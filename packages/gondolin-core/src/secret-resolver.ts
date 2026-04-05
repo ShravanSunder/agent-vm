@@ -20,7 +20,7 @@ export interface SecretResolver {
 
 export type TokenSource =
 	| { readonly type: 'op-cli'; readonly ref: string }
-	| { readonly type: 'env'; readonly envVar?: string }
+	| { readonly type: 'env'; readonly envVar?: string | undefined }
 	| { readonly type: 'keychain'; readonly service: string; readonly account: string };
 
 export interface ExecFileResult {

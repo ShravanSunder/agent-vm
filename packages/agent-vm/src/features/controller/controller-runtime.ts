@@ -4,6 +4,7 @@ import {
 	buildImage as buildImageFromCore,
 	createManagedVm as createManagedVmFromCore,
 	createSecretResolver,
+	resolveServiceAccountToken,
 	type BuildConfig,
 	type ManagedVm,
 	type SecretResolver,
@@ -83,15 +84,13 @@ async function defaultStartHttpServer(options: {
 	};
 }
 
-async function createResolverFromEnv(
+async function createResolverFromConfig(
 	systemConfig: SystemConfig,
 	createSecretResolverImpl: typeof createSecretResolver,
+	resolveTokenImpl: typeof resolveServiceAccountToken = resolveServiceAccountToken,
 ): Promise<SecretResolver> {
-	const serviceAccountTokenEnv = systemConfig.host.secretsProvider.serviceAccountTokenEnv;
-	const serviceAccountToken = process.env[serviceAccountTokenEnv];
-	if (!serviceAccountToken) {
-		throw new Error(`Missing required env var '${serviceAccountTokenEnv}'.`);
-	}
+	const tokenSource = systemConfig.host.secretsProvider.tokenSource;
+	const serviceAccountToken = await resolveTokenImpl(tokenSource);
 
 	return await createSecretResolverImpl({
 		serviceAccountToken,
@@ -121,7 +120,7 @@ export async function startControllerRuntime(
 ): Promise<ControllerRuntime> {
 	const now = dependencies.now ?? Date.now;
 	const zone = findZone(options.systemConfig, options.zoneId);
-	const secretResolver = await createResolverFromEnv(
+	const secretResolver = await createResolverFromConfig(
 		options.systemConfig,
 		dependencies.createSecretResolver ?? createSecretResolver,
 	);

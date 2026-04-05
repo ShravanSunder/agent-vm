@@ -27,7 +27,7 @@ describe('loadSystemConfig', () => {
 					controllerPort: 18800,
 					secretsProvider: {
 						type: '1password',
-						serviceAccountTokenEnv: 'OP_SERVICE_ACCOUNT_TOKEN',
+						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
 					},
 				},
 				images: {
@@ -102,7 +102,7 @@ describe('loadSystemConfig', () => {
 					controllerPort: 18800,
 					secretsProvider: {
 						type: '1password',
-						serviceAccountTokenEnv: 'OP_SERVICE_ACCOUNT_TOKEN',
+						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
 					},
 				},
 				images: {

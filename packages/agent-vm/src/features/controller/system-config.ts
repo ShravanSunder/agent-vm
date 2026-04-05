@@ -7,6 +7,22 @@ const secretReferenceSchema = z.object({
 	ref: z.string().min(1),
 });
 
+const tokenSourceSchema = z.discriminatedUnion('type', [
+	z.object({
+		type: z.literal('op-cli'),
+		ref: z.string().min(1),
+	}),
+	z.object({
+		type: z.literal('env'),
+		envVar: z.string().min(1).optional(),
+	}),
+	z.object({
+		type: z.literal('keychain'),
+		service: z.string().min(1),
+		account: z.string().min(1),
+	}),
+]);
+
 const zoneGatewaySchema = z.object({
 	memory: z.string().min(1),
 	cpus: z.number().int().positive(),
@@ -27,7 +43,7 @@ const systemConfigSchema = z.object({
 		controllerPort: z.number().int().positive(),
 		secretsProvider: z.object({
 			type: z.literal('1password'),
-			serviceAccountTokenEnv: z.string().min(1),
+			tokenSource: tokenSourceSchema,
 		}),
 	}),
 	images: z.object({
