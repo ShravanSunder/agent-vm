@@ -1,5 +1,5 @@
 {
-	"name": "agent-vm-workspace",
+	"name": "agent-vm",
 	"version": "0.1.0",
 	"private": true,
 	"description": "Gondolin-based VM controller and OpenClaw integration",
@@ -12,7 +12,8 @@
 		"lint:types": "oxlint --type-aware .",
 		"fmt": "oxfmt .",
 		"fmt:check": "oxfmt --check .",
-		"typecheck": "pnpm -r typecheck",
+		"typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r typecheck",
+		"check": "pnpm lint:types && pnpm fmt:check && pnpm typecheck && pnpm test",
 		"test": "vitest run",
 		"test:watch": "vitest"
 	},
