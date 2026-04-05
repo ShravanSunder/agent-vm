@@ -167,8 +167,10 @@ export async function startGatewayZone(
 		},
 	});
 
-	// Start OpenClaw gateway backgrounded, then poll until it's listening.
-	await managedVm.exec('openclaw gateway --port 18789 &');
+	// Start OpenClaw gateway backgrounded with output redirected so exec() returns immediately.
+	await managedVm.exec(
+		'cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &',
+	);
 
 	// Poll for readiness (OpenClaw needs ~2-3s to bind the port).
 	// Accept any HTTP status (including 401) as "listening" — use curl to get the status code.
