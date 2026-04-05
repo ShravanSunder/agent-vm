@@ -24,7 +24,10 @@ export interface IngressRoute {
 
 export interface SshAccess {
 	readonly host: string;
+	readonly command?: string;
+	readonly identityFile?: string;
 	readonly port: number;
+	readonly user?: string;
 }
 
 export interface IngressAccess {

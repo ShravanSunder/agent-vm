@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import {
 	buildImage as buildImageFromCore,
 	createManagedVm as createManagedVmFromCore,
+	type BuildImageOptions,
 	type BuildImageResult,
 	type ManagedVm,
 	type SecretResolver,
@@ -101,12 +102,15 @@ export async function startGatewayZone(
 	const loadBuildConfig = dependencies.loadBuildConfig ?? loadJsonFile;
 	const buildImage =
 		dependencies.buildImage ??
-		(async (buildOptions: GatewayBuildImageOptions): Promise<BuildImageResult> =>
-			await buildImageFromCore({
+		(async (buildOptions: GatewayBuildImageOptions): Promise<BuildImageResult> => {
+			const coreBuildOptions: BuildImageOptions = {
 				buildConfig: buildOptions.buildConfig as never,
 				cacheDir: buildOptions.cacheDir,
-				fullReset: buildOptions.fullReset,
-			}));
+				...(buildOptions.fullReset !== undefined ? { fullReset: buildOptions.fullReset } : {}),
+			};
+
+			return await buildImageFromCore(coreBuildOptions);
+		});
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
 	const buildConfig = await loadBuildConfig(options.systemConfig.images.gateway.buildConfig);
 	const image = await buildImage({
