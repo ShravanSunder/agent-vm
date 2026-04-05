@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createGondolinPlugin } from './plugin.js';
+import defaultPlugin, { createGondolinPlugin } from './plugin.js';
 
 describe('createGondolinPlugin', () => {
 	it('registers the gondolin backend when OpenClaw loads the plugin in full mode', () => {
@@ -23,5 +23,10 @@ describe('createGondolinPlugin', () => {
 				factory: expect.any(Function),
 			}),
 		);
+	});
+
+	it('exports a default plugin descriptor with the gondolin id', () => {
+		expect(defaultPlugin.id).toBe('gondolin');
+		expect(defaultPlugin.name).toBe('Gondolin Sandbox');
 	});
 });

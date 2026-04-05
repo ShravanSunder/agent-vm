@@ -41,3 +41,34 @@ export function createGondolinPlugin(dependencies: {
 		},
 	};
 }
+
+type RuntimeRegisterSandboxBackend = (
+	id: string,
+	registration: {
+		factory: ReturnType<typeof createGondolinSandboxBackendFactory>;
+	},
+) => void;
+
+let runtimeRegisterSandboxBackend: RuntimeRegisterSandboxBackend | null = null;
+
+try {
+	const sandboxModuleSpecifier = 'openclaw/plugin-sdk/sandbox';
+	const sandboxModule = await import(sandboxModuleSpecifier);
+	runtimeRegisterSandboxBackend =
+		sandboxModule.registerSandboxBackend as RuntimeRegisterSandboxBackend;
+} catch {
+	runtimeRegisterSandboxBackend = null;
+}
+
+const defaultPlugin = createGondolinPlugin({
+	registerSandboxBackend: (id, registration): void => {
+		if (!runtimeRegisterSandboxBackend) {
+			throw new Error(
+				'openclaw/plugin-sdk/sandbox is unavailable; load this package inside an OpenClaw runtime.',
+			);
+		}
+		runtimeRegisterSandboxBackend(id, registration);
+	},
+});
+
+export default defaultPlugin;
