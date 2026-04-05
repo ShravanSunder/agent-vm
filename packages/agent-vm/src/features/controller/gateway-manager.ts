@@ -3,8 +3,6 @@ import fs from 'node:fs/promises';
 import {
 	buildImage as buildImageFromCore,
 	createManagedVm as createManagedVmFromCore,
-	type BuildConfig,
-	type BuildImageOptions,
 	type BuildImageResult,
 	type ManagedVm,
 	type SecretResolver,
@@ -16,8 +14,14 @@ import type { SystemConfig } from './system-config.js';
 
 type GatewayZone = SystemConfig['zones'][number];
 
+interface GatewayBuildImageOptions {
+	readonly buildConfig: unknown;
+	readonly cacheDir: string;
+	readonly fullReset?: boolean;
+}
+
 export interface GatewayManagerDependencies {
-	readonly buildImage?: (options: BuildImageOptions) => Promise<BuildImageResult>;
+	readonly buildImage?: (options: GatewayBuildImageOptions) => Promise<BuildImageResult>;
 	readonly createManagedVm?: (options: {
 		readonly allowedHosts: readonly string[];
 		readonly cpus: number;
@@ -67,34 +71,9 @@ function resolveSecretHosts(secretName: string): readonly string[] {
 	}
 }
 
-function isBuildConfig(value: unknown): value is BuildConfig {
-	return (
-		typeof value === 'object' &&
-		value !== null &&
-		typeof value === 'object' &&
-		'arch' in value &&
-		'distro' in value
-	);
-}
-
 async function loadJsonFile(filePath: string): Promise<unknown> {
 	const rawContents = await fs.readFile(filePath, 'utf8');
-	const parsedContents: unknown = JSON.parse(rawContents);
-	if (!isBuildConfig(parsedContents)) {
-		throw new TypeError(`Invalid build config at '${filePath}'.`);
-	}
-	return parsedContents;
-}
-
-function isIngressAccess(
-	value: unknown,
-): value is { readonly host: string; readonly port: number } {
-	return (
-		typeof value === 'object' &&
-		value !== null &&
-		typeof (value as { host?: unknown }).host === 'string' &&
-		typeof (value as { port?: unknown }).port === 'number'
-	);
+	return JSON.parse(rawContents);
 }
 
 export async function startGatewayZone(
@@ -124,7 +103,7 @@ export async function startGatewayZone(
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
 	const buildConfig = await loadBuildConfig(options.systemConfig.images.gateway.buildConfig);
 	const image = await buildImage({
-		buildConfig: buildConfig as BuildImageOptions['buildConfig'],
+		buildConfig,
 		cacheDir: `${zone.gateway.stateDir}/images/gateway`,
 	});
 	const managedVm = await createManagedVm({
@@ -173,9 +152,6 @@ export async function startGatewayZone(
 	const ingress = await managedVm.enableIngress({
 		listenPort: zone.gateway.port,
 	});
-	if (!isIngressAccess(ingress)) {
-		throw new TypeError('Gateway ingress returned an unexpected result.');
-	}
 
 	return {
 		image,
