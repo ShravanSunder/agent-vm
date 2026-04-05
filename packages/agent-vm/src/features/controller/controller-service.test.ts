@@ -39,6 +39,7 @@ describe('createControllerApp', () => {
 		const getLease = vi.fn(() => lease);
 		const releaseLease = vi.fn(async () => {});
 		const app = createControllerApp({
+			readIdentityPem: async () => 'pem-from-file',
 			leaseManager: {
 				createLease,
 				getLease,
@@ -67,6 +68,9 @@ describe('createControllerApp', () => {
 		expect(createResponse.status).toBe(200);
 		await expect(createResponse.json()).resolves.toMatchObject({
 			leaseId: 'lease-123',
+			ssh: {
+				identityPem: 'pem-from-file',
+			},
 			tcpSlot: 0,
 			workdir: '/workspace',
 		});

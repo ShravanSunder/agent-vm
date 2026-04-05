@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+
 import { Hono } from 'hono';
 
 import type { LeaseManager } from './lease-manager.js';
@@ -5,6 +7,7 @@ import type { SystemConfig } from './system-config.js';
 
 export function createControllerApp(options: {
 	readonly leaseManager: Pick<LeaseManager, 'createLease' | 'getLease' | 'releaseLease'>;
+	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly operations?: {
 		readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
 		readonly getStatus: () => Promise<unknown>;
@@ -14,6 +17,10 @@ export function createControllerApp(options: {
 	};
 }): Hono {
 	const app = new Hono();
+	const readIdentityPem =
+		options.readIdentityPem ??
+		(async (identityFilePath: string): Promise<string> =>
+			await fs.readFile(identityFilePath, 'utf8'));
 
 	app.post('/lease', async (context) => {
 		try {
@@ -37,11 +44,14 @@ export function createControllerApp(options: {
 				zoneId: payload.zoneId,
 			});
 
+			const identityPem = lease.sshAccess.identityFile
+				? await readIdentityPem(lease.sshAccess.identityFile)
+				: '';
 			return context.json({
 				leaseId: lease.id,
 				ssh: {
 					host: `tool-${lease.tcpSlot}.vm.host`,
-					identityPem: '',
+					identityPem,
 					knownHostsLine: '',
 					port: 22,
 					user: 'sandbox',
@@ -59,17 +69,20 @@ export function createControllerApp(options: {
 		}
 	});
 
-	app.get('/lease/:leaseId', (context) => {
+	app.get('/lease/:leaseId', async (context) => {
 		const lease = options.leaseManager.getLease(context.req.param('leaseId'));
 		if (!lease) {
 			return context.json({ error: 'Lease not found' }, 404);
 		}
 
+		const identityPem = lease.sshAccess.identityFile
+			? await readIdentityPem(lease.sshAccess.identityFile)
+			: '';
 		return context.json({
 			leaseId: lease.id,
 			ssh: {
 				host: `tool-${lease.tcpSlot}.vm.host`,
-				identityPem: '',
+				identityPem,
 				knownHostsLine: '',
 				port: 22,
 				user: 'sandbox',
