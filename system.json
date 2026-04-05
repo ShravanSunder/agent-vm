@@ -46,6 +46,8 @@
 				"api.openai.com",
 				"discord.com",
 				"gateway.discord.gg",
+				"web.whatsapp.com",
+				"api.whatsapp.com",
 				"api.github.com"
 			],
 			"toolProfile": "standard"

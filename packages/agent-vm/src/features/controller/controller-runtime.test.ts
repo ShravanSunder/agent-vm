@@ -86,14 +86,14 @@ describe('startControllerRuntime', () => {
 		let startHttpServerArgs:
 			| {
 					app: {
-						request(path: string): Response | Promise<Response>;
+						request(path: string, init?: RequestInit): Response | Promise<Response>;
 					};
 					port: number;
 			  }
 			| undefined;
 		const startHttpServer = vi.fn(
 			async (options: {
-				app: { request(path: string): Response | Promise<Response> };
+				app: { request(path: string, init?: RequestInit): Response | Promise<Response> };
 				port: number;
 			}) => {
 				startHttpServerArgs = options;
@@ -156,6 +156,16 @@ describe('startControllerRuntime', () => {
 		await expect(statusResponse.json()).resolves.toMatchObject({
 			controllerPort: 18800,
 		});
+		const refreshResponse = await startHttpServerArgs.app.request(
+			'/zones/shravan/credentials/refresh',
+			{ method: 'POST' },
+		);
+		expect(refreshResponse.status).toBe(200);
+		const upgradeResponse = await startHttpServerArgs.app.request('/zones/shravan/upgrade', {
+			method: 'POST',
+		});
+		expect(upgradeResponse.status).toBe(200);
+		expect(startGatewayZone).toHaveBeenCalledTimes(3);
 		expect(setIntervalMock).toHaveBeenCalledTimes(1);
 		expect(runtime.controllerPort).toBe(18800);
 		expect(runtime.gateway.vm.id).toBe('gateway-vm-1');

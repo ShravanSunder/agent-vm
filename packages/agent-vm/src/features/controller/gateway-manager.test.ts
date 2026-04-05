@@ -116,9 +116,15 @@ describe('startGatewayZone', () => {
 			expect.objectContaining({
 				allowedHosts: ['api.anthropic.com', 'api.openai.com'],
 				cpus: 2,
+				env: expect.objectContaining({
+					HOME: '/home/openclaw',
+					NODE_EXTRA_CA_CERTS: '/etc/ssl/certs/ca-certificates.crt',
+					OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/openclaw.json',
+					OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
+				}),
 				imagePath: '/tmp/gateway-image',
 				memory: '2G',
-				rootfsMode: 'memory',
+				rootfsMode: 'cow',
 				secrets: {
 					ANTHROPIC_API_KEY: {
 						hosts: ['api.anthropic.com'],

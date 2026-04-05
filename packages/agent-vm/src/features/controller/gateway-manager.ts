@@ -121,9 +121,15 @@ export async function startGatewayZone(
 	const managedVm = await createManagedVm({
 		allowedHosts: zone.allowedHosts,
 		cpus: zone.gateway.cpus,
+		env: {
+			HOME: '/home/openclaw',
+			NODE_EXTRA_CA_CERTS: '/etc/ssl/certs/ca-certificates.crt',
+			OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/openclaw.json',
+			OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
+		},
 		imagePath: image.imagePath,
 		memory: zone.gateway.memory,
-		rootfsMode: 'memory',
+		rootfsMode: 'cow',
 		secrets: Object.fromEntries(
 			Object.entries(resolvedSecrets).map(([secretName, secretValue]) => [
 				secretName,

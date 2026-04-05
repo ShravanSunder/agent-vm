@@ -32,6 +32,16 @@ describe('production config artifacts', () => {
 					buildConfig: './images/tool/build-config.json',
 				},
 			},
+			zones: [
+				{
+					secrets: {
+						DISCORD_BOT_TOKEN: {
+							ref: 'op://AI/discord-shravan/token',
+							source: '1password',
+						},
+					},
+				},
+			],
 		});
 		expect(gatewayBuildConfig).toMatchObject({
 			arch: 'aarch64',
@@ -40,11 +50,24 @@ describe('production config artifacts', () => {
 			arch: 'aarch64',
 		});
 		expect(openClawConfig).toMatchObject({
+			channels: {
+				discord: {},
+				whatsapp: {},
+			},
 			agents: {
 				defaults: {
+					model: 'anthropic/claude-sonnet-4-5',
 					sandbox: {
 						backend: 'gondolin',
 						mode: 'all',
+						scope: 'session',
+					},
+				},
+			},
+			models: {
+				profiles: {
+					codex: {
+						provider: 'openai-codex',
 					},
 				},
 			},

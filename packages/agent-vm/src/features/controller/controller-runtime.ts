@@ -172,12 +172,14 @@ export async function startControllerRuntime(
 	const reaperTimer = (dependencies.setIntervalImpl ?? setInterval)(() => {
 		void idleReaper.reapExpiredLeases();
 	}, 60_000);
-	const gateway = await (dependencies.startGatewayZone ?? startGatewayZone)({
-		pluginSourceDir: options.pluginSourceDir,
-		secretResolver,
-		systemConfig: options.systemConfig,
-		zoneId: options.zoneId,
-	});
+	const startGateway = async (): Promise<Awaited<ReturnType<typeof startGatewayZone>>> =>
+		await (dependencies.startGatewayZone ?? startGatewayZone)({
+			pluginSourceDir: options.pluginSourceDir,
+			secretResolver,
+			systemConfig: options.systemConfig,
+			zoneId: options.zoneId,
+		});
+	let gateway = await startGateway();
 	const controllerApp = createControllerService({
 		leaseManager,
 		operations: {
@@ -228,7 +230,10 @@ export async function startControllerRuntime(
 							const targetZone = findZone(options.systemConfig, zoneId);
 							await secretResolver.resolveAll(targetZone.secrets);
 						},
-						restartGatewayZone: async () => {},
+						restartGatewayZone: async () => {
+							await gateway.vm.close();
+							gateway = await startGateway();
+						},
 					},
 				),
 			upgradeZone: async (targetZoneId: string) =>
@@ -239,7 +244,9 @@ export async function startControllerRuntime(
 					},
 					{
 						rebuildGatewayImage: async () => {},
-						restartGatewayZone: async () => {},
+						restartGatewayZone: async () => {
+							gateway = await startGateway();
+						},
 						stopGatewayZone: async () => {
 							await gateway.vm.close();
 						},

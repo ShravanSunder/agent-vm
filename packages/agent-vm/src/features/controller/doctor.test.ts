@@ -54,10 +54,13 @@ describe('runControllerDoctor', () => {
 	it('reports healthy basics for node version and 1password token presence', () => {
 		expect(
 			runControllerDoctor({
+				diskFreeBytes: 50 * 1024 * 1024 * 1024,
 				env: {
 					OP_SERVICE_ACCOUNT_TOKEN: 'token',
 				},
+				occupiedPorts: new Set<number>(),
 				nodeVersion: 'v25.9.0',
+				totalMemoryBytes: 16 * 1024 * 1024 * 1024,
 				systemConfig,
 			}),
 		).toEqual({
@@ -66,6 +69,32 @@ describe('runControllerDoctor', () => {
 				{ name: 'node-version', ok: true },
 				{ name: '1password-token', ok: true },
 				{ name: 'controller-port', ok: true, value: 18800 },
+				{ name: 'gateway-port-shravan', ok: true, value: 18791 },
+				{ name: 'disk-space', ok: true },
+				{ name: 'memory-budget', ok: true },
+			],
+		});
+	});
+
+	it('flags occupied ports and insufficient resources', () => {
+		expect(
+			runControllerDoctor({
+				diskFreeBytes: 1,
+				env: {},
+				occupiedPorts: new Set<number>([18800, 18791]),
+				nodeVersion: 'v20.0.0',
+				totalMemoryBytes: 512 * 1024 * 1024,
+				systemConfig,
+			}),
+		).toEqual({
+			ok: false,
+			checks: [
+				{ name: 'node-version', ok: false },
+				{ name: '1password-token', ok: false },
+				{ name: 'controller-port', ok: false, value: 18800 },
+				{ name: 'gateway-port-shravan', ok: false, value: 18791 },
+				{ name: 'disk-space', ok: false },
+				{ name: 'memory-budget', ok: false },
 			],
 		});
 	});

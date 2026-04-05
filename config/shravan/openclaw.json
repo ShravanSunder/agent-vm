@@ -16,6 +16,17 @@
 			}
 		}
 	},
+	"channels": {
+		"discord": {},
+		"whatsapp": {}
+	},
+	"models": {
+		"profiles": {
+			"codex": {
+				"provider": "openai-codex"
+			}
+		}
+	},
 	"plugins": {
 		"entries": {
 			"gondolin": {
