@@ -70,7 +70,8 @@ describe('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
 		log('gateway VM created');
 
 		// Step 3: Install the tool VM's SSH identity inside the gateway VM
-		const identityPem = fs.readFileSync(toolSsh.identityFile!, 'utf-8');
+		if (!toolSsh.identityFile) throw new Error('SSH identity file not available');
+		const identityPem = fs.readFileSync(toolSsh.identityFile, 'utf-8');
 
 		await gatewayVm.exec('mkdir -p /root/.ssh && chmod 700 /root/.ssh');
 		// Write identity via base64 to avoid escaping issues

@@ -99,6 +99,9 @@ export interface ManagedVm {
 	close(): Promise<void>;
 }
 
+/* oxlint-disable typescript-eslint/no-unsafe-type-assertion -- Gondolin SDK boundary:
+   The dependency injection pattern uses `unknown` to decouple from SDK internals.
+   The `as never` casts bridge our unknown-typed providers to the SDK's concrete types. */
 function createDefaultDependencies(): ManagedVmDependencies {
 	return {
 		createVm: async (vmOptions: unknown): Promise<ManagedVmInstance> =>
@@ -127,6 +130,7 @@ function createDefaultDependencies(): ManagedVmDependencies {
 			createShadowPathPredicate([...paths]),
 	};
 }
+/* oxlint-enable typescript-eslint/no-unsafe-type-assertion */
 
 function normalizeShadowPath(pathValue: string): string {
 	const trimmedPath = pathValue.trim();

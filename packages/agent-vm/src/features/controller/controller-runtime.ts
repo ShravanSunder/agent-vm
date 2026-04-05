@@ -195,6 +195,7 @@ export async function startControllerRuntime(
 							for (const lease of leaseManager
 								.listLeases()
 								.filter((activeLease) => activeLease.zoneId === targetZoneId)) {
+								// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP pool races
 								await leaseManager.releaseLease(lease.id);
 							}
 						},

@@ -5,6 +5,28 @@ import { Hono } from 'hono';
 import type { LeaseManager } from './lease-manager.js';
 import type { SystemConfig } from './system-config.js';
 
+function isLeaseCreatePayload(value: unknown): value is {
+	readonly agentWorkspaceDir: string;
+	readonly profileId: string;
+	readonly scopeKey: string;
+	readonly workspaceDir: string;
+	readonly zoneId: string;
+} {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		typeof (value as { agentWorkspaceDir?: unknown }).agentWorkspaceDir === 'string' &&
+		typeof (value as { profileId?: unknown }).profileId === 'string' &&
+		typeof (value as { scopeKey?: unknown }).scopeKey === 'string' &&
+		typeof (value as { workspaceDir?: unknown }).workspaceDir === 'string' &&
+		typeof (value as { zoneId?: unknown }).zoneId === 'string'
+	);
+}
+
+function isDestroyPayload(value: unknown): value is { readonly purge?: boolean } {
+	return typeof value === 'object' && value !== null;
+}
+
 export function createControllerApp(options: {
 	readonly leaseManager: Pick<LeaseManager, 'createLease' | 'getLease' | 'releaseLease'>;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
@@ -21,28 +43,6 @@ export function createControllerApp(options: {
 		options.readIdentityPem ??
 		(async (identityFilePath: string): Promise<string> =>
 			await fs.readFile(identityFilePath, 'utf8'));
-
-	function isLeaseCreatePayload(value: unknown): value is {
-		readonly agentWorkspaceDir: string;
-		readonly profileId: string;
-		readonly scopeKey: string;
-		readonly workspaceDir: string;
-		readonly zoneId: string;
-	} {
-		return (
-			typeof value === 'object' &&
-			value !== null &&
-			typeof (value as { agentWorkspaceDir?: unknown }).agentWorkspaceDir === 'string' &&
-			typeof (value as { profileId?: unknown }).profileId === 'string' &&
-			typeof (value as { scopeKey?: unknown }).scopeKey === 'string' &&
-			typeof (value as { workspaceDir?: unknown }).workspaceDir === 'string' &&
-			typeof (value as { zoneId?: unknown }).zoneId === 'string'
-		);
-	}
-
-	function isDestroyPayload(value: unknown): value is { readonly purge?: boolean } {
-		return typeof value === 'object' && value !== null;
-	}
 
 	app.post('/lease', async (context) => {
 		try {
@@ -71,7 +71,7 @@ export function createControllerApp(options: {
 				ssh: {
 					host: `tool-${lease.tcpSlot}.vm.host`,
 					identityPem,
-					knownHostsLine: '',
+					knownHostsLine: '', // intentionally empty: Gondolin SSH uses StrictHostKeyChecking=no (local virtio channel)
 					port: 22,
 					user: 'sandbox',
 				},
