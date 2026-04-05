@@ -96,6 +96,27 @@ export interface ManagedVm {
 	close(): Promise<void>;
 }
 
+function isExecResult(value: unknown): value is ExecResult {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		typeof (value as { exitCode?: unknown }).exitCode === 'number' &&
+		typeof (value as { stdout?: unknown }).stdout === 'string' &&
+		typeof (value as { stderr?: unknown }).stderr === 'string'
+	);
+}
+
+function isHostPortAccess(
+	value: unknown,
+): value is { readonly host: string; readonly port: number } {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		typeof (value as { host?: unknown }).host === 'string' &&
+		typeof (value as { port?: unknown }).port === 'number'
+	);
+}
+
 function createDefaultDependencies(): ManagedVmDependencies {
 	return {
 		createVm: async (vmOptions: unknown): Promise<ManagedVmInstance> => {
@@ -103,16 +124,20 @@ function createDefaultDependencies(): ManagedVmDependencies {
 			return {
 				close: async (): Promise<void> => vm.close(),
 				enableIngress: async (ingressOptions?: unknown): Promise<IngressAccess> => {
-					const ingressAccess = (await Reflect.apply(vm.enableIngress, vm, [
-						ingressOptions,
-					])) as IngressAccess;
+					const ingressAccess = await Reflect.apply(vm.enableIngress, vm, [ingressOptions]);
+					if (!isHostPortAccess(ingressAccess)) {
+						throw new TypeError('Gondolin enableIngress returned an unexpected result');
+					}
 					return {
 						host: ingressAccess.host,
 						port: ingressAccess.port,
 					};
 				},
 				enableSsh: async (sshOptions?: unknown): Promise<SshAccess> => {
-					const sshAccess = (await Reflect.apply(vm.enableSsh, vm, [sshOptions])) as SshAccess;
+					const sshAccess = await Reflect.apply(vm.enableSsh, vm, [sshOptions]);
+					if (!isHostPortAccess(sshAccess)) {
+						throw new TypeError('Gondolin enableSsh returned an unexpected result');
+					}
 					return {
 						host: sshAccess.host,
 						port: sshAccess.port,
@@ -120,6 +145,9 @@ function createDefaultDependencies(): ManagedVmDependencies {
 				},
 				exec: async (command: string): Promise<ExecResult> => {
 					const executionResult = await vm.exec(command);
+					if (!isExecResult(executionResult)) {
+						throw new TypeError('Gondolin exec returned an unexpected result');
+					}
 					return {
 						exitCode: executionResult.exitCode,
 						stderr: executionResult.stderr ?? '',

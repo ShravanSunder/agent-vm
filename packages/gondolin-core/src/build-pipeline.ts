@@ -100,9 +100,7 @@ export async function buildImage(
 				) => Promise<void>
 			)(options.buildConfig, imagePath);
 		} else {
-			await (dependencies.buildAssets as (outputDirectory: string) => Promise<void>)(
-				imagePath,
-			);
+			await (dependencies.buildAssets as (outputDirectory: string) => Promise<void>)(imagePath);
 		}
 	} else {
 		const buildAssets = await loadBuildAssets();
