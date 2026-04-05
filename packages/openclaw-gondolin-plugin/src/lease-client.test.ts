@@ -10,7 +10,8 @@ describe('createLeaseClient', () => {
 			fetchImpl: async (input, init) => {
 				requests.push({
 					method: init?.method ?? 'GET',
-					url: String(input),
+					url:
+						typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url,
 				});
 
 				return new Response(
