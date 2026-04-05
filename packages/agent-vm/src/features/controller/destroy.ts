@@ -17,7 +17,9 @@ export async function runControllerDestroy(
 	readonly purged: boolean;
 	readonly zoneId: string;
 }> {
-	const zone = options.systemConfig.zones.find((candidateZone) => candidateZone.id === options.zoneId);
+	const zone = options.systemConfig.zones.find(
+		(candidateZone) => candidateZone.id === options.zoneId,
+	);
 	if (!zone) {
 		throw new Error(`Unknown zone '${options.zoneId}'.`);
 	}
