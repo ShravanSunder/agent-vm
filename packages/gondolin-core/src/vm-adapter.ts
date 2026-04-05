@@ -103,14 +103,16 @@ function createDefaultDependencies(): ManagedVmDependencies {
 			return {
 				close: async (): Promise<void> => vm.close(),
 				enableIngress: async (ingressOptions?: unknown): Promise<IngressAccess> => {
-					const ingressAccess = await Reflect.apply(vm.enableIngress, vm, [ingressOptions]);
+					const ingressAccess = (await Reflect.apply(vm.enableIngress, vm, [
+						ingressOptions,
+					])) as IngressAccess;
 					return {
 						host: ingressAccess.host,
 						port: ingressAccess.port,
 					};
 				},
 				enableSsh: async (sshOptions?: unknown): Promise<SshAccess> => {
-					const sshAccess = await Reflect.apply(vm.enableSsh, vm, [sshOptions]);
+					const sshAccess = (await Reflect.apply(vm.enableSsh, vm, [sshOptions])) as SshAccess;
 					return {
 						host: sshAccess.host,
 						port: sshAccess.port,
