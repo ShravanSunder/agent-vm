@@ -1,0 +1,109 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+
+import type { BuildConfig, BuildOptions } from '@earendil-works/gondolin';
+
+export interface BuildImageOptions {
+	readonly buildConfig: BuildConfig;
+	readonly cacheDir: string;
+	readonly fullReset?: boolean;
+}
+
+export interface BuildImageResult {
+	readonly built: boolean;
+	readonly fingerprint: string;
+	readonly imagePath: string;
+}
+
+interface BuildPipelineDependencies {
+	readonly buildAssets?: (buildConfig: BuildConfig, outputDirectory: string) => Promise<unknown>;
+	readonly gondolinVersion?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
+}
+
+function stableSerialize(value: unknown): string {
+	if (Array.isArray(value)) {
+		return `[${value.map((entry) => stableSerialize(entry)).join(',')}]`;
+	}
+
+	if (isRecord(value)) {
+		const objectEntries = Object.entries(value)
+			.filter(([, entryValue]) => entryValue !== undefined)
+			.toSorted(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+		return `{${objectEntries
+			.map(([entryKey, entryValue]) => `${JSON.stringify(entryKey)}:${stableSerialize(entryValue)}`)
+			.join(',')}}`;
+	}
+
+	return JSON.stringify(value);
+}
+
+function hasBuiltAssets(outputDirectoryPath: string): boolean {
+	return (
+		fs.existsSync(path.join(outputDirectoryPath, 'manifest.json')) &&
+		fs.existsSync(path.join(outputDirectoryPath, 'rootfs.ext4')) &&
+		fs.existsSync(path.join(outputDirectoryPath, 'initramfs.cpio.lz4')) &&
+		fs.existsSync(path.join(outputDirectoryPath, 'vmlinuz-virt'))
+	);
+}
+
+async function loadBuildAssets(): Promise<
+	(buildConfig: BuildConfig, outputDirectory: string) => Promise<unknown>
+> {
+	const gondolinModule = await import('@earendil-works/gondolin');
+	return async (buildConfig: BuildConfig, outputDirectory: string): Promise<unknown> => {
+		await gondolinModule.buildAssets(buildConfig, {
+			outputDir: outputDirectory,
+			verbose: false,
+		} satisfies BuildOptions);
+	};
+}
+
+export function computeBuildFingerprint(
+	buildConfig: BuildConfig,
+	gondolinVersion: string = 'unknown',
+): string {
+	return crypto
+		.createHash('sha256')
+		.update(`${stableSerialize(buildConfig)}|${gondolinVersion}`)
+		.digest('hex')
+		.slice(0, 16);
+}
+
+export async function buildImage(
+	options: BuildImageOptions,
+	dependencies: BuildPipelineDependencies = {},
+): Promise<BuildImageResult> {
+	const fingerprint = computeBuildFingerprint(options.buildConfig, dependencies.gondolinVersion);
+	const imagePath = path.join(options.cacheDir, fingerprint);
+
+	if (options.fullReset) {
+		fs.rmSync(imagePath, { recursive: true, force: true });
+	}
+
+	if (hasBuiltAssets(imagePath)) {
+		return {
+			built: false,
+			fingerprint,
+			imagePath,
+		};
+	}
+
+	fs.mkdirSync(imagePath, { recursive: true });
+	const buildAssetsImplementation = dependencies.buildAssets ?? (await loadBuildAssets());
+	await buildAssetsImplementation(options.buildConfig, imagePath);
+
+	if (!hasBuiltAssets(imagePath)) {
+		throw new Error(`Expected Gondolin assets to be written to ${imagePath}.`);
+	}
+
+	return {
+		built: true,
+		fingerprint,
+		imagePath,
+	};
+}
