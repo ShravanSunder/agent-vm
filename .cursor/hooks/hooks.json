@@ -1,0 +1,6 @@
+{
+	"version": 1,
+	"hooks": {
+		"afterFileEdit": [{ "command": "sh -lc '.cursor/hooks/after-edit.sh'" }]
+	}
+}

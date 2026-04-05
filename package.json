@@ -1,0 +1,37 @@
+{
+	"name": "agent-vm-workspace",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Gondolin-based VM controller and OpenClaw integration",
+	"type": "module",
+	"scripts": {
+		"build": "pnpm -r build",
+		"clean": "git clean -fdX packages",
+		"lint": "oxlint .",
+		"lint:fix": "oxlint --fix",
+		"lint:types": "oxlint --type-aware .",
+		"fmt": "oxfmt .",
+		"fmt:check": "oxfmt --check .",
+		"typecheck": "pnpm -r typecheck",
+		"test": "vitest run",
+		"test:watch": "vitest"
+	},
+	"devDependencies": {
+		"@types/node": "^24.0.0",
+		"oxfmt": "^0.35.0",
+		"oxlint": "^1.0.0",
+		"oxlint-tsgolint": "^0.19.0",
+		"typescript": "^5.7.0",
+		"vite": "latest",
+		"vitest": "^3.0.0"
+	},
+	"engines": {
+		"node": ">=24"
+	},
+	"packageManager": "pnpm@10.33.0",
+	"pnpm": {
+		"onlyBuiltDependencies": [
+			"esbuild"
+		]
+	}
+}

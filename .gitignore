@@ -1,0 +1,65 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Swift
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+Package.resolved
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+.dev.vars
+
+# Test / Coverage
+.coverage
+htmlcov/
+coverage/
+.pytest_cache/
+.ruff_cache/
+state/
+workspaces/
+tmp/
+test-results/
+playwright-report/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Generated
+*.gen.ts
+__generated__/
+
+# Secrets (never commit)
+*.pem
+*.key
+credentials.json
+
+# Scaffold tracking
+.scaffold-project.json

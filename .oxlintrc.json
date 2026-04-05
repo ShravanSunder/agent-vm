@@ -1,0 +1,83 @@
+{
+	"$schema": "./node_modules/oxlint/configuration_schema.json",
+	"plugins": ["typescript", "unicorn", "oxc", "import", "react"],
+	"categories": {
+		"correctness": "error",
+		"suspicious": "warn",
+		"style": "off",
+		"perf": "warn",
+		"pedantic": "off",
+		"restriction": "off",
+		"nursery": "off"
+	},
+	"rules": {
+		"typescript/no-explicit-any": "error",
+		"typescript/no-non-null-assertion": "error",
+		"no-param-reassign": "error",
+		"no-void": ["error", { "allowAsStatement": true }],
+		"typescript/explicit-function-return-type": [
+			"error",
+			{
+				"allowExpressions": true,
+				"allowTypedFunctionExpressions": true,
+				"allowDirectConstAssertionInArrowFunctions": true,
+				"allowHigherOrderFunctions": true
+			}
+		],
+
+		"no-console": "warn",
+		"prefer-const": "warn",
+		"id-length": ["warn", { "min": 2, "exceptions": ["_", "i", "id", "fs", "os"] }],
+		"typescript/consistent-type-imports": [
+			"warn",
+			{
+				"prefer": "type-imports",
+				"disallowTypeAnnotations": false,
+				"fixStyle": "separate-type-imports"
+			}
+		],
+		"typescript/no-unused-vars": [
+			"warn",
+			{
+				"argsIgnorePattern": "^_",
+				"destructuredArrayIgnorePattern": "^_",
+				"varsIgnorePattern": "^_"
+			}
+		],
+		"typescript/array-type": "warn",
+		"typescript/consistent-generic-constructors": "warn",
+		"typescript/prefer-function-type": "warn",
+		"unicorn/throw-new-error": "warn",
+		"unicorn/prefer-optional-catch-binding": "warn",
+		"unicorn/catch-error-name": "warn",
+		"react/self-closing-comp": "warn",
+
+		"no-var": "warn",
+		"unicorn/prefer-node-protocol": "warn",
+		"eqeqeq": "warn",
+		"no-fallthrough": "error",
+		"no-self-compare": "error",
+		"array-callback-return": "warn",
+		"typescript/prefer-nullish-coalescing": "warn",
+		"typescript/switch-exhaustiveness-check": "error",
+		"typescript/no-misused-promises": "error",
+
+		"typescript/no-floating-promises": ["error", { "ignoreVoid": true }],
+		"typescript/await-thenable": "error",
+		"typescript/no-unsafe-assignment": "warn",
+		"typescript/no-unsafe-return": "warn",
+		"typescript/no-unsafe-call": "warn",
+
+		"import/no-cycle": "error"
+	},
+	"overrides": [
+		{
+			"files": ["**/*.gen.ts", "**/__generated__/**"],
+			"rules": {
+				"typescript/no-explicit-any": "off",
+				"typescript/explicit-function-return-type": "off"
+			}
+		}
+	],
+	"ignorePatterns": ["dist", "build", "coverage", "node_modules"]
+}

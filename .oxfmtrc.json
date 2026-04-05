@@ -1,0 +1,23 @@
+{
+	"$schema": "./node_modules/oxfmt/configuration_schema.json",
+	"printWidth": 100,
+	"tabWidth": 2,
+	"useTabs": true,
+	"semi": true,
+	"singleQuote": true,
+	"trailingComma": "all",
+	"sortImports": {
+		"enabled": true
+	},
+	"sortPackageJson": {
+		"enabled": true
+	},
+	"ignorePatterns": [
+		"dist",
+		"build",
+		"coverage",
+		"node_modules",
+		"**/*.gen.ts",
+		"**/__generated__/**"
+	]
+}

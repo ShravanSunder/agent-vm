@@ -1,0 +1,29 @@
+{
+	"name": "agent-vm",
+	"version": "0.1.0",
+	"private": true,
+	"bin": {
+		"agent-vm": "./dist/bin/agent-vm.js"
+	},
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"typecheck": "tsc -p tsconfig.json --noEmit"
+	},
+	"dependencies": {
+		"@hono/node-server": "^1",
+		"cmd-ts": "^0.14.0",
+		"execa": "^9.5.2",
+		"gondolin-core": "workspace:*",
+		"hono": "^4",
+		"zod": "^4"
+	}
+}
