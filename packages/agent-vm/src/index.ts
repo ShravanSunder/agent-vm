@@ -4,6 +4,7 @@ export * from './features/controller/credential-manager.js';
 export * from './features/controller/destroy.js';
 export * from './features/controller/doctor.js';
 export * from './features/controller/gateway-manager.js';
+export * from './features/controller/idle-reaper.js';
 export * from './features/controller/lease-manager.js';
 export * from './features/controller/logs.js';
 export * from './features/controller/status.js';

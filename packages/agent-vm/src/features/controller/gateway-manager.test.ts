@@ -98,6 +98,7 @@ describe('startGatewayZone', () => {
 
 		const result = await startGatewayZone(
 			{
+				pluginSourceDir: '/plugins/openclaw-gondolin-plugin',
 				secretResolver,
 				systemConfig,
 				zoneId: 'shravan',
@@ -124,6 +125,12 @@ describe('startGatewayZone', () => {
 						value: 'resolved-key',
 					},
 				},
+				vfsMounts: expect.objectContaining({
+					'/home/openclaw/.openclaw/extensions/gondolin': {
+						hostPath: '/plugins/openclaw-gondolin-plugin',
+						kind: 'realfs-readonly',
+					},
+				}),
 			}),
 		);
 		expect(execMock).toHaveBeenCalledWith('openclaw gateway --port 18789 &');

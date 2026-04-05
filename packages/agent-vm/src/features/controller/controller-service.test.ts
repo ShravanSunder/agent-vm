@@ -74,4 +74,35 @@ describe('createControllerApp', () => {
 		expect(deleteResponse.status).toBe(204);
 		expect(releaseLease).toHaveBeenCalledWith('lease-123');
 	});
+
+	it('returns 503 when the tcp pool is exhausted', async () => {
+		const app = createControllerApp({
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('No TCP slots available');
+				}),
+				getLease: vi.fn(),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const createResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/workspace',
+				profileId: 'standard',
+				scopeKey: 'agent:main:session-abc',
+				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/workspace',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(createResponse.status).toBe(503);
+		await expect(createResponse.json()).resolves.toMatchObject({
+			error: 'No TCP slots available',
+		});
+	});
 });

@@ -79,6 +79,7 @@ async function loadJsonFile(filePath: string): Promise<unknown> {
 
 export async function startGatewayZone(
 	options: {
+		readonly pluginSourceDir?: string;
 		readonly systemConfig: SystemConfig;
 		readonly zoneId: string;
 		readonly secretResolver: SecretResolver;
@@ -149,6 +150,14 @@ export async function startGatewayZone(
 				hostPath: zone.gateway.workspaceDir,
 				kind: 'realfs',
 			},
+			...(options.pluginSourceDir
+				? {
+						'/home/openclaw/.openclaw/extensions/gondolin': {
+							hostPath: options.pluginSourceDir,
+							kind: 'realfs-readonly' as const,
+						},
+					}
+				: {}),
 		},
 	});
 

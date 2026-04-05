@@ -9,38 +9,47 @@ export function createControllerApp(options: {
 	const app = new Hono();
 
 	app.post('/lease', async (context) => {
-		const payload = (await context.req.json()) as {
-			readonly agentWorkspaceDir: string;
-			readonly profileId: string;
-			readonly scopeKey: string;
-			readonly workspaceDir: string;
-			readonly zoneId: string;
-		};
-		const lease = await options.leaseManager.createLease({
-			agentWorkspaceDir: payload.agentWorkspaceDir,
-			profile: {
-				cpus: 1,
-				memory: '1G',
-				workspaceRoot: '/workspace',
-			},
-			profileId: payload.profileId,
-			scopeKey: payload.scopeKey,
-			workspaceDir: payload.workspaceDir,
-			zoneId: payload.zoneId,
-		});
+		try {
+			const payload = (await context.req.json()) as {
+				readonly agentWorkspaceDir: string;
+				readonly profileId: string;
+				readonly scopeKey: string;
+				readonly workspaceDir: string;
+				readonly zoneId: string;
+			};
+			const lease = await options.leaseManager.createLease({
+				agentWorkspaceDir: payload.agentWorkspaceDir,
+				profile: {
+					cpus: 1,
+					memory: '1G',
+					workspaceRoot: '/workspace',
+				},
+				profileId: payload.profileId,
+				scopeKey: payload.scopeKey,
+				workspaceDir: payload.workspaceDir,
+				zoneId: payload.zoneId,
+			});
 
-		return context.json({
-			leaseId: lease.id,
-			ssh: {
-				host: `tool-${lease.tcpSlot}.vm.host`,
-				identityPem: '',
-				knownHostsLine: '',
-				port: 22,
-				user: 'sandbox',
-			},
-			tcpSlot: lease.tcpSlot,
-			workdir: '/workspace',
-		});
+			return context.json({
+				leaseId: lease.id,
+				ssh: {
+					host: `tool-${lease.tcpSlot}.vm.host`,
+					identityPem: '',
+					knownHostsLine: '',
+					port: 22,
+					user: 'sandbox',
+				},
+				tcpSlot: lease.tcpSlot,
+				workdir: '/workspace',
+			});
+		} catch (error) {
+			return context.json(
+				{
+					error: error instanceof Error ? error.message : 'lease-creation-failed',
+				},
+				503,
+			);
+		}
 	});
 
 	app.get('/lease/:leaseId', (context) => {
