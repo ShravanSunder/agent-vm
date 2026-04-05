@@ -132,4 +132,102 @@ describe('runAgentVmCli', () => {
 		expect(outputs.join('\n')).toContain('"ok": true');
 		expect(outputs.join('\n')).toContain('"controllerPort": 18800');
 	});
+
+	it('passes the bundled gondolin plugin source path into controller start', async () => {
+		const startGatewayZone = vi.fn(
+			async () =>
+				({
+					ingress: {
+						host: '127.0.0.1',
+						port: 18791,
+					},
+					vm: {
+						id: 'vm-123',
+					},
+				}) as never,
+		);
+
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+
+		await runAgentVmCli(
+			['controller', 'start'],
+			{
+				stderr: {
+					write: () => true,
+				},
+				stdout: {
+					write: () => true,
+				},
+			},
+			{
+				buildControllerStatus: () => ({
+					controllerPort: 18800,
+					toolProfiles: ['standard'],
+					zones: [],
+				}),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				loadSystemConfig: () => ({
+					host: {
+						controllerPort: 18800,
+						secretsProvider: {
+							type: '1password',
+							serviceAccountTokenEnv: 'OP_SERVICE_ACCOUNT_TOKEN',
+						},
+					},
+					images: {
+						gateway: {
+							buildConfig: './images/gateway/build-config.json',
+							postBuild: [],
+						},
+						tool: {
+							buildConfig: './images/tool/build-config.json',
+							postBuild: [],
+						},
+					},
+					tcpPool: {
+						basePort: 19000,
+						size: 5,
+					},
+					toolProfiles: {
+						standard: {
+							cpus: 1,
+							memory: '1G',
+							workspaceRoot: './workspaces/tools',
+						},
+					},
+					zones: [
+						{
+							allowedHosts: ['api.anthropic.com'],
+							gateway: {
+								cpus: 2,
+								memory: '2G',
+								openclawConfig: './config/shravan/openclaw.json',
+								port: 18791,
+								stateDir: './state/shravan',
+								workspaceDir: './workspaces/shravan',
+							},
+							id: 'shravan',
+							secrets: {},
+							toolProfile: 'standard',
+						},
+					],
+				}),
+				runControllerDoctor: () => ({
+					checks: [],
+					ok: true,
+				}),
+				startGatewayZone,
+			},
+		);
+
+		expect(startGatewayZone).toHaveBeenCalledWith(
+			expect.objectContaining({
+				pluginSourceDir: expect.stringMatching(/openclaw-gondolin-plugin\/src\/?$/u),
+				zoneId: 'shravan',
+			}),
+		);
+	});
 });

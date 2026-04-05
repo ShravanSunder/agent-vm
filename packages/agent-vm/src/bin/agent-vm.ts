@@ -38,6 +38,10 @@ function resolveConfigPath(argv: readonly string[]): string {
 	return 'system.json';
 }
 
+function resolveBundledPluginSourceDir(): string {
+	return new URL('../../../openclaw-gondolin-plugin/src/', import.meta.url).pathname;
+}
+
 function resolveZoneId(systemConfig: SystemConfig, argv: readonly string[]): string {
 	const zoneFlagIndex = argv.indexOf('--zone');
 	if (zoneFlagIndex >= 0) {
@@ -107,6 +111,7 @@ export async function runAgentVmCli(
 			}
 
 			const startedGateway = await dependencies.startGatewayZone({
+				pluginSourceDir: resolveBundledPluginSourceDir(),
 				secretResolver,
 				systemConfig,
 				zoneId: firstZone.id,
