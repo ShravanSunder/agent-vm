@@ -1,9 +1,4 @@
-import type {
-	BuildImageOptions,
-	BuildImageResult,
-	ManagedVm,
-	SecretResolver,
-} from 'gondolin-core';
+import type { BuildImageOptions, BuildImageResult, ManagedVm, SecretResolver } from 'gondolin-core';
 import { describe, expect, it, vi } from 'vitest';
 
 import { startGatewayZone } from './gateway-manager.js';
@@ -99,9 +94,8 @@ describe('startGatewayZone', () => {
 				label: 'gateway-root',
 			},
 		};
-		const loadBuildConfig: (
-			buildConfigPath: string,
-		) => Promise<BuildImageOptions['buildConfig']> = vi.fn(async () => buildConfig);
+		const loadBuildConfig: (buildConfigPath: string) => Promise<BuildImageOptions['buildConfig']> =
+			vi.fn(async () => buildConfig);
 
 		const result = await startGatewayZone(
 			{

@@ -3,7 +3,6 @@ import fs from 'node:fs/promises';
 import {
 	buildImage as buildImageFromCore,
 	createManagedVm as createManagedVmFromCore,
-	type BuildImageOptions,
 	type BuildImageResult,
 	type ManagedVm,
 	type SecretResolver,
@@ -15,8 +14,14 @@ import type { SystemConfig } from './system-config.js';
 
 type GatewayZone = SystemConfig['zones'][number];
 
+interface GatewayBuildImageOptions {
+	readonly buildConfig: unknown;
+	readonly cacheDir: string;
+	readonly fullReset?: boolean;
+}
+
 interface GatewayManagerDependencies {
-	readonly buildImage?: (options: BuildImageOptions) => Promise<BuildImageResult>;
+	readonly buildImage?: (options: GatewayBuildImageOptions) => Promise<BuildImageResult>;
 	readonly createManagedVm?: (options: {
 		readonly allowedHosts: readonly string[];
 		readonly cpus: number;
@@ -39,7 +44,7 @@ interface GatewayManagerDependencies {
 			}
 		>;
 	}) => Promise<ManagedVm>;
-	readonly loadBuildConfig?: (buildConfigPath: string) => Promise<BuildImageOptions['buildConfig']>;
+	readonly loadBuildConfig?: (buildConfigPath: string) => Promise<unknown>;
 }
 
 function findZone(systemConfig: SystemConfig, zoneId: string): GatewayZone {
@@ -66,9 +71,9 @@ function resolveSecretHosts(secretName: string): readonly string[] {
 	}
 }
 
-async function loadJsonFile(filePath: string): Promise<BuildImageOptions['buildConfig']> {
+async function loadJsonFile(filePath: string): Promise<unknown> {
 	const rawContents = await fs.readFile(filePath, 'utf8');
-	return JSON.parse(rawContents) as BuildImageOptions['buildConfig'];
+	return JSON.parse(rawContents);
 }
 
 export async function startGatewayZone(
