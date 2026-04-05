@@ -1,6 +1,94 @@
 import { describe, expect, it } from 'vitest';
 
-import { createSecretResolver, type SecretResolverClient } from './secret-resolver.js';
+import {
+	createSecretResolver,
+	resolveServiceAccountToken,
+	type ExecFileResult,
+	type SecretResolverClient,
+} from './secret-resolver.js';
+
+describe('resolveServiceAccountToken', () => {
+	it('resolves token via op-cli', async () => {
+		const fakeExec = async (
+			command: string,
+			args: readonly string[],
+		): Promise<ExecFileResult> => {
+			expect(command).toBe('op');
+			expect(args).toEqual(['read', 'op://vault/item/field']);
+			return { stdout: 'resolved-token\n', stderr: '' };
+		};
+
+		const token = await resolveServiceAccountToken(
+			{ type: 'op-cli', ref: 'op://vault/item/field' },
+			{ execFileAsync: fakeExec },
+		);
+		expect(token).toBe('resolved-token');
+	});
+
+	it('resolves token via env var', async () => {
+		const original = process.env.OP_SERVICE_ACCOUNT_TOKEN;
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'env-token';
+		try {
+			const token = await resolveServiceAccountToken({ type: 'env' });
+			expect(token).toBe('env-token');
+		} finally {
+			if (original === undefined) {
+				delete process.env.OP_SERVICE_ACCOUNT_TOKEN;
+			} else {
+				process.env.OP_SERVICE_ACCOUNT_TOKEN = original;
+			}
+		}
+	});
+
+	it('throws when env var is not set', async () => {
+		const original = process.env.TEST_MISSING_VAR;
+		delete process.env.TEST_MISSING_VAR;
+		try {
+			await expect(
+				resolveServiceAccountToken({ type: 'env', envVar: 'TEST_MISSING_VAR' }),
+			).rejects.toThrow('TEST_MISSING_VAR is not set');
+		} finally {
+			if (original !== undefined) {
+				process.env.TEST_MISSING_VAR = original;
+			}
+		}
+	});
+
+	it('resolves token via keychain', async () => {
+		const fakeExec = async (
+			command: string,
+			args: readonly string[],
+		): Promise<ExecFileResult> => {
+			expect(command).toBe('security');
+			expect(args).toEqual([
+				'find-generic-password',
+				'-s',
+				'agent-vm',
+				'-a',
+				'service-account',
+				'-w',
+			]);
+			return { stdout: 'keychain-token\n', stderr: '' };
+		};
+
+		const token = await resolveServiceAccountToken(
+			{ type: 'keychain', service: 'agent-vm', account: 'service-account' },
+			{ execFileAsync: fakeExec },
+		);
+		expect(token).toBe('keychain-token');
+	});
+
+	it('throws when op-cli returns empty', async () => {
+		const fakeExec = async (): Promise<ExecFileResult> => ({ stdout: '', stderr: '' });
+
+		await expect(
+			resolveServiceAccountToken(
+				{ type: 'op-cli', ref: 'op://vault/item/field' },
+				{ execFileAsync: fakeExec },
+			),
+		).rejects.toThrow('empty value');
+	});
+});
 
 describe('createSecretResolver', () => {
 	it('resolves a single secret reference through the sdk client', async () => {
@@ -52,18 +140,13 @@ describe('createSecretResolver', () => {
 
 		await expect(
 			secretResolver.resolveAll({
-				ANTHROPIC_API_KEY: {
+				DISCORD_BOT_TOKEN: {
 					source: '1password',
-					ref: 'op://AI/anthropic/api-key',
-				},
-				GITHUB_PAT: {
-					source: '1password',
-					ref: 'op://AI/github/pat',
+					ref: 'op://agent-vm/agent-discord-app/bot-token',
 				},
 			}),
 		).resolves.toEqual({
-			ANTHROPIC_API_KEY: 'resolved:op://AI/anthropic/api-key',
-			GITHUB_PAT: 'resolved:op://AI/github/pat',
+			DISCORD_BOT_TOKEN: 'resolved:op://agent-vm/agent-discord-app/bot-token',
 		});
 	});
 });

@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+
 import { createClient } from '@1password/sdk';
 
 import type { SecretRef } from './types.js';
@@ -13,6 +15,88 @@ export interface SecretResolver {
 	resolve(ref: SecretRef): Promise<string>;
 	resolveAll(refs: Record<string, SecretRef>): Promise<Record<string, string>>;
 }
+
+// --- Token source: how to obtain the 1Password service account token ---
+
+export type TokenSource =
+	| { readonly type: 'op-cli'; readonly ref: string }
+	| { readonly type: 'env'; readonly envVar?: string }
+	| { readonly type: 'keychain'; readonly service: string; readonly account: string };
+
+export interface ExecFileResult {
+	readonly stdout: string;
+	readonly stderr: string;
+}
+
+function execFileAsync(command: string, args: readonly string[]): Promise<ExecFileResult> {
+	return new Promise((resolve, reject) => {
+		execFile(command, [...args], { timeout: 30_000 }, (error, stdout, stderr) => {
+			if (error) {
+				reject(new Error(`${command} failed: ${stderr.trim() || error.message}`));
+				return;
+			}
+
+			resolve({ stdout, stderr });
+		});
+	});
+}
+
+export async function resolveServiceAccountToken(
+	source: TokenSource,
+	dependencies?: {
+		readonly execFileAsync?: (
+			command: string,
+			args: readonly string[],
+		) => Promise<ExecFileResult>;
+	},
+): Promise<string> {
+	const exec = dependencies?.execFileAsync ?? execFileAsync;
+
+	switch (source.type) {
+		case 'op-cli': {
+			// Uses `op read` which triggers biometric auth (Touch ID) on macOS
+			const result = await exec('op', ['read', source.ref]);
+			const token = result.stdout.trim();
+			if (token.length === 0) {
+				throw new Error(`op read returned empty value for ${source.ref}`);
+			}
+
+			return token;
+		}
+
+		case 'env': {
+			const envVar = source.envVar ?? 'OP_SERVICE_ACCOUNT_TOKEN';
+			const token = process.env[envVar]?.trim();
+			if (!token) {
+				throw new Error(`Environment variable ${envVar} is not set`);
+			}
+
+			return token;
+		}
+
+		case 'keychain': {
+			// macOS Keychain via `security find-generic-password`
+			const result = await exec('security', [
+				'find-generic-password',
+				'-s',
+				source.service,
+				'-a',
+				source.account,
+				'-w',
+			]);
+			const token = result.stdout.trim();
+			if (token.length === 0) {
+				throw new Error(
+					`Keychain entry ${source.service}/${source.account} returned empty value`,
+				);
+			}
+
+			return token;
+		}
+	}
+}
+
+// --- Secret resolver: uses the token to resolve secrets via 1Password SDK ---
 
 export interface CreateSecretResolverDependencies {
 	readonly createClient?: (config: {

@@ -40,7 +40,7 @@ describe('production config artifacts', () => {
 				{
 					secrets: {
 						DISCORD_BOT_TOKEN: {
-							ref: 'op://AI/discord-shravan/token',
+							ref: 'op://agent-vm/agent-discord-app/bot-token',
 							source: '1password',
 						},
 					},
