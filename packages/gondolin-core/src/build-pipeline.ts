@@ -4,10 +4,8 @@ import path from 'node:path';
 
 import type { BuildConfig, BuildOptions } from '@earendil-works/gondolin';
 
-type BuildConfigLike = BuildConfig | Record<string, unknown>;
-
 export interface BuildImageOptions {
-	readonly buildConfig: BuildConfigLike;
+	readonly buildConfig: BuildConfig;
 	readonly cacheDir: string;
 	readonly fullReset?: boolean;
 }
@@ -19,10 +17,12 @@ export interface BuildImageResult {
 }
 
 interface BuildPipelineDependencies {
-	readonly buildAssets?:
-		| ((outputDirectory: string) => Promise<void>)
-		| ((buildConfig: BuildConfigLike, outputDirectory: string) => Promise<void>);
+	readonly buildAssets?: (buildConfig: BuildConfig, outputDirectory: string) => Promise<unknown>;
 	readonly gondolinVersion?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
 }
 
 function stableSerialize(value: unknown): string {
@@ -30,8 +30,8 @@ function stableSerialize(value: unknown): string {
 		return `[${value.map((entry) => stableSerialize(entry)).join(',')}]`;
 	}
 
-	if (typeof value === 'object' && value !== null) {
-		const objectEntries = Object.entries(value as Record<string, unknown>)
+	if (isRecord(value)) {
+		const objectEntries = Object.entries(value)
 			.filter(([, entryValue]) => entryValue !== undefined)
 			.toSorted(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
 		return `{${objectEntries
@@ -51,8 +51,19 @@ function hasBuiltAssets(outputDirectoryPath: string): boolean {
 	);
 }
 
+async function loadBuildAssets(): Promise<
+	(buildConfig: BuildConfig, outputDirectory: string) => Promise<unknown>
+> {
+	const gondolinModule = await import('@earendil-works/gondolin');
+	return async (buildConfig: BuildConfig, outputDirectory: string): Promise<unknown> =>
+		await gondolinModule.buildAssets(buildConfig, {
+			outputDir: outputDirectory,
+			verbose: false,
+		} satisfies BuildOptions);
+}
+
 export function computeBuildFingerprint(
-	buildConfig: BuildConfigLike,
+	buildConfig: BuildConfig,
 	gondolinVersion: string = 'unknown',
 ): string {
 	return crypto
@@ -60,15 +71,6 @@ export function computeBuildFingerprint(
 		.update(`${stableSerialize(buildConfig)}|${gondolinVersion}`)
 		.digest('hex')
 		.slice(0, 16);
-}
-
-async function loadBuildAssets(): Promise<
-	(buildConfig: BuildConfig, buildOptions: BuildOptions) => Promise<void>
-> {
-	const gondolinModule = await import('@earendil-works/gondolin');
-	return async (buildConfig: BuildConfig, buildOptions: BuildOptions): Promise<void> => {
-		await gondolinModule.buildAssets(buildConfig, buildOptions);
-	};
 }
 
 export async function buildImage(
@@ -91,23 +93,11 @@ export async function buildImage(
 	}
 
 	fs.mkdirSync(imagePath, { recursive: true });
-	if (dependencies.buildAssets) {
-		if (dependencies.buildAssets.length >= 2) {
-			await (
-				dependencies.buildAssets as (
-					buildConfig: BuildConfigLike,
-					outputDirectory: string,
-				) => Promise<void>
-			)(options.buildConfig, imagePath);
-		} else {
-			await (dependencies.buildAssets as (outputDirectory: string) => Promise<void>)(imagePath);
-		}
-	} else {
-		const buildAssets = await loadBuildAssets();
-		await buildAssets(options.buildConfig as unknown as BuildConfig, {
-			outputDir: imagePath,
-			verbose: false,
-		} satisfies BuildOptions);
+	const buildAssetsImplementation = dependencies.buildAssets ?? (await loadBuildAssets());
+	await buildAssetsImplementation(options.buildConfig, imagePath);
+
+	if (!hasBuiltAssets(imagePath)) {
+		throw new Error(`Expected Gondolin assets to be written to ${imagePath}.`);
 	}
 
 	return {

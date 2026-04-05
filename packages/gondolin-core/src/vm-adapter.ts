@@ -96,77 +96,10 @@ export interface ManagedVm {
 	close(): Promise<void>;
 }
 
-function isExecResult(value: unknown): value is ExecResult {
-	return (
-		typeof value === 'object' &&
-		value !== null &&
-		typeof (value as { exitCode?: unknown }).exitCode === 'number' &&
-		typeof (value as { stdout?: unknown }).stdout === 'string' &&
-		typeof (value as { stderr?: unknown }).stderr === 'string'
-	);
-}
-
-function isHostPortAccess(
-	value: unknown,
-): value is { readonly host: string; readonly port: number } {
-	return (
-		typeof value === 'object' &&
-		value !== null &&
-		typeof (value as { host?: unknown }).host === 'string' &&
-		typeof (value as { port?: unknown }).port === 'number'
-	);
-}
-
 function createDefaultDependencies(): ManagedVmDependencies {
-	const createVmInstance = VM.create.bind(VM);
-
 	return {
-		createVm: async (vmOptions: unknown): Promise<ManagedVmInstance> => {
-			const vm = await createVmInstance(vmOptions);
-			const closeVm = vm.close.bind(vm);
-			const enableIngressOnVm = vm.enableIngress.bind(vm);
-			const enableSshOnVm = vm.enableSsh.bind(vm);
-			const execInVm = vm.exec.bind(vm);
-			const setIngressRoutesOnVm = vm.setIngressRoutes.bind(vm);
-			return {
-				close: async (): Promise<void> => closeVm(),
-				enableIngress: async (ingressOptions?: unknown): Promise<IngressAccess> => {
-					const ingressAccess = await enableIngressOnVm(ingressOptions);
-					if (!isHostPortAccess(ingressAccess)) {
-						throw new TypeError('Gondolin enableIngress returned an unexpected result');
-					}
-					return {
-						host: ingressAccess.host,
-						port: ingressAccess.port,
-					};
-				},
-				enableSsh: async (sshOptions?: unknown): Promise<SshAccess> => {
-					const sshAccess = await enableSshOnVm(sshOptions);
-					if (!isHostPortAccess(sshAccess)) {
-						throw new TypeError('Gondolin enableSsh returned an unexpected result');
-					}
-					return {
-						host: sshAccess.host,
-						port: sshAccess.port,
-					};
-				},
-				exec: async (command: string): Promise<ExecResult> => {
-					const executionResult = await execInVm(command);
-					if (!isExecResult(executionResult)) {
-						throw new TypeError('Gondolin exec returned an unexpected result');
-					}
-					return {
-						exitCode: executionResult.exitCode,
-						stderr: executionResult.stderr ?? '',
-						stdout: executionResult.stdout ?? '',
-					};
-				},
-				id: vm.id,
-				setIngressRoutes: (routes: readonly IngressRoute[]): void => {
-					setIngressRoutesOnVm([...routes]);
-				},
-			};
-		},
+		createVm: async (vmOptions: unknown): Promise<ManagedVmInstance> =>
+			(await VM.create(vmOptions as never)) as unknown as ManagedVmInstance,
 		createHttpHooks: (hookOptions) =>
 			createHttpHooks({
 				allowedHosts: [...hookOptions.allowedHosts],
@@ -183,11 +116,10 @@ function createDefaultDependencies(): ManagedVmDependencies {
 				...(hookOptions.onResponse ? { onResponse: hookOptions.onResponse } : {}),
 			}),
 		createRealFsProvider: (hostPath: string): unknown => new RealFSProvider(hostPath),
-		createReadonlyProvider: (provider: unknown): unknown =>
-			Reflect.construct(ReadonlyProvider, [provider]),
+		createReadonlyProvider: (provider: unknown): unknown => new ReadonlyProvider(provider as never),
 		createMemoryProvider: (): unknown => new MemoryProvider(),
 		createShadowProvider: (provider: unknown, shadowOptions: unknown): unknown =>
-			Reflect.construct(ShadowProvider, [provider, shadowOptions]),
+			new ShadowProvider(provider as never, shadowOptions as never),
 		createShadowPathPredicate: (paths: readonly string[]): unknown =>
 			createShadowPathPredicate([...paths]),
 	};
