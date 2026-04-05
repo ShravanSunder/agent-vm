@@ -1,3 +1,16 @@
+export interface GondolinLeaseResponse {
+	readonly leaseId: string;
+	readonly ssh: {
+		readonly host: string;
+		readonly identityPem: string;
+		readonly knownHostsLine: string;
+		readonly port: number;
+		readonly user: string;
+	};
+	readonly tcpSlot: number;
+	readonly workdir: string;
+}
+
 export interface LeaseClient {
 	getLeaseStatus(leaseId: string): Promise<unknown>;
 	releaseLease(leaseId: string): Promise<void>;
@@ -7,7 +20,7 @@ export interface LeaseClient {
 		readonly scopeKey: string;
 		readonly workspaceDir: string;
 		readonly zoneId: string;
-	}): Promise<unknown>;
+	}): Promise<GondolinLeaseResponse>;
 }
 
 export function createLeaseClient(options: {
@@ -27,7 +40,7 @@ export function createLeaseClient(options: {
 				method: 'DELETE',
 			});
 		},
-		requestLease: async (request): Promise<unknown> => {
+		requestLease: async (request): Promise<GondolinLeaseResponse> => {
 			const response = await fetchImpl(`${baseUrl}/lease`, {
 				body: JSON.stringify(request),
 				headers: {
@@ -35,7 +48,7 @@ export function createLeaseClient(options: {
 				},
 				method: 'POST',
 			});
-			return await response.json();
+			return (await response.json()) as GondolinLeaseResponse;
 		},
 	};
 }

@@ -1,0 +1,30 @@
+{
+  "gateway": {
+    "port": 18789,
+    "auth": {
+      "mode": "token"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "/home/openclaw/workspace",
+      "model": "anthropic/claude-sonnet-4-5",
+      "sandbox": {
+        "mode": "all",
+        "backend": "gondolin",
+        "scope": "session"
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "gondolin": {
+        "enabled": true,
+        "config": {
+          "controllerUrl": "http://controller.vm.host:18800",
+          "zoneId": "shravan"
+        }
+      }
+    }
+  }
+}

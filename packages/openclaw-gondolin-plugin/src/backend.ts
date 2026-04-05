@@ -1,17 +1,4 @@
-import { createLeaseClient, type LeaseClient } from './lease-client.js';
-
-export interface GondolinLeaseResponse {
-	readonly leaseId: string;
-	readonly ssh: {
-		readonly host: string;
-		readonly identityPem: string;
-		readonly knownHostsLine: string;
-		readonly port: number;
-		readonly user: string;
-	};
-	readonly tcpSlot: number;
-	readonly workdir: string;
-}
+import { createLeaseClient, type GondolinLeaseResponse, type LeaseClient } from './lease-client.js';
 
 function isGondolinLeaseResponse(value: unknown): value is GondolinLeaseResponse {
 	return (
@@ -49,25 +36,9 @@ interface CreateBackendDependencies {
 	}>;
 }
 
-export function createGondolinSandboxBackendFactory(
-	options: {
-		readonly controllerUrl: string;
-		readonly zoneId: string;
-	},
-	dependencies: CreateBackendDependencies,
-): (params: {
-	readonly agentWorkspaceDir: string;
-	readonly cfg: {
-		readonly docker?: {
-			readonly env?: Record<string, string>;
-		};
-	};
-	readonly scopeKey: string;
-	readonly sessionKey: string;
-	readonly workspaceDir: string;
-}) => Promise<{
-	readonly createFsBridge?: (params: { readonly sandbox: unknown }) => unknown;
-	readonly env?: Record<string, string>;
+interface GondolinSandboxBackendHandle {
+	createFsBridge?: (params: { readonly sandbox: unknown }) => unknown;
+	env?: Record<string, string>;
 	readonly id: string;
 	readonly runtimeId: string;
 	readonly runtimeLabel: string;
@@ -87,7 +58,25 @@ export function createGondolinSandboxBackendFactory(
 		readonly stderr: Buffer;
 		readonly stdout: Buffer;
 	}>;
-}> {
+}
+
+export function createGondolinSandboxBackendFactory(
+	options: {
+		readonly controllerUrl: string;
+		readonly zoneId: string;
+	},
+	dependencies: CreateBackendDependencies,
+): (params: {
+	readonly agentWorkspaceDir: string;
+	readonly cfg: {
+		readonly docker?: {
+			readonly env?: Record<string, string>;
+		};
+	};
+	readonly scopeKey: string;
+	readonly sessionKey: string;
+	readonly workspaceDir: string;
+}) => Promise<GondolinSandboxBackendHandle> {
 	return async (params) => {
 		const leaseClient =
 			dependencies.createLeaseClient?.({
@@ -106,8 +95,16 @@ export function createGondolinSandboxBackendFactory(
 		const lease = leaseResponse;
 
 		return {
-			...(dependencies.createFsBridge ? { createFsBridge: dependencies.createFsBridge } : {}),
-			...(params.cfg.docker?.env ? { env: params.cfg.docker.env } : {}),
+			...(dependencies.createFsBridge
+				? {
+						createFsBridge: dependencies.createFsBridge,
+					}
+				: {}),
+			...(params.cfg.docker?.env
+				? {
+						env: params.cfg.docker.env,
+					}
+				: {}),
 			id: 'gondolin',
 			runtimeId: lease.leaseId,
 			runtimeLabel: lease.leaseId,
@@ -125,6 +122,6 @@ export function createGondolinSandboxBackendFactory(
 					script: commandParams.script,
 					ssh: lease.ssh,
 				}),
-		};
+		} satisfies GondolinSandboxBackendHandle;
 	};
 }
