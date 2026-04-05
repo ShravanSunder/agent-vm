@@ -1,3 +1,4 @@
+export * from './features/controller/controller-client.js';
 export * from './features/controller/controller-service.js';
 export * from './features/controller/credentials-refresh.js';
 export * from './features/controller/credential-manager.js';

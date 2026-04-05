@@ -1,21 +1,18 @@
 #!/usr/bin/env node
-import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 import { createSecretResolver, type SecretResolver } from 'gondolin-core';
 
+import { createControllerClient } from '../features/controller/controller-client.js';
 import { startControllerRuntime } from '../features/controller/controller-runtime.js';
-import { runControllerCredentialsRefresh } from '../features/controller/credentials-refresh.js';
-import { runControllerDestroy } from '../features/controller/destroy.js';
 import { runControllerDoctor } from '../features/controller/doctor.js';
 import { startGatewayZone } from '../features/controller/gateway-manager.js';
-import { runControllerLogs } from '../features/controller/logs.js';
 import { buildControllerStatus } from '../features/controller/status.js';
 import { loadSystemConfig, type SystemConfig } from '../features/controller/system-config.js';
-import { runControllerUpgrade } from '../features/controller/upgrade.js';
 
 interface CliDependencies {
 	readonly buildControllerStatus: typeof buildControllerStatus;
+	readonly createControllerClient: typeof createControllerClient;
 	readonly createSecretResolver: typeof createSecretResolver;
 	readonly loadSystemConfig: typeof loadSystemConfig;
 	readonly runControllerDoctor: typeof runControllerDoctor;
@@ -67,6 +64,10 @@ function resolveZoneId(systemConfig: SystemConfig, argv: readonly string[]): str
 	return systemConfig.zones[0]?.id ?? '';
 }
 
+function resolveControllerBaseUrl(systemConfig: SystemConfig): string {
+	return `http://127.0.0.1:${systemConfig.host.controllerPort}`;
+}
+
 async function createResolverFromEnv(
 	systemConfig: SystemConfig,
 	createSecretResolverImpl: CliDependencies['createSecretResolver'],
@@ -87,6 +88,7 @@ export async function runAgentVmCli(
 	io: CliIo,
 	dependencies: CliDependencies = {
 		buildControllerStatus,
+		createControllerClient,
 		createSecretResolver,
 		loadSystemConfig,
 		runControllerDoctor,
@@ -121,7 +123,14 @@ export async function runAgentVmCli(
 			);
 			return;
 		case 'status':
-			writeJson(io, dependencies.buildControllerStatus(systemConfig));
+			writeJson(
+				io,
+				await dependencies
+					.createControllerClient({
+						baseUrl: resolveControllerBaseUrl(systemConfig),
+					})
+					.getStatus(),
+			);
 			return;
 		case 'start': {
 			const firstZone = systemConfig.zones[0];
@@ -147,17 +156,11 @@ export async function runAgentVmCli(
 			const purge = restArguments.includes('--purge');
 			writeJson(
 				io,
-				await runControllerDestroy(
-					{
-						purge,
-						systemConfig,
-						zoneId,
-					},
-					{
-						releaseZoneLeases: async () => {},
-						stopGatewayZone: async () => {},
-					},
-				),
+				await dependencies
+					.createControllerClient({
+						baseUrl: resolveControllerBaseUrl(systemConfig),
+					})
+					.destroyZone(zoneId, purge),
 			);
 			return;
 		}
@@ -165,17 +168,11 @@ export async function runAgentVmCli(
 			const zoneId = resolveZoneId(systemConfig, restArguments);
 			writeJson(
 				io,
-				await runControllerUpgrade(
-					{
-						systemConfig,
-						zoneId,
-					},
-					{
-						rebuildGatewayImage: async () => {},
-						restartGatewayZone: async () => {},
-						stopGatewayZone: async () => {},
-					},
-				),
+				await dependencies
+					.createControllerClient({
+						baseUrl: resolveControllerBaseUrl(systemConfig),
+					})
+					.upgradeZone(zoneId),
 			);
 			return;
 		}
@@ -183,27 +180,11 @@ export async function runAgentVmCli(
 			const zoneId = resolveZoneId(systemConfig, restArguments);
 			writeJson(
 				io,
-				await runControllerLogs(
-					{
-						zoneId,
-					},
-					{
-						readGatewayLogs: async (targetZoneId: string) => {
-							const zone = systemConfig.zones.find(
-								(candidateZone) => candidateZone.id === targetZoneId,
-							);
-							if (!zone) {
-								throw new Error(`Unknown zone '${targetZoneId}'.`);
-							}
-							const logPath = `${zone.gateway.stateDir}/logs/gateway.log`;
-							try {
-								return await fs.readFile(logPath, 'utf8');
-							} catch {
-								return '';
-							}
-						},
-					},
-				),
+				await dependencies
+					.createControllerClient({
+						baseUrl: resolveControllerBaseUrl(systemConfig),
+					})
+					.getLogs(zoneId),
 			);
 			return;
 		}
@@ -218,25 +199,18 @@ export async function runAgentVmCli(
 				systemConfig,
 				dependencies.createSecretResolver,
 			);
+			const zone = systemConfig.zones.find((candidateZone) => candidateZone.id === zoneId);
+			if (!zone) {
+				throw new Error(`Unknown zone '${zoneId}'.`);
+			}
+			await secretResolver.resolveAll(zone.secrets);
 			writeJson(
 				io,
-				await runControllerCredentialsRefresh(
-					{
-						zoneId,
-					},
-					{
-						refreshZoneSecrets: async (targetZoneId: string) => {
-							const zone = systemConfig.zones.find(
-								(candidateZone) => candidateZone.id === targetZoneId,
-							);
-							if (!zone) {
-								throw new Error(`Unknown zone '${targetZoneId}'.`);
-							}
-							await secretResolver.resolveAll(zone.secrets);
-						},
-						restartGatewayZone: async () => {},
-					},
-				),
+				await dependencies
+					.createControllerClient({
+						baseUrl: resolveControllerBaseUrl(systemConfig),
+					})
+					.refreshCredentials(zoneId),
 			);
 			return;
 		}

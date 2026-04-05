@@ -5,6 +5,13 @@ import type { SystemConfig } from './system-config.js';
 
 export function createControllerApp(options: {
 	readonly leaseManager: Pick<LeaseManager, 'createLease' | 'getLease' | 'releaseLease'>;
+	readonly operations?: {
+		readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
+		readonly getStatus: () => Promise<unknown>;
+		readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
+		readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;
+		readonly upgradeZone: (zoneId: string) => Promise<unknown>;
+	};
 }): Hono {
 	const app = new Hono();
 
@@ -77,15 +84,43 @@ export function createControllerApp(options: {
 		return context.body(null, 204);
 	});
 
+	if (options.operations) {
+		const operations = options.operations;
+		app.get('/status', async (context) => context.json(await operations.getStatus()));
+		app.get('/zones/:zoneId/logs', async (context) =>
+			context.json(await operations.getZoneLogs(context.req.param('zoneId'))),
+		);
+		app.post('/zones/:zoneId/credentials/refresh', async (context) =>
+			context.json(await operations.refreshZoneCredentials(context.req.param('zoneId'))),
+		);
+		app.post('/zones/:zoneId/destroy', async (context) => {
+			const payload = (await context.req.json()) as { readonly purge?: boolean };
+			return context.json(
+				await operations.destroyZone(context.req.param('zoneId'), payload.purge === true),
+			);
+		});
+		app.post('/zones/:zoneId/upgrade', async (context) =>
+			context.json(await operations.upgradeZone(context.req.param('zoneId'))),
+		);
+	}
+
 	return app;
 }
 
 export function createControllerService(options: {
 	readonly leaseManager: Pick<LeaseManager, 'createLease' | 'getLease' | 'releaseLease'>;
+	readonly operations?: {
+		readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
+		readonly getStatus: () => Promise<unknown>;
+		readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
+		readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;
+		readonly upgradeZone: (zoneId: string) => Promise<unknown>;
+	};
 	readonly systemConfig: SystemConfig;
 }): Hono {
 	const app = createControllerApp({
 		leaseManager: options.leaseManager,
+		...(options.operations ? { operations: options.operations } : {}),
 	});
 
 	app.get('/health', (context) =>
