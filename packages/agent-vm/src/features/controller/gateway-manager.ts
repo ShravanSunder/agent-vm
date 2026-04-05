@@ -99,7 +99,14 @@ export async function startGatewayZone(
 		secretResolver: options.secretResolver,
 	});
 	const loadBuildConfig = dependencies.loadBuildConfig ?? loadJsonFile;
-	const buildImage = dependencies.buildImage ?? buildImageFromCore;
+	const buildImage =
+		dependencies.buildImage ??
+		(async (buildOptions: GatewayBuildImageOptions): Promise<BuildImageResult> =>
+			await buildImageFromCore({
+				buildConfig: buildOptions.buildConfig as never,
+				cacheDir: buildOptions.cacheDir,
+				fullReset: buildOptions.fullReset,
+			}));
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
 	const buildConfig = await loadBuildConfig(options.systemConfig.images.gateway.buildConfig);
 	const image = await buildImage({
