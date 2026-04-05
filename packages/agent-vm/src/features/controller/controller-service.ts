@@ -24,7 +24,12 @@ function isLeaseCreatePayload(value: unknown): value is {
 }
 
 function isDestroyPayload(value: unknown): value is { readonly purge?: boolean } {
-	return typeof value === 'object' && value !== null;
+	if (typeof value !== 'object' || value === null) {
+		return false;
+	}
+
+	const candidate = value as { purge?: unknown };
+	return candidate.purge === undefined || typeof candidate.purge === 'boolean';
 }
 
 export function createControllerApp(options: {
