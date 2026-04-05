@@ -118,13 +118,20 @@ function isHostPortAccess(
 }
 
 function createDefaultDependencies(): ManagedVmDependencies {
+	const createVmInstance = VM.create.bind(VM);
+
 	return {
 		createVm: async (vmOptions: unknown): Promise<ManagedVmInstance> => {
-			const vm = await Reflect.apply(VM.create, VM, [vmOptions]);
+			const vm = await createVmInstance(vmOptions);
+			const closeVm = vm.close.bind(vm);
+			const enableIngressOnVm = vm.enableIngress.bind(vm);
+			const enableSshOnVm = vm.enableSsh.bind(vm);
+			const execInVm = vm.exec.bind(vm);
+			const setIngressRoutesOnVm = vm.setIngressRoutes.bind(vm);
 			return {
-				close: async (): Promise<void> => vm.close(),
+				close: async (): Promise<void> => closeVm(),
 				enableIngress: async (ingressOptions?: unknown): Promise<IngressAccess> => {
-					const ingressAccess = await Reflect.apply(vm.enableIngress, vm, [ingressOptions]);
+					const ingressAccess = await enableIngressOnVm(ingressOptions);
 					if (!isHostPortAccess(ingressAccess)) {
 						throw new TypeError('Gondolin enableIngress returned an unexpected result');
 					}
@@ -134,7 +141,7 @@ function createDefaultDependencies(): ManagedVmDependencies {
 					};
 				},
 				enableSsh: async (sshOptions?: unknown): Promise<SshAccess> => {
-					const sshAccess = await Reflect.apply(vm.enableSsh, vm, [sshOptions]);
+					const sshAccess = await enableSshOnVm(sshOptions);
 					if (!isHostPortAccess(sshAccess)) {
 						throw new TypeError('Gondolin enableSsh returned an unexpected result');
 					}
@@ -144,7 +151,7 @@ function createDefaultDependencies(): ManagedVmDependencies {
 					};
 				},
 				exec: async (command: string): Promise<ExecResult> => {
-					const executionResult = await vm.exec(command);
+					const executionResult = await execInVm(command);
 					if (!isExecResult(executionResult)) {
 						throw new TypeError('Gondolin exec returned an unexpected result');
 					}
@@ -156,7 +163,7 @@ function createDefaultDependencies(): ManagedVmDependencies {
 				},
 				id: vm.id,
 				setIngressRoutes: (routes: readonly IngressRoute[]): void => {
-					void Reflect.apply(vm.setIngressRoutes, vm, [[...routes]]);
+					setIngressRoutesOnVm([...routes]);
 				},
 			};
 		},
