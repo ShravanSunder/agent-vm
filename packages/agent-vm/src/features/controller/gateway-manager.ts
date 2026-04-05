@@ -170,16 +170,19 @@ export async function startGatewayZone(
 	// Start OpenClaw gateway backgrounded, then poll until it's listening.
 	await managedVm.exec('openclaw gateway --port 18789 &');
 
-	// Poll for readiness (OpenClaw needs ~2-3s to bind the port)
-	const maxAttempts = 20;
+	// Poll for readiness (OpenClaw needs ~2-3s to bind the port).
+	// Accept any HTTP status (including 401) as "listening" — use curl to get the status code.
+	const maxAttempts = 30;
 	for (let attempt = 0; attempt < maxAttempts; attempt++) {
 		const check = await managedVm.exec(
-			'wget -qO /dev/null http://127.0.0.1:18789/ 2>/dev/null && echo READY || echo WAITING',
+			'curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:18789/ 2>/dev/null || echo 000',
 		);
-		if (check.stdout.trim() === 'READY') {
+		const httpCode = check.stdout.trim();
+		if (httpCode !== '000') {
 			break;
 		}
 
+		// oxlint-disable-next-line eslint/no-await-in-loop -- sequential polling for port readiness
 		await new Promise((resolve) => setTimeout(resolve, 500));
 	}
 

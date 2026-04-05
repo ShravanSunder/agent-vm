@@ -32,7 +32,8 @@ function execFileAsync(command: string, args: readonly string[]): Promise<ExecFi
 	return new Promise((resolve, reject) => {
 		execFile(command, [...args], { timeout: 30_000 }, (error, stdout, stderr) => {
 			if (error) {
-				reject(new Error(`${command} failed: ${stderr.trim() || error.message}`));
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				reject(new Error(`${command} failed: ${stderr.trim() || errorMessage}`));
 				return;
 			}
 
@@ -40,6 +41,8 @@ function execFileAsync(command: string, args: readonly string[]): Promise<ExecFi
 		});
 	});
 }
+
+const SAFE_IDENTIFIER_PATTERN = /^[\w.@-]+$/u;
 
 export async function resolveServiceAccountToken(
 	source: TokenSource,
@@ -58,7 +61,7 @@ export async function resolveServiceAccountToken(
 			const result = await exec('op', ['read', source.ref]);
 			const token = result.stdout.trim();
 			if (token.length === 0) {
-				throw new Error(`op read returned empty value for ${source.ref}`);
+				throw new Error('op-cli token resolution returned empty value');
 			}
 
 			return token;
@@ -75,6 +78,15 @@ export async function resolveServiceAccountToken(
 		}
 
 		case 'keychain': {
+			// Validate keychain identifiers to prevent argument injection
+			if (!SAFE_IDENTIFIER_PATTERN.test(source.service)) {
+				throw new Error('Keychain service name contains invalid characters');
+			}
+
+			if (!SAFE_IDENTIFIER_PATTERN.test(source.account)) {
+				throw new Error('Keychain account name contains invalid characters');
+			}
+
 			// macOS Keychain via `security find-generic-password`
 			const result = await exec('security', [
 				'find-generic-password',
@@ -86,9 +98,7 @@ export async function resolveServiceAccountToken(
 			]);
 			const token = result.stdout.trim();
 			if (token.length === 0) {
-				throw new Error(
-					`Keychain entry ${source.service}/${source.account} returned empty value`,
-				);
+				throw new Error('Keychain token resolution returned empty value');
 			}
 
 			return token;
