@@ -28,27 +28,27 @@
 				"workspaceDir": "./workspaces/shravan"
 			},
 			"secrets": {
-				"ANTHROPIC_API_KEY": {
-					"source": "1password",
-					"ref": "op://AI/anthropic/api-key"
-				},
 				"DISCORD_BOT_TOKEN": {
 					"source": "1password",
-					"ref": "op://AI/discord-shravan/token"
-				},
-				"GITHUB_PAT": {
-					"source": "1password",
-					"ref": "op://AI/github-bot/pat"
+					"ref": "op://agent-vm/agent-discord-app/bot-token"
 				}
 			},
 			"allowedHosts": [
 				"api.anthropic.com",
+				"statsig.anthropic.com",
+				"sentry.io",
 				"api.openai.com",
+				"auth.openai.com",
 				"discord.com",
 				"gateway.discord.gg",
+				"cdn.discordapp.com",
 				"web.whatsapp.com",
-				"api.whatsapp.com",
-				"api.github.com"
+				"*.whatsapp.net",
+				"api.github.com",
+				"registry.npmjs.org",
+				"clawhub.ai",
+				"openclaw.ai",
+				"docs.openclaw.ai"
 			],
 			"toolProfile": "standard"
 		}
