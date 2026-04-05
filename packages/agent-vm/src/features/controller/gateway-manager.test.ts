@@ -1,4 +1,5 @@
-import type { BuildImageOptions, BuildImageResult, ManagedVm, SecretResolver } from 'gondolin-core';
+import type { BuildConfig } from '@earendil-works/gondolin';
+import type { BuildImageResult, ManagedVm, SecretResolver } from 'gondolin-core';
 import { describe, expect, it, vi } from 'vitest';
 
 import { startGatewayZone } from './gateway-manager.js';
@@ -58,14 +59,20 @@ const systemConfig = {
 
 describe('startGatewayZone', () => {
 	it('builds the image, resolves secrets, creates the vm, and enables ingress', async () => {
-		const closeMock = vi.fn(async () => {});
-		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
-		const enableSshMock = vi.fn(async () => ({ host: '127.0.0.1', port: 2222 }));
+		const buildConfig: BuildConfig = {
+			arch: 'aarch64',
+			distro: 'alpine',
+			rootfs: {
+				label: 'gateway-root',
+			},
+		};
 		const execMock = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
 		const setIngressRoutesMock = vi.fn();
+		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
+		const enableSshMock = vi.fn(async () => ({ host: '127.0.0.1', port: 2222 }));
 		const managedVm: ManagedVm = {
 			id: 'vm-123',
-			close: closeMock,
+			close: vi.fn(async () => {}),
 			enableIngress: enableIngressMock,
 			enableSsh: enableSshMock,
 			exec: execMock,
@@ -80,22 +87,14 @@ describe('startGatewayZone', () => {
 			}),
 		};
 		const buildImage = vi.fn(
-			async (_options: BuildImageOptions): Promise<BuildImageResult> => ({
+			async (): Promise<BuildImageResult> => ({
 				built: true,
 				fingerprint: 'fingerprint-123',
 				imagePath: '/tmp/gateway-image',
 			}),
 		);
 		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => managedVm);
-		const buildConfig: BuildImageOptions['buildConfig'] = {
-			arch: 'aarch64',
-			distro: 'alpine',
-			rootfs: {
-				label: 'gateway-root',
-			},
-		};
-		const loadBuildConfig: (buildConfigPath: string) => Promise<BuildImageOptions['buildConfig']> =
-			vi.fn(async () => buildConfig);
+		const loadBuildConfig = vi.fn(async (): Promise<BuildConfig> => buildConfig);
 
 		const result = await startGatewayZone(
 			{

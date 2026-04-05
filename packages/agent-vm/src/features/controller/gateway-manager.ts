@@ -1,8 +1,10 @@
 import fs from 'node:fs/promises';
 
+import type { BuildConfig } from '@earendil-works/gondolin';
 import {
 	buildImage as buildImageFromCore,
 	createManagedVm as createManagedVmFromCore,
+	type BuildImageOptions,
 	type BuildImageResult,
 	type ManagedVm,
 	type SecretResolver,
@@ -14,14 +16,8 @@ import type { SystemConfig } from './system-config.js';
 
 type GatewayZone = SystemConfig['zones'][number];
 
-interface GatewayBuildImageOptions {
-	readonly buildConfig: unknown;
-	readonly cacheDir: string;
-	readonly fullReset?: boolean;
-}
-
-interface GatewayManagerDependencies {
-	readonly buildImage?: (options: GatewayBuildImageOptions) => Promise<BuildImageResult>;
+export interface GatewayManagerDependencies {
+	readonly buildImage?: (options: BuildImageOptions) => Promise<BuildImageResult>;
 	readonly createManagedVm?: (options: {
 		readonly allowedHosts: readonly string[];
 		readonly cpus: number;
@@ -44,7 +40,7 @@ interface GatewayManagerDependencies {
 			}
 		>;
 	}) => Promise<ManagedVm>;
-	readonly loadBuildConfig?: (buildConfigPath: string) => Promise<unknown>;
+	readonly loadBuildConfig?: (buildConfigPath: string) => Promise<BuildConfig>;
 }
 
 function findZone(systemConfig: SystemConfig, zoneId: string): GatewayZone {
@@ -71,9 +67,34 @@ function resolveSecretHosts(secretName: string): readonly string[] {
 	}
 }
 
-async function loadJsonFile(filePath: string): Promise<unknown> {
+function isBuildConfig(value: unknown): value is BuildConfig {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		typeof value === 'object' &&
+		'arch' in value &&
+		'distro' in value
+	);
+}
+
+async function loadJsonFile(filePath: string): Promise<BuildConfig> {
 	const rawContents = await fs.readFile(filePath, 'utf8');
-	return JSON.parse(rawContents);
+	const parsedContents: unknown = JSON.parse(rawContents);
+	if (!isBuildConfig(parsedContents)) {
+		throw new TypeError(`Invalid build config at '${filePath}'.`);
+	}
+	return parsedContents;
+}
+
+function isIngressAccess(
+	value: unknown,
+): value is { readonly host: string; readonly port: number } {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		typeof (value as { host?: unknown }).host === 'string' &&
+		typeof (value as { port?: unknown }).port === 'number'
+	);
 }
 
 export async function startGatewayZone(
@@ -152,22 +173,13 @@ export async function startGatewayZone(
 	const ingress = await managedVm.enableIngress({
 		listenPort: zone.gateway.port,
 	});
-
-	if (
-		typeof ingress !== 'object' ||
-		ingress === null ||
-		typeof (ingress as { host?: unknown }).host !== 'string' ||
-		typeof (ingress as { port?: unknown }).port !== 'number'
-	) {
+	if (!isIngressAccess(ingress)) {
 		throw new TypeError('Gateway ingress returned an unexpected result.');
 	}
 
 	return {
 		image,
-		ingress: {
-			host: (ingress as { host: string }).host,
-			port: (ingress as { port: number }).port,
-		},
+		ingress,
 		vm: managedVm,
 		zone,
 	};
