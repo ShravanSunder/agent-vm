@@ -31,6 +31,13 @@ export function createControllerApp(options: {
 
 		return context.json({
 			leaseId: lease.id,
+			ssh: {
+				host: `tool-${lease.tcpSlot}.vm.host`,
+				identityPem: '',
+				knownHostsLine: '',
+				port: 22,
+				user: 'sandbox',
+			},
 			tcpSlot: lease.tcpSlot,
 			workdir: '/workspace',
 		});
@@ -44,6 +51,13 @@ export function createControllerApp(options: {
 
 		return context.json({
 			leaseId: lease.id,
+			ssh: {
+				host: `tool-${lease.tcpSlot}.vm.host`,
+				identityPem: '',
+				knownHostsLine: '',
+				port: 22,
+				user: 'sandbox',
+			},
 			tcpSlot: lease.tcpSlot,
 			workdir: '/workspace',
 		});
