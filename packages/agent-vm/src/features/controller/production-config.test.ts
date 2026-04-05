@@ -6,7 +6,11 @@ import { describe, expect, it } from 'vitest';
 const repoRoot = '/Users/shravansunder/dev/agent-vm';
 
 function parseJsonFile(filePath: string): Record<string, unknown> {
-	return JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;
+	const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+	if (typeof parsed !== 'object' || parsed === null) {
+		throw new TypeError(`Expected JSON object at ${filePath}`);
+	}
+	return parsed as Record<string, unknown>;
 }
 
 describe('production config artifacts', () => {

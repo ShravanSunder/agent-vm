@@ -22,15 +22,34 @@ export function createControllerApp(options: {
 		(async (identityFilePath: string): Promise<string> =>
 			await fs.readFile(identityFilePath, 'utf8'));
 
+	function isLeaseCreatePayload(value: unknown): value is {
+		readonly agentWorkspaceDir: string;
+		readonly profileId: string;
+		readonly scopeKey: string;
+		readonly workspaceDir: string;
+		readonly zoneId: string;
+	} {
+		return (
+			typeof value === 'object' &&
+			value !== null &&
+			typeof (value as { agentWorkspaceDir?: unknown }).agentWorkspaceDir === 'string' &&
+			typeof (value as { profileId?: unknown }).profileId === 'string' &&
+			typeof (value as { scopeKey?: unknown }).scopeKey === 'string' &&
+			typeof (value as { workspaceDir?: unknown }).workspaceDir === 'string' &&
+			typeof (value as { zoneId?: unknown }).zoneId === 'string'
+		);
+	}
+
+	function isDestroyPayload(value: unknown): value is { readonly purge?: boolean } {
+		return typeof value === 'object' && value !== null;
+	}
+
 	app.post('/lease', async (context) => {
 		try {
-			const payload = (await context.req.json()) as {
-				readonly agentWorkspaceDir: string;
-				readonly profileId: string;
-				readonly scopeKey: string;
-				readonly workspaceDir: string;
-				readonly zoneId: string;
-			};
+			const payload = await context.req.json();
+			if (!isLeaseCreatePayload(payload)) {
+				return context.json({ error: 'invalid-lease-request' }, 400);
+			}
 			const lease = await options.leaseManager.createLease({
 				agentWorkspaceDir: payload.agentWorkspaceDir,
 				profile: {
@@ -107,7 +126,10 @@ export function createControllerApp(options: {
 			context.json(await operations.refreshZoneCredentials(context.req.param('zoneId'))),
 		);
 		app.post('/zones/:zoneId/destroy', async (context) => {
-			const payload = (await context.req.json()) as { readonly purge?: boolean };
+			const payload = await context.req.json();
+			if (!isDestroyPayload(payload)) {
+				return context.json({ error: 'invalid-destroy-request' }, 400);
+			}
 			return context.json(
 				await operations.destroyZone(context.req.param('zoneId'), payload.purge === true),
 			);

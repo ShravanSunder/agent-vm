@@ -23,6 +23,16 @@ export interface LeaseClient {
 	}): Promise<GondolinLeaseResponse>;
 }
 
+function isGondolinLeaseResponse(value: unknown): value is GondolinLeaseResponse {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		typeof (value as { leaseId?: unknown }).leaseId === 'string' &&
+		typeof (value as { tcpSlot?: unknown }).tcpSlot === 'number' &&
+		typeof (value as { workdir?: unknown }).workdir === 'string'
+	);
+}
+
 export function createLeaseClient(options: {
 	readonly controllerUrl: string;
 	readonly fetchImpl?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -48,7 +58,11 @@ export function createLeaseClient(options: {
 				},
 				method: 'POST',
 			});
-			return (await response.json()) as GondolinLeaseResponse;
+			const payload = await response.json();
+			if (!isGondolinLeaseResponse(payload)) {
+				throw new TypeError('Controller returned an invalid lease response.');
+			}
+			return payload;
 		},
 	};
 }
