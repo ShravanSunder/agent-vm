@@ -167,7 +167,8 @@ export async function startGatewayZone(
 		},
 	});
 
-	await managedVm.exec('openclaw gateway --port 18789 &');
+	// Pre-configure ingress routes before starting OpenClaw so the
+	// ingress gateway is ready as soon as enableIngress() returns.
 	managedVm.setIngressRoutes([
 		{
 			port: 18789,
@@ -175,9 +176,16 @@ export async function startGatewayZone(
 			stripPrefix: true,
 		},
 	]);
-	const ingress = await managedVm.enableIngress({
-		listenPort: zone.gateway.port,
-	});
+
+	// Start OpenClaw and enable ingress in parallel.
+	// exec() includes the first-exec cold-start penalty (~700ms);
+	// enableIngress() is fast (~50ms) but can proceed concurrently.
+	const [, ingress] = await Promise.all([
+		managedVm.exec('openclaw gateway --port 18789 &'),
+		managedVm.enableIngress({
+			listenPort: zone.gateway.port,
+		}),
+	]);
 
 	return {
 		image,
