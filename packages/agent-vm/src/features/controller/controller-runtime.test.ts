@@ -52,6 +52,7 @@ const systemConfig = {
 
 describe('startControllerRuntime', () => {
 	it('starts the gateway, creates the controller app, and opens the controller port', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected test zone.');
@@ -85,6 +86,8 @@ describe('startControllerRuntime', () => {
 		const startHttpServer = vi.fn(async () => ({
 			close: async () => {},
 		}));
+		const clearIntervalMock = vi.fn();
+		const setIntervalMock = vi.fn(() => 123 as unknown as NodeJS.Timeout);
 
 		const runtime = await startControllerRuntime(
 			{
@@ -111,8 +114,10 @@ describe('startControllerRuntime', () => {
 					resolve: async () => '',
 					resolveAll: async () => ({}),
 				}),
+				clearIntervalImpl: clearIntervalMock,
 				startGatewayZone,
 				startHttpServer,
+				setIntervalImpl: setIntervalMock,
 			},
 		);
 
@@ -127,7 +132,10 @@ describe('startControllerRuntime', () => {
 				port: 18800,
 			}),
 		);
+		expect(setIntervalMock).toHaveBeenCalledTimes(1);
 		expect(runtime.controllerPort).toBe(18800);
 		expect(runtime.gateway.vm.id).toBe('gateway-vm-1');
+		await runtime.close();
+		expect(clearIntervalMock).toHaveBeenCalledTimes(1);
 	});
 });

@@ -29,6 +29,7 @@ export interface ControllerRuntime {
 }
 
 interface ControllerRuntimeDependencies {
+	readonly clearIntervalImpl?: (timer: NodeJS.Timeout) => void;
 	readonly createManagedToolVm?: (options: {
 		readonly profile: ToolProfile;
 		readonly tcpSlot: number;
@@ -37,6 +38,10 @@ interface ControllerRuntimeDependencies {
 	}) => Promise<ManagedVm>;
 	readonly createSecretResolver?: typeof createSecretResolver;
 	readonly now?: () => number;
+	readonly setIntervalImpl?: (
+		callback: () => void | Promise<void>,
+		delayMs: number,
+	) => NodeJS.Timeout;
 	readonly startGatewayZone?: typeof startGatewayZone;
 	readonly startHttpServer?: (options: {
 		readonly app: ReturnType<typeof createControllerService>;
@@ -159,6 +164,9 @@ export async function startControllerRuntime(
 		},
 		ttlMs: 30 * 60 * 1000,
 	});
+	const reaperTimer = (dependencies.setIntervalImpl ?? setInterval)(() => {
+		void idleReaper.reapExpiredLeases();
+	}, 60_000);
 	const gateway = await (dependencies.startGatewayZone ?? startGatewayZone)({
 		pluginSourceDir: options.pluginSourceDir,
 		secretResolver,
@@ -178,6 +186,7 @@ export async function startControllerRuntime(
 
 	return {
 		async close(): Promise<void> {
+			(dependencies.clearIntervalImpl ?? clearInterval)(reaperTimer);
 			await gateway.vm.close();
 			await server.close();
 		},
