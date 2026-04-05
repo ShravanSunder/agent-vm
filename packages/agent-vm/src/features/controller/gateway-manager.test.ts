@@ -1,4 +1,3 @@
-import type { BuildConfig } from '@earendil-works/gondolin';
 import type { BuildImageResult, ManagedVm, SecretResolver } from 'gondolin-core';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -59,20 +58,14 @@ const systemConfig = {
 
 describe('startGatewayZone', () => {
 	it('builds the image, resolves secrets, creates the vm, and enables ingress', async () => {
-		const buildConfig: BuildConfig = {
-			arch: 'aarch64',
-			distro: 'alpine',
-			rootfs: {
-				label: 'gateway-root',
-			},
-		};
-		const execMock = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
-		const setIngressRoutesMock = vi.fn();
+		const closeMock = vi.fn(async () => {});
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
 		const enableSshMock = vi.fn(async () => ({ host: '127.0.0.1', port: 2222 }));
+		const execMock = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+		const setIngressRoutesMock = vi.fn();
 		const managedVm: ManagedVm = {
 			id: 'vm-123',
-			close: vi.fn(async () => {}),
+			close: closeMock,
 			enableIngress: enableIngressMock,
 			enableSsh: enableSshMock,
 			exec: execMock,
@@ -87,14 +80,21 @@ describe('startGatewayZone', () => {
 			}),
 		};
 		const buildImage = vi.fn(
-			async (): Promise<BuildImageResult> => ({
+			async (_options: unknown): Promise<BuildImageResult> => ({
 				built: true,
 				fingerprint: 'fingerprint-123',
 				imagePath: '/tmp/gateway-image',
 			}),
 		);
 		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => managedVm);
-		const loadBuildConfig = vi.fn(async (): Promise<BuildConfig> => buildConfig);
+		const buildConfig = {
+			arch: 'aarch64',
+			distro: 'alpine',
+			rootfs: {
+				label: 'gateway-root',
+			},
+		};
+		const loadBuildConfig = vi.fn(async (): Promise<unknown> => buildConfig);
 
 		const result = await startGatewayZone(
 			{

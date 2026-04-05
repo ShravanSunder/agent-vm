@@ -1,9 +1,9 @@
 import fs from 'node:fs/promises';
 
-import type { BuildConfig } from '@earendil-works/gondolin';
 import {
 	buildImage as buildImageFromCore,
 	createManagedVm as createManagedVmFromCore,
+	type BuildConfig,
 	type BuildImageOptions,
 	type BuildImageResult,
 	type ManagedVm,
@@ -40,7 +40,7 @@ export interface GatewayManagerDependencies {
 			}
 		>;
 	}) => Promise<ManagedVm>;
-	readonly loadBuildConfig?: (buildConfigPath: string) => Promise<BuildConfig>;
+	readonly loadBuildConfig?: (buildConfigPath: string) => Promise<unknown>;
 }
 
 function findZone(systemConfig: SystemConfig, zoneId: string): GatewayZone {
@@ -77,7 +77,7 @@ function isBuildConfig(value: unknown): value is BuildConfig {
 	);
 }
 
-async function loadJsonFile(filePath: string): Promise<BuildConfig> {
+async function loadJsonFile(filePath: string): Promise<unknown> {
 	const rawContents = await fs.readFile(filePath, 'utf8');
 	const parsedContents: unknown = JSON.parse(rawContents);
 	if (!isBuildConfig(parsedContents)) {
@@ -124,7 +124,7 @@ export async function startGatewayZone(
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
 	const buildConfig = await loadBuildConfig(options.systemConfig.images.gateway.buildConfig);
 	const image = await buildImage({
-		buildConfig,
+		buildConfig: buildConfig as BuildImageOptions['buildConfig'],
 		cacheDir: `${zone.gateway.stateDir}/images/gateway`,
 	});
 	const managedVm = await createManagedVm({
