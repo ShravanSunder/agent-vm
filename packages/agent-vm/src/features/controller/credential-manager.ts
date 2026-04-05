@@ -2,7 +2,10 @@ import type { SecretResolver } from 'gondolin-core';
 
 import type { SystemConfig } from './system-config.js';
 
-function findZone(systemConfig: SystemConfig, zoneId: string) {
+function findZone(
+	systemConfig: SystemConfig,
+	zoneId: string,
+): SystemConfig['zones'][number] | undefined {
 	return systemConfig.zones.find((zone) => zone.id === zoneId);
 }
 

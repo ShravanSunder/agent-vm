@@ -5,7 +5,6 @@ import {
 	createManagedVm as createManagedVmFromCore,
 	type BuildImageOptions,
 	type BuildImageResult,
-	type BuildImageOptions as _BuildImageOptions,
 	type ManagedVm,
 	type SecretResolver,
 	type SecretSpec,
@@ -40,7 +39,7 @@ interface GatewayManagerDependencies {
 			}
 		>;
 	}) => Promise<ManagedVm>;
-	readonly loadBuildConfig?: (buildConfigPath: string) => Promise<Record<string, unknown>>;
+	readonly loadBuildConfig?: (buildConfigPath: string) => Promise<BuildImageOptions['buildConfig']>;
 }
 
 function findZone(systemConfig: SystemConfig, zoneId: string): GatewayZone {
@@ -67,9 +66,9 @@ function resolveSecretHosts(secretName: string): readonly string[] {
 	}
 }
 
-async function loadJsonFile(filePath: string): Promise<Record<string, unknown>> {
+async function loadJsonFile(filePath: string): Promise<BuildImageOptions['buildConfig']> {
 	const rawContents = await fs.readFile(filePath, 'utf8');
-	return JSON.parse(rawContents) as Record<string, unknown>;
+	return JSON.parse(rawContents) as BuildImageOptions['buildConfig'];
 }
 
 export async function startGatewayZone(

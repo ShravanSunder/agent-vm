@@ -4,6 +4,8 @@ import path from 'node:path';
 
 import type { BuildConfig, BuildOptions } from '@earendil-works/gondolin';
 
+export type { BuildConfig } from '@earendil-works/gondolin';
+
 export interface BuildImageOptions {
 	readonly buildConfig: BuildConfig;
 	readonly cacheDir: string;
