@@ -64,6 +64,22 @@ describe('runAgentVmCli', () => {
 					checks: [],
 					ok: true,
 				}),
+				startControllerRuntime: vi.fn(
+					async () =>
+						({
+							controllerPort: 18800,
+							gateway: {
+								ingress: {
+									host: '127.0.0.1',
+									port: 18791,
+								},
+								vm: {
+									id: 'vm-123',
+								},
+							},
+							close: async () => {},
+						}) as never,
+				),
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
 		);
@@ -125,6 +141,22 @@ describe('runAgentVmCli', () => {
 					checks: [],
 					ok: true,
 				}),
+				startControllerRuntime: vi.fn(
+					async () =>
+						({
+							controllerPort: 18800,
+							gateway: {
+								ingress: {
+									host: '127.0.0.1',
+									port: 18791,
+								},
+								vm: {
+									id: 'vm-123',
+								},
+							},
+							close: async () => {},
+						}) as never,
+				),
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
 		);
@@ -134,16 +166,20 @@ describe('runAgentVmCli', () => {
 	});
 
 	it('passes the bundled gondolin plugin source path into controller start', async () => {
-		const startGatewayZone = vi.fn(
+		const startControllerRuntime = vi.fn(
 			async () =>
 				({
-					ingress: {
-						host: '127.0.0.1',
-						port: 18791,
+					controllerPort: 18800,
+					gateway: {
+						ingress: {
+							host: '127.0.0.1',
+							port: 18791,
+						},
+						vm: {
+							id: 'vm-123',
+						},
 					},
-					vm: {
-						id: 'vm-123',
-					},
+					close: async () => {},
 				}) as never,
 		);
 
@@ -219,11 +255,12 @@ describe('runAgentVmCli', () => {
 					checks: [],
 					ok: true,
 				}),
-				startGatewayZone,
+				startControllerRuntime,
+				startGatewayZone: vi.fn(async () => undefined as never),
 			},
 		);
 
-		expect(startGatewayZone).toHaveBeenCalledWith(
+		expect(startControllerRuntime).toHaveBeenCalledWith(
 			expect.objectContaining({
 				pluginSourceDir: expect.stringMatching(/openclaw-gondolin-plugin\/src\/?$/u),
 				zoneId: 'shravan',

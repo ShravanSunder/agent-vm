@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 
 import { createSecretResolver, type SecretResolver } from 'gondolin-core';
 
+import { startControllerRuntime } from '../features/controller/controller-runtime.js';
 import { runControllerCredentialsRefresh } from '../features/controller/credentials-refresh.js';
 import { runControllerDestroy } from '../features/controller/destroy.js';
 import { runControllerDoctor } from '../features/controller/doctor.js';
@@ -18,6 +19,22 @@ interface CliDependencies {
 	readonly createSecretResolver: typeof createSecretResolver;
 	readonly loadSystemConfig: typeof loadSystemConfig;
 	readonly runControllerDoctor: typeof runControllerDoctor;
+	readonly startControllerRuntime: (options: {
+		readonly pluginSourceDir: string;
+		readonly systemConfig: SystemConfig;
+		readonly zoneId: string;
+	}) => Promise<{
+		readonly controllerPort: number;
+		readonly gateway: {
+			readonly ingress: {
+				readonly host: string;
+				readonly port: number;
+			};
+			readonly vm: {
+				readonly id: string;
+			};
+		};
+	}>;
 	readonly startGatewayZone: typeof startGatewayZone;
 }
 
@@ -73,6 +90,12 @@ export async function runAgentVmCli(
 		createSecretResolver,
 		loadSystemConfig,
 		runControllerDoctor,
+		startControllerRuntime: async (runtimeOptions) =>
+			await startControllerRuntime(runtimeOptions, {
+				createManagedToolVm: async () => {
+					throw new Error('Tool VM creation is not wired in CLI defaults yet.');
+				},
+			}),
 		startGatewayZone,
 	},
 ): Promise<void> {
@@ -101,24 +124,20 @@ export async function runAgentVmCli(
 			writeJson(io, dependencies.buildControllerStatus(systemConfig));
 			return;
 		case 'start': {
-			const secretResolver = await createResolverFromEnv(
-				systemConfig,
-				dependencies.createSecretResolver,
-			);
 			const firstZone = systemConfig.zones[0];
 			if (!firstZone) {
 				throw new Error('System config does not define any zones.');
 			}
 
-			const startedGateway = await dependencies.startGatewayZone({
+			const runtime = await dependencies.startControllerRuntime({
 				pluginSourceDir: resolveBundledPluginSourceDir(),
-				secretResolver,
 				systemConfig,
 				zoneId: firstZone.id,
 			});
 			writeJson(io, {
-				ingress: startedGateway.ingress,
-				vmId: startedGateway.vm.id,
+				controllerPort: runtime.controllerPort,
+				ingress: runtime.gateway.ingress,
+				vmId: runtime.gateway.vm.id,
 				zoneId: firstZone.id,
 			});
 			return;

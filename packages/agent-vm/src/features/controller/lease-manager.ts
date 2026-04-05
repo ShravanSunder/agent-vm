@@ -36,6 +36,7 @@ export interface LeaseManager {
 		readonly zoneId: string;
 	}): Promise<Lease>;
 	getLease(leaseId: string): Lease | undefined;
+	listLeases(): Lease[];
 	releaseLease(leaseId: string): Promise<void>;
 }
 
@@ -79,6 +80,9 @@ export function createLeaseManager(options: {
 		},
 		getLease(leaseId: string): Lease | undefined {
 			return leases.get(leaseId);
+		},
+		listLeases(): Lease[] {
+			return [...leases.values()];
 		},
 		async releaseLease(leaseId: string): Promise<void> {
 			const lease = leases.get(leaseId);
