@@ -10,11 +10,16 @@ import {
 } from 'gondolin-core';
 
 import { createControllerService } from './controller-service.js';
+import { runControllerCredentialsRefresh } from './credentials-refresh.js';
+import { runControllerDestroy } from './destroy.js';
 import { startGatewayZone } from './gateway-manager.js';
 import { createIdleReaper } from './idle-reaper.js';
 import { createLeaseManager, type ToolProfile } from './lease-manager.js';
+import { runControllerLogs } from './logs.js';
+import { buildControllerStatus } from './status.js';
 import type { SystemConfig } from './system-config.js';
 import { createTcpPool } from './tcp-pool.js';
+import { runControllerUpgrade } from './upgrade.js';
 
 export interface ControllerRuntime {
 	readonly controllerPort: number;
@@ -175,6 +180,72 @@ export async function startControllerRuntime(
 	});
 	const controllerApp = createControllerService({
 		leaseManager,
+		operations: {
+			destroyZone: async (targetZoneId: string, purge: boolean) =>
+				await runControllerDestroy(
+					{
+						purge,
+						systemConfig: options.systemConfig,
+						zoneId: targetZoneId,
+					},
+					{
+						releaseZoneLeases: async () => {
+							for (const lease of leaseManager
+								.listLeases()
+								.filter((activeLease) => activeLease.zoneId === targetZoneId)) {
+								await leaseManager.releaseLease(lease.id);
+							}
+						},
+						stopGatewayZone: async () => {
+							await gateway.vm.close();
+						},
+					},
+				),
+			getStatus: async () => buildControllerStatus(options.systemConfig),
+			getZoneLogs: async (targetZoneId: string) =>
+				await runControllerLogs(
+					{
+						zoneId: targetZoneId,
+					},
+					{
+						readGatewayLogs: async (zoneId: string) => {
+							const targetZone = findZone(options.systemConfig, zoneId);
+							try {
+								return await fs.readFile(`${targetZone.gateway.stateDir}/logs/gateway.log`, 'utf8');
+							} catch {
+								return '';
+							}
+						},
+					},
+				),
+			refreshZoneCredentials: async (targetZoneId: string) =>
+				await runControllerCredentialsRefresh(
+					{
+						zoneId: targetZoneId,
+					},
+					{
+						refreshZoneSecrets: async (zoneId: string) => {
+							const targetZone = findZone(options.systemConfig, zoneId);
+							await secretResolver.resolveAll(targetZone.secrets);
+						},
+						restartGatewayZone: async () => {},
+					},
+				),
+			upgradeZone: async (targetZoneId: string) =>
+				await runControllerUpgrade(
+					{
+						systemConfig: options.systemConfig,
+						zoneId: targetZoneId,
+					},
+					{
+						rebuildGatewayImage: async () => {},
+						restartGatewayZone: async () => {},
+						stopGatewayZone: async () => {
+							await gateway.vm.close();
+						},
+					},
+				),
+		},
 		systemConfig: options.systemConfig,
 	});
 	const server = await (dependencies.startHttpServer ?? defaultStartHttpServer)({

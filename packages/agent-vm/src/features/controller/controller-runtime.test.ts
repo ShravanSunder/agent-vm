@@ -83,9 +83,25 @@ describe('startControllerRuntime', () => {
 			},
 			zone,
 		}));
-		const startHttpServer = vi.fn(async () => ({
-			close: async () => {},
-		}));
+		let startHttpServerArgs:
+			| {
+					app: {
+						request(path: string): Response | Promise<Response>;
+					};
+					port: number;
+			  }
+			| undefined;
+		const startHttpServer = vi.fn(
+			async (options: {
+				app: { request(path: string): Response | Promise<Response> };
+				port: number;
+			}) => {
+				startHttpServerArgs = options;
+				return {
+					close: async () => {},
+				};
+			},
+		);
 		const clearIntervalMock = vi.fn();
 		const setIntervalMock = vi.fn(() => 123 as unknown as NodeJS.Timeout);
 
@@ -132,6 +148,14 @@ describe('startControllerRuntime', () => {
 				port: 18800,
 			}),
 		);
+		if (!startHttpServerArgs) {
+			throw new Error('Expected startHttpServer to be called.');
+		}
+		const statusResponse = await startHttpServerArgs.app.request('/status');
+		expect(statusResponse.status).toBe(200);
+		await expect(statusResponse.json()).resolves.toMatchObject({
+			controllerPort: 18800,
+		});
 		expect(setIntervalMock).toHaveBeenCalledTimes(1);
 		expect(runtime.controllerPort).toBe(18800);
 		expect(runtime.gateway.vm.id).toBe('gateway-vm-1');
