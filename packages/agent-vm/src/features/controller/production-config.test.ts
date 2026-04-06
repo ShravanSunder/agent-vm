@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-const repoRoot = '/Users/shravansunder/dev/agent-vm';
+const repoRoot = new URL('../../../../../', import.meta.url).pathname.replace(/\/$/, '');
 
 function parseJsonFile(filePath: string): Record<string, unknown> {
 	const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
