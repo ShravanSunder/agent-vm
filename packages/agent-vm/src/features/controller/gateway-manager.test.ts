@@ -34,12 +34,20 @@ const systemConfig = {
 				workspaceDir: './workspaces/shravan',
 			},
 			secrets: {
-				ANTHROPIC_API_KEY: {
+				PERPLEXITY_API_KEY: {
 					source: '1password',
-					ref: 'op://AI/anthropic/api-key',
+					ref: 'op://agent-vm/agent-perplexity/credential',
+					injection: 'http-mediation',
+					hosts: ['api.perplexity.ai'],
+				},
+				DISCORD_BOT_TOKEN: {
+					source: '1password',
+					ref: 'op://agent-vm/agent-discord-app/bot-token',
+					injection: 'env',
 				},
 			},
-			allowedHosts: ['api.anthropic.com', 'api.openai.com'],
+			allowedHosts: ['api.anthropic.com', 'api.openai.com', 'api.perplexity.ai'],
+			websocketBypass: ['gateway.discord.gg:443'],
 			toolProfile: 'standard',
 		},
 	],
@@ -76,7 +84,8 @@ describe('startGatewayZone', () => {
 				throw new Error('resolve is not used by this test');
 			},
 			resolveAll: async () => ({
-				ANTHROPIC_API_KEY: 'resolved-key',
+				PERPLEXITY_API_KEY: 'resolved-key',
+				DISCORD_BOT_TOKEN: 'resolved-key',
 			}),
 		};
 		const buildImage = vi.fn(
@@ -114,23 +123,28 @@ describe('startGatewayZone', () => {
 		expect(buildImage).toHaveBeenCalled();
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
-				allowedHosts: ['api.anthropic.com', 'api.openai.com'],
+				allowedHosts: ['api.anthropic.com', 'api.openai.com', 'api.perplexity.ai'],
 				cpus: 2,
 				env: expect.objectContaining({
 					HOME: '/home/openclaw',
 					NODE_EXTRA_CA_CERTS: '/etc/ssl/certs/ca-certificates.crt',
 					OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/openclaw.json',
 					OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
+					DISCORD_BOT_TOKEN: 'resolved-key',
 				}),
 				imagePath: '/tmp/gateway-image',
 				memory: '2G',
 				rootfsMode: 'cow',
 				secrets: {
-					ANTHROPIC_API_KEY: {
-						hosts: ['api.anthropic.com'],
+					PERPLEXITY_API_KEY: {
+						hosts: ['api.perplexity.ai'],
 						value: 'resolved-key',
 					},
 				},
+				tcpHosts: expect.objectContaining({
+					'controller.vm.host:18800': '127.0.0.1:18800',
+					'gateway.discord.gg:443': 'gateway.discord.gg:443',
+				}),
 				vfsMounts: expect.objectContaining({
 					'/home/openclaw/.openclaw/extensions/gondolin': {
 						hostPath: '/plugins/openclaw-gondolin-plugin',

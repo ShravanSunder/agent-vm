@@ -33,20 +33,39 @@
 			"secrets": {
 				"DISCORD_BOT_TOKEN": {
 					"source": "1password",
-					"ref": "op://agent-vm/agent-discord-app/bot-token"
+					"ref": "op://agent-vm/agent-discord-app/bot-token",
+					"injection": "env"
+				},
+				"PERPLEXITY_API_KEY": {
+					"source": "1password",
+					"ref": "op://agent-vm/agent-perplexity/credential",
+					"injection": "http-mediation",
+					"hosts": ["api.perplexity.ai"]
+				},
+				"OPENCLAW_GATEWAY_TOKEN": {
+					"source": "1password",
+					"ref": "op://agent-vm/agent-shravan-claw-gateway/password",
+					"injection": "env"
 				}
 			},
+			"websocketBypass": [
+				"gateway.discord.gg:443",
+				"web.whatsapp.com:443",
+				"g.whatsapp.net:443",
+				"mmg.whatsapp.net:443",
+				"media.whatsapp.net:443",
+				"pps.whatsapp.net:443",
+				"static.whatsapp.net:443"
+			],
 			"allowedHosts": [
 				"api.anthropic.com",
 				"statsig.anthropic.com",
 				"sentry.io",
 				"api.openai.com",
 				"auth.openai.com",
+				"api.perplexity.ai",
 				"discord.com",
-				"gateway.discord.gg",
 				"cdn.discordapp.com",
-				"web.whatsapp.com",
-				"*.whatsapp.net",
 				"api.github.com",
 				"registry.npmjs.org",
 				"clawhub.ai",

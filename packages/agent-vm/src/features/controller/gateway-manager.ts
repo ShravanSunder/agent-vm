@@ -57,27 +57,66 @@ function findZone(systemConfig: SystemConfig, zoneId: string): GatewayZone {
 	return zone;
 }
 
-// Secrets that can be injected at the HTTP boundary (API keys in headers)
-function resolveSecretHosts(secretName: string): readonly string[] {
-	switch (secretName) {
-		case 'ANTHROPIC_API_KEY':
-			return ['api.anthropic.com'];
-		case 'OPENAI_API_KEY':
-			return ['api.openai.com'];
-		case 'GITHUB_PAT':
-			return ['api.github.com'];
-		default:
-			return [];
-	}
-}
-
-// Secrets that must be real env vars inside the VM (used by client libraries
-// in WebSocket payloads or other non-HTTP-header auth flows)
-const ENV_ONLY_SECRETS = new Set(['DISCORD_BOT_TOKEN']);
-
 async function loadJsonFile(filePath: string): Promise<unknown> {
 	const rawContents = await fs.readFile(filePath, 'utf8');
 	return JSON.parse(rawContents);
+}
+
+/**
+ * Split resolved secrets into env vars and HTTP mediation based on
+ * the injection type configured in system.json per secret.
+ */
+function splitSecretsByInjection(
+	zone: GatewayZone,
+	resolvedSecrets: Record<string, string>,
+): {
+	envSecrets: Record<string, string>;
+	mediationSecrets: Record<string, SecretSpec>;
+} {
+	const envSecrets: Record<string, string> = {};
+	const mediationSecrets: Record<string, SecretSpec> = {};
+
+	for (const [secretName, secretValue] of Object.entries(resolvedSecrets)) {
+		const secretConfig = zone.secrets[secretName];
+		if (!secretConfig) {
+			continue;
+		}
+
+		if (secretConfig.injection === 'http-mediation' && secretConfig.hosts) {
+			mediationSecrets[secretName] = {
+				hosts: [...secretConfig.hosts],
+				value: secretValue,
+			};
+		} else {
+			// Default: env var injection
+			envSecrets[secretName] = secretValue;
+		}
+	}
+
+	return { envSecrets, mediationSecrets };
+}
+
+/**
+ * Build tcp.hosts map from zone config:
+ * - Controller back-channel
+ * - WebSocket bypass entries (Discord, WhatsApp)
+ * - Tool VM SSH slots from TCP pool
+ */
+function buildTcpHosts(
+	zone: GatewayZone,
+	controllerPort: number,
+): Record<string, string> {
+	const tcpHosts: Record<string, string> = {
+		'controller.vm.host:18800': `127.0.0.1:${controllerPort}`,
+	};
+
+	// WebSocket bypass: raw TCP tunnel for channels that use ws library
+	// (Discord, WhatsApp) — bypasses Gondolin HTTP MITM proxy
+	for (const wsHost of zone.websocketBypass) {
+		tcpHosts[wsHost] = wsHost;
+	}
+
+	return tcpHosts;
 }
 
 export async function startGatewayZone(
@@ -121,21 +160,9 @@ export async function startGatewayZone(
 		buildConfig,
 		cacheDir: `${zone.gateway.stateDir}/images/gateway`,
 	});
-	// Split secrets: env-only secrets go as real env vars (e.g. DISCORD_BOT_TOKEN
-	// is sent inside a WebSocket payload by discord.js, not in HTTP headers).
-	// HTTP-mediation secrets get placeholder injection at the network boundary.
-	const envOnlySecrets: Record<string, string> = {};
-	const mediationSecrets: Record<string, SecretSpec> = {};
-	for (const [secretName, secretValue] of Object.entries(resolvedSecrets)) {
-		if (ENV_ONLY_SECRETS.has(secretName)) {
-			envOnlySecrets[secretName] = secretValue;
-		} else {
-			const hosts = resolveSecretHosts(secretName);
-			if (hosts.length > 0) {
-				mediationSecrets[secretName] = { hosts: [...hosts], value: secretValue };
-			}
-		}
-	}
+
+	// Split secrets by injection type (from system.json config)
+	const { envSecrets, mediationSecrets } = splitSecretsByInjection(zone, resolvedSecrets);
 
 	const managedVm = await createManagedVm({
 		allowedHosts: zone.allowedHosts,
@@ -145,19 +172,14 @@ export async function startGatewayZone(
 			NODE_EXTRA_CA_CERTS: '/etc/ssl/certs/ca-certificates.crt',
 			OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/openclaw.json',
 			OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
-			...envOnlySecrets,
+			...envSecrets,
 		},
 		imagePath: image.imagePath,
 		memory: zone.gateway.memory,
 		rootfsMode: 'cow',
 		secrets: mediationSecrets,
 		sessionLabel: `${zone.id}-gateway`,
-		tcpHosts: {
-			'controller.vm.host:18800': `127.0.0.1:${options.systemConfig.host.controllerPort}`,
-			// Discord WebSocket bypass: discord.js uses the ws library which is
-			// unreliable through Gondolin's HTTP MITM proxy. Raw TCP tunnel works.
-			'gateway.discord.gg:443': 'gateway.discord.gg:443',
-		},
+		tcpHosts: buildTcpHosts(zone, options.systemConfig.host.controllerPort),
 		vfsMounts: {
 			'/home/openclaw/.openclaw/openclaw.json': {
 				hostPath: zone.gateway.openclawConfig,
