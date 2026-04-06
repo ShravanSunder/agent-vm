@@ -118,6 +118,7 @@ let runtimeDeps: {
 } | null = null;
 
 try {
+	// @ts-expect-error -- openclaw/plugin-sdk/sandbox only exists at runtime inside the gateway VM
 	const sandboxModule = await import('openclaw/plugin-sdk/sandbox');
 	runtimeDeps = {
 		registerSandboxBackend: sandboxModule.registerSandboxBackend as RuntimeRegisterSandboxBackend,
