@@ -107,7 +107,7 @@ describe('startControllerRuntime', () => {
 
 		const runtime = await startControllerRuntime(
 			{
-				pluginSourceDir: '/plugins/openclaw-gondolin-plugin',
+				pluginSourceDir: '/plugins/openclaw-agent-vm-plugin',
 				systemConfig,
 				zoneId: 'shravan',
 			},
@@ -139,7 +139,7 @@ describe('startControllerRuntime', () => {
 
 		expect(startGatewayZone).toHaveBeenCalledWith(
 			expect.objectContaining({
-				pluginSourceDir: '/plugins/openclaw-gondolin-plugin',
+				pluginSourceDir: '/plugins/openclaw-agent-vm-plugin',
 				zoneId: 'shravan',
 			}),
 		);

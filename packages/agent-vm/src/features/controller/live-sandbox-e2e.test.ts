@@ -85,11 +85,11 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 
 		// --- Step 3: Boot gateway VM with plugin mounted ---
 		log('creating gateway VM...');
-		const pluginDistDir = `${process.cwd()}/packages/openclaw-gondolin-plugin/dist`;
+		const pluginDistDir = `${process.cwd()}/packages/openclaw-agent-vm-plugin/dist`;
 
 		// Verify plugin dist exists
 		if (!fs.existsSync(`${pluginDistDir}/plugin.js`)) {
-			throw new Error(`Plugin not built. Run: pnpm --filter openclaw-gondolin-plugin build`);
+			throw new Error(`Plugin not built. Run: pnpm --filter openclaw-agent-vm-plugin build`);
 		}
 
 		gatewayVm = await createManagedVm({

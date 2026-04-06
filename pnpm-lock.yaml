@@ -58,12 +58,12 @@ importers:
         version: 0.4.0
       '@earendil-works/gondolin':
         specifier: link:/Users/shravansunder/Documents/dev/open-source/vm/gondolin/host
-        version: link:../../../../Documents/dev/open-source/vm/gondolin/host
+        version: link:../../../../open-source/vm/gondolin/host
       zod:
         specifier: ^4
         version: 4.3.6
 
-  packages/openclaw-gondolin-plugin:
+  packages/openclaw-agent-vm-plugin:
     dependencies:
       gondolin-core:
         specifier: workspace:*

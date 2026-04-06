@@ -4,4 +4,4 @@ export * from './lease-client.js';
 export * from './plugin.js';
 export { default } from './plugin.js';
 
-export const OPENCLAW_GONDOLIN_PLUGIN_PACKAGE_NAME = 'openclaw-gondolin-plugin';
+export const OPENCLAW_GONDOLIN_PLUGIN_PACKAGE_NAME = 'openclaw-agent-vm-plugin';

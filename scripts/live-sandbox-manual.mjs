@@ -121,7 +121,7 @@ const stateDir = '/tmp/oc-persistent/state';
 const wsDir = '/tmp/oc-persistent/workspace';
 [cfgDir, stateDir, wsDir].forEach((d) => fs.mkdirSync(d, { recursive: true }));
 
-const pluginDir = `${process.cwd()}/packages/openclaw-gondolin-plugin/dist`;
+const pluginDir = `${process.cwd()}/packages/openclaw-agent-vm-plugin/dist`;
 
 // Patch existing config or create fresh one
 const existingConfig = fs.existsSync(`${cfgDir}/openclaw.json`)

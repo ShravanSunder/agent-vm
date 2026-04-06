@@ -107,7 +107,7 @@ describe('startGatewayZone', () => {
 
 		const result = await startGatewayZone(
 			{
-				pluginSourceDir: '/plugins/openclaw-gondolin-plugin',
+				pluginSourceDir: '/plugins/openclaw-agent-vm-plugin',
 				secretResolver,
 				systemConfig,
 				zoneId: 'shravan',
@@ -147,7 +147,7 @@ describe('startGatewayZone', () => {
 				}),
 				vfsMounts: expect.objectContaining({
 					'/home/openclaw/.openclaw/extensions/gondolin': {
-						hostPath: '/plugins/openclaw-gondolin-plugin',
+						hostPath: '/plugins/openclaw-agent-vm-plugin',
 						kind: 'realfs-readonly',
 					},
 				}),

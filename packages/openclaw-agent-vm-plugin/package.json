@@ -1,5 +1,5 @@
 {
-	"name": "openclaw-gondolin-plugin",
+	"name": "openclaw-agent-vm-plugin",
 	"version": "0.1.0",
 	"private": true,
 	"type": "module",

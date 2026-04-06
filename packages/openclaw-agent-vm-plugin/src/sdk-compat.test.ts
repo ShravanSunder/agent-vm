@@ -2,7 +2,7 @@
  * SDK compatibility test — validates our type guard against the real OpenClaw SDK.
  *
  * This test can only run INSIDE a gateway VM where OpenClaw is installed.
- * Run manually: node --test packages/openclaw-gondolin-plugin/src/sdk-compat.test.mjs
+ * Run manually: node --test packages/openclaw-agent-vm-plugin/src/sdk-compat.test.mjs
  *
  * For CI: include in the live-smoke test suite that boots a gateway VM.
  * The test verifies that our assertSdkShape type guard matches the actual
