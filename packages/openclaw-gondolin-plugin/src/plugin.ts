@@ -88,6 +88,36 @@ function createBackendDeps(ssh: SshHelpers) {
 	};
 }
 
+interface OpenClawSandboxSdk extends SshHelpers {
+	registerSandboxBackend: (
+		id: string,
+		reg: { factory: ReturnType<typeof createGondolinSandboxBackendFactory> },
+	) => void;
+}
+
+function assertSdkShape(value: unknown): asserts value is OpenClawSandboxSdk {
+	if (typeof value !== 'object' || value === null) {
+		throw new TypeError('OpenClaw SDK module is not an object');
+	}
+
+	const requiredFunctions = [
+		'buildExecRemoteCommand',
+		'buildRemoteCommand',
+		'buildSshSandboxArgv',
+		'createSshSandboxSessionFromSettings',
+		'runSshSandboxCommand',
+		'sanitizeEnvVars',
+		'registerSandboxBackend',
+	] as const;
+
+	const record = value as Record<string, unknown>;
+	for (const name of requiredFunctions) {
+		if (typeof record[name] !== 'function') {
+			throw new TypeError(`OpenClaw SDK missing required export: ${name}`);
+		}
+	}
+}
+
 // Default export: OpenClaw plugin that loads SDK helpers lazily at register() time.
 // No top-level await — compatible with CommonJS require().
 const plugin = {
@@ -102,19 +132,24 @@ const plugin = {
 
 		const pluginConfig = resolveGondolinPluginConfig(api.pluginConfig);
 
-		// Lazy-load OpenClaw SDK — this import runs at register() time, not at module load.
-		// OpenClaw guarantees register() is called inside an async context.
-		const sdkPromise = import('openclaw/plugin-sdk/sandbox' as string).then((sdk) => {
+		// Lazy-load OpenClaw SDK from the global install path.
+		// Our plugin lives at /opt/extensions/gondolin/ (outside OpenClaw's node_modules),
+		// so bare specifier 'openclaw/plugin-sdk/sandbox' won't resolve.
+		// Use absolute path to the SDK entry point in OpenClaw's global install.
+		const sdkPath = '/usr/local/lib/node_modules/openclaw/dist/plugin-sdk/sandbox.js';
+		const sdkPromise = import(sdkPath).then((sdkRaw: Record<string, unknown>) => {
+			assertSdkShape(sdkRaw);
+
 			const ssh: SshHelpers = {
-				buildExecRemoteCommand: sdk.buildExecRemoteCommand,
-				buildRemoteCommand: sdk.buildRemoteCommand,
-				buildSshSandboxArgv: sdk.buildSshSandboxArgv,
-				createSshSandboxSessionFromSettings: sdk.createSshSandboxSessionFromSettings,
-				runSshSandboxCommand: sdk.runSshSandboxCommand,
-				sanitizeEnvVars: sdk.sanitizeEnvVars,
+				buildExecRemoteCommand: sdkRaw.buildExecRemoteCommand,
+				buildRemoteCommand: sdkRaw.buildRemoteCommand,
+				buildSshSandboxArgv: sdkRaw.buildSshSandboxArgv,
+				createSshSandboxSessionFromSettings: sdkRaw.createSshSandboxSessionFromSettings,
+				runSshSandboxCommand: sdkRaw.runSshSandboxCommand,
+				sanitizeEnvVars: sdkRaw.sanitizeEnvVars,
 			};
 
-			sdk.registerSandboxBackend('gondolin', {
+			sdkRaw.registerSandboxBackend('gondolin', {
 				factory: createGondolinSandboxBackendFactory(pluginConfig, createBackendDeps(ssh)),
 			});
 		});
