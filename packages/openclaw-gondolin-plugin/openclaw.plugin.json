@@ -1,0 +1,20 @@
+{
+	"id": "gondolin",
+	"name": "Gondolin VM Sandbox",
+	"description": "Sandbox backend powered by Gondolin micro-VMs with SSH-based command execution via controller lease API.",
+	"configSchema": {
+		"type": "object",
+		"additionalProperties": false,
+		"properties": {
+			"controllerUrl": {
+				"type": "string",
+				"minLength": 1
+			},
+			"zoneId": {
+				"type": "string",
+				"minLength": 1
+			}
+		},
+		"required": ["controllerUrl", "zoneId"]
+	}
+}
