@@ -1,3 +1,4 @@
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 
 import {
@@ -160,6 +161,10 @@ export async function startGatewayZone(
 		buildConfig,
 		cacheDir: `${zone.gateway.stateDir}/images/gateway`,
 	});
+
+	// Ensure host directories exist before mounting into the VM
+	fsSync.mkdirSync(zone.gateway.stateDir, { recursive: true });
+	fsSync.mkdirSync(zone.gateway.workspaceDir, { recursive: true });
 
 	// Split secrets by injection type (from system.json config)
 	const { envSecrets, mediationSecrets } = splitSecretsByInjection(zone, resolvedSecrets);

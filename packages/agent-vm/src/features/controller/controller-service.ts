@@ -33,13 +33,14 @@ function isDestroyPayload(value: unknown): value is { readonly purge?: boolean }
 }
 
 export function createControllerApp(options: {
-	readonly leaseManager: Pick<LeaseManager, 'createLease' | 'getLease' | 'releaseLease'>;
+	readonly leaseManager: Pick<LeaseManager, 'createLease' | 'getLease' | 'listLeases' | 'releaseLease'>;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly operations?: {
 		readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
 		readonly getStatus: () => Promise<unknown>;
 		readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
 		readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;
+		readonly stopController?: () => Promise<unknown>;
 		readonly upgradeZone: (zoneId: string) => Promise<unknown>;
 	};
 }): Hono {
@@ -116,6 +117,19 @@ export function createControllerApp(options: {
 		});
 	});
 
+	app.get('/leases', (context) => {
+		const leases = options.leaseManager.listLeases().map((lease) => ({
+			createdAt: lease.createdAt,
+			id: lease.id,
+			lastUsedAt: lease.lastUsedAt,
+			profileId: lease.profileId,
+			scopeKey: lease.scopeKey,
+			tcpSlot: lease.tcpSlot,
+			zoneId: lease.zoneId,
+		}));
+		return context.json(leases);
+	});
+
 	app.delete('/lease/:leaseId', async (context) => {
 		await options.leaseManager.releaseLease(context.req.param('leaseId'));
 		return context.body(null, 204);
@@ -142,18 +156,23 @@ export function createControllerApp(options: {
 		app.post('/zones/:zoneId/upgrade', async (context) =>
 			context.json(await operations.upgradeZone(context.req.param('zoneId'))),
 		);
+		if (operations.stopController) {
+			const stopHandler = operations.stopController;
+			app.post('/stop', async (context) => context.json(await stopHandler()));
+		}
 	}
 
 	return app;
 }
 
 export function createControllerService(options: {
-	readonly leaseManager: Pick<LeaseManager, 'createLease' | 'getLease' | 'releaseLease'>;
+	readonly leaseManager: Pick<LeaseManager, 'createLease' | 'getLease' | 'listLeases' | 'releaseLease'>;
 	readonly operations?: {
 		readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
 		readonly getStatus: () => Promise<unknown>;
 		readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
 		readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;
+		readonly stopController?: () => Promise<unknown>;
 		readonly upgradeZone: (zoneId: string) => Promise<unknown>;
 	};
 	readonly systemConfig: SystemConfig;

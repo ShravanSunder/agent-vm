@@ -177,4 +177,133 @@ describe('startGatewayZone', () => {
 			},
 		});
 	});
+
+	it('throws for an unknown zone id', async () => {
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => {
+				throw new Error('not used');
+			},
+			resolveAll: async () => ({}),
+		};
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver,
+					systemConfig,
+					zoneId: 'does-not-exist',
+				},
+				{
+					buildImage: vi.fn(),
+					createManagedVm: vi.fn(),
+					loadBuildConfig: vi.fn(),
+				},
+			),
+		).rejects.toThrow("Unknown zone 'does-not-exist'.");
+	});
+
+	it('splits env secrets from http-mediation secrets based on injection config', async () => {
+		const closeMock = vi.fn(async () => {});
+		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
+		const execMock = vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' }));
+		const setIngressRoutesMock = vi.fn();
+		const managedVm: ManagedVm = {
+			id: 'vm-456',
+			close: closeMock,
+			enableIngress: enableIngressMock,
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: execMock,
+			setIngressRoutes: setIngressRoutesMock,
+		};
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => {
+				throw new Error('not used');
+			},
+			resolveAll: async () => ({
+				PERPLEXITY_API_KEY: 'pplx-key',
+				DISCORD_BOT_TOKEN: 'discord-token',
+			}),
+		};
+		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => managedVm);
+
+		await startGatewayZone(
+			{
+				secretResolver,
+				systemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => ({})),
+			},
+		);
+
+		const vmOptions = createManagedVm.mock.calls[0]?.[0];
+
+		// PERPLEXITY_API_KEY should be in secrets (http-mediation) with hosts
+		expect(vmOptions.secrets).toEqual({
+			PERPLEXITY_API_KEY: {
+				hosts: ['api.perplexity.ai'],
+				value: 'pplx-key',
+			},
+		});
+
+		// DISCORD_BOT_TOKEN should be in env (env injection)
+		expect(vmOptions.env).toMatchObject({
+			DISCORD_BOT_TOKEN: 'discord-token',
+		});
+
+		// PERPLEXITY_API_KEY should NOT be in env
+		expect(vmOptions.env).not.toHaveProperty('PERPLEXITY_API_KEY');
+	});
+
+	it('builds tcp hosts with controller and websocket bypass entries', async () => {
+		const closeMock = vi.fn(async () => {});
+		const execMock = vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' }));
+		const managedVm: ManagedVm = {
+			id: 'vm-789',
+			close: closeMock,
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: execMock,
+			setIngressRoutes: vi.fn(),
+		};
+		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => managedVm);
+
+		await startGatewayZone(
+			{
+				secretResolver: {
+					resolve: async (): Promise<string> => {
+						throw new Error('not used');
+					},
+					resolveAll: async () => ({
+						PERPLEXITY_API_KEY: 'key',
+						DISCORD_BOT_TOKEN: 'token',
+					}),
+				},
+				systemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => ({})),
+			},
+		);
+
+		const vmOptions = createManagedVm.mock.calls[0]?.[0];
+		expect(vmOptions.tcpHosts).toEqual({
+			'controller.vm.host:18800': '127.0.0.1:18800',
+			'gateway.discord.gg:443': 'gateway.discord.gg:443',
+		});
+	});
 });

@@ -4,8 +4,8 @@
 		"secretsProvider": {
 			"type": "1password",
 			"tokenSource": {
-				"type": "op-cli",
-				"ref": "op://agent-vm/agent-1p-service-account/password"
+				"type": "env",
+				"envVar": "OP_SERVICE_ACCOUNT_TOKEN"
 			}
 		}
 	},

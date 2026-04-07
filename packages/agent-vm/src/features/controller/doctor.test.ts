@@ -8,7 +8,10 @@ const systemConfig = {
 		controllerPort: 18800,
 		secretsProvider: {
 			type: '1password',
-			serviceAccountTokenEnv: 'OP_SERVICE_ACCOUNT_TOKEN',
+			tokenSource: {
+				type: 'env',
+				envVar: 'OP_SERVICE_ACCOUNT_TOKEN',
+			},
 		},
 	},
 	images: {
@@ -50,52 +53,122 @@ const systemConfig = {
 	},
 } satisfies SystemConfig;
 
+const allBinaries = new Set(['qemu-system-aarch64', 'age', 'op', 'security']);
+
 describe('runControllerDoctor', () => {
-	it('reports healthy basics for node version and 1password token presence', () => {
-		expect(
-			runControllerDoctor({
-				diskFreeBytes: 50 * 1024 * 1024 * 1024,
-				env: {
-					OP_SERVICE_ACCOUNT_TOKEN: 'token',
-				},
-				occupiedPorts: new Set<number>(),
-				nodeVersion: 'v25.9.0',
-				totalMemoryBytes: 16 * 1024 * 1024 * 1024,
-				systemConfig,
-			}),
-		).toEqual({
-			ok: true,
-			checks: [
-				{ name: 'node-version', ok: true },
-				{ name: '1password-token', ok: true },
-				{ name: 'controller-port', ok: true, value: 18800 },
-				{ name: 'gateway-port-shravan', ok: true, value: 18791 },
-				{ name: 'disk-space', ok: true },
-				{ name: 'memory-budget', ok: true },
-			],
+	it('reports all checks passing when environment is complete', () => {
+		const result = runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			systemConfig,
 		});
+
+		expect(result.ok).toBe(true);
+		expect(result.checks.every((check) => check.ok)).toBe(true);
+		expect(result.checks.find((check) => check.name === 'qemu')?.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === 'age')?.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === '1password-cli')?.ok).toBe(true);
+	});
+
+	it('flags missing binaries with install hints', () => {
+		const result = runControllerDoctor({
+			availableBinaries: new Set<string>(),
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(false);
+		const qemuCheck = result.checks.find((check) => check.name === 'qemu');
+		expect(qemuCheck?.ok).toBe(false);
+		expect(qemuCheck?.hint).toBe('brew install qemu');
+
+		const ageCheck = result.checks.find((check) => check.name === 'age');
+		expect(ageCheck?.ok).toBe(false);
+		expect(ageCheck?.hint).toBe('brew install age');
 	});
 
 	it('flags occupied ports and insufficient resources', () => {
-		expect(
-			runControllerDoctor({
-				diskFreeBytes: 1,
-				env: {},
-				occupiedPorts: new Set<number>([18800, 18791]),
-				nodeVersion: 'v20.0.0',
-				totalMemoryBytes: 512 * 1024 * 1024,
-				systemConfig,
-			}),
-		).toEqual({
-			ok: false,
-			checks: [
-				{ name: 'node-version', ok: false },
-				{ name: '1password-token', ok: false },
-				{ name: 'controller-port', ok: false, value: 18800 },
-				{ name: 'gateway-port-shravan', ok: false, value: 18791 },
-				{ name: 'disk-space', ok: false },
-				{ name: 'memory-budget', ok: false },
-			],
+		const result = runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 1,
+			env: {},
+			occupiedPorts: new Set<number>([18800, 18791]),
+			nodeVersion: 'v20.0.0',
+			totalMemoryBytes: 512 * 1024 * 1024,
+			systemConfig,
 		});
+
+		expect(result.ok).toBe(false);
+		expect(result.checks.find((check) => check.name === 'node-version')?.ok).toBe(false);
+		expect(result.checks.find((check) => check.name === '1password-token-source')?.ok).toBe(false);
+		expect(result.checks.find((check) => check.name === 'controller-port')?.ok).toBe(false);
+		expect(result.checks.find((check) => check.name === 'disk-space')?.ok).toBe(false);
+	});
+
+	it('reports ok for op-cli token source when op binary is available', () => {
+		const opCliConfig = {
+			...systemConfig,
+			host: {
+				...systemConfig.host,
+				secretsProvider: {
+					type: '1password' as const,
+					tokenSource: {
+						type: 'op-cli' as const,
+						ref: 'op://agent-vm/agent-1p-service-account/password',
+					},
+				},
+			},
+		};
+
+		const result = runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: {},
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			systemConfig: opCliConfig,
+		});
+
+		const tokenCheck = result.checks.find((check) => check.name === '1password-token-source');
+		expect(tokenCheck?.ok).toBe(true);
+	});
+
+	it('flags op-cli token source when op binary is missing', () => {
+		const opCliConfig = {
+			...systemConfig,
+			host: {
+				...systemConfig.host,
+				secretsProvider: {
+					type: '1password' as const,
+					tokenSource: {
+						type: 'op-cli' as const,
+						ref: 'op://agent-vm/agent-1p-service-account/password',
+					},
+				},
+			},
+		};
+
+		const result = runControllerDoctor({
+			availableBinaries: new Set<string>(),
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: {},
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			systemConfig: opCliConfig,
+		});
+
+		const tokenCheck = result.checks.find((check) => check.name === '1password-token-source');
+		expect(tokenCheck?.ok).toBe(false);
+		expect(tokenCheck?.hint).toContain('1password-cli');
 	});
 });

@@ -99,4 +99,81 @@ describe('createGondolinSandboxBackendFactory', () => {
 			kind: 'fs-bridge',
 		});
 	});
+
+	it('throws TypeError when the controller returns an invalid lease response', async () => {
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(),
+				createLeaseClient: () => ({
+					getLeaseStatus: async () => ({ ok: true }),
+					releaseLease: async () => {},
+					requestLease: async () =>
+						// Return a response missing required fields
+						({ unexpected: true }) as never,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		await expect(
+			factory({
+				agentWorkspaceDir: '/workspace',
+				cfg: {},
+				scopeKey: 'test',
+				sessionKey: 'test',
+				workspaceDir: '/workspace',
+			}),
+		).rejects.toThrow('Controller lease API returned an unexpected response.');
+	});
+
+	it('omits env and createFsBridge from handle when not provided', async () => {
+		const requestLease = vi.fn(async () => ({
+			leaseId: 'lease-456',
+			ssh: {
+				host: 'tool-0.vm.host',
+				identityPem: 'pem',
+				knownHostsLine: '',
+				port: 22,
+				user: 'sandbox',
+			},
+			tcpSlot: 1,
+			workdir: '/workspace',
+		}));
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					getLeaseStatus: async () => ({ ok: true }),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const backend = await factory({
+			agentWorkspaceDir: '/workspace',
+			cfg: {},
+			scopeKey: 'test',
+			sessionKey: 'test',
+			workspaceDir: '/workspace',
+		});
+
+		expect(backend.env).toBeUndefined();
+		expect(backend.createFsBridge).toBeUndefined();
+		expect(backend.runtimeId).toBe('lease-456');
+	});
 });

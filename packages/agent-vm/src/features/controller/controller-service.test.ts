@@ -43,6 +43,7 @@ describe('createControllerApp', () => {
 			leaseManager: {
 				createLease,
 				getLease,
+				listLeases: vi.fn(() => []),
 				releaseLease,
 			},
 		});
@@ -86,6 +87,7 @@ describe('createControllerApp', () => {
 					throw new Error('No TCP slots available');
 				}),
 				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
 			},
 		});
@@ -135,6 +137,7 @@ describe('createControllerApp', () => {
 					throw new Error('not used');
 				}),
 				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
 			},
 			operations: {
@@ -172,5 +175,116 @@ describe('createControllerApp', () => {
 		expect(refreshZoneCredentials).toHaveBeenCalledWith('shravan');
 		expect(destroyZone).toHaveBeenCalledWith('shravan', true);
 		expect(upgradeZone).toHaveBeenCalledWith('shravan');
+	});
+
+	it('returns 400 for invalid lease create payload', async () => {
+		const app = createControllerApp({
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('should not be called');
+				}),
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const response = await app.request('/lease', {
+			body: JSON.stringify({ incomplete: true }),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toMatchObject({
+			error: 'invalid-lease-request',
+		});
+	});
+
+	it('returns 404 when fetching a non-existent lease', async () => {
+		const app = createControllerApp({
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				getLease: vi.fn(() => undefined),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const response = await app.request('/lease/non-existent-id');
+
+		expect(response.status).toBe(404);
+		await expect(response.json()).resolves.toMatchObject({
+			error: 'Lease not found',
+		});
+	});
+
+	it('lists active leases via GET /leases', async () => {
+		const listLeases = vi.fn(() => [
+			{
+				id: 'lease-1',
+				zoneId: 'shravan',
+				scopeKey: 'agent:main',
+				tcpSlot: 0,
+				createdAt: 100,
+				lastUsedAt: 100,
+				profileId: 'standard',
+			},
+			{
+				id: 'lease-2',
+				zoneId: 'shravan',
+				scopeKey: 'agent:tool',
+				tcpSlot: 1,
+				createdAt: 200,
+				lastUsedAt: 200,
+				profileId: 'standard',
+			},
+		]);
+		const app = createControllerApp({
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				getLease: vi.fn(),
+				listLeases,
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const response = await app.request('/leases');
+
+		expect(response.status).toBe(200);
+		const body = await response.json();
+		expect(body).toHaveLength(2);
+		expect(body[0]).toMatchObject({ id: 'lease-1', zoneId: 'shravan' });
+	});
+
+	it('gracefully stops the controller via POST /stop', async () => {
+		const stopController = vi.fn(async () => ({ ok: true }));
+		const app = createControllerApp({
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				stopController,
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/stop', { method: 'POST' });
+
+		expect(response.status).toBe(200);
+		expect(stopController).toHaveBeenCalled();
 	});
 });

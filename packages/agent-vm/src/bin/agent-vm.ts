@@ -1,20 +1,30 @@
 #!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { createSecretResolver, type SecretResolver } from 'gondolin-core';
+import {
+	createSecretResolver,
+	resolveServiceAccountToken,
+	type SecretResolver,
+} from 'gondolin-core';
 
 import { createControllerClient } from '../features/controller/controller-client.js';
 import { startControllerRuntime } from '../features/controller/controller-runtime.js';
 import { runControllerDoctor } from '../features/controller/doctor.js';
 import { startGatewayZone } from '../features/controller/gateway-manager.js';
+import { createAgeEncryption } from '../features/controller/snapshot-encryption.js';
+import { createSnapshotManager } from '../features/controller/snapshot-manager.js';
 import { buildControllerStatus } from '../features/controller/status.js';
 import { loadSystemConfig, type SystemConfig } from '../features/controller/system-config.js';
 
 interface CliDependencies {
 	readonly buildControllerStatus: typeof buildControllerStatus;
+	readonly createAgeEncryption: typeof createAgeEncryption;
 	readonly createControllerClient: typeof createControllerClient;
 	readonly createSecretResolver: typeof createSecretResolver;
+	readonly createSnapshotManager: typeof createSnapshotManager;
 	readonly loadSystemConfig: typeof loadSystemConfig;
+	readonly resolveServiceAccountToken: typeof resolveServiceAccountToken;
 	readonly runControllerDoctor: typeof runControllerDoctor;
 	readonly startControllerRuntime: (options: {
 		readonly pluginSourceDir: string;
@@ -68,17 +78,17 @@ function resolveControllerBaseUrl(systemConfig: SystemConfig): string {
 	return `http://127.0.0.1:${systemConfig.host.controllerPort}`;
 }
 
-async function createResolverFromEnv(
+async function createResolverFromConfig(
 	systemConfig: SystemConfig,
-	createSecretResolverImpl: CliDependencies['createSecretResolver'],
+	dependencies: {
+		readonly createSecretResolver: CliDependencies['createSecretResolver'];
+		readonly resolveServiceAccountToken: CliDependencies['resolveServiceAccountToken'];
+	},
 ): Promise<SecretResolver> {
-	const serviceAccountTokenEnv = systemConfig.host.secretsProvider.serviceAccountTokenEnv;
-	const serviceAccountToken = process.env[serviceAccountTokenEnv];
-	if (!serviceAccountToken) {
-		throw new Error(`Missing required env var '${serviceAccountTokenEnv}'.`);
-	}
+	const tokenSource = systemConfig.host.secretsProvider.tokenSource;
+	const serviceAccountToken = await dependencies.resolveServiceAccountToken(tokenSource);
 
-	return await createSecretResolverImpl({
+	return await dependencies.createSecretResolver({
 		serviceAccountToken,
 	});
 }
@@ -88,16 +98,15 @@ export async function runAgentVmCli(
 	io: CliIo,
 	dependencies: CliDependencies = {
 		buildControllerStatus,
+		createAgeEncryption,
 		createControllerClient,
 		createSecretResolver,
+		createSnapshotManager,
 		loadSystemConfig,
+		resolveServiceAccountToken,
 		runControllerDoctor,
 		startControllerRuntime: async (runtimeOptions) =>
-			await startControllerRuntime(runtimeOptions, {
-				createManagedToolVm: async () => {
-					throw new Error('Tool VM creation is not wired in CLI defaults yet.');
-				},
-			}),
+			await startControllerRuntime(runtimeOptions, {}),
 		startGatewayZone,
 	},
 ): Promise<void> {
@@ -112,16 +121,28 @@ export async function runAgentVmCli(
 	const systemConfig = dependencies.loadSystemConfig(resolveConfigPath(restArguments));
 
 	switch (subcommand) {
-		case 'doctor':
+		case 'doctor': {
+			const requiredBinaries = ['qemu-system-aarch64', 'age', 'op', 'security'] as const;
+			const availableBinaries = new Set<string>();
+			for (const binary of requiredBinaries) {
+				try {
+					execFileSync('which', [binary], { stdio: 'ignore' });
+					availableBinaries.add(binary);
+				} catch {
+					// Binary not found
+				}
+			}
 			writeJson(
 				io,
 				dependencies.runControllerDoctor({
+					availableBinaries,
 					env: process.env,
 					nodeVersion: process.version,
 					systemConfig,
 				}),
 			);
 			return;
+		}
 		case 'status':
 			writeJson(
 				io,
@@ -132,6 +153,42 @@ export async function runAgentVmCli(
 					.getStatus(),
 			);
 			return;
+		case 'stop':
+			writeJson(
+				io,
+				await dependencies
+					.createControllerClient({
+						baseUrl: resolveControllerBaseUrl(systemConfig),
+					})
+					.stop(),
+			);
+			return;
+		case 'lease': {
+			const leaseSubcommand = restArguments[0];
+			if (leaseSubcommand === 'list') {
+				writeJson(
+					io,
+					await dependencies
+						.createControllerClient({ baseUrl: resolveControllerBaseUrl(systemConfig) })
+						.listLeases(),
+				);
+				return;
+			}
+			if (leaseSubcommand === 'release') {
+				const leaseId = restArguments[1];
+				if (!leaseId) {
+					throw new Error('Usage: agent-vm controller lease release <leaseId>');
+				}
+				await dependencies
+					.createControllerClient({ baseUrl: resolveControllerBaseUrl(systemConfig) })
+					.releaseLease(leaseId);
+				writeJson(io, { ok: true, released: leaseId });
+				return;
+			}
+			throw new Error(
+				`Unknown lease subcommand '${leaseSubcommand ?? 'undefined'}'.`,
+			);
+		}
 		case 'start': {
 			const firstZone = systemConfig.zones[0];
 			if (!firstZone) {
@@ -195,9 +252,12 @@ export async function runAgentVmCli(
 				);
 			}
 			const zoneId = resolveZoneId(systemConfig, restArguments);
-			const secretResolver = await createResolverFromEnv(
+			const secretResolver = await createResolverFromConfig(
 				systemConfig,
-				dependencies.createSecretResolver,
+				{
+					createSecretResolver: dependencies.createSecretResolver,
+					resolveServiceAccountToken: dependencies.resolveServiceAccountToken,
+				},
 			);
 			const zone = systemConfig.zones.find((candidateZone) => candidateZone.id === zoneId);
 			if (!zone) {
@@ -213,6 +273,77 @@ export async function runAgentVmCli(
 					.refreshCredentials(zoneId),
 			);
 			return;
+		}
+		case 'snapshot': {
+			const snapshotSubcommand = restArguments[0];
+			const zoneId = resolveZoneId(systemConfig, restArguments);
+			const zone = systemConfig.zones.find(
+				(candidateZone) => candidateZone.id === zoneId,
+			);
+			if (!zone) {
+				throw new Error(`Unknown zone '${zoneId}'.`);
+			}
+			const snapshotDir = `${zone.gateway.stateDir}/snapshots`;
+
+			if (snapshotSubcommand === 'list') {
+				const manager = dependencies.createSnapshotManager({
+					encrypt: async () => {},
+					decrypt: async () => {},
+				});
+				writeJson(io, manager.listSnapshots({ snapshotDir, zoneId }));
+				return;
+			}
+
+			const secretResolver = await createResolverFromConfig(
+				systemConfig,
+				{
+					createSecretResolver: dependencies.createSecretResolver,
+					resolveServiceAccountToken: dependencies.resolveServiceAccountToken,
+				},
+			);
+			const encryption = dependencies.createAgeEncryption({
+				resolvePassphrase: async () =>
+					await secretResolver.resolve({
+						source: '1password',
+						ref: `op://agent-vm/agent-${zoneId}-snapshot/password`,
+					}),
+			});
+			const manager = dependencies.createSnapshotManager(encryption);
+
+			if (snapshotSubcommand === 'create') {
+				writeJson(
+					io,
+					await manager.createSnapshot({
+						zoneId,
+						stateDir: zone.gateway.stateDir,
+						workspaceDir: zone.gateway.workspaceDir,
+						snapshotDir,
+					}),
+				);
+				return;
+			}
+
+			if (snapshotSubcommand === 'restore') {
+				const snapshotPath = restArguments[1];
+				if (!snapshotPath) {
+					throw new Error(
+						'Usage: agent-vm controller snapshot restore <path> [--zone <id>]',
+					);
+				}
+				writeJson(
+					io,
+					await manager.restoreSnapshot({
+						snapshotPath,
+						stateDir: zone.gateway.stateDir,
+						workspaceDir: zone.gateway.workspaceDir,
+					}),
+				);
+				return;
+			}
+
+			throw new Error(
+				`Unknown snapshot subcommand '${snapshotSubcommand ?? 'undefined'}'.`,
+			);
 		}
 	}
 

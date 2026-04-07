@@ -29,7 +29,7 @@ describe('runControllerDestroy', () => {
 				controllerPort: 18800,
 				secretsProvider: {
 					type: '1password',
-					serviceAccountTokenEnv: 'OP_SERVICE_ACCOUNT_TOKEN',
+					tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 				},
 			},
 			images: {

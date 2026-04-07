@@ -2,7 +2,10 @@ export interface ControllerClient {
 	destroyZone(zoneId: string, purge: boolean): Promise<unknown>;
 	getLogs(zoneId: string): Promise<unknown>;
 	getStatus(): Promise<unknown>;
+	listLeases(): Promise<unknown>;
 	refreshCredentials(zoneId: string): Promise<unknown>;
+	releaseLease(leaseId: string): Promise<void>;
+	stop(): Promise<unknown>;
 	upgradeZone(zoneId: string): Promise<unknown>;
 }
 
@@ -36,6 +39,17 @@ export function createControllerClient(options: {
 			const response = await fetchImpl(`${baseUrl}/zones/${zoneId}/credentials/refresh`, {
 				method: 'POST',
 			});
+			return await response.json();
+		},
+		listLeases: async (): Promise<unknown> => {
+			const response = await fetchImpl(`${baseUrl}/leases`);
+			return await response.json();
+		},
+		releaseLease: async (leaseId: string): Promise<void> => {
+			await fetchImpl(`${baseUrl}/lease/${leaseId}`, { method: 'DELETE' });
+		},
+		stop: async (): Promise<unknown> => {
+			const response = await fetchImpl(`${baseUrl}/stop`, { method: 'POST' });
 			return await response.json();
 		},
 		upgradeZone: async (zoneId: string): Promise<unknown> => {

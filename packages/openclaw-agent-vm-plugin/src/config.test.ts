@@ -15,4 +15,30 @@ describe('resolveGondolinPluginConfig', () => {
 			zoneId: 'shravan',
 		});
 	});
+
+	it('uses a custom profileId when provided', () => {
+		expect(
+			resolveGondolinPluginConfig({
+				controllerUrl: 'http://controller.vm.host:18800',
+				profileId: 'heavy',
+				zoneId: 'shravan-lab',
+			}),
+		).toEqual({
+			controllerUrl: 'http://controller.vm.host:18800',
+			profileId: 'heavy',
+			zoneId: 'shravan-lab',
+		});
+	});
+
+	it('throws when controllerUrl is missing', () => {
+		expect(() => resolveGondolinPluginConfig({ zoneId: 'shravan' })).toThrow(
+			'Gondolin plugin config requires controllerUrl and zoneId.',
+		);
+	});
+
+	it('throws when zoneId is missing', () => {
+		expect(() =>
+			resolveGondolinPluginConfig({ controllerUrl: 'http://controller.vm.host:18800' }),
+		).toThrow('Gondolin plugin config requires controllerUrl and zoneId.');
+	});
 });
