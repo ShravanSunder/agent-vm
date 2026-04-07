@@ -37,6 +37,7 @@ export function createControllerApp(options: {
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly operations?: {
 		readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
+		readonly execInZone?: (zoneId: string, command: string) => Promise<unknown>;
 		readonly getStatus: () => Promise<unknown>;
 		readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
 		readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;
@@ -156,6 +157,18 @@ export function createControllerApp(options: {
 		app.post('/zones/:zoneId/upgrade', async (context) =>
 			context.json(await operations.upgradeZone(context.req.param('zoneId'))),
 		);
+		if (operations.execInZone) {
+			const execHandler = operations.execInZone;
+			app.post('/zones/:zoneId/exec', async (context) => {
+				const payload = await context.req.json() as { command?: string };
+				if (typeof payload.command !== 'string') {
+					return context.json({ error: 'command is required' }, 400);
+				}
+				return context.json(
+					await execHandler(context.req.param('zoneId'), payload.command),
+				);
+			});
+		}
 		if (operations.stopController) {
 			const stopHandler = operations.stopController;
 			app.post('/stop', async (context) => context.json(await stopHandler()));
@@ -169,6 +182,7 @@ export function createControllerService(options: {
 	readonly leaseManager: Pick<LeaseManager, 'createLease' | 'getLease' | 'listLeases' | 'releaseLease'>;
 	readonly operations?: {
 		readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
+		readonly execInZone?: (zoneId: string, command: string) => Promise<unknown>;
 		readonly getStatus: () => Promise<unknown>;
 		readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
 		readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;

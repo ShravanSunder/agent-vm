@@ -329,7 +329,7 @@ describe('runAgentVmCli', () => {
 
 		expect(startControllerRuntime).toHaveBeenCalledWith(
 			expect.objectContaining({
-				pluginSourceDir: expect.stringMatching(/openclaw-agent-vm-plugin\/src\/?$/u),
+				pluginSourceDir: expect.stringMatching(/openclaw-agent-vm-plugin\/dist\/?$/u),
 				zoneId: 'shravan',
 			}),
 		);

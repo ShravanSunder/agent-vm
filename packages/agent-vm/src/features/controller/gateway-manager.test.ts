@@ -128,7 +128,8 @@ describe('startGatewayZone', () => {
 				env: expect.objectContaining({
 					HOME: '/home/openclaw',
 					NODE_EXTRA_CA_CERTS: '/etc/ssl/certs/ca-certificates.crt',
-					OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/openclaw.json',
+					OPENCLAW_BUNDLED_PLUGINS_DIR: '/opt/extensions',
+					OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/config/openclaw.json',
 					OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
 					DISCORD_BOT_TOKEN: 'resolved-key',
 				}),
@@ -146,7 +147,7 @@ describe('startGatewayZone', () => {
 					'gateway.discord.gg:443': 'gateway.discord.gg:443',
 				}),
 				vfsMounts: expect.objectContaining({
-					'/home/openclaw/.openclaw/extensions/gondolin': {
+					'/opt/gondolin-plugin-src': {
 						hostPath: '/plugins/openclaw-agent-vm-plugin',
 						kind: 'realfs-readonly',
 					},

@@ -63,7 +63,7 @@ function resolveConfigPath(argv: readonly string[]): string {
 }
 
 function resolveBundledPluginSourceDir(): string {
-	return new URL('../../../openclaw-agent-vm-plugin/src/', import.meta.url).pathname;
+	return new URL('../../../openclaw-agent-vm-plugin/dist/', import.meta.url).pathname;
 }
 
 function resolveZoneId(systemConfig: SystemConfig, argv: readonly string[]): string {

@@ -182,6 +182,14 @@ export async function startControllerRuntime(
 	const controllerApp = createControllerService({
 		leaseManager,
 		operations: {
+			execInZone: async (_targetZoneId: string, command: string) => {
+				const result = await gateway.vm.exec(command);
+				return {
+					exitCode: result.exitCode,
+					stdout: result.stdout,
+					stderr: result.stderr,
+				};
+			},
 			destroyZone: async (targetZoneId: string, purge: boolean) =>
 				await runControllerDestroy(
 					{

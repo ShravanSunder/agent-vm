@@ -10,7 +10,9 @@
 	"agents": {
 		"defaults": {
 			"workspace": "/home/openclaw/workspace",
-			"model": "anthropic/claude-sonnet-4-5",
+			"model": {
+				"primary": "openai-codex/gpt-5.4"
+			},
 			"sandbox": {
 				"mode": "all",
 				"backend": "gondolin",
@@ -18,16 +20,14 @@
 			}
 		}
 	},
+	"tools": {
+		"elevated": {
+			"enabled": false
+		}
+	},
 	"channels": {
 		"discord": {},
 		"whatsapp": {}
-	},
-	"models": {
-		"profiles": {
-			"codex": {
-				"provider": "openai-codex"
-			}
-		}
 	},
 	"plugins": {
 		"entries": {

@@ -1,5 +1,6 @@
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 
 import {
 	buildImage as buildImageFromCore,
@@ -169,14 +170,21 @@ export async function startGatewayZone(
 	// Split secrets by injection type (from system.json config)
 	const { envSecrets, mediationSecrets } = splitSecretsByInjection(zone, resolvedSecrets);
 
+	// Resolve config dir from the config file path (mount the directory, not the file)
+	const configDir = path.dirname(path.resolve(zone.gateway.openclawConfig));
+	const configFileName = path.basename(zone.gateway.openclawConfig);
+
 	const managedVm = await createManagedVm({
 		allowedHosts: zone.allowedHosts,
 		cpus: zone.gateway.cpus,
 		env: {
 			HOME: '/home/openclaw',
 			NODE_EXTRA_CA_CERTS: '/etc/ssl/certs/ca-certificates.crt',
-			OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/openclaw.json',
+			OPENCLAW_CONFIG_PATH: `/home/openclaw/.openclaw/config/${configFileName}`,
 			OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
+			...(options.pluginSourceDir
+				? { OPENCLAW_BUNDLED_PLUGINS_DIR: '/opt/extensions' }
+				: {}),
 			...envSecrets,
 		},
 		imagePath: image.imagePath,
@@ -186,8 +194,8 @@ export async function startGatewayZone(
 		sessionLabel: `${zone.id}-gateway`,
 		tcpHosts: buildTcpHosts(zone, options.systemConfig.host.controllerPort),
 		vfsMounts: {
-			'/home/openclaw/.openclaw/openclaw.json': {
-				hostPath: zone.gateway.openclawConfig,
+			'/home/openclaw/.openclaw/config': {
+				hostPath: configDir,
 				kind: 'realfs-readonly',
 			},
 			'/home/openclaw/.openclaw/state': {
@@ -200,7 +208,7 @@ export async function startGatewayZone(
 			},
 			...(options.pluginSourceDir
 				? {
-						'/home/openclaw/.openclaw/extensions/gondolin': {
+						'/opt/gondolin-plugin-src': {
 							hostPath: options.pluginSourceDir,
 							kind: 'realfs-readonly' as const,
 						},
@@ -208,6 +216,16 @@ export async function startGatewayZone(
 				: {}),
 		},
 	});
+
+	// Copy plugin from VFS staging to rootfs with root ownership.
+	// OpenClaw rejects plugins owned by non-root UIDs (VFS preserves host UID).
+	if (options.pluginSourceDir) {
+		await managedVm.exec(
+			'mkdir -p /opt/extensions/gondolin && ' +
+			'cp -a /opt/gondolin-plugin-src/. /opt/extensions/gondolin/ && ' +
+			'chown -R root:root /opt/extensions',
+		);
+	}
 
 	// Start OpenClaw gateway backgrounded with output redirected so exec() returns immediately.
 	await managedVm.exec(

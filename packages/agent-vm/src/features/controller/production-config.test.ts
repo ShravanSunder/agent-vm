@@ -60,7 +60,9 @@ describe('production config artifacts', () => {
 			},
 			agents: {
 				defaults: {
-					model: 'anthropic/claude-sonnet-4-5',
+					model: {
+						primary: 'openai-codex/gpt-5.4',
+					},
 					sandbox: {
 						backend: 'gondolin',
 						mode: 'all',
@@ -68,11 +70,9 @@ describe('production config artifacts', () => {
 					},
 				},
 			},
-			models: {
-				profiles: {
-					codex: {
-						provider: 'openai-codex',
-					},
+			tools: {
+				elevated: {
+					enabled: false,
 				},
 			},
 			plugins: {
