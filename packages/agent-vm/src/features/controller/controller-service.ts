@@ -37,6 +37,7 @@ export function createControllerApp(options: {
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly operations?: {
 		readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
+		readonly enableSshForZone?: (zoneId: string) => Promise<unknown>;
 		readonly execInZone?: (zoneId: string, command: string) => Promise<unknown>;
 		readonly getStatus: () => Promise<unknown>;
 		readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
@@ -157,6 +158,12 @@ export function createControllerApp(options: {
 		app.post('/zones/:zoneId/upgrade', async (context) =>
 			context.json(await operations.upgradeZone(context.req.param('zoneId'))),
 		);
+		if (operations.enableSshForZone) {
+			const sshHandler = operations.enableSshForZone;
+			app.post('/zones/:zoneId/ssh', async (context) =>
+				context.json(await sshHandler(context.req.param('zoneId'))),
+			);
+		}
 		if (operations.execInZone) {
 			const execHandler = operations.execInZone;
 			app.post('/zones/:zoneId/exec', async (context) => {
@@ -182,6 +189,7 @@ export function createControllerService(options: {
 	readonly leaseManager: Pick<LeaseManager, 'createLease' | 'getLease' | 'listLeases' | 'releaseLease'>;
 	readonly operations?: {
 		readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
+		readonly enableSshForZone?: (zoneId: string) => Promise<unknown>;
 		readonly execInZone?: (zoneId: string, command: string) => Promise<unknown>;
 		readonly getStatus: () => Promise<unknown>;
 		readonly getZoneLogs: (zoneId: string) => Promise<unknown>;

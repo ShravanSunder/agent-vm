@@ -28,7 +28,8 @@
 				"port": 18791,
 				"openclawConfig": "./config/shravan/openclaw.json",
 				"stateDir": "./state/shravan",
-				"workspaceDir": "./workspaces/shravan"
+				"workspaceDir": "./workspaces/shravan",
+				"authProfilesRef": "op://agent-vm/agent-codex-test-oauth-token/credential"
 			},
 			"secrets": {
 				"DISCORD_BOT_TOKEN": {

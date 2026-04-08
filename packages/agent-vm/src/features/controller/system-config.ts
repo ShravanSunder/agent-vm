@@ -32,6 +32,7 @@ const zoneGatewaySchema = z.object({
 	openclawConfig: z.string().min(1),
 	stateDir: z.string().min(1),
 	workspaceDir: z.string().min(1),
+	authProfilesRef: z.string().min(1).optional(),
 });
 
 const toolProfileSchema = z.object({

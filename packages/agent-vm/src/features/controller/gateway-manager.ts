@@ -167,6 +167,23 @@ export async function startGatewayZone(
 	fsSync.mkdirSync(zone.gateway.stateDir, { recursive: true });
 	fsSync.mkdirSync(zone.gateway.workspaceDir, { recursive: true });
 
+	// Restore auth-profiles from 1P into the state dir before VM boot.
+	// OpenClaw reads auth-profiles.json at startup from $OPENCLAW_STATE_DIR/agents/main/agent/.
+	// The state dir is VFS-mounted, so writing on the host makes it visible inside the VM.
+	if (zone.gateway.authProfilesRef) {
+		const authProfilesDir = path.join(zone.gateway.stateDir, 'agents', 'main', 'agent');
+		fsSync.mkdirSync(authProfilesDir, { recursive: true });
+		const authProfilesJson = await options.secretResolver.resolve({
+			source: '1password',
+			ref: zone.gateway.authProfilesRef,
+		});
+		fsSync.writeFileSync(
+			path.join(authProfilesDir, 'auth-profiles.json'),
+			authProfilesJson,
+			'utf8',
+		);
+	}
+
 	// Split secrets by injection type (from system.json config)
 	const { envSecrets, mediationSecrets } = splitSecretsByInjection(zone, resolvedSecrets);
 
@@ -180,6 +197,7 @@ export async function startGatewayZone(
 		env: {
 			HOME: '/home/openclaw',
 			NODE_EXTRA_CA_CERTS: '/etc/ssl/certs/ca-certificates.crt',
+			OPENCLAW_HOME: '/home/openclaw',
 			OPENCLAW_CONFIG_PATH: `/home/openclaw/.openclaw/config/${configFileName}`,
 			OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
 			...(options.pluginSourceDir
@@ -216,6 +234,21 @@ export async function startGatewayZone(
 				: {}),
 		},
 	});
+
+	// Write OpenClaw env vars to /etc/profile.d/ so SSH sessions inherit them.
+	// Without this, SSH login as root resolves OPENCLAW_HOME to /root/ instead
+	// of /home/openclaw/, causing config/auth/state path mismatches.
+	// Uses double-quoted heredoc so $OPENCLAW_GATEWAY_TOKEN expands from the process env.
+	await managedVm.exec(
+		'mkdir -p /etc/profile.d && cat > /etc/profile.d/openclaw.sh << ENVEOF\n' +
+		'export OPENCLAW_HOME=/home/openclaw\n' +
+		`export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/config/${configFileName}\n` +
+		'export OPENCLAW_STATE_DIR=/home/openclaw/.openclaw/state\n' +
+		'export OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN\n' +
+		(options.pluginSourceDir ? 'export OPENCLAW_BUNDLED_PLUGINS_DIR=/opt/extensions\n' : '') +
+		'ENVEOF\n' +
+		'chmod 644 /etc/profile.d/openclaw.sh',
+	);
 
 	// Copy plugin from VFS staging to rootfs with root ownership.
 	// OpenClaw rejects plugins owned by non-root UIDs (VFS preserves host UID).

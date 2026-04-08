@@ -182,6 +182,10 @@ export async function startControllerRuntime(
 	const controllerApp = createControllerService({
 		leaseManager,
 		operations: {
+			enableSshForZone: async () => {
+				const sshAccess = await gateway.vm.enableSsh();
+				return sshAccess;
+			},
 			execInZone: async (_targetZoneId: string, command: string) => {
 				const result = await gateway.vm.exec(command);
 				return {
