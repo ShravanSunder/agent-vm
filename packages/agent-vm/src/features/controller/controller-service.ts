@@ -140,7 +140,7 @@ export function createControllerApp(options: {
 
 	if (options.operations) {
 		const operations = options.operations;
-		app.get('/status', async (context) => context.json(await operations.getStatus()));
+		app.get('/controller-status', async (context) => context.json(await operations.getStatus()));
 		app.get('/zones/:zoneId/logs', async (context) =>
 			context.json(await operations.getZoneLogs(context.req.param('zoneId'))),
 		);
@@ -161,13 +161,13 @@ export function createControllerApp(options: {
 		);
 		if (operations.enableSshForZone) {
 			const sshHandler = operations.enableSshForZone;
-			app.post('/zones/:zoneId/ssh', async (context) =>
+			app.post('/zones/:zoneId/enable-ssh', async (context) =>
 				context.json(await sshHandler(context.req.param('zoneId'))),
 			);
 		}
 		if (operations.execInZone) {
 			const execHandler = operations.execInZone;
-			app.post('/zones/:zoneId/exec', async (context) => {
+			app.post('/zones/:zoneId/execute-command', async (context) => {
 				const payload = await context.req.json() as { command?: string };
 				if (typeof payload.command !== 'string') {
 					return context.json({ error: 'command is required' }, 400);
@@ -179,7 +179,7 @@ export function createControllerApp(options: {
 		}
 		if (operations.stopController) {
 			const stopHandler = operations.stopController;
-			app.post('/stop', async (context) => context.json(await stopHandler()));
+			app.post('/stop-controller', async (context) => context.json(await stopHandler()));
 		}
 	}
 

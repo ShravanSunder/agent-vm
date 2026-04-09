@@ -25,7 +25,7 @@ describe('createGatewayApiClient', () => {
 			},
 		});
 
-		const status = await client.getStatus();
+		const status = await client.getGatewayStatus();
 
 		expect(requests[0]?.url).toBe('http://127.0.0.1:18791/api/status');
 		expect(status).toMatchObject({ ok: true });
@@ -98,7 +98,7 @@ describe('createGatewayApiClient', () => {
 			},
 		});
 
-		await client.getStatus();
+		await client.getGatewayStatus();
 
 		expect(requests[0]).toBe('http://127.0.0.1:18791/api/status');
 	});

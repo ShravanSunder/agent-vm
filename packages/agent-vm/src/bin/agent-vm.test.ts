@@ -28,16 +28,17 @@ describe('runAgentVmCli', () => {
 				}),
 				createControllerClient: () => ({
 					destroyZone: async () => ({ ok: true, zoneId: 'shravan' }),
-					getLogs: async () => ({ output: '', zoneId: 'shravan' }),
-					getStatus: async () => ({
+					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
+					getZoneLogs: async () => ({ output: '', zoneId: 'shravan' }),
+					getControllerStatus: async () => ({
 						controllerPort: 18800,
 						toolProfiles: ['standard'],
 						zones: [],
 					}),
 					listLeases: async () => [],
-					refreshCredentials: async () => ({ ok: true, zoneId: 'shravan' }),
+					refreshZoneCredentials: async () => ({ ok: true, zoneId: 'shravan' }),
 					releaseLease: async () => {},
-					stop: async () => ({ ok: true }),
+					stopController: async () => ({ ok: true }),
 					upgradeZone: async () => ({ ok: true, zoneId: 'shravan' }),
 				}),
 				createAgeEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
@@ -126,16 +127,17 @@ describe('runAgentVmCli', () => {
 				}),
 				createControllerClient: () => ({
 					destroyZone: async () => ({ ok: true, zoneId: 'shravan' }),
-					getLogs: async () => ({ output: '', zoneId: 'shravan' }),
-					getStatus: async () => ({
+					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
+					getZoneLogs: async () => ({ output: '', zoneId: 'shravan' }),
+					getControllerStatus: async () => ({
 						controllerPort: 18800,
 						toolProfiles: ['standard'],
 						zones: [],
 					}),
 					listLeases: async () => [],
-					refreshCredentials: async () => ({ ok: true, zoneId: 'shravan' }),
+					refreshZoneCredentials: async () => ({ ok: true, zoneId: 'shravan' }),
 					releaseLease: async () => {},
-					stop: async () => ({ ok: true }),
+					stopController: async () => ({ ok: true }),
 					upgradeZone: async () => ({ ok: true, zoneId: 'shravan' }),
 				}),
 				createAgeEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
@@ -246,16 +248,17 @@ describe('runAgentVmCli', () => {
 				}),
 				createControllerClient: () => ({
 					destroyZone: async () => ({ ok: true, zoneId: 'shravan' }),
-					getLogs: async () => ({ output: '', zoneId: 'shravan' }),
-					getStatus: async () => ({
+					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
+					getZoneLogs: async () => ({ output: '', zoneId: 'shravan' }),
+					getControllerStatus: async () => ({
 						controllerPort: 18800,
 						toolProfiles: ['standard'],
 						zones: [],
 					}),
 					listLeases: async () => [],
-					refreshCredentials: async () => ({ ok: true, zoneId: 'shravan' }),
+					refreshZoneCredentials: async () => ({ ok: true, zoneId: 'shravan' }),
 					releaseLease: async () => {},
-					stop: async () => ({ ok: true }),
+					stopController: async () => ({ ok: true }),
 					upgradeZone: async () => ({ ok: true, zoneId: 'shravan' }),
 				}),
 				createAgeEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
@@ -336,16 +339,17 @@ describe('runAgentVmCli', () => {
 		const outputs: string[] = [];
 		const controllerClient = {
 			destroyZone: vi.fn(async () => ({ ok: true, purged: true, zoneId: 'shravan' })),
-			getLogs: vi.fn(async () => ({ output: 'logs', zoneId: 'shravan' })),
-			getStatus: vi.fn(async () => ({
+			enableZoneSsh: vi.fn(async () => ({ command: 'ssh root@127.0.0.1' })),
+			getControllerStatus: vi.fn(async () => ({
 				controllerPort: 18800,
 				toolProfiles: ['standard'],
 				zones: [{ id: 'shravan', ingressPort: 18791, toolProfile: 'standard' }],
 			})),
+			getZoneLogs: vi.fn(async () => ({ output: 'logs', zoneId: 'shravan' })),
 			listLeases: vi.fn(async () => []),
-			refreshCredentials: vi.fn(async () => ({ ok: true, zoneId: 'shravan' })),
+			refreshZoneCredentials: vi.fn(async () => ({ ok: true, zoneId: 'shravan' })),
 			releaseLease: vi.fn(async () => {}),
-			stop: vi.fn(async () => ({ ok: true })),
+			stopController: vi.fn(async () => ({ ok: true })),
 			upgradeZone: vi.fn(async () => ({ ok: true, zoneId: 'shravan' })),
 		};
 
@@ -457,11 +461,11 @@ describe('runAgentVmCli', () => {
 			);
 		}
 
-		expect(controllerClient.getStatus).toHaveBeenCalled();
-		expect(controllerClient.getLogs).toHaveBeenCalledWith('shravan');
+		expect(controllerClient.getControllerStatus).toHaveBeenCalled();
+		expect(controllerClient.getZoneLogs).toHaveBeenCalledWith('shravan');
 		expect(controllerClient.destroyZone).toHaveBeenCalledWith('shravan', true);
 		expect(controllerClient.upgradeZone).toHaveBeenCalledWith('shravan');
-		expect(controllerClient.refreshCredentials).toHaveBeenCalledWith('shravan');
+		expect(controllerClient.refreshZoneCredentials).toHaveBeenCalledWith('shravan');
 		expect(outputs.join('\n')).toContain('"zoneId": "shravan"');
 	});
 
@@ -487,12 +491,13 @@ describe('runAgentVmCli', () => {
 				createAgeEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
 				createControllerClient: () => ({
 					destroyZone: async () => ({}),
-					getLogs: async () => ({}),
-					getStatus: async () => ({}),
+					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
+					getZoneLogs: async () => ({}),
+					getControllerStatus: async () => ({}),
 					listLeases: async () => [],
-					refreshCredentials: async () => ({}),
+					refreshZoneCredentials: async () => ({}),
 					releaseLease: async () => {},
-					stop: async () => ({}),
+					stopController: async () => ({}),
 					upgradeZone: async () => ({}),
 				}),
 				createSecretResolver: async () => ({
@@ -555,12 +560,13 @@ describe('runAgentVmCli', () => {
 				},
 				createControllerClient: () => ({
 					destroyZone: async () => ({}),
-					getLogs: async () => ({}),
-					getStatus: async () => ({}),
+					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
+					getZoneLogs: async () => ({}),
+					getControllerStatus: async () => ({}),
 					listLeases: async () => [],
-					refreshCredentials: async () => ({}),
+					refreshZoneCredentials: async () => ({}),
 					releaseLease: async () => {},
-					stop: async () => ({}),
+					stopController: async () => ({}),
 					upgradeZone: async () => ({}),
 				}),
 				createSecretResolver: async () => ({

@@ -151,7 +151,7 @@ describe('startControllerRuntime', () => {
 		if (!startHttpServerArgs) {
 			throw new Error('Expected startHttpServer to be called.');
 		}
-		const statusResponse = await startHttpServerArgs.app.request('/status');
+		const statusResponse = await startHttpServerArgs.app.request('/controller-status');
 		expect(statusResponse.status).toBe(200);
 		await expect(statusResponse.json()).resolves.toMatchObject({
 			controllerPort: 18800,

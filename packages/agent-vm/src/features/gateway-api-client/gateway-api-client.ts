@@ -6,7 +6,7 @@ export interface GatewayToolInvocation {
 }
 
 export interface GatewayApiClient {
-	getStatus(): Promise<unknown>;
+	getGatewayStatus(): Promise<unknown>;
 	invokeTool(invocation: GatewayToolInvocation): Promise<unknown>;
 }
 
@@ -19,7 +19,7 @@ export function createGatewayApiClient(options: {
 	const baseUrl = options.gatewayUrl.replace(/\/$/u, '');
 
 	return {
-		getStatus: async (): Promise<unknown> => {
+		getGatewayStatus: async (): Promise<unknown> => {
 			const response = await fetchImpl(`${baseUrl}/api/status`);
 			return await response.json();
 		},

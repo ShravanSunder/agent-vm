@@ -152,7 +152,7 @@ describe('createControllerApp', () => {
 			},
 		});
 
-		const statusResponse = await app.request('/status');
+		const statusResponse = await app.request('/controller-status');
 		const logsResponse = await app.request('/zones/shravan/logs');
 		const refreshResponse = await app.request('/zones/shravan/credentials/refresh', {
 			method: 'POST',
@@ -289,7 +289,7 @@ describe('createControllerApp', () => {
 			},
 		});
 
-		const response = await app.request('/stop', { method: 'POST' });
+		const response = await app.request('/stop-controller', { method: 'POST' });
 
 		expect(response.status).toBe(200);
 		expect(stopController).toHaveBeenCalled();

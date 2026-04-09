@@ -150,7 +150,7 @@ export async function runAgentVmCli(
 					.createControllerClient({
 						baseUrl: resolveControllerBaseUrl(systemConfig),
 					})
-					.getStatus(),
+					.getControllerStatus(),
 			);
 			return;
 		case 'stop':
@@ -160,9 +160,22 @@ export async function runAgentVmCli(
 					.createControllerClient({
 						baseUrl: resolveControllerBaseUrl(systemConfig),
 					})
-					.stop(),
+					.stopController(),
 			);
 			return;
+		case 'ssh-cmd': {
+			const zoneId = resolveZoneId(systemConfig, restArguments);
+			const sshResponse = await dependencies
+				.createControllerClient({ baseUrl: resolveControllerBaseUrl(systemConfig) })
+				.enableZoneSsh(zoneId);
+			const sshInfo = sshResponse as { command?: string; host?: string; port?: number };
+			if (sshInfo.command) {
+				io.stdout.write(`${sshInfo.command}\n`);
+			} else {
+				writeJson(io, sshResponse);
+			}
+			return;
+		}
 		case 'lease': {
 			const leaseSubcommand = restArguments[0];
 			if (leaseSubcommand === 'list') {
@@ -241,7 +254,7 @@ export async function runAgentVmCli(
 					.createControllerClient({
 						baseUrl: resolveControllerBaseUrl(systemConfig),
 					})
-					.getLogs(zoneId),
+					.getZoneLogs(zoneId),
 			);
 			return;
 		}
@@ -270,7 +283,7 @@ export async function runAgentVmCli(
 					.createControllerClient({
 						baseUrl: resolveControllerBaseUrl(systemConfig),
 					})
-					.refreshCredentials(zoneId),
+					.refreshZoneCredentials(zoneId),
 			);
 			return;
 		}

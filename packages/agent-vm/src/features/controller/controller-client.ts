@@ -1,11 +1,12 @@
 export interface ControllerClient {
 	destroyZone(zoneId: string, purge: boolean): Promise<unknown>;
-	getLogs(zoneId: string): Promise<unknown>;
-	getStatus(): Promise<unknown>;
+	enableZoneSsh(zoneId: string): Promise<unknown>;
+	getControllerStatus(): Promise<unknown>;
+	getZoneLogs(zoneId: string): Promise<unknown>;
 	listLeases(): Promise<unknown>;
-	refreshCredentials(zoneId: string): Promise<unknown>;
+	refreshZoneCredentials(zoneId: string): Promise<unknown>;
 	releaseLease(leaseId: string): Promise<void>;
-	stop(): Promise<unknown>;
+	stopController(): Promise<unknown>;
 	upgradeZone(zoneId: string): Promise<unknown>;
 }
 
@@ -17,6 +18,12 @@ export function createControllerClient(options: {
 	const baseUrl = options.baseUrl.replace(/\/$/u, '');
 
 	return {
+		enableZoneSsh: async (zoneId: string): Promise<unknown> => {
+			const response = await fetchImpl(`${baseUrl}/zones/${zoneId}/enable-ssh`, {
+				method: 'POST',
+			});
+			return await response.json();
+		},
 		destroyZone: async (zoneId: string, purge: boolean): Promise<unknown> => {
 			const response = await fetchImpl(`${baseUrl}/zones/${zoneId}/destroy`, {
 				body: JSON.stringify({ purge }),
@@ -27,15 +34,15 @@ export function createControllerClient(options: {
 			});
 			return await response.json();
 		},
-		getLogs: async (zoneId: string): Promise<unknown> => {
+		getControllerStatus: async (): Promise<unknown> => {
+			const response = await fetchImpl(`${baseUrl}/controller-status`);
+			return await response.json();
+		},
+		getZoneLogs: async (zoneId: string): Promise<unknown> => {
 			const response = await fetchImpl(`${baseUrl}/zones/${zoneId}/logs`);
 			return await response.json();
 		},
-		getStatus: async (): Promise<unknown> => {
-			const response = await fetchImpl(`${baseUrl}/status`);
-			return await response.json();
-		},
-		refreshCredentials: async (zoneId: string): Promise<unknown> => {
+		refreshZoneCredentials: async (zoneId: string): Promise<unknown> => {
 			const response = await fetchImpl(`${baseUrl}/zones/${zoneId}/credentials/refresh`, {
 				method: 'POST',
 			});
@@ -48,8 +55,8 @@ export function createControllerClient(options: {
 		releaseLease: async (leaseId: string): Promise<void> => {
 			await fetchImpl(`${baseUrl}/lease/${leaseId}`, { method: 'DELETE' });
 		},
-		stop: async (): Promise<unknown> => {
-			const response = await fetchImpl(`${baseUrl}/stop`, { method: 'POST' });
+		stopController: async (): Promise<unknown> => {
+			const response = await fetchImpl(`${baseUrl}/stop-controller`, { method: 'POST' });
 			return await response.json();
 		},
 		upgradeZone: async (zoneId: string): Promise<unknown> => {

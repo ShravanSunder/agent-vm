@@ -22,14 +22,14 @@ describe('createControllerClient', () => {
 			},
 		});
 
-		await controllerClient.getStatus();
-		await controllerClient.getLogs('shravan');
-		await controllerClient.refreshCredentials('shravan');
+		await controllerClient.getControllerStatus();
+		await controllerClient.getZoneLogs('shravan');
+		await controllerClient.refreshZoneCredentials('shravan');
 		await controllerClient.destroyZone('shravan', true);
 		await controllerClient.upgradeZone('shravan');
 
 		expect(requests).toEqual([
-			{ method: 'GET', url: 'http://127.0.0.1:18800/status' },
+			{ method: 'GET', url: 'http://127.0.0.1:18800/controller-status' },
 			{ method: 'GET', url: 'http://127.0.0.1:18800/zones/shravan/logs' },
 			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/credentials/refresh' },
 			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/destroy' },

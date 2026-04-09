@@ -100,7 +100,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 		});
 
 		// Verify status
-		const status = await gatewayClient.getStatus();
+		const status = await gatewayClient.getGatewayStatus();
 		expect(status).toMatchObject({ ok: true, version: '2026.4.2' });
 
 		// Verify tool invocation
