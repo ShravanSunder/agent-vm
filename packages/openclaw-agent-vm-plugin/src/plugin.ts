@@ -1,4 +1,4 @@
-import { createGondolinSandboxBackendFactory } from './backend.js';
+import { createGondolinSandboxBackendFactory, type FsBridgeLeaseContext, type GondolinFsBridge } from './backend.js';
 import { resolveGondolinPluginConfig } from './config.js';
 
 interface SshHelpers {
@@ -13,6 +13,20 @@ interface SshHelpers {
 		readonly session: { readonly command: string; readonly configPath: string; readonly host: string };
 		readonly tty?: boolean;
 	}) => string[];
+	readonly createRemoteShellSandboxFsBridge: (params: {
+		readonly runtime: {
+			readonly remoteAgentWorkspaceDir: string;
+			readonly remoteWorkspaceDir: string;
+			readonly runRemoteShellScript: (shellParams: {
+				readonly allowFailure?: boolean;
+				readonly args?: string[];
+				readonly script: string;
+				readonly signal?: AbortSignal;
+				readonly stdin?: Buffer | string;
+			}) => Promise<{ readonly code: number; readonly stderr: Buffer; readonly stdout: Buffer }>;
+		};
+		readonly sandbox: unknown;
+	}) => GondolinFsBridge;
 	readonly createSshSandboxSessionFromSettings: (settings: {
 		readonly command: string;
 		readonly identityData?: string;
@@ -44,6 +58,9 @@ interface BackendDeps {
 		readonly env: Record<string, string>;
 		readonly stdinMode: 'pipe-open';
 	}>;
+	readonly createFsBridgeBuilder: (
+		leaseContext: FsBridgeLeaseContext,
+	) => (params: { readonly sandbox: unknown }) => GondolinFsBridge;
 	readonly runRemoteShellScript: (params: {
 		readonly script: string;
 		readonly ssh: { readonly host: string; readonly identityPem: string; readonly port: number; readonly user: string };
@@ -81,6 +98,18 @@ function createBackendDeps(ssh: SshHelpers): BackendDeps {
 				}),
 				env: ssh.sanitizeEnvVars(process.env).allowed,
 				stdinMode: 'pipe-open' as const,
+			};
+		},
+		createFsBridgeBuilder: (leaseContext: FsBridgeLeaseContext) => {
+			return (params: { readonly sandbox: unknown }): GondolinFsBridge => {
+				return ssh.createRemoteShellSandboxFsBridge({
+					sandbox: params.sandbox,
+					runtime: {
+						remoteWorkspaceDir: leaseContext.remoteWorkspaceDir,
+						remoteAgentWorkspaceDir: leaseContext.remoteAgentWorkspaceDir,
+						runRemoteShellScript: leaseContext.runRemoteShellScript,
+					},
+				});
 			};
 		},
 		runRemoteShellScript: async ({
@@ -122,6 +151,7 @@ function assertSdkShape(value: unknown): asserts value is OpenClawSandboxSdk {
 		'buildExecRemoteCommand',
 		'buildRemoteCommand',
 		'buildSshSandboxArgv',
+		'createRemoteShellSandboxFsBridge',
 		'createSshSandboxSessionFromSettings',
 		'runSshSandboxCommand',
 		'sanitizeEnvVars',
@@ -162,6 +192,7 @@ const plugin = {
 				buildExecRemoteCommand: sdkRaw.buildExecRemoteCommand,
 				buildRemoteCommand: sdkRaw.buildRemoteCommand,
 				buildSshSandboxArgv: sdkRaw.buildSshSandboxArgv,
+				createRemoteShellSandboxFsBridge: sdkRaw.createRemoteShellSandboxFsBridge,
 				createSshSandboxSessionFromSettings: sdkRaw.createSshSandboxSessionFromSettings,
 				runSshSandboxCommand: sdkRaw.runSshSandboxCommand,
 				sanitizeEnvVars: sdkRaw.sanitizeEnvVars,

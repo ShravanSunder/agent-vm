@@ -1,6 +1,33 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { GondolinFsBridge } from './backend.js';
 import defaultPlugin, { createBackendDeps, type SshHelpers } from './plugin.js';
+
+function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
+	const mockSession = { command: 'ssh', configPath: '/tmp/ssh', host: 'tool-0.vm.host' };
+	return {
+		buildExecRemoteCommand: vi.fn(() => 'cd /workspace && ls -la'),
+		buildRemoteCommand: vi.fn(() => '/bin/sh -c pwd'),
+		buildSshSandboxArgv: vi.fn(() => ['ssh', '-i', '/tmp/key', 'tool-0.vm.host', 'ls']),
+		createRemoteShellSandboxFsBridge: vi.fn(() => ({
+			mkdirp: vi.fn(async () => {}),
+			readFile: vi.fn(async () => Buffer.from('content')),
+			remove: vi.fn(async () => {}),
+			rename: vi.fn(async () => {}),
+			resolvePath: vi.fn(() => ({ containerPath: '/workspace/f.txt', relativePath: 'f.txt' })),
+			stat: vi.fn(async () => ({ mtimeMs: 0, size: 0, type: 'file' as const })),
+			writeFile: vi.fn(async () => {}),
+		})),
+		createSshSandboxSessionFromSettings: vi.fn(async () => mockSession),
+		runSshSandboxCommand: vi.fn(async () => ({
+			code: 0,
+			stderr: Buffer.from(''),
+			stdout: Buffer.from('ok'),
+		})),
+		sanitizeEnvVars: vi.fn(() => ({ allowed: { PATH: '/usr/bin' } })),
+		...overrides,
+	};
+}
 
 describe('createGondolinPlugin', () => {
 	it('exports a default plugin descriptor with the gondolin id', () => {
@@ -45,20 +72,7 @@ describe('createGondolinPlugin', () => {
 
 describe('createBackendDeps', () => {
 	it('delegates buildExecSpec to SSH helpers', async () => {
-		const mockSession = { command: 'ssh', configPath: '/tmp/ssh', host: 'tool-0.vm.host' };
-		const ssh: SshHelpers = {
-			buildExecRemoteCommand: vi.fn(() => 'cd /workspace && ls -la'),
-			buildRemoteCommand: vi.fn(() => '/bin/sh -c pwd'),
-			buildSshSandboxArgv: vi.fn(() => ['ssh', '-i', '/tmp/key', 'tool-0.vm.host', 'ls']),
-			createSshSandboxSessionFromSettings: vi.fn(async () => mockSession),
-			runSshSandboxCommand: vi.fn(async () => ({
-				code: 0,
-				stderr: Buffer.from(''),
-				stdout: Buffer.from('ok'),
-			})),
-			sanitizeEnvVars: vi.fn(() => ({ allowed: { PATH: '/usr/bin' } })),
-		};
-
+		const ssh = createMockSshHelpers();
 		const deps = createBackendDeps(ssh);
 
 		const execSpec = await deps.buildExecSpec({
@@ -87,18 +101,15 @@ describe('createBackendDeps', () => {
 
 	it('delegates runRemoteShellScript to SSH helpers', async () => {
 		const mockSession = { command: 'ssh', configPath: '/tmp/ssh', host: 'tool-0.vm.host' };
-		const ssh: SshHelpers = {
-			buildExecRemoteCommand: vi.fn(),
+		const ssh = createMockSshHelpers({
 			buildRemoteCommand: vi.fn(() => '/bin/sh -c pwd gondolin-sandbox-fs'),
-			buildSshSandboxArgv: vi.fn(),
 			createSshSandboxSessionFromSettings: vi.fn(async () => mockSession),
 			runSshSandboxCommand: vi.fn(async () => ({
 				code: 0,
 				stderr: Buffer.from(''),
 				stdout: Buffer.from('/workspace\n'),
 			})),
-			sanitizeEnvVars: vi.fn(),
-		};
+		});
 
 		const deps = createBackendDeps(ssh);
 		const result = await deps.runRemoteShellScript({
@@ -117,6 +128,46 @@ describe('createBackendDeps', () => {
 		expect(ssh.runSshSandboxCommand).toHaveBeenCalledWith({
 			session: mockSession,
 			remoteCommand: '/bin/sh -c pwd gondolin-sandbox-fs',
+		});
+	});
+
+	it('createFsBridgeBuilder delegates to SDK createRemoteShellSandboxFsBridge', () => {
+		const mockBridge: GondolinFsBridge = {
+			mkdirp: vi.fn(async () => {}),
+			readFile: vi.fn(async () => Buffer.from('remote-content')),
+			remove: vi.fn(async () => {}),
+			rename: vi.fn(async () => {}),
+			resolvePath: vi.fn(() => ({ containerPath: '/workspace/readme.md', relativePath: 'readme.md' })),
+			stat: vi.fn(async () => ({ mtimeMs: 2000, size: 100, type: 'file' as const })),
+			writeFile: vi.fn(async () => {}),
+		};
+		const createRemoteShellSandboxFsBridge = vi.fn(() => mockBridge);
+		const ssh = createMockSshHelpers({ createRemoteShellSandboxFsBridge });
+
+		const deps = createBackendDeps(ssh);
+
+		const mockRunShellScript = vi.fn(async () => ({
+			code: 0,
+			stderr: Buffer.from(''),
+			stdout: Buffer.from(''),
+		}));
+		const createFsBridge = deps.createFsBridgeBuilder({
+			remoteWorkspaceDir: '/workspace',
+			remoteAgentWorkspaceDir: '/workspace',
+			runRemoteShellScript: mockRunShellScript,
+		});
+
+		const fakeSandbox = { workspaceDir: '/home/user', agentWorkspaceDir: '/home/user' };
+		const bridge = createFsBridge({ sandbox: fakeSandbox });
+
+		expect(bridge).toBe(mockBridge);
+		expect(createRemoteShellSandboxFsBridge).toHaveBeenCalledWith({
+			sandbox: fakeSandbox,
+			runtime: {
+				remoteWorkspaceDir: '/workspace',
+				remoteAgentWorkspaceDir: '/workspace',
+				runRemoteShellScript: mockRunShellScript,
+			},
 		});
 	});
 });

@@ -1,9 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createGondolinSandboxBackendFactory } from './backend.js';
+import { createGondolinSandboxBackendFactory, type FsBridgeLeaseContext, type GondolinFsBridge } from './backend.js';
+
+function createMockFsBridge(): GondolinFsBridge {
+	return {
+		mkdirp: vi.fn(async () => {}),
+		readFile: vi.fn(async () => Buffer.from('file-content')),
+		remove: vi.fn(async () => {}),
+		rename: vi.fn(async () => {}),
+		resolvePath: vi.fn(() => ({ containerPath: '/workspace/file.txt', relativePath: 'file.txt' })),
+		stat: vi.fn(async () => ({ mtimeMs: 1000, size: 42, type: 'file' as const })),
+		writeFile: vi.fn(async () => {}),
+	};
+}
 
 describe('createGondolinSandboxBackendFactory', () => {
-	it('requests a lease and exposes an ssh-backed sandbox handle', async () => {
+	it('requests a lease and exposes an ssh-backed sandbox handle with fs bridge', async () => {
 		const requestLease = vi.fn(async () => ({
 			leaseId: 'lease-123',
 			ssh: {
@@ -21,7 +33,10 @@ describe('createGondolinSandboxBackendFactory', () => {
 			stderr: Buffer.from(''),
 			stdout: Buffer.from('ok'),
 		}));
-		const createFsBridge = vi.fn(() => ({ kind: 'fs-bridge' }));
+		const mockBridge = createMockFsBridge();
+		const createFsBridgeBuilder = vi.fn((_leaseContext: FsBridgeLeaseContext) =>
+			vi.fn((_params: { readonly sandbox: unknown }) => mockBridge),
+		);
 		const buildExecSpec = vi.fn(async () => ({
 			argv: ['ssh', 'tool-0.vm.host'],
 			env: {},
@@ -35,7 +50,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			},
 			{
 				buildExecSpec,
-				createFsBridge,
+				createFsBridgeBuilder,
 				createLeaseClient: () => ({
 					getLeaseStatus: async () => ({ ok: true }),
 					releaseLease: async () => {},
@@ -95,8 +110,93 @@ describe('createGondolinSandboxBackendFactory', () => {
 		});
 		expect(execSpec.argv).toEqual(['ssh', 'tool-0.vm.host']);
 		expect(commandResult.code).toBe(0);
-		expect(backend.createFsBridge?.({ sandbox: { id: 'sandbox' } })).toEqual({
-			kind: 'fs-bridge',
+
+		// Verify createFsBridgeBuilder was called with lease context
+		expect(createFsBridgeBuilder).toHaveBeenCalledWith(
+			expect.objectContaining({
+				remoteWorkspaceDir: '/workspace',
+				remoteAgentWorkspaceDir: '/workspace',
+			}),
+		);
+		// Verify the lease context includes a runRemoteShellScript bound to lease SSH
+		const leaseContext = createFsBridgeBuilder.mock.calls[0]?.[0] as FsBridgeLeaseContext;
+		expect(typeof leaseContext.runRemoteShellScript).toBe('function');
+
+		// Verify createFsBridge on the handle delegates to the builder
+		expect(backend.createFsBridge).toBeDefined();
+		const bridge = backend.createFsBridge?.({ sandbox: { id: 'sandbox' } });
+		expect(bridge).toBe(mockBridge);
+	});
+
+	it('createFsBridgeBuilder lease context runRemoteShellScript delegates to deps', async () => {
+		const runRemoteShellScript = vi.fn(async () => ({
+			code: 0,
+			stderr: Buffer.from(''),
+			stdout: Buffer.from('/workspace\n'),
+		}));
+		let capturedLeaseContext: FsBridgeLeaseContext | undefined;
+		const createFsBridgeBuilder = vi.fn((leaseContext: FsBridgeLeaseContext) => {
+			capturedLeaseContext = leaseContext;
+			return vi.fn(() => createMockFsBridge());
+		});
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createFsBridgeBuilder,
+				createLeaseClient: () => ({
+					getLeaseStatus: async () => ({ ok: true }),
+					releaseLease: async () => {},
+					requestLease: vi.fn(async () => ({
+						leaseId: 'lease-789',
+						ssh: {
+							host: 'tool-0.vm.host',
+							identityPem: 'pem',
+							knownHostsLine: '',
+							port: 22,
+							user: 'sandbox',
+						},
+						tcpSlot: 0,
+						workdir: '/workspace',
+					})),
+				}),
+				runRemoteShellScript,
+			},
+		);
+
+		await factory({
+			agentWorkspaceDir: '/workspace',
+			cfg: {},
+			scopeKey: 'test',
+			sessionKey: 'test',
+			workspaceDir: '/workspace',
+		});
+
+		// Call the captured runRemoteShellScript from the lease context
+		expect(capturedLeaseContext).toBeDefined();
+		await capturedLeaseContext!.runRemoteShellScript({
+			script: 'cat /etc/hostname',
+			args: ['/workspace/file.txt'],
+		});
+
+		// Verify it delegates to the deps runRemoteShellScript with the lease SSH creds
+		expect(runRemoteShellScript).toHaveBeenCalledWith({
+			script: expect.stringContaining('cat /etc/hostname'),
+			ssh: {
+				host: 'tool-0.vm.host',
+				identityPem: 'pem',
+				knownHostsLine: '',
+				port: 22,
+				user: 'sandbox',
+			},
 		});
 	});
 
@@ -130,7 +230,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		).rejects.toThrow('Controller lease API returned an unexpected response.');
 	});
 
-	it('omits env and createFsBridge from handle when not provided', async () => {
+	it('omits env and createFsBridge from handle when createFsBridgeBuilder is not provided', async () => {
 		const requestLease = vi.fn(async () => ({
 			leaseId: 'lease-456',
 			ssh: {

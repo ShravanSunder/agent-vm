@@ -3,8 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { createGatewayApiClient } from './gateway-api-client.js';
 
 describe('createGatewayApiClient', () => {
-	it('checks gateway readiness via /api/status', async () => {
-		const requests: { url: string; method: string }[] = [];
+	it('checks gateway readiness via /readyz with bearer auth', async () => {
+		const requests: { url: string; method: string; headers: Record<string, string> }[] =
+			[];
 		const client = createGatewayApiClient({
 			gatewayUrl: 'http://127.0.0.1:18791',
 			token: 'test-token',
@@ -17,18 +18,23 @@ describe('createGatewayApiClient', () => {
 								? input.toString()
 								: input.url,
 					method: init?.method ?? 'GET',
+					headers: Object.fromEntries(new Headers(init?.headers).entries()),
 				});
-				return new Response(JSON.stringify({ ok: true, version: '2026.4.2' }), {
-					headers: { 'content-type': 'application/json' },
-					status: 200,
-				});
+				return new Response(
+					JSON.stringify({ ready: true, failing: [], uptimeMs: 12345 }),
+					{
+						headers: { 'content-type': 'application/json' },
+						status: 200,
+					},
+				);
 			},
 		});
 
 		const status = await client.getGatewayStatus();
 
-		expect(requests[0]?.url).toBe('http://127.0.0.1:18791/api/status');
-		expect(status).toMatchObject({ ok: true });
+		expect(requests[0]?.url).toBe('http://127.0.0.1:18791/readyz');
+		expect(requests[0]?.headers['authorization']).toBe('Bearer test-token');
+		expect(status).toMatchObject({ ready: true });
 	});
 
 	it('invokes a tool with bearer auth', async () => {
@@ -91,7 +97,7 @@ describe('createGatewayApiClient', () => {
 							? input.toString()
 							: input.url,
 				);
-				return new Response(JSON.stringify({ ok: true }), {
+				return new Response(JSON.stringify({ ready: true }), {
 					headers: { 'content-type': 'application/json' },
 					status: 200,
 				});
@@ -100,6 +106,6 @@ describe('createGatewayApiClient', () => {
 
 		await client.getGatewayStatus();
 
-		expect(requests[0]).toBe('http://127.0.0.1:18791/api/status');
+		expect(requests[0]).toBe('http://127.0.0.1:18791/readyz');
 	});
 });

@@ -5,8 +5,28 @@ export interface GatewayToolInvocation {
 	readonly dryRun?: boolean;
 }
 
+/**
+ * Liveness probe response from `/health` or `/healthz`.
+ * Gateway returns `{ ok: true, status: "live" }` when the process is alive.
+ */
+export interface GatewayLivenessResponse {
+	readonly ok: boolean;
+	readonly status: 'live';
+}
+
+/**
+ * Readiness probe response from `/readyz`.
+ * Authenticated callers also receive `failing` and `uptimeMs` detail fields.
+ */
+export interface GatewayReadinessResponse {
+	readonly ready: boolean;
+	readonly failing?: readonly string[];
+	readonly uptimeMs?: number;
+}
+
 export interface GatewayApiClient {
-	getGatewayStatus(): Promise<unknown>;
+	/** Check gateway readiness via the `/readyz` probe endpoint. */
+	getGatewayStatus(): Promise<GatewayReadinessResponse>;
 	invokeTool(invocation: GatewayToolInvocation): Promise<unknown>;
 }
 
@@ -19,9 +39,13 @@ export function createGatewayApiClient(options: {
 	const baseUrl = options.gatewayUrl.replace(/\/$/u, '');
 
 	return {
-		getGatewayStatus: async (): Promise<unknown> => {
-			const response = await fetchImpl(`${baseUrl}/api/status`);
-			return await response.json();
+		getGatewayStatus: async (): Promise<GatewayReadinessResponse> => {
+			const response = await fetchImpl(`${baseUrl}/readyz`, {
+				headers: {
+					authorization: `Bearer ${options.token}`,
+				},
+			});
+			return (await response.json()) as GatewayReadinessResponse;
 		},
 		invokeTool: async (invocation: GatewayToolInvocation): Promise<unknown> => {
 			const response = await fetchImpl(`${baseUrl}/tools/invoke`, {

@@ -28,12 +28,12 @@ describe('live smoke: API client → controller over real HTTP', () => {
 	});
 
 	it('gateway API client talks to a real Hono HTTP server', async () => {
-		// --- Mock gateway that simulates OpenClaw's /tools/invoke and /api/status ---
+		// --- Mock gateway that simulates OpenClaw's /tools/invoke and /readyz ---
 		const toolInvocations: unknown[] = [];
 		const gatewayApp = new Hono();
 
-		gatewayApp.get('/api/status', (context) =>
-			context.json({ ok: true, version: '2026.4.2', uptime: 123 }),
+		gatewayApp.get('/readyz', (context) =>
+			context.json({ ready: true, uptimeMs: 123000 }),
 		);
 
 		gatewayApp.post('/tools/invoke', async (context) => {
@@ -99,9 +99,9 @@ describe('live smoke: API client → controller over real HTTP', () => {
 			token: 'test-gateway-token',
 		});
 
-		// Verify status
-		const status = await gatewayClient.getGatewayStatus();
-		expect(status).toMatchObject({ ok: true, version: '2026.4.2' });
+		// Verify readiness
+		const readiness = await gatewayClient.getGatewayStatus();
+		expect(readiness).toMatchObject({ ready: true });
 
 		// Verify tool invocation
 		const toolResult = await gatewayClient.invokeTool({
