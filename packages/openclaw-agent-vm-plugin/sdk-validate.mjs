@@ -25,15 +25,20 @@ try {
 	const missing = REQUIRED_EXPORTS.filter((name) => typeof sdk[name] !== 'function');
 
 	if (missing.length > 0) {
-		console.error('SDK MISMATCH — missing exports:', missing.join(', '));
-		console.error('Update assertSdkShape() and SshHelpers interface in plugin.ts');
+		process.stderr.write(`SDK MISMATCH - missing exports: ${missing.join(', ')}\n`);
+		process.stderr.write(
+			'Update assertSdkShape() and SshHelpers interface in plugin.ts\n',
+		);
 		process.exit(1);
 	}
 
-	console.log('SDK COMPATIBLE — all', REQUIRED_EXPORTS.length, 'required exports found');
+	process.stdout.write(
+		`SDK COMPATIBLE - all ${String(REQUIRED_EXPORTS.length)} required exports found\n`,
+	);
 	process.exit(0);
-} catch (err) {
-	console.error('SDK LOAD FAILED:', err.message);
-	console.error('Is OpenClaw installed? Expected at:', SDK_PATH);
+} catch (error) {
+	const message = error instanceof Error ? error.message : JSON.stringify(error);
+	process.stderr.write(`SDK LOAD FAILED: ${message}\n`);
+	process.stderr.write(`Is OpenClaw installed? Expected at: ${SDK_PATH}\n`);
 	process.exit(1);
 }

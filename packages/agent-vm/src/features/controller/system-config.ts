@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 
 import { z } from 'zod';
 
@@ -80,8 +81,49 @@ const systemConfigSchema = z.object({
 
 export type SystemConfig = z.infer<typeof systemConfigSchema>;
 
+/**
+ * Resolve all relative paths in a system config relative to the config file's directory.
+ * This ensures paths like "./state/shravan" work regardless of the process CWD.
+ */
+function resolveRelativePaths(config: SystemConfig, configDir: string): SystemConfig {
+	const resolvePath = (relativePath: string): string =>
+		path.isAbsolute(relativePath) ? relativePath : path.resolve(configDir, relativePath);
+
+	return {
+		...config,
+		images: {
+			gateway: {
+				...config.images.gateway,
+				buildConfig: resolvePath(config.images.gateway.buildConfig),
+			},
+			tool: {
+				...config.images.tool,
+				buildConfig: resolvePath(config.images.tool.buildConfig),
+			},
+		},
+		zones: config.zones.map((zone) => ({
+			...zone,
+			gateway: {
+				...zone.gateway,
+				openclawConfig: resolvePath(zone.gateway.openclawConfig),
+				stateDir: resolvePath(zone.gateway.stateDir),
+				workspaceDir: resolvePath(zone.gateway.workspaceDir),
+			},
+		})),
+		toolProfiles: Object.fromEntries(
+			Object.entries(config.toolProfiles).map(([profileId, profile]) => [
+				profileId,
+				{ ...profile, workspaceRoot: resolvePath(profile.workspaceRoot) },
+			]),
+		),
+	};
+}
+
 export function loadSystemConfig(configPath: string): SystemConfig {
-	const rawConfig = fs.readFileSync(configPath, 'utf8');
+	const absoluteConfigPath = path.resolve(configPath);
+	const configDir = path.dirname(absoluteConfigPath);
+	const rawConfig = fs.readFileSync(absoluteConfigPath, 'utf8');
 	const parsedConfig = JSON.parse(rawConfig) as unknown;
-	return systemConfigSchema.parse(parsedConfig);
+	const config = systemConfigSchema.parse(parsedConfig);
+	return resolveRelativePaths(config, configDir);
 }

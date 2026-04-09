@@ -102,7 +102,6 @@ describe('runAgentVmCli', () => {
 							close: async () => {},
 						}) as never,
 				),
-				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
 		);
@@ -201,7 +200,6 @@ describe('runAgentVmCli', () => {
 							close: async () => {},
 						}) as never,
 				),
-				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
 		);
@@ -322,7 +320,6 @@ describe('runAgentVmCli', () => {
 					ok: true,
 				}),
 				startControllerRuntime,
-				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
 		);
@@ -442,6 +439,7 @@ describe('runAgentVmCli', () => {
 			['controller', 'upgrade', '--zone', 'shravan'],
 			['controller', 'credentials', 'refresh', '--zone', 'shravan'],
 		] as const) {
+			// oxlint-disable-next-line no-await-in-loop -- commands intentionally run serially against shared mocks
 			await runAgentVmCli(
 				command,
 				{

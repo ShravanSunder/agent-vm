@@ -58,9 +58,17 @@ export function createLeaseClient(options: {
 				},
 				method: 'POST',
 			});
+			if (!response.ok) {
+				const errorBody = await response.text().catch(() => '(unreadable)');
+				throw new TypeError(
+					`Controller lease API returned HTTP ${response.status}: ${errorBody}`,
+				);
+			}
 			const payload = await response.json();
 			if (!isGondolinLeaseResponse(payload)) {
-				throw new TypeError('Controller returned an invalid lease response.');
+				throw new TypeError(
+					`Controller returned an invalid lease response: ${JSON.stringify(payload).slice(0, 200)}`,
+				);
 			}
 			return payload;
 		},

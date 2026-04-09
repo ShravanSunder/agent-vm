@@ -24,7 +24,7 @@ describe('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
 	it('should create tool VM, enable SSH, then SSH from gateway VM to tool VM', async () => {
 		const t0 = Date.now();
 		const log = (msg: string): void => {
-			console.log(`[${String(Date.now() - t0).padStart(5)}ms] ${msg}`);
+			process.stdout.write(`[${String(Date.now() - t0).padStart(5)}ms] ${msg}\n`);
 		};
 
 		// Step 1: Create tool VM and enable SSH on a specific port
@@ -91,9 +91,6 @@ describe('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
 				'"echo cross_vm_ok && cat /tmp/marker.txt && uname -m"',
 		);
 		log(`SSH result: exit=${sshResult.exitCode}`);
-
-		console.log('stdout:', sshResult.stdout);
-		console.log('stderr:', sshResult.stderr);
 
 		expect(sshResult.exitCode).toBe(0);
 		expect(sshResult.stdout).toContain('cross_vm_ok');

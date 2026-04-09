@@ -7,6 +7,8 @@ import {
 	type SecretResolverClient,
 } from './secret-resolver.js';
 
+const emptyExecFileResult = async (): Promise<ExecFileResult> => ({ stdout: '', stderr: '' });
+
 describe('resolveServiceAccountToken', () => {
 	it('resolves token via op-cli', async () => {
 		const fakeExec = async (
@@ -79,12 +81,10 @@ describe('resolveServiceAccountToken', () => {
 	});
 
 	it('throws when op-cli returns empty', async () => {
-		const fakeExec = async (): Promise<ExecFileResult> => ({ stdout: '', stderr: '' });
-
 		await expect(
 			resolveServiceAccountToken(
 				{ type: 'op-cli', ref: 'op://vault/item/field' },
-				{ execFileAsync: fakeExec },
+				{ execFileAsync: emptyExecFileResult },
 			),
 		).rejects.toThrow('empty value');
 	});

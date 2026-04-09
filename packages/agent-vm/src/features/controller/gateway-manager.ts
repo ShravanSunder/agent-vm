@@ -269,6 +269,7 @@ export async function startGatewayZone(
 	// Accept any HTTP status (including 401) as "listening" — use curl to get the status code.
 	const maxAttempts = 30;
 	for (let attempt = 0; attempt < maxAttempts; attempt++) {
+		// oxlint-disable-next-line no-await-in-loop -- readiness polling must be sequential
 		const check = await managedVm.exec(
 			'curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:18789/ 2>/dev/null || echo 000',
 		);

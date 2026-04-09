@@ -1,4 +1,6 @@
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 
 import {
 	buildImage as buildImageFromCore,
@@ -132,6 +134,10 @@ export async function startControllerRuntime(
 				buildConfig: toolBuildConfig,
 				cacheDir: `${zone.gateway.stateDir}/images/tool`,
 			});
+			// Use the host-side workspace root from toolProfiles, not the guest-internal path.
+			// The plugin sends a path from inside the gateway VM which doesn't exist on the host.
+			const hostWorkspaceDir = path.resolve(toolVmOptions.profile.workspaceRoot, `${toolVmOptions.zoneId}-${toolVmOptions.tcpSlot}`);
+			fsSync.mkdirSync(hostWorkspaceDir, { recursive: true });
 			return await createManagedVmFromCore({
 				allowedHosts: [],
 				cpus: toolVmOptions.profile.cpus,
@@ -142,7 +148,7 @@ export async function startControllerRuntime(
 				secrets: {},
 				vfsMounts: {
 					'/workspace': {
-						hostPath: toolVmOptions.workspaceDir,
+						hostPath: hostWorkspaceDir,
 						kind: 'realfs',
 					},
 				},

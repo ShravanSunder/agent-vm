@@ -39,6 +39,7 @@ describe('createControllerApp', () => {
 		const getLease = vi.fn(() => lease);
 		const releaseLease = vi.fn(async () => {});
 		const app = createControllerApp({
+			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
 			readIdentityPem: async () => 'pem-from-file',
 			leaseManager: {
 				createLease,
@@ -82,6 +83,7 @@ describe('createControllerApp', () => {
 
 	it('returns 503 when the tcp pool is exhausted', async () => {
 		const app = createControllerApp({
+			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
 			leaseManager: {
 				createLease: vi.fn(async () => {
 					throw new Error('No TCP slots available');
@@ -132,6 +134,7 @@ describe('createControllerApp', () => {
 			zoneId: 'shravan',
 		}));
 		const app = createControllerApp({
+			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
 			leaseManager: {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
@@ -179,6 +182,7 @@ describe('createControllerApp', () => {
 
 	it('returns 400 for invalid lease create payload', async () => {
 		const app = createControllerApp({
+			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
 			leaseManager: {
 				createLease: vi.fn(async () => {
 					throw new Error('should not be called');
@@ -203,6 +207,7 @@ describe('createControllerApp', () => {
 
 	it('returns 404 when fetching a non-existent lease', async () => {
 		const app = createControllerApp({
+			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
 			leaseManager: {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
@@ -243,6 +248,7 @@ describe('createControllerApp', () => {
 			},
 		]);
 		const app = createControllerApp({
+			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
 			leaseManager: {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
@@ -264,6 +270,7 @@ describe('createControllerApp', () => {
 	it('gracefully stops the controller via POST /stop', async () => {
 		const stopController = vi.fn(async () => ({ ok: true }));
 		const app = createControllerApp({
+			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
 			leaseManager: {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');

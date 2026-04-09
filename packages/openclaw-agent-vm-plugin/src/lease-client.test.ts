@@ -72,7 +72,7 @@ describe('createLeaseClient', () => {
 				workspaceDir: '/workspace',
 				zoneId: 'shravan',
 			}),
-		).rejects.toThrow('Controller returned an invalid lease response.');
+		).rejects.toThrow('Controller returned an invalid lease response');
 	});
 
 	it('strips trailing slash from controller url', async () => {

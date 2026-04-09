@@ -35,6 +35,7 @@ function isDestroyPayload(value: unknown): value is { readonly purge?: boolean }
 export function createControllerApp(options: {
 	readonly leaseManager: Pick<LeaseManager, 'createLease' | 'getLease' | 'listLeases' | 'releaseLease'>;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
+	readonly toolProfiles?: Record<string, { readonly cpus: number; readonly memory: string; readonly workspaceRoot: string }>;
 	readonly operations?: {
 		readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
 		readonly enableSshForZone?: (zoneId: string) => Promise<unknown>;
@@ -58,13 +59,13 @@ export function createControllerApp(options: {
 			if (!isLeaseCreatePayload(payload)) {
 				return context.json({ error: 'invalid-lease-request' }, 400);
 			}
+			const toolProfile = options.toolProfiles?.[payload.profileId];
+			if (!toolProfile) {
+				return context.json({ error: `Unknown tool profile '${payload.profileId}'` }, 400);
+			}
 			const lease = await options.leaseManager.createLease({
 				agentWorkspaceDir: payload.agentWorkspaceDir,
-				profile: {
-					cpus: 1,
-					memory: '1G',
-					workspaceRoot: '/workspace',
-				},
+				profile: toolProfile,
 				profileId: payload.profileId,
 				scopeKey: payload.scopeKey,
 				workspaceDir: payload.workspaceDir,
@@ -201,6 +202,7 @@ export function createControllerService(options: {
 }): Hono {
 	const app = createControllerApp({
 		leaseManager: options.leaseManager,
+		toolProfiles: options.systemConfig.toolProfiles,
 		...(options.operations ? { operations: options.operations } : {}),
 	});
 

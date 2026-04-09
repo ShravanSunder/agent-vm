@@ -35,9 +35,6 @@ describe('live smoke: real Gondolin VM', () => {
 		});
 
 		const result = await vm.exec('echo hello_from_gondolin && uname -a');
-		console.log('VM exec stdout:', result.stdout);
-		console.log('VM exec stderr:', result.stderr);
-		console.log('VM exec exitCode:', result.exitCode);
 
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain('hello_from_gondolin');
@@ -69,7 +66,6 @@ describe('live smoke: real Gondolin VM', () => {
 		});
 
 		const result = await vm.exec('cat /test-mount/test.txt');
-		console.log('VFS read:', result.stdout);
 
 		expect(result.stdout.trim()).toBe('vfs_mount_works');
 
@@ -98,7 +94,6 @@ describe('live smoke: real Gondolin VM', () => {
 
 		// The VM sees a placeholder, not the real value
 		const envCheck = await vm.exec('echo $TEST_TOKEN');
-		console.log('Env TEST_TOKEN:', envCheck.stdout.trim());
 		expect(envCheck.stdout.trim()).not.toBe('real-secret-value-12345');
 		expect(envCheck.stdout.trim()).toContain('GONDOLIN_SECRET_');
 
@@ -106,7 +101,6 @@ describe('live smoke: real Gondolin VM', () => {
 		const curlResult = await vm.exec(
 			'curl -sS -H "Authorization: Bearer $TEST_TOKEN" https://httpbin.org/headers',
 		);
-		console.log('Curl result:', curlResult.stdout.slice(0, 300));
 
 		// The response should show the real token was injected by the proxy
 		expect(curlResult.stdout).toContain('real-secret-value-12345');
@@ -126,20 +120,17 @@ describe('live smoke: real Gondolin VM', () => {
 		await new Promise((resolve) => setTimeout(resolve, 2000));
 
 		// Verify server is running inside VM
-		const internalCheck = await vm.exec(
+		await vm.exec(
 			'wget -qO- http://127.0.0.1:18080/ 2>/dev/null || echo not_ready',
 		);
-		console.log('Internal check:', internalCheck.stdout.trim());
 
 		// Configure ingress and expose to host
 		vm.setIngressRoutes([{ prefix: '/', port: 18080, stripPrefix: true }]);
 		const ingress = await vm.enableIngress({ listenPort: 0 });
-		console.log(`Ingress listening on: http://${ingress.host}:${ingress.port}/`);
 
 		// Fetch from host
 		const response = await fetch(`http://${ingress.host}:${ingress.port}/`);
 		const body = await response.text();
-		console.log('Ingress response:', response.status, body);
 
 		expect(response.status).toBe(200);
 		expect(body).toBe('ingress_works');
@@ -153,9 +144,6 @@ describe('live smoke: real Gondolin VM', () => {
 			listenHost: '127.0.0.1',
 			listenPort: 0,
 		});
-
-		console.log('SSH access:', sshAccess.host, sshAccess.port, sshAccess.user);
-		console.log('SSH command:', sshAccess.command);
 
 		expect(sshAccess.host).toBe('127.0.0.1');
 		expect(sshAccess.port).toBeGreaterThan(0);

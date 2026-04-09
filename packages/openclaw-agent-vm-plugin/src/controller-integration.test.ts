@@ -8,6 +8,7 @@ describe('gondolin controller integration', () => {
 	it('requests a lease through the controller app and builds an exec spec from the returned ssh lease', async () => {
 		const controllerApp = createControllerApp({
 			readIdentityPem: async () => 'pem',
+			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
 			leaseManager: {
 				createLease: vi.fn(async () => ({
 					createdAt: 1,

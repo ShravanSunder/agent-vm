@@ -25,12 +25,17 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 	afterAll(async () => {
 		if (gatewayVm) await gatewayVm.close().catch(() => {});
 		if (toolVm) await toolVm.close().catch(() => {});
-		if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+		if (server) {
+			await new Promise<void>((resolve) => {
+				server?.close(() => resolve());
+			});
+		}
 	});
 
 	it('should route exec from gateway VM to tool VM via the controller lease API', async () => {
 		const t0 = Date.now();
-		const log = (msg: string): void => console.log(`[${String(Date.now() - t0).padStart(6)}ms] ${msg}`);
+		const log = (msg: string): void =>
+			process.stdout.write(`[${String(Date.now() - t0).padStart(6)}ms] ${msg}\n`);
 
 		// --- Step 1: Create tool VM (pre-create so we have SSH creds ready) ---
 		log('creating tool VM...');
@@ -62,9 +67,9 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 		log('starting controller lease API...');
 		const app = new Hono();
 
-		app.post('/lease', async (c) => {
+		app.post('/lease', async (context) => {
 			log('lease API: POST /lease received');
-			return c.json({
+			return context.json({
 				leaseId: 'test-lease-001',
 				ssh: {
 					host: 'tool-0.vm.host',
@@ -78,7 +83,7 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 			});
 		});
 
-		app.get('/health', (c) => c.json({ ok: true }));
+		app.get('/health', (context) => context.json({ ok: true }));
 
 		server = serve({ fetch: app.fetch, port: 18800 });
 		log('controller API listening on :18800');

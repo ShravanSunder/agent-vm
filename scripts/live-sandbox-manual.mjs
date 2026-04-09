@@ -1,3 +1,4 @@
+/* oxlint-disable no-console, no-await-in-loop, id-length, no-control-regex */
 /**
  * Live manual sandbox test — boots full stack with channels + sandbox plugin.
  *

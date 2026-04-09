@@ -32,7 +32,25 @@ interface SshHelpers {
 	) => { readonly allowed: Record<string, string> };
 }
 
-function createBackendDeps(ssh: SshHelpers) {
+interface BackendDeps {
+	readonly buildExecSpec: (params: {
+		readonly command: string;
+		readonly env: Record<string, string>;
+		readonly ssh: { readonly host: string; readonly identityPem: string; readonly port: number; readonly user: string };
+		readonly usePty: boolean;
+		readonly workdir: string;
+	}) => Promise<{
+		readonly argv: string[];
+		readonly env: Record<string, string>;
+		readonly stdinMode: 'pipe-open';
+	}>;
+	readonly runRemoteShellScript: (params: {
+		readonly script: string;
+		readonly ssh: { readonly host: string; readonly identityPem: string; readonly port: number; readonly user: string };
+	}) => Promise<{ readonly code: number; readonly stderr: Buffer; readonly stdout: Buffer }>;
+}
+
+function createBackendDeps(ssh: SshHelpers): BackendDeps {
 	return {
 		buildExecSpec: async ({
 			command,
@@ -158,9 +176,9 @@ const plugin = {
 		// but the sandbox backend registration is async. The backend won't be
 		// available until the import resolves (~1 tick). In practice, sandbox
 		// backends are used at tool-call time, not at startup, so this is safe.
-		sdkPromise.catch((err: unknown) => {
-			const message = err instanceof Error ? err.message : String(err);
-			console.error(`[gondolin] failed to load OpenClaw SDK: ${message}`);
+		sdkPromise.catch((error: unknown) => {
+			const message = error instanceof Error ? error.message : JSON.stringify(error);
+			process.stderr.write(`[gondolin] failed to load OpenClaw SDK: ${message}\n`);
 		});
 	},
 };
