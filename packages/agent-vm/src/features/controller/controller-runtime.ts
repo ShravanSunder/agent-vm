@@ -270,10 +270,22 @@ export async function startControllerRuntime(
 						},
 					},
 				),
+			stopController: async () => {
+				(dependencies.clearIntervalImpl ?? clearInterval)(reaperTimer);
+				for (const lease of leaseManager.listLeases()) {
+					// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP pool races
+					await leaseManager.releaseLease(lease.id);
+				}
+				await gateway.vm.close();
+				// Schedule server close after the response is sent
+				setTimeout(() => void serverRef.current?.close(), 100);
+				return { ok: true };
+			},
 		},
 		systemConfig: options.systemConfig,
 	});
-	const server = await (dependencies.startHttpServer ?? defaultStartHttpServer)({
+	const serverRef: { current: { close(): Promise<void> } | undefined } = { current: undefined };
+	serverRef.current = await (dependencies.startHttpServer ?? defaultStartHttpServer)({
 		app: controllerApp,
 		port: options.systemConfig.host.controllerPort,
 	});
@@ -284,7 +296,7 @@ export async function startControllerRuntime(
 		async close(): Promise<void> {
 			(dependencies.clearIntervalImpl ?? clearInterval)(reaperTimer);
 			await gateway.vm.close();
-			await server.close();
+			await serverRef.current?.close();
 		},
 		controllerPort: options.systemConfig.host.controllerPort,
 		gateway: {

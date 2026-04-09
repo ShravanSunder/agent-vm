@@ -304,6 +304,11 @@ describe('startGatewayZone', () => {
 		const vmOptions = createManagedVm.mock.calls[0]?.[0];
 		expect(vmOptions.tcpHosts).toEqual({
 			'controller.vm.host:18800': '127.0.0.1:18800',
+			'tool-0.vm.host:22': '127.0.0.1:19000',
+			'tool-1.vm.host:22': '127.0.0.1:19001',
+			'tool-2.vm.host:22': '127.0.0.1:19002',
+			'tool-3.vm.host:22': '127.0.0.1:19003',
+			'tool-4.vm.host:22': '127.0.0.1:19004',
 			'gateway.discord.gg:443': 'gateway.discord.gg:443',
 		});
 	});

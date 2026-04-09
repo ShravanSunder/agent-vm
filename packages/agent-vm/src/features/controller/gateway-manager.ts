@@ -107,10 +107,17 @@ function splitSecretsByInjection(
 function buildTcpHosts(
 	zone: GatewayZone,
 	controllerPort: number,
+	tcpPool: { readonly basePort: number; readonly size: number },
 ): Record<string, string> {
 	const tcpHosts: Record<string, string> = {
 		'controller.vm.host:18800': `127.0.0.1:${controllerPort}`,
 	};
+
+	// Tool VM SSH slots: map tool-N.vm.host:22 → 127.0.0.1:<basePort+N>
+	// so the gateway VM can SSH into leased tool VMs via tcp.hosts tunnel
+	for (let slot = 0; slot < tcpPool.size; slot++) {
+		tcpHosts[`tool-${slot}.vm.host:22`] = `127.0.0.1:${tcpPool.basePort + slot}`;
+	}
 
 	// WebSocket bypass: raw TCP tunnel for channels that use ws library
 	// (Discord, WhatsApp) — bypasses Gondolin HTTP MITM proxy
@@ -210,7 +217,7 @@ export async function startGatewayZone(
 		rootfsMode: 'cow',
 		secrets: mediationSecrets,
 		sessionLabel: `${zone.id}-gateway`,
-		tcpHosts: buildTcpHosts(zone, options.systemConfig.host.controllerPort),
+		tcpHosts: buildTcpHosts(zone, options.systemConfig.host.controllerPort, options.systemConfig.tcpPool),
 		vfsMounts: {
 			'/home/openclaw/.openclaw/config': {
 				hostPath: configDir,
