@@ -141,22 +141,22 @@ export function createSnapshotManager(
 				const extractedStateDir = path.join(extractDir, 'state');
 				if (fs.existsSync(extractedStateDir)) {
 					const stateEntries = fs.readdirSync(extractedStateDir);
-					for (const entry of stateEntries) {
+					await Promise.all(stateEntries.map(async (entry) => {
 						const sourcePath = path.join(extractedStateDir, entry);
 						const destPath = path.join(options.stateDir, entry);
 						await execFileAsync('cp', ['-a', sourcePath, destPath]);
-					}
+					}));
 				}
 
 				// Copy extracted workspace/ contents into the target workspaceDir
 				const extractedWorkspaceDir = path.join(extractDir, 'workspace');
 				if (fs.existsSync(extractedWorkspaceDir)) {
 					const workspaceEntries = fs.readdirSync(extractedWorkspaceDir);
-					for (const entry of workspaceEntries) {
+					await Promise.all(workspaceEntries.map(async (entry) => {
 						const sourcePath = path.join(extractedWorkspaceDir, entry);
 						const destPath = path.join(options.workspaceDir, entry);
 						await execFileAsync('cp', ['-a', sourcePath, destPath]);
-					}
+					}));
 				}
 
 				return {

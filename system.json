@@ -59,9 +59,6 @@
 				"static.whatsapp.net:443"
 			],
 			"allowedHosts": [
-				"api.anthropic.com",
-				"statsig.anthropic.com",
-				"sentry.io",
 				"api.openai.com",
 				"auth.openai.com",
 				"api.perplexity.ai",
@@ -69,6 +66,8 @@
 				"cdn.discordapp.com",
 				"api.github.com",
 				"registry.npmjs.org",
+				"deb.debian.org",
+				"security.debian.org",
 				"clawhub.ai",
 				"openclaw.ai",
 				"docs.openclaw.ai"

@@ -128,6 +128,22 @@ function buildTcpHosts(
 	return tcpHosts;
 }
 
+async function waitForGatewayReadiness(managedVm: ManagedVm, attempt: number, maxAttempts: number): Promise<void> {
+	if (attempt >= maxAttempts) {
+		return;
+	}
+
+	const check = await managedVm.exec(
+		'curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:18789/ 2>/dev/null || echo 000',
+	);
+	if (check.stdout.trim() !== '000') {
+		return;
+	}
+
+	await new Promise((resolve) => setTimeout(resolve, 500));
+	await waitForGatewayReadiness(managedVm, attempt + 1, maxAttempts);
+}
+
 export async function startGatewayZone(
 	options: {
 		readonly pluginSourceDir?: string;
@@ -203,13 +219,10 @@ export async function startGatewayZone(
 		cpus: zone.gateway.cpus,
 		env: {
 			HOME: '/home/openclaw',
-			NODE_EXTRA_CA_CERTS: '/etc/ssl/certs/ca-certificates.crt',
+			NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
 			OPENCLAW_HOME: '/home/openclaw',
 			OPENCLAW_CONFIG_PATH: `/home/openclaw/.openclaw/config/${configFileName}`,
 			OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
-			...(options.pluginSourceDir
-				? { OPENCLAW_BUNDLED_PLUGINS_DIR: '/opt/extensions' }
-				: {}),
 			...envSecrets,
 		},
 		imagePath: image.imagePath,
@@ -221,7 +234,7 @@ export async function startGatewayZone(
 		vfsMounts: {
 			'/home/openclaw/.openclaw/config': {
 				hostPath: configDir,
-				kind: 'realfs-readonly',
+				kind: 'realfs',
 			},
 			'/home/openclaw/.openclaw/state': {
 				hostPath: zone.gateway.stateDir,
@@ -242,28 +255,38 @@ export async function startGatewayZone(
 		},
 	});
 
+	// Update Gondolin CA trust in the Debian image.
+	// Gondolin injects its MITM CA at /usr/local/share/ca-certificates/gondolin-mitm-ca.crt.
+	// update-ca-certificates merges it into the system trust store so npm/curl work.
+	await managedVm.exec('update-ca-certificates > /dev/null 2>&1');
+
 	// Write OpenClaw env vars to /etc/profile.d/ so SSH sessions inherit them.
-	// Without this, SSH login as root resolves OPENCLAW_HOME to /root/ instead
-	// of /home/openclaw/, causing config/auth/state path mismatches.
-	// Uses double-quoted heredoc so $OPENCLAW_GATEWAY_TOKEN expands from the process env.
-	await managedVm.exec(
-		'mkdir -p /etc/profile.d && cat > /etc/profile.d/openclaw.sh << ENVEOF\n' +
+	// Debian sources /etc/profile.d/*.sh on login shell init (bash).
+	// Also write to /root/.bashrc as a fallback for non-login SSH sessions.
+	const envVarsScript =
 		'export OPENCLAW_HOME=/home/openclaw\n' +
 		`export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/config/${configFileName}\n` +
 		'export OPENCLAW_STATE_DIR=/home/openclaw/.openclaw/state\n' +
 		'export OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN\n' +
-		(options.pluginSourceDir ? 'export OPENCLAW_BUNDLED_PLUGINS_DIR=/opt/extensions\n' : '') +
+		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt\n';
+
+	await managedVm.exec(
+		'mkdir -p /etc/profile.d && cat > /etc/profile.d/openclaw.sh << ENVEOF\n' +
+		envVarsScript +
 		'ENVEOF\n' +
-		'chmod 644 /etc/profile.d/openclaw.sh',
+		'chmod 644 /etc/profile.d/openclaw.sh && ' +
+		'cat /etc/profile.d/openclaw.sh >> /root/.bashrc',
 	);
 
-	// Copy plugin from VFS staging to rootfs with root ownership.
+	// Copy plugin into OpenClaw's built-in extensions directory.
+	// This preserves all built-in providers (openai-codex, etc.) while adding ours.
 	// OpenClaw rejects plugins owned by non-root UIDs (VFS preserves host UID).
 	if (options.pluginSourceDir) {
+		const openclawExtensionsDir = '/usr/local/lib/node_modules/openclaw/dist/extensions';
 		await managedVm.exec(
-			'mkdir -p /opt/extensions/gondolin && ' +
-			'cp -a /opt/gondolin-plugin-src/. /opt/extensions/gondolin/ && ' +
-			'chown -R root:root /opt/extensions',
+			`mkdir -p ${openclawExtensionsDir}/gondolin && ` +
+			`cp -a /opt/gondolin-plugin-src/. ${openclawExtensionsDir}/gondolin/ && ` +
+			`chown -R root:root ${openclawExtensionsDir}/gondolin`,
 		);
 	}
 
@@ -274,20 +297,7 @@ export async function startGatewayZone(
 
 	// Poll for readiness (OpenClaw needs ~2-3s to bind the port).
 	// Accept any HTTP status (including 401) as "listening" — use curl to get the status code.
-	const maxAttempts = 30;
-	for (let attempt = 0; attempt < maxAttempts; attempt++) {
-		// oxlint-disable-next-line no-await-in-loop -- readiness polling must be sequential
-		const check = await managedVm.exec(
-			'curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:18789/ 2>/dev/null || echo 000',
-		);
-		const httpCode = check.stdout.trim();
-		if (httpCode !== '000') {
-			break;
-		}
-
-		// oxlint-disable-next-line eslint/no-await-in-loop -- sequential polling for port readiness
-		await new Promise((resolve) => setTimeout(resolve, 500));
-	}
+	await waitForGatewayReadiness(managedVm, 0, 30);
 
 	// Configure and enable ingress now that OpenClaw is ready
 	managedVm.setIngressRoutes([

@@ -127,8 +127,8 @@ describe('startGatewayZone', () => {
 				cpus: 2,
 				env: expect.objectContaining({
 					HOME: '/home/openclaw',
-					NODE_EXTRA_CA_CERTS: '/etc/ssl/certs/ca-certificates.crt',
-					OPENCLAW_BUNDLED_PLUGINS_DIR: '/opt/extensions',
+					NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
+					OPENCLAW_HOME: '/home/openclaw',
 					OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/config/openclaw.json',
 					OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
 					DISCORD_BOT_TOKEN: 'resolved-key',

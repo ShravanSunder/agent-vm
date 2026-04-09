@@ -5,27 +5,15 @@
 		"version": "3.23.0",
 		"kernelPackage": "linux-virt",
 		"kernelImage": "vmlinuz-virt",
-		"rootfsPackages": [
-			"linux-virt",
-			"rng-tools",
-			"bash",
-			"ca-certificates",
-			"curl",
-			"git",
-			"nodejs",
-			"npm",
-			"python3",
-			"openssh"
-		],
+		"rootfsPackages": [],
 		"initramfsPackages": []
 	},
-	"rootfs": {
-		"label": "tool-root"
+	"oci": {
+		"image": "agent-vm-tool:latest",
+		"pullPolicy": "never"
 	},
-	"postBuild": {
-		"commands": [
-			"adduser -D -s /bin/bash sandbox",
-			"mkdir -p /workspace && chown sandbox:sandbox /workspace"
-		]
+	"rootfs": {
+		"label": "tool-root",
+		"sizeMb": 2048
 	}
 }

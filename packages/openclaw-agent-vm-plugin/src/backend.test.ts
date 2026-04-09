@@ -182,7 +182,10 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		// Call the captured runRemoteShellScript from the lease context
 		expect(capturedLeaseContext).toBeDefined();
-		await capturedLeaseContext!.runRemoteShellScript({
+		if (!capturedLeaseContext) {
+			throw new Error('Expected lease context to be captured');
+		}
+		await capturedLeaseContext.runRemoteShellScript({
 			script: 'cat /etc/hostname',
 			args: ['/workspace/file.txt'],
 		});

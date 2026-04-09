@@ -5,29 +5,15 @@
 		"version": "3.23.0",
 		"kernelPackage": "linux-virt",
 		"kernelImage": "vmlinuz-virt",
-		"rootfsPackages": [
-			"linux-virt",
-			"rng-tools",
-			"bash",
-			"ca-certificates",
-			"curl",
-			"git",
-			"nodejs",
-			"npm",
-			"python3",
-			"openssh"
-		],
+		"rootfsPackages": [],
 		"initramfsPackages": []
 	},
-	"rootfs": {
-		"label": "gondolin-root"
+	"oci": {
+		"image": "agent-vm-gateway:latest",
+		"pullPolicy": "never"
 	},
-	"postBuild": {
-		"commands": [
-			"npm install -g openclaw@2026.4.2",
-			"adduser -D -s /bin/bash openclaw",
-			"mkdir -p /home/openclaw/.openclaw /home/openclaw/workspace",
-			"chown -R openclaw:openclaw /home/openclaw"
-		]
+	"rootfs": {
+		"label": "gondolin-root",
+		"sizeMb": 4096
 	}
 }

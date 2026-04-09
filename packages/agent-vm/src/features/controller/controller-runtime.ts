@@ -138,7 +138,7 @@ export async function startControllerRuntime(
 			// The plugin sends a path from inside the gateway VM which doesn't exist on the host.
 			const hostWorkspaceDir = path.resolve(toolVmOptions.profile.workspaceRoot, `${toolVmOptions.zoneId}-${toolVmOptions.tcpSlot}`);
 			fsSync.mkdirSync(hostWorkspaceDir, { recursive: true });
-			return await createManagedVmFromCore({
+			const toolVm = await createManagedVmFromCore({
 				allowedHosts: [],
 				cpus: toolVmOptions.profile.cpus,
 				imagePath: toolImage.imagePath,
@@ -153,6 +153,12 @@ export async function startControllerRuntime(
 					},
 				},
 			});
+			// Debian OCI runtime setup: create sandbox user + workspace ownership
+			await toolVm.exec(
+				'useradd -m -s /bin/bash sandbox 2>/dev/null; ' +
+				'mkdir -p /workspace && chown sandbox:sandbox /workspace',
+			);
+			return toolVm;
 		});
 	const tcpPool = createTcpPool(options.systemConfig.tcpPool);
 	const leaseManager = createLeaseManager({
