@@ -315,13 +315,73 @@ pnpm build && pnpm vitest run
 
 ---
 
-### Task 5: Rename controller-service.ts → controller-http-routes.ts
+### Task 5: Split sandbox-backend-factory.ts in openclaw-agent-vm-plugin (290 lines → focused files)
+
+`packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.ts` mixes: factory + scope cache + manager + FS bridge builder + shell script helper. Split by responsibility.
+
+**Current structure:**
+```
+packages/openclaw-agent-vm-plugin/src/
+├── sandbox-backend-factory.ts          (290 lines — factory + cache + manager + FS bridge)
+├── openclaw-plugin-registration.ts     (253 lines — SDK wiring + SSH helpers)
+├── controller-lease-client.ts
+├── gondolin-plugin-config.ts
+└── index.ts
+```
+
+**Target structure:**
+```
+packages/openclaw-agent-vm-plugin/src/
+├── sandbox-backend-factory.ts          (< 100 lines — factory only, creates handle)
+├── sandbox-scope-cache.ts              (scope-based handle caching + invalidation)
+├── sandbox-backend-manager.ts          (describeRuntime + removeRuntime)
+├── sandbox-fs-bridge-builder.ts        (FS bridge construction from lease context)
+├── openclaw-plugin-registration.ts     (SDK wiring — unchanged or slightly trimmed)
+├── controller-lease-client.ts          (unchanged)
+├── gondolin-plugin-config.ts           (unchanged)
+└── index.ts
+```
+
+- [ ] **Step 1: Extract sandbox-scope-cache.ts**
+
+Move the `CachedScopeEntry` type and the scope cache `Map` + lookup/store/invalidation logic into its own module. Export:
+- `ScopeCache` type (the Map)
+- `getCachedHandle(cache, scopeKey)` — returns cached handle or undefined
+- `setCachedHandle(cache, scopeKey, entry)` — stores handle + leaseId
+- `invalidateCachedHandle(cache, scopeKey)` — removes entry
+
+- [ ] **Step 2: Extract sandbox-backend-manager.ts**
+
+Move `createGondolinSandboxBackendManager` into its own file. It depends on the lease client — pass via options.
+
+- [ ] **Step 3: Extract sandbox-fs-bridge-builder.ts**
+
+Move `FsBridgeLeaseContext`, `GondolinFsBridge`, `buildShellScriptWithArgs`, and the `boundRunRemoteShellScript` + `createFsBridgeBuilder` logic.
+
+- [ ] **Step 4: Slim down sandbox-backend-factory.ts**
+
+The factory should: check cache → create lease → build handle → store in cache → return. No FS bridge or manager logic.
+Target: < 100 lines.
+
+- [ ] **Step 5: Update imports in openclaw-plugin-registration.ts and tests**
+
+- [ ] **Step 6: Verify**
+
+```bash
+pnpm build && pnpm vitest run
+```
+
+- [ ] **Step 7: Commit**
+
+---
+
+### Task 6: Verify rename controller-service.ts → controller-http-routes.ts
 
 Already moved in Task 1. Verify the name is correct and all imports work. This is a no-op if Task 1 did it correctly.
 
 ---
 
-### Task 6: Final verification
+### Task 7: Final verification
 
 - [ ] **Step 1: Run full build and test suite**
 
@@ -379,7 +439,9 @@ Also update the File Structure section at the top of the Phase 5 plan to match t
 5. `agent-vm-entrypoint.ts` is < 80 lines (routing only)
 6. `gateway-zone-orchestrator.ts` is < 80 lines (orchestration only)
 7. `controller-runtime.ts` is < 150 lines (wiring only)
-8. All `git mv` used (history preserved)
+8. `sandbox-backend-factory.ts` is < 100 lines (factory only)
+9. All `git mv` used (history preserved)
+10. Commits at each task checkpoint (not one giant commit)
 
 ## Dependency Note
 
