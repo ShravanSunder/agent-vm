@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fix all review findings (High/Medium/Low), pass quality gates, split controller-runtime, add comprehensive tests, and create a reproducible e2e verification checklist.
+**Goal:** Fix all review findings (High/Medium/Low), clear blocking quality gate errors (warnings acceptable for now), split controller-runtime, add comprehensive tests with separate integration test config, and create a reproducible e2e verification checklist.
 
 **Architecture:** Three independent subsystems: (A) Bug fixes from review findings, (B) Structural improvements (split controller-runtime, add test coverage), (C) E2E verification checklist for manual testing.
 
@@ -165,7 +165,18 @@ it('deriveRecipientFromIdentity works in ESM context (no require)', async () => 
 - [ ] **Step 2: Run the test, confirm it fails**
 
 Run: `pnpm vitest run packages/agent-vm/src/features/controller/snapshot-encryption.test.ts`
-Expected: May pass in vitest (which shims `require`), but the code change is still necessary for production ESM. Proceed with the fix regardless.
+Expected: May pass in vitest (which shims `require`).
+
+**IMPORTANT:** Also verify with real Node ESM (not vitest) to catch the actual production failure:
+```bash
+node --input-type=module -e "
+import { createAgeEncryption } from './packages/agent-vm/dist/features/controller/snapshot-encryption.js';
+const enc = createAgeEncryption({ resolveIdentity: async () => 'AGE-SECRET-KEY-TEST' });
+console.log('ESM import OK, encrypt is', typeof enc.encrypt);
+"
+```
+Expected before fix: `ReferenceError: require is not defined`
+Expected after fix: `ESM import OK, encrypt is function`
 
 - [ ] **Step 3: Rewrite `deriveRecipientFromIdentity` to be async**
 
@@ -211,9 +222,11 @@ The plugin publishes `runtimeId` as `gondolin-${scopeKey}` (sandbox-backend-fact
 
 **Root cause:** `CachedScopeEntry` stores the lease (which has `leaseId`), but `createGondolinSandboxBackendManager` receives `containerName` (runtimeId) and passes it directly to `getLeaseStatus`/`releaseLease`.
 
-**Fix approach:** Add `getLeaseByScopeKey` endpoint to the controller, or — simpler — make the manager resolve the runtimeId to a leaseId. Since the runtimeId is `gondolin-${scopeKey}`, the manager can strip the prefix and query `/leases` to find the matching lease. But the cleanest fix is: add a `getLeaseByScope(scopeKey)` method to the lease client, and have the manager extract the scopeKey from the containerName.
+**Fix approach:** The core problem is that the manager receives `containerName` (which is `runtimeId = gondolin-${scopeKey}`) but needs the actual `leaseId`. A scope-based lookup is wrong because it can target the wrong lease when stale and new leases coexist.
 
-For this task, we'll: (1) add a `GET /lease/by-scope/:scopeKey` route to the controller, (2) add a `getLeaseByScopeKey` method to the lease client, (3) have the manager use it instead of passing runtimeId as leaseId.
+The correct fix: **make runtimeId equal to the actual leaseId**. The runtimeId doesn't need to be stable across factory calls — it just needs to be the correct identifier for the current runtime. The cached scope entry already stores the lease (which has `leaseId`). So: (1) set `runtimeId = lease.leaseId`, (2) the manager receives the real leaseId as containerName, (3) manager calls `/lease/:leaseId` directly. No new endpoint needed.
+
+For cache reuse: the scope cache returns the existing handle (with the correct leaseId as runtimeId). For the registry: OpenClaw's registry tracks runtimeId as containerName, and when removeRuntime is called, it passes the containerName back — which is now the real leaseId.
 
 **Files:**
 - Modify: `packages/agent-vm/src/features/controller/controller-service.ts`
@@ -625,10 +638,12 @@ it('boundRunRemoteShellScript forwards signal and allowFailure to deps', async (
     allowFailure: true,
   });
 
-  // Verify the deps were called — currently signal and allowFailure are dropped
+  // Verify signal and allowFailure were forwarded (this is the key assertion)
   expect(runRemoteShellScript).toHaveBeenCalledWith(
     expect.objectContaining({
       script: expect.stringContaining('cat /etc/os-release'),
+      signal: controller.signal,
+      allowFailure: true,
     }),
   );
 });
@@ -743,6 +758,20 @@ const envVarsScript =
 
 Note: Shell-escape the token value with single-quote escaping to prevent injection.
 
+Also change the file permissions from 644 to 600 (root-only readable) since the file now contains a literal secret:
+
+```typescript
+'chmod 600 /etc/profile.d/openclaw.sh && ' +
+```
+
+And write to `/root/.openclaw-env` instead of `/etc/profile.d/` to avoid world-readable secrets. Source it from `/root/.bashrc`:
+
+```typescript
+'cat /etc/profile.d/openclaw.sh > /root/.openclaw-env && ' +
+'chmod 600 /root/.openclaw-env && ' +
+'echo "source /root/.openclaw-env" >> /root/.bashrc',
+```
+
 - [ ] **Step 3: Update the test fixture to include OPENCLAW_GATEWAY_TOKEN in resolved secrets**
 
 The test's `resolveAll` mock should return `OPENCLAW_GATEWAY_TOKEN: 'gw-token-123'` alongside the other secrets. Then verify the exec call contains the literal token value.
@@ -779,14 +808,14 @@ Expected: 0 files with formatting issues.
 
 Run: `pnpm lint:types`
 
-- [ ] **Step 2: Fix the 2 errors (these block CI)**
+- [ ] **Step 2: Fix the 2 errors (these block CI). Warnings are acceptable for now.**
 
 Examine the error output. Common issues:
 - Missing `await` on promises (no-floating-promises)
 - `as` casts that could be `satisfies`
 - Unused variables
 
-Fix each error in the source file.
+Fix each error in the source file. Warnings (e.g., no-console in test files, no-await-in-loop for polling) are acceptable and do not block.
 
 - [ ] **Step 3: Fix high-severity warnings selectively**
 
@@ -1497,11 +1526,20 @@ Quality gates (run after all fixes):
 - Modify: `package.json` — add `test:integration` script
 
 Unit tests (`pnpm test`): fast, no external deps, run in CI. Pattern: `*.test.ts`
-Integration tests (`pnpm test:integration`): require QEMU, .env.local, real VMs. Pattern: `*.integration.test.ts`
+Integration tests (`pnpm test:integration`): require QEMU, `.env.local`, real VMs. Pattern: `*.integration.test.ts`
+
+The integration config should:
+- Load `.env.local` automatically (vitest `env` or `setupFiles`)
+- Set longer timeouts (120s+ for VM boot)
+- Only include `*.integration.test.ts` files
+- Read `OPENAI_API_KEY` from `.env.local` for model round-trip tests
+
+Add `OPENAI_API_KEY` to `.env.local` for integration tests that need real model calls. This is a standard OpenAI API key (not OAuth), used only for testing. The production system uses Codex OAuth.
 
 Rename existing live tests:
 - `live-sandbox-e2e.test.ts` → `live-sandbox-e2e.integration.test.ts`
 - `live-cross-vm-ssh.test.ts` → `live-cross-vm-ssh.integration.test.ts`
+- `live-smoke.test.ts` → `live-smoke.integration.test.ts` (if it exists)
 - `live-api-smoke.test.ts` stays as unit (uses mock Hono servers, no VMs)
 
 - [ ] **Step 1: Create vitest.integration.config.ts** that includes `*.integration.test.ts`
