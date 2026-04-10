@@ -86,7 +86,7 @@ OpenClaw's file tools (write file, read file, mkdir, etc.) go through a "FS brid
 
 ## File Structure
 
-### `packages/agent-vm/src/features/controller/` (modifications)
+### `packages/agent-vm/src/controller/` (modifications)
 
 - `gateway-manager.ts`: Fix H5 (throw on readiness exhaustion)
 - `controller-runtime.ts`: Fix H3 (workspace cleanup), then extract tool VM lifecycle
@@ -99,13 +99,14 @@ OpenClaw's file tools (write file, read file, mkdir, etc.) go through a "FS brid
 
 ### `packages/openclaw-agent-vm-plugin/src/` (modifications)
 
-- `sandbox-backend-factory.ts`: Fix H1 (store leaseId, use it for manager), Fix H2 (cache validation)
+- `sandbox-backend/sandbox-backend-handle-factory.ts`: Fix H1 (runtimeId = leaseId), Fix H2 (cache validation)
+- `sandbox-backend/sandbox-backend-manager.ts`: Fix H1 (manager uses leaseId from containerName)
 - `sandbox-backend-factory.test.ts`: Add cache invalidation and leaseId tests
 - `gondolin-plugin-config.ts`: Fix M1 (remove profileId)
 - `gondolin-plugin-config.test.ts`: Fix M1 (remove profileId test)
-- `openclaw-plugin-registration.ts`: Fix M2 (forward signal/allowFailure in FS bridge)
+- `openclaw-backend-dependencies.ts`: Fix M2 (forward signal/allowFailure in FS bridge)
 
-### `packages/agent-vm/src/features/controller/` (modifications continued)
+### `packages/agent-vm/src/snapshots/` (modifications)
 
 - `snapshot-encryption.ts`: Fix H4 (replace require() with dynamic import)
 - `snapshot-encryption.test.ts`: Add test for ESM compatibility
@@ -123,8 +124,8 @@ OpenClaw's file tools (write file, read file, mkdir, etc.) go through a "FS brid
 `waitForGatewayReadiness()` in `gateway-manager.ts:131` returns silently when all attempts are exhausted. The controller proceeds as if OpenClaw started successfully, leading to confusing failures downstream.
 
 **Files:**
-- Modify: `packages/agent-vm/src/features/controller/gateway-manager.ts`
-- Modify: `packages/agent-vm/src/features/controller/gateway-manager.test.ts`
+- Modify: `packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts`
+- Modify: `packages/agent-vm/src/gateway/gateway-zone-orchestrator.test.ts`
 
 - [ ] **Step 1: Write a failing test for readiness exhaustion**
 
@@ -167,7 +168,7 @@ it('throws when gateway readiness polling exhausts all attempts', async () => {
 
 - [ ] **Step 2: Run the test, confirm it fails**
 
-Run: `pnpm vitest run packages/agent-vm/src/features/controller/gateway-manager.test.ts`
+Run: `pnpm vitest run packages/agent-vm/src/gateway/gateway-zone-orchestrator.test.ts`
 Expected: FAIL — the function returns silently instead of throwing.
 
 - [ ] **Step 3: Fix `waitForGatewayReadiness` to throw**
@@ -190,7 +191,7 @@ if (attempt >= maxAttempts) {
 
 - [ ] **Step 4: Run the test, confirm it passes**
 
-Run: `pnpm vitest run packages/agent-vm/src/features/controller/gateway-manager.test.ts`
+Run: `pnpm vitest run packages/agent-vm/src/gateway/gateway-zone-orchestrator.test.ts`
 Expected: All tests PASS. The existing tests already return non-`000` from exec, so they remain unaffected.
 
 - [ ] **Step 5: Run full suite**
@@ -204,8 +205,8 @@ Run: `pnpm vitest run`
 `deriveRecipientFromIdentity()` in `snapshot-encryption.ts:35` uses `require('node:child_process')` which throws `ReferenceError` in real ESM. The `runAge()` function already uses `await import()` correctly — apply the same pattern.
 
 **Files:**
-- Modify: `packages/agent-vm/src/features/controller/snapshot-encryption.ts`
-- Modify: `packages/agent-vm/src/features/controller/snapshot-encryption.test.ts`
+- Modify: `packages/agent-vm/src/snapshots/snapshot-encryption.ts`
+- Modify: `packages/agent-vm/src/snapshots/snapshot-encryption.test.ts`
 
 - [ ] **Step 1: Write a failing test that asserts ESM-compatible import**
 
@@ -236,13 +237,13 @@ it('deriveRecipientFromIdentity works in ESM context (no require)', async () => 
 
 - [ ] **Step 2: Run the test, confirm it fails**
 
-Run: `pnpm vitest run packages/agent-vm/src/features/controller/snapshot-encryption.test.ts`
+Run: `pnpm vitest run packages/agent-vm/src/snapshots/snapshot-encryption.test.ts`
 Expected: May pass in vitest (which shims `require`).
 
 **IMPORTANT:** Also verify with real Node ESM (not vitest) to catch the actual production failure:
 ```bash
 node --input-type=module -e "
-import { createAgeEncryption } from './packages/agent-vm/dist/features/controller/snapshot-encryption.js';
+import { createAgeEncryption } from './packages/agent-vm/dist/controller/snapshot-encryption.js';
 const enc = createAgeEncryption({ resolveIdentity: async () => 'AGE-SECRET-KEY-TEST' });
 console.log('ESM import OK, encrypt is', typeof enc.encrypt);
 "
@@ -283,7 +284,7 @@ Also fix the test helper `generateTestIdentity` to use the same pattern (import 
 
 - [ ] **Step 4: Run the test, confirm it passes**
 
-Run: `pnpm vitest run packages/agent-vm/src/features/controller/snapshot-encryption.test.ts`
+Run: `pnpm vitest run packages/agent-vm/src/snapshots/snapshot-encryption.test.ts`
 Expected: PASS
 
 ---
@@ -301,8 +302,8 @@ The manager receives `containerName` which IS the leaseId, so it calls `/lease/:
 The scope cache stores the leaseId alongside the handle. When the factory returns a cached handle, its runtimeId is already the correct leaseId. When OpenClaw's registry calls `removeRuntime`, it passes the containerName back — which is now the real leaseId.
 
 **Files:**
-- Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.ts`
-- Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts`
+- Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-factory.ts`
+- Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts` (barrel test)
 
 No changes needed to controller-service.ts or lease-client.ts — the existing `GET /lease/:leaseId` and `DELETE /lease/:leaseId` endpoints already accept leaseId directly.
 
@@ -400,8 +401,8 @@ Expected: All PASS.
 `createGondolinSandboxBackendFactory` returns the cached handle on scopeKey match (sandbox-backend-factory.ts:153) but never checks whether the lease is still alive. After `removeRuntime`, lease release, or controller restart, the cache returns a stale handle with dead SSH creds.
 
 **Files:**
-- Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.ts`
-- Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts`
+- Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-factory.ts`
+- Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts` (barrel test)
 
 - [ ] **Step 1: Write a failing test for cache invalidation**
 
@@ -489,8 +490,8 @@ Run: `pnpm vitest run`
 Tool VMs mount host workspace from `zoneId + tcpSlot` (controller-runtime.ts:139). After lease release, the workspace dir still has previous session's files. The next lease on the same tcpSlot sees stale data.
 
 **Files:**
-- Modify: `packages/agent-vm/src/features/controller/lease-manager.ts`
-- Modify: `packages/agent-vm/src/features/controller/lease-manager.test.ts`
+- Modify: `packages/agent-vm/src/controller/lease-manager.ts`
+- Modify: `packages/agent-vm/src/controller/lease-manager.test.ts`
 
 - [ ] **Step 1: Write a failing test for workspace cleanup**
 
@@ -543,7 +544,7 @@ it('calls cleanWorkspace on lease release when provided', async () => {
 
 - [ ] **Step 2: Run the test, confirm it fails**
 
-Run: `pnpm vitest run packages/agent-vm/src/features/controller/lease-manager.test.ts`
+Run: `pnpm vitest run packages/agent-vm/src/controller/lease-manager.test.ts`
 Expected: FAIL — `cleanWorkspace` is not accepted or called.
 
 - [ ] **Step 3: Add optional `cleanWorkspace` callback to lease manager**
@@ -642,8 +643,8 @@ Expected: All PASS.
 The `boundRunRemoteShellScript` in `sandbox-backend-factory.ts:173-181` only forwards `script`, `args`, and `stdin` to the underlying `runRemoteShellScript`. It drops `signal` and `allowFailure`, which are part of the `FsBridgeLeaseContext['runRemoteShellScript']` signature.
 
 **Files:**
-- Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.ts`
-- Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts`
+- Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-factory.ts`
+- Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts` (barrel test)
 
 - [ ] **Step 1: Write a failing test for signal/allowFailure forwarding**
 
@@ -772,8 +773,8 @@ Expected: All PASS.
 In `gateway-manager.ts:274`, the heredoc writes `$OPENCLAW_GATEWAY_TOKEN` which relies on env inheritance during exec. If the exec context doesn't inherit the env, the token is empty. Additionally, `/etc/profile.d/` is world-readable — secrets must not go there.
 
 **Files:**
-- Modify: `packages/agent-vm/src/features/controller/gateway-manager.ts`
-- Modify: `packages/agent-vm/src/features/controller/gateway-manager.test.ts`
+- Modify: `packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts`
+- Modify: `packages/agent-vm/src/gateway/gateway-zone-orchestrator.test.ts`
 
 - [ ] **Step 1: Write a test asserting the resolved token is written to /root/.openclaw-env**
 
@@ -831,7 +832,7 @@ The test's `resolveAll` mock should return `OPENCLAW_GATEWAY_TOKEN: 'gw-token-12
 
 - [ ] **Step 4: Run tests**
 
-Run: `pnpm vitest run packages/agent-vm/src/features/controller/gateway-manager.test.ts`
+Run: `pnpm vitest run packages/agent-vm/src/gateway/gateway-zone-orchestrator.test.ts`
 Expected: PASS
 
 ---
@@ -918,8 +919,8 @@ Expected: Exit 0.
 - Do NOT extract HTTP server setup unless it grows beyond the current ~25 lines. A thin wrapper around `@hono/node-server` doesn't earn its own module.
 
 **Files:**
-- Modify: `packages/agent-vm/src/features/controller/controller-runtime.ts`
-- Create: `packages/agent-vm/src/features/controller/tool-vm-lifecycle.ts`
+- Modify: `packages/agent-vm/src/controller/controller-runtime.ts`
+- Create: `packages/agent-vm/src/controller/tool-vm-lifecycle.ts`
 
 - [ ] **Step 1: Extract tool VM lifecycle**
 
@@ -1020,7 +1021,7 @@ No implementation logic for VM creation, image building, or workspace setup shou
 Current `tcp-pool.test.ts` has a single test. Add edge cases.
 
 **Files:**
-- Modify: `packages/agent-vm/src/features/controller/tcp-pool.test.ts`
+- Modify: `packages/agent-vm/src/controller/tcp-pool.test.ts`
 
 - [ ] **Step 1: Add exhaustion and reuse tests**
 
@@ -1069,7 +1070,7 @@ it('release is idempotent', () => {
 
 - [ ] **Step 2: Run tests**
 
-Run: `pnpm vitest run packages/agent-vm/src/features/controller/tcp-pool.test.ts`
+Run: `pnpm vitest run packages/agent-vm/src/controller/tcp-pool.test.ts`
 Expected: All PASS (these test existing behavior, should pass immediately).
 
 ---
@@ -1079,7 +1080,7 @@ Expected: All PASS (these test existing behavior, should pass immediately).
 Current `idle-reaper.test.ts` has a single test. Add edge cases.
 
 **Files:**
-- Modify: `packages/agent-vm/src/features/controller/idle-reaper.test.ts`
+- Modify: `packages/agent-vm/src/controller/idle-reaper.test.ts`
 
 - [ ] **Step 1: Add tests for multiple expired and all-active scenarios**
 
@@ -1155,7 +1156,7 @@ it('releases a lease at exactly the TTL boundary', async () => {
 
 - [ ] **Step 2: Run tests**
 
-Run: `pnpm vitest run packages/agent-vm/src/features/controller/idle-reaper.test.ts`
+Run: `pnpm vitest run packages/agent-vm/src/controller/idle-reaper.test.ts`
 Expected: All PASS.
 
 ---
@@ -1165,7 +1166,7 @@ Expected: All PASS.
 The existing test only covers the happy path. Add a test for gateway boot failure.
 
 **Files:**
-- Modify: `packages/agent-vm/src/features/controller/controller-runtime.test.ts`
+- Modify: `packages/agent-vm/src/controller/controller-runtime.test.ts`
 
 - [ ] **Step 1: Add boot failure test**
 
@@ -1227,7 +1228,7 @@ it('throws for an unknown zone id', async () => {
 
 - [ ] **Step 2: Run tests**
 
-Run: `pnpm vitest run packages/agent-vm/src/features/controller/controller-runtime.test.ts`
+Run: `pnpm vitest run packages/agent-vm/src/controller/controller-runtime.test.ts`
 Expected: All PASS.
 
 ---
@@ -1557,9 +1558,9 @@ Rename existing live tests:
 ### Task 19: Add Zod v4 request validation to all controller HTTP endpoints (replaces manual type guards)
 
 **Files:**
-- Modify: `packages/agent-vm/src/features/controller/controller-service.ts`
-- Create: `packages/agent-vm/src/features/controller/controller-request-schemas.ts`
-- Modify: `packages/agent-vm/src/features/controller/controller-service.test.ts`
+- Modify: `packages/agent-vm/src/controller/controller-http-routes.ts`
+- Create: `packages/agent-vm/src/controller/controller-request-schemas.ts`
+- Modify: `packages/agent-vm/src/controller/controller-http-routes.test.ts`
 
 All controller HTTP endpoints currently parse JSON with manual type guards (`isLeaseCreatePayload`, `isDestroyPayload`). Replace with Zod v4 schemas + Hono's zValidator middleware for type-safe request validation with proper error messages.
 
@@ -1581,7 +1582,7 @@ Use `@hono/zod-validator` if available, or manual `schema.parse()` in route hand
 ### Task 20: Add live integration test — agent chat model round-trip
 
 **Files:**
-- Create: `packages/agent-vm/src/features/controller/live-agent-model-roundtrip.test.ts`
+- Create: `packages/agent-vm/src/controller/live-agent-model-roundtrip.test.ts`
 
 This test requires: QEMU, built images, `.env.local` with `OP_SERVICE_ACCOUNT_TOKEN` and `OPEN_AI_TEST_KEY`.
 Mark with `integration_llm` tag so it doesn't run in CI. The test uses `OPEN_AI_TEST_KEY` from `.env.local` as the model API key for the round-trip call.
@@ -1595,13 +1596,13 @@ The test:
 6. Stops controller
 
 - [ ] **Step 1: Write the test file** with `describe.skip` initially
-- [ ] **Step 2: Run manually** to verify it works: `pnpm vitest run packages/agent-vm/src/features/controller/live-agent-model-roundtrip.test.ts`
+- [ ] **Step 2: Run manually** to verify it works: `pnpm vitest run packages/agent-vm/src/controller/live-agent-model-roundtrip.test.ts`
 - [ ] **Step 3: Commit**
 
 ### Task 21: Add live integration test — controller stop + restart persistence
 
 **Files:**
-- Create: `packages/agent-vm/src/features/controller/live-stop-restart.test.ts`
+- Create: `packages/agent-vm/src/controller/live-stop-restart.test.ts`
 
 This test requires: QEMU, built images, `.env.local`.
 
