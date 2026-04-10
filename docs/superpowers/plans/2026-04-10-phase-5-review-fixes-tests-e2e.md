@@ -57,6 +57,14 @@ User (Discord/WhatsApp)
 - **http-mediation** — Secret injected at Gondolin's HTTP proxy boundary (e.g. API keys in Authorization headers)
 - **on-disk** — Written to VFS-mounted state directory (e.g. OAuth auth-profiles.json)
 
+### Integration test environment
+
+Integration tests (Tasks 18-21) use `.env.local` for secrets:
+- `OP_SERVICE_ACCOUNT_TOKEN` — 1Password service account for resolving production secrets
+- `OPEN_AI_TEST_KEY` — Standard OpenAI API key for model round-trip tests (not the production Codex OAuth key)
+
+These are loaded automatically by the integration vitest config (`vitest.integration.config.ts`).
+
 ### How the FS bridge works
 
 OpenClaw's file tools (write file, read file, mkdir, etc.) go through a "FS bridge" — an abstraction over the sandbox's filesystem. For remote SSH backends (like ours), this uses `createRemoteShellSandboxFsBridge` from the OpenClaw SDK. It runs Python scripts on the remote host via SSH, using a heredoc pattern: `python3 /dev/fd/3 "$@" 3<<'PY' ... PY`. This requires `/dev/fd` to exist in the tool VM (symlink to `/proc/self/fd`), and requires `stdin` to be forwarded through the SSH connection for file writes.
@@ -81,11 +89,9 @@ OpenClaw's file tools (write file, read file, mkdir, etc.) go through a "FS brid
 ### `packages/agent-vm/src/features/controller/` (modifications)
 
 - `gateway-manager.ts`: Fix H5 (throw on readiness exhaustion)
-- `controller-runtime.ts`: Fix H3 (workspace cleanup), then split into smaller modules
-- `gateway-zone-lifecycle.ts`: New — extracted gateway VM boot logic from controller-runtime
-- `tool-vm-lifecycle.ts`: New — extracted tool VM creation logic from controller-runtime
-- `controller-http-server.ts`: New — extracted HTTP server setup from controller-runtime
-- `lease-manager.ts`: Add `getLeaseByScope()` for H1 fix
+- `controller-runtime.ts`: Fix H3 (workspace cleanup), then extract tool VM lifecycle
+- `tool-vm-lifecycle.ts`: New — extracted tool VM creation logic from controller-runtime (image build, VM creation, workspace setup, user provisioning)
+- `lease-manager.ts`: Add `cleanWorkspace` callback for H3 fix
 - `tcp-pool.test.ts`: Add exhaustion, reuse, and edge case tests
 - `idle-reaper.test.ts`: Add multiple-expired and keep-non-expired tests
 - `gateway-manager.test.ts`: Add readiness failure test
@@ -282,128 +288,105 @@ Expected: PASS
 
 ---
 
-### Task 3: Fix H1 — Store leaseId in scope cache; manager uses leaseId, not runtimeId
+### Task 3: Fix H1 — Make runtimeId equal to leaseId; manager uses leaseId directly
 
 The plugin publishes `runtimeId` as `gondolin-${scopeKey}` (sandbox-backend-factory.ts:204). The controller creates `leaseId` as `${zoneId}-${scopeKey}-${createdAt}` (lease-manager.ts:70). When the manager calls `getLeaseStatus(containerName)` or `releaseLease(containerName)`, it passes the runtimeId — which doesn't match any leaseId.
 
 **Root cause:** `CachedScopeEntry` stores the lease (which has `leaseId`), but `createGondolinSandboxBackendManager` receives `containerName` (runtimeId) and passes it directly to `getLeaseStatus`/`releaseLease`.
 
-**Fix approach:** The core problem is that the manager receives `containerName` (which is `runtimeId = gondolin-${scopeKey}`) but needs the actual `leaseId`. A scope-based lookup is wrong because it can target the wrong lease when stale and new leases coexist.
+**Fix approach:** Make `runtimeId = lease.leaseId`. No new endpoints needed.
 
-The correct fix: **make runtimeId equal to the actual leaseId**. The runtimeId doesn't need to be stable across factory calls — it just needs to be the correct identifier for the current runtime. The cached scope entry already stores the lease (which has `leaseId`). So: (1) set `runtimeId = lease.leaseId`, (2) the manager receives the real leaseId as containerName, (3) manager calls `/lease/:leaseId` directly. No new endpoint needed.
+The manager receives `containerName` which IS the leaseId, so it calls `/lease/:leaseId` directly. No scope-based lookup endpoint (`GET /lease/by-scope/:scopeKey`) is needed — that approach is wrong because it can target the wrong lease when stale and new leases coexist for the same scope.
 
-For cache reuse: the scope cache returns the existing handle (with the correct leaseId as runtimeId). For the registry: OpenClaw's registry tracks runtimeId as containerName, and when removeRuntime is called, it passes the containerName back — which is now the real leaseId.
+The scope cache stores the leaseId alongside the handle. When the factory returns a cached handle, its runtimeId is already the correct leaseId. When OpenClaw's registry calls `removeRuntime`, it passes the containerName back — which is now the real leaseId.
 
 **Files:**
-- Modify: `packages/agent-vm/src/features/controller/controller-service.ts`
-- Modify: `packages/agent-vm/src/features/controller/controller-service.test.ts`
-- Modify: `packages/openclaw-agent-vm-plugin/src/controller-lease-client.ts`
-- Modify: `packages/openclaw-agent-vm-plugin/src/controller-lease-client.test.ts`
 - Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.ts`
 - Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts`
 
-- [ ] **Step 1: Write failing test for `GET /lease/by-scope/:scopeKey` route**
+No changes needed to controller-service.ts or lease-client.ts — the existing `GET /lease/:leaseId` and `DELETE /lease/:leaseId` endpoints already accept leaseId directly.
 
-In `controller-service.test.ts`:
+- [ ] **Step 1: Write failing test — runtimeId matches leaseId**
+
+In `sandbox-backend-factory.test.ts`:
 
 ```typescript
-it('looks up a lease by scope key via GET /lease/by-scope/:scopeKey', async () => {
-  const leases = [
+it('publishes runtimeId equal to the actual leaseId, not gondolin-${scopeKey}', async () => {
+  const requestLease = vi.fn(async () => ({
+    leaseId: 'shravan-agent:main-1712345678',
+    ssh: { host: 'h', identityPem: 'p', knownHostsLine: '', port: 22, user: 'u' },
+    tcpSlot: 0,
+    workdir: '/workspace',
+  }));
+
+  const factory = createGondolinSandboxBackendFactory(
+    { controllerUrl: 'http://controller.vm.host:18800', zoneId: 'shravan' },
     {
-      id: 'lease-1',
-      zoneId: 'shravan',
-      scopeKey: 'agent:main:session-abc',
-      tcpSlot: 0,
-      createdAt: 100,
-      lastUsedAt: 100,
-      profileId: 'standard',
+      buildExecSpec: vi.fn(async () => ({ argv: ['ssh'], env: {}, stdinMode: 'pipe-open' as const })),
+      createLeaseClient: () => ({
+        getLeaseStatus: vi.fn(async () => ({ ok: true })),
+        releaseLease: vi.fn(async () => {}),
+        requestLease,
+      }),
+      runRemoteShellScript: vi.fn(),
     },
-  ];
-  const app = createControllerApp({
-    toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
-    leaseManager: {
-      createLease: vi.fn(),
-      getLease: vi.fn(),
-      listLeases: vi.fn(() => leases),
-      releaseLease: vi.fn(async () => {}),
-    },
+  );
+
+  const handle = await factory({
+    agentWorkspaceDir: '/w', cfg: {}, scopeKey: 'agent:main', sessionKey: 's', workspaceDir: '/w',
   });
 
-  const response = await app.request('/lease/by-scope/agent:main:session-abc');
-  expect(response.status).toBe(200);
-  const body = await response.json();
-  expect(body).toMatchObject({ id: 'lease-1', scopeKey: 'agent:main:session-abc' });
+  // runtimeId must be the actual leaseId, not 'gondolin-agent:main'
+  expect(handle.runtimeId).toBe('shravan-agent:main-1712345678');
 });
 ```
 
-- [ ] **Step 2: Add the route to `controller-service.ts`**
+- [ ] **Step 2: Run the test, confirm it fails**
 
-After the existing `GET /lease/:leaseId` route, add:
+Run: `pnpm vitest run packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts`
+Expected: FAIL — runtimeId is `gondolin-agent:main` instead of `shravan-agent:main-1712345678`.
+
+- [ ] **Step 3: Change runtimeId assignment in the factory**
+
+In `sandbox-backend-factory.ts`, change the runtimeId from `gondolin-${scopeKey}` to `lease.leaseId`:
 
 ```typescript
-app.get('/lease/by-scope/:scopeKey', (context) => {
-  const scopeKey = context.req.param('scopeKey');
-  const lease = options.leaseManager
-    .listLeases()
-    .find((candidateLease) => candidateLease.scopeKey === scopeKey);
-  if (!lease) {
-    return context.json({ error: 'Lease not found for scope' }, 404);
-  }
-  return context.json({
-    createdAt: lease.createdAt,
-    id: lease.id,
-    scopeKey: lease.scopeKey,
-    tcpSlot: lease.tcpSlot,
-    zoneId: lease.zoneId,
-  });
-});
+// Before (line ~204):
+runtimeId: `gondolin-${params.scopeKey}`,
+
+// After:
+runtimeId: lease.leaseId,
 ```
 
-**Important ordering note:** This route must be placed _before_ `GET /lease/:leaseId` because Hono matches routes in registration order, and `/lease/by-scope/:scopeKey` would otherwise match `:leaseId` as `by-scope`. Move the more specific route first.
-
-- [ ] **Step 3: Add `getLeaseByScopeKey` to the lease client**
-
-In `controller-lease-client.ts`, add to the `LeaseClient` interface and implementation:
+Also update the `CachedScopeEntry` type to store the leaseId explicitly:
 
 ```typescript
-// Interface addition:
-getLeaseByScopeKey(scopeKey: string): Promise<{ id: string; scopeKey: string } | null>;
-
-// Implementation:
-getLeaseByScopeKey: async (scopeKey: string) => {
-  const response = await fetchImpl(`${baseUrl}/lease/by-scope/${encodeURIComponent(scopeKey)}`);
-  if (response.status === 404) {
-    return null;
-  }
-  return await response.json() as { id: string; scopeKey: string };
-},
-```
-
-- [ ] **Step 4: Update the manager to use scope-based lookup**
-
-In `sandbox-backend-factory.ts`, modify `createGondolinSandboxBackendManager`:
-
-```typescript
-// Extract scopeKey from containerName (runtimeId format: "gondolin-${scopeKey}")
-const scopeKeyFromContainerName = (containerName: string): string =>
-  containerName.startsWith('gondolin-') ? containerName.slice('gondolin-'.length) : containerName;
-
-// In describeRuntime:
-const scopeKey = scopeKeyFromContainerName(params.entry.containerName);
-const scopeLease = await leaseClient.getLeaseByScopeKey(scopeKey);
-return { running: scopeLease !== null, configLabelMatch: true };
-
-// In removeRuntime:
-const scopeKey = scopeKeyFromContainerName(params.entry.containerName);
-const scopeLease = await leaseClient.getLeaseByScopeKey(scopeKey);
-if (scopeLease) {
-  await leaseClient.releaseLease(scopeLease.id);
+interface CachedScopeEntry {
+  readonly handle: SandboxBackendHandle;
+  readonly leaseId: string;  // the actual leaseId for this cached entry
 }
 ```
 
+And when caching: `scopeCache.set(params.scopeKey, { handle, leaseId: lease.leaseId });`
+
+- [ ] **Step 4: Update the manager — containerName IS the leaseId**
+
+In `sandbox-backend-factory.ts`, `createGondolinSandboxBackendManager` no longer needs to reverse-engineer the scopeKey from containerName. The containerName is already the leaseId:
+
+```typescript
+// In describeRuntime:
+const leaseStatus = await leaseClient.getLeaseStatus(params.entry.containerName);
+return { running: leaseStatus !== null, configLabelMatch: true };
+
+// In removeRuntime:
+await leaseClient.releaseLease(params.entry.containerName);
+```
+
+This is simpler than the previous code and correct — `containerName` is the leaseId, and the controller's existing `GET /lease/:leaseId` and `DELETE /lease/:leaseId` endpoints handle it directly.
+
 - [ ] **Step 5: Update manager tests in `sandbox-backend-factory.test.ts`**
 
-Update the existing `createGondolinSandboxBackendManager` tests to mock `getLeaseByScopeKey` instead of `getLeaseStatus`, and verify the scope-based lookup is used.
+Update the existing `createGondolinSandboxBackendManager` tests. The manager mock should use `getLeaseStatus` (not `getLeaseByScopeKey` — that endpoint does not exist). Verify the manager passes the containerName (which is now the leaseId) directly to `getLeaseStatus` and `releaseLease`.
 
 - [ ] **Step 6: Run all tests**
 
@@ -426,26 +409,29 @@ In `sandbox-backend-factory.test.ts`:
 
 ```typescript
 it('evicts cached handle when the lease is no longer active', async () => {
-  let leaseCallCount = 0;
-  const getLeaseByScopeKey = vi.fn(async () => {
+  let leaseStatusCallCount = 0;
+  const getLeaseStatus = vi.fn(async () => {
     // First call: lease exists. Second call: lease gone (simulate controller restart).
-    leaseCallCount++;
-    return leaseCallCount <= 1 ? { id: 'lease-1', scopeKey: 'scope-evict' } : null;
+    leaseStatusCallCount++;
+    return leaseStatusCallCount <= 1 ? { ok: true } : null;
   });
-  const requestLease = vi.fn(async () => ({
-    leaseId: `lease-${leaseCallCount + 1}`,
-    ssh: { host: 'h', identityPem: 'p', knownHostsLine: '', port: 22, user: 'u' },
-    tcpSlot: 0,
-    workdir: '/workspace',
-  }));
+  let leaseCounter = 0;
+  const requestLease = vi.fn(async () => {
+    leaseCounter++;
+    return {
+      leaseId: `lease-${leaseCounter}`,
+      ssh: { host: 'h', identityPem: 'p', knownHostsLine: '', port: 22, user: 'u' },
+      tcpSlot: 0,
+      workdir: '/workspace',
+    };
+  });
 
   const factory = createGondolinSandboxBackendFactory(
     { controllerUrl: 'http://controller.vm.host:18800', zoneId: 'shravan' },
     {
       buildExecSpec: vi.fn(async () => ({ argv: ['ssh'], env: {}, stdinMode: 'pipe-open' as const })),
       createLeaseClient: () => ({
-        getLeaseByScopeKey,
-        getLeaseStatus: vi.fn(async () => null),
+        getLeaseStatus,
         releaseLease: vi.fn(async () => {}),
         requestLease,
       }),
@@ -458,6 +444,8 @@ it('evicts cached handle when the lease is no longer active', async () => {
 
   expect(first).not.toBe(second);
   expect(requestLease).toHaveBeenCalledTimes(2);
+  // getLeaseStatus is called with the cached leaseId to verify it's still alive
+  expect(getLeaseStatus).toHaveBeenCalledWith('lease-1');
 });
 ```
 
@@ -473,8 +461,8 @@ In the factory function, after checking the cache hit, validate the lease is sti
 ```typescript
 const existingEntry = scopeCache.get(params.scopeKey);
 if (existingEntry) {
-  // Verify the lease is still active before returning the cached handle
-  const leaseStatus = await leaseClient.getLeaseByScopeKey(params.scopeKey);
+  // Verify the lease is still active by calling GET /lease/:leaseId
+  const leaseStatus = await leaseClient.getLeaseStatus(existingEntry.leaseId);
   if (leaseStatus !== null) {
     return existingEntry.handle;
   }
@@ -483,7 +471,7 @@ if (existingEntry) {
 }
 ```
 
-Note: This requires moving the `leaseClient` creation above the cache check, or extracting it into a shared variable. The lease client creation is cheap (just builds a fetch wrapper), so moving it up is fine.
+Note: `existingEntry.leaseId` comes from the `CachedScopeEntry` type updated in Task 3, which now stores the leaseId alongside the handle. This requires moving the `leaseClient` creation above the cache check, or extracting it into a shared variable. The lease client creation is cheap (just builds a fetch wrapper), so moving it up is fine.
 
 - [ ] **Step 4: Run the test, confirm it passes**
 
@@ -680,7 +668,6 @@ it('boundRunRemoteShellScript forwards signal and allowFailure to deps', async (
       buildExecSpec: vi.fn(async () => ({ argv: ['ssh'], env: {}, stdinMode: 'pipe-open' as const })),
       createFsBridgeBuilder,
       createLeaseClient: () => ({
-        getLeaseByScopeKey: vi.fn(async () => null),
         getLeaseStatus: vi.fn(async () => ({ ok: true })),
         releaseLease: vi.fn(async () => {}),
         requestLease: vi.fn(async () => ({
@@ -780,67 +767,67 @@ Expected: All PASS.
 
 ---
 
-### Task 8: Fix M3 — Write resolved token value to profile.d instead of variable reference
+### Task 8: Fix M3 — Write resolved token to /root/.openclaw-env (not profile.d, not variable reference)
 
-In `gateway-manager.ts:274`, the heredoc writes `$OPENCLAW_GATEWAY_TOKEN` which relies on env inheritance during exec. If the exec context doesn't inherit the env, the token is empty.
+In `gateway-manager.ts:274`, the heredoc writes `$OPENCLAW_GATEWAY_TOKEN` which relies on env inheritance during exec. If the exec context doesn't inherit the env, the token is empty. Additionally, `/etc/profile.d/` is world-readable — secrets must not go there.
 
 **Files:**
 - Modify: `packages/agent-vm/src/features/controller/gateway-manager.ts`
 - Modify: `packages/agent-vm/src/features/controller/gateway-manager.test.ts`
 
-- [ ] **Step 1: Write a test asserting the resolved token is written**
+- [ ] **Step 1: Write a test asserting the resolved token is written to /root/.openclaw-env**
 
 In `gateway-manager.test.ts`, add an assertion to the existing main test:
 
 ```typescript
 // In the existing 'builds the image, resolves secrets...' test, after all existing assertions:
-// Verify that the profile.d script writes a resolved token, not a variable reference
-const profileDExecCall = execMock.mock.calls.find(
-  (call) => typeof call[0] === 'string' && call[0].includes('/etc/profile.d/openclaw.sh'),
+// Verify that env vars are written to /root/.openclaw-env with mode 600, not /etc/profile.d/
+const envFileExecCall = execMock.mock.calls.find(
+  (call) => typeof call[0] === 'string' && call[0].includes('/root/.openclaw-env'),
 );
-expect(profileDExecCall).toBeDefined();
-const profileDScript = profileDExecCall![0] as string;
-expect(profileDScript).not.toContain('$OPENCLAW_GATEWAY_TOKEN');
+expect(envFileExecCall).toBeDefined();
+const envFileScript = envFileExecCall![0] as string;
+// Must contain the literal token value, not a variable reference
+expect(envFileScript).not.toContain('$OPENCLAW_GATEWAY_TOKEN');
+expect(envFileScript).toContain('gw-token-123');
+// Must set restrictive permissions
+expect(envFileScript).toContain('chmod 600');
+// Must source from .bashrc
+expect(envFileScript).toContain('.bashrc');
 ```
 
-- [ ] **Step 2: Fix the heredoc to use the resolved env value**
+- [ ] **Step 2: Fix the env var writing approach**
 
-In `gateway-manager.ts`, the `envVarsScript` currently has:
-```
-'export OPENCLAW_GATEWAY_TOKEN=$OPENCLAW_GATEWAY_TOKEN\n'
-```
+In `gateway-manager.ts`, replace the `/etc/profile.d/openclaw.sh` approach entirely. The env vars file should:
 
-Replace with access to the already-resolved env secrets:
+1. Write to `/root/.openclaw-env` (not `/etc/profile.d/`)
+2. Set `chmod 600 /root/.openclaw-env` (root-only readable)
+3. Source it from `/root/.bashrc`
+4. Use the resolved token value (not `$OPENCLAW_GATEWAY_TOKEN` variable reference)
 
 ```typescript
 const gatewayTokenValue = envSecrets.OPENCLAW_GATEWAY_TOKEN ?? '';
-const envVarsScript =
+const envVarsContent =
   'export OPENCLAW_HOME=/home/openclaw\n' +
   `export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/config/${configFileName}\n` +
   'export OPENCLAW_STATE_DIR=/home/openclaw/.openclaw/state\n' +
   `export OPENCLAW_GATEWAY_TOKEN='${gatewayTokenValue.replace(/'/gu, "'\\''")}'` + '\n' +
   'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt\n';
+
+// Write to /root/.openclaw-env with mode 600, source from .bashrc
+await vm.exec(
+  `cat > /root/.openclaw-env << 'ENVEOF'\n${envVarsContent}ENVEOF\n` +
+  'chmod 600 /root/.openclaw-env && ' +
+  'grep -q "source /root/.openclaw-env" /root/.bashrc 2>/dev/null || ' +
+  'echo "source /root/.openclaw-env" >> /root/.bashrc',
+);
 ```
 
-Note: Shell-escape the token value with single-quote escaping to prevent injection.
-
-Also change the file permissions from 644 to 600 (root-only readable) since the file now contains a literal secret:
-
-```typescript
-'chmod 600 /etc/profile.d/openclaw.sh && ' +
-```
-
-And write to `/root/.openclaw-env` instead of `/etc/profile.d/` to avoid world-readable secrets. Source it from `/root/.bashrc`:
-
-```typescript
-'cat /etc/profile.d/openclaw.sh > /root/.openclaw-env && ' +
-'chmod 600 /root/.openclaw-env && ' +
-'echo "source /root/.openclaw-env" >> /root/.bashrc',
-```
+Note: Shell-escape the token value with single-quote escaping to prevent injection. Do NOT write to `/etc/profile.d/` — that directory is world-readable.
 
 - [ ] **Step 3: Update the test fixture to include OPENCLAW_GATEWAY_TOKEN in resolved secrets**
 
-The test's `resolveAll` mock should return `OPENCLAW_GATEWAY_TOKEN: 'gw-token-123'` alongside the other secrets. Then verify the exec call contains the literal token value.
+The test's `resolveAll` mock should return `OPENCLAW_GATEWAY_TOKEN: 'gw-token-123'` alongside the other secrets. Then verify the exec call contains the literal token value and writes to `/root/.openclaw-env`.
 
 - [ ] **Step 4: Run tests**
 
@@ -908,7 +895,7 @@ Run: `pnpm typecheck`
 - [ ] **Step 2: Fix type errors**
 
 Common issues from prior phases:
-- Test mocks missing new fields added to interfaces (e.g., `websocketBypass`, `getLeaseByScopeKey`)
+- Test mocks missing new fields added to interfaces (e.g., `websocketBypass`)
 - Missing return type annotations
 
 Fix each error. Do not use `as any` or bare `// @ts-ignore`. Use `satisfies` or extend mock objects.
@@ -922,47 +909,21 @@ Expected: Exit 0.
 
 ### Task 12: Split controller-runtime.ts into focused modules
 
-`controller-runtime.ts` is currently ~317 lines and orchestrates gateway boot, tool VM creation, HTTP server setup, and the boot sequence. Split it into focused modules with clear single responsibilities.
+`controller-runtime.ts` is currently ~317 lines and handles both orchestration (wiring dependencies, boot sequence) and tool VM lifecycle implementation (image build, VM creation, workspace setup, user provisioning). These are distinct responsibilities with distinct testing surfaces.
+
+**Split criteria — responsibility boundaries, not line counts:**
+- `controller-runtime.ts` is the orchestrator: wire dependencies, boot sequence, shutdown. It should contain ONLY wiring logic — no implementation details for VM creation.
+- Tool VM lifecycle (create VM, build image, enable SSH, workspace setup, user provisioning) is a distinct responsibility with its own testing surface — extract it.
+- Do NOT extract gateway lifecycle into a separate module — `startGatewayZone` already lives in `gateway-manager.ts`. A thin re-export wrapper would be busywork with no distinct responsibility.
+- Do NOT extract HTTP server setup unless it grows beyond the current ~25 lines. A thin wrapper around `@hono/node-server` doesn't earn its own module.
 
 **Files:**
 - Modify: `packages/agent-vm/src/features/controller/controller-runtime.ts`
-- Create: `packages/agent-vm/src/features/controller/gateway-zone-lifecycle.ts`
 - Create: `packages/agent-vm/src/features/controller/tool-vm-lifecycle.ts`
-- Create: `packages/agent-vm/src/features/controller/controller-http-server.ts`
 
-- [ ] **Step 1: Extract gateway zone lifecycle**
+- [ ] **Step 1: Extract tool VM lifecycle**
 
-Create `gateway-zone-lifecycle.ts` with:
-- The `startGateway` wrapper function (currently inline in `startControllerRuntime`, lines 188-194)
-- Re-exports `startGatewayZone` from `./gateway-manager.js`
-
-This file is thin — it exists so `controller-runtime.ts` doesn't directly depend on gateway boot details.
-
-```typescript
-// gateway-zone-lifecycle.ts
-import type { SecretResolver } from 'gondolin-core';
-
-import { startGatewayZone, type GatewayManagerDependencies } from './gateway-manager.js';
-import type { SystemConfig } from './system-config.js';
-
-export interface GatewayZoneLifecycleOptions {
-  readonly pluginSourceDir?: string;
-  readonly secretResolver: SecretResolver;
-  readonly systemConfig: SystemConfig;
-  readonly zoneId: string;
-}
-
-export async function bootGatewayZone(
-  options: GatewayZoneLifecycleOptions,
-  dependencies?: GatewayManagerDependencies,
-): ReturnType<typeof startGatewayZone> {
-  return await startGatewayZone(options, dependencies);
-}
-```
-
-- [ ] **Step 2: Extract tool VM lifecycle**
-
-Create `tool-vm-lifecycle.ts` with the `createManagedToolVm` default factory (currently lines 131-164 in controller-runtime.ts):
+Create `tool-vm-lifecycle.ts` with the `createManagedToolVm` default factory (currently lines 131-164 in controller-runtime.ts). This module owns: image building, VM creation with profile config, workspace directory setup, user provisioning, and `/dev/fd` symlink.
 
 ```typescript
 // tool-vm-lifecycle.ts
@@ -1028,71 +989,29 @@ export async function createDefaultToolVm(
 }
 ```
 
-- [ ] **Step 3: Extract HTTP server setup**
+- [ ] **Step 2: Update controller-runtime.ts to import tool VM lifecycle**
 
-Create `controller-http-server.ts` with the `defaultStartHttpServer` function (currently lines 62-87):
-
-```typescript
-// controller-http-server.ts
-import type { Hono } from 'hono';
-
-export interface ControllerHttpServer {
-  close(): Promise<void>;
-}
-
-export async function startControllerHttpServer(options: {
-  readonly app: Hono;
-  readonly port: number;
-}): Promise<ControllerHttpServer> {
-  const honoNodeServer = await import('@hono/node-server');
-  const server = honoNodeServer.serve({
-    fetch: options.app.fetch,
-    port: options.port,
-  });
-
-  return {
-    async close(): Promise<void> {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error?: Error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
-      });
-    },
-  };
-}
-```
-
-- [ ] **Step 4: Update controller-runtime.ts to import from new modules**
-
-Replace the inline implementations with imports. The file should shrink to ~150-200 lines of pure orchestration:
+Replace the inline tool VM creation with an import:
 
 ```typescript
-import { bootGatewayZone } from './gateway-zone-lifecycle.js';
 import { createDefaultToolVm } from './tool-vm-lifecycle.js';
-import { startControllerHttpServer } from './controller-http-server.js';
 ```
 
-Remove the inlined `defaultStartHttpServer`, the tool VM creation block, and `loadBuildConfig`.
+Remove the inlined tool VM creation block and `loadBuildConfig`. Keep the HTTP server setup and gateway boot wiring inline — they're thin enough to stay in the orchestrator.
 
-- [ ] **Step 5: Run all tests**
+- [ ] **Step 3: Run all tests**
 
 Run: `pnpm vitest run`
 Expected: All PASS. The existing `controller-runtime.test.ts` tests inject all dependencies, so the extraction doesn't break them.
 
-- [ ] **Step 6: Verify file sizes**
+- [ ] **Step 4: Verify responsibility boundaries**
 
-```
-wc -l packages/agent-vm/src/features/controller/controller-runtime.ts
-wc -l packages/agent-vm/src/features/controller/gateway-zone-lifecycle.ts
-wc -l packages/agent-vm/src/features/controller/tool-vm-lifecycle.ts
-wc -l packages/agent-vm/src/features/controller/controller-http-server.ts
-```
+`controller-runtime.ts` should now contain only:
+- Dependency wiring (create lease manager, create HTTP app, configure intervals)
+- Boot sequence (resolve secrets, start gateway, start HTTP server, start reaper)
+- Shutdown logic
 
-Expected: `controller-runtime.ts` < 200 lines. Each extracted file < 80 lines.
+No implementation logic for VM creation, image building, or workspace setup should remain in `controller-runtime.ts`.
 
 ---
 
@@ -1369,13 +1288,20 @@ Run from the repo root. Requires Gondolin installed and 1Password CLI configured
 ## 1. Controller Boot
 
 ```bash
-pnpm agent-vm controller start --zone shravan --config ./system.json
+source .env.local && node packages/agent-vm/dist/bin/agent-vm.js controller start --zone shravan --config ./system.json
 ```
 
-**Expected:**
-- stdout includes `Controller listening on port 18800`
-- stdout includes `Gateway zone 'shravan' started`
-- No error output
+**Expected (JSON output via writeJson):**
+```json
+{
+  "controllerPort": 18800,
+  "ingress": { "host": "127.0.0.1", "port": 18791 },
+  "vmId": "<uuid>",
+  "zoneId": "shravan"
+}
+```
+
+No error output. The CLI uses `writeJson` to stdout, not log-style messages.
 
 **Verify:**
 ```bash
@@ -1427,40 +1353,53 @@ curl -s http://127.0.0.1:18800/leases | jq .
 ```
 Expected: Array with one entry matching `scopeKey: "e2e-test-scope"`
 
-## 4. Execute Command in Tool VM (via Gateway)
+## 4. Execute Command in Tool VM (via Sandbox Plugin)
 
-Using the lease's SSH details, execute a command inside the tool VM through the gateway:
+The previous steps verified the gateway VM directly. This step proves the full sandbox plugin path: OpenClaw agent → sandbox plugin → lease → tool VM execution.
+
+```bash
+# Run a command through the actual agent → sandbox plugin → tool VM path
+source .env.local && node packages/agent-vm/dist/bin/agent-vm.js controller exec \
+  --zone shravan --config ./system.json \
+  -- openclaw agent -m "run: cat /etc/os-release" --agent main --local
+```
+
+If the controller doesn't have an `exec` subcommand, use the gateway's OpenClaw CLI directly:
 
 ```bash
 curl -s -X POST http://127.0.0.1:18800/zones/shravan/execute-command \
   -H 'Content-Type: application/json' \
-  -d '{"command": "cat /etc/os-release"}' | jq .
+  -d '{"command": "openclaw agent -m \"run: cat /etc/os-release\" --agent main --local"}' | jq .
 ```
 
 **Expected:**
-- `exitCode: 0`
-- `stdout` contains OS identification (e.g., `Debian`)
+- The agent invokes the sandbox plugin, which leases a tool VM
+- Output contains OS identification from the **tool VM** (not the gateway VM)
+- At least one lease appears in `curl -s http://127.0.0.1:18800/leases | jq .`
 
-## 5. File Operations in Workspace
+**Why this matters:** Steps 2-3 verified the gateway VM and raw lease creation. This step proves the sandbox plugin → lease → tool VM path actually works end-to-end. A `POST /zones/shravan/execute-command` with a plain shell command only runs on the gateway VM — it does NOT exercise the sandbox plugin or tool VM creation.
 
-Verify files can be created and read in the workspace:
+## 5. File Operations in Tool VM Workspace
+
+Verify files can be created and read in the tool VM workspace via the sandbox plugin:
 
 ```bash
-# Write a file
 curl -s -X POST http://127.0.0.1:18800/zones/shravan/execute-command \
   -H 'Content-Type: application/json' \
-  -d '{"command": "echo hello-e2e > /home/openclaw/workspace/test.txt && cat /home/openclaw/workspace/test.txt"}' | jq .
+  -d '{"command": "openclaw agent -m \"run: echo hello-e2e > /workspace/test.txt && cat /workspace/test.txt\" --agent main --local"}' | jq .
 ```
 
 **Expected:**
-- `exitCode: 0`
-- `stdout` contains `hello-e2e`
+- Output contains `hello-e2e`
+- The file was written inside the tool VM's `/workspace` mount
 
-**Verify the file exists on the host:**
+**Verify the file exists on the host (workspace is VFS-mounted):**
 ```bash
-cat workspaces/shravan/test.txt
+cat workspaces/shravan-0/test.txt
 ```
 Expected: `hello-e2e`
+
+Note: The host workspace path is `workspaces/<zoneId>-<tcpSlot>/`. The tcpSlot is 0 for the first lease.
 
 ## 6. Lease Release
 
@@ -1485,7 +1424,7 @@ Expected: Empty array `[]`
 If `OPENCLAW_GATEWAY_TOKEN` is available:
 
 ```bash
-TOKEN=$(op read "op://agent-vm/openclaw-gateway/token" 2>/dev/null || echo "")
+TOKEN=$(op read "op://agent-vm/agent-shravan-claw-gateway/password" 2>/dev/null || echo "")
 curl -s http://127.0.0.1:18791/api/status \
   -H "Authorization: Bearer ${TOKEN}" | jq .
 ```
@@ -1496,7 +1435,7 @@ curl -s http://127.0.0.1:18791/api/status \
 ## 8. Snapshot Create/Restore
 
 ```bash
-pnpm agent-vm controller snapshot create --zone shravan --config ./system.json
+source .env.local && node packages/agent-vm/dist/bin/agent-vm.js controller snapshot create --zone shravan --config ./system.json
 ```
 
 **Expected:**
@@ -1504,7 +1443,7 @@ pnpm agent-vm controller snapshot create --zone shravan --config ./system.json
 - File exists at the printed path
 
 ```bash
-pnpm agent-vm controller snapshot list --zone shravan --config ./system.json
+source .env.local && node packages/agent-vm/dist/bin/agent-vm.js controller snapshot list --zone shravan --config ./system.json
 ```
 
 **Expected:**
@@ -1531,10 +1470,10 @@ Expected: Connection refused
 Repeat step 1. Verify the controller boots cleanly without stale state.
 
 ```bash
-pnpm agent-vm controller start --zone shravan --config ./system.json
+source .env.local && node packages/agent-vm/dist/bin/agent-vm.js controller start --zone shravan --config ./system.json
 ```
 
-**Expected:** Same as step 1 — no errors about existing VMs or ports in use.
+**Expected:** Same JSON output as step 1 — no errors about existing VMs or ports in use.
 
 ## Pass/Fail Summary
 
@@ -1568,7 +1507,7 @@ Independent (can parallelize):
   Task 1 (H5)  Task 2 (H4)  Task 6 (M1)  Task 13 (tcp-pool)  Task 14 (idle-reaper)  Task 17 (E2E checklist)
 
 Sequential chains:
-  Task 3 (H1) → Task 4 (H2)     # H2 depends on getLeaseByScopeKey from H1
+  Task 3 (H1) → Task 4 (H2)     # H2 depends on CachedScopeEntry.leaseId from H1
   Task 5 (H3)                    # independent
   Task 7 (M2)                    # independent
   Task 8 (M3)                    # independent
@@ -1598,9 +1537,9 @@ The integration config should:
 - Load `.env.local` automatically (vitest `env` or `setupFiles`)
 - Set longer timeouts (120s+ for VM boot)
 - Only include `*.integration.test.ts` files
-- Read `OPENAI_API_KEY` from `.env.local` for model round-trip tests
+- Read `OPEN_AI_TEST_KEY` from `.env.local` for model round-trip tests
 
-Add `OPENAI_API_KEY` to `.env.local` for integration tests that need real model calls. This is a standard OpenAI API key (not OAuth), used only for testing. The production system uses Codex OAuth.
+Add `OPEN_AI_TEST_KEY` to `.env.local` for integration tests that need real model calls. This is a standard OpenAI API key (not OAuth), used only for testing. The production system uses Codex OAuth. Integration tests should read this key and pass it as the model API key.
 
 Rename existing live tests:
 - `live-sandbox-e2e.test.ts` → `live-sandbox-e2e.integration.test.ts`
@@ -1644,8 +1583,8 @@ Use `@hono/zod-validator` if available, or manual `schema.parse()` in route hand
 **Files:**
 - Create: `packages/agent-vm/src/features/controller/live-agent-model-roundtrip.test.ts`
 
-This test requires: QEMU, built images, `.env.local` with `OP_SERVICE_ACCOUNT_TOKEN`.
-Mark with `integration_llm` tag so it doesn't run in CI.
+This test requires: QEMU, built images, `.env.local` with `OP_SERVICE_ACCOUNT_TOKEN` and `OPEN_AI_TEST_KEY`.
+Mark with `integration_llm` tag so it doesn't run in CI. The test uses `OPEN_AI_TEST_KEY` from `.env.local` as the model API key for the round-trip call.
 
 The test:
 1. Boots controller with real system.json
@@ -1690,8 +1629,8 @@ All of the following must pass before this phase is complete:
 2. `pnpm lint:types` — 0 errors
 3. `pnpm typecheck` — exit 0
 4. `pnpm vitest run` — all tests pass, 0 failures
-5. `controller-runtime.ts` < 200 lines
-6. Each new extracted file < 100 lines
+5. `controller-runtime.ts` contains only orchestration wiring — no tool VM creation, image building, or workspace setup implementation
+6. `tool-vm-lifecycle.ts` owns all tool VM lifecycle logic (image build, VM creation, workspace setup, user provisioning) with a clear single responsibility
 7. `docs/E2E-VERIFICATION-CHECKLIST.md` exists with all 10 steps
 8. All controller HTTP endpoints use Zod v4 request validation
 9. Live integration tests exist for: agent model round-trip, stop/restart persistence
