@@ -2,7 +2,7 @@ import type { SecretResolver } from 'gondolin-core';
 import { describe, expect, it } from 'vitest';
 
 import { resolveZoneSecrets } from './credential-manager.js';
-import type { SystemConfig } from './system-config.js';
+import type { SystemConfig } from '../controller/system-config.js';
 
 const systemConfig = {
 	host: {

@@ -12,17 +12,17 @@ import {
 	type SecretResolver,
 } from 'gondolin-core';
 
-import { createControllerService } from './controller-service.js';
-import { runControllerCredentialsRefresh } from './credentials-refresh.js';
-import { runControllerDestroy } from './destroy.js';
-import { startGatewayZone } from './gateway-manager.js';
+import { createControllerService } from './controller-http-routes.js';
+import { runControllerCredentialsRefresh } from '../operations/credentials-refresh.js';
+import { runControllerDestroy } from '../operations/destroy-zone.js';
+import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { createIdleReaper } from './idle-reaper.js';
 import { createLeaseManager, type ToolProfile } from './lease-manager.js';
-import { runControllerLogs } from './logs.js';
-import { buildControllerStatus } from './status.js';
+import { runControllerLogs } from '../operations/zone-logs.js';
+import { buildControllerStatus } from '../operations/controller-status.js';
 import type { SystemConfig } from './system-config.js';
 import { createTcpPool } from './tcp-pool.js';
-import { runControllerUpgrade } from './upgrade.js';
+import { runControllerUpgrade } from '../operations/upgrade-zone.js';
 
 export interface ControllerRuntime {
 	readonly controllerPort: number;

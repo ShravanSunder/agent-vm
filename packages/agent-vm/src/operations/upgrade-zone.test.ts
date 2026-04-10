@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SystemConfig } from './system-config.js';
-import { runControllerUpgrade } from './upgrade.js';
+import type { SystemConfig } from '../controller/system-config.js';
+import { runControllerUpgrade } from './upgrade-zone.js';
 
 const systemConfig = {
 	host: {

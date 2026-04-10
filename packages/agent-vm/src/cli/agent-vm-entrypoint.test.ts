@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SystemConfig } from '../features/controller/system-config.js';
-import { runAgentVmCli } from './agent-vm.js';
+import type { SystemConfig } from '../controller/system-config.js';
+import { runAgentVmCli } from './agent-vm-entrypoint.js';
 
 describe('runAgentVmCli', () => {
 	it('routes doctor and status subcommands to their handlers', async () => {

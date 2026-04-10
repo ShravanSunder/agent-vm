@@ -4,8 +4,8 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { runControllerDestroy } from './destroy.js';
-import type { SystemConfig } from './system-config.js';
+import { runControllerDestroy } from './destroy-zone.js';
+import type { SystemConfig } from '../controller/system-config.js';
 
 const createdDirectories: string[] = [];
 

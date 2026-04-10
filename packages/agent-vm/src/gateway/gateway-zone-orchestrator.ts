@@ -13,7 +13,7 @@ import {
 } from 'gondolin-core';
 
 import { resolveZoneSecrets } from './credential-manager.js';
-import type { SystemConfig } from './system-config.js';
+import type { SystemConfig } from '../controller/system-config.js';
 
 type GatewayZone = SystemConfig['zones'][number];
 

@@ -1,8 +1,8 @@
 import type { BuildImageResult, ManagedVm, SecretResolver } from 'gondolin-core';
 import { describe, expect, it, vi } from 'vitest';
 
-import { startGatewayZone } from './gateway-manager.js';
-import type { SystemConfig } from './system-config.js';
+import { startGatewayZone } from './gateway-zone-orchestrator.js';
+import type { SystemConfig } from '../controller/system-config.js';
 
 const systemConfig = {
 	host: {

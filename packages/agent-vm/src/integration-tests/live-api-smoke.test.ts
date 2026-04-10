@@ -15,8 +15,8 @@ import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 
 import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
-import { createControllerApp } from './controller-service.js';
-import type { Lease } from './lease-manager.js';
+import { createControllerApp } from '../controller/controller-http-routes.js';
+import type { Lease } from '../controller/lease-manager.js';
 
 describe('live smoke: API client → controller over real HTTP', () => {
 	let controllerServer: { close: (cb?: () => void) => void } | null = null;

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createControllerApp } from './controller-service.js';
+import { createControllerApp } from './controller-http-routes.js';
 import type { Lease } from './lease-manager.js';
 
 describe('createControllerApp', () => {

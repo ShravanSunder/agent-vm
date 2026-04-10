@@ -8,14 +8,14 @@ import {
 	type SecretResolver,
 } from 'gondolin-core';
 
-import { createControllerClient } from '../features/controller/controller-client.js';
-import { startControllerRuntime } from '../features/controller/controller-runtime.js';
-import { runControllerDoctor } from '../features/controller/doctor.js';
-import { startGatewayZone } from '../features/controller/gateway-manager.js';
-import { createAgeEncryption } from '../features/controller/snapshot-encryption.js';
-import { createSnapshotManager } from '../features/controller/snapshot-manager.js';
-import { buildControllerStatus } from '../features/controller/status.js';
-import { loadSystemConfig, type SystemConfig } from '../features/controller/system-config.js';
+import { createControllerClient } from '../controller/controller-client.js';
+import { startControllerRuntime } from '../controller/controller-runtime.js';
+import { runControllerDoctor } from '../operations/doctor.js';
+import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import { createAgeEncryption } from '../snapshots/snapshot-encryption.js';
+import { createSnapshotManager } from '../snapshots/snapshot-manager.js';
+import { buildControllerStatus } from '../operations/controller-status.js';
+import { loadSystemConfig, type SystemConfig } from '../controller/system-config.js';
 
 interface CliDependencies {
 	readonly buildControllerStatus: typeof buildControllerStatus;

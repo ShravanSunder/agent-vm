@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildControllerStatus } from './status.js';
-import type { SystemConfig } from './system-config.js';
+import { buildControllerStatus } from './controller-status.js';
+import type { SystemConfig } from '../controller/system-config.js';
 
 const systemConfig = {
 	host: {

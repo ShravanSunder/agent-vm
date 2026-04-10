@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { runControllerLogs } from './logs.js';
+import { runControllerLogs } from './zone-logs.js';
 
 describe('runControllerLogs', () => {
 	it('returns streamed gateway output for the requested zone', async () => {

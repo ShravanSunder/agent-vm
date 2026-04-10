@@ -3,7 +3,7 @@
 	"version": "0.1.0",
 	"private": true,
 	"bin": {
-		"agent-vm": "./dist/bin/agent-vm.js"
+		"agent-vm": "./dist/cli/agent-vm-entrypoint.js"
 	},
 	"type": "module",
 	"main": "./dist/index.js",
