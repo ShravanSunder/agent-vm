@@ -345,7 +345,28 @@ find packages/agent-vm/src -type d | sort
 
 Should show: `cli/`, `controller/`, `gateway/`, `tool-vm/`, `snapshots/`, `operations/`, `gateway-api-client/`, `integration-tests/`.
 
-- [ ] **Step 4: Commit final state**
+- [ ] **Step 4: Update Phase 5 plan file paths**
+
+After the reorg, `docs/superpowers/plans/2026-04-10-phase-5-review-fixes-tests-e2e.md` references old paths. Do a find-and-replace across the Phase 5 plan:
+
+| Old path | New path |
+|----------|----------|
+| `features/controller/gateway-manager.ts` | `gateway/gateway-zone-orchestrator.ts` (or the split file) |
+| `features/controller/controller-runtime.ts` | `controller/controller-runtime.ts` |
+| `features/controller/controller-service.ts` | `controller/controller-http-routes.ts` |
+| `features/controller/lease-manager.ts` | `controller/lease-manager.ts` |
+| `features/controller/snapshot-encryption.ts` | `snapshots/snapshot-encryption.ts` |
+| `features/controller/snapshot-manager.ts` | `snapshots/snapshot-manager.ts` |
+| `features/controller/doctor.ts` | `operations/doctor.ts` |
+| `features/controller/tcp-pool.ts` | `controller/tcp-pool.ts` |
+| `features/controller/idle-reaper.ts` | `controller/idle-reaper.ts` |
+| `features/controller/system-config.ts` | `controller/system-config.ts` |
+| `features/controller/credential-manager.ts` | `gateway/credential-manager.ts` |
+| `bin/agent-vm.ts` | `cli/agent-vm-entrypoint.ts` |
+
+Also update the File Structure section at the top of the Phase 5 plan to match the new layout.
+
+- [ ] **Step 5: Commit final state**
 
 ---
 
