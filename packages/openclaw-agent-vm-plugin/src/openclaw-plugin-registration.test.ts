@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { GondolinFsBridge } from './backend.js';
-import defaultPlugin, { createBackendDeps, type SshHelpers } from './plugin.js';
+import type { GondolinFsBridge } from './sandbox-backend-factory.js';
+import defaultPlugin, { createBackendDeps, type SshHelpers } from './openclaw-plugin-registration.js';
 
 function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
 	const mockSession = { command: 'ssh', configPath: '/tmp/ssh', host: 'tool-0.vm.host' };
@@ -97,6 +97,49 @@ describe('createBackendDeps', () => {
 		});
 		expect(execSpec.stdinMode).toBe('pipe-open');
 		expect(execSpec.argv).toEqual(['ssh', '-i', '/tmp/key', 'tool-0.vm.host', 'ls']);
+
+		// Verify finalizeToken contains session and dispose function
+		expect(execSpec.finalizeToken).toBeDefined();
+		const token = execSpec.finalizeToken as { session: unknown; dispose: () => Promise<void> };
+		expect(token.session).toEqual({ command: 'ssh', configPath: '/tmp/ssh', host: 'tool-0.vm.host' });
+		expect(typeof token.dispose).toBe('function');
+	});
+
+	it('buildExecSpec finalizeToken dispose calls disposeSshSandboxSession when available', async () => {
+		const disposeSshSandboxSession = vi.fn(async () => {});
+		const ssh = createMockSshHelpers({ disposeSshSandboxSession });
+		const deps = createBackendDeps(ssh);
+
+		const execSpec = await deps.buildExecSpec({
+			command: 'echo test',
+			env: {},
+			ssh: { host: 'tool-0.vm.host', identityPem: 'pem', port: 22, user: 'sandbox' },
+			usePty: false,
+			workdir: '/workspace',
+		});
+
+		const token = execSpec.finalizeToken as { dispose: () => Promise<void> };
+		await token.dispose();
+
+		expect(disposeSshSandboxSession).toHaveBeenCalledTimes(1);
+	});
+
+	it('buildExecSpec finalizeToken dispose is safe when disposeSshSandboxSession is absent', async () => {
+		const ssh = createMockSshHelpers();
+		// disposeSshSandboxSession is undefined by default in createMockSshHelpers
+		const deps = createBackendDeps(ssh);
+
+		const execSpec = await deps.buildExecSpec({
+			command: 'echo test',
+			env: {},
+			ssh: { host: 'tool-0.vm.host', identityPem: 'pem', port: 22, user: 'sandbox' },
+			usePty: false,
+			workdir: '/workspace',
+		});
+
+		const token = execSpec.finalizeToken as { dispose: () => Promise<void> };
+		// Should not throw
+		await token.dispose();
 	});
 
 	it('delegates runRemoteShellScript to SSH helpers', async () => {

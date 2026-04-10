@@ -153,10 +153,12 @@ export async function startControllerRuntime(
 					},
 				},
 			});
-			// Debian OCI runtime setup: create sandbox user + workspace ownership
+			// Debian OCI runtime setup: create sandbox user, workspace, /dev/fd symlink
+			// /dev/fd is needed by OpenClaw's remote FS bridge (python3 /dev/fd/3 pattern)
 			await toolVm.exec(
 				'useradd -m -s /bin/bash sandbox 2>/dev/null; ' +
-				'mkdir -p /workspace && chown sandbox:sandbox /workspace',
+				'mkdir -p /workspace && chown sandbox:sandbox /workspace; ' +
+				'ln -sf /proc/self/fd /dev/fd 2>/dev/null || true',
 			);
 			return toolVm;
 		});
@@ -234,10 +236,12 @@ export async function startControllerRuntime(
 						zoneId: targetZoneId,
 					},
 					{
-						readGatewayLogs: async (zoneId: string) => {
-							const targetZone = findZone(options.systemConfig, zoneId);
+						readGatewayLogs: async () => {
 							try {
-								return await fs.readFile(`${targetZone.gateway.stateDir}/logs/gateway.log`, 'utf8');
+								const result = await gateway.vm.exec(
+									'cat /tmp/openclaw.log 2>/dev/null || echo ""',
+								);
+								return result.stdout;
 							} catch {
 								return '';
 							}

@@ -1,65 +1,66 @@
-import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAgeEncryption } from './snapshot-encryption.js';
 
+// Generate a real age identity for testing
+function generateTestIdentity(): string {
+	const { execFileSync } = require('node:child_process') as typeof import('node:child_process');
+	const output = execFileSync('age-keygen', [], { encoding: 'utf8' });
+	const match = output.match(/AGE-SECRET-KEY-\S+/u);
+	if (!match) {
+		throw new Error('Failed to generate age identity');
+	}
+	return match[0];
+}
+
 describe('createAgeEncryption', () => {
-	it('calls age with the passphrase to encrypt a file', async () => {
-		const execCommands: { cmd: string; args: string[] }[] = [];
-		const encryption = createAgeEncryption({
-			resolvePassphrase: async () => 'test-passphrase-32chars-minimum!',
-			execFileAsync: async (
-				cmd: string,
-				args: readonly string[],
-			) => {
-				execCommands.push({ cmd, args: [...args] });
-				return { stdout: '', stderr: '' };
-			},
-		});
+	let tmpDir: string | undefined;
 
-		await encryption.encrypt('/tmp/input.tar', '/tmp/output.tar.age');
-
-		expect(execCommands).toHaveLength(1);
-		expect(execCommands[0]?.cmd).toBe('age');
-		expect(execCommands[0]?.args).toContain('--encrypt');
-		expect(execCommands[0]?.args).toContain('--passphrase');
-		expect(execCommands[0]?.args).toContain('--output');
-		expect(execCommands[0]?.args).toContain('/tmp/output.tar.age');
-		expect(execCommands[0]?.args).toContain('/tmp/input.tar');
+	afterEach(() => {
+		if (tmpDir) {
+			fs.rmSync(tmpDir, { recursive: true, force: true });
+			tmpDir = undefined;
+		}
 	});
 
-	it('calls age with the passphrase to decrypt a file', async () => {
-		const execCommands: { cmd: string; args: string[] }[] = [];
+	it('encrypts and decrypts a file using age identity key', async () => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'age-test-'));
+		const identity = generateTestIdentity();
+		const inputPath = path.join(tmpDir, 'input.txt');
+		const encryptedPath = path.join(tmpDir, 'output.age');
+		const decryptedPath = path.join(tmpDir, 'decrypted.txt');
+		fs.writeFileSync(inputPath, 'hello from age encryption test');
+
 		const encryption = createAgeEncryption({
-			resolvePassphrase: async () => 'test-passphrase-32chars-minimum!',
-			execFileAsync: async (
-				cmd: string,
-				args: readonly string[],
-			) => {
-				execCommands.push({ cmd, args: [...args] });
-				return { stdout: '', stderr: '' };
-			},
+			resolveIdentity: async () => identity,
 		});
 
-		await encryption.decrypt('/tmp/input.tar.age', '/tmp/output.tar');
+		await encryption.encrypt(inputPath, encryptedPath);
+		expect(fs.existsSync(encryptedPath)).toBe(true);
+		expect(fs.readFileSync(encryptedPath).length).toBeGreaterThan(0);
+		// Encrypted file should not contain plaintext
+		expect(fs.readFileSync(encryptedPath, 'utf8')).not.toContain('hello from age');
 
-		expect(execCommands).toHaveLength(1);
-		expect(execCommands[0]?.cmd).toBe('age');
-		expect(execCommands[0]?.args).toContain('--decrypt');
-		expect(execCommands[0]?.args).toContain('--output');
-		expect(execCommands[0]?.args).toContain('/tmp/output.tar');
-		expect(execCommands[0]?.args).toContain('/tmp/input.tar.age');
+		await encryption.decrypt(encryptedPath, decryptedPath);
+		expect(fs.readFileSync(decryptedPath, 'utf8')).toBe('hello from age encryption test');
 	});
 
-	it('resolves the passphrase before each operation', async () => {
-		const resolvePassphrase = vi.fn(async () => 'my-secret');
-		const encryption = createAgeEncryption({
-			resolvePassphrase,
-			execFileAsync: async () => ({ stdout: '', stderr: '' }),
-		});
+	it('resolves the identity before each operation', async () => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'age-resolve-'));
+		const identity = generateTestIdentity();
+		const resolveIdentity = vi.fn(async () => identity);
+		const inputPath = path.join(tmpDir, 'input.txt');
+		fs.writeFileSync(inputPath, 'test');
 
-		await encryption.encrypt('/tmp/a', '/tmp/b');
-		await encryption.decrypt('/tmp/b', '/tmp/c');
+		const encryption = createAgeEncryption({ resolveIdentity });
 
-		expect(resolvePassphrase).toHaveBeenCalledTimes(2);
+		await encryption.encrypt(inputPath, path.join(tmpDir, 'out1.age'));
+		await encryption.decrypt(path.join(tmpDir, 'out1.age'), path.join(tmpDir, 'out1.txt'));
+
+		expect(resolveIdentity).toHaveBeenCalledTimes(2);
 	});
 });

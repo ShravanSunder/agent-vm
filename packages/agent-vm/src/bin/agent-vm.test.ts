@@ -536,7 +536,7 @@ describe('runAgentVmCli', () => {
 			timestamp: '2026-04-06T12-00',
 			zoneId: 'shravan',
 		}));
-		const resolvePassphraseCalls: string[] = [];
+		const resolveIdentityCalls: string[] = [];
 
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'test-token';
 
@@ -554,8 +554,8 @@ describe('runAgentVmCli', () => {
 			{
 				buildControllerStatus: () => ({ controllerPort: 18800, toolProfiles: ['standard'], zones: [] }),
 				createAgeEncryption: (deps) => {
-					// Capture the passphrase resolver to verify the 1P ref pattern
-					void deps.resolvePassphrase().then((passphrase) => resolvePassphraseCalls.push(passphrase));
+					// Capture the identity resolver to verify the 1P ref pattern
+					void deps.resolveIdentity().then((identity) => resolveIdentityCalls.push(identity));
 					return { encrypt: async () => {}, decrypt: async () => {} };
 				},
 				createControllerClient: () => ({

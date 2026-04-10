@@ -16,7 +16,8 @@
       "sandbox": {
         "mode": "all",
         "backend": "gondolin",
-        "scope": "session"
+        "scope": "session",
+        "workspaceAccess": "rw"
       }
     }
   },

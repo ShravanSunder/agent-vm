@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveGondolinPluginConfig } from './config.js';
+import { resolveGondolinPluginConfig } from './gondolin-plugin-config.js';
 
 describe('resolveGondolinPluginConfig', () => {
 	it('parses the controller url and zone id from plugin config', () => {

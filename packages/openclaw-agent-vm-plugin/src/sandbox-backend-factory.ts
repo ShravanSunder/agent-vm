@@ -1,4 +1,4 @@
-import { createLeaseClient, type GondolinLeaseResponse, type LeaseClient } from './lease-client.js';
+import { createLeaseClient, type GondolinLeaseResponse, type LeaseClient } from './controller-lease-client.js';
 
 function isGondolinLeaseResponse(value: unknown): value is GondolinLeaseResponse {
 	return (
@@ -73,6 +73,7 @@ interface CreateBackendDependencies {
 	}) => Promise<{
 		readonly argv: string[];
 		readonly env: Record<string, string>;
+		readonly finalizeToken?: unknown;
 		readonly stdinMode: 'pipe-open' | 'pipe-closed';
 	}>;
 	readonly createFsBridgeBuilder?: (
@@ -82,6 +83,7 @@ interface CreateBackendDependencies {
 	readonly runRemoteShellScript: (params: {
 		readonly script: string;
 		readonly ssh: GondolinLeaseResponse['ssh'];
+		readonly stdin?: Buffer | string;
 	}) => Promise<{
 		readonly code: number;
 		readonly stderr: Buffer;
@@ -90,6 +92,8 @@ interface CreateBackendDependencies {
 }
 
 interface GondolinSandboxBackendHandle {
+	readonly configLabel?: string;
+	readonly configLabelKind?: string;
 	createFsBridge?: (params: { readonly sandbox: unknown }) => GondolinFsBridge;
 	env?: Record<string, string>;
 	readonly id: string;
@@ -104,13 +108,25 @@ interface GondolinSandboxBackendHandle {
 	}): Promise<{
 		readonly argv: string[];
 		readonly env: Record<string, string>;
+		readonly finalizeToken?: unknown;
 		readonly stdinMode: 'pipe-open' | 'pipe-closed';
 	}>;
+	finalizeExec?: (params: {
+		readonly exitCode: number | null;
+		readonly status: 'completed' | 'failed';
+		readonly timedOut: boolean;
+		readonly token?: unknown;
+	}) => Promise<void>;
 	runShellCommand(params: { readonly script: string }): Promise<{
 		readonly code: number;
 		readonly stderr: Buffer;
 		readonly stdout: Buffer;
 	}>;
+}
+
+interface CachedScopeEntry {
+	readonly handle: GondolinSandboxBackendHandle;
+	readonly lease: GondolinLeaseResponse;
 }
 
 export function createGondolinSandboxBackendFactory(
@@ -130,7 +146,14 @@ export function createGondolinSandboxBackendFactory(
 	readonly sessionKey: string;
 	readonly workspaceDir: string;
 }) => Promise<GondolinSandboxBackendHandle> {
+	const scopeCache = new Map<string, CachedScopeEntry>();
+
 	return async (params) => {
+		const existingEntry = scopeCache.get(params.scopeKey);
+		if (existingEntry) {
+			return existingEntry.handle;
+		}
+
 		const leaseClient =
 			dependencies.createLeaseClient?.({
 				controllerUrl: options.controllerUrl,
@@ -150,11 +173,12 @@ export function createGondolinSandboxBackendFactory(
 		const boundRunRemoteShellScript: FsBridgeLeaseContext['runRemoteShellScript'] = async (
 			shellParams,
 		) => {
-			const session = await dependencies.runRemoteShellScript({
+			const result = await dependencies.runRemoteShellScript({
 				script: buildShellScriptWithArgs(shellParams.script, shellParams.args),
 				ssh: lease.ssh,
+				...(shellParams.stdin !== undefined ? { stdin: shellParams.stdin } : {}),
 			});
-			return session;
+			return result;
 		};
 
 		const fsBridgeCreateFn = dependencies.createFsBridgeBuilder
@@ -165,7 +189,7 @@ export function createGondolinSandboxBackendFactory(
 				})
 			: undefined;
 
-		return {
+		const handle: GondolinSandboxBackendHandle = {
 			...(fsBridgeCreateFn
 				? {
 						createFsBridge: fsBridgeCreateFn,
@@ -177,8 +201,10 @@ export function createGondolinSandboxBackendFactory(
 					}
 				: {}),
 			id: 'gondolin',
-			runtimeId: lease.leaseId,
-			runtimeLabel: lease.leaseId,
+			runtimeId: `gondolin-${params.scopeKey}`,
+			runtimeLabel: `gondolin-${params.scopeKey}`,
+			configLabel: `${options.controllerUrl} (${options.zoneId})`,
+			configLabelKind: 'VM',
 			workdir: lease.workdir,
 			buildExecSpec: async (execParams) =>
 				await dependencies.buildExecSpec({
@@ -188,12 +214,63 @@ export function createGondolinSandboxBackendFactory(
 					usePty: execParams.usePty,
 					workdir: execParams.workdir ?? lease.workdir,
 				}),
+			finalizeExec: async (finalizeParams) => {
+				if (
+					finalizeParams.token &&
+					typeof finalizeParams.token === 'object' &&
+					'dispose' in finalizeParams.token
+				) {
+					await (finalizeParams.token as { dispose: () => Promise<void> }).dispose();
+				}
+			},
 			runShellCommand: async (commandParams) =>
 				await dependencies.runRemoteShellScript({
 					script: commandParams.script,
 					ssh: lease.ssh,
 				}),
 		} satisfies GondolinSandboxBackendHandle;
+
+		scopeCache.set(params.scopeKey, { handle, lease });
+		return handle;
+	};
+}
+
+/**
+ * Creates a sandbox backend manager that can inspect and tear down VM leases
+ * by delegating to the Gondolin controller lease API.
+ */
+export function createGondolinSandboxBackendManager(
+	options: {
+		readonly controllerUrl: string;
+		readonly zoneId: string;
+	},
+	dependencies: CreateBackendDependencies,
+): {
+	describeRuntime: (params: {
+		readonly entry: { readonly containerName: string };
+	}) => Promise<{ readonly configLabelMatch: boolean; readonly running: boolean }>;
+	removeRuntime: (params: {
+		readonly entry: { readonly containerName: string };
+	}) => Promise<void>;
+} {
+	return {
+		describeRuntime: async (params) => {
+			const leaseClient =
+				dependencies.createLeaseClient?.({ controllerUrl: options.controllerUrl }) ??
+				createLeaseClient({ controllerUrl: options.controllerUrl });
+			try {
+				const status = await leaseClient.getLeaseStatus(params.entry.containerName);
+				return { running: status !== null, configLabelMatch: true };
+			} catch {
+				return { running: false, configLabelMatch: false };
+			}
+		},
+		removeRuntime: async (params) => {
+			const leaseClient =
+				dependencies.createLeaseClient?.({ controllerUrl: options.controllerUrl }) ??
+				createLeaseClient({ controllerUrl: options.controllerUrl });
+			await leaseClient.releaseLease(params.entry.containerName);
+		},
 	};
 }
 

@@ -1,7 +1,7 @@
-export * from './backend.js';
-export * from './config.js';
-export * from './lease-client.js';
-export * from './plugin.js';
-export { default } from './plugin.js';
+export * from './sandbox-backend-factory.js';
+export * from './gondolin-plugin-config.js';
+export * from './controller-lease-client.js';
+export * from './openclaw-plugin-registration.js';
+export { default } from './openclaw-plugin-registration.js';
 
 export const OPENCLAW_GONDOLIN_PLUGIN_PACKAGE_NAME = 'openclaw-agent-vm-plugin';

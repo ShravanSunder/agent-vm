@@ -255,6 +255,10 @@ export async function startGatewayZone(
 		},
 	});
 
+	// Ensure /dev/fd exists — needed by OpenClaw's remote FS bridge (python3 /dev/fd/3 pattern).
+	// Gondolin's Debian images don't mount /dev/fd by default.
+	await managedVm.exec('ln -sf /proc/self/fd /dev/fd 2>/dev/null || true');
+
 	// Update Gondolin CA trust in the Debian image.
 	// Gondolin injects its MITM CA at /usr/local/share/ca-certificates/gondolin-mitm-ca.crt.
 	// update-ca-certificates merges it into the system trust store so npm/curl work.

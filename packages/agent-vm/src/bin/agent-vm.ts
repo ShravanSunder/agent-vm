@@ -315,7 +315,7 @@ export async function runAgentVmCli(
 				},
 			);
 			const encryption = dependencies.createAgeEncryption({
-				resolvePassphrase: async () =>
+				resolveIdentity: async () =>
 					await secretResolver.resolve({
 						source: '1password',
 						ref: `op://agent-vm/agent-${zoneId}-snapshot/password`,

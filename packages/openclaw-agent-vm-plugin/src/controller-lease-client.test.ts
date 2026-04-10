@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createLeaseClient } from './lease-client.js';
+import { createLeaseClient } from './controller-lease-client.js';
 
 describe('createLeaseClient', () => {
 	it('requests, checks, and releases leases through the controller API', async () => {

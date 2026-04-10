@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createControllerApp } from '../../agent-vm/src/features/controller/controller-service.js';
-import { createGondolinSandboxBackendFactory } from './backend.js';
-import { createLeaseClient } from './lease-client.js';
+import { createGondolinSandboxBackendFactory } from './sandbox-backend-factory.js';
+import { createLeaseClient } from './controller-lease-client.js';
 
 describe('gondolin controller integration', () => {
 	it('requests a lease through the controller app and builds an exec spec from the returned ssh lease', async () => {
@@ -96,6 +96,8 @@ describe('gondolin controller integration', () => {
 
 		expect(execSpec.argv).toEqual(['ssh', 'tool-0.vm.host', 'ls -la']);
 		expect(execSpec.stdinMode).toBe('pipe-open');
-		expect(backend.runtimeId).toBe('lease-123');
+		expect(backend.runtimeId).toBe('gondolin-agent:main:session-abc');
+		expect(backend.configLabel).toBe('http://controller.vm.host:18800 (shravan)');
+		expect(backend.configLabelKind).toBe('VM');
 	});
 });

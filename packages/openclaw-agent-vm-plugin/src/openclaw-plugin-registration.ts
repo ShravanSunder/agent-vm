@@ -1,5 +1,11 @@
-import { createGondolinSandboxBackendFactory, type FsBridgeLeaseContext, type GondolinFsBridge } from './backend.js';
-import { resolveGondolinPluginConfig } from './config.js';
+import { createGondolinSandboxBackendFactory, createGondolinSandboxBackendManager, type FsBridgeLeaseContext, type GondolinFsBridge } from './sandbox-backend-factory.js';
+import { resolveGondolinPluginConfig } from './gondolin-plugin-config.js';
+
+interface SshSandboxSession {
+	readonly command: string;
+	readonly configPath: string;
+	readonly host: string;
+}
 
 interface SshHelpers {
 	readonly buildExecRemoteCommand: (params: {
@@ -10,7 +16,7 @@ interface SshHelpers {
 	readonly buildRemoteCommand: (argv: readonly string[]) => string;
 	readonly buildSshSandboxArgv: (params: {
 		readonly remoteCommand: string;
-		readonly session: { readonly command: string; readonly configPath: string; readonly host: string };
+		readonly session: SshSandboxSession;
 		readonly tty?: boolean;
 	}) => string[];
 	readonly createRemoteShellSandboxFsBridge: (params: {
@@ -34,11 +40,12 @@ interface SshHelpers {
 		readonly target: string;
 		readonly updateHostKeys: boolean;
 		readonly workspaceRoot: string;
-	}) => Promise<{ readonly command: string; readonly configPath: string; readonly host: string }>;
+	}) => Promise<SshSandboxSession>;
+	readonly disposeSshSandboxSession?: (session: SshSandboxSession) => Promise<void>;
 	readonly runSshSandboxCommand: (params: {
 		readonly allowFailure?: boolean;
 		readonly remoteCommand: string;
-		readonly session: { readonly command: string; readonly configPath: string; readonly host: string };
+		readonly session: SshSandboxSession;
 		readonly stdin?: Buffer | string;
 	}) => Promise<{ readonly code: number; readonly stderr: Buffer; readonly stdout: Buffer }>;
 	readonly sanitizeEnvVars: (
@@ -56,6 +63,7 @@ interface BackendDeps {
 	}) => Promise<{
 		readonly argv: string[];
 		readonly env: Record<string, string>;
+		readonly finalizeToken?: unknown;
 		readonly stdinMode: 'pipe-open';
 	}>;
 	readonly createFsBridgeBuilder: (
@@ -90,6 +98,7 @@ function createBackendDeps(ssh: SshHelpers): BackendDeps {
 				command: 'ssh',
 				workspaceRoot: workdir,
 			});
+			const disposeFn = ssh.disposeSshSandboxSession;
 			return {
 				argv: ssh.buildSshSandboxArgv({
 					session,
@@ -97,6 +106,14 @@ function createBackendDeps(ssh: SshHelpers): BackendDeps {
 					tty: usePty,
 				}),
 				env: ssh.sanitizeEnvVars(process.env).allowed,
+				finalizeToken: {
+					session,
+					dispose: async (): Promise<void> => {
+						if (disposeFn) {
+							await disposeFn(session);
+						}
+					},
+				},
 				stdinMode: 'pipe-open' as const,
 			};
 		},
@@ -115,9 +132,11 @@ function createBackendDeps(ssh: SshHelpers): BackendDeps {
 		runRemoteShellScript: async ({
 			script,
 			ssh: sshCreds,
+			stdin,
 		}: {
 			script: string;
 			ssh: { host: string; identityPem: string; port: number; user: string };
+			stdin?: Buffer | string;
 		}) => {
 			const session = await ssh.createSshSandboxSessionFromSettings({
 				target: `${sshCreds.user}@${sshCreds.host}:${sshCreds.port}`,
@@ -130,6 +149,7 @@ function createBackendDeps(ssh: SshHelpers): BackendDeps {
 			return ssh.runSshSandboxCommand({
 				session,
 				remoteCommand: ssh.buildRemoteCommand(['/bin/sh', '-c', script, 'gondolin-sandbox-fs']),
+				...(stdin !== undefined ? { stdin } : {}),
 			});
 		},
 	};
@@ -138,7 +158,10 @@ function createBackendDeps(ssh: SshHelpers): BackendDeps {
 interface OpenClawSandboxSdk extends SshHelpers {
 	registerSandboxBackend: (
 		id: string,
-		reg: { factory: ReturnType<typeof createGondolinSandboxBackendFactory> },
+		reg: {
+			factory: ReturnType<typeof createGondolinSandboxBackendFactory>;
+			manager?: ReturnType<typeof createGondolinSandboxBackendManager>;
+		},
 	) => void;
 }
 
@@ -194,12 +217,21 @@ const plugin = {
 				buildSshSandboxArgv: sdkRaw.buildSshSandboxArgv,
 				createRemoteShellSandboxFsBridge: sdkRaw.createRemoteShellSandboxFsBridge,
 				createSshSandboxSessionFromSettings: sdkRaw.createSshSandboxSessionFromSettings,
+				...(typeof sdkRaw.disposeSshSandboxSession === 'function'
+					? {
+							disposeSshSandboxSession: sdkRaw.disposeSshSandboxSession as (
+								session: SshSandboxSession,
+							) => Promise<void>,
+						}
+					: {}),
 				runSshSandboxCommand: sdkRaw.runSshSandboxCommand,
 				sanitizeEnvVars: sdkRaw.sanitizeEnvVars,
 			};
 
+			const deps = createBackendDeps(ssh);
 			sdkRaw.registerSandboxBackend('gondolin', {
-				factory: createGondolinSandboxBackendFactory(pluginConfig, createBackendDeps(ssh)),
+				factory: createGondolinSandboxBackendFactory(pluginConfig, deps),
+				manager: createGondolinSandboxBackendManager(pluginConfig, deps),
 			});
 		});
 
