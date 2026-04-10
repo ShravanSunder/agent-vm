@@ -1,167 +1,50 @@
-import fsSync from 'node:fs';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-
 import {
-	buildImage as buildImageFromCore,
-	createManagedVm as createManagedVmFromCore,
 	createSecretResolver,
-	resolveServiceAccountToken,
-	type BuildConfig,
 	type ManagedVm,
-	type SecretResolver,
 } from 'gondolin-core';
 
-import { createControllerService } from './controller-http-routes.js';
-import { runControllerCredentialsRefresh } from '../operations/credentials-refresh.js';
-import { runControllerDestroy } from '../operations/destroy-zone.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import { createControllerService } from './controller-http-routes.js';
+import { startControllerHttpServer } from './controller-http-server.js';
 import { createIdleReaper } from './idle-reaper.js';
-import { createLeaseManager, type ToolProfile } from './lease-manager.js';
-import { runControllerLogs } from '../operations/zone-logs.js';
-import { buildControllerStatus } from '../operations/controller-status.js';
-import type { SystemConfig } from './system-config.js';
+import { createLeaseManager } from './lease-manager.js';
+import {
+	createControllerRuntimeOperations,
+	createStopControllerOperation,
+} from './controller-runtime-operations.js';
+import {
+	createSecretResolverFromSystemConfig,
+	findConfiguredZone,
+} from './controller-runtime-support.js';
+import {
+	type ControllerRuntime,
+	type ControllerRuntimeDependencies,
+	type StartControllerRuntimeOptions,
+} from './controller-runtime-types.js';
 import { createTcpPool } from './tcp-pool.js';
-import { runControllerUpgrade } from '../operations/upgrade-zone.js';
-
-export interface ControllerRuntime {
-	readonly controllerPort: number;
-	readonly gateway: {
-		readonly ingress: {
-			readonly host: string;
-			readonly port: number;
-		};
-		readonly vm: Pick<ManagedVm, 'close' | 'id'>;
-	};
-	close(): Promise<void>;
-}
-
-interface ControllerRuntimeDependencies {
-	readonly clearIntervalImpl?: (timer: NodeJS.Timeout) => void;
-	readonly createManagedToolVm?: (options: {
-		readonly profile: ToolProfile;
-		readonly tcpSlot: number;
-		readonly workspaceDir: string;
-		readonly zoneId: string;
-	}) => Promise<ManagedVm>;
-	readonly createSecretResolver?: typeof createSecretResolver;
-	readonly now?: () => number;
-	readonly setIntervalImpl?: (
-		callback: () => void | Promise<void>,
-		delayMs: number,
-	) => NodeJS.Timeout;
-	readonly startGatewayZone?: typeof startGatewayZone;
-	readonly startHttpServer?: (options: {
-		readonly app: ReturnType<typeof createControllerService>;
-		readonly port: number;
-	}) => Promise<{
-		close(): Promise<void>;
-	}>;
-}
-
-async function defaultStartHttpServer(options: {
-	readonly app: ReturnType<typeof createControllerService>;
-	readonly port: number;
-}): Promise<{
-	close(): Promise<void>;
-}> {
-	const honoNodeServer = await import('@hono/node-server');
-	const server = honoNodeServer.serve({
-		fetch: options.app.fetch,
-		port: options.port,
-	});
-
-	return {
-		async close(): Promise<void> {
-			await new Promise<void>((resolve, reject) => {
-				server.close((error?: Error) => {
-					if (error) {
-						reject(error);
-						return;
-					}
-					resolve();
-				});
-			});
-		},
-	};
-}
-
-async function createResolverFromConfig(
-	systemConfig: SystemConfig,
-	createSecretResolverImpl: typeof createSecretResolver,
-	resolveTokenImpl: typeof resolveServiceAccountToken = resolveServiceAccountToken,
-): Promise<SecretResolver> {
-	const tokenSource = systemConfig.host.secretsProvider.tokenSource;
-	const serviceAccountToken = await resolveTokenImpl(tokenSource);
-
-	return await createSecretResolverImpl({
-		serviceAccountToken,
-	});
-}
-
-async function loadBuildConfig(buildConfigPath: string): Promise<BuildConfig> {
-	return JSON.parse(await fs.readFile(buildConfigPath, 'utf8')) as BuildConfig;
-}
-
-function findZone(systemConfig: SystemConfig, zoneId: string): SystemConfig['zones'][number] {
-	const zone = systemConfig.zones.find((candidateZone) => candidateZone.id === zoneId);
-	if (!zone) {
-		throw new Error(`Unknown zone '${zoneId}'.`);
-	}
-
-	return zone;
-}
+import { createToolVm } from '../tool-vm/tool-vm-lifecycle.js';
 
 export async function startControllerRuntime(
-	options: {
-		readonly pluginSourceDir: string;
-		readonly systemConfig: SystemConfig;
-		readonly zoneId: string;
-	},
+	options: StartControllerRuntimeOptions,
 	dependencies: ControllerRuntimeDependencies,
 ): Promise<ControllerRuntime> {
 	const now = dependencies.now ?? Date.now;
-	const zone = findZone(options.systemConfig, options.zoneId);
-	const secretResolver = await createResolverFromConfig(
+	const zone = findConfiguredZone(options.systemConfig, options.zoneId);
+	const secretResolver = await createSecretResolverFromSystemConfig(
 		options.systemConfig,
 		dependencies.createSecretResolver ?? createSecretResolver,
 	);
 	const createManagedToolVm =
 		dependencies.createManagedToolVm ??
-		(async (toolVmOptions): Promise<ManagedVm> => {
-			const toolBuildConfig = await loadBuildConfig(options.systemConfig.images.tool.buildConfig);
-			const toolImage = await buildImageFromCore({
-				buildConfig: toolBuildConfig,
-				cacheDir: `${zone.gateway.stateDir}/images/tool`,
-			});
-			// Use the host-side workspace root from toolProfiles, not the guest-internal path.
-			// The plugin sends a path from inside the gateway VM which doesn't exist on the host.
-			const hostWorkspaceDir = path.resolve(toolVmOptions.profile.workspaceRoot, `${toolVmOptions.zoneId}-${toolVmOptions.tcpSlot}`);
-			fsSync.mkdirSync(hostWorkspaceDir, { recursive: true });
-			const toolVm = await createManagedVmFromCore({
-				allowedHosts: [],
-				cpus: toolVmOptions.profile.cpus,
-				imagePath: toolImage.imagePath,
-				memory: toolVmOptions.profile.memory,
-				rootfsMode: 'memory',
-				sessionLabel: `${toolVmOptions.zoneId}-tool-${toolVmOptions.tcpSlot}`,
-				secrets: {},
-				vfsMounts: {
-					'/workspace': {
-						hostPath: hostWorkspaceDir,
-						kind: 'realfs',
-					},
-				},
-			});
-			// Debian OCI runtime setup: create sandbox user, workspace, /dev/fd symlink
-			// /dev/fd is needed by OpenClaw's remote FS bridge (python3 /dev/fd/3 pattern)
-			await toolVm.exec(
-				'useradd -m -s /bin/bash sandbox 2>/dev/null; ' +
-				'mkdir -p /workspace && chown sandbox:sandbox /workspace; ' +
-				'ln -sf /proc/self/fd /dev/fd 2>/dev/null || true',
-			);
-			return toolVm;
-		});
+		(async (toolVmOptions): Promise<ManagedVm> =>
+			await createToolVm({
+				profile: toolVmOptions.profile,
+				systemConfig: options.systemConfig,
+				tcpSlot: toolVmOptions.tcpSlot,
+				workspaceDir: toolVmOptions.workspaceDir,
+				zoneGatewayStateDirectory: zone.gateway.stateDir,
+				zoneId: toolVmOptions.zoneId,
+			}));
 	const tcpPool = createTcpPool(options.systemConfig.tcpPool);
 	const leaseManager = createLeaseManager({
 		createManagedVm: async (leaseOptions) =>
@@ -182,9 +65,10 @@ export async function startControllerRuntime(
 		},
 		ttlMs: 30 * 60 * 1000,
 	});
-	const reaperTimer = (dependencies.setIntervalImpl ?? setInterval)(() => {
-		void idleReaper.reapExpiredLeases();
-	}, 60_000);
+	const reaperTimer = (dependencies.setIntervalImpl ?? setInterval)(
+		() => void idleReaper.reapExpiredLeases(),
+		60_000,
+	);
 	const startGateway = async (): Promise<Awaited<ReturnType<typeof startGatewayZone>>> =>
 		await (dependencies.startGatewayZone ?? startGatewayZone)({
 			pluginSourceDir: options.pluginSourceDir,
@@ -193,121 +77,47 @@ export async function startControllerRuntime(
 			zoneId: options.zoneId,
 		});
 	let gateway = await startGateway();
+	const stopGatewayZone = async (): Promise<void> => await gateway.vm.close();
+	const restartGatewayZone = async (): Promise<void> => {
+		gateway = await startGateway();
+	};
+	let server: { close(): Promise<void> } | undefined;
 	const controllerApp = createControllerService({
 		leaseManager,
 		operations: {
-			enableSshForZone: async () => {
-				const sshAccess = await gateway.vm.enableSsh();
-				return sshAccess;
-			},
-			execInZone: async (_targetZoneId: string, command: string) => {
-				const result = await gateway.vm.exec(command);
-				return {
-					exitCode: result.exitCode,
-					stdout: result.stdout,
-					stderr: result.stderr,
-				};
-			},
-			destroyZone: async (targetZoneId: string, purge: boolean) =>
-				await runControllerDestroy(
-					{
-						purge,
-						systemConfig: options.systemConfig,
-						zoneId: targetZoneId,
-					},
-					{
-						releaseZoneLeases: async () => {
-							for (const lease of leaseManager
-								.listLeases()
-								.filter((activeLease) => activeLease.zoneId === targetZoneId)) {
-								// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP pool races
-								await leaseManager.releaseLease(lease.id);
-							}
-						},
-						stopGatewayZone: async () => {
-							await gateway.vm.close();
-						},
-					},
-				),
-			getStatus: async () => buildControllerStatus(options.systemConfig),
-			getZoneLogs: async (targetZoneId: string) =>
-				await runControllerLogs(
-					{
-						zoneId: targetZoneId,
-					},
-					{
-						readGatewayLogs: async () => {
-							try {
-								const result = await gateway.vm.exec(
-									'cat /tmp/openclaw.log 2>/dev/null || echo ""',
-								);
-								return result.stdout;
-							} catch {
-								return '';
-							}
-						},
-					},
-				),
-			refreshZoneCredentials: async (targetZoneId: string) =>
-				await runControllerCredentialsRefresh(
-					{
-						zoneId: targetZoneId,
-					},
-					{
-						refreshZoneSecrets: async (zoneId: string) => {
-							const targetZone = findZone(options.systemConfig, zoneId);
-							await secretResolver.resolveAll(targetZone.secrets);
-						},
-						restartGatewayZone: async () => {
-							await gateway.vm.close();
-							gateway = await startGateway();
-						},
-					},
-				),
-			upgradeZone: async (targetZoneId: string) =>
-				await runControllerUpgrade(
-					{
-						systemConfig: options.systemConfig,
-						zoneId: targetZoneId,
-					},
-					{
-						rebuildGatewayImage: async () => {},
-						restartGatewayZone: async () => {
-							gateway = await startGateway();
-						},
-						stopGatewayZone: async () => {
-							await gateway.vm.close();
-						},
-					},
-				),
-			stopController: async () => {
-				(dependencies.clearIntervalImpl ?? clearInterval)(reaperTimer);
-				for (const lease of leaseManager.listLeases()) {
-					// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP pool races
-					await leaseManager.releaseLease(lease.id);
-				}
-				await gateway.vm.close();
-				// Schedule server close after the response is sent
-				setTimeout(() => void serverRef.current?.close(), 100);
-				return { ok: true };
-			},
+			...createControllerRuntimeOperations({
+				getGateway: () => gateway,
+				getZone: (zoneId: string) => findConfiguredZone(options.systemConfig, zoneId),
+				leaseManager,
+				restartGatewayZone,
+				secretResolver,
+				stopGatewayZone,
+				systemConfig: options.systemConfig,
+			}),
+			stopController: createStopControllerOperation({
+				clearReaperTimer: () =>
+					(dependencies.clearIntervalImpl ?? clearInterval)(reaperTimer),
+				closeControllerServer: () => setTimeout(() => void server?.close(), 100),
+				getLeases: () => leaseManager.listLeases(),
+				releaseLease: async (leaseId: string) => await leaseManager.releaseLease(leaseId),
+				stopGatewayZone,
+			}),
 		},
 		systemConfig: options.systemConfig,
 	});
-	const serverRef: { current: { close(): Promise<void> } | undefined } = { current: undefined };
-	serverRef.current = await (dependencies.startHttpServer ?? defaultStartHttpServer)({
+	server = await (dependencies.startHttpServer ?? startControllerHttpServer)({
 		app: controllerApp,
 		port: options.systemConfig.host.controllerPort,
 	});
 
 	await idleReaper.reapExpiredLeases();
 
-	return {
-		async close(): Promise<void> {
-			(dependencies.clearIntervalImpl ?? clearInterval)(reaperTimer);
-			await gateway.vm.close();
-			await serverRef.current?.close();
-		},
+		return {
+			async close(): Promise<void> {
+				(dependencies.clearIntervalImpl ?? clearInterval)(reaperTimer);
+				await gateway.vm.close();
+				await server?.close();
+			},
 		controllerPort: options.systemConfig.host.controllerPort,
 		gateway: {
 			ingress: gateway.ingress,
