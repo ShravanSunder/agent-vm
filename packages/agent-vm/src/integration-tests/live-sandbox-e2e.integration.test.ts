@@ -7,7 +7,7 @@
  * 3. Tool VM created on demand via lease API
  * 4. Verifies exec tool calls route from gateway to tool VM
  *
- * Run: pnpm vitest run packages/agent-vm/src/features/controller/live-sandbox-e2e.test.ts
+ * Run: pnpm vitest run packages/agent-vm/src/integration-tests/live-sandbox-e2e.integration.test.ts
  * Requires: QEMU, built gateway image at build-cache/gateway/
  */
 import { afterAll, describe, it, expect } from 'vitest';

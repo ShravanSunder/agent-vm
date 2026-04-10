@@ -8,7 +8,7 @@
  * validated manually via scripts/live-sandbox-manual.mjs or by sending
  * a message through WhatsApp/Discord and checking controller logs.
  *
- * Run: pnpm vitest run packages/agent-vm/src/features/controller/live-api-smoke.test.ts
+ * Run: pnpm vitest run packages/agent-vm/src/integration-tests/live-api-smoke.test.ts
  */
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { serve } from '@hono/node-server';

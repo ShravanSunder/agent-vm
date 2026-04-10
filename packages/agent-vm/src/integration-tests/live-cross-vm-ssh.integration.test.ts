@@ -4,7 +4,7 @@
  * Creates a gateway VM and a tool VM, SSHes from gateway to tool via tcp.hosts.
  * This is the core execution path for the OpenClaw gondolin sandbox plugin.
  *
- * Run: pnpm vitest run packages/agent-vm/src/features/controller/live-cross-vm-ssh.test.ts
+ * Run: pnpm vitest run packages/agent-vm/src/integration-tests/live-cross-vm-ssh.integration.test.ts
  * Requires: QEMU installed.
  */
 import { describe, it, expect, afterAll } from 'vitest';

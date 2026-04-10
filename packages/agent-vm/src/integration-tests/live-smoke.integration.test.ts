@@ -1,7 +1,7 @@
 /**
  * Live smoke test — boots real Gondolin VMs.
  *
- * Run with: pnpm vitest run packages/agent-vm/src/features/controller/live-smoke.test.ts
+ * Run with: pnpm vitest run packages/agent-vm/src/integration-tests/live-smoke.integration.test.ts
  *
  * Requires: QEMU installed, ~30s per test, creates real VMs.
  * NOT part of the standard test suite (too slow, needs QEMU).
