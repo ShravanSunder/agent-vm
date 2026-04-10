@@ -1,57 +1,23 @@
-import fs from 'node:fs/promises';
-
 import { Hono } from 'hono';
 
-import type { LeaseManager } from './lease-manager.js';
+import {
+	type ControllerLeaseManager,
+	type ControllerRouteOperations,
+	isLeaseCreatePayload,
+	readIdentityPemFromFile,
+	serializeLeaseForResponse,
+} from './controller-http-route-support.js';
+import { registerControllerZoneOperationRoutes } from './controller-zone-operation-routes.js';
 import type { SystemConfig } from './system-config.js';
 
-function isLeaseCreatePayload(value: unknown): value is {
-	readonly agentWorkspaceDir: string;
-	readonly profileId: string;
-	readonly scopeKey: string;
-	readonly workspaceDir: string;
-	readonly zoneId: string;
-} {
-	return (
-		typeof value === 'object' &&
-		value !== null &&
-		typeof (value as { agentWorkspaceDir?: unknown }).agentWorkspaceDir === 'string' &&
-		typeof (value as { profileId?: unknown }).profileId === 'string' &&
-		typeof (value as { scopeKey?: unknown }).scopeKey === 'string' &&
-		typeof (value as { workspaceDir?: unknown }).workspaceDir === 'string' &&
-		typeof (value as { zoneId?: unknown }).zoneId === 'string'
-	);
-}
-
-function isDestroyPayload(value: unknown): value is { readonly purge?: boolean } {
-	if (typeof value !== 'object' || value === null) {
-		return false;
-	}
-
-	const candidate = value as { purge?: unknown };
-	return candidate.purge === undefined || typeof candidate.purge === 'boolean';
-}
-
 export function createControllerApp(options: {
-	readonly leaseManager: Pick<LeaseManager, 'createLease' | 'getLease' | 'listLeases' | 'releaseLease'>;
+	readonly leaseManager: ControllerLeaseManager;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly toolProfiles?: Record<string, { readonly cpus: number; readonly memory: string; readonly workspaceRoot: string }>;
-	readonly operations?: {
-		readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
-		readonly enableSshForZone?: (zoneId: string) => Promise<unknown>;
-		readonly execInZone?: (zoneId: string, command: string) => Promise<unknown>;
-		readonly getStatus: () => Promise<unknown>;
-		readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
-		readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;
-		readonly stopController?: () => Promise<unknown>;
-		readonly upgradeZone: (zoneId: string) => Promise<unknown>;
-	};
+	readonly operations?: ControllerRouteOperations;
 }): Hono {
 	const app = new Hono();
-	const readIdentityPem =
-		options.readIdentityPem ??
-		(async (identityFilePath: string): Promise<string> =>
-			await fs.readFile(identityFilePath, 'utf8'));
+	const readIdentityPem = options.readIdentityPem ?? readIdentityPemFromFile;
 
 	app.post('/lease', async (context) => {
 		try {
@@ -71,22 +37,9 @@ export function createControllerApp(options: {
 				workspaceDir: payload.workspaceDir,
 				zoneId: payload.zoneId,
 			});
-
-			const identityPem = lease.sshAccess.identityFile
-				? await readIdentityPem(lease.sshAccess.identityFile)
-				: '';
-			return context.json({
-				leaseId: lease.id,
-				ssh: {
-					host: `tool-${lease.tcpSlot}.vm.host`,
-					identityPem,
-					knownHostsLine: '',
-					port: 22,
-					user: lease.sshAccess.user ?? 'root',
-				},
-				tcpSlot: lease.tcpSlot,
-				workdir: '/workspace',
-			});
+			return context.json(
+				await serializeLeaseForResponse(lease, readIdentityPem),
+			);
 		} catch (error) {
 			return context.json(
 				{
@@ -102,22 +55,7 @@ export function createControllerApp(options: {
 		if (!lease) {
 			return context.json({ error: 'Lease not found' }, 404);
 		}
-
-		const identityPem = lease.sshAccess.identityFile
-			? await readIdentityPem(lease.sshAccess.identityFile)
-			: '';
-		return context.json({
-			leaseId: lease.id,
-			ssh: {
-				host: `tool-${lease.tcpSlot}.vm.host`,
-				identityPem,
-				knownHostsLine: '',
-				port: 22,
-				user: lease.sshAccess.user ?? 'root',
-			},
-			tcpSlot: lease.tcpSlot,
-			workdir: '/workspace',
-		});
+		return context.json(await serializeLeaseForResponse(lease, readIdentityPem));
 	});
 
 	app.get('/leases', (context) => {
@@ -139,65 +77,15 @@ export function createControllerApp(options: {
 	});
 
 	if (options.operations) {
-		const operations = options.operations;
-		app.get('/controller-status', async (context) => context.json(await operations.getStatus()));
-		app.get('/zones/:zoneId/logs', async (context) =>
-			context.json(await operations.getZoneLogs(context.req.param('zoneId'))),
-		);
-		app.post('/zones/:zoneId/credentials/refresh', async (context) =>
-			context.json(await operations.refreshZoneCredentials(context.req.param('zoneId'))),
-		);
-		app.post('/zones/:zoneId/destroy', async (context) => {
-			const payload = await context.req.json();
-			if (!isDestroyPayload(payload)) {
-				return context.json({ error: 'invalid-destroy-request' }, 400);
-			}
-			return context.json(
-				await operations.destroyZone(context.req.param('zoneId'), payload.purge === true),
-			);
-		});
-		app.post('/zones/:zoneId/upgrade', async (context) =>
-			context.json(await operations.upgradeZone(context.req.param('zoneId'))),
-		);
-		if (operations.enableSshForZone) {
-			const sshHandler = operations.enableSshForZone;
-			app.post('/zones/:zoneId/enable-ssh', async (context) =>
-				context.json(await sshHandler(context.req.param('zoneId'))),
-			);
-		}
-		if (operations.execInZone) {
-			const execHandler = operations.execInZone;
-			app.post('/zones/:zoneId/execute-command', async (context) => {
-				const payload = await context.req.json() as { command?: string };
-				if (typeof payload.command !== 'string') {
-					return context.json({ error: 'command is required' }, 400);
-				}
-				return context.json(
-					await execHandler(context.req.param('zoneId'), payload.command),
-				);
-			});
-		}
-		if (operations.stopController) {
-			const stopHandler = operations.stopController;
-			app.post('/stop-controller', async (context) => context.json(await stopHandler()));
-		}
+		registerControllerZoneOperationRoutes(app, options.operations);
 	}
 
 	return app;
 }
 
 export function createControllerService(options: {
-	readonly leaseManager: Pick<LeaseManager, 'createLease' | 'getLease' | 'listLeases' | 'releaseLease'>;
-	readonly operations?: {
-		readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
-		readonly enableSshForZone?: (zoneId: string) => Promise<unknown>;
-		readonly execInZone?: (zoneId: string, command: string) => Promise<unknown>;
-		readonly getStatus: () => Promise<unknown>;
-		readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
-		readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;
-		readonly stopController?: () => Promise<unknown>;
-		readonly upgradeZone: (zoneId: string) => Promise<unknown>;
-	};
+	readonly leaseManager: ControllerLeaseManager;
+	readonly operations?: ControllerRouteOperations;
 	readonly systemConfig: SystemConfig;
 }): Hono {
 	const app = createControllerApp({
