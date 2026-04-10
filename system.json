@@ -28,8 +28,7 @@
 				"port": 18791,
 				"openclawConfig": "./config/shravan/openclaw.json",
 				"stateDir": "./state/shravan",
-				"workspaceDir": "./workspaces/shravan",
-				"authProfilesRef": "op://agent-vm/agent-codex-test-oauth-token/credential"
+				"workspaceDir": "./workspaces/shravan"
 			},
 			"secrets": {
 				"DISCORD_BOT_TOKEN": {
@@ -61,6 +60,7 @@
 			"allowedHosts": [
 				"api.openai.com",
 				"auth.openai.com",
+				"chatgpt.com",
 				"api.perplexity.ai",
 				"discord.com",
 				"cdn.discordapp.com",

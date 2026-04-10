@@ -62,7 +62,9 @@ export function createLeaseManager(options: {
 				...leaseOptions,
 				tcpSlot,
 			});
-			const sshAccess = await vm.enableSsh();
+			const sshAccess = await vm.enableSsh({
+				listenPort: options.tcpPool.portForSlot(tcpSlot),
+			});
 			const createdAt = options.now();
 			const lease: Lease = {
 				createdAt,

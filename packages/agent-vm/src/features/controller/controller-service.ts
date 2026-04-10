@@ -80,9 +80,9 @@ export function createControllerApp(options: {
 				ssh: {
 					host: `tool-${lease.tcpSlot}.vm.host`,
 					identityPem,
-					knownHostsLine: '', // intentionally empty: Gondolin SSH uses StrictHostKeyChecking=no (local virtio channel)
+					knownHostsLine: '',
 					port: 22,
-					user: 'sandbox',
+					user: lease.sshAccess.user ?? 'root',
 				},
 				tcpSlot: lease.tcpSlot,
 				workdir: '/workspace',
@@ -113,7 +113,7 @@ export function createControllerApp(options: {
 				identityPem,
 				knownHostsLine: '',
 				port: 22,
-				user: 'sandbox',
+				user: lease.sshAccess.user ?? 'root',
 			},
 			tcpSlot: lease.tcpSlot,
 			workdir: '/workspace',
