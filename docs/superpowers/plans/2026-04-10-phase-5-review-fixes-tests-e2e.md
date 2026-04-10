@@ -10,6 +10,72 @@
 
 ---
 
+## System Context (read this first)
+
+### What this system does
+
+This is a self-hosted AI assistant. Users chat with an AI agent through Discord or WhatsApp. The agent can execute shell commands, read/write files, and run code — all inside isolated QEMU micro-VMs for security.
+
+### Architecture overview
+
+```
+User (Discord/WhatsApp)
+  → Gateway VM (Debian, runs OpenClaw — the AI agent framework)
+    → OpenClaw receives message, calls Codex model (OpenAI OAuth)
+    → Model decides to run a tool (e.g. "execute shell command")
+    → Gondolin sandbox plugin intercepts the tool call
+      → Plugin requests a "lease" from the Controller (HTTP POST /lease)
+      → Controller creates an ephemeral Tool VM (Debian, QEMU)
+      → Controller returns SSH credentials for the Tool VM
+      → Plugin SSHs into Tool VM, runs the command
+      → Output returns through the chain to the user
+```
+
+**Three processes on the host:**
+- **Controller** (`agent-vm controller start`) — Node.js HTTP server on port 18800. Manages VM lifecycle, leases, secrets.
+- **Gateway VM** — Gondolin QEMU VM running OpenClaw + our sandbox plugin. Handles channels (Discord/WhatsApp), model calls, tool routing.
+- **Tool VMs** — Ephemeral Gondolin QEMU VMs, one per tool call session. Created on-demand, destroyed after idle timeout.
+
+### Key concepts
+
+**Gondolin** — A QEMU-based micro-VM sandbox by earendil-works. Provides: VM lifecycle (`VM.create`, `vm.exec`, `vm.enableSsh`), HTTP mediation (MITM proxy for API key injection), VFS mounts (host↔guest file sharing), tcp.hosts (TCP tunnel mapping between VMs).
+
+**OpenClaw** — Open-source AI agent framework. Provides: gateway server, agent sessions, channels (Discord/WhatsApp/Web), sandbox backend interface, plugin SDK. We write a plugin that implements the sandbox backend.
+
+**Sandbox backend** — OpenClaw's interface for executing tool calls in isolation. A backend factory is called per tool call, returns a handle with `buildExecSpec` (SSH command), `runShellCommand` (script execution), and optionally `createFsBridge` (remote file ops). Our plugin implements this by leasing tool VMs from the controller.
+
+**Lease** — A running tool VM allocated to a session. Has: leaseId, SSH credentials, TCP slot, workspace path. Created by `POST /lease`, released by `DELETE /lease/:id`. The idle reaper destroys leases after 30 min of inactivity.
+
+**Scope** — Determines VM sharing. `session` scope = each chat session gets its own VM. `agent` scope = all sessions for the same agent share one VM. `shared` = one VM for everything. Configured in `openclaw.json` as `sandbox.scope`.
+
+**TCP pool** — Maps `tool-N.vm.host:22` inside the gateway VM to `127.0.0.1:<port>` on the host. The gateway VM can't directly reach tool VMs — it goes through Gondolin's tcp.hosts tunnel. Each tool VM gets a slot (0, 1, 2...) with a fixed host port.
+
+### How secrets work
+
+1Password service account resolves secrets at boot. Three injection methods:
+- **env** — Secret value set as VM environment variable (e.g. `DISCORD_BOT_TOKEN`)
+- **http-mediation** — Secret injected at Gondolin's HTTP proxy boundary (e.g. API keys in Authorization headers)
+- **on-disk** — Written to VFS-mounted state directory (e.g. OAuth auth-profiles.json)
+
+### How the FS bridge works
+
+OpenClaw's file tools (write file, read file, mkdir, etc.) go through a "FS bridge" — an abstraction over the sandbox's filesystem. For remote SSH backends (like ours), this uses `createRemoteShellSandboxFsBridge` from the OpenClaw SDK. It runs Python scripts on the remote host via SSH, using a heredoc pattern: `python3 /dev/fd/3 "$@" 3<<'PY' ... PY`. This requires `/dev/fd` to exist in the tool VM (symlink to `/proc/self/fd`), and requires `stdin` to be forwarded through the SSH connection for file writes.
+
+### Why each bug matters
+
+| Bug | What breaks in production |
+|-----|--------------------------|
+| H1: runtimeId ≠ leaseId | `openclaw sandbox list` and `openclaw sandbox remove` can't find or destroy tool VMs — they use runtimeId to query the controller, but the controller only knows leaseId |
+| H2: Stale scope cache | After a tool VM dies or is manually released, the next tool call in the same session gets a dead handle and SSH fails silently |
+| H3: Workspace not cleaned | User A's session files leak to User B if they get the same TCP slot — security violation |
+| H4: require() in ESM | `agent-vm controller snapshot create` crashes with `ReferenceError: require is not defined` in production Node.js (vitest shims it so tests pass) |
+| H5: Gateway readiness silent fail | Controller reports "started" even if OpenClaw failed to boot — all tool calls fail with no clear error |
+| M1: Dead profileId | Config accepts a field that does nothing — confuses operators |
+| M2: Missing signal/allowFailure | File operations can't be cancelled (AbortSignal ignored) and can't tolerate expected failures |
+| M3: Token in world-readable file | Gateway auth token readable by any process in the VM — should be root-only |
+
+---
+
 ## File Structure
 
 ### `packages/agent-vm/src/features/controller/` (modifications)
