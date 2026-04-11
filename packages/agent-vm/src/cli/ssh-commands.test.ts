@@ -89,6 +89,8 @@ describe('runSshCommand', () => {
 		});
 
 		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', [
+			'-o', 'StrictHostKeyChecking=no',
+			'-o', 'UserKnownHostsFile=/dev/null',
 			'-i',
 			'/tmp/key',
 			'-p',
@@ -148,6 +150,8 @@ describe('runSshCommand', () => {
 		});
 
 		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', [
+			'-o', 'StrictHostKeyChecking=no',
+			'-o', 'UserKnownHostsFile=/dev/null',
 			'-i',
 			'/tmp/key',
 			'-p',

@@ -98,12 +98,15 @@ describe('runAuthCommand', () => {
 		});
 
 		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', [
+			'-o', 'StrictHostKeyChecking=no',
+			'-o', 'UserKnownHostsFile=/dev/null',
 			'-i',
 			'/tmp/test-key',
 			'-p',
 			'19000',
 			'root@127.0.0.1',
 			'openclaw',
+			'models',
 			'auth',
 			'login',
 			'codex',

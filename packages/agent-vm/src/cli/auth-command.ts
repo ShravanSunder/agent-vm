@@ -33,11 +33,14 @@ export async function runAuthCommand(options: {
 	}
 
 	const sshArguments = [
+		'-o', 'StrictHostKeyChecking=no',
+		'-o', 'UserKnownHostsFile=/dev/null',
 		...(sshResponse.identityFile ? ['-i', sshResponse.identityFile] : []),
 		'-p',
 		String(sshResponse.port),
 		`${sshResponse.user ?? 'root'}@${sshResponse.host}`,
 		'openclaw',
+		'models',
 		'auth',
 		'login',
 		options.pluginName,
