@@ -34,9 +34,7 @@ export function listSnapshotArtifacts(options: {
 		.filter((fileName) => fileName.endsWith('.tar.age'));
 	const filteredFiles = options.zoneId
 		? snapshotFiles.filter((fileName) =>
-				fileName.startsWith(
-					`${options.zoneId}${SNAPSHOT_FILENAME_DELIMITER}`,
-				),
+				fileName.startsWith(`${options.zoneId}${SNAPSHOT_FILENAME_DELIMITER}`),
 			)
 		: snapshotFiles;
 
@@ -47,14 +45,9 @@ export function listSnapshotArtifacts(options: {
 			snapshotPath: path.join(options.snapshotDir, fileName),
 			timestamp:
 				delimiterIndex >= 0
-					? fileStem.slice(
-							delimiterIndex + SNAPSHOT_FILENAME_DELIMITER.length,
-						)
+					? fileStem.slice(delimiterIndex + SNAPSHOT_FILENAME_DELIMITER.length)
 					: '',
-			zoneId:
-				delimiterIndex >= 0
-					? fileStem.slice(0, delimiterIndex)
-					: fileStem,
+			zoneId: delimiterIndex >= 0 ? fileStem.slice(0, delimiterIndex) : fileStem,
 		};
 	});
 }

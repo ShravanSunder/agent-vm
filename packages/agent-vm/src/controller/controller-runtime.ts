@@ -1,13 +1,13 @@
-import {
-	createSecretResolver,
-	type ManagedVm,
-} from 'gondolin-core';
+import { createSecretResolver, type ManagedVm } from 'gondolin-core';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import {
+	cleanToolVmWorkspace,
+	createToolVm,
+	resolveToolVmWorkspaceDirectory,
+} from '../tool-vm/tool-vm-lifecycle.js';
 import { createControllerService } from './controller-http-routes.js';
 import { startControllerHttpServer } from './controller-http-server.js';
-import { createIdleReaper } from './idle-reaper.js';
-import { createLeaseManager } from './lease-manager.js';
 import {
 	createControllerRuntimeOperations,
 	createStopControllerOperation,
@@ -21,8 +21,9 @@ import {
 	type ControllerRuntimeDependencies,
 	type StartControllerRuntimeOptions,
 } from './controller-runtime-types.js';
+import { createIdleReaper } from './idle-reaper.js';
+import { createLeaseManager } from './lease-manager.js';
 import { createTcpPool } from './tcp-pool.js';
-import { createToolVm } from '../tool-vm/tool-vm-lifecycle.js';
 
 export async function startControllerRuntime(
 	options: StartControllerRuntimeOptions,
@@ -47,6 +48,15 @@ export async function startControllerRuntime(
 			}));
 	const tcpPool = createTcpPool(options.systemConfig.tcpPool);
 	const leaseManager = createLeaseManager({
+		cleanWorkspace: async ({ profile, tcpSlot, zoneId }) => {
+			cleanToolVmWorkspace(
+				resolveToolVmWorkspaceDirectory({
+					profile,
+					tcpSlot,
+					zoneId,
+				}),
+			);
+		},
 		createManagedVm: async (leaseOptions) =>
 			await createManagedToolVm({
 				profile: leaseOptions.profile,
@@ -69,6 +79,14 @@ export async function startControllerRuntime(
 		() => void idleReaper.reapExpiredLeases(),
 		60_000,
 	);
+	const clearReaperTimer = (): void =>
+		(dependencies.clearIntervalImpl ?? clearInterval)(reaperTimer);
+	const releaseAllLeases = async (): Promise<void> => {
+		for (const lease of leaseManager.listLeases()) {
+			// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP slot races
+			await leaseManager.releaseLease(lease.id);
+		}
+	};
 	const startGateway = async (): Promise<Awaited<ReturnType<typeof startGatewayZone>>> =>
 		await (dependencies.startGatewayZone ?? startGatewayZone)({
 			pluginSourceDir: options.pluginSourceDir,
@@ -81,7 +99,7 @@ export async function startControllerRuntime(
 	const restartGatewayZone = async (): Promise<void> => {
 		gateway = await startGateway();
 	};
-	let server: { close(): Promise<void> } | undefined;
+	const serverRef: { current?: { close(): Promise<void> } } = {};
 	const controllerApp = createControllerService({
 		leaseManager,
 		operations: {
@@ -95,9 +113,8 @@ export async function startControllerRuntime(
 				systemConfig: options.systemConfig,
 			}),
 			stopController: createStopControllerOperation({
-				clearReaperTimer: () =>
-					(dependencies.clearIntervalImpl ?? clearInterval)(reaperTimer),
-				closeControllerServer: () => setTimeout(() => void server?.close(), 100),
+				clearReaperTimer,
+				closeControllerServer: () => setTimeout(() => void serverRef.current?.close(), 100),
 				getLeases: () => leaseManager.listLeases(),
 				releaseLease: async (leaseId: string) => await leaseManager.releaseLease(leaseId),
 				stopGatewayZone,
@@ -105,19 +122,20 @@ export async function startControllerRuntime(
 		},
 		systemConfig: options.systemConfig,
 	});
-	server = await (dependencies.startHttpServer ?? startControllerHttpServer)({
+	serverRef.current = await (dependencies.startHttpServer ?? startControllerHttpServer)({
 		app: controllerApp,
 		port: options.systemConfig.host.controllerPort,
 	});
 
 	await idleReaper.reapExpiredLeases();
 
-		return {
-			async close(): Promise<void> {
-				(dependencies.clearIntervalImpl ?? clearInterval)(reaperTimer);
-				await gateway.vm.close();
-				await server?.close();
-			},
+	return {
+		async close(): Promise<void> {
+			clearReaperTimer();
+			await releaseAllLeases();
+			await gateway.vm.close();
+			await serverRef.current?.close();
+		},
 		controllerPort: options.systemConfig.host.controllerPort,
 		gateway: {
 			ingress: gateway.ingress,

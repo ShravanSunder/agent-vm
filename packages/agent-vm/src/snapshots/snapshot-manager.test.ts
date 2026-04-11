@@ -124,9 +124,7 @@ describe('createSnapshotManager', () => {
 
 		// State files land in the target stateDir, not leaked elsewhere
 		expect(fs.existsSync(path.join(restoreStateDir, 'state-file.json'))).toBe(true);
-		expect(fs.readFileSync(path.join(restoreStateDir, 'state-file.json'), 'utf8')).toBe(
-			'{"s":1}',
-		);
+		expect(fs.readFileSync(path.join(restoreStateDir, 'state-file.json'), 'utf8')).toBe('{"s":1}');
 
 		// Workspace files land in the target workspaceDir
 		expect(fs.existsSync(path.join(restoreWorkspaceDir, 'work-file.txt'))).toBe(true);
@@ -157,14 +155,8 @@ describe('createSnapshotManager', () => {
 
 	it('correctly parses hyphenated zone names in filenames', () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'snapshot-hyphen-'));
-		fs.writeFileSync(
-			path.join(tmpDir, 'shravan-lab__2026-04-06T10-00-00.tar.age'),
-			'',
-		);
-		fs.writeFileSync(
-			path.join(tmpDir, 'shravan__2026-04-06T10-00-00.tar.age'),
-			'',
-		);
+		fs.writeFileSync(path.join(tmpDir, 'shravan-lab__2026-04-06T10-00-00.tar.age'), '');
+		fs.writeFileSync(path.join(tmpDir, 'shravan__2026-04-06T10-00-00.tar.age'), '');
 
 		const manager = createSnapshotManager(noopEncryption);
 

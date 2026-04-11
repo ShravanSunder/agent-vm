@@ -26,9 +26,7 @@ try {
 
 	if (missing.length > 0) {
 		process.stderr.write(`SDK MISMATCH - missing exports: ${missing.join(', ')}\n`);
-		process.stderr.write(
-			'Update assertSdkShape() and SshHelpers interface in plugin.ts\n',
-		);
+		process.stderr.write('Update assertSdkShape() and SshHelpers interface in plugin.ts\n');
 		process.exit(1);
 	}
 

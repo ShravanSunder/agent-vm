@@ -109,4 +109,103 @@ describe('createLeaseManager', () => {
 
 		expect(leaseManager.listLeases()).toHaveLength(0);
 	});
+
+	it('cleans the host workspace when releasing a lease', async () => {
+		const closeMock = vi.fn(async () => {});
+		const cleanWorkspace = vi.fn(async () => {});
+		const leaseManager = createLeaseManager({
+			cleanWorkspace,
+			createManagedVm: vi.fn(async () => ({
+				close: closeMock,
+				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				enableSsh: vi.fn(async () => ({
+					command: 'ssh ...',
+					host: '127.0.0.1',
+					identityFile: '/tmp/key',
+					port: 19000,
+					user: 'sandbox',
+				})),
+				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+				id: 'tool-vm-clean',
+				setIngressRoutes: vi.fn(),
+			})),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+
+		const lease = await leaseManager.createLease({
+			agentWorkspaceDir: '/workspace',
+			profile: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+			profileId: 'standard',
+			scopeKey: 'scope-clean',
+			workspaceDir: '/workspace',
+			zoneId: 'shravan',
+		});
+
+		await leaseManager.releaseLease(lease.id);
+
+		expect(closeMock).toHaveBeenCalledTimes(1);
+		expect(cleanWorkspace).toHaveBeenCalledWith({
+			profile: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+			tcpSlot: 0,
+			zoneId: 'shravan',
+		});
+	});
+
+	it('releases the tcp slot when VM creation fails', async () => {
+		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => {
+				throw new Error('vm create failed');
+			}),
+			now: () => 100,
+			tcpPool,
+		});
+
+		await expect(
+			leaseManager.createLease({
+				agentWorkspaceDir: '/workspace',
+				profile: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+				profileId: 'standard',
+				scopeKey: 'scope-fail',
+				workspaceDir: '/workspace',
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow('vm create failed');
+
+		expect(tcpPool.allocate()).toBe(0);
+	});
+
+	it('closes the VM and releases the tcp slot when enabling SSH fails', async () => {
+		const closeMock = vi.fn(async () => {});
+		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => ({
+				close: closeMock,
+				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				enableSsh: vi.fn(async () => {
+					throw new Error('ssh setup failed');
+				}),
+				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+				id: 'tool-vm-ssh-fail',
+				setIngressRoutes: vi.fn(),
+			})),
+			now: () => 100,
+			tcpPool,
+		});
+
+		await expect(
+			leaseManager.createLease({
+				agentWorkspaceDir: '/workspace',
+				profile: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+				profileId: 'standard',
+				scopeKey: 'scope-ssh-fail',
+				workspaceDir: '/workspace',
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow('ssh setup failed');
+
+		expect(closeMock).toHaveBeenCalledTimes(1);
+		expect(tcpPool.allocate()).toBe(0);
+	});
 });

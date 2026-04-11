@@ -48,15 +48,10 @@ export async function restoreEncryptedSnapshot(options: {
 	const decryptedTarPath = `${options.snapshotPath}.decrypted.tar`;
 	await options.encryption.decrypt(options.snapshotPath, decryptedTarPath);
 
-	const extractDirectory = fs.mkdtempSync(
-		path.join(os.tmpdir(), 'snapshot-extract-'),
-	);
+	const extractDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'snapshot-extract-'));
 	try {
 		await execFileAsync('tar', ['xf', decryptedTarPath, '-C', extractDirectory]);
-		await copyExtractedDirectoryContents(
-			path.join(extractDirectory, 'state'),
-			options.stateDir,
-		);
+		await copyExtractedDirectoryContents(path.join(extractDirectory, 'state'), options.stateDir);
 		await copyExtractedDirectoryContents(
 			path.join(extractDirectory, 'workspace'),
 			options.workspaceDir,

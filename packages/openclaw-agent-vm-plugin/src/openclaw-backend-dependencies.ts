@@ -1,12 +1,9 @@
+import type { SshHelpers, SshSandboxSession } from './openclaw-sandbox-sdk-contract.js';
 import type {
 	CreateBackendDependencies,
 	FsBridgeLeaseContext,
 	GondolinFsBridge,
 } from './sandbox-backend-factory.js';
-import type {
-	SshHelpers,
-	SshSandboxSession,
-} from './openclaw-sandbox-sdk-contract.js';
 
 export function createBackendDeps(ssh: SshHelpers): {
 	readonly buildExecSpec: CreateBackendDependencies['buildExecSpec'];
@@ -16,13 +13,7 @@ export function createBackendDeps(ssh: SshHelpers): {
 	readonly runRemoteShellScript: CreateBackendDependencies['runRemoteShellScript'];
 } {
 	return {
-		buildExecSpec: async ({
-			command,
-			env,
-			ssh: sshCreds,
-			usePty,
-			workdir,
-		}) => {
+		buildExecSpec: async ({ command, env, ssh: sshCreds, usePty, workdir }) => {
 			const session = await ssh.createSshSandboxSessionFromSettings({
 				command: 'ssh',
 				identityData: sshCreds.identityPem,
@@ -54,7 +45,8 @@ export function createBackendDeps(ssh: SshHelpers): {
 				stdinMode: 'pipe-open' as const,
 			};
 		},
-		createFsBridgeBuilder: (leaseContext: FsBridgeLeaseContext) =>
+		createFsBridgeBuilder:
+			(leaseContext: FsBridgeLeaseContext) =>
 			(params: { readonly sandbox: unknown }): GondolinFsBridge =>
 				ssh.createRemoteShellSandboxFsBridge({
 					sandbox: params.sandbox,
@@ -64,7 +56,7 @@ export function createBackendDeps(ssh: SshHelpers): {
 						runRemoteShellScript: leaseContext.runRemoteShellScript,
 					},
 				}),
-		runRemoteShellScript: async ({ script, ssh: sshCreds, stdin }) => {
+		runRemoteShellScript: async ({ allowFailure, script, signal, ssh: sshCreds, stdin }) => {
 			const session = await ssh.createSshSandboxSessionFromSettings({
 				command: 'ssh',
 				identityData: sshCreds.identityPem,
@@ -74,13 +66,10 @@ export function createBackendDeps(ssh: SshHelpers): {
 				workspaceRoot: '/workspace',
 			});
 			return await ssh.runSshSandboxCommand({
-				remoteCommand: ssh.buildRemoteCommand([
-					'/bin/sh',
-					'-c',
-					script,
-					'gondolin-sandbox-fs',
-				]),
+				...(allowFailure !== undefined ? { allowFailure } : {}),
+				remoteCommand: ssh.buildRemoteCommand(['/bin/sh', '-c', script, 'gondolin-sandbox-fs']),
 				session,
+				...(signal !== undefined ? { signal } : {}),
 				...(stdin !== undefined ? { stdin } : {}),
 			});
 		},

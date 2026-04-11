@@ -4,11 +4,7 @@ import path from 'node:path';
 import type { SecretResolver, SecretSpec } from 'gondolin-core';
 
 import type { SystemConfig } from '../controller/system-config.js';
-
-import type {
-	GatewayManagedVmFactoryOptions,
-	GatewayZone,
-} from './gateway-zone-support.js';
+import type { GatewayManagedVmFactoryOptions, GatewayZone } from './gateway-zone-support.js';
 
 function splitResolvedGatewaySecrets(
 	zone: GatewayZone,
@@ -60,12 +56,10 @@ function buildGatewayTcpHosts(
 	return tcpHosts;
 }
 
-export async function prepareGatewayHostDirectories(
-	options: {
-		readonly secretResolver: SecretResolver;
-		readonly zone: GatewayZone;
-	},
-): Promise<void> {
+export async function prepareGatewayHostDirectories(options: {
+	readonly secretResolver: SecretResolver;
+	readonly zone: GatewayZone;
+}): Promise<void> {
 	fsSync.mkdirSync(options.zone.gateway.stateDir, { recursive: true });
 	fsSync.mkdirSync(options.zone.gateway.workspaceDir, { recursive: true });
 
@@ -73,12 +67,7 @@ export async function prepareGatewayHostDirectories(
 		return;
 	}
 
-	const authProfilesDirectory = path.join(
-		options.zone.gateway.stateDir,
-		'agents',
-		'main',
-		'agent',
-	);
+	const authProfilesDirectory = path.join(options.zone.gateway.stateDir, 'agents', 'main', 'agent');
 	fsSync.mkdirSync(authProfilesDirectory, { recursive: true });
 	fsSync.writeFileSync(
 		path.join(authProfilesDirectory, 'auth-profiles.json'),
@@ -90,16 +79,14 @@ export async function prepareGatewayHostDirectories(
 	);
 }
 
-export function buildGatewayVmFactoryOptions(
-	options: {
-		readonly controllerPort: number;
-		readonly gatewayImagePath: string;
-		readonly pluginSourceDir?: string;
-		readonly resolvedSecrets: Record<string, string>;
-		readonly systemConfig: SystemConfig;
-		readonly zone: GatewayZone;
-	},
-): GatewayManagedVmFactoryOptions {
+export function buildGatewayVmFactoryOptions(options: {
+	readonly controllerPort: number;
+	readonly gatewayImagePath: string;
+	readonly pluginSourceDir?: string;
+	readonly resolvedSecrets: Record<string, string>;
+	readonly systemConfig: SystemConfig;
+	readonly zone: GatewayZone;
+}): GatewayManagedVmFactoryOptions {
 	const configDirectory = path.dirname(path.resolve(options.zone.gateway.openclawConfig));
 	const configFileName = path.basename(options.zone.gateway.openclawConfig);
 	const { envSecrets, mediationSecrets } = splitResolvedGatewaySecrets(

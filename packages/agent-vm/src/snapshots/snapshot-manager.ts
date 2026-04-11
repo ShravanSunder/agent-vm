@@ -48,9 +48,7 @@ export interface SnapshotManager {
  * This fixed layout decouples archive structure from host paths, so stateDir
  * and workspaceDir can live under completely different parents on restore.
  */
-export function createSnapshotManager(
-	encryption: SnapshotEncryption,
-): SnapshotManager {
+export function createSnapshotManager(encryption: SnapshotEncryption): SnapshotManager {
 	return {
 		async createSnapshot(options) {
 			return await createEncryptedSnapshot({

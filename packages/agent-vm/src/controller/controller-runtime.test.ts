@@ -34,6 +34,7 @@ const systemConfig = {
 			},
 			secrets: {},
 			allowedHosts: ['api.anthropic.com'],
+			websocketBypass: [],
 			toolProfile: 'standard',
 		},
 	],
@@ -171,5 +172,144 @@ describe('startControllerRuntime', () => {
 		expect(runtime.gateway.vm.id).toBe('gateway-vm-1');
 		await runtime.close();
 		expect(clearIntervalMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('propagates gateway boot failures without starting the HTTP server', async () => {
+		const startHttpServer = vi.fn(async () => ({
+			close: async () => {},
+		}));
+
+		await expect(
+			startControllerRuntime(
+				{
+					pluginSourceDir: '/plugins/openclaw-agent-vm-plugin',
+					systemConfig,
+					zoneId: 'shravan',
+				},
+				{
+					createManagedToolVm: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({
+							command: 'ssh ...',
+							host: '127.0.0.1',
+							identityFile: '/tmp/key',
+							port: 19000,
+							user: 'sandbox',
+						})),
+						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+						id: 'tool-vm-boot-fail',
+						setIngressRoutes: vi.fn(),
+					})),
+					createSecretResolver: async () => ({
+						resolve: async () => '',
+						resolveAll: async () => ({}),
+					}),
+					startGatewayZone: vi.fn(async () => {
+						throw new Error('gateway boot failed');
+					}),
+					startHttpServer,
+				},
+			),
+		).rejects.toThrow('gateway boot failed');
+
+		expect(startHttpServer).not.toHaveBeenCalled();
+	});
+
+	it('releases active leases when runtime.close is called', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone.');
+		}
+		const toolVmClose = vi.fn(async () => {});
+		let startHttpServerArgs:
+			| {
+					app: {
+						request(path: string, init?: RequestInit): Response | Promise<Response>;
+					};
+					port: number;
+			  }
+			| undefined;
+
+		const runtime = await startControllerRuntime(
+			{
+				pluginSourceDir: '/plugins/openclaw-agent-vm-plugin',
+				systemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				createManagedToolVm: vi.fn(async () => ({
+					close: toolVmClose,
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+					id: 'tool-vm-close',
+					setIngressRoutes: vi.fn(),
+				})),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				startGatewayZone: vi.fn(async () => ({
+					image: {
+						built: true,
+						fingerprint: 'gateway-image',
+						imagePath: '/tmp/gateway-image',
+					},
+					ingress: {
+						host: '127.0.0.1',
+						port: 18791,
+					},
+					vm: {
+						close: vi.fn(async () => {}),
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({
+							command: 'ssh ...',
+							host: '127.0.0.1',
+							port: 19000,
+							user: 'sandbox',
+						})),
+						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+						id: 'gateway-vm-close',
+						setIngressRoutes: vi.fn(),
+					},
+					zone,
+				})),
+				startHttpServer: vi.fn(async (options) => {
+					startHttpServerArgs = options;
+					return {
+						close: async () => {},
+					};
+				}),
+			},
+		);
+
+		if (!startHttpServerArgs) {
+			throw new Error('Expected runtime HTTP server args');
+		}
+
+		await startHttpServerArgs.app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/workspace',
+				profileId: 'standard',
+				scopeKey: 'close-runtime',
+				workspaceDir: '/workspace',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		await runtime.close();
+
+		expect(toolVmClose).toHaveBeenCalledTimes(1);
 	});
 });

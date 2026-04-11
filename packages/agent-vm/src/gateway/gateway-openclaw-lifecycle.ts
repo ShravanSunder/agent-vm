@@ -6,7 +6,9 @@ async function waitForGatewayReadiness(
 	maxAttempts: number,
 ): Promise<void> {
 	if (attempt >= maxAttempts) {
-		return;
+		throw new Error(
+			`Gateway readiness check failed after ${maxAttempts} attempts. OpenClaw may not have started.`,
+		);
 	}
 
 	const readinessCheck = await managedVm.exec(
@@ -20,12 +22,10 @@ async function waitForGatewayReadiness(
 	await waitForGatewayReadiness(managedVm, attempt + 1, maxAttempts);
 }
 
-export async function startOpenClawInGateway(
-	options: {
-		readonly gatewayPort: number;
-		readonly managedVm: ManagedVm;
-	},
-): Promise<{
+export async function startOpenClawInGateway(options: {
+	readonly gatewayPort: number;
+	readonly managedVm: ManagedVm;
+}): Promise<{
 	readonly host: string;
 	readonly port: number;
 }> {

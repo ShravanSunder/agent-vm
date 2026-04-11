@@ -72,7 +72,7 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 		{
 			name: 'node-version',
 			ok: nodeMajorVersion >= 24,
-			...( nodeMajorVersion < 24 ? { hint: 'Requires Node.js >= 24. Install via nvm or fnm.' } : {}),
+			...(nodeMajorVersion < 24 ? { hint: 'Requires Node.js >= 24. Install via nvm or fnm.' } : {}),
 		},
 		{
 			name: '1password-token-source',
@@ -105,7 +105,9 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 		{
 			name: 'disk-space',
 			ok: diskFreeBytes >= 10 * 1024 * 1024 * 1024,
-			...( diskFreeBytes < 10 * 1024 * 1024 * 1024 ? { hint: 'Need at least 10GB free disk space' } : {}),
+			...(diskFreeBytes < 10 * 1024 * 1024 * 1024
+				? { hint: 'Need at least 10GB free disk space' }
+				: {}),
 		},
 		{
 			name: 'memory-budget',

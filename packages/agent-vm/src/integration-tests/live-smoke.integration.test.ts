@@ -1,3 +1,9 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import { createManagedVm } from 'gondolin-core';
+import type { ManagedVm } from 'gondolin-core';
 /**
  * Live smoke test — boots real Gondolin VMs.
  *
@@ -7,11 +13,6 @@
  * NOT part of the standard test suite (too slow, needs QEMU).
  */
 import { describe, it, expect, afterAll } from 'vitest';
-import { createManagedVm } from 'gondolin-core';
-import type { ManagedVm } from 'gondolin-core';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 
 describe('live smoke: real Gondolin VM', () => {
 	let vm: ManagedVm | null = null;
@@ -114,15 +115,13 @@ describe('live smoke: real Gondolin VM', () => {
 
 		// Reuse existing VM — start a simple HTTP server inside it
 		await vm.exec(
-			'node -e "require(\'http\').createServer((req,res)=>{res.writeHead(200);res.end(\'ingress_works\')}).listen(18080)" &',
+			"node -e \"require('http').createServer((req,res)=>{res.writeHead(200);res.end('ingress_works')}).listen(18080)\" &",
 		);
 		// Wait for server to bind
 		await new Promise((resolve) => setTimeout(resolve, 2000));
 
 		// Verify server is running inside VM
-		await vm.exec(
-			'wget -qO- http://127.0.0.1:18080/ 2>/dev/null || echo not_ready',
-		);
+		await vm.exec('wget -qO- http://127.0.0.1:18080/ 2>/dev/null || echo not_ready');
 
 		// Configure ingress and expose to host
 		vm.setIngressRoutes([{ prefix: '/', port: 18080, stripPrefix: true }]);

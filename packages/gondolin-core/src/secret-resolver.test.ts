@@ -11,10 +11,7 @@ const emptyExecFileResult = async (): Promise<ExecFileResult> => ({ stdout: '', 
 
 describe('resolveServiceAccountToken', () => {
 	it('resolves token via op-cli', async () => {
-		const fakeExec = async (
-			command: string,
-			args: readonly string[],
-		): Promise<ExecFileResult> => {
+		const fakeExec = async (command: string, args: readonly string[]): Promise<ExecFileResult> => {
 			expect(command).toBe('op');
 			expect(args).toEqual(['read', 'op://vault/item/field']);
 			return { stdout: 'resolved-token\n', stderr: '' };
@@ -57,10 +54,7 @@ describe('resolveServiceAccountToken', () => {
 	});
 
 	it('resolves token via keychain', async () => {
-		const fakeExec = async (
-			command: string,
-			args: readonly string[],
-		): Promise<ExecFileResult> => {
+		const fakeExec = async (command: string, args: readonly string[]): Promise<ExecFileResult> => {
 			expect(command).toBe('security');
 			expect(args).toEqual([
 				'find-generic-password',

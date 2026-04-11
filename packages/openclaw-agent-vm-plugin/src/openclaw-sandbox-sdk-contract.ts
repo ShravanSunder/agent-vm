@@ -42,27 +42,24 @@ export interface SshHelpers {
 		readonly updateHostKeys: boolean;
 		readonly workspaceRoot: string;
 	}) => Promise<SshSandboxSession>;
-	readonly disposeSshSandboxSession?: (
-		session: SshSandboxSession,
-	) => Promise<void>;
+	readonly disposeSshSandboxSession?: (session: SshSandboxSession) => Promise<void>;
 	readonly runSshSandboxCommand: (params: {
 		readonly allowFailure?: boolean;
 		readonly remoteCommand: string;
 		readonly session: SshSandboxSession;
+		readonly signal?: AbortSignal;
 		readonly stdin?: Buffer | string;
 	}) => Promise<{
 		readonly code: number;
 		readonly stderr: Buffer;
 		readonly stdout: Buffer;
 	}>;
-	readonly sanitizeEnvVars: (
-		env: NodeJS.ProcessEnv,
-	) => { readonly allowed: Record<string, string> };
+	readonly sanitizeEnvVars: (env: NodeJS.ProcessEnv) => {
+		readonly allowed: Record<string, string>;
+	};
 }
 
-export function assertSdkShape(
-	value: unknown,
-): asserts value is SshHelpers & {
+export function assertSdkShape(value: unknown): asserts value is SshHelpers & {
 	registerSandboxBackend: (
 		id: string,
 		registration: {

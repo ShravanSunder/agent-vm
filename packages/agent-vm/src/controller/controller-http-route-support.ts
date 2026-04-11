@@ -2,14 +2,6 @@ import fs from 'node:fs/promises';
 
 import type { Lease, LeaseManager } from './lease-manager.js';
 
-export interface LeaseCreatePayload {
-	readonly agentWorkspaceDir: string;
-	readonly profileId: string;
-	readonly scopeKey: string;
-	readonly workspaceDir: string;
-	readonly zoneId: string;
-}
-
 export interface ControllerRouteOperations {
 	readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
 	readonly enableSshForZone?: (zoneId: string) => Promise<unknown>;
@@ -26,35 +18,7 @@ export type ControllerLeaseManager = Pick<
 	'createLease' | 'getLease' | 'listLeases' | 'releaseLease'
 >;
 
-export function isLeaseCreatePayload(
-	value: unknown,
-): value is LeaseCreatePayload {
-	return (
-		typeof value === 'object' &&
-		value !== null &&
-		typeof (value as { agentWorkspaceDir?: unknown }).agentWorkspaceDir ===
-			'string' &&
-		typeof (value as { profileId?: unknown }).profileId === 'string' &&
-		typeof (value as { scopeKey?: unknown }).scopeKey === 'string' &&
-		typeof (value as { workspaceDir?: unknown }).workspaceDir === 'string' &&
-		typeof (value as { zoneId?: unknown }).zoneId === 'string'
-	);
-}
-
-export function isDestroyPayload(
-	value: unknown,
-): value is { readonly purge?: boolean } {
-	if (typeof value !== 'object' || value === null) {
-		return false;
-	}
-
-	const candidate = value as { purge?: unknown };
-	return candidate.purge === undefined || typeof candidate.purge === 'boolean';
-}
-
-export async function readIdentityPemFromFile(
-	identityFilePath: string,
-): Promise<string> {
+export async function readIdentityPemFromFile(identityFilePath: string): Promise<string> {
 	return await fs.readFile(identityFilePath, 'utf8');
 }
 

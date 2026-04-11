@@ -1,14 +1,22 @@
-import { buildGatewayImage, type GatewayImageBuilderDependencies } from './gateway-image-builder.js';
-import { startOpenClawInGateway } from './gateway-openclaw-lifecycle.js';
 import { resolveZoneSecrets } from './credential-manager.js';
+import {
+	buildGatewayImage,
+	type GatewayImageBuilderDependencies,
+} from './gateway-image-builder.js';
+import { startOpenClawInGateway } from './gateway-openclaw-lifecycle.js';
 import {
 	createGatewayVm,
 	setupGatewayVmRuntime,
 	type GatewayVmSetupDependencies,
 } from './gateway-vm-setup.js';
-import { findGatewayZone, type GatewayZoneStartResult, type StartGatewayZoneOptions } from './gateway-zone-support.js';
+import {
+	findGatewayZone,
+	type GatewayZoneStartResult,
+	type StartGatewayZoneOptions,
+} from './gateway-zone-support.js';
 
-export interface GatewayManagerDependencies extends GatewayImageBuilderDependencies, GatewayVmSetupDependencies {}
+export interface GatewayManagerDependencies
+	extends GatewayImageBuilderDependencies, GatewayVmSetupDependencies {}
 
 export async function startGatewayZone(
 	options: StartGatewayZoneOptions,
@@ -26,12 +34,8 @@ export async function startGatewayZone(
 			cacheDir: `${zone.gateway.stateDir}/images/gateway`,
 		},
 		{
-			...(dependencies.buildImage
-				? { buildImage: dependencies.buildImage }
-				: {}),
-			...(dependencies.loadBuildConfig
-				? { loadBuildConfig: dependencies.loadBuildConfig }
-				: {}),
+			...(dependencies.buildImage ? { buildImage: dependencies.buildImage } : {}),
+			...(dependencies.loadBuildConfig ? { loadBuildConfig: dependencies.loadBuildConfig } : {}),
 		},
 	);
 	const managedVm = await createGatewayVm(
@@ -42,22 +46,17 @@ export async function startGatewayZone(
 			secretResolver: options.secretResolver,
 			systemConfig: options.systemConfig,
 			zone,
-			...(options.pluginSourceDir
-				? { pluginSourceDir: options.pluginSourceDir }
-				: {}),
+			...(options.pluginSourceDir ? { pluginSourceDir: options.pluginSourceDir } : {}),
 		},
-		{
-			...(dependencies.createManagedVm
-				? { createManagedVm: dependencies.createManagedVm }
-				: {}),
-		},
+		dependencies.createManagedVm ? { createManagedVm: dependencies.createManagedVm } : {},
 	);
 	await setupGatewayVmRuntime({
+		...(resolvedSecrets.OPENCLAW_GATEWAY_TOKEN
+			? { gatewayToken: resolvedSecrets.OPENCLAW_GATEWAY_TOKEN }
+			: {}),
 		managedVm,
 		openClawConfigPath: zone.gateway.openclawConfig,
-		...(options.pluginSourceDir
-			? { pluginSourceDir: options.pluginSourceDir }
-			: {}),
+		...(options.pluginSourceDir ? { pluginSourceDir: options.pluginSourceDir } : {}),
 	});
 	const ingress = await startOpenClawInGateway({
 		gatewayPort: zone.gateway.port,

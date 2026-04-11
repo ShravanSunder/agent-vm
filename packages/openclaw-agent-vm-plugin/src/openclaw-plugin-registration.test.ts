@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import defaultPlugin, {
+	createBackendDeps,
+	type SshHelpers,
+} from './openclaw-plugin-registration.js';
 import type { GondolinFsBridge } from './sandbox-backend-factory.js';
-import defaultPlugin, { createBackendDeps, type SshHelpers } from './openclaw-plugin-registration.js';
 
 function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
 	const mockSession = { command: 'ssh', configPath: '/tmp/ssh', host: 'tool-0.vm.host' };
@@ -78,7 +81,13 @@ describe('createBackendDeps', () => {
 		const execSpec = await deps.buildExecSpec({
 			command: 'ls -la',
 			env: { TEST: '1' },
-			ssh: { host: 'tool-0.vm.host', identityPem: 'pem', port: 22, user: 'sandbox' },
+			ssh: {
+				host: 'tool-0.vm.host',
+				identityPem: 'pem',
+				knownHostsLine: '',
+				port: 22,
+				user: 'sandbox',
+			},
 			usePty: false,
 			workdir: '/workspace',
 		});
@@ -101,7 +110,11 @@ describe('createBackendDeps', () => {
 		// Verify finalizeToken contains session and dispose function
 		expect(execSpec.finalizeToken).toBeDefined();
 		const token = execSpec.finalizeToken as { session: unknown; dispose: () => Promise<void> };
-		expect(token.session).toEqual({ command: 'ssh', configPath: '/tmp/ssh', host: 'tool-0.vm.host' });
+		expect(token.session).toEqual({
+			command: 'ssh',
+			configPath: '/tmp/ssh',
+			host: 'tool-0.vm.host',
+		});
 		expect(typeof token.dispose).toBe('function');
 	});
 
@@ -113,7 +126,13 @@ describe('createBackendDeps', () => {
 		const execSpec = await deps.buildExecSpec({
 			command: 'echo test',
 			env: {},
-			ssh: { host: 'tool-0.vm.host', identityPem: 'pem', port: 22, user: 'sandbox' },
+			ssh: {
+				host: 'tool-0.vm.host',
+				identityPem: 'pem',
+				knownHostsLine: '',
+				port: 22,
+				user: 'sandbox',
+			},
 			usePty: false,
 			workdir: '/workspace',
 		});
@@ -132,7 +151,13 @@ describe('createBackendDeps', () => {
 		const execSpec = await deps.buildExecSpec({
 			command: 'echo test',
 			env: {},
-			ssh: { host: 'tool-0.vm.host', identityPem: 'pem', port: 22, user: 'sandbox' },
+			ssh: {
+				host: 'tool-0.vm.host',
+				identityPem: 'pem',
+				knownHostsLine: '',
+				port: 22,
+				user: 'sandbox',
+			},
 			usePty: false,
 			workdir: '/workspace',
 		});
@@ -157,7 +182,13 @@ describe('createBackendDeps', () => {
 		const deps = createBackendDeps(ssh);
 		const result = await deps.runRemoteShellScript({
 			script: 'pwd',
-			ssh: { host: 'tool-0.vm.host', identityPem: 'pem', port: 22, user: 'sandbox' },
+			ssh: {
+				host: 'tool-0.vm.host',
+				identityPem: 'pem',
+				knownHostsLine: '',
+				port: 22,
+				user: 'sandbox',
+			},
 		});
 
 		expect(result.code).toBe(0);
@@ -180,7 +211,10 @@ describe('createBackendDeps', () => {
 			readFile: vi.fn(async () => Buffer.from('remote-content')),
 			remove: vi.fn(async () => {}),
 			rename: vi.fn(async () => {}),
-			resolvePath: vi.fn(() => ({ containerPath: '/workspace/readme.md', relativePath: 'readme.md' })),
+			resolvePath: vi.fn(() => ({
+				containerPath: '/workspace/readme.md',
+				relativePath: 'readme.md',
+			})),
 			stat: vi.fn(async () => ({ mtimeMs: 2000, size: 100, type: 'file' as const })),
 			writeFile: vi.fn(async () => {}),
 		};

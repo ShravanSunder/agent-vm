@@ -1,3 +1,5 @@
+import { serve } from '@hono/node-server';
+import { Hono } from 'hono';
 /**
  * Live smoke test: gateway API client → controller lease API round-trip.
  *
@@ -11,19 +13,18 @@
  * Run: pnpm vitest run packages/agent-vm/src/integration-tests/live-api-smoke.test.ts
  */
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { serve } from '@hono/node-server';
-import { Hono } from 'hono';
 
-import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
 import { createControllerApp } from '../controller/controller-http-routes.js';
 import type { Lease } from '../controller/lease-manager.js';
+import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
 
 describe('live smoke: API client → controller over real HTTP', () => {
 	let controllerServer: { close: (cb?: () => void) => void } | null = null;
 	let gatewayServer: { close: (cb?: () => void) => void } | null = null;
 
 	afterAll(async () => {
-		if (controllerServer) await new Promise<void>((resolve) => controllerServer?.close(() => resolve()));
+		if (controllerServer)
+			await new Promise<void>((resolve) => controllerServer?.close(() => resolve()));
 		if (gatewayServer) await new Promise<void>((resolve) => gatewayServer?.close(() => resolve()));
 	});
 
@@ -32,9 +33,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 		const toolInvocations: unknown[] = [];
 		const gatewayApp = new Hono();
 
-		gatewayApp.get('/readyz', (context) =>
-			context.json({ ready: true, uptimeMs: 123000 }),
-		);
+		gatewayApp.get('/readyz', (context) => context.json({ ready: true, uptimeMs: 123000 }));
 
 		gatewayApp.post('/tools/invoke', async (context) => {
 			const authHeader = context.req.header('authorization');
@@ -125,14 +124,14 @@ describe('live smoke: API client → controller over real HTTP', () => {
 				zoneId: 'shravan',
 			}),
 		});
-		const leaseBody = await leaseResponse.json() as { leaseId: string };
+		const leaseBody = (await leaseResponse.json()) as { leaseId: string };
 		expect(leaseResponse.status).toBe(200);
 		expect(leaseBody.leaseId).toBe('smoke-lease-001');
 		expect(createLease).toHaveBeenCalled();
 
 		// Verify lease list over real HTTP
 		const leasesResponse = await fetch('http://127.0.0.1:18801/leases');
-		const leasesBody = await leasesResponse.json() as unknown[];
+		const leasesBody = (await leasesResponse.json()) as unknown[];
 		expect(leasesBody).toHaveLength(1);
 	});
 

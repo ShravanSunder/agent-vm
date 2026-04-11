@@ -1,11 +1,6 @@
-import type {
-	GondolinLeaseResponse,
-	LeaseClient,
-} from '../controller-lease-client.js';
+import type { GondolinLeaseResponse, LeaseClient } from '../controller-lease-client.js';
 
-export function isGondolinLeaseResponse(
-	value: unknown,
-): value is GondolinLeaseResponse {
+export function isGondolinLeaseResponse(value: unknown): value is GondolinLeaseResponse {
 	return (
 		typeof value === 'object' &&
 		value !== null &&
@@ -57,10 +52,10 @@ export interface GondolinFsBridge {
 		readonly signal?: AbortSignal;
 		readonly to: string;
 	}): Promise<void>;
-	resolvePath(params: {
-		readonly cwd?: string;
-		readonly filePath: string;
-	}): { readonly containerPath: string; readonly relativePath: string };
+	resolvePath(params: { readonly cwd?: string; readonly filePath: string }): {
+		readonly containerPath: string;
+		readonly relativePath: string;
+	};
 	stat(params: {
 		readonly cwd?: string;
 		readonly filePath: string;
@@ -96,11 +91,11 @@ export interface CreateBackendDependencies {
 	readonly createFsBridgeBuilder?: (
 		leaseContext: FsBridgeLeaseContext,
 	) => (params: { readonly sandbox: unknown }) => GondolinFsBridge;
-	readonly createLeaseClient?: (options: {
-		readonly controllerUrl: string;
-	}) => LeaseClient;
+	readonly createLeaseClient?: (options: { readonly controllerUrl: string }) => LeaseClient;
 	readonly runRemoteShellScript: (params: {
+		readonly allowFailure?: boolean;
 		readonly script: string;
+		readonly signal?: AbortSignal;
 		readonly ssh: GondolinLeaseResponse['ssh'];
 		readonly stdin?: Buffer | string;
 	}) => Promise<{
@@ -136,9 +131,7 @@ export interface GondolinSandboxBackendHandle {
 		readonly timedOut: boolean;
 		readonly token?: unknown;
 	}) => Promise<void>;
-	runShellCommand(params: {
-		readonly script: string;
-	}): Promise<{
+	runShellCommand(params: { readonly script: string }): Promise<{
 		readonly code: number;
 		readonly stderr: Buffer;
 		readonly stdout: Buffer;

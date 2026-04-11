@@ -26,10 +26,46 @@ interface GatewayFrame {
 	readonly event?: string;
 }
 
+function parseGatewayFrame(rawFrame: string): GatewayFrame | null {
+	const parsed = JSON.parse(rawFrame) as unknown;
+	if (typeof parsed !== 'object' || parsed === null) {
+		return null;
+	}
+	const candidate = parsed as Record<string, unknown>;
+	if (candidate.type !== 'req' && candidate.type !== 'res' && candidate.type !== 'event') {
+		return null;
+	}
+	const errorMessage =
+		typeof candidate.error === 'object' &&
+		candidate.error !== null &&
+		typeof (candidate.error as { message?: unknown }).message === 'string'
+			? (candidate.error as { message: string }).message
+			: null;
+
+	return {
+		type: candidate.type,
+		...(typeof candidate.id === 'string' ? { id: candidate.id } : {}),
+		...(typeof candidate.method === 'string' ? { method: candidate.method } : {}),
+		...(typeof candidate.ok === 'boolean' ? { ok: candidate.ok } : {}),
+		...('payload' in candidate ? { payload: candidate.payload } : {}),
+		...(typeof candidate.event === 'string' ? { event: candidate.event } : {}),
+		...(errorMessage !== null ? { error: { message: errorMessage } } : {}),
+	};
+}
+
 /** Nonce + timestamp sent by the gateway as the first frame after WS upgrade. */
 interface ConnectChallengePayload {
 	readonly nonce: string;
 	readonly ts: number;
+}
+
+function isConnectChallengePayload(value: unknown): value is ConnectChallengePayload {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		typeof (value as { nonce?: unknown }).nonce === 'string' &&
+		typeof (value as { ts?: unknown }).ts === 'number'
+	);
 }
 
 /** Options for the connect handshake sent to the gateway. */
@@ -55,13 +91,19 @@ interface ConnectHelloOkPayload {
 	};
 }
 
+function isConnectHelloOkPayload(value: unknown): value is ConnectHelloOkPayload {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		(value as { type?: unknown }).type === 'hello-ok' &&
+		typeof (value as { protocol?: unknown }).protocol === 'number'
+	);
+}
+
 export interface GatewayWebSocketClient {
 	/** Resolves when the connect handshake completes. Rejects if the gateway refuses. */
 	readonly connected: Promise<ConnectHelloOkPayload>;
-	chatSend(params: {
-		readonly session: string;
-		readonly text: string;
-	}): Promise<unknown>;
+	chatSend(params: { readonly session: string; readonly text: string }): Promise<unknown>;
 	close(): void;
 }
 
@@ -87,21 +129,31 @@ export function createGatewayWebSocketClient(options: {
 	let handshakeComplete = false;
 
 	socket.addEventListener('message', (event: { data: string }) => {
-		const message = JSON.parse(event.data) as GatewayFrame;
+		const message = parseGatewayFrame(event.data);
+		if (!message) {
+			return;
+		}
 
 		// --- Handle the connect.challenge event from the gateway ---
 		if (message.type === 'event' && message.event === 'connect.challenge') {
-			const challengePayload = message.payload as ConnectChallengePayload;
+			if (!isConnectChallengePayload(message.payload)) {
+				rejectConnected(new Error('Gateway sent invalid connect.challenge payload'));
+				return;
+			}
+			const challengePayload = message.payload;
 			const connectOpts = options.connectOptions;
-			const protocolVersion =
-				connectOpts.protocolVersion ?? DEFAULT_PROTOCOL_VERSION;
+			const protocolVersion = connectOpts.protocolVersion ?? DEFAULT_PROTOCOL_VERSION;
 			const connectId = String(nextId);
 			nextId += 1;
 
 			pending.set(connectId, {
 				resolve: (payload: unknown) => {
+					if (!isConnectHelloOkPayload(payload)) {
+						rejectConnected(new Error('Gateway sent invalid hello-ok payload'));
+						return;
+					}
 					handshakeComplete = true;
-					resolveConnected(payload as ConnectHelloOkPayload);
+					resolveConnected(payload);
 				},
 				reject: (error: Error) => {
 					rejectConnected(error);
@@ -145,20 +197,13 @@ export function createGatewayWebSocketClient(options: {
 				if (message.ok) {
 					request.resolve(message.payload);
 				} else {
-					request.reject(
-						new Error(
-							message.error?.message ?? 'Gateway WebSocket request failed',
-						),
-					);
+					request.reject(new Error(message.error?.message ?? 'Gateway WebSocket request failed'));
 				}
 			}
 		}
 	});
 
-	function sendRequest(
-		method: string,
-		params: Record<string, unknown>,
-	): Promise<unknown> {
+	function sendRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
 		const id = String(nextId);
 		nextId += 1;
 		return new Promise<unknown>((resolve, reject) => {

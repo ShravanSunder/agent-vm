@@ -1,8 +1,8 @@
 import type { SecretResolver } from 'gondolin-core';
 import { describe, expect, it } from 'vitest';
 
-import { resolveZoneSecrets } from './credential-manager.js';
 import type { SystemConfig } from '../controller/system-config.js';
+import { resolveZoneSecrets } from './credential-manager.js';
 
 const systemConfig = {
 	host: {
@@ -37,13 +37,16 @@ const systemConfig = {
 				ANTHROPIC_API_KEY: {
 					source: '1password',
 					ref: 'op://AI/anthropic/api-key',
+					injection: 'env',
 				},
 				GITHUB_PAT: {
 					source: '1password',
 					ref: 'op://AI/github/pat',
+					injection: 'env',
 				},
 			},
 			allowedHosts: ['api.anthropic.com'],
+			websocketBypass: [],
 			toolProfile: 'standard',
 		},
 	],

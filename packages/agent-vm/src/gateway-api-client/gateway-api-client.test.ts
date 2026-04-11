@@ -4,29 +4,21 @@ import { createGatewayApiClient } from './gateway-api-client.js';
 
 describe('createGatewayApiClient', () => {
 	it('checks gateway readiness via /readyz with bearer auth', async () => {
-		const requests: { url: string; method: string; headers: Record<string, string> }[] =
-			[];
+		const requests: { url: string; method: string; headers: Record<string, string> }[] = [];
 		const client = createGatewayApiClient({
 			gatewayUrl: 'http://127.0.0.1:18791',
 			token: 'test-token',
 			fetchImpl: async (input, init) => {
 				requests.push({
 					url:
-						typeof input === 'string'
-							? input
-							: input instanceof URL
-								? input.toString()
-								: input.url,
+						typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url,
 					method: init?.method ?? 'GET',
 					headers: Object.fromEntries(new Headers(init?.headers).entries()),
 				});
-				return new Response(
-					JSON.stringify({ ready: true, failing: [], uptimeMs: 12345 }),
-					{
-						headers: { 'content-type': 'application/json' },
-						status: 200,
-					},
-				);
+				return new Response(JSON.stringify({ ready: true, failing: [], uptimeMs: 12345 }), {
+					headers: { 'content-type': 'application/json' },
+					status: 200,
+				});
 			},
 		});
 
@@ -45,11 +37,7 @@ describe('createGatewayApiClient', () => {
 			fetchImpl: async (input, init) => {
 				requests.push({
 					url:
-						typeof input === 'string'
-							? input
-							: input instanceof URL
-								? input.toString()
-								: input.url,
+						typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url,
 					headers: Object.fromEntries(new Headers(init?.headers).entries()),
 					body: typeof init?.body === 'string' ? init.body : '',
 				});
@@ -79,9 +67,9 @@ describe('createGatewayApiClient', () => {
 				new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 }),
 		});
 
-		await expect(
-			client.invokeTool({ tool: 'shell', args: { command: 'ls' } }),
-		).rejects.toThrow('Gateway API returned status 401');
+		await expect(client.invokeTool({ tool: 'shell', args: { command: 'ls' } })).rejects.toThrow(
+			'Gateway API returned status 401',
+		);
 	});
 
 	it('strips trailing slash from gateway url', async () => {
@@ -91,11 +79,7 @@ describe('createGatewayApiClient', () => {
 			token: 'test-token',
 			fetchImpl: async (input) => {
 				requests.push(
-					typeof input === 'string'
-						? input
-						: input instanceof URL
-							? input.toString()
-							: input.url,
+					typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url,
 				);
 				return new Response(JSON.stringify({ ready: true }), {
 					headers: { 'content-type': 'application/json' },

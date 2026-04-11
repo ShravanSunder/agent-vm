@@ -32,7 +32,7 @@ function execFileAsync(command: string, args: readonly string[]): Promise<ExecFi
 	return new Promise((resolve, reject) => {
 		execFile(command, [...args], { timeout: 30_000 }, (error, stdout, stderr) => {
 			if (error) {
-				const errorMessage = error instanceof Error ? error.message : String(error);
+				const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
 				reject(new Error(`${command} failed: ${stderr.trim() || errorMessage}`));
 				return;
 			}
@@ -47,10 +47,7 @@ const SAFE_IDENTIFIER_PATTERN = /^[\w.@-]+$/u;
 export async function resolveServiceAccountToken(
 	source: TokenSource,
 	dependencies?: {
-		readonly execFileAsync?: (
-			command: string,
-			args: readonly string[],
-		) => Promise<ExecFileResult>;
+		readonly execFileAsync?: (command: string, args: readonly string[]) => Promise<ExecFileResult>;
 	},
 ): Promise<string> {
 	const exec = dependencies?.execFileAsync ?? execFileAsync;
@@ -103,6 +100,8 @@ export async function resolveServiceAccountToken(
 
 			return token;
 		}
+		default:
+			throw new Error(`Unsupported token source: ${JSON.stringify(source)}`);
 	}
 }
 

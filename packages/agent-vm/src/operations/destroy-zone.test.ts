@@ -4,8 +4,8 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { runControllerDestroy } from './destroy-zone.js';
 import type { SystemConfig } from '../controller/system-config.js';
+import { runControllerDestroy } from './destroy-zone.js';
 
 const createdDirectories: string[] = [];
 
@@ -55,6 +55,7 @@ describe('runControllerDestroy', () => {
 					},
 					secrets: {},
 					allowedHosts: ['api.anthropic.com'],
+					websocketBypass: [],
 					toolProfile: 'standard',
 				},
 			],

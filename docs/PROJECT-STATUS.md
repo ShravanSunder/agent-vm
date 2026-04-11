@@ -36,11 +36,11 @@ Host (macOS)
 
 ## Packages
 
-| Package | Purpose | Files |
-|---------|---------|-------|
-| `gondolin-core` | VM adapter, secret resolver, build pipeline, policy compiler | 8 source + 6 test |
-| `agent-vm` | Controller CLI, runtime, lease API, gateway manager, snapshots | 20 source + 18 test |
-| `openclaw-agent-vm-plugin` | OpenClaw sandbox backend, lease client, plugin registration | 5 source + 5 test |
+| Package                    | Purpose                                                        | Files               |
+| -------------------------- | -------------------------------------------------------------- | ------------------- |
+| `gondolin-core`            | VM adapter, secret resolver, build pipeline, policy compiler   | 8 source + 6 test   |
+| `agent-vm`                 | Controller CLI, runtime, lease API, gateway manager, snapshots | 20 source + 18 test |
+| `openclaw-agent-vm-plugin` | OpenClaw sandbox backend, lease client, plugin registration    | 5 source + 5 test   |
 
 ---
 
@@ -67,26 +67,27 @@ agent-vm controller snapshot list       # List snapshot archives
 
 ## E2E Verification Matrix
 
-| # | Scenario | Result | Evidence |
-|---|----------|--------|----------|
-| 1 | Agent chat → Codex model responds | ✅ | "Four" (what is 2+2) |
-| 2 | Sandbox tool call → tool VM exec | ✅ | "hello-from-sandbox" |
-| 3 | FS bridge write + read | ✅ | "FSBRIDGEWORKS" via python3 /dev/fd/3 |
-| 4 | Workspace persistence (same session) | ✅ | File written in call 1, read in call 2 |
-| 5 | Multiple sessions → separate VMs | ✅ | discord:123 → slot 0, whatsapp:456 → slot 1 |
-| 6 | Controller stop + restart | ✅ | State persists, clean leases, tool calls work |
-| 7 | Snapshot create + restore | ✅ | Age encrypted, auth-profiles restored (2672 bytes) |
-| 8 | Scope-based VM reuse | ✅ | Same scopeKey reuses handle within process |
-| 9 | Doctor checks | ✅ | All binaries found (qemu, age, op, node) |
-| 10 | SSH into gateway VM | ✅ | Gondolin enableSsh + profile.d env vars |
-| 11 | Auth from 1P at boot | ✅ | auth-profiles.json written to VFS state dir |
-| 12 | Idle reaper (manual release) | ✅ | DELETE /lease → 0 leases, VMs destroyed |
+| #   | Scenario                             | Result | Evidence                                           |
+| --- | ------------------------------------ | ------ | -------------------------------------------------- |
+| 1   | Agent chat → Codex model responds    | ✅     | "Four" (what is 2+2)                               |
+| 2   | Sandbox tool call → tool VM exec     | ✅     | "hello-from-sandbox"                               |
+| 3   | FS bridge write + read               | ✅     | "FSBRIDGEWORKS" via python3 /dev/fd/3              |
+| 4   | Workspace persistence (same session) | ✅     | File written in call 1, read in call 2             |
+| 5   | Multiple sessions → separate VMs     | ✅     | discord:123 → slot 0, whatsapp:456 → slot 1        |
+| 6   | Controller stop + restart            | ✅     | State persists, clean leases, tool calls work      |
+| 7   | Snapshot create + restore            | ✅     | Age encrypted, auth-profiles restored (2672 bytes) |
+| 8   | Scope-based VM reuse                 | ✅     | Same scopeKey reuses handle within process         |
+| 9   | Doctor checks                        | ✅     | All binaries found (qemu, age, op, node)           |
+| 10  | SSH into gateway VM                  | ✅     | Gondolin enableSsh + profile.d env vars            |
+| 11  | Auth from 1P at boot                 | ✅     | auth-profiles.json written to VFS state dir        |
+| 12  | Idle reaper (manual release)         | ✅     | DELETE /lease → 0 leases, VMs destroyed            |
 
 ---
 
 ## What Was Built (Chronological)
 
 ### Phase 1-3 (Foundation)
+
 - [x] pnpm monorepo with 3 packages
 - [x] Gondolin core: VM adapter, secret resolver, build pipeline, mount policy, volume manager
 - [x] Controller: system config (Zod), gateway manager, lease manager, TCP pool
@@ -97,6 +98,7 @@ agent-vm controller snapshot list       # List snapshot archives
 - [x] Live tests: cross-VM SSH, lease API round-trip
 
 ### Phase 4 (API, CLI, Snapshots)
+
 - [x] Gateway HTTP API client (/readyz, /tools/invoke with Bearer auth)
 - [x] Gateway WebSocket client (connect.challenge handshake, chat.send)
 - [x] CLI completeness: stop, lease list/release, snapshot create/restore/list, ssh-cmd
@@ -107,6 +109,7 @@ agent-vm controller snapshot list       # List snapshot archives
 - [x] Tool profile lookup from config (not hardcoded)
 
 ### Phase 5 (Live Validation + Fixes)
+
 - [x] Switch to Debian slim OCI images (Dockerfile-based)
 - [x] Fix plugin discovery (copy to OpenClaw extensions dir, not BUNDLED_PLUGINS_DIR override)
 - [x] Fix SSH tool VM: enableSsh on TCP pool port, correct user
@@ -126,18 +129,21 @@ agent-vm controller snapshot list       # List snapshot archives
 ## Configuration
 
 ### system.json
+
 - `tokenSource: { type: "env", envVar: "OP_SERVICE_ACCOUNT_TOKEN" }` (for testing)
 - `allowedHosts` includes: chatgpt.com, api.openai.com, auth.openai.com, deb.debian.org
 - `tcpPool: { basePort: 19000, size: 5 }`
 - `toolProfiles.standard: { memory: "1G", cpus: 1 }`
 
 ### openclaw.json
+
 - `model.primary: "openai-codex/gpt-5.4"` (Codex OAuth, NOT Anthropic)
 - `sandbox: { mode: "all", backend: "gondolin", scope: "session", workspaceAccess: "rw" }`
 - `tools.elevated.enabled: false`
 - `plugins.entries.gondolin.config.controllerUrl: "http://controller.vm.host:18800"`
 
 ### Docker Images
+
 - `agent-vm-gateway:latest` — node:24-slim + openssh-server + openclaw@2026.4.2
 - `agent-vm-tool:latest` — node:24-slim + openssh-server + python3 + git
 

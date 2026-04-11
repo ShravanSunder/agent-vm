@@ -314,6 +314,7 @@ describe('runAgentVmCli', () => {
 							},
 							id: 'shravan',
 							secrets: {},
+							websocketBypass: [],
 							toolProfile: 'standard',
 						},
 					],
@@ -413,6 +414,7 @@ describe('runAgentVmCli', () => {
 						},
 						id: 'shravan',
 						secrets: {},
+						websocketBypass: [],
 						toolProfile: 'standard',
 					},
 				],
@@ -472,7 +474,11 @@ describe('runAgentVmCli', () => {
 	it('routes snapshot list through the snapshot manager', async () => {
 		const outputs: string[] = [];
 		const listSnapshots = vi.fn(() => [
-			{ snapshotPath: '/state/shravan/snapshots/shravan-2026-04-06.tar.age', timestamp: '2026-04-06', zoneId: 'shravan' },
+			{
+				snapshotPath: '/state/shravan/snapshots/shravan-2026-04-06.tar.age',
+				timestamp: '2026-04-06',
+				zoneId: 'shravan',
+			},
 		]);
 
 		await runAgentVmCli(
@@ -487,7 +493,11 @@ describe('runAgentVmCli', () => {
 				},
 			},
 			{
-				buildControllerStatus: () => ({ controllerPort: 18800, toolProfiles: ['standard'], zones: [] }),
+				buildControllerStatus: () => ({
+					controllerPort: 18800,
+					toolProfiles: ['standard'],
+					zones: [],
+				}),
 				createAgeEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
 				createControllerClient: () => ({
 					destroyZone: async () => ({}),
@@ -510,14 +520,44 @@ describe('runAgentVmCli', () => {
 					listSnapshots,
 				}),
 				loadSystemConfig: () => ({
-					host: { controllerPort: 18800, secretsProvider: { type: '1password', tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' } } },
-					images: { gateway: { buildConfig: '', postBuild: [] }, tool: { buildConfig: '', postBuild: [] } },
+					host: {
+						controllerPort: 18800,
+						secretsProvider: {
+							type: '1password',
+							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
+						},
+					},
+					images: {
+						gateway: { buildConfig: '', postBuild: [] },
+						tool: { buildConfig: '', postBuild: [] },
+					},
 					tcpPool: { basePort: 19000, size: 5 },
-					toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: './workspaces/tools' } },
-					zones: [{ allowedHosts: ['api.anthropic.com'], gateway: { cpus: 2, memory: '2G', openclawConfig: './config/shravan/openclaw.json', port: 18791, stateDir: './state/shravan', workspaceDir: './workspaces/shravan' }, id: 'shravan', secrets: {}, toolProfile: 'standard' }],
+					toolProfiles: {
+						standard: { cpus: 1, memory: '1G', workspaceRoot: './workspaces/tools' },
+					},
+					zones: [
+						{
+							allowedHosts: ['api.anthropic.com'],
+							gateway: {
+								cpus: 2,
+								memory: '2G',
+								openclawConfig: './config/shravan/openclaw.json',
+								port: 18791,
+								stateDir: './state/shravan',
+								workspaceDir: './workspaces/shravan',
+							},
+							id: 'shravan',
+							secrets: {},
+							websocketBypass: [],
+							toolProfile: 'standard',
+						},
+					],
 				}),
 				runControllerDoctor: () => ({ checks: [], ok: true }),
-				startControllerRuntime: vi.fn(async () => ({ controllerPort: 18800, gateway: { ingress: { host: '127.0.0.1', port: 18791 }, vm: { id: 'vm-1' } } })),
+				startControllerRuntime: vi.fn(async () => ({
+					controllerPort: 18800,
+					gateway: { ingress: { host: '127.0.0.1', port: 18791 }, vm: { id: 'vm-1' } },
+				})),
 				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
@@ -552,7 +592,11 @@ describe('runAgentVmCli', () => {
 				},
 			},
 			{
-				buildControllerStatus: () => ({ controllerPort: 18800, toolProfiles: ['standard'], zones: [] }),
+				buildControllerStatus: () => ({
+					controllerPort: 18800,
+					toolProfiles: ['standard'],
+					zones: [],
+				}),
 				createAgeEncryption: (deps) => {
 					// Capture the identity resolver to verify the 1P ref pattern
 					void deps.resolveIdentity().then((identity) => resolveIdentityCalls.push(identity));
@@ -583,14 +627,44 @@ describe('runAgentVmCli', () => {
 					listSnapshots: () => [],
 				}),
 				loadSystemConfig: () => ({
-					host: { controllerPort: 18800, secretsProvider: { type: '1password', tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' } } },
-					images: { gateway: { buildConfig: '', postBuild: [] }, tool: { buildConfig: '', postBuild: [] } },
+					host: {
+						controllerPort: 18800,
+						secretsProvider: {
+							type: '1password',
+							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
+						},
+					},
+					images: {
+						gateway: { buildConfig: '', postBuild: [] },
+						tool: { buildConfig: '', postBuild: [] },
+					},
 					tcpPool: { basePort: 19000, size: 5 },
-					toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: './workspaces/tools' } },
-					zones: [{ allowedHosts: ['api.anthropic.com'], gateway: { cpus: 2, memory: '2G', openclawConfig: './config/shravan/openclaw.json', port: 18791, stateDir: './state/shravan', workspaceDir: './workspaces/shravan' }, id: 'shravan', secrets: {}, toolProfile: 'standard' }],
+					toolProfiles: {
+						standard: { cpus: 1, memory: '1G', workspaceRoot: './workspaces/tools' },
+					},
+					zones: [
+						{
+							allowedHosts: ['api.anthropic.com'],
+							gateway: {
+								cpus: 2,
+								memory: '2G',
+								openclawConfig: './config/shravan/openclaw.json',
+								port: 18791,
+								stateDir: './state/shravan',
+								workspaceDir: './workspaces/shravan',
+							},
+							id: 'shravan',
+							secrets: {},
+							websocketBypass: [],
+							toolProfile: 'standard',
+						},
+					],
 				}),
 				runControllerDoctor: () => ({ checks: [], ok: true }),
-				startControllerRuntime: vi.fn(async () => ({ controllerPort: 18800, gateway: { ingress: { host: '127.0.0.1', port: 18791 }, vm: { id: 'vm-1' } } })),
+				startControllerRuntime: vi.fn(async () => ({
+					controllerPort: 18800,
+					gateway: { ingress: { host: '127.0.0.1', port: 18791 }, vm: { id: 'vm-1' } },
+				})),
 				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},

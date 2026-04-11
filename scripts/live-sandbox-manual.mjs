@@ -7,13 +7,13 @@
  */
 import fs from 'node:fs';
 import http from 'node:http';
+
 import { createSecretResolver } from '../packages/gondolin-core/dist/secret-resolver.js';
 import { createManagedVm } from '../packages/gondolin-core/dist/vm-adapter.js';
 
 // Dynamic import for Gondolin SDK (needs the full path)
-const gondolin = await import(
-	'/Users/shravansunder/Documents/dev/open-source/vm/gondolin/host/dist/src/index.js'
-);
+const gondolin =
+	await import('/Users/shravansunder/Documents/dev/open-source/vm/gondolin/host/dist/src/index.js');
 const { VM, createHttpHooks, RealFSProvider, ReadonlyProvider } = gondolin;
 
 // Load .env.local
@@ -61,35 +61,37 @@ const identityPem = fs.readFileSync(toolSsh.identityFile, 'utf-8');
 log(`tool VM ready on port ${toolSsh.port}`);
 
 // --- Controller lease API (plain Node.js HTTP) ---
-const server = http.createServer(async (req, res) => {
-	res.setHeader('Content-Type', 'application/json');
+const server = http.createServer((req, res) => {
+	void (async () => {
+		res.setHeader('Content-Type', 'application/json');
 
-	if (req.method === 'GET' && req.url === '/health') {
-		res.end(JSON.stringify({ ok: true }));
-		return;
-	}
+		if (req.method === 'GET' && req.url === '/health') {
+			res.end(JSON.stringify({ ok: true }));
+			return;
+		}
 
-	if (req.method === 'POST' && req.url === '/lease') {
-		log('>>> LEASE REQUESTED — tool VM assigned');
-		res.end(
-			JSON.stringify({
-				leaseId: 'live-lease-001',
-				ssh: { host: 'tool-0.vm.host', port: 22, user: 'root', identityPem, knownHostsLine: '' },
-				workdir: '/tmp',
-				tcpSlot: 0,
-			}),
-		);
-		return;
-	}
+		if (req.method === 'POST' && req.url === '/lease') {
+			log('>>> LEASE REQUESTED — tool VM assigned');
+			res.end(
+				JSON.stringify({
+					leaseId: 'live-lease-001',
+					ssh: { host: 'tool-0.vm.host', port: 22, user: 'root', identityPem, knownHostsLine: '' },
+					workdir: '/tmp',
+					tcpSlot: 0,
+				}),
+			);
+			return;
+		}
 
-	if (req.method === 'DELETE' && req.url?.startsWith('/lease/')) {
-		log(`>>> LEASE RELEASED: ${req.url.split('/').pop()}`);
-		res.end(JSON.stringify({ ok: true }));
-		return;
-	}
+		if (req.method === 'DELETE' && req.url?.startsWith('/lease/')) {
+			log(`>>> LEASE RELEASED: ${req.url.split('/').pop()}`);
+			res.end(JSON.stringify({ ok: true }));
+			return;
+		}
 
-	res.statusCode = 404;
-	res.end(JSON.stringify({ error: 'not found' }));
+		res.statusCode = 404;
+		res.end(JSON.stringify({ error: 'not found' }));
+	})();
 });
 server.listen(18800);
 log('controller API on :18800');
@@ -129,7 +131,12 @@ const existingConfig = fs.existsSync(`${cfgDir}/openclaw.json`)
 	? JSON.parse(fs.readFileSync(`${cfgDir}/openclaw.json`, 'utf-8'))
 	: {
 			gateway: { port: 18789, mode: 'local', bind: 'loopback', auth: { mode: 'token' } },
-			agents: { defaults: { workspace: '/home/openclaw/workspace', model: { primary: 'openai-codex/gpt-5.4' } } },
+			agents: {
+				defaults: {
+					workspace: '/home/openclaw/workspace',
+					model: { primary: 'openai-codex/gpt-5.4' },
+				},
+			},
 			channels: { whatsapp: {}, discord: {} },
 		};
 existingConfig.agents = existingConfig.agents || {};
@@ -185,12 +192,14 @@ const gatewayVm = await VM.create({
 // Copy plugin to rootfs /opt/extensions/gondolin/ with root ownership.
 // OPENCLAW_BUNDLED_PLUGINS_DIR points to /opt/extensions.
 await gatewayVm.exec(
-	"mkdir -p /opt/extensions/gondolin && " +
-	"cp -a /opt/gondolin-plugin-src/. /opt/extensions/gondolin/ && " +
-	"chown -R root:root /opt/extensions",
+	'mkdir -p /opt/extensions/gondolin && ' +
+		'cp -a /opt/gondolin-plugin-src/. /opt/extensions/gondolin/ && ' +
+		'chown -R root:root /opt/extensions',
 );
-const pluginCheck = await gatewayVm.exec("stat -c '%U' /opt/extensions/gondolin/plugin.js 2>/dev/null || echo no-stat");
-log("plugin ownership: " + pluginCheck.stdout.trim());
+const pluginCheck = await gatewayVm.exec(
+	"stat -c '%U' /opt/extensions/gondolin/plugin.js 2>/dev/null || echo no-stat",
+);
+log('plugin ownership: ' + pluginCheck.stdout.trim());
 
 await gatewayVm.exec(
 	'cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &',

@@ -1,8 +1,4 @@
-import {
-	createLeaseClient,
-	type GondolinLeaseResponse,
-} from '../controller-lease-client.js';
-
+import { createLeaseClient, type GondolinLeaseResponse } from '../controller-lease-client.js';
 import {
 	type CachedScopeEntry,
 	type CreateBackendDependencies,
@@ -32,15 +28,19 @@ export function createGondolinSandboxBackendFactory(
 	const scopeCache = new Map<string, CachedScopeEntry>();
 
 	return async (params) => {
-		const cachedEntry = scopeCache.get(params.scopeKey);
-		if (cachedEntry) {
-			return cachedEntry.handle;
-		}
-
 		const leaseClient =
 			dependencies.createLeaseClient?.({
 				controllerUrl: options.controllerUrl,
 			}) ?? createLeaseClient({ controllerUrl: options.controllerUrl });
+		const cachedEntry = scopeCache.get(params.scopeKey);
+		if (cachedEntry) {
+			try {
+				await leaseClient.getLeaseStatus(cachedEntry.lease.leaseId);
+				return cachedEntry.handle;
+			} catch {
+				scopeCache.delete(params.scopeKey);
+			}
+		}
 		const leaseResponse = await leaseClient.requestLease({
 			agentWorkspaceDir: params.agentWorkspaceDir,
 			profileId: 'standard',
@@ -49,9 +49,7 @@ export function createGondolinSandboxBackendFactory(
 			zoneId: options.zoneId,
 		});
 		if (!isGondolinLeaseResponse(leaseResponse)) {
-			throw new TypeError(
-				'Controller lease API returned an unexpected response.',
-			);
+			throw new TypeError('Controller lease API returned an unexpected response.');
 		}
 
 		const lease = leaseResponse;
@@ -84,18 +82,16 @@ function createSandboxBackendHandle(options: {
 	readonly scopeKey: string;
 	readonly zoneId: string;
 }): GondolinSandboxBackendHandle {
-	const boundRunRemoteShellScript: FsBridgeLeaseContext['runRemoteShellScript'] =
-		async (shellParams) =>
-			await options.runRemoteShellScript({
-				script: buildShellScriptWithArgs(
-					shellParams.script,
-					shellParams.args,
-				),
-				ssh: options.lease.ssh,
-				...(shellParams.stdin !== undefined
-					? { stdin: shellParams.stdin }
-					: {}),
-			});
+	const boundRunRemoteShellScript: FsBridgeLeaseContext['runRemoteShellScript'] = async (
+		shellParams,
+	) =>
+		await options.runRemoteShellScript({
+			...(shellParams.allowFailure !== undefined ? { allowFailure: shellParams.allowFailure } : {}),
+			script: buildShellScriptWithArgs(shellParams.script, shellParams.args),
+			...(shellParams.signal !== undefined ? { signal: shellParams.signal } : {}),
+			ssh: options.lease.ssh,
+			...(shellParams.stdin !== undefined ? { stdin: shellParams.stdin } : {}),
+		});
 
 	const createFsBridge = options.createFsBridgeBuilder?.({
 		remoteAgentWorkspaceDir: options.lease.workdir,
@@ -109,8 +105,8 @@ function createSandboxBackendHandle(options: {
 		configLabel: `${options.controllerUrl} (${options.zoneId})`,
 		configLabelKind: 'VM',
 		id: 'gondolin',
-		runtimeId: `gondolin-${options.scopeKey}`,
-		runtimeLabel: `gondolin-${options.scopeKey}`,
+		runtimeId: options.lease.leaseId,
+		runtimeLabel: options.lease.leaseId,
 		workdir: options.lease.workdir,
 		buildExecSpec: async (execParams) =>
 			await options.buildExecSpec({
@@ -126,9 +122,7 @@ function createSandboxBackendHandle(options: {
 				typeof finalizeParams.token === 'object' &&
 				'dispose' in finalizeParams.token
 			) {
-				await (
-					finalizeParams.token as { dispose: () => Promise<void> }
-				).dispose();
+				await (finalizeParams.token as { dispose: () => Promise<void> }).dispose();
 			}
 		},
 		runShellCommand: async (commandParams) =>

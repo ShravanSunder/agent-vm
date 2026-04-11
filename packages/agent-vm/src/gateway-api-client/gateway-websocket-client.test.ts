@@ -11,97 +11,99 @@ import { createGatewayWebSocketClient } from './gateway-websocket-client.js';
 function createMockGatewaySocket(options?: {
 	readonly challengeNonce?: string;
 	readonly connectReject?: { message: string };
-	readonly mockResponder?: (parsed: {
-		id: string;
-		method: string;
-		params: unknown;
-	}) => { ok: boolean; payload?: unknown; error?: { message: string } };
+	readonly mockResponder?: (parsed: { id: string; method: string; params: unknown }) => {
+		ok: boolean;
+		payload?: unknown;
+		error?: { message: string };
+	};
 }): {
 	socket: {
-		addEventListener: ReturnType<typeof vi.fn>;
-		close: ReturnType<typeof vi.fn>;
-		send: ReturnType<typeof vi.fn>;
+		addEventListener: (event: string, handler: (data: { data: string }) => void) => void;
+		close: () => void;
+		send: (data: string) => void;
 	};
+	closeMock: ReturnType<typeof vi.fn>;
+	sendMock: ReturnType<typeof vi.fn>;
 	sentMessages: string[];
 } {
 	const sentMessages: string[] = [];
 	let messageHandler: ((data: { data: string }) => void) | undefined;
 	const nonce = options?.challengeNonce ?? 'test-nonce-abc123';
 
-	const socket = {
-		addEventListener: vi.fn(
-			(event: string, handler: (data: { data: string }) => void) => {
-				if (event === 'message') {
-					messageHandler = handler;
-					// Gateway sends connect.challenge as the first frame
-					setTimeout(() => {
-						messageHandler?.({
-							data: JSON.stringify({
-								type: 'event',
-								event: 'connect.challenge',
-								payload: { nonce, ts: 1737264000000 },
-							}),
-						});
-					}, 1);
-				}
-			},
-		),
-		close: vi.fn(),
-		send: vi.fn((data: string) => {
-			sentMessages.push(data);
-			const parsed = JSON.parse(data) as {
-				id: string;
-				method: string;
-				params: unknown;
-			};
-
-			if (parsed.method === 'connect') {
-				setTimeout(() => {
-					if (options?.connectReject) {
-						messageHandler?.({
-							data: JSON.stringify({
-								type: 'res',
-								id: parsed.id,
-								ok: false,
-								error: options.connectReject,
-							}),
-						});
-					} else {
-						messageHandler?.({
-							data: JSON.stringify({
-								type: 'res',
-								id: parsed.id,
-								ok: true,
-								payload: {
-									type: 'hello-ok',
-									protocol: 3,
-									policy: { tickIntervalMs: 15000 },
-								},
-							}),
-						});
-					}
-				}, 1);
-				return;
-			}
-
-			// For non-connect requests, use the mock responder or default success
+	const addEventListener = vi.fn((event: string, handler: (data: { data: string }) => void) => {
+		if (event === 'message') {
+			messageHandler = handler;
+			// Gateway sends connect.challenge as the first frame
 			setTimeout(() => {
-				const response = options?.mockResponder?.(parsed) ?? {
-					ok: true,
-					payload: { text: 'default response' },
-				};
 				messageHandler?.({
 					data: JSON.stringify({
-						type: 'res',
-						id: parsed.id,
-						...response,
+						type: 'event',
+						event: 'connect.challenge',
+						payload: { nonce, ts: 1737264000000 },
 					}),
 				});
 			}, 1);
-		}),
+		}
+	});
+	const closeMock = vi.fn((): void => {});
+	const sendMock = vi.fn((data: string): void => {
+		sentMessages.push(data);
+		const parsed = JSON.parse(data) as {
+			id: string;
+			method: string;
+			params: unknown;
+		};
+
+		if (parsed.method === 'connect') {
+			setTimeout(() => {
+				if (options?.connectReject) {
+					messageHandler?.({
+						data: JSON.stringify({
+							type: 'res',
+							id: parsed.id,
+							ok: false,
+							error: options.connectReject,
+						}),
+					});
+				} else {
+					messageHandler?.({
+						data: JSON.stringify({
+							type: 'res',
+							id: parsed.id,
+							ok: true,
+							payload: {
+								type: 'hello-ok',
+								protocol: 3,
+								policy: { tickIntervalMs: 15000 },
+							},
+						}),
+					});
+				}
+			}, 1);
+			return;
+		}
+
+		setTimeout(() => {
+			const response = options?.mockResponder?.(parsed) ?? {
+				ok: true,
+				payload: { text: 'default response' },
+			};
+			messageHandler?.({
+				data: JSON.stringify({
+					type: 'res',
+					id: parsed.id,
+					...response,
+				}),
+			});
+		}, 1);
+	});
+	const socket = {
+		addEventListener,
+		close: closeMock as () => void,
+		send: sendMock as (data: string) => void,
 	};
 
-	return { socket, sentMessages };
+	return { closeMock, sendMock, socket, sentMessages };
 }
 
 describe('createGatewayWebSocketClient', () => {
@@ -215,9 +217,9 @@ describe('createGatewayWebSocketClient', () => {
 			connectOptions: { token: 'bad-token' },
 		});
 
-		await expect(
-			client.chatSend({ session: 'test', text: 'hello' }),
-		).rejects.toThrow('auth failed');
+		await expect(client.chatSend({ session: 'test', text: 'hello' })).rejects.toThrow(
+			'auth failed',
+		);
 	});
 
 	it('rejects the promise when the server returns an error to chat.send', async () => {
@@ -235,13 +237,13 @@ describe('createGatewayWebSocketClient', () => {
 
 		await client.connected;
 
-		await expect(
-			client.chatSend({ session: 'missing', text: 'hello' }),
-		).rejects.toThrow('session not found');
+		await expect(client.chatSend({ session: 'missing', text: 'hello' })).rejects.toThrow(
+			'session not found',
+		);
 	});
 
 	it('closes the underlying socket', () => {
-		const { socket } = createMockGatewaySocket();
+		const { closeMock, socket } = createMockGatewaySocket();
 
 		const client = createGatewayWebSocketClient({
 			createSocket: () => socket,
@@ -250,7 +252,7 @@ describe('createGatewayWebSocketClient', () => {
 
 		client.close();
 
-		expect(socket.close).toHaveBeenCalled();
+		expect(closeMock).toHaveBeenCalled();
 	});
 
 	it('uses custom protocol version and node role when provided', async () => {

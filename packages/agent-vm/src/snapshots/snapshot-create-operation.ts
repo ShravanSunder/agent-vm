@@ -25,15 +25,9 @@ export async function createEncryptedSnapshot(options: {
 
 	fs.mkdirSync(options.snapshotDir, { recursive: true });
 
-	const stagingDirectory = fs.mkdtempSync(
-		path.join(os.tmpdir(), 'snapshot-stage-'),
-	);
+	const stagingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'snapshot-stage-'));
 	try {
-		await execFileAsync('cp', [
-			'-a',
-			options.stateDir,
-			path.join(stagingDirectory, 'state'),
-		]);
+		await execFileAsync('cp', ['-a', options.stateDir, path.join(stagingDirectory, 'state')]);
 		await execFileAsync('cp', [
 			'-a',
 			options.workspaceDir,
@@ -62,10 +56,7 @@ export async function createEncryptedSnapshot(options: {
 		fs.rmSync(stagingDirectory, { recursive: true, force: true });
 	}
 
-	await options.encryption.encrypt(
-		snapshotPaths.tarPath,
-		snapshotPaths.encryptedPath,
-	);
+	await options.encryption.encrypt(snapshotPaths.tarPath, snapshotPaths.encryptedPath);
 	fs.unlinkSync(snapshotPaths.tarPath);
 
 	return {

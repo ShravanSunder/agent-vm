@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createGondolinSandboxBackendFactory, createGondolinSandboxBackendManager, type FsBridgeLeaseContext, type GondolinFsBridge } from './sandbox-backend-factory.js';
+import {
+	createGondolinSandboxBackendFactory,
+	createGondolinSandboxBackendManager,
+	type FsBridgeLeaseContext,
+	type GondolinFsBridge,
+} from './sandbox-backend-factory.js';
 
 function createMockFsBridge(): GondolinFsBridge {
 	return {
@@ -127,9 +132,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 		const bridge = backend.createFsBridge?.({ sandbox: { id: 'sandbox' } });
 		expect(bridge).toBe(mockBridge);
 
-		// Gap 4: stable runtimeId based on scopeKey, not leaseId
-		expect(backend.runtimeId).toBe('gondolin-agent:main:session-abc');
-		expect(backend.runtimeLabel).toBe('gondolin-agent:main:session-abc');
+		expect(backend.runtimeId).toBe('lease-123');
+		expect(backend.runtimeLabel).toBe('lease-123');
 		expect(backend.configLabel).toBe('http://controller.vm.host:18800 (shravan)');
 		expect(backend.configLabelKind).toBe('VM');
 		expect(typeof backend.finalizeExec).toBe('function');
@@ -242,9 +246,74 @@ describe('createGondolinSandboxBackendFactory', () => {
 		});
 
 		expect(handleA).not.toBe(handleB);
-		expect(handleA.runtimeId).toBe('gondolin-scope-a');
-		expect(handleB.runtimeId).toBe('gondolin-scope-b');
+		expect(handleA.runtimeId).toBe('lease-1');
+		expect(handleB.runtimeId).toBe('lease-2');
 		expect(requestLease).toHaveBeenCalledTimes(2);
+	});
+
+	it('requests a new lease when the cached scope handle points at a stale lease', async () => {
+		let leaseCounter = 0;
+		const getLeaseStatus = vi.fn(async (leaseId: string) => {
+			if (leaseId === 'lease-1') {
+				throw new Error('stale');
+			}
+			return { status: 'active' };
+		});
+		const requestLease = vi.fn(async () => {
+			leaseCounter += 1;
+			return {
+				leaseId: `lease-${leaseCounter}`,
+				ssh: {
+					host: 'tool-0.vm.host',
+					identityPem: 'pem',
+					knownHostsLine: '',
+					port: 22,
+					user: 'sandbox',
+				},
+				tcpSlot: 0,
+				workdir: '/workspace',
+			};
+		});
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					getLeaseStatus,
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const firstHandle = await factory({
+			agentWorkspaceDir: '/workspace',
+			cfg: {},
+			scopeKey: 'scope-stale',
+			sessionKey: 'session-stale',
+			workspaceDir: '/workspace',
+		});
+		const secondHandle = await factory({
+			agentWorkspaceDir: '/workspace',
+			cfg: {},
+			scopeKey: 'scope-stale',
+			sessionKey: 'session-stale',
+			workspaceDir: '/workspace',
+		});
+
+		expect(firstHandle).not.toBe(secondHandle);
+		expect(requestLease).toHaveBeenCalledTimes(2);
+		expect(getLeaseStatus).toHaveBeenCalledWith('lease-1');
+		expect(secondHandle.runtimeId).toBe('lease-2');
 	});
 
 	it('finalizeExec calls dispose on token when dispose is present', async () => {
@@ -398,13 +467,17 @@ describe('createGondolinSandboxBackendFactory', () => {
 			throw new Error('Expected lease context to be captured');
 		}
 		await capturedLeaseContext.runRemoteShellScript({
+			allowFailure: true,
 			script: 'cat /etc/hostname',
+			signal: new AbortController().signal,
 			args: ['/workspace/file.txt'],
 		});
 
 		// Verify it delegates to the deps runRemoteShellScript with the lease SSH creds
 		expect(runRemoteShellScript).toHaveBeenCalledWith({
+			allowFailure: true,
 			script: expect.stringContaining('cat /etc/hostname'),
+			signal: expect.any(AbortSignal),
 			ssh: {
 				host: 'tool-0.vm.host',
 				identityPem: 'pem',
@@ -489,7 +562,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		expect(backend.env).toBeUndefined();
 		expect(backend.createFsBridge).toBeUndefined();
-		expect(backend.runtimeId).toBe('gondolin-test');
+		expect(backend.runtimeId).toBe('lease-456');
 	});
 });
 
@@ -513,11 +586,11 @@ describe('createGondolinSandboxBackendManager', () => {
 		);
 
 		const result = await manager.describeRuntime({
-			entry: { containerName: 'gondolin-scope-a' },
+			entry: { containerName: 'lease-123' },
 		});
 
 		expect(result).toEqual({ running: true, configLabelMatch: true });
-		expect(getLeaseStatus).toHaveBeenCalledWith('gondolin-scope-a');
+		expect(getLeaseStatus).toHaveBeenCalledWith('lease-123');
 	});
 
 	it('describeRuntime returns running false when getLeaseStatus throws', async () => {

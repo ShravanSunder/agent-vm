@@ -7,9 +7,7 @@ export default defineConfig({
 		testTimeout: 300_000,
 		hookTimeout: 120_000,
 		pool: 'forks',
-		poolOptions: {
-			forks: { singleFork: true },
-		},
+		fileParallelism: false,
 		// Default suite runs unit-style tests. Live integration coverage uses
 		// the explicit .integration.test.ts suffix and runs separately.
 		include: ['packages/**/*.test.ts', 'packages/**/*.spec.ts'],

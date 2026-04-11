@@ -1,8 +1,8 @@
 import type { BuildImageResult, ManagedVm, SecretResolver } from 'gondolin-core';
 import { describe, expect, it, vi } from 'vitest';
 
-import { startGatewayZone } from './gateway-zone-orchestrator.js';
 import type { SystemConfig } from '../controller/system-config.js';
+import { startGatewayZone } from './gateway-zone-orchestrator.js';
 
 const systemConfig = {
 	host: {
@@ -95,7 +95,7 @@ describe('startGatewayZone', () => {
 				imagePath: '/tmp/gateway-image',
 			}),
 		);
-		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => managedVm);
+		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
 		const buildConfig = {
 			arch: 'aarch64',
 			distro: 'alpine',
@@ -225,7 +225,7 @@ describe('startGatewayZone', () => {
 				DISCORD_BOT_TOKEN: 'discord-token',
 			}),
 		};
-		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => managedVm);
+		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
 
 		await startGatewayZone(
 			{
@@ -244,7 +244,11 @@ describe('startGatewayZone', () => {
 			},
 		);
 
-		const vmOptions = createManagedVm.mock.calls[0]?.[0];
+		const createManagedVmCall = createManagedVm.mock.calls[0];
+		if (!createManagedVmCall) {
+			throw new Error('Expected gateway VM creation call');
+		}
+		const [vmOptions] = createManagedVmCall as [Record<string, unknown>];
 
 		// PERPLEXITY_API_KEY should be in secrets (http-mediation) with hosts
 		expect(vmOptions.secrets).toEqual({
@@ -274,7 +278,7 @@ describe('startGatewayZone', () => {
 			exec: execMock,
 			setIngressRoutes: vi.fn(),
 		};
-		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => managedVm);
+		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
 
 		await startGatewayZone(
 			{
@@ -301,7 +305,11 @@ describe('startGatewayZone', () => {
 			},
 		);
 
-		const vmOptions = createManagedVm.mock.calls[0]?.[0];
+		const createManagedVmCall = createManagedVm.mock.calls[0];
+		if (!createManagedVmCall) {
+			throw new Error('Expected gateway VM creation call');
+		}
+		const [vmOptions] = createManagedVmCall as [Record<string, unknown>];
 		expect(vmOptions.tcpHosts).toEqual({
 			'controller.vm.host:18800': '127.0.0.1:18800',
 			'tool-0.vm.host:22': '127.0.0.1:19000',
@@ -311,5 +319,87 @@ describe('startGatewayZone', () => {
 			'tool-4.vm.host:22': '127.0.0.1:19004',
 			'gateway.discord.gg:443': 'gateway.discord.gg:443',
 		});
+	});
+
+	it('throws when gateway readiness polling exhausts all attempts', async () => {
+		const managedVm: ManagedVm = {
+			id: 'vm-timeout',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stdout: '000', stderr: '' })),
+			setIngressRoutes: vi.fn(),
+		};
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver: {
+						resolve: async (): Promise<string> => {
+							throw new Error('not used');
+						},
+						resolveAll: async () => ({}),
+					},
+					systemConfig,
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					createManagedVm: vi.fn(async () => managedVm),
+					loadBuildConfig: vi.fn(async () => ({})),
+				},
+			),
+		).rejects.toThrow(/gateway.*readiness/iu);
+	});
+
+	it('writes the resolved gateway token to a root-only env file', async () => {
+		const execMock = vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' }));
+		const managedVm: ManagedVm = {
+			id: 'vm-token',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: execMock,
+			setIngressRoutes: vi.fn(),
+		};
+
+		await startGatewayZone(
+			{
+				secretResolver: {
+					resolve: async (): Promise<string> => {
+						throw new Error('not used');
+					},
+					resolveAll: async () => ({
+						DISCORD_BOT_TOKEN: 'discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						PERPLEXITY_API_KEY: 'pplx-key',
+					}),
+				},
+				systemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => ({})),
+			},
+		);
+
+		expect(execMock).toHaveBeenCalledWith(
+			expect.stringContaining('cat > /root/.openclaw-env << ENVEOF'),
+		);
+		expect(execMock).toHaveBeenCalledWith(expect.stringContaining('chmod 600 /root/.openclaw-env'));
+		expect(execMock).toHaveBeenCalledWith(expect.stringContaining('source /root/.openclaw-env'));
+		expect(execMock).toHaveBeenCalledWith(
+			expect.stringContaining("export OPENCLAW_GATEWAY_TOKEN='gateway-token-123'"),
+		);
 	});
 });

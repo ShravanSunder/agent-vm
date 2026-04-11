@@ -1,3 +1,9 @@
+import fs from 'node:fs';
+
+import { serve } from '@hono/node-server';
+import { createManagedVm } from 'gondolin-core';
+import type { ManagedVm, SshAccess } from 'gondolin-core';
+import { Hono } from 'hono';
 /**
  * Live end-to-end test: OpenClaw sandbox plugin → controller lease API → tool VM
  *
@@ -11,11 +17,6 @@
  * Requires: QEMU, built gateway image at build-cache/gateway/
  */
 import { afterAll, describe, it, expect } from 'vitest';
-import { createManagedVm } from 'gondolin-core';
-import type { ManagedVm, SshAccess } from 'gondolin-core';
-import { serve } from '@hono/node-server';
-import { Hono } from 'hono';
-import fs from 'node:fs';
 describe('live e2e: sandbox plugin → controller → tool VM', () => {
 	let gatewayVm: ManagedVm | null = null;
 	let toolVm: ManagedVm | null = null;
@@ -27,15 +28,18 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 		if (toolVm) await toolVm.close().catch(() => {});
 		if (server) {
 			await new Promise<void>((resolve) => {
-				server?.close(() => resolve());
+				server?.close(() => {
+					resolve();
+				});
 			});
 		}
 	});
 
 	it('should route exec from gateway VM to tool VM via the controller lease API', async () => {
 		const t0 = Date.now();
-		const log = (msg: string): void =>
+		const log = (msg: string): void => {
 			process.stdout.write(`[${String(Date.now() - t0).padStart(6)}ms] ${msg}\n`);
+		};
 
 		// --- Step 1: Create tool VM (pre-create so we have SSH creds ready) ---
 		log('creating tool VM...');
@@ -114,9 +118,7 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 
 		// --- Step 4: Test the lease API from inside the gateway VM ---
 		log('testing lease API from gateway VM...');
-		const healthCheck = await gatewayVm.exec(
-			'curl -sS http://controller.vm.host:18800/health',
-		);
+		const healthCheck = await gatewayVm.exec('curl -sS http://controller.vm.host:18800/health');
 		log(`health check: ${healthCheck.stdout.trim()}`);
 		expect(healthCheck.stdout).toContain('ok');
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildControllerStatus } from './controller-status.js';
 import type { SystemConfig } from '../controller/system-config.js';
+import { buildControllerStatus } from './controller-status.js';
 
 const systemConfig = {
 	host: {
@@ -34,6 +34,7 @@ const systemConfig = {
 			},
 			secrets: {},
 			allowedHosts: ['api.anthropic.com'],
+			websocketBypass: [],
 			toolProfile: 'standard',
 		},
 	],

@@ -15,6 +15,7 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r typecheck",
 		"check": "pnpm lint:types && pnpm fmt:check && pnpm typecheck && pnpm test",
 		"test": "vitest run",
+		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"test:watch": "vitest"
 	},
 	"devDependencies": {

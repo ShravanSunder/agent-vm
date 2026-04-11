@@ -34,6 +34,7 @@ const systemConfig = {
 			},
 			secrets: {},
 			allowedHosts: ['api.anthropic.com'],
+			websocketBypass: [],
 			toolProfile: 'standard',
 		},
 	],

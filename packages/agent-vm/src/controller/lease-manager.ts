@@ -9,6 +9,7 @@ export interface ToolProfile {
 }
 
 export interface Lease {
+	readonly cleanWorkspace?: () => Promise<void>;
 	readonly createdAt: number;
 	readonly id: string;
 	readonly lastUsedAt: number;
@@ -41,6 +42,11 @@ export interface LeaseManager {
 }
 
 export function createLeaseManager(options: {
+	readonly cleanWorkspace?: (leaseOptions: {
+		readonly profile: ToolProfile;
+		readonly tcpSlot: number;
+		readonly zoneId: string;
+	}) => Promise<void>;
 	readonly createManagedVm: (leaseOptions: {
 		readonly agentWorkspaceDir: string;
 		readonly profile: ToolProfile;
@@ -58,27 +64,47 @@ export function createLeaseManager(options: {
 	return {
 		async createLease(leaseOptions) {
 			const tcpSlot = options.tcpPool.allocate();
-			const vm = await options.createManagedVm({
-				...leaseOptions,
-				tcpSlot,
-			});
-			const sshAccess = await vm.enableSsh({
-				listenPort: options.tcpPool.portForSlot(tcpSlot),
-			});
-			const createdAt = options.now();
-			const lease: Lease = {
-				createdAt,
-				id: `${leaseOptions.zoneId}-${leaseOptions.scopeKey}-${createdAt}`,
-				lastUsedAt: createdAt,
-				profileId: leaseOptions.profileId,
-				scopeKey: leaseOptions.scopeKey,
-				sshAccess,
-				tcpSlot,
-				vm,
-				zoneId: leaseOptions.zoneId,
-			};
-			leases.set(lease.id, lease);
-			return lease;
+			try {
+				const vm = await options.createManagedVm({
+					...leaseOptions,
+					tcpSlot,
+				});
+				try {
+					const sshAccess = await vm.enableSsh({
+						listenPort: options.tcpPool.portForSlot(tcpSlot),
+					});
+					const createdAt = options.now();
+					const lease: Lease = {
+						...(options.cleanWorkspace
+							? {
+									cleanWorkspace: async () =>
+										await options.cleanWorkspace?.({
+											profile: leaseOptions.profile,
+											tcpSlot,
+											zoneId: leaseOptions.zoneId,
+										}),
+								}
+							: {}),
+						createdAt,
+						id: `${leaseOptions.zoneId}-${leaseOptions.scopeKey}-${createdAt}`,
+						lastUsedAt: createdAt,
+						profileId: leaseOptions.profileId,
+						scopeKey: leaseOptions.scopeKey,
+						sshAccess,
+						tcpSlot,
+						vm,
+						zoneId: leaseOptions.zoneId,
+					};
+					leases.set(lease.id, lease);
+					return lease;
+				} catch (error) {
+					await vm.close().catch(() => {});
+					throw error;
+				}
+			} catch (error) {
+				options.tcpPool.release(tcpSlot);
+				throw error;
+			}
 		},
 		getLease(leaseId: string): Lease | undefined {
 			return leases.get(leaseId);
@@ -92,9 +118,10 @@ export function createLeaseManager(options: {
 				return;
 			}
 
+			await lease.vm.close();
+			await lease.cleanWorkspace?.();
 			leases.delete(leaseId);
 			options.tcpPool.release(lease.tcpSlot);
-			await lease.vm.close();
 		},
 	};
 }

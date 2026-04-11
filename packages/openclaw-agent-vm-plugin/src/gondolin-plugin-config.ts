@@ -1,6 +1,5 @@
 export interface ResolvedGondolinPluginConfig {
 	readonly controllerUrl: string;
-	readonly profileId: string;
 	readonly zoneId: string;
 }
 
@@ -13,7 +12,6 @@ export function resolveGondolinPluginConfig(
 
 	return {
 		controllerUrl: config.controllerUrl,
-		profileId: typeof config.profileId === 'string' ? config.profileId : 'standard',
 		zoneId: config.zoneId,
 	};
 }

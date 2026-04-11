@@ -60,9 +60,7 @@ export function createLeaseClient(options: {
 			});
 			if (!response.ok) {
 				const errorBody = await response.text().catch(() => '(unreadable)');
-				throw new TypeError(
-					`Controller lease API returned HTTP ${response.status}: ${errorBody}`,
-				);
+				throw new TypeError(`Controller lease API returned HTTP ${response.status}: ${errorBody}`);
 			}
 			const payload = await response.json();
 			if (!isGondolinLeaseResponse(payload)) {

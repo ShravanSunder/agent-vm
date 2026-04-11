@@ -135,31 +135,31 @@ Move files to their new locations. Update all imports. No file content changes.
 
 **Moves:**
 
-| From | To |
-|------|----|
-| `bin/agent-vm.ts` | `cli/agent-vm-entrypoint.ts` |
-| `features/controller/controller-runtime.ts` | `controller/controller-runtime.ts` |
-| `features/controller/controller-service.ts` | `controller/controller-http-routes.ts` |
-| `features/controller/controller-client.ts` | `controller/controller-client.ts` |
-| `features/controller/lease-manager.ts` | `controller/lease-manager.ts` |
-| `features/controller/idle-reaper.ts` | `controller/idle-reaper.ts` |
-| `features/controller/tcp-pool.ts` | `controller/tcp-pool.ts` |
-| `features/controller/system-config.ts` | `controller/system-config.ts` |
-| `features/controller/gateway-manager.ts` | `gateway/gateway-zone-orchestrator.ts` |
-| `features/controller/credential-manager.ts` | `gateway/credential-manager.ts` |
-| `features/controller/snapshot-manager.ts` | `snapshots/snapshot-manager.ts` |
-| `features/controller/snapshot-encryption.ts` | `snapshots/snapshot-encryption.ts` |
-| `features/controller/doctor.ts` | `operations/doctor.ts` |
-| `features/controller/status.ts` | `operations/controller-status.ts` |
-| `features/controller/destroy.ts` | `operations/destroy-zone.ts` |
-| `features/controller/upgrade.ts` | `operations/upgrade-zone.ts` |
-| `features/controller/credentials-refresh.ts` | `operations/credentials-refresh.ts` |
-| `features/controller/logs.ts` | `operations/zone-logs.ts` |
-| `features/controller/live-sandbox-e2e.test.ts` | `integration-tests/live-sandbox-e2e.integration.test.ts` |
-| `features/controller/live-cross-vm-ssh.test.ts` | `integration-tests/live-cross-vm-ssh.integration.test.ts` |
-| `features/controller/live-api-smoke.test.ts` | `integration-tests/live-api-smoke.test.ts` |
-| `features/controller/production-config.test.ts` | `integration-tests/production-config.test.ts` |
-| `features/gateway-api-client/*` | `gateway-api-client/*` (same, just remove `features/` prefix) |
+| From                                            | To                                                            |
+| ----------------------------------------------- | ------------------------------------------------------------- |
+| `bin/agent-vm.ts`                               | `cli/agent-vm-entrypoint.ts`                                  |
+| `features/controller/controller-runtime.ts`     | `controller/controller-runtime.ts`                            |
+| `features/controller/controller-service.ts`     | `controller/controller-http-routes.ts`                        |
+| `features/controller/controller-client.ts`      | `controller/controller-client.ts`                             |
+| `features/controller/lease-manager.ts`          | `controller/lease-manager.ts`                                 |
+| `features/controller/idle-reaper.ts`            | `controller/idle-reaper.ts`                                   |
+| `features/controller/tcp-pool.ts`               | `controller/tcp-pool.ts`                                      |
+| `features/controller/system-config.ts`          | `controller/system-config.ts`                                 |
+| `features/controller/gateway-manager.ts`        | `gateway/gateway-zone-orchestrator.ts`                        |
+| `features/controller/credential-manager.ts`     | `gateway/credential-manager.ts`                               |
+| `features/controller/snapshot-manager.ts`       | `snapshots/snapshot-manager.ts`                               |
+| `features/controller/snapshot-encryption.ts`    | `snapshots/snapshot-encryption.ts`                            |
+| `features/controller/doctor.ts`                 | `operations/doctor.ts`                                        |
+| `features/controller/status.ts`                 | `operations/controller-status.ts`                             |
+| `features/controller/destroy.ts`                | `operations/destroy-zone.ts`                                  |
+| `features/controller/upgrade.ts`                | `operations/upgrade-zone.ts`                                  |
+| `features/controller/credentials-refresh.ts`    | `operations/credentials-refresh.ts`                           |
+| `features/controller/logs.ts`                   | `operations/zone-logs.ts`                                     |
+| `features/controller/live-sandbox-e2e.test.ts`  | `integration-tests/live-sandbox-e2e.integration.test.ts`      |
+| `features/controller/live-cross-vm-ssh.test.ts` | `integration-tests/live-cross-vm-ssh.integration.test.ts`     |
+| `features/controller/live-api-smoke.test.ts`    | `integration-tests/live-api-smoke.test.ts`                    |
+| `features/controller/production-config.test.ts` | `integration-tests/production-config.test.ts`                 |
+| `features/gateway-api-client/*`                 | `gateway-api-client/*` (same, just remove `features/` prefix) |
 
 Move all corresponding `.test.ts` files alongside their source.
 
@@ -176,11 +176,13 @@ Use `git mv` for each file to preserve history. Do NOT copy — move.
 - [ ] **Step 3: Update all imports**
 
 Search for every import path that references the old location and update. Key patterns:
+
 - `../features/controller/` → `../controller/` or `../gateway/` etc.
 - `../../agent-vm/src/features/controller/` → `../../agent-vm/src/controller/`
 - `./controller-service.js` → `./controller-http-routes.js`
 
 Check imports in:
+
 - All moved files (internal imports)
 - `packages/openclaw-agent-vm-plugin/src/controller-integration.test.ts` (cross-package import)
 - `packages/agent-vm/src/index.ts`
@@ -201,6 +203,7 @@ Check imports in:
 pnpm build
 pnpm vitest run
 ```
+
 Expected: All 109 tests pass, 0 build errors.
 
 - [ ] **Step 7: Commit**
@@ -221,6 +224,7 @@ The CLI is one giant switch statement. Split each command group into its own fil
 Move these cases from the switch: `status`, `stop`, `doctor`, `logs`, `destroy`, `upgrade`, `credentials refresh`.
 
 Each becomes an exported async function:
+
 ```typescript
 export async function runStatusCommand(systemConfig: SystemConfig, dependencies: CliDependencies, io: CliIo): Promise<void> { ... }
 ```
@@ -240,6 +244,7 @@ Move the `ssh-cmd` case.
 - [ ] **Step 5: Slim down agent-vm-entrypoint.ts**
 
 The entrypoint should:
+
 1. Parse args (commandGroup, subcommand)
 2. Load system config
 3. Route to the correct command function
@@ -263,7 +268,7 @@ The gateway manager does image building, VM setup, OpenClaw lifecycle, and orche
 
 - [ ] **Step 1: Extract gateway-image-builder.ts**
 
-Move: `loadJsonFile`, image build logic, `buildImage` call, `loadBuildConfig`. 
+Move: `loadJsonFile`, image build logic, `buildImage` call, `loadBuildConfig`.
 Single function: `buildGatewayImage(options) → BuildImageResult`.
 
 - [ ] **Step 2: Extract gateway-vm-setup.ts**
@@ -320,6 +325,7 @@ pnpm build && pnpm vitest run
 `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.ts` mixes: factory + scope cache + manager + FS bridge builder + shell script helper. Split by responsibility.
 
 **Current structure:**
+
 ```
 packages/openclaw-agent-vm-plugin/src/
 ├── sandbox-backend-factory.ts          (290 lines — factory + cache + manager + FS bridge)
@@ -330,6 +336,7 @@ packages/openclaw-agent-vm-plugin/src/
 ```
 
 **Target structure:**
+
 ```
 packages/openclaw-agent-vm-plugin/src/
 ├── sandbox-backend-factory.ts          (< 100 lines — factory only, creates handle)
@@ -345,6 +352,7 @@ packages/openclaw-agent-vm-plugin/src/
 - [ ] **Step 1: Extract sandbox-scope-cache.ts**
 
 Move the `CachedScopeEntry` type and the scope cache `Map` + lookup/store/invalidation logic into its own module. Export:
+
 - `ScopeCache` type (the Map)
 - `getCachedHandle(cache, scopeKey)` — returns cached handle or undefined
 - `setCachedHandle(cache, scopeKey, entry)` — stores handle + leaseId
@@ -409,20 +417,20 @@ Should show: `cli/`, `controller/`, `gateway/`, `tool-vm/`, `snapshots/`, `opera
 
 After the reorg, `docs/superpowers/plans/2026-04-10-phase-5-review-fixes-tests-e2e.md` references old paths. Do a find-and-replace across the Phase 5 plan:
 
-| Old path | New path |
-|----------|----------|
-| `features/controller/gateway-manager.ts` | `gateway/gateway-zone-orchestrator.ts` (or the split file) |
-| `features/controller/controller-runtime.ts` | `controller/controller-runtime.ts` |
-| `features/controller/controller-service.ts` | `controller/controller-http-routes.ts` |
-| `features/controller/lease-manager.ts` | `controller/lease-manager.ts` |
-| `features/controller/snapshot-encryption.ts` | `snapshots/snapshot-encryption.ts` |
-| `features/controller/snapshot-manager.ts` | `snapshots/snapshot-manager.ts` |
-| `features/controller/doctor.ts` | `operations/doctor.ts` |
-| `features/controller/tcp-pool.ts` | `controller/tcp-pool.ts` |
-| `features/controller/idle-reaper.ts` | `controller/idle-reaper.ts` |
-| `features/controller/system-config.ts` | `controller/system-config.ts` |
-| `features/controller/credential-manager.ts` | `gateway/credential-manager.ts` |
-| `bin/agent-vm.ts` | `cli/agent-vm-entrypoint.ts` |
+| Old path                                     | New path                                                   |
+| -------------------------------------------- | ---------------------------------------------------------- |
+| `features/controller/gateway-manager.ts`     | `gateway/gateway-zone-orchestrator.ts` (or the split file) |
+| `features/controller/controller-runtime.ts`  | `controller/controller-runtime.ts`                         |
+| `features/controller/controller-service.ts`  | `controller/controller-http-routes.ts`                     |
+| `features/controller/lease-manager.ts`       | `controller/lease-manager.ts`                              |
+| `features/controller/snapshot-encryption.ts` | `snapshots/snapshot-encryption.ts`                         |
+| `features/controller/snapshot-manager.ts`    | `snapshots/snapshot-manager.ts`                            |
+| `features/controller/doctor.ts`              | `operations/doctor.ts`                                     |
+| `features/controller/tcp-pool.ts`            | `controller/tcp-pool.ts`                                   |
+| `features/controller/idle-reaper.ts`         | `controller/idle-reaper.ts`                                |
+| `features/controller/system-config.ts`       | `controller/system-config.ts`                              |
+| `features/controller/credential-manager.ts`  | `gateway/credential-manager.ts`                            |
+| `bin/agent-vm.ts`                            | `cli/agent-vm-entrypoint.ts`                               |
 
 Also update the File Structure section at the top of the Phase 5 plan to match the new layout.
 

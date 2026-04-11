@@ -1,8 +1,5 @@
 import type { SecretResolver } from 'gondolin-core';
-import {
-	createSecretResolver,
-	resolveServiceAccountToken,
-} from 'gondolin-core';
+import { createSecretResolver, resolveServiceAccountToken } from 'gondolin-core';
 
 import { createControllerClient } from '../controller/controller-client.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
@@ -88,7 +85,10 @@ export function resolveControllerBaseUrl(systemConfig: SystemConfig): string {
 	return `http://127.0.0.1:${systemConfig.host.controllerPort}`;
 }
 
-export function findZone(systemConfig: SystemConfig, zoneId: string): SystemConfig['zones'][number] {
+export function findZone(
+	systemConfig: SystemConfig,
+	zoneId: string,
+): SystemConfig['zones'][number] {
 	const zone = systemConfig.zones.find((candidateZone) => candidateZone.id === zoneId);
 	if (!zone) {
 		throw new Error(`Unknown zone '${zoneId}'.`);

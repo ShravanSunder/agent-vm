@@ -1,7 +1,6 @@
 import { execFileSync } from 'node:child_process';
 
 import type { SystemConfig } from '../controller/system-config.js';
-
 import {
 	createResolverFromSystemConfig,
 	type CliDependencies,

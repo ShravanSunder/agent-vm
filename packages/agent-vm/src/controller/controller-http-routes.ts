@@ -3,17 +3,20 @@ import { Hono } from 'hono';
 import {
 	type ControllerLeaseManager,
 	type ControllerRouteOperations,
-	isLeaseCreatePayload,
 	readIdentityPemFromFile,
 	serializeLeaseForResponse,
 } from './controller-http-route-support.js';
+import { controllerLeaseCreateRequestSchema } from './controller-request-schemas.js';
 import { registerControllerZoneOperationRoutes } from './controller-zone-operation-routes.js';
 import type { SystemConfig } from './system-config.js';
 
 export function createControllerApp(options: {
 	readonly leaseManager: ControllerLeaseManager;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
-	readonly toolProfiles?: Record<string, { readonly cpus: number; readonly memory: string; readonly workspaceRoot: string }>;
+	readonly toolProfiles?: Record<
+		string,
+		{ readonly cpus: number; readonly memory: string; readonly workspaceRoot: string }
+	>;
 	readonly operations?: ControllerRouteOperations;
 }): Hono {
 	const app = new Hono();
@@ -21,10 +24,17 @@ export function createControllerApp(options: {
 
 	app.post('/lease', async (context) => {
 		try {
-			const payload = await context.req.json();
-			if (!isLeaseCreatePayload(payload)) {
-				return context.json({ error: 'invalid-lease-request' }, 400);
+			const parsedPayload = controllerLeaseCreateRequestSchema.safeParse(await context.req.json());
+			if (!parsedPayload.success) {
+				return context.json(
+					{
+						error: 'invalid-lease-request',
+						issues: parsedPayload.error.issues,
+					},
+					400,
+				);
 			}
+			const payload = parsedPayload.data;
 			const toolProfile = options.toolProfiles?.[payload.profileId];
 			if (!toolProfile) {
 				return context.json({ error: `Unknown tool profile '${payload.profileId}'` }, 400);
@@ -37,9 +47,7 @@ export function createControllerApp(options: {
 				workspaceDir: payload.workspaceDir,
 				zoneId: payload.zoneId,
 			});
-			return context.json(
-				await serializeLeaseForResponse(lease, readIdentityPem),
-			);
+			return context.json(await serializeLeaseForResponse(lease, readIdentityPem));
 		} catch (error) {
 			return context.json(
 				{

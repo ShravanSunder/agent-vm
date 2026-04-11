@@ -1,8 +1,8 @@
+import { buildControllerStatus } from '../operations/controller-status.js';
 import { runControllerCredentialsRefresh } from '../operations/credentials-refresh.js';
 import { runControllerDestroy } from '../operations/destroy-zone.js';
-import { buildControllerStatus } from '../operations/controller-status.js';
-import { runControllerLogs } from '../operations/zone-logs.js';
 import { runControllerUpgrade } from '../operations/upgrade-zone.js';
+import { runControllerLogs } from '../operations/zone-logs.js';
 import type { LeaseManager } from './lease-manager.js';
 import type { SystemConfig } from './system-config.js';
 
@@ -22,6 +22,29 @@ interface GatewayZoneRuntime {
 	};
 }
 
+interface ControllerRuntimeOperations {
+	readonly destroyZone: (targetZoneId: string, purge: boolean) => Promise<unknown>;
+	readonly enableSshForZone: () => Promise<unknown>;
+	readonly execInZone: (
+		targetZoneId: string,
+		command: string,
+	) => Promise<{
+		readonly exitCode: number;
+		readonly stderr: string;
+		readonly stdout: string;
+	}>;
+	readonly getStatus: () => Promise<unknown>;
+	readonly getZoneLogs: (targetZoneId: string) => Promise<{
+		readonly output: string;
+		readonly zoneId: string;
+	}>;
+	readonly refreshZoneCredentials: (targetZoneId: string) => Promise<{
+		readonly ok: true;
+		readonly zoneId: string;
+	}>;
+	readonly upgradeZone: (targetZoneId: string) => Promise<unknown>;
+}
+
 export function createControllerRuntimeOperations(options: {
 	readonly getGateway: () => GatewayZoneRuntime;
 	readonly getZone: (zoneId: string) => SystemConfig['zones'][number];
@@ -34,7 +57,7 @@ export function createControllerRuntimeOperations(options: {
 	};
 	readonly stopGatewayZone: () => Promise<void>;
 	readonly systemConfig: SystemConfig;
-}) {
+}): ControllerRuntimeOperations {
 	return {
 		enableSshForZone: async () => await options.getGateway().vm.enableSsh(),
 		execInZone: async (_targetZoneId: string, command: string) => {
@@ -57,6 +80,7 @@ export function createControllerRuntimeOperations(options: {
 						for (const lease of options.leaseManager
 							.listLeases()
 							.filter((activeLease) => activeLease.zoneId === targetZoneId)) {
+							// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP slot races
 							await options.leaseManager.releaseLease(lease.id);
 						}
 					},
@@ -89,9 +113,7 @@ export function createControllerRuntimeOperations(options: {
 				},
 				{
 					refreshZoneSecrets: async (zoneId: string) => {
-						await options.secretResolver.resolveAll(
-							options.getZone(zoneId).secrets,
-						);
+						await options.secretResolver.resolveAll(options.getZone(zoneId).secrets);
 					},
 					restartGatewayZone: async () => {
 						await options.stopGatewayZone();
@@ -120,10 +142,11 @@ export function createStopControllerOperation(options: {
 	readonly getLeases: () => readonly { readonly id: string }[];
 	readonly releaseLease: (leaseId: string) => Promise<void>;
 	readonly stopGatewayZone: () => Promise<void>;
-}) {
-	return async () => {
+}): () => Promise<{ readonly ok: true }> {
+	return async (): Promise<{ readonly ok: true }> => {
 		options.clearReaperTimer();
 		for (const lease of options.getLeases()) {
+			// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP slot races
 			await options.releaseLease(lease.id);
 		}
 		await options.stopGatewayZone();

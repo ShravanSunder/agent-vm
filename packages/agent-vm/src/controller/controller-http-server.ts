@@ -1,5 +1,4 @@
 import { serve } from '@hono/node-server';
-
 import type { Hono } from 'hono';
 
 export async function startControllerHttpServer(options: {

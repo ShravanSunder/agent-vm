@@ -1,12 +1,8 @@
-import {
-	createSecretResolver,
-	type ManagedVm,
-} from 'gondolin-core';
+import type { ManagedVm, SecretResolver } from 'gondolin-core';
 
-import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
-
-import { createControllerService } from './controller-http-routes.js';
-import { type ToolProfile } from './lease-manager.js';
+import type { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import type { createControllerService } from './controller-http-routes.js';
+import type { ToolProfile } from './lease-manager.js';
 import type { SystemConfig } from './system-config.js';
 
 export interface ControllerRuntime {
@@ -29,7 +25,9 @@ export interface ControllerRuntimeDependencies {
 		readonly workspaceDir: string;
 		readonly zoneId: string;
 	}) => Promise<ManagedVm>;
-	readonly createSecretResolver?: typeof createSecretResolver;
+	readonly createSecretResolver?: (options: {
+		readonly serviceAccountToken: string;
+	}) => Promise<SecretResolver>;
 	readonly now?: () => number;
 	readonly setIntervalImpl?: (
 		callback: () => void | Promise<void>,

@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+
+import { createManagedVm } from 'gondolin-core';
+import type { ManagedVm } from 'gondolin-core';
 /**
  * Live cross-VM SSH test — validates the tool VM lease + SSH exec flow.
  *
@@ -8,9 +12,6 @@
  * Requires: QEMU installed.
  */
 import { describe, it, expect, afterAll } from 'vitest';
-import { createManagedVm } from 'gondolin-core';
-import type { ManagedVm } from 'gondolin-core';
-import fs from 'node:fs';
 
 describe('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
 	let toolVm: ManagedVm | null = null;
@@ -76,7 +77,9 @@ describe('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
 		await gatewayVm.exec('mkdir -p /root/.ssh && chmod 700 /root/.ssh');
 		// Write identity via base64 to avoid escaping issues
 		const b64Key = Buffer.from(identityPem).toString('base64');
-		await gatewayVm.exec(`echo ${b64Key} | base64 -d > /root/.ssh/tool_key && chmod 600 /root/.ssh/tool_key`);
+		await gatewayVm.exec(
+			`echo ${b64Key} | base64 -d > /root/.ssh/tool_key && chmod 600 /root/.ssh/tool_key`,
+		);
 		log('SSH identity installed in gateway VM');
 
 		// Step 4: SSH from gateway VM to tool VM through tcp.hosts

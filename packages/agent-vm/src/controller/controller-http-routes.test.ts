@@ -3,6 +3,35 @@ import { describe, expect, it, vi } from 'vitest';
 import { createControllerApp } from './controller-http-routes.js';
 import type { Lease } from './lease-manager.js';
 
+function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
+	return {
+		createdAt: tcpSlot,
+		id: leaseId,
+		lastUsedAt: tcpSlot,
+		profileId: 'standard',
+		scopeKey: `scope-${leaseId}`,
+		sshAccess: {
+			host: '127.0.0.1',
+			port: 19000 + tcpSlot,
+			user: 'sandbox',
+		},
+		tcpSlot,
+		vm: {
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({
+				host: '127.0.0.1',
+				port: 19000 + tcpSlot,
+				user: 'sandbox',
+			})),
+			exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+			id: `tool-vm-${leaseId}`,
+			setIngressRoutes: vi.fn(),
+		},
+		zoneId: 'shravan',
+	};
+}
+
 describe('createControllerApp', () => {
 	it('creates, fetches, and releases leases through the controller api', async () => {
 		const lease: Lease = {
@@ -202,6 +231,7 @@ describe('createControllerApp', () => {
 		expect(response.status).toBe(400);
 		await expect(response.json()).resolves.toMatchObject({
 			error: 'invalid-lease-request',
+			issues: expect.any(Array),
 		});
 	});
 
@@ -227,26 +257,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('lists active leases via GET /leases', async () => {
-		const listLeases = vi.fn(() => [
-			{
-				id: 'lease-1',
-				zoneId: 'shravan',
-				scopeKey: 'agent:main',
-				tcpSlot: 0,
-				createdAt: 100,
-				lastUsedAt: 100,
-				profileId: 'standard',
-			},
-			{
-				id: 'lease-2',
-				zoneId: 'shravan',
-				scopeKey: 'agent:tool',
-				tcpSlot: 1,
-				createdAt: 200,
-				lastUsedAt: 200,
-				profileId: 'standard',
-			},
-		]);
+		const listLeases = vi.fn(() => [createLeaseStub('lease-1', 0), createLeaseStub('lease-2', 1)]);
 		const app = createControllerApp({
 			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
 			leaseManager: {
@@ -263,6 +274,10 @@ describe('createControllerApp', () => {
 
 		expect(response.status).toBe(200);
 		const body = await response.json();
+		expect(Array.isArray(body)).toBe(true);
+		if (!Array.isArray(body)) {
+			throw new Error('Expected lease list array');
+		}
 		expect(body).toHaveLength(2);
 		expect(body[0]).toMatchObject({ id: 'lease-1', zoneId: 'shravan' });
 	});
@@ -293,5 +308,72 @@ describe('createControllerApp', () => {
 
 		expect(response.status).toBe(200);
 		expect(stopController).toHaveBeenCalled();
+	});
+
+	it('returns schema details for invalid destroy requests', async () => {
+		const app = createControllerApp({
+			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/shravan/destroy', {
+			body: JSON.stringify({ purge: 'yes' }),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toMatchObject({
+			error: 'invalid-destroy-request',
+			issues: expect.any(Array),
+		});
+	});
+
+	it('returns schema details for invalid execute-command requests', async () => {
+		const app = createControllerApp({
+			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				execInZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/shravan/execute-command', {
+			body: JSON.stringify({ command: '' }),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toMatchObject({
+			error: 'invalid-execute-command-request',
+			issues: expect.any(Array),
+		});
 	});
 });

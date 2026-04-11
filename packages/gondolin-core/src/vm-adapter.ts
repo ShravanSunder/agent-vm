@@ -222,9 +222,7 @@ export async function createManagedVm(
 
 	const hasTcpHosts = options.tcpHosts && Object.keys(options.tcpHosts).length > 0;
 	const hasImagePath = options.imagePath !== undefined && options.imagePath.length > 0;
-	const sandboxOptions = hasImagePath
-		? { imagePath: options.imagePath }
-		: {};
+	const sandboxOptions = hasImagePath ? { imagePath: options.imagePath } : {};
 	const vmInstance = await dependencies.createVm({
 		...(Object.keys(sandboxOptions).length > 0 ? { sandbox: sandboxOptions } : {}),
 		sessionLabel: options.sessionLabel,

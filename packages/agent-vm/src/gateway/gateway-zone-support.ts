@@ -54,10 +54,7 @@ export interface GatewayManagedVmFactoryOptions {
 	>;
 }
 
-export function findGatewayZone(
-	systemConfig: SystemConfig,
-	zoneId: string,
-): GatewayZone {
+export function findGatewayZone(systemConfig: SystemConfig, zoneId: string): GatewayZone {
 	const zone = systemConfig.zones.find((candidateZone) => candidateZone.id === zoneId);
 	if (!zone) {
 		throw new Error(`Unknown zone '${zoneId}'.`);

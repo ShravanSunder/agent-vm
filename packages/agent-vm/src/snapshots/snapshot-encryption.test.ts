@@ -7,10 +7,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAgeEncryption } from './snapshot-encryption.js';
 
 // Generate a real age identity for testing
-function generateTestIdentity(): string {
-	const { execFileSync } = require('node:child_process') as typeof import('node:child_process');
-	const output = execFileSync('age-keygen', [], { encoding: 'utf8' });
-	const match = output.match(/AGE-SECRET-KEY-\S+/u);
+async function generateTestIdentity(): Promise<string> {
+	const { execFile } = await import('node:child_process');
+	const { promisify } = await import('node:util');
+	const output = await promisify(execFile)('age-keygen', [], { encoding: 'utf8' });
+	const match = output.stdout.match(/AGE-SECRET-KEY-\S+/u);
 	if (!match) {
 		throw new Error('Failed to generate age identity');
 	}
@@ -29,7 +30,7 @@ describe('createAgeEncryption', () => {
 
 	it('encrypts and decrypts a file using age identity key', async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'age-test-'));
-		const identity = generateTestIdentity();
+		const identity = await generateTestIdentity();
 		const inputPath = path.join(tmpDir, 'input.txt');
 		const encryptedPath = path.join(tmpDir, 'output.age');
 		const decryptedPath = path.join(tmpDir, 'decrypted.txt');
@@ -51,7 +52,7 @@ describe('createAgeEncryption', () => {
 
 	it('resolves the identity before each operation', async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'age-resolve-'));
-		const identity = generateTestIdentity();
+		const identity = await generateTestIdentity();
 		const resolveIdentity = vi.fn(async () => identity);
 		const inputPath = path.join(tmpDir, 'input.txt');
 		fs.writeFileSync(inputPath, 'test');
@@ -62,5 +63,20 @@ describe('createAgeEncryption', () => {
 		await encryption.decrypt(path.join(tmpDir, 'out1.age'), path.join(tmpDir, 'out1.txt'));
 
 		expect(resolveIdentity).toHaveBeenCalledTimes(2);
+	});
+
+	it('encrypts successfully without require in the runtime path', async () => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'age-esm-'));
+		const identity = await generateTestIdentity();
+		const inputPath = path.join(tmpDir, 'input.txt');
+		const encryptedPath = path.join(tmpDir, 'output.age');
+		fs.writeFileSync(inputPath, 'esm-safe');
+
+		const encryption = createAgeEncryption({
+			resolveIdentity: async () => identity,
+		});
+
+		await encryption.encrypt(inputPath, encryptedPath);
+		expect(fs.existsSync(encryptedPath)).toBe(true);
 	});
 });

@@ -23,15 +23,23 @@ export function resolveToolVmWorkspaceDirectory(options: {
 	readonly tcpSlot: number;
 	readonly zoneId: string;
 }): string {
-	return path.resolve(
-		options.profile.workspaceRoot,
-		`${options.zoneId}-${options.tcpSlot}`,
-	);
+	return path.resolve(options.profile.workspaceRoot, `${options.zoneId}-${options.tcpSlot}`);
 }
 
-async function loadBuildConfigFromJson(
-	buildConfigPath: string,
-): Promise<BuildConfig> {
+export function cleanToolVmWorkspace(workspaceDirectory: string): void {
+	if (!fsSync.existsSync(workspaceDirectory)) {
+		return;
+	}
+
+	for (const entryName of fsSync.readdirSync(workspaceDirectory)) {
+		fsSync.rmSync(path.join(workspaceDirectory, entryName), {
+			force: true,
+			recursive: true,
+		});
+	}
+}
+
+async function loadBuildConfigFromJson(buildConfigPath: string): Promise<BuildConfig> {
 	return JSON.parse(await fs.readFile(buildConfigPath, 'utf8')) as BuildConfig;
 }
 
@@ -46,14 +54,10 @@ export async function createToolVm(
 	},
 	dependencies: ToolVmLifecycleDependencies = {},
 ): Promise<ManagedVm> {
-	const loadBuildConfig =
-		dependencies.loadBuildConfig ?? loadBuildConfigFromJson;
+	const loadBuildConfig = dependencies.loadBuildConfig ?? loadBuildConfigFromJson;
 	const buildImage = dependencies.buildImage ?? buildImageFromCore;
-	const createManagedVm =
-		dependencies.createManagedVm ?? createManagedVmFromCore;
-	const toolBuildConfig = await loadBuildConfig(
-		options.systemConfig.images.tool.buildConfig,
-	);
+	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
+	const toolBuildConfig = await loadBuildConfig(options.systemConfig.images.tool.buildConfig);
 	const toolImage = await buildImage({
 		buildConfig: toolBuildConfig,
 		cacheDir: `${options.zoneGatewayStateDirectory}/images/tool`,
