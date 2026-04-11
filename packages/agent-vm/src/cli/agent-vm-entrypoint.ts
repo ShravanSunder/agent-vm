@@ -13,8 +13,8 @@ import {
 	type CliIo,
 	resolveConfigPath,
 } from './agent-vm-cli-support.js';
-import { scaffoldAgentVmProject } from './init-command.js';
 import { runControllerOperationCommand } from './controller-operation-commands.js';
+import { scaffoldAgentVmProject } from './init-command.js';
 import { runLeaseCommand } from './lease-commands.js';
 import { runSnapshotCommand } from './snapshot-commands.js';
 import { runSshCommand } from './ssh-commands.js';

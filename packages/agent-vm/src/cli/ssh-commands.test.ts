@@ -51,14 +51,15 @@ describe('runSshCommand', () => {
 
 		await runSshCommand({
 			dependencies: {
-				createControllerClient: () => ({
-					enableZoneSsh: async () => ({
-						host: '127.0.0.1',
-						identityFile: '/tmp/key',
-						port: 2222,
-						user: 'root',
-					}),
-				}) as never,
+				createControllerClient: () =>
+					({
+						enableZoneSsh: async () => ({
+							host: '127.0.0.1',
+							identityFile: '/tmp/key',
+							port: 2222,
+							user: 'root',
+						}),
+					}) as never,
 				runInteractiveProcess,
 			} as never,
 			io: {
@@ -83,11 +84,12 @@ describe('runSshCommand', () => {
 
 		await runSshCommand({
 			dependencies: {
-				createControllerClient: () => ({
-					enableZoneSsh: async () => ({
-						command: 'ssh -i /tmp/key -p 2222 root@127.0.0.1',
-					}),
-				}) as never,
+				createControllerClient: () =>
+					({
+						enableZoneSsh: async () => ({
+							command: 'ssh -i /tmp/key -p 2222 root@127.0.0.1',
+						}),
+					}) as never,
 			} as never,
 			io: {
 				stderr: { write: () => true },

@@ -23,6 +23,7 @@ describe('production config artifacts', () => {
 			path.join(repoRoot, 'images', 'tool', 'build-config.json'),
 		);
 		const openClawConfig = parseJsonFile(path.join(repoRoot, 'config', 'shravan', 'openclaw.json'));
+		const envExample = fs.readFileSync(path.join(repoRoot, '.env.example'), 'utf8');
 
 		expect(systemConfig).toMatchObject({
 			host: {
@@ -40,13 +41,17 @@ describe('production config artifacts', () => {
 				{
 					secrets: {
 						DISCORD_BOT_TOKEN: {
-							ref: 'op://agent-vm/agent-discord-app/bot-token',
+							injection: 'env',
 							source: '1password',
 						},
 					},
 				},
 			],
 		});
+		expect(envExample).toContain('DISCORD_BOT_TOKEN_REF=op://agent-vm/agent-discord-app/bot-token');
+		expect(envExample).toContain(
+			'PERPLEXITY_API_KEY_REF=op://agent-vm/agent-perplexity/credential',
+		);
 		expect(gatewayBuildConfig).toMatchObject({
 			arch: 'aarch64',
 		});

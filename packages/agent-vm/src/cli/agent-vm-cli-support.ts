@@ -9,10 +9,7 @@ import { buildControllerStatus } from '../operations/controller-status.js';
 import { runControllerDoctor } from '../operations/doctor.js';
 import { createAgeEncryption } from '../snapshots/snapshot-encryption.js';
 import { createSnapshotManager } from '../snapshots/snapshot-manager.js';
-import {
-	scaffoldAgentVmProject,
-	type ScaffoldAgentVmProjectResult,
-} from './init-command.js';
+import { scaffoldAgentVmProject, type ScaffoldAgentVmProjectResult } from './init-command.js';
 
 export interface CliDependencies {
 	readonly buildControllerStatus: typeof buildControllerStatus;

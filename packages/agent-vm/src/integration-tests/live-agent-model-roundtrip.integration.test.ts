@@ -6,6 +6,12 @@ import { loadSystemConfig } from '../controller/system-config.js';
 const runLiveModelRoundtrip =
 	typeof process.env.OP_SERVICE_ACCOUNT_TOKEN === 'string' &&
 	process.env.OP_SERVICE_ACCOUNT_TOKEN.length > 0 &&
+	typeof process.env.DISCORD_BOT_TOKEN_REF === 'string' &&
+	process.env.DISCORD_BOT_TOKEN_REF.length > 0 &&
+	typeof process.env.PERPLEXITY_API_KEY_REF === 'string' &&
+	process.env.PERPLEXITY_API_KEY_REF.length > 0 &&
+	typeof process.env.OPENCLAW_GATEWAY_TOKEN_REF === 'string' &&
+	process.env.OPENCLAW_GATEWAY_TOKEN_REF.length > 0 &&
 	typeof process.env.OPEN_AI_TEST_KEY === 'string' &&
 	process.env.OPEN_AI_TEST_KEY.length > 0;
 

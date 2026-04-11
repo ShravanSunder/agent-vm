@@ -91,14 +91,14 @@ describe('runAgentVmCli', () => {
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 						},
 					},
-						images: {
-							gateway: {
-								buildConfig: './images/gateway/build-config.json',
-							},
-							tool: {
-								buildConfig: './images/tool/build-config.json',
-							},
+					images: {
+						gateway: {
+							buildConfig: './images/gateway/build-config.json',
 						},
+						tool: {
+							buildConfig: './images/tool/build-config.json',
+						},
+					},
 					tcpPool: {
 						basePort: 19000,
 						size: 5,
@@ -188,14 +188,14 @@ describe('runAgentVmCli', () => {
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 						},
 					},
-						images: {
-							gateway: {
-								buildConfig: './images/gateway/build-config.json',
-							},
-							tool: {
-								buildConfig: './images/tool/build-config.json',
-							},
+					images: {
+						gateway: {
+							buildConfig: './images/gateway/build-config.json',
 						},
+						tool: {
+							buildConfig: './images/tool/build-config.json',
+						},
+					},
 					tcpPool: {
 						basePort: 19000,
 						size: 5,
@@ -307,14 +307,14 @@ describe('runAgentVmCli', () => {
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 						},
 					},
-						images: {
-							gateway: {
-								buildConfig: './images/gateway/build-config.json',
-							},
-							tool: {
-								buildConfig: './images/tool/build-config.json',
-							},
+					images: {
+						gateway: {
+							buildConfig: './images/gateway/build-config.json',
 						},
+						tool: {
+							buildConfig: './images/tool/build-config.json',
+						},
+					},
 					tcpPool: {
 						basePort: 19000,
 						size: 5,
@@ -404,14 +404,14 @@ describe('runAgentVmCli', () => {
 						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 					},
 				},
-					images: {
-						gateway: {
-							buildConfig: './images/gateway/build-config.json',
-						},
-						tool: {
-							buildConfig: './images/tool/build-config.json',
-						},
+				images: {
+					gateway: {
+						buildConfig: './images/gateway/build-config.json',
 					},
+					tool: {
+						buildConfig: './images/tool/build-config.json',
+					},
+				},
 				tcpPool: {
 					basePort: 19000,
 					size: 5,
