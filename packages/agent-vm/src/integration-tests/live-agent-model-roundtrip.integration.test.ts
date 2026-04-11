@@ -11,10 +11,6 @@ const runLiveModelRoundtrip =
 
 const describeLiveModelRoundtrip = runLiveModelRoundtrip ? describe : describe.skip;
 
-function resolveBundledPluginSourceDirectory(): string {
-	return new URL('../../../openclaw-agent-vm-plugin/dist/', import.meta.url).pathname;
-}
-
 async function waitForControllerHealth(controllerPort: number): Promise<void> {
 	const poll = async (attempt: number): Promise<void> => {
 		const response = await fetch(`http://127.0.0.1:${controllerPort}/health`);
@@ -41,7 +37,6 @@ describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 
 		const runtime = await startControllerRuntime(
 			{
-				pluginSourceDir: resolveBundledPluginSourceDirectory(),
 				systemConfig,
 				zoneId: zone.id,
 			},

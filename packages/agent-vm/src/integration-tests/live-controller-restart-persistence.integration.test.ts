@@ -141,7 +141,6 @@ describe('live integration: controller restart persistence', () => {
 		const startRuntime = async (): ReturnType<typeof startControllerRuntime> =>
 			await startControllerRuntime(
 				{
-					pluginSourceDir: '/plugins/openclaw-agent-vm-plugin',
 					systemConfig,
 					zoneId: 'shravan',
 				},

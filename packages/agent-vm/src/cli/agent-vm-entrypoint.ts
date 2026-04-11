@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+try {
+	process.loadEnvFile('.env.local');
+} catch {
+	// .env.local is optional.
+}
+
 import { pathToFileURL } from 'node:url';
 
 import {
@@ -7,6 +13,7 @@ import {
 	type CliIo,
 	resolveConfigPath,
 } from './agent-vm-cli-support.js';
+import { scaffoldAgentVmProject } from './init-command.js';
 import { runControllerOperationCommand } from './controller-operation-commands.js';
 import { runLeaseCommand } from './lease-commands.js';
 import { runSnapshotCommand } from './snapshot-commands.js';
@@ -18,6 +25,16 @@ export async function runAgentVmCli(
 	dependencies: CliDependencies = defaultCliDependencies,
 ): Promise<void> {
 	const [commandGroup, subcommand, ...restArguments] = argv;
+	if (commandGroup === 'init') {
+		const zoneId = subcommand || 'default';
+		const result = (dependencies.scaffoldAgentVmProject ?? scaffoldAgentVmProject)({
+			targetDir: dependencies.getCurrentWorkingDirectory?.() ?? process.cwd(),
+			zoneId,
+		});
+		io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+		return;
+	}
+
 	if (commandGroup !== 'controller') {
 		throw new Error('Expected command group "controller".');
 	}

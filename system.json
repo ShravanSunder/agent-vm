@@ -31,18 +31,15 @@
 			"secrets": {
 				"DISCORD_BOT_TOKEN": {
 					"source": "1password",
-					"ref": "op://agent-vm/agent-discord-app/bot-token",
 					"injection": "env"
 				},
 				"PERPLEXITY_API_KEY": {
 					"source": "1password",
-					"ref": "op://agent-vm/agent-perplexity/credential",
 					"injection": "http-mediation",
 					"hosts": ["api.perplexity.ai"]
 				},
 				"OPENCLAW_GATEWAY_TOKEN": {
 					"source": "1password",
-					"ref": "op://agent-vm/agent-shravan-claw-gateway/password",
 					"injection": "env"
 				}
 			},

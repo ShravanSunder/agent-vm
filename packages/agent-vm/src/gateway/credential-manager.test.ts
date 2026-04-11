@@ -1,5 +1,5 @@
 import type { SecretResolver } from 'gondolin-core';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../controller/system-config.js';
 import { resolveZoneSecrets } from './credential-manager.js';
@@ -62,6 +62,17 @@ const systemConfig = {
 } satisfies SystemConfig;
 
 describe('resolveZoneSecrets', () => {
+	const originalDiscordRef = process.env.DISCORD_BOT_TOKEN_REF;
+
+	afterEach(() => {
+		if (originalDiscordRef === undefined) {
+			delete process.env.DISCORD_BOT_TOKEN_REF;
+			return;
+		}
+
+		process.env.DISCORD_BOT_TOKEN_REF = originalDiscordRef;
+	});
+
 	it('resolves the named zone secret references through the shared resolver', async () => {
 		const secretResolver: SecretResolver = {
 			resolve: async (): Promise<string> => {
@@ -85,6 +96,48 @@ describe('resolveZoneSecrets', () => {
 		).resolves.toEqual({
 			ANTHROPIC_API_KEY: 'resolved:op://AI/anthropic/api-key',
 			GITHUB_PAT: 'resolved:op://AI/github/pat',
+		});
+	});
+
+	it('resolves a secret ref from environment when it is omitted from config', async () => {
+		process.env.DISCORD_BOT_TOKEN_REF = 'op://test-vault/test-item/token';
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => {
+				throw new Error('resolve is not used by this test');
+			},
+			resolveAll: vi.fn(async (secretRefs) =>
+				Object.fromEntries(
+					Object.entries(secretRefs).map(([secretName, secretRef]) => [
+						secretName,
+						`resolved:${secretRef.ref}`,
+					]),
+				),
+			),
+		};
+
+		const envBackedConfig = {
+			...systemConfig,
+			zones: [
+				{
+					...systemConfig.zones[0],
+					secrets: {
+						DISCORD_BOT_TOKEN: {
+							source: '1password' as const,
+							injection: 'env' as const,
+						},
+					},
+				},
+			],
+		} satisfies SystemConfig;
+
+		await expect(
+			resolveZoneSecrets({
+				secretResolver,
+				systemConfig: envBackedConfig,
+				zoneId: 'shravan',
+			}),
+		).resolves.toEqual({
+			DISCORD_BOT_TOKEN: 'resolved:op://test-vault/test-item/token',
 		});
 	});
 });

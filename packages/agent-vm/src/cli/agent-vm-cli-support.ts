@@ -9,6 +9,10 @@ import { buildControllerStatus } from '../operations/controller-status.js';
 import { runControllerDoctor } from '../operations/doctor.js';
 import { createAgeEncryption } from '../snapshots/snapshot-encryption.js';
 import { createSnapshotManager } from '../snapshots/snapshot-manager.js';
+import {
+	scaffoldAgentVmProject,
+	type ScaffoldAgentVmProjectResult,
+} from './init-command.js';
 
 export interface CliDependencies {
 	readonly buildControllerStatus: typeof buildControllerStatus;
@@ -16,11 +20,19 @@ export interface CliDependencies {
 	readonly createControllerClient: typeof createControllerClient;
 	readonly createSecretResolver: typeof createSecretResolver;
 	readonly createSnapshotManager: typeof createSnapshotManager;
+	readonly getCurrentWorkingDirectory?: () => string;
 	readonly loadSystemConfig: typeof loadSystemConfig;
+	readonly runInteractiveProcess?: (
+		command: string,
+		arguments_: readonly string[],
+	) => Promise<void>;
 	readonly resolveServiceAccountToken: typeof resolveServiceAccountToken;
 	readonly runControllerDoctor: typeof runControllerDoctor;
+	readonly scaffoldAgentVmProject?: (options: {
+		readonly targetDir: string;
+		readonly zoneId: string;
+	}) => ScaffoldAgentVmProjectResult;
 	readonly startControllerRuntime: (options: {
-		readonly pluginSourceDir: string;
 		readonly systemConfig: SystemConfig;
 		readonly zoneId: string;
 	}) => Promise<{
@@ -49,9 +61,11 @@ export const defaultCliDependencies: CliDependencies = {
 	createControllerClient,
 	createSecretResolver,
 	createSnapshotManager,
+	getCurrentWorkingDirectory: () => process.cwd(),
 	loadSystemConfig,
 	resolveServiceAccountToken,
 	runControllerDoctor,
+	scaffoldAgentVmProject,
 	startControllerRuntime: async (runtimeOptions) =>
 		await startControllerRuntime(runtimeOptions, {}),
 	startGatewayZone,
@@ -75,10 +89,6 @@ export function resolveZoneId(systemConfig: SystemConfig, argv: readonly string[
 		return argv[zoneFlagIndex + 1] ?? '';
 	}
 	return systemConfig.zones[0]?.id ?? '';
-}
-
-export function resolveBundledPluginSourceDir(): string {
-	return new URL('../../../openclaw-agent-vm-plugin/dist/', import.meta.url).pathname;
 }
 
 export function resolveControllerBaseUrl(systemConfig: SystemConfig): string {

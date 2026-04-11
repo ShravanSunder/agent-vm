@@ -89,7 +89,6 @@ export async function startControllerRuntime(
 	};
 	const startGateway = async (): Promise<Awaited<ReturnType<typeof startGatewayZone>>> =>
 		await (dependencies.startGatewayZone ?? startGatewayZone)({
-			pluginSourceDir: options.pluginSourceDir,
 			secretResolver,
 			systemConfig: options.systemConfig,
 			zoneId: options.zoneId,

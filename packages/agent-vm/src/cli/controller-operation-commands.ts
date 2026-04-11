@@ -6,7 +6,6 @@ import {
 	type CliDependencies,
 	type CliIo,
 	findZone,
-	resolveBundledPluginSourceDir,
 	resolveControllerBaseUrl,
 	resolveZoneId,
 	writeJson,
@@ -80,7 +79,6 @@ export async function runControllerOperationCommand(
 			}
 
 			const runtime = await options.dependencies.startControllerRuntime({
-				pluginSourceDir: resolveBundledPluginSourceDir(),
 				systemConfig: options.systemConfig,
 				zoneId: firstZone.id,
 			});

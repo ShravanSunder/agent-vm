@@ -43,7 +43,6 @@ export interface ControllerRuntimeDependencies {
 }
 
 export interface StartControllerRuntimeOptions {
-	readonly pluginSourceDir: string;
 	readonly systemConfig: SystemConfig;
 	readonly zoneId: string;
 }

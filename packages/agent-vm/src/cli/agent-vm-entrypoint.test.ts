@@ -4,6 +4,37 @@ import type { SystemConfig } from '../controller/system-config.js';
 import { runAgentVmCli } from './agent-vm-entrypoint.js';
 
 describe('runAgentVmCli', () => {
+	it('routes init to the project scaffolder', async () => {
+		const outputs: string[] = [];
+		const scaffoldAgentVmProject = vi.fn(() => ({
+			created: ['system.json', '.env.local'],
+			skipped: [],
+		}));
+
+		await runAgentVmCli(
+			['init', 'test-zone'],
+			{
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			{
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
+				scaffoldAgentVmProject,
+			} as never,
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
+			targetDir: '/tmp/agent-vm-init',
+			zoneId: 'test-zone',
+		});
+		expect(outputs.join('')).toContain('"system.json"');
+	});
+
 	it('routes doctor and status subcommands to their handlers', async () => {
 		const outputs: string[] = [];
 
@@ -324,7 +355,6 @@ describe('runAgentVmCli', () => {
 
 		expect(startControllerRuntime).toHaveBeenCalledWith(
 			expect.objectContaining({
-				pluginSourceDir: expect.stringMatching(/openclaw-agent-vm-plugin\/dist\/?$/u),
 				zoneId: 'shravan',
 			}),
 		);
