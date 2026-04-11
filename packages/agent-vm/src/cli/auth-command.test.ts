@@ -98,6 +98,7 @@ describe('runAuthCommand', () => {
 		});
 
 		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', [
+			'-t',
 			'-o', 'StrictHostKeyChecking=no',
 			'-o', 'UserKnownHostsFile=/dev/null',
 			'-i',
@@ -109,6 +110,7 @@ describe('runAuthCommand', () => {
 			'models',
 			'auth',
 			'login',
+			'--provider',
 			'codex',
 		]);
 	});

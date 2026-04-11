@@ -33,6 +33,7 @@ export async function runAuthCommand(options: {
 	}
 
 	const sshArguments = [
+		'-t',
 		'-o', 'StrictHostKeyChecking=no',
 		'-o', 'UserKnownHostsFile=/dev/null',
 		...(sshResponse.identityFile ? ['-i', sshResponse.identityFile] : []),
@@ -43,6 +44,7 @@ export async function runAuthCommand(options: {
 		'models',
 		'auth',
 		'login',
+		'--provider',
 		options.pluginName,
 	];
 	const runInteractiveProcess =

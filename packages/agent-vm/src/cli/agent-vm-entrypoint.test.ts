@@ -235,6 +235,7 @@ describe('runAgentVmCli', () => {
 		);
 
 		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', [
+			'-t',
 			'-o', 'StrictHostKeyChecking=no',
 			'-o', 'UserKnownHostsFile=/dev/null',
 			'-i',
@@ -246,6 +247,7 @@ describe('runAgentVmCli', () => {
 			'models',
 			'auth',
 			'login',
+			'--provider',
 			'codex',
 		]);
 	});
