@@ -105,7 +105,7 @@ describe('resolveZoneSecrets', () => {
 			resolve: async (): Promise<string> => {
 				throw new Error('resolve is not used by this test');
 			},
-			resolveAll: vi.fn(async (secretRefs) =>
+			resolveAll: vi.fn(async (secretRefs: Record<string, { readonly ref: string }>) =>
 				Object.fromEntries(
 					Object.entries(secretRefs).map(([secretName, secretRef]) => [
 						secretName,
@@ -115,17 +115,25 @@ describe('resolveZoneSecrets', () => {
 			),
 		};
 
+		const baseZone = systemConfig.zones[0];
+		if (!baseZone) {
+			throw new Error('Expected base test zone');
+		}
 		const envBackedConfig = {
 			...systemConfig,
 			zones: [
 				{
-					...systemConfig.zones[0],
+					allowedHosts: baseZone.allowedHosts,
+					gateway: baseZone.gateway,
+					id: baseZone.id,
 					secrets: {
 						DISCORD_BOT_TOKEN: {
 							source: '1password' as const,
 							injection: 'env' as const,
 						},
 					},
+					toolProfile: baseZone.toolProfile,
+					websocketBypass: baseZone.websocketBypass,
 				},
 			],
 		} satisfies SystemConfig;

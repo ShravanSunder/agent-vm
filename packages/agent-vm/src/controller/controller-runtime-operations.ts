@@ -1,3 +1,6 @@
+import type { SecretResolver } from 'gondolin-core';
+
+import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import { buildControllerStatus } from '../operations/controller-status.js';
 import { runControllerCredentialsRefresh } from '../operations/credentials-refresh.js';
 import { runControllerDestroy } from '../operations/destroy-zone.js';
@@ -50,11 +53,7 @@ export function createControllerRuntimeOperations(options: {
 	readonly getZone: (zoneId: string) => SystemConfig['zones'][number];
 	readonly leaseManager: Pick<LeaseManager, 'listLeases' | 'releaseLease'>;
 	readonly restartGatewayZone: () => Promise<void>;
-	readonly secretResolver: {
-		resolveAll: (
-			secrets: SystemConfig['zones'][number]['secrets'],
-		) => Promise<Record<string, string>>;
-	};
+	readonly secretResolver: SecretResolver;
 	readonly stopGatewayZone: () => Promise<void>;
 	readonly systemConfig: SystemConfig;
 }): ControllerRuntimeOperations {
@@ -113,7 +112,11 @@ export function createControllerRuntimeOperations(options: {
 				},
 				{
 					refreshZoneSecrets: async (zoneId: string) => {
-						await options.secretResolver.resolveAll(options.getZone(zoneId).secrets);
+						await resolveZoneSecrets({
+							secretResolver: options.secretResolver,
+							systemConfig: options.systemConfig,
+							zoneId,
+						});
 					},
 					restartGatewayZone: async () => {
 						await options.stopGatewayZone();

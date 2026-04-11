@@ -95,6 +95,7 @@ export interface ManagedVm {
 	exec(command: string): Promise<ExecResult>;
 	enableSsh(options?: unknown): Promise<SshAccess>;
 	enableIngress(options?: unknown): Promise<IngressAccess>;
+	getVmInstance(): ManagedVmInstance;
 	setIngressRoutes(routes: readonly IngressRoute[]): void;
 	close(): Promise<void>;
 }
@@ -268,6 +269,9 @@ export async function createManagedVm(
 		},
 		async enableIngress(ingressOptions?: unknown): Promise<IngressAccess> {
 			return await vmInstance.enableIngress(ingressOptions);
+		},
+		getVmInstance(): ManagedVmInstance {
+			return vmInstance;
 		},
 		setIngressRoutes(routes: readonly IngressRoute[]): void {
 			vmInstance.setIngressRoutes(routes);

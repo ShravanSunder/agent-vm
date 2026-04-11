@@ -1,11 +1,11 @@
 import { execFileSync } from 'node:child_process';
 
 import type { SystemConfig } from '../controller/system-config.js';
+import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import {
 	createResolverFromSystemConfig,
 	type CliDependencies,
 	type CliIo,
-	findZone,
 	resolveControllerBaseUrl,
 	resolveZoneId,
 	writeJson,
@@ -120,7 +120,11 @@ export async function runControllerOperationCommand(
 				options.systemConfig,
 				options.dependencies,
 			);
-			await secretResolver.resolveAll(findZone(options.systemConfig, zoneId).secrets);
+			await resolveZoneSecrets({
+				secretResolver,
+				systemConfig: options.systemConfig,
+				zoneId,
+			});
 			writeJson(options.io, await controllerClient.refreshZoneCredentials(zoneId));
 			return;
 		}
