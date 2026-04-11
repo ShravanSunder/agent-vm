@@ -19,7 +19,7 @@
 	"postBuild": {
 		"commands": [
 			"ln -sf /proc/self/fd /dev/fd 2>/dev/null || true",
-			"update-ca-certificates > /dev/null 2>&1 || true",
+			"update-ca-certificates",
 			"mkdir -p /workspace /run/sshd"
 		]
 	}
