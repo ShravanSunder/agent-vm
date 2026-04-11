@@ -11,6 +11,7 @@ export interface ToolVmLifecycleDependencies {
 	readonly buildGondolinImage?: (options: {
 		readonly buildConfigPath: string;
 		readonly cacheDir: string;
+		readonly fullReset?: boolean;
 	}) => ReturnType<typeof buildGondolinImageDefault>;
 	readonly createManagedVm?: typeof createManagedVmFromCore;
 }
@@ -38,11 +39,11 @@ export function cleanToolVmWorkspace(workspaceDirectory: string): void {
 
 export async function createToolVm(
 	options: {
+		readonly cacheDir: string;
 		readonly profile: ToolProfile;
 		readonly systemConfig: SystemConfig;
 		readonly tcpSlot: number;
 		readonly workspaceDir: string;
-		readonly zoneGatewayStateDirectory: string;
 		readonly zoneId: string;
 	},
 	dependencies: ToolVmLifecycleDependencies = {},
@@ -51,7 +52,7 @@ export async function createToolVm(
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
 	const toolImage = await buildGondolinImage({
 		buildConfigPath: options.systemConfig.images.tool.buildConfig,
-		cacheDir: `${options.zoneGatewayStateDirectory}/images/tool`,
+		cacheDir: path.join(options.cacheDir, 'images', 'tool'),
 	});
 	const hostWorkspaceDirectory = resolveToolVmWorkspaceDirectory({
 		profile: options.profile,
@@ -76,12 +77,6 @@ export async function createToolVm(
 			},
 		},
 	});
-
-	await toolVm.exec(
-		'useradd -m -s /bin/bash sandbox 2>/dev/null; ' +
-			'mkdir -p /workspace && chown sandbox:sandbox /workspace; ' +
-			'ln -sf /proc/self/fd /dev/fd 2>/dev/null || true',
-	);
 
 	return toolVm;
 }

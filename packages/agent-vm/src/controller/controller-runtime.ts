@@ -30,7 +30,6 @@ export async function startControllerRuntime(
 	dependencies: ControllerRuntimeDependencies,
 ): Promise<ControllerRuntime> {
 	const now = dependencies.now ?? Date.now;
-	const zone = findConfiguredZone(options.systemConfig, options.zoneId);
 	const secretResolver = await createSecretResolverFromSystemConfig(
 		options.systemConfig,
 		dependencies.createSecretResolver ?? createSecretResolver,
@@ -39,11 +38,11 @@ export async function startControllerRuntime(
 		dependencies.createManagedToolVm ??
 		(async (toolVmOptions): Promise<ManagedVm> =>
 			await createToolVm({
+				cacheDir: options.systemConfig.cacheDir,
 				profile: toolVmOptions.profile,
 				systemConfig: options.systemConfig,
 				tcpSlot: toolVmOptions.tcpSlot,
 				workspaceDir: toolVmOptions.workspaceDir,
-				zoneGatewayStateDirectory: zone.gateway.stateDir,
 				zoneId: toolVmOptions.zoneId,
 			}));
 	const tcpPool = createTcpPool(options.systemConfig.tcpPool);

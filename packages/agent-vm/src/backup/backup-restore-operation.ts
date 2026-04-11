@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import type { RestoreResult, SnapshotEncryption } from './snapshot-manager.js';
+import type { BackupEncryption, BackupRestoreResult } from './backup-manager.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -39,16 +39,16 @@ function readZoneIdFromManifest(extractDirectory: string): string {
 	return manifest.zoneId ?? 'unknown';
 }
 
-export async function restoreEncryptedSnapshot(options: {
-	readonly encryption: SnapshotEncryption;
-	readonly snapshotPath: string;
+export async function restoreEncryptedBackup(options: {
+	readonly backupPath: string;
+	readonly encryption: BackupEncryption;
 	readonly stateDir: string;
 	readonly workspaceDir: string;
-}): Promise<RestoreResult> {
-	const decryptedTarPath = `${options.snapshotPath}.decrypted.tar`;
-	await options.encryption.decrypt(options.snapshotPath, decryptedTarPath);
+}): Promise<BackupRestoreResult> {
+	const decryptedTarPath = `${options.backupPath}.decrypted.tar`;
+	await options.encryption.decrypt(options.backupPath, decryptedTarPath);
 
-	const extractDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'snapshot-extract-'));
+	const extractDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-extract-'));
 	try {
 		await execFileAsync('tar', ['xf', decryptedTarPath, '-C', extractDirectory]);
 		await copyExtractedDirectoryContents(path.join(extractDirectory, 'state'), options.stateDir);

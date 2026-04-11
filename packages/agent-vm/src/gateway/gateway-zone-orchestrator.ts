@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { resolveZoneSecrets } from './credential-manager.js';
 import {
 	buildGatewayImage,
@@ -31,7 +33,7 @@ export async function startGatewayZone(
 	const image = await buildGatewayImage(
 		{
 			buildConfigPath: options.systemConfig.images.gateway.buildConfig,
-			cacheDir: `${zone.gateway.stateDir}/images/gateway`,
+			cacheDir: path.join(options.systemConfig.cacheDir, 'images', 'gateway'),
 		},
 		{
 			...(dependencies.buildImage ? { buildImage: dependencies.buildImage } : {}),

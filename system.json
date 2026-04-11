@@ -9,6 +9,7 @@
 			}
 		}
 	},
+	"cacheDir": "./cache",
 	"images": {
 		"gateway": {
 			"buildConfig": "./images/gateway/build-config.json",

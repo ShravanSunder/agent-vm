@@ -25,12 +25,15 @@ import {
 	type CliDependencies,
 	type CliIo,
 	resolveConfigPath,
+	resolveZoneId,
 } from './agent-vm-cli-support.js';
+import { runAuthCommand } from './auth-command.js';
+import { runBackupCommand } from './backup-commands.js';
 import { runBuildCommand } from './build-command.js';
+import { runCacheCommand } from './cache-commands.js';
 import { runControllerOperationCommand } from './controller-operation-commands.js';
 import { scaffoldAgentVmProject } from './init-command.js';
 import { runLeaseCommand } from './lease-commands.js';
-import { runSnapshotCommand } from './snapshot-commands.js';
 import { runSshCommand } from './ssh-commands.js';
 
 export async function runAgentVmCli(
@@ -53,8 +56,54 @@ export async function runAgentVmCli(
 			subcommand === undefined
 				? restArguments
 				: ([subcommand, ...restArguments] as readonly string[]);
+		const forceRebuild = buildArguments.includes('--force');
 		const systemConfig = dependencies.loadSystemConfig(resolveConfigPath(buildArguments));
-		await (dependencies.runBuildCommand ?? runBuildCommand)({ systemConfig }, io);
+		await (dependencies.runBuildCommand ?? runBuildCommand)({ forceRebuild, systemConfig }, io);
+		return;
+	}
+	if (commandGroup === 'cache') {
+		const cacheArguments =
+			subcommand === undefined
+				? restArguments
+				: ([subcommand, ...restArguments] as readonly string[]);
+		const systemConfig = dependencies.loadSystemConfig(resolveConfigPath(cacheArguments));
+		const confirm = cacheArguments.includes('--confirm');
+		await (dependencies.runCacheCommand ?? runCacheCommand)(
+			{
+				confirm,
+				subcommand: subcommand ?? 'list',
+				systemConfig,
+			},
+			io,
+		);
+		return;
+	}
+	if (commandGroup === 'backup') {
+		const backupArguments =
+			subcommand === undefined
+				? restArguments
+				: ([subcommand, ...restArguments] as readonly string[]);
+		const systemConfig = dependencies.loadSystemConfig(resolveConfigPath(backupArguments));
+		await runBackupCommand({
+			dependencies,
+			io,
+			restArguments: backupArguments,
+			systemConfig,
+		});
+		return;
+	}
+	if (commandGroup === 'auth') {
+		if (!subcommand) {
+			throw new Error('Usage: agent-vm auth <plugin> --zone <id>');
+		}
+		const systemConfig = dependencies.loadSystemConfig(resolveConfigPath(restArguments));
+		await runAuthCommand({
+			dependencies,
+			io,
+			pluginName: subcommand,
+			systemConfig,
+			zoneId: resolveZoneId(systemConfig, restArguments),
+		});
 		return;
 	}
 
@@ -86,9 +135,6 @@ export async function runAgentVmCli(
 			return;
 		case 'lease':
 			await runLeaseCommand({ dependencies, io, restArguments, systemConfig });
-			return;
-		case 'snapshot':
-			await runSnapshotCommand({ dependencies, io, restArguments, systemConfig });
 			return;
 		case 'ssh-cmd':
 			await runSshCommand({ dependencies, io, restArguments, systemConfig });

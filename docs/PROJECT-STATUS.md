@@ -36,11 +36,11 @@ Host (macOS)
 
 ## Packages
 
-| Package                    | Purpose                                                        | Files               |
-| -------------------------- | -------------------------------------------------------------- | ------------------- |
-| `gondolin-core`            | VM adapter, secret resolver, build pipeline, policy compiler   | 8 source + 6 test   |
-| `agent-vm`                 | Controller CLI, runtime, lease API, gateway manager, snapshots | 20 source + 18 test |
-| `openclaw-agent-vm-plugin` | OpenClaw sandbox backend, lease client, plugin registration    | 5 source + 5 test   |
+| Package                    | Purpose                                                      | Files               |
+| -------------------------- | ------------------------------------------------------------ | ------------------- |
+| `gondolin-core`            | VM adapter, secret resolver, build pipeline, policy compiler | 8 source + 6 test   |
+| `agent-vm`                 | Controller CLI, runtime, lease API, gateway manager, backups | 20 source + 18 test |
+| `openclaw-agent-vm-plugin` | OpenClaw sandbox backend, lease client, plugin registration  | 5 source + 5 test   |
 
 ---
 
@@ -58,9 +58,9 @@ agent-vm controller upgrade             # Rebuild image + restart
 agent-vm controller credentials refresh # Re-resolve 1P secrets
 agent-vm controller lease list          # Active tool VM leases
 agent-vm controller lease release <id>  # Release a specific lease
-agent-vm controller snapshot create     # Encrypted backup of zone state
-agent-vm controller snapshot restore    # Decrypt + restore zone state
-agent-vm controller snapshot list       # List snapshot archives
+agent-vm backup create                  # Encrypted backup of zone state
+agent-vm backup restore                 # Decrypt + restore zone state
+agent-vm backup list                    # List backup archives
 ```
 
 ---
@@ -75,7 +75,7 @@ agent-vm controller snapshot list       # List snapshot archives
 | 4   | Workspace persistence (same session) | ✅     | File written in call 1, read in call 2             |
 | 5   | Multiple sessions → separate VMs     | ✅     | discord:123 → slot 0, whatsapp:456 → slot 1        |
 | 6   | Controller stop + restart            | ✅     | State persists, clean leases, tool calls work      |
-| 7   | Snapshot create + restore            | ✅     | Age encrypted, auth-profiles restored (2672 bytes) |
+| 7   | Backup create + restore              | ✅     | Age encrypted, auth-profiles restored (2672 bytes) |
 | 8   | Scope-based VM reuse                 | ✅     | Same scopeKey reuses handle within process         |
 | 9   | Doctor checks                        | ✅     | All binaries found (qemu, age, op, node)           |
 | 10  | SSH into gateway VM                  | ✅     | Gondolin enableSsh + profile.d env vars            |
@@ -97,12 +97,12 @@ agent-vm controller snapshot list       # List snapshot archives
 - [x] WebSocket bypass (tcp.hosts) for Discord + WhatsApp
 - [x] Live tests: cross-VM SSH, lease API round-trip
 
-### Phase 4 (API, CLI, Snapshots)
+### Phase 4 (API, CLI, Backups)
 
 - [x] Gateway HTTP API client (/readyz, /tools/invoke with Bearer auth)
 - [x] Gateway WebSocket client (connect.challenge handshake, chat.send)
-- [x] CLI completeness: stop, lease list/release, snapshot create/restore/list, ssh-cmd
-- [x] Snapshot manager with age identity-key encryption
+- [x] CLI completeness: stop, lease list/release, backup create/restore/list, ssh-cmd
+- [x] Backup manager with age identity-key encryption
 - [x] Doctor checks for qemu, age, op binaries with install hints
 - [x] Fix tokenSource schema mismatch (serviceAccountTokenEnv → tokenSource)
 - [x] Resolve all system.json paths relative to config file location
@@ -151,7 +151,7 @@ agent-vm controller snapshot list       # List snapshot archives
 
 ## Known Issues / Future Work
 
-1. **Snapshot size** — Includes image cache (26GB). Should exclude `state/*/images/` from snapshots.
+1. **Backup size** — Includes image cache (26GB). Should exclude `state/*/images/` from backups.
 2. **Boot time** — ~90s for gateway (CA update + plugin copy + OpenClaw startup). Could pre-bake more into image.
 3. **Codex OAuth expiry** — Token expires in ~10 days. Needs manual re-auth via SSH.
 4. **Formatting** — `pnpm fmt:check` not configured. 29 files unformatted.

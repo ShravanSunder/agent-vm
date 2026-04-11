@@ -16,7 +16,7 @@ interface RunSshCommandOptions {
 	readonly systemConfig: SystemConfig;
 }
 
-const zoneSshAccessResponseSchema = z
+export const zoneSshAccessResponseSchema = z
 	.object({
 		command: z.string().min(1).optional(),
 		host: z.string().min(1).optional(),
@@ -26,7 +26,7 @@ const zoneSshAccessResponseSchema = z
 	})
 	.passthrough();
 
-type ZoneSshAccessResponse = z.infer<typeof zoneSshAccessResponseSchema>;
+export type ZoneSshAccessResponse = z.infer<typeof zoneSshAccessResponseSchema>;
 
 export async function runSshCommand(options: RunSshCommandOptions): Promise<void> {
 	const controllerClient = options.dependencies.createControllerClient({

@@ -4,6 +4,7 @@ import { startControllerRuntime } from './controller-runtime.js';
 import type { SystemConfig } from './system-config.js';
 
 const systemConfig = {
+	cacheDir: './cache',
 	host: {
 		controllerPort: 18800,
 		secretsProvider: {

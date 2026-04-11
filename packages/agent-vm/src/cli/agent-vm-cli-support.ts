@@ -1,26 +1,28 @@
 import type { SecretResolver } from 'gondolin-core';
 import { createSecretResolver, resolveServiceAccountToken } from 'gondolin-core';
 
+import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
+import { createZoneBackupManager } from '../backup/backup-manager.js';
 import { createControllerClient } from '../controller/controller-client.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 import { loadSystemConfig, type SystemConfig } from '../controller/system-config.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { buildControllerStatus } from '../operations/controller-status.js';
 import { runControllerDoctor } from '../operations/doctor.js';
-import { createAgeEncryption } from '../snapshots/snapshot-encryption.js';
-import { createSnapshotManager } from '../snapshots/snapshot-manager.js';
 import { runBuildCommand } from './build-command.js';
+import { runCacheCommand } from './cache-commands.js';
 import { scaffoldAgentVmProject, type ScaffoldAgentVmProjectResult } from './init-command.js';
 
 export interface CliDependencies {
 	readonly buildControllerStatus: typeof buildControllerStatus;
-	readonly createAgeEncryption: typeof createAgeEncryption;
+	readonly createAgeBackupEncryption: typeof createAgeBackupEncryption;
 	readonly createControllerClient: typeof createControllerClient;
 	readonly createSecretResolver: typeof createSecretResolver;
-	readonly createSnapshotManager: typeof createSnapshotManager;
+	readonly createZoneBackupManager: typeof createZoneBackupManager;
 	readonly getCurrentWorkingDirectory?: () => string;
 	readonly loadSystemConfig: typeof loadSystemConfig;
 	readonly runBuildCommand?: typeof runBuildCommand;
+	readonly runCacheCommand?: typeof runCacheCommand;
 	readonly runInteractiveProcess?: (
 		command: string,
 		arguments_: readonly string[],
@@ -56,13 +58,14 @@ export interface CliIo {
 
 export const defaultCliDependencies: CliDependencies = {
 	buildControllerStatus,
-	createAgeEncryption,
+	createAgeBackupEncryption,
 	createControllerClient,
 	createSecretResolver,
-	createSnapshotManager,
+	createZoneBackupManager,
 	getCurrentWorkingDirectory: () => process.cwd(),
 	loadSystemConfig,
 	runBuildCommand,
+	runCacheCommand,
 	resolveServiceAccountToken,
 	runControllerDoctor,
 	scaffoldAgentVmProject,

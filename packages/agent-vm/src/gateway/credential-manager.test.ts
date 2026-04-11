@@ -5,6 +5,7 @@ import type { SystemConfig } from '../controller/system-config.js';
 import { resolveZoneSecrets } from './credential-manager.js';
 
 const systemConfig = {
+	cacheDir: './cache',
 	host: {
 		controllerPort: 18800,
 		secretsProvider: {

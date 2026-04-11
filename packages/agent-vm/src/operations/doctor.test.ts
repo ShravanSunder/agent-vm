@@ -4,6 +4,7 @@ import type { SystemConfig } from '../controller/system-config.js';
 import { runControllerDoctor } from './doctor.js';
 
 const systemConfig = {
+	cacheDir: './cache',
 	host: {
 		controllerPort: 18800,
 		secretsProvider: {

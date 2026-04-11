@@ -55,6 +55,7 @@ const systemConfigSchema = z.object({
 			tokenSource: tokenSourceSchema,
 		}),
 	}),
+	cacheDir: z.string().min(1).default('./cache'),
 	images: z.object({
 		gateway: imageConfigSchema,
 		tool: imageConfigSchema,
@@ -90,6 +91,7 @@ function resolveRelativePaths(config: SystemConfig, configDir: string): SystemCo
 
 	return {
 		...config,
+		cacheDir: resolvePath(config.cacheDir),
 		images: {
 			gateway: {
 				...config.images.gateway,

@@ -30,6 +30,7 @@ describe('loadSystemConfig', () => {
 						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
 					},
 				},
+				cacheDir: './cache',
 				images: {
 					gateway: {
 						buildConfig: './images/gateway/build-config.json',
@@ -80,6 +81,7 @@ describe('loadSystemConfig', () => {
 			host: {
 				controllerPort: 18800,
 			},
+			cacheDir: path.join(workingDirectoryPath, 'cache'),
 			images: {
 				gateway: {
 					dockerfile: path.join(workingDirectoryPath, 'images/gateway/Dockerfile'),
@@ -113,6 +115,7 @@ describe('loadSystemConfig', () => {
 						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
 					},
 				},
+				cacheDir: './cache',
 				images: {
 					gateway: {
 						buildConfig: './images/gateway/build-config.json',

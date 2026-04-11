@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createAgeEncryption } from './snapshot-encryption.js';
+import { createAgeBackupEncryption } from './backup-encryption.js';
 
 // Generate a real age identity for testing
 async function generateTestIdentity(): Promise<string> {
@@ -18,7 +18,7 @@ async function generateTestIdentity(): Promise<string> {
 	return match[0];
 }
 
-describe('createAgeEncryption', () => {
+describe('createAgeBackupEncryption', () => {
 	let tmpDir: string | undefined;
 
 	afterEach(() => {
@@ -36,7 +36,7 @@ describe('createAgeEncryption', () => {
 		const decryptedPath = path.join(tmpDir, 'decrypted.txt');
 		fs.writeFileSync(inputPath, 'hello from age encryption test');
 
-		const encryption = createAgeEncryption({
+		const encryption = createAgeBackupEncryption({
 			resolveIdentity: async () => identity,
 		});
 
@@ -57,7 +57,7 @@ describe('createAgeEncryption', () => {
 		const inputPath = path.join(tmpDir, 'input.txt');
 		fs.writeFileSync(inputPath, 'test');
 
-		const encryption = createAgeEncryption({ resolveIdentity });
+		const encryption = createAgeBackupEncryption({ resolveIdentity });
 
 		await encryption.encrypt(inputPath, path.join(tmpDir, 'out1.age'));
 		await encryption.decrypt(path.join(tmpDir, 'out1.age'), path.join(tmpDir, 'out1.txt'));
@@ -72,7 +72,7 @@ describe('createAgeEncryption', () => {
 		const encryptedPath = path.join(tmpDir, 'output.age');
 		fs.writeFileSync(inputPath, 'esm-safe');
 
-		const encryption = createAgeEncryption({
+		const encryption = createAgeBackupEncryption({
 			resolveIdentity: async () => identity,
 		});
 

@@ -1,8 +1,76 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ControllerClient } from '../controller/controller-client.js';
 import type { SystemConfig } from '../controller/system-config.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { loadOptionalLocalEnvironmentFile, runAgentVmCli } from './agent-vm-entrypoint.js';
+
+function createCliBuildSystemConfig(): SystemConfig {
+	return {
+		cacheDir: './cache',
+		host: {
+			controllerPort: 18800,
+			secretsProvider: {
+				type: '1password',
+				tokenSource: { type: 'env' },
+			},
+		},
+		images: {
+			gateway: {
+				buildConfig: './images/gateway/build-config.json',
+				dockerfile: './images/gateway/Dockerfile',
+			},
+			tool: {
+				buildConfig: './images/tool/build-config.json',
+				dockerfile: './images/tool/Dockerfile',
+			},
+		},
+		tcpPool: {
+			basePort: 19000,
+			size: 5,
+		},
+		toolProfiles: {
+			standard: {
+				cpus: 1,
+				memory: '1G',
+				workspaceRoot: './workspaces/tools',
+			},
+		},
+		zones: [
+			{
+				allowedHosts: ['api.anthropic.com'],
+				gateway: {
+					cpus: 2,
+					memory: '2G',
+					openclawConfig: './config/shravan/openclaw.json',
+					port: 18791,
+					stateDir: './state/shravan',
+					workspaceDir: './workspaces/shravan',
+				},
+				id: 'shravan',
+				secrets: {},
+				toolProfile: 'standard',
+				websocketBypass: [],
+			},
+		],
+	};
+}
+
+function createControllerClientStub(
+	enableZoneSsh: ControllerClient['enableZoneSsh'],
+): ControllerClient {
+	return {
+		destroyZone: async () => ({}),
+		enableZoneSsh,
+		getControllerStatus: async () => ({}),
+		getZoneLogs: async () => ({}),
+		listLeases: async () => [],
+		refreshZoneCredentials: async () => ({}),
+		releaseLease: async () => {},
+		stopController: async () => ({}),
+		upgradeZone: async () => ({}),
+	};
+}
 
 describe('runAgentVmCli', () => {
 	it('ignores a missing .env.local file', () => {
@@ -70,63 +138,16 @@ describe('runAgentVmCli', () => {
 			},
 			{
 				...defaultCliDependencies,
-				loadSystemConfig: vi.fn(
-					() =>
-						({
-							host: {
-								controllerPort: 18800,
-								secretsProvider: {
-									type: '1password',
-									tokenSource: { type: 'env' },
-								},
-							},
-							images: {
-								gateway: {
-									buildConfig: './images/gateway/build-config.json',
-									dockerfile: './images/gateway/Dockerfile',
-								},
-								tool: {
-									buildConfig: './images/tool/build-config.json',
-									dockerfile: './images/tool/Dockerfile',
-								},
-							},
-							tcpPool: {
-								basePort: 19000,
-								size: 5,
-							},
-							toolProfiles: {
-								standard: {
-									cpus: 1,
-									memory: '1G',
-									workspaceRoot: './workspaces/tools',
-								},
-							},
-							zones: [
-								{
-									allowedHosts: ['api.anthropic.com'],
-									gateway: {
-										cpus: 2,
-										memory: '2G',
-										openclawConfig: './config/shravan/openclaw.json',
-										port: 18791,
-										stateDir: './state/shravan',
-										workspaceDir: './workspaces/shravan',
-									},
-									id: 'shravan',
-									secrets: {},
-									toolProfile: 'standard',
-									websocketBypass: [],
-								},
-							],
-						}) as SystemConfig,
-				),
+				loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
 				runBuildCommand,
 			},
 		);
 
 		expect(runBuildCommand).toHaveBeenCalledWith(
 			{
+				forceRebuild: false,
 				systemConfig: expect.objectContaining({
+					cacheDir: './cache',
 					images: expect.objectContaining({
 						gateway: expect.objectContaining({
 							dockerfile: './images/gateway/Dockerfile',
@@ -136,6 +157,110 @@ describe('runAgentVmCli', () => {
 			},
 			expect.any(Object),
 		);
+	});
+
+	it('passes build --force through to the build command handler', async () => {
+		const runBuildCommand = vi.fn(async () => {});
+
+		await runAgentVmCli(
+			['build', '--force', '--config', './custom-system.json'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
+				runBuildCommand,
+			},
+		);
+
+		expect(runBuildCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				forceRebuild: true,
+			}),
+			expect.any(Object),
+		);
+	});
+
+	it('routes cache clean through the cache command handler', async () => {
+		const runCacheCommand = vi.fn(async () => {});
+
+		await runAgentVmCli(
+			['cache', 'clean', '--confirm', '--config', './custom-system.json'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
+				runCacheCommand,
+			},
+		);
+
+		expect(runCacheCommand).toHaveBeenCalledWith(
+			{
+				confirm: true,
+				subcommand: 'clean',
+				systemConfig: expect.objectContaining({
+					cacheDir: './cache',
+				}),
+			},
+			expect.any(Object),
+		);
+	});
+
+	it('routes auth to an interactive SSH-backed OpenClaw login', async () => {
+		const runInteractiveProcess = vi.fn(async () => {});
+
+		await runAgentVmCli(
+			['auth', 'codex', '--zone', 'shravan'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () =>
+					createControllerClientStub(async () => ({
+						host: '127.0.0.1',
+						identityFile: '/tmp/test-key',
+						port: 19000,
+						user: 'root',
+					})),
+				loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
+				runInteractiveProcess,
+			},
+		);
+
+		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', [
+			'-i',
+			'/tmp/test-key',
+			'-p',
+			'19000',
+			'root@127.0.0.1',
+			'openclaw',
+			'auth',
+			'login',
+			'codex',
+		]);
+	});
+
+	it('throws a usage error when auth is missing the plugin name', async () => {
+		await expect(
+			runAgentVmCli(
+				['auth'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
+				},
+			),
+		).rejects.toThrow('Usage: agent-vm auth <plugin> --zone <id>');
 	});
 
 	it('routes doctor and status subcommands to their handlers', async () => {
@@ -175,18 +300,19 @@ describe('runAgentVmCli', () => {
 					stopController: async () => ({ ok: true }),
 					upgradeZone: async () => ({ ok: true, zoneId: 'shravan' }),
 				}),
-				createAgeEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
+				createAgeBackupEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
 					resolveAll: async () => ({}),
 				}),
-				createSnapshotManager: () => ({
-					createSnapshot: async () => ({ snapshotPath: '', timestamp: '', zoneId: '' }),
-					restoreSnapshot: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
-					listSnapshots: () => [],
+				createZoneBackupManager: () => ({
+					createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
+					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+					listBackups: () => [],
 				}),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: () => ({
+					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
 						secretsProvider: {
@@ -272,18 +398,19 @@ describe('runAgentVmCli', () => {
 					stopController: async () => ({ ok: true }),
 					upgradeZone: async () => ({ ok: true, zoneId: 'shravan' }),
 				}),
-				createAgeEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
+				createAgeBackupEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
 					resolveAll: async () => ({}),
 				}),
-				createSnapshotManager: () => ({
-					createSnapshot: async () => ({ snapshotPath: '', timestamp: '', zoneId: '' }),
-					restoreSnapshot: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
-					listSnapshots: () => [],
+				createZoneBackupManager: () => ({
+					createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
+					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+					listBackups: () => [],
 				}),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: () => ({
+					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
 						secretsProvider: {
@@ -391,18 +518,19 @@ describe('runAgentVmCli', () => {
 					stopController: async () => ({ ok: true }),
 					upgradeZone: async () => ({ ok: true, zoneId: 'shravan' }),
 				}),
-				createAgeEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
+				createAgeBackupEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
 					resolveAll: async () => ({}),
 				}),
-				createSnapshotManager: () => ({
-					createSnapshot: async () => ({ snapshotPath: '', timestamp: '', zoneId: '' }),
-					restoreSnapshot: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
-					listSnapshots: () => [],
+				createZoneBackupManager: () => ({
+					createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
+					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+					listBackups: () => [],
 				}),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: () => ({
+					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
 						secretsProvider: {
@@ -487,19 +615,20 @@ describe('runAgentVmCli', () => {
 				toolProfiles: ['standard'],
 				zones: [],
 			}),
-			createAgeEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
+			createAgeBackupEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
 			createControllerClient: () => controllerClient,
 			createSecretResolver: async () => ({
 				resolve: async () => '',
 				resolveAll: async () => ({}),
 			}),
-			createSnapshotManager: () => ({
-				createSnapshot: async () => ({ snapshotPath: '', timestamp: '', zoneId: '' }),
-				restoreSnapshot: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
-				listSnapshots: () => [],
+			createZoneBackupManager: () => ({
+				createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
+				restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+				listBackups: () => [],
 			}),
 			resolveServiceAccountToken: async () => 'mock-token',
 			loadSystemConfig: (): SystemConfig => ({
+				cacheDir: './cache',
 				host: {
 					controllerPort: 18800,
 					secretsProvider: {
@@ -596,18 +725,18 @@ describe('runAgentVmCli', () => {
 		expect(outputs.join('\n')).toContain('"zoneId": "shravan"');
 	});
 
-	it('routes snapshot list through the snapshot manager', async () => {
+	it('routes backup list through the backup manager', async () => {
 		const outputs: string[] = [];
-		const listSnapshots = vi.fn(() => [
+		const listBackups = vi.fn(() => [
 			{
-				snapshotPath: '/state/shravan/snapshots/shravan-2026-04-06.tar.age',
+				backupPath: '/state/shravan/backups/shravan-2026-04-06.tar.age',
 				timestamp: '2026-04-06',
 				zoneId: 'shravan',
 			},
 		]);
 
 		await runAgentVmCli(
-			['controller', 'snapshot', 'list', '--zone', 'shravan'],
+			['backup', 'list', '--zone', 'shravan'],
 			{
 				stderr: { write: () => true },
 				stdout: {
@@ -623,7 +752,7 @@ describe('runAgentVmCli', () => {
 					toolProfiles: ['standard'],
 					zones: [],
 				}),
-				createAgeEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
+				createAgeBackupEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
 				createControllerClient: () => ({
 					destroyZone: async () => ({}),
 					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
@@ -639,12 +768,13 @@ describe('runAgentVmCli', () => {
 					resolve: async () => '',
 					resolveAll: async () => ({}),
 				}),
-				createSnapshotManager: () => ({
-					createSnapshot: async () => ({ snapshotPath: '', timestamp: '', zoneId: '' }),
-					restoreSnapshot: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
-					listSnapshots,
+				createZoneBackupManager: () => ({
+					createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
+					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+					listBackups,
 				}),
 				loadSystemConfig: () => ({
+					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
 						secretsProvider: {
@@ -688,16 +818,16 @@ describe('runAgentVmCli', () => {
 			},
 		);
 
-		expect(listSnapshots).toHaveBeenCalledWith(
-			expect.objectContaining({ snapshotDir: './state/shravan/snapshots', zoneId: 'shravan' }),
+		expect(listBackups).toHaveBeenCalledWith(
+			expect.objectContaining({ backupDir: './state/shravan/backups', zoneId: 'shravan' }),
 		);
 		expect(outputs.join('')).toContain('shravan-2026-04-06.tar.age');
 	});
 
-	it('routes snapshot create through the snapshot manager with 1P passphrase', async () => {
+	it('routes backup create through the backup manager with a 1Password key ref', async () => {
 		const outputs: string[] = [];
-		const createSnapshot = vi.fn(async () => ({
-			snapshotPath: './state/shravan/snapshots/shravan-2026-04-06T12-00.tar.age',
+		const createBackup = vi.fn(async () => ({
+			backupPath: './state/shravan/backups/shravan-2026-04-06T12-00.tar.age',
 			timestamp: '2026-04-06T12-00',
 			zoneId: 'shravan',
 		}));
@@ -706,7 +836,7 @@ describe('runAgentVmCli', () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'test-token';
 
 		await runAgentVmCli(
-			['controller', 'snapshot', 'create', '--zone', 'shravan'],
+			['backup', 'create', '--zone', 'shravan'],
 			{
 				stderr: { write: () => true },
 				stdout: {
@@ -722,7 +852,7 @@ describe('runAgentVmCli', () => {
 					toolProfiles: ['standard'],
 					zones: [],
 				}),
-				createAgeEncryption: (deps) => {
+				createAgeBackupEncryption: (deps) => {
 					// Capture the identity resolver to verify the 1P ref pattern
 					void deps.resolveIdentity().then((identity) => resolveIdentityCalls.push(identity));
 					return { encrypt: async () => {}, decrypt: async () => {} };
@@ -741,17 +871,18 @@ describe('runAgentVmCli', () => {
 				createSecretResolver: async () => ({
 					resolve: async (ref: { ref: string }) => {
 						// Verify the 1P ref pattern
-						expect(ref.ref).toBe('op://agent-vm/agent-shravan-snapshot/password');
+						expect(ref.ref).toBe('op://agent-vm/agent-shravan-backup/password');
 						return 'resolved-passphrase';
 					},
 					resolveAll: async () => ({}),
 				}),
-				createSnapshotManager: () => ({
-					createSnapshot,
-					restoreSnapshot: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
-					listSnapshots: () => [],
+				createZoneBackupManager: () => ({
+					createBackup,
+					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+					listBackups: () => [],
 				}),
 				loadSystemConfig: () => ({
+					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
 						secretsProvider: {
@@ -795,12 +926,12 @@ describe('runAgentVmCli', () => {
 			},
 		);
 
-		expect(createSnapshot).toHaveBeenCalledWith(
+		expect(createBackup).toHaveBeenCalledWith(
 			expect.objectContaining({
 				zoneId: 'shravan',
 				stateDir: './state/shravan',
 				workspaceDir: './workspaces/shravan',
-				snapshotDir: './state/shravan/snapshots',
+				backupDir: './state/shravan/backups',
 			}),
 		);
 		expect(outputs.join('')).toContain('shravan-2026-04-06T12-00.tar.age');

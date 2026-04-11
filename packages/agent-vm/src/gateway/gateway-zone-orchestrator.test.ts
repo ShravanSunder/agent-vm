@@ -5,6 +5,7 @@ import type { SystemConfig } from '../controller/system-config.js';
 import { startGatewayZone } from './gateway-zone-orchestrator.js';
 
 const systemConfig = {
+	cacheDir: '/cache',
 	host: {
 		controllerPort: 18800,
 		secretsProvider: {

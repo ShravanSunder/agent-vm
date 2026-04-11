@@ -28,11 +28,13 @@ This scaffolds:
 
 ### 2. Configure secrets
 
-Edit `.env.local`:
+`agent-vm init` defaults to Touch ID via 1Password CLI.
 
-- set `OP_SERVICE_ACCOUNT_TOKEN`
+Optional tweaks in `.env.local`:
+
 - adjust any `*_REF` values if your 1Password vault paths differ
-- set `AGE_IDENTITY_KEY` if you want snapshot and checkpoint encryption available
+- set `OP_SERVICE_ACCOUNT_TOKEN` only if you want a service account instead of Touch ID
+- keep `AGE_IDENTITY_KEY` only if you want a custom checkpoint encryption key
 
 ### 3. Build images
 
@@ -40,8 +42,8 @@ Edit `.env.local`:
 agent-vm build
 ```
 
-Builds Docker OCI images from Dockerfiles, then Gondolin VM assets per zone.
-First build takes a few minutes. Subsequent builds reuse cached fingerprints.
+Builds Docker OCI images from Dockerfiles, then shared Gondolin VM assets.
+First build takes a few minutes. Subsequent builds reuse cached fingerprints from `./cache/images/`.
 
 ### 4. Start the controller
 
@@ -52,13 +54,13 @@ agent-vm controller start
 ### 5. Do OAuth setup if needed
 
 ```bash
-agent-vm controller ssh-cmd --zone <zone-id>
+agent-vm auth codex --zone <zone-id>
 ```
 
-Inside the gateway VM, run the auth flow you need, for example:
+For advanced manual access, you can still get the raw SSH command with:
 
 ```bash
-openclaw auth login
+agent-vm controller ssh-cmd --zone <zone-id>
 ```
 
 ### 6. Verify

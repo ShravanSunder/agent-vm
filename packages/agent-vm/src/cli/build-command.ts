@@ -17,6 +17,7 @@ export interface BuildCommandDependencies {
 	readonly buildGondolinImage?: (options: {
 		readonly buildConfigPath: string;
 		readonly cacheDir: string;
+		readonly fullReset?: boolean;
 	}) => Promise<BuildImageResult>;
 	readonly resolveOciImageTag?: (buildConfigPath: string) => Promise<string>;
 }
@@ -46,6 +47,7 @@ async function resolveOciImageTagFromConfig(buildConfigPath: string): Promise<st
 
 export async function runBuildCommand(
 	options: {
+		readonly forceRebuild?: boolean;
 		readonly systemConfig: SystemConfig;
 	},
 	io: CliIo,
@@ -82,18 +84,17 @@ export async function runBuildCommand(
 		io.stderr.write(`[build] Docker: ${imageTarget.name} done\n`);
 	}
 
-	for (const zone of options.systemConfig.zones) {
-		for (const imageTarget of imageTargets) {
-			const cacheDirectory = path.join(zone.gateway.stateDir, 'images', imageTarget.name);
-			io.stderr.write(`[build] Gondolin: ${imageTarget.name} (${zone.id}) -> ${cacheDirectory}\n`);
-			const buildResult = await buildGondolinImage({
-				buildConfigPath: imageTarget.buildConfigPath,
-				cacheDir: cacheDirectory,
-			});
-			const buildStatus = buildResult.built ? 'built' : 'cached';
-			io.stderr.write(
-				`[build] Gondolin: ${imageTarget.name} (${zone.id}) ${buildStatus} [${buildResult.fingerprint}]\n`,
-			);
-		}
+	for (const imageTarget of imageTargets) {
+		const cacheDirectory = path.join(options.systemConfig.cacheDir, 'images', imageTarget.name);
+		io.stderr.write(`[build] Gondolin: ${imageTarget.name} -> ${cacheDirectory}\n`);
+		const buildResult = await buildGondolinImage({
+			buildConfigPath: imageTarget.buildConfigPath,
+			cacheDir: cacheDirectory,
+			...(options.forceRebuild !== undefined ? { fullReset: options.forceRebuild } : {}),
+		});
+		const buildStatus = buildResult.built ? 'built' : 'cached';
+		io.stderr.write(
+			`[build] Gondolin: ${imageTarget.name} ${buildStatus} [${buildResult.fingerprint}]\n`,
+		);
 	}
 }

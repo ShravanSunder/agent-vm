@@ -4,28 +4,28 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { buildSnapshotPaths } from './snapshot-archive-layout.js';
-import type { SnapshotEncryption, SnapshotResult } from './snapshot-manager.js';
+import { buildBackupPaths } from './backup-archive-layout.js';
+import type { BackupEncryption, BackupResult } from './backup-manager.js';
 
 const execFileAsync = promisify(execFile);
 
-export async function createEncryptedSnapshot(options: {
-	readonly encryption: SnapshotEncryption;
-	readonly snapshotDir: string;
+export async function createEncryptedBackup(options: {
+	readonly backupDir: string;
+	readonly encryption: BackupEncryption;
 	readonly stateDir: string;
 	readonly workspaceDir: string;
 	readonly zoneId: string;
-}): Promise<SnapshotResult> {
+}): Promise<BackupResult> {
 	const timestamp = new Date().toISOString().replace(/[:.]/gu, '-');
-	const snapshotPaths = buildSnapshotPaths({
-		snapshotDir: options.snapshotDir,
+	const backupPaths = buildBackupPaths({
+		backupDir: options.backupDir,
 		timestamp,
 		zoneId: options.zoneId,
 	});
 
-	fs.mkdirSync(options.snapshotDir, { recursive: true });
+	fs.mkdirSync(options.backupDir, { recursive: true });
 
-	const stagingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'snapshot-stage-'));
+	const stagingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-stage-'));
 	try {
 		await execFileAsync('cp', ['-a', options.stateDir, path.join(stagingDirectory, 'state')]);
 		await execFileAsync('cp', [
@@ -45,7 +45,7 @@ export async function createEncryptedSnapshot(options: {
 
 		await execFileAsync('tar', [
 			'cf',
-			snapshotPaths.tarPath,
+			backupPaths.tarPath,
 			'-C',
 			stagingDirectory,
 			'state',
@@ -56,11 +56,11 @@ export async function createEncryptedSnapshot(options: {
 		fs.rmSync(stagingDirectory, { recursive: true, force: true });
 	}
 
-	await options.encryption.encrypt(snapshotPaths.tarPath, snapshotPaths.encryptedPath);
-	fs.unlinkSync(snapshotPaths.tarPath);
+	await options.encryption.encrypt(backupPaths.tarPath, backupPaths.encryptedPath);
+	fs.unlinkSync(backupPaths.tarPath);
 
 	return {
-		snapshotPath: snapshotPaths.encryptedPath,
+		backupPath: backupPaths.encryptedPath,
 		timestamp,
 		zoneId: options.zoneId,
 	};

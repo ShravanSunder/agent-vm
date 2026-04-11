@@ -1,8 +1,10 @@
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
-import type { SnapshotEncryption } from './snapshot-manager.js';
+import type { BackupEncryption } from './backup-manager.js';
 
 interface AgeEncryptionDependencies {
 	/** Resolves the age identity (secret key) string, e.g. from 1Password.
@@ -17,8 +19,6 @@ interface AgeEncryptionDependencies {
  * the terminal requirement entirely.
  */
 async function runAge(args: readonly string[]): Promise<void> {
-	const { execFile } = await import('node:child_process');
-	const { promisify } = await import('node:util');
 	const result = await promisify(execFile)('age', [...args], { encoding: 'utf8' });
 	if (result.stderr && result.stderr.includes('error')) {
 		throw new Error(`age error: ${result.stderr.trim()}`);
@@ -32,8 +32,6 @@ async function deriveRecipientFromIdentity(identityLine: string): Promise<string
 	// Actually, `age` can encrypt to a recipient derived from an identity file using:
 	// age -e -i identity.txt (since age 1.1+, -i can be used for encryption too — it auto-derives)
 	// BUT that's not supported in all versions. Use age-keygen -y to derive.
-	const { execFile } = await import('node:child_process');
-	const { promisify } = await import('node:util');
 	const execFileAsync = promisify(execFile);
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'age-identity-'));
 	const identityPath = path.join(tmpDir, 'identity.txt');
@@ -48,7 +46,9 @@ async function deriveRecipientFromIdentity(identityLine: string): Promise<string
 	}
 }
 
-export function createAgeEncryption(dependencies: AgeEncryptionDependencies): SnapshotEncryption {
+export function createAgeBackupEncryption(
+	dependencies: AgeEncryptionDependencies,
+): BackupEncryption {
 	return {
 		encrypt: async (inputPath, outputPath) => {
 			const identity = await dependencies.resolveIdentity();

@@ -23,6 +23,7 @@ function createTemporaryDirectory(): string {
 
 function createTestSystemConfig(): SystemConfig {
 	return {
+		cacheDir: '/cache',
 		host: {
 			controllerPort: 18800,
 			secretsProvider: { type: '1password', tokenSource: { type: 'env' } },
@@ -109,12 +110,15 @@ describe('runBuildCommand', () => {
 		expect(dockerBuilds).toHaveLength(1);
 	});
 
-	it('builds Gondolin assets for each zone into the zone state dir', async () => {
-		const gondolinBuilds: { cacheDir: string }[] = [];
+	it('builds shared Gondolin assets once per image type into the shared cache dir', async () => {
+		const gondolinBuilds: { cacheDir: string; fullReset: boolean | undefined }[] = [];
 		const dependencies: BuildCommandDependencies = {
 			buildDockerImage: async () => {},
 			buildGondolinImage: async (options) => {
-				gondolinBuilds.push({ cacheDir: options.cacheDir });
+				gondolinBuilds.push({
+					cacheDir: options.cacheDir,
+					fullReset: options.fullReset,
+				});
 				return { built: true, fingerprint: 'f1', imagePath: '/cache/f1' };
 			},
 			resolveOciImageTag: async () => 'tag:latest',
@@ -127,11 +131,17 @@ describe('runBuildCommand', () => {
 		);
 
 		expect(gondolinBuilds).toHaveLength(2);
-		expect(gondolinBuilds[0]?.cacheDir).toBe('/state/test/images/gateway');
-		expect(gondolinBuilds[1]?.cacheDir).toBe('/state/test/images/tool');
+		expect(gondolinBuilds[0]).toEqual({
+			cacheDir: '/cache/images/gateway',
+			fullReset: undefined,
+		});
+		expect(gondolinBuilds[1]).toEqual({
+			cacheDir: '/cache/images/tool',
+			fullReset: undefined,
+		});
 	});
 
-	it('builds Gondolin assets for multiple zones into distinct cache directories', async () => {
+	it('reuses the same shared Gondolin cache directories across multiple zones', async () => {
 		const gondolinBuilds: { cacheDir: string }[] = [];
 		const baseConfig = createTestSystemConfig();
 		const baseZone = baseConfig.zones[0];
@@ -174,12 +184,38 @@ describe('runBuildCommand', () => {
 			dependencies,
 		);
 
-		expect(gondolinBuilds).toHaveLength(4);
+		expect(gondolinBuilds).toHaveLength(2);
 		expect(gondolinBuilds.map((build) => build.cacheDir)).toEqual([
-			'/state/zone-a/images/gateway',
-			'/state/zone-a/images/tool',
-			'/state/zone-b/images/gateway',
-			'/state/zone-b/images/tool',
+			'/cache/images/gateway',
+			'/cache/images/tool',
+		]);
+	});
+
+	it('passes fullReset to shared Gondolin builds when forceRebuild is enabled', async () => {
+		const gondolinBuilds: { cacheDir: string; fullReset: boolean | undefined }[] = [];
+
+		await runBuildCommand(
+			{
+				forceRebuild: true,
+				systemConfig: createTestSystemConfig(),
+			},
+			{ stderr: { write: () => true }, stdout: { write: () => true } },
+			{
+				buildDockerImage: async () => {},
+				buildGondolinImage: async (options) => {
+					gondolinBuilds.push({
+						cacheDir: options.cacheDir,
+						fullReset: options.fullReset,
+					});
+					return { built: true, fingerprint: 'force-fp', imagePath: '/cache/force-fp' };
+				},
+				resolveOciImageTag: async () => 'tag:latest',
+			},
+		);
+
+		expect(gondolinBuilds).toEqual([
+			{ cacheDir: '/cache/images/gateway', fullReset: true },
+			{ cacheDir: '/cache/images/tool', fullReset: true },
 		]);
 	});
 });

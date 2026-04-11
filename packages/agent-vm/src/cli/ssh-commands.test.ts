@@ -6,6 +6,7 @@ import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { runSshCommand } from './ssh-commands.js';
 
 const systemConfig = {
+	cacheDir: './cache',
 	host: {
 		controllerPort: 18800,
 		secretsProvider: {

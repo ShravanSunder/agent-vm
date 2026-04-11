@@ -25,6 +25,7 @@ describe('runControllerDestroy', () => {
 		fs.mkdirSync(workspaceDir, { recursive: true });
 
 		const systemConfig = {
+			cacheDir: './cache',
 			host: {
 				controllerPort: 18800,
 				secretsProvider: {

@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createSnapshotManager } from './snapshot-manager.js';
+import { createZoneBackupManager } from './backup-manager.js';
 
 const noopEncryption = {
 	encrypt: async (inputPath: string, outputPath: string): Promise<void> => {
@@ -15,7 +15,7 @@ const noopEncryption = {
 	},
 };
 
-describe('createSnapshotManager', () => {
+describe('createZoneBackupManager', () => {
 	let tmpDir: string | undefined;
 
 	afterEach(() => {
@@ -26,46 +26,46 @@ describe('createSnapshotManager', () => {
 	});
 
 	it('creates a tar archive of zone state and workspace dirs', async () => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'snapshot-create-'));
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-create-'));
 		const stateDir = path.join(tmpDir, 'state');
 		const workspaceDir = path.join(tmpDir, 'workspace');
-		const snapshotDir = path.join(tmpDir, 'snapshots');
+		const backupDir = path.join(tmpDir, 'backups');
 		fs.mkdirSync(stateDir, { recursive: true });
 		fs.mkdirSync(workspaceDir, { recursive: true });
 		fs.writeFileSync(path.join(stateDir, 'session.json'), '{"token":"abc"}');
 		fs.writeFileSync(path.join(workspaceDir, 'notes.txt'), 'hello');
 
-		const manager = createSnapshotManager(noopEncryption);
+		const manager = createZoneBackupManager(noopEncryption);
 
-		const result = await manager.createSnapshot({
+		const result = await manager.createBackup({
 			zoneId: 'shravan',
 			stateDir,
 			workspaceDir,
-			snapshotDir,
+			backupDir,
 		});
 
 		expect(result.zoneId).toBe('shravan');
-		expect(result.snapshotPath).toMatch(/shravan__\d{4}-\d{2}-\d{2}T.*\.tar\.age$/u);
-		expect(fs.existsSync(result.snapshotPath)).toBe(true);
+		expect(result.backupPath).toMatch(/shravan__\d{4}-\d{2}-\d{2}T.*\.tar\.age$/u);
+		expect(fs.existsSync(result.backupPath)).toBe(true);
 	});
 
-	it('restores a snapshot to state and workspace dirs', async () => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'snapshot-restore-'));
+	it('restores a backup to state and workspace dirs', async () => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-restore-'));
 		const stateDir = path.join(tmpDir, 'state');
 		const workspaceDir = path.join(tmpDir, 'workspace');
-		const snapshotDir = path.join(tmpDir, 'snapshots');
+		const backupDir = path.join(tmpDir, 'backups');
 		fs.mkdirSync(stateDir, { recursive: true });
 		fs.mkdirSync(workspaceDir, { recursive: true });
 		fs.writeFileSync(path.join(stateDir, 'data.json'), '{"key":"val"}');
 		fs.writeFileSync(path.join(workspaceDir, 'file.txt'), 'content');
 
-		const manager = createSnapshotManager(noopEncryption);
+		const manager = createZoneBackupManager(noopEncryption);
 
-		const snapshot = await manager.createSnapshot({
+		const backup = await manager.createBackup({
 			zoneId: 'shravan',
 			stateDir,
 			workspaceDir,
-			snapshotDir,
+			backupDir,
 		});
 
 		// Clear dirs to simulate a fresh machine
@@ -74,8 +74,8 @@ describe('createSnapshotManager', () => {
 		fs.mkdirSync(stateDir, { recursive: true });
 		fs.mkdirSync(workspaceDir, { recursive: true });
 
-		const restoreResult = await manager.restoreSnapshot({
-			snapshotPath: snapshot.snapshotPath,
+		const restoreResult = await manager.restoreBackup({
+			backupPath: backup.backupPath,
 			stateDir,
 			workspaceDir,
 		});
@@ -88,24 +88,24 @@ describe('createSnapshotManager', () => {
 	});
 
 	it('restores state and workspace to different parent directories', async () => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'snapshot-cross-parent-'));
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-cross-parent-'));
 
 		// Create source dirs under different parents
 		const sourceStateDir = path.join(tmpDir, 'parent-a', 'zone-state');
 		const sourceWorkspaceDir = path.join(tmpDir, 'parent-b', 'zone-workspace');
-		const snapshotDir = path.join(tmpDir, 'snapshots');
+		const backupDir = path.join(tmpDir, 'backups');
 		fs.mkdirSync(sourceStateDir, { recursive: true });
 		fs.mkdirSync(sourceWorkspaceDir, { recursive: true });
 		fs.writeFileSync(path.join(sourceStateDir, 'state-file.json'), '{"s":1}');
 		fs.writeFileSync(path.join(sourceWorkspaceDir, 'work-file.txt'), 'workspace-data');
 
-		const manager = createSnapshotManager(noopEncryption);
+		const manager = createZoneBackupManager(noopEncryption);
 
-		const snapshot = await manager.createSnapshot({
+		const backup = await manager.createBackup({
 			zoneId: 'shravan-lab',
 			stateDir: sourceStateDir,
 			workspaceDir: sourceWorkspaceDir,
-			snapshotDir,
+			backupDir,
 		});
 
 		// Restore to completely different parents
@@ -114,8 +114,8 @@ describe('createSnapshotManager', () => {
 		fs.mkdirSync(restoreStateDir, { recursive: true });
 		fs.mkdirSync(restoreWorkspaceDir, { recursive: true });
 
-		const restoreResult = await manager.restoreSnapshot({
-			snapshotPath: snapshot.snapshotPath,
+		const restoreResult = await manager.restoreBackup({
+			backupPath: backup.backupPath,
 			stateDir: restoreStateDir,
 			workspaceDir: restoreWorkspaceDir,
 		});
@@ -137,39 +137,39 @@ describe('createSnapshotManager', () => {
 		expect(fs.readdirSync(path.join(tmpDir, 'restore-y'))).toEqual(['my-workspace']);
 	});
 
-	it('lists snapshots filtered by zone using double-underscore delimiter', () => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'snapshot-list-'));
+	it('lists backups filtered by zone using double-underscore delimiter', () => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-list-'));
 		fs.writeFileSync(path.join(tmpDir, 'shravan__2026-04-06T10-00-00.tar.age'), '');
 		fs.writeFileSync(path.join(tmpDir, 'shravan__2026-04-05T10-00-00.tar.age'), '');
 		fs.writeFileSync(path.join(tmpDir, 'alevtina__2026-04-06T10-00-00.tar.age'), '');
 
-		const manager = createSnapshotManager(noopEncryption);
+		const manager = createZoneBackupManager(noopEncryption);
 
-		const all = manager.listSnapshots({ snapshotDir: tmpDir });
+		const all = manager.listBackups({ backupDir: tmpDir });
 		expect(all).toHaveLength(3);
 
-		const shravanOnly = manager.listSnapshots({ snapshotDir: tmpDir, zoneId: 'shravan' });
+		const shravanOnly = manager.listBackups({ backupDir: tmpDir, zoneId: 'shravan' });
 		expect(shravanOnly).toHaveLength(2);
-		expect(shravanOnly.every((snapshot) => snapshot.zoneId === 'shravan')).toBe(true);
+		expect(shravanOnly.every((backup) => backup.zoneId === 'shravan')).toBe(true);
 	});
 
 	it('correctly parses hyphenated zone names in filenames', () => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'snapshot-hyphen-'));
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-hyphen-'));
 		fs.writeFileSync(path.join(tmpDir, 'shravan-lab__2026-04-06T10-00-00.tar.age'), '');
 		fs.writeFileSync(path.join(tmpDir, 'shravan__2026-04-06T10-00-00.tar.age'), '');
 
-		const manager = createSnapshotManager(noopEncryption);
+		const manager = createZoneBackupManager(noopEncryption);
 
-		const shravanLabOnly = manager.listSnapshots({
-			snapshotDir: tmpDir,
+		const shravanLabOnly = manager.listBackups({
+			backupDir: tmpDir,
 			zoneId: 'shravan-lab',
 		});
 		expect(shravanLabOnly).toHaveLength(1);
 		expect(shravanLabOnly[0]?.zoneId).toBe('shravan-lab');
 		expect(shravanLabOnly[0]?.timestamp).toBe('2026-04-06T10-00-00');
 
-		const shravanOnly = manager.listSnapshots({
-			snapshotDir: tmpDir,
+		const shravanOnly = manager.listBackups({
+			backupDir: tmpDir,
 			zoneId: 'shravan',
 		});
 		expect(shravanOnly).toHaveLength(1);
@@ -177,22 +177,22 @@ describe('createSnapshotManager', () => {
 	});
 
 	it('reads zoneId from manifest on restore instead of parsing filename', async () => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'snapshot-manifest-zone-'));
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-manifest-zone-'));
 		const stateDir = path.join(tmpDir, 'state');
 		const workspaceDir = path.join(tmpDir, 'workspace');
-		const snapshotDir = path.join(tmpDir, 'snapshots');
+		const backupDir = path.join(tmpDir, 'backups');
 		fs.mkdirSync(stateDir, { recursive: true });
 		fs.mkdirSync(workspaceDir, { recursive: true });
 		fs.writeFileSync(path.join(stateDir, 'a.json'), '{}');
 		fs.writeFileSync(path.join(workspaceDir, 'b.txt'), 'b');
 
-		const manager = createSnapshotManager(noopEncryption);
+		const manager = createZoneBackupManager(noopEncryption);
 
-		const snapshot = await manager.createSnapshot({
+		const backup = await manager.createBackup({
 			zoneId: 'my-hyphenated-zone',
 			stateDir,
 			workspaceDir,
-			snapshotDir,
+			backupDir,
 		});
 
 		// Clear and restore
@@ -201,8 +201,8 @@ describe('createSnapshotManager', () => {
 		fs.mkdirSync(stateDir, { recursive: true });
 		fs.mkdirSync(workspaceDir, { recursive: true });
 
-		const restoreResult = await manager.restoreSnapshot({
-			snapshotPath: snapshot.snapshotPath,
+		const restoreResult = await manager.restoreBackup({
+			backupPath: backup.backupPath,
 			stateDir,
 			workspaceDir,
 		});
@@ -211,9 +211,9 @@ describe('createSnapshotManager', () => {
 		expect(restoreResult.zoneId).toBe('my-hyphenated-zone');
 	});
 
-	it('returns empty list for non-existent snapshot directory', () => {
-		const manager = createSnapshotManager(noopEncryption);
-		const result = manager.listSnapshots({ snapshotDir: '/tmp/does-not-exist-xyz' });
+	it('returns empty list for non-existent backup directory', () => {
+		const manager = createZoneBackupManager(noopEncryption);
+		const result = manager.listBackups({ backupDir: '/tmp/does-not-exist-xyz' });
 		expect(result).toEqual([]);
 	});
 });

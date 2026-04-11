@@ -14,6 +14,7 @@ function createSystemConfig(
 	workspaceDirectory: string,
 ): SystemConfig {
 	return {
+		cacheDir: path.join(path.dirname(stateDirectory), 'cache'),
 		host: {
 			controllerPort,
 			secretsProvider: {

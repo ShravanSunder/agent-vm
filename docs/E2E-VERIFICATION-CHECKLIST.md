@@ -121,12 +121,12 @@ Expected:
 
 - prints an SSH command or JSON SSH details for the gateway VM
 
-## 8. Snapshot List
+## 8. Backup List
 
 Run:
 
 ```bash
-pnpm --filter agent-vm exec agent-vm controller snapshot list --zone shravan --config system.json
+pnpm --filter agent-vm exec agent-vm backup list --zone shravan --config system.json
 ```
 
 Expected:
