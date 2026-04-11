@@ -37,10 +37,11 @@ Edit `.env.local`:
 ### 3. Build images
 
 ```bash
-./scripts/build-images.sh
+agent-vm build
 ```
 
-The script builds the OCI images first, then primes the Gondolin asset caches the controller reads at runtime.
+Builds Docker OCI images from Dockerfiles, then Gondolin VM assets per zone.
+First build takes a few minutes. Subsequent builds reuse cached fingerprints.
 
 ### 4. Start the controller
 

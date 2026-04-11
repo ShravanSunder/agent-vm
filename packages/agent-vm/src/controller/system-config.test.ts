@@ -33,9 +33,11 @@ describe('loadSystemConfig', () => {
 				images: {
 					gateway: {
 						buildConfig: './images/gateway/build-config.json',
+						dockerfile: './images/gateway/Dockerfile',
 					},
 					tool: {
 						buildConfig: './images/tool/build-config.json',
+						dockerfile: './images/tool/Dockerfile',
 					},
 				},
 				zones: [
@@ -78,6 +80,14 @@ describe('loadSystemConfig', () => {
 			host: {
 				controllerPort: 18800,
 			},
+			images: {
+				gateway: {
+					dockerfile: path.join(workingDirectoryPath, 'images/gateway/Dockerfile'),
+				},
+				tool: {
+					dockerfile: path.join(workingDirectoryPath, 'images/tool/Dockerfile'),
+				},
+			},
 			zones: [
 				{
 					id: 'shravan',
@@ -106,9 +116,11 @@ describe('loadSystemConfig', () => {
 				images: {
 					gateway: {
 						buildConfig: './images/gateway/build-config.json',
+						dockerfile: './images/gateway/Dockerfile',
 					},
 					tool: {
 						buildConfig: './images/tool/build-config.json',
+						dockerfile: './images/tool/Dockerfile',
 					},
 				},
 				zones: [],

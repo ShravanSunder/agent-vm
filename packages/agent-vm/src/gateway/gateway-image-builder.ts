@@ -1,22 +1,21 @@
 import fs from 'node:fs/promises';
-import path from 'node:path';
+
+import type { BuildConfig, BuildImageResult } from 'gondolin-core';
 
 import {
-	buildImage as buildImageFromCore,
-	type BuildImageOptions,
-	type BuildImageResult,
-} from 'gondolin-core';
-
+	buildGondolinImage as buildGondolinImageDefault,
+	type GondolinImageBuilderDependencies,
+} from '../build/gondolin-image-builder.js';
 import type { GatewayBuildImageOptions } from './gateway-zone-support.js';
 
 export interface GatewayImageBuilderDependencies {
 	readonly buildImage?: (options: GatewayBuildImageOptions) => Promise<BuildImageResult>;
-	readonly loadBuildConfig?: (buildConfigPath: string) => Promise<unknown>;
+	readonly buildGondolinImage?: GondolinImageBuilderDependencies['buildImage'];
+	readonly loadBuildConfig?: GondolinImageBuilderDependencies['loadBuildConfig'];
 }
 
-async function loadBuildConfigFromJson(buildConfigPath: string): Promise<unknown> {
-	const rawContents = await fs.readFile(buildConfigPath, 'utf8');
-	return JSON.parse(rawContents);
+async function loadBuildConfigFromJson(buildConfigPath: string): Promise<BuildConfig> {
+	return JSON.parse(await fs.readFile(buildConfigPath, 'utf8')) as BuildConfig;
 }
 
 export async function buildGatewayImage(
@@ -26,23 +25,16 @@ export async function buildGatewayImage(
 	},
 	dependencies: GatewayImageBuilderDependencies = {},
 ): Promise<BuildImageResult> {
-	const loadBuildConfig = dependencies.loadBuildConfig ?? loadBuildConfigFromJson;
-	const configDir = path.dirname(path.resolve(options.buildConfigPath));
-	const buildImage =
-		dependencies.buildImage ??
-		(async (buildOptions: GatewayBuildImageOptions): Promise<BuildImageResult> => {
-			const coreBuildOptions: BuildImageOptions = {
-				buildConfig: buildOptions.buildConfig as never,
-				cacheDir: buildOptions.cacheDir,
-				configDir,
-				...(buildOptions.fullReset !== undefined ? { fullReset: buildOptions.fullReset } : {}),
-			};
-
-			return await buildImageFromCore(coreBuildOptions);
+	if (dependencies.buildImage) {
+		const loadBuildConfig = dependencies.loadBuildConfig ?? loadBuildConfigFromJson;
+		return await dependencies.buildImage({
+			buildConfig: await loadBuildConfig(options.buildConfigPath),
+			cacheDir: options.cacheDir,
 		});
+	}
 
-	return await buildImage({
-		buildConfig: await loadBuildConfig(options.buildConfigPath),
-		cacheDir: options.cacheDir,
+	return await buildGondolinImageDefault(options, {
+		...(dependencies.buildGondolinImage ? { buildImage: dependencies.buildGondolinImage } : {}),
+		...(dependencies.loadBuildConfig ? { loadBuildConfig: dependencies.loadBuildConfig } : {}),
 	});
 }

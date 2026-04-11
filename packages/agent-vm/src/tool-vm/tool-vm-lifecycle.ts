@@ -1,21 +1,18 @@
 import fsSync from 'node:fs';
-import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import {
-	buildImage as buildImageFromCore,
-	createManagedVm as createManagedVmFromCore,
-	type BuildConfig,
-	type ManagedVm,
-} from 'gondolin-core';
+import { createManagedVm as createManagedVmFromCore, type ManagedVm } from 'gondolin-core';
 
+import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { ToolProfile } from '../controller/lease-manager.js';
 import type { SystemConfig } from '../controller/system-config.js';
 
 export interface ToolVmLifecycleDependencies {
-	readonly buildImage?: typeof buildImageFromCore;
+	readonly buildGondolinImage?: (options: {
+		readonly buildConfigPath: string;
+		readonly cacheDir: string;
+	}) => ReturnType<typeof buildGondolinImageDefault>;
 	readonly createManagedVm?: typeof createManagedVmFromCore;
-	readonly loadBuildConfig?: (buildConfigPath: string) => Promise<BuildConfig>;
 }
 
 export function resolveToolVmWorkspaceDirectory(options: {
@@ -39,10 +36,6 @@ export function cleanToolVmWorkspace(workspaceDirectory: string): void {
 	}
 }
 
-async function loadBuildConfigFromJson(buildConfigPath: string): Promise<BuildConfig> {
-	return JSON.parse(await fs.readFile(buildConfigPath, 'utf8')) as BuildConfig;
-}
-
 export async function createToolVm(
 	options: {
 		readonly profile: ToolProfile;
@@ -54,12 +47,10 @@ export async function createToolVm(
 	},
 	dependencies: ToolVmLifecycleDependencies = {},
 ): Promise<ManagedVm> {
-	const loadBuildConfig = dependencies.loadBuildConfig ?? loadBuildConfigFromJson;
-	const buildImage = dependencies.buildImage ?? buildImageFromCore;
+	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
-	const toolBuildConfig = await loadBuildConfig(options.systemConfig.images.tool.buildConfig);
-	const toolImage = await buildImage({
-		buildConfig: toolBuildConfig,
+	const toolImage = await buildGondolinImage({
+		buildConfigPath: options.systemConfig.images.tool.buildConfig,
 		cacheDir: `${options.zoneGatewayStateDirectory}/images/tool`,
 	});
 	const hostWorkspaceDirectory = resolveToolVmWorkspaceDirectory({

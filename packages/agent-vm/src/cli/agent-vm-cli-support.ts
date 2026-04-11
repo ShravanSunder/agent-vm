@@ -9,6 +9,7 @@ import { buildControllerStatus } from '../operations/controller-status.js';
 import { runControllerDoctor } from '../operations/doctor.js';
 import { createAgeEncryption } from '../snapshots/snapshot-encryption.js';
 import { createSnapshotManager } from '../snapshots/snapshot-manager.js';
+import { runBuildCommand } from './build-command.js';
 import { scaffoldAgentVmProject, type ScaffoldAgentVmProjectResult } from './init-command.js';
 
 export interface CliDependencies {
@@ -19,6 +20,7 @@ export interface CliDependencies {
 	readonly createSnapshotManager: typeof createSnapshotManager;
 	readonly getCurrentWorkingDirectory?: () => string;
 	readonly loadSystemConfig: typeof loadSystemConfig;
+	readonly runBuildCommand?: typeof runBuildCommand;
 	readonly runInteractiveProcess?: (
 		command: string,
 		arguments_: readonly string[],
@@ -60,6 +62,7 @@ export const defaultCliDependencies: CliDependencies = {
 	createSnapshotManager,
 	getCurrentWorkingDirectory: () => process.cwd(),
 	loadSystemConfig,
+	runBuildCommand,
 	resolveServiceAccountToken,
 	runControllerDoctor,
 	scaffoldAgentVmProject,

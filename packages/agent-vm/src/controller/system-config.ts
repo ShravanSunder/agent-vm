@@ -42,6 +42,11 @@ const toolProfileSchema = z.object({
 	workspaceRoot: z.string().min(1),
 });
 
+const imageConfigSchema = z.object({
+	buildConfig: z.string().min(1),
+	dockerfile: z.string().min(1).optional(),
+});
+
 const systemConfigSchema = z.object({
 	host: z.object({
 		controllerPort: z.number().int().positive(),
@@ -51,12 +56,8 @@ const systemConfigSchema = z.object({
 		}),
 	}),
 	images: z.object({
-		gateway: z.object({
-			buildConfig: z.string().min(1),
-		}),
-		tool: z.object({
-			buildConfig: z.string().min(1),
-		}),
+		gateway: imageConfigSchema,
+		tool: imageConfigSchema,
 	}),
 	zones: z
 		.array(
@@ -93,10 +94,16 @@ function resolveRelativePaths(config: SystemConfig, configDir: string): SystemCo
 			gateway: {
 				...config.images.gateway,
 				buildConfig: resolvePath(config.images.gateway.buildConfig),
+				...(config.images.gateway.dockerfile
+					? { dockerfile: resolvePath(config.images.gateway.dockerfile) }
+					: {}),
 			},
 			tool: {
 				...config.images.tool,
 				buildConfig: resolvePath(config.images.tool.buildConfig),
+				...(config.images.tool.dockerfile
+					? { dockerfile: resolvePath(config.images.tool.dockerfile) }
+					: {}),
 			},
 		},
 		zones: config.zones.map((zone) => ({

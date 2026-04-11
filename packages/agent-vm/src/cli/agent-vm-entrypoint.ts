@@ -26,6 +26,7 @@ import {
 	type CliIo,
 	resolveConfigPath,
 } from './agent-vm-cli-support.js';
+import { runBuildCommand } from './build-command.js';
 import { runControllerOperationCommand } from './controller-operation-commands.js';
 import { scaffoldAgentVmProject } from './init-command.js';
 import { runLeaseCommand } from './lease-commands.js';
@@ -45,6 +46,15 @@ export async function runAgentVmCli(
 			zoneId,
 		});
 		io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+		return;
+	}
+	if (commandGroup === 'build') {
+		const buildArguments =
+			subcommand === undefined
+				? restArguments
+				: ([subcommand, ...restArguments] as readonly string[]);
+		const systemConfig = dependencies.loadSystemConfig(resolveConfigPath(buildArguments));
+		await (dependencies.runBuildCommand ?? runBuildCommand)({ systemConfig }, io);
 		return;
 	}
 

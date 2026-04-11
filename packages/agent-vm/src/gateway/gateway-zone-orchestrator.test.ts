@@ -1,4 +1,4 @@
-import type { BuildImageResult, ManagedVm, SecretResolver } from 'gondolin-core';
+import type { BuildConfig, BuildImageResult, ManagedVm, SecretResolver } from 'gondolin-core';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../controller/system-config.js';
@@ -62,6 +62,11 @@ const systemConfig = {
 	},
 } satisfies SystemConfig;
 
+const minimalBuildConfig: BuildConfig = {
+	arch: 'aarch64',
+	distro: 'alpine',
+};
+
 describe('startGatewayZone', () => {
 	it('builds the image, resolves secrets, creates the vm, and enables ingress', async () => {
 		const closeMock = vi.fn(async () => {});
@@ -95,14 +100,14 @@ describe('startGatewayZone', () => {
 			}),
 		);
 		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
-		const buildConfig = {
+		const buildConfig: BuildConfig = {
 			arch: 'aarch64',
 			distro: 'alpine',
 			rootfs: {
 				label: 'gateway-root',
 			},
 		};
-		const loadBuildConfig = vi.fn(async (): Promise<unknown> => buildConfig);
+		const loadBuildConfig = vi.fn(async (): Promise<BuildConfig> => buildConfig);
 
 		const result = await startGatewayZone(
 			{
@@ -189,7 +194,7 @@ describe('startGatewayZone', () => {
 				{
 					buildImage: vi.fn(),
 					createManagedVm: vi.fn(),
-					loadBuildConfig: vi.fn(),
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				},
 			),
 		).rejects.toThrow("Unknown zone 'does-not-exist'.");
@@ -233,7 +238,7 @@ describe('startGatewayZone', () => {
 					imagePath: '/tmp/img',
 				})),
 				createManagedVm,
-				loadBuildConfig: vi.fn(async () => ({})),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 			},
 		);
 
@@ -295,7 +300,7 @@ describe('startGatewayZone', () => {
 					imagePath: '/tmp/img',
 				})),
 				createManagedVm,
-				loadBuildConfig: vi.fn(async () => ({})),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 			},
 		);
 
@@ -345,7 +350,7 @@ describe('startGatewayZone', () => {
 						imagePath: '/tmp/img',
 					})),
 					createManagedVm: vi.fn(async () => managedVm),
-					loadBuildConfig: vi.fn(async () => ({})),
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				},
 			),
 		).rejects.toThrow(/gateway.*readiness/iu);
@@ -385,7 +390,7 @@ describe('startGatewayZone', () => {
 					imagePath: '/tmp/img',
 				})),
 				createManagedVm: vi.fn(async () => managedVm),
-				loadBuildConfig: vi.fn(async () => ({})),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 			},
 		);
 

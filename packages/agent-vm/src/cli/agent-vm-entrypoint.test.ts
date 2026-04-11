@@ -59,6 +59,85 @@ describe('runAgentVmCli', () => {
 		expect(outputs.join('')).toContain('"system.json"');
 	});
 
+	it('routes build to the build command handler', async () => {
+		const runBuildCommand = vi.fn(async () => {});
+
+		await runAgentVmCli(
+			['build', '--config', './custom-system.json'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				loadSystemConfig: vi.fn(
+					() =>
+						({
+							host: {
+								controllerPort: 18800,
+								secretsProvider: {
+									type: '1password',
+									tokenSource: { type: 'env' },
+								},
+							},
+							images: {
+								gateway: {
+									buildConfig: './images/gateway/build-config.json',
+									dockerfile: './images/gateway/Dockerfile',
+								},
+								tool: {
+									buildConfig: './images/tool/build-config.json',
+									dockerfile: './images/tool/Dockerfile',
+								},
+							},
+							tcpPool: {
+								basePort: 19000,
+								size: 5,
+							},
+							toolProfiles: {
+								standard: {
+									cpus: 1,
+									memory: '1G',
+									workspaceRoot: './workspaces/tools',
+								},
+							},
+							zones: [
+								{
+									allowedHosts: ['api.anthropic.com'],
+									gateway: {
+										cpus: 2,
+										memory: '2G',
+										openclawConfig: './config/shravan/openclaw.json',
+										port: 18791,
+										stateDir: './state/shravan',
+										workspaceDir: './workspaces/shravan',
+									},
+									id: 'shravan',
+									secrets: {},
+									toolProfile: 'standard',
+									websocketBypass: [],
+								},
+							],
+						}) as SystemConfig,
+				),
+				runBuildCommand,
+			},
+		);
+
+		expect(runBuildCommand).toHaveBeenCalledWith(
+			{
+				systemConfig: expect.objectContaining({
+					images: expect.objectContaining({
+						gateway: expect.objectContaining({
+							dockerfile: './images/gateway/Dockerfile',
+						}),
+					}),
+				}),
+			},
+			expect.any(Object),
+		);
+	});
+
 	it('routes doctor and status subcommands to their handlers', async () => {
 		const outputs: string[] = [];
 

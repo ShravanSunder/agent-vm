@@ -25,9 +25,11 @@ const defaultSystemConfig = (zoneId: string): object => ({
 	images: {
 		gateway: {
 			buildConfig: './images/gateway/build-config.json',
+			dockerfile: './images/gateway/Dockerfile',
 		},
 		tool: {
 			buildConfig: './images/tool/build-config.json',
+			dockerfile: './images/tool/Dockerfile',
 		},
 	},
 	zones: [
