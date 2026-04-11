@@ -33,11 +33,9 @@ describe('loadSystemConfig', () => {
 				images: {
 					gateway: {
 						buildConfig: './images/gateway/build-config.json',
-						postBuild: ['npm install -g openclaw@2026.4.2'],
 					},
 					tool: {
 						buildConfig: './images/tool/build-config.json',
-						postBuild: ['npm install -g @anthropic-ai/claude-code @openai/codex'],
 					},
 				},
 				zones: [
@@ -108,11 +106,9 @@ describe('loadSystemConfig', () => {
 				images: {
 					gateway: {
 						buildConfig: './images/gateway/build-config.json',
-						postBuild: [],
 					},
 					tool: {
 						buildConfig: './images/tool/build-config.json',
-						postBuild: [],
 					},
 				},
 				zones: [],

@@ -15,11 +15,9 @@ const systemConfig = {
 	images: {
 		gateway: {
 			buildConfig: './images/gateway/build-config.json',
-			postBuild: [],
 		},
 		tool: {
 			buildConfig: './images/tool/build-config.json',
-			postBuild: [],
 		},
 	},
 	zones: [

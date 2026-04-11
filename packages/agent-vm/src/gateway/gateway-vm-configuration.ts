@@ -82,7 +82,6 @@ export async function prepareGatewayHostDirectories(options: {
 export function buildGatewayVmFactoryOptions(options: {
 	readonly controllerPort: number;
 	readonly gatewayImagePath: string;
-	readonly pluginSourceDir?: string;
 	readonly resolvedSecrets: Record<string, string>;
 	readonly systemConfig: SystemConfig;
 	readonly zone: GatewayZone;
@@ -128,14 +127,6 @@ export function buildGatewayVmFactoryOptions(options: {
 				hostPath: options.zone.gateway.workspaceDir,
 				kind: 'realfs',
 			},
-			...(options.pluginSourceDir
-				? {
-						'/opt/gondolin-plugin-src': {
-							hostPath: options.pluginSourceDir,
-							kind: 'realfs-readonly' as const,
-						},
-					}
-				: {}),
 		},
 	};
 }

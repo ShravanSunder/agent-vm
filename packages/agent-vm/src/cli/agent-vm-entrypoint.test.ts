@@ -60,16 +60,14 @@ describe('runAgentVmCli', () => {
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 						},
 					},
-					images: {
-						gateway: {
-							buildConfig: './images/gateway/build-config.json',
-							postBuild: [],
+						images: {
+							gateway: {
+								buildConfig: './images/gateway/build-config.json',
+							},
+							tool: {
+								buildConfig: './images/tool/build-config.json',
+							},
 						},
-						tool: {
-							buildConfig: './images/tool/build-config.json',
-							postBuild: [],
-						},
-					},
 					tcpPool: {
 						basePort: 19000,
 						size: 5,
@@ -159,16 +157,14 @@ describe('runAgentVmCli', () => {
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 						},
 					},
-					images: {
-						gateway: {
-							buildConfig: './images/gateway/build-config.json',
-							postBuild: [],
+						images: {
+							gateway: {
+								buildConfig: './images/gateway/build-config.json',
+							},
+							tool: {
+								buildConfig: './images/tool/build-config.json',
+							},
 						},
-						tool: {
-							buildConfig: './images/tool/build-config.json',
-							postBuild: [],
-						},
-					},
 					tcpPool: {
 						basePort: 19000,
 						size: 5,
@@ -280,16 +276,14 @@ describe('runAgentVmCli', () => {
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 						},
 					},
-					images: {
-						gateway: {
-							buildConfig: './images/gateway/build-config.json',
-							postBuild: [],
+						images: {
+							gateway: {
+								buildConfig: './images/gateway/build-config.json',
+							},
+							tool: {
+								buildConfig: './images/tool/build-config.json',
+							},
 						},
-						tool: {
-							buildConfig: './images/tool/build-config.json',
-							postBuild: [],
-						},
-					},
 					tcpPool: {
 						basePort: 19000,
 						size: 5,
@@ -380,16 +374,14 @@ describe('runAgentVmCli', () => {
 						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 					},
 				},
-				images: {
-					gateway: {
-						buildConfig: './images/gateway/build-config.json',
-						postBuild: [],
+					images: {
+						gateway: {
+							buildConfig: './images/gateway/build-config.json',
+						},
+						tool: {
+							buildConfig: './images/tool/build-config.json',
+						},
 					},
-					tool: {
-						buildConfig: './images/tool/build-config.json',
-						postBuild: [],
-					},
-				},
 				tcpPool: {
 					basePort: 19000,
 					size: 5,
@@ -528,8 +520,8 @@ describe('runAgentVmCli', () => {
 						},
 					},
 					images: {
-						gateway: { buildConfig: '', postBuild: [] },
-						tool: { buildConfig: '', postBuild: [] },
+						gateway: { buildConfig: '' },
+						tool: { buildConfig: '' },
 					},
 					tcpPool: { basePort: 19000, size: 5 },
 					toolProfiles: {
@@ -635,8 +627,8 @@ describe('runAgentVmCli', () => {
 						},
 					},
 					images: {
-						gateway: { buildConfig: '', postBuild: [] },
-						tool: { buildConfig: '', postBuild: [] },
+						gateway: { buildConfig: '' },
+						tool: { buildConfig: '' },
 					},
 					tcpPool: { basePort: 19000, size: 5 },
 					toolProfiles: {

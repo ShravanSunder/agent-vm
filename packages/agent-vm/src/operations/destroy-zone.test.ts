@@ -32,16 +32,14 @@ describe('runControllerDestroy', () => {
 					tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 				},
 			},
-			images: {
-				gateway: {
-					buildConfig: './images/gateway/build-config.json',
-					postBuild: [],
+				images: {
+					gateway: {
+						buildConfig: './images/gateway/build-config.json',
+					},
+					tool: {
+						buildConfig: './images/tool/build-config.json',
+					},
 				},
-				tool: {
-					buildConfig: './images/tool/build-config.json',
-					postBuild: [],
-				},
-			},
 			zones: [
 				{
 					id: 'shravan',

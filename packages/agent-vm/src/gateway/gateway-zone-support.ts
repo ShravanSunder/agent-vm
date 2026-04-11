@@ -3,7 +3,6 @@ import type { SystemConfig } from '../controller/system-config.js';
 export type GatewayZone = SystemConfig['zones'][number];
 
 export interface StartGatewayZoneOptions {
-	readonly pluginSourceDir?: string;
 	readonly secretResolver: import('gondolin-core').SecretResolver;
 	readonly systemConfig: SystemConfig;
 	readonly zoneId: string;

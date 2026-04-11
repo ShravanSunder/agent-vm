@@ -15,11 +15,9 @@ const systemConfig = {
 	images: {
 		gateway: {
 			buildConfig: './images/gateway/build-config.json',
-			postBuild: ['npm install -g openclaw@2026.4.2'],
 		},
 		tool: {
 			buildConfig: './images/tool/build-config.json',
-			postBuild: [],
 		},
 	},
 	zones: [
@@ -107,7 +105,6 @@ describe('startGatewayZone', () => {
 
 		const result = await startGatewayZone(
 			{
-				pluginSourceDir: '/plugins/openclaw-agent-vm-plugin',
 				secretResolver,
 				systemConfig,
 				zoneId: 'shravan',
@@ -145,12 +142,6 @@ describe('startGatewayZone', () => {
 				tcpHosts: expect.objectContaining({
 					'controller.vm.host:18800': '127.0.0.1:18800',
 					'gateway.discord.gg:443': 'gateway.discord.gg:443',
-				}),
-				vfsMounts: expect.objectContaining({
-					'/opt/gondolin-plugin-src': {
-						hostPath: '/plugins/openclaw-agent-vm-plugin',
-						kind: 'realfs-readonly',
-					},
 				}),
 			}),
 		);

@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { BuildConfig } from '@earendil-works/gondolin';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { buildImage } from './build-pipeline.js';
+import { buildImage, computeBuildFingerprint } from './build-pipeline.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -63,5 +63,40 @@ describe('buildImage', () => {
 		expect(secondResult.fingerprint).toBe(firstResult.fingerprint);
 		expect(secondResult.imagePath).toBe(firstResult.imagePath);
 		expect(fakeBuildIntoDirectory).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('computeBuildFingerprint', () => {
+	it('produces different fingerprints when postBuild changes', () => {
+		const baseConfig = {
+			alpine: { version: '3.23.0' },
+			arch: 'aarch64',
+			distro: 'alpine',
+		};
+		const withPostBuild = {
+			...baseConfig,
+			postBuild: {
+				commands: ['update-ca-certificates'],
+			},
+		};
+
+		expect(computeBuildFingerprint(baseConfig as BuildConfig)).not.toBe(
+			computeBuildFingerprint(withPostBuild as BuildConfig),
+		);
+	});
+
+	it('produces the same fingerprint for identical postBuild configs', () => {
+		const configA = {
+			arch: 'aarch64',
+			postBuild: { commands: ['echo hello'] },
+		};
+		const configB = {
+			arch: 'aarch64',
+			postBuild: { commands: ['echo hello'] },
+		};
+
+		expect(computeBuildFingerprint(configA as BuildConfig)).toBe(
+			computeBuildFingerprint(configB as BuildConfig),
+		);
 	});
 });

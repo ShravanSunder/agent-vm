@@ -15,5 +15,12 @@
 	"rootfs": {
 		"label": "tool-root",
 		"sizeMb": 2048
+	},
+	"postBuild": {
+		"commands": [
+			"ln -sf /proc/self/fd /dev/fd 2>/dev/null || true",
+			"update-ca-certificates > /dev/null 2>&1 || true",
+			"mkdir -p /workspace /run/sshd"
+		]
 	}
 }

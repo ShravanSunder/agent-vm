@@ -53,11 +53,9 @@ const systemConfigSchema = z.object({
 	images: z.object({
 		gateway: z.object({
 			buildConfig: z.string().min(1),
-			postBuild: z.array(z.string()),
 		}),
 		tool: z.object({
 			buildConfig: z.string().min(1),
-			postBuild: z.array(z.string()),
 		}),
 	}),
 	zones: z

@@ -46,7 +46,6 @@ export async function startGatewayZone(
 			secretResolver: options.secretResolver,
 			systemConfig: options.systemConfig,
 			zone,
-			...(options.pluginSourceDir ? { pluginSourceDir: options.pluginSourceDir } : {}),
 		},
 		dependencies.createManagedVm ? { createManagedVm: dependencies.createManagedVm } : {},
 	);
@@ -56,7 +55,6 @@ export async function startGatewayZone(
 			: {}),
 		managedVm,
 		openClawConfigPath: zone.gateway.openclawConfig,
-		...(options.pluginSourceDir ? { pluginSourceDir: options.pluginSourceDir } : {}),
 	});
 	const ingress = await startOpenClawInGateway({
 		gatewayPort: zone.gateway.port,

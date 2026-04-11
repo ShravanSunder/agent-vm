@@ -21,7 +21,6 @@ export async function createGatewayVm(
 	options: {
 		readonly controllerPort: number;
 		readonly gatewayImagePath: string;
-		readonly pluginSourceDir?: string;
 		readonly resolvedSecrets: Record<string, string>;
 		readonly secretResolver: SecretResolver;
 		readonly systemConfig: SystemConfig;
@@ -42,11 +41,7 @@ export async function setupGatewayVmRuntime(options: {
 	readonly gatewayToken?: string;
 	readonly managedVm: ManagedVm;
 	readonly openClawConfigPath: string;
-	readonly pluginSourceDir?: string;
 }): Promise<void> {
-	await options.managedVm.exec('ln -sf /proc/self/fd /dev/fd 2>/dev/null || true');
-	await options.managedVm.exec('update-ca-certificates > /dev/null 2>&1');
-
 	const gatewayEnvironmentProfile =
 		'export OPENCLAW_HOME=/home/openclaw\n' +
 		`export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/config/${path.basename(options.openClawConfigPath)}\n` +
@@ -63,16 +58,5 @@ export async function setupGatewayVmRuntime(options: {
 			'chmod 600 /root/.openclaw-env && ' +
 			'touch /root/.bashrc && ' +
 			"grep -qxF 'source /root/.openclaw-env' /root/.bashrc || echo 'source /root/.openclaw-env' >> /root/.bashrc",
-	);
-
-	if (!options.pluginSourceDir) {
-		return;
-	}
-
-	const openClawExtensionsDirectory = '/usr/local/lib/node_modules/openclaw/dist/extensions';
-	await options.managedVm.exec(
-		`mkdir -p ${openClawExtensionsDirectory}/gondolin && ` +
-			`cp -a /opt/gondolin-plugin-src/. ${openClawExtensionsDirectory}/gondolin/ && ` +
-			`chown -R root:root ${openClawExtensionsDirectory}/gondolin`,
 	);
 }

@@ -11,12 +11,10 @@
 	},
 	"images": {
 		"gateway": {
-			"buildConfig": "./images/gateway/build-config.json",
-			"postBuild": []
+			"buildConfig": "./images/gateway/build-config.json"
 		},
 		"tool": {
-			"buildConfig": "./images/tool/build-config.json",
-			"postBuild": []
+			"buildConfig": "./images/tool/build-config.json"
 		}
 	},
 	"zones": [
