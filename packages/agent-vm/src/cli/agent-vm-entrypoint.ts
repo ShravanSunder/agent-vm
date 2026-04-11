@@ -1,9 +1,22 @@
 #!/usr/bin/env node
-try {
-	process.loadEnvFile('.env.local');
-} catch {
-	// .env.local is optional.
+function loadOptionalLocalEnvironmentFile(environmentFilePath: string = '.env.local'): void {
+	try {
+		process.loadEnvFile(environmentFilePath);
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+			return;
+		}
+
+		throw new Error(
+			`Failed to load ${environmentFilePath}: ${error instanceof Error ? error.message : String(error)}`,
+			{
+				cause: error,
+			},
+		);
+	}
 }
+
+loadOptionalLocalEnvironmentFile();
 
 import { pathToFileURL } from 'node:url';
 
@@ -26,7 +39,7 @@ export async function runAgentVmCli(
 ): Promise<void> {
 	const [commandGroup, subcommand, ...restArguments] = argv;
 	if (commandGroup === 'init') {
-		const zoneId = subcommand || 'default';
+		const zoneId = subcommand ?? 'default';
 		const result = (dependencies.scaffoldAgentVmProject ?? scaffoldAgentVmProject)({
 			targetDir: dependencies.getCurrentWorkingDirectory?.() ?? process.cwd(),
 			zoneId,
@@ -74,6 +87,8 @@ export async function runAgentVmCli(
 
 	throw new Error(`Unknown controller subcommand '${subcommand}'.`);
 }
+
+export { loadOptionalLocalEnvironmentFile };
 
 async function main(): Promise<void> {
 	await runAgentVmCli(process.argv.slice(2), {

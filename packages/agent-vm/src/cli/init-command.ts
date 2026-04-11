@@ -133,13 +133,20 @@ const defaultOpenClawConfig = (zoneId: string): object => ({
 });
 
 function writeFileIfMissing(filePath: string, content: string): 'created' | 'skipped' {
-	if (fs.existsSync(filePath)) {
-		return 'skipped';
-	}
-
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
-	fs.writeFileSync(filePath, content, 'utf8');
-	return 'created';
+	try {
+		fs.writeFileSync(filePath, content, {
+			encoding: 'utf8',
+			flag: 'wx',
+		});
+		return 'created';
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST') {
+			return 'skipped';
+		}
+
+		throw error;
+	}
 }
 
 export function scaffoldAgentVmProject(

@@ -22,38 +22,47 @@ node --input-type=module -e "
   import { buildAssets } from '@earendil-works/gondolin';
   import fs from 'node:fs';
   import path from 'node:path';
+  
+  try {
+    const configPath = path.resolve('${CONFIG_PATH}');
+    const configDir = path.dirname(configPath);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
-  const configPath = path.resolve('${CONFIG_PATH}');
-  const configDir = path.dirname(configPath);
-  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    function resolvePath(pathValue) {
+      return path.isAbsolute(pathValue) ? pathValue : path.resolve(configDir, pathValue);
+    }
 
-  function resolvePath(pathValue) {
-    return path.isAbsolute(pathValue) ? pathValue : path.resolve(configDir, pathValue);
-  }
+    async function build(imageName, buildConfigPath, outputDir) {
+      try {
+        const buildConfig = JSON.parse(fs.readFileSync(buildConfigPath, 'utf8'));
+        fs.mkdirSync(outputDir, { recursive: true });
+        console.log('  Building ' + imageName + ' → ' + outputDir);
+        await buildAssets(buildConfig, { outputDir, verbose: true });
+        console.log('  ' + imageName + ' done.');
+      } catch (error) {
+        throw new Error('Failed to build ' + imageName + ': ' + (error instanceof Error ? error.message : String(error)));
+      }
+    }
 
-  async function build(imageName, buildConfigPath, outputDir) {
-    const buildConfig = JSON.parse(fs.readFileSync(buildConfigPath, 'utf8'));
-    fs.mkdirSync(outputDir, { recursive: true });
-    console.log('  Building ' + imageName + ' → ' + outputDir);
-    await buildAssets(buildConfig, { outputDir, verbose: true });
-    console.log('  ' + imageName + ' done.');
-  }
+    const gatewayBuildConfigPath = resolvePath(config.images.gateway.buildConfig);
+    const toolBuildConfigPath = resolvePath(config.images.tool.buildConfig);
 
-  const gatewayBuildConfigPath = resolvePath(config.images.gateway.buildConfig);
-  const toolBuildConfigPath = resolvePath(config.images.tool.buildConfig);
-
-  for (const zone of config.zones) {
-    const zoneStateDir = resolvePath(zone.gateway.stateDir);
-    await build(
-      'gateway (' + zone.id + ')',
-      gatewayBuildConfigPath,
-      path.join(zoneStateDir, 'images', 'gateway'),
-    );
-    await build(
-      'tool (' + zone.id + ')',
-      toolBuildConfigPath,
-      path.join(zoneStateDir, 'images', 'tool'),
-    );
+    for (const zone of config.zones) {
+      const zoneStateDir = resolvePath(zone.gateway.stateDir);
+      await build(
+        'gateway (' + zone.id + ')',
+        gatewayBuildConfigPath,
+        path.join(zoneStateDir, 'images', 'gateway'),
+      );
+      await build(
+        'tool (' + zone.id + ')',
+        toolBuildConfigPath,
+        path.join(zoneStateDir, 'images', 'tool'),
+      );
+    }
+  } catch (error) {
+    console.error('[build-images] ' + (error instanceof Error ? error.message : String(error)));
+    process.exit(1);
   }
 "
 

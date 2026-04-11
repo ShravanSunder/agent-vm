@@ -28,6 +28,9 @@ export async function decryptCheckpointFile(
 	encryptedPath: string,
 	encryption: SnapshotEncryption,
 ): Promise<string> {
+	if (!encryptedPath.endsWith('.age')) {
+		throw new Error(`Checkpoint path must end with .age: ${encryptedPath}`);
+	}
 	const decryptedPath = encryptedPath.replace(/\.age$/u, '');
 	await encryption.decrypt(encryptedPath, decryptedPath);
 	return decryptedPath;

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ControllerClient } from '../controller/controller-client.js';
 import type { SystemConfig } from '../controller/system-config.js';
+import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { runSshCommand } from './ssh-commands.js';
 
 const systemConfig = {
@@ -45,23 +47,38 @@ const systemConfig = {
 	],
 } satisfies SystemConfig;
 
+function createControllerClientStub(
+	enableZoneSsh: ControllerClient['enableZoneSsh'],
+): ControllerClient {
+	return {
+		destroyZone: async () => ({}),
+		enableZoneSsh,
+		getControllerStatus: async () => ({}),
+		getZoneLogs: async () => ({}),
+		listLeases: async () => [],
+		refreshZoneCredentials: async () => ({}),
+		releaseLease: async () => {},
+		stopController: async () => ({}),
+		upgradeZone: async () => ({}),
+	};
+}
+
 describe('runSshCommand', () => {
 	it('spawns an interactive ssh session', async () => {
 		const runInteractiveProcess = vi.fn(async () => {});
 
 		await runSshCommand({
 			dependencies: {
+				...defaultCliDependencies,
 				createControllerClient: () =>
-					({
-						enableZoneSsh: async () => ({
-							host: '127.0.0.1',
-							identityFile: '/tmp/key',
-							port: 2222,
-							user: 'root',
-						}),
-					}) as never,
+					createControllerClientStub(async () => ({
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 2222,
+						user: 'root',
+					})),
 				runInteractiveProcess,
-			} as never,
+			},
 			io: {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -84,13 +101,12 @@ describe('runSshCommand', () => {
 
 		await runSshCommand({
 			dependencies: {
+				...defaultCliDependencies,
 				createControllerClient: () =>
-					({
-						enableZoneSsh: async () => ({
-							command: 'ssh -i /tmp/key -p 2222 root@127.0.0.1',
-						}),
-					}) as never,
-			} as never,
+					createControllerClientStub(async () => ({
+						command: 'ssh -i /tmp/key -p 2222 root@127.0.0.1',
+					})),
+			},
 			io: {
 				stderr: { write: () => true },
 				stdout: {
@@ -105,5 +121,87 @@ describe('runSshCommand', () => {
 		});
 
 		expect(outputs.join('')).toContain('ssh -i /tmp/key -p 2222 root@127.0.0.1');
+	});
+
+	it('passes through remote command arguments', async () => {
+		const runInteractiveProcess = vi.fn(async () => {});
+
+		await runSshCommand({
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: () =>
+					createControllerClientStub(async () => ({
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 2222,
+						user: 'root',
+					})),
+				runInteractiveProcess,
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			restArguments: ['--zone', 'shravan', '--', 'openclaw', 'auth', 'login'],
+			systemConfig,
+		});
+
+		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', [
+			'-i',
+			'/tmp/key',
+			'-p',
+			'2222',
+			'root@127.0.0.1',
+			'openclaw',
+			'auth',
+			'login',
+		]);
+	});
+
+	it('throws when the controller returns incomplete ssh data without a printable command', async () => {
+		await expect(
+			runSshCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: () =>
+						createControllerClientStub(async () => ({
+							user: 'root',
+						})),
+				},
+				io: {
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				restArguments: ['--zone', 'shravan'],
+				systemConfig,
+			}),
+		).rejects.toThrow('Controller returned incomplete SSH access details.');
+	});
+
+	it('wraps interactive ssh failures with context', async () => {
+		const runInteractiveProcess = vi.fn(async () => {
+			throw new Error('connect ECONNREFUSED');
+		});
+
+		await expect(
+			runSshCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: () =>
+						createControllerClientStub(async () => ({
+							host: '127.0.0.1',
+							port: 2222,
+							user: 'root',
+						})),
+					runInteractiveProcess,
+				},
+				io: {
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				restArguments: ['--zone', 'shravan'],
+				systemConfig,
+			}),
+		).rejects.toThrow('Failed to open SSH session to root@127.0.0.1:2222');
 	});
 });

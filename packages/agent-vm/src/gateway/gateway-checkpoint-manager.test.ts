@@ -23,22 +23,33 @@ describe('checkpoint encryption', () => {
 	it('encryptCheckpointFile calls encryption.encrypt with the correct paths', async () => {
 		const mockEncrypt = vi.fn(async () => {});
 
-		await encryptCheckpointFile('/tmp/gateway.qcow2', {
+		const encryptedPath = await encryptCheckpointFile('/tmp/gateway.qcow2', {
 			decrypt: vi.fn(),
 			encrypt: mockEncrypt,
 		});
 
 		expect(mockEncrypt).toHaveBeenCalledWith('/tmp/gateway.qcow2', '/tmp/gateway.qcow2.age');
+		expect(encryptedPath).toBe('/tmp/gateway.qcow2.age');
 	});
 
 	it('decryptCheckpointFile calls encryption.decrypt with the correct paths', async () => {
 		const mockDecrypt = vi.fn(async () => {});
 
-		await decryptCheckpointFile('/tmp/gateway.qcow2.age', {
+		const decryptedPath = await decryptCheckpointFile('/tmp/gateway.qcow2.age', {
 			decrypt: mockDecrypt,
 			encrypt: vi.fn(),
 		});
 
 		expect(mockDecrypt).toHaveBeenCalledWith('/tmp/gateway.qcow2.age', '/tmp/gateway.qcow2');
+		expect(decryptedPath).toBe('/tmp/gateway.qcow2');
+	});
+
+	it('rejects decrypt paths without the .age suffix', async () => {
+		await expect(
+			decryptCheckpointFile('/tmp/gateway.qcow2', {
+				decrypt: vi.fn(),
+				encrypt: vi.fn(),
+			}),
+		).rejects.toThrow('Checkpoint path must end with .age');
 	});
 });

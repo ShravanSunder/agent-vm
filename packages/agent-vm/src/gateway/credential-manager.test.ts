@@ -148,4 +148,99 @@ describe('resolveZoneSecrets', () => {
 			DISCORD_BOT_TOKEN: 'resolved:op://test-vault/test-item/token',
 		});
 	});
+
+	it('throws when the zone is unknown', async () => {
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => '',
+			resolveAll: async () => ({}),
+		};
+
+		await expect(
+			resolveZoneSecrets({
+				secretResolver,
+				systemConfig,
+				zoneId: 'missing-zone',
+			}),
+		).rejects.toThrow("Unknown zone 'missing-zone'.");
+	});
+
+	it('throws when a secret ref is missing from config and environment', async () => {
+		delete process.env.DISCORD_BOT_TOKEN_REF;
+		const baseZone = systemConfig.zones[0];
+		if (!baseZone) {
+			throw new Error('Expected base test zone');
+		}
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => '',
+			resolveAll: async () => ({}),
+		};
+		const envBackedConfig = {
+			...systemConfig,
+			zones: [
+				{
+					allowedHosts: baseZone.allowedHosts,
+					gateway: baseZone.gateway,
+					id: baseZone.id,
+					secrets: {
+						DISCORD_BOT_TOKEN: {
+							source: '1password' as const,
+							injection: 'env' as const,
+						},
+					},
+					toolProfile: baseZone.toolProfile,
+					websocketBypass: baseZone.websocketBypass,
+				},
+			],
+		} satisfies SystemConfig;
+
+		await expect(
+			resolveZoneSecrets({
+				secretResolver,
+				systemConfig: envBackedConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(
+			"Secret 'DISCORD_BOT_TOKEN' has no ref in config and DISCORD_BOT_TOKEN_REF is not set in environment.",
+		);
+	});
+
+	it('treats whitespace-only env refs as missing', async () => {
+		process.env.DISCORD_BOT_TOKEN_REF = '   ';
+		const baseZone = systemConfig.zones[0];
+		if (!baseZone) {
+			throw new Error('Expected base test zone');
+		}
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => '',
+			resolveAll: async () => ({}),
+		};
+		const envBackedConfig = {
+			...systemConfig,
+			zones: [
+				{
+					allowedHosts: baseZone.allowedHosts,
+					gateway: baseZone.gateway,
+					id: baseZone.id,
+					secrets: {
+						DISCORD_BOT_TOKEN: {
+							source: '1password' as const,
+							injection: 'env' as const,
+						},
+					},
+					toolProfile: baseZone.toolProfile,
+					websocketBypass: baseZone.websocketBypass,
+				},
+			],
+		} satisfies SystemConfig;
+
+		await expect(
+			resolveZoneSecrets({
+				secretResolver,
+				systemConfig: envBackedConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(
+			"Secret 'DISCORD_BOT_TOKEN' has no ref in config and DISCORD_BOT_TOKEN_REF is not set in environment.",
+		);
+	});
 });

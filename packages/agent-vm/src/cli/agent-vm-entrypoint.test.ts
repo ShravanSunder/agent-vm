@@ -1,9 +1,32 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../controller/system-config.js';
-import { runAgentVmCli } from './agent-vm-entrypoint.js';
+import { defaultCliDependencies } from './agent-vm-cli-support.js';
+import { loadOptionalLocalEnvironmentFile, runAgentVmCli } from './agent-vm-entrypoint.js';
 
 describe('runAgentVmCli', () => {
+	it('ignores a missing .env.local file', () => {
+		const loadEnvFileSpy = vi.spyOn(process, 'loadEnvFile').mockImplementation(() => {
+			const missingFileError = new Error('missing');
+			Object.assign(missingFileError, { code: 'ENOENT' });
+			throw missingFileError;
+		});
+
+		expect(() => loadOptionalLocalEnvironmentFile('.env.local')).not.toThrow();
+		expect(loadEnvFileSpy).toHaveBeenCalledWith('.env.local');
+	});
+
+	it('surfaces non-ENOENT .env.local load failures', () => {
+		const loadEnvFileSpy = vi.spyOn(process, 'loadEnvFile').mockImplementation(() => {
+			throw new Error('bad dotenv syntax');
+		});
+
+		expect(() => loadOptionalLocalEnvironmentFile('.env.local')).toThrow(
+			'Failed to load .env.local: bad dotenv syntax',
+		);
+		expect(loadEnvFileSpy).toHaveBeenCalledWith('.env.local');
+	});
+
 	it('routes init to the project scaffolder', async () => {
 		const outputs: string[] = [];
 		const scaffoldAgentVmProject = vi.fn(() => ({
@@ -23,9 +46,10 @@ describe('runAgentVmCli', () => {
 				},
 			},
 			{
+				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
 				scaffoldAgentVmProject,
-			} as never,
+			},
 		);
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({

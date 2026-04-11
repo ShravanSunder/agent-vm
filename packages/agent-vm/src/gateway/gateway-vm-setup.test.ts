@@ -30,4 +30,27 @@ describe('setupGatewayVmRuntime', () => {
 			false,
 		);
 	});
+
+	it('escapes single quotes in the gateway token', async () => {
+		const execCalls: string[] = [];
+		const managedVm: ManagedVm = {
+			id: 'gateway-vm',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async (command: string) => {
+				execCalls.push(command);
+				return { exitCode: 0, stderr: '', stdout: '' };
+			}),
+			setIngressRoutes: vi.fn(),
+		};
+
+		await setupGatewayVmRuntime({
+			gatewayToken: "abc'def",
+			managedVm,
+			openClawConfigPath: './config/shravan/openclaw.json',
+		});
+
+		expect(execCalls.join('\n')).toContain("OPENCLAW_GATEWAY_TOKEN='abc'\\''def'");
+	});
 });
