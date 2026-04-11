@@ -16,6 +16,7 @@ describe('setupGatewayVmRuntime', () => {
 				return { exitCode: 0, stderr: '', stdout: '' };
 			}),
 			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(),
 		};
 
 		await setupGatewayVmRuntime({
@@ -43,6 +44,7 @@ describe('setupGatewayVmRuntime', () => {
 				return { exitCode: 0, stderr: '', stdout: '' };
 			}),
 			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(),
 		};
 
 		await setupGatewayVmRuntime({

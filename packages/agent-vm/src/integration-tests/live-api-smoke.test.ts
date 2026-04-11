@@ -76,6 +76,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
 				id: 'tool-vm-smoke',
 				setIngressRoutes: vi.fn(),
+				getVmInstance: vi.fn(),
 			},
 			zoneId: 'shravan',
 		};

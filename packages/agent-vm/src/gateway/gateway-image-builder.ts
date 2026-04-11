@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 
 import {
 	buildImage as buildImageFromCore,
@@ -26,12 +27,14 @@ export async function buildGatewayImage(
 	dependencies: GatewayImageBuilderDependencies = {},
 ): Promise<BuildImageResult> {
 	const loadBuildConfig = dependencies.loadBuildConfig ?? loadBuildConfigFromJson;
+	const configDir = path.dirname(path.resolve(options.buildConfigPath));
 	const buildImage =
 		dependencies.buildImage ??
 		(async (buildOptions: GatewayBuildImageOptions): Promise<BuildImageResult> => {
 			const coreBuildOptions: BuildImageOptions = {
 				buildConfig: buildOptions.buildConfig as never,
 				cacheDir: buildOptions.cacheDir,
+				configDir,
 				...(buildOptions.fullReset !== undefined ? { fullReset: buildOptions.fullReset } : {}),
 			};
 

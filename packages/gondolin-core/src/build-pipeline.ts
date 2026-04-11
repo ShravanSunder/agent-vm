@@ -9,6 +9,9 @@ export type { BuildConfig } from '@earendil-works/gondolin';
 export interface BuildImageOptions {
 	readonly buildConfig: BuildConfig;
 	readonly cacheDir: string;
+	/** Directory to resolve relative paths in buildConfig (e.g. postBuild.copy.src).
+	 *  Defaults to process.cwd() if not provided. */
+	readonly configDir?: string;
 	readonly fullReset?: boolean;
 }
 
@@ -19,7 +22,11 @@ export interface BuildImageResult {
 }
 
 interface BuildPipelineDependencies {
-	readonly buildAssets?: (buildConfig: BuildConfig, outputDirectory: string) => Promise<unknown>;
+	readonly buildAssets?: (
+		buildConfig: BuildConfig,
+		outputDirectory: string,
+		configDir?: string,
+	) => Promise<unknown>;
 	readonly gondolinVersion?: string;
 }
 
@@ -54,13 +61,18 @@ function hasBuiltAssets(outputDirectoryPath: string): boolean {
 }
 
 async function loadBuildAssets(): Promise<
-	(buildConfig: BuildConfig, outputDirectory: string) => Promise<unknown>
+	(buildConfig: BuildConfig, outputDirectory: string, configDir?: string) => Promise<unknown>
 > {
 	const gondolinModule = await import('@earendil-works/gondolin');
-	return async (buildConfig: BuildConfig, outputDirectory: string): Promise<unknown> =>
+	return async (
+		buildConfig: BuildConfig,
+		outputDirectory: string,
+		configDir?: string,
+	): Promise<unknown> =>
 		await gondolinModule.buildAssets(buildConfig, {
 			outputDir: outputDirectory,
 			verbose: false,
+			...(configDir ? { configDir } : {}),
 		} satisfies BuildOptions);
 }
 
@@ -96,7 +108,7 @@ export async function buildImage(
 
 	fs.mkdirSync(imagePath, { recursive: true });
 	const buildAssetsImplementation = dependencies.buildAssets ?? (await loadBuildAssets());
-	await buildAssetsImplementation(options.buildConfig, imagePath);
+	await buildAssetsImplementation(options.buildConfig, imagePath, options.configDir);
 
 	if (!hasBuiltAssets(imagePath)) {
 		throw new Error(`Expected Gondolin assets to be written to ${imagePath}.`);

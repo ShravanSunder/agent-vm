@@ -8,6 +8,8 @@ RUN apt-get update && \
       curl \
       python3 && \
     rm -rf /var/lib/apt/lists/* && \
+    update-ca-certificates && \
     useradd -m -s /bin/bash sandbox && \
     mkdir -p /workspace /run/sshd && \
-    chown sandbox:sandbox /workspace
+    chown sandbox:sandbox /workspace && \
+    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true

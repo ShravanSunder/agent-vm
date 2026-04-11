@@ -79,6 +79,7 @@ describe('startControllerRuntime', () => {
 				exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
 				id: 'gateway-vm-1',
 				setIngressRoutes: vi.fn(),
+				getVmInstance: vi.fn(),
 			},
 			zone,
 		}));
@@ -123,6 +124,7 @@ describe('startControllerRuntime', () => {
 					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
 					id: 'tool-vm-1',
 					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
@@ -195,6 +197,7 @@ describe('startControllerRuntime', () => {
 						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
 						id: 'tool-vm-boot-fail',
 						setIngressRoutes: vi.fn(),
+						getVmInstance: vi.fn(),
 					})),
 					createSecretResolver: async () => ({
 						resolve: async () => '',
@@ -245,6 +248,7 @@ describe('startControllerRuntime', () => {
 					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
 					id: 'tool-vm-close',
 					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
@@ -272,6 +276,7 @@ describe('startControllerRuntime', () => {
 						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
 						id: 'gateway-vm-close',
 						setIngressRoutes: vi.fn(),
+						getVmInstance: vi.fn(),
 					},
 					zone,
 				})),

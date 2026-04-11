@@ -27,6 +27,7 @@ function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 			exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
 			id: `tool-vm-${leaseId}`,
 			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(),
 		},
 		zoneId: 'shravan',
 	};
@@ -61,6 +62,7 @@ describe('createControllerApp', () => {
 				exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
 				id: 'tool-vm-1',
 				setIngressRoutes: vi.fn(),
+				getVmInstance: vi.fn(),
 			},
 			zoneId: 'shravan',
 		};

@@ -20,17 +20,8 @@
 		"copy": [
 			{
 				"src": "../../packages/openclaw-agent-vm-plugin/dist",
-				"dest": "/opt/gondolin-plugin-staging"
+				"dest": "/usr/local/lib/node_modules/openclaw/dist/extensions/gondolin"
 			}
-		],
-		"commands": [
-			"ln -sf /proc/self/fd /dev/fd 2>/dev/null || true",
-			"update-ca-certificates",
-			"mkdir -p /usr/local/lib/node_modules/openclaw/dist/extensions/gondolin",
-			"cp -a /opt/gondolin-plugin-staging/. /usr/local/lib/node_modules/openclaw/dist/extensions/gondolin/",
-			"chown -R root:root /usr/local/lib/node_modules/openclaw/dist/extensions/gondolin",
-			"rm -rf /opt/gondolin-plugin-staging",
-			"mkdir -p /home/openclaw/.openclaw /home/openclaw/workspace /root"
 		]
 	}
 }

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVm } from 'gondolin-core';
+import type { ManagedVm, ManagedVmInstance } from 'gondolin-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { startControllerRuntime } from '../controller/controller-runtime.js';
@@ -62,7 +62,10 @@ function createSystemConfig(
 
 function createGatewayVmMock(
 	stateDirectory: string,
-): Pick<ManagedVm, 'close' | 'enableIngress' | 'enableSsh' | 'exec' | 'id' | 'setIngressRoutes'> {
+): Pick<
+	ManagedVm,
+	'close' | 'enableIngress' | 'enableSsh' | 'exec' | 'getVmInstance' | 'id' | 'setIngressRoutes'
+> {
 	return {
 		close: async () => {},
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -92,6 +95,7 @@ function createGatewayVmMock(
 
 			return { exitCode: 0, stderr: '', stdout: '' };
 		},
+		getVmInstance: () => ({}) as ManagedVmInstance,
 		id: 'gateway-vm-live-restart',
 		setIngressRoutes: () => {},
 	};
@@ -160,6 +164,7 @@ describe('live integration: controller restart persistence', () => {
 						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
 						id: 'tool-vm-live-restart',
 						setIngressRoutes: vi.fn(),
+						getVmInstance: vi.fn(),
 					})),
 					createSecretResolver: async () => ({
 						resolve: async () => '',

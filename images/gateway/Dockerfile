@@ -8,7 +8,10 @@ RUN apt-get update && \
       curl \
       python3 && \
     rm -rf /var/lib/apt/lists/* && \
+    update-ca-certificates && \
     npm install -g openclaw@2026.4.2 && \
     useradd -m -s /bin/bash openclaw && \
-    mkdir -p /home/openclaw/.openclaw /home/openclaw/workspace /run/sshd && \
-    chown -R openclaw:openclaw /home/openclaw
+    mkdir -p /home/openclaw/.openclaw /home/openclaw/workspace /run/sshd /root && \
+    chown -R openclaw:openclaw /home/openclaw && \
+    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true && \
+    mkdir -p /usr/local/lib/node_modules/openclaw/dist/extensions/gondolin

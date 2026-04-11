@@ -37,6 +37,7 @@ describe('gondolin controller integration', () => {
 						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
 						id: 'tool-vm-1',
 						setIngressRoutes: vi.fn(),
+						getVmInstance: vi.fn(),
 					},
 					zoneId: 'shravan',
 				})),

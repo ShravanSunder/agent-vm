@@ -75,6 +75,7 @@ describe('startGatewayZone', () => {
 			enableIngress: enableIngressMock,
 			enableSsh: enableSshMock,
 			exec: execMock,
+			getVmInstance: vi.fn(),
 			setIngressRoutes: setIngressRoutesMock,
 		};
 		const secretResolver: SecretResolver = {
@@ -205,6 +206,7 @@ describe('startGatewayZone', () => {
 			enableIngress: enableIngressMock,
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
+			getVmInstance: vi.fn(),
 			setIngressRoutes: setIngressRoutesMock,
 		};
 		const secretResolver: SecretResolver = {
@@ -268,6 +270,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
 			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(),
 		};
 		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
 
@@ -320,6 +323,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(async () => ({ exitCode: 0, stdout: '000', stderr: '' })),
 			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(),
 		};
 
 		await expect(
@@ -356,6 +360,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
 			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(),
 		};
 
 		await startGatewayZone(
