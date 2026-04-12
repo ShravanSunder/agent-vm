@@ -67,3 +67,4 @@ build-cache/
 # Scaffold tracking
 .scaffold-project.json
 cache/
+*.bak
