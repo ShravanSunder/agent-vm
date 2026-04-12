@@ -119,6 +119,7 @@ describe('createManagedVm', () => {
 		});
 		await managedVm.enableSsh();
 		await managedVm.enableIngress();
+		expect(managedVm.getVmInstance()).toBe(fakeVmInstance);
 		managedVm.setIngressRoutes([{ port: 18789, prefix: '/', stripPrefix: true }]);
 		await managedVm.close();
 

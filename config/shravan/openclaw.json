@@ -1,6 +1,8 @@
 {
 	"gateway": {
 		"port": 18789,
+		"mode": "local",
+		"bind": "loopback",
 		"auth": {
 			"mode": "token"
 		}
@@ -8,23 +10,31 @@
 	"agents": {
 		"defaults": {
 			"workspace": "/home/openclaw/workspace",
-			"model": "anthropic/claude-sonnet-4-5",
+			"model": {
+				"primary": "openai-codex/gpt-5.4"
+			},
 			"sandbox": {
 				"mode": "all",
 				"backend": "gondolin",
-				"scope": "session"
+				"scope": "session",
+				"workspaceAccess": "rw"
+			},
+			"models": {
+				"openai-codex/gpt-5.4": {}
 			}
 		}
 	},
-	"channels": {
-		"discord": {},
-		"whatsapp": {}
+	"tools": {
+		"elevated": {
+			"enabled": false
+		}
 	},
-	"models": {
-		"profiles": {
-			"codex": {
-				"provider": "openai-codex"
-			}
+	"channels": {
+		"discord": {
+			"enabled": true
+		},
+		"whatsapp": {
+			"enabled": true
 		}
 	},
 	"plugins": {
@@ -35,6 +45,18 @@
 					"controllerUrl": "http://controller.vm.host:18800",
 					"zoneId": "shravan"
 				}
+			}
+		}
+	},
+	"meta": {
+		"lastTouchedVersion": "2026.4.2",
+		"lastTouchedAt": "2026-04-11T23:50:42.693Z"
+	},
+	"auth": {
+		"profiles": {
+			"openai-codex:matches_copse_0i@icloud.com": {
+				"provider": "openai-codex",
+				"mode": "oauth"
 			}
 		}
 	}

@@ -3,17 +3,21 @@
 		"controllerPort": 18800,
 		"secretsProvider": {
 			"type": "1password",
-			"serviceAccountTokenEnv": "OP_SERVICE_ACCOUNT_TOKEN"
+			"tokenSource": {
+				"type": "env",
+				"envVar": "OP_SERVICE_ACCOUNT_TOKEN"
+			}
 		}
 	},
+	"cacheDir": "./cache",
 	"images": {
 		"gateway": {
 			"buildConfig": "./images/gateway/build-config.json",
-			"postBuild": []
+			"dockerfile": "./images/gateway/Dockerfile"
 		},
 		"tool": {
 			"buildConfig": "./images/tool/build-config.json",
-			"postBuild": []
+			"dockerfile": "./images/tool/Dockerfile"
 		}
 	},
 	"zones": [
@@ -28,27 +32,43 @@
 				"workspaceDir": "./workspaces/shravan"
 			},
 			"secrets": {
-				"ANTHROPIC_API_KEY": {
-					"source": "1password",
-					"ref": "op://AI/anthropic/api-key"
-				},
 				"DISCORD_BOT_TOKEN": {
 					"source": "1password",
-					"ref": "op://AI/discord-shravan/token"
+					"injection": "env"
 				},
-				"GITHUB_PAT": {
+				"PERPLEXITY_API_KEY": {
 					"source": "1password",
-					"ref": "op://AI/github-bot/pat"
+					"injection": "http-mediation",
+					"hosts": ["api.perplexity.ai"]
+				},
+				"OPENCLAW_GATEWAY_TOKEN": {
+					"source": "1password",
+					"injection": "env"
 				}
 			},
+			"websocketBypass": [
+				"gateway.discord.gg:443",
+				"web.whatsapp.com:443",
+				"g.whatsapp.net:443",
+				"mmg.whatsapp.net:443",
+				"media.whatsapp.net:443",
+				"pps.whatsapp.net:443",
+				"static.whatsapp.net:443"
+			],
 			"allowedHosts": [
-				"api.anthropic.com",
 				"api.openai.com",
+				"auth.openai.com",
+				"chatgpt.com",
+				"api.perplexity.ai",
 				"discord.com",
-				"gateway.discord.gg",
-				"web.whatsapp.com",
-				"api.whatsapp.com",
-				"api.github.com"
+				"cdn.discordapp.com",
+				"api.github.com",
+				"registry.npmjs.org",
+				"deb.debian.org",
+				"security.debian.org",
+				"clawhub.ai",
+				"openclaw.ai",
+				"docs.openclaw.ai"
 			],
 			"toolProfile": "standard"
 		}

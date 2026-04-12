@@ -3,7 +3,7 @@
 	"version": "0.1.0",
 	"private": true,
 	"bin": {
-		"agent-vm": "./dist/bin/agent-vm.js"
+		"agent-vm": "./dist/cli/agent-vm-entrypoint.js"
 	},
 	"type": "module",
 	"main": "./dist/index.js",
@@ -25,5 +25,8 @@
 		"gondolin-core": "workspace:*",
 		"hono": "^4",
 		"zod": "^4"
+	},
+	"devDependencies": {
+		"tasuku": "^2.3.0"
 	}
 }

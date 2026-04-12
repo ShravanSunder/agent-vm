@@ -7,13 +7,16 @@ export default defineConfig({
 		testTimeout: 300_000,
 		hookTimeout: 120_000,
 		pool: 'forks',
-		poolOptions: {
-			forks: { singleFork: true },
-		},
-		// Unit tests: colocated with source files across all packages
+		fileParallelism: false,
+		// Default suite runs unit-style tests. Live integration coverage uses
+		// the explicit .integration.test.ts suffix and runs separately.
 		include: ['packages/**/*.test.ts', 'packages/**/*.spec.ts'],
-		// Integration/E2E tests: separate directories (run with --project)
-		exclude: ['**/node_modules/**', '**/tests/integration/**', '**/tests/e2e/**'],
+		exclude: [
+			'**/node_modules/**',
+			'**/*.integration.test.ts',
+			'**/tests/integration/**',
+			'**/tests/e2e/**',
+		],
 		setupFiles: ['./vitest.setup.ts'],
 	},
 });

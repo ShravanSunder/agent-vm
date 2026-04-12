@@ -1,16 +1,27 @@
 {
 	"arch": "aarch64",
+	"distro": "alpine",
+	"alpine": {
+		"version": "3.23.0",
+		"kernelPackage": "linux-virt",
+		"kernelImage": "vmlinuz-virt",
+		"rootfsPackages": [],
+		"initramfsPackages": []
+	},
 	"oci": {
-		"image": "docker.io/library/node:24-slim",
-		"pullPolicy": "if-not-present"
+		"image": "agent-vm-gateway:latest",
+		"pullPolicy": "never"
+	},
+	"rootfs": {
+		"label": "gondolin-root",
+		"sizeMb": 4096
 	},
 	"postBuild": {
-		"commands": [
-			"apt-get update && apt-get install -y git curl openssh-server python3 ca-certificates chromium",
-			"npm install -g openclaw@2026.4.2",
-			"useradd -m -s /bin/bash openclaw",
-			"mkdir -p /home/openclaw/.openclaw /home/openclaw/workspace",
-			"chown -R openclaw:openclaw /home/openclaw"
+		"copy": [
+			{
+				"src": "../../packages/openclaw-agent-vm-plugin/dist",
+				"dest": "/usr/local/lib/node_modules/openclaw/dist/extensions/gondolin"
+			}
 		]
 	}
 }

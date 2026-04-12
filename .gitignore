@@ -61,5 +61,10 @@ __generated__/
 *.key
 credentials.json
 
+# Gondolin image build cache
+build-cache/
+
 # Scaffold tracking
 .scaffold-project.json
+cache/
+*.bak

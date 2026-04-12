@@ -95,10 +95,14 @@ export interface ManagedVm {
 	exec(command: string): Promise<ExecResult>;
 	enableSsh(options?: unknown): Promise<SshAccess>;
 	enableIngress(options?: unknown): Promise<IngressAccess>;
+	getVmInstance(): ManagedVmInstance;
 	setIngressRoutes(routes: readonly IngressRoute[]): void;
 	close(): Promise<void>;
 }
 
+/* oxlint-disable typescript-eslint/no-unsafe-type-assertion -- Gondolin SDK boundary:
+   The dependency injection pattern uses `unknown` to decouple from SDK internals.
+   The `as never` casts bridge our unknown-typed providers to the SDK's concrete types. */
 function createDefaultDependencies(): ManagedVmDependencies {
 	return {
 		createVm: async (vmOptions: unknown): Promise<ManagedVmInstance> =>
@@ -127,6 +131,7 @@ function createDefaultDependencies(): ManagedVmDependencies {
 			createShadowPathPredicate([...paths]),
 	};
 }
+/* oxlint-enable typescript-eslint/no-unsafe-type-assertion */
 
 function normalizeShadowPath(pathValue: string): string {
 	const trimmedPath = pathValue.trim();
@@ -217,10 +222,10 @@ export async function createManagedVm(
 	});
 
 	const hasTcpHosts = options.tcpHosts && Object.keys(options.tcpHosts).length > 0;
+	const hasImagePath = options.imagePath !== undefined && options.imagePath.length > 0;
+	const sandboxOptions = hasImagePath ? { imagePath: options.imagePath } : {};
 	const vmInstance = await dependencies.createVm({
-		sandbox: {
-			imagePath: options.imagePath,
-		},
+		...(Object.keys(sandboxOptions).length > 0 ? { sandbox: sandboxOptions } : {}),
 		sessionLabel: options.sessionLabel,
 		rootfs: {
 			mode: options.rootfsMode,
@@ -264,6 +269,9 @@ export async function createManagedVm(
 		},
 		async enableIngress(ingressOptions?: unknown): Promise<IngressAccess> {
 			return await vmInstance.enableIngress(ingressOptions);
+		},
+		getVmInstance(): ManagedVmInstance {
+			return vmInstance;
 		},
 		setIngressRoutes(routes: readonly IngressRoute[]): void {
 			vmInstance.setIngressRoutes(routes);
