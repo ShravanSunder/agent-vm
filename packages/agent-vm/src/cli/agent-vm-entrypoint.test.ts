@@ -40,6 +40,7 @@ function createCliBuildSystemConfig(): SystemConfig {
 			{
 				allowedHosts: ['api.anthropic.com'],
 				gateway: {
+					type: 'openclaw',
 					cpus: 2,
 					memory: '2G',
 					openclawConfig: './config/shravan/openclaw.json',
@@ -99,6 +100,7 @@ describe('runAgentVmCli', () => {
 		const outputs: string[] = [];
 		const scaffoldAgentVmProject = vi.fn(() => ({
 			created: ['system.json', '.env.local'],
+			keychainStored: false,
 			skipped: [],
 		}));
 
@@ -121,10 +123,38 @@ describe('runAgentVmCli', () => {
 		);
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
+			gatewayType: 'openclaw',
 			targetDir: '/tmp/agent-vm-init',
 			zoneId: 'test-zone',
 		});
 		expect(outputs.join('')).toContain('"system.json"');
+	});
+
+	it('passes gateway type through to init scaffolding', async () => {
+		const scaffoldAgentVmProject = vi.fn(() => ({
+			created: ['system.json', '.env.local'],
+			keychainStored: false,
+			skipped: [],
+		}));
+
+		await runAgentVmCli(
+			['init', 'test-zone', '--type', 'coding'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
+				scaffoldAgentVmProject,
+			},
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
+			gatewayType: 'coding',
+			targetDir: '/tmp/agent-vm-init',
+			zoneId: 'test-zone',
+		});
 	});
 
 	it('routes build to the build command handler', async () => {
@@ -143,17 +173,22 @@ describe('runAgentVmCli', () => {
 			},
 		);
 
-		expect(runBuildCommand).toHaveBeenCalledWith({
-			forceRebuild: false,
-			systemConfig: expect.objectContaining({
-				cacheDir: './cache',
-				images: expect.objectContaining({
-					gateway: expect.objectContaining({
-						dockerfile: './images/gateway/Dockerfile',
+		expect(runBuildCommand).toHaveBeenCalledWith(
+			{
+				forceRebuild: false,
+				systemConfig: expect.objectContaining({
+					cacheDir: './cache',
+					images: expect.objectContaining({
+						gateway: expect.objectContaining({
+							dockerfile: './images/gateway/Dockerfile',
+						}),
 					}),
 				}),
-			}),
-		});
+			},
+			{
+				runTask: expect.any(Function),
+			},
+		);
 	});
 
 	it('passes build --force through to the build command handler', async () => {
@@ -176,6 +211,9 @@ describe('runAgentVmCli', () => {
 			expect.objectContaining({
 				forceRebuild: true,
 			}),
+			{
+				runTask: expect.any(Function),
+			},
 		);
 	});
 
@@ -211,7 +249,7 @@ describe('runAgentVmCli', () => {
 		const runInteractiveProcess = vi.fn(async () => {});
 
 		await runAgentVmCli(
-			['auth', 'codex', '--zone', 'shravan'],
+			['openclaw', 'auth', 'codex', '--zone', 'shravan'],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -253,7 +291,7 @@ describe('runAgentVmCli', () => {
 	it('throws a usage error when auth is missing the plugin name', async () => {
 		await expect(
 			runAgentVmCli(
-				['auth'],
+				['openclaw', 'auth'],
 				{
 					stderr: { write: () => true },
 					stdout: { write: () => true },
@@ -263,14 +301,61 @@ describe('runAgentVmCli', () => {
 					loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
 				},
 			),
-		).rejects.toThrow('Usage: agent-vm auth <plugin> --zone <id>');
+		).rejects.toThrow(/provider|plugin|missing/i);
+	});
+
+	it('prints top-level help instead of throwing on --help', async () => {
+		const stdoutChunks: string[] = [];
+
+		await expect(
+			runAgentVmCli(
+				['--help'],
+				{
+					stderr: { write: () => true },
+					stdout: {
+						write: (chunk: string | Uint8Array) => {
+							stdoutChunks.push(String(chunk));
+							return true;
+						},
+					},
+				},
+				defaultCliDependencies,
+			),
+		).resolves.toBeUndefined();
+
+		expect(stdoutChunks.join('')).toContain('agent-vm');
+		expect(stdoutChunks.join('')).toContain('controller');
+	});
+
+	it('prints controller help instead of throwing on controller --help', async () => {
+		const stdoutChunks: string[] = [];
+
+		await expect(
+			runAgentVmCli(
+				['controller', '--help'],
+				{
+					stderr: { write: () => true },
+					stdout: {
+						write: (chunk: string | Uint8Array) => {
+							stdoutChunks.push(String(chunk));
+							return true;
+						},
+					},
+				},
+				defaultCliDependencies,
+			),
+		).resolves.toBeUndefined();
+
+		expect(stdoutChunks.join('')).toContain('controller');
+		expect(stdoutChunks.join('')).toContain('start');
+		expect(stdoutChunks.join('')).toContain('credentials');
 	});
 
 	it('routes doctor and status subcommands to their handlers', async () => {
 		const outputs: string[] = [];
 
 		await runAgentVmCli(
-			['controller', 'doctor'],
+			['doctor'],
 			{
 				stderr: {
 					write: () => true,
@@ -564,6 +649,7 @@ describe('runAgentVmCli', () => {
 						{
 							allowedHosts: ['api.anthropic.com'],
 							gateway: {
+								type: 'openclaw',
 								cpus: 2,
 								memory: '2G',
 								openclawConfig: './config/shravan/openclaw.json',
@@ -591,6 +677,9 @@ describe('runAgentVmCli', () => {
 			expect.objectContaining({
 				zoneId: 'shravan',
 			}),
+			{
+				runTask: expect.any(Function),
+			},
 		);
 	});
 
@@ -662,6 +751,7 @@ describe('runAgentVmCli', () => {
 					{
 						allowedHosts: ['api.anthropic.com'],
 						gateway: {
+							type: 'openclaw',
 							cpus: 2,
 							memory: '2G',
 							openclawConfig: './config/shravan/openclaw.json',
@@ -797,6 +887,7 @@ describe('runAgentVmCli', () => {
 						{
 							allowedHosts: ['api.anthropic.com'],
 							gateway: {
+								type: 'openclaw',
 								cpus: 2,
 								memory: '2G',
 								openclawConfig: './config/shravan/openclaw.json',
@@ -905,6 +996,7 @@ describe('runAgentVmCli', () => {
 						{
 							allowedHosts: ['api.anthropic.com'],
 							gateway: {
+								type: 'openclaw',
 								cpus: 2,
 								memory: '2G',
 								openclawConfig: './config/shravan/openclaw.json',

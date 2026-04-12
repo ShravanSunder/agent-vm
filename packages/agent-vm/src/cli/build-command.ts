@@ -48,10 +48,10 @@ async function resolveOciImageTagFromConfig(buildConfigPath: string): Promise<st
 }
 
 async function defaultRunTask(title: string, fn: () => Promise<void>): Promise<void> {
-	await task(title, async ({ startTime, setTitle }) => {
-		startTime();
+	await task(title, async (taskState) => {
+		taskState.startTime();
 		await fn();
-		setTitle(`${title} done`);
+		taskState.setTitle(`${title} done`);
 	});
 }
 
@@ -79,16 +79,16 @@ export async function runBuildCommand(
 			name: 'tool',
 		},
 	];
+	const dockerImageTargets = imageTargets.filter(
+		(imageTarget): imageTarget is ImageTarget & { readonly dockerfile: string } =>
+			imageTarget.dockerfile !== undefined,
+	);
 
-	for (const imageTarget of imageTargets) {
-		if (!imageTarget.dockerfile) {
-			continue;
-		}
-
+	for (const imageTarget of dockerImageTargets) {
 		const imageTag = await resolveOciImageTag(imageTarget.buildConfigPath);
 		await runTaskStep(`Docker: ${imageTarget.name} (${imageTag})`, async () => {
 			await buildDockerImage({
-				dockerfilePath: imageTarget.dockerfile!,
+				dockerfilePath: imageTarget.dockerfile,
 				imageTag,
 			});
 		});

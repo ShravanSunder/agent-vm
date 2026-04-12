@@ -25,6 +25,7 @@ const systemConfig = {
 		{
 			id: 'shravan',
 			gateway: {
+				type: 'openclaw',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
@@ -70,6 +71,7 @@ const minimalBuildConfig: BuildConfig = {
 
 describe('startGatewayZone', () => {
 	it('builds the image, resolves secrets, creates the vm, and enables ingress', async () => {
+		const taskTitles: string[] = [];
 		const closeMock = vi.fn(async () => {});
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
 		const enableSshMock = vi.fn(async () => ({ host: '127.0.0.1', port: 2222 }));
@@ -112,6 +114,10 @@ describe('startGatewayZone', () => {
 
 		const result = await startGatewayZone(
 			{
+				runTask: async (title, fn) => {
+					taskTitles.push(title);
+					await fn();
+				},
 				secretResolver,
 				systemConfig,
 				zoneId: 'shravan',
@@ -165,6 +171,13 @@ describe('startGatewayZone', () => {
 		expect(enableIngressMock).toHaveBeenCalledWith({
 			listenPort: 18791,
 		});
+		expect(taskTitles).toEqual([
+			'Resolving zone secrets',
+			'Building gateway image',
+			'Booting gateway VM',
+			'Configuring gateway',
+			'Starting OpenClaw',
+		]);
 		expect(result).toMatchObject({
 			image: {
 				fingerprint: 'fingerprint-123',

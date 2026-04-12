@@ -24,6 +24,7 @@ const systemConfig = {
 		{
 			id: 'shravan',
 			gateway: {
+				type: 'openclaw',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
@@ -53,6 +54,7 @@ const systemConfig = {
 describe('startControllerRuntime', () => {
 	it('starts the gateway, creates the controller app, and opens the controller port', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		const taskTitles: string[] = [];
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected test zone.');
@@ -132,6 +134,10 @@ describe('startControllerRuntime', () => {
 					resolveAll: async () => ({}),
 				}),
 				clearIntervalImpl: clearIntervalMock,
+				runTask: async (title, fn) => {
+					taskTitles.push(title);
+					await fn();
+				},
 				startGatewayZone,
 				startHttpServer,
 				setIntervalImpl: setIntervalMock,
@@ -140,9 +146,15 @@ describe('startControllerRuntime', () => {
 
 		expect(startGatewayZone).toHaveBeenCalledWith(
 			expect.objectContaining({
+				runTask: expect.any(Function),
 				zoneId: 'shravan',
 			}),
 		);
+		expect(taskTitles).toEqual([
+			'Resolving 1Password secrets',
+			'Starting gateway zone',
+			'Controller API on :18800',
+		]);
 		expect(startHttpServer).toHaveBeenCalledWith(
 			expect.objectContaining({
 				port: 18800,

@@ -1,8 +1,10 @@
 import type { SystemConfig } from '../controller/system-config.js';
+import type { RunTaskFn } from '../shared/run-task.js';
 
 export type GatewayZone = SystemConfig['zones'][number];
 
 export interface StartGatewayZoneOptions {
+	readonly runTask?: RunTaskFn;
 	readonly secretResolver: import('gondolin-core').SecretResolver;
 	readonly systemConfig: SystemConfig;
 	readonly zoneId: string;

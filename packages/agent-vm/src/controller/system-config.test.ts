@@ -45,6 +45,7 @@ describe('loadSystemConfig', () => {
 					{
 						id: 'shravan',
 						gateway: {
+							type: 'coding',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
@@ -93,6 +94,9 @@ describe('loadSystemConfig', () => {
 			zones: [
 				{
 					id: 'shravan',
+					gateway: {
+						type: 'coding',
+					},
 				},
 			],
 		});

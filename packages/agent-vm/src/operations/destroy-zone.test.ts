@@ -45,6 +45,7 @@ describe('runControllerDestroy', () => {
 				{
 					id: 'shravan',
 					gateway: {
+						type: 'openclaw',
 						memory: '2G',
 						cpus: 2,
 						port: 18791,

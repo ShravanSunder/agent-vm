@@ -20,133 +20,32 @@ loadOptionalLocalEnvironmentFile();
 
 import { pathToFileURL } from 'node:url';
 
+import { runSafely } from 'cmd-ts';
+
 import {
 	defaultCliDependencies,
 	type CliDependencies,
 	type CliIo,
-	resolveConfigPath,
-	resolveZoneId,
 } from './agent-vm-cli-support.js';
-import { runAuthCommand } from './auth-command.js';
-import { runBackupCommand } from './backup-commands.js';
-import { runBuildCommand } from './build-command.js';
-import { runCacheCommand } from './cache-commands.js';
-import { runControllerOperationCommand } from './controller-operation-commands.js';
-import { promptAndStoreServiceAccountToken, scaffoldAgentVmProject } from './init-command.js';
-import { runLeaseCommand } from './lease-commands.js';
-import { runSshCommand } from './ssh-commands.js';
+import { createAgentVmApp } from './commands/create-app.js';
 
 export async function runAgentVmCli(
 	argv: readonly string[],
 	io: CliIo,
 	dependencies: CliDependencies = defaultCliDependencies,
 ): Promise<void> {
-	const [commandGroup, subcommand, ...restArguments] = argv;
-	if (commandGroup === 'init') {
-		const zoneId = subcommand ?? 'default';
-		const result = (dependencies.scaffoldAgentVmProject ?? scaffoldAgentVmProject)({
-			targetDir: dependencies.getCurrentWorkingDirectory?.() ?? process.cwd(),
-			zoneId,
-		});
-
-		const keychainStored = await (
-			dependencies.promptAndStoreServiceAccountToken ?? promptAndStoreServiceAccountToken
-		)();
-
-		io.stdout.write(`${JSON.stringify({ ...result, keychainStored }, null, 2)}\n`);
+	const result = await runSafely(createAgentVmApp(io, dependencies), [...argv]);
+	if (result._tag === 'ok') {
 		return;
 	}
-	if (commandGroup === 'build') {
-		const buildArguments =
-			subcommand === undefined
-				? restArguments
-				: ([subcommand, ...restArguments] as readonly string[]);
-		const forceRebuild = buildArguments.includes('--force');
-		const systemConfig = dependencies.loadSystemConfig(resolveConfigPath(buildArguments));
-		await (dependencies.runBuildCommand ?? runBuildCommand)({ forceRebuild, systemConfig });
-		return;
+	const outputStream = result.error.config.into === 'stderr' ? io.stderr : io.stdout;
+	outputStream.write(result.error.config.message);
+	if (!result.error.config.message.endsWith('\n')) {
+		outputStream.write('\n');
 	}
-	if (commandGroup === 'cache') {
-		const cacheArguments =
-			subcommand === undefined
-				? restArguments
-				: ([subcommand, ...restArguments] as readonly string[]);
-		const systemConfig = dependencies.loadSystemConfig(resolveConfigPath(cacheArguments));
-		const confirm = cacheArguments.includes('--confirm');
-		await (dependencies.runCacheCommand ?? runCacheCommand)(
-			{
-				confirm,
-				subcommand: subcommand ?? 'list',
-				systemConfig,
-			},
-			io,
-		);
-		return;
+	if (result.error.config.exitCode !== 0) {
+		throw new Error(result.error.config.message);
 	}
-	if (commandGroup === 'backup') {
-		const backupArguments =
-			subcommand === undefined
-				? restArguments
-				: ([subcommand, ...restArguments] as readonly string[]);
-		const systemConfig = dependencies.loadSystemConfig(resolveConfigPath(backupArguments));
-		await runBackupCommand({
-			dependencies,
-			io,
-			restArguments: backupArguments,
-			systemConfig,
-		});
-		return;
-	}
-	if (commandGroup === 'auth') {
-		if (!subcommand) {
-			throw new Error('Usage: agent-vm auth <plugin> --zone <id>');
-		}
-		const systemConfig = dependencies.loadSystemConfig(resolveConfigPath(restArguments));
-		await runAuthCommand({
-			dependencies,
-			io,
-			pluginName: subcommand,
-			systemConfig,
-			zoneId: resolveZoneId(systemConfig, restArguments),
-		});
-		return;
-	}
-
-	if (commandGroup !== 'controller') {
-		throw new Error('Expected command group "controller".');
-	}
-	if (subcommand === undefined) {
-		throw new Error('Expected a controller subcommand.');
-	}
-
-	const systemConfig = dependencies.loadSystemConfig(resolveConfigPath(restArguments));
-
-	switch (subcommand) {
-		case 'credentials':
-		case 'destroy':
-		case 'doctor':
-		case 'logs':
-		case 'start':
-		case 'status':
-		case 'stop':
-		case 'upgrade':
-			await runControllerOperationCommand({
-				dependencies,
-				io,
-				restArguments,
-				subcommand,
-				systemConfig,
-			});
-			return;
-		case 'lease':
-			await runLeaseCommand({ dependencies, io, restArguments, systemConfig });
-			return;
-		case 'ssh-cmd':
-			await runSshCommand({ dependencies, io, restArguments, systemConfig });
-			return;
-	}
-
-	throw new Error(`Unknown controller subcommand '${subcommand}'.`);
 }
 
 export { loadOptionalLocalEnvironmentFile };
@@ -160,7 +59,9 @@ async function main(): Promise<void> {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	void main().catch((error: unknown) => {
-		process.stderr.write(`${String(error)}\n`);
+		if (!(error instanceof Error)) {
+			process.stderr.write(`${String(error)}\n`);
+		}
 		process.exitCode = 1;
 	});
 }

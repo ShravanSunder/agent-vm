@@ -27,7 +27,14 @@ const noGeneratedAgeIdentityDependencies = {
 
 const scaffoldedSystemConfigSchema = z.object({
 	cacheDir: z.string().min(1),
-	zones: z.tuple([z.object({ id: z.string().min(1) })]),
+	zones: z.tuple([
+		z.object({
+			id: z.string().min(1),
+			gateway: z.object({
+				type: z.enum(['openclaw', 'coding']),
+			}),
+		}),
+	]),
 });
 
 describe('scaffoldAgentVmProject', () => {
@@ -45,6 +52,27 @@ describe('scaffoldAgentVmProject', () => {
 		expect(result.created).toContain('system.json');
 		expect(config.cacheDir).toBe('./cache');
 		expect(config.zones[0]?.id).toBe('test-zone');
+		expect(config.zones[0]?.gateway.type).toBe('openclaw');
+	});
+
+	it('scaffolds a coding gateway when requested', () => {
+		const targetDir = createTestDirectory();
+
+		scaffoldAgentVmProject(
+			{ targetDir, zoneId: 'test-zone', gatewayType: 'coding' },
+			noGeneratedAgeIdentityDependencies,
+		);
+		const config = scaffoldedSystemConfigSchema.parse(
+			JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8')),
+		);
+		const gatewayDockerfile = fs.readFileSync(
+			path.join(targetDir, 'images', 'gateway', 'Dockerfile'),
+			'utf8',
+		);
+
+		expect(config.zones[0]?.gateway.type).toBe('coding');
+		expect(gatewayDockerfile).toContain('@openai/codex-cli');
+		expect(gatewayDockerfile).not.toContain('openclaw@');
 	});
 
 	it('creates .env.local from the default template', () => {
@@ -110,6 +138,30 @@ describe('scaffoldAgentVmProject', () => {
 		expect(fs.existsSync(path.join(targetDir, 'state', 'my-zone'))).toBe(true);
 		expect(fs.existsSync(path.join(targetDir, 'workspaces', 'my-zone'))).toBe(true);
 		expect(fs.existsSync(path.join(targetDir, 'workspaces', 'tools'))).toBe(true);
+	});
+
+	it('scaffolds a type-specific gateway config file', () => {
+		const openClawTargetDir = createTestDirectory();
+		scaffoldAgentVmProject(
+			{ targetDir: openClawTargetDir, zoneId: 'my-zone' },
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		const codingTargetDir = createTestDirectory();
+		scaffoldAgentVmProject(
+			{ targetDir: codingTargetDir, zoneId: 'my-zone', gatewayType: 'coding' },
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		expect(fs.existsSync(path.join(openClawTargetDir, 'config', 'my-zone', 'openclaw.json'))).toBe(
+			true,
+		);
+		expect(fs.existsSync(path.join(codingTargetDir, 'config', 'my-zone', 'coding.json'))).toBe(
+			true,
+		);
+		expect(fs.existsSync(path.join(codingTargetDir, 'config', 'my-zone', 'openclaw.json'))).toBe(
+			false,
+		);
 	});
 
 	it('does not overwrite an existing system.json', () => {

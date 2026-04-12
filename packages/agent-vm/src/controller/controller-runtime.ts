@@ -30,10 +30,15 @@ export async function startControllerRuntime(
 	dependencies: ControllerRuntimeDependencies,
 ): Promise<ControllerRuntime> {
 	const now = dependencies.now ?? Date.now;
-	const secretResolver = await createSecretResolverFromSystemConfig(
-		options.systemConfig,
-		dependencies.createSecretResolver ?? createSecretResolver,
-	);
+	const runTaskStep =
+		dependencies.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
+	let secretResolver!: Awaited<ReturnType<typeof createSecretResolverFromSystemConfig>>;
+	await runTaskStep('Resolving 1Password secrets', async () => {
+		secretResolver = await createSecretResolverFromSystemConfig(
+			options.systemConfig,
+			dependencies.createSecretResolver ?? createSecretResolver,
+		);
+	});
 	const createManagedToolVm =
 		dependencies.createManagedToolVm ??
 		(async (toolVmOptions): Promise<ManagedVm> =>
@@ -88,11 +93,15 @@ export async function startControllerRuntime(
 	};
 	const startGateway = async (): Promise<Awaited<ReturnType<typeof startGatewayZone>>> =>
 		await (dependencies.startGatewayZone ?? startGatewayZone)({
+			runTask: runTaskStep,
 			secretResolver,
 			systemConfig: options.systemConfig,
 			zoneId: options.zoneId,
 		});
-	let gateway = await startGateway();
+	let gateway!: Awaited<ReturnType<typeof startGatewayZone>>;
+	await runTaskStep('Starting gateway zone', async () => {
+		gateway = await startGateway();
+	});
 	const stopGatewayZone = async (): Promise<void> => await gateway.vm.close();
 	const restartGatewayZone = async (): Promise<void> => {
 		gateway = await startGateway();
@@ -120,9 +129,11 @@ export async function startControllerRuntime(
 		},
 		systemConfig: options.systemConfig,
 	});
-	serverRef.current = await (dependencies.startHttpServer ?? startControllerHttpServer)({
-		app: controllerApp,
-		port: options.systemConfig.host.controllerPort,
+	await runTaskStep(`Controller API on :${options.systemConfig.host.controllerPort}`, async () => {
+		serverRef.current = await (dependencies.startHttpServer ?? startControllerHttpServer)({
+			app: controllerApp,
+			port: options.systemConfig.host.controllerPort,
+		});
 	});
 
 	await idleReaper.reapExpiredLeases();

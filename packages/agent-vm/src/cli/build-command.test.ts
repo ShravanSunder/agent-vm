@@ -41,6 +41,7 @@ function createTestSystemConfig(): SystemConfig {
 			{
 				allowedHosts: ['example.com'],
 				gateway: {
+					type: 'openclaw',
 					cpus: 2,
 					memory: '2G',
 					openclawConfig: './config/test/openclaw.json',

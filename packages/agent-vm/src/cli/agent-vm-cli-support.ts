@@ -4,6 +4,7 @@ import { createSecretResolver, resolveServiceAccountToken } from 'gondolin-core'
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';
 import { createControllerClient } from '../controller/controller-client.js';
+import type { ControllerRuntimeDependencies } from '../controller/controller-runtime-types.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 import { loadSystemConfig, type SystemConfig } from '../controller/system-config.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
@@ -11,7 +12,11 @@ import { buildControllerStatus } from '../operations/controller-status.js';
 import { runControllerDoctor } from '../operations/doctor.js';
 import { runBuildCommand } from './build-command.js';
 import { runCacheCommand } from './cache-commands.js';
-import { scaffoldAgentVmProject, type ScaffoldAgentVmProjectResult } from './init-command.js';
+import {
+	scaffoldAgentVmProject,
+	type GatewayType,
+	type ScaffoldAgentVmProjectResult,
+} from './init-command.js';
 
 export interface CliDependencies {
 	readonly buildControllerStatus: typeof buildControllerStatus;
@@ -31,13 +36,17 @@ export interface CliDependencies {
 	readonly runControllerDoctor: typeof runControllerDoctor;
 	readonly promptAndStoreServiceAccountToken?: () => Promise<boolean>;
 	readonly scaffoldAgentVmProject?: (options: {
+		readonly gatewayType?: GatewayType;
 		readonly targetDir: string;
 		readonly zoneId: string;
 	}) => ScaffoldAgentVmProjectResult;
-	readonly startControllerRuntime: (options: {
-		readonly systemConfig: SystemConfig;
-		readonly zoneId: string;
-	}) => Promise<{
+	readonly startControllerRuntime: (
+		options: {
+			readonly systemConfig: SystemConfig;
+			readonly zoneId: string;
+		},
+		runtimeDependencies?: ControllerRuntimeDependencies,
+	) => Promise<{
 		readonly controllerPort: number;
 		readonly gateway: {
 			readonly ingress: {
@@ -70,8 +79,8 @@ export const defaultCliDependencies: CliDependencies = {
 	resolveServiceAccountToken,
 	runControllerDoctor,
 	scaffoldAgentVmProject,
-	startControllerRuntime: async (runtimeOptions) =>
-		await startControllerRuntime(runtimeOptions, {}),
+	startControllerRuntime: async (runtimeOptions, runtimeDependencies) =>
+		await startControllerRuntime(runtimeOptions, runtimeDependencies ?? {}),
 	startGatewayZone,
 };
 

@@ -27,6 +27,7 @@ const tokenSourceSchema = z.discriminatedUnion('type', [
 ]);
 
 const zoneGatewaySchema = z.object({
+	type: z.enum(['openclaw', 'coding']).default('openclaw'),
 	memory: z.string().min(1),
 	cpus: z.number().int().positive(),
 	port: z.number().int().positive(),

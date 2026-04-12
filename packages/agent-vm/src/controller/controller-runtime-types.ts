@@ -1,6 +1,7 @@
 import type { ManagedVm, SecretResolver } from 'gondolin-core';
 
 import type { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import type { RunTaskFn } from '../shared/run-task.js';
 import type { createControllerService } from './controller-http-routes.js';
 import type { ToolProfile } from './lease-manager.js';
 import type { SystemConfig } from './system-config.js';
@@ -29,6 +30,7 @@ export interface ControllerRuntimeDependencies {
 		readonly serviceAccountToken: string;
 	}) => Promise<SecretResolver>;
 	readonly now?: () => number;
+	readonly runTask?: RunTaskFn;
 	readonly setIntervalImpl?: (
 		callback: () => void | Promise<void>,
 		delayMs: number,

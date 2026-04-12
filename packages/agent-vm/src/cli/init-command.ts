@@ -10,6 +10,7 @@ import {
 } from './keychain-credential.js';
 
 export interface ScaffoldAgentVmProjectOptions {
+	readonly gatewayType?: GatewayType;
 	readonly targetDir: string;
 	readonly zoneId: string;
 }
@@ -30,7 +31,13 @@ export interface PromptAndStoreTokenDependencies {
 	readonly createReadlineInterface?: () => readline.Interface;
 }
 
-const defaultSystemConfig = (zoneId: string): object => ({
+export type GatewayType = 'coding' | 'openclaw';
+
+function resolveGatewayConfigFileName(gatewayType: GatewayType): 'coding.json' | 'openclaw.json' {
+	return gatewayType === 'coding' ? 'coding.json' : 'openclaw.json';
+}
+
+const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object => ({
 	host: {
 		controllerPort: 18800,
 		secretsProvider: {
@@ -53,10 +60,11 @@ const defaultSystemConfig = (zoneId: string): object => ({
 		{
 			id: zoneId,
 			gateway: {
+				type: gatewayType,
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				openclawConfig: `./config/${zoneId}/openclaw.json`,
+				openclawConfig: `./config/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 				stateDir: `./state/${zoneId}`,
 				workspaceDir: `./workspaces/${zoneId}`,
 			},
@@ -134,6 +142,24 @@ RUN apt-get update && \\
     chown -R openclaw:openclaw /home/openclaw && \\
     ln -sf /proc/self/fd /dev/fd 2>/dev/null || true && \\
     mkdir -p /usr/local/lib/node_modules/openclaw/dist/extensions/gondolin
+`;
+
+const defaultCodingGatewayDockerfile = `FROM node:24-slim
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      openssh-server \\
+      ca-certificates \\
+      git \\
+      curl \\
+      python3 && \\
+    rm -rf /var/lib/apt/lists/* && \\
+    update-ca-certificates && \\
+    npm install -g @openai/codex-cli && \\
+    useradd -m -s /bin/bash coder && \\
+    mkdir -p /workspace /run/sshd /state && \\
+    chown -R coder:coder /workspace /state && \\
+    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true
 `;
 
 const defaultToolDockerfile = `FROM node:24-slim
@@ -222,6 +248,19 @@ const defaultOpenClawConfig = (zoneId: string): object => ({
 	channels: {},
 });
 
+const defaultCodingGatewayConfig = (): object => ({
+	agentTimeoutMs: 600_000,
+	branchPrefix: 'agent/',
+	commitCoAuthor: 'agent-vm-coding <noreply@agent-vm>',
+	idleTimeoutMs: 1_800_000,
+	lintCommand: 'pnpm lint',
+	maxRetries: 3,
+	model: 'gpt-5.4-mini',
+	stateDir: '/state',
+	testCommand: 'pnpm test',
+	verificationTimeoutMs: 300_000,
+});
+
 function writeFileIfMissing(filePath: string, content: string): 'created' | 'skipped' {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	try {
@@ -245,11 +284,12 @@ export function scaffoldAgentVmProject(
 ): ScaffoldAgentVmProjectResult {
 	const created: string[] = [];
 	const skipped: string[] = [];
+	const gatewayType = options.gatewayType ?? 'openclaw';
 
 	const systemConfigPath = path.join(options.targetDir, 'system.json');
 	const systemConfigStatus = writeFileIfMissing(
 		systemConfigPath,
-		`${JSON.stringify(defaultSystemConfig(options.zoneId), null, '\t')}\n`,
+		`${JSON.stringify(defaultSystemConfig(options.zoneId, gatewayType), null, '\t')}\n`,
 	);
 	(systemConfigStatus === 'created' ? created : skipped).push('system.json');
 
@@ -276,24 +316,31 @@ export function scaffoldAgentVmProject(
 		}
 	}
 
-	const openClawConfigPath = path.join(
+	const gatewayConfigFileName = resolveGatewayConfigFileName(gatewayType);
+	const gatewayConfigPath = path.join(
 		options.targetDir,
 		'config',
 		options.zoneId,
-		'openclaw.json',
+		gatewayConfigFileName,
 	);
-	const openClawConfigStatus = writeFileIfMissing(
-		openClawConfigPath,
-		`${JSON.stringify(defaultOpenClawConfig(options.zoneId), null, '\t')}\n`,
+	const gatewayConfigStatus = writeFileIfMissing(
+		gatewayConfigPath,
+		`${JSON.stringify(
+			gatewayType === 'openclaw'
+				? defaultOpenClawConfig(options.zoneId)
+				: defaultCodingGatewayConfig(),
+			null,
+			'\t',
+		)}\n`,
 	);
-	(openClawConfigStatus === 'created' ? created : skipped).push(
-		`config/${options.zoneId}/openclaw.json`,
+	(gatewayConfigStatus === 'created' ? created : skipped).push(
+		`config/${options.zoneId}/${gatewayConfigFileName}`,
 	);
 
 	const gatewayDockerfilePath = path.join(options.targetDir, 'images', 'gateway', 'Dockerfile');
 	const gatewayDockerfileStatus = writeFileIfMissing(
 		gatewayDockerfilePath,
-		defaultGatewayDockerfile,
+		gatewayType === 'openclaw' ? defaultGatewayDockerfile : defaultCodingGatewayDockerfile,
 	);
 	(gatewayDockerfileStatus === 'created' ? created : skipped).push('images/gateway/Dockerfile');
 
@@ -364,11 +411,11 @@ export async function promptAndStoreServiceAccountToken(
 		readline.createInterface({ input: process.stdin, output: mutedOutput, terminal: true });
 
 	try {
-		process.stdout.write(
+		process.stderr.write(
 			'Paste your 1Password service account token (from https://my.1password.com/developer-tools/service-accounts):\n> ',
 		);
 		const token = await rl.question('');
-		process.stdout.write('\n');
+		process.stderr.write('\n');
 
 		const trimmedToken = token.trim();
 		if (!trimmedToken) {
@@ -376,7 +423,7 @@ export async function promptAndStoreServiceAccountToken(
 		}
 
 		storeToken(trimmedToken);
-		process.stdout.write('✓ Stored in macOS Keychain\n');
+		process.stderr.write('✓ Stored in macOS Keychain\n');
 		return true;
 	} finally {
 		rl.close();

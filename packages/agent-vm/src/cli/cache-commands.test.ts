@@ -36,6 +36,7 @@ function createCacheCommandSystemConfig(): SystemConfig {
 			{
 				allowedHosts: ['api.anthropic.com'],
 				gateway: {
+					type: 'openclaw',
 					cpus: 2,
 					memory: '2G',
 					openclawConfig: './config/shravan/openclaw.json',
