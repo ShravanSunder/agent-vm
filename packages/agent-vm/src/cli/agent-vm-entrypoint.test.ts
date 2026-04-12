@@ -110,7 +110,7 @@ describe('runAgentVmCli', () => {
 		}));
 
 		await runAgentVmCli(
-			['init', 'test-zone'],
+			['init', 'test-zone', '--type', 'openclaw'],
 			{
 				stderr: { write: () => true },
 				stdout: {
