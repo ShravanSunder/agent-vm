@@ -111,6 +111,7 @@ export async function startControllerRuntime(
 		leaseManager,
 		operations: {
 			...createControllerRuntimeOperations({
+				activeZoneId: options.zoneId,
 				getGateway: () => gateway,
 				getZone: (zoneId: string) => findConfiguredZone(options.systemConfig, zoneId),
 				leaseManager,
