@@ -43,6 +43,12 @@ export function createLeaseClient(options: {
 	return {
 		getLeaseStatus: async (leaseId: string): Promise<unknown> => {
 			const response = await fetchImpl(`${baseUrl}/lease/${leaseId}`);
+			if (!response.ok) {
+				const errorBody = await response.text().catch(() => '(unreadable)');
+				throw new TypeError(
+					`Controller lease status API returned HTTP ${response.status}: ${errorBody}`,
+				);
+			}
 			return await response.json();
 		},
 		releaseLease: async (leaseId: string): Promise<void> => {

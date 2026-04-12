@@ -7,10 +7,12 @@ describe('resolveGondolinPluginConfig', () => {
 		expect(
 			resolveGondolinPluginConfig({
 				controllerUrl: 'http://controller.vm.host:18800',
+				profileId: 'gpu',
 				zoneId: 'shravan',
 			}),
 		).toEqual({
 			controllerUrl: 'http://controller.vm.host:18800',
+			profileId: 'gpu',
 			zoneId: 'shravan',
 		});
 	});

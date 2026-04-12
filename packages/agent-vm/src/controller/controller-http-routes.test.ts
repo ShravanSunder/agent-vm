@@ -145,6 +145,48 @@ describe('createControllerApp', () => {
 		});
 	});
 
+	it('uses the zone toolProfile instead of trusting the requested profileId', async () => {
+		const createLease = vi.fn(async () => createLeaseStub('lease-gpu', 0));
+		const app = createControllerApp({
+			leaseManager: {
+				createLease,
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			toolProfiles: {
+				gpu: { cpus: 4, memory: '8G', workspaceRoot: '/workspaces/gpu' },
+				standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+			},
+			zoneToolProfiles: {
+				shravan: 'gpu',
+			},
+		});
+
+		const createResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/workspace',
+				profileId: 'standard',
+				scopeKey: 'agent:main:session-abc',
+				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/workspace',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(createResponse.status).toBe(200);
+		expect(createLease).toHaveBeenCalledWith(
+			expect.objectContaining({
+				profile: { cpus: 4, memory: '8G', workspaceRoot: '/workspaces/gpu' },
+				profileId: 'gpu',
+				zoneId: 'shravan',
+			}),
+		);
+	});
+
 	it('exposes status, logs, credentials refresh, destroy, and upgrade routes', async () => {
 		const destroyZone = vi.fn(async () => ({ ok: true, purged: true, zoneId: 'shravan' }));
 		const getStatus = vi.fn(async () => ({

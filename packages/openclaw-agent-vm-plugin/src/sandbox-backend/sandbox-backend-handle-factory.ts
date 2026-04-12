@@ -11,6 +11,7 @@ import { buildShellScriptWithArgs } from './sandbox-shell-script.js';
 export function createGondolinSandboxBackendFactory(
 	options: {
 		readonly controllerUrl: string;
+		readonly profileId?: string;
 		readonly zoneId: string;
 	},
 	dependencies: CreateBackendDependencies,
@@ -43,7 +44,7 @@ export function createGondolinSandboxBackendFactory(
 		}
 		const leaseResponse = await leaseClient.requestLease({
 			agentWorkspaceDir: params.agentWorkspaceDir,
-			profileId: 'standard',
+			profileId: options.profileId ?? 'standard',
 			scopeKey: params.scopeKey,
 			workspaceDir: params.workspaceDir,
 			zoneId: options.zoneId,

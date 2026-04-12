@@ -51,6 +51,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		const factory = createGondolinSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
+				profileId: 'gpu',
 				zoneId: 'shravan',
 			},
 			{
@@ -93,7 +94,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		expect(requestLease).toHaveBeenCalledWith({
 			agentWorkspaceDir: '/home/openclaw/workspace',
-			profileId: 'standard',
+			profileId: 'gpu',
 			scopeKey: 'agent:main:session-abc',
 			workspaceDir: '/home/openclaw/.openclaw/sandboxes/workspace',
 			zoneId: 'shravan',
@@ -190,6 +191,85 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		expect(firstHandle).toBe(secondHandle);
 		expect(requestLease).toHaveBeenCalledTimes(1);
+	});
+
+	it('drops a cached handle when lease status returns 404 and requests a fresh lease', async () => {
+		const requestLease = vi
+			.fn()
+			.mockResolvedValueOnce({
+				leaseId: 'lease-old',
+				ssh: {
+					host: 'tool-0.vm.host',
+					identityPem: 'pem',
+					knownHostsLine: '',
+					port: 22,
+					user: 'sandbox',
+				},
+				tcpSlot: 0,
+				workdir: '/workspace',
+			})
+			.mockResolvedValueOnce({
+				leaseId: 'lease-new',
+				ssh: {
+					host: 'tool-1.vm.host',
+					identityPem: 'pem',
+					knownHostsLine: '',
+					port: 22,
+					user: 'sandbox',
+				},
+				tcpSlot: 1,
+				workdir: '/workspace',
+			});
+		const getLeaseStatus = vi
+			.fn()
+			.mockResolvedValueOnce({ ok: true })
+			.mockRejectedValueOnce(new TypeError('Controller lease status API returned HTTP 404'));
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					getLeaseStatus,
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const firstHandle = await factory({
+			agentWorkspaceDir: '/workspace',
+			cfg: {},
+			scopeKey: 'agent:main:session-stale',
+			sessionKey: 'session-stale',
+			workspaceDir: '/workspace',
+		});
+		const secondHandle = await factory({
+			agentWorkspaceDir: '/workspace',
+			cfg: {},
+			scopeKey: 'agent:main:session-stale',
+			sessionKey: 'session-stale',
+			workspaceDir: '/workspace',
+		});
+		const thirdHandle = await factory({
+			agentWorkspaceDir: '/workspace',
+			cfg: {},
+			scopeKey: 'agent:main:session-stale',
+			sessionKey: 'session-stale',
+			workspaceDir: '/workspace',
+		});
+
+		expect(firstHandle).toBe(secondHandle);
+		expect(thirdHandle).not.toBe(firstHandle);
+		expect(requestLease).toHaveBeenCalledTimes(2);
 	});
 
 	it('creates separate handles for different scopeKeys', async () => {

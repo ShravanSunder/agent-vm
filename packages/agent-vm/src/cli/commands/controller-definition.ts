@@ -88,6 +88,11 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 				},
 				handler: async ({ config }) => {
 					const systemConfig = loadSystemConfigFromOption(config, dependencies);
+					if (systemConfig.zones.length !== 1) {
+						throw new Error(
+							`controller start currently supports a single-zone system.json, but found ${systemConfig.zones.length} zones. Split the config or add explicit multi-zone runtime support before starting.`,
+						);
+					}
 					const firstZone = systemConfig.zones[0];
 					if (!firstZone) {
 						throw new Error('System config does not define any zones.');

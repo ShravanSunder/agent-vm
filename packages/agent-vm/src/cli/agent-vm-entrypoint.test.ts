@@ -162,6 +162,19 @@ describe('runAgentVmCli', () => {
 		});
 	});
 
+	it('rejects init when --type is missing', async () => {
+		await expect(
+			runAgentVmCli(
+				['init', 'test-zone'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				defaultCliDependencies,
+			),
+		).rejects.toThrow(/type/u);
+	});
+
 	it('routes build to the build command handler', async () => {
 		const runBuildCommand = vi.fn(async () => {});
 
@@ -330,6 +343,19 @@ describe('runAgentVmCli', () => {
 
 		expect(stdoutChunks.join('')).toContain('agent-vm');
 		expect(stdoutChunks.join('')).toContain('controller');
+	});
+
+	it('rejects an invalid gateway type value', async () => {
+		await expect(
+			runAgentVmCli(
+				['init', 'test-zone', '--type', 'banana'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				defaultCliDependencies,
+			),
+		).rejects.toThrow(/openclaw|coding/u);
 	});
 
 	it('prints controller help instead of throwing on controller --help', async () => {
@@ -712,6 +738,37 @@ describe('runAgentVmCli', () => {
 				runTask: expect.any(Function),
 			},
 		);
+	});
+
+	it('rejects controller start when multiple zones are configured', async () => {
+		const baseSystemConfig = createCliBuildSystemConfig();
+		const primaryZone = baseSystemConfig.zones[0];
+		if (!primaryZone) {
+			throw new Error('Expected primary zone in test system config');
+		}
+
+		await expect(
+			runAgentVmCli(
+				['controller', 'start'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					loadSystemConfig: () => ({
+						...baseSystemConfig,
+						zones: [
+							primaryZone,
+							{
+								...primaryZone,
+								id: 'alevtina',
+							},
+						],
+					}),
+				},
+			),
+		).rejects.toThrow(/single-zone/u);
 	});
 
 	it('routes controller operation subcommands through the controller client', async () => {

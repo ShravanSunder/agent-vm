@@ -105,4 +105,17 @@ describe('createLeaseClient', () => {
 
 		expect(requests[0]).toBe('http://controller.vm.host:18800/lease');
 	});
+
+	it('throws when lease status returns a non-ok response', async () => {
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async () =>
+				new Response(JSON.stringify({ error: 'missing lease' }), {
+					headers: { 'content-type': 'application/json' },
+					status: 404,
+				}),
+		});
+
+		await expect(leaseClient.getLeaseStatus('lease-missing')).rejects.toThrow(/HTTP 404/u);
+	});
 });

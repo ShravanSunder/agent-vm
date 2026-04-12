@@ -17,6 +17,7 @@ export function createControllerApp(options: {
 		string,
 		{ readonly cpus: number; readonly memory: string; readonly workspaceRoot: string }
 	>;
+	readonly zoneToolProfiles?: Record<string, string>;
 	readonly operations?: ControllerRouteOperations;
 }): Hono {
 	const app = new Hono();
@@ -35,14 +36,15 @@ export function createControllerApp(options: {
 				);
 			}
 			const payload = parsedPayload.data;
-			const toolProfile = options.toolProfiles?.[payload.profileId];
+			const resolvedProfileId = options.zoneToolProfiles?.[payload.zoneId] ?? payload.profileId;
+			const toolProfile = options.toolProfiles?.[resolvedProfileId];
 			if (!toolProfile) {
-				return context.json({ error: `Unknown tool profile '${payload.profileId}'` }, 400);
+				return context.json({ error: `Unknown tool profile '${resolvedProfileId}'` }, 400);
 			}
 			const lease = await options.leaseManager.createLease({
 				agentWorkspaceDir: payload.agentWorkspaceDir,
 				profile: toolProfile,
-				profileId: payload.profileId,
+				profileId: resolvedProfileId,
 				scopeKey: payload.scopeKey,
 				workspaceDir: payload.workspaceDir,
 				zoneId: payload.zoneId,
@@ -99,6 +101,9 @@ export function createControllerService(options: {
 	const app = createControllerApp({
 		leaseManager: options.leaseManager,
 		toolProfiles: options.systemConfig.toolProfiles,
+		zoneToolProfiles: Object.fromEntries(
+			options.systemConfig.zones.map((zone) => [zone.id, zone.toolProfile]),
+		),
 		...(options.operations ? { operations: options.operations } : {}),
 	});
 
