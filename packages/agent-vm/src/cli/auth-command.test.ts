@@ -99,8 +99,10 @@ describe('runAuthCommand', () => {
 
 		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', [
 			'-t',
-			'-o', 'StrictHostKeyChecking=no',
-			'-o', 'UserKnownHostsFile=/dev/null',
+			'-o',
+			'StrictHostKeyChecking=no',
+			'-o',
+			'UserKnownHostsFile=/dev/null',
 			'-i',
 			'/tmp/test-key',
 			'-p',

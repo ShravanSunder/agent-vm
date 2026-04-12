@@ -16,7 +16,8 @@
 			"sandbox": {
 				"mode": "all",
 				"backend": "gondolin",
-				"scope": "session"
+				"scope": "session",
+				"workspaceAccess": "rw"
 			}
 		}
 	},
@@ -26,8 +27,12 @@
 		}
 	},
 	"channels": {
-		"discord": {},
-		"whatsapp": {}
+		"discord": {
+			"enabled": true
+		},
+		"whatsapp": {
+			"enabled": true
+		}
 	},
 	"plugins": {
 		"entries": {
@@ -39,5 +44,9 @@
 				}
 			}
 		}
+	},
+	"meta": {
+		"lastTouchedVersion": "2026.4.2",
+		"lastTouchedAt": "2026-04-09T22:59:24.206Z"
 	}
 }

@@ -143,20 +143,17 @@ describe('runAgentVmCli', () => {
 			},
 		);
 
-		expect(runBuildCommand).toHaveBeenCalledWith(
-			{
-				forceRebuild: false,
-				systemConfig: expect.objectContaining({
-					cacheDir: './cache',
-					images: expect.objectContaining({
-						gateway: expect.objectContaining({
-							dockerfile: './images/gateway/Dockerfile',
-						}),
+		expect(runBuildCommand).toHaveBeenCalledWith({
+			forceRebuild: false,
+			systemConfig: expect.objectContaining({
+				cacheDir: './cache',
+				images: expect.objectContaining({
+					gateway: expect.objectContaining({
+						dockerfile: './images/gateway/Dockerfile',
 					}),
 				}),
-			},
-			expect.any(Object),
-		);
+			}),
+		});
 	});
 
 	it('passes build --force through to the build command handler', async () => {
@@ -179,7 +176,6 @@ describe('runAgentVmCli', () => {
 			expect.objectContaining({
 				forceRebuild: true,
 			}),
-			expect.any(Object),
 		);
 	});
 
@@ -236,8 +232,10 @@ describe('runAgentVmCli', () => {
 
 		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', [
 			'-t',
-			'-o', 'StrictHostKeyChecking=no',
-			'-o', 'UserKnownHostsFile=/dev/null',
+			'-o',
+			'StrictHostKeyChecking=no',
+			'-o',
+			'UserKnownHostsFile=/dev/null',
 			'-i',
 			'/tmp/test-key',
 			'-p',

@@ -48,9 +48,13 @@ export function createAgeBackupEncryption(
 		encrypt: async (inputPath, outputPath) => {
 			const identity = await dependencies.resolveIdentity();
 			const recipient = await deriveRecipientFromIdentity(identity);
-			await execFileAsync('age', ['--encrypt', '--recipient', recipient, '--output', outputPath, inputPath], {
-				encoding: 'utf8',
-			});
+			await execFileAsync(
+				'age',
+				['--encrypt', '--recipient', recipient, '--output', outputPath, inputPath],
+				{
+					encoding: 'utf8',
+				},
+			);
 		},
 		decrypt: async (inputPath, outputPath) => {
 			const identity = await dependencies.resolveIdentity();
@@ -58,9 +62,13 @@ export function createAgeBackupEncryption(
 			const identityPath = path.join(tmpDir, 'identity.txt');
 			try {
 				fs.writeFileSync(identityPath, identity + '\n', { mode: 0o600 });
-				await execFileAsync('age', ['--decrypt', '--identity', identityPath, '--output', outputPath, inputPath], {
-					encoding: 'utf8',
-				});
+				await execFileAsync(
+					'age',
+					['--decrypt', '--identity', identityPath, '--output', outputPath, inputPath],
+					{
+						encoding: 'utf8',
+					},
+				);
 			} finally {
 				fs.rmSync(tmpDir, { recursive: true, force: true });
 			}

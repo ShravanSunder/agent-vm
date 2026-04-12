@@ -62,8 +62,10 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	}
 
 	const sshArguments = [
-		'-o', 'StrictHostKeyChecking=no',
-		'-o', 'UserKnownHostsFile=/dev/null',
+		'-o',
+		'StrictHostKeyChecking=no',
+		'-o',
+		'UserKnownHostsFile=/dev/null',
 		...(sshResponse.identityFile ? ['-i', sshResponse.identityFile] : []),
 		'-p',
 		String(sshResponse.port),

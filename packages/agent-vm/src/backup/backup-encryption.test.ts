@@ -10,7 +10,8 @@ async function generateTestIdentity(): Promise<string> {
 	const { execFile } = await import('node:child_process');
 	const { promisify } = await import('node:util');
 	const output = await promisify(execFile)('age-keygen', [], { encoding: 'utf8' });
-	const match = output.stderr.match(/AGE-SECRET-KEY-\S+/u) ?? output.stdout.match(/AGE-SECRET-KEY-\S+/u);
+	const match =
+		output.stderr.match(/AGE-SECRET-KEY-\S+/u) ?? output.stdout.match(/AGE-SECRET-KEY-\S+/u);
 	if (!match) {
 		throw new Error('Failed to generate age identity');
 	}
