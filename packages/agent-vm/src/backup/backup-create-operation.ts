@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -23,9 +23,9 @@ export async function createEncryptedBackup(options: {
 		zoneId: options.zoneId,
 	});
 
-	fs.mkdirSync(options.backupDir, { recursive: true });
+	await fs.mkdir(options.backupDir, { recursive: true });
 
-	const stagingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-stage-'));
+	const stagingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'backup-stage-'));
 	try {
 		await execFileAsync('cp', ['-a', options.stateDir, path.join(stagingDirectory, 'state')]);
 		await execFileAsync('cp', [
@@ -34,7 +34,7 @@ export async function createEncryptedBackup(options: {
 			path.join(stagingDirectory, 'workspace'),
 		]);
 
-		fs.writeFileSync(
+		await fs.writeFile(
 			path.join(stagingDirectory, 'manifest.json'),
 			JSON.stringify({
 				createdAt: new Date().toISOString(),
@@ -53,11 +53,11 @@ export async function createEncryptedBackup(options: {
 			'manifest.json',
 		]);
 	} finally {
-		fs.rmSync(stagingDirectory, { recursive: true, force: true });
+		await fs.rm(stagingDirectory, { recursive: true, force: true });
 	}
 
 	await options.encryption.encrypt(backupPaths.tarPath, backupPaths.encryptedPath);
-	fs.unlinkSync(backupPaths.tarPath);
+	await fs.unlink(backupPaths.tarPath);
 
 	return {
 		backupPath: backupPaths.encryptedPath,

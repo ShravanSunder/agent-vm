@@ -1,12 +1,6 @@
-import { execFile } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
 
 import type { BackupEncryption } from './backup-manager.js';
-
-const execFileAsync = promisify(execFile);
 
 interface AgeEncryptionDependencies {
 	/** Resolves the age identity (secret key) string from 1Password.
@@ -15,18 +9,51 @@ interface AgeEncryptionDependencies {
 	readonly resolveIdentity: () => Promise<string>;
 }
 
-async function deriveRecipientFromIdentity(identityLine: string): Promise<string> {
-	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'age-identity-'));
-	const identityPath = path.join(tmpDir, 'identity.txt');
-	try {
-		fs.writeFileSync(identityPath, identityLine + '\n', { mode: 0o600 });
-		const result = await execFileAsync('age-keygen', ['-y', identityPath], {
-			encoding: 'utf8',
+/**
+ * Run a command with optional stdin input. Returns stdout as a string.
+ * Rejects if the process exits non-zero.
+ */
+function runWithStdin(
+	command: string,
+	args: readonly string[],
+	stdinInput?: string,
+): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const child = spawn(command, [...args], { stdio: ['pipe', 'pipe', 'pipe'] });
+		let stdout = '';
+		let stderr = '';
+
+		child.stdout.on('data', (data: Buffer) => {
+			stdout += data.toString('utf8');
 		});
-		return result.stdout.trim();
-	} finally {
-		fs.rmSync(tmpDir, { recursive: true, force: true });
-	}
+		child.stderr.on('data', (data: Buffer) => {
+			stderr += data.toString('utf8');
+		});
+
+		child.on('close', (code) => {
+			if (code !== 0) {
+				reject(new Error(`${command} failed (exit ${code}): ${stderr.trim()}`));
+				return;
+			}
+			resolve(stdout);
+		});
+
+		if (stdinInput !== undefined) {
+			child.stdin.write(stdinInput);
+			child.stdin.end();
+		} else {
+			child.stdin.end();
+		}
+	});
+}
+
+/**
+ * Derive the public key (recipient) from an age identity key via stdin.
+ * No temp files — the secret key stays in memory.
+ */
+async function deriveRecipientFromIdentity(identityLine: string): Promise<string> {
+	const stdout = await runWithStdin('age-keygen', ['-y', '/dev/stdin'], identityLine + '\n');
+	return stdout.trim();
 }
 
 /**
@@ -36,10 +63,8 @@ async function deriveRecipientFromIdentity(identityLine: string): Promise<string
  * is stored in 1Password per zone. The public key (recipient) is derived
  * at encryption time via age-keygen -y.
  *
- * Note: age's --passphrase mode requires an interactive TTY and cannot
- * be driven programmatically. Identity-key mode works non-interactively.
- * The 1Password vault item must store an actual age identity key, not
- * a human-readable passphrase.
+ * Secret keys are never written to disk — they're passed via stdin
+ * using /dev/stdin as the identity file path.
  */
 export function createAgeBackupEncryption(
 	dependencies: AgeEncryptionDependencies,
@@ -48,30 +73,22 @@ export function createAgeBackupEncryption(
 		encrypt: async (inputPath, outputPath) => {
 			const identity = await dependencies.resolveIdentity();
 			const recipient = await deriveRecipientFromIdentity(identity);
-			await execFileAsync(
-				'age',
-				['--encrypt', '--recipient', recipient, '--output', outputPath, inputPath],
-				{
-					encoding: 'utf8',
-				},
-			);
+			await runWithStdin('age', [
+				'--encrypt',
+				'--recipient',
+				recipient,
+				'--output',
+				outputPath,
+				inputPath,
+			]);
 		},
 		decrypt: async (inputPath, outputPath) => {
 			const identity = await dependencies.resolveIdentity();
-			const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'age-decrypt-'));
-			const identityPath = path.join(tmpDir, 'identity.txt');
-			try {
-				fs.writeFileSync(identityPath, identity + '\n', { mode: 0o600 });
-				await execFileAsync(
-					'age',
-					['--decrypt', '--identity', identityPath, '--output', outputPath, inputPath],
-					{
-						encoding: 'utf8',
-					},
-				);
-			} finally {
-				fs.rmSync(tmpDir, { recursive: true, force: true });
-			}
+			await runWithStdin(
+				'age',
+				['--decrypt', '--identity', '/dev/stdin', '--output', outputPath, inputPath],
+				identity + '\n',
+			);
 		},
 	};
 }

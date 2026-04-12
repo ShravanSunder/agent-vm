@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -12,12 +12,15 @@ async function copyExtractedDirectoryContents(
 	sourceDirectory: string,
 	targetDirectory: string,
 ): Promise<void> {
-	if (!fs.existsSync(sourceDirectory)) {
+	try {
+		await fs.access(sourceDirectory);
+	} catch {
 		return;
 	}
 
+	const entries = await fs.readdir(sourceDirectory);
 	await Promise.all(
-		fs.readdirSync(sourceDirectory).map(async (entryName) => {
+		entries.map(async (entryName) => {
 			await execFileAsync('cp', [
 				'-a',
 				path.join(sourceDirectory, entryName),
@@ -27,16 +30,15 @@ async function copyExtractedDirectoryContents(
 	);
 }
 
-function readZoneIdFromManifest(extractDirectory: string): string {
+async function readZoneIdFromManifest(extractDirectory: string): Promise<string> {
 	const manifestPath = path.join(extractDirectory, 'manifest.json');
-	if (!fs.existsSync(manifestPath)) {
+	try {
+		const rawManifest = await fs.readFile(manifestPath, 'utf8');
+		const manifest = JSON.parse(rawManifest) as { readonly zoneId?: string };
+		return manifest.zoneId ?? 'unknown';
+	} catch {
 		return 'unknown';
 	}
-
-	const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
-		readonly zoneId?: string;
-	};
-	return manifest.zoneId ?? 'unknown';
 }
 
 export async function restoreEncryptedBackup(options: {
@@ -48,7 +50,7 @@ export async function restoreEncryptedBackup(options: {
 	const decryptedTarPath = `${options.backupPath}.decrypted.tar`;
 	await options.encryption.decrypt(options.backupPath, decryptedTarPath);
 
-	const extractDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-extract-'));
+	const extractDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'backup-extract-'));
 	try {
 		await execFileAsync('tar', ['xf', decryptedTarPath, '-C', extractDirectory]);
 		await copyExtractedDirectoryContents(path.join(extractDirectory, 'state'), options.stateDir);
@@ -60,10 +62,10 @@ export async function restoreEncryptedBackup(options: {
 		return {
 			stateDir: options.stateDir,
 			workspaceDir: options.workspaceDir,
-			zoneId: readZoneIdFromManifest(extractDirectory),
+			zoneId: await readZoneIdFromManifest(extractDirectory),
 		};
 	} finally {
-		fs.rmSync(extractDirectory, { recursive: true, force: true });
-		fs.unlinkSync(decryptedTarPath);
+		await fs.rm(extractDirectory, { recursive: true, force: true });
+		await fs.unlink(decryptedTarPath);
 	}
 }
