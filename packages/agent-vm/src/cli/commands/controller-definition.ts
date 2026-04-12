@@ -41,12 +41,9 @@ function createControllerOperationSubcommand(
 		},
 		handler: async ({ config, ...rest }) => {
 			const systemConfig = await loadSystemConfigFromOption(config, dependencies);
-			const zoneFlag = options.supportsZone && 'zone' in rest
-				? (rest.zone as string | undefined)
-				: undefined;
-			const selectedZone = options.supportsZone
-				? requireZone(systemConfig, zoneFlag)
-				: undefined;
+			const zoneFlag =
+				options.supportsZone && 'zone' in rest ? (rest.zone as string | undefined) : undefined;
+			const selectedZone = options.supportsZone ? requireZone(systemConfig, zoneFlag) : undefined;
 			const argumentPrefix =
 				options.supportsPurge && 'purge' in rest && rest.purge ? ['--purge'] : [];
 			const restArguments = selectedZone

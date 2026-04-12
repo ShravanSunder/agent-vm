@@ -170,6 +170,30 @@ describe('scaffoldAgentVmProject', () => {
 		);
 	});
 
+	it('scaffolds control-ui allowed origins for the host ingress port', async () => {
+		const targetDir = createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{ targetDir, zoneId: 'my-zone', gatewayType: 'openclaw' },
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		const openClawConfig = JSON.parse(
+			fs.readFileSync(path.join(targetDir, 'config', 'my-zone', 'openclaw.json'), 'utf8'),
+		) as {
+			readonly gateway: {
+				readonly controlUi: {
+					readonly allowedOrigins: readonly string[];
+				};
+			};
+		};
+
+		expect(openClawConfig.gateway.controlUi.allowedOrigins).toEqual([
+			'http://127.0.0.1:18791',
+			'http://localhost:18791',
+		]);
+	});
+
 	it('does not overwrite an existing system.json', async () => {
 		const targetDir = createTestDirectory();
 		fs.writeFileSync(path.join(targetDir, 'system.json'), '{"existing":true}\n', 'utf8');

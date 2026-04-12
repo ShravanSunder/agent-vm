@@ -111,7 +111,12 @@ export async function startControllerRuntime(
 	await runTaskStep('Starting gateway zone', async () => {
 		gateway = await startGateway();
 	});
-	const stopGatewayZone = async (): Promise<void> => await requireGateway().vm.close();
+	const stopGatewayZone = async (): Promise<void> => {
+		if (!gateway) {
+			return;
+		}
+		await gateway.vm.close();
+	};
 	const restartGatewayZone = async (): Promise<void> => {
 		gateway = undefined;
 		gateway = await startGateway();
@@ -153,8 +158,11 @@ export async function startControllerRuntime(
 		async close(): Promise<void> {
 			clearReaperTimer();
 			await releaseAllLeases();
-			await requireGateway().vm.close();
-			await serverRef.current?.close();
+			try {
+				await stopGatewayZone();
+			} finally {
+				await serverRef.current?.close();
+			}
 		},
 		controllerPort: options.systemConfig.host.controllerPort,
 		gateway: {

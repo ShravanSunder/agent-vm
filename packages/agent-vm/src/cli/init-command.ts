@@ -33,6 +33,8 @@ export interface PromptAndStoreTokenDependencies {
 
 export type GatewayType = 'coding' | 'openclaw';
 
+const defaultGatewayIngressPort = 18791;
+
 function resolveGatewayConfigFileName(gatewayType: GatewayType): 'coding.json' | 'openclaw.json' {
 	return gatewayType === 'coding' ? 'coding.json' : 'openclaw.json';
 }
@@ -63,7 +65,7 @@ const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object =
 				type: gatewayType,
 				memory: '2G',
 				cpus: 2,
-				port: 18791,
+				port: defaultGatewayIngressPort,
 				gatewayConfig: `./config/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 				stateDir: `./state/${zoneId}`,
 				workspaceDir: `./workspaces/${zoneId}`,
@@ -269,10 +271,16 @@ const defaultToolBuildConfig = (): object => ({
 	},
 });
 
-const defaultOpenClawConfig = (zoneId: string): object => ({
+const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): object => ({
 	gateway: {
 		auth: { mode: 'token' },
 		bind: 'loopback',
+		controlUi: {
+			allowedOrigins: [
+				`http://127.0.0.1:${gatewayIngressPort}`,
+				`http://localhost:${gatewayIngressPort}`,
+			],
+		},
 		mode: 'local',
 		port: 18789,
 	},
@@ -390,7 +398,7 @@ async function scaffoldAgentVmProjectInternal(
 		gatewayConfigPath,
 		`${JSON.stringify(
 			gatewayType === 'openclaw'
-				? defaultOpenClawConfig(options.zoneId)
+				? defaultOpenClawConfig(options.zoneId, defaultGatewayIngressPort)
 				: defaultCodingGatewayConfig(),
 			null,
 			'\t',

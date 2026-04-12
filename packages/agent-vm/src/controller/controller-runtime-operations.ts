@@ -112,10 +112,14 @@ export function createControllerRuntimeOperations(options: {
 				},
 				{
 					readGatewayLogs: async () => {
-						const result = await options
-							.getGateway()
-							.vm.exec(`cat ${options.getGateway().processSpec.logPath} 2>/dev/null || echo ""`);
-						return result.stdout;
+						try {
+							const result = await options
+								.getGateway()
+								.vm.exec(`cat ${options.getGateway().processSpec.logPath} 2>/dev/null || echo ""`);
+							return result.stdout;
+						} catch {
+							return '';
+						}
 					},
 				},
 			);
@@ -171,8 +175,11 @@ export function createStopControllerOperation(options: {
 			// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP slot races
 			await options.releaseLease(lease.id);
 		}
-		await options.stopGatewayZone();
-		options.closeControllerServer();
+		try {
+			await options.stopGatewayZone();
+		} finally {
+			options.closeControllerServer();
+		}
 		return { ok: true } as const;
 	};
 }

@@ -336,4 +336,99 @@ describe('startControllerRuntime', () => {
 
 		expect(toolVmClose).toHaveBeenCalledTimes(1);
 	});
+
+	it('still closes the HTTP server when gateway restart fails before runtime.close', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone.');
+		}
+		const closeGatewayVm = vi.fn(async () => {});
+		const closeHttpServer = vi.fn(async () => {});
+		const startGatewayZone = vi
+			.fn()
+			.mockResolvedValueOnce({
+				image: {
+					built: true,
+					fingerprint: 'gateway-image',
+					imagePath: '/tmp/gateway-image',
+				},
+				ingress: {
+					host: '127.0.0.1',
+					port: 18791,
+				},
+				processSpec: openClawProcessSpec,
+				vm: {
+					close: closeGatewayVm,
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+					id: 'gateway-vm-close-after-failed-restart',
+					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
+				},
+				zone,
+			})
+			.mockRejectedValueOnce(new Error('restart failed'));
+		let startHttpServerArgs:
+			| {
+					app: {
+						request(path: string, init?: RequestInit): Response | Promise<Response>;
+					};
+					port: number;
+			  }
+			| undefined;
+
+		const runtime = await startControllerRuntime(
+			{
+				systemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				createManagedToolVm: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+					id: 'tool-vm-close-after-failed-restart',
+					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
+				})),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				startGatewayZone,
+				startHttpServer: vi.fn(async (options) => {
+					startHttpServerArgs = options;
+					return {
+						close: closeHttpServer,
+					};
+				}),
+			},
+		);
+
+		if (!startHttpServerArgs) {
+			throw new Error('Expected runtime HTTP server args');
+		}
+
+		const refreshResponse = await startHttpServerArgs.app.request(
+			'/zones/shravan/credentials/refresh',
+			{ method: 'POST' },
+		);
+		expect(refreshResponse.status).toBe(500);
+		await expect(runtime.close()).resolves.toBeUndefined();
+		expect(closeHttpServer).toHaveBeenCalledTimes(1);
+		expect(closeGatewayVm).toHaveBeenCalledTimes(1);
+	});
 });

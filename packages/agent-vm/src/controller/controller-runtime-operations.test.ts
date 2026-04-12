@@ -48,7 +48,7 @@ const systemConfig = {
 } satisfies SystemConfig;
 
 describe('createControllerRuntimeOperations', () => {
-	it('propagates gateway exec errors from getZoneLogs', async () => {
+	it('returns empty logs when the gateway exec fails', async () => {
 		const operations = createControllerRuntimeOperations({
 			activeZoneId: 'shravan',
 			getGateway: () => ({
@@ -88,6 +88,9 @@ describe('createControllerRuntimeOperations', () => {
 			systemConfig,
 		});
 
-		await expect(operations.getZoneLogs('shravan')).rejects.toThrow('gateway handle is dead');
+		await expect(operations.getZoneLogs('shravan')).resolves.toEqual({
+			output: '',
+			zoneId: 'shravan',
+		});
 	});
 });

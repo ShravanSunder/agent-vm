@@ -181,21 +181,21 @@ This is pragmatic: the lockfile provides metadata for the common case, the port 
 
 ### New Files
 
-| File | Responsibility |
-|------|---------------|
-| `packages/agent-vm/src/controller/gateway-health-monitor.ts` | Periodic health check + in-place restart logic |
-| `packages/agent-vm/src/controller/gateway-health-monitor.test.ts` | Tests for the monitor |
-| `packages/agent-vm/src/controller/controller-lockfile.ts` | Lockfile write/read/cleanup + port-based orphan kill |
-| `packages/agent-vm/src/controller/controller-lockfile.test.ts` | Tests for lockfile operations |
+| File                                                              | Responsibility                                       |
+| ----------------------------------------------------------------- | ---------------------------------------------------- |
+| `packages/agent-vm/src/controller/gateway-health-monitor.ts`      | Periodic health check + in-place restart logic       |
+| `packages/agent-vm/src/controller/gateway-health-monitor.test.ts` | Tests for the monitor                                |
+| `packages/agent-vm/src/controller/controller-lockfile.ts`         | Lockfile write/read/cleanup + port-based orphan kill |
+| `packages/agent-vm/src/controller/controller-lockfile.test.ts`    | Tests for lockfile operations                        |
 
 ### Modified Files
 
-| File | Change |
-|------|--------|
-| `packages/agent-vm/src/controller/controller-runtime.ts` | Wire health monitor (same pattern as idle reaper); wire lockfile; export health state |
+| File                                                           | Change                                                                                                       |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `packages/agent-vm/src/controller/controller-runtime.ts`       | Wire health monitor (same pattern as idle reaper); wire lockfile; export health state                        |
 | `packages/agent-vm/src/controller/controller-runtime-types.ts` | Add health monitor dependencies to `ControllerRuntimeDependencies`; add health status to `ControllerRuntime` |
-| `packages/agent-vm/src/cli/commands/controller-definition.ts` | Register SIGTERM/SIGINT handlers in `start` command |
-| `packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts` | Extract `checkGatewayHealth` as a standalone exported function (refactor `waitForHealth` to use it) |
+| `packages/agent-vm/src/cli/commands/controller-definition.ts`  | Register SIGTERM/SIGINT handlers in `start` command                                                          |
+| `packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts`   | Extract `checkGatewayHealth` as a standalone exported function (refactor `waitForHealth` to use it)          |
 
 ### Component: Gateway Health Monitor
 
@@ -204,6 +204,7 @@ createGatewayHealthMonitor(options) -> { checkHealth(), stop() }
 ```
 
 **Behavior:**
+
 - Runs a health check every `intervalMs` (default: 10,000ms = 10s)
 - On failure, attempts to restart the gateway process via `exec(processSpec.startCommand)` inside the VM
 - After restart, waits for health again (reuses `waitForHealth` with reduced maxAttempts)
@@ -215,23 +216,23 @@ createGatewayHealthMonitor(options) -> { checkHealth(), stop() }
 
 ```typescript
 interface GatewayHealthMonitorOptions {
-  readonly checkHealth: () => Promise<GatewayHealthStatus>;
-  readonly restartGatewayProcess: () => Promise<void>;
-  readonly waitForHealthAfterRestart: () => Promise<void>;
-  readonly onHealthChange?: (status: GatewayHealthStatus) => void;
-  readonly intervalMs?: number;             // default 10_000
-  readonly maxConsecutiveFailures?: number;  // default 5
+	readonly checkHealth: () => Promise<GatewayHealthStatus>;
+	readonly restartGatewayProcess: () => Promise<void>;
+	readonly waitForHealthAfterRestart: () => Promise<void>;
+	readonly onHealthChange?: (status: GatewayHealthStatus) => void;
+	readonly intervalMs?: number; // default 10_000
+	readonly maxConsecutiveFailures?: number; // default 5
 }
 
 type GatewayHealthStatus =
-  | { readonly status: 'healthy' }
-  | { readonly status: 'unhealthy'; readonly lastObservation: string }
-  | { readonly status: 'failed'; readonly consecutiveFailures: number };
+	| { readonly status: 'healthy' }
+	| { readonly status: 'unhealthy'; readonly lastObservation: string }
+	| { readonly status: 'failed'; readonly consecutiveFailures: number };
 
 interface GatewayHealthMonitor {
-  readonly getStatus: () => GatewayHealthStatus;
-  readonly runHealthCheck: () => Promise<GatewayHealthStatus>;
-  stop(): void;
+	readonly getStatus: () => GatewayHealthStatus;
+	readonly runHealthCheck: () => Promise<GatewayHealthStatus>;
+	stop(): void;
 }
 ```
 
@@ -250,17 +251,17 @@ cleanupOrphanedProcesses(options) -> void
 
 ```typescript
 interface ControllerLockfileData {
-  readonly pid: number;
-  readonly startedAt: string;       // ISO 8601
-  readonly controllerPort: number;
-  readonly ingressPort: number;
+	readonly pid: number;
+	readonly startedAt: string; // ISO 8601
+	readonly controllerPort: number;
+	readonly ingressPort: number;
 }
 
 interface CleanupOrphanedProcessesOptions {
-  readonly lockfilePath: string;
-  readonly controllerPort: number;
-  readonly ingressPort: number;
-  readonly stopControllerUrl?: string;  // e.g. http://127.0.0.1:18800/stop
+	readonly lockfilePath: string;
+	readonly controllerPort: number;
+	readonly ingressPort: number;
+	readonly stopControllerUrl?: string; // e.g. http://127.0.0.1:18800/stop
 }
 ```
 
@@ -278,17 +279,17 @@ In the `controller start` command handler:
 ```typescript
 let shuttingDown = false;
 const shutdown = async (): Promise<void> => {
-  if (shuttingDown) {
-    process.exit(1);  // second signal = force exit
-  }
-  shuttingDown = true;
-  const forceExitTimer = setTimeout(() => process.exit(1), 10_000);
-  forceExitTimer.unref();
-  try {
-    await runtime.close();
-  } finally {
-    clearTimeout(forceExitTimer);
-  }
+	if (shuttingDown) {
+		process.exit(1); // second signal = force exit
+	}
+	shuttingDown = true;
+	const forceExitTimer = setTimeout(() => process.exit(1), 10_000);
+	forceExitTimer.unref();
+	try {
+		await runtime.close();
+	} finally {
+		clearTimeout(forceExitTimer);
+	}
 };
 process.on('SIGTERM', () => void shutdown());
 process.on('SIGINT', () => void shutdown());
@@ -300,13 +301,13 @@ process.on('SIGINT', () => void shutdown());
 
 ## Tradeoffs Summary
 
-| Decision | What we gain | What we pay |
-|----------|-------------|-------------|
-| Exec-based health polling | Direct guest-process health, reuses existing types | One exec per interval (~10s); fails if exec pipe breaks |
-| In-place process restart | Sub-second recovery, preserves VM state | Doesn't help if VM itself is broken |
-| Signal handlers in CLI | Clean shutdown on Ctrl+C/SIGTERM | CLI command handler grows ~15 lines |
-| Port-probe orphan cleanup | Handles crash recovery without SDK support | `lsof` is macOS-specific (acceptable -- only supported platform) |
-| Lockfile | Fast path for clean shutdown detection | Another file to manage; can become stale |
+| Decision                  | What we gain                                       | What we pay                                                      |
+| ------------------------- | -------------------------------------------------- | ---------------------------------------------------------------- |
+| Exec-based health polling | Direct guest-process health, reuses existing types | One exec per interval (~10s); fails if exec pipe breaks          |
+| In-place process restart  | Sub-second recovery, preserves VM state            | Doesn't help if VM itself is broken                              |
+| Signal handlers in CLI    | Clean shutdown on Ctrl+C/SIGTERM                   | CLI command handler grows ~15 lines                              |
+| Port-probe orphan cleanup | Handles crash recovery without SDK support         | `lsof` is macOS-specific (acceptable -- only supported platform) |
+| Lockfile                  | Fast path for clean shutdown detection             | Another file to manage; can become stale                         |
 
 ## What This Does NOT Cover (Deferred)
 

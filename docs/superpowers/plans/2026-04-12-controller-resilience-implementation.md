@@ -47,6 +47,7 @@ packages/agent-vm/src/cli/commands/
 Refactor the existing health check logic so the single-probe function is exported and reusable. `waitForHealth` becomes a thin loop over `checkGatewayHealth`.
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts`
 - Modify: `packages/agent-vm/src/gateway/gateway-zone-orchestrator.test.ts`
 
@@ -220,9 +221,7 @@ async function waitForHealth(
 	maxAttempts: number = 30,
 ): Promise<void> {
 	if (attempt >= maxAttempts) {
-		throw new Error(
-			`Gateway readiness check failed after ${maxAttempts} attempts.`,
-		);
+		throw new Error(`Gateway readiness check failed after ${maxAttempts} attempts.`);
 	}
 
 	const checkResult = await checkGatewayHealth(managedVm, healthCheck);
@@ -260,6 +259,7 @@ git commit -m "refactor: extract checkGatewayHealth from waitForHealth for reuse
 A periodic health poller that detects failures and triggers in-place restart with exponential backoff. Follows the `createIdleReaper` pattern: a factory function with injected dependencies, returns an object with methods.
 
 **Files:**
+
 - Create: `packages/agent-vm/src/controller/gateway-health-monitor.ts`
 - Create: `packages/agent-vm/src/controller/gateway-health-monitor.test.ts`
 
@@ -551,6 +551,7 @@ git commit -m "feat: add gateway health monitor with periodic polling and in-pla
 Handles lockfile write/read/remove and port-based orphan cleanup on startup.
 
 **Files:**
+
 - Create: `packages/agent-vm/src/controller/controller-lockfile.ts`
 - Create: `packages/agent-vm/src/controller/controller-lockfile.test.ts`
 
@@ -655,9 +656,7 @@ describe('removeControllerLockfile', () => {
 	});
 
 	it('does not throw when lockfile does not exist', async () => {
-		await expect(
-			removeControllerLockfile('/tmp/already-gone.lock'),
-		).resolves.toBeUndefined();
+		await expect(removeControllerLockfile('/tmp/already-gone.lock')).resolves.toBeUndefined();
 	});
 });
 ```
@@ -701,12 +700,7 @@ export async function readControllerLockfile(
 	try {
 		contents = await fs.readFile(lockfilePath, 'utf8');
 	} catch (error) {
-		if (
-			typeof error === 'object' &&
-			error !== null &&
-			'code' in error &&
-			error.code === 'ENOENT'
-		) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
 			return undefined;
 		}
 		throw error;
@@ -724,12 +718,7 @@ export async function removeControllerLockfile(lockfilePath: string): Promise<vo
 	try {
 		await fs.unlink(lockfilePath);
 	} catch (error) {
-		if (
-			typeof error === 'object' &&
-			error !== null &&
-			'code' in error &&
-			error.code === 'ENOENT'
-		) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
 			return;
 		}
 		throw error;
@@ -760,6 +749,7 @@ git commit -m "feat: add controller lockfile manager for orphan detection"
 This adds the `cleanupOrphanedProcesses` function that probes ports and kills stale processes on startup.
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/controller/controller-lockfile.ts`
 - Modify: `packages/agent-vm/src/controller/controller-lockfile.test.ts`
 
@@ -959,6 +949,7 @@ git commit -m "feat: add orphan cleanup with port probing and dependency injecti
 Add the real implementations of `tryStopOldController`, `findProcessOnPort`, and `killProcess` that use `fetch` and `lsof`.
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/controller/controller-lockfile.ts`
 - Modify: `packages/agent-vm/src/controller/controller-lockfile.test.ts`
 
@@ -1070,6 +1061,7 @@ git commit -m "feat: add default orphan cleanup implementations using lsof and f
 Connect the health monitor to the controller runtime using the same pattern as the idle reaper: create the monitor, start a timer, clear it on shutdown.
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/controller/controller-runtime-types.ts`
 - Modify: `packages/agent-vm/src/controller/controller-runtime.ts`
 - Modify: `packages/agent-vm/src/controller/controller-runtime.test.ts`
@@ -1150,61 +1142,58 @@ import { createGatewayHealthMonitor, type GatewayHealthStatus } from './gateway-
 After the `await runTaskStep('Starting gateway zone', ...)` block (~line 113), add the health monitor wiring:
 
 ```typescript
-	const healthMonitor = createGatewayHealthMonitor({
-		checkHealth: async (): Promise<GatewayHealthStatus> => {
-			const gatewayRef = gateway;
-			if (!gatewayRef) {
-				return { status: 'unhealthy', lastObservation: 'gateway not available' };
-			}
-			const result = await checkGatewayHealth(gatewayRef.vm, gatewayRef.processSpec.healthCheck);
-			return result;
-		},
-		restartGatewayProcess: async () => {
-			const gatewayRef = requireGateway();
-			await gatewayRef.vm.exec(gatewayRef.processSpec.startCommand);
-		},
-		waitForHealthAfterRestart: async () => {
-			const gatewayRef = requireGateway();
-			const checkResult = await checkGatewayHealth(
-				gatewayRef.vm,
-				gatewayRef.processSpec.healthCheck,
+const healthMonitor = createGatewayHealthMonitor({
+	checkHealth: async (): Promise<GatewayHealthStatus> => {
+		const gatewayRef = gateway;
+		if (!gatewayRef) {
+			return { status: 'unhealthy', lastObservation: 'gateway not available' };
+		}
+		const result = await checkGatewayHealth(gatewayRef.vm, gatewayRef.processSpec.healthCheck);
+		return result;
+	},
+	restartGatewayProcess: async () => {
+		const gatewayRef = requireGateway();
+		await gatewayRef.vm.exec(gatewayRef.processSpec.startCommand);
+	},
+	waitForHealthAfterRestart: async () => {
+		const gatewayRef = requireGateway();
+		const checkResult = await checkGatewayHealth(gatewayRef.vm, gatewayRef.processSpec.healthCheck);
+		if (checkResult.status !== 'healthy') {
+			throw new Error(
+				`Gateway not healthy after restart: ${'lastObservation' in checkResult ? checkResult.lastObservation : checkResult.status}`,
 			);
-			if (checkResult.status !== 'healthy') {
-				throw new Error(
-					`Gateway not healthy after restart: ${'lastObservation' in checkResult ? checkResult.lastObservation : checkResult.status}`,
-				);
-			}
-		},
-		intervalMs: dependencies.healthCheckIntervalMs ?? 10_000,
-	});
-	const healthMonitorTimer = (dependencies.setIntervalImpl ?? setInterval)(
-		() => void healthMonitor.runHealthCheck(),
-		dependencies.healthCheckIntervalMs ?? 10_000,
-	);
-	const clearHealthMonitorTimer = (): void =>
-		(dependencies.clearIntervalImpl ?? clearInterval)(healthMonitorTimer);
+		}
+	},
+	intervalMs: dependencies.healthCheckIntervalMs ?? 10_000,
+});
+const healthMonitorTimer = (dependencies.setIntervalImpl ?? setInterval)(
+	() => void healthMonitor.runHealthCheck(),
+	dependencies.healthCheckIntervalMs ?? 10_000,
+);
+const clearHealthMonitorTimer = (): void =>
+	(dependencies.clearIntervalImpl ?? clearInterval)(healthMonitorTimer);
 ```
 
 Update the `close()` method in the return object to clear the health monitor timer:
 
 ```typescript
-	return {
-		async close(): Promise<void> {
-			clearReaperTimer();
-			healthMonitor.stop();
-			clearHealthMonitorTimer();
-			await releaseAllLeases();
-			await requireGateway().vm.close();
-			await serverRef.current?.close();
-		},
-		controllerPort: options.systemConfig.host.controllerPort,
-		gateway: {
-			ingress: requireGateway().ingress,
-			processSpec: requireGateway().processSpec,
-			vm: requireGateway().vm,
-		},
-		getHealthStatus: () => healthMonitor.getStatus(),
-	};
+return {
+	async close(): Promise<void> {
+		clearReaperTimer();
+		healthMonitor.stop();
+		clearHealthMonitorTimer();
+		await releaseAllLeases();
+		await requireGateway().vm.close();
+		await serverRef.current?.close();
+	},
+	controllerPort: options.systemConfig.host.controllerPort,
+	gateway: {
+		ingress: requireGateway().ingress,
+		processSpec: requireGateway().processSpec,
+		vm: requireGateway().vm,
+	},
+	getHealthStatus: () => healthMonitor.getStatus(),
+};
 ```
 
 - [ ] **Step 3: Update the controller-runtime test to verify health monitor wiring**
@@ -1212,70 +1201,70 @@ Update the `close()` method in the return object to clear the health monitor tim
 Add a new test to `packages/agent-vm/src/controller/controller-runtime.test.ts`:
 
 ```typescript
-	it('creates a health monitor timer and clears it on close', async () => {
-		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		const zone = systemConfig.zones[0];
-		if (!zone) {
-			throw new Error('Expected test zone.');
-		}
-		const clearIntervalMock = vi.fn();
-		const setIntervalMock = vi.fn(() => 456 as unknown as NodeJS.Timeout);
+it('creates a health monitor timer and clears it on close', async () => {
+	process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+	const zone = systemConfig.zones[0];
+	if (!zone) {
+		throw new Error('Expected test zone.');
+	}
+	const clearIntervalMock = vi.fn();
+	const setIntervalMock = vi.fn(() => 456 as unknown as NodeJS.Timeout);
 
-		const runtime = await startControllerRuntime(
-			{
-				systemConfig,
-				zoneId: 'shravan',
-			},
-			{
-				clearIntervalImpl: clearIntervalMock,
-				createSecretResolver: async () => ({
-					resolve: async () => '',
-					resolveAll: async () => ({}),
-				}),
-				setIntervalImpl: setIntervalMock,
-				startGatewayZone: vi.fn(async () => ({
-					image: {
-						built: true,
-						fingerprint: 'gateway-image',
-						imagePath: '/tmp/gateway-image',
-					},
-					ingress: {
+	const runtime = await startControllerRuntime(
+		{
+			systemConfig,
+			zoneId: 'shravan',
+		},
+		{
+			clearIntervalImpl: clearIntervalMock,
+			createSecretResolver: async () => ({
+				resolve: async () => '',
+				resolveAll: async () => ({}),
+			}),
+			setIntervalImpl: setIntervalMock,
+			startGatewayZone: vi.fn(async () => ({
+				image: {
+					built: true,
+					fingerprint: 'gateway-image',
+					imagePath: '/tmp/gateway-image',
+				},
+				ingress: {
+					host: '127.0.0.1',
+					port: 18791,
+				},
+				processSpec: openClawProcessSpec,
+				vm: {
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
 						host: '127.0.0.1',
-						port: 18791,
-					},
-					processSpec: openClawProcessSpec,
-					vm: {
-						close: vi.fn(async () => {}),
-						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-						enableSsh: vi.fn(async () => ({
-							command: 'ssh ...',
-							host: '127.0.0.1',
-							port: 19000,
-							user: 'sandbox',
-						})),
-						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
-						id: 'gateway-vm-health',
-						setIngressRoutes: vi.fn(),
-						getVmInstance: vi.fn(),
-					},
-					zone,
-				})),
-				startHttpServer: vi.fn(async () => ({
-					close: async () => {},
-				})),
-			},
-		);
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+					id: 'gateway-vm-health',
+					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
+				},
+				zone,
+			})),
+			startHttpServer: vi.fn(async () => ({
+				close: async () => {},
+			})),
+		},
+	);
 
-		// setInterval called twice: once for idle reaper, once for health monitor
-		expect(setIntervalMock).toHaveBeenCalledTimes(2);
+	// setInterval called twice: once for idle reaper, once for health monitor
+	expect(setIntervalMock).toHaveBeenCalledTimes(2);
 
-		expect(runtime.getHealthStatus()).toEqual({ status: 'healthy' });
+	expect(runtime.getHealthStatus()).toEqual({ status: 'healthy' });
 
-		await runtime.close();
+	await runtime.close();
 
-		// clearInterval called twice: once for idle reaper, once for health monitor
-		expect(clearIntervalMock).toHaveBeenCalledTimes(2);
-	});
+	// clearInterval called twice: once for idle reaper, once for health monitor
+	expect(clearIntervalMock).toHaveBeenCalledTimes(2);
+});
 ```
 
 - [ ] **Step 4: Run all controller-runtime tests**
@@ -1301,6 +1290,7 @@ git commit -m "feat: wire gateway health monitor into controller runtime with ti
 Write the lockfile at startup, clean up orphans before starting, remove lockfile on shutdown.
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/controller/controller-runtime.ts`
 - Modify: `packages/agent-vm/src/controller/controller-runtime-types.ts`
 - Modify: `packages/agent-vm/src/controller/controller-runtime.test.ts`
@@ -1355,60 +1345,57 @@ import {
 At the beginning of `startControllerRuntime`, before secret resolution, add orphan cleanup:
 
 ```typescript
-	const lockfilePath =
-		options.lockfilePath ?? path.join(options.systemConfig.cacheDir, 'controller.lock');
-	const ingressPort = options.systemConfig.zones.find(
-		(zone) => zone.id === options.zoneId,
-	)?.gateway.port;
-	if (ingressPort !== undefined) {
-		const cleanupFn =
-			dependencies.lockfileDependencies?.cleanupOrphanedProcesses ??
-			cleanupOrphanedProcessesImpl;
-		const orphanDeps =
-			dependencies.lockfileDependencies?.orphanCleanupDependencies ??
-			createDefaultOrphanCleanupDependencies();
-		await cleanupFn(
-			{
-				lockfilePath,
-				controllerPort: options.systemConfig.host.controllerPort,
-				ingressPort,
-			},
-			orphanDeps,
-		);
-	}
+const lockfilePath =
+	options.lockfilePath ?? path.join(options.systemConfig.cacheDir, 'controller.lock');
+const ingressPort = options.systemConfig.zones.find((zone) => zone.id === options.zoneId)?.gateway
+	.port;
+if (ingressPort !== undefined) {
+	const cleanupFn =
+		dependencies.lockfileDependencies?.cleanupOrphanedProcesses ?? cleanupOrphanedProcessesImpl;
+	const orphanDeps =
+		dependencies.lockfileDependencies?.orphanCleanupDependencies ??
+		createDefaultOrphanCleanupDependencies();
+	await cleanupFn(
+		{
+			lockfilePath,
+			controllerPort: options.systemConfig.host.controllerPort,
+			ingressPort,
+		},
+		orphanDeps,
+	);
+}
 ```
 
 After the HTTP server starts, write the lockfile:
 
 ```typescript
-	const writeLockfileFn =
-		dependencies.lockfileDependencies?.writeLockfile ?? writeControllerLockfile;
-	await writeLockfileFn(lockfilePath, {
-		pid: process.pid,
-		startedAt: new Date().toISOString(),
-		controllerPort: options.systemConfig.host.controllerPort,
-		ingressPort: ingressPort ?? 0,
-	});
+const writeLockfileFn = dependencies.lockfileDependencies?.writeLockfile ?? writeControllerLockfile;
+await writeLockfileFn(lockfilePath, {
+	pid: process.pid,
+	startedAt: new Date().toISOString(),
+	controllerPort: options.systemConfig.host.controllerPort,
+	ingressPort: ingressPort ?? 0,
+});
 ```
 
 In the `close()` method, remove the lockfile:
 
 ```typescript
-	const removeLockfileFn =
-		dependencies.lockfileDependencies?.removeLockfile ?? removeControllerLockfile;
+const removeLockfileFn =
+	dependencies.lockfileDependencies?.removeLockfile ?? removeControllerLockfile;
 
-	return {
-		async close(): Promise<void> {
-			clearReaperTimer();
-			healthMonitor.stop();
-			clearHealthMonitorTimer();
-			await releaseAllLeases();
-			await requireGateway().vm.close();
-			await serverRef.current?.close();
-			await removeLockfileFn(lockfilePath);
-		},
-		// ...
-	};
+return {
+	async close(): Promise<void> {
+		clearReaperTimer();
+		healthMonitor.stop();
+		clearHealthMonitorTimer();
+		await releaseAllLeases();
+		await requireGateway().vm.close();
+		await serverRef.current?.close();
+		await removeLockfileFn(lockfilePath);
+	},
+	// ...
+};
 ```
 
 - [ ] **Step 3: Add test for lockfile lifecycle**
@@ -1416,88 +1403,88 @@ In the `close()` method, remove the lockfile:
 Add to `packages/agent-vm/src/controller/controller-runtime.test.ts`:
 
 ```typescript
-	it('cleans up orphans on startup and writes lockfile', async () => {
-		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		const zone = systemConfig.zones[0];
-		if (!zone) {
-			throw new Error('Expected test zone.');
-		}
-		const cleanupMock = vi.fn(async () => {});
-		const writeLockfileMock = vi.fn(async () => {});
-		const removeLockfileMock = vi.fn(async () => {});
+it('cleans up orphans on startup and writes lockfile', async () => {
+	process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+	const zone = systemConfig.zones[0];
+	if (!zone) {
+		throw new Error('Expected test zone.');
+	}
+	const cleanupMock = vi.fn(async () => {});
+	const writeLockfileMock = vi.fn(async () => {});
+	const removeLockfileMock = vi.fn(async () => {});
 
-		const runtime = await startControllerRuntime(
-			{
-				lockfilePath: '/tmp/test-controller.lock',
-				systemConfig,
-				zoneId: 'shravan',
-			},
-			{
-				createSecretResolver: async () => ({
-					resolve: async () => '',
-					resolveAll: async () => ({}),
-				}),
-				lockfileDependencies: {
-					cleanupOrphanedProcesses: cleanupMock,
-					orphanCleanupDependencies: {
-						tryStopOldController: vi.fn(async () => false),
-						findProcessOnPort: vi.fn(async () => undefined),
-						killProcess: vi.fn(async () => {}),
-					},
-					writeLockfile: writeLockfileMock,
-					removeLockfile: removeLockfileMock,
+	const runtime = await startControllerRuntime(
+		{
+			lockfilePath: '/tmp/test-controller.lock',
+			systemConfig,
+			zoneId: 'shravan',
+		},
+		{
+			createSecretResolver: async () => ({
+				resolve: async () => '',
+				resolveAll: async () => ({}),
+			}),
+			lockfileDependencies: {
+				cleanupOrphanedProcesses: cleanupMock,
+				orphanCleanupDependencies: {
+					tryStopOldController: vi.fn(async () => false),
+					findProcessOnPort: vi.fn(async () => undefined),
+					killProcess: vi.fn(async () => {}),
 				},
-				startGatewayZone: vi.fn(async () => ({
-					image: {
-						built: true,
-						fingerprint: 'gateway-image',
-						imagePath: '/tmp/gateway-image',
-					},
-					ingress: { host: '127.0.0.1', port: 18791 },
-					processSpec: openClawProcessSpec,
-					vm: {
-						close: vi.fn(async () => {}),
-						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-						enableSsh: vi.fn(async () => ({
-							host: '127.0.0.1',
-							port: 19000,
-							user: 'sandbox',
-						})),
-						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
-						id: 'gateway-vm-lockfile',
-						setIngressRoutes: vi.fn(),
-						getVmInstance: vi.fn(),
-					},
-					zone,
-				})),
-				startHttpServer: vi.fn(async () => ({
-					close: async () => {},
-				})),
+				writeLockfile: writeLockfileMock,
+				removeLockfile: removeLockfileMock,
 			},
-		);
+			startGatewayZone: vi.fn(async () => ({
+				image: {
+					built: true,
+					fingerprint: 'gateway-image',
+					imagePath: '/tmp/gateway-image',
+				},
+				ingress: { host: '127.0.0.1', port: 18791 },
+				processSpec: openClawProcessSpec,
+				vm: {
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						host: '127.0.0.1',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+					id: 'gateway-vm-lockfile',
+					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
+				},
+				zone,
+			})),
+			startHttpServer: vi.fn(async () => ({
+				close: async () => {},
+			})),
+		},
+	);
 
-		expect(cleanupMock).toHaveBeenCalledTimes(1);
-		expect(cleanupMock).toHaveBeenCalledWith(
-			expect.objectContaining({
-				lockfilePath: '/tmp/test-controller.lock',
-				controllerPort: 18800,
-				ingressPort: 18791,
-			}),
-			expect.any(Object),
-		);
-		expect(writeLockfileMock).toHaveBeenCalledWith(
-			'/tmp/test-controller.lock',
-			expect.objectContaining({
-				pid: process.pid,
-				controllerPort: 18800,
-				ingressPort: 18791,
-			}),
-		);
+	expect(cleanupMock).toHaveBeenCalledTimes(1);
+	expect(cleanupMock).toHaveBeenCalledWith(
+		expect.objectContaining({
+			lockfilePath: '/tmp/test-controller.lock',
+			controllerPort: 18800,
+			ingressPort: 18791,
+		}),
+		expect.any(Object),
+	);
+	expect(writeLockfileMock).toHaveBeenCalledWith(
+		'/tmp/test-controller.lock',
+		expect.objectContaining({
+			pid: process.pid,
+			controllerPort: 18800,
+			ingressPort: 18791,
+		}),
+	);
 
-		await runtime.close();
+	await runtime.close();
 
-		expect(removeLockfileMock).toHaveBeenCalledWith('/tmp/test-controller.lock');
-	});
+	expect(removeLockfileMock).toHaveBeenCalledWith('/tmp/test-controller.lock');
+});
 ```
 
 - [ ] **Step 4: Run all controller-runtime tests**
@@ -1523,6 +1510,7 @@ git commit -m "feat: wire lockfile lifecycle into controller runtime with orphan
 Register signal handlers in the CLI command that calls `runtime.close()` on shutdown signals.
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/cli/commands/controller-definition.ts`
 
 - [ ] **Step 1: Add signal handling to the `start` command handler**
@@ -1607,6 +1595,7 @@ git commit -m "feat: add SIGTERM/SIGINT graceful shutdown with timeout to contro
 Add a `/health` endpoint to the controller HTTP API that returns the current gateway health status.
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/controller/http/controller-http-routes.ts`
 - Modify: `packages/agent-vm/src/controller/controller-runtime.ts` (pass health getter to routes)
 
@@ -1653,9 +1642,9 @@ const controllerApp = createControllerService({
 Add to the existing controller-runtime test that already tests HTTP endpoints:
 
 ```typescript
-		const healthResponse = await startHttpServerArgs.app.request('/health');
-		expect(healthResponse.status).toBe(200);
-		await expect(healthResponse.json()).resolves.toEqual({ status: 'healthy' });
+const healthResponse = await startHttpServerArgs.app.request('/health');
+expect(healthResponse.status).toBe(200);
+await expect(healthResponse.json()).resolves.toEqual({ status: 'healthy' });
 ```
 
 - [ ] **Step 5: Run tests**
@@ -1708,16 +1697,16 @@ git commit -m "chore: formatting and lint fixes from controller resilience imple
 
 ## Summary
 
-| Task | Component | Estimated Time |
-|------|-----------|---------------|
-| 1 | Extract `checkGatewayHealth` | 5 min |
-| 2 | Gateway health monitor | 10 min |
-| 3 | Controller lockfile (write/read/remove) | 5 min |
-| 4 | Orphan cleanup function | 5 min |
-| 5 | Default platform dependencies (lsof/fetch) | 5 min |
-| 6 | Wire health monitor into runtime | 10 min |
-| 7 | Wire lockfile into runtime | 10 min |
-| 8 | SIGTERM/SIGINT signal handlers | 5 min |
-| 9 | /health HTTP endpoint | 5 min |
-| 10 | Final verification | 5 min |
-| **Total** | | **~65 min** |
+| Task      | Component                                  | Estimated Time |
+| --------- | ------------------------------------------ | -------------- |
+| 1         | Extract `checkGatewayHealth`               | 5 min          |
+| 2         | Gateway health monitor                     | 10 min         |
+| 3         | Controller lockfile (write/read/remove)    | 5 min          |
+| 4         | Orphan cleanup function                    | 5 min          |
+| 5         | Default platform dependencies (lsof/fetch) | 5 min          |
+| 6         | Wire health monitor into runtime           | 10 min         |
+| 7         | Wire lockfile into runtime                 | 10 min         |
+| 8         | SIGTERM/SIGINT signal handlers             | 5 min          |
+| 9         | /health HTTP endpoint                      | 5 min          |
+| 10        | Final verification                         | 5 min          |
+| **Total** |                                            | **~65 min**    |
