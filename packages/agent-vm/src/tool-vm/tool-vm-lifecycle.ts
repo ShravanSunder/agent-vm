@@ -1,4 +1,4 @@
-import fsSync from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { createManagedVm as createManagedVmFromCore, type ManagedVm } from 'gondolin-core';
@@ -24,13 +24,17 @@ export function resolveToolVmWorkspaceDirectory(options: {
 	return path.resolve(options.profile.workspaceRoot, `${options.zoneId}-${options.tcpSlot}`);
 }
 
-export function cleanToolVmWorkspace(workspaceDirectory: string): void {
-	if (!fsSync.existsSync(workspaceDirectory)) {
+export async function cleanToolVmWorkspace(workspaceDirectory: string): Promise<void> {
+	let entryNames: string[];
+	try {
+		entryNames = await fs.readdir(workspaceDirectory);
+	} catch {
 		return;
 	}
 
-	for (const entryName of fsSync.readdirSync(workspaceDirectory)) {
-		fsSync.rmSync(path.join(workspaceDirectory, entryName), {
+	for (const entryName of entryNames) {
+		// oxlint-disable-next-line eslint/no-await-in-loop -- cleanup must be deterministic per entry
+		await fs.rm(path.join(workspaceDirectory, entryName), {
 			force: true,
 			recursive: true,
 		});
@@ -60,7 +64,7 @@ export async function createToolVm(
 		zoneId: options.zoneId,
 	});
 
-	fsSync.mkdirSync(hostWorkspaceDirectory, { recursive: true });
+	await fs.mkdir(hostWorkspaceDirectory, { recursive: true });
 
 	const toolVm = await createManagedVm({
 		allowedHosts: [],

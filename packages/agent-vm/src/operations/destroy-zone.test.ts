@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../controller/system-config.js';
 import { runControllerDestroy } from './destroy-zone.js';
@@ -10,6 +10,7 @@ import { runControllerDestroy } from './destroy-zone.js';
 const createdDirectories: string[] = [];
 
 afterEach(() => {
+	vi.restoreAllMocks();
 	for (const directoryPath of createdDirectories.splice(0)) {
 		fs.rmSync(directoryPath, { force: true, recursive: true });
 	}
@@ -17,6 +18,7 @@ afterEach(() => {
 
 describe('runControllerDestroy', () => {
 	it('releases zone leases and optionally purges persisted state', async () => {
+		const rmSyncSpy = vi.spyOn(fs, 'rmSync');
 		const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-destroy-'));
 		createdDirectories.push(tempDirectory);
 		const stateDir = path.join(tempDirectory, 'state', 'shravan');
@@ -90,6 +92,8 @@ describe('runControllerDestroy', () => {
 		);
 
 		expect(actions).toEqual(['stop:shravan', 'leases:shravan']);
+		expect(rmSyncSpy).not.toHaveBeenCalledWith(stateDir, expect.anything());
+		expect(rmSyncSpy).not.toHaveBeenCalledWith(workspaceDir, expect.anything());
 		expect(fs.existsSync(stateDir)).toBe(false);
 		expect(fs.existsSync(workspaceDir)).toBe(false);
 		expect(result).toEqual({

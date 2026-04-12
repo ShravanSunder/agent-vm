@@ -1,4 +1,4 @@
-import fsSync from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type { SecretResolver, SecretSpec } from 'gondolin-core';
@@ -60,16 +60,16 @@ export async function prepareGatewayHostDirectories(options: {
 	readonly secretResolver: SecretResolver;
 	readonly zone: GatewayZone;
 }): Promise<void> {
-	fsSync.mkdirSync(options.zone.gateway.stateDir, { recursive: true });
-	fsSync.mkdirSync(options.zone.gateway.workspaceDir, { recursive: true });
+	await fs.mkdir(options.zone.gateway.stateDir, { recursive: true });
+	await fs.mkdir(options.zone.gateway.workspaceDir, { recursive: true });
 
 	if (!options.zone.gateway.authProfilesRef) {
 		return;
 	}
 
 	const authProfilesDirectory = path.join(options.zone.gateway.stateDir, 'agents', 'main', 'agent');
-	fsSync.mkdirSync(authProfilesDirectory, { recursive: true });
-	fsSync.writeFileSync(
+	await fs.mkdir(authProfilesDirectory, { recursive: true });
+	await fs.writeFile(
 		path.join(authProfilesDirectory, 'auth-profiles.json'),
 		await options.secretResolver.resolve({
 			source: '1password',

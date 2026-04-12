@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type { BuildConfig, BuildOptions } from '@earendil-works/gondolin';
@@ -51,12 +51,21 @@ function stableSerialize(value: unknown): string {
 	return JSON.stringify(value);
 }
 
-function hasBuiltAssets(outputDirectoryPath: string): boolean {
+async function pathExists(filePath: string): Promise<boolean> {
+	try {
+		await fs.access(filePath);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function hasBuiltAssets(outputDirectoryPath: string): Promise<boolean> {
 	return (
-		fs.existsSync(path.join(outputDirectoryPath, 'manifest.json')) &&
-		fs.existsSync(path.join(outputDirectoryPath, 'rootfs.ext4')) &&
-		fs.existsSync(path.join(outputDirectoryPath, 'initramfs.cpio.lz4')) &&
-		fs.existsSync(path.join(outputDirectoryPath, 'vmlinuz-virt'))
+		(await pathExists(path.join(outputDirectoryPath, 'manifest.json'))) &&
+		(await pathExists(path.join(outputDirectoryPath, 'rootfs.ext4'))) &&
+		(await pathExists(path.join(outputDirectoryPath, 'initramfs.cpio.lz4'))) &&
+		(await pathExists(path.join(outputDirectoryPath, 'vmlinuz-virt')))
 	);
 }
 
@@ -95,10 +104,10 @@ export async function buildImage(
 	const imagePath = path.join(options.cacheDir, fingerprint);
 
 	if (options.fullReset) {
-		fs.rmSync(imagePath, { recursive: true, force: true });
+		await fs.rm(imagePath, { recursive: true, force: true });
 	}
 
-	if (hasBuiltAssets(imagePath)) {
+	if (await hasBuiltAssets(imagePath)) {
 		return {
 			built: false,
 			fingerprint,
@@ -106,11 +115,11 @@ export async function buildImage(
 		};
 	}
 
-	fs.mkdirSync(imagePath, { recursive: true });
+	await fs.mkdir(imagePath, { recursive: true });
 	const buildAssetsImplementation = dependencies.buildAssets ?? (await loadBuildAssets());
 	await buildAssetsImplementation(options.buildConfig, imagePath, options.configDir);
 
-	if (!hasBuiltAssets(imagePath)) {
+	if (!(await hasBuiltAssets(imagePath))) {
 		throw new Error(`Expected Gondolin assets to be written to ${imagePath}.`);
 	}
 

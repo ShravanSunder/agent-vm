@@ -53,7 +53,7 @@ export async function startControllerRuntime(
 	const tcpPool = createTcpPool(options.systemConfig.tcpPool);
 	const leaseManager = createLeaseManager({
 		cleanWorkspace: async ({ profile, tcpSlot, zoneId }) => {
-			cleanToolVmWorkspace(
+			await cleanToolVmWorkspace(
 				resolveToolVmWorkspaceDirectory({
 					profile,
 					tcpSlot,

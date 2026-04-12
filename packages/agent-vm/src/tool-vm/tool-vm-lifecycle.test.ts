@@ -11,6 +11,7 @@ import { createToolVm } from './tool-vm-lifecycle.js';
 const createdDirectories: string[] = [];
 
 afterEach(() => {
+	vi.restoreAllMocks();
 	for (const directoryPath of createdDirectories.splice(0)) {
 		fs.rmSync(directoryPath, { recursive: true, force: true });
 	}
@@ -130,5 +131,52 @@ describe('createToolVm', () => {
 			cacheDir: path.join(systemConfig.cacheDir, 'images', 'tool'),
 		});
 		expect(exec).not.toHaveBeenCalled();
+	});
+
+	it('does not use mkdirSync inside the async createToolVm path', async () => {
+		const mkdirSyncSpy = vi.spyOn(fs, 'mkdirSync');
+		const managedVm = {
+			close: async () => {},
+			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+			getVmInstance: () => ({
+				close: async () => {},
+				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				exec: async () => ({ exitCode: 0 }),
+				id: 'vm-instance',
+				setIngressRoutes: () => {},
+			}),
+			id: 'managed-vm',
+			setIngressRoutes: () => {},
+		} satisfies ManagedVm;
+
+		const systemConfig = createToolVmSystemConfig();
+		const standardProfile = systemConfig.toolProfiles.standard;
+		if (!standardProfile) {
+			throw new Error('Expected standard tool profile');
+		}
+
+		await createToolVm(
+			{
+				cacheDir: systemConfig.cacheDir,
+				profile: standardProfile,
+				systemConfig,
+				tcpSlot: 1,
+				workspaceDir: '/workspace',
+				zoneId: 'shravan',
+			},
+			{
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'tool-fingerprint',
+					imagePath: '/cache/tool-fingerprint',
+				}),
+				createManagedVm: async () => managedVm,
+			},
+		);
+
+		expect(mkdirSyncSpy).not.toHaveBeenCalled();
 	});
 });

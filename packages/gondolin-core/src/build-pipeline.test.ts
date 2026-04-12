@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -63,6 +64,42 @@ describe('buildImage', () => {
 		expect(secondResult.fingerprint).toBe(firstResult.fingerprint);
 		expect(secondResult.imagePath).toBe(firstResult.imagePath);
 		expect(fakeBuildIntoDirectory).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not use synchronous filesystem helpers inside the async build path', async () => {
+		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-core-build-cache-'));
+		temporaryDirectories.push(cacheDirectory);
+		const buildConfig: BuildConfig = {
+			arch: 'aarch64',
+			distro: 'alpine',
+			rootfs: {
+				label: 'gondolin-root',
+			},
+		};
+		const existsSyncSpy = vi.spyOn(fs, 'existsSync');
+		const mkdirSyncSpy = vi.spyOn(fs, 'mkdirSync');
+		const rmSyncSpy = vi.spyOn(fs, 'rmSync');
+
+		await buildImage(
+			{
+				buildConfig,
+				cacheDir: cacheDirectory,
+				fullReset: true,
+			},
+			{
+				buildAssets: async (_buildConfig: BuildConfig, outputDirectory: string): Promise<void> => {
+					await fsPromises.mkdir(outputDirectory, { recursive: true });
+					await fsPromises.writeFile(path.join(outputDirectory, 'manifest.json'), '{}', 'utf8');
+					await fsPromises.writeFile(path.join(outputDirectory, 'rootfs.ext4'), '', 'utf8');
+					await fsPromises.writeFile(path.join(outputDirectory, 'initramfs.cpio.lz4'), '', 'utf8');
+					await fsPromises.writeFile(path.join(outputDirectory, 'vmlinuz-virt'), '', 'utf8');
+				},
+			},
+		);
+
+		expect(existsSyncSpy).not.toHaveBeenCalled();
+		expect(mkdirSyncSpy).not.toHaveBeenCalled();
+		expect(rmSyncSpy).not.toHaveBeenCalled();
 	});
 });
 

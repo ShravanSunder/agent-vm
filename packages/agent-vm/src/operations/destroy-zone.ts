@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 
 import type { SystemConfig } from '../controller/system-config.js';
 
@@ -28,8 +28,8 @@ export async function runControllerDestroy(
 	await dependencies.releaseZoneLeases(options.zoneId);
 
 	if (options.purge) {
-		fs.rmSync(zone.gateway.stateDir, { force: true, recursive: true });
-		fs.rmSync(zone.gateway.workspaceDir, { force: true, recursive: true });
+		await fs.rm(zone.gateway.stateDir, { force: true, recursive: true });
+		await fs.rm(zone.gateway.workspaceDir, { force: true, recursive: true });
 	}
 
 	return {
