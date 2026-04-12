@@ -93,14 +93,17 @@ export async function runBuildCommand(
 			});
 		});
 	}
+	const dockerBackedTargets = new Set(dockerImageTargets.map((imageTarget) => imageTarget.name));
 
 	for (const imageTarget of imageTargets) {
 		const cacheDirectory = path.join(options.systemConfig.cacheDir, 'images', imageTarget.name);
+		const shouldResetGondolinCache =
+			options.forceRebuild === true || dockerBackedTargets.has(imageTarget.name);
 		await runTaskStep(`Gondolin: ${imageTarget.name}`, async () => {
 			await buildGondolinImage({
 				buildConfigPath: imageTarget.buildConfigPath,
 				cacheDir: cacheDirectory,
-				...(options.forceRebuild !== undefined ? { fullReset: options.forceRebuild } : {}),
+				...(shouldResetGondolinCache ? { fullReset: true } : {}),
 			});
 		});
 	}

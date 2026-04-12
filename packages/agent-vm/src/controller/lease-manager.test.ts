@@ -155,6 +155,87 @@ describe('createLeaseManager', () => {
 		});
 	});
 
+	it('releases bookkeeping even when vm.close throws', async () => {
+		const closeMock = vi.fn(async () => {
+			throw new Error('close failed');
+		});
+		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => ({
+				close: closeMock,
+				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				enableSsh: vi.fn(async () => ({
+					command: 'ssh ...',
+					host: '127.0.0.1',
+					identityFile: '/tmp/key',
+					port: 19000,
+					user: 'sandbox',
+				})),
+				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+				id: 'tool-vm-close-fail',
+				setIngressRoutes: vi.fn(),
+				getVmInstance: vi.fn(),
+			})),
+			now: () => 100,
+			tcpPool,
+		});
+
+		const lease = await leaseManager.createLease({
+			agentWorkspaceDir: '/workspace',
+			profile: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+			profileId: 'standard',
+			scopeKey: 'scope-close-fail',
+			workspaceDir: '/workspace',
+			zoneId: 'shravan',
+		});
+
+		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow('close failed');
+		expect(leaseManager.getLease(lease.id)).toBeUndefined();
+		expect(tcpPool.allocate()).toBe(0);
+	});
+
+	it('releases bookkeeping even when workspace cleanup throws after vm close', async () => {
+		const closeMock = vi.fn(async () => {});
+		const cleanWorkspace = vi.fn(async () => {
+			throw new Error('cleanup failed');
+		});
+		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
+		const leaseManager = createLeaseManager({
+			cleanWorkspace,
+			createManagedVm: vi.fn(async () => ({
+				close: closeMock,
+				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				enableSsh: vi.fn(async () => ({
+					command: 'ssh ...',
+					host: '127.0.0.1',
+					identityFile: '/tmp/key',
+					port: 19000,
+					user: 'sandbox',
+				})),
+				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+				id: 'tool-vm-cleanup-fail',
+				setIngressRoutes: vi.fn(),
+				getVmInstance: vi.fn(),
+			})),
+			now: () => 100,
+			tcpPool,
+		});
+
+		const lease = await leaseManager.createLease({
+			agentWorkspaceDir: '/workspace',
+			profile: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+			profileId: 'standard',
+			scopeKey: 'scope-cleanup-fail',
+			workspaceDir: '/workspace',
+			zoneId: 'shravan',
+		});
+
+		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow('cleanup failed');
+		expect(closeMock).toHaveBeenCalledTimes(1);
+		expect(leaseManager.getLease(lease.id)).toBeUndefined();
+		expect(tcpPool.allocate()).toBe(0);
+	});
+
 	it('releases the tcp slot when VM creation fails', async () => {
 		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
 		const leaseManager = createLeaseManager({

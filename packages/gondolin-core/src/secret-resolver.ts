@@ -32,6 +32,14 @@ export interface ExecFileResult {
 	readonly stderr: string;
 }
 
+function ensureMacOsForKeychain(): void {
+	if (process.platform !== 'darwin') {
+		throw new Error(
+			'Keychain token source is only supported on macOS. Use an env or op-cli token source on this platform so cmd-ts can surface a clear startup error.',
+		);
+	}
+}
+
 function execFileAsync(
 	command: string,
 	args: readonly string[],
@@ -92,6 +100,8 @@ export async function resolveServiceAccountToken(
 		}
 
 		case 'keychain': {
+			ensureMacOsForKeychain();
+
 			// Validate keychain identifiers to prevent argument injection
 			if (!SAFE_IDENTIFIER_PATTERN.test(source.service)) {
 				throw new Error('Keychain service name contains invalid characters');

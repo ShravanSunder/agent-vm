@@ -125,12 +125,37 @@ describe('runBuildCommand', () => {
 		expect(gondolinBuilds).toHaveLength(2);
 		expect(gondolinBuilds[0]).toEqual({
 			cacheDir: '/cache/images/gateway',
-			fullReset: undefined,
+			fullReset: true,
 		});
 		expect(gondolinBuilds[1]).toEqual({
 			cacheDir: '/cache/images/tool',
 			fullReset: undefined,
 		});
+	});
+
+	it('forces a Gondolin reset for any target rebuilt from a Dockerfile in this invocation', async () => {
+		const gondolinBuilds: { cacheDir: string; fullReset: boolean | undefined }[] = [];
+
+		await runBuildCommand(
+			{ systemConfig: createTestSystemConfig() },
+			{
+				buildDockerImage: async () => {},
+				buildGondolinImage: async (options) => {
+					gondolinBuilds.push({
+						cacheDir: options.cacheDir,
+						fullReset: options.fullReset,
+					});
+					return { built: true, fingerprint: 'docker-refresh', imagePath: '/cache/docker-refresh' };
+				},
+				resolveOciImageTag: async () => 'tag:latest',
+				runTask: async (_title, fn) => await fn(),
+			},
+		);
+
+		expect(gondolinBuilds).toEqual([
+			{ cacheDir: '/cache/images/gateway', fullReset: true },
+			{ cacheDir: '/cache/images/tool', fullReset: undefined },
+		]);
 	});
 
 	it('reuses the same shared Gondolin cache directories across multiple zones', async () => {

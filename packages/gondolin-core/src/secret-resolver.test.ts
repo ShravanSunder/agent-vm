@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
 	createSecretResolver,
@@ -9,6 +9,14 @@ import {
 } from './secret-resolver.js';
 
 const emptyExecFileResult = async (): Promise<ExecFileResult> => ({ stdout: '', stderr: '' });
+const originalPlatform = process.platform;
+
+afterEach(() => {
+	Object.defineProperty(process, 'platform', {
+		configurable: true,
+		value: originalPlatform,
+	});
+});
 
 describe('resolveServiceAccountToken', () => {
 	it('resolves token via op-cli', async () => {
@@ -73,6 +81,21 @@ describe('resolveServiceAccountToken', () => {
 			{ execFileAsync: fakeExec },
 		);
 		expect(token).toBe('keychain-token');
+	});
+
+	it('throws a clear error when keychain token source is used off macOS', async () => {
+		Object.defineProperty(process, 'platform', {
+			configurable: true,
+			value: 'linux',
+		});
+
+		await expect(
+			resolveServiceAccountToken({
+				type: 'keychain',
+				service: 'agent-vm',
+				account: 'service-account',
+			}),
+		).rejects.toThrow(/macOS/u);
 	});
 
 	it('throws when op-cli returns empty', async () => {

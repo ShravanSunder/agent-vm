@@ -118,10 +118,27 @@ export function createLeaseManager(options: {
 				return;
 			}
 
-			await lease.vm.close();
-			await lease.cleanWorkspace?.();
+			let releaseError: Error | undefined;
+			try {
+				await lease.vm.close();
+			} catch (error) {
+				releaseError = error instanceof Error ? error : new Error(String(error));
+			}
+
+			try {
+				await lease.cleanWorkspace?.();
+			} catch (error) {
+				if (!releaseError) {
+					releaseError = error instanceof Error ? error : new Error(String(error));
+				}
+			}
+
 			leases.delete(leaseId);
 			options.tcpPool.release(lease.tcpSlot);
+
+			if (releaseError) {
+				throw releaseError;
+			}
 		},
 	};
 }
