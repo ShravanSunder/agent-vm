@@ -58,7 +58,7 @@ export async function runAgentVmCli(
 				: ([subcommand, ...restArguments] as readonly string[]);
 		const forceRebuild = buildArguments.includes('--force');
 		const systemConfig = dependencies.loadSystemConfig(resolveConfigPath(buildArguments));
-		await (dependencies.runBuildCommand ?? runBuildCommand)({ forceRebuild, systemConfig }, io);
+		await (dependencies.runBuildCommand ?? runBuildCommand)({ forceRebuild, systemConfig });
 		return;
 	}
 	if (commandGroup === 'cache') {

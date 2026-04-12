@@ -65,6 +65,7 @@ describe('runBuildCommand', () => {
 	it('builds Docker image when dockerfile is configured', async () => {
 		const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
 		const dependencies: BuildCommandDependencies = {
+			runTask: async (_title, fn) => fn(),
 			buildDockerImage: async (options) => {
 				dockerBuilds.push(options);
 			},
@@ -76,11 +77,7 @@ describe('runBuildCommand', () => {
 			resolveOciImageTag: async () => 'agent-vm-gateway:latest',
 		};
 
-		await runBuildCommand(
-			{ systemConfig: createTestSystemConfig() },
-			{ stderr: { write: () => true }, stdout: { write: () => true } },
-			dependencies,
-		);
+		await runBuildCommand({ systemConfig: createTestSystemConfig() }, dependencies);
 
 		expect(dockerBuilds).toHaveLength(1);
 		expect(dockerBuilds[0]?.dockerfilePath).toBe('/project/images/gateway/Dockerfile');
@@ -90,6 +87,7 @@ describe('runBuildCommand', () => {
 	it('skips Docker build when no dockerfile is configured', async () => {
 		const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
 		const dependencies: BuildCommandDependencies = {
+			runTask: async (_title, fn) => fn(),
 			buildDockerImage: async (options) => {
 				dockerBuilds.push(options);
 			},
@@ -101,11 +99,7 @@ describe('runBuildCommand', () => {
 			resolveOciImageTag: async () => 'agent-vm-tool:latest',
 		};
 
-		await runBuildCommand(
-			{ systemConfig: createTestSystemConfig() },
-			{ stderr: { write: () => true }, stdout: { write: () => true } },
-			dependencies,
-		);
+		await runBuildCommand({ systemConfig: createTestSystemConfig() }, dependencies);
 
 		expect(dockerBuilds).toHaveLength(1);
 	});
@@ -113,6 +107,7 @@ describe('runBuildCommand', () => {
 	it('builds shared Gondolin assets once per image type into the shared cache dir', async () => {
 		const gondolinBuilds: { cacheDir: string; fullReset: boolean | undefined }[] = [];
 		const dependencies: BuildCommandDependencies = {
+			runTask: async (_title, fn) => fn(),
 			buildDockerImage: async () => {},
 			buildGondolinImage: async (options) => {
 				gondolinBuilds.push({
@@ -124,11 +119,7 @@ describe('runBuildCommand', () => {
 			resolveOciImageTag: async () => 'tag:latest',
 		};
 
-		await runBuildCommand(
-			{ systemConfig: createTestSystemConfig() },
-			{ stderr: { write: () => true }, stdout: { write: () => true } },
-			dependencies,
-		);
+		await runBuildCommand({ systemConfig: createTestSystemConfig() }, dependencies);
 
 		expect(gondolinBuilds).toHaveLength(2);
 		expect(gondolinBuilds[0]).toEqual({
@@ -170,6 +161,7 @@ describe('runBuildCommand', () => {
 			],
 		};
 		const dependencies: BuildCommandDependencies = {
+			runTask: async (_title, fn) => fn(),
 			buildDockerImage: async () => {},
 			buildGondolinImage: async (options) => {
 				gondolinBuilds.push({ cacheDir: options.cacheDir });
@@ -178,11 +170,7 @@ describe('runBuildCommand', () => {
 			resolveOciImageTag: async () => 'tag:latest',
 		};
 
-		await runBuildCommand(
-			{ systemConfig: multiZoneConfig },
-			{ stderr: { write: () => true }, stdout: { write: () => true } },
-			dependencies,
-		);
+		await runBuildCommand({ systemConfig: multiZoneConfig }, dependencies);
 
 		expect(gondolinBuilds).toHaveLength(2);
 		expect(gondolinBuilds.map((build) => build.cacheDir)).toEqual([
@@ -193,13 +181,13 @@ describe('runBuildCommand', () => {
 
 	it('passes fullReset to shared Gondolin builds when forceRebuild is enabled', async () => {
 		const gondolinBuilds: { cacheDir: string; fullReset: boolean | undefined }[] = [];
+		const taskTitles: string[] = [];
 
 		await runBuildCommand(
 			{
 				forceRebuild: true,
 				systemConfig: createTestSystemConfig(),
 			},
-			{ stderr: { write: () => true }, stdout: { write: () => true } },
 			{
 				buildDockerImage: async () => {},
 				buildGondolinImage: async (options) => {
@@ -210,6 +198,10 @@ describe('runBuildCommand', () => {
 					return { built: true, fingerprint: 'force-fp', imagePath: '/cache/force-fp' };
 				},
 				resolveOciImageTag: async () => 'tag:latest',
+				runTask: async (title, fn) => {
+					taskTitles.push(title);
+					await fn();
+				},
 			},
 		);
 
@@ -217,6 +209,8 @@ describe('runBuildCommand', () => {
 			{ cacheDir: '/cache/images/gateway', fullReset: true },
 			{ cacheDir: '/cache/images/tool', fullReset: true },
 		]);
+		expect(taskTitles).toContain('Gondolin: gateway');
+		expect(taskTitles).toContain('Gondolin: tool');
 	});
 });
 
@@ -248,7 +242,6 @@ describe('resolveOciImageTagFromConfig', () => {
 					},
 				},
 			},
-			{ stderr: { write: () => true }, stdout: { write: () => true } },
 			{
 				buildDockerImage: async (options) => {
 					dockerBuilds.push({ imageTag: options.imageTag });
@@ -258,6 +251,7 @@ describe('resolveOciImageTagFromConfig', () => {
 					fingerprint: 'fp',
 					imagePath: '/cache/fp',
 				}),
+				runTask: async (_title, fn) => fn(),
 			},
 		);
 
@@ -283,7 +277,6 @@ describe('resolveOciImageTagFromConfig', () => {
 						},
 					},
 				},
-				{ stderr: { write: () => true }, stdout: { write: () => true } },
 				{
 					buildDockerImage: async () => {},
 					buildGondolinImage: async () => ({
@@ -291,6 +284,7 @@ describe('resolveOciImageTagFromConfig', () => {
 						fingerprint: 'fp',
 						imagePath: '/cache/fp',
 					}),
+					runTask: async (_title, fn) => fn(),
 				},
 			),
 		).rejects.toThrow('has no valid oci.image tag');
@@ -323,7 +317,6 @@ describe('resolveOciImageTagFromConfig', () => {
 						},
 					},
 				},
-				{ stderr: { write: () => true }, stdout: { write: () => true } },
 				{
 					buildDockerImage: async () => {},
 					buildGondolinImage: async () => ({
@@ -331,6 +324,7 @@ describe('resolveOciImageTagFromConfig', () => {
 						fingerprint: 'fp',
 						imagePath: '/cache/fp',
 					}),
+					runTask: async (_title, fn) => fn(),
 				},
 			),
 		).rejects.toThrow('has no valid oci.image tag');
@@ -355,7 +349,6 @@ describe('resolveOciImageTagFromConfig', () => {
 						},
 					},
 				},
-				{ stderr: { write: () => true }, stdout: { write: () => true } },
 				{
 					buildDockerImage: async () => {},
 					buildGondolinImage: async () => ({
@@ -363,6 +356,7 @@ describe('resolveOciImageTagFromConfig', () => {
 						fingerprint: 'fp',
 						imagePath: '/cache/fp',
 					}),
+					runTask: async (_title, fn) => fn(),
 				},
 			),
 		).rejects.toThrow();

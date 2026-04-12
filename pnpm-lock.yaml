@@ -20,6 +20,9 @@ importers:
       oxlint-tsgolint:
         specifier: ^0.20.0
         version: 0.20.0
+      tasuku:
+        specifier: ^2.3.0
+        version: 2.3.0
       typescript:
         specifier: ^6.0.2
         version: 6.0.2
@@ -50,6 +53,10 @@ importers:
       zod:
         specifier: ^4
         version: 4.3.6
+    devDependencies:
+      tasuku:
+        specifier: ^2.3.0
+        version: 2.3.0
 
   packages/gondolin-core:
     dependencies:
@@ -971,6 +978,9 @@ packages:
     resolution: {integrity: sha512-aulFJcD6YK8V1G7iRB5tigAP4TsHBZZrOV8pjV++zdUwmeV8uzbY7yn6h9MswN62adStNZFuCIx4haBnRuMDaw==}
     engines: {node: '>=18'}
 
+  tasuku@2.3.0:
+    resolution: {integrity: sha512-9Jtk+XAnttslCw4i9RceSZGr2PT5TLn0vUyWnoP2SdlSYzkiYRY6kB5qnPi5IQ/Em8e4oBow1rpaA39iijTIrA==}
+
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
 
@@ -1769,6 +1779,8 @@ snapshots:
       ansi-regex: 6.2.2
 
   strip-final-newline@4.0.0: {}
+
+  tasuku@2.3.0: {}
 
   tinybench@2.9.0: {}
 

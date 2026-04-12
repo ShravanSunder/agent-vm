@@ -25,5 +25,8 @@
 		"gondolin-core": "workspace:*",
 		"hono": "^4",
 		"zod": "^4"
+	},
+	"devDependencies": {
+		"tasuku": "^2.3.0"
 	}
 }

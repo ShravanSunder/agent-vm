@@ -2,12 +2,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type { BuildImageResult } from 'gondolin-core';
+import task from 'tasuku';
 import { z } from 'zod';
 
 import { buildDockerImage as buildDockerImageDefault } from '../build/docker-image-builder.js';
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { SystemConfig } from '../controller/system-config.js';
-import type { CliIo } from './agent-vm-cli-support.js';
 
 export interface BuildCommandDependencies {
 	readonly buildDockerImage?: (options: {
@@ -20,6 +20,8 @@ export interface BuildCommandDependencies {
 		readonly fullReset?: boolean;
 	}) => Promise<BuildImageResult>;
 	readonly resolveOciImageTag?: (buildConfigPath: string) => Promise<string>;
+	/** Override the task runner for testing (bypasses tasuku terminal rendering). */
+	readonly runTask?: (title: string, fn: () => Promise<void>) => Promise<void>;
 }
 
 const ociImageTagSchema = z.object({
@@ -45,17 +47,25 @@ async function resolveOciImageTagFromConfig(buildConfigPath: string): Promise<st
 	return parsedConfig.data.oci.image;
 }
 
+async function defaultRunTask(title: string, fn: () => Promise<void>): Promise<void> {
+	await task(title, async ({ startTime, setTitle }) => {
+		startTime();
+		await fn();
+		setTitle(`${title} done`);
+	});
+}
+
 export async function runBuildCommand(
 	options: {
 		readonly forceRebuild?: boolean;
 		readonly systemConfig: SystemConfig;
 	},
-	io: CliIo,
 	dependencies: BuildCommandDependencies = {},
 ): Promise<void> {
 	const buildDockerImage = dependencies.buildDockerImage ?? buildDockerImageDefault;
 	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
 	const resolveOciImageTag = dependencies.resolveOciImageTag ?? resolveOciImageTagFromConfig;
+	const runTaskStep = dependencies.runTask ?? defaultRunTask;
 
 	const imageTargets: readonly ImageTarget[] = [
 		{
@@ -76,25 +86,22 @@ export async function runBuildCommand(
 		}
 
 		const imageTag = await resolveOciImageTag(imageTarget.buildConfigPath);
-		io.stderr.write(`[build] Docker: ${imageTarget.name} -> ${imageTag}\n`);
-		await buildDockerImage({
-			dockerfilePath: imageTarget.dockerfile,
-			imageTag,
+		await runTaskStep(`Docker: ${imageTarget.name} (${imageTag})`, async () => {
+			await buildDockerImage({
+				dockerfilePath: imageTarget.dockerfile!,
+				imageTag,
+			});
 		});
-		io.stderr.write(`[build] Docker: ${imageTarget.name} done\n`);
 	}
 
 	for (const imageTarget of imageTargets) {
 		const cacheDirectory = path.join(options.systemConfig.cacheDir, 'images', imageTarget.name);
-		io.stderr.write(`[build] Gondolin: ${imageTarget.name} -> ${cacheDirectory}\n`);
-		const buildResult = await buildGondolinImage({
-			buildConfigPath: imageTarget.buildConfigPath,
-			cacheDir: cacheDirectory,
-			...(options.forceRebuild !== undefined ? { fullReset: options.forceRebuild } : {}),
+		await runTaskStep(`Gondolin: ${imageTarget.name}`, async () => {
+			await buildGondolinImage({
+				buildConfigPath: imageTarget.buildConfigPath,
+				cacheDir: cacheDirectory,
+				...(options.forceRebuild !== undefined ? { fullReset: options.forceRebuild } : {}),
+			});
 		});
-		const buildStatus = buildResult.built ? 'built' : 'cached';
-		io.stderr.write(
-			`[build] Gondolin: ${imageTarget.name} ${buildStatus} [${buildResult.fingerprint}]\n`,
-		);
 	}
 }

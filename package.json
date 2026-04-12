@@ -23,6 +23,7 @@
 		"oxfmt": "^0.44.0",
 		"oxlint": "^1.59.0",
 		"oxlint-tsgolint": "^0.20.0",
+		"tasuku": "^2.3.0",
 		"typescript": "^6.0.2",
 		"vite": "latest",
 		"vitest": "^4.1.4"
