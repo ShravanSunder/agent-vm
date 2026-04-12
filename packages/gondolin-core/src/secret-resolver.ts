@@ -163,6 +163,7 @@ export async function createSecretResolver(
 	},
 	dependencies: CreateSecretResolverDependencies = {},
 ): Promise<SecretResolver> {
+	const exec = dependencies.execFileAsync ?? execFileAsync;
 	try {
 		const client = await (dependencies.createClient ?? createClient)({
 			auth: options.serviceAccountToken,
@@ -171,12 +172,26 @@ export async function createSecretResolver(
 		});
 
 		return {
-			resolve: async (ref: SecretRef): Promise<string> => client.secrets.resolve(ref.ref),
+			resolve: async (ref: SecretRef): Promise<string> => {
+				try {
+					return await client.secrets.resolve(ref.ref);
+				} catch {
+					return await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec);
+				}
+			},
 			resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> => {
 				const resolvedEntries = await Promise.all(
 					Object.entries(refs).map(
-						async ([secretName, secretRef]) =>
-							[secretName, await client.secrets.resolve(secretRef.ref)] as const,
+						async ([secretName, secretRef]) => {
+							try {
+								return [secretName, await client.secrets.resolve(secretRef.ref)] as const;
+							} catch {
+								return [
+									secretName,
+									await resolveSecretWithOpCli(options.serviceAccountToken, secretRef.ref, exec),
+								] as const;
+							}
+						},
 					),
 				);
 
@@ -190,8 +205,6 @@ export async function createSecretResolver(
 			},
 		};
 	} catch {
-		const exec = dependencies.execFileAsync ?? execFileAsync;
-
 		return {
 			resolve: async (ref: SecretRef): Promise<string> =>
 				await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec),

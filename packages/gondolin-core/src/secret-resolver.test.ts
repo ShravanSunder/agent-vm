@@ -201,4 +201,52 @@ describe('createSecretResolver', () => {
 			},
 		]);
 	});
+
+	it('falls back to op read when sdk secret resolution fails after client creation', async () => {
+		const execCalls: {
+			readonly args: readonly string[];
+			readonly command: string;
+			readonly env?: Readonly<Record<string, string | undefined>>;
+		}[] = [];
+
+		const secretResolver = await createSecretResolver(
+			{ serviceAccountToken: 'service-token' },
+			{
+				createClient: async (): Promise<SecretResolverClient> => ({
+					secrets: {
+						resolve: async (): Promise<string> => {
+							throw new Error('sdk resolve failed');
+						},
+						resolveAll: async () => ({
+							individualResponses: {},
+						}),
+					},
+				}),
+				execFileAsync: async (command, args, options) => {
+					execCalls.push({
+						args,
+						command,
+						...(options?.env ? { env: options.env } : {}),
+					});
+					return { stdout: 'resolved-from-op\n', stderr: '' };
+				},
+			},
+		);
+
+		await expect(
+			secretResolver.resolve({
+				source: '1password',
+				ref: 'op://AI/anthropic/api-key',
+			}),
+		).resolves.toBe('resolved-from-op');
+		expect(execCalls).toEqual([
+			{
+				args: ['read', 'op://AI/anthropic/api-key'],
+				command: 'op',
+				env: expect.objectContaining({
+					OP_SERVICE_ACCOUNT_TOKEN: 'service-token',
+				}),
+			},
+		]);
+	});
 });
