@@ -6,33 +6,16 @@ import { promisify } from 'node:util';
 
 import type { BackupEncryption } from './backup-manager.js';
 
+const execFileAsync = promisify(execFile);
+
 interface AgeEncryptionDependencies {
-	/** Resolves the age identity (secret key) string, e.g. from 1Password.
-	 *  Format: AGE-SECRET-KEY-1... (the full key line from age-keygen) */
+	/** Resolves the age identity (secret key) string from 1Password.
+	 *  Format: AGE-SECRET-KEY-1... (the full key line from age-keygen).
+	 *  Store this in 1Password as a "password" field. Generate with: age-keygen */
 	readonly resolveIdentity: () => Promise<string>;
 }
 
-/**
- * Runs `age` with recipient/identity key files instead of passphrase.
- * The official `age` binary does not support non-interactive passphrase input.
- * Using -R (recipient) for encryption and -i (identity) for decryption avoids
- * the terminal requirement entirely.
- */
-async function runAge(args: readonly string[]): Promise<void> {
-	const result = await promisify(execFile)('age', [...args], { encoding: 'utf8' });
-	if (result.stderr && result.stderr.includes('error')) {
-		throw new Error(`age error: ${result.stderr.trim()}`);
-	}
-}
-
 async function deriveRecipientFromIdentity(identityLine: string): Promise<string> {
-	// age-keygen output format: AGE-SECRET-KEY-1<base32>
-	// We need to run age-keygen -y to derive the public key from the identity.
-	// But to avoid shelling out, we can write the identity to a temp file and use -R.
-	// Actually, `age` can encrypt to a recipient derived from an identity file using:
-	// age -e -i identity.txt (since age 1.1+, -i can be used for encryption too — it auto-derives)
-	// BUT that's not supported in all versions. Use age-keygen -y to derive.
-	const execFileAsync = promisify(execFile);
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'age-identity-'));
 	const identityPath = path.join(tmpDir, 'identity.txt');
 	try {
@@ -46,6 +29,18 @@ async function deriveRecipientFromIdentity(identityLine: string): Promise<string
 	}
 }
 
+/**
+ * Age identity-key-based encryption for zone backups.
+ *
+ * Uses age public-key encryption: the identity key (AGE-SECRET-KEY-1...)
+ * is stored in 1Password per zone. The public key (recipient) is derived
+ * at encryption time via age-keygen -y.
+ *
+ * Note: age's --passphrase mode requires an interactive TTY and cannot
+ * be driven programmatically. Identity-key mode works non-interactively.
+ * The 1Password vault item must store an actual age identity key, not
+ * a human-readable passphrase.
+ */
 export function createAgeBackupEncryption(
 	dependencies: AgeEncryptionDependencies,
 ): BackupEncryption {
@@ -53,7 +48,9 @@ export function createAgeBackupEncryption(
 		encrypt: async (inputPath, outputPath) => {
 			const identity = await dependencies.resolveIdentity();
 			const recipient = await deriveRecipientFromIdentity(identity);
-			await runAge(['--encrypt', '--recipient', recipient, '--output', outputPath, inputPath]);
+			await execFileAsync('age', ['--encrypt', '--recipient', recipient, '--output', outputPath, inputPath], {
+				encoding: 'utf8',
+			});
 		},
 		decrypt: async (inputPath, outputPath) => {
 			const identity = await dependencies.resolveIdentity();
@@ -61,7 +58,9 @@ export function createAgeBackupEncryption(
 			const identityPath = path.join(tmpDir, 'identity.txt');
 			try {
 				fs.writeFileSync(identityPath, identity + '\n', { mode: 0o600 });
-				await runAge(['--decrypt', '--identity', identityPath, '--output', outputPath, inputPath]);
+				await execFileAsync('age', ['--decrypt', '--identity', identityPath, '--output', outputPath, inputPath], {
+					encoding: 'utf8',
+				});
 			} finally {
 				fs.rmSync(tmpDir, { recursive: true, force: true });
 			}

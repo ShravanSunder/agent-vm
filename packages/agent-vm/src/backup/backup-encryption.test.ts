@@ -6,12 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAgeBackupEncryption } from './backup-encryption.js';
 
-// Generate a real age identity for testing
 async function generateTestIdentity(): Promise<string> {
 	const { execFile } = await import('node:child_process');
 	const { promisify } = await import('node:util');
 	const output = await promisify(execFile)('age-keygen', [], { encoding: 'utf8' });
-	const match = output.stdout.match(/AGE-SECRET-KEY-\S+/u);
+	const match = output.stderr.match(/AGE-SECRET-KEY-\S+/u) ?? output.stdout.match(/AGE-SECRET-KEY-\S+/u);
 	if (!match) {
 		throw new Error('Failed to generate age identity');
 	}
@@ -28,7 +27,7 @@ describe('createAgeBackupEncryption', () => {
 		}
 	});
 
-	it('encrypts and decrypts a file using age identity key', async () => {
+	it('encrypts and decrypts a file using an age identity key', async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'age-test-'));
 		const identity = await generateTestIdentity();
 		const inputPath = path.join(tmpDir, 'input.txt');
@@ -43,7 +42,6 @@ describe('createAgeBackupEncryption', () => {
 		await encryption.encrypt(inputPath, encryptedPath);
 		expect(fs.existsSync(encryptedPath)).toBe(true);
 		expect(fs.readFileSync(encryptedPath).length).toBeGreaterThan(0);
-		// Encrypted file should not contain plaintext
 		expect(fs.readFileSync(encryptedPath, 'utf8')).not.toContain('hello from age');
 
 		await encryption.decrypt(encryptedPath, decryptedPath);
@@ -63,20 +61,5 @@ describe('createAgeBackupEncryption', () => {
 		await encryption.decrypt(path.join(tmpDir, 'out1.age'), path.join(tmpDir, 'out1.txt'));
 
 		expect(resolveIdentity).toHaveBeenCalledTimes(2);
-	});
-
-	it('encrypts successfully without require in the runtime path', async () => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'age-esm-'));
-		const identity = await generateTestIdentity();
-		const inputPath = path.join(tmpDir, 'input.txt');
-		const encryptedPath = path.join(tmpDir, 'output.age');
-		fs.writeFileSync(inputPath, 'esm-safe');
-
-		const encryption = createAgeBackupEncryption({
-			resolveIdentity: async () => identity,
-		});
-
-		await encryption.encrypt(inputPath, encryptedPath);
-		expect(fs.existsSync(encryptedPath)).toBe(true);
 	});
 });
