@@ -1,5 +1,5 @@
 import type { SecretResolver } from 'gondolin-core';
-import { createSecretResolver, resolveServiceAccountToken } from 'gondolin-core';
+import { createOpCliSecretResolver, resolveServiceAccountToken } from 'gondolin-core';
 
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';
@@ -22,7 +22,7 @@ export interface CliDependencies {
 	readonly buildControllerStatus: typeof buildControllerStatus;
 	readonly createAgeBackupEncryption: typeof createAgeBackupEncryption;
 	readonly createControllerClient: typeof createControllerClient;
-	readonly createSecretResolver: typeof createSecretResolver;
+	readonly createSecretResolver: typeof createOpCliSecretResolver;
 	readonly createZoneBackupManager: typeof createZoneBackupManager;
 	readonly getCurrentWorkingDirectory?: () => string;
 	readonly loadSystemConfig: typeof loadSystemConfig;
@@ -70,7 +70,7 @@ export const defaultCliDependencies: CliDependencies = {
 	buildControllerStatus,
 	createAgeBackupEncryption,
 	createControllerClient,
-	createSecretResolver,
+	createSecretResolver: createOpCliSecretResolver,
 	createZoneBackupManager,
 	getCurrentWorkingDirectory: () => process.cwd(),
 	loadSystemConfig,

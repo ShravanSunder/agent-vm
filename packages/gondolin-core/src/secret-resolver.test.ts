@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	createSecretResolver,
+	createOpCliSecretResolver,
 	resolveServiceAccountToken,
 	type ExecFileResult,
 	type SecretResolverClient,
@@ -242,6 +243,55 @@ describe('createSecretResolver', () => {
 		expect(execCalls).toEqual([
 			{
 				args: ['read', 'op://AI/anthropic/api-key'],
+				command: 'op',
+				env: expect.objectContaining({
+					OP_SERVICE_ACCOUNT_TOKEN: 'service-token',
+				}),
+			},
+		]);
+	});
+});
+
+describe('createOpCliSecretResolver', () => {
+	it('resolves all refs sequentially via op read', async () => {
+		const execCalls: {
+			readonly args: readonly string[];
+			readonly command: string;
+			readonly env?: Readonly<Record<string, string | undefined>>;
+		}[] = [];
+		const secretResolver = await createOpCliSecretResolver(
+			{ serviceAccountToken: 'service-token' },
+			{
+				execFileAsync: async (command, args, options) => {
+					execCalls.push({
+						args,
+						command,
+						...(options?.env ? { env: options.env } : {}),
+					});
+					return { stdout: `${args[1]}\n`, stderr: '' };
+				},
+			},
+		);
+
+		await expect(
+			secretResolver.resolveAll({
+				A: { source: '1password', ref: 'op://vault/item/a' },
+				B: { source: '1password', ref: 'op://vault/item/b' },
+			}),
+		).resolves.toEqual({
+			A: 'op://vault/item/a',
+			B: 'op://vault/item/b',
+		});
+		expect(execCalls).toEqual([
+			{
+				args: ['read', 'op://vault/item/a'],
+				command: 'op',
+				env: expect.objectContaining({
+					OP_SERVICE_ACCOUNT_TOKEN: 'service-token',
+				}),
+			},
+			{
+				args: ['read', 'op://vault/item/b'],
 				command: 'op',
 				env: expect.objectContaining({
 					OP_SERVICE_ACCOUNT_TOKEN: 'service-token',

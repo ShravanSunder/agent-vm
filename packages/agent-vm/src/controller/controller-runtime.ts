@@ -1,4 +1,4 @@
-import { createSecretResolver, type ManagedVm } from 'gondolin-core';
+import { createOpCliSecretResolver, type ManagedVm } from 'gondolin-core';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import {
@@ -36,7 +36,7 @@ export async function startControllerRuntime(
 	await runTaskStep('Resolving 1Password secrets', async () => {
 		secretResolver = await createSecretResolverFromSystemConfig(
 			options.systemConfig,
-			dependencies.createSecretResolver ?? createSecretResolver,
+			dependencies.createSecretResolver ?? createOpCliSecretResolver,
 		);
 	});
 	const createManagedToolVm =

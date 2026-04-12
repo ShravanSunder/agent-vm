@@ -92,10 +92,11 @@ Legend:
 - `[x]` `agent-vm init test-zone --type coding` scaffolds a coding gateway in live CLI smoke checks
 - `[x]` `pnpm check` passes
 - `[x]` `pnpm test` passes
-- `[~]` live `agent-vm controller start` shows the new progress path and now gets past initial 1Password SDK initialization, but full boot still stalls/fails in zone secret resolution on this machine
-- `[~]` live `agent-vm controller start | jq .ingress` remains blocked by that unresolved runtime secret-resolution failure before final JSON is emitted
+- `[x]` live `agent-vm controller start` completes with plain progress output and final JSON
+- `[x]` live `agent-vm controller status` returns controller/zone data
+- `[x]` live `agent-vm controller stop` returns `{ "ok": true }` and the listeners shut down cleanly
 
 ## Current Remaining Delta
 
-- `[~]` The implemented CLI redesign is complete at code/test level.
-- `[~]` The remaining gap against the plan is live controller boot verification. The branch fixed two code-level 1Password fallback gaps, but the full runtime still fails during zone secret resolution in this environment.
+- `[x]` The implemented CLI redesign is complete at code, test, and live-validation level for the planned OpenClaw path.
+- `[x]` Remaining coding-gateway runtime work is explicitly out of scope for this changeset and now fails clearly instead of pretending to work.

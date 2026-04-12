@@ -157,6 +157,30 @@ async function resolveSecretWithOpCli(
 	return result.stdout.trim();
 }
 
+async function resolveAllSecretsWithOpCli(
+	serviceAccountToken: string,
+	refs: Record<string, SecretRef>,
+	exec: (
+		command: string,
+		args: readonly string[],
+		options?: ExecFileOptions,
+	) => Promise<ExecFileResult>,
+): Promise<Record<string, string>> {
+	const resolvedSecrets: Record<string, string> = {};
+
+	for (const [secretName, secretRef] of Object.entries(refs)) {
+		// Sequential resolution avoids concurrent `op read` failures with the same service account token.
+		// oxlint-disable-next-line eslint/no-await-in-loop
+		resolvedSecrets[secretName] = await resolveSecretWithOpCli(
+			serviceAccountToken,
+			secretRef.ref,
+			exec,
+		);
+	}
+
+	return resolvedSecrets;
+}
+
 export async function createSecretResolver(
 	options: {
 		readonly serviceAccountToken: string;
@@ -180,51 +204,48 @@ export async function createSecretResolver(
 				}
 			},
 			resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> => {
-				const resolvedEntries = await Promise.all(
-					Object.entries(refs).map(async ([secretName, secretRef]) => {
-						try {
-							return [secretName, await client.secrets.resolve(secretRef.ref)] as const;
-						} catch {
-							return [
-								secretName,
-								await resolveSecretWithOpCli(options.serviceAccountToken, secretRef.ref, exec),
-							] as const;
-						}
-					}),
-				);
+				const resolvedSecrets: Record<string, string> = {};
 
-				return resolvedEntries.reduce<Record<string, string>>(
-					(resolvedSecrets, [secretName, value]) => {
-						resolvedSecrets[secretName] = value;
-						return resolvedSecrets;
-					},
-					{},
-				);
+				for (const [secretName, secretRef] of Object.entries(refs)) {
+					try {
+						// oxlint-disable-next-line eslint/no-await-in-loop
+						resolvedSecrets[secretName] = await client.secrets.resolve(secretRef.ref);
+					} catch {
+						// Sequential fallback avoids concurrent `op read` failures when the SDK path is unhealthy.
+						// oxlint-disable-next-line eslint/no-await-in-loop
+						resolvedSecrets[secretName] = await resolveSecretWithOpCli(
+							options.serviceAccountToken,
+							secretRef.ref,
+							exec,
+						);
+					}
+				}
+
+				return resolvedSecrets;
 			},
 		};
 	} catch {
 		return {
 			resolve: async (ref: SecretRef): Promise<string> =>
 				await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec),
-			resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> => {
-				const resolvedEntries = await Promise.all(
-					Object.entries(refs).map(
-						async ([secretName, secretRef]) =>
-							[
-								secretName,
-								await resolveSecretWithOpCli(options.serviceAccountToken, secretRef.ref, exec),
-							] as const,
-					),
-				);
-
-				return resolvedEntries.reduce<Record<string, string>>(
-					(resolvedSecrets, [secretName, value]) => {
-						resolvedSecrets[secretName] = value;
-						return resolvedSecrets;
-					},
-					{},
-				);
-			},
+			resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> =>
+				await resolveAllSecretsWithOpCli(options.serviceAccountToken, refs, exec),
 		};
 	}
+}
+
+export async function createOpCliSecretResolver(
+	options: {
+		readonly serviceAccountToken: string;
+	},
+	dependencies: Pick<CreateSecretResolverDependencies, 'execFileAsync'> = {},
+): Promise<SecretResolver> {
+	const exec = dependencies.execFileAsync ?? execFileAsync;
+
+	return {
+		resolve: async (ref: SecretRef): Promise<string> =>
+			await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec),
+		resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> =>
+			await resolveAllSecretsWithOpCli(options.serviceAccountToken, refs, exec),
+	};
 }
