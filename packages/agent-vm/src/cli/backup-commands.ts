@@ -3,8 +3,8 @@ import {
 	createResolverFromSystemConfig,
 	type CliDependencies,
 	type CliIo,
-	findZone,
-	resolveZoneId,
+	readZoneFlag,
+	requireZone,
 	writeJson,
 } from './agent-vm-cli-support.js';
 
@@ -17,8 +17,8 @@ interface RunBackupCommandOptions {
 
 export async function runBackupCommand(options: RunBackupCommandOptions): Promise<void> {
 	const backupSubcommand = options.restArguments[0];
-	const zoneId = resolveZoneId(options.systemConfig, options.restArguments);
-	const zone = findZone(options.systemConfig, zoneId);
+	const zone = requireZone(options.systemConfig, readZoneFlag(options.restArguments));
+	const zoneId = zone.id;
 	const backupDir = `${zone.gateway.stateDir}/backups`;
 
 	if (backupSubcommand === 'list') {
@@ -58,7 +58,7 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 
 	if (backupSubcommand === 'restore') {
 		const backupPath = options.restArguments[1];
-		if (!backupPath) {
+		if (!backupPath || backupPath.startsWith('--')) {
 			throw new Error('Usage: agent-vm backup restore <path> [--zone <id>]');
 		}
 		writeJson(

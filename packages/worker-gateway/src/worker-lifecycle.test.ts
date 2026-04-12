@@ -27,6 +27,10 @@ const zone: GatewayZoneConfig = {
 };
 
 describe('workerLifecycle', () => {
+	it('does not support interactive auth', () => {
+		expect(workerLifecycle.authConfig).toBeUndefined();
+	});
+
 	it('builds a worker VM spec with /state and /workspace mounts', () => {
 		const vmSpec = workerLifecycle.buildVmSpec(zone, { OPENAI_API_KEY: 'openai-token' }, 18800, {
 			basePort: 19000,

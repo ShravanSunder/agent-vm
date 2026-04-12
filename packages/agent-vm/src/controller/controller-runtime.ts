@@ -1,6 +1,7 @@
 import { createOpCliSecretResolver, type ManagedVm } from 'gondolin-core';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import { runTaskWithResult } from '../shared/run-task.js';
 import {
 	cleanToolVmWorkspace,
 	createToolVm,
@@ -32,21 +33,8 @@ export async function startControllerRuntime(
 	const now = dependencies.now ?? Date.now;
 	const runTaskStep =
 		dependencies.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
-	const runTaskWithResult = async <TResult>(
-		title: string,
-		fn: () => Promise<TResult>,
-	): Promise<TResult> => {
-		const noResult = Symbol(title);
-		let taskResult: TResult | typeof noResult = noResult;
-		await runTaskStep(title, async () => {
-			taskResult = await fn();
-		});
-		if (taskResult === noResult) {
-			throw new Error(`Task '${title}' did not produce a result.`);
-		}
-		return taskResult;
-	};
 	const secretResolver = await runTaskWithResult(
+		runTaskStep,
 		'Resolving 1Password secrets',
 		async () =>
 			await createSecretResolverFromSystemConfig(

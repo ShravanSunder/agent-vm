@@ -42,7 +42,7 @@ describe('scaffoldAgentVmProject', () => {
 		const targetDir = createTestDirectory();
 
 		const result = await scaffoldAgentVmProject(
-			{ targetDir, zoneId: 'test-zone' },
+			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
 			noGeneratedAgeIdentityDependencies,
 		);
 		const config = scaffoldedSystemConfigSchema.parse(
@@ -79,7 +79,7 @@ describe('scaffoldAgentVmProject', () => {
 		const targetDir = createTestDirectory();
 
 		const result = await scaffoldAgentVmProject(
-			{ targetDir, zoneId: 'test-zone' },
+			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
 			noGeneratedAgeIdentityDependencies,
 		);
 		const envContent = fs.readFileSync(path.join(targetDir, '.env.local'), 'utf8');
@@ -92,7 +92,7 @@ describe('scaffoldAgentVmProject', () => {
 	it('scaffolds macOS Keychain auth by default', async () => {
 		const targetDir = createTestDirectory();
 		await scaffoldAgentVmProject(
-			{ targetDir, zoneId: 'test-zone' },
+			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
 			noGeneratedAgeIdentityDependencies,
 		);
 		const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
@@ -108,7 +108,7 @@ describe('scaffoldAgentVmProject', () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
-			{ targetDir, zoneId: 'test-zone' },
+			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
 			{
 				generateAgeIdentityKey: () => 'AGE-SECRET-KEY-1TESTVALUE',
 			},
@@ -122,7 +122,7 @@ describe('scaffoldAgentVmProject', () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
-			{ targetDir, zoneId: 'test-zone' },
+			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
 			{
 				generateAgeIdentityKey: () => undefined,
 			},
@@ -136,7 +136,7 @@ describe('scaffoldAgentVmProject', () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
-			{ targetDir, zoneId: 'my-zone' },
+			{ targetDir, zoneId: 'my-zone', gatewayType: 'openclaw' },
 			noGeneratedAgeIdentityDependencies,
 		);
 
@@ -149,7 +149,7 @@ describe('scaffoldAgentVmProject', () => {
 	it('scaffolds a type-specific gateway config file', async () => {
 		const openClawTargetDir = createTestDirectory();
 		await scaffoldAgentVmProject(
-			{ targetDir: openClawTargetDir, zoneId: 'my-zone' },
+			{ targetDir: openClawTargetDir, zoneId: 'my-zone', gatewayType: 'openclaw' },
 			noGeneratedAgeIdentityDependencies,
 		);
 
@@ -175,7 +175,7 @@ describe('scaffoldAgentVmProject', () => {
 		fs.writeFileSync(path.join(targetDir, 'system.json'), '{"existing":true}\n', 'utf8');
 
 		const result = await scaffoldAgentVmProject(
-			{ targetDir, zoneId: 'test-zone' },
+			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
 			noGeneratedAgeIdentityDependencies,
 		);
 		const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8')) as {
@@ -184,5 +184,70 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(result.skipped).toContain('system.json');
 		expect(config.existing).toBe(true);
+	});
+
+	it('scaffolds coding-appropriate secrets for coding type', async () => {
+		const targetDir = createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{ gatewayType: 'coding', targetDir, zoneId: 'test-coding' },
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
+		const secrets = config.zones[0].secrets;
+
+		expect(secrets).not.toHaveProperty('DISCORD_BOT_TOKEN');
+		expect(secrets).not.toHaveProperty('OPENCLAW_GATEWAY_TOKEN');
+		expect(secrets).toHaveProperty('ANTHROPIC_API_KEY');
+		expect(secrets).toHaveProperty('OPENAI_API_KEY');
+	});
+
+	it('scaffolds openclaw-appropriate secrets for openclaw type', async () => {
+		const targetDir = createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{ gatewayType: 'openclaw', targetDir, zoneId: 'test-openclaw' },
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
+		const secrets = config.zones[0].secrets;
+
+		expect(secrets).toHaveProperty('DISCORD_BOT_TOKEN');
+		expect(secrets).toHaveProperty('OPENCLAW_GATEWAY_TOKEN');
+		expect(secrets).not.toHaveProperty('ANTHROPIC_API_KEY');
+	});
+
+	it('scaffolds coding-specific env references for coding type', async () => {
+		const targetDir = createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{ gatewayType: 'coding', targetDir, zoneId: 'test-coding' },
+			noGeneratedAgeIdentityDependencies,
+		);
+		const envContent = fs.readFileSync(path.join(targetDir, '.env.local'), 'utf8');
+
+		expect(envContent).toContain('ANTHROPIC_API_KEY_REF=');
+		expect(envContent).toContain('OPENAI_API_KEY_REF=');
+		expect(envContent).not.toContain('DISCORD_BOT_TOKEN_REF=');
+		expect(envContent).not.toContain('OPENCLAW_GATEWAY_TOKEN_REF=');
+	});
+
+	it('scaffolds coding-specific network defaults for coding type', async () => {
+		const targetDir = createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{ gatewayType: 'coding', targetDir, zoneId: 'test-coding' },
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
+		const zone = config.zones[0];
+
+		expect(zone.allowedHosts).toContain('api.anthropic.com');
+		expect(zone.allowedHosts).toContain('api.openai.com');
+		expect(zone.allowedHosts).not.toContain('discord.com');
+		expect(zone.websocketBypass).toEqual([]);
 	});
 });

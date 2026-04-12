@@ -2,7 +2,7 @@
 import { subcommands } from 'cmd-ts';
 
 import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
-import { createOpenClawSubcommands } from './auth-definition.js';
+import { createAuthInteractiveCommand } from './auth-interactive-definition.js';
 import { createBackupSubcommands } from './backup-definition.js';
 import { createBuildCommand } from './build-definition.js';
 import { createCacheSubcommands } from './cache-definition.js';
@@ -21,7 +21,7 @@ export function createAgentVmApp(io: CliIo, dependencies: CliDependencies) {
 			doctor: createDoctorCommand(io, dependencies),
 			cache: createCacheSubcommands(io, dependencies),
 			backup: createBackupSubcommands(io, dependencies),
-			openclaw: createOpenClawSubcommands(io, dependencies),
+			'auth-interactive': createAuthInteractiveCommand(io, dependencies),
 			controller: createControllerSubcommands(io, dependencies),
 		},
 	});

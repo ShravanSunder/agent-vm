@@ -214,4 +214,26 @@ describe('runSshCommand', () => {
 			}),
 		).rejects.toThrow('Failed to open SSH session to root@127.0.0.1:2222');
 	});
+
+	it('requires --zone explicitly', async () => {
+		await expect(
+			runSshCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: () =>
+						createControllerClientStub(async () => ({
+							host: '127.0.0.1',
+							port: 2222,
+							user: 'root',
+						})),
+				},
+				io: {
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				restArguments: [],
+				systemConfig,
+			}),
+		).rejects.toThrow('--zone is required');
+	});
 });

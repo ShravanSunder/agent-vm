@@ -1,6 +1,7 @@
 export interface ControllerClient {
 	destroyZone(zoneId: string, purge: boolean): Promise<unknown>;
 	enableZoneSsh(zoneId: string): Promise<unknown>;
+	execInZone?(zoneId: string, command: string): Promise<unknown>;
 	getControllerStatus(): Promise<unknown>;
 	getZoneLogs(zoneId: string): Promise<unknown>;
 	listLeases(): Promise<unknown>;
@@ -11,17 +12,17 @@ export interface ControllerClient {
 }
 
 async function readJsonResponse(response: Response, context: string): Promise<unknown> {
+	const responseBody = await response.text().catch(() => '(unreadable)');
 	if (!response.ok) {
-		const body = await response.text().catch(() => '(unreadable)');
-		throw new Error(`${context} failed with HTTP ${response.status}: ${body}`);
+		throw new Error(`${context} failed with HTTP ${response.status}: ${responseBody}`);
 	}
 
 	try {
-		return await response.json();
+		return JSON.parse(responseBody) as unknown;
 	} catch (error) {
-		const body = await response.text().catch(() => '(unreadable)');
 		throw new Error(
-			`${context} returned invalid JSON: ${error instanceof Error ? error.message : String(error)}. Body: ${body}`,
+			`${context} returned invalid JSON: ${error instanceof Error ? error.message : String(error)}. Body: ${responseBody}`,
+			{ cause: error },
 		);
 	}
 }
@@ -39,6 +40,16 @@ export function createControllerClient(options: {
 				method: 'POST',
 			});
 			return await readJsonResponse(response, `Enable SSH for zone '${zoneId}'`);
+		},
+		execInZone: async (zoneId: string, command: string): Promise<unknown> => {
+			const response = await fetchImpl(`${baseUrl}/zones/${zoneId}/execute-command`, {
+				body: JSON.stringify({ command }),
+				headers: {
+					'content-type': 'application/json',
+				},
+				method: 'POST',
+			});
+			return await readJsonResponse(response, `Execute command in zone '${zoneId}'`);
 		},
 		destroyZone: async (zoneId: string, purge: boolean): Promise<unknown> => {
 			const response = await fetchImpl(`${baseUrl}/zones/${zoneId}/destroy`, {

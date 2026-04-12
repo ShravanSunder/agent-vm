@@ -73,6 +73,24 @@ function createZone(overrides?: {
 }
 
 describe('openclawLifecycle', () => {
+	describe('authConfig', () => {
+		it('provides a list-providers command', () => {
+			expect(openclawLifecycle.authConfig).toBeDefined();
+			expect(openclawLifecycle.authConfig?.listProvidersCommand).toBe(
+				'openclaw models auth list --format plain 2>/dev/null || echo ""',
+			);
+		});
+
+		it('builds a login command for a given provider', () => {
+			expect(openclawLifecycle.authConfig?.buildLoginCommand('codex')).toBe(
+				'openclaw models auth login --provider codex',
+			);
+			expect(openclawLifecycle.authConfig?.buildLoginCommand('openai-codex')).toBe(
+				'openclaw models auth login --provider openai-codex',
+			);
+		});
+	});
+
 	describe('buildVmSpec', () => {
 		it('splits environment and mediated secrets', () => {
 			const vmSpec = openclawLifecycle.buildVmSpec(createZone(), resolvedSecrets, 18800, {

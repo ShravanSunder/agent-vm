@@ -38,9 +38,18 @@ export function registerControllerZoneOperationRoutes(
 	);
 
 	if (operations.enableSshForZone) {
-		app.post('/zones/:zoneId/enable-ssh', async (context) =>
-			context.json(await operations.enableSshForZone?.(context.req.param('zoneId'))),
-		);
+		app.post('/zones/:zoneId/enable-ssh', async (context) => {
+			try {
+				return context.json(await operations.enableSshForZone?.(context.req.param('zoneId')));
+			} catch (error) {
+				return context.json(
+					{
+						error: error instanceof Error ? error.message : 'zone-ssh-enable-failed',
+					},
+					500,
+				);
+			}
+		});
 	}
 
 	if (operations.execInZone) {
@@ -58,9 +67,18 @@ export function registerControllerZoneOperationRoutes(
 				);
 			}
 			const payload = parsedPayload.data;
-			return context.json(
-				await operations.execInZone?.(context.req.param('zoneId'), payload.command),
-			);
+			try {
+				return context.json(
+					await operations.execInZone?.(context.req.param('zoneId'), payload.command),
+				);
+			} catch (error) {
+				return context.json(
+					{
+						error: error instanceof Error ? error.message : 'zone-command-execution-failed',
+					},
+					500,
+				);
+			}
 		});
 	}
 

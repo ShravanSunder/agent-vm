@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { GatewayHealthCheck, GatewayLifecycle, GatewayZoneConfig } from 'gateway-interface';
 import { createManagedVm as createManagedVmFromCore, type ManagedVm } from 'gondolin-core';
 
+import { runTaskWithResult } from '../shared/run-task.js';
 import { resolveZoneSecrets } from './credential-manager.js';
 import {
 	buildGatewayImage,
@@ -20,24 +21,6 @@ import {
 export interface GatewayManagerDependencies extends GatewayImageBuilderDependencies {
 	readonly createManagedVm?: (options: GatewayManagedVmFactoryOptions) => Promise<ManagedVm>;
 	readonly loadGatewayLifecycle?: (type: GatewayZoneConfig['gateway']['type']) => GatewayLifecycle;
-}
-
-async function runTaskWithResult<TResult>(
-	runTaskStep: (title: string, fn: () => Promise<void>) => Promise<void>,
-	title: string,
-	fn: () => Promise<TResult>,
-): Promise<TResult> {
-	const noResult = Symbol(title);
-	let taskResult: TResult | typeof noResult = noResult;
-	await runTaskStep(title, async () => {
-		taskResult = await fn();
-	});
-
-	if (taskResult === noResult) {
-		throw new Error(`Task '${title}' did not produce a result.`);
-	}
-
-	return taskResult;
 }
 
 async function waitForHealth(

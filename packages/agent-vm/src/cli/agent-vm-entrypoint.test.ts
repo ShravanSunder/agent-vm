@@ -69,6 +69,7 @@ function createControllerClientStub(
 	return {
 		destroyZone: async () => ({}),
 		enableZoneSsh,
+		execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
 		getControllerStatus: async () => ({}),
 		getZoneLogs: async () => ({}),
 		listLeases: async () => [],
@@ -268,7 +269,7 @@ describe('runAgentVmCli', () => {
 		const runInteractiveProcess = vi.fn(async () => {});
 
 		await runAgentVmCli(
-			['openclaw', 'auth', 'codex', '--zone', 'shravan'],
+			['auth-interactive', 'codex', '--zone', 'shravan'],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -298,29 +299,51 @@ describe('runAgentVmCli', () => {
 			'-p',
 			'19000',
 			'root@127.0.0.1',
-			'openclaw',
-			'models',
-			'auth',
-			'login',
-			'--provider',
-			'codex',
+			'openclaw models auth login --provider codex',
 		]);
 	});
 
-	it('throws a usage error when auth is missing the plugin name', async () => {
-		await expect(
-			runAgentVmCli(
-				['openclaw', 'auth'],
-				{
-					stderr: { write: () => true },
-					stdout: { write: () => true },
+	it('lists available auth providers when auth-interactive is called without a provider', async () => {
+		const outputs: string[] = [];
+		const execInZone = vi.fn(async () => ({
+			exitCode: 0,
+			stdout: 'codex\nopenai-codex\n',
+			stderr: '',
+		}));
+
+		await runAgentVmCli(
+			['auth-interactive', '--zone', 'shravan'],
+			{
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
 				},
-				{
-					...defaultCliDependencies,
-					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
-				},
-			),
-		).rejects.toThrow(/provider|plugin|missing/i);
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () => ({
+					...createControllerClientStub(async () => ({
+						host: '127.0.0.1',
+						identityFile: '/tmp/test-key',
+						port: 19000,
+						user: 'root',
+					})),
+					execInZone,
+				}),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				runCommand: vi.fn(async () => ({
+					exitCode: 0,
+					stdout: 'codex\nopenai-codex\n',
+					stderr: '',
+				})),
+			},
+		);
+
+		expect(outputs.join('')).toContain('codex');
+		expect(outputs.join('')).toContain('openai-codex');
 	});
 
 	it('prints top-level help instead of throwing on --help', async () => {
@@ -665,7 +688,7 @@ describe('runAgentVmCli', () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 
 		await runAgentVmCli(
-			['controller', 'start'],
+			['controller', 'start', '--zone', 'shravan'],
 			{
 				stderr: {
 					write: () => true,
@@ -800,7 +823,58 @@ describe('runAgentVmCli', () => {
 					}),
 				},
 			),
-		).rejects.toThrow(/single-zone/u);
+		).rejects.toThrow(/No value provided for --zone/u);
+	});
+
+	it('uses the explicitly requested zone for controller start', async () => {
+		const baseSystemConfig = createCliBuildSystemConfig();
+		const primaryZone = baseSystemConfig.zones[0];
+		if (!primaryZone) {
+			throw new Error('Expected primary zone in test system config');
+		}
+		const startControllerRuntime = vi.fn(async () => ({
+			controllerPort: 18800,
+			gateway: {
+				ingress: {
+					host: '127.0.0.1',
+					port: 18792,
+				},
+				vm: {
+					id: 'vm-alevtina',
+				},
+			},
+		}));
+
+		await runAgentVmCli(
+			['controller', 'start', '--zone', 'alevtina'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				loadSystemConfig: async () => ({
+					...baseSystemConfig,
+					zones: [
+						primaryZone,
+						{
+							...primaryZone,
+							id: 'alevtina',
+						},
+					],
+				}),
+				startControllerRuntime,
+			},
+		);
+
+		expect(startControllerRuntime).toHaveBeenCalledWith(
+			expect.objectContaining({
+				zoneId: 'alevtina',
+			}),
+			{
+				runTask: expect.any(Function),
+			},
+		);
 	});
 
 	it('routes controller operation subcommands through the controller client', async () => {
@@ -1043,6 +1117,22 @@ describe('runAgentVmCli', () => {
 			expect.objectContaining({ backupDir: './state/shravan/backups', zoneId: 'shravan' }),
 		);
 		expect(outputs.join('')).toContain('shravan-2026-04-06.tar.age');
+	});
+
+	it('requires --zone for backup list', async () => {
+		await expect(
+			runAgentVmCli(
+				['backup', 'list'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					loadSystemConfig: async () => createCliBuildSystemConfig(),
+				},
+			),
+		).rejects.toThrow(/--zone/u);
 	});
 
 	it('routes backup create through the backup manager with a 1Password key ref', async () => {

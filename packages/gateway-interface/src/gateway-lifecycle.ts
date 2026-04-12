@@ -4,6 +4,24 @@ import type { GatewayProcessSpec } from './gateway-process-spec.js';
 import type { GatewayVmSpec } from './gateway-vm-spec.js';
 
 /**
+ * Describes how to run interactive auth for a gateway type.
+ * Static property — available without a running VM.
+ */
+export interface GatewayAuthConfig {
+	/**
+	 * Shell command to list available auth providers inside the VM.
+	 * Should output one provider name per line to stdout.
+	 */
+	readonly listProvidersCommand: string;
+
+	/**
+	 * Build the shell command for interactive auth login.
+	 * The CLI passes this as the SSH remote command with -t (TTY).
+	 */
+	readonly buildLoginCommand: (provider: string) => string;
+}
+
+/**
  * Zone config as the lifecycle sees it.
  * Decoupled from SystemConfig — the controller maps into this shape.
  */
@@ -34,6 +52,12 @@ export interface GatewayZoneConfig {
 }
 
 export interface GatewayLifecycle {
+	/**
+	 * How to run interactive auth for this gateway type.
+	 * Absent means the gateway type does not support interactive auth.
+	 */
+	readonly authConfig?: GatewayAuthConfig | undefined;
+
 	/**
 	 * Build the full VM spec — everything Gondolin needs to create the VM.
 	 * Pure data assembly — no side effects.

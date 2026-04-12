@@ -19,7 +19,7 @@ export function createConfigOption() {
 
 export function createZoneOption() {
 	return option({
-		type: optional(string),
+		type: string,
 		long: 'zone',
 		short: 'z',
 		description: 'Zone identifier',
@@ -74,21 +74,11 @@ export function loadSystemConfigFromOption(
 	});
 }
 
-export function appendZoneArgument(
-	arguments_: string[],
-	zoneId: string | undefined,
-): readonly string[] {
-	if (!zoneId) {
-		return arguments_;
-	}
-
+export function appendZoneArgument(arguments_: string[], zoneId: string): readonly string[] {
 	return [...arguments_, '--zone', zoneId];
 }
 
 export function parseGatewayType(gatewayType: string | undefined): GatewayType {
-	if (!gatewayType) {
-		return 'openclaw';
-	}
 	if (gatewayType === 'openclaw') {
 		return gatewayType;
 	}
@@ -96,5 +86,7 @@ export function parseGatewayType(gatewayType: string | undefined): GatewayType {
 		return gatewayType;
 	}
 
-	throw new Error(`Unknown gateway type '${gatewayType}'. Expected 'openclaw' or 'coding'.`);
+	throw new Error(
+		`Gateway type is required. Expected 'openclaw' or 'coding'${gatewayType ? `, got '${gatewayType}'` : ''}.`,
+	);
 }

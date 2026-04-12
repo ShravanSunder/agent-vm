@@ -58,6 +58,12 @@ function buildOpenClawBootstrapCommand(
 }
 
 export const openclawLifecycle: GatewayLifecycle = {
+	authConfig: {
+		listProvidersCommand: 'openclaw models auth list --format plain 2>/dev/null || echo ""',
+		buildLoginCommand: (provider: string): string =>
+			`openclaw models auth login --provider ${provider}`,
+	},
+
 	buildVmSpec(
 		zone: GatewayZoneConfig,
 		resolvedSecrets: Record<string, string>,

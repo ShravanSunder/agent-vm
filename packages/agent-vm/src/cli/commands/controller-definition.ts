@@ -6,7 +6,7 @@ import { command, positional, string, subcommands } from 'cmd-ts';
 
 import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
 import type { SystemConfig } from '../../config/system-config.js';
-import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
+import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
 import { runControllerOperationCommand } from '../controller-operation-commands.js';
 import { runLeaseCommand } from '../lease-commands.js';
 import { createRunTask } from '../run-task.js';
@@ -25,7 +25,7 @@ function createControllerOperationSubcommand(
 	io: CliIo,
 	dependencies: CliDependencies,
 	options: {
-		readonly name: 'destroy' | 'logs' | 'start' | 'status' | 'stop' | 'upgrade';
+		readonly name: 'destroy' | 'logs' | 'status' | 'stop' | 'upgrade';
 		readonly description: string;
 		readonly supportsPurge?: boolean;
 		readonly supportsZone?: boolean;
@@ -41,10 +41,11 @@ function createControllerOperationSubcommand(
 		},
 		handler: async ({ config, ...rest }) => {
 			const systemConfig = await loadSystemConfigFromOption(config, dependencies);
-			const restArguments = appendZoneArgument(
-				options.supportsPurge && 'purge' in rest && rest.purge ? ['--purge'] : [],
-				'zone' in rest ? (rest.zone as string | undefined) : undefined,
-			);
+			const argumentPrefix =
+				options.supportsPurge && 'purge' in rest && rest.purge ? ['--purge'] : [];
+			const restArguments = options.supportsZone
+				? appendZoneArgument(argumentPrefix, 'zone' in rest ? rest.zone : '')
+				: argumentPrefix;
 			await runControllerOperationCommand({
 				dependencies,
 				io,
@@ -84,25 +85,18 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 				description: 'Boot the controller and gateway',
 				args: {
 					config: createConfigOption(),
+					zone: createZoneOption(),
 				},
-				handler: async ({ config }) => {
+				handler: async ({ config, zone }) => {
 					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
-					if (systemConfig.zones.length !== 1) {
-						throw new Error(
-							`controller start currently supports a single-zone system.json, but found ${systemConfig.zones.length} zones. Split the config or add explicit multi-zone runtime support before starting.`,
-						);
-					}
-					const firstZone = systemConfig.zones[0];
-					if (!firstZone) {
-						throw new Error('System config does not define any zones.');
-					}
+					const selectedZone = requireZone(systemConfig, zone);
 
 					await warnIfGatewayImageCacheIsCold(io, systemConfig);
 					const runTask = await createRunTask(io);
 					const runtime = await dependencies.startControllerRuntime(
 						{
 							systemConfig,
-							zoneId: firstZone.id,
+							zoneId: selectedZone.id,
 						},
 						{ runTask },
 					);
@@ -112,7 +106,7 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 								controllerPort: runtime.controllerPort,
 								ingress: runtime.gateway.ingress,
 								vmId: runtime.gateway.vm.id,
-								zoneId: firstZone.id,
+								zoneId: selectedZone.id,
 							},
 							null,
 							2,
@@ -139,7 +133,8 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 				},
 				handler: async ({ config, print, remoteCommandArguments, zone }) => {
 					const restArguments = [
-						...(zone ? ['--zone', zone] : []),
+						'--zone',
+						zone,
 						...(print ? ['--print'] : []),
 						...(remoteCommandArguments.length > 0 ? ['--', ...remoteCommandArguments] : []),
 					];

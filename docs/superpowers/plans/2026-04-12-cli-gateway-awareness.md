@@ -40,43 +40,43 @@ The gateway abstraction refactored the controller/orchestrator layer so it's gat
 
 ### Modified in gateway-interface
 
-| File | Change |
-|------|--------|
+| File                                                  | Change                                                                                |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `packages/gateway-interface/src/gateway-lifecycle.ts` | Add `GatewayAuthConfig` type and optional `authConfig` property to `GatewayLifecycle` |
-| `packages/gateway-interface/src/index.ts` | Re-export `GatewayAuthConfig` |
+| `packages/gateway-interface/src/index.ts`             | Re-export `GatewayAuthConfig`                                                         |
 
 ### Modified in openclaw-gateway
 
-| File | Change |
-|------|--------|
-| `packages/openclaw-gateway/src/openclaw-lifecycle.ts` | Add `authConfig` property |
-| `packages/openclaw-gateway/src/openclaw-lifecycle.test.ts` | Test `authConfig` |
+| File                                                       | Change                    |
+| ---------------------------------------------------------- | ------------------------- |
+| `packages/openclaw-gateway/src/openclaw-lifecycle.ts`      | Add `authConfig` property |
+| `packages/openclaw-gateway/src/openclaw-lifecycle.test.ts` | Test `authConfig`         |
 
 ### New in agent-vm
 
-| File | Responsibility |
-|------|---------------|
-| `packages/agent-vm/src/cli/auth-interactive-command.ts` | Type-aware auth with provider discovery |
-| `packages/agent-vm/src/cli/auth-interactive-command.test.ts` | Tests |
-| `packages/agent-vm/src/cli/commands/auth-interactive-definition.ts` | cmd-ts command definition |
+| File                                                                | Responsibility                          |
+| ------------------------------------------------------------------- | --------------------------------------- |
+| `packages/agent-vm/src/cli/auth-interactive-command.ts`             | Type-aware auth with provider discovery |
+| `packages/agent-vm/src/cli/auth-interactive-command.test.ts`        | Tests                                   |
+| `packages/agent-vm/src/cli/commands/auth-interactive-definition.ts` | cmd-ts command definition               |
 
 ### Modified in agent-vm
 
-| File | Change |
-|------|--------|
-| `packages/agent-vm/src/cli/commands/create-app.ts` | Replace `openclaw:` with top-level `auth-interactive:` |
-| `packages/agent-vm/src/cli/agent-vm-cli-support.ts` | Delete `resolveZoneId`, add `requireZone` (strict, no defaults) |
-| `packages/agent-vm/src/cli/commands/controller-definition.ts` | Use `requireZone` instead of `zones[0]` |
-| `packages/agent-vm/src/cli/controller-operation-commands.ts` | Use `requireZone` instead of `zones[0]` |
-| `packages/agent-vm/src/cli/init-command.ts` | Per-type secret/env templates |
-| `packages/agent-vm/src/cli/init-command.test.ts` | Test per-type scaffolding |
+| File                                                          | Change                                                          |
+| ------------------------------------------------------------- | --------------------------------------------------------------- |
+| `packages/agent-vm/src/cli/commands/create-app.ts`            | Replace `openclaw:` with top-level `auth-interactive:`          |
+| `packages/agent-vm/src/cli/agent-vm-cli-support.ts`           | Delete `resolveZoneId`, add `requireZone` (strict, no defaults) |
+| `packages/agent-vm/src/cli/commands/controller-definition.ts` | Use `requireZone` instead of `zones[0]`                         |
+| `packages/agent-vm/src/cli/controller-operation-commands.ts`  | Use `requireZone` instead of `zones[0]`                         |
+| `packages/agent-vm/src/cli/init-command.ts`                   | Per-type secret/env templates                                   |
+| `packages/agent-vm/src/cli/init-command.test.ts`              | Test per-type scaffolding                                       |
 
 ### Deleted
 
-| File | Reason |
-|------|--------|
-| `packages/agent-vm/src/cli/auth-command.ts` | Replaced by `auth-interactive-command.ts` |
-| `packages/agent-vm/src/cli/auth-command.test.ts` | Replaced |
+| File                                                    | Reason                                       |
+| ------------------------------------------------------- | -------------------------------------------- |
+| `packages/agent-vm/src/cli/auth-command.ts`             | Replaced by `auth-interactive-command.ts`    |
+| `packages/agent-vm/src/cli/auth-command.test.ts`        | Replaced                                     |
 | `packages/agent-vm/src/cli/commands/auth-definition.ts` | Replaced by `auth-interactive-definition.ts` |
 
 ---
@@ -86,6 +86,7 @@ The gateway abstraction refactored the controller/orchestrator layer so it's gat
 Auth config is a **static property on the lifecycle object**, not on the process spec. It describes what commands to run for auth — available without a running VM, before `buildProcessSpec` is called. This is where gateway-type-specific auth knowledge lives, keeping agent-vm decoupled.
 
 **Files:**
+
 - Modify: `packages/gateway-interface/src/gateway-lifecycle.ts`
 - Modify: `packages/gateway-interface/src/index.ts`
 
@@ -137,7 +138,11 @@ export interface GatewayLifecycle {
 - [ ] **Step 2: Re-export from index.ts**
 
 ```ts
-export type { GatewayAuthConfig, GatewayLifecycle, GatewayZoneConfig } from './gateway-lifecycle.js';
+export type {
+	GatewayAuthConfig,
+	GatewayLifecycle,
+	GatewayZoneConfig,
+} from './gateway-lifecycle.js';
 ```
 
 - [ ] **Step 3: Typecheck**
@@ -162,6 +167,7 @@ EOF
 The `openclaw-gateway` package owns the knowledge that auth uses `openclaw models auth list` and `openclaw models auth login`. agent-vm never sees these strings.
 
 **Files:**
+
 - Modify: `packages/openclaw-gateway/src/openclaw-lifecycle.ts`
 - Modify: `packages/openclaw-gateway/src/openclaw-lifecycle.test.ts`
 
@@ -206,9 +212,15 @@ export const openclawLifecycle: GatewayLifecycle = {
 			`openclaw models auth login --provider ${provider}`,
 	},
 
-	buildVmSpec(/* ... existing ... */) { /* ... */ },
-	buildProcessSpec(/* ... existing ... */) { /* ... */ },
-	async prepareHostState(/* ... existing ... */) { /* ... */ },
+	buildVmSpec(/* ... existing ... */) {
+		/* ... */
+	},
+	buildProcessSpec(/* ... existing ... */) {
+		/* ... */
+	},
+	async prepareHostState(/* ... existing ... */) {
+		/* ... */
+	},
 };
 ```
 
@@ -252,23 +264,24 @@ Delete `resolveZoneId` (blind `zones[0]`). Add `requireZone` that always require
 
 **Every zone-scoped command that needs updating:**
 
-| Command | Current behavior | File |
-|---------|-----------------|------|
-| `controller start` | `zones[0]` with single-zone guard | `controller-definition.ts:88-98` |
-| `controller ssh` | `--zone` optional, passed through | `controller-definition.ts:131-153` |
-| `controller logs` | `--zone` optional via `createControllerOperationSubcommand` | `controller-definition.ts:165-169` |
-| `controller destroy` | `--zone` optional via `createControllerOperationSubcommand` | `controller-definition.ts:154-159` |
-| `controller upgrade` | `--zone` optional via `createControllerOperationSubcommand` | `controller-definition.ts:160-164` |
-| `controller credentials refresh` | `--zone` optional | `controller-definition.ts:174-189` |
-| `controller stop` | No zone needed (stops the whole controller) | Not affected |
-| `controller status` | No zone needed (shows all zones) | Not affected |
-| `controller lease list/release` | No zone needed (global) | Not affected |
-| Old `openclaw auth` | `resolveZoneId` blind default | Being replaced by `auth-interactive` in Task 5 |
-| `backup create/restore/list` | Uses `--zone` via `resolveZoneId` | `backup-definition.ts` |
+| Command                          | Current behavior                                            | File                                           |
+| -------------------------------- | ----------------------------------------------------------- | ---------------------------------------------- |
+| `controller start`               | `zones[0]` with single-zone guard                           | `controller-definition.ts:88-98`               |
+| `controller ssh`                 | `--zone` optional, passed through                           | `controller-definition.ts:131-153`             |
+| `controller logs`                | `--zone` optional via `createControllerOperationSubcommand` | `controller-definition.ts:165-169`             |
+| `controller destroy`             | `--zone` optional via `createControllerOperationSubcommand` | `controller-definition.ts:154-159`             |
+| `controller upgrade`             | `--zone` optional via `createControllerOperationSubcommand` | `controller-definition.ts:160-164`             |
+| `controller credentials refresh` | `--zone` optional                                           | `controller-definition.ts:174-189`             |
+| `controller stop`                | No zone needed (stops the whole controller)                 | Not affected                                   |
+| `controller status`              | No zone needed (shows all zones)                            | Not affected                                   |
+| `controller lease list/release`  | No zone needed (global)                                     | Not affected                                   |
+| Old `openclaw auth`              | `resolveZoneId` blind default                               | Being replaced by `auth-interactive` in Task 5 |
+| `backup create/restore/list`     | Uses `--zone` via `resolveZoneId`                           | `backup-definition.ts`                         |
 
 The `createControllerOperationSubcommand` helper at `controller-definition.ts:24-57` generates commands with optional `--zone` via `supportsZone`. This helper passes `--zone` through to `runControllerOperationCommand` which calls `resolveZoneId`. Fix: make `--zone` required on all zone-scoped subcommands generated by this helper, and pass through `requireZone` instead of the old `resolveZoneId`.
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/cli/agent-vm-cli-support.ts`
 - Modify: `packages/agent-vm/src/cli/commands/controller-definition.ts`
 - Modify: `packages/agent-vm/src/cli/controller-operation-commands.ts`
@@ -294,9 +307,7 @@ export function requireZone(
 	}
 
 	const zoneNames = systemConfig.zones.map((z) => z.id).join(', ');
-	throw new Error(
-		`--zone is required. Available zones: ${zoneNames}`,
-	);
+	throw new Error(`--zone is required. Available zones: ${zoneNames}`);
 }
 ```
 
@@ -336,6 +347,7 @@ This helper at line 24-57 conditionally adds `--zone` via `supportsZone`. Change
 - [ ] **Step 4: Update `ssh`, `logs`, `destroy`, `upgrade`, `credentials refresh`**
 
 Each of these passes `--zone` optionally. Make it required by using `requireZone(systemConfig, zoneFlag)` at the command handler level. The list:
+
 - `ssh` (line 131-153) — already has `zone: createZoneOption()`, add `requireZone` call
 - `logs` (line 165-169) — via helper, needs `supportsZone` path to use `requireZone`
 - `destroy` (line 154-159) — via helper
@@ -369,6 +381,7 @@ Expected: zero matches.
 - [ ] **Step 6: Update tests**
 
 Tests that previously relied on implicit zone selection need `--zone` added to their command args. Tests should verify:
+
 - With `--zone shravan`: works
 - Without `--zone`: throws with "Available zones: ..."
 
@@ -395,6 +408,7 @@ EOF
 ### Task 4: Build Type-Aware `auth-interactive` Command
 
 The command:
+
 1. Requires `--zone` (via `requireZone`)
 2. Loads the lifecycle for that zone's gateway type
 3. Checks `lifecycle.authConfig` — throws if absent
@@ -402,6 +416,7 @@ The command:
 5. With provider arg: SSHs in and runs `authConfig.buildLoginCommand(provider)` interactively
 
 **Files:**
+
 - Create: `packages/agent-vm/src/cli/auth-interactive-command.ts`
 - Create: `packages/agent-vm/src/cli/auth-interactive-command.test.ts`
 
@@ -541,15 +556,16 @@ Expected: FAIL — module doesn't exist.
 import type { GatewayAuthConfig } from 'gateway-interface';
 
 import type { SystemConfig } from '../config/system-config.js';
-import { type CliDependencies, type CliIo, resolveControllerBaseUrl } from './agent-vm-cli-support.js';
+import {
+	type CliDependencies,
+	type CliIo,
+	resolveControllerBaseUrl,
+} from './agent-vm-cli-support.js';
 import { zoneSshAccessResponseSchema } from './ssh-commands.js';
 
 export async function listAuthProviders(options: {
 	readonly controllerClient: {
-		readonly execInZone: (
-			zoneId: string,
-			command: string,
-		) => Promise<{ readonly stdout: string }>;
+		readonly execInZone: (zoneId: string, command: string) => Promise<{ readonly stdout: string }>;
 	};
 	readonly listProvidersCommand: string;
 	readonly zoneId: string;
@@ -612,10 +628,13 @@ export async function runAuthInteractiveCommand(options: {
 	const loginCommand = options.authConfig.buildLoginCommand(options.provider);
 	const sshArguments = [
 		'-t',
-		'-o', 'StrictHostKeyChecking=no',
-		'-o', 'UserKnownHostsFile=/dev/null',
+		'-o',
+		'StrictHostKeyChecking=no',
+		'-o',
+		'UserKnownHostsFile=/dev/null',
 		...(sshResponse.identityFile ? ['-i', sshResponse.identityFile] : []),
-		'-p', String(sshResponse.port),
+		'-p',
+		String(sshResponse.port),
 		`${sshResponse.user ?? 'root'}@${sshResponse.host}`,
 		loginCommand,
 	];
@@ -661,6 +680,7 @@ EOF
 ### Task 5: Wire `auth-interactive` into CLI and Delete Old Auth
 
 **Files:**
+
 - Create: `packages/agent-vm/src/cli/commands/auth-interactive-definition.ts`
 - Modify: `packages/agent-vm/src/cli/commands/create-app.ts`
 - Delete: `packages/agent-vm/src/cli/auth-command.ts`
@@ -679,12 +699,17 @@ import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
 import { requireZone, resolveControllerBaseUrl } from '../agent-vm-cli-support.js';
 import { runAuthInteractiveCommand } from '../auth-interactive-command.js';
 import { loadGatewayLifecycle } from '../../gateway/gateway-lifecycle-loader.js';
-import { createConfigOption, createZoneOption, loadSystemConfigFromOption } from './command-definition-support.js';
+import {
+	createConfigOption,
+	createZoneOption,
+	loadSystemConfigFromOption,
+} from './command-definition-support.js';
 
 export function createAuthInteractiveCommand(io: CliIo, dependencies: CliDependencies) {
 	return command({
 		name: 'auth-interactive',
-		description: 'Run interactive auth for a gateway zone. Lists providers when called without a provider argument.',
+		description:
+			'Run interactive auth for a gateway zone. Lists providers when called without a provider argument.',
 		args: {
 			config: createConfigOption(),
 			provider: positional({
@@ -757,6 +782,7 @@ EOF
 Init scaffolds OpenClaw-specific secrets (`DISCORD_BOT_TOKEN`, `OPENCLAW_GATEWAY_TOKEN`) for both types. Fix so each type gets appropriate defaults.
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/cli/init-command.ts`
 - Modify: `packages/agent-vm/src/cli/init-command.test.ts`
 
@@ -822,31 +848,61 @@ function defaultSecretsForGatewayType(gatewayType: GatewayType): Record<string, 
 
 	return {
 		DISCORD_BOT_TOKEN: { source: '1password', injection: 'env' },
-		PERPLEXITY_API_KEY: { source: '1password', hosts: ['api.perplexity.ai'], injection: 'http-mediation' },
+		PERPLEXITY_API_KEY: {
+			source: '1password',
+			hosts: ['api.perplexity.ai'],
+			injection: 'http-mediation',
+		},
 		OPENCLAW_GATEWAY_TOKEN: { source: '1password', injection: 'env' },
 	};
 }
 
 function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): string[] {
 	if (gatewayType === 'coding') {
-		return ['api.anthropic.com', 'api.openai.com', 'auth.openai.com', 'api.github.com', 'registry.npmjs.org'];
+		return [
+			'api.anthropic.com',
+			'api.openai.com',
+			'auth.openai.com',
+			'api.github.com',
+			'registry.npmjs.org',
+		];
 	}
-	return ['api.openai.com', 'auth.openai.com', 'api.perplexity.ai', 'discord.com', 'cdn.discordapp.com', 'api.github.com', 'registry.npmjs.org'];
+	return [
+		'api.openai.com',
+		'auth.openai.com',
+		'api.perplexity.ai',
+		'discord.com',
+		'cdn.discordapp.com',
+		'api.github.com',
+		'registry.npmjs.org',
+	];
 }
 
 function defaultWebsocketBypassForGatewayType(gatewayType: GatewayType): string[] {
 	if (gatewayType === 'coding') {
 		return [];
 	}
-	return ['gateway.discord.gg:443', 'web.whatsapp.com:443', 'g.whatsapp.net:443', 'mmg.whatsapp.net:443'];
+	return [
+		'gateway.discord.gg:443',
+		'web.whatsapp.com:443',
+		'g.whatsapp.net:443',
+		'mmg.whatsapp.net:443',
+	];
 }
 
 function defaultEnvTemplateForGatewayType(gatewayType: GatewayType): string {
-	const header = '# agent-vm environment configuration\n# 1Password token is stored in macOS Keychain by agent-vm init.\n# Only set this for CI or non-macOS environments:\n# OP_SERVICE_ACCOUNT_TOKEN=\n\n# === Secret References (1Password op:// URIs) ===\n';
+	const header =
+		'# agent-vm environment configuration\n# 1Password token is stored in macOS Keychain by agent-vm init.\n# Only set this for CI or non-macOS environments:\n# OP_SERVICE_ACCOUNT_TOKEN=\n\n# === Secret References (1Password op:// URIs) ===\n';
 	if (gatewayType === 'coding') {
-		return header + 'ANTHROPIC_API_KEY_REF=op://agent-vm/agent-anthropic/api-key\nOPENAI_API_KEY_REF=op://agent-vm/agent-openai/api-key\n';
+		return (
+			header +
+			'ANTHROPIC_API_KEY_REF=op://agent-vm/agent-anthropic/api-key\nOPENAI_API_KEY_REF=op://agent-vm/agent-openai/api-key\n'
+		);
 	}
-	return header + 'DISCORD_BOT_TOKEN_REF=op://agent-vm/agent-discord-app/bot-token\nPERPLEXITY_API_KEY_REF=op://agent-vm/agent-perplexity/credential\nOPENCLAW_GATEWAY_TOKEN_REF=op://agent-vm/agent-shravan-claw-gateway/password\n';
+	return (
+		header +
+		'DISCORD_BOT_TOKEN_REF=op://agent-vm/agent-discord-app/bot-token\nPERPLEXITY_API_KEY_REF=op://agent-vm/agent-perplexity/credential\nOPENCLAW_GATEWAY_TOKEN_REF=op://agent-vm/agent-shravan-claw-gateway/password\n'
+	);
 }
 ```
 
@@ -876,6 +932,7 @@ EOF
 ### Task 7: Clean Up Dead Code
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/cli/commands/command-definition-support.ts`
 
 - [ ] **Step 1: Remove `parseGatewayType` default to openclaw**

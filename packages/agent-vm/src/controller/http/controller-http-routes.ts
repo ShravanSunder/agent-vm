@@ -72,27 +72,15 @@ export function createControllerApp(options: {
 	});
 
 	app.get('/leases', (context) => {
-		const leases = options.leaseManager
-			.listLeases()
-			.map(
-				(lease: {
-					readonly createdAt: number;
-					readonly id: string;
-					readonly lastUsedAt: number;
-					readonly profileId: string;
-					readonly scopeKey: string;
-					readonly tcpSlot: number;
-					readonly zoneId: string;
-				}) => ({
-					createdAt: lease.createdAt,
-					id: lease.id,
-					lastUsedAt: lease.lastUsedAt,
-					profileId: lease.profileId,
-					scopeKey: lease.scopeKey,
-					tcpSlot: lease.tcpSlot,
-					zoneId: lease.zoneId,
-				}),
-			);
+		const leases = options.leaseManager.listLeases().map((lease) => ({
+			createdAt: lease.createdAt,
+			id: lease.id,
+			lastUsedAt: lease.lastUsedAt,
+			profileId: lease.profileId,
+			scopeKey: lease.scopeKey,
+			tcpSlot: lease.tcpSlot,
+			zoneId: lease.zoneId,
+		}));
 		return context.json(leases);
 	});
 

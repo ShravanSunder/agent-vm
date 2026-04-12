@@ -28,6 +28,10 @@ export interface CliDependencies {
 	readonly loadSystemConfig: typeof loadSystemConfig;
 	readonly runBuildCommand?: typeof runBuildCommand;
 	readonly runCacheCommand?: typeof runCacheCommand;
+	readonly runCommand?: (
+		command: string,
+		arguments_: readonly string[],
+	) => Promise<{ readonly exitCode: number; readonly stderr: string; readonly stdout: string }>;
 	readonly runInteractiveProcess?: (
 		command: string,
 		arguments_: readonly string[],
@@ -36,7 +40,7 @@ export interface CliDependencies {
 	readonly runControllerDoctor: typeof runControllerDoctor;
 	readonly promptAndStoreServiceAccountToken?: () => Promise<boolean>;
 	readonly scaffoldAgentVmProject?: (options: {
-		readonly gatewayType?: GatewayType;
+		readonly gatewayType: GatewayType;
 		readonly targetDir: string;
 		readonly zoneId: string;
 	}) => Promise<ScaffoldAgentVmProjectResult>;
@@ -96,12 +100,12 @@ export function resolveConfigPath(argv: readonly string[]): string {
 	return 'system.json';
 }
 
-export function resolveZoneId(systemConfig: SystemConfig, argv: readonly string[]): string {
+export function readZoneFlag(argv: readonly string[]): string | undefined {
 	const zoneFlagIndex = argv.indexOf('--zone');
 	if (zoneFlagIndex >= 0) {
-		return argv[zoneFlagIndex + 1] ?? '';
+		return argv[zoneFlagIndex + 1];
 	}
-	return systemConfig.zones[0]?.id ?? '';
+	return undefined;
 }
 
 export function resolveControllerBaseUrl(systemConfig: SystemConfig): string {
@@ -117,6 +121,18 @@ export function findZone(
 		throw new Error(`Unknown zone '${zoneId}'.`);
 	}
 	return zone;
+}
+
+export function requireZone(
+	systemConfig: SystemConfig,
+	zoneFlag: string | undefined,
+): SystemConfig['zones'][number] {
+	if (zoneFlag) {
+		return findZone(systemConfig, zoneFlag);
+	}
+
+	const zoneNames = systemConfig.zones.map((zone) => zone.id).join(', ');
+	throw new Error(`--zone is required. Available zones: ${zoneNames}`);
 }
 
 export async function createResolverFromSystemConfig(

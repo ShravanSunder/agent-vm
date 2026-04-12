@@ -211,9 +211,25 @@ describe('runBackupCommand', () => {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				restArguments: ['restore'],
+				restArguments: ['restore', '--zone', 'shravan'],
 				systemConfig,
 			}),
 		).rejects.toThrow('Usage: agent-vm backup restore <path> [--zone <id>]');
+	});
+
+	it('requires --zone explicitly', async () => {
+		const systemConfig = createBackupSystemConfig();
+
+		await expect(
+			runBackupCommand({
+				dependencies: defaultCliDependencies,
+				io: {
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				restArguments: ['list'],
+				systemConfig,
+			}),
+		).rejects.toThrow('--zone is required');
 	});
 });

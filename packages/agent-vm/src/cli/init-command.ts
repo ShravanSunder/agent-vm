@@ -10,7 +10,7 @@ import {
 } from './keychain-credential.js';
 
 export interface ScaffoldAgentVmProjectOptions {
-	readonly gatewayType?: GatewayType;
+	readonly gatewayType: GatewayType;
 	readonly targetDir: string;
 	readonly zoneId: string;
 }
@@ -68,36 +68,9 @@ const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object =
 				stateDir: `./state/${zoneId}`,
 				workspaceDir: `./workspaces/${zoneId}`,
 			},
-			secrets: {
-				DISCORD_BOT_TOKEN: {
-					source: '1password',
-					injection: 'env',
-				},
-				PERPLEXITY_API_KEY: {
-					source: '1password',
-					hosts: ['api.perplexity.ai'],
-					injection: 'http-mediation',
-				},
-				OPENCLAW_GATEWAY_TOKEN: {
-					source: '1password',
-					injection: 'env',
-				},
-			},
-			allowedHosts: [
-				'api.openai.com',
-				'auth.openai.com',
-				'api.perplexity.ai',
-				'discord.com',
-				'cdn.discordapp.com',
-				'api.github.com',
-				'registry.npmjs.org',
-			],
-			websocketBypass: [
-				'gateway.discord.gg:443',
-				'web.whatsapp.com:443',
-				'g.whatsapp.net:443',
-				'mmg.whatsapp.net:443',
-			],
+			secrets: defaultSecretsForGatewayType(gatewayType),
+			allowedHosts: defaultAllowedHostsForGatewayType(gatewayType),
+			websocketBypass: defaultWebsocketBypassForGatewayType(gatewayType),
 			toolProfile: 'standard',
 		},
 	],
@@ -114,16 +87,93 @@ const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object =
 	},
 });
 
-const defaultEnvTemplate = `# agent-vm environment configuration
+function defaultSecretsForGatewayType(gatewayType: GatewayType): Record<string, object> {
+	if (gatewayType === 'coding') {
+		return {
+			ANTHROPIC_API_KEY: {
+				source: '1password',
+				hosts: ['api.anthropic.com'],
+				injection: 'http-mediation',
+			},
+			OPENAI_API_KEY: {
+				source: '1password',
+				hosts: ['api.openai.com'],
+				injection: 'http-mediation',
+			},
+		};
+	}
+
+	return {
+		DISCORD_BOT_TOKEN: {
+			source: '1password',
+			injection: 'env',
+		},
+		PERPLEXITY_API_KEY: {
+			source: '1password',
+			hosts: ['api.perplexity.ai'],
+			injection: 'http-mediation',
+		},
+		OPENCLAW_GATEWAY_TOKEN: {
+			source: '1password',
+			injection: 'env',
+		},
+	};
+}
+
+function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): readonly string[] {
+	if (gatewayType === 'coding') {
+		return [
+			'api.anthropic.com',
+			'api.openai.com',
+			'auth.openai.com',
+			'api.github.com',
+			'registry.npmjs.org',
+		];
+	}
+
+	return [
+		'api.openai.com',
+		'auth.openai.com',
+		'api.perplexity.ai',
+		'discord.com',
+		'cdn.discordapp.com',
+		'api.github.com',
+		'registry.npmjs.org',
+	];
+}
+
+function defaultWebsocketBypassForGatewayType(gatewayType: GatewayType): readonly string[] {
+	if (gatewayType === 'coding') {
+		return [];
+	}
+
+	return [
+		'gateway.discord.gg:443',
+		'web.whatsapp.com:443',
+		'g.whatsapp.net:443',
+		'mmg.whatsapp.net:443',
+	];
+}
+
+function defaultEnvTemplateForGatewayType(gatewayType: GatewayType): string {
+	const header = `# agent-vm environment configuration
 # 1Password token is stored in macOS Keychain by agent-vm init.
 # Only set this for CI or non-macOS environments:
 # OP_SERVICE_ACCOUNT_TOKEN=
 
 # === Secret References (1Password op:// URIs) ===
-DISCORD_BOT_TOKEN_REF=op://agent-vm/agent-discord-app/bot-token
+`;
+	if (gatewayType === 'coding') {
+		return `${header}ANTHROPIC_API_KEY_REF=op://agent-vm/agent-anthropic/api-key
+OPENAI_API_KEY_REF=op://agent-vm/agent-openai/api-key
+`;
+	}
+
+	return `${header}DISCORD_BOT_TOKEN_REF=op://agent-vm/agent-discord-app/bot-token
 PERPLEXITY_API_KEY_REF=op://agent-vm/agent-perplexity/credential
 OPENCLAW_GATEWAY_TOKEN_REF=op://agent-vm/agent-shravan-claw-gateway/password
 `;
+}
 
 const defaultGatewayDockerfile = `FROM node:24-slim
 
@@ -294,7 +344,7 @@ async function scaffoldAgentVmProjectInternal(
 ): Promise<ScaffoldAgentVmProjectResult> {
 	const created: string[] = [];
 	const skipped: string[] = [];
-	const gatewayType = options.gatewayType ?? 'openclaw';
+	const gatewayType = options.gatewayType;
 
 	const systemConfigPath = path.join(options.targetDir, 'system.json');
 	const systemConfigStatus = await writeFileIfMissing(
@@ -304,7 +354,10 @@ async function scaffoldAgentVmProjectInternal(
 	(systemConfigStatus === 'created' ? created : skipped).push('system.json');
 
 	const envFilePath = path.join(options.targetDir, '.env.local');
-	const envFileStatus = await writeFileIfMissing(envFilePath, defaultEnvTemplate);
+	const envFileStatus = await writeFileIfMissing(
+		envFilePath,
+		defaultEnvTemplateForGatewayType(gatewayType),
+	);
 	(envFileStatus === 'created' ? created : skipped).push('.env.local');
 	if (envFileStatus === 'created') {
 		const generateAgeIdentityKey =
