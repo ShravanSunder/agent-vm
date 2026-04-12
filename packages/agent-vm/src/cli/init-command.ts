@@ -351,14 +351,24 @@ export async function promptAndStoreServiceAccountToken(
 		return false;
 	}
 
+	// Use a muted output stream so readline doesn't echo the token
+	const { Writable } = await import('node:stream');
+	const mutedOutput = new Writable({
+		write(_chunk: Buffer, _encoding: BufferEncoding, callback: () => void): void {
+			callback();
+		},
+	});
+
 	const rl =
 		dependencies.createReadlineInterface?.() ??
-		readline.createInterface({ input: process.stdin, output: process.stdout });
+		readline.createInterface({ input: process.stdin, output: mutedOutput, terminal: true });
 
 	try {
-		const token = await rl.question(
+		process.stdout.write(
 			'Paste your 1Password service account token (from https://my.1password.com/developer-tools/service-accounts):\n> ',
 		);
+		const token = await rl.question('');
+		process.stdout.write('\n');
 
 		const trimmedToken = token.trim();
 		if (!trimmedToken) {
@@ -366,6 +376,7 @@ export async function promptAndStoreServiceAccountToken(
 		}
 
 		storeToken(trimmedToken);
+		process.stdout.write('✓ Stored in macOS Keychain\n');
 		return true;
 	} finally {
 		rl.close();
