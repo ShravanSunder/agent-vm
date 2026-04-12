@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import net from 'node:net';
 
 import { serve } from '@hono/node-server';
 import { createManagedVm } from 'gondolin-core';
@@ -17,6 +18,28 @@ import { Hono } from 'hono';
  * Requires: QEMU, built gateway image at build-cache/gateway/
  */
 import { afterAll, describe, it, expect } from 'vitest';
+
+async function findAvailablePort(): Promise<number> {
+	return await new Promise((resolve, reject) => {
+		const server = net.createServer();
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', () => {
+			const address = server.address();
+			if (!address || typeof address === 'string') {
+				server.close(() => reject(new Error('Failed to determine an available port.')));
+				return;
+			}
+			server.close((error) => {
+				if (error) {
+					reject(error);
+					return;
+				}
+				resolve(address.port);
+			});
+		});
+	});
+}
+
 describe('live e2e: sandbox plugin → controller → tool VM', () => {
 	let gatewayVm: ManagedVm | null = null;
 	let toolVm: ManagedVm | null = null;
@@ -43,6 +66,8 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 
 		// --- Step 1: Create tool VM (pre-create so we have SSH creds ready) ---
 		log('creating tool VM...');
+		const toolSshPort = await findAvailablePort();
+		const controllerPort = await findAvailablePort();
 		toolVm = await createManagedVm({
 			imagePath: '',
 			memory: '512M',
@@ -56,7 +81,7 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 		toolSsh = await toolVm.enableSsh({
 			user: 'root',
 			listenHost: '127.0.0.1',
-			listenPort: 19000,
+			listenPort: toolSshPort,
 		});
 		log(`tool VM SSH: port=${toolSsh.port}`);
 
@@ -89,8 +114,8 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 
 		app.get('/health', (context) => context.json({ ok: true }));
 
-		server = serve({ fetch: app.fetch, port: 18800 });
-		log('controller API listening on :18800');
+		server = serve({ fetch: app.fetch, port: controllerPort });
+		log(`controller API listening on :${controllerPort}`);
 
 		// --- Step 3: Boot gateway VM with plugin mounted ---
 		log('creating gateway VM...');
@@ -110,7 +135,7 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 			secrets: {},
 			vfsMounts: {},
 			tcpHosts: {
-				'controller.vm.host:18800': '127.0.0.1:18800',
+				'controller.vm.host:18800': `127.0.0.1:${controllerPort}`,
 				'tool-0.vm.host:22': `127.0.0.1:${toolSsh.port}`,
 			},
 		});
