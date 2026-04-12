@@ -23,22 +23,35 @@ export type TokenSource =
 	| { readonly type: 'env'; readonly envVar?: string | undefined }
 	| { readonly type: 'keychain'; readonly service: string; readonly account: string };
 
+export interface ExecFileOptions {
+	readonly env?: Readonly<Record<string, string | undefined>>;
+}
+
 export interface ExecFileResult {
 	readonly stdout: string;
 	readonly stderr: string;
 }
 
-function execFileAsync(command: string, args: readonly string[]): Promise<ExecFileResult> {
+function execFileAsync(
+	command: string,
+	args: readonly string[],
+	options?: ExecFileOptions,
+): Promise<ExecFileResult> {
 	return new Promise((resolve, reject) => {
-		execFile(command, [...args], { timeout: 30_000 }, (error, stdout, stderr) => {
-			if (error) {
-				const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
-				reject(new Error(`${command} failed: ${stderr.trim() || errorMessage}`));
-				return;
-			}
+		execFile(
+			command,
+			[...args],
+			{ env: options?.env, timeout: 30_000 },
+			(error, stdout, stderr) => {
+				if (error) {
+					const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+					reject(new Error(`${command} failed: ${stderr.trim() || errorMessage}`));
+					return;
+				}
 
-			resolve({ stdout, stderr });
-		});
+				resolve({ stdout, stderr });
+			},
+		);
 	});
 }
 
@@ -47,7 +60,11 @@ const SAFE_IDENTIFIER_PATTERN = /^[\w.@-]+$/u;
 export async function resolveServiceAccountToken(
 	source: TokenSource,
 	dependencies?: {
-		readonly execFileAsync?: (command: string, args: readonly string[]) => Promise<ExecFileResult>;
+		readonly execFileAsync?: (
+			command: string,
+			args: readonly string[],
+			options?: ExecFileOptions,
+		) => Promise<ExecFileResult>;
 	},
 ): Promise<string> {
 	const exec = dependencies?.execFileAsync ?? execFileAsync;
@@ -113,8 +130,31 @@ export interface CreateSecretResolverDependencies {
 		integrationName: string;
 		integrationVersion: string;
 	}) => Promise<SecretResolverClient>;
+	readonly execFileAsync?: (
+		command: string,
+		args: readonly string[],
+		options?: ExecFileOptions,
+	) => Promise<ExecFileResult>;
 	readonly integrationName?: string;
 	readonly integrationVersion?: string;
+}
+
+async function resolveSecretWithOpCli(
+	serviceAccountToken: string,
+	secretReference: string,
+	exec: (
+		command: string,
+		args: readonly string[],
+		options?: ExecFileOptions,
+	) => Promise<ExecFileResult>,
+): Promise<string> {
+	const result = await exec('op', ['read', secretReference], {
+		env: {
+			...process.env,
+			OP_SERVICE_ACCOUNT_TOKEN: serviceAccountToken,
+		},
+	});
+	return result.stdout.trim();
 }
 
 export async function createSecretResolver(
@@ -123,29 +163,57 @@ export async function createSecretResolver(
 	},
 	dependencies: CreateSecretResolverDependencies = {},
 ): Promise<SecretResolver> {
-	const client = await (dependencies.createClient ?? createClient)({
-		auth: options.serviceAccountToken,
-		integrationName: dependencies.integrationName ?? 'agent-vm',
-		integrationVersion: dependencies.integrationVersion ?? '0.1.0',
-	});
+	try {
+		const client = await (dependencies.createClient ?? createClient)({
+			auth: options.serviceAccountToken,
+			integrationName: dependencies.integrationName ?? 'agent-vm',
+			integrationVersion: dependencies.integrationVersion ?? '0.1.0',
+		});
 
-	return {
-		resolve: async (ref: SecretRef): Promise<string> => client.secrets.resolve(ref.ref),
-		resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> => {
-			const resolvedEntries = await Promise.all(
-				Object.entries(refs).map(
-					async ([secretName, secretRef]) =>
-						[secretName, await client.secrets.resolve(secretRef.ref)] as const,
-				),
-			);
+		return {
+			resolve: async (ref: SecretRef): Promise<string> => client.secrets.resolve(ref.ref),
+			resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> => {
+				const resolvedEntries = await Promise.all(
+					Object.entries(refs).map(
+						async ([secretName, secretRef]) =>
+							[secretName, await client.secrets.resolve(secretRef.ref)] as const,
+					),
+				);
 
-			return resolvedEntries.reduce<Record<string, string>>(
-				(resolvedSecrets, [secretName, value]) => {
-					resolvedSecrets[secretName] = value;
-					return resolvedSecrets;
-				},
-				{},
-			);
-		},
-	};
+				return resolvedEntries.reduce<Record<string, string>>(
+					(resolvedSecrets, [secretName, value]) => {
+						resolvedSecrets[secretName] = value;
+						return resolvedSecrets;
+					},
+					{},
+				);
+			},
+		};
+	} catch {
+		const exec = dependencies.execFileAsync ?? execFileAsync;
+
+		return {
+			resolve: async (ref: SecretRef): Promise<string> =>
+				await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec),
+			resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> => {
+				const resolvedEntries = await Promise.all(
+					Object.entries(refs).map(
+						async ([secretName, secretRef]) =>
+							[
+								secretName,
+								await resolveSecretWithOpCli(options.serviceAccountToken, secretRef.ref, exec),
+							] as const,
+					),
+				);
+
+				return resolvedEntries.reduce<Record<string, string>>(
+					(resolvedSecrets, [secretName, value]) => {
+						resolvedSecrets[secretName] = value;
+						return resolvedSecrets;
+					},
+					{},
+				);
+			},
+		};
+	}
 }

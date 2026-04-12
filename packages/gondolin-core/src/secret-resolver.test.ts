@@ -143,4 +143,62 @@ describe('createSecretResolver', () => {
 			DISCORD_BOT_TOKEN: 'resolved:op://agent-vm/agent-discord-app/bot-token',
 		});
 	});
+
+	it('falls back to op read when sdk client creation fails', async () => {
+		const execCalls: Array<{
+			readonly args: readonly string[];
+			readonly command: string;
+			readonly env?: Readonly<Record<string, string | undefined>>;
+		}> = [];
+
+		const secretResolver = await createSecretResolver(
+			{ serviceAccountToken: 'service-token' },
+			{
+				createClient: async (): Promise<SecretResolverClient> => {
+					throw new Error('sdk init failed');
+				},
+				execFileAsync: async (command, args, options) => {
+					execCalls.push({
+						args,
+						command,
+						...(options?.env ? { env: options.env } : {}),
+					});
+					return { stdout: 'resolved-from-op\n', stderr: '' };
+				},
+			},
+		);
+
+		await expect(
+			secretResolver.resolve({
+				source: '1password',
+				ref: 'op://AI/anthropic/api-key',
+			}),
+		).resolves.toBe('resolved-from-op');
+		await expect(
+			secretResolver.resolveAll({
+				OPENCLAW_GATEWAY_TOKEN: {
+					source: '1password',
+					ref: 'op://agent-vm/agent-gateway/token',
+				},
+			}),
+		).resolves.toEqual({
+			OPENCLAW_GATEWAY_TOKEN: 'resolved-from-op',
+		});
+		expect(execCalls).toEqual([
+			{
+				args: ['read', 'op://AI/anthropic/api-key'],
+				command: 'op',
+				env: expect.objectContaining({
+					OP_SERVICE_ACCOUNT_TOKEN: 'service-token',
+				}),
+			},
+			{
+				args: ['read', 'op://agent-vm/agent-gateway/token'],
+				command: 'op',
+				env: expect.objectContaining({
+					OP_SERVICE_ACCOUNT_TOKEN: 'service-token',
+				}),
+			},
+		]);
+	});
 });
