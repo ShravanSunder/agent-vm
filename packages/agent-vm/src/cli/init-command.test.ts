@@ -38,10 +38,10 @@ const scaffoldedSystemConfigSchema = z.object({
 });
 
 describe('scaffoldAgentVmProject', () => {
-	it('creates system.json with the requested zone', () => {
+	it('creates system.json with the requested zone', async () => {
 		const targetDir = createTestDirectory();
 
-		const result = scaffoldAgentVmProject(
+		const result = await scaffoldAgentVmProject(
 			{ targetDir, zoneId: 'test-zone' },
 			noGeneratedAgeIdentityDependencies,
 		);
@@ -55,10 +55,10 @@ describe('scaffoldAgentVmProject', () => {
 		expect(config.zones[0]?.gateway.type).toBe('openclaw');
 	});
 
-	it('scaffolds a coding gateway when requested', () => {
+	it('scaffolds a coding gateway when requested', async () => {
 		const targetDir = createTestDirectory();
 
-		scaffoldAgentVmProject(
+		await scaffoldAgentVmProject(
 			{ targetDir, zoneId: 'test-zone', gatewayType: 'coding' },
 			noGeneratedAgeIdentityDependencies,
 		);
@@ -75,10 +75,10 @@ describe('scaffoldAgentVmProject', () => {
 		expect(gatewayDockerfile).not.toContain('openclaw@');
 	});
 
-	it('creates .env.local from the default template', () => {
+	it('creates .env.local from the default template', async () => {
 		const targetDir = createTestDirectory();
 
-		const result = scaffoldAgentVmProject(
+		const result = await scaffoldAgentVmProject(
 			{ targetDir, zoneId: 'test-zone' },
 			noGeneratedAgeIdentityDependencies,
 		);
@@ -89,9 +89,12 @@ describe('scaffoldAgentVmProject', () => {
 		expect(envContent).toContain('DISCORD_BOT_TOKEN_REF=');
 	});
 
-	it('scaffolds macOS Keychain auth by default', () => {
+	it('scaffolds macOS Keychain auth by default', async () => {
 		const targetDir = createTestDirectory();
-		scaffoldAgentVmProject({ targetDir, zoneId: 'test-zone' }, noGeneratedAgeIdentityDependencies);
+		await scaffoldAgentVmProject(
+			{ targetDir, zoneId: 'test-zone' },
+			noGeneratedAgeIdentityDependencies,
+		);
 		const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
 
 		expect(config.host.secretsProvider.tokenSource).toEqual({
@@ -101,10 +104,10 @@ describe('scaffoldAgentVmProject', () => {
 		});
 	});
 
-	it('appends an age identity to .env.local when one is generated', () => {
+	it('appends an age identity to .env.local when one is generated', async () => {
 		const targetDir = createTestDirectory();
 
-		scaffoldAgentVmProject(
+		await scaffoldAgentVmProject(
 			{ targetDir, zoneId: 'test-zone' },
 			{
 				generateAgeIdentityKey: () => 'AGE-SECRET-KEY-1TESTVALUE',
@@ -115,10 +118,10 @@ describe('scaffoldAgentVmProject', () => {
 		expect(envContent).toContain('AGE_IDENTITY_KEY=AGE-SECRET-KEY-1TESTVALUE');
 	});
 
-	it('leaves .env.local without an age identity when generation fails', () => {
+	it('leaves .env.local without an age identity when generation fails', async () => {
 		const targetDir = createTestDirectory();
 
-		scaffoldAgentVmProject(
+		await scaffoldAgentVmProject(
 			{ targetDir, zoneId: 'test-zone' },
 			{
 				generateAgeIdentityKey: () => undefined,
@@ -129,10 +132,13 @@ describe('scaffoldAgentVmProject', () => {
 		expect(envContent).not.toMatch(/^AGE_IDENTITY_KEY=/mu);
 	});
 
-	it('creates config and state directories', () => {
+	it('creates config and state directories', async () => {
 		const targetDir = createTestDirectory();
 
-		scaffoldAgentVmProject({ targetDir, zoneId: 'my-zone' }, noGeneratedAgeIdentityDependencies);
+		await scaffoldAgentVmProject(
+			{ targetDir, zoneId: 'my-zone' },
+			noGeneratedAgeIdentityDependencies,
+		);
 
 		expect(fs.existsSync(path.join(targetDir, 'config', 'my-zone'))).toBe(true);
 		expect(fs.existsSync(path.join(targetDir, 'state', 'my-zone'))).toBe(true);
@@ -140,15 +146,15 @@ describe('scaffoldAgentVmProject', () => {
 		expect(fs.existsSync(path.join(targetDir, 'workspaces', 'tools'))).toBe(true);
 	});
 
-	it('scaffolds a type-specific gateway config file', () => {
+	it('scaffolds a type-specific gateway config file', async () => {
 		const openClawTargetDir = createTestDirectory();
-		scaffoldAgentVmProject(
+		await scaffoldAgentVmProject(
 			{ targetDir: openClawTargetDir, zoneId: 'my-zone' },
 			noGeneratedAgeIdentityDependencies,
 		);
 
 		const codingTargetDir = createTestDirectory();
-		scaffoldAgentVmProject(
+		await scaffoldAgentVmProject(
 			{ targetDir: codingTargetDir, zoneId: 'my-zone', gatewayType: 'coding' },
 			noGeneratedAgeIdentityDependencies,
 		);
@@ -164,11 +170,11 @@ describe('scaffoldAgentVmProject', () => {
 		);
 	});
 
-	it('does not overwrite an existing system.json', () => {
+	it('does not overwrite an existing system.json', async () => {
 		const targetDir = createTestDirectory();
 		fs.writeFileSync(path.join(targetDir, 'system.json'), '{"existing":true}\n', 'utf8');
 
-		const result = scaffoldAgentVmProject(
+		const result = await scaffoldAgentVmProject(
 			{ targetDir, zoneId: 'test-zone' },
 			noGeneratedAgeIdentityDependencies,
 		);

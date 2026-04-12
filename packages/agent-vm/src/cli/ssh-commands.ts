@@ -1,7 +1,7 @@
 import { execa } from 'execa';
 import { z } from 'zod';
 
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 import {
 	type CliDependencies,
 	type CliIo,

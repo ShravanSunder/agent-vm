@@ -31,6 +31,7 @@ throw new Error(`Unknown controller subcommand '${subcommand}'.`);
 ```
 
 This means:
+
 - `agent-vm --help` → "Expected command group controller" (useless)
 - `agent-vm controller --help` → "Unknown controller subcommand '--help'" (broken)
 - `agent-vm contorller start` → "Expected command group controller" (no typo suggestion)
@@ -61,34 +62,34 @@ Error: Unknown command "contorller". Did you mean "controller"?
 
 ```typescript
 const app = subcommands({
-  name: 'agent-vm',
-  version: '0.1.0',
-  description: 'Gondolin-based VM controller for OpenClaw',
-  cmds: {
-    init: initCommand,
-    build: buildCommand,
-    cache: cacheSubcommands,
-    backup: backupSubcommands,
-    auth: authCommand,
-    controller: controllerSubcommands,
-  },
+	name: 'agent-vm',
+	version: '0.1.0',
+	description: 'Gondolin-based VM controller for OpenClaw',
+	cmds: {
+		init: initCommand,
+		build: buildCommand,
+		cache: cacheSubcommands,
+		backup: backupSubcommands,
+		auth: authCommand,
+		controller: controllerSubcommands,
+	},
 });
 
 const controllerSubcommands = subcommands({
-  name: 'controller',
-  description: 'Manage the VM controller',
-  cmds: {
-    start: controllerStartCommand,
-    stop: controllerStopCommand,
-    status: controllerStatusCommand,
-    doctor: controllerDoctorCommand,
-    destroy: controllerDestroyCommand,
-    upgrade: controllerUpgradeCommand,
-    logs: controllerLogsCommand,
-    credentials: controllerCredentialsCommand,
-    'ssh-cmd': controllerSshCommand,
-    lease: leaseSubcommands,
-  },
+	name: 'controller',
+	description: 'Manage the VM controller',
+	cmds: {
+		start: controllerStartCommand,
+		stop: controllerStopCommand,
+		status: controllerStatusCommand,
+		doctor: controllerDoctorCommand,
+		destroy: controllerDestroyCommand,
+		upgrade: controllerUpgradeCommand,
+		logs: controllerLogsCommand,
+		credentials: controllerCredentialsCommand,
+		'ssh-cmd': controllerSshCommand,
+		lease: leaseSubcommands,
+	},
 });
 ```
 
@@ -110,6 +111,7 @@ Task 1 and 2 are the cmd-ts migration. Task 3 and 4 are the progress indicators.
 ## Task 1: Define cmd-ts commands
 
 **Files:**
+
 - Create: `packages/agent-vm/src/cli/commands/init-definition.ts`
 - Create: `packages/agent-vm/src/cli/commands/build-definition.ts`
 - Create: `packages/agent-vm/src/cli/commands/cache-definition.ts`
@@ -128,25 +130,23 @@ import { command, positional, string } from 'cmd-ts';
 import { promptAndStoreServiceAccountToken, scaffoldAgentVmProject } from '../init-command.js';
 
 export const initCommand = command({
-  name: 'init',
-  description: 'Scaffold a new agent-vm project with config, images, and Keychain auth',
-  args: {
-    zoneId: positional({
-      displayName: 'zone-id',
-      type: string,
-      description: 'Zone identifier (e.g., shravan)',
-    }),
-  },
-  handler: async ({ zoneId }) => {
-    const result = scaffoldAgentVmProject({
-      targetDir: process.cwd(),
-      zoneId,
-    });
-    const keychainStored = await promptAndStoreServiceAccountToken();
-    process.stdout.write(
-      `${JSON.stringify({ ...result, keychainStored }, null, 2)}\n`,
-    );
-  },
+	name: 'init',
+	description: 'Scaffold a new agent-vm project with config, images, and Keychain auth',
+	args: {
+		zoneId: positional({
+			displayName: 'zone-id',
+			type: string,
+			description: 'Zone identifier (e.g., shravan)',
+		}),
+	},
+	handler: async ({ zoneId }) => {
+		const result = scaffoldAgentVmProject({
+			targetDir: process.cwd(),
+			zoneId,
+		});
+		const keychainStored = await promptAndStoreServiceAccountToken();
+		process.stdout.write(`${JSON.stringify({ ...result, keychainStored }, null, 2)}\n`);
+	},
 });
 ```
 
@@ -160,25 +160,25 @@ import { loadSystemConfig } from '../../controller/system-config.js';
 import { runBuildCommand } from '../build-command.js';
 
 export const buildCommand = command({
-  name: 'build',
-  description: 'Build Docker OCI images and Gondolin VM assets',
-  args: {
-    config: option({
-      type: optional(string),
-      long: 'config',
-      short: 'c',
-      description: 'Path to system.json',
-      defaultValue: () => 'system.json',
-    }),
-    force: flag({
-      long: 'force',
-      description: 'Force rebuild, ignoring cache',
-    }),
-  },
-  handler: async ({ config, force }) => {
-    const systemConfig = loadSystemConfig(config ?? 'system.json');
-    await runBuildCommand({ forceRebuild: force, systemConfig });
-  },
+	name: 'build',
+	description: 'Build Docker OCI images and Gondolin VM assets',
+	args: {
+		config: option({
+			type: optional(string),
+			long: 'config',
+			short: 'c',
+			description: 'Path to system.json',
+			defaultValue: () => 'system.json',
+		}),
+		force: flag({
+			long: 'force',
+			description: 'Force rebuild, ignoring cache',
+		}),
+	},
+	handler: async ({ config, force }) => {
+		const systemConfig = loadSystemConfig(config ?? 'system.json');
+		await runBuildCommand({ forceRebuild: force, systemConfig });
+	},
 });
 ```
 
@@ -192,39 +192,39 @@ import { loadSystemConfig } from '../../controller/system-config.js';
 import { runAuthCommand } from '../auth-command.js';
 
 export const authCommand = command({
-  name: 'auth',
-  description: 'Run model provider OAuth flow inside the gateway VM',
-  args: {
-    provider: positional({
-      displayName: 'provider',
-      type: string,
-      description: 'Provider name (e.g., openai-codex, anthropic, google)',
-    }),
-    zone: option({
-      type: string,
-      long: 'zone',
-      short: 'z',
-      description: 'Zone identifier',
-      onMissing: () => 'default',
-    }),
-    config: option({
-      type: string,
-      long: 'config',
-      short: 'c',
-      description: 'Path to system.json',
-      defaultValue: () => 'system.json',
-    }),
-  },
-  handler: async ({ provider, zone, config }) => {
-    const systemConfig = loadSystemConfig(config);
-    await runAuthCommand({
-      dependencies: (await import('../agent-vm-cli-support.js')).defaultCliDependencies,
-      io: { stderr: process.stderr, stdout: process.stdout },
-      pluginName: provider,
-      systemConfig,
-      zoneId: zone,
-    });
-  },
+	name: 'auth',
+	description: 'Run model provider OAuth flow inside the gateway VM',
+	args: {
+		provider: positional({
+			displayName: 'provider',
+			type: string,
+			description: 'Provider name (e.g., openai-codex, anthropic, google)',
+		}),
+		zone: option({
+			type: string,
+			long: 'zone',
+			short: 'z',
+			description: 'Zone identifier',
+			onMissing: () => 'default',
+		}),
+		config: option({
+			type: string,
+			long: 'config',
+			short: 'c',
+			description: 'Path to system.json',
+			defaultValue: () => 'system.json',
+		}),
+	},
+	handler: async ({ provider, zone, config }) => {
+		const systemConfig = loadSystemConfig(config);
+		await runAuthCommand({
+			dependencies: (await import('../agent-vm-cli-support.js')).defaultCliDependencies,
+			io: { stderr: process.stderr, stdout: process.stdout },
+			pluginName: provider,
+			systemConfig,
+			zoneId: zone,
+		});
+	},
 });
 ```
 
@@ -233,6 +233,7 @@ export const authCommand = command({
 Follow the same pattern for each. The controller subcommands nest: `controller → { start, stop, status, doctor, ... }`.
 
 Key commands that need options:
+
 - `controller start` → `--config`
 - `controller stop` → `--config`
 - `controller ssh-cmd` → `--zone`, `--print`, `--config`
@@ -255,6 +256,7 @@ git commit -m "feat: define cmd-ts command definitions for all CLI commands"
 ## Task 2: Wire root subcommands and replace manual switch
 
 **Files:**
+
 - Rewrite: `packages/agent-vm/src/cli/agent-vm-entrypoint.ts`
 - Modify: `packages/agent-vm/src/cli/agent-vm-entrypoint.test.ts`
 
@@ -308,23 +310,24 @@ import { controllerSubcommands } from './controller-definition.js';
 import { initCommand } from './init-definition.js';
 
 export const app = subcommands({
-  name: 'agent-vm',
-  version: '0.1.0',
-  description: 'Gondolin-based VM controller for OpenClaw',
-  cmds: {
-    init: initCommand,
-    build: buildCommand,
-    cache: cacheSubcommands,
-    backup: backupSubcommands,
-    auth: authCommand,
-    controller: controllerSubcommands,
-  },
+	name: 'agent-vm',
+	version: '0.1.0',
+	description: 'Gondolin-based VM controller for OpenClaw',
+	cmds: {
+		init: initCommand,
+		build: buildCommand,
+		cache: cacheSubcommands,
+		backup: backupSubcommands,
+		auth: authCommand,
+		controller: controllerSubcommands,
+	},
 });
 ```
 
 - [ ] **Step 3: Update tests**
 
 The existing entrypoint tests call `runAgentVmCli(argv, io, dependencies)`. With cmd-ts, the handler functions are called directly by cmd-ts. Tests should either:
+
 - Test the command definitions directly by calling `handler({ ... })` with parsed args
 - Or test the underlying handler functions (init-command, build-command, etc.) which don't change
 
@@ -354,6 +357,7 @@ git commit -m "feat: migrate CLI to cmd-ts — --help, usage text, typo suggesti
 ## Task 3: Add tasuku progress to controller start
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/controller/controller-runtime.ts`
 - Modify: `packages/agent-vm/src/controller/controller-runtime-types.ts`
 - Modify: `packages/agent-vm/src/controller/controller-runtime.test.ts`
@@ -416,6 +420,7 @@ git commit -m "feat: tasuku progress on controller start"
 ## Task 4: Warn if images not cached on controller start
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/cli/commands/controller-definition.ts` (or wherever the start handler lives)
 
 - [ ] **Step 1: Check cache before starting**
@@ -429,10 +434,10 @@ import path from 'node:path';
 const fingerprint = await computeFingerprintFromConfigPath(systemConfig.images.gateway.buildConfig);
 const cachePath = path.join(systemConfig.cacheDir, 'images', 'gateway', fingerprint);
 if (!fs.existsSync(path.join(cachePath, 'manifest.json'))) {
-  process.stderr.write(
-    '[start] Gateway image not cached. Run `agent-vm build` first for faster startup.\n' +
-    '[start] Building inline...\n',
-  );
+	process.stderr.write(
+		'[start] Gateway image not cached. Run `agent-vm build` first for faster startup.\n' +
+			'[start] Building inline...\n',
+	);
 }
 ```
 
@@ -446,16 +451,17 @@ git commit -m "feat: warn if images not cached on controller start"
 
 ## Summary
 
-| Task | What | Why |
-|------|------|-----|
-| 1 | cmd-ts command definitions | Typed args, --help, descriptions for every command |
-| 2 | Replace manual switch with cmd-ts root | --help works, typo suggestions, usage text |
-| 3 | Tasuku on controller start | No more frozen terminal during 15-120s startup |
-| 4 | Cache check before start | User knows to run `agent-vm build` first |
+| Task | What                                   | Why                                                |
+| ---- | -------------------------------------- | -------------------------------------------------- |
+| 1    | cmd-ts command definitions             | Typed args, --help, descriptions for every command |
+| 2    | Replace manual switch with cmd-ts root | --help works, typo suggestions, usage text         |
+| 3    | Tasuku on controller start             | No more frozen terminal during 15-120s startup     |
+| 4    | Cache check before start               | User knows to run `agent-vm build` first           |
 
 **Execution order:** 1 → 2 → 3 → 4
 
 After all tasks:
+
 ```
 agent-vm --help              # shows all commands
 agent-vm controller --help   # shows controller subcommands

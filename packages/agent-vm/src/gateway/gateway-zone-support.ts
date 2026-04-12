@@ -1,4 +1,6 @@
-import type { SystemConfig } from '../controller/system-config.js';
+import type { GatewayProcessSpec } from 'gateway-interface';
+
+import type { SystemConfig } from '../config/system-config.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 
 export type GatewayZone = SystemConfig['zones'][number];
@@ -16,6 +18,7 @@ export interface GatewayZoneStartResult {
 		readonly host: string;
 		readonly port: number;
 	};
+	readonly processSpec: GatewayProcessSpec;
 	readonly vm: import('gondolin-core').ManagedVm;
 	readonly zone: GatewayZone;
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ControllerClient } from '../controller/controller-client.js';
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
+import type { ControllerClient } from '../controller/http/controller-client.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { runAuthCommand } from './auth-command.js';
 
@@ -41,7 +41,7 @@ function createAuthSystemConfig(): SystemConfig {
 					type: 'openclaw',
 					cpus: 2,
 					memory: '2G',
-					openclawConfig: './config/shravan/openclaw.json',
+					gatewayConfig: './config/shravan/openclaw.json',
 					port: 18791,
 					stateDir: './state/shravan',
 					workspaceDir: './workspaces/shravan',

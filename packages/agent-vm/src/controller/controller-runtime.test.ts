@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { SystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from './controller-runtime.js';
-import type { SystemConfig } from './system-config.js';
 
 const systemConfig = {
 	cacheDir: './cache',
@@ -28,7 +28,7 @@ const systemConfig = {
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				openclawConfig: './config/shravan/openclaw.json',
+				gatewayConfig: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
 				workspaceDir: './workspaces/shravan',
 			},
@@ -51,6 +51,14 @@ const systemConfig = {
 	},
 } satisfies SystemConfig;
 
+const openClawProcessSpec = {
+	bootstrapCommand: 'bootstrap-openclaw',
+	guestListenPort: 18789,
+	healthCheck: { type: 'http', port: 18789, path: '/' } as const,
+	logPath: '/tmp/openclaw.log',
+	startCommand: 'start-openclaw',
+};
+
 describe('startControllerRuntime', () => {
 	it('starts the gateway, creates the controller app, and opens the controller port', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
@@ -69,6 +77,7 @@ describe('startControllerRuntime', () => {
 				host: '127.0.0.1',
 				port: 18791,
 			},
+			processSpec: openClawProcessSpec,
 			vm: {
 				close: vi.fn(async () => {}),
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
@@ -279,6 +288,7 @@ describe('startControllerRuntime', () => {
 						host: '127.0.0.1',
 						port: 18791,
 					},
+					processSpec: openClawProcessSpec,
 					vm: {
 						close: vi.fn(async () => {}),
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),

@@ -1,7 +1,7 @@
 // oxlint-disable typescript-eslint/explicit-function-return-type
 import { flag, option, optional, restPositionals, string } from 'cmd-ts';
 
-import type { SystemConfig } from '../../controller/system-config.js';
+import type { SystemConfig } from '../../config/system-config.js';
 import type { CliDependencies } from '../agent-vm-cli-support.js';
 import type { GatewayType } from '../init-command.js';
 
@@ -55,7 +55,7 @@ export function createRemoteCommandArguments() {
 export function loadSystemConfigFromOption(
 	configPath: string | undefined,
 	dependencies: Pick<CliDependencies, 'loadSystemConfig'>,
-): SystemConfig {
+): Promise<SystemConfig> {
 	return dependencies.loadSystemConfig(configPath ?? 'system.json');
 }
 

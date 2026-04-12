@@ -70,15 +70,18 @@ The current code has `runAgentVmCli(argv, io, dependencies)` which injects IO st
 The fix: **keep the factory pattern**. cmd-ts `command()` handlers receive parsed args. Those handlers call the existing implementation functions with injected dependencies. The root app is created by a factory:
 
 ```typescript
-function createAgentVmApp(io: CliIo, dependencies: CliDependencies): ReturnType<typeof subcommands> {
-  return subcommands({
-    name: 'agent-vm',
-    cmds: {
-      init: createInitCommand(io, dependencies),
-      build: createBuildCommand(dependencies),
-      // ...
-    },
-  });
+function createAgentVmApp(
+	io: CliIo,
+	dependencies: CliDependencies,
+): ReturnType<typeof subcommands> {
+	return subcommands({
+		name: 'agent-vm',
+		cmds: {
+			init: createInitCommand(io, dependencies),
+			build: createBuildCommand(dependencies),
+			// ...
+		},
+	});
 }
 ```
 
@@ -109,6 +112,7 @@ The validation review was right: one opaque "Starting gateway zone" spinner for 
 Each should get its own tasuku task. The `runTask` callback gets threaded into the orchestrator, not wrapped around it from outside.
 
 Same for `controller start` at the runtime level:
+
 1. Resolve 1Password secrets → runTask
 2. Start gateway zone → delegates to orchestrator (which has its own runTask calls)
 3. Start controller HTTP API → runTask
@@ -116,12 +120,14 @@ Same for `controller start` at the runtime level:
 ### Gateway type in init
 
 `agent-vm init <zone> --type openclaw` scaffolds:
+
 - `system.json` with `gateway.type: "openclaw"`
 - OpenClaw-specific Dockerfile (node:24-slim + openclaw package)
 - OpenClaw config file
 - OpenClaw secrets (DISCORD_BOT_TOKEN, etc.)
 
 `agent-vm init <zone> --type coding` scaffolds:
+
 - `system.json` with `gateway.type: "coding"`
 - Coding-agent Dockerfile (node:24-slim + codex CLI + git)
 - Coding agent config
@@ -174,6 +180,7 @@ Stream 4: Gateway types (depends on Stream 1)
 ## Task 1: Create cmd-ts command definitions
 
 **Files:**
+
 - Create: `packages/agent-vm/src/cli/commands/init-definition.ts`
 - Create: `packages/agent-vm/src/cli/commands/build-definition.ts`
 - Create: `packages/agent-vm/src/cli/commands/doctor-definition.ts`
@@ -183,11 +190,13 @@ Stream 4: Gateway types (depends on Stream 1)
 - Create: `packages/agent-vm/src/cli/commands/controller-definition.ts`
 
 Each definition is a thin cmd-ts `command()` that:
+
 1. Declares typed args via `option()`, `flag()`, `positional()`
 2. Receives `CliIo` and `CliDependencies` from the factory (not hardcoded globals)
 3. Calls the existing handler function (init-command.ts, build-command.ts, etc.)
 
 **Behavioral preservation (from validation review):**
+
 - `init` zone is optional, defaults to `'default'` (use `defaultValue`, not required positional)
 - `--zone` defaults to first configured zone via `resolveZoneId` pattern (not hardcoded `'default'`)
 - `controller credentials refresh` stays nested (credentials is a subcommand group with `refresh`)
@@ -202,40 +211,40 @@ import { command, option, optional, positional, string } from 'cmd-ts';
 import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
 
 export function createInitCommand(
-  io: CliIo,
-  dependencies: CliDependencies,
+	io: CliIo,
+	dependencies: CliDependencies,
 ): ReturnType<typeof command> {
-  return command({
-    name: 'init',
-    description: 'Scaffold a new agent-vm project',
-    args: {
-      zoneId: positional({
-        displayName: 'zone-id',
-        type: optional(string),
-        description: 'Zone identifier (default: "default")',
-      }),
-      type: option({
-        type: optional(string),
-        long: 'type',
-        description: 'Gateway type: openclaw (default) or coding',
-      }),
-    },
-    handler: async ({ zoneId, type }) => {
-      const resolvedZoneId = zoneId ?? 'default';
-      // --type is parsed but scaffold always uses openclaw until Stream 4
-      // adds type-specific Dockerfile/config templates. The flag is
-      // forward-compatible — passing --type coding is accepted but
-      // produces openclaw scaffolding until the templates exist.
-      const result = (dependencies.scaffoldAgentVmProject ?? scaffoldAgentVmProject)({
-        targetDir: dependencies.getCurrentWorkingDirectory?.() ?? process.cwd(),
-        zoneId: resolvedZoneId,
-      });
-      const keychainStored = await (
-        dependencies.promptAndStoreServiceAccountToken ?? promptAndStoreServiceAccountToken
-      )();
-      io.stdout.write(`${JSON.stringify({ ...result, keychainStored }, null, 2)}\n`);
-    },
-  });
+	return command({
+		name: 'init',
+		description: 'Scaffold a new agent-vm project',
+		args: {
+			zoneId: positional({
+				displayName: 'zone-id',
+				type: optional(string),
+				description: 'Zone identifier (default: "default")',
+			}),
+			type: option({
+				type: optional(string),
+				long: 'type',
+				description: 'Gateway type: openclaw (default) or coding',
+			}),
+		},
+		handler: async ({ zoneId, type }) => {
+			const resolvedZoneId = zoneId ?? 'default';
+			// --type is parsed but scaffold always uses openclaw until Stream 4
+			// adds type-specific Dockerfile/config templates. The flag is
+			// forward-compatible — passing --type coding is accepted but
+			// produces openclaw scaffolding until the templates exist.
+			const result = (dependencies.scaffoldAgentVmProject ?? scaffoldAgentVmProject)({
+				targetDir: dependencies.getCurrentWorkingDirectory?.() ?? process.cwd(),
+				zoneId: resolvedZoneId,
+			});
+			const keychainStored = await (
+				dependencies.promptAndStoreServiceAccountToken ?? promptAndStoreServiceAccountToken
+			)();
+			io.stdout.write(`${JSON.stringify({ ...result, keychainStored }, null, 2)}\n`);
+		},
+	});
 }
 ```
 
@@ -243,39 +252,45 @@ Example — controller start:
 
 ```typescript
 export function createControllerStartCommand(
-  io: CliIo,
-  dependencies: CliDependencies,
+	io: CliIo,
+	dependencies: CliDependencies,
 ): ReturnType<typeof command> {
-  return command({
-    name: 'start',
-    description: 'Boot the controller, resolve secrets, start gateway VM',
-    args: {
-      config: option({
-        type: optional(string),
-        long: 'config',
-        short: 'c',
-        description: 'Path to system.json',
-        defaultValue: () => 'system.json',
-      }),
-    },
-    handler: async ({ config }) => {
-      const systemConfig = dependencies.loadSystemConfig(config ?? 'system.json');
-      const firstZone = systemConfig.zones[0];
-      if (!firstZone) {
-        throw new Error('System config does not define any zones.');
-      }
-      const runtime = await dependencies.startControllerRuntime({
-        systemConfig,
-        zoneId: firstZone.id,
-      });
-      io.stdout.write(JSON.stringify({
-        controllerPort: runtime.controllerPort,
-        ingress: runtime.gateway.ingress,
-        vmId: runtime.gateway.vm.id,
-        zoneId: firstZone.id,
-      }, null, 2) + '\n');
-    },
-  });
+	return command({
+		name: 'start',
+		description: 'Boot the controller, resolve secrets, start gateway VM',
+		args: {
+			config: option({
+				type: optional(string),
+				long: 'config',
+				short: 'c',
+				description: 'Path to system.json',
+				defaultValue: () => 'system.json',
+			}),
+		},
+		handler: async ({ config }) => {
+			const systemConfig = dependencies.loadSystemConfig(config ?? 'system.json');
+			const firstZone = systemConfig.zones[0];
+			if (!firstZone) {
+				throw new Error('System config does not define any zones.');
+			}
+			const runtime = await dependencies.startControllerRuntime({
+				systemConfig,
+				zoneId: firstZone.id,
+			});
+			io.stdout.write(
+				JSON.stringify(
+					{
+						controllerPort: runtime.controllerPort,
+						ingress: runtime.gateway.ingress,
+						vmId: runtime.gateway.vm.id,
+						zoneId: firstZone.id,
+					},
+					null,
+					2,
+				) + '\n',
+			);
+		},
+	});
 }
 ```
 
@@ -288,6 +303,7 @@ export function createControllerStartCommand(
 ## Task 2: Create app factory with DI
 
 **Files:**
+
 - Create: `packages/agent-vm/src/cli/commands/create-app.ts`
 
 ```typescript
@@ -299,52 +315,52 @@ import { createBuildCommand } from './build-definition.js';
 // ... all imports
 
 export function createAgentVmApp(
-  io: CliIo,
-  dependencies: CliDependencies,
+	io: CliIo,
+	dependencies: CliDependencies,
 ): ReturnType<typeof subcommands> {
-  const controllerCmds = subcommands({
-    name: 'controller',
-    description: 'Manage the VM controller',
-    cmds: {
-      start: createControllerStartCommand(io, dependencies),
-      stop: createControllerStopCommand(io, dependencies),
-      status: createControllerStatusCommand(io, dependencies),
-      ssh: createSshCommand(io, dependencies),
-      destroy: createDestroyCommand(io, dependencies),
-      upgrade: createUpgradeCommand(io, dependencies),
-      logs: createLogsCommand(io, dependencies),
-      credentials: subcommands({
-        name: 'credentials',
-        description: 'Manage credentials',
-        cmds: {
-          refresh: createCredentialsRefreshCommand(io, dependencies),
-        },
-      }),
-      lease: subcommands({
-        name: 'lease',
-        description: 'Manage tool VM leases',
-        cmds: {
-          list: createLeaseListCommand(io, dependencies),
-          release: createLeaseReleaseCommand(io, dependencies),
-        },
-      }),
-    },
-  });
+	const controllerCmds = subcommands({
+		name: 'controller',
+		description: 'Manage the VM controller',
+		cmds: {
+			start: createControllerStartCommand(io, dependencies),
+			stop: createControllerStopCommand(io, dependencies),
+			status: createControllerStatusCommand(io, dependencies),
+			ssh: createSshCommand(io, dependencies),
+			destroy: createDestroyCommand(io, dependencies),
+			upgrade: createUpgradeCommand(io, dependencies),
+			logs: createLogsCommand(io, dependencies),
+			credentials: subcommands({
+				name: 'credentials',
+				description: 'Manage credentials',
+				cmds: {
+					refresh: createCredentialsRefreshCommand(io, dependencies),
+				},
+			}),
+			lease: subcommands({
+				name: 'lease',
+				description: 'Manage tool VM leases',
+				cmds: {
+					list: createLeaseListCommand(io, dependencies),
+					release: createLeaseReleaseCommand(io, dependencies),
+				},
+			}),
+		},
+	});
 
-  return subcommands({
-    name: 'agent-vm',
-    version: '0.1.0',
-    description: 'Gondolin-based VM controller for OpenClaw and coding agents',
-    cmds: {
-      init: createInitCommand(io, dependencies),
-      build: createBuildCommand(io, dependencies),
-      doctor: createDoctorCommand(io, dependencies),
-      cache: createCacheSubcommands(io, dependencies),
-      backup: createBackupSubcommands(io, dependencies),
-      openclaw: createOpenClawSubcommands(io, dependencies),
-      controller: controllerCmds,
-    },
-  });
+	return subcommands({
+		name: 'agent-vm',
+		version: '0.1.0',
+		description: 'Gondolin-based VM controller for OpenClaw and coding agents',
+		cmds: {
+			init: createInitCommand(io, dependencies),
+			build: createBuildCommand(io, dependencies),
+			doctor: createDoctorCommand(io, dependencies),
+			cache: createCacheSubcommands(io, dependencies),
+			backup: createBackupSubcommands(io, dependencies),
+			openclaw: createOpenClawSubcommands(io, dependencies),
+			controller: controllerCmds,
+		},
+	});
 }
 ```
 
@@ -356,15 +372,22 @@ export function createAgentVmApp(
 ## Task 3: Wire entrypoint to cmd-ts
 
 **Files:**
+
 - Rewrite: `packages/agent-vm/src/cli/agent-vm-entrypoint.ts`
 
 ```typescript
 #!/usr/bin/env node
 function loadOptionalLocalEnvironmentFile(): void {
-  try { process.loadEnvFile('.env.local'); } catch (error) {
-    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return;
-    throw new Error(`Failed to load .env.local: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-  }
+	try {
+		process.loadEnvFile('.env.local');
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT')
+			return;
+		throw new Error(
+			`Failed to load .env.local: ${error instanceof Error ? error.message : String(error)}`,
+			{ cause: error },
+		);
+	}
 }
 loadOptionalLocalEnvironmentFile();
 
@@ -373,13 +396,13 @@ import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { createAgentVmApp } from './commands/create-app.js';
 
 const app = createAgentVmApp(
-  { stderr: process.stderr, stdout: process.stdout },
-  defaultCliDependencies,
+	{ stderr: process.stderr, stdout: process.stdout },
+	defaultCliDependencies,
 );
 
 run(app, process.argv.slice(2)).catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
+	process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+	process.exitCode = 1;
 });
 ```
 
@@ -387,12 +410,12 @@ The old `runAgentVmCli` function becomes a thin adapter for tests:
 
 ```typescript
 export async function runAgentVmCli(
-  argv: readonly string[],
-  io: CliIo,
-  dependencies: CliDependencies = defaultCliDependencies,
+	argv: readonly string[],
+	io: CliIo,
+	dependencies: CliDependencies = defaultCliDependencies,
 ): Promise<void> {
-  const app = createAgentVmApp(io, dependencies);
-  await run(app, [...argv]);
+	const app = createAgentVmApp(io, dependencies);
+	await run(app, [...argv]);
 }
 ```
 
@@ -409,6 +432,7 @@ export async function runAgentVmCli(
 ## Task 4: Update tests
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/cli/agent-vm-entrypoint.test.ts`
 
 Tests continue to use `runAgentVmCli(argv, io, dependencies)` — the adapter calls cmd-ts internally. Test assertions may need updating for cmd-ts error message format (more structured than our manual throws).
@@ -421,28 +445,31 @@ Existing tests call `runAgentVmCli(['controller', 'start'], io, deps)` and asser
 
 ```typescript
 it('prints usage text for --help', async () => {
-  const stdoutOutput: string[] = [];
-  const io = {
-    stdout: { write: (s: string) => { stdoutOutput.push(s); return true; } },
-    stderr: { write: () => true },
-  };
+	const stdoutOutput: string[] = [];
+	const io = {
+		stdout: {
+			write: (s: string) => {
+				stdoutOutput.push(s);
+				return true;
+			},
+		},
+		stderr: { write: () => true },
+	};
 
-  // cmd-ts exits with a help "error" — catch it
-  await expect(
-    runAgentVmCli(['--help'], io, dependencies),
-  ).rejects.toThrow(); // cmd-ts throws on --help
+	// cmd-ts exits with a help "error" — catch it
+	await expect(runAgentVmCli(['--help'], io, dependencies)).rejects.toThrow(); // cmd-ts throws on --help
 
-  // Or if cmd-ts writes help to stdout and resolves:
-  // expect(stdoutOutput.join('')).toContain('agent-vm');
-  // expect(stdoutOutput.join('')).toContain('controller');
-  // expect(stdoutOutput.join('')).toContain('init');
-  // expect(stdoutOutput.join('')).toContain('build');
+	// Or if cmd-ts writes help to stdout and resolves:
+	// expect(stdoutOutput.join('')).toContain('agent-vm');
+	// expect(stdoutOutput.join('')).toContain('controller');
+	// expect(stdoutOutput.join('')).toContain('init');
+	// expect(stdoutOutput.join('')).toContain('build');
 });
 
 it('prints controller subcommand help', async () => {
-  const stdoutOutput: string[] = [];
-  // ... same pattern with ['controller', '--help']
-  // expect output to contain 'start', 'stop', 'status', 'ssh'
+	const stdoutOutput: string[] = [];
+	// ... same pattern with ['controller', '--help']
+	// expect output to contain 'start', 'stop', 'status', 'ssh'
 });
 ```
 
@@ -452,9 +479,9 @@ Note: cmd-ts may throw on `--help` or write to stdout and resolve — check the 
 
 ```typescript
 it('suggests correct command on typo', async () => {
-  await expect(
-    runAgentVmCli(['contorller', 'start'], io, dependencies),
-  ).rejects.toThrow(/controller/u); // cmd-ts suggests "controller"
+	await expect(runAgentVmCli(['contorller', 'start'], io, dependencies)).rejects.toThrow(
+		/controller/u,
+	); // cmd-ts suggests "controller"
 });
 ```
 
@@ -462,9 +489,7 @@ it('suggests correct command on typo', async () => {
 
 ```typescript
 it('errors on unknown controller subcommand', async () => {
-  await expect(
-    runAgentVmCli(['controller', 'nonexistent'], io, dependencies),
-  ).rejects.toThrow();
+	await expect(runAgentVmCli(['controller', 'nonexistent'], io, dependencies)).rejects.toThrow();
 });
 ```
 
@@ -488,6 +513,7 @@ git commit -m "test: update CLI tests for cmd-ts migration"
 ## Task 5: Output contract — stderr for progress, stdout for JSON
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/cli/commands/controller-definition.ts`
 - Modify: any command handler that writes progress to stdout
 
@@ -505,6 +531,7 @@ Currently `build-command.ts` uses tasuku which writes to its own stdout. Tasuku 
 ## Task 6: Thread runTask into gateway orchestrator
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts`
 - Modify: `packages/agent-vm/src/gateway/gateway-zone-support.ts` (add runTask to options)
 - Modify: `packages/agent-vm/src/gateway/gateway-zone-orchestrator.test.ts`
@@ -551,12 +578,13 @@ export async function startGatewayZone(
 - [ ] **Step 1: Add RunTaskFn to StartGatewayZoneOptions**
 
 In `gateway-zone-support.ts`:
+
 ```typescript
 export type RunTaskFn = (title: string, fn: () => Promise<void>) => Promise<void>;
 
 export interface StartGatewayZoneOptions {
-  // ... existing fields
-  readonly runTask?: RunTaskFn;
+	// ... existing fields
+	readonly runTask?: RunTaskFn;
 }
 ```
 
@@ -570,33 +598,33 @@ In `gateway-zone-orchestrator.ts`, wrap each step as shown in the code block abo
 // packages/agent-vm/src/gateway/gateway-zone-orchestrator.test.ts
 
 it('calls runTask for each gateway startup step', async () => {
-  const taskTitles: string[] = [];
-  const runTask = async (title: string, fn: () => Promise<void>): Promise<void> => {
-    taskTitles.push(title);
-    await fn();
-  };
+	const taskTitles: string[] = [];
+	const runTask = async (title: string, fn: () => Promise<void>): Promise<void> => {
+		taskTitles.push(title);
+		await fn();
+	};
 
-  await startGatewayZone(
-    { secretResolver, systemConfig, zoneId: 'shravan', runTask },
-    { buildImage, createManagedVm, loadBuildConfig },
-  );
+	await startGatewayZone(
+		{ secretResolver, systemConfig, zoneId: 'shravan', runTask },
+		{ buildImage, createManagedVm, loadBuildConfig },
+	);
 
-  expect(taskTitles).toEqual([
-    'Resolving zone secrets',
-    'Building gateway image',
-    'Booting gateway VM',
-    'Configuring gateway',
-    'Starting OpenClaw',
-  ]);
+	expect(taskTitles).toEqual([
+		'Resolving zone secrets',
+		'Building gateway image',
+		'Booting gateway VM',
+		'Configuring gateway',
+		'Starting OpenClaw',
+	]);
 });
 
 it('works without runTask (silent mode)', async () => {
-  // Existing tests don't pass runTask — verify they still pass
-  const result = await startGatewayZone(
-    { secretResolver, systemConfig, zoneId: 'shravan' },
-    { buildImage, createManagedVm, loadBuildConfig },
-  );
-  expect(result.ingress.port).toBe(18791);
+	// Existing tests don't pass runTask — verify they still pass
+	const result = await startGatewayZone(
+		{ secretResolver, systemConfig, zoneId: 'shravan' },
+		{ buildImage, createManagedVm, loadBuildConfig },
+	);
+	expect(result.ingress.port).toBe(18791);
 });
 ```
 
@@ -620,6 +648,7 @@ git commit -m "feat: thread progress callback into gateway orchestrator — 5 st
 ## Task 7: Tasuku progress on controller start
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/controller/controller-runtime.ts`
 - Modify: `packages/agent-vm/src/controller/controller-runtime-types.ts`
 
@@ -663,23 +692,23 @@ This means we CANNOT call tasuku directly from runtime/orchestrator code — it 
 export type RunTaskFn = (title: string, fn: () => Promise<void>) => Promise<void>;
 
 export async function createRunTask(io: CliIo): Promise<RunTaskFn> {
-  if (process.stdout.isTTY) {
-    // Interactive terminal — tasuku spinners on stdout (acceptable, user is watching)
-    const { default: task } = await import('tasuku');
-    return async (title, fn) => {
-      await task(title, async ({ startTime }) => {
-        startTime();
-        await fn();
-      });
-    };
-  }
+	if (process.stdout.isTTY) {
+		// Interactive terminal — tasuku spinners on stdout (acceptable, user is watching)
+		const { default: task } = await import('tasuku');
+		return async (title, fn) => {
+			await task(title, async ({ startTime }) => {
+				startTime();
+				await fn();
+			});
+		};
+	}
 
-  // Piped/non-TTY — plain text to stderr, stdout stays clean for JSON
-  return async (title, fn) => {
-    io.stderr.write(`  ${title}...\n`);
-    await fn();
-    io.stderr.write(`  ${title} done\n`);
-  };
+	// Piped/non-TTY — plain text to stderr, stdout stays clean for JSON
+	return async (title, fn) => {
+		io.stderr.write(`  ${title}...\n`);
+		await fn();
+		io.stderr.write(`  ${title} done\n`);
+	};
 }
 ```
 
@@ -688,20 +717,31 @@ This runner is created at the CLI layer (command handler) and threaded down to t
 - [ ] **Step 1: Create RunTaskFn type and createRunTask factory**
 
 Create `packages/agent-vm/src/cli/run-task.ts`:
+
 ```typescript
 export type RunTaskFn = (title: string, fn: () => Promise<void>) => Promise<void>;
 ```
+
 The factory (`createRunTask`) uses tasuku when TTY, plain stderr when piped.
 
 - [ ] **Step 2: Add cache-check before controller start**
 
 In the controller start command handler, before calling `startControllerRuntime`:
+
 ```typescript
 const fingerprint = await computeFingerprintFromConfigPath(systemConfig.images.gateway.buildConfig);
-const cachePath = path.join(systemConfig.cacheDir, 'images', 'gateway', fingerprint, 'manifest.json');
+const cachePath = path.join(
+	systemConfig.cacheDir,
+	'images',
+	'gateway',
+	fingerprint,
+	'manifest.json',
+);
 if (!fs.existsSync(cachePath)) {
-  io.stderr.write('[start] Gateway image not cached. Run `agent-vm build` first for faster startup.\n');
-  io.stderr.write('[start] Building inline — this may take a few minutes...\n');
+	io.stderr.write(
+		'[start] Gateway image not cached. Run `agent-vm build` first for faster startup.\n',
+	);
+	io.stderr.write('[start] Building inline — this may take a few minutes...\n');
 }
 ```
 
@@ -714,44 +754,58 @@ Thread `runTask` into `startControllerRuntime` and down to `startGatewayZone`. E
 ```typescript
 // Test: runTask is called for each startup step
 it('calls runTask for secrets, gateway, and controller API', async () => {
-  const taskTitles: string[] = [];
-  await startControllerRuntime(options, {
-    ...dependencies,
-    runTask: async (title, fn) => { taskTitles.push(title); await fn(); },
-  });
-  expect(taskTitles).toContain('Resolving 1Password secrets');
-  expect(taskTitles).toContain('Starting gateway zone');
-  expect(taskTitles.some(t => t.includes('Controller API'))).toBe(true);
+	const taskTitles: string[] = [];
+	await startControllerRuntime(options, {
+		...dependencies,
+		runTask: async (title, fn) => {
+			taskTitles.push(title);
+			await fn();
+		},
+	});
+	expect(taskTitles).toContain('Resolving 1Password secrets');
+	expect(taskTitles).toContain('Starting gateway zone');
+	expect(taskTitles.some((t) => t.includes('Controller API'))).toBe(true);
 });
 
 // Test: orchestrator steps each get their own progress
 it('calls runTask for each gateway orchestrator step', async () => {
-  const taskTitles: string[] = [];
-  await startGatewayZone({
-    ...options,
-    runTask: async (title, fn) => { taskTitles.push(title); await fn(); },
-  }, dependencies);
-  expect(taskTitles).toContain('Resolving zone secrets');
-  expect(taskTitles).toContain('Building gateway image');
-  expect(taskTitles).toContain('Booting gateway VM');
-  expect(taskTitles).toContain('Configuring gateway');
-  expect(taskTitles).toContain('Starting OpenClaw');
+	const taskTitles: string[] = [];
+	await startGatewayZone(
+		{
+			...options,
+			runTask: async (title, fn) => {
+				taskTitles.push(title);
+				await fn();
+			},
+		},
+		dependencies,
+	);
+	expect(taskTitles).toContain('Resolving zone secrets');
+	expect(taskTitles).toContain('Building gateway image');
+	expect(taskTitles).toContain('Booting gateway VM');
+	expect(taskTitles).toContain('Configuring gateway');
+	expect(taskTitles).toContain('Starting OpenClaw');
 });
 
 // Test: cache check warns when not cached
 it('warns on stderr when gateway image is not cached', async () => {
-  const stderrOutput: string[] = [];
-  // ... run start with empty cache dir
-  expect(stderrOutput.some(s => s.includes('not cached'))).toBe(true);
+	const stderrOutput: string[] = [];
+	// ... run start with empty cache dir
+	expect(stderrOutput.some((s) => s.includes('not cached'))).toBe(true);
 });
 
 // Test: RunTaskFn non-TTY mode writes to stderr only
 it('writes progress to stderr when stdout is not a TTY', async () => {
-  const stderrOutput: string[] = [];
-  const runTask = createRunTaskForPipe({ write: (s) => { stderrOutput.push(s); return true; } });
-  await runTask('test step', async () => {});
-  expect(stderrOutput).toContain('  test step...\n');
-  expect(stderrOutput).toContain('  test step done\n');
+	const stderrOutput: string[] = [];
+	const runTask = createRunTaskForPipe({
+		write: (s) => {
+			stderrOutput.push(s);
+			return true;
+		},
+	});
+	await runTask('test step', async () => {});
+	expect(stderrOutput).toContain('  test step...\n');
+	expect(stderrOutput).toContain('  test step done\n');
 });
 ```
 
@@ -776,6 +830,7 @@ git commit -m "feat: tasuku progress on controller start + cache-check warning"
 ## Task 8: Gateway type in init
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/cli/init-command.ts`
 - Modify: `packages/agent-vm/src/controller/system-config.ts`
 - Modify: `packages/agent-vm/src/cli/commands/init-definition.ts`
@@ -785,30 +840,33 @@ Add `gateway.type` to system config schema. Init scaffolds different Dockerfiles
 - [ ] **Step 1: Add gatewayType to system config schema**
 
 In `system-config.ts`:
+
 ```typescript
 const zoneGatewaySchema = z.object({
-  type: z.enum(['openclaw', 'coding']).default('openclaw'),
-  memory: z.string().min(1),
-  // ... rest unchanged
+	type: z.enum(['openclaw', 'coding']).default('openclaw'),
+	memory: z.string().min(1),
+	// ... rest unchanged
 });
 ```
 
 - [ ] **Step 2: Add gatewayType to scaffold options**
 
 In `init-command.ts`, update `ScaffoldAgentVmProjectOptions`:
+
 ```typescript
 export interface ScaffoldAgentVmProjectOptions {
-  readonly targetDir: string;
-  readonly zoneId: string;
-  readonly gatewayType?: 'openclaw' | 'coding';
+	readonly targetDir: string;
+	readonly zoneId: string;
+	readonly gatewayType?: 'openclaw' | 'coding';
 }
 ```
 
 Add type-specific templates:
+
 ```typescript
 const gatewayDockerfileByType = {
-  openclaw: defaultGatewayDockerfile,  // existing — node:24-slim + openclaw
-  coding: `FROM node:24-slim\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n      openssh-server ca-certificates git curl python3 && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    update-ca-certificates && \\\n    npm install -g @openai/codex-cli && \\\n    useradd -m -s /bin/bash coder && \\\n    mkdir -p /workspace /run/sshd && \\\n    chown coder:coder /workspace && \\\n    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true\n`,
+	openclaw: defaultGatewayDockerfile, // existing — node:24-slim + openclaw
+	coding: `FROM node:24-slim\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n      openssh-server ca-certificates git curl python3 && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    update-ca-certificates && \\\n    npm install -g @openai/codex-cli && \\\n    useradd -m -s /bin/bash coder && \\\n    mkdir -p /workspace /run/sshd && \\\n    chown coder:coder /workspace && \\\n    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true\n`,
 };
 ```
 
@@ -817,6 +875,7 @@ Use `options.gatewayType ?? 'openclaw'` to select templates.
 - [ ] **Step 3: Wire --type flag in init command definition**
 
 In `init-definition.ts`, the `--type` arg (already parsed) now passes through:
+
 ```typescript
 handler: async ({ zoneId, type }) => {
   const result = scaffoldAgentVmProject({
@@ -834,33 +893,36 @@ handler: async ({ zoneId, type }) => {
 // packages/agent-vm/src/cli/init-command.test.ts
 
 it('scaffolds openclaw gateway by default', () => {
-  const targetDir = createTestDirectory();
-  scaffoldAgentVmProject({ targetDir, zoneId: 'test' }, noAgeKeyDeps);
-  const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
-  expect(config.zones[0].gateway.type).toBe('openclaw');
-  const dockerfile = fs.readFileSync(path.join(targetDir, 'images/gateway/Dockerfile'), 'utf8');
-  expect(dockerfile).toContain('openclaw@');
+	const targetDir = createTestDirectory();
+	scaffoldAgentVmProject({ targetDir, zoneId: 'test' }, noAgeKeyDeps);
+	const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
+	expect(config.zones[0].gateway.type).toBe('openclaw');
+	const dockerfile = fs.readFileSync(path.join(targetDir, 'images/gateway/Dockerfile'), 'utf8');
+	expect(dockerfile).toContain('openclaw@');
 });
 
 it('scaffolds coding gateway when type is coding', () => {
-  const targetDir = createTestDirectory();
-  scaffoldAgentVmProject({ targetDir, zoneId: 'test', gatewayType: 'coding' }, noAgeKeyDeps);
-  const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
-  expect(config.zones[0].gateway.type).toBe('coding');
-  const dockerfile = fs.readFileSync(path.join(targetDir, 'images/gateway/Dockerfile'), 'utf8');
-  expect(dockerfile).toContain('codex-cli');
-  expect(dockerfile).not.toContain('openclaw@');
+	const targetDir = createTestDirectory();
+	scaffoldAgentVmProject({ targetDir, zoneId: 'test', gatewayType: 'coding' }, noAgeKeyDeps);
+	const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
+	expect(config.zones[0].gateway.type).toBe('coding');
+	const dockerfile = fs.readFileSync(path.join(targetDir, 'images/gateway/Dockerfile'), 'utf8');
+	expect(dockerfile).toContain('codex-cli');
+	expect(dockerfile).not.toContain('openclaw@');
 });
 
 it('scaffolds different OpenClaw config for openclaw vs no config for coding', () => {
-  const openclawDir = createTestDirectory();
-  scaffoldAgentVmProject({ targetDir: openclawDir, zoneId: 'test' }, noAgeKeyDeps);
-  expect(fs.existsSync(path.join(openclawDir, 'config/test/openclaw.json'))).toBe(true);
+	const openclawDir = createTestDirectory();
+	scaffoldAgentVmProject({ targetDir: openclawDir, zoneId: 'test' }, noAgeKeyDeps);
+	expect(fs.existsSync(path.join(openclawDir, 'config/test/openclaw.json'))).toBe(true);
 
-  const codingDir = createTestDirectory();
-  scaffoldAgentVmProject({ targetDir: codingDir, zoneId: 'test', gatewayType: 'coding' }, noAgeKeyDeps);
-  // Coding gateway doesn't need openclaw.json — has its own config
-  expect(fs.existsSync(path.join(codingDir, 'config/test/coding.json'))).toBe(true);
+	const codingDir = createTestDirectory();
+	scaffoldAgentVmProject(
+		{ targetDir: codingDir, zoneId: 'test', gatewayType: 'coding' },
+		noAgeKeyDeps,
+	);
+	// Coding gateway doesn't need openclaw.json — has its own config
+	expect(fs.existsSync(path.join(codingDir, 'config/test/coding.json'))).toBe(true);
 });
 ```
 
@@ -891,16 +953,17 @@ git commit -m "feat: init supports gateway types — openclaw (default) or codin
 
 ## Summary
 
-| Stream | Tasks | What it delivers |
-|--------|-------|-----------------|
-| cmd-ts migration | 1-4 | --help, usage text, typo suggestions, typed args, clean command definitions |
-| Output contract | 5 | Progress to stderr, JSON to stdout, piping works |
-| Tasuku progress | 6-7 | Per-step visibility during controller start (no more frozen terminal) |
-| Gateway types | 8 | `init --type coding` scaffolds coding agent projects |
+| Stream           | Tasks | What it delivers                                                            |
+| ---------------- | ----- | --------------------------------------------------------------------------- |
+| cmd-ts migration | 1-4   | --help, usage text, typo suggestions, typed args, clean command definitions |
+| Output contract  | 5     | Progress to stderr, JSON to stdout, piping works                            |
+| Tasuku progress  | 6-7   | Per-step visibility during controller start (no more frozen terminal)       |
+| Gateway types    | 8     | `init --type coding` scaffolds coding agent projects                        |
 
 **Execution order:** 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 After all tasks:
+
 ```
 agent-vm --help                    # shows all commands
 agent-vm controller start          # shows per-step progress

@@ -48,26 +48,26 @@ packages/worker-gateway/             ← Worker GatewayLifecycle scaffold (runs 
 
 ### Modified files in agent-vm
 
-| File | Action |
-|------|--------|
-| `gateway-zone-orchestrator.ts` | **Rewrite** — accepts `GatewayLifecycle`, calls `buildVmSpec`/`buildProcessSpec`, generic health wait, generic ingress |
-| `gateway-zone-orchestrator.test.ts` | **Rewrite** — tests generic orchestration with mock lifecycle |
-| `gateway-zone-support.ts` | **Simplify** — keep `findGatewayZone`, update `GatewayZoneStartResult` to include `processSpec` |
-| `controller-runtime.ts` | **Modify** — thread `processSpec` through gateway handle |
-| `controller-runtime-types.ts` | **Modify** — add `processSpec` to runtime types |
-| `controller-runtime-operations.ts` | **Modify** — read `processSpec.logPath` instead of hardcoded path, add `processSpec` to `GatewayZoneRuntime` |
-| `system-config.ts` | **Modify** — rename `openclawConfig` → `gatewayConfig`, make `loadSystemConfig` async |
-| `system-config.test.ts` | **Modify** — update fixture field name, adapt for async |
-| `init-command.ts` | **Modify** — emit `gatewayConfig` in scaffolded system.json |
-| `idle-reaper.ts` | **Fix** — sequential lease release instead of `Promise.all` |
-| `gateway-openclaw-lifecycle.ts` | **Delete** — moved to `openclaw-gateway` package |
-| `gateway-vm-setup.ts` + test | **Delete** — bootstrap is now `processSpec.bootstrapCommand` |
-| `gateway-vm-configuration.ts` + test | **Delete** — VM config is now `vmSpec` from lifecycle |
+| File                                 | Action                                                                                                                 |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `gateway-zone-orchestrator.ts`       | **Rewrite** — accepts `GatewayLifecycle`, calls `buildVmSpec`/`buildProcessSpec`, generic health wait, generic ingress |
+| `gateway-zone-orchestrator.test.ts`  | **Rewrite** — tests generic orchestration with mock lifecycle                                                          |
+| `gateway-zone-support.ts`            | **Simplify** — keep `findGatewayZone`, update `GatewayZoneStartResult` to include `processSpec`                        |
+| `controller-runtime.ts`              | **Modify** — thread `processSpec` through gateway handle                                                               |
+| `controller-runtime-types.ts`        | **Modify** — add `processSpec` to runtime types                                                                        |
+| `controller-runtime-operations.ts`   | **Modify** — read `processSpec.logPath` instead of hardcoded path, add `processSpec` to `GatewayZoneRuntime`           |
+| `system-config.ts`                   | **Modify** — rename `openclawConfig` → `gatewayConfig`, make `loadSystemConfig` async                                  |
+| `system-config.test.ts`              | **Modify** — update fixture field name, adapt for async                                                                |
+| `init-command.ts`                    | **Modify** — emit `gatewayConfig` in scaffolded system.json                                                            |
+| `idle-reaper.ts`                     | **Fix** — sequential lease release instead of `Promise.all`                                                            |
+| `gateway-openclaw-lifecycle.ts`      | **Delete** — moved to `openclaw-gateway` package                                                                       |
+| `gateway-vm-setup.ts` + test         | **Delete** — bootstrap is now `processSpec.bootstrapCommand`                                                           |
+| `gateway-vm-configuration.ts` + test | **Delete** — VM config is now `vmSpec` from lifecycle                                                                  |
 
 ### Modified files in openclaw-agent-vm-plugin
 
-| File | Action |
-|------|--------|
+| File                         | Action                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------- |
 | `controller-lease-client.ts` | **Fix** — consolidate duplicate `isGondolinLeaseResponse`, import from contract |
 
 ---
@@ -75,6 +75,7 @@ packages/worker-gateway/             ← Worker GatewayLifecycle scaffold (runs 
 ### Task 1: Create `gateway-interface` Package (Types Only)
 
 **Files:**
+
 - Create: `packages/gateway-interface/package.json`
 - Create: `packages/gateway-interface/tsconfig.json`
 - Create: `packages/gateway-interface/tsconfig.build.json`
@@ -112,6 +113,7 @@ packages/worker-gateway/             ← Worker GatewayLifecycle scaffold (runs 
 - [ ] **Step 2: Create tsconfig files**
 
 `packages/gateway-interface/tsconfig.json`:
+
 ```json
 {
 	"extends": "../../tsconfig.base.json",
@@ -121,6 +123,7 @@ packages/worker-gateway/             ← Worker GatewayLifecycle scaffold (runs 
 ```
 
 `packages/gateway-interface/tsconfig.build.json`:
+
 ```json
 {
 	"extends": "./tsconfig.json",
@@ -231,10 +234,7 @@ export interface GatewayLifecycle {
 
 	/** Optional: prepare host-side state before the VM boots.
 	 *  Example: OpenClaw writes auth-profiles.json from 1Password. */
-	prepareHostState?(
-		zone: GatewayZoneConfig,
-		secretResolver: SecretResolver,
-	): Promise<void>;
+	prepareHostState?(zone: GatewayZoneConfig, secretResolver: SecretResolver): Promise<void>;
 }
 ```
 
@@ -271,6 +271,7 @@ EOF
 **Why this comes before the lifecycle extraction:** The extracted lifecycle will consume `zone.gateway.gatewayConfig`. If we extract first and rename later, we'd have two code paths. Hard cutover — one changeset.
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/controller/system-config.ts`
 - Modify: `packages/agent-vm/src/controller/system-config.test.ts`
 - Modify: `packages/agent-vm/src/cli/init-command.ts`
@@ -290,7 +291,7 @@ const zoneGatewaySchema = z.object({
 	memory: z.string().min(1),
 	cpus: z.number().int().positive(),
 	port: z.number().int().positive(),
-	gatewayConfig: z.string().min(1),        // was: openclawConfig
+	gatewayConfig: z.string().min(1), // was: openclawConfig
 	stateDir: z.string().min(1),
 	workspaceDir: z.string().min(1),
 	authProfilesRef: z.string().min(1).optional(),
@@ -332,17 +333,20 @@ gateway: {
 - [ ] **Step 4: Update all references in gateway files**
 
 In `gateway-vm-configuration.ts:89`:
+
 ```ts
 const configDirectory = path.dirname(path.resolve(options.zone.gateway.gatewayConfig));
 const configFileName = path.basename(options.zone.gateway.gatewayConfig);
 ```
 
 In `gateway-vm-setup.ts:77`:
+
 ```ts
 openClawConfigPath: zone.gateway.gatewayConfig,
 ```
 
 In `gateway-zone-orchestrator.test.ts`, update the test fixture:
+
 ```ts
 gateway: {
 	type: 'openclaw',
@@ -386,6 +390,7 @@ EOF
 ### Task 3: Extract the OpenClaw Lifecycle
 
 **Files:**
+
 - Create: `packages/openclaw-gateway/package.json`
 - Create: `packages/openclaw-gateway/tsconfig.json`
 - Create: `packages/openclaw-gateway/tsconfig.build.json`
@@ -399,6 +404,7 @@ EOF
 - [ ] **Step 1: Create package scaffolding**
 
 `packages/openclaw-gateway/package.json`:
+
 ```json
 {
 	"name": "openclaw-gateway",
@@ -563,7 +569,9 @@ describe('openclawLifecycle', () => {
 		it('includes gateway token in bootstrap when present', () => {
 			const processSpec = openclawLifecycle.buildProcessSpec(zone, resolvedSecrets);
 
-			expect(processSpec.bootstrapCommand).toContain("export OPENCLAW_GATEWAY_TOKEN='gateway-token-123'");
+			expect(processSpec.bootstrapCommand).toContain(
+				"export OPENCLAW_GATEWAY_TOKEN='gateway-token-123'",
+			);
 			expect(processSpec.bootstrapCommand).toContain('chmod 600 /root/.openclaw-env');
 			expect(processSpec.bootstrapCommand).toContain('source /root/.openclaw-env');
 		});
@@ -779,6 +787,7 @@ EOF
 This is the core refactor. The orchestrator becomes generic — it accepts a `GatewayLifecycle` and executes specs. This task also adds the missing `waitForHealth` generic function, ingress setup, and threads `processSpec` into the gateway handle.
 
 **Files:**
+
 - Create: `packages/agent-vm/src/gateway/gateway-health-check.ts`
 - Create: `packages/agent-vm/src/gateway/gateway-health-check.test.ts`
 - Modify: `packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts`
@@ -799,7 +808,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { waitForGatewayHealth } from './gateway-health-check.js';
 
-function createMockVm(execResults: { exitCode: number; stdout: string; stderr: string }[]): ManagedVm {
+function createMockVm(
+	execResults: { exitCode: number; stdout: string; stderr: string }[],
+): ManagedVm {
 	let callIndex = 0;
 	return {
 		id: 'test-vm',
@@ -820,7 +831,11 @@ describe('waitForGatewayHealth', () => {
 	it('resolves immediately when health check returns 2xx', async () => {
 		const vm = createMockVm([{ exitCode: 0, stdout: '200', stderr: '' }]);
 
-		await waitForGatewayHealth(vm, { type: 'http', port: 18789, path: '/' }, { maxAttempts: 5, intervalMs: 0 });
+		await waitForGatewayHealth(
+			vm,
+			{ type: 'http', port: 18789, path: '/' },
+			{ maxAttempts: 5, intervalMs: 0 },
+		);
 
 		expect(vm.exec).toHaveBeenCalledTimes(1);
 	});
@@ -832,7 +847,11 @@ describe('waitForGatewayHealth', () => {
 			{ exitCode: 0, stdout: '200', stderr: '' },
 		]);
 
-		await waitForGatewayHealth(vm, { type: 'http', port: 18789, path: '/' }, { maxAttempts: 5, intervalMs: 0 });
+		await waitForGatewayHealth(
+			vm,
+			{ type: 'http', port: 18789, path: '/' },
+			{ maxAttempts: 5, intervalMs: 0 },
+		);
 
 		expect(vm.exec).toHaveBeenCalledTimes(3);
 	});
@@ -845,7 +864,11 @@ describe('waitForGatewayHealth', () => {
 		]);
 
 		await expect(
-			waitForGatewayHealth(vm, { type: 'http', port: 18789, path: '/' }, { maxAttempts: 3, intervalMs: 0 }),
+			waitForGatewayHealth(
+				vm,
+				{ type: 'http', port: 18789, path: '/' },
+				{ maxAttempts: 3, intervalMs: 0 },
+			),
 		).rejects.toThrow(/readiness/i);
 	});
 
@@ -853,14 +876,22 @@ describe('waitForGatewayHealth', () => {
 		const vm = createMockVm([{ exitCode: 0, stdout: '000', stderr: '' }]);
 
 		await expect(
-			waitForGatewayHealth(vm, { type: 'http', port: 18789, path: '/' }, { maxAttempts: 2, intervalMs: 0 }),
+			waitForGatewayHealth(
+				vm,
+				{ type: 'http', port: 18789, path: '/' },
+				{ maxAttempts: 2, intervalMs: 0 },
+			),
 		).rejects.toThrow(/readiness/i);
 	});
 
 	it('supports command-type health checks', async () => {
 		const vm = createMockVm([{ exitCode: 0, stdout: '', stderr: '' }]);
 
-		await waitForGatewayHealth(vm, { type: 'command', command: '/health-check.sh' }, { maxAttempts: 5, intervalMs: 0 });
+		await waitForGatewayHealth(
+			vm,
+			{ type: 'command', command: '/health-check.sh' },
+			{ maxAttempts: 5, intervalMs: 0 },
+		);
 
 		expect(vm.exec).toHaveBeenCalledWith('/health-check.sh');
 	});
@@ -892,9 +923,10 @@ export async function waitForGatewayHealth(
 	const intervalMs = options?.intervalMs ?? 500;
 
 	for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-		const isHealthy = healthCheck.type === 'http'
-			? await checkHttp(vm, healthCheck.port, healthCheck.path)
-			: await checkCommand(vm, healthCheck.command);
+		const isHealthy =
+			healthCheck.type === 'http'
+				? await checkHttp(vm, healthCheck.port, healthCheck.path)
+				: await checkCommand(vm, healthCheck.command);
 
 		if (isHealthy) return;
 
@@ -1145,6 +1177,7 @@ Add `lifecycle` to `StartGatewayZoneOptions` or ensure `startGatewayZone` in dep
 The existing tests in `gateway-zone-orchestrator.test.ts` assert OpenClaw-specific behavior (env vars, paths). Rewrite them to test generic orchestration: the test provides a mock `GatewayLifecycle` and verifies the orchestrator calls the right lifecycle methods in the right order, passes specs to `createManagedVm`, and threads `processSpec` into the result.
 
 Keep the existing behavior assertions (secret splitting, TCP hosts, env vars) but move them to the `openclaw-gateway` package tests (Task 3). The orchestrator tests should verify:
+
 - lifecycle.buildVmSpec is called with the right args
 - lifecycle.buildProcessSpec is called with the right args
 - lifecycle.prepareHostState is called when present
@@ -1178,6 +1211,7 @@ EOF
 ### Task 5: Wire Lifecycle Loader and Dependencies
 
 **Files:**
+
 - Create: `packages/agent-vm/src/gateway/gateway-lifecycle-loader.ts`
 - Create: `packages/agent-vm/src/gateway/gateway-lifecycle-loader.test.ts`
 - Modify: `packages/agent-vm/package.json`
@@ -1226,7 +1260,9 @@ const lifecycleByType = {
 export function loadGatewayLifecycle(type: string): GatewayLifecycle {
 	const lifecycle = lifecycleByType[type as keyof typeof lifecycleByType];
 	if (!lifecycle) {
-		throw new Error(`Unknown gateway type '${type}'. Supported types: ${Object.keys(lifecycleByType).join(', ')}`);
+		throw new Error(
+			`Unknown gateway type '${type}'. Supported types: ${Object.keys(lifecycleByType).join(', ')}`,
+		);
 	}
 	return lifecycle;
 }
@@ -1292,6 +1328,7 @@ EOF
 ### Task 6: Delete Old OpenClaw-Specific Code
 
 **Files:**
+
 - Delete: `packages/agent-vm/src/gateway/gateway-openclaw-lifecycle.ts`
 - Delete: `packages/agent-vm/src/gateway/gateway-vm-setup.ts`
 - Delete: `packages/agent-vm/src/gateway/gateway-vm-setup.test.ts`
@@ -1343,6 +1380,7 @@ EOF
 ### Task 7: Create Worker Gateway Scaffold
 
 **Files:**
+
 - Create: `packages/worker-gateway/package.json`
 - Create: `packages/worker-gateway/tsconfig.json`
 - Create: `packages/worker-gateway/tsconfig.build.json`
@@ -1353,6 +1391,7 @@ EOF
 - [ ] **Step 1: Create package scaffolding**
 
 `packages/worker-gateway/package.json`:
+
 ```json
 {
 	"name": "worker-gateway",
@@ -1580,6 +1619,7 @@ EOF
 These bugs were surfaced during PR #3 review. The sync fs calls violate the async-everywhere pattern established in the prior changeset. Fix all of it in one pass.
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/controller/idle-reaper.ts`
 - Modify: `packages/agent-vm/src/controller/idle-reaper.test.ts` (if exists, or create)
 - Modify: `packages/openclaw-agent-vm-plugin/src/controller-lease-client.ts`
@@ -1660,6 +1700,7 @@ await expect(loadSystemConfig(configPath)).resolves.toMatchObject({ ... });
 ```
 
 And the error case:
+
 ```ts
 await expect(loadSystemConfig(configPath)).rejects.toThrow(/zones/i);
 ```
@@ -1775,16 +1816,17 @@ packages/agent-vm/src/
 
 **Domain boundaries:**
 
-| Folder | Responsibility | Imports from |
-|--------|---------------|-------------|
-| `config/` | Parse + validate system.json, resolve paths | Nothing — pure data |
-| `gateway/` | Build specs via lifecycle, create VM, health check, ingress | `gondolin-core`, lifecycle packages |
-| `leases/` | TCP slot allocation, lease CRUD, idle reaping | `gondolin-core` (tool VMs) |
-| `http/` | Hono routes, request handling, server lifecycle | Operations (via injected fns) |
-| `operations/` | Runtime ops: logs, ssh, destroy, upgrade, credential refresh | Gateway handle, lease manager |
-| `controller/` | **Thin wiring only** — creates services, connects them | Everything (but no domain logic of its own) |
+| Folder        | Responsibility                                               | Imports from                                |
+| ------------- | ------------------------------------------------------------ | ------------------------------------------- |
+| `config/`     | Parse + validate system.json, resolve paths                  | Nothing — pure data                         |
+| `gateway/`    | Build specs via lifecycle, create VM, health check, ingress  | `gondolin-core`, lifecycle packages         |
+| `leases/`     | TCP slot allocation, lease CRUD, idle reaping                | `gondolin-core` (tool VMs)                  |
+| `http/`       | Hono routes, request handling, server lifecycle              | Operations (via injected fns)               |
+| `operations/` | Runtime ops: logs, ssh, destroy, upgrade, credential refresh | Gateway handle, lease manager               |
+| `controller/` | **Thin wiring only** — creates services, connects them       | Everything (but no domain logic of its own) |
 
 **Files:**
+
 - Move: `controller/system-config.ts` → `config/system-config.ts`
 - Move: `controller/system-config.test.ts` → `config/system-config.test.ts`
 - Move: `controller/controller-http-server.ts` → `http/controller-http-server.ts`
@@ -1921,6 +1963,7 @@ export function createLeaseService(
 - [ ] **Step 5: Slim down `controller-runtime.ts`**
 
 After moving files and extracting `lease-service.ts`, the controller-runtime should:
+
 1. Create secret resolver (from `controller-runtime-support.ts`)
 2. Load lifecycle (from `gateway-lifecycle-loader.ts`)
 3. Create lease service (from `leases/lease-service.ts`)
@@ -1931,6 +1974,7 @@ After moving files and extracting `lease-service.ts`, the controller-runtime sho
 The file should shrink from ~155 lines to ~80-100 lines. The lease wiring (pool, manager, reaper, interval, cleanup) moves entirely into `lease-service.ts`.
 
 Update imports in `controller-runtime.ts`:
+
 ```ts
 import { loadSystemConfig } from '../config/system-config.js';
 import { createControllerService } from '../http/controller-http-routes.js';
@@ -1947,6 +1991,7 @@ Update `packages/agent-vm/src/index.ts` to export from the new folder paths. Any
 Run: `pnpm typecheck`
 
 This will surface every broken import. Fix them one by one. The common patterns:
+
 - `'./system-config.js'` from controller files → `'../config/system-config.js'`
 - `'./lease-manager.js'` from controller files → `'../leases/lease-manager.js'`
 - `'./controller-http-routes.js'` from controller files → `'../http/controller-http-routes.js'`
@@ -1980,6 +2025,7 @@ EOF
 ### Task 10: End-to-End Verification
 
 **Files:**
+
 - Reference: `system.json` (in whatever agent-vm workspace the user has)
 
 - [ ] **Step 1: Run full local verification loop**
@@ -2021,6 +2067,7 @@ pnpm --filter agent-vm exec agent-vm controller logs --zone test-e2e
 ```
 
 Expected:
+
 - Init emits `gatewayConfig` (not `openclawConfig`)
 - Build succeeds
 - Controller boots with progress steps: Resolving zone secrets → Building gateway image → Booting gateway VM → Preparing host state (if authProfilesRef set) → Configuring gateway → Starting gateway → Waiting for readiness
@@ -2067,6 +2114,7 @@ Expected: each folder contains only its domain files. Controller folder has no l
 ## Summary
 
 The gateway abstraction ships with:
+
 - `gateway-interface` package — types only (GatewayLifecycle, GatewayVmSpec, GatewayProcessSpec, GatewayZoneConfig)
 - `openclaw-gateway` package — full OpenClaw lifecycle extraction with tests
 - `worker-gateway` package — VM spec functional, process spec throws until agent-vm-worker lands

@@ -3,10 +3,10 @@ import { createOpCliSecretResolver, resolveServiceAccountToken } from 'gondolin-
 
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';
-import { createControllerClient } from '../controller/controller-client.js';
+import { loadSystemConfig, type SystemConfig } from '../config/system-config.js';
 import type { ControllerRuntimeDependencies } from '../controller/controller-runtime-types.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
-import { loadSystemConfig, type SystemConfig } from '../controller/system-config.js';
+import { createControllerClient } from '../controller/http/controller-client.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { buildControllerStatus } from '../operations/controller-status.js';
 import { runControllerDoctor } from '../operations/doctor.js';
@@ -39,7 +39,7 @@ export interface CliDependencies {
 		readonly gatewayType?: GatewayType;
 		readonly targetDir: string;
 		readonly zoneId: string;
-	}) => ScaffoldAgentVmProjectResult;
+	}) => Promise<ScaffoldAgentVmProjectResult>;
 	readonly startControllerRuntime: (
 		options: {
 			readonly systemConfig: SystemConfig;

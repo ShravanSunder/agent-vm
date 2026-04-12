@@ -31,6 +31,7 @@ After rename, the 1Password ref becomes `op://agent-vm/agent-${zoneId}-backup/pa
 Images are identical across zones — same Dockerfile, same build-config.json, same fingerprint. Shared cache at `./cache/images/{type}/{fingerprint}/` with no per-zone duplication.
 
 **Fingerprint algorithm** (already implemented in `build-pipeline.ts:79-88`):
+
 ```
 input  = stableSerialize(buildConfig) + "|" + gondolinVersion
 output = SHA256(input)[0..16]
@@ -73,6 +74,7 @@ Task 7: Test WebSocket through Gondolin proxy
 ## Task 1: Shared image cache with cacheDir
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/controller/system-config.ts`
 - Modify: `system.json`
 - Modify: `packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts`
@@ -104,8 +106,7 @@ Add `"cacheDir": "./cache"` at top level.
 
 - [ ] **Step 3: Update gateway-zone-orchestrator.ts — shared path**
 
-Old: `cacheDir: \`${zone.gateway.stateDir}/images/gateway\``
-New: `cacheDir: path.join(options.systemConfig.cacheDir, 'images', 'gateway')`
+Old: `cacheDir: \`${zone.gateway.stateDir}/images/gateway\``New:`cacheDir: path.join(options.systemConfig.cacheDir, 'images', 'gateway')`
 
 No zone prefix — images are shared.
 
@@ -132,23 +133,25 @@ export async function runBuildCommand(
 ```
 
 Update the Gondolin build call:
+
 ```typescript
 for (const imageTarget of imageTargets) {
-  const cacheDirectory = path.join(options.systemConfig.cacheDir, 'images', imageTarget.name);
-  const buildResult = await buildGondolinImage({
-    buildConfigPath: imageTarget.buildConfigPath,
-    cacheDir: cacheDirectory,
-    fullReset: options.forceRebuild,
-  });
-  // ...
+	const cacheDirectory = path.join(options.systemConfig.cacheDir, 'images', imageTarget.name);
+	const buildResult = await buildGondolinImage({
+		buildConfigPath: imageTarget.buildConfigPath,
+		cacheDir: cacheDirectory,
+		fullReset: options.forceRebuild,
+	});
+	// ...
 }
 ```
 
 In `agent-vm-entrypoint.ts`, parse the flag:
+
 ```typescript
 if (commandGroup === 'build') {
-  const forceRebuild = restArguments.includes('--force');
-  // pass to runBuildCommand
+	const forceRebuild = restArguments.includes('--force');
+	// pass to runBuildCommand
 }
 ```
 
@@ -177,6 +180,7 @@ Commit: `feat: shared image cache at cacheDir — deduplicated, outside stateDir
 ## Task 2: Cache clean/list command
 
 **Files:**
+
 - Create: `packages/agent-vm/src/build/stale-image-cleaner.ts`
 - Create: `packages/agent-vm/src/build/stale-image-cleaner.test.ts`
 - Create: `packages/agent-vm/src/cli/cache-commands.ts`
@@ -191,12 +195,13 @@ Commit: `feat: shared image cache at cacheDir — deduplicated, outside stateDir
 // Add to packages/agent-vm/src/build/gondolin-image-builder.ts
 import { computeBuildFingerprint, type BuildConfig } from 'gondolin-core';
 
-export async function computeFingerprintFromConfigPath(
-  buildConfigPath: string,
-): Promise<string> {
-  const rawContents = await fs.readFile(buildConfigPath, 'utf8');
-  const buildConfig: BuildConfig = JSON.parse(rawContents) satisfies Record<string, unknown> as BuildConfig;
-  return computeBuildFingerprint(buildConfig);
+export async function computeFingerprintFromConfigPath(buildConfigPath: string): Promise<string> {
+	const rawContents = await fs.readFile(buildConfigPath, 'utf8');
+	const buildConfig: BuildConfig = JSON.parse(rawContents) satisfies Record<
+		string,
+		unknown
+	> as BuildConfig;
+	return computeBuildFingerprint(buildConfig);
 }
 ```
 
@@ -210,62 +215,62 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export interface StaleImageEntry {
-  readonly absolutePath: string;
-  readonly imageType: 'gateway' | 'tool';
-  readonly name: string;
-  readonly sizeBytes: number;
+	readonly absolutePath: string;
+	readonly imageType: 'gateway' | 'tool';
+	readonly name: string;
+	readonly sizeBytes: number;
 }
 
 function getDirectorySizeBytes(dirPath: string): number {
-  let totalSize = 0;
-  try {
-    for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
-      if (entry.isFile()) {
-        totalSize += fs.statSync(path.join(dirPath, entry.name)).size;
-      }
-    }
-  } catch {
-    // Cannot stat — report 0
-  }
-  return totalSize;
+	let totalSize = 0;
+	try {
+		for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+			if (entry.isFile()) {
+				totalSize += fs.statSync(path.join(dirPath, entry.name)).size;
+			}
+		}
+	} catch {
+		// Cannot stat — report 0
+	}
+	return totalSize;
 }
 
 export function findStaleImageDirectories(options: {
-  readonly cacheDir: string;
-  readonly currentFingerprints: { readonly gateway: string; readonly tool: string };
+	readonly cacheDir: string;
+	readonly currentFingerprints: { readonly gateway: string; readonly tool: string };
 }): readonly StaleImageEntry[] {
-  const staleEntries: StaleImageEntry[] = [];
+	const staleEntries: StaleImageEntry[] = [];
 
-  for (const imageType of ['gateway', 'tool'] as const) {
-    const typeDir = path.join(options.cacheDir, 'images', imageType);
-    if (!fs.existsSync(typeDir)) {
-      continue;
-    }
+	for (const imageType of ['gateway', 'tool'] as const) {
+		const typeDir = path.join(options.cacheDir, 'images', imageType);
+		if (!fs.existsSync(typeDir)) {
+			continue;
+		}
 
-    const currentFingerprint = options.currentFingerprints[imageType];
+		const currentFingerprint = options.currentFingerprints[imageType];
 
-    for (const entry of fs.readdirSync(typeDir, { withFileTypes: true })) {
-      if (!entry.isDirectory() || entry.name === currentFingerprint) {
-        continue;
-      }
+		for (const entry of fs.readdirSync(typeDir, { withFileTypes: true })) {
+			if (!entry.isDirectory() || entry.name === currentFingerprint) {
+				continue;
+			}
 
-      const absolutePath = path.join(typeDir, entry.name);
-      staleEntries.push({
-        absolutePath,
-        imageType,
-        name: entry.name,
-        sizeBytes: getDirectorySizeBytes(absolutePath),
-      });
-    }
-  }
+			const absolutePath = path.join(typeDir, entry.name);
+			staleEntries.push({
+				absolutePath,
+				imageType,
+				name: entry.name,
+				sizeBytes: getDirectorySizeBytes(absolutePath),
+			});
+		}
+	}
 
-  return staleEntries;
+	return staleEntries;
 }
 
 export function deleteStaleImageDirectories(entries: readonly StaleImageEntry[]): void {
-  for (const entry of entries) {
-    fs.rmSync(entry.absolutePath, { recursive: true, force: true });
-  }
+	for (const entry of entries) {
+		fs.rmSync(entry.absolutePath, { recursive: true, force: true });
+	}
 }
 ```
 
@@ -283,69 +288,70 @@ import path from 'node:path';
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import type { SystemConfig } from '../controller/system-config.js';
 import {
-  deleteStaleImageDirectories,
-  findStaleImageDirectories,
+	deleteStaleImageDirectories,
+	findStaleImageDirectories,
 } from '../build/stale-image-cleaner.js';
 import type { CliIo } from './agent-vm-cli-support.js';
 
 async function resolveCurrentFingerprints(
-  systemConfig: SystemConfig,
+	systemConfig: SystemConfig,
 ): Promise<{ gateway: string; tool: string }> {
-  return {
-    gateway: await computeFingerprintFromConfigPath(systemConfig.images.gateway.buildConfig),
-    tool: await computeFingerprintFromConfigPath(systemConfig.images.tool.buildConfig),
-  };
+	return {
+		gateway: await computeFingerprintFromConfigPath(systemConfig.images.gateway.buildConfig),
+		tool: await computeFingerprintFromConfigPath(systemConfig.images.tool.buildConfig),
+	};
 }
 ```
 
 **Cache clean behavior:**
+
 - Default (no `--confirm`): list stale entries with sizes, do NOT delete
 - With `--confirm`: delete stale entries
 - Warn: "Running VMs may reference these images. Stop the controller before cleaning."
 
 ```typescript
 export async function runCacheCommand(
-  options: {
-    readonly subcommand: string;
-    readonly systemConfig: SystemConfig;
-    readonly confirm?: boolean;
-  },
-  io: CliIo,
+	options: {
+		readonly subcommand: string;
+		readonly systemConfig: SystemConfig;
+		readonly confirm?: boolean;
+	},
+	io: CliIo,
 ): Promise<void> {
-  const currentFingerprints = await resolveCurrentFingerprints(options.systemConfig);
+	const currentFingerprints = await resolveCurrentFingerprints(options.systemConfig);
 
-  if (options.subcommand === 'list') {
-    // ... list all entries, mark current
-    return;
-  }
+	if (options.subcommand === 'list') {
+		// ... list all entries, mark current
+		return;
+	}
 
-  if (options.subcommand === 'clean') {
-    const stale = findStaleImageDirectories({
-      cacheDir: options.systemConfig.cacheDir,
-      currentFingerprints,
-    });
+	if (options.subcommand === 'clean') {
+		const stale = findStaleImageDirectories({
+			cacheDir: options.systemConfig.cacheDir,
+			currentFingerprints,
+		});
 
-    if (stale.length === 0) {
-      io.stderr.write('[cache] No stale images found.\n');
-      return;
-    }
+		if (stale.length === 0) {
+			io.stderr.write('[cache] No stale images found.\n');
+			return;
+		}
 
-    io.stderr.write(`[cache] ${stale.length} stale image(s):\n`);
-    for (const entry of stale) {
-      io.stderr.write(`  ${entry.imageType}/${entry.name} (${formatBytes(entry.sizeBytes)})\n`);
-    }
+		io.stderr.write(`[cache] ${stale.length} stale image(s):\n`);
+		for (const entry of stale) {
+			io.stderr.write(`  ${entry.imageType}/${entry.name} (${formatBytes(entry.sizeBytes)})\n`);
+		}
 
-    if (!options.confirm) {
-      io.stderr.write('\n[cache] Run with --confirm to delete. Stop the controller first.\n');
-      return;
-    }
+		if (!options.confirm) {
+			io.stderr.write('\n[cache] Run with --confirm to delete. Stop the controller first.\n');
+			return;
+		}
 
-    deleteStaleImageDirectories(stale);
-    io.stderr.write(`[cache] Deleted ${stale.length} stale image(s).\n`);
-    return;
-  }
+		deleteStaleImageDirectories(stale);
+		io.stderr.write(`[cache] Deleted ${stale.length} stale image(s).\n`);
+		return;
+	}
 
-  throw new Error(`Unknown cache subcommand '${options.subcommand}'.`);
+	throw new Error(`Unknown cache subcommand '${options.subcommand}'.`);
 }
 ```
 
@@ -360,6 +366,7 @@ Commit: `feat: agent-vm cache list/clean — fingerprint-based stale image clean
 ## Task 3: Bake tool VM runtime into Dockerfile
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/tool-vm/tool-vm-lifecycle.ts:80-84`
 
 Delete the redundant runtime exec. Dockerfile already has everything.
@@ -377,6 +384,7 @@ Commit: `fix: remove redundant tool VM runtime setup — already baked into Dock
 **Critical fix:** Update the 1Password ref from `op://agent-vm/agent-${zoneId}-snapshot/password` to `op://agent-vm/agent-${zoneId}-backup/password` in the backup commands. (The user will need to update their 1Password vault item name, or we keep the old ref as a transitional alias.)
 
 **Docs to update (hard cutover — all refs to "snapshot" must become "backup"):**
+
 - `docs/SETUP.md:35` — remove `AGE_IDENTITY_KEY` as snapshot encryption, explain backup encryption comes from 1Password
 - `docs/E2E-VERIFICATION-CHECKLIST.md:129` — `controller snapshot` → `backup`
 - `docs/PROJECT-STATUS.md:42,61-63,104,154` — 5 references to "snapshot" including CLI examples and known issues
@@ -398,6 +406,7 @@ Commit: `refactor: rename snapshot → backup — encrypted zone data backup, no
 ## Task 5: Auth command
 
 **Files:**
+
 - Create: `packages/agent-vm/src/cli/auth-command.ts`
 - Create: `packages/agent-vm/src/cli/auth-command.test.ts`
 - Modify: `packages/agent-vm/src/cli/agent-vm-entrypoint.ts`
@@ -412,51 +421,51 @@ import type { SystemConfig } from '../controller/system-config.js';
 import type { CliDependencies, CliIo } from './agent-vm-cli-support.js';
 
 export async function runAuthCommand(options: {
-  readonly dependencies: CliDependencies;
-  readonly io: CliIo;
-  readonly pluginName: string;
-  readonly systemConfig: SystemConfig;
-  readonly zoneId: string;
+	readonly dependencies: CliDependencies;
+	readonly io: CliIo;
+	readonly pluginName: string;
+	readonly systemConfig: SystemConfig;
+	readonly zoneId: string;
 }): Promise<void> {
-  const controllerClient = options.dependencies.createControllerClient({
-    baseUrl: `http://127.0.0.1:${options.systemConfig.host.controllerPort}`,
-  });
+	const controllerClient = options.dependencies.createControllerClient({
+		baseUrl: `http://127.0.0.1:${options.systemConfig.host.controllerPort}`,
+	});
 
-  const sshResponse = await controllerClient.enableZoneSsh(options.zoneId);
-  // Validate response shape (Zod, same as ssh-commands.ts)
+	const sshResponse = await controllerClient.enableZoneSsh(options.zoneId);
+	// Validate response shape (Zod, same as ssh-commands.ts)
 
-  if (!sshResponse.host || !sshResponse.port) {
-    throw new Error(
-      `Cannot auth: controller returned incomplete SSH access for zone '${options.zoneId}'. Is the gateway running?`,
-    );
-  }
+	if (!sshResponse.host || !sshResponse.port) {
+		throw new Error(
+			`Cannot auth: controller returned incomplete SSH access for zone '${options.zoneId}'. Is the gateway running?`,
+		);
+	}
 
-  const runInteractiveProcess =
-    options.dependencies.runInteractiveProcess ??
-    (async (command: string, args: readonly string[]): Promise<void> => {
-      const { execa } = await import('execa');
-      await execa(command, args, { stdio: 'inherit' });
-    });
+	const runInteractiveProcess =
+		options.dependencies.runInteractiveProcess ??
+		(async (command: string, args: readonly string[]): Promise<void> => {
+			const { execa } = await import('execa');
+			await execa(command, args, { stdio: 'inherit' });
+		});
 
-  const sshArgs = [
-    ...(sshResponse.identityFile ? ['-i', sshResponse.identityFile] : []),
-    '-p',
-    String(sshResponse.port),
-    `${sshResponse.user ?? 'root'}@${sshResponse.host}`,
-    'openclaw',
-    'auth',
-    'login',
-    options.pluginName,
-  ];
+	const sshArgs = [
+		...(sshResponse.identityFile ? ['-i', sshResponse.identityFile] : []),
+		'-p',
+		String(sshResponse.port),
+		`${sshResponse.user ?? 'root'}@${sshResponse.host}`,
+		'openclaw',
+		'auth',
+		'login',
+		options.pluginName,
+	];
 
-  try {
-    await runInteractiveProcess('ssh', sshArgs);
-  } catch (error) {
-    throw new Error(
-      `Auth failed for ${options.pluginName} in zone '${options.zoneId}': ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  }
+	try {
+		await runInteractiveProcess('ssh', sshArgs);
+	} catch (error) {
+		throw new Error(
+			`Auth failed for ${options.pluginName} in zone '${options.zoneId}': ${error instanceof Error ? error.message : String(error)}`,
+			{ cause: error },
+		);
+	}
 }
 ```
 
@@ -464,14 +473,14 @@ export async function runAuthCommand(options: {
 
 ```typescript
 if (commandGroup === 'auth') {
-  const pluginName = subcommand;
-  if (!pluginName) {
-    throw new Error('Usage: agent-vm auth <plugin> --zone <id>');
-  }
-  const systemConfig = dependencies.loadSystemConfig(resolveConfigPath(restArguments));
-  const zoneId = resolveZoneId(systemConfig, restArguments);
-  await runAuthCommand({ dependencies, io, pluginName, systemConfig, zoneId });
-  return;
+	const pluginName = subcommand;
+	if (!pluginName) {
+		throw new Error('Usage: agent-vm auth <plugin> --zone <id>');
+	}
+	const systemConfig = dependencies.loadSystemConfig(resolveConfigPath(restArguments));
+	const zoneId = resolveZoneId(systemConfig, restArguments);
+	await runAuthCommand({ dependencies, io, pluginName, systemConfig, zoneId });
+	return;
 }
 ```
 
@@ -484,6 +493,7 @@ Commit: `feat: agent-vm auth <plugin> — one-command OAuth setup`
 ## Task 6: Zero-friction init (Touch ID default, auto age key)
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/cli/init-command.ts`
 - Modify: `.env.example`
 - Modify: `docs/SETUP.md`
@@ -493,6 +503,7 @@ Commit: `feat: agent-vm auth <plugin> — one-command OAuth setup`
 In `init-command.ts`, update `DEFAULT_SYSTEM_CONFIG`:
 
 Old:
+
 ```typescript
 tokenSource: {
   type: 'env',
@@ -501,6 +512,7 @@ tokenSource: {
 ```
 
 New:
+
 ```typescript
 tokenSource: {
   type: 'op-cli',
@@ -519,14 +531,14 @@ import { execFileSync } from 'node:child_process';
 
 // After writing .env.local:
 try {
-  const result = execFileSync('age-keygen', [], { encoding: 'utf8' });
-  const identityLine = result.split('\n').find((line) => line.startsWith('AGE-SECRET-KEY-'));
-  if (identityLine) {
-    // Append to .env.local
-    fs.appendFileSync(envFilePath, `AGE_IDENTITY_KEY=${identityLine.trim()}\n`);
-  }
+	const result = execFileSync('age-keygen', [], { encoding: 'utf8' });
+	const identityLine = result.split('\n').find((line) => line.startsWith('AGE-SECRET-KEY-'));
+	if (identityLine) {
+		// Append to .env.local
+		fs.appendFileSync(envFilePath, `AGE_IDENTITY_KEY=${identityLine.trim()}\n`);
+	}
 } catch {
-  // age not installed — user can add key manually later
+	// age not installed — user can add key manually later
 }
 ```
 
@@ -556,19 +568,25 @@ OPENCLAW_GATEWAY_TOKEN_REF=op://agent-vm/agent-shravan-claw-gateway/password
 ## Quick Start
 
 ### 1. Initialize
+
 agent-vm init <your-zone-id>
 
 ### 2. Build images
+
 agent-vm build
 
 ### 3. Start
+
 agent-vm controller start
+
 # Touch ID prompt → 1Password resolves secrets → gateway boots
 
 ### 4. Auth (if needed)
+
 agent-vm auth codex --zone <id>
 
 ### 5. Verify
+
 agent-vm controller doctor
 ```
 
@@ -592,17 +610,18 @@ Commit: `feat: zero-friction init — Touch ID default, auto age key generation`
 
 ## Summary
 
-| Task | What | Complexity |
-|------|------|------------|
-| 1 | Shared image cache with `cacheDir` | Medium (7 files) |
-| 2 | `agent-vm cache clean/list` with fingerprint cleanup | Medium (new command) |
-| 3 | Bake tool VM runtime | Trivial (delete 5 lines) |
-| 4 | Rename snapshot → backup + fix encryption docs | Medium (file moves + doc fixes) |
-| 5 | `agent-vm auth <plugin>` command | Small (new command) |
-| 6 | Zero-friction init (Touch ID, auto age key) | Small (init changes) |
-| 7 | Test WebSocket proxy | Experiment |
+| Task | What                                                 | Complexity                      |
+| ---- | ---------------------------------------------------- | ------------------------------- |
+| 1    | Shared image cache with `cacheDir`                   | Medium (7 files)                |
+| 2    | `agent-vm cache clean/list` with fingerprint cleanup | Medium (new command)            |
+| 3    | Bake tool VM runtime                                 | Trivial (delete 5 lines)        |
+| 4    | Rename snapshot → backup + fix encryption docs       | Medium (file moves + doc fixes) |
+| 5    | `agent-vm auth <plugin>` command                     | Small (new command)             |
+| 6    | Zero-friction init (Touch ID, auto age key)          | Small (init changes)            |
+| 7    | Test WebSocket proxy                                 | Experiment                      |
 
 **CLI shape after all tasks:**
+
 ```
 agent-vm init <zone>                    # Scaffold (Touch ID default, auto age key)
 agent-vm build                          # Build Docker + Gondolin images
@@ -622,6 +641,7 @@ agent-vm controller status              # Runtime status
 ```
 
 **Zero-to-claw on any Mac:**
+
 ```
 brew install qemu age 1password-cli docker
 agent-vm init shravan

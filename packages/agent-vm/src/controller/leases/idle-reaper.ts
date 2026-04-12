@@ -15,9 +15,10 @@ export function createIdleReaper(options: {
 				.getLeases()
 				.filter((lease) => options.now() - lease.lastUsedAt > options.ttlMs)
 				.map((lease) => lease.id);
-			await Promise.all(
-				expiredLeaseIds.map(async (leaseId) => await options.releaseLease(leaseId)),
-			);
+			for (const leaseId of expiredLeaseIds) {
+				// oxlint-disable-next-line eslint/no-await-in-loop -- release must stay sequential to avoid TCP pool races
+				await options.releaseLease(leaseId);
+			}
 		},
 	};
 }

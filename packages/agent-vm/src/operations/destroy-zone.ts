@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 
 export async function runControllerDestroy(
 	options: {

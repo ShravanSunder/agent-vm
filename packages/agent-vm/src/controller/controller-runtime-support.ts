@@ -1,7 +1,7 @@
 import type { SecretResolver } from 'gondolin-core';
 import { resolveServiceAccountToken } from 'gondolin-core';
 
-import type { SystemConfig } from './system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 
 export async function createSecretResolverFromSystemConfig(
 	systemConfig: SystemConfig,

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { runBackupCommand } from './backup-commands.js';
 
@@ -40,7 +40,7 @@ function createBackupSystemConfig(): SystemConfig {
 					type: 'openclaw',
 					cpus: 2,
 					memory: '2G',
-					openclawConfig: './config/shravan/openclaw.json',
+					gatewayConfig: './config/shravan/openclaw.json',
 					port: 18791,
 					stateDir: './state/shravan',
 					workspaceDir: './workspaces/shravan',
@@ -91,7 +91,7 @@ describe('runBackupCommand', () => {
 					listBackups,
 					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 				}),
-				loadSystemConfig: () => systemConfig,
+				loadSystemConfig: async () => systemConfig,
 				resolveServiceAccountToken: async () => 'token',
 				runControllerDoctor: () => ({ checks: [], ok: true }),
 			},
@@ -154,7 +154,7 @@ describe('runBackupCommand', () => {
 					listBackups: () => [],
 					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 				}),
-				loadSystemConfig: () => systemConfig,
+				loadSystemConfig: async () => systemConfig,
 				resolveServiceAccountToken: async () => 'token',
 				runControllerDoctor: () => ({ checks: [], ok: true }),
 			},
@@ -203,7 +203,7 @@ describe('runBackupCommand', () => {
 						listBackups: () => [],
 						restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 					}),
-					loadSystemConfig: () => systemConfig,
+					loadSystemConfig: async () => systemConfig,
 					resolveServiceAccountToken: async () => 'token',
 					runControllerDoctor: () => ({ checks: [], ok: true }),
 				},

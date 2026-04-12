@@ -25,6 +25,7 @@
 7. Start controller HTTP API (0.1s)
 
 Target output:
+
 ```
 agent-vm controller start
 
@@ -62,18 +63,19 @@ The progress needs to be added at the `startControllerRuntime` level since that'
 
 ## File Structure
 
-| File | Change |
-|------|--------|
-| Modify: `packages/agent-vm/src/controller/controller-runtime.ts` | Wrap startup steps in tasuku tasks |
-| Modify: `packages/agent-vm/src/controller/controller-runtime-types.ts` | Add `runTask` to dependencies |
-| Modify: `packages/agent-vm/src/cli/controller-operation-commands.ts` | No change needed — delegates to startControllerRuntime |
-| Test: existing `packages/agent-vm/src/controller/controller-runtime.test.ts` | Add `runTask` bypass to test deps |
+| File                                                                         | Change                                                 |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Modify: `packages/agent-vm/src/controller/controller-runtime.ts`             | Wrap startup steps in tasuku tasks                     |
+| Modify: `packages/agent-vm/src/controller/controller-runtime-types.ts`       | Add `runTask` to dependencies                          |
+| Modify: `packages/agent-vm/src/cli/controller-operation-commands.ts`         | No change needed — delegates to startControllerRuntime |
+| Test: existing `packages/agent-vm/src/controller/controller-runtime.test.ts` | Add `runTask` bypass to test deps                      |
 
 ---
 
 ## Task 1: Add tasuku progress to startControllerRuntime
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/controller/controller-runtime-types.ts`
 - Modify: `packages/agent-vm/src/controller/controller-runtime.ts`
 - Modify: `packages/agent-vm/src/controller/controller-runtime.test.ts`
@@ -96,11 +98,11 @@ import task from 'tasuku';
 
 // Add default task runner (same pattern as build-command.ts)
 async function defaultRunTask(title: string, fn: () => Promise<void>): Promise<void> {
-  await task(title, async ({ startTime, setTitle }) => {
-    startTime();
-    await fn();
-    setTitle(`${title} done`);
-  });
+	await task(title, async ({ startTime, setTitle }) => {
+		startTime();
+		await fn();
+		setTitle(`${title} done`);
+	});
 }
 ```
 
@@ -191,6 +193,7 @@ git commit -m "feat: add tasuku progress to controller start — no more frozen 
 ## Task 2: Also check for cached images before start
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/controller/controller-runtime.ts` or `packages/agent-vm/src/cli/controller-operation-commands.ts`
 
 If images aren't cached when `controller start` runs, the Gondolin build happens inline (60-90s with no output). Better UX: check before starting and suggest `agent-vm build` if the cache is cold.
@@ -206,16 +209,14 @@ import path from 'node:path';
 
 // Check if gateway image is cached
 const gatewayFingerprint = await computeFingerprintFromConfigPath(
-  systemConfig.images.gateway.buildConfig,
+	systemConfig.images.gateway.buildConfig,
 );
-const gatewayCachePath = path.join(
-  systemConfig.cacheDir, 'images', 'gateway', gatewayFingerprint,
-);
+const gatewayCachePath = path.join(systemConfig.cacheDir, 'images', 'gateway', gatewayFingerprint);
 if (!fs.existsSync(path.join(gatewayCachePath, 'manifest.json'))) {
-  io.stderr.write(
-    '[start] Gateway image not cached. Run `agent-vm build` first for faster startup.\n' +
-    '[start] Building inline...\n',
-  );
+	io.stderr.write(
+		'[start] Gateway image not cached. Run `agent-vm build` first for faster startup.\n' +
+			'[start] Building inline...\n',
+	);
 }
 ```
 
@@ -232,12 +233,13 @@ git commit -m "feat: warn if images not cached on controller start"
 
 ## Summary
 
-| Task | What | Impact |
-|------|------|--------|
-| 1 | Tasuku progress on controller start | User sees what's happening during 15-120s startup |
-| 2 | Cache check before start | User knows to run `agent-vm build` first |
+| Task | What                                | Impact                                            |
+| ---- | ----------------------------------- | ------------------------------------------------- |
+| 1    | Tasuku progress on controller start | User sees what's happening during 15-120s startup |
+| 2    | Cache check before start            | User knows to run `agent-vm build` first          |
 
 After both tasks:
+
 ```bash
 pnpm check
 agent-vm build

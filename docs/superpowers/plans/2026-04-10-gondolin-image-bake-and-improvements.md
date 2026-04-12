@@ -17,6 +17,7 @@
 Agent-vm is a self-hosted AI assistant stack. OpenClaw (the agent platform — channels, LLM orchestration, tool execution) runs inside Gondolin QEMU micro-VMs for security isolation. The controller on the host Mac manages VM lifecycles, resolves secrets from 1Password, and exposes a lease API for ephemeral tool VMs.
 
 Three trust boundaries:
+
 1. **Host** — owns all secrets, runs the controller, never exposed to agent code
 2. **Gateway VM** — runs OpenClaw with channels (Discord, WhatsApp). Gets secrets via HTTP mediation (agent never sees API keys) or env vars (sandbox-protected by Gondolin)
 3. **Tool VM** — ephemeral sandboxes for code execution. SSH-accessible from gateway. No access to channel tokens or agent state
@@ -54,7 +55,7 @@ The core insight: **most of this runtime setup is static.** CA certificates don'
 }
 ```
 
-This mixes two concerns: the *structure* of how a secret is used (env injection vs HTTP mediation, which hosts) with the *location* of where it lives in the user's 1Password vault. A new user has to dig through system.json to find and change every `ref` field. And system.json is meant to be version-controlled — user-specific vault paths shouldn't be in it.
+This mixes two concerns: the _structure_ of how a secret is used (env injection vs HTTP mediation, which hosts) with the _location_ of where it lives in the user's 1Password vault. A new user has to dig through system.json to find and change every `ref` field. And system.json is meant to be version-controlled — user-specific vault paths shouldn't be in it.
 
 **No setup command.** Going from zero to a running system requires manually creating system.json, the zone config directory, the OpenClaw config, the state directory, and understanding which env vars to set. There's no `init` that scaffolds all of this.
 
@@ -64,7 +65,7 @@ This mixes two concerns: the *structure* of how a secret is used (env injection 
 
 **Three layers of boot speedup, each independent:**
 
-1. **postBuild image baking** — Gondolin's `postBuild` config runs commands inside the rootfs at *build time*. We move CA cert updates, plugin installation, directory creation, and ownership fixes from runtime into `postBuild.copy` + `postBuild.commands` in `build-config.json`. The image is built once, cached by fingerprint (SHA256 of the full build config including postBuild), and reused for every boot. Runtime setup drops to just writing a single env profile file.
+1. **postBuild image baking** — Gondolin's `postBuild` config runs commands inside the rootfs at _build time_. We move CA cert updates, plugin installation, directory creation, and ownership fixes from runtime into `postBuild.copy` + `postBuild.commands` in `build-config.json`. The image is built once, cached by fingerprint (SHA256 of the full build config including postBuild), and reused for every boot. Runtime setup drops to just writing a single env profile file.
 
    Gondolin's postBuild now works on macOS via OCI containerized builds — no separate Docker build step needed for the postBuild commands. The `build-config.json` already references an OCI image (`agent-vm-gateway:latest`) for the base packages (Node.js, OpenClaw, openssh). postBuild adds our custom layer on top.
 
@@ -86,7 +87,7 @@ This mixes two concerns: the *structure* of how a secret is used (env injection 
 
 **Separating structural config from user-specific config:**
 
-`system.json` keeps the *structure*: which secrets exist, how they're injected (env vs HTTP mediation), which hosts get mediation. The actual 1Password `op://` URIs move to `.env.local` as `${SECRET_NAME}_REF` variables:
+`system.json` keeps the _structure_: which secrets exist, how they're injected (env vs HTTP mediation), which hosts get mediation. The actual 1Password `op://` URIs move to `.env.local` as `${SECRET_NAME}_REF` variables:
 
 ```
 # .env.local
@@ -122,13 +123,13 @@ The `init` command generates all the boilerplate: system.json with a default zon
 
 ### Tradeoffs
 
-| Decision | What we gain | What we pay |
-|----------|-------------|-------------|
-| postBuild baking | No runtime setup overhead on every boot | Image must be rebuilt when plugin changes. Fingerprint-based cache handles this automatically, but the rebuild itself takes minutes. |
+| Decision                                | What we gain                                                                                                                       | What we pay                                                                                                                                                                                 |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| postBuild baking                        | No runtime setup overhead on every boot                                                                                            | Image must be rebuilt when plugin changes. Fingerprint-based cache handles this automatically, but the rebuild itself takes minutes.                                                        |
 | Checkpoint resume (infrastructure only) | When wired up: skip first-boot-only disk setup on subsequent boots. This plan builds path/encryption infra, not the resume itself. | Checkpoint files are ~4GB (full rootfs). Disk space cost per zone. Age encryption adds ~10s to checkpoint create/restore. Resume wiring is a follow-up after VmCheckpoint API verification. |
-| .env for refs | Clean separation of structural vs user config. Easy setup templating. | Two places to look for secret config (system.json structure + .env refs). Resolution order must be documented clearly. |
-| `init` scaffolding | Zero-to-claw experience. No manual file creation. | Opinionated defaults. Users with non-standard setups need to edit generated files. |
-| Checkpoint encryption | Defense in depth for gateway token in rootfs env file | Adds age dependency. ~10s overhead per checkpoint create/restore. Arguably unnecessary if we move the token out of the env file entirely — but belt-and-suspenders is right for secrets. |
+| .env for refs                           | Clean separation of structural vs user config. Easy setup templating.                                                              | Two places to look for secret config (system.json structure + .env refs). Resolution order must be documented clearly.                                                                      |
+| `init` scaffolding                      | Zero-to-claw experience. No manual file creation.                                                                                  | Opinionated defaults. Users with non-standard setups need to edit generated files.                                                                                                          |
+| Checkpoint encryption                   | Defense in depth for gateway token in rootfs env file                                                                              | Adds age dependency. ~10s overhead per checkpoint create/restore. Arguably unnecessary if we move the token out of the env file entirely — but belt-and-suspenders is right for secrets.    |
 
 ### Execution order and dependencies
 
@@ -156,34 +157,34 @@ Recommended order: **A → B → D → E → C → F → G**
 
 ### New Files
 
-| File | Responsibility |
-|------|---------------|
-| `.env.example` | Template with 1P secret refs and hardcoded defaults |
-| `scripts/build-images.sh` | Builds OCI Docker images + Gondolin assets in sequence |
-| `packages/agent-vm/src/cli/init-command.ts` | `agent-vm init` scaffolding logic |
-| `packages/agent-vm/src/cli/init-command.test.ts` | Tests for init command |
-| `packages/agent-vm/src/gateway/gateway-checkpoint-manager.ts` | Checkpoint create/resume logic for gateway VMs |
-| `packages/agent-vm/src/gateway/gateway-checkpoint-manager.test.ts` | Tests for checkpoint manager |
+| File                                                               | Responsibility                                         |
+| ------------------------------------------------------------------ | ------------------------------------------------------ |
+| `.env.example`                                                     | Template with 1P secret refs and hardcoded defaults    |
+| `scripts/build-images.sh`                                          | Builds OCI Docker images + Gondolin assets in sequence |
+| `packages/agent-vm/src/cli/init-command.ts`                        | `agent-vm init` scaffolding logic                      |
+| `packages/agent-vm/src/cli/init-command.test.ts`                   | Tests for init command                                 |
+| `packages/agent-vm/src/gateway/gateway-checkpoint-manager.ts`      | Checkpoint create/resume logic for gateway VMs         |
+| `packages/agent-vm/src/gateway/gateway-checkpoint-manager.test.ts` | Tests for checkpoint manager                           |
 
 ### Modified Files
 
-| File | Change |
-|------|--------|
-| `images/gateway/build-config.json` | Add `postBuild.copy` + `postBuild.commands` |
-| `images/tool/build-config.json` | Add `postBuild.commands` for CA trust |
-| `packages/agent-vm/src/controller/system-config.ts` | Remove dead `postBuild` field from images schema, make `ref` optional in secrets |
-| `packages/agent-vm/src/cli/agent-vm-entrypoint.ts` | Load `.env.local` via `process.loadEnvFile()` at startup |
-| `packages/gondolin-core/src/build-pipeline.ts` | Include postBuild in fingerprint hash |
-| `packages/agent-vm/src/gateway/gateway-vm-setup.ts` | Remove runtime CA update + plugin copy (now baked) |
-| `packages/agent-vm/src/gateway/gateway-vm-configuration.ts` | Remove plugin VFS mount (now baked) |
-| `packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts` | Add checkpoint resume path |
-| `packages/agent-vm/src/gateway/credential-manager.ts` | Resolve refs from env when missing in config |
-| `packages/agent-vm/src/cli/agent-vm-entrypoint.ts` | Add `init` subcommand |
-| `packages/agent-vm/src/cli/agent-vm-cli-support.ts` | Wire init command dependencies |
-| `packages/gondolin-core/src/vm-adapter.ts` | Add `getVmInstance()` to `ManagedVm` interface (prep for future checkpoints) |
-| `system.json` | Remove inline `ref` values (resolved from .env) |
-| `docs/01-architecture-v4.md` (shravan-claw) | Update boot flow, postBuild, checkpoints |
-| `docs/05-secrets-security-model.md` (shravan-claw) | Update .env ref pattern |
+| File                                                         | Change                                                                           |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `images/gateway/build-config.json`                           | Add `postBuild.copy` + `postBuild.commands`                                      |
+| `images/tool/build-config.json`                              | Add `postBuild.commands` for CA trust                                            |
+| `packages/agent-vm/src/controller/system-config.ts`          | Remove dead `postBuild` field from images schema, make `ref` optional in secrets |
+| `packages/agent-vm/src/cli/agent-vm-entrypoint.ts`           | Load `.env.local` via `process.loadEnvFile()` at startup                         |
+| `packages/gondolin-core/src/build-pipeline.ts`               | Include postBuild in fingerprint hash                                            |
+| `packages/agent-vm/src/gateway/gateway-vm-setup.ts`          | Remove runtime CA update + plugin copy (now baked)                               |
+| `packages/agent-vm/src/gateway/gateway-vm-configuration.ts`  | Remove plugin VFS mount (now baked)                                              |
+| `packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts` | Add checkpoint resume path                                                       |
+| `packages/agent-vm/src/gateway/credential-manager.ts`        | Resolve refs from env when missing in config                                     |
+| `packages/agent-vm/src/cli/agent-vm-entrypoint.ts`           | Add `init` subcommand                                                            |
+| `packages/agent-vm/src/cli/agent-vm-cli-support.ts`          | Wire init command dependencies                                                   |
+| `packages/gondolin-core/src/vm-adapter.ts`                   | Add `getVmInstance()` to `ManagedVm` interface (prep for future checkpoints)     |
+| `system.json`                                                | Remove inline `ref` values (resolved from .env)                                  |
+| `docs/01-architecture-v4.md` (shravan-claw)                  | Update boot flow, postBuild, checkpoints                                         |
+| `docs/05-secrets-security-model.md` (shravan-claw)           | Update .env ref pattern                                                          |
 
 ---
 
@@ -192,6 +193,7 @@ Recommended order: **A → B → D → E → C → F → G**
 ### Task 1: Add postBuild to gateway build-config.json
 
 **Files:**
+
 - Modify: `images/gateway/build-config.json`
 
 The gateway OCI image (`agent-vm-gateway:latest`, built by `images/gateway/Dockerfile`) already contains Node.js 24, OpenClaw, openssh, git, curl, python3. The postBuild adds our custom files on top: CA trust update and the plugin directory structure.
@@ -200,40 +202,40 @@ The gateway OCI image (`agent-vm-gateway:latest`, built by `images/gateway/Docke
 
 ```json
 {
-  "arch": "aarch64",
-  "distro": "alpine",
-  "alpine": {
-    "version": "3.23.0",
-    "kernelPackage": "linux-virt",
-    "kernelImage": "vmlinuz-virt",
-    "rootfsPackages": [],
-    "initramfsPackages": []
-  },
-  "oci": {
-    "image": "agent-vm-gateway:latest",
-    "pullPolicy": "never"
-  },
-  "rootfs": {
-    "label": "gondolin-root",
-    "sizeMb": 4096
-  },
-  "postBuild": {
-    "copy": [
-      {
-        "src": "../../packages/openclaw-agent-vm-plugin/dist",
-        "dest": "/opt/gondolin-plugin-staging"
-      }
-    ],
-    "commands": [
-      "ln -sf /proc/self/fd /dev/fd 2>/dev/null || true",
-      "update-ca-certificates > /dev/null 2>&1 || true",
-      "mkdir -p /usr/local/lib/node_modules/openclaw/dist/extensions/gondolin",
-      "cp -a /opt/gondolin-plugin-staging/. /usr/local/lib/node_modules/openclaw/dist/extensions/gondolin/",
-      "chown -R root:root /usr/local/lib/node_modules/openclaw/dist/extensions/gondolin",
-      "rm -rf /opt/gondolin-plugin-staging",
-      "mkdir -p /home/openclaw/.openclaw /home/openclaw/workspace /root"
-    ]
-  }
+	"arch": "aarch64",
+	"distro": "alpine",
+	"alpine": {
+		"version": "3.23.0",
+		"kernelPackage": "linux-virt",
+		"kernelImage": "vmlinuz-virt",
+		"rootfsPackages": [],
+		"initramfsPackages": []
+	},
+	"oci": {
+		"image": "agent-vm-gateway:latest",
+		"pullPolicy": "never"
+	},
+	"rootfs": {
+		"label": "gondolin-root",
+		"sizeMb": 4096
+	},
+	"postBuild": {
+		"copy": [
+			{
+				"src": "../../packages/openclaw-agent-vm-plugin/dist",
+				"dest": "/opt/gondolin-plugin-staging"
+			}
+		],
+		"commands": [
+			"ln -sf /proc/self/fd /dev/fd 2>/dev/null || true",
+			"update-ca-certificates > /dev/null 2>&1 || true",
+			"mkdir -p /usr/local/lib/node_modules/openclaw/dist/extensions/gondolin",
+			"cp -a /opt/gondolin-plugin-staging/. /usr/local/lib/node_modules/openclaw/dist/extensions/gondolin/",
+			"chown -R root:root /usr/local/lib/node_modules/openclaw/dist/extensions/gondolin",
+			"rm -rf /opt/gondolin-plugin-staging",
+			"mkdir -p /home/openclaw/.openclaw /home/openclaw/workspace /root"
+		]
+	}
 }
 ```
 
@@ -254,6 +256,7 @@ git commit -m "feat: add postBuild to gateway build-config — bake plugin + CA 
 ### Task 2: Add postBuild to tool build-config.json
 
 **Files:**
+
 - Modify: `images/tool/build-config.json`
 
 Tool VMs only need the CA trust update and /dev/fd symlink baked in. No plugin.
@@ -262,30 +265,30 @@ Tool VMs only need the CA trust update and /dev/fd symlink baked in. No plugin.
 
 ```json
 {
-  "arch": "aarch64",
-  "distro": "alpine",
-  "alpine": {
-    "version": "3.23.0",
-    "kernelPackage": "linux-virt",
-    "kernelImage": "vmlinuz-virt",
-    "rootfsPackages": [],
-    "initramfsPackages": []
-  },
-  "oci": {
-    "image": "agent-vm-tool:latest",
-    "pullPolicy": "never"
-  },
-  "rootfs": {
-    "label": "tool-root",
-    "sizeMb": 2048
-  },
-  "postBuild": {
-    "commands": [
-      "ln -sf /proc/self/fd /dev/fd 2>/dev/null || true",
-      "update-ca-certificates > /dev/null 2>&1 || true",
-      "mkdir -p /workspace /run/sshd"
-    ]
-  }
+	"arch": "aarch64",
+	"distro": "alpine",
+	"alpine": {
+		"version": "3.23.0",
+		"kernelPackage": "linux-virt",
+		"kernelImage": "vmlinuz-virt",
+		"rootfsPackages": [],
+		"initramfsPackages": []
+	},
+	"oci": {
+		"image": "agent-vm-tool:latest",
+		"pullPolicy": "never"
+	},
+	"rootfs": {
+		"label": "tool-root",
+		"sizeMb": 2048
+	},
+	"postBuild": {
+		"commands": [
+			"ln -sf /proc/self/fd /dev/fd 2>/dev/null || true",
+			"update-ca-certificates > /dev/null 2>&1 || true",
+			"mkdir -p /workspace /run/sshd"
+		]
+	}
 }
 ```
 
@@ -301,6 +304,7 @@ git commit -m "feat: add postBuild to tool build-config — bake CA trust into i
 ### Task 3: Remove dead postBuild from system-config schema + update system.json
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/controller/system-config.ts`
 - Modify: `system.json`
 
@@ -311,6 +315,7 @@ The current schema has `postBuild: z.array(z.string())` in the images section, b
 In `packages/agent-vm/src/controller/system-config.ts`, change both gateway and tool image schemas:
 
 Old:
+
 ```typescript
 gateway: z.object({
   buildConfig: z.string().min(1),
@@ -323,6 +328,7 @@ tool: z.object({
 ```
 
 New:
+
 ```typescript
 gateway: z.object({
   buildConfig: z.string().min(1),
@@ -364,6 +370,7 @@ git commit -m "fix: remove dead postBuild from system-config — build-config.js
 ### Task 4: Include postBuild in build fingerprint
 
 **Files:**
+
 - Modify: `packages/gondolin-core/src/build-pipeline.ts`
 - Test: `packages/gondolin-core/src/build-pipeline.test.ts` (existing)
 
@@ -378,39 +385,39 @@ import { describe, expect, it } from 'vitest';
 import { computeBuildFingerprint } from './build-pipeline.js';
 
 describe('computeBuildFingerprint', () => {
-  it('produces different fingerprints when postBuild changes', () => {
-    const baseConfig = {
-      arch: 'aarch64',
-      distro: 'alpine',
-      alpine: { version: '3.23.0' },
-    };
+	it('produces different fingerprints when postBuild changes', () => {
+		const baseConfig = {
+			arch: 'aarch64',
+			distro: 'alpine',
+			alpine: { version: '3.23.0' },
+		};
 
-    const withPostBuild = {
-      ...baseConfig,
-      postBuild: {
-        commands: ['update-ca-certificates'],
-      },
-    };
+		const withPostBuild = {
+			...baseConfig,
+			postBuild: {
+				commands: ['update-ca-certificates'],
+			},
+		};
 
-    const fingerprintWithout = computeBuildFingerprint(baseConfig as never);
-    const fingerprintWith = computeBuildFingerprint(withPostBuild as never);
-    expect(fingerprintWithout).not.toBe(fingerprintWith);
-  });
+		const fingerprintWithout = computeBuildFingerprint(baseConfig as never);
+		const fingerprintWith = computeBuildFingerprint(withPostBuild as never);
+		expect(fingerprintWithout).not.toBe(fingerprintWith);
+	});
 
-  it('produces same fingerprint for identical postBuild configs', () => {
-    const configA = {
-      arch: 'aarch64',
-      postBuild: { commands: ['echo hello'] },
-    };
-    const configB = {
-      arch: 'aarch64',
-      postBuild: { commands: ['echo hello'] },
-    };
+	it('produces same fingerprint for identical postBuild configs', () => {
+		const configA = {
+			arch: 'aarch64',
+			postBuild: { commands: ['echo hello'] },
+		};
+		const configB = {
+			arch: 'aarch64',
+			postBuild: { commands: ['echo hello'] },
+		};
 
-    expect(computeBuildFingerprint(configA as never)).toBe(
-      computeBuildFingerprint(configB as never),
-    );
-  });
+		expect(computeBuildFingerprint(configA as never)).toBe(
+			computeBuildFingerprint(configB as never),
+		);
+	});
 });
 ```
 
@@ -431,6 +438,7 @@ git commit -m "test: verify postBuild changes build fingerprint"
 ### Task 5: Strip runtime setup from gateway-vm-setup.ts
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/gateway/gateway-vm-setup.ts`
 - Modify: `packages/agent-vm/src/gateway/gateway-vm-configuration.ts`
 - Modify: `packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts`
@@ -447,35 +455,35 @@ import { describe, expect, it, vi } from 'vitest';
 import { setupGatewayVmRuntime } from './gateway-vm-setup.js';
 
 describe('setupGatewayVmRuntime (post-bake)', () => {
-  it('writes env profile but does not run CA update or plugin copy', async () => {
-    const execCalls: string[] = [];
-    const mockVm = {
-      id: 'test-vm',
-      exec: vi.fn(async (command: string) => {
-        execCalls.push(command);
-        return { exitCode: 0, stdout: '', stderr: '' };
-      }),
-      enableSsh: vi.fn(),
-      enableIngress: vi.fn(),
-      setIngressRoutes: vi.fn(),
-      close: vi.fn(),
-    };
+	it('writes env profile but does not run CA update or plugin copy', async () => {
+		const execCalls: string[] = [];
+		const mockVm = {
+			id: 'test-vm',
+			exec: vi.fn(async (command: string) => {
+				execCalls.push(command);
+				return { exitCode: 0, stdout: '', stderr: '' };
+			}),
+			enableSsh: vi.fn(),
+			enableIngress: vi.fn(),
+			setIngressRoutes: vi.fn(),
+			close: vi.fn(),
+		};
 
-    await setupGatewayVmRuntime({
-      managedVm: mockVm,
-      openClawConfigPath: './config/shravan/openclaw.json',
-      gatewayToken: 'test-token',
-    });
+		await setupGatewayVmRuntime({
+			managedVm: mockVm,
+			openClawConfigPath: './config/shravan/openclaw.json',
+			gatewayToken: 'test-token',
+		});
 
-    // Should write env profile
-    expect(execCalls.some((cmd) => cmd.includes('.openclaw-env'))).toBe(true);
+		// Should write env profile
+		expect(execCalls.some((cmd) => cmd.includes('.openclaw-env'))).toBe(true);
 
-    // Should NOT run update-ca-certificates (baked in)
-    expect(execCalls.some((cmd) => cmd.includes('update-ca-certificates'))).toBe(false);
+		// Should NOT run update-ca-certificates (baked in)
+		expect(execCalls.some((cmd) => cmd.includes('update-ca-certificates'))).toBe(false);
 
-    // Should NOT run plugin copy (baked in)
-    expect(execCalls.some((cmd) => cmd.includes('cp -a /opt/gondolin-plugin-src'))).toBe(false);
-  });
+		// Should NOT run plugin copy (baked in)
+		expect(execCalls.some((cmd) => cmd.includes('cp -a /opt/gondolin-plugin-src'))).toBe(false);
+	});
 });
 ```
 
@@ -490,31 +498,32 @@ Replace `setupGatewayVmRuntime` in `packages/agent-vm/src/gateway/gateway-vm-set
 
 ```typescript
 export async function setupGatewayVmRuntime(options: {
-  readonly gatewayToken?: string;
-  readonly managedVm: ManagedVm;
-  readonly openClawConfigPath: string;
+	readonly gatewayToken?: string;
+	readonly managedVm: ManagedVm;
+	readonly openClawConfigPath: string;
 }): Promise<void> {
-  const gatewayEnvironmentProfile =
-    'export OPENCLAW_HOME=/home/openclaw\n' +
-    `export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/config/${path.basename(options.openClawConfigPath)}\n` +
-    'export OPENCLAW_STATE_DIR=/home/openclaw/.openclaw/state\n' +
-    (options.gatewayToken
-      ? `export OPENCLAW_GATEWAY_TOKEN='${options.gatewayToken.replace(/'/gu, "'\\''")}'\n`
-      : '') +
-    'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt\n';
+	const gatewayEnvironmentProfile =
+		'export OPENCLAW_HOME=/home/openclaw\n' +
+		`export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/config/${path.basename(options.openClawConfigPath)}\n` +
+		'export OPENCLAW_STATE_DIR=/home/openclaw/.openclaw/state\n' +
+		(options.gatewayToken
+			? `export OPENCLAW_GATEWAY_TOKEN='${options.gatewayToken.replace(/'/gu, "'\\''")}'\n`
+			: '') +
+		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt\n';
 
-  await options.managedVm.exec(
-    'mkdir -p /root && cat > /root/.openclaw-env << ENVEOF\n' +
-      gatewayEnvironmentProfile +
-      'ENVEOF\n' +
-      'chmod 600 /root/.openclaw-env && ' +
-      'touch /root/.bashrc && ' +
-      "grep -qxF 'source /root/.openclaw-env' /root/.bashrc || echo 'source /root/.openclaw-env' >> /root/.bashrc",
-  );
+	await options.managedVm.exec(
+		'mkdir -p /root && cat > /root/.openclaw-env << ENVEOF\n' +
+			gatewayEnvironmentProfile +
+			'ENVEOF\n' +
+			'chmod 600 /root/.openclaw-env && ' +
+			'touch /root/.bashrc && ' +
+			"grep -qxF 'source /root/.openclaw-env' /root/.bashrc || echo 'source /root/.openclaw-env' >> /root/.bashrc",
+	);
 }
 ```
 
 Key changes:
+
 - Removed `ln -sf /proc/self/fd /dev/fd` (baked in via postBuild)
 - Removed `update-ca-certificates` (baked in via postBuild)
 - Removed `pluginSourceDir` parameter and plugin copy block (baked in via postBuild)
@@ -524,6 +533,7 @@ Key changes:
 In `packages/agent-vm/src/gateway/gateway-vm-configuration.ts`, the `buildGatewayVmFactoryOptions` function currently adds a `/opt/gondolin-plugin-src` VFS mount when `pluginSourceDir` is provided. Remove that mount:
 
 Old (in the `vfsMounts` object):
+
 ```typescript
 ...(options.pluginSourceDir
   ? {
@@ -547,22 +557,22 @@ In `startGatewayZone`, the call to `createGatewayVm` currently spreads `pluginSo
 
 ```typescript
 const managedVm = await createGatewayVm(
-  {
-    controllerPort: options.systemConfig.host.controllerPort,
-    gatewayImagePath: image.imagePath,
-    resolvedSecrets,
-    secretResolver: options.secretResolver,
-    systemConfig: options.systemConfig,
-    zone,
-  },
-  dependencies.createManagedVm ? { createManagedVm: dependencies.createManagedVm } : {},
+	{
+		controllerPort: options.systemConfig.host.controllerPort,
+		gatewayImagePath: image.imagePath,
+		resolvedSecrets,
+		secretResolver: options.secretResolver,
+		systemConfig: options.systemConfig,
+		zone,
+	},
+	dependencies.createManagedVm ? { createManagedVm: dependencies.createManagedVm } : {},
 );
 await setupGatewayVmRuntime({
-  ...(resolvedSecrets.OPENCLAW_GATEWAY_TOKEN
-    ? { gatewayToken: resolvedSecrets.OPENCLAW_GATEWAY_TOKEN }
-    : {}),
-  managedVm,
-  openClawConfigPath: zone.gateway.openclawConfig,
+	...(resolvedSecrets.OPENCLAW_GATEWAY_TOKEN
+		? { gatewayToken: resolvedSecrets.OPENCLAW_GATEWAY_TOKEN }
+		: {}),
+	managedVm,
+	openClawConfigPath: zone.gateway.openclawConfig,
 });
 ```
 
@@ -585,6 +595,7 @@ git commit -m "feat: strip runtime CA/plugin setup — now baked into image via 
 ### Task 6: Create image build script
 
 **Files:**
+
 - Create: `scripts/build-images.sh`
 
 This script builds both OCI Docker images and then runs Gondolin `buildAssets` to produce the final VM images.
@@ -688,6 +699,7 @@ git commit -m "feat: add build-images.sh — builds OCI + Gondolin assets in seq
 ### Task 7: Create .env.example template
 
 **Files:**
+
 - Create: `.env.example`
 
 Move 1Password secret refs from system.json into .env with hardcoded defaults. The `op://` URIs are vault paths (not secrets) so they're safe to template.
@@ -731,6 +743,7 @@ git commit -m "feat: add .env.example — template for secret refs with hardcode
 ### Task 8: Update secret resolution to use env-based refs
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/controller/system-config.ts`
 - Modify: `packages/agent-vm/src/gateway/credential-manager.ts`
 - Test: `packages/agent-vm/src/gateway/credential-manager.test.ts`
@@ -746,57 +759,57 @@ import { describe, expect, it, vi } from 'vitest';
 import { resolveZoneSecrets } from './credential-manager.js';
 
 describe('resolveZoneSecrets with env-based refs', () => {
-  it('resolves ref from environment when not in config', async () => {
-    const originalEnv = process.env.DISCORD_BOT_TOKEN_REF;
-    process.env.DISCORD_BOT_TOKEN_REF = 'op://test-vault/test-item/token';
+	it('resolves ref from environment when not in config', async () => {
+		const originalEnv = process.env.DISCORD_BOT_TOKEN_REF;
+		process.env.DISCORD_BOT_TOKEN_REF = 'op://test-vault/test-item/token';
 
-    const mockResolver = {
-      resolve: vi.fn(async (ref) => `resolved-${ref.ref}`),
-      resolveAll: vi.fn(async (refs) => {
-        const results: Record<string, string> = {};
-        for (const [name, ref] of Object.entries(refs)) {
-          results[name] = `resolved-${ref.ref}`;
-        }
-        return results;
-      }),
-    };
+		const mockResolver = {
+			resolve: vi.fn(async (ref) => `resolved-${ref.ref}`),
+			resolveAll: vi.fn(async (refs) => {
+				const results: Record<string, string> = {};
+				for (const [name, ref] of Object.entries(refs)) {
+					results[name] = `resolved-${ref.ref}`;
+				}
+				return results;
+			}),
+		};
 
-    const result = await resolveZoneSecrets({
-      systemConfig: {
-        zones: [
-          {
-            id: 'test',
-            gateway: {
-              memory: '2G',
-              cpus: 2,
-              port: 18791,
-              openclawConfig: './config/test/openclaw.json',
-              stateDir: './state/test',
-              workspaceDir: './workspaces/test',
-            },
-            secrets: {
-              DISCORD_BOT_TOKEN: {
-                source: '1password' as const,
-                injection: 'env' as const,
-                // ref intentionally omitted — should come from env
-              },
-            },
-            allowedHosts: ['discord.com'],
-            websocketBypass: [],
-            toolProfile: 'standard',
-          },
-        ],
-      } as never,
-      zoneId: 'test',
-      secretResolver: mockResolver,
-    });
+		const result = await resolveZoneSecrets({
+			systemConfig: {
+				zones: [
+					{
+						id: 'test',
+						gateway: {
+							memory: '2G',
+							cpus: 2,
+							port: 18791,
+							openclawConfig: './config/test/openclaw.json',
+							stateDir: './state/test',
+							workspaceDir: './workspaces/test',
+						},
+						secrets: {
+							DISCORD_BOT_TOKEN: {
+								source: '1password' as const,
+								injection: 'env' as const,
+								// ref intentionally omitted — should come from env
+							},
+						},
+						allowedHosts: ['discord.com'],
+						websocketBypass: [],
+						toolProfile: 'standard',
+					},
+				],
+			} as never,
+			zoneId: 'test',
+			secretResolver: mockResolver,
+		});
 
-    expect(mockResolver.resolveAll).toHaveBeenCalled();
-    const callArg = mockResolver.resolveAll.mock.calls[0]?.[0] as Record<string, { ref: string }>;
-    expect(callArg.DISCORD_BOT_TOKEN.ref).toBe('op://test-vault/test-item/token');
+		expect(mockResolver.resolveAll).toHaveBeenCalled();
+		const callArg = mockResolver.resolveAll.mock.calls[0]?.[0] as Record<string, { ref: string }>;
+		expect(callArg.DISCORD_BOT_TOKEN.ref).toBe('op://test-vault/test-item/token');
 
-    process.env.DISCORD_BOT_TOKEN_REF = originalEnv;
-  });
+		process.env.DISCORD_BOT_TOKEN_REF = originalEnv;
+	});
 });
 ```
 
@@ -810,22 +823,24 @@ Expected: FAIL
 In `packages/agent-vm/src/controller/system-config.ts`:
 
 Old:
+
 ```typescript
 const secretReferenceSchema = z.object({
-  source: z.literal('1password'),
-  ref: z.string().min(1),
-  injection: z.enum(['env', 'http-mediation']).default('env'),
-  hosts: z.array(z.string().min(1)).optional(),
+	source: z.literal('1password'),
+	ref: z.string().min(1),
+	injection: z.enum(['env', 'http-mediation']).default('env'),
+	hosts: z.array(z.string().min(1)).optional(),
 });
 ```
 
 New:
+
 ```typescript
 const secretReferenceSchema = z.object({
-  source: z.literal('1password'),
-  ref: z.string().min(1).optional(),
-  injection: z.enum(['env', 'http-mediation']).default('env'),
-  hosts: z.array(z.string().min(1)).optional(),
+	source: z.literal('1password'),
+	ref: z.string().min(1).optional(),
+	injection: z.enum(['env', 'http-mediation']).default('env'),
+	hosts: z.array(z.string().min(1)).optional(),
 });
 ```
 
@@ -839,50 +854,47 @@ import type { SecretRef, SecretResolver } from 'gondolin-core';
 import type { SystemConfig } from '../controller/system-config.js';
 
 function findZone(
-  systemConfig: SystemConfig,
-  zoneId: string,
+	systemConfig: SystemConfig,
+	zoneId: string,
 ): SystemConfig['zones'][number] | undefined {
-  return systemConfig.zones.find((zone) => zone.id === zoneId);
+	return systemConfig.zones.find((zone) => zone.id === zoneId);
 }
 
-function resolveSecretRef(
-  secretName: string,
-  secretConfig: { readonly ref?: string },
-): string {
-  if (secretConfig.ref) {
-    return secretConfig.ref;
-  }
+function resolveSecretRef(secretName: string, secretConfig: { readonly ref?: string }): string {
+	if (secretConfig.ref) {
+		return secretConfig.ref;
+	}
 
-  const envVarName = `${secretName}_REF`;
-  const envValue = process.env[envVarName]?.trim();
-  if (!envValue) {
-    throw new Error(
-      `Secret '${secretName}' has no ref in config and ${envVarName} is not set in environment.`,
-    );
-  }
+	const envVarName = `${secretName}_REF`;
+	const envValue = process.env[envVarName]?.trim();
+	if (!envValue) {
+		throw new Error(
+			`Secret '${secretName}' has no ref in config and ${envVarName} is not set in environment.`,
+		);
+	}
 
-  return envValue;
+	return envValue;
 }
 
 export async function resolveZoneSecrets(options: {
-  readonly systemConfig: SystemConfig;
-  readonly zoneId: string;
-  readonly secretResolver: SecretResolver;
+	readonly systemConfig: SystemConfig;
+	readonly zoneId: string;
+	readonly secretResolver: SecretResolver;
 }): Promise<Record<string, string>> {
-  const zone = findZone(options.systemConfig, options.zoneId);
-  if (!zone) {
-    throw new Error(`Unknown zone '${options.zoneId}'.`);
-  }
+	const zone = findZone(options.systemConfig, options.zoneId);
+	if (!zone) {
+		throw new Error(`Unknown zone '${options.zoneId}'.`);
+	}
 
-  const resolvedRefs: Record<string, SecretRef> = {};
-  for (const [secretName, secretConfig] of Object.entries(zone.secrets)) {
-    resolvedRefs[secretName] = {
-      source: secretConfig.source,
-      ref: resolveSecretRef(secretName, secretConfig),
-    };
-  }
+	const resolvedRefs: Record<string, SecretRef> = {};
+	for (const [secretName, secretConfig] of Object.entries(zone.secrets)) {
+		resolvedRefs[secretName] = {
+			source: secretConfig.source,
+			ref: resolveSecretRef(secretName, secretConfig),
+		};
+	}
 
-  return await options.secretResolver.resolveAll(resolvedRefs);
+	return await options.secretResolver.resolveAll(resolvedRefs);
 }
 ```
 
@@ -896,9 +908,9 @@ In `packages/agent-vm/src/cli/agent-vm-entrypoint.ts`, add at the very top of th
 // Load .env.local into process.env before anything else.
 // Node 24's built-in loadEnvFile throws if file doesn't exist, so guard it.
 try {
-  process.loadEnvFile('.env.local');
+	process.loadEnvFile('.env.local');
 } catch {
-  // .env.local is optional — secrets may come from system.json refs or shell env
+	// .env.local is optional — secrets may come from system.json refs or shell env
 }
 ```
 
@@ -950,6 +962,7 @@ git commit -m "feat: resolve secret refs from env — ref optional in config, .e
 ### Task 9: Add checkpoint method to ManagedVm interface
 
 **Files:**
+
 - Modify: `packages/gondolin-core/src/vm-adapter.ts`
 - Create: `packages/gondolin-core/src/checkpoint-adapter.ts`
 - Create: `packages/gondolin-core/src/checkpoint-adapter.test.ts`
@@ -963,18 +976,19 @@ In `packages/gondolin-core/src/vm-adapter.ts`, add to the `ManagedVm` interface:
 
 ```typescript
 export interface ManagedVm {
-  readonly id: string;
-  exec(command: string): Promise<ExecResult>;
-  enableSsh(options?: unknown): Promise<SshAccess>;
-  enableIngress(options?: unknown): Promise<IngressAccess>;
-  setIngressRoutes(routes: readonly IngressRoute[]): void;
-  close(): Promise<void>;
-  /** Access the underlying VM instance for checkpoint operations (future use). */
-  getVmInstance(): ManagedVmInstance;
+	readonly id: string;
+	exec(command: string): Promise<ExecResult>;
+	enableSsh(options?: unknown): Promise<SshAccess>;
+	enableIngress(options?: unknown): Promise<IngressAccess>;
+	setIngressRoutes(routes: readonly IngressRoute[]): void;
+	close(): Promise<void>;
+	/** Access the underlying VM instance for checkpoint operations (future use). */
+	getVmInstance(): ManagedVmInstance;
 }
 ```
 
 In the return object of `createManagedVm`, add:
+
 ```typescript
 getVmInstance(): ManagedVmInstance {
   return vmInstance;
@@ -990,39 +1004,39 @@ import { describe, expect, it, vi } from 'vitest';
 import { createManagedVm } from './vm-adapter.js';
 
 describe('ManagedVm.getVmInstance', () => {
-  it('returns the underlying VM instance', async () => {
-    const mockInstance = {
-      id: 'test-vm',
-      exec: vi.fn(async () => ({ exitCode: 0 })),
-      enableSsh: vi.fn(),
-      enableIngress: vi.fn(),
-      setIngressRoutes: vi.fn(),
-      close: vi.fn(),
-    };
+	it('returns the underlying VM instance', async () => {
+		const mockInstance = {
+			id: 'test-vm',
+			exec: vi.fn(async () => ({ exitCode: 0 })),
+			enableSsh: vi.fn(),
+			enableIngress: vi.fn(),
+			setIngressRoutes: vi.fn(),
+			close: vi.fn(),
+		};
 
-    const vm = await createManagedVm(
-      {
-        imagePath: '',
-        memory: '512M',
-        cpus: 1,
-        rootfsMode: 'cow',
-        allowedHosts: [],
-        secrets: {},
-        vfsMounts: {},
-      },
-      {
-        createVm: vi.fn(async () => mockInstance),
-        createHttpHooks: vi.fn(() => ({ env: {}, httpHooks: {} })),
-        createRealFsProvider: vi.fn(),
-        createReadonlyProvider: vi.fn(),
-        createMemoryProvider: vi.fn(),
-        createShadowProvider: vi.fn(),
-        createShadowPathPredicate: vi.fn(),
-      },
-    );
+		const vm = await createManagedVm(
+			{
+				imagePath: '',
+				memory: '512M',
+				cpus: 1,
+				rootfsMode: 'cow',
+				allowedHosts: [],
+				secrets: {},
+				vfsMounts: {},
+			},
+			{
+				createVm: vi.fn(async () => mockInstance),
+				createHttpHooks: vi.fn(() => ({ env: {}, httpHooks: {} })),
+				createRealFsProvider: vi.fn(),
+				createReadonlyProvider: vi.fn(),
+				createMemoryProvider: vi.fn(),
+				createShadowProvider: vi.fn(),
+				createShadowPathPredicate: vi.fn(),
+			},
+		);
 
-    expect(vm.getVmInstance()).toBe(mockInstance);
-  });
+		expect(vm.getVmInstance()).toBe(mockInstance);
+	});
 });
 ```
 
@@ -1043,6 +1057,7 @@ git commit -m "feat: add getVmInstance to ManagedVm — prep for checkpoint supp
 ### Task 10: Build checkpoint path resolution (infrastructure — resume is a follow-up)
 
 **Files:**
+
 - Create: `packages/agent-vm/src/gateway/gateway-checkpoint-manager.ts`
 - Create: `packages/agent-vm/src/gateway/gateway-checkpoint-manager.test.ts`
 
@@ -1060,21 +1075,18 @@ Checkpoints live at the project root under `./checkpoints/${zoneId}/`:
 // packages/agent-vm/src/gateway/gateway-checkpoint-manager.test.ts
 import { describe, expect, it } from 'vitest';
 
-import {
-  resolveCheckpointPath,
-  shouldUseCheckpoint,
-} from './gateway-checkpoint-manager.js';
+import { resolveCheckpointPath, shouldUseCheckpoint } from './gateway-checkpoint-manager.js';
 
 describe('gateway-checkpoint-manager', () => {
-  it('resolveCheckpointPath returns path under checkpoints dir, not stateDir', () => {
-    const result = resolveCheckpointPath('./checkpoints', 'shravan', 'abc123');
-    expect(result).toBe('checkpoints/shravan/gateway-abc123.qcow2');
-  });
+	it('resolveCheckpointPath returns path under checkpoints dir, not stateDir', () => {
+		const result = resolveCheckpointPath('./checkpoints', 'shravan', 'abc123');
+		expect(result).toBe('checkpoints/shravan/gateway-abc123.qcow2');
+	});
 
-  it('shouldUseCheckpoint returns false when file does not exist', () => {
-    const result = shouldUseCheckpoint('/nonexistent/path.qcow2');
-    expect(result).toBe(false);
-  });
+	it('shouldUseCheckpoint returns false when file does not exist', () => {
+		const result = shouldUseCheckpoint('/nonexistent/path.qcow2');
+		expect(result).toBe(false);
+	});
 });
 ```
 
@@ -1095,15 +1107,15 @@ import path from 'node:path';
  * Checkpoints live OUTSIDE stateDir (which is VFS-mounted and swept by snapshots).
  */
 export function resolveCheckpointPath(
-  checkpointsBaseDir: string,
-  zoneId: string,
-  imageFingerprint: string,
+	checkpointsBaseDir: string,
+	zoneId: string,
+	imageFingerprint: string,
 ): string {
-  return path.join(checkpointsBaseDir, zoneId, `gateway-${imageFingerprint}.qcow2`);
+	return path.join(checkpointsBaseDir, zoneId, `gateway-${imageFingerprint}.qcow2`);
 }
 
 export function shouldUseCheckpoint(checkpointPath: string): boolean {
-  return fs.existsSync(checkpointPath);
+	return fs.existsSync(checkpointPath);
 }
 ```
 
@@ -1126,6 +1138,7 @@ git commit -m "feat: add gateway checkpoint path resolution — outside stateDir
 ### Task 11: Add `agent-vm init` command
 
 **Files:**
+
 - Create: `packages/agent-vm/src/cli/init-command.ts`
 - Create: `packages/agent-vm/src/cli/init-command.test.ts`
 - Modify: `packages/agent-vm/src/cli/agent-vm-entrypoint.ts`
@@ -1145,42 +1158,42 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { scaffoldAgentVmProject } from './init-command.js';
 
 describe('scaffoldAgentVmProject', () => {
-  const testDir = path.join(os.tmpdir(), `agent-vm-init-test-${Date.now()}`);
+	const testDir = path.join(os.tmpdir(), `agent-vm-init-test-${Date.now()}`);
 
-  afterEach(() => {
-    fs.rmSync(testDir, { recursive: true, force: true });
-  });
+	afterEach(() => {
+		fs.rmSync(testDir, { recursive: true, force: true });
+	});
 
-  it('creates system.json with default zone', () => {
-    const result = scaffoldAgentVmProject({ targetDir: testDir, zoneId: 'test-zone' });
-    expect(result.created).toContain('system.json');
-    const config = JSON.parse(fs.readFileSync(path.join(testDir, 'system.json'), 'utf8'));
-    expect(config.zones[0].id).toBe('test-zone');
-  });
+	it('creates system.json with default zone', () => {
+		const result = scaffoldAgentVmProject({ targetDir: testDir, zoneId: 'test-zone' });
+		expect(result.created).toContain('system.json');
+		const config = JSON.parse(fs.readFileSync(path.join(testDir, 'system.json'), 'utf8'));
+		expect(config.zones[0].id).toBe('test-zone');
+	});
 
-  it('creates .env.local from template', () => {
-    const result = scaffoldAgentVmProject({ targetDir: testDir, zoneId: 'test-zone' });
-    expect(result.created).toContain('.env.local');
-    const envContent = fs.readFileSync(path.join(testDir, '.env.local'), 'utf8');
-    expect(envContent).toContain('OP_SERVICE_ACCOUNT_TOKEN=');
-    expect(envContent).toContain('DISCORD_BOT_TOKEN_REF=');
-  });
+	it('creates .env.local from template', () => {
+		const result = scaffoldAgentVmProject({ targetDir: testDir, zoneId: 'test-zone' });
+		expect(result.created).toContain('.env.local');
+		const envContent = fs.readFileSync(path.join(testDir, '.env.local'), 'utf8');
+		expect(envContent).toContain('OP_SERVICE_ACCOUNT_TOKEN=');
+		expect(envContent).toContain('DISCORD_BOT_TOKEN_REF=');
+	});
 
-  it('creates config and state directories', () => {
-    scaffoldAgentVmProject({ targetDir: testDir, zoneId: 'my-zone' });
-    expect(fs.existsSync(path.join(testDir, 'config', 'my-zone'))).toBe(true);
-    expect(fs.existsSync(path.join(testDir, 'state', 'my-zone'))).toBe(true);
-    expect(fs.existsSync(path.join(testDir, 'workspaces', 'my-zone'))).toBe(true);
-  });
+	it('creates config and state directories', () => {
+		scaffoldAgentVmProject({ targetDir: testDir, zoneId: 'my-zone' });
+		expect(fs.existsSync(path.join(testDir, 'config', 'my-zone'))).toBe(true);
+		expect(fs.existsSync(path.join(testDir, 'state', 'my-zone'))).toBe(true);
+		expect(fs.existsSync(path.join(testDir, 'workspaces', 'my-zone'))).toBe(true);
+	});
 
-  it('does not overwrite existing system.json', () => {
-    fs.mkdirSync(testDir, { recursive: true });
-    fs.writeFileSync(path.join(testDir, 'system.json'), '{"existing": true}');
-    const result = scaffoldAgentVmProject({ targetDir: testDir, zoneId: 'test-zone' });
-    expect(result.skipped).toContain('system.json');
-    const config = JSON.parse(fs.readFileSync(path.join(testDir, 'system.json'), 'utf8'));
-    expect(config.existing).toBe(true);
-  });
+	it('does not overwrite existing system.json', () => {
+		fs.mkdirSync(testDir, { recursive: true });
+		fs.writeFileSync(path.join(testDir, 'system.json'), '{"existing": true}');
+		const result = scaffoldAgentVmProject({ targetDir: testDir, zoneId: 'test-zone' });
+		expect(result.skipped).toContain('system.json');
+		const config = JSON.parse(fs.readFileSync(path.join(testDir, 'system.json'), 'utf8'));
+		expect(config.existing).toBe(true);
+	});
 });
 ```
 
@@ -1197,89 +1210,89 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 interface ScaffoldOptions {
-  readonly targetDir: string;
-  readonly zoneId: string;
+	readonly targetDir: string;
+	readonly zoneId: string;
 }
 
 interface ScaffoldResult {
-  readonly created: readonly string[];
-  readonly skipped: readonly string[];
+	readonly created: readonly string[];
+	readonly skipped: readonly string[];
 }
 
 const DEFAULT_SYSTEM_CONFIG = (zoneId: string): object => ({
-  host: {
-    controllerPort: 18800,
-    secretsProvider: {
-      type: '1password',
-      tokenSource: {
-        type: 'env',
-        envVar: 'OP_SERVICE_ACCOUNT_TOKEN',
-      },
-    },
-  },
-  images: {
-    gateway: {
-      buildConfig: './images/gateway/build-config.json',
-    },
-    tool: {
-      buildConfig: './images/tool/build-config.json',
-    },
-  },
-  zones: [
-    {
-      id: zoneId,
-      gateway: {
-        memory: '2G',
-        cpus: 2,
-        port: 18791,
-        openclawConfig: `./config/${zoneId}/openclaw.json`,
-        stateDir: `./state/${zoneId}`,
-        workspaceDir: `./workspaces/${zoneId}`,
-      },
-      secrets: {
-        DISCORD_BOT_TOKEN: {
-          source: '1password',
-          injection: 'env',
-        },
-        PERPLEXITY_API_KEY: {
-          source: '1password',
-          injection: 'http-mediation',
-          hosts: ['api.perplexity.ai'],
-        },
-        OPENCLAW_GATEWAY_TOKEN: {
-          source: '1password',
-          injection: 'env',
-        },
-      },
-      allowedHosts: [
-        'api.openai.com',
-        'auth.openai.com',
-        'api.perplexity.ai',
-        'discord.com',
-        'cdn.discordapp.com',
-        'api.github.com',
-        'registry.npmjs.org',
-      ],
-      websocketBypass: [
-        'gateway.discord.gg:443',
-        'web.whatsapp.com:443',
-        'g.whatsapp.net:443',
-        'mmg.whatsapp.net:443',
-      ],
-      toolProfile: 'standard',
-    },
-  ],
-  toolProfiles: {
-    standard: {
-      memory: '1G',
-      cpus: 1,
-      workspaceRoot: './workspaces/tools',
-    },
-  },
-  tcpPool: {
-    basePort: 19000,
-    size: 5,
-  },
+	host: {
+		controllerPort: 18800,
+		secretsProvider: {
+			type: '1password',
+			tokenSource: {
+				type: 'env',
+				envVar: 'OP_SERVICE_ACCOUNT_TOKEN',
+			},
+		},
+	},
+	images: {
+		gateway: {
+			buildConfig: './images/gateway/build-config.json',
+		},
+		tool: {
+			buildConfig: './images/tool/build-config.json',
+		},
+	},
+	zones: [
+		{
+			id: zoneId,
+			gateway: {
+				memory: '2G',
+				cpus: 2,
+				port: 18791,
+				openclawConfig: `./config/${zoneId}/openclaw.json`,
+				stateDir: `./state/${zoneId}`,
+				workspaceDir: `./workspaces/${zoneId}`,
+			},
+			secrets: {
+				DISCORD_BOT_TOKEN: {
+					source: '1password',
+					injection: 'env',
+				},
+				PERPLEXITY_API_KEY: {
+					source: '1password',
+					injection: 'http-mediation',
+					hosts: ['api.perplexity.ai'],
+				},
+				OPENCLAW_GATEWAY_TOKEN: {
+					source: '1password',
+					injection: 'env',
+				},
+			},
+			allowedHosts: [
+				'api.openai.com',
+				'auth.openai.com',
+				'api.perplexity.ai',
+				'discord.com',
+				'cdn.discordapp.com',
+				'api.github.com',
+				'registry.npmjs.org',
+			],
+			websocketBypass: [
+				'gateway.discord.gg:443',
+				'web.whatsapp.com:443',
+				'g.whatsapp.net:443',
+				'mmg.whatsapp.net:443',
+			],
+			toolProfile: 'standard',
+		},
+	],
+	toolProfiles: {
+		standard: {
+			memory: '1G',
+			cpus: 1,
+			workspaceRoot: './workspaces/tools',
+		},
+	},
+	tcpPool: {
+		basePort: 19000,
+		size: 5,
+	},
 });
 
 const ENV_TEMPLATE = `# agent-vm environment configuration
@@ -1299,85 +1312,83 @@ AGE_IDENTITY_KEY=
 `;
 
 const OPENCLAW_CONFIG_TEMPLATE = (zoneId: string): object => ({
-  gateway: {
-    port: 18789,
-    mode: 'local',
-    bind: 'loopback',
-    auth: { mode: 'token' },
-  },
-  agents: {
-    defaults: {
-      workspace: '/home/openclaw/workspace',
-      model: { primary: 'openai-codex/gpt-5.4' },
-      sandbox: { mode: 'all', backend: 'gondolin', scope: 'session' },
-    },
-  },
-  tools: { elevated: { enabled: false } },
-  plugins: {
-    entries: {
-      gondolin: {
-        enabled: true,
-        config: {
-          controllerUrl: 'http://controller.vm.host:18800',
-          zoneId,
-        },
-      },
-    },
-  },
-  channels: {},
+	gateway: {
+		port: 18789,
+		mode: 'local',
+		bind: 'loopback',
+		auth: { mode: 'token' },
+	},
+	agents: {
+		defaults: {
+			workspace: '/home/openclaw/workspace',
+			model: { primary: 'openai-codex/gpt-5.4' },
+			sandbox: { mode: 'all', backend: 'gondolin', scope: 'session' },
+		},
+	},
+	tools: { elevated: { enabled: false } },
+	plugins: {
+		entries: {
+			gondolin: {
+				enabled: true,
+				config: {
+					controllerUrl: 'http://controller.vm.host:18800',
+					zoneId,
+				},
+			},
+		},
+	},
+	channels: {},
 });
 
 function writeIfMissing(filePath: string, content: string): 'created' | 'skipped' {
-  if (fs.existsSync(filePath)) {
-    return 'skipped';
-  }
+	if (fs.existsSync(filePath)) {
+		return 'skipped';
+	}
 
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, 'utf8');
-  return 'created';
+	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+	fs.writeFileSync(filePath, content, 'utf8');
+	return 'created';
 }
 
 export function scaffoldAgentVmProject(options: ScaffoldOptions): ScaffoldResult {
-  const created: string[] = [];
-  const skipped: string[] = [];
+	const created: string[] = [];
+	const skipped: string[] = [];
 
-  const systemJsonPath = path.join(options.targetDir, 'system.json');
-  const systemJsonStatus = writeIfMissing(
-    systemJsonPath,
-    JSON.stringify(DEFAULT_SYSTEM_CONFIG(options.zoneId), null, '\t') + '\n',
-  );
-  (systemJsonStatus === 'created' ? created : skipped).push('system.json');
+	const systemJsonPath = path.join(options.targetDir, 'system.json');
+	const systemJsonStatus = writeIfMissing(
+		systemJsonPath,
+		JSON.stringify(DEFAULT_SYSTEM_CONFIG(options.zoneId), null, '\t') + '\n',
+	);
+	(systemJsonStatus === 'created' ? created : skipped).push('system.json');
 
-  const envPath = path.join(options.targetDir, '.env.local');
-  const envStatus = writeIfMissing(envPath, ENV_TEMPLATE);
-  (envStatus === 'created' ? created : skipped).push('.env.local');
+	const envPath = path.join(options.targetDir, '.env.local');
+	const envStatus = writeIfMissing(envPath, ENV_TEMPLATE);
+	(envStatus === 'created' ? created : skipped).push('.env.local');
 
-  const openclawConfigPath = path.join(
-    options.targetDir,
-    'config',
-    options.zoneId,
-    'openclaw.json',
-  );
-  const openclawStatus = writeIfMissing(
-    openclawConfigPath,
-    JSON.stringify(OPENCLAW_CONFIG_TEMPLATE(options.zoneId), null, '\t') + '\n',
-  );
-  (openclawStatus === 'created' ? created : skipped).push(
-    `config/${options.zoneId}/openclaw.json`,
-  );
+	const openclawConfigPath = path.join(
+		options.targetDir,
+		'config',
+		options.zoneId,
+		'openclaw.json',
+	);
+	const openclawStatus = writeIfMissing(
+		openclawConfigPath,
+		JSON.stringify(OPENCLAW_CONFIG_TEMPLATE(options.zoneId), null, '\t') + '\n',
+	);
+	(openclawStatus === 'created' ? created : skipped).push(`config/${options.zoneId}/openclaw.json`);
 
-  const directories = [
-    path.join(options.targetDir, 'state', options.zoneId),
-    path.join(options.targetDir, 'workspaces', options.zoneId),
-    path.join(options.targetDir, 'workspaces', 'tools'),
-    path.join(options.targetDir, 'images', 'gateway'),
-    path.join(options.targetDir, 'images', 'tool'),
-  ];
-  for (const dir of directories) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+	const directories = [
+		path.join(options.targetDir, 'state', options.zoneId),
+		path.join(options.targetDir, 'workspaces', options.zoneId),
+		path.join(options.targetDir, 'workspaces', 'tools'),
+		path.join(options.targetDir, 'images', 'gateway'),
+		path.join(options.targetDir, 'images', 'tool'),
+	];
+	for (const dir of directories) {
+		fs.mkdirSync(dir, { recursive: true });
+	}
 
-  return { created, skipped };
+	return { created, skipped };
 }
 ```
 
@@ -1395,13 +1406,13 @@ import { scaffoldAgentVmProject } from './init-command.js';
 
 // In runAgentVmCli, before the controller check:
 if (commandGroup === 'init') {
-  const zoneId = argv[1] || 'default';
-  const result = scaffoldAgentVmProject({
-    targetDir: process.cwd(),
-    zoneId,
-  });
-  io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  return;
+	const zoneId = argv[1] || 'default';
+	const result = scaffoldAgentVmProject({
+		targetDir: process.cwd(),
+		zoneId,
+	});
+	io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+	return;
 }
 ```
 
@@ -1426,9 +1437,10 @@ git commit -m "feat: add agent-vm init command — scaffolds system.json, .env, 
 ### Task 12: Improve SSH gateway access
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/cli/ssh-commands.ts`
 
-**This is a UX enhancement, not already-working behavior.** The current `ssh-commands.ts` only *prints* the SSH command string or JSON response from the controller API (`ssh-commands.ts:27`). It does NOT spawn an interactive SSH session itself. The user currently has to copy-paste the printed command into their terminal.
+**This is a UX enhancement, not already-working behavior.** The current `ssh-commands.ts` only _prints_ the SSH command string or JSON response from the controller API (`ssh-commands.ts:27`). It does NOT spawn an interactive SSH session itself. The user currently has to copy-paste the printed command into their terminal.
 
 The enhancement: spawn `ssh` directly with `stdio: 'inherit'` so the user gets an interactive shell in one step.
 
@@ -1439,6 +1451,7 @@ Read `packages/agent-vm/src/cli/ssh-commands.ts` to understand what it currently
 - [ ] **Step 2: Add interactive SSH mode**
 
 The command should:
+
 1. Call controller API to get SSH access details (already implemented)
 2. Instead of printing the command, spawn `ssh -i <identityFile> -p <port> root@<host>` with `stdio: 'inherit'` for interactive mode
 3. Support one-shot mode with `-- <command>`: `agent-vm controller ssh-cmd --zone shravan -- openclaw auth login`
@@ -1460,6 +1473,7 @@ git commit -m "feat: improve SSH command — interactive mode for gateway OAuth 
 ### Task 13: Encrypt gateway checkpoints with age
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/gateway/gateway-checkpoint-manager.ts`
 - Test: `packages/agent-vm/src/gateway/gateway-checkpoint-manager.test.ts`
 
@@ -1471,35 +1485,23 @@ Although Gondolin checkpoints capture only rootfs (VFS mounts like state/workspa
 // Add to packages/agent-vm/src/gateway/gateway-checkpoint-manager.test.ts
 import { describe, expect, it, vi } from 'vitest';
 
-import {
-  encryptCheckpointFile,
-  decryptCheckpointFile,
-} from './gateway-checkpoint-manager.js';
+import { encryptCheckpointFile, decryptCheckpointFile } from './gateway-checkpoint-manager.js';
 
 describe('checkpoint encryption', () => {
-  it('encryptCheckpointFile calls encryption.encrypt with correct paths', async () => {
-    const mockEncrypt = vi.fn(async () => {});
-    await encryptCheckpointFile(
-      '/tmp/gateway.qcow2',
-      { encrypt: mockEncrypt, decrypt: vi.fn() },
-    );
-    expect(mockEncrypt).toHaveBeenCalledWith(
-      '/tmp/gateway.qcow2',
-      '/tmp/gateway.qcow2.age',
-    );
-  });
+	it('encryptCheckpointFile calls encryption.encrypt with correct paths', async () => {
+		const mockEncrypt = vi.fn(async () => {});
+		await encryptCheckpointFile('/tmp/gateway.qcow2', { encrypt: mockEncrypt, decrypt: vi.fn() });
+		expect(mockEncrypt).toHaveBeenCalledWith('/tmp/gateway.qcow2', '/tmp/gateway.qcow2.age');
+	});
 
-  it('decryptCheckpointFile calls encryption.decrypt with correct paths', async () => {
-    const mockDecrypt = vi.fn(async () => {});
-    await decryptCheckpointFile(
-      '/tmp/gateway.qcow2.age',
-      { encrypt: vi.fn(), decrypt: mockDecrypt },
-    );
-    expect(mockDecrypt).toHaveBeenCalledWith(
-      '/tmp/gateway.qcow2.age',
-      '/tmp/gateway.qcow2',
-    );
-  });
+	it('decryptCheckpointFile calls encryption.decrypt with correct paths', async () => {
+		const mockDecrypt = vi.fn(async () => {});
+		await decryptCheckpointFile('/tmp/gateway.qcow2.age', {
+			encrypt: vi.fn(),
+			decrypt: mockDecrypt,
+		});
+		expect(mockDecrypt).toHaveBeenCalledWith('/tmp/gateway.qcow2.age', '/tmp/gateway.qcow2');
+	});
 });
 ```
 
@@ -1511,21 +1513,21 @@ Add to `packages/agent-vm/src/gateway/gateway-checkpoint-manager.ts`:
 import type { SnapshotEncryption } from '../snapshots/snapshot-manager.js';
 
 export async function encryptCheckpointFile(
-  checkpointPath: string,
-  encryption: SnapshotEncryption,
+	checkpointPath: string,
+	encryption: SnapshotEncryption,
 ): Promise<string> {
-  const encryptedPath = `${checkpointPath}.age`;
-  await encryption.encrypt(checkpointPath, encryptedPath);
-  return encryptedPath;
+	const encryptedPath = `${checkpointPath}.age`;
+	await encryption.encrypt(checkpointPath, encryptedPath);
+	return encryptedPath;
 }
 
 export async function decryptCheckpointFile(
-  encryptedPath: string,
-  encryption: SnapshotEncryption,
+	encryptedPath: string,
+	encryption: SnapshotEncryption,
 ): Promise<string> {
-  const decryptedPath = encryptedPath.replace(/\.age$/u, '');
-  await encryption.decrypt(encryptedPath, decryptedPath);
-  return decryptedPath;
+	const decryptedPath = encryptedPath.replace(/\.age$/u, '');
+	await encryption.decrypt(encryptedPath, decryptedPath);
+	return decryptedPath;
 }
 ```
 
@@ -1548,9 +1550,11 @@ git commit -m "feat: add checkpoint encryption — age encrypt/decrypt for gatew
 ### Task 14: Update architecture doc
 
 **Files:**
+
 - Modify: `/Users/shravansunder/Documents/dev/project-dev/shravan-claw/docs/01-architecture-v4.md`
 
 Update the architecture doc to reflect:
+
 1. postBuild image baking (no more runtime CA/plugin setup)
 2. Checkpoint-based fast resume
 3. .env secret ref pattern
@@ -1561,6 +1565,7 @@ Update the architecture doc to reflect:
 Replace the gateway VM description to show that plugins and CA certs are baked into the image. Remove the runtime setup mentions. Add checkpoint flow.
 
 Key changes to the topology diagram:
+
 - Add `postBuild: plugin + CA trust baked in` under each VM
 - Add checkpoint resume path annotation
 - Update secret placement table to show .env ref pattern
@@ -1571,6 +1576,7 @@ Key changes to the topology diagram:
 ## Boot flow
 
 ### First boot (image not cached)
+
 1. `build-images.sh` builds OCI Docker images + Gondolin assets with postBuild
 2. postBuild bakes: CA trust update, plugin install, directory structure
 3. VM boots from cached image (~155ms)
@@ -1579,6 +1585,7 @@ Key changes to the topology diagram:
 6. Checkpoint saved for fast subsequent boots
 
 ### Subsequent boots (checkpoint exists)
+
 1. Resume from encrypted checkpoint (disk state restored)
 2. Runtime writes zone-specific env profile (may have changed)
 3. OpenClaw starts from pre-configured rootfs
@@ -1587,6 +1594,7 @@ Key changes to the topology diagram:
 - [ ] **Step 3: Update the secret placement table**
 
 Add `.env` ref pattern:
+
 ```markdown
 | Secret ref (op:// URI) | `.env.local` as `SECRET_NAME_REF` | Convention: `${NAME}_REF` env var |
 ```
@@ -1604,9 +1612,11 @@ git commit -m "docs: update architecture — postBuild baking, checkpoints, .env
 ### Task 15: Update secrets security model doc
 
 **Files:**
+
 - Modify: `/Users/shravansunder/Documents/dev/project-dev/shravan-claw/docs/05-secrets-security-model.md`
 
 Update to document:
+
 1. .env ref pattern (refs live in .env, not system.json)
 2. Checkpoint encryption (defense in depth)
 3. Removal of gateway token from rootfs env file (if implemented)
@@ -1617,6 +1627,7 @@ Update to document:
 ## Secret Reference Resolution
 
 Secret 1Password `op://` URIs are resolved in this order:
+
 1. `ref` field in `system.json` secrets config (explicit)
 2. `${SECRET_NAME}_REF` environment variable (from `.env.local`)
 3. Error if neither is available
@@ -1634,6 +1645,7 @@ Gondolin checkpoints capture rootfs state (OS, packages, config files).
 VFS-mounted paths (state, workspace) are NOT captured.
 
 Checkpoints are encrypted with `age` as defense-in-depth:
+
 - Encrypted at rest: `gateway-<fingerprint>.qcow2.age`
 - Decrypted to temp path for resume, cleaned up after
 - Uses the same `AGE_IDENTITY_KEY` as snapshot encryption
@@ -1652,18 +1664,20 @@ git commit -m "docs: update secrets model — .env ref pattern, checkpoint encry
 ### Task 16: Add setup guide to agent-vm repo
 
 **Files:**
+
 - Create: `/Users/shravansunder/Documents/dev/project-dev/agent-vm/docs/SETUP.md`
 
 A concise zero-to-claw guide.
 
 - [ ] **Step 1: Write SETUP.md**
 
-```markdown
+````markdown
 # Agent-VM Setup Guide
 
 ## Prerequisites
 
 Run `agent-vm controller doctor` to verify:
+
 - Node.js >= 24
 - QEMU (`brew install qemu`)
 - age (`brew install age`)
@@ -1677,8 +1691,10 @@ Run `agent-vm controller doctor` to verify:
 ```bash
 agent-vm init <your-zone-id>
 ```
+````
 
 This creates:
+
 - `system.json` — system configuration
 - `.env.local` — secret references (fill in `OP_SERVICE_ACCOUNT_TOKEN`)
 - `config/<zone>/openclaw.json` — OpenClaw configuration
@@ -1688,6 +1704,7 @@ This creates:
 ### 2. Configure secrets
 
 Edit `.env.local`:
+
 - Set `OP_SERVICE_ACCOUNT_TOKEN` (from 1Password service account)
 - Adjust `*_REF` values if your 1Password vault differs from defaults
 - Set `AGE_IDENTITY_KEY` (generate with `age-keygen`)
@@ -1723,7 +1740,8 @@ openclaw auth login
 agent-vm controller doctor
 agent-vm controller status
 ```
-```
+
+````
 
 - [ ] **Step 2: Commit in agent-vm repo**
 
@@ -1731,7 +1749,7 @@ agent-vm controller status
 cd /Users/shravansunder/Documents/dev/project-dev/agent-vm
 git add docs/SETUP.md
 git commit -m "docs: add setup guide — zero to claw in 6 steps"
-```
+````
 
 ---
 
@@ -1739,15 +1757,15 @@ git commit -m "docs: add setup guide — zero to claw in 6 steps"
 
 ### What changes and why
 
-| Phase | Tasks | Problem it solves | How you'd verify it worked |
-|-------|-------|-------------------|---------------------------|
-| A: Image Baking | 1-6 | Runtime setup runs inside the VM on every boot (CA certs, plugin copy, chown). This takes 5-10s and is completely static between boots. | `setupGatewayVmRuntime` issues exactly 1 exec call (env profile only). No `update-ca-certificates`, no `cp -a plugin`. |
-| B: .env Secret Refs | 7-8 | 1P vault paths are tangled into system.json alongside structural config. New users have to dig through JSON to find what to change. **Plus:** nothing loads `.env.local` at runtime — fixed by adding `process.loadEnvFile()` to CLI entrypoint. | `system.json` has no `ref` fields. `credential-manager.ts` resolves from `${NAME}_REF` env vars. `.env.example` provides defaults. CLI loads `.env.local` on startup. |
-| C: Checkpoint Infra (resume is follow-up) | 9-10 | Build the path resolution and encryption infrastructure for checkpoints. Actual resume requires VmCheckpoint API verification — follow-up task. | `gateway-checkpoint-manager.ts` resolves checkpoint path from `./checkpoints/${zoneId}/` (NOT stateDir — avoids VFS mount + snapshot sweep leak). |
-| D: CLI Init | 11 | Going from zero to a running system requires manually creating 5+ files and directories. | `agent-vm init shravan` produces system.json, .env.local, config/shravan/openclaw.json, and all directories. |
-| E: SSH UX | 12 | OAuth setup requires knowing SSH port and identity file from runtime state. | `agent-vm controller ssh-cmd --zone shravan` opens interactive SSH. |
-| F: Checkpoint Encryption | 13 | Gateway token ends up in rootfs at `/root/.openclaw-env`. Checkpoint captures rootfs → token on disk unencrypted. | Checkpoint files stored as `.qcow2.age`. Decrypted to temp path for resume, cleaned up after. |
-| G: Documentation | 14-16 | Architecture and security docs don't reflect postBuild, checkpoints, or .env ref pattern. No setup guide exists. | Docs describe current boot flow, secret resolution, and six-step setup. |
+| Phase                                     | Tasks | Problem it solves                                                                                                                                                                                                                                | How you'd verify it worked                                                                                                                                            |
+| ----------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A: Image Baking                           | 1-6   | Runtime setup runs inside the VM on every boot (CA certs, plugin copy, chown). This takes 5-10s and is completely static between boots.                                                                                                          | `setupGatewayVmRuntime` issues exactly 1 exec call (env profile only). No `update-ca-certificates`, no `cp -a plugin`.                                                |
+| B: .env Secret Refs                       | 7-8   | 1P vault paths are tangled into system.json alongside structural config. New users have to dig through JSON to find what to change. **Plus:** nothing loads `.env.local` at runtime — fixed by adding `process.loadEnvFile()` to CLI entrypoint. | `system.json` has no `ref` fields. `credential-manager.ts` resolves from `${NAME}_REF` env vars. `.env.example` provides defaults. CLI loads `.env.local` on startup. |
+| C: Checkpoint Infra (resume is follow-up) | 9-10  | Build the path resolution and encryption infrastructure for checkpoints. Actual resume requires VmCheckpoint API verification — follow-up task.                                                                                                  | `gateway-checkpoint-manager.ts` resolves checkpoint path from `./checkpoints/${zoneId}/` (NOT stateDir — avoids VFS mount + snapshot sweep leak).                     |
+| D: CLI Init                               | 11    | Going from zero to a running system requires manually creating 5+ files and directories.                                                                                                                                                         | `agent-vm init shravan` produces system.json, .env.local, config/shravan/openclaw.json, and all directories.                                                          |
+| E: SSH UX                                 | 12    | OAuth setup requires knowing SSH port and identity file from runtime state.                                                                                                                                                                      | `agent-vm controller ssh-cmd --zone shravan` opens interactive SSH.                                                                                                   |
+| F: Checkpoint Encryption                  | 13    | Gateway token ends up in rootfs at `/root/.openclaw-env`. Checkpoint captures rootfs → token on disk unencrypted.                                                                                                                                | Checkpoint files stored as `.qcow2.age`. Decrypted to temp path for resume, cleaned up after.                                                                         |
+| G: Documentation                          | 14-16 | Architecture and security docs don't reflect postBuild, checkpoints, or .env ref pattern. No setup guide exists.                                                                                                                                 | Docs describe current boot flow, secret resolution, and six-step setup.                                                                                               |
 
 ### Execution order
 
@@ -1764,9 +1782,11 @@ git commit -m "docs: add setup guide — zero to claw in 6 steps"
 ### After all tasks
 
 Run full check suite from agent-vm root:
+
 ```bash
 pnpm check
 ```
+
 All lints, types, and tests must pass before PR.
 
 ### What "done" looks like

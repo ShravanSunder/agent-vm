@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { loadSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
-import { loadSystemConfig } from '../controller/system-config.js';
 
 const runLiveModelRoundtrip =
 	typeof process.env.OP_SERVICE_ACCOUNT_TOKEN === 'string' &&
@@ -35,7 +35,7 @@ async function waitForControllerHealth(controllerPort: number): Promise<void> {
 
 describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 	it('boots the controller and performs a real gateway exec roundtrip', async () => {
-		const systemConfig = loadSystemConfig('system.json');
+		const systemConfig = await loadSystemConfig('system.json');
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected at least one zone in system config');

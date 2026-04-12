@@ -22,7 +22,7 @@ export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 			}),
 		},
 		handler: async ({ type, zoneId }) => {
-			const result = (dependencies.scaffoldAgentVmProject ?? scaffoldAgentVmProject)({
+			const result = await (dependencies.scaffoldAgentVmProject ?? scaffoldAgentVmProject)({
 				gatewayType: parseGatewayType(type),
 				targetDir: dependencies.getCurrentWorkingDirectory?.() ?? process.cwd(),
 				zoneId: zoneId ?? 'default',

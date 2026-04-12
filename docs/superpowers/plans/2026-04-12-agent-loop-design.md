@@ -192,9 +192,9 @@ Every agent type verifies differently, but the interface is the same:
 
 ```typescript
 interface VerificationResult {
-  readonly passed: boolean;
-  readonly failures: readonly { readonly check: string; readonly output: string }[];
-  readonly context: string;  // fed back to agent on retry
+	readonly passed: boolean;
+	readonly failures: readonly { readonly check: string; readonly output: string }[];
+	readonly context: string; // fed back to agent on retry
 }
 ```
 
@@ -212,11 +212,11 @@ The loop uses `passed` to decide next state. The agent uses `context` to improve
 
 ```typescript
 interface AgentTask {
-  readonly id: string;
-  readonly type: string;              // 'coding' | 'oncall' | 'migration' | ...
-  readonly prompt: string;
-  readonly context: Record<string, unknown>;  // type-specific context
-  readonly config: Record<string, unknown>;   // type-specific config
+	readonly id: string;
+	readonly type: string; // 'coding' | 'oncall' | 'migration' | ...
+	readonly prompt: string;
+	readonly context: Record<string, unknown>; // type-specific context
+	readonly config: Record<string, unknown>; // type-specific config
 }
 ```
 
@@ -224,45 +224,70 @@ interface AgentTask {
 
 ```typescript
 interface AgentRunner<TRunnerState = unknown> {
-  /** Initialize runner state for a new task */
-  initialize(task: AgentTask, workspace: string): Promise<{
-    readonly runnerState: TRunnerState;
-  }>;
+	/** Initialize runner state for a new task */
+	initialize(
+		task: AgentTask,
+		workspace: string,
+	): Promise<{
+		readonly runnerState: TRunnerState;
+	}>;
 
-  /** Plan the task — analyze context, produce a plan.
-   *  retryContext comes from verifyPlan rejection. */
-  plan(task: AgentTask, workspace: string, runnerState: TRunnerState, retryContext?: string): Promise<{
-    readonly plan: PlanResult;
-    readonly runnerState: TRunnerState;
-  }>;
+	/** Plan the task — analyze context, produce a plan.
+	 *  retryContext comes from verifyPlan rejection. */
+	plan(
+		task: AgentTask,
+		workspace: string,
+		runnerState: TRunnerState,
+		retryContext?: string,
+	): Promise<{
+		readonly plan: PlanResult;
+		readonly runnerState: TRunnerState;
+	}>;
 
-  /** Verify the plan before execution begins.
-   *  Catches approach-level mistakes before expensive execution. */
-  verifyPlan(task: AgentTask, workspace: string, runnerState: TRunnerState): Promise<{
-    readonly verification: PlanVerificationResult;
-    readonly runnerState: TRunnerState;
-  }>;
+	/** Verify the plan before execution begins.
+	 *  Catches approach-level mistakes before expensive execution. */
+	verifyPlan(
+		task: AgentTask,
+		workspace: string,
+		runnerState: TRunnerState,
+	): Promise<{
+		readonly verification: PlanVerificationResult;
+		readonly runnerState: TRunnerState;
+	}>;
 
-  /** Execute the plan (or re-execute on retry with failure context) */
-  execute(task: AgentTask, workspace: string, runnerState: TRunnerState, retryContext?: string): Promise<{
-    readonly result: ExecutionResult;
-    readonly runnerState: TRunnerState;
-  }>;
+	/** Execute the plan (or re-execute on retry with failure context) */
+	execute(
+		task: AgentTask,
+		workspace: string,
+		runnerState: TRunnerState,
+		retryContext?: string,
+	): Promise<{
+		readonly result: ExecutionResult;
+		readonly runnerState: TRunnerState;
+	}>;
 
-  /** Verify the execution output. Runner decides what checks to run. */
-  verify(task: AgentTask, workspace: string, runnerState: TRunnerState): Promise<{
-    readonly verification: VerificationResult;
-    readonly runnerState: TRunnerState;
-  }>;
+	/** Verify the execution output. Runner decides what checks to run. */
+	verify(
+		task: AgentTask,
+		workspace: string,
+		runnerState: TRunnerState,
+	): Promise<{
+		readonly verification: VerificationResult;
+		readonly runnerState: TRunnerState;
+	}>;
 
-  /** Complete the task — produce the final artifact. */
-  complete(task: AgentTask, workspace: string, runnerState: TRunnerState): Promise<{
-    readonly completion: CompletionResult;
-    readonly runnerState: TRunnerState;
-  }>;
+	/** Complete the task — produce the final artifact. */
+	complete(
+		task: AgentTask,
+		workspace: string,
+		runnerState: TRunnerState,
+	): Promise<{
+		readonly completion: CompletionResult;
+		readonly runnerState: TRunnerState;
+	}>;
 
-  /** Hydrate runner state from persisted storage (crash recovery). */
-  hydrate?(persistedState: unknown): TRunnerState;
+	/** Hydrate runner state from persisted storage (crash recovery). */
+	hydrate?(persistedState: unknown): TRunnerState;
 }
 ```
 
@@ -270,30 +295,30 @@ interface AgentRunner<TRunnerState = unknown> {
 
 ```typescript
 interface PlanResult {
-  readonly summary: string;
-  readonly steps: readonly string[];
+	readonly summary: string;
+	readonly steps: readonly string[];
 }
 
 interface PlanVerificationResult {
-  readonly approved: boolean;
-  readonly findings: readonly { readonly severity: string; readonly description: string }[];
-  readonly context: string;  // fed to plan() retryContext on rejection
+	readonly approved: boolean;
+	readonly findings: readonly { readonly severity: string; readonly description: string }[];
+	readonly context: string; // fed to plan() retryContext on rejection
 }
 
 interface ExecutionResult {
-  readonly diffs: string;
-  readonly filesChanged: readonly string[];
+	readonly diffs: string;
+	readonly filesChanged: readonly string[];
 }
 
 interface VerificationResult {
-  readonly passed: boolean;
-  readonly failures: readonly { readonly check: string; readonly output: string }[];
-  readonly context: string;  // fed to execute() retryContext on failure
+	readonly passed: boolean;
+	readonly failures: readonly { readonly check: string; readonly output: string }[];
+	readonly context: string; // fed to execute() retryContext on failure
 }
 
 interface CompletionResult {
-  readonly artifact: string;    // PR URL, incident update link, etc.
-  readonly summary: string;
+	readonly artifact: string; // PR URL, incident update link, etc.
+	readonly summary: string;
 }
 ```
 
@@ -301,20 +326,28 @@ interface CompletionResult {
 
 ```typescript
 interface TaskState<TRunnerState = unknown> {
-  readonly id: string;
-  readonly status: 'pending' | 'planning' | 'verifying-plan' | 'executing' | 'verifying' | 'completing' | 'done' | 'failed';
-  readonly retryCount: number;
-  readonly planRetryCount: number;
-  readonly maxRetries: number;
-  readonly maxPlanRetries: number;
-  readonly plan?: PlanResult;
-  readonly lastPlanVerification?: PlanVerificationResult;
-  readonly lastVerification?: VerificationResult;
-  readonly completion?: CompletionResult;
-  readonly runnerState?: TRunnerState;
-  readonly error?: string;
-  readonly startedAt: string;
-  readonly updatedAt: string;
+	readonly id: string;
+	readonly status:
+		| 'pending'
+		| 'planning'
+		| 'verifying-plan'
+		| 'executing'
+		| 'verifying'
+		| 'completing'
+		| 'done'
+		| 'failed';
+	readonly retryCount: number;
+	readonly planRetryCount: number;
+	readonly maxRetries: number;
+	readonly maxPlanRetries: number;
+	readonly plan?: PlanResult;
+	readonly lastPlanVerification?: PlanVerificationResult;
+	readonly lastVerification?: VerificationResult;
+	readonly completion?: CompletionResult;
+	readonly runnerState?: TRunnerState;
+	readonly error?: string;
+	readonly startedAt: string;
+	readonly updatedAt: string;
 }
 ```
 
@@ -322,15 +355,15 @@ interface TaskState<TRunnerState = unknown> {
 
 ```typescript
 interface OuterLoopConfig {
-  readonly maxRetries: number;
-  readonly maxPlanRetries: number;
-  readonly executionTimeoutMs: number;
-  readonly verificationTimeoutMs: number;
+	readonly maxRetries: number;
+	readonly maxPlanRetries: number;
+	readonly executionTimeoutMs: number;
+	readonly verificationTimeoutMs: number;
 }
 
 interface OuterLoop {
-  submitTask(task: AgentTask): Promise<string>;
-  getTaskState(taskId: string): TaskState | undefined;
+	submitTask(task: AgentTask): Promise<string>;
+	getTaskState(taskId: string): TaskState | undefined;
 }
 ```
 
@@ -409,11 +442,11 @@ complete(task, workspace, state)
 
 ```typescript
 interface CodingRunnerState {
-  readonly codexThreadId: string | undefined;
-  readonly plan: PlanResult | undefined;
-  readonly lastReview: ReviewResult | undefined;
-  readonly changedFiles: readonly string[];
-  readonly reviewIterations: number;
+	readonly codexThreadId: string | undefined;
+	readonly plan: PlanResult | undefined;
+	readonly lastReview: ReviewResult | undefined;
+	readonly changedFiles: readonly string[];
+	readonly reviewIterations: number;
 }
 ```
 
@@ -511,9 +544,9 @@ const config = loadConfig('/state/config.json');
 const runner = createMyRunner(config);
 
 createAgentServer({
-  runner,
-  port: 18789,
-  ...config,
+	runner,
+	port: 18789,
+	...config,
 });
 ```
 
@@ -651,15 +684,15 @@ packages/
 
 ## What Changes vs Current agent-vm-coding (renamed to agent-vm-worker)
 
-| Current (monolithic) | After (separated) | Notes |
-|---------------------|-------------------|-------|
-| `outer-loop.ts` has coding logic inline | `agent-loop/outer-loop.ts` is generic state machine | Loop doesn't know about git, Codex, or coding |
-| Plan review logic is inline in `outer-loop.ts` | `verifyPlan()` is part of the generic runner interface | Existing behavior becomes an explicit reusable boundary |
-| `codexThreadId` managed in outer loop | `CodingRunnerState.codexThreadId` in runner state | Loop persists it opaquely |
-| Review agent called from outer loop | `CodingAgentRunner` internally owns `ReviewSubAgent` | Loop calls `verify()`, runner decides what that means |
-| `state/task-state.ts` has coding-specific fields | `agent-loop/task-state.ts` generic + `runnerState` opaque | Loop state generic, runner state typed |
-| `state/event-log.ts` JSONL for hydration | Same pattern, used by `hydrate()` | Crash recovery preserved |
-| `server.ts` knows about coding | `agent-vm-worker/server.ts` thin HTTP → OuterLoop | Server just submits tasks and queries state |
+| Current (monolithic)                             | After (separated)                                         | Notes                                                   |
+| ------------------------------------------------ | --------------------------------------------------------- | ------------------------------------------------------- |
+| `outer-loop.ts` has coding logic inline          | `agent-loop/outer-loop.ts` is generic state machine       | Loop doesn't know about git, Codex, or coding           |
+| Plan review logic is inline in `outer-loop.ts`   | `verifyPlan()` is part of the generic runner interface    | Existing behavior becomes an explicit reusable boundary |
+| `codexThreadId` managed in outer loop            | `CodingRunnerState.codexThreadId` in runner state         | Loop persists it opaquely                               |
+| Review agent called from outer loop              | `CodingAgentRunner` internally owns `ReviewSubAgent`      | Loop calls `verify()`, runner decides what that means   |
+| `state/task-state.ts` has coding-specific fields | `agent-loop/task-state.ts` generic + `runnerState` opaque | Loop state generic, runner state typed                  |
+| `state/event-log.ts` JSONL for hydration         | Same pattern, used by `hydrate()`                         | Crash recovery preserved                                |
+| `server.ts` knows about coding                   | `agent-vm-worker/server.ts` thin HTTP → OuterLoop         | Server just submits tasks and queries state             |
 
 ## What Stays The Same (preserved behavior)
 
@@ -673,13 +706,13 @@ packages/
 
 ## What's New (explicitly new features)
 
-| Feature | Status |
-|---------|--------|
-| `GET /tasks` (list all tasks) | **New** — add after refactor |
-| `DELETE /tasks/:id` (cancel) | **New** — add after refactor |
-| `awaiting-followup` state | **Deferred** — add post-refactor |
-| `POST /tasks/:id/followup` | **Deferred** — depends on awaiting-followup |
-| `createAgentServer()` helper | **New** — one-call composition |
+| Feature                       | Status                                      |
+| ----------------------------- | ------------------------------------------- |
+| `GET /tasks` (list all tasks) | **New** — add after refactor                |
+| `DELETE /tasks/:id` (cancel)  | **New** — add after refactor                |
+| `awaiting-followup` state     | **Deferred** — add post-refactor            |
+| `POST /tasks/:id/followup`    | **Deferred** — depends on awaiting-followup |
+| `createAgentServer()` helper  | **New** — one-call composition              |
 
 ---
 

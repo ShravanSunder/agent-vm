@@ -27,7 +27,7 @@
 				"memory": "2G",
 				"cpus": 2,
 				"port": 18791,
-				"openclawConfig": "./config/shravan/openclaw.json",
+				"gatewayConfig": "./config/shravan/openclaw.json",
 				"stateDir": "./state/shravan",
 				"workspaceDir": "./workspaces/shravan"
 			},

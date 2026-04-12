@@ -29,6 +29,7 @@ The TypeScript command uses the same `loadSystemConfig()` + Zod parsing the cont
 `system.json` gains an optional `dockerfile` field per image target. If present, `agent-vm build` builds the Docker image before running Gondolin. If absent, the OCI image must already exist.
 
 Current:
+
 ```json
 "images": {
   "gateway": {
@@ -38,6 +39,7 @@ Current:
 ```
 
 After:
+
 ```json
 "images": {
   "gateway": {
@@ -57,28 +59,28 @@ Default OCI base is `node:24-slim`. Users can change it in their Dockerfile. The
 
 ### New Files
 
-| File | Responsibility |
-|------|---------------|
-| `packages/agent-vm/src/cli/build-command.ts` | `agent-vm build` — orchestrates Docker + Gondolin builds per zone |
-| `packages/agent-vm/src/cli/build-command.test.ts` | Tests for build command |
-| `packages/agent-vm/src/build/docker-image-builder.ts` | Runs `docker build` from a Dockerfile path, tags with the OCI image name |
-| `packages/agent-vm/src/build/docker-image-builder.test.ts` | Tests for Docker builder |
-| `packages/agent-vm/src/build/gondolin-image-builder.ts` | Reads build-config.json, calls gondolin-core `buildImage()` with correct configDir and cache path |
-| `packages/agent-vm/src/build/gondolin-image-builder.test.ts` | Tests for Gondolin builder |
+| File                                                         | Responsibility                                                                                    |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `packages/agent-vm/src/cli/build-command.ts`                 | `agent-vm build` — orchestrates Docker + Gondolin builds per zone                                 |
+| `packages/agent-vm/src/cli/build-command.test.ts`            | Tests for build command                                                                           |
+| `packages/agent-vm/src/build/docker-image-builder.ts`        | Runs `docker build` from a Dockerfile path, tags with the OCI image name                          |
+| `packages/agent-vm/src/build/docker-image-builder.test.ts`   | Tests for Docker builder                                                                          |
+| `packages/agent-vm/src/build/gondolin-image-builder.ts`      | Reads build-config.json, calls gondolin-core `buildImage()` with correct configDir and cache path |
+| `packages/agent-vm/src/build/gondolin-image-builder.test.ts` | Tests for Gondolin builder                                                                        |
 
 ### Modified Files
 
-| File | Change |
-|------|--------|
+| File                                                | Change                                     |
+| --------------------------------------------------- | ------------------------------------------ |
 | `packages/agent-vm/src/controller/system-config.ts` | Add optional `dockerfile` to image schemas |
-| `packages/agent-vm/src/cli/agent-vm-entrypoint.ts` | Add `build` subcommand |
-| `system.json` | Add `dockerfile` fields |
-| `scripts/build-images.sh` | Delete |
+| `packages/agent-vm/src/cli/agent-vm-entrypoint.ts`  | Add `build` subcommand                     |
+| `system.json`                                       | Add `dockerfile` fields                    |
+| `scripts/build-images.sh`                           | Delete                                     |
 
 ### Deleted Files
 
-| File | Why |
-|------|-----|
+| File                      | Why                          |
+| ------------------------- | ---------------------------- |
 | `scripts/build-images.sh` | Replaced by `agent-vm build` |
 
 ---
@@ -88,6 +90,7 @@ Default OCI base is `node:24-slim`. Users can change it in their Dockerfile. The
 ### Task 1: Create docker-image-builder with test
 
 **Files:**
+
 - Create: `packages/agent-vm/src/build/docker-image-builder.ts`
 - Create: `packages/agent-vm/src/build/docker-image-builder.test.ts`
 
@@ -102,51 +105,51 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildDockerImage, type DockerImageBuilderDependencies } from './docker-image-builder.js';
 
 describe('buildDockerImage', () => {
-  it('runs docker build with correct arguments', async () => {
-    const execCommands: { command: string; args: readonly string[] }[] = [];
-    const dependencies: DockerImageBuilderDependencies = {
-      executeCommand: async (command, args) => {
-        execCommands.push({ command, args });
-      },
-    };
+	it('runs docker build with correct arguments', async () => {
+		const execCommands: { command: string; args: readonly string[] }[] = [];
+		const dependencies: DockerImageBuilderDependencies = {
+			executeCommand: async (command, args) => {
+				execCommands.push({ command, args });
+			},
+		};
 
-    await buildDockerImage(
-      {
-        dockerfilePath: '/project/images/gateway/Dockerfile',
-        imageTag: 'agent-vm-gateway:latest',
-      },
-      dependencies,
-    );
+		await buildDockerImage(
+			{
+				dockerfilePath: '/project/images/gateway/Dockerfile',
+				imageTag: 'agent-vm-gateway:latest',
+			},
+			dependencies,
+		);
 
-    expect(execCommands).toHaveLength(1);
-    expect(execCommands[0]?.command).toBe('docker');
-    expect(execCommands[0]?.args).toEqual([
-      'build',
-      '-f',
-      '/project/images/gateway/Dockerfile',
-      '-t',
-      'agent-vm-gateway:latest',
-      '/project/images/gateway',
-    ]);
-  });
+		expect(execCommands).toHaveLength(1);
+		expect(execCommands[0]?.command).toBe('docker');
+		expect(execCommands[0]?.args).toEqual([
+			'build',
+			'-f',
+			'/project/images/gateway/Dockerfile',
+			'-t',
+			'agent-vm-gateway:latest',
+			'/project/images/gateway',
+		]);
+	});
 
-  it('throws with context when docker build fails', async () => {
-    const dependencies: DockerImageBuilderDependencies = {
-      executeCommand: async () => {
-        throw new Error('exit code 1');
-      },
-    };
+	it('throws with context when docker build fails', async () => {
+		const dependencies: DockerImageBuilderDependencies = {
+			executeCommand: async () => {
+				throw new Error('exit code 1');
+			},
+		};
 
-    await expect(
-      buildDockerImage(
-        {
-          dockerfilePath: '/project/images/gateway/Dockerfile',
-          imageTag: 'agent-vm-gateway:latest',
-        },
-        dependencies,
-      ),
-    ).rejects.toThrow('Docker build failed for agent-vm-gateway:latest');
-  });
+		await expect(
+			buildDockerImage(
+				{
+					dockerfilePath: '/project/images/gateway/Dockerfile',
+					imageTag: 'agent-vm-gateway:latest',
+				},
+				dependencies,
+			),
+		).rejects.toThrow('Docker build failed for agent-vm-gateway:latest');
+	});
 });
 ```
 
@@ -164,39 +167,41 @@ import path from 'node:path';
 import { execa } from 'execa';
 
 export interface DockerImageBuilderDependencies {
-  readonly executeCommand?: (command: string, args: readonly string[]) => Promise<void>;
+	readonly executeCommand?: (command: string, args: readonly string[]) => Promise<void>;
 }
 
 interface BuildDockerImageOptions {
-  readonly dockerfilePath: string;
-  readonly imageTag: string;
+	readonly dockerfilePath: string;
+	readonly imageTag: string;
 }
 
 async function executeDockerCommand(command: string, args: readonly string[]): Promise<void> {
-  await execa(command, args, { stdio: 'inherit' });
+	await execa(command, args, { stdio: 'inherit' });
 }
 
 export async function buildDockerImage(
-  options: BuildDockerImageOptions,
-  dependencies: DockerImageBuilderDependencies = {},
+	options: BuildDockerImageOptions,
+	dependencies: DockerImageBuilderDependencies = {},
 ): Promise<void> {
-  const executeCommand = dependencies.executeCommand ?? executeDockerCommand;
-  const resolvedDockerfilePath = path.resolve(options.dockerfilePath);
-  const contextDir = path.dirname(resolvedDockerfilePath);
+	const executeCommand = dependencies.executeCommand ?? executeDockerCommand;
+	const resolvedDockerfilePath = path.resolve(options.dockerfilePath);
+	const contextDir = path.dirname(resolvedDockerfilePath);
 
-  try {
-    await executeCommand('docker', [
-      'build',
-      '-f', resolvedDockerfilePath,
-      '-t', options.imageTag,
-      contextDir,
-    ]);
-  } catch (error) {
-    throw new Error(
-      `Docker build failed for ${options.imageTag}: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  }
+	try {
+		await executeCommand('docker', [
+			'build',
+			'-f',
+			resolvedDockerfilePath,
+			'-t',
+			options.imageTag,
+			contextDir,
+		]);
+	} catch (error) {
+		throw new Error(
+			`Docker build failed for ${options.imageTag}: ${error instanceof Error ? error.message : String(error)}`,
+			{ cause: error },
+		);
+	}
 }
 ```
 
@@ -219,6 +224,7 @@ git commit -m "feat: add docker-image-builder — typed wrapper for docker build
 ### Task 2: Create gondolin-image-builder with test
 
 **Files:**
+
 - Create: `packages/agent-vm/src/build/gondolin-image-builder.ts`
 - Create: `packages/agent-vm/src/build/gondolin-image-builder.test.ts`
 
@@ -231,57 +237,57 @@ This extracts the Gondolin build logic that currently lives inline in the shell 
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  buildGondolinImage,
-  type GondolinImageBuilderDependencies,
+	buildGondolinImage,
+	type GondolinImageBuilderDependencies,
 } from './gondolin-image-builder.js';
 
 describe('buildGondolinImage', () => {
-  it('calls buildImage with configDir derived from buildConfigPath', async () => {
-    const buildImageCalls: { cacheDir: string; configDir?: string }[] = [];
-    const dependencies: GondolinImageBuilderDependencies = {
-      loadBuildConfig: async () => ({
-        arch: 'aarch64',
-        distro: 'alpine',
-      }),
-      buildImage: async (options) => {
-        buildImageCalls.push({ cacheDir: options.cacheDir, configDir: options.configDir });
-        return { built: false, fingerprint: 'abc123', imagePath: '/cache/abc123' };
-      },
-    };
+	it('calls buildImage with configDir derived from buildConfigPath', async () => {
+		const buildImageCalls: { cacheDir: string; configDir?: string }[] = [];
+		const dependencies: GondolinImageBuilderDependencies = {
+			loadBuildConfig: async () => ({
+				arch: 'aarch64',
+				distro: 'alpine',
+			}),
+			buildImage: async (options) => {
+				buildImageCalls.push({ cacheDir: options.cacheDir, configDir: options.configDir });
+				return { built: false, fingerprint: 'abc123', imagePath: '/cache/abc123' };
+			},
+		};
 
-    const result = await buildGondolinImage(
-      {
-        buildConfigPath: '/project/images/gateway/build-config.json',
-        cacheDir: '/state/shravan/images/gateway',
-      },
-      dependencies,
-    );
+		const result = await buildGondolinImage(
+			{
+				buildConfigPath: '/project/images/gateway/build-config.json',
+				cacheDir: '/state/shravan/images/gateway',
+			},
+			dependencies,
+		);
 
-    expect(result.fingerprint).toBe('abc123');
-    expect(buildImageCalls[0]?.cacheDir).toBe('/state/shravan/images/gateway');
-    expect(buildImageCalls[0]?.configDir).toBe('/project/images/gateway');
-  });
+		expect(result.fingerprint).toBe('abc123');
+		expect(buildImageCalls[0]?.cacheDir).toBe('/state/shravan/images/gateway');
+		expect(buildImageCalls[0]?.configDir).toBe('/project/images/gateway');
+	});
 
-  it('reports built vs cached status', async () => {
-    const dependencies: GondolinImageBuilderDependencies = {
-      loadBuildConfig: async () => ({ arch: 'aarch64', distro: 'alpine' }),
-      buildImage: async () => ({
-        built: true,
-        fingerprint: 'def456',
-        imagePath: '/cache/def456',
-      }),
-    };
+	it('reports built vs cached status', async () => {
+		const dependencies: GondolinImageBuilderDependencies = {
+			loadBuildConfig: async () => ({ arch: 'aarch64', distro: 'alpine' }),
+			buildImage: async () => ({
+				built: true,
+				fingerprint: 'def456',
+				imagePath: '/cache/def456',
+			}),
+		};
 
-    const result = await buildGondolinImage(
-      {
-        buildConfigPath: '/project/images/gateway/build-config.json',
-        cacheDir: '/cache',
-      },
-      dependencies,
-    );
+		const result = await buildGondolinImage(
+			{
+				buildConfigPath: '/project/images/gateway/build-config.json',
+				cacheDir: '/cache',
+			},
+			dependencies,
+		);
 
-    expect(result.built).toBe(true);
-  });
+		expect(result.built).toBe(true);
+	});
 });
 ```
 
@@ -298,38 +304,38 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import {
-  buildImage as buildImageFromCore,
-  type BuildImageOptions,
-  type BuildImageResult,
+	buildImage as buildImageFromCore,
+	type BuildImageOptions,
+	type BuildImageResult,
 } from 'gondolin-core';
 
 export interface GondolinImageBuilderDependencies {
-  readonly buildImage?: (options: BuildImageOptions) => Promise<BuildImageResult>;
-  readonly loadBuildConfig?: (buildConfigPath: string) => Promise<unknown>;
+	readonly buildImage?: (options: BuildImageOptions) => Promise<BuildImageResult>;
+	readonly loadBuildConfig?: (buildConfigPath: string) => Promise<unknown>;
 }
 
 async function loadBuildConfigFromJson(buildConfigPath: string): Promise<unknown> {
-  const rawContents = await fs.readFile(buildConfigPath, 'utf8');
-  return JSON.parse(rawContents);
+	const rawContents = await fs.readFile(buildConfigPath, 'utf8');
+	return JSON.parse(rawContents);
 }
 
 export async function buildGondolinImage(
-  options: {
-    readonly buildConfigPath: string;
-    readonly cacheDir: string;
-  },
-  dependencies: GondolinImageBuilderDependencies = {},
+	options: {
+		readonly buildConfigPath: string;
+		readonly cacheDir: string;
+	},
+	dependencies: GondolinImageBuilderDependencies = {},
 ): Promise<BuildImageResult> {
-  const loadBuildConfig = dependencies.loadBuildConfig ?? loadBuildConfigFromJson;
-  const buildImage = dependencies.buildImage ?? buildImageFromCore;
-  const configDir = path.dirname(path.resolve(options.buildConfigPath));
-  const buildConfig = await loadBuildConfig(options.buildConfigPath);
+	const loadBuildConfig = dependencies.loadBuildConfig ?? loadBuildConfigFromJson;
+	const buildImage = dependencies.buildImage ?? buildImageFromCore;
+	const configDir = path.dirname(path.resolve(options.buildConfigPath));
+	const buildConfig = await loadBuildConfig(options.buildConfigPath);
 
-  return await buildImage({
-    buildConfig: buildConfig as BuildImageOptions['buildConfig'],
-    cacheDir: options.cacheDir,
-    configDir,
-  });
+	return await buildImage({
+		buildConfig: buildConfig as BuildImageOptions['buildConfig'],
+		cacheDir: options.cacheDir,
+		configDir,
+	});
 }
 ```
 
@@ -352,6 +358,7 @@ git commit -m "feat: add gondolin-image-builder — typed build-config.json → 
 ### Task 3: Add `dockerfile` to system-config schema
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/controller/system-config.ts`
 - Modify: `system.json`
 
@@ -360,6 +367,7 @@ git commit -m "feat: add gondolin-image-builder — typed build-config.json → 
 In `packages/agent-vm/src/controller/system-config.ts`, update both gateway and tool:
 
 Old:
+
 ```typescript
 gateway: z.object({
   buildConfig: z.string().min(1),
@@ -370,14 +378,16 @@ tool: z.object({
 ```
 
 New — extract a shared schema to avoid repetition:
+
 ```typescript
 const imageConfigSchema = z.object({
-  buildConfig: z.string().min(1),
-  dockerfile: z.string().min(1).optional(),
+	buildConfig: z.string().min(1),
+	dockerfile: z.string().min(1).optional(),
 });
 ```
 
 Then use it:
+
 ```typescript
 images: z.object({
   gateway: imageConfigSchema,
@@ -440,6 +450,7 @@ git commit -m "feat: add optional dockerfile field to image config schema"
 ### Task 4: Implement the build command
 
 **Files:**
+
 - Create: `packages/agent-vm/src/cli/build-command.ts`
 - Create: `packages/agent-vm/src/cli/build-command.test.ts`
 
@@ -455,121 +466,129 @@ import type { SystemConfig } from '../controller/system-config.js';
 import { runBuildCommand, type BuildCommandDependencies } from './build-command.js';
 
 function createTestSystemConfig(): SystemConfig {
-  return {
-    host: {
-      controllerPort: 18800,
-      secretsProvider: { type: '1password', tokenSource: { type: 'env' } },
-    },
-    images: {
-      gateway: {
-        buildConfig: '/project/images/gateway/build-config.json',
-        dockerfile: '/project/images/gateway/Dockerfile',
-      },
-      tool: {
-        buildConfig: '/project/images/tool/build-config.json',
-      },
-    },
-    zones: [
-      {
-        id: 'test-zone',
-        gateway: {
-          memory: '2G',
-          cpus: 2,
-          port: 18791,
-          openclawConfig: './config/test/openclaw.json',
-          stateDir: '/state/test',
-          workspaceDir: '/workspaces/test',
-        },
-        secrets: {},
-        allowedHosts: ['example.com'],
-        websocketBypass: [],
-        toolProfile: 'standard',
-      },
-    ],
-    toolProfiles: {
-      standard: { memory: '1G', cpus: 1, workspaceRoot: '/workspaces/tools' },
-    },
-    tcpPool: { basePort: 19000, size: 5 },
-  } satisfies SystemConfig;
+	return {
+		host: {
+			controllerPort: 18800,
+			secretsProvider: { type: '1password', tokenSource: { type: 'env' } },
+		},
+		images: {
+			gateway: {
+				buildConfig: '/project/images/gateway/build-config.json',
+				dockerfile: '/project/images/gateway/Dockerfile',
+			},
+			tool: {
+				buildConfig: '/project/images/tool/build-config.json',
+			},
+		},
+		zones: [
+			{
+				id: 'test-zone',
+				gateway: {
+					memory: '2G',
+					cpus: 2,
+					port: 18791,
+					openclawConfig: './config/test/openclaw.json',
+					stateDir: '/state/test',
+					workspaceDir: '/workspaces/test',
+				},
+				secrets: {},
+				allowedHosts: ['example.com'],
+				websocketBypass: [],
+				toolProfile: 'standard',
+			},
+		],
+		toolProfiles: {
+			standard: { memory: '1G', cpus: 1, workspaceRoot: '/workspaces/tools' },
+		},
+		tcpPool: { basePort: 19000, size: 5 },
+	} satisfies SystemConfig;
 }
 
 describe('runBuildCommand', () => {
-  it('builds Docker image when dockerfile is configured', async () => {
-    const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
-    const gondolinBuilds: { buildConfigPath: string; cacheDir: string }[] = [];
-    const output: string[] = [];
+	it('builds Docker image when dockerfile is configured', async () => {
+		const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
+		const gondolinBuilds: { buildConfigPath: string; cacheDir: string }[] = [];
+		const output: string[] = [];
 
-    const dependencies: BuildCommandDependencies = {
-      buildDockerImage: async (options) => {
-        dockerBuilds.push(options);
-      },
-      buildGondolinImage: async (options) => {
-        gondolinBuilds.push(options);
-        return { built: true, fingerprint: 'abc123', imagePath: '/cache/abc123' };
-      },
-      resolveOciImageTag: async (buildConfigPath) => 'agent-vm-gateway:latest',
-    };
+		const dependencies: BuildCommandDependencies = {
+			buildDockerImage: async (options) => {
+				dockerBuilds.push(options);
+			},
+			buildGondolinImage: async (options) => {
+				gondolinBuilds.push(options);
+				return { built: true, fingerprint: 'abc123', imagePath: '/cache/abc123' };
+			},
+			resolveOciImageTag: async (buildConfigPath) => 'agent-vm-gateway:latest',
+		};
 
-    await runBuildCommand(
-      { systemConfig: createTestSystemConfig() },
-      { stderr: { write: (msg: string) => { output.push(msg); return true; } }, stdout: { write: () => true } },
-      dependencies,
-    );
+		await runBuildCommand(
+			{ systemConfig: createTestSystemConfig() },
+			{
+				stderr: {
+					write: (msg: string) => {
+						output.push(msg);
+						return true;
+					},
+				},
+				stdout: { write: () => true },
+			},
+			dependencies,
+		);
 
-    expect(dockerBuilds).toHaveLength(1);
-    expect(dockerBuilds[0]?.dockerfilePath).toBe('/project/images/gateway/Dockerfile');
-    expect(dockerBuilds[0]?.imageTag).toBe('agent-vm-gateway:latest');
-  });
+		expect(dockerBuilds).toHaveLength(1);
+		expect(dockerBuilds[0]?.dockerfilePath).toBe('/project/images/gateway/Dockerfile');
+		expect(dockerBuilds[0]?.imageTag).toBe('agent-vm-gateway:latest');
+	});
 
-  it('skips Docker build when no dockerfile is configured', async () => {
-    const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
-    const config = createTestSystemConfig();
+	it('skips Docker build when no dockerfile is configured', async () => {
+		const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
+		const config = createTestSystemConfig();
 
-    const dependencies: BuildCommandDependencies = {
-      buildDockerImage: async (options) => {
-        dockerBuilds.push(options);
-      },
-      buildGondolinImage: async () => ({
-        built: false,
-        fingerprint: 'cached',
-        imagePath: '/cache/cached',
-      }),
-      resolveOciImageTag: async () => 'agent-vm-tool:latest',
-    };
+		const dependencies: BuildCommandDependencies = {
+			buildDockerImage: async (options) => {
+				dockerBuilds.push(options);
+			},
+			buildGondolinImage: async () => ({
+				built: false,
+				fingerprint: 'cached',
+				imagePath: '/cache/cached',
+			}),
+			resolveOciImageTag: async () => 'agent-vm-tool:latest',
+		};
 
-    await runBuildCommand(
-      { systemConfig: config },
-      { stderr: { write: () => true }, stdout: { write: () => true } },
-      dependencies,
-    );
+		await runBuildCommand(
+			{ systemConfig: config },
+			{ stderr: { write: () => true }, stdout: { write: () => true } },
+			dependencies,
+		);
 
-    // Gateway has dockerfile → 1 docker build. Tool has no dockerfile → 0 docker builds for tool.
-    expect(dockerBuilds).toHaveLength(1);
-  });
+		// Gateway has dockerfile → 1 docker build. Tool has no dockerfile → 0 docker builds for tool.
+		expect(dockerBuilds).toHaveLength(1);
+	});
 
-  it('builds Gondolin assets for each zone into the zone state dir', async () => {
-    const gondolinBuilds: { cacheDir: string }[] = [];
+	it('builds Gondolin assets for each zone into the zone state dir', async () => {
+		const gondolinBuilds: { cacheDir: string }[] = [];
 
-    const dependencies: BuildCommandDependencies = {
-      buildDockerImage: async () => {},
-      buildGondolinImage: async (options) => {
-        gondolinBuilds.push({ cacheDir: options.cacheDir });
-        return { built: true, fingerprint: 'f1', imagePath: '/cache/f1' };
-      },
-      resolveOciImageTag: async () => 'tag:latest',
-    };
+		const dependencies: BuildCommandDependencies = {
+			buildDockerImage: async () => {},
+			buildGondolinImage: async (options) => {
+				gondolinBuilds.push({ cacheDir: options.cacheDir });
+				return { built: true, fingerprint: 'f1', imagePath: '/cache/f1' };
+			},
+			resolveOciImageTag: async () => 'tag:latest',
+		};
 
-    await runBuildCommand(
-      { systemConfig: createTestSystemConfig() },
-      { stderr: { write: () => true }, stdout: { write: () => true } },
-      dependencies,
-    );
+		await runBuildCommand(
+			{ systemConfig: createTestSystemConfig() },
+			{ stderr: { write: () => true }, stdout: { write: () => true } },
+			dependencies,
+		);
 
-    // 1 zone × 2 image types (gateway + tool)
-    expect(gondolinBuilds).toHaveLength(2);
-    expect(gondolinBuilds[0]?.cacheDir).toBe('/state/test/images/gateway');
-    expect(gondolinBuilds[1]?.cacheDir).toBe('/state/test/images/tool');
-  });
+		// 1 zone × 2 image types (gateway + tool)
+		expect(gondolinBuilds).toHaveLength(2);
+		expect(gondolinBuilds[0]?.cacheDir).toBe('/state/test/images/gateway');
+		expect(gondolinBuilds[1]?.cacheDir).toBe('/state/test/images/tool');
+	});
 });
 ```
 
@@ -589,100 +608,96 @@ import type { BuildImageResult } from 'gondolin-core';
 import { z } from 'zod';
 
 import type { SystemConfig } from '../controller/system-config.js';
-import {
-  buildDockerImage as buildDockerImageDefault,
-} from '../build/docker-image-builder.js';
-import {
-  buildGondolinImage as buildGondolinImageDefault,
-} from '../build/gondolin-image-builder.js';
+import { buildDockerImage as buildDockerImageDefault } from '../build/docker-image-builder.js';
+import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { CliIo } from './agent-vm-cli-support.js';
 
 export interface BuildCommandDependencies {
-  readonly buildDockerImage?: (options: {
-    readonly dockerfilePath: string;
-    readonly imageTag: string;
-  }) => Promise<void>;
-  readonly buildGondolinImage?: (options: {
-    readonly buildConfigPath: string;
-    readonly cacheDir: string;
-  }) => Promise<BuildImageResult>;
-  readonly resolveOciImageTag?: (buildConfigPath: string) => Promise<string>;
+	readonly buildDockerImage?: (options: {
+		readonly dockerfilePath: string;
+		readonly imageTag: string;
+	}) => Promise<void>;
+	readonly buildGondolinImage?: (options: {
+		readonly buildConfigPath: string;
+		readonly cacheDir: string;
+	}) => Promise<BuildImageResult>;
+	readonly resolveOciImageTag?: (buildConfigPath: string) => Promise<string>;
 }
 
 const ociImageTagSchema = z.object({
-  oci: z.object({
-    image: z.string().min(1),
-  }),
+	oci: z.object({
+		image: z.string().min(1),
+	}),
 });
 
 async function resolveOciImageTagFromConfig(buildConfigPath: string): Promise<string> {
-  const rawConfig: unknown = JSON.parse(await fs.readFile(buildConfigPath, 'utf8'));
-  const parsed = ociImageTagSchema.safeParse(rawConfig);
-  if (!parsed.success) {
-    throw new Error(
-      `build-config.json at ${buildConfigPath} has no valid oci.image tag: ${parsed.error.message}`,
-    );
-  }
-  return parsed.data.oci.image;
+	const rawConfig: unknown = JSON.parse(await fs.readFile(buildConfigPath, 'utf8'));
+	const parsed = ociImageTagSchema.safeParse(rawConfig);
+	if (!parsed.success) {
+		throw new Error(
+			`build-config.json at ${buildConfigPath} has no valid oci.image tag: ${parsed.error.message}`,
+		);
+	}
+	return parsed.data.oci.image;
 }
 
 interface ImageTarget {
-  readonly name: string;
-  readonly buildConfigPath: string;
-  readonly dockerfile?: string;
+	readonly name: string;
+	readonly buildConfigPath: string;
+	readonly dockerfile?: string;
 }
 
 export async function runBuildCommand(
-  options: { readonly systemConfig: SystemConfig },
-  io: CliIo,
-  dependencies: BuildCommandDependencies = {},
+	options: { readonly systemConfig: SystemConfig },
+	io: CliIo,
+	dependencies: BuildCommandDependencies = {},
 ): Promise<void> {
-  const buildDockerImage = dependencies.buildDockerImage ?? buildDockerImageDefault;
-  const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
-  const resolveOciImageTag = dependencies.resolveOciImageTag ?? resolveOciImageTagFromConfig;
+	const buildDockerImage = dependencies.buildDockerImage ?? buildDockerImageDefault;
+	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
+	const resolveOciImageTag = dependencies.resolveOciImageTag ?? resolveOciImageTagFromConfig;
 
-  const imageTargets: readonly ImageTarget[] = [
-    {
-      name: 'gateway',
-      buildConfigPath: options.systemConfig.images.gateway.buildConfig,
-      dockerfile: options.systemConfig.images.gateway.dockerfile,
-    },
-    {
-      name: 'tool',
-      buildConfigPath: options.systemConfig.images.tool.buildConfig,
-      dockerfile: options.systemConfig.images.tool.dockerfile,
-    },
-  ];
+	const imageTargets: readonly ImageTarget[] = [
+		{
+			name: 'gateway',
+			buildConfigPath: options.systemConfig.images.gateway.buildConfig,
+			dockerfile: options.systemConfig.images.gateway.dockerfile,
+		},
+		{
+			name: 'tool',
+			buildConfigPath: options.systemConfig.images.tool.buildConfig,
+			dockerfile: options.systemConfig.images.tool.dockerfile,
+		},
+	];
 
-  // Step 1: Build Docker images for targets that have Dockerfiles
-  for (const target of imageTargets) {
-    if (!target.dockerfile) {
-      continue;
-    }
+	// Step 1: Build Docker images for targets that have Dockerfiles
+	for (const target of imageTargets) {
+		if (!target.dockerfile) {
+			continue;
+		}
 
-    const imageTag = await resolveOciImageTag(target.buildConfigPath);
-    io.stderr.write(`[build] Docker: ${target.name} → ${imageTag}\n`);
-    await buildDockerImage({ dockerfilePath: target.dockerfile, imageTag });
-    io.stderr.write(`[build] Docker: ${target.name} done\n`);
-  }
+		const imageTag = await resolveOciImageTag(target.buildConfigPath);
+		io.stderr.write(`[build] Docker: ${target.name} → ${imageTag}\n`);
+		await buildDockerImage({ dockerfilePath: target.dockerfile, imageTag });
+		io.stderr.write(`[build] Docker: ${target.name} done\n`);
+	}
 
-  // Step 2: Build Gondolin VM assets per zone
-  for (const zone of options.systemConfig.zones) {
-    for (const target of imageTargets) {
-      const cacheDir = path.join(zone.gateway.stateDir, 'images', target.name);
-      io.stderr.write(`[build] Gondolin: ${target.name} (${zone.id}) → ${cacheDir}\n`);
+	// Step 2: Build Gondolin VM assets per zone
+	for (const zone of options.systemConfig.zones) {
+		for (const target of imageTargets) {
+			const cacheDir = path.join(zone.gateway.stateDir, 'images', target.name);
+			io.stderr.write(`[build] Gondolin: ${target.name} (${zone.id}) → ${cacheDir}\n`);
 
-      const result = await buildGondolinImage({
-        buildConfigPath: target.buildConfigPath,
-        cacheDir,
-      });
+			const result = await buildGondolinImage({
+				buildConfigPath: target.buildConfigPath,
+				cacheDir,
+			});
 
-      const status = result.built ? 'built' : 'cached';
-      io.stderr.write(
-        `[build] Gondolin: ${target.name} (${zone.id}) ${status} [${result.fingerprint}]\n`,
-      );
-    }
-  }
+			const status = result.built ? 'built' : 'cached';
+			io.stderr.write(
+				`[build] Gondolin: ${target.name} (${zone.id}) ${status} [${result.fingerprint}]\n`,
+			);
+		}
+	}
 }
 ```
 
@@ -703,6 +718,7 @@ git commit -m "feat: add build command — Docker + Gondolin builds from system 
 ### Task 5: Wire build into CLI entrypoint and delete shell script
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/cli/agent-vm-entrypoint.ts`
 - Delete: `scripts/build-images.sh`
 
@@ -715,11 +731,11 @@ import { runBuildCommand } from './build-command.js';
 
 // After the init block, before the controller check:
 if (commandGroup === 'build') {
-  const systemConfig = dependencies.loadSystemConfig(
-    resolveConfigPath(subcommand ? [subcommand, ...restArguments] : restArguments),
-  );
-  await runBuildCommand({ systemConfig }, io);
-  return;
+	const systemConfig = dependencies.loadSystemConfig(
+		resolveConfigPath(subcommand ? [subcommand, ...restArguments] : restArguments),
+	);
+	await runBuildCommand({ systemConfig }, io);
+	return;
 }
 ```
 
@@ -742,6 +758,7 @@ Expected: PASS
 Run: `cd /Users/shravansunder/Documents/dev/project-dev/agent-vm && pnpm -r build && node packages/agent-vm/dist/cli/agent-vm-entrypoint.js build`
 
 Expected output:
+
 ```
 [build] Docker: gateway → agent-vm-gateway:latest
 [build] Docker: gateway done
@@ -766,6 +783,7 @@ git commit -m "feat: wire agent-vm build into CLI, delete shell script"
 ### Task 6: Refactor both gateway and tool image builders to use shared gondolin-image-builder
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/gateway/gateway-image-builder.ts`
 - Modify: `packages/agent-vm/src/tool-vm/tool-vm-lifecycle.ts`
 
@@ -778,40 +796,41 @@ Both the gateway-image-builder and tool-vm-lifecycle currently duplicate the "lo
 import type { BuildImageResult } from 'gondolin-core';
 
 import {
-  buildGondolinImage as buildGondolinImageDefault,
-  type GondolinImageBuilderDependencies,
+	buildGondolinImage as buildGondolinImageDefault,
+	type GondolinImageBuilderDependencies,
 } from '../build/gondolin-image-builder.js';
 import type { GatewayBuildImageOptions } from './gateway-zone-support.js';
 
 export interface GatewayImageBuilderDependencies {
-  readonly buildImage?: (options: GatewayBuildImageOptions) => Promise<BuildImageResult>;
-  readonly buildGondolinImage?: GondolinImageBuilderDependencies['buildImage'];
-  readonly loadBuildConfig?: GondolinImageBuilderDependencies['loadBuildConfig'];
+	readonly buildImage?: (options: GatewayBuildImageOptions) => Promise<BuildImageResult>;
+	readonly buildGondolinImage?: GondolinImageBuilderDependencies['buildImage'];
+	readonly loadBuildConfig?: GondolinImageBuilderDependencies['loadBuildConfig'];
 }
 
 export async function buildGatewayImage(
-  options: {
-    readonly buildConfigPath: string;
-    readonly cacheDir: string;
-  },
-  dependencies: GatewayImageBuilderDependencies = {},
+	options: {
+		readonly buildConfigPath: string;
+		readonly cacheDir: string;
+	},
+	dependencies: GatewayImageBuilderDependencies = {},
 ): Promise<BuildImageResult> {
-  if (dependencies.buildImage) {
-    const loadBuildConfig = dependencies.loadBuildConfig ??
-      (async (configPath: string) => {
-        const fs = await import('node:fs/promises');
-        return JSON.parse(await fs.readFile(configPath, 'utf8'));
-      });
-    return await dependencies.buildImage({
-      buildConfig: await loadBuildConfig(options.buildConfigPath),
-      cacheDir: options.cacheDir,
-    });
-  }
+	if (dependencies.buildImage) {
+		const loadBuildConfig =
+			dependencies.loadBuildConfig ??
+			(async (configPath: string) => {
+				const fs = await import('node:fs/promises');
+				return JSON.parse(await fs.readFile(configPath, 'utf8'));
+			});
+		return await dependencies.buildImage({
+			buildConfig: await loadBuildConfig(options.buildConfigPath),
+			cacheDir: options.cacheDir,
+		});
+	}
 
-  return await buildGondolinImageDefault(options, {
-    buildImage: dependencies.buildGondolinImage,
-    loadBuildConfig: dependencies.loadBuildConfig,
-  });
+	return await buildGondolinImageDefault(options, {
+		buildImage: dependencies.buildGondolinImage,
+		loadBuildConfig: dependencies.loadBuildConfig,
+	});
 }
 ```
 
@@ -832,6 +851,7 @@ git commit -m "refactor: gateway-image-builder delegates to shared gondolin-imag
 ### Task 7: Update docs, init template, and fix all stale script references
 
 **Files:**
+
 - Modify: `packages/agent-vm/src/cli/init-command.ts` — update DEFAULT_SYSTEM_CONFIG to include `dockerfile` fields
 - Modify: `/Users/shravansunder/Documents/dev/project-dev/agent-vm/docs/SETUP.md` — replace `./scripts/build-images.sh` with `agent-vm build`
 - Modify: `/Users/shravansunder/Documents/dev/project-dev/shravan-claw/docs/01-architecture-v4.md:73` — replace `./scripts/build-images.sh` with `agent-vm build`
@@ -859,13 +879,16 @@ images: {
 - [ ] **Step 2: Update SETUP.md**
 
 Replace:
-```markdown
+
+````markdown
 ### 3. Build images
 
 ```bash
 ./scripts/build-images.sh
 ```
-```
+````
+
+````
 
 With:
 ```markdown
@@ -873,11 +896,12 @@ With:
 
 ```bash
 agent-vm build
-```
+````
 
 Builds Docker OCI images from Dockerfiles, then Gondolin VM assets per zone.
 First build takes ~2-5 minutes. Subsequent builds are cached by fingerprint.
-```
+
+````
 
 - [ ] **Step 3: Update init test if it checks images config shape**
 
@@ -894,7 +918,7 @@ Expected: 0 errors
 ```bash
 git add packages/agent-vm/src/cli/init-command.ts docs/SETUP.md
 git commit -m "docs: update setup guide and init template — agent-vm build replaces shell script"
-```
+````
 
 - [ ] **Step 6: Commit in shravan-claw**
 
@@ -908,19 +932,20 @@ git commit -m "docs: update shravan-claw references — agent-vm build replaces 
 
 ## Summary
 
-| Task | What | Why |
-|------|------|-----|
-| 1 | Docker image builder | Type-safe wrapper for `docker build`, mockable for tests |
-| 2 | Gondolin image builder | Extracts the "load config + configDir + buildImage" pattern into a reusable module |
-| 3 | Schema: `dockerfile` field | Config-driven Docker builds — users specify their Dockerfile, or omit for pre-built images |
-| 4 | `agent-vm build` command | Orchestrates Docker → Gondolin per zone. Replaces the shell script with typed, testable code. |
-| 5 | Wire into CLI + delete shell script | One CLI for everything. No more `scripts/build-images.sh`. |
-| 6 | Refactor gateway-image-builder | One code path for Gondolin builds — build command and controller use the same module |
-| 7 | Docs + init template | `agent-vm build` in setup guide, `dockerfile` in scaffolded system.json |
+| Task | What                                | Why                                                                                           |
+| ---- | ----------------------------------- | --------------------------------------------------------------------------------------------- |
+| 1    | Docker image builder                | Type-safe wrapper for `docker build`, mockable for tests                                      |
+| 2    | Gondolin image builder              | Extracts the "load config + configDir + buildImage" pattern into a reusable module            |
+| 3    | Schema: `dockerfile` field          | Config-driven Docker builds — users specify their Dockerfile, or omit for pre-built images    |
+| 4    | `agent-vm build` command            | Orchestrates Docker → Gondolin per zone. Replaces the shell script with typed, testable code. |
+| 5    | Wire into CLI + delete shell script | One CLI for everything. No more `scripts/build-images.sh`.                                    |
+| 6    | Refactor gateway-image-builder      | One code path for Gondolin builds — build command and controller use the same module          |
+| 7    | Docs + init template                | `agent-vm build` in setup guide, `dockerfile` in scaffolded system.json                       |
 
 **Execution order:** 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 After all tasks, run:
+
 ```bash
 pnpm check
 agent-vm build  # Verify e2e

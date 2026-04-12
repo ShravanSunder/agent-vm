@@ -6,8 +6,6 @@ import {
 	createToolVm,
 	resolveToolVmWorkspaceDirectory,
 } from '../tool-vm/tool-vm-lifecycle.js';
-import { createControllerService } from './controller-http-routes.js';
-import { startControllerHttpServer } from './controller-http-server.js';
 import {
 	createControllerRuntimeOperations,
 	createStopControllerOperation,
@@ -21,9 +19,11 @@ import {
 	type ControllerRuntimeDependencies,
 	type StartControllerRuntimeOptions,
 } from './controller-runtime-types.js';
-import { createIdleReaper } from './idle-reaper.js';
-import { createLeaseManager } from './lease-manager.js';
-import { createTcpPool } from './tcp-pool.js';
+import { createControllerService } from './http/controller-http-routes.js';
+import { startControllerHttpServer } from './http/controller-http-server.js';
+import { createIdleReaper } from './leases/idle-reaper.js';
+import { createLeaseManager } from './leases/lease-manager.js';
+import { createTcpPool } from './leases/tcp-pool.js';
 
 export async function startControllerRuntime(
 	options: StartControllerRuntimeOptions,
@@ -32,13 +32,28 @@ export async function startControllerRuntime(
 	const now = dependencies.now ?? Date.now;
 	const runTaskStep =
 		dependencies.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
-	let secretResolver!: Awaited<ReturnType<typeof createSecretResolverFromSystemConfig>>;
-	await runTaskStep('Resolving 1Password secrets', async () => {
-		secretResolver = await createSecretResolverFromSystemConfig(
-			options.systemConfig,
-			dependencies.createSecretResolver ?? createOpCliSecretResolver,
-		);
-	});
+	const runTaskWithResult = async <TResult>(
+		title: string,
+		fn: () => Promise<TResult>,
+	): Promise<TResult> => {
+		const noResult = Symbol(title);
+		let taskResult: TResult | typeof noResult = noResult;
+		await runTaskStep(title, async () => {
+			taskResult = await fn();
+		});
+		if (taskResult === noResult) {
+			throw new Error(`Task '${title}' did not produce a result.`);
+		}
+		return taskResult;
+	};
+	const secretResolver = await runTaskWithResult(
+		'Resolving 1Password secrets',
+		async () =>
+			await createSecretResolverFromSystemConfig(
+				options.systemConfig,
+				dependencies.createSecretResolver ?? createOpCliSecretResolver,
+			),
+	);
 	const createManagedToolVm =
 		dependencies.createManagedToolVm ??
 		(async (toolVmOptions): Promise<ManagedVm> =>
@@ -98,12 +113,19 @@ export async function startControllerRuntime(
 			systemConfig: options.systemConfig,
 			zoneId: options.zoneId,
 		});
-	let gateway!: Awaited<ReturnType<typeof startGatewayZone>>;
+	let gateway: Awaited<ReturnType<typeof startGatewayZone>> | undefined;
+	const requireGateway = (): Awaited<ReturnType<typeof startGatewayZone>> => {
+		if (!gateway) {
+			throw new Error('Gateway runtime is unavailable because the last restart did not complete.');
+		}
+		return gateway;
+	};
 	await runTaskStep('Starting gateway zone', async () => {
 		gateway = await startGateway();
 	});
-	const stopGatewayZone = async (): Promise<void> => await gateway.vm.close();
+	const stopGatewayZone = async (): Promise<void> => await requireGateway().vm.close();
 	const restartGatewayZone = async (): Promise<void> => {
+		gateway = undefined;
 		gateway = await startGateway();
 	};
 	const serverRef: { current?: { close(): Promise<void> } } = {};
@@ -112,7 +134,7 @@ export async function startControllerRuntime(
 		operations: {
 			...createControllerRuntimeOperations({
 				activeZoneId: options.zoneId,
-				getGateway: () => gateway,
+				getGateway: () => requireGateway(),
 				getZone: (zoneId: string) => findConfiguredZone(options.systemConfig, zoneId),
 				leaseManager,
 				restartGatewayZone,
@@ -143,13 +165,14 @@ export async function startControllerRuntime(
 		async close(): Promise<void> {
 			clearReaperTimer();
 			await releaseAllLeases();
-			await gateway.vm.close();
+			await requireGateway().vm.close();
 			await serverRef.current?.close();
 		},
 		controllerPort: options.systemConfig.host.controllerPort,
 		gateway: {
-			ingress: gateway.ingress,
-			vm: gateway.vm,
+			ingress: requireGateway().ingress,
+			processSpec: requireGateway().processSpec,
+			vm: requireGateway().vm,
 		},
 	};
 }

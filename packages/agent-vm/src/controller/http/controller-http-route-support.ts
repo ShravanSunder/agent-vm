@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 
-import type { Lease, LeaseManager } from './lease-manager.js';
+import type { Lease, LeaseManager } from '../leases/lease-manager.js';
 
 export interface ControllerRouteOperations {
 	readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { command, positional, string, subcommands } from 'cmd-ts';
 
 import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
+import type { SystemConfig } from '../../config/system-config.js';
 import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
 import { runControllerOperationCommand } from '../controller-operation-commands.js';
 import { runLeaseCommand } from '../lease-commands.js';
@@ -39,6 +40,7 @@ function createControllerOperationSubcommand(
 			...(options.supportsPurge ? { purge: createPurgeFlag() } : {}),
 		},
 		handler: async ({ config, ...rest }) => {
+			const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 			const restArguments = appendZoneArgument(
 				options.supportsPurge && 'purge' in rest && rest.purge ? ['--purge'] : [],
 				'zone' in rest ? (rest.zone as string | undefined) : undefined,
@@ -48,16 +50,13 @@ function createControllerOperationSubcommand(
 				io,
 				restArguments,
 				subcommand: options.name,
-				systemConfig: loadSystemConfigFromOption(config, dependencies),
+				systemConfig,
 			});
 		},
 	});
 }
 
-async function warnIfGatewayImageCacheIsCold(
-	io: CliIo,
-	systemConfig: ReturnType<typeof loadSystemConfigFromOption>,
-): Promise<void> {
+async function warnIfGatewayImageCacheIsCold(io: CliIo, systemConfig: SystemConfig): Promise<void> {
 	const gatewayFingerprint = await computeFingerprintFromConfigPath(
 		systemConfig.images.gateway.buildConfig,
 	);
@@ -87,7 +86,7 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 					config: createConfigOption(),
 				},
 				handler: async ({ config }) => {
-					const systemConfig = loadSystemConfigFromOption(config, dependencies);
+					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 					if (systemConfig.zones.length !== 1) {
 						throw new Error(
 							`controller start currently supports a single-zone system.json, but found ${systemConfig.zones.length} zones. Split the config or add explicit multi-zone runtime support before starting.`,
@@ -148,7 +147,7 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 						dependencies,
 						io,
 						restArguments,
-						systemConfig: loadSystemConfigFromOption(config, dependencies),
+						systemConfig: await loadSystemConfigFromOption(config, dependencies),
 					});
 				},
 			}),
@@ -185,7 +184,7 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 								io,
 								restArguments: appendZoneArgument(['refresh'], zone),
 								subcommand: 'credentials',
-								systemConfig: loadSystemConfigFromOption(config, dependencies),
+								systemConfig: await loadSystemConfigFromOption(config, dependencies),
 							});
 						},
 					}),
@@ -206,7 +205,7 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 								dependencies,
 								io,
 								restArguments: ['list'],
-								systemConfig: loadSystemConfigFromOption(config, dependencies),
+								systemConfig: await loadSystemConfigFromOption(config, dependencies),
 							});
 						},
 					}),
@@ -226,7 +225,7 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 								dependencies,
 								io,
 								restArguments: ['release', leaseId],
-								systemConfig: loadSystemConfigFromOption(config, dependencies),
+								systemConfig: await loadSystemConfigFromOption(config, dependencies),
 							});
 						},
 					}),

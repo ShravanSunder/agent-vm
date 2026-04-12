@@ -1,7 +1,7 @@
 import type { SecretResolver } from 'gondolin-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from './credential-manager.js';
 
 const systemConfig = {
@@ -29,7 +29,7 @@ const systemConfig = {
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				openclawConfig: './config/shravan/openclaw.json',
+				gatewayConfig: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
 				workspaceDir: './workspaces/shravan',
 			},

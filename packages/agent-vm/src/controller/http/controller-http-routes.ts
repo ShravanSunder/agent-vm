@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 
+import type { SystemConfig } from '../../config/system-config.js';
 import {
 	type ControllerLeaseManager,
 	type ControllerRouteOperations,
@@ -8,7 +9,6 @@ import {
 } from './controller-http-route-support.js';
 import { controllerLeaseCreateRequestSchema } from './controller-request-schemas.js';
 import { registerControllerZoneOperationRoutes } from './controller-zone-operation-routes.js';
-import type { SystemConfig } from './system-config.js';
 
 export function createControllerApp(options: {
 	readonly leaseManager: ControllerLeaseManager;
@@ -72,15 +72,27 @@ export function createControllerApp(options: {
 	});
 
 	app.get('/leases', (context) => {
-		const leases = options.leaseManager.listLeases().map((lease) => ({
-			createdAt: lease.createdAt,
-			id: lease.id,
-			lastUsedAt: lease.lastUsedAt,
-			profileId: lease.profileId,
-			scopeKey: lease.scopeKey,
-			tcpSlot: lease.tcpSlot,
-			zoneId: lease.zoneId,
-		}));
+		const leases = options.leaseManager
+			.listLeases()
+			.map(
+				(lease: {
+					readonly createdAt: number;
+					readonly id: string;
+					readonly lastUsedAt: number;
+					readonly profileId: string;
+					readonly scopeKey: string;
+					readonly tcpSlot: number;
+					readonly zoneId: string;
+				}) => ({
+					createdAt: lease.createdAt,
+					id: lease.id,
+					lastUsedAt: lease.lastUsedAt,
+					profileId: lease.profileId,
+					scopeKey: lease.scopeKey,
+					tcpSlot: lease.tcpSlot,
+					zoneId: lease.zoneId,
+				}),
+			);
 		return context.json(leases);
 	});
 

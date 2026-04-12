@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { z } from 'zod';
@@ -31,7 +31,7 @@ const zoneGatewaySchema = z.object({
 	memory: z.string().min(1),
 	cpus: z.number().int().positive(),
 	port: z.number().int().positive(),
-	openclawConfig: z.string().min(1),
+	gatewayConfig: z.string().min(1),
 	stateDir: z.string().min(1),
 	workspaceDir: z.string().min(1),
 	authProfilesRef: z.string().min(1).optional(),
@@ -113,7 +113,7 @@ function resolveRelativePaths(config: SystemConfig, configDir: string): SystemCo
 			...zone,
 			gateway: {
 				...zone.gateway,
-				openclawConfig: resolvePath(zone.gateway.openclawConfig),
+				gatewayConfig: resolvePath(zone.gateway.gatewayConfig),
 				stateDir: resolvePath(zone.gateway.stateDir),
 				workspaceDir: resolvePath(zone.gateway.workspaceDir),
 			},
@@ -127,10 +127,10 @@ function resolveRelativePaths(config: SystemConfig, configDir: string): SystemCo
 	};
 }
 
-export function loadSystemConfig(configPath: string): SystemConfig {
+export async function loadSystemConfig(configPath: string): Promise<SystemConfig> {
 	const absoluteConfigPath = path.resolve(configPath);
 	const configDir = path.dirname(absoluteConfigPath);
-	const rawConfig = fs.readFileSync(absoluteConfigPath, 'utf8');
+	const rawConfig = await fs.readFile(absoluteConfigPath, 'utf8');
 	const parsedConfig = JSON.parse(rawConfig) as unknown;
 	const config = systemConfigSchema.parse(parsedConfig);
 	return resolveRelativePaths(config, configDir);

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ControllerClient } from '../controller/controller-client.js';
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
+import type { ControllerClient } from '../controller/http/controller-client.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import {
 	handleCliMainError,
@@ -48,7 +48,7 @@ function createCliBuildSystemConfig(): SystemConfig {
 					type: 'openclaw',
 					cpus: 2,
 					memory: '2G',
-					openclawConfig: './config/shravan/openclaw.json',
+					gatewayConfig: './config/shravan/openclaw.json',
 					port: 18791,
 					stateDir: './state/shravan',
 					workspaceDir: './workspaces/shravan',
@@ -103,7 +103,7 @@ describe('runAgentVmCli', () => {
 
 	it('routes init to the project scaffolder', async () => {
 		const outputs: string[] = [];
-		const scaffoldAgentVmProject = vi.fn(() => ({
+		const scaffoldAgentVmProject = vi.fn(async () => ({
 			created: ['system.json', '.env.local'],
 			keychainStored: false,
 			skipped: [],
@@ -136,7 +136,7 @@ describe('runAgentVmCli', () => {
 	});
 
 	it('passes gateway type through to init scaffolding', async () => {
-		const scaffoldAgentVmProject = vi.fn(() => ({
+		const scaffoldAgentVmProject = vi.fn(async () => ({
 			created: ['system.json', '.env.local'],
 			keychainStored: false,
 			skipped: [],
@@ -186,7 +186,7 @@ describe('runAgentVmCli', () => {
 			},
 			{
 				...defaultCliDependencies,
-				loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runBuildCommand,
 			},
 		);
@@ -220,7 +220,7 @@ describe('runAgentVmCli', () => {
 			},
 			{
 				...defaultCliDependencies,
-				loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runBuildCommand,
 			},
 		);
@@ -246,7 +246,7 @@ describe('runAgentVmCli', () => {
 			},
 			{
 				...defaultCliDependencies,
-				loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runCacheCommand,
 			},
 		);
@@ -281,7 +281,7 @@ describe('runAgentVmCli', () => {
 						port: 19000,
 						user: 'root',
 					})),
-				loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runInteractiveProcess,
 			},
 		);
@@ -316,7 +316,7 @@ describe('runAgentVmCli', () => {
 				},
 				{
 					...defaultCliDependencies,
-					loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
+					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				},
 			),
 		).rejects.toThrow(/provider|plugin|missing/i);
@@ -456,7 +456,7 @@ describe('runAgentVmCli', () => {
 					listBackups: () => [],
 				}),
 				resolveServiceAccountToken: async () => 'mock-token',
-				loadSystemConfig: () => ({
+				loadSystemConfig: async () => ({
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
@@ -554,7 +554,7 @@ describe('runAgentVmCli', () => {
 					listBackups: () => [],
 				}),
 				resolveServiceAccountToken: async () => 'mock-token',
-				loadSystemConfig: () => ({
+				loadSystemConfig: async () => ({
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
@@ -674,7 +674,7 @@ describe('runAgentVmCli', () => {
 					listBackups: () => [],
 				}),
 				resolveServiceAccountToken: async () => 'mock-token',
-				loadSystemConfig: () => ({
+				loadSystemConfig: async () => ({
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
@@ -709,7 +709,7 @@ describe('runAgentVmCli', () => {
 								type: 'openclaw',
 								cpus: 2,
 								memory: '2G',
-								openclawConfig: './config/shravan/openclaw.json',
+								gatewayConfig: './config/shravan/openclaw.json',
 								port: 18791,
 								stateDir: './state/shravan',
 								workspaceDir: './workspaces/shravan',
@@ -756,7 +756,7 @@ describe('runAgentVmCli', () => {
 				},
 				{
 					...defaultCliDependencies,
-					loadSystemConfig: () => ({
+					loadSystemConfig: async () => ({
 						...baseSystemConfig,
 						zones: [
 							primaryZone,
@@ -807,7 +807,7 @@ describe('runAgentVmCli', () => {
 				listBackups: () => [],
 			}),
 			resolveServiceAccountToken: async () => 'mock-token',
-			loadSystemConfig: (): SystemConfig => ({
+			loadSystemConfig: async (): Promise<SystemConfig> => ({
 				cacheDir: './cache',
 				host: {
 					controllerPort: 18800,
@@ -842,7 +842,7 @@ describe('runAgentVmCli', () => {
 							type: 'openclaw',
 							cpus: 2,
 							memory: '2G',
-							openclawConfig: './config/shravan/openclaw.json',
+							gatewayConfig: './config/shravan/openclaw.json',
 							port: 18791,
 							stateDir: './state/shravan',
 							workspaceDir: './workspaces/shravan',
@@ -954,7 +954,7 @@ describe('runAgentVmCli', () => {
 					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 					listBackups,
 				}),
-				loadSystemConfig: () => ({
+				loadSystemConfig: async () => ({
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
@@ -978,7 +978,7 @@ describe('runAgentVmCli', () => {
 								type: 'openclaw',
 								cpus: 2,
 								memory: '2G',
-								openclawConfig: './config/shravan/openclaw.json',
+								gatewayConfig: './config/shravan/openclaw.json',
 								port: 18791,
 								stateDir: './state/shravan',
 								workspaceDir: './workspaces/shravan',
@@ -1063,7 +1063,7 @@ describe('runAgentVmCli', () => {
 					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 					listBackups: () => [],
 				}),
-				loadSystemConfig: () => ({
+				loadSystemConfig: async () => ({
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
@@ -1087,7 +1087,7 @@ describe('runAgentVmCli', () => {
 								type: 'openclaw',
 								cpus: 2,
 								memory: '2G',
-								openclawConfig: './config/shravan/openclaw.json',
+								gatewayConfig: './config/shravan/openclaw.json',
 								port: 18791,
 								stateDir: './state/shravan',
 								workspaceDir: './workspaces/shravan',

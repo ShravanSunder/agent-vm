@@ -27,7 +27,7 @@ export function createBackupSubcommands(io: CliIo, dependencies: CliDependencies
 						dependencies,
 						io,
 						restArguments: appendZoneArgument(['create'], zone),
-						systemConfig: loadSystemConfigFromOption(config, dependencies),
+						systemConfig: await loadSystemConfigFromOption(config, dependencies),
 					});
 				},
 			}),
@@ -43,7 +43,7 @@ export function createBackupSubcommands(io: CliIo, dependencies: CliDependencies
 						dependencies,
 						io,
 						restArguments: appendZoneArgument(['list'], zone),
-						systemConfig: loadSystemConfigFromOption(config, dependencies),
+						systemConfig: await loadSystemConfigFromOption(config, dependencies),
 					});
 				},
 			}),
@@ -64,7 +64,7 @@ export function createBackupSubcommands(io: CliIo, dependencies: CliDependencies
 						dependencies,
 						io,
 						restArguments: appendZoneArgument(['restore', backupPath], zone),
-						systemConfig: loadSystemConfigFromOption(config, dependencies),
+						systemConfig: await loadSystemConfigFromOption(config, dependencies),
 					});
 				},
 			}),

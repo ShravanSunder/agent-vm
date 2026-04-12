@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import {
 	createResolverFromSystemConfig,

@@ -1,19 +1,21 @@
+import type { GatewayProcessSpec } from 'gateway-interface';
 import type { SecretResolver } from 'gondolin-core';
 
+import type { SystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import { buildControllerStatus } from '../operations/controller-status.js';
 import { runControllerCredentialsRefresh } from '../operations/credentials-refresh.js';
 import { runControllerDestroy } from '../operations/destroy-zone.js';
 import { runControllerUpgrade } from '../operations/upgrade-zone.js';
 import { runControllerLogs } from '../operations/zone-logs.js';
-import type { LeaseManager } from './lease-manager.js';
-import type { SystemConfig } from './system-config.js';
+import type { LeaseManager } from './leases/lease-manager.js';
 
 interface GatewayZoneRuntime {
 	readonly ingress: {
 		readonly host: string;
 		readonly port: number;
 	};
+	readonly processSpec: GatewayProcessSpec;
 	readonly vm: {
 		close(): Promise<void>;
 		enableSsh(): Promise<unknown>;
@@ -110,14 +112,10 @@ export function createControllerRuntimeOperations(options: {
 				},
 				{
 					readGatewayLogs: async () => {
-						try {
-							const result = await options
-								.getGateway()
-								.vm.exec('cat /tmp/openclaw.log 2>/dev/null || echo ""');
-							return result.stdout;
-						} catch {
-							return '';
-						}
+						const result = await options
+							.getGateway()
+							.vm.exec(`cat ${options.getGateway().processSpec.logPath} 2>/dev/null || echo ""`);
+						return result.stdout;
 					},
 				},
 			);

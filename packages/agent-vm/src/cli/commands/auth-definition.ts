@@ -28,7 +28,7 @@ export function createOpenClawSubcommands(io: CliIo, dependencies: CliDependenci
 					zone: createZoneOption(),
 				},
 				handler: async ({ config, provider, zone }) => {
-					const systemConfig = loadSystemConfigFromOption(config, dependencies);
+					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 					await runAuthCommand({
 						dependencies,
 						io,

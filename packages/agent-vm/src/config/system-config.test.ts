@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 describe('loadSystemConfig', () => {
-	test('loads a valid plan-1 controller config', () => {
+	test('loads a valid plan-1 controller config', async () => {
 		const workingDirectoryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-system-config-'));
 		createdDirectories.push(workingDirectoryPath);
 		const configPath = path.join(workingDirectoryPath, 'system.json');
@@ -49,7 +49,7 @@ describe('loadSystemConfig', () => {
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							openclawConfig: './config/shravan/openclaw.json',
+							gatewayConfig: './config/shravan/openclaw.json',
 							stateDir: './state/shravan',
 							workspaceDir: './workspaces/shravan',
 						},
@@ -78,7 +78,7 @@ describe('loadSystemConfig', () => {
 			'utf8',
 		);
 
-		expect(loadSystemConfig(configPath)).toMatchObject({
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
 			host: {
 				controllerPort: 18800,
 			},
@@ -95,6 +95,7 @@ describe('loadSystemConfig', () => {
 				{
 					id: 'shravan',
 					gateway: {
+						gatewayConfig: path.join(workingDirectoryPath, 'config/shravan/openclaw.json'),
 						type: 'coding',
 					},
 				},
@@ -102,7 +103,7 @@ describe('loadSystemConfig', () => {
 		});
 	});
 
-	test('rejects configs without zones', () => {
+	test('rejects configs without zones', async () => {
 		const workingDirectoryPath = fs.mkdtempSync(
 			path.join(os.tmpdir(), 'agent-vm-system-config-invalid-'),
 		);
@@ -146,6 +147,6 @@ describe('loadSystemConfig', () => {
 			'utf8',
 		);
 
-		expect(() => loadSystemConfig(configPath)).toThrow(/zones/i);
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/zones/i);
 	});
 });

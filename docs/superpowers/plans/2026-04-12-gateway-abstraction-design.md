@@ -19,7 +19,7 @@ A controller that receives a complete VM spec and process spec from the gateway 
 
 ```
 Controller: "Give me everything I need to create this VM and start your process."
-Lifecycle:  "Here's the VM spec (env, VFS, secrets, TCP, hosts) and process spec 
+Lifecycle:  "Here's the VM spec (env, VFS, secrets, TCP, hosts) and process spec
              (bootstrap, start, health, logs)."
 Controller: "Done. Here's your ingress."
 ```
@@ -85,30 +85,30 @@ import type { VfsMountSpec, SecretSpec } from 'gondolin-core';
  * Lifecycle implementations own the full Gondolin-facing contract.
  */
 export interface GatewayVmSpec {
-  /** Environment variables set in the VM process */
-  readonly environment: Record<string, string>;
+	/** Environment variables set in the VM process */
+	readonly environment: Record<string, string>;
 
-  /** VFS mounts (guest path → host path + kind) */
-  readonly vfsMounts: Record<string, VfsMountSpec>;
+	/** VFS mounts (guest path → host path + kind) */
+	readonly vfsMounts: Record<string, VfsMountSpec>;
 
-  /** HTTP-mediated secrets — injected at the network boundary by Gondolin.
-   *  The agent never sees the real values, only placeholders.
-   *  Key = secret name, value = { hosts, value } */
-  readonly mediatedSecrets: Record<string, SecretSpec>;
+	/** HTTP-mediated secrets — injected at the network boundary by Gondolin.
+	 *  The agent never sees the real values, only placeholders.
+	 *  Key = secret name, value = { hosts, value } */
+	readonly mediatedSecrets: Record<string, SecretSpec>;
 
-  /** TCP host mappings — raw TCP passthrough for WebSocket bypass, 
-   *  service routing (docker compose), controller API, tool VM SSH.
-   *  Key = "host:port" as seen from inside VM, value = "host:port" on host */
-  readonly tcpHosts: Record<string, string>;
+	/** TCP host mappings — raw TCP passthrough for WebSocket bypass,
+	 *  service routing (docker compose), controller API, tool VM SSH.
+	 *  Key = "host:port" as seen from inside VM, value = "host:port" on host */
+	readonly tcpHosts: Record<string, string>;
 
-  /** Hosts the VM is allowed to reach via HTTP mediation */
-  readonly allowedHosts: readonly string[];
+	/** Hosts the VM is allowed to reach via HTTP mediation */
+	readonly allowedHosts: readonly string[];
 
-  /** Rootfs mode: readonly, memory, or cow */
-  readonly rootfsMode: 'readonly' | 'memory' | 'cow';
+	/** Rootfs mode: readonly, memory, or cow */
+	readonly rootfsMode: 'readonly' | 'memory' | 'cow';
 
-  /** Label for the VM session (used in Gondolin logs) */
-  readonly sessionLabel: string;
+	/** Label for the VM session (used in Gondolin logs) */
+	readonly sessionLabel: string;
 }
 ```
 
@@ -120,32 +120,32 @@ export interface GatewayVmSpec {
  * Retained by the running gateway handle for logs, health, restart.
  */
 export interface GatewayProcessSpec {
-  /** Shell command that sets up the environment for interactive sessions.
-   *  Writes env profile to a file and hooks .bashrc to source it.
-   *  This ensures SSH sessions (agent-vm controller ssh, agent-vm openclaw auth)
-   *  get the right env vars. Runs BEFORE startCommand. */
-  readonly bootstrapCommand: string;
+	/** Shell command that sets up the environment for interactive sessions.
+	 *  Writes env profile to a file and hooks .bashrc to source it.
+	 *  This ensures SSH sessions (agent-vm controller ssh, agent-vm openclaw auth)
+	 *  get the right env vars. Runs BEFORE startCommand. */
+	readonly bootstrapCommand: string;
 
-  /** Shell command that starts the gateway process.
-   *  Must background itself (nohup ... &) so vm.exec returns. 
-   *  Runs AFTER bootstrapCommand. */
-  readonly startCommand: string;
+	/** Shell command that starts the gateway process.
+	 *  Must background itself (nohup ... &) so vm.exec returns.
+	 *  Runs AFTER bootstrapCommand. */
+	readonly startCommand: string;
 
-  /** How to check if the gateway is ready */
-  readonly healthCheck: GatewayHealthCheck;
+	/** How to check if the gateway is ready */
+	readonly healthCheck: GatewayHealthCheck;
 
-  /** Port the gateway process listens on INSIDE the VM.
-   *  Used for setIngressRoutes. Different from zone.gateway.port
-   *  which is the HOST-side ingress listen port. */
-  readonly guestListenPort: number;
+	/** Port the gateway process listens on INSIDE the VM.
+	 *  Used for setIngressRoutes. Different from zone.gateway.port
+	 *  which is the HOST-side ingress listen port. */
+	readonly guestListenPort: number;
 
-  /** Path to the gateway's log file inside the VM */
-  readonly logPath: string;
+	/** Path to the gateway's log file inside the VM */
+	readonly logPath: string;
 }
 
 export type GatewayHealthCheck =
-  | { readonly type: 'http'; readonly port: number; readonly path: string }
-  | { readonly type: 'command'; readonly command: string };
+	| { readonly type: 'http'; readonly port: number; readonly path: string }
+	| { readonly type: 'command'; readonly command: string };
 ```
 
 ```typescript
@@ -160,58 +160,58 @@ import type { GatewayProcessSpec } from './gateway-process-spec.js';
  * Generic — no OpenClaw-specific fields.
  */
 export interface GatewayZoneConfig {
-  readonly id: string;
-  readonly gateway: {
-    readonly type: string;
-    readonly memory: string;
-    readonly cpus: number;
-    readonly port: number;                 // host-side ingress listen port
-    readonly gatewayConfig: string;        // path to gateway-specific config file
-    readonly stateDir: string;
-    readonly workspaceDir: string;
-    readonly authProfilesRef?: string;     // optional, OpenClaw uses this
-  };
-  readonly secrets: Record<string, {
-    readonly source: string;
-    readonly ref?: string;
-    readonly injection: 'env' | 'http-mediation';
-    readonly hosts?: readonly string[];
-  }>;
-  readonly allowedHosts: readonly string[];
-  readonly websocketBypass: readonly string[];
-  readonly toolProfile: string;
+	readonly id: string;
+	readonly gateway: {
+		readonly type: string;
+		readonly memory: string;
+		readonly cpus: number;
+		readonly port: number; // host-side ingress listen port
+		readonly gatewayConfig: string; // path to gateway-specific config file
+		readonly stateDir: string;
+		readonly workspaceDir: string;
+		readonly authProfilesRef?: string; // optional, OpenClaw uses this
+	};
+	readonly secrets: Record<
+		string,
+		{
+			readonly source: string;
+			readonly ref?: string;
+			readonly injection: 'env' | 'http-mediation';
+			readonly hosts?: readonly string[];
+		}
+	>;
+	readonly allowedHosts: readonly string[];
+	readonly websocketBypass: readonly string[];
+	readonly toolProfile: string;
 }
 
 export interface GatewayLifecycle {
-  /** Build the full VM spec — everything Gondolin needs to create the VM.
-   *  Lifecycle owns the complete Gondolin-facing contract: env, VFS, mediated
-   *  secrets, TCP hosts, allowed hosts, rootfs mode, session label.
-   *  Pure data assembly — no side effects. */
-  buildVmSpec(
-    zone: GatewayZoneConfig,
-    resolvedSecrets: Record<string, string>,
-    controllerPort: number,
-    tcpPool: { readonly basePort: number; readonly size: number },
-  ): GatewayVmSpec;
+	/** Build the full VM spec — everything Gondolin needs to create the VM.
+	 *  Lifecycle owns the complete Gondolin-facing contract: env, VFS, mediated
+	 *  secrets, TCP hosts, allowed hosts, rootfs mode, session label.
+	 *  Pure data assembly — no side effects. */
+	buildVmSpec(
+		zone: GatewayZoneConfig,
+		resolvedSecrets: Record<string, string>,
+		controllerPort: number,
+		tcpPool: { readonly basePort: number; readonly size: number },
+	): GatewayVmSpec;
 
-  /** Build the process spec — everything about startup, health, and logging.
-   *  Receives resolvedSecrets so the bootstrap can conditionally include
-   *  secrets (e.g., gateway token) in the shell profile for SSH sessions.
-   *  The returned processSpec is retained by the running gateway handle so
-   *  logs, health checks, and restart stay generic after startup.
-   *  Pure data assembly — no side effects. */
-  buildProcessSpec(
-    zone: GatewayZoneConfig,
-    resolvedSecrets: Record<string, string>,
-  ): GatewayProcessSpec;
+	/** Build the process spec — everything about startup, health, and logging.
+	 *  Receives resolvedSecrets so the bootstrap can conditionally include
+	 *  secrets (e.g., gateway token) in the shell profile for SSH sessions.
+	 *  The returned processSpec is retained by the running gateway handle so
+	 *  logs, health checks, and restart stay generic after startup.
+	 *  Pure data assembly — no side effects. */
+	buildProcessSpec(
+		zone: GatewayZoneConfig,
+		resolvedSecrets: Record<string, string>,
+	): GatewayProcessSpec;
 
-  /** Optional: prepare host-side state before the VM boots.
-   *  Example: OpenClaw writes auth-profiles.json from 1Password.
-   *  Most gateways don't need this. */
-  prepareHostState?(
-    zone: GatewayZoneConfig,
-    secretResolver: SecretResolver,
-  ): Promise<void>;
+	/** Optional: prepare host-side state before the VM boots.
+	 *  Example: OpenClaw writes auth-profiles.json from 1Password.
+	 *  Most gateways don't need this. */
+	prepareHostState?(zone: GatewayZoneConfig, secretResolver: SecretResolver): Promise<void>;
 }
 ```
 
@@ -237,90 +237,92 @@ export interface GatewayLifecycle {
 // gateway-zone-orchestrator.ts — generic
 
 export interface GatewayZoneStartResult {
-  readonly image: BuildImageResult;
-  readonly ingress: { readonly host: string; readonly port: number };
-  readonly processSpec: GatewayProcessSpec;     // retained for runtime ops
-  readonly vm: ManagedVm;
-  readonly zone: GatewayZoneConfig;
+	readonly image: BuildImageResult;
+	readonly ingress: { readonly host: string; readonly port: number };
+	readonly processSpec: GatewayProcessSpec; // retained for runtime ops
+	readonly vm: ManagedVm;
+	readonly zone: GatewayZoneConfig;
 }
 
 export async function startGatewayZone(options: {
-  readonly image: BuildImageResult;   // from buildGatewayImage(), has .imagePath
-  readonly lifecycle: GatewayLifecycle;
-  readonly resolvedSecrets: Record<string, string>;
-  readonly secretResolver: SecretResolver;
-  readonly systemConfig: SystemConfig;
-  readonly zone: GatewayZoneConfig;
-  readonly runTask?: RunTaskFn;
+	readonly image: BuildImageResult; // from buildGatewayImage(), has .imagePath
+	readonly lifecycle: GatewayLifecycle;
+	readonly resolvedSecrets: Record<string, string>;
+	readonly secretResolver: SecretResolver;
+	readonly systemConfig: SystemConfig;
+	readonly zone: GatewayZoneConfig;
+	readonly runTask?: RunTaskFn;
 }): Promise<GatewayZoneStartResult> {
-  const runTaskStep = options.runTask ?? noopRunTask;
+	const runTaskStep = options.runTask ?? noopRunTask;
 
-  // 1. Create mount target directories (unconditional — controller responsibility)
-  //    VFS realfs mounts need the host directories to exist before the VM boots.
-  fs.mkdirSync(options.zone.gateway.stateDir, { recursive: true });
-  fs.mkdirSync(options.zone.gateway.workspaceDir, { recursive: true });
+	// 1. Create mount target directories (unconditional — controller responsibility)
+	//    VFS realfs mounts need the host directories to exist before the VM boots.
+	fs.mkdirSync(options.zone.gateway.stateDir, { recursive: true });
+	fs.mkdirSync(options.zone.gateway.workspaceDir, { recursive: true });
 
-  // 2. Pre-start hook (optional — gateway-specific host state)
-  //    Example: OpenClaw writes auth-profiles.json from 1Password.
-  //    This is NOT for creating mount directories — that's step 1.
-  if (options.lifecycle.prepareHostState) {
-    await runTaskStep('Preparing host state', async () => {
-      await options.lifecycle.prepareHostState!(options.zone, options.secretResolver);
-    });
-  }
+	// 2. Pre-start hook (optional — gateway-specific host state)
+	//    Example: OpenClaw writes auth-profiles.json from 1Password.
+	//    This is NOT for creating mount directories — that's step 1.
+	if (options.lifecycle.prepareHostState) {
+		await runTaskStep('Preparing host state', async () => {
+			await options.lifecycle.prepareHostState!(options.zone, options.secretResolver);
+		});
+	}
 
-  // 3. Build specs (pure, no side effects)
-  const vmSpec = options.lifecycle.buildVmSpec(
-    options.zone,
-    options.resolvedSecrets,
-    options.systemConfig.host.controllerPort,
-    options.systemConfig.tcpPool,
-  );
-  const processSpec = options.lifecycle.buildProcessSpec(options.zone, options.resolvedSecrets);
+	// 3. Build specs (pure, no side effects)
+	const vmSpec = options.lifecycle.buildVmSpec(
+		options.zone,
+		options.resolvedSecrets,
+		options.systemConfig.host.controllerPort,
+		options.systemConfig.tcpPool,
+	);
+	const processSpec = options.lifecycle.buildProcessSpec(options.zone, options.resolvedSecrets);
 
-  // 3. Create VM with vmSpec
-  let managedVm!: ManagedVm;
-  await runTaskStep('Booting gateway VM', async () => {
-    managedVm = await createManagedVm({
-      imagePath: options.image.imagePath,
-      memory: options.zone.gateway.memory,
-      cpus: options.zone.gateway.cpus,
-      rootfsMode: vmSpec.rootfsMode,
-      env: vmSpec.environment,
-      vfsMounts: vmSpec.vfsMounts,
-      secrets: vmSpec.mediatedSecrets,
-      allowedHosts: vmSpec.allowedHosts,
-      tcpHosts: vmSpec.tcpHosts,
-      sessionLabel: vmSpec.sessionLabel,
-    });
-  });
+	// 3. Create VM with vmSpec
+	let managedVm!: ManagedVm;
+	await runTaskStep('Booting gateway VM', async () => {
+		managedVm = await createManagedVm({
+			imagePath: options.image.imagePath,
+			memory: options.zone.gateway.memory,
+			cpus: options.zone.gateway.cpus,
+			rootfsMode: vmSpec.rootfsMode,
+			env: vmSpec.environment,
+			vfsMounts: vmSpec.vfsMounts,
+			secrets: vmSpec.mediatedSecrets,
+			allowedHosts: vmSpec.allowedHosts,
+			tcpHosts: vmSpec.tcpHosts,
+			sessionLabel: vmSpec.sessionLabel,
+		});
+	});
 
-  // 4. Bootstrap shell environment (for SSH sessions)
-  await runTaskStep('Configuring gateway', async () => {
-    await managedVm.exec(processSpec.bootstrapCommand);
-  });
+	// 4. Bootstrap shell environment (for SSH sessions)
+	await runTaskStep('Configuring gateway', async () => {
+		await managedVm.exec(processSpec.bootstrapCommand);
+	});
 
-  // 5. Start the gateway process
-  await runTaskStep('Starting gateway', async () => {
-    await managedVm.exec(processSpec.startCommand);
-  });
+	// 5. Start the gateway process
+	await runTaskStep('Starting gateway', async () => {
+		await managedVm.exec(processSpec.startCommand);
+	});
 
-  // 6. Wait for health
-  await runTaskStep('Waiting for readiness', async () => {
-    await waitForHealth(managedVm, processSpec.healthCheck);
-  });
+	// 6. Wait for health
+	await runTaskStep('Waiting for readiness', async () => {
+		await waitForHealth(managedVm, processSpec.healthCheck);
+	});
 
-  // 7. Enable ingress
-  managedVm.setIngressRoutes([{
-    port: processSpec.guestListenPort,
-    prefix: '/',
-    stripPrefix: true,
-  }]);
-  const ingress = await managedVm.enableIngress({
-    listenPort: options.zone.gateway.port,  // HOST port from zone config
-  });
+	// 7. Enable ingress
+	managedVm.setIngressRoutes([
+		{
+			port: processSpec.guestListenPort,
+			prefix: '/',
+			stripPrefix: true,
+		},
+	]);
+	const ingress = await managedVm.enableIngress({
+		listenPort: options.zone.gateway.port, // HOST port from zone config
+	});
 
-  return { image: options.image, ingress, processSpec, vm: managedVm, zone: options.zone };
+	return { image: options.image, ingress, processSpec, vm: managedVm, zone: options.zone };
 }
 ```
 
@@ -334,97 +336,99 @@ The controller passes `vmSpec` fields directly to `createManagedVm`. The lifecyc
 // packages/openclaw-gateway/src/openclaw-lifecycle.ts
 
 export const openclawLifecycle: GatewayLifecycle = {
-  buildVmSpec(zone, resolvedSecrets, controllerPort, tcpPool): GatewayVmSpec {
-    // Split secrets by injection type
-    const environment: Record<string, string> = {
-      HOME: '/home/openclaw',
-      NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
-      OPENCLAW_CONFIG_PATH: `/home/openclaw/.openclaw/config/${path.basename(zone.gateway.gatewayConfig)}`,
-      OPENCLAW_HOME: '/home/openclaw',
-      OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
-    };
-    const mediatedSecrets: Record<string, SecretSpec> = {};
+	buildVmSpec(zone, resolvedSecrets, controllerPort, tcpPool): GatewayVmSpec {
+		// Split secrets by injection type
+		const environment: Record<string, string> = {
+			HOME: '/home/openclaw',
+			NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
+			OPENCLAW_CONFIG_PATH: `/home/openclaw/.openclaw/config/${path.basename(zone.gateway.gatewayConfig)}`,
+			OPENCLAW_HOME: '/home/openclaw',
+			OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
+		};
+		const mediatedSecrets: Record<string, SecretSpec> = {};
 
-    for (const [secretName, secretConfig] of Object.entries(zone.secrets)) {
-      const secretValue = resolvedSecrets[secretName];
-      if (!secretValue) continue;
+		for (const [secretName, secretConfig] of Object.entries(zone.secrets)) {
+			const secretValue = resolvedSecrets[secretName];
+			if (!secretValue) continue;
 
-      if (secretConfig.injection === 'http-mediation' && secretConfig.hosts) {
-        mediatedSecrets[secretName] = { hosts: [...secretConfig.hosts], value: secretValue };
-      } else {
-        environment[secretName] = secretValue;
-      }
-    }
+			if (secretConfig.injection === 'http-mediation' && secretConfig.hosts) {
+				mediatedSecrets[secretName] = { hosts: [...secretConfig.hosts], value: secretValue };
+			} else {
+				environment[secretName] = secretValue;
+			}
+		}
 
-    // Build TCP hosts
-    const tcpHosts: Record<string, string> = {
-      // In-VM alias is stable at :18800 regardless of actual host port.
-      // This is the address gateways and plugins use to reach the controller.
-      'controller.vm.host:18800': `127.0.0.1:${controllerPort}`,
-    };
-    for (let slot = 0; slot < tcpPool.size; slot++) {
-      tcpHosts[`tool-${slot}.vm.host:22`] = `127.0.0.1:${tcpPool.basePort + slot}`;
-    }
-    for (const wsHost of zone.websocketBypass) {
-      tcpHosts[wsHost] = wsHost;
-    }
+		// Build TCP hosts
+		const tcpHosts: Record<string, string> = {
+			// In-VM alias is stable at :18800 regardless of actual host port.
+			// This is the address gateways and plugins use to reach the controller.
+			'controller.vm.host:18800': `127.0.0.1:${controllerPort}`,
+		};
+		for (let slot = 0; slot < tcpPool.size; slot++) {
+			tcpHosts[`tool-${slot}.vm.host:22`] = `127.0.0.1:${tcpPool.basePort + slot}`;
+		}
+		for (const wsHost of zone.websocketBypass) {
+			tcpHosts[wsHost] = wsHost;
+		}
 
-    const configDir = path.dirname(path.resolve(zone.gateway.gatewayConfig));
+		const configDir = path.dirname(path.resolve(zone.gateway.gatewayConfig));
 
-    return {
-      environment,
-      mediatedSecrets,
-      vfsMounts: {
-        '/home/openclaw/.openclaw/config': { kind: 'realfs', hostPath: configDir },
-        '/home/openclaw/.openclaw/state': { kind: 'realfs', hostPath: zone.gateway.stateDir },
-        '/home/openclaw/workspace': { kind: 'realfs', hostPath: zone.gateway.workspaceDir },
-      },
-      tcpHosts,
-      allowedHosts: [...zone.allowedHosts],
-      rootfsMode: 'cow',
-      sessionLabel: `${zone.id}-gateway`,
-    };
-  },
+		return {
+			environment,
+			mediatedSecrets,
+			vfsMounts: {
+				'/home/openclaw/.openclaw/config': { kind: 'realfs', hostPath: configDir },
+				'/home/openclaw/.openclaw/state': { kind: 'realfs', hostPath: zone.gateway.stateDir },
+				'/home/openclaw/workspace': { kind: 'realfs', hostPath: zone.gateway.workspaceDir },
+			},
+			tcpHosts,
+			allowedHosts: [...zone.allowedHosts],
+			rootfsMode: 'cow',
+			sessionLabel: `${zone.id}-gateway`,
+		};
+	},
 
-  buildProcessSpec(zone, resolvedSecrets): GatewayProcessSpec {
-    // Build the env profile content — conditionally include gateway token
-    const envLines = [
-      'export OPENCLAW_HOME=/home/openclaw',
-      `export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/config/${path.basename(zone.gateway.gatewayConfig)}`,
-      'export OPENCLAW_STATE_DIR=/home/openclaw/.openclaw/state',
-      'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
-    ];
-    if (resolvedSecrets.OPENCLAW_GATEWAY_TOKEN) {
-      const escapedToken = resolvedSecrets.OPENCLAW_GATEWAY_TOKEN.replace(/'/g, "'\\''");
-      envLines.push(`export OPENCLAW_GATEWAY_TOKEN='${escapedToken}'`);
-    }
+	buildProcessSpec(zone, resolvedSecrets): GatewayProcessSpec {
+		// Build the env profile content — conditionally include gateway token
+		const envLines = [
+			'export OPENCLAW_HOME=/home/openclaw',
+			`export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/config/${path.basename(zone.gateway.gatewayConfig)}`,
+			'export OPENCLAW_STATE_DIR=/home/openclaw/.openclaw/state',
+			'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
+		];
+		if (resolvedSecrets.OPENCLAW_GATEWAY_TOKEN) {
+			const escapedToken = resolvedSecrets.OPENCLAW_GATEWAY_TOKEN.replace(/'/g, "'\\''");
+			envLines.push(`export OPENCLAW_GATEWAY_TOKEN='${escapedToken}'`);
+		}
 
-    return {
-      bootstrapCommand:
-        'mkdir -p /root && cat > /root/.openclaw-env << ENVEOF\n' +
-        envLines.join('\n') + '\n' +
-        'ENVEOF\n' +
-        'chmod 600 /root/.openclaw-env && ' +
-        'touch /root/.bashrc && ' +
-        "grep -qxF 'source /root/.openclaw-env' /root/.bashrc || echo 'source /root/.openclaw-env' >> /root/.bashrc",
-      startCommand: 'cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &',
-      healthCheck: { type: 'http', port: 18789, path: '/' },
-      guestListenPort: 18789,
-      logPath: '/tmp/openclaw.log',
-    };
-  },
+		return {
+			bootstrapCommand:
+				'mkdir -p /root && cat > /root/.openclaw-env << ENVEOF\n' +
+				envLines.join('\n') +
+				'\n' +
+				'ENVEOF\n' +
+				'chmod 600 /root/.openclaw-env && ' +
+				'touch /root/.bashrc && ' +
+				"grep -qxF 'source /root/.openclaw-env' /root/.bashrc || echo 'source /root/.openclaw-env' >> /root/.bashrc",
+			startCommand:
+				'cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &',
+			healthCheck: { type: 'http', port: 18789, path: '/' },
+			guestListenPort: 18789,
+			logPath: '/tmp/openclaw.log',
+		};
+	},
 
-  async prepareHostState(zone, secretResolver): Promise<void> {
-    if (!zone.gateway.authProfilesRef) return;
+	async prepareHostState(zone, secretResolver): Promise<void> {
+		if (!zone.gateway.authProfilesRef) return;
 
-    const authProfilesDir = path.join(zone.gateway.stateDir, 'agents', 'main', 'agent');
-    fs.mkdirSync(authProfilesDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(authProfilesDir, 'auth-profiles.json'),
-      await secretResolver.resolve({ source: '1password', ref: zone.gateway.authProfilesRef }),
-      'utf8',
-    );
-  },
+		const authProfilesDir = path.join(zone.gateway.stateDir, 'agents', 'main', 'agent');
+		fs.mkdirSync(authProfilesDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(authProfilesDir, 'auth-profiles.json'),
+			await secretResolver.resolve({ source: '1password', ref: zone.gateway.authProfilesRef }),
+			'utf8',
+		);
+	},
 };
 ```
 
@@ -434,65 +438,65 @@ export const openclawLifecycle: GatewayLifecycle = {
 // packages/coding-gateway/src/coding-lifecycle.ts
 
 export const codingLifecycle: GatewayLifecycle = {
-  buildVmSpec(zone, resolvedSecrets, controllerPort, tcpPool): GatewayVmSpec {
-    const environment: Record<string, string> = {
-      HOME: '/home/coder',
-      STATE_DIR: '/state',
-      NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
-    };
-    const mediatedSecrets: Record<string, SecretSpec> = {};
+	buildVmSpec(zone, resolvedSecrets, controllerPort, tcpPool): GatewayVmSpec {
+		const environment: Record<string, string> = {
+			HOME: '/home/coder',
+			STATE_DIR: '/state',
+			NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
+		};
+		const mediatedSecrets: Record<string, SecretSpec> = {};
 
-    for (const [secretName, secretConfig] of Object.entries(zone.secrets)) {
-      const secretValue = resolvedSecrets[secretName];
-      if (!secretValue) continue;
-      if (secretConfig.injection === 'http-mediation' && secretConfig.hosts) {
-        mediatedSecrets[secretName] = { hosts: [...secretConfig.hosts], value: secretValue };
-      } else {
-        environment[secretName] = secretValue;
-      }
-    }
+		for (const [secretName, secretConfig] of Object.entries(zone.secrets)) {
+			const secretValue = resolvedSecrets[secretName];
+			if (!secretValue) continue;
+			if (secretConfig.injection === 'http-mediation' && secretConfig.hosts) {
+				mediatedSecrets[secretName] = { hosts: [...secretConfig.hosts], value: secretValue };
+			} else {
+				environment[secretName] = secretValue;
+			}
+		}
 
-    // TCP hosts for Docker Compose services + controller
-    const tcpHosts: Record<string, string> = {
-      // In-VM alias is stable at :18800 regardless of actual host port.
-      // This is the address gateways and plugins use to reach the controller.
-      'controller.vm.host:18800': `127.0.0.1:${controllerPort}`,
-      'postgres.local:5432': '127.0.0.1:5432',
-      'redis.local:6379': '127.0.0.1:6379',
-    };
+		// TCP hosts for Docker Compose services + controller
+		const tcpHosts: Record<string, string> = {
+			// In-VM alias is stable at :18800 regardless of actual host port.
+			// This is the address gateways and plugins use to reach the controller.
+			'controller.vm.host:18800': `127.0.0.1:${controllerPort}`,
+			'postgres.local:5432': '127.0.0.1:5432',
+			'redis.local:6379': '127.0.0.1:6379',
+		};
 
-    return {
-      environment,
-      mediatedSecrets,
-      vfsMounts: {
-        '/state': { kind: 'realfs', hostPath: zone.gateway.stateDir },
-        '/workspace': { kind: 'realfs', hostPath: zone.gateway.workspaceDir },
-      },
-      tcpHosts,
-      allowedHosts: [...zone.allowedHosts],
-      rootfsMode: 'cow',
-      sessionLabel: `${zone.id}-coding`,
-    };
-  },
+		return {
+			environment,
+			mediatedSecrets,
+			vfsMounts: {
+				'/state': { kind: 'realfs', hostPath: zone.gateway.stateDir },
+				'/workspace': { kind: 'realfs', hostPath: zone.gateway.workspaceDir },
+			},
+			tcpHosts,
+			allowedHosts: [...zone.allowedHosts],
+			rootfsMode: 'cow',
+			sessionLabel: `${zone.id}-coding`,
+		};
+	},
 
-  buildProcessSpec(zone, _resolvedSecrets): GatewayProcessSpec {
-    return {
-      bootstrapCommand:
-        'mkdir -p /root && cat > /root/.coding-env << ENVEOF\n' +
-        'export HOME=/home/coder\n' +
-        'export STATE_DIR=/state\n' +
-        'ENVEOF\n' +
-        'chmod 600 /root/.coding-env && ' +
-        'touch /root/.bashrc && ' +
-        "grep -qxF 'source /root/.coding-env' /root/.bashrc || echo 'source /root/.coding-env' >> /root/.bashrc",
-      startCommand: 'agent-vm-worker serve --port 18789 > /tmp/coding.log 2>&1 &',
-      healthCheck: { type: 'http', port: 18789, path: '/health' },
-      guestListenPort: 18789,
-      logPath: '/tmp/coding.log',
-    };
-  },
+	buildProcessSpec(zone, _resolvedSecrets): GatewayProcessSpec {
+		return {
+			bootstrapCommand:
+				'mkdir -p /root && cat > /root/.coding-env << ENVEOF\n' +
+				'export HOME=/home/coder\n' +
+				'export STATE_DIR=/state\n' +
+				'ENVEOF\n' +
+				'chmod 600 /root/.coding-env && ' +
+				'touch /root/.bashrc && ' +
+				"grep -qxF 'source /root/.coding-env' /root/.bashrc || echo 'source /root/.coding-env' >> /root/.bashrc",
+			startCommand: 'agent-vm-worker serve --port 18789 > /tmp/coding.log 2>&1 &',
+			healthCheck: { type: 'http', port: 18789, path: '/health' },
+			guestListenPort: 18789,
+			logPath: '/tmp/coding.log',
+		};
+	},
 
-  // No prepareHostState needed
+	// No prepareHostState needed
 };
 ```
 
@@ -522,14 +526,14 @@ logs: async (zoneId) => {
 
 ```typescript
 const zoneGatewaySchema = z.object({
-  type: z.enum(['openclaw', 'coding']).default('openclaw'),
-  memory: z.string().min(1),
-  cpus: z.number().int().positive(),
-  port: z.number().int().positive(),
-  gatewayConfig: z.string().min(1),        // was: openclawConfig
-  stateDir: z.string().min(1),
-  workspaceDir: z.string().min(1),
-  authProfilesRef: z.string().min(1).optional(),
+	type: z.enum(['openclaw', 'coding']).default('openclaw'),
+	memory: z.string().min(1),
+	cpus: z.number().int().positive(),
+	port: z.number().int().positive(),
+	gatewayConfig: z.string().min(1), // was: openclawConfig
+	stateDir: z.string().min(1),
+	workspaceDir: z.string().min(1),
+	authProfilesRef: z.string().min(1).optional(),
 });
 ```
 
@@ -542,30 +546,30 @@ import { openclawLifecycle } from 'openclaw-gateway';
 import { codingLifecycle } from 'coding-gateway';
 
 const lifecycleByType: Record<string, GatewayLifecycle> = {
-  openclaw: openclawLifecycle,
-  coding: codingLifecycle,
+	openclaw: openclawLifecycle,
+	coding: codingLifecycle,
 };
 
 function loadGatewayLifecycle(type: string): GatewayLifecycle {
-  const lifecycle = lifecycleByType[type];
-  if (!lifecycle) throw new Error(`Unknown gateway type '${type}'.`);
-  return lifecycle;
+	const lifecycle = lifecycleByType[type];
+	if (!lifecycle) throw new Error(`Unknown gateway type '${type}'.`);
+	return lifecycle;
 }
 ```
 
 ### What Gets Deleted from agent-vm
 
-| File | What happens |
-|------|-------------|
-| `gateway-openclaw-lifecycle.ts` | **Deleted** — moved to `openclaw-gateway` package |
-| `gateway-vm-setup.ts` | **Deleted** — bootstrap is now `processSpec.bootstrapCommand` |
-| `gateway-vm-configuration.ts` | **Deleted** — VM config is now `vmSpec` from lifecycle |
-| `gateway-zone-orchestrator.ts` | **Simplified** — calls lifecycle methods, executes specs generically |
-| `controller-runtime-operations.ts` | **Simplified** — reads `processSpec.logPath` not hardcoded path |
-| `splitResolvedGatewaySecrets()` | **Deleted** — secret splitting moves to lifecycle implementation |
-| `buildGatewayTcpHosts()` | **Deleted** — TCP host building moves to lifecycle implementation |
-| `prepareGatewayHostDirectories()` | **Split** — mount target dir creation (stateDir, workspaceDir) stays in orchestrator (unconditional). Auth-profiles write moves to `lifecycle.prepareHostState()` (optional). |
-| `buildGatewayVmFactoryOptions()` | **Deleted** — replaced by `lifecycle.buildVmSpec()` |
+| File                               | What happens                                                                                                                                                                  |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gateway-openclaw-lifecycle.ts`    | **Deleted** — moved to `openclaw-gateway` package                                                                                                                             |
+| `gateway-vm-setup.ts`              | **Deleted** — bootstrap is now `processSpec.bootstrapCommand`                                                                                                                 |
+| `gateway-vm-configuration.ts`      | **Deleted** — VM config is now `vmSpec` from lifecycle                                                                                                                        |
+| `gateway-zone-orchestrator.ts`     | **Simplified** — calls lifecycle methods, executes specs generically                                                                                                          |
+| `controller-runtime-operations.ts` | **Simplified** — reads `processSpec.logPath` not hardcoded path                                                                                                               |
+| `splitResolvedGatewaySecrets()`    | **Deleted** — secret splitting moves to lifecycle implementation                                                                                                              |
+| `buildGatewayTcpHosts()`           | **Deleted** — TCP host building moves to lifecycle implementation                                                                                                             |
+| `prepareGatewayHostDirectories()`  | **Split** — mount target dir creation (stateDir, workspaceDir) stays in orchestrator (unconditional). Auth-profiles write moves to `lifecycle.prepareHostState()` (optional). |
+| `buildGatewayVmFactoryOptions()`   | **Deleted** — replaced by `lifecycle.buildVmSpec()`                                                                                                                           |
 
 ---
 

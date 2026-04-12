@@ -36,4 +36,21 @@ describe('createControllerClient', () => {
 			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/upgrade' },
 		]);
 	});
+
+	it('surfaces a readable error when a controller route returns non-json failure text', async () => {
+		const controllerClient = createControllerClient({
+			baseUrl: 'http://127.0.0.1:18800',
+			fetchImpl: async () =>
+				new Response('Internal Server Error', {
+					headers: {
+						'content-type': 'text/plain',
+					},
+					status: 500,
+				}),
+		});
+
+		await expect(controllerClient.getZoneLogs('shravan')).rejects.toThrow(
+			"Get logs for zone 'shravan' failed with HTTP 500: Internal Server Error",
+		);
+	});
 });

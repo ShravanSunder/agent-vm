@@ -56,6 +56,30 @@ describe('createIdleReaper', () => {
 		expect(releaseLease).toHaveBeenCalledWith('lease-expired-2');
 	});
 
+	it('releases expired leases sequentially', async () => {
+		let activeReleases = 0;
+		let maxConcurrentReleases = 0;
+		const releaseLease = vi.fn(async () => {
+			activeReleases += 1;
+			maxConcurrentReleases = Math.max(maxConcurrentReleases, activeReleases);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			activeReleases -= 1;
+		});
+		const idleReaper = createIdleReaper({
+			getLeases: () => [
+				{ id: 'lease-expired-1', lastUsedAt: 1_000 },
+				{ id: 'lease-expired-2', lastUsedAt: 2_000 },
+			],
+			now: () => 10_000,
+			releaseLease,
+			ttlMs: 5_000,
+		});
+
+		await idleReaper.reapExpiredLeases();
+
+		expect(maxConcurrentReleases).toBe(1);
+	});
+
 	it('does nothing when all leases are still active', async () => {
 		const releaseLease = vi.fn(async () => {});
 		const idleReaper = createIdleReaper({

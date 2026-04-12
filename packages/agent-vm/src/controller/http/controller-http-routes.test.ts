@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { Lease } from '../leases/lease-manager.js';
 import { createControllerApp } from './controller-http-routes.js';
-import type { Lease } from './lease-manager.js';
 
 function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 	return {

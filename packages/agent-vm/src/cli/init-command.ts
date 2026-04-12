@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 
@@ -64,7 +64,7 @@ const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object =
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				openclawConfig: `./config/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
+				gatewayConfig: `./config/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 				stateDir: `./state/${zoneId}`,
 				workspaceDir: `./workspaces/${zoneId}`,
 			},
@@ -261,10 +261,13 @@ const defaultCodingGatewayConfig = (): object => ({
 	verificationTimeoutMs: 300_000,
 });
 
-function writeFileIfMissing(filePath: string, content: string): 'created' | 'skipped' {
-	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+async function writeFileIfMissing(
+	filePath: string,
+	content: string,
+): Promise<'created' | 'skipped'> {
+	await fs.mkdir(path.dirname(filePath), { recursive: true });
 	try {
-		fs.writeFileSync(filePath, content, {
+		await fs.writeFile(filePath, content, {
 			encoding: 'utf8',
 			flag: 'wx',
 		});
@@ -281,20 +284,27 @@ function writeFileIfMissing(filePath: string, content: string): 'created' | 'ski
 export function scaffoldAgentVmProject(
 	options: ScaffoldAgentVmProjectOptions,
 	dependencies: ScaffoldAgentVmProjectDependencies = {},
-): ScaffoldAgentVmProjectResult {
+): Promise<ScaffoldAgentVmProjectResult> {
+	return scaffoldAgentVmProjectInternal(options, dependencies);
+}
+
+async function scaffoldAgentVmProjectInternal(
+	options: ScaffoldAgentVmProjectOptions,
+	dependencies: ScaffoldAgentVmProjectDependencies = {},
+): Promise<ScaffoldAgentVmProjectResult> {
 	const created: string[] = [];
 	const skipped: string[] = [];
 	const gatewayType = options.gatewayType ?? 'openclaw';
 
 	const systemConfigPath = path.join(options.targetDir, 'system.json');
-	const systemConfigStatus = writeFileIfMissing(
+	const systemConfigStatus = await writeFileIfMissing(
 		systemConfigPath,
 		`${JSON.stringify(defaultSystemConfig(options.zoneId, gatewayType), null, '\t')}\n`,
 	);
 	(systemConfigStatus === 'created' ? created : skipped).push('system.json');
 
 	const envFilePath = path.join(options.targetDir, '.env.local');
-	const envFileStatus = writeFileIfMissing(envFilePath, defaultEnvTemplate);
+	const envFileStatus = await writeFileIfMissing(envFilePath, defaultEnvTemplate);
 	(envFileStatus === 'created' ? created : skipped).push('.env.local');
 	if (envFileStatus === 'created') {
 		const generateAgeIdentityKey =
@@ -312,7 +322,7 @@ export function scaffoldAgentVmProject(
 			});
 		const ageIdentityKey = generateAgeIdentityKey();
 		if (ageIdentityKey) {
-			fs.appendFileSync(envFilePath, `AGE_IDENTITY_KEY=${ageIdentityKey}\n`, 'utf8');
+			await fs.appendFile(envFilePath, `AGE_IDENTITY_KEY=${ageIdentityKey}\n`, 'utf8');
 		}
 	}
 
@@ -323,7 +333,7 @@ export function scaffoldAgentVmProject(
 		options.zoneId,
 		gatewayConfigFileName,
 	);
-	const gatewayConfigStatus = writeFileIfMissing(
+	const gatewayConfigStatus = await writeFileIfMissing(
 		gatewayConfigPath,
 		`${JSON.stringify(
 			gatewayType === 'openclaw'
@@ -338,7 +348,7 @@ export function scaffoldAgentVmProject(
 	);
 
 	const gatewayDockerfilePath = path.join(options.targetDir, 'images', 'gateway', 'Dockerfile');
-	const gatewayDockerfileStatus = writeFileIfMissing(
+	const gatewayDockerfileStatus = await writeFileIfMissing(
 		gatewayDockerfilePath,
 		gatewayType === 'openclaw' ? defaultGatewayDockerfile : defaultCodingGatewayDockerfile,
 	);
@@ -350,7 +360,7 @@ export function scaffoldAgentVmProject(
 		'gateway',
 		'build-config.json',
 	);
-	const gatewayBuildConfigStatus = writeFileIfMissing(
+	const gatewayBuildConfigStatus = await writeFileIfMissing(
 		gatewayBuildConfigPath,
 		`${JSON.stringify(defaultGatewayBuildConfig(), null, '\t')}\n`,
 	);
@@ -359,11 +369,11 @@ export function scaffoldAgentVmProject(
 	);
 
 	const toolDockerfilePath = path.join(options.targetDir, 'images', 'tool', 'Dockerfile');
-	const toolDockerfileStatus = writeFileIfMissing(toolDockerfilePath, defaultToolDockerfile);
+	const toolDockerfileStatus = await writeFileIfMissing(toolDockerfilePath, defaultToolDockerfile);
 	(toolDockerfileStatus === 'created' ? created : skipped).push('images/tool/Dockerfile');
 
 	const toolBuildConfigPath = path.join(options.targetDir, 'images', 'tool', 'build-config.json');
-	const toolBuildConfigStatus = writeFileIfMissing(
+	const toolBuildConfigStatus = await writeFileIfMissing(
 		toolBuildConfigPath,
 		`${JSON.stringify(defaultToolBuildConfig(), null, '\t')}\n`,
 	);
@@ -374,7 +384,7 @@ export function scaffoldAgentVmProject(
 		path.join(options.targetDir, 'workspaces', options.zoneId),
 		path.join(options.targetDir, 'workspaces', 'tools'),
 	]) {
-		fs.mkdirSync(directoryPath, { recursive: true });
+		await fs.mkdir(directoryPath, { recursive: true });
 	}
 
 	return { created, keychainStored: false, skipped };

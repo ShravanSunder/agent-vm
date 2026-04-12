@@ -24,7 +24,7 @@ export function createCacheSubcommands(io: CliIo, dependencies: CliDependencies)
 					await (dependencies.runCacheCommand ?? runCacheCommand)(
 						{
 							subcommand: 'list',
-							systemConfig: loadSystemConfigFromOption(config, dependencies),
+							systemConfig: await loadSystemConfigFromOption(config, dependencies),
 						},
 						io,
 					);
@@ -42,7 +42,7 @@ export function createCacheSubcommands(io: CliIo, dependencies: CliDependencies)
 						{
 							confirm,
 							subcommand: 'clean',
-							systemConfig: loadSystemConfigFromOption(config, dependencies),
+							systemConfig: await loadSystemConfigFromOption(config, dependencies),
 						},
 						io,
 					);

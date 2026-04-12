@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 import { runBuildCommand, type BuildCommandDependencies } from './build-command.js';
 
 const createdDirectories: string[] = [];
@@ -44,7 +44,7 @@ function createTestSystemConfig(): SystemConfig {
 					type: 'openclaw',
 					cpus: 2,
 					memory: '2G',
-					openclawConfig: './config/test/openclaw.json',
+					gatewayConfig: './config/test/openclaw.json',
 					port: 18791,
 					stateDir: '/state/test',
 					workspaceDir: '/workspaces/test',
