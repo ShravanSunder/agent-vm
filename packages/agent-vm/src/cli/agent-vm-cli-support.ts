@@ -131,8 +131,10 @@ export function requireZone(
 		return findZone(systemConfig, zoneFlag);
 	}
 
-	const zoneNames = systemConfig.zones.map((zone) => zone.id).join(', ');
-	throw new Error(`--zone is required. Available zones: ${zoneNames}`);
+	const zoneList = systemConfig.zones
+		.map((zone) => `  --zone ${zone.id}  (${zone.gateway.type})`)
+		.join('\n');
+	throw new Error(`--zone is required. Available zones:\n${zoneList}`);
 }
 
 export async function createResolverFromSystemConfig(

@@ -64,7 +64,7 @@ export async function runAuthInteractiveCommand(options: {
 		'createControllerClient' | 'runCommand' | 'runInteractiveProcess'
 	>;
 	readonly io: CliIo;
-	readonly provider: string | undefined;
+	readonly provider: string;
 	readonly runCommand?: (
 		command: string,
 		arguments_: readonly string[],
@@ -91,25 +91,6 @@ export async function runAuthInteractiveCommand(options: {
 		throw new Error(
 			`Cannot auth: controller returned incomplete SSH access for zone '${options.zoneId}'.`,
 		);
-	}
-
-	if (!options.provider) {
-		const providers = await listAuthProviders({
-			listProvidersCommand: options.authConfig.listProvidersCommand,
-			sshAccess: sshResponse,
-			...((options.runCommand ?? options.dependencies.runCommand)
-				? { runCommand: options.runCommand ?? options.dependencies.runCommand }
-				: {}),
-		});
-		if (providers.length === 0) {
-			options.io.stdout.write('No auth providers available.\n');
-			return;
-		}
-		options.io.stdout.write('Available auth providers:\n');
-		for (const provider of providers) {
-			options.io.stdout.write(`  ${provider}\n`);
-		}
-		return;
 	}
 
 	const sshArguments = [

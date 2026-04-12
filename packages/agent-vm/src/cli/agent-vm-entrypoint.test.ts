@@ -299,51 +299,25 @@ describe('runAgentVmCli', () => {
 			'-p',
 			'19000',
 			'root@127.0.0.1',
-			'openclaw models auth login --provider codex',
+			"openclaw models auth login --provider 'codex'",
 		]);
 	});
 
-	it('lists available auth providers when auth-interactive is called without a provider', async () => {
-		const outputs: string[] = [];
-		const execInZone = vi.fn(async () => ({
-			exitCode: 0,
-			stdout: 'codex\nopenai-codex\n',
-			stderr: '',
-		}));
-
-		await runAgentVmCli(
-			['auth-interactive', '--zone', 'shravan'],
-			{
-				stderr: { write: () => true },
-				stdout: {
-					write: (chunk: string | Uint8Array) => {
-						outputs.push(String(chunk));
-						return true;
-					},
+	it('auth-interactive without --zone shows available zones', async () => {
+		const stderrChunks: string[] = [];
+		await expect(
+			runAgentVmCli(
+				['auth-interactive', 'codex'],
+				{
+					stderr: { write: (s: string) => { stderrChunks.push(s); return true; } },
+					stdout: { write: () => true },
 				},
-			},
-			{
-				...defaultCliDependencies,
-				createControllerClient: () => ({
-					...createControllerClientStub(async () => ({
-						host: '127.0.0.1',
-						identityFile: '/tmp/test-key',
-						port: 19000,
-						user: 'root',
-					})),
-					execInZone,
-				}),
-				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
-				runCommand: vi.fn(async () => ({
-					exitCode: 0,
-					stdout: 'codex\nopenai-codex\n',
-					stderr: '',
-				})),
-			},
-		);
-
-		expect(outputs.join('')).toContain('codex');
-		expect(outputs.join('')).toContain('openai-codex');
+				{
+					...defaultCliDependencies,
+					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				},
+			),
+		).rejects.toThrow(/--zone is required/u);
 	});
 
 	it('prints top-level help instead of throwing on --help', async () => {

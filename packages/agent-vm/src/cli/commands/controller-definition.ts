@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { command, option, optional, positional, string, subcommands } from 'cmd-ts';
+import { command, positional, string, subcommands } from 'cmd-ts';
 
 import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
 import type { SystemConfig } from '../../config/system-config.js';
@@ -41,10 +41,16 @@ function createControllerOperationSubcommand(
 		},
 		handler: async ({ config, ...rest }) => {
 			const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+			const zoneFlag = options.supportsZone && 'zone' in rest
+				? (rest.zone as string | undefined)
+				: undefined;
+			const selectedZone = options.supportsZone
+				? requireZone(systemConfig, zoneFlag)
+				: undefined;
 			const argumentPrefix =
 				options.supportsPurge && 'purge' in rest && rest.purge ? ['--purge'] : [];
-			const restArguments = options.supportsZone
-				? appendZoneArgument(argumentPrefix, 'zone' in rest ? rest.zone : '')
+			const restArguments = selectedZone
+				? appendZoneArgument(argumentPrefix, selectedZone.id)
 				: argumentPrefix;
 			await runControllerOperationCommand({
 				dependencies,
@@ -85,12 +91,7 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 				description: 'Boot the controller and gateway',
 				args: {
 					config: createConfigOption(),
-					zone: option({
-						type: optional(string),
-						long: 'zone',
-						short: 'z',
-						description: 'Zone identifier (required — lists available zones when omitted)',
-					}),
+					zone: createZoneOption(),
 				},
 				handler: async ({ config, zone }) => {
 					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
@@ -137,9 +138,11 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 					zone: createZoneOption(),
 				},
 				handler: async ({ config, print, remoteCommandArguments, zone }) => {
+					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+					const selectedZone = requireZone(systemConfig, zone);
 					const restArguments = [
 						'--zone',
-						zone,
+						selectedZone.id,
 						...(print ? ['--print'] : []),
 						...(remoteCommandArguments.length > 0 ? ['--', ...remoteCommandArguments] : []),
 					];
@@ -147,7 +150,7 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 						dependencies,
 						io,
 						restArguments,
-						systemConfig: await loadSystemConfigFromOption(config, dependencies),
+						systemConfig,
 					});
 				},
 			}),
@@ -179,12 +182,14 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 							zone: createZoneOption(),
 						},
 						handler: async ({ config, zone }) => {
+							const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+							const selectedZone = requireZone(systemConfig, zone);
 							await runControllerOperationCommand({
 								dependencies,
 								io,
-								restArguments: appendZoneArgument(['refresh'], zone),
+								restArguments: appendZoneArgument(['refresh'], selectedZone.id),
 								subcommand: 'credentials',
-								systemConfig: await loadSystemConfigFromOption(config, dependencies),
+								systemConfig,
 							});
 						},
 					}),

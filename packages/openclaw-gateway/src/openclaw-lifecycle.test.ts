@@ -83,11 +83,17 @@ describe('openclawLifecycle', () => {
 
 		it('builds a login command for a given provider', () => {
 			expect(openclawLifecycle.authConfig?.buildLoginCommand('codex')).toBe(
-				'openclaw models auth login --provider codex',
+				"openclaw models auth login --provider 'codex'",
 			);
 			expect(openclawLifecycle.authConfig?.buildLoginCommand('openai-codex')).toBe(
-				'openclaw models auth login --provider openai-codex',
+				"openclaw models auth login --provider 'openai-codex'",
 			);
+		});
+
+		it('shell-quotes provider values safely', () => {
+			expect(
+				openclawLifecycle.authConfig?.buildLoginCommand("codex'; touch /tmp/pwned; echo '"),
+			).toBe("openclaw models auth login --provider 'codex'\\''; touch /tmp/pwned; echo '\\'''");
 		});
 	});
 

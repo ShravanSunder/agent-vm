@@ -1,7 +1,7 @@
 // oxlint-disable typescript-eslint/explicit-function-return-type
 import { command, positional, string, subcommands } from 'cmd-ts';
 
-import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
+import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
 import { runBackupCommand } from '../backup-commands.js';
 import {
 	appendZoneArgument,
@@ -23,11 +23,13 @@ export function createBackupSubcommands(io: CliIo, dependencies: CliDependencies
 					zone: createZoneOption(),
 				},
 				handler: async ({ config, zone }) => {
+					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+					const selectedZone = requireZone(systemConfig, zone);
 					await runBackupCommand({
 						dependencies,
 						io,
-						restArguments: appendZoneArgument(['create'], zone),
-						systemConfig: await loadSystemConfigFromOption(config, dependencies),
+						restArguments: appendZoneArgument(['create'], selectedZone.id),
+						systemConfig,
 					});
 				},
 			}),
@@ -39,11 +41,13 @@ export function createBackupSubcommands(io: CliIo, dependencies: CliDependencies
 					zone: createZoneOption(),
 				},
 				handler: async ({ config, zone }) => {
+					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+					const selectedZone = requireZone(systemConfig, zone);
 					await runBackupCommand({
 						dependencies,
 						io,
-						restArguments: appendZoneArgument(['list'], zone),
-						systemConfig: await loadSystemConfigFromOption(config, dependencies),
+						restArguments: appendZoneArgument(['list'], selectedZone.id),
+						systemConfig,
 					});
 				},
 			}),
@@ -60,11 +64,13 @@ export function createBackupSubcommands(io: CliIo, dependencies: CliDependencies
 					zone: createZoneOption(),
 				},
 				handler: async ({ backupPath, config, zone }) => {
+					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+					const selectedZone = requireZone(systemConfig, zone);
 					await runBackupCommand({
 						dependencies,
 						io,
-						restArguments: appendZoneArgument(['restore', backupPath], zone),
-						systemConfig: await loadSystemConfigFromOption(config, dependencies),
+						restArguments: appendZoneArgument(['restore', backupPath], selectedZone.id),
+						systemConfig,
 					});
 				},
 			}),

@@ -1,5 +1,5 @@
 // oxlint-disable typescript-eslint/explicit-function-return-type
-import { command, optional, positional, string } from 'cmd-ts';
+import { command, positional, string } from 'cmd-ts';
 
 import { loadGatewayLifecycle } from '../../gateway/gateway-lifecycle-loader.js';
 import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
@@ -13,14 +13,13 @@ import {
 export function createAuthInteractiveCommand(io: CliIo, dependencies: CliDependencies) {
 	return command({
 		name: 'auth-interactive',
-		description:
-			'Run interactive auth for a gateway zone. Omitting the provider lists available providers.',
+		description: 'Run interactive auth for a gateway zone.',
 		args: {
 			config: createConfigOption(),
 			provider: positional({
 				displayName: 'provider',
-				type: optional(string),
-				description: 'Provider name (for example: codex)',
+				type: string,
+				description: 'Provider name (for example: codex).',
 			}),
 			zone: createZoneOption(),
 		},

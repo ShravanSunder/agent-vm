@@ -114,55 +114,6 @@ describe('runAuthInteractiveCommand', () => {
 		).rejects.toThrow(/does not support interactive auth/i);
 	});
 
-	it('lists providers when no provider argument is given', async () => {
-		const writes: string[] = [];
-		const enableZoneSsh = vi.fn(async () => ({
-			host: '127.0.0.1',
-			identityFile: '/tmp/key',
-			port: 2222,
-			user: 'root',
-		}));
-		const runCommand = vi.fn(async () => ({
-			exitCode: 0,
-			stdout: 'codex\nanthropic\n',
-			stderr: '',
-		}));
-
-		await runAuthInteractiveCommand({
-			authConfig,
-			dependencies: {
-				...defaultCliDependencies,
-				createControllerClient: vi.fn(() =>
-					createControllerClientStub({
-						enableZoneSsh,
-					}),
-				),
-				runInteractiveProcess: vi.fn(),
-			},
-			io: {
-				stdout: {
-					write: (chunk: string | Uint8Array) => {
-						writes.push(String(chunk));
-						return true;
-					},
-				},
-				stderr: { write: vi.fn(() => true) },
-			},
-			provider: undefined,
-			runCommand,
-			systemConfig: { host: { controllerPort: 18800 } } as never,
-			zoneId: 'test',
-		});
-
-		expect(enableZoneSsh).toHaveBeenCalledWith('test');
-		expect(runCommand).toHaveBeenCalledWith(
-			'ssh',
-			expect.arrayContaining(['root@127.0.0.1', 'list-cmd']),
-		);
-		expect(writes.join('')).toContain('codex');
-		expect(writes.join('')).toContain('anthropic');
-	});
-
 	it('runs interactive SSH with the login command when provider is given', async () => {
 		const runInteractiveProcess = vi.fn(async () => {});
 		const enableZoneSsh = vi.fn(async () => ({

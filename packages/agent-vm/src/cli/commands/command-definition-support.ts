@@ -19,10 +19,10 @@ export function createConfigOption() {
 
 export function createZoneOption() {
 	return option({
-		type: string,
+		type: optional(string),
 		long: 'zone',
 		short: 'z',
-		description: 'Zone identifier',
+		description: 'Zone identifier (lists available zones when omitted)',
 	});
 }
 

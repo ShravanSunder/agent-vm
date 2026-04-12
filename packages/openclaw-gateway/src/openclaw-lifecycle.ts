@@ -57,11 +57,15 @@ function buildOpenClawBootstrapCommand(
 	);
 }
 
+function shellQuote(value: string): string {
+	return `'${value.replace(/'/gu, `'\\''`)}'`;
+}
+
 export const openclawLifecycle: GatewayLifecycle = {
 	authConfig: {
 		listProvidersCommand: 'openclaw models auth list --format plain 2>/dev/null || echo ""',
 		buildLoginCommand: (provider: string): string =>
-			`openclaw models auth login --provider ${provider}`,
+			`openclaw models auth login --provider ${shellQuote(provider)}`,
 	},
 
 	buildVmSpec(
