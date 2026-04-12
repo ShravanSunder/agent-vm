@@ -27,6 +27,11 @@ export async function startGatewayZone(
 	const runTaskStep =
 		options.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
 	const zone = findGatewayZone(options.systemConfig, options.zoneId);
+	if (zone.gateway.type === 'coding') {
+		throw new Error(
+			`Coding gateway runtime is not implemented for zone '${zone.id}'. Use an OpenClaw gateway zone or add coding runtime support before starting this zone.`,
+		);
+	}
 	let resolvedSecrets!: Awaited<ReturnType<typeof resolveZoneSecrets>>;
 	await runTaskStep('Resolving zone secrets', async () => {
 		resolvedSecrets = await resolveZoneSecrets({

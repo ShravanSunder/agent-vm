@@ -29,6 +29,8 @@ import {
 } from './agent-vm-cli-support.js';
 import { createAgentVmApp } from './commands/create-app.js';
 
+export class ReportedCliError extends Error {}
+
 export async function runAgentVmCli(
 	argv: readonly string[],
 	io: CliIo,
@@ -44,11 +46,25 @@ export async function runAgentVmCli(
 		outputStream.write('\n');
 	}
 	if (result.error.config.exitCode !== 0) {
-		throw new Error(result.error.config.message);
+		throw new ReportedCliError(result.error.config.message);
 	}
 }
 
 export { loadOptionalLocalEnvironmentFile };
+
+export function handleCliMainError(
+	error: unknown,
+	stderr: Pick<NodeJS.WriteStream, 'write'>,
+): void {
+	if (error instanceof ReportedCliError) {
+		return;
+	}
+	if (error instanceof Error) {
+		stderr.write(`${error.message}\n`);
+		return;
+	}
+	stderr.write(`${String(error)}\n`);
+}
 
 async function main(): Promise<void> {
 	await runAgentVmCli(process.argv.slice(2), {
@@ -59,9 +75,7 @@ async function main(): Promise<void> {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	void main().catch((error: unknown) => {
-		if (!(error instanceof Error)) {
-			process.stderr.write(`${String(error)}\n`);
-		}
+		handleCliMainError(error, process.stderr);
 		process.exitCode = 1;
 	});
 }

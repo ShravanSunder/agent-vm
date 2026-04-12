@@ -3,7 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ControllerClient } from '../controller/controller-client.js';
 import type { SystemConfig } from '../controller/system-config.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
-import { loadOptionalLocalEnvironmentFile, runAgentVmCli } from './agent-vm-entrypoint.js';
+import {
+	handleCliMainError,
+	loadOptionalLocalEnvironmentFile,
+	ReportedCliError,
+	runAgentVmCli,
+} from './agent-vm-entrypoint.js';
 
 function createCliBuildSystemConfig(): SystemConfig {
 	return {
@@ -349,6 +354,32 @@ describe('runAgentVmCli', () => {
 		expect(stdoutChunks.join('')).toContain('controller');
 		expect(stdoutChunks.join('')).toContain('start');
 		expect(stdoutChunks.join('')).toContain('credentials');
+	});
+
+	it('reports regular runtime errors to stderr in the main error handler', () => {
+		const stderrChunks: string[] = [];
+
+		handleCliMainError(new Error('boom'), {
+			write: (chunk: string | Uint8Array) => {
+				stderrChunks.push(String(chunk));
+				return true;
+			},
+		});
+
+		expect(stderrChunks.join('')).toContain('boom');
+	});
+
+	it('does not duplicate already-reported cli exit errors in the main error handler', () => {
+		const stderrChunks: string[] = [];
+
+		handleCliMainError(new ReportedCliError('already shown'), {
+			write: (chunk: string | Uint8Array) => {
+				stderrChunks.push(String(chunk));
+				return true;
+			},
+		});
+
+		expect(stderrChunks).toEqual([]);
 	});
 
 	it('routes doctor and status subcommands to their handlers', async () => {

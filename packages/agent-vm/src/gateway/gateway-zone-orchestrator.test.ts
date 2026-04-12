@@ -214,6 +214,40 @@ describe('startGatewayZone', () => {
 		).rejects.toThrow("Unknown zone 'does-not-exist'.");
 	});
 
+	it('throws a clear error for coding gateways until that runtime is implemented', async () => {
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => {
+				throw new Error('not used');
+			},
+			resolveAll: async () => ({}),
+		};
+		const codingSystemConfig: SystemConfig = {
+			...systemConfig,
+			zones: systemConfig.zones.map((zone) => ({
+				...zone,
+				gateway: {
+					...zone.gateway,
+					type: 'coding',
+				},
+			})),
+		};
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver,
+					systemConfig: codingSystemConfig,
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(),
+					createManagedVm: vi.fn(),
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				},
+			),
+		).rejects.toThrow(/coding gateway runtime is not implemented/i);
+	});
+
 	it('splits env secrets from http-mediation secrets based on injection config', async () => {
 		const closeMock = vi.fn(async () => {});
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));

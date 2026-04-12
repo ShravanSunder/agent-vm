@@ -181,18 +181,16 @@ export async function createSecretResolver(
 			},
 			resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> => {
 				const resolvedEntries = await Promise.all(
-					Object.entries(refs).map(
-						async ([secretName, secretRef]) => {
-							try {
-								return [secretName, await client.secrets.resolve(secretRef.ref)] as const;
-							} catch {
-								return [
-									secretName,
-									await resolveSecretWithOpCli(options.serviceAccountToken, secretRef.ref, exec),
-								] as const;
-							}
-						},
-					),
+					Object.entries(refs).map(async ([secretName, secretRef]) => {
+						try {
+							return [secretName, await client.secrets.resolve(secretRef.ref)] as const;
+						} catch {
+							return [
+								secretName,
+								await resolveSecretWithOpCli(options.serviceAccountToken, secretRef.ref, exec),
+							] as const;
+						}
+					}),
 				);
 
 				return resolvedEntries.reduce<Record<string, string>>(

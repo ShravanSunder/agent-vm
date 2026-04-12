@@ -3,6 +3,7 @@
 Source spec: `docs/superpowers/plans/2026-04-11-cli-redesign.md`
 
 Legend:
+
 - `[x]` implemented and verified
 - `[~]` implemented, but live verification is blocked by host/runtime environment
 - `[ ]` not implemented
@@ -64,12 +65,13 @@ Legend:
 
 - `[x]` `gateway.type` exists in the system config schema in [system-config.ts](../../packages/agent-vm/src/controller/system-config.ts)
 - `[x]` `init` defaults to `openclaw`
-- `[x]` `init --type coding` is effective, not inert
+- `[x]` `init --type coding` is effective for scaffolding
 - `[x]` coding scaffolding writes `config/<zone>/coding.json`
 - `[x]` coding scaffolding writes a gateway Dockerfile with `@openai/codex-cli`
 - `[x]` openclaw scaffolding still writes `config/<zone>/openclaw.json`
 - `[x]` gateway-type scaffolding is covered by [init-command.test.ts](../../packages/agent-vm/src/cli/init-command.test.ts)
 - `[x]` config loading accepts `gateway.type` in [system-config.test.ts](../../packages/agent-vm/src/controller/system-config.test.ts)
+- `[x]` `controller start` now reads `gateway.type` and throws a clear unsupported error for `coding` zones in [gateway-zone-orchestrator.ts](../../packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts)
 
 ## Behavioral Preservation
 
@@ -90,10 +92,10 @@ Legend:
 - `[x]` `agent-vm init test-zone --type coding` scaffolds a coding gateway in live CLI smoke checks
 - `[x]` `pnpm check` passes
 - `[x]` `pnpm test` passes
-- `[~]` live `agent-vm controller start` shows progress, but full startup is blocked by host 1Password SDK/auth compatibility on this machine
-- `[~]` live `agent-vm controller start | jq .ingress` is blocked by the same 1Password runtime failure before JSON is emitted
+- `[~]` live `agent-vm controller start` shows the new progress path and now gets past initial 1Password SDK initialization, but full boot still stalls/fails in zone secret resolution on this machine
+- `[~]` live `agent-vm controller start | jq .ingress` remains blocked by that unresolved runtime secret-resolution failure before final JSON is emitted
 
 ## Current Remaining Delta
 
 - `[~]` The implemented CLI redesign is complete at code/test level.
-- `[~]` The only remaining gap against the plan is live controller boot verification, blocked by the host's 1Password request/auth environment rather than missing application code.
+- `[~]` The remaining gap against the plan is live controller boot verification. The branch fixed two code-level 1Password fallback gaps, but the full runtime still fails during zone secret resolution in this environment.
