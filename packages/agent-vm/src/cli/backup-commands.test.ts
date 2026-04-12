@@ -217,6 +217,65 @@ describe('runBackupCommand', () => {
 		).rejects.toThrow('Usage: agent-vm backup restore <path> [--zone <id>]');
 	});
 
+	it('restores a backup into the target zone workspace and state directories', async () => {
+		const restoreBackup = vi.fn(async () => ({
+			stateDir: './state/shravan',
+			workspaceDir: './workspaces/shravan',
+			zoneId: 'shravan',
+		}));
+		const systemConfig = createBackupSystemConfig();
+		const outputs: string[] = [];
+
+		await runBackupCommand({
+			dependencies: {
+				...defaultCliDependencies,
+				buildControllerStatus: () => ({ controllerPort: 18800, toolProfiles: [], zones: [] }),
+				createAgeBackupEncryption: () => ({ decrypt: async () => {}, encrypt: async () => {} }),
+				createControllerClient: () => ({
+					destroyZone: async () => ({}),
+					enableZoneSsh: async () => ({}),
+					getControllerStatus: async () => ({}),
+					getZoneLogs: async () => ({}),
+					listLeases: async () => [],
+					refreshZoneCredentials: async () => ({}),
+					releaseLease: async () => {},
+					stopController: async () => ({}),
+					upgradeZone: async () => ({}),
+				}),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				createZoneBackupManager: () => ({
+					createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
+					listBackups: () => [],
+					restoreBackup,
+				}),
+				loadSystemConfig: async () => systemConfig,
+				resolveServiceAccountToken: async () => 'token',
+				runControllerDoctor: () => ({ checks: [], ok: true }),
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			restArguments: ['restore', '/tmp/backup.tar.age', '--zone', 'shravan'],
+			systemConfig,
+		});
+
+		expect(restoreBackup).toHaveBeenCalledWith({
+			backupPath: '/tmp/backup.tar.age',
+			stateDir: './state/shravan',
+			workspaceDir: './workspaces/shravan',
+		});
+		expect(outputs.join('')).toContain('"zoneId": "shravan"');
+	});
+
 	it('requires --zone explicitly', async () => {
 		const systemConfig = createBackupSystemConfig();
 

@@ -265,6 +265,33 @@ describe('runAgentVmCli', () => {
 		);
 	});
 
+	it('routes cache list through the cache command handler', async () => {
+		const runCacheCommand = vi.fn(async () => {});
+
+		await runAgentVmCli(
+			['cache', 'list', '--config', './custom-system.json'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				runCacheCommand,
+			},
+		);
+
+		expect(runCacheCommand).toHaveBeenCalledWith(
+			{
+				subcommand: 'list',
+				systemConfig: expect.objectContaining({
+					cacheDir: './cache',
+				}),
+			},
+			expect.any(Object),
+		);
+	});
+
 	it('routes auth to an interactive SSH-backed OpenClaw login', async () => {
 		const runInteractiveProcess = vi.fn(async () => {});
 
@@ -309,7 +336,12 @@ describe('runAgentVmCli', () => {
 			runAgentVmCli(
 				['auth-interactive', 'codex'],
 				{
-					stderr: { write: (s: string) => { stderrChunks.push(s); return true; } },
+					stderr: {
+						write: (s: string) => {
+							stderrChunks.push(s);
+							return true;
+						},
+					},
 					stdout: { write: () => true },
 				},
 				{
@@ -991,6 +1023,115 @@ describe('runAgentVmCli', () => {
 		expect(controllerClient.upgradeZone).toHaveBeenCalledWith('shravan');
 		expect(controllerClient.refreshZoneCredentials).toHaveBeenCalledWith('shravan');
 		expect(outputs.join('\n')).toContain('"zoneId": "shravan"');
+	});
+
+	it('routes controller ssh through the ssh command handler', async () => {
+		const runInteractiveProcess = vi.fn(async () => {});
+
+		await runAgentVmCli(
+			['controller', 'ssh', '--zone', 'shravan', '--print'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () =>
+					createControllerClientStub(async () => ({
+						command: 'ssh root@127.0.0.1',
+					})),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				runInteractiveProcess,
+			},
+		);
+
+		expect(runInteractiveProcess).not.toHaveBeenCalled();
+	});
+
+	it('routes controller stop through the controller client', async () => {
+		const stopController = vi.fn(async () => ({ ok: true }));
+
+		await runAgentVmCli(
+			['controller', 'stop'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () => ({
+					destroyZone: async () => ({}),
+					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
+					execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+					getZoneLogs: async () => ({}),
+					getControllerStatus: async () => ({}),
+					listLeases: async () => [],
+					refreshZoneCredentials: async () => ({}),
+					releaseLease: async () => {},
+					stopController,
+					upgradeZone: async () => ({}),
+				}),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+			},
+		);
+
+		expect(stopController).toHaveBeenCalled();
+	});
+
+	it('routes controller lease list and release through the lease handler', async () => {
+		const listLeases = vi.fn(async () => [{ id: 'lease-123' }]);
+		const releaseLease = vi.fn(async () => {});
+
+		await runAgentVmCli(
+			['controller', 'lease', 'list'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () => ({
+					destroyZone: async () => ({}),
+					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
+					execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+					getZoneLogs: async () => ({}),
+					getControllerStatus: async () => ({}),
+					listLeases,
+					refreshZoneCredentials: async () => ({}),
+					releaseLease,
+					stopController: async () => ({ ok: true }),
+					upgradeZone: async () => ({}),
+				}),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+			},
+		);
+
+		await runAgentVmCli(
+			['controller', 'lease', 'release', 'lease-123'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () => ({
+					destroyZone: async () => ({}),
+					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
+					execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+					getZoneLogs: async () => ({}),
+					getControllerStatus: async () => ({}),
+					listLeases,
+					refreshZoneCredentials: async () => ({}),
+					releaseLease,
+					stopController: async () => ({ ok: true }),
+					upgradeZone: async () => ({}),
+				}),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+			},
+		);
+
+		expect(listLeases).toHaveBeenCalled();
+		expect(releaseLease).toHaveBeenCalledWith('lease-123');
 	});
 
 	it('routes backup list through the backup manager', async () => {
