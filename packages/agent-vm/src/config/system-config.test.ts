@@ -149,4 +149,70 @@ describe('loadSystemConfig', () => {
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/zones/i);
 	});
+
+	test('rejects configs with zone secrets missing ref', async () => {
+		const workingDirectoryPath = fs.mkdtempSync(
+			path.join(os.tmpdir(), 'agent-vm-system-config-missing-ref-'),
+		);
+		createdDirectories.push(workingDirectoryPath);
+		const configPath = path.join(workingDirectoryPath, 'system.json');
+
+		fs.writeFileSync(
+			configPath,
+			JSON.stringify({
+				host: {
+					controllerPort: 18800,
+					secretsProvider: {
+						type: '1password',
+						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
+					},
+				},
+				cacheDir: './cache',
+				images: {
+					gateway: {
+						buildConfig: './images/gateway/build-config.json',
+					},
+					tool: {
+						buildConfig: './images/tool/build-config.json',
+					},
+				},
+				zones: [
+					{
+						id: 'shravan',
+						gateway: {
+							type: 'openclaw',
+							memory: '2G',
+							cpus: 2,
+							port: 18791,
+							gatewayConfig: './config/shravan/openclaw.json',
+							stateDir: './state/shravan',
+							workspaceDir: './workspaces/shravan',
+						},
+						secrets: {
+							DISCORD_BOT_TOKEN: {
+								source: '1password',
+								injection: 'env',
+							},
+						},
+						allowedHosts: ['discord.com'],
+						toolProfile: 'standard',
+					},
+				],
+				toolProfiles: {
+					standard: {
+						memory: '1G',
+						cpus: 1,
+						workspaceRoot: './workspaces/tools',
+					},
+				},
+				tcpPool: {
+					basePort: 19000,
+					size: 5,
+				},
+			}),
+			'utf8',
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/ref/i);
+	});
 });

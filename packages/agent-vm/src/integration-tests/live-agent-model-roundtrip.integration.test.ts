@@ -1,10 +1,15 @@
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import net from 'node:net';
 
 import { describe, expect, it } from 'vitest';
 
 import { loadSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
+}
 
 function canReadSecretRef(secretRef: string | undefined): boolean {
 	if (typeof secretRef !== 'string' || secretRef.length === 0) {
@@ -21,12 +26,40 @@ function canReadSecretRef(secretRef: string | undefined): boolean {
 	}
 }
 
+function canReadConfiguredZoneSecretRefs(): boolean {
+	const rawSystemConfig = JSON.parse(fs.readFileSync('system.json', 'utf8')) as unknown;
+	if (!isObjectRecord(rawSystemConfig)) {
+		return false;
+	}
+	const rawZones = rawSystemConfig.zones;
+	if (!Array.isArray(rawZones)) {
+		return false;
+	}
+	const firstZone = rawZones[0];
+	if (!isObjectRecord(firstZone) || !isObjectRecord(firstZone.secrets)) {
+		return false;
+	}
+	const secrets = firstZone.secrets;
+
+	const readRef = (secretName: string): string | undefined => {
+		const secretValue = secrets[secretName];
+		if (!isObjectRecord(secretValue)) {
+			return undefined;
+		}
+		return typeof secretValue.ref === 'string' ? secretValue.ref : undefined;
+	};
+
+	return (
+		canReadSecretRef(readRef('DISCORD_BOT_TOKEN')) &&
+		canReadSecretRef(readRef('PERPLEXITY_API_KEY')) &&
+		canReadSecretRef(readRef('OPENCLAW_GATEWAY_TOKEN'))
+	);
+}
+
 const runLiveModelRoundtrip =
 	typeof process.env.OP_SERVICE_ACCOUNT_TOKEN === 'string' &&
 	process.env.OP_SERVICE_ACCOUNT_TOKEN.length > 0 &&
-	canReadSecretRef(process.env.DISCORD_BOT_TOKEN_REF) &&
-	canReadSecretRef(process.env.PERPLEXITY_API_KEY_REF) &&
-	canReadSecretRef(process.env.OPENCLAW_GATEWAY_TOKEN_REF) &&
+	canReadConfiguredZoneSecretRefs() &&
 	typeof process.env.OPEN_AI_TEST_KEY === 'string' &&
 	process.env.OPEN_AI_TEST_KEY.length > 0;
 

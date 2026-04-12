@@ -86,7 +86,8 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(result.created).toContain('.env.local');
 		expect(envContent).toContain('# OP_SERVICE_ACCOUNT_TOKEN=');
-		expect(envContent).toContain('DISCORD_BOT_TOKEN_REF=');
+		expect(envContent).not.toContain('DISCORD_BOT_TOKEN_REF=');
+		expect(envContent).not.toContain('OPENCLAW_GATEWAY_TOKEN_REF=');
 	});
 
 	it('scaffolds macOS Keychain auth by default', async () => {
@@ -241,6 +242,13 @@ describe('scaffoldAgentVmProject', () => {
 		expect(secrets).toHaveProperty('DISCORD_BOT_TOKEN');
 		expect(secrets).toHaveProperty('OPENCLAW_GATEWAY_TOKEN');
 		expect(secrets).not.toHaveProperty('ANTHROPIC_API_KEY');
+		expect(secrets.DISCORD_BOT_TOKEN.ref).toBe('op://agent-vm/test-openclaw-discord/bot-token');
+		expect(secrets.PERPLEXITY_API_KEY.ref).toBe(
+			'op://agent-vm/test-openclaw-perplexity/credential',
+		);
+		expect(secrets.OPENCLAW_GATEWAY_TOKEN.ref).toBe(
+			'op://agent-vm/test-openclaw-gateway-auth/password',
+		);
 	});
 
 	it('scaffolds coding-specific env references for coding type', async () => {
@@ -252,10 +260,23 @@ describe('scaffoldAgentVmProject', () => {
 		);
 		const envContent = fs.readFileSync(path.join(targetDir, '.env.local'), 'utf8');
 
-		expect(envContent).toContain('ANTHROPIC_API_KEY_REF=');
-		expect(envContent).toContain('OPENAI_API_KEY_REF=');
-		expect(envContent).not.toContain('DISCORD_BOT_TOKEN_REF=');
-		expect(envContent).not.toContain('OPENCLAW_GATEWAY_TOKEN_REF=');
+		expect(envContent).not.toContain('ANTHROPIC_API_KEY_REF=');
+		expect(envContent).not.toContain('OPENAI_API_KEY_REF=');
+	});
+
+	it('scaffolds coding-specific refs in system.json for coding type', async () => {
+		const targetDir = createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{ gatewayType: 'coding', targetDir, zoneId: 'test-coding' },
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
+		const secrets = config.zones[0].secrets;
+
+		expect(secrets.ANTHROPIC_API_KEY.ref).toBe('op://agent-vm/test-coding-anthropic/credential');
+		expect(secrets.OPENAI_API_KEY.ref).toBe('op://agent-vm/test-coding-openai/credential');
 	});
 
 	it('scaffolds coding-specific network defaults for coding type', async () => {

@@ -10,6 +10,14 @@ import type {
 import { splitResolvedGatewaySecrets } from 'gateway-interface';
 import type { SecretResolver } from 'gondolin-core';
 
+const effectiveOpenClawConfigFileName = 'effective-openclaw.json';
+const effectiveOpenClawConfigVmPath = `/home/openclaw/.openclaw/state/${effectiveOpenClawConfigFileName}`;
+const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function buildGatewayTcpHosts(
 	zone: GatewayZoneConfig,
 	controllerPort: number,
@@ -31,34 +39,121 @@ function buildGatewayTcpHosts(
 }
 
 function buildOpenClawBootstrapCommand(
-	zone: GatewayZoneConfig,
-	resolvedSecrets: Record<string, string>,
+	_zone: GatewayZoneConfig,
+	_resolvedSecrets: Record<string, string>,
 ): string {
 	const environmentLines = [
 		'export OPENCLAW_HOME=/home/openclaw',
-		`export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/config/${path.basename(zone.gateway.gatewayConfig)}`,
+		`export OPENCLAW_CONFIG_PATH=${effectiveOpenClawConfigVmPath}`,
 		'export OPENCLAW_STATE_DIR=/home/openclaw/.openclaw/state',
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
 	];
-	const gatewayToken = resolvedSecrets.OPENCLAW_GATEWAY_TOKEN;
-	if (gatewayToken) {
-		environmentLines.push(
-			`export OPENCLAW_GATEWAY_TOKEN='${gatewayToken.replace(/'/gu, "'\\''")}'`,
-		);
-	}
 
 	return (
-		'mkdir -p /root && cat > /root/.openclaw-env << ENVEOF\n' +
+		`mkdir -p /root /etc/profile.d && cat > ${openClawShellEnvFilePath} << ENVEOF\n` +
 		environmentLines.join('\n') +
 		'\nENVEOF\n' +
-		'chmod 600 /root/.openclaw-env && ' +
+		`chmod 644 ${openClawShellEnvFilePath} && ` +
 		'touch /root/.bashrc && ' +
-		"grep -qxF 'source /root/.openclaw-env' /root/.bashrc || echo 'source /root/.openclaw-env' >> /root/.bashrc"
+		`grep -qxF 'source ${openClawShellEnvFilePath}' /root/.bashrc || echo 'source ${openClawShellEnvFilePath}' >> /root/.bashrc && ` +
+		'touch /root/.bash_profile && ' +
+		"grep -qxF 'source /root/.bashrc' /root/.bash_profile || echo 'source /root/.bashrc' >> /root/.bash_profile"
 	);
+}
+
+function getEffectiveOpenClawConfigHostPath(zone: GatewayZoneConfig): string {
+	return path.join(zone.gateway.stateDir, effectiveOpenClawConfigFileName);
 }
 
 function shellQuote(value: string): string {
 	return `'${value.replace(/'/gu, `'\\''`)}'`;
+}
+
+async function writeFileAtomically(filePath: string, content: string, mode: number): Promise<void> {
+	const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+	await fs.writeFile(tempPath, content, { encoding: 'utf8', mode });
+	await fs.rename(tempPath, filePath);
+}
+
+async function writeAuthProfilesIfConfigured(
+	zone: GatewayZoneConfig,
+	secretResolver: SecretResolver,
+): Promise<void> {
+	if (!zone.gateway.authProfilesRef) {
+		return;
+	}
+
+	try {
+		const authProfilesDirectory = path.join(zone.gateway.stateDir, 'agents', 'main', 'agent');
+		await fs.mkdir(authProfilesDirectory, { recursive: true, mode: 0o700 });
+		await fs.chmod(authProfilesDirectory, 0o700);
+		const authProfiles = await secretResolver.resolve({
+			source: '1password',
+			ref: zone.gateway.authProfilesRef,
+		});
+		await writeFileAtomically(
+			path.join(authProfilesDirectory, 'auth-profiles.json'),
+			authProfiles,
+			0o600,
+		);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(
+			`Failed to write OpenClaw auth profiles for zone '${zone.id}' from '${zone.gateway.authProfilesRef}': ${message}`,
+			{ cause: error },
+		);
+	}
+}
+
+async function writeEffectiveOpenClawConfig(
+	zone: GatewayZoneConfig,
+	secretResolver: SecretResolver,
+): Promise<void> {
+	try {
+		const gatewayTokenSecret = zone.secrets.OPENCLAW_GATEWAY_TOKEN;
+		if (!gatewayTokenSecret?.ref) {
+			throw new Error(
+				`Zone '${zone.id}' secret 'OPENCLAW_GATEWAY_TOKEN' is missing 'ref'. Add an explicit 1Password reference such as 'op://agent-vm/${zone.id}-gateway-auth/password'.`,
+			);
+		}
+
+		const gatewayToken = await secretResolver.resolve({
+			source: '1password',
+			ref: gatewayTokenSecret.ref,
+		});
+		const rawBaseConfig = await fs.readFile(zone.gateway.gatewayConfig, 'utf8');
+		const parsedBaseConfig = JSON.parse(rawBaseConfig) as unknown;
+		if (!isObjectRecord(parsedBaseConfig)) {
+			throw new Error(`OpenClaw config at '${zone.gateway.gatewayConfig}' must be a JSON object.`);
+		}
+		const gatewayConfig = isObjectRecord(parsedBaseConfig.gateway) ? parsedBaseConfig.gateway : {};
+		const existingAuthConfig = isObjectRecord(gatewayConfig.auth) ? gatewayConfig.auth : {};
+		const effectiveConfig = {
+			...parsedBaseConfig,
+			gateway: {
+				...gatewayConfig,
+				auth: {
+					...existingAuthConfig,
+					mode: 'token',
+					token: gatewayToken,
+				},
+			},
+		};
+		const effectiveConfigPath = getEffectiveOpenClawConfigHostPath(zone);
+		await fs.mkdir(zone.gateway.stateDir, { recursive: true, mode: 0o700 });
+		await fs.chmod(zone.gateway.stateDir, 0o700);
+		await writeFileAtomically(
+			effectiveConfigPath,
+			`${JSON.stringify(effectiveConfig, null, 2)}\n`,
+			0o600,
+		);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(
+			`Failed to write effective OpenClaw config for zone '${zone.id}' from '${zone.gateway.gatewayConfig}' using secret '${zone.secrets.OPENCLAW_GATEWAY_TOKEN?.ref ?? 'OPENCLAW_GATEWAY_TOKEN (missing ref)'}': ${message}`,
+			{ cause: error },
+		);
+	}
 }
 
 export const openclawLifecycle: GatewayLifecycle = {
@@ -75,7 +170,6 @@ export const openclawLifecycle: GatewayLifecycle = {
 		tcpPool: { readonly basePort: number; readonly size: number },
 	): GatewayVmSpec {
 		const configDirectory = path.dirname(path.resolve(zone.gateway.gatewayConfig));
-		const configFileName = path.basename(zone.gateway.gatewayConfig);
 		const { environmentSecrets, mediatedSecrets } = splitResolvedGatewaySecrets(
 			zone,
 			resolvedSecrets,
@@ -86,7 +180,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 			environment: {
 				HOME: '/home/openclaw',
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
-				OPENCLAW_CONFIG_PATH: `/home/openclaw/.openclaw/config/${configFileName}`,
+				OPENCLAW_CONFIG_PATH: effectiveOpenClawConfigVmPath,
 				OPENCLAW_HOME: '/home/openclaw',
 				OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
 				...environmentSecrets,
@@ -127,19 +221,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 	},
 
 	async prepareHostState(zone: GatewayZoneConfig, secretResolver: SecretResolver): Promise<void> {
-		if (!zone.gateway.authProfilesRef) {
-			return;
-		}
-
-		const authProfilesDirectory = path.join(zone.gateway.stateDir, 'agents', 'main', 'agent');
-		await fs.mkdir(authProfilesDirectory, { recursive: true });
-		await fs.writeFile(
-			path.join(authProfilesDirectory, 'auth-profiles.json'),
-			await secretResolver.resolve({
-				source: '1password',
-				ref: zone.gateway.authProfilesRef,
-			}),
-			'utf8',
-		);
+		await writeEffectiveOpenClawConfig(zone, secretResolver);
+		await writeAuthProfilesIfConfigured(zone, secretResolver);
 	},
 };

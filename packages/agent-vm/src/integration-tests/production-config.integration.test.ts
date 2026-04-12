@@ -42,16 +42,27 @@ describe('production config artifacts', () => {
 					secrets: {
 						DISCORD_BOT_TOKEN: {
 							injection: 'env',
+							ref: 'op://agent-vm/shravan-discord/bot-token',
+							source: '1password',
+						},
+						OPENCLAW_GATEWAY_TOKEN: {
+							injection: 'env',
+							ref: 'op://agent-vm/shravan-gateway-auth/password',
+							source: '1password',
+						},
+						PERPLEXITY_API_KEY: {
+							hosts: ['api.perplexity.ai'],
+							injection: 'http-mediation',
+							ref: 'op://agent-vm/shravan-perplexity/credential',
 							source: '1password',
 						},
 					},
 				},
 			],
 		});
-		expect(envExample).toContain('DISCORD_BOT_TOKEN_REF=op://agent-vm/agent-discord-app/bot-token');
-		expect(envExample).toContain(
-			'PERPLEXITY_API_KEY_REF=op://agent-vm/agent-perplexity/credential',
-		);
+		expect(envExample).not.toContain('DISCORD_BOT_TOKEN_REF=');
+		expect(envExample).not.toContain('PERPLEXITY_API_KEY_REF=');
+		expect(envExample).not.toContain('OPENCLAW_GATEWAY_TOKEN_REF=');
 		expect(gatewayBuildConfig).toMatchObject({
 			arch: 'aarch64',
 		});

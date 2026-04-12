@@ -9,6 +9,16 @@ import {
 } from './agent-vm-cli-support.js';
 import { zoneSshAccessResponseSchema, type ZoneSshAccessResponse } from './ssh-commands.js';
 
+const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
+
+function shellQuote(value: string): string {
+	return `'${value.replace(/'/gu, `'\\''`)}'`;
+}
+
+function wrapWithOpenClawShellEnvironment(command: string): string {
+	return `bash -lc ${shellQuote(`source ${openClawShellEnvFilePath} && ${command}`)}`;
+}
+
 export async function listAuthProviders(options: {
 	readonly listProvidersCommand: string;
 	readonly runCommand?: (
@@ -43,7 +53,7 @@ export async function listAuthProviders(options: {
 		'-p',
 		String(options.sshAccess.port),
 		`${options.sshAccess.user ?? 'root'}@${options.sshAccess.host}`,
-		options.listProvidersCommand,
+		wrapWithOpenClawShellEnvironment(options.listProvidersCommand),
 	]);
 	if (commandResult.exitCode !== 0) {
 		throw new Error(
@@ -103,7 +113,7 @@ export async function runAuthInteractiveCommand(options: {
 		'-p',
 		String(sshResponse.port),
 		`${sshResponse.user ?? 'root'}@${sshResponse.host}`,
-		options.authConfig.buildLoginCommand(options.provider),
+		wrapWithOpenClawShellEnvironment(options.authConfig.buildLoginCommand(options.provider)),
 	];
 
 	const runInteractiveProcess =

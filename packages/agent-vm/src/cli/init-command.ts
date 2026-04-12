@@ -70,7 +70,7 @@ const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object =
 				stateDir: `./state/${zoneId}`,
 				workspaceDir: `./workspaces/${zoneId}`,
 			},
-			secrets: defaultSecretsForGatewayType(gatewayType),
+			secrets: defaultSecretsForGatewayType(zoneId, gatewayType),
 			allowedHosts: defaultAllowedHostsForGatewayType(gatewayType),
 			websocketBypass: defaultWebsocketBypassForGatewayType(gatewayType),
 			toolProfile: 'standard',
@@ -89,15 +89,20 @@ const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object =
 	},
 });
 
-function defaultSecretsForGatewayType(gatewayType: GatewayType): Record<string, object> {
+function defaultSecretsForGatewayType(
+	zoneId: string,
+	gatewayType: GatewayType,
+): Record<string, object> {
 	if (gatewayType === 'coding') {
 		return {
 			ANTHROPIC_API_KEY: {
+				ref: `op://agent-vm/${zoneId}-anthropic/credential`,
 				source: '1password',
 				hosts: ['api.anthropic.com'],
 				injection: 'http-mediation',
 			},
 			OPENAI_API_KEY: {
+				ref: `op://agent-vm/${zoneId}-openai/credential`,
 				source: '1password',
 				hosts: ['api.openai.com'],
 				injection: 'http-mediation',
@@ -107,15 +112,18 @@ function defaultSecretsForGatewayType(gatewayType: GatewayType): Record<string, 
 
 	return {
 		DISCORD_BOT_TOKEN: {
+			ref: `op://agent-vm/${zoneId}-discord/bot-token`,
 			source: '1password',
 			injection: 'env',
 		},
 		PERPLEXITY_API_KEY: {
+			ref: `op://agent-vm/${zoneId}-perplexity/credential`,
 			source: '1password',
 			hosts: ['api.perplexity.ai'],
 			injection: 'http-mediation',
 		},
 		OPENCLAW_GATEWAY_TOKEN: {
+			ref: `op://agent-vm/${zoneId}-gateway-auth/password`,
 			source: '1password',
 			injection: 'env',
 		},
@@ -157,23 +165,11 @@ function defaultWebsocketBypassForGatewayType(gatewayType: GatewayType): readonl
 	];
 }
 
-function defaultEnvTemplateForGatewayType(gatewayType: GatewayType): string {
-	const header = `# agent-vm environment configuration
+function defaultEnvTemplateForGatewayType(_gatewayType: GatewayType): string {
+	return `# agent-vm environment configuration
 # 1Password token is stored in macOS Keychain by agent-vm init.
 # Only set this for CI or non-macOS environments:
 # OP_SERVICE_ACCOUNT_TOKEN=
-
-# === Secret References (1Password op:// URIs) ===
-`;
-	if (gatewayType === 'coding') {
-		return `${header}ANTHROPIC_API_KEY_REF=op://agent-vm/agent-anthropic/api-key
-OPENAI_API_KEY_REF=op://agent-vm/agent-openai/api-key
-`;
-	}
-
-	return `${header}DISCORD_BOT_TOKEN_REF=op://agent-vm/agent-discord-app/bot-token
-PERPLEXITY_API_KEY_REF=op://agent-vm/agent-perplexity/credential
-OPENCLAW_GATEWAY_TOKEN_REF=op://agent-vm/agent-shravan-claw-gateway/password
 `;
 }
 

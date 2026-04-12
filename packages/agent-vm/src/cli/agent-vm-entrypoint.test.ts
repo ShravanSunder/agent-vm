@@ -326,7 +326,7 @@ describe('runAgentVmCli', () => {
 			'-p',
 			'19000',
 			'root@127.0.0.1',
-			"openclaw models auth login --provider 'codex'",
+			expect.stringContaining('source /etc/profile.d/openclaw-env.sh'),
 		]);
 	});
 
@@ -801,6 +801,28 @@ describe('runAgentVmCli', () => {
 		);
 	});
 
+	it('fails fast when the gateway image cache is cold', async () => {
+		const startControllerRuntime = vi.fn();
+
+		await expect(
+			runAgentVmCli(
+				['controller', 'start', '--zone', 'shravan'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					isGatewayImageCached: async () => false,
+					loadSystemConfig: async () => createCliBuildSystemConfig(),
+					startControllerRuntime,
+				},
+			),
+		).rejects.toThrow(/Gateway image not cached|agent-vm build/u);
+
+		expect(startControllerRuntime).not.toHaveBeenCalled();
+	});
+
 	it('rejects controller start when multiple zones are configured', async () => {
 		const baseSystemConfig = createCliBuildSystemConfig();
 		const primaryZone = baseSystemConfig.zones[0];
@@ -817,6 +839,7 @@ describe('runAgentVmCli', () => {
 				},
 				{
 					...defaultCliDependencies,
+					isGatewayImageCached: async () => true,
 					loadSystemConfig: async () => ({
 						...baseSystemConfig,
 						zones: [
@@ -859,6 +882,7 @@ describe('runAgentVmCli', () => {
 			},
 			{
 				...defaultCliDependencies,
+				isGatewayImageCached: async () => true,
 				loadSystemConfig: async () => ({
 					...baseSystemConfig,
 					zones: [

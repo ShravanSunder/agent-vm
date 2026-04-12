@@ -25,6 +25,7 @@ export interface CliDependencies {
 	readonly createSecretResolver: typeof createOpCliSecretResolver;
 	readonly createZoneBackupManager: typeof createZoneBackupManager;
 	readonly getCurrentWorkingDirectory?: () => string;
+	readonly isGatewayImageCached?: (systemConfig: SystemConfig) => Promise<boolean>;
 	readonly loadSystemConfig: typeof loadSystemConfig;
 	readonly runBuildCommand?: typeof runBuildCommand;
 	readonly runCacheCommand?: typeof runCacheCommand;

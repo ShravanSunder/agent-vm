@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 const secretReferenceSchema = z.object({
 	source: z.literal('1password'),
-	ref: z.string().min(1).optional(),
+	ref: z.string().min(1),
 	injection: z.enum(['env', 'http-mediation']).default('env'),
 	hosts: z.array(z.string().min(1)).optional(),
 });

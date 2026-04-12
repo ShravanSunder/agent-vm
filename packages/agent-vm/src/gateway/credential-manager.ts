@@ -2,6 +2,23 @@ import type { SecretRef, SecretResolver } from 'gondolin-core';
 
 import type { SystemConfig } from '../config/system-config.js';
 
+function buildSuggestedSecretRef(zoneId: string, secretName: string): string {
+	switch (secretName) {
+		case 'DISCORD_BOT_TOKEN':
+			return `op://agent-vm/${zoneId}-discord/bot-token`;
+		case 'PERPLEXITY_API_KEY':
+			return `op://agent-vm/${zoneId}-perplexity/credential`;
+		case 'OPENCLAW_GATEWAY_TOKEN':
+			return `op://agent-vm/${zoneId}-gateway-auth/password`;
+		case 'OPENAI_API_KEY':
+			return `op://agent-vm/${zoneId}-openai/credential`;
+		case 'ANTHROPIC_API_KEY':
+			return `op://agent-vm/${zoneId}-anthropic/credential`;
+		default:
+			return `op://agent-vm/${zoneId}-${secretName.toLowerCase().replace(/_/gu, '-')}/credential`;
+	}
+}
+
 function findZone(
 	systemConfig: SystemConfig,
 	zoneId: string,
@@ -19,19 +36,29 @@ export async function resolveZoneSecrets(options: {
 		throw new Error(`Unknown zone '${options.zoneId}'.`);
 	}
 
-	const resolvedRefs: Record<string, SecretRef> = {};
+	const resolvedSecrets: Record<string, string> = {};
 	for (const [secretName, secretConfig] of Object.entries(zone.secrets)) {
-		const ref = secretConfig.ref ?? process.env[`${secretName}_REF`]?.trim();
-		if (!ref) {
+		if (!secretConfig.ref) {
 			throw new Error(
-				`Secret '${secretName}' has no ref in config and ${secretName}_REF is not set in environment.`,
+				`Zone '${zone.id}' secret '${secretName}' is missing 'ref'. Add an explicit 1Password reference such as '${buildSuggestedSecretRef(zone.id, secretName)}'.`,
 			);
 		}
-		resolvedRefs[secretName] = {
-			ref,
-			source: secretConfig.source,
-		};
+		try {
+			const secretRef: SecretRef = {
+				ref: secretConfig.ref,
+				source: secretConfig.source,
+			};
+			// Sequential resolution gives the user exact secret context on failure.
+			// oxlint-disable-next-line eslint/no-await-in-loop
+			resolvedSecrets[secretName] = await options.secretResolver.resolve(secretRef);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			throw new Error(
+				`Failed to resolve secret '${secretName}' for zone '${zone.id}' from '${secretConfig.ref}': ${message}`,
+				{ cause: error },
+			);
+		}
 	}
 
-	return await options.secretResolver.resolveAll(resolvedRefs);
+	return resolvedSecrets;
 }

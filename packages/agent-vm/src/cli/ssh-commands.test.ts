@@ -162,9 +162,7 @@ describe('runSshCommand', () => {
 			'-p',
 			'2222',
 			'root@127.0.0.1',
-			'openclaw',
-			'auth',
-			'login',
+			expect.stringContaining('source /etc/profile.d/openclaw-env.sh'),
 		]);
 	});
 

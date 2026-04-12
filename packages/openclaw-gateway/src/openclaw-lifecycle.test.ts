@@ -60,6 +60,11 @@ function createZone(overrides?: {
 				ref: 'op://vault/item/discord',
 				source: '1password',
 			},
+			OPENCLAW_GATEWAY_TOKEN: {
+				injection: 'env',
+				ref: 'op://vault/item/openclaw-gateway-token',
+				source: '1password',
+			},
 			PERPLEXITY_API_KEY: {
 				hosts: ['api.perplexity.ai'],
 				injection: 'http-mediation',
@@ -120,7 +125,7 @@ describe('openclawLifecycle', () => {
 
 			expect(vmSpec.environment.OPENCLAW_HOME).toBe('/home/openclaw');
 			expect(vmSpec.environment.OPENCLAW_CONFIG_PATH).toBe(
-				'/home/openclaw/.openclaw/config/openclaw.json',
+				'/home/openclaw/.openclaw/state/effective-openclaw.json',
 			);
 			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/config']).toEqual({
 				hostPath: '/host/config/shravan',
@@ -139,8 +144,13 @@ describe('openclawLifecycle', () => {
 		it('builds bootstrap and start commands with escaped gateway token', () => {
 			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
 
-			expect(processSpec.bootstrapCommand).toContain('.openclaw-env');
-			expect(processSpec.bootstrapCommand).toContain("OPENCLAW_GATEWAY_TOKEN='gateway'\\''token'");
+			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
+			expect(processSpec.bootstrapCommand).not.toContain('OPENCLAW_GATEWAY_TOKEN=');
+			expect(processSpec.bootstrapCommand).toContain(
+				'OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json',
+			);
+			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
+			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
 			expect(processSpec.startCommand).toContain('nohup openclaw gateway --port 18789');
 			expect(processSpec.healthCheck).toEqual({ type: 'http', port: 18789, path: '/' });
 			expect(processSpec.logPath).toBe('/tmp/openclaw.log');
@@ -148,18 +158,48 @@ describe('openclawLifecycle', () => {
 	});
 
 	describe('prepareHostState', () => {
-		it('writes auth-profiles.json when authProfilesRef is configured', async () => {
+		it('writes auth-profiles.json and effective-openclaw.json when auth is configured', async () => {
 			const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-lifecycle-'));
 			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			fs.mkdirSync(configDirectory, { recursive: true });
+			fs.writeFileSync(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify(
+					{
+						agents: { defaults: { workspace: '/home/openclaw/workspace' } },
+						gateway: {
+							auth: { mode: 'token' },
+							bind: 'loopback',
+							controlUi: {
+								allowedOrigins: ['http://127.0.0.1:18791', 'http://localhost:18791'],
+							},
+						},
+					},
+					null,
+					2,
+				),
+				'utf8',
+			);
 			const zone = createZone({
 				gateway: {
-					gatewayConfig: path.join(tempDirectory, 'config', 'openclaw.json'),
+					gatewayConfig: path.join(configDirectory, 'openclaw.json'),
 					stateDir: path.join(tempDirectory, 'state'),
 					workspaceDir: path.join(tempDirectory, 'workspace'),
 				},
 			});
 			const secretResolver: SecretResolver = {
-				resolve: async () => '{"profiles":[]}',
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/auth-profiles') {
+						return '{"profiles":[]}';
+					}
+
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
 				resolveAll: async () => ({}),
 			};
 
@@ -171,20 +211,91 @@ describe('openclawLifecycle', () => {
 					'utf8',
 				),
 			).toBe('{"profiles":[]}');
+			expect(
+				JSON.parse(
+					fs.readFileSync(path.join(zone.gateway.stateDir, 'effective-openclaw.json'), 'utf8'),
+				),
+			).toMatchObject({
+				agents: { defaults: { workspace: '/home/openclaw/workspace' } },
+				gateway: {
+					auth: { mode: 'token', token: 'resolved-gateway-token' },
+					bind: 'loopback',
+					controlUi: {
+						allowedOrigins: ['http://127.0.0.1:18791', 'http://localhost:18791'],
+					},
+				},
+			});
+			expect(
+				fs.statSync(path.join(zone.gateway.stateDir, 'effective-openclaw.json')).mode & 0o777,
+			).toBe(0o600);
+			expect(fs.statSync(zone.gateway.stateDir).mode & 0o777).toBe(0o700);
 			expect(fs.existsSync(path.join(zone.gateway.stateDir, 'agents', 'main', 'agent'))).toBe(true);
 		});
 
-		it('does nothing when authProfilesRef is absent', async () => {
+		it('still writes effective-openclaw.json when authProfilesRef is absent', async () => {
 			const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-lifecycle-no-auth-'));
 			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			fs.mkdirSync(configDirectory, { recursive: true });
+			fs.writeFileSync(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify(
+					{
+						gateway: {
+							auth: { mode: 'token' },
+							bind: 'loopback',
+						},
+					},
+					null,
+					2,
+				),
+				'utf8',
+			);
 			const zone = createZone({
 				gateway: {
-					gatewayConfig: path.join(tempDirectory, 'config', 'openclaw.json'),
+					gatewayConfig: path.join(configDirectory, 'openclaw.json'),
 					stateDir: path.join(tempDirectory, 'state'),
 					workspaceDir: path.join(tempDirectory, 'workspace'),
 				},
 				withoutAuthProfilesRef: true,
 			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
+
+			expect(fs.existsSync(zone.gateway.stateDir)).toBe(true);
+			expect(fs.statSync(zone.gateway.stateDir).mode & 0o777).toBe(0o700);
+			expect(fs.existsSync(path.join(zone.gateway.stateDir, 'agents'))).toBe(false);
+			expect(fs.existsSync(path.join(zone.gateway.stateDir, 'effective-openclaw.json'))).toBe(true);
+		});
+
+		it('throws when OPENCLAW_GATEWAY_TOKEN ref is absent', async () => {
+			const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-lifecycle-no-token-'));
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			fs.mkdirSync(configDirectory, { recursive: true });
+			fs.writeFileSync(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify({ gateway: { auth: { mode: 'token' }, bind: 'loopback' } }, null, 2),
+				'utf8',
+			);
+			const zoneWithoutGatewayToken = createZone({
+				gateway: {
+					gatewayConfig: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					workspaceDir: path.join(tempDirectory, 'workspace'),
+				},
+			});
+			delete zoneWithoutGatewayToken.secrets.OPENCLAW_GATEWAY_TOKEN;
 			const secretResolver: SecretResolver = {
 				resolve: async () => {
 					throw new Error('resolve should not be called');
@@ -192,11 +303,48 @@ describe('openclawLifecycle', () => {
 				resolveAll: async () => ({}),
 			};
 
-			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
+			await expect(
+				openclawLifecycle.prepareHostState?.(zoneWithoutGatewayToken, secretResolver),
+			).rejects.toThrow(
+				/Failed to write effective OpenClaw config for zone 'shravan'.*OPENCLAW_GATEWAY_TOKEN/u,
+			);
+		});
 
-			expect(fs.existsSync(zone.gateway.stateDir)).toBe(false);
-			expect(fs.existsSync(zone.gateway.workspaceDir)).toBe(false);
-			expect(fs.existsSync(path.join(zone.gateway.stateDir, 'agents'))).toBe(false);
+		it('throws when base config is not a JSON object', async () => {
+			const tempDirectory = fs.mkdtempSync(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-bad-config-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			fs.mkdirSync(configDirectory, { recursive: true });
+			fs.writeFileSync(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify(['not-an-object'], null, 2),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					gatewayConfig: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					workspaceDir: path.join(tempDirectory, 'workspace'),
+				},
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/auth-profiles') {
+						return '{"profiles":[]}';
+					}
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+				/Failed to write effective OpenClaw config for zone 'shravan'.*must be a JSON object/u,
+			);
 		});
 	});
 });

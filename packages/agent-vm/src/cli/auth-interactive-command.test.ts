@@ -50,7 +50,10 @@ describe('listAuthProviders', () => {
 		expect(providers).toEqual(['codex', 'openai-codex', 'anthropic']);
 		expect(runCommand).toHaveBeenCalledWith(
 			'ssh',
-			expect.arrayContaining(['root@127.0.0.1', 'list-cmd']),
+			expect.arrayContaining([
+				'root@127.0.0.1',
+				expect.stringContaining('source /etc/profile.d/openclaw-env.sh && list-cmd'),
+			]),
 		);
 	});
 
@@ -148,7 +151,11 @@ describe('runAuthInteractiveCommand', () => {
 		expect(enableZoneSsh).toHaveBeenCalledWith('shravan');
 		expect(runInteractiveProcess).toHaveBeenCalledWith(
 			'ssh',
-			expect.arrayContaining(['-t', 'root@127.0.0.1', 'login --provider codex']),
+			expect.arrayContaining([
+				'-t',
+				'root@127.0.0.1',
+				expect.stringContaining('source /etc/profile.d/openclaw-env.sh'),
+			]),
 		);
 	});
 

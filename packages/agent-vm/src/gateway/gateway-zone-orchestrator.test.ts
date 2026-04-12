@@ -36,13 +36,18 @@ const systemConfig = {
 			secrets: {
 				PERPLEXITY_API_KEY: {
 					source: '1password',
-					ref: 'op://agent-vm/agent-perplexity/credential',
+					ref: 'op://agent-vm/shravan-perplexity/credential',
 					injection: 'http-mediation',
 					hosts: ['api.perplexity.ai'],
 				},
 				DISCORD_BOT_TOKEN: {
 					source: '1password',
-					ref: 'op://agent-vm/agent-discord-app/bot-token',
+					ref: 'op://agent-vm/shravan-discord/bot-token',
+					injection: 'env',
+				},
+				OPENCLAW_GATEWAY_TOKEN: {
+					source: '1password',
+					ref: 'op://agent-vm/shravan-gateway-auth/password',
 					injection: 'env',
 				},
 			},
@@ -69,6 +74,27 @@ const minimalBuildConfig: BuildConfig = {
 	distro: 'alpine',
 };
 
+function createOpenClawSecretResolver(resolvedSecrets: Record<string, string>): SecretResolver {
+	return {
+		resolve: async (secretRef): Promise<string> => {
+			if (secretRef.ref === 'op://agent-vm/shravan-discord/bot-token') {
+				return resolvedSecrets.DISCORD_BOT_TOKEN ?? 'resolved-discord-token';
+			}
+
+			if (secretRef.ref === 'op://agent-vm/shravan-perplexity/credential') {
+				return resolvedSecrets.PERPLEXITY_API_KEY ?? 'resolved-perplexity-key';
+			}
+
+			if (secretRef.ref === 'op://agent-vm/shravan-gateway-auth/password') {
+				return resolvedSecrets.OPENCLAW_GATEWAY_TOKEN ?? 'resolved-gateway-token';
+			}
+
+			throw new Error(`Unexpected secret ref: ${secretRef.ref}`);
+		},
+		resolveAll: async () => resolvedSecrets,
+	};
+}
+
 describe('startGatewayZone', () => {
 	it('builds the image, resolves secrets, creates the vm, and enables ingress', async () => {
 		const taskTitles: string[] = [];
@@ -90,15 +116,11 @@ describe('startGatewayZone', () => {
 			getVmInstance: vi.fn(),
 			setIngressRoutes: setIngressRoutesMock,
 		};
-		const secretResolver: SecretResolver = {
-			resolve: async (): Promise<string> => {
-				throw new Error('resolve is not used by this test');
-			},
-			resolveAll: async () => ({
-				PERPLEXITY_API_KEY: 'resolved-key',
-				DISCORD_BOT_TOKEN: 'resolved-key',
-			}),
-		};
+		const secretResolver = createOpenClawSecretResolver({
+			PERPLEXITY_API_KEY: 'resolved-key',
+			DISCORD_BOT_TOKEN: 'resolved-key',
+			OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+		});
 		const buildImage = vi.fn(
 			async (_options: unknown): Promise<BuildImageResult> => ({
 				built: true,
@@ -143,7 +165,7 @@ describe('startGatewayZone', () => {
 					HOME: '/home/openclaw',
 					NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
 					OPENCLAW_HOME: '/home/openclaw',
-					OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/config/openclaw.json',
+					OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/state/effective-openclaw.json',
 					OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
 					DISCORD_BOT_TOKEN: 'resolved-key',
 				}),
@@ -225,12 +247,6 @@ describe('startGatewayZone', () => {
 	});
 
 	it('throws a clear error for coding gateways until that runtime is implemented', async () => {
-		const secretResolver: SecretResolver = {
-			resolve: async (): Promise<string> => {
-				throw new Error('not used');
-			},
-			resolveAll: async () => ({}),
-		};
 		const codingSystemConfig: SystemConfig = {
 			...systemConfig,
 			zones: systemConfig.zones.map((zone) => ({
@@ -239,7 +255,33 @@ describe('startGatewayZone', () => {
 					...zone.gateway,
 					type: 'coding',
 				},
+				secrets: {
+					ANTHROPIC_API_KEY: {
+						source: '1password',
+						ref: 'op://agent-vm/shravan-anthropic/credential',
+						injection: 'http-mediation',
+						hosts: ['api.anthropic.com'],
+					},
+					OPENAI_API_KEY: {
+						source: '1password',
+						ref: 'op://agent-vm/shravan-openai/credential',
+						injection: 'http-mediation',
+						hosts: ['api.openai.com'],
+					},
+				},
 			})),
+		};
+		const secretResolver: SecretResolver = {
+			resolve: async (secretRef): Promise<string> => {
+				if (secretRef.ref === 'op://agent-vm/shravan-anthropic/credential') {
+					return 'anthropic-key';
+				}
+				if (secretRef.ref === 'op://agent-vm/shravan-openai/credential') {
+					return 'openai-key';
+				}
+				throw new Error(`Unexpected secret ref: ${secretRef.ref}`);
+			},
+			resolveAll: async () => ({}),
 		};
 
 		await expect(
@@ -272,15 +314,11 @@ describe('startGatewayZone', () => {
 			getVmInstance: vi.fn(),
 			setIngressRoutes: setIngressRoutesMock,
 		};
-		const secretResolver: SecretResolver = {
-			resolve: async (): Promise<string> => {
-				throw new Error('not used');
-			},
-			resolveAll: async () => ({
-				PERPLEXITY_API_KEY: 'pplx-key',
-				DISCORD_BOT_TOKEN: 'discord-token',
-			}),
-		};
+		const secretResolver = createOpenClawSecretResolver({
+			PERPLEXITY_API_KEY: 'pplx-key',
+			DISCORD_BOT_TOKEN: 'discord-token',
+			OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+		});
 		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
 
 		await startGatewayZone(
@@ -339,15 +377,11 @@ describe('startGatewayZone', () => {
 
 		await startGatewayZone(
 			{
-				secretResolver: {
-					resolve: async (): Promise<string> => {
-						throw new Error('not used');
-					},
-					resolveAll: async () => ({
-						PERPLEXITY_API_KEY: 'key',
-						DISCORD_BOT_TOKEN: 'token',
-					}),
-				},
+				secretResolver: createOpenClawSecretResolver({
+					PERPLEXITY_API_KEY: 'key',
+					DISCORD_BOT_TOKEN: 'token',
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
 				systemConfig,
 				zoneId: 'shravan',
 			},
@@ -392,12 +426,9 @@ describe('startGatewayZone', () => {
 		await expect(
 			startGatewayZone(
 				{
-					secretResolver: {
-						resolve: async (): Promise<string> => {
-							throw new Error('not used');
-						},
-						resolveAll: async () => ({}),
-					},
+					secretResolver: createOpenClawSecretResolver({
+						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					}),
 					systemConfig,
 					zoneId: 'shravan',
 				},
@@ -435,12 +466,9 @@ describe('startGatewayZone', () => {
 		await expect(
 			startGatewayZone(
 				{
-					secretResolver: {
-						resolve: async (): Promise<string> => {
-							throw new Error('not used');
-						},
-						resolveAll: async () => ({}),
-					},
+					secretResolver: createOpenClawSecretResolver({
+						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					}),
 					systemConfig,
 					zoneId: 'shravan',
 				},
@@ -475,12 +503,9 @@ describe('startGatewayZone', () => {
 
 		const result = await startGatewayZone(
 			{
-				secretResolver: {
-					resolve: async (): Promise<string> => {
-						throw new Error('not used');
-					},
-					resolveAll: async () => ({}),
-				},
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
 				systemConfig,
 				zoneId: 'shravan',
 			},
@@ -542,12 +567,9 @@ describe('startGatewayZone', () => {
 
 		await startGatewayZone(
 			{
-				secretResolver: {
-					resolve: async (): Promise<string> => {
-						throw new Error('not used');
-					},
-					resolveAll: async () => ({}),
-				},
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
 				systemConfig,
 				zoneId: 'shravan',
 			},
@@ -573,7 +595,7 @@ describe('startGatewayZone', () => {
 		expect(healthProbeCount).toBe(2);
 	});
 
-	it('writes the resolved gateway token to a root-only env file', async () => {
+	it('configures the gateway to use the generated effective OpenClaw config path', async () => {
 		const execMock = vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' }));
 		const managedVm: ManagedVm = {
 			id: 'vm-token',
@@ -587,16 +609,11 @@ describe('startGatewayZone', () => {
 
 		await startGatewayZone(
 			{
-				secretResolver: {
-					resolve: async (): Promise<string> => {
-						throw new Error('not used');
-					},
-					resolveAll: async () => ({
-						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
-						PERPLEXITY_API_KEY: 'pplx-key',
-					}),
-				},
+				secretResolver: createOpenClawSecretResolver({
+					DISCORD_BOT_TOKEN: 'discord-token',
+					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+					PERPLEXITY_API_KEY: 'pplx-key',
+				}),
 				systemConfig,
 				zoneId: 'shravan',
 			},
@@ -612,12 +629,16 @@ describe('startGatewayZone', () => {
 		);
 
 		expect(execMock).toHaveBeenCalledWith(
-			expect.stringContaining('cat > /root/.openclaw-env << ENVEOF'),
+			expect.stringContaining('cat > /etc/profile.d/openclaw-env.sh << ENVEOF'),
 		);
-		expect(execMock).toHaveBeenCalledWith(expect.stringContaining('chmod 600 /root/.openclaw-env'));
-		expect(execMock).toHaveBeenCalledWith(expect.stringContaining('source /root/.openclaw-env'));
 		expect(execMock).toHaveBeenCalledWith(
-			expect.stringContaining("export OPENCLAW_GATEWAY_TOKEN='gateway-token-123'"),
+			expect.stringContaining('chmod 644 /etc/profile.d/openclaw-env.sh'),
+		);
+		expect(execMock).toHaveBeenCalledWith(expect.stringContaining('source /root/.bashrc'));
+		expect(execMock).toHaveBeenCalledWith(
+			expect.stringContaining(
+				'export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json',
+			),
 		);
 	});
 });
