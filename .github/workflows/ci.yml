@@ -21,14 +21,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Lint
-        run: pnpm lint
+      - name: Build
+        run: pnpm build
 
-      - name: Format check
-        run: pnpm fmt:check
-
-      - name: Type check
-        run: pnpm typecheck
+      - name: Check (lint + format + typecheck)
+        run: pnpm check
 
       - name: Unit tests
         run: pnpm test
