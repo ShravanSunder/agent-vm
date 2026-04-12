@@ -3,6 +3,9 @@
 		"port": 18789,
 		"mode": "local",
 		"bind": "loopback",
+		"controlUi": {
+			"allowedOrigins": ["http://127.0.0.1:18791", "http://localhost:18791"]
+		},
 		"auth": {
 			"mode": "token"
 		}

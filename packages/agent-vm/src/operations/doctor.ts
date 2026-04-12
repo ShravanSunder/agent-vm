@@ -1,4 +1,4 @@
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 
 export interface DoctorCheck {
 	readonly name: string;

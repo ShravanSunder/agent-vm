@@ -27,6 +27,13 @@ function loadDotEnvLocal(): void {
 loadDotEnvLocal();
 
 export default defineConfig({
+	resolve: {
+		alias: {
+			'gateway-interface': path.resolve('./packages/gateway-interface/src/index.ts'),
+			'openclaw-gateway': path.resolve('./packages/openclaw-gateway/src/index.ts'),
+			'worker-gateway': path.resolve('./packages/worker-gateway/src/index.ts'),
+		},
+	},
 	test: {
 		globals: true,
 		environment: 'node',

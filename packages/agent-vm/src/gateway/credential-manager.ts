@@ -1,6 +1,6 @@
 import type { SecretRef, SecretResolver } from 'gondolin-core';
 
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 
 function findZone(
 	systemConfig: SystemConfig,

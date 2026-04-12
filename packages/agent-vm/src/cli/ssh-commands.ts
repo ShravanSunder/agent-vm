@@ -1,12 +1,13 @@
 import { execa } from 'execa';
 import { z } from 'zod';
 
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 import {
 	type CliDependencies,
 	type CliIo,
+	readZoneFlag,
+	requireZone,
 	resolveControllerBaseUrl,
-	resolveZoneId,
 } from './agent-vm-cli-support.js';
 
 interface RunSshCommandOptions {
@@ -32,10 +33,9 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	const controllerClient = options.dependencies.createControllerClient({
 		baseUrl: resolveControllerBaseUrl(options.systemConfig),
 	});
+	const zone = requireZone(options.systemConfig, readZoneFlag(options.restArguments));
 	const parsedSshResponse = zoneSshAccessResponseSchema.safeParse(
-		await controllerClient.enableZoneSsh(
-			resolveZoneId(options.systemConfig, options.restArguments),
-		),
+		await controllerClient.enableZoneSsh(zone.id),
 	);
 	if (!parsedSshResponse.success) {
 		throw new Error('Controller returned an invalid SSH response.');

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createControllerApp } from '../../agent-vm/src/controller/controller-http-routes.js';
+import { createControllerApp } from '../../agent-vm/src/controller/http/controller-http-routes.js';
 import { createLeaseClient } from './controller-lease-client.js';
 import { createGondolinSandboxBackendFactory } from './sandbox-backend-factory.js';
 

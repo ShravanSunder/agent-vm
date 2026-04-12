@@ -18,7 +18,7 @@ export function createBuildCommand(_io: CliIo, dependencies: CliDependencies) {
 			}),
 		},
 		handler: async ({ config, force }) => {
-			const systemConfig = loadSystemConfigFromOption(config, dependencies);
+			const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 			const runTask = await createRunTask(_io);
 			await (dependencies.runBuildCommand ?? runBuildCommand)(
 				{

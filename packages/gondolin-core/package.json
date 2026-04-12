@@ -17,7 +17,7 @@
 	},
 	"dependencies": {
 		"@1password/sdk": "^0.4.0",
-		"@earendil-works/gondolin": "link:/Users/shravansunder/Documents/dev/open-source/vm/gondolin/host",
+		"@earendil-works/gondolin": "npm:@shravansunder/gondolin@0.7.1-agentvm.0",
 		"zod": "^4"
 	}
 }

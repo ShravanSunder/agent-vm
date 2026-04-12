@@ -1,7 +1,7 @@
 import type { BuildConfig, BuildImageResult, ManagedVm, SecretResolver } from 'gondolin-core';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 import { startGatewayZone } from './gateway-zone-orchestrator.js';
 
 const systemConfig = {
@@ -29,7 +29,7 @@ const systemConfig = {
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				openclawConfig: './config/shravan/openclaw.json',
+				gatewayConfig: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
 				workspaceDir: './workspaces/shravan',
 			},
@@ -75,7 +75,11 @@ describe('startGatewayZone', () => {
 		const closeMock = vi.fn(async () => {});
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
 		const enableSshMock = vi.fn(async () => ({ host: '127.0.0.1', port: 2222 }));
-		const execMock = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+		const execMock = vi.fn(async (command: string) => ({
+			exitCode: 0,
+			stdout: command.includes('curl -sS -o /dev/null -w "%{http_code}"') ? '200' : '',
+			stderr: '',
+		}));
 		const setIngressRoutesMock = vi.fn();
 		const managedVm: ManagedVm = {
 			id: 'vm-123',
@@ -174,9 +178,11 @@ describe('startGatewayZone', () => {
 		expect(taskTitles).toEqual([
 			'Resolving zone secrets',
 			'Building gateway image',
+			'Preparing host state',
 			'Booting gateway VM',
 			'Configuring gateway',
-			'Starting OpenClaw',
+			'Starting gateway',
+			'Waiting for readiness',
 		]);
 		expect(result).toMatchObject({
 			image: {
@@ -186,6 +192,10 @@ describe('startGatewayZone', () => {
 			ingress: {
 				host: '127.0.0.1',
 				port: 18791,
+			},
+			processSpec: {
+				guestListenPort: 18789,
+				logPath: '/tmp/openclaw.log',
 			},
 		});
 	});
@@ -245,7 +255,7 @@ describe('startGatewayZone', () => {
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				},
 			),
-		).rejects.toThrow(/coding gateway runtime is not implemented/i);
+		).rejects.toThrow(/agent-vm-worker/u);
 	});
 
 	it('splits env secrets from http-mediation secrets based on injection config', async () => {
@@ -402,6 +412,165 @@ describe('startGatewayZone', () => {
 				},
 			),
 		).rejects.toThrow(/gateway.*readiness/iu);
+	});
+
+	it('does not treat non-2xx http responses as ready', async () => {
+		const managedVm: ManagedVm = {
+			id: 'vm-not-ready-500',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi
+				.fn()
+				.mockResolvedValueOnce({ exitCode: 0, stdout: '500', stderr: '' })
+				.mockResolvedValueOnce({ exitCode: 0, stdout: '500', stderr: '' })
+				.mockResolvedValueOnce({ exitCode: 0, stdout: '500', stderr: '' })
+				.mockResolvedValueOnce({ exitCode: 0, stdout: '500', stderr: '' })
+				.mockResolvedValueOnce({ exitCode: 0, stdout: '500', stderr: '' })
+				.mockResolvedValue({ exitCode: 0, stdout: '500', stderr: '' }),
+			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(),
+		};
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver: {
+						resolve: async (): Promise<string> => {
+							throw new Error('not used');
+						},
+						resolveAll: async () => ({}),
+					},
+					systemConfig,
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					createManagedVm: vi.fn(async () => managedVm),
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				},
+			),
+		).rejects.toThrow(/500/u);
+	});
+
+	it('supports command-based health checks', async () => {
+		const execMock = vi.fn(async (command: string) => ({
+			exitCode: command === 'check-health' ? 0 : 0,
+			stdout: '',
+			stderr: '',
+		}));
+		const managedVm: ManagedVm = {
+			id: 'vm-command-health',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: execMock,
+			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(),
+		};
+
+		const result = await startGatewayZone(
+			{
+				secretResolver: {
+					resolve: async (): Promise<string> => {
+						throw new Error('not used');
+					},
+					resolveAll: async () => ({}),
+				},
+				systemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				loadGatewayLifecycle: () => ({
+					buildProcessSpec: () => ({
+						bootstrapCommand: 'bootstrap-worker',
+						guestListenPort: 18789,
+						healthCheck: { type: 'command', command: 'check-health' } as const,
+						logPath: '/tmp/worker.log',
+						startCommand: 'start-worker',
+					}),
+					buildVmSpec: () => ({
+						allowedHosts: [],
+						environment: {},
+						mediatedSecrets: {},
+						rootfsMode: 'cow' as const,
+						sessionLabel: 'worker-session',
+						tcpHosts: {},
+						vfsMounts: {},
+					}),
+				}),
+			},
+		);
+
+		expect(execMock).toHaveBeenCalledWith('check-health');
+		expect(result.processSpec.logPath).toBe('/tmp/worker.log');
+	});
+
+	it('retries health checks until a 2xx response is returned', async () => {
+		const execMock = vi.fn(async (command: string) => {
+			if (!command.includes('curl -sS -o /dev/null -w "%{http_code}"')) {
+				return { exitCode: 0, stdout: '', stderr: '' };
+			}
+			healthProbeCount += 1;
+			return {
+				exitCode: 0,
+				stdout: healthProbeCount === 1 ? '000' : '200',
+				stderr: '',
+			};
+		});
+		let healthProbeCount = 0;
+		const managedVm: ManagedVm = {
+			id: 'vm-retry-health',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: execMock,
+			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(),
+		};
+
+		await startGatewayZone(
+			{
+				secretResolver: {
+					resolve: async (): Promise<string> => {
+						throw new Error('not used');
+					},
+					resolveAll: async () => ({}),
+				},
+				systemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(execMock).toHaveBeenNthCalledWith(
+			3,
+			expect.stringContaining('curl -sS -o /dev/null -w "%{http_code}"'),
+		);
+		expect(execMock).toHaveBeenNthCalledWith(
+			4,
+			expect.stringContaining('curl -sS -o /dev/null -w "%{http_code}"'),
+		);
+		expect(healthProbeCount).toBe(2);
 	});
 
 	it('writes the resolved gateway token to a root-only env file', async () => {

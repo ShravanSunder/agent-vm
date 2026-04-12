@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ZodError } from 'zod';
 
-import type { ControllerClient } from '../controller/controller-client.js';
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
+import type { ControllerClient } from '../controller/http/controller-client.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import {
 	handleCliMainError,
@@ -48,7 +49,7 @@ function createCliBuildSystemConfig(): SystemConfig {
 					type: 'openclaw',
 					cpus: 2,
 					memory: '2G',
-					openclawConfig: './config/shravan/openclaw.json',
+					gatewayConfig: './config/shravan/openclaw.json',
 					port: 18791,
 					stateDir: './state/shravan',
 					workspaceDir: './workspaces/shravan',
@@ -68,6 +69,7 @@ function createControllerClientStub(
 	return {
 		destroyZone: async () => ({}),
 		enableZoneSsh,
+		execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
 		getControllerStatus: async () => ({}),
 		getZoneLogs: async () => ({}),
 		listLeases: async () => [],
@@ -103,7 +105,7 @@ describe('runAgentVmCli', () => {
 
 	it('routes init to the project scaffolder', async () => {
 		const outputs: string[] = [];
-		const scaffoldAgentVmProject = vi.fn(() => ({
+		const scaffoldAgentVmProject = vi.fn(async () => ({
 			created: ['system.json', '.env.local'],
 			keychainStored: false,
 			skipped: [],
@@ -136,7 +138,7 @@ describe('runAgentVmCli', () => {
 	});
 
 	it('passes gateway type through to init scaffolding', async () => {
-		const scaffoldAgentVmProject = vi.fn(() => ({
+		const scaffoldAgentVmProject = vi.fn(async () => ({
 			created: ['system.json', '.env.local'],
 			keychainStored: false,
 			skipped: [],
@@ -186,7 +188,7 @@ describe('runAgentVmCli', () => {
 			},
 			{
 				...defaultCliDependencies,
-				loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runBuildCommand,
 			},
 		);
@@ -220,7 +222,7 @@ describe('runAgentVmCli', () => {
 			},
 			{
 				...defaultCliDependencies,
-				loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runBuildCommand,
 			},
 		);
@@ -246,7 +248,7 @@ describe('runAgentVmCli', () => {
 			},
 			{
 				...defaultCliDependencies,
-				loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runCacheCommand,
 			},
 		);
@@ -263,11 +265,38 @@ describe('runAgentVmCli', () => {
 		);
 	});
 
+	it('routes cache list through the cache command handler', async () => {
+		const runCacheCommand = vi.fn(async () => {});
+
+		await runAgentVmCli(
+			['cache', 'list', '--config', './custom-system.json'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				runCacheCommand,
+			},
+		);
+
+		expect(runCacheCommand).toHaveBeenCalledWith(
+			{
+				subcommand: 'list',
+				systemConfig: expect.objectContaining({
+					cacheDir: './cache',
+				}),
+			},
+			expect.any(Object),
+		);
+	});
+
 	it('routes auth to an interactive SSH-backed OpenClaw login', async () => {
 		const runInteractiveProcess = vi.fn(async () => {});
 
 		await runAgentVmCli(
-			['openclaw', 'auth', 'codex', '--zone', 'shravan'],
+			['auth-interactive', 'codex', '--zone', 'shravan'],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -281,7 +310,7 @@ describe('runAgentVmCli', () => {
 						port: 19000,
 						user: 'root',
 					})),
-				loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runInteractiveProcess,
 			},
 		);
@@ -297,29 +326,30 @@ describe('runAgentVmCli', () => {
 			'-p',
 			'19000',
 			'root@127.0.0.1',
-			'openclaw',
-			'models',
-			'auth',
-			'login',
-			'--provider',
-			'codex',
+			"openclaw models auth login --provider 'codex'",
 		]);
 	});
 
-	it('throws a usage error when auth is missing the plugin name', async () => {
+	it('auth-interactive without --zone shows available zones', async () => {
+		const stderrChunks: string[] = [];
 		await expect(
 			runAgentVmCli(
-				['openclaw', 'auth'],
+				['auth-interactive', 'codex'],
 				{
-					stderr: { write: () => true },
+					stderr: {
+						write: (s: string) => {
+							stderrChunks.push(s);
+							return true;
+						},
+					},
 					stdout: { write: () => true },
 				},
 				{
 					...defaultCliDependencies,
-					loadSystemConfig: vi.fn(() => createCliBuildSystemConfig()),
+					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				},
 			),
-		).rejects.toThrow(/provider|plugin|missing/i);
+		).rejects.toThrow(/--zone is required/u);
 	});
 
 	it('prints top-level help instead of throwing on --help', async () => {
@@ -395,6 +425,37 @@ describe('runAgentVmCli', () => {
 		expect(stderrChunks.join('')).toContain('boom');
 	});
 
+	it('surfaces system config validation errors with friendly paths', async () => {
+		await expect(
+			runAgentVmCli(
+				['build'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					loadSystemConfig: async () => {
+						throw new ZodError([
+							{
+								code: 'invalid_type',
+								expected: 'string',
+								input: undefined,
+								message: 'Invalid input: expected string, received undefined',
+								path: ['zones', 0, 'gateway', 'gatewayConfig'],
+							},
+						]);
+					},
+				},
+			),
+		).rejects.toThrow(
+			[
+				'Invalid system.json configuration:',
+				'  zones[0].gateway.gatewayConfig: Invalid input: expected string, received undefined',
+			].join('\n'),
+		);
+	});
+
 	it('does not duplicate already-reported cli exit errors in the main error handler', () => {
 		const stderrChunks: string[] = [];
 
@@ -456,7 +517,7 @@ describe('runAgentVmCli', () => {
 					listBackups: () => [],
 				}),
 				resolveServiceAccountToken: async () => 'mock-token',
-				loadSystemConfig: () => ({
+				loadSystemConfig: async () => ({
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
@@ -554,7 +615,7 @@ describe('runAgentVmCli', () => {
 					listBackups: () => [],
 				}),
 				resolveServiceAccountToken: async () => 'mock-token',
-				loadSystemConfig: () => ({
+				loadSystemConfig: async () => ({
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
@@ -633,7 +694,7 @@ describe('runAgentVmCli', () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 
 		await runAgentVmCli(
-			['controller', 'start'],
+			['controller', 'start', '--zone', 'shravan'],
 			{
 				stderr: {
 					write: () => true,
@@ -674,7 +735,7 @@ describe('runAgentVmCli', () => {
 					listBackups: () => [],
 				}),
 				resolveServiceAccountToken: async () => 'mock-token',
-				loadSystemConfig: () => ({
+				loadSystemConfig: async () => ({
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
@@ -709,7 +770,7 @@ describe('runAgentVmCli', () => {
 								type: 'openclaw',
 								cpus: 2,
 								memory: '2G',
-								openclawConfig: './config/shravan/openclaw.json',
+								gatewayConfig: './config/shravan/openclaw.json',
 								port: 18791,
 								stateDir: './state/shravan',
 								workspaceDir: './workspaces/shravan',
@@ -756,7 +817,7 @@ describe('runAgentVmCli', () => {
 				},
 				{
 					...defaultCliDependencies,
-					loadSystemConfig: () => ({
+					loadSystemConfig: async () => ({
 						...baseSystemConfig,
 						zones: [
 							primaryZone,
@@ -768,7 +829,58 @@ describe('runAgentVmCli', () => {
 					}),
 				},
 			),
-		).rejects.toThrow(/single-zone/u);
+		).rejects.toThrow(/--zone is required\. Available zones:/u);
+	});
+
+	it('uses the explicitly requested zone for controller start', async () => {
+		const baseSystemConfig = createCliBuildSystemConfig();
+		const primaryZone = baseSystemConfig.zones[0];
+		if (!primaryZone) {
+			throw new Error('Expected primary zone in test system config');
+		}
+		const startControllerRuntime = vi.fn(async () => ({
+			controllerPort: 18800,
+			gateway: {
+				ingress: {
+					host: '127.0.0.1',
+					port: 18792,
+				},
+				vm: {
+					id: 'vm-alevtina',
+				},
+			},
+		}));
+
+		await runAgentVmCli(
+			['controller', 'start', '--zone', 'alevtina'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				loadSystemConfig: async () => ({
+					...baseSystemConfig,
+					zones: [
+						primaryZone,
+						{
+							...primaryZone,
+							id: 'alevtina',
+						},
+					],
+				}),
+				startControllerRuntime,
+			},
+		);
+
+		expect(startControllerRuntime).toHaveBeenCalledWith(
+			expect.objectContaining({
+				zoneId: 'alevtina',
+			}),
+			{
+				runTask: expect.any(Function),
+			},
+		);
 	});
 
 	it('routes controller operation subcommands through the controller client', async () => {
@@ -779,7 +891,14 @@ describe('runAgentVmCli', () => {
 			getControllerStatus: vi.fn(async () => ({
 				controllerPort: 18800,
 				toolProfiles: ['standard'],
-				zones: [{ id: 'shravan', ingressPort: 18791, toolProfile: 'standard' }],
+				zones: [
+					{
+						gatewayType: 'openclaw',
+						id: 'shravan',
+						ingressPort: 18791,
+						toolProfile: 'standard',
+					},
+				],
 			})),
 			getZoneLogs: vi.fn(async () => ({ output: 'logs', zoneId: 'shravan' })),
 			listLeases: vi.fn(async () => []),
@@ -807,7 +926,7 @@ describe('runAgentVmCli', () => {
 				listBackups: () => [],
 			}),
 			resolveServiceAccountToken: async () => 'mock-token',
-			loadSystemConfig: (): SystemConfig => ({
+			loadSystemConfig: async (): Promise<SystemConfig> => ({
 				cacheDir: './cache',
 				host: {
 					controllerPort: 18800,
@@ -842,7 +961,7 @@ describe('runAgentVmCli', () => {
 							type: 'openclaw',
 							cpus: 2,
 							memory: '2G',
-							openclawConfig: './config/shravan/openclaw.json',
+							gatewayConfig: './config/shravan/openclaw.json',
 							port: 18791,
 							stateDir: './state/shravan',
 							workspaceDir: './workspaces/shravan',
@@ -906,6 +1025,115 @@ describe('runAgentVmCli', () => {
 		expect(outputs.join('\n')).toContain('"zoneId": "shravan"');
 	});
 
+	it('routes controller ssh through the ssh command handler', async () => {
+		const runInteractiveProcess = vi.fn(async () => {});
+
+		await runAgentVmCli(
+			['controller', 'ssh', '--zone', 'shravan', '--print'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () =>
+					createControllerClientStub(async () => ({
+						command: 'ssh root@127.0.0.1',
+					})),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				runInteractiveProcess,
+			},
+		);
+
+		expect(runInteractiveProcess).not.toHaveBeenCalled();
+	});
+
+	it('routes controller stop through the controller client', async () => {
+		const stopController = vi.fn(async () => ({ ok: true }));
+
+		await runAgentVmCli(
+			['controller', 'stop'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () => ({
+					destroyZone: async () => ({}),
+					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
+					execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+					getZoneLogs: async () => ({}),
+					getControllerStatus: async () => ({}),
+					listLeases: async () => [],
+					refreshZoneCredentials: async () => ({}),
+					releaseLease: async () => {},
+					stopController,
+					upgradeZone: async () => ({}),
+				}),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+			},
+		);
+
+		expect(stopController).toHaveBeenCalled();
+	});
+
+	it('routes controller lease list and release through the lease handler', async () => {
+		const listLeases = vi.fn(async () => [{ id: 'lease-123' }]);
+		const releaseLease = vi.fn(async () => {});
+
+		await runAgentVmCli(
+			['controller', 'lease', 'list'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () => ({
+					destroyZone: async () => ({}),
+					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
+					execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+					getZoneLogs: async () => ({}),
+					getControllerStatus: async () => ({}),
+					listLeases,
+					refreshZoneCredentials: async () => ({}),
+					releaseLease,
+					stopController: async () => ({ ok: true }),
+					upgradeZone: async () => ({}),
+				}),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+			},
+		);
+
+		await runAgentVmCli(
+			['controller', 'lease', 'release', 'lease-123'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () => ({
+					destroyZone: async () => ({}),
+					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
+					execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+					getZoneLogs: async () => ({}),
+					getControllerStatus: async () => ({}),
+					listLeases,
+					refreshZoneCredentials: async () => ({}),
+					releaseLease,
+					stopController: async () => ({ ok: true }),
+					upgradeZone: async () => ({}),
+				}),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+			},
+		);
+
+		expect(listLeases).toHaveBeenCalled();
+		expect(releaseLease).toHaveBeenCalledWith('lease-123');
+	});
+
 	it('routes backup list through the backup manager', async () => {
 		const outputs: string[] = [];
 		const listBackups = vi.fn(() => [
@@ -954,7 +1182,7 @@ describe('runAgentVmCli', () => {
 					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 					listBackups,
 				}),
-				loadSystemConfig: () => ({
+				loadSystemConfig: async () => ({
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
@@ -978,7 +1206,7 @@ describe('runAgentVmCli', () => {
 								type: 'openclaw',
 								cpus: 2,
 								memory: '2G',
-								openclawConfig: './config/shravan/openclaw.json',
+								gatewayConfig: './config/shravan/openclaw.json',
 								port: 18791,
 								stateDir: './state/shravan',
 								workspaceDir: './workspaces/shravan',
@@ -1004,6 +1232,22 @@ describe('runAgentVmCli', () => {
 			expect.objectContaining({ backupDir: './state/shravan/backups', zoneId: 'shravan' }),
 		);
 		expect(outputs.join('')).toContain('shravan-2026-04-06.tar.age');
+	});
+
+	it('requires --zone for backup list', async () => {
+		await expect(
+			runAgentVmCli(
+				['backup', 'list'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					loadSystemConfig: async () => createCliBuildSystemConfig(),
+				},
+			),
+		).rejects.toThrow(/--zone/u);
 	});
 
 	it('routes backup create through the backup manager with a 1Password key ref', async () => {
@@ -1063,7 +1307,7 @@ describe('runAgentVmCli', () => {
 					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 					listBackups: () => [],
 				}),
-				loadSystemConfig: () => ({
+				loadSystemConfig: async () => ({
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
@@ -1087,7 +1331,7 @@ describe('runAgentVmCli', () => {
 								type: 'openclaw',
 								cpus: 2,
 								memory: '2G',
-								openclawConfig: './config/shravan/openclaw.json',
+								gatewayConfig: './config/shravan/openclaw.json',
 								port: 18791,
 								stateDir: './state/shravan',
 								workspaceDir: './workspaces/shravan',

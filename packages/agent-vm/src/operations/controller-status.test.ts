@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 import { buildControllerStatus } from './controller-status.js';
 
 const systemConfig = {
@@ -28,7 +28,7 @@ const systemConfig = {
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				openclawConfig: './config/shravan/openclaw.json',
+				gatewayConfig: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
 				workspaceDir: './workspaces/shravan',
 			},
@@ -58,6 +58,7 @@ describe('buildControllerStatus', () => {
 			toolProfiles: ['standard'],
 			zones: [
 				{
+					gatewayType: 'openclaw',
 					id: 'shravan',
 					ingressPort: 18791,
 					toolProfile: 'standard',

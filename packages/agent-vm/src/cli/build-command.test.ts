@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 import { runBuildCommand, type BuildCommandDependencies } from './build-command.js';
 
 const createdDirectories: string[] = [];
@@ -44,7 +44,7 @@ function createTestSystemConfig(): SystemConfig {
 					type: 'openclaw',
 					cpus: 2,
 					memory: '2G',
-					openclawConfig: './config/test/openclaw.json',
+					gatewayConfig: './config/test/openclaw.json',
 					port: 18791,
 					stateDir: '/state/test',
 					workspaceDir: '/workspaces/test',
@@ -313,7 +313,12 @@ describe('resolveOciImageTagFromConfig', () => {
 					runTask: async (_title, fn) => fn(),
 				},
 			),
-		).rejects.toThrow('has no valid oci.image tag');
+		).rejects.toThrow(
+			[
+				`Invalid build-config.json at ${gatewayBuildConfigPath}:`,
+				'  oci.image: Invalid input: expected string, received undefined',
+			].join('\n'),
+		);
 	});
 
 	it('throws when oci.image is an empty string', async () => {
@@ -353,7 +358,12 @@ describe('resolveOciImageTagFromConfig', () => {
 					runTask: async (_title, fn) => fn(),
 				},
 			),
-		).rejects.toThrow('has no valid oci.image tag');
+		).rejects.toThrow(
+			[
+				`Invalid build-config.json at ${gatewayBuildConfigPath}:`,
+				'  oci.image: Too small: expected string to have >=1 characters',
+			].join('\n'),
+		);
 	});
 
 	it('throws when build-config.json is malformed JSON', async () => {
@@ -386,5 +396,41 @@ describe('resolveOciImageTagFromConfig', () => {
 				},
 			),
 		).rejects.toThrow();
+	});
+
+	it('formats invalid build-config schema errors clearly', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const gatewayBuildConfigPath = path.join(temporaryDirectory, 'gateway-build-config.json');
+		fs.writeFileSync(gatewayBuildConfigPath, JSON.stringify({ oci: {} }), 'utf8');
+
+		await expect(
+			runBuildCommand(
+				{
+					systemConfig: {
+						...createTestSystemConfig(),
+						images: {
+							...createTestSystemConfig().images,
+							gateway: {
+								buildConfig: gatewayBuildConfigPath,
+								dockerfile: '/project/images/gateway/Dockerfile',
+							},
+						},
+					},
+				},
+				{
+					buildGondolinImage: async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/cache/fp',
+					}),
+					runTask: async (_title, fn) => fn(),
+				},
+			),
+		).rejects.toThrow(
+			[
+				`Invalid build-config.json at ${gatewayBuildConfigPath}:`,
+				'  oci.image: Invalid input: expected string, received undefined',
+			].join('\n'),
+		);
 	});
 });

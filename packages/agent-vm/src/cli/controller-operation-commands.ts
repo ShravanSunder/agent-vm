@@ -1,13 +1,14 @@
 import { execFileSync } from 'node:child_process';
 
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import {
 	createResolverFromSystemConfig,
 	type CliDependencies,
 	type CliIo,
+	readZoneFlag,
+	requireZone,
 	resolveControllerBaseUrl,
-	resolveZoneId,
 	writeJson,
 } from './agent-vm-cli-support.js';
 
@@ -20,7 +21,6 @@ interface RunControllerOperationCommandOptions {
 		| 'destroy'
 		| 'doctor'
 		| 'logs'
-		| 'start'
 		| 'status'
 		| 'stop'
 		| 'upgrade';
@@ -72,26 +72,8 @@ export async function runControllerOperationCommand(
 		case 'stop':
 			writeJson(options.io, await controllerClient.stopController());
 			return;
-		case 'start': {
-			const firstZone = options.systemConfig.zones[0];
-			if (!firstZone) {
-				throw new Error('System config does not define any zones.');
-			}
-
-			const runtime = await options.dependencies.startControllerRuntime({
-				systemConfig: options.systemConfig,
-				zoneId: firstZone.id,
-			});
-			writeJson(options.io, {
-				controllerPort: runtime.controllerPort,
-				ingress: runtime.gateway.ingress,
-				vmId: runtime.gateway.vm.id,
-				zoneId: firstZone.id,
-			});
-			return;
-		}
 		case 'destroy': {
-			const zoneId = resolveZoneId(options.systemConfig, options.restArguments);
+			const zoneId = requireZone(options.systemConfig, readZoneFlag(options.restArguments)).id;
 			writeJson(
 				options.io,
 				await controllerClient.destroyZone(zoneId, options.restArguments.includes('--purge')),
@@ -99,12 +81,12 @@ export async function runControllerOperationCommand(
 			return;
 		}
 		case 'upgrade': {
-			const zoneId = resolveZoneId(options.systemConfig, options.restArguments);
+			const zoneId = requireZone(options.systemConfig, readZoneFlag(options.restArguments)).id;
 			writeJson(options.io, await controllerClient.upgradeZone(zoneId));
 			return;
 		}
 		case 'logs': {
-			const zoneId = resolveZoneId(options.systemConfig, options.restArguments);
+			const zoneId = requireZone(options.systemConfig, readZoneFlag(options.restArguments)).id;
 			writeJson(options.io, await controllerClient.getZoneLogs(zoneId));
 			return;
 		}
@@ -115,7 +97,7 @@ export async function runControllerOperationCommand(
 				);
 			}
 
-			const zoneId = resolveZoneId(options.systemConfig, options.restArguments);
+			const zoneId = requireZone(options.systemConfig, readZoneFlag(options.restArguments)).id;
 			const secretResolver = await createResolverFromSystemConfig(
 				options.systemConfig,
 				options.dependencies,

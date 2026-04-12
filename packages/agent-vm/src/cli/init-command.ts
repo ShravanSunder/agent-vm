@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 
@@ -10,7 +10,7 @@ import {
 } from './keychain-credential.js';
 
 export interface ScaffoldAgentVmProjectOptions {
-	readonly gatewayType?: GatewayType;
+	readonly gatewayType: GatewayType;
 	readonly targetDir: string;
 	readonly zoneId: string;
 }
@@ -32,6 +32,8 @@ export interface PromptAndStoreTokenDependencies {
 }
 
 export type GatewayType = 'coding' | 'openclaw';
+
+const defaultGatewayIngressPort = 18791;
 
 function resolveGatewayConfigFileName(gatewayType: GatewayType): 'coding.json' | 'openclaw.json' {
 	return gatewayType === 'coding' ? 'coding.json' : 'openclaw.json';
@@ -63,41 +65,14 @@ const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object =
 				type: gatewayType,
 				memory: '2G',
 				cpus: 2,
-				port: 18791,
-				openclawConfig: `./config/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
+				port: defaultGatewayIngressPort,
+				gatewayConfig: `./config/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 				stateDir: `./state/${zoneId}`,
 				workspaceDir: `./workspaces/${zoneId}`,
 			},
-			secrets: {
-				DISCORD_BOT_TOKEN: {
-					source: '1password',
-					injection: 'env',
-				},
-				PERPLEXITY_API_KEY: {
-					source: '1password',
-					hosts: ['api.perplexity.ai'],
-					injection: 'http-mediation',
-				},
-				OPENCLAW_GATEWAY_TOKEN: {
-					source: '1password',
-					injection: 'env',
-				},
-			},
-			allowedHosts: [
-				'api.openai.com',
-				'auth.openai.com',
-				'api.perplexity.ai',
-				'discord.com',
-				'cdn.discordapp.com',
-				'api.github.com',
-				'registry.npmjs.org',
-			],
-			websocketBypass: [
-				'gateway.discord.gg:443',
-				'web.whatsapp.com:443',
-				'g.whatsapp.net:443',
-				'mmg.whatsapp.net:443',
-			],
+			secrets: defaultSecretsForGatewayType(gatewayType),
+			allowedHosts: defaultAllowedHostsForGatewayType(gatewayType),
+			websocketBypass: defaultWebsocketBypassForGatewayType(gatewayType),
 			toolProfile: 'standard',
 		},
 	],
@@ -114,16 +89,93 @@ const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object =
 	},
 });
 
-const defaultEnvTemplate = `# agent-vm environment configuration
+function defaultSecretsForGatewayType(gatewayType: GatewayType): Record<string, object> {
+	if (gatewayType === 'coding') {
+		return {
+			ANTHROPIC_API_KEY: {
+				source: '1password',
+				hosts: ['api.anthropic.com'],
+				injection: 'http-mediation',
+			},
+			OPENAI_API_KEY: {
+				source: '1password',
+				hosts: ['api.openai.com'],
+				injection: 'http-mediation',
+			},
+		};
+	}
+
+	return {
+		DISCORD_BOT_TOKEN: {
+			source: '1password',
+			injection: 'env',
+		},
+		PERPLEXITY_API_KEY: {
+			source: '1password',
+			hosts: ['api.perplexity.ai'],
+			injection: 'http-mediation',
+		},
+		OPENCLAW_GATEWAY_TOKEN: {
+			source: '1password',
+			injection: 'env',
+		},
+	};
+}
+
+function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): readonly string[] {
+	if (gatewayType === 'coding') {
+		return [
+			'api.anthropic.com',
+			'api.openai.com',
+			'auth.openai.com',
+			'api.github.com',
+			'registry.npmjs.org',
+		];
+	}
+
+	return [
+		'api.openai.com',
+		'auth.openai.com',
+		'api.perplexity.ai',
+		'discord.com',
+		'cdn.discordapp.com',
+		'api.github.com',
+		'registry.npmjs.org',
+	];
+}
+
+function defaultWebsocketBypassForGatewayType(gatewayType: GatewayType): readonly string[] {
+	if (gatewayType === 'coding') {
+		return [];
+	}
+
+	return [
+		'gateway.discord.gg:443',
+		'web.whatsapp.com:443',
+		'g.whatsapp.net:443',
+		'mmg.whatsapp.net:443',
+	];
+}
+
+function defaultEnvTemplateForGatewayType(gatewayType: GatewayType): string {
+	const header = `# agent-vm environment configuration
 # 1Password token is stored in macOS Keychain by agent-vm init.
 # Only set this for CI or non-macOS environments:
 # OP_SERVICE_ACCOUNT_TOKEN=
 
 # === Secret References (1Password op:// URIs) ===
-DISCORD_BOT_TOKEN_REF=op://agent-vm/agent-discord-app/bot-token
+`;
+	if (gatewayType === 'coding') {
+		return `${header}ANTHROPIC_API_KEY_REF=op://agent-vm/agent-anthropic/api-key
+OPENAI_API_KEY_REF=op://agent-vm/agent-openai/api-key
+`;
+	}
+
+	return `${header}DISCORD_BOT_TOKEN_REF=op://agent-vm/agent-discord-app/bot-token
 PERPLEXITY_API_KEY_REF=op://agent-vm/agent-perplexity/credential
 OPENCLAW_GATEWAY_TOKEN_REF=op://agent-vm/agent-shravan-claw-gateway/password
 `;
+}
 
 const defaultGatewayDockerfile = `FROM node:24-slim
 
@@ -219,10 +271,16 @@ const defaultToolBuildConfig = (): object => ({
 	},
 });
 
-const defaultOpenClawConfig = (zoneId: string): object => ({
+const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): object => ({
 	gateway: {
 		auth: { mode: 'token' },
 		bind: 'loopback',
+		controlUi: {
+			allowedOrigins: [
+				`http://127.0.0.1:${gatewayIngressPort}`,
+				`http://localhost:${gatewayIngressPort}`,
+			],
+		},
 		mode: 'local',
 		port: 18789,
 	},
@@ -261,10 +319,13 @@ const defaultCodingGatewayConfig = (): object => ({
 	verificationTimeoutMs: 300_000,
 });
 
-function writeFileIfMissing(filePath: string, content: string): 'created' | 'skipped' {
-	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+async function writeFileIfMissing(
+	filePath: string,
+	content: string,
+): Promise<'created' | 'skipped'> {
+	await fs.mkdir(path.dirname(filePath), { recursive: true });
 	try {
-		fs.writeFileSync(filePath, content, {
+		await fs.writeFile(filePath, content, {
 			encoding: 'utf8',
 			flag: 'wx',
 		});
@@ -281,20 +342,30 @@ function writeFileIfMissing(filePath: string, content: string): 'created' | 'ski
 export function scaffoldAgentVmProject(
 	options: ScaffoldAgentVmProjectOptions,
 	dependencies: ScaffoldAgentVmProjectDependencies = {},
-): ScaffoldAgentVmProjectResult {
+): Promise<ScaffoldAgentVmProjectResult> {
+	return scaffoldAgentVmProjectInternal(options, dependencies);
+}
+
+async function scaffoldAgentVmProjectInternal(
+	options: ScaffoldAgentVmProjectOptions,
+	dependencies: ScaffoldAgentVmProjectDependencies = {},
+): Promise<ScaffoldAgentVmProjectResult> {
 	const created: string[] = [];
 	const skipped: string[] = [];
-	const gatewayType = options.gatewayType ?? 'openclaw';
+	const gatewayType = options.gatewayType;
 
 	const systemConfigPath = path.join(options.targetDir, 'system.json');
-	const systemConfigStatus = writeFileIfMissing(
+	const systemConfigStatus = await writeFileIfMissing(
 		systemConfigPath,
 		`${JSON.stringify(defaultSystemConfig(options.zoneId, gatewayType), null, '\t')}\n`,
 	);
 	(systemConfigStatus === 'created' ? created : skipped).push('system.json');
 
 	const envFilePath = path.join(options.targetDir, '.env.local');
-	const envFileStatus = writeFileIfMissing(envFilePath, defaultEnvTemplate);
+	const envFileStatus = await writeFileIfMissing(
+		envFilePath,
+		defaultEnvTemplateForGatewayType(gatewayType),
+	);
 	(envFileStatus === 'created' ? created : skipped).push('.env.local');
 	if (envFileStatus === 'created') {
 		const generateAgeIdentityKey =
@@ -312,7 +383,7 @@ export function scaffoldAgentVmProject(
 			});
 		const ageIdentityKey = generateAgeIdentityKey();
 		if (ageIdentityKey) {
-			fs.appendFileSync(envFilePath, `AGE_IDENTITY_KEY=${ageIdentityKey}\n`, 'utf8');
+			await fs.appendFile(envFilePath, `AGE_IDENTITY_KEY=${ageIdentityKey}\n`, 'utf8');
 		}
 	}
 
@@ -323,11 +394,11 @@ export function scaffoldAgentVmProject(
 		options.zoneId,
 		gatewayConfigFileName,
 	);
-	const gatewayConfigStatus = writeFileIfMissing(
+	const gatewayConfigStatus = await writeFileIfMissing(
 		gatewayConfigPath,
 		`${JSON.stringify(
 			gatewayType === 'openclaw'
-				? defaultOpenClawConfig(options.zoneId)
+				? defaultOpenClawConfig(options.zoneId, defaultGatewayIngressPort)
 				: defaultCodingGatewayConfig(),
 			null,
 			'\t',
@@ -338,7 +409,7 @@ export function scaffoldAgentVmProject(
 	);
 
 	const gatewayDockerfilePath = path.join(options.targetDir, 'images', 'gateway', 'Dockerfile');
-	const gatewayDockerfileStatus = writeFileIfMissing(
+	const gatewayDockerfileStatus = await writeFileIfMissing(
 		gatewayDockerfilePath,
 		gatewayType === 'openclaw' ? defaultGatewayDockerfile : defaultCodingGatewayDockerfile,
 	);
@@ -350,7 +421,7 @@ export function scaffoldAgentVmProject(
 		'gateway',
 		'build-config.json',
 	);
-	const gatewayBuildConfigStatus = writeFileIfMissing(
+	const gatewayBuildConfigStatus = await writeFileIfMissing(
 		gatewayBuildConfigPath,
 		`${JSON.stringify(defaultGatewayBuildConfig(), null, '\t')}\n`,
 	);
@@ -359,11 +430,11 @@ export function scaffoldAgentVmProject(
 	);
 
 	const toolDockerfilePath = path.join(options.targetDir, 'images', 'tool', 'Dockerfile');
-	const toolDockerfileStatus = writeFileIfMissing(toolDockerfilePath, defaultToolDockerfile);
+	const toolDockerfileStatus = await writeFileIfMissing(toolDockerfilePath, defaultToolDockerfile);
 	(toolDockerfileStatus === 'created' ? created : skipped).push('images/tool/Dockerfile');
 
 	const toolBuildConfigPath = path.join(options.targetDir, 'images', 'tool', 'build-config.json');
-	const toolBuildConfigStatus = writeFileIfMissing(
+	const toolBuildConfigStatus = await writeFileIfMissing(
 		toolBuildConfigPath,
 		`${JSON.stringify(defaultToolBuildConfig(), null, '\t')}\n`,
 	);
@@ -374,7 +445,7 @@ export function scaffoldAgentVmProject(
 		path.join(options.targetDir, 'workspaces', options.zoneId),
 		path.join(options.targetDir, 'workspaces', 'tools'),
 	]) {
-		fs.mkdirSync(directoryPath, { recursive: true });
+		await fs.mkdir(directoryPath, { recursive: true });
 	}
 
 	return { created, keychainStored: false, skipped };

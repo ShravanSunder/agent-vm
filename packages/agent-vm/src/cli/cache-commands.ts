@@ -7,7 +7,7 @@ import {
 	findStaleImageDirectories as findStaleImageDirectoriesDefault,
 	type StaleImageEntry,
 } from '../build/stale-image-cleaner.js';
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 
 interface CacheCommandIo {
 	readonly stderr: Pick<NodeJS.WriteStream, 'write'>;

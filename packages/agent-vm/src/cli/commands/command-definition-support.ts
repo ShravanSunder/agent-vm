@@ -1,8 +1,10 @@
 // oxlint-disable typescript-eslint/explicit-function-return-type
 import { flag, option, optional, restPositionals, string } from 'cmd-ts';
+import { ZodError } from 'zod';
 
-import type { SystemConfig } from '../../controller/system-config.js';
+import type { SystemConfig } from '../../config/system-config.js';
 import type { CliDependencies } from '../agent-vm-cli-support.js';
+import { formatZodError } from '../format-zod-error.js';
 import type { GatewayType } from '../init-command.js';
 
 export function createConfigOption() {
@@ -20,7 +22,7 @@ export function createZoneOption() {
 		type: optional(string),
 		long: 'zone',
 		short: 'z',
-		description: 'Zone identifier',
+		description: 'Zone identifier (lists available zones when omitted)',
 	});
 }
 
@@ -55,25 +57,28 @@ export function createRemoteCommandArguments() {
 export function loadSystemConfigFromOption(
 	configPath: string | undefined,
 	dependencies: Pick<CliDependencies, 'loadSystemConfig'>,
-): SystemConfig {
-	return dependencies.loadSystemConfig(configPath ?? 'system.json');
+): Promise<SystemConfig> {
+	const resolvedConfigPath = configPath ?? 'system.json';
+	return dependencies.loadSystemConfig(resolvedConfigPath).catch((error: unknown) => {
+		if (error instanceof ZodError) {
+			throw new Error(formatZodError(`Invalid ${resolvedConfigPath} configuration:`, error), {
+				cause: error,
+			});
+		}
+		if (error instanceof SyntaxError) {
+			throw new Error(`Invalid JSON in ${resolvedConfigPath}: ${error.message}`, {
+				cause: error,
+			});
+		}
+		throw error;
+	});
 }
 
-export function appendZoneArgument(
-	arguments_: string[],
-	zoneId: string | undefined,
-): readonly string[] {
-	if (!zoneId) {
-		return arguments_;
-	}
-
+export function appendZoneArgument(arguments_: string[], zoneId: string): readonly string[] {
 	return [...arguments_, '--zone', zoneId];
 }
 
 export function parseGatewayType(gatewayType: string | undefined): GatewayType {
-	if (!gatewayType) {
-		return 'openclaw';
-	}
 	if (gatewayType === 'openclaw') {
 		return gatewayType;
 	}
@@ -81,5 +86,7 @@ export function parseGatewayType(gatewayType: string | undefined): GatewayType {
 		return gatewayType;
 	}
 
-	throw new Error(`Unknown gateway type '${gatewayType}'. Expected 'openclaw' or 'coding'.`);
+	throw new Error(
+		`Gateway type is required. Expected 'openclaw' or 'coding'${gatewayType ? `, got '${gatewayType}'` : ''}.`,
+	);
 }

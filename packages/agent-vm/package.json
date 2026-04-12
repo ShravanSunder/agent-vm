@@ -22,8 +22,11 @@
 		"@hono/node-server": "^1",
 		"cmd-ts": "^0.14.0",
 		"execa": "^9.5.2",
+		"gateway-interface": "workspace:*",
 		"gondolin-core": "workspace:*",
 		"hono": "^4",
+		"openclaw-gateway": "workspace:*",
+		"worker-gateway": "workspace:*",
 		"zod": "^4"
 	},
 	"devDependencies": {

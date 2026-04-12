@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 import { runCacheCommand, type CacheCommandDependencies } from './cache-commands.js';
 
 function createCacheCommandSystemConfig(): SystemConfig {
@@ -39,7 +39,7 @@ function createCacheCommandSystemConfig(): SystemConfig {
 					type: 'openclaw',
 					cpus: 2,
 					memory: '2G',
-					openclawConfig: './config/shravan/openclaw.json',
+					gatewayConfig: './config/shravan/openclaw.json',
 					port: 18791,
 					stateDir: './state/shravan',
 					workspaceDir: './workspaces/shravan',

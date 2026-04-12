@@ -1,10 +1,11 @@
+import type { GatewayProcessSpec } from 'gateway-interface';
 import type { ManagedVm, SecretResolver } from 'gondolin-core';
 
+import type { SystemConfig } from '../config/system-config.js';
 import type { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { RunTaskFn } from '../shared/run-task.js';
-import type { createControllerService } from './controller-http-routes.js';
-import type { ToolProfile } from './lease-manager.js';
-import type { SystemConfig } from './system-config.js';
+import type { createControllerService } from './http/controller-http-routes.js';
+import type { ToolProfile } from './leases/lease-manager.js';
 
 export interface ControllerRuntime {
 	readonly controllerPort: number;
@@ -13,6 +14,7 @@ export interface ControllerRuntime {
 			readonly host: string;
 			readonly port: number;
 		};
+		readonly processSpec: GatewayProcessSpec;
 		readonly vm: Pick<ManagedVm, 'close' | 'id'>;
 	};
 	close(): Promise<void>;

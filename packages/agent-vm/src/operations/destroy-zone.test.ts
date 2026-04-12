@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 import { runControllerDestroy } from './destroy-zone.js';
 
 const createdDirectories: string[] = [];
@@ -51,7 +51,7 @@ describe('runControllerDestroy', () => {
 						memory: '2G',
 						cpus: 2,
 						port: 18791,
-						openclawConfig: './config/shravan/openclaw.json',
+						gatewayConfig: './config/shravan/openclaw.json',
 						stateDir,
 						workspaceDir,
 					},

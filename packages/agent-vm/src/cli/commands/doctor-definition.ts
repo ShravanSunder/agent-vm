@@ -18,7 +18,7 @@ export function createDoctorCommand(io: CliIo, dependencies: CliDependencies) {
 				io,
 				restArguments: [],
 				subcommand: 'doctor',
-				systemConfig: loadSystemConfigFromOption(config, dependencies),
+				systemConfig: await loadSystemConfigFromOption(config, dependencies),
 			});
 		},
 	});

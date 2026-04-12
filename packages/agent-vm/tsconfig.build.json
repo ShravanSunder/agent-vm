@@ -6,7 +6,12 @@
 		"declaration": true,
 		"declarationMap": true,
 		"sourceMap": true,
-		"noEmit": false
+		"noEmit": false,
+		"paths": {
+			"gateway-interface": ["../gateway-interface/dist/index.d.ts"],
+			"openclaw-gateway": ["../openclaw-gateway/dist/index.d.ts"],
+			"worker-gateway": ["../worker-gateway/dist/index.d.ts"]
+		}
 	},
 	"exclude": ["src/**/*.test.ts"]
 }

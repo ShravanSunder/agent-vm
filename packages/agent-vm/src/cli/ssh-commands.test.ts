@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ControllerClient } from '../controller/controller-client.js';
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
+import type { ControllerClient } from '../controller/http/controller-client.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { runSshCommand } from './ssh-commands.js';
 
@@ -36,7 +36,7 @@ const systemConfig = {
 				type: 'openclaw',
 				cpus: 2,
 				memory: '2G',
-				openclawConfig: './config/shravan/openclaw.json',
+				gatewayConfig: './config/shravan/openclaw.json',
 				port: 18791,
 				stateDir: './state/shravan',
 				workspaceDir: './workspaces/shravan',
@@ -213,5 +213,27 @@ describe('runSshCommand', () => {
 				systemConfig,
 			}),
 		).rejects.toThrow('Failed to open SSH session to root@127.0.0.1:2222');
+	});
+
+	it('requires --zone explicitly', async () => {
+		await expect(
+			runSshCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: () =>
+						createControllerClientStub(async () => ({
+							host: '127.0.0.1',
+							port: 2222,
+							user: 'root',
+						})),
+				},
+				io: {
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				restArguments: [],
+				systemConfig,
+			}),
+		).rejects.toThrow('--zone is required');
 	});
 });

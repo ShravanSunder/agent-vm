@@ -5,8 +5,8 @@ import path from 'node:path';
 import type { ManagedVm, ManagedVmInstance } from 'gondolin-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { SystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
-import type { SystemConfig } from '../controller/system-config.js';
 
 function createSystemConfig(
 	controllerPort: number,
@@ -38,7 +38,7 @@ function createSystemConfig(
 					memory: '2G',
 					cpus: 2,
 					port: controllerPort + 100,
-					openclawConfig: './config/shravan/openclaw.json',
+					gatewayConfig: './config/shravan/openclaw.json',
 					stateDir: stateDirectory,
 					workspaceDir: workspaceDirectory,
 				},
@@ -181,6 +181,13 @@ describe('live integration: controller restart persistence', () => {
 						ingress: {
 							host: '127.0.0.1',
 							port: 18791,
+						},
+						processSpec: {
+							bootstrapCommand: 'bootstrap-openclaw',
+							guestListenPort: 18789,
+							healthCheck: { type: 'http', port: 18789, path: '/' } as const,
+							logPath: '/tmp/openclaw.log',
+							startCommand: 'start-openclaw',
 						},
 						vm: createGatewayVmMock(stateDirectory),
 						zone,

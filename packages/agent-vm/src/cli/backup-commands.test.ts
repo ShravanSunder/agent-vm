@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SystemConfig } from '../controller/system-config.js';
+import type { SystemConfig } from '../config/system-config.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { runBackupCommand } from './backup-commands.js';
 
@@ -40,7 +40,7 @@ function createBackupSystemConfig(): SystemConfig {
 					type: 'openclaw',
 					cpus: 2,
 					memory: '2G',
-					openclawConfig: './config/shravan/openclaw.json',
+					gatewayConfig: './config/shravan/openclaw.json',
 					port: 18791,
 					stateDir: './state/shravan',
 					workspaceDir: './workspaces/shravan',
@@ -91,7 +91,7 @@ describe('runBackupCommand', () => {
 					listBackups,
 					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 				}),
-				loadSystemConfig: () => systemConfig,
+				loadSystemConfig: async () => systemConfig,
 				resolveServiceAccountToken: async () => 'token',
 				runControllerDoctor: () => ({ checks: [], ok: true }),
 			},
@@ -154,7 +154,7 @@ describe('runBackupCommand', () => {
 					listBackups: () => [],
 					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 				}),
-				loadSystemConfig: () => systemConfig,
+				loadSystemConfig: async () => systemConfig,
 				resolveServiceAccountToken: async () => 'token',
 				runControllerDoctor: () => ({ checks: [], ok: true }),
 			},
@@ -203,7 +203,7 @@ describe('runBackupCommand', () => {
 						listBackups: () => [],
 						restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 					}),
-					loadSystemConfig: () => systemConfig,
+					loadSystemConfig: async () => systemConfig,
 					resolveServiceAccountToken: async () => 'token',
 					runControllerDoctor: () => ({ checks: [], ok: true }),
 				},
@@ -211,9 +211,84 @@ describe('runBackupCommand', () => {
 					stderr: { write: () => true },
 					stdout: { write: () => true },
 				},
-				restArguments: ['restore'],
+				restArguments: ['restore', '--zone', 'shravan'],
 				systemConfig,
 			}),
 		).rejects.toThrow('Usage: agent-vm backup restore <path> [--zone <id>]');
+	});
+
+	it('restores a backup into the target zone workspace and state directories', async () => {
+		const restoreBackup = vi.fn(async () => ({
+			stateDir: './state/shravan',
+			workspaceDir: './workspaces/shravan',
+			zoneId: 'shravan',
+		}));
+		const systemConfig = createBackupSystemConfig();
+		const outputs: string[] = [];
+
+		await runBackupCommand({
+			dependencies: {
+				...defaultCliDependencies,
+				buildControllerStatus: () => ({ controllerPort: 18800, toolProfiles: [], zones: [] }),
+				createAgeBackupEncryption: () => ({ decrypt: async () => {}, encrypt: async () => {} }),
+				createControllerClient: () => ({
+					destroyZone: async () => ({}),
+					enableZoneSsh: async () => ({}),
+					getControllerStatus: async () => ({}),
+					getZoneLogs: async () => ({}),
+					listLeases: async () => [],
+					refreshZoneCredentials: async () => ({}),
+					releaseLease: async () => {},
+					stopController: async () => ({}),
+					upgradeZone: async () => ({}),
+				}),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				createZoneBackupManager: () => ({
+					createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
+					listBackups: () => [],
+					restoreBackup,
+				}),
+				loadSystemConfig: async () => systemConfig,
+				resolveServiceAccountToken: async () => 'token',
+				runControllerDoctor: () => ({ checks: [], ok: true }),
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			restArguments: ['restore', '/tmp/backup.tar.age', '--zone', 'shravan'],
+			systemConfig,
+		});
+
+		expect(restoreBackup).toHaveBeenCalledWith({
+			backupPath: '/tmp/backup.tar.age',
+			stateDir: './state/shravan',
+			workspaceDir: './workspaces/shravan',
+		});
+		expect(outputs.join('')).toContain('"zoneId": "shravan"');
+	});
+
+	it('requires --zone explicitly', async () => {
+		const systemConfig = createBackupSystemConfig();
+
+		await expect(
+			runBackupCommand({
+				dependencies: defaultCliDependencies,
+				io: {
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				restArguments: ['list'],
+				systemConfig,
+			}),
+		).rejects.toThrow('--zone is required');
 	});
 });

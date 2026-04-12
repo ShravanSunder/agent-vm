@@ -3,10 +3,10 @@ import { createOpCliSecretResolver, resolveServiceAccountToken } from 'gondolin-
 
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';
-import { createControllerClient } from '../controller/controller-client.js';
+import { loadSystemConfig, type SystemConfig } from '../config/system-config.js';
 import type { ControllerRuntimeDependencies } from '../controller/controller-runtime-types.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
-import { loadSystemConfig, type SystemConfig } from '../controller/system-config.js';
+import { createControllerClient } from '../controller/http/controller-client.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { buildControllerStatus } from '../operations/controller-status.js';
 import { runControllerDoctor } from '../operations/doctor.js';
@@ -28,6 +28,10 @@ export interface CliDependencies {
 	readonly loadSystemConfig: typeof loadSystemConfig;
 	readonly runBuildCommand?: typeof runBuildCommand;
 	readonly runCacheCommand?: typeof runCacheCommand;
+	readonly runCommand?: (
+		command: string,
+		arguments_: readonly string[],
+	) => Promise<{ readonly exitCode: number; readonly stderr: string; readonly stdout: string }>;
 	readonly runInteractiveProcess?: (
 		command: string,
 		arguments_: readonly string[],
@@ -36,10 +40,10 @@ export interface CliDependencies {
 	readonly runControllerDoctor: typeof runControllerDoctor;
 	readonly promptAndStoreServiceAccountToken?: () => Promise<boolean>;
 	readonly scaffoldAgentVmProject?: (options: {
-		readonly gatewayType?: GatewayType;
+		readonly gatewayType: GatewayType;
 		readonly targetDir: string;
 		readonly zoneId: string;
-	}) => ScaffoldAgentVmProjectResult;
+	}) => Promise<ScaffoldAgentVmProjectResult>;
 	readonly startControllerRuntime: (
 		options: {
 			readonly systemConfig: SystemConfig;
@@ -96,12 +100,12 @@ export function resolveConfigPath(argv: readonly string[]): string {
 	return 'system.json';
 }
 
-export function resolveZoneId(systemConfig: SystemConfig, argv: readonly string[]): string {
+export function readZoneFlag(argv: readonly string[]): string | undefined {
 	const zoneFlagIndex = argv.indexOf('--zone');
 	if (zoneFlagIndex >= 0) {
-		return argv[zoneFlagIndex + 1] ?? '';
+		return argv[zoneFlagIndex + 1];
 	}
-	return systemConfig.zones[0]?.id ?? '';
+	return undefined;
 }
 
 export function resolveControllerBaseUrl(systemConfig: SystemConfig): string {
@@ -117,6 +121,20 @@ export function findZone(
 		throw new Error(`Unknown zone '${zoneId}'.`);
 	}
 	return zone;
+}
+
+export function requireZone(
+	systemConfig: SystemConfig,
+	zoneFlag: string | undefined,
+): SystemConfig['zones'][number] {
+	if (zoneFlag) {
+		return findZone(systemConfig, zoneFlag);
+	}
+
+	const zoneList = systemConfig.zones
+		.map((zone) => `  --zone ${zone.id}  (${zone.gateway.type})`)
+		.join('\n');
+	throw new Error(`--zone is required. Available zones:\n${zoneList}`);
 }
 
 export async function createResolverFromSystemConfig(

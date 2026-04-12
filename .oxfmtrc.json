@@ -17,6 +17,7 @@
 		"build",
 		"coverage",
 		"node_modules",
+		"**/*.md",
 		"**/*.gen.ts",
 		"**/__generated__/**"
 	]
