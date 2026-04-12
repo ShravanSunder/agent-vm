@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { command, positional, string, subcommands } from 'cmd-ts';
+import { command, option, optional, positional, string, subcommands } from 'cmd-ts';
 
 import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
 import type { SystemConfig } from '../../config/system-config.js';
@@ -85,7 +85,12 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 				description: 'Boot the controller and gateway',
 				args: {
 					config: createConfigOption(),
-					zone: createZoneOption(),
+					zone: option({
+						type: optional(string),
+						long: 'zone',
+						short: 'z',
+						description: 'Zone identifier (required — lists available zones when omitted)',
+					}),
 				},
 				handler: async ({ config, zone }) => {
 					const systemConfig = await loadSystemConfigFromOption(config, dependencies);

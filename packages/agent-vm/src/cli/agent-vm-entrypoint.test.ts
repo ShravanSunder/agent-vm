@@ -823,7 +823,7 @@ describe('runAgentVmCli', () => {
 					}),
 				},
 			),
-		).rejects.toThrow(/No value provided for --zone/u);
+		).rejects.toThrow(/--zone is required\. Available zones:/u);
 	});
 
 	it('uses the explicitly requested zone for controller start', async () => {
