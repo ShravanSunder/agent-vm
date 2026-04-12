@@ -29,6 +29,7 @@ export interface CliDependencies {
 	) => Promise<void>;
 	readonly resolveServiceAccountToken: typeof resolveServiceAccountToken;
 	readonly runControllerDoctor: typeof runControllerDoctor;
+	readonly promptAndStoreServiceAccountToken?: () => Promise<boolean>;
 	readonly scaffoldAgentVmProject?: (options: {
 		readonly targetDir: string;
 		readonly zoneId: string;

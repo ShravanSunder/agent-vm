@@ -61,14 +61,15 @@ describe('scaffoldAgentVmProject', () => {
 		expect(envContent).toContain('DISCORD_BOT_TOKEN_REF=');
 	});
 
-	it('scaffolds 1Password Touch ID auth by default', () => {
+	it('scaffolds macOS Keychain auth by default', () => {
 		const targetDir = createTestDirectory();
 		scaffoldAgentVmProject({ targetDir, zoneId: 'test-zone' }, noGeneratedAgeIdentityDependencies);
 		const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
 
 		expect(config.host.secretsProvider.tokenSource).toEqual({
-			ref: 'op://agent-vm/service-account/credential',
-			type: 'op-cli',
+			type: 'keychain',
+			service: 'agent-vm',
+			account: '1p-service-account',
 		});
 	});
 

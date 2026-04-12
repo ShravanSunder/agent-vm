@@ -32,7 +32,7 @@ import { runBackupCommand } from './backup-commands.js';
 import { runBuildCommand } from './build-command.js';
 import { runCacheCommand } from './cache-commands.js';
 import { runControllerOperationCommand } from './controller-operation-commands.js';
-import { scaffoldAgentVmProject } from './init-command.js';
+import { promptAndStoreServiceAccountToken, scaffoldAgentVmProject } from './init-command.js';
 import { runLeaseCommand } from './lease-commands.js';
 import { runSshCommand } from './ssh-commands.js';
 
@@ -48,7 +48,12 @@ export async function runAgentVmCli(
 			targetDir: dependencies.getCurrentWorkingDirectory?.() ?? process.cwd(),
 			zoneId,
 		});
-		io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+
+		const keychainStored = await (
+			dependencies.promptAndStoreServiceAccountToken ?? promptAndStoreServiceAccountToken
+		)();
+
+		io.stdout.write(`${JSON.stringify({ ...result, keychainStored }, null, 2)}\n`);
 		return;
 	}
 	if (commandGroup === 'build') {
