@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { buildDockerImage as buildDockerImageDefault } from '../build/docker-image-builder.js';
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { SystemConfig } from '../config/system-config.js';
+import { formatZodError } from './format-zod-error.js';
 
 export interface BuildCommandDependencies {
 	readonly buildDockerImage?: (options: {
@@ -41,7 +42,7 @@ async function resolveOciImageTagFromConfig(buildConfigPath: string): Promise<st
 	const parsedConfig = ociImageTagSchema.safeParse(rawConfig);
 	if (!parsedConfig.success) {
 		throw new Error(
-			`build-config.json at ${buildConfigPath} has no valid oci.image tag: ${parsedConfig.error.message}`,
+			formatZodError(`Invalid build-config.json at ${buildConfigPath}:`, parsedConfig.error),
 		);
 	}
 	return parsedConfig.data.oci.image;

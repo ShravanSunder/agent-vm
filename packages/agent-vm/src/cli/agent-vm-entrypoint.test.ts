@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ZodError } from 'zod';
 
 import type { SystemConfig } from '../config/system-config.js';
 import type { ControllerClient } from '../controller/http/controller-client.js';
@@ -395,6 +396,37 @@ describe('runAgentVmCli', () => {
 		expect(stderrChunks.join('')).toContain('boom');
 	});
 
+	it('surfaces system config validation errors with friendly paths', async () => {
+		await expect(
+			runAgentVmCli(
+				['build'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					loadSystemConfig: async () => {
+						throw new ZodError([
+							{
+								code: 'invalid_type',
+								expected: 'string',
+								input: undefined,
+								message: 'Invalid input: expected string, received undefined',
+								path: ['zones', 0, 'gateway', 'gatewayConfig'],
+							},
+						]);
+					},
+				},
+			),
+		).rejects.toThrow(
+			[
+				'Invalid system.json configuration:',
+				'  zones[0].gateway.gatewayConfig: Invalid input: expected string, received undefined',
+			].join('\n'),
+		);
+	});
+
 	it('does not duplicate already-reported cli exit errors in the main error handler', () => {
 		const stderrChunks: string[] = [];
 
@@ -779,7 +811,14 @@ describe('runAgentVmCli', () => {
 			getControllerStatus: vi.fn(async () => ({
 				controllerPort: 18800,
 				toolProfiles: ['standard'],
-				zones: [{ id: 'shravan', ingressPort: 18791, toolProfile: 'standard' }],
+				zones: [
+					{
+						gatewayType: 'openclaw',
+						id: 'shravan',
+						ingressPort: 18791,
+						toolProfile: 'standard',
+					},
+				],
 			})),
 			getZoneLogs: vi.fn(async () => ({ output: 'logs', zoneId: 'shravan' })),
 			listLeases: vi.fn(async () => []),

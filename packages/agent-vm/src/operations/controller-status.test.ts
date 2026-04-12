@@ -58,6 +58,7 @@ describe('buildControllerStatus', () => {
 			toolProfiles: ['standard'],
 			zones: [
 				{
+					gatewayType: 'openclaw',
 					id: 'shravan',
 					ingressPort: 18791,
 					toolProfile: 'standard',

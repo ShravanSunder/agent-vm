@@ -230,7 +230,14 @@ describe('createControllerApp', () => {
 		const getStatus = vi.fn(async () => ({
 			controllerPort: 18800,
 			toolProfiles: ['standard'],
-			zones: [{ id: 'shravan', ingressPort: 18791, toolProfile: 'standard' }],
+			zones: [
+				{
+					gatewayType: 'openclaw',
+					id: 'shravan',
+					ingressPort: 18791,
+					toolProfile: 'standard',
+				},
+			],
 		}));
 		const getZoneLogs = vi.fn(async () => ({
 			output: 'gateway log line',
