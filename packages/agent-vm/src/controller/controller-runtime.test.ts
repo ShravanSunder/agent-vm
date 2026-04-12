@@ -173,6 +173,8 @@ describe('startControllerRuntime', () => {
 			{ method: 'POST' },
 		);
 		expect(refreshResponse.status).toBe(200);
+		const wrongZoneLogsResponse = await startHttpServerArgs.app.request('/zones/alevtina/logs');
+		expect(wrongZoneLogsResponse.status).toBe(500);
 		const upgradeResponse = await startHttpServerArgs.app.request('/zones/shravan/upgrade', {
 			method: 'POST',
 		});

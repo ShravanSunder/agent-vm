@@ -36,6 +36,9 @@ export function createControllerApp(options: {
 				);
 			}
 			const payload = parsedPayload.data;
+			if (options.zoneToolProfiles && !(payload.zoneId in options.zoneToolProfiles)) {
+				return context.json({ error: `Unknown zone '${payload.zoneId}'` }, 400);
+			}
 			const resolvedProfileId = options.zoneToolProfiles?.[payload.zoneId] ?? payload.profileId;
 			const toolProfile = options.toolProfiles?.[resolvedProfileId];
 			if (!toolProfile) {

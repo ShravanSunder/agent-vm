@@ -187,6 +187,44 @@ describe('createControllerApp', () => {
 		);
 	});
 
+	it('rejects lease creation for an unknown zone', async () => {
+		const createLease = vi.fn(async () => createLeaseStub('lease-unknown-zone', 0));
+		const app = createControllerApp({
+			leaseManager: {
+				createLease,
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			toolProfiles: {
+				standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+			},
+			zoneToolProfiles: {
+				shravan: 'standard',
+			},
+		});
+
+		const response = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/workspace',
+				profileId: 'standard',
+				scopeKey: 'agent:main:session-abc',
+				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/workspace',
+				zoneId: 'bogus-zone',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toMatchObject({
+			error: "Unknown zone 'bogus-zone'",
+		});
+		expect(createLease).not.toHaveBeenCalled();
+	});
+
 	it('exposes status, logs, credentials refresh, destroy, and upgrade routes', async () => {
 		const destroyZone = vi.fn(async () => ({ ok: true, purged: true, zoneId: 'shravan' }));
 		const getStatus = vi.fn(async () => ({

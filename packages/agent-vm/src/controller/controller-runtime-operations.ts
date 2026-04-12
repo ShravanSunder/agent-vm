@@ -27,7 +27,7 @@ interface GatewayZoneRuntime {
 
 interface ControllerRuntimeOperations {
 	readonly destroyZone: (targetZoneId: string, purge: boolean) => Promise<unknown>;
-	readonly enableSshForZone: () => Promise<unknown>;
+	readonly enableSshForZone: (targetZoneId: string) => Promise<unknown>;
 	readonly execInZone: (
 		targetZoneId: string,
 		command: string,
@@ -49,6 +49,7 @@ interface ControllerRuntimeOperations {
 }
 
 export function createControllerRuntimeOperations(options: {
+	readonly activeZoneId: string;
 	readonly getGateway: () => GatewayZoneRuntime;
 	readonly getZone: (zoneId: string) => SystemConfig['zones'][number];
 	readonly leaseManager: Pick<LeaseManager, 'listLeases' | 'releaseLease'>;
@@ -57,9 +58,21 @@ export function createControllerRuntimeOperations(options: {
 	readonly stopGatewayZone: () => Promise<void>;
 	readonly systemConfig: SystemConfig;
 }): ControllerRuntimeOperations {
+	const assertActiveZone = (targetZoneId: string): void => {
+		if (targetZoneId !== options.activeZoneId) {
+			throw new Error(
+				`Controller is running zone '${options.activeZoneId}', not '${targetZoneId}'. Multi-zone runtime selection is not implemented yet.`,
+			);
+		}
+	};
+
 	return {
-		enableSshForZone: async () => await options.getGateway().vm.enableSsh(),
-		execInZone: async (_targetZoneId: string, command: string) => {
+		enableSshForZone: async (targetZoneId: string) => {
+			assertActiveZone(targetZoneId);
+			return await options.getGateway().vm.enableSsh();
+		},
+		execInZone: async (targetZoneId: string, command: string) => {
+			assertActiveZone(targetZoneId);
 			const result = await options.getGateway().vm.exec(command);
 			return {
 				exitCode: result.exitCode,
@@ -67,8 +80,9 @@ export function createControllerRuntimeOperations(options: {
 				stdout: result.stdout,
 			};
 		},
-		destroyZone: async (targetZoneId: string, purge: boolean) =>
-			await runControllerDestroy(
+		destroyZone: async (targetZoneId: string, purge: boolean) => {
+			assertActiveZone(targetZoneId);
+			return await runControllerDestroy(
 				{
 					purge,
 					systemConfig: options.systemConfig,
@@ -85,10 +99,12 @@ export function createControllerRuntimeOperations(options: {
 					},
 					stopGatewayZone: options.stopGatewayZone,
 				},
-			),
+			);
+		},
 		getStatus: async () => buildControllerStatus(options.systemConfig),
-		getZoneLogs: async (targetZoneId: string) =>
-			await runControllerLogs(
+		getZoneLogs: async (targetZoneId: string) => {
+			assertActiveZone(targetZoneId);
+			return await runControllerLogs(
 				{
 					zoneId: targetZoneId,
 				},
@@ -104,9 +120,11 @@ export function createControllerRuntimeOperations(options: {
 						}
 					},
 				},
-			),
-		refreshZoneCredentials: async (targetZoneId: string) =>
-			await runControllerCredentialsRefresh(
+			);
+		},
+		refreshZoneCredentials: async (targetZoneId: string) => {
+			assertActiveZone(targetZoneId);
+			return await runControllerCredentialsRefresh(
 				{
 					zoneId: targetZoneId,
 				},
@@ -123,9 +141,11 @@ export function createControllerRuntimeOperations(options: {
 						await options.restartGatewayZone();
 					},
 				},
-			),
-		upgradeZone: async (targetZoneId: string) =>
-			await runControllerUpgrade(
+			);
+		},
+		upgradeZone: async (targetZoneId: string) => {
+			assertActiveZone(targetZoneId);
+			return await runControllerUpgrade(
 				{
 					systemConfig: options.systemConfig,
 					zoneId: targetZoneId,
@@ -135,7 +155,8 @@ export function createControllerRuntimeOperations(options: {
 					restartGatewayZone: options.restartGatewayZone,
 					stopGatewayZone: options.stopGatewayZone,
 				},
-			),
+			);
+		},
 	};
 }
 
