@@ -109,6 +109,82 @@ OPENCLAW_GATEWAY_TOKEN_REF=op://agent-vm/agent-shravan-claw-gateway/password
 # AGE_IDENTITY_KEY=
 `;
 
+const defaultGatewayDockerfile = `FROM node:24-slim
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      openssh-server \\
+      ca-certificates \\
+      git \\
+      curl \\
+      python3 && \\
+    rm -rf /var/lib/apt/lists/* && \\
+    update-ca-certificates && \\
+    npm install -g openclaw@2026.4.2 && \\
+    useradd -m -s /bin/bash openclaw && \\
+    mkdir -p /home/openclaw/.openclaw /home/openclaw/workspace /run/sshd /root && \\
+    chown -R openclaw:openclaw /home/openclaw && \\
+    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true && \\
+    mkdir -p /usr/local/lib/node_modules/openclaw/dist/extensions/gondolin
+`;
+
+const defaultToolDockerfile = `FROM node:24-slim
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      openssh-server \\
+      ca-certificates \\
+      git \\
+      curl \\
+      python3 && \\
+    rm -rf /var/lib/apt/lists/* && \\
+    update-ca-certificates && \\
+    useradd -m -s /bin/bash sandbox && \\
+    mkdir -p /workspace /run/sshd && \\
+    chown sandbox:sandbox /workspace && \\
+    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true
+`;
+
+const defaultGatewayBuildConfig = (): object => ({
+	arch: 'aarch64',
+	distro: 'alpine',
+	alpine: {
+		version: '3.23.0',
+		kernelPackage: 'linux-virt',
+		kernelImage: 'vmlinuz-virt',
+		rootfsPackages: [],
+		initramfsPackages: [],
+	},
+	oci: {
+		image: 'agent-vm-gateway:latest',
+		pullPolicy: 'never',
+	},
+	rootfs: {
+		label: 'gondolin-root',
+		sizeMb: 4096,
+	},
+});
+
+const defaultToolBuildConfig = (): object => ({
+	arch: 'aarch64',
+	distro: 'alpine',
+	alpine: {
+		version: '3.23.0',
+		kernelPackage: 'linux-virt',
+		kernelImage: 'vmlinuz-virt',
+		rootfsPackages: [],
+		initramfsPackages: [],
+	},
+	oci: {
+		image: 'agent-vm-tool:latest',
+		pullPolicy: 'never',
+	},
+	rootfs: {
+		label: 'tool-root',
+		sizeMb: 2048,
+	},
+});
+
 const defaultOpenClawConfig = (zoneId: string): object => ({
 	gateway: {
 		auth: { mode: 'token' },
@@ -205,6 +281,28 @@ export function scaffoldAgentVmProject(
 	(openClawConfigStatus === 'created' ? created : skipped).push(
 		`config/${options.zoneId}/openclaw.json`,
 	);
+
+	const gatewayDockerfilePath = path.join(options.targetDir, 'images', 'gateway', 'Dockerfile');
+	const gatewayDockerfileStatus = writeFileIfMissing(gatewayDockerfilePath, defaultGatewayDockerfile);
+	(gatewayDockerfileStatus === 'created' ? created : skipped).push('images/gateway/Dockerfile');
+
+	const gatewayBuildConfigPath = path.join(options.targetDir, 'images', 'gateway', 'build-config.json');
+	const gatewayBuildConfigStatus = writeFileIfMissing(
+		gatewayBuildConfigPath,
+		`${JSON.stringify(defaultGatewayBuildConfig(), null, '\t')}\n`,
+	);
+	(gatewayBuildConfigStatus === 'created' ? created : skipped).push('images/gateway/build-config.json');
+
+	const toolDockerfilePath = path.join(options.targetDir, 'images', 'tool', 'Dockerfile');
+	const toolDockerfileStatus = writeFileIfMissing(toolDockerfilePath, defaultToolDockerfile);
+	(toolDockerfileStatus === 'created' ? created : skipped).push('images/tool/Dockerfile');
+
+	const toolBuildConfigPath = path.join(options.targetDir, 'images', 'tool', 'build-config.json');
+	const toolBuildConfigStatus = writeFileIfMissing(
+		toolBuildConfigPath,
+		`${JSON.stringify(defaultToolBuildConfig(), null, '\t')}\n`,
+	);
+	(toolBuildConfigStatus === 'created' ? created : skipped).push('images/tool/build-config.json');
 
 	for (const directoryPath of [
 		path.join(options.targetDir, 'state', options.zoneId),
