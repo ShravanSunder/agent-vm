@@ -162,7 +162,6 @@ describe('startControllerRuntime', () => {
 		);
 		expect(taskTitles).toEqual([
 			'Resolving 1Password secrets',
-			'Cleaning orphaned gateway runtime',
 			'Starting gateway zone',
 			'Controller API on :18800',
 		]);
@@ -240,17 +239,13 @@ describe('startControllerRuntime', () => {
 		expect(startHttpServer).not.toHaveBeenCalled();
 	});
 
-	it('runs orphan cleanup before starting the gateway and deletes the runtime record on close', async () => {
+	it('deletes the runtime record on close after the gateway stops', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected test zone.');
 		}
 		const callOrder: string[] = [];
-		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => {
-			callOrder.push('cleanup');
-			return { cleanedUp: true, killedPid: 28282 };
-		});
 		const deleteGatewayRuntimeRecord = vi.fn(async () => {
 			callOrder.push('delete-record');
 		});
@@ -295,7 +290,6 @@ describe('startControllerRuntime', () => {
 				zoneId: 'shravan',
 			},
 			{
-				cleanupOrphanedGatewayIfPresent,
 				createManagedToolVm: vi.fn(async () => ({
 					close: vi.fn(async () => {}),
 					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
@@ -323,13 +317,7 @@ describe('startControllerRuntime', () => {
 			},
 		);
 
-		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledWith(
-			expect.objectContaining({
-				stateDir: zone.gateway.stateDir,
-				zoneId: 'shravan',
-			}),
-		);
-		expect(callOrder.slice(0, 2)).toEqual(['cleanup', 'start-gateway']);
+		expect(callOrder).toEqual(['start-gateway']);
 
 		await runtime.close();
 

@@ -77,6 +77,10 @@ function resolveManagedVmQemuPid(managedVm: ManagedVm): number {
 		throw new Error('Gateway VM runtime is missing its live VM instance.');
 	}
 
+	// Level 1 currently relies on Gondolin's live runtime object graph:
+	// VM -> SandboxServer -> SandboxController -> child_process.ChildProcess.
+	// If Gondolin refactors that structure, we fail closed here instead of
+	// silently persisting an invalid pid into gateway-runtime.json.
 	const server = vmInstance.server;
 	if (!isObjectRecord(server)) {
 		throw new Error('Gateway VM runtime is missing its live sandbox server.');
