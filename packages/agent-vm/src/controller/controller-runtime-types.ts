@@ -6,10 +6,11 @@ import type { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 import type { createControllerService } from './http/controller-http-routes.js';
 import type { ToolProfile } from './leases/lease-manager.js';
+import type { runWorkerTask } from './worker-task-runner.js';
 
 export interface ControllerRuntime {
 	readonly controllerPort: number;
-	readonly gateway: {
+	readonly gateway?: {
 		readonly ingress: {
 			readonly host: string;
 			readonly port: number;
@@ -32,6 +33,7 @@ export interface ControllerRuntimeDependencies {
 		readonly serviceAccountToken: string;
 	}) => Promise<SecretResolver>;
 	readonly now?: () => number;
+	readonly runWorkerTask?: typeof runWorkerTask;
 	readonly runTask?: RunTaskFn;
 	readonly setIntervalImpl?: (
 		callback: () => void | Promise<void>,

@@ -1,5 +1,13 @@
 {
 	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"paths": {
+			"agent-vm-worker": ["../agent-vm-worker/src/index.ts"],
+			"gateway-interface": ["../gateway-interface/src/index.ts"],
+			"openclaw-gateway": ["../openclaw-gateway/src/index.ts"],
+			"worker-gateway": ["../worker-gateway/src/index.ts"]
+		}
+	},
 	"include": ["src/**/*.ts"],
 	"exclude": ["dist"]
 }

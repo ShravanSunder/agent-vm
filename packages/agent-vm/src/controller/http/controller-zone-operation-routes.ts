@@ -4,6 +4,7 @@ import type { ControllerRouteOperations } from './controller-http-route-support.
 import {
 	controllerDestroyZoneRequestSchema,
 	controllerExecuteCommandRequestSchema,
+	controllerWorkerTaskRequestSchema,
 } from './controller-request-schemas.js';
 
 export function registerControllerZoneOperationRoutes(
@@ -36,6 +37,38 @@ export function registerControllerZoneOperationRoutes(
 	app.post('/zones/:zoneId/upgrade', async (context) =>
 		context.json(await operations.upgradeZone(context.req.param('zoneId'))),
 	);
+
+	if (operations.runWorkerTask) {
+		app.post('/zones/:zoneId/worker-tasks', async (context) => {
+			const parsedPayload = controllerWorkerTaskRequestSchema.safeParse(await context.req.json());
+			if (!parsedPayload.success) {
+				return context.json(
+					{
+						error: 'invalid-worker-task-request',
+						issues: parsedPayload.error.issues,
+					},
+					400,
+				);
+			}
+			try {
+				const taskInput = parsedPayload.data;
+				return context.json(
+					await operations.runWorkerTask?.(context.req.param('zoneId'), {
+						prompt: taskInput.prompt,
+						...(taskInput.repo !== undefined ? { repo: taskInput.repo } : {}),
+						context: taskInput.context,
+					}),
+				);
+			} catch (error) {
+				return context.json(
+					{
+						error: error instanceof Error ? error.message : 'worker-task-failed',
+					},
+					500,
+				);
+			}
+		});
+	}
 
 	if (operations.enableSshForZone) {
 		app.post('/zones/:zoneId/enable-ssh', async (context) => {

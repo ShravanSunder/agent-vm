@@ -224,7 +224,7 @@ describe('startGatewayZone', () => {
 		).rejects.toThrow("Unknown zone 'does-not-exist'.");
 	});
 
-	it('throws a clear error for coding gateways until that runtime is implemented', async () => {
+	it('boots coding gateways with the worker lifecycle', async () => {
 		const secretResolver: SecretResolver = {
 			resolve: async (): Promise<string> => {
 				throw new Error('not used');
@@ -241,21 +241,43 @@ describe('startGatewayZone', () => {
 				},
 			})),
 		};
+		const managedVm: ManagedVm = {
+			id: 'coding-vm',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async (command: string) => ({
+				exitCode: 0,
+				stdout: command.includes('curl -sS -o /dev/null -w "%{http_code}"') ? '200' : '',
+				stderr: '',
+			})),
+			getVmInstance: vi.fn(),
+			setIngressRoutes: vi.fn(),
+		};
 
-		await expect(
-			startGatewayZone(
-				{
-					secretResolver,
-					systemConfig: codingSystemConfig,
-					zoneId: 'shravan',
-				},
-				{
-					buildImage: vi.fn(),
-					createManagedVm: vi.fn(),
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
-				},
-			),
-		).rejects.toThrow(/agent-vm-worker/u);
+		const result = await startGatewayZone(
+			{
+				secretResolver,
+				systemConfig: codingSystemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'worker-image',
+					imagePath: '/tmp/worker-image',
+				})),
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(result.processSpec.startCommand).toContain('/opt/agent-vm-worker/dist/main.js');
+		expect(result.processSpec.healthCheck).toEqual({
+			type: 'http',
+			port: 18789,
+			path: '/health',
+		});
 	});
 
 	it('splits env secrets from http-mediation secrets based on injection config', async () => {

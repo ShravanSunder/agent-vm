@@ -1,0 +1,22 @@
+import { createCodexExecutor } from './codex-executor.js';
+import type { ExecutorCapabilities, WorkExecutor } from './executor-interface.js';
+
+export function createWorkExecutor(
+	provider: string,
+	model: string,
+	capabilities: ExecutorCapabilities,
+	workingDirectory?: string,
+): WorkExecutor {
+	switch (provider) {
+		case 'codex':
+			return createCodexExecutor({
+				model,
+				capabilities,
+				...(workingDirectory ? { workingDirectory } : {}),
+			});
+		case 'claude':
+			throw new Error('Claude executor is not implemented yet.');
+		default:
+			throw new Error(`Unknown executor provider: '${provider}'.`);
+	}
+}

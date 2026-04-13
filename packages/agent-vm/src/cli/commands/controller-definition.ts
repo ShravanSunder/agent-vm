@@ -107,8 +107,8 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 						`${JSON.stringify(
 							{
 								controllerPort: runtime.controllerPort,
-								ingress: runtime.gateway.ingress,
-								vmId: runtime.gateway.vm.id,
+								ingress: runtime.gateway?.ingress ?? null,
+								vmId: runtime.gateway?.vm.id ?? null,
 								zoneId: selectedZone.id,
 							},
 							null,

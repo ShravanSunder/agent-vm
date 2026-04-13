@@ -10,6 +10,7 @@ export interface StartGatewayZoneOptions {
 	readonly secretResolver: import('gondolin-core').SecretResolver;
 	readonly systemConfig: SystemConfig;
 	readonly zoneId: string;
+	readonly zoneOverride?: GatewayZone;
 }
 
 export interface GatewayZoneStartResult {

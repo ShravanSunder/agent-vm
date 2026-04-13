@@ -191,7 +191,7 @@ describe('startControllerRuntime', () => {
 		expect(startGatewayZone).toHaveBeenCalledTimes(3);
 		expect(setIntervalMock).toHaveBeenCalledTimes(1);
 		expect(runtime.controllerPort).toBe(18800);
-		expect(runtime.gateway.vm.id).toBe('gateway-vm-1');
+		expect(runtime.gateway?.vm.id).toBe('gateway-vm-1');
 		await runtime.close();
 		expect(clearIntervalMock).toHaveBeenCalledTimes(1);
 	});
@@ -236,6 +236,86 @@ describe('startControllerRuntime', () => {
 		).rejects.toThrow('gateway boot failed');
 
 		expect(startHttpServer).not.toHaveBeenCalled();
+	});
+
+	it('does not boot a long-lived gateway for coding zones', async () => {
+		const codingSystemConfig: SystemConfig = {
+			...systemConfig,
+			zones: systemConfig.zones.map((zone) => ({
+				...zone,
+				gateway: {
+					...zone.gateway,
+					type: 'coding',
+				},
+			})),
+		};
+		const startGatewayZone = vi.fn();
+		let startHttpServerArgs:
+			| {
+					app: {
+						request(path: string, init?: RequestInit): Response | Promise<Response>;
+					};
+					port: number;
+			  }
+			| undefined;
+
+		const runtime = await startControllerRuntime(
+			{
+				systemConfig: codingSystemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				createManagedToolVm: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+					id: 'tool-vm-coding',
+					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
+				})),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				runWorkerTask: vi.fn(async () => ({
+					taskId: 'worker-task-1',
+					finalState: { status: 'completed' },
+					taskRoot: '/tmp/task-root',
+				})),
+				startGatewayZone,
+				startHttpServer: vi.fn(async (options) => {
+					startHttpServerArgs = options;
+					return {
+						close: async () => {},
+					};
+				}),
+			},
+		);
+
+		expect(startGatewayZone).not.toHaveBeenCalled();
+		expect(runtime.gateway).toBeUndefined();
+		if (!startHttpServerArgs) {
+			throw new Error('Expected runtime HTTP server args');
+		}
+
+		const response = await startHttpServerArgs.app.request('/zones/shravan/worker-tasks', {
+			body: JSON.stringify({
+				prompt: 'fix the login bug',
+				context: {},
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+		expect(response.status).toBe(200);
 	});
 
 	it('releases active leases when runtime.close is called', async () => {

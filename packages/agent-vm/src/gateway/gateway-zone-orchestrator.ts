@@ -62,7 +62,7 @@ export async function startGatewayZone(
 ): Promise<GatewayZoneStartResult> {
 	const runTaskStep =
 		options.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
-	const zone = findGatewayZone(options.systemConfig, options.zoneId);
+	const zone = options.zoneOverride ?? findGatewayZone(options.systemConfig, options.zoneId);
 	const lifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(zone.gateway.type);
 	const resolvedSecrets = await runTaskWithResult(
 		runTaskStep,

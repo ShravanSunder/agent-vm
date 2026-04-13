@@ -9,6 +9,14 @@ export interface ControllerRouteOperations {
 	readonly getStatus: () => Promise<unknown>;
 	readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
 	readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;
+	readonly runWorkerTask?: (
+		zoneId: string,
+		input: {
+			readonly prompt: string;
+			readonly repo?: { readonly repoUrl: string; readonly baseBranch: string } | null;
+			readonly context: Record<string, unknown>;
+		},
+	) => Promise<unknown>;
 	readonly stopController?: () => Promise<unknown>;
 	readonly upgradeZone: (zoneId: string) => Promise<unknown>;
 }

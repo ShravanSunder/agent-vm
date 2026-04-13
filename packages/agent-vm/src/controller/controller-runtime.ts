@@ -25,6 +25,7 @@ import { startControllerHttpServer } from './http/controller-http-server.js';
 import { createIdleReaper } from './leases/idle-reaper.js';
 import { createLeaseManager } from './leases/lease-manager.js';
 import { createTcpPool } from './leases/tcp-pool.js';
+import { runWorkerTask as runWorkerTaskWithPerTaskVm } from './worker-task-runner.js';
 
 export async function startControllerRuntime(
 	options: StartControllerRuntimeOptions,
@@ -54,6 +55,7 @@ export async function startControllerRuntime(
 				zoneId: toolVmOptions.zoneId,
 			}));
 	const tcpPool = createTcpPool(options.systemConfig.tcpPool);
+	const activeZone = findConfiguredZone(options.systemConfig, options.zoneId);
 	const leaseManager = createLeaseManager({
 		cleanWorkspace: async ({ profile, tcpSlot, zoneId }) => {
 			await cleanToolVmWorkspace(
@@ -108,9 +110,11 @@ export async function startControllerRuntime(
 		}
 		return gateway;
 	};
-	await runTaskStep('Starting gateway zone', async () => {
-		gateway = await startGateway();
-	});
+	if (activeZone.gateway.type !== 'coding') {
+		await runTaskStep('Starting gateway zone', async () => {
+			gateway = await startGateway();
+		});
+	}
 	const stopGatewayZone = async (): Promise<void> => {
 		if (!gateway) {
 			return;
@@ -119,30 +123,54 @@ export async function startControllerRuntime(
 	};
 	const restartGatewayZone = async (): Promise<void> => {
 		gateway = undefined;
-		gateway = await startGateway();
+		if (activeZone.gateway.type !== 'coding') {
+			gateway = await startGateway();
+		}
 	};
 	const serverRef: { current?: { close(): Promise<void> } } = {};
+	const controllerOperations =
+		activeZone.gateway.type !== 'coding'
+			? {
+					...createControllerRuntimeOperations({
+						activeZoneId: options.zoneId,
+						getGateway: () => requireGateway(),
+						getZone: (zoneId: string) => findConfiguredZone(options.systemConfig, zoneId),
+						leaseManager,
+						restartGatewayZone,
+						secretResolver,
+						stopGatewayZone,
+						systemConfig: options.systemConfig,
+					}),
+					stopController: createStopControllerOperation({
+						clearReaperTimer,
+						closeControllerServer: () => setTimeout(() => void serverRef.current?.close(), 100),
+						getLeases: () => leaseManager.listLeases(),
+						releaseLease: async (leaseId: string) => await leaseManager.releaseLease(leaseId),
+						stopGatewayZone,
+					}),
+				}
+			: undefined;
+	const workerTaskRunner =
+		activeZone.gateway.type === 'coding'
+			? async (
+					zoneId: string,
+					input: {
+						readonly prompt: string;
+						readonly repo?: { readonly repoUrl: string; readonly baseBranch: string } | null;
+						readonly context: Record<string, unknown>;
+					},
+				) =>
+					await (dependencies.runWorkerTask ?? runWorkerTaskWithPerTaskVm)({
+						input,
+						secretResolver,
+						systemConfig: options.systemConfig,
+						zoneId,
+					})
+			: undefined;
 	const controllerApp = createControllerService({
 		leaseManager,
-		operations: {
-			...createControllerRuntimeOperations({
-				activeZoneId: options.zoneId,
-				getGateway: () => requireGateway(),
-				getZone: (zoneId: string) => findConfiguredZone(options.systemConfig, zoneId),
-				leaseManager,
-				restartGatewayZone,
-				secretResolver,
-				stopGatewayZone,
-				systemConfig: options.systemConfig,
-			}),
-			stopController: createStopControllerOperation({
-				clearReaperTimer,
-				closeControllerServer: () => setTimeout(() => void serverRef.current?.close(), 100),
-				getLeases: () => leaseManager.listLeases(),
-				releaseLease: async (leaseId: string) => await leaseManager.releaseLease(leaseId),
-				stopGatewayZone,
-			}),
-		},
+		...(controllerOperations ? { operations: controllerOperations } : {}),
+		...(workerTaskRunner ? { workerTaskRunner } : {}),
 		systemConfig: options.systemConfig,
 	});
 	await runTaskStep(`Controller API on :${options.systemConfig.host.controllerPort}`, async () => {
@@ -165,10 +193,14 @@ export async function startControllerRuntime(
 			}
 		},
 		controllerPort: options.systemConfig.host.controllerPort,
-		gateway: {
-			ingress: requireGateway().ingress,
-			processSpec: requireGateway().processSpec,
-			vm: requireGateway().vm,
-		},
+		...(gateway
+			? {
+					gateway: {
+						ingress: requireGateway().ingress,
+						processSpec: requireGateway().processSpec,
+						vm: requireGateway().vm,
+					},
+				}
+			: {}),
 	};
 }

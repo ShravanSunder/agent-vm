@@ -465,4 +465,59 @@ describe('createControllerApp', () => {
 			issues: expect.any(Array),
 		});
 	});
+
+	it('runs worker tasks through the controller route when configured', async () => {
+		const runWorkerTask = vi.fn(async () => ({
+			taskId: 'worker-task-1',
+			finalState: { status: 'completed' },
+		}));
+		const app = createControllerApp({
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				runWorkerTask,
+				upgradeZone: vi.fn(async () => ({})),
+			},
+			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
+		});
+
+		const response = await app.request('/zones/shravan/worker-tasks', {
+			body: JSON.stringify({
+				prompt: 'fix the login bug',
+				repo: {
+					repoUrl: 'https://github.com/org/repo.git',
+					baseBranch: 'main',
+				},
+				context: { ticket: 'INC-1' },
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(200);
+		await expect(response.json()).resolves.toMatchObject({
+			taskId: 'worker-task-1',
+			finalState: { status: 'completed' },
+		});
+		expect(runWorkerTask).toHaveBeenCalledWith('shravan', {
+			context: { ticket: 'INC-1' },
+			prompt: 'fix the login bug',
+			repo: {
+				baseBranch: 'main',
+				repoUrl: 'https://github.com/org/repo.git',
+			},
+		});
+	});
 });

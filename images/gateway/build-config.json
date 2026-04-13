@@ -21,6 +21,10 @@
 			{
 				"src": "../../packages/openclaw-agent-vm-plugin/dist",
 				"dest": "/usr/local/lib/node_modules/openclaw/dist/extensions/gondolin"
+			},
+			{
+				"src": "../../packages/agent-vm-worker/dist",
+				"dest": "/opt/agent-vm-worker/dist"
 			}
 		]
 	}

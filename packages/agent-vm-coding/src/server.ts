@@ -2,165 +2,162 @@
  * Hono HTTP server for agent-vm-coding
  */
 
-import { zValidator } from "@hono/zod-validator";
-import { Hono } from "hono";
-import type { Context } from "hono";
-import { z } from "zod";
+import { zValidator } from '@hono/zod-validator';
+import { Hono } from 'hono';
+import type { Context } from 'hono';
+import { z } from 'zod';
 
-import type { TaskState } from "./state/task-state.js";
-import { isTerminal } from "./state/task-state.js";
+import type { TaskState } from './state/task-state.js';
+import { isTerminal } from './state/task-state.js';
 
 function validationErrorHook(
-  result: {
-    success: boolean;
-    error?: { issues: readonly z.core.$ZodIssue[] };
-  },
-  context: Context,
+	result: {
+		success: boolean;
+		error?: { issues: readonly z.core.$ZodIssue[] };
+	},
+	context: Context,
 ): Response | void {
-  if (!result.success) {
-    return context.json(
-      {
-        error: "invalid-request",
-        details: result.error?.issues ?? [],
-      },
-      400,
-    );
-  }
+	if (!result.success) {
+		return context.json(
+			{
+				error: 'invalid-request',
+				details: result.error?.issues ?? [],
+			},
+			400,
+		);
+	}
 }
 
 export const createTaskRequestSchema = z.object({
-  prompt: z.string().min(1),
-  repoUrl: z.string().min(1),
-  baseBranch: z.string().default("main"),
-  testCommand: z.string().default("npm test"),
-  lintCommand: z.string().default("npm run lint"),
+	prompt: z.string().min(1),
+	repoUrl: z.string().min(1),
+	baseBranch: z.string().default('main'),
+	testCommand: z.string().default('npm test'),
+	lintCommand: z.string().default('npm run lint'),
 });
 
 const followupRequestSchema = z.object({
-  prompt: z.string().min(1),
+	prompt: z.string().min(1),
 });
 
 export interface ServerDeps {
-  readonly getActiveTaskId: () => string | null;
-  readonly getTaskState: (taskId: string) => TaskState | undefined;
-  readonly submitTask: (
-    input: z.infer<typeof createTaskRequestSchema>,
-  ) => Promise<{ taskId: string; status: "accepted" }>;
-  readonly submitFollowup: (
-    taskId: string,
-    prompt: string,
-  ) => Promise<{ status: "accepted" }>;
-  readonly closeTask: (taskId: string) => Promise<{ status: "closed" }>;
+	readonly getActiveTaskId: () => string | null;
+	readonly getTaskState: (taskId: string) => TaskState | undefined;
+	readonly submitTask: (
+		input: z.infer<typeof createTaskRequestSchema>,
+	) => Promise<{ taskId: string; status: 'accepted' }>;
+	readonly submitFollowup: (taskId: string, prompt: string) => Promise<{ status: 'accepted' }>;
+	readonly closeTask: (taskId: string) => Promise<{ status: 'closed' }>;
 }
 
 export function createApp(deps: ServerDeps): Hono {
-  const app = new Hono();
+	const app = new Hono();
 
-  app.get("/health", (context) => {
-    return context.json({
-      status: "ok",
-      activeTask: deps.getActiveTaskId(),
-    });
-  });
+	app.get('/health', (context) => {
+		return context.json({
+			status: 'ok',
+			activeTask: deps.getActiveTaskId(),
+		});
+	});
 
-  app.post(
-    "/tasks",
-    zValidator("json", createTaskRequestSchema, validationErrorHook),
-    async (context) => {
-      try {
-      if (deps.getActiveTaskId() !== null) {
-        return context.json(
-          {
-            error: "task-already-active",
-            activeTaskId: deps.getActiveTaskId(),
-          },
-          409,
-        );
-      }
+	app.post(
+		'/tasks',
+		zValidator('json', createTaskRequestSchema, validationErrorHook),
+		async (context) => {
+			try {
+				if (deps.getActiveTaskId() !== null) {
+					return context.json(
+						{
+							error: 'task-already-active',
+							activeTaskId: deps.getActiveTaskId(),
+						},
+						409,
+					);
+				}
 
-      const result = await deps.submitTask(context.req.valid("json"));
-      return context.json(result, 201);
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.error(`[server] POST /tasks failed:`, error instanceof Error ? error.message : String(error));
-        return context.json({ error: "task-submission-failed" }, 500);
-      }
-    },
-  );
+				const result = await deps.submitTask(context.req.valid('json'));
+				return context.json(result, 201);
+			} catch (error) {
+				// eslint-disable-next-line no-console
+				console.error(
+					`[server] POST /tasks failed:`,
+					error instanceof Error ? error.message : String(error),
+				);
+				return context.json({ error: 'task-submission-failed' }, 500);
+			}
+		},
+	);
 
-  app.get("/tasks/:id", (context) => {
-    const taskState = deps.getTaskState(context.req.param("id"));
+	app.get('/tasks/:id', (context) => {
+		const taskState = deps.getTaskState(context.req.param('id'));
 
-    if (!taskState) {
-      return context.json({ error: "task-not-found" }, 404);
-    }
+		if (!taskState) {
+			return context.json({ error: 'task-not-found' }, 404);
+		}
 
-    return context.json(taskState);
-  });
+		return context.json(taskState);
+	});
 
-  app.post(
-    "/tasks/:id/followup",
-    zValidator("json", followupRequestSchema, validationErrorHook),
-    async (context) => {
-      const taskId = context.req.param("id");
-      const taskState = deps.getTaskState(taskId);
+	app.post(
+		'/tasks/:id/followup',
+		zValidator('json', followupRequestSchema, validationErrorHook),
+		async (context) => {
+			const taskId = context.req.param('id');
+			const taskState = deps.getTaskState(taskId);
 
-      if (!taskState) {
-        return context.json({ error: "task-not-found" }, 404);
-      }
-      if (isTerminal(taskState)) {
-        return context.json(
-          { error: "task-is-terminal", status: taskState.status },
-          410,
-        );
-      }
-      if (taskState.status !== "awaiting-followup") {
-        return context.json(
-          {
-            error: "task-not-awaiting-followup",
-            status: taskState.status,
-          },
-          409,
-        );
-      }
+			if (!taskState) {
+				return context.json({ error: 'task-not-found' }, 404);
+			}
+			if (isTerminal(taskState)) {
+				return context.json({ error: 'task-is-terminal', status: taskState.status }, 410);
+			}
+			if (taskState.status !== 'awaiting-followup') {
+				return context.json(
+					{
+						error: 'task-not-awaiting-followup',
+						status: taskState.status,
+					},
+					409,
+				);
+			}
 
-      try {
-        const result = await deps.submitFollowup(
-          taskId,
-          context.req.valid("json").prompt,
-        );
-        return context.json(result, 200);
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.error(`[server] POST /tasks/:id/followup failed:`, error instanceof Error ? error.message : String(error));
-        return context.json({ error: "followup-submission-failed" }, 500);
-      }
-    },
-  );
+			try {
+				const result = await deps.submitFollowup(taskId, context.req.valid('json').prompt);
+				return context.json(result, 200);
+			} catch (error) {
+				// eslint-disable-next-line no-console
+				console.error(
+					`[server] POST /tasks/:id/followup failed:`,
+					error instanceof Error ? error.message : String(error),
+				);
+				return context.json({ error: 'followup-submission-failed' }, 500);
+			}
+		},
+	);
 
-  app.post("/tasks/:id/close", async (context) => {
-    const taskId = context.req.param("id");
-    const taskState = deps.getTaskState(taskId);
+	app.post('/tasks/:id/close', async (context) => {
+		const taskId = context.req.param('id');
+		const taskState = deps.getTaskState(taskId);
 
-    if (!taskState) {
-      return context.json({ error: "task-not-found" }, 404);
-    }
-    if (isTerminal(taskState)) {
-      return context.json(
-        { error: "task-is-terminal", status: taskState.status },
-        410,
-      );
-    }
+		if (!taskState) {
+			return context.json({ error: 'task-not-found' }, 404);
+		}
+		if (isTerminal(taskState)) {
+			return context.json({ error: 'task-is-terminal', status: taskState.status }, 410);
+		}
 
-    try {
-      const result = await deps.closeTask(taskId);
-      return context.json(result, 200);
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error(`[server] POST /tasks/:id/close failed:`, error instanceof Error ? error.message : String(error));
-      return context.json({ error: "task-close-failed" }, 500);
-    }
-  });
+		try {
+			const result = await deps.closeTask(taskId);
+			return context.json(result, 200);
+		} catch (error) {
+			// eslint-disable-next-line no-console
+			console.error(
+				`[server] POST /tasks/:id/close failed:`,
+				error instanceof Error ? error.message : String(error),
+			);
+			return context.json({ error: 'task-close-failed' }, 500);
+		}
+	});
 
-  return app;
+	return app;
 }

@@ -52,7 +52,7 @@ export interface CliDependencies {
 		runtimeDependencies?: ControllerRuntimeDependencies,
 	) => Promise<{
 		readonly controllerPort: number;
-		readonly gateway: {
+		readonly gateway?: {
 			readonly ingress: {
 				readonly host: string;
 				readonly port: number;

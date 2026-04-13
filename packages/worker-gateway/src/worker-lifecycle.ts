@@ -23,11 +23,13 @@ export const workerLifecycle: GatewayLifecycle = {
 				HOME: '/home/coder',
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
 				STATE_DIR: '/state',
+				WORKER_CONFIG_PATH: '/state/effective-worker.json',
+				WORKSPACE_DIR: '/workspace',
 				...environmentSecrets,
 			},
 			mediatedSecrets,
 			rootfsMode: 'cow',
-			sessionLabel: `${zone.id}-coding`,
+			sessionLabel: `${zone.id}-worker`,
 			tcpHosts: {
 				'controller.vm.host:18800': `127.0.0.1:${controllerPort}`,
 			},
@@ -45,8 +47,13 @@ export const workerLifecycle: GatewayLifecycle = {
 	},
 
 	buildProcessSpec(): GatewayProcessSpec {
-		throw new Error(
-			"Worker gateway process start is blocked: 'agent-vm-worker' is not present in this repo yet.",
-		);
+		return {
+			bootstrapCommand: 'true',
+			startCommand:
+				'cd /workspace && nohup node /opt/agent-vm-worker/dist/main.js serve --port 18789 > /tmp/agent-vm-worker.log 2>&1 &',
+			healthCheck: { type: 'http', port: 18789, path: '/health' },
+			guestListenPort: 18789,
+			logPath: '/tmp/agent-vm-worker.log',
+		};
 	},
 };

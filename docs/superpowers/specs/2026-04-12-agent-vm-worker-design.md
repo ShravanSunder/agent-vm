@@ -6,7 +6,7 @@ agent-vm-worker is the process that runs inside a Gondolin VM. It receives tasks
 
 ## What Already Exists
 
-`packages/agent-vm-coding` (on the `kubernetes-attempts` branches) implements the coding-specific version:
+`packages/agent-vm-coding` (on the `kubernetes-attemps-3` branch family) implements the coding-specific version:
 - 4 hardcoded agents: planner, plan-reviewer, coder, code-reviewer
 - Codex SDK as the only executor
 - Hardcoded skill names as a TypeScript enum
@@ -610,8 +610,14 @@ POST /tasks { taskId, prompt, repo location, context }
  wrapping-up
     │ wrapup agent runs configured actions (git-pr, slack, etc.)
     │ agent-driven, non-deterministic
-    ▼
- completed (terminal)
+    │
+    ├── all required actions succeeded
+    │     ▼
+    │   completed (terminal)
+    │
+    └── any required action missing/failed
+          ▼
+        failed (terminal)
 
  failed (terminal) ← any state on max retries or unrecoverable error
 ```
@@ -623,6 +629,8 @@ Review is the subjective gate. Verification is the objective gate. They are inde
 - **`phases.plan.maxReviewLoops: 0`** — plan review is skipped entirely. The plan goes straight to the work phase.
 - **`phases.work.maxReviewLoops: 0`** — work review is skipped entirely. After verification passes, work goes straight to wrapup. Verification always runs regardless — it's the objective quality gate (tests, lint, typecheck). Review is the optional subjective gate.
 - Both can be 0 simultaneously — the worker runs: plan → work → verify → wrapup. No LLM review at any stage.
+
+`maxReviewLoops: N` means up to `N` review attempts. Because the final failed review exits the loop, this yields at most `N-1` revision attempts.
 
 ### No Followup in v1
 
@@ -1011,6 +1019,20 @@ agent-vm-worker health
 JSONL event sourcing. Same pattern as current `agent-vm-coding`. Events are a Zod discriminated union.
 
 ```typescript
+const taskConfigSchema = z.object({
+  taskId: z.string().min(1),
+  prompt: z.string().min(1),
+  repo: z
+    .object({
+      repoUrl: z.string().min(1),
+      baseBranch: z.string().min(1),
+      workspacePath: z.string().min(1),
+    })
+    .nullable(),
+  context: z.record(z.string(), z.unknown()),
+  effectiveConfig: workerConfigSchema,
+});
+
 const phaseNames = [
   "plan", "plan-review", "work",
   "verification", "work-review", "wrapup",
@@ -1072,6 +1094,9 @@ const taskEventSchema = z.discriminatedUnion("event", [
     })),
   }),
   z.object({
+    event: z.literal("task-completed"),  // only emitted after required-action check passes
+  }),
+  z.object({
     event: z.literal("task-failed"),
     reason: z.string(),
   }),
@@ -1114,35 +1139,17 @@ interface TaskState {
 }
 ```
 
+`wrapup-result` records artifacts/results from tool calls. It does not by itself imply success. The task only transitions to `completed` after required-action validation passes; otherwise it transitions to `failed`.
+
 Hydration: on worker startup, scan `stateDir/tasks/*.jsonl`, replay events, rebuild in-memory `Map<string, TaskState>`. Same as current.
 
 ---
 
-## Repo Preparation (Controller-Side Orchestration)
+## Repo Preparation
 
-**v1: single repo, nullable.** The controller receives a task with an optional repo. If present, it clones the repo to `workspaceDir` on the host. If absent (e.g., oncall triage), `/workspace` is empty. Multi-repo is a future extension.
+**v1: single repo, nullable.** A task may provide one repo or `repo: null` for non-repo workflows.
 
-**Why the controller owns the clone, not `prepareHostState`:** The `GatewayLifecycle.prepareHostState(zone, secretResolver)` hook only receives static zone config and the secret resolver — it has no access to per-task input (repo URL, branch, prompt). Since the per-task VM model means "one VM per task," the clone happens in the controller's task submission flow before calling `startGatewayZone`:
-
-```
-Controller receives task → clone repo → read project config → merge config
-→ write merged config to zone state → startGatewayZone() → VM boots
-→ POST /tasks to worker
-```
-
-The `worker-gateway.prepareHostState()` is reserved for gateway-specific prep that doesn't depend on task input (if any). For v1, the worker gateway's `prepareHostState` may be empty — all prep happens in the controller's task orchestration layer.
-
-**Step by step:**
-
-1. Controller receives task input (prompt, optional repo URL + branch, context) via API or queue
-2. If repo is provided: controller clones it into `zone.gateway.workspaceDir` on the host
-3. Controller reads `.agent-vm/config.json` from the cloned repo (if it exists)
-4. Controller merges project config with gateway config → writes merged config to a known path in zone state (e.g., `stateDir/worker.json`)
-5. Controller calls `startGatewayZone()` — `buildVmSpec()` mounts `workspaceDir` → `/workspace`, `stateDir` → `/state` (effective config is already in stateDir)
-6. VM boots, worker reads `/state/effective-worker.json` at startup via `WORKER_CONFIG_PATH`
-7. Controller sends `POST /tasks { prompt, repo location, context }` to the running worker
-
-**Per-task VM lifecycle:** One VM per task. Controller clones → merges config → boots VM → submits task → worker runs → wrapup completes → controller shuts down VM. Clean slate for each task.
+Repo cloning is handled by the controller's `preStartGateway` hook (see Controller-Side Lifecycle Hooks section above for the full flow and code). The controller clones the repo into per-task dirs (`taskRoot/workspace`), reads `.agent-vm/config.json`, merges config, writes `effective-worker.json` to `taskRoot/state`. The VM mounts these per-task paths. The worker never clones repos itself.
 
 ---
 
@@ -1167,7 +1174,7 @@ The controller owns this setup:
 6. **Controller merges service TCP hosts into `vmSpec.tcpHosts`** before calling `createManagedVm()`
 7. Worker boots, verification commands connect to `postgres.local:5432` transparently
 
-This is controller-side work, not part of agent-vm-worker. The first version of the worker can ship without Docker service support — tasks that don't need postgres/redis work immediately. Docker service routing is additive.
+This is controller-side work rather than worker-package logic, but it is part of the v1 end-to-end worker system when tasks depend on backing services. Tasks that require postgres/redis rely on this routing being present.
 
 ---
 
@@ -1181,7 +1188,7 @@ This is controller-side work, not part of agent-vm-worker. The first version of 
 | `agents/code-reviewer/code-reviewer-agent.ts` | `work-reviewer/work-reviewer.ts` — runs verification + review |
 | `agents/codex-client-factory.ts` | `work-executor/codex-executor.ts` — merged into executor |
 | `agents/skill-registry.ts` | **Deleted** — skills are paths in config, no hardcoded enum |
-| `agents/shared-types.ts` | `work-executor/executor-interface.ts` + `shared/skill-types.ts` |
+| `agents/shared-types.ts` | `work-executor/executor-interface.ts` + `shared/skill-types.ts` — `StructuredInput` uses `content` (worker reads file, passes text) |
 | `coordinator/prompt-builder.ts` | `prompt/prompt-assembler.ts` — generic, not per-phase templates |
 | `coordinator/run-sanity-retries.ts` | `work-reviewer/verification-runner.ts` — runs command list |
 | `coordinator/task-ship.ts` | `wrapup/git-pr-action.ts` — tool for wrapup agent, not imperative step |
@@ -1228,15 +1235,15 @@ Steps 1-10 are the refactor. Step 11 connects to the gateway abstraction. Step 1
 - Per-task directory allocation and teardown
 - Task submission pipeline (external API → preStart → startGatewayZone → POST /tasks)
 - Result harvesting before teardown
+- Docker service routing (docker compose up, container IP inspection, TCP host map merge into vmSpec.tcpHosts)
+- Docker cleanup in postStopGateway (docker compose down for per-task services)
 - worker-gateway `buildVmSpec` update (mount effective config, set WORKER_CONFIG_PATH)
 - worker-gateway `buildProcessSpec` unblock (replace "not implemented" throw)
 
 ### Not in v1
 - Followup (re-entering the loop after wrapup)
-- Multi-repo (array of repos per task)
-- Claude executor (throws "not implemented")
-- Docker service routing
-- `postStopGateway` Docker cleanup
-- `context` schema validation per runner config
+- Claude executor (throws "not implemented yet")
+- Multi-repo (array of repos per task — v1 is single repo, nullable)
+- Per-runner context schema validation (typed context instead of `Record<string, unknown>`)
 - Per-task VM boot optimization (VM pooling, warm starts)
 - Wrapup retry on required-action failure (wrapup runs once; if a required action fails, the task fails)

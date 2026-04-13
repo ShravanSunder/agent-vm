@@ -46,14 +46,20 @@ describe('workerLifecycle', () => {
 			kind: 'realfs',
 		});
 		expect(vmSpec.environment.OPENAI_API_KEY).toBe('openai-token');
+		expect(vmSpec.environment.WORKER_CONFIG_PATH).toBe('/state/effective-worker.json');
+		expect(vmSpec.environment.WORKSPACE_DIR).toBe('/workspace');
 		expect(vmSpec.tcpHosts['controller.vm.host:18800']).toBe('127.0.0.1:18800');
 	});
 
-	it('throws clearly until agent-vm-worker exists', () => {
-		expect(() =>
-			workerLifecycle.buildProcessSpec(zone, {
-				OPENAI_API_KEY: 'openai-token',
-			}),
-		).toThrow(/agent-vm-worker/u);
+	it('builds a concrete worker process spec', () => {
+		const processSpec = workerLifecycle.buildProcessSpec(zone, {
+			OPENAI_API_KEY: 'openai-token',
+		});
+
+		expect(processSpec.bootstrapCommand).toBe('true');
+		expect(processSpec.startCommand).toContain('/opt/agent-vm-worker/dist/main.js');
+		expect(processSpec.startCommand).toContain('serve --port 18789');
+		expect(processSpec.healthCheck).toEqual({ type: 'http', port: 18789, path: '/health' });
+		expect(processSpec.logPath).toBe('/tmp/agent-vm-worker.log');
 	});
 });

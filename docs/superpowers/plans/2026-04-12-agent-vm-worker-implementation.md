@@ -812,7 +812,6 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
       return {
         ...state,
         wrapupResults: event.actions,
-        status: "completed",
         updatedAt,
       };
 
@@ -4970,19 +4969,10 @@ async function runTask(
 
     const wrapupResult = await wrapupExecutor.execute(wrapupPrompt);
 
-    // Parse wrapup results from the executor's tool call results
-    // The executor calls tools internally; we collect results from the tool definitions
-    const actionResults = wrapupTools
-      .map((tool) => ({
-        type: tool.name,
-        success: true, // Tools that were called successfully
-        artifact: undefined as string | undefined,
-      }));
-
-    // For now, record the wrapup completion. The actual action results
-    // come from the tool execute() calls — we need to track them.
-    // TODO: In the real implementation, the Codex SDK manages tool calls
-    // and we get results back. For v1, we record what we know.
+    // Collect actual wrapup action results from the registry. Each
+    // ToolDefinition.execute() records its own WrapupActionResult into the
+    // shared collector as the SDK invokes tools.
+    const actionResults = wrapupRegistry.getResults();
     eventRecorder.emit(taskId, {
       event: "wrapup-result",
       actions: actionResults,
@@ -6023,11 +6013,8 @@ A separate implementation plan should be written for this controller-side work.
 ### What is NOT in v1
 
 1. **Followup** — no `submitFollowup` or `POST /tasks/:id/followup` route
-2. **Claude executor** — throws "not implemented yet"
-3. **Docker service routing** — controller-side, additive
-4. **Wrapup retry** — wrapup runs once; if required action fails, task fails
-5. **Context schema validation** — `Record<string, unknown>` passthrough
-6. **Multi-repo** — v1 is single repo, nullable
+2. **Per-task VM boot optimization** — no VM pooling or warm starts
+3. **Wrapup retry** — wrapup runs once; if required action fails, task fails
 
 ### gather-context preserved
 

@@ -20,6 +20,7 @@
 	},
 	"dependencies": {
 		"@hono/node-server": "^1",
+		"agent-vm-worker": "workspace:*",
 		"cmd-ts": "^0.14.0",
 		"execa": "^9.5.2",
 		"gateway-interface": "workspace:*",
