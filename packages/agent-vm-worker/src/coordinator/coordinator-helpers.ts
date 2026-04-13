@@ -14,7 +14,7 @@ export function buildTaskConfig(input: CreateTaskInput, config: WorkerConfig): T
 	return {
 		taskId: input.taskId,
 		prompt: input.prompt,
-		repo: input.repo ?? null,
+		repos: [...(input.repos ?? [])],
 		context: input.context ?? {},
 		effectiveConfig: config,
 	};

@@ -1,4 +1,9 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
 import { Codex, type Thread, type UserInput } from '@openai/codex-sdk';
+import { execa } from 'execa';
 
 import type {
 	ExecutorCapabilities,
@@ -6,6 +11,7 @@ import type {
 	StructuredInput,
 	WorkExecutor,
 } from './executor-interface.js';
+import { getOrCreateLocalToolMcpServer } from './local-tool-mcp-server.js';
 
 export interface CodexExecutorConfig {
 	readonly model: string;
@@ -27,13 +33,50 @@ function mapToCodexInput(input: readonly StructuredInput[]): UserInput[] {
 }
 
 export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
-	const codex = new Codex({});
 	const workingDirectory = config.workingDirectory ?? '/workspace';
+	let codex: Codex | null = null;
 	let currentThread: Thread | null = null;
 	let currentThreadId: string | null = null;
 
+	async function ensureCapabilitiesConfigured(): Promise<void> {
+		if (codex !== null) {
+			return;
+		}
+
+		const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-codex-home-'));
+		await fs.mkdir(path.join(tempHome, '.codex'), { recursive: true });
+
+		for (const mcpServer of config.capabilities.mcpServers) {
+			// MCP registration must be serialized because each command mutates the same config home.
+			// oxlint-disable-next-line eslint/no-await-in-loop
+			await execa('codex', ['mcp', 'add', mcpServer.name, '--url', mcpServer.url], {
+				cwd: workingDirectory,
+				env: { ...process.env, HOME: tempHome },
+				reject: true,
+			});
+		}
+
+		const localToolServer = await getOrCreateLocalToolMcpServer(config.capabilities.tools);
+		if (localToolServer) {
+			await execa('codex', ['mcp', 'add', 'agent-vm-local-tools', '--url', localToolServer.url], {
+				cwd: workingDirectory,
+				env: { ...process.env, HOME: tempHome },
+				reject: true,
+			});
+		}
+
+		codex = new Codex({
+			env: {
+				...process.env,
+				HOME: tempHome,
+			},
+		});
+	}
+
 	function startNewThread(): Thread {
-		void config.capabilities;
+		if (codex === null) {
+			throw new Error('Codex executor has not been configured.');
+		}
 
 		return codex.startThread({
 			model: config.model,
@@ -60,6 +103,7 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 
 	return {
 		async execute(input: readonly StructuredInput[]): Promise<ExecutorResult> {
+			await ensureCapabilitiesConfigured();
 			currentThread = startNewThread();
 			const result = await runInThread(currentThread, input);
 			currentThreadId = result.threadId || null;
@@ -67,6 +111,7 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 		},
 
 		async fix(input: readonly StructuredInput[]): Promise<ExecutorResult> {
+			await ensureCapabilitiesConfigured();
 			if (currentThread === null) {
 				throw new Error('No active executor thread. Call execute() first.');
 			}
@@ -80,8 +125,12 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 			threadId: string | null,
 			context: readonly StructuredInput[],
 		): Promise<void> {
+			await ensureCapabilitiesConfigured();
 			if (threadId !== null) {
 				try {
+					if (codex === null) {
+						throw new Error('Codex executor has not been configured.');
+					}
 					currentThread = codex.resumeThread(threadId, {
 						model: config.model,
 						approvalPolicy: 'never',

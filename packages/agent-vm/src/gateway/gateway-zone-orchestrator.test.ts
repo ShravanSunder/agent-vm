@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
 import { startGatewayZone } from './gateway-zone-orchestrator.js';
+import type { GatewayManagedVmFactoryOptions } from './gateway-zone-support.js';
 
 const systemConfig = {
 	cacheDir: '/cache',
@@ -326,7 +327,7 @@ describe('startGatewayZone', () => {
 		if (!createManagedVmCall) {
 			throw new Error('Expected gateway VM creation call');
 		}
-		const [vmOptions] = createManagedVmCall as [Record<string, unknown>];
+		const [vmOptions] = createManagedVmCall as unknown as [Record<string, unknown>];
 
 		// PERPLEXITY_API_KEY should be in secrets (http-mediation) with hosts
 		expect(vmOptions.secrets).toEqual({
@@ -398,6 +399,57 @@ describe('startGatewayZone', () => {
 			'tool-4.vm.host:22': '127.0.0.1:19004',
 			'gateway.discord.gg:443': 'gateway.discord.gg:443',
 		});
+	});
+
+	it('merges controller-provided tcp host overrides into the vm spec', async () => {
+		const managedVm: ManagedVm = {
+			id: 'vm-tcp-override',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(),
+		};
+		const createManagedVm = vi.fn(async (_options: GatewayManagedVmFactoryOptions) => managedVm);
+
+		await startGatewayZone(
+			{
+				secretResolver: {
+					resolve: async (): Promise<string> => {
+						throw new Error('not used');
+					},
+					resolveAll: async () => ({}),
+				},
+				systemConfig,
+				tcpHostsOverride: {
+					'postgres.local:5432': '172.30.0.10:5432',
+				},
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		const vmOptions = createManagedVm.mock.lastCall?.[0] as
+			| { readonly tcpHosts?: Record<string, string> }
+			| undefined;
+		if (!vmOptions) {
+			throw new Error('Expected gateway VM options');
+		}
+		expect(vmOptions.tcpHosts).toEqual(
+			expect.objectContaining({
+				'controller.vm.host:18800': '127.0.0.1:18800',
+				'postgres.local:5432': '172.30.0.10:5432',
+			}),
+		);
 	});
 
 	it('throws when gateway readiness polling exhausts all attempts', async () => {

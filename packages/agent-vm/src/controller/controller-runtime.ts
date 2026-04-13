@@ -156,7 +156,10 @@ export async function startControllerRuntime(
 					zoneId: string,
 					input: {
 						readonly prompt: string;
-						readonly repo?: { readonly repoUrl: string; readonly baseBranch: string } | null;
+						readonly repos: readonly {
+							readonly repoUrl: string;
+							readonly baseBranch: string;
+						}[];
 						readonly context: Record<string, unknown>;
 					},
 				) =>

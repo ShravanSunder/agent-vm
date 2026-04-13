@@ -168,11 +168,13 @@ describe('coordinator', () => {
 		const { taskId } = await coordinator.submitTask({
 			taskId: 'test-task-1',
 			prompt: 'fix the login bug',
-			repo: {
-				repoUrl: 'https://github.com/org/repo.git',
-				baseBranch: 'main',
-				workspacePath: '/workspace',
-			},
+			repos: [
+				{
+					repoUrl: 'https://github.com/org/repo.git',
+					baseBranch: 'main',
+					workspacePath: '/workspace/repo',
+				},
+			],
 		});
 
 		await waitForStatus(coordinator, taskId, 'completed');

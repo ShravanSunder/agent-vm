@@ -37,6 +37,7 @@ export function createSlackToolDefinition(config: SlackActionConfig): ToolDefini
 
 				if (!response.ok) {
 					return {
+						key: '',
 						type: 'slack-post',
 						success: false,
 						artifact: `Slack webhook returned ${response.status}: ${response.statusText}`,
@@ -44,12 +45,14 @@ export function createSlackToolDefinition(config: SlackActionConfig): ToolDefini
 				}
 
 				return {
+					key: '',
 					type: 'slack-post',
 					success: true,
 					artifact: 'Message posted successfully.',
 				};
 			} catch (error) {
 				return {
+					key: '',
 					type: 'slack-post',
 					success: false,
 					artifact: error instanceof Error ? error.message : String(error),

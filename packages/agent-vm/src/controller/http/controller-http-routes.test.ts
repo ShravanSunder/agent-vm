@@ -494,10 +494,12 @@ describe('createControllerApp', () => {
 		const response = await app.request('/zones/shravan/worker-tasks', {
 			body: JSON.stringify({
 				prompt: 'fix the login bug',
-				repo: {
-					repoUrl: 'https://github.com/org/repo.git',
-					baseBranch: 'main',
-				},
+				repos: [
+					{
+						repoUrl: 'https://github.com/org/repo.git',
+						baseBranch: 'main',
+					},
+				],
 				context: { ticket: 'INC-1' },
 			}),
 			headers: {
@@ -514,10 +516,70 @@ describe('createControllerApp', () => {
 		expect(runWorkerTask).toHaveBeenCalledWith('shravan', {
 			context: { ticket: 'INC-1' },
 			prompt: 'fix the login bug',
-			repo: {
-				baseBranch: 'main',
-				repoUrl: 'https://github.com/org/repo.git',
+			repos: [{ baseBranch: 'main', repoUrl: 'https://github.com/org/repo.git' }],
+		});
+	});
+
+	it('runs worker tasks with multiple repos through the controller route', async () => {
+		const runWorkerTask = vi.fn(async () => ({
+			taskId: 'worker-task-2',
+			finalState: { status: 'completed' },
+		}));
+		const app = createControllerApp({
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
 			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				runWorkerTask,
+				upgradeZone: vi.fn(async () => ({})),
+			},
+			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
+		});
+
+		const response = await app.request('/zones/shravan/worker-tasks', {
+			body: JSON.stringify({
+				prompt: 'fix the cross-repo bug',
+				repos: [
+					{
+						repoUrl: 'https://github.com/org/frontend.git',
+						baseBranch: 'main',
+					},
+					{
+						repoUrl: 'https://github.com/org/backend.git',
+						baseBranch: 'develop',
+					},
+				],
+				context: { ticket: 'INC-2' },
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(200);
+		expect(runWorkerTask).toHaveBeenCalledWith('shravan', {
+			context: { ticket: 'INC-2' },
+			prompt: 'fix the cross-repo bug',
+			repos: [
+				{
+					baseBranch: 'main',
+					repoUrl: 'https://github.com/org/frontend.git',
+				},
+				{
+					baseBranch: 'develop',
+					repoUrl: 'https://github.com/org/backend.git',
+				},
+			],
 		});
 	});
 });

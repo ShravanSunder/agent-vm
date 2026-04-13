@@ -49,7 +49,14 @@ export async function gatherContext(workspaceDir: string): Promise<RepoContext> 
 	const files = await collectFiles(workspaceDir, workspaceDir, 0, 3);
 	const claudeMd = await readOptionalFile(join(workspaceDir, 'CLAUDE.md'));
 	const packageJson = await readOptionalFile(join(workspaceDir, 'package.json'));
-	const summary = `Repository structure (${files.length} files):\n${files.join('\n')}`;
+	const repoMetadataLines = files
+		.filter((filePath) => filePath.endsWith('CLAUDE.md') || filePath.endsWith('package.json'))
+		.slice(0, 20);
+	const summarySections = [`Repository structure (${files.length} files):`, files.join('\n')];
+	if (repoMetadataLines.length > 0) {
+		summarySections.push('', 'Discovered repo metadata files:', repoMetadataLines.join('\n'));
+	}
+	const summary = summarySections.join('\n');
 
 	return {
 		fileCount: files.length,

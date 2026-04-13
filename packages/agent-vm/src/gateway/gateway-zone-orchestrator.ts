@@ -102,6 +102,10 @@ export async function startGatewayZone(
 		options.systemConfig.host.controllerPort,
 		options.systemConfig.tcpPool,
 	);
+	const mergedTcpHosts = {
+		...vmSpec.tcpHosts,
+		...options.tcpHostsOverride,
+	};
 	const processSpec = lifecycle.buildProcessSpec(zone, resolvedSecrets);
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
 	const managedVm = await runTaskWithResult(
@@ -117,7 +121,7 @@ export async function startGatewayZone(
 				rootfsMode: vmSpec.rootfsMode,
 				secrets: vmSpec.mediatedSecrets,
 				sessionLabel: vmSpec.sessionLabel,
-				tcpHosts: vmSpec.tcpHosts,
+				tcpHosts: mergedTcpHosts,
 				vfsMounts: vmSpec.vfsMounts,
 			}),
 	);

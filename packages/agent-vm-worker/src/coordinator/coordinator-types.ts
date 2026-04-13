@@ -3,11 +3,11 @@ import type { TaskState } from '../state/task-state.js';
 export interface CreateTaskInput {
 	readonly taskId: string;
 	readonly prompt: string;
-	readonly repo?: {
+	readonly repos?: readonly {
 		readonly repoUrl: string;
 		readonly baseBranch: string;
 		readonly workspacePath: string;
-	} | null;
+	}[];
 	readonly context?: Record<string, unknown>;
 }
 

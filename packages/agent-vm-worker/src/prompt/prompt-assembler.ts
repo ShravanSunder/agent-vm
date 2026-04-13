@@ -45,15 +45,16 @@ export interface AssemblePromptInput {
 	readonly phase: string;
 	readonly phaseInstructions?: string | undefined;
 	readonly taskPrompt: string;
-	readonly repo?: {
+	readonly repos?: readonly {
 		readonly repoUrl: string;
 		readonly baseBranch: string;
 		readonly workspacePath: string;
-	} | null;
+	}[];
 	readonly context?: Record<string, unknown>;
 	readonly repoSummary?: string | null;
 	readonly plan?: string | null;
 	readonly failureContext?: string | null;
+	readonly extraContext?: string | null;
 	readonly skills: readonly SkillReference[];
 }
 
@@ -72,12 +73,14 @@ export function assemblePrompt(input: AssemblePromptInput): readonly StructuredI
 
 	sections.push('', `Task: ${input.taskPrompt}`);
 
-	if (input.repo) {
-		sections.push(
-			'',
-			`Repository: ${input.repo.repoUrl} (branch: ${input.repo.baseBranch})`,
-			`Workspace: ${input.repo.workspacePath}`,
-		);
+	if (input.repos && input.repos.length > 0) {
+		sections.push('', 'Repositories:');
+		for (const repo of input.repos) {
+			sections.push(
+				`- ${repo.repoUrl} (branch: ${repo.baseBranch})`,
+				`  Workspace: ${repo.workspacePath}`,
+			);
+		}
 	}
 
 	if (input.context && Object.keys(input.context).length > 0) {
@@ -94,6 +97,10 @@ export function assemblePrompt(input: AssemblePromptInput): readonly StructuredI
 
 	if (input.failureContext) {
 		sections.push('', 'Failure context from previous attempt:', input.failureContext);
+	}
+
+	if (input.extraContext) {
+		sections.push('', 'Additional context:', input.extraContext);
 	}
 
 	return [{ type: 'text', text: sections.join('\n') }, ...resolveSkillInputs(input.skills)];

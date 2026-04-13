@@ -35,11 +35,16 @@ describe('git-pr-action', () => {
 		const tool = createGitPrToolDefinition({
 			branchPrefix: 'agent/',
 			commitCoAuthor: 'agent <noreply@agent>',
-			workspaceDir: '/workspace',
 			taskId: 'task-1',
 			taskPrompt: 'fix login bug',
 			plan: 'The plan',
-			repo: { repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' },
+			repos: [
+				{
+					repoUrl: 'https://github.com/org/repo.git',
+					baseBranch: 'main',
+					workspacePath: '/workspace/repo',
+				},
+			],
 		});
 
 		const result = await tool.execute({
@@ -48,6 +53,7 @@ describe('git-pr-action', () => {
 		});
 
 		expect(result).toEqual({
+			key: '',
 			type: 'git-pr',
 			artifact: 'https://github.com/org/repo/pull/42',
 			success: true,
@@ -55,24 +61,24 @@ describe('git-pr-action', () => {
 		expect(mocks.stageAndCommit).toHaveBeenCalledWith({
 			message: 'fix: resolve login bug',
 			coAuthor: 'agent <noreply@agent>',
-			cwd: '/workspace',
+			cwd: '/workspace/repo',
 		});
 	});
 
-	it('returns failure when repo is null', async () => {
+	it('returns failure when no repos are configured', async () => {
 		const tool = createGitPrToolDefinition({
 			branchPrefix: 'agent/',
 			commitCoAuthor: 'agent <noreply@agent>',
-			workspaceDir: '/workspace',
 			taskId: 'task-1',
 			taskPrompt: 'summarize incidents',
 			plan: null,
-			repo: null,
+			repos: [],
 		});
 
 		const result = await tool.execute({ title: 'PR', body: 'body' });
 
 		expect(result).toEqual({
+			key: '',
 			type: 'git-pr',
 			success: false,
 			artifact: 'No repo configured - cannot create PR.',
@@ -90,11 +96,16 @@ describe('git-pr-action', () => {
 		const tool = createGitPrToolDefinition({
 			branchPrefix: 'agent/',
 			commitCoAuthor: 'agent <noreply@agent>',
-			workspaceDir: '/workspace',
 			taskId: 'task-1',
 			taskPrompt: 'fix bug',
 			plan: null,
-			repo: { repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' },
+			repos: [
+				{
+					repoUrl: 'https://github.com/org/repo.git',
+					baseBranch: 'main',
+					workspacePath: '/workspace/repo',
+				},
+			],
 		});
 
 		const result = (await tool.execute({
@@ -106,6 +117,38 @@ describe('git-pr-action', () => {
 		expect(result.artifact).not.toContain('ghp_secret123');
 		expect(result.artifact).toContain('x-access-token:***');
 	});
+
+	it('requires an explicit repo target when multiple repos are configured', async () => {
+		const tool = createGitPrToolDefinition({
+			branchPrefix: 'agent/',
+			commitCoAuthor: 'agent <noreply@agent>',
+			taskId: 'task-1',
+			taskPrompt: 'fix cross-repo bug',
+			plan: null,
+			repos: [
+				{
+					repoUrl: 'https://github.com/org/frontend.git',
+					baseBranch: 'main',
+					workspacePath: '/workspace/frontend',
+				},
+				{
+					repoUrl: 'https://github.com/org/backend.git',
+					baseBranch: 'main',
+					workspacePath: '/workspace/backend',
+				},
+			],
+		});
+
+		const result = await tool.execute({ title: 'PR', body: 'body' });
+
+		expect(result).toEqual({
+			key: '',
+			type: 'git-pr',
+			success: false,
+			artifact:
+				'Multiple repos configured - provide repoWorkspacePath or repoUrl to choose which repo to wrap up.',
+		});
+	});
 });
 
 describe('wrapup-types', () => {
@@ -114,10 +157,10 @@ describe('wrapup-types', () => {
 			expect(
 				findMissingRequiredActions(
 					[
-						{ type: 'git-pr', required: true },
-						{ type: 'slack-post', required: false },
+						{ key: 'git-pr:0', type: 'git-pr', required: true },
+						{ key: 'slack-post:1', type: 'slack-post', required: false },
 					],
-					[{ type: 'git-pr', success: true }],
+					[{ key: 'git-pr:0', type: 'git-pr', success: true }],
 				),
 			).toHaveLength(0);
 		});
@@ -125,22 +168,37 @@ describe('wrapup-types', () => {
 		it('returns missing required actions', () => {
 			expect(
 				findMissingRequiredActions(
-					[{ type: 'git-pr', required: true }],
-					[{ type: 'git-pr', success: false }],
+					[{ key: 'git-pr:0', type: 'git-pr', required: true }],
+					[{ key: 'git-pr:0', type: 'git-pr', success: false }],
 				),
 			).toEqual(['git-pr']);
 		});
 
 		it('returns required actions not executed at all', () => {
-			expect(findMissingRequiredActions([{ type: 'git-pr', required: true }], [])).toEqual([
-				'git-pr',
-			]);
+			expect(
+				findMissingRequiredActions([{ key: 'git-pr:0', type: 'git-pr', required: true }], []),
+			).toEqual(['git-pr']);
 		});
 
 		it('ignores optional actions', () => {
 			expect(
-				findMissingRequiredActions([{ type: 'slack-post', required: false }], []),
+				findMissingRequiredActions(
+					[{ key: 'slack-post:0', type: 'slack-post', required: false }],
+					[],
+				),
 			).toHaveLength(0);
+		});
+
+		it('distinguishes duplicate required actions with the same type', () => {
+			expect(
+				findMissingRequiredActions(
+					[
+						{ key: 'git-pr:0', type: 'git-pr', required: true },
+						{ key: 'git-pr:1', type: 'git-pr', required: true },
+					],
+					[{ key: 'git-pr:0', type: 'git-pr', success: true }],
+				),
+			).toEqual(['git-pr']);
 		});
 	});
 });

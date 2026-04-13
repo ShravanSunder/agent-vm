@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the agent-vm-worker package — a configurable task worker that runs inside a Gondolin VM, driving tasks through plan/work/verify/review/wrapup loops.
+**Goal:** Build the full agent-vm-worker v1 system — the in-VM worker plus the controller/worker-gateway lifecycle required to boot one VM per task, run the task, harvest results, and tear the task environment down.
 
-**Architecture:** Single package porting from agent-vm-coding. Config-driven phases replace hardcoded agents. WorkExecutor interface replaces direct Codex SDK usage. Agent-driven wrapup replaces imperative completion. JSONL event sourcing preserved. **Note:** Full e2e operation requires companion controller-side work (see Post-Implementation Notes) — this plan covers only the worker package.
+**Architecture:** Single package porting from agent-vm-coding plus controller-side per-task lifecycle. Config-driven phases replace hardcoded agents. WorkExecutor interface replaces direct Codex SDK usage. Agent-driven wrapup replaces imperative completion. JSONL event sourcing preserved.
 
 **Tech Stack:** TypeScript, Hono, cmd-ts, Zod, Codex SDK, execa, vitest
 
@@ -5990,31 +5990,23 @@ cd /Users/shravansunder/Documents/dev/project-dev/agent-vm.agent-vm-worker && no
 
 Expected: shows subcommands `serve` and `health`.
 
-> **Note:** Full e2e verification with a real Gondolin VM requires the controller companion work described in the Post-Implementation Notes below (`preStartGateway`/`postStopGateway` hooks, per-task VM orchestration, `buildVmSpec`/`buildProcessSpec` updates). This task verifies that the worker package builds, passes tests, and runs standalone. Integration testing with a live VM is out of scope for this plan.
+> **Note:** Automated verification for this plan includes the worker package, controller lifecycle, worker-gateway wiring, targeted integration tests, and repo-wide build/typecheck/test/check. A separate live manual Gondolin VM e2e path is still required before calling the whole v1 rollout done.
 
 **Commit:** `feat(agent-vm-worker): add server, CLI, and wire all modules together`
 
 ---
 
-## Post-Implementation Notes
+## Current Remaining Task List
 
-### Companion work required (in packages/agent-vm, separate branch)
+The following items are still the live checklist to close the full v1 scope completely:
 
-The worker package cannot run end-to-end without controller-side changes. These are in scope for v1 but live in `packages/agent-vm` and `packages/worker-gateway`, not in this package:
-
-1. **`preStartGateway` hook** — clone repo, read project config, merge with gateway config, write effective config to per-task stateDir, allocate per-task dirs (`tasks/<taskId>/workspace`, `tasks/<taskId>/state`)
-2. **`postStopGateway` hook** — delete per-task dirs after VM teardown
-3. **Per-task VM orchestration** — controller receives task → preStartGateway → clone zone config with per-task paths → startGatewayZone → POST /tasks → poll for completion → harvest results → vm.close → postStopGateway
-4. **worker-gateway `buildVmSpec` update** — mount effective config path, set `WORKER_CONFIG_PATH` env var
-5. **worker-gateway `buildProcessSpec` unblock** — replace the "not implemented" throw with actual startCommand/healthCheck
-
-A separate implementation plan should be written for this controller-side work.
+1. **Multi-repo end-to-end support** — request schemas, task config/events, coordinator prompt assembly, controller pre-start cloning, and wrapup behavior must all accept `repos[]` rather than a single `repo`.
+2. **Multi-repo automated tests** — worker HTTP, controller routes, state/event hydration, and integration tests must all cover multi-repo payloads and workspace layouts.
+3. **Live manual Gondolin e2e** — run the full controller → preStartGateway → VM boot → worker task → wrapup → teardown path against a real VM and capture evidence.
 
 ### What is NOT in v1
 
 1. **Followup** — no `submitFollowup` or `POST /tasks/:id/followup` route
-2. **Per-task VM boot optimization** — no VM pooling or warm starts
-3. **Wrapup retry** — wrapup runs once; if required action fails, task fails
 
 ### gather-context preserved
 

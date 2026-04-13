@@ -18,12 +18,13 @@ export const controllerExecuteCommandRequestSchema = z.object({
 
 export const controllerWorkerTaskRequestSchema = z.object({
 	prompt: z.string().min(1),
-	repo: z
-		.object({
-			repoUrl: z.string().min(1),
-			baseBranch: z.string().min(1),
-		})
-		.nullable()
-		.optional(),
+	repos: z
+		.array(
+			z.object({
+				repoUrl: z.string().min(1),
+				baseBranch: z.string().min(1),
+			}),
+		)
+		.default([]),
 	context: z.record(z.string(), z.unknown()).default({}),
 });

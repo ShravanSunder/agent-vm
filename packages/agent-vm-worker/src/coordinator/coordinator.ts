@@ -49,6 +49,7 @@ async function runTask(
 		}
 
 		const config = deps.config;
+		let latestWorkOutput: string | null = null;
 		let repoSummary: string | null = null;
 		try {
 			const repoContext = await gatherContext(workspaceDir);
@@ -73,7 +74,7 @@ async function runTask(
 				phase: 'plan',
 				phaseInstructions: config.phases.plan.instructions,
 				taskPrompt: initialState.config.prompt,
-				repo: initialState.config.repo,
+				repos: initialState.config.repos,
 				context: initialState.config.context,
 				repoSummary,
 				skills: config.phases.plan.skills,
@@ -120,7 +121,7 @@ async function runTask(
 					phase: 'plan-review',
 					phaseInstructions: config.phases.planReview.instructions,
 					taskPrompt: initialState.config.prompt,
-					repo: initialState.config.repo,
+					repos: initialState.config.repos,
 					context: initialState.config.context,
 					repoSummary,
 					plan: currentPlan,
@@ -185,13 +186,14 @@ async function runTask(
 				phase: 'work',
 				phaseInstructions: config.phases.work.instructions,
 				taskPrompt: initialState.config.prompt,
-				repo: initialState.config.repo,
+				repos: initialState.config.repos,
 				context: initialState.config.context,
 				repoSummary,
 				plan: currentPlan,
 				skills: config.phases.work.skills,
 			}),
 		);
+		latestWorkOutput = workResult.response;
 		eventRecorder.emit(taskId, {
 			event: 'work-started',
 			threadId: workResult.threadId,
@@ -248,6 +250,7 @@ async function runTask(
 					repoSummary,
 				}),
 			);
+			latestWorkOutput = fixResult.response;
 			eventRecorder.emit(taskId, { event: 'fix-applied', tokenCount: fixResult.tokenCount });
 		}
 
@@ -282,7 +285,7 @@ async function runTask(
 					phase: 'work-review',
 					phaseInstructions: config.phases.workReview.instructions,
 					taskPrompt: initialState.config.prompt,
-					repo: initialState.config.repo,
+					repos: initialState.config.repos,
 					repoSummary,
 					plan: currentPlan,
 					failureContext: diff ? `Current diff:\n${diff}` : null,
@@ -335,7 +338,7 @@ async function runTask(
 			taskId,
 			taskPrompt: initialState.config.prompt,
 			plan: currentPlan,
-			repo: initialState.config.repo,
+			repos: initialState.config.repos,
 		});
 		const wrapupExecutorConfig = resolvePhaseExecutor(config, config.phases.wrapup);
 		const wrapupExecutor = createWorkExecutor(
@@ -349,9 +352,31 @@ async function runTask(
 				phase: 'wrapup',
 				phaseInstructions: config.phases.wrapup.instructions,
 				taskPrompt: initialState.config.prompt,
-				repo: initialState.config.repo,
+				repos: initialState.config.repos,
 				repoSummary,
 				plan: currentPlan,
+				extraContext: [
+					latestWorkOutput ? `Work output:\n${latestWorkOutput}` : null,
+					initialState.config.effectiveConfig.wrapupActions.length > 0
+						? `Configured wrapup actions:\n${initialState.config.effectiveConfig.wrapupActions
+								.map(
+									(action, index) =>
+										`- ${action.type}:${index} (${'required' in action && action.required ? 'required' : 'optional'})`,
+								)
+								.join('\n')}`
+						: 'Configured wrapup actions: none',
+					tasks.get(taskId)?.lastVerificationResults
+						? `Verification results:\n${tasks
+								.get(taskId)
+								?.lastVerificationResults?.map(
+									(result) =>
+										`- ${result.name}: ${result.passed ? 'passed' : 'failed'} (exit ${result.exitCode})`,
+								)
+								.join('\n')}`
+						: null,
+				]
+					.filter((value): value is string => value !== null)
+					.join('\n\n'),
 				skills: config.phases.wrapup.skills,
 			}),
 		);

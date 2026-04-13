@@ -56,5 +56,18 @@ describe('gather-context', () => {
 			expect(context.summary).not.toContain('node_modules');
 			expect(context.summary).not.toContain('.git');
 		});
+
+		it('includes repo-local metadata files from nested repos', async () => {
+			await mkdir(join(tempDir, 'frontend', '.agent-vm'), { recursive: true });
+			await mkdir(join(tempDir, 'backend', '.agent-vm'), { recursive: true });
+			await writeFile(join(tempDir, 'frontend', 'package.json'), '{"name":"frontend"}', 'utf-8');
+			await writeFile(join(tempDir, 'backend', 'CLAUDE.md'), '# Backend Repo', 'utf-8');
+
+			const context = await gatherContext(tempDir);
+
+			expect(context.summary).toContain('frontend/package.json');
+			expect(context.summary).toContain('backend/CLAUDE.md');
+			expect(context.summary).toContain('Discovered repo metadata files:');
+		});
 	});
 });

@@ -13,7 +13,7 @@ function makeTaskState(overrides?: Partial<TaskState>): TaskState {
 		config: {
 			taskId: 'test-1',
 			prompt: 'fix bug',
-			repo: null,
+			repos: [],
 			context: {},
 			effectiveConfig: TEST_EFFECTIVE_CONFIG,
 		},
@@ -66,6 +66,41 @@ describe('server', () => {
 		expect(response.status).toBe(201);
 		const body = (await response.json()) as Record<string, unknown>;
 		expect(body.taskId).toBe('test-1');
+	});
+
+	it('POST /tasks accepts multiple repos', async () => {
+		const submitTask = vi.fn().mockResolvedValue({ taskId: 'test-1', status: 'accepted' });
+		const app = createApp(createDeps({ submitTask }));
+		const response = await app.request('/tasks', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				taskId: 'task-1',
+				prompt: 'fix the cross-repo bug',
+				repos: [
+					{
+						repoUrl: 'https://github.com/org/frontend.git',
+						baseBranch: 'main',
+						workspacePath: '/workspace/frontend',
+					},
+					{
+						repoUrl: 'https://github.com/org/backend.git',
+						baseBranch: 'main',
+						workspacePath: '/workspace/backend',
+					},
+				],
+			}),
+		});
+
+		expect(response.status).toBe(201);
+		expect(submitTask).toHaveBeenCalledWith(
+			expect.objectContaining({
+				repos: [
+					expect.objectContaining({ repoUrl: 'https://github.com/org/frontend.git' }),
+					expect.objectContaining({ repoUrl: 'https://github.com/org/backend.git' }),
+				],
+			}),
+		);
 	});
 
 	it('POST /tasks returns 409 when task is already active', async () => {

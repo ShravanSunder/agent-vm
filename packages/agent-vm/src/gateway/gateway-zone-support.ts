@@ -9,6 +9,7 @@ export interface StartGatewayZoneOptions {
 	readonly runTask?: RunTaskFn;
 	readonly secretResolver: import('gondolin-core').SecretResolver;
 	readonly systemConfig: SystemConfig;
+	readonly tcpHostsOverride?: Record<string, string>;
 	readonly zoneId: string;
 	readonly zoneOverride?: GatewayZone;
 }

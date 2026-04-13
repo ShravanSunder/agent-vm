@@ -796,7 +796,7 @@ If `phases.plan.instructions` is set in config, it replaces the default. The bas
 ### 3. Task Input + Gathered Context
 
 - Task prompt (what to do)
-- Repo location (if provided — repoUrl, baseBranch, workspacePath)
+- Repo locations (if provided — repoUrl, baseBranch, workspacePath for each cloned repo)
 - Context (arbitrary key-value data from POST body — alertId, service name, links, etc.)
 - Repo summary (gathered by the coordinator from `/workspace` — file tree, CLAUDE.md, package.json. Gives the planner structural awareness of the project. Skipped if `/workspace` is empty.)
 - Skills (appended as structured inputs — the worker reads the file from the VM filesystem and passes the content as text to the executor)
@@ -812,14 +812,18 @@ interface AssemblePromptInput {
   readonly taskPrompt: string;
   readonly context: Record<string, unknown>;
   readonly repoSummary: string | null;
-  readonly repo: { readonly repoUrl: string; readonly baseBranch: string; readonly workspacePath: string } | null;
+  readonly repos: readonly {
+    readonly repoUrl: string;
+    readonly baseBranch: string;
+    readonly workspacePath: string;
+  }[];
   readonly plan: string | null;
   readonly failureContext: string | null;
   readonly skills: readonly { readonly name: string; readonly path: string }[];
 }
 ```
 
-Final assembled input: `[base + instructions + task prompt + context + repo summary (text), ...skills (structured)]`
+Final assembled input: `[base + instructions + task prompt + repo list + context + repo summary (text), ...skills (structured)]`
 
 ---
 
@@ -937,7 +941,7 @@ const repoLocationSchema = z.object({
 const createTaskRequestSchema = z.object({
   taskId: z.string().min(1),          // controller-generated — single ID for host dirs, worker state, events, teardown
   prompt: z.string().min(1),
-  repo: repoLocationSchema.nullable().default(null),  // v1: single repo, nullable
+  repos: z.array(repoLocationSchema).default([]),  // v1: zero or more repos
   context: z.record(z.string(), z.unknown()).default({}),  // arbitrary key-value passthrough
 });
 ```
@@ -948,33 +952,40 @@ Examples:
 // Coding task
 {
   "prompt": "fix the login bug in src/auth/login.ts",
-  "repo": {
-    "repoUrl": "https://github.com/org/repo.git",
-    "baseBranch": "main",
-    "workspacePath": "/workspace"
-  },
+  "repos": [
+    {
+      "repoUrl": "https://github.com/org/repo.git",
+      "baseBranch": "main",
+      "workspacePath": "/workspace/repo"
+    }
+  ],
   "context": {}
 }
 
-// Oncall triage (has a repo for code context)
+// Cross-repo task
 {
-  "prompt": "triage this alert — postgres connection pool exhausted",
-  "repo": {
-    "repoUrl": "https://github.com/org/payments-api.git",
-    "baseBranch": "main",
-    "workspacePath": "/workspace"
-  },
+  "prompt": "update frontend and backend together for the new auth flow",
+  "repos": [
+    {
+      "repoUrl": "https://github.com/org/frontend.git",
+      "baseBranch": "main",
+      "workspacePath": "/workspace/frontend"
+    },
+    {
+      "repoUrl": "https://github.com/org/backend.git",
+      "baseBranch": "develop",
+      "workspacePath": "/workspace/backend"
+    }
+  ],
   "context": {
-    "alertId": "INC-4521",
-    "service": "payments-api",
-    "grafanaUrl": "https://grafana.internal/d/abc123"
+    "ticket": "AUTH-214"
   }
 }
 
 // Task without a repo
 {
   "prompt": "summarize this week's incidents and post to #eng-updates",
-  "repo": null,
+  "repos": [],
   "context": {
     "slackChannel": "#eng-updates",
     "dateRange": "2026-04-06/2026-04-12"
@@ -982,7 +993,7 @@ Examples:
 }
 ```
 
-`repo` is the cloned repo location. `context` is passthrough — the controller forwards whatever the external caller sent. The agent uses it as part of its prompt. No schema enforcement on `context` values — it's `Record<string, unknown>`.
+`repos` are the cloned repo locations. `context` is passthrough — the controller forwards whatever the external caller sent. The agent uses it as part of its prompt. No schema enforcement on `context` values — it's `Record<string, unknown>`.
 
 ### Health Response
 
@@ -1036,13 +1047,11 @@ JSONL event sourcing. Same pattern as current `agent-vm-coding`. Events are a Zo
 const taskConfigSchema = z.object({
   taskId: z.string().min(1),
   prompt: z.string().min(1),
-  repo: z
-    .object({
+  repos: z.array(z.object({
       repoUrl: z.string().min(1),
       baseBranch: z.string().min(1),
       workspacePath: z.string().min(1),
-    })
-    .nullable(),
+    })),
   context: z.record(z.string(), z.unknown()),
   effectiveConfig: workerConfigSchema,
 });
@@ -1161,9 +1170,9 @@ Hydration: on worker startup, scan `stateDir/tasks/*.jsonl`, replay events, rebu
 
 ## Repo Preparation
 
-**v1: single repo, nullable.** A task may provide one repo or `repo: null` for non-repo workflows.
+**v1: repo-optional and multi-repo capable.** A task may provide zero, one, or more repos.
 
-Repo cloning is handled by the controller's `preStartGateway` hook (see Controller-Side Lifecycle Hooks section above for the full flow and code). The controller clones the repo into per-task dirs (`taskRoot/workspace`), reads `.agent-vm/config.json`, merges config, writes `effective-worker.json` to `taskRoot/state`. The VM mounts these per-task paths. The worker never clones repos itself.
+Repo cloning is handled by the controller's `preStartGateway` hook (see Controller-Side Lifecycle Hooks section above for the full flow and code). The controller clones each repo into a distinct subdirectory under the per-task workspace (`taskRoot/workspace/<repo-name>`), reads `.agent-vm/config.json` from the primary repo when present, merges config, writes `effective-worker.json` to `taskRoot/state`, and sends the normalized repo list to the worker. The worker never clones repos itself.
 
 ---
 
@@ -1244,7 +1253,7 @@ Steps 1-10 are the refactor. Step 11 connects to the gateway abstraction. Step 1
 - Config loading (reads mounted effective config)
 - Prompt assembly, verification runner, git operations
 
-### What's in the controller (v1 scope, `packages/agent-vm` — separate implementation plan)
+### What's in the controller (v1 scope, `packages/agent-vm`)
 - `preStartGateway` / `postStopGateway` hooks — **required for v1, ships alongside worker**
 - Repo cloning, project config reading, config merge
 - Per-task directory allocation and teardown
@@ -1257,8 +1266,3 @@ Steps 1-10 are the refactor. Step 11 connects to the gateway abstraction. Step 1
 
 ### Not in v1
 - Followup (re-entering the loop after wrapup)
-- Claude executor (throws "not implemented yet")
-- Multi-repo (array of repos per task — v1 is single repo, nullable)
-- Per-runner context schema validation (typed context instead of `Record<string, unknown>`)
-- Per-task VM boot optimization (VM pooling, warm starts)
-- Wrapup retry on required-action failure (wrapup runs once; if a required action fails, the task fails)

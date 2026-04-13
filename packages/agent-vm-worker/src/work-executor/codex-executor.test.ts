@@ -8,17 +8,41 @@ interface MockSdkThread {
 	run: ReturnType<typeof vi.fn>;
 }
 
-const mockStartThread = vi.fn();
-const mockResumeThread = vi.fn();
+const hoistedMocks = vi.hoisted(() => ({
+	mockStartThread: vi.fn(),
+	mockResumeThread: vi.fn(),
+	execaMock: vi.fn(),
+	getOrCreateLocalToolMcpServerMock: vi.fn(),
+	codexConstructorMock: vi.fn(),
+}));
 
 vi.mock('@openai/codex-sdk', () => {
 	class MockCodex {
-		startThread = mockStartThread;
-		resumeThread = mockResumeThread;
+		constructor(options?: unknown) {
+			hoistedMocks.codexConstructorMock(options);
+		}
+		startThread = hoistedMocks.mockStartThread;
+		resumeThread = hoistedMocks.mockResumeThread;
 	}
 
 	return { Codex: MockCodex };
 });
+
+vi.mock('execa', () => ({
+	execa: hoistedMocks.execaMock,
+}));
+
+vi.mock('./local-tool-mcp-server.js', () => ({
+	getOrCreateLocalToolMcpServer: hoistedMocks.getOrCreateLocalToolMcpServerMock,
+}));
+
+const {
+	mockStartThread,
+	mockResumeThread,
+	execaMock,
+	getOrCreateLocalToolMcpServerMock,
+	codexConstructorMock,
+} = hoistedMocks;
 
 function createMockThread(id: string, response: string, outputTokens: number): MockSdkThread {
 	return {
@@ -85,6 +109,10 @@ describe('codex-executor', () => {
 	beforeEach(() => {
 		mockStartThread.mockReset();
 		mockResumeThread.mockReset();
+		execaMock.mockReset();
+		getOrCreateLocalToolMcpServerMock.mockReset();
+		codexConstructorMock.mockReset();
+		getOrCreateLocalToolMcpServerMock.mockResolvedValue(null);
 	});
 
 	it('execute() starts a new thread and returns result', async () => {
@@ -104,6 +132,7 @@ describe('codex-executor', () => {
 			tokenCount: 50,
 			threadId: 'thread-1',
 		});
+		expect(execaMock).not.toHaveBeenCalled();
 		expect(executor.getThreadId()).toBe('thread-1');
 		expect(thread.run).toHaveBeenCalledWith([{ type: 'text', text: 'do the thing' }]);
 	});
@@ -187,6 +216,74 @@ describe('codex-executor', () => {
 			{ type: 'text', text: 'implement plan' },
 			{ type: 'text', text: '[Skill: tdd]\n\nWrite tests first.' },
 		]);
+	});
+
+	it('registers remote mcp servers before starting codex', async () => {
+		const thread = createMockThread('thread-1', 'done', 5);
+		mockStartThread.mockReturnValue(thread);
+
+		const { createCodexExecutor } = await import('./codex-executor.js');
+		const executor = createCodexExecutor({
+			model: 'latest',
+			capabilities: {
+				mcpServers: [{ name: 'deepwiki', url: 'http://127.0.0.1:4000/mcp' }],
+				tools: [],
+			},
+		});
+
+		await executor.execute([{ type: 'text', text: 'hello' }]);
+
+		expect(execaMock).toHaveBeenCalledWith(
+			'codex',
+			['mcp', 'add', 'deepwiki', '--url', 'http://127.0.0.1:4000/mcp'],
+			expect.objectContaining({
+				env: expect.objectContaining({
+					HOME: expect.any(String),
+				}),
+			}),
+		);
+		expect(codexConstructorMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				env: expect.objectContaining({
+					HOME: expect.any(String),
+				}),
+			}),
+		);
+	});
+
+	it('registers a local tool mcp server when tools are provided', async () => {
+		const thread = createMockThread('thread-1', 'done', 5);
+		mockStartThread.mockReturnValue(thread);
+		getOrCreateLocalToolMcpServerMock.mockResolvedValue({
+			url: 'http://127.0.0.1:4555/mcp',
+		});
+
+		const { createCodexExecutor } = await import('./codex-executor.js');
+		const executor = createCodexExecutor({
+			model: 'latest',
+			capabilities: {
+				mcpServers: [],
+				tools: [
+					{
+						name: 'git-pr',
+						description: 'Create a PR',
+						inputSchema: { type: 'object', properties: {} },
+						execute: async () => ({ ok: true }),
+					},
+				],
+			},
+		});
+
+		await executor.execute([{ type: 'text', text: 'hello' }]);
+
+		expect(getOrCreateLocalToolMcpServerMock).toHaveBeenCalledWith([
+			expect.objectContaining({ name: 'git-pr' }),
+		]);
+		expect(execaMock).toHaveBeenCalledWith(
+			'codex',
+			['mcp', 'add', 'agent-vm-local-tools', '--url', 'http://127.0.0.1:4555/mcp'],
+			expect.any(Object),
+		);
 	});
 });
 

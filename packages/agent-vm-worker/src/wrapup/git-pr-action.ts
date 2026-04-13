@@ -11,14 +11,35 @@ import type { WrapupActionResult } from './wrapup-types.js';
 export interface GitPrActionConfig {
 	readonly branchPrefix: string;
 	readonly commitCoAuthor: string;
-	readonly workspaceDir: string;
 	readonly taskId: string;
 	readonly taskPrompt: string;
 	readonly plan: string | null;
-	readonly repo: {
+	readonly repos: readonly {
 		readonly repoUrl: string;
 		readonly baseBranch: string;
-	} | null;
+		readonly workspacePath: string;
+	}[];
+}
+
+function selectTargetRepo(
+	config: GitPrActionConfig,
+	params: Record<string, unknown>,
+): {
+	readonly repoUrl: string;
+	readonly baseBranch: string;
+	readonly workspacePath: string;
+} | null {
+	const requestedWorkspacePath =
+		typeof params.repoWorkspacePath === 'string' ? params.repoWorkspacePath : null;
+	const requestedRepoUrl = typeof params.repoUrl === 'string' ? params.repoUrl : null;
+
+	if (requestedWorkspacePath) {
+		return config.repos.find((repo) => repo.workspacePath === requestedWorkspacePath) ?? null;
+	}
+	if (requestedRepoUrl) {
+		return config.repos.find((repo) => repo.repoUrl === requestedRepoUrl) ?? null;
+	}
+	return config.repos[0] ?? null;
 }
 
 export function createGitPrToolDefinition(config: GitPrActionConfig): ToolDefinition {
@@ -37,16 +58,41 @@ export function createGitPrToolDefinition(config: GitPrActionConfig): ToolDefini
 					type: 'string',
 					description: 'PR description (markdown)',
 				},
+				repoWorkspacePath: {
+					type: 'string',
+					description:
+						'Optional workspace path of the repo to wrap up, required when multiple repos are present.',
+				},
+				repoUrl: {
+					type: 'string',
+					description:
+						'Optional repo URL of the repo to wrap up, used if repoWorkspacePath is omitted.',
+				},
 			},
 			required: ['title', 'body'],
 		},
 		execute: async (params: Record<string, unknown>): Promise<WrapupActionResult> => {
 			try {
-				if (!config.repo) {
+				const targetRepo = selectTargetRepo(config, params);
+				if (!targetRepo) {
 					return {
+						key: '',
 						type: 'git-pr',
 						success: false,
 						artifact: 'No repo configured - cannot create PR.',
+					};
+				}
+				if (
+					config.repos.length > 1 &&
+					typeof params.repoWorkspacePath !== 'string' &&
+					typeof params.repoUrl !== 'string'
+				) {
+					return {
+						key: '',
+						type: 'git-pr',
+						success: false,
+						artifact:
+							'Multiple repos configured - provide repoWorkspacePath or repoUrl to choose which repo to wrap up.',
 					};
 				}
 
@@ -63,32 +109,33 @@ export function createGitPrToolDefinition(config: GitPrActionConfig): ToolDefini
 						userEmail: 'agent-vm-worker@agent-vm',
 						userName: 'agent-vm-worker',
 					},
-					config.workspaceDir,
+					targetRepo.workspacePath,
 				);
-				await createBranch(branchName, config.workspaceDir);
+				await createBranch(branchName, targetRepo.workspacePath);
 				await stageAndCommit({
 					message: title,
 					coAuthor: config.commitCoAuthor,
-					cwd: config.workspaceDir,
+					cwd: targetRepo.workspacePath,
 				});
 				await pushBranch({
-					repo: config.repo.repoUrl,
+					repo: targetRepo.repoUrl,
 					branchName,
-					cwd: config.workspaceDir,
+					cwd: targetRepo.workspacePath,
 				});
 
 				const prUrl = await createPullRequest(
 					{
-						repo: config.repo.repoUrl,
+						repo: targetRepo.repoUrl,
 						title,
 						body,
-						baseBranch: config.repo.baseBranch,
+						baseBranch: targetRepo.baseBranch,
 						headBranch: branchName,
 					},
-					config.workspaceDir,
+					targetRepo.workspacePath,
 				);
 
 				return {
+					key: '',
 					type: 'git-pr',
 					artifact: prUrl,
 					success: true,
@@ -100,6 +147,7 @@ export function createGitPrToolDefinition(config: GitPrActionConfig): ToolDefini
 					'https://x-access-token:***@',
 				);
 				return {
+					key: '',
 					type: 'git-pr',
 					artifact: sanitized,
 					success: false,

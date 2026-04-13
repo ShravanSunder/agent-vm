@@ -23,6 +23,7 @@
 	"dependencies": {
 		"@hono/node-server": "^1",
 		"@hono/zod-validator": "^0.7.6",
+		"@modelcontextprotocol/sdk": "^1.29.0",
 		"@openai/codex-sdk": "^0.118.0",
 		"cmd-ts": "^0.13.0",
 		"execa": "^9.5.2",

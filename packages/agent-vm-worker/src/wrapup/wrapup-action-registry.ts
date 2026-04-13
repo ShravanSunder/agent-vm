@@ -9,11 +9,11 @@ export interface WrapupToolRegistryInput {
 	readonly taskId: string;
 	readonly taskPrompt: string;
 	readonly plan: string | null;
-	readonly repo: {
+	readonly repos: readonly {
 		readonly repoUrl: string;
 		readonly baseBranch: string;
 		readonly workspacePath: string;
-	} | null;
+	}[];
 }
 
 export interface WrapupToolRegistryResult {
@@ -23,13 +23,21 @@ export interface WrapupToolRegistryResult {
 
 function wrapToolWithResultCollector(
 	tool: ToolDefinition,
+	actionKey: string,
+	actionType: string,
 	results: WrapupActionResult[],
 ): ToolDefinition {
 	return {
 		...tool,
 		execute: async (params: Record<string, unknown>): Promise<unknown> => {
-			const result = (await tool.execute(params)) as WrapupActionResult;
-			results.push(result);
+			const result = (await tool.execute(params)) as Omit<WrapupActionResult, 'key' | 'type'> &
+				Partial<Pick<WrapupActionResult, 'key' | 'type'>>;
+			results.push({
+				key: result.key ?? actionKey,
+				type: result.type ?? actionType,
+				success: result.success,
+				...(result.artifact !== undefined ? { artifact: result.artifact } : {}),
+			});
 			return result;
 		},
 	};
@@ -39,24 +47,30 @@ export function buildWrapupTools(input: WrapupToolRegistryInput): WrapupToolRegi
 	const tools: ToolDefinition[] = [];
 	const results: WrapupActionResult[] = [];
 
-	for (const action of input.config.wrapupActions) {
+	for (const [index, action] of input.config.wrapupActions.entries()) {
+		const actionKey = `${action.type}:${index}`;
 		switch (action.type) {
 			case 'git-pr': {
 				const gitConfig: GitPrActionConfig = {
 					branchPrefix: input.config.branchPrefix,
 					commitCoAuthor: input.config.commitCoAuthor,
-					workspaceDir: input.repo?.workspacePath ?? '/workspace',
 					taskId: input.taskId,
 					taskPrompt: input.taskPrompt,
 					plan: input.plan,
-					repo: input.repo
-						? {
-								repoUrl: input.repo.repoUrl,
-								baseBranch: input.repo.baseBranch,
-							}
-						: null,
+					repos: input.repos.map((repo) => ({
+						repoUrl: repo.repoUrl,
+						baseBranch: repo.baseBranch,
+						workspacePath: repo.workspacePath,
+					})),
 				};
-				tools.push(wrapToolWithResultCollector(createGitPrToolDefinition(gitConfig), results));
+				tools.push(
+					wrapToolWithResultCollector(
+						createGitPrToolDefinition(gitConfig),
+						actionKey,
+						action.type,
+						results,
+					),
+				);
 				break;
 			}
 			case 'slack-post':
@@ -66,6 +80,8 @@ export function buildWrapupTools(input: WrapupToolRegistryInput): WrapupToolRegi
 							webhookUrl: action.webhookUrl,
 							...(action.channel ? { channel: action.channel } : {}),
 						}),
+						actionKey,
+						action.type,
 						results,
 					),
 				);
@@ -80,7 +96,8 @@ export function buildWrapupTools(input: WrapupToolRegistryInput): WrapupToolRegi
 }
 
 export function getWrapupActionConfigs(config: WorkerConfig): readonly WrapupActionConfig[] {
-	return config.wrapupActions.map((action) => ({
+	return config.wrapupActions.map((action, index) => ({
+		key: `${action.type}:${index}`,
 		type: action.type,
 		required: 'required' in action ? (action.required ?? false) : false,
 	}));

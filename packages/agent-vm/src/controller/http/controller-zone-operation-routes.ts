@@ -55,7 +55,7 @@ export function registerControllerZoneOperationRoutes(
 				return context.json(
 					await operations.runWorkerTask?.(context.req.param('zoneId'), {
 						prompt: taskInput.prompt,
-						...(taskInput.repo !== undefined ? { repo: taskInput.repo } : {}),
+						repos: taskInput.repos,
 						context: taskInput.context,
 					}),
 				);

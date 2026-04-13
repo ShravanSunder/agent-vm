@@ -89,11 +89,13 @@ describe('prompt-assembler', () => {
 			const result = assemblePrompt({
 				phase: 'work',
 				taskPrompt: 'implement feature',
-				repo: {
-					repoUrl: 'https://github.com/org/repo.git',
-					baseBranch: 'main',
-					workspacePath: '/workspace',
-				},
+				repos: [
+					{
+						repoUrl: 'https://github.com/org/repo.git',
+						baseBranch: 'main',
+						workspacePath: '/workspace/repo',
+					},
+				],
 				skills: [],
 			});
 
@@ -101,6 +103,35 @@ describe('prompt-assembler', () => {
 			if (text?.type === 'text') {
 				expect(text.text).toContain('github.com/org/repo.git');
 				expect(text.text).toContain('branch: main');
+				expect(text.text).toContain('/workspace/repo');
+			}
+		});
+
+		it('includes multiple repos when provided', () => {
+			const result = assemblePrompt({
+				phase: 'work',
+				taskPrompt: 'implement feature',
+				repos: [
+					{
+						repoUrl: 'https://github.com/org/frontend.git',
+						baseBranch: 'main',
+						workspacePath: '/workspace/frontend',
+					},
+					{
+						repoUrl: 'https://github.com/org/backend.git',
+						baseBranch: 'develop',
+						workspacePath: '/workspace/backend',
+					},
+				],
+				skills: [],
+			});
+
+			const text = result[0];
+			if (text?.type === 'text') {
+				expect(text.text).toContain('https://github.com/org/frontend.git');
+				expect(text.text).toContain('/workspace/frontend');
+				expect(text.text).toContain('https://github.com/org/backend.git');
+				expect(text.text).toContain('/workspace/backend');
 			}
 		});
 

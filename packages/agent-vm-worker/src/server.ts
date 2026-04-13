@@ -33,7 +33,7 @@ export const repoLocationSchema = z.object({
 export const createTaskRequestSchema = z.object({
 	taskId: z.string().min(1),
 	prompt: z.string().min(1),
-	repo: repoLocationSchema.nullable().default(null),
+	repos: z.array(repoLocationSchema).default([]),
 	context: z.record(z.string(), z.unknown()).default({}),
 });
 

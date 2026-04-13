@@ -17,6 +17,7 @@ RUN apt-get update && \
       '  "private": true,' \
       '  "type": "module",' \
       '  "dependencies": {' \
+      '    "@modelcontextprotocol/sdk": "^1.29.0",' \
       '    "@hono/node-server": "^1",' \
       '    "@hono/zod-validator": "^0.7.6",' \
       '    "@openai/codex-sdk": "^0.118.0",' \
