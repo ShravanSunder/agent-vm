@@ -6,6 +6,7 @@ import type {
 	BuildConfig,
 	BuildImageResult,
 	ManagedVm,
+	ManagedVmInstance,
 	SecretResolver,
 } from '@shravansunder/agent-vm-gondolin-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -48,6 +49,7 @@ function createSystemConfig(): SystemConfig {
 		cacheDir: '/cache',
 		host: {
 			controllerPort: 18800,
+			projectNamespace: 'claw-tests-a1b2c3d4',
 			secretsProvider: {
 				type: '1password',
 				tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -115,6 +117,30 @@ const minimalBuildConfig: BuildConfig = {
 	distro: 'alpine',
 };
 
+function createVmInstanceStub(pid: number = 28282): ManagedVmInstance {
+	return {
+		close: async () => {},
+		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+		enableSsh: async () => ({
+			command: 'ssh ...',
+			host: '127.0.0.1',
+			identityFile: '/tmp/key',
+			port: 19000,
+			user: 'sandbox',
+		}),
+		exec: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+		id: `vm-instance-${pid}`,
+		server: {
+			controller: {
+				child: {
+					pid,
+				},
+			},
+		},
+		setIngressRoutes: () => {},
+	} as ManagedVmInstance;
+}
+
 function createOpenClawSecretResolver(resolvedSecrets: Record<string, string>): SecretResolver {
 	return {
 		resolve: async (secretRef): Promise<string> => {
@@ -154,7 +180,7 @@ describe('startGatewayZone', () => {
 			enableIngress: enableIngressMock,
 			enableSsh: enableSshMock,
 			exec: execMock,
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28282)),
 			setIngressRoutes: setIngressRoutesMock,
 		};
 		const secretResolver = createOpenClawSecretResolver({
@@ -213,6 +239,7 @@ describe('startGatewayZone', () => {
 				imagePath: '/tmp/gateway-image',
 				memory: '2G',
 				rootfsMode: 'cow',
+				sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 				secrets: {
 					PERPLEXITY_API_KEY: {
 						hosts: ['api.perplexity.ai'],
@@ -239,6 +266,7 @@ describe('startGatewayZone', () => {
 			listenPort: 18791,
 		});
 		expect(taskTitles).toEqual([
+			'Cleaning orphaned gateway runtime',
 			'Resolving zone secrets',
 			'Building gateway image',
 			'Preparing host state',
@@ -246,6 +274,7 @@ describe('startGatewayZone', () => {
 			'Configuring gateway',
 			'Starting gateway',
 			'Waiting for readiness',
+			'Recording gateway runtime',
 		]);
 		expect(result).toMatchObject({
 			image: {
@@ -353,7 +382,7 @@ describe('startGatewayZone', () => {
 			enableIngress: enableIngressMock,
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28283)),
 			setIngressRoutes: setIngressRoutesMock,
 		};
 		const secretResolver = createOpenClawSecretResolver({
@@ -413,7 +442,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
 			setIngressRoutes: vi.fn(),
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28284)),
 		};
 		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
 
@@ -462,7 +491,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(async () => ({ exitCode: 0, stdout: '000', stderr: '' })),
 			setIngressRoutes: vi.fn(),
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28285)),
 		};
 
 		await expect(
@@ -502,7 +531,7 @@ describe('startGatewayZone', () => {
 				.mockResolvedValueOnce({ exitCode: 0, stdout: '500', stderr: '' })
 				.mockResolvedValue({ exitCode: 0, stdout: '500', stderr: '' }),
 			setIngressRoutes: vi.fn(),
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28286)),
 		};
 
 		await expect(
@@ -540,7 +569,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
 			setIngressRoutes: vi.fn(),
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28287)),
 		};
 
 		const result = await startGatewayZone(
@@ -572,7 +601,7 @@ describe('startGatewayZone', () => {
 						environment: {},
 						mediatedSecrets: {},
 						rootfsMode: 'cow' as const,
-						sessionLabel: 'worker-session',
+						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 						tcpHosts: {},
 						vfsMounts: {},
 					}),
@@ -604,7 +633,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
 			setIngressRoutes: vi.fn(),
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28288)),
 		};
 
 		await startGatewayZone(
@@ -646,7 +675,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
 			setIngressRoutes: vi.fn(),
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28289)),
 		};
 
 		await startGatewayZone(

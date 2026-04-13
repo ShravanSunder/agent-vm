@@ -1,9 +1,10 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-const repoRoot = new URL('../../../../', import.meta.url).pathname.replace(/\/$/, '');
+import { scaffoldAgentVmProject } from '../cli/init-command.js';
 
 function parseJsonFile(filePath: string): Record<string, unknown> {
 	const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
@@ -13,19 +14,50 @@ function parseJsonFile(filePath: string): Record<string, unknown> {
 	return parsed as Record<string, unknown>;
 }
 
+const createdDirectories: string[] = [];
+
+afterEach(() => {
+	for (const directoryPath of createdDirectories.splice(0)) {
+		fs.rmSync(directoryPath, { force: true, recursive: true });
+	}
+});
+
 describe('production config artifacts', () => {
-	it('ships gateway and tool image build configs', () => {
+	it('scaffolds gateway and tool image build configs for production use', async () => {
+		const projectDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-production-config-'));
+		createdDirectories.push(projectDirectory);
+		await scaffoldAgentVmProject(
+			{
+				gatewayType: 'openclaw',
+				targetDir: projectDirectory,
+				zoneId: 'shravan',
+			},
+			{
+				copyBundledOpenClawPlugin: async (targetDir: string): Promise<'created' | 'skipped'> => {
+					const pluginDirectory = path.join(targetDir, 'images', 'gateway', 'vendor', 'gondolin');
+					fs.mkdirSync(pluginDirectory, { recursive: true });
+					fs.writeFileSync(
+						path.join(pluginDirectory, 'openclaw.plugin.json'),
+						'{"id":"gondolin"}\n',
+						'utf8',
+					);
+					return 'created';
+				},
+				generateAgeIdentityKey: () => undefined,
+			},
+		);
+
 		const gatewayBuildConfig = parseJsonFile(
-			path.join(repoRoot, 'images', 'gateway', 'build-config.json'),
+			path.join(projectDirectory, 'images', 'gateway', 'build-config.json'),
 		);
 		const toolBuildConfig = parseJsonFile(
-			path.join(repoRoot, 'images', 'tool', 'build-config.json'),
+			path.join(projectDirectory, 'images', 'tool', 'build-config.json'),
 		);
-		const envExample = fs.readFileSync(path.join(repoRoot, '.env.example'), 'utf8');
+		const envLocal = fs.readFileSync(path.join(projectDirectory, '.env.local'), 'utf8');
 
-		expect(envExample).not.toContain('DISCORD_BOT_TOKEN_REF=');
-		expect(envExample).not.toContain('PERPLEXITY_API_KEY_REF=');
-		expect(envExample).not.toContain('OPENCLAW_GATEWAY_TOKEN_REF=');
+		expect(envLocal).not.toContain('DISCORD_BOT_TOKEN_REF=');
+		expect(envLocal).not.toContain('PERPLEXITY_API_KEY_REF=');
+		expect(envLocal).not.toContain('OPENCLAW_GATEWAY_TOKEN_REF=');
 		expect(gatewayBuildConfig).toMatchObject({
 			arch: 'aarch64',
 		});
@@ -33,7 +65,7 @@ describe('production config artifacts', () => {
 			arch: 'aarch64',
 		});
 		expect(
-			fs.readFileSync(path.join(repoRoot, 'images', 'gateway', 'Dockerfile'), 'utf8'),
+			fs.readFileSync(path.join(projectDirectory, 'images', 'gateway', 'Dockerfile'), 'utf8'),
 		).toContain('COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin');
 	});
 });

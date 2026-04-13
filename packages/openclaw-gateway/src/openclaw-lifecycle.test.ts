@@ -104,10 +104,16 @@ describe('openclawLifecycle', () => {
 
 	describe('buildVmSpec', () => {
 		it('splits environment and mediated secrets', () => {
-			const vmSpec = openclawLifecycle.buildVmSpec(createZone(), resolvedSecrets, 18800, {
-				basePort: 19000,
-				size: 3,
-			});
+			const vmSpec = openclawLifecycle.buildVmSpec(
+				createZone(),
+				resolvedSecrets,
+				18800,
+				{
+					basePort: 19000,
+					size: 3,
+				},
+				'claw-tests-a1b2c3d4',
+			);
 
 			expect(vmSpec.environment.DISCORD_BOT_TOKEN).toBe('discord-token');
 			expect(vmSpec.environment.PERPLEXITY_API_KEY).toBeUndefined();
@@ -118,10 +124,16 @@ describe('openclawLifecycle', () => {
 		});
 
 		it('builds the expected OpenClaw environment, mounts, and tcp hosts', () => {
-			const vmSpec = openclawLifecycle.buildVmSpec(createZone(), resolvedSecrets, 18800, {
-				basePort: 19000,
-				size: 2,
-			});
+			const vmSpec = openclawLifecycle.buildVmSpec(
+				createZone(),
+				resolvedSecrets,
+				18800,
+				{
+					basePort: 19000,
+					size: 2,
+				},
+				'claw-tests-a1b2c3d4',
+			);
 
 			expect(vmSpec.environment.OPENCLAW_HOME).toBe('/home/openclaw');
 			expect(vmSpec.environment.OPENCLAW_CONFIG_PATH).toBe(
@@ -137,6 +149,7 @@ describe('openclawLifecycle', () => {
 				'tool-0.vm.host:22': '127.0.0.1:19000',
 				'tool-1.vm.host:22': '127.0.0.1:19001',
 			});
+			expect(vmSpec.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');
 		});
 	});
 

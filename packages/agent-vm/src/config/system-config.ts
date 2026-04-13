@@ -51,6 +51,7 @@ const imageConfigSchema = z.object({
 const systemConfigSchema = z.object({
 	host: z.object({
 		controllerPort: z.number().int().positive(),
+		projectNamespace: z.string().min(1),
 		secretsProvider: z.object({
 			type: z.literal('1password'),
 			tokenSource: tokenSourceSchema,

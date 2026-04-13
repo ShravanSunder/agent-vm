@@ -1,5 +1,7 @@
 import { createOpCliSecretResolver, type ManagedVm } from '@shravansunder/agent-vm-gondolin-core';
 
+import { cleanupOrphanedGatewayIfPresent as cleanupOrphanedGatewayIfPresentDefault } from '../gateway/gateway-recovery.js';
+import { deleteGatewayRuntimeRecord as deleteGatewayRuntimeRecordDefault } from '../gateway/gateway-runtime-record.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { runTaskWithResult } from '../shared/run-task.js';
 import {
@@ -101,6 +103,13 @@ export async function startControllerRuntime(
 			systemConfig: options.systemConfig,
 			zoneId: options.zoneId,
 		});
+	const zone = findConfiguredZone(options.systemConfig, options.zoneId);
+	await runTaskStep('Cleaning orphaned gateway runtime', async () => {
+		await (dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresentDefault)({
+			stateDir: zone.gateway.stateDir,
+			zoneId: zone.id,
+		});
+	});
 	let gateway: Awaited<ReturnType<typeof startGatewayZone>> | undefined;
 	const requireGateway = (): Awaited<ReturnType<typeof startGatewayZone>> => {
 		if (!gateway) {
@@ -115,7 +124,13 @@ export async function startControllerRuntime(
 		if (!gateway) {
 			return;
 		}
-		await gateway.vm.close();
+		try {
+			await gateway.vm.close();
+		} finally {
+			await (dependencies.deleteGatewayRuntimeRecord ?? deleteGatewayRuntimeRecordDefault)(
+				zone.gateway.stateDir,
+			);
+		}
 	};
 	const restartGatewayZone = async (): Promise<void> => {
 		gateway = undefined;

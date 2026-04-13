@@ -33,6 +33,9 @@ const noGeneratedAgeIdentityDependencies = {
 
 const scaffoldedSystemConfigSchema = z.object({
 	cacheDir: z.string().min(1),
+	host: z.object({
+		projectNamespace: z.string().min(1),
+	}),
 	zones: z.tuple([
 		z.object({
 			id: z.string().min(1),
@@ -57,6 +60,7 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(result.created).toContain('config/system.json');
 		expect(config.cacheDir).toBe('../cache');
+		expect(config.host.projectNamespace).toMatch(/^agent-vm-init-test-/u);
 		expect(config.zones[0]?.id).toBe('test-zone');
 		expect(config.zones[0]?.gateway.type).toBe('openclaw');
 	});

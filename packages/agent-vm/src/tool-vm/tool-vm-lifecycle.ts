@@ -75,7 +75,7 @@ export async function createToolVm(
 		imagePath: toolImage.imagePath,
 		memory: options.profile.memory,
 		rootfsMode: 'memory',
-		sessionLabel: `${options.zoneId}-tool-${options.tcpSlot}`,
+		sessionLabel: `${options.systemConfig.host.projectNamespace}:${options.zoneId}:tool:${options.tcpSlot}`,
 		secrets: {},
 		vfsMounts: {
 			'/workspace': {

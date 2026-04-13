@@ -26,6 +26,7 @@ describe('loadSystemConfig', () => {
 			JSON.stringify({
 				host: {
 					controllerPort: 18800,
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					secretsProvider: {
 						type: '1password',
 						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
@@ -82,6 +83,7 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
 			host: {
 				controllerPort: 18800,
+				projectNamespace: 'claw-tests-a1b2c3d4',
 			},
 			cacheDir: path.join(workingDirectoryPath, 'cache'),
 			images: {
@@ -117,6 +119,7 @@ describe('loadSystemConfig', () => {
 			JSON.stringify({
 				host: {
 					controllerPort: 18800,
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					secretsProvider: {
 						type: '1password',
 						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
@@ -165,6 +168,7 @@ describe('loadSystemConfig', () => {
 			JSON.stringify({
 				host: {
 					controllerPort: 18800,
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					secretsProvider: {
 						type: '1password',
 						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },

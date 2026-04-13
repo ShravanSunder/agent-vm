@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 
+import { buildDefaultProjectNamespace } from '../runtime/project-namespace.js';
 import {
 	getKeychainTokenSource,
 	hasServiceAccountToken,
@@ -44,9 +45,14 @@ function resolveGatewayConfigFileName(gatewayType: GatewayType): 'worker.json' |
 	return gatewayType === 'worker' ? 'worker.json' : 'openclaw.json';
 }
 
-const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object => ({
+const defaultSystemConfig = (
+	zoneId: string,
+	gatewayType: GatewayType,
+	projectNamespace: string,
+): object => ({
 	host: {
 		controllerPort: 18800,
+		projectNamespace,
 		secretsProvider: {
 			type: '1password',
 			tokenSource: getKeychainTokenSource(),
@@ -374,11 +380,12 @@ async function scaffoldAgentVmProjectInternal(
 	const created: string[] = [];
 	const skipped: string[] = [];
 	const gatewayType = options.gatewayType;
+	const projectNamespace = await buildDefaultProjectNamespace(options.targetDir);
 
 	const systemConfigPath = path.join(options.targetDir, 'config', 'system.json');
 	const systemConfigStatus = await writeFileIfMissing(
 		systemConfigPath,
-		`${JSON.stringify(defaultSystemConfig(options.zoneId, gatewayType), null, '\t')}\n`,
+		`${JSON.stringify(defaultSystemConfig(options.zoneId, gatewayType, projectNamespace), null, '\t')}\n`,
 	);
 	(systemConfigStatus === 'created' ? created : skipped).push('config/system.json');
 

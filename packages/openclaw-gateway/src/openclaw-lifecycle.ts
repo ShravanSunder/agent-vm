@@ -168,6 +168,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 		resolvedSecrets: Record<string, string>,
 		controllerPort: number,
 		tcpPool: { readonly basePort: number; readonly size: number },
+		projectNamespace: string,
 	): GatewayVmSpec {
 		const configDirectory = path.dirname(path.resolve(zone.gateway.gatewayConfig));
 		const { environmentSecrets, mediatedSecrets } = splitResolvedGatewaySecrets(
@@ -187,7 +188,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 			},
 			mediatedSecrets,
 			rootfsMode: 'cow',
-			sessionLabel: `${zone.id}-gateway`,
+			sessionLabel: `${projectNamespace}:${zone.id}:gateway`,
 			tcpHosts: buildGatewayTcpHosts(zone, controllerPort, tcpPool),
 			vfsMounts: {
 				'/home/openclaw/.openclaw/config': {

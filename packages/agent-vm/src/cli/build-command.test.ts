@@ -26,6 +26,7 @@ function createTestSystemConfig(): SystemConfig {
 		cacheDir: '/cache',
 		host: {
 			controllerPort: 18800,
+			projectNamespace: 'claw-tests-a1b2c3d4',
 			secretsProvider: { type: '1password', tokenSource: { type: 'env' } },
 		},
 		images: {

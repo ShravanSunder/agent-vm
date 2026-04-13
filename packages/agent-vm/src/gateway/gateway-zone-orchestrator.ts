@@ -18,6 +18,12 @@ import {
 	type GatewayImageBuilderDependencies,
 } from './gateway-image-builder.js';
 import { loadGatewayLifecycle } from './gateway-lifecycle-loader.js';
+import { cleanupOrphanedGatewayIfPresent } from './gateway-recovery.js';
+import {
+	buildGatewayRuntimeRecord,
+	writeGatewayRuntimeRecord,
+	type GatewayRuntimeRecord,
+} from './gateway-runtime-record.js';
 import {
 	findGatewayZone,
 	type GatewayManagedVmFactoryOptions,
@@ -26,8 +32,13 @@ import {
 } from './gateway-zone-support.js';
 
 export interface GatewayManagerDependencies extends GatewayImageBuilderDependencies {
+	readonly cleanupOrphanedGatewayIfPresent?: typeof cleanupOrphanedGatewayIfPresent;
 	readonly createManagedVm?: (options: GatewayManagedVmFactoryOptions) => Promise<ManagedVm>;
 	readonly loadGatewayLifecycle?: (type: GatewayZoneConfig['gateway']['type']) => GatewayLifecycle;
+	readonly writeGatewayRuntimeRecord?: (
+		stateDirectory: string,
+		record: GatewayRuntimeRecord,
+	) => Promise<void>;
 }
 
 async function waitForHealth(
@@ -70,6 +81,12 @@ export async function startGatewayZone(
 	const runTaskStep =
 		options.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
 	const zone = findGatewayZone(options.systemConfig, options.zoneId);
+	await runTaskStep('Cleaning orphaned gateway runtime', async () => {
+		await (dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent)({
+			stateDir: zone.gateway.stateDir,
+			zoneId: zone.id,
+		});
+	});
 	const lifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(zone.gateway.type);
 	const resolvedSecrets = await runTaskWithResult(
 		runTaskStep,
@@ -108,6 +125,7 @@ export async function startGatewayZone(
 		resolvedSecrets,
 		options.systemConfig.host.controllerPort,
 		options.systemConfig.tcpPool,
+		options.systemConfig.host.projectNamespace,
 	);
 	const processSpec = lifecycle.buildProcessSpec(zone, resolvedSecrets);
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
@@ -146,6 +164,19 @@ export async function startGatewayZone(
 	]);
 	const ingress = await managedVm.enableIngress({
 		listenPort: zone.gateway.port,
+	});
+	await runTaskStep('Recording gateway runtime', async () => {
+		await (dependencies.writeGatewayRuntimeRecord ?? writeGatewayRuntimeRecord)(
+			zone.gateway.stateDir,
+			buildGatewayRuntimeRecord({
+				gatewayType: zone.gateway.type,
+				ingressPort: ingress.port,
+				managedVm,
+				processSpec,
+				projectNamespace: options.systemConfig.host.projectNamespace,
+				zoneId: zone.id,
+			}),
+		);
 	});
 
 	return {

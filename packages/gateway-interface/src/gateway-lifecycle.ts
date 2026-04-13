@@ -67,6 +67,7 @@ export interface GatewayLifecycle {
 		resolvedSecrets: Record<string, string>,
 		controllerPort: number,
 		tcpPool: { readonly basePort: number; readonly size: number },
+		projectNamespace: string,
 	): GatewayVmSpec;
 
 	/**

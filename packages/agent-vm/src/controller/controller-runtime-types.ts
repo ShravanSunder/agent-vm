@@ -2,6 +2,8 @@ import type { GatewayProcessSpec } from '@shravansunder/agent-vm-gateway-interfa
 import type { ManagedVm, SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
 
 import type { SystemConfig } from '../config/system-config.js';
+import type { cleanupOrphanedGatewayIfPresent } from '../gateway/gateway-recovery.js';
+import type { deleteGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
 import type { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 import type { createControllerService } from './http/controller-http-routes.js';
@@ -22,6 +24,7 @@ export interface ControllerRuntime {
 
 export interface ControllerRuntimeDependencies {
 	readonly clearIntervalImpl?: (timer: NodeJS.Timeout) => void;
+	readonly cleanupOrphanedGatewayIfPresent?: typeof cleanupOrphanedGatewayIfPresent;
 	readonly createManagedToolVm?: (options: {
 		readonly profile: ToolProfile;
 		readonly tcpSlot: number;
@@ -31,6 +34,7 @@ export interface ControllerRuntimeDependencies {
 	readonly createSecretResolver?: (options: {
 		readonly serviceAccountToken: string;
 	}) => Promise<SecretResolver>;
+	readonly deleteGatewayRuntimeRecord?: typeof deleteGatewayRuntimeRecord;
 	readonly now?: () => number;
 	readonly runTask?: RunTaskFn;
 	readonly setIntervalImpl?: (

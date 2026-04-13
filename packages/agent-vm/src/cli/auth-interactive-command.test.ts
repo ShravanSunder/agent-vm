@@ -111,7 +111,9 @@ describe('runAuthInteractiveCommand', () => {
 				},
 				io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
 				provider: 'codex',
-				systemConfig: { host: { controllerPort: 18800 } } as never,
+				systemConfig: {
+					host: { controllerPort: 18800, projectNamespace: 'claw-tests-a1b2c3d4' },
+				} as never,
 				zoneId: 'test',
 			}),
 		).rejects.toThrow(/does not support interactive auth/i);
@@ -144,7 +146,9 @@ describe('runAuthInteractiveCommand', () => {
 			},
 			io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
 			provider: 'codex',
-			systemConfig: { host: { controllerPort: 18800 } } as never,
+			systemConfig: {
+				host: { controllerPort: 18800, projectNamespace: 'claw-tests-a1b2c3d4' },
+			} as never,
 			zoneId: 'shravan',
 		});
 
@@ -183,7 +187,9 @@ describe('runAuthInteractiveCommand', () => {
 				},
 				io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
 				provider: 'codex',
-				systemConfig: { host: { controllerPort: 18800 } } as never,
+				systemConfig: {
+					host: { controllerPort: 18800, projectNamespace: 'claw-tests-a1b2c3d4' },
+				} as never,
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow("Auth failed for codex in zone 'shravan': connect ECONNREFUSED");

@@ -11,6 +11,8 @@ export const workerLifecycle: GatewayLifecycle = {
 		zone: GatewayZoneConfig,
 		resolvedSecrets: Record<string, string>,
 		controllerPort: number,
+		_tcpPool: { readonly basePort: number; readonly size: number },
+		projectNamespace: string,
 	): GatewayVmSpec {
 		const { environmentSecrets, mediatedSecrets } = splitResolvedGatewaySecrets(
 			zone,
@@ -27,7 +29,7 @@ export const workerLifecycle: GatewayLifecycle = {
 			},
 			mediatedSecrets,
 			rootfsMode: 'cow',
-			sessionLabel: `${zone.id}-worker`,
+			sessionLabel: `${projectNamespace}:${zone.id}:gateway`,
 			tcpHosts: {
 				'controller.vm.host:18800': `127.0.0.1:${controllerPort}`,
 			},
