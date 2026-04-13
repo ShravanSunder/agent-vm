@@ -782,20 +782,19 @@ Each phase has a default instruction string. Config can replace it.
 
 If `phases.plan.instructions` is set in config, it replaces the default. The base prompt is always prepended regardless.
 
-### 3. Task Input (from POST body)
+### 3. Task Input + Gathered Context
 
 - Task prompt (what to do)
 - Repo location (if provided — repoUrl, baseBranch, workspacePath)
-- Context (arbitrary key-value data — alertId, service name, links, etc.)
+- Context (arbitrary key-value data from POST body — alertId, service name, links, etc.)
+- Repo summary (gathered by the coordinator from `/workspace` — file tree, CLAUDE.md, package.json. Gives the planner structural awareness of the project. Skipped if `/workspace` is empty.)
 - Skills (appended as structured inputs — the worker reads the file from the VM filesystem and passes the content as text to the executor)
 - Plan (for work/review phases — the approved plan from the plan loop)
 - Failure context (for retries — verification output, review comments)
 
-The `context` field from the task input is serialized as text and included in the prompt. This is how non-repo metadata (alert IDs, service names, Grafana links) reaches the model. Without this, triage tasks would have no input data.
+The `context` field from the task input is serialized as text and included in the prompt. The repo summary is gathered by the coordinator at task start. Both are pre-loaded into the prompt. The agent also uses MCP servers and skills to discover additional information during execution.
 
-The agent also gathers its own context using MCP servers, the repo itself, and skills. We pre-load `context` into the prompt; the agent discovers the rest.
-
-Final assembled input: `[base + instructions + task prompt + context + repo info (text), ...skills (structured)]`
+Final assembled input: `[base + instructions + task prompt + context + repo summary (text), ...skills (structured)]`
 
 ---
 
@@ -1220,13 +1219,14 @@ Steps 1-10 are the refactor. Step 11 connects to the gateway abstraction. Step 1
 - Config loading (reads mounted effective config)
 - Prompt assembly, verification runner, git operations
 
-### What's in the controller (separate scope, `packages/agent-vm`)
-- `preStartGateway` / `postStopGateway` hooks
+### What's in the controller (v1 scope, `packages/agent-vm` — separate implementation plan)
+- `preStartGateway` / `postStopGateway` hooks — **required for v1, ships alongside worker**
 - Repo cloning, project config reading, config merge
 - Per-task directory allocation and teardown
 - Task submission pipeline (external API → preStart → startGatewayZone → POST /tasks)
-- Docker service setup (future)
 - Result harvesting before teardown
+- worker-gateway `buildVmSpec` update (mount effective config, set WORKER_CONFIG_PATH)
+- worker-gateway `buildProcessSpec` unblock (replace "not implemented" throw)
 
 ### Not in v1
 - Followup (re-entering the loop after wrapup)

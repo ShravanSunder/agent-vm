@@ -87,7 +87,7 @@ packages/agent-vm-worker/
 | `coordinator/prompt-builder.ts` | `prompt/prompt-assembler.ts` | Generic, not per-phase templates |
 | `coordinator/run-sanity-retries.ts` | `work-reviewer/verification-runner.ts` | Runs configurable command list |
 | `coordinator/task-ship.ts` | `wrapup/git-pr-action.ts` | Tool for wrapup agent |
-| `coordinator/task-setup.ts` | **Deleted** | Agent gathers its own context via MCP/skills |
+| `coordinator/task-setup.ts` | `coordinator/coordinator-helpers.ts` | Git setup merged into helpers |
 | `config.ts` | `config/worker-config.ts` | Generic phases, MCP servers, wrapup actions |
 | `verification.ts` | `work-reviewer/verification-runner.ts` | `parseCommand` preserved |
 | `state/task-event-types.ts` | `state/task-event-types.ts` | Generic events, thread IDs |
@@ -96,7 +96,7 @@ packages/agent-vm-worker/
 | `server.ts` | `server.ts` | No followup route, new request schema |
 | `main.ts` | `main.ts` | cmd-ts CLI, not bare script |
 | `git/git-operations.ts` | `git/git-operations.ts` | Straight port |
-| `context/gather-context.ts` | **Deleted** | Agent gathers its own context via MCP/skills |
+| `context/gather-context.ts` | `context/gather-context.ts` | Straight port — repo summary for planner |
 
 ---
 
@@ -5890,9 +5890,9 @@ A separate implementation plan should be written for this controller-side work.
 5. **Context schema validation** — `Record<string, unknown>` passthrough
 6. **Multi-repo** — v1 is single repo, nullable
 
-### gather-context removed
+### gather-context preserved
 
-The spec says the agent gathers its own context via MCP servers, skills, and the repo. The old `gather-context.ts` (pre-chewed repo summary) is NOT ported. The prompt assembler includes task prompt + context (from POST body) + repo info + skills. No `gatherContext()` call in the coordinator.
+The coordinator gathers a repo summary from `/workspace` (file tree, CLAUDE.md, package.json) and includes it in the prompt. This gives the planner and work executor structural awareness of the project before they start. Even though the executor can browse files itself, the summary makes planning significantly more effective. If `/workspace` is empty (no-repo task), context gathering is skipped.
 
 ### Wrapup tool-call result tracking
 
