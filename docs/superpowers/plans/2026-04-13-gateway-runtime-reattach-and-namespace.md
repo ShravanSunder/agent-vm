@@ -1,14 +1,98 @@
-# Gateway Runtime Reattach And Namespace Implementation Plan
+# Gateway Runtime Recovery And Namespace Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make controller restarts crash-safe for gateway VMs by persisting runtime identity, reattaching to an existing healthy gateway when possible, introducing a stable per-project namespace so gateway identities do not collide across projects that reuse the same zone id, and hard-cutting gateway naming from `coding` to `worker`.
+**Goal:** Make controller restarts crash-safe for gateway VMs by persisting runtime identity, detecting and killing orphaned gateway VMs after controller crashes, introducing a stable per-project namespace so gateway identities do not collide across projects that reuse the same zone id, and hard-cutting gateway naming from `coding` to `worker`.
 
-**Architecture:** Add a stable `host.projectNamespace` to `system.json`, persist a `gateway-runtime.json` record under each zone state directory, add an upstream Gondolin SDK attach primitive, then expose that through `attachManagedVm()` in our adapter and change controller startup from "always create" to "attach-or-create". The controller will continue to shut down the gateway on an intentional `controller stop`, but on crash-only restarts it will attempt to reattach to the previously running gateway VM and reuse its ingress if healthy.
+**Architecture:** Add a stable `host.projectNamespace` to `system.json`, persist a `gateway-runtime.json` record under each zone state directory, and change startup from "always create" to a bounded **detect-kill-create** recovery phase. The controller will continue to shut down the gateway on an intentional `controller stop`, but on crash-only restarts it will identify an orphaned gateway VM, kill it, delete stale runtime state, and then boot a fresh gateway against the already-persisted host state/workspace mounts.
 
 **Tech Stack:** TypeScript, Zod, cmd-ts, Gondolin VM adapter, Vitest, pnpm
 
 ---
+
+## Level 1 Override
+
+This plan is now explicitly **Level 1 only**.
+
+That means:
+
+```text
+recovery policy = detect-kill-create
+```
+
+Not:
+
+```text
+recovery policy = attach-or-create
+```
+
+### Why this override exists
+
+We now have direct experiment evidence from this repo that after a hard controller kill:
+- the `qemu-system-aarch64` child survives
+- the controller and ingress ports disappear
+- the Gondolin session socket remains on disk but returns `ECONNREFUSED`
+- `findSession()` reports the session with `alive: false`
+- `connectToSession()` cannot execute even a simple `exec`
+- restarting the controller creates a second gateway VM while the orphaned QEMU is still alive
+
+So the Level 1 gateway is an orphaned process, not a reusable live runtime.
+
+### Level 1 startup rule
+
+```text
+controller start
+  -> load runtime record
+  -> if orphan exists:
+       kill orphan
+       delete stale runtime record
+  -> create fresh gateway
+  -> write new runtime record
+```
+
+### Responsiveness / startup behavior
+
+This cleanup must **not** happen as a post-readiness background task.
+
+Why kill during startup:
+- it prevents duplicate VMs before a new gateway is created
+- it avoids serving requests while ownership is ambiguous
+- it keeps recovery decisions in one authoritative place
+
+So the cleanup should be:
+- part of startup
+- bounded
+- observable in startup task output/logging
+- fail-fast if it cannot establish a safe baseline
+
+### Task interpretation overrides
+
+Interpret the tasks below with these overrides:
+
+- **Task 4**
+  - ignore any `attachManagedVm()` / upstream reattach work for Level 1
+  - replace with `cleanupOrphanedGatewayIfPresent()` and supporting tests
+
+- **Task 6**
+  - replace attach-or-create with detect-kill-create
+  - startup must run orphan cleanup before fresh gateway creation
+
+- **Task 8**
+  - test orphan cleanup and fresh VM creation after controller-only crash
+  - do **not** test same-`vmId` reuse in Level 1
+
+### Future Level 2 note
+
+Level 2 remains a follow-up after upstream Gondolin improvements:
+- reconnecting chardevs
+- deterministic socket paths
+
+The reusable Level 1 foundation is still:
+- `host.projectNamespace`
+- `gateway-runtime.json`
+- namespaced session labels
+- startup recovery decision point
+
 
 ## Why We Are Doing This
 
@@ -40,7 +124,7 @@ Current persistent state answers:
 Current persistent state does **not** answer:
 
 - "which gateway VM is currently running?"
-- "how do I reopen it after the controller dies?"
+- "which orphaned QEMU should be cleaned up after the controller dies?"
 
 That gap exists in three places:
 
@@ -54,8 +138,7 @@ That gap exists in three places:
 So the fix must be cross-layer:
 
 - config/state model
-- upstream Gondolin SDK capability
-- Gondolin adapter
+- Gondolin session/process discovery
 - controller startup flow
 
 ## Non-Goals
@@ -67,28 +150,58 @@ So the fix must be cross-layer:
 
 The first pass should recover **gateway runtime ownership only**. Existing tool leases may die and be recreated later.
 
-## External Dependency / Design Gate
+## Why Level 1 Kills Instead Of Reattaching
 
-This plan depends on an upstream capability that does **not** exist in the current Gondolin SDK surface.
+The current orphaned gateway is not meaningfully reusable after a hard controller crash.
 
-Current direct evidence:
-- [packages/gondolin-core/src/vm-adapter.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/gondolin-core/src/vm-adapter.ts)
-  only wraps `VM.create(...)`
-- there is no `VM.attach(...)`, `VM.fromId(...)`, `VM.fromSession(...)`, or equivalent reopen primitive in our current adapter surface
+Experiment evidence from this repo:
+- controller PID died
+- child `qemu-system-aarch64` process stayed alive and was reparented to PID `1`
+- controller health and ingress ports disappeared
+- Gondolin session socket remained on disk but returned `ECONNREFUSED`
+- `findSession()` returned the session with `alive: false`
+- `connectToSession()` could not execute even a basic `exec`
+- restarting the controller created a second gateway VM while the old QEMU was still alive
 
-That means:
+So Level 1 policy is:
 
 ```text
-agent-vm alone cannot implement reattach today
+if orphan exists:
+  kill orphan
+  delete stale runtime record
+create fresh gateway
 ```
 
-So the implementation must be staged:
+This solves the real operational problems now:
+- no duplicate VMs
+- no orphaned QEMUs wasting resources
+- persisted host state/workspace is still reused by the fresh gateway
 
-1. upstream/add reattach capability in `@earendil-works/gondolin`
-2. expose that capability in `packages/gondolin-core`
-3. persist runtime identity and use attach-or-create in `agent-vm`
+True reattach is a future Level 2 after upstream Gondolin work such as reconnecting chardevs and deterministic socket paths.
 
-If upstream attach support is rejected or infeasible, this plan must stop and be replaced with a different recovery design.
+## Startup Responsiveness
+
+Orphan cleanup belongs in startup, but it should be a short, bounded startup phase.
+
+Why kill during startup:
+- it prevents duplicate VMs before a new gateway is created
+- it keeps ownership decisions in one place
+- it avoids serving requests while recovery state is ambiguous
+
+Why not a background task after readiness:
+- background cleanup can race with fresh gateway creation
+- you can still end up with duplicate VMs
+- request handling would start before recovery is settled
+
+So the Level 1 rule is:
+
+```text
+startup cleanup phase:
+  fast
+  bounded
+  observable in task output/logs
+  fail clearly if cleanup cannot establish a safe baseline
+```
 
 ## File Structure And Responsibilities
 
@@ -98,17 +211,15 @@ If upstream attach support is rejected or infeasible, this plan must stop and be
   - add `host.projectNamespace` to schema/type loading
 - Modify: [packages/agent-vm/src/cli/init-command.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/agent-vm/src/cli/init-command.ts)
   - generate default project namespace during scaffold
-- Modify: [packages/gondolin-core/src/vm-adapter.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/gondolin-core/src/vm-adapter.ts)
-  - add attach/reopen support to the managed VM adapter
 - Modify: [packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts)
-  - split attach-or-create startup flow
+  - split detect-kill-create startup flow
 - Modify: [packages/openclaw-gateway/src/openclaw-lifecycle.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/openclaw-gateway/src/openclaw-lifecycle.ts)
   - update session labels to use project namespace
 - Modify: [packages/agent-vm/src/controller/controller-runtime.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/agent-vm/src/controller/controller-runtime.ts)
-  - startup should attempt reattach before create
+  - startup should run bounded orphan cleanup before create
   - coordinated stop should delete runtime record
 - Modify: [packages/agent-vm/src/controller/controller-runtime-types.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/agent-vm/src/controller/controller-runtime-types.ts)
-  - extend dependencies for attach path if needed
+  - extend dependencies for orphan cleanup path if needed
 - Modify: [packages/agent-vm/src/tool-vm/tool-vm-lifecycle.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/agent-vm/src/tool-vm/tool-vm-lifecycle.ts)
   - namespace tool VM session labels too
 
@@ -186,6 +297,8 @@ export const gatewayRuntimeRecordSchema = z.object({
 	zoneId: z.string().min(1),
 	gatewayType: z.enum(['openclaw', 'worker']),
 	vmId: z.string().min(1),
+	sessionId: z.string().min(1),
+	qemuPid: z.number().int().positive().optional(),
 	sessionLabel: z.string().min(1),
 	guestListenPort: z.number().int().positive(),
 	ingressPort: z.number().int().positive(),
@@ -200,58 +313,40 @@ Write only after:
 
 Delete when:
 - `controller stop` shuts the gateway down intentionally
-- attach fails because the VM is gone/stale
+- orphan cleanup succeeds
+- the runtime record is invalid/stale and cannot be trusted
 
-### 3. Gondolin Attach Primitive
+### 3. Orphan Cleanup Strategy
 
-This task is **not** pure adapter work. It requires a new upstream SDK capability first.
+Level 1 recovery needs orphan discovery and termination, not VM reattachment.
 
-Required upstream shape in `@earendil-works/gondolin`:
+Primary cleanup inputs:
+- `gateway-runtime.json`
+  - `sessionId`
+  - `qemuPid`
+  - `sessionLabel`
+- Gondolin session-registry APIs
+  - `findSession`
+  - `listSessions`
+  - `gcSessions`
 
-```ts
-export declare class VM {
-	static create(options?: VMOptions): Promise<VM>;
-	static attach(options: { vmId: string }): Promise<VM>;
-}
+Level 1 cleanup flow:
+
+```text
+load runtime record
+  -> if no record: nothing to clean
+  -> if record exists:
+       try session lookup by sessionId
+       if qemuPid alive: kill qemuPid
+       if no qemuPid but session metadata is enough to find the orphan: kill it
+       best-effort remove stale session metadata
+       delete runtime record
 ```
 
-Acceptable alternatives:
-
-```ts
-static fromId(vmId: string): Promise<VM>;
-static fromSession(sessionLabel: string): Promise<VM>;
-```
-
-But one real reopen primitive must exist below our adapter.
-
-After that lands, extend our adapter with:
-
-```ts
-export interface AttachVmOptions {
-	readonly vmId: string;
-}
-
-export interface ManagedVmDependencies {
-	// existing
-	createVm(vmOptions: unknown): Promise<ManagedVmInstance>;
-	// new
-	attachVm?(vmOptions: AttachVmOptions): Promise<ManagedVmInstance>;
-}
-
-export async function attachManagedVm(
-	options: AttachVmOptions,
-	dependencies: ManagedVmDependencies = createDefaultDependencies(),
-): Promise<ManagedVm> {
-	if (!dependencies.attachVm) {
-		throw new Error('attachVm is not implemented for this Gondolin adapter.');
-	}
-
-	const vmInstance = await dependencies.attachVm(options);
-	return wrapManagedVmInstance(vmInstance);
-}
-```
-
-`wrapManagedVmInstance()` should be extracted from the current `createManagedVm()` return block so create and attach share the same wrapper shape.
+Important:
+- cleanup must be idempotent
+- missing process / missing session metadata should not be fatal
+- success means "no orphan remains", not "old VM was reachable"
 
 ### 4. Hard Cutover Gateway Type Naming To `worker`
 
@@ -285,23 +380,20 @@ This is a hard cutover:
 - no dual enums
 - all config, tests, and generated scaffolds move together
 
-### 5. Attach-Or-Create Startup Flow
+### 5. Detect-Kill-Create Startup Flow
 
 New startup decision:
 
 ```text
 read runtime record
-  -> if missing: create gateway
-  -> if present: try attach
-       -> health check
-       -> ensure ingress
-       -> reuse on success
-       -> delete stale record + create fresh on failure
+  -> if present: clean orphan
+  -> create gateway
 ```
 
 Important:
-- health check must run on attached gateways too
-- ingress must be re-established if the runtime handle does not already carry it
+- cleanup runs before fresh create
+- fresh create remains the only path to a usable gateway in Level 1
+- normal gateway health check still runs on the newly created gateway
 
 ### 6. Stop Semantics
 
@@ -311,7 +403,7 @@ Intentional stop:
 
 Crash:
 - runtime record remains
-- next startup attempts reattach
+- next startup runs orphan cleanup and creates a fresh gateway
 
 ## Implementation Tasks
 
@@ -617,6 +709,8 @@ export const gatewayRuntimeRecordSchema = z.object({
 	zoneId: z.string().min(1),
 gatewayType: z.enum(['openclaw', 'worker']),
 	vmId: z.string().min(1),
+	sessionId: z.string().min(1),
+	qemuPid: z.number().int().positive(),
 	sessionLabel: z.string().min(1),
 	guestListenPort: z.number().int().positive(),
 	ingressPort: z.number().int().positive(),
@@ -678,137 +772,149 @@ git add \
 git commit -m "feat: persist gateway runtime records"
 ```
 
-### Task 4: Add Upstream Gondolin Reattach Support And Expose It Locally
+### Task 4: Add Level 1 Orphan Cleanup Support
 
 **Files:**
-- Modify: upstream `@earendil-works/gondolin` SDK (outside this repo)
-- Modify: [packages/gondolin-core/src/vm-adapter.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/gondolin-core/src/vm-adapter.ts)
-- Test: [packages/gondolin-core/src/vm-adapter.test.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/gondolin-core/src/vm-adapter.test.ts)
+- Create: [packages/agent-vm/src/gateway/gateway-recovery.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/agent-vm/src/gateway/gateway-recovery.ts)
+- Test: [packages/agent-vm/src/gateway/gateway-recovery.test.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/agent-vm/src/gateway/gateway-recovery.test.ts)
 
-- [ ] **Step 1: Confirm the upstream Gondolin SDK shape and add the failing upstream test**
-
-Example upstream test sketch:
+- [ ] **Step 1: Write the failing orphan-cleanup tests**
 
 ```ts
-it('reattaches to an existing VM by vmId', async () => {
-	const createdVm = await VM.create({ /* ... */ });
-	const attachedVm = await VM.attach({ vmId: createdVm.id });
-
-	expect(attachedVm.id).toBe(createdVm.id);
-});
-```
-
-- [ ] **Step 2: Implement the upstream attach primitive in `@earendil-works/gondolin`**
-
-The exact implementation depends on the SDK internals, but the acceptance criteria are:
-- attach by `vmId` succeeds for a still-running VM
-- attaching a missing VM throws a typed not-found error
-- attached instances support the same operations we need:
-  - `exec`
-  - `enableSsh`
-  - `enableIngress`
-  - `setIngressRoutes`
-  - `close`
-
-- [ ] **Step 3: Update `packages/gondolin-core` to consume the new upstream primitive**
-
-```ts
-it('attaches to an existing VM by id', async () => {
-	const vmInstance = createVmInstanceMock({ id: 'vm-123' });
-	const attachVm = vi.fn(async ({ vmId }) => {
-		expect(vmId).toBe('vm-123');
-		return vmInstance;
-	});
-
-	const managedVm = await attachManagedVm(
-		{ vmId: 'vm-123' },
+it('kills an orphaned qemu process when runtime record points to a live pid', async () => {
+	const killProcess = vi.fn();
+	await cleanupOrphanedGatewayIfPresent(
 		{
-			...createDependencyMocks(),
-			attachVm,
+			stateDir: '/state/shravan',
+		},
+		{
+			deleteRuntimeRecord: async () => {},
+			findSession: async () => ({
+				alive: false,
+				id: 'session-123',
+				pid: 999,
+				socketPath: '/tmp/session.sock',
+			}),
+			isProcessAlive: () => true,
+			killProcess,
+			loadRuntimeRecord: async () => ({
+				projectNamespace: 'agent-vm-1234abcd',
+				zoneId: 'shravan',
+				gatewayType: 'openclaw',
+				vmId: 'vm-123',
+				sessionId: 'session-123',
+				qemuPid: 45678,
+				sessionLabel: 'agent-vm-1234abcd:shravan:gateway',
+				guestListenPort: 18789,
+				ingressPort: 18791,
+				createdAt: new Date().toISOString(),
+			}),
 		},
 	);
 
-	expect(managedVm.id).toBe('vm-123');
+	expect(killProcess).toHaveBeenCalledWith(45678);
 });
 
-it('throws when attachVm is not implemented', async () => {
-	await expect(
-		attachManagedVm({ vmId: 'vm-123' }, createDependencyMocks()),
-	).rejects.toThrow('attachVm is not implemented');
+it('verifies the pid still belongs to qemu before killing it', async () => {
+	const killProcess = vi.fn();
+	await cleanupOrphanedGatewayIfPresent(
+		{
+			stateDir: '/state/shravan',
+		},
+		{
+			deleteRuntimeRecord: async () => {},
+			findSession: async () => null,
+			getProcessCommand: async () => 'python some-other-process.py',
+			isProcessAlive: () => true,
+			killProcess,
+			loadRuntimeRecord: async () => ({
+				projectNamespace: 'agent-vm-1234abcd',
+				zoneId: 'shravan',
+				gatewayType: 'openclaw',
+				vmId: 'vm-123',
+				sessionId: 'session-123',
+				qemuPid: 45678,
+				sessionLabel: 'agent-vm-1234abcd:shravan:gateway',
+				guestListenPort: 18789,
+				ingressPort: 18791,
+				createdAt: new Date().toISOString(),
+			}),
+		},
+	);
+
+	expect(killProcess).not.toHaveBeenCalled();
 });
 ```
 
-- [ ] **Step 4: Run tests to verify they fail before adapter changes**
+- [ ] **Step 2: Run tests to verify they fail**
 
 Run:
 
 ```bash
-pnpm vitest run packages/gondolin-core/src/vm-adapter.test.ts
+pnpm vitest run packages/agent-vm/src/gateway/gateway-recovery.test.ts
 ```
 
 Expected:
-- FAIL because `attachManagedVm()` does not exist yet
+- FAIL because the cleanup helpers do not exist yet
 
-- [ ] **Step 5: Extract a shared wrapper and add attach API**
+- [ ] **Step 3: Implement `cleanupOrphanedGatewayIfPresent()`**
 
 ```ts
-function wrapManagedVmInstance(vmInstance: ManagedVmInstance): ManagedVm {
-	return {
-		id: vmInstance.id,
-		async exec(command: string): Promise<ExecResult> {
-			const result = await vmInstance.exec(command);
-			return {
-				exitCode: result.exitCode,
-				stdout: result.stdout ?? '',
-				stderr: result.stderr ?? '',
-			};
-		},
-		async enableSsh(options?: unknown): Promise<SshAccess> {
-			return await vmInstance.enableSsh(options);
-		},
-		async enableIngress(options?: unknown): Promise<IngressAccess> {
-			return await vmInstance.enableIngress(options);
-		},
-		getVmInstance(): ManagedVmInstance {
-			return vmInstance;
-		},
-		setIngressRoutes(routes: readonly IngressRoute[]): void {
-			vmInstance.setIngressRoutes(routes);
-		},
-		async close(): Promise<void> {
-			await vmInstance.close();
-		},
-	};
-}
+export async function cleanupOrphanedGatewayIfPresent(
+	options: {
+		readonly stateDir: string;
+	},
+	dependencies: {
+		readonly deleteRuntimeRecord: (stateDir: string) => Promise<void>;
+		readonly findSession: (sessionId: string) => Promise<{
+			readonly alive: boolean;
+			readonly id: string;
+			readonly pid: number;
+			readonly socketPath: string;
+		} | null>;
+		readonly getProcessCommand: (pid: number) => Promise<string | null>;
+		readonly isProcessAlive: (pid: number) => boolean;
+		readonly killProcess: (pid: number) => void;
+		readonly loadRuntimeRecord: (stateDir: string) => Promise<GatewayRuntimeRecord | null>;
+	},
+): Promise<void> {
+	const runtimeRecord = await dependencies.loadRuntimeRecord(options.stateDir);
+	if (!runtimeRecord) {
+		return;
+	}
 
-export async function attachManagedVm(
-	options: { readonly vmId: string },
-	dependencies: ManagedVmDependencies = createDefaultDependencies(),
-): Promise<ManagedVm> {
-	return wrapManagedVmInstance(await dependencies.attachVm(options));
+	try {
+		if (dependencies.isProcessAlive(runtimeRecord.qemuPid)) {
+			const command = await dependencies.getProcessCommand(runtimeRecord.qemuPid);
+			if (command?.includes('qemu-system')) {
+				dependencies.killProcess(runtimeRecord.qemuPid);
+			}
+		}
+		await dependencies.findSession(runtimeRecord.sessionId).catch(() => null);
+	} finally {
+		await dependencies.deleteRuntimeRecord(options.stateDir);
+	}
 }
 ```
 
-`createDefaultDependencies()` should wire `attachVm` to the new upstream SDK primitive. The adapter should no longer treat attach as optional once the upstream dependency is present.
-
-- [ ] **Step 6: Run tests to verify they pass**
+- [ ] **Step 4: Run tests to verify they pass**
 
 Run:
 
 ```bash
-pnpm vitest run packages/gondolin-core/src/vm-adapter.test.ts
+pnpm vitest run packages/agent-vm/src/gateway/gateway-recovery.test.ts
 ```
 
 Expected:
 - PASS
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add \
-  packages/gondolin-core/src/vm-adapter.ts \
-  packages/gondolin-core/src/vm-adapter.test.ts
-git commit -m "feat: add gateway VM attach support"
+  packages/agent-vm/src/gateway/gateway-recovery.ts \
+  packages/agent-vm/src/gateway/gateway-recovery.test.ts
+git commit -m "feat: add orphaned gateway cleanup"
 ```
 
 ### Task 5: Namespace Gateway And Tool Session Labels
@@ -900,7 +1006,7 @@ git add \
 git commit -m "feat: namespace gateway and tool VM identities"
 ```
 
-### Task 6: Teach Gateway Startup To Attach Or Create
+### Task 6: Teach Gateway Startup To Detect-Kill-Create
 
 **Files:**
 - Modify: [packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts)
@@ -911,42 +1017,19 @@ git commit -m "feat: namespace gateway and tool VM identities"
 - [ ] **Step 1: Write the failing orchestrator tests**
 
 ```ts
-it('reattaches to a healthy existing gateway VM when runtime record is present', async () => {
-	const attachManagedVm = vi.fn(async () => existingManagedVm);
-	const createManagedVm = vi.fn();
+it('runs orphan cleanup before creating a fresh gateway VM', async () => {
+	const cleanupOrphanedGatewayIfPresent = vi.fn(async () => {});
+	const createManagedVm = vi.fn(async () => freshManagedVm);
 
 	await startGatewayZone(
 		{ runTask, secretResolver, systemConfig, zoneId: 'shravan' },
 		{
-			attachManagedVm,
+			cleanupOrphanedGatewayIfPresent,
 			createManagedVm,
-			loadGatewayRuntimeRecord: async () => ({
-				projectNamespace: 'agent-vm-1234abcd',
-				zoneId: 'shravan',
-				gatewayType: 'openclaw',
-				vmId: 'vm-123',
-				sessionLabel: 'agent-vm-1234abcd:shravan:gateway',
-				guestListenPort: 18789,
-				ingressPort: 18791,
-				createdAt: '2026-04-13T12:00:00.000Z',
-			}),
 		},
 	);
 
-	expect(attachManagedVm).toHaveBeenCalledWith({ vmId: 'vm-123' });
-	expect(createManagedVm).not.toHaveBeenCalled();
-});
-
-it('deletes a stale runtime record and creates a fresh VM when attach fails', async () => {
-	const attachManagedVm = vi.fn(async () => {
-		throw new Error('vm not found');
-	});
-	const deleteGatewayRuntimeRecord = vi.fn(async () => {});
-	const createManagedVm = vi.fn(async () => freshManagedVm);
-
-	await startGatewayZone(/* ... */);
-
-	expect(deleteGatewayRuntimeRecord).toHaveBeenCalled();
+	expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalled();
 	expect(createManagedVm).toHaveBeenCalled();
 });
 ```
@@ -960,48 +1043,20 @@ pnpm vitest run packages/agent-vm/src/gateway/gateway-zone-orchestrator.test.ts
 ```
 
 Expected:
-- FAIL because there is no attach path yet
+- FAIL because there is no orphan cleanup path yet
 
-- [ ] **Step 3: Add load/attach/health/reuse flow**
-
-```ts
-async function attachExistingGatewayIfHealthy(/* ... */): Promise<GatewayZoneStartResult | null> {
-	const runtimeRecord = await loadGatewayRuntimeRecord(zone.gateway.stateDir);
-	if (!runtimeRecord) {
-		return null;
-	}
-
-	try {
-		const managedVm = await attachManagedVm({ vmId: runtimeRecord.vmId });
-		await waitForHealth(managedVm, processSpec.healthCheck);
-		managedVm.setIngressRoutes([{ port: processSpec.guestListenPort, prefix: '/', stripPrefix: true }]);
-		const ingress = await managedVm.enableIngress({ listenPort: zone.gateway.port });
-		return {
-			image,
-			ingress,
-			processSpec,
-			vm: managedVm,
-			zone,
-		};
-	} catch {
-		await deleteGatewayRuntimeRecord(zone.gateway.stateDir);
-		return null;
-	}
-}
-```
+- [ ] **Step 3: Add cleanup-before-create flow**
 
 ```ts
-const attachedGateway = await attachExistingGatewayIfHealthy(/* ... */);
-if (attachedGateway) {
-	return attachedGateway;
-}
-
-// existing create flow remains below
+await cleanupOrphanedGatewayIfPresent({
+	stateDir: zone.gateway.stateDir,
+}, recoveryDependencies);
 ```
+
+This should happen before the new `createManagedVm(...)` path.
 
 Update dependency injection types so tests can mock:
-- upstream Gondolin attach primitive
-- `attachManagedVm`
+- `cleanupOrphanedGatewayIfPresent`
 - `loadGatewayRuntimeRecord`
 - `writeGatewayRuntimeRecord`
 - `deleteGatewayRuntimeRecord`
@@ -1009,14 +1064,16 @@ Update dependency injection types so tests can mock:
 - [ ] **Step 4: Write runtime record after successful create**
 
 ```ts
-await writeGatewayRuntimeRecord(zone.gateway.stateDir, {
-	projectNamespace: options.systemConfig.host.projectNamespace,
-	zoneId: zone.id,
-	gatewayType: zone.gateway.type,
-	vmId: managedVm.id,
-	sessionLabel: vmSpec.sessionLabel ?? `${options.systemConfig.host.projectNamespace}:${zone.id}:gateway`,
-	guestListenPort: processSpec.guestListenPort,
-	ingressPort: zone.gateway.port,
+	await writeGatewayRuntimeRecord(zone.gateway.stateDir, {
+		projectNamespace: options.systemConfig.host.projectNamespace,
+		zoneId: zone.id,
+		gatewayType: zone.gateway.type,
+		vmId: managedVm.id,
+		sessionId: managedVm.id,
+		qemuPid: managedVm.getVmInstance().pid,
+		sessionLabel: vmSpec.sessionLabel ?? `${options.systemConfig.host.projectNamespace}:${zone.id}:gateway`,
+		guestListenPort: processSpec.guestListenPort,
+		ingressPort: zone.gateway.port,
 	createdAt: new Date().toISOString(),
 });
 ```
@@ -1040,7 +1097,7 @@ git add \
   packages/agent-vm/src/gateway/gateway-zone-support.ts \
   packages/agent-vm/src/controller/controller-runtime-types.ts \
   packages/agent-vm/src/gateway/gateway-zone-orchestrator.test.ts
-git commit -m "feat: reattach healthy gateway VMs on controller restart"
+git commit -m "feat: clean orphaned gateways before restart"
 ```
 
 ### Task 7: Delete Runtime Record On Coordinated Shutdown
@@ -1118,7 +1175,7 @@ git add \
 git commit -m "feat: clean gateway runtime records on coordinated stop"
 ```
 
-### Task 8: Prove Crash-Safe Reattach End To End
+### Task 8: Prove Crash-Safe Orphan Cleanup End To End
 
 **Files:**
 - Modify: [packages/agent-vm/src/integration-tests/live-controller-restart-persistence.integration.test.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/agent-vm/src/integration-tests/live-controller-restart-persistence.integration.test.ts)
@@ -1127,19 +1184,19 @@ git commit -m "feat: clean gateway runtime records on coordinated stop"
 - [ ] **Step 1: Write a failing restart-reattach integration test**
 
 ```ts
-it('reattaches to the same gateway VM after controller-only restart', async () => {
+it('kills an orphaned gateway and starts a fresh one after controller-only restart', async () => {
 	const firstRuntime = await startRuntime();
 	const firstGatewayVmId = firstRuntime.gateway.vm.id;
 
-	await stopControllerHttpOnly(firstRuntime);
+	await killControllerOnly(firstRuntime);
 
 	const secondRuntime = await startRuntime();
 
-	expect(secondRuntime.gateway.vm.id).toBe(firstGatewayVmId);
+	expect(secondRuntime.gateway.vm.id).not.toBe(firstGatewayVmId);
 });
 ```
 
-If the current fake VM seam cannot express attach/reuse, extend it so the second runtime receives the same underlying gateway VM instance by persisted vm id.
+If the current fake VM seam cannot express orphan cleanup, extend it so the first runtime leaves behind an orphan marker / qemu pid that the second startup must clean before creating a fresh gateway.
 
 - [ ] **Step 2: Add a live smoke command that proves the reused gateway still works**
 
@@ -1167,15 +1224,16 @@ pnpm vitest run --config vitest.integration.config.ts \
 ```
 
 Expected:
-- FAIL because the old gateway is not reattached yet
+- FAIL because orphan cleanup is not implemented yet
 
-- [ ] **Step 4: Adjust tests to use the real attach-or-create path**
+- [ ] **Step 4: Adjust tests to use the real detect-kill-create path**
 
 Make sure these tests:
 - persist a runtime record
 - restart only the controller layer
-- assert same `vm.id` after restart
-- still verify a real gateway command works after reattach
+- assert the old orphan is cleaned up
+- assert a fresh gateway `vm.id` is created
+- still verify a real gateway command works after restart
 
 - [ ] **Step 5: Run integration tests to verify they pass**
 
@@ -1210,7 +1268,7 @@ Expected:
 git add \
   packages/agent-vm/src/integration-tests/live-controller-restart-persistence.integration.test.ts \
   packages/agent-vm/src/integration-tests/live-agent-model-roundtrip.integration.test.ts
-git commit -m "test: cover gateway reattach after controller restart"
+git commit -m "test: cover gateway orphan cleanup after controller restart"
 ```
 
 ## Self-Review
@@ -1222,8 +1280,8 @@ Covered:
 - why existing `state` is insufficient
 - stable project namespace
 - persisted gateway runtime identity
-- Gondolin attach primitive
-- controller attach-or-create startup
+- orphan cleanup strategy
+- controller detect-kill-create startup
 - coordinated stop semantics
 - unit + integration verification
 
@@ -1247,11 +1305,11 @@ Consistent names used across tasks:
 - `loadGatewayRuntimeRecord`
 - `writeGatewayRuntimeRecord`
 - `deleteGatewayRuntimeRecord`
-- `attachManagedVm`
+- `cleanupOrphanedGatewayIfPresent`
 
 ## Notes For The Implementer
 
 - Do not weaken the current `controller stop` behavior. Clean shutdown should still terminate the gateway VM.
-- The attach path must be health-checked before reuse.
-- If attach fails, delete the stale runtime record immediately and fall back to create.
+- Orphan cleanup must verify that a stored `qemuPid` still belongs to `qemu-system` before killing it.
+- Keep cleanup bounded and in startup, not in request-serving background work.
 - Keep the first pass limited to gateway recovery only. Do not bundle lease recovery into the same change.
