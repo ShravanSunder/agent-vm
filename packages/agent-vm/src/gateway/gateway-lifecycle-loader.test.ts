@@ -9,7 +9,7 @@ describe('loadGatewayLifecycle', () => {
 		expect(loadGatewayLifecycle('openclaw')).toBe(openclawLifecycle);
 	});
 
-	it('loads the worker lifecycle for coding zones', () => {
-		expect(loadGatewayLifecycle('coding')).toBe(workerLifecycle);
+	it('loads the worker lifecycle for worker zones', () => {
+		expect(loadGatewayLifecycle('worker')).toBe(workerLifecycle);
 	});
 });

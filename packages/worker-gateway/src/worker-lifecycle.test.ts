@@ -7,11 +7,11 @@ const zone: GatewayZoneConfig = {
 	allowedHosts: ['api.openai.com'],
 	gateway: {
 		cpus: 2,
-		gatewayConfig: '/host/config/shravan/coding.json',
+		gatewayConfig: '/host/config/shravan/worker.json',
 		memory: '2G',
 		port: 18791,
 		stateDir: '/host/state/shravan',
-		type: 'coding',
+		type: 'worker',
 		workspaceDir: '/host/workspaces/shravan',
 	},
 	id: 'shravan',

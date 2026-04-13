@@ -707,7 +707,7 @@ import { z } from 'zod';
 export const gatewayRuntimeRecordSchema = z.object({
 	projectNamespace: z.string().min(1),
 	zoneId: z.string().min(1),
-gatewayType: z.enum(['openclaw', 'worker']),
+	gatewayType: z.enum(['openclaw', 'worker']),
 	vmId: z.string().min(1),
 	sessionId: z.string().min(1),
 	qemuPid: z.number().int().positive(),
@@ -1181,7 +1181,7 @@ git commit -m "feat: clean gateway runtime records on coordinated stop"
 - Modify: [packages/agent-vm/src/integration-tests/live-controller-restart-persistence.integration.test.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/agent-vm/src/integration-tests/live-controller-restart-persistence.integration.test.ts)
 - Modify: [packages/agent-vm/src/integration-tests/live-agent-model-roundtrip.integration.test.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/agent-vm/src/integration-tests/live-agent-model-roundtrip.integration.test.ts)
 
-- [ ] **Step 1: Write a failing restart-reattach integration test**
+- [ ] **Step 1: Write a failing restart-recovery integration test**
 
 ```ts
 it('kills an orphaned gateway and starts a fresh one after controller-only restart', async () => {
@@ -1198,7 +1198,7 @@ it('kills an orphaned gateway and starts a fresh one after controller-only resta
 
 If the current fake VM seam cannot express orphan cleanup, extend it so the first runtime leaves behind an orphan marker / qemu pid that the second startup must clean before creating a fresh gateway.
 
-- [ ] **Step 2: Add a live smoke command that proves the reused gateway still works**
+- [ ] **Step 2: Add a live smoke command that proves the restarted gateway still works**
 
 ```ts
 const commandResponse = await fetch(

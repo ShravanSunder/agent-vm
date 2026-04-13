@@ -28,7 +28,7 @@ export interface GatewayAuthConfig {
 export interface GatewayZoneConfig {
 	readonly id: string;
 	readonly gateway: {
-		readonly type: 'openclaw' | 'coding';
+		readonly type: 'openclaw' | 'worker';
 		readonly memory: string;
 		readonly cpus: number;
 		readonly port: number;

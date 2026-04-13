@@ -27,7 +27,7 @@ export const workerLifecycle: GatewayLifecycle = {
 			},
 			mediatedSecrets,
 			rootfsMode: 'cow',
-			sessionLabel: `${zone.id}-coding`,
+			sessionLabel: `${zone.id}-worker`,
 			tcpHosts: {
 				'controller.vm.host:18800': `127.0.0.1:${controllerPort}`,
 			},

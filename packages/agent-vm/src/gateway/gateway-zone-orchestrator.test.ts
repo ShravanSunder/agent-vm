@@ -1,78 +1,114 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import type {
 	BuildConfig,
 	BuildImageResult,
 	ManagedVm,
 	SecretResolver,
 } from '@shravansunder/agent-vm-gondolin-core';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
 import { startGatewayZone } from './gateway-zone-orchestrator.js';
 
-const systemConfig = {
-	cacheDir: '/cache',
-	host: {
-		controllerPort: 18800,
-		secretsProvider: {
-			type: '1password',
-			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
-		},
-	},
-	images: {
-		gateway: {
-			buildConfig: './images/gateway/build-config.json',
-		},
-		tool: {
-			buildConfig: './images/tool/build-config.json',
-		},
-	},
-	zones: [
-		{
-			id: 'shravan',
+const createdDirectories: string[] = [];
+
+afterEach(() => {
+	for (const directoryPath of createdDirectories.splice(0)) {
+		fs.rmSync(directoryPath, { recursive: true, force: true });
+	}
+});
+
+function createGatewayConfigPath(): string {
+	const workingDirectoryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-gateway-zone-'));
+	createdDirectories.push(workingDirectoryPath);
+	const configDirectory = path.join(workingDirectoryPath, 'config', 'shravan');
+	fs.mkdirSync(configDirectory, { recursive: true });
+	const configPath = path.join(configDirectory, 'openclaw.json');
+	fs.writeFileSync(
+		configPath,
+		JSON.stringify({
 			gateway: {
-				type: 'openclaw',
-				memory: '2G',
-				cpus: 2,
-				port: 18791,
-				gatewayConfig: './config/shravan/openclaw.json',
-				stateDir: './state/shravan',
-				workspaceDir: './workspaces/shravan',
-			},
-			secrets: {
-				PERPLEXITY_API_KEY: {
-					source: '1password',
-					ref: 'op://agent-vm/shravan-perplexity/credential',
-					injection: 'http-mediation',
-					hosts: ['api.perplexity.ai'],
-				},
-				DISCORD_BOT_TOKEN: {
-					source: '1password',
-					ref: 'op://agent-vm/shravan-discord/bot-token',
-					injection: 'env',
-				},
-				OPENCLAW_GATEWAY_TOKEN: {
-					source: '1password',
-					ref: 'op://agent-vm/shravan-gateway-auth/password',
-					injection: 'env',
+				auth: { mode: 'token' },
+				bind: 'loopback',
+				controlUi: {
+					allowedOrigins: ['http://127.0.0.1:18791', 'http://localhost:18791'],
 				},
 			},
-			allowedHosts: ['api.anthropic.com', 'api.openai.com', 'api.perplexity.ai'],
-			websocketBypass: ['gateway.discord.gg:443'],
-			toolProfile: 'standard',
+		}),
+		'utf8',
+	);
+	return configPath;
+}
+
+function createSystemConfig(): SystemConfig {
+	return {
+		cacheDir: '/cache',
+		host: {
+			controllerPort: 18800,
+			secretsProvider: {
+				type: '1password',
+				tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
+			},
 		},
-	],
-	toolProfiles: {
-		standard: {
-			memory: '1G',
-			cpus: 1,
-			workspaceRoot: './workspaces/tools',
+		images: {
+			gateway: {
+				buildConfig: './images/gateway/build-config.json',
+			},
+			tool: {
+				buildConfig: './images/tool/build-config.json',
+			},
 		},
-	},
-	tcpPool: {
-		basePort: 19000,
-		size: 5,
-	},
-} satisfies SystemConfig;
+		zones: [
+			{
+				id: 'shravan',
+				gateway: {
+					type: 'openclaw',
+					memory: '2G',
+					cpus: 2,
+					port: 18791,
+					gatewayConfig: createGatewayConfigPath(),
+					stateDir: '../state/shravan',
+					workspaceDir: '../workspaces/shravan',
+				},
+				secrets: {
+					PERPLEXITY_API_KEY: {
+						source: '1password',
+						ref: 'op://agent-vm/shravan-perplexity/credential',
+						injection: 'http-mediation',
+						hosts: ['api.perplexity.ai'],
+					},
+					DISCORD_BOT_TOKEN: {
+						source: '1password',
+						ref: 'op://agent-vm/shravan-discord/bot-token',
+						injection: 'env',
+					},
+					OPENCLAW_GATEWAY_TOKEN: {
+						source: '1password',
+						ref: 'op://agent-vm/shravan-gateway-auth/password',
+						injection: 'env',
+					},
+				},
+				allowedHosts: ['api.anthropic.com', 'api.openai.com', 'api.perplexity.ai'],
+				websocketBypass: ['gateway.discord.gg:443'],
+				toolProfile: 'standard',
+			},
+		],
+		toolProfiles: {
+			standard: {
+				memory: '1G',
+				cpus: 1,
+				workspaceRoot: './workspaces/tools',
+			},
+		},
+		tcpPool: {
+			basePort: 19000,
+			size: 5,
+		},
+	} satisfies SystemConfig;
+}
 
 const minimalBuildConfig: BuildConfig = {
 	arch: 'aarch64',
@@ -150,7 +186,7 @@ describe('startGatewayZone', () => {
 					await fn();
 				},
 				secretResolver,
-				systemConfig,
+				systemConfig: createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -239,7 +275,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					secretResolver,
-					systemConfig,
+					systemConfig: createSystemConfig(),
 					zoneId: 'does-not-exist',
 				},
 				{
@@ -251,14 +287,15 @@ describe('startGatewayZone', () => {
 		).rejects.toThrow("Unknown zone 'does-not-exist'.");
 	});
 
-	it('throws a clear error for coding gateways until that runtime is implemented', async () => {
-		const codingSystemConfig: SystemConfig = {
+	it('throws a clear error for worker gateways until that runtime is implemented', async () => {
+		const systemConfig = createSystemConfig();
+		const workerSystemConfig: SystemConfig = {
 			...systemConfig,
 			zones: systemConfig.zones.map((zone) => ({
 				...zone,
 				gateway: {
 					...zone.gateway,
-					type: 'coding',
+					type: 'worker',
 				},
 				secrets: {
 					ANTHROPIC_API_KEY: {
@@ -293,7 +330,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					secretResolver,
-					systemConfig: codingSystemConfig,
+					systemConfig: workerSystemConfig,
 					zoneId: 'shravan',
 				},
 				{
@@ -329,7 +366,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver,
-				systemConfig,
+				systemConfig: createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -387,7 +424,7 @@ describe('startGatewayZone', () => {
 					DISCORD_BOT_TOKEN: 'token',
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
-				systemConfig,
+				systemConfig: createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -434,7 +471,7 @@ describe('startGatewayZone', () => {
 					secretResolver: createOpenClawSecretResolver({
 						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
-					systemConfig,
+					systemConfig: createSystemConfig(),
 					zoneId: 'shravan',
 				},
 				{
@@ -474,7 +511,7 @@ describe('startGatewayZone', () => {
 					secretResolver: createOpenClawSecretResolver({
 						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
-					systemConfig,
+					systemConfig: createSystemConfig(),
 					zoneId: 'shravan',
 				},
 				{
@@ -511,7 +548,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createOpenClawSecretResolver({
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
-				systemConfig,
+				systemConfig: createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -575,7 +612,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createOpenClawSecretResolver({
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
-				systemConfig,
+				systemConfig: createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -619,7 +656,7 @@ describe('startGatewayZone', () => {
 					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
 				}),
-				systemConfig,
+				systemConfig: createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{

@@ -46,7 +46,7 @@ describe('loadSystemConfig', () => {
 					{
 						id: 'shravan',
 						gateway: {
-							type: 'coding',
+							type: 'worker',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
@@ -97,7 +97,7 @@ describe('loadSystemConfig', () => {
 					id: 'shravan',
 					gateway: {
 						gatewayConfig: path.join(workingDirectoryPath, 'config', 'shravan', 'openclaw.json'),
-						type: 'coding',
+						type: 'worker',
 					},
 				},
 			],

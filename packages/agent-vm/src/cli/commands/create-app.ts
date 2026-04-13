@@ -14,7 +14,7 @@ export function createAgentVmApp(io: CliIo, dependencies: CliDependencies) {
 	return subcommands({
 		name: 'agent-vm',
 		version: '0.0.1',
-		description: 'Gondolin-based VM controller for OpenClaw and coding agents',
+		description: 'Gondolin-based VM controller for OpenClaw and worker agents',
 		cmds: {
 			init: createInitCommand(io, dependencies),
 			build: createBuildCommand(io, dependencies),

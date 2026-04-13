@@ -116,7 +116,7 @@ describe('runBuildCommand', () => {
 		expect(dockerBuilds).toHaveLength(1);
 	});
 
-	it('does not sync the OpenClaw plugin bundle for coding-only projects', async () => {
+	it('does not sync the OpenClaw plugin bundle for worker-only projects', async () => {
 		const pluginSyncs: string[] = [];
 		const baseConfig = createTestSystemConfig();
 		const baseZone = baseConfig.zones[0];
@@ -133,7 +133,7 @@ describe('runBuildCommand', () => {
 							...baseZone,
 							gateway: {
 								...baseZone.gateway,
-								type: 'coding',
+								type: 'worker',
 							},
 						},
 					],

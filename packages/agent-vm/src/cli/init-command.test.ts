@@ -37,7 +37,7 @@ const scaffoldedSystemConfigSchema = z.object({
 		z.object({
 			id: z.string().min(1),
 			gateway: z.object({
-				type: z.enum(['openclaw', 'coding']),
+				type: z.enum(['openclaw', 'worker']),
 			}),
 		}),
 	]),
@@ -61,11 +61,11 @@ describe('scaffoldAgentVmProject', () => {
 		expect(config.zones[0]?.gateway.type).toBe('openclaw');
 	});
 
-	it('scaffolds a coding gateway when requested', async () => {
+	it('scaffolds a worker gateway when requested', async () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
-			{ targetDir, zoneId: 'test-zone', gatewayType: 'coding' },
+			{ targetDir, zoneId: 'test-zone', gatewayType: 'worker' },
 			noGeneratedAgeIdentityDependencies,
 		);
 		const config = scaffoldedSystemConfigSchema.parse(
@@ -76,7 +76,7 @@ describe('scaffoldAgentVmProject', () => {
 			'utf8',
 		);
 
-		expect(config.zones[0]?.gateway.type).toBe('coding');
+		expect(config.zones[0]?.gateway.type).toBe('worker');
 		expect(gatewayDockerfile).toContain('@openai/codex-cli');
 		expect(gatewayDockerfile).not.toContain('openclaw@');
 	});
@@ -185,19 +185,19 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const codingTargetDir = createTestDirectory();
+		const workerTargetDir = createTestDirectory();
 		await scaffoldAgentVmProject(
-			{ targetDir: codingTargetDir, zoneId: 'my-zone', gatewayType: 'coding' },
+			{ targetDir: workerTargetDir, zoneId: 'my-zone', gatewayType: 'worker' },
 			noGeneratedAgeIdentityDependencies,
 		);
 
 		expect(fs.existsSync(path.join(openClawTargetDir, 'config', 'my-zone', 'openclaw.json'))).toBe(
 			true,
 		);
-		expect(fs.existsSync(path.join(codingTargetDir, 'config', 'my-zone', 'coding.json'))).toBe(
+		expect(fs.existsSync(path.join(workerTargetDir, 'config', 'my-zone', 'worker.json'))).toBe(
 			true,
 		);
-		expect(fs.existsSync(path.join(codingTargetDir, 'config', 'my-zone', 'openclaw.json'))).toBe(
+		expect(fs.existsSync(path.join(workerTargetDir, 'config', 'my-zone', 'openclaw.json'))).toBe(
 			false,
 		);
 	});
@@ -251,11 +251,11 @@ describe('scaffoldAgentVmProject', () => {
 		expect(config.existing).toBe(true);
 	});
 
-	it('scaffolds coding-appropriate secrets for coding type', async () => {
+	it('scaffolds worker-appropriate secrets for worker type', async () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
-			{ gatewayType: 'coding', targetDir, zoneId: 'test-coding' },
+			{ gatewayType: 'worker', targetDir, zoneId: 'test-worker' },
 			noGeneratedAgeIdentityDependencies,
 		);
 
@@ -295,11 +295,11 @@ describe('scaffoldAgentVmProject', () => {
 		);
 	});
 
-	it('scaffolds coding-specific env references for coding type', async () => {
+	it('scaffolds worker-specific env references for worker type', async () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
-			{ gatewayType: 'coding', targetDir, zoneId: 'test-coding' },
+			{ gatewayType: 'worker', targetDir, zoneId: 'test-worker' },
 			noGeneratedAgeIdentityDependencies,
 		);
 		const envContent = fs.readFileSync(path.join(targetDir, '.env.local'), 'utf8');
@@ -308,11 +308,11 @@ describe('scaffoldAgentVmProject', () => {
 		expect(envContent).not.toContain('OPENAI_API_KEY_REF=');
 	});
 
-	it('scaffolds coding-specific refs in system.json for coding type', async () => {
+	it('scaffolds worker-specific refs in system.json for worker type', async () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
-			{ gatewayType: 'coding', targetDir, zoneId: 'test-coding' },
+			{ gatewayType: 'worker', targetDir, zoneId: 'test-worker' },
 			noGeneratedAgeIdentityDependencies,
 		);
 
@@ -321,15 +321,15 @@ describe('scaffoldAgentVmProject', () => {
 		);
 		const secrets = config.zones[0].secrets;
 
-		expect(secrets.ANTHROPIC_API_KEY.ref).toBe('op://agent-vm/test-coding-anthropic/credential');
-		expect(secrets.OPENAI_API_KEY.ref).toBe('op://agent-vm/test-coding-openai/credential');
+		expect(secrets.ANTHROPIC_API_KEY.ref).toBe('op://agent-vm/test-worker-anthropic/credential');
+		expect(secrets.OPENAI_API_KEY.ref).toBe('op://agent-vm/test-worker-openai/credential');
 	});
 
-	it('scaffolds coding-specific network defaults for coding type', async () => {
+	it('scaffolds worker-specific network defaults for worker type', async () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
-			{ gatewayType: 'coding', targetDir, zoneId: 'test-coding' },
+			{ gatewayType: 'worker', targetDir, zoneId: 'test-worker' },
 			noGeneratedAgeIdentityDependencies,
 		);
 
