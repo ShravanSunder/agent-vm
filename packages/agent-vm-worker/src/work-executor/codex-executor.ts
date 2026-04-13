@@ -66,6 +66,12 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 		}
 
 		codex = new Codex({
+			...(typeof process.env.OPENAI_API_KEY === 'string' && process.env.OPENAI_API_KEY.length > 0
+				? { apiKey: process.env.OPENAI_API_KEY }
+				: {}),
+			config: {
+				skip_git_repo_check: true,
+			},
 			env: {
 				...process.env,
 				HOME: tempHome,
@@ -83,6 +89,7 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 			approvalPolicy: 'never',
 			sandboxMode: 'danger-full-access',
 			workingDirectory,
+			skipGitRepoCheck: true,
 			networkAccessEnabled: true,
 		});
 	}
@@ -136,6 +143,7 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 						approvalPolicy: 'never',
 						sandboxMode: 'danger-full-access',
 						workingDirectory,
+						skipGitRepoCheck: true,
 						networkAccessEnabled: true,
 					});
 					currentThreadId = threadId;

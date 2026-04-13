@@ -34,6 +34,13 @@ interface CoordinatorDeps {
 	readonly workspaceDir?: string;
 }
 
+function getPrimaryRepoWorkspace(
+	config: { readonly repos: readonly { readonly workspacePath: string }[] },
+	workspaceRoot: string,
+): string {
+	return config.repos[0]?.workspacePath ?? workspaceRoot;
+}
+
 async function runTask(
 	taskId: string,
 	deps: CoordinatorDeps,
@@ -49,6 +56,7 @@ async function runTask(
 		}
 
 		const config = deps.config;
+		const primaryWorkspaceDir = getPrimaryRepoWorkspace(initialState.config, workspaceDir);
 		let latestWorkOutput: string | null = null;
 		let repoSummary: string | null = null;
 		try {
@@ -65,7 +73,7 @@ async function runTask(
 			planExecutorConfig.provider,
 			planExecutorConfig.model,
 			{ mcpServers: config.mcpServers, tools: [] },
-			workspaceDir,
+			primaryWorkspaceDir,
 		);
 		const planner = createPlanner(planExecutor);
 
@@ -111,7 +119,7 @@ async function runTask(
 				reviewExecutorConfig.provider,
 				reviewExecutorConfig.model,
 				{ mcpServers: config.mcpServers, tools: [] },
-				workspaceDir,
+				primaryWorkspaceDir,
 			);
 			const reviewer = createPlanReviewer(reviewExecutor);
 			// Plan review/revision is intentionally sequential because each iteration depends on prior feedback.
@@ -179,7 +187,7 @@ async function runTask(
 			workExecutorConfig.provider,
 			workExecutorConfig.model,
 			{ mcpServers: config.mcpServers, tools: [] },
-			workspaceDir,
+			primaryWorkspaceDir,
 		);
 		const workResult = await workExecutor.execute(
 			assemblePrompt({
@@ -216,7 +224,7 @@ async function runTask(
 			// oxlint-disable-next-line eslint/no-await-in-loop
 			const verifyResults = await runVerification({
 				commands: config.verification,
-				cwd: workspaceDir,
+				cwd: primaryWorkspaceDir,
 				timeoutMs: config.verificationTimeoutMs,
 			});
 			eventRecorder.emit(taskId, {
@@ -272,12 +280,12 @@ async function runTask(
 				workReviewExecutorConfig.provider,
 				workReviewExecutorConfig.model,
 				{ mcpServers: config.mcpServers, tools: [] },
-				workspaceDir,
+				primaryWorkspaceDir,
 			);
 
 			// Review iterations are serial because each loop may patch the same work tree and thread.
 			// oxlint-disable-next-line eslint/no-await-in-loop
-			const diff = await getDiff(workspaceDir).catch(() => '');
+			const diff = await getDiff(primaryWorkspaceDir).catch(() => '');
 			// Review is gated on the current diff, so it must run after the diff is captured for this loop.
 			// oxlint-disable-next-line eslint/no-await-in-loop
 			const workReviewResult = await reviewWork(workReviewExecutor, {
@@ -293,7 +301,7 @@ async function runTask(
 				}),
 				verificationOptions: {
 					commands: config.verification,
-					cwd: workspaceDir,
+					cwd: primaryWorkspaceDir,
 					timeoutMs: config.verificationTimeoutMs,
 				},
 			});
@@ -345,7 +353,7 @@ async function runTask(
 			wrapupExecutorConfig.provider,
 			wrapupExecutorConfig.model,
 			{ mcpServers: config.mcpServers, tools: wrapupRegistry.tools },
-			workspaceDir,
+			primaryWorkspaceDir,
 		);
 		const wrapupResult = await wrapupExecutor.execute(
 			assemblePrompt({

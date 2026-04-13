@@ -9,6 +9,14 @@ import { loadConfig } from './config.js';
 import { createCoordinator, type CreateTaskInput } from './coordinator/coordinator.js';
 import { createApp } from './server.js';
 
+function writeStdout(message: string): void {
+	process.stdout.write(`${message}\n`);
+}
+
+function writeStderr(message: string): void {
+	process.stderr.write(`${message}\n`);
+}
+
 async function main(): Promise<void> {
 	const configPath = process.env['CODING_GATEWAY_CONFIG'] ?? '/etc/agent-vm-coding/config.json';
 	const config = loadConfig(configPath);
@@ -61,12 +69,12 @@ async function main(): Promise<void> {
 			port,
 		},
 		(info) => {
-			console.log(`[main] Server listening on http://localhost:${info.port}`);
+			writeStdout(`[main] Server listening on http://localhost:${info.port}`);
 		},
 	);
 }
 
 main().catch((error: unknown) => {
-	console.error('[main] Fatal error:', error instanceof Error ? error.message : String(error));
+	writeStderr(`[main] Fatal error: ${error instanceof Error ? error.message : String(error)}`);
 	process.exit(1);
 });
