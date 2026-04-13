@@ -61,7 +61,7 @@ preStartGateway(taskInput, zoneConfig, secretResolver)     ← NEW (v1)
     → read .agent-vm/config.json from cloned repo
     → merge: project config > gateway base config > Zod defaults
     → write effective config to taskRoot/state/effective-worker.json
-    → start Docker services, build extra TCP host map (future)
+    → start Docker services, build extra TCP host map
     → return { taskId, workspaceDir: taskRoot/workspace, stateDir: taskRoot/state }
     │
     ▼
@@ -226,7 +226,7 @@ External API / Queue
 ┌─────────────────────────────────────────────────────────┐
 │ WORKER (inside Gondolin QEMU VM)                         │
 │                                                          │
-│  Reads /state/effective-worker.json at startup (WORKER_CONFIG_PATH)                    │
+│  Reads /state/effective-worker.json (WORKER_CONFIG_PATH)     │
 │  Serves HTTP on :18789                                   │
 │                                                          │
 │  POST /tasks → runs one task through the loop            │
@@ -397,7 +397,7 @@ packages/agent-vm-worker/
 
 Config is assembled by the controller before the worker boots. The worker receives a single merged config.
 
-**How repos get into the VM:** The controller clones repos to `workspaceDir` on the host. That directory is VFS-mounted into the VM at `/workspace` via Gondolin's realfs mount. One clone per repo, zero duplication. The controller can read `.agent-vm/config.json` from the host path before the VM boots, merge with gateway config, and pass the merged result to the worker. When the worker opens `/workspace`, the repos are already there.
+**How the repo gets into the VM:** The controller clones the repo to `workspaceDir` on the host. That directory is VFS-mounted into the VM at `/workspace` via Gondolin's realfs mount. One clone per repo, zero duplication. The controller can read `.agent-vm/config.json` from the host path before the VM boots, merge with gateway config, and pass the merged result to the worker. When the worker opens `/workspace`, the repos are already there.
 
 **Per-task VM lifecycle:** Controller clones repos → reads project config → merges config → boots VM → submits task via `POST /tasks` → worker runs task → wrapup completes → VM shuts down. One VM per task, clean slate.
 
@@ -805,6 +805,20 @@ If `phases.plan.instructions` is set in config, it replaces the default. The bas
 
 The `context` field from the task input is serialized as text and included in the prompt. The repo summary is gathered by the coordinator at task start. Both are pre-loaded into the prompt. The agent also uses MCP servers and skills to discover additional information during execution.
 
+```typescript
+interface AssemblePromptInput {
+  readonly phase: string;
+  readonly instructions: string;
+  readonly taskPrompt: string;
+  readonly context: Record<string, unknown>;
+  readonly repoSummary: string | null;
+  readonly repo: { readonly repoUrl: string; readonly baseBranch: string; readonly workspacePath: string } | null;
+  readonly plan: string | null;
+  readonly failureContext: string | null;
+  readonly skills: readonly { readonly name: string; readonly path: string }[];
+}
+```
+
 Final assembled input: `[base + instructions + task prompt + context + repo summary (text), ...skills (structured)]`
 
 ---
@@ -1197,6 +1211,7 @@ This is controller-side work rather than worker-package logic, but it is part of
 | `state/*` | `state/*` — same pattern, generic events, thread IDs persisted |
 | `server.ts` | `server.ts` — same API shape, no followup route in v1 |
 | `git/*` | `git/*` — unchanged |
+| `context/gather-context.ts` | `context/gather-context.ts` — straight port, repo summary for planner |
 
 ---
 
