@@ -65,17 +65,31 @@ preStartGateway(taskInput, zoneConfig, secretResolver)     ← NEW (v1)
     → return { taskId, workspaceDir: taskRoot/workspace, stateDir: taskRoot/state }
     │
     ▼
-startGatewayZone(with per-task dirs as mount paths)         ← EXISTING (unchanged)
+Clone zone config with per-task path overrides:             ← NEW
+    taskZoneConfig = { ...zoneConfig, gateway: {
+      ...zoneConfig.gateway,
+      workspaceDir: preStartResult.workspaceDir,
+      stateDir: preStartResult.stateDir,
+    }}
+    │
+    ▼
+startGatewayZone(taskZoneConfig)                            ← EXISTING (unchanged)
     → lifecycle.prepareHostState(zone, secretResolver)       (static, no task input)
     → lifecycle.buildVmSpec(zone, secrets, ...)              (mounts per-task workspace/state)
     → boot VM, run bootstrapCommand, startCommand
     → wait for health
     │
     ▼
-POST /tasks { prompt, repo location, context }              ← to running worker
-    │
+POST /tasks { taskId, prompt, repo location, context }      ← to running worker
+    │                                                         (taskId from preStartGateway)
     ▼
 ... worker runs plan → work → verify → review → wrapup ...
+    │
+    ▼
+Controller harvests results:                                ← NEW (v1)
+    → poll GET /tasks/:taskId until terminal (completed/failed)
+    → fetch final task state + wrapup artifacts (PR URL, etc.)
+    → return results to external caller
     │
     ▼
 vm.close()                                                  ← EXISTING
@@ -545,11 +559,11 @@ Note: repos are already cloned and config is already merged by the controller's
 preStartGateway before the VM boots. The worker state machine starts after POST /tasks.
 
 ```
-POST /tasks { prompt, repo location, context }
+POST /tasks { taskId, prompt, repo location, context }
     │
     ▼
  pending
-    │ task accepted, config snapshot stored
+    │ task accepted with controller-provided taskId, effective config snapshot stored in event log
     ▼
  planning ◄─────────────────────┐
     │ planner.run(skills)        │ (thread continues across revisions)
@@ -681,7 +695,9 @@ interface ToolDefinition {
 }
 ```
 
-Note: `StructuredInput` uses `content` (the text of the skill), not `path`. The worker reads skill files from the VM filesystem and passes the content. The executor never sees file paths. Each provider adapter translates `StructuredInput` into its native format — Codex passes skills as file references, Claude would pass them as text blocks.
+Note: `StructuredInput` uses `content` (the text of the skill), not `path`. The worker reads skill files from the VM filesystem and passes the content. The executor never sees file paths. Each provider adapter translates `StructuredInput` into its native format.
+
+**Implementation note on skill loading:** The current Codex adapter passes skills as file path references and the Codex SDK reads them internally. For the generic interface, the worker reads the file and passes content. The Codex adapter may need to either (a) write the content to a temp file and pass that path to the SDK, or (b) check if the SDK supports inline content. Verify against the Codex SDK docs during implementation — the adapter is the translation layer.
 
 ### How Tools and MCP Flow Through
 
@@ -895,6 +911,7 @@ const repoLocationSchema = z.object({
 });
 
 const createTaskRequestSchema = z.object({
+  taskId: z.string().min(1),          // controller-generated — single ID for host dirs, worker state, events, teardown
   prompt: z.string().min(1),
   repo: repoLocationSchema.nullable().default(null),  // v1: single repo, nullable
   context: z.record(z.string(), z.unknown()).default({}),  // arbitrary key-value passthrough
@@ -1192,3 +1209,31 @@ This is controller-side work, not part of agent-vm-worker. The first version of 
 ```
 
 Steps 1-10 are the refactor. Step 11 connects to the gateway abstraction. Step 12 proves it works end-to-end.
+
+---
+
+## Scope Boundaries
+
+### What's in the worker package (this spec)
+- Worker HTTP API, coordinator, state machine, event sourcing
+- Planner/reviewer/work executor/wrapup phases
+- Config loading (reads mounted effective config)
+- Prompt assembly, verification runner, git operations
+
+### What's in the controller (separate scope, `packages/agent-vm`)
+- `preStartGateway` / `postStopGateway` hooks
+- Repo cloning, project config reading, config merge
+- Per-task directory allocation and teardown
+- Task submission pipeline (external API → preStart → startGatewayZone → POST /tasks)
+- Docker service setup (future)
+- Result harvesting before teardown
+
+### Not in v1
+- Followup (re-entering the loop after wrapup)
+- Multi-repo (array of repos per task)
+- Claude executor (throws "not implemented")
+- Docker service routing
+- `postStopGateway` Docker cleanup
+- `context` schema validation per runner config
+- Per-task VM boot optimization (VM pooling, warm starts)
+- Wrapup retry on required-action failure (wrapup runs once; if a required action fails, the task fails)
