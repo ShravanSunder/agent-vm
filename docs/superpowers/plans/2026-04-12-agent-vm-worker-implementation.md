@@ -62,6 +62,9 @@ packages/agent-vm-worker/
     ├── git/
     │   ├── git-operations.ts            ← commit, push, PR, branch, config
     │   └── git-operations.test.ts
+    ├── context/
+    │   ├── gather-context.ts            ← repo summary for planner (file tree, CLAUDE.md)
+    │   └── gather-context.test.ts
     ├── coordinator/
     │   ├── coordinator.ts               ← orchestrates plan + work + wrapup loops
     │   ├── coordinator.test.ts
@@ -3939,13 +3942,15 @@ Expected: exit code 0.
 
 ---
 
-## Task 10: Git Operations
+## Task 10: Git Operations + Context Gathering
 
-Straight port from agent-vm-coding. Minimal changes — these modules are stable and well-tested. Note: `gather-context.ts` is NOT ported (see post-implementation notes — the agent gathers its own context via MCP servers and skills).
+Straight port from agent-vm-coding. Both modules are stable and well-tested.
 
 **Files:**
 - Create: `packages/agent-vm-worker/src/git/git-operations.ts`
 - Create: `packages/agent-vm-worker/src/git/git-operations.test.ts`
+- Create: `packages/agent-vm-worker/src/context/gather-context.ts`
+- Create: `packages/agent-vm-worker/src/context/gather-context.test.ts`
 
 **Steps:**
 
@@ -4279,7 +4284,132 @@ cd /Users/shravansunder/Documents/dev/project-dev/agent-vm.agent-vm-worker && pn
 
 Expected: exit code 0.
 
-**Commit:** `feat(agent-vm-worker): add git operations — straight port from agent-vm-coding`
+- [ ] **Step 5: Create `packages/agent-vm-worker/src/context/gather-context.ts`**
+
+Straight port from `agent-vm-coding/src/context/gather-context.ts`. The coordinator calls this at task start to give the planner structural awareness of the project.
+
+```typescript
+import fs from "node:fs/promises";
+import path from "node:path";
+
+export interface RepoContext {
+  readonly fileCount: number;
+  readonly summary: string;
+  readonly claudeMd: string | null;
+  readonly packageJson: string | null;
+}
+
+export async function readOptionalFile(filePath: string): Promise<string | null> {
+  try {
+    return await fs.readFile(filePath, "utf-8");
+  } catch {
+    return null;
+  }
+}
+
+export async function gatherContext(workspaceDir: string): Promise<RepoContext> {
+  const files = await collectFiles(workspaceDir, "", 0, 3);
+  const claudeMd = await readOptionalFile(path.join(workspaceDir, "CLAUDE.md"));
+  const packageJson = await readOptionalFile(path.join(workspaceDir, "package.json"));
+
+  return {
+    fileCount: files.length,
+    summary: files.length > 0
+      ? `Repository structure (${files.length} files):\n${files.join("\n")}`
+      : "Empty workspace — no repository files.",
+    claudeMd,
+    packageJson,
+  };
+}
+
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", "coverage"]);
+
+async function collectFiles(
+  baseDir: string,
+  relativePath: string,
+  depth: number,
+  maxDepth: number,
+): Promise<string[]> {
+  if (depth >= maxDepth) return [];
+  const fullPath = path.join(baseDir, relativePath);
+  const entries = await fs.readdir(fullPath, { withFileTypes: true }).catch(() => []);
+  const results: string[] = [];
+
+  for (const entry of entries) {
+    const entryRelative = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      if (!SKIP_DIRS.has(entry.name)) {
+        results.push(...await collectFiles(baseDir, entryRelative, depth + 1, maxDepth));
+      }
+    } else {
+      results.push(entryRelative);
+    }
+  }
+  return results;
+}
+```
+
+- [ ] **Step 6: Create `packages/agent-vm-worker/src/context/gather-context.test.ts`**
+
+```typescript
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { gatherContext, readOptionalFile } from "./gather-context.js";
+
+const createdDirs: string[] = [];
+afterEach(() => {
+  for (const d of createdDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+});
+
+describe("readOptionalFile", () => {
+  it("returns content when file exists", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-"));
+    createdDirs.push(dir);
+    fs.writeFileSync(path.join(dir, "test.txt"), "hello");
+    expect(await readOptionalFile(path.join(dir, "test.txt"))).toBe("hello");
+  });
+
+  it("returns null when file does not exist", async () => {
+    expect(await readOptionalFile("/nonexistent/file.txt")).toBeNull();
+  });
+});
+
+describe("gatherContext", () => {
+  it("collects files and reads CLAUDE.md", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-"));
+    createdDirs.push(dir);
+    fs.writeFileSync(path.join(dir, "CLAUDE.md"), "# Rules");
+    fs.writeFileSync(path.join(dir, "package.json"), "{}");
+    fs.mkdirSync(path.join(dir, "src"));
+    fs.writeFileSync(path.join(dir, "src", "index.ts"), "");
+    const ctx = await gatherContext(dir);
+    expect(ctx.fileCount).toBeGreaterThan(0);
+    expect(ctx.claudeMd).toBe("# Rules");
+    expect(ctx.packageJson).toBe("{}");
+    expect(ctx.summary).toContain("src/index.ts");
+  });
+
+  it("returns empty summary for empty workspace", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-"));
+    createdDirs.push(dir);
+    const ctx = await gatherContext(dir);
+    expect(ctx.fileCount).toBe(0);
+    expect(ctx.summary).toContain("Empty workspace");
+  });
+});
+```
+
+- [ ] **Step 7: Run tests**
+
+```bash
+cd /Users/shravansunder/Documents/dev/project-dev/agent-vm.agent-vm-worker && pnpm vitest run packages/agent-vm-worker/src/context/
+```
+
+Expected: all pass.
+
+**Commit:** `feat(agent-vm-worker): add git operations + context gathering`
 
 ---
 
@@ -4412,6 +4542,7 @@ export function createTaskEventRecorder(
 - [ ] **Step 3: Create `packages/agent-vm-worker/src/coordinator/coordinator.ts`**
 
 ```typescript
+import { gatherContext } from "../context/gather-context.js";
 import { getDiff } from "../git/git-operations.js";
 import type { WorkerConfig } from "../config/worker-config.js";
 import { resolvePhaseExecutor } from "../config/worker-config.js";
@@ -4467,6 +4598,10 @@ async function runTask(
     }
 
     const config = deps.config;
+
+    // --- GATHER CONTEXT ---
+    const repoContext = await gatherContext(workspaceDir);
+    console.log(`[coordinator] task ${taskId}: gathered context (${repoContext.fileCount} files)`);
 
     // --- PLAN PHASE ---
     console.log(`[coordinator] task ${taskId}: planning`);
@@ -5820,6 +5955,10 @@ export type { SkillReference } from "./shared/skill-types.js";
 // --- Git ---
 export { configureGit, createBranch, stageAndCommit, pushBranch, createPullRequest, getDiffStat, getDiff, buildPushUrl, buildCommitMessage, parseRepoFromUrl, sanitizeBranchName } from "./git/git-operations.js";
 export type { GitConfigOptions, CommitOptions, PushOptions, PullRequestOptions } from "./git/git-operations.js";
+
+// --- Context ---
+export { gatherContext, readOptionalFile } from "./context/gather-context.js";
+export type { RepoContext } from "./context/gather-context.js";
 
 // --- Prompt ---
 export { assemblePrompt, resolveSkillInputs } from "./prompt/prompt-assembler.js";
