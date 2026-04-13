@@ -39,6 +39,10 @@ describe('gather-context', () => {
 
 			expect(context.fileCount).toBeGreaterThanOrEqual(3);
 			expect(context.summary).toContain('src/index.ts');
+			expect(context.summary).toContain('CLAUDE.md contents:');
+			expect(context.summary).toContain('# Project');
+			expect(context.summary).toContain('package.json contents:');
+			expect(context.summary).toContain('"name":"test"');
 			expect(context.packageJson).toContain('test');
 			expect(context.claudeMd).toContain('Project');
 		});
@@ -68,6 +72,10 @@ describe('gather-context', () => {
 			expect(context.summary).toContain('frontend/package.json');
 			expect(context.summary).toContain('backend/CLAUDE.md');
 			expect(context.summary).toContain('Discovered repo metadata files:');
+			expect(context.summary).toContain('backend/CLAUDE.md contents:');
+			expect(context.summary).toContain('# Backend Repo');
+			expect(context.summary).toContain('frontend/package.json contents:');
+			expect(context.summary).toContain('"name":"frontend"');
 		});
 	});
 });

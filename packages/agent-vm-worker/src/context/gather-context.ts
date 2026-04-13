@@ -34,6 +34,10 @@ async function collectFiles(
 	return nested.flat();
 }
 
+function formatMetadataSection(filePath: string, content: string): string {
+	return `${filePath} contents:\n${content}`;
+}
+
 export async function readOptionalFile(filePath: string): Promise<string | null> {
 	try {
 		return await fs.readFile(filePath, 'utf-8');
@@ -55,6 +59,22 @@ export async function gatherContext(workspaceDir: string): Promise<RepoContext> 
 	const summarySections = [`Repository structure (${files.length} files):`, files.join('\n')];
 	if (repoMetadataLines.length > 0) {
 		summarySections.push('', 'Discovered repo metadata files:', repoMetadataLines.join('\n'));
+	}
+	if (claudeMd) {
+		summarySections.push('', formatMetadataSection('CLAUDE.md', claudeMd));
+	}
+	if (packageJson) {
+		summarySections.push('', formatMetadataSection('package.json', packageJson));
+	}
+	for (const filePath of repoMetadataLines) {
+		if (filePath === 'CLAUDE.md' || filePath === 'package.json') {
+			continue;
+		}
+		const content = await readOptionalFile(join(workspaceDir, filePath));
+		if (!content) {
+			continue;
+		}
+		summarySections.push('', formatMetadataSection(filePath, content));
 	}
 	const summary = summarySections.join('\n');
 
