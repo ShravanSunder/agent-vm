@@ -52,16 +52,22 @@ Controller receives task from external API
     │
     ▼
 preStartGateway(taskInput, zoneConfig, secretResolver)     ← NEW (v1)
-    → clone repo to workspaceDir (if repo provided)
+    → allocate taskId
+    → create per-task host dirs:
+        taskRoot = zoneConfig.gateway.stateDir/tasks/<taskId>
+        taskRoot/workspace/
+        taskRoot/state/
+    → clone repo to taskRoot/workspace (if repo provided)
     → read .agent-vm/config.json from cloned repo
     → merge: project config > gateway base config > Zod defaults
-    → write effective config to stateDir/effective-worker.json
+    → write effective config to taskRoot/state/effective-worker.json
     → start Docker services, build extra TCP host map (future)
+    → return { taskId, workspaceDir: taskRoot/workspace, stateDir: taskRoot/state }
     │
     ▼
-startGatewayZone()                                          ← EXISTING (unchanged)
+startGatewayZone(with per-task dirs as mount paths)         ← EXISTING (unchanged)
     → lifecycle.prepareHostState(zone, secretResolver)       (static, no task input)
-    → lifecycle.buildVmSpec(zone, secrets, ...)              (mounts workspace/state)
+    → lifecycle.buildVmSpec(zone, secrets, ...)              (mounts per-task workspace/state)
     → boot VM, run bootstrapCommand, startCommand
     → wait for health
     │
@@ -75,10 +81,10 @@ POST /tasks { prompt, repo location, context }              ← to running worke
 vm.close()                                                  ← EXISTING
     │
     ▼
-postStopGateway(zoneConfig)                                 ← FUTURE (not v1)
-    → stop Docker services
-    → clean up temp files
-    → tear down per-task host state
+postStopGateway(taskId, zoneConfig)                         ← NEW (v1)
+    → stop Docker services (if any)
+    → delete taskRoot/ entirely (workspace + state + config)
+    → nothing persists between tasks
 ```
 
 **Why controller-side hooks, not lifecycle methods:**
@@ -86,13 +92,88 @@ postStopGateway(zoneConfig)                                 ← FUTURE (not v1)
 - OpenClaw proves this separation: its `prepareHostState` writes auth-profiles from 1Password (static, zone-level). Per-task clone/merge is a different concern.
 - Per-task VMs are already a controller behavior change. Controller-side hooks are the natural home for per-task prep.
 
-**For v1:** Only `preStartGateway`. Teardown is `vm.close()` which already exists. `postStopGateway` is future — for Docker service cleanup, temp file removal, etc.
+**For v1:** Both `preStartGateway` and `postStopGateway` ship. Per-task isolation requires both setup and teardown.
+
+### Controller Hook Implementations
+
+```typescript
+interface WorkerTaskInput {
+  readonly prompt: string;
+  readonly repo?: { readonly repoUrl: string; readonly baseBranch: string } | undefined;
+  readonly context: Record<string, unknown>;
+}
+
+interface PreStartResult {
+  readonly taskId: string;
+  readonly taskRoot: string;       // host path: stateDir/tasks/<taskId>
+  readonly workspaceDir: string;   // host path: taskRoot/workspace
+  readonly stateDir: string;       // host path: taskRoot/state
+}
+
+async function preStartGateway(
+  taskInput: WorkerTaskInput,
+  zoneConfig: GatewayZoneConfig,
+  secretResolver: SecretResolver,
+): Promise<PreStartResult> {
+  const taskId = crypto.randomUUID();
+  const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
+  const workspaceDir = path.join(taskRoot, 'workspace');
+  const stateDir = path.join(taskRoot, 'state');
+
+  // Create per-task directories (born clean)
+  await fs.mkdir(workspaceDir, { recursive: true });
+  await fs.mkdir(stateDir, { recursive: true });
+
+  // Clone repo if provided
+  if (taskInput.repo) {
+    await execa('git', [
+      'clone', '--branch', taskInput.repo.baseBranch,
+      taskInput.repo.repoUrl, workspaceDir,
+    ]);
+  }
+
+  // Read project config from cloned repo (if exists)
+  const projectConfigPath = path.join(workspaceDir, '.agent-vm', 'config.json');
+  const projectConfig = await fs.readFile(projectConfigPath, 'utf8')
+    .then((raw) => JSON.parse(raw) as Record<string, unknown>)
+    .catch(() => ({}));
+
+  // Read base gateway config
+  const baseConfig = await fs.readFile(zoneConfig.gateway.gatewayConfig, 'utf8')
+    .then((raw) => JSON.parse(raw) as Record<string, unknown>);
+
+  // Merge: project > gateway > Zod defaults
+  const effectiveConfig = mergeWorkerConfig(baseConfig, projectConfig);
+
+  // Write effective config to per-task state
+  await fs.writeFile(
+    path.join(stateDir, 'effective-worker.json'),
+    JSON.stringify(effectiveConfig, null, 2),
+    { encoding: 'utf8', mode: 0o600 },
+  );
+
+  return { taskId, taskRoot, workspaceDir, stateDir };
+}
+
+async function postStopGateway(
+  taskId: string,
+  zoneConfig: GatewayZoneConfig,
+): Promise<void> {
+  const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
+  // Delete the entire per-task directory tree
+  await fs.rm(taskRoot, { recursive: true, force: true });
+}
+```
+
+The `preStartResult.workspaceDir` and `preStartResult.stateDir` are passed to `startGatewayZone` as the mount paths, overriding the zone-level defaults. The VM only sees this task's files.
 
 ### Required Changes to worker-gateway
 
-1. **Config mounting:** The effective config lives at `stateDir/effective-worker.json`, written by `preStartGateway`. Since `buildVmSpec` already mounts `stateDir` → `/state`, the config is automatically available at `/state/effective-worker.json` inside the VM. The bootstrap command sets `WORKER_CONFIG_PATH=/state/effective-worker.json` — same pattern as OpenClaw uses `OPENCLAW_CONFIG_PATH`. The base checked-in gateway config stays untouched. No new mount convention needed.
+1. **Config mounting:** The effective config lives at `taskStateDir/effective-worker.json`, written by `preStartGateway`. Since `buildVmSpec` mounts `stateDir` → `/state`, the config is at `/state/effective-worker.json` inside the VM. The bootstrap command sets `WORKER_CONFIG_PATH=/state/effective-worker.json` — same pattern as OpenClaw uses `OPENCLAW_CONFIG_PATH`.
 
-2. **`prepareHostState()`** stays static. Does NOT clone repos or merge config. For v1, the worker gateway's `prepareHostState` may be empty — all per-task prep happens in `preStartGateway`.
+2. **`buildVmSpec` receives per-task dirs:** The orchestrator passes `preStartResult.workspaceDir` and `preStartResult.stateDir` instead of the static zone-level paths. This may require threading per-task paths through the zone config or as separate options to `startGatewayZone`.
+
+3. **`prepareHostState()`** stays static. Does NOT clone repos or merge config. For v1, the worker gateway's `prepareHostState` may be empty — all per-task prep happens in `preStartGateway`.
 
 ---
 
@@ -119,10 +200,9 @@ External API / Queue
 │  9. Shut down VM                                         │
 └──────────┬──────────────────────────────────────────────┘
            │
-           │ VFS mounts (3 required for worker gateway):
-           │   workspaceDir       → /workspace           (cloned repo or empty)
-           │   stateDir           → /state               (JSONL events, task logs)
-           │   stateDir/worker.json → /config/worker.json  (merged config)
+           │ VFS mounts (per-task isolated directories):
+           │   tasks/<taskId>/workspace  → /workspace   (cloned repo or empty)
+           │   tasks/<taskId>/state      → /state       (JSONL events, effective config)
            │
            │ TCP host map:
            │   controller.vm.host:18800 → 127.0.0.1:18800
@@ -132,7 +212,7 @@ External API / Queue
 ┌─────────────────────────────────────────────────────────┐
 │ WORKER (inside Gondolin QEMU VM)                         │
 │                                                          │
-│  Reads /config/worker.json at startup                    │
+│  Reads /state/effective-worker.json at startup (WORKER_CONFIG_PATH)                    │
 │  Serves HTTP on :18789                                   │
 │                                                          │
 │  POST /tasks → runs one task through the loop            │
@@ -167,7 +247,7 @@ External API / Queue
 │ Read from cloned repo     │
 └───────────────────────────┘
 
-Result: single merged WorkerConfig at /config/worker.json
+Result: single merged WorkerConfig at /state/effective-worker.json
 ```
 
 ### Task Data Flow
@@ -461,12 +541,15 @@ If the model value is not an alias key, it is used as-is (explicit model ID).
 
 ### State Machine
 
+Note: repos are already cloned and config is already merged by the controller's
+preStartGateway before the VM boots. The worker state machine starts after POST /tasks.
+
 ```
-POST /tasks
+POST /tasks { prompt, repo location, context }
     │
     ▼
  pending
-    │ clone repos to /workspace (controller-side, before VM boot)
+    │ task accepted, config snapshot stored
     ▼
  planning ◄─────────────────────┐
     │ planner.run(skills)        │ (thread continues across revisions)
@@ -592,6 +675,8 @@ interface ExecutorCapabilities {
 interface ToolDefinition {
   readonly name: string;
   readonly description: string;
+  /** JSON Schema for tool input — the SDK uses this for model-facing affordance discovery */
+  readonly inputSchema: Record<string, unknown>;
   readonly execute: (params: Record<string, unknown>) => Promise<unknown>;
 }
 ```
@@ -630,7 +715,7 @@ function createWorkExecutor(
   const resolvedModel = resolveModelAlias(provider, model);
   switch (provider) {
     case "codex":
-      return createCodexExecutor({ model: resolvedModel });
+      return createCodexExecutor({ model: resolvedModel, capabilities });
     case "claude":
       throw new Error("Claude executor is not implemented yet.");
     default:
@@ -1034,8 +1119,8 @@ The `worker-gateway.prepareHostState()` is reserved for gateway-specific prep th
 2. If repo is provided: controller clones it into `zone.gateway.workspaceDir` on the host
 3. Controller reads `.agent-vm/config.json` from the cloned repo (if it exists)
 4. Controller merges project config with gateway config → writes merged config to a known path in zone state (e.g., `stateDir/worker.json`)
-5. Controller calls `startGatewayZone()` — `buildVmSpec()` mounts `workspaceDir` → `/workspace`, `stateDir` → `/state`, and the config file → `/config/worker.json`
-6. VM boots, worker reads `/config/worker.json` at startup
+5. Controller calls `startGatewayZone()` — `buildVmSpec()` mounts `workspaceDir` → `/workspace`, `stateDir` → `/state` (effective config is already in stateDir)
+6. VM boots, worker reads `/state/effective-worker.json` at startup via `WORKER_CONFIG_PATH`
 7. Controller sends `POST /tasks { prompt, repo location, context }` to the running worker
 
 **Per-task VM lifecycle:** One VM per task. Controller clones → merges config → boots VM → submits task → worker runs → wrapup completes → controller shuts down VM. Clean slate for each task.
