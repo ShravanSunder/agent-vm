@@ -106,7 +106,7 @@ describe('runAgentVmCli', () => {
 	it('routes init to the project scaffolder', async () => {
 		const outputs: string[] = [];
 		const scaffoldAgentVmProject = vi.fn(async () => ({
-			created: ['system.json', '.env.local'],
+			created: ['config/system.json', '.env.local'],
 			keychainStored: false,
 			skipped: [],
 		}));
@@ -134,12 +134,12 @@ describe('runAgentVmCli', () => {
 			targetDir: '/tmp/agent-vm-init',
 			zoneId: 'test-zone',
 		});
-		expect(outputs.join('')).toContain('"system.json"');
+		expect(outputs.join('')).toContain('"config/system.json"');
 	});
 
 	it('passes gateway type through to init scaffolding', async () => {
 		const scaffoldAgentVmProject = vi.fn(async () => ({
-			created: ['system.json', '.env.local'],
+			created: ['config/system.json', '.env.local'],
 			keychainStored: false,
 			skipped: [],
 		}));
@@ -450,7 +450,7 @@ describe('runAgentVmCli', () => {
 			),
 		).rejects.toThrow(
 			[
-				'Invalid system.json configuration:',
+				'Invalid config/system.json configuration:',
 				'  zones[0].gateway.gatewayConfig: Invalid input: expected string, received undefined',
 			].join('\n'),
 		);

@@ -18,7 +18,8 @@ describe('loadSystemConfig', () => {
 	test('loads a valid plan-1 controller config', async () => {
 		const workingDirectoryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-system-config-'));
 		createdDirectories.push(workingDirectoryPath);
-		const configPath = path.join(workingDirectoryPath, 'system.json');
+		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
+		fs.mkdirSync(path.dirname(configPath), { recursive: true });
 
 		fs.writeFileSync(
 			configPath,
@@ -30,15 +31,15 @@ describe('loadSystemConfig', () => {
 						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
 					},
 				},
-				cacheDir: './cache',
+				cacheDir: '../cache',
 				images: {
 					gateway: {
-						buildConfig: './images/gateway/build-config.json',
-						dockerfile: './images/gateway/Dockerfile',
+						buildConfig: '../images/gateway/build-config.json',
+						dockerfile: '../images/gateway/Dockerfile',
 					},
 					tool: {
-						buildConfig: './images/tool/build-config.json',
-						dockerfile: './images/tool/Dockerfile',
+						buildConfig: '../images/tool/build-config.json',
+						dockerfile: '../images/tool/Dockerfile',
 					},
 				},
 				zones: [
@@ -49,9 +50,9 @@ describe('loadSystemConfig', () => {
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							gatewayConfig: './config/shravan/openclaw.json',
-							stateDir: './state/shravan',
-							workspaceDir: './workspaces/shravan',
+							gatewayConfig: './shravan/openclaw.json',
+							stateDir: '../state/shravan',
+							workspaceDir: '../workspaces/shravan',
 						},
 						secrets: {
 							ANTHROPIC_API_KEY: {
@@ -67,7 +68,7 @@ describe('loadSystemConfig', () => {
 					standard: {
 						memory: '1G',
 						cpus: 1,
-						workspaceRoot: './workspaces/tools',
+						workspaceRoot: '../workspaces/tools',
 					},
 				},
 				tcpPool: {
@@ -95,7 +96,7 @@ describe('loadSystemConfig', () => {
 				{
 					id: 'shravan',
 					gateway: {
-						gatewayConfig: path.join(workingDirectoryPath, 'config/shravan/openclaw.json'),
+						gatewayConfig: path.join(workingDirectoryPath, 'config', 'shravan', 'openclaw.json'),
 						type: 'coding',
 					},
 				},
@@ -108,7 +109,8 @@ describe('loadSystemConfig', () => {
 			path.join(os.tmpdir(), 'agent-vm-system-config-invalid-'),
 		);
 		createdDirectories.push(workingDirectoryPath);
-		const configPath = path.join(workingDirectoryPath, 'system.json');
+		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
+		fs.mkdirSync(path.dirname(configPath), { recursive: true });
 
 		fs.writeFileSync(
 			configPath,
@@ -120,15 +122,15 @@ describe('loadSystemConfig', () => {
 						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
 					},
 				},
-				cacheDir: './cache',
+				cacheDir: '../cache',
 				images: {
 					gateway: {
-						buildConfig: './images/gateway/build-config.json',
-						dockerfile: './images/gateway/Dockerfile',
+						buildConfig: '../images/gateway/build-config.json',
+						dockerfile: '../images/gateway/Dockerfile',
 					},
 					tool: {
-						buildConfig: './images/tool/build-config.json',
-						dockerfile: './images/tool/Dockerfile',
+						buildConfig: '../images/tool/build-config.json',
+						dockerfile: '../images/tool/Dockerfile',
 					},
 				},
 				zones: [],
@@ -136,7 +138,7 @@ describe('loadSystemConfig', () => {
 					standard: {
 						memory: '1G',
 						cpus: 1,
-						workspaceRoot: './workspaces/tools',
+						workspaceRoot: '../workspaces/tools',
 					},
 				},
 				tcpPool: {
@@ -155,7 +157,8 @@ describe('loadSystemConfig', () => {
 			path.join(os.tmpdir(), 'agent-vm-system-config-missing-ref-'),
 		);
 		createdDirectories.push(workingDirectoryPath);
-		const configPath = path.join(workingDirectoryPath, 'system.json');
+		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
+		fs.mkdirSync(path.dirname(configPath), { recursive: true });
 
 		fs.writeFileSync(
 			configPath,
@@ -167,13 +170,13 @@ describe('loadSystemConfig', () => {
 						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
 					},
 				},
-				cacheDir: './cache',
+				cacheDir: '../cache',
 				images: {
 					gateway: {
-						buildConfig: './images/gateway/build-config.json',
+						buildConfig: '../images/gateway/build-config.json',
 					},
 					tool: {
-						buildConfig: './images/tool/build-config.json',
+						buildConfig: '../images/tool/build-config.json',
 					},
 				},
 				zones: [
@@ -184,9 +187,9 @@ describe('loadSystemConfig', () => {
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							gatewayConfig: './config/shravan/openclaw.json',
-							stateDir: './state/shravan',
-							workspaceDir: './workspaces/shravan',
+							gatewayConfig: './shravan/openclaw.json',
+							stateDir: '../state/shravan',
+							workspaceDir: '../workspaces/shravan',
 						},
 						secrets: {
 							DISCORD_BOT_TOKEN: {
@@ -202,7 +205,7 @@ describe('loadSystemConfig', () => {
 					standard: {
 						memory: '1G',
 						cpus: 1,
-						workspaceRoot: './workspaces/tools',
+						workspaceRoot: '../workspaces/tools',
 					},
 				},
 				tcpPool: {

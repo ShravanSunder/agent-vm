@@ -22,7 +22,7 @@ describe('loadSystemConfigFromOption', () => {
 			}),
 		).rejects.toThrow(
 			[
-				'Invalid system.json configuration:',
+				'Invalid config/system.json configuration:',
 				'  zones[0].gateway.gatewayConfig: Invalid input: expected string, received undefined',
 			].join('\n'),
 		);

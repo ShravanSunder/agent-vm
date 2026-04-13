@@ -52,15 +52,15 @@ const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object =
 			tokenSource: getKeychainTokenSource(),
 		},
 	},
-	cacheDir: './cache',
+	cacheDir: '../cache',
 	images: {
 		gateway: {
-			buildConfig: './images/gateway/build-config.json',
-			dockerfile: './images/gateway/Dockerfile',
+			buildConfig: '../images/gateway/build-config.json',
+			dockerfile: '../images/gateway/Dockerfile',
 		},
 		tool: {
-			buildConfig: './images/tool/build-config.json',
-			dockerfile: './images/tool/Dockerfile',
+			buildConfig: '../images/tool/build-config.json',
+			dockerfile: '../images/tool/Dockerfile',
 		},
 	},
 	zones: [
@@ -71,9 +71,9 @@ const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object =
 				memory: '2G',
 				cpus: 2,
 				port: defaultGatewayIngressPort,
-				gatewayConfig: `./config/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
-				stateDir: `./state/${zoneId}`,
-				workspaceDir: `./workspaces/${zoneId}`,
+				gatewayConfig: `./${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
+				stateDir: `../state/${zoneId}`,
+				workspaceDir: `../workspaces/${zoneId}`,
 			},
 			secrets: defaultSecretsForGatewayType(zoneId, gatewayType),
 			allowedHosts: defaultAllowedHostsForGatewayType(gatewayType),
@@ -85,7 +85,7 @@ const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object =
 		standard: {
 			memory: '1G',
 			cpus: 1,
-			workspaceRoot: './workspaces/tools',
+			workspaceRoot: '../workspaces/tools',
 		},
 	},
 	tcpPool: {
@@ -375,12 +375,12 @@ async function scaffoldAgentVmProjectInternal(
 	const skipped: string[] = [];
 	const gatewayType = options.gatewayType;
 
-	const systemConfigPath = path.join(options.targetDir, 'system.json');
+	const systemConfigPath = path.join(options.targetDir, 'config', 'system.json');
 	const systemConfigStatus = await writeFileIfMissing(
 		systemConfigPath,
 		`${JSON.stringify(defaultSystemConfig(options.zoneId, gatewayType), null, '\t')}\n`,
 	);
-	(systemConfigStatus === 'created' ? created : skipped).push('system.json');
+	(systemConfigStatus === 'created' ? created : skipped).push('config/system.json');
 
 	const envFilePath = path.join(options.targetDir, '.env.local');
 	const envFileStatus = await writeFileIfMissing(

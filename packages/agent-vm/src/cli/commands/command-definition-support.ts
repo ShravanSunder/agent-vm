@@ -12,8 +12,8 @@ export function createConfigOption() {
 		type: optional(string),
 		long: 'config',
 		short: 'c',
-		description: 'Path to system.json',
-		defaultValue: () => 'system.json',
+		description: 'Path to config/system.json',
+		defaultValue: () => 'config/system.json',
 	});
 }
 
@@ -58,7 +58,7 @@ export function loadSystemConfigFromOption(
 	configPath: string | undefined,
 	dependencies: Pick<CliDependencies, 'loadSystemConfig'>,
 ): Promise<SystemConfig> {
-	const resolvedConfigPath = configPath ?? 'system.json';
+	const resolvedConfigPath = configPath ?? 'config/system.json';
 	return dependencies.loadSystemConfig(resolvedConfigPath).catch((error: unknown) => {
 		if (error instanceof ZodError) {
 			throw new Error(formatZodError(`Invalid ${resolvedConfigPath} configuration:`, error), {

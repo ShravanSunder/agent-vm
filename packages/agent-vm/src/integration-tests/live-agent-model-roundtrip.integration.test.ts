@@ -30,7 +30,12 @@ function canReadSecretRef(secretRef: string | undefined): boolean {
 }
 
 function canReadConfiguredZoneSecretRefs(): boolean {
-	const rawSystemConfig = JSON.parse(fs.readFileSync('system.json', 'utf8')) as unknown;
+	let rawSystemConfig: unknown;
+	try {
+		rawSystemConfig = JSON.parse(fs.readFileSync('config/system.json', 'utf8')) as unknown;
+	} catch {
+		return false;
+	}
 	if (!isObjectRecord(rawSystemConfig)) {
 		return false;
 	}
@@ -107,7 +112,7 @@ async function waitForControllerHealth(controllerPort: number): Promise<void> {
 
 describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 	it('boots the controller and performs a real gateway exec roundtrip', async () => {
-		const systemConfig = await loadSystemConfig('system.json');
+		const systemConfig = await loadSystemConfig('config/system.json');
 		const controllerPort = await findAvailablePort();
 		const gatewayPort = await findAvailablePort();
 		const toolSshPort = await findAvailablePort();

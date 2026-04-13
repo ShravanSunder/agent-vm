@@ -99,9 +99,9 @@ export function writeJson(io: CliIo, value: unknown): void {
 export function resolveConfigPath(argv: readonly string[]): string {
 	const configFlagIndex = argv.indexOf('--config');
 	if (configFlagIndex >= 0) {
-		return argv[configFlagIndex + 1] ?? 'system.json';
+		return argv[configFlagIndex + 1] ?? 'config/system.json';
 	}
-	return 'system.json';
+	return 'config/system.json';
 }
 
 export function readZoneFlag(argv: readonly string[]): string | undefined {

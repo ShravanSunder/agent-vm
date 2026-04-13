@@ -52,11 +52,11 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 		const config = scaffoldedSystemConfigSchema.parse(
-			JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8')),
+			JSON.parse(fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8')),
 		);
 
-		expect(result.created).toContain('system.json');
-		expect(config.cacheDir).toBe('./cache');
+		expect(result.created).toContain('config/system.json');
+		expect(config.cacheDir).toBe('../cache');
 		expect(config.zones[0]?.id).toBe('test-zone');
 		expect(config.zones[0]?.gateway.type).toBe('openclaw');
 	});
@@ -69,7 +69,7 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 		const config = scaffoldedSystemConfigSchema.parse(
-			JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8')),
+			JSON.parse(fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8')),
 		);
 		const gatewayDockerfile = fs.readFileSync(
 			path.join(targetDir, 'images', 'gateway', 'Dockerfile'),
@@ -125,7 +125,9 @@ describe('scaffoldAgentVmProject', () => {
 			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
 			noGeneratedAgeIdentityDependencies,
 		);
-		const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
+		const config = JSON.parse(
+			fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		);
 
 		expect(config.host.secretsProvider.tokenSource).toEqual({
 			type: 'keychain',
@@ -232,17 +234,20 @@ describe('scaffoldAgentVmProject', () => {
 
 	it('does not overwrite an existing system.json', async () => {
 		const targetDir = createTestDirectory();
-		fs.writeFileSync(path.join(targetDir, 'system.json'), '{"existing":true}\n', 'utf8');
+		fs.mkdirSync(path.join(targetDir, 'config'), { recursive: true });
+		fs.writeFileSync(path.join(targetDir, 'config', 'system.json'), '{"existing":true}\n', 'utf8');
 
 		const result = await scaffoldAgentVmProject(
 			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
 			noGeneratedAgeIdentityDependencies,
 		);
-		const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8')) as {
+		const config = JSON.parse(
+			fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		) as {
 			readonly existing: boolean;
 		};
 
-		expect(result.skipped).toContain('system.json');
+		expect(result.skipped).toContain('config/system.json');
 		expect(config.existing).toBe(true);
 	});
 
@@ -254,7 +259,9 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
+		const config = JSON.parse(
+			fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		);
 		const secrets = config.zones[0].secrets;
 
 		expect(secrets).not.toHaveProperty('DISCORD_BOT_TOKEN');
@@ -271,7 +278,9 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
+		const config = JSON.parse(
+			fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		);
 		const secrets = config.zones[0].secrets;
 
 		expect(secrets).toHaveProperty('DISCORD_BOT_TOKEN');
@@ -307,7 +316,9 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
+		const config = JSON.parse(
+			fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		);
 		const secrets = config.zones[0].secrets;
 
 		expect(secrets.ANTHROPIC_API_KEY.ref).toBe('op://agent-vm/test-coding-anthropic/credential');
@@ -322,7 +333,9 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8'));
+		const config = JSON.parse(
+			fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		);
 		const zone = config.zones[0];
 
 		expect(zone.allowedHosts).toContain('api.anthropic.com');
