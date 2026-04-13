@@ -4,7 +4,7 @@
 
 **Goal:** Build the agent-vm-worker package — a configurable task worker that runs inside a Gondolin VM, driving tasks through plan/work/verify/review/wrapup loops.
 
-**Architecture:** Single package porting from agent-vm-coding. Config-driven phases replace hardcoded agents. WorkExecutor interface replaces direct Codex SDK usage. Agent-driven wrapup replaces imperative completion. JSONL event sourcing preserved.
+**Architecture:** Single package porting from agent-vm-coding. Config-driven phases replace hardcoded agents. WorkExecutor interface replaces direct Codex SDK usage. Agent-driven wrapup replaces imperative completion. JSONL event sourcing preserved. **Note:** Full e2e operation requires companion controller-side work (see Post-Implementation Notes) — this plan covers only the worker package.
 
 **Tech Stack:** TypeScript, Hono, cmd-ts, Zod, Codex SDK, execa, vitest
 
@@ -87,7 +87,7 @@ packages/agent-vm-worker/
 | `coordinator/prompt-builder.ts` | `prompt/prompt-assembler.ts` | Generic, not per-phase templates |
 | `coordinator/run-sanity-retries.ts` | `work-reviewer/verification-runner.ts` | Runs configurable command list |
 | `coordinator/task-ship.ts` | `wrapup/git-pr-action.ts` | Tool for wrapup agent |
-| `coordinator/task-setup.ts` | `context/gather-context.ts` | Straight port |
+| `coordinator/task-setup.ts` | **Deleted** | Agent gathers its own context via MCP/skills |
 | `config.ts` | `config/worker-config.ts` | Generic phases, MCP servers, wrapup actions |
 | `verification.ts` | `work-reviewer/verification-runner.ts` | `parseCommand` preserved |
 | `state/task-event-types.ts` | `state/task-event-types.ts` | Generic events, thread IDs |
@@ -96,7 +96,7 @@ packages/agent-vm-worker/
 | `server.ts` | `server.ts` | No followup route, new request schema |
 | `main.ts` | `main.ts` | cmd-ts CLI, not bare script |
 | `git/git-operations.ts` | `git/git-operations.ts` | Straight port |
-| `context/gather-context.ts` | `context/gather-context.ts` | Straight port |
+| `context/gather-context.ts` | **Deleted** | Agent gathers its own context via MCP/skills |
 
 ---
 
@@ -279,6 +279,8 @@ New generic events. This replaces the old per-phase events with a phase-paramete
 
 ```typescript
 import { z } from "zod";
+
+import { workerConfigSchema } from "../config/worker-config.js";
 
 // --- Phase names ---
 
@@ -531,6 +533,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { appendEvent, replayEvents } from "./event-log.js";
 import type { TaskEvent } from "./task-event-types.js";
+import { workerConfigSchema } from "../config/worker-config.js";
+
+const TEST_EFFECTIVE_CONFIG = workerConfigSchema.parse({});
 
 describe("event-log", () => {
   let tempDir: string;
@@ -550,12 +555,11 @@ describe("event-log", () => {
         event: "task-accepted",
         taskId: "abc",
         config: {
+          taskId: "abc",
           prompt: "fix bug",
           repo: null,
           context: {},
-          maxPlanReviewLoops: 2,
-          maxWorkReviewLoops: 3,
-          maxVerificationRetries: 3,
+          effectiveConfig: TEST_EFFECTIVE_CONFIG,
         },
       };
 
@@ -577,12 +581,11 @@ describe("event-log", () => {
         event: "task-accepted",
         taskId: "multi",
         config: {
+          taskId: "multi",
           prompt: "test",
           repo: null,
           context: {},
-          maxPlanReviewLoops: 2,
-          maxWorkReviewLoops: 3,
-          maxVerificationRetries: 3,
+          effectiveConfig: TEST_EFFECTIVE_CONFIG,
         },
       });
 
@@ -610,12 +613,11 @@ describe("event-log", () => {
         event: "task-accepted",
         taskId: "replay",
         config: {
+          taskId: "replay",
           prompt: "test",
           repo: null,
           context: {},
-          maxPlanReviewLoops: 2,
-          maxWorkReviewLoops: 3,
-          maxVerificationRetries: 3,
+          effectiveConfig: TEST_EFFECTIVE_CONFIG,
         },
       });
       appendEvent(filePath, { event: "phase-started", phase: "plan" });
@@ -637,12 +639,11 @@ describe("event-log", () => {
           event: "task-accepted",
           taskId: "crash",
           config: {
+            taskId: "crash",
             prompt: "test",
             repo: null,
             context: {},
-            maxPlanReviewLoops: 2,
-            maxWorkReviewLoops: 3,
-            maxVerificationRetries: 3,
+            effectiveConfig: TEST_EFFECTIVE_CONFIG,
           },
         },
       });
@@ -904,6 +905,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { appendEvent } from "./event-log.js";
 import type { TaskConfig, TaskEvent } from "./task-event-types.js";
+import { workerConfigSchema } from "../config/worker-config.js";
 import {
   applyEvent,
   createInitialState,
@@ -911,14 +913,15 @@ import {
   isTerminal,
 } from "./task-state.js";
 
+const TEST_EFFECTIVE_CONFIG = workerConfigSchema.parse({});
+
 function makeConfig(overrides?: Partial<TaskConfig>): TaskConfig {
   return {
+    taskId: "test-task",
     prompt: "fix bug",
     repo: null,
     context: {},
-    maxPlanReviewLoops: 2,
-    maxWorkReviewLoops: 3,
-    maxVerificationRetries: 3,
+    effectiveConfig: TEST_EFFECTIVE_CONFIG,
     ...overrides,
   };
 }
@@ -1126,7 +1129,7 @@ describe("task-state", () => {
       appendEvent(logPath, {
         event: "task-accepted",
         taskId: "t1",
-        config: makeConfig(),
+        config: makeConfig({ taskId: "t1" }),
       });
       appendEvent(logPath, { event: "phase-started", phase: "plan" });
       appendEvent(logPath, {
@@ -2028,7 +2031,6 @@ export interface AssemblePromptInput {
   readonly context?: Record<string, unknown>;
   readonly plan?: string | null;
   readonly failureContext?: string | null;
-  readonly repoSummary?: string | null;
   readonly skills: readonly SkillReference[];
 }
 
@@ -2075,12 +2077,6 @@ export function assemblePrompt(
     sections.push("");
     sections.push("Context:");
     sections.push(JSON.stringify(input.context, null, 2));
-  }
-
-  if (input.repoSummary) {
-    sections.push("");
-    sections.push("Repository summary:");
-    sections.push(input.repoSummary);
   }
 
   if (input.plan) {
@@ -3943,15 +3939,13 @@ Expected: exit code 0.
 
 ---
 
-## Task 10: Git Operations + Context Gathering
+## Task 10: Git Operations
 
-Straight port from agent-vm-coding. Minimal changes — these modules are stable and well-tested.
+Straight port from agent-vm-coding. Minimal changes — these modules are stable and well-tested. Note: `gather-context.ts` is NOT ported (see post-implementation notes — the agent gathers its own context via MCP servers and skills).
 
 **Files:**
 - Create: `packages/agent-vm-worker/src/git/git-operations.ts`
 - Create: `packages/agent-vm-worker/src/git/git-operations.test.ts`
-- Create: `packages/agent-vm-worker/src/context/gather-context.ts`
-- Create: `packages/agent-vm-worker/src/context/gather-context.test.ts`
 
 **Steps:**
 
@@ -4269,161 +4263,7 @@ describe("git-operations", () => {
 });
 ```
 
-- [ ] **Step 3: Create `packages/agent-vm-worker/src/context/gather-context.ts`**
-
-Straight port from agent-vm-coding.
-
-```typescript
-import * as fs from "node:fs";
-import { join, relative } from "node:path";
-
-export interface RepoContext {
-  readonly fileCount: number;
-  readonly summary: string;
-  readonly claudeMd: string | null;
-  readonly packageJson: string | null;
-}
-
-const SKIP_DIRS = new Set([
-  "node_modules",
-  ".git",
-  "dist",
-  "build",
-  "coverage",
-]);
-
-function collectFiles(
-  dir: string,
-  baseDir: string,
-  depth: number,
-  maxDepth: number,
-): string[] {
-  if (depth > maxDepth) return [];
-
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  const files: string[] = [];
-
-  for (const entry of entries) {
-    if (SKIP_DIRS.has(entry.name)) continue;
-
-    const fullPath = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...collectFiles(fullPath, baseDir, depth + 1, maxDepth));
-    } else {
-      files.push(relative(baseDir, fullPath));
-    }
-  }
-
-  return files;
-}
-
-export function readOptionalFile(
-  filePath: string,
-  readFile: (
-    path: string,
-    encoding: BufferEncoding,
-  ) => string = fs.readFileSync,
-): string | null {
-  try {
-    return readFile(filePath, "utf-8");
-  } catch (error) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
-      return null;
-    }
-    throw error;
-  }
-}
-
-export function gatherContext(workspaceDir: string): RepoContext {
-  const files = collectFiles(workspaceDir, workspaceDir, 0, 3);
-
-  const claudeMd = readOptionalFile(join(workspaceDir, "CLAUDE.md"));
-  const packageJson = readOptionalFile(join(workspaceDir, "package.json"));
-
-  const summary = `Repository structure (${files.length} files):\n${files.join("\n")}`;
-
-  return {
-    fileCount: files.length,
-    summary,
-    claudeMd,
-    packageJson,
-  };
-}
-```
-
-- [ ] **Step 4: Create `packages/agent-vm-worker/src/context/gather-context.test.ts`**
-
-```typescript
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import { gatherContext, readOptionalFile } from "./gather-context.js";
-
-describe("gather-context", () => {
-  let tempDir: string;
-
-  beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "context-test-"));
-  });
-
-  afterEach(async () => {
-    await rm(tempDir, { recursive: true, force: true });
-  });
-
-  describe("readOptionalFile", () => {
-    it("reads existing file", async () => {
-      await writeFile(join(tempDir, "test.txt"), "hello", "utf-8");
-      expect(readOptionalFile(join(tempDir, "test.txt"))).toBe("hello");
-    });
-
-    it("returns null for missing file", () => {
-      expect(readOptionalFile(join(tempDir, "missing.txt"))).toBeNull();
-    });
-  });
-
-  describe("gatherContext", () => {
-    it("gathers file tree and reads metadata", async () => {
-      await writeFile(join(tempDir, "package.json"), '{"name":"test"}', "utf-8");
-      await writeFile(join(tempDir, "CLAUDE.md"), "# Project", "utf-8");
-      await mkdir(join(tempDir, "src"), { recursive: true });
-      await writeFile(join(tempDir, "src", "index.ts"), "export {};", "utf-8");
-
-      const context = gatherContext(tempDir);
-
-      expect(context.fileCount).toBeGreaterThanOrEqual(3);
-      expect(context.summary).toContain("src/index.ts");
-      expect(context.packageJson).toContain("test");
-      expect(context.claudeMd).toContain("Project");
-    });
-
-    it("skips node_modules and .git", async () => {
-      await mkdir(join(tempDir, "node_modules", "pkg"), { recursive: true });
-      await writeFile(
-        join(tempDir, "node_modules", "pkg", "index.js"),
-        "",
-        "utf-8",
-      );
-      await mkdir(join(tempDir, ".git", "objects"), { recursive: true });
-      await writeFile(join(tempDir, "src.ts"), "", "utf-8");
-
-      const context = gatherContext(tempDir);
-      expect(context.summary).not.toContain("node_modules");
-      expect(context.summary).not.toContain(".git");
-      expect(context.summary).toContain("src.ts");
-    });
-  });
-});
-```
-
-- [ ] **Step 5: Run tests**
+- [ ] **Step 3: Run tests**
 
 ```bash
 cd /Users/shravansunder/Documents/dev/project-dev/agent-vm.agent-vm-worker && pnpm --filter agent-vm-worker test
@@ -4431,7 +4271,7 @@ cd /Users/shravansunder/Documents/dev/project-dev/agent-vm.agent-vm-worker && pn
 
 Expected: all tests pass.
 
-- [ ] **Step 6: Run typecheck**
+- [ ] **Step 4: Run typecheck**
 
 ```bash
 cd /Users/shravansunder/Documents/dev/project-dev/agent-vm.agent-vm-worker && pnpm --filter agent-vm-worker typecheck
@@ -4439,7 +4279,7 @@ cd /Users/shravansunder/Documents/dev/project-dev/agent-vm.agent-vm-worker && pn
 
 Expected: exit code 0.
 
-**Commit:** `feat(agent-vm-worker): add git operations and context gathering — straight port from agent-vm-coding`
+**Commit:** `feat(agent-vm-worker): add git operations — straight port from agent-vm-coding`
 
 ---
 
@@ -4506,12 +4346,11 @@ export function buildTaskConfig(
   config: WorkerConfig,
 ): TaskConfig {
   return {
+    taskId: input.taskId,
     prompt: input.prompt,
     repo: input.repo ?? null,
     context: input.context ?? {},
-    maxPlanReviewLoops: config.phases.plan.maxReviewLoops,
-    maxWorkReviewLoops: config.phases.work.maxReviewLoops,
-    maxVerificationRetries: config.phases.work.maxVerificationRetries,
+    effectiveConfig: config,
   };
 }
 
@@ -4573,7 +4412,6 @@ export function createTaskEventRecorder(
 - [ ] **Step 3: Create `packages/agent-vm-worker/src/coordinator/coordinator.ts`**
 
 ```typescript
-import { gatherContext } from "../context/gather-context.js";
 import { getDiff } from "../git/git-operations.js";
 import type { WorkerConfig } from "../config/worker-config.js";
 import { resolvePhaseExecutor } from "../config/worker-config.js";
@@ -4643,22 +4481,12 @@ async function runTask(
     );
     const planner = createPlanner(planExecutor);
 
-    // Gather context for the prompt
-    let repoSummary: string | null = null;
-    try {
-      const context = gatherContext(workspaceDir);
-      repoSummary = context.summary;
-    } catch {
-      // Workspace may be empty (no repo task)
-    }
-
     const planPrompt = assemblePrompt({
       phase: "plan",
       phaseInstructions: config.phases.plan.instructions,
       taskPrompt: initialState.config.prompt,
       repo: initialState.config.repo,
       context: initialState.config.context,
-      repoSummary,
       skills: config.phases.plan.skills,
     });
 
@@ -4679,13 +4507,13 @@ async function runTask(
     // --- PLAN REVIEW LOOP ---
     for (
       let loop = 1;
-      loop <= initialState.config.maxPlanReviewLoops;
+      loop <= initialState.config.effectiveConfig.phases.plan.maxReviewLoops;
       loop += 1
     ) {
       if (eventRecorder.isClosed(taskId)) return;
 
       console.log(
-        `[coordinator] task ${taskId}: plan review ${loop}/${initialState.config.maxPlanReviewLoops}`,
+        `[coordinator] task ${taskId}: plan review ${loop}/${initialState.config.effectiveConfig.phases.plan.maxReviewLoops}`,
       );
       eventRecorder.emit(taskId, {
         event: "phase-started",
@@ -4712,7 +4540,6 @@ async function runTask(
         repo: initialState.config.repo,
         context: initialState.config.context,
         plan: currentPlan,
-        repoSummary,
         skills: config.phases.planReview.skills,
       });
 
@@ -4735,7 +4562,7 @@ async function runTask(
         break;
       }
 
-      if (loop === initialState.config.maxPlanReviewLoops) {
+      if (loop === initialState.config.effectiveConfig.phases.plan.maxReviewLoops) {
         eventRecorder.recordTaskFailure(
           taskId,
           "Plan review loop exhausted",
@@ -4797,7 +4624,6 @@ async function runTask(
       repo: initialState.config.repo,
       context: initialState.config.context,
       plan: currentPlan,
-      repoSummary,
       skills: config.phases.work.skills,
     });
 
@@ -4816,14 +4642,14 @@ async function runTask(
     for (
       let verifyAttempt = 1;
       verifyAttempt <=
-        initialState.config.maxVerificationRetries;
+        initialState.config.effectiveConfig.phases.work.maxVerificationRetries;
       verifyAttempt += 1
     ) {
       if (eventRecorder.isClosed(taskId)) return;
 
       // Run verification
       console.log(
-        `[coordinator] task ${taskId}: verification ${verifyAttempt}/${initialState.config.maxVerificationRetries}`,
+        `[coordinator] task ${taskId}: verification ${verifyAttempt}/${initialState.config.effectiveConfig.phases.work.maxVerificationRetries}`,
       );
       eventRecorder.emit(taskId, {
         event: "phase-started",
@@ -4857,7 +4683,7 @@ async function runTask(
       // Verification failed
       if (
         verifyAttempt ===
-        initialState.config.maxVerificationRetries
+        initialState.config.effectiveConfig.phases.work.maxVerificationRetries
       ) {
         eventRecorder.recordTaskFailure(
           taskId,
@@ -4885,13 +4711,13 @@ async function runTask(
     // --- WORK REVIEW LOOP ---
     for (
       let reviewLoop = 1;
-      reviewLoop <= initialState.config.maxWorkReviewLoops;
+      reviewLoop <= initialState.config.effectiveConfig.phases.work.maxReviewLoops;
       reviewLoop += 1
     ) {
       if (eventRecorder.isClosed(taskId)) return;
 
       console.log(
-        `[coordinator] task ${taskId}: work review ${reviewLoop}/${initialState.config.maxWorkReviewLoops}`,
+        `[coordinator] task ${taskId}: work review ${reviewLoop}/${initialState.config.effectiveConfig.phases.work.maxReviewLoops}`,
       );
       eventRecorder.emit(taskId, {
         event: "phase-started",
@@ -4948,7 +4774,7 @@ async function runTask(
         break;
       }
 
-      if (reviewLoop === initialState.config.maxWorkReviewLoops) {
+      if (reviewLoop === initialState.config.effectiveConfig.phases.work.maxReviewLoops) {
         eventRecorder.recordTaskFailure(
           taskId,
           "Work review loop exhausted",
@@ -5164,7 +4990,6 @@ import { workerConfigSchema } from "../config/worker-config.js";
 
 const mocks = vi.hoisted(() => ({
   createWorkExecutor: vi.fn(),
-  gatherContext: vi.fn(),
   getDiff: vi.fn(),
   runVerification: vi.fn(),
   allVerificationsPassed: vi.fn(),
@@ -5177,10 +5002,6 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../work-executor/executor-factory.js", () => ({
   createWorkExecutor: mocks.createWorkExecutor,
-}));
-
-vi.mock("../context/gather-context.js", () => ({
-  gatherContext: mocks.gatherContext,
 }));
 
 vi.mock("../git/git-operations.js", () => ({
@@ -5271,13 +5092,6 @@ describe("coordinator", () => {
     await mkdir(stateDir, { recursive: true });
 
     // Default mock setup: all phases succeed
-    mocks.gatherContext.mockReturnValue({
-      fileCount: 2,
-      summary: "Repository summary",
-      claudeMd: null,
-      packageJson: null,
-    });
-
     // Plan executor returns plan, then plan reviewer approves
     const planExecutor = createMockExecutor({
       executeResponse: "The implementation plan",
@@ -5663,7 +5477,10 @@ export function createApp(deps: ServerDeps): Hono {
 import { describe, expect, it, vi } from "vitest";
 
 import type { TaskState } from "./state/task-state.js";
+import { workerConfigSchema } from "./config/worker-config.js";
 import { createApp, type ServerDeps } from "./server.js";
+
+const TEST_EFFECTIVE_CONFIG = workerConfigSchema.parse({});
 
 function makeTaskState(
   overrides?: Partial<TaskState>,
@@ -5672,12 +5489,11 @@ function makeTaskState(
     taskId: "test-1",
     status: "pending",
     config: {
+      taskId: "test-1",
       prompt: "fix bug",
       repo: null,
       context: {},
-      maxPlanReviewLoops: 2,
-      maxWorkReviewLoops: 3,
-      maxVerificationRetries: 3,
+      effectiveConfig: TEST_EFFECTIVE_CONFIG,
     },
     plan: null,
     plannerThreadId: null,
@@ -6005,10 +5821,6 @@ export type { SkillReference } from "./shared/skill-types.js";
 export { configureGit, createBranch, stageAndCommit, pushBranch, createPullRequest, getDiffStat, getDiff, buildPushUrl, buildCommitMessage, parseRepoFromUrl, sanitizeBranchName } from "./git/git-operations.js";
 export type { GitConfigOptions, CommitOptions, PushOptions, PullRequestOptions } from "./git/git-operations.js";
 
-// --- Context ---
-export { gatherContext, readOptionalFile } from "./context/gather-context.js";
-export type { RepoContext } from "./context/gather-context.js";
-
 // --- Prompt ---
 export { assemblePrompt, resolveSkillInputs } from "./prompt/prompt-assembler.js";
 
@@ -6048,6 +5860,8 @@ cd /Users/shravansunder/Documents/dev/project-dev/agent-vm.agent-vm-worker && no
 ```
 
 Expected: shows subcommands `serve` and `health`.
+
+> **Note:** Full e2e verification with a real Gondolin VM requires the controller companion work described in the Post-Implementation Notes below (`preStartGateway`/`postStopGateway` hooks, per-task VM orchestration, `buildVmSpec`/`buildProcessSpec` updates). This task verifies that the worker package builds, passes tests, and runs standalone. Integration testing with a live VM is out of scope for this plan.
 
 **Commit:** `feat(agent-vm-worker): add server, CLI, and wire all modules together`
 
