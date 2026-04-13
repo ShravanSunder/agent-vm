@@ -62,9 +62,6 @@ packages/agent-vm-worker/
     ├── git/
     │   ├── git-operations.ts            ← commit, push, PR, branch, config
     │   └── git-operations.test.ts
-    ├── context/
-    │   ├── gather-context.ts            ← workspace file tree + metadata
-    │   └── gather-context.test.ts
     ├── coordinator/
     │   ├── coordinator.ts               ← orchestrates plan + work + wrapup loops
     │   ├── coordinator.test.ts
@@ -318,7 +315,11 @@ export const TERMINAL_STATUSES = ["completed", "failed"] as const;
 
 // --- Task config (snapshot stored in task-accepted event) ---
 
+// Full effective config snapshot — makes crash recovery and auditing
+// self-contained without depending on the external config file.
 export const taskConfigSchema = z.object({
+  // Task input
+  taskId: z.string().min(1),
   prompt: z.string().min(1),
   repo: z
     .object({
@@ -328,9 +329,8 @@ export const taskConfigSchema = z.object({
     })
     .nullable(),
   context: z.record(z.string(), z.unknown()),
-  maxPlanReviewLoops: z.number().int().nonnegative(),
-  maxWorkReviewLoops: z.number().int().nonnegative(),
-  maxVerificationRetries: z.number().int().nonnegative(),
+  // Full effective WorkerConfig snapshot
+  effectiveConfig: workerConfigSchema,
 });
 
 export type TaskConfig = z.infer<typeof taskConfigSchema>;
@@ -6055,18 +6055,41 @@ Expected: shows subcommands `serve` and `health`.
 
 ## Post-Implementation Notes
 
-### What was NOT implemented (out of scope per spec)
+### Companion work required (in packages/agent-vm, separate branch)
+
+The worker package cannot run end-to-end without controller-side changes. These are in scope for v1 but live in `packages/agent-vm` and `packages/worker-gateway`, not in this package:
+
+1. **`preStartGateway` hook** — clone repo, read project config, merge with gateway config, write effective config to per-task stateDir, allocate per-task dirs (`tasks/<taskId>/workspace`, `tasks/<taskId>/state`)
+2. **`postStopGateway` hook** — delete per-task dirs after VM teardown
+3. **Per-task VM orchestration** — controller receives task → preStartGateway → clone zone config with per-task paths → startGatewayZone → POST /tasks → poll for completion → harvest results → vm.close → postStopGateway
+4. **worker-gateway `buildVmSpec` update** — mount effective config path, set `WORKER_CONFIG_PATH` env var
+5. **worker-gateway `buildProcessSpec` unblock** — replace the "not implemented" throw with actual startCommand/healthCheck
+
+A separate implementation plan should be written for this controller-side work.
+
+### What is NOT in v1
 
 1. **Followup** — no `submitFollowup` or `POST /tasks/:id/followup` route
 2. **Claude executor** — throws "not implemented yet"
-3. **Docker service routing** — controller-side concern
+3. **Docker service routing** — controller-side, additive
 4. **Wrapup retry** — wrapup runs once; if required action fails, task fails
-5. **Per-task VM boot** — controller-side concern
-6. **Context schema validation** — `Record<string, unknown>` passthrough
+5. **Context schema validation** — `Record<string, unknown>` passthrough
+6. **Multi-repo** — v1 is single repo, nullable
+
+### gather-context removed
+
+The spec says the agent gathers its own context via MCP servers, skills, and the repo. The old `gather-context.ts` (pre-chewed repo summary) is NOT ported. The prompt assembler includes task prompt + context (from POST body) + repo info + skills. No `gatherContext()` call in the coordinator.
 
 ### Wrapup tool-call result tracking
 
-The coordinator's wrapup implementation has a known gap: the Codex SDK manages tool calls internally, and we don't currently have a way to capture individual tool-call results from the SDK. The `wrapup-result` event records what tools were registered, not what was actually called. This needs to be resolved when we have the real SDK integration — the adapter needs to collect results from `ToolDefinition.execute()` calls as they happen. The `findMissingRequiredActions` check depends on accurate results.
+The wrapup tool-call tracking is NOT deferred — it is required for v1. The spec requires the coordinator to check required wrapup actions after wrapup completes and fail the task if required actions were not successfully executed. The implementation:
+
+1. Each `ToolDefinition.execute()` implementation (git-pr, slack-post) records its own result into a shared results collector.
+2. The Codex SDK calls `ToolDefinition.execute()` as the agent makes tool calls — our implementation runs and records the result.
+3. After the wrapup executor finishes, the coordinator reads the collected results from the registry.
+4. `findMissingRequiredActions` checks required actions against actual results. Task fails if any required action was not successfully called.
+
+This works because we control the `execute` function on each tool — the SDK calls our code, and we capture the result. No SDK-level interception needed.
 
 ### Thread continuity in the coordinator
 
