@@ -1,4 +1,4 @@
-import type { SecretSpec, VfsMountSpec } from 'gondolin-core';
+import type { SecretSpec, VfsMountSpec } from '@shravansunder/agent-vm-gondolin-core';
 
 /**
  * Everything the controller needs to create the Gondolin VM.

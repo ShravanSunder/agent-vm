@@ -8,7 +8,7 @@
  *
  * Exit 0 = compatible, Exit 1 = mismatch (lists missing exports)
  */
-const SDK_PATH = '/usr/local/lib/node_modules/openclaw/dist/plugin-sdk/sandbox.js';
+const SDK_PATH = '/opt/openclaw-sdk/sandbox.js';
 
 const REQUIRED_EXPORTS = [
 	'buildExecRemoteCommand',

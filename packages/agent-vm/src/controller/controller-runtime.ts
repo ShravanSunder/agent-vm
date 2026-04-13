@@ -1,4 +1,4 @@
-import { createOpCliSecretResolver, type ManagedVm } from 'gondolin-core';
+import { createOpCliSecretResolver, type ManagedVm } from '@shravansunder/agent-vm-gondolin-core';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { runTaskWithResult } from '../shared/run-task.js';

@@ -516,6 +516,7 @@ describe('runAgentVmCli', () => {
 					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 					listBackups: () => [],
 				}),
+				isGatewayImageCached: async () => true,
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
@@ -614,6 +615,7 @@ describe('runAgentVmCli', () => {
 					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 					listBackups: () => [],
 				}),
+				isGatewayImageCached: async () => true,
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
@@ -734,6 +736,7 @@ describe('runAgentVmCli', () => {
 					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 					listBackups: () => [],
 				}),
+				isGatewayImageCached: async () => true,
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',

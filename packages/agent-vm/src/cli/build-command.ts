@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import type { BuildImageResult } from 'gondolin-core';
+import type { BuildImageResult } from '@shravansunder/agent-vm-gondolin-core';
 import task from 'tasuku';
 import { z } from 'zod';
 
@@ -9,6 +9,7 @@ import { buildDockerImage as buildDockerImageDefault } from '../build/docker-ima
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { SystemConfig } from '../config/system-config.js';
 import { formatZodError } from './format-zod-error.js';
+import { syncBundledOpenClawPluginBundle } from './openclaw-plugin-bundle.js';
 
 export interface BuildCommandDependencies {
 	readonly buildDockerImage?: (options: {
@@ -23,6 +24,7 @@ export interface BuildCommandDependencies {
 	readonly resolveOciImageTag?: (buildConfigPath: string) => Promise<string>;
 	/** Override the task runner for testing (bypasses tasuku terminal rendering). */
 	readonly runTask?: (title: string, fn: () => Promise<void>) => Promise<void>;
+	readonly syncBundledOpenClawPlugin?: (targetDir: string) => Promise<'created' | 'skipped'>;
 }
 
 const ociImageTagSchema = z.object({
@@ -67,6 +69,8 @@ export async function runBuildCommand(
 	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
 	const resolveOciImageTag = dependencies.resolveOciImageTag ?? resolveOciImageTagFromConfig;
 	const runTaskStep = dependencies.runTask ?? defaultRunTask;
+	const syncBundledOpenClawPlugin =
+		dependencies.syncBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle;
 
 	const imageTargets: readonly ImageTarget[] = [
 		{
@@ -87,6 +91,15 @@ export async function runBuildCommand(
 
 	for (const imageTarget of dockerImageTargets) {
 		const imageTag = await resolveOciImageTag(imageTarget.buildConfigPath);
+		if (
+			imageTarget.name === 'gateway' &&
+			options.systemConfig.zones.some((zone) => zone.gateway.type === 'openclaw')
+		) {
+			const projectRootDirectory = path.resolve(imageTarget.dockerfile, '..', '..', '..');
+			await runTaskStep('OpenClaw plugin bundle', async () => {
+				await syncBundledOpenClawPlugin(projectRootDirectory);
+			});
+		}
 		await runTaskStep(`Docker: ${imageTarget.name} (${imageTag})`, async () => {
 			await buildDockerImage({
 				dockerfilePath: imageTarget.dockerfile,

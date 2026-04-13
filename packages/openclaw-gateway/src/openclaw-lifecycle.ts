@@ -6,9 +6,9 @@ import type {
 	GatewayProcessSpec,
 	GatewayZoneConfig,
 	GatewayVmSpec,
-} from 'gateway-interface';
-import { splitResolvedGatewaySecrets } from 'gateway-interface';
-import type { SecretResolver } from 'gondolin-core';
+} from '@shravansunder/agent-vm-gateway-interface';
+import { splitResolvedGatewaySecrets } from '@shravansunder/agent-vm-gateway-interface';
+import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
 
 const effectiveOpenClawConfigFileName = 'effective-openclaw.json';
 const effectiveOpenClawConfigVmPath = `/home/openclaw/.openclaw/state/${effectiveOpenClawConfigFileName}`;

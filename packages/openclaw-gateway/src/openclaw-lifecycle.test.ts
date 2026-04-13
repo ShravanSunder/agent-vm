@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { GatewayZoneConfig } from 'gateway-interface';
-import type { SecretResolver } from 'gondolin-core';
+import type { GatewayZoneConfig } from '@shravansunder/agent-vm-gateway-interface';
+import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { openclawLifecycle } from './openclaw-lifecycle.js';

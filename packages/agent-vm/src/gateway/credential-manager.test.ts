@@ -1,4 +1,4 @@
-import type { SecretResolver } from 'gondolin-core';
+import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
 import { describe, expect, it } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';

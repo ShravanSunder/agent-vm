@@ -202,7 +202,7 @@ export async function createSecretResolver(
 		const client = await (dependencies.createClient ?? createClient)({
 			auth: options.serviceAccountToken,
 			integrationName: dependencies.integrationName ?? 'agent-vm',
-			integrationVersion: dependencies.integrationVersion ?? '0.1.0',
+			integrationVersion: dependencies.integrationVersion ?? '0.0.1',
 		});
 
 		return {

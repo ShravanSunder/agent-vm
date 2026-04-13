@@ -15,13 +15,5 @@
 	"rootfs": {
 		"label": "gondolin-root",
 		"sizeMb": 4096
-	},
-	"postBuild": {
-		"copy": [
-			{
-				"src": "../../packages/openclaw-agent-vm-plugin/dist",
-				"dest": "/usr/local/lib/node_modules/openclaw/dist/extensions/gondolin"
-			}
-		]
 	}
 }

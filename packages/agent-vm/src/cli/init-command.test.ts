@@ -22,6 +22,12 @@ function createTestDirectory(): string {
 }
 
 const noGeneratedAgeIdentityDependencies = {
+	copyBundledOpenClawPlugin: async (targetDir: string): Promise<'created' | 'skipped'> => {
+		const pluginDirectory = path.join(targetDir, 'images', 'gateway', 'vendor', 'gondolin');
+		fs.mkdirSync(pluginDirectory, { recursive: true });
+		fs.writeFileSync(path.join(pluginDirectory, 'openclaw.plugin.json'), '{"id":"gondolin"}\n');
+		return 'created';
+	},
 	generateAgeIdentityKey: () => undefined,
 };
 
@@ -73,6 +79,29 @@ describe('scaffoldAgentVmProject', () => {
 		expect(config.zones[0]?.gateway.type).toBe('coding');
 		expect(gatewayDockerfile).toContain('@openai/codex-cli');
 		expect(gatewayDockerfile).not.toContain('openclaw@');
+	});
+
+	it('scaffolds the published gondolin plugin install into the openclaw gateway Dockerfile', async () => {
+		const targetDir = createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
+			noGeneratedAgeIdentityDependencies,
+		);
+		const gatewayDockerfile = fs.readFileSync(
+			path.join(targetDir, 'images', 'gateway', 'Dockerfile'),
+			'utf8',
+		);
+
+		expect(gatewayDockerfile).toContain(
+			'COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin',
+		);
+		expect(gatewayDockerfile).not.toContain('@shravansunder/openclaw-agent-vm-plugin');
+		expect(
+			fs.existsSync(
+				path.join(targetDir, 'images', 'gateway', 'vendor', 'gondolin', 'openclaw.plugin.json'),
+			),
+		).toBe(true);
 	});
 
 	it('creates .env.local from the default template', async () => {
@@ -187,12 +216,18 @@ describe('scaffoldAgentVmProject', () => {
 					readonly allowedOrigins: readonly string[];
 				};
 			};
+			readonly plugins: {
+				readonly load: {
+					readonly paths: readonly string[];
+				};
+			};
 		};
 
 		expect(openClawConfig.gateway.controlUi.allowedOrigins).toEqual([
 			'http://127.0.0.1:18791',
 			'http://localhost:18791',
 		]);
+		expect(openClawConfig.plugins.load.paths).toEqual(['/home/openclaw/.openclaw/extensions']);
 	});
 
 	it('does not overwrite an existing system.json', async () => {

@@ -1,7 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { createManagedVm as createManagedVmFromCore, type ManagedVm } from 'gondolin-core';
+import {
+	createManagedVm as createManagedVmFromCore,
+	type ManagedVm,
+} from '@shravansunder/agent-vm-gondolin-core';
 
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { SystemConfig } from '../config/system-config.js';

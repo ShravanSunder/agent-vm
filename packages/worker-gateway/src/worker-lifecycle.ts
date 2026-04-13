@@ -3,8 +3,8 @@ import type {
 	GatewayProcessSpec,
 	GatewayVmSpec,
 	GatewayZoneConfig,
-} from 'gateway-interface';
-import { splitResolvedGatewaySecrets } from 'gateway-interface';
+} from '@shravansunder/agent-vm-gateway-interface';
+import { splitResolvedGatewaySecrets } from '@shravansunder/agent-vm-gateway-interface';
 
 export const workerLifecycle: GatewayLifecycle = {
 	buildVmSpec(

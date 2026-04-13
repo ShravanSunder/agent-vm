@@ -5,9 +5,21 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
 	resolve: {
 		alias: {
-			'gateway-interface': path.resolve('./packages/gateway-interface/src/index.ts'),
-			'openclaw-gateway': path.resolve('./packages/openclaw-gateway/src/index.ts'),
-			'worker-gateway': path.resolve('./packages/worker-gateway/src/index.ts'),
+			'@shravansunder/agent-vm-gateway-interface': path.resolve(
+				'./packages/gateway-interface/src/index.ts',
+			),
+			'@shravansunder/agent-vm-gondolin-core': path.resolve(
+				'./packages/gondolin-core/src/index.ts',
+			),
+			'@shravansunder/agent-vm-openclaw-gateway': path.resolve(
+				'./packages/openclaw-gateway/src/index.ts',
+			),
+			'@shravansunder/agent-vm-worker-gateway': path.resolve(
+				'./packages/worker-gateway/src/index.ts',
+			),
+			'@shravansunder/openclaw-agent-vm-plugin': path.resolve(
+				'./packages/openclaw-agent-vm-plugin/src/index.ts',
+			),
 		},
 	},
 	test: {

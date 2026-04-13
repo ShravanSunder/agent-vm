@@ -1,6 +1,9 @@
-import type { GatewayLifecycle, GatewayZoneConfig } from 'gateway-interface';
-import { openclawLifecycle } from 'openclaw-gateway';
-import { workerLifecycle } from 'worker-gateway';
+import type {
+	GatewayLifecycle,
+	GatewayZoneConfig,
+} from '@shravansunder/agent-vm-gateway-interface';
+import { openclawLifecycle } from '@shravansunder/agent-vm-openclaw-gateway';
+import { workerLifecycle } from '@shravansunder/agent-vm-worker-gateway';
 
 const lifecycleByType = {
 	coding: workerLifecycle,

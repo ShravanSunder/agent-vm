@@ -1,5 +1,5 @@
-import type { GatewayProcessSpec } from 'gateway-interface';
-import type { ManagedVm, SecretResolver } from 'gondolin-core';
+import type { GatewayProcessSpec } from '@shravansunder/agent-vm-gateway-interface';
+import type { ManagedVm, SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
 
 import type { SystemConfig } from '../config/system-config.js';
 import type { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';

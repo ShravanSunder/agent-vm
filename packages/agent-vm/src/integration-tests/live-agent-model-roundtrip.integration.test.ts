@@ -1,9 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { runBuildCommand } from '../cli/build-command.js';
 import { loadSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 
@@ -108,8 +111,12 @@ describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 		const controllerPort = await findAvailablePort();
 		const gatewayPort = await findAvailablePort();
 		const toolSshPort = await findAvailablePort();
+		const isolatedCacheDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), 'agent-vm-live-roundtrip-cache-'),
+		);
 		const isolatedSystemConfig = {
 			...systemConfig,
+			cacheDir: isolatedCacheDir,
 			host: {
 				...systemConfig.host,
 				controllerPort,
@@ -130,6 +137,15 @@ describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 		if (!zone) {
 			throw new Error('Expected at least one zone in system config');
 		}
+		await runBuildCommand(
+			{
+				forceRebuild: true,
+				systemConfig: isolatedSystemConfig,
+			},
+			{
+				runTask: async (_title, fn) => await fn(),
+			},
+		);
 
 		const runtime = await startControllerRuntime(
 			{
@@ -183,6 +199,7 @@ describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 			expect(leasesBody.length).toBeGreaterThan(0);
 		} finally {
 			await runtime.close();
+			fs.rmSync(isolatedCacheDir, { force: true, recursive: true });
 		}
 	}, 300_000);
 });

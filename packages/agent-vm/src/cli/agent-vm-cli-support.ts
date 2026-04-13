@@ -1,5 +1,8 @@
-import type { SecretResolver } from 'gondolin-core';
-import { createOpCliSecretResolver, resolveServiceAccountToken } from 'gondolin-core';
+import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
+import {
+	createOpCliSecretResolver,
+	resolveServiceAccountToken,
+} from '@shravansunder/agent-vm-gondolin-core';
 
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';

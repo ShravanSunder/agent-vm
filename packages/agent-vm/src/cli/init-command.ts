@@ -8,6 +8,10 @@ import {
 	hasServiceAccountToken,
 	storeServiceAccountToken,
 } from './keychain-credential.js';
+import {
+	openClawPluginVendorDirectory,
+	syncBundledOpenClawPluginBundle,
+} from './openclaw-plugin-bundle.js';
 
 export interface ScaffoldAgentVmProjectOptions {
 	readonly gatewayType: GatewayType;
@@ -22,6 +26,7 @@ export interface ScaffoldAgentVmProjectResult {
 }
 
 interface ScaffoldAgentVmProjectDependencies {
+	readonly copyBundledOpenClawPlugin?: (targetDir: string) => Promise<'created' | 'skipped'>;
 	readonly generateAgeIdentityKey?: () => string | undefined;
 }
 
@@ -34,7 +39,7 @@ export interface PromptAndStoreTokenDependencies {
 export type GatewayType = 'coding' | 'openclaw';
 
 const defaultGatewayIngressPort = 18791;
-
+const defaultOpenClawExtensionsPath = '/home/openclaw/.openclaw/extensions';
 function resolveGatewayConfigFileName(gatewayType: GatewayType): 'coding.json' | 'openclaw.json' {
 	return gatewayType === 'coding' ? 'coding.json' : 'openclaw.json';
 }
@@ -175,6 +180,9 @@ function defaultEnvTemplateForGatewayType(_gatewayType: GatewayType): string {
 
 const defaultGatewayDockerfile = `FROM node:24-slim
 
+ENV PNPM_HOME=/pnpm
+ENV PATH=\${PNPM_HOME}:\${PATH}
+
 RUN apt-get update && \\
     apt-get install -y --no-install-recommends \\
       openssh-server \\
@@ -184,16 +192,27 @@ RUN apt-get update && \\
       python3 && \\
     rm -rf /var/lib/apt/lists/* && \\
     update-ca-certificates && \\
-    npm install -g openclaw@2026.4.2 && \\
+    corepack enable && \\
+    pnpm add -g openclaw@2026.4.2 && \\
+    OPENCLAW_PACKAGE_ROOT="$(pnpm root -g)/openclaw" && \\
+    (cd "$OPENCLAW_PACKAGE_ROOT" && node scripts/postinstall-bundled-plugins.mjs) && \\
+    mkdir -p /opt/openclaw-sdk && \\
+    ln -sf "$OPENCLAW_PACKAGE_ROOT/dist/plugin-sdk/sandbox.js" /opt/openclaw-sdk/sandbox.js && \\
+    printf '#!/bin/sh\\nexec /pnpm/openclaw "$@"\\n' > /usr/local/bin/openclaw && \\
+    chmod 755 /usr/local/bin/openclaw && \\
     useradd -m -s /bin/bash openclaw && \\
-    mkdir -p /home/openclaw/.openclaw /home/openclaw/workspace /run/sshd /root && \\
+    mkdir -p ${defaultOpenClawExtensionsPath} /home/openclaw/workspace /run/sshd /root && \\
     chown -R openclaw:openclaw /home/openclaw && \\
-    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true && \\
-    mkdir -p /usr/local/lib/node_modules/openclaw/dist/extensions/gondolin
+    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true
+
+COPY vendor/gondolin ${defaultOpenClawExtensionsPath}/gondolin
 `;
 
 const defaultCodingGatewayDockerfile = `FROM node:24-slim
 
+ENV PNPM_HOME=/pnpm
+ENV PATH=\${PNPM_HOME}:\${PATH}
+
 RUN apt-get update && \\
     apt-get install -y --no-install-recommends \\
       openssh-server \\
@@ -203,7 +222,10 @@ RUN apt-get update && \\
       python3 && \\
     rm -rf /var/lib/apt/lists/* && \\
     update-ca-certificates && \\
-    npm install -g @openai/codex-cli && \\
+    corepack enable && \\
+    pnpm add -g @openai/codex-cli && \\
+    printf '#!/bin/sh\\nexec /pnpm/codex "$@"\\n' > /usr/local/bin/codex && \\
+    chmod 755 /usr/local/bin/codex && \\
     useradd -m -s /bin/bash coder && \\
     mkdir -p /workspace /run/sshd /state && \\
     chown -R coder:coder /workspace /state && \\
@@ -289,6 +311,9 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 	},
 	tools: { elevated: { enabled: false } },
 	plugins: {
+		load: {
+			paths: [defaultOpenClawExtensionsPath],
+		},
 		entries: {
 			gondolin: {
 				enabled: true,
@@ -424,6 +449,12 @@ async function scaffoldAgentVmProjectInternal(
 	(gatewayBuildConfigStatus === 'created' ? created : skipped).push(
 		'images/gateway/build-config.json',
 	);
+	if (gatewayType === 'openclaw') {
+		const pluginCopyStatus = await (
+			dependencies.copyBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle
+		)(options.targetDir);
+		(pluginCopyStatus === 'created' ? created : skipped).push(openClawPluginVendorDirectory);
+	}
 
 	const toolDockerfilePath = path.join(options.targetDir, 'images', 'tool', 'Dockerfile');
 	const toolDockerfileStatus = await writeFileIfMissing(toolDockerfilePath, defaultToolDockerfile);

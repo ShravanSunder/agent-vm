@@ -35,6 +35,7 @@ Thumbs.db
 .env.local
 .env.*.local
 .dev.vars
+system.json
 
 # Test / Coverage
 .coverage
@@ -55,6 +56,8 @@ npm-debug.log*
 # Generated
 *.gen.ts
 __generated__/
+images/gateway/vendor/
+config/**
 
 # Secrets (never commit)
 *.pem

@@ -92,6 +92,9 @@ describe('production config artifacts', () => {
 				},
 			},
 			plugins: {
+				load: {
+					paths: ['/home/openclaw/.openclaw/extensions'],
+				},
 				entries: {
 					gondolin: {
 						config: {
@@ -103,5 +106,8 @@ describe('production config artifacts', () => {
 				},
 			},
 		});
+		expect(
+			fs.readFileSync(path.join(repoRoot, 'images', 'gateway', 'Dockerfile'), 'utf8'),
+		).toContain('COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin');
 	});
 });

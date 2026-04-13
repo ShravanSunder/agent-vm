@@ -120,7 +120,7 @@ describe('createGatewayWebSocketClient', () => {
 			connectOptions: {
 				token: 'test-token',
 				clientId: 'agent-vm-test',
-				clientVersion: '0.1.0',
+				clientVersion: '0.0.1',
 			},
 		});
 

@@ -1,4 +1,4 @@
-import type { SecretResolver } from 'gondolin-core';
+import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
 
 import type { GatewayProcessSpec } from './gateway-process-spec.js';
 import type { GatewayVmSpec } from './gateway-vm-spec.js';

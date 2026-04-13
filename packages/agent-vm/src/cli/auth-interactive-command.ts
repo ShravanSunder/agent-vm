@@ -1,5 +1,5 @@
+import type { GatewayAuthConfig } from '@shravansunder/agent-vm-gateway-interface';
 import { execa } from 'execa';
-import type { GatewayAuthConfig } from 'gateway-interface';
 
 import type { SystemConfig } from '../config/system-config.js';
 import {
