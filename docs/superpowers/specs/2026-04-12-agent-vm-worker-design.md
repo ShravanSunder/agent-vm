@@ -376,6 +376,9 @@ packages/agent-vm-worker/
     ├── git/
     │   ├── git-operations.ts            ← commit, push, PR, branch, config
     │   └── git-operations.test.ts
+    ├── context/
+    │   ├── gather-context.ts            ← repo summary for planner (file tree, CLAUDE.md)
+    │   └── gather-context.test.ts
     ├── state/
     │   ├── task-state.ts                ← event-sourced state + hydration
     │   ├── task-state.test.ts
