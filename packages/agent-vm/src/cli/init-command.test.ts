@@ -146,6 +146,7 @@ describe('scaffoldAgentVmProject', () => {
 		await scaffoldAgentVmProject(
 			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
 			{
+				...noGeneratedAgeIdentityDependencies,
 				generateAgeIdentityKey: () => 'AGE-SECRET-KEY-1TESTVALUE',
 			},
 		);
@@ -160,6 +161,7 @@ describe('scaffoldAgentVmProject', () => {
 		await scaffoldAgentVmProject(
 			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
 			{
+				...noGeneratedAgeIdentityDependencies,
 				generateAgeIdentityKey: () => undefined,
 			},
 		);
