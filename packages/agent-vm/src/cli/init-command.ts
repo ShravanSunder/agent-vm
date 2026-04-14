@@ -3,11 +3,16 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 
+import { buildDefaultProjectNamespace } from '../runtime/project-namespace.js';
 import {
 	getKeychainTokenSource,
 	hasServiceAccountToken,
 	storeServiceAccountToken,
 } from './keychain-credential.js';
+import {
+	openClawPluginVendorDirectory,
+	syncBundledOpenClawPluginBundle,
+} from './openclaw-plugin-bundle.js';
 
 export interface ScaffoldAgentVmProjectOptions {
 	readonly gatewayType: GatewayType;
@@ -22,6 +27,7 @@ export interface ScaffoldAgentVmProjectResult {
 }
 
 interface ScaffoldAgentVmProjectDependencies {
+	readonly copyBundledOpenClawPlugin?: (targetDir: string) => Promise<'created' | 'skipped'>;
 	readonly generateAgeIdentityKey?: () => string | undefined;
 }
 
@@ -31,31 +37,36 @@ export interface PromptAndStoreTokenDependencies {
 	readonly createReadlineInterface?: () => readline.Interface;
 }
 
-export type GatewayType = 'coding' | 'openclaw';
+export type GatewayType = 'worker' | 'openclaw';
 
 const defaultGatewayIngressPort = 18791;
-
-function resolveGatewayConfigFileName(gatewayType: GatewayType): 'coding.json' | 'openclaw.json' {
-	return gatewayType === 'coding' ? 'coding.json' : 'openclaw.json';
+const defaultOpenClawExtensionsPath = '/home/openclaw/.openclaw/extensions';
+function resolveGatewayConfigFileName(gatewayType: GatewayType): 'worker.json' | 'openclaw.json' {
+	return gatewayType === 'worker' ? 'worker.json' : 'openclaw.json';
 }
 
-const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object => ({
+const defaultSystemConfig = (
+	zoneId: string,
+	gatewayType: GatewayType,
+	projectNamespace: string,
+): object => ({
 	host: {
 		controllerPort: 18800,
+		projectNamespace,
 		secretsProvider: {
 			type: '1password',
 			tokenSource: getKeychainTokenSource(),
 		},
 	},
-	cacheDir: './cache',
+	cacheDir: '../cache',
 	images: {
 		gateway: {
-			buildConfig: './images/gateway/build-config.json',
-			dockerfile: './images/gateway/Dockerfile',
+			buildConfig: '../images/gateway/build-config.json',
+			dockerfile: '../images/gateway/Dockerfile',
 		},
 		tool: {
-			buildConfig: './images/tool/build-config.json',
-			dockerfile: './images/tool/Dockerfile',
+			buildConfig: '../images/tool/build-config.json',
+			dockerfile: '../images/tool/Dockerfile',
 		},
 	},
 	zones: [
@@ -66,11 +77,11 @@ const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object =
 				memory: '2G',
 				cpus: 2,
 				port: defaultGatewayIngressPort,
-				gatewayConfig: `./config/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
-				stateDir: `./state/${zoneId}`,
-				workspaceDir: `./workspaces/${zoneId}`,
+				gatewayConfig: `./${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
+				stateDir: `../state/${zoneId}`,
+				workspaceDir: `../workspaces/${zoneId}`,
 			},
-			secrets: defaultSecretsForGatewayType(gatewayType),
+			secrets: defaultSecretsForGatewayType(zoneId, gatewayType),
 			allowedHosts: defaultAllowedHostsForGatewayType(gatewayType),
 			websocketBypass: defaultWebsocketBypassForGatewayType(gatewayType),
 			toolProfile: 'standard',
@@ -80,7 +91,7 @@ const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object =
 		standard: {
 			memory: '1G',
 			cpus: 1,
-			workspaceRoot: './workspaces/tools',
+			workspaceRoot: '../workspaces/tools',
 		},
 	},
 	tcpPool: {
@@ -89,15 +100,20 @@ const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object =
 	},
 });
 
-function defaultSecretsForGatewayType(gatewayType: GatewayType): Record<string, object> {
-	if (gatewayType === 'coding') {
+function defaultSecretsForGatewayType(
+	zoneId: string,
+	gatewayType: GatewayType,
+): Record<string, object> {
+	if (gatewayType === 'worker') {
 		return {
 			ANTHROPIC_API_KEY: {
+				ref: `op://agent-vm/${zoneId}-anthropic/credential`,
 				source: '1password',
 				hosts: ['api.anthropic.com'],
 				injection: 'http-mediation',
 			},
 			OPENAI_API_KEY: {
+				ref: `op://agent-vm/${zoneId}-openai/credential`,
 				source: '1password',
 				hosts: ['api.openai.com'],
 				injection: 'http-mediation',
@@ -107,15 +123,18 @@ function defaultSecretsForGatewayType(gatewayType: GatewayType): Record<string, 
 
 	return {
 		DISCORD_BOT_TOKEN: {
+			ref: `op://agent-vm/${zoneId}-discord/bot-token`,
 			source: '1password',
 			injection: 'env',
 		},
 		PERPLEXITY_API_KEY: {
+			ref: `op://agent-vm/${zoneId}-perplexity/credential`,
 			source: '1password',
 			hosts: ['api.perplexity.ai'],
 			injection: 'http-mediation',
 		},
 		OPENCLAW_GATEWAY_TOKEN: {
+			ref: `op://agent-vm/${zoneId}-gateway-auth/password`,
 			source: '1password',
 			injection: 'env',
 		},
@@ -123,7 +142,7 @@ function defaultSecretsForGatewayType(gatewayType: GatewayType): Record<string, 
 }
 
 function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): readonly string[] {
-	if (gatewayType === 'coding') {
+	if (gatewayType === 'worker') {
 		return [
 			'api.anthropic.com',
 			'api.openai.com',
@@ -145,7 +164,7 @@ function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): readonly s
 }
 
 function defaultWebsocketBypassForGatewayType(gatewayType: GatewayType): readonly string[] {
-	if (gatewayType === 'coding') {
+	if (gatewayType === 'worker') {
 		return [];
 	}
 
@@ -157,28 +176,19 @@ function defaultWebsocketBypassForGatewayType(gatewayType: GatewayType): readonl
 	];
 }
 
-function defaultEnvTemplateForGatewayType(gatewayType: GatewayType): string {
-	const header = `# agent-vm environment configuration
+function defaultEnvTemplateForGatewayType(_gatewayType: GatewayType): string {
+	return `# agent-vm environment configuration
 # 1Password token is stored in macOS Keychain by agent-vm init.
 # Only set this for CI or non-macOS environments:
 # OP_SERVICE_ACCOUNT_TOKEN=
-
-# === Secret References (1Password op:// URIs) ===
-`;
-	if (gatewayType === 'coding') {
-		return `${header}ANTHROPIC_API_KEY_REF=op://agent-vm/agent-anthropic/api-key
-OPENAI_API_KEY_REF=op://agent-vm/agent-openai/api-key
-`;
-	}
-
-	return `${header}DISCORD_BOT_TOKEN_REF=op://agent-vm/agent-discord-app/bot-token
-PERPLEXITY_API_KEY_REF=op://agent-vm/agent-perplexity/credential
-OPENCLAW_GATEWAY_TOKEN_REF=op://agent-vm/agent-shravan-claw-gateway/password
 `;
 }
 
 const defaultGatewayDockerfile = `FROM node:24-slim
 
+ENV PNPM_HOME=/pnpm
+ENV PATH=\${PNPM_HOME}:\${PATH}
+
 RUN apt-get update && \\
     apt-get install -y --no-install-recommends \\
       openssh-server \\
@@ -188,15 +198,26 @@ RUN apt-get update && \\
       python3 && \\
     rm -rf /var/lib/apt/lists/* && \\
     update-ca-certificates && \\
-    npm install -g openclaw@2026.4.2 && \\
+    corepack enable && \\
+    pnpm add -g openclaw@2026.4.2 && \\
+    OPENCLAW_PACKAGE_ROOT="$(pnpm root -g)/openclaw" && \\
+    (cd "$OPENCLAW_PACKAGE_ROOT" && node scripts/postinstall-bundled-plugins.mjs) && \\
+    mkdir -p /opt/openclaw-sdk && \\
+    ln -sf "$OPENCLAW_PACKAGE_ROOT/dist/plugin-sdk/sandbox.js" /opt/openclaw-sdk/sandbox.js && \\
+    printf '#!/bin/sh\\nexec /pnpm/openclaw "$@"\\n' > /usr/local/bin/openclaw && \\
+    chmod 755 /usr/local/bin/openclaw && \\
     useradd -m -s /bin/bash openclaw && \\
-    mkdir -p /home/openclaw/.openclaw /home/openclaw/workspace /run/sshd /root && \\
+    mkdir -p ${defaultOpenClawExtensionsPath} /home/openclaw/workspace /run/sshd /root && \\
     chown -R openclaw:openclaw /home/openclaw && \\
-    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true && \\
-    mkdir -p /usr/local/lib/node_modules/openclaw/dist/extensions/gondolin
+    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true
+
+COPY vendor/gondolin ${defaultOpenClawExtensionsPath}/gondolin
 `;
 
-const defaultCodingGatewayDockerfile = `FROM node:24-slim
+const defaultWorkerGatewayDockerfile = `FROM node:24-slim
+
+ENV PNPM_HOME=/pnpm
+ENV PATH=\${PNPM_HOME}:\${PATH}
 
 RUN apt-get update && \\
     apt-get install -y --no-install-recommends \\
@@ -207,7 +228,10 @@ RUN apt-get update && \\
       python3 && \\
     rm -rf /var/lib/apt/lists/* && \\
     update-ca-certificates && \\
-    npm install -g @openai/codex-cli && \\
+    corepack enable && \\
+    pnpm add -g @openai/codex-cli && \\
+    printf '#!/bin/sh\\nexec /pnpm/codex "$@"\\n' > /usr/local/bin/codex && \\
+    chmod 755 /usr/local/bin/codex && \\
     useradd -m -s /bin/bash coder && \\
     mkdir -p /workspace /run/sshd /state && \\
     chown -R coder:coder /workspace /state && \\
@@ -293,6 +317,9 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 	},
 	tools: { elevated: { enabled: false } },
 	plugins: {
+		load: {
+			paths: [defaultOpenClawExtensionsPath],
+		},
 		entries: {
 			gondolin: {
 				enabled: true,
@@ -306,10 +333,10 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 	channels: {},
 });
 
-const defaultCodingGatewayConfig = (): object => ({
+const defaultWorkerGatewayConfig = (): object => ({
 	agentTimeoutMs: 600_000,
 	branchPrefix: 'agent/',
-	commitCoAuthor: 'agent-vm-coding <noreply@agent-vm>',
+	commitCoAuthor: 'agent-vm-worker <noreply@agent-vm>',
 	idleTimeoutMs: 1_800_000,
 	lintCommand: 'pnpm lint',
 	maxRetries: 3,
@@ -353,13 +380,14 @@ async function scaffoldAgentVmProjectInternal(
 	const created: string[] = [];
 	const skipped: string[] = [];
 	const gatewayType = options.gatewayType;
+	const projectNamespace = await buildDefaultProjectNamespace(options.targetDir);
 
-	const systemConfigPath = path.join(options.targetDir, 'system.json');
+	const systemConfigPath = path.join(options.targetDir, 'config', 'system.json');
 	const systemConfigStatus = await writeFileIfMissing(
 		systemConfigPath,
-		`${JSON.stringify(defaultSystemConfig(options.zoneId, gatewayType), null, '\t')}\n`,
+		`${JSON.stringify(defaultSystemConfig(options.zoneId, gatewayType, projectNamespace), null, '\t')}\n`,
 	);
-	(systemConfigStatus === 'created' ? created : skipped).push('system.json');
+	(systemConfigStatus === 'created' ? created : skipped).push('config/system.json');
 
 	const envFilePath = path.join(options.targetDir, '.env.local');
 	const envFileStatus = await writeFileIfMissing(
@@ -399,7 +427,7 @@ async function scaffoldAgentVmProjectInternal(
 		`${JSON.stringify(
 			gatewayType === 'openclaw'
 				? defaultOpenClawConfig(options.zoneId, defaultGatewayIngressPort)
-				: defaultCodingGatewayConfig(),
+				: defaultWorkerGatewayConfig(),
 			null,
 			'\t',
 		)}\n`,
@@ -411,7 +439,7 @@ async function scaffoldAgentVmProjectInternal(
 	const gatewayDockerfilePath = path.join(options.targetDir, 'images', 'gateway', 'Dockerfile');
 	const gatewayDockerfileStatus = await writeFileIfMissing(
 		gatewayDockerfilePath,
-		gatewayType === 'openclaw' ? defaultGatewayDockerfile : defaultCodingGatewayDockerfile,
+		gatewayType === 'openclaw' ? defaultGatewayDockerfile : defaultWorkerGatewayDockerfile,
 	);
 	(gatewayDockerfileStatus === 'created' ? created : skipped).push('images/gateway/Dockerfile');
 
@@ -428,6 +456,12 @@ async function scaffoldAgentVmProjectInternal(
 	(gatewayBuildConfigStatus === 'created' ? created : skipped).push(
 		'images/gateway/build-config.json',
 	);
+	if (gatewayType === 'openclaw') {
+		const pluginCopyStatus = await (
+			dependencies.copyBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle
+		)(options.targetDir);
+		(pluginCopyStatus === 'created' ? created : skipped).push(openClawPluginVendorDirectory);
+	}
 
 	const toolDockerfilePath = path.join(options.targetDir, 'images', 'tool', 'Dockerfile');
 	const toolDockerfileStatus = await writeFileIfMissing(toolDockerfilePath, defaultToolDockerfile);
@@ -440,13 +474,15 @@ async function scaffoldAgentVmProjectInternal(
 	);
 	(toolBuildConfigStatus === 'created' ? created : skipped).push('images/tool/build-config.json');
 
-	for (const directoryPath of [
-		path.join(options.targetDir, 'state', options.zoneId),
-		path.join(options.targetDir, 'workspaces', options.zoneId),
-		path.join(options.targetDir, 'workspaces', 'tools'),
-	]) {
-		await fs.mkdir(directoryPath, { recursive: true });
-	}
+	await Promise.all(
+		[
+			path.join(options.targetDir, 'state', options.zoneId),
+			path.join(options.targetDir, 'workspaces', options.zoneId),
+			path.join(options.targetDir, 'workspaces', 'tools'),
+		].map(async (directoryPath) => {
+			await fs.mkdir(directoryPath, { recursive: true });
+		}),
+	);
 
 	return { created, keychainStored: false, skipped };
 }

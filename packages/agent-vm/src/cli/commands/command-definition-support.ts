@@ -12,8 +12,8 @@ export function createConfigOption() {
 		type: optional(string),
 		long: 'config',
 		short: 'c',
-		description: 'Path to system.json',
-		defaultValue: () => 'system.json',
+		description: 'Path to config/system.json',
+		defaultValue: () => 'config/system.json',
 	});
 }
 
@@ -58,7 +58,7 @@ export function loadSystemConfigFromOption(
 	configPath: string | undefined,
 	dependencies: Pick<CliDependencies, 'loadSystemConfig'>,
 ): Promise<SystemConfig> {
-	const resolvedConfigPath = configPath ?? 'system.json';
+	const resolvedConfigPath = configPath ?? 'config/system.json';
 	return dependencies.loadSystemConfig(resolvedConfigPath).catch((error: unknown) => {
 		if (error instanceof ZodError) {
 			throw new Error(formatZodError(`Invalid ${resolvedConfigPath} configuration:`, error), {
@@ -82,11 +82,11 @@ export function parseGatewayType(gatewayType: string | undefined): GatewayType {
 	if (gatewayType === 'openclaw') {
 		return gatewayType;
 	}
-	if (gatewayType === 'coding') {
+	if (gatewayType === 'worker') {
 		return gatewayType;
 	}
 
 	throw new Error(
-		`Gateway type is required. Expected 'openclaw' or 'coding'${gatewayType ? `, got '${gatewayType}'` : ''}.`,
+		`Gateway type is required. Expected 'openclaw' or 'worker'${gatewayType ? `, got '${gatewayType}'` : ''}.`,
 	);
 }

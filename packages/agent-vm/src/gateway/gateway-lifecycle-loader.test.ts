@@ -1,6 +1,6 @@
-import { openclawLifecycle } from 'openclaw-gateway';
+import { openclawLifecycle } from '@shravansunder/agent-vm-openclaw-gateway';
+import { workerLifecycle } from '@shravansunder/agent-vm-worker-gateway';
 import { describe, expect, it } from 'vitest';
-import { workerLifecycle } from 'worker-gateway';
 
 import { loadGatewayLifecycle } from './gateway-lifecycle-loader.js';
 
@@ -9,7 +9,7 @@ describe('loadGatewayLifecycle', () => {
 		expect(loadGatewayLifecycle('openclaw')).toBe(openclawLifecycle);
 	});
 
-	it('loads the worker lifecycle for coding zones', () => {
-		expect(loadGatewayLifecycle('coding')).toBe(workerLifecycle);
+	it('loads the worker lifecycle for worker zones', () => {
+		expect(loadGatewayLifecycle('worker')).toBe(workerLifecycle);
 	});
 });

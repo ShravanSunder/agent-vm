@@ -1,6 +1,7 @@
-import type { SecretResolver } from 'gondolin-core';
+import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
 
 import type { GatewayProcessSpec } from './gateway-process-spec.js';
+import type { GatewayType } from './gateway-runtime-contract.js';
 import type { GatewayVmSpec } from './gateway-vm-spec.js';
 
 /**
@@ -26,22 +27,21 @@ export interface GatewayAuthConfig {
  * Decoupled from SystemConfig — the controller maps into this shape.
  */
 export interface GatewayZoneConfig {
+	readonly authProfilesRef?: string | undefined;
 	readonly id: string;
 	readonly gateway: {
-		readonly type: 'openclaw' | 'coding';
+		readonly type: GatewayType;
 		readonly memory: string;
 		readonly cpus: number;
 		readonly port: number;
 		readonly gatewayConfig: string;
 		readonly stateDir: string;
 		readonly workspaceDir: string;
-		readonly authProfilesRef?: string | undefined;
 	};
 	readonly secrets: Record<
 		string,
 		{
-			readonly source: string;
-			readonly ref?: string | undefined;
+			readonly ref: string;
 			readonly injection: 'env' | 'http-mediation';
 			readonly hosts?: readonly string[] | undefined;
 		}
@@ -49,6 +49,17 @@ export interface GatewayZoneConfig {
 	readonly allowedHosts: readonly string[];
 	readonly websocketBypass: readonly string[];
 	readonly toolProfile: string;
+}
+
+export interface BuildGatewayVmSpecOptions {
+	readonly controllerPort: number;
+	readonly projectNamespace: string;
+	readonly resolvedSecrets: Record<string, string>;
+	readonly tcpPool: {
+		readonly basePort: number;
+		readonly size: number;
+	};
+	readonly zone: GatewayZoneConfig;
 }
 
 export interface GatewayLifecycle {
@@ -62,12 +73,7 @@ export interface GatewayLifecycle {
 	 * Build the full VM spec — everything Gondolin needs to create the VM.
 	 * Pure data assembly — no side effects.
 	 */
-	buildVmSpec(
-		zone: GatewayZoneConfig,
-		resolvedSecrets: Record<string, string>,
-		controllerPort: number,
-		tcpPool: { readonly basePort: number; readonly size: number },
-	): GatewayVmSpec;
+	buildVmSpec(options: BuildGatewayVmSpecOptions): GatewayVmSpec;
 
 	/**
 	 * Build the process spec — everything about startup, health, and logging.

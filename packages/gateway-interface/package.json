@@ -1,7 +1,9 @@
 {
-	"name": "gateway-interface",
-	"version": "0.1.0",
-	"private": true,
+	"name": "@shravansunder/agent-vm-gateway-interface",
+	"version": "0.0.1",
+	"files": [
+		"dist"
+	],
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -11,11 +13,15 @@
 			"import": "./dist/index.js"
 		}
 	},
+	"publishConfig": {
+		"access": "public"
+	},
 	"scripts": {
-		"build": "tsc -p tsconfig.build.json",
+		"build": "tsdown",
+		"prepack": "pnpm -C ../.. build",
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"gondolin-core": "workspace:*"
+		"@shravansunder/agent-vm-gondolin-core": "workspace:*"
 	}
 }

@@ -1,73 +1,166 @@
-import type { BuildConfig, BuildImageResult, ManagedVm, SecretResolver } from 'gondolin-core';
-import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import type {
+	BuildConfig,
+	BuildImageResult,
+	ManagedVm,
+	ManagedVmInstance,
+	SecretResolver,
+} from '@shravansunder/agent-vm-gondolin-core';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
 import { startGatewayZone } from './gateway-zone-orchestrator.js';
 
-const systemConfig = {
-	cacheDir: '/cache',
-	host: {
-		controllerPort: 18800,
-		secretsProvider: {
-			type: '1password',
-			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
-		},
-	},
-	images: {
-		gateway: {
-			buildConfig: './images/gateway/build-config.json',
-		},
-		tool: {
-			buildConfig: './images/tool/build-config.json',
-		},
-	},
-	zones: [
-		{
-			id: 'shravan',
+const createdDirectories: string[] = [];
+
+afterEach(() => {
+	for (const directoryPath of createdDirectories.splice(0)) {
+		fs.rmSync(directoryPath, { recursive: true, force: true });
+	}
+});
+
+function createGatewayConfigPath(): string {
+	const workingDirectoryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-gateway-zone-'));
+	createdDirectories.push(workingDirectoryPath);
+	const configDirectory = path.join(workingDirectoryPath, 'config', 'shravan');
+	fs.mkdirSync(configDirectory, { recursive: true });
+	const configPath = path.join(configDirectory, 'openclaw.json');
+	fs.writeFileSync(
+		configPath,
+		JSON.stringify({
 			gateway: {
-				type: 'openclaw',
-				memory: '2G',
-				cpus: 2,
-				port: 18791,
-				gatewayConfig: './config/shravan/openclaw.json',
-				stateDir: './state/shravan',
-				workspaceDir: './workspaces/shravan',
-			},
-			secrets: {
-				PERPLEXITY_API_KEY: {
-					source: '1password',
-					ref: 'op://agent-vm/agent-perplexity/credential',
-					injection: 'http-mediation',
-					hosts: ['api.perplexity.ai'],
-				},
-				DISCORD_BOT_TOKEN: {
-					source: '1password',
-					ref: 'op://agent-vm/agent-discord-app/bot-token',
-					injection: 'env',
+				auth: { mode: 'token' },
+				bind: 'loopback',
+				controlUi: {
+					allowedOrigins: ['http://127.0.0.1:18791', 'http://localhost:18791'],
 				},
 			},
-			allowedHosts: ['api.anthropic.com', 'api.openai.com', 'api.perplexity.ai'],
-			websocketBypass: ['gateway.discord.gg:443'],
-			toolProfile: 'standard',
+		}),
+		'utf8',
+	);
+	return configPath;
+}
+
+function createSystemConfig(): SystemConfig {
+	return {
+		cacheDir: '/cache',
+		host: {
+			controllerPort: 18800,
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			secretsProvider: {
+				type: '1password',
+				tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
+			},
 		},
-	],
-	toolProfiles: {
-		standard: {
-			memory: '1G',
-			cpus: 1,
-			workspaceRoot: './workspaces/tools',
+		images: {
+			gateway: {
+				buildConfig: './images/gateway/build-config.json',
+			},
+			tool: {
+				buildConfig: './images/tool/build-config.json',
+			},
 		},
-	},
-	tcpPool: {
-		basePort: 19000,
-		size: 5,
-	},
-} satisfies SystemConfig;
+		zones: [
+			{
+				id: 'shravan',
+				gateway: {
+					type: 'openclaw',
+					memory: '2G',
+					cpus: 2,
+					port: 18791,
+					gatewayConfig: createGatewayConfigPath(),
+					stateDir: '../state/shravan',
+					workspaceDir: '../workspaces/shravan',
+				},
+				secrets: {
+					PERPLEXITY_API_KEY: {
+						source: '1password',
+						ref: 'op://agent-vm/shravan-perplexity/credential',
+						injection: 'http-mediation',
+						hosts: ['api.perplexity.ai'],
+					},
+					DISCORD_BOT_TOKEN: {
+						source: '1password',
+						ref: 'op://agent-vm/shravan-discord/bot-token',
+						injection: 'env',
+					},
+					OPENCLAW_GATEWAY_TOKEN: {
+						source: '1password',
+						ref: 'op://agent-vm/shravan-gateway-auth/password',
+						injection: 'env',
+					},
+				},
+				allowedHosts: ['api.anthropic.com', 'api.openai.com', 'api.perplexity.ai'],
+				websocketBypass: ['gateway.discord.gg:443'],
+				toolProfile: 'standard',
+			},
+		],
+		toolProfiles: {
+			standard: {
+				memory: '1G',
+				cpus: 1,
+				workspaceRoot: './workspaces/tools',
+			},
+		},
+		tcpPool: {
+			basePort: 19000,
+			size: 5,
+		},
+	} satisfies SystemConfig;
+}
 
 const minimalBuildConfig: BuildConfig = {
 	arch: 'aarch64',
 	distro: 'alpine',
 };
+
+function createVmInstanceStub(pid: number = 28282): ManagedVmInstance {
+	return {
+		close: async () => {},
+		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+		enableSsh: async () => ({
+			command: 'ssh ...',
+			host: '127.0.0.1',
+			identityFile: '/tmp/key',
+			port: 19000,
+			user: 'sandbox',
+		}),
+		exec: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+		id: `vm-instance-${pid}`,
+		server: {
+			controller: {
+				child: {
+					pid,
+				},
+			},
+		},
+		setIngressRoutes: () => {},
+	} as ManagedVmInstance;
+}
+
+function createOpenClawSecretResolver(resolvedSecrets: Record<string, string>): SecretResolver {
+	return {
+		resolve: async (secretRef): Promise<string> => {
+			if (secretRef.ref === 'op://agent-vm/shravan-discord/bot-token') {
+				return resolvedSecrets.DISCORD_BOT_TOKEN ?? 'resolved-discord-token';
+			}
+
+			if (secretRef.ref === 'op://agent-vm/shravan-perplexity/credential') {
+				return resolvedSecrets.PERPLEXITY_API_KEY ?? 'resolved-perplexity-key';
+			}
+
+			if (secretRef.ref === 'op://agent-vm/shravan-gateway-auth/password') {
+				return resolvedSecrets.OPENCLAW_GATEWAY_TOKEN ?? 'resolved-gateway-token';
+			}
+
+			throw new Error(`Unexpected secret ref: ${secretRef.ref}`);
+		},
+		resolveAll: async () => resolvedSecrets,
+	};
+}
 
 describe('startGatewayZone', () => {
 	it('builds the image, resolves secrets, creates the vm, and enables ingress', async () => {
@@ -87,18 +180,14 @@ describe('startGatewayZone', () => {
 			enableIngress: enableIngressMock,
 			enableSsh: enableSshMock,
 			exec: execMock,
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28282)),
 			setIngressRoutes: setIngressRoutesMock,
 		};
-		const secretResolver: SecretResolver = {
-			resolve: async (): Promise<string> => {
-				throw new Error('resolve is not used by this test');
-			},
-			resolveAll: async () => ({
-				PERPLEXITY_API_KEY: 'resolved-key',
-				DISCORD_BOT_TOKEN: 'resolved-key',
-			}),
-		};
+		const secretResolver = createOpenClawSecretResolver({
+			PERPLEXITY_API_KEY: 'resolved-key',
+			DISCORD_BOT_TOKEN: 'resolved-key',
+			OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+		});
 		const buildImage = vi.fn(
 			async (_options: unknown): Promise<BuildImageResult> => ({
 				built: true,
@@ -123,7 +212,7 @@ describe('startGatewayZone', () => {
 					await fn();
 				},
 				secretResolver,
-				systemConfig,
+				systemConfig: createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -143,13 +232,14 @@ describe('startGatewayZone', () => {
 					HOME: '/home/openclaw',
 					NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
 					OPENCLAW_HOME: '/home/openclaw',
-					OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/config/openclaw.json',
+					OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/state/effective-openclaw.json',
 					OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
 					DISCORD_BOT_TOKEN: 'resolved-key',
 				}),
 				imagePath: '/tmp/gateway-image',
 				memory: '2G',
 				rootfsMode: 'cow',
+				sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 				secrets: {
 					PERPLEXITY_API_KEY: {
 						hosts: ['api.perplexity.ai'],
@@ -176,6 +266,7 @@ describe('startGatewayZone', () => {
 			listenPort: 18791,
 		});
 		expect(taskTitles).toEqual([
+			'Cleaning orphaned gateway runtime',
 			'Resolving zone secrets',
 			'Building gateway image',
 			'Preparing host state',
@@ -183,6 +274,7 @@ describe('startGatewayZone', () => {
 			'Configuring gateway',
 			'Starting gateway',
 			'Waiting for readiness',
+			'Recording gateway runtime',
 		]);
 		expect(result).toMatchObject({
 			image: {
@@ -212,7 +304,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					secretResolver,
-					systemConfig,
+					systemConfig: createSystemConfig(),
 					zoneId: 'does-not-exist',
 				},
 				{
@@ -224,29 +316,50 @@ describe('startGatewayZone', () => {
 		).rejects.toThrow("Unknown zone 'does-not-exist'.");
 	});
 
-	it('throws a clear error for coding gateways until that runtime is implemented', async () => {
-		const secretResolver: SecretResolver = {
-			resolve: async (): Promise<string> => {
-				throw new Error('not used');
-			},
-			resolveAll: async () => ({}),
-		};
-		const codingSystemConfig: SystemConfig = {
+	it('throws a clear error for worker gateways until that runtime is implemented', async () => {
+		const systemConfig = createSystemConfig();
+		const workerSystemConfig: SystemConfig = {
 			...systemConfig,
 			zones: systemConfig.zones.map((zone) => ({
 				...zone,
 				gateway: {
 					...zone.gateway,
-					type: 'coding',
+					type: 'worker',
+				},
+				secrets: {
+					ANTHROPIC_API_KEY: {
+						source: '1password',
+						ref: 'op://agent-vm/shravan-anthropic/credential',
+						injection: 'http-mediation',
+						hosts: ['api.anthropic.com'],
+					},
+					OPENAI_API_KEY: {
+						source: '1password',
+						ref: 'op://agent-vm/shravan-openai/credential',
+						injection: 'http-mediation',
+						hosts: ['api.openai.com'],
+					},
 				},
 			})),
+		};
+		const secretResolver: SecretResolver = {
+			resolve: async (secretRef): Promise<string> => {
+				if (secretRef.ref === 'op://agent-vm/shravan-anthropic/credential') {
+					return 'anthropic-key';
+				}
+				if (secretRef.ref === 'op://agent-vm/shravan-openai/credential') {
+					return 'openai-key';
+				}
+				throw new Error(`Unexpected secret ref: ${secretRef.ref}`);
+			},
+			resolveAll: async () => ({}),
 		};
 
 		await expect(
 			startGatewayZone(
 				{
 					secretResolver,
-					systemConfig: codingSystemConfig,
+					systemConfig: workerSystemConfig,
 					zoneId: 'shravan',
 				},
 				{
@@ -269,24 +382,20 @@ describe('startGatewayZone', () => {
 			enableIngress: enableIngressMock,
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28283)),
 			setIngressRoutes: setIngressRoutesMock,
 		};
-		const secretResolver: SecretResolver = {
-			resolve: async (): Promise<string> => {
-				throw new Error('not used');
-			},
-			resolveAll: async () => ({
-				PERPLEXITY_API_KEY: 'pplx-key',
-				DISCORD_BOT_TOKEN: 'discord-token',
-			}),
-		};
+		const secretResolver = createOpenClawSecretResolver({
+			PERPLEXITY_API_KEY: 'pplx-key',
+			DISCORD_BOT_TOKEN: 'discord-token',
+			OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+		});
 		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
 
 		await startGatewayZone(
 			{
 				secretResolver,
-				systemConfig,
+				systemConfig: createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -333,22 +442,18 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
 			setIngressRoutes: vi.fn(),
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28284)),
 		};
 		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
 
 		await startGatewayZone(
 			{
-				secretResolver: {
-					resolve: async (): Promise<string> => {
-						throw new Error('not used');
-					},
-					resolveAll: async () => ({
-						PERPLEXITY_API_KEY: 'key',
-						DISCORD_BOT_TOKEN: 'token',
-					}),
-				},
-				systemConfig,
+				secretResolver: createOpenClawSecretResolver({
+					PERPLEXITY_API_KEY: 'key',
+					DISCORD_BOT_TOKEN: 'token',
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig: createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -386,19 +491,16 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(async () => ({ exitCode: 0, stdout: '000', stderr: '' })),
 			setIngressRoutes: vi.fn(),
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28285)),
 		};
 
 		await expect(
 			startGatewayZone(
 				{
-					secretResolver: {
-						resolve: async (): Promise<string> => {
-							throw new Error('not used');
-						},
-						resolveAll: async () => ({}),
-					},
-					systemConfig,
+					secretResolver: createOpenClawSecretResolver({
+						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					}),
+					systemConfig: createSystemConfig(),
 					zoneId: 'shravan',
 				},
 				{
@@ -429,19 +531,16 @@ describe('startGatewayZone', () => {
 				.mockResolvedValueOnce({ exitCode: 0, stdout: '500', stderr: '' })
 				.mockResolvedValue({ exitCode: 0, stdout: '500', stderr: '' }),
 			setIngressRoutes: vi.fn(),
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28286)),
 		};
 
 		await expect(
 			startGatewayZone(
 				{
-					secretResolver: {
-						resolve: async (): Promise<string> => {
-							throw new Error('not used');
-						},
-						resolveAll: async () => ({}),
-					},
-					systemConfig,
+					secretResolver: createOpenClawSecretResolver({
+						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					}),
+					systemConfig: createSystemConfig(),
 					zoneId: 'shravan',
 				},
 				{
@@ -470,18 +569,15 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
 			setIngressRoutes: vi.fn(),
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28287)),
 		};
 
 		const result = await startGatewayZone(
 			{
-				secretResolver: {
-					resolve: async (): Promise<string> => {
-						throw new Error('not used');
-					},
-					resolveAll: async () => ({}),
-				},
-				systemConfig,
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig: createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -505,7 +601,7 @@ describe('startGatewayZone', () => {
 						environment: {},
 						mediatedSecrets: {},
 						rootfsMode: 'cow' as const,
-						sessionLabel: 'worker-session',
+						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 						tcpHosts: {},
 						vfsMounts: {},
 					}),
@@ -537,18 +633,15 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
 			setIngressRoutes: vi.fn(),
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28288)),
 		};
 
 		await startGatewayZone(
 			{
-				secretResolver: {
-					resolve: async (): Promise<string> => {
-						throw new Error('not used');
-					},
-					resolveAll: async () => ({}),
-				},
-				systemConfig,
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig: createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -573,7 +666,7 @@ describe('startGatewayZone', () => {
 		expect(healthProbeCount).toBe(2);
 	});
 
-	it('writes the resolved gateway token to a root-only env file', async () => {
+	it('configures the gateway to use the generated effective OpenClaw config path', async () => {
 		const execMock = vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' }));
 		const managedVm: ManagedVm = {
 			id: 'vm-token',
@@ -582,22 +675,17 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
 			setIngressRoutes: vi.fn(),
-			getVmInstance: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28289)),
 		};
 
 		await startGatewayZone(
 			{
-				secretResolver: {
-					resolve: async (): Promise<string> => {
-						throw new Error('not used');
-					},
-					resolveAll: async () => ({
-						DISCORD_BOT_TOKEN: 'discord-token',
-						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
-						PERPLEXITY_API_KEY: 'pplx-key',
-					}),
-				},
-				systemConfig,
+				secretResolver: createOpenClawSecretResolver({
+					DISCORD_BOT_TOKEN: 'discord-token',
+					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+					PERPLEXITY_API_KEY: 'pplx-key',
+				}),
+				systemConfig: createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -612,12 +700,57 @@ describe('startGatewayZone', () => {
 		);
 
 		expect(execMock).toHaveBeenCalledWith(
-			expect.stringContaining('cat > /root/.openclaw-env << ENVEOF'),
+			expect.stringContaining('cat > /etc/profile.d/openclaw-env.sh << ENVEOF'),
 		);
-		expect(execMock).toHaveBeenCalledWith(expect.stringContaining('chmod 600 /root/.openclaw-env'));
-		expect(execMock).toHaveBeenCalledWith(expect.stringContaining('source /root/.openclaw-env'));
 		expect(execMock).toHaveBeenCalledWith(
-			expect.stringContaining("export OPENCLAW_GATEWAY_TOKEN='gateway-token-123'"),
+			expect.stringContaining('chmod 644 /etc/profile.d/openclaw-env.sh'),
 		);
+		expect(execMock).toHaveBeenCalledWith(expect.stringContaining('source /root/.bashrc'));
+		expect(execMock).toHaveBeenCalledWith(
+			expect.stringContaining(
+				'export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json',
+			),
+		);
+	});
+
+	it('closes the booted gateway VM if writing the runtime record fails', async () => {
+		const closeMock = vi.fn(async () => {});
+		const managedVm: ManagedVm = {
+			id: 'vm-record-fail',
+			close: closeMock,
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28290)),
+		};
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						PERPLEXITY_API_KEY: 'pplx-key',
+					}),
+					systemConfig: createSystemConfig(),
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					createManagedVm: vi.fn(async () => managedVm),
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					writeGatewayRuntimeRecord: vi.fn(async () => {
+						throw new Error('disk full');
+					}),
+				},
+			),
+		).rejects.toThrow(/disk full/u);
+
+		expect(closeMock).toHaveBeenCalledTimes(1);
 	});
 });

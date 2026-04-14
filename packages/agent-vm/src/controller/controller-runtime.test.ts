@@ -7,6 +7,7 @@ const systemConfig = {
 	cacheDir: './cache',
 	host: {
 		controllerPort: 18800,
+		projectNamespace: 'claw-tests-a1b2c3d4',
 		secretsProvider: {
 			type: '1password',
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -67,6 +68,7 @@ describe('startControllerRuntime', () => {
 		if (!zone) {
 			throw new Error('Expected test zone.');
 		}
+		const closeGatewayVm = vi.fn(async () => {});
 		const startGatewayZone = vi.fn(async () => ({
 			image: {
 				built: true,
@@ -79,7 +81,7 @@ describe('startControllerRuntime', () => {
 			},
 			processSpec: openClawProcessSpec,
 			vm: {
-				close: vi.fn(async () => {}),
+				close: closeGatewayVm,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 				enableSsh: vi.fn(async () => ({
 					command: 'ssh ...',
@@ -189,6 +191,8 @@ describe('startControllerRuntime', () => {
 		});
 		expect(upgradeResponse.status).toBe(200);
 		expect(startGatewayZone).toHaveBeenCalledTimes(3);
+		expect(zone.gateway.port).toBe(18791);
+		expect(closeGatewayVm).toHaveBeenCalledTimes(2);
 		expect(setIntervalMock).toHaveBeenCalledTimes(1);
 		expect(runtime.controllerPort).toBe(18800);
 		expect(runtime.gateway.vm.id).toBe('gateway-vm-1');
@@ -236,6 +240,93 @@ describe('startControllerRuntime', () => {
 		).rejects.toThrow('gateway boot failed');
 
 		expect(startHttpServer).not.toHaveBeenCalled();
+	});
+
+	it('deletes the runtime record on close after the gateway stops', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone.');
+		}
+		const callOrder: string[] = [];
+		const deleteGatewayRuntimeRecord = vi.fn(async () => {
+			callOrder.push('delete-record');
+		});
+		const closeGatewayVm = vi.fn(async () => {
+			callOrder.push('close-gateway');
+		});
+		const startGatewayZone = vi.fn(async () => {
+			callOrder.push('start-gateway');
+			return {
+				image: {
+					built: true,
+					fingerprint: 'gateway-image',
+					imagePath: '/tmp/gateway-image',
+				},
+				ingress: {
+					host: '127.0.0.1',
+					port: 18791,
+				},
+				processSpec: openClawProcessSpec,
+				vm: {
+					close: closeGatewayVm,
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+					id: 'gateway-vm-cleanup-test',
+					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
+				},
+				zone,
+			};
+		});
+
+		const runtime = await startControllerRuntime(
+			{
+				systemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				createManagedToolVm: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+					id: 'tool-vm-cleanup-test',
+					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
+				})),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				deleteGatewayRuntimeRecord,
+				startGatewayZone,
+				startHttpServer: vi.fn(async () => ({
+					close: async () => {},
+				})),
+			},
+		);
+
+		expect(callOrder).toEqual(['start-gateway']);
+
+		await runtime.close();
+
+		expect(closeGatewayVm).toHaveBeenCalledTimes(1);
+		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledWith(zone.gateway.stateDir);
+		expect(callOrder.slice(-2)).toEqual(['close-gateway', 'delete-record']);
 	});
 
 	it('releases active leases when runtime.close is called', async () => {
@@ -335,6 +426,79 @@ describe('startControllerRuntime', () => {
 		await runtime.close();
 
 		expect(toolVmClose).toHaveBeenCalledTimes(1);
+	});
+
+	it('surfaces runtime record deletion failures during shutdown', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone.');
+		}
+		const closeGatewayVm = vi.fn(async () => {});
+
+		const runtime = await startControllerRuntime(
+			{
+				systemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				createManagedToolVm: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+					id: 'tool-vm-clean',
+					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
+				})),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				deleteGatewayRuntimeRecord: async () => {
+					throw new Error('permission denied');
+				},
+				startGatewayZone: vi.fn(async () => ({
+					image: {
+						built: true,
+						fingerprint: 'gateway-image',
+						imagePath: '/tmp/gateway-image',
+					},
+					ingress: {
+						host: '127.0.0.1',
+						port: 18791,
+					},
+					processSpec: openClawProcessSpec,
+					vm: {
+						close: closeGatewayVm,
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({
+							command: 'ssh ...',
+							host: '127.0.0.1',
+							port: 19000,
+							user: 'sandbox',
+						})),
+						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+						id: 'gateway-vm-clean',
+						setIngressRoutes: vi.fn(),
+						getVmInstance: vi.fn(),
+					},
+					zone,
+				})),
+				startHttpServer: vi.fn(async () => ({
+					close: async () => {},
+				})),
+			},
+		);
+
+		await expect(runtime.close()).rejects.toThrow('permission denied');
+		expect(closeGatewayVm).toHaveBeenCalledTimes(1);
 	});
 
 	it('still closes the HTTP server when gateway restart fails before runtime.close', async () => {

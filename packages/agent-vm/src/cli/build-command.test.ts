@@ -26,6 +26,7 @@ function createTestSystemConfig(): SystemConfig {
 		cacheDir: '/cache',
 		host: {
 			controllerPort: 18800,
+			projectNamespace: 'claw-tests-a1b2c3d4',
 			secretsProvider: { type: '1password', tokenSource: { type: 'env' } },
 		},
 		images: {
@@ -62,9 +63,15 @@ function createTestSystemConfig(): SystemConfig {
 	};
 }
 
+const noOpPluginSync: NonNullable<
+	BuildCommandDependencies['syncBundledOpenClawPlugin']
+> = async () => 'created';
+
 describe('runBuildCommand', () => {
 	it('builds Docker image when dockerfile is configured', async () => {
 		const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
+		const pluginSyncs: string[] = [];
+		const resolvedProjectRoots: string[] = [];
 		const dependencies: BuildCommandDependencies = {
 			runTask: async (_title, fn) => fn(),
 			buildDockerImage: async (options) => {
@@ -75,7 +82,15 @@ describe('runBuildCommand', () => {
 				fingerprint: 'abc123',
 				imagePath: '/cache/abc123',
 			}),
+			resolveProjectRootFromDockerfile: async (dockerfilePath) => {
+				resolvedProjectRoots.push(dockerfilePath);
+				return '/project';
+			},
 			resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+			syncBundledOpenClawPlugin: async (targetDir) => {
+				pluginSyncs.push(targetDir);
+				return 'created';
+			},
 		};
 
 		await runBuildCommand({ systemConfig: createTestSystemConfig() }, dependencies);
@@ -83,6 +98,58 @@ describe('runBuildCommand', () => {
 		expect(dockerBuilds).toHaveLength(1);
 		expect(dockerBuilds[0]?.dockerfilePath).toBe('/project/images/gateway/Dockerfile');
 		expect(dockerBuilds[0]?.imageTag).toBe('agent-vm-gateway:latest');
+		expect(resolvedProjectRoots).toEqual(['/project/images/gateway/Dockerfile']);
+		expect(pluginSyncs).toEqual(['/project']);
+	});
+
+	it('finds the scaffold root by walking up to config/system.json instead of assuming dockerfile depth', async () => {
+		const projectRootDirectory = createTemporaryDirectory();
+		const dockerfileDirectory = path.join(projectRootDirectory, 'nested', 'images', 'gateway');
+		const dockerfilePath = path.join(dockerfileDirectory, 'Dockerfile');
+		const buildConfigPath = path.join(dockerfileDirectory, 'build-config.json');
+		fs.mkdirSync(path.join(projectRootDirectory, 'config'), { recursive: true });
+		fs.mkdirSync(dockerfileDirectory, { recursive: true });
+		fs.writeFileSync(path.join(projectRootDirectory, 'config', 'system.json'), '{}\n');
+		fs.writeFileSync(dockerfilePath, 'FROM scratch\n');
+		fs.writeFileSync(
+			buildConfigPath,
+			JSON.stringify({ oci: { image: 'agent-vm-gateway:latest' } }),
+		);
+
+		const pluginSyncs: string[] = [];
+
+		await runBuildCommand(
+			{
+				systemConfig: {
+					...createTestSystemConfig(),
+					images: {
+						gateway: {
+							buildConfig: buildConfigPath,
+							dockerfile: dockerfilePath,
+						},
+						tool: {
+							buildConfig: '/project/images/tool/build-config.json',
+						},
+					},
+				},
+			},
+			{
+				runTask: async (_title, fn) => fn(),
+				buildDockerImage: async () => {},
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'abc123',
+					imagePath: '/cache/abc123',
+				}),
+				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+				syncBundledOpenClawPlugin: async (targetDir) => {
+					pluginSyncs.push(targetDir);
+					return 'created';
+				},
+			},
+		);
+
+		expect(pluginSyncs).toEqual([projectRootDirectory]);
 	});
 
 	it('skips Docker build when no dockerfile is configured', async () => {
@@ -98,11 +165,54 @@ describe('runBuildCommand', () => {
 				imagePath: '/cache/cached',
 			}),
 			resolveOciImageTag: async () => 'agent-vm-tool:latest',
+			syncBundledOpenClawPlugin: noOpPluginSync,
 		};
 
 		await runBuildCommand({ systemConfig: createTestSystemConfig() }, dependencies);
 
 		expect(dockerBuilds).toHaveLength(1);
+	});
+
+	it('does not sync the OpenClaw plugin bundle for worker-only projects', async () => {
+		const pluginSyncs: string[] = [];
+		const baseConfig = createTestSystemConfig();
+		const baseZone = baseConfig.zones[0];
+		if (!baseZone) {
+			throw new Error('Expected base test zone');
+		}
+
+		await runBuildCommand(
+			{
+				systemConfig: {
+					...baseConfig,
+					zones: [
+						{
+							...baseZone,
+							gateway: {
+								...baseZone.gateway,
+								type: 'worker',
+							},
+						},
+					],
+				},
+			},
+			{
+				buildDockerImage: async () => {},
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'abc123',
+					imagePath: '/cache/abc123',
+				}),
+				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+				runTask: async (_title, fn) => fn(),
+				syncBundledOpenClawPlugin: async (targetDir) => {
+					pluginSyncs.push(targetDir);
+					return 'created';
+				},
+			},
+		);
+
+		expect(pluginSyncs).toEqual([]);
 	});
 
 	it('builds shared Gondolin assets once per image type into the shared cache dir', async () => {
@@ -118,6 +228,7 @@ describe('runBuildCommand', () => {
 				return { built: true, fingerprint: 'f1', imagePath: '/cache/f1' };
 			},
 			resolveOciImageTag: async () => 'tag:latest',
+			syncBundledOpenClawPlugin: noOpPluginSync,
 		};
 
 		await runBuildCommand({ systemConfig: createTestSystemConfig() }, dependencies);
@@ -149,6 +260,7 @@ describe('runBuildCommand', () => {
 				},
 				resolveOciImageTag: async () => 'tag:latest',
 				runTask: async (_title, fn) => await fn(),
+				syncBundledOpenClawPlugin: noOpPluginSync,
 			},
 		);
 
@@ -194,6 +306,7 @@ describe('runBuildCommand', () => {
 				return { built: true, fingerprint: 'zone-fp', imagePath: '/cache/zone-fp' };
 			},
 			resolveOciImageTag: async () => 'tag:latest',
+			syncBundledOpenClawPlugin: noOpPluginSync,
 		};
 
 		await runBuildCommand({ systemConfig: multiZoneConfig }, dependencies);
@@ -228,6 +341,7 @@ describe('runBuildCommand', () => {
 					taskTitles.push(title);
 					await fn();
 				},
+				syncBundledOpenClawPlugin: noOpPluginSync,
 			},
 		);
 
@@ -278,6 +392,7 @@ describe('resolveOciImageTagFromConfig', () => {
 					imagePath: '/cache/fp',
 				}),
 				runTask: async (_title, fn) => fn(),
+				syncBundledOpenClawPlugin: noOpPluginSync,
 			},
 		);
 
@@ -311,6 +426,7 @@ describe('resolveOciImageTagFromConfig', () => {
 						imagePath: '/cache/fp',
 					}),
 					runTask: async (_title, fn) => fn(),
+					syncBundledOpenClawPlugin: noOpPluginSync,
 				},
 			),
 		).rejects.toThrow(
@@ -356,6 +472,7 @@ describe('resolveOciImageTagFromConfig', () => {
 						imagePath: '/cache/fp',
 					}),
 					runTask: async (_title, fn) => fn(),
+					syncBundledOpenClawPlugin: noOpPluginSync,
 				},
 			),
 		).rejects.toThrow(
@@ -393,6 +510,7 @@ describe('resolveOciImageTagFromConfig', () => {
 						imagePath: '/cache/fp',
 					}),
 					runTask: async (_title, fn) => fn(),
+					syncBundledOpenClawPlugin: noOpPluginSync,
 				},
 			),
 		).rejects.toThrow();

@@ -29,6 +29,17 @@ export const zoneSshAccessResponseSchema = z
 
 export type ZoneSshAccessResponse = z.infer<typeof zoneSshAccessResponseSchema>;
 
+const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
+
+function shellQuote(value: string): string {
+	return `'${value.replace(/'/gu, `'\\''`)}'`;
+}
+
+function buildOpenClawAwareRemoteCommand(commandArguments: readonly string[]): string {
+	const quotedCommand = commandArguments.map((commandPart) => shellQuote(commandPart)).join(' ');
+	return `bash -lc ${shellQuote(`source ${openClawShellEnvFilePath} && exec ${quotedCommand}`)}`;
+}
+
 export async function runSshCommand(options: RunSshCommandOptions): Promise<void> {
 	const controllerClient = options.dependencies.createControllerClient({
 		baseUrl: resolveControllerBaseUrl(options.systemConfig),
@@ -70,7 +81,9 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 		'-p',
 		String(sshResponse.port),
 		`${sshResponse.user ?? 'root'}@${sshResponse.host}`,
-		...remoteCommandArguments,
+		...(remoteCommandArguments.length > 0
+			? [buildOpenClawAwareRemoteCommand(remoteCommandArguments)]
+			: []),
 	];
 	const runInteractiveProcess =
 		options.dependencies.runInteractiveProcess ??

@@ -1,5 +1,5 @@
-import type { GatewayProcessSpec } from 'gateway-interface';
-import type { SecretResolver } from 'gondolin-core';
+import type { GatewayProcessSpec } from '@shravansunder/agent-vm-gateway-interface';
+import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
 
 import type { SystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
@@ -106,21 +106,15 @@ export function createControllerRuntimeOperations(options: {
 		getStatus: async () => buildControllerStatus(options.systemConfig),
 		getZoneLogs: async (targetZoneId: string) => {
 			assertActiveZone(targetZoneId);
+			const gateway = options.getGateway();
 			return await runControllerLogs(
 				{
 					zoneId: targetZoneId,
 				},
 				{
-					readGatewayLogs: async () => {
-						try {
-							const result = await options
-								.getGateway()
-								.vm.exec(`cat ${options.getGateway().processSpec.logPath} 2>/dev/null || echo ""`);
-							return result.stdout;
-						} catch {
-							return '';
-						}
-					},
+					readGatewayLogs: async () =>
+						(await gateway.vm.exec(`cat ${gateway.processSpec.logPath} 2>/dev/null || echo ""`))
+							.stdout,
 				},
 			);
 		},
@@ -138,10 +132,7 @@ export function createControllerRuntimeOperations(options: {
 							zoneId,
 						});
 					},
-					restartGatewayZone: async () => {
-						await options.stopGatewayZone();
-						await options.restartGatewayZone();
-					},
+					restartGatewayZone: async () => await options.restartGatewayZone(),
 				},
 			);
 		},
@@ -155,7 +146,6 @@ export function createControllerRuntimeOperations(options: {
 				{
 					rebuildGatewayImage: async () => {},
 					restartGatewayZone: options.restartGatewayZone,
-					stopGatewayZone: options.stopGatewayZone,
 				},
 			);
 		},

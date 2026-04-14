@@ -1,11 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { gatewayTypeValues } from '@shravansunder/agent-vm-gateway-interface';
 import { z } from 'zod';
 
 const secretReferenceSchema = z.object({
 	source: z.literal('1password'),
-	ref: z.string().min(1).optional(),
+	ref: z.string().min(1),
 	injection: z.enum(['env', 'http-mediation']).default('env'),
 	hosts: z.array(z.string().min(1)).optional(),
 });
@@ -27,7 +28,7 @@ const tokenSourceSchema = z.discriminatedUnion('type', [
 ]);
 
 const zoneGatewaySchema = z.object({
-	type: z.enum(['openclaw', 'coding']).default('openclaw'),
+	type: z.enum(gatewayTypeValues).default('openclaw'),
 	memory: z.string().min(1),
 	cpus: z.number().int().positive(),
 	port: z.number().int().positive(),
@@ -48,37 +49,57 @@ const imageConfigSchema = z.object({
 	dockerfile: z.string().min(1).optional(),
 });
 
-const systemConfigSchema = z.object({
-	host: z.object({
-		controllerPort: z.number().int().positive(),
-		secretsProvider: z.object({
-			type: z.literal('1password'),
-			tokenSource: tokenSourceSchema,
-		}),
-	}),
-	cacheDir: z.string().min(1).default('./cache'),
-	images: z.object({
-		gateway: imageConfigSchema,
-		tool: imageConfigSchema,
-	}),
-	zones: z
-		.array(
-			z.object({
-				id: z.string().min(1),
-				gateway: zoneGatewaySchema,
-				secrets: z.record(z.string(), secretReferenceSchema),
-				allowedHosts: z.array(z.string().min(1)).min(1),
-				websocketBypass: z.array(z.string().min(1)).default([]),
-				toolProfile: z.string().min(1),
+const systemConfigSchema = z
+	.object({
+		host: z.object({
+			controllerPort: z.number().int().positive(),
+			projectNamespace: z
+				.string()
+				.min(1)
+				.regex(
+					/^[a-z0-9][a-z0-9-]*$/u,
+					'projectNamespace must use lowercase letters, numbers, and hyphens only',
+				),
+			secretsProvider: z.object({
+				type: z.literal('1password'),
+				tokenSource: tokenSourceSchema,
 			}),
-		)
-		.min(1, 'system config must define at least one zone'),
-	toolProfiles: z.record(z.string(), toolProfileSchema),
-	tcpPool: z.object({
-		basePort: z.number().int().positive(),
-		size: z.number().int().positive(),
-	}),
-});
+		}),
+		cacheDir: z.string().min(1).default('./cache'),
+		images: z.object({
+			gateway: imageConfigSchema,
+			tool: imageConfigSchema,
+		}),
+		zones: z
+			.array(
+				z.object({
+					id: z.string().min(1),
+					gateway: zoneGatewaySchema,
+					secrets: z.record(z.string(), secretReferenceSchema),
+					allowedHosts: z.array(z.string().min(1)).min(1),
+					websocketBypass: z.array(z.string().min(1)).default([]),
+					toolProfile: z.string().min(1),
+				}),
+			)
+			.min(1, 'system config must define at least one zone'),
+		toolProfiles: z.record(z.string(), toolProfileSchema),
+		tcpPool: z.object({
+			basePort: z.number().int().positive(),
+			size: z.number().int().positive(),
+		}),
+	})
+	.superRefine((config, context) => {
+		for (const [zoneIndex, zone] of config.zones.entries()) {
+			if (config.toolProfiles[zone.toolProfile]) {
+				continue;
+			}
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: `Zone '${zone.id}' references unknown toolProfile '${zone.toolProfile}'.`,
+				path: ['zones', zoneIndex, 'toolProfile'],
+			});
+		}
+	});
 
 export type SystemConfig = z.infer<typeof systemConfigSchema>;
 
@@ -131,7 +152,7 @@ export async function loadSystemConfig(configPath: string): Promise<SystemConfig
 	const absoluteConfigPath = path.resolve(configPath);
 	const configDir = path.dirname(absoluteConfigPath);
 	const rawConfig = await fs.readFile(absoluteConfigPath, 'utf8');
-	const parsedConfig = JSON.parse(rawConfig) as unknown;
+	const parsedConfig: unknown = JSON.parse(rawConfig);
 	const config = systemConfigSchema.parse(parsedConfig);
 	return resolveRelativePaths(config, configDir);
 }

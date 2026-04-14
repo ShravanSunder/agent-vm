@@ -1,4 +1,4 @@
-import type { ManagedVm } from 'gondolin-core';
+import type { ManagedVm } from '@shravansunder/agent-vm-gondolin-core';
 
 import type { TcpPool } from './tcp-pool.js';
 
@@ -128,9 +128,7 @@ export function createLeaseManager(options: {
 			try {
 				await lease.cleanWorkspace?.();
 			} catch (error) {
-				if (!releaseError) {
-					releaseError = error instanceof Error ? error : new Error(String(error));
-				}
+				releaseError ??= error instanceof Error ? error : new Error(String(error));
 			}
 
 			leases.delete(leaseId);

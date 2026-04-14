@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVm, ManagedVmInstance } from 'gondolin-core';
+import type { ManagedVm, ManagedVmInstance } from '@shravansunder/agent-vm-gondolin-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
@@ -17,6 +17,7 @@ function createSystemConfig(
 		cacheDir: path.join(path.dirname(stateDirectory), 'cache'),
 		host: {
 			controllerPort,
+			projectNamespace: 'claw-tests-a1b2c3d4',
 			secretsProvider: {
 				type: '1password',
 				tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },

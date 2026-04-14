@@ -1,3 +1,5 @@
+import net from 'node:net';
+
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 /**
@@ -10,7 +12,7 @@ import { Hono } from 'hono';
  * validated manually via scripts/live-sandbox-manual.mjs or by sending
  * a message through WhatsApp/Discord and checking controller logs.
  *
- * Run: pnpm vitest run packages/agent-vm/src/integration-tests/live-api-smoke.test.ts
+ * Run: pnpm vitest run packages/agent-vm/src/integration-tests/live-api-smoke.integration.test.ts
  */
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
@@ -18,9 +20,31 @@ import { createControllerApp } from '../controller/http/controller-http-routes.j
 import type { Lease } from '../controller/leases/lease-manager.js';
 import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
 
+async function findAvailablePort(): Promise<number> {
+	return await new Promise((resolve, reject) => {
+		const server = net.createServer();
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', () => {
+			const address = server.address();
+			if (!address || typeof address === 'string') {
+				server.close(() => reject(new Error('Failed to determine an available port.')));
+				return;
+			}
+			server.close((error) => {
+				if (error) {
+					reject(error);
+					return;
+				}
+				resolve(address.port);
+			});
+		});
+	});
+}
+
 describe('live smoke: API client → controller over real HTTP', () => {
 	let controllerServer: { close: (cb?: () => void) => void } | null = null;
 	let gatewayServer: { close: (cb?: () => void) => void } | null = null;
+	let activeGatewayPort: number | null = null;
 
 	afterAll(async () => {
 		if (controllerServer)
@@ -29,6 +53,10 @@ describe('live smoke: API client → controller over real HTTP', () => {
 	});
 
 	it('gateway API client talks to a real Hono HTTP server', async () => {
+		const gatewayPort = await findAvailablePort();
+		const controllerPort = await findAvailablePort();
+		activeGatewayPort = gatewayPort;
+
 		// --- Mock gateway that simulates OpenClaw's /tools/invoke and /readyz ---
 		const toolInvocations: unknown[] = [];
 		const gatewayApp = new Hono();
@@ -48,7 +76,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 			});
 		});
 
-		gatewayServer = serve({ fetch: gatewayApp.fetch, port: 18792 });
+		gatewayServer = serve({ fetch: gatewayApp.fetch, port: gatewayPort });
 
 		// --- Real controller lease API ---
 		const lease: Lease = {
@@ -91,11 +119,11 @@ describe('live smoke: API client → controller over real HTTP', () => {
 				releaseLease: vi.fn(async () => {}),
 			},
 		});
-		controllerServer = serve({ fetch: controllerApp.fetch, port: 18801 });
+		controllerServer = serve({ fetch: controllerApp.fetch, port: controllerPort });
 
 		// --- Exercise the gateway API client ---
 		const gatewayClient = createGatewayApiClient({
-			gatewayUrl: 'http://127.0.0.1:18792',
+			gatewayUrl: `http://127.0.0.1:${gatewayPort}`,
 			token: 'test-gateway-token',
 		});
 
@@ -114,7 +142,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 		expect(toolInvocations[0]).toMatchObject({ tool: 'shell', args: { command: 'echo hello' } });
 
 		// Verify controller lease API works over real HTTP
-		const leaseResponse = await fetch('http://127.0.0.1:18801/lease', {
+		const leaseResponse = await fetch(`http://127.0.0.1:${controllerPort}/lease`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
@@ -131,14 +159,18 @@ describe('live smoke: API client → controller over real HTTP', () => {
 		expect(createLease).toHaveBeenCalled();
 
 		// Verify lease list over real HTTP
-		const leasesResponse = await fetch('http://127.0.0.1:18801/leases');
+		const leasesResponse = await fetch(`http://127.0.0.1:${controllerPort}/leases`);
 		const leasesBody = (await leasesResponse.json()) as unknown[];
 		expect(leasesBody).toHaveLength(1);
 	});
 
 	it('gateway API client rejects unauthorized requests', async () => {
+		if (!gatewayServer || activeGatewayPort === null) {
+			throw new Error('Expected gateway server to be running from the previous test.');
+		}
+
 		const unauthorizedClient = createGatewayApiClient({
-			gatewayUrl: 'http://127.0.0.1:18792',
+			gatewayUrl: `http://127.0.0.1:${activeGatewayPort}`,
 			token: 'wrong-token',
 		});
 

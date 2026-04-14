@@ -1,17 +1,21 @@
 import type {
+	BuildGatewayVmSpecOptions,
 	GatewayLifecycle,
 	GatewayProcessSpec,
 	GatewayVmSpec,
-	GatewayZoneConfig,
-} from 'gateway-interface';
-import { splitResolvedGatewaySecrets } from 'gateway-interface';
+} from '@shravansunder/agent-vm-gateway-interface';
+import {
+	buildGatewaySessionLabel,
+	splitResolvedGatewaySecrets,
+} from '@shravansunder/agent-vm-gateway-interface';
 
 export const workerLifecycle: GatewayLifecycle = {
-	buildVmSpec(
-		zone: GatewayZoneConfig,
-		resolvedSecrets: Record<string, string>,
-		controllerPort: number,
-	): GatewayVmSpec {
+	buildVmSpec({
+		controllerPort,
+		projectNamespace,
+		resolvedSecrets,
+		zone,
+	}: BuildGatewayVmSpecOptions): GatewayVmSpec {
 		const { environmentSecrets, mediatedSecrets } = splitResolvedGatewaySecrets(
 			zone,
 			resolvedSecrets,
@@ -27,7 +31,7 @@ export const workerLifecycle: GatewayLifecycle = {
 			},
 			mediatedSecrets,
 			rootfsMode: 'cow',
-			sessionLabel: `${zone.id}-coding`,
+			sessionLabel: buildGatewaySessionLabel(projectNamespace, zone.id),
 			tcpHosts: {
 				'controller.vm.host:18800': `127.0.0.1:${controllerPort}`,
 			},

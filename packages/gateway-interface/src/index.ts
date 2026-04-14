@@ -1,4 +1,11 @@
+export {
+	buildGatewaySessionLabel,
+	buildToolSessionLabel,
+	gatewayTypeValues,
+} from './gateway-runtime-contract.js';
+export type { GatewayType } from './gateway-runtime-contract.js';
 export type {
+	BuildGatewayVmSpecOptions,
 	GatewayAuthConfig,
 	GatewayLifecycle,
 	GatewayZoneConfig,

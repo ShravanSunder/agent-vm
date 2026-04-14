@@ -65,6 +65,8 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 				return availableBinaries.has('op');
 			case 'keychain':
 				return availableBinaries.has('security');
+			default:
+				return false;
 		}
 	})();
 

@@ -8,9 +8,10 @@
 		"sourceMap": true,
 		"noEmit": false,
 		"paths": {
-			"gateway-interface": ["../gateway-interface/dist/index.d.ts"],
-			"openclaw-gateway": ["../openclaw-gateway/dist/index.d.ts"],
-			"worker-gateway": ["../worker-gateway/dist/index.d.ts"]
+			"@shravansunder/agent-vm-gateway-interface": ["../gateway-interface/dist/index.d.ts"],
+			"@shravansunder/agent-vm-gondolin-core": ["../gondolin-core/dist/index.d.ts"],
+			"@shravansunder/agent-vm-openclaw-gateway": ["../openclaw-gateway/dist/index.d.ts"],
+			"@shravansunder/agent-vm-worker-gateway": ["../worker-gateway/dist/index.d.ts"]
 		}
 	},
 	"exclude": ["src/**/*.test.ts"]

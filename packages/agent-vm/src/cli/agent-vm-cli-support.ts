@@ -1,5 +1,8 @@
-import type { SecretResolver } from 'gondolin-core';
-import { createOpCliSecretResolver, resolveServiceAccountToken } from 'gondolin-core';
+import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
+import {
+	createOpCliSecretResolver,
+	resolveServiceAccountToken,
+} from '@shravansunder/agent-vm-gondolin-core';
 
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';
@@ -25,6 +28,7 @@ export interface CliDependencies {
 	readonly createSecretResolver: typeof createOpCliSecretResolver;
 	readonly createZoneBackupManager: typeof createZoneBackupManager;
 	readonly getCurrentWorkingDirectory?: () => string;
+	readonly isGatewayImageCached?: (systemConfig: SystemConfig) => Promise<boolean>;
 	readonly loadSystemConfig: typeof loadSystemConfig;
 	readonly runBuildCommand?: typeof runBuildCommand;
 	readonly runCacheCommand?: typeof runCacheCommand;
@@ -95,9 +99,9 @@ export function writeJson(io: CliIo, value: unknown): void {
 export function resolveConfigPath(argv: readonly string[]): string {
 	const configFlagIndex = argv.indexOf('--config');
 	if (configFlagIndex >= 0) {
-		return argv[configFlagIndex + 1] ?? 'system.json';
+		return argv[configFlagIndex + 1] ?? 'config/system.json';
 	}
-	return 'system.json';
+	return 'config/system.json';
 }
 
 export function readZoneFlag(argv: readonly string[]): string | undefined {

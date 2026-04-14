@@ -24,7 +24,7 @@ const plugin = {
 		}
 
 		const pluginConfig = resolveGondolinPluginConfig(api.pluginConfig);
-		const sdkPath = '/usr/local/lib/node_modules/openclaw/dist/plugin-sdk/sandbox.js';
+		const sdkPath = '/opt/openclaw-sdk/sandbox.js';
 		const sdkPromise = import(sdkPath).then((sdkRaw: Record<string, unknown>) => {
 			assertSdkShape(sdkRaw);
 

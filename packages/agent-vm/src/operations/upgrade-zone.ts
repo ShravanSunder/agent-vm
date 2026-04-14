@@ -8,7 +8,6 @@ export async function runControllerUpgrade(
 	dependencies: {
 		readonly rebuildGatewayImage: (zoneId: string) => Promise<void>;
 		readonly restartGatewayZone: (zoneId: string) => Promise<void>;
-		readonly stopGatewayZone: (zoneId: string) => Promise<void>;
 	},
 ): Promise<{
 	readonly ok: true;
@@ -16,7 +15,6 @@ export async function runControllerUpgrade(
 }> {
 	void options.systemConfig;
 	await dependencies.rebuildGatewayImage(options.zoneId);
-	await dependencies.stopGatewayZone(options.zoneId);
 	await dependencies.restartGatewayZone(options.zoneId);
 
 	return {

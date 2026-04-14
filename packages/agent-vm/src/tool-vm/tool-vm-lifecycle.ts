@@ -1,7 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { createManagedVm as createManagedVmFromCore, type ManagedVm } from 'gondolin-core';
+import { buildToolSessionLabel } from '@shravansunder/agent-vm-gateway-interface';
+import {
+	createManagedVm as createManagedVmFromCore,
+	type ManagedVm,
+} from '@shravansunder/agent-vm-gondolin-core';
 
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { SystemConfig } from '../config/system-config.js';
@@ -72,7 +76,11 @@ export async function createToolVm(
 		imagePath: toolImage.imagePath,
 		memory: options.profile.memory,
 		rootfsMode: 'memory',
-		sessionLabel: `${options.zoneId}-tool-${options.tcpSlot}`,
+		sessionLabel: buildToolSessionLabel(
+			options.systemConfig.host.projectNamespace,
+			options.zoneId,
+			options.tcpSlot,
+		),
 		secrets: {},
 		vfsMounts: {
 			'/workspace': {

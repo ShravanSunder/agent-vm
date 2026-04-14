@@ -63,6 +63,11 @@ describe('resolveServiceAccountToken', () => {
 	});
 
 	it('resolves token via keychain', async () => {
+		Object.defineProperty(process, 'platform', {
+			configurable: true,
+			value: 'darwin',
+		});
+
 		const fakeExec = async (command: string, args: readonly string[]): Promise<ExecFileResult> => {
 			expect(command).toBe('security');
 			expect(args).toEqual([

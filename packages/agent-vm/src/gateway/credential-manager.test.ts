@@ -1,5 +1,5 @@
-import type { SecretResolver } from 'gondolin-core';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
+import { describe, expect, it } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from './credential-manager.js';
@@ -8,6 +8,7 @@ const systemConfig = {
 	cacheDir: './cache',
 	host: {
 		controllerPort: 18800,
+		projectNamespace: 'claw-tests-a1b2c3d4',
 		secretsProvider: {
 			type: '1password',
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -64,29 +65,12 @@ const systemConfig = {
 } satisfies SystemConfig;
 
 describe('resolveZoneSecrets', () => {
-	const originalDiscordRef = process.env.DISCORD_BOT_TOKEN_REF;
-
-	afterEach(() => {
-		if (originalDiscordRef === undefined) {
-			delete process.env.DISCORD_BOT_TOKEN_REF;
-			return;
-		}
-
-		process.env.DISCORD_BOT_TOKEN_REF = originalDiscordRef;
-	});
-
 	it('resolves the named zone secret references through the shared resolver', async () => {
 		const secretResolver: SecretResolver = {
-			resolve: async (): Promise<string> => {
-				throw new Error('resolve is not used by this test');
+			resolve: async (secretRef) => `resolved:${secretRef.ref}`,
+			resolveAll: async () => {
+				throw new Error('resolveAll is not used by this test');
 			},
-			resolveAll: async (secretRefs) =>
-				Object.fromEntries(
-					Object.entries(secretRefs).map(([secretName, secretRef]) => [
-						secretName,
-						`resolved:${secretRef.ref}`,
-					]),
-				),
 		};
 
 		await expect(
@@ -101,41 +85,41 @@ describe('resolveZoneSecrets', () => {
 		});
 	});
 
-	it('resolves a secret ref from environment when it is omitted from config', async () => {
-		process.env.DISCORD_BOT_TOKEN_REF = 'op://test-vault/test-item/token';
+	it('supports per-zone refs for the same secret name', async () => {
 		const secretResolver: SecretResolver = {
-			resolve: async (): Promise<string> => {
-				throw new Error('resolve is not used by this test');
+			resolve: async (secretRef) => `resolved:${secretRef.ref}`,
+			resolveAll: async () => {
+				throw new Error('resolveAll is not used by this test');
 			},
-			resolveAll: vi.fn(async (secretRefs: Record<string, { readonly ref: string }>) =>
-				Object.fromEntries(
-					Object.entries(secretRefs).map(([secretName, secretRef]) => [
-						secretName,
-						`resolved:${secretRef.ref}`,
-					]),
-				),
-			),
 		};
 
-		const baseZone = systemConfig.zones[0];
-		if (!baseZone) {
+		const shravanZone = systemConfig.zones[0];
+		if (!shravanZone) {
 			throw new Error('Expected base test zone');
 		}
-		const envBackedConfig = {
+		const multiZoneConfig = {
 			...systemConfig,
 			zones: [
 				{
-					allowedHosts: baseZone.allowedHosts,
-					gateway: baseZone.gateway,
-					id: baseZone.id,
+					...shravanZone,
 					secrets: {
-						DISCORD_BOT_TOKEN: {
+						OPENCLAW_GATEWAY_TOKEN: {
 							source: '1password' as const,
+							ref: 'op://agent-vm/shravan-gateway-auth/password',
 							injection: 'env' as const,
 						},
 					},
-					toolProfile: baseZone.toolProfile,
-					websocketBypass: baseZone.websocketBypass,
+				},
+				{
+					...shravanZone,
+					id: 'copse',
+					secrets: {
+						OPENCLAW_GATEWAY_TOKEN: {
+							source: '1password' as const,
+							ref: 'op://agent-vm/copse-gateway-auth/password',
+							injection: 'env' as const,
+						},
+					},
 				},
 			],
 		} satisfies SystemConfig;
@@ -143,11 +127,11 @@ describe('resolveZoneSecrets', () => {
 		await expect(
 			resolveZoneSecrets({
 				secretResolver,
-				systemConfig: envBackedConfig,
-				zoneId: 'shravan',
+				systemConfig: multiZoneConfig,
+				zoneId: 'copse',
 			}),
 		).resolves.toEqual({
-			DISCORD_BOT_TOKEN: 'resolved:op://test-vault/test-item/token',
+			OPENCLAW_GATEWAY_TOKEN: 'resolved:op://agent-vm/copse-gateway-auth/password',
 		});
 	});
 
@@ -166,8 +150,7 @@ describe('resolveZoneSecrets', () => {
 		).rejects.toThrow("Unknown zone 'missing-zone'.");
 	});
 
-	it('throws when a secret ref is missing from config and environment', async () => {
-		delete process.env.DISCORD_BOT_TOKEN_REF;
+	it('throws when a zone secret is missing an explicit ref', async () => {
 		const baseZone = systemConfig.zones[0];
 		if (!baseZone) {
 			throw new Error('Expected base test zone');
@@ -184,7 +167,7 @@ describe('resolveZoneSecrets', () => {
 					gateway: baseZone.gateway,
 					id: baseZone.id,
 					secrets: {
-						DISCORD_BOT_TOKEN: {
+						OPENCLAW_GATEWAY_TOKEN: {
 							source: '1password' as const,
 							injection: 'env' as const,
 						},
@@ -193,21 +176,21 @@ describe('resolveZoneSecrets', () => {
 					websocketBypass: baseZone.websocketBypass,
 				},
 			],
-		} satisfies SystemConfig;
+		};
 
 		await expect(
 			resolveZoneSecrets({
 				secretResolver,
-				systemConfig: envBackedConfig,
+				// oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
+				systemConfig: envBackedConfig as unknown as SystemConfig,
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow(
-			"Secret 'DISCORD_BOT_TOKEN' has no ref in config and DISCORD_BOT_TOKEN_REF is not set in environment.",
+			"Zone 'shravan' secret 'OPENCLAW_GATEWAY_TOKEN' is missing 'ref'. Add an explicit 1Password reference such as 'op://agent-vm/shravan-gateway-auth/password'.",
 		);
 	});
 
-	it('treats whitespace-only env refs as missing', async () => {
-		process.env.DISCORD_BOT_TOKEN_REF = '   ';
+	it('suggests a secret-specific ref example when discord token ref is missing', async () => {
 		const baseZone = systemConfig.zones[0];
 		if (!baseZone) {
 			throw new Error('Expected base test zone');
@@ -216,7 +199,7 @@ describe('resolveZoneSecrets', () => {
 			resolve: async (): Promise<string> => '',
 			resolveAll: async () => ({}),
 		};
-		const envBackedConfig = {
+		const missingDiscordRefConfig = {
 			...systemConfig,
 			zones: [
 				{
@@ -233,16 +216,56 @@ describe('resolveZoneSecrets', () => {
 					websocketBypass: baseZone.websocketBypass,
 				},
 			],
-		} satisfies SystemConfig;
+		};
 
 		await expect(
 			resolveZoneSecrets({
 				secretResolver,
-				systemConfig: envBackedConfig,
+				// oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
+				systemConfig: missingDiscordRefConfig as unknown as SystemConfig,
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow(
-			"Secret 'DISCORD_BOT_TOKEN' has no ref in config and DISCORD_BOT_TOKEN_REF is not set in environment.",
+			"Zone 'shravan' secret 'DISCORD_BOT_TOKEN' is missing 'ref'. Add an explicit 1Password reference such as 'op://agent-vm/shravan-discord/bot-token'.",
+		);
+	});
+
+	it('adds secret-specific context when secret resolution fails', async () => {
+		const baseZone = systemConfig.zones[0];
+		if (!baseZone) {
+			throw new Error('Expected base test zone');
+		}
+		const failingConfig = {
+			...systemConfig,
+			zones: [
+				{
+					...baseZone,
+					secrets: {
+						PERPLEXITY_API_KEY: {
+							source: '1password' as const,
+							ref: 'op://agent-vm/shravan-perplexity/credential',
+							injection: 'http-mediation' as const,
+							hosts: ['api.perplexity.ai'],
+						},
+					},
+				},
+			],
+		} satisfies SystemConfig;
+		const secretResolver: SecretResolver = {
+			resolve: async () => {
+				throw new Error('1Password lookup failed');
+			},
+			resolveAll: async () => ({}),
+		};
+
+		await expect(
+			resolveZoneSecrets({
+				secretResolver,
+				systemConfig: failingConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(
+			"Failed to resolve secret 'PERPLEXITY_API_KEY' for zone 'shravan' from 'op://agent-vm/shravan-perplexity/credential': 1Password lookup failed",
 		);
 	});
 });

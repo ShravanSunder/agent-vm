@@ -16,6 +16,7 @@ function createCliBuildSystemConfig(): SystemConfig {
 		cacheDir: './cache',
 		host: {
 			controllerPort: 18800,
+			projectNamespace: 'claw-tests-a1b2c3d4',
 			secretsProvider: {
 				type: '1password',
 				tokenSource: { type: 'env' },
@@ -106,7 +107,7 @@ describe('runAgentVmCli', () => {
 	it('routes init to the project scaffolder', async () => {
 		const outputs: string[] = [];
 		const scaffoldAgentVmProject = vi.fn(async () => ({
-			created: ['system.json', '.env.local'],
+			created: ['config/system.json', '.env.local'],
 			keychainStored: false,
 			skipped: [],
 		}));
@@ -134,18 +135,18 @@ describe('runAgentVmCli', () => {
 			targetDir: '/tmp/agent-vm-init',
 			zoneId: 'test-zone',
 		});
-		expect(outputs.join('')).toContain('"system.json"');
+		expect(outputs.join('')).toContain('"config/system.json"');
 	});
 
 	it('passes gateway type through to init scaffolding', async () => {
 		const scaffoldAgentVmProject = vi.fn(async () => ({
-			created: ['system.json', '.env.local'],
+			created: ['config/system.json', '.env.local'],
 			keychainStored: false,
 			skipped: [],
 		}));
 
 		await runAgentVmCli(
-			['init', 'test-zone', '--type', 'coding'],
+			['init', 'test-zone', '--type', 'worker'],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -158,7 +159,7 @@ describe('runAgentVmCli', () => {
 		);
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
-			gatewayType: 'coding',
+			gatewayType: 'worker',
 			targetDir: '/tmp/agent-vm-init',
 			zoneId: 'test-zone',
 		});
@@ -326,7 +327,7 @@ describe('runAgentVmCli', () => {
 			'-p',
 			'19000',
 			'root@127.0.0.1',
-			"openclaw models auth login --provider 'codex'",
+			expect.stringContaining('source /etc/profile.d/openclaw-env.sh'),
 		]);
 	});
 
@@ -385,7 +386,7 @@ describe('runAgentVmCli', () => {
 				},
 				defaultCliDependencies,
 			),
-		).rejects.toThrow(/openclaw|coding/u);
+		).rejects.toThrow(/openclaw|worker/u);
 	});
 
 	it('prints controller help instead of throwing on controller --help', async () => {
@@ -450,7 +451,7 @@ describe('runAgentVmCli', () => {
 			),
 		).rejects.toThrow(
 			[
-				'Invalid system.json configuration:',
+				'Invalid config/system.json configuration:',
 				'  zones[0].gateway.gatewayConfig: Invalid input: expected string, received undefined',
 			].join('\n'),
 		);
@@ -516,11 +517,13 @@ describe('runAgentVmCli', () => {
 					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 					listBackups: () => [],
 				}),
+				isGatewayImageCached: async () => true,
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
+						projectNamespace: 'claw-tests-a1b2c3d4',
 						secretsProvider: {
 							type: '1password',
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -614,11 +617,13 @@ describe('runAgentVmCli', () => {
 					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 					listBackups: () => [],
 				}),
+				isGatewayImageCached: async () => true,
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
+						projectNamespace: 'claw-tests-a1b2c3d4',
 						secretsProvider: {
 							type: '1password',
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -734,11 +739,13 @@ describe('runAgentVmCli', () => {
 					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 					listBackups: () => [],
 				}),
+				isGatewayImageCached: async () => true,
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
+						projectNamespace: 'claw-tests-a1b2c3d4',
 						secretsProvider: {
 							type: '1password',
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -801,6 +808,28 @@ describe('runAgentVmCli', () => {
 		);
 	});
 
+	it('fails fast when the gateway image cache is cold', async () => {
+		const startControllerRuntime = vi.fn();
+
+		await expect(
+			runAgentVmCli(
+				['controller', 'start', '--zone', 'shravan'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					isGatewayImageCached: async () => false,
+					loadSystemConfig: async () => createCliBuildSystemConfig(),
+					startControllerRuntime,
+				},
+			),
+		).rejects.toThrow(/Gateway image not cached|agent-vm build/u);
+
+		expect(startControllerRuntime).not.toHaveBeenCalled();
+	});
+
 	it('rejects controller start when multiple zones are configured', async () => {
 		const baseSystemConfig = createCliBuildSystemConfig();
 		const primaryZone = baseSystemConfig.zones[0];
@@ -817,6 +846,7 @@ describe('runAgentVmCli', () => {
 				},
 				{
 					...defaultCliDependencies,
+					isGatewayImageCached: async () => true,
 					loadSystemConfig: async () => ({
 						...baseSystemConfig,
 						zones: [
@@ -859,6 +889,7 @@ describe('runAgentVmCli', () => {
 			},
 			{
 				...defaultCliDependencies,
+				isGatewayImageCached: async () => true,
 				loadSystemConfig: async () => ({
 					...baseSystemConfig,
 					zones: [
@@ -930,6 +961,7 @@ describe('runAgentVmCli', () => {
 				cacheDir: './cache',
 				host: {
 					controllerPort: 18800,
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					secretsProvider: {
 						type: '1password',
 						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -1186,6 +1218,7 @@ describe('runAgentVmCli', () => {
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
+						projectNamespace: 'claw-tests-a1b2c3d4',
 						secretsProvider: {
 							type: '1password',
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -1311,6 +1344,7 @@ describe('runAgentVmCli', () => {
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
+						projectNamespace: 'claw-tests-a1b2c3d4',
 						secretsProvider: {
 							type: '1password',
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },

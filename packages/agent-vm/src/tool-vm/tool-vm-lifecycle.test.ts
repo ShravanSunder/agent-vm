@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVm } from 'gondolin-core';
+import type { ManagedVm } from '@shravansunder/agent-vm-gondolin-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
@@ -30,6 +30,7 @@ function createToolVmSystemConfig(): SystemConfig {
 		cacheDir: path.join(temporaryDirectory, 'cache'),
 		host: {
 			controllerPort: 18800,
+			projectNamespace: 'claw-tests-a1b2c3d4',
 			secretsProvider: {
 				type: '1password',
 				tokenSource: { type: 'env' },

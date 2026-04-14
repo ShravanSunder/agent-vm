@@ -7,6 +7,7 @@ const systemConfig = {
 	cacheDir: './cache',
 	host: {
 		controllerPort: 18800,
+		projectNamespace: 'claw-tests-a1b2c3d4',
 		secretsProvider: {
 			type: '1password',
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -48,7 +49,7 @@ const systemConfig = {
 } satisfies SystemConfig;
 
 describe('createControllerRuntimeOperations', () => {
-	it('returns empty logs when the gateway exec fails', async () => {
+	it('propagates gateway log read failures', async () => {
 		const operations = createControllerRuntimeOperations({
 			activeZoneId: 'shravan',
 			getGateway: () => ({
@@ -88,9 +89,6 @@ describe('createControllerRuntimeOperations', () => {
 			systemConfig,
 		});
 
-		await expect(operations.getZoneLogs('shravan')).resolves.toEqual({
-			output: '',
-			zoneId: 'shravan',
-		});
+		await expect(operations.getZoneLogs('shravan')).rejects.toThrow('gateway handle is dead');
 	});
 });

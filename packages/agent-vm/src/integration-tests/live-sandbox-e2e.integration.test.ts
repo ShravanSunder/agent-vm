@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import net from 'node:net';
 
 import { serve } from '@hono/node-server';
-import { createManagedVm } from 'gondolin-core';
-import type { ManagedVm, SshAccess } from 'gondolin-core';
+import { createManagedVm } from '@shravansunder/agent-vm-gondolin-core';
+import type { ManagedVm, SshAccess } from '@shravansunder/agent-vm-gondolin-core';
 import { Hono } from 'hono';
 /**
  * Live end-to-end test: OpenClaw sandbox plugin → controller lease API → tool VM
@@ -122,7 +122,10 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 		const pluginDistDir = `${process.cwd()}/packages/openclaw-agent-vm-plugin/dist`;
 
 		// Verify plugin dist exists
-		if (!fs.existsSync(`${pluginDistDir}/openclaw-plugin-registration.js`)) {
+		if (
+			!fs.existsSync(`${pluginDistDir}/index.js`) ||
+			!fs.existsSync(`${pluginDistDir}/openclaw.plugin.json`)
+		) {
 			throw new Error(`Plugin not built. Run: pnpm --filter openclaw-agent-vm-plugin build`);
 		}
 
