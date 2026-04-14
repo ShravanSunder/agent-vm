@@ -107,6 +107,7 @@ T1 is the bulk of the work. T2-T4 are integration.
 - Create: `relay-background-agent/config/coding-gateway.json`
 - Create: `relay-background-agent/images/gateway/Dockerfile`
 - Create: `relay-background-agent/images/gateway/build-config.json`
+- Create: `relay-background-agent/images/tool/build-config.json`
 - Create: `relay-background-agent/scripts/start.sh`
 - Modify: `relay-background-agent/package.json`
 - Modify: `relay-background-agent/README.md`
@@ -120,7 +121,7 @@ T1 is the bulk of the work. T2-T4 are integration.
   "private": true,
   "description": "Sysbox worker image for agent-vm controller + Gondolin VMs",
   "dependencies": {
-    "@shravansunder/agent-vm": "^0.0.1"
+    "@shravansunder/agent-vm": "latest"
   }
 }
 ```
@@ -147,7 +148,7 @@ The current `systemConfigSchema` in `packages/agent-vm/src/config/system-config.
       "buildConfig": "/etc/agent-vm/images/gateway/build-config.json"
     },
     "tool": {
-      "buildConfig": "/etc/agent-vm/images/gateway/build-config.json"
+      "buildConfig": "/etc/agent-vm/images/tool/build-config.json"
     }
   },
   "zones": [
@@ -165,12 +166,10 @@ The current `systemConfigSchema` in `packages/agent-vm/src/config/system-config.
       "secrets": {
         "OPENAI_API_KEY": {
           "source": "1password",
-          "ref": "op://agent-vm/openai/api-key",
           "injection": "env"
         },
         "GITHUB_TOKEN": {
           "source": "1password",
-          "ref": "op://agent-vm/github/token",
           "injection": "env"
         }
       },
@@ -198,7 +197,7 @@ The current `systemConfigSchema` in `packages/agent-vm/src/config/system-config.
 }
 ```
 
-Note: For beta, secrets can use `"injection": "env"` — the controller passes them as env vars to the VM. The 1Password `ref` values are placeholders; Relay will set the real refs. The `OP_SERVICE_ACCOUNT_TOKEN` env var is injected into the pod via k8s Secret.
+**Secrets flow for dev/beta:** Secrets are injected as pod env vars from a manually-created k8s Secret (see Step 4a below). No 1Password resolution, no ExternalSecrets Operator. The `secrets` entries use `"injection": "env"` — the controller reads `OPENAI_API_KEY` and `GITHUB_TOKEN` directly from the pod's env and passes them to the Gondolin VM as env vars. The `ref` field is omitted because we're not using 1Password in dev. For staging/prod, secrets will come from SSM → ExternalSecrets Operator → k8s Secret → same `envFrom` pattern.
 
 - [ ] **Step 3: Create coding-gateway.json (worker config)**
 
@@ -304,6 +303,31 @@ The symlink `ln -sf .../node_modules/@shravansunder/agent-vm-worker/dist /opt/ag
 ```
 
 No `postBuild.copy` needed — the worker is installed from npm in the OCI Dockerfile. `oci.pullPolicy: "never"` means the OCI image must exist locally when Gondolin builds the VM image (the start script builds it first).
+
+- [ ] **Step 5a: Create tool build-config.json stub**
+
+The coding zone doesn't use tool VMs (controller-runtime.ts skips tool VM creation when `gateway.type === 'coding'`), but the schema requires `images.tool.buildConfig`. Create a minimal stub.
+
+`relay-background-agent/images/tool/build-config.json`:
+```json
+{
+  "arch": "aarch64",
+  "distro": "alpine",
+  "alpine": {
+    "version": "3.23.0",
+    "kernelPackage": "linux-virt",
+    "kernelImage": "vmlinuz-virt",
+    "rootfsPackages": [],
+    "initramfsPackages": []
+  },
+  "rootfs": {
+    "label": "tool-root",
+    "sizeMb": 1024
+  }
+}
+```
+
+This is never built for the coding zone. It exists to satisfy the schema.
 
 - [ ] **Step 6: Create the pod startup script**
 
@@ -451,20 +475,60 @@ export const appConfigSchema = z.object({
 
 Added: `controllerZoneId` (matches `zones[].id` in system.json) and `workerTaskTimeoutMs` (how long to wait for the synchronous controller response).
 
-- [ ] **Step 3: Simplify pod env vars**
+- [ ] **Step 3: Simplify pod env vars and add secrets wiring**
 
-In `relay-agent-delegator/src/k8s/pod-creator.ts`, remove all task-specific env vars. The pod only needs controller-level config:
+In `relay-agent-delegator/src/k8s/pod-creator.ts`, remove all task-specific env vars and add `envFrom` for secrets:
 
 ```typescript
 const podEnvVars = [
   { name: "CONTROLLER_PORT", value: String(config.controllerPort) },
 ];
-
-// Secrets (OPENAI_API_KEY, GITHUB_TOKEN, OP_SERVICE_ACCOUNT_TOKEN)
-// injected via k8s Secret envFrom — not in this list
 ```
 
 Remove: `TASK_ID`, `TASK_REPO_URL`, `TASK_BRANCH`, `TASK_PROMPT`, `TASK_TEST_COMMAND`, `TASK_LINT_COMMAND`, `TASK_MODEL`, `IDLE_TIMEOUT_MINUTES`.
+
+Add `envFrom` to the container spec in `buildWorkerPodSpec` so secrets from the k8s Secret become env vars in the pod:
+
+```typescript
+containers: [
+  {
+    name: "agent-vm",
+    image: config.workerImage,
+    // ... ports, resources, readinessProbe ...
+    env: podEnvVars,
+    envFrom: [
+      {
+        secretRef: {
+          name: config.workerSecretName,
+        },
+      },
+    ],
+  },
+],
+```
+
+The `workerSecretName` comes from the delegator config (Step 2). The k8s Secret contains `OPENAI_API_KEY` and `GITHUB_TOKEN`. The controller inside the pod reads them from env and passes them to the Gondolin VM.
+
+- [ ] **Step 3a: Add workerSecretName to config**
+
+In `relay-agent-delegator/src/config.ts`, add:
+
+```typescript
+workerSecretName: z.string().default("agent-vm-secrets"),
+```
+
+This is the name of the k8s Secret that contains the API keys. Env var: `WORKER_SECRET_NAME`.
+
+- [ ] **Step 3b: Create the k8s Secret (one-time manual step for dev)**
+
+```bash
+kubectl create secret generic agent-vm-secrets \
+  --namespace agent-vm \
+  --from-literal=OPENAI_API_KEY=sk-... \
+  --from-literal=GITHUB_TOKEN=ghp-...
+```
+
+For staging/prod, this would come from SSM → ExternalSecrets Operator. For dev, it's a one-time manual creation.
 
 - [ ] **Step 4: Update readiness probe path**
 
@@ -623,24 +687,37 @@ git commit -m "feat(relay-agent-delegator): synchronous task submission to contr
 **Files:**
 - No code changes — verify existing CI workflows work with the new code
 
-- [ ] **Step 1: Push relay-background-agent changes and verify CI**
+- [ ] **Step 1: Create branch, push, and open PRs**
+
+Work on a feature branch, not main directly. CI triggers on merge to main.
 
 ```bash
 cd relay-ai-tools
-git push origin main
+git checkout -b feat/agent-vm-worker-beta
+git add relay-background-agent/ relay-agent-delegator/
+git commit -m "feat: wire agent-vm worker beta deployment"
+git push origin feat/agent-vm-worker-beta
+gh pr create --title "feat: agent-vm worker beta deployment" --body "..."
 ```
 
-Watch: `.github/workflows/relay-background-agent-dev.yml`
-Expected: Image builds, pushes to `relay/agent-vm-worker:latest` in dev ECR.
+- [ ] **Step 2: Create k8s Secret for dev (one-time, if not done in T2 Step 3b)**
 
-The Dockerfile now runs `pnpm add -g @shravansunder/agent-vm` — this downloads from public npm, no auth needed.
+```bash
+kubectl -n agent-vm get secret agent-vm-secrets 2>/dev/null || \
+kubectl -n agent-vm create secret generic agent-vm-secrets \
+  --from-literal=OPENAI_API_KEY=sk-... \
+  --from-literal=GITHUB_TOKEN=ghp-...
+```
 
-- [ ] **Step 2: Push relay-agent-delegator changes and verify CI**
+- [ ] **Step 3: Merge PR and verify CI**
 
-Watch: `.github/workflows/relay-agent-delegator-dev.yml`
-Expected: Image builds, pushes to `relay/agent-vm-delegator:latest` in dev ECR.
+Merge the PR to main. CI triggers:
+- `.github/workflows/relay-background-agent-dev.yml` → builds + pushes `relay/agent-vm-worker:latest`
+- `.github/workflows/relay-agent-delegator-dev.yml` → builds + pushes `relay/agent-vm-delegator:latest`
 
-- [ ] **Step 3: Verify ArgoCD sync**
+Both download from public npm (`@shravansunder/*`), no auth needed.
+
+- [ ] **Step 4: Verify ArgoCD sync**
 
 ```bash
 argocd app sync agent-vm-delegator --force
@@ -648,23 +725,7 @@ argocd app logs agent-vm-delegator | head -5
 # Expected: "relay-agent-delegator listening on port 3000"
 ```
 
-- [ ] **Step 4: Verify k8s secrets exist**
-
-The controller needs `OP_SERVICE_ACCOUNT_TOKEN` (or `OPENAI_API_KEY` + `GITHUB_TOKEN` directly) in the pod environment. These come from k8s Secrets. Verify they exist:
-
-```bash
-kubectl -n agent-vm get secrets
-# Expected: a secret with OPENAI_API_KEY, GITHUB_TOKEN
-```
-
-If missing, create them:
-```bash
-kubectl -n agent-vm create secret generic agent-vm-secrets \
-  --from-literal=OPENAI_API_KEY=<key> \
-  --from-literal=GITHUB_TOKEN=<token>
-```
-
-The pod spec in `buildWorkerPodSpec` needs `envFrom` referencing this secret. This may need a code change in the delegator's pod creator if not already wired.
+The `envFrom` in the pod spec (added in Task 2 Step 3) references `agent-vm-secrets`. Verify the secret exists (Task 3 Step 2).
 
 ---
 
@@ -738,13 +799,16 @@ Record in a follow-up issue: cold start time, error messages, config issues, mis
 ## Self-Review
 
 - [x] **Spec coverage:** T1=Dockerfile+config (worker-gateway, system-config, worker-config schemas). T2=API contract (controller-zone-operation-routes, controller-request-schemas). T3=CI. T4=E2E.
-- [x] **No placeholders:** All config files have actual JSON matching Zod schemas. All code shows actual code. Commands are exact.
+- [x] **Config complete:** All JSON configs have concrete values matching Zod schemas. system.json validated against `systemConfigSchema`, coding-gateway.json validated against `workerConfigSchema`.
 - [x] **Type consistency:** `taskInputSchema` in T2 matches `controllerWorkerTaskRequestSchema`. `TaskEntry.result` is `unknown` matching the controller's untyped response. `controllerZoneId` matches `zones[].id` in system.json.
 - [x] **Controller route is correct:** `POST /zones/:zoneId/worker-tasks` (not `/coding/tasks`). Verified against `controller-zone-operation-routes.ts:42`.
 - [x] **Controller call is synchronous:** `runWorkerTask()` blocks for the full lifecycle. No async task ID, no delegator-side polling.
 - [x] **Worker binary path resolved:** OCI Dockerfile installs `@shravansunder/agent-vm-worker` from npm and symlinks `node_modules/.../dist` → `/opt/agent-vm-worker/dist` so `worker-lifecycle.ts:53` resolves.
+- [x] **Secrets wired end-to-end:** k8s Secret `agent-vm-secrets` → pod `envFrom` (T2 Step 3) → controller reads from env → passes to Gondolin VM as env vars (`injection: "env"`). Manual creation for dev (T2 Step 3b / T3 Step 2).
 - [x] **Pod cleanup:** Delegator deletes pod in `finally` block after task completes or fails.
 - [x] **PNPM_HOME set:** Dockerfile sets `ENV PNPM_HOME=/usr/local/share/pnpm` and `ENV PATH=$PNPM_HOME:$PATH`.
-- [x] **Known gap:** Secrets management (k8s Secret → pod envFrom) may need additional wiring in the pod spec. Noted in T3.
+- [x] **images.tool separate:** Stub build-config.json at `/etc/agent-vm/images/tool/build-config.json`. Not used by coding zone but required by schema.
+- [x] **Package version:** Uses `"latest"` not pinned `"^0.0.1"`.
+- [x] **CI flow:** Branch + PR, not push to main. CI triggers on merge.
 - [x] **Known gap:** Cold start ~30-60s (Docker daemon wait + OCI build + Gondolin image build). Acceptable for beta.
 - [x] **Known gap:** Skills not baked into VM image yet. Worker uses default instructions. Additive future work.
