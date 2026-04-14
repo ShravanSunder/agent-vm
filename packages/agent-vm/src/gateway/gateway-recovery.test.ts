@@ -300,6 +300,47 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		).rejects.toThrow(/ps failed/u);
 	});
 
+	it('surfaces actionable permission errors when the orphaned process cannot be signaled', async () => {
+		const processKillSpy = vi.spyOn(process, 'kill').mockImplementation(((
+			_pid: number,
+			signal?: number | NodeJS.Signals,
+		) => {
+			if (signal === 0) {
+				return true;
+			}
+			const error = new Error('operation not permitted');
+			Object.assign(error, { code: 'EPERM' });
+			throw error;
+		}) as typeof process.kill);
+
+		await expect(
+			cleanupOrphanedGatewayIfPresent(
+				{
+					stateDir: '/state/shravan',
+					zoneId: 'shravan',
+				},
+				{
+					deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+					loadGatewayRuntimeRecord: async () => ({
+						createdAt: '2026-04-13T12:34:56.000Z',
+						gatewayType: 'openclaw',
+						guestListenPort: 18789,
+						ingressPort: 18791,
+						projectNamespace: 'claw-tests-a1b2c3d4',
+						qemuPid: 48282,
+						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+						vmId: 'gateway-vm-123',
+						zoneId: 'shravan',
+					}),
+					readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
+					sleep: async () => {},
+				},
+			),
+		).rejects.toThrow(/Permission denied while sending SIGTERM/u);
+
+		processKillSpy.mockRestore();
+	});
+
 	it('escalates to SIGKILL when SIGTERM does not stop the orphaned process', async () => {
 		let nowMs = 0;
 		const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);

@@ -23,11 +23,11 @@ const resolvedSecrets: Record<string, string> = {
 };
 
 function createZone(overrides?: {
+	readonly authProfilesRef?: string;
 	readonly gateway?: Partial<GatewayZoneConfig['gateway']>;
 	readonly withoutAuthProfilesRef?: boolean;
 }): GatewayZoneConfig {
 	const baseGateway: GatewayZoneConfig['gateway'] = {
-		authProfilesRef: 'op://vault/item/auth-profiles',
 		cpus: 2,
 		gatewayConfig: '/host/config/shravan/openclaw.json',
 		memory: '2G',
@@ -38,38 +38,28 @@ function createZone(overrides?: {
 	};
 
 	return {
+		...(overrides?.withoutAuthProfilesRef
+			? {}
+			: { authProfilesRef: overrides?.authProfilesRef ?? 'op://vault/item/auth-profiles' }),
 		allowedHosts: ['api.openai.com', 'api.perplexity.ai'],
-		gateway: overrides?.withoutAuthProfilesRef
-			? {
-					cpus: overrides.gateway?.cpus ?? baseGateway.cpus,
-					gatewayConfig: overrides.gateway?.gatewayConfig ?? baseGateway.gatewayConfig,
-					memory: overrides.gateway?.memory ?? baseGateway.memory,
-					port: overrides.gateway?.port ?? baseGateway.port,
-					stateDir: overrides.gateway?.stateDir ?? baseGateway.stateDir,
-					type: overrides.gateway?.type ?? baseGateway.type,
-					workspaceDir: overrides.gateway?.workspaceDir ?? baseGateway.workspaceDir,
-				}
-			: {
-					...baseGateway,
-					...overrides?.gateway,
-				},
+		gateway: {
+			...baseGateway,
+			...overrides?.gateway,
+		},
 		id: 'shravan',
 		secrets: {
 			DISCORD_BOT_TOKEN: {
 				injection: 'env',
 				ref: 'op://vault/item/discord',
-				source: '1password',
 			},
 			OPENCLAW_GATEWAY_TOKEN: {
 				injection: 'env',
 				ref: 'op://vault/item/openclaw-gateway-token',
-				source: '1password',
 			},
 			PERPLEXITY_API_KEY: {
 				hosts: ['api.perplexity.ai'],
 				injection: 'http-mediation',
 				ref: 'op://vault/item/perplexity',
-				source: '1password',
 			},
 		},
 		toolProfile: 'standard',

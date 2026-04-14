@@ -1,4 +1,7 @@
-import type { GatewayProcessSpec } from '@shravansunder/agent-vm-gateway-interface';
+import type {
+	GatewayProcessSpec,
+	GatewayZoneConfig,
+} from '@shravansunder/agent-vm-gateway-interface';
 
 import type { SystemConfig } from '../config/system-config.js';
 import type { RunTaskFn } from '../shared/run-task.js';
@@ -65,4 +68,33 @@ export function findGatewayZone(systemConfig: SystemConfig, zoneId: string): Gat
 	}
 
 	return zone;
+}
+
+export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZoneConfig {
+	return {
+		authProfilesRef: zone.gateway.authProfilesRef,
+		id: zone.id,
+		gateway: {
+			cpus: zone.gateway.cpus,
+			gatewayConfig: zone.gateway.gatewayConfig,
+			memory: zone.gateway.memory,
+			port: zone.gateway.port,
+			stateDir: zone.gateway.stateDir,
+			type: zone.gateway.type,
+			workspaceDir: zone.gateway.workspaceDir,
+		},
+		secrets: Object.fromEntries(
+			Object.entries(zone.secrets).map(([secretName, secretConfig]) => [
+				secretName,
+				{
+					...(secretConfig.hosts ? { hosts: secretConfig.hosts } : {}),
+					injection: secretConfig.injection,
+					ref: secretConfig.ref,
+				},
+			]),
+		),
+		allowedHosts: zone.allowedHosts,
+		toolProfile: zone.toolProfile,
+		websocketBypass: zone.websocketBypass,
+	};
 }

@@ -27,6 +27,7 @@ export interface GatewayAuthConfig {
  * Decoupled from SystemConfig — the controller maps into this shape.
  */
 export interface GatewayZoneConfig {
+	readonly authProfilesRef?: string | undefined;
 	readonly id: string;
 	readonly gateway: {
 		readonly type: GatewayType;
@@ -36,12 +37,10 @@ export interface GatewayZoneConfig {
 		readonly gatewayConfig: string;
 		readonly stateDir: string;
 		readonly workspaceDir: string;
-		readonly authProfilesRef?: string | undefined;
 	};
 	readonly secrets: Record<
 		string,
 		{
-			readonly source: '1password';
 			readonly ref: string;
 			readonly injection: 'env' | 'http-mediation';
 			readonly hosts?: readonly string[] | undefined;

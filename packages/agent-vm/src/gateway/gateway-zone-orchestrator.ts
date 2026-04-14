@@ -26,6 +26,7 @@ import {
 } from './gateway-runtime-record.js';
 import {
 	findGatewayZone,
+	mapSystemGatewayZoneToLifecycleZone,
 	type GatewayManagedVmFactoryOptions,
 	type GatewayZoneStartResult,
 	type StartGatewayZoneOptions,
@@ -90,6 +91,7 @@ export async function startGatewayZone(
 	const runTaskStep =
 		options.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
 	const zone = findGatewayZone(options.systemConfig, options.zoneId);
+	const lifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone);
 	await runTaskStep('Cleaning orphaned gateway runtime', async () => {
 		await (dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent)({
 			stateDir: zone.gateway.stateDir,
@@ -127,16 +129,16 @@ export async function startGatewayZone(
 	await fs.mkdir(zone.gateway.stateDir, { recursive: true });
 	await fs.mkdir(zone.gateway.workspaceDir, { recursive: true });
 	await runTaskStep('Preparing host state', async () => {
-		await lifecycle.prepareHostState?.(zone, options.secretResolver);
+		await lifecycle.prepareHostState?.(lifecycleZone, options.secretResolver);
 	});
 	const vmSpec = lifecycle.buildVmSpec({
 		controllerPort: options.systemConfig.host.controllerPort,
 		projectNamespace: options.systemConfig.host.projectNamespace,
 		resolvedSecrets,
 		tcpPool: options.systemConfig.tcpPool,
-		zone,
+		zone: lifecycleZone,
 	});
-	const processSpec = lifecycle.buildProcessSpec(zone, resolvedSecrets);
+	const processSpec = lifecycle.buildProcessSpec(lifecycleZone, resolvedSecrets);
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
 	const managedVm = await runTaskWithResult(
 		runTaskStep,

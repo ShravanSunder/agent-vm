@@ -12,7 +12,7 @@ import {
 	buildGatewaySessionLabel as buildGatewaySessionLabelValue,
 	splitResolvedGatewaySecrets,
 } from '@shravansunder/agent-vm-gateway-interface';
-import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
+import { type SecretResolver, writeFileAtomically } from '@shravansunder/agent-vm-gondolin-core';
 
 const effectiveOpenClawConfigFileName = 'effective-openclaw.json';
 const effectiveOpenClawConfigVmPath = `/home/openclaw/.openclaw/state/${effectiveOpenClawConfigFileName}`;
@@ -73,22 +73,11 @@ function shellQuote(value: string): string {
 	return `'${value.replace(/'/gu, `'\\''`)}'`;
 }
 
-async function writeFileAtomically(filePath: string, content: string, mode: number): Promise<void> {
-	const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-	await fs.writeFile(tempPath, content, { encoding: 'utf8', mode });
-	try {
-		await fs.rename(tempPath, filePath);
-	} catch (error) {
-		await fs.rm(tempPath, { force: true }).catch(() => {});
-		throw error;
-	}
-}
-
 async function writeAuthProfilesIfConfigured(
 	zone: GatewayZoneConfig,
 	secretResolver: SecretResolver,
 ): Promise<void> {
-	if (!zone.gateway.authProfilesRef) {
+	if (!zone.authProfilesRef) {
 		return;
 	}
 
@@ -98,17 +87,17 @@ async function writeAuthProfilesIfConfigured(
 		await fs.chmod(authProfilesDirectory, 0o700);
 		const authProfiles = await secretResolver.resolve({
 			source: '1password',
-			ref: zone.gateway.authProfilesRef,
+			ref: zone.authProfilesRef,
 		});
 		await writeFileAtomically(
 			path.join(authProfilesDirectory, 'auth-profiles.json'),
 			authProfiles,
-			0o600,
+			{ mode: 0o600 },
 		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		throw new Error(
-			`Failed to write OpenClaw auth profiles for zone '${zone.id}' from '${zone.gateway.authProfilesRef}': ${message}`,
+			`Failed to write OpenClaw auth profiles for zone '${zone.id}' from '${zone.authProfilesRef}': ${message}`,
 			{ cause: error },
 		);
 	}
@@ -154,7 +143,7 @@ async function writeEffectiveOpenClawConfig(
 		await writeFileAtomically(
 			effectiveConfigPath,
 			`${JSON.stringify(effectiveConfig, null, 2)}\n`,
-			0o600,
+			{ mode: 0o600 },
 		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);

@@ -19,7 +19,6 @@ const zone: GatewayZoneConfig = {
 		OPENAI_API_KEY: {
 			injection: 'env',
 			ref: 'op://vault/item/openai',
-			source: '1password',
 		},
 	},
 	toolProfile: 'standard',

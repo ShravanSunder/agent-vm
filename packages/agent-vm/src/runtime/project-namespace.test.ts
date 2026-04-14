@@ -25,4 +25,23 @@ describe('buildDefaultProjectNamespace', () => {
 			}),
 		).resolves.toMatch(/^agent-vm-project-[0-9a-f]{8}$/u);
 	});
+
+	it('produces the same namespace for the same canonical path across calls', async () => {
+		const firstNamespace = await buildDefaultProjectNamespace('/tmp/project-link', {
+			realpath: async () => '/tmp/Canonical Project',
+		});
+		const secondNamespace = await buildDefaultProjectNamespace('/tmp/project-link', {
+			realpath: async () => '/tmp/Canonical Project',
+		});
+
+		expect(firstNamespace).toBe(secondNamespace);
+	});
+
+	it('falls back to the generic slug when the basename is entirely non-ascii', async () => {
+		await expect(
+			buildDefaultProjectNamespace('/tmp/リンク', {
+				realpath: async () => '/tmp/プロジェクト',
+			}),
+		).resolves.toMatch(/^agent-vm-[0-9a-f]{8}$/u);
+	});
 });

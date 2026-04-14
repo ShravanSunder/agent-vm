@@ -7,3 +7,4 @@ export * from './vm-adapter.js';
 export * from './volume-manager.js';
 export { getDefaultBuildConfig } from '@earendil-works/gondolin';
 export type { BuildConfig } from '@earendil-works/gondolin';
+export { writeFileAtomically } from './write-file-atomically.js';

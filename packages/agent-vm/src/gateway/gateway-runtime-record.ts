@@ -7,7 +7,7 @@ import {
 	type GatewayProcessSpec,
 	type GatewayType,
 } from '@shravansunder/agent-vm-gateway-interface';
-import type { ManagedVm } from '@shravansunder/agent-vm-gondolin-core';
+import { type ManagedVm, writeFileAtomically } from '@shravansunder/agent-vm-gondolin-core';
 import { ZodError, z } from 'zod';
 
 export const gatewayRuntimeRecordSchema = z.object({
@@ -37,21 +37,6 @@ function resolveInvalidGatewayRuntimeRecordPath(stateDirectory: string): string 
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
-}
-
-async function writeFileAtomically(
-	filePath: string,
-	content: string,
-	mode: number = 0o600,
-): Promise<void> {
-	const temporaryFilePath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-	await fs.writeFile(temporaryFilePath, content, { encoding: 'utf8', mode });
-	try {
-		await fs.rename(temporaryFilePath, filePath);
-	} catch (error) {
-		await fs.rm(temporaryFilePath, { force: true }).catch(() => {});
-		throw error;
-	}
 }
 
 async function quarantineMalformedGatewayRuntimeRecord(
@@ -119,7 +104,7 @@ export async function writeGatewayRuntimeRecord(
 	await writeFileAtomically(
 		runtimeRecordPath,
 		`${JSON.stringify(gatewayRuntimeRecordSchema.parse(record), null, 2)}\n`,
-		0o600,
+		{ mode: 0o600 },
 	);
 }
 
