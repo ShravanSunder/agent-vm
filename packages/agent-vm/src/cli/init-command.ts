@@ -109,14 +109,8 @@ function defaultSecretsForGatewayType(
 ): Record<string, object> {
 	if (gatewayType === 'worker') {
 		return {
-			ANTHROPIC_API_KEY: {
-				ref: `op://agent-vm/${zoneId}-anthropic/credential`,
-				source: '1password',
-				hosts: ['api.anthropic.com'],
-				injection: 'http-mediation',
-			},
 			OPENAI_API_KEY: {
-				ref: `op://agent-vm/${zoneId}-openai/credential`,
+				ref: 'op://agent-vm/workers-openai/credential',
 				source: '1password',
 				hosts: ['api.openai.com'],
 				injection: 'http-mediation',

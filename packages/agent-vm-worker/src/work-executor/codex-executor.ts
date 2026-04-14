@@ -69,7 +69,8 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 		}
 
 		await fs.mkdir(workingDirectory, { recursive: true });
-		const tempHome = await fs.mkdtemp(path.join(workingDirectory, '.agent-vm-codex-home-'));
+		const codexHomeBase = process.env.STATE_DIR ?? workingDirectory;
+		const tempHome = await fs.mkdtemp(path.join(codexHomeBase, '.agent-vm-codex-home-'));
 		await fs.mkdir(path.join(tempHome, '.codex'), { recursive: true });
 
 		for (const mcpServer of config.capabilities.mcpServers) {
