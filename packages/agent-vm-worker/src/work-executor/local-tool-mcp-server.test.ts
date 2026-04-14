@@ -21,6 +21,17 @@ async function postJson(
 	};
 }
 
+function describeValue(value: unknown): string {
+	if (typeof value === 'string') {
+		return value;
+	}
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return '[unserializable]';
+	}
+}
+
 describe('local-tool-mcp-server', () => {
 	let serverUrl: string | null = null;
 
@@ -39,7 +50,7 @@ describe('local-tool-mcp-server', () => {
 			execute: async (params) => ({
 				type: 'echo',
 				success: true,
-				artifact: String(params.value ?? ''),
+				artifact: describeValue(params.value ?? ''),
 			}),
 		};
 
@@ -58,7 +69,7 @@ describe('local-tool-mcp-server', () => {
 			execute: async (params) => ({
 				type: 'echo',
 				success: true,
-				artifact: String(params.value ?? ''),
+				artifact: describeValue(params.value ?? ''),
 			}),
 		};
 

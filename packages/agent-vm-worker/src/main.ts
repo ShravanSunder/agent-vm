@@ -135,6 +135,8 @@ export async function runAgentVmWorkerCli(
 	if (!result.error.config.message.endsWith('\n')) {
 		outputStream.write('\n');
 	}
+	// cmd-ts subcommands still surface top-level help as a stdout Exit with nonzero exitCode.
+	// We keep cmd-ts's generated help text verbatim and only normalize that help path to success.
 	if (result.error.config.into === 'stdout' && isHelpRequest(argv)) {
 		return;
 	}

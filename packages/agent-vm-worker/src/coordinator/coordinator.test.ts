@@ -24,6 +24,12 @@ const mocks = vi.hoisted(() => ({
 	gatherContext: vi.fn(),
 }));
 
+const PLAN_MODEL = 'test-plan-model';
+const PLAN_REVIEW_MODEL = 'test-plan-review-model';
+const WORK_MODEL = 'test-work-model';
+const WORK_REVIEW_MODEL = 'test-work-review-model';
+const WRAPUP_MODEL = 'test-wrapup-model';
+
 vi.mock('../work-executor/executor-factory.js', () => ({
 	createWorkExecutor: mocks.createWorkExecutor,
 }));
@@ -86,7 +92,57 @@ function createMockExecutor(overrides?: {
 }
 
 function makeConfig(stateDir: string, overrides: Record<string, unknown> = {}): WorkerConfig {
-	return workerConfigSchema.parse({ stateDir, ...overrides });
+	const phaseDefaults = {
+		plan: { model: PLAN_MODEL },
+		planReview: { model: PLAN_REVIEW_MODEL },
+		work: { model: WORK_MODEL },
+		workReview: { model: WORK_REVIEW_MODEL },
+		wrapup: { model: WRAPUP_MODEL },
+	};
+	const isRecord = (value: unknown): value is Record<string, unknown> =>
+		typeof value === 'object' && value !== null;
+	const overridePhases = (() => {
+		if (!isRecord(overrides.phases)) {
+			return {};
+		}
+		return overrides.phases;
+	})();
+	const getPhaseOverride = (phaseKey: string): Record<string, unknown> => {
+		const candidate = overridePhases[phaseKey];
+		if (!isRecord(candidate)) {
+			return {};
+		}
+		return candidate;
+	};
+
+	const { phases: _ignoredPhases, ...remainingOverrides } = overrides;
+
+	return workerConfigSchema.parse({
+		stateDir,
+		phases: {
+			plan: {
+				...phaseDefaults.plan,
+				...getPhaseOverride('plan'),
+			},
+			planReview: {
+				...phaseDefaults.planReview,
+				...getPhaseOverride('planReview'),
+			},
+			work: {
+				...phaseDefaults.work,
+				...getPhaseOverride('work'),
+			},
+			workReview: {
+				...phaseDefaults.workReview,
+				...getPhaseOverride('workReview'),
+			},
+			wrapup: {
+				...phaseDefaults.wrapup,
+				...getPhaseOverride('wrapup'),
+			},
+		},
+		...remainingOverrides,
+	});
 }
 
 async function readEventNames(stateDir: string, taskId: string): Promise<readonly string[]> {
@@ -117,6 +173,7 @@ async function waitForStatus(
 describe('coordinator', () => {
 	let tempDir: string;
 	let stateDir: string;
+	let executorsByModel: Map<string, WorkExecutor>;
 
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), 'coordinator-test-'));
@@ -128,15 +185,23 @@ describe('coordinator', () => {
 			executeResponse: JSON.stringify({ approved: true, comments: [], summary: 'Plan looks good' }),
 		});
 		const workExecutor = createMockExecutor({ executeResponse: 'Implemented' });
+		const workReviewExecutor = createMockExecutor({
+			executeResponse: JSON.stringify({ approved: true, comments: [], summary: 'Looks good' }),
+		});
 		const wrapupExecutor = createMockExecutor({ executeResponse: 'Wrapup complete' });
-
-		let executorCallCount = 0;
-		mocks.createWorkExecutor.mockImplementation(() => {
-			executorCallCount += 1;
-			if (executorCallCount === 1) return planExecutor;
-			if (executorCallCount === 2) return reviewExecutor;
-			if (executorCallCount === 3) return workExecutor;
-			return wrapupExecutor;
+		executorsByModel = new Map([
+			[PLAN_MODEL, planExecutor],
+			[PLAN_REVIEW_MODEL, reviewExecutor],
+			[WORK_MODEL, workExecutor],
+			[WORK_REVIEW_MODEL, workReviewExecutor],
+			[WRAPUP_MODEL, wrapupExecutor],
+		]);
+		mocks.createWorkExecutor.mockImplementation((_provider: string, model: string) => {
+			const executor = executorsByModel.get(model);
+			if (!executor) {
+				throw new Error(`No mock executor configured for model ${model}`);
+			}
+			return executor;
 		});
 
 		mocks.gatherContext.mockResolvedValue({
@@ -234,7 +299,13 @@ describe('coordinator', () => {
 				return 't';
 			},
 		};
-		mocks.createWorkExecutor.mockReturnValue(slowExecutor);
+		executorsByModel = new Map([
+			[PLAN_MODEL, slowExecutor],
+			[PLAN_REVIEW_MODEL, slowExecutor],
+			[WORK_MODEL, slowExecutor],
+			[WORK_REVIEW_MODEL, slowExecutor],
+			[WRAPUP_MODEL, slowExecutor],
+		]);
 
 		const coordinator = await createCoordinator({
 			config: makeConfig(stateDir),
@@ -325,7 +396,13 @@ describe('coordinator', () => {
 				return 't';
 			},
 		};
-		mocks.createWorkExecutor.mockReturnValue(slowExecutor);
+		executorsByModel = new Map([
+			[PLAN_MODEL, slowExecutor],
+			[PLAN_REVIEW_MODEL, slowExecutor],
+			[WORK_MODEL, slowExecutor],
+			[WORK_REVIEW_MODEL, slowExecutor],
+			[WRAPUP_MODEL, slowExecutor],
+		]);
 
 		const coordinator = await createCoordinator({
 			config: makeConfig(stateDir),
@@ -348,14 +425,13 @@ describe('coordinator', () => {
 				summary: 'Plan needs more detail',
 			}),
 		});
-		let executorCallCount = 0;
-		mocks.createWorkExecutor.mockImplementation(() => {
-			executorCallCount += 1;
-			if (executorCallCount === 1) {
-				return createMockExecutor({ executeResponse: 'Initial plan' });
-			}
-			return reviewExecutor;
-		});
+		executorsByModel = new Map([
+			[PLAN_MODEL, createMockExecutor({ executeResponse: 'Initial plan' })],
+			[PLAN_REVIEW_MODEL, reviewExecutor],
+			[WORK_MODEL, createMockExecutor({ executeResponse: 'unused' })],
+			[WORK_REVIEW_MODEL, createMockExecutor({ executeResponse: 'unused' })],
+			[WRAPUP_MODEL, createMockExecutor({ executeResponse: 'unused' })],
+		]);
 
 		const coordinator = await createCoordinator({
 			config: makeConfig(stateDir, {

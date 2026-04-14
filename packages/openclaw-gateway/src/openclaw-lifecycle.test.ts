@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import type { GatewayZoneConfig } from 'gateway-interface';
 import type { SecretResolver } from 'gondolin-core';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { openclawLifecycle } from './openclaw-lifecycle.js';
 
@@ -165,13 +165,17 @@ describe('openclawLifecycle', () => {
 
 			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
 
-			expect(
-				fs.readFileSync(
-					path.join(zone.gateway.stateDir, 'agents', 'main', 'agent', 'auth-profiles.json'),
-					'utf8',
-				),
-			).toBe('{"profiles":[]}');
+			const authProfilesPath = path.join(
+				zone.gateway.stateDir,
+				'agents',
+				'main',
+				'agent',
+				'auth-profiles.json',
+			);
+			expect(fs.readFileSync(authProfilesPath, 'utf8')).toBe('{"profiles":[]}');
 			expect(fs.existsSync(path.join(zone.gateway.stateDir, 'agents', 'main', 'agent'))).toBe(true);
+			expect(fs.existsSync(path.join(zone.gateway.stateDir, 'effective-openclaw.json'))).toBe(false);
+			expect(fs.readFileSync(authProfilesPath, 'utf8')).not.toContain(resolvedSecrets.OPENCLAW_GATEWAY_TOKEN);
 		});
 
 		it('does nothing when authProfilesRef is absent', async () => {
@@ -185,15 +189,17 @@ describe('openclawLifecycle', () => {
 				},
 				withoutAuthProfilesRef: true,
 			});
+			const resolveSpy = vi.fn(async () => {
+				throw new Error('resolve should not be called');
+			});
 			const secretResolver: SecretResolver = {
-				resolve: async () => {
-					throw new Error('resolve should not be called');
-				},
+				resolve: resolveSpy,
 				resolveAll: async () => ({}),
 			};
 
 			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
 
+			expect(resolveSpy).not.toHaveBeenCalled();
 			expect(fs.existsSync(zone.gateway.stateDir)).toBe(false);
 			expect(fs.existsSync(zone.gateway.workspaceDir)).toBe(false);
 			expect(fs.existsSync(path.join(zone.gateway.stateDir, 'agents'))).toBe(false);

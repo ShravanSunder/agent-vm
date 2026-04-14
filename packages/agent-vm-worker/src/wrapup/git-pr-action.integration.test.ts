@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { createGitPrToolDefinition } from './git-pr-action.js';
-import { wrapupActionResultSchema } from './wrapup-types.js';
+import { wrapupToolOutputSchema } from './wrapup-types.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -126,7 +126,7 @@ printf '%s\\n' "https://github.com/acme/widgets/pull/42"
 			],
 		});
 
-		const result = wrapupActionResultSchema.parse(
+		const result = wrapupToolOutputSchema.parse(
 			await tool.execute({
 				title: 'feat: add feature artifact',
 				body: 'Implements the feature artifact test.',
@@ -134,7 +134,6 @@ printf '%s\\n' "https://github.com/acme/widgets/pull/42"
 		);
 
 		expect(result).toEqual({
-			key: '',
 			type: 'git-pr',
 			success: true,
 			artifact: 'https://github.com/acme/widgets/pull/42',

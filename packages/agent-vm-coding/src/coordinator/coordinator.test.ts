@@ -334,7 +334,7 @@ describe('coordinator', () => {
 		await waitForStatus(coordinator, taskId, 'awaiting-followup');
 
 		expect(coderAgent.fixCalls).toHaveLength(1);
-		expect(coordinator.getTaskState(taskId)?.codeReviewLoop).toBe(1);
+		expect(coordinator.getTaskState(taskId)?.codeReviewLoop).toBe(2);
 	});
 
 	it('fails the task when sanity retries are exhausted', async () => {

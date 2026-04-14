@@ -50,6 +50,10 @@ interface ControllerRuntimeOperations {
 	readonly upgradeZone: (targetZoneId: string) => Promise<unknown>;
 }
 
+function writeStderr(message: string): void {
+	process.stderr.write(`${message}\n`);
+}
+
 export function createControllerRuntimeOperations(options: {
 	readonly activeZoneId: string;
 	readonly getGateway: () => GatewayZoneRuntime;
@@ -117,7 +121,11 @@ export function createControllerRuntimeOperations(options: {
 								.getGateway()
 								.vm.exec(`cat ${options.getGateway().processSpec.logPath} 2>/dev/null || echo ""`);
 							return result.stdout;
-						} catch {
+						} catch (error) {
+							const message = error instanceof Error ? error.message : String(error);
+							writeStderr(
+								`[controller-runtime-operations] Failed to read gateway logs for ${targetZoneId}: ${message}`,
+							);
 							return '';
 						}
 					},

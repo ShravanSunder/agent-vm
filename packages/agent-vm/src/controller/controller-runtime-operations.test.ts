@@ -49,6 +49,7 @@ const systemConfig = {
 
 describe('createControllerRuntimeOperations', () => {
 	it('returns empty logs when the gateway exec fails', async () => {
+		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const operations = createControllerRuntimeOperations({
 			activeZoneId: 'shravan',
 			getGateway: () => ({
@@ -92,5 +93,10 @@ describe('createControllerRuntimeOperations', () => {
 			output: '',
 			zoneId: 'shravan',
 		});
+		expect(stderrSpy).toHaveBeenCalledWith(
+			expect.stringContaining(
+				'[controller-runtime-operations] Failed to read gateway logs for shravan: gateway handle is dead',
+			),
+		);
 	});
 });
