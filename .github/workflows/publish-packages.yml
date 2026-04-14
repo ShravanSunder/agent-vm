@@ -2,6 +2,15 @@ name: Publish Packages
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Release mode
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - publish
 
 jobs:
   publish:
@@ -36,5 +45,22 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      - name: Dry-run package publish
+        if: github.event.inputs.mode == 'dry-run'
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.pack-output"
+          for package_dir in \
+            packages/gondolin-core \
+            packages/gateway-interface \
+            packages/openclaw-gateway \
+            packages/worker-gateway \
+            packages/openclaw-agent-vm-plugin \
+            packages/agent-vm
+          do
+            pnpm --dir "$package_dir" pack --pack-destination "$GITHUB_WORKSPACE/.pack-output"
+          done
+          ls -lh "$GITHUB_WORKSPACE/.pack-output"
+
       - name: Publish packages
+        if: github.event.inputs.mode == 'publish'
         run: pnpm publish:packages
