@@ -1,5 +1,5 @@
 import type { ToolDefinition } from '../work-executor/executor-interface.js';
-import type { WrapupActionResult } from './wrapup-types.js';
+import type { WrapupToolOutput } from './wrapup-types.js';
 
 export interface SlackActionConfig {
 	readonly webhookUrl: string;
@@ -21,7 +21,7 @@ export function createSlackToolDefinition(config: SlackActionConfig): ToolDefini
 			},
 			required: ['message'],
 		},
-		execute: async (params: Record<string, unknown>): Promise<WrapupActionResult> => {
+		execute: async (params: Record<string, unknown>): Promise<WrapupToolOutput> => {
 			try {
 				const message = typeof params.message === 'string' ? params.message : 'Task completed.';
 				const payload: Record<string, unknown> = { text: message };
@@ -37,7 +37,6 @@ export function createSlackToolDefinition(config: SlackActionConfig): ToolDefini
 
 				if (!response.ok) {
 					return {
-						key: '',
 						type: 'slack-post',
 						success: false,
 						artifact: `Slack webhook returned ${response.status}: ${response.statusText}`,
@@ -45,14 +44,12 @@ export function createSlackToolDefinition(config: SlackActionConfig): ToolDefini
 				}
 
 				return {
-					key: '',
 					type: 'slack-post',
 					success: true,
 					artifact: 'Message posted successfully.',
 				};
 			} catch (error) {
 				return {
-					key: '',
 					type: 'slack-post',
 					success: false,
 					artifact: error instanceof Error ? error.message : String(error),

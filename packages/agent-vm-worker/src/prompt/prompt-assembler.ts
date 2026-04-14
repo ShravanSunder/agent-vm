@@ -1,6 +1,9 @@
 import { readFile } from 'node:fs/promises';
 
+import { reviewPhaseNames } from '../shared/phase-names.js';
+import type { RepoLocation } from '../shared/repo-location.js';
 import type { SkillReference } from '../shared/skill-types.js';
+import type { PhaseName } from '../state/task-event-types.js';
 import type { StructuredInput } from '../work-executor/executor-interface.js';
 
 const BASE_WORKER_PROMPT =
@@ -21,7 +24,7 @@ const DEFAULT_PHASE_INSTRUCTIONS: Record<string, string> = {
 		'git (commit, push, PR), Slack (webhook post). Decide which actions to take based on the task results.',
 };
 
-const REVIEW_PHASES = new Set(['plan-review', 'work-review']);
+const REVIEW_PHASES = new Set<PhaseName>(reviewPhaseNames);
 
 export async function resolveSkillInputs(
 	skills: readonly SkillReference[],
@@ -48,14 +51,10 @@ export async function resolveSkillInputs(
 }
 
 export interface AssemblePromptInput {
-	readonly phase: string;
+	readonly phase: PhaseName;
 	readonly phaseInstructions?: string | undefined;
 	readonly taskPrompt: string;
-	readonly repos?: readonly {
-		readonly repoUrl: string;
-		readonly baseBranch: string;
-		readonly workspacePath: string;
-	}[];
+	readonly repos?: readonly RepoLocation[];
 	readonly context?: Record<string, unknown>;
 	readonly repoSummary?: string | null;
 	readonly plan?: string | null;

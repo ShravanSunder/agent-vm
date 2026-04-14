@@ -1,10 +1,15 @@
 import { z } from 'zod';
 
-export const wrapupActionResultSchema = z.object({
-	key: z.string(),
+export const wrapupToolOutputSchema = z.object({
 	type: z.string(),
 	artifact: z.string().optional(),
 	success: z.boolean(),
+});
+
+export type WrapupToolOutput = z.infer<typeof wrapupToolOutputSchema>;
+
+export const wrapupActionResultSchema = wrapupToolOutputSchema.extend({
+	key: z.string(),
 });
 
 export interface WrapupActionResult {

@@ -1,13 +1,10 @@
+import type { RepoLocation } from '../shared/repo-location.js';
 import type { TaskState } from '../state/task-state.js';
 
 export interface CreateTaskInput {
 	readonly taskId: string;
 	readonly prompt: string;
-	readonly repos?: readonly {
-		readonly repoUrl: string;
-		readonly baseBranch: string;
-		readonly workspacePath: string;
-	}[];
+	readonly repos?: readonly RepoLocation[];
 	readonly context?: Record<string, unknown>;
 }
 

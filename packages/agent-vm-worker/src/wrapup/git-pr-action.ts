@@ -5,8 +5,9 @@ import {
 	pushBranch,
 	stageAndCommit,
 } from '../git/git-operations.js';
+import type { RepoLocation } from '../shared/repo-location.js';
 import type { ToolDefinition } from '../work-executor/executor-interface.js';
-import type { WrapupActionResult } from './wrapup-types.js';
+import type { WrapupToolOutput } from './wrapup-types.js';
 
 export interface GitPrActionConfig {
 	readonly branchPrefix: string;
@@ -14,21 +15,13 @@ export interface GitPrActionConfig {
 	readonly taskId: string;
 	readonly taskPrompt: string;
 	readonly plan: string | null;
-	readonly repos: readonly {
-		readonly repoUrl: string;
-		readonly baseBranch: string;
-		readonly workspacePath: string;
-	}[];
+	readonly repos: readonly RepoLocation[];
 }
 
 function selectTargetRepo(
 	config: GitPrActionConfig,
 	params: Record<string, unknown>,
-): {
-	readonly repoUrl: string;
-	readonly baseBranch: string;
-	readonly workspacePath: string;
-} | null {
+): RepoLocation | null {
 	const requestedWorkspacePath =
 		typeof params.repoWorkspacePath === 'string' ? params.repoWorkspacePath : null;
 	const requestedRepoUrl = typeof params.repoUrl === 'string' ? params.repoUrl : null;
@@ -71,12 +64,11 @@ export function createGitPrToolDefinition(config: GitPrActionConfig): ToolDefini
 			},
 			required: ['title', 'body'],
 		},
-		execute: async (params: Record<string, unknown>): Promise<WrapupActionResult> => {
+		execute: async (params: Record<string, unknown>): Promise<WrapupToolOutput> => {
 			try {
 				const targetRepo = selectTargetRepo(config, params);
 				if (!targetRepo) {
 					return {
-						key: '',
 						type: 'git-pr',
 						success: false,
 						artifact: 'No repo configured - cannot create PR.',
@@ -88,7 +80,6 @@ export function createGitPrToolDefinition(config: GitPrActionConfig): ToolDefini
 					typeof params.repoUrl !== 'string'
 				) {
 					return {
-						key: '',
 						type: 'git-pr',
 						success: false,
 						artifact:
@@ -135,7 +126,6 @@ export function createGitPrToolDefinition(config: GitPrActionConfig): ToolDefini
 				);
 
 				return {
-					key: '',
 					type: 'git-pr',
 					artifact: prUrl,
 					success: true,
@@ -147,7 +137,6 @@ export function createGitPrToolDefinition(config: GitPrActionConfig): ToolDefini
 					'https://x-access-token:***@',
 				);
 				return {
-					key: '',
 					type: 'git-pr',
 					artifact: sanitized,
 					success: false,

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createGitPrToolDefinition } from './git-pr-action.js';
-import { findMissingRequiredActions, wrapupActionResultSchema } from './wrapup-types.js';
+import { findMissingRequiredActions, wrapupToolOutputSchema } from './wrapup-types.js';
 
 const mocks = vi.hoisted(() => ({
 	configureGit: vi.fn(),
@@ -52,7 +52,6 @@ describe('git-pr-action', () => {
 		});
 
 		expect(result).toEqual({
-			key: '',
 			type: 'git-pr',
 			artifact: 'https://github.com/org/repo/pull/42',
 			success: true,
@@ -77,7 +76,6 @@ describe('git-pr-action', () => {
 		const result = await tool.execute({ title: 'PR', body: 'body' });
 
 		expect(result).toEqual({
-			key: '',
 			type: 'git-pr',
 			success: false,
 			artifact: 'No repo configured - cannot create PR.',
@@ -107,7 +105,7 @@ describe('git-pr-action', () => {
 			],
 		});
 
-		const result = wrapupActionResultSchema.parse(
+		const result = wrapupToolOutputSchema.parse(
 			await tool.execute({
 				title: 'PR',
 				body: 'body',
@@ -143,7 +141,6 @@ describe('git-pr-action', () => {
 		const result = await tool.execute({ title: 'PR', body: 'body' });
 
 		expect(result).toEqual({
-			key: '',
 			type: 'git-pr',
 			success: false,
 			artifact:

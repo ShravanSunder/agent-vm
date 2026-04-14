@@ -1,9 +1,10 @@
 import type { WorkerConfig } from '../config/worker-config.js';
+import type { RepoLocation } from '../shared/repo-location.js';
 import type { ToolDefinition } from '../work-executor/executor-interface.js';
 import { createGitPrToolDefinition, type GitPrActionConfig } from './git-pr-action.js';
 import { createSlackToolDefinition } from './slack-action.js';
 import {
-	wrapupActionResultSchema,
+	wrapupToolOutputSchema,
 	type WrapupActionConfig,
 	type WrapupActionResult,
 } from './wrapup-types.js';
@@ -13,11 +14,7 @@ export interface WrapupToolRegistryInput {
 	readonly taskId: string;
 	readonly taskPrompt: string;
 	readonly plan: string | null;
-	readonly repos: readonly {
-		readonly repoUrl: string;
-		readonly baseBranch: string;
-		readonly workspacePath: string;
-	}[];
+	readonly repos: readonly RepoLocation[];
 }
 
 export interface WrapupToolRegistryResult {
@@ -35,7 +32,7 @@ function wrapToolWithResultCollector(
 		...tool,
 		execute: async (params: Record<string, unknown>): Promise<unknown> => {
 			try {
-				const parseResult = wrapupActionResultSchema.safeParse(await tool.execute(params));
+				const parseResult = wrapupToolOutputSchema.safeParse(await tool.execute(params));
 				if (!parseResult.success) {
 					const result: WrapupActionResult = {
 						key: actionKey,

@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
 
+import { repoLocationSchema } from './shared/repo-location.js';
 import { isTerminal } from './state/task-state.js';
 import type { TaskState } from './state/task-state.js';
 
@@ -27,12 +28,6 @@ function validationErrorHook(
 function writeStderr(message: string): void {
 	process.stderr.write(`${message}\n`);
 }
-
-export const repoLocationSchema = z.object({
-	repoUrl: z.string().min(1),
-	baseBranch: z.string().min(1),
-	workspacePath: z.string().min(1),
-});
 
 export const createTaskRequestSchema = z.object({
 	taskId: z.string().min(1),
