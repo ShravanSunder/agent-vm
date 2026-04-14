@@ -27,7 +27,7 @@ Package.resolved
 *.swo
 
 # OS
-.DS_Store
+**/.DS_Store
 Thumbs.db
 
 # Environment
