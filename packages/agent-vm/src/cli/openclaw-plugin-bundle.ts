@@ -22,17 +22,30 @@ async function resolveBundledOpenClawPluginDistDirectory(): Promise<string> {
 
 export async function syncBundledOpenClawPluginBundle(
 	targetDir: string,
+	dependencies: {
+		readonly access?: typeof fs.access;
+		readonly copyDirectory?: typeof fs.cp;
+		readonly createDirectory?: typeof fs.mkdir;
+		readonly removeDirectory?: typeof fs.rm;
+		readonly resolveBundledDistDirectory?: () => Promise<string>;
+	} = {},
 ): Promise<'created' | 'skipped'> {
+	const access = dependencies.access ?? fs.access;
+	const copyDirectory = dependencies.copyDirectory ?? fs.cp;
+	const createDirectory = dependencies.createDirectory ?? fs.mkdir;
+	const removeDirectory = dependencies.removeDirectory ?? fs.rm;
+	const resolveBundledDistDirectory =
+		dependencies.resolveBundledDistDirectory ?? resolveBundledOpenClawPluginDistDirectory;
 	const pluginTargetDirectory = path.join(targetDir, openClawPluginVendorDirectory);
 	try {
-		await fs.access(path.join(pluginTargetDirectory, 'openclaw.plugin.json'));
-		await fs.rm(pluginTargetDirectory, { force: true, recursive: true });
+		await access(path.join(pluginTargetDirectory, 'openclaw.plugin.json'));
 	} catch {
-		// continue
+		// Target does not exist yet — nothing to clean.
 	}
+	await removeDirectory(pluginTargetDirectory, { force: true, recursive: true });
 
-	const pluginDistDirectory = await resolveBundledOpenClawPluginDistDirectory();
-	await fs.mkdir(path.dirname(pluginTargetDirectory), { recursive: true });
-	await fs.cp(pluginDistDirectory, pluginTargetDirectory, { recursive: true });
+	const pluginDistDirectory = await resolveBundledDistDirectory();
+	await createDirectory(path.dirname(pluginTargetDirectory), { recursive: true });
+	await copyDirectory(pluginDistDirectory, pluginTargetDirectory, { recursive: true });
 	return 'created';
 }

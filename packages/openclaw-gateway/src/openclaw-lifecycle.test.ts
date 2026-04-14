@@ -106,6 +106,7 @@ describe('openclawLifecycle', () => {
 			});
 
 			expect(vmSpec.environment.DISCORD_BOT_TOKEN).toBe('discord-token');
+			expect(vmSpec.environment.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
 			expect(vmSpec.environment.PERPLEXITY_API_KEY).toBeUndefined();
 			expect(vmSpec.mediatedSecrets.PERPLEXITY_API_KEY).toEqual({
 				hosts: ['api.perplexity.ai'],

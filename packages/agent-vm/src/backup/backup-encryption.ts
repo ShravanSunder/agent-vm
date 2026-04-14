@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 import type { BackupEncryption } from './backup-manager.js';
 
@@ -47,13 +50,33 @@ function runWithStdin(
 	});
 }
 
+async function withTemporaryIdentityFile<TResult>(
+	identityLine: string,
+	runWithIdentityFile: (identityFilePath: string) => Promise<TResult>,
+): Promise<TResult> {
+	const temporaryIdentityPath = path.join(
+		os.tmpdir(),
+		`agent-vm-age-identity-${process.pid}-${Date.now()}.txt`,
+	);
+	await fs.writeFile(temporaryIdentityPath, `${identityLine}\n`, {
+		encoding: 'utf8',
+		mode: 0o600,
+	});
+	try {
+		return await runWithIdentityFile(temporaryIdentityPath);
+	} finally {
+		await fs.rm(temporaryIdentityPath, { force: true });
+	}
+}
+
 /**
- * Derive the public key (recipient) from an age identity key via stdin.
- * No temp files — the secret key stays in memory.
+ * Derive the public key (recipient) from an age identity key via a short-lived
+ * 0600 temp file. `/dev/stdin` is not portable enough across CI runners.
  */
 async function deriveRecipientFromIdentity(identityLine: string): Promise<string> {
-	const stdout = await runWithStdin('age-keygen', ['-y', '/dev/stdin'], identityLine + '\n');
-	return stdout.trim();
+	return await withTemporaryIdentityFile(identityLine, async (identityFilePath) =>
+		(await runWithStdin('age-keygen', ['-y', identityFilePath])).trim(),
+	);
 }
 
 /**
@@ -63,8 +86,8 @@ async function deriveRecipientFromIdentity(identityLine: string): Promise<string
  * is stored in 1Password per zone. The public key (recipient) is derived
  * at encryption time via age-keygen -y.
  *
- * Secret keys are never written to disk — they're passed via stdin
- * using /dev/stdin as the identity file path.
+ * Secret keys are written only to a short-lived 0600 temp file for tool
+ * compatibility, then deleted immediately after each operation.
  */
 export function createAgeBackupEncryption(
 	dependencies: AgeEncryptionDependencies,
@@ -84,10 +107,17 @@ export function createAgeBackupEncryption(
 		},
 		decrypt: async (inputPath, outputPath) => {
 			const identity = await dependencies.resolveIdentity();
-			await runWithStdin(
-				'age',
-				['--decrypt', '--identity', '/dev/stdin', '--output', outputPath, inputPath],
-				identity + '\n',
+			await withTemporaryIdentityFile(
+				identity,
+				async (identityFilePath) =>
+					await runWithStdin('age', [
+						'--decrypt',
+						'--identity',
+						identityFilePath,
+						'--output',
+						outputPath,
+						inputPath,
+					]),
 			);
 		},
 	};

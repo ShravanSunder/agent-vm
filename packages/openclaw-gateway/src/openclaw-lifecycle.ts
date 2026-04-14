@@ -173,6 +173,8 @@ export const openclawLifecycle: GatewayLifecycle = {
 			zone,
 			resolvedSecrets,
 		);
+		const { OPENCLAW_GATEWAY_TOKEN: _gatewayToken, ...environmentSecretsWithoutGatewayToken } =
+			environmentSecrets;
 
 		return {
 			allowedHosts: [...zone.allowedHosts],
@@ -182,7 +184,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 				OPENCLAW_CONFIG_PATH: effectiveOpenClawConfigVmPath,
 				OPENCLAW_HOME: '/home/openclaw',
 				OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
-				...environmentSecrets,
+				...environmentSecretsWithoutGatewayToken,
 			},
 			mediatedSecrets,
 			rootfsMode: 'cow',
