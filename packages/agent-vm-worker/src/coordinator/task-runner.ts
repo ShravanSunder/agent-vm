@@ -5,6 +5,7 @@ import { getDiff } from '../git/git-operations.js';
 import { createPlanReviewer } from '../planner/plan-reviewer.js';
 import { createPlanner } from '../planner/planner.js';
 import { assemblePrompt } from '../prompt/prompt-assembler.js';
+import { writeStderr } from '../shared/stderr.js';
 import type { TaskState } from '../state/task-state.js';
 import { createWorkExecutor } from '../work-executor/executor-factory.js';
 import {
@@ -15,10 +16,9 @@ import {
 import { reviewWork } from '../work-reviewer/work-reviewer.js';
 import { buildWrapupTools, getWrapupActionConfigs } from '../wrapup/wrapup-action-registry.js';
 import { findMissingRequiredActions } from '../wrapup/wrapup-types.js';
-import { writeStderr } from '../shared/stderr.js';
-import type { CoordinatorDeps } from './coordinator-types.js';
 import type { TaskEventRecorder } from './coordinator-helpers.js';
 import { sanitizeErrorMessage } from './coordinator-helpers.js';
+import type { CoordinatorDeps } from './coordinator-types.js';
 
 function getPrimaryRepoWorkspace(
 	config: { readonly repos: readonly { readonly workspacePath: string }[] },

@@ -1,6 +1,6 @@
+import type { WorkerConfig } from '../config/worker-config.js';
 import type { RepoLocation } from '../shared/repo-location.js';
 import type { TaskState } from '../state/task-state.js';
-import type { WorkerConfig } from '../config/worker-config.js';
 
 export interface CreateTaskInput {
 	readonly taskId: string;

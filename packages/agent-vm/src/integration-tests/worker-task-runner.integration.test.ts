@@ -96,6 +96,8 @@ describe('worker-task-runner integration', () => {
 						},
 					},
 					plan: null,
+					lastContextError: null,
+					lastDiffError: null,
 					plannerThreadId: null,
 					workThreadId: null,
 					planReviewLoop: 0,

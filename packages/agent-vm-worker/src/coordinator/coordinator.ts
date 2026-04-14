@@ -1,6 +1,15 @@
 import { writeStderr } from '../shared/stderr.js';
-import { createInitialState, hydrateTaskStates, isTerminal, type TaskState } from '../state/task-state.js';
-import { buildTaskConfig, createTaskEventRecorder, sanitizeErrorMessage } from './coordinator-helpers.js';
+import {
+	createInitialState,
+	hydrateTaskStates,
+	isTerminal,
+	type TaskState,
+} from '../state/task-state.js';
+import {
+	buildTaskConfig,
+	createTaskEventRecorder,
+	sanitizeErrorMessage,
+} from './coordinator-helpers.js';
 import type { Coordinator, CoordinatorDeps, CreateTaskInput } from './coordinator-types.js';
 import { runTask } from './task-runner.js';
 

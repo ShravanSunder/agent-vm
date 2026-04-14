@@ -46,7 +46,12 @@ export type {
 	WrapupActionResult,
 } from './state/task-event-types.js';
 export { reviewResultSchema, type ReviewResult } from './shared/review-result.js';
-export { repoLocationSchema, repoTargetSchema, type RepoLocation, type RepoTarget } from './shared/repo-location.js';
+export {
+	repoLocationSchema,
+	repoTargetSchema,
+	type RepoLocation,
+	type RepoTarget,
+} from './shared/repo-location.js';
 export { skillReferenceSchema, type SkillReference } from './shared/skill-types.js';
 export { createCodexExecutor, type CodexExecutorConfig } from './work-executor/codex-executor.js';
 export { createWorkExecutor } from './work-executor/executor-factory.js';

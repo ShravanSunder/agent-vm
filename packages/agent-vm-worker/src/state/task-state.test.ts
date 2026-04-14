@@ -21,9 +21,9 @@ describe('task-state reducer', () => {
 			applyEvent(state, { event: 'phase-started', phase: 'plan-review', loop: 1 }).status,
 		).toBe('reviewing-plan');
 		expect(applyEvent(state, { event: 'phase-started', phase: 'work' }).status).toBe('working');
-		expect(
-			applyEvent(state, { event: 'phase-started', phase: 'verification' }).status,
-		).toBe('verifying');
+		expect(applyEvent(state, { event: 'phase-started', phase: 'verification' }).status).toBe(
+			'verifying',
+		);
 		expect(
 			applyEvent(state, { event: 'phase-started', phase: 'work-review', loop: 1 }).status,
 		).toBe('reviewing-work');

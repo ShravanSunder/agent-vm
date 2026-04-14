@@ -1,5 +1,5 @@
-import { execa } from 'execa';
 import type { GatewayAuthConfig } from '@shravansunder/gateway-interface';
+import { execa } from 'execa';
 
 import type { SystemConfig } from '../config/system-config.js';
 import {

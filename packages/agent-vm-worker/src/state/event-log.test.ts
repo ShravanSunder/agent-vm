@@ -52,13 +52,19 @@ describe('event-log', () => {
 		tempDir = await mkdtemp(join(tmpdir(), 'worker-event-log-'));
 		const filePath = join(tempDir, 'tasks', 'task-1.jsonl');
 		await appendEvent(filePath, { event: 'task-completed' });
-		await writeFile(filePath, `${await readFile(filePath, 'utf8')}{"event":"task-accepted"`, 'utf8');
+		await writeFile(
+			filePath,
+			`${await readFile(filePath, 'utf8')}{"event":"task-accepted"`,
+			'utf8',
+		);
 		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
 		const events = await replayEvents(filePath);
 
 		expect(events).toHaveLength(1);
 		expect(events[0]?.data.event).toBe('task-completed');
-		expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('Skipping incomplete final line'));
+		expect(stderrSpy).toHaveBeenCalledWith(
+			expect.stringContaining('Skipping incomplete final line'),
+		);
 	});
 });
