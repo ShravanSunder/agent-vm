@@ -3,6 +3,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 
+import { workerConfigSchema } from '@shravansunder/agent-vm-worker';
+
 import {
 	getKeychainTokenSource,
 	hasServiceAccountToken,
@@ -299,18 +301,7 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 	channels: {},
 });
 
-const defaultCodingGatewayConfig = (): object => ({
-	agentTimeoutMs: 600_000,
-	branchPrefix: 'agent/',
-	commitCoAuthor: 'agent-vm-worker <noreply@agent-vm>',
-	idleTimeoutMs: 1_800_000,
-	lintCommand: 'pnpm lint',
-	maxRetries: 3,
-	model: 'gpt-5.4-mini',
-	stateDir: '/state',
-	testCommand: 'pnpm test',
-	verificationTimeoutMs: 300_000,
-});
+const defaultWorkerGatewayConfig = (): object => workerConfigSchema.parse({});
 
 async function writeFileIfMissing(
 	filePath: string,
@@ -389,7 +380,7 @@ async function scaffoldAgentVmProjectInternal(
 		`${JSON.stringify(
 			gatewayType === 'openclaw'
 				? defaultOpenClawConfig(options.zoneId, defaultGatewayIngressPort)
-				: defaultCodingGatewayConfig(),
+				: defaultWorkerGatewayConfig(),
 			null,
 			'\t',
 		)}\n`,

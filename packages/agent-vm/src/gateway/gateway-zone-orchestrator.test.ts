@@ -693,9 +693,13 @@ describe('startGatewayZone', () => {
 		expect(execMock).toHaveBeenCalledWith(
 			expect.stringContaining('cat > /root/.openclaw-env << ENVEOF'),
 		);
-		expect(execMock).toHaveBeenCalledWith(expect.stringContaining('chmod 600 /root/.openclaw-env'));
-		expect(execMock).toHaveBeenCalledWith(expect.stringContaining('source /root/.openclaw-env'));
 		expect(execMock).toHaveBeenCalledWith(
+			expect.stringContaining('chmod 600 /root/.openclaw-env'),
+		);
+		expect(execMock).toHaveBeenCalledWith(
+			expect.stringContaining('source /root/.openclaw-env'),
+		);
+		expect(execMock).not.toHaveBeenCalledWith(
 			expect.stringContaining("export OPENCLAW_GATEWAY_TOKEN='gateway-token-123'"),
 		);
 	});
