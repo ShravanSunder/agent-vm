@@ -138,10 +138,7 @@ export function createControllerRuntimeOperations(options: {
 							zoneId,
 						});
 					},
-					restartGatewayZone: async () => {
-						await options.stopGatewayZone();
-						await options.restartGatewayZone();
-					},
+					restartGatewayZone: async () => await options.restartGatewayZone(),
 				},
 			);
 		},
@@ -155,7 +152,6 @@ export function createControllerRuntimeOperations(options: {
 				{
 					rebuildGatewayImage: async () => {},
 					restartGatewayZone: options.restartGatewayZone,
-					stopGatewayZone: options.stopGatewayZone,
 				},
 			);
 		},

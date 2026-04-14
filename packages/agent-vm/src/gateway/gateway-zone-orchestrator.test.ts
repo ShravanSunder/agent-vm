@@ -712,4 +712,45 @@ describe('startGatewayZone', () => {
 			),
 		);
 	});
+
+	it('closes the booted gateway VM if writing the runtime record fails', async () => {
+		const closeMock = vi.fn(async () => {});
+		const managedVm: ManagedVm = {
+			id: 'vm-record-fail',
+			close: closeMock,
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28290)),
+		};
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						PERPLEXITY_API_KEY: 'pplx-key',
+					}),
+					systemConfig: createSystemConfig(),
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					createManagedVm: vi.fn(async () => managedVm),
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					writeGatewayRuntimeRecord: vi.fn(async () => {
+						throw new Error('disk full');
+					}),
+				},
+			),
+		).rejects.toThrow(/disk full/u);
+
+		expect(closeMock).toHaveBeenCalledTimes(1);
+	});
 });

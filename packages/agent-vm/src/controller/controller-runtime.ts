@@ -27,6 +27,17 @@ import { createIdleReaper } from './leases/idle-reaper.js';
 import { createLeaseManager } from './leases/lease-manager.js';
 import { createTcpPool } from './leases/tcp-pool.js';
 
+function writeControllerRuntimeLog(message: string): void {
+	process.stderr.write(`[agent-vm] ${message}\n`);
+}
+
+function formatUnknownError(error: unknown): string {
+	if (error instanceof Error) {
+		return error.message;
+	}
+	return typeof error === 'string' ? error : JSON.stringify(error);
+}
+
 export async function startControllerRuntime(
 	options: StartControllerRuntimeOptions,
 	dependencies: ControllerRuntimeDependencies,
@@ -117,16 +128,33 @@ export async function startControllerRuntime(
 		if (!gateway) {
 			return;
 		}
+		const activeGateway = gateway;
+		gateway = undefined;
+		let closeError: unknown;
 		try {
-			await gateway.vm.close();
-		} finally {
+			await activeGateway.vm.close();
+		} catch (error) {
+			closeError = error;
+		}
+		let deleteRecordError: unknown;
+		try {
 			await (dependencies.deleteGatewayRuntimeRecord ?? deleteGatewayRuntimeRecordDefault)(
 				zone.gateway.stateDir,
+			);
+		} catch (error) {
+			deleteRecordError = error;
+		}
+		if (closeError) {
+			throw closeError;
+		}
+		if (deleteRecordError) {
+			writeControllerRuntimeLog(
+				`Failed to remove gateway runtime record for zone '${zone.id}' at '${zone.gateway.stateDir}': ${formatUnknownError(deleteRecordError)}`,
 			);
 		}
 	};
 	const restartGatewayZone = async (): Promise<void> => {
-		gateway = undefined;
+		await stopGatewayZone();
 		gateway = await startGateway();
 	};
 	const serverRef: { current?: { close(): Promise<void> } } = {};

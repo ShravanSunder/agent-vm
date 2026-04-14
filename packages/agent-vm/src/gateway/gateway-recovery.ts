@@ -10,7 +10,15 @@ function isProcessAlive(pid: number): boolean {
 	try {
 		process.kill(pid, 0);
 		return true;
-	} catch {
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error) {
+			if (error.code === 'EPERM') {
+				return true;
+			}
+			if (error.code === 'ESRCH') {
+				return false;
+			}
+		}
 		return false;
 	}
 }
@@ -29,28 +37,43 @@ function isManagedGatewayProcess(command: string): boolean {
 	return /\b(qemu-system|krun)\b/u.test(command);
 }
 
+function writeRecoveryLog(message: string): void {
+	process.stderr.write(`[agent-vm] ${message}\n`);
+}
+
 function killProcess(pid: number, signal: NodeJS.Signals): void {
-	process.kill(pid, signal);
+	try {
+		process.kill(pid, signal);
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH') {
+			return;
+		}
+		throw error;
+	}
+}
+
+function isNoSuchProcessError(error: unknown): boolean {
+	return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH';
 }
 
 async function sleep(delayMs: number): Promise<void> {
 	await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
-async function waitForExit(
-	pid: number,
-	processIsAlive: (pid: number) => boolean,
-	sleepImpl: (delayMs: number) => Promise<void>,
-	timeoutMs: number,
-): Promise<boolean> {
-	const deadline = Date.now() + timeoutMs;
+async function waitForExit(options: {
+	readonly pid: number;
+	readonly processIsAlive: (pid: number) => boolean;
+	readonly sleep: (delayMs: number) => Promise<void>;
+	readonly timeoutMs: number;
+}): Promise<boolean> {
+	const deadline = Date.now() + options.timeoutMs;
 	while (Date.now() < deadline) {
-		if (!processIsAlive(pid)) {
+		if (!options.processIsAlive(options.pid)) {
 			return true;
 		}
-		await sleepImpl(100);
+		await options.sleep(100);
 	}
-	return !processIsAlive(pid);
+	return !options.processIsAlive(options.pid);
 }
 
 async function killOrphanedGatewayProcess(
@@ -73,18 +96,40 @@ async function killOrphanedGatewayProcess(
 		);
 	}
 
-	dependencies.killProcess(runtimeRecord.qemuPid, 'SIGTERM');
+	try {
+		dependencies.killProcess(runtimeRecord.qemuPid, 'SIGTERM');
+	} catch (error) {
+		if (!isNoSuchProcessError(error)) {
+			throw error;
+		}
+	}
 	if (
-		await waitForExit(runtimeRecord.qemuPid, dependencies.isProcessAlive, dependencies.sleep, 2_000)
+		await waitForExit({
+			pid: runtimeRecord.qemuPid,
+			processIsAlive: dependencies.isProcessAlive,
+			sleep: dependencies.sleep,
+			timeoutMs: 2_000,
+		})
 	) {
-		return runtimeRecord.qemuPid;
+		return dependencies.isProcessAlive(runtimeRecord.qemuPid) ? runtimeRecord.qemuPid : null;
 	}
 
-	dependencies.killProcess(runtimeRecord.qemuPid, 'SIGKILL');
+	try {
+		dependencies.killProcess(runtimeRecord.qemuPid, 'SIGKILL');
+	} catch (error) {
+		if (!isNoSuchProcessError(error)) {
+			throw error;
+		}
+	}
 	if (
-		await waitForExit(runtimeRecord.qemuPid, dependencies.isProcessAlive, dependencies.sleep, 2_000)
+		await waitForExit({
+			pid: runtimeRecord.qemuPid,
+			processIsAlive: dependencies.isProcessAlive,
+			sleep: dependencies.sleep,
+			timeoutMs: 2_000,
+		})
 	) {
-		return runtimeRecord.qemuPid;
+		return dependencies.isProcessAlive(runtimeRecord.qemuPid) ? runtimeRecord.qemuPid : null;
 	}
 
 	throw new Error(
@@ -97,6 +142,7 @@ export interface GatewayRecoveryDependencies {
 	readonly isProcessAlive?: (pid: number) => boolean;
 	readonly killProcess?: (pid: number, signal: NodeJS.Signals) => void;
 	readonly loadGatewayRuntimeRecord?: typeof loadGatewayRuntimeRecord;
+	readonly log?: (message: string) => void;
 	readonly readProcessCommand?: (pid: number) => Promise<string | null>;
 	readonly sleep?: (delayMs: number) => Promise<void>;
 }
@@ -111,12 +157,17 @@ export async function cleanupOrphanedGatewayIfPresent(
 	readonly cleanedUp: boolean;
 	readonly killedPid: number | null;
 }> {
+	const log = dependencies.log ?? writeRecoveryLog;
 	const runtimeRecord = await (dependencies.loadGatewayRuntimeRecord ?? loadGatewayRuntimeRecord)(
 		options.stateDir,
+		{ log },
 	);
 	if (!runtimeRecord) {
 		return { cleanedUp: false, killedPid: null };
 	}
+	log(
+		`Found persisted gateway runtime for zone '${runtimeRecord.zoneId}' (pid ${runtimeRecord.qemuPid}, session ${runtimeRecord.sessionId}).`,
+	);
 
 	const killedPid = await killOrphanedGatewayProcess(runtimeRecord, {
 		isProcessAlive: dependencies.isProcessAlive ?? isProcessAlive,
@@ -125,6 +176,11 @@ export async function cleanupOrphanedGatewayIfPresent(
 		sleep: dependencies.sleep ?? sleep,
 	});
 	await (dependencies.deleteGatewayRuntimeRecord ?? deleteGatewayRuntimeRecord)(options.stateDir);
+	log(
+		killedPid === null
+			? `Removed stale gateway runtime record for zone '${runtimeRecord.zoneId}' after confirming the orphaned process was already gone.`
+			: `Removed stale gateway runtime record for zone '${runtimeRecord.zoneId}' after terminating orphaned gateway pid ${killedPid}.`,
+	);
 
 	return {
 		cleanedUp: true,

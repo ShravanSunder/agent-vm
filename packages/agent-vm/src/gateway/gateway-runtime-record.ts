@@ -19,11 +19,16 @@ export const gatewayRuntimeRecordSchema = z.object({
 });
 
 export type GatewayRuntimeRecord = z.infer<typeof gatewayRuntimeRecordSchema>;
+export type GatewayRuntimeLog = (message: string) => void;
 
 const gatewayRuntimeRecordFileName = 'gateway-runtime.json';
 
 function resolveGatewayRuntimeRecordPath(stateDirectory: string): string {
 	return path.join(stateDirectory, gatewayRuntimeRecordFileName);
+}
+
+function resolveInvalidGatewayRuntimeRecordPath(stateDirectory: string): string {
+	return path.join(stateDirectory, `gateway-runtime.invalid.${Date.now()}.json`);
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -33,11 +38,37 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 async function writeFileAtomically(filePath: string, content: string): Promise<void> {
 	const temporaryFilePath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
 	await fs.writeFile(temporaryFilePath, content, 'utf8');
-	await fs.rename(temporaryFilePath, filePath);
+	try {
+		await fs.rename(temporaryFilePath, filePath);
+	} catch (error) {
+		await fs.rm(temporaryFilePath, { force: true }).catch(() => {});
+		throw error;
+	}
+}
+
+async function quarantineMalformedGatewayRuntimeRecord(
+	stateDirectory: string,
+	runtimeRecordPath: string,
+	log: GatewayRuntimeLog,
+): Promise<void> {
+	const invalidRuntimeRecordPath = resolveInvalidGatewayRuntimeRecordPath(stateDirectory);
+	await fs.rename(runtimeRecordPath, invalidRuntimeRecordPath).catch(async () => {
+		await fs.rm(runtimeRecordPath, { force: true });
+	});
+	log(
+		`Quarantined malformed gateway runtime record '${runtimeRecordPath}' to '${invalidRuntimeRecordPath}'.`,
+	);
+}
+
+function writeGatewayRuntimeLog(message: string): void {
+	process.stderr.write(`[agent-vm] ${message}\n`);
 }
 
 export async function loadGatewayRuntimeRecord(
 	stateDirectory: string,
+	options: {
+		readonly log?: GatewayRuntimeLog;
+	} = {},
 ): Promise<GatewayRuntimeRecord | null> {
 	const runtimeRecordPath = resolveGatewayRuntimeRecordPath(stateDirectory);
 	let rawRuntimeRecord: string;
@@ -51,9 +82,13 @@ export async function loadGatewayRuntimeRecord(
 	}
 
 	try {
-		return gatewayRuntimeRecordSchema.parse(JSON.parse(rawRuntimeRecord) as unknown);
+		return gatewayRuntimeRecordSchema.parse(JSON.parse(rawRuntimeRecord));
 	} catch {
-		await deleteGatewayRuntimeRecord(stateDirectory);
+		await quarantineMalformedGatewayRuntimeRecord(
+			stateDirectory,
+			runtimeRecordPath,
+			options.log ?? writeGatewayRuntimeLog,
+		);
 		return null;
 	}
 }

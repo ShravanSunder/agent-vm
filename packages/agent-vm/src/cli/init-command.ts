@@ -214,7 +214,7 @@ RUN apt-get update && \\
 COPY vendor/gondolin ${defaultOpenClawExtensionsPath}/gondolin
 `;
 
-const defaultCodingGatewayDockerfile = `FROM node:24-slim
+const defaultWorkerGatewayDockerfile = `FROM node:24-slim
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=\${PNPM_HOME}:\${PATH}
@@ -333,7 +333,7 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 	channels: {},
 });
 
-const defaultCodingGatewayConfig = (): object => ({
+const defaultWorkerGatewayConfig = (): object => ({
 	agentTimeoutMs: 600_000,
 	branchPrefix: 'agent/',
 	commitCoAuthor: 'agent-vm-worker <noreply@agent-vm>',
@@ -427,7 +427,7 @@ async function scaffoldAgentVmProjectInternal(
 		`${JSON.stringify(
 			gatewayType === 'openclaw'
 				? defaultOpenClawConfig(options.zoneId, defaultGatewayIngressPort)
-				: defaultCodingGatewayConfig(),
+				: defaultWorkerGatewayConfig(),
 			null,
 			'\t',
 		)}\n`,
@@ -439,7 +439,7 @@ async function scaffoldAgentVmProjectInternal(
 	const gatewayDockerfilePath = path.join(options.targetDir, 'images', 'gateway', 'Dockerfile');
 	const gatewayDockerfileStatus = await writeFileIfMissing(
 		gatewayDockerfilePath,
-		gatewayType === 'openclaw' ? defaultGatewayDockerfile : defaultCodingGatewayDockerfile,
+		gatewayType === 'openclaw' ? defaultGatewayDockerfile : defaultWorkerGatewayDockerfile,
 	);
 	(gatewayDockerfileStatus === 'created' ? created : skipped).push('images/gateway/Dockerfile');
 

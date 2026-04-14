@@ -68,13 +68,10 @@ describe('runControllerUpgrade', () => {
 				restartGatewayZone: async (zoneId: string) => {
 					actions.push(`restart:${zoneId}`);
 				},
-				stopGatewayZone: async (zoneId: string) => {
-					actions.push(`stop:${zoneId}`);
-				},
 			},
 		);
 
-		expect(actions).toEqual(['rebuild:shravan', 'stop:shravan', 'restart:shravan']);
+		expect(actions).toEqual(['rebuild:shravan', 'restart:shravan']);
 		expect(result).toEqual({
 			ok: true,
 			zoneId: 'shravan',

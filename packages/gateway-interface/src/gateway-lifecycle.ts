@@ -51,6 +51,17 @@ export interface GatewayZoneConfig {
 	readonly toolProfile: string;
 }
 
+export interface BuildGatewayVmSpecOptions {
+	readonly controllerPort: number;
+	readonly projectNamespace: string;
+	readonly resolvedSecrets: Record<string, string>;
+	readonly tcpPool: {
+		readonly basePort: number;
+		readonly size: number;
+	};
+	readonly zone: GatewayZoneConfig;
+}
+
 export interface GatewayLifecycle {
 	/**
 	 * How to run interactive auth for this gateway type.
@@ -62,13 +73,7 @@ export interface GatewayLifecycle {
 	 * Build the full VM spec — everything Gondolin needs to create the VM.
 	 * Pure data assembly — no side effects.
 	 */
-	buildVmSpec(
-		zone: GatewayZoneConfig,
-		resolvedSecrets: Record<string, string>,
-		controllerPort: number,
-		tcpPool: { readonly basePort: number; readonly size: number },
-		projectNamespace: string,
-	): GatewayVmSpec;
+	buildVmSpec(options: BuildGatewayVmSpecOptions): GatewayVmSpec;
 
 	/**
 	 * Build the process spec — everything about startup, health, and logging.

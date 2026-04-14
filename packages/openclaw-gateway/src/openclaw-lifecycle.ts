@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
+	BuildGatewayVmSpecOptions,
 	GatewayLifecycle,
 	GatewayProcessSpec,
 	GatewayZoneConfig,
@@ -163,13 +164,13 @@ export const openclawLifecycle: GatewayLifecycle = {
 			`openclaw models auth login --provider ${shellQuote(provider)}`,
 	},
 
-	buildVmSpec(
-		zone: GatewayZoneConfig,
-		resolvedSecrets: Record<string, string>,
-		controllerPort: number,
-		tcpPool: { readonly basePort: number; readonly size: number },
-		projectNamespace: string,
-	): GatewayVmSpec {
+	buildVmSpec({
+		controllerPort,
+		projectNamespace,
+		resolvedSecrets,
+		tcpPool,
+		zone,
+	}: BuildGatewayVmSpecOptions): GatewayVmSpec {
 		const configDirectory = path.dirname(path.resolve(zone.gateway.gatewayConfig));
 		const { environmentSecrets, mediatedSecrets } = splitResolvedGatewaySecrets(
 			zone,

@@ -105,6 +105,7 @@ describe('gateway runtime record', () => {
 	it('treats malformed records as stale state and removes them', async () => {
 		const stateDirectory = createStateDirectory();
 		const runtimeRecordPath = path.join(stateDirectory, 'gateway-runtime.json');
+		const logMessages: string[] = [];
 		await fs.promises.mkdir(stateDirectory, { recursive: true });
 		await fs.promises.writeFile(
 			runtimeRecordPath,
@@ -116,8 +117,20 @@ describe('gateway runtime record', () => {
 			'utf8',
 		);
 
-		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toBeNull();
+		await expect(
+			loadGatewayRuntimeRecord(stateDirectory, {
+				log: (message) => {
+					logMessages.push(message);
+				},
+			}),
+		).resolves.toBeNull();
 		expect(fs.existsSync(runtimeRecordPath)).toBe(false);
+		expect(
+			fs
+				.readdirSync(stateDirectory)
+				.some((entryName) => entryName.startsWith('gateway-runtime.invalid.')),
+		).toBe(true);
+		expect(logMessages[0]).toMatch(/Quarantined malformed gateway runtime record/u);
 	});
 
 	it('builds a runtime record from the live gateway runtime and captures the QEMU pid', () => {

@@ -1,4 +1,5 @@
 export type {
+	BuildGatewayVmSpecOptions,
 	GatewayAuthConfig,
 	GatewayLifecycle,
 	GatewayZoneConfig,

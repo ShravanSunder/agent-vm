@@ -32,16 +32,16 @@ describe('workerLifecycle', () => {
 	});
 
 	it('builds a worker VM spec with /state and /workspace mounts', () => {
-		const vmSpec = workerLifecycle.buildVmSpec(
-			zone,
-			{ OPENAI_API_KEY: 'openai-token' },
-			18800,
-			{
+		const vmSpec = workerLifecycle.buildVmSpec({
+			controllerPort: 18800,
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
+			tcpPool: {
 				basePort: 19000,
 				size: 5,
 			},
-			'claw-tests-a1b2c3d4',
-		);
+			zone,
+		});
 
 		expect(vmSpec.vfsMounts['/state']).toEqual({
 			hostPath: '/host/state/shravan',

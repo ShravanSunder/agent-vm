@@ -1,19 +1,18 @@
 import type {
+	BuildGatewayVmSpecOptions,
 	GatewayLifecycle,
 	GatewayProcessSpec,
 	GatewayVmSpec,
-	GatewayZoneConfig,
 } from '@shravansunder/agent-vm-gateway-interface';
 import { splitResolvedGatewaySecrets } from '@shravansunder/agent-vm-gateway-interface';
 
 export const workerLifecycle: GatewayLifecycle = {
-	buildVmSpec(
-		zone: GatewayZoneConfig,
-		resolvedSecrets: Record<string, string>,
-		controllerPort: number,
-		_tcpPool: { readonly basePort: number; readonly size: number },
-		projectNamespace: string,
-	): GatewayVmSpec {
+	buildVmSpec({
+		controllerPort,
+		projectNamespace,
+		resolvedSecrets,
+		zone,
+	}: BuildGatewayVmSpecOptions): GatewayVmSpec {
 		const { environmentSecrets, mediatedSecrets } = splitResolvedGatewaySecrets(
 			zone,
 			resolvedSecrets,
