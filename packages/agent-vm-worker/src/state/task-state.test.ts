@@ -77,6 +77,17 @@ describe('task-state reducer', () => {
 		expect(diffErrorState.status).toBe('pending');
 	});
 
+	it('stores the terminal failure reason on task-failed', () => {
+		const state = createInitialState('task-1', TEST_CONFIG);
+		const failedState = applyEvent(state, {
+			event: 'task-failed',
+			reason: 'verification command failed',
+		});
+
+		expect(failedState.status).toBe('failed');
+		expect(failedState.failureReason).toBe('verification command failed');
+	});
+
 	it('treats task-closed as a distinct terminal status', () => {
 		const state = createInitialState('task-1', TEST_CONFIG);
 		const closedState = applyEvent(state, { event: 'task-closed' });

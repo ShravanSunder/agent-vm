@@ -17,6 +17,7 @@ export interface TaskState {
 	readonly taskId: string;
 	readonly status: TaskStatus;
 	readonly config: TaskConfig;
+	readonly failureReason: string | null;
 	readonly plan: string | null;
 	readonly lastContextError: string | null;
 	readonly lastDiffError: string | null;
@@ -50,6 +51,7 @@ export function createInitialState(taskId: string, config: TaskConfig): TaskStat
 		taskId,
 		status: 'pending',
 		config,
+		failureReason: null,
 		plan: null,
 		lastContextError: null,
 		lastDiffError: null,
@@ -135,7 +137,7 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 		case 'task-completed':
 			return { ...state, status: 'completed', updatedAt };
 		case 'task-failed':
-			return { ...state, status: 'failed', updatedAt };
+			return { ...state, status: 'failed', failureReason: event.reason, updatedAt };
 		case 'task-closed':
 			return { ...state, status: 'closed', updatedAt };
 		default: {
