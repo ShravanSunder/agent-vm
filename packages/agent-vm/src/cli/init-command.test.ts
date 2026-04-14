@@ -22,60 +22,29 @@ function createTestDirectory(): string {
 }
 
 const noGeneratedAgeIdentityDependencies = {
+	copyBundledOpenClawPlugin: async (targetDir: string): Promise<'created' | 'skipped'> => {
+		const pluginDirectory = path.join(targetDir, 'images', 'gateway', 'vendor', 'gondolin');
+		fs.mkdirSync(pluginDirectory, { recursive: true });
+		fs.writeFileSync(path.join(pluginDirectory, 'openclaw.plugin.json'), '{"id":"gondolin"}\n');
+		return 'created';
+	},
 	generateAgeIdentityKey: () => undefined,
 };
 
 const scaffoldedSystemConfigSchema = z.object({
 	cacheDir: z.string().min(1),
-	host: z
-		.object({
-			secretsProvider: z
-				.object({
-					tokenSource: z.unknown(),
-				})
-				.optional(),
-		})
-		.passthrough(),
+	host: z.object({
+		projectNamespace: z.string().min(1),
+	}),
 	zones: z.tuple([
-		z
-			.object({
-				id: z.string().min(1),
-				gateway: z
-					.object({
-						type: z.enum(['openclaw', 'worker']),
-					})
-					.passthrough(),
-				secrets: z.record(
-					z.string(),
-					z
-						.object({
-							ref: z.string().optional(),
-						})
-						.passthrough(),
-				),
-			})
-			.passthrough(),
+		z.object({
+			id: z.string().min(1),
+			gateway: z.object({
+				type: z.enum(['openclaw', 'worker']),
+			}),
+		}),
 	]),
 });
-
-const openClawConfigSchema = z.object({
-	gateway: z.object({
-		controlUi: z.object({
-			allowedOrigins: z.array(z.string()),
-		}),
-	}),
-});
-
-const existingConfigSchema = z.object({
-	existing: z.boolean(),
-});
-
-function readJsonFile<TSchema extends z.ZodTypeAny>(
-	filePath: string,
-	schema: TSchema,
-): z.infer<TSchema> {
-	return schema.parse(JSON.parse(fs.readFileSync(filePath, 'utf8')));
-}
 
 describe('scaffoldAgentVmProject', () => {
 	it('creates system.json with the requested zone', async () => {
@@ -86,16 +55,17 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 		const config = scaffoldedSystemConfigSchema.parse(
-			JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8')),
+			JSON.parse(fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8')),
 		);
 
-		expect(result.created).toContain('system.json');
-		expect(config.cacheDir).toBe('./cache');
+		expect(result.created).toContain('config/system.json');
+		expect(config.cacheDir).toBe('../cache');
+		expect(config.host.projectNamespace).toMatch(/^agent-vm-init-test-/u);
 		expect(config.zones[0]?.id).toBe('test-zone');
 		expect(config.zones[0]?.gateway.type).toBe('openclaw');
 	});
 
-	it('scaffolds a coding gateway when requested', async () => {
+	it('scaffolds a worker gateway when requested', async () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
@@ -103,7 +73,7 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 		const config = scaffoldedSystemConfigSchema.parse(
-			JSON.parse(fs.readFileSync(path.join(targetDir, 'system.json'), 'utf8')),
+			JSON.parse(fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8')),
 		);
 		const gatewayDockerfile = fs.readFileSync(
 			path.join(targetDir, 'images', 'gateway', 'Dockerfile'),
@@ -111,8 +81,31 @@ describe('scaffoldAgentVmProject', () => {
 		);
 
 		expect(config.zones[0]?.gateway.type).toBe('worker');
-		expect(gatewayDockerfile).toContain('@openai/codex-cli');
+		expect(gatewayDockerfile).toContain('@openai/codex');
 		expect(gatewayDockerfile).not.toContain('openclaw@');
+	});
+
+	it('scaffolds the published gondolin plugin install into the openclaw gateway Dockerfile', async () => {
+		const targetDir = createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
+			noGeneratedAgeIdentityDependencies,
+		);
+		const gatewayDockerfile = fs.readFileSync(
+			path.join(targetDir, 'images', 'gateway', 'Dockerfile'),
+			'utf8',
+		);
+
+		expect(gatewayDockerfile).toContain(
+			'COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin',
+		);
+		expect(gatewayDockerfile).not.toContain('@shravansunder/openclaw-agent-vm-plugin');
+		expect(
+			fs.existsSync(
+				path.join(targetDir, 'images', 'gateway', 'vendor', 'gondolin', 'openclaw.plugin.json'),
+			),
+		).toBe(true);
 	});
 
 	it('creates .env.local from the default template', async () => {
@@ -126,7 +119,8 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(result.created).toContain('.env.local');
 		expect(envContent).toContain('# OP_SERVICE_ACCOUNT_TOKEN=');
-		expect(envContent).not.toContain('_REF=');
+		expect(envContent).not.toContain('DISCORD_BOT_TOKEN_REF=');
+		expect(envContent).not.toContain('OPENCLAW_GATEWAY_TOKEN_REF=');
 	});
 
 	it('scaffolds macOS Keychain auth by default', async () => {
@@ -135,34 +129,15 @@ describe('scaffoldAgentVmProject', () => {
 			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
 			noGeneratedAgeIdentityDependencies,
 		);
-		const config = readJsonFile(path.join(targetDir, 'system.json'), scaffoldedSystemConfigSchema);
-		expect(config.host.secretsProvider).toBeDefined();
+		const config = JSON.parse(
+			fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		);
 
-		expect(config.host.secretsProvider?.tokenSource).toEqual({
+		expect(config.host.secretsProvider.tokenSource).toEqual({
 			type: 'keychain',
 			service: 'agent-vm',
 			account: '1p-service-account',
 		});
-	});
-
-	it('writes explicit 1Password refs into scaffolded secrets', async () => {
-		const targetDir = createTestDirectory();
-
-		await scaffoldAgentVmProject(
-			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
-			noGeneratedAgeIdentityDependencies,
-		);
-		const config = readJsonFile(path.join(targetDir, 'system.json'), scaffoldedSystemConfigSchema);
-		const secrets = config.zones[0].secrets;
-		expect(secrets.DISCORD_BOT_TOKEN).toBeDefined();
-		expect(secrets.PERPLEXITY_API_KEY).toBeDefined();
-		expect(secrets.OPENCLAW_GATEWAY_TOKEN).toBeDefined();
-
-		expect(secrets.DISCORD_BOT_TOKEN?.ref).toBe('op://agent-vm/agent-discord-app/bot-token');
-		expect(secrets.PERPLEXITY_API_KEY?.ref).toBe('op://agent-vm/agent-perplexity/credential');
-		expect(secrets.OPENCLAW_GATEWAY_TOKEN?.ref).toBe(
-			'op://agent-vm/agent-shravan-claw-gateway/password',
-		);
 	});
 
 	it('appends an age identity to .env.local when one is generated', async () => {
@@ -171,6 +146,7 @@ describe('scaffoldAgentVmProject', () => {
 		await scaffoldAgentVmProject(
 			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
 			{
+				...noGeneratedAgeIdentityDependencies,
 				generateAgeIdentityKey: () => 'AGE-SECRET-KEY-1TESTVALUE',
 			},
 		);
@@ -185,6 +161,7 @@ describe('scaffoldAgentVmProject', () => {
 		await scaffoldAgentVmProject(
 			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
 			{
+				...noGeneratedAgeIdentityDependencies,
 				generateAgeIdentityKey: () => undefined,
 			},
 		);
@@ -214,19 +191,19 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const codingTargetDir = createTestDirectory();
+		const workerTargetDir = createTestDirectory();
 		await scaffoldAgentVmProject(
-			{ targetDir: codingTargetDir, zoneId: 'my-zone', gatewayType: 'worker' },
+			{ targetDir: workerTargetDir, zoneId: 'my-zone', gatewayType: 'worker' },
 			noGeneratedAgeIdentityDependencies,
 		);
 
 		expect(fs.existsSync(path.join(openClawTargetDir, 'config', 'my-zone', 'openclaw.json'))).toBe(
 			true,
 		);
-		expect(fs.existsSync(path.join(codingTargetDir, 'config', 'my-zone', 'worker.json'))).toBe(
+		expect(fs.existsSync(path.join(workerTargetDir, 'config', 'my-zone', 'worker.json'))).toBe(
 			true,
 		);
-		expect(fs.existsSync(path.join(codingTargetDir, 'config', 'my-zone', 'openclaw.json'))).toBe(
+		expect(fs.existsSync(path.join(workerTargetDir, 'config', 'my-zone', 'openclaw.json'))).toBe(
 			false,
 		);
 	});
@@ -239,40 +216,58 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const openClawConfig = readJsonFile(
-			path.join(targetDir, 'config', 'my-zone', 'openclaw.json'),
-			openClawConfigSchema,
-		);
+		const openClawConfig = JSON.parse(
+			fs.readFileSync(path.join(targetDir, 'config', 'my-zone', 'openclaw.json'), 'utf8'),
+		) as {
+			readonly gateway: {
+				readonly controlUi: {
+					readonly allowedOrigins: readonly string[];
+				};
+			};
+			readonly plugins: {
+				readonly load: {
+					readonly paths: readonly string[];
+				};
+			};
+		};
 
 		expect(openClawConfig.gateway.controlUi.allowedOrigins).toEqual([
 			'http://127.0.0.1:18791',
 			'http://localhost:18791',
 		]);
+		expect(openClawConfig.plugins.load.paths).toEqual(['/home/openclaw/.openclaw/extensions']);
 	});
 
 	it('does not overwrite an existing system.json', async () => {
 		const targetDir = createTestDirectory();
-		fs.writeFileSync(path.join(targetDir, 'system.json'), '{"existing":true}\n', 'utf8');
+		fs.mkdirSync(path.join(targetDir, 'config'), { recursive: true });
+		fs.writeFileSync(path.join(targetDir, 'config', 'system.json'), '{"existing":true}\n', 'utf8');
 
 		const result = await scaffoldAgentVmProject(
 			{ targetDir, zoneId: 'test-zone', gatewayType: 'openclaw' },
 			noGeneratedAgeIdentityDependencies,
 		);
-		const config = readJsonFile(path.join(targetDir, 'system.json'), existingConfigSchema);
+		const config = JSON.parse(
+			fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		) as {
+			readonly existing: boolean;
+		};
 
-		expect(result.skipped).toContain('system.json');
+		expect(result.skipped).toContain('config/system.json');
 		expect(config.existing).toBe(true);
 	});
 
-	it('scaffolds coding-appropriate secrets for coding type', async () => {
+	it('scaffolds worker-appropriate secrets for worker type', async () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
-			{ gatewayType: 'worker', targetDir, zoneId: 'test-coding' },
+			{ gatewayType: 'worker', targetDir, zoneId: 'test-worker' },
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = readJsonFile(path.join(targetDir, 'system.json'), scaffoldedSystemConfigSchema);
+		const config = JSON.parse(
+			fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		);
 		const secrets = config.zones[0].secrets;
 
 		expect(secrets).not.toHaveProperty('DISCORD_BOT_TOKEN');
@@ -289,41 +284,64 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = readJsonFile(path.join(targetDir, 'system.json'), scaffoldedSystemConfigSchema);
+		const config = JSON.parse(
+			fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		);
 		const secrets = config.zones[0].secrets;
 
 		expect(secrets).toHaveProperty('DISCORD_BOT_TOKEN');
 		expect(secrets).toHaveProperty('OPENCLAW_GATEWAY_TOKEN');
 		expect(secrets).not.toHaveProperty('ANTHROPIC_API_KEY');
+		expect(secrets.DISCORD_BOT_TOKEN.ref).toBe('op://agent-vm/test-openclaw-discord/bot-token');
+		expect(secrets.PERPLEXITY_API_KEY.ref).toBe(
+			'op://agent-vm/test-openclaw-perplexity/credential',
+		);
+		expect(secrets.OPENCLAW_GATEWAY_TOKEN.ref).toBe(
+			'op://agent-vm/test-openclaw-gateway-auth/password',
+		);
 	});
 
-	it('scaffolds coding-specific env references for coding type', async () => {
+	it('scaffolds worker-specific env references for worker type', async () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
-			{ gatewayType: 'worker', targetDir, zoneId: 'test-coding' },
+			{ gatewayType: 'worker', targetDir, zoneId: 'test-worker' },
 			noGeneratedAgeIdentityDependencies,
 		);
-		const config = readJsonFile(path.join(targetDir, 'system.json'), scaffoldedSystemConfigSchema);
-		const secrets = config.zones[0].secrets;
 		const envContent = fs.readFileSync(path.join(targetDir, '.env.local'), 'utf8');
-		expect(secrets.ANTHROPIC_API_KEY).toBeDefined();
-		expect(secrets.OPENAI_API_KEY).toBeDefined();
 
-		expect(envContent).not.toContain('_REF=');
-		expect(secrets.ANTHROPIC_API_KEY?.ref).toBe('op://agent-vm/agent-anthropic/api-key');
-		expect(secrets.OPENAI_API_KEY?.ref).toBe('op://agent-vm/agent-openai/api-key');
+		expect(envContent).not.toContain('ANTHROPIC_API_KEY_REF=');
+		expect(envContent).not.toContain('OPENAI_API_KEY_REF=');
 	});
 
-	it('scaffolds coding-specific network defaults for coding type', async () => {
+	it('scaffolds worker-specific refs in system.json for worker type', async () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
-			{ gatewayType: 'worker', targetDir, zoneId: 'test-coding' },
+			{ gatewayType: 'worker', targetDir, zoneId: 'test-worker' },
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = readJsonFile(path.join(targetDir, 'system.json'), scaffoldedSystemConfigSchema);
+		const config = JSON.parse(
+			fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		);
+		const secrets = config.zones[0].secrets;
+
+		expect(secrets.ANTHROPIC_API_KEY.ref).toBe('op://agent-vm/test-worker-anthropic/credential');
+		expect(secrets.OPENAI_API_KEY.ref).toBe('op://agent-vm/test-worker-openai/credential');
+	});
+
+	it('scaffolds worker-specific network defaults for worker type', async () => {
+		const targetDir = createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{ gatewayType: 'worker', targetDir, zoneId: 'test-worker' },
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		const config = JSON.parse(
+			fs.readFileSync(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		);
 		const zone = config.zones[0];
 
 		expect(zone.allowedHosts).toContain('api.anthropic.com');

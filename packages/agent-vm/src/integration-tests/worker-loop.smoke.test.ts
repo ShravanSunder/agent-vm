@@ -10,7 +10,8 @@ import type { SecretRef, SecretResolver } from '@shravansunder/gondolin-core';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import type { SystemConfig } from '../config/system-config.js';
+import { scaffoldAgentVmProject } from '../cli/init-command.js';
+import { loadSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 
 function hasCommand(command: string): boolean {
@@ -22,7 +23,7 @@ function hasCommand(command: string): boolean {
 	}
 }
 
-function rebuildGatewayDockerImage(repoRoot: string): void {
+function rebuildGatewayDockerImage(projectRoot: string): void {
 	execFileSync(
 		'docker',
 		[
@@ -30,8 +31,8 @@ function rebuildGatewayDockerImage(repoRoot: string): void {
 			'-t',
 			'agent-vm-gateway:latest',
 			'-f',
-			path.join(repoRoot, 'images', 'gateway', 'Dockerfile'),
-			path.join(repoRoot, 'images', 'gateway'),
+			path.join(projectRoot, 'images', 'gateway', 'Dockerfile'),
+			path.join(projectRoot, 'images', 'gateway'),
 		],
 		{ stdio: 'inherit' },
 	);
@@ -42,6 +43,40 @@ function rebuildWorkerPackages(repoRoot: string): void {
 		cwd: repoRoot,
 		stdio: 'inherit',
 	});
+}
+
+async function prepareLocalWorkerPackageForGatewayImage(
+	repoRoot: string,
+	projectRoot: string,
+): Promise<string> {
+	const gatewayImageDirectory = path.join(projectRoot, 'images', 'gateway');
+	execFileSync('pnpm', ['pack', '--pack-destination', gatewayImageDirectory], {
+		cwd: path.join(repoRoot, 'packages', 'agent-vm-worker'),
+		stdio: 'pipe',
+	});
+	const packedTarballName = execFileSync('sh', ['-lc', 'ls *.tgz | tail -n 1'], {
+		cwd: gatewayImageDirectory,
+		encoding: 'utf8',
+		stdio: 'pipe',
+	}).trim();
+	if (packedTarballName.length === 0) {
+		throw new Error('Failed to pack local agent-vm-worker tarball for smoke image.');
+	}
+
+	const dockerfilePath = path.join(gatewayImageDirectory, 'Dockerfile');
+	const dockerfileContents = await fs.readFile(dockerfilePath, 'utf8');
+	const patchedDockerfile = dockerfileContents
+		.replace(
+			'FROM node:24-slim\n\n',
+			`FROM node:24-slim\n\nCOPY ${packedTarballName} /tmp/${packedTarballName}\n\n`,
+		)
+		.replace(
+			'npm install -g @openai/codex @shravansunder/agent-vm-worker && \\',
+			`npm install -g @openai/codex /tmp/${packedTarballName} && \\`,
+		);
+	await fs.writeFile(dockerfilePath, patchedDockerfile, 'utf8');
+
+	return packedTarballName;
 }
 
 const runWorkerSmoke =
@@ -125,9 +160,11 @@ async function postJsonWithLongTimeout(
 
 const workerTaskResponseSchema = z.object({
 	taskId: z.string().min(1),
-	finalState: z.object({
-		status: z.string(),
-	}),
+	finalState: z
+		.object({
+			status: z.string(),
+		})
+		.passthrough(),
 });
 
 async function createSampleRepo(baseDir: string): Promise<string> {
@@ -173,73 +210,39 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 	it('runs a real worker task to completed through the controller route', async () => {
 		const repoRoot = path.resolve(process.cwd());
 		rebuildWorkerPackages(repoRoot);
-		rebuildGatewayDockerImage(repoRoot);
 
 		const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-loop-smoke-'));
 		const controllerPort = await findAvailablePort();
 		const gatewayPort = await findAvailablePort();
 		const repoDir = await createSampleRepo(tempRoot);
+		await scaffoldAgentVmProject(
+			{
+				targetDir: tempRoot,
+				zoneId: 'worker-smoke',
+				gatewayType: 'worker',
+			},
+			{
+				generateAgeIdentityKey: () => undefined,
+			},
+		);
+		await prepareLocalWorkerPackageForGatewayImage(repoRoot, tempRoot);
+		rebuildGatewayDockerImage(tempRoot);
 
-		const systemConfig = {
-			cacheDir: path.join(tempRoot, 'cache'),
-			host: {
-				controllerPort,
-				secretsProvider: {
-					type: '1password',
-					tokenSource: { type: 'env', envVar: 'OPEN_AI_TEST_KEY' },
-				},
-			},
-			images: {
-				gateway: {
-					buildConfig: path.resolve(repoRoot, 'images', 'gateway', 'build-config.json'),
-					dockerfile: path.resolve(repoRoot, 'images', 'gateway', 'Dockerfile'),
-				},
-				tool: {
-					buildConfig: path.resolve(repoRoot, 'images', 'tool', 'build-config.json'),
-					dockerfile: path.resolve(repoRoot, 'images', 'tool', 'Dockerfile'),
-				},
-			},
-			zones: [
-				{
-					id: 'worker-smoke',
-					gateway: {
-						type: 'worker',
-						memory: '2G',
-						cpus: 2,
-						port: gatewayPort,
-						gatewayConfig: path.join(tempRoot, 'worker-config.json'),
-						stateDir: path.join(tempRoot, 'state'),
-						workspaceDir: path.join(tempRoot, 'workspace'),
-					},
-					secrets: {
-						OPENAI_API_KEY: {
-							source: '1password',
-							ref: 'op://smoke/openai/api-key',
-							injection: 'env',
-						},
-					},
-					allowedHosts: ['api.openai.com', 'github.com'],
-					websocketBypass: [],
-					toolProfile: 'standard',
-				},
-			],
-			toolProfiles: {
-				standard: {
-					memory: '1G',
-					cpus: 1,
-					workspaceRoot: path.join(tempRoot, 'tools'),
-				},
-			},
-			tcpPool: { basePort: 19000, size: 4 },
-		} satisfies SystemConfig;
+		const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
+		systemConfig.host.controllerPort = controllerPort;
+		systemConfig.host.projectNamespace = 'claw-tests-a1b2c3d4';
+		systemConfig.host.secretsProvider = {
+			type: '1password',
+			tokenSource: { type: 'env', envVar: 'OPEN_AI_TEST_KEY' },
+		};
 
 		const workerZone = systemConfig.zones[0];
 		if (!workerZone) {
 			throw new Error('Expected a configured worker zone for the smoke test.');
 		}
+		workerZone.gateway.port = gatewayPort;
+		workerZone.allowedHosts = [...workerZone.allowedHosts, 'github.com'];
 
-		await fs.mkdir(workerZone.gateway.stateDir, { recursive: true });
-		await fs.mkdir(workerZone.gateway.workspaceDir, { recursive: true });
 		await fs.writeFile(
 			workerZone.gateway.gatewayConfig,
 			JSON.stringify({
@@ -288,9 +291,17 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 			},
 		);
 
-		expect(response.statusCode).toBe(200);
+		if (response.statusCode !== 200) {
+			throw new Error(
+				`Worker smoke task request failed with ${response.statusCode}: ${JSON.stringify(response.json)}`,
+			);
+		}
 		const body = workerTaskResponseSchema.parse(response.json);
 		expect(body.taskId).toBeTruthy();
-		expect(body.finalState.status).toBe('completed');
+		if (body.finalState.status !== 'completed') {
+			throw new Error(
+				`Worker smoke task ended in ${body.finalState.status}: ${JSON.stringify(body.finalState)}`,
+			);
+		}
 	}, 900_000);
 });

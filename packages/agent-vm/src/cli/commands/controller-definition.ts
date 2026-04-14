@@ -41,8 +41,7 @@ function createControllerOperationSubcommand(
 		},
 		handler: async ({ config, ...rest }) => {
 			const systemConfig = await loadSystemConfigFromOption(config, dependencies);
-			const zoneFlag =
-				options.supportsZone && 'zone' in rest ? (rest.zone as string | undefined) : undefined;
+			const zoneFlag = options.supportsZone && 'zone' in rest ? rest.zone : undefined;
 			const selectedZone = options.supportsZone ? requireZone(systemConfig, zoneFlag) : undefined;
 			const argumentPrefix =
 				options.supportsPurge && 'purge' in rest && rest.purge ? ['--purge'] : [];
@@ -60,7 +59,7 @@ function createControllerOperationSubcommand(
 	});
 }
 
-async function warnIfGatewayImageCacheIsCold(io: CliIo, systemConfig: SystemConfig): Promise<void> {
+async function isGatewayImageCached(systemConfig: SystemConfig): Promise<boolean> {
 	const gatewayFingerprint = await computeFingerprintFromConfigPath(
 		systemConfig.images.gateway.buildConfig,
 	);
@@ -70,12 +69,24 @@ async function warnIfGatewayImageCacheIsCold(io: CliIo, systemConfig: SystemConf
 		'gateway',
 		gatewayFingerprint,
 	);
-	if (!fs.existsSync(path.join(gatewayCachePath, 'manifest.json'))) {
-		io.stderr.write(
-			'[start] Gateway image not cached. Run `agent-vm build` first for faster startup.\n',
-		);
-		io.stderr.write('[start] Building inline...\n');
+	return fs.existsSync(path.join(gatewayCachePath, 'manifest.json'));
+}
+
+async function requireGatewayImageCache(
+	systemConfig: SystemConfig,
+	zoneId: string,
+	dependencies: Pick<CliDependencies, 'isGatewayImageCached'>,
+): Promise<void> {
+	const cacheIsWarm =
+		(await dependencies.isGatewayImageCached?.(systemConfig)) ??
+		(await isGatewayImageCached(systemConfig));
+	if (cacheIsWarm) {
+		return;
 	}
+
+	throw new Error(
+		`[start] Gateway image not cached. Run \`agent-vm build\` first, then retry \`agent-vm controller start --zone ${zoneId}\`.`,
+	);
 }
 
 export function createControllerSubcommands(io: CliIo, dependencies: CliDependencies) {
@@ -94,7 +105,7 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 					const selectedZone = requireZone(systemConfig, zone);
 
-					await warnIfGatewayImageCacheIsCold(io, systemConfig);
+					await requireGatewayImageCache(systemConfig, selectedZone.id, dependencies);
 					const runTask = await createRunTask(io);
 					const runtime = await dependencies.startControllerRuntime(
 						{

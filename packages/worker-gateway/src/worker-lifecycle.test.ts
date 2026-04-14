@@ -18,8 +18,8 @@ const zone: GatewayZoneConfig = {
 	secrets: {
 		OPENAI_API_KEY: {
 			injection: 'env',
-			ref: 'op://vault/item/openai',
 			source: '1password',
+			ref: 'op://vault/item/openai',
 		},
 	},
 	toolProfile: 'standard',
@@ -32,9 +32,15 @@ describe('workerLifecycle', () => {
 	});
 
 	it('builds a worker VM spec with /state and /workspace mounts', () => {
-		const vmSpec = workerLifecycle.buildVmSpec(zone, { OPENAI_API_KEY: 'openai-token' }, 18800, {
-			basePort: 19000,
-			size: 5,
+		const vmSpec = workerLifecycle.buildVmSpec({
+			controllerPort: 18800,
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
+			tcpPool: {
+				basePort: 19000,
+				size: 5,
+			},
+			zone,
 		});
 
 		expect(vmSpec.vfsMounts['/state']).toEqual({
@@ -48,18 +54,19 @@ describe('workerLifecycle', () => {
 		expect(vmSpec.environment.OPENAI_API_KEY).toBe('openai-token');
 		expect(vmSpec.environment.WORKER_CONFIG_PATH).toBe('/state/effective-worker.json');
 		expect(vmSpec.environment.WORKSPACE_DIR).toBe('/workspace');
+		expect(vmSpec.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');
 		expect(vmSpec.tcpHosts['controller.vm.host:18800']).toBe('127.0.0.1:18800');
 	});
 
-	it('builds a concrete worker process spec', () => {
+	it('builds a process spec that starts the worker HTTP server', () => {
 		const processSpec = workerLifecycle.buildProcessSpec(zone, {
 			OPENAI_API_KEY: 'openai-token',
 		});
 
-		expect(processSpec.bootstrapCommand).toBe('true');
-		expect(processSpec.startCommand).toContain('/opt/agent-vm-worker/dist/main.js');
+		expect(processSpec.startCommand).toContain('agent-vm-worker');
 		expect(processSpec.startCommand).toContain('serve --port 18789');
 		expect(processSpec.healthCheck).toEqual({ type: 'http', port: 18789, path: '/health' });
+		expect(processSpec.guestListenPort).toBe(18789);
 		expect(processSpec.logPath).toBe('/tmp/agent-vm-worker.log');
 	});
 });

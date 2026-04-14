@@ -17,7 +17,8 @@
 		"access": "public"
 	},
 	"scripts": {
-		"build": "tsc -p tsconfig.build.json && cp openclaw.plugin.json sdk-validate.mjs dist/",
+		"build": "tsdown && cp openclaw.plugin.json sdk-validate.mjs dist/",
+		"prepack": "pnpm -C ../.. build",
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {

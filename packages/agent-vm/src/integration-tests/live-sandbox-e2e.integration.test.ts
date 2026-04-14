@@ -122,7 +122,10 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 		const pluginDistDir = `${process.cwd()}/packages/openclaw-agent-vm-plugin/dist`;
 
 		// Verify plugin dist exists
-		if (!fs.existsSync(`${pluginDistDir}/openclaw-plugin-registration.js`)) {
+		if (
+			!fs.existsSync(`${pluginDistDir}/index.js`) ||
+			!fs.existsSync(`${pluginDistDir}/openclaw.plugin.json`)
+		) {
 			throw new Error(`Plugin not built. Run: pnpm --filter openclaw-agent-vm-plugin build`);
 		}
 

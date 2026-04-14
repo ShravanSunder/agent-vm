@@ -20,7 +20,8 @@
 		"access": "public"
 	},
 	"scripts": {
-		"build": "tsc -p tsconfig.build.json",
+		"build": "rm -rf dist && tsc -p tsconfig.build.json",
+		"prepack": "pnpm -C ../.. build",
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
@@ -28,6 +29,7 @@
 		"@shravansunder/agent-vm-worker": "workspace:0.0.3",
 		"@shravansunder/gateway-interface": "workspace:0.0.3",
 		"@shravansunder/gondolin-core": "workspace:0.0.3",
+		"@shravansunder/openclaw-agent-vm-plugin": "workspace:0.0.3",
 		"@shravansunder/openclaw-gateway": "workspace:0.0.3",
 		"@shravansunder/worker-gateway": "workspace:0.0.3",
 		"cmd-ts": "^0.14.0",

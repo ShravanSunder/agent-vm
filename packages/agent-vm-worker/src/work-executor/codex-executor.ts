@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import { Codex, type Thread, type UserInput } from '@openai/codex-sdk';
@@ -59,7 +58,7 @@ function mapToCodexInput(input: readonly StructuredInput[]): UserInput[] {
 }
 
 export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
-	const workingDirectory = config.workingDirectory ?? '/workspace';
+	const workingDirectory = config.workingDirectory ?? process.cwd();
 	let codex: Codex | null = null;
 	let currentThread: Thread | null = null;
 	let currentThreadId: string | null = null;
@@ -69,7 +68,8 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 			return;
 		}
 
-		const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-codex-home-'));
+		await fs.mkdir(workingDirectory, { recursive: true });
+		const tempHome = await fs.mkdtemp(path.join(workingDirectory, '.agent-vm-codex-home-'));
 		await fs.mkdir(path.join(tempHome, '.codex'), { recursive: true });
 
 		for (const mcpServer of config.capabilities.mcpServers) {

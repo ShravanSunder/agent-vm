@@ -4,7 +4,7 @@ import { resolveServiceAccountToken } from '@shravansunder/gondolin-core';
 import type { SystemConfig } from '../config/system-config.js';
 import { createCompositeSecretResolver } from './composite-secret-resolver.js';
 
-export async function createSecretResolver(
+export async function createSecretResolverFromSystemConfig(
 	systemConfig: SystemConfig,
 	createSecretResolverImpl: (options: {
 		readonly serviceAccountToken: string;
@@ -23,6 +23,8 @@ export async function createSecretResolver(
 
 	return createCompositeSecretResolver(onePasswordResolver);
 }
+
+export const createSecretResolver = createSecretResolverFromSystemConfig;
 
 export function findConfiguredZone(
 	systemConfig: SystemConfig,

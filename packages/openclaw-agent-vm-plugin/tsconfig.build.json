@@ -6,7 +6,10 @@
 		"declaration": true,
 		"declarationMap": true,
 		"sourceMap": true,
-		"noEmit": false
+		"noEmit": false,
+		"paths": {
+			"@shravansunder/gondolin-core": ["../gondolin-core/dist/index.d.ts"]
+		}
 	},
 	"exclude": ["src/**/*.test.ts"]
 }

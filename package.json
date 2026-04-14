@@ -1,11 +1,12 @@
 {
 	"name": "agent-vm",
-	"version": "0.1.0",
+	"version": "0.0.1",
 	"private": true,
 	"description": "Gondolin-based VM controller and OpenClaw integration",
 	"type": "module",
 	"scripts": {
 		"build": "pnpm -r build",
+		"changeset": "changeset",
 		"clean": "git clean -fdX packages",
 		"lint": "oxlint .",
 		"lint:fix": "oxlint --fix",
@@ -18,14 +19,18 @@
 		"test:unit": "vitest run --config vitest.config.ts",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"test:smoke": "vitest run --config vitest.smoke.config.ts",
-		"test:watch": "vitest"
+		"test:watch": "vitest",
+		"version:packages": "changeset version",
+		"publish:packages": "changeset publish"
 	},
 	"devDependencies": {
+		"@changesets/cli": "^2.29.7",
 		"@types/node": "^25.6.0",
 		"oxfmt": "^0.44.0",
 		"oxlint": "^1.59.0",
 		"oxlint-tsgolint": "^0.20.0",
 		"tasuku": "^2.3.0",
+		"tsdown": "^0.15.4",
 		"typescript": "^6.0.2",
 		"vite": "latest",
 		"vitest": "^4.1.4"

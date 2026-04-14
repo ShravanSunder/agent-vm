@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { buildToolSessionLabel } from '@shravansunder/gateway-interface';
 import {
 	createManagedVm as createManagedVmFromCore,
 	type ManagedVm,
@@ -75,7 +76,11 @@ export async function createToolVm(
 		imagePath: toolImage.imagePath,
 		memory: options.profile.memory,
 		rootfsMode: 'memory',
-		sessionLabel: `${options.zoneId}-tool-${options.tcpSlot}`,
+		sessionLabel: buildToolSessionLabel(
+			options.systemConfig.host.projectNamespace,
+			options.zoneId,
+			options.tcpSlot,
+		),
 		secrets: {},
 		vfsMounts: {
 			'/workspace': {

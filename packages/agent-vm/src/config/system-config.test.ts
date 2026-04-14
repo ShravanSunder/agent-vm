@@ -18,27 +18,29 @@ describe('loadSystemConfig', () => {
 	test('loads a valid plan-1 controller config', async () => {
 		const workingDirectoryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-system-config-'));
 		createdDirectories.push(workingDirectoryPath);
-		const configPath = path.join(workingDirectoryPath, 'system.json');
+		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
+		fs.mkdirSync(path.dirname(configPath), { recursive: true });
 
 		fs.writeFileSync(
 			configPath,
 			JSON.stringify({
 				host: {
 					controllerPort: 18800,
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					secretsProvider: {
 						type: '1password',
 						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
 					},
 				},
-				cacheDir: './cache',
+				cacheDir: '../cache',
 				images: {
 					gateway: {
-						buildConfig: './images/gateway/build-config.json',
-						dockerfile: './images/gateway/Dockerfile',
+						buildConfig: '../images/gateway/build-config.json',
+						dockerfile: '../images/gateway/Dockerfile',
 					},
 					tool: {
-						buildConfig: './images/tool/build-config.json',
-						dockerfile: './images/tool/Dockerfile',
+						buildConfig: '../images/tool/build-config.json',
+						dockerfile: '../images/tool/Dockerfile',
 					},
 				},
 				zones: [
@@ -49,9 +51,9 @@ describe('loadSystemConfig', () => {
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							gatewayConfig: './config/shravan/openclaw.json',
-							stateDir: './state/shravan',
-							workspaceDir: './workspaces/shravan',
+							gatewayConfig: './shravan/openclaw.json',
+							stateDir: '../state/shravan',
+							workspaceDir: '../workspaces/shravan',
 						},
 						secrets: {
 							ANTHROPIC_API_KEY: {
@@ -68,7 +70,7 @@ describe('loadSystemConfig', () => {
 					standard: {
 						memory: '1G',
 						cpus: 1,
-						workspaceRoot: './workspaces/tools',
+						workspaceRoot: '../workspaces/tools',
 					},
 				},
 				tcpPool: {
@@ -82,6 +84,7 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
 			host: {
 				controllerPort: 18800,
+				projectNamespace: 'claw-tests-a1b2c3d4',
 			},
 			cacheDir: path.join(workingDirectoryPath, 'cache'),
 			images: {
@@ -96,7 +99,7 @@ describe('loadSystemConfig', () => {
 				{
 					id: 'shravan',
 					gateway: {
-						gatewayConfig: path.join(workingDirectoryPath, 'config/shravan/openclaw.json'),
+						gatewayConfig: path.join(workingDirectoryPath, 'config', 'shravan', 'openclaw.json'),
 						type: 'worker',
 					},
 				},
@@ -109,27 +112,29 @@ describe('loadSystemConfig', () => {
 			path.join(os.tmpdir(), 'agent-vm-system-config-invalid-'),
 		);
 		createdDirectories.push(workingDirectoryPath);
-		const configPath = path.join(workingDirectoryPath, 'system.json');
+		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
+		fs.mkdirSync(path.dirname(configPath), { recursive: true });
 
 		fs.writeFileSync(
 			configPath,
 			JSON.stringify({
 				host: {
 					controllerPort: 18800,
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					secretsProvider: {
 						type: '1password',
 						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
 					},
 				},
-				cacheDir: './cache',
+				cacheDir: '../cache',
 				images: {
 					gateway: {
-						buildConfig: './images/gateway/build-config.json',
-						dockerfile: './images/gateway/Dockerfile',
+						buildConfig: '../images/gateway/build-config.json',
+						dockerfile: '../images/gateway/Dockerfile',
 					},
 					tool: {
-						buildConfig: './images/tool/build-config.json',
-						dockerfile: './images/tool/Dockerfile',
+						buildConfig: '../images/tool/build-config.json',
+						dockerfile: '../images/tool/Dockerfile',
 					},
 				},
 				zones: [],
@@ -137,7 +142,7 @@ describe('loadSystemConfig', () => {
 					standard: {
 						memory: '1G',
 						cpus: 1,
-						workspaceRoot: './workspaces/tools',
+						workspaceRoot: '../workspaces/tools',
 					},
 				},
 				tcpPool: {
@@ -151,194 +156,33 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/zones/i);
 	});
 
-	test('accepts environment-sourced secrets without host.secretsProvider', async () => {
+	test('rejects configs with zone secrets missing ref', async () => {
 		const workingDirectoryPath = fs.mkdtempSync(
-			path.join(os.tmpdir(), 'agent-vm-system-config-env-'),
+			path.join(os.tmpdir(), 'agent-vm-system-config-missing-ref-'),
 		);
 		createdDirectories.push(workingDirectoryPath);
-		const configPath = path.join(workingDirectoryPath, 'system.json');
+		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
+		fs.mkdirSync(path.dirname(configPath), { recursive: true });
 
 		fs.writeFileSync(
 			configPath,
 			JSON.stringify({
 				host: {
 					controllerPort: 18800,
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					secretsProvider: {
+						type: '1password',
+						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
+					},
 				},
-				cacheDir: './cache',
+				cacheDir: '../cache',
 				images: {
-					gateway: { buildConfig: './images/gateway/build-config.json' },
-					tool: { buildConfig: './images/tool/build-config.json' },
-				},
-				zones: [
-					{
-						id: 'shravan',
-						gateway: {
-							type: 'worker',
-							memory: '2G',
-							cpus: 2,
-							port: 18791,
-							gatewayConfig: './config/shravan/openclaw.json',
-							stateDir: './state/shravan',
-							workspaceDir: './workspaces/shravan',
-						},
-						secrets: {
-							OPENAI_API_KEY: {
-								source: 'environment',
-								envVar: 'OPENAI_API_KEY',
-								hosts: ['api.openai.com'],
-							},
-						},
-						allowedHosts: ['api.openai.com'],
-						toolProfile: 'standard',
+					gateway: {
+						buildConfig: '../images/gateway/build-config.json',
 					},
-				],
-				toolProfiles: {
-					standard: {
-						memory: '1G',
-						cpus: 1,
-						workspaceRoot: './workspaces/tools',
+					tool: {
+						buildConfig: '../images/tool/build-config.json',
 					},
-				},
-				tcpPool: { basePort: 19000, size: 5 },
-			}),
-			'utf8',
-		);
-
-		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
-			host: { controllerPort: 18800 },
-		});
-	});
-
-	test('defaults secret injection to http-mediation', async () => {
-		const workingDirectoryPath = fs.mkdtempSync(
-			path.join(os.tmpdir(), 'agent-vm-system-config-default-injection-'),
-		);
-		createdDirectories.push(workingDirectoryPath);
-		const configPath = path.join(workingDirectoryPath, 'system.json');
-
-		fs.writeFileSync(
-			configPath,
-			JSON.stringify({
-				host: {
-					controllerPort: 18800,
-				},
-				cacheDir: './cache',
-				images: {
-					gateway: { buildConfig: './images/gateway/build-config.json' },
-					tool: { buildConfig: './images/tool/build-config.json' },
-				},
-				zones: [
-					{
-						id: 'shravan',
-						gateway: {
-							type: 'worker',
-							memory: '2G',
-							cpus: 2,
-							port: 18791,
-							gatewayConfig: './config/shravan/openclaw.json',
-							stateDir: './state/shravan',
-							workspaceDir: './workspaces/shravan',
-						},
-						secrets: {
-							OPENAI_API_KEY: {
-								source: 'environment',
-								envVar: 'OPENAI_API_KEY',
-								hosts: ['api.openai.com'],
-							},
-						},
-						allowedHosts: ['api.openai.com'],
-						toolProfile: 'standard',
-					},
-				],
-				toolProfiles: {
-					standard: {
-						memory: '1G',
-						cpus: 1,
-						workspaceRoot: './workspaces/tools',
-					},
-				},
-				tcpPool: { basePort: 19000, size: 5 },
-			}),
-			'utf8',
-		);
-
-		const config = await loadSystemConfig(configPath);
-		expect(config.zones[0]?.secrets.OPENAI_API_KEY?.injection).toBe('http-mediation');
-	});
-
-	test('rejects onepassword secrets when host.secretsProvider is absent', async () => {
-		const workingDirectoryPath = fs.mkdtempSync(
-			path.join(os.tmpdir(), 'agent-vm-system-config-missing-provider-'),
-		);
-		createdDirectories.push(workingDirectoryPath);
-		const configPath = path.join(workingDirectoryPath, 'system.json');
-
-		fs.writeFileSync(
-			configPath,
-			JSON.stringify({
-				host: {
-					controllerPort: 18800,
-				},
-				cacheDir: './cache',
-				images: {
-					gateway: { buildConfig: './images/gateway/build-config.json' },
-					tool: { buildConfig: './images/tool/build-config.json' },
-				},
-				zones: [
-					{
-						id: 'shravan',
-						gateway: {
-							type: 'worker',
-							memory: '2G',
-							cpus: 2,
-							port: 18791,
-							gatewayConfig: './config/shravan/openclaw.json',
-							stateDir: './state/shravan',
-							workspaceDir: './workspaces/shravan',
-						},
-						secrets: {
-							OPENAI_API_KEY: {
-								source: '1password',
-								ref: 'op://agent-vm/openai/token',
-								hosts: ['api.openai.com'],
-							},
-						},
-						allowedHosts: ['api.openai.com'],
-						toolProfile: 'standard',
-					},
-				],
-				toolProfiles: {
-					standard: {
-						memory: '1G',
-						cpus: 1,
-						workspaceRoot: './workspaces/tools',
-					},
-				},
-				tcpPool: { basePort: 19000, size: 5 },
-			}),
-			'utf8',
-		);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/host\.secretsProvider/i);
-	});
-
-	test('rejects onepassword authProfilesRef when host.secretsProvider is absent', async () => {
-		const workingDirectoryPath = fs.mkdtempSync(
-			path.join(os.tmpdir(), 'agent-vm-system-config-authprofiles-provider-'),
-		);
-		createdDirectories.push(workingDirectoryPath);
-		const configPath = path.join(workingDirectoryPath, 'system.json');
-
-		fs.writeFileSync(
-			configPath,
-			JSON.stringify({
-				host: {
-					controllerPort: 18800,
-				},
-				cacheDir: './cache',
-				images: {
-					gateway: { buildConfig: './images/gateway/build-config.json' },
-					tool: { buildConfig: './images/tool/build-config.json' },
 				},
 				zones: [
 					{
@@ -348,16 +192,17 @@ describe('loadSystemConfig', () => {
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							gatewayConfig: './config/shravan/openclaw.json',
-							stateDir: './state/shravan',
-							workspaceDir: './workspaces/shravan',
-							authProfilesRef: {
+							gatewayConfig: './shravan/openclaw.json',
+							stateDir: '../state/shravan',
+							workspaceDir: '../workspaces/shravan',
+						},
+						secrets: {
+							DISCORD_BOT_TOKEN: {
 								source: '1password',
-								ref: 'op://agent-vm/auth-profiles/value',
+								injection: 'env',
 							},
 						},
-						secrets: {},
-						allowedHosts: ['api.openai.com'],
+						allowedHosts: ['discord.com'],
 						toolProfile: 'standard',
 					},
 				],
@@ -365,54 +210,62 @@ describe('loadSystemConfig', () => {
 					standard: {
 						memory: '1G',
 						cpus: 1,
-						workspaceRoot: './workspaces/tools',
+						workspaceRoot: '../workspaces/tools',
 					},
 				},
-				tcpPool: { basePort: 19000, size: 5 },
+				tcpPool: {
+					basePort: 19000,
+					size: 5,
+				},
 			}),
 			'utf8',
 		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/host\.secretsProvider/i);
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/ref/i);
 	});
 
-	test('rejects http-mediation secrets without hosts', async () => {
+	test('rejects project namespaces that contain label separators', async () => {
 		const workingDirectoryPath = fs.mkdtempSync(
-			path.join(os.tmpdir(), 'agent-vm-system-config-missing-hosts-'),
+			path.join(os.tmpdir(), 'agent-vm-system-config-invalid-namespace-'),
 		);
 		createdDirectories.push(workingDirectoryPath);
-		const configPath = path.join(workingDirectoryPath, 'system.json');
+		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
+		fs.mkdirSync(path.dirname(configPath), { recursive: true });
 
 		fs.writeFileSync(
 			configPath,
 			JSON.stringify({
 				host: {
 					controllerPort: 18800,
+					projectNamespace: 'bad:namespace',
+					secretsProvider: {
+						type: '1password',
+						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
+					},
 				},
-				cacheDir: './cache',
+				cacheDir: '../cache',
 				images: {
-					gateway: { buildConfig: './images/gateway/build-config.json' },
-					tool: { buildConfig: './images/tool/build-config.json' },
+					gateway: {
+						buildConfig: '../images/gateway/build-config.json',
+					},
+					tool: {
+						buildConfig: '../images/tool/build-config.json',
+					},
 				},
 				zones: [
 					{
 						id: 'shravan',
 						gateway: {
-							type: 'worker',
+							type: 'openclaw',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							gatewayConfig: './config/shravan/openclaw.json',
-							stateDir: './state/shravan',
-							workspaceDir: './workspaces/shravan',
+							gatewayConfig: './shravan/openclaw.json',
+							stateDir: '../state/shravan',
+							workspaceDir: '../workspaces/shravan',
 						},
-						secrets: {
-							OPENAI_API_KEY: {
-								source: 'environment',
-								envVar: 'OPENAI_API_KEY',
-							},
-						},
-						allowedHosts: ['api.openai.com'],
+						secrets: {},
+						allowedHosts: ['discord.com'],
 						toolProfile: 'standard',
 					},
 				],
@@ -420,14 +273,80 @@ describe('loadSystemConfig', () => {
 					standard: {
 						memory: '1G',
 						cpus: 1,
-						workspaceRoot: './workspaces/tools',
+						workspaceRoot: '../workspaces/tools',
 					},
 				},
-				tcpPool: { basePort: 19000, size: 5 },
+				tcpPool: {
+					basePort: 19000,
+					size: 5,
+				},
 			}),
 			'utf8',
 		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/http-mediation/i);
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/projectNamespace/u);
+	});
+
+	test('rejects zones that reference unknown tool profiles', async () => {
+		const workingDirectoryPath = fs.mkdtempSync(
+			path.join(os.tmpdir(), 'agent-vm-system-config-missing-tool-profile-'),
+		);
+		createdDirectories.push(workingDirectoryPath);
+		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
+		fs.mkdirSync(path.dirname(configPath), { recursive: true });
+
+		fs.writeFileSync(
+			configPath,
+			JSON.stringify({
+				host: {
+					controllerPort: 18800,
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					secretsProvider: {
+						type: '1password',
+						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
+					},
+				},
+				cacheDir: '../cache',
+				images: {
+					gateway: {
+						buildConfig: '../images/gateway/build-config.json',
+					},
+					tool: {
+						buildConfig: '../images/tool/build-config.json',
+					},
+				},
+				zones: [
+					{
+						id: 'shravan',
+						gateway: {
+							type: 'openclaw',
+							memory: '2G',
+							cpus: 2,
+							port: 18791,
+							gatewayConfig: './shravan/openclaw.json',
+							stateDir: '../state/shravan',
+							workspaceDir: '../workspaces/shravan',
+						},
+						secrets: {},
+						allowedHosts: ['discord.com'],
+						toolProfile: 'missing-profile',
+					},
+				],
+				toolProfiles: {
+					standard: {
+						memory: '1G',
+						cpus: 1,
+						workspaceRoot: '../workspaces/tools',
+					},
+				},
+				tcpPool: {
+					basePort: 19000,
+					size: 5,
+				},
+			}),
+			'utf8',
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/unknown toolProfile/u);
 	});
 });

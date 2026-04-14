@@ -1,5 +1,6 @@
 import { createOpCliSecretResolver, type ManagedVm } from '@shravansunder/gondolin-core';
 
+import { deleteGatewayRuntimeRecord as deleteGatewayRuntimeRecordDefault } from '../gateway/gateway-runtime-record.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { runTaskWithResult } from '../shared/run-task.js';
 import {
@@ -23,6 +24,17 @@ import { createIdleReaper } from './leases/idle-reaper.js';
 import { createLeaseManager } from './leases/lease-manager.js';
 import { createTcpPool } from './leases/tcp-pool.js';
 import { runWorkerTask as runWorkerTaskWithPerTaskVm } from './worker-task-runner.js';
+
+function writeControllerRuntimeLog(message: string): void {
+	process.stderr.write(`[agent-vm] ${message}\n`);
+}
+
+function formatUnknownError(error: unknown): string {
+	if (error instanceof Error) {
+		return error.message;
+	}
+	return typeof error === 'string' ? error : JSON.stringify(error);
+}
 
 export async function startControllerRuntime(
 	options: StartControllerRuntimeOptions,
@@ -87,11 +99,20 @@ export async function startControllerRuntime(
 	);
 	const clearReaperTimer = (): void =>
 		(dependencies.clearIntervalImpl ?? clearInterval)(reaperTimer);
-	const releaseAllLeases = async (): Promise<void> => {
+	const releaseAllLeases = async (): Promise<Error | undefined> => {
+		let releaseError: Error | undefined;
 		for (const lease of leaseManager.listLeases()) {
-			// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP slot races
-			await leaseManager.releaseLease(lease.id);
+			try {
+				// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP slot races
+				await leaseManager.releaseLease(lease.id);
+			} catch (error) {
+				releaseError ??= error instanceof Error ? error : new Error(formatUnknownError(error));
+				writeControllerRuntimeLog(
+					`Failed to release lease '${lease.id}' during controller shutdown: ${formatUnknownError(error)}`,
+				);
+			}
 		}
+		return releaseError;
 	};
 	const startGateway = async (): Promise<Awaited<ReturnType<typeof startGatewayZone>>> =>
 		await (dependencies.startGatewayZone ?? startGatewayZone)({
@@ -100,6 +121,7 @@ export async function startControllerRuntime(
 			systemConfig: options.systemConfig,
 			zoneId: options.zoneId,
 		});
+	const zone = findConfiguredZone(options.systemConfig, options.zoneId);
 	let gateway: Awaited<ReturnType<typeof startGatewayZone>> | undefined;
 	const requireGateway = (): Awaited<ReturnType<typeof startGatewayZone>> => {
 		if (!gateway) {
@@ -116,13 +138,32 @@ export async function startControllerRuntime(
 		if (!gateway) {
 			return;
 		}
-		await gateway.vm.close();
+		const activeGateway = gateway;
+		gateway = undefined;
+		let closeError: unknown;
+		try {
+			await activeGateway.vm.close();
+		} catch (error) {
+			closeError = error;
+		}
+		let deleteRecordError: unknown;
+		try {
+			await (dependencies.deleteGatewayRuntimeRecord ?? deleteGatewayRuntimeRecordDefault)(
+				zone.gateway.stateDir,
+			);
+		} catch (error) {
+			deleteRecordError = error;
+		}
+		if (closeError) {
+			throw closeError;
+		}
+		if (deleteRecordError) {
+			throw deleteRecordError;
+		}
 	};
 	const restartGatewayZone = async (): Promise<void> => {
-		gateway = undefined;
-		if (activeZone.gateway.type !== 'worker') {
-			gateway = await startGateway();
-		}
+		await stopGatewayZone();
+		gateway = await startGateway();
 	};
 	const serverRef: { current?: { close(): Promise<void> } } = {};
 	const controllerOperations =
@@ -149,23 +190,26 @@ export async function startControllerRuntime(
 			: undefined;
 	const workerTaskRunner =
 		activeZone.gateway.type === 'worker'
-			? async (
-					zoneId: string,
-					input: {
-						readonly prompt: string;
-						readonly repos: readonly {
-							readonly repoUrl: string;
-							readonly baseBranch: string;
-						}[];
-						readonly context: Record<string, unknown>;
-					},
-				) =>
-					await (dependencies.runWorkerTask ?? runWorkerTaskWithPerTaskVm)({
-						input,
-						secretResolver,
-						systemConfig: options.systemConfig,
-						zoneId,
-					})
+			? (() => {
+					const runWorkerTask = dependencies.runWorkerTask ?? runWorkerTaskWithPerTaskVm;
+					return async (
+						zoneId: string,
+						input: {
+							readonly prompt: string;
+							readonly repos: readonly {
+								readonly repoUrl: string;
+								readonly baseBranch: string;
+							}[];
+							readonly context: Record<string, unknown>;
+						},
+					) =>
+						await runWorkerTask({
+							input,
+							secretResolver,
+							systemConfig: options.systemConfig,
+							zoneId,
+						});
+				})()
 			: undefined;
 	const controllerApp = createControllerService({
 		leaseManager,
@@ -185,11 +229,14 @@ export async function startControllerRuntime(
 	return {
 		async close(): Promise<void> {
 			clearReaperTimer();
-			await releaseAllLeases();
+			const releaseError = await releaseAllLeases();
 			try {
 				await stopGatewayZone();
 			} finally {
 				await serverRef.current?.close();
+			}
+			if (releaseError) {
+				throw releaseError;
 			}
 		},
 		controllerPort: options.systemConfig.host.controllerPort,

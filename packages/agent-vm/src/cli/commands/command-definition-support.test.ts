@@ -22,7 +22,7 @@ describe('loadSystemConfigFromOption', () => {
 			}),
 		).rejects.toThrow(
 			[
-				'Invalid system.json configuration:',
+				'Invalid config/system.json configuration:',
 				'  zones[0].gateway.gatewayConfig: Invalid input: expected string, received undefined',
 			].join('\n'),
 		);
@@ -49,6 +49,7 @@ describe('requireZone', () => {
 					cacheDir: './cache',
 					host: {
 						controllerPort: 18800,
+						projectNamespace: 'claw-tests-a1b2c3d4',
 						secretsProvider: { type: '1password', tokenSource: { type: 'env' } },
 					},
 					images: {

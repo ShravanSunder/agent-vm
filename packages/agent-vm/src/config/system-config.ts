@@ -3,6 +3,8 @@ import path from 'node:path';
 
 import { z } from 'zod';
 
+const gatewayTypeValues = ['openclaw', 'worker'] as const;
+
 const secretInjectionSchema = z.enum(['env', 'http-mediation']);
 
 const onePasswordSecretSchema = z.object({
@@ -59,7 +61,7 @@ const authProfilesSecretSchema = z.discriminatedUnion('source', [
 ]);
 
 const zoneGatewaySchema = z.object({
-	type: z.enum(['openclaw', 'worker']).default('openclaw'),
+	type: z.enum(gatewayTypeValues).default('openclaw'),
 	memory: z.string().min(1),
 	cpus: z.number().int().positive(),
 	port: z.number().int().positive(),
@@ -84,6 +86,13 @@ const systemConfigSchema = z
 	.object({
 		host: z.object({
 			controllerPort: z.number().int().positive(),
+			projectNamespace: z
+				.string()
+				.min(1)
+				.regex(
+					/^[a-z0-9][a-z0-9-]*$/u,
+					'projectNamespace must use lowercase letters, numbers, and hyphens only',
+				),
 			secretsProvider: z
 				.object({
 					type: z.literal('1password'),
@@ -125,6 +134,17 @@ const systemConfigSchema = z
 				code: z.ZodIssueCode.custom,
 				message: "host.secretsProvider is required when any zone secret uses source '1password'.",
 				path: ['host', 'secretsProvider'],
+			});
+		}
+
+		for (const [zoneIndex, zone] of config.zones.entries()) {
+			if (config.toolProfiles[zone.toolProfile]) {
+				continue;
+			}
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: `Zone '${zone.id}' references unknown toolProfile '${zone.toolProfile}'.`,
+				path: ['zones', zoneIndex, 'toolProfile'],
 			});
 		}
 	});
@@ -180,7 +200,15 @@ export async function loadSystemConfig(configPath: string): Promise<SystemConfig
 	const absoluteConfigPath = path.resolve(configPath);
 	const configDir = path.dirname(absoluteConfigPath);
 	const rawConfig = await fs.readFile(absoluteConfigPath, 'utf8');
-	const parsedConfig = JSON.parse(rawConfig) as unknown;
+	let parsedConfig: unknown;
+	try {
+		parsedConfig = JSON.parse(rawConfig) as unknown;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Failed to parse system config '${absoluteConfigPath}': ${message}`, {
+			cause: error,
+		});
+	}
 	const config = systemConfigSchema.parse(parsedConfig);
 	return resolveRelativePaths(config, configDir);
 }

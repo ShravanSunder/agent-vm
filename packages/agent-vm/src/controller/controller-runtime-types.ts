@@ -2,6 +2,7 @@ import type { GatewayProcessSpec } from '@shravansunder/gateway-interface';
 import type { ManagedVm, SecretResolver } from '@shravansunder/gondolin-core';
 
 import type { SystemConfig } from '../config/system-config.js';
+import type { deleteGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
 import type { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 import type { createControllerService } from './http/controller-http-routes.js';
@@ -32,9 +33,10 @@ export interface ControllerRuntimeDependencies {
 	readonly createSecretResolver?: (options: {
 		readonly serviceAccountToken: string;
 	}) => Promise<SecretResolver>;
+	readonly deleteGatewayRuntimeRecord?: typeof deleteGatewayRuntimeRecord;
 	readonly now?: () => number;
-	readonly runWorkerTask?: typeof runWorkerTask;
 	readonly runTask?: RunTaskFn;
+	readonly runWorkerTask?: typeof runWorkerTask;
 	readonly setIntervalImpl?: (
 		callback: () => void | Promise<void>,
 		delayMs: number,

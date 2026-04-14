@@ -50,10 +50,6 @@ interface ControllerRuntimeOperations {
 	readonly upgradeZone: (targetZoneId: string) => Promise<unknown>;
 }
 
-function writeStderr(message: string): void {
-	process.stderr.write(`${message}\n`);
-}
-
 export function createControllerRuntimeOperations(options: {
 	readonly activeZoneId: string;
 	readonly getGateway: () => GatewayZoneRuntime;
@@ -110,25 +106,15 @@ export function createControllerRuntimeOperations(options: {
 		getStatus: async () => buildControllerStatus(options.systemConfig),
 		getZoneLogs: async (targetZoneId: string) => {
 			assertActiveZone(targetZoneId);
+			const gateway = options.getGateway();
 			return await runControllerLogs(
 				{
 					zoneId: targetZoneId,
 				},
 				{
-					readGatewayLogs: async () => {
-						try {
-							const result = await options
-								.getGateway()
-								.vm.exec(`cat ${options.getGateway().processSpec.logPath} 2>/dev/null || echo ""`);
-							return result.stdout;
-						} catch (error) {
-							const message = error instanceof Error ? error.message : String(error);
-							writeStderr(
-								`[controller-runtime-operations] Failed to read gateway logs for ${targetZoneId}: ${message}`,
-							);
-							return '';
-						}
-					},
+					readGatewayLogs: async () =>
+						(await gateway.vm.exec(`cat ${gateway.processSpec.logPath} 2>/dev/null || echo ""`))
+							.stdout,
 				},
 			);
 		},
@@ -146,10 +132,7 @@ export function createControllerRuntimeOperations(options: {
 							zoneId,
 						});
 					},
-					restartGatewayZone: async () => {
-						await options.stopGatewayZone();
-						await options.restartGatewayZone();
-					},
+					restartGatewayZone: async () => await options.restartGatewayZone(),
 				},
 			);
 		},
@@ -163,7 +146,6 @@ export function createControllerRuntimeOperations(options: {
 				{
 					rebuildGatewayImage: async () => {},
 					restartGatewayZone: options.restartGatewayZone,
-					stopGatewayZone: options.stopGatewayZone,
 				},
 			);
 		},

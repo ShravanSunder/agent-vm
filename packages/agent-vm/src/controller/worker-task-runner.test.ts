@@ -67,6 +67,7 @@ const systemConfig = {
 	cacheDir: '/tmp/cache',
 	host: {
 		controllerPort: 18800,
+		projectNamespace: 'claw-tests-a1b2c3d4',
 		secretsProvider: {
 			type: '1password',
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -161,7 +162,8 @@ describe('worker-task-runner', () => {
 			ingress: { host: '127.0.0.1', port: 18791 },
 			processSpec: {
 				bootstrapCommand: 'true',
-				startCommand: 'node /opt/agent-vm-worker/dist/main.js serve --port 18789',
+				startCommand:
+					'agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state',
 				healthCheck: { type: 'http', port: 18789, path: '/health' },
 				guestListenPort: 18789,
 				logPath: '/tmp/worker.log',

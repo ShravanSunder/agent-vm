@@ -21,6 +21,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Install age
+        run: sudo apt-get update && sudo apt-get install -y age
+
+      - name: Build
+        run: pnpm build
+
       - name: Lint
         run: pnpm lint
 

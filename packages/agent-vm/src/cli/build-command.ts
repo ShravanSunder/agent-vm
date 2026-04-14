@@ -9,6 +9,7 @@ import { buildDockerImage as buildDockerImageDefault } from '../build/docker-ima
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { SystemConfig } from '../config/system-config.js';
 import { formatZodError } from './format-zod-error.js';
+import { syncBundledOpenClawPluginBundle } from './openclaw-plugin-bundle.js';
 
 export interface BuildCommandDependencies {
 	readonly buildDockerImage?: (options: {
@@ -23,6 +24,8 @@ export interface BuildCommandDependencies {
 	readonly resolveOciImageTag?: (buildConfigPath: string) => Promise<string>;
 	/** Override the task runner for testing (bypasses tasuku terminal rendering). */
 	readonly runTask?: (title: string, fn: () => Promise<void>) => Promise<void>;
+	readonly resolveProjectRootFromDockerfile?: (dockerfilePath: string) => Promise<string>;
+	readonly syncBundledOpenClawPlugin?: (targetDir: string) => Promise<'created' | 'skipped'>;
 }
 
 const ociImageTagSchema = z.object({
@@ -56,6 +59,26 @@ async function defaultRunTask(title: string, fn: () => Promise<void>): Promise<v
 	});
 }
 
+async function resolveProjectRootFromDockerfile(dockerfilePath: string): Promise<string> {
+	let searchDirectory = path.dirname(path.resolve(dockerfilePath));
+
+	for (;;) {
+		try {
+			// oxlint-disable-next-line no-await-in-loop -- upward root discovery is intentionally sequential
+			await fs.access(path.join(searchDirectory, 'config', 'system.json'));
+			return searchDirectory;
+		} catch {
+			const parentDirectory = path.dirname(searchDirectory);
+			if (parentDirectory === searchDirectory) {
+				// Fallback for older test scaffolds and legacy layouts that still follow the
+				// standard images/gateway/Dockerfile shape but do not materialize config/system.json.
+				return path.resolve(dockerfilePath, '..', '..', '..');
+			}
+			searchDirectory = parentDirectory;
+		}
+	}
+}
+
 export async function runBuildCommand(
 	options: {
 		readonly forceRebuild?: boolean;
@@ -67,6 +90,10 @@ export async function runBuildCommand(
 	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
 	const resolveOciImageTag = dependencies.resolveOciImageTag ?? resolveOciImageTagFromConfig;
 	const runTaskStep = dependencies.runTask ?? defaultRunTask;
+	const resolveProjectRoot =
+		dependencies.resolveProjectRootFromDockerfile ?? resolveProjectRootFromDockerfile;
+	const syncBundledOpenClawPlugin =
+		dependencies.syncBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle;
 
 	const imageTargets: readonly ImageTarget[] = [
 		{
@@ -85,8 +112,24 @@ export async function runBuildCommand(
 			imageTarget.dockerfile !== undefined,
 	);
 
+	// oxlint-disable-next-line no-await-in-loop -- image builds are intentionally sequential for stable task output and shared image tags
 	for (const imageTarget of dockerImageTargets) {
+		// oxlint-disable-next-line no-await-in-loop -- each image tag is resolved in lockstep with its matching build task
 		const imageTag = await resolveOciImageTag(imageTarget.buildConfigPath);
+		if (
+			imageTarget.name === 'gateway' &&
+			options.systemConfig.zones.some((zone) => zone.gateway.type === 'openclaw')
+		) {
+			// Resolve the scaffold root via config/system.json instead of assuming a fixed
+			// images/gateway/Dockerfile depth.
+			// oxlint-disable-next-line no-await-in-loop -- root discovery belongs to the matching build target
+			const projectRootDirectory = await resolveProjectRoot(imageTarget.dockerfile);
+			// oxlint-disable-next-line no-await-in-loop -- bundle sync must complete before the matching docker build starts
+			await runTaskStep('OpenClaw plugin bundle', async () => {
+				await syncBundledOpenClawPlugin(projectRootDirectory);
+			});
+		}
+		// oxlint-disable-next-line no-await-in-loop -- docker builds intentionally run one at a time to keep task output readable
 		await runTaskStep(`Docker: ${imageTarget.name} (${imageTag})`, async () => {
 			await buildDockerImage({
 				dockerfilePath: imageTarget.dockerfile,
@@ -100,6 +143,7 @@ export async function runBuildCommand(
 		const cacheDirectory = path.join(options.systemConfig.cacheDir, 'images', imageTarget.name);
 		const shouldResetGondolinCache =
 			options.forceRebuild === true || dockerBackedTargets.has(imageTarget.name);
+		// oxlint-disable-next-line no-await-in-loop -- gondolin cache rebuilds are intentionally sequenced per image target
 		await runTaskStep(`Gondolin: ${imageTarget.name}`, async () => {
 			await buildGondolinImage({
 				buildConfigPath: imageTarget.buildConfigPath,

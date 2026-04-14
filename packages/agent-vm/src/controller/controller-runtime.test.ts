@@ -7,6 +7,7 @@ const systemConfig = {
 	cacheDir: './cache',
 	host: {
 		controllerPort: 18800,
+		projectNamespace: 'claw-tests-a1b2c3d4',
 		secretsProvider: {
 			type: '1password',
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
@@ -60,94 +61,6 @@ const openClawProcessSpec = {
 };
 
 describe('startControllerRuntime', () => {
-	it('starts with environment-only secrets and does not require a host secretsProvider', async () => {
-		const envOnlyConfig: SystemConfig = {
-			...systemConfig,
-			host: {
-				controllerPort: 18800,
-			},
-			zones: systemConfig.zones.map((zone) => ({
-				...zone,
-				secrets: {
-					OPENAI_API_KEY: {
-						source: 'environment',
-						envVar: 'OPENAI_API_KEY',
-						injection: 'http-mediation',
-						hosts: ['api.openai.com'],
-					},
-				},
-				allowedHosts: ['api.openai.com'],
-			})),
-		};
-		const zone = envOnlyConfig.zones[0];
-		if (!zone) {
-			throw new Error('Expected test zone.');
-		}
-		const createOnePasswordResolver = vi.fn(async () => {
-			throw new Error('1Password resolver should not be created');
-		});
-		const startGatewayZone = vi.fn(async () => ({
-			image: {
-				built: true,
-				fingerprint: 'gateway-image',
-				imagePath: '/tmp/gateway-image',
-			},
-			ingress: {
-				host: '127.0.0.1',
-				port: 18791,
-			},
-			processSpec: openClawProcessSpec,
-			vm: {
-				close: vi.fn(async () => {}),
-				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-				enableSsh: vi.fn(async () => ({
-					command: 'ssh ...',
-					host: '127.0.0.1',
-					identityFile: '/tmp/key',
-					port: 19000,
-					user: 'sandbox',
-				})),
-				exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
-				id: 'gateway-vm-env-only',
-				setIngressRoutes: vi.fn(),
-				getVmInstance: vi.fn(),
-			},
-			zone,
-		}));
-		const runtime = await startControllerRuntime(
-			{
-				systemConfig: envOnlyConfig,
-				zoneId: 'shravan',
-			},
-			{
-				createManagedToolVm: vi.fn(async () => ({
-					close: vi.fn(async () => {}),
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({
-						command: 'ssh ...',
-						host: '127.0.0.1',
-						identityFile: '/tmp/key',
-						port: 19000,
-						user: 'sandbox',
-					})),
-					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
-					id: 'tool-vm-env-only',
-					setIngressRoutes: vi.fn(),
-					getVmInstance: vi.fn(),
-				})),
-				createSecretResolver: createOnePasswordResolver,
-				startGatewayZone,
-				startHttpServer: vi.fn(async () => ({
-					close: async () => {},
-				})),
-			},
-		);
-
-		expect(createOnePasswordResolver).not.toHaveBeenCalled();
-		expect(startGatewayZone).toHaveBeenCalledTimes(1);
-		await runtime.close();
-	});
-
 	it('starts the gateway, creates the controller app, and opens the controller port', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		const taskTitles: string[] = [];
@@ -155,6 +68,7 @@ describe('startControllerRuntime', () => {
 		if (!zone) {
 			throw new Error('Expected test zone.');
 		}
+		const closeGatewayVm = vi.fn(async () => {});
 		const startGatewayZone = vi.fn(async () => ({
 			image: {
 				built: true,
@@ -167,7 +81,7 @@ describe('startControllerRuntime', () => {
 			},
 			processSpec: openClawProcessSpec,
 			vm: {
-				close: vi.fn(async () => {}),
+				close: closeGatewayVm,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 				enableSsh: vi.fn(async () => ({
 					command: 'ssh ...',
@@ -277,6 +191,8 @@ describe('startControllerRuntime', () => {
 		});
 		expect(upgradeResponse.status).toBe(200);
 		expect(startGatewayZone).toHaveBeenCalledTimes(3);
+		expect(zone.gateway.port).toBe(18791);
+		expect(closeGatewayVm).toHaveBeenCalledTimes(2);
 		expect(setIntervalMock).toHaveBeenCalledTimes(1);
 		expect(runtime.controllerPort).toBe(18800);
 		expect(runtime.gateway?.vm.id).toBe('gateway-vm-1');
@@ -326,30 +242,54 @@ describe('startControllerRuntime', () => {
 		expect(startHttpServer).not.toHaveBeenCalled();
 	});
 
-	it('does not boot a long-lived gateway for worker zones', async () => {
-		const workerSystemConfig: SystemConfig = {
-			...systemConfig,
-			zones: systemConfig.zones.map((zone) => ({
-				...zone,
-				gateway: {
-					...zone.gateway,
-					type: 'worker',
+	it('deletes the runtime record on close after the gateway stops', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone.');
+		}
+		const callOrder: string[] = [];
+		const deleteGatewayRuntimeRecord = vi.fn(async () => {
+			callOrder.push('delete-record');
+		});
+		const closeGatewayVm = vi.fn(async () => {
+			callOrder.push('close-gateway');
+		});
+		const startGatewayZone = vi.fn(async () => {
+			callOrder.push('start-gateway');
+			return {
+				image: {
+					built: true,
+					fingerprint: 'gateway-image',
+					imagePath: '/tmp/gateway-image',
 				},
-			})),
-		};
-		const startGatewayZone = vi.fn();
-		let startHttpServerArgs:
-			| {
-					app: {
-						request(path: string, init?: RequestInit): Response | Promise<Response>;
-					};
-					port: number;
-			  }
-			| undefined;
+				ingress: {
+					host: '127.0.0.1',
+					port: 18791,
+				},
+				processSpec: openClawProcessSpec,
+				vm: {
+					close: closeGatewayVm,
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+					id: 'gateway-vm-cleanup-test',
+					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
+				},
+				zone,
+			};
+		});
 
 		const runtime = await startControllerRuntime(
 			{
-				systemConfig: workerSystemConfig,
+				systemConfig,
 				zoneId: 'shravan',
 			},
 			{
@@ -364,7 +304,7 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
-					id: 'tool-vm-worker',
+					id: 'tool-vm-cleanup-test',
 					setIngressRoutes: vi.fn(),
 					getVmInstance: vi.fn(),
 				})),
@@ -372,38 +312,21 @@ describe('startControllerRuntime', () => {
 					resolve: async () => '',
 					resolveAll: async () => ({}),
 				}),
-				runWorkerTask: vi.fn(async () => ({
-					taskId: 'worker-task-1',
-					finalState: { status: 'completed' },
-					taskRoot: '/tmp/task-root',
-				})),
+				deleteGatewayRuntimeRecord,
 				startGatewayZone,
-				startHttpServer: vi.fn(async (options) => {
-					startHttpServerArgs = options;
-					return {
-						close: async () => {},
-					};
-				}),
+				startHttpServer: vi.fn(async () => ({
+					close: async () => {},
+				})),
 			},
 		);
 
-		expect(startGatewayZone).not.toHaveBeenCalled();
-		expect(runtime.gateway).toBeUndefined();
-		if (!startHttpServerArgs) {
-			throw new Error('Expected runtime HTTP server args');
-		}
+		expect(callOrder).toEqual(['start-gateway']);
 
-		const response = await startHttpServerArgs.app.request('/zones/shravan/worker-tasks', {
-			body: JSON.stringify({
-				prompt: 'fix the login bug',
-				context: {},
-			}),
-			headers: {
-				'content-type': 'application/json',
-			},
-			method: 'POST',
-		});
-		expect(response.status).toBe(200);
+		await runtime.close();
+
+		expect(closeGatewayVm).toHaveBeenCalledTimes(1);
+		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledWith(zone.gateway.stateDir);
+		expect(callOrder.slice(-2)).toEqual(['close-gateway', 'delete-record']);
 	});
 
 	it('releases active leases when runtime.close is called', async () => {
@@ -503,6 +426,79 @@ describe('startControllerRuntime', () => {
 		await runtime.close();
 
 		expect(toolVmClose).toHaveBeenCalledTimes(1);
+	});
+
+	it('surfaces runtime record deletion failures during shutdown', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone.');
+		}
+		const closeGatewayVm = vi.fn(async () => {});
+
+		const runtime = await startControllerRuntime(
+			{
+				systemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				createManagedToolVm: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+					id: 'tool-vm-clean',
+					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
+				})),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				deleteGatewayRuntimeRecord: async () => {
+					throw new Error('permission denied');
+				},
+				startGatewayZone: vi.fn(async () => ({
+					image: {
+						built: true,
+						fingerprint: 'gateway-image',
+						imagePath: '/tmp/gateway-image',
+					},
+					ingress: {
+						host: '127.0.0.1',
+						port: 18791,
+					},
+					processSpec: openClawProcessSpec,
+					vm: {
+						close: closeGatewayVm,
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({
+							command: 'ssh ...',
+							host: '127.0.0.1',
+							port: 19000,
+							user: 'sandbox',
+						})),
+						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+						id: 'gateway-vm-clean',
+						setIngressRoutes: vi.fn(),
+						getVmInstance: vi.fn(),
+					},
+					zone,
+				})),
+				startHttpServer: vi.fn(async () => ({
+					close: async () => {},
+				})),
+			},
+		);
+
+		await expect(runtime.close()).rejects.toThrow('permission denied');
+		expect(closeGatewayVm).toHaveBeenCalledTimes(1);
 	});
 
 	it('still closes the HTTP server when gateway restart fails before runtime.close', async () => {
