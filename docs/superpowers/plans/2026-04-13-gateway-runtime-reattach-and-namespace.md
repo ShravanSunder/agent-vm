@@ -128,11 +128,11 @@ Current persistent state does **not** answer:
 
 That gap exists in three places:
 
-- [packages/agent-vm/src/controller/controller-runtime.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/agent-vm/src/controller/controller-runtime.ts)
+- [packages/agent-vm/src/controller/controller-runtime.ts](packages/agent-vm/src/controller/controller-runtime.ts)
   - always starts a gateway on controller boot
-- [packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts)
+- [packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts](packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts)
   - always calls `createManagedVm(...)`
-- [packages/gondolin-core/src/vm-adapter.ts](/Users/shravansunder/Documents/dev/project-dev/agent-vm/packages/gondolin-core/src/vm-adapter.ts)
+- [packages/gondolin-core/src/vm-adapter.ts](packages/gondolin-core/src/vm-adapter.ts)
   - exposes create/exec/ssh/ingress/close only; no attach/reopen API exists
 
 So the fix must be cross-layer:

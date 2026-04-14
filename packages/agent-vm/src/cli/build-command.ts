@@ -24,6 +24,7 @@ export interface BuildCommandDependencies {
 	readonly resolveOciImageTag?: (buildConfigPath: string) => Promise<string>;
 	/** Override the task runner for testing (bypasses tasuku terminal rendering). */
 	readonly runTask?: (title: string, fn: () => Promise<void>) => Promise<void>;
+	readonly resolveProjectRootFromDockerfile?: (dockerfilePath: string) => Promise<string>;
 	readonly syncBundledOpenClawPlugin?: (targetDir: string) => Promise<'created' | 'skipped'>;
 }
 
@@ -58,6 +59,26 @@ async function defaultRunTask(title: string, fn: () => Promise<void>): Promise<v
 	});
 }
 
+async function resolveProjectRootFromDockerfile(dockerfilePath: string): Promise<string> {
+	let searchDirectory = path.dirname(path.resolve(dockerfilePath));
+
+	for (;;) {
+		try {
+			// oxlint-disable-next-line no-await-in-loop -- upward root discovery is intentionally sequential
+			await fs.access(path.join(searchDirectory, 'config', 'system.json'));
+			return searchDirectory;
+		} catch {
+			const parentDirectory = path.dirname(searchDirectory);
+			if (parentDirectory === searchDirectory) {
+				// Fallback for older test scaffolds and legacy layouts that still follow the
+				// standard images/gateway/Dockerfile shape but do not materialize config/system.json.
+				return path.resolve(dockerfilePath, '..', '..', '..');
+			}
+			searchDirectory = parentDirectory;
+		}
+	}
+}
+
 export async function runBuildCommand(
 	options: {
 		readonly forceRebuild?: boolean;
@@ -69,6 +90,8 @@ export async function runBuildCommand(
 	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
 	const resolveOciImageTag = dependencies.resolveOciImageTag ?? resolveOciImageTagFromConfig;
 	const runTaskStep = dependencies.runTask ?? defaultRunTask;
+	const resolveProjectRoot =
+		dependencies.resolveProjectRootFromDockerfile ?? resolveProjectRootFromDockerfile;
 	const syncBundledOpenClawPlugin =
 		dependencies.syncBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle;
 
@@ -97,7 +120,10 @@ export async function runBuildCommand(
 			imageTarget.name === 'gateway' &&
 			options.systemConfig.zones.some((zone) => zone.gateway.type === 'openclaw')
 		) {
-			const projectRootDirectory = path.resolve(imageTarget.dockerfile, '..', '..', '..');
+			// Resolve the scaffold root via config/system.json instead of assuming a fixed
+			// images/gateway/Dockerfile depth.
+			// oxlint-disable-next-line no-await-in-loop -- root discovery belongs to the matching build target
+			const projectRootDirectory = await resolveProjectRoot(imageTarget.dockerfile);
 			// oxlint-disable-next-line no-await-in-loop -- bundle sync must complete before the matching docker build starts
 			await runTaskStep('OpenClaw plugin bundle', async () => {
 				await syncBundledOpenClawPlugin(projectRootDirectory);
