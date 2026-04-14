@@ -35,16 +35,31 @@ export interface GatewayZoneConfig {
 		readonly gatewayConfig: string;
 		readonly stateDir: string;
 		readonly workspaceDir: string;
-		readonly authProfilesRef?: string | undefined;
+		readonly authProfilesRef?:
+			| {
+					readonly source: '1password';
+					readonly ref: string;
+			  }
+			| {
+					readonly source: 'environment';
+					readonly envVar: string;
+			  }
+			| undefined;
 	};
 	readonly secrets: Record<
 		string,
-		{
-			readonly source: string;
-			readonly ref?: string | undefined;
-			readonly injection: 'env' | 'http-mediation';
-			readonly hosts?: readonly string[] | undefined;
-		}
+		| {
+				readonly source: '1password';
+				readonly ref: string;
+				readonly injection: 'env' | 'http-mediation';
+				readonly hosts?: readonly string[] | undefined;
+		  }
+		| {
+				readonly source: 'environment';
+				readonly envVar: string;
+				readonly injection: 'env' | 'http-mediation';
+				readonly hosts?: readonly string[] | undefined;
+		  }
 	>;
 	readonly allowedHosts: readonly string[];
 	readonly websocketBypass: readonly string[];

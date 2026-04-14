@@ -133,12 +133,16 @@ export const openclawLifecycle: GatewayLifecycle = {
 
 		const authProfilesDirectory = path.join(zone.gateway.stateDir, 'agents', 'main', 'agent');
 		await fs.mkdir(authProfilesDirectory, { recursive: true });
+		const authProfilesRef =
+			zone.gateway.authProfilesRef.source === 'environment'
+				? {
+						source: 'environment' as const,
+						ref: zone.gateway.authProfilesRef.envVar,
+					}
+				: zone.gateway.authProfilesRef;
 		await fs.writeFile(
 			path.join(authProfilesDirectory, 'auth-profiles.json'),
-			await secretResolver.resolve({
-				source: '1password',
-				ref: zone.gateway.authProfilesRef,
-			}),
+			await secretResolver.resolve(authProfilesRef),
 			'utf8',
 		);
 	},

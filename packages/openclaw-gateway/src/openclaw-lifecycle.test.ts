@@ -25,9 +25,13 @@ const resolvedSecrets: Record<string, string> = {
 function createZone(overrides?: {
 	readonly gateway?: Partial<GatewayZoneConfig['gateway']>;
 	readonly withoutAuthProfilesRef?: boolean;
+	readonly authProfilesRef?: GatewayZoneConfig['gateway']['authProfilesRef'];
 }): GatewayZoneConfig {
 	const baseGateway: GatewayZoneConfig['gateway'] = {
-		authProfilesRef: 'op://vault/item/auth-profiles',
+		authProfilesRef: {
+			source: '1password',
+			ref: 'op://vault/item/auth-profiles',
+		},
 		cpus: 2,
 		gatewayConfig: '/host/config/shravan/openclaw.json',
 		memory: '2G',
@@ -51,6 +55,9 @@ function createZone(overrides?: {
 				}
 			: {
 					...baseGateway,
+					...(overrides?.authProfilesRef !== undefined
+						? { authProfilesRef: overrides.authProfilesRef }
+						: {}),
 					...overrides?.gateway,
 				},
 		id: 'shravan',
@@ -58,6 +65,11 @@ function createZone(overrides?: {
 			DISCORD_BOT_TOKEN: {
 				injection: 'env',
 				ref: 'op://vault/item/discord',
+				source: '1password',
+			},
+			OPENCLAW_GATEWAY_TOKEN: {
+				injection: 'env',
+				ref: 'op://vault/item/gateway-token',
 				source: '1password',
 			},
 			PERPLEXITY_API_KEY: {
@@ -174,8 +186,12 @@ describe('openclawLifecycle', () => {
 			);
 			expect(fs.readFileSync(authProfilesPath, 'utf8')).toBe('{"profiles":[]}');
 			expect(fs.existsSync(path.join(zone.gateway.stateDir, 'agents', 'main', 'agent'))).toBe(true);
-			expect(fs.existsSync(path.join(zone.gateway.stateDir, 'effective-openclaw.json'))).toBe(false);
-			expect(fs.readFileSync(authProfilesPath, 'utf8')).not.toContain(resolvedSecrets.OPENCLAW_GATEWAY_TOKEN);
+			expect(fs.existsSync(path.join(zone.gateway.stateDir, 'effective-openclaw.json'))).toBe(
+				false,
+			);
+			expect(fs.readFileSync(authProfilesPath, 'utf8')).not.toContain(
+				resolvedSecrets.OPENCLAW_GATEWAY_TOKEN,
+			);
 		});
 
 		it('does nothing when authProfilesRef is absent', async () => {
@@ -203,6 +219,43 @@ describe('openclawLifecycle', () => {
 			expect(fs.existsSync(zone.gateway.stateDir)).toBe(false);
 			expect(fs.existsSync(zone.gateway.workspaceDir)).toBe(false);
 			expect(fs.existsSync(path.join(zone.gateway.stateDir, 'agents'))).toBe(false);
+		});
+
+		it('supports environment-sourced auth profiles through the composite resolver contract', async () => {
+			const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-lifecycle-env-auth-'));
+			createdDirectories.push(tempDirectory);
+			const zone = createZone({
+				authProfilesRef: {
+					source: 'environment',
+					envVar: 'OPENCLAW_AUTH_PROFILES',
+				},
+				gateway: {
+					gatewayConfig: path.join(tempDirectory, 'config', 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					workspaceDir: path.join(tempDirectory, 'workspace'),
+				},
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (ref) => {
+					expect(ref).toEqual({
+						source: 'environment',
+						ref: 'OPENCLAW_AUTH_PROFILES',
+					});
+					return '{"profiles":["env"]}';
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
+
+			const authProfilesPath = path.join(
+				zone.gateway.stateDir,
+				'agents',
+				'main',
+				'agent',
+				'auth-profiles.json',
+			);
+			expect(fs.readFileSync(authProfilesPath, 'utf8')).toBe('{"profiles":["env"]}');
 		});
 	});
 });

@@ -21,16 +21,16 @@ export async function resolveZoneSecrets(options: {
 
 	const resolvedRefs: Record<string, SecretRef> = {};
 	for (const [secretName, secretConfig] of Object.entries(zone.secrets)) {
-		const ref = secretConfig.ref ?? process.env[`${secretName}_REF`]?.trim();
-		if (!ref) {
-			throw new Error(
-				`Secret '${secretName}' has no ref in config and ${secretName}_REF is not set in environment.`,
-			);
-		}
-		resolvedRefs[secretName] = {
-			ref,
-			source: secretConfig.source,
-		};
+		resolvedRefs[secretName] =
+			secretConfig.source === 'environment'
+				? {
+						ref: secretConfig.envVar,
+						source: 'environment',
+					}
+				: {
+						ref: secretConfig.ref,
+						source: '1password',
+					};
 	}
 
 	return await options.secretResolver.resolveAll(resolvedRefs);

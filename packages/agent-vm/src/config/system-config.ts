@@ -3,12 +3,33 @@ import path from 'node:path';
 
 import { z } from 'zod';
 
-const secretReferenceSchema = z.object({
+const secretInjectionSchema = z.enum(['env', 'http-mediation']);
+
+const onePasswordSecretSchema = z.object({
 	source: z.literal('1password'),
-	ref: z.string().min(1).optional(),
-	injection: z.enum(['env', 'http-mediation']).default('env'),
+	ref: z.string().min(1),
+	injection: secretInjectionSchema.default('http-mediation'),
 	hosts: z.array(z.string().min(1)).optional(),
 });
+
+const environmentSecretSchema = z.object({
+	source: z.literal('environment'),
+	envVar: z.string().min(1),
+	injection: secretInjectionSchema.default('http-mediation'),
+	hosts: z.array(z.string().min(1)).optional(),
+});
+
+const secretReferenceSchema = z
+	.discriminatedUnion('source', [onePasswordSecretSchema, environmentSecretSchema])
+	.superRefine((secret, context) => {
+		if (secret.injection === 'http-mediation' && (!secret.hosts || secret.hosts.length === 0)) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Injection 'http-mediation' requires at least one host.",
+				path: ['hosts'],
+			});
+		}
+	});
 
 const tokenSourceSchema = z.discriminatedUnion('type', [
 	z.object({
@@ -26,6 +47,17 @@ const tokenSourceSchema = z.discriminatedUnion('type', [
 	}),
 ]);
 
+const authProfilesSecretSchema = z.discriminatedUnion('source', [
+	z.object({
+		source: z.literal('1password'),
+		ref: z.string().min(1),
+	}),
+	z.object({
+		source: z.literal('environment'),
+		envVar: z.string().min(1),
+	}),
+]);
+
 const zoneGatewaySchema = z.object({
 	type: z.enum(['openclaw', 'coding']).default('openclaw'),
 	memory: z.string().min(1),
@@ -34,7 +66,7 @@ const zoneGatewaySchema = z.object({
 	gatewayConfig: z.string().min(1),
 	stateDir: z.string().min(1),
 	workspaceDir: z.string().min(1),
-	authProfilesRef: z.string().min(1).optional(),
+	authProfilesRef: authProfilesSecretSchema.optional(),
 });
 
 const toolProfileSchema = z.object({
@@ -48,37 +80,52 @@ const imageConfigSchema = z.object({
 	dockerfile: z.string().min(1).optional(),
 });
 
-const systemConfigSchema = z.object({
-	host: z.object({
-		controllerPort: z.number().int().positive(),
-		secretsProvider: z.object({
-			type: z.literal('1password'),
-			tokenSource: tokenSourceSchema,
+const systemConfigSchema = z
+	.object({
+		host: z.object({
+			controllerPort: z.number().int().positive(),
+			secretsProvider: z
+				.object({
+					type: z.literal('1password'),
+					tokenSource: tokenSourceSchema,
+				})
+				.optional(),
 		}),
-	}),
-	cacheDir: z.string().min(1).default('./cache'),
-	images: z.object({
-		gateway: imageConfigSchema,
-		tool: imageConfigSchema,
-	}),
-	zones: z
-		.array(
-			z.object({
-				id: z.string().min(1),
-				gateway: zoneGatewaySchema,
-				secrets: z.record(z.string(), secretReferenceSchema),
-				allowedHosts: z.array(z.string().min(1)).min(1),
-				websocketBypass: z.array(z.string().min(1)).default([]),
-				toolProfile: z.string().min(1),
-			}),
-		)
-		.min(1, 'system config must define at least one zone'),
-	toolProfiles: z.record(z.string(), toolProfileSchema),
-	tcpPool: z.object({
-		basePort: z.number().int().positive(),
-		size: z.number().int().positive(),
-	}),
-});
+		cacheDir: z.string().min(1).default('./cache'),
+		images: z.object({
+			gateway: imageConfigSchema,
+			tool: imageConfigSchema,
+		}),
+		zones: z
+			.array(
+				z.object({
+					id: z.string().min(1),
+					gateway: zoneGatewaySchema,
+					secrets: z.record(z.string(), secretReferenceSchema),
+					allowedHosts: z.array(z.string().min(1)).min(1),
+					websocketBypass: z.array(z.string().min(1)).default([]),
+					toolProfile: z.string().min(1),
+				}),
+			)
+			.min(1, 'system config must define at least one zone'),
+		toolProfiles: z.record(z.string(), toolProfileSchema),
+		tcpPool: z.object({
+			basePort: z.number().int().positive(),
+			size: z.number().int().positive(),
+		}),
+	})
+	.superRefine((config, context) => {
+		const hasOnePasswordSecrets = config.zones.some((zone) =>
+			Object.values(zone.secrets).some((secret) => secret.source === '1password'),
+		);
+		if (hasOnePasswordSecrets && !config.host.secretsProvider) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "host.secretsProvider is required when any zone secret uses source '1password'.",
+				path: ['host', 'secretsProvider'],
+			});
+		}
+	});
 
 export type SystemConfig = z.infer<typeof systemConfigSchema>;
 

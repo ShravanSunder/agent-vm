@@ -64,15 +64,15 @@ const systemConfig = {
 } satisfies SystemConfig;
 
 describe('resolveZoneSecrets', () => {
-	const originalDiscordRef = process.env.DISCORD_BOT_TOKEN_REF;
+	const originalDiscordToken = process.env.DISCORD_BOT_TOKEN;
 
 	afterEach(() => {
-		if (originalDiscordRef === undefined) {
-			delete process.env.DISCORD_BOT_TOKEN_REF;
+		if (originalDiscordToken === undefined) {
+			delete process.env.DISCORD_BOT_TOKEN;
 			return;
 		}
 
-		process.env.DISCORD_BOT_TOKEN_REF = originalDiscordRef;
+		process.env.DISCORD_BOT_TOKEN = originalDiscordToken;
 	});
 
 	it('resolves the named zone secret references through the shared resolver', async () => {
@@ -101,20 +101,21 @@ describe('resolveZoneSecrets', () => {
 		});
 	});
 
-	it('resolves a secret ref from environment when it is omitted from config', async () => {
-		process.env.DISCORD_BOT_TOKEN_REF = 'op://test-vault/test-item/token';
+	it('resolves an environment secret using envVar', async () => {
+		process.env.DISCORD_BOT_TOKEN = 'discord-token';
+		const resolveAllSecrets = vi.fn(async (secretRefs: Record<string, { readonly ref: string }>) =>
+			Object.fromEntries(
+				Object.entries(secretRefs).map(([secretName, secretRef]) => [
+					secretName,
+					`resolved:${secretRef.ref}`,
+				]),
+			),
+		);
 		const secretResolver: SecretResolver = {
 			resolve: async (): Promise<string> => {
 				throw new Error('resolve is not used by this test');
 			},
-			resolveAll: vi.fn(async (secretRefs: Record<string, { readonly ref: string }>) =>
-				Object.fromEntries(
-					Object.entries(secretRefs).map(([secretName, secretRef]) => [
-						secretName,
-						`resolved:${secretRef.ref}`,
-					]),
-				),
-			),
+			resolveAll: resolveAllSecrets,
 		};
 
 		const baseZone = systemConfig.zones[0];
@@ -130,7 +131,8 @@ describe('resolveZoneSecrets', () => {
 					id: baseZone.id,
 					secrets: {
 						DISCORD_BOT_TOKEN: {
-							source: '1password' as const,
+							source: 'environment' as const,
+							envVar: 'DISCORD_BOT_TOKEN',
 							injection: 'env' as const,
 						},
 					},
@@ -147,7 +149,13 @@ describe('resolveZoneSecrets', () => {
 				zoneId: 'shravan',
 			}),
 		).resolves.toEqual({
-			DISCORD_BOT_TOKEN: 'resolved:op://test-vault/test-item/token',
+			DISCORD_BOT_TOKEN: 'resolved:DISCORD_BOT_TOKEN',
+		});
+		expect(resolveAllSecrets).toHaveBeenCalledWith({
+			DISCORD_BOT_TOKEN: {
+				source: 'environment',
+				ref: 'DISCORD_BOT_TOKEN',
+			},
 		});
 	});
 
@@ -166,15 +174,27 @@ describe('resolveZoneSecrets', () => {
 		).rejects.toThrow("Unknown zone 'missing-zone'.");
 	});
 
-	it('throws when a secret ref is missing from config and environment', async () => {
-		delete process.env.DISCORD_BOT_TOKEN_REF;
+	it('throws when an environment secret env var is missing', async () => {
+		delete process.env.DISCORD_BOT_TOKEN;
 		const baseZone = systemConfig.zones[0];
 		if (!baseZone) {
 			throw new Error('Expected base test zone');
 		}
 		const secretResolver: SecretResolver = {
-			resolve: async (): Promise<string> => '',
-			resolveAll: async () => ({}),
+			resolve: async (): Promise<string> => {
+				throw new Error('resolve is not used by this test');
+			},
+			resolveAll: async (secretRefs) => {
+				const resolved: Record<string, string> = {};
+				for (const [secretName, secretRef] of Object.entries(secretRefs)) {
+					const value = process.env[secretRef.ref];
+					if (!value) {
+						throw new Error(`Environment variable '${secretRef.ref}' is not set.`);
+					}
+					resolved[secretName] = value;
+				}
+				return resolved;
+			},
 		};
 		const envBackedConfig = {
 			...systemConfig,
@@ -185,7 +205,8 @@ describe('resolveZoneSecrets', () => {
 					id: baseZone.id,
 					secrets: {
 						DISCORD_BOT_TOKEN: {
-							source: '1password' as const,
+							source: 'environment' as const,
+							envVar: 'DISCORD_BOT_TOKEN',
 							injection: 'env' as const,
 						},
 					},
@@ -201,20 +222,30 @@ describe('resolveZoneSecrets', () => {
 				systemConfig: envBackedConfig,
 				zoneId: 'shravan',
 			}),
-		).rejects.toThrow(
-			"Secret 'DISCORD_BOT_TOKEN' has no ref in config and DISCORD_BOT_TOKEN_REF is not set in environment.",
-		);
+		).rejects.toThrow("Environment variable 'DISCORD_BOT_TOKEN' is not set.");
 	});
 
-	it('treats whitespace-only env refs as missing', async () => {
-		process.env.DISCORD_BOT_TOKEN_REF = '   ';
+	it('treats whitespace-only environment values as missing', async () => {
+		process.env.DISCORD_BOT_TOKEN = '   ';
 		const baseZone = systemConfig.zones[0];
 		if (!baseZone) {
 			throw new Error('Expected base test zone');
 		}
 		const secretResolver: SecretResolver = {
-			resolve: async (): Promise<string> => '',
-			resolveAll: async () => ({}),
+			resolve: async (): Promise<string> => {
+				throw new Error('resolve is not used by this test');
+			},
+			resolveAll: async (secretRefs) => {
+				const resolved: Record<string, string> = {};
+				for (const [secretName, secretRef] of Object.entries(secretRefs)) {
+					const value = process.env[secretRef.ref]?.trim();
+					if (!value) {
+						throw new Error(`Environment variable '${secretRef.ref}' is not set.`);
+					}
+					resolved[secretName] = value;
+				}
+				return resolved;
+			},
 		};
 		const envBackedConfig = {
 			...systemConfig,
@@ -225,7 +256,8 @@ describe('resolveZoneSecrets', () => {
 					id: baseZone.id,
 					secrets: {
 						DISCORD_BOT_TOKEN: {
-							source: '1password' as const,
+							source: 'environment' as const,
+							envVar: 'DISCORD_BOT_TOKEN',
 							injection: 'env' as const,
 						},
 					},
@@ -241,8 +273,58 @@ describe('resolveZoneSecrets', () => {
 				systemConfig: envBackedConfig,
 				zoneId: 'shravan',
 			}),
-		).rejects.toThrow(
-			"Secret 'DISCORD_BOT_TOKEN' has no ref in config and DISCORD_BOT_TOKEN_REF is not set in environment.",
-		);
+		).rejects.toThrow("Environment variable 'DISCORD_BOT_TOKEN' is not set.");
+	});
+
+	it('resolves mixed onepassword and environment secrets in one zone', async () => {
+		process.env.GITHUB_TOKEN = 'gh-token';
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => {
+				throw new Error('resolve is not used by this test');
+			},
+			resolveAll: vi.fn(async (secretRefs: Record<string, { readonly ref: string }>) =>
+				Object.fromEntries(
+					Object.entries(secretRefs).map(([secretName, secretRef]) => [
+						secretName,
+						secretRef.ref === 'GITHUB_TOKEN' ? 'resolved:GITHUB_TOKEN' : `resolved:${secretRef.ref}`,
+					]),
+				),
+			),
+		};
+		const baseZone = systemConfig.zones[0];
+		if (!baseZone) {
+			throw new Error('Expected base test zone');
+		}
+		const mixedConfig = {
+			...systemConfig,
+			zones: [
+				{
+					...baseZone,
+					secrets: {
+						OPENAI_API_KEY: {
+							source: '1password' as const,
+							ref: 'op://AI/openai/api-key',
+							injection: 'env' as const,
+						},
+						GITHUB_TOKEN: {
+							source: 'environment' as const,
+							envVar: 'GITHUB_TOKEN',
+							injection: 'env' as const,
+						},
+					},
+				},
+			],
+		} satisfies SystemConfig;
+
+		await expect(
+			resolveZoneSecrets({
+				secretResolver,
+				systemConfig: mixedConfig,
+				zoneId: 'shravan',
+			}),
+		).resolves.toEqual({
+			OPENAI_API_KEY: 'resolved:op://AI/openai/api-key',
+			GITHUB_TOKEN: 'resolved:GITHUB_TOKEN',
+		});
 	});
 });

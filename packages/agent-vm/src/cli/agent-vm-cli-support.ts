@@ -7,6 +7,7 @@ import {
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';
 import { loadSystemConfig, type SystemConfig } from '../config/system-config.js';
+import { createSecretResolver as createControllerSecretResolver } from '../controller/controller-runtime-support.js';
 import type { ControllerRuntimeDependencies } from '../controller/controller-runtime-types.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 import { createControllerClient } from '../controller/http/controller-client.js';
@@ -144,10 +145,9 @@ export async function createResolverFromSystemConfig(
 	systemConfig: SystemConfig,
 	dependencies: Pick<CliDependencies, 'createSecretResolver' | 'resolveServiceAccountToken'>,
 ): Promise<SecretResolver> {
-	const tokenSource = systemConfig.host.secretsProvider.tokenSource;
-	const serviceAccountToken = await dependencies.resolveServiceAccountToken(tokenSource);
-
-	return await dependencies.createSecretResolver({
-		serviceAccountToken,
-	});
+	return await createControllerSecretResolver(
+		systemConfig,
+		dependencies.createSecretResolver,
+		dependencies.resolveServiceAccountToken,
+	);
 }

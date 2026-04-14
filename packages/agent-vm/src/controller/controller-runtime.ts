@@ -1,7 +1,4 @@
-import {
-	createOpCliSecretResolver,
-	type ManagedVm,
-} from '@shravansunder/gondolin-core';
+import { createOpCliSecretResolver, type ManagedVm } from '@shravansunder/gondolin-core';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { runTaskWithResult } from '../shared/run-task.js';
@@ -14,10 +11,7 @@ import {
 	createControllerRuntimeOperations,
 	createStopControllerOperation,
 } from './controller-runtime-operations.js';
-import {
-	createSecretResolverFromSystemConfig,
-	findConfiguredZone,
-} from './controller-runtime-support.js';
+import { createSecretResolver, findConfiguredZone } from './controller-runtime-support.js';
 import {
 	type ControllerRuntime,
 	type ControllerRuntimeDependencies,
@@ -41,7 +35,7 @@ export async function startControllerRuntime(
 		runTaskStep,
 		'Resolving 1Password secrets',
 		async () =>
-			await createSecretResolverFromSystemConfig(
+			await createSecretResolver(
 				options.systemConfig,
 				dependencies.createSecretResolver ?? createOpCliSecretResolver,
 			),

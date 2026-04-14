@@ -60,6 +60,94 @@ const openClawProcessSpec = {
 };
 
 describe('startControllerRuntime', () => {
+	it('starts with environment-only secrets and does not require a host secretsProvider', async () => {
+		const envOnlyConfig: SystemConfig = {
+			...systemConfig,
+			host: {
+				controllerPort: 18800,
+			},
+			zones: systemConfig.zones.map((zone) => ({
+				...zone,
+				secrets: {
+					OPENAI_API_KEY: {
+						source: 'environment',
+						envVar: 'OPENAI_API_KEY',
+						injection: 'http-mediation',
+						hosts: ['api.openai.com'],
+					},
+				},
+				allowedHosts: ['api.openai.com'],
+			})),
+		};
+		const zone = envOnlyConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone.');
+		}
+		const createOnePasswordResolver = vi.fn(async () => {
+			throw new Error('1Password resolver should not be created');
+		});
+		const startGatewayZone = vi.fn(async () => ({
+			image: {
+				built: true,
+				fingerprint: 'gateway-image',
+				imagePath: '/tmp/gateway-image',
+			},
+			ingress: {
+				host: '127.0.0.1',
+				port: 18791,
+			},
+			processSpec: openClawProcessSpec,
+			vm: {
+				close: vi.fn(async () => {}),
+				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				enableSsh: vi.fn(async () => ({
+					command: 'ssh ...',
+					host: '127.0.0.1',
+					identityFile: '/tmp/key',
+					port: 19000,
+					user: 'sandbox',
+				})),
+				exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+				id: 'gateway-vm-env-only',
+				setIngressRoutes: vi.fn(),
+				getVmInstance: vi.fn(),
+			},
+			zone,
+		}));
+		const runtime = await startControllerRuntime(
+			{
+				systemConfig: envOnlyConfig,
+				zoneId: 'shravan',
+			},
+			{
+				createManagedToolVm: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+					id: 'tool-vm-env-only',
+					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
+				})),
+				createSecretResolver: createOnePasswordResolver,
+				startGatewayZone,
+				startHttpServer: vi.fn(async () => ({
+					close: async () => {},
+				})),
+			},
+		);
+
+		expect(createOnePasswordResolver).not.toHaveBeenCalled();
+		expect(startGatewayZone).toHaveBeenCalledTimes(1);
+		await runtime.close();
+	});
+
 	it('starts the gateway, creates the controller app, and opens the controller port', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		const taskTitles: string[] = [];

@@ -94,11 +94,13 @@ function defaultSecretsForGatewayType(gatewayType: GatewayType): Record<string, 
 		return {
 			ANTHROPIC_API_KEY: {
 				source: '1password',
+				ref: 'op://agent-vm/agent-anthropic/api-key',
 				hosts: ['api.anthropic.com'],
 				injection: 'http-mediation',
 			},
 			OPENAI_API_KEY: {
 				source: '1password',
+				ref: 'op://agent-vm/agent-openai/api-key',
 				hosts: ['api.openai.com'],
 				injection: 'http-mediation',
 			},
@@ -108,15 +110,18 @@ function defaultSecretsForGatewayType(gatewayType: GatewayType): Record<string, 
 	return {
 		DISCORD_BOT_TOKEN: {
 			source: '1password',
+			ref: 'op://agent-vm/agent-discord-app/bot-token',
 			injection: 'env',
 		},
 		PERPLEXITY_API_KEY: {
 			source: '1password',
+			ref: 'op://agent-vm/agent-perplexity/credential',
 			hosts: ['api.perplexity.ai'],
 			injection: 'http-mediation',
 		},
 		OPENCLAW_GATEWAY_TOKEN: {
 			source: '1password',
+			ref: 'op://agent-vm/agent-shravan-claw-gateway/password',
 			injection: 'env',
 		},
 	};
@@ -157,23 +162,11 @@ function defaultWebsocketBypassForGatewayType(gatewayType: GatewayType): readonl
 	];
 }
 
-function defaultEnvTemplateForGatewayType(gatewayType: GatewayType): string {
-	const header = `# agent-vm environment configuration
+function defaultEnvTemplateForGatewayType(): string {
+	return `# agent-vm environment configuration
 # 1Password token is stored in macOS Keychain by agent-vm init.
 # Only set this for CI or non-macOS environments:
 # OP_SERVICE_ACCOUNT_TOKEN=
-
-# === Secret References (1Password op:// URIs) ===
-`;
-	if (gatewayType === 'coding') {
-		return `${header}ANTHROPIC_API_KEY_REF=op://agent-vm/agent-anthropic/api-key
-OPENAI_API_KEY_REF=op://agent-vm/agent-openai/api-key
-`;
-	}
-
-	return `${header}DISCORD_BOT_TOKEN_REF=op://agent-vm/agent-discord-app/bot-token
-PERPLEXITY_API_KEY_REF=op://agent-vm/agent-perplexity/credential
-OPENCLAW_GATEWAY_TOKEN_REF=op://agent-vm/agent-shravan-claw-gateway/password
 `;
 }
 
@@ -362,10 +355,7 @@ async function scaffoldAgentVmProjectInternal(
 	(systemConfigStatus === 'created' ? created : skipped).push('system.json');
 
 	const envFilePath = path.join(options.targetDir, '.env.local');
-	const envFileStatus = await writeFileIfMissing(
-		envFilePath,
-		defaultEnvTemplateForGatewayType(gatewayType),
-	);
+	const envFileStatus = await writeFileIfMissing(envFilePath, defaultEnvTemplateForGatewayType());
 	(envFileStatus === 'created' ? created : skipped).push('.env.local');
 	if (envFileStatus === 'created') {
 		const generateAgeIdentityKey =
@@ -440,13 +430,13 @@ async function scaffoldAgentVmProjectInternal(
 	);
 	(toolBuildConfigStatus === 'created' ? created : skipped).push('images/tool/build-config.json');
 
-	for (const directoryPath of [
-		path.join(options.targetDir, 'state', options.zoneId),
-		path.join(options.targetDir, 'workspaces', options.zoneId),
-		path.join(options.targetDir, 'workspaces', 'tools'),
-	]) {
-		await fs.mkdir(directoryPath, { recursive: true });
-	}
+	await Promise.all(
+		[
+			path.join(options.targetDir, 'state', options.zoneId),
+			path.join(options.targetDir, 'workspaces', options.zoneId),
+			path.join(options.targetDir, 'workspaces', 'tools'),
+		].map(async (directoryPath) => await fs.mkdir(directoryPath, { recursive: true })),
+	);
 
 	return { created, keychainStored: false, skipped };
 }
