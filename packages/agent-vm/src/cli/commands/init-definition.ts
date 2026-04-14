@@ -18,7 +18,7 @@ export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 			type: option({
 				type: string,
 				long: 'type',
-				description: 'Gateway type: openclaw',
+				description: 'Gateway type: openclaw or worker',
 			}),
 		},
 		handler: async ({ type, zoneId }) => {

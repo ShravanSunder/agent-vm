@@ -83,14 +83,10 @@ export function parseGatewayType(gatewayType: string | undefined): GatewayType {
 		return gatewayType;
 	}
 	if (gatewayType === 'worker') {
-		throw new Error(
-			"Gateway type 'worker' is not available yet. Only 'openclaw' is currently supported.",
-		);
+		return gatewayType;
 	}
 
 	throw new Error(
-		gatewayType
-			? `Unsupported gateway type '${gatewayType}'. Only 'openclaw' is currently supported.`
-			: "Gateway type is required. Only 'openclaw' is currently supported.",
+		`Gateway type is required. Expected 'openclaw' or 'worker'${gatewayType ? `, got '${gatewayType}'` : ''}.`,
 	);
 }

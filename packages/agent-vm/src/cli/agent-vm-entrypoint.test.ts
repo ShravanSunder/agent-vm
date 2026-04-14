@@ -138,29 +138,31 @@ describe('runAgentVmCli', () => {
 		expect(outputs.join('')).toContain('"config/system.json"');
 	});
 
-	it('rejects worker init until the worker runtime is implemented', async () => {
+	it('passes gateway type through to init scaffolding', async () => {
 		const scaffoldAgentVmProject = vi.fn(async () => ({
 			created: ['config/system.json', '.env.local'],
 			keychainStored: false,
 			skipped: [],
 		}));
 
-		await expect(
-			runAgentVmCli(
-				['init', 'test-zone', '--type', 'worker'],
-				{
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				{
-					...defaultCliDependencies,
-					getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
-					scaffoldAgentVmProject,
-				},
-			),
-		).rejects.toThrow(/worker.*not available yet.*openclaw/u);
+		await runAgentVmCli(
+			['init', 'test-zone', '--type', 'worker'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
+				scaffoldAgentVmProject,
+			},
+		);
 
-		expect(scaffoldAgentVmProject).not.toHaveBeenCalled();
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
+			gatewayType: 'worker',
+			targetDir: '/tmp/agent-vm-init',
+			zoneId: 'test-zone',
+		});
 	});
 
 	it('rejects init when --type is missing', async () => {
@@ -384,7 +386,7 @@ describe('runAgentVmCli', () => {
 				},
 				defaultCliDependencies,
 			),
-		).rejects.toThrow(/unsupported gateway type 'banana'.*openclaw/iu);
+		).rejects.toThrow(/openclaw|worker/u);
 	});
 
 	it('prints controller help instead of throwing on controller --help', async () => {
