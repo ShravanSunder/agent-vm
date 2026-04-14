@@ -1,6 +1,6 @@
 {
 	"name": "@shravansunder/openclaw-agent-vm-plugin",
-	"version": "0.0.2",
+	"version": "0.0.3",
 	"files": [
 		"dist"
 	],
@@ -21,6 +21,6 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@shravansunder/gondolin-core": "workspace:0.0.2"
+		"@shravansunder/gondolin-core": "workspace:0.0.3"
 	}
 }

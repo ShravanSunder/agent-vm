@@ -145,7 +145,7 @@ describe('runAgentVmCli', () => {
 		}));
 
 		await runAgentVmCli(
-			['init', 'test-zone', '--type', 'coding'],
+			['init', 'test-zone', '--type', 'worker'],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -158,7 +158,7 @@ describe('runAgentVmCli', () => {
 		);
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
-			gatewayType: 'coding',
+			gatewayType: 'worker',
 			targetDir: '/tmp/agent-vm-init',
 			zoneId: 'test-zone',
 		});

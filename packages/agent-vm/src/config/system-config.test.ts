@@ -45,7 +45,7 @@ describe('loadSystemConfig', () => {
 					{
 						id: 'shravan',
 						gateway: {
-							type: 'coding',
+							type: 'worker',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
@@ -97,7 +97,7 @@ describe('loadSystemConfig', () => {
 					id: 'shravan',
 					gateway: {
 						gatewayConfig: path.join(workingDirectoryPath, 'config/shravan/openclaw.json'),
-						type: 'coding',
+						type: 'worker',
 					},
 				},
 			],
@@ -173,7 +173,7 @@ describe('loadSystemConfig', () => {
 					{
 						id: 'shravan',
 						gateway: {
-							type: 'coding',
+							type: 'worker',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
@@ -231,7 +231,7 @@ describe('loadSystemConfig', () => {
 					{
 						id: 'shravan',
 						gateway: {
-							type: 'coding',
+							type: 'worker',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
@@ -288,7 +288,7 @@ describe('loadSystemConfig', () => {
 					{
 						id: 'shravan',
 						gateway: {
-							type: 'coding',
+							type: 'worker',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
@@ -303,6 +303,60 @@ describe('loadSystemConfig', () => {
 								hosts: ['api.openai.com'],
 							},
 						},
+						allowedHosts: ['api.openai.com'],
+						toolProfile: 'standard',
+					},
+				],
+				toolProfiles: {
+					standard: {
+						memory: '1G',
+						cpus: 1,
+						workspaceRoot: './workspaces/tools',
+					},
+				},
+				tcpPool: { basePort: 19000, size: 5 },
+			}),
+			'utf8',
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/host\.secretsProvider/i);
+	});
+
+	test('rejects onepassword authProfilesRef when host.secretsProvider is absent', async () => {
+		const workingDirectoryPath = fs.mkdtempSync(
+			path.join(os.tmpdir(), 'agent-vm-system-config-authprofiles-provider-'),
+		);
+		createdDirectories.push(workingDirectoryPath);
+		const configPath = path.join(workingDirectoryPath, 'system.json');
+
+		fs.writeFileSync(
+			configPath,
+			JSON.stringify({
+				host: {
+					controllerPort: 18800,
+				},
+				cacheDir: './cache',
+				images: {
+					gateway: { buildConfig: './images/gateway/build-config.json' },
+					tool: { buildConfig: './images/tool/build-config.json' },
+				},
+				zones: [
+					{
+						id: 'shravan',
+						gateway: {
+							type: 'openclaw',
+							memory: '2G',
+							cpus: 2,
+							port: 18791,
+							gatewayConfig: './config/shravan/openclaw.json',
+							stateDir: './state/shravan',
+							workspaceDir: './workspaces/shravan',
+							authProfilesRef: {
+								source: '1password',
+								ref: 'op://agent-vm/auth-profiles/value',
+							},
+						},
+						secrets: {},
 						allowedHosts: ['api.openai.com'],
 						toolProfile: 'standard',
 					},
@@ -344,7 +398,7 @@ describe('loadSystemConfig', () => {
 					{
 						id: 'shravan',
 						gateway: {
-							type: 'coding',
+							type: 'worker',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,

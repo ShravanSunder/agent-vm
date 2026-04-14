@@ -42,7 +42,7 @@ const scaffoldedSystemConfigSchema = z.object({
 				id: z.string().min(1),
 				gateway: z
 					.object({
-						type: z.enum(['openclaw', 'coding']),
+						type: z.enum(['openclaw', 'worker']),
 					})
 					.passthrough(),
 				secrets: z.record(
@@ -99,7 +99,7 @@ describe('scaffoldAgentVmProject', () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
-			{ targetDir, zoneId: 'test-zone', gatewayType: 'coding' },
+			{ targetDir, zoneId: 'test-zone', gatewayType: 'worker' },
 			noGeneratedAgeIdentityDependencies,
 		);
 		const config = scaffoldedSystemConfigSchema.parse(
@@ -110,7 +110,7 @@ describe('scaffoldAgentVmProject', () => {
 			'utf8',
 		);
 
-		expect(config.zones[0]?.gateway.type).toBe('coding');
+		expect(config.zones[0]?.gateway.type).toBe('worker');
 		expect(gatewayDockerfile).toContain('@openai/codex-cli');
 		expect(gatewayDockerfile).not.toContain('openclaw@');
 	});
@@ -216,14 +216,14 @@ describe('scaffoldAgentVmProject', () => {
 
 		const codingTargetDir = createTestDirectory();
 		await scaffoldAgentVmProject(
-			{ targetDir: codingTargetDir, zoneId: 'my-zone', gatewayType: 'coding' },
+			{ targetDir: codingTargetDir, zoneId: 'my-zone', gatewayType: 'worker' },
 			noGeneratedAgeIdentityDependencies,
 		);
 
 		expect(fs.existsSync(path.join(openClawTargetDir, 'config', 'my-zone', 'openclaw.json'))).toBe(
 			true,
 		);
-		expect(fs.existsSync(path.join(codingTargetDir, 'config', 'my-zone', 'coding.json'))).toBe(
+		expect(fs.existsSync(path.join(codingTargetDir, 'config', 'my-zone', 'worker.json'))).toBe(
 			true,
 		);
 		expect(fs.existsSync(path.join(codingTargetDir, 'config', 'my-zone', 'openclaw.json'))).toBe(
@@ -268,7 +268,7 @@ describe('scaffoldAgentVmProject', () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
-			{ gatewayType: 'coding', targetDir, zoneId: 'test-coding' },
+			{ gatewayType: 'worker', targetDir, zoneId: 'test-coding' },
 			noGeneratedAgeIdentityDependencies,
 		);
 
@@ -301,7 +301,7 @@ describe('scaffoldAgentVmProject', () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
-			{ gatewayType: 'coding', targetDir, zoneId: 'test-coding' },
+			{ gatewayType: 'worker', targetDir, zoneId: 'test-coding' },
 			noGeneratedAgeIdentityDependencies,
 		);
 		const config = readJsonFile(path.join(targetDir, 'system.json'), scaffoldedSystemConfigSchema);
@@ -319,7 +319,7 @@ describe('scaffoldAgentVmProject', () => {
 		const targetDir = createTestDirectory();
 
 		await scaffoldAgentVmProject(
-			{ gatewayType: 'coding', targetDir, zoneId: 'test-coding' },
+			{ gatewayType: 'worker', targetDir, zoneId: 'test-coding' },
 			noGeneratedAgeIdentityDependencies,
 		);
 

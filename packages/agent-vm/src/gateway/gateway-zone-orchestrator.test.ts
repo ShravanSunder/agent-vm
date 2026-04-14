@@ -243,7 +243,7 @@ describe('startGatewayZone', () => {
 				...zone,
 				gateway: {
 					...zone.gateway,
-					type: 'coding',
+					type: 'worker',
 				},
 			})),
 		};

@@ -203,7 +203,7 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 				{
 					id: 'worker-smoke',
 					gateway: {
-						type: 'coding',
+						type: 'worker',
 						memory: '2G',
 						cpus: 2,
 						port: gatewayPort,

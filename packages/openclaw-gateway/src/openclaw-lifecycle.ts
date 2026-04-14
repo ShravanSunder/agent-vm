@@ -34,6 +34,7 @@ function buildOpenClawBootstrapCommand(
 	zone: GatewayZoneConfig,
 	resolvedSecrets: Record<string, string>,
 ): string {
+	const gatewayTokenSecret = zone.secrets.OPENCLAW_GATEWAY_TOKEN;
 	const environmentLines = [
 		'export OPENCLAW_HOME=/home/openclaw',
 		`export OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/config/${path.basename(zone.gateway.gatewayConfig)}`,
@@ -41,7 +42,7 @@ function buildOpenClawBootstrapCommand(
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
 	];
 	const gatewayToken = resolvedSecrets.OPENCLAW_GATEWAY_TOKEN;
-	if (gatewayToken) {
+	if (gatewayToken && gatewayTokenSecret?.injection === 'env') {
 		environmentLines.push(
 			`export OPENCLAW_GATEWAY_TOKEN='${gatewayToken.replace(/'/gu, "'\\''")}'`,
 		);

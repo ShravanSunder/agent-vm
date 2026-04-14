@@ -180,7 +180,7 @@ describe('worker-task-runner integration', () => {
 			{
 				id: 'shravan',
 				gateway: {
-					type: 'coding',
+					type: 'worker',
 					memory: '2G',
 					cpus: 2,
 					port: 18791,

@@ -107,7 +107,7 @@ export async function startControllerRuntime(
 		}
 		return gateway;
 	};
-	if (activeZone.gateway.type !== 'coding') {
+	if (activeZone.gateway.type !== 'worker') {
 		await runTaskStep('Starting gateway zone', async () => {
 			gateway = await startGateway();
 		});
@@ -120,13 +120,13 @@ export async function startControllerRuntime(
 	};
 	const restartGatewayZone = async (): Promise<void> => {
 		gateway = undefined;
-		if (activeZone.gateway.type !== 'coding') {
+		if (activeZone.gateway.type !== 'worker') {
 			gateway = await startGateway();
 		}
 	};
 	const serverRef: { current?: { close(): Promise<void> } } = {};
 	const controllerOperations =
-		activeZone.gateway.type !== 'coding'
+		activeZone.gateway.type !== 'worker'
 			? {
 					...createControllerRuntimeOperations({
 						activeZoneId: options.zoneId,
@@ -148,7 +148,7 @@ export async function startControllerRuntime(
 				}
 			: undefined;
 	const workerTaskRunner =
-		activeZone.gateway.type === 'coding'
+		activeZone.gateway.type === 'worker'
 			? async (
 					zoneId: string,
 					input: {

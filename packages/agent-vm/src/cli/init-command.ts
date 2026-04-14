@@ -31,12 +31,12 @@ export interface PromptAndStoreTokenDependencies {
 	readonly createReadlineInterface?: () => readline.Interface;
 }
 
-export type GatewayType = 'coding' | 'openclaw';
+export type GatewayType = 'worker' | 'openclaw';
 
 const defaultGatewayIngressPort = 18791;
 
-function resolveGatewayConfigFileName(gatewayType: GatewayType): 'coding.json' | 'openclaw.json' {
-	return gatewayType === 'coding' ? 'coding.json' : 'openclaw.json';
+function resolveGatewayConfigFileName(gatewayType: GatewayType): 'worker.json' | 'openclaw.json' {
+	return gatewayType === 'worker' ? 'worker.json' : 'openclaw.json';
 }
 
 const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object => ({
@@ -90,7 +90,7 @@ const defaultSystemConfig = (zoneId: string, gatewayType: GatewayType): object =
 });
 
 function defaultSecretsForGatewayType(gatewayType: GatewayType): Record<string, object> {
-	if (gatewayType === 'coding') {
+	if (gatewayType === 'worker') {
 		return {
 			ANTHROPIC_API_KEY: {
 				source: '1password',
@@ -128,7 +128,7 @@ function defaultSecretsForGatewayType(gatewayType: GatewayType): Record<string, 
 }
 
 function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): readonly string[] {
-	if (gatewayType === 'coding') {
+	if (gatewayType === 'worker') {
 		return [
 			'api.anthropic.com',
 			'api.openai.com',
@@ -150,7 +150,7 @@ function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): readonly s
 }
 
 function defaultWebsocketBypassForGatewayType(gatewayType: GatewayType): readonly string[] {
-	if (gatewayType === 'coding') {
+	if (gatewayType === 'worker') {
 		return [];
 	}
 

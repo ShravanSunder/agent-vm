@@ -326,14 +326,14 @@ describe('startControllerRuntime', () => {
 		expect(startHttpServer).not.toHaveBeenCalled();
 	});
 
-	it('does not boot a long-lived gateway for coding zones', async () => {
-		const codingSystemConfig: SystemConfig = {
+	it('does not boot a long-lived gateway for worker zones', async () => {
+		const workerSystemConfig: SystemConfig = {
 			...systemConfig,
 			zones: systemConfig.zones.map((zone) => ({
 				...zone,
 				gateway: {
 					...zone.gateway,
-					type: 'coding',
+					type: 'worker',
 				},
 			})),
 		};
@@ -349,7 +349,7 @@ describe('startControllerRuntime', () => {
 
 		const runtime = await startControllerRuntime(
 			{
-				systemConfig: codingSystemConfig,
+				systemConfig: workerSystemConfig,
 				zoneId: 'shravan',
 			},
 			{
@@ -364,7 +364,7 @@ describe('startControllerRuntime', () => {
 						user: 'sandbox',
 					})),
 					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
-					id: 'tool-vm-coding',
+					id: 'tool-vm-worker',
 					setIngressRoutes: vi.fn(),
 					getVmInstance: vi.fn(),
 				})),

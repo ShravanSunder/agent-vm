@@ -234,8 +234,8 @@ export async function runWorkerTask(options: {
 	if (!zone) {
 		throw new Error(`Unknown zone '${options.zoneId}'.`);
 	}
-	if (zone.gateway.type !== 'coding') {
-		throw new Error(`Zone '${options.zoneId}' is not a coding zone.`);
+	if (zone.gateway.type !== 'worker') {
+		throw new Error(`Zone '${options.zoneId}' is not a worker zone.`);
 	}
 
 	const preStartResult = await preStartGateway(options.input, zone);

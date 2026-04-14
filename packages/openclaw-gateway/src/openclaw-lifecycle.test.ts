@@ -157,6 +157,20 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.healthCheck).toEqual({ type: 'http', port: 18789, path: '/' });
 			expect(processSpec.logPath).toBe('/tmp/openclaw.log');
 		});
+
+		it('does not export the gateway token when it is configured for http-mediation', () => {
+			const zone = createZone();
+			zone.secrets.OPENCLAW_GATEWAY_TOKEN = {
+				source: '1password',
+				ref: 'op://vault/item/gateway-token',
+				injection: 'http-mediation',
+				hosts: ['gateway.discord.gg:443'],
+			};
+
+			const processSpec = openclawLifecycle.buildProcessSpec(zone, resolvedSecrets);
+
+			expect(processSpec.bootstrapCommand).not.toContain('OPENCLAW_GATEWAY_TOKEN=');
+		});
 	});
 
 	describe('prepareHostState', () => {

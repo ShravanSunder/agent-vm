@@ -3,7 +3,7 @@ import { openclawLifecycle } from '@shravansunder/openclaw-gateway';
 import { workerLifecycle } from '@shravansunder/worker-gateway';
 
 const lifecycleByType = {
-	coding: workerLifecycle,
+	worker: workerLifecycle,
 	openclaw: openclawLifecycle,
 } satisfies Record<string, GatewayLifecycle>;
 

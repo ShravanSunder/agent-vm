@@ -87,7 +87,7 @@ describe('requireZone', () => {
 describe('parseGatewayType', () => {
 	it('throws when the gateway type is missing', () => {
 		expect(() => parseGatewayType(undefined)).toThrow(
-			"Gateway type is required. Expected 'openclaw' or 'coding'.",
+			"Gateway type is required. Expected 'openclaw' or 'worker'.",
 		);
 	});
 });

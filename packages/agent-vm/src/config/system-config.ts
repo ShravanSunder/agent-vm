@@ -59,7 +59,7 @@ const authProfilesSecretSchema = z.discriminatedUnion('source', [
 ]);
 
 const zoneGatewaySchema = z.object({
-	type: z.enum(['openclaw', 'coding']).default('openclaw'),
+	type: z.enum(['openclaw', 'worker']).default('openclaw'),
 	memory: z.string().min(1),
 	cpus: z.number().int().positive(),
 	port: z.number().int().positive(),
@@ -115,8 +115,10 @@ const systemConfigSchema = z
 		}),
 	})
 	.superRefine((config, context) => {
-		const hasOnePasswordSecrets = config.zones.some((zone) =>
-			Object.values(zone.secrets).some((secret) => secret.source === '1password'),
+		const hasOnePasswordSecrets = config.zones.some(
+			(zone) =>
+				Object.values(zone.secrets).some((secret) => secret.source === '1password') ||
+				zone.gateway.authProfilesRef?.source === '1password',
 		);
 		if (hasOnePasswordSecrets && !config.host.secretsProvider) {
 			context.addIssue({

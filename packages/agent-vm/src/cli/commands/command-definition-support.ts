@@ -82,11 +82,11 @@ export function parseGatewayType(gatewayType: string | undefined): GatewayType {
 	if (gatewayType === 'openclaw') {
 		return gatewayType;
 	}
-	if (gatewayType === 'coding') {
+	if (gatewayType === 'worker') {
 		return gatewayType;
 	}
 
 	throw new Error(
-		`Gateway type is required. Expected 'openclaw' or 'coding'${gatewayType ? `, got '${gatewayType}'` : ''}.`,
+		`Gateway type is required. Expected 'openclaw' or 'worker'${gatewayType ? `, got '${gatewayType}'` : ''}.`,
 	);
 }
