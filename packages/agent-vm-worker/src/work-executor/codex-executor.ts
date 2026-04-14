@@ -5,6 +5,7 @@ import path from 'node:path';
 import { Codex, type Thread, type UserInput } from '@openai/codex-sdk';
 import { execa } from 'execa';
 
+import { writeStderr } from '../shared/stderr.js';
 import type {
 	ExecutorCapabilities,
 	ExecutorResult,
@@ -36,10 +37,6 @@ function isRecoverableResumeError(error: unknown): boolean {
 			message.includes('404') ||
 			message.includes('no thread found'),
 	);
-}
-
-function writeStderr(message: string): void {
-	process.stderr.write(`${message}\n`);
 }
 
 export interface CodexExecutorConfig {

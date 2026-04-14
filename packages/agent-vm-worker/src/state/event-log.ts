@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { dirname } from 'node:path';
 
+import { writeStderr } from '../shared/stderr.js';
 import type { TaskEvent, TimestampedEvent } from './task-event-types.js';
 
 function isTimestampedEvent(value: unknown): value is TimestampedEvent {
@@ -9,10 +10,6 @@ function isTimestampedEvent(value: unknown): value is TimestampedEvent {
 	if (typeof value.ts !== 'string') return false;
 	if (typeof value.data !== 'object' || value.data === null) return false;
 	return 'event' in value.data;
-}
-
-function writeStderr(message: string): void {
-	process.stderr.write(`${message}\n`);
 }
 
 export async function appendEvent(filePath: string, event: TaskEvent): Promise<void> {

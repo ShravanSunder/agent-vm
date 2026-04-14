@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { writeStderr } from '../shared/stderr.js';
 import { replayEvents } from './event-log.js';
 import type {
 	TaskConfig,
@@ -17,6 +18,8 @@ export interface TaskState {
 	readonly status: TaskStatus;
 	readonly config: TaskConfig;
 	readonly plan: string | null;
+	readonly lastContextError: string | null;
+	readonly lastDiffError: string | null;
 	readonly plannerThreadId: string | null;
 	readonly workThreadId: string | null;
 	readonly planReviewLoop: number;
@@ -48,6 +51,8 @@ export function createInitialState(taskId: string, config: TaskConfig): TaskStat
 		status: 'pending',
 		config,
 		plan: null,
+		lastContextError: null,
+		lastDiffError: null,
 		plannerThreadId: null,
 		workThreadId: null,
 		planReviewLoop: 0,
@@ -67,6 +72,8 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 	switch (event.event) {
 		case 'task-accepted':
 			return { ...state, status: 'pending', updatedAt };
+		case 'context-gather-failed':
+			return { ...state, lastContextError: event.reason, updatedAt };
 		case 'phase-started': {
 			return { ...state, status: phaseStatusMap[event.phase], updatedAt };
 		}
@@ -101,6 +108,8 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 				lastReviewSummary: event.approved ? null : event.summary,
 				updatedAt,
 			};
+		case 'diff-read-failed':
+			return { ...state, lastDiffError: event.reason, updatedAt };
 		case 'verification-result': {
 			const allPassed = event.results.every((result) => result.passed);
 			return {
@@ -138,10 +147,6 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 
 export function isTerminal(state: TaskState): boolean {
 	return terminalStatusSet.has(state.status);
-}
-
-function writeStderr(message: string): void {
-	process.stderr.write(`${message}\n`);
 }
 
 export async function hydrateTaskStates(stateDir: string): Promise<Map<string, TaskState>> {

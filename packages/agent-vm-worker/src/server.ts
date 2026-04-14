@@ -4,6 +4,7 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 
 import { repoLocationSchema } from './shared/repo-location.js';
+import { writeStderr } from './shared/stderr.js';
 import { isTerminal } from './state/task-state.js';
 import type { TaskState } from './state/task-state.js';
 
@@ -23,10 +24,6 @@ function validationErrorHook(
 			400,
 		);
 	}
-}
-
-function writeStderr(message: string): void {
-	process.stderr.write(`${message}\n`);
 }
 
 export const createTaskRequestSchema = z.object({

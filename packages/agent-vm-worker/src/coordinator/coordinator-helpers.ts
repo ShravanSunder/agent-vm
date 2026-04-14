@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 
 import type { WorkerConfig } from '../config/worker-config.js';
+import { writeStderr } from '../shared/stderr.js';
 import { appendEvent } from '../state/event-log.js';
 import type { TaskConfig, TaskEvent } from '../state/task-event-types.js';
 import { applyEvent, type TaskState } from '../state/task-state.js';
@@ -8,10 +9,6 @@ import type { CreateTaskInput } from './coordinator-types.js';
 
 export function sanitizeErrorMessage(message: string): string {
 	return message.replace(/https:\/\/x-access-token:[^@]*@/g, 'https://x-access-token:***@');
-}
-
-function writeStderr(message: string): void {
-	process.stderr.write(`${message}\n`);
 }
 
 export function buildTaskConfig(input: CreateTaskInput, config: WorkerConfig): TaskConfig {
@@ -28,11 +25,7 @@ export function createTaskEventRecorder(
 	stateDir: string,
 	tasks: Map<string, TaskState>,
 	closedTaskIds: Set<string>,
-): {
-	readonly emit: (taskId: string, event: TaskEvent) => Promise<void>;
-	readonly isClosed: (taskId: string) => boolean;
-	readonly recordTaskFailure: (taskId: string, reason: string) => Promise<void>;
-} {
+): TaskEventRecorder {
 	function logPath(taskId: string): string {
 		return join(stateDir, 'tasks', `${taskId}.jsonl`);
 	}
@@ -69,4 +62,10 @@ export function createTaskEventRecorder(
 		},
 		recordTaskFailure,
 	};
+}
+
+export interface TaskEventRecorder {
+	readonly emit: (taskId: string, event: TaskEvent) => Promise<void>;
+	readonly isClosed: (taskId: string) => boolean;
+	readonly recordTaskFailure: (taskId: string, reason: string) => Promise<void>;
 }

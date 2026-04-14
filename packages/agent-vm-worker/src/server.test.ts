@@ -20,6 +20,8 @@ function makeTaskState(overrides?: Partial<TaskState>): TaskState {
 			effectiveConfig: TEST_EFFECTIVE_CONFIG,
 		},
 		plan: null,
+		lastContextError: null,
+		lastDiffError: null,
 		plannerThreadId: null,
 		workThreadId: null,
 		planReviewLoop: 0,

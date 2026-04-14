@@ -547,5 +547,29 @@ describe('coordinator', () => {
 				`[coordinator] Failed to gather repo context for task ${taskId}: workspace not readable`,
 			),
 		);
+		expect(await readEventNames(stateDir, taskId)).toContain('context-gather-failed');
+		expect(coordinator.getTaskState(taskId)?.lastContextError).toBe('workspace not readable');
+	});
+
+	it('continues the task and records when diff reading fails', async () => {
+		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		mocks.getDiff.mockRejectedValue(new Error('git diff failed'));
+
+		const coordinator = await createCoordinator({
+			config: makeConfig(stateDir),
+			workspaceDir: tempDir,
+		});
+
+		const { taskId } = await coordinator.submitTask({
+			taskId: 'diff-failed',
+			prompt: 'fix the issue',
+		});
+
+		await waitForStatus(coordinator, taskId, 'completed');
+		expect(stderrSpy).toHaveBeenCalledWith(
+			expect.stringContaining(`Failed to read diff for task ${taskId}: git diff failed`),
+		);
+		expect(await readEventNames(stateDir, taskId)).toContain('diff-read-failed');
+		expect(coordinator.getTaskState(taskId)?.lastDiffError).toBe('git diff failed');
 	});
 });

@@ -53,6 +53,10 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 		config: taskConfigSchema,
 	}),
 	z.object({
+		event: z.literal('context-gather-failed'),
+		reason: z.string(),
+	}),
+	z.object({
 		event: z.literal('phase-started'),
 		phase: phaseNameSchema,
 		loop: z.number().int().nonnegative().optional(),
@@ -76,6 +80,11 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 		phase: z.enum(reviewPhaseNames),
 		approved: z.boolean(),
 		summary: z.string(),
+		loop: z.number().int().nonnegative(),
+	}),
+	z.object({
+		event: z.literal('diff-read-failed'),
+		reason: z.string(),
 		loop: z.number().int().nonnegative(),
 	}),
 	z.object({

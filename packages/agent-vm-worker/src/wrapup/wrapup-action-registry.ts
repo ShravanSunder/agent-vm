@@ -1,5 +1,6 @@
 import type { WorkerConfig } from '../config/worker-config.js';
 import type { RepoLocation } from '../shared/repo-location.js';
+import { writeStderr } from '../shared/stderr.js';
 import type { ToolDefinition } from '../work-executor/executor-interface.js';
 import { createGitPrToolDefinition, type GitPrActionConfig } from './git-pr-action.js';
 import { createSlackToolDefinition } from './slack-action.js';
@@ -20,10 +21,6 @@ export interface WrapupToolRegistryInput {
 export interface WrapupToolRegistryResult {
 	readonly tools: readonly ToolDefinition[];
 	readonly getResults: () => readonly WrapupActionResult[];
-}
-
-function writeStderr(message: string): void {
-	process.stderr.write(`${message}\n`);
 }
 
 function wrapToolWithResultCollector(

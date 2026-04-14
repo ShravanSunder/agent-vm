@@ -60,6 +60,23 @@ describe('task-state reducer', () => {
 		]);
 	});
 
+	it('tracks degraded context and diff reads without changing terminal state', () => {
+		const state = createInitialState('task-1', TEST_CONFIG);
+		const contextErrorState = applyEvent(state, {
+			event: 'context-gather-failed',
+			reason: 'workspace not readable',
+		});
+		const diffErrorState = applyEvent(contextErrorState, {
+			event: 'diff-read-failed',
+			reason: 'git diff failed',
+			loop: 1,
+		});
+
+		expect(contextErrorState.lastContextError).toBe('workspace not readable');
+		expect(diffErrorState.lastDiffError).toBe('git diff failed');
+		expect(diffErrorState.status).toBe('pending');
+	});
+
 	it('treats task-closed as a distinct terminal status', () => {
 		const state = createInitialState('task-1', TEST_CONFIG);
 		const closedState = applyEvent(state, { event: 'task-closed' });
