@@ -257,19 +257,11 @@ relay-background-agent/
   "rootfs": {
     "label": "gondolin-root",
     "sizeMb": 4096
-  },
-  "postBuild": {
-    "copy": [
-      {
-        "src": "../../packages/agent-vm-worker/dist",
-        "dest": "/opt/agent-vm-worker/dist"
-      }
-    ]
   }
 }
 ```
 
-Note: `postBuild.copy.src` is resolved relative to the build-config.json location. In the relay image, the agent-vm-worker dist will be at a known path. The `oci.pullPolicy: "never"` means the OCI image must be pre-built locally — the Dockerfile builds it with `docker build`.
+No `postBuild.copy` needed — `@shravansunder/agent-vm-worker` is installed from npm directly in the OCI Dockerfile. The `oci.pullPolicy: "never"` means the OCI image must be pre-built locally — the start script builds it with `docker build`.
 
 `relay-background-agent/images/gateway/Dockerfile`:
 ```dockerfile
@@ -284,33 +276,17 @@ RUN apt-get update && \
       python3 && \
     rm -rf /var/lib/apt/lists/* && \
     update-ca-certificates && \
+    npm install -g pnpm@10 && \
     mkdir -p /opt/agent-vm-worker && \
-    printf '%s\n' \
-      '{' \
-      '  "name": "agent-vm-worker-runtime",' \
-      '  "private": true,' \
-      '  "type": "module",' \
-      '  "dependencies": {' \
-      '    "@modelcontextprotocol/sdk": "^1.29.0",' \
-      '    "@hono/node-server": "^1",' \
-      '    "@hono/zod-validator": "^0.7.6",' \
-      '    "@openai/codex-sdk": "^0.118.0",' \
-      '    "cmd-ts": "^0.14.0",' \
-      '    "execa": "^9.5.2",' \
-      '    "hono": "^4",' \
-      '    "zod": "^4",' \
-      '    "zod-to-json-schema": "^3.24.1"' \
-      '  }' \
-      '}' > /opt/agent-vm-worker/package.json && \
-    cd /opt/agent-vm-worker && npm install --omit=dev && cd / && \
+    cd /opt/agent-vm-worker && \
+    pnpm add @shravansunder/agent-vm-worker && \
     useradd -m -s /bin/bash coder && \
     mkdir -p /home/coder /workspace /state /run/sshd /root && \
     chown -R coder:coder /home/coder && \
-    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true && \
-    mkdir -p /opt/agent-vm-worker/dist
+    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true
 ```
 
-This is the OCI image that becomes the Gondolin VM rootfs. It has Node.js + worker runtime deps. The worker dist (TypeScript compiled output) is copied in via `postBuild.copy` at Gondolin image build time.
+This is the OCI image that becomes the Gondolin VM rootfs. It has Node.js + agent-vm-worker installed from npm (includes all runtime deps). The worker binary is at `/opt/agent-vm-worker/node_modules/.bin/agent-vm-worker` — the `startCommand` in `worker-lifecycle.ts` needs to resolve to this path (or use `pnpm dlx`).
 
 - [ ] **Step 5: Update the main Dockerfile**
 
@@ -326,13 +302,17 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y nodejs=24.* \
     && npm install -g pnpm@10
 
+# pnpm global bin path — ensures `agent-vm` binary is on PATH
+ENV PNPM_HOME=/usr/local/share/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+
 # QEMU for Gondolin VMs (TCG mode — no KVM on m8a instances)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends qemu-system-x86 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install agent-vm controller + all workspace deps from npm
+# Install agent-vm controller from npm (public @shravansunder scope)
 RUN pnpm add -g @shravansunder/agent-vm
 
 # Copy Relay configuration
@@ -530,15 +510,40 @@ async function startPodCreation(props: StartPodCreationProps): Promise<void> {
 
     entry.status = "pod-ready";
     entry.controllerTaskId = (taskResponse.body as { taskId?: string })?.taskId;
+
+    // Poll until task reaches terminal state, then delete pod
+    if (entry.controllerTaskId) {
+      await pollUntilTerminal({
+        podIp,
+        controllerPort: config.controllerPort,
+        taskId: entry.controllerTaskId,
+        timeoutMs: config.idleTimeoutMinutes * 60 * 1000,
+      });
+      entry.status = "completed";
+    }
   } catch (error: unknown) {
     // ... existing error handling
+  } finally {
+    // Always clean up the pod — whether task succeeded, failed, or timed out
+    try {
+      await deleteWorkerPod({
+        coreApi,
+        namespace: config.workerNamespace,
+        podName: entry.podName,
+      });
+    } catch (cleanupError: unknown) {
+      const msg = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+      console.error(`Failed to cleanup pod "${entry.podName}": ${msg}`);
+    }
   }
 }
 ```
 
-Add `controllerTaskId` to the `TaskEntry` interface:
+Add `controllerTaskId` to `TaskEntry` and update `TaskStatus`:
 
 ```typescript
+type TaskStatus = "creating-pod" | "pod-ready" | "completed" | "failed";
+
 interface TaskEntry {
   id: string;
   status: TaskStatus;
@@ -548,6 +553,37 @@ interface TaskEntry {
   input: TaskInput;
   error: string | undefined;
   createdAt: string;
+}
+```
+
+Add `pollUntilTerminal` helper:
+
+```typescript
+async function pollUntilTerminal(options: {
+  readonly podIp: string;
+  readonly controllerPort: number;
+  readonly taskId: string;
+  readonly timeoutMs: number;
+}): Promise<void> {
+  const deadline = Date.now() + options.timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await proxyRequest({
+        podIp: options.podIp,
+        controllerPort: options.controllerPort,
+        path: `/coding/tasks/${options.taskId}`,
+        method: "GET",
+      });
+      const state = response.body as { status?: string };
+      if (state.status === "completed" || state.status === "failed") {
+        return;
+      }
+    } catch {
+      // Transient error — keep polling
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+  throw new Error(`Task ${options.taskId} timed out after ${options.timeoutMs}ms`);
 }
 ```
 
