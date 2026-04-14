@@ -1,29 +1,47 @@
-# .env Secret Injection for Kubernetes Deployment
+# Environment-Based Secret Injection for Kubernetes
 
-## Problem
+## Why This Matters
 
-The agent-vm controller currently resolves ALL secrets through 1Password. There is no bypass. The resolution chain is:
+agent-vm runs in two environments:
+
+1. **Developer Mac** — secrets come from 1Password. The developer has `op` CLI installed, a service account token, and vault access. The controller calls `op read op://vault/item/key` to resolve secrets.
+
+2. **Kubernetes** — secrets come from k8s Secrets (populated by SSM, Vault, or manual creation). The pod gets `OPENAI_API_KEY=sk-...` injected as an env var via `envFrom`. There is no 1Password CLI in the pod and no vault access.
+
+The controller currently only supports path (1). Every deployment must have 1Password available. This blocks k8s deployment because:
+- The 1Password service account requires network access to 1Password servers
+- Installing the `op` CLI in every pod image adds complexity and attack surface
+- Many k8s clusters already have secret injection pipelines (ExternalSecrets, Vault, SSM) that deliver secrets as env vars — forcing 1Password on top of that is redundant
+
+We need a second secret provider: `"env"` — read secrets directly from `process.env`. No external calls, no CLI tools, no vault access.
+
+## How Secrets Flow Today (1Password Only)
 
 ```
-controller-runtime.ts
-  → createSecretResolverFromSystemConfig()           (controller-runtime-support.ts:6)
-    → resolveServiceAccountToken(tokenSource)         reads OP_SERVICE_ACCOUNT_TOKEN from env
-    → createOpCliSecretResolver({ serviceAccountToken })  creates 1Password resolver
+system.json:
+  host.secretsProvider.type: "1password"
+  host.secretsProvider.tokenSource: { type: "env", envVar: "OP_SERVICE_ACCOUNT_TOKEN" }
 
-resolveZoneSecrets()                                  (credential-manager.ts:12)
-  → for each secret in zone.secrets:
-      ref = secretConfig.ref ?? process.env[`${SECRET_NAME}_REF`]
-      if (!ref) throw Error("no ref and no _REF env var")
-  → secretResolver.resolveAll(resolvedRefs)           calls 1Password API
+  zone.secrets:
+    OPENAI_API_KEY: { source: "1password", ref: "op://agent-vm/openai/api-key", injection: "env" }
+
+Controller startup:
+  1. Read OP_SERVICE_ACCOUNT_TOKEN from process.env
+  2. Create 1Password resolver (calls op CLI or 1P Connect API)
+  3. For each zone secret: resolver.resolve({ ref: "op://agent-vm/openai/api-key" }) → "sk-..."
+  4. Pass resolved value to Gondolin VM as env var (injection: "env")
+     or as HTTP mediation secret (injection: "http-mediation")
 ```
 
-For k8s deployment, we want to support injecting secrets directly as environment variables — no 1Password dependency. The pod gets secrets from a k8s Secret via `envFrom`, and the controller reads them from `process.env` without calling any external service.
+The resolution always goes through 1Password. There is no bypass path in the current code.
 
-## What Needs to Change
+**Relevant code:**
+- `controller-runtime-support.ts:6-18` — always creates 1Password resolver from `tokenSource`
+- `credential-manager.ts:12-37` — resolves each secret via `secretResolver.resolveAll()`, requires `ref` (op:// path) or `${SECRET_NAME}_REF` env var
 
-### 1. Add an `env` secret provider type
+## What Changes
 
-Currently `system-config.ts` only accepts `secretsProvider.type: "1password"`. Add `"env"` as an alternative:
+### 1. Add `"env"` to the secretsProvider discriminated union
 
 ```typescript
 // packages/agent-vm/src/config/system-config.ts
@@ -35,14 +53,14 @@ const secretsProviderSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('env'),
-    // No tokenSource needed — secrets come directly from process.env
+    // No tokenSource — secrets come directly from process.env
   }),
 ]);
 ```
 
 ### 2. Create an env-based SecretResolver
 
-The `SecretResolver` interface from gondolin-core has two methods:
+The `SecretResolver` interface (from gondolin-core) is:
 
 ```typescript
 interface SecretResolver {
@@ -51,7 +69,7 @@ interface SecretResolver {
 }
 ```
 
-Create an env-based implementation that reads from `process.env`:
+The env implementation reads from `process.env` using `ref` as the env var name:
 
 ```typescript
 // packages/agent-vm/src/controller/env-secret-resolver.ts
@@ -61,7 +79,6 @@ import type { SecretResolver } from '@shravansunder/gondolin-core';
 export function createEnvSecretResolver(): SecretResolver {
   return {
     async resolve(ref) {
-      // ref.ref is the env var name (e.g., "OPENAI_API_KEY")
       const value = process.env[ref.ref];
       if (!value) {
         throw new Error(`Environment variable '${ref.ref}' is not set.`);
@@ -83,12 +100,12 @@ export function createEnvSecretResolver(): SecretResolver {
 }
 ```
 
-### 3. Update createSecretResolverFromSystemConfig
-
-Dispatch on `secretsProvider.type`:
+### 3. Dispatch on provider type in controller-runtime-support.ts
 
 ```typescript
 // packages/agent-vm/src/controller/controller-runtime-support.ts
+
+import { createEnvSecretResolver } from './env-secret-resolver.js';
 
 export async function createSecretResolverFromSystemConfig(
   systemConfig: SystemConfig,
@@ -98,7 +115,7 @@ export async function createSecretResolverFromSystemConfig(
     return createEnvSecretResolver();
   }
 
-  // Existing 1Password path
+  // Existing 1Password path — unchanged
   const serviceAccountToken = await resolveServiceAccountToken(
     systemConfig.host.secretsProvider.tokenSource,
   );
@@ -106,20 +123,11 @@ export async function createSecretResolverFromSystemConfig(
 }
 ```
 
-### 4. Update credential-manager.ts to support env-based refs
+### 4. Credential manager — no change needed
 
-Currently `resolveZoneSecrets` expects `ref` to be an `op://` path. For env-based injection, `ref` is the environment variable name:
+`credential-manager.ts` already has a fallback: `ref = secretConfig.ref ?? process.env[${SECRET_NAME}_REF]`. For the env provider, zone secrets use `ref: "OPENAI_API_KEY"` (the env var name). The env resolver reads `process.env["OPENAI_API_KEY"]` and returns the value. The credential manager doesn't need to know which resolver is in use.
 
-```typescript
-// credential-manager.ts — no change needed if ref convention changes
-
-// For 1Password: ref = "op://agent-vm/openai/api-key"  → 1Password resolves it
-// For env:       ref = "OPENAI_API_KEY"                 → env resolver reads process.env["OPENAI_API_KEY"]
-```
-
-The `ref` field does double duty — it's an `op://` path for 1Password or an env var name for the env provider. The resolver implementation decides how to interpret it.
-
-### 5. system.json for k8s (env-based)
+## system.json for k8s
 
 ```json
 {
@@ -132,10 +140,7 @@ The `ref` field does double duty — it's an `op://` path for 1Password or an en
   "zones": [
     {
       "id": "coding-agent",
-      "gateway": {
-        "type": "coding",
-        ...
-      },
+      "gateway": { ... },
       "secrets": {
         "OPENAI_API_KEY": {
           "source": "1password",
@@ -154,82 +159,56 @@ The `ref` field does double duty — it's an `op://` path for 1Password or an en
 }
 ```
 
-Note: `source: "1password"` in the zone secrets schema is a Zod literal — it's always `"1password"` regardless of the provider type. The `ref` value changes meaning: for 1Password it's an `op://` path, for env it's the env var name. This is slightly confusing but avoids a schema change to the zone secrets.
-
-**Alternative (cleaner):** Change the zone secret schema to also accept `source: "env"`:
-
-```typescript
-const secretReferenceSchema = z.object({
-  source: z.enum(['1password', 'env']),
-  ref: z.string().min(1).optional(),
-  injection: z.enum(['env', 'http-mediation']).default('env'),
-  hosts: z.array(z.string().min(1)).optional(),
-});
-```
-
-Then for env-based secrets, the zone config looks cleaner:
-
-```json
-"secrets": {
-  "OPENAI_API_KEY": {
-    "source": "env",
-    "ref": "OPENAI_API_KEY",
-    "injection": "env"
-  }
-}
-```
-
-And the credential manager can skip resolution for `source: "env"` secrets — just read directly from `process.env[ref]`.
+Note: `source: "1password"` is a Zod literal in the zone secrets schema — it doesn't change. It means "this secret was originally sourced from a secrets provider" not "use 1Password to resolve it." The `ref` value changes meaning based on `secretsProvider.type`:
+- `type: "1password"` → `ref` is an `op://vault/item/field` path
+- `type: "env"` → `ref` is the env var name
 
 ## How It Flows in k8s
 
 ```
-k8s Secret (agent-vm-secrets):
+k8s Secret (created by ExternalSecrets, Vault, SSM, or manually):
   OPENAI_API_KEY: sk-...
   GITHUB_TOKEN: ghp-...
        ↓
-Pod spec envFrom: [{ secretRef: { name: "agent-vm-secrets" } }]
+Pod spec: envFrom: [{ secretRef: { name: "agent-vm-secrets" } }]
        ↓
-Sysbox Pod env:
-  OPENAI_API_KEY=sk-...
-  GITHUB_TOKEN=ghp-...
+Pod env: OPENAI_API_KEY=sk-..., GITHUB_TOKEN=ghp-...
        ↓
-Controller reads system.json:
-  secretsProvider.type: "env"
-  → creates env-based SecretResolver
+Controller starts, reads system.json:
+  secretsProvider.type: "env" → creates env-based SecretResolver
        ↓
 resolveZoneSecrets():
-  OPENAI_API_KEY ref="OPENAI_API_KEY" → process.env["OPENAI_API_KEY"] → "sk-..."
-  GITHUB_TOKEN ref="GITHUB_TOKEN" → process.env["GITHUB_TOKEN"] → "ghp-..."
+  OPENAI_API_KEY → ref="OPENAI_API_KEY" → process.env["OPENAI_API_KEY"] → "sk-..."
+  GITHUB_TOKEN → ref="GITHUB_TOKEN" → process.env["GITHUB_TOKEN"] → "ghp-..."
        ↓
 Resolved values passed to Gondolin VM:
-  injection: "env" → VM env vars
-  injection: "http-mediation" → Gondolin MITM proxy replaces placeholders
+  injection: "env" → VM env vars (agent uses them for API calls)
+  injection: "http-mediation" → Gondolin MITM proxy replaces placeholders at network layer
 ```
+
+## Comparison: Mac vs k8s
+
+| | Developer Mac | Kubernetes |
+|---|---|---|
+| `secretsProvider.type` | `"1password"` | `"env"` |
+| Secret source | 1Password vault | k8s Secret (from SSM/Vault/manual) |
+| `ref` format | `op://vault/item/key` | env var name (`OPENAI_API_KEY`) |
+| External dependency | 1Password CLI + service account | None (secrets already in env) |
+| Network calls | Yes (1Password API) | No |
 
 ## Files to Change
 
 | File | Change |
 |------|--------|
 | `packages/agent-vm/src/config/system-config.ts` | Add `"env"` to secretsProvider discriminated union |
-| `packages/agent-vm/src/controller/env-secret-resolver.ts` | **New.** Env-based SecretResolver implementation |
-| `packages/agent-vm/src/controller/controller-runtime-support.ts` | Dispatch on provider type (env vs 1password) |
-| `packages/agent-vm/src/gateway/credential-manager.ts` | Optional: skip resolution for `source: "env"` secrets |
-| `relay-background-agent/config/system.json` | Use `secretsProvider.type: "env"`, secret refs are env var names |
+| `packages/agent-vm/src/controller/env-secret-resolver.ts` | **New.** Env-based SecretResolver implementation (~30 lines) |
+| `packages/agent-vm/src/controller/controller-runtime-support.ts` | Dispatch on provider type (~5 lines) |
+| Config files (per deployment) | Use `secretsProvider.type: "env"`, refs are env var names |
 
-## Scope
-
-This is a small, focused change:
-- ~30 lines new code (env-secret-resolver.ts)
-- ~10 lines schema change (system-config.ts)
-- ~5 lines dispatch change (controller-runtime-support.ts)
-- Config file updates
-
-No changes to: Gondolin, gateway-interface, worker-gateway, agent-vm-worker, delegator.
+No changes to: gondolin-core, gateway-interface, worker-gateway, agent-vm-worker, credential-manager.
 
 ## Testing
 
 - Unit test: `createEnvSecretResolver` with mocked `process.env`
-- Unit test: `createSecretResolverFromSystemConfig` dispatches correctly
-- Integration test: controller starts with `type: "env"`, resolves secrets from env
-- E2E: delegator creates pod with k8s Secret → controller resolves → worker runs
+- Unit test: `createSecretResolverFromSystemConfig` dispatches correctly for `"env"` vs `"1password"`
+- Integration test: controller starts with `type: "env"`, resolves secrets from env, boots VM
