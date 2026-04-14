@@ -220,6 +220,55 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		});
 	});
 
+	it('returns a cleanup warning when record deletion fails after handling the orphan', async () => {
+		const logMessages: string[] = [];
+
+		await expect(
+			cleanupOrphanedGatewayIfPresent(
+				{
+					stateDir: '/state/shravan',
+					zoneId: 'shravan',
+				},
+				{
+					deleteGatewayRuntimeRecord: async () => {
+						throw new Error('filesystem readonly');
+					},
+					isProcessAlive: vi
+						.fn()
+						.mockReturnValueOnce(true)
+						.mockReturnValueOnce(true)
+						.mockReturnValueOnce(false),
+					killProcess: vi.fn(),
+					loadGatewayRuntimeRecord: async () => ({
+						createdAt: '2026-04-13T12:34:56.000Z',
+						gatewayType: 'openclaw',
+						guestListenPort: 18789,
+						ingressPort: 18791,
+						projectNamespace: 'claw-tests-a1b2c3d4',
+						qemuPid: 48282,
+						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+						vmId: 'gateway-vm-123',
+						zoneId: 'shravan',
+					}),
+					log: (message) => {
+						logMessages.push(message);
+					},
+					readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
+					sleep: async () => {},
+				},
+			),
+		).resolves.toEqual({
+			cleanedUp: false,
+			cleanupWarning:
+				"Failed to remove stale gateway runtime record for zone 'shravan' at '/state/shravan': filesystem readonly",
+			killedPid: 48282,
+		});
+
+		expect(logMessages).toContain(
+			"Failed to remove stale gateway runtime record for zone 'shravan' at '/state/shravan': filesystem readonly",
+		);
+	});
+
 	it('surfaces ps execution failures instead of misreporting an unexpected live process', async () => {
 		await expect(
 			cleanupOrphanedGatewayIfPresent(

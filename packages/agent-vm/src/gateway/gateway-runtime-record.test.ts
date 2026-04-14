@@ -77,6 +77,7 @@ describe('gateway runtime record', () => {
 			vmId: 'vm-session-123',
 			zoneId: 'shravan',
 		});
+		expect(fs.statSync(path.join(stateDirectory, 'gateway-runtime.json')).mode & 0o777).toBe(0o600);
 	});
 
 	it('deletes a persisted gateway runtime record', async () => {
@@ -97,6 +98,41 @@ describe('gateway runtime record', () => {
 		await deleteGatewayRuntimeRecord(stateDirectory);
 
 		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toBeNull();
+	});
+
+	it('rejects invalid runtime records on write before touching disk', async () => {
+		const stateDirectory = createStateDirectory();
+
+		await expect(
+			writeGatewayRuntimeRecord(stateDirectory, {
+				createdAt: 'not-a-datetime',
+				gatewayType: 'openclaw',
+				guestListenPort: 18789,
+				ingressPort: 18791,
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				qemuPid: 4242,
+				sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+				vmId: 'vm-session-123',
+				zoneId: 'shravan',
+			} as never),
+		).rejects.toThrow();
+
+		expect(fs.existsSync(path.join(stateDirectory, 'gateway-runtime.json'))).toBe(false);
+	});
+
+	it('quarantines malformed JSON records on load', async () => {
+		const stateDirectory = createStateDirectory();
+		const runtimeRecordPath = path.join(stateDirectory, 'gateway-runtime.json');
+		await fs.promises.mkdir(stateDirectory, { recursive: true });
+		await fs.promises.writeFile(runtimeRecordPath, '{"createdAt":', 'utf8');
+
+		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toBeNull();
+		expect(fs.existsSync(runtimeRecordPath)).toBe(false);
+		expect(
+			fs
+				.readdirSync(stateDirectory)
+				.some((entryName) => entryName.startsWith('gateway-runtime.invalid.')),
+		).toBe(true);
 	});
 
 	it('treats malformed records as stale state and removes them', async () => {

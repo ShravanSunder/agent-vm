@@ -165,6 +165,7 @@ export async function cleanupOrphanedGatewayIfPresent(
 	dependencies: GatewayRecoveryDependencies = {},
 ): Promise<{
 	readonly cleanedUp: boolean;
+	readonly cleanupWarning?: string;
 	readonly killedPid: number | null;
 }> {
 	const log = dependencies.log ?? writeRecoveryLog;
@@ -188,9 +189,13 @@ export async function cleanupOrphanedGatewayIfPresent(
 	try {
 		await (dependencies.deleteGatewayRuntimeRecord ?? deleteGatewayRuntimeRecord)(options.stateDir);
 	} catch (error) {
-		log(
-			`Failed to remove stale gateway runtime record for zone '${runtimeRecord.zoneId}' at '${options.stateDir}': ${error instanceof Error ? error.message : JSON.stringify(error)}`,
-		);
+		const cleanupWarning = `Failed to remove stale gateway runtime record for zone '${runtimeRecord.zoneId}' at '${options.stateDir}': ${error instanceof Error ? error.message : JSON.stringify(error)}`;
+		log(cleanupWarning);
+		return {
+			cleanedUp: false,
+			cleanupWarning,
+			killedPid,
+		};
 	}
 	log(
 		killedPid === null

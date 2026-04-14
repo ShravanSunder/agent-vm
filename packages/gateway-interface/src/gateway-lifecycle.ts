@@ -42,7 +42,7 @@ export interface GatewayZoneConfig {
 		string,
 		{
 			readonly source: '1password';
-			readonly ref?: string | undefined;
+			readonly ref: string;
 			readonly injection: 'env' | 'http-mediation';
 			readonly hosts?: readonly string[] | undefined;
 		}

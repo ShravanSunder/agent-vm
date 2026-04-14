@@ -222,4 +222,130 @@ describe('loadSystemConfig', () => {
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/ref/i);
 	});
+
+	test('rejects project namespaces that contain label separators', async () => {
+		const workingDirectoryPath = fs.mkdtempSync(
+			path.join(os.tmpdir(), 'agent-vm-system-config-invalid-namespace-'),
+		);
+		createdDirectories.push(workingDirectoryPath);
+		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
+		fs.mkdirSync(path.dirname(configPath), { recursive: true });
+
+		fs.writeFileSync(
+			configPath,
+			JSON.stringify({
+				host: {
+					controllerPort: 18800,
+					projectNamespace: 'bad:namespace',
+					secretsProvider: {
+						type: '1password',
+						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
+					},
+				},
+				cacheDir: '../cache',
+				images: {
+					gateway: {
+						buildConfig: '../images/gateway/build-config.json',
+					},
+					tool: {
+						buildConfig: '../images/tool/build-config.json',
+					},
+				},
+				zones: [
+					{
+						id: 'shravan',
+						gateway: {
+							type: 'openclaw',
+							memory: '2G',
+							cpus: 2,
+							port: 18791,
+							gatewayConfig: './shravan/openclaw.json',
+							stateDir: '../state/shravan',
+							workspaceDir: '../workspaces/shravan',
+						},
+						secrets: {},
+						allowedHosts: ['discord.com'],
+						toolProfile: 'standard',
+					},
+				],
+				toolProfiles: {
+					standard: {
+						memory: '1G',
+						cpus: 1,
+						workspaceRoot: '../workspaces/tools',
+					},
+				},
+				tcpPool: {
+					basePort: 19000,
+					size: 5,
+				},
+			}),
+			'utf8',
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/projectNamespace/u);
+	});
+
+	test('rejects zones that reference unknown tool profiles', async () => {
+		const workingDirectoryPath = fs.mkdtempSync(
+			path.join(os.tmpdir(), 'agent-vm-system-config-missing-tool-profile-'),
+		);
+		createdDirectories.push(workingDirectoryPath);
+		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
+		fs.mkdirSync(path.dirname(configPath), { recursive: true });
+
+		fs.writeFileSync(
+			configPath,
+			JSON.stringify({
+				host: {
+					controllerPort: 18800,
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					secretsProvider: {
+						type: '1password',
+						tokenSource: { type: 'op-cli', ref: 'op://agent-vm/agent-1p-service-account/password' },
+					},
+				},
+				cacheDir: '../cache',
+				images: {
+					gateway: {
+						buildConfig: '../images/gateway/build-config.json',
+					},
+					tool: {
+						buildConfig: '../images/tool/build-config.json',
+					},
+				},
+				zones: [
+					{
+						id: 'shravan',
+						gateway: {
+							type: 'openclaw',
+							memory: '2G',
+							cpus: 2,
+							port: 18791,
+							gatewayConfig: './shravan/openclaw.json',
+							stateDir: '../state/shravan',
+							workspaceDir: '../workspaces/shravan',
+						},
+						secrets: {},
+						allowedHosts: ['discord.com'],
+						toolProfile: 'missing-profile',
+					},
+				],
+				toolProfiles: {
+					standard: {
+						memory: '1G',
+						cpus: 1,
+						workspaceRoot: '../workspaces/tools',
+					},
+				},
+				tcpPool: {
+					basePort: 19000,
+					size: 5,
+				},
+			}),
+			'utf8',
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/unknown toolProfile/u);
+	});
 });

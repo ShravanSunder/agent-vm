@@ -157,9 +157,7 @@ export async function startControllerRuntime(
 			throw closeError;
 		}
 		if (deleteRecordError) {
-			writeControllerRuntimeLog(
-				`Failed to remove gateway runtime record for zone '${zone.id}' at '${zone.gateway.stateDir}': ${formatUnknownError(deleteRecordError)}`,
-			);
+			throw deleteRecordError;
 		}
 	};
 	const restartGatewayZone = async (): Promise<void> => {

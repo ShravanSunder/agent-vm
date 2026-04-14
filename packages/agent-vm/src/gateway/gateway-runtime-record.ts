@@ -39,9 +39,13 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
 }
 
-async function writeFileAtomically(filePath: string, content: string): Promise<void> {
+async function writeFileAtomically(
+	filePath: string,
+	content: string,
+	mode: number = 0o600,
+): Promise<void> {
 	const temporaryFilePath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-	await fs.writeFile(temporaryFilePath, content, 'utf8');
+	await fs.writeFile(temporaryFilePath, content, { encoding: 'utf8', mode });
 	try {
 		await fs.rename(temporaryFilePath, filePath);
 	} catch (error) {
@@ -56,20 +60,18 @@ async function quarantineMalformedGatewayRuntimeRecord(
 	log: GatewayRuntimeLog,
 ): Promise<void> {
 	const invalidRuntimeRecordPath = resolveInvalidGatewayRuntimeRecordPath(stateDirectory);
-	let quarantined = true;
-	await fs.rename(runtimeRecordPath, invalidRuntimeRecordPath).catch(async () => {
-		quarantined = false;
-		await fs.rm(runtimeRecordPath, { force: true });
-	});
-	if (quarantined) {
+	try {
+		await fs.rename(runtimeRecordPath, invalidRuntimeRecordPath);
 		log(
 			`Quarantined malformed gateway runtime record '${runtimeRecordPath}' to '${invalidRuntimeRecordPath}'.`,
 		);
 		return;
+	} catch (error) {
+		await fs.rm(runtimeRecordPath, { force: true });
+		log(
+			`Deleted malformed gateway runtime record '${runtimeRecordPath}' after quarantine rename failed: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
+		);
 	}
-	log(
-		`Deleted malformed gateway runtime record '${runtimeRecordPath}' after quarantine rename failed.`,
-	);
 }
 
 function writeGatewayRuntimeLog(message: string): void {
@@ -117,6 +119,7 @@ export async function writeGatewayRuntimeRecord(
 	await writeFileAtomically(
 		runtimeRecordPath,
 		`${JSON.stringify(gatewayRuntimeRecordSchema.parse(record), null, 2)}\n`,
+		0o600,
 	);
 }
 

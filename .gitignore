@@ -9,6 +9,8 @@ venv/
 # Build outputs
 dist/
 build/
+!packages/agent-vm/src/build/
+!packages/agent-vm/src/build/**
 *.egg-info/
 .eggs/
 

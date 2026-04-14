@@ -428,7 +428,7 @@ describe('startControllerRuntime', () => {
 		expect(toolVmClose).toHaveBeenCalledTimes(1);
 	});
 
-	it('still closes cleanly when deleting the runtime record fails during shutdown', async () => {
+	it('surfaces runtime record deletion failures during shutdown', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		const zone = systemConfig.zones[0];
 		if (!zone) {
@@ -497,7 +497,7 @@ describe('startControllerRuntime', () => {
 			},
 		);
 
-		await expect(runtime.close()).resolves.toBeUndefined();
+		await expect(runtime.close()).rejects.toThrow('permission denied');
 		expect(closeGatewayVm).toHaveBeenCalledTimes(1);
 	});
 

@@ -308,7 +308,12 @@ describe('openclawLifecycle', () => {
 					workspaceDir: path.join(tempDirectory, 'workspace'),
 				},
 			});
-			delete zoneWithoutGatewayToken.secrets.OPENCLAW_GATEWAY_TOKEN;
+			const { OPENCLAW_GATEWAY_TOKEN: _removedGatewayToken, ...remainingSecrets } =
+				zoneWithoutGatewayToken.secrets;
+			const invalidZone = {
+				...zoneWithoutGatewayToken,
+				secrets: remainingSecrets,
+			} as GatewayZoneConfig;
 			const secretResolver: SecretResolver = {
 				resolve: async () => {
 					throw new Error('resolve should not be called');
@@ -317,7 +322,7 @@ describe('openclawLifecycle', () => {
 			};
 
 			await expect(
-				openclawLifecycle.prepareHostState?.(zoneWithoutGatewayToken, secretResolver),
+				openclawLifecycle.prepareHostState?.(invalidZone, secretResolver),
 			).rejects.toThrow(/secret 'OPENCLAW_GATEWAY_TOKEN' is missing 'ref'/u);
 		});
 
@@ -428,7 +433,7 @@ describe('openclawLifecycle', () => {
 				},
 				withoutAuthProfilesRef: true,
 			});
-			const brokenZone: GatewayZoneConfig = {
+			const brokenZone = {
 				...zone,
 				secrets: {
 					...zone.secrets,
@@ -437,7 +442,7 @@ describe('openclawLifecycle', () => {
 						source: '1password',
 					},
 				},
-			};
+			} as unknown as GatewayZoneConfig;
 			const secretResolver: SecretResolver = {
 				resolve: async () => {
 					throw new Error('should not resolve');

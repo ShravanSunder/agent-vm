@@ -106,21 +106,15 @@ export function createControllerRuntimeOperations(options: {
 		getStatus: async () => buildControllerStatus(options.systemConfig),
 		getZoneLogs: async (targetZoneId: string) => {
 			assertActiveZone(targetZoneId);
+			const gateway = options.getGateway();
 			return await runControllerLogs(
 				{
 					zoneId: targetZoneId,
 				},
 				{
-					readGatewayLogs: async () => {
-						try {
-							const result = await options
-								.getGateway()
-								.vm.exec(`cat ${options.getGateway().processSpec.logPath} 2>/dev/null || echo ""`);
-							return result.stdout;
-						} catch {
-							return '';
-						}
-					},
+					readGatewayLogs: async () =>
+						(await gateway.vm.exec(`cat ${gateway.processSpec.logPath} 2>/dev/null || echo ""`))
+							.stdout,
 				},
 			);
 		},
