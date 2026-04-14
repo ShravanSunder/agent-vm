@@ -1,7 +1,9 @@
-import fs from 'node:fs';
+/* oxlint-disable eslint/no-await-in-loop -- docker compose stacks are managed sequentially per task */
+import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
+import { z } from 'zod';
 
 export interface DockerServiceRoutingResult {
 	readonly composeFilePaths: readonly string[];
@@ -19,31 +21,66 @@ export class DockerServiceRoutingError extends Error {
 }
 
 interface DockerInspectContainer {
-	readonly Config?: {
-		readonly ExposedPorts?: Record<string, unknown>;
-		readonly Labels?: Record<string, string>;
-	};
-	readonly NetworkSettings?: {
-		readonly Networks?: Record<
-			string,
-			{
-				readonly IPAddress?: string;
-			}
-		>;
-	};
+	readonly Config?:
+		| {
+				readonly ExposedPorts?: Record<string, unknown> | undefined;
+				readonly Labels?: Record<string, string> | undefined;
+		  }
+		| undefined;
+	readonly NetworkSettings?:
+		| {
+				readonly Networks?:
+					| Record<
+							string,
+							{
+								readonly IPAddress?: string | undefined;
+							}
+					  >
+					| undefined;
+		  }
+		| undefined;
 }
 
-function findComposeFiles(
+const dockerInspectContainerSchema = z.object({
+	Config: z
+		.object({
+			ExposedPorts: z.record(z.string(), z.unknown()).optional(),
+			Labels: z.record(z.string(), z.string()).optional(),
+		})
+		.optional(),
+	NetworkSettings: z
+		.object({
+			Networks: z
+				.record(
+					z.string(),
+					z.object({
+						IPAddress: z.string().optional(),
+					}),
+				)
+				.optional(),
+		})
+		.optional(),
+});
+
+const dockerInspectResultSchema = z.array(dockerInspectContainerSchema);
+
+async function findComposeFiles(
 	workspaceDir: string,
 	repoHostDirs: readonly string[],
-): readonly string[] {
+): Promise<readonly string[]> {
 	const candidateDirectories = [workspaceDir, ...repoHostDirs];
 	const composeFilePaths: string[] = [];
 
 	for (const directory of candidateDirectories) {
 		const composeFilePath = path.join(directory, '.agent-vm', 'docker-compose.yml');
-		if (fs.existsSync(composeFilePath)) {
+		try {
+			await fs.access(composeFilePath);
 			composeFilePaths.push(composeFilePath);
+		} catch (error) {
+			if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+				continue;
+			}
+			throw error;
 		}
 	}
 
@@ -89,7 +126,7 @@ export async function startDockerServicesForTask(
 	workspaceDir: string,
 	repoHostDirs: readonly string[] = [],
 ): Promise<DockerServiceRoutingResult> {
-	const composeFilePaths = findComposeFiles(workspaceDir, repoHostDirs);
+	const composeFilePaths = await findComposeFiles(workspaceDir, repoHostDirs);
 	if (composeFilePaths.length === 0) {
 		return {
 			composeFilePaths: [],
@@ -128,7 +165,7 @@ export async function startDockerServicesForTask(
 						cwd: composeWorkingDirectory,
 						reject: true,
 					});
-					return JSON.parse(inspectResult.stdout) as DockerInspectContainer[];
+					return dockerInspectResultSchema.parse(JSON.parse(inspectResult.stdout));
 				}),
 			);
 			Object.assign(

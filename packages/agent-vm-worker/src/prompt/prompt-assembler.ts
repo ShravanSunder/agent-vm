@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 
 import type { SkillReference } from '../shared/skill-types.js';
 import type { StructuredInput } from '../work-executor/executor-interface.js';
@@ -23,22 +23,28 @@ const DEFAULT_PHASE_INSTRUCTIONS: Record<string, string> = {
 
 const REVIEW_PHASES = new Set(['plan-review', 'work-review']);
 
-export function resolveSkillInputs(skills: readonly SkillReference[]): readonly StructuredInput[] {
-	const result: StructuredInput[] = [];
+export async function resolveSkillInputs(
+	skills: readonly SkillReference[],
+): Promise<readonly StructuredInput[]> {
+	const resolvedInputs = await Promise.all(
+		skills.map(async (skill): Promise<StructuredInput | null> => {
+			try {
+				const content = await readFile(skill.path, 'utf-8');
+				return {
+					type: 'skill',
+					name: skill.name,
+					content,
+				};
+			} catch (error) {
+				if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+					return null;
+				}
+				return null;
+			}
+		}),
+	);
 
-	for (const skill of skills) {
-		if (!existsSync(skill.path)) {
-			continue;
-		}
-
-		result.push({
-			type: 'skill',
-			name: skill.name,
-			content: readFileSync(skill.path, 'utf-8'),
-		});
-	}
-
-	return result;
+	return resolvedInputs.filter((input): input is StructuredInput => input !== null);
 }
 
 export interface AssemblePromptInput {
@@ -58,7 +64,9 @@ export interface AssemblePromptInput {
 	readonly skills: readonly SkillReference[];
 }
 
-export function assemblePrompt(input: AssemblePromptInput): readonly StructuredInput[] {
+export async function assemblePrompt(
+	input: AssemblePromptInput,
+): Promise<readonly StructuredInput[]> {
 	const sections: string[] = [];
 
 	sections.push(BASE_WORKER_PROMPT);
@@ -103,5 +111,5 @@ export function assemblePrompt(input: AssemblePromptInput): readonly StructuredI
 		sections.push('', 'Additional context:', input.extraContext);
 	}
 
-	return [{ type: 'text', text: sections.join('\n') }, ...resolveSkillInputs(input.skills)];
+	return [{ type: 'text', text: sections.join('\n') }, ...(await resolveSkillInputs(input.skills))];
 }

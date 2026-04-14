@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 import { workerConfigSchema } from './config/worker-config.js';
 import { createApp, type ServerDeps } from './server.js';
 import type { TaskState } from './state/task-state.js';
 
 const TEST_EFFECTIVE_CONFIG = workerConfigSchema.parse({});
+const genericJsonResponseSchema = z.record(z.string(), z.unknown());
 
 function makeTaskState(overrides?: Partial<TaskState>): TaskState {
 	return {
@@ -50,7 +52,7 @@ describe('server', () => {
 		const app = createApp(createDeps());
 		const response = await app.request('/health');
 		expect(response.status).toBe(200);
-		const body = (await response.json()) as Record<string, unknown>;
+		const body = genericJsonResponseSchema.parse(await response.json());
 		expect(body.status).toBe('ok');
 		expect(body.executor).toBeDefined();
 	});
@@ -64,7 +66,7 @@ describe('server', () => {
 		});
 
 		expect(response.status).toBe(201);
-		const body = (await response.json()) as Record<string, unknown>;
+		const body = genericJsonResponseSchema.parse(await response.json());
 		expect(body.taskId).toBe('test-1');
 	});
 
@@ -112,7 +114,7 @@ describe('server', () => {
 		});
 
 		expect(response.status).toBe(409);
-		const body = (await response.json()) as Record<string, unknown>;
+		const body = genericJsonResponseSchema.parse(await response.json());
 		expect(body.error).toBe('task-already-active');
 	});
 
@@ -125,7 +127,7 @@ describe('server', () => {
 		});
 
 		expect(response.status).toBe(400);
-		const body = (await response.json()) as Record<string, unknown>;
+		const body = genericJsonResponseSchema.parse(await response.json());
 		expect(body.error).toBe('invalid-request');
 	});
 
@@ -134,7 +136,7 @@ describe('server', () => {
 		const response = await app.request('/tasks/my-task');
 
 		expect(response.status).toBe(200);
-		const body = (await response.json()) as Record<string, unknown>;
+		const body = genericJsonResponseSchema.parse(await response.json());
 		expect(body.taskId).toBe('my-task');
 	});
 
@@ -149,7 +151,7 @@ describe('server', () => {
 		const response = await app.request('/tasks/test-1/close', { method: 'POST' });
 
 		expect(response.status).toBe(200);
-		const body = (await response.json()) as Record<string, unknown>;
+		const body = genericJsonResponseSchema.parse(await response.json());
 		expect(body.status).toBe('closed');
 	});
 

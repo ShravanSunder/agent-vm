@@ -1,11 +1,14 @@
+/* oxlint-disable eslint/no-await-in-loop -- smoke polling must be sequential against live services */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
 import type { SecretRef, SecretResolver } from 'gondolin-core';
 import { afterAll, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import type { SystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
@@ -82,6 +85,50 @@ async function waitForControllerReady(controllerPort: number): Promise<void> {
 
 	throw new Error('Controller did not become ready in time.');
 }
+
+async function postJsonWithLongTimeout(
+	url: string,
+	body: Record<string, unknown>,
+): Promise<{ readonly statusCode: number; readonly json: unknown }> {
+	return await new Promise((resolve, reject) => {
+		const request = http.request(
+			url,
+			{
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+				},
+			},
+			(response) => {
+				const chunks: Buffer[] = [];
+				response.on('data', (chunk) => {
+					chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+				});
+				response.on('end', () => {
+					try {
+						resolve({
+							statusCode: response.statusCode ?? 0,
+							json: JSON.parse(Buffer.concat(chunks).toString('utf8')),
+						});
+					} catch (error) {
+						reject(error);
+					}
+				});
+			},
+		);
+
+		request.on('error', reject);
+		request.write(JSON.stringify(body));
+		request.end();
+	});
+}
+
+const workerTaskResponseSchema = z.object({
+	taskId: z.string().min(1),
+	finalState: z.object({
+		status: z.string(),
+	}),
+});
 
 async function createSampleRepo(baseDir: string): Promise<string> {
 	const repoDir = path.join(baseDir, 'sample-repo');
@@ -232,24 +279,17 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 
 		await waitForControllerReady(controllerPort);
 
-		const response = await fetch(
+		const response = await postJsonWithLongTimeout(
 			`http://127.0.0.1:${controllerPort}/zones/worker-smoke/worker-tasks`,
 			{
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
-					prompt: 'Create a file named READY.txt in the repository root containing exactly READY.',
-					repos: [{ repoUrl: repoDir, baseBranch: 'main' }],
-					context: { source: 'smoke-test' },
-				}),
+				prompt: 'Create a file named READY.txt in the repository root containing exactly READY.',
+				repos: [{ repoUrl: repoDir, baseBranch: 'main' }],
+				context: { source: 'smoke-test' },
 			},
 		);
 
-		expect(response.status).toBe(200);
-		const body = (await response.json()) as {
-			taskId: string;
-			finalState: { status: string };
-		};
+		expect(response.statusCode).toBe(200);
+		const body = workerTaskResponseSchema.parse(response.json);
 		expect(body.taskId).toBeTruthy();
 		expect(body.finalState.status).toBe('completed');
 	}, 900_000);

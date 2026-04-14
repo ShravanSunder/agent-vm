@@ -1,3 +1,4 @@
+/* oxlint-disable eslint/no-await-in-loop -- git setup commands intentionally run in order */
 import { execa } from 'execa';
 
 export interface GitConfigOptions {

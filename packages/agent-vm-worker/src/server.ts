@@ -24,6 +24,10 @@ function validationErrorHook(
 	}
 }
 
+function writeStderr(message: string): void {
+	process.stderr.write(`${message}\n`);
+}
+
 export const repoLocationSchema = z.object({
 	repoUrl: z.string().min(1),
 	baseBranch: z.string().min(1),
@@ -82,7 +86,9 @@ export function createApp(deps: ServerDeps): Hono {
 
 				const result = await deps.submitTask(context.req.valid('json'));
 				return context.json(result, 201);
-			} catch {
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				writeStderr(`[server] Failed to submit task: ${message}`);
 				return context.json({ error: 'task-submission-failed' }, 500);
 			}
 		},
@@ -109,7 +115,9 @@ export function createApp(deps: ServerDeps): Hono {
 		try {
 			const result = await deps.closeTask(taskId);
 			return context.json(result, 200);
-		} catch {
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			writeStderr(`[server] Failed to close task ${taskId}: ${message}`);
 			return context.json({ error: 'task-close-failed' }, 500);
 		}
 	});

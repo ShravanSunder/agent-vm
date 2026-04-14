@@ -1,3 +1,4 @@
+/* oxlint-disable eslint/no-await-in-loop -- coordinator phases are intentionally sequential and stateful */
 import type { WorkerConfig } from '../config/worker-config.js';
 import { resolvePhaseExecutor } from '../config/worker-config.js';
 import { gatherContext } from '../context/gather-context.js';
@@ -34,6 +35,10 @@ interface CoordinatorDeps {
 	readonly workspaceDir?: string;
 }
 
+function writeStderr(message: string): void {
+	process.stderr.write(`${message}\n`);
+}
+
 function getPrimaryRepoWorkspace(
 	config: { readonly repos: readonly { readonly workspacePath: string }[] },
 	workspaceRoot: string,
@@ -62,11 +67,13 @@ async function runTask(
 		try {
 			const repoContext = await gatherContext(workspaceDir);
 			repoSummary = repoContext.summary;
-		} catch {
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			writeStderr(`[coordinator] Failed to gather repo context for task ${taskId}: ${message}`);
 			repoSummary = null;
 		}
 
-		eventRecorder.emit(taskId, { event: 'phase-started', phase: 'plan' });
+		await eventRecorder.emit(taskId, { event: 'phase-started', phase: 'plan' });
 
 		const planExecutorConfig = resolvePhaseExecutor(config, config.phases.plan);
 		const planExecutor = createWorkExecutor(
@@ -78,7 +85,7 @@ async function runTask(
 		const planner = createPlanner(planExecutor);
 
 		const planResult = await planner.plan(
-			assemblePrompt({
+			await assemblePrompt({
 				phase: 'plan',
 				phaseInstructions: config.phases.plan.instructions,
 				taskPrompt: initialState.config.prompt,
@@ -90,12 +97,12 @@ async function runTask(
 		);
 		let currentPlan = planResult.plan;
 
-		eventRecorder.emit(taskId, {
+		await eventRecorder.emit(taskId, {
 			event: 'plan-created',
 			plan: currentPlan,
 			threadId: planResult.threadId,
 		});
-		eventRecorder.emit(taskId, {
+		await eventRecorder.emit(taskId, {
 			event: 'phase-completed',
 			phase: 'plan',
 			tokenCount: planResult.tokenCount,
@@ -108,7 +115,7 @@ async function runTask(
 		) {
 			if (eventRecorder.isClosed(taskId)) return;
 
-			eventRecorder.emit(taskId, {
+			await eventRecorder.emit(taskId, {
 				event: 'phase-started',
 				phase: 'plan-review',
 				loop,
@@ -125,7 +132,7 @@ async function runTask(
 			// Plan review/revision is intentionally sequential because each iteration depends on prior feedback.
 			// oxlint-disable-next-line eslint/no-await-in-loop
 			const review = await reviewer.review(
-				assemblePrompt({
+				await assemblePrompt({
 					phase: 'plan-review',
 					phaseInstructions: config.phases.planReview.instructions,
 					taskPrompt: initialState.config.prompt,
@@ -137,28 +144,28 @@ async function runTask(
 				}),
 			);
 
-			eventRecorder.emit(taskId, {
+			await eventRecorder.emit(taskId, {
 				event: 'review-result',
 				phase: 'plan-review',
 				approved: review.approved,
 				summary: review.summary,
 				loop,
 			});
-			eventRecorder.emit(taskId, { event: 'phase-completed', phase: 'plan-review' });
+			await eventRecorder.emit(taskId, { event: 'phase-completed', phase: 'plan-review' });
 
 			if (review.approved) {
 				break;
 			}
 
 			if (loop === initialState.config.effectiveConfig.phases.plan.maxReviewLoops) {
-				eventRecorder.recordTaskFailure(taskId, 'Plan review loop exhausted');
+				await eventRecorder.recordTaskFailure(taskId, 'Plan review loop exhausted');
 				return;
 			}
 
 			// Planner revisions must reuse the same thread in order, so these cannot run concurrently.
 			// oxlint-disable-next-line eslint/no-await-in-loop
 			const revised = await planner.revise(
-				assemblePrompt({
+				await assemblePrompt({
 					phase: 'plan',
 					taskPrompt: initialState.config.prompt,
 					failureContext: `Plan review feedback:\n\n${review.summary}`,
@@ -167,12 +174,12 @@ async function runTask(
 				}),
 			);
 			currentPlan = revised.plan;
-			eventRecorder.emit(taskId, {
+			await eventRecorder.emit(taskId, {
 				event: 'plan-created',
 				plan: currentPlan,
 				threadId: revised.threadId,
 			});
-			eventRecorder.emit(taskId, {
+			await eventRecorder.emit(taskId, {
 				event: 'phase-completed',
 				phase: 'plan',
 				tokenCount: revised.tokenCount,
@@ -181,7 +188,7 @@ async function runTask(
 
 		if (eventRecorder.isClosed(taskId)) return;
 
-		eventRecorder.emit(taskId, { event: 'phase-started', phase: 'work' });
+		await eventRecorder.emit(taskId, { event: 'phase-started', phase: 'work' });
 		const workExecutorConfig = resolvePhaseExecutor(config, config.phases.work);
 		const workExecutor = createWorkExecutor(
 			workExecutorConfig.provider,
@@ -190,7 +197,7 @@ async function runTask(
 			primaryWorkspaceDir,
 		);
 		const workResult = await workExecutor.execute(
-			assemblePrompt({
+			await assemblePrompt({
 				phase: 'work',
 				phaseInstructions: config.phases.work.instructions,
 				taskPrompt: initialState.config.prompt,
@@ -202,11 +209,11 @@ async function runTask(
 			}),
 		);
 		latestWorkOutput = workResult.response;
-		eventRecorder.emit(taskId, {
+		await eventRecorder.emit(taskId, {
 			event: 'work-started',
 			threadId: workResult.threadId,
 		});
-		eventRecorder.emit(taskId, {
+		await eventRecorder.emit(taskId, {
 			event: 'phase-completed',
 			phase: 'work',
 			tokenCount: workResult.tokenCount,
@@ -219,7 +226,7 @@ async function runTask(
 		) {
 			if (eventRecorder.isClosed(taskId)) return;
 
-			eventRecorder.emit(taskId, { event: 'phase-started', phase: 'verification' });
+			await eventRecorder.emit(taskId, { event: 'phase-started', phase: 'verification' });
 			// Verification attempts are a serial fix-and-retry loop by design.
 			// oxlint-disable-next-line eslint/no-await-in-loop
 			const verifyResults = await runVerification({
@@ -227,11 +234,11 @@ async function runTask(
 				cwd: primaryWorkspaceDir,
 				timeoutMs: config.verificationTimeoutMs,
 			});
-			eventRecorder.emit(taskId, {
+			await eventRecorder.emit(taskId, {
 				event: 'verification-result',
 				results: [...verifyResults],
 			});
-			eventRecorder.emit(taskId, { event: 'phase-completed', phase: 'verification' });
+			await eventRecorder.emit(taskId, { event: 'phase-completed', phase: 'verification' });
 
 			if (allVerificationsPassed(verifyResults)) {
 				break;
@@ -240,7 +247,7 @@ async function runTask(
 			if (
 				verifyAttempt === initialState.config.effectiveConfig.phases.work.maxVerificationRetries
 			) {
-				eventRecorder.recordTaskFailure(
+				await eventRecorder.recordTaskFailure(
 					taskId,
 					`Verification failed after ${verifyAttempt} attempts`,
 				);
@@ -250,7 +257,7 @@ async function runTask(
 			// Each fix continues the same work thread after a failed verification attempt.
 			// oxlint-disable-next-line eslint/no-await-in-loop
 			const fixResult = await workExecutor.fix(
-				assemblePrompt({
+				await assemblePrompt({
 					phase: 'work',
 					taskPrompt: initialState.config.prompt,
 					failureContext: buildVerificationFailureSummary(verifyResults),
@@ -259,7 +266,7 @@ async function runTask(
 				}),
 			);
 			latestWorkOutput = fixResult.response;
-			eventRecorder.emit(taskId, { event: 'fix-applied', tokenCount: fixResult.tokenCount });
+			await eventRecorder.emit(taskId, { event: 'fix-applied', tokenCount: fixResult.tokenCount });
 		}
 
 		for (
@@ -269,7 +276,7 @@ async function runTask(
 		) {
 			if (eventRecorder.isClosed(taskId)) return;
 
-			eventRecorder.emit(taskId, {
+			await eventRecorder.emit(taskId, {
 				event: 'phase-started',
 				phase: 'work-review',
 				loop: reviewLoop,
@@ -285,11 +292,18 @@ async function runTask(
 
 			// Review iterations are serial because each loop may patch the same work tree and thread.
 			// oxlint-disable-next-line eslint/no-await-in-loop
-			const diff = await getDiff(primaryWorkspaceDir).catch(() => '');
+			let diff = '';
+			try {
+				diff = await getDiff(primaryWorkspaceDir);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				writeStderr(`[coordinator] Failed to read diff for task ${taskId}: ${message}`);
+				diff = '';
+			}
 			// Review is gated on the current diff, so it must run after the diff is captured for this loop.
 			// oxlint-disable-next-line eslint/no-await-in-loop
 			const workReviewResult = await reviewWork(workReviewExecutor, {
-				reviewPrompt: assemblePrompt({
+				reviewPrompt: await assemblePrompt({
 					phase: 'work-review',
 					phaseInstructions: config.phases.workReview.instructions,
 					taskPrompt: initialState.config.prompt,
@@ -306,28 +320,28 @@ async function runTask(
 				},
 			});
 
-			eventRecorder.emit(taskId, {
+			await eventRecorder.emit(taskId, {
 				event: 'review-result',
 				phase: 'work-review',
 				approved: workReviewResult.review?.approved ?? false,
 				summary: workReviewResult.review?.summary ?? 'Verification failed before review.',
 				loop: reviewLoop,
 			});
-			eventRecorder.emit(taskId, { event: 'phase-completed', phase: 'work-review' });
+			await eventRecorder.emit(taskId, { event: 'phase-completed', phase: 'work-review' });
 
 			if (workReviewResult.review?.approved) {
 				break;
 			}
 
 			if (reviewLoop === initialState.config.effectiveConfig.phases.work.maxReviewLoops) {
-				eventRecorder.recordTaskFailure(taskId, 'Work review loop exhausted');
+				await eventRecorder.recordTaskFailure(taskId, 'Work review loop exhausted');
 				return;
 			}
 
 			// Follow-up fixes must happen in sequence on the same executor thread.
 			// oxlint-disable-next-line eslint/no-await-in-loop
 			const fixResult = await workExecutor.fix(
-				assemblePrompt({
+				await assemblePrompt({
 					phase: 'work',
 					taskPrompt: initialState.config.prompt,
 					failureContext: `Work review feedback:\n\n${workReviewResult.review?.summary ?? 'Verification failed.'}`,
@@ -335,12 +349,12 @@ async function runTask(
 					repoSummary,
 				}),
 			);
-			eventRecorder.emit(taskId, { event: 'fix-applied', tokenCount: fixResult.tokenCount });
+			await eventRecorder.emit(taskId, { event: 'fix-applied', tokenCount: fixResult.tokenCount });
 		}
 
 		if (eventRecorder.isClosed(taskId)) return;
 
-		eventRecorder.emit(taskId, { event: 'phase-started', phase: 'wrapup' });
+		await eventRecorder.emit(taskId, { event: 'phase-started', phase: 'wrapup' });
 		const wrapupRegistry = buildWrapupTools({
 			config,
 			taskId,
@@ -356,7 +370,7 @@ async function runTask(
 			primaryWorkspaceDir,
 		);
 		const wrapupResult = await wrapupExecutor.execute(
-			assemblePrompt({
+			await assemblePrompt({
 				phase: 'wrapup',
 				phaseInstructions: config.phases.wrapup.instructions,
 				taskPrompt: initialState.config.prompt,
@@ -390,29 +404,31 @@ async function runTask(
 		);
 
 		const actionResults = wrapupRegistry.getResults();
-		eventRecorder.emit(taskId, { event: 'wrapup-result', actions: [...actionResults] });
+		await eventRecorder.emit(taskId, { event: 'wrapup-result', actions: [...actionResults] });
 
 		const missing = findMissingRequiredActions(getWrapupActionConfigs(config), actionResults);
 		if (missing.length > 0) {
-			eventRecorder.recordTaskFailure(
+			await eventRecorder.recordTaskFailure(
 				taskId,
 				`Required wrapup actions not completed: ${missing.join(', ')}`,
 			);
 			return;
 		}
 
-		eventRecorder.emit(taskId, {
+		await eventRecorder.emit(taskId, {
 			event: 'phase-completed',
 			phase: 'wrapup',
 			tokenCount: wrapupResult.tokenCount,
 		});
-		eventRecorder.emit(taskId, { event: 'task-completed' });
+		await eventRecorder.emit(taskId, { event: 'task-completed' });
 	} catch (error) {
 		const reason = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
 
 		try {
-			eventRecorder.recordTaskFailure(taskId, reason);
-		} catch {
+			await eventRecorder.recordTaskFailure(taskId, reason);
+		} catch (recordError) {
+			const message = recordError instanceof Error ? recordError.message : String(recordError);
+			writeStderr(`[coordinator] Failed to persist task failure for ${taskId}: ${message}`);
 			const current = tasks.get(taskId);
 			if (current && !isTerminal(current)) {
 				tasks.set(taskId, { ...current, status: 'failed', updatedAt: new Date().toISOString() });
@@ -423,9 +439,9 @@ async function runTask(
 	}
 }
 
-export function createCoordinator(deps: CoordinatorDeps): Coordinator {
+export async function createCoordinator(deps: CoordinatorDeps): Promise<Coordinator> {
 	const workspaceDir = deps.workspaceDir ?? '/workspace';
-	const tasks = hydrateTaskStates(deps.config.stateDir);
+	const tasks = await hydrateTaskStates(deps.config.stateDir);
 	const closedTaskIds = new Set<string>();
 	const eventRecorder = createTaskEventRecorder(deps.config.stateDir, tasks, closedTaskIds);
 	let activeTaskId: string | null = null;
@@ -445,7 +461,7 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
 			const taskId = input.taskId;
 			const taskConfig = buildTaskConfig(input, deps.config);
 			tasks.set(taskId, createInitialState(taskId, taskConfig));
-			eventRecorder.emit(taskId, {
+			await eventRecorder.emit(taskId, {
 				event: 'task-accepted',
 				taskId,
 				config: taskConfig,
@@ -454,7 +470,11 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
 			activeTaskId = taskId;
 			void runTask(taskId, deps, workspaceDir, tasks, eventRecorder, () =>
 				finishActiveTask(taskId),
-			);
+			).catch((error) => {
+				const message = error instanceof Error ? error.message : String(error);
+				writeStderr(`[coordinator] Unhandled runTask error for ${taskId}: ${message}`);
+				finishActiveTask(taskId);
+			});
 
 			return { taskId, status: 'accepted' };
 		},
@@ -477,7 +497,7 @@ export function createCoordinator(deps: CoordinatorDeps): Coordinator {
 			}
 
 			closedTaskIds.add(taskId);
-			eventRecorder.emit(taskId, { event: 'task-closed' });
+			await eventRecorder.emit(taskId, { event: 'task-closed' });
 			finishActiveTask(taskId);
 			return { status: 'closed' };
 		},

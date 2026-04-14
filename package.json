@@ -14,7 +14,8 @@
 		"fmt:check": "oxfmt --check .",
 		"typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r typecheck",
 		"check": "pnpm lint:types && pnpm fmt:check && pnpm typecheck",
-		"test": "vitest run",
+		"test": "pnpm test:unit",
+		"test:unit": "vitest run --config vitest.config.ts",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"test:smoke": "vitest run --config vitest.smoke.config.ts",
 		"test:watch": "vitest"

@@ -21,7 +21,7 @@ RUN apt-get update && \
       '    "@hono/node-server": "^1",' \
       '    "@hono/zod-validator": "^0.7.6",' \
       '    "@openai/codex-sdk": "^0.118.0",' \
-      '    "cmd-ts": "^0.13.0",' \
+      '    "cmd-ts": "^0.14.0",' \
       '    "execa": "^9.5.2",' \
       '    "hono": "^4",' \
       '    "zod": "^4",' \

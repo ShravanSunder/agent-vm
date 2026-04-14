@@ -3,7 +3,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { workerConfigSchema, type WorkerConfig } from 'agent-vm-worker';
+import { execa } from 'execa';
 import type { SecretResolver } from 'gondolin-core';
+import { z } from 'zod';
 
 import type { SystemConfig } from '../config/system-config.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
@@ -30,6 +32,36 @@ function deepMerge(base: unknown, override: unknown): unknown {
 	return override ?? base;
 }
 
+function writeStderr(message: string): void {
+	process.stderr.write(`${message}\n`);
+}
+
+const taskStatusResponseSchema = z
+	.object({
+		status: z.string().optional(),
+	})
+	.passthrough();
+
+async function readJsonObjectFile(
+	filePath: string,
+	options: { readonly missingValue: Record<string, unknown>; readonly label: string },
+): Promise<Record<string, unknown>> {
+	try {
+		const raw = await fs.readFile(filePath, 'utf8');
+		const parsed: unknown = JSON.parse(raw);
+		if (!isPlainObject(parsed)) {
+			throw new Error(`${options.label} must be a JSON object`);
+		}
+		return parsed;
+	} catch (error) {
+		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+			return options.missingValue;
+		}
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Invalid ${options.label}: ${message}`, { cause: error });
+	}
+}
+
 export interface WorkerTaskInput {
 	readonly prompt: string;
 	readonly repos: readonly { readonly repoUrl: string; readonly baseBranch: string }[];
@@ -52,7 +84,7 @@ export interface PreStartResult {
 
 function deriveRepoDirectoryName(repoUrl: string, usedNames: Set<string>): string {
 	const cleanedUrl = repoUrl.replace(/\.git$/, '');
-	const baseName = cleanedUrl.split('/').pop()?.trim() || 'repo';
+	const baseName = cleanedUrl.split('/').pop()?.trim() ?? 'repo';
 	let candidate = baseName.replace(/[^a-zA-Z0-9._-]/g, '-');
 	let counter = 2;
 	while (usedNames.has(candidate)) {
@@ -94,7 +126,6 @@ export async function preStartGateway(
 			const repoDirectoryName = deriveRepoDirectoryName(repo.repoUrl, usedRepoNames);
 			const repoWorkspaceDir = path.join(workspaceDir, repoDirectoryName);
 			const cloneArgs = ['clone', '--branch', repo.baseBranch, repo.repoUrl, repoWorkspaceDir];
-			const { execa } = await import('execa');
 			// Repo cloning is intentionally sequential to keep host-side side effects easy to reason about.
 			// oxlint-disable-next-line eslint/no-await-in-loop
 			await execa('git', cloneArgs);
@@ -108,13 +139,14 @@ export async function preStartGateway(
 
 		const primaryRepoWorkspaceDir = clonedRepoHostDirs[0] ?? workspaceDir;
 		const projectConfigPath = path.join(primaryRepoWorkspaceDir, '.agent-vm', 'config.json');
-		const projectConfig = await fs
-			.readFile(projectConfigPath, 'utf8')
-			.then((raw) => JSON.parse(raw) as Record<string, unknown>)
-			.catch(() => ({}));
-		const baseConfig = JSON.parse(
-			await fs.readFile(zoneConfig.gateway.gatewayConfig, 'utf8'),
-		) as Record<string, unknown>;
+		const projectConfig = await readJsonObjectFile(projectConfigPath, {
+			label: 'project config',
+			missingValue: {},
+		});
+		const baseConfig = await readJsonObjectFile(zoneConfig.gateway.gatewayConfig, {
+			label: 'gateway config',
+			missingValue: {},
+		});
 		const effectiveConfig = workerConfigSchema.parse(
 			deepMerge(baseConfig, projectConfig),
 		) satisfies WorkerConfig;
@@ -228,12 +260,35 @@ export async function runWorkerTask(options: {
 
 		const timeoutMs = options.timeoutMs ?? 30 * 60 * 1000;
 		const start = Date.now();
+		let consecutivePollFailures = 0;
 		while (Date.now() - start < timeoutMs) {
-			// Polling task state is intentionally sequential because each request depends on prior status.
-			// oxlint-disable-next-line eslint/no-await-in-loop
-			const state = (await fetchJson(`${baseUrl}/tasks/${preStartResult.taskId}`)) as {
-				readonly status?: string;
-			};
+			let state:
+				| {
+						readonly status?: string | undefined;
+				  }
+				| undefined;
+			try {
+				// Polling task state is intentionally sequential because each request depends on prior status.
+				// oxlint-disable-next-line eslint/no-await-in-loop
+				const response = await fetchJson(`${baseUrl}/tasks/${preStartResult.taskId}`);
+				state = taskStatusResponseSchema.parse(response);
+				consecutivePollFailures = 0;
+			} catch (error) {
+				consecutivePollFailures += 1;
+				const message = error instanceof Error ? error.message : String(error);
+				writeStderr(
+					`[worker-task-runner] Poll failure ${consecutivePollFailures} for task ${preStartResult.taskId}: ${message}`,
+				);
+				if (consecutivePollFailures >= 3) {
+					throw error;
+				}
+			}
+			if (!state) {
+				// Poll retry loop intentionally sleeps before the next serial attempt.
+				// oxlint-disable-next-line eslint/no-await-in-loop
+				await new Promise((resolve) => setTimeout(resolve, 1000));
+				continue;
+			}
 			if (state.status === 'completed' || state.status === 'failed') {
 				return {
 					taskId: preStartResult.taskId,

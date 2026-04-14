@@ -1,3 +1,4 @@
+/* oxlint-disable typescript-eslint/no-unsafe-assignment -- expect matchers intentionally carry loose matcher types in tests */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createWorkExecutor } from './executor-factory.js';
@@ -197,6 +198,50 @@ describe('codex-executor', () => {
 		expect(executor.getThreadId()).toBe('thread-1');
 	});
 
+	it('resumeOrRebuild() rebuilds on recoverable resume errors', async () => {
+		mockResumeThread.mockImplementation(() => {
+			throw new Error('Resume failed', {
+				cause: new Error('Thread expired with 404'),
+			});
+		});
+		const rebuiltThread = createMockThread('thread-2', 'context rebuilt', 10);
+		mockStartThread.mockReturnValue(rebuiltThread);
+
+		const { createCodexExecutor } = await import('./codex-executor.js');
+		const executor = createCodexExecutor({
+			model: 'latest',
+			capabilities: { mcpServers: [], tools: [] },
+		});
+
+		await executor.resumeOrRebuild('expired-thread', [{ type: 'text', text: 'context' }]);
+
+		expect(mockResumeThread).toHaveBeenCalledWith(
+			'expired-thread',
+			expect.objectContaining({
+				model: 'latest',
+			}),
+		);
+		expect(mockStartThread).toHaveBeenCalled();
+		expect(executor.getThreadId()).toBe('thread-2');
+	});
+
+	it('resumeOrRebuild() rethrows non-recoverable resume errors', async () => {
+		mockResumeThread.mockImplementation(() => {
+			throw new Error('permission denied');
+		});
+
+		const { createCodexExecutor } = await import('./codex-executor.js');
+		const executor = createCodexExecutor({
+			model: 'latest',
+			capabilities: { mcpServers: [], tools: [] },
+		});
+
+		await expect(
+			executor.resumeOrRebuild('bad-thread', [{ type: 'text', text: 'context' }]),
+		).rejects.toThrow('permission denied');
+		expect(mockStartThread).not.toHaveBeenCalled();
+	});
+
 	it('maps skill inputs to inline text instructions', async () => {
 		const thread = createMockThread('thread-1', 'done', 5);
 		mockStartThread.mockReturnValue(thread);
@@ -236,6 +281,7 @@ describe('codex-executor', () => {
 		expect(execaMock).toHaveBeenCalledWith(
 			'codex',
 			['mcp', 'add', 'deepwiki', '--url', 'http://127.0.0.1:4000/mcp'],
+			// oxlint-disable-next-line typescript-eslint/no-unsafe-assignment
 			expect.objectContaining({
 				env: expect.objectContaining({
 					HOME: expect.any(String),
@@ -243,6 +289,7 @@ describe('codex-executor', () => {
 			}),
 		);
 		expect(codexConstructorMock).toHaveBeenCalledWith(
+			// oxlint-disable-next-line typescript-eslint/no-unsafe-assignment
 			expect.objectContaining({
 				env: expect.objectContaining({
 					HOME: expect.any(String),

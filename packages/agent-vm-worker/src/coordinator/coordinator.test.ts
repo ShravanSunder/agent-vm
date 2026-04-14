@@ -6,7 +6,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { workerConfigSchema, type WorkerConfig } from '../config/worker-config.js';
+import { replayEvents } from '../state/event-log.js';
 import type { WorkExecutor } from '../work-executor/executor-interface.js';
+import type { Coordinator } from './coordinator-types.js';
 import { createCoordinator } from './coordinator.js';
 
 const mocks = vi.hoisted(() => ({
@@ -83,12 +85,17 @@ function createMockExecutor(overrides?: {
 	};
 }
 
-function makeConfig(stateDir: string): WorkerConfig {
-	return workerConfigSchema.parse({ stateDir });
+function makeConfig(stateDir: string, overrides: Record<string, unknown> = {}): WorkerConfig {
+	return workerConfigSchema.parse({ stateDir, ...overrides });
+}
+
+async function readEventNames(stateDir: string, taskId: string): Promise<readonly string[]> {
+	const events = await replayEvents(join(stateDir, 'tasks', `${taskId}.jsonl`));
+	return events.map((event) => event.data.event);
 }
 
 async function waitForStatus(
-	coordinator: ReturnType<typeof createCoordinator>,
+	coordinator: Coordinator,
 	taskId: string,
 	expectedStatus: string,
 	timeoutMs: number = 5000,
@@ -163,7 +170,10 @@ describe('coordinator', () => {
 	});
 
 	it('runs a task through all phases to completion', async () => {
-		const coordinator = createCoordinator({ config: makeConfig(stateDir), workspaceDir: tempDir });
+		const coordinator = await createCoordinator({
+			config: makeConfig(stateDir),
+			workspaceDir: tempDir,
+		});
 
 		const { taskId } = await coordinator.submitTask({
 			taskId: 'test-task-1',
@@ -181,6 +191,33 @@ describe('coordinator', () => {
 		const state = coordinator.getTaskState(taskId);
 		expect(state?.status).toBe('completed');
 		expect(state?.plan).toBe('The implementation plan');
+		const logContents = readFileSync(join(stateDir, 'tasks', 'test-task-1.jsonl'), 'utf-8');
+		expect(logContents).toContain('"phase":"plan"');
+		expect(logContents).toContain('"phase":"work"');
+		expect(logContents).toContain('"phase":"verification"');
+		expect(logContents).toContain('"phase":"wrapup"');
+		expect(await readEventNames(stateDir, taskId)).toEqual([
+			'task-accepted',
+			'phase-started',
+			'plan-created',
+			'phase-completed',
+			'phase-started',
+			'review-result',
+			'phase-completed',
+			'phase-started',
+			'work-started',
+			'phase-completed',
+			'phase-started',
+			'verification-result',
+			'phase-completed',
+			'phase-started',
+			'review-result',
+			'phase-completed',
+			'phase-started',
+			'wrapup-result',
+			'phase-completed',
+			'task-completed',
+		]);
 	});
 
 	it('rejects a second task while one is active', async () => {
@@ -199,7 +236,10 @@ describe('coordinator', () => {
 		};
 		mocks.createWorkExecutor.mockReturnValue(slowExecutor);
 
-		const coordinator = createCoordinator({ config: makeConfig(stateDir), workspaceDir: tempDir });
+		const coordinator = await createCoordinator({
+			config: makeConfig(stateDir),
+			workspaceDir: tempDir,
+		});
 		await coordinator.submitTask({ taskId: 'task-a', prompt: 'first task' });
 
 		await expect(
@@ -208,7 +248,10 @@ describe('coordinator', () => {
 	});
 
 	it('uses controller-provided taskId', async () => {
-		const coordinator = createCoordinator({ config: makeConfig(stateDir), workspaceDir: tempDir });
+		const coordinator = await createCoordinator({
+			config: makeConfig(stateDir),
+			workspaceDir: tempDir,
+		});
 
 		const { taskId } = await coordinator.submitTask({
 			taskId: 'controller-provided-id',
@@ -216,6 +259,30 @@ describe('coordinator', () => {
 		});
 
 		expect(taskId).toBe('controller-provided-id');
+		await waitForStatus(coordinator, taskId, 'completed');
+	});
+
+	it('fails the task when required wrapup actions are missing', async () => {
+		mocks.getWrapupActionConfigs.mockReturnValue([
+			{ key: 'git-pr:0', type: 'git-pr', required: true },
+		]);
+		mocks.findMissingRequiredActions.mockReturnValue(['git-pr']);
+
+		const coordinator = await createCoordinator({
+			config: makeConfig(stateDir),
+			workspaceDir: tempDir,
+		});
+		const { taskId } = await coordinator.submitTask({
+			taskId: 'missing-wrapup',
+			prompt: 'test required wrapup',
+		});
+
+		await waitForStatus(coordinator, taskId, 'failed');
+		const state = coordinator.getTaskState(taskId);
+		expect(state?.status).toBe('failed');
+		const logContents = readFileSync(join(stateDir, 'tasks', 'missing-wrapup.jsonl'), 'utf-8');
+		expect(logContents).toContain('Required wrapup actions not completed: git-pr');
+		expect(logContents).not.toContain('task-completed');
 	});
 
 	it('sanitizes error messages with tokens', async () => {
@@ -232,7 +299,10 @@ describe('coordinator', () => {
 			},
 		}));
 
-		const coordinator = createCoordinator({ config: makeConfig(stateDir), workspaceDir: tempDir });
+		const coordinator = await createCoordinator({
+			config: makeConfig(stateDir),
+			workspaceDir: tempDir,
+		});
 		await coordinator.submitTask({ taskId: 'sanitize-test', prompt: 'test' });
 
 		await waitForStatus(coordinator, 'sanitize-test', 'failed');
@@ -257,7 +327,10 @@ describe('coordinator', () => {
 		};
 		mocks.createWorkExecutor.mockReturnValue(slowExecutor);
 
-		const coordinator = createCoordinator({ config: makeConfig(stateDir), workspaceDir: tempDir });
+		const coordinator = await createCoordinator({
+			config: makeConfig(stateDir),
+			workspaceDir: tempDir,
+		});
 		const { taskId } = await coordinator.submitTask({ taskId: 'close-test', prompt: 'slow task' });
 		await new Promise((resolve) => setTimeout(resolve, 100));
 		await coordinator.closeTask(taskId);
@@ -265,5 +338,131 @@ describe('coordinator', () => {
 
 		expect(coordinator.getTaskState(taskId)?.status).toBe('completed');
 		expect(coordinator.getActiveTaskId()).toBeNull();
+	});
+
+	it('fails when plan review loops are exhausted', async () => {
+		const reviewExecutor = createMockExecutor({
+			executeResponse: JSON.stringify({
+				approved: false,
+				comments: [],
+				summary: 'Plan needs more detail',
+			}),
+		});
+		let executorCallCount = 0;
+		mocks.createWorkExecutor.mockImplementation(() => {
+			executorCallCount += 1;
+			if (executorCallCount === 1) {
+				return createMockExecutor({ executeResponse: 'Initial plan' });
+			}
+			return reviewExecutor;
+		});
+
+		const coordinator = await createCoordinator({
+			config: makeConfig(stateDir, {
+				phases: {
+					plan: { maxReviewLoops: 1 },
+				},
+			}),
+			workspaceDir: tempDir,
+		});
+
+		const { taskId } = await coordinator.submitTask({
+			taskId: 'plan-review-exhausted',
+			prompt: 'write a plan',
+		});
+
+		await waitForStatus(coordinator, taskId, 'failed');
+		const logContents = readFileSync(
+			join(stateDir, 'tasks', 'plan-review-exhausted.jsonl'),
+			'utf-8',
+		);
+		expect(logContents).toContain('Plan review loop exhausted');
+		expect(logContents).not.toContain('task-completed');
+	});
+
+	it('fails when verification retries are exhausted', async () => {
+		mocks.runVerification.mockResolvedValue([
+			{ name: 'test', passed: false, exitCode: 1, output: 'failed' },
+		]);
+		mocks.allVerificationsPassed.mockReturnValue(false);
+		mocks.buildVerificationFailureSummary.mockReturnValue('tests failed');
+
+		const coordinator = await createCoordinator({
+			config: makeConfig(stateDir, {
+				phases: {
+					work: { maxVerificationRetries: 1 },
+				},
+			}),
+			workspaceDir: tempDir,
+		});
+
+		const { taskId } = await coordinator.submitTask({
+			taskId: 'verification-exhausted',
+			prompt: 'fix the failing test',
+		});
+
+		await waitForStatus(coordinator, taskId, 'failed');
+		const logContents = readFileSync(
+			join(stateDir, 'tasks', 'verification-exhausted.jsonl'),
+			'utf-8',
+		);
+		expect(logContents).toContain('Verification failed after 1 attempts');
+		expect(logContents).not.toContain('task-completed');
+	});
+
+	it('fails when work review loops are exhausted', async () => {
+		mocks.reviewWork.mockResolvedValue({
+			verificationResults: [{ name: 'test', passed: true, exitCode: 0, output: '' }],
+			verificationPassed: true,
+			review: {
+				approved: false,
+				comments: [],
+				summary: 'Still missing edge cases',
+			},
+		});
+
+		const coordinator = await createCoordinator({
+			config: makeConfig(stateDir, {
+				phases: {
+					work: { maxReviewLoops: 1 },
+				},
+			}),
+			workspaceDir: tempDir,
+		});
+
+		const { taskId } = await coordinator.submitTask({
+			taskId: 'work-review-exhausted',
+			prompt: 'implement the feature',
+		});
+
+		await waitForStatus(coordinator, taskId, 'failed');
+		const logContents = readFileSync(
+			join(stateDir, 'tasks', 'work-review-exhausted.jsonl'),
+			'utf-8',
+		);
+		expect(logContents).toContain('Work review loop exhausted');
+		expect(logContents).not.toContain('task-completed');
+	});
+
+	it('continues the task and logs when repo context gathering fails', async () => {
+		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		mocks.gatherContext.mockRejectedValue(new Error('workspace not readable'));
+
+		const coordinator = await createCoordinator({
+			config: makeConfig(stateDir),
+			workspaceDir: tempDir,
+		});
+
+		const { taskId } = await coordinator.submitTask({
+			taskId: 'gather-context-failed',
+			prompt: 'fix the issue',
+		});
+
+		await waitForStatus(coordinator, taskId, 'completed');
+		expect(stderrSpy).toHaveBeenCalledWith(
+			expect.stringContaining(
+				`[coordinator] Failed to gather repo context for task ${taskId}: workspace not readable`,
+			),
+		);
 	});
 });

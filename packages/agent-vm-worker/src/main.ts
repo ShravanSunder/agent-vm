@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { serve } from '@hono/node-server';
-import { command, number, option, optional, run, string, subcommands } from 'cmd-ts';
+import { command, number, option, optional, runSafely, string, subcommands } from 'cmd-ts';
 
 import { loadWorkerConfig, resolvePhaseExecutor } from './config/worker-config.js';
 import { createCoordinator } from './coordinator/coordinator.js';
@@ -11,8 +11,15 @@ function writeStdout(message: string): void {
 	process.stdout.write(`${message}\n`);
 }
 
-function writeStderr(message: string): void {
-	process.stderr.write(`${message}\n`);
+export class ReportedCliError extends Error {}
+
+export interface CliIo {
+	readonly stdout: Pick<NodeJS.WriteStream, 'write'>;
+	readonly stderr: Pick<NodeJS.WriteStream, 'write'>;
+}
+
+function isHelpRequest(argv: readonly string[]): boolean {
+	return argv.includes('--help') || argv.includes('-h');
 }
 
 const serveCommand = command({
@@ -40,11 +47,11 @@ const serveCommand = command({
 	},
 	handler: async (args) => {
 		const configPath = args.config ?? process.env.WORKER_CONFIG_PATH ?? undefined;
-		const baseConfig = loadWorkerConfig(configPath);
+		const baseConfig = await loadWorkerConfig(configPath);
 		const config = args.stateDir ? { ...baseConfig, stateDir: args.stateDir } : baseConfig;
 		const workspaceDir = process.env.WORKSPACE_DIR ?? '/workspace';
 		const startTime = Date.now();
-		const coordinator = createCoordinator({ config, workspaceDir });
+		const coordinator = await createCoordinator({ config, workspaceDir });
 		const defaultExecutor = resolvePhaseExecutor(config, {});
 
 		const app = createApp({
@@ -92,14 +99,15 @@ const healthCommand = command({
 		try {
 			const response = await fetch(`http://localhost:${args.port}/health`);
 			if (!response.ok) {
-				writeStderr(`Health check failed: ${response.status}`);
-				process.exit(1);
+				throw new Error(`Health check failed: ${response.status}`);
 			}
 			const data = await response.json();
 			writeStdout(JSON.stringify(data, null, 2));
 		} catch (error) {
-			writeStderr(`Health check failed: ${error instanceof Error ? error.message : String(error)}`);
-			process.exit(1);
+			throw new Error(
+				`Health check failed: ${error instanceof Error ? error.message : String(error)}`,
+				{ cause: error },
+			);
 		}
 	},
 });
@@ -113,26 +121,46 @@ const app = subcommands({
 	},
 });
 
-export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
-	if (argv.length === 0 || (argv.length === 1 && (argv[0] === '--help' || argv[0] === '-h'))) {
-		process.exitCode = 0;
-		writeStdout('agent-vm-worker <subcommand>');
-		writeStdout('> Configurable task worker for Gondolin VMs');
-		writeStdout('');
-		writeStdout('where <subcommand> can be one of:');
-		writeStdout('');
-		writeStdout('- serve - Start the agent-vm-worker HTTP server');
-		writeStdout('- health - Check worker health');
-		writeStdout('');
-		writeStdout('For more help, try running `agent-vm-worker <subcommand> --help`');
+export async function runAgentVmWorkerCli(
+	argv: readonly string[],
+	io: CliIo = { stdout: process.stdout, stderr: process.stderr },
+): Promise<void> {
+	const result = await runSafely(app, [...argv]);
+	if (result._tag === 'ok') {
 		return;
 	}
 
-	await run(app, [...argv]);
-	process.exitCode = 0;
+	const outputStream = result.error.config.into === 'stderr' ? io.stderr : io.stdout;
+	outputStream.write(result.error.config.message);
+	if (!result.error.config.message.endsWith('\n')) {
+		outputStream.write('\n');
+	}
+	if (result.error.config.into === 'stdout' && isHelpRequest(argv)) {
+		return;
+	}
+	if (result.error.config.exitCode !== 0) {
+		throw new ReportedCliError(result.error.config.message);
+	}
+}
+
+export function handleCliMainError(
+	error: unknown,
+	stderr: Pick<NodeJS.WriteStream, 'write'>,
+): void {
+	if (error instanceof ReportedCliError) {
+		return;
+	}
+	stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+}
+
+export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
+	await runAgentVmWorkerCli(argv, {
+		stdout: process.stdout,
+		stderr: process.stderr,
+	});
 }
 
 void main().catch((error) => {
-	writeStderr(`[main] Fatal error: ${error instanceof Error ? error.message : String(error)}`);
-	process.exit(1);
+	handleCliMainError(error, process.stderr);
+	process.exitCode = 1;
 });

@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import type { ManagedVm } from 'gondolin-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 import type { SystemConfig } from '../config/system-config.js';
 
@@ -16,15 +17,44 @@ const startDockerServicesForTaskMock = vi.fn<
 	tcpHosts: {},
 }));
 const execaMock = vi.fn();
+const effectiveWorkerConfigSchema = z.object({
+	defaults: z
+		.object({
+			provider: z.string().optional(),
+		})
+		.optional(),
+	branchPrefix: z.string().optional(),
+	verification: z.array(z.object({ name: z.string() })).optional(),
+});
+const completedTaskStateSchema = z.object({
+	status: z.literal('completed'),
+});
+
+function normalizeMockFilePath(filePath: Parameters<typeof fs.readFile>[0]): string {
+	if (typeof filePath === 'string') {
+		return filePath;
+	}
+	if (filePath instanceof URL) {
+		return filePath.pathname;
+	}
+	if (filePath instanceof Uint8Array) {
+		return Buffer.from(filePath).toString('utf8');
+	}
+	throw new Error('Unsupported file path type in fs.readFile mock.');
+}
 
 vi.mock('../gateway/gateway-zone-orchestrator.js', () => ({
 	startGatewayZone: startGatewayZoneMock,
 }));
 
-vi.mock('./docker-service-routing.js', () => ({
-	startDockerServicesForTask: startDockerServicesForTaskMock,
-	stopDockerServicesForTask: stopDockerServicesForTaskMock,
-}));
+vi.mock('./docker-service-routing.js', async (importOriginal) => {
+	const original = await importOriginal<typeof import('./docker-service-routing.js')>();
+	return {
+		...original,
+		startDockerServicesForTask: startDockerServicesForTaskMock,
+		stopDockerServicesForTask: stopDockerServicesForTaskMock,
+	};
+});
 
 vi.mock('execa', () => ({
 	execa: execaMock,
@@ -195,13 +225,158 @@ describe('worker-task-runner', () => {
 			zone,
 		);
 
-		const writtenConfig = JSON.parse(
-			await fs.readFile(path.join(result.stateDir, 'effective-worker.json'), 'utf8'),
-		) as { defaults?: { provider?: string } };
+		const writtenConfig = effectiveWorkerConfigSchema.parse(
+			JSON.parse(await fs.readFile(path.join(result.stateDir, 'effective-worker.json'), 'utf8')),
+		);
 
 		expect(writtenConfig.defaults?.provider).toBe('codex');
 		expect(result.tcpHosts).toEqual({});
 		expect(result.composeFilePaths).toEqual([]);
 		expect(result.repos).toEqual([]);
+	});
+
+	it('clones repos into named workspace directories and merges primary repo config', async () => {
+		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+		startDockerServicesForTaskMock.mockResolvedValue({
+			composeFilePaths: [],
+			tcpHosts: {},
+		});
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const originalReadFile = fs.readFile;
+		vi.spyOn(fs, 'readFile').mockImplementation(async (filePath, encoding) => {
+			if (normalizeMockFilePath(filePath).endsWith('/frontend/.agent-vm/config.json')) {
+				return JSON.stringify({
+					branchPrefix: 'feature/',
+					verification: [{ name: 'custom', command: 'pnpm custom-check' }],
+				});
+			}
+			return await originalReadFile(filePath, encoding);
+		});
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		const result = await preStartGateway(
+			{
+				prompt: 'cross repo task',
+				repos: [
+					{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' },
+					{ repoUrl: 'https://github.com/org/backend.git', baseBranch: 'develop' },
+				],
+				context: {},
+			},
+			zone,
+		);
+
+		expect(execaMock).toHaveBeenNthCalledWith(1, 'git', [
+			'clone',
+			'--branch',
+			'main',
+			'https://github.com/org/frontend.git',
+			path.join(result.workspaceDir, 'frontend'),
+		]);
+		expect(execaMock).toHaveBeenNthCalledWith(2, 'git', [
+			'clone',
+			'--branch',
+			'develop',
+			'https://github.com/org/backend.git',
+			path.join(result.workspaceDir, 'backend'),
+		]);
+		expect(result.repos).toEqual([
+			{
+				repoUrl: 'https://github.com/org/frontend.git',
+				baseBranch: 'main',
+				workspacePath: '/workspace/frontend',
+			},
+			{
+				repoUrl: 'https://github.com/org/backend.git',
+				baseBranch: 'develop',
+				workspacePath: '/workspace/backend',
+			},
+		]);
+		const writtenConfig = effectiveWorkerConfigSchema.parse(
+			JSON.parse(await fs.readFile(path.join(result.stateDir, 'effective-worker.json'), 'utf8')),
+		);
+		expect(writtenConfig.branchPrefix).toBe('feature/');
+		expect(writtenConfig.verification?.[0]?.name).toBe('custom');
+	});
+
+	it('throws on invalid project config instead of silently ignoring it', async () => {
+		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+		startDockerServicesForTaskMock.mockResolvedValue({
+			composeFilePaths: [],
+			tcpHosts: {},
+		});
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const originalReadFile = fs.readFile;
+		vi.spyOn(fs, 'readFile').mockImplementation(async (filePath, encoding) => {
+			if (normalizeMockFilePath(filePath).endsWith('/frontend/.agent-vm/config.json')) {
+				return '{ not-valid-json';
+			}
+			return await originalReadFile(filePath, encoding);
+		});
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+
+		await expect(
+			preStartGateway(
+				{
+					prompt: 'cross repo task',
+					repos: [{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' }],
+					context: {},
+				},
+				zone,
+			),
+		).rejects.toThrow('Invalid project config');
+	});
+
+	it('retries transient poll failures before giving up', async () => {
+		startDockerServicesForTaskMock.mockResolvedValue({
+			composeFilePaths: [],
+			tcpHosts: {},
+		});
+		let pollCount = 0;
+		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.endsWith('/tasks')) {
+				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
+					status: 201,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (/\/tasks\/[^/]+$/.test(url)) {
+				pollCount += 1;
+				if (pollCount === 1) {
+					throw new Error('temporary network error');
+				}
+				const taskId = url.split('/').pop() ?? 'unknown-task';
+				return new Response(JSON.stringify({ status: 'completed', taskId }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		}) as typeof fetch;
+
+		const { runWorkerTask } = await import('./worker-task-runner.js');
+		const result = await runWorkerTask({
+			input: {
+				prompt: 'fix login',
+				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+				context: {},
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+			zoneId: 'shravan',
+			timeoutMs: 10_000,
+		});
+
+		expect(completedTaskStateSchema.parse(result.finalState).status).toBe('completed');
+		expect(pollCount).toBeGreaterThanOrEqual(2);
 	});
 });

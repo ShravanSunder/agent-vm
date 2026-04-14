@@ -66,15 +66,21 @@ export async function gatherContext(workspaceDir: string): Promise<RepoContext> 
 	if (packageJson) {
 		summarySections.push('', formatMetadataSection('package.json', packageJson));
 	}
-	for (const filePath of repoMetadataLines) {
-		if (filePath === 'CLAUDE.md' || filePath === 'package.json') {
-			continue;
+	const nestedMetadataSections = await Promise.all(
+		repoMetadataLines
+			.filter((filePath) => filePath !== 'CLAUDE.md' && filePath !== 'package.json')
+			.map(async (filePath): Promise<string | null> => {
+				const content = await readOptionalFile(join(workspaceDir, filePath));
+				if (!content) {
+					return null;
+				}
+				return formatMetadataSection(filePath, content);
+			}),
+	);
+	for (const section of nestedMetadataSections) {
+		if (section) {
+			summarySections.push('', section);
 		}
-		const content = await readOptionalFile(join(workspaceDir, filePath));
-		if (!content) {
-			continue;
-		}
-		summarySections.push('', formatMetadataSection(filePath, content));
 	}
 	const summary = summarySections.join('\n');
 

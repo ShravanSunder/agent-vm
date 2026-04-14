@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createGitPrToolDefinition } from './git-pr-action.js';
-import type { WrapupActionResult } from './wrapup-types.js';
-import { findMissingRequiredActions } from './wrapup-types.js';
+import { findMissingRequiredActions, wrapupActionResultSchema } from './wrapup-types.js';
 
 const mocks = vi.hoisted(() => ({
 	configureGit: vi.fn(),
@@ -108,10 +107,12 @@ describe('git-pr-action', () => {
 			],
 		});
 
-		const result = (await tool.execute({
-			title: 'PR',
-			body: 'body',
-		})) as WrapupActionResult;
+		const result = wrapupActionResultSchema.parse(
+			await tool.execute({
+				title: 'PR',
+				body: 'body',
+			}),
+		);
 
 		expect(result.success).toBe(false);
 		expect(result.artifact).not.toContain('ghp_secret123');

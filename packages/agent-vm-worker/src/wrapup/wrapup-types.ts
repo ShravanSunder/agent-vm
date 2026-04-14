@@ -1,3 +1,12 @@
+import { z } from 'zod';
+
+export const wrapupActionResultSchema = z.object({
+	key: z.string(),
+	type: z.string(),
+	artifact: z.string().optional(),
+	success: z.boolean(),
+});
+
 export interface WrapupActionResult {
 	readonly key: string;
 	readonly type: string;

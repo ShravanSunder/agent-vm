@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 import { workerConfigSchema } from './config/worker-config.js';
 import { createCoordinator } from './coordinator/coordinator.js';
@@ -72,17 +73,22 @@ function createMockExecutor(response: string): WorkExecutor {
 	};
 }
 
+const taskStatusBodySchema = z.object({
+	status: z.string(),
+	plan: z.string().nullable().optional(),
+});
+
 async function waitForTaskCompletion(
 	app: ReturnType<typeof createApp>,
 	taskId: string,
-): Promise<Record<string, unknown>> {
+): Promise<z.infer<typeof taskStatusBodySchema>> {
 	for (let attempt = 0; attempt < 100; attempt += 1) {
 		// Task polling is intentionally serial so each request observes the latest coordinator state.
 		// oxlint-disable-next-line eslint/no-await-in-loop
 		const response = await app.request(`/tasks/${taskId}`);
 		// Response parsing is coupled to the sequential polling loop above.
 		// oxlint-disable-next-line eslint/no-await-in-loop
-		const body = (await response.json()) as Record<string, unknown>;
+		const body = taskStatusBodySchema.parse(await response.json());
 		if (body.status === 'completed' || body.status === 'failed') {
 			return body;
 		}
@@ -152,7 +158,7 @@ describe('worker runtime integration', () => {
 
 	it('runs a task from HTTP submission through to completed state', async () => {
 		const config = workerConfigSchema.parse({ stateDir });
-		const coordinator = createCoordinator({ config, workspaceDir });
+		const coordinator = await createCoordinator({ config, workspaceDir });
 		const app = createApp({
 			getActiveTaskId: () => coordinator.getActiveTaskId(),
 			getActiveTaskStatus: () => coordinator.getActiveTaskId(),

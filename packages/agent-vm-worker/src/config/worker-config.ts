@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 
 import { z } from 'zod';
 
@@ -163,10 +163,17 @@ export function resolvePhaseExecutor(
 	};
 }
 
-export function loadWorkerConfig(configPath?: string): WorkerConfig {
-	if (configPath && existsSync(configPath)) {
-		const raw: unknown = JSON.parse(readFileSync(configPath, 'utf-8'));
-		return workerConfigSchema.parse(raw);
+export async function loadWorkerConfig(configPath?: string): Promise<WorkerConfig> {
+	if (configPath) {
+		try {
+			const raw: unknown = JSON.parse(await readFile(configPath, 'utf-8'));
+			return workerConfigSchema.parse(raw);
+		} catch (error) {
+			if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+				return workerConfigSchema.parse({});
+			}
+			throw error;
+		}
 	}
 
 	return workerConfigSchema.parse({});

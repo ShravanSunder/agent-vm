@@ -131,13 +131,13 @@ describe('worker-config', () => {
 				'utf-8',
 			);
 
-			const config = loadWorkerConfig(configPath);
+			const config = await loadWorkerConfig(configPath);
 			expect(config.defaults.provider).toBe('claude');
 			expect(config.branchPrefix).toBe('bot/');
 		});
 
-		it('returns defaults when file does not exist', () => {
-			const config = loadWorkerConfig(join(tempDir, 'missing.json'));
+		it('returns defaults when file does not exist', async () => {
+			const config = await loadWorkerConfig(join(tempDir, 'missing.json'));
 			expect(config.defaults.provider).toBe('codex');
 		});
 	});

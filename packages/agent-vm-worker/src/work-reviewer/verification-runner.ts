@@ -1,3 +1,4 @@
+/* oxlint-disable eslint/no-await-in-loop -- verification commands must run in stable serial order */
 import { execa } from 'execa';
 
 export type CommandStatus = 'passed' | 'failed' | 'timeout';

@@ -23,7 +23,7 @@ describe('prompt-assembler', () => {
 			await mkdir(skillDir, { recursive: true });
 			await writeFile(join(skillDir, 'SKILL.md'), '# TDD\nWrite tests first.', 'utf-8');
 
-			const inputs = resolveSkillInputs([{ name: 'tdd', path: join(skillDir, 'SKILL.md') }]);
+			const inputs = await resolveSkillInputs([{ name: 'tdd', path: join(skillDir, 'SKILL.md') }]);
 
 			expect(inputs).toHaveLength(1);
 			expect(inputs[0]?.type).toBe('skill');
@@ -33,16 +33,16 @@ describe('prompt-assembler', () => {
 			}
 		});
 
-		it('skips missing skill files', () => {
-			expect(resolveSkillInputs([{ name: 'missing', path: '/nonexistent/SKILL.md' }])).toHaveLength(
-				0,
-			);
+		it('skips missing skill files', async () => {
+			await expect(
+				resolveSkillInputs([{ name: 'missing', path: '/nonexistent/SKILL.md' }]),
+			).resolves.toHaveLength(0);
 		});
 	});
 
 	describe('assemblePrompt', () => {
-		it('includes base prompt and default instructions', () => {
-			const result = assemblePrompt({
+		it('includes base prompt and default instructions', async () => {
+			const result = await assemblePrompt({
 				phase: 'plan',
 				taskPrompt: 'fix the login bug',
 				skills: [],
@@ -57,8 +57,8 @@ describe('prompt-assembler', () => {
 			}
 		});
 
-		it('includes review JSON format for review phases', () => {
-			const result = assemblePrompt({
+		it('includes review JSON format for review phases', async () => {
+			const result = await assemblePrompt({
 				phase: 'plan-review',
 				taskPrompt: 'review this',
 				skills: [],
@@ -70,8 +70,8 @@ describe('prompt-assembler', () => {
 			}
 		});
 
-		it('uses custom phase instructions when provided', () => {
-			const result = assemblePrompt({
+		it('uses custom phase instructions when provided', async () => {
+			const result = await assemblePrompt({
 				phase: 'plan',
 				phaseInstructions: 'Custom: make a plan and include diagrams.',
 				taskPrompt: 'build feature',
@@ -85,8 +85,8 @@ describe('prompt-assembler', () => {
 			}
 		});
 
-		it('includes repo information when provided', () => {
-			const result = assemblePrompt({
+		it('includes repo information when provided', async () => {
+			const result = await assemblePrompt({
 				phase: 'work',
 				taskPrompt: 'implement feature',
 				repos: [
@@ -107,8 +107,8 @@ describe('prompt-assembler', () => {
 			}
 		});
 
-		it('includes multiple repos when provided', () => {
-			const result = assemblePrompt({
+		it('includes multiple repos when provided', async () => {
+			const result = await assemblePrompt({
 				phase: 'work',
 				taskPrompt: 'implement feature',
 				repos: [
@@ -135,8 +135,8 @@ describe('prompt-assembler', () => {
 			}
 		});
 
-		it('includes context when provided', () => {
-			const result = assemblePrompt({
+		it('includes context when provided', async () => {
+			const result = await assemblePrompt({
 				phase: 'work',
 				taskPrompt: 'triage alert',
 				context: { alertId: 'INC-123', service: 'payments' },
@@ -150,8 +150,8 @@ describe('prompt-assembler', () => {
 			}
 		});
 
-		it('includes repo summary when provided', () => {
-			const result = assemblePrompt({
+		it('includes repo summary when provided', async () => {
+			const result = await assemblePrompt({
 				phase: 'plan',
 				taskPrompt: 'plan work',
 				repoSummary: 'Repository structure (4 files):\nsrc/index.ts',
@@ -165,8 +165,8 @@ describe('prompt-assembler', () => {
 			}
 		});
 
-		it('includes plan for work phases', () => {
-			const result = assemblePrompt({
+		it('includes plan for work phases', async () => {
+			const result = await assemblePrompt({
 				phase: 'work',
 				taskPrompt: 'implement',
 				plan: 'Step 1: write tests\nStep 2: implement',
@@ -180,8 +180,8 @@ describe('prompt-assembler', () => {
 			}
 		});
 
-		it('includes failure context for retries', () => {
-			const result = assemblePrompt({
+		it('includes failure context for retries', async () => {
+			const result = await assemblePrompt({
 				phase: 'work',
 				taskPrompt: 'fix bug',
 				failureContext: 'Test failed: exit code 1\nassert false',
@@ -200,7 +200,7 @@ describe('prompt-assembler', () => {
 			await mkdir(skillDir, { recursive: true });
 			await writeFile(join(skillDir, 'SKILL.md'), '# Debug Skill', 'utf-8');
 
-			const result = assemblePrompt({
+			const result = await assemblePrompt({
 				phase: 'work',
 				taskPrompt: 'debug issue',
 				skills: [{ name: 'debug', path: join(skillDir, 'SKILL.md') }],

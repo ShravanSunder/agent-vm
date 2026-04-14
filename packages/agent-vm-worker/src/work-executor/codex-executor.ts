@@ -13,6 +13,30 @@ import type {
 } from './executor-interface.js';
 import { getOrCreateLocalToolMcpServer } from './local-tool-mcp-server.js';
 
+function extractErrorMessages(error: unknown): readonly string[] {
+	if (!(error instanceof Error)) {
+		return [String(error)];
+	}
+
+	const messages = [error.message];
+	if ('cause' in error && error.cause !== undefined) {
+		messages.push(...extractErrorMessages(error.cause));
+	}
+	return messages;
+}
+
+function isRecoverableResumeError(error: unknown): boolean {
+	const messages = extractErrorMessages(error).map((message) => message.toLowerCase());
+	return messages.some(
+		(message) =>
+			message.includes('expired') ||
+			message.includes('not found') ||
+			message.includes('does not exist') ||
+			message.includes('unknown thread') ||
+			message.includes('404'),
+	);
+}
+
 export interface CodexExecutorConfig {
 	readonly model: string;
 	readonly capabilities: ExecutorCapabilities;
@@ -149,13 +173,7 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 					currentThreadId = threadId;
 					return;
 				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					const recoverableResumeError =
-						message.includes('expired') ||
-						message.includes('not found') ||
-						message.includes('does not exist');
-
-					if (!recoverableResumeError) {
+					if (!isRecoverableResumeError(error)) {
 						throw error;
 					}
 

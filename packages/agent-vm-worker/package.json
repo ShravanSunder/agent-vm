@@ -17,7 +17,10 @@
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test": "vitest run --config vitest.config.ts",
+		"test": "pnpm test:unit",
+		"test:unit": "vitest run --root ../../ --config vitest.config.ts packages/agent-vm-worker/src",
+		"test:integration": "vitest run --root ../../ --config vitest.integration.config.ts packages/agent-vm-worker/src",
+		"test:smoke": "vitest run --root ../../ --config vitest.smoke.config.ts packages/agent-vm-worker/src",
 		"start": "node ./dist/main.js"
 	},
 	"dependencies": {
@@ -25,7 +28,7 @@
 		"@hono/zod-validator": "^0.7.6",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"@openai/codex-sdk": "^0.118.0",
-		"cmd-ts": "^0.13.0",
+		"cmd-ts": "^0.14.0",
 		"execa": "^9.5.2",
 		"hono": "^4",
 		"zod": "^4",

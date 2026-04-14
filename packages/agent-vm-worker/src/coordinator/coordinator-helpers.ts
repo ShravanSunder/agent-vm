@@ -10,6 +10,10 @@ export function sanitizeErrorMessage(message: string): string {
 	return message.replace(/https:\/\/x-access-token:[^@]*@/g, 'https://x-access-token:***@');
 }
 
+function writeStderr(message: string): void {
+	process.stderr.write(`${message}\n`);
+}
+
 export function buildTaskConfig(input: CreateTaskInput, config: WorkerConfig): TaskConfig {
 	return {
 		taskId: input.taskId,
@@ -25,30 +29,32 @@ export function createTaskEventRecorder(
 	tasks: Map<string, TaskState>,
 	closedTaskIds: Set<string>,
 ): {
-	readonly emit: (taskId: string, event: TaskEvent) => void;
+	readonly emit: (taskId: string, event: TaskEvent) => Promise<void>;
 	readonly isClosed: (taskId: string) => boolean;
-	readonly recordTaskFailure: (taskId: string, reason: string) => void;
+	readonly recordTaskFailure: (taskId: string, reason: string) => Promise<void>;
 } {
 	function logPath(taskId: string): string {
 		return join(stateDir, 'tasks', `${taskId}.jsonl`);
 	}
 
-	function emit(taskId: string, event: TaskEvent): void {
+	async function emit(taskId: string, event: TaskEvent): Promise<void> {
 		if (closedTaskIds.has(taskId) && event.event !== 'task-closed') {
 			return;
 		}
 
-		appendEvent(logPath(taskId), event);
+		await appendEvent(logPath(taskId), event);
 		const current = tasks.get(taskId);
 		if (current) {
 			tasks.set(taskId, applyEvent(current, event));
 		}
 	}
 
-	function recordTaskFailure(taskId: string, reason: string): void {
+	async function recordTaskFailure(taskId: string, reason: string): Promise<void> {
 		try {
-			emit(taskId, { event: 'task-failed', reason });
-		} catch {
+			await emit(taskId, { event: 'task-failed', reason });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			writeStderr(`[task-event-recorder] Failed to append task-failed for ${taskId}: ${message}`);
 			const current = tasks.get(taskId);
 			if (current) {
 				tasks.set(taskId, applyEvent(current, { event: 'task-failed', reason }));

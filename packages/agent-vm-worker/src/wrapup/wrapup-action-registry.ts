@@ -2,7 +2,11 @@ import type { WorkerConfig } from '../config/worker-config.js';
 import type { ToolDefinition } from '../work-executor/executor-interface.js';
 import { createGitPrToolDefinition, type GitPrActionConfig } from './git-pr-action.js';
 import { createSlackToolDefinition } from './slack-action.js';
-import type { WrapupActionConfig, WrapupActionResult } from './wrapup-types.js';
+import {
+	wrapupActionResultSchema,
+	type WrapupActionConfig,
+	type WrapupActionResult,
+} from './wrapup-types.js';
 
 export interface WrapupToolRegistryInput {
 	readonly config: WorkerConfig;
@@ -30,15 +34,39 @@ function wrapToolWithResultCollector(
 	return {
 		...tool,
 		execute: async (params: Record<string, unknown>): Promise<unknown> => {
-			const result = (await tool.execute(params)) as Omit<WrapupActionResult, 'key' | 'type'> &
-				Partial<Pick<WrapupActionResult, 'key' | 'type'>>;
-			results.push({
-				key: result.key ?? actionKey,
-				type: result.type ?? actionType,
-				success: result.success,
-				...(result.artifact !== undefined ? { artifact: result.artifact } : {}),
-			});
-			return result;
+			try {
+				const parseResult = wrapupActionResultSchema.safeParse(await tool.execute(params));
+				if (!parseResult.success) {
+					const result: WrapupActionResult = {
+						key: actionKey,
+						type: actionType,
+						success: false,
+						artifact: `Invalid wrapup action result: ${parseResult.error.issues
+							.map((issue) => issue.message)
+							.join('; ')}`,
+					};
+					results.push(result);
+					return result;
+				}
+
+				const result = parseResult.data;
+				results.push({
+					key: actionKey,
+					type: actionType,
+					success: result.success,
+					...(result.artifact !== undefined ? { artifact: result.artifact } : {}),
+				});
+				return result;
+			} catch (error) {
+				const result: WrapupActionResult = {
+					key: actionKey,
+					type: actionType,
+					success: false,
+					artifact: error instanceof Error ? error.message : String(error),
+				};
+				results.push(result);
+				return result;
+			}
 		},
 	};
 }
