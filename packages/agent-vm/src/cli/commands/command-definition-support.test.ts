@@ -88,7 +88,13 @@ describe('requireZone', () => {
 describe('parseGatewayType', () => {
 	it('throws when the gateway type is missing', () => {
 		expect(() => parseGatewayType(undefined)).toThrow(
-			"Gateway type is required. Expected 'openclaw' or 'worker'.",
+			"Gateway type is required. Only 'openclaw' is currently supported.",
+		);
+	});
+
+	it('throws when worker is requested before that runtime exists', () => {
+		expect(() => parseGatewayType('worker')).toThrow(
+			"Gateway type 'worker' is not available yet. Only 'openclaw' is currently supported.",
 		);
 	});
 });
