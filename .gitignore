@@ -8,7 +8,7 @@ venv/
 
 # Build outputs
 dist/
-build/
+/build/
 *.egg-info/
 .eggs/
 
@@ -42,7 +42,7 @@ htmlcov/
 coverage/
 .pytest_cache/
 .ruff_cache/
-state/
+/state/
 workspaces/
 tmp/
 test-results/

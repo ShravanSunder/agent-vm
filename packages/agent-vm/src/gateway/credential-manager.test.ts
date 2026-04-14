@@ -1,4 +1,4 @@
-import type { SecretResolver } from 'gondolin-core';
+import type { SecretResolver } from '@shravansunder/gondolin-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';

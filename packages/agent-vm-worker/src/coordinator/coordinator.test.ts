@@ -91,6 +91,10 @@ function createMockExecutor(overrides?: {
 	};
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
+}
+
 function makeConfig(stateDir: string, overrides: Record<string, unknown> = {}): WorkerConfig {
 	const phaseDefaults = {
 		plan: { model: PLAN_MODEL },
@@ -99,8 +103,6 @@ function makeConfig(stateDir: string, overrides: Record<string, unknown> = {}): 
 		workReview: { model: WORK_REVIEW_MODEL },
 		wrapup: { model: WRAPUP_MODEL },
 	};
-	const isRecord = (value: unknown): value is Record<string, unknown> =>
-		typeof value === 'object' && value !== null;
 	const overridePhases = (() => {
 		if (!isRecord(overrides.phases)) {
 			return {};

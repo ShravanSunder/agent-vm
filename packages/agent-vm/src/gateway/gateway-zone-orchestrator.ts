@@ -1,8 +1,15 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import type { GatewayHealthCheck, GatewayLifecycle, GatewayZoneConfig } from 'gateway-interface';
-import { createManagedVm as createManagedVmFromCore, type ManagedVm } from 'gondolin-core';
+import type {
+	GatewayHealthCheck,
+	GatewayLifecycle,
+	GatewayZoneConfig,
+} from '@shravansunder/gateway-interface';
+import {
+	createManagedVm as createManagedVmFromCore,
+	type ManagedVm,
+} from '@shravansunder/gondolin-core';
 
 import { runTaskWithResult } from '../shared/run-task.js';
 import { resolveZoneSecrets } from './credential-manager.js';

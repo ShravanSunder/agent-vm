@@ -1,4 +1,9 @@
-import type { BuildConfig, BuildImageResult, ManagedVm, SecretResolver } from 'gondolin-core';
+import type {
+	BuildConfig,
+	BuildImageResult,
+	ManagedVm,
+	SecretResolver,
+} from '@shravansunder/gondolin-core';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';

@@ -1,10 +1,12 @@
 {
-	"name": "agent-vm",
+	"name": "@shravansunder/agent-vm",
 	"version": "0.0.2",
-	"private": true,
 	"bin": {
 		"agent-vm": "./dist/cli/agent-vm-entrypoint.js"
 	},
+	"files": [
+		"dist"
+	],
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -14,20 +16,23 @@
 			"import": "./dist/index.js"
 		}
 	},
+	"publishConfig": {
+		"access": "public"
+	},
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
 		"@hono/node-server": "^1",
-		"agent-vm-worker": "workspace:*",
+		"@shravansunder/agent-vm-worker": "workspace:0.0.2",
+		"@shravansunder/gateway-interface": "workspace:0.0.2",
+		"@shravansunder/gondolin-core": "workspace:0.0.2",
+		"@shravansunder/openclaw-gateway": "workspace:0.0.2",
+		"@shravansunder/worker-gateway": "workspace:0.0.2",
 		"cmd-ts": "^0.14.0",
 		"execa": "^9.5.2",
-		"gateway-interface": "workspace:*",
-		"gondolin-core": "workspace:*",
 		"hono": "^4",
-		"openclaw-gateway": "workspace:*",
-		"worker-gateway": "workspace:*",
 		"zod": "^4"
 	},
 	"devDependencies": {

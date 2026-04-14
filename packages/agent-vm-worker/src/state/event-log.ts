@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import fs from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { TaskEvent, TimestampedEvent } from './task-event-types.js';
@@ -11,19 +11,18 @@ function isTimestampedEvent(value: unknown): value is TimestampedEvent {
 	return 'event' in value.data;
 }
 
-export function appendEvent(filePath: string, event: TaskEvent): void {
-	try {
-		const dir = dirname(filePath);
-		if (!existsSync(dir)) {
-			mkdirSync(dir, { recursive: true });
-		}
+function writeStderr(message: string): void {
+	process.stderr.write(`${message}\n`);
+}
 
+export async function appendEvent(filePath: string, event: TaskEvent): Promise<void> {
+	try {
+		await fs.mkdir(dirname(filePath), { recursive: true });
 		const timestampedEvent: TimestampedEvent = {
 			ts: new Date().toISOString(),
 			data: event,
 		};
-
-		appendFileSync(filePath, JSON.stringify(timestampedEvent) + '\n', 'utf-8');
+		await fs.appendFile(filePath, `${JSON.stringify(timestampedEvent)}\n`, 'utf-8');
 	} catch (error) {
 		throw new Error(
 			`Failed to append event to ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
@@ -32,12 +31,17 @@ export function appendEvent(filePath: string, event: TaskEvent): void {
 	}
 }
 
-export function replayEvents(filePath: string): readonly TimestampedEvent[] {
-	if (!existsSync(filePath)) {
-		return [];
+export async function replayEvents(filePath: string): Promise<readonly TimestampedEvent[]> {
+	let fileContents: string;
+	try {
+		fileContents = await fs.readFile(filePath, 'utf-8');
+	} catch (error) {
+		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+			return [];
+		}
+		throw error;
 	}
 
-	const fileContents = readFileSync(filePath, 'utf-8');
 	const lines = fileContents.split('\n').filter((line) => line.trim() !== '');
 	if (lines.length === 0) {
 		return [];
@@ -50,14 +54,14 @@ export function replayEvents(filePath: string): readonly TimestampedEvent[] {
 
 		const isLastLine = lineIndex === lines.length - 1;
 		try {
-			const parsed: unknown = JSON.parse(line);
-			if (!isTimestampedEvent(parsed)) {
+			const parsedJson: unknown = JSON.parse(line);
+			if (!isTimestampedEvent(parsedJson)) {
 				throw new Error(`Invalid event structure at line ${lineIndex + 1}`);
 			}
-			events.push(parsed);
+			events.push(parsedJson);
 		} catch (error) {
 			if (isLastLine) {
-				console.warn(`Skipping incomplete final line in ${filePath}: ${line.slice(0, 50)}...`);
+				writeStderr(`Skipping incomplete final line in ${filePath}: ${line.slice(0, 50)}...`);
 			} else {
 				throw new Error(
 					`Corrupt event at line ${lineIndex + 1} in ${filePath}: ${error instanceof Error ? error.message : String(error)}`,

@@ -1,4 +1,4 @@
-import type { SecretSpec } from 'gondolin-core';
+import type { SecretSpec } from '@shravansunder/gondolin-core';
 
 import type { GatewayZoneConfig } from './gateway-lifecycle.js';
 

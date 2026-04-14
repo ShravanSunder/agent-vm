@@ -1,4 +1,4 @@
-import type { ManagedVm } from 'gondolin-core';
+import type { ManagedVm } from '@shravansunder/gondolin-core';
 
 import type { TcpPool } from './tcp-pool.js';
 

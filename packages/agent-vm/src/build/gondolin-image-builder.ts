@@ -4,10 +4,11 @@ import path from 'node:path';
 import {
 	buildImage as buildImageFromCore,
 	computeBuildFingerprint,
+	parseBuildConfig,
 	type BuildConfig,
 	type BuildImageOptions,
 	type BuildImageResult,
-} from 'gondolin-core';
+} from '@shravansunder/gondolin-core';
 
 export interface GondolinImageBuilderDependencies {
 	readonly buildImage?: (options: BuildImageOptions) => Promise<BuildImageResult>;
@@ -15,8 +16,7 @@ export interface GondolinImageBuilderDependencies {
 }
 
 async function loadBuildConfigFromJson(buildConfigPath: string): Promise<BuildConfig> {
-	const rawContents = await fs.readFile(buildConfigPath, 'utf8');
-	return JSON.parse(rawContents) as BuildConfig;
+	return parseBuildConfig(await fs.readFile(buildConfigPath, 'utf8'));
 }
 
 export async function computeFingerprintFromConfigPath(buildConfigPath: string): Promise<string> {

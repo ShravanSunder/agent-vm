@@ -1,5 +1,11 @@
 {
 	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"paths": {
+			"@shravansunder/gateway-interface": ["../gateway-interface/src/index.ts"],
+			"@shravansunder/gondolin-core": ["../gondolin-core/src/index.ts"]
+		}
+	},
 	"include": ["src/**/*.ts"],
 	"exclude": ["dist"]
 }

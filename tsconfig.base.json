@@ -26,9 +26,11 @@
 		"skipLibCheck": true,
 		"types": ["node"],
 		"paths": {
-			"gateway-interface": ["./packages/gateway-interface/src/index.ts"],
-			"openclaw-gateway": ["./packages/openclaw-gateway/src/index.ts"],
-			"worker-gateway": ["./packages/worker-gateway/src/index.ts"]
+			"@shravansunder/gondolin-core": ["./packages/gondolin-core/src/index.ts"],
+			"@shravansunder/agent-vm-worker": ["./packages/agent-vm-worker/src/index.ts"],
+			"@shravansunder/gateway-interface": ["./packages/gateway-interface/src/index.ts"],
+			"@shravansunder/openclaw-gateway": ["./packages/openclaw-gateway/src/index.ts"],
+			"@shravansunder/worker-gateway": ["./packages/worker-gateway/src/index.ts"]
 		}
 	}
 }

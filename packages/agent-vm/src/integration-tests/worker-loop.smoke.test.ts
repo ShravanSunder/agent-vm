@@ -6,7 +6,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { SecretRef, SecretResolver } from 'gondolin-core';
+import type { SecretRef, SecretResolver } from '@shravansunder/gondolin-core';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 

@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 
-import type { BuildConfig, BuildImageResult } from 'gondolin-core';
+import type { BuildConfig, BuildImageResult } from '@shravansunder/gondolin-core';
 
 import {
 	buildGondolinImage as buildGondolinImageDefault,

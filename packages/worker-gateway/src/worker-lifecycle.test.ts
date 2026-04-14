@@ -1,4 +1,4 @@
-import type { GatewayZoneConfig } from 'gateway-interface';
+import type { GatewayZoneConfig } from '@shravansunder/gateway-interface';
 import { describe, expect, it } from 'vitest';
 
 import { workerLifecycle } from './worker-lifecycle.js';

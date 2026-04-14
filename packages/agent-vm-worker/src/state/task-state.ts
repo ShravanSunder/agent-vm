@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs';
+import fs from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { replayEvents } from './event-log.js';
@@ -140,25 +140,31 @@ export function isTerminal(state: TaskState): boolean {
 	return new Set<string>(TERMINAL_STATUSES).has(state.status);
 }
 
-export function hydrateTaskStates(stateDir: string): Map<string, TaskState> {
+function writeStderr(message: string): void {
+	process.stderr.write(`${message}\n`);
+}
+
+export async function hydrateTaskStates(stateDir: string): Promise<Map<string, TaskState>> {
 	const tasksDir = join(stateDir, 'tasks');
 	const taskStates = new Map<string, TaskState>();
 
 	try {
-		const files = readdirSync(tasksDir);
+		const files = await fs.readdir(tasksDir);
 		for (const file of files) {
 			if (!file.endsWith('.jsonl')) {
 				continue;
 			}
 			const filePath = join(tasksDir, file);
-			const events = replayEvents(filePath);
+			// Replay stays sequential so stderr warnings and corruption errors point at one file at a time.
+			// oxlint-disable-next-line eslint/no-await-in-loop
+			const events = await replayEvents(filePath);
 			if (events.length === 0) {
 				continue;
 			}
 
 			const firstEvent = events[0];
 			if (!firstEvent || firstEvent.data.event !== 'task-accepted') {
-				console.warn(`Skipping ${file}: first event is not task-accepted`);
+				writeStderr(`Skipping ${file}: first event is not task-accepted`);
 				continue;
 			}
 

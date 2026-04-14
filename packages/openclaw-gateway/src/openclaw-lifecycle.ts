@@ -6,9 +6,9 @@ import type {
 	GatewayProcessSpec,
 	GatewayZoneConfig,
 	GatewayVmSpec,
-} from 'gateway-interface';
-import { splitResolvedGatewaySecrets } from 'gateway-interface';
-import type { SecretResolver } from 'gondolin-core';
+} from '@shravansunder/gateway-interface';
+import { splitResolvedGatewaySecrets } from '@shravansunder/gateway-interface';
+import type { SecretResolver } from '@shravansunder/gondolin-core';
 
 function buildGatewayTcpHosts(
 	zone: GatewayZoneConfig,

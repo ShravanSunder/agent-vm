@@ -1,5 +1,5 @@
-import type { SecretResolver } from 'gondolin-core';
-import { resolveServiceAccountToken } from 'gondolin-core';
+import type { SecretResolver } from '@shravansunder/gondolin-core';
+import { resolveServiceAccountToken } from '@shravansunder/gondolin-core';
 
 import type { SystemConfig } from '../config/system-config.js';
 

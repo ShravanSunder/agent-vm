@@ -1,7 +1,9 @@
 {
-	"name": "gateway-interface",
+	"name": "@shravansunder/gateway-interface",
 	"version": "0.0.2",
-	"private": true,
+	"files": [
+		"dist"
+	],
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -11,11 +13,14 @@
 			"import": "./dist/index.js"
 		}
 	},
+	"publishConfig": {
+		"access": "public"
+	},
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"gondolin-core": "workspace:*"
+		"@shravansunder/gondolin-core": "workspace:0.0.2"
 	}
 }

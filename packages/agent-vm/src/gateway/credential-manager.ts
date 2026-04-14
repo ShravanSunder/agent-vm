@@ -1,4 +1,4 @@
-import type { SecretRef, SecretResolver } from 'gondolin-core';
+import type { SecretRef, SecretResolver } from '@shravansunder/gondolin-core';
 
 import type { SystemConfig } from '../config/system-config.js';
 

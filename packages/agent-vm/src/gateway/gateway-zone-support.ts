@@ -1,4 +1,4 @@
-import type { GatewayProcessSpec } from 'gateway-interface';
+import type { GatewayProcessSpec } from '@shravansunder/gateway-interface';
 
 import type { SystemConfig } from '../config/system-config.js';
 import type { RunTaskFn } from '../shared/run-task.js';
@@ -7,7 +7,7 @@ export type GatewayZone = SystemConfig['zones'][number];
 
 export interface StartGatewayZoneOptions {
 	readonly runTask?: RunTaskFn;
-	readonly secretResolver: import('gondolin-core').SecretResolver;
+	readonly secretResolver: import('@shravansunder/gondolin-core').SecretResolver;
 	readonly systemConfig: SystemConfig;
 	readonly tcpHostsOverride?: Record<string, string>;
 	readonly zoneId: string;
@@ -15,13 +15,13 @@ export interface StartGatewayZoneOptions {
 }
 
 export interface GatewayZoneStartResult {
-	readonly image: import('gondolin-core').BuildImageResult;
+	readonly image: import('@shravansunder/gondolin-core').BuildImageResult;
 	readonly ingress: {
 		readonly host: string;
 		readonly port: number;
 	};
 	readonly processSpec: GatewayProcessSpec;
-	readonly vm: import('gondolin-core').ManagedVm;
+	readonly vm: import('@shravansunder/gondolin-core').ManagedVm;
 	readonly zone: GatewayZone;
 }
 

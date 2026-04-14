@@ -2,9 +2,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { workerConfigSchema, type WorkerConfig } from 'agent-vm-worker';
+import { workerConfigSchema, type WorkerConfig } from '@shravansunder/agent-vm-worker';
 import { execa } from 'execa';
-import type { SecretResolver } from 'gondolin-core';
+import type { SecretResolver } from '@shravansunder/gondolin-core';
 import { z } from 'zod';
 
 import type { SystemConfig } from '../config/system-config.js';
