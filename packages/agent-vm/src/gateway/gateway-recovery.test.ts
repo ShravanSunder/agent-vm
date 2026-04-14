@@ -12,7 +12,6 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 			ingressPort: 18791,
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			qemuPid: 48282,
-			sessionId: 'gateway-vm-123',
 			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 			vmId: 'gateway-vm-123',
 			zoneId: 'shravan',
@@ -53,7 +52,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		expect(killProcess).toHaveBeenNthCalledWith(1, 48282, 'SIGTERM');
 		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledWith('/state/shravan');
 		expect(logMessages).toEqual([
-			"Found persisted gateway runtime for zone 'shravan' (pid 48282, session gateway-vm-123).",
+			"Found persisted gateway runtime for zone 'shravan' (pid 48282, vm gateway-vm-123).",
 			"Removed stale gateway runtime record for zone 'shravan' after terminating orphaned gateway pid 48282.",
 		]);
 	});
@@ -66,7 +65,6 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 			ingressPort: 18791,
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			qemuPid: 48282,
-			sessionId: 'gateway-vm-123',
 			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 			vmId: 'gateway-vm-123',
 			zoneId: 'shravan',
@@ -114,7 +112,6 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 						ingressPort: 18791,
 						projectNamespace: 'claw-tests-a1b2c3d4',
 						qemuPid: 48282,
-						sessionId: 'gateway-vm-123',
 						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 						vmId: 'gateway-vm-123',
 						zoneId: 'shravan',
@@ -158,7 +155,6 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 						ingressPort: 18791,
 						projectNamespace: 'claw-tests-a1b2c3d4',
 						qemuPid: 48282,
-						sessionId: 'gateway-vm-123',
 						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 						vmId: 'gateway-vm-123',
 						zoneId: 'shravan',
@@ -195,7 +191,6 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 						ingressPort: 18791,
 						projectNamespace: 'claw-tests-a1b2c3d4',
 						qemuPid: 48282,
-						sessionId: 'gateway-vm-123',
 						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 						vmId: 'gateway-vm-123',
 						zoneId: 'shravan',
@@ -243,7 +238,6 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 						ingressPort: 18791,
 						projectNamespace: 'claw-tests-a1b2c3d4',
 						qemuPid: 48282,
-						sessionId: 'gateway-vm-123',
 						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 						vmId: 'gateway-vm-123',
 						zoneId: 'shravan',
@@ -285,7 +279,6 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 						ingressPort: 18791,
 						projectNamespace: 'claw-tests-a1b2c3d4',
 						qemuPid: 48282,
-						sessionId: 'gateway-vm-123',
 						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 						vmId: 'gateway-vm-123',
 						zoneId: 'shravan',
@@ -326,7 +319,6 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 						ingressPort: 18791,
 						projectNamespace: 'claw-tests-a1b2c3d4',
 						qemuPid: 48282,
-						sessionId: 'gateway-vm-123',
 						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 						vmId: 'gateway-vm-123',
 						zoneId: 'shravan',

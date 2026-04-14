@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { gatewayTypeValues } from '@shravansunder/agent-vm-gateway-interface';
 import { z } from 'zod';
 
 const secretReferenceSchema = z.object({
@@ -27,7 +28,7 @@ const tokenSourceSchema = z.discriminatedUnion('type', [
 ]);
 
 const zoneGatewaySchema = z.object({
-	type: z.enum(['openclaw', 'worker']).default('openclaw'),
+	type: z.enum(gatewayTypeValues).default('openclaw'),
 	memory: z.string().min(1),
 	cpus: z.number().int().positive(),
 	port: z.number().int().positive(),
@@ -132,7 +133,7 @@ export async function loadSystemConfig(configPath: string): Promise<SystemConfig
 	const absoluteConfigPath = path.resolve(configPath);
 	const configDir = path.dirname(absoluteConfigPath);
 	const rawConfig = await fs.readFile(absoluteConfigPath, 'utf8');
-	const parsedConfig = JSON.parse(rawConfig) as unknown;
+	const parsedConfig: unknown = JSON.parse(rawConfig);
 	const config = systemConfigSchema.parse(parsedConfig);
 	return resolveRelativePaths(config, configDir);
 }

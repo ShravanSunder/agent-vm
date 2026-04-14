@@ -8,7 +8,10 @@ import type {
 	GatewayZoneConfig,
 	GatewayVmSpec,
 } from '@shravansunder/agent-vm-gateway-interface';
-import { splitResolvedGatewaySecrets } from '@shravansunder/agent-vm-gateway-interface';
+import {
+	buildGatewaySessionLabel as buildGatewaySessionLabelValue,
+	splitResolvedGatewaySecrets,
+} from '@shravansunder/agent-vm-gateway-interface';
 import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
 
 const effectiveOpenClawConfigFileName = 'effective-openclaw.json';
@@ -128,7 +131,7 @@ async function writeEffectiveOpenClawConfig(
 			ref: gatewayTokenSecret.ref,
 		});
 		const rawBaseConfig = await fs.readFile(zone.gateway.gatewayConfig, 'utf8');
-		const parsedBaseConfig = JSON.parse(rawBaseConfig) as unknown;
+		const parsedBaseConfig: unknown = JSON.parse(rawBaseConfig);
 		if (!isObjectRecord(parsedBaseConfig)) {
 			throw new Error(`OpenClaw config at '${zone.gateway.gatewayConfig}' must be a JSON object.`);
 		}
@@ -194,7 +197,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 			},
 			mediatedSecrets,
 			rootfsMode: 'cow',
-			sessionLabel: `${projectNamespace}:${zone.id}:gateway`,
+			sessionLabel: buildGatewaySessionLabelValue(projectNamespace, zone.id),
 			tcpHosts: buildGatewayTcpHosts(zone, controllerPort, tcpPool),
 			vfsMounts: {
 				'/home/openclaw/.openclaw/config': {

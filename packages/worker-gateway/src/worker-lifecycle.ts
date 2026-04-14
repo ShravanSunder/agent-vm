@@ -4,7 +4,10 @@ import type {
 	GatewayProcessSpec,
 	GatewayVmSpec,
 } from '@shravansunder/agent-vm-gateway-interface';
-import { splitResolvedGatewaySecrets } from '@shravansunder/agent-vm-gateway-interface';
+import {
+	buildGatewaySessionLabel,
+	splitResolvedGatewaySecrets,
+} from '@shravansunder/agent-vm-gateway-interface';
 
 export const workerLifecycle: GatewayLifecycle = {
 	buildVmSpec({
@@ -28,7 +31,7 @@ export const workerLifecycle: GatewayLifecycle = {
 			},
 			mediatedSecrets,
 			rootfsMode: 'cow',
-			sessionLabel: `${projectNamespace}:${zone.id}:gateway`,
+			sessionLabel: buildGatewaySessionLabel(projectNamespace, zone.id),
 			tcpHosts: {
 				'controller.vm.host:18800': `127.0.0.1:${controllerPort}`,
 			},

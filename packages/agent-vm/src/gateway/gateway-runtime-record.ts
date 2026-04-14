@@ -1,18 +1,22 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import type { GatewayProcessSpec } from '@shravansunder/agent-vm-gateway-interface';
+import {
+	buildGatewaySessionLabel,
+	gatewayTypeValues,
+	type GatewayProcessSpec,
+	type GatewayType,
+} from '@shravansunder/agent-vm-gateway-interface';
 import type { ManagedVm } from '@shravansunder/agent-vm-gondolin-core';
 import { ZodError, z } from 'zod';
 
 export const gatewayRuntimeRecordSchema = z.object({
 	createdAt: z.string().datetime(),
-	gatewayType: z.enum(['openclaw', 'worker']),
+	gatewayType: z.enum(gatewayTypeValues),
 	guestListenPort: z.number().int().positive(),
 	ingressPort: z.number().int().positive(),
 	projectNamespace: z.string().min(1),
 	qemuPid: z.number().int().positive(),
-	sessionId: z.string().min(1),
 	sessionLabel: z.string().min(1),
 	vmId: z.string().min(1),
 	zoneId: z.string().min(1),
@@ -110,7 +114,10 @@ export async function writeGatewayRuntimeRecord(
 ): Promise<void> {
 	const runtimeRecordPath = resolveGatewayRuntimeRecordPath(stateDirectory);
 	await fs.mkdir(stateDirectory, { recursive: true });
-	await writeFileAtomically(runtimeRecordPath, `${JSON.stringify(record, null, 2)}\n`);
+	await writeFileAtomically(
+		runtimeRecordPath,
+		`${JSON.stringify(gatewayRuntimeRecordSchema.parse(record), null, 2)}\n`,
+	);
 }
 
 export async function deleteGatewayRuntimeRecord(stateDirectory: string): Promise<void> {
@@ -118,7 +125,7 @@ export async function deleteGatewayRuntimeRecord(stateDirectory: string): Promis
 }
 
 function resolveManagedVmQemuPid(managedVm: ManagedVm): number {
-	const vmInstance = managedVm.getVmInstance() as unknown;
+	const vmInstance: unknown = managedVm.getVmInstance();
 	if (!isObjectRecord(vmInstance)) {
 		throw new Error('Gateway VM runtime is missing its live VM instance.');
 	}
@@ -151,24 +158,23 @@ function resolveManagedVmQemuPid(managedVm: ManagedVm): number {
 }
 
 export function buildGatewayRuntimeRecord(options: {
-	readonly gatewayType: GatewayRuntimeRecord['gatewayType'];
+	readonly gatewayType: GatewayType;
 	readonly ingressPort: number;
 	readonly managedVm: ManagedVm;
 	readonly processSpec: GatewayProcessSpec;
 	readonly projectNamespace: string;
 	readonly zoneId: string;
 }): GatewayRuntimeRecord {
-	const sessionId = options.managedVm.id;
+	const gatewayType = gatewayRuntimeRecordSchema.shape.gatewayType.parse(options.gatewayType);
 
 	return {
 		createdAt: new Date().toISOString(),
-		gatewayType: options.gatewayType,
+		gatewayType,
 		guestListenPort: options.processSpec.guestListenPort,
 		ingressPort: options.ingressPort,
 		projectNamespace: options.projectNamespace,
 		qemuPid: resolveManagedVmQemuPid(options.managedVm),
-		sessionId,
-		sessionLabel: `${options.projectNamespace}:${options.zoneId}:gateway`,
+		sessionLabel: buildGatewaySessionLabel(options.projectNamespace, options.zoneId),
 		vmId: options.managedVm.id,
 		zoneId: options.zoneId,
 	};

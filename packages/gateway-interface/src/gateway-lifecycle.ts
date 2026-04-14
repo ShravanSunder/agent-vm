@@ -1,6 +1,7 @@
 import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
 
 import type { GatewayProcessSpec } from './gateway-process-spec.js';
+import type { GatewayType } from './gateway-runtime-contract.js';
 import type { GatewayVmSpec } from './gateway-vm-spec.js';
 
 /**
@@ -28,7 +29,7 @@ export interface GatewayAuthConfig {
 export interface GatewayZoneConfig {
 	readonly id: string;
 	readonly gateway: {
-		readonly type: 'openclaw' | 'worker';
+		readonly type: GatewayType;
 		readonly memory: string;
 		readonly cpus: number;
 		readonly port: number;
@@ -40,7 +41,7 @@ export interface GatewayZoneConfig {
 	readonly secrets: Record<
 		string,
 		{
-			readonly source: string;
+			readonly source: '1password';
 			readonly ref?: string | undefined;
 			readonly injection: 'env' | 'http-mediation';
 			readonly hosts?: readonly string[] | undefined;

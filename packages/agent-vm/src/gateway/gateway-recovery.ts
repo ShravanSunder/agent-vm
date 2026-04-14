@@ -176,7 +176,7 @@ export async function cleanupOrphanedGatewayIfPresent(
 		return { cleanedUp: false, killedPid: null };
 	}
 	log(
-		`Found persisted gateway runtime for zone '${runtimeRecord.zoneId}' (pid ${runtimeRecord.qemuPid}, session ${runtimeRecord.sessionId}).`,
+		`Found persisted gateway runtime for zone '${runtimeRecord.zoneId}' (pid ${runtimeRecord.qemuPid}, vm ${runtimeRecord.vmId}).`,
 	);
 
 	const killedPid = await killOrphanedGatewayProcess(runtimeRecord, {
