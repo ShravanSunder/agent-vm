@@ -4,15 +4,13 @@
 
 **Goal:** Wire Relay's deployed infrastructure (delegator + background-agent) to the agent-vm controller and agent-vm-worker so that `POST /tasks` to the delegator creates a Sysbox pod that runs a coding task end-to-end: clone repo → plan → implement → verify → PR.
 
-**Architecture:** The relay-agent-delegator (already deployed, healthy in dev cluster) creates Sysbox pods. Each pod runs the agent-vm controller, which boots a Gondolin VM containing agent-vm-worker. The controller handles the full task lifecycle: clone, config merge, Docker services, VM creation, task submission, polling, cleanup. All packages are published to npm under `@shravansunder/` scope. The relay-background-agent Dockerfile installs them via pnpm.
+**Architecture:** The relay-agent-delegator (already deployed, healthy in dev cluster) creates Sysbox pods. Each pod runs the agent-vm controller natively (not in Docker). The controller's `POST /zones/:zoneId/worker-tasks` route is **synchronous** — it does the entire lifecycle internally (clone repo, merge config, start Docker services, boot Gondolin VM, submit task to worker, poll worker, harvest result, cleanup) and returns the final result. The delegator creates the pod, waits for ready, POSTs the task, waits for the response, then deletes the pod. All packages are published to npm under `@shravansunder/` scope (public).
 
 **Tech Stack:** TypeScript, pnpm, Hono, Zod, cmd-ts, Gondolin (QEMU), Sysbox, Docker Compose, ArgoCD, ECR, GitHub Actions
 
 **Repos involved:**
 - `agent-vm` (ShravanSunder/agent-vm) — controller + worker source, npm packages
 - `relay-ai-tools` (relay-ai-tools) — delegator + background-agent Docker images
-
-**Design spec:** `docs/superpowers/specs/2026-04-12-agent-vm-worker-design.md`
 
 ---
 
@@ -21,28 +19,33 @@
 ```
 relay-agent-delegator (k8s Deployment, port 3000, already deployed)
     │
-    │ POST /tasks { repoUrl, branch, prompt }
-    │
-    ▼
-Creates Sysbox pod (image: relay/agent-vm-worker from ECR)
+    │ POST /tasks { prompt, repos, context }
+    │   → creates Sysbox pod, waits for /health:18800
+    │   → POST /zones/coding-agent/worker-tasks to controller
+    │   → waits for synchronous response (controller does everything)
+    │   → deletes pod
+    │   → returns result to caller
     │
     ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ Sysbox Pod                                                   │
+│ Sysbox Pod (image: relay/agent-vm-worker from ECR)           │
 │                                                              │
 │  systemd (PID 1)                                             │
-│  Docker daemon (for pg, redis stacks only)                   │
+│  Docker daemon (for pg, redis stacks ONLY)                   │
+│  agent-vm controller runs NATIVELY in the pod (not Docker)   │
 │                                                              │
 │  agent-vm controller start --config /etc/agent-vm/system.json│
-│  (port 18800, serves /health, /coding/tasks/*)               │
+│  (port 18800, serves /health + /zones/:zoneId/worker-tasks)  │
 │                                                              │
-│  On POST /coding/tasks:                                      │
-│    preStartGateway → mkdir, clone repo, merge config         │
-│    docker compose up (pg, redis) ← nested Docker             │
-│    startGatewayZone → Gondolin VM (QEMU)                     │
+│  On POST /zones/coding-agent/worker-tasks:                   │
+│    runWorkerTask() does EVERYTHING synchronously:            │
+│    1. preStartGateway → mkdir, clone repo, merge config      │
+│    2. docker compose up (pg, redis) ← nested Docker daemon   │
+│    3. startGatewayZone → boot Gondolin VM (QEMU, native)     │
 │    ┌──────────────────────────────────────┐                  │
-│    │ Gondolin VM                          │                  │
-│    │  agent-vm-worker serve --port 18789  │                  │
+│    │ Gondolin VM (QEMU)                   │                  │
+│    │  node /opt/agent-vm-worker/dist/     │                  │
+│    │       main.js serve --port 18789     │                  │
 │    │  /workspace → VFS mount (cloned repo)│                  │
 │    │  /state → VFS mount (JSONL events)   │                  │
 │    │  postgres.local:5432 → TCP to Docker │                  │
@@ -50,11 +53,36 @@ Creates Sysbox pod (image: relay/agent-vm-worker from ECR)
 │    │  plan → review → work → verify →     │                  │
 │    │  review → wrapup (git-pr) → done     │                  │
 │    └──────────────────────────────────────┘                  │
-│    POST /tasks to worker → poll → harvest result             │
-│    vm.close() → postStopGateway → cleanup                    │
+│    4. POST /tasks to worker via ingress                      │
+│    5. Poll GET /tasks/:id every 1s until terminal            │
+│    6. vm.close()                                             │
+│    7. postStopGateway → stop Docker, delete task dirs        │
+│    8. Return final result in HTTP response                   │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+### Key API Surface (controller inside pod)
+
+| Route | Method | Behavior |
+|-------|--------|----------|
+| `/health` | GET | Returns `{ ok: true, port }` — readiness probe target |
+| `/zones/:zoneId/worker-tasks` | POST | **Synchronous.** Runs full task lifecycle. Returns final result when done. Body: `{ prompt, repos, context }` |
+| `/controller-status` | GET | Controller status |
+| `/zones/:zoneId/logs` | GET | Gateway logs |
+
+**There is NO async task ID or polling endpoint on the controller.** The controller's `runWorkerTask()` blocks until the worker completes or fails (up to 30min timeout). The delegator waits for this single HTTP response.
+
+### Worker binary path inside Gondolin VM
+
+The `worker-lifecycle.ts` starts the worker at a fixed path:
+```
+node /opt/agent-vm-worker/dist/main.js serve --port 18789
+```
+
+The OCI Dockerfile (gateway image rootfs) must install `@shravansunder/agent-vm-worker` from npm AND symlink its dist to `/opt/agent-vm-worker/dist/` so the hardcoded path resolves.
+
+---
 
 ## Dependency Graph
 
@@ -71,14 +99,17 @@ T1 is the bulk of the work. T2-T4 are integration.
 
 ### Task 1: Update relay-background-agent — Install agent-vm + Config
 
-**Why:** The base image currently has no controller binary (`sleep infinity`). We need to install `@shravansunder/agent-vm` via pnpm, update system.json for the new schema, add a gateway config for the worker, and pre-cache the Gondolin VM image at build time.
+**Why:** The base image currently has no controller binary (`sleep infinity`). We need to install `@shravansunder/agent-vm` via pnpm, update system.json for the new schema, add a gateway config for the worker, and set up the Gondolin VM image build.
 
 **Files:**
 - Modify: `relay-background-agent/Dockerfile`
 - Modify: `relay-background-agent/config/system.json`
 - Create: `relay-background-agent/config/coding-gateway.json`
-- Modify: `relay-background-agent/README.md`
+- Create: `relay-background-agent/images/gateway/Dockerfile`
+- Create: `relay-background-agent/images/gateway/build-config.json`
+- Create: `relay-background-agent/scripts/start.sh`
 - Modify: `relay-background-agent/package.json`
+- Modify: `relay-background-agent/README.md`
 
 - [ ] **Step 1: Update package.json to add agent-vm dependency**
 
@@ -96,7 +127,7 @@ T1 is the bulk of the work. T2-T4 are integration.
 
 - [ ] **Step 2: Update system.json to match the current Zod schema**
 
-The current schema uses `gateway.type: "coding"` (not `"agent-vm-coding"`), requires `gatewayConfig` (not `openclawConfig`), and the secrets provider needs a valid tokenSource discriminated union.
+The current `systemConfigSchema` in `packages/agent-vm/src/config/system-config.ts` requires: `host.secretsProvider.type: "1password"` with a tokenSource discriminated union, `gateway.type: "openclaw" | "coding"`, `gatewayConfig` (not `openclawConfig`), `cacheDir`, `images.gateway` + `images.tool`, `tcpPool`, and `toolProfiles`.
 
 ```json
 {
@@ -116,7 +147,7 @@ The current schema uses `gateway.type: "coding"` (not `"agent-vm-coding"`), requ
       "buildConfig": "/etc/agent-vm/images/gateway/build-config.json"
     },
     "tool": {
-      "buildConfig": "/etc/agent-vm/images/tool/build-config.json"
+      "buildConfig": "/etc/agent-vm/images/gateway/build-config.json"
     }
   },
   "zones": [
@@ -167,11 +198,11 @@ The current schema uses `gateway.type: "coding"` (not `"agent-vm-coding"`), requ
 }
 ```
 
-Note: The secret refs are placeholders — Relay will inject the actual 1Password refs or switch to env-based injection. For beta, secrets can be injected as pod env vars by the delegator. The controller reads `OP_SERVICE_ACCOUNT_TOKEN` from env if `tokenSource.type` is `"env"`.
+Note: For beta, secrets can use `"injection": "env"` — the controller passes them as env vars to the VM. The 1Password `ref` values are placeholders; Relay will set the real refs. The `OP_SERVICE_ACCOUNT_TOKEN` env var is injected into the pod via k8s Secret.
 
 - [ ] **Step 3: Create coding-gateway.json (worker config)**
 
-This is the gateway-level config that gets merged with project config and fed to the worker. It defines phase skills, models, and default verification.
+This is the gateway-level config that `preStartGateway()` reads, merges with project config, and writes as `effective-worker.json` for the worker. Matches `workerConfigSchema` in `packages/agent-vm-worker/src/config/worker-config.ts`.
 
 ```json
 {
@@ -215,28 +246,39 @@ This is the gateway-level config that gets merged with project config and fed to
 }
 ```
 
-Skills arrays are empty for beta — the VM image doesn't have skills baked in yet. The worker uses default instructions from code. Skills will be added when we bake SKILL.md files into the Gondolin VM image.
+Skills arrays are empty for beta. The worker uses default instructions from code. Skills will be added when SKILL.md files are baked into the Gondolin VM image.
 
-- [ ] **Step 4: Copy Gondolin VM image build configs into the image**
+- [ ] **Step 4: Create the Gondolin VM OCI Dockerfile**
 
-The controller needs the `build-config.json` and `Dockerfile` (for the OCI image) to build the Gondolin VM image. These live in the agent-vm repo at `images/gateway/`. We need them in the relay-background-agent Docker image.
+This is the OCI image that becomes the Gondolin VM rootfs. The controller builds it with `docker build` on first pod startup. The worker binary (`agent-vm-worker`) is installed from npm and symlinked to `/opt/agent-vm-worker/dist/` because `worker-lifecycle.ts` starts it at `node /opt/agent-vm-worker/dist/main.js`.
 
-Create the directory structure:
+`relay-background-agent/images/gateway/Dockerfile`:
+```dockerfile
+FROM node:24-slim
 
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      openssh-server \
+      ca-certificates \
+      git \
+      curl \
+      python3 && \
+    rm -rf /var/lib/apt/lists/* && \
+    update-ca-certificates && \
+    npm install -g pnpm@10 && \
+    mkdir -p /opt/agent-vm-worker && \
+    cd /opt/agent-vm-worker && \
+    pnpm add @shravansunder/agent-vm-worker && \
+    ln -sf /opt/agent-vm-worker/node_modules/@shravansunder/agent-vm-worker/dist /opt/agent-vm-worker/dist && \
+    useradd -m -s /bin/bash coder && \
+    mkdir -p /home/coder /workspace /state /run/sshd /root && \
+    chown -R coder:coder /home/coder && \
+    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true
 ```
-relay-background-agent/
-├── config/
-│   ├── system.json
-│   └── coding-gateway.json
-├── images/
-│   └── gateway/
-│       ├── build-config.json    ← copied from agent-vm repo
-│       └── Dockerfile           ← copied from agent-vm repo
-├── stacks/
-│   └── default/
-│       └── docker-compose.yml
-└── Dockerfile
-```
+
+The symlink `ln -sf .../node_modules/@shravansunder/agent-vm-worker/dist /opt/agent-vm-worker/dist` ensures the hardcoded `startCommand` in `worker-lifecycle.ts:53` resolves correctly.
+
+- [ ] **Step 5: Create the Gondolin build-config.json**
 
 `relay-background-agent/images/gateway/build-config.json`:
 ```json
@@ -261,34 +303,30 @@ relay-background-agent/
 }
 ```
 
-No `postBuild.copy` needed — `@shravansunder/agent-vm-worker` is installed from npm directly in the OCI Dockerfile. The `oci.pullPolicy: "never"` means the OCI image must be pre-built locally — the start script builds it with `docker build`.
+No `postBuild.copy` needed — the worker is installed from npm in the OCI Dockerfile. `oci.pullPolicy: "never"` means the OCI image must exist locally when Gondolin builds the VM image (the start script builds it first).
 
-`relay-background-agent/images/gateway/Dockerfile`:
-```dockerfile
-FROM node:24-slim
+- [ ] **Step 6: Create the pod startup script**
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-      openssh-server \
-      ca-certificates \
-      git \
-      curl \
-      python3 && \
-    rm -rf /var/lib/apt/lists/* && \
-    update-ca-certificates && \
-    npm install -g pnpm@10 && \
-    mkdir -p /opt/agent-vm-worker && \
-    cd /opt/agent-vm-worker && \
-    pnpm add @shravansunder/agent-vm-worker && \
-    useradd -m -s /bin/bash coder && \
-    mkdir -p /home/coder /workspace /state /run/sshd /root && \
-    chown -R coder:coder /home/coder && \
-    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true
+The `docker build` and `agent-vm build` steps require Docker to be running. In the Sysbox pod, Docker is managed by systemd and isn't available during `docker build` (CI time). So we build on first pod startup.
+
+`relay-background-agent/scripts/start.sh`:
+```bash
+#!/bin/bash
+set -euo pipefail
+
+echo "[start] Waiting for Docker daemon..."
+timeout 60 bash -c 'until docker info >/dev/null 2>&1; do sleep 1; done'
+
+echo "[start] Building gateway OCI image..."
+docker build -t agent-vm-gateway:latest -f /etc/agent-vm/images/gateway/Dockerfile /etc/agent-vm/images/gateway/
+
+echo "[start] Starting controller..."
+exec agent-vm controller start --config /etc/agent-vm/system.json
 ```
 
-This is the OCI image that becomes the Gondolin VM rootfs. It has Node.js + agent-vm-worker installed from npm (includes all runtime deps). The worker binary is at `/opt/agent-vm-worker/node_modules/.bin/agent-vm-worker` — the `startCommand` in `worker-lifecycle.ts` needs to resolve to this path (or use `pnpm dlx`).
+This waits for systemd to start the Docker daemon, builds the OCI image (rootfs for the Gondolin VM), then starts the controller. The controller's `startGatewayZone()` will call `buildImage()` which uses the OCI image + Alpine kernel to create the final Gondolin VM image. First startup takes ~30-60s (OCI build + Gondolin build). Subsequent restarts reuse the cached Gondolin image.
 
-- [ ] **Step 5: Update the main Dockerfile**
+- [ ] **Step 7: Update the main Dockerfile**
 
 ```dockerfile
 # ---------------------------------------------------------------------------
@@ -315,111 +353,69 @@ RUN apt-get update \
 # Install agent-vm controller from npm (public @shravansunder scope)
 RUN pnpm add -g @shravansunder/agent-vm
 
-# Copy Relay configuration
+# Pre-download Gondolin guest assets (Alpine kernel + initramfs, ~200MB)
+RUN pnpm dlx @shravansunder/gondolin image pull || true
+
+# Copy Relay configuration + Gondolin VM image build files
 COPY config/ /etc/agent-vm/
 COPY stacks/ /etc/agent-vm/stacks/
 COPY images/ /etc/agent-vm/images/
 
-# Build the Gondolin gateway OCI image (rootfs for the VM)
-# This creates the Docker image "agent-vm-gateway:latest" locally
-COPY images/gateway/Dockerfile /tmp/gateway-dockerfile
-RUN docker build -t agent-vm-gateway:latest -f /tmp/gateway-dockerfile /tmp \
-    && rm /tmp/gateway-dockerfile
-
-# Pre-cache Gondolin VM image (kernel + initramfs + rootfs)
-# This takes ~30s first time but is cached in the Docker layer
-RUN agent-vm build --config /etc/agent-vm/system.json || true
+# Startup script (waits for Docker, builds OCI image, starts controller)
+COPY scripts/start.sh /usr/local/bin/start.sh
+RUN chmod +x /usr/local/bin/start.sh
 
 # Create runtime directories
 RUN mkdir -p /var/agent-vm/state /var/agent-vm/workspace /var/agent-vm/cache
 
 EXPOSE 18800
 
-# Start the controller — it will serve /health on :18800
-CMD ["agent-vm", "controller", "start", "--config", "/etc/agent-vm/system.json"]
-```
-
-**Important consideration:** The `docker build` and `agent-vm build` steps require Docker to be running. In the Sysbox base image, Docker is managed by systemd. During Docker image build (CI), we may need to use buildx or a different approach since the nested Docker daemon isn't available during `docker build`. This may need to be handled by:
-- Building the OCI image separately in CI and copying the tarball
-- Or running `agent-vm build` on first pod startup (adds ~30s cold start)
-
-For beta, the pragmatic approach: skip `docker build` and `agent-vm build` in the Dockerfile. Run them on first pod startup. The cold start penalty is acceptable for beta. The CMD becomes a wrapper script:
-
-```dockerfile
-COPY scripts/start.sh /usr/local/bin/start.sh
-RUN chmod +x /usr/local/bin/start.sh
-
 CMD ["/usr/local/bin/start.sh"]
 ```
 
-Create `relay-background-agent/scripts/start.sh`:
-```bash
-#!/bin/bash
-set -euo pipefail
+- [ ] **Step 8: Update README.md**
 
-echo "[start] Waiting for Docker daemon..."
-timeout 60 bash -c 'until docker info >/dev/null 2>&1; do sleep 1; done'
+Replace the current content to reflect a functional image:
+- Installed packages: `@shravansunder/agent-vm` (controller CLI + Gondolin core)
+- CMD: startup script that builds OCI image then starts controller
+- Config paths: `/etc/agent-vm/system.json`, `/etc/agent-vm/coding-gateway.json`
+- Gateway OCI image: built on first pod startup (requires Docker daemon via systemd)
+- Cold start: ~30-60s first boot, ~5s subsequent (Gondolin image cached)
 
-echo "[start] Building gateway OCI image..."
-docker build -t agent-vm-gateway:latest -f /etc/agent-vm/images/gateway/Dockerfile /etc/agent-vm/images/gateway/
-
-echo "[start] Starting controller..."
-exec agent-vm controller start --config /etc/agent-vm/system.json
-```
-
-- [ ] **Step 6: Update README.md**
-
-Update to reflect the functional image (no longer a base image):
-- Installed packages: `@shravansunder/agent-vm` (controller + Gondolin core)
-- CMD: starts controller directly
-- Config paths: system.json, coding-gateway.json
-- Gateway OCI image: built on first startup
-- No downstream Dockerfile needed
-
-- [ ] **Step 7: Verify locally (if Sysbox available)**
-
-```bash
-cd relay-ai-tools/relay-background-agent
-docker build -t relay-background-agent-test .
-# Run with Sysbox if available:
-docker run --runtime=sysbox-runc -p 18800:18800 relay-background-agent-test
-# In another terminal:
-curl http://localhost:18800/health
-```
-
-Expected: Controller starts, `/health` returns 200.
-
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 cd relay-ai-tools
 git add relay-background-agent/
 git commit -m "feat(relay-background-agent): install agent-vm controller, add coding gateway config
 
-- Install @shravansunder/agent-vm via pnpm (controller CLI + Gondolin)
-- Update system.json for new gateway abstraction schema (type: coding)
-- Add coding-gateway.json (worker phase config, models, verification)
-- Add gateway OCI image Dockerfile + build-config.json
-- CMD starts controller directly (no more sleep infinity)
-- Build gateway OCI image on first startup (Docker daemon needed)"
+- Install @shravansunder/agent-vm via pnpm (controller CLI)
+- Update system.json for gateway abstraction schema (type: coding)
+- Add coding-gateway.json (worker phase config)
+- Add gateway OCI Dockerfile (installs agent-vm-worker from npm, symlinks dist)
+- Add Gondolin build-config.json (Alpine + OCI rootfs, 4GB)
+- Startup script: wait for Docker → build OCI image → start controller
+- ENV PNPM_HOME for global binary resolution"
 ```
 
 ---
 
-### Task 2: Update relay-agent-delegator — API Contract + Controller Routes
+### Task 2: Update relay-agent-delegator — API Contract
 
-**Why:** The delegator's `POST /tasks` schema sends flat fields (`repoUrl`, `branch`, `prompt`, `testCommand`, `lintCommand`). The controller's `POST /coding/tasks` (via `worker-task-runner.ts`) expects `{ prompt, repos: [{ repoUrl, baseBranch }], context }`. The delegator also needs to proxy to the controller's `/coding/tasks` route, not pass everything via env vars.
+**Why:** The delegator currently sends task input as pod env vars (`TASK_REPO_URL`, `TASK_PROMPT`, etc.) and has no task submission step. In the new model, the delegator creates the pod, waits for the controller to be ready, then POSTs the task to `POST /zones/:zoneId/worker-tasks`. This call is **synchronous** — the controller runs the full lifecycle and returns the final result. The delegator then deletes the pod.
+
+**Critical understanding:** The controller's `runWorkerTask()` in `worker-task-runner.ts` blocks for the entire task duration (up to 30min). There is no async task ID or polling on the controller side. The controller internally polls the worker VM — the delegator just waits for the HTTP response.
 
 **Files:**
 - Modify: `relay-agent-delegator/src/routes/task-routes.ts`
 - Modify: `relay-agent-delegator/src/routes/task-routes.test.ts`
 - Modify: `relay-agent-delegator/src/k8s/pod-creator.ts`
 - Modify: `relay-agent-delegator/src/k8s/pod-creator.test.ts`
-- Modify: `relay-agent-delegator/src/proxy/request-proxy.ts`
+- Modify: `relay-agent-delegator/src/config.ts`
 
 - [ ] **Step 1: Update task input schema**
 
-In `relay-agent-delegator/src/routes/task-routes.ts`, update the input schema to match what the controller expects:
+In `relay-agent-delegator/src/routes/task-routes.ts`, update to match `controllerWorkerTaskRequestSchema` in `packages/agent-vm/src/controller/http/controller-request-schemas.ts`:
 
 ```typescript
 export const taskInputSchema = z.object({
@@ -429,30 +425,48 @@ export const taskInputSchema = z.object({
     baseBranch: z.string().min(1).max(200).default("main"),
   })).default([]),
   context: z.record(z.string(), z.unknown()).default({}),
-  // Keep these for backward compat during migration — delegator can pass to controller
-  testCommand: z.string().optional(),
-  lintCommand: z.string().optional(),
-  model: z.string().optional(),
 });
 ```
 
-- [ ] **Step 2: Simplify pod env vars**
+Remove: `repoUrl`, `branch`, `testCommand`, `lintCommand`, `model`, `stackComposePath`. These are now in the gateway config or project config (`.agent-vm/config.json` in the repo), not task input.
 
-In `relay-agent-delegator/src/k8s/pod-creator.ts`, reduce env vars to only what the controller needs at startup (not task-specific):
+- [ ] **Step 2: Add zoneId to config**
+
+In `relay-agent-delegator/src/config.ts`, add the zone ID the delegator targets:
+
+```typescript
+export const appConfigSchema = z.object({
+  port: z.number().default(3000),
+  workerImage: z.string().default("912732483245.dkr.ecr.us-east-1.amazonaws.com/relay/agent-vm-worker:latest"),
+  workerNamespace: z.string().default("agent-vm"),
+  workerMemory: z.string().default("8Gi"),
+  workerCpu: z.string().default("2"),
+  workerRuntimeClass: z.string().default("sysbox-runc"),
+  controllerPort: z.number().default(18800),
+  controllerZoneId: z.string().default("coding-agent"),
+  idleTimeoutMinutes: z.number().default(30),
+  workerTaskTimeoutMs: z.number().default(30 * 60 * 1000),
+});
+```
+
+Added: `controllerZoneId` (matches `zones[].id` in system.json) and `workerTaskTimeoutMs` (how long to wait for the synchronous controller response).
+
+- [ ] **Step 3: Simplify pod env vars**
+
+In `relay-agent-delegator/src/k8s/pod-creator.ts`, remove all task-specific env vars. The pod only needs controller-level config:
 
 ```typescript
 const podEnvVars = [
   { name: "CONTROLLER_PORT", value: String(config.controllerPort) },
-  { name: "IDLE_TIMEOUT_MINUTES", value: String(config.idleTimeoutMinutes) },
 ];
 
-// Secrets injected via k8s secret refs (OPENAI_API_KEY, GITHUB_TOKEN, OP_SERVICE_ACCOUNT_TOKEN)
-// These are NOT in the env var list — they come from k8s Secret objects
+// Secrets (OPENAI_API_KEY, GITHUB_TOKEN, OP_SERVICE_ACCOUNT_TOKEN)
+// injected via k8s Secret envFrom — not in this list
 ```
 
-Remove: `TASK_ID`, `TASK_REPO_URL`, `TASK_BRANCH`, `TASK_PROMPT`, `TASK_TEST_COMMAND`, `TASK_LINT_COMMAND`, `TASK_MODEL`. Task input is now sent via HTTP POST after the pod is ready.
+Remove: `TASK_ID`, `TASK_REPO_URL`, `TASK_BRANCH`, `TASK_PROMPT`, `TASK_TEST_COMMAND`, `TASK_LINT_COMMAND`, `TASK_MODEL`, `IDLE_TIMEOUT_MINUTES`.
 
-- [ ] **Step 3: Update readiness probe path**
+- [ ] **Step 4: Update readiness probe path**
 
 The controller serves `/health` (not `/healthcheck`). Update in `buildWorkerPodSpec`:
 
@@ -462,18 +476,18 @@ readinessProbe: {
     path: "/health",
     port: config.controllerPort,
   },
-  initialDelaySeconds: 10,
+  initialDelaySeconds: 15,
   periodSeconds: 5,
   timeoutSeconds: 3,
-  failureThreshold: 40,  // 40 * 5s = 200s max wait (gateway image build on cold start)
+  failureThreshold: 40,  // 40 * 5s = 200s (OCI build + Gondolin build on first start)
 },
 ```
 
-Increase `failureThreshold` to 40 because the first startup builds the Gondolin VM image (~30s) + gateway OCI image.
+`initialDelaySeconds: 15` because the startup script waits for Docker daemon (~5-10s) before even starting the controller.
 
-- [ ] **Step 4: Add task submission after pod ready**
+- [ ] **Step 5: Rewrite startPodCreation — synchronous task submission + cleanup**
 
-In `task-routes.ts`, after `waitForPodReady` succeeds, submit the task to the controller via HTTP:
+The entire flow is: create pod → wait ready → POST task (blocks) → delete pod.
 
 ```typescript
 async function startPodCreation(props: StartPodCreationProps): Promise<void> {
@@ -490,41 +504,38 @@ async function startPodCreation(props: StartPodCreationProps): Promise<void> {
     });
 
     entry.podIp = podIp;
+    entry.status = "pod-ready";
 
-    // Submit task to controller
+    // Submit task to controller — this blocks until the task completes or fails.
+    // The controller's runWorkerTask() handles everything internally:
+    // clone repo, merge config, start Docker services, boot VM, run worker, cleanup.
     const taskResponse = await proxyRequest({
       podIp,
       controllerPort: config.controllerPort,
-      path: "/coding/tasks",
+      path: `/zones/${config.controllerZoneId}/worker-tasks`,
       method: "POST",
       body: JSON.stringify({
         prompt: taskInput.prompt,
         repos: taskInput.repos,
         context: taskInput.context,
       }),
+      timeoutMs: config.workerTaskTimeoutMs,
     });
 
     if (taskResponse.status >= 400) {
-      throw new Error(`Controller rejected task: ${JSON.stringify(taskResponse.body)}`);
-    }
-
-    entry.status = "pod-ready";
-    entry.controllerTaskId = (taskResponse.body as { taskId?: string })?.taskId;
-
-    // Poll until task reaches terminal state, then delete pod
-    if (entry.controllerTaskId) {
-      await pollUntilTerminal({
-        podIp,
-        controllerPort: config.controllerPort,
-        taskId: entry.controllerTaskId,
-        timeoutMs: config.idleTimeoutMinutes * 60 * 1000,
-      });
+      entry.status = "failed";
+      entry.error = `Controller error ${taskResponse.status}: ${JSON.stringify(taskResponse.body)}`;
+    } else {
       entry.status = "completed";
+      entry.result = taskResponse.body;
     }
   } catch (error: unknown) {
-    // ... existing error handling
+    const message = error instanceof Error ? error.message : String(error);
+    entry.status = "failed";
+    entry.error = message;
+    console.error(`Task "${taskId}" failed: ${message}`);
   } finally {
-    // Always clean up the pod — whether task succeeded, failed, or timed out
+    // Always clean up the pod
     try {
       await deleteWorkerPod({
         coreApi,
@@ -539,7 +550,7 @@ async function startPodCreation(props: StartPodCreationProps): Promise<void> {
 }
 ```
 
-Add `controllerTaskId` to `TaskEntry` and update `TaskStatus`:
+- [ ] **Step 6: Update TaskEntry and TaskStatus**
 
 ```typescript
 type TaskStatus = "creating-pod" | "pod-ready" | "completed" | "failed";
@@ -549,96 +560,58 @@ interface TaskEntry {
   status: TaskStatus;
   podName: string;
   podIp: string | undefined;
-  controllerTaskId: string | undefined;  // ← NEW: task ID from controller
   input: TaskInput;
+  result: unknown | undefined;   // ← NEW: controller's final response
   error: string | undefined;
   createdAt: string;
 }
 ```
 
-Add `pollUntilTerminal` helper:
+No `controllerTaskId` — the controller doesn't return one. The synchronous response IS the result.
 
-```typescript
-async function pollUntilTerminal(options: {
-  readonly podIp: string;
-  readonly controllerPort: number;
-  readonly taskId: string;
-  readonly timeoutMs: number;
-}): Promise<void> {
-  const deadline = Date.now() + options.timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await proxyRequest({
-        podIp: options.podIp,
-        controllerPort: options.controllerPort,
-        path: `/coding/tasks/${options.taskId}`,
-        method: "GET",
-      });
-      const state = response.body as { status?: string };
-      if (state.status === "completed" || state.status === "failed") {
-        return;
-      }
-    } catch {
-      // Transient error — keep polling
-    }
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
-  }
-  throw new Error(`Task ${options.taskId} timed out after ${options.timeoutMs}ms`);
-}
-```
+- [ ] **Step 7: Update proxy timeout**
 
-- [ ] **Step 5: Add task status proxying**
+In `relay-agent-delegator/src/proxy/request-proxy.ts`, the default 30s timeout is too short for the synchronous controller call. The timeout is now passed per-request via `timeoutMs` parameter (already supported — the `proxyRequest` function accepts `timeoutMs`). The delegator passes `config.workerTaskTimeoutMs` (default 30 minutes) for the worker-task POST.
 
-Add a route to proxy task status queries to the controller:
+- [ ] **Step 8: Remove the delegator-side polling and task status proxy routes**
 
-```typescript
-router.get("/tasks/:id/status", async (c) => {
-  const taskId = c.req.param("id");
-  const entry = tasks.get(taskId);
+There is no async polling. Remove:
+- Any `pollUntilTerminal` helper
+- Any `GET /tasks/:id/status` proxy route
 
-  if (!entry) {
-    return c.json({ error: "Task not found" }, 404);
-  }
-  if (!entry.podIp || !entry.controllerTaskId) {
-    return c.json({ delegatorStatus: entry.status, error: entry.error });
-  }
+The `GET /tasks/:id` route returns the delegator's `TaskEntry` which includes `entry.result` (the controller's final response) once the task completes.
 
-  try {
-    const response = await proxyRequest({
-      podIp: entry.podIp,
-      controllerPort: config.controllerPort,
-      path: `/coding/tasks/${entry.controllerTaskId}`,
-      method: "GET",
-    });
-    return c.json(response.body, response.status);
-  } catch {
-    return c.json({ delegatorStatus: entry.status, proxyError: "Controller unreachable" });
-  }
-});
-```
+- [ ] **Step 9: Update tests**
 
-- [ ] **Step 6: Update tests**
+Update `task-routes.test.ts`:
+- New task input schema (prompt + repos[] + context)
+- No task-specific env vars in pod spec
+- Readiness probe at `/health`
+- Synchronous task submission via proxy
+- Pod deletion in finally block
 
-Update `task-routes.test.ts` and `pod-creator.test.ts` for the new schema, removed env vars, new readiness probe path, and task submission flow.
+Update `pod-creator.test.ts`:
+- Simplified env vars (just CONTROLLER_PORT)
+- Readiness probe path + higher failure threshold
 
-- [ ] **Step 7: Run tests**
+- [ ] **Step 10: Run tests**
 
 Run: `cd relay-ai-tools/relay-agent-delegator && pnpm vitest run`
 Expected: all tests pass.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 cd relay-ai-tools
 git add relay-agent-delegator/
-git commit -m "feat(relay-agent-delegator): update API for agent-vm controller integration
+git commit -m "feat(relay-agent-delegator): synchronous task submission to controller
 
-- Task input schema: prompt + repos[] + context (not flat repoUrl/branch)
-- Remove task-specific env vars (task submitted via HTTP after pod ready)
-- Readiness probe: /health not /healthcheck, higher failure threshold
-- Submit task to controller POST /coding/tasks after pod ready
-- Proxy task status via GET /tasks/:id/status → controller
-- Add controllerTaskId to TaskEntry for tracking"
+- Task input: prompt + repos[] + context (matches controller schema)
+- Remove task-specific env vars (TASK_REPO_URL, TASK_PROMPT, etc.)
+- POST /zones/:zoneId/worker-tasks — synchronous, controller blocks
+- Delete pod in finally block after task completes or fails
+- Readiness probe: /health, 200s max wait (cold start)
+- Add controllerZoneId + workerTaskTimeoutMs to config"
 ```
 
 ---
@@ -660,7 +633,7 @@ git push origin main
 Watch: `.github/workflows/relay-background-agent-dev.yml`
 Expected: Image builds, pushes to `relay/agent-vm-worker:latest` in dev ECR.
 
-Note: The Dockerfile now installs `@shravansunder/agent-vm` from npm. If the package requires auth (private scope), the CI workflow needs an `.npmrc` with auth token. Check if `@shravansunder` is a public scope on npm. If private, add `NPM_TOKEN` to the CI secrets.
+The Dockerfile now runs `pnpm add -g @shravansunder/agent-vm` — this downloads from public npm, no auth needed.
 
 - [ ] **Step 2: Push relay-agent-delegator changes and verify CI**
 
@@ -675,16 +648,29 @@ argocd app logs agent-vm-delegator | head -5
 # Expected: "relay-agent-delegator listening on port 3000"
 ```
 
-- [ ] **Step 4: Commit (nothing to commit — verification only)**
+- [ ] **Step 4: Verify k8s secrets exist**
+
+The controller needs `OP_SERVICE_ACCOUNT_TOKEN` (or `OPENAI_API_KEY` + `GITHUB_TOKEN` directly) in the pod environment. These come from k8s Secrets. Verify they exist:
+
+```bash
+kubectl -n agent-vm get secrets
+# Expected: a secret with OPENAI_API_KEY, GITHUB_TOKEN
+```
+
+If missing, create them:
+```bash
+kubectl -n agent-vm create secret generic agent-vm-secrets \
+  --from-literal=OPENAI_API_KEY=<key> \
+  --from-literal=GITHUB_TOKEN=<token>
+```
+
+The pod spec in `buildWorkerPodSpec` needs `envFrom` referencing this secret. This may need a code change in the delegator's pod creator if not already wired.
 
 ---
 
 ### Task 4: E2E Smoke Test
 
 **Why:** Prove the full chain works: delegator → pod → controller → Gondolin VM → worker → PR.
-
-**Files:**
-- No code changes — manual verification via curl/kubectl
 
 - [ ] **Step 1: Port-forward to delegator**
 
@@ -710,32 +696,55 @@ Expected: 201 with `{ id, status: "creating-pod", podName }`.
 
 ```bash
 kubectl -n agent-vm get pods -w
-# Expected: agent-vm-<taskId> appears, goes Running, then Ready
+# Expected: agent-vm-<taskId> appears, goes Pending → Running → Ready
+# This may take 30-60s on first cold start (OCI build + Gondolin build)
 ```
 
-- [ ] **Step 4: Poll task status**
+- [ ] **Step 4: Wait for task completion**
+
+The delegator's background `startPodCreation` is running. Poll the delegator:
 
 ```bash
 TASK_ID=<from step 2>
-curl http://localhost:3000/tasks/$TASK_ID/status
-# Expected: eventually shows { status: "completed", wrapupResults: [{ type: "git-pr", success: true, artifact: "https://github.com/..." }] }
+watch -n 5 "curl -s http://localhost:3000/tasks/$TASK_ID | jq .status"
+# Expected progression: creating-pod → pod-ready → completed (or failed)
+# This may take 5-15 minutes for the full plan → work → verify → PR cycle
 ```
 
-- [ ] **Step 5: Verify PR was created**
+- [ ] **Step 5: Check final result**
+
+```bash
+curl -s http://localhost:3000/tasks/$TASK_ID | jq .
+# Expected: { status: "completed", result: { taskId: "...", finalState: { status: "completed", ... } } }
+```
+
+- [ ] **Step 6: Verify PR was created**
 
 Check the test repo on GitHub for a new PR created by the agent.
 
-- [ ] **Step 6: Document any issues found**
+- [ ] **Step 7: Verify pod was cleaned up**
 
-Record in a follow-up issue: cold start time, error messages, config issues, etc.
+```bash
+kubectl -n agent-vm get pods | grep agent-vm-
+# Expected: pod is gone (deleted by delegator after task completed)
+```
+
+- [ ] **Step 8: Document issues found**
+
+Record in a follow-up issue: cold start time, error messages, config issues, missing secrets, timeouts, etc.
 
 ---
 
 ## Self-Review
 
-- [x] **Spec coverage:** T1 covers Dockerfile + config (spec §2 "Connection to Gateway Abstraction", §4 "Config"). T2 covers API contract (spec §7 "HTTP API"). T3 covers CI. T4 covers E2E (spec §12 "Verify").
-- [x] **No placeholders:** All config files have actual JSON. All code changes show the actual code. Commands are exact.
-- [x] **Type consistency:** `taskInputSchema` in T2 matches `WorkerTaskInput` in `worker-task-runner.ts`. `controllerTaskId` in TaskEntry matches what the controller returns.
-- [x] **Known gap:** Secrets management (1Password in k8s) is noted but not fully wired. Beta uses env var injection. Secrets are a separate scope.
-- [x] **Known gap:** Skills (SKILL.md files) not baked into VM image yet. Worker uses default instructions. Skills are additive.
-- [x] **Known gap:** The Gondolin VM image OCI build (`docker build`) happens on first pod startup, adding ~30s cold start. Pre-caching in CI is future optimization.
+- [x] **Spec coverage:** T1=Dockerfile+config (worker-gateway, system-config, worker-config schemas). T2=API contract (controller-zone-operation-routes, controller-request-schemas). T3=CI. T4=E2E.
+- [x] **No placeholders:** All config files have actual JSON matching Zod schemas. All code shows actual code. Commands are exact.
+- [x] **Type consistency:** `taskInputSchema` in T2 matches `controllerWorkerTaskRequestSchema`. `TaskEntry.result` is `unknown` matching the controller's untyped response. `controllerZoneId` matches `zones[].id` in system.json.
+- [x] **Controller route is correct:** `POST /zones/:zoneId/worker-tasks` (not `/coding/tasks`). Verified against `controller-zone-operation-routes.ts:42`.
+- [x] **Controller call is synchronous:** `runWorkerTask()` blocks for the full lifecycle. No async task ID, no delegator-side polling.
+- [x] **Worker binary path resolved:** OCI Dockerfile installs `@shravansunder/agent-vm-worker` from npm and symlinks `node_modules/.../dist` → `/opt/agent-vm-worker/dist` so `worker-lifecycle.ts:53` resolves.
+- [x] **Pod cleanup:** Delegator deletes pod in `finally` block after task completes or fails.
+- [x] **PNPM_HOME set:** Dockerfile sets `ENV PNPM_HOME=/usr/local/share/pnpm` and `ENV PATH=$PNPM_HOME:$PATH`.
+- [x] **Known gap:** Secrets management (k8s Secret → pod envFrom) may need additional wiring in the pod spec. Noted in T3.
+- [x] **Known gap:** Cold start ~30-60s (Docker daemon wait + OCI build + Gondolin image build). Acceptable for beta.
+- [x] **Known gap:** Skills not baked into VM image yet. Worker uses default instructions. Additive future work.
