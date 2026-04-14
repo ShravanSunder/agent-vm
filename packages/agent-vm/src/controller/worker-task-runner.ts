@@ -38,7 +38,7 @@ function writeStderr(message: string): void {
 
 const taskStatusResponseSchema = z
 	.object({
-		status: z.string().optional(),
+		status: z.string(),
 	})
 	.passthrough();
 
@@ -187,16 +187,29 @@ export async function postStopGateway(
 	composeFilePaths: readonly string[] = [],
 ): Promise<void> {
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
-	let cleanupError: unknown = null;
+	let cleanupError: Error | null = null;
+	let removalError: Error | null = null;
 	try {
 		await stopDockerServicesForTask(composeFilePaths);
 	} catch (error) {
-		cleanupError = error;
-	} finally {
+		cleanupError = error instanceof Error ? error : new Error(String(error));
+	}
+	try {
 		await fs.rm(taskRoot, { recursive: true, force: true });
+	} catch (error) {
+		removalError = error instanceof Error ? error : new Error(String(error));
+	}
+	if (cleanupError && removalError) {
+		throw new AggregateError(
+			[cleanupError, removalError],
+			`Failed to stop Docker services and delete task root for ${taskId}.`,
+		);
 	}
 	if (cleanupError) {
 		throw cleanupError;
+	}
+	if (removalError) {
+		throw removalError;
 	}
 }
 
@@ -274,6 +287,12 @@ export async function runWorkerTask(options: {
 				state = taskStatusResponseSchema.parse(response);
 				consecutivePollFailures = 0;
 			} catch (error) {
+				if (error instanceof z.ZodError) {
+					throw new Error(
+						`Worker task status response did not match the expected schema for task ${preStartResult.taskId}.`,
+						{ cause: error },
+					);
+				}
 				consecutivePollFailures += 1;
 				const message = error instanceof Error ? error.message : String(error);
 				writeStderr(
@@ -289,7 +308,7 @@ export async function runWorkerTask(options: {
 				await new Promise((resolve) => setTimeout(resolve, 1000));
 				continue;
 			}
-			if (state.status === 'completed' || state.status === 'failed') {
+			if (state.status === 'completed' || state.status === 'failed' || state.status === 'closed') {
 				return {
 					taskId: preStartResult.taskId,
 					finalState: state,

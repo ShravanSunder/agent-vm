@@ -29,6 +29,9 @@ const effectiveWorkerConfigSchema = z.object({
 const completedTaskStateSchema = z.object({
 	status: z.literal('completed'),
 });
+const closedTaskStateSchema = z.object({
+	status: z.literal('closed'),
+});
 
 function normalizeMockFilePath(filePath: Parameters<typeof fs.readFile>[0]): string {
 	if (typeof filePath === 'string') {
@@ -378,5 +381,74 @@ describe('worker-task-runner', () => {
 
 		expect(completedTaskStateSchema.parse(result.finalState).status).toBe('completed');
 		expect(pollCount).toBeGreaterThanOrEqual(2);
+	});
+
+	it('fails immediately when the worker returns an invalid task status payload', async () => {
+		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.endsWith('/tasks')) {
+				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
+					status: 201,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (/\/tasks\/[^/]+$/.test(url)) {
+				return new Response(JSON.stringify({ wrong: true }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		}) as typeof fetch;
+
+		const { runWorkerTask } = await import('./worker-task-runner.js');
+
+		await expect(
+			runWorkerTask({
+				input: {
+					prompt: 'fix login',
+					repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+					context: {},
+				},
+				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+				systemConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow('did not match the expected schema');
+	});
+
+	it('treats closed worker tasks as terminal results', async () => {
+		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.endsWith('/tasks')) {
+				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
+					status: 201,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (/\/tasks\/[^/]+$/.test(url)) {
+				return new Response(JSON.stringify({ status: 'closed', taskId: 'task-1' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		}) as typeof fetch;
+
+		const { runWorkerTask } = await import('./worker-task-runner.js');
+		const result = await runWorkerTask({
+			input: {
+				prompt: 'fix login',
+				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+				context: {},
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+			zoneId: 'shravan',
+		});
+
+		expect(closedTaskStateSchema.parse(result.finalState).status).toBe('closed');
 	});
 });

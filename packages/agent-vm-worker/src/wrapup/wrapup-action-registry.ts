@@ -22,6 +22,10 @@ export interface WrapupToolRegistryResult {
 	readonly getResults: () => readonly WrapupActionResult[];
 }
 
+function writeStderr(message: string): void {
+	process.stderr.write(`${message}\n`);
+}
+
 function wrapToolWithResultCollector(
 	tool: ToolDefinition,
 	actionKey: string,
@@ -55,11 +59,15 @@ function wrapToolWithResultCollector(
 				});
 				return result;
 			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				writeStderr(
+					`[wrapup-action-registry] Wrapup action ${actionKey} (${actionType}) threw: ${message}`,
+				);
 				const result: WrapupActionResult = {
 					key: actionKey,
 					type: actionType,
 					success: false,
-					artifact: error instanceof Error ? error.message : String(error),
+					artifact: message,
 				};
 				results.push(result);
 				return result;

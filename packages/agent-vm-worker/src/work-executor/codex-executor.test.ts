@@ -213,6 +213,7 @@ describe('codex-executor', () => {
 			capabilities: { mcpServers: [], tools: [] },
 		});
 
+		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		await executor.resumeOrRebuild('expired-thread', [{ type: 'text', text: 'context' }]);
 
 		expect(mockResumeThread).toHaveBeenCalledWith(
@@ -223,6 +224,9 @@ describe('codex-executor', () => {
 		);
 		expect(mockStartThread).toHaveBeenCalled();
 		expect(executor.getThreadId()).toBe('thread-2');
+		expect(stderrSpy).toHaveBeenCalledWith(
+			expect.stringContaining('Failed to resume thread expired-thread; rebuilding thread instead'),
+		);
 	});
 
 	it('resumeOrRebuild() rethrows non-recoverable resume errors', async () => {

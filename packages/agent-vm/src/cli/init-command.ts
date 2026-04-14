@@ -309,7 +309,7 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 const defaultCodingGatewayConfig = (): object => ({
 	agentTimeoutMs: 600_000,
 	branchPrefix: 'agent/',
-	commitCoAuthor: 'agent-vm-coding <noreply@agent-vm>',
+	commitCoAuthor: 'agent-vm-worker <noreply@agent-vm>',
 	idleTimeoutMs: 1_800_000,
 	lintCommand: 'pnpm lint',
 	maxRetries: 3,

@@ -18,13 +18,14 @@ export const taskStatusValues = [
 	'reviewing-work',
 	'wrapping-up',
 	'completed',
+	'closed',
 	'failed',
 ] as const satisfies readonly string[];
 
 export const taskStatusSchema = z.enum(taskStatusValues);
 export type TaskStatus = z.infer<typeof taskStatusSchema>;
 
-export const TERMINAL_STATUSES = ['completed', 'failed'] as const;
+export const TERMINAL_STATUSES = ['completed', 'closed', 'failed'] as const;
 
 export const taskConfigSchema = z.object({
 	taskId: z.string().min(1),

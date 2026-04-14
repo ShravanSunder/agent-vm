@@ -72,6 +72,7 @@ describe('wrapup-action-registry', () => {
 			repos: [],
 		});
 
+		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const result = await registry.tools[0]?.execute({});
 
 		expect(result).toEqual({
@@ -88,6 +89,9 @@ describe('wrapup-action-registry', () => {
 				artifact: 'push failed',
 			},
 		]);
+		expect(stderrSpy).toHaveBeenCalledWith(
+			expect.stringContaining('Wrapup action git-pr:0 (git-pr) threw: push failed'),
+		);
 	});
 
 	it('returns stable wrapup action config keys', () => {

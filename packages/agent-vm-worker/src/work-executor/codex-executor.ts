@@ -30,11 +30,16 @@ function isRecoverableResumeError(error: unknown): boolean {
 	return messages.some(
 		(message) =>
 			message.includes('expired') ||
-			message.includes('not found') ||
+			message.includes('thread not found') ||
 			message.includes('does not exist') ||
 			message.includes('unknown thread') ||
-			message.includes('404'),
+			message.includes('404') ||
+			message.includes('no thread found'),
 	);
+}
+
+function writeStderr(message: string): void {
+	process.stderr.write(`${message}\n`);
 }
 
 export interface CodexExecutorConfig {
@@ -177,6 +182,10 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 						throw error;
 					}
 
+					const message = error instanceof Error ? error.message : String(error);
+					writeStderr(
+						`[codex-executor] Failed to resume thread ${threadId}; rebuilding thread instead: ${message}`,
+					);
 					currentThread = null;
 					currentThreadId = null;
 				}

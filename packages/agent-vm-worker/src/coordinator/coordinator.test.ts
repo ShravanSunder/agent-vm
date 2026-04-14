@@ -415,8 +415,13 @@ describe('coordinator', () => {
 		await coordinator.closeTask(taskId);
 		await new Promise((resolve) => setTimeout(resolve, 600));
 
-		expect(coordinator.getTaskState(taskId)?.status).toBe('completed');
+		expect(coordinator.getTaskState(taskId)?.status).toBe('closed');
 		expect(coordinator.getActiveTaskId()).toBeNull();
+		expect(await readEventNames(stateDir, taskId)).toEqual([
+			'task-accepted',
+			'phase-started',
+			'task-closed',
+		]);
 	});
 
 	it('fails when plan review loops are exhausted', async () => {

@@ -70,30 +70,6 @@ importers:
         specifier: ^2.3.0
         version: 2.3.0
 
-  packages/agent-vm-coding:
-    dependencies:
-      '@hono/node-server':
-        specifier: ^1
-        version: 1.19.12(hono@4.12.10)
-      '@hono/zod-validator':
-        specifier: ^0.7.6
-        version: 0.7.6(hono@4.12.10)(zod@4.3.6)
-      '@openai/codex-sdk':
-        specifier: ^0.118.0
-        version: 0.118.0
-      execa:
-        specifier: ^9.5.2
-        version: 9.6.1
-      hono:
-        specifier: ^4
-        version: 4.12.10
-      zod:
-        specifier: ^4
-        version: 4.3.6
-      zod-to-json-schema:
-        specifier: ^3.24.1
-        version: 3.25.2(zod@4.3.6)
-
   packages/agent-vm-worker:
     dependencies:
       '@hono/node-server':

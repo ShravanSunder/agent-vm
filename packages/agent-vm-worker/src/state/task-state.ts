@@ -5,6 +5,7 @@ import { replayEvents } from './event-log.js';
 import type {
 	TaskConfig,
 	TaskEvent,
+	PhaseName,
 	TaskStatus,
 	VerificationCommandResult,
 	WrapupActionResult,
@@ -27,6 +28,17 @@ export interface TaskState {
 	readonly createdAt: string;
 	readonly updatedAt: string;
 }
+
+const terminalStatusSet = new Set<string>(TERMINAL_STATUSES);
+
+const phaseStatusMap = {
+	plan: 'planning',
+	'plan-review': 'reviewing-plan',
+	work: 'working',
+	verification: 'verifying',
+	'work-review': 'reviewing-work',
+	wrapup: 'wrapping-up',
+} as const satisfies Record<PhaseName, TaskStatus>;
 
 export function createInitialState(taskId: string, config: TaskConfig): TaskState {
 	const now = new Date().toISOString();
@@ -56,19 +68,7 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 		case 'task-accepted':
 			return { ...state, status: 'pending', updatedAt };
 		case 'phase-started': {
-			const statusMap: Record<string, TaskStatus> = {
-				plan: 'planning',
-				'plan-review': 'reviewing-plan',
-				work: 'working',
-				verification: 'verifying',
-				'work-review': 'reviewing-work',
-				wrapup: 'wrapping-up',
-			};
-			const newStatus = statusMap[event.phase];
-			if (!newStatus) {
-				return { ...state, updatedAt };
-			}
-			return { ...state, status: newStatus, updatedAt };
+			return { ...state, status: phaseStatusMap[event.phase], updatedAt };
 		}
 		case 'phase-completed':
 			return { ...state, updatedAt };
@@ -128,7 +128,7 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 		case 'task-failed':
 			return { ...state, status: 'failed', updatedAt };
 		case 'task-closed':
-			return { ...state, status: 'completed', updatedAt };
+			return { ...state, status: 'closed', updatedAt };
 		default: {
 			const exhaustiveCheck: never = event;
 			throw new Error(`Unhandled task event: ${JSON.stringify(exhaustiveCheck)}`);
@@ -137,7 +137,7 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 }
 
 export function isTerminal(state: TaskState): boolean {
-	return new Set<string>(TERMINAL_STATUSES).has(state.status);
+	return terminalStatusSet.has(state.status);
 }
 
 function writeStderr(message: string): void {
