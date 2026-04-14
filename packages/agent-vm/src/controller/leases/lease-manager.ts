@@ -128,9 +128,7 @@ export function createLeaseManager(options: {
 			try {
 				await lease.cleanWorkspace?.();
 			} catch (error) {
-				if (!releaseError) {
-					releaseError = error instanceof Error ? error : new Error(String(error));
-				}
+				releaseError ??= error instanceof Error ? error : new Error(String(error));
 			}
 
 			leases.delete(leaseId);

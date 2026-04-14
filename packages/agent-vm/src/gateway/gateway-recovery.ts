@@ -19,7 +19,7 @@ function isProcessAlive(pid: number): boolean {
 				return false;
 			}
 		}
-		return false;
+		throw error;
 	}
 }
 
@@ -28,8 +28,11 @@ async function readProcessCommand(pid: number): Promise<string | null> {
 		const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'command=']);
 		const command = stdout.trim();
 		return command.length > 0 ? command : null;
-	} catch {
-		return null;
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 1) {
+			return null;
+		}
+		throw error;
 	}
 }
 
@@ -47,6 +50,12 @@ function killProcess(pid: number, signal: NodeJS.Signals): void {
 	} catch (error) {
 		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH') {
 			return;
+		}
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'EPERM') {
+			throw new Error(
+				`Permission denied while sending ${signal} to orphaned gateway pid ${pid}. The process is still running and may require elevated privileges to terminate.`,
+				{ cause: error },
+			);
 		}
 		throw error;
 	}
@@ -71,6 +80,7 @@ async function waitForExit(options: {
 		if (!options.processIsAlive(options.pid)) {
 			return true;
 		}
+		// oxlint-disable-next-line no-await-in-loop -- polling loop must wait between liveness checks
 		await options.sleep(100);
 	}
 	return !options.processIsAlive(options.pid);
@@ -111,7 +121,7 @@ async function killOrphanedGatewayProcess(
 			timeoutMs: 2_000,
 		})
 	) {
-		return dependencies.isProcessAlive(runtimeRecord.qemuPid) ? runtimeRecord.qemuPid : null;
+		return runtimeRecord.qemuPid;
 	}
 
 	try {
@@ -129,7 +139,7 @@ async function killOrphanedGatewayProcess(
 			timeoutMs: 2_000,
 		})
 	) {
-		return dependencies.isProcessAlive(runtimeRecord.qemuPid) ? runtimeRecord.qemuPid : null;
+		return runtimeRecord.qemuPid;
 	}
 
 	throw new Error(
@@ -175,7 +185,13 @@ export async function cleanupOrphanedGatewayIfPresent(
 		readProcessCommand: dependencies.readProcessCommand ?? readProcessCommand,
 		sleep: dependencies.sleep ?? sleep,
 	});
-	await (dependencies.deleteGatewayRuntimeRecord ?? deleteGatewayRuntimeRecord)(options.stateDir);
+	try {
+		await (dependencies.deleteGatewayRuntimeRecord ?? deleteGatewayRuntimeRecord)(options.stateDir);
+	} catch (error) {
+		log(
+			`Failed to remove stale gateway runtime record for zone '${runtimeRecord.zoneId}' at '${options.stateDir}': ${error instanceof Error ? error.message : JSON.stringify(error)}`,
+		);
+	}
 	log(
 		killedPid === null
 			? `Removed stale gateway runtime record for zone '${runtimeRecord.zoneId}' after confirming the orphaned process was already gone.`

@@ -192,7 +192,11 @@ export async function startGatewayZone(
 			);
 		});
 	} catch (error) {
-		await managedVm.close().catch(() => {});
+		await managedVm.close().catch((closeError: unknown) => {
+			process.stderr.write(
+				`[agent-vm] Failed to close gateway VM after runtime-record write failure: ${closeError instanceof Error ? closeError.message : JSON.stringify(closeError)}\n`,
+			);
+		});
 		throw error;
 	}
 

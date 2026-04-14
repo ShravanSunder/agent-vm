@@ -474,13 +474,15 @@ async function scaffoldAgentVmProjectInternal(
 	);
 	(toolBuildConfigStatus === 'created' ? created : skipped).push('images/tool/build-config.json');
 
-	for (const directoryPath of [
-		path.join(options.targetDir, 'state', options.zoneId),
-		path.join(options.targetDir, 'workspaces', options.zoneId),
-		path.join(options.targetDir, 'workspaces', 'tools'),
-	]) {
-		await fs.mkdir(directoryPath, { recursive: true });
-	}
+	await Promise.all(
+		[
+			path.join(options.targetDir, 'state', options.zoneId),
+			path.join(options.targetDir, 'workspaces', options.zoneId),
+			path.join(options.targetDir, 'workspaces', 'tools'),
+		].map(async (directoryPath) => {
+			await fs.mkdir(directoryPath, { recursive: true });
+		}),
+	);
 
 	return { created, keychainStored: false, skipped };
 }

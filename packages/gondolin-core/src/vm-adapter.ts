@@ -194,6 +194,9 @@ function createProviderFromSpec(
 
 			return shadowProvider;
 		}
+		default: {
+			throw new Error(`Unsupported VFS mount kind: ${String(mountSpec.kind)}`);
+		}
 	}
 }
 

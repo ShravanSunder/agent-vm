@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import type { GatewayZoneConfig } from '@shravansunder/agent-vm-gateway-interface';
 import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { openclawLifecycle } from './openclaw-lifecycle.js';
 
@@ -318,9 +318,7 @@ describe('openclawLifecycle', () => {
 
 			await expect(
 				openclawLifecycle.prepareHostState?.(zoneWithoutGatewayToken, secretResolver),
-			).rejects.toThrow(
-				/Failed to write effective OpenClaw config for zone 'shravan'.*OPENCLAW_GATEWAY_TOKEN/u,
-			);
+			).rejects.toThrow(/secret 'OPENCLAW_GATEWAY_TOKEN' is missing 'ref'/u);
 		});
 
 		it('throws when base config is not a JSON object', async () => {
@@ -358,6 +356,98 @@ describe('openclawLifecycle', () => {
 			await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
 				/Failed to write effective OpenClaw config for zone 'shravan'.*must be a JSON object/u,
 			);
+		});
+
+		it('cleans up the temp effective config file if atomic rename fails', async () => {
+			const tempDirectory = fs.mkdtempSync(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-rename-fail-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			fs.mkdirSync(configDirectory, { recursive: true });
+			const configPath = path.join(configDirectory, 'openclaw.json');
+			fs.writeFileSync(
+				configPath,
+				JSON.stringify({
+					gateway: {
+						auth: { mode: 'token' },
+						bind: 'loopback',
+					},
+				}),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					gatewayConfig: configPath,
+					stateDir: path.join(tempDirectory, 'state'),
+					workspaceDir: path.join(tempDirectory, 'workspace'),
+				},
+				withoutAuthProfilesRef: true,
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async () => 'resolved-gateway-token',
+				resolveAll: async () => ({}),
+			};
+			const renameSpy = vi
+				.spyOn(fs.promises, 'rename')
+				.mockRejectedValueOnce(new Error('disk full'));
+
+			await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+				/disk full/u,
+			);
+			expect(
+				fs.readdirSync(zone.gateway.stateDir).filter((entryName) => entryName.includes('.tmp')),
+			).toEqual([]);
+
+			renameSpy.mockRestore();
+		});
+
+		it('throws the missing gateway token ref error directly', async () => {
+			const tempDirectory = fs.mkdtempSync(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-missing-ref-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			fs.mkdirSync(configDirectory, { recursive: true });
+			const configPath = path.join(configDirectory, 'openclaw.json');
+			fs.writeFileSync(
+				configPath,
+				JSON.stringify({
+					gateway: {
+						auth: { mode: 'token' },
+						bind: 'loopback',
+					},
+				}),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					gatewayConfig: configPath,
+					stateDir: path.join(tempDirectory, 'state'),
+					workspaceDir: path.join(tempDirectory, 'workspace'),
+				},
+				withoutAuthProfilesRef: true,
+			});
+			const brokenZone: GatewayZoneConfig = {
+				...zone,
+				secrets: {
+					...zone.secrets,
+					OPENCLAW_GATEWAY_TOKEN: {
+						injection: 'env',
+						source: '1password',
+					},
+				},
+			};
+			const secretResolver: SecretResolver = {
+				resolve: async () => {
+					throw new Error('should not resolve');
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await expect(
+				openclawLifecycle.prepareHostState?.(brokenZone, secretResolver),
+			).rejects.toThrow(/secret 'OPENCLAW_GATEWAY_TOKEN' is missing 'ref'/u);
 		});
 	});
 });

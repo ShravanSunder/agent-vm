@@ -12,10 +12,16 @@ function slugifyProjectName(projectName: string): string {
 	return normalizedProjectName.length > 0 ? normalizedProjectName : 'agent-vm';
 }
 
-export async function buildDefaultProjectNamespace(targetDirectory: string): Promise<string> {
-	const resolvedTargetDirectory = await fs
-		.realpath(targetDirectory)
-		.catch(() => path.resolve(targetDirectory));
+export async function buildDefaultProjectNamespace(
+	targetDirectory: string,
+	dependencies: {
+		readonly realpath?: (targetDirectory: string) => Promise<string>;
+		readonly resolvePath?: (targetDirectory: string) => string;
+	} = {},
+): Promise<string> {
+	const resolvedTargetDirectory = await (dependencies.realpath ?? fs.realpath)(
+		targetDirectory,
+	).catch(() => (dependencies.resolvePath ?? path.resolve)(targetDirectory));
 	const projectName = slugifyProjectName(path.basename(resolvedTargetDirectory));
 	const projectHash = crypto
 		.createHash('sha1')

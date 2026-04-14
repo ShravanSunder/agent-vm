@@ -73,7 +73,12 @@ function shellQuote(value: string): string {
 async function writeFileAtomically(filePath: string, content: string, mode: number): Promise<void> {
 	const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
 	await fs.writeFile(tempPath, content, { encoding: 'utf8', mode });
-	await fs.rename(tempPath, filePath);
+	try {
+		await fs.rename(tempPath, filePath);
+	} catch (error) {
+		await fs.rm(tempPath, { force: true }).catch(() => {});
+		throw error;
+	}
 }
 
 async function writeAuthProfilesIfConfigured(
@@ -110,14 +115,14 @@ async function writeEffectiveOpenClawConfig(
 	zone: GatewayZoneConfig,
 	secretResolver: SecretResolver,
 ): Promise<void> {
-	try {
-		const gatewayTokenSecret = zone.secrets.OPENCLAW_GATEWAY_TOKEN;
-		if (!gatewayTokenSecret?.ref) {
-			throw new Error(
-				`Zone '${zone.id}' secret 'OPENCLAW_GATEWAY_TOKEN' is missing 'ref'. Add an explicit 1Password reference such as 'op://agent-vm/${zone.id}-gateway-auth/password'.`,
-			);
-		}
+	const gatewayTokenSecret = zone.secrets.OPENCLAW_GATEWAY_TOKEN;
+	if (!gatewayTokenSecret?.ref) {
+		throw new Error(
+			`Zone '${zone.id}' secret 'OPENCLAW_GATEWAY_TOKEN' is missing 'ref'. Add an explicit 1Password reference such as 'op://agent-vm/${zone.id}-gateway-auth/password'.`,
+		);
+	}
 
+	try {
 		const gatewayToken = await secretResolver.resolve({
 			source: '1password',
 			ref: gatewayTokenSecret.ref,

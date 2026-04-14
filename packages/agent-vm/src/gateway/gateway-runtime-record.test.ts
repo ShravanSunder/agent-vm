@@ -172,4 +172,81 @@ describe('gateway runtime record', () => {
 			zoneId: 'shravan',
 		});
 	});
+
+	it('throws when the live VM instance is missing', () => {
+		const managedVm = {
+			close: async () => {},
+			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			exec: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+			getVmInstance: () => null as never,
+			id: 'gateway-vm-123',
+			setIngressRoutes: () => {},
+		} satisfies ManagedVm;
+
+		expect(() =>
+			buildGatewayRuntimeRecord({
+				gatewayType: 'openclaw',
+				ingressPort: 18791,
+				managedVm,
+				processSpec: {
+					bootstrapCommand: 'bootstrap-openclaw',
+					guestListenPort: 18789,
+					healthCheck: { path: '/', port: 18789, type: 'http' },
+					logPath: '/tmp/openclaw.log',
+					startCommand: 'start-openclaw',
+				},
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				zoneId: 'shravan',
+			}),
+		).toThrow(/live VM instance/u);
+	});
+
+	it('throws when the live VM is missing its QEMU pid', () => {
+		const managedVm = {
+			close: async () => {},
+			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			exec: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+			getVmInstance: () =>
+				({
+					close: async () => {},
+					enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+					enableSsh: async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					}),
+					exec: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+					id: 'gateway-vm-123',
+					server: {
+						controller: {
+							child: {},
+						},
+					},
+					setIngressRoutes: () => {},
+				}) as ManagedVmInstance,
+			id: 'gateway-vm-123',
+			setIngressRoutes: () => {},
+		} satisfies ManagedVm;
+
+		expect(() =>
+			buildGatewayRuntimeRecord({
+				gatewayType: 'openclaw',
+				ingressPort: 18791,
+				managedVm,
+				processSpec: {
+					bootstrapCommand: 'bootstrap-openclaw',
+					guestListenPort: 18789,
+					healthCheck: { path: '/', port: 18789, type: 'http' },
+					logPath: '/tmp/openclaw.log',
+					startCommand: 'start-openclaw',
+				},
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				zoneId: 'shravan',
+			}),
+		).toThrow(/live QEMU pid/u);
+	});
 });

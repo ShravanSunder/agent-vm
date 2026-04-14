@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import type { GatewayProcessSpec } from '@shravansunder/agent-vm-gateway-interface';
 import type { ManagedVm } from '@shravansunder/agent-vm-gondolin-core';
-import { z } from 'zod';
+import { ZodError, z } from 'zod';
 
 export const gatewayRuntimeRecordSchema = z.object({
 	createdAt: z.string().datetime(),
@@ -52,11 +52,19 @@ async function quarantineMalformedGatewayRuntimeRecord(
 	log: GatewayRuntimeLog,
 ): Promise<void> {
 	const invalidRuntimeRecordPath = resolveInvalidGatewayRuntimeRecordPath(stateDirectory);
+	let quarantined = true;
 	await fs.rename(runtimeRecordPath, invalidRuntimeRecordPath).catch(async () => {
+		quarantined = false;
 		await fs.rm(runtimeRecordPath, { force: true });
 	});
+	if (quarantined) {
+		log(
+			`Quarantined malformed gateway runtime record '${runtimeRecordPath}' to '${invalidRuntimeRecordPath}'.`,
+		);
+		return;
+	}
 	log(
-		`Quarantined malformed gateway runtime record '${runtimeRecordPath}' to '${invalidRuntimeRecordPath}'.`,
+		`Deleted malformed gateway runtime record '${runtimeRecordPath}' after quarantine rename failed.`,
 	);
 }
 
@@ -83,7 +91,10 @@ export async function loadGatewayRuntimeRecord(
 
 	try {
 		return gatewayRuntimeRecordSchema.parse(JSON.parse(rawRuntimeRecord));
-	} catch {
+	} catch (error) {
+		if (!(error instanceof SyntaxError) && !(error instanceof ZodError)) {
+			throw error;
+		}
 		await quarantineMalformedGatewayRuntimeRecord(
 			stateDirectory,
 			runtimeRecordPath,

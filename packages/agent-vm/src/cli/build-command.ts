@@ -89,17 +89,21 @@ export async function runBuildCommand(
 			imageTarget.dockerfile !== undefined,
 	);
 
+	// oxlint-disable-next-line no-await-in-loop -- image builds are intentionally sequential for stable task output and shared image tags
 	for (const imageTarget of dockerImageTargets) {
+		// oxlint-disable-next-line no-await-in-loop -- each image tag is resolved in lockstep with its matching build task
 		const imageTag = await resolveOciImageTag(imageTarget.buildConfigPath);
 		if (
 			imageTarget.name === 'gateway' &&
 			options.systemConfig.zones.some((zone) => zone.gateway.type === 'openclaw')
 		) {
 			const projectRootDirectory = path.resolve(imageTarget.dockerfile, '..', '..', '..');
+			// oxlint-disable-next-line no-await-in-loop -- bundle sync must complete before the matching docker build starts
 			await runTaskStep('OpenClaw plugin bundle', async () => {
 				await syncBundledOpenClawPlugin(projectRootDirectory);
 			});
 		}
+		// oxlint-disable-next-line no-await-in-loop -- docker builds intentionally run one at a time to keep task output readable
 		await runTaskStep(`Docker: ${imageTarget.name} (${imageTag})`, async () => {
 			await buildDockerImage({
 				dockerfilePath: imageTarget.dockerfile,
@@ -113,6 +117,7 @@ export async function runBuildCommand(
 		const cacheDirectory = path.join(options.systemConfig.cacheDir, 'images', imageTarget.name);
 		const shouldResetGondolinCache =
 			options.forceRebuild === true || dockerBackedTargets.has(imageTarget.name);
+		// oxlint-disable-next-line no-await-in-loop -- gondolin cache rebuilds are intentionally sequenced per image target
 		await runTaskStep(`Gondolin: ${imageTarget.name}`, async () => {
 			await buildGondolinImage({
 				buildConfigPath: imageTarget.buildConfigPath,

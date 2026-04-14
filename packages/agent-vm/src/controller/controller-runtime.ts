@@ -100,11 +100,20 @@ export async function startControllerRuntime(
 	);
 	const clearReaperTimer = (): void =>
 		(dependencies.clearIntervalImpl ?? clearInterval)(reaperTimer);
-	const releaseAllLeases = async (): Promise<void> => {
+	const releaseAllLeases = async (): Promise<Error | undefined> => {
+		let releaseError: Error | undefined;
 		for (const lease of leaseManager.listLeases()) {
-			// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP slot races
-			await leaseManager.releaseLease(lease.id);
+			try {
+				// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP slot races
+				await leaseManager.releaseLease(lease.id);
+			} catch (error) {
+				releaseError ??= error instanceof Error ? error : new Error(formatUnknownError(error));
+				writeControllerRuntimeLog(
+					`Failed to release lease '${lease.id}' during controller shutdown: ${formatUnknownError(error)}`,
+				);
+			}
 		}
+		return releaseError;
 	};
 	const startGateway = async (): Promise<Awaited<ReturnType<typeof startGatewayZone>>> =>
 		await (dependencies.startGatewayZone ?? startGatewayZone)({
@@ -193,11 +202,14 @@ export async function startControllerRuntime(
 	return {
 		async close(): Promise<void> {
 			clearReaperTimer();
-			await releaseAllLeases();
+			const releaseError = await releaseAllLeases();
 			try {
 				await stopGatewayZone();
 			} finally {
 				await serverRef.current?.close();
+			}
+			if (releaseError) {
+				throw releaseError;
 			}
 		},
 		controllerPort: options.systemConfig.host.controllerPort,
