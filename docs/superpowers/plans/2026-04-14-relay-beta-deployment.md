@@ -199,23 +199,7 @@ The current `systemConfigSchema` in `packages/agent-vm/src/config/system-config.
 }
 ```
 
-**Secrets flow — CRITICAL:** The controller ALWAYS resolves secrets through 1Password. There is no env-var-only bypass in the current code (`controller-runtime-support.ts:6-18`, `credential-manager.ts:12-37`). The flow is:
-
-1. Controller reads `OP_SERVICE_ACCOUNT_TOKEN` from pod env (injected via k8s Secret `envFrom`)
-2. Controller creates a 1Password resolver using that service account token
-3. For each secret in `zone.secrets`, controller reads the `ref` (`op://` path) and calls 1Password API to get the real value
-4. Resolved values are passed to the Gondolin VM as env vars (`injection: "env"`) or HTTP mediation (`injection: "http-mediation"`)
-5. The VM never talks to 1Password — the controller resolves everything before VM boot
-
-**Required setup:** A 1Password service account with read access to the vault containing `OPENAI_API_KEY` and `GITHUB_TOKEN`. The service account token goes into the k8s Secret as `OP_SERVICE_ACCOUNT_TOKEN`. The `ref` values in system.json above (`op://agent-vm/openai/api-key`, `op://agent-vm/github/token`) must be real 1Password vault paths — replace with actual paths before deployment.
-
-**k8s Secret for dev:**
-```bash
-kubectl -n agent-vm create secret generic agent-vm-secrets \
-  --from-literal=OP_SERVICE_ACCOUNT_TOKEN=<real-1password-service-account-token>
-```
-
-Only `OP_SERVICE_ACCOUNT_TOKEN` is needed in the k8s Secret. The actual API keys live in 1Password and are resolved at runtime by the controller.
+**Secrets — separate scope.** The current controller always resolves secrets through 1Password (`controller-runtime-support.ts`, `credential-manager.ts`). A separate agent is implementing .env-based injection as an alternative for dev. This plan assumes secrets are available to the controller by the time it starts — the mechanism (1Password, env vars, or hybrid) is handled by that separate task. The system.json `secrets` section and `secretsProvider` config will be finalized as part of that work.
 
 - [ ] **Step 3: Create coding-gateway.json (worker config)**
 
@@ -537,20 +521,9 @@ workerSecretName: z.string().default("agent-vm-secrets"),
 
 This is the name of the k8s Secret that contains the API keys. Env var: `WORKER_SECRET_NAME`.
 
-- [ ] **Step 3b: Create the k8s Secret (one-time manual step for dev)**
+- [ ] **Step 3b: k8s Secret — handled by separate secrets task**
 
-The controller resolves secrets through 1Password at runtime. The only env var the pod needs is the 1Password service account token:
-
-```bash
-kubectl -n agent-vm create secret generic agent-vm-secrets \
-  --from-literal=OP_SERVICE_ACCOUNT_TOKEN=<real-1password-service-account-token>
-```
-
-The actual API keys (`OPENAI_API_KEY`, `GITHUB_TOKEN`) live in 1Password at the `op://` paths specified in system.json. The controller resolves them using the service account token.
-
-**Prerequisite:** A 1Password service account must exist with read access to the `agent-vm` vault (or wherever the secrets are stored). Create it at https://my.1password.com/developer-tools/service-accounts.
-
-For staging/prod, this would come from SSM → ExternalSecrets Operator. For dev, it's a one-time manual creation.
+The k8s Secret creation and content (1Password token, env vars, or hybrid) is handled by a separate agent implementing .env-based secret injection. This plan wires `envFrom` in the pod spec (Step 3) so whatever secret mechanism is chosen, the pod receives the env vars. The secret name defaults to `agent-vm-secrets` (from `config.workerSecretName`).
 
 - [ ] **Step 4: Update readiness probe path**
 
@@ -722,15 +695,13 @@ git push origin feat/agent-vm-worker-beta
 gh pr create --title "feat: agent-vm worker beta deployment" --body "..."
 ```
 
-- [ ] **Step 2: Create k8s Secret for dev (one-time, if not done in T2 Step 3b)**
+- [ ] **Step 2: Verify k8s Secret exists (created by separate secrets task)**
 
 ```bash
-kubectl -n agent-vm get secret agent-vm-secrets 2>/dev/null || \
-kubectl -n agent-vm create secret generic agent-vm-secrets \
-  --from-literal=OP_SERVICE_ACCOUNT_TOKEN=<real-1password-service-account-token>
+kubectl -n agent-vm get secret agent-vm-secrets
 ```
 
-Only `OP_SERVICE_ACCOUNT_TOKEN` is needed. The controller resolves `OPENAI_API_KEY` and `GITHUB_TOKEN` from 1Password at runtime using the `op://` refs in system.json.
+The secret content and creation is handled by the separate secrets task. This step just verifies it exists before testing.
 
 - [ ] **Step 3: Merge PR and verify CI**
 
@@ -827,7 +798,7 @@ Record in a follow-up issue: cold start time, error messages, config issues, mis
 - [x] **Controller route is correct:** `POST /zones/:zoneId/worker-tasks` (not `/coding/tasks`). Verified against `controller-zone-operation-routes.ts:42`.
 - [x] **Controller call is synchronous:** `runWorkerTask()` blocks for the full lifecycle. No async task ID, no delegator-side polling.
 - [x] **Worker binary path resolved:** OCI Dockerfile installs `@shravansunder/agent-vm-worker` from npm and symlinks `node_modules/.../dist` → `/opt/agent-vm-worker/dist` so `worker-lifecycle.ts:53` resolves.
-- [x] **Secrets wired end-to-end via 1Password:** k8s Secret contains `OP_SERVICE_ACCOUNT_TOKEN` → pod `envFrom` (T2 Step 3) → controller creates 1Password resolver → resolves `op://` refs from system.json → passes resolved values to Gondolin VM. No env-var-only bypass — the controller always resolves through 1Password (`controller-runtime-support.ts`, `credential-manager.ts`). 1Password service account + vault setup is a prerequisite (T2 Step 3b).
+- [x] **Secrets — deferred to separate scope:** Current controller uses 1Password. A separate agent is adding .env-based injection for dev. This plan assumes secrets are available when the controller starts. The `envFrom` wiring in the pod spec (T2 Step 3) is in place; the secret content and provider config are finalized by the separate secrets task.
 - [x] **Pod cleanup:** Delegator deletes pod in `finally` block after task completes or fails.
 - [x] **PNPM_HOME set:** Dockerfile sets `ENV PNPM_HOME=/usr/local/share/pnpm` and `ENV PATH=$PNPM_HOME:$PATH`.
 - [x] **images.tool separate:** Stub build-config.json at `/etc/agent-vm/images/tool/build-config.json`. Not used by coding zone but required by schema.
