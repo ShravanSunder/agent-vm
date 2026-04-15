@@ -63,6 +63,8 @@ describe('workerLifecycle', () => {
 			OPENAI_API_KEY: 'openai-token',
 		});
 
+		expect(processSpec.bootstrapCommand).toContain('npm install -g @openai/codex');
+		expect(processSpec.bootstrapCommand).toContain('/state/agent-vm-worker.tgz');
 		expect(processSpec.startCommand).toContain('agent-vm-worker');
 		expect(processSpec.startCommand).toContain('serve --port 18789');
 		expect(processSpec.healthCheck).toEqual({ type: 'http', port: 18789, path: '/health' });

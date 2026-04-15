@@ -174,6 +174,7 @@ describe('worker-task-runner', () => {
 	});
 
 	afterEach(() => {
+		delete process.env.AGENT_VM_WORKER_TARBALL_PATH;
 		vi.resetModules();
 		startGatewayZoneMock.mockReset();
 		startDockerServicesForTaskMock.mockReset();
@@ -337,6 +338,30 @@ describe('worker-task-runner', () => {
 				zone,
 			),
 		).rejects.toThrow('Invalid project config');
+	});
+
+	it('copies the configured local worker tarball into the task state directory', async () => {
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const localWorkerTarballPath = path.join(tempDir, 'agent-vm-worker-local.tgz');
+		await fs.writeFile(localWorkerTarballPath, 'local worker tarball bytes');
+		process.env.AGENT_VM_WORKER_TARBALL_PATH = localWorkerTarballPath;
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		const result = await preStartGateway(
+			{
+				prompt: 'fix login',
+				repos: [],
+				context: {},
+			},
+			zone,
+		);
+
+		await expect(
+			fs.readFile(path.join(result.stateDir, 'agent-vm-worker.tgz'), 'utf8'),
+		).resolves.toBe('local worker tarball bytes');
 	});
 
 	it('retries transient poll failures before giving up', async () => {

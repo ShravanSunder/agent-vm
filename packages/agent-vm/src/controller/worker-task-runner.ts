@@ -62,6 +62,15 @@ async function readJsonObjectFile(
 	}
 }
 
+async function copyLocalWorkerTarballIfConfigured(stateDir: string): Promise<void> {
+	const localWorkerTarballPath = process.env.AGENT_VM_WORKER_TARBALL_PATH;
+	if (!localWorkerTarballPath) {
+		return;
+	}
+
+	await fs.copyFile(localWorkerTarballPath, path.join(stateDir, 'agent-vm-worker.tgz'));
+}
+
 export interface WorkerTaskInput {
 	readonly prompt: string;
 	readonly repos: readonly { readonly repoUrl: string; readonly baseBranch: string }[];
@@ -113,6 +122,7 @@ export async function preStartGateway(
 	let composeFilePaths: readonly string[] = [];
 	await fs.mkdir(workspaceDir, { recursive: true });
 	await fs.mkdir(stateDir, { recursive: true });
+	await copyLocalWorkerTarballIfConfigured(stateDir);
 
 	try {
 		const usedRepoNames = new Set<string>();

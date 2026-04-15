@@ -24,26 +24,70 @@ function hasCommand(command: string): boolean {
 	}
 }
 
-function rebuildGatewayDockerImage(projectRoot: string): void {
-	execFileSync(
-		'docker',
-		[
-			'build',
-			'-t',
-			'agent-vm-gateway:latest',
-			'-f',
-			path.join(projectRoot, 'images', 'gateway', 'Dockerfile'),
-			path.join(projectRoot, 'images', 'gateway'),
-		],
-		{ stdio: 'inherit' },
-	);
-}
-
 function rebuildWorkerPackages(repoRoot: string): void {
 	execFileSync('pnpm', ['build'], {
 		cwd: repoRoot,
 		stdio: 'inherit',
 	});
+}
+
+async function findReusableGatewayImageDirectory(
+	currentProjectRoot: string,
+	gatewayBuildConfigPath: string,
+): Promise<string | null> {
+	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
+	const tempRootEntries = await fs.readdir(os.tmpdir(), { withFileTypes: true });
+	const smokeRunDirectories = tempRootEntries
+		.filter((entry) => entry.isDirectory() && entry.name.startsWith('worker-loop-smoke-'))
+		.map((entry) => path.join(os.tmpdir(), entry.name));
+
+	for (const smokeRunDirectory of smokeRunDirectories) {
+		if (smokeRunDirectory === currentProjectRoot) {
+			continue;
+		}
+		const candidateImageDir = path.join(
+			smokeRunDirectory,
+			'cache',
+			'images',
+			'gateway',
+			requiredFingerprint,
+		);
+		try {
+			await fs.access(path.join(candidateImageDir, 'manifest.json'));
+			await fs.access(path.join(candidateImageDir, 'rootfs.ext4'));
+			await fs.access(path.join(candidateImageDir, 'initramfs.cpio.lz4'));
+			await fs.access(path.join(candidateImageDir, 'vmlinuz-virt'));
+			return candidateImageDir;
+		} catch {
+			continue;
+		}
+	}
+
+	return null;
+}
+
+async function seedGatewayImageCacheIfAvailable(
+	activeCacheDir: string,
+	currentProjectRoot: string,
+	gatewayBuildConfigPath: string,
+): Promise<void> {
+	const reusableImageDir = await findReusableGatewayImageDirectory(
+		currentProjectRoot,
+		gatewayBuildConfigPath,
+	);
+	if (!reusableImageDir) {
+		return;
+	}
+
+	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
+	const activeImageDir = path.join(activeCacheDir, 'images', 'gateway', requiredFingerprint);
+	if (activeImageDir === reusableImageDir) {
+		return;
+	}
+
+	await fs.rm(activeImageDir, { recursive: true, force: true });
+	await fs.mkdir(path.dirname(activeImageDir), { recursive: true });
+	await fs.symlink(reusableImageDir, activeImageDir, 'dir');
 }
 
 async function prepareLocalWorkerPackageForGatewayImage(
@@ -63,36 +107,7 @@ async function prepareLocalWorkerPackageForGatewayImage(
 	if (packedTarballName.length === 0) {
 		throw new Error('Failed to pack local agent-vm-worker tarball for smoke image.');
 	}
-
-	const dockerfilePath = path.join(gatewayImageDirectory, 'Dockerfile');
-	const dockerfileContents = await fs.readFile(dockerfilePath, 'utf8');
-	const patchedDockerfile = dockerfileContents
-		.replace(
-			'FROM node:24-slim\n\n',
-			`FROM node:24-slim\n\nCOPY ${packedTarballName} /tmp/${packedTarballName}\n\n`,
-		)
-		.replace(
-			'npm install -g @openai/codex @shravansunder/agent-vm-worker && \\',
-			`npm install -g @openai/codex /tmp/${packedTarballName} && \\`,
-		);
-	await fs.writeFile(dockerfilePath, patchedDockerfile, 'utf8');
-
-	return packedTarballName;
-}
-
-async function resetGatewayImageCacheForCurrentDockerImage(
-	cacheDir: string,
-	gatewayBuildConfigPath: string,
-): Promise<void> {
-	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
-	await fs.mkdir(path.join(cacheDir, 'images', 'gateway'), { recursive: true });
-	// The Gondolin fingerprint is based on build-config JSON, not OCI image contents.
-	// When the smoke harness rebuilds agent-vm-gateway:latest, we must evict the
-	// converted rootfs for the matching fingerprint so the VM picks up the new image.
-	await fs.rm(path.join(cacheDir, 'images', 'gateway', requiredFingerprint), {
-		recursive: true,
-		force: true,
-	});
+	return path.join(gatewayImageDirectory, packedTarballName);
 }
 
 const runWorkerSmoke =
@@ -241,12 +256,14 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 				generateAgeIdentityKey: () => undefined,
 			},
 		);
-		const gatewayBuildConfigPath = path.join(tempRoot, 'images', 'gateway', 'build-config.json');
-		const scaffoldCachePath = path.join(repoRoot, '.agent-vm-smoke-cache');
+		const scaffoldCachePath = path.join(os.tmpdir(), 'agent-vm-smoke-cache');
 		await fs.mkdir(scaffoldCachePath, { recursive: true });
-		await prepareLocalWorkerPackageForGatewayImage(repoRoot, tempRoot);
-		rebuildGatewayDockerImage(tempRoot);
-		await resetGatewayImageCacheForCurrentDockerImage(scaffoldCachePath, gatewayBuildConfigPath);
+		const gatewayBuildConfigPath = path.join(tempRoot, 'images', 'gateway', 'build-config.json');
+		await seedGatewayImageCacheIfAvailable(scaffoldCachePath, tempRoot, gatewayBuildConfigPath);
+		const localWorkerTarballPath = await prepareLocalWorkerPackageForGatewayImage(
+			repoRoot,
+			tempRoot,
+		);
 
 		const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
 		systemConfig.cacheDir = scaffoldCachePath;
@@ -284,45 +301,53 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 				stateDir: '/state',
 			}),
 		);
-
-		runtime = await startControllerRuntime(
-			{
-				systemConfig,
-				zoneId: 'worker-smoke',
-			},
-			{
-				createSecretResolver: async (): Promise<SecretResolver> => ({
-					resolve: async (_ref: SecretRef) => process.env.OPEN_AI_TEST_KEY ?? '',
-					resolveAll: async (refs: Record<string, SecretRef>) =>
-						Object.fromEntries(
-							Object.keys(refs).map((key) => [key, process.env.OPEN_AI_TEST_KEY ?? '']),
-						),
-				}),
-			},
-		);
-
-		await waitForControllerReady(controllerPort);
-
-		const response = await postJsonWithLongTimeout(
-			`http://127.0.0.1:${controllerPort}/zones/worker-smoke/worker-tasks`,
-			{
-				prompt: 'Create a file named READY.txt in the repository root containing exactly READY.',
-				repos: [{ repoUrl: repoDir, baseBranch: 'main' }],
-				context: { source: 'smoke-test' },
-			},
-		);
-
-		if (response.statusCode !== 200) {
-			throw new Error(
-				`Worker smoke task request failed with ${response.statusCode}: ${JSON.stringify(response.json)}`,
+		const previousLocalWorkerTarballPath = process.env.AGENT_VM_WORKER_TARBALL_PATH;
+		process.env.AGENT_VM_WORKER_TARBALL_PATH = localWorkerTarballPath;
+		try {
+			runtime = await startControllerRuntime(
+				{
+					systemConfig,
+					zoneId: 'worker-smoke',
+				},
+				{
+					createSecretResolver: async (): Promise<SecretResolver> => ({
+						resolve: async (_ref: SecretRef) => process.env.OPEN_AI_TEST_KEY ?? '',
+						resolveAll: async (refs: Record<string, SecretRef>) =>
+							Object.fromEntries(
+								Object.keys(refs).map((key) => [key, process.env.OPEN_AI_TEST_KEY ?? '']),
+							),
+					}),
+				},
 			);
-		}
-		const body = workerTaskResponseSchema.parse(response.json);
-		expect(body.taskId).toBeTruthy();
-		if (body.finalState.status !== 'completed') {
-			throw new Error(
-				`Worker smoke task ended in ${body.finalState.status}: ${JSON.stringify(body.finalState)}`,
+			await waitForControllerReady(controllerPort);
+
+			const response = await postJsonWithLongTimeout(
+				`http://127.0.0.1:${controllerPort}/zones/worker-smoke/worker-tasks`,
+				{
+					prompt: 'Create a file named READY.txt in the repository root containing exactly READY.',
+					repos: [{ repoUrl: repoDir, baseBranch: 'main' }],
+					context: { source: 'smoke-test' },
+				},
 			);
+
+			if (response.statusCode !== 200) {
+				throw new Error(
+					`Worker smoke task request failed with ${response.statusCode}: ${JSON.stringify(response.json)}`,
+				);
+			}
+			const body = workerTaskResponseSchema.parse(response.json);
+			expect(body.taskId).toBeTruthy();
+			if (body.finalState.status !== 'completed') {
+				throw new Error(
+					`Worker smoke task ended in ${body.finalState.status}: ${JSON.stringify(body.finalState)}`,
+				);
+			}
+		} finally {
+			if (previousLocalWorkerTarballPath === undefined) {
+				delete process.env.AGENT_VM_WORKER_TARBALL_PATH;
+			} else {
+				process.env.AGENT_VM_WORKER_TARBALL_PATH = previousLocalWorkerTarballPath;
+			}
 		}
 	}, 900_000);
 });
