@@ -59,7 +59,7 @@ When you give it a task, the agent runs a 6-phase loop:
 3. **Work** — writes the code (uses OpenAI GPT-5.4 by default)
 4. **Verify** — runs your tests and linter, fixes failures automatically
 5. **Work Review** — reviews the diff, requests changes if quality is low
-6. **Wrapup** — stages changes, controller pushes branch and opens a pull request
+6. **Wrapup** — stages and commits changes, controller pushes branch and opens a pull request
 
 If verification or review fails, the agent loops back and tries again
 (up to configurable retry limits). The whole thing is event-sourced —

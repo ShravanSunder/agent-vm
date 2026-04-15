@@ -310,7 +310,7 @@ The task moves through these statuses:
   |  The agent runs configured "finishing" actions:                     |
   |                                                                    |
   |    git-pr (default, required):                                     |
-  |      Stage changes -> call controller push-branches endpoint       |
+  |      Stage & commit -> call controller push-branches endpoint       |
   |      Controller pushes branch + creates PR (host-side, with token) |
   |                                                                    |
   |    slack-post (optional):                                          |
@@ -486,7 +486,7 @@ During the wrapup phase, the agent needs to call tools like "create a git PR" or
   Coordinator (wrapup phase)
         |
         |  Build tool definitions:
-        |    git-pr    -> stages changes, calls controller push-branches API
+        |    git-pr    -> stages and commits changes, calls controller push-branches API
         |    slack-post -> posts to webhook directly
         |
         v
@@ -501,7 +501,7 @@ During the wrapup phase, the agent needs to call tools like "create a git PR" or
         v
   Executor runs wrapup phase
     LLM decides which tools to call based on the prompt
-    LLM calls git-pr tool -> stages changes, controller pushes + creates PR
+    LLM calls git-pr tool -> stages and commits, controller pushes + creates PR
     LLM calls slack-post tool -> posts to webhook
         |
         v
@@ -510,7 +510,7 @@ During the wrapup phase, the agent needs to call tools like "create a git PR" or
 
 **MCP** (Model Context Protocol) is a standard way for LLMs to discover and call tools. By wrapping our tools as an MCP server, the LLM agent can call them naturally as part of its conversation.
 
-**Why controller-side push?** The GitHub token never enters the VM. The worker stages changes and tells the controller "push this branch and create a PR." The controller runs `git push` and `gh pr create` on the host side where the token is available. See `docs/subsystems/worker-task-pipeline.md` for the full push flow.
+**Why controller-side push?** The GitHub token never enters the VM. The worker stages and commits changes locally, then tells the controller "push this branch and create a PR." The controller runs `git push` and `gh pr create` on the host side where the token is available. See `docs/subsystems/worker-task-pipeline.md` for the full push flow.
 
 ---
 
@@ -669,9 +669,9 @@ Here's a concrete trace of a successful task from start to finish:
                                                 Start MCP server with git-pr tool
                                                 LLM calls git-pr tool:
                                                   Create branch agent/t-001
-                                                  Commit with co-author
-                                                  Push to origin
-                                                  Open PR via gh CLI
+                                                  Stage & commit with co-author
+                                                  Call controller push-branches API
+                                                  Controller pushes + opens PR
                                                 Emit: wrapup-result (PR URL)
                                                 Emit: task-completed
                                                 Status: completed
@@ -706,7 +706,7 @@ Quick reference for finding things in the code:
   |
   |-- work-executor/
   |   |-- executor-interface.ts .. WorkExecutor contract (execute, fix, resumeOrRebuild)
-  |   |-- executor-factory.ts .... Provider dispatch (openai vs claude)
+  |   |-- executor-factory.ts .... Provider dispatch (codex vs claude)
   |   |-- codex-executor.ts ...... OpenAI SDK wrapper (threads, MCP registration)
   |   |-- local-tool-mcp-server.ts  Wraps tools as MCP server (Hono + MCP SDK)
   |
