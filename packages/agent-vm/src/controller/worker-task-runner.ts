@@ -94,10 +94,11 @@ export interface PreStartResult {
 function deriveRepoDirectoryName(repoUrl: string, usedNames: Set<string>): string {
 	const cleanedUrl = repoUrl.replace(/\.git$/, '');
 	const baseName = cleanedUrl.split('/').pop()?.trim() ?? 'repo';
-	let candidate = baseName.replace(/[^a-zA-Z0-9._-]/g, '-');
+	const sanitizedBaseName = baseName.replace(/[^a-zA-Z0-9._-]/g, '-');
+	let candidate = sanitizedBaseName;
 	let counter = 2;
 	while (usedNames.has(candidate)) {
-		candidate = `${baseName}-${counter}`;
+		candidate = `${sanitizedBaseName}-${counter}`;
 		counter += 1;
 	}
 	usedNames.add(candidate);
