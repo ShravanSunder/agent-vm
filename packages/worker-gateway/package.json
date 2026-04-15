@@ -1,6 +1,6 @@
 {
 	"name": "@shravansunder/worker-gateway",
-	"version": "0.0.4",
+	"version": "0.0.5",
 	"files": [
 		"dist"
 	],
@@ -22,7 +22,7 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@shravansunder/gateway-interface": "workspace:0.0.4",
-		"@shravansunder/gondolin-core": "workspace:0.0.4"
+		"@shravansunder/gateway-interface": "workspace:0.0.5",
+		"@shravansunder/gondolin-core": "workspace:0.0.5"
 	}
 }
