@@ -1,14 +1,28 @@
 # agent-vm
 
-Give it a coding task. It plans an approach, writes the code, runs your
-tests, reviews its own work, and opens a pull request. Everything happens
-inside a disposable virtual machine — the agent has full filesystem and
-shell access, but it can't affect your real systems.
+A self-hosted system for running LLM coding agents safely. Each task gets its own fresh QEMU micro-VM that boots in seconds, does the work, and is destroyed when done. API keys are injected at the network layer so the agent never sees raw credentials.
 
-agent-vm is a self-hosted system for running LLM coding agents safely.
-Each task gets its own fresh VM that boots in seconds, does the work, and
-is destroyed when done. API keys are injected at the network layer so the
-agent never sees the raw credentials.
+---
+
+## System Overview
+
+```mermaid
+flowchart TB
+    User["You / CI / API"] -->|"coding task"| Controller
+    subgraph Host["Host Machine (Zone 1 — trusted)"]
+        Controller["Controller :18800\nclone repo, resolve secrets,\nmanage VM lifecycle"]
+        SecretResolver["Secret Resolver\n1Password / env"]
+        Controller --- SecretResolver
+    end
+    Controller -->|"boot VM\nmount workspace + state"| VM
+    subgraph VM["Gondolin VM (Zone 2 — sandboxed, ephemeral)"]
+        direction LR
+        Worker["Worker\n:18789"] --> Plan["Plan"] --> PlanReview["Plan\nReview"] --> Code["Code"] --> Verify["Verify"] --> CodeReview["Code\nReview"] --> Wrapup["Wrapup"]
+    end
+    SecretResolver -.->|"HTTP mediation\n(secrets never enter VM)"| VM
+    Wrapup -->|"request push"| Controller
+    Controller -->|"git push + create PR\n(GitHub token stays on host)"| GitHub["GitHub"]
+```
 
 ---
 
@@ -34,36 +48,62 @@ agent never sees the raw credentials.
                     database containers, build tools, etc.
 ```
 
-The **Controller** is a Node.js process on your machine. It never runs
-untrusted code — it just manages VMs and credentials.
+The **Controller** is a Node.js process on your machine. It never runs untrusted code — it just manages VMs and credentials.
 
-The **Gateway VM** is where the LLM agent works. It's a lightweight QEMU
-virtual machine (via [Gondolin](https://github.com/nicholasgasior/gondolin))
-that boots in ~2 seconds. Your repo is mounted read-write inside the VM.
-The agent can run any command — npm, git, python — but it's sandboxed.
-When the task finishes, the VM is destroyed and nothing persists except
-your repo changes and the event log.
+The **Gateway VM** is where the LLM agent works. A lightweight QEMU virtual machine (via [Gondolin](https://github.com/nicholasgasior/gondolin)) that boots in ~2 seconds. Your repo is mounted read-write inside the VM. The agent can run any command — npm, git, python — but it's sandboxed. When the task finishes, the VM is destroyed.
 
-**Tool VMs** are additional sandboxes for backing services (postgres,
-redis) that your tests might need. They're booted on demand and cleaned
-up with the task.
+**Tool VMs** are additional sandboxes for backing services (postgres, redis) that your tests might need. Booted on demand and cleaned up with the task.
 
 ---
 
-## The Agent Pipeline (Worker Mode)
+## The Agent Pipeline
 
-When you give it a task, the agent runs a 6-phase loop:
+Six phases, three with retry loops:
 
 1. **Plan** — reads your codebase, writes an implementation plan
-2. **Plan Review** — reviews its own plan, revises if needed
-3. **Work** — writes the code (uses OpenAI GPT-5.4 by default)
-4. **Verify** — runs your tests and linter, fixes failures automatically
-5. **Work Review** — reviews the diff, requests changes if quality is low
-6. **Wrapup** — stages and commits changes, controller pushes branch and opens a pull request
+2. **Plan Review** — separate LLM reviews the plan, revises if rejected (max 2 loops)
+3. **Work** — writes code with full shell access (default: GPT-5.4)
+4. **Verify** — runs your tests + linter, auto-fixes failures (max 3 retries)
+5. **Work Review** — separate LLM reviews the diff, requests changes if needed (max 3 loops)
+6. **Wrapup** — commits changes, controller pushes branch + opens PR from host
 
-If verification or review fails, the agent loops back and tries again
-(up to configurable retry limits). The whole thing is event-sourced —
-every state change is logged to a JSONL file for debugging.
+Every state change is logged to a JSONL event log for debugging and crash recovery.
+
+---
+
+## Security Model
+
+```
+  +====================================================================+
+  |  ZONE 1: HOST  (fully trusted)                                      |
+  |                                                                     |
+  |  Controller process, secret resolver, GitHub token, Docker daemon   |
+  |  Can: resolve secrets, push branches, manage VMs                    |
+  |  Never: runs untrusted code                                         |
+  |                                                                     |
+  |  +---------------------------------------------------------------+  |
+  |  |  ZONE 2: GATEWAY VM  (sandboxed)                              |  |
+  |  |                                                                |  |
+  |  |  Per-task ephemeral VM with full shell access                  |  |
+  |  |  Can: make outbound HTTP (allowlisted hosts only)              |  |
+  |  |  Cannot: see API keys, access host filesystem, persist state   |  |
+  |  |                                                                |  |
+  |  |  +----------------------------------------------------------+  |  |
+  |  |  |  ZONE 3: TOOL VM  (untrusted)                            |  |  |
+  |  |  |                                                           |  |  |
+  |  |  |  Ephemeral, per-lease. Runs LLM-generated code.           |  |  |
+  |  |  |  Has: workspace mount only. No secrets, no network.       |  |  |
+  |  |  +----------------------------------------------------------+  |  |
+  |  +---------------------------------------------------------------+  |
+  +=====================================================================+
+```
+
+**Key properties:**
+- **Secrets never enter the VM** — Gondolin's HTTP mediation proxy intercepts outbound requests and injects API keys at the network layer. The agent process makes normal HTTP calls without ever seeing credentials.
+- **Each task is isolated** — fresh VM, fresh workspace, fresh Docker namespace. Tasks can't contaminate each other.
+- **GitHub token stays on host** — the VM asks the controller to push. The controller runs `git push` from Zone 1 where the token lives.
+- **Allowlisted egress** — outbound traffic is restricted per-zone. No arbitrary internet access.
+- **.env / secrets never readable by agent** — contrast with container-based approaches where `process.env` exposes everything.
 
 ---
 
@@ -74,7 +114,7 @@ every state change is logged to a JSONL file for debugging.
 | **Purpose**        | Interactive chat agent          | Autonomous coding pipeline                           |
 | **Gateway type**   | `openclaw`                      | `worker`                                             |
 | **VM lifecycle**   | Long-running per zone           | Per-task ephemeral                                   |
-| **Pipeline**       | User-driven conversation        | 6-phase: plan > review > work > verify > review > wrapup |
+| **Pipeline**       | User-driven conversation        | 6-phase: plan → review → work → verify → review → wrapup |
 | **Output**         | Chat responses + tool calls     | Pull requests                                        |
 | **Backing services** | Discord, WhatsApp channels    | Docker compose (postgres, etc.)                      |
 
@@ -98,16 +138,41 @@ All packages live under `packages/` in this monorepo.
 
 ## Quick Start
 
-See [SETUP.md](SETUP.md) for prerequisites, installation, and first-run
-instructions.
+See [SETUP.md](SETUP.md) for prerequisites, installation, and first-run instructions.
 
 ---
 
-## Documentation
+## Reading Guide
 
-| Document | What it covers |
-|----------|---------------|
-| [architecture.md](architecture.md) | System architecture -- trust zones, VM lifecycle, secret flow |
-| [agent-vm-worker-architecture.md](agent-vm-worker-architecture.md) | Worker pipeline deep dive -- phases, state machine, event log |
-| [configuration-reference.md](configuration-reference.md) | All config fields for system.json, zone configs, and env |
-| [subsystems/](subsystems/) | Subsystem deep dives -- secrets, snapshots, networking, Docker |
+### By audience
+
+| You want to... | Read |
+|----------------|------|
+| **5-min pitch** — understand what this is and why it's secure | This README (you're done) |
+| **15-min technical walkthrough** — understand all the moving parts | README → [architecture.md](architecture.md) → [worker-pipeline.md](worker-pipeline.md) |
+| **Work on the codebase** — understand implementation details | + [subsystems/](subsystems/) deep dives |
+| **Configure or operate** — look up config fields, run E2E checks | [reference/](reference/) |
+
+### Full doc tree
+
+```
+docs/
+├── README.md                              You are here
+├── architecture.md                        System architecture, packages, controller,
+│                                          gateway, secrets, trust zones
+├── worker-pipeline.md                     Inside the VM: 6-phase pipeline, event
+│                                          sourcing, executors, MCP tools
+├── SETUP.md                               Prerequisites + quick start
+│
+├── subsystems/                            Implementation deep dives
+│   ├── controller.md                      Controller runtime, HTTP API, leases
+│   ├── gateway-lifecycle.md               Gateway abstraction, OpenClaw vs Worker
+│   ├── gondolin-vm-layer.md               VM adapter, VFS, HTTP mediation
+│   ├── secrets-and-credentials.md         Secret resolution + injection modes
+│   └── worker-task-pipeline.md            Controller-side task lifecycle
+│
+└── reference/                             Lookup material
+    ├── configuration-reference.md         All config fields (system.json, worker.json)
+    ├── project-status.md                  Build history, E2E verification matrix
+    └── e2e-verification.md                Live testing checklist
+```

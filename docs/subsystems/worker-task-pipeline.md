@@ -2,6 +2,8 @@
 
 [Overview](../README.md) > [Architecture](../architecture.md) > Worker Task Pipeline
 
+For the in-VM pipeline (what happens after task submission), see [worker-pipeline.md](../worker-pipeline.md). For configuration fields, see [configuration-reference.md](../reference/configuration-reference.md).
+
 Controller-side lifecycle of a worker task from HTTP submission through
 VM teardown. Every step runs on the host -- the VM is an opaque compute
 box that the controller boots, monitors, and destroys. GitHub tokens and
