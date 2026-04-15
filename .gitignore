@@ -76,3 +76,4 @@ build-cache/
 cache/
 *.bak
 *.tgz
+.npmrc

@@ -1,6 +1,6 @@
 {
 	"name": "@shravansunder/openclaw-gateway",
-	"version": "0.0.7",
+	"version": "0.0.15",
 	"files": [
 		"dist"
 	],
@@ -22,7 +22,7 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@shravansunder/gateway-interface": "workspace:0.0.7",
-		"@shravansunder/gondolin-core": "workspace:0.0.7"
+		"@shravansunder/gateway-interface": "workspace:*",
+		"@shravansunder/gondolin-core": "workspace:*"
 	}
 }

@@ -45,22 +45,22 @@ importers:
         specifier: ^1.19.14
         version: 1.19.14(hono@4.12.14)
       '@shravansunder/agent-vm-worker':
-        specifier: workspace:0.0.7
+        specifier: workspace:*
         version: link:../agent-vm-worker
       '@shravansunder/gateway-interface':
-        specifier: workspace:0.0.7
+        specifier: workspace:*
         version: link:../gateway-interface
       '@shravansunder/gondolin-core':
-        specifier: workspace:0.0.7
+        specifier: workspace:*
         version: link:../gondolin-core
       '@shravansunder/openclaw-agent-vm-plugin':
-        specifier: workspace:0.0.7
+        specifier: workspace:*
         version: link:../openclaw-agent-vm-plugin
       '@shravansunder/openclaw-gateway':
-        specifier: workspace:0.0.7
+        specifier: workspace:*
         version: link:../openclaw-gateway
       '@shravansunder/worker-gateway':
-        specifier: workspace:0.0.7
+        specifier: workspace:*
         version: link:../worker-gateway
       cmd-ts:
         specifier: ^0.14.0
@@ -116,7 +116,7 @@ importers:
   packages/gateway-interface:
     dependencies:
       '@shravansunder/gondolin-core':
-        specifier: workspace:0.0.7
+        specifier: workspace:*
         version: link:../gondolin-core
 
   packages/gondolin-core:
@@ -134,25 +134,25 @@ importers:
   packages/openclaw-agent-vm-plugin:
     dependencies:
       '@shravansunder/gondolin-core':
-        specifier: workspace:0.0.7
+        specifier: workspace:*
         version: link:../gondolin-core
 
   packages/openclaw-gateway:
     dependencies:
       '@shravansunder/gateway-interface':
-        specifier: workspace:0.0.7
+        specifier: workspace:*
         version: link:../gateway-interface
       '@shravansunder/gondolin-core':
-        specifier: workspace:0.0.7
+        specifier: workspace:*
         version: link:../gondolin-core
 
   packages/worker-gateway:
     dependencies:
       '@shravansunder/gateway-interface':
-        specifier: workspace:0.0.7
+        specifier: workspace:*
         version: link:../gateway-interface
       '@shravansunder/gondolin-core':
-        specifier: workspace:0.0.7
+        specifier: workspace:*
         version: link:../gondolin-core
 
 packages:
