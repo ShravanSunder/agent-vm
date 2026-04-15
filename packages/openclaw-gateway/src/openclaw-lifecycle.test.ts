@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { GatewayZoneConfig } from '@shravansunder/agent-vm-gateway-interface';
-import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
+import type { GatewayZoneConfig } from '@shravansunder/gateway-interface';
+import type { SecretResolver } from '@shravansunder/gondolin-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { openclawLifecycle } from './openclaw-lifecycle.js';
@@ -23,7 +23,7 @@ const resolvedSecrets: Record<string, string> = {
 };
 
 function createZone(overrides?: {
-	readonly authProfilesRef?: string;
+	readonly authProfilesRef?: GatewayZoneConfig['gateway']['authProfilesRef'];
 	readonly gateway?: Partial<GatewayZoneConfig['gateway']>;
 	readonly withoutAuthProfilesRef?: boolean;
 }): GatewayZoneConfig {
@@ -38,27 +38,35 @@ function createZone(overrides?: {
 	};
 
 	return {
-		...(overrides?.withoutAuthProfilesRef
-			? {}
-			: { authProfilesRef: overrides?.authProfilesRef ?? 'op://vault/item/auth-profiles' }),
 		allowedHosts: ['api.openai.com', 'api.perplexity.ai'],
 		gateway: {
 			...baseGateway,
+			...(overrides?.withoutAuthProfilesRef
+				? {}
+				: {
+						authProfilesRef: overrides?.authProfilesRef ?? {
+							source: '1password',
+							ref: 'op://vault/item/auth-profiles',
+						},
+					}),
 			...overrides?.gateway,
 		},
 		id: 'shravan',
 		secrets: {
 			DISCORD_BOT_TOKEN: {
 				injection: 'env',
+				source: '1password',
 				ref: 'op://vault/item/discord',
 			},
 			OPENCLAW_GATEWAY_TOKEN: {
 				injection: 'env',
+				source: '1password',
 				ref: 'op://vault/item/openclaw-gateway-token',
 			},
 			PERPLEXITY_API_KEY: {
 				hosts: ['api.perplexity.ai'],
 				injection: 'http-mediation',
+				source: '1password',
 				ref: 'op://vault/item/perplexity',
 			},
 		},
@@ -210,12 +218,6 @@ describe('openclawLifecycle', () => {
 			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
 
 			expect(
-				fs.readFileSync(
-					path.join(zone.gateway.stateDir, 'agents', 'main', 'agent', 'auth-profiles.json'),
-					'utf8',
-				),
-			).toBe('{"profiles":[]}');
-			expect(
 				JSON.parse(
 					fs.readFileSync(path.join(zone.gateway.stateDir, 'effective-openclaw.json'), 'utf8'),
 				),
@@ -233,7 +235,6 @@ describe('openclawLifecycle', () => {
 				fs.statSync(path.join(zone.gateway.stateDir, 'effective-openclaw.json')).mode & 0o777,
 			).toBe(0o600);
 			expect(fs.statSync(zone.gateway.stateDir).mode & 0o777).toBe(0o700);
-			expect(fs.existsSync(path.join(zone.gateway.stateDir, 'agents', 'main', 'agent'))).toBe(true);
 		});
 
 		it('still writes effective-openclaw.json when authProfilesRef is absent', async () => {
@@ -314,7 +315,7 @@ describe('openclawLifecycle', () => {
 
 			await expect(
 				openclawLifecycle.prepareHostState?.(invalidZone, secretResolver),
-			).rejects.toThrow(/secret 'OPENCLAW_GATEWAY_TOKEN' is missing 'ref'/u);
+			).rejects.toThrow(/secret 'OPENCLAW_GATEWAY_TOKEN' is missing/u);
 		});
 
 		it('throws when base config is not a JSON object', async () => {
@@ -443,7 +444,7 @@ describe('openclawLifecycle', () => {
 
 			await expect(
 				openclawLifecycle.prepareHostState?.(brokenZone, secretResolver),
-			).rejects.toThrow(/secret 'OPENCLAW_GATEWAY_TOKEN' is missing 'ref'/u);
+			).rejects.toThrow(/secret 'OPENCLAW_GATEWAY_TOKEN'.*(missing 'ref'|invalid shape)/u);
 		});
 	});
 });

@@ -1,7 +1,4 @@
-import type {
-	GatewayProcessSpec,
-	GatewayZoneConfig,
-} from '@shravansunder/agent-vm-gateway-interface';
+import type { GatewayProcessSpec, GatewayZoneConfig } from '@shravansunder/gateway-interface';
 
 import type { SystemConfig } from '../config/system-config.js';
 import type { RunTaskFn } from '../shared/run-task.js';
@@ -10,19 +7,21 @@ export type GatewayZone = SystemConfig['zones'][number];
 
 export interface StartGatewayZoneOptions {
 	readonly runTask?: RunTaskFn;
-	readonly secretResolver: import('@shravansunder/agent-vm-gondolin-core').SecretResolver;
+	readonly secretResolver: import('@shravansunder/gondolin-core').SecretResolver;
 	readonly systemConfig: SystemConfig;
+	readonly tcpHostsOverride?: Record<string, string>;
 	readonly zoneId: string;
+	readonly zoneOverride?: GatewayZone;
 }
 
 export interface GatewayZoneStartResult {
-	readonly image: import('@shravansunder/agent-vm-gondolin-core').BuildImageResult;
+	readonly image: import('@shravansunder/gondolin-core').BuildImageResult;
 	readonly ingress: {
 		readonly host: string;
 		readonly port: number;
 	};
 	readonly processSpec: GatewayProcessSpec;
-	readonly vm: import('@shravansunder/agent-vm-gondolin-core').ManagedVm;
+	readonly vm: import('@shravansunder/gondolin-core').ManagedVm;
 	readonly zone: GatewayZone;
 }
 
@@ -72,7 +71,6 @@ export function findGatewayZone(systemConfig: SystemConfig, zoneId: string): Gat
 
 export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZoneConfig {
 	return {
-		authProfilesRef: zone.gateway.authProfilesRef,
 		id: zone.id,
 		gateway: {
 			cpus: zone.gateway.cpus,
@@ -82,15 +80,24 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 			stateDir: zone.gateway.stateDir,
 			type: zone.gateway.type,
 			workspaceDir: zone.gateway.workspaceDir,
+			authProfilesRef: zone.gateway.authProfilesRef,
 		},
 		secrets: Object.fromEntries(
 			Object.entries(zone.secrets).map(([secretName, secretConfig]) => [
 				secretName,
-				{
-					...(secretConfig.hosts ? { hosts: secretConfig.hosts } : {}),
-					injection: secretConfig.injection,
-					ref: secretConfig.ref,
-				},
+				secretConfig.source === 'environment'
+					? {
+							source: 'environment' as const,
+							...(secretConfig.hosts ? { hosts: secretConfig.hosts } : {}),
+							injection: secretConfig.injection,
+							envVar: secretConfig.envVar,
+						}
+					: {
+							source: '1password' as const,
+							...(secretConfig.hosts ? { hosts: secretConfig.hosts } : {}),
+							injection: secretConfig.injection,
+							ref: secretConfig.ref,
+						},
 			]),
 		),
 		allowedHosts: zone.allowedHosts,

@@ -1,5 +1,5 @@
-import type { GatewayProcessSpec } from '@shravansunder/agent-vm-gateway-interface';
-import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
+import type { GatewayProcessSpec } from '@shravansunder/gateway-interface';
+import type { SecretResolver } from '@shravansunder/gondolin-core';
 
 import type { SystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';

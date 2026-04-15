@@ -7,7 +7,7 @@ import {
 	type BuildConfig,
 	type BuildImageOptions,
 	type BuildImageResult,
-} from '@shravansunder/agent-vm-gondolin-core';
+} from '@shravansunder/gondolin-core';
 
 export interface GondolinImageBuilderDependencies {
 	readonly buildImage?: (options: BuildImageOptions) => Promise<BuildImageResult>;

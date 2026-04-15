@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVm, ManagedVmInstance } from '@shravansunder/agent-vm-gondolin-core';
+import type { ManagedVm, ManagedVmInstance } from '@shravansunder/gondolin-core';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {

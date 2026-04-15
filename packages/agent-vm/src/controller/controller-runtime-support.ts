@@ -1,7 +1,8 @@
-import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
-import { resolveServiceAccountToken } from '@shravansunder/agent-vm-gondolin-core';
+import type { SecretResolver } from '@shravansunder/gondolin-core';
+import { resolveServiceAccountToken } from '@shravansunder/gondolin-core';
 
 import type { SystemConfig } from '../config/system-config.js';
+import { createCompositeSecretResolver } from './composite-secret-resolver.js';
 
 export async function createSecretResolverFromSystemConfig(
 	systemConfig: SystemConfig,
@@ -10,12 +11,20 @@ export async function createSecretResolverFromSystemConfig(
 	}) => Promise<SecretResolver>,
 	resolveTokenImpl: typeof resolveServiceAccountToken = resolveServiceAccountToken,
 ): Promise<SecretResolver> {
-	const serviceAccountToken = await resolveTokenImpl(systemConfig.host.secretsProvider.tokenSource);
+	let onePasswordResolver: SecretResolver | null = null;
+	if (systemConfig.host.secretsProvider) {
+		const serviceAccountToken = await resolveTokenImpl(
+			systemConfig.host.secretsProvider.tokenSource,
+		);
+		onePasswordResolver = await createSecretResolverImpl({
+			serviceAccountToken,
+		});
+	}
 
-	return await createSecretResolverImpl({
-		serviceAccountToken,
-	});
+	return createCompositeSecretResolver(onePasswordResolver);
 }
+
+export const createSecretResolver = createSecretResolverFromSystemConfig;
 
 export function findConfiguredZone(
 	systemConfig: SystemConfig,

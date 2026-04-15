@@ -32,6 +32,10 @@ export interface ExecFileResult {
 	readonly stderr: string;
 }
 
+function writeStderr(message: string): void {
+	process.stderr.write(`${message}\n`);
+}
+
 function ensureMacOsForKeychain(): void {
 	if (process.platform !== 'darwin') {
 		throw new Error(
@@ -209,7 +213,11 @@ export async function createSecretResolver(
 			resolve: async (ref: SecretRef): Promise<string> => {
 				try {
 					return await client.secrets.resolve(ref.ref);
-				} catch {
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					writeStderr(
+						`[secret-resolver] 1Password SDK resolve failed for ${ref.ref}; falling back to op CLI: ${message}`,
+					);
 					return await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec);
 				}
 			},
@@ -220,7 +228,11 @@ export async function createSecretResolver(
 					try {
 						// oxlint-disable-next-line eslint/no-await-in-loop
 						resolvedSecrets[secretName] = await client.secrets.resolve(secretRef.ref);
-					} catch {
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						writeStderr(
+							`[secret-resolver] 1Password SDK resolve failed for ${secretRef.ref}; falling back to op CLI: ${message}`,
+						);
 						// Sequential fallback avoids concurrent `op read` failures when the SDK path is unhealthy.
 						// oxlint-disable-next-line eslint/no-await-in-loop
 						resolvedSecrets[secretName] = await resolveSecretWithOpCli(
@@ -234,7 +246,11 @@ export async function createSecretResolver(
 				return resolvedSecrets;
 			},
 		};
-	} catch {
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		writeStderr(
+			`[secret-resolver] 1Password SDK client creation failed; falling back to op CLI: ${message}`,
+		);
 		return {
 			resolve: async (ref: SecretRef): Promise<string> =>
 				await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec),

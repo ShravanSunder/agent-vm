@@ -81,7 +81,7 @@ describe('scaffoldAgentVmProject', () => {
 		);
 
 		expect(config.zones[0]?.gateway.type).toBe('worker');
-		expect(gatewayDockerfile).toContain('@openai/codex-cli');
+		expect(gatewayDockerfile).toContain('@openai/codex');
 		expect(gatewayDockerfile).not.toContain('openclaw@');
 	});
 
@@ -272,7 +272,7 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(secrets).not.toHaveProperty('DISCORD_BOT_TOKEN');
 		expect(secrets).not.toHaveProperty('OPENCLAW_GATEWAY_TOKEN');
-		expect(secrets).toHaveProperty('ANTHROPIC_API_KEY');
+		expect(secrets).not.toHaveProperty('ANTHROPIC_API_KEY');
 		expect(secrets).toHaveProperty('OPENAI_API_KEY');
 	});
 
@@ -327,8 +327,7 @@ describe('scaffoldAgentVmProject', () => {
 		);
 		const secrets = config.zones[0].secrets;
 
-		expect(secrets.ANTHROPIC_API_KEY.ref).toBe('op://agent-vm/test-worker-anthropic/credential');
-		expect(secrets.OPENAI_API_KEY.ref).toBe('op://agent-vm/test-worker-openai/credential');
+		expect(secrets.OPENAI_API_KEY.ref).toBe('op://agent-vm/workers-openai/credential');
 	});
 
 	it('scaffolds worker-specific network defaults for worker type', async () => {

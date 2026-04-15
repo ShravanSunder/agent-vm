@@ -54,8 +54,11 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 			(memoryMatch[2] ?? '').toLowerCase() === 'g' ? 1024 * 1024 * 1024 : 1024 * 1024;
 		return totalBytes + numericValue * multiplier;
 	}, 0);
-	const tokenSource = options.systemConfig.host.secretsProvider.tokenSource;
+	const tokenSource = options.systemConfig.host.secretsProvider?.tokenSource;
 	const tokenSourceReady = (() => {
+		if (!tokenSource) {
+			return true;
+		}
 		switch (tokenSource.type) {
 			case 'env': {
 				const envVar = tokenSource.envVar ?? 'OP_SERVICE_ACCOUNT_TOKEN';
@@ -76,16 +79,22 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 			ok: nodeMajorVersion >= 24,
 			...(nodeMajorVersion < 24 ? { hint: 'Requires Node.js >= 24. Install via nvm or fnm.' } : {}),
 		},
-		{
-			name: '1password-token-source',
-			ok: tokenSourceReady,
-			...(!tokenSourceReady && tokenSource.type === 'env'
-				? { hint: `Set ${tokenSource.envVar ?? 'OP_SERVICE_ACCOUNT_TOKEN'} environment variable` }
-				: {}),
-			...(!tokenSourceReady && tokenSource.type === 'op-cli'
-				? { hint: 'Install 1Password CLI: brew install 1password-cli' }
-				: {}),
-		},
+		...(tokenSource
+			? [
+					{
+						name: '1password-token-source',
+						ok: tokenSourceReady,
+						...(!tokenSourceReady && tokenSource.type === 'env'
+							? {
+									hint: `Set ${tokenSource.envVar ?? 'OP_SERVICE_ACCOUNT_TOKEN'} environment variable`,
+								}
+							: {}),
+						...(!tokenSourceReady && tokenSource.type === 'op-cli'
+							? { hint: 'Install 1Password CLI: brew install 1password-cli' }
+							: {}),
+					} satisfies DoctorCheck,
+				]
+			: []),
 		checkBinary('qemu', 'qemu-system-aarch64', 'brew install qemu', availableBinaries),
 		checkBinary('age', 'age', 'brew install age', availableBinaries),
 		checkBinary('1password-cli', 'op', 'brew install 1password-cli', availableBinaries),

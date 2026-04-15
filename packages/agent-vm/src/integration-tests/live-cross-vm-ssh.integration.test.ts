@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 
-import { createManagedVm } from '@shravansunder/agent-vm-gondolin-core';
-import type { ManagedVm } from '@shravansunder/agent-vm-gondolin-core';
+import { createManagedVm } from '@shravansunder/gondolin-core';
+import type { ManagedVm } from '@shravansunder/gondolin-core';
 /**
  * Live cross-VM SSH test — validates the tool VM lease + SSH exec flow.
  *

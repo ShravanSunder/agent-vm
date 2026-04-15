@@ -1,11 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { buildToolSessionLabel } from '@shravansunder/agent-vm-gateway-interface';
+import { buildToolSessionLabel } from '@shravansunder/gateway-interface';
 import {
 	createManagedVm as createManagedVmFromCore,
 	type ManagedVm,
-} from '@shravansunder/agent-vm-gondolin-core';
+} from '@shravansunder/gondolin-core';
 
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { SystemConfig } from '../config/system-config.js';

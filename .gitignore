@@ -45,7 +45,7 @@ htmlcov/
 coverage/
 .pytest_cache/
 .ruff_cache/
-state/
+/state/
 workspaces/
 tmp/
 test-results/
@@ -71,5 +71,6 @@ build-cache/
 
 # Scaffold tracking
 .scaffold-project.json
+.agent-vm-smoke-cache/
 cache/
 *.bak

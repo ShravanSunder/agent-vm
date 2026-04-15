@@ -1,3 +1,4 @@
+import { repoTargetSchema } from '@shravansunder/agent-vm-worker';
 import { z } from 'zod';
 
 export const controllerLeaseCreateRequestSchema = z.object({
@@ -14,4 +15,10 @@ export const controllerDestroyZoneRequestSchema = z.object({
 
 export const controllerExecuteCommandRequestSchema = z.object({
 	command: z.string().min(1),
+});
+
+export const controllerWorkerTaskRequestSchema = z.object({
+	prompt: z.string().min(1),
+	repos: z.array(repoTargetSchema).default([]),
+	context: z.record(z.string(), z.unknown()).default({}),
 });

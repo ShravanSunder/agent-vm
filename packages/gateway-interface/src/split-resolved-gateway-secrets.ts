@@ -1,4 +1,4 @@
-import type { SecretSpec } from '@shravansunder/agent-vm-gondolin-core';
+import type { SecretSpec } from '@shravansunder/gondolin-core';
 
 import type { GatewayZoneConfig } from './gateway-lifecycle.js';
 
@@ -17,6 +17,9 @@ export function splitResolvedGatewaySecrets(
 	for (const [secretName, secretValue] of Object.entries(resolvedSecrets)) {
 		const secretConfig = zone.secrets[secretName];
 		if (!secretConfig) {
+			process.stderr.write(
+				`[split-resolved-gateway-secrets] Secret '${secretName}' was resolved but has no matching zone secret config.\n`,
+			);
 			continue;
 		}
 

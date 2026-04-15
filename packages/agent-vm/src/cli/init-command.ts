@@ -3,6 +3,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 
+import { workerConfigSchema } from '@shravansunder/agent-vm-worker';
+import type { GatewayType } from '@shravansunder/gateway-interface';
+
 import { buildDefaultProjectNamespace } from '../runtime/project-namespace.js';
 import {
 	getKeychainTokenSource,
@@ -37,7 +40,7 @@ export interface PromptAndStoreTokenDependencies {
 	readonly createReadlineInterface?: () => readline.Interface;
 }
 
-export type GatewayType = 'worker' | 'openclaw';
+export type { GatewayType } from '@shravansunder/gateway-interface';
 
 const defaultGatewayIngressPort = 18791;
 const defaultOpenClawExtensionsPath = '/home/openclaw/.openclaw/extensions';
@@ -106,14 +109,8 @@ function defaultSecretsForGatewayType(
 ): Record<string, object> {
 	if (gatewayType === 'worker') {
 		return {
-			ANTHROPIC_API_KEY: {
-				ref: `op://agent-vm/${zoneId}-anthropic/credential`,
-				source: '1password',
-				hosts: ['api.anthropic.com'],
-				injection: 'http-mediation',
-			},
 			OPENAI_API_KEY: {
-				ref: `op://agent-vm/${zoneId}-openai/credential`,
+				ref: 'op://agent-vm/workers-openai/credential',
 				source: '1password',
 				hosts: ['api.openai.com'],
 				injection: 'http-mediation',
@@ -216,9 +213,6 @@ COPY vendor/gondolin ${defaultOpenClawExtensionsPath}/gondolin
 
 const defaultWorkerGatewayDockerfile = `FROM node:24-slim
 
-ENV PNPM_HOME=/pnpm
-ENV PATH=\${PNPM_HOME}:\${PATH}
-
 RUN apt-get update && \\
     apt-get install -y --no-install-recommends \\
       openssh-server \\
@@ -228,10 +222,9 @@ RUN apt-get update && \\
       python3 && \\
     rm -rf /var/lib/apt/lists/* && \\
     update-ca-certificates && \\
-    corepack enable && \\
-    pnpm add -g @openai/codex-cli && \\
-    printf '#!/bin/sh\\nexec /pnpm/codex "$@"\\n' > /usr/local/bin/codex && \\
-    chmod 755 /usr/local/bin/codex && \\
+    npm install -g @openai/codex @shravansunder/agent-vm-worker && \\
+    mkdir -p /opt/agent-vm-worker && \\
+    ln -s /usr/local/lib/node_modules/@shravansunder/agent-vm-worker /opt/agent-vm-worker && \\
     useradd -m -s /bin/bash coder && \\
     mkdir -p /workspace /run/sshd /state && \\
     chown -R coder:coder /workspace /state && \\
@@ -333,18 +326,7 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 	channels: {},
 });
 
-const defaultWorkerGatewayConfig = (): object => ({
-	agentTimeoutMs: 600_000,
-	branchPrefix: 'agent/',
-	commitCoAuthor: 'agent-vm-worker <noreply@agent-vm>',
-	idleTimeoutMs: 1_800_000,
-	lintCommand: 'pnpm lint',
-	maxRetries: 3,
-	model: 'gpt-5.4-mini',
-	stateDir: '/state',
-	testCommand: 'pnpm test',
-	verificationTimeoutMs: 300_000,
-});
+const defaultWorkerGatewayConfig = (): object => workerConfigSchema.parse({});
 
 async function writeFileIfMissing(
 	filePath: string,

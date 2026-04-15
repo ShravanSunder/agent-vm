@@ -5,11 +5,11 @@ import type {
 	GatewayHealthCheck,
 	GatewayLifecycle,
 	GatewayZoneConfig,
-} from '@shravansunder/agent-vm-gateway-interface';
+} from '@shravansunder/gateway-interface';
 import {
 	createManagedVm as createManagedVmFromCore,
 	type ManagedVm,
-} from '@shravansunder/agent-vm-gondolin-core';
+} from '@shravansunder/gondolin-core';
 
 import { runTaskWithResult } from '../shared/run-task.js';
 import { resolveZoneSecrets } from './credential-manager.js';
@@ -90,7 +90,7 @@ export async function startGatewayZone(
 ): Promise<GatewayZoneStartResult> {
 	const runTaskStep =
 		options.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
-	const zone = findGatewayZone(options.systemConfig, options.zoneId);
+	const zone = options.zoneOverride ?? findGatewayZone(options.systemConfig, options.zoneId);
 	const lifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone);
 	await runTaskStep('Cleaning orphaned gateway runtime', async () => {
 		await (dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent)({

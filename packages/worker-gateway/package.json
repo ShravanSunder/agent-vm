@@ -1,6 +1,6 @@
 {
-	"name": "@shravansunder/agent-vm-worker-gateway",
-	"version": "0.0.1",
+	"name": "@shravansunder/worker-gateway",
+	"version": "0.0.5",
 	"files": [
 		"dist"
 	],
@@ -22,7 +22,7 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@shravansunder/agent-vm-gateway-interface": "workspace:*",
-		"@shravansunder/agent-vm-gondolin-core": "workspace:*"
+		"@shravansunder/gateway-interface": "workspace:0.0.5",
+		"@shravansunder/gondolin-core": "workspace:0.0.5"
 	}
 }

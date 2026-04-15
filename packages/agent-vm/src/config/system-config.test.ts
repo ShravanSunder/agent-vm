@@ -59,6 +59,7 @@ describe('loadSystemConfig', () => {
 							ANTHROPIC_API_KEY: {
 								source: '1password',
 								ref: 'op://AI/anthropic/api-key',
+								hosts: ['api.anthropic.com'],
 							},
 						},
 						allowedHosts: ['api.anthropic.com', 'api.openai.com'],

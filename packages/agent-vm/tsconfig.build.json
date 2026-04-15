@@ -8,10 +8,12 @@
 		"sourceMap": true,
 		"noEmit": false,
 		"paths": {
-			"@shravansunder/agent-vm-gateway-interface": ["../gateway-interface/dist/index.d.ts"],
-			"@shravansunder/agent-vm-gondolin-core": ["../gondolin-core/dist/index.d.ts"],
-			"@shravansunder/agent-vm-openclaw-gateway": ["../openclaw-gateway/dist/index.d.ts"],
-			"@shravansunder/agent-vm-worker-gateway": ["../worker-gateway/dist/index.d.ts"]
+			"@shravansunder/agent-vm-worker": ["../agent-vm-worker/dist/index.d.ts"],
+			"@shravansunder/gateway-interface": ["../gateway-interface/dist/index.d.ts"],
+			"@shravansunder/gondolin-core": ["../gondolin-core/dist/index.d.ts"],
+			"@shravansunder/openclaw-agent-vm-plugin": ["../openclaw-agent-vm-plugin/dist/index.d.ts"],
+			"@shravansunder/openclaw-gateway": ["../openclaw-gateway/dist/index.d.ts"],
+			"@shravansunder/worker-gateway": ["../worker-gateway/dist/index.d.ts"]
 		}
 	},
 	"exclude": ["src/**/*.test.ts"]

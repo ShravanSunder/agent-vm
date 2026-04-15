@@ -1,5 +1,5 @@
-import { openclawLifecycle } from '@shravansunder/agent-vm-openclaw-gateway';
-import { workerLifecycle } from '@shravansunder/agent-vm-worker-gateway';
+import { openclawLifecycle } from '@shravansunder/openclaw-gateway';
+import { workerLifecycle } from '@shravansunder/worker-gateway';
 import { describe, expect, it } from 'vitest';
 
 import { loadGatewayLifecycle } from './gateway-lifecycle-loader.js';

@@ -1,15 +1,37 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { gatewayTypeValues } from '@shravansunder/agent-vm-gateway-interface';
 import { z } from 'zod';
 
-const secretReferenceSchema = z.object({
+const gatewayTypeValues = ['openclaw', 'worker'] as const;
+
+const secretInjectionSchema = z.enum(['env', 'http-mediation']);
+
+const onePasswordSecretSchema = z.object({
 	source: z.literal('1password'),
 	ref: z.string().min(1),
-	injection: z.enum(['env', 'http-mediation']).default('env'),
+	injection: secretInjectionSchema.default('http-mediation'),
 	hosts: z.array(z.string().min(1)).optional(),
 });
+
+const environmentSecretSchema = z.object({
+	source: z.literal('environment'),
+	envVar: z.string().min(1),
+	injection: secretInjectionSchema.default('http-mediation'),
+	hosts: z.array(z.string().min(1)).optional(),
+});
+
+const secretReferenceSchema = z
+	.discriminatedUnion('source', [onePasswordSecretSchema, environmentSecretSchema])
+	.superRefine((secret, context) => {
+		if (secret.injection === 'http-mediation' && (!secret.hosts || secret.hosts.length === 0)) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Injection 'http-mediation' requires at least one host.",
+				path: ['hosts'],
+			});
+		}
+	});
 
 const tokenSourceSchema = z.discriminatedUnion('type', [
 	z.object({
@@ -27,6 +49,17 @@ const tokenSourceSchema = z.discriminatedUnion('type', [
 	}),
 ]);
 
+const authProfilesSecretSchema = z.discriminatedUnion('source', [
+	z.object({
+		source: z.literal('1password'),
+		ref: z.string().min(1),
+	}),
+	z.object({
+		source: z.literal('environment'),
+		envVar: z.string().min(1),
+	}),
+]);
+
 const zoneGatewaySchema = z.object({
 	type: z.enum(gatewayTypeValues).default('openclaw'),
 	memory: z.string().min(1),
@@ -35,7 +68,7 @@ const zoneGatewaySchema = z.object({
 	gatewayConfig: z.string().min(1),
 	stateDir: z.string().min(1),
 	workspaceDir: z.string().min(1),
-	authProfilesRef: z.string().min(1).optional(),
+	authProfilesRef: authProfilesSecretSchema.optional(),
 });
 
 const toolProfileSchema = z.object({
@@ -60,10 +93,12 @@ const systemConfigSchema = z
 					/^[a-z0-9][a-z0-9-]*$/u,
 					'projectNamespace must use lowercase letters, numbers, and hyphens only',
 				),
-			secretsProvider: z.object({
-				type: z.literal('1password'),
-				tokenSource: tokenSourceSchema,
-			}),
+			secretsProvider: z
+				.object({
+					type: z.literal('1password'),
+					tokenSource: tokenSourceSchema,
+				})
+				.optional(),
 		}),
 		cacheDir: z.string().min(1).default('./cache'),
 		images: z.object({
@@ -89,6 +124,19 @@ const systemConfigSchema = z
 		}),
 	})
 	.superRefine((config, context) => {
+		const hasOnePasswordSecrets = config.zones.some(
+			(zone) =>
+				Object.values(zone.secrets).some((secret) => secret.source === '1password') ||
+				zone.gateway.authProfilesRef?.source === '1password',
+		);
+		if (hasOnePasswordSecrets && !config.host.secretsProvider) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "host.secretsProvider is required when any zone secret uses source '1password'.",
+				path: ['host', 'secretsProvider'],
+			});
+		}
+
 		for (const [zoneIndex, zone] of config.zones.entries()) {
 			if (config.toolProfiles[zone.toolProfile]) {
 				continue;
@@ -152,7 +200,15 @@ export async function loadSystemConfig(configPath: string): Promise<SystemConfig
 	const absoluteConfigPath = path.resolve(configPath);
 	const configDir = path.dirname(absoluteConfigPath);
 	const rawConfig = await fs.readFile(absoluteConfigPath, 'utf8');
-	const parsedConfig: unknown = JSON.parse(rawConfig);
+	let parsedConfig: unknown;
+	try {
+		parsedConfig = JSON.parse(rawConfig) as unknown;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Failed to parse system config '${absoluteConfigPath}': ${message}`, {
+			cause: error,
+		});
+	}
 	const config = systemConfigSchema.parse(parsedConfig);
 	return resolveRelativePaths(config, configDir);
 }

@@ -1,6 +1,6 @@
 {
-	"name": "@shravansunder/agent-vm-gondolin-core",
-	"version": "0.0.1",
+	"name": "@shravansunder/gondolin-core",
+	"version": "0.0.5",
 	"files": [
 		"dist"
 	],

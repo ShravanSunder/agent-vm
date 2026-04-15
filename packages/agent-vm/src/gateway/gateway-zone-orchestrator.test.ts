@@ -8,15 +8,27 @@ import type {
 	ManagedVm,
 	ManagedVmInstance,
 	SecretResolver,
-} from '@shravansunder/agent-vm-gondolin-core';
+} from '@shravansunder/gondolin-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
 import { startGatewayZone } from './gateway-zone-orchestrator.js';
 
+const { cleanupOrphanedGatewayIfPresentMock } = vi.hoisted(() => ({
+	cleanupOrphanedGatewayIfPresentMock: vi.fn(async () => ({
+		cleanedUp: false,
+		killedPid: null,
+	})),
+}));
+
+vi.mock('./gateway-recovery.js', () => ({
+	cleanupOrphanedGatewayIfPresent: cleanupOrphanedGatewayIfPresentMock,
+}));
+
 const createdDirectories: string[] = [];
 
 afterEach(() => {
+	cleanupOrphanedGatewayIfPresentMock.mockClear();
 	for (const directoryPath of createdDirectories.splice(0)) {
 		fs.rmSync(directoryPath, { recursive: true, force: true });
 	}
@@ -316,7 +328,7 @@ describe('startGatewayZone', () => {
 		).rejects.toThrow("Unknown zone 'does-not-exist'.");
 	});
 
-	it('throws a clear error for worker gateways until that runtime is implemented', async () => {
+	it('loads the worker lifecycle for worker gateway zones', async () => {
 		const systemConfig = createSystemConfig();
 		const workerSystemConfig: SystemConfig = {
 			...systemConfig,
@@ -324,51 +336,58 @@ describe('startGatewayZone', () => {
 				...zone,
 				gateway: {
 					...zone.gateway,
-					type: 'worker',
+					type: 'worker' as const,
 				},
 				secrets: {
-					ANTHROPIC_API_KEY: {
-						source: '1password',
-						ref: 'op://agent-vm/shravan-anthropic/credential',
-						injection: 'http-mediation',
-						hosts: ['api.anthropic.com'],
-					},
 					OPENAI_API_KEY: {
-						source: '1password',
+						source: '1password' as const,
 						ref: 'op://agent-vm/shravan-openai/credential',
-						injection: 'http-mediation',
+						injection: 'http-mediation' as const,
 						hosts: ['api.openai.com'],
 					},
 				},
 			})),
 		};
 		const secretResolver: SecretResolver = {
-			resolve: async (secretRef): Promise<string> => {
-				if (secretRef.ref === 'op://agent-vm/shravan-anthropic/credential') {
-					return 'anthropic-key';
-				}
-				if (secretRef.ref === 'op://agent-vm/shravan-openai/credential') {
-					return 'openai-key';
-				}
-				throw new Error(`Unexpected secret ref: ${secretRef.ref}`);
-			},
-			resolveAll: async () => ({}),
+			resolve: async () => 'openai-key',
+			resolveAll: async () => ({ OPENAI_API_KEY: 'openai-key' }),
 		};
+		const execMock = vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '200' }));
+		const setIngressRoutesMock = vi.fn();
+		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
 
-		await expect(
-			startGatewayZone(
-				{
-					secretResolver,
-					systemConfig: workerSystemConfig,
-					zoneId: 'shravan',
-				},
-				{
-					buildImage: vi.fn(),
-					createManagedVm: vi.fn(),
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
-				},
-			),
-		).rejects.toThrow(/agent-vm-worker/u);
+		const result = await startGatewayZone(
+			{
+				secretResolver,
+				systemConfig: workerSystemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp-worker',
+					imagePath: '/tmp/worker-image',
+				})),
+				cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
+					cleanedUp: false,
+					killedPid: null,
+				})),
+				createManagedVm: vi.fn(async () => ({
+					close: vi.fn(),
+					enableIngress: enableIngressMock,
+					enableSsh: vi.fn(),
+					exec: execMock,
+					getVmInstance: vi.fn(() => createVmInstanceStub(12345)),
+					id: 'worker-vm-123',
+					setIngressRoutes: setIngressRoutesMock,
+				})),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				writeGatewayRuntimeRecord: vi.fn(async () => {}),
+			},
+		);
+
+		expect(result.processSpec.startCommand).toContain('agent-vm-worker');
+		expect(result.processSpec.healthCheck).toEqual({ type: 'http', port: 18789, path: '/health' });
 	});
 
 	it('splits env secrets from http-mediation secrets based on injection config', async () => {
@@ -650,6 +669,10 @@ describe('startGatewayZone', () => {
 					fingerprint: 'fp',
 					imagePath: '/tmp/img',
 				})),
+				cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
+					cleanedUp: false,
+					killedPid: null,
+				})),
 				createManagedVm: vi.fn(async () => managedVm),
 				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 			},
@@ -693,6 +716,10 @@ describe('startGatewayZone', () => {
 					built: true,
 					fingerprint: 'fp',
 					imagePath: '/tmp/img',
+				})),
+				cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
+					cleanedUp: false,
+					killedPid: null,
 				})),
 				createManagedVm: vi.fn(async () => managedVm),
 				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
@@ -741,6 +768,10 @@ describe('startGatewayZone', () => {
 						built: true,
 						fingerprint: 'fp',
 						imagePath: '/tmp/img',
+					})),
+					cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
+						cleanedUp: false,
+						killedPid: null,
 					})),
 					createManagedVm: vi.fn(async () => managedVm),
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),

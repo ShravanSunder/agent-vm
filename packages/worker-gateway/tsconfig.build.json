@@ -8,8 +8,8 @@
 		"sourceMap": true,
 		"noEmit": false,
 		"paths": {
-			"@shravansunder/agent-vm-gateway-interface": ["../gateway-interface/dist/index.d.ts"],
-			"@shravansunder/agent-vm-gondolin-core": ["../gondolin-core/dist/index.d.ts"]
+			"@shravansunder/gateway-interface": ["../gateway-interface/dist/index.d.ts"],
+			"@shravansunder/gondolin-core": ["../gondolin-core/dist/index.d.ts"]
 		}
 	},
 	"exclude": ["src/**/*.test.ts"]

@@ -1,5 +1,5 @@
-import type { GatewayProcessSpec } from '@shravansunder/agent-vm-gateway-interface';
-import type { ManagedVm, SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
+import type { GatewayProcessSpec } from '@shravansunder/gateway-interface';
+import type { ManagedVm, SecretResolver } from '@shravansunder/gondolin-core';
 
 import type { SystemConfig } from '../config/system-config.js';
 import type { deleteGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
@@ -7,10 +7,11 @@ import type { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 import type { createControllerService } from './http/controller-http-routes.js';
 import type { ToolProfile } from './leases/lease-manager.js';
+import type { runWorkerTask } from './worker-task-runner.js';
 
 export interface ControllerRuntime {
 	readonly controllerPort: number;
-	readonly gateway: {
+	readonly gateway?: {
 		readonly ingress: {
 			readonly host: string;
 			readonly port: number;
@@ -35,6 +36,7 @@ export interface ControllerRuntimeDependencies {
 	readonly deleteGatewayRuntimeRecord?: typeof deleteGatewayRuntimeRecord;
 	readonly now?: () => number;
 	readonly runTask?: RunTaskFn;
+	readonly runWorkerTask?: typeof runWorkerTask;
 	readonly setIntervalImpl?: (
 		callback: () => void | Promise<void>,
 		delayMs: number,

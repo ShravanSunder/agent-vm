@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import type { BuildImageResult } from '@shravansunder/agent-vm-gondolin-core';
+import type { BuildImageResult } from '@shravansunder/gondolin-core';
 import task from 'tasuku';
 import { z } from 'zod';
 

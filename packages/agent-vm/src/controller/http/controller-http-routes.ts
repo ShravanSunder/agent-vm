@@ -19,6 +19,7 @@ export function createControllerApp(options: {
 	>;
 	readonly zoneToolProfiles?: Record<string, string>;
 	readonly operations?: ControllerRouteOperations;
+	readonly workerTaskRunner?: ControllerRouteOperations['runWorkerTask'];
 }): Hono {
 	const app = new Hono();
 	const readIdentityPem = options.readIdentityPem ?? readIdentityPemFromFile;
@@ -89,8 +90,25 @@ export function createControllerApp(options: {
 		return context.body(null, 204);
 	});
 
-	if (options.operations) {
-		registerControllerZoneOperationRoutes(app, options.operations);
+	if (options.operations || options.workerTaskRunner) {
+		registerControllerZoneOperationRoutes(app, {
+			...(options.operations ?? {
+				destroyZone: async () => {
+					throw new Error('destroy-zone-unavailable');
+				},
+				getStatus: async () => ({}),
+				getZoneLogs: async () => {
+					throw new Error('zone-logs-unavailable');
+				},
+				refreshZoneCredentials: async () => {
+					throw new Error('refresh-zone-credentials-unavailable');
+				},
+				upgradeZone: async () => {
+					throw new Error('upgrade-zone-unavailable');
+				},
+			}),
+			...(options.workerTaskRunner ? { runWorkerTask: options.workerTaskRunner } : {}),
+		});
 	}
 
 	return app;
@@ -100,6 +118,7 @@ export function createControllerService(options: {
 	readonly leaseManager: ControllerLeaseManager;
 	readonly operations?: ControllerRouteOperations;
 	readonly systemConfig: SystemConfig;
+	readonly workerTaskRunner?: ControllerRouteOperations['runWorkerTask'];
 }): Hono {
 	const app = createControllerApp({
 		leaseManager: options.leaseManager,
@@ -107,6 +126,7 @@ export function createControllerService(options: {
 		zoneToolProfiles: Object.fromEntries(
 			options.systemConfig.zones.map((zone) => [zone.id, zone.toolProfile]),
 		),
+		...(options.workerTaskRunner ? { workerTaskRunner: options.workerTaskRunner } : {}),
 		...(options.operations ? { operations: options.operations } : {}),
 	});
 

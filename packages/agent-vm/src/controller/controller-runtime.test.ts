@@ -195,7 +195,7 @@ describe('startControllerRuntime', () => {
 		expect(closeGatewayVm).toHaveBeenCalledTimes(2);
 		expect(setIntervalMock).toHaveBeenCalledTimes(1);
 		expect(runtime.controllerPort).toBe(18800);
-		expect(runtime.gateway.vm.id).toBe('gateway-vm-1');
+		expect(runtime.gateway?.vm.id).toBe('gateway-vm-1');
 		await runtime.close();
 		expect(clearIntervalMock).toHaveBeenCalledTimes(1);
 	});

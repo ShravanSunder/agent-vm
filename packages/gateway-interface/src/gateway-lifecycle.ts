@@ -1,4 +1,4 @@
-import type { SecretResolver } from '@shravansunder/agent-vm-gondolin-core';
+import type { SecretResolver } from '@shravansunder/gondolin-core';
 
 import type { GatewayProcessSpec } from './gateway-process-spec.js';
 import type { GatewayType } from './gateway-runtime-contract.js';
@@ -27,7 +27,6 @@ export interface GatewayAuthConfig {
  * Decoupled from SystemConfig — the controller maps into this shape.
  */
 export interface GatewayZoneConfig {
-	readonly authProfilesRef?: string | undefined;
 	readonly id: string;
 	readonly gateway: {
 		readonly type: GatewayType;
@@ -37,14 +36,31 @@ export interface GatewayZoneConfig {
 		readonly gatewayConfig: string;
 		readonly stateDir: string;
 		readonly workspaceDir: string;
+		readonly authProfilesRef?:
+			| {
+					readonly source: '1password';
+					readonly ref: string;
+			  }
+			| {
+					readonly source: 'environment';
+					readonly envVar: string;
+			  }
+			| undefined;
 	};
 	readonly secrets: Record<
 		string,
-		{
-			readonly ref: string;
-			readonly injection: 'env' | 'http-mediation';
-			readonly hosts?: readonly string[] | undefined;
-		}
+		| {
+				readonly source: '1password';
+				readonly ref: string;
+				readonly injection: 'env' | 'http-mediation';
+				readonly hosts?: readonly string[] | undefined;
+		  }
+		| {
+				readonly source: 'environment';
+				readonly envVar: string;
+				readonly injection: 'env' | 'http-mediation';
+				readonly hosts?: readonly string[] | undefined;
+		  }
 	>;
 	readonly allowedHosts: readonly string[];
 	readonly websocketBypass: readonly string[];
