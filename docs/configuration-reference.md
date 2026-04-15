@@ -1,6 +1,6 @@
 # Configuration Reference
 
-[Overview](SETUP.md) > [Architecture](agent-vm-worker-architecture.md) > Configuration Reference
+[Overview](README.md) > [Architecture](architecture.md) > Configuration Reference
 
 This is the single source of truth for every configuration field in agent-vm. All field names, types, defaults, and validation rules are derived directly from the Zod schemas in the source code.
 
