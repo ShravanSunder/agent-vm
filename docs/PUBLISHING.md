@@ -7,7 +7,7 @@ All packages are published under the `@shravansunder/` scope on npm (public).
 ```
 1. @shravansunder/gondolin-core        ← no internal deps
 2. @shravansunder/gateway-interface     ← depends on gondolin-core
-3. @shravansunder/openclaw-agent-vm-plugin  ← depends on gondolin-core, gateway-interface
+3. @shravansunder/openclaw-agent-vm-plugin  ← depends on gondolin-core
 4. @shravansunder/openclaw-gateway      ← depends on gateway-interface, gondolin-core
 5. @shravansunder/worker-gateway        ← depends on gateway-interface, gondolin-core
 6. @shravansunder/agent-vm-worker       ← no internal deps (standalone)
@@ -80,10 +80,6 @@ agent-vm --help
 ### Never use `--ignore-scripts` with `pnpm publish`
 
 `--ignore-scripts` skips the `workspace:*` rewriting. The published package will have `workspace:*` in its deps, which npm can't resolve.
-
-### The `prepack` script rebuilds the monorepo
-
-If `pnpm publish` fails because the prepack script triggers a full monorepo rebuild, temporarily remove prepack from the failing package's package.json, publish, then restore it. Or fix the prepack to only build the single package.
 
 ### Don't use `workspace:X.X.X` (pinned)
 
