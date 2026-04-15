@@ -8,16 +8,26 @@ import {
 	createToolVm,
 	resolveToolVmWorkspaceDirectory,
 } from '../tool-vm/tool-vm-lifecycle.js';
+import { ActiveTaskRegistry } from './active-task-registry.js';
 import {
 	createControllerRuntimeOperations,
 	createStopControllerOperation,
 } from './controller-runtime-operations.js';
-import { createSecretResolver, findConfiguredZone } from './controller-runtime-support.js';
+import {
+	createSecretResolver,
+	findConfiguredZone,
+	resolveControllerGithubToken,
+} from './controller-runtime-support.js';
 import {
 	type ControllerRuntime,
 	type ControllerRuntimeDependencies,
 	type StartControllerRuntimeOptions,
 } from './controller-runtime-types.js';
+import {
+	pushBranchesForTask,
+	PushBranchesValidationError,
+	type PushBranchRequest,
+} from './git-push-operations.js';
 import { createControllerService } from './http/controller-http-routes.js';
 import { startControllerHttpServer } from './http/controller-http-server.js';
 import { createIdleReaper } from './leases/idle-reaper.js';
@@ -52,6 +62,10 @@ export async function startControllerRuntime(
 				dependencies.createSecretResolver ?? createOpCliSecretResolver,
 			),
 	);
+	const controllerGithubToken = await resolveControllerGithubToken(
+		options.systemConfig,
+		secretResolver,
+	);
 	const createManagedToolVm =
 		dependencies.createManagedToolVm ??
 		(async (toolVmOptions): Promise<ManagedVm> =>
@@ -64,6 +78,7 @@ export async function startControllerRuntime(
 				zoneId: toolVmOptions.zoneId,
 			}));
 	const tcpPool = createTcpPool(options.systemConfig.tcpPool);
+	const activeTaskRegistry = new ActiveTaskRegistry();
 	const activeZone = findConfiguredZone(options.systemConfig, options.zoneId);
 	const leaseManager = createLeaseManager({
 		cleanWorkspace: async ({ profile, tcpSlot, zoneId }) => {
@@ -166,6 +181,13 @@ export async function startControllerRuntime(
 		gateway = await startGateway();
 	};
 	const serverRef: { current?: { close(): Promise<void> } } = {};
+	const stopController = createStopControllerOperation({
+		clearReaperTimer,
+		closeControllerServer: () => setTimeout(() => void serverRef.current?.close(), 100),
+		getLeases: () => leaseManager.listLeases(),
+		releaseLease: async (leaseId: string) => await leaseManager.releaseLease(leaseId),
+		stopGatewayZone,
+	});
 	const controllerOperations =
 		activeZone.gateway.type !== 'worker'
 			? {
@@ -179,15 +201,9 @@ export async function startControllerRuntime(
 						stopGatewayZone,
 						systemConfig: options.systemConfig,
 					}),
-					stopController: createStopControllerOperation({
-						clearReaperTimer,
-						closeControllerServer: () => setTimeout(() => void serverRef.current?.close(), 100),
-						getLeases: () => leaseManager.listLeases(),
-						releaseLease: async (leaseId: string) => await leaseManager.releaseLease(leaseId),
-						stopGatewayZone,
-					}),
+					stopController,
 				}
-			: undefined;
+			: { stopController };
 	const workerTaskRunner =
 		activeZone.gateway.type === 'worker'
 			? (() => {
@@ -208,12 +224,51 @@ export async function startControllerRuntime(
 							secretResolver,
 							systemConfig: options.systemConfig,
 							zoneId,
+							onTaskPrepared:
+								dependencies.onWorkerTaskPrepared ??
+								(async (task) => {
+									activeTaskRegistry.register(task);
+								}),
+							onTaskFinished:
+								dependencies.onWorkerTaskFinished ??
+								(async (finishedZoneId, taskId) => {
+									activeTaskRegistry.clear(finishedZoneId, taskId);
+								}),
 						});
 				})()
 			: undefined;
+	const pushTaskBranches =
+		activeZone.gateway.type === 'worker'
+			? async (
+					zoneId: string,
+					taskId: string,
+					input: { readonly branches: readonly PushBranchRequest[] },
+				) => {
+					const activeTask = activeTaskRegistry.get(zoneId, taskId);
+					if (!activeTask) {
+						throw new PushBranchesValidationError(
+							`Task '${taskId}' is not active for zone '${zoneId}'.`,
+						);
+					}
+					if (!controllerGithubToken) {
+						throw new Error(
+							'Controller GitHub token is not configured. Set host.githubToken or process.env.GITHUB_TOKEN.',
+						);
+					}
+					return await pushBranchesForTask({
+						activeTask,
+						branches: input.branches,
+						githubToken: controllerGithubToken,
+					});
+				}
+			: undefined;
+	const operations =
+		pushTaskBranches !== undefined
+			? { ...controllerOperations, pushTaskBranches }
+			: controllerOperations;
 	const controllerApp = createControllerService({
 		leaseManager,
-		...(controllerOperations ? { operations: controllerOperations } : {}),
+		...(operations ? { operations } : {}),
 		...(workerTaskRunner ? { workerTaskRunner } : {}),
 		systemConfig: options.systemConfig,
 	});

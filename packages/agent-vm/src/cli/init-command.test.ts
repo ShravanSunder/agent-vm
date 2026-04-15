@@ -273,7 +273,9 @@ describe('scaffoldAgentVmProject', () => {
 		expect(secrets).not.toHaveProperty('DISCORD_BOT_TOKEN');
 		expect(secrets).not.toHaveProperty('OPENCLAW_GATEWAY_TOKEN');
 		expect(secrets).not.toHaveProperty('ANTHROPIC_API_KEY');
+		expect(secrets).toHaveProperty('GITHUB_TOKEN');
 		expect(secrets).toHaveProperty('OPENAI_API_KEY');
+		expect(config.host.githubToken.ref).toBe('op://agent-vm/github-token/credential');
 	});
 
 	it('scaffolds openclaw-appropriate secrets for openclaw type', async () => {
@@ -328,6 +330,7 @@ describe('scaffoldAgentVmProject', () => {
 		const secrets = config.zones[0].secrets;
 
 		expect(secrets.OPENAI_API_KEY.ref).toBe('op://agent-vm/workers-openai/credential');
+		expect(secrets.GITHUB_TOKEN.ref).toBe('op://agent-vm/github-token/credential');
 	});
 
 	it('scaffolds worker-specific network defaults for worker type', async () => {

@@ -90,24 +90,22 @@ async function seedGatewayImageCacheIfAvailable(
 	await fs.symlink(reusableImageDir, activeImageDir, 'dir');
 }
 
-async function prepareLocalWorkerPackageForGatewayImage(
-	repoRoot: string,
-	projectRoot: string,
-): Promise<string> {
-	const gatewayImageDirectory = path.join(projectRoot, 'images', 'gateway');
-	execFileSync('pnpm', ['pack', '--pack-destination', gatewayImageDirectory], {
+async function prepareLocalWorkerPackageForGatewayImage(repoRoot: string): Promise<string> {
+	await fs.mkdir(path.join(repoRoot, 'tmp'), { recursive: true });
+	const packDirectory = await fs.mkdtemp(path.join(repoRoot, 'tmp', 'agent-vm-worker-pack-'));
+	execFileSync('pnpm', ['pack', '--pack-destination', packDirectory], {
 		cwd: path.join(repoRoot, 'packages', 'agent-vm-worker'),
 		stdio: 'pipe',
 	});
 	const packedTarballName = execFileSync('sh', ['-lc', 'ls *.tgz | tail -n 1'], {
-		cwd: gatewayImageDirectory,
+		cwd: packDirectory,
 		encoding: 'utf8',
 		stdio: 'pipe',
 	}).trim();
 	if (packedTarballName.length === 0) {
 		throw new Error('Failed to pack local agent-vm-worker tarball for smoke image.');
 	}
-	return path.join(gatewayImageDirectory, packedTarballName);
+	return path.join(packDirectory, packedTarballName);
 }
 
 const runWorkerSmoke =
@@ -260,10 +258,7 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 		await fs.mkdir(scaffoldCachePath, { recursive: true });
 		const gatewayBuildConfigPath = path.join(tempRoot, 'images', 'gateway', 'build-config.json');
 		await seedGatewayImageCacheIfAvailable(scaffoldCachePath, tempRoot, gatewayBuildConfigPath);
-		const localWorkerTarballPath = await prepareLocalWorkerPackageForGatewayImage(
-			repoRoot,
-			tempRoot,
-		);
+		const localWorkerTarballPath = await prepareLocalWorkerPackageForGatewayImage(repoRoot);
 
 		const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
 		systemConfig.cacheDir = scaffoldCachePath;

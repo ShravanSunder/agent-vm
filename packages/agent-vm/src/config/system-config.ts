@@ -60,6 +60,17 @@ const authProfilesSecretSchema = z.discriminatedUnion('source', [
 	}),
 ]);
 
+const hostSecretReferenceSchema = z.discriminatedUnion('source', [
+	z.object({
+		source: z.literal('1password'),
+		ref: z.string().min(1),
+	}),
+	z.object({
+		source: z.literal('environment'),
+		envVar: z.string().min(1),
+	}),
+]);
+
 const zoneGatewaySchema = z.object({
 	type: z.enum(gatewayTypeValues).default('openclaw'),
 	memory: z.string().min(1),
@@ -99,6 +110,7 @@ const systemConfigSchema = z
 					tokenSource: tokenSourceSchema,
 				})
 				.optional(),
+			githubToken: hostSecretReferenceSchema.optional(),
 		}),
 		cacheDir: z.string().min(1).default('./cache'),
 		images: z.object({
@@ -129,10 +141,12 @@ const systemConfigSchema = z
 				Object.values(zone.secrets).some((secret) => secret.source === '1password') ||
 				zone.gateway.authProfilesRef?.source === '1password',
 		);
-		if (hasOnePasswordSecrets && !config.host.secretsProvider) {
+		const hasOnePasswordGithubToken = config.host.githubToken?.source === '1password';
+		if ((hasOnePasswordSecrets || hasOnePasswordGithubToken) && !config.host.secretsProvider) {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
-				message: "host.secretsProvider is required when any zone secret uses source '1password'.",
+				message:
+					"host.secretsProvider is required when any zone secret or host credential uses source '1password'.",
 				path: ['host', 'secretsProvider'],
 			});
 		}

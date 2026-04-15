@@ -13,14 +13,11 @@ export {
 export { gatherContext, readOptionalFile, type RepoContext } from './context/gather-context.js';
 export {
 	buildCommitMessage,
-	buildPushUrl,
 	configureGit,
 	createBranch,
-	createPullRequest,
 	getDiff,
 	getDiffStat,
 	parseRepoFromUrl,
-	pushBranch,
 	sanitizeBranchName,
 	stageAndCommit,
 } from './git/git-operations.js';

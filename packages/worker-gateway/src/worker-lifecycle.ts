@@ -25,7 +25,9 @@ export const workerLifecycle: GatewayLifecycle = {
 			allowedHosts: [...zone.allowedHosts],
 			environment: {
 				HOME: '/home/coder',
+				CONTROLLER_BASE_URL: 'http://controller.vm.host:18800',
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
+				AGENT_VM_ZONE_ID: zone.id,
 				STATE_DIR: '/state',
 				WORKER_CONFIG_PATH: '/state/effective-worker.json',
 				WORKSPACE_DIR: '/workspace',

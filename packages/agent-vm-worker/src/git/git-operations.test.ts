@@ -1,17 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import {
-	buildCommitMessage,
-	buildPushUrl,
-	parseRepoFromUrl,
-	sanitizeBranchName,
-} from './git-operations.js';
+import { buildCommitMessage, parseRepoFromUrl, sanitizeBranchName } from './git-operations.js';
 
 describe('git-operations', () => {
-	afterEach(() => {
-		vi.unstubAllEnvs();
-	});
-
 	describe('parseRepoFromUrl', () => {
 		it('extracts owner/repo from full https url', () => {
 			expect(parseRepoFromUrl('https://github.com/acme/widgets.git')).toBe('acme/widgets');
@@ -48,23 +39,6 @@ describe('git-operations', () => {
 		it('appends co-author to message', () => {
 			expect(buildCommitMessage('feat: add login', 'bot <bot@x>')).toBe(
 				'feat: add login\n\nCo-Authored-By: bot <bot@x>',
-			);
-		});
-	});
-
-	describe('buildPushUrl', () => {
-		it('builds authenticated push url', () => {
-			vi.stubEnv('GITHUB_TOKEN', 'test-token-123');
-			expect(buildPushUrl('acme/widgets')).toBe(
-				'https://x-access-token:test-token-123@github.com/acme/widgets.git',
-			);
-		});
-
-		it('throws when GITHUB_TOKEN is missing', () => {
-			vi.stubEnv('GITHUB_TOKEN', '');
-			delete process.env.GITHUB_TOKEN;
-			expect(() => buildPushUrl('acme/widgets')).toThrow(
-				'GITHUB_TOKEN environment variable is required',
 			);
 		});
 	});

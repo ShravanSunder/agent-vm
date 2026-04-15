@@ -25,6 +25,7 @@ describe('worker-config', () => {
 			expect(config.wrapupActions).toHaveLength(1);
 			expect(config.branchPrefix).toBe('agent/');
 			expect(config.stateDir).toBe('/state');
+			expect(config.instructions).toBeUndefined();
 		});
 
 		it('merges partial overrides', () => {
@@ -148,6 +149,20 @@ describe('worker-config', () => {
 			const config = await loadWorkerConfig(configPath);
 			expect(config.defaults.provider).toBe('claude');
 			expect(config.branchPrefix).toBe('bot/');
+		});
+
+		it('loads top-level instructions from config', async () => {
+			const configPath = join(tempDir, 'worker.json');
+			await writeFile(
+				configPath,
+				JSON.stringify({
+					instructions: 'Always explain the risk before changes.',
+				}),
+				'utf-8',
+			);
+
+			const config = await loadWorkerConfig(configPath);
+			expect(config.instructions).toBe('Always explain the risk before changes.');
 		});
 
 		it('returns defaults when file does not exist', async () => {

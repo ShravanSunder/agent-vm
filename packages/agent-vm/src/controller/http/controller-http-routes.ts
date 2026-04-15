@@ -18,7 +18,7 @@ export function createControllerApp(options: {
 		{ readonly cpus: number; readonly memory: string; readonly workspaceRoot: string }
 	>;
 	readonly zoneToolProfiles?: Record<string, string>;
-	readonly operations?: ControllerRouteOperations;
+	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly workerTaskRunner?: ControllerRouteOperations['runWorkerTask'];
 }): Hono {
 	const app = new Hono();
@@ -91,22 +91,24 @@ export function createControllerApp(options: {
 	});
 
 	if (options.operations || options.workerTaskRunner) {
+		const defaultOperations: ControllerRouteOperations = {
+			destroyZone: async () => {
+				throw new Error('destroy-zone-unavailable');
+			},
+			getStatus: async () => ({}),
+			getZoneLogs: async () => {
+				throw new Error('zone-logs-unavailable');
+			},
+			refreshZoneCredentials: async () => {
+				throw new Error('refresh-zone-credentials-unavailable');
+			},
+			upgradeZone: async () => {
+				throw new Error('upgrade-zone-unavailable');
+			},
+		};
 		registerControllerZoneOperationRoutes(app, {
-			...(options.operations ?? {
-				destroyZone: async () => {
-					throw new Error('destroy-zone-unavailable');
-				},
-				getStatus: async () => ({}),
-				getZoneLogs: async () => {
-					throw new Error('zone-logs-unavailable');
-				},
-				refreshZoneCredentials: async () => {
-					throw new Error('refresh-zone-credentials-unavailable');
-				},
-				upgradeZone: async () => {
-					throw new Error('upgrade-zone-unavailable');
-				},
-			}),
+			...defaultOperations,
+			...options.operations,
 			...(options.workerTaskRunner ? { runWorkerTask: options.workerTaskRunner } : {}),
 		});
 	}
@@ -116,7 +118,7 @@ export function createControllerApp(options: {
 
 export function createControllerService(options: {
 	readonly leaseManager: ControllerLeaseManager;
-	readonly operations?: ControllerRouteOperations;
+	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly systemConfig: SystemConfig;
 	readonly workerTaskRunner?: ControllerRouteOperations['runWorkerTask'];
 }): Hono {

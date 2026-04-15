@@ -34,10 +34,12 @@ describe('wrapup-action-registry', () => {
 			config: workerConfigSchema.parse({
 				wrapupActions: [{ type: 'git-pr', required: true }],
 			}),
+			controllerBaseUrl: 'http://controller.vm.host:18800',
 			taskId: 'task-1',
 			taskPrompt: 'fix bug',
 			plan: null,
 			repos: [],
+			zoneId: 'shravan',
 		});
 
 		await registry.tools[0]?.execute({});
@@ -66,10 +68,12 @@ describe('wrapup-action-registry', () => {
 			config: workerConfigSchema.parse({
 				wrapupActions: [{ type: 'git-pr', required: true }],
 			}),
+			controllerBaseUrl: 'http://controller.vm.host:18800',
 			taskId: 'task-1',
 			taskPrompt: 'fix bug',
 			plan: null,
 			repos: [],
+			zoneId: 'shravan',
 		});
 
 		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);

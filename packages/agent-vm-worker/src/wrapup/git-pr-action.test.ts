@@ -1,39 +1,57 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createGitPrToolDefinition } from './git-pr-action.js';
-import { findMissingRequiredActions, wrapupToolOutputSchema } from './wrapup-types.js';
+import { findMissingRequiredActions } from './wrapup-types.js';
 
 const mocks = vi.hoisted(() => ({
 	configureGit: vi.fn(),
 	createBranch: vi.fn(),
 	stageAndCommit: vi.fn(),
-	pushBranch: vi.fn(),
-	createPullRequest: vi.fn(),
+	fetch: vi.fn(),
 }));
 
 vi.mock('../git/git-operations.js', () => ({
 	configureGit: mocks.configureGit,
 	createBranch: mocks.createBranch,
 	stageAndCommit: mocks.stageAndCommit,
-	pushBranch: mocks.pushBranch,
-	createPullRequest: mocks.createPullRequest,
 }));
 
 describe('git-pr-action', () => {
 	afterEach(() => {
 		vi.clearAllMocks();
+		vi.unstubAllGlobals();
 	});
 
 	it('creates a PR and returns success result', async () => {
 		mocks.configureGit.mockResolvedValue(undefined);
 		mocks.createBranch.mockResolvedValue(undefined);
 		mocks.stageAndCommit.mockResolvedValue(undefined);
-		mocks.pushBranch.mockResolvedValue(undefined);
-		mocks.createPullRequest.mockResolvedValue('https://github.com/org/repo/pull/42');
+		vi.stubGlobal(
+			'fetch',
+			mocks.fetch.mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						results: [
+							{
+								repoUrl: 'https://github.com/org/repo.git',
+								branchName: 'agent/task-1',
+								success: true,
+								prUrl: 'https://github.com/org/repo/pull/42',
+							},
+						],
+					}),
+					{
+						status: 200,
+						headers: { 'content-type': 'application/json' },
+					},
+				),
+			),
+		);
 
 		const tool = createGitPrToolDefinition({
 			branchPrefix: 'agent/',
 			commitCoAuthor: 'agent <noreply@agent>',
+			controllerBaseUrl: 'http://controller.vm.host:18800',
 			taskId: 'task-1',
 			taskPrompt: 'fix login bug',
 			plan: 'The plan',
@@ -44,6 +62,7 @@ describe('git-pr-action', () => {
 					workspacePath: '/workspace/repo',
 				},
 			],
+			zoneId: 'shravan',
 		});
 
 		const result = await tool.execute({
@@ -61,16 +80,24 @@ describe('git-pr-action', () => {
 			coAuthor: 'agent <noreply@agent>',
 			cwd: '/workspace/repo',
 		});
+		expect(mocks.fetch).toHaveBeenCalledWith(
+			'http://controller.vm.host:18800/zones/shravan/tasks/task-1/push-branches',
+			expect.objectContaining({
+				method: 'POST',
+			}),
+		);
 	});
 
 	it('returns failure when no repos are configured', async () => {
 		const tool = createGitPrToolDefinition({
 			branchPrefix: 'agent/',
 			commitCoAuthor: 'agent <noreply@agent>',
+			controllerBaseUrl: 'http://controller.vm.host:18800',
 			taskId: 'task-1',
 			taskPrompt: 'summarize incidents',
 			plan: null,
 			repos: [],
+			zoneId: 'shravan',
 		});
 
 		const result = await tool.execute({ title: 'PR', body: 'body' });
@@ -82,17 +109,36 @@ describe('git-pr-action', () => {
 		});
 	});
 
-	it('sanitizes tokens in error messages', async () => {
+	it('returns controller failure details', async () => {
 		mocks.configureGit.mockResolvedValue(undefined);
 		mocks.createBranch.mockResolvedValue(undefined);
 		mocks.stageAndCommit.mockResolvedValue(undefined);
-		mocks.pushBranch.mockRejectedValue(
-			new Error('push failed: https://x-access-token:ghp_secret123@github.com/org/repo'),
+		vi.stubGlobal(
+			'fetch',
+			mocks.fetch.mockResolvedValue(
+				new Response(
+					JSON.stringify({
+						results: [
+							{
+								repoUrl: 'https://github.com/org/repo.git',
+								branchName: 'agent/task-1',
+								success: false,
+								error: 'git push failed: remote rejected',
+							},
+						],
+					}),
+					{
+						status: 200,
+						headers: { 'content-type': 'application/json' },
+					},
+				),
+			),
 		);
 
 		const tool = createGitPrToolDefinition({
 			branchPrefix: 'agent/',
 			commitCoAuthor: 'agent <noreply@agent>',
+			controllerBaseUrl: 'http://controller.vm.host:18800',
 			taskId: 'task-1',
 			taskPrompt: 'fix bug',
 			plan: null,
@@ -103,24 +149,22 @@ describe('git-pr-action', () => {
 					workspacePath: '/workspace/repo',
 				},
 			],
+			zoneId: 'shravan',
 		});
 
-		const result = wrapupToolOutputSchema.parse(
-			await tool.execute({
+		await expect(
+			tool.execute({
 				title: 'PR',
 				body: 'body',
 			}),
-		);
-
-		expect(result.success).toBe(false);
-		expect(result.artifact).not.toContain('ghp_secret123');
-		expect(result.artifact).toContain('x-access-token:***');
+		).rejects.toThrow('git push failed: remote rejected');
 	});
 
 	it('requires an explicit repo target when multiple repos are configured', async () => {
 		const tool = createGitPrToolDefinition({
 			branchPrefix: 'agent/',
 			commitCoAuthor: 'agent <noreply@agent>',
+			controllerBaseUrl: 'http://controller.vm.host:18800',
 			taskId: 'task-1',
 			taskPrompt: 'fix cross-repo bug',
 			plan: null,
@@ -136,6 +180,7 @@ describe('git-pr-action', () => {
 					workspacePath: '/workspace/backend',
 				},
 			],
+			zoneId: 'shravan',
 		});
 
 		const result = await tool.execute({ title: 'PR', body: 'body' });

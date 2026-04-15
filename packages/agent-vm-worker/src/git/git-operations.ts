@@ -65,6 +65,7 @@ export function sanitizeBranchName(name: string): string {
 
 export async function configureGit(options: GitConfigOptions, cwd: string): Promise<void> {
 	const commands: readonly (readonly [string, ...string[]])[] = [
+		['git', 'config', '--global', '--add', 'safe.directory', cwd],
 		['git', 'config', 'http.version', 'HTTP/1.1'],
 		['git', 'config', 'user.email', options.userEmail],
 		['git', 'config', 'user.name', options.userName],
@@ -112,47 +113,6 @@ export async function stageAndCommit(options: CommitOptions): Promise<void> {
 	}
 }
 
-export async function pushBranch(options: PushOptions): Promise<void> {
-	const pushUrl = buildPushUrl(options.repo);
-	const safeBranch = sanitizeBranchName(options.branchName);
-	const result = await execGitArgs('git', ['push', pushUrl, safeBranch], options.cwd);
-
-	if (result.exitCode !== 0) {
-		const errorDetail = `${result.stdout}\n${result.stderr}`
-			.replace(/https:\/\/x-access-token:[^@]*@/g, 'https://x-access-token:***@')
-			.trim();
-		throw new Error(`git push failed\n${errorDetail}`);
-	}
-}
-
-export async function createPullRequest(options: PullRequestOptions, cwd: string): Promise<string> {
-	const ownerRepo = parseRepoFromUrl(options.repo);
-	const result = await execGitArgs(
-		'gh',
-		[
-			'pr',
-			'create',
-			'--repo',
-			ownerRepo,
-			'--title',
-			options.title,
-			'--body',
-			options.body,
-			'--base',
-			options.baseBranch,
-			'--head',
-			options.headBranch,
-		],
-		cwd,
-	);
-
-	if (result.exitCode !== 0) {
-		throw new Error(`Failed to create pull request\n${result.stdout}\n${result.stderr}`.trim());
-	}
-
-	return result.stdout.trim().split('\n').pop() ?? '';
-}
-
 export async function getDiffStat(cwd: string): Promise<string> {
 	const result = await execGitShell('git diff --stat', cwd);
 	return result.stdout;
@@ -176,17 +136,6 @@ export function parseRepoFromUrl(repoUrl: string): string {
 	}
 
 	throw new Error(`Invalid GitHub repository: ${repoUrl}`);
-}
-
-export function buildPushUrl(repo: string): string {
-	const ownerRepo = parseRepoFromUrl(repo);
-	const githubToken = process.env.GITHUB_TOKEN;
-
-	if (!githubToken) {
-		throw new Error('GITHUB_TOKEN environment variable is required');
-	}
-
-	return `https://x-access-token:${githubToken}@github.com/${ownerRepo}.git`;
 }
 
 export function buildCommitMessage(message: string, coAuthor: string): string {

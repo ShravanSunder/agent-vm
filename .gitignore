@@ -58,6 +58,7 @@ npm-debug.log*
 # Generated
 *.gen.ts
 __generated__/
+*.tgz
 images/gateway/vendor/
 config/**
 

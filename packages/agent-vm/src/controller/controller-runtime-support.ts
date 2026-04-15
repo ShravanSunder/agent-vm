@@ -26,6 +26,28 @@ export async function createSecretResolverFromSystemConfig(
 
 export const createSecretResolver = createSecretResolverFromSystemConfig;
 
+export async function resolveControllerGithubToken(
+	systemConfig: SystemConfig,
+	secretResolver: SecretResolver,
+): Promise<string | null> {
+	const githubTokenConfig = systemConfig.host.githubToken;
+	if (!githubTokenConfig) {
+		return process.env.GITHUB_TOKEN ?? null;
+	}
+
+	return await secretResolver.resolve(
+		githubTokenConfig.source === 'environment'
+			? {
+					source: 'environment',
+					ref: githubTokenConfig.envVar,
+				}
+			: {
+					source: '1password',
+					ref: githubTokenConfig.ref,
+				},
+	);
+}
+
 export function findConfiguredZone(
 	systemConfig: SystemConfig,
 	zoneId: string,

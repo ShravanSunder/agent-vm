@@ -66,6 +66,7 @@ export const wrapupActionSchema = z.discriminatedUnion('type', [
 ]);
 
 export const workerConfigSchema = z.object({
+	instructions: z.string().optional(),
 	defaults: z
 		.object({
 			provider: z.string().min(1).default('codex'),

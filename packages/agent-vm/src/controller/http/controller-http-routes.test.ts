@@ -399,6 +399,73 @@ describe('createControllerApp', () => {
 		expect(stopController).toHaveBeenCalled();
 	});
 
+	it('pushes branches for an active worker task via POST /zones/:zoneId/tasks/:taskId/push-branches', async () => {
+		const pushTaskBranches = vi.fn(async () => ({
+			results: [
+				{
+					repoUrl: 'https://github.com/acme/widgets.git',
+					branchName: 'agent/task-1',
+					success: true,
+					prUrl: 'https://github.com/acme/widgets/pull/42',
+				},
+			],
+		}));
+		const app = createControllerApp({
+			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				pushTaskBranches,
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/shravan/tasks/task-1/push-branches', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				branches: [
+					{
+						repoUrl: 'https://github.com/acme/widgets.git',
+						branchName: 'agent/task-1',
+						title: 'PR title',
+						body: 'PR body',
+					},
+				],
+			}),
+		});
+
+		expect(response.status).toBe(200);
+		await expect(response.json()).resolves.toMatchObject({
+			results: [
+				{
+					repoUrl: 'https://github.com/acme/widgets.git',
+					success: true,
+				},
+			],
+		});
+		expect(pushTaskBranches).toHaveBeenCalledWith('shravan', 'task-1', {
+			branches: [
+				{
+					repoUrl: 'https://github.com/acme/widgets.git',
+					branchName: 'agent/task-1',
+					title: 'PR title',
+					body: 'PR body',
+				},
+			],
+		});
+	});
+
 	it('returns schema details for invalid destroy requests', async () => {
 		const app = createControllerApp({
 			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },

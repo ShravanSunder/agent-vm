@@ -1,6 +1,6 @@
 {
 	"name": "@shravansunder/agent-vm-worker",
-	"version": "0.0.5",
+	"version": "0.0.7",
 	"bin": {
 		"agent-vm-worker": "./dist/main.js"
 	},
@@ -29,13 +29,13 @@
 		"start": "node ./dist/main.js"
 	},
 	"dependencies": {
-		"@hono/node-server": "^1",
+		"@hono/node-server": "^1.19.14",
 		"@hono/zod-validator": "^0.7.6",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"@openai/codex-sdk": "^0.118.0",
 		"cmd-ts": "^0.14.0",
 		"execa": "^9.5.2",
-		"hono": "^4",
+		"hono": "^4.12.14",
 		"zod": "^4",
 		"zod-to-json-schema": "^3.24.1"
 	},
