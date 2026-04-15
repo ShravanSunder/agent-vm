@@ -65,6 +65,7 @@ export function sanitizeBranchName(name: string): string {
 
 export async function configureGit(options: GitConfigOptions, cwd: string): Promise<void> {
 	const commands: readonly (readonly [string, ...string[]])[] = [
+		['git', 'config', '--global', '--add', 'safe.directory', cwd],
 		['git', 'config', 'http.version', 'HTTP/1.1'],
 		['git', 'config', 'user.email', options.userEmail],
 		['git', 'config', 'user.name', options.userName],

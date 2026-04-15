@@ -74,6 +74,30 @@ export function createGitPrToolDefinition(config: GitPrActionConfig): ToolDefini
 						artifact: 'No repo configured - cannot create PR.',
 					};
 				}
+
+				// Debug: log workspace state before git operations
+				const { execaCommand } = await import('execa');
+				const debugLines: string[] = [];
+				debugLines.push(`targetRepo.workspacePath: ${targetRepo.workspacePath}`);
+				debugLines.push(`targetRepo.repoUrl: ${targetRepo.repoUrl}`);
+				debugLines.push(`cwd: ${process.cwd()}`);
+				try {
+					const lsResult = await execaCommand(`ls -la ${targetRepo.workspacePath}`, { shell: true, reject: false });
+					debugLines.push(`ls workspace: ${lsResult.stdout}`);
+				} catch { debugLines.push('ls workspace: FAILED'); }
+				try {
+					const gitResult = await execaCommand(`ls -la ${targetRepo.workspacePath}/.git`, { shell: true, reject: false });
+					debugLines.push(`.git exists: ${gitResult.exitCode === 0 ? 'YES' : 'NO'}`);
+					debugLines.push(`.git ls: ${gitResult.stdout}`);
+				} catch { debugLines.push('.git check: FAILED'); }
+				try {
+					const stateDir = process.env.STATE_DIR ?? '/state';
+					const fs = await import('node:fs/promises');
+					await fs.mkdir(`${stateDir}/debug`, { recursive: true });
+					await fs.writeFile(`${stateDir}/debug/git-pr-debug.log`, debugLines.join('\n'), 'utf8');
+				} catch { /* best effort */ }
+				process.stderr.write(`[git-pr-action] Debug:\n${debugLines.join('\n')}\n`);
+
 				if (
 					config.repos.length > 1 &&
 					typeof params.repoWorkspacePath !== 'string' &&
