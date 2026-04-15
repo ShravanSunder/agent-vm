@@ -45,6 +45,9 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      - name: Validate Changesets
+        run: pnpm changeset status
+
       - name: Dry-run package publish
         if: github.event.inputs.mode == 'dry-run'
         run: |
