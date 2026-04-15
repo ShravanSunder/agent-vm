@@ -63,6 +63,7 @@ export async function runTask(
 			planExecutorConfig.model,
 			{ mcpServers: config.mcpServers, tools: [] },
 			primaryWorkspaceDir,
+			planExecutorConfig.reasoningEffort,
 		);
 		const planner = createPlanner(planExecutor);
 
@@ -109,6 +110,7 @@ export async function runTask(
 				reviewExecutorConfig.model,
 				{ mcpServers: config.mcpServers, tools: [] },
 				primaryWorkspaceDir,
+				reviewExecutorConfig.reasoningEffort,
 			);
 			const reviewer = createPlanReviewer(reviewExecutor);
 			const review = await reviewer.review(
@@ -173,6 +175,7 @@ export async function runTask(
 			workExecutorConfig.model,
 			{ mcpServers: config.mcpServers, tools: [] },
 			primaryWorkspaceDir,
+			workExecutorConfig.reasoningEffort,
 		);
 		const workResult = await workExecutor.execute(
 			await assemblePrompt({
@@ -262,6 +265,7 @@ export async function runTask(
 				workReviewExecutorConfig.model,
 				{ mcpServers: config.mcpServers, tools: [] },
 				primaryWorkspaceDir,
+				workReviewExecutorConfig.reasoningEffort,
 			);
 
 			let diff = '';
@@ -342,6 +346,7 @@ export async function runTask(
 			wrapupExecutorConfig.model,
 			{ mcpServers: config.mcpServers, tools: wrapupRegistry.tools },
 			primaryWorkspaceDir,
+			wrapupExecutorConfig.reasoningEffort,
 		);
 		const wrapupResult = await wrapupExecutor.execute(
 			await assemblePrompt({

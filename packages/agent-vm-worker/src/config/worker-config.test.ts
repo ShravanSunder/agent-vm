@@ -67,20 +67,32 @@ describe('worker-config', () => {
 	});
 
 	describe('resolveModelAlias', () => {
-		it('resolves codex latest-medium', () => {
-			expect(resolveModelAlias('codex', 'latest-medium')).toBe('gpt-5.4-low');
+		it('resolves codex latest-medium to gpt-5.4 with low effort', () => {
+			expect(resolveModelAlias('codex', 'latest-medium')).toEqual({
+				model: 'gpt-5.4',
+				reasoningEffort: 'low',
+			});
 		});
 
-		it('resolves claude latest', () => {
-			expect(resolveModelAlias('claude', 'latest')).toBe('claude-opus-4-6');
+		it('resolves claude latest to opus with high effort', () => {
+			expect(resolveModelAlias('claude', 'latest')).toEqual({
+				model: 'claude-opus-4-6',
+				reasoningEffort: 'high',
+			});
 		});
 
-		it('passes through explicit model IDs', () => {
-			expect(resolveModelAlias('codex', 'gpt-5.4-turbo')).toBe('gpt-5.4-turbo');
+		it('passes through explicit model IDs with medium effort', () => {
+			expect(resolveModelAlias('codex', 'gpt-5.4-turbo')).toEqual({
+				model: 'gpt-5.4-turbo',
+				reasoningEffort: 'medium',
+			});
 		});
 
-		it('passes through unknown providers', () => {
-			expect(resolveModelAlias('unknown-provider', 'latest')).toBe('latest');
+		it('passes through unknown providers with medium effort', () => {
+			expect(resolveModelAlias('unknown-provider', 'latest')).toEqual({
+				model: 'latest',
+				reasoningEffort: 'medium',
+			});
 		});
 	});
 
@@ -90,7 +102,8 @@ describe('worker-config', () => {
 
 			expect(resolvePhaseExecutor(config, {})).toEqual({
 				provider: 'codex',
-				model: 'gpt-5.4-low',
+				model: 'gpt-5.4',
+				reasoningEffort: 'low',
 			});
 		});
 
@@ -105,6 +118,7 @@ describe('worker-config', () => {
 			).toEqual({
 				provider: 'claude',
 				model: 'claude-opus-4-6',
+				reasoningEffort: 'high',
 			});
 		});
 	});

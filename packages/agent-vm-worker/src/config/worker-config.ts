@@ -133,33 +133,42 @@ export const workerConfigSchema = z.object({
 
 export type WorkerConfig = z.infer<typeof workerConfigSchema>;
 
-const MODEL_ALIASES: Record<string, Record<string, string>> = {
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+interface ResolvedModel {
+	readonly model: string;
+	readonly reasoningEffort: ReasoningEffort;
+}
+
+const MODEL_ALIASES: Record<string, Record<string, ResolvedModel>> = {
 	codex: {
-		latest: 'gpt-5.4-high',
-		'latest-medium': 'gpt-5.4-low',
-		'latest-mini': 'gpt-5.4-mini',
+		latest: { model: 'gpt-5.4', reasoningEffort: 'high' },
+		'latest-medium': { model: 'gpt-5.4', reasoningEffort: 'low' },
+		'latest-mini': { model: 'gpt-5.4-mini', reasoningEffort: 'medium' },
 	},
 	claude: {
-		latest: 'claude-opus-4-6',
-		'latest-medium': 'claude-sonnet-4-6',
-		'latest-mini': 'claude-haiku-4-5',
+		latest: { model: 'claude-opus-4-6', reasoningEffort: 'high' },
+		'latest-medium': { model: 'claude-sonnet-4-6', reasoningEffort: 'medium' },
+		'latest-mini': { model: 'claude-haiku-4-5', reasoningEffort: 'medium' },
 	},
 };
 
-export function resolveModelAlias(provider: string, model: string): string {
-	return MODEL_ALIASES[provider]?.[model] ?? model;
+export function resolveModelAlias(provider: string, model: string): ResolvedModel {
+	return MODEL_ALIASES[provider]?.[model] ?? { model, reasoningEffort: 'medium' as ReasoningEffort };
 }
 
 export function resolvePhaseExecutor(
 	config: WorkerConfig,
 	phase: { readonly provider?: string | undefined; readonly model?: string | undefined },
-): { readonly provider: string; readonly model: string } {
+): { readonly provider: string; readonly model: string; readonly reasoningEffort: ReasoningEffort } {
 	const provider = phase.provider ?? config.defaults.provider;
 	const model = phase.model ?? config.defaults.model;
+	const resolved = resolveModelAlias(provider, model);
 
 	return {
 		provider,
-		model: resolveModelAlias(provider, model),
+		model: resolved.model,
+		reasoningEffort: resolved.reasoningEffort,
 	};
 }
 

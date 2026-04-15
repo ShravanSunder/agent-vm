@@ -42,6 +42,7 @@ export interface CodexExecutorConfig {
 	readonly model: string;
 	readonly capabilities: ExecutorCapabilities;
 	readonly workingDirectory?: string;
+	readonly reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 }
 
 function mapToCodexInput(input: readonly StructuredInput[]): UserInput[] {
@@ -118,6 +119,7 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 			workingDirectory,
 			skipGitRepoCheck: true,
 			networkAccessEnabled: true,
+			...(config.reasoningEffort ? { modelReasoningEffort: config.reasoningEffort } : {}),
 		});
 	}
 
