@@ -10,6 +10,7 @@ import { z } from 'zod';
 import type { SystemConfig } from '../config/system-config.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { GatewayZone } from '../gateway/gateway-zone-support.js';
+import type { ActiveWorkerTask } from './active-task-registry.js';
 import {
 	DockerServiceRoutingError,
 	startDockerServicesForTask,
@@ -87,17 +88,20 @@ export interface PreStartResult {
 	readonly repos: readonly {
 		readonly repoUrl: string;
 		readonly baseBranch: string;
+		readonly hostWorkspacePath: string;
 		readonly workspacePath: string;
 	}[];
+	readonly effectiveConfig: WorkerConfig;
 }
 
 function deriveRepoDirectoryName(repoUrl: string, usedNames: Set<string>): string {
 	const cleanedUrl = repoUrl.replace(/\.git$/, '');
 	const baseName = cleanedUrl.split('/').pop()?.trim() ?? 'repo';
-	let candidate = baseName.replace(/[^a-zA-Z0-9._-]/g, '-');
+	const sanitizedBaseName = baseName.replace(/[^a-zA-Z0-9._-]/g, '-');
+	let candidate = sanitizedBaseName;
 	let counter = 2;
 	while (usedNames.has(candidate)) {
-		candidate = `${baseName}-${counter}`;
+		candidate = `${sanitizedBaseName}-${counter}`;
 		counter += 1;
 	}
 	usedNames.add(candidate);
@@ -130,6 +134,7 @@ export async function preStartGateway(
 		const clonedRepos: {
 			readonly repoUrl: string;
 			readonly baseBranch: string;
+			readonly hostWorkspacePath: string;
 			readonly workspacePath: string;
 		}[] = [];
 		for (const repo of taskInput.repos) {
@@ -143,6 +148,7 @@ export async function preStartGateway(
 			clonedRepos.push({
 				repoUrl: repo.repoUrl,
 				baseBranch: repo.baseBranch,
+				hostWorkspacePath: repoWorkspaceDir,
 				workspacePath: `/workspace/${repoDirectoryName}`,
 			});
 		}
@@ -178,6 +184,7 @@ export async function preStartGateway(
 			composeFilePaths,
 			tcpHosts: dockerRouting.tcpHosts,
 			repos: clonedRepos,
+			effectiveConfig,
 		};
 	} catch (error) {
 		const composeFilesToStop =
@@ -238,6 +245,8 @@ export async function runWorkerTask(options: {
 	readonly systemConfig: SystemConfig;
 	readonly zoneId: string;
 	readonly timeoutMs?: number;
+	readonly onTaskPrepared?: (task: ActiveWorkerTask) => void | Promise<void>;
+	readonly onTaskFinished?: (zoneId: string, taskId: string) => void | Promise<void>;
 }): Promise<WorkerTaskResult> {
 	const zone = options.systemConfig.zones.find(
 		(candidateZone) => candidateZone.id === options.zoneId,
@@ -258,6 +267,18 @@ export async function runWorkerTask(options: {
 			stateDir: preStartResult.stateDir,
 		},
 	};
+	await options.onTaskPrepared?.({
+		taskId: preStartResult.taskId,
+		zoneId: options.zoneId,
+		taskRoot: preStartResult.taskRoot,
+		branchPrefix: preStartResult.effectiveConfig.branchPrefix,
+		repos: preStartResult.repos.map((repo) => ({
+			repoUrl: repo.repoUrl,
+			baseBranch: repo.baseBranch,
+			hostWorkspacePath: repo.hostWorkspacePath,
+			vmWorkspacePath: repo.workspacePath,
+		})),
+	});
 
 	let gateway: Awaited<ReturnType<typeof startGatewayZone>> | undefined;
 
@@ -336,7 +357,11 @@ export async function runWorkerTask(options: {
 		try {
 			await gateway?.vm.close();
 		} finally {
-			await postStopGateway(preStartResult.taskId, zone, preStartResult.composeFilePaths);
+			try {
+				await postStopGateway(preStartResult.taskId, zone, preStartResult.composeFilePaths);
+			} finally {
+				await options.onTaskFinished?.(options.zoneId, preStartResult.taskId);
+			}
 		}
 	}
 }

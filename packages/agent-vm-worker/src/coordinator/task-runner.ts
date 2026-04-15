@@ -42,7 +42,16 @@ export async function runTask(
 		}
 
 		const config = deps.config;
+		const controllerBaseUrl = process.env.CONTROLLER_BASE_URL ?? 'http://controller.vm.host:18800';
+		const zoneId = process.env.AGENT_VM_ZONE_ID ?? 'unknown-zone';
 		const primaryWorkspaceDir = getPrimaryRepoWorkspace(initialState.config, workspaceDir);
+		const buildPrompt = async (
+			input: Omit<Parameters<typeof assemblePrompt>[0], 'baseInstructions'>,
+		): Promise<readonly import('../work-executor/executor-interface.js').StructuredInput[]> =>
+			await assemblePrompt({
+				...input,
+				baseInstructions: config.instructions,
+			});
 		let latestWorkOutput: string | null = null;
 		let repoSummary: string | null = null;
 		try {
@@ -68,7 +77,7 @@ export async function runTask(
 		const planner = createPlanner(planExecutor);
 
 		const planResult = await planner.plan(
-			await assemblePrompt({
+			await buildPrompt({
 				phase: 'plan',
 				phaseInstructions: config.phases.plan.instructions,
 				taskPrompt: initialState.config.prompt,
@@ -114,7 +123,7 @@ export async function runTask(
 			);
 			const reviewer = createPlanReviewer(reviewExecutor);
 			const review = await reviewer.review(
-				await assemblePrompt({
+				await buildPrompt({
 					phase: 'plan-review',
 					phaseInstructions: config.phases.planReview.instructions,
 					taskPrompt: initialState.config.prompt,
@@ -145,7 +154,7 @@ export async function runTask(
 			}
 
 			const revised = await planner.revise(
-				await assemblePrompt({
+				await buildPrompt({
 					phase: 'plan',
 					taskPrompt: initialState.config.prompt,
 					failureContext: `Plan review feedback:\n\n${review.summary}`,
@@ -178,7 +187,7 @@ export async function runTask(
 			workExecutorConfig.reasoningEffort,
 		);
 		const workResult = await workExecutor.execute(
-			await assemblePrompt({
+			await buildPrompt({
 				phase: 'work',
 				phaseInstructions: config.phases.work.instructions,
 				taskPrompt: initialState.config.prompt,
@@ -234,7 +243,7 @@ export async function runTask(
 			}
 
 			const fixResult = await workExecutor.fix(
-				await assemblePrompt({
+				await buildPrompt({
 					phase: 'work',
 					taskPrompt: initialState.config.prompt,
 					failureContext: buildVerificationFailureSummary(verifyResults),
@@ -283,7 +292,7 @@ export async function runTask(
 			}
 
 			const workReviewResult = await reviewWork(workReviewExecutor, {
-				reviewPrompt: await assemblePrompt({
+				reviewPrompt: await buildPrompt({
 					phase: 'work-review',
 					phaseInstructions: config.phases.workReview.instructions,
 					taskPrompt: initialState.config.prompt,
@@ -319,7 +328,7 @@ export async function runTask(
 			}
 
 			const fixResult = await workExecutor.fix(
-				await assemblePrompt({
+				await buildPrompt({
 					phase: 'work',
 					taskPrompt: initialState.config.prompt,
 					failureContext: `Work review feedback:\n\n${workReviewResult.review?.summary ?? 'Verification failed.'}`,
@@ -335,10 +344,12 @@ export async function runTask(
 		await eventRecorder.emit(taskId, { event: 'phase-started', phase: 'wrapup' });
 		const wrapupRegistry = buildWrapupTools({
 			config,
+			controllerBaseUrl,
 			taskId,
 			taskPrompt: initialState.config.prompt,
 			plan: currentPlan,
 			repos: initialState.config.repos,
+			zoneId,
 		});
 		const wrapupExecutorConfig = resolvePhaseExecutor(config, config.phases.wrapup);
 		const wrapupExecutor = createWorkExecutor(
@@ -349,7 +360,7 @@ export async function runTask(
 			wrapupExecutorConfig.reasoningEffort,
 		);
 		const wrapupResult = await wrapupExecutor.execute(
-			await assemblePrompt({
+			await buildPrompt({
 				phase: 'wrapup',
 				phaseInstructions: config.phases.wrapup.instructions,
 				taskPrompt: initialState.config.prompt,

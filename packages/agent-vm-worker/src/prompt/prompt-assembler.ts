@@ -10,6 +10,26 @@ const BASE_WORKER_PROMPT =
 	'You are an agent working in a sandboxed VM. You have access to the workspace at /workspace. ' +
 	'Do not attempt to access the network directly - all outbound requests go through a mediation proxy.';
 
+const DEFAULT_BASE_INSTRUCTIONS = `## Git Rules
+- You may commit at any time using git add and git commit.
+- Always commit to a branch prefixed with "agent/" - never commit to main or master.
+- Do NOT run git push. Push is handled by the system after wrapup.
+- Do NOT modify or delete the .git directory.
+- Use conventional commit messages: "feat:", "fix:", "refactor:", "test:", "docs:".
+
+## Workspace Rules
+- Work only inside the workspace directories provided in the task repos.
+- Do not create files outside the workspace.
+- Do not modify system files or configuration outside the workspace.
+
+## Verification
+- Run verification commands before requesting wrapup.
+- If verification fails, fix the issue and re-verify.
+
+## Wrapup
+- When work is complete and verified, call the git-pr tool to stage, commit, and create a PR.
+- The git-pr tool handles push and PR creation - you only need to provide the title and description.`;
+
 const BASE_REVIEW_PROMPT =
 	'Return your review as structured JSON matching the ReviewResult schema: ' +
 	'{ approved: boolean, comments: [{ file: string, line?: number, severity: "critical" | "suggestion" | "nitpick", comment: string }], summary: string }';
@@ -52,6 +72,7 @@ export async function resolveSkillInputs(
 
 export interface AssemblePromptInput {
 	readonly phase: PhaseName;
+	readonly baseInstructions?: string | undefined;
 	readonly phaseInstructions?: string | undefined;
 	readonly taskPrompt: string;
 	readonly repos?: readonly RepoLocation[];
@@ -69,6 +90,7 @@ export async function assemblePrompt(
 	const sections: string[] = [];
 
 	sections.push(BASE_WORKER_PROMPT);
+	sections.push('', input.baseInstructions ?? DEFAULT_BASE_INSTRUCTIONS);
 	if (REVIEW_PHASES.has(input.phase)) {
 		sections.push('', BASE_REVIEW_PROMPT);
 	}

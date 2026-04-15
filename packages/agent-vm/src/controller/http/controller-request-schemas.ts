@@ -22,3 +22,28 @@ export const controllerWorkerTaskRequestSchema = z.object({
 	repos: z.array(repoTargetSchema).default([]),
 	context: z.record(z.string(), z.unknown()).default({}),
 });
+
+export const controllerPushBranchesRequestSchema = z.object({
+	branches: z
+		.array(
+			z.object({
+				repoUrl: z.string().min(1),
+				branchName: z.string().min(1),
+				title: z.string().min(1),
+				body: z.string(),
+			}),
+		)
+		.min(1),
+});
+
+export const controllerPushBranchesResponseSchema = z.object({
+	results: z.array(
+		z.object({
+			repoUrl: z.string().min(1),
+			branchName: z.string().min(1),
+			success: z.boolean(),
+			prUrl: z.string().url().optional(),
+			error: z.string().optional(),
+		}),
+	),
+});

@@ -4,6 +4,7 @@ import type { ControllerRouteOperations } from './controller-http-route-support.
 import {
 	controllerDestroyZoneRequestSchema,
 	controllerExecuteCommandRequestSchema,
+	controllerPushBranchesRequestSchema,
 	controllerWorkerTaskRequestSchema,
 } from './controller-request-schemas.js';
 
@@ -65,6 +66,37 @@ export function registerControllerZoneOperationRoutes(
 						error: error instanceof Error ? error.message : 'worker-task-failed',
 					},
 					500,
+				);
+			}
+		});
+	}
+
+	if (operations.pushTaskBranches) {
+		app.post('/zones/:zoneId/tasks/:taskId/push-branches', async (context) => {
+			const parsedPayload = controllerPushBranchesRequestSchema.safeParse(await context.req.json());
+			if (!parsedPayload.success) {
+				return context.json(
+					{
+						error: 'invalid-push-branches-request',
+						issues: parsedPayload.error.issues,
+					},
+					400,
+				);
+			}
+			try {
+				return context.json(
+					await operations.pushTaskBranches?.(
+						context.req.param('zoneId'),
+						context.req.param('taskId'),
+						parsedPayload.data,
+					),
+				);
+			} catch (error) {
+				return context.json(
+					{
+						error: error instanceof Error ? error.message : 'push-branches-failed',
+					},
+					400,
 				);
 			}
 		});

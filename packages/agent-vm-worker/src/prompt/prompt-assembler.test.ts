@@ -52,8 +52,24 @@ describe('prompt-assembler', () => {
 			expect(text?.type).toBe('text');
 			if (text?.type === 'text') {
 				expect(text.text).toContain('sandboxed VM');
+				expect(text.text).toContain('Do NOT run git push');
 				expect(text.text).toContain('fix the login bug');
 				expect(text.text).toContain('Create an implementation plan');
+			}
+		});
+
+		it('uses custom base instructions when provided', async () => {
+			const result = await assemblePrompt({
+				phase: 'plan',
+				baseInstructions: 'Custom base instructions.',
+				taskPrompt: 'fix the login bug',
+				skills: [],
+			});
+
+			const text = result[0];
+			if (text?.type === 'text') {
+				expect(text.text).toContain('Custom base instructions.');
+				expect(text.text).not.toContain('Do NOT run git push');
 			}
 		});
 

@@ -293,11 +293,13 @@ describe('worker-task-runner', () => {
 			{
 				repoUrl: 'https://github.com/org/frontend.git',
 				baseBranch: 'main',
+				hostWorkspacePath: path.join(result.workspaceDir, 'frontend'),
 				workspacePath: '/workspace/frontend',
 			},
 			{
 				repoUrl: 'https://github.com/org/backend.git',
 				baseBranch: 'develop',
+				hostWorkspacePath: path.join(result.workspaceDir, 'backend'),
 				workspacePath: '/workspace/backend',
 			},
 		]);

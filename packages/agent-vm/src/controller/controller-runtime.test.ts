@@ -60,6 +60,14 @@ const openClawProcessSpec = {
 	startCommand: 'start-openclaw',
 };
 
+const workerProcessSpec = {
+	bootstrapCommand: 'bootstrap-worker',
+	guestListenPort: 18789,
+	healthCheck: { type: 'http', port: 18789, path: '/health' } as const,
+	logPath: '/tmp/agent-vm-worker.log',
+	startCommand: 'start-worker',
+};
+
 describe('startControllerRuntime', () => {
 	it('starts the gateway, creates the controller app, and opens the controller port', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
@@ -240,6 +248,115 @@ describe('startControllerRuntime', () => {
 		).rejects.toThrow('gateway boot failed');
 
 		expect(startHttpServer).not.toHaveBeenCalled();
+	});
+
+	it('registers stop-controller for worker runtimes', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		const workerSystemConfig: SystemConfig = {
+			...systemConfig,
+			zones: systemConfig.zones.map((zone) => ({
+				...zone,
+				gateway: {
+					...zone.gateway,
+					type: 'worker' as const,
+				},
+			})),
+		};
+		const workerZone = workerSystemConfig.zones[0];
+		if (!workerZone) {
+			throw new Error('Expected worker test zone.');
+		}
+		let startHttpServerArgs:
+			| {
+					app: {
+						request(path: string, init?: RequestInit): Response | Promise<Response>;
+					};
+					port: number;
+			  }
+			| undefined;
+		const startHttpServer = vi.fn(
+			async (options: {
+				app: { request(path: string, init?: RequestInit): Response | Promise<Response> };
+				port: number;
+			}) => {
+				startHttpServerArgs = options;
+				return {
+					close: async () => {},
+				};
+			},
+		);
+
+		const runtime = await startControllerRuntime(
+			{
+				systemConfig: workerSystemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				createManagedToolVm: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+					id: 'tool-vm-worker-stop',
+					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
+				})),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				runWorkerTask: vi.fn(async () => ({
+					taskId: 'worker-task-1',
+					finalState: { status: 'completed' },
+					taskRoot: '/tmp/worker-task-1',
+				})),
+				startGatewayZone: vi.fn(async () => ({
+					image: {
+						built: true,
+						fingerprint: 'gateway-image',
+						imagePath: '/tmp/gateway-image',
+					},
+					ingress: {
+						host: '127.0.0.1',
+						port: 18791,
+					},
+					processSpec: workerProcessSpec,
+					vm: {
+						close: vi.fn(async () => {}),
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({
+							command: 'ssh ...',
+							host: '127.0.0.1',
+							identityFile: '/tmp/key',
+							port: 19000,
+							user: 'sandbox',
+						})),
+						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+						id: 'gateway-vm-worker',
+						setIngressRoutes: vi.fn(),
+						getVmInstance: vi.fn(),
+					},
+					zone: workerZone,
+				})),
+				startHttpServer,
+			},
+		);
+
+		if (!startHttpServerArgs) {
+			throw new Error('Expected startHttpServer to be called.');
+		}
+		const stopResponse = await startHttpServerArgs.app.request('/stop-controller', {
+			method: 'POST',
+		});
+		expect(stopResponse.status).toBe(200);
+		await expect(stopResponse.json()).resolves.toMatchObject({ ok: true });
+		await runtime.close();
 	});
 
 	it('deletes the runtime record on close after the gateway stops', async () => {

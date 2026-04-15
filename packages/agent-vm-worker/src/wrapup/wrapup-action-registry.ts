@@ -12,10 +12,12 @@ import {
 
 export interface WrapupToolRegistryInput {
 	readonly config: WorkerConfig;
+	readonly controllerBaseUrl: string;
 	readonly taskId: string;
 	readonly taskPrompt: string;
 	readonly plan: string | null;
 	readonly repos: readonly RepoLocation[];
+	readonly zoneId: string;
 }
 
 export interface WrapupToolRegistryResult {
@@ -84,6 +86,7 @@ export function buildWrapupTools(input: WrapupToolRegistryInput): WrapupToolRegi
 				const gitConfig: GitPrActionConfig = {
 					branchPrefix: input.config.branchPrefix,
 					commitCoAuthor: input.config.commitCoAuthor,
+					controllerBaseUrl: input.controllerBaseUrl,
 					taskId: input.taskId,
 					taskPrompt: input.taskPrompt,
 					plan: input.plan,
@@ -92,6 +95,7 @@ export function buildWrapupTools(input: WrapupToolRegistryInput): WrapupToolRegi
 						baseBranch: repo.baseBranch,
 						workspacePath: repo.workspacePath,
 					})),
+					zoneId: input.zoneId,
 				};
 				tools.push(
 					wrapToolWithResultCollector(

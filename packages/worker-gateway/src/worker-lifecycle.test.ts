@@ -52,6 +52,8 @@ describe('workerLifecycle', () => {
 			kind: 'realfs',
 		});
 		expect(vmSpec.environment.OPENAI_API_KEY).toBe('openai-token');
+		expect(vmSpec.environment.AGENT_VM_ZONE_ID).toBe('shravan');
+		expect(vmSpec.environment.CONTROLLER_BASE_URL).toBe('http://controller.vm.host:18800');
 		expect(vmSpec.environment.WORKER_CONFIG_PATH).toBe('/state/effective-worker.json');
 		expect(vmSpec.environment.WORKSPACE_DIR).toBe('/workspace');
 		expect(vmSpec.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');

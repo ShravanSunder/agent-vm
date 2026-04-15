@@ -20,6 +20,18 @@ export interface ControllerRouteOperations {
 			readonly context: Record<string, unknown>;
 		},
 	) => Promise<unknown>;
+	readonly pushTaskBranches?: (
+		zoneId: string,
+		taskId: string,
+		input: {
+			readonly branches: readonly {
+				readonly repoUrl: string;
+				readonly branchName: string;
+				readonly title: string;
+				readonly body: string;
+			}[];
+		},
+	) => Promise<unknown>;
 	readonly stopController?: () => Promise<unknown>;
 	readonly upgradeZone: (zoneId: string) => Promise<unknown>;
 }

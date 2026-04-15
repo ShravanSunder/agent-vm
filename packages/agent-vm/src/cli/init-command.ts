@@ -56,6 +56,10 @@ const defaultSystemConfig = (
 	host: {
 		controllerPort: 18800,
 		projectNamespace,
+		githubToken: {
+			source: '1password',
+			ref: 'op://agent-vm/github-token/credential',
+		},
 		secretsProvider: {
 			type: '1password',
 			tokenSource: getKeychainTokenSource(),
@@ -109,6 +113,12 @@ function defaultSecretsForGatewayType(
 ): Record<string, object> {
 	if (gatewayType === 'worker') {
 		return {
+			GITHUB_TOKEN: {
+				ref: 'op://agent-vm/github-token/credential',
+				source: '1password',
+				hosts: ['api.github.com'],
+				injection: 'http-mediation',
+			},
 			OPENAI_API_KEY: {
 				ref: 'op://agent-vm/workers-openai/credential',
 				source: '1password',

@@ -5,6 +5,7 @@ import type { SystemConfig } from '../config/system-config.js';
 import type { deleteGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
 import type { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { RunTaskFn } from '../shared/run-task.js';
+import type { ActiveWorkerTask } from './active-task-registry.js';
 import type { createControllerService } from './http/controller-http-routes.js';
 import type { ToolProfile } from './leases/lease-manager.js';
 import type { runWorkerTask } from './worker-task-runner.js';
@@ -37,6 +38,8 @@ export interface ControllerRuntimeDependencies {
 	readonly now?: () => number;
 	readonly runTask?: RunTaskFn;
 	readonly runWorkerTask?: typeof runWorkerTask;
+	readonly onWorkerTaskPrepared?: (task: ActiveWorkerTask) => void | Promise<void>;
+	readonly onWorkerTaskFinished?: (zoneId: string, taskId: string) => void | Promise<void>;
 	readonly setIntervalImpl?: (
 		callback: () => void | Promise<void>,
 		delayMs: number,
