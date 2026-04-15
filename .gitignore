@@ -74,3 +74,4 @@ build-cache/
 .agent-vm-smoke-cache/
 cache/
 *.bak
+*.tgz
