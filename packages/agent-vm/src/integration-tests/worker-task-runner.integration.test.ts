@@ -105,6 +105,7 @@ describe('worker-task-runner integration', () => {
 					verificationAttempt: 0,
 					lastReviewSummary: null,
 					lastVerificationResults: null,
+					failureReason: null,
 					wrapupResults: null,
 					createdAt: new Date().toISOString(),
 					updatedAt: new Date().toISOString(),
@@ -239,6 +240,8 @@ describe('worker-task-runner integration', () => {
 			repos: [],
 			context: { ticket: 'INC-123' },
 		});
-		await expect(fs.stat(result.taskRoot)).rejects.toThrow();
+		await expect(fs.stat(result.taskRoot)).resolves.toBeDefined();
+		await expect(fs.stat(path.join(result.taskRoot, 'state'))).resolves.toBeDefined();
+		await expect(fs.stat(path.join(result.taskRoot, 'workspace'))).rejects.toThrow();
 	});
 });

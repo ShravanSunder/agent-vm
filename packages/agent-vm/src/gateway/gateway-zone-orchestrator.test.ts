@@ -14,9 +14,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SystemConfig } from '../config/system-config.js';
 import { startGatewayZone } from './gateway-zone-orchestrator.js';
 
+const { cleanupOrphanedGatewayIfPresentMock } = vi.hoisted(() => ({
+	cleanupOrphanedGatewayIfPresentMock: vi.fn(async () => ({
+		cleanedUp: false,
+		killedPid: null,
+	})),
+}));
+
+vi.mock('./gateway-recovery.js', () => ({
+	cleanupOrphanedGatewayIfPresent: cleanupOrphanedGatewayIfPresentMock,
+}));
+
 const createdDirectories: string[] = [];
 
 afterEach(() => {
+	cleanupOrphanedGatewayIfPresentMock.mockClear();
 	for (const directoryPath of createdDirectories.splice(0)) {
 		fs.rmSync(directoryPath, { recursive: true, force: true });
 	}
@@ -365,9 +377,7 @@ describe('startGatewayZone', () => {
 					enableIngress: enableIngressMock,
 					enableSsh: vi.fn(),
 					exec: execMock,
-					getVmInstance: vi.fn(() => ({
-						server: { controller: { child: { pid: 12345 } } },
-					})),
+					getVmInstance: vi.fn(() => createVmInstanceStub(12345)),
 					id: 'worker-vm-123',
 					setIngressRoutes: setIngressRoutesMock,
 				})),
@@ -659,6 +669,10 @@ describe('startGatewayZone', () => {
 					fingerprint: 'fp',
 					imagePath: '/tmp/img',
 				})),
+				cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
+					cleanedUp: false,
+					killedPid: null,
+				})),
 				createManagedVm: vi.fn(async () => managedVm),
 				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 			},
@@ -702,6 +716,10 @@ describe('startGatewayZone', () => {
 					built: true,
 					fingerprint: 'fp',
 					imagePath: '/tmp/img',
+				})),
+				cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
+					cleanedUp: false,
+					killedPid: null,
 				})),
 				createManagedVm: vi.fn(async () => managedVm),
 				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
@@ -750,6 +768,10 @@ describe('startGatewayZone', () => {
 						built: true,
 						fingerprint: 'fp',
 						imagePath: '/tmp/img',
+					})),
+					cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
+						cleanedUp: false,
+						killedPid: null,
 					})),
 					createManagedVm: vi.fn(async () => managedVm),
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),

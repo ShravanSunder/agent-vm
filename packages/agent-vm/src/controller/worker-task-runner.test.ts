@@ -453,4 +453,26 @@ describe('worker-task-runner', () => {
 
 		expect(closedTaskStateSchema.parse(result.finalState).status).toBe('closed');
 	});
+
+	it('preserves task state while pruning the workspace during shutdown', async () => {
+		const { postStopGateway } = await import('./worker-task-runner.js');
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const taskRoot = path.join(zone.gateway.stateDir, 'tasks', 'task-keep-state');
+		await fs.mkdir(path.join(taskRoot, 'workspace'), { recursive: true });
+		await fs.mkdir(path.join(taskRoot, 'state'), { recursive: true });
+		await fs.writeFile(path.join(taskRoot, 'workspace', 'README.md'), 'workspace data');
+		await fs.writeFile(path.join(taskRoot, 'state', 'events.jsonl'), '{"event":"task-created"}\n');
+
+		await postStopGateway('task-keep-state', zone, ['/tmp/task/.agent-vm/docker-compose.yml']);
+
+		expect(stopDockerServicesForTaskMock).toHaveBeenCalledWith([
+			'/tmp/task/.agent-vm/docker-compose.yml',
+		]);
+		await expect(fs.stat(path.join(taskRoot, 'state'))).resolves.toBeDefined();
+		await expect(fs.stat(path.join(taskRoot, 'workspace'))).rejects.toThrow();
+	});
 });

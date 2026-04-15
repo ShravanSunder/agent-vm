@@ -10,6 +10,7 @@ import type { SecretRef, SecretResolver } from '@shravansunder/gondolin-core';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
+import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import { scaffoldAgentVmProject } from '../cli/init-command.js';
 import { loadSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
@@ -77,6 +78,21 @@ async function prepareLocalWorkerPackageForGatewayImage(
 	await fs.writeFile(dockerfilePath, patchedDockerfile, 'utf8');
 
 	return packedTarballName;
+}
+
+async function resetGatewayImageCacheForCurrentDockerImage(
+	cacheDir: string,
+	gatewayBuildConfigPath: string,
+): Promise<void> {
+	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
+	await fs.mkdir(path.join(cacheDir, 'images', 'gateway'), { recursive: true });
+	// The Gondolin fingerprint is based on build-config JSON, not OCI image contents.
+	// When the smoke harness rebuilds agent-vm-gateway:latest, we must evict the
+	// converted rootfs for the matching fingerprint so the VM picks up the new image.
+	await fs.rm(path.join(cacheDir, 'images', 'gateway', requiredFingerprint), {
+		recursive: true,
+		force: true,
+	});
 }
 
 const runWorkerSmoke =
@@ -225,10 +241,15 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 				generateAgeIdentityKey: () => undefined,
 			},
 		);
+		const gatewayBuildConfigPath = path.join(tempRoot, 'images', 'gateway', 'build-config.json');
+		const scaffoldCachePath = path.join(repoRoot, '.agent-vm-smoke-cache');
+		await fs.mkdir(scaffoldCachePath, { recursive: true });
 		await prepareLocalWorkerPackageForGatewayImage(repoRoot, tempRoot);
 		rebuildGatewayDockerImage(tempRoot);
+		await resetGatewayImageCacheForCurrentDockerImage(scaffoldCachePath, gatewayBuildConfigPath);
 
 		const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
+		systemConfig.cacheDir = scaffoldCachePath;
 		systemConfig.host.controllerPort = controllerPort;
 		systemConfig.host.projectNamespace = 'claw-tests-a1b2c3d4';
 		systemConfig.host.secretsProvider = {

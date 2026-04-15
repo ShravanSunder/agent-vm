@@ -187,29 +187,30 @@ export async function postStopGateway(
 	composeFilePaths: readonly string[] = [],
 ): Promise<void> {
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
+	const workspaceDir = path.join(taskRoot, 'workspace');
 	let cleanupError: Error | null = null;
-	let removalError: Error | null = null;
+	let workspaceRemovalError: Error | null = null;
 	try {
 		await stopDockerServicesForTask(composeFilePaths);
 	} catch (error) {
 		cleanupError = error instanceof Error ? error : new Error(String(error));
 	}
 	try {
-		await fs.rm(taskRoot, { recursive: true, force: true });
+		await fs.rm(workspaceDir, { recursive: true, force: true });
 	} catch (error) {
-		removalError = error instanceof Error ? error : new Error(String(error));
+		workspaceRemovalError = error instanceof Error ? error : new Error(String(error));
 	}
-	if (cleanupError && removalError) {
+	if (cleanupError && workspaceRemovalError) {
 		throw new AggregateError(
-			[cleanupError, removalError],
-			`Failed to stop Docker services and delete task root for ${taskId}.`,
+			[cleanupError, workspaceRemovalError],
+			`Failed to stop Docker services and prune the task workspace for ${taskId}.`,
 		);
 	}
 	if (cleanupError) {
 		throw cleanupError;
 	}
-	if (removalError) {
-		throw removalError;
+	if (workspaceRemovalError) {
+		throw workspaceRemovalError;
 	}
 }
 

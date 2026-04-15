@@ -29,6 +29,7 @@ function makeTaskState(overrides?: Partial<TaskState>): TaskState {
 		verificationAttempt: 0,
 		lastReviewSummary: null,
 		lastVerificationResults: null,
+		failureReason: null,
 		wrapupResults: null,
 		createdAt: new Date().toISOString(),
 		updatedAt: new Date().toISOString(),

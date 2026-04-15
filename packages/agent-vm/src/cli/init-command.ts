@@ -3,8 +3,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 
-import type { GatewayType } from '@shravansunder/gateway-interface';
 import { workerConfigSchema } from '@shravansunder/agent-vm-worker';
+import type { GatewayType } from '@shravansunder/gateway-interface';
 
 import { buildDefaultProjectNamespace } from '../runtime/project-namespace.js';
 import {
