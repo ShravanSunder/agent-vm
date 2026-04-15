@@ -56,15 +56,47 @@ task-completed
 
 ### Key decisions
 
-1. **Commits happen inside the VM.** The agent makes changes, stages, and commits in the VM workspace (`/workspace/<repo-name>/`). The commit is on the local branch in the VFS-mounted repo. The controller sees it on the host filesystem because `/workspace` is mounted via VFS from `taskRoot/workspace/`.
+1. **Commits happen inside the VM.** The agent makes changes, stages, and commits in the VM workspace (`/workspace/<repo-name>/`). The commit is on the local branch in the VFS-mounted repo. The controller sees it on the host filesystem because `/workspace` is mounted via VFS from `taskRoot/workspace/`. The agent can commit at any time during any phase — this is unrestricted.
 
 2. **Push and PR happen on the controller.** The controller reads the committed branch from the host-side workspace, pushes to the remote, and creates the PR using `gh`. `GITHUB_TOKEN` lives only on the host.
 
-3. **The controller already knows the paths.** `preStartGateway` clones the repos and records their host-side paths in `preStartResult.repos[]`. Each entry has `{ repoUrl, baseBranch, workspacePath }` where `workspacePath` is the VM path (`/workspace/repo-name`), and the host path is `taskRoot/workspace/repo-name`. The controller maps between them — the worker doesn't need to send paths.
+3. **Push is restricted to agent branches.** The controller validates that the branch name starts with the configured `branchPrefix` (default `agent/`). The agent cannot push to `main`, `master`, or any branch outside its prefix. This prevents accidental or malicious pushes to protected branches.
 
-4. **Multiple repos supported.** The task input already supports `repos: []`. Each repo can have its own branch to push. The endpoint accepts an array of branches.
+4. **The controller already knows the paths.** `preStartGateway` clones the repos and records their host-side paths in `preStartResult.repos[]`. Each entry has `{ repoUrl, baseBranch, workspacePath }` where `workspacePath` is the VM path (`/workspace/repo-name`), and the host path is `taskRoot/workspace/repo-name`. The controller maps between them — the worker doesn't need to send paths.
 
-5. **The worker never sees GITHUB_TOKEN.** Remove it from zone secrets entirely. The controller resolves it separately — either from its own env or from 1Password, at the controller level (not per-zone).
+5. **Multiple repos supported.** The task input already supports `repos: []`. Each repo can have its own branch to push. The endpoint accepts an array of branches.
+
+6. **The worker never sees GITHUB_TOKEN.** Remove it from zone secrets entirely. The controller resolves it separately — either from its own env or from 1Password, at the controller level (not per-zone).
+
+### Clone configuration
+
+The controller clones repos during `preStartGateway`. The clone behavior is configurable per-repo in the task input:
+
+```typescript
+repos: [
+  {
+    repoUrl: "https://github.com/org/repo",
+    baseBranch: "main",
+    branches: ["main", "develop"],  // or "all" for all branches
+    depth: 10                        // shallow clone depth, default 10
+  }
+]
+```
+
+- **`branches`**: Which branches to fetch. Default is `[baseBranch]` (only the base branch). Set to `"all"` to fetch all remote branches. The agent can reference other branches for context (e.g., comparing against a feature branch).
+- **`depth`**: Shallow clone depth. Default `10`. Keeps history small for large repos while providing enough context for diffs. Set to `0` for full clone.
+
+The clone command becomes:
+```
+git clone --depth <depth> --branch <baseBranch> <repoUrl> <dir>
+# Then for additional branches:
+git fetch origin <branch>:<branch> --depth <depth>
+```
+
+Or with `branches: "all"`:
+```
+git clone --depth <depth> --no-single-branch <repoUrl> <dir>
+```
 
 ### Controller endpoint
 
