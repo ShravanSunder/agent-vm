@@ -425,3 +425,4 @@ The system operates across three trust boundaries:
 | [SETUP.md](SETUP.md) | Prerequisites, installation, first-run instructions |
 | [subsystems/controller.md](subsystems/controller.md) | Controller internals: lease lifecycle, TCP pool, idle reaper |
 | [subsystems/secrets-and-credentials.md](subsystems/secrets-and-credentials.md) | Secret resolution, 1Password integration, HTTP mediation details |
+| [subsystems/gondolin-vm-layer.md](subsystems/gondolin-vm-layer.md) | Gondolin VM adapter, VFS mounts, rootfs modes, HTTP mediation, image build pipeline |
