@@ -18,7 +18,7 @@ export class ActiveTaskRegistry {
 
 	public register(task: ActiveWorkerTask): void {
 		const existingTask = this.tasksByZone.get(task.zoneId);
-		if (existingTask && existingTask.taskId !== task.taskId) {
+		if (existingTask) {
 			throw new Error(
 				`Zone '${task.zoneId}' already has active task '${existingTask.taskId}', cannot register '${task.taskId}'.`,
 			);
@@ -35,10 +35,20 @@ export class ActiveTaskRegistry {
 		return task;
 	}
 
+	public getActiveForZone(zoneId: string): ActiveWorkerTask | null {
+		return this.tasksByZone.get(zoneId) ?? null;
+	}
+
 	public clear(zoneId: string, taskId: string): void {
 		const task = this.tasksByZone.get(zoneId);
-		if (task?.taskId === taskId) {
-			this.tasksByZone.delete(zoneId);
+		if (!task) {
+			throw new Error(`Zone '${zoneId}' has no active task to clear.`);
 		}
+		if (task.taskId !== taskId) {
+			throw new Error(
+				`Zone '${zoneId}' active task is '${task.taskId}', cannot clear '${taskId}'.`,
+			);
+		}
+		this.tasksByZone.delete(zoneId);
 	}
 }

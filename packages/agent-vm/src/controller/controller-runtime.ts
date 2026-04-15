@@ -62,6 +62,10 @@ export async function startControllerRuntime(
 				dependencies.createSecretResolver ?? createOpCliSecretResolver,
 			),
 	);
+	const controllerGithubToken = await resolveControllerGithubToken(
+		options.systemConfig,
+		secretResolver,
+	);
 	const createManagedToolVm =
 		dependencies.createManagedToolVm ??
 		(async (toolVmOptions): Promise<ManagedVm> =>
@@ -246,11 +250,7 @@ export async function startControllerRuntime(
 							`Task '${taskId}' is not active for zone '${zoneId}'.`,
 						);
 					}
-					const githubToken = await resolveControllerGithubToken(
-						options.systemConfig,
-						secretResolver,
-					);
-					if (!githubToken) {
+					if (!controllerGithubToken) {
 						throw new Error(
 							'Controller GitHub token is not configured. Set host.githubToken or process.env.GITHUB_TOKEN.',
 						);
@@ -258,15 +258,18 @@ export async function startControllerRuntime(
 					return await pushBranchesForTask({
 						activeTask,
 						branches: input.branches,
-						githubToken,
+						githubToken: controllerGithubToken,
 					});
 				}
 			: undefined;
+	const operations =
+		pushTaskBranches !== undefined
+			? { ...controllerOperations, pushTaskBranches }
+			: controllerOperations;
 	const controllerApp = createControllerService({
 		leaseManager,
-		...(controllerOperations ? { operations: controllerOperations } : {}),
+		...(operations ? { operations } : {}),
 		...(workerTaskRunner ? { workerTaskRunner } : {}),
-		...(pushTaskBranches ? { operations: { ...controllerOperations, pushTaskBranches } } : {}),
 		systemConfig: options.systemConfig,
 	});
 	await runTaskStep(`Controller API on :${options.systemConfig.host.controllerPort}`, async () => {

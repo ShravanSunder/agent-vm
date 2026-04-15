@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createGitPrToolDefinition } from './git-pr-action.js';
-import { findMissingRequiredActions, wrapupToolOutputSchema } from './wrapup-types.js';
+import { findMissingRequiredActions } from './wrapup-types.js';
 
 const mocks = vi.hoisted(() => ({
 	configureGit: vi.fn(),
@@ -152,15 +152,12 @@ describe('git-pr-action', () => {
 			zoneId: 'shravan',
 		});
 
-		const result = wrapupToolOutputSchema.parse(
-			await tool.execute({
+		await expect(
+			tool.execute({
 				title: 'PR',
 				body: 'body',
 			}),
-		);
-
-		expect(result.success).toBe(false);
-		expect(result.artifact).toContain('git push failed: remote rejected');
+		).rejects.toThrow('git push failed: remote rejected');
 	});
 
 	it('requires an explicit repo target when multiple repos are configured', async () => {

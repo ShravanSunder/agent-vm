@@ -1,21 +1,31 @@
-import {
-	configureGit,
-	createBranch,
-	createPullRequest,
-	pushBranch,
-	stageAndCommit,
-} from '../git/git-operations.js';
+import { z } from 'zod';
+
+import { configureGit, createBranch, stageAndCommit } from '../git/git-operations.js';
 import type { RepoLocation } from '../shared/repo-location.js';
 import type { ToolDefinition } from '../work-executor/executor-interface.js';
 import type { WrapupToolOutput } from './wrapup-types.js';
 
+const pushBranchesResponseSchema = z.object({
+	results: z.array(
+		z.object({
+			repoUrl: z.string().min(1),
+			branchName: z.string().min(1),
+			success: z.boolean(),
+			prUrl: z.string().url().optional(),
+			error: z.string().optional(),
+		}),
+	),
+});
+
 export interface GitPrActionConfig {
 	readonly branchPrefix: string;
 	readonly commitCoAuthor: string;
+	readonly controllerBaseUrl: string;
 	readonly taskId: string;
 	readonly taskPrompt: string;
 	readonly plan: string | null;
 	readonly repos: readonly RepoLocation[];
+	readonly zoneId: string;
 }
 
 function selectTargetRepo(
@@ -35,11 +45,77 @@ function selectTargetRepo(
 	return config.repos[0] ?? null;
 }
 
+async function requestControllerPush(
+	config: GitPrActionConfig,
+	input: {
+		readonly repoUrl: string;
+		readonly branchName: string;
+		readonly title: string;
+		readonly body: string;
+	},
+): Promise<string> {
+	const pushRequestUrl = `${config.controllerBaseUrl}/zones/${config.zoneId}/tasks/${config.taskId}/push-branches`;
+	let response: Response;
+	try {
+		response = await fetch(pushRequestUrl, {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+			},
+			body: JSON.stringify({
+				branches: [
+					{
+						repoUrl: input.repoUrl,
+						branchName: input.branchName,
+						title: input.title,
+						body: input.body,
+					},
+				],
+			}),
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`controller push request to ${pushRequestUrl} failed: ${message}`, {
+			cause: error,
+		});
+	}
+	const responseBody = await response.text();
+	if (!response.ok) {
+		throw new Error(
+			`controller push request to ${pushRequestUrl} failed with HTTP ${response.status}: ${responseBody}`,
+		);
+	}
+
+	let parsedJson: unknown;
+	try {
+		parsedJson = JSON.parse(responseBody) as unknown;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(
+			`controller push request to ${pushRequestUrl} returned invalid JSON: ${message}. Body: ${responseBody}`,
+			{ cause: error },
+		);
+	}
+	const parsed = pushBranchesResponseSchema.parse(parsedJson);
+	const result = parsed.results?.[0];
+	if (!result) {
+		throw new Error('controller push request returned no results');
+	}
+	if (!result.success) {
+		throw new Error(result.error ?? 'controller push request failed');
+	}
+	if (!result.prUrl) {
+		throw new Error('controller push request succeeded without a prUrl');
+	}
+
+	return result.prUrl;
+}
+
 export function createGitPrToolDefinition(config: GitPrActionConfig): ToolDefinition {
 	return {
 		name: 'git-pr',
 		description:
-			'Stage all changes, commit, push to a new branch, and create a pull request. Call this after all code changes are complete.',
+			'Stage all changes, commit to a new branch, and request controller-side push and PR creation. Call this after all code changes are complete.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -65,107 +141,59 @@ export function createGitPrToolDefinition(config: GitPrActionConfig): ToolDefini
 			required: ['title', 'body'],
 		},
 		execute: async (params: Record<string, unknown>): Promise<WrapupToolOutput> => {
-			try {
-				const targetRepo = selectTargetRepo(config, params);
-				if (!targetRepo) {
-					return {
-						type: 'git-pr',
-						success: false,
-						artifact: 'No repo configured - cannot create PR.',
-					};
-				}
-
-				// Debug: log workspace state before git operations
-				const { execaCommand } = await import('execa');
-				const debugLines: string[] = [];
-				debugLines.push(`targetRepo.workspacePath: ${targetRepo.workspacePath}`);
-				debugLines.push(`targetRepo.repoUrl: ${targetRepo.repoUrl}`);
-				debugLines.push(`cwd: ${process.cwd()}`);
-				try {
-					const lsResult = await execaCommand(`ls -la ${targetRepo.workspacePath}`, { shell: true, reject: false });
-					debugLines.push(`ls workspace: ${lsResult.stdout}`);
-				} catch { debugLines.push('ls workspace: FAILED'); }
-				try {
-					const gitResult = await execaCommand(`ls -la ${targetRepo.workspacePath}/.git`, { shell: true, reject: false });
-					debugLines.push(`.git exists: ${gitResult.exitCode === 0 ? 'YES' : 'NO'}`);
-					debugLines.push(`.git ls: ${gitResult.stdout}`);
-				} catch { debugLines.push('.git check: FAILED'); }
-				try {
-					const stateDir = process.env.STATE_DIR ?? '/state';
-					const fs = await import('node:fs/promises');
-					await fs.mkdir(`${stateDir}/debug`, { recursive: true });
-					await fs.writeFile(`${stateDir}/debug/git-pr-debug.log`, debugLines.join('\n'), 'utf8');
-				} catch { /* best effort */ }
-				process.stderr.write(`[git-pr-action] Debug:\n${debugLines.join('\n')}\n`);
-
-				if (
-					config.repos.length > 1 &&
-					typeof params.repoWorkspacePath !== 'string' &&
-					typeof params.repoUrl !== 'string'
-				) {
-					return {
-						type: 'git-pr',
-						success: false,
-						artifact:
-							'Multiple repos configured - provide repoWorkspacePath or repoUrl to choose which repo to wrap up.',
-					};
-				}
-
-				const title =
-					typeof params.title === 'string'
-						? params.title
-						: `feat: ${config.taskPrompt.slice(0, 72)}`;
-				const body =
-					typeof params.body === 'string' ? params.body : (config.plan?.slice(0, 2000) ?? '');
-				const branchName = `${config.branchPrefix}${config.taskId}`;
-
-				await configureGit(
-					{
-						userEmail: 'agent-vm-worker@agent-vm',
-						userName: 'agent-vm-worker',
-					},
-					targetRepo.workspacePath,
-				);
-				await createBranch(branchName, targetRepo.workspacePath);
-				await stageAndCommit({
-					message: title,
-					coAuthor: config.commitCoAuthor,
-					cwd: targetRepo.workspacePath,
-				});
-				await pushBranch({
-					repo: targetRepo.repoUrl,
-					branchName,
-					cwd: targetRepo.workspacePath,
-				});
-
-				const prUrl = await createPullRequest(
-					{
-						repo: targetRepo.repoUrl,
-						title,
-						body,
-						baseBranch: targetRepo.baseBranch,
-						headBranch: branchName,
-					},
-					targetRepo.workspacePath,
-				);
-
+			const targetRepo = selectTargetRepo(config, params);
+			if (!targetRepo) {
 				return {
 					type: 'git-pr',
-					artifact: prUrl,
-					success: true,
-				};
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				const sanitized = message.replace(
-					/https:\/\/x-access-token:[^@]*@/g,
-					'https://x-access-token:***@',
-				);
-				return {
-					type: 'git-pr',
-					artifact: sanitized,
 					success: false,
+					artifact: 'No repo configured - cannot create PR.',
 				};
 			}
+
+			if (
+				config.repos.length > 1 &&
+				typeof params.repoWorkspacePath !== 'string' &&
+				typeof params.repoUrl !== 'string'
+			) {
+				return {
+					type: 'git-pr',
+					success: false,
+					artifact:
+						'Multiple repos configured - provide repoWorkspacePath or repoUrl to choose which repo to wrap up.',
+				};
+			}
+
+			const title =
+				typeof params.title === 'string' ? params.title : `feat: ${config.taskPrompt.slice(0, 72)}`;
+			const body =
+				typeof params.body === 'string' ? params.body : (config.plan?.slice(0, 2000) ?? '');
+			const branchName = `${config.branchPrefix}${config.taskId}`;
+
+			await configureGit(
+				{
+					userEmail: 'agent-vm-worker@agent-vm',
+					userName: 'agent-vm-worker',
+				},
+				targetRepo.workspacePath,
+			);
+			await createBranch(branchName, targetRepo.workspacePath);
+			await stageAndCommit({
+				message: title,
+				coAuthor: config.commitCoAuthor,
+				cwd: targetRepo.workspacePath,
+			});
+			const prUrl = await requestControllerPush(config, {
+				repoUrl: targetRepo.repoUrl,
+				branchName,
+				title,
+				body,
+			});
+
+			return {
+				type: 'git-pr',
+				artifact: prUrl,
+				success: true,
+			};
 		},
 	};
 }

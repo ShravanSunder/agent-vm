@@ -1,5 +1,6 @@
-import type { Hono } from 'hono';
+import { type Context, type Hono } from 'hono';
 
+import { PushBranchesValidationError } from '../git-push-operations.js';
 import type { ControllerRouteOperations } from './controller-http-route-support.js';
 import {
 	controllerDestroyZoneRequestSchema,
@@ -7,6 +8,18 @@ import {
 	controllerPushBranchesRequestSchema,
 	controllerWorkerTaskRequestSchema,
 } from './controller-request-schemas.js';
+
+async function parseJsonBody(context: Context): Promise<unknown> {
+	try {
+		return await context.req.json();
+	} catch {
+		throw new PushBranchesValidationError('Request body must be valid JSON.');
+	}
+}
+
+function writeControllerRouteLog(message: string): void {
+	process.stderr.write(`[controller-zone-operation-routes] ${message}\n`);
+}
 
 export function registerControllerZoneOperationRoutes(
 	app: Hono,
@@ -40,8 +53,11 @@ export function registerControllerZoneOperationRoutes(
 	);
 
 	if (operations.runWorkerTask) {
+		const runWorkerTask = operations.runWorkerTask;
 		app.post('/zones/:zoneId/worker-tasks', async (context) => {
-			const parsedPayload = controllerWorkerTaskRequestSchema.safeParse(await context.req.json());
+			const parsedPayload = controllerWorkerTaskRequestSchema.safeParse(
+				await parseJsonBody(context),
+			);
 			if (!parsedPayload.success) {
 				return context.json(
 					{
@@ -54,7 +70,7 @@ export function registerControllerZoneOperationRoutes(
 			try {
 				const taskInput = parsedPayload.data;
 				return context.json(
-					await operations.runWorkerTask?.(context.req.param('zoneId'), {
+					await runWorkerTask(context.req.param('zoneId'), {
 						prompt: taskInput.prompt,
 						repos: taskInput.repos,
 						context: taskInput.context,
@@ -72,8 +88,11 @@ export function registerControllerZoneOperationRoutes(
 	}
 
 	if (operations.pushTaskBranches) {
+		const pushTaskBranches = operations.pushTaskBranches;
 		app.post('/zones/:zoneId/tasks/:taskId/push-branches', async (context) => {
-			const parsedPayload = controllerPushBranchesRequestSchema.safeParse(await context.req.json());
+			const parsedPayload = controllerPushBranchesRequestSchema.safeParse(
+				await parseJsonBody(context),
+			);
 			if (!parsedPayload.success) {
 				return context.json(
 					{
@@ -85,27 +104,32 @@ export function registerControllerZoneOperationRoutes(
 			}
 			try {
 				return context.json(
-					await operations.pushTaskBranches?.(
+					await pushTaskBranches(
 						context.req.param('zoneId'),
 						context.req.param('taskId'),
 						parsedPayload.data,
 					),
 				);
 			} catch (error) {
+				const message = error instanceof Error ? error.message : 'push-branches-failed';
+				writeControllerRouteLog(
+					`push-branches failed for zone '${context.req.param('zoneId')}' task '${context.req.param('taskId')}': ${message}`,
+				);
 				return context.json(
 					{
-						error: error instanceof Error ? error.message : 'push-branches-failed',
+						error: message,
 					},
-					400,
+					error instanceof PushBranchesValidationError ? 400 : 500,
 				);
 			}
 		});
 	}
 
 	if (operations.enableSshForZone) {
+		const enableSshForZone = operations.enableSshForZone;
 		app.post('/zones/:zoneId/enable-ssh', async (context) => {
 			try {
-				return context.json(await operations.enableSshForZone?.(context.req.param('zoneId')));
+				return context.json(await enableSshForZone(context.req.param('zoneId')));
 			} catch (error) {
 				return context.json(
 					{
@@ -118,9 +142,10 @@ export function registerControllerZoneOperationRoutes(
 	}
 
 	if (operations.execInZone) {
+		const execInZone = operations.execInZone;
 		app.post('/zones/:zoneId/execute-command', async (context) => {
 			const parsedPayload = controllerExecuteCommandRequestSchema.safeParse(
-				await context.req.json(),
+				await parseJsonBody(context),
 			);
 			if (!parsedPayload.success) {
 				return context.json(
@@ -133,9 +158,7 @@ export function registerControllerZoneOperationRoutes(
 			}
 			const payload = parsedPayload.data;
 			try {
-				return context.json(
-					await operations.execInZone?.(context.req.param('zoneId'), payload.command),
-				);
+				return context.json(await execInZone(context.req.param('zoneId'), payload.command));
 			} catch (error) {
 				return context.json(
 					{
@@ -148,8 +171,7 @@ export function registerControllerZoneOperationRoutes(
 	}
 
 	if (operations.stopController) {
-		app.post('/stop-controller', async (context) =>
-			context.json(await operations.stopController?.()),
-		);
+		const stopController = operations.stopController;
+		app.post('/stop-controller', async (context) => context.json(await stopController()));
 	}
 }

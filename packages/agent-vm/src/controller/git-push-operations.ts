@@ -19,6 +19,10 @@ export interface PushBranchResult {
 
 export class PushBranchesValidationError extends Error {}
 
+function writePushFlowLog(message: string): void {
+	process.stderr.write(`[git-push-operations] ${message}\n`);
+}
+
 function parseRepoFromUrl(repoUrl: string): string {
 	const cleaned = repoUrl.replace(/\.git$/, '');
 	const urlPattern = /(?:https?:\/\/)?github\.com\/([^/]+\/[^/]+)$/u;
@@ -65,6 +69,9 @@ async function pushBranch(options: {
 		const errorDetail = `${result.stdout}\n${result.stderr}`
 			.replace(/https:\/\/x-access-token:[^@]*@/gu, 'https://x-access-token:***@')
 			.trim();
+		writePushFlowLog(
+			`git push failed for ${options.repoUrl} ${sanitizeBranchName(options.branchName)}: ${errorDetail}`,
+		);
 		throw new Error(`git push failed\n${errorDetail}`);
 	}
 }
@@ -105,10 +112,19 @@ async function createPullRequest(options: {
 	);
 
 	if ((result.exitCode ?? -1) !== 0) {
-		throw new Error(`Failed to create pull request\n${result.stdout}\n${result.stderr}`.trim());
+		const errorDetail = `${result.stdout}\n${result.stderr}`
+			.replace(/https:\/\/x-access-token:[^@]*@/gu, 'https://x-access-token:***@')
+			.trim();
+		writePushFlowLog(
+			`gh pr create failed for ${options.repoUrl} ${sanitizeBranchName(options.headBranch)}: ${errorDetail}`,
+		);
+		throw new Error(`Failed to create pull request\n${errorDetail}`.trim());
 	}
-
-	return result.stdout.trim().split('\n').pop() ?? '';
+	const prUrl = result.stdout.trim().split('\n').pop() ?? '';
+	if (prUrl.length === 0) {
+		throw new Error('gh pr create succeeded without returning a PR URL');
+	}
+	return prUrl;
 }
 
 export async function pushBranchesForTask(options: {
@@ -131,14 +147,16 @@ export async function pushBranchesForTask(options: {
 	}
 
 	const results: PushBranchResult[] = [];
-	for (const branch of options.branches) {
+	const validatedBranches = options.branches.map((branch) => {
 		const repo = options.activeTask.repos.find((candidate) => candidate.repoUrl === branch.repoUrl);
 		if (!repo) {
 			throw new PushBranchesValidationError(
 				`Repo '${branch.repoUrl}' is not registered for active task '${options.activeTask.taskId}'.`,
 			);
 		}
-
+		return { branch, repo };
+	});
+	for (const { branch, repo } of validatedBranches) {
 		try {
 			// Host-side push/PR operations stay ordered so failures are attributed to the right repo.
 			// oxlint-disable-next-line eslint/no-await-in-loop
