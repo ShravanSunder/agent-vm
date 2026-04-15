@@ -1,95 +1,167 @@
 # agent-vm
 
-A self-hosted system for running LLM coding agents safely. Each task gets its own fresh QEMU micro-VM that boots in seconds, does the work, and is destroyed when done. API keys are injected at the network layer so the agent never sees raw credentials.
+A self-hosted system for running LLM coding agents safely. Give it a coding task — it plans, codes, tests, reviews, and opens a PR. Everything runs inside disposable QEMU micro-VMs. API keys are injected at the network layer so the agent never sees raw credentials.
 
 ---
 
-## System Overview
+## Package Architecture
 
-```mermaid
-flowchart TB
-    User["You / CI / API"] -->|"coding task"| Controller
-    subgraph Host["Host Machine (Zone 1 — trusted)"]
-        Controller["Controller :18800\nclone repo, resolve secrets,\nmanage VM lifecycle"]
-        SecretResolver["Secret Resolver\n1Password / env"]
-        Controller --- SecretResolver
-    end
-    Controller -->|"boot VM\nmount workspace + state"| VM
-    subgraph VM["Gondolin VM (Zone 2 — sandboxed, ephemeral)"]
-        direction LR
-        Worker["Worker\n:18789"] --> Plan["Plan"] --> PlanReview["Plan\nReview"] --> Code["Code"] --> Verify["Verify"] --> CodeReview["Code\nReview"] --> Wrapup["Wrapup"]
-    end
-    SecretResolver -.->|"HTTP mediation\n(secrets never enter VM)"| VM
-    Wrapup -->|"request push"| Controller
-    Controller -->|"git push + create PR\n(GitHub token stays on host)"| GitHub["GitHub"]
+Seven packages. Dependencies flow downward.
+
 ```
+                @earendil-works/gondolin
+                (external SDK — QEMU micro-VMs,
+                 VFS, HTTP mediation, image builds)
+                          |
+                          v
+                gondolin-core
+                (VM adapter, secret resolver,
+                 image build pipeline, VFS helpers)
+                          |
+          +---------------+---------------+
+          |                               |
+          v                               v
+  gateway-interface             openclaw-agent-vm-plugin
+  (GatewayLifecycle contract,   (OpenClaw sandbox backend,
+   VmSpec, ProcessSpec,          lease client, SSH/file bridge)
+   splitResolvedSecrets)
+          |
+     +----+----+
+     |         |
+     v         v
+  openclaw-  worker-
+  gateway    gateway
+  (OpenClaw  (Worker
+   lifecycle) lifecycle)
+     |         |
+     +----+----+
+          |
+          v
+      agent-vm
+      (CLI + Controller runtime,
+       HTTP API :18800, lease manager,
+       gateway orchestrator,
+       worker task runner,
+       git push from host)
+          |
+          | (imports workerConfigSchema)
+          v
+    agent-vm-worker
+    (Runs INSIDE the VM.
+     6-phase pipeline, coordinator,
+     executors, event sourcing,
+     MCP tools, HTTP API :18789)
+```
+
+| Package | What it does |
+|---------|-------------|
+| **gondolin-core** | Wraps the Gondolin SDK. Creates VMs, resolves secrets (1Password/env), builds images with fingerprint caching, assembles VFS mounts and HTTP mediation hooks. |
+| **gateway-interface** | The contract. `GatewayLifecycle` interface, `GatewayVmSpec`, `GatewayProcessSpec`. Both gateway types implement this. `splitResolvedGatewaySecrets()` routes secrets to env or HTTP mediation. |
+| **openclaw-gateway** | OpenClaw lifecycle: 3 VFS mounts, TCP pool for tool VM SSH, auth profiles, `prepareHostState` writes effective config to disk. |
+| **worker-gateway** | Worker lifecycle: 2 VFS mounts (`/workspace` + `/state`), TCP to controller only, no auth, no `prepareHostState`. |
+| **agent-vm** | The controller. CLI (cmd-ts), HTTP API (Hono), lease manager + TCP pool + idle reaper for tool VMs, gateway zone orchestrator, worker task runner, host-side git push. |
+| **agent-vm-worker** | The pipeline inside the VM. 6-phase coordinator, Codex/Claude executors with thread persistence, JSONL event sourcing, MCP tool server (git-pr, slack-post), HTTP API. |
+| **openclaw-agent-vm-plugin** | Bridge to OpenClaw's sandbox system. Registers Gondolin VMs as an OpenClaw sandbox backend. Provides file bridge + shell execution via SSH into tool VMs. |
 
 ---
 
-## How It Works
+## Two Operating Modes
+
+The controller supports two gateway types. Same infrastructure, different lifecycles.
+
+### Mode 1: Worker (autonomous coding)
 
 ```
-  You / CI / API
+  Host (Zone 1 — trusted)
+  +----------------------------------------------------------+
+  |  Controller :18800                                        |
+  |  ├── Secret Resolver (1Password / env)                    |
+  |  ├── Worker Task Runner                                   |
+  |  │   ├── Clone repos (shallow, single-branch)             |
+  |  │   ├── Merge config (.agent-vm/config.json > zone)      |
+  |  │   ├── Start Docker services (compose up)               |
+  |  │   ├── Boot VM per task (ephemeral)                     |
+  |  │   ├── Submit task → poll until done (30 min timeout)   |
+  |  │   └── Teardown: VM + Docker + workspace                |
+  |  ├── Git Push Operations (GitHub token stays here)        |
+  |  └── HTTP API                                             |
+  |       ├── POST /zones/:id/worker-tasks                    |
+  |       └── POST /zones/:id/tasks/:id/push-branches         |
+  +----------------------------------------------------------+
        |
-       |  "Add pagination to /api/users"
-       v
-  Controller        (your host machine, :18800)
-       |            Clones your repo, assembles config,
-       |            boots a fresh VM, submits the task,
-       |            waits for completion, pushes the PR.
-       v
-  Gateway VM        (Gondolin QEMU micro-VM, ~2s boot)
-       |            Runs the coding agent inside a sandbox.
-       |            Full filesystem + shell access inside.
-       |            Can't touch the host or other tasks.
-       v
-  Tool VMs          (ephemeral, on-demand)
-                    Extra sandboxed environments for
-                    database containers, build tools, etc.
+       v  (Gondolin VM — ephemeral, per task)
+  +----------------------------------------------------------+
+  |  agent-vm-worker :18789                   Zone 2           |
+  |  ├── Coordinator (6-phase pipeline)                        |
+  |  │   ├── Plan → Plan Review (max 2 loops)                  |
+  |  │   ├── Work → Verify (max 3 retries)                     |
+  |  │   ├── Work Review (max 3 loops)                         |
+  |  │   └── Wrapup (git-pr calls controller to push)          |
+  |  ├── Executors (Codex SDK, thread persistence)             |
+  |  ├── Event Log (JSONL, crash recovery)                     |
+  |  └── MCP Tools (git-pr, slack-post)                        |
+  |                                                            |
+  |  /workspace → host repo clone (VFS realfs)                 |
+  |  /state → config + event logs (VFS realfs)                 |
+  +----------------------------------------------------------+
+       |
+       v  (HTTP mediation — secrets injected at proxy layer)
+  External APIs (OpenAI, GitHub, Anthropic)
+  Agent never sees credentials.
 ```
 
-The **Controller** is a Node.js process on your machine. It never runs untrusted code — it just manages VMs and credentials.
+### Mode 2: OpenClaw (interactive chat agent)
 
-The **Gateway VM** is where the LLM agent works. A lightweight QEMU virtual machine (via [Gondolin](https://github.com/nicholasgasior/gondolin)) that boots in ~2 seconds. Your repo is mounted read-write inside the VM. The agent can run any command — npm, git, python — but it's sandboxed. When the task finishes, the VM is destroyed.
-
-**Tool VMs** are additional sandboxes for backing services (postgres, redis) that your tests might need. Booted on demand and cleaned up with the task.
-
----
-
-## The Agent Pipeline
-
-Six phases, three with retry loops:
-
-1. **Plan** — reads your codebase, writes an implementation plan
-2. **Plan Review** — separate LLM reviews the plan, revises if rejected (max 2 loops)
-3. **Work** — writes code with full shell access (default: GPT-5.4)
-4. **Verify** — runs your tests + linter, auto-fixes failures (max 3 retries)
-5. **Work Review** — separate LLM reviews the diff, requests changes if needed (max 3 loops)
-6. **Wrapup** — commits changes, controller pushes branch + opens PR from host
-
-Every state change is logged to a JSONL event log for debugging and crash recovery.
+```
+  Host (Zone 1 — trusted)
+  +----------------------------------------------------------+
+  |  Controller :18800                                        |
+  |  ├── Secret Resolver                                      |
+  |  ├── Lease Manager (tool VM allocation)                   |
+  |  ├── TCP Pool (SSH port slots for tool VMs)               |
+  |  ├── Idle Reaper (30min TTL)                              |
+  |  └── HTTP API                                             |
+  |       ├── POST /lease (create tool VM)                    |
+  |       ├── DELETE /lease/:id (release)                     |
+  |       └── Zone ops (destroy, upgrade, logs, SSH, exec)    |
+  +----------------------------------------------------------+
+       |                           |
+       v                           v
+  Gateway VM (Zone 2)         Tool VMs (Zone 3)
+  +----------------------+    +--------------------+
+  | OpenClaw :18789      |    | Ephemeral, per     |
+  | Long-running         |    | lease               |
+  | Discord / WhatsApp   |    | No secrets          |
+  | Auth profiles (1P)   |    | No network          |
+  | 3 VFS mounts         |    | /workspace only     |
+  | TCP to all tool VMs  |    | SSH via TCP pool     |
+  +----------------------+    +--------------------+
+```
 
 ---
 
 ## Security Model
 
+Three nested trust zones. Each boundary restricts what's visible to the inner zone.
+
 ```
   +====================================================================+
   |  ZONE 1: HOST  (fully trusted)                                      |
   |                                                                     |
-  |  Controller process, secret resolver, GitHub token, Docker daemon   |
+  |  Controller, secret resolver, GitHub token, Docker daemon           |
   |  Can: resolve secrets, push branches, manage VMs                    |
   |  Never: runs untrusted code                                         |
   |                                                                     |
   |  +---------------------------------------------------------------+  |
   |  |  ZONE 2: GATEWAY VM  (sandboxed)                              |  |
   |  |                                                                |  |
-  |  |  Per-task ephemeral VM with full shell access                  |  |
-  |  |  Can: make outbound HTTP (allowlisted hosts only)              |  |
-  |  |  Cannot: see API keys, access host filesystem, persist state   |  |
+  |  |  Per-task (Worker) or long-running (OpenClaw)                  |  |
+  |  |  Has: full shell access, VFS-mounted workspace                 |  |
+  |  |  Can: outbound HTTP (allowlisted hosts only)                   |  |
+  |  |  Cannot: see API keys, access host FS, persist after shutdown  |  |
   |  |                                                                |  |
   |  |  +----------------------------------------------------------+  |  |
-  |  |  |  ZONE 3: TOOL VM  (untrusted)                            |  |  |
+  |  |  |  ZONE 3: TOOL VM  (untrusted, OpenClaw only)             |  |  |
   |  |  |                                                           |  |  |
   |  |  |  Ephemeral, per-lease. Runs LLM-generated code.           |  |  |
   |  |  |  Has: workspace mount only. No secrets, no network.       |  |  |
@@ -99,40 +171,24 @@ Every state change is logged to a JSONL event log for debugging and crash recove
 ```
 
 **Key properties:**
-- **Secrets never enter the VM** — Gondolin's HTTP mediation proxy intercepts outbound requests and injects API keys at the network layer. The agent process makes normal HTTP calls without ever seeing credentials.
+- **Secrets never enter the VM** — Gondolin's HTTP mediation proxy intercepts outbound requests and injects API keys at the network layer. The agent makes normal HTTP calls without ever seeing credentials.
 - **Each task is isolated** — fresh VM, fresh workspace, fresh Docker namespace. Tasks can't contaminate each other.
-- **GitHub token stays on host** — the VM asks the controller to push. The controller runs `git push` from Zone 1 where the token lives.
-- **Allowlisted egress** — outbound traffic is restricted per-zone. No arbitrary internet access.
+- **GitHub token stays on host** — the VM asks the controller to push. `git push` runs from Zone 1 where the token lives.
+- **Allowlisted egress** — outbound traffic restricted per-zone. No arbitrary internet access.
 - **.env / secrets never readable by agent** — contrast with container-based approaches where `process.env` exposes everything.
 
 ---
 
-## Operating Modes
+## The Agent Pipeline (Worker Mode)
 
-|                    | OpenClaw                        | Worker                                              |
-|--------------------|---------------------------------|------------------------------------------------------|
-| **Purpose**        | Interactive chat agent          | Autonomous coding pipeline                           |
-| **Gateway type**   | `openclaw`                      | `worker`                                             |
-| **VM lifecycle**   | Long-running per zone           | Per-task ephemeral                                   |
-| **Pipeline**       | User-driven conversation        | 6-phase: plan → review → work → verify → review → wrapup |
-| **Output**         | Chat responses + tool calls     | Pull requests                                        |
-| **Backing services** | Discord, WhatsApp channels    | Docker compose (postgres, etc.)                      |
+Six phases, three with retry loops. Every state change logged to JSONL.
 
----
-
-## Package Map
-
-| Package | Description |
-|---------|-------------|
-| `@shravansunder/agent-vm` | CLI + controller runtime |
-| `@shravansunder/agent-vm-worker` | Task pipeline (runs inside VM) |
-| `@shravansunder/gondolin-core` | VM adapter + secret resolver |
-| `@shravansunder/gateway-interface` | Shared gateway lifecycle types |
-| `@shravansunder/openclaw-gateway` | OpenClaw gateway implementation |
-| `@shravansunder/worker-gateway` | Worker gateway implementation |
-| `@shravansunder/openclaw-agent-vm-plugin` | OpenClaw sandbox plugin |
-
-All packages live under `packages/` in this monorepo.
+1. **Plan** — reads your codebase, writes an implementation plan
+2. **Plan Review** — separate LLM reviews the plan, revises if rejected (max 2 loops)
+3. **Work** — writes code with full shell access (default: GPT-5.4 via Codex SDK)
+4. **Verify** — runs your tests + linter, auto-fixes failures on same LLM thread (max 3 retries)
+5. **Work Review** — separate LLM reviews the diff, requests changes if needed (max 3 loops)
+6. **Wrapup** — commits changes, calls controller's push-branches endpoint → PR created from host
 
 ---
 
@@ -148,18 +204,18 @@ See [SETUP.md](SETUP.md) for prerequisites, installation, and first-run instruct
 
 | You want to... | Read |
 |----------------|------|
-| **5-min pitch** — understand what this is and why it's secure | This README (you're done) |
-| **15-min technical walkthrough** — understand all the moving parts | README → [architecture.md](architecture.md) → [worker-pipeline.md](worker-pipeline.md) |
-| **Work on the codebase** — understand implementation details | + [subsystems/](subsystems/) deep dives |
-| **Configure or operate** — look up config fields, run E2E checks | [reference/](reference/) |
+| **5-min pitch** — what this is, security model, why VMs | This README (you're done) |
+| **15-min walkthrough** — all the moving parts | README → [architecture.md](architecture.md) → [worker-pipeline.md](worker-pipeline.md) |
+| **Work on the codebase** — implementation details | + [subsystems/](subsystems/) deep dives |
+| **Configure or operate** — config fields, E2E checks | [reference/](reference/) |
 
 ### Full doc tree
 
 ```
 docs/
 ├── README.md                              You are here
-├── architecture.md                        System architecture, packages, controller,
-│                                          gateway, secrets, trust zones
+├── architecture.md                        System architecture: packages, controller,
+│                                          gateway abstraction, secrets, trust zones
 ├── worker-pipeline.md                     Inside the VM: 6-phase pipeline, event
 │                                          sourcing, executors, MCP tools
 ├── SETUP.md                               Prerequisites + quick start
