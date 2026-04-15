@@ -13,9 +13,9 @@ The agent-vm-worker is an **autonomous coding agent**. You give it a task like "
 3. Writes the code
 4. Runs your tests and linter to check its work
 5. Reviews the code changes
-6. Creates a pull request and notifies your team
+6. Signals the controller to push branches and create a pull request
 
-It does all of this inside a disposable virtual machine so it can't affect your real systems.
+It does all of this inside a disposable virtual machine so it can't affect your real systems. Git push and PR creation happen on the **controller** (host side) — the VM never has direct GitHub access.
 
 ---
 
@@ -38,6 +38,7 @@ There are two processes that work together: a **Controller** (on your host machi
   |   - Boot a fresh VM           |
   |   - Submit the task           |
   |   - Wait for completion       |
+  |   - Push branches & create PR |
   |   - Tear everything down      |
   +----------|--------------------+
              |
@@ -52,9 +53,9 @@ There are two processes that work together: a **Controller** (on your host machi
   |  Jobs:                        |
   |   - Run the plan/work/review  |
   |     pipeline                  |
-  |   - Drive the LLM (Codex)    |
+  |   - Drive the LLM             |
   |   - Run tests & linter        |
-  |   - Create the PR             |
+  |   - Request PR via controller  |
   |   - Log every state change    |
   +-------------------------------+
 ```
@@ -309,7 +310,8 @@ The task moves through these statuses:
   |  The agent runs configured "finishing" actions:                     |
   |                                                                    |
   |    git-pr (default, required):                                     |
-  |      Create branch -> commit -> push -> open PR via gh CLI         |
+  |      Stage & commit -> call controller push-branches endpoint       |
+  |      Controller pushes branch + creates PR (host-side, with token) |
   |                                                                    |
   |    slack-post (optional):                                          |
   |      Post summary to Slack channel via webhook                     |
@@ -415,7 +417,7 @@ The worker never mutates state directly. Instead, every state change is recorded
 An **executor** is the bridge between the coordinator and an LLM. The coordinator says "plan this" or "fix that", and the executor translates it into an LLM API call.
 
 ```
-  Coordinator                    Executor                         LLM (Codex/Claude)
+  Coordinator                    Executor                         LLM (OpenAI/Claude)
       |                              |                                   |
       |  execute(prompt)             |                                   |
       |----------------------------->|                                   |
@@ -444,14 +446,14 @@ An **executor** is the bridge between the coordinator and an LLM. The coordinato
 - **`fix()`** continues the existing thread — the LLM sees the full history of what it already did, plus the new feedback
 - **Thread persistence** matters because it means the agent learns from its mistakes within a single task
 
-### Codex Executor (Current Implementation)
+### OpenAI Executor (Current Implementation)
 
-The Codex executor wraps OpenAI's `@openai/codex-sdk`. On first use, it:
+The OpenAI executor wraps the `@openai/codex-sdk`. On first use, it:
 
 1. Creates an isolated HOME directory (so config doesn't leak between executors)
 2. Registers any MCP servers (like deepwiki for documentation lookup)
 3. Starts a local MCP server if the phase has tools (like git-pr)
-4. Initializes the Codex SDK
+4. Initializes the OpenAI SDK
 
 The executor runs with `sandboxMode: 'danger-full-access'` — this sounds scary but is safe because **the VM is the sandbox**. The LLM agent gets full access to run commands and write files, but it's all contained inside the ephemeral Gondolin VM.
 
@@ -476,16 +478,16 @@ For example, you might use a more capable (and expensive) model for planning, an
 
 ---
 
-## MCP Tools: How the Agent Creates PRs
+## MCP Tools: How the Agent Triggers PRs and Notifications
 
-During the wrapup phase, the agent needs to call tools like "create a git PR" or "post to Slack". These tools are exposed as an **MCP server** running inside the VM.
+During the wrapup phase, the agent needs to call tools like "create a git PR" or "post to Slack". These tools are exposed as an **MCP server** running inside the VM. The git-pr tool stages changes and calls the **controller's push-branches endpoint** — the actual git push and PR creation happen on the host, not inside the VM.
 
 ```
   Coordinator (wrapup phase)
         |
         |  Build tool definitions:
-        |    git-pr    -> createGitPrToolDefinition(config)
-        |    slack-post -> createSlackToolDefinition(config)
+        |    git-pr    -> stages and commits changes, calls controller push-branches API
+        |    slack-post -> posts to webhook directly
         |
         v
   Start local MCP server
@@ -493,20 +495,22 @@ During the wrapup phase, the agent needs to call tools like "create a git PR" or
     Implements MCP protocol (ListTools, CallTool)
         |
         v
-  Register with Codex:
+  Register with executor:
     codex mcp add agent-vm-local-tools --url http://127.0.0.1:{port}/mcp
         |
         v
-  Codex executor runs wrapup phase
+  Executor runs wrapup phase
     LLM decides which tools to call based on the prompt
-    LLM calls git-pr tool -> branches, commits, pushes, creates PR
+    LLM calls git-pr tool -> stages and commits, controller pushes + creates PR
     LLM calls slack-post tool -> posts to webhook
         |
         v
   Results collected and emitted as wrapup-result event
 ```
 
-**MCP** (Model Context Protocol) is a standard way for LLMs to discover and call tools. By wrapping our git-pr and slack tools as an MCP server, the Codex agent can call them naturally as part of its conversation.
+**MCP** (Model Context Protocol) is a standard way for LLMs to discover and call tools. By wrapping our tools as an MCP server, the LLM agent can call them naturally as part of its conversation.
+
+**Why controller-side push?** The GitHub token never enters the VM. The worker stages and commits changes locally, then tells the controller "push this branch and create a PR." The controller runs `git push` and `gh pr create` on the host side where the token is available. See `docs/subsystems/worker-task-pipeline.md` for the full push flow.
 
 ---
 
@@ -579,7 +583,7 @@ The worker config controls every aspect of the pipeline. It's assembled by the c
 
 Human-friendly names that resolve to concrete model IDs:
 
-| Alias | Codex | Claude |
+| Alias | OpenAI (codex provider) | Claude |
 |---|---|---|
 | `latest` | gpt-5.4-high | claude-opus-4-6 |
 | `latest-medium` | gpt-5.4-low | claude-sonnet-4-6 |
@@ -665,9 +669,9 @@ Here's a concrete trace of a successful task from start to finish:
                                                 Start MCP server with git-pr tool
                                                 LLM calls git-pr tool:
                                                   Create branch agent/t-001
-                                                  Commit with co-author
-                                                  Push to origin
-                                                  Open PR via gh CLI
+                                                  Stage & commit with co-author
+                                                  Call controller push-branches API
+                                                  Controller pushes + opens PR
                                                 Emit: wrapup-result (PR URL)
                                                 Emit: task-completed
                                                 Status: completed
@@ -703,7 +707,7 @@ Quick reference for finding things in the code:
   |-- work-executor/
   |   |-- executor-interface.ts .. WorkExecutor contract (execute, fix, resumeOrRebuild)
   |   |-- executor-factory.ts .... Provider dispatch (codex vs claude)
-  |   |-- codex-executor.ts ...... Codex SDK wrapper (threads, MCP registration)
+  |   |-- codex-executor.ts ...... OpenAI SDK wrapper (threads, MCP registration)
   |   |-- local-tool-mcp-server.ts  Wraps tools as MCP server (Hono + MCP SDK)
   |
   |-- planner/
