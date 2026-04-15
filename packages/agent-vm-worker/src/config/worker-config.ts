@@ -154,13 +154,19 @@ const MODEL_ALIASES: Record<string, Record<string, ResolvedModel>> = {
 };
 
 export function resolveModelAlias(provider: string, model: string): ResolvedModel {
-	return MODEL_ALIASES[provider]?.[model] ?? { model, reasoningEffort: 'medium' as ReasoningEffort };
+	return (
+		MODEL_ALIASES[provider]?.[model] ?? { model, reasoningEffort: 'medium' as ReasoningEffort }
+	);
 }
 
 export function resolvePhaseExecutor(
 	config: WorkerConfig,
 	phase: { readonly provider?: string | undefined; readonly model?: string | undefined },
-): { readonly provider: string; readonly model: string; readonly reasoningEffort: ReasoningEffort } {
+): {
+	readonly provider: string;
+	readonly model: string;
+	readonly reasoningEffort: ReasoningEffort;
+} {
 	const provider = phase.provider ?? config.defaults.provider;
 	const model = phase.model ?? config.defaults.model;
 	const resolved = resolveModelAlias(provider, model);
