@@ -11,27 +11,59 @@ Level 2 architecture guide covering all packages, both gateway types, the contro
 Seven packages compose the system. Dependencies flow downward.
 
 ```
-  openclaw-agent-vm-plugin
-      |
-  agent-vm  (controller + CLI)
-      |              |              |
-  openclaw-       worker-       gondolin-core
-  gateway         gateway           |
-      |              |              |
-      +----- gateway-interface -----+---- @earendil-works/gondolin
+                @earendil-works/gondolin
+                (external SDK — QEMU micro-VMs,
+                 VFS, HTTP mediation, image builds)
+                          |
+                          v
+                gondolin-core
+                (VM adapter, secret resolver,
+                 image build pipeline, VFS helpers)
+                          |
+          +---------------+---------------+
+          |                               |
+          v                               v
+  gateway-interface             openclaw-agent-vm-plugin
+  (GatewayLifecycle contract,   (OpenClaw sandbox backend,
+   VmSpec, ProcessSpec,          lease client, SSH/file bridge)
+   splitResolvedSecrets)
+          |
+     +----+----+
+     |         |
+     v         v
+  openclaw-  worker-
+  gateway    gateway
+  (OpenClaw  (Worker
+   lifecycle) lifecycle)
+     |         |
+     +----+----+
+          |
+          v
+      agent-vm
+      (CLI + Controller runtime,
+       HTTP API :18800, lease manager,
+       gateway orchestrator,
+       worker task runner,
+       git push from host)
+          |
+          | (imports workerConfigSchema)
+          v
+    agent-vm-worker
+    (Runs INSIDE the VM.
+     6-phase pipeline, coordinator,
+     executors, event sourcing,
+     MCP tools, HTTP API :18789)
 ```
 
-| Package | npm Name | Responsibility |
-|---------|----------|----------------|
-| `agent-vm` | `@shravansunder/agent-vm` | CLI entry point, controller runtime, HTTP API, lease manager, gateway orchestrator |
-| `agent-vm-worker` | `@shravansunder/agent-vm-worker` | Task pipeline that runs inside the VM (plan, review, work, verify, wrapup) |
-| `gateway-interface` | `@shravansunder/gateway-interface` | Shared types: `GatewayLifecycle`, `GatewayVmSpec`, `GatewayProcessSpec`, `GatewayZoneConfig` |
-| `openclaw-gateway` | `@shravansunder/openclaw-gateway` | OpenClaw-specific lifecycle: VM spec, process spec, auth profiles, config merging |
-| `worker-gateway` | `@shravansunder/worker-gateway` | Worker-specific lifecycle: minimal VM spec, bootstrap via tarball, codex worker process |
-| `gondolin-core` | `@shravansunder/gondolin-core` | VM adapter wrapping `@earendil-works/gondolin`, build pipeline, secret resolver, VFS mount helpers |
-| `openclaw-agent-vm-plugin` | `@shravansunder/openclaw-agent-vm-plugin` | OpenClaw sandbox backend plugin: lease client, plugin registration, SDK compatibility |
-
-The external dependency `@earendil-works/gondolin` is the Gondolin SDK itself -- QEMU micro-VM runtime, VFS providers, HTTP mediation hooks, and the image build toolchain.
+| Package | Responsibility |
+|---------|----------------|
+| **gondolin-core** | Wraps the Gondolin SDK. Creates VMs, resolves secrets (1Password/env), builds images with fingerprint caching, assembles VFS mounts and HTTP mediation hooks. |
+| **gateway-interface** | The contract. `GatewayLifecycle` interface, `GatewayVmSpec`, `GatewayProcessSpec`. Both gateway types implement this. `splitResolvedGatewaySecrets()` routes secrets to env or HTTP mediation. |
+| **openclaw-gateway** | OpenClaw lifecycle: 3 VFS mounts, TCP pool for tool VM SSH, auth profiles, `prepareHostState` writes effective config to disk. |
+| **worker-gateway** | Worker lifecycle: 2 VFS mounts (`/workspace` + `/state`), TCP to controller only, no auth, no `prepareHostState`. |
+| **agent-vm** | The controller. CLI (cmd-ts), HTTP API (Hono), lease manager + TCP pool + idle reaper, gateway zone orchestrator, worker task runner, host-side git push. |
+| **agent-vm-worker** | Runs inside the VM. 6-phase coordinator, Codex/Claude executors with thread persistence, JSONL event sourcing, MCP tool server (git-pr, slack-post). |
+| **openclaw-agent-vm-plugin** | Bridge to OpenClaw's sandbox system. Registers Gondolin VMs as an OpenClaw sandbox backend. File bridge + shell execution via SSH into tool VMs. |
 
 ---
 
