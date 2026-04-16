@@ -58,14 +58,31 @@ For all system.json fields, see [reference/configuration-reference.md](../refere
 
 ### worker.json — Pipeline Behavior
 
-Controls which LLM models to use, how many retries, what verification commands to run:
+Controls which LLM models to use, how many retries, what verification commands to run. `agent-vm init --gateway-type worker` writes the built-in instruction defaults explicitly so you can edit them in place:
 
 ```json
 {
+  "instructions": "## Git Rules\n- You may commit at any time using git add and git commit.\n...\n## Wrapup\n- When work is complete and verified, call the git-pr tool to stage, commit, and request controller-side push and PR creation.\n- The git-pr tool handles the controller handoff - you only need to provide the title and description.",
   "defaults": { "provider": "codex", "model": "latest-medium" },
   "phases": {
-    "plan": { "model": "latest", "maxReviewLoops": 2 },
-    "work": { "maxReviewLoops": 3, "maxVerificationRetries": 3 }
+    "plan": {
+      "instructions": "Create an implementation plan for the task. Do not write code yet.",
+      "maxReviewLoops": 2
+    },
+    "planReview": {
+      "instructions": "Review the plan for completeness, correctness, risks, and missing edge cases."
+    },
+    "work": {
+      "instructions": "Implement the approved plan.",
+      "maxReviewLoops": 3,
+      "maxVerificationRetries": 3
+    },
+    "workReview": {
+      "instructions": "Review the code changes for correctness, bugs, style, and test coverage."
+    },
+    "wrapup": {
+      "instructions": "Complete the task by running the configured wrapup actions. ..."
+    }
   },
   "verification": [
     { "name": "test", "command": "npm test" },
