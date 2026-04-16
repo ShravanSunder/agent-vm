@@ -71,13 +71,12 @@ importers:
       hono:
         specifier: ^4.12.14
         version: 4.12.14
-      zod:
-        specifier: ^4
-        version: 4.3.6
-    devDependencies:
       tasuku:
         specifier: ^2.3.0
         version: 2.3.0
+      zod:
+        specifier: ^4
+        version: 4.3.6
 
   packages/agent-vm-worker:
     dependencies:
