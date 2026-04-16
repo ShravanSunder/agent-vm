@@ -2,6 +2,7 @@
 	"extends": "../../tsconfig.base.json",
 	"compilerOptions": {
 		"paths": {
+			"@shravansunder/agent-vm-worker": ["../agent-vm-worker/src/index.ts"],
 			"@shravansunder/gondolin-core": ["../gondolin-core/src/index.ts"]
 		}
 	},

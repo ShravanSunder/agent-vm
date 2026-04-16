@@ -3,7 +3,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 
-import { workerConfigSchema } from '@shravansunder/agent-vm-worker';
+import {
+	DEFAULT_BASE_INSTRUCTIONS,
+	DEFAULT_PHASE_INSTRUCTIONS,
+	workerConfigSchema,
+} from '@shravansunder/agent-vm-worker';
 import type { GatewayType } from '@shravansunder/gateway-interface';
 
 import { buildDefaultProjectNamespace } from '../runtime/project-namespace.js';
@@ -336,7 +340,35 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 	channels: {},
 });
 
-const defaultWorkerGatewayConfig = (): object => workerConfigSchema.parse({});
+const DEFAULT_PHASE_INSTRUCTIONS_BY_CONFIG_KEY = {
+	plan: DEFAULT_PHASE_INSTRUCTIONS.plan,
+	planReview: DEFAULT_PHASE_INSTRUCTIONS['plan-review'],
+	work: DEFAULT_PHASE_INSTRUCTIONS.work,
+	workReview: DEFAULT_PHASE_INSTRUCTIONS['work-review'],
+	wrapup: DEFAULT_PHASE_INSTRUCTIONS.wrapup,
+} as const;
+
+const defaultWorkerGatewayConfig = (): object =>
+	workerConfigSchema.parse({
+		instructions: DEFAULT_BASE_INSTRUCTIONS,
+		phases: {
+			plan: {
+				instructions: DEFAULT_PHASE_INSTRUCTIONS_BY_CONFIG_KEY.plan,
+			},
+			planReview: {
+				instructions: DEFAULT_PHASE_INSTRUCTIONS_BY_CONFIG_KEY.planReview,
+			},
+			work: {
+				instructions: DEFAULT_PHASE_INSTRUCTIONS_BY_CONFIG_KEY.work,
+			},
+			workReview: {
+				instructions: DEFAULT_PHASE_INSTRUCTIONS_BY_CONFIG_KEY.workReview,
+			},
+			wrapup: {
+				instructions: DEFAULT_PHASE_INSTRUCTIONS_BY_CONFIG_KEY.wrapup,
+			},
+		},
+	});
 
 async function writeFileIfMissing(
 	filePath: string,

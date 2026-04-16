@@ -5,44 +5,15 @@ import type { RepoLocation } from '../shared/repo-location.js';
 import type { SkillReference } from '../shared/skill-types.js';
 import type { PhaseName } from '../state/task-event-types.js';
 import type { StructuredInput } from '../work-executor/executor-interface.js';
+import { DEFAULT_BASE_INSTRUCTIONS, DEFAULT_PHASE_INSTRUCTIONS } from './prompt-defaults.js';
 
 const BASE_WORKER_PROMPT =
 	'You are an agent working in a sandboxed VM. You have access to the workspace at /workspace. ' +
 	'Do not attempt to access the network directly - all outbound requests go through a mediation proxy.';
 
-const DEFAULT_BASE_INSTRUCTIONS = `## Git Rules
-- You may commit at any time using git add and git commit.
-- Always commit to a branch prefixed with "agent/" - never commit to main or master.
-- Do NOT run git push. Push is handled by the system after wrapup.
-- Do NOT modify or delete the .git directory.
-- Use conventional commit messages: "feat:", "fix:", "refactor:", "test:", "docs:".
-
-## Workspace Rules
-- Work only inside the workspace directories provided in the task repos.
-- Do not create files outside the workspace.
-- Do not modify system files or configuration outside the workspace.
-
-## Verification
-- Run verification commands before requesting wrapup.
-- If verification fails, fix the issue and re-verify.
-
-## Wrapup
-- When work is complete and verified, call the git-pr tool to stage, commit, and create a PR.
-- The git-pr tool handles push and PR creation - you only need to provide the title and description.`;
-
 const BASE_REVIEW_PROMPT =
 	'Return your review as structured JSON matching the ReviewResult schema: ' +
 	'{ approved: boolean, comments: [{ file: string, line?: number, severity: "critical" | "suggestion" | "nitpick", comment: string }], summary: string }';
-
-const DEFAULT_PHASE_INSTRUCTIONS: Record<string, string> = {
-	plan: 'Create an implementation plan for the task. Do not write code yet.',
-	'plan-review': 'Review the plan for completeness, correctness, risks, and missing edge cases.',
-	work: 'Implement the approved plan.',
-	'work-review': 'Review the code changes for correctness, bugs, style, and test coverage.',
-	wrapup:
-		'Complete the task by running the configured wrapup actions. You have access to: ' +
-		'git (commit, push, PR), Slack (webhook post). Decide which actions to take based on the task results.',
-};
 
 const REVIEW_PHASES = new Set<PhaseName>(reviewPhaseNames);
 

@@ -8,6 +8,7 @@
 		"sourceMap": true,
 		"noEmit": false,
 		"paths": {
+			"@shravansunder/agent-vm-worker": ["../agent-vm-worker/dist/index.d.ts"],
 			"@shravansunder/gondolin-core": ["../gondolin-core/dist/index.d.ts"]
 		}
 	},

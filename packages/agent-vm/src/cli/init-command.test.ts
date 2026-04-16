@@ -2,6 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import {
+	DEFAULT_BASE_INSTRUCTIONS,
+	DEFAULT_PHASE_INSTRUCTIONS,
+} from '@shravansunder/agent-vm-worker';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -83,6 +87,35 @@ describe('scaffoldAgentVmProject', () => {
 		expect(config.zones[0]?.gateway.type).toBe('worker');
 		expect(gatewayDockerfile).toContain('@openai/codex');
 		expect(gatewayDockerfile).not.toContain('openclaw@');
+	});
+
+	it('scaffolds worker.json with explicit default instructions for every phase', async () => {
+		const targetDir = createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{ gatewayType: 'worker', targetDir, zoneId: 'test-worker' },
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		const workerConfig = JSON.parse(
+			fs.readFileSync(path.join(targetDir, 'config', 'test-worker', 'worker.json'), 'utf8'),
+		);
+
+		expect(workerConfig.instructions).toBe(DEFAULT_BASE_INSTRUCTIONS);
+		expect(workerConfig.phases.plan.instructions).toBe(DEFAULT_PHASE_INSTRUCTIONS.plan);
+		expect(workerConfig.phases.planReview.instructions).toBe(
+			DEFAULT_PHASE_INSTRUCTIONS['plan-review'],
+		);
+		expect(workerConfig.phases.work.instructions).toBe(DEFAULT_PHASE_INSTRUCTIONS.work);
+		expect(workerConfig.phases.workReview.instructions).toBe(
+			DEFAULT_PHASE_INSTRUCTIONS['work-review'],
+		);
+		expect(workerConfig.phases.wrapup.instructions).toBe(DEFAULT_PHASE_INSTRUCTIONS.wrapup);
+		expect(workerConfig.defaults.provider).toBe('codex');
+		expect(workerConfig.defaults.model).toBe('latest-medium');
+		expect(workerConfig.phases.plan.maxReviewLoops).toBe(2);
+		expect(workerConfig.phases.work.maxVerificationRetries).toBe(3);
+		expect(workerConfig.wrapupActions).toEqual([{ type: 'git-pr', required: true }]);
 	});
 
 	it('scaffolds the published gondolin plugin install into the openclaw gateway Dockerfile', async () => {
