@@ -1,8 +1,50 @@
 # Configuration Reference
 
-[Overview](README.md) > [Architecture](architecture.md) > Configuration Reference
+[Overview](../README.md) > [Architecture](../architecture/overview.md) > Configuration Reference
 
 This is the single source of truth for every configuration field in agent-vm. All field names, types, defaults, and validation rules are derived directly from the Zod schemas in the source code.
+
+For how-to guides on configuring each mode, see [getting-started/worker-guide.md](../getting-started/worker-guide.md) or [getting-started/openclaw-guide.md](../getting-started/openclaw-guide.md).
+
+---
+
+## What Controls What
+
+```
+  system.json ──────→ Controller
+  (admin)             - host port, namespace
+                      - secret provider (1Password / env)
+                      - zones (gateway type, resources, secrets, allowedHosts)
+                      - VM images (build configs)
+                      - TCP pool, tool profiles
+                          |
+                          | zones[].gateway.gatewayConfig points to:
+                          v
+  worker.json ──────→ Worker Pipeline (inside VM)
+  (org/team)          - LLM provider + model per phase
+                      - phase retry limits
+                      - verification commands (test, lint)
+                      - wrapup actions (git-pr, slack)
+                      - MCP servers, skills
+                          |
+                          | deep-merged with (project overrides zone):
+                          v
+  .agent-vm/          Project-specific overrides
+  config.json         - different test commands
+  (project dev)       - different model for planning
+                      - project-specific MCP servers
+                          |
+                          v
+                      effective-worker.json (written to /state/)
+```
+
+## Who Writes What
+
+| File | Who writes it | Who reads it | What it controls |
+|------|--------------|-------------|-----------------|
+| `system.json` | System administrator (via `agent-vm init`) | Controller at startup | Host, zones, networking, secrets, images |
+| `worker.json` | Org/team (zone-level defaults) | Controller during task prep | Pipeline behavior: models, phases, verification, wrapup |
+| `.agent-vm/config.json` | Project developer (checked into repo) | Controller during task prep (merged over worker.json) | Project-specific overrides |
 
 ---
 

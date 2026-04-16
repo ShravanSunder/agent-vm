@@ -1,8 +1,137 @@
 # System Architecture
 
-[Overview](README.md) > Architecture
+[Overview](../README.md) > Architecture
 
-Level 2 architecture guide covering all packages, both gateway types, the controller, and the Gondolin VM layer. For the worker pipeline internals (6-phase task execution, event sourcing, executors), see [agent-vm-worker-architecture.md](agent-vm-worker-architecture.md).
+System architecture covering all packages, both gateway types, the controller, and the Gondolin VM layer. For mode-specific details: [Worker Pipeline](worker-pipeline.md) | [OpenClaw Mode](openclaw-mode.md).
+
+---
+
+## How Components Interact
+
+The system is nested containers. The delegator (CLI, CI, API) sends tasks to the agent runtime. The controller inside the runtime manages VMs and secrets. The agent runs inside a Gondolin VM. Docker services run alongside.
+
+```
+  Delegator (CLI / CI / API)
+       |
+       v  Submit task
+  +----------------------------------------------------+
+  | Agent Runtime (host process)                        |
+  |                                                     |
+  |  +----------------------+  +---------------------+ |
+  |  | Controller :18800    |  | Environment         | |
+  |  | - secret resolver    |  | (Docker Compose)    | |
+  |  | - git push (host)    |  | PG, Redis, etc.     | |
+  |  | - VM lifecycle       |  |                     | |
+  |  | - lease manager      |  |                     | |
+  |  +----------------------+  +---------------------+ |
+  |          |                         |                |
+  |          v (boot VM)               | (tcpHosts)     |
+  |  +------------------------------------------+       |
+  |  | Gondolin VM                              |       |
+  |  |                                          |       |
+  |  |  +------------------------------------+  |       |
+  |  |  | Agent (worker :18789 or openclaw)  |  |       |
+  |  |  +------------------------------------+  |       |
+  |  |                                          |       |
+  |  |  /workspace (VFS mount from host)        |       |
+  |  |  /state (VFS mount from host)            |       |
+  |  +------------------------------------------+       |
+  +----------------------------------------------------+
+```
+
+### Controller ↔ Gondolin
+
+The controller calls `gondolin-core` to create VMs. It passes a `GatewayVmSpec` (VFS mounts, secrets, tcpHosts, allowedHosts, rootfsMode) and gets back a `ManagedVm` handle with `exec()`, `enableSsh()`, `enableIngress()`, `close()`.
+
+→ Deep dive: [subsystems/gondolin-vm-layer.md](../subsystems/gondolin-vm-layer.md)
+
+### Controller ↔ Worker (Worker mode)
+
+The controller POSTs a task to the worker's HTTP API inside the VM, then polls until complete. The worker calls back to the controller's `push-branches` endpoint via MCP tool to trigger git push + PR creation from the host.
+
+→ Full pipeline: [worker-pipeline.md](worker-pipeline.md)
+→ Controller-side lifecycle: [subsystems/worker-task-pipeline.md](../subsystems/worker-task-pipeline.md)
+
+### Controller ↔ OpenClaw (OpenClaw mode)
+
+The gateway VM runs long-term. When the agent needs tool execution, it requests a lease from the controller's HTTP API. The controller boots a tool VM and returns SSH access details.
+
+→ Full mode: [openclaw-mode.md](openclaw-mode.md)
+→ Lease manager: [subsystems/controller.md](../subsystems/controller.md#lease-manager)
+
+### Secrets Flow
+
+Secrets are resolved on the host and split into two channels:
+
+```mermaid
+flowchart LR
+    Config["system.json\nzone.secrets"] --> Resolver["Composite\nResolver"]
+    Resolver -->|"source: 1password"| OP["1Password SDK\n(op-cli fallback)"]
+    Resolver -->|"source: environment"| Env["process.env"]
+    OP --> Split["splitResolved\nGatewaySecrets"]
+    Env --> Split
+    Split -->|"injection: env"| VMEnv["VM env var\n(visible to agent)"]
+    Split -->|"injection:\nhttp-mediation"| Proxy["Gondolin HTTP Proxy\n(agent never sees secret)"]
+    Proxy -->|"injects credentials\ninto request headers"| ExtAPI["External API\n(OpenAI, GitHub, etc.)"]
+```
+
+→ Deep dive: [subsystems/secrets-and-credentials.md](../subsystems/secrets-and-credentials.md)
+
+### Docker Services ↔ VM
+
+The controller starts Docker Compose stacks, extracts container IPs, and passes them to Gondolin as TCP host mappings. The VM sees services via synthetic DNS.
+
+```
+  docker compose up → container starts (IP: 172.17.0.2)
+       |
+       v
+  Controller passes tcpHosts to Gondolin:
+    "postgres.local:5432" → "172.17.0.2:5432"
+       |
+       v
+  Inside VM: Gondolin synthetic DNS
+    postgres.local resolves → virtual IP → TCP forwarded to 172.17.0.2:5432
+       |
+       v
+  Agent connects to postgres.local:5432 (standard connection string)
+```
+
+→ Deep dive: [subsystems/worker-task-pipeline.md](../subsystems/worker-task-pipeline.md#docker-service-routing)
+
+### Gateway Lifecycle Contract
+
+Both modes implement the same `GatewayLifecycle` interface. The controller calls `buildVmSpec()` + `buildProcessSpec()` and gets pure data specs back — it never knows the specifics of Worker or OpenClaw.
+
+→ Deep dive: [subsystems/gateway-lifecycle.md](../subsystems/gateway-lifecycle.md)
+
+### Worker Task Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant D as Delegator
+    participant C as Controller
+    participant Docker as Docker
+    participant G as Gondolin
+    participant W as Worker
+
+    D->>C: POST /worker-tasks {prompt, repos}
+    C->>C: Clone repos, merge config
+    C->>Docker: docker compose up
+    C->>G: Boot VM (VmSpec + tcpHosts)
+    G->>W: Bootstrap + start :18789
+    C->>W: POST /tasks {taskId, prompt}
+    loop Poll (1s, 30min timeout)
+        C->>W: GET /tasks/:taskId
+        W-->>C: {status, ...}
+    end
+    W->>C: POST /push-branches (via MCP)
+    C->>C: git push + gh pr create
+    Note over C: TEARDOWN (always runs)
+    C->>G: vm.close()
+    C->>Docker: docker compose down
+    C->>C: rm workspace, release port
+    C-->>D: {taskId, prUrl, finalState}
+```
 
 ---
 
@@ -11,27 +140,59 @@ Level 2 architecture guide covering all packages, both gateway types, the contro
 Seven packages compose the system. Dependencies flow downward.
 
 ```
-  openclaw-agent-vm-plugin
-      |
-  agent-vm  (controller + CLI)
-      |              |              |
-  openclaw-       worker-       gondolin-core
-  gateway         gateway           |
-      |              |              |
-      +----- gateway-interface -----+---- @earendil-works/gondolin
+                @earendil-works/gondolin
+                (external SDK — QEMU micro-VMs,
+                 VFS, HTTP mediation, image builds)
+                          |
+                          v
+                gondolin-core
+                (VM adapter, secret resolver,
+                 image build pipeline, VFS helpers)
+                          |
+          +---------------+---------------+
+          |                               |
+          v                               v
+  gateway-interface             openclaw-agent-vm-plugin
+  (GatewayLifecycle contract,   (OpenClaw sandbox backend,
+   VmSpec, ProcessSpec,          lease client, SSH/file bridge)
+   splitResolvedSecrets)
+          |
+     +----+----+
+     |         |
+     v         v
+  openclaw-  worker-
+  gateway    gateway
+  (OpenClaw  (Worker
+   lifecycle) lifecycle)
+     |         |
+     +----+----+
+          |
+          v
+      agent-vm
+      (CLI + Controller runtime,
+       HTTP API :18800, lease manager,
+       gateway orchestrator,
+       worker task runner,
+       git push from host)
+          |
+          | (imports workerConfigSchema)
+          v
+    agent-vm-worker
+    (Runs INSIDE the VM.
+     6-phase pipeline, coordinator,
+     executors, event sourcing,
+     MCP tools, HTTP API :18789)
 ```
 
-| Package | npm Name | Responsibility |
-|---------|----------|----------------|
-| `agent-vm` | `@shravansunder/agent-vm` | CLI entry point, controller runtime, HTTP API, lease manager, gateway orchestrator |
-| `agent-vm-worker` | `@shravansunder/agent-vm-worker` | Task pipeline that runs inside the VM (plan, review, work, verify, wrapup) |
-| `gateway-interface` | `@shravansunder/gateway-interface` | Shared types: `GatewayLifecycle`, `GatewayVmSpec`, `GatewayProcessSpec`, `GatewayZoneConfig` |
-| `openclaw-gateway` | `@shravansunder/openclaw-gateway` | OpenClaw-specific lifecycle: VM spec, process spec, auth profiles, config merging |
-| `worker-gateway` | `@shravansunder/worker-gateway` | Worker-specific lifecycle: minimal VM spec, bootstrap via tarball, codex worker process |
-| `gondolin-core` | `@shravansunder/gondolin-core` | VM adapter wrapping `@earendil-works/gondolin`, build pipeline, secret resolver, VFS mount helpers |
-| `openclaw-agent-vm-plugin` | `@shravansunder/openclaw-agent-vm-plugin` | OpenClaw sandbox backend plugin: lease client, plugin registration, SDK compatibility |
-
-The external dependency `@earendil-works/gondolin` is the Gondolin SDK itself -- QEMU micro-VM runtime, VFS providers, HTTP mediation hooks, and the image build toolchain.
+| Package | Responsibility |
+|---------|----------------|
+| **gondolin-core** | Wraps the Gondolin SDK. Creates VMs, resolves secrets (1Password/env), builds images with fingerprint caching, assembles VFS mounts and HTTP mediation hooks. |
+| **gateway-interface** | The contract. `GatewayLifecycle` interface, `GatewayVmSpec`, `GatewayProcessSpec`. Both gateway types implement this. `splitResolvedGatewaySecrets()` routes secrets to env or HTTP mediation. |
+| **openclaw-gateway** | OpenClaw lifecycle: 3 VFS mounts, TCP pool for tool VM SSH, auth profiles, `prepareHostState` writes effective config to disk. |
+| **worker-gateway** | Worker lifecycle: 2 VFS mounts (`/workspace` + `/state`), TCP to controller only, no auth, no `prepareHostState`. |
+| **agent-vm** | The controller. CLI (cmd-ts), HTTP API (Hono), lease manager + TCP pool + idle reaper, gateway zone orchestrator, worker task runner, host-side git push. |
+| **agent-vm-worker** | Runs inside the VM. 6-phase coordinator, Codex/Claude executors with thread persistence, JSONL event sourcing, MCP tool server (git-pr, slack-post). |
+| **openclaw-agent-vm-plugin** | Bridge to OpenClaw's sandbox system. Registers Gondolin VMs as an OpenClaw sandbox backend. File bridge + shell execution via SSH into tool VMs. |
 
 ---
 
@@ -242,6 +403,31 @@ The gateway VM boots at controller startup and stays running. Tool VMs are creat
 
 Worker mode runs a per-task ephemeral VM. There is no long-running gateway -- each task gets a fresh VM that is destroyed on completion.
 
+### Task Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant API as HTTP Client
+    participant Ctrl as Controller (Host)
+    participant VM as Gondolin VM
+    participant Worker as Worker Process
+
+    API->>Ctrl: POST /worker-tasks {prompt, repos}
+    Note over Ctrl: Clone repos, merge config,<br/>start Docker services
+    Ctrl->>VM: Boot VM (mount /workspace + /state)
+    VM->>Worker: Bootstrap + start worker :18789
+    Ctrl->>Worker: POST /tasks {taskId, prompt}
+    Note over Worker: Run 6-phase pipeline:<br/>plan → review → code →<br/>verify → review → wrapup
+    loop Poll every 1s (30 min timeout)
+        Ctrl->>Worker: GET /tasks/:taskId
+        Worker-->>Ctrl: {status, ...}
+    end
+    Worker->>Ctrl: POST /push-branches (via MCP tool)
+    Note over Ctrl: git push + gh pr create<br/>(GitHub token stays on host)
+    Ctrl-->>API: {taskId, prUrl, finalState}
+    Note over Ctrl: vm.close(), docker down,<br/>rm workspace, release port
+```
+
 ### Controller-Side Lifecycle
 
 The full per-task lifecycle is managed by `worker-task-runner.ts`:
@@ -287,7 +473,7 @@ The full per-task lifecycle is managed by `worker-task-runner.ts`:
      |-- Deregister task from active task registry
 ```
 
-For the worker pipeline internals (what happens inside the VM after step 3), see [agent-vm-worker-architecture.md](agent-vm-worker-architecture.md). That document covers the 6-phase pipeline: plan, plan-review, work, verification, work-review, and wrapup.
+For the worker pipeline internals (what happens inside the VM after step 3), see [worker-pipeline.md](worker-pipeline.md). That document covers the 6-phase pipeline: plan, plan-review, work, verification, work-review, and wrapup.
 
 ---
 
@@ -318,6 +504,18 @@ Secrets are resolved on the host and delivered to VMs through two channels. Host
     +---> resolveControllerGithubToken()
             HOST-ONLY: never enters any VM
             Used by push-branches to push task branches from the host
+```
+
+```mermaid
+flowchart LR
+    Config["system.json\nzone.secrets"] --> Resolver["Composite\nResolver"]
+    Resolver -->|"source: 1password"| OP["1Password SDK\n(op-cli fallback)"]
+    Resolver -->|"source: environment"| Env["process.env"]
+    OP --> Split["splitResolved\nGatewaySecrets"]
+    Env --> Split
+    Split -->|"injection: env"| VMEnv["VM env var\n(visible to agent)"]
+    Split -->|"injection:\nhttp-mediation"| Proxy["Gondolin HTTP Proxy\n(agent never sees secret)"]
+    Proxy -->|"injects credentials\ninto request headers"| ExtAPI["External API\n(OpenAI, GitHub, etc.)"]
 ```
 
 ### Secret Injection Modes
@@ -378,7 +576,7 @@ The system is configured via a single `system-config.json` file (validated by Zo
 
 Each zone declares its `gateway.type` (`openclaw` or `worker`), resource limits, a set of secret references with injection mode, an outbound host allowlist, and a tool profile reference. The schema validates that every zone's `toolProfile` exists and that `host.secretsProvider` is present when any secret uses the `1password` source.
 
-For the full field-by-field reference, see [configuration-reference.md](configuration-reference.md).
+For the full field-by-field reference, see [configuration-reference.md](../reference/configuration-reference.md).
 
 ---
 
@@ -420,9 +618,12 @@ The system operates across three trust boundaries:
 
 | Document | Scope |
 |----------|-------|
-| [agent-vm-worker-architecture.md](agent-vm-worker-architecture.md) | Worker pipeline: 6-phase state machine, event sourcing, executors, MCP tools |
-| [configuration-reference.md](configuration-reference.md) | All configuration fields for system.json, zone configs, worker config, env vars |
-| [SETUP.md](SETUP.md) | Prerequisites, installation, first-run instructions |
-| [subsystems/controller.md](subsystems/controller.md) | Controller internals: lease lifecycle, TCP pool, idle reaper |
-| [subsystems/secrets-and-credentials.md](subsystems/secrets-and-credentials.md) | Secret resolution, 1Password integration, HTTP mediation details |
-| [subsystems/gondolin-vm-layer.md](subsystems/gondolin-vm-layer.md) | Gondolin VM adapter, VFS mounts, rootfs modes, HTTP mediation, image build pipeline |
+| [worker-pipeline.md](worker-pipeline.md) | Worker pipeline: 6-phase state machine, event sourcing, executors, MCP tools |
+| [openclaw-mode.md](openclaw-mode.md) | OpenClaw mode: interactive gateway, tool VM leases, sandbox plugin |
+| [reference/configuration-reference.md](../reference/configuration-reference.md) | All configuration fields for system.json, zone configs, worker config, env vars |
+| [getting-started/setup.md](../getting-started/setup.md) | Prerequisites, installation, first-run instructions |
+| [subsystems/controller.md](../subsystems/controller.md) | Controller internals: lease lifecycle, TCP pool, idle reaper |
+| [subsystems/secrets-and-credentials.md](../subsystems/secrets-and-credentials.md) | Secret resolution, 1Password integration, HTTP mediation details |
+| [subsystems/gondolin-vm-layer.md](../subsystems/gondolin-vm-layer.md) | Gondolin VM adapter, VFS mounts, rootfs modes, HTTP mediation, image build pipeline |
+| [subsystems/gateway-lifecycle.md](../subsystems/gateway-lifecycle.md) | Gateway abstraction: GatewayLifecycle interface, OpenClaw vs Worker |
+| [subsystems/worker-task-pipeline.md](../subsystems/worker-task-pipeline.md) | Controller-side task lifecycle: pre-start, boot, poll, teardown |

@@ -1,6 +1,6 @@
 {
 	"name": "@shravansunder/agent-vm-worker",
-	"version": "0.0.7",
+	"version": "0.0.17",
 	"bin": {
 		"agent-vm-worker": "./dist/main.js"
 	},

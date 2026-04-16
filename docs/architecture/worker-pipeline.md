@@ -1,6 +1,8 @@
-# Agent VM Worker: Architecture Guide
+# Worker Pipeline
 
-A guide to how the agent-vm-worker system works — from receiving a coding task to delivering a pull request.
+[Overview](../README.md) > [Architecture](overview.md) > Worker Pipeline
+
+How the agent-vm-worker system works inside the VM — from receiving a coding task to delivering a pull request.
 
 ---
 
@@ -211,6 +213,27 @@ The task moves through these statuses:
                                                                (success)   (gave up)  (user stopped)
 ```
 
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> planning
+    planning --> reviewing_plan : plan created
+    reviewing_plan --> working : approved
+    reviewing_plan --> planning : revision needed (max 2)
+    reviewing_plan --> failed : max loops exceeded
+    working --> verifying : code written
+    verifying --> reviewing_work : all pass
+    verifying --> working : fix needed (max 3)
+    verifying --> failed : max retries exceeded
+    reviewing_work --> wrapping_up : approved
+    reviewing_work --> working : changes requested (max 3)
+    reviewing_work --> failed : max loops exceeded
+    wrapping_up --> completed : PR created
+    wrapping_up --> failed : required action failed
+    completed --> [*]
+    failed --> [*]
+```
+
 ### The 6 Phases
 
 ```
@@ -341,6 +364,32 @@ The loops are the system's self-healing mechanism. When verification fails or a 
                          |
     [tests pass]         |
     [review approves]
+```
+
+```mermaid
+sequenceDiagram
+    participant Coord as Coordinator
+    participant Exec as Work Executor
+    participant LLM as LLM (same thread)
+    participant Shell as Shell (inside VM)
+
+    Coord->>Exec: execute(prompt + plan)
+    Exec->>LLM: Start new conversation thread
+    LLM->>Shell: Write code to /workspace
+    LLM-->>Exec: {response, threadId}
+
+    Coord->>Shell: Run tests + lint
+    Shell-->>Coord: lint FAILED (exit 1)
+
+    Coord->>Exec: fix(lint error output)
+    Exec->>LLM: Continue SAME thread (full history)
+    LLM->>Shell: Fix lint issues
+    LLM-->>Exec: {response, threadId}
+
+    Coord->>Shell: Run tests + lint
+    Shell-->>Coord: all PASS
+
+    Note over Coord: Proceed to work review
 ```
 
 ---
@@ -510,7 +559,7 @@ During the wrapup phase, the agent needs to call tools like "create a git PR" or
 
 **MCP** (Model Context Protocol) is a standard way for LLMs to discover and call tools. By wrapping our tools as an MCP server, the LLM agent can call them naturally as part of its conversation.
 
-**Why controller-side push?** The GitHub token never enters the VM. The worker stages and commits changes locally, then tells the controller "push this branch and create a PR." The controller runs `git push` and `gh pr create` on the host side where the token is available. See `docs/subsystems/worker-task-pipeline.md` for the full push flow.
+**Why controller-side push?** The GitHub token never enters the VM. The worker stages and commits changes locally, then tells the controller "push this branch and create a PR." The controller runs `git push` and `gh pr create` on the host side where the token is available. See [subsystems/worker-task-pipeline.md](subsystems/worker-task-pipeline.md) for the full push flow.
 
 ---
 

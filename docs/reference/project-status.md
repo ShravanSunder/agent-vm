@@ -1,5 +1,7 @@
 # Agent VM — Project Status
 
+[Overview](../README.md) > Project Status
+
 ## Overview
 
 Self-hosted AI assistant running OpenClaw inside Gondolin QEMU micro-VMs with per-user trust zone isolation, managed secrets via 1Password, and ephemeral tool VMs for sandboxed code execution.

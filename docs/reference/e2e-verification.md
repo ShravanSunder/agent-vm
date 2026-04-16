@@ -1,5 +1,7 @@
 # E2E Verification Checklist
 
+[Overview](../README.md) > E2E Verification
+
 This checklist verifies the live `agent-vm` stack after the Phase 5 reorganization and review fixes.
 
 ## Prerequisites

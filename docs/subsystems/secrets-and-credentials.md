@@ -1,6 +1,6 @@
 # Secrets and Credentials
 
-[Overview](../README.md) > [Architecture](../architecture.md) > Secrets and Credentials
+[Overview](../README.md) > [Architecture](../architecture/overview.md) > Secrets and Credentials
 
 This document describes how the agent-vm system resolves, classifies, and
 delivers secrets to Gondolin VMs and host-side controller operations.
