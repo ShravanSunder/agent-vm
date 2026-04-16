@@ -39,7 +39,7 @@ Set ALL packages to the same version:
 
 ```bash
 for pkg in packages/gondolin-core packages/gateway-interface packages/openclaw-agent-vm-plugin packages/openclaw-gateway packages/worker-gateway packages/agent-vm-worker packages/agent-vm; do
-  (cd "$pkg" && npm version 0.1.0 --no-git-tag-version)
+  (cd "$pkg" && npm version 0.1.0 --no-git-tag-version) || break
 done
 pnpm install   # regenerate lockfile with new versions
 ```
@@ -48,12 +48,12 @@ pnpm install   # regenerate lockfile with new versions
 
 ```bash
 WD=$(pwd)
-cd "$WD/packages/gondolin-core" && pnpm publish --access public --no-git-checks
-cd "$WD/packages/gateway-interface" && pnpm publish --access public --no-git-checks
-cd "$WD/packages/openclaw-agent-vm-plugin" && pnpm publish --access public --no-git-checks
-cd "$WD/packages/openclaw-gateway" && pnpm publish --access public --no-git-checks
-cd "$WD/packages/worker-gateway" && pnpm publish --access public --no-git-checks
-cd "$WD/packages/agent-vm-worker" && pnpm publish --access public --no-git-checks
+cd "$WD/packages/gondolin-core" && pnpm publish --access public --no-git-checks && \
+cd "$WD/packages/gateway-interface" && pnpm publish --access public --no-git-checks && \
+cd "$WD/packages/openclaw-agent-vm-plugin" && pnpm publish --access public --no-git-checks && \
+cd "$WD/packages/openclaw-gateway" && pnpm publish --access public --no-git-checks && \
+cd "$WD/packages/worker-gateway" && pnpm publish --access public --no-git-checks && \
+cd "$WD/packages/agent-vm-worker" && pnpm publish --access public --no-git-checks && \
 cd "$WD/packages/agent-vm" && pnpm publish --access public --no-git-checks
 ```
 
@@ -104,5 +104,5 @@ If a version is already taken on npm, you can't republish it. Bump to a new vers
 ## One-Liner (after versions are bumped)
 
 ```bash
-WD=$(pwd) && for pkg in gondolin-core gateway-interface openclaw-agent-vm-plugin openclaw-gateway worker-gateway agent-vm-worker agent-vm; do cd "$WD/packages/$pkg" && pnpm publish --access public --no-git-checks && cd "$WD"; done
+WD=$(pwd) && for pkg in gondolin-core gateway-interface openclaw-agent-vm-plugin openclaw-gateway worker-gateway agent-vm-worker agent-vm; do (cd "$WD/packages/$pkg" && pnpm publish --access public --no-git-checks) || break; done
 ```
