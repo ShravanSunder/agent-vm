@@ -1,6 +1,6 @@
 # Gondolin VM Layer
 
-[Overview](../README.md) > [Architecture](../architecture.md) > Gondolin VM Layer
+[Overview](../README.md) > [Architecture](../architecture/overview.md) > Gondolin VM Layer
 
 Deep dive into the Gondolin VM abstraction: how `gondolin-core` wraps the `@earendil-works/gondolin` SDK into a managed VM interface with VFS mounts, HTTP secret mediation, synthetic DNS, and fingerprint-cached image builds. This is the lowest infrastructure layer -- every gateway and tool VM in the system boots through this adapter.
 

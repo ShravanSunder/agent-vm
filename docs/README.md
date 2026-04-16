@@ -194,7 +194,7 @@ Six phases, three with retry loops. Every state change logged to JSONL.
 
 ## Quick Start
 
-See [SETUP.md](SETUP.md) for prerequisites, installation, and first-run instructions.
+See [getting-started/setup.md](getting-started/setup.md) for prerequisites, installation, and first-run instructions.
 
 ---
 
@@ -205,20 +205,42 @@ See [SETUP.md](SETUP.md) for prerequisites, installation, and first-run instruct
 | You want to... | Read |
 |----------------|------|
 | **5-min pitch** — what this is, security model, why VMs | This README (you're done) |
-| **15-min walkthrough** — all the moving parts | README → [architecture.md](architecture.md) → [worker-pipeline.md](worker-pipeline.md) |
-| **Work on the codebase** — implementation details | + [subsystems/](subsystems/) deep dives |
-| **Configure or operate** — config fields, E2E checks | [reference/](reference/) |
+| **Use Worker mode** — configure + submit tasks | [getting-started/worker-guide.md](getting-started/worker-guide.md) |
+| **Use OpenClaw mode** — configure + run interactive agent | [getting-started/openclaw-guide.md](getting-started/openclaw-guide.md) |
+| **15-min architecture walkthrough** | README → [architecture/overview.md](architecture/overview.md) → [architecture/worker-pipeline.md](architecture/worker-pipeline.md) |
+| **Understand OpenClaw internals** | [architecture/openclaw-mode.md](architecture/openclaw-mode.md) |
+| **Work on the codebase** | + [subsystems/](subsystems/) deep dives |
+| **Look up config fields** | [reference/configuration-reference.md](reference/configuration-reference.md) |
+
+### By topic
+
+| Topic | Glance (README) | Understand (architecture/) | Deep dive (subsystems/) |
+|-------|-----------------|---------------------------|------------------------|
+| System overview | [Package Architecture](#package-architecture) | [How Components Interact](architecture/overview.md#how-components-interact) | Per-subsystem docs |
+| Security | [Security Model](#security-model) | [Trust Zones](architecture/overview.md#trust-zones) + [Secrets Flow](architecture/overview.md#secrets-flow) | [secrets-and-credentials.md](subsystems/secrets-and-credentials.md) |
+| Worker pipeline | [The Agent Pipeline](#the-agent-pipeline-worker-mode) | [worker-pipeline.md](architecture/worker-pipeline.md) | [worker-task-pipeline.md](subsystems/worker-task-pipeline.md) |
+| OpenClaw mode | [Operating Modes](#two-operating-modes) | [openclaw-mode.md](architecture/openclaw-mode.md) | [controller.md](subsystems/controller.md) |
+| Gondolin VMs | — | [Gondolin VM Layer](architecture/overview.md#gondolin-vm-layer) | [gondolin-vm-layer.md](subsystems/gondolin-vm-layer.md) |
+| Configuration | — | [Config Overview](architecture/overview.md#configuration-overview) | [configuration-reference.md](reference/configuration-reference.md) |
 
 ### Full doc tree
 
 ```
 docs/
 ├── README.md                              You are here
-├── architecture.md                        System architecture: packages, controller,
-│                                          gateway abstraction, secrets, trust zones
-├── worker-pipeline.md                     Inside the VM: 6-phase pipeline, event
-│                                          sourcing, executors, MCP tools
-├── SETUP.md                               Prerequisites + quick start
+│
+├── getting-started/                       How to use
+│   ├── setup.md                           Prerequisites + quick start
+│   ├── worker-guide.md                    Configure + run Worker mode
+│   └── openclaw-guide.md                  Configure + run OpenClaw mode
+│
+├── architecture/                          How it works
+│   ├── overview.md                        Component interactions, packages,
+│   │                                      controller, gateway, secrets, trust zones
+│   ├── worker-pipeline.md                 Inside the VM: 6-phase pipeline, event
+│   │                                      sourcing, executors, MCP tools
+│   └── openclaw-mode.md                   Interactive gateway, tool VM leases,
+│                                          sandbox plugin
 │
 ├── subsystems/                            Implementation deep dives
 │   ├── controller.md                      Controller runtime, HTTP API, leases

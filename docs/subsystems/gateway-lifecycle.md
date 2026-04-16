@@ -1,6 +1,6 @@
 # Gateway Lifecycle
 
-[Overview](../README.md) > [Architecture](../architecture.md) > Gateway Lifecycle
+[Overview](../README.md) > [Architecture](../architecture/overview.md) > Gateway Lifecycle
 
 The gateway lifecycle abstraction decouples "what a gateway needs" from
 "how the controller boots it."  Each gateway type (OpenClaw, Worker)

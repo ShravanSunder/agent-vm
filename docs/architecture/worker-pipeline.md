@@ -1,6 +1,6 @@
 # Worker Pipeline
 
-[Overview](README.md) > [Architecture](architecture.md) > Worker Pipeline
+[Overview](../README.md) > [Architecture](overview.md) > Worker Pipeline
 
 How the agent-vm-worker system works inside the VM — from receiving a coding task to delivering a pull request.
 

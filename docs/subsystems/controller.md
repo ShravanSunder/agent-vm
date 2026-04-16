@@ -1,6 +1,6 @@
 # Controller Subsystem
 
-[Overview](../README.md) > [Architecture](../architecture.md) > Controller
+[Overview](../README.md) > [Architecture](../architecture/overview.md) > Controller
 
 Deep dive into the controller runtime: startup lifecycle, HTTP API surface, lease management, gateway orchestration, worker task execution, and graceful shutdown. The controller is the host-side process that owns all VM lifecycles and never executes untrusted code.
 
@@ -110,7 +110,7 @@ Request bodies are validated with Zod schemas (`controller-request-schemas.ts`).
 
 ## Gateway Zone Orchestrator
 
-`startGatewayZone()` in `gateway-zone-orchestrator.ts` is the boot sequence for any gateway VM. The controller calls it once at startup for OpenClaw zones, and once per task for Worker zones. The full 15-step sequence is documented in [architecture.md](../architecture.md#gateway-zone-orchestrator). Key points for controller integration:
+`startGatewayZone()` in `gateway-zone-orchestrator.ts` is the boot sequence for any gateway VM. The controller calls it once at startup for OpenClaw zones, and once per task for Worker zones. The full 15-step sequence is documented in [architecture.md](../architecture/overview.md#gateway-zone-orchestrator). Key points for controller integration:
 
 - **Step 1 (orphan cleanup)** runs `gateway-recovery.ts`: loads a persisted `GatewayRuntimeRecord` from `stateDir`, checks PID liveness via `kill(pid, 0)`, verifies the command matches `/qemu-system|krun/`, then sends SIGTERM (2s grace) and SIGKILL (2s grace). Non-managed PIDs cause a hard error. Record deletion failures produce a warning but do not block startup.
 - **Step 15 (runtime record write)** persists pid, vmId, and zoneId so orphan cleanup works on next startup if the controller crashes.
