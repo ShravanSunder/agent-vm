@@ -1,6 +1,6 @@
 {
 	"name": "@shravansunder/agent-vm",
-	"version": "0.0.17",
+	"version": "0.0.18",
 	"bin": {
 		"agent-vm": "./dist/cli/agent-vm-entrypoint.js"
 	},
