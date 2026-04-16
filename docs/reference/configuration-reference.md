@@ -12,7 +12,7 @@ For how-to guides on configuring each mode, see [getting-started/worker-guide.md
 
 ```
   system.json ──────→ Controller
-  (operator)          - host port, namespace
+  (admin)             - host port, namespace
                       - secret provider (1Password / env)
                       - zones (gateway type, resources, secrets, allowedHosts)
                       - VM images (build configs)
@@ -42,7 +42,7 @@ For how-to guides on configuring each mode, see [getting-started/worker-guide.md
 
 | File | Who writes it | Who reads it | What it controls |
 |------|--------------|-------------|-----------------|
-| `system.json` | Operator (via `agent-vm init`) | Controller at startup | Host, zones, networking, secrets, images |
+| `system.json` | System administrator (via `agent-vm init`) | Controller at startup | Host, zones, networking, secrets, images |
 | `worker.json` | Org/team (zone-level defaults) | Controller during task prep | Pipeline behavior: models, phases, verification, wrapup |
 | `.agent-vm/config.json` | Project developer (checked into repo) | Controller during task prep (merged over worker.json) | Project-specific overrides |
 

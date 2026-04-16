@@ -54,7 +54,7 @@ OpenClaw runs a persistent gateway VM that hosts an interactive chat agent. Tool
 | prepareHostState | None | Writes effective config + auth profiles |
 | Health check | `GET /health` | `GET /` |
 
-See [overview.md](overview.md#gateway-abstraction) for the GatewayLifecycle interface that both modes implement.
+See [overview.md](overview.md#gateway-lifecycle-contract) for the GatewayLifecycle interface that both modes implement.
 
 ---
 

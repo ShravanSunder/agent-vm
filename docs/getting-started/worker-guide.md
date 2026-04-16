@@ -19,14 +19,16 @@ For the full pipeline internals, see [architecture/worker-pipeline.md](../archit
 Three config files compose together. Project overrides zone, Zod defaults fill gaps.
 
 ```
-  zone worker.json          (operator/team defaults)
+  zone worker.json          (team defaults, lives next to system.json)
        |
        v  deep merge
-  .agent-vm/config.json     (project overrides, checked into repo)
+  .agent-vm/config.json     (project overrides, checked into the PROJECT repo root)
        |
        v  Zod defaults fill gaps
   effective-worker.json     (written to /state/ before VM boots)
 ```
+
+**Merge rules:** Objects merge recursively (project wins per key). Arrays replace entirely (no concatenation). Missing `.agent-vm/config.json` is fine — zone defaults apply. The controller reads `.agent-vm/config.json` from the cloned repo during task prep, NOT from the zone folder.
 
 ### system.json — Define a Worker Zone
 
