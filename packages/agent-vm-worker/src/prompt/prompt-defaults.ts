@@ -20,7 +20,7 @@ export const DEFAULT_BASE_INSTRUCTIONS = `## Git Rules
 - When work is complete and verified, call the git-pr tool to stage, commit, and request controller-side push and PR creation.
 - The git-pr tool handles the controller handoff - you only need to provide the title and description.`;
 
-export const DEFAULT_PHASE_INSTRUCTIONS: Readonly<Partial<Record<PhaseName, string>>> = {
+export const DEFAULT_PHASE_INSTRUCTIONS = {
 	plan: 'Create an implementation plan for the task. Do not write code yet.',
 	'plan-review': 'Review the plan for completeness, correctness, risks, and missing edge cases.',
 	work: 'Implement the approved plan.',
@@ -28,4 +28,10 @@ export const DEFAULT_PHASE_INSTRUCTIONS: Readonly<Partial<Record<PhaseName, stri
 	wrapup:
 		'Complete the task by running the configured wrapup actions. You have access to: ' +
 		'git (commit, push, PR), Slack (webhook post). Decide which actions to take based on the task results.',
-} as const;
+} as const satisfies Partial<Record<PhaseName, string>>;
+
+export function getDefaultPhaseInstruction(phase: PhaseName): string | undefined {
+	const defaultPhaseInstructionsByPhase: Partial<Record<PhaseName, string>> =
+		DEFAULT_PHASE_INSTRUCTIONS;
+	return defaultPhaseInstructionsByPhase[phase];
+}

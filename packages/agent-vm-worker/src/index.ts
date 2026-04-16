@@ -23,7 +23,11 @@ export {
 } from './git/git-operations.js';
 export { createPlanReviewer, type PlanReviewer } from './planner/plan-reviewer.js';
 export { createPlanner, type Planner, type PlanResult } from './planner/planner.js';
-export { DEFAULT_BASE_INSTRUCTIONS, DEFAULT_PHASE_INSTRUCTIONS } from './prompt/prompt-defaults.js';
+export {
+	DEFAULT_BASE_INSTRUCTIONS,
+	DEFAULT_PHASE_INSTRUCTIONS,
+	getDefaultPhaseInstruction,
+} from './prompt/prompt-defaults.js';
 export { assemblePrompt, resolveSkillInputs } from './prompt/prompt-assembler.js';
 export { createTaskRequestSchema, createApp, type ServerDeps } from './server.js';
 export { appendEvent, replayEvents } from './state/event-log.js';

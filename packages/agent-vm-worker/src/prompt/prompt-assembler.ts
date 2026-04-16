@@ -5,7 +5,7 @@ import type { RepoLocation } from '../shared/repo-location.js';
 import type { SkillReference } from '../shared/skill-types.js';
 import type { PhaseName } from '../state/task-event-types.js';
 import type { StructuredInput } from '../work-executor/executor-interface.js';
-import { DEFAULT_BASE_INSTRUCTIONS, DEFAULT_PHASE_INSTRUCTIONS } from './prompt-defaults.js';
+import { DEFAULT_BASE_INSTRUCTIONS, getDefaultPhaseInstruction } from './prompt-defaults.js';
 
 const BASE_WORKER_PROMPT =
 	'You are an agent working in a sandboxed VM. You have access to the workspace at /workspace. ' +
@@ -66,7 +66,7 @@ export async function assemblePrompt(
 		sections.push('', BASE_REVIEW_PROMPT);
 	}
 
-	const instructions = input.phaseInstructions ?? DEFAULT_PHASE_INSTRUCTIONS[input.phase] ?? '';
+	const instructions = input.phaseInstructions ?? getDefaultPhaseInstruction(input.phase) ?? '';
 	if (instructions.length > 0) {
 		sections.push('', instructions);
 	}

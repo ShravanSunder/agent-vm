@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_BASE_INSTRUCTIONS, DEFAULT_PHASE_INSTRUCTIONS } from './prompt-defaults.js';
+import {
+	DEFAULT_BASE_INSTRUCTIONS,
+	DEFAULT_PHASE_INSTRUCTIONS,
+	getDefaultPhaseInstruction,
+} from './prompt-defaults.js';
 
 describe('prompt-defaults', () => {
 	it('exports the default base instructions used by the worker runtime', () => {
@@ -14,5 +18,9 @@ describe('prompt-defaults', () => {
 		expect(DEFAULT_PHASE_INSTRUCTIONS.work).toContain('Implement the approved plan');
 		expect(DEFAULT_PHASE_INSTRUCTIONS['work-review']).toContain('Review the code changes');
 		expect(DEFAULT_PHASE_INSTRUCTIONS.wrapup).toContain('configured wrapup actions');
+	});
+
+	it('returns undefined for phases without a built-in default instruction', () => {
+		expect(getDefaultPhaseInstruction('verification')).toBeUndefined();
 	});
 });
