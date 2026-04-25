@@ -120,8 +120,11 @@ describe('scaffoldAgentVmProject', () => {
 		);
 
 		expect(config.zones[0]?.gateway.type).toBe('worker');
+		expect(gatewayDockerfile).toContain('Do not bake auth tokens');
 		expect(gatewayDockerfile).toContain('@openai/codex');
 		expect(gatewayDockerfile).not.toContain('openclaw@');
+		expect(gatewayDockerfile).not.toContain('.npmrc');
+		expect(gatewayDockerfile).not.toContain('_authToken');
 	});
 
 	it('scaffolds worker.json with editable prompt file references for every default prompt', async () => {
@@ -236,6 +239,7 @@ describe('scaffoldAgentVmProject', () => {
 			'utf8',
 		);
 
+		expect(gatewayDockerfile).toContain('Do not bake auth tokens');
 		expect(gatewayDockerfile).toContain(
 			'COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin',
 		);
@@ -947,9 +951,12 @@ describe('scaffoldAgentVmProject', () => {
 			'utf8',
 		);
 		expect(gatewayBuildConfig.arch).toBe('x86_64');
+		expect(workerDockerfile).toContain('Do not bake auth tokens');
 		expect(workerDockerfile).toContain('apt-get install -y --no-install-recommends gh');
 		expect(workerDockerfile).toContain('COPY agent-vm-worker/ /opt/agent-vm-worker/');
 		expect(workerDockerfile).toContain('/usr/local/bin/agent-vm-worker');
+		expect(workerDockerfile).not.toContain('.npmrc');
+		expect(workerDockerfile).not.toContain('_authToken');
 		await expect(
 			fs.access(path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'build-config.json')),
 		).rejects.toMatchObject({ code: 'ENOENT' });

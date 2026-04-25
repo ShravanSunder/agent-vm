@@ -422,7 +422,14 @@ function defaultEnvTemplate(gatewayType: GatewayType, secretsProvider: SecretsPr
 	}
 }
 
+const gatewayDockerfileAuthBoundaryNote = `# NOTE: Do not bake auth tokens or credential material into this gateway image.
+# Runtime auth must flow through controller HTTP mediation. Keep token env
+# names, registry auth files, and build args out of this Dockerfile so a
+# future edit cannot accidentally turn a runtime secret into image state.`;
+
 const defaultGatewayDockerfile = `FROM node:24-slim
+
+${gatewayDockerfileAuthBoundaryNote}
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=\${PNPM_HOME}:\${PATH}
@@ -454,6 +461,8 @@ COPY vendor/gondolin ${defaultOpenClawExtensionsPath}/gondolin
 
 const defaultLocalWorkerGatewayDockerfile = `FROM node:24-slim
 
+${gatewayDockerfileAuthBoundaryNote}
+
 RUN apt-get update && \\
     apt-get install -y --no-install-recommends \\
       openssh-server \\
@@ -473,6 +482,8 @@ RUN apt-get update && \\
 `;
 
 const defaultPodWorkerGatewayDockerfile = `FROM node:24-slim
+
+${gatewayDockerfileAuthBoundaryNote}
 
 RUN apt-get update && \\
     apt-get install -y --no-install-recommends \\
