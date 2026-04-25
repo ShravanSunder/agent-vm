@@ -11,7 +11,7 @@ How OpenClaw Gateway works — long-running interactive gateway with on-demand t
 OpenClaw runs a persistent gateway VM that hosts an interactive chat agent. Tool VMs are created on demand when the agent needs to execute code, and destroyed after use.
 
 ```
-  Delegator (Discord / WhatsApp / API)
+  External client (Discord / WhatsApp / API)
        |
        v
   +----------------------------------------------------------------+
