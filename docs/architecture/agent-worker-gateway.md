@@ -15,9 +15,9 @@ The agent-vm-worker is an **autonomous coding agent**. You give it a task like "
 3. Writes the code
 4. Runs your tests and linter to check its work
 5. Reviews the code changes
-6. Signals the controller to push branches and create a pull request
+6. Signals the controller to push branches, then creates a pull request with `gh`
 
-It does all of this inside a disposable virtual machine so it can't affect your real systems. Git push and PR creation happen on the **controller** (host side) — the VM never has direct GitHub access.
+It does all of this inside a disposable virtual machine so it can't affect your real systems. Git push happens on the **controller** (host side). PR creation happens from the worker via `gh pr create` after the push succeeds, with GitHub HTTP traffic mediated by the controller proxy.
 
 ---
 
@@ -40,7 +40,7 @@ There are two processes that work together: a **Controller** (on your host machi
   |   - Boot a fresh VM           |
   |   - Submit the task           |
   |   - Wait for completion       |
-  |   - Push branches & create PR |
+  |   - Push branches             |
   |   - Tear everything down      |
   +----------|--------------------+
              |
@@ -342,12 +342,12 @@ stateDiagram-v2
   |                                                                    |
   |  The agent runs configured "finishing" actions:                     |
   |                                                                    |
-  |    git-pr (default, required):                                     |
+  |    git-push (required before PR creation):                         |
   |      Stage & commit -> call controller push-branches endpoint       |
-  |      Controller pushes branch + creates PR (host-side, with token) |
+  |      Controller pushes branch from the host                         |
   |                                                                    |
-  |    slack-post (optional):                                          |
-  |      Post summary to Slack channel via webhook                     |
+  |    gh pr create:                                                   |
+  |      Worker creates the PR after git-push succeeds                  |
   |                                                                    |
   |  If a required action fails -> TASK FAILS                          |
   |  If all required actions succeed -> TASK COMPLETED                 |
@@ -511,7 +511,7 @@ The OpenAI executor wraps the `@openai/codex-sdk`. On first use, it:
 
 1. Creates an isolated HOME directory (so config doesn't leak between executors)
 2. Registers any MCP servers (like deepwiki for documentation lookup)
-3. Starts a local MCP server if the phase has tools (like git-pr)
+3. Registers local controller tools when the phase needs them (like `git-push`)
 4. Initializes the OpenAI SDK
 
 The executor runs with `sandboxMode: 'danger-full-access'` — this sounds scary but is safe because **the VM is the sandbox**. The LLM agent gets full access to run commands and write files, but it's all contained inside the ephemeral Gondolin VM.
@@ -537,16 +537,16 @@ For example, you might use a more capable (and expensive) model for planning, an
 
 ---
 
-## MCP Tools: How the Agent Triggers PRs and Notifications
+## MCP Tools: How the Agent Pushes Branches
 
-During the wrapup phase, the agent needs to call tools like "create a git PR" or "post to Slack". These tools are exposed as an **MCP server** running inside the VM. The git-pr tool stages changes and calls the **controller's push-branches endpoint** — the actual git push and PR creation happen on the host, not inside the VM.
+During the wrapup phase, the agent calls controller tools exposed inside the VM. The `git-push` tool calls the **controller's push-branches endpoint**; the actual git push happens on the host, not inside the VM. After that succeeds, the worker can run `gh pr create` from the shell. GitHub HTTP traffic is mediated by the controller proxy.
 
 ```
   Coordinator (wrapup phase)
         |
         |  Build tool definitions:
-        |    git-pr    -> stages and commits changes, calls controller push-branches API
-        |    slack-post -> posts to webhook directly
+        |    git-push         -> calls controller push-branches API
+        |    git-pull-default -> refreshes the protected/default branch
         |
         v
   Start local MCP server
@@ -560,8 +560,8 @@ During the wrapup phase, the agent needs to call tools like "create a git PR" or
         v
   Executor runs wrapup phase
     LLM decides which tools to call based on the prompt
-    LLM calls git-pr tool -> stages and commits, controller pushes + creates PR
-    LLM calls slack-post tool -> posts to webhook
+    LLM calls git-push -> controller pushes branch
+    LLM runs gh pr create -> mediated GitHub HTTP creates PR
         |
         v
   Results collected and emitted as wrapup-result event
@@ -569,7 +569,7 @@ During the wrapup phase, the agent needs to call tools like "create a git PR" or
 
 **MCP** (Model Context Protocol) is a standard way for LLMs to discover and call tools. By wrapping our tools as an MCP server, the LLM agent can call them naturally as part of its conversation.
 
-**Why controller-side push?** The GitHub token never enters the VM. The worker stages and commits changes locally, then tells the controller "push this branch and create a PR." The controller runs `git push` and `gh pr create` on the host side where the token is available. See [worker task pipeline](../subsystems/worker-task-pipeline.md) for the full push flow.
+**Why controller-side push?** The host-only GitHub token never enters the VM. The worker stages and commits changes locally, then tells the controller "push this branch." The controller runs `git push` on the host side. After that succeeds, the worker runs `gh pr create`; GitHub HTTP traffic is mediated by the controller proxy. See [worker task pipeline](../subsystems/worker-task-pipeline.md) for the full push flow.
 
 ---
 
@@ -718,12 +718,13 @@ Here's a concrete trace of a successful task from start to finish:
 
                                                 --- WRAPUP ---
                                                 Status: wrapping-up
-                                                Start MCP server with git-pr tool
-                                                LLM calls git-pr tool:
+                                                Start MCP tools
+                                                LLM calls git-push:
                                                   Create branch agent/t-001
                                                   Stage & commit with co-author
                                                   Call controller push-branches API
-                                                  Controller pushes + opens PR
+                                                  Controller pushes branch
+                                                LLM runs gh pr create
                                                 Emit: wrapup-result (PR URL)
                                                 Emit: task-completed
                                                 Status: completed
@@ -762,19 +763,21 @@ Quick reference for finding things in the code:
   |   |-- codex-executor.ts ...... OpenAI SDK wrapper (threads, MCP registration)
   |   |-- local-tool-mcp-server.ts  Wraps tools as MCP server (Hono + MCP SDK)
   |
-  |-- planner/
-  |   |-- planner.ts ............. Plan generation + revision
-  |   |-- plan-reviewer.ts ...... Plan review (expects JSON ReviewResult)
+  |-- plan-phase/
+  |   |-- plan-cycle.ts ......... Plan generation + review cycle
   |
-  |-- work-reviewer/
+  |-- work-phase/
+  |   |-- work-cycle.ts ......... Work agent + reviewer cycle
+  |   |-- validation-tool.ts ..... Exposes configured checks to the agent
+  |   |-- controller-tools/
+  |       |-- git-push-tool.ts ........ Calls controller push-branches API
+  |       |-- git-pull-default-tool.ts  Refreshes protected/default branch
+  |
+  |-- validation-runner/
   |   |-- verification-runner.ts . Runs test/lint commands safely
-  |   |-- work-reviewer.ts ...... Work review = verify gate + LLM review
   |
-  |-- wrapup/
-  |   |-- wrapup-action-registry.ts  Builds tool definitions for wrapup
-  |   |-- git-pr-action.ts ........ Branch + commit + push + PR
-  |   |-- slack-action.ts ......... Slack webhook posting
-  |   |-- wrapup-types.ts ......... Result schemas
+  |-- wrapup-phase/
+  |   |-- wrapup-runner.ts ...... Final PR URL extraction and summary
   |
   |-- prompt/
   |   |-- prompt-assembler.ts .... Builds structured prompts per phase
@@ -783,7 +786,7 @@ Quick reference for finding things in the code:
   |   |-- gather-context.ts ...... Scans workspace for file tree + metadata
   |
   |-- git/
-  |   |-- git-operations.ts ...... Git primitives (branch, commit, push, diff, PR)
+  |   |-- git-operations.ts ...... Git primitives (branch, commit, diff)
   |
   |-- shared/
       |-- phase-names.ts ......... Phase name constants

@@ -42,7 +42,7 @@ tcpPool
 | `controllerPort` | yes | TCP port for the controller HTTP API. |
 | `projectNamespace` | yes | Lowercase namespace used for runtime labels and cache separation. |
 | `secretsProvider` | when using `source: "1password"` | How the host resolves 1Password-backed secrets. |
-| `githubToken` | no | Host-only token for clone, push, and PR creation. Never enters the VM. |
+| `githubToken` | no | Host-only token for clone and push. Never enters the VM. |
 
 `secretsProvider.tokenSource` may be:
 

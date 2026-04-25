@@ -26,7 +26,7 @@ controller host process
   - resolves secrets
   - clones repos
   - builds/caches VM images
-  - pushes branches and creates PRs
+  - pushes branches
       |
       v
 Gondolin VM
@@ -37,7 +37,9 @@ Gondolin VM
 
 The controller clones git repositories on the host side, then realfs-mounts
 them into the VM at `/workspace`. The VM can edit the mounted checkout, but git
-push and PR creation still happen through the host-side controller.
+push still happens through the host-side controller. PR creation happens from
+the worker via `gh pr create` after `git-push` succeeds, with GitHub HTTP
+traffic mediated by the controller proxy.
 
 ## Init Presets
 

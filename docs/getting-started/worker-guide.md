@@ -140,7 +140,8 @@ curl -X POST http://localhost:18800/zones/dev-worker/worker-tasks \
 5. Submits task to worker inside VM
 6. Worker runs 6-phase pipeline → see [architecture/agent-worker-gateway.md](../architecture/agent-worker-gateway.md)
 7. Worker calls controller's push-branches endpoint → controller pushes from host
-8. VM destroyed, selected repo resource providers stopped, workspace cleaned up
+8. Worker runs `gh pr create` after the push succeeds
+9. VM destroyed, selected repo resource providers stopped, workspace cleaned up
 
 For controller-side details, see [subsystems/worker-task-pipeline.md](../subsystems/worker-task-pipeline.md).
 

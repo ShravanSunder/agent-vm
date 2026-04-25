@@ -103,7 +103,7 @@ Registered conditionally -- only when `operations` or `workerTaskRunner` is prov
 | `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
 | `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
 | `POST` | `/zones/:zoneId/tasks/:taskId/close` | Request task cancellation | Worker |
-| `POST` | `/zones/:zoneId/tasks/:taskId/push-branches` | Push branches + open PRs from host | Worker |
+| `POST` | `/zones/:zoneId/tasks/:taskId/push-branches` | Push task branches from the host | Worker |
 | `POST` | `/zones/:zoneId/tasks/:taskId/pull-default` | Refresh a repo's default branch from the host | Worker |
 | `POST` | `/stop-controller` | Graceful shutdown | Both |
 
@@ -255,9 +255,12 @@ Worker-mode zones do not start a gateway at boot. Instead, each task gets an eph
 `git-push-operations.ts` handles post-task branch pushing from the host (Zone 1), so the GitHub token never enters any VM. The `pushBranchesForTask()` function:
 
 1. Validates every branch name starts with the task's `branchPrefix`.
-2. Validates every repo URL is registered for the active task.
-3. For each branch: `git push` to the repo using a token-authenticated HTTPS URL, then `gh pr create` with the provided title, body, base, and head branch.
-4. Token values are scrubbed from error messages before surfacing.
+2. Validates every repo URL is registered for the active task and appears at most once in the request.
+3. Pushes branches for distinct repos concurrently. A single repo can have only one branch push per request because operations share one `.git` directory.
+4. Pushes each branch using a token-authenticated HTTPS URL, refreshes the remote branch ref, and returns branch state.
+5. Token values are scrubbed from error messages before surfacing.
+
+PR creation is not part of `pushBranchesForTask()`. After the controller reports a successful push, the worker uses `gh pr create`; GitHub HTTP traffic is mediated by the controller proxy.
 
 ### Active Task Registry
 
@@ -304,7 +307,7 @@ All paths relative to `packages/agent-vm/src/controller/`.
 | `leases/idle-reaper.ts` | TTL-based lease expiration |
 | `worker-task-runner.ts` | Per-task VM lifecycle: pre-start, boot, submit, poll, teardown |
 | `active-task-registry.ts` | In-memory map of active worker tasks by zone |
-| `git-push-operations.ts` | Host-side git push + PR creation with token scrubbing |
+| `git-push-operations.ts` | Host-side git push with token scrubbing |
 | `composite-secret-resolver.ts` | Dispatches by `SecretRef.source` to 1Password or env resolver |
 
 Gateway-side files referenced by the controller (relative to `src/gateway/`): `gateway-zone-orchestrator.ts` (boot sequence), `gateway-recovery.ts` (orphan cleanup), `gateway-runtime-record.ts` (crash recovery persistence), `credential-manager.ts` (zone secret resolution).
