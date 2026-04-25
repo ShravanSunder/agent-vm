@@ -293,7 +293,7 @@ export function finalizeRepoResourceSetup(
 			'pg',
 		]);
 		const setupCalls = execaMock.mock.calls.filter(([command]) =>
-			String(command).endsWith('/.agent-vm/run-setup.sh'),
+			command.endsWith('/.agent-vm/run-setup.sh'),
 		);
 		expect(setupCalls).toHaveLength(1);
 		expect(setupCalls[0]?.[1]).toEqual([]);
@@ -438,9 +438,24 @@ export function finalizeRepoResourceSetup(
 		);
 		expect(composeUpCalls).toHaveLength(1);
 		expect(setupCalls).toHaveLength(2);
-		const setupCallCwds = setupCalls.map(([, , options]) => options.cwd as string);
-		expect(setupCallCwds.toSorted((left, right) => left.localeCompare(right))).toEqual(
-			[consumerRepoDir, providerRepoDir].toSorted((left, right) => left.localeCompare(right)),
+		const setupCallWorkingDirectories = setupCalls.map(([, , options]): string => {
+			const optionsValue: unknown = options;
+			if (
+				typeof optionsValue !== 'object' ||
+				optionsValue === null ||
+				!('cwd' in optionsValue) ||
+				typeof optionsValue.cwd !== 'string'
+			) {
+				throw new Error('Expected setup call to include a string cwd option.');
+			}
+			return optionsValue.cwd;
+		});
+		expect(
+			setupCallWorkingDirectories.toSorted((left, right): number => left.localeCompare(right)),
+		).toEqual(
+			[consumerRepoDir, providerRepoDir].toSorted((left, right): number =>
+				left.localeCompare(right),
+			),
 		);
 		expect(result.startedProviders).toHaveLength(1);
 		expect(result.finalizations.map((finalization) => finalization.repoId)).toEqual([
@@ -787,7 +802,7 @@ export function finalizeRepoResourceSetup(
 		});
 
 		for (const [command, , options] of execaMock.mock.calls) {
-			if (command !== 'docker' && !String(command).endsWith('/.agent-vm/run-setup.sh')) {
+			if (command !== 'docker' && !command.endsWith('/.agent-vm/run-setup.sh')) {
 				continue;
 			}
 			expect(options).toEqual(
