@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 
-import { loadWorkerConfig } from '@agent-vm/agent-vm-worker';
+import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
 
 import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
@@ -54,7 +54,7 @@ async function collectWorkerGatewayConfigChecks(
 		}
 		try {
 			// oxlint-disable-next-line eslint/no-await-in-loop
-			await loadWorkerConfig(zone.gateway.config);
+			await loadWorkerConfigDraft(zone.gateway.config);
 			checks.push({
 				name: `worker-config-${zone.id}`,
 				ok: true,

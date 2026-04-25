@@ -15,6 +15,8 @@ const TEST_CONFIG: TaskConfig = {
 	repos: [],
 	context: {},
 	effectiveConfig: workerConfigSchema.parse({
+		runtimeInstructions: 'runtime facts',
+		commonAgentInstructions: null,
 		defaults: { provider: 'codex', model: 'latest-medium' },
 		phases: {
 			plan: {

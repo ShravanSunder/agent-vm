@@ -46,7 +46,7 @@ describe('vm-host-system templates', () => {
 		expect(unit).toContain('Requires=docker.service');
 	});
 
-	it('renders the README with the zone and catalog path', () => {
+	it('renders the README with the zone and project path', () => {
 		const readme = renderVmHostSystemReadme({ zoneId: 'coding-agent' });
 
 		expect(readme).toContain('vm-host-system');

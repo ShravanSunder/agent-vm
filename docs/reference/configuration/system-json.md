@@ -26,6 +26,7 @@ zones[]
   gateway
   resources
   secrets
+  runtimeAuthHints
   allowedHosts
   websocketBypass
   toolProfile
@@ -93,8 +94,24 @@ Each zone selects one gateway image profile and one gateway behavior config:
   "resources": {
     "allowRepoResources": false
   },
-  "secrets": {},
-  "allowedHosts": ["api.openai.com", "api.github.com", "github.com"]
+  "secrets": {
+    "GITHUB_TOKEN": {
+      "source": "environment",
+      "envVar": "GITHUB_TOKEN",
+      "injection": "http-mediation",
+      "hosts": ["api.github.com", "github.com"]
+    }
+  },
+  "runtimeAuthHints": [
+    {
+      "kind": "service-token",
+      "secret": "GITHUB_TOKEN",
+      "service": "github",
+      "hosts": ["api.github.com", "github.com"],
+      "tools": ["gh"]
+    }
+  ],
+  "allowedHosts": ["api.openai.com", "api.github.com", "github.com", "mcp.deepwiki.com"]
 }
 ```
 
@@ -108,9 +125,9 @@ resources. If omitted, `allowRepoResources` behaves as `true`.
 ```json
 {
   "resources": {
-        "allowRepoResources": [
-          "https://github.com/example/example-repo"
-        ]
+    "allowRepoResources": [
+      "https://github.com/example/example-repo"
+    ]
   }
 }
 ```
@@ -149,6 +166,48 @@ Secrets support two injection modes:
 
 For `http-mediation`, `hosts` is required.
 
+## runtimeAuthHints
+
+Zones may declare `runtimeAuthHints` to describe mediated service tokens to the
+agent. These hints generate runtime instructions only; they do not mount config
+files and do not expose real secret values. They name the service, mediated host
+list, tool names, and placeholder env var so the agent can use normal tooling
+without guessing which token exists.
+
+Known services get setup recipes in the generated runtime instructions. Current
+recipes cover `github`, `npm`, and Python package indexes (`pypi`,
+`pypi-private`, `python`, or `python-package-index`). Unknown services are still
+listed, but the generated guidance tells the agent to report an auth setup gap
+if the correct toolchain setup is not known.
+
+```json
+{
+  "runtimeAuthHints": [
+    {
+      "kind": "service-token",
+      "secret": "GITHUB_TOKEN",
+      "service": "github",
+      "hosts": ["api.github.com"],
+      "tools": ["gh"]
+    },
+    {
+      "kind": "service-token",
+      "secret": "NPM_AUTH_TOKEN",
+      "service": "npm",
+      "hosts": ["registry.npmjs.org"],
+      "tools": ["npm", "pnpm", "yarn"]
+    }
+  ]
+}
+```
+
+Each hint must reference a zone secret with `injection: "http-mediation"`, and
+every hint host must also appear in that secret's `hosts`.
+
+Generated auth guidance appears in `/agent-vm/agents.md`,
+`/agent-vm/runtime-instructions.md`, and the prompt's `runtimeInstructions`
+layer.
+
 ## tcpPool
 
 The TCP pool reserves host ports for VM networking. Agent Worker Gateway uses the
@@ -170,5 +229,7 @@ The schema rejects:
 - 1Password secrets without `host.secretsProvider`.
 - Zones referencing missing gateway image profiles.
 - Zone gateway type mismatches against the selected image profile.
+- `runtimeAuthHints` referencing missing secrets, non-mediated secrets, or hosts
+  not listed on the referenced secret.
 - OpenClaw zones without `toolProfile`.
 - Tool profiles referencing missing tool VM image profiles.

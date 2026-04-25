@@ -28,6 +28,8 @@ vi.mock('../context/gather-context.js', () => ({
 
 function makeConfig(stateDir: string, overrides: Record<string, unknown> = {}): WorkerConfig {
 	return workerConfigSchema.parse({
+		runtimeInstructions: 'runtime facts',
+		commonAgentInstructions: null,
 		stateDir,
 		defaults: { provider: 'codex', model: 'latest-medium' },
 		phases: {

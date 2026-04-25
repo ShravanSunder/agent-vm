@@ -30,7 +30,7 @@ function minimalWorkerConfig(): unknown {
 	};
 }
 
-async function writeContainerCatalogFixture(rootPath: string): Promise<string> {
+async function writeContainerProjectFixture(rootPath: string): Promise<string> {
 	await writeJson(path.join(rootPath, 'config', 'system.json'), {
 		host: {
 			controllerPort: 18800,
@@ -101,9 +101,9 @@ async function writeContainerCatalogFixture(rootPath: string): Promise<string> {
 }
 
 describe('runConfigValidation', () => {
-	it('validates a container catalog from its checkout paths', async () => {
+	it('validates a container project from its checkout paths', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
-		const systemConfigPath = await writeContainerCatalogFixture(temporaryDirectoryPath);
+		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);
 		const systemConfig = await loadSystemConfig(systemConfigPath);
 
 		const result = await runConfigValidation({ systemConfig });
@@ -120,9 +120,9 @@ describe('runConfigValidation', () => {
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
-	it('reports missing catalog-local worker prompt files', async () => {
+	it('reports missing project-local worker prompt files', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
-		const systemConfigPath = await writeContainerCatalogFixture(temporaryDirectoryPath);
+		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);
 		await fs.rm(
 			path.join(
 				temporaryDirectoryPath,

@@ -17,27 +17,57 @@ describe('buildRoleSystemPrompt', () => {
 	test('composes base and role-specific defaults with branchPrefix', async () => {
 		const output = await buildRoleSystemPrompt({
 			role: 'plan-agent',
-			baseInstructionsOverride: null,
+			runtimeInstructions: 'RUNTIME',
+			commonAgentInstructionsOverride: null,
 			roleInstructionsOverride: null,
 			branchPrefix: 'feat/',
 			skills: [],
 		});
 
+		expect(output).toContain('RUNTIME');
 		expect(output).toContain('feat/');
 		expect(output.toLowerCase()).toContain('plan');
 	});
 
-	test('honors base and role overrides', async () => {
+	test('rejects empty runtime instructions', async () => {
+		await expect(
+			buildRoleSystemPrompt({
+				role: 'plan-agent',
+				runtimeInstructions: '',
+				commonAgentInstructionsOverride: null,
+				roleInstructionsOverride: null,
+				branchPrefix: 'feat/',
+				skills: [],
+			}),
+		).rejects.toThrow(/runtimeInstructions/u);
+	});
+
+	test('honors common and role overrides', async () => {
 		const output = await buildRoleSystemPrompt({
 			role: 'work-agent',
-			baseInstructionsOverride: 'BASE {branchPrefix}',
+			runtimeInstructions: 'RUNTIME',
+			commonAgentInstructionsOverride: 'COMMON {branchPrefix}',
 			roleInstructionsOverride: 'ROLE',
 			branchPrefix: 'agent/',
 			skills: [],
 		});
 
-		expect(output).toContain('BASE agent/');
+		expect(output).toContain('RUNTIME');
+		expect(output).toContain('COMMON agent/');
 		expect(output).toContain('ROLE');
+	});
+
+	test('orders runtime, built-in, common, role, and skills', async () => {
+		const output = await buildRoleSystemPrompt({
+			role: 'work-agent',
+			runtimeInstructions: 'RUNTIME',
+			commonAgentInstructionsOverride: 'COMMON',
+			roleInstructionsOverride: 'ROLE',
+			branchPrefix: 'agent/',
+			skills: [],
+		});
+
+		expect(output).toMatch(/RUNTIME[\s\S]*## Instruction layers[\s\S]*COMMON[\s\S]*ROLE/u);
 	});
 
 	test('appends skill content when skills are provided', async () => {
@@ -48,7 +78,8 @@ describe('buildRoleSystemPrompt', () => {
 
 		const output = await buildRoleSystemPrompt({
 			role: 'work-reviewer',
-			baseInstructionsOverride: null,
+			runtimeInstructions: 'RUNTIME',
+			commonAgentInstructionsOverride: null,
 			roleInstructionsOverride: null,
 			branchPrefix: 'agent/',
 			skills: [{ name: 'review-skill', path: skillPath }],
@@ -64,7 +95,8 @@ describe('buildRoleSystemPrompt', () => {
 
 		const output = await buildRoleSystemPrompt({
 			role: 'plan-agent',
-			baseInstructionsOverride: null,
+			runtimeInstructions: 'RUNTIME',
+			commonAgentInstructionsOverride: null,
 			roleInstructionsOverride: null,
 			branchPrefix: 'agent/',
 			skills: [{ name: 'missing-skill', path: join(dir, 'missing.md') }],
@@ -74,7 +106,8 @@ describe('buildRoleSystemPrompt', () => {
 		await expect(
 			buildRoleSystemPrompt({
 				role: 'plan-agent',
-				baseInstructionsOverride: null,
+				runtimeInstructions: 'RUNTIME',
+				commonAgentInstructionsOverride: null,
 				roleInstructionsOverride: null,
 				branchPrefix: 'agent/',
 				skills: [{ name: 'directory-skill', path: dir }],

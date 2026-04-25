@@ -2,13 +2,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import {
-	DEFAULT_BASE_INSTRUCTIONS,
+	DEFAULT_COMMON_AGENT_INSTRUCTIONS,
 	DEFAULT_PLAN_AGENT_INSTRUCTIONS,
 	DEFAULT_PLAN_REVIEWER_INSTRUCTIONS,
 	DEFAULT_WORK_AGENT_INSTRUCTIONS,
 	DEFAULT_WORK_REVIEWER_INSTRUCTIONS,
 	DEFAULT_WRAPUP_INSTRUCTIONS,
-	loadWorkerConfig,
+	loadWorkerConfigDraft,
 } from '@agent-vm/agent-vm-worker';
 
 export type InstructionResetPhase = 'plan' | 'work' | 'wrapup' | 'all';
@@ -31,9 +31,9 @@ interface InstructionResetTarget {
 
 const instructionResetTargets = [
 	{
-		defaultValue: DEFAULT_BASE_INSTRUCTIONS,
-		fieldName: 'instructions',
-		fieldPath: 'instructions',
+		defaultValue: DEFAULT_COMMON_AGENT_INSTRUCTIONS,
+		fieldName: 'commonAgentInstructions',
+		fieldPath: 'commonAgentInstructions',
 		parentPath: [],
 	},
 	{
@@ -89,7 +89,7 @@ function selectInstructionResetTargets(
 	const resetWrapup = resetAll || phase === 'wrapup';
 
 	return instructionResetTargets.filter((target) => {
-		if (target.fieldPath === 'instructions') {
+		if (target.fieldPath === 'commonAgentInstructions') {
 			return resetAll;
 		}
 		if (target.fieldPath.startsWith('phases.plan.')) {
@@ -136,7 +136,7 @@ async function applyDefaultInstructionToRawConfig(options: {
 export async function resetWorkerInstructions(
 	options: ResetWorkerInstructionsOptions,
 ): Promise<ResetWorkerInstructionsResult> {
-	await loadWorkerConfig(options.workerConfigPath);
+	await loadWorkerConfigDraft(options.workerConfigPath);
 	const rawConfig = JSON.parse(await fs.readFile(options.workerConfigPath, 'utf8')) as unknown;
 	if (!isObjectRecord(rawConfig)) {
 		throw new Error('Invalid worker config: root must be an object.');

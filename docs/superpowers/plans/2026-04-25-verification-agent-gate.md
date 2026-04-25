@@ -528,14 +528,13 @@ In `packages/agent-vm-worker/src/index.ts`, export the new default:
 
 ```ts
 export {
-	DEFAULT_BASE_INSTRUCTIONS,
+	DEFAULT_COMMON_AGENT_INSTRUCTIONS,
 	DEFAULT_PLAN_AGENT_INSTRUCTIONS,
 	DEFAULT_PLAN_REVIEWER_INSTRUCTIONS,
 	DEFAULT_VERIFICATION_AGENT_INSTRUCTIONS,
 	DEFAULT_WORK_AGENT_INSTRUCTIONS,
 	DEFAULT_WORK_REVIEWER_INSTRUCTIONS,
 	DEFAULT_WRAPUP_INSTRUCTIONS,
-	interpolateBaseInstructions,
 	resolveRoleInstructions,
 	type Role,
 } from './prompt/prompt-defaults.js';

@@ -132,6 +132,8 @@ function createPreparedWorkerTaskStub(
 			vfsMounts: {},
 			repos: [],
 			effectiveConfig: workerConfigSchema.parse({
+				runtimeInstructions: 'Generated runtime instructions.',
+				commonAgentInstructions: null,
 				defaults: { provider: 'codex', model: 'latest-medium' },
 				phases: {
 					plan: {
@@ -214,7 +216,9 @@ describe('startControllerRuntime', () => {
 			},
 		);
 		const clearIntervalMock = vi.fn();
-		const setIntervalMock = vi.fn(() => 123 as unknown as NodeJS.Timeout);
+		const fakeInterval = setTimeout(() => undefined, 0);
+		clearTimeout(fakeInterval);
+		const setIntervalMock = vi.fn(() => fakeInterval);
 
 		const runtime = await startControllerRuntime(
 			{

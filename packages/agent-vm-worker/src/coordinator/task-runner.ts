@@ -140,14 +140,16 @@ export async function runTask(
 		await eventRecorder.emit(taskId, { event: 'phase-started', phase: 'plan' });
 		const planAgentSystem = await buildRoleSystemPrompt({
 			role: 'plan-agent',
-			baseInstructionsOverride: config.instructions ?? null,
+			runtimeInstructions: config.runtimeInstructions,
+			commonAgentInstructionsOverride: config.commonAgentInstructions ?? null,
 			roleInstructionsOverride: config.phases.plan.agentInstructions,
 			branchPrefix: config.branchPrefix,
 			skills: config.phases.plan.skills,
 		});
 		const planReviewerSystem = await buildRoleSystemPrompt({
 			role: 'plan-reviewer',
-			baseInstructionsOverride: config.instructions ?? null,
+			runtimeInstructions: config.runtimeInstructions,
+			commonAgentInstructionsOverride: config.commonAgentInstructions ?? null,
 			roleInstructionsOverride: config.phases.plan.reviewerInstructions,
 			branchPrefix: config.branchPrefix,
 			skills: config.phases.plan.skills,
@@ -227,14 +229,16 @@ export async function runTask(
 		];
 		const workAgentSystem = await buildRoleSystemPrompt({
 			role: 'work-agent',
-			baseInstructionsOverride: config.instructions ?? null,
+			runtimeInstructions: config.runtimeInstructions,
+			commonAgentInstructionsOverride: config.commonAgentInstructions ?? null,
 			roleInstructionsOverride: config.phases.work.agentInstructions,
 			branchPrefix: config.branchPrefix,
 			skills: config.phases.work.skills,
 		});
 		const workReviewerSystem = await buildRoleSystemPrompt({
 			role: 'work-reviewer',
-			baseInstructionsOverride: config.instructions ?? null,
+			runtimeInstructions: config.runtimeInstructions,
+			commonAgentInstructionsOverride: config.commonAgentInstructions ?? null,
 			roleInstructionsOverride: config.phases.work.reviewerInstructions,
 			branchPrefix: config.branchPrefix,
 			skills: config.phases.work.skills,
@@ -308,7 +312,8 @@ export async function runTask(
 		await eventRecorder.emit(taskId, { event: 'phase-started', phase: 'wrapup' });
 		const wrapupSystem = await buildRoleSystemPrompt({
 			role: 'wrapup',
-			baseInstructionsOverride: config.instructions ?? null,
+			runtimeInstructions: config.runtimeInstructions,
+			commonAgentInstructionsOverride: config.commonAgentInstructions ?? null,
 			roleInstructionsOverride: config.phases.wrapup.instructions,
 			branchPrefix: config.branchPrefix,
 			skills: config.phases.wrapup.skills,

@@ -6,9 +6,11 @@ import {
 	appendEvent,
 	computeTotalTaskTimeoutMs,
 	resolveWorkerConfigInstructionReferences,
+	workerConfigDraftSchema,
 	workerConfigSchema,
 	type TaskEvent,
 	type WorkerConfig,
+	type WorkerConfigDraft,
 } from '@agent-vm/agent-vm-worker';
 import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 import { execa } from 'execa';
@@ -39,6 +41,10 @@ import { compileResourceOverlay } from '../resources/resource-compiler.js';
 import { resolveTaskResources } from '../resources/resource-resolver.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
 import { buildGithubAuthConfigArgs, scrubGithubTokenFromOutput } from './git-auth-support.js';
+import {
+	buildResolvedRuntimeResources,
+	buildRuntimeInstructions,
+} from './runtime-instructions-builder.js';
 import { buildTaskConfigFromPreparedInput } from './task-config-builder.js';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -101,6 +107,30 @@ async function copyLocalWorkerTarballIfConfigured(stateDir: string): Promise<voi
 	await fs.copyFile(localWorkerTarballPath, path.join(stateDir, 'agent-vm-worker.tgz'));
 }
 
+async function writeAgentRuntimeFiles(
+	agentVmDir: string,
+	files: Readonly<Record<string, string>>,
+): Promise<void> {
+	await Promise.all(
+		Object.entries(files).map(async ([relativePath, content]) => {
+			const outputPath = path.join(agentVmDir, relativePath);
+			await fs.mkdir(path.dirname(outputPath), { recursive: true });
+			await fs.writeFile(outputPath, content, { encoding: 'utf8', mode: 0o644 });
+		}),
+	);
+}
+
+async function replaceRelativeSymlink(linkPath: string, target: string): Promise<void> {
+	try {
+		await fs.unlink(linkPath);
+	} catch (error) {
+		if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) {
+			throw error;
+		}
+	}
+	await fs.symlink(target, linkPath);
+}
+
 export type WorkerTaskInput = WorkerTaskControllerRequestInput;
 
 export interface PreStartResult {
@@ -157,11 +187,13 @@ export async function preStartGateway(
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
 	const workspaceDir = path.join(taskRoot, 'workspace');
 	const stateDir = path.join(taskRoot, 'state');
+	const agentVmDir = path.join(taskRoot, 'agent-vm');
 
 	let startedResourceProviders: readonly StartedRepoResourceProvider[] = [];
 	try {
 		await fs.mkdir(workspaceDir, { recursive: true });
 		await fs.mkdir(stateDir, { recursive: true });
+		await fs.mkdir(agentVmDir, { recursive: true });
 		await copyLocalWorkerTarballIfConfigured(stateDir);
 
 		const usedRepoNames = new Set<string>();
@@ -264,15 +296,9 @@ export async function preStartGateway(
 		const resolvedBaseConfig = await resolveWorkerConfigInstructionReferences(baseConfig, {
 			configPath: zoneConfig.gateway.config,
 		});
-		const effectiveConfig = workerConfigSchema.parse(
+		const effectiveConfigDraft = workerConfigDraftSchema.parse(
 			deepMerge(resolvedBaseConfig, projectConfig),
-		) satisfies WorkerConfig;
-
-		await fs.writeFile(
-			path.join(stateDir, 'effective-worker.json'),
-			JSON.stringify(effectiveConfig, null, 2),
-			{ encoding: 'utf8', mode: 0o600 },
-		);
+		) satisfies WorkerConfigDraft;
 
 		const repoResourceDescriptions = await Promise.all(
 			clonedRepos.map(async (repo) => ({
@@ -308,7 +334,7 @@ export async function preStartGateway(
 						repoId: repoDescription.repoId,
 						repoUrl: repoDescription.repoUrl,
 						repoDir: repo.hostWorkspacePath,
-						outputDir: path.join(stateDir, 'resources', repoDescription.repoId),
+						outputDir: path.join(agentVmDir, 'resources', repoDescription.repoId),
 						setupCommand: repoDescription.description.setupCommand,
 					};
 				})
@@ -333,7 +359,7 @@ export async function preStartGateway(
 				return {
 					...provider,
 					repoDir: repo.hostWorkspacePath,
-					outputDir: path.join(stateDir, 'resources', provider.repoId),
+					outputDir: path.join(agentVmDir, 'resources', provider.repoId),
 				};
 			}),
 		});
@@ -342,6 +368,31 @@ export async function preStartGateway(
 			externalResources: resolvedResources.externalResources,
 			repoFinalizations: providerRun.finalizations,
 		});
+		const runtime = buildRuntimeInstructions({
+			resolvedResources: buildResolvedRuntimeResources({
+				externalResources: resolvedResources.externalResources,
+				repoFinalizations: providerRun.finalizations,
+			}),
+			runtimeAuthHints: zoneConfig.runtimeAuthHints ?? [],
+			taskId,
+			workspaceDir: '/workspace',
+		});
+		const effectiveConfig = workerConfigSchema.parse({
+			...effectiveConfigDraft,
+			runtimeInstructions: runtime.runtimeInstructions,
+		}) satisfies WorkerConfig;
+		await writeAgentRuntimeFiles(agentVmDir, runtime.agentRuntimeFiles);
+		await replaceRelativeSymlink(path.join(agentVmDir, 'CLAUDE.md'), 'agents.md');
+		await fs.writeFile(path.join(workspaceDir, 'AGENTS.md'), runtime.workspaceAgentsMd, {
+			encoding: 'utf8',
+			mode: 0o644,
+		});
+		await replaceRelativeSymlink(path.join(workspaceDir, 'CLAUDE.md'), 'AGENTS.md');
+		await fs.writeFile(
+			path.join(stateDir, 'effective-worker.json'),
+			JSON.stringify(effectiveConfig, null, 2),
+			{ encoding: 'utf8', mode: 0o600 },
+		);
 
 		return {
 			taskId,
@@ -352,7 +403,12 @@ export async function preStartGateway(
 			startedResourceProviders: providerRun.startedProviders,
 			environment: overlay.environment,
 			tcpHosts: overlay.tcpHosts,
-			vfsMounts: overlay.vfsMounts,
+			vfsMounts: {
+				'/agent-vm': {
+					hostPath: agentVmDir,
+					kind: 'realfs-readonly',
+				},
+			},
 			repos: clonedRepos,
 			effectiveConfig,
 		};
@@ -373,7 +429,7 @@ export async function postStopGateway(
 ): Promise<void> {
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
 	const workspaceDir = path.join(taskRoot, 'workspace');
-	const resourcesDir = path.join(taskRoot, 'state', 'resources');
+	const resourcesDir = path.join(taskRoot, 'agent-vm', 'resources');
 	let cleanupError: Error | null = null;
 	let workspaceRemovalError: Error | null = null;
 	let resourcesRemovalError: Error | null = null;

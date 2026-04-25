@@ -60,7 +60,7 @@ Prompt file references are resolved before the worker starts.
 | --- | --- | --- |
 | `system.json` | platform/operator | host paths, zones, secrets, image profiles, resources change |
 | `systemCacheIdentifier.json` | platform/runtime | outer build environment changes |
-| `worker.json` | catalog/team | default agent behavior changes |
+| `worker.json` | operator/team | default agent behavior changes |
 | `.agent-vm/config.json` | project repo | a repo needs different validation, MCP, or prompt overrides |
 | `.agent-vm/repo-resources.ts` | project repo | a repo needs TCP resources, mocks, fixtures, or repo-local providers |
 

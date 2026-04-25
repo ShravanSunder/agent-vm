@@ -32,7 +32,8 @@ const hasRepoResourceDescriptionContractMock = vi.fn<
 >(async () => true);
 const execaMock = vi.fn();
 const effectiveWorkerConfigSchema = z.object({
-	instructions: z.string().optional(),
+	runtimeInstructions: z.string(),
+	commonAgentInstructions: z.string().nullable().optional(),
 	defaults: z
 		.object({
 			provider: z.string().optional(),
@@ -50,6 +51,7 @@ const closedTaskStateSchema = z.object({
 
 function buildWorkerConfigInput(): Record<string, unknown> {
 	return {
+		commonAgentInstructions: null,
 		defaults: { provider: 'codex', model: 'latest-medium' },
 		phases: {
 			plan: {
@@ -149,6 +151,7 @@ const systemConfig = {
 				workspaceDir: '',
 			},
 			secrets: {},
+			runtimeAuthHints: [],
 			allowedHosts: ['github.com'],
 			websocketBypass: [],
 			toolProfile: 'standard',
@@ -354,19 +357,23 @@ describe('worker-task-runner', () => {
 		await expect(fs.readdir(path.join(zone.gateway.stateDir, 'tasks'))).resolves.toEqual([]);
 	});
 
-	it('resolves worker config prompt file references before writing effective config', async () => {
+	it('resolves common agent instructions and writes generated runtime files', async () => {
 		const { preStartGateway } = await import('./worker-task-runner.js');
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected zone config.');
 		}
 		await fs.mkdir(path.join(tempDir, 'prompts'), { recursive: true });
-		await fs.writeFile(path.join(tempDir, 'prompts', 'base.md'), 'base from markdown\n', 'utf8');
+		await fs.writeFile(
+			path.join(tempDir, 'prompts', 'common-agent-instructions.md'),
+			'common from markdown\n',
+			'utf8',
+		);
 		await fs.writeFile(
 			zone.gateway.config,
 			JSON.stringify({
 				...buildWorkerConfigInput(),
-				instructions: { path: './prompts/base.md' },
+				commonAgentInstructions: { path: './prompts/common-agent-instructions.md' },
 			}),
 			'utf8',
 		);
@@ -384,7 +391,28 @@ describe('worker-task-runner', () => {
 		const writtenConfig = effectiveWorkerConfigSchema.parse(
 			JSON.parse(await fs.readFile(path.join(result.stateDir, 'effective-worker.json'), 'utf8')),
 		);
-		expect(writtenConfig.instructions).toBe('base from markdown\n');
+		expect(writtenConfig.commonAgentInstructions).toBe('common from markdown\n');
+		expect(writtenConfig.runtimeInstructions).toContain('Runtime instructions');
+		expect(writtenConfig.runtimeInstructions).toContain('/workspace');
+		expect(writtenConfig.runtimeInstructions).toContain('/agent-vm/agents.md');
+		await expect(
+			fs.readFile(path.join(result.workspaceDir, 'AGENTS.md'), 'utf8'),
+		).resolves.toContain('/agent-vm/agents.md');
+		await expect(
+			fs.readFile(path.join(result.taskRoot, 'agent-vm', 'runtime-instructions.md'), 'utf8'),
+		).resolves.toBe(writtenConfig.runtimeInstructions);
+		await expect(
+			fs.readFile(path.join(result.taskRoot, 'agent-vm', 'agents.md'), 'utf8'),
+		).resolves.toContain('/agent-vm/runtime-instructions.md');
+		await expect(fs.readlink(path.join(result.workspaceDir, 'CLAUDE.md'))).resolves.toBe(
+			'AGENTS.md',
+		);
+		await expect(fs.readlink(path.join(result.taskRoot, 'agent-vm', 'CLAUDE.md'))).resolves.toBe(
+			'agents.md',
+		);
+		expect(result.vfsMounts['/agent-vm']).toEqual(
+			expect.objectContaining({ kind: 'realfs-readonly' }),
+		);
 	});
 
 	it('clones repos into named workspace directories and merges primary repo config', async () => {
@@ -549,19 +577,19 @@ describe('worker-task-runner', () => {
 			expect.objectContaining({
 				repoId: 'frontend',
 				repoDir: expect.stringMatching(/\/workspace\/frontend$/u),
-				outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/state\/resources\/frontend$/u),
+				outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/agent-vm\/resources\/frontend$/u),
 			}),
 			expect.objectContaining({
 				repoId: 'backend',
 				repoDir: expect.stringMatching(/\/workspace\/backend$/u),
-				outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/state\/resources\/backend$/u),
+				outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/agent-vm\/resources\/backend$/u),
 			}),
 		]);
 		expect(providerCall?.providers).toHaveLength(1);
 		expect(providerCall?.providers[0]).toMatchObject({
 			repoId: 'frontend',
 			repoDir: expect.stringMatching(/\/workspace\/frontend$/u),
-			outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/state\/resources\/frontend$/u),
+			outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/agent-vm\/resources\/frontend$/u),
 			resourceName: 'pg',
 			provider: { service: 'pg' },
 			binding: { host: 'pg.local', port: 5432 },
@@ -846,7 +874,7 @@ describe('worker-task-runner', () => {
 		vi.spyOn(fs, 'readFile').mockImplementation(async (filePath, encoding) => {
 			if (normalizeMockFilePath(filePath).endsWith('/frontend/.agent-vm/config.json')) {
 				return JSON.stringify({
-					instructions: { path: './prompts/base.md' },
+					commonAgentInstructions: { path: './prompts/common-agent-instructions.md' },
 				});
 			}
 			return await originalReadFile(filePath, encoding);
@@ -1101,11 +1129,11 @@ describe('worker-task-runner', () => {
 		}
 		const taskRoot = path.join(zone.gateway.stateDir, 'tasks', 'task-cleanup-failures');
 		await fs.mkdir(path.join(taskRoot, 'workspace'), { recursive: true });
-		await fs.mkdir(path.join(taskRoot, 'state', 'resources'), { recursive: true });
+		await fs.mkdir(path.join(taskRoot, 'agent-vm', 'resources'), { recursive: true });
 		stopRepoResourceProvidersMock.mockRejectedValue(new Error('compose cleanup failed'));
 		vi.spyOn(fs, 'rm').mockImplementation(async (targetPath) => {
 			const normalizedTarget = normalizeMockFilePath(targetPath);
-			if (normalizedTarget.endsWith('/state/resources')) {
+			if (normalizedTarget.endsWith('/agent-vm/resources')) {
 				throw new Error('resource removal failed');
 			}
 			if (normalizedTarget.endsWith('/workspace')) {
@@ -1222,11 +1250,12 @@ describe('worker-task-runner', () => {
 
 		const taskRoot = path.join(zone.gateway.stateDir, 'tasks', 'task-keep-state');
 		await fs.mkdir(path.join(taskRoot, 'workspace'), { recursive: true });
-		await fs.mkdir(path.join(taskRoot, 'state', 'resources', 'repo-a'), { recursive: true });
+		await fs.mkdir(path.join(taskRoot, 'state'), { recursive: true });
+		await fs.mkdir(path.join(taskRoot, 'agent-vm', 'resources', 'repo-a'), { recursive: true });
 		await fs.writeFile(path.join(taskRoot, 'workspace', 'README.md'), 'workspace data');
 		await fs.writeFile(path.join(taskRoot, 'state', 'events.jsonl'), '{"event":"task-created"}\n');
 		await fs.writeFile(
-			path.join(taskRoot, 'state', 'resources', 'repo-a', 'mock.json'),
+			path.join(taskRoot, 'agent-vm', 'resources', 'repo-a', 'mock.json'),
 			'{"ok":true}\n',
 		);
 
@@ -1240,7 +1269,7 @@ describe('worker-task-runner', () => {
 
 		expect(stopRepoResourceProvidersMock).toHaveBeenCalledWith([startedProvider]);
 		await expect(fs.stat(path.join(taskRoot, 'state'))).resolves.toBeDefined();
-		await expect(fs.stat(path.join(taskRoot, 'state', 'resources'))).rejects.toThrow();
+		await expect(fs.stat(path.join(taskRoot, 'agent-vm', 'resources'))).rejects.toThrow();
 		await expect(fs.stat(path.join(taskRoot, 'workspace'))).rejects.toThrow();
 	});
 });

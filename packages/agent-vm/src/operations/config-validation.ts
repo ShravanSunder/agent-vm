@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { loadWorkerConfig } from '@agent-vm/agent-vm-worker';
+import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
 
 import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
@@ -26,11 +26,11 @@ function getErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-function catalogRootForSystemConfig(systemConfig: LoadedSystemConfig): string {
+function projectRootForSystemConfig(systemConfig: LoadedSystemConfig): string {
 	return path.resolve(path.dirname(systemConfig.systemConfigPath), '..');
 }
 
-function resolveCatalogCheckoutPath(
+function resolveProjectCheckoutPath(
 	systemConfig: LoadedSystemConfig,
 	configuredPath: string,
 ): string {
@@ -44,17 +44,17 @@ function resolveCatalogCheckoutPath(
 		return configuredPath;
 	}
 
-	const catalogRoot = catalogRootForSystemConfig(systemConfig);
+	const projectRoot = projectRootForSystemConfig(systemConfig);
 	if (relativeRuntimePath === 'system.json') {
-		return path.join(catalogRoot, 'config', 'system.json');
+		return path.join(projectRoot, 'config', 'system.json');
 	}
 	if (relativeRuntimePath === 'systemCacheIdentifier.json') {
-		return path.join(catalogRoot, 'config', 'systemCacheIdentifier.json');
+		return path.join(projectRoot, 'config', 'systemCacheIdentifier.json');
 	}
 	if (relativeRuntimePath.startsWith(`gateways${path.sep}`) || relativeRuntimePath === 'gateways') {
-		return path.join(catalogRoot, 'config', relativeRuntimePath);
+		return path.join(projectRoot, 'config', relativeRuntimePath);
 	}
-	return path.join(catalogRoot, relativeRuntimePath);
+	return path.join(projectRoot, relativeRuntimePath);
 }
 
 async function collectReadableFileCheck(
@@ -96,9 +96,9 @@ async function collectWorkerConfigCheck(
 	systemConfig: LoadedSystemConfig,
 	zone: LoadedSystemConfig['zones'][number],
 ): Promise<ConfigValidationCheck> {
-	const workerConfigPath = resolveCatalogCheckoutPath(systemConfig, zone.gateway.config);
+	const workerConfigPath = resolveProjectCheckoutPath(systemConfig, zone.gateway.config);
 	try {
-		await loadWorkerConfig(workerConfigPath);
+		await loadWorkerConfigDraft(workerConfigPath);
 		return {
 			name: `worker-config-${zone.id}`,
 			ok: true,
@@ -117,7 +117,7 @@ async function collectGatewayConfigCheck(
 	systemConfig: LoadedSystemConfig,
 	zone: LoadedSystemConfig['zones'][number],
 ): Promise<ConfigValidationCheck> {
-	const gatewayConfigPath = resolveCatalogCheckoutPath(systemConfig, zone.gateway.config);
+	const gatewayConfigPath = resolveProjectCheckoutPath(systemConfig, zone.gateway.config);
 	return await collectReadableFileCheck(`gateway-config-${zone.id}`, gatewayConfigPath);
 }
 
@@ -126,7 +126,7 @@ async function collectGatewayImageProfileChecks(
 ): Promise<readonly ConfigValidationCheck[]> {
 	const pendingChecks: Promise<ConfigValidationCheck>[] = [];
 	for (const [profileName, profile] of Object.entries(systemConfig.imageProfiles.gateways)) {
-		const buildConfigPath = resolveCatalogCheckoutPath(systemConfig, profile.buildConfig);
+		const buildConfigPath = resolveProjectCheckoutPath(systemConfig, profile.buildConfig);
 		pendingChecks.push(
 			collectReadableFileCheck(`gateway-${profileName}-build-config`, buildConfigPath),
 		);
@@ -134,7 +134,7 @@ async function collectGatewayImageProfileChecks(
 			pendingChecks.push(
 				collectReadableFileCheck(
 					`gateway-${profileName}-dockerfile`,
-					resolveCatalogCheckoutPath(systemConfig, profile.dockerfile),
+					resolveProjectCheckoutPath(systemConfig, profile.dockerfile),
 				),
 			);
 		}
@@ -148,7 +148,7 @@ async function collectToolImageProfileChecks(
 ): Promise<readonly ConfigValidationCheck[]> {
 	const pendingChecks: Promise<ConfigValidationCheck>[] = [];
 	for (const [profileName, profile] of Object.entries(systemConfig.imageProfiles.toolVms)) {
-		const buildConfigPath = resolveCatalogCheckoutPath(systemConfig, profile.buildConfig);
+		const buildConfigPath = resolveProjectCheckoutPath(systemConfig, profile.buildConfig);
 		pendingChecks.push(
 			collectReadableFileCheck(`tool-vm-${profileName}-build-config`, buildConfigPath),
 		);
@@ -156,7 +156,7 @@ async function collectToolImageProfileChecks(
 			pendingChecks.push(
 				collectReadableFileCheck(
 					`tool-vm-${profileName}-dockerfile`,
-					resolveCatalogCheckoutPath(systemConfig, profile.dockerfile),
+					resolveProjectCheckoutPath(systemConfig, profile.dockerfile),
 				),
 			);
 		}

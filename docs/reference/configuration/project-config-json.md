@@ -1,7 +1,7 @@
 # .agent-vm/config.json
 
 `.agent-vm/config.json` is a repo-level Worker override. It lives in the
-repository that the agent edits, not in the agent-vm catalog.
+repository that the agent edits, not in the controller project config.
 
 The controller reads it after cloning the repo, deep-merges it over the
 zone-level `worker.json`, applies Zod defaults, and writes the normalized
@@ -49,7 +49,11 @@ Project-specific MCP servers:
 ```json
 {
   "mcpServers": [
-    { "name": "project-docs", "url": "http://localhost:3100/mcp" }
+    {
+      "name": "project-docs",
+      "url": "http://localhost:3100/mcp",
+      "bearerTokenEnvVar": "PROJECT_DOCS_TOKEN"
+    }
   ]
 }
 ```
@@ -59,6 +63,6 @@ Project-specific MCP servers:
 Repo-level configs may use inline strings or `null` for instructions. They may
 not use `{ "path": "./prompts/..." }` prompt file references.
 
-Prompt file references are catalog-level only because they resolve relative to
+Prompt file references are zone-level only because they resolve relative to
 the zone-level `worker.json` and must stay under that config's sibling
 `prompts/` directory.

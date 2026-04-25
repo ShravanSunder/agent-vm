@@ -3,13 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
-	DEFAULT_BASE_INSTRUCTIONS,
+	DEFAULT_COMMON_AGENT_INSTRUCTIONS,
 	DEFAULT_PLAN_AGENT_INSTRUCTIONS,
 	DEFAULT_PLAN_REVIEWER_INSTRUCTIONS,
 	DEFAULT_WORK_AGENT_INSTRUCTIONS,
 	DEFAULT_WORK_REVIEWER_INSTRUCTIONS,
 	DEFAULT_WRAPUP_INSTRUCTIONS,
-	loadWorkerConfig,
+	loadWorkerConfigDraft,
 } from '@agent-vm/agent-vm-worker';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
@@ -122,6 +122,8 @@ describe('scaffoldAgentVmProject', () => {
 		expect(config.zones[0]?.gateway.type).toBe('worker');
 		expect(gatewayDockerfile).toContain('Do not bake auth tokens');
 		expect(gatewayDockerfile).toContain('@openai/codex');
+		expect(gatewayDockerfile).toContain('apt-get install -y --no-install-recommends gh');
+		expect(gatewayDockerfile).toContain('(ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)');
 		expect(gatewayDockerfile).not.toContain('openclaw@');
 		expect(gatewayDockerfile).not.toContain('.npmrc');
 		expect(gatewayDockerfile).not.toContain('_authToken');
@@ -149,9 +151,11 @@ describe('scaffoldAgentVmProject', () => {
 			'worker.json',
 		);
 		const rawWorkerConfig = JSON.parse(await fs.readFile(workerConfigPath, 'utf8'));
-		const workerConfig = await loadWorkerConfig(workerConfigPath);
+		const workerConfig = await loadWorkerConfigDraft(workerConfigPath);
 
-		expect(rawWorkerConfig.instructions).toEqual({ path: './prompts/base.md' });
+		expect(rawWorkerConfig.commonAgentInstructions).toEqual({
+			path: './prompts/common-agent-instructions.md',
+		});
 		expect(rawWorkerConfig.phases.plan.agentInstructions).toEqual({
 			path: './prompts/plan-agent.md',
 		});
@@ -171,7 +175,20 @@ describe('scaffoldAgentVmProject', () => {
 				path.join(targetDir, 'config', 'gateways', 'test-worker', 'prompts', 'base.md'),
 				'utf8',
 			),
-		).resolves.toBe(`${DEFAULT_BASE_INSTRUCTIONS}\n`);
+		).rejects.toMatchObject({ code: 'ENOENT' });
+		await expect(
+			fs.readFile(
+				path.join(
+					targetDir,
+					'config',
+					'gateways',
+					'test-worker',
+					'prompts',
+					'common-agent-instructions.md',
+				),
+				'utf8',
+			),
+		).resolves.toBe(`${DEFAULT_COMMON_AGENT_INSTRUCTIONS}\n`);
 		await expect(
 			fs.readFile(
 				path.join(targetDir, 'config', 'gateways', 'test-worker', 'prompts', 'plan-agent.md'),
@@ -203,7 +220,7 @@ describe('scaffoldAgentVmProject', () => {
 			),
 		).resolves.toBe(`${DEFAULT_WRAPUP_INSTRUCTIONS}\n`);
 
-		expect(workerConfig.instructions).toBe(`${DEFAULT_BASE_INSTRUCTIONS}\n`);
+		expect(workerConfig.commonAgentInstructions).toBe(`${DEFAULT_COMMON_AGENT_INSTRUCTIONS}\n`);
 		expect(workerConfig.phases.plan.agentInstructions).toBe(`${DEFAULT_PLAN_AGENT_INSTRUCTIONS}\n`);
 		expect(workerConfig.phases.plan.reviewerInstructions).toBe(
 			`${DEFAULT_PLAN_REVIEWER_INSTRUCTIONS}\n`,
@@ -218,6 +235,9 @@ describe('scaffoldAgentVmProject', () => {
 		expect(workerConfig.phases.plan.cycle).toEqual({ kind: 'review', cycleCount: 2 });
 		expect(workerConfig.phases.work.cycle).toEqual({ kind: 'review', cycleCount: 4 });
 		expect(rawWorkerConfig.wrapupActions).toBeUndefined();
+		expect(workerConfig.mcpServers).toEqual([
+			{ name: 'deepwiki', url: 'https://mcp.deepwiki.com/mcp' },
+		]);
 	});
 
 	it('scaffolds the published gondolin plugin install into the openclaw gateway Dockerfile', async () => {
@@ -240,6 +260,7 @@ describe('scaffoldAgentVmProject', () => {
 		);
 
 		expect(gatewayDockerfile).toContain('Do not bake auth tokens');
+		expect(gatewayDockerfile).toContain('(ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)');
 		expect(gatewayDockerfile).toContain(
 			'COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin',
 		);
@@ -696,8 +717,50 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(zone.allowedHosts).toContain('api.anthropic.com');
 		expect(zone.allowedHosts).toContain('api.openai.com');
+		expect(zone.allowedHosts).toContain('mcp.deepwiki.com');
 		expect(zone.allowedHosts).not.toContain('discord.com');
 		expect(zone.websocketBypass).toEqual([]);
+	});
+
+	it('scaffolds worker runtime auth hints for mediated GitHub operations', async () => {
+		const targetDir = await createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{
+				gatewayType: 'worker',
+				architecture: 'aarch64',
+				targetDir,
+				zoneId: 'test-worker',
+				secretsProvider: '1password',
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		const config = JSON.parse(
+			await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		) as {
+			readonly zones: readonly [
+				{
+					readonly runtimeAuthHints: readonly {
+						readonly kind: string;
+						readonly secret: string;
+						readonly service: string;
+						readonly hosts: readonly string[];
+						readonly tools: readonly string[];
+					}[];
+				},
+			];
+		};
+
+		expect(config.zones[0].runtimeAuthHints).toEqual([
+			{
+				kind: 'service-token',
+				secret: 'GITHUB_TOKEN',
+				service: 'github',
+				hosts: ['api.github.com'],
+				tools: ['gh'],
+			},
+		]);
 	});
 
 	it('scaffolds environment-backed secrets when secretsProvider is environment', async () => {
@@ -955,6 +1018,10 @@ describe('scaffoldAgentVmProject', () => {
 		expect(workerDockerfile).toContain('apt-get install -y --no-install-recommends gh');
 		expect(workerDockerfile).toContain('COPY agent-vm-worker/ /opt/agent-vm-worker/');
 		expect(workerDockerfile).toContain('/usr/local/bin/agent-vm-worker');
+		expect(workerDockerfile).toContain('pnpm@10');
+		expect(workerDockerfile).toContain('astral.sh/uv/install.sh');
+		expect(workerDockerfile).toContain('/usr/local/bin/uv');
+		expect(workerDockerfile).toContain('(ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)');
 		expect(workerDockerfile).not.toContain('.npmrc');
 		expect(workerDockerfile).not.toContain('_authToken');
 		await expect(
@@ -982,5 +1049,6 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(systemConfig.zones[0].allowedHosts).toContain('api.github.com');
 		expect(systemConfig.zones[0].allowedHosts).toContain('github.com');
+		expect(systemConfig.zones[0].allowedHosts).toContain('mcp.deepwiki.com');
 	});
 });

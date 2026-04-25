@@ -3,13 +3,13 @@
 Worker prompt defaults can be stored as markdown files next to zone-level
 `worker.json`.
 
-Generated Worker catalogs use this shape:
+Generated Worker projects use this shape:
 
 ```
 config/gateways/<zone>/
   worker.json
   prompts/
-    base.md
+    common-agent-instructions.md
     plan-agent.md
     plan-reviewer.md
     work-agent.md
@@ -21,7 +21,7 @@ config/gateways/<zone>/
 
 ```json
 {
-  "instructions": { "path": "./prompts/base.md" },
+  "commonAgentInstructions": { "path": "./prompts/common-agent-instructions.md" },
   "phases": {
     "plan": {
       "agentInstructions": { "path": "./prompts/plan-agent.md" },

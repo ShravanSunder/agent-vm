@@ -77,9 +77,19 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 		await fs.mkdir(path.join(tempHome, '.codex'), { recursive: true });
 
 		for (const mcpServer of config.capabilities.mcpServers) {
+			const mcpAddArgs = [
+				'mcp',
+				'add',
+				mcpServer.name,
+				'--url',
+				mcpServer.url,
+				...(mcpServer.bearerTokenEnvVar
+					? ['--bearer-token-env-var', mcpServer.bearerTokenEnvVar]
+					: []),
+			];
 			// MCP registration must be serialized because each command mutates the same config home.
 			// oxlint-disable-next-line eslint/no-await-in-loop
-			await execa('codex', ['mcp', 'add', mcpServer.name, '--url', mcpServer.url], {
+			await execa('codex', mcpAddArgs, {
 				cwd: workingDirectory,
 				env: { ...process.env, HOME: tempHome },
 				reject: true,

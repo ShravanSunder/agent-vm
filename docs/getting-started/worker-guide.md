@@ -48,7 +48,7 @@ In your `system.json`, add a zone with `gateway.type: "worker"`:
       "workspaceDir": "../workspaces/dev-worker"
     },
     "secrets": { ... },
-    "allowedHosts": ["api.openai.com", "api.github.com", "registry.npmjs.org"],
+    "allowedHosts": ["api.openai.com", "api.github.com", "registry.npmjs.org", "mcp.deepwiki.com"],
     "toolProfile": "standard"
   }]
 }
@@ -63,7 +63,7 @@ Controls which LLM models to use, how review cycles run, and what verification c
 
 ```json
 {
-  "instructions": { "path": "./prompts/base.md" },
+  "commonAgentInstructions": { "path": "./prompts/common-agent-instructions.md" },
   "defaults": { "provider": "codex", "model": "latest-medium" },
   "phases": {
     "plan": {
@@ -87,7 +87,7 @@ Controls which LLM models to use, how review cycles run, and what verification c
 }
 ```
 
-Prompt paths are catalog-only: they are supported in zone-level `worker.json`,
+Prompt paths are zone-level only: they are supported in zone-level `worker.json`,
 not in repo-level `.agent-vm/config.json`. Paths are relative to `worker.json`
 and must stay under its sibling `prompts/` directory. Missing prompt files,
 absolute paths, `../` escapes, and symlink escapes fail fast during config

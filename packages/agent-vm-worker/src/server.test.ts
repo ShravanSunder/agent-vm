@@ -6,6 +6,8 @@ import { createApp, type ServerDeps } from './server.js';
 import type { TaskState } from './state/task-state.js';
 
 const TEST_EFFECTIVE_CONFIG = workerConfigSchema.parse({
+	runtimeInstructions: 'runtime facts',
+	commonAgentInstructions: null,
 	phases: {
 		plan: {
 			cycle: { kind: 'review', cycleCount: 1 },

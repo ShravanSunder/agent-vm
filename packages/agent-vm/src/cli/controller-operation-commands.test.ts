@@ -70,6 +70,82 @@ function createWorkerSystemConfig(
 }
 
 describe('runControllerOperationCommand', () => {
+	it('accepts authored worker config drafts without generated runtime instructions in doctor output', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
+		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
+		const systemCacheIdentifierPath = path.join(
+			temporaryDirectoryPath,
+			'systemCacheIdentifier.json',
+		);
+		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
+		await fs.writeFile(systemCacheIdentifierPath, '{"schemaVersion":1}\n', 'utf8');
+		await fs.writeFile(
+			workerConfigPath,
+			JSON.stringify({
+				commonAgentInstructions: null,
+				phases: {
+					plan: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					work: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					wrapup: { instructions: null },
+				},
+				mcpServers: [{ name: 'deepwiki', url: 'https://mcp.deepwiki.com/mcp' }],
+			}),
+			'utf8',
+		);
+		const outputs: string[] = [];
+
+		await runControllerOperationCommand({
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: () => ({
+					destroyZone: async () => ({}),
+					enableZoneSsh: async () => ({}),
+					getControllerStatus: async () => ({}),
+					getZoneLogs: async () => ({}),
+					listLeases: async () => [],
+					refreshZoneCredentials: async () => ({}),
+					releaseLease: async () => {},
+					stopController: async () => ({}),
+					upgradeZone: async () => ({}),
+				}),
+				runControllerDoctor: () => ({ ok: true, checks: [] }),
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			restArguments: [],
+			subcommand: 'doctor',
+			systemConfig: createWorkerSystemConfig(workerConfigPath, systemConfigPath),
+		});
+
+		const result = JSON.parse(outputs.join('')) as {
+			readonly ok: boolean;
+			readonly checks: readonly {
+				readonly name: string;
+				readonly ok: boolean;
+			}[];
+		};
+
+		expect(result.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === 'worker-config-worker')?.ok).toBe(true);
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
 	it('reports worker prompt reference failures in doctor output', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');

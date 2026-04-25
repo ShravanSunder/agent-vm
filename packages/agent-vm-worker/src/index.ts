@@ -1,11 +1,14 @@
 export {
 	computeTotalTaskTimeoutMs,
 	loadWorkerConfig,
+	loadWorkerConfigDraft,
 	resolveModelAlias,
 	resolvePhaseExecutor,
 	resolveWorkerConfigInstructionReferences,
+	workerConfigDraftSchema,
 	workerConfigSchema,
 	type WorkerConfig,
+	type WorkerConfigDraft,
 } from './config/worker-config.js';
 export {
 	createCoordinator,
@@ -24,13 +27,13 @@ export {
 	stageAndCommit,
 } from './git/git-operations.js';
 export {
-	DEFAULT_BASE_INSTRUCTIONS,
+	DEFAULT_BUILTIN_AGENT_INSTRUCTIONS,
+	DEFAULT_COMMON_AGENT_INSTRUCTIONS,
 	DEFAULT_PLAN_AGENT_INSTRUCTIONS,
 	DEFAULT_PLAN_REVIEWER_INSTRUCTIONS,
 	DEFAULT_WORK_AGENT_INSTRUCTIONS,
 	DEFAULT_WORK_REVIEWER_INSTRUCTIONS,
 	DEFAULT_WRAPUP_INSTRUCTIONS,
-	interpolateBaseInstructions,
 	resolveRoleInstructions,
 	type Role,
 } from './prompt/prompt-defaults.js';

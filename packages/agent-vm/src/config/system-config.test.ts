@@ -9,13 +9,33 @@ import { loadSystemConfig } from './system-config.js';
 
 const createdDirectories: string[] = [];
 
+interface ValidSystemConfigZoneInput {
+	id: string;
+	gateway: Record<string, unknown>;
+	secrets: Record<string, unknown>;
+	runtimeAuthHints?: unknown;
+	allowedHosts: readonly string[];
+	toolProfile?: string;
+	readonly [key: string]: unknown;
+}
+
+interface ValidSystemConfigInput {
+	host: Record<string, unknown>;
+	cacheDir: string;
+	imageProfiles: Record<string, unknown>;
+	zones: [ValidSystemConfigZoneInput, ...ValidSystemConfigZoneInput[]];
+	toolProfiles?: Record<string, unknown>;
+	tcpPool: Record<string, unknown>;
+	readonly [key: string]: unknown;
+}
+
 afterEach(() => {
 	for (const directoryPath of createdDirectories.splice(0)) {
 		fs.rmSync(directoryPath, { recursive: true, force: true });
 	}
 });
 
-function createValidSystemConfigInput(): Record<string, unknown> {
+function createValidSystemConfigInput(): ValidSystemConfigInput {
 	return {
 		host: {
 			controllerPort: 18800,
@@ -54,6 +74,7 @@ function createValidSystemConfigInput(): Record<string, unknown> {
 					workspaceDir: '../workspaces/shravan',
 				},
 				secrets: {},
+				runtimeAuthHints: [],
 				allowedHosts: ['discord.com'],
 				toolProfile: 'standard',
 			},
@@ -73,10 +94,7 @@ function createValidSystemConfigInput(): Record<string, unknown> {
 	};
 }
 
-async function writeSystemConfigForTest(
-	prefix: string,
-	config: Record<string, unknown>,
-): Promise<string> {
+async function writeSystemConfigForTest(prefix: string, config: unknown): Promise<string> {
 	const workingDirectoryPath = await fsp.mkdtemp(path.join(os.tmpdir(), prefix));
 	createdDirectories.push(workingDirectoryPath);
 	const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
@@ -501,6 +519,7 @@ describe('loadSystemConfig', () => {
 							workspaceDir: '../workspaces/shravan',
 						},
 						secrets: {},
+						runtimeAuthHints: [],
 						allowedHosts: ['discord.com'],
 						toolProfile: 'standard',
 					},
@@ -522,6 +541,129 @@ describe('loadSystemConfig', () => {
 		);
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/projectNamespace/u);
+	});
+
+	test('loads service token runtime auth hints from zone config', async () => {
+		const config = createValidSystemConfigInput();
+		const zones = config.zones as Array<{
+			runtimeAuthHints?: unknown;
+			secrets: Record<string, unknown>;
+		}>;
+		const zone = zones[0];
+		if (!zone) {
+			throw new Error('Expected valid config fixture to include a zone.');
+		}
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			hosts: ['api.github.com'],
+		};
+		zone.runtimeAuthHints = [
+			{
+				kind: 'service-token',
+				secret: 'GITHUB_TOKEN',
+				service: 'github',
+				hosts: ['api.github.com'],
+				tools: ['gh'],
+			},
+		];
+		const configPath = await writeSystemConfigForTest('agent-vm-system-runtime-auth-', config);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			zones: [
+				{
+					runtimeAuthHints: [
+						{
+							kind: 'service-token',
+							secret: 'GITHUB_TOKEN',
+							service: 'github',
+							hosts: ['api.github.com'],
+							tools: ['gh'],
+						},
+					],
+				},
+			],
+		});
+	});
+
+	test('allows omitted runtime auth hints', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		delete zone.runtimeAuthHints;
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-runtime-auth-default-',
+			config,
+		);
+
+		const loadedConfig = await loadSystemConfig(configPath);
+
+		expect(loadedConfig.zones[0]?.runtimeAuthHints).toBeUndefined();
+	});
+
+	test('rejects runtime auth hints that reference missing secrets', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.runtimeAuthHints = [
+			{
+				kind: 'service-token',
+				secret: 'NPM_AUTH_TOKEN',
+				service: 'npm',
+				hosts: ['registry.npmjs.org'],
+				tools: ['npm', 'pnpm', 'yarn'],
+			},
+		];
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-runtime-auth-missing-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/NPM_AUTH_TOKEN/u);
+	});
+
+	test('rejects runtime auth hints that reference hosts outside the mediated secret', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.secrets.NPM_AUTH_TOKEN = {
+			source: 'environment',
+			envVar: 'NPM_AUTH_TOKEN',
+			injection: 'http-mediation',
+			hosts: ['registry.npmjs.org'],
+		};
+		zone.runtimeAuthHints = [
+			{
+				kind: 'service-token',
+				secret: 'NPM_AUTH_TOKEN',
+				service: 'npm',
+				hosts: ['npm.pkg.github.com'],
+				tools: ['npm'],
+			},
+		];
+		const configPath = await writeSystemConfigForTest('agent-vm-system-runtime-auth-host-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/npm\.pkg\.github\.com/u);
+	});
+
+	test('rejects runtime auth hints that reference env-injected secrets', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'env',
+		};
+		zone.runtimeAuthHints = [
+			{
+				kind: 'service-token',
+				secret: 'GITHUB_TOKEN',
+				service: 'github',
+				hosts: ['api.github.com'],
+				tools: ['gh'],
+			},
+		];
+		const configPath = await writeSystemConfigForTest('agent-vm-system-runtime-auth-env-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/http-mediation/u);
 	});
 
 	test('rejects zones that reference unknown tool profiles', async () => {
@@ -576,6 +718,7 @@ describe('loadSystemConfig', () => {
 							workspaceDir: '../workspaces/shravan',
 						},
 						secrets: {},
+						runtimeAuthHints: [],
 						allowedHosts: ['discord.com'],
 						toolProfile: 'missing-profile',
 					},
@@ -644,6 +787,7 @@ describe('loadSystemConfig', () => {
 					workspaceDir: '../workspaces/worker-zone',
 				},
 				secrets: {},
+				runtimeAuthHints: [],
 				allowedHosts: ['api.openai.com'],
 			},
 		];
@@ -669,7 +813,7 @@ describe('loadSystemConfig', () => {
 
 	test('rejects openclaw zones without a tool profile', async () => {
 		const config = createValidSystemConfigInput();
-		const zone = (config.zones as [Record<string, unknown>])[0];
+		const zone = config.zones[0];
 		delete zone.toolProfile;
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-config-openclaw-missing-tool-profile-',
@@ -714,6 +858,7 @@ describe('loadSystemConfig', () => {
 					workspaceDir: '../workspaces/shravan',
 				},
 				secrets: {},
+				runtimeAuthHints: [],
 				allowedHosts: ['discord.com'],
 				toolProfile: 'standard',
 			},
@@ -742,6 +887,7 @@ describe('loadSystemConfig', () => {
 					workspaceDir: '../workspaces/shravan',
 				},
 				secrets: {},
+				runtimeAuthHints: [],
 				allowedHosts: ['discord.com'],
 				toolProfile: 'standard',
 			},

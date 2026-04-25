@@ -245,12 +245,30 @@ environment variable.
 
 ---
 
+## Runtime Auth Hints
+
+Mediated secrets can be described to agents with zone `runtimeAuthHints`. The
+controller turns those hints into generated runtime instructions under
+`/agent-vm/agents.md` and `/agent-vm/runtime-instructions.md`, and injects the
+same text into the prompt `runtimeInstructions` layer.
+
+`runtimeAuthHints` do not mount credential files or expose real secret values.
+They name the service, mediated host list, tool names, and placeholder env var
+name so the agent can use normal tooling without guessing which token exists.
+Known services get controller-owned setup recipes in the generated runtime
+instructions. Unknown services are still listed, but the generated guidance
+tells the agent to report an infrastructure/auth setup gap if the correct
+toolchain setup is not known.
+
+---
+
 ## Security Boundaries
 
 | Secret | Resolved On | Enters VM? | Mechanism |
 |--------|------------|------------|-----------|
 | Zone secret (injection: env) | Host | Yes | VM environment variable |
 | Zone secret (injection: http-mediation) | Host | No | Gondolin proxy injects into HTTP requests |
+| runtimeAuthHints for mediated secrets | Host | Placeholder name only | Generated runtime instructions under `/agent-vm` |
 | OPENCLAW_GATEWAY_TOKEN | Host | No | Baked into effective config file on host; VFS-mounted read-only |
 | githubToken | Host | No | Controller-side git push only |
 | authProfilesRef | Host | Indirectly | Written to host disk; VM reads via VFS mount |

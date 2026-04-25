@@ -3,14 +3,15 @@ import { readFile } from 'node:fs/promises';
 import type { SkillReference } from '../shared/skill-types.js';
 import { writeStderr } from '../shared/stderr.js';
 import {
-	DEFAULT_BASE_INSTRUCTIONS,
+	DEFAULT_BUILTIN_AGENT_INSTRUCTIONS,
 	resolveRoleInstructions,
 	type Role,
 } from './prompt-defaults.js';
 
 export interface BuildRoleSystemPromptProps {
 	readonly role: Role;
-	readonly baseInstructionsOverride: string | null;
+	readonly runtimeInstructions: string;
+	readonly commonAgentInstructionsOverride: string | null;
 	readonly roleInstructionsOverride: string | null;
 	readonly branchPrefix: string;
 	readonly skills: readonly SkillReference[];
@@ -42,12 +43,27 @@ async function resolveSkillContent(skills: readonly SkillReference[]): Promise<s
 }
 
 export async function buildRoleSystemPrompt(props: BuildRoleSystemPromptProps): Promise<string> {
-	const baseTemplate = props.baseInstructionsOverride ?? DEFAULT_BASE_INSTRUCTIONS;
-	const baseInstructions = baseTemplate.replaceAll('{branchPrefix}', props.branchPrefix);
+	if (props.runtimeInstructions.length === 0) {
+		throw new Error('runtimeInstructions must be non-empty.');
+	}
+	const builtinInstructions = DEFAULT_BUILTIN_AGENT_INSTRUCTIONS.replaceAll(
+		'{branchPrefix}',
+		props.branchPrefix,
+	);
+	const commonAgentInstructions = (props.commonAgentInstructionsOverride ?? '').replaceAll(
+		'{branchPrefix}',
+		props.branchPrefix,
+	);
 	const roleInstructions = resolveRoleInstructions(props.role, props.roleInstructionsOverride);
 	const skillContent = await resolveSkillContent(props.skills);
 
-	return [baseInstructions, roleInstructions, skillContent]
+	return [
+		props.runtimeInstructions,
+		builtinInstructions,
+		commonAgentInstructions,
+		roleInstructions,
+		skillContent,
+	]
 		.filter((section) => section.length > 0)
 		.join('\n\n---\n\n');
 }

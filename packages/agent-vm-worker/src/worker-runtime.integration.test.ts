@@ -142,6 +142,8 @@ describe('worker runtime integration', () => {
 
 	it('runs a task from HTTP submission through to completed state', async () => {
 		const config = workerConfigSchema.parse({
+			runtimeInstructions: 'runtime facts',
+			commonAgentInstructions: null,
 			stateDir,
 			phases: {
 				plan: {

@@ -97,6 +97,8 @@ function createPreparedWorkerTaskStub(
 			vfsMounts: {},
 			repos: [],
 			effectiveConfig: workerConfigSchema.parse({
+				runtimeInstructions: 'Generated runtime instructions.',
+				commonAgentInstructions: null,
 				defaults: { provider: 'codex', model: 'latest-medium' },
 				phases: {
 					plan: {

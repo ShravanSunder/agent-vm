@@ -36,6 +36,18 @@ const secretReferenceSchema = z
 		}
 	});
 
+const runtimeAuthHintSchema = z.discriminatedUnion('kind', [
+	z
+		.object({
+			kind: z.literal('service-token'),
+			secret: z.string().min(1),
+			service: z.string().min(1),
+			hosts: z.array(z.string().min(1)).min(1),
+			tools: z.array(z.string().min(1)).default([]),
+		})
+		.strict(),
+]);
+
 const tokenSourceSchema = z.discriminatedUnion('type', [
 	z.object({
 		type: z.literal('op-cli'),
@@ -141,6 +153,7 @@ const systemConfigSchema = z
 					gateway: zoneGatewaySchema,
 					resources: zoneResourcesPolicySchema.optional(),
 					secrets: z.record(z.string(), secretReferenceSchema),
+					runtimeAuthHints: z.array(runtimeAuthHintSchema).optional(),
 					allowedHosts: z.array(z.string().min(1)).min(1),
 					websocketBypass: z.array(z.string().min(1)).default([]),
 					toolProfile: z.string().min(1).optional(),
@@ -212,6 +225,33 @@ const systemConfigSchema = z
 					path: ['zones', zoneIndex, 'toolProfile'],
 				});
 			}
+
+			for (const [hintIndex, hint] of (zone.runtimeAuthHints ?? []).entries()) {
+				const secret = zone.secrets[hint.secret];
+				if (!secret) {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `Zone '${zone.id}' runtimeAuthHints[${String(hintIndex)}] references unknown secret '${hint.secret}'.`,
+						path: ['zones', zoneIndex, 'runtimeAuthHints', hintIndex, 'secret'],
+					});
+					continue;
+				}
+				if (secret.injection !== 'http-mediation') {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `Zone '${zone.id}' runtimeAuthHints[${String(hintIndex)}] secret '${hint.secret}' must use injection 'http-mediation'.`,
+						path: ['zones', zoneIndex, 'runtimeAuthHints', hintIndex, 'secret'],
+					});
+				}
+				const missingHosts = hint.hosts.filter((host) => !secret.hosts?.includes(host));
+				for (const missingHost of missingHosts) {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `Zone '${zone.id}' service token hint host '${missingHost}' must be listed in secret '${hint.secret}' hosts.`,
+						path: ['zones', zoneIndex, 'runtimeAuthHints', hintIndex, 'hosts'],
+					});
+				}
+			}
 		}
 
 		for (const [profileId, profile] of Object.entries(config.toolProfiles)) {
@@ -227,6 +267,7 @@ const systemConfigSchema = z
 	});
 
 export type SystemConfig = z.infer<typeof systemConfigSchema>;
+export type SystemConfigInput = z.input<typeof systemConfigSchema>;
 
 export type LoadedSystemConfig = SystemConfig & {
 	readonly systemConfigPath: string;
@@ -234,11 +275,12 @@ export type LoadedSystemConfig = SystemConfig & {
 };
 
 export function createLoadedSystemConfig(
-	config: z.infer<typeof systemConfigSchema>,
+	config: SystemConfigInput,
 	options: { readonly systemConfigPath: string },
 ): LoadedSystemConfig {
+	const parsedConfig = systemConfigSchema.parse(config);
 	return {
-		...config,
+		...parsedConfig,
 		systemConfigPath: options.systemConfigPath,
 		systemCacheIdentifierPath: resolveSystemCacheIdentifierPath(options.systemConfigPath),
 	};

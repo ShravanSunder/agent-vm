@@ -9,6 +9,8 @@ import { appendEvent, replayEvents } from './event-log.js';
 
 function buildWorkerConfigInput(): Record<string, unknown> {
 	return {
+		runtimeInstructions: 'runtime facts',
+		commonAgentInstructions: null,
 		phases: {
 			plan: {
 				cycle: { kind: 'review', cycleCount: 1 },

@@ -7,6 +7,7 @@ import { serve } from '@hono/node-server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createApp } from '../../../agent-vm-worker/src/server.js';
+import type { ServerDeps } from '../../../agent-vm-worker/src/server.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 
 const startGatewayZoneMock = vi.fn();
@@ -76,6 +77,7 @@ describe('worker-task-runner integration', () => {
 	let server: { close: (cb?: () => void) => void } | null = null;
 	let workerPort: number;
 	let closeVmMock: ReturnType<typeof vi.fn>;
+	let receivedTaskBody: Parameters<ServerDeps['submitTask']>[0] | null;
 
 	beforeEach(async () => {
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-task-runner-integration-'));
@@ -84,7 +86,7 @@ describe('worker-task-runner integration', () => {
 
 		let activeTaskId: string | null = null;
 		let currentStatus: 'pending' | 'completed' = 'pending';
-		let receivedTaskBody: Record<string, unknown> | null = null;
+		receivedTaskBody = null;
 
 		const app = createApp({
 			getActiveTaskId: () => activeTaskId,
@@ -126,6 +128,8 @@ describe('worker-task-runner integration', () => {
 							verification: [{ name: 'test', command: 'pnpm test' }],
 							verificationTimeoutMs: 300_000,
 							branchPrefix: 'agent/',
+							runtimeInstructions: 'Generated runtime instructions.',
+							commonAgentInstructions: null,
 							stateDir: '/state',
 						},
 					},
@@ -150,7 +154,7 @@ describe('worker-task-runner integration', () => {
 				};
 			},
 			submitTask: async (input) => {
-				receivedTaskBody = input as Record<string, unknown>;
+				receivedTaskBody = input;
 				activeTaskId = input.taskId;
 				currentStatus = 'pending';
 				setTimeout(() => {
@@ -186,8 +190,6 @@ describe('worker-task-runner integration', () => {
 			},
 			zone: systemConfig.zones[0],
 		});
-
-		Reflect.set(globalThis, '__receivedWorkerTaskBody', () => receivedTaskBody);
 	});
 
 	afterEach(async () => {
@@ -287,9 +289,6 @@ describe('worker-task-runner integration', () => {
 		});
 		expect(startGatewayZoneMock).toHaveBeenCalledTimes(1);
 		expect(closeVmMock).toHaveBeenCalledTimes(1);
-		const receivedTaskBody = (
-			Reflect.get(globalThis, '__receivedWorkerTaskBody') as () => unknown
-		)();
 		expect(receivedTaskBody).toMatchObject({
 			prompt: 'fix login bug',
 			repos: [],

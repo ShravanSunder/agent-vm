@@ -4,7 +4,7 @@ import path from 'node:path';
 import readline from 'node:readline/promises';
 
 import {
-	DEFAULT_BASE_INSTRUCTIONS,
+	DEFAULT_COMMON_AGENT_INSTRUCTIONS,
 	DEFAULT_PLAN_AGENT_INSTRUCTIONS,
 	DEFAULT_PLAN_REVIEWER_INSTRUCTIONS,
 	DEFAULT_WORK_AGENT_INSTRUCTIONS,
@@ -94,6 +94,60 @@ interface ScaffoldPathProfile {
 	readonly gatewayDockerfile: (gatewayType: GatewayType) => string;
 	readonly toolVmBuildConfig: string;
 	readonly toolWorkspaceRoot: string;
+}
+
+interface PromptReference {
+	readonly path: string;
+}
+
+interface ScaffoldMcpServer {
+	readonly name: string;
+	readonly url: string;
+	readonly bearerTokenEnvVar?: string;
+}
+
+interface ScaffoldWorkerGatewayConfig {
+	readonly commonAgentInstructions: PromptReference;
+	readonly defaults: {
+		readonly provider: string;
+		readonly model: string;
+	};
+	readonly phases: {
+		readonly plan: {
+			readonly cycle: { readonly kind: 'review'; readonly cycleCount: number };
+			readonly agentInstructions: PromptReference;
+			readonly reviewerInstructions: PromptReference;
+			readonly agentTurnTimeoutMs: number;
+			readonly reviewerTurnTimeoutMs: number;
+			readonly skills: readonly [];
+		};
+		readonly work: {
+			readonly cycle: { readonly kind: 'review'; readonly cycleCount: number };
+			readonly agentInstructions: PromptReference;
+			readonly reviewerInstructions: PromptReference;
+			readonly agentTurnTimeoutMs: number;
+			readonly reviewerTurnTimeoutMs: number;
+			readonly skills: readonly [];
+		};
+		readonly wrapup: {
+			readonly instructions: PromptReference;
+			readonly turnTimeoutMs: number;
+			readonly skills: readonly [];
+		};
+	};
+	readonly mcpServers: readonly ScaffoldMcpServer[];
+	readonly verification: readonly [];
+	readonly verificationTimeoutMs: number;
+	readonly branchPrefix: string;
+	readonly stateDir: string;
+}
+
+interface RuntimeAuthHint {
+	readonly kind: 'service-token';
+	readonly secret: string;
+	readonly service: string;
+	readonly hosts: readonly string[];
+	readonly tools: readonly string[];
 }
 
 const defaultGatewayIngressPort = 18791;
@@ -218,6 +272,7 @@ const defaultSystemConfig = (
 				workspaceDir: pathProfile.gatewayWorkspaceDir(zoneId),
 			},
 			secrets: defaultSecretsForGatewayType(zoneId, gatewayType, secretsProvider),
+			runtimeAuthHints: defaultRuntimeAuthHintsForGatewayType(gatewayType),
 			allowedHosts: defaultAllowedHostsForGatewayType(gatewayType),
 			websocketBypass: defaultWebsocketBypassForGatewayType(gatewayType),
 			...(gatewayType === 'openclaw' ? { toolProfile: 'standard' } : {}),
@@ -351,6 +406,24 @@ function defaultSecretsForGatewayType(
 	};
 }
 
+function defaultRuntimeAuthHintsForGatewayType(
+	gatewayType: GatewayType,
+): readonly RuntimeAuthHint[] {
+	if (gatewayType !== 'worker') {
+		return [];
+	}
+
+	return [
+		{
+			kind: 'service-token',
+			secret: 'GITHUB_TOKEN',
+			service: 'github',
+			hosts: ['api.github.com'],
+			tools: ['gh'],
+		},
+	];
+}
+
 function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): readonly string[] {
 	if (gatewayType === 'worker') {
 		return [
@@ -360,6 +433,7 @@ function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): readonly s
 			'api.github.com',
 			'github.com',
 			'registry.npmjs.org',
+			'mcp.deepwiki.com',
 		];
 	}
 
@@ -439,6 +513,7 @@ RUN apt-get update && \\
       openssh-server \\
       ca-certificates \\
       git \\
+      gh \\
       curl \\
       python3 && \\
     rm -rf /var/lib/apt/lists/* && \\
@@ -454,7 +529,7 @@ RUN apt-get update && \\
     useradd -m -s /bin/bash openclaw && \\
     mkdir -p ${defaultOpenClawExtensionsPath} /home/openclaw/workspace /run/sshd /root && \\
     chown -R openclaw:openclaw /home/openclaw && \\
-    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true
+    (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
 
 COPY vendor/gondolin ${defaultOpenClawExtensionsPath}/gondolin
 `;
@@ -472,13 +547,24 @@ RUN apt-get update && \\
       python3 && \\
     rm -rf /var/lib/apt/lists/* && \\
     update-ca-certificates && \\
-    npm install -g @openai/codex @agent-vm/agent-vm-worker && \\
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \\
+      -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \\
+    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \\
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \\
+      > /etc/apt/sources.list.d/github-cli.list && \\
+    apt-get update && \\
+    apt-get install -y --no-install-recommends gh && \\
+    rm -rf /var/lib/apt/lists/* && \\
+    npm install -g @openai/codex @agent-vm/agent-vm-worker pnpm@10 && \\
+    curl -LsSf https://astral.sh/uv/install.sh | sh && \\
+    mv /root/.local/bin/uv /usr/local/bin/uv && \\
+    mv /root/.local/bin/uvx /usr/local/bin/uvx && \\
     mkdir -p /opt/agent-vm-worker && \\
     ln -s /usr/local/lib/node_modules/@agent-vm/agent-vm-worker /opt/agent-vm-worker && \\
     useradd -m -s /bin/bash coder && \\
     mkdir -p /workspace /run/sshd /state && \\
     chown -R coder:coder /workspace /state && \\
-    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true
+    (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
 `;
 
 const defaultPodWorkerGatewayDockerfile = `FROM node:24-slim
@@ -494,11 +580,14 @@ RUN apt-get update && \\
       python3 && \\
     rm -rf /var/lib/apt/lists/* && \\
     update-ca-certificates && \\
-    npm install -g @openai/codex && \\
+    npm install -g @openai/codex pnpm@10 && \\
+    curl -LsSf https://astral.sh/uv/install.sh | sh && \\
+    mv /root/.local/bin/uv /usr/local/bin/uv && \\
+    mv /root/.local/bin/uvx /usr/local/bin/uvx && \\
     useradd -m -s /bin/bash coder && \\
     mkdir -p /workspace /run/sshd /state && \\
     chown -R coder:coder /workspace /state && \\
-    ln -sf /proc/self/fd /dev/fd 2>/dev/null || true
+    (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
 
 # Install GitHub CLI. The agent uses gh for PR creation; GitHub
 # auth is mediated by the controller proxy rather than exposed in
@@ -604,7 +693,7 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 });
 
 const defaultWorkerPromptFiles = [
-	{ fileName: 'base.md', content: DEFAULT_BASE_INSTRUCTIONS },
+	{ fileName: 'common-agent-instructions.md', content: DEFAULT_COMMON_AGENT_INSTRUCTIONS },
 	{ fileName: 'plan-agent.md', content: DEFAULT_PLAN_AGENT_INSTRUCTIONS },
 	{ fileName: 'plan-reviewer.md', content: DEFAULT_PLAN_REVIEWER_INSTRUCTIONS },
 	{ fileName: 'work-agent.md', content: DEFAULT_WORK_AGENT_INSTRUCTIONS },
@@ -612,11 +701,12 @@ const defaultWorkerPromptFiles = [
 	{ fileName: 'wrapup.md', content: DEFAULT_WRAPUP_INSTRUCTIONS },
 ] as const;
 
-function defaultWorkerPromptReference(fileName: string): { readonly path: string } {
+function defaultWorkerPromptReference(fileName: string): PromptReference {
 	return { path: `./prompts/${fileName}` };
 }
 
-const defaultWorkerGatewayConfig = (): object => ({
+const defaultWorkerGatewayConfig = (): ScaffoldWorkerGatewayConfig => ({
+	commonAgentInstructions: defaultWorkerPromptReference('common-agent-instructions.md'),
 	defaults: {
 		provider: 'codex',
 		model: 'latest-medium',
@@ -644,8 +734,12 @@ const defaultWorkerGatewayConfig = (): object => ({
 			skills: [],
 		},
 	},
-	instructions: defaultWorkerPromptReference('base.md'),
-	mcpServers: [],
+	mcpServers: [
+		{
+			name: 'deepwiki',
+			url: 'https://mcp.deepwiki.com/mcp',
+		},
+	],
 	verification: [],
 	verificationTimeoutMs: 300_000,
 	branchPrefix: 'agent/',

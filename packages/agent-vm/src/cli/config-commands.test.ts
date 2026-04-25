@@ -3,13 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
-	DEFAULT_BASE_INSTRUCTIONS,
+	DEFAULT_COMMON_AGENT_INSTRUCTIONS,
 	DEFAULT_PLAN_AGENT_INSTRUCTIONS,
 	DEFAULT_PLAN_REVIEWER_INSTRUCTIONS,
 	DEFAULT_WORK_AGENT_INSTRUCTIONS,
 	DEFAULT_WORK_REVIEWER_INSTRUCTIONS,
 	DEFAULT_WRAPUP_INSTRUCTIONS,
-	loadWorkerConfig,
+	loadWorkerConfigDraft,
 	workerConfigSchema,
 } from '@agent-vm/agent-vm-worker';
 import { describe, expect, it } from 'vitest';
@@ -22,7 +22,8 @@ async function writeWorkerConfig(filePath: string): Promise<void> {
 		filePath,
 		`${JSON.stringify(
 			workerConfigSchema.parse({
-				instructions: 'custom base',
+				runtimeInstructions: 'runtime facts',
+				commonAgentInstructions: 'custom common',
 				phases: {
 					plan: {
 						cycle: { kind: 'review', cycleCount: 1 },
@@ -60,7 +61,7 @@ describe('resetWorkerInstructions', () => {
 		const parsed = workerConfigSchema.parse(
 			JSON.parse(await fs.readFile(workerConfigPath, 'utf8')),
 		);
-		expect(parsed.instructions).toBe(DEFAULT_BASE_INSTRUCTIONS);
+		expect(parsed.commonAgentInstructions).toBe(DEFAULT_COMMON_AGENT_INSTRUCTIONS);
 		expect(parsed.phases.plan.agentInstructions).toBe(DEFAULT_PLAN_AGENT_INSTRUCTIONS);
 		expect(parsed.phases.plan.reviewerInstructions).toBe(DEFAULT_PLAN_REVIEWER_INSTRUCTIONS);
 		expect(parsed.phases.work.agentInstructions).toBe(DEFAULT_WORK_AGENT_INSTRUCTIONS);
@@ -68,7 +69,7 @@ describe('resetWorkerInstructions', () => {
 		expect(parsed.phases.wrapup.instructions).toBe(DEFAULT_WRAPUP_INSTRUCTIONS);
 		expect(parsed.phases.work.cycle).toEqual({ kind: 'review', cycleCount: 2 });
 		expect(result.changed).toEqual([
-			'instructions',
+			'commonAgentInstructions',
 			'phases.plan.agentInstructions',
 			'phases.plan.reviewerInstructions',
 			'phases.work.agentInstructions',
@@ -90,7 +91,7 @@ describe('resetWorkerInstructions', () => {
 		const parsed = workerConfigSchema.parse(
 			JSON.parse(await fs.readFile(workerConfigPath, 'utf8')),
 		);
-		expect(parsed.instructions).toBe('custom base');
+		expect(parsed.commonAgentInstructions).toBe('custom common');
 		expect(parsed.phases.plan.agentInstructions).toBe('custom plan agent');
 		expect(parsed.phases.work.agentInstructions).toBe('custom work agent');
 		expect(parsed.phases.wrapup.instructions).toBe(DEFAULT_WRAPUP_INSTRUCTIONS);
@@ -100,12 +101,15 @@ describe('resetWorkerInstructions', () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-config-'));
 		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
 		await fs.mkdir(path.join(temporaryDirectoryPath, 'prompts'), { recursive: true });
-		await fs.writeFile(path.join(temporaryDirectoryPath, 'prompts', 'base.md'), 'custom base\n');
+		await fs.writeFile(
+			path.join(temporaryDirectoryPath, 'prompts', 'common-agent-instructions.md'),
+			'custom common\n',
+		);
 		await fs.writeFile(
 			workerConfigPath,
 			`${JSON.stringify(
 				{
-					instructions: { path: './prompts/base.md' },
+					commonAgentInstructions: { path: './prompts/common-agent-instructions.md' },
 					phases: {
 						plan: {
 							cycle: { kind: 'review', cycleCount: 1 },
@@ -134,11 +138,13 @@ describe('resetWorkerInstructions', () => {
 		});
 
 		const rawConfig = JSON.parse(await fs.readFile(workerConfigPath, 'utf8')) as {
-			readonly instructions: { readonly path: string };
+			readonly commonAgentInstructions: { readonly path: string };
 		};
-		const parsed = await loadWorkerConfig(workerConfigPath);
-		expect(rawConfig.instructions).toEqual({ path: './prompts/base.md' });
-		expect(parsed.instructions).toBe(`${DEFAULT_BASE_INSTRUCTIONS}\n`);
+		const parsed = await loadWorkerConfigDraft(workerConfigPath);
+		expect(rawConfig.commonAgentInstructions).toEqual({
+			path: './prompts/common-agent-instructions.md',
+		});
+		expect(parsed.commonAgentInstructions).toBe(`${DEFAULT_COMMON_AGENT_INSTRUCTIONS}\n`);
 		expect(parsed.phases.plan.agentInstructions).toBe(DEFAULT_PLAN_AGENT_INSTRUCTIONS);
 	});
 
@@ -147,7 +153,10 @@ describe('resetWorkerInstructions', () => {
 		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
 		const promptDirectoryPath = path.join(temporaryDirectoryPath, 'prompts');
 		await fs.mkdir(promptDirectoryPath, { recursive: true });
-		await fs.writeFile(path.join(promptDirectoryPath, 'base.md'), 'custom base\n');
+		await fs.writeFile(
+			path.join(promptDirectoryPath, 'common-agent-instructions.md'),
+			'custom common\n',
+		);
 		await fs.writeFile(path.join(promptDirectoryPath, 'plan-agent.md'), 'custom plan agent\n');
 		await fs.writeFile(
 			path.join(promptDirectoryPath, 'plan-reviewer.md'),
@@ -160,7 +169,7 @@ describe('resetWorkerInstructions', () => {
 		);
 		await fs.writeFile(path.join(promptDirectoryPath, 'wrapup.md'), 'custom wrapup\n');
 		const rawConfig = {
-			instructions: { path: './prompts/base.md' },
+			commonAgentInstructions: { path: './prompts/common-agent-instructions.md' },
 			phases: {
 				plan: {
 					cycle: { kind: 'review', cycleCount: 1 },
@@ -187,7 +196,9 @@ describe('resetWorkerInstructions', () => {
 		const updatedRawConfig = JSON.parse(
 			await fs.readFile(workerConfigPath, 'utf8'),
 		) as typeof rawConfig;
-		expect(updatedRawConfig.instructions).toEqual({ path: './prompts/base.md' });
+		expect(updatedRawConfig.commonAgentInstructions).toEqual({
+			path: './prompts/common-agent-instructions.md',
+		});
 		expect(updatedRawConfig.phases.plan.agentInstructions).toEqual({
 			path: './prompts/plan-agent.md',
 		});
@@ -195,9 +206,9 @@ describe('resetWorkerInstructions', () => {
 			path: './prompts/work-reviewer.md',
 		});
 		expect(updatedRawConfig.phases.wrapup.instructions).toEqual({ path: './prompts/wrapup.md' });
-		await expect(fs.readFile(path.join(promptDirectoryPath, 'base.md'), 'utf8')).resolves.toBe(
-			'custom base\n',
-		);
+		await expect(
+			fs.readFile(path.join(promptDirectoryPath, 'common-agent-instructions.md'), 'utf8'),
+		).resolves.toBe('custom common\n');
 		await expect(fs.readFile(path.join(promptDirectoryPath, 'wrapup.md'), 'utf8')).resolves.toBe(
 			`${DEFAULT_WRAPUP_INSTRUCTIONS}\n`,
 		);

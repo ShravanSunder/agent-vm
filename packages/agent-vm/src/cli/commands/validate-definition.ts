@@ -9,7 +9,7 @@ import { createConfigOption, loadSystemConfigFromOption } from './command-defini
 export function createValidateCommand(io: CliIo, dependencies: CliDependencies) {
 	return command({
 		name: 'validate',
-		description: 'Validate agent-vm config and catalog files without checking host readiness',
+		description: 'Validate agent-vm config files without checking host readiness',
 		args: {
 			config: createConfigOption(),
 		},

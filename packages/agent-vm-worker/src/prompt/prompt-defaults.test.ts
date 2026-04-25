@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'vitest';
 
 import {
-	DEFAULT_BASE_INSTRUCTIONS,
+	DEFAULT_BUILTIN_AGENT_INSTRUCTIONS,
+	DEFAULT_COMMON_AGENT_INSTRUCTIONS,
 	DEFAULT_PLAN_AGENT_INSTRUCTIONS,
 	DEFAULT_PLAN_REVIEWER_INSTRUCTIONS,
 	DEFAULT_WORK_AGENT_INSTRUCTIONS,
 	DEFAULT_WORK_REVIEWER_INSTRUCTIONS,
 	DEFAULT_WRAPUP_INSTRUCTIONS,
-	interpolateBaseInstructions,
 	resolveRoleInstructions,
 	type Role,
 } from './prompt-defaults.js';
@@ -34,28 +34,37 @@ describe('resolveRoleInstructions', () => {
 	});
 });
 
-describe('interpolateBaseInstructions', () => {
-	test('substitutes branchPrefix placeholder', () => {
-		const output = interpolateBaseInstructions('feat/');
-		expect(output).toContain('feat/');
-		expect(output).not.toContain('{branchPrefix}');
-	});
-
-	test('keeps placeholder in raw default', () => {
-		expect(DEFAULT_BASE_INSTRUCTIONS).toContain('{branchPrefix}');
-	});
-});
-
 describe('role default content', () => {
-	test('base forbids direct git push and mentions tokens', () => {
-		expect(DEFAULT_BASE_INSTRUCTIONS.toLowerCase()).toContain('push');
-		expect(DEFAULT_BASE_INSTRUCTIONS.toLowerCase()).toContain('token');
-		expect(DEFAULT_BASE_INSTRUCTIONS).toContain('Mediated secrets');
-		expect(DEFAULT_BASE_INSTRUCTIONS).toContain('NPM_AUTH_TOKEN');
-		expect(DEFAULT_BASE_INSTRUCTIONS).toContain(
-			'printf \'//registry.npmjs.org/:_authToken=${NPM_AUTH_TOKEN}\\n\' > "$HOME/.npmrc"',
-		);
-		expect(DEFAULT_BASE_INSTRUCTIONS).toContain('Do not inline the env var');
+	test('built-in instructions describe runtime layers and platform boundaries', () => {
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('Instruction layers');
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('/workspace/AGENTS.md');
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('/agent-vm/agents.md');
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('/agent-vm/runtime-instructions.md');
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('/state');
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('{branchPrefix}');
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS.toLowerCase()).toContain('push');
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS.toLowerCase()).toContain('token');
+	});
+
+	test('common instructions describe configurable agent behavior', () => {
+		expect(DEFAULT_COMMON_AGENT_INSTRUCTIONS).toContain('Package manager conventions');
+		expect(DEFAULT_COMMON_AGENT_INSTRUCTIONS).toContain('runtimeInstructions');
+		expect(DEFAULT_COMMON_AGENT_INSTRUCTIONS).toContain('{branchPrefix}');
+		expect(DEFAULT_COMMON_AGENT_INSTRUCTIONS).not.toContain('GH_TOKEN="$GITHUB_TOKEN"');
+	});
+
+	test('built-in instructions teach Deepwiki research priority', () => {
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('## Research');
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('Deepwiki MCP');
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('ask_question');
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('NEVER');
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('read_wiki_structure');
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('read_wiki_contents');
+	});
+
+	test('built-in instructions defer project-specific research tools to project instructions', () => {
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('Project-specific research tools');
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('Project-level instructions');
 	});
 
 	test('plan-agent does not mention validation tool', () => {

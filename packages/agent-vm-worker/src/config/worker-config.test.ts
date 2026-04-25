@@ -15,6 +15,8 @@ import {
 
 function baseValidConfig(): Record<string, unknown> {
 	return {
+		runtimeInstructions: 'runtime facts',
+		commonAgentInstructions: null,
 		defaults: { provider: 'codex', model: 'latest-medium' },
 		phases: {
 			plan: {
@@ -44,6 +46,8 @@ describe('worker-config', () => {
 		it('accepts valid config with null role instructions', () => {
 			const config = workerConfigSchema.parse(baseValidConfig());
 
+			expect(config.runtimeInstructions).toBe('runtime facts');
+			expect(config.commonAgentInstructions).toBeNull();
 			expect(config.phases.plan.agentInstructions).toBeNull();
 			expect(config.phases.work.reviewerInstructions).toBeNull();
 			expect(config.phases.wrapup.instructions).toBeNull();
@@ -67,9 +71,41 @@ describe('worker-config', () => {
 			expect(workerConfigSchema.safeParse(input).success).toBe(true);
 		});
 
+		it('accepts final runtime and common agent instructions', () => {
+			const input = baseValidConfig();
+			input.runtimeInstructions = 'runtime facts from controller';
+			input.commonAgentInstructions = 'common behavior';
+
+			const config = workerConfigSchema.parse(input);
+
+			expect(config.runtimeInstructions).toBe('runtime facts from controller');
+			expect(config.commonAgentInstructions).toBe('common behavior');
+		});
+
+		it('requires runtime instructions in the final worker config', () => {
+			const input = baseValidConfig();
+			delete input.runtimeInstructions;
+
+			expect(() => workerConfigSchema.parse(input)).toThrow(/runtimeInstructions/u);
+		});
+
+		it('rejects empty runtime instructions in the final worker config', () => {
+			const input = baseValidConfig();
+			input.runtimeInstructions = '';
+
+			expect(workerConfigSchema.safeParse(input).success).toBe(false);
+		});
+
+		it('does not accept legacy instructions', () => {
+			const input = baseValidConfig();
+			input.instructions = 'legacy base instructions';
+
+			expect(() => workerConfigSchema.parse(input)).toThrow();
+		});
+
 		it('rejects instruction arrays', () => {
 			const input = baseValidConfig();
-			input.instructions = ['base line 1', 'base line 2'];
+			input.commonAgentInstructions = ['base line 1', 'base line 2'];
 
 			expect(workerConfigSchema.safeParse(input).success).toBe(false);
 		});
@@ -125,6 +161,44 @@ describe('worker-config', () => {
 					wrapupActions: [{ type: 'git-pr', required: true }],
 				}).success,
 			).toBe(false);
+		});
+
+		it('accepts mcpServer entry without bearerTokenEnvVar', () => {
+			const result = workerConfigSchema.safeParse({
+				...baseValidConfig(),
+				mcpServers: [{ name: 'deepwiki', url: 'https://mcp.deepwiki.com/mcp' }],
+			});
+			expect(result.success).toBe(true);
+			if (result.success) {
+				expect(result.data.mcpServers[0]?.bearerTokenEnvVar).toBeUndefined();
+			}
+		});
+
+		it('accepts mcpServer entry with bearerTokenEnvVar', () => {
+			const result = workerConfigSchema.safeParse({
+				...baseValidConfig(),
+				mcpServers: [
+					{
+						name: 'internal-docs',
+						url: 'https://docs.example.test/mcp',
+						bearerTokenEnvVar: 'INTERNAL_DOCS_TOKEN',
+					},
+				],
+			});
+			expect(result.success).toBe(true);
+			if (result.success) {
+				expect(result.data.mcpServers[0]?.bearerTokenEnvVar).toBe('INTERNAL_DOCS_TOKEN');
+			}
+		});
+
+		it('rejects empty bearerTokenEnvVar', () => {
+			const result = workerConfigSchema.safeParse({
+				...baseValidConfig(),
+				mcpServers: [
+					{ name: 'internal-docs', url: 'https://docs.example.test/mcp', bearerTokenEnvVar: '' },
+				],
+			});
+			expect(result.success).toBe(false);
 		});
 	});
 
@@ -190,10 +264,14 @@ describe('worker-config', () => {
 			const configPath = join(tempDir, 'nested', 'worker.json');
 			const promptDir = join(tempDir, 'nested', 'prompts');
 			await mkdir(promptDir, { recursive: true });
-			await writeFile(join(promptDir, 'base.md'), 'base line 1\nbase line 2\n', 'utf-8');
+			await writeFile(
+				join(promptDir, 'common-agent-instructions.md'),
+				'base line 1\nbase line 2\n',
+				'utf-8',
+			);
 			await writeFile(join(promptDir, 'plan-agent.md'), 'plan agent\n', 'utf-8');
 			const rawConfig = baseValidConfig();
-			rawConfig.instructions = { path: './prompts/base.md' };
+			rawConfig.commonAgentInstructions = { path: './prompts/common-agent-instructions.md' };
 			(
 				rawConfig.phases as {
 					plan: { agentInstructions: unknown };
@@ -203,25 +281,25 @@ describe('worker-config', () => {
 
 			const config = await loadWorkerConfig(configPath);
 
-			expect(config.instructions).toBe('base line 1\nbase line 2\n');
+			expect(config.commonAgentInstructions).toBe('base line 1\nbase line 2\n');
 			expect(config.phases.plan.agentInstructions).toBe('plan agent\n');
 		});
 
 		it('fails fast when an instruction file reference is missing', async () => {
 			const configPath = join(tempDir, 'worker.json');
 			const rawConfig = baseValidConfig();
-			rawConfig.instructions = { path: './prompts/missing.md' };
+			rawConfig.commonAgentInstructions = { path: './prompts/missing.md' };
 			await writeFile(configPath, JSON.stringify(rawConfig), 'utf-8');
 
 			await expect(loadWorkerConfig(configPath)).rejects.toThrow(
-				/instructions.*prompts\/missing\.md/u,
+				/commonAgentInstructions.*prompts\/missing\.md/u,
 			);
 		});
 
 		it('rejects absolute instruction file references', async () => {
 			const configPath = join(tempDir, 'worker.json');
 			const rawConfig = baseValidConfig();
-			rawConfig.instructions = { path: join(tempDir, 'prompts', 'base.md') };
+			rawConfig.commonAgentInstructions = { path: join(tempDir, 'prompts', 'base.md') };
 			await writeFile(configPath, JSON.stringify(rawConfig), 'utf-8');
 
 			await expect(loadWorkerConfig(configPath)).rejects.toThrow(/must be relative/u);
@@ -231,7 +309,7 @@ describe('worker-config', () => {
 			const configPath = join(tempDir, 'worker.json');
 			await writeFile(join(tempDir, 'outside.md'), 'outside\n', 'utf-8');
 			const rawConfig = baseValidConfig();
-			rawConfig.instructions = { path: './outside.md' };
+			rawConfig.commonAgentInstructions = { path: './outside.md' };
 			await writeFile(configPath, JSON.stringify(rawConfig), 'utf-8');
 
 			await expect(loadWorkerConfig(configPath)).rejects.toThrow(/must stay under '\.\/prompts'/u);
@@ -244,7 +322,7 @@ describe('worker-config', () => {
 			await writeFile(join(tempDir, 'outside.md'), 'outside\n', 'utf-8');
 			await symlink(join(tempDir, 'outside.md'), join(promptDir, 'escaped.md'));
 			const rawConfig = baseValidConfig();
-			rawConfig.instructions = { path: './prompts/escaped.md' };
+			rawConfig.commonAgentInstructions = { path: './prompts/escaped.md' };
 			await writeFile(configPath, JSON.stringify(rawConfig), 'utf-8');
 
 			await expect(loadWorkerConfig(configPath)).rejects.toThrow(/escapes/u);

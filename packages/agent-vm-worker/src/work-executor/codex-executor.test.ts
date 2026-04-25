@@ -306,6 +306,47 @@ describe('codex-executor', () => {
 		);
 	});
 
+	it('registers remote mcp servers with bearer token env vars', async () => {
+		const thread = createMockThread('thread-1', 'done', 5);
+		mockStartThread.mockReturnValue(thread);
+
+		const { createCodexExecutor } = await import('./codex-executor.js');
+		const executor = createCodexExecutor({
+			model: 'latest',
+			capabilities: {
+				mcpServers: [
+					{
+						name: 'internal-docs',
+						url: 'http://127.0.0.1:4100/mcp',
+						bearerTokenEnvVar: 'INTERNAL_DOCS_TOKEN',
+					},
+				],
+				tools: [],
+			},
+		});
+
+		await executor.execute([{ type: 'text', text: 'hello' }]);
+
+		expect(execaMock).toHaveBeenCalledWith(
+			'codex',
+			[
+				'mcp',
+				'add',
+				'internal-docs',
+				'--url',
+				'http://127.0.0.1:4100/mcp',
+				'--bearer-token-env-var',
+				'INTERNAL_DOCS_TOKEN',
+			],
+			// oxlint-disable-next-line typescript-eslint/no-unsafe-assignment
+			expect.objectContaining({
+				env: expect.objectContaining({
+					HOME: expect.any(String),
+				}),
+			}),
+		);
+	});
+
 	it('uses STATE_DIR for temporary codex home when available', async () => {
 		const thread = createMockThread('thread-1', 'done', 5);
 		mockStartThread.mockReturnValue(thread);

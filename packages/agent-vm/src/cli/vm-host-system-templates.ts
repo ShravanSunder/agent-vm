@@ -147,11 +147,11 @@ CACHE_STATUS="$(
 read -r GATEWAY_CACHE_HIT <<< "$CACHE_STATUS"
 
 if [ "$GATEWAY_CACHE_HIT" = "yes" ]; then
-  echo "[start] EFS cache hit for gateway image; skipping docker build and agent-vm build"
+  echo "[start] cache hit for gateway image; skipping docker build and agent-vm build"
 else
-  echo "[start] EFS cache miss; building OCI gateway image..."
+  echo "[start] cache miss; building OCI gateway image..."
   docker build \\
-    -t agent-vm-gateway:catalog \\
+    -t agent-vm-gateway:local \\
     -f /etc/agent-vm/vm-images/gateways/worker/Dockerfile \\
     /etc/agent-vm/vm-images/gateways/worker/
 
