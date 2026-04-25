@@ -1,7 +1,18 @@
 {
 	"name": "@agent-vm/agent-vm-worker",
-	"version": "0.0.19",
+	"version": "0.0.20",
+	"description": "Worker process that runs inside a sandboxed VM, plans, edits, validates, and reviews coding tasks.",
+	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
+	"bugs": {
+		"url": "https://github.com/ShravanSunder/agent-vm/issues"
+	},
+	"license": "MIT",
 	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/agent-vm-worker"
+	},
 	"bin": {
 		"agent-vm-worker": "./dist/main.js"
 	},
@@ -18,7 +29,7 @@
 		}
 	},
 	"publishConfig": {
-		"access": "restricted"
+		"access": "public"
 	},
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",

@@ -1,0 +1,66 @@
+name: Publish
+
+# Publishes every workspace package to npm using Trusted Publishing
+# (OIDC).  No NPM_TOKEN secret is stored — npm exchanges the
+# GitHub-issued OIDC token for a short-lived publish credential.
+#
+# Configure trusted publishers per package on npmjs.com BEFORE the
+# first OIDC publish:
+#   Package settings ▸ Trusted Publisher ▸ GitHub Actions
+#   organization: ShravanSunder
+#   repository:   agent-vm
+#   workflow:     publish.yml
+#   environment:  npm-publish
+#
+# Repeat for each of the 7 @agent-vm/* packages.  Provenance is
+# generated automatically.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm-publish
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org/
+          cache: pnpm
+
+      - name: Upgrade npm to >= 11.5.1 (Trusted Publishing requirement)
+        run: npm install -g npm@latest
+
+      - name: Install age
+        run: sudo apt-get update && sudo apt-get install -y age
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm fmt:check
+
+      - name: Unit tests
+        run: pnpm test:unit
+
+      - name: Publish to npm via OIDC
+        run: pnpm -r publish --access=public --no-git-checks

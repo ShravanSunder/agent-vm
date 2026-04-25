@@ -1,7 +1,18 @@
 {
 	"name": "@agent-vm/gateway-interface",
-	"version": "0.0.19",
+	"version": "0.0.20",
+	"description": "Shared TypeScript interfaces for VM gateway lifecycles, VmSpec, and ProcessSpec.",
+	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
+	"bugs": {
+		"url": "https://github.com/ShravanSunder/agent-vm/issues"
+	},
+	"license": "MIT",
 	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/gateway-interface"
+	},
 	"files": [
 		"dist"
 	],
@@ -15,7 +26,7 @@
 		}
 	},
 	"publishConfig": {
-		"access": "restricted"
+		"access": "public"
 	},
 	"scripts": {
 		"build": "tsdown",

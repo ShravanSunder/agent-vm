@@ -1,7 +1,18 @@
 {
 	"name": "@agent-vm/agent-vm",
-	"version": "0.0.19",
+	"version": "0.0.20",
+	"description": "Controller CLI and HTTP server for sandboxed VM coding agents.",
+	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
+	"bugs": {
+		"url": "https://github.com/ShravanSunder/agent-vm/issues"
+	},
+	"license": "MIT",
 	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/agent-vm"
+	},
 	"bin": {
 		"agent-vm": "./dist/cli/agent-vm-entrypoint.js"
 	},
@@ -18,7 +29,7 @@
 		}
 	},
 	"publishConfig": {
-		"access": "restricted"
+		"access": "public"
 	},
 	"scripts": {
 		"build": "rm -rf dist && tsc -p tsconfig.build.json",
