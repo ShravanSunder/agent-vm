@@ -86,6 +86,7 @@ export type ScaffoldPathMode = 'local' | 'pod';
 
 interface ScaffoldPathProfile {
 	readonly cacheDir: string;
+	readonly createLocalRuntimeDirectories: boolean;
 	readonly gatewayConfig: (zoneId: string, gatewayType: GatewayType) => string;
 	readonly gatewayStateDir: (zoneId: string) => string;
 	readonly gatewayWorkspaceDir: (zoneId: string) => string;
@@ -103,6 +104,7 @@ function resolveGatewayConfigFileName(gatewayType: GatewayType): 'worker.json' |
 
 const localPathProfile: ScaffoldPathProfile = {
 	cacheDir: '../cache',
+	createLocalRuntimeDirectories: true,
 	gatewayConfig: (zoneId, gatewayType) =>
 		`./gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 	gatewayStateDir: (zoneId) => `../state/${zoneId}`,
@@ -115,6 +117,7 @@ const localPathProfile: ScaffoldPathProfile = {
 
 const podPathProfile: ScaffoldPathProfile = {
 	cacheDir: '/var/agent-vm/cache',
+	createLocalRuntimeDirectories: false,
 	gatewayConfig: (zoneId, gatewayType) =>
 		`/etc/agent-vm/gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 	gatewayStateDir: () => '/var/agent-vm/state',
@@ -893,15 +896,17 @@ async function scaffoldAgentVmProjectInternal(
 		);
 	}
 
-	await Promise.all(
-		[
-			path.join(options.targetDir, 'state', options.zoneId),
-			path.join(options.targetDir, 'workspaces', options.zoneId),
-			path.join(options.targetDir, 'workspaces', 'tools'),
-		].map(async (directoryPath) => {
-			await fs.mkdir(directoryPath, { recursive: true });
-		}),
-	);
+	if (pathProfile.createLocalRuntimeDirectories) {
+		await Promise.all(
+			[
+				path.join(options.targetDir, 'state', options.zoneId),
+				path.join(options.targetDir, 'workspaces', options.zoneId),
+				path.join(options.targetDir, 'workspaces', 'tools'),
+			].map(async (directoryPath) => {
+				await fs.mkdir(directoryPath, { recursive: true });
+			}),
+		);
+	}
 
 	return { created, keychainStored: false, skipped };
 }

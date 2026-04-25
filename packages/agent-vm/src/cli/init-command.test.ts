@@ -353,7 +353,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(warnings.join('\n')).toContain('age-keygen missing');
 	});
 
-	it('creates config and state directories', async () => {
+	it('creates local runtime directories for local scaffolds', async () => {
 		const targetDir = await createTestDirectory();
 
 		await scaffoldAgentVmProject(
@@ -371,6 +371,27 @@ describe('scaffoldAgentVmProject', () => {
 		expect(await pathExists(path.join(targetDir, 'state', 'my-zone'))).toBe(true);
 		expect(await pathExists(path.join(targetDir, 'workspaces', 'my-zone'))).toBe(true);
 		expect(await pathExists(path.join(targetDir, 'workspaces', 'tools'))).toBe(true);
+	});
+
+	it('does not create checkout-local runtime directories for container scaffolds', async () => {
+		const targetDir = await createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{
+				targetDir,
+				zoneId: 'my-zone',
+				gatewayType: 'worker',
+				architecture: 'x86_64',
+				secretsProvider: 'environment',
+				paths: 'pod',
+				hostSystemType: 'container',
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		expect(await pathExists(path.join(targetDir, 'config', 'gateways', 'my-zone'))).toBe(true);
+		expect(await pathExists(path.join(targetDir, 'state'))).toBe(false);
+		expect(await pathExists(path.join(targetDir, 'workspaces'))).toBe(false);
 	});
 
 	it('scaffolds a type-specific gateway config file', async () => {
