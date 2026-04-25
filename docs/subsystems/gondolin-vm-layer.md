@@ -2,13 +2,13 @@
 
 [Overview](../README.md) > [Architecture](../architecture/overview.md) > Gondolin VM Layer
 
-Deep dive into the Gondolin VM abstraction: how `gondolin-core` wraps the `@earendil-works/gondolin` SDK into a managed VM interface with VFS mounts, HTTP secret mediation, synthetic DNS, and fingerprint-cached image builds. This is the lowest infrastructure layer -- every gateway and tool VM in the system boots through this adapter.
+Deep dive into the Gondolin VM abstraction: how `gondolin-adapter` wraps the `@earendil-works/gondolin` SDK into a managed VM interface with VFS mounts, HTTP secret mediation, synthetic DNS, and fingerprint-cached image builds. This is the lowest infrastructure layer -- every gateway and tool VM in the system boots through this adapter.
 
 ---
 
 ## What Gondolin Provides
 
-Gondolin (`@earendil-works/gondolin`) is the external SDK that runs QEMU micro-VMs on the host. The system never calls QEMU directly. Instead, `gondolin-core` wraps the SDK into a dependency-injectable adapter with narrower types.
+Gondolin (`@earendil-works/gondolin`) is the external SDK that runs QEMU micro-VMs on the host. The system never calls QEMU directly. Instead, `gondolin-adapter` wraps the SDK into a dependency-injectable adapter with narrower types.
 
 | Capability | SDK Surface | What It Does |
 |------------|-------------|--------------|
@@ -142,7 +142,7 @@ Only hosts in the `allowedHosts` list can be reached. Requests to unlisted hosts
 
 ## TCP Host Mapping
 
-TCP host mapping lets processes inside the VM reach host-side TCP services via synthetic DNS hostnames. This is how gateway VMs talk to the controller and how OpenClaw gateways reach tool VM SSH ports.
+TCP host mapping lets processes inside the VM reach host-side TCP services via synthetic DNS hostnames. This is how gateway VMs talk to the controller and how OpenClaw Gateways reach tool VM SSH ports.
 
 ```
   Inside VM                          Host Side
@@ -156,7 +156,7 @@ When `tcpHosts` is provided in `CreateVmOptions`, the adapter configures:
 - `dns.mode: 'synthetic'` with `syntheticHostMapping: 'per-host'` -- Gondolin resolves virtual hostnames to loopback addresses inside the VM
 - `tcp.hosts` -- maps each virtual hostname to a real host-side TCP endpoint
 
-Worker VMs only map the controller endpoint. OpenClaw gateway VMs map the controller plus all tool VM slots from the TCP pool.
+Worker VMs only map the controller endpoint. OpenClaw Gateway VMs map the controller plus all tool VM slots from the TCP pool.
 
 ---
 
@@ -200,9 +200,9 @@ The `fullReset` option deletes the cached image directory before building, forci
 
 ---
 
-## gondolin-core Exports
+## gondolin-adapter Exports
 
-The `gondolin-core` package (`packages/gondolin-core/src/index.ts`) re-exports everything the rest of the system needs from the Gondolin layer.
+The `gondolin-adapter` package (`packages/gondolin-adapter/src/index.ts`) re-exports everything the rest of the system needs from the Gondolin layer.
 
 | Export | Source | Purpose |
 |--------|--------|---------|
@@ -228,14 +228,14 @@ The `gondolin-core` package (`packages/gondolin-core/src/index.ts`) re-exports e
 
 | File | Lines | Responsibility |
 |------|-------|----------------|
-| `packages/gondolin-core/src/vm-adapter.ts` | 287 | `ManagedVm` interface, `createManagedVm()`, VFS provider assembly, HTTP hooks wiring |
-| `packages/gondolin-core/src/secret-resolver.ts` | 278 | `SecretResolver` interface, 1Password SDK client with op-cli fallback, token source resolution |
-| `packages/gondolin-core/src/types.ts` | 14 | `SecretSpec` and `SecretRef` type definitions |
-| `packages/gondolin-core/src/build-pipeline.ts` | 132 | `buildImage()`, `computeBuildFingerprint()`, asset verification |
-| `packages/gondolin-core/src/mount-policy.ts` | 117 | Writable mount validation, auth path protection |
-| `packages/gondolin-core/src/policy-compiler.ts` | 33 | Host allowlist compilation and deduplication |
-| `packages/gondolin-core/src/volume-manager.ts` | 39 | Persistent volume directory management |
-| `packages/gondolin-core/src/write-file-atomically.ts` | 29 | Atomic file write via write-then-rename |
-| `packages/gondolin-core/src/index.ts` | 11 | Barrel re-exports |
+| `packages/gondolin-adapter/src/vm-adapter.ts` | 287 | `ManagedVm` interface, `createManagedVm()`, VFS provider assembly, HTTP hooks wiring |
+| `packages/gondolin-adapter/src/secret-resolver.ts` | 278 | `SecretResolver` interface, 1Password SDK client with op-cli fallback, token source resolution |
+| `packages/gondolin-adapter/src/types.ts` | 14 | `SecretSpec` and `SecretRef` type definitions |
+| `packages/gondolin-adapter/src/build-pipeline.ts` | 132 | `buildImage()`, `computeBuildFingerprint()`, asset verification |
+| `packages/gondolin-adapter/src/mount-policy.ts` | 117 | Writable mount validation, auth path protection |
+| `packages/gondolin-adapter/src/policy-compiler.ts` | 33 | Host allowlist compilation and deduplication |
+| `packages/gondolin-adapter/src/volume-manager.ts` | 39 | Persistent volume directory management |
+| `packages/gondolin-adapter/src/write-file-atomically.ts` | 29 | Atomic file write via write-then-rename |
+| `packages/gondolin-adapter/src/index.ts` | 11 | Barrel re-exports |
 | `packages/agent-vm/src/build/gondolin-image-builder.ts` | 47 | `buildGondolinImage()` wrapper with config loading |
 | `packages/agent-vm/src/gateway/gateway-image-builder.ts` | 41 | `buildGatewayImage()` thin wrapper for gateway-specific builds |

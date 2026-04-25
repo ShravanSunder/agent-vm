@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVm } from '@shravansunder/gondolin-core';
+import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { SystemConfig } from '../config/system-config.js';
+import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { createToolVm } from './tool-vm-lifecycle.js';
 
 const createdDirectories: string[] = [];
@@ -23,57 +23,73 @@ function createTemporaryDirectory(): string {
 	return temporaryDirectory;
 }
 
-function createToolVmSystemConfig(): SystemConfig {
+function createToolVmSystemConfig(): LoadedSystemConfig {
 	const temporaryDirectory = createTemporaryDirectory();
+	const systemConfigPath = path.join(temporaryDirectory, 'config', 'system.json');
 
-	return {
-		cacheDir: path.join(temporaryDirectory, 'cache'),
-		host: {
-			controllerPort: 18800,
-			projectNamespace: 'claw-tests-a1b2c3d4',
-			secretsProvider: {
-				type: '1password',
-				tokenSource: { type: 'env' },
-			},
-		},
-		images: {
-			gateway: {
-				buildConfig: '/project/images/gateway/build-config.json',
-			},
-			tool: {
-				buildConfig: '/project/images/tool/build-config.json',
-			},
-		},
-		tcpPool: {
-			basePort: 19000,
-			size: 5,
-		},
-		toolProfiles: {
-			standard: {
-				cpus: 1,
-				memory: '1G',
-				workspaceRoot: path.join(temporaryDirectory, 'workspaces', 'tools'),
-			},
-		},
-		zones: [
-			{
-				allowedHosts: ['api.anthropic.com'],
-				gateway: {
-					type: 'openclaw',
-					cpus: 2,
-					memory: '2G',
-					gatewayConfig: './config/shravan/openclaw.json',
-					port: 18791,
-					stateDir: './state/shravan',
-					workspaceDir: './workspaces/shravan',
+	return createLoadedSystemConfig(
+		{
+			cacheDir: path.join(temporaryDirectory, 'cache'),
+			host: {
+				controllerPort: 18800,
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				secretsProvider: {
+					type: '1password',
+					tokenSource: { type: 'env' },
 				},
-				id: 'shravan',
-				secrets: {},
-				toolProfile: 'standard',
-				websocketBypass: [],
 			},
-		],
-	};
+			imageProfiles: {
+				gateways: {
+					openclaw: {
+						type: 'openclaw',
+						buildConfig: '/project/vm-images/gateways/openclaw/build-config.json',
+					},
+					worker: {
+						type: 'worker',
+						buildConfig: '/project/vm-images/gateways/worker/build-config.json',
+					},
+				},
+				toolVms: {
+					default: {
+						type: 'toolVm',
+						buildConfig: '/project/vm-images/tool-vms/default/build-config.json',
+					},
+				},
+			},
+			tcpPool: {
+				basePort: 19000,
+				size: 5,
+			},
+			toolProfiles: {
+				standard: {
+					cpus: 1,
+					imageProfile: 'default',
+					memory: '1G',
+					workspaceRoot: path.join(temporaryDirectory, 'workspaces', 'tools'),
+				},
+			},
+			zones: [
+				{
+					allowedHosts: ['api.anthropic.com'],
+					gateway: {
+						type: 'openclaw',
+						imageProfile: 'openclaw',
+						cpus: 2,
+						memory: '2G',
+						config: './config/shravan/openclaw.json',
+						port: 18791,
+						stateDir: './state/shravan',
+						workspaceDir: './workspaces/shravan',
+					},
+					id: 'shravan',
+					secrets: {},
+					toolProfile: 'standard',
+					websocketBypass: [],
+				},
+			],
+		},
+		{ systemConfigPath },
+	);
 }
 
 describe('createToolVm', () => {
@@ -128,8 +144,9 @@ describe('createToolVm', () => {
 
 		expect(result).toBe(managedVm);
 		expect(buildGondolinImage).toHaveBeenCalledWith({
-			buildConfigPath: '/project/images/tool/build-config.json',
-			cacheDir: path.join(systemConfig.cacheDir, 'images', 'tool'),
+			buildConfigPath: '/project/vm-images/tool-vms/default/build-config.json',
+			systemCacheIdentifierPath: systemConfig.systemCacheIdentifierPath,
+			cacheDir: path.join(systemConfig.cacheDir, 'tool-vm-images', 'default'),
 		});
 		expect(exec).not.toHaveBeenCalled();
 	});

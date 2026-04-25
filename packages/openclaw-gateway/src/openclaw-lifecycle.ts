@@ -7,16 +7,16 @@ import type {
 	GatewayProcessSpec,
 	GatewayZoneConfig,
 	GatewayVmSpec,
-} from '@shravansunder/gateway-interface';
+} from '@agent-vm/gateway-interface';
 import {
 	buildGatewaySessionLabel as buildGatewaySessionLabelValue,
 	splitResolvedGatewaySecrets,
-} from '@shravansunder/gateway-interface';
+} from '@agent-vm/gateway-interface';
 import {
 	type SecretRef,
 	type SecretResolver,
 	writeFileAtomically,
-} from '@shravansunder/gondolin-core';
+} from '@agent-vm/gondolin-adapter';
 
 const effectiveOpenClawConfigFileName = 'effective-openclaw.json';
 const effectiveOpenClawConfigVmPath = `/home/openclaw/.openclaw/state/${effectiveOpenClawConfigFileName}`;
@@ -181,17 +181,17 @@ async function writeEffectiveOpenClawConfig(
 			);
 		}
 		const gatewayToken = await secretResolver.resolve(toSecretRef(gatewayTokenSecret));
-		const rawBaseConfig = await fs.readFile(zone.gateway.gatewayConfig, 'utf8');
+		const rawBaseConfig = await fs.readFile(zone.gateway.config, 'utf8');
 		const parsedBaseConfig: unknown = JSON.parse(rawBaseConfig);
 		if (!isObjectRecord(parsedBaseConfig)) {
-			throw new Error(`OpenClaw config at '${zone.gateway.gatewayConfig}' must be a JSON object.`);
+			throw new Error(`OpenClaw config at '${zone.gateway.config}' must be a JSON object.`);
 		}
-		const gatewayConfig = isObjectRecord(parsedBaseConfig.gateway) ? parsedBaseConfig.gateway : {};
-		const existingAuthConfig = isObjectRecord(gatewayConfig.auth) ? gatewayConfig.auth : {};
+		const config = isObjectRecord(parsedBaseConfig.gateway) ? parsedBaseConfig.gateway : {};
+		const existingAuthConfig = isObjectRecord(config.auth) ? config.auth : {};
 		const effectiveConfig = {
 			...parsedBaseConfig,
 			gateway: {
-				...gatewayConfig,
+				...config,
 				auth: {
 					...existingAuthConfig,
 					mode: 'token',
@@ -210,7 +210,7 @@ async function writeEffectiveOpenClawConfig(
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		throw new Error(
-			`Failed to write effective OpenClaw config for zone '${zone.id}' from '${zone.gateway.gatewayConfig}' using secret '${describeSecretReference(gatewayTokenSecret)}': ${message}`,
+			`Failed to write effective OpenClaw config for zone '${zone.id}' from '${zone.gateway.config}' using secret '${describeSecretReference(gatewayTokenSecret)}': ${message}`,
 			{ cause: error },
 		);
 	}
@@ -230,7 +230,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 		tcpPool,
 		zone,
 	}: BuildGatewayVmSpecOptions): GatewayVmSpec {
-		const configDirectory = path.dirname(path.resolve(zone.gateway.gatewayConfig));
+		const configDirectory = path.dirname(path.resolve(zone.gateway.config));
 		const { environmentSecrets, mediatedSecrets } = splitResolvedGatewaySecrets(
 			zone,
 			resolvedSecrets,

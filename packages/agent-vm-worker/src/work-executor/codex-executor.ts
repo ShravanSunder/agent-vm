@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { Codex, type Thread, type UserInput } from '@openai/codex-sdk';
@@ -70,8 +71,9 @@ export function createCodexExecutor(config: CodexExecutorConfig): WorkExecutor {
 		}
 
 		await fs.mkdir(workingDirectory, { recursive: true });
-		const codexHomeBase = process.env.STATE_DIR ?? workingDirectory;
-		const tempHome = await fs.mkdtemp(path.join(codexHomeBase, '.agent-vm-codex-home-'));
+		const codexHomeBase = process.env.STATE_DIR ?? os.tmpdir();
+		await fs.mkdir(codexHomeBase, { recursive: true });
+		const tempHome = await fs.mkdtemp(path.join(codexHomeBase, 'agent-vm-codex-home-'));
 		await fs.mkdir(path.join(tempHome, '.codex'), { recursive: true });
 
 		for (const mcpServer of config.capabilities.mcpServers) {

@@ -1,7 +1,11 @@
 import { execFileSync } from 'node:child_process';
 
-import type { SystemConfig } from '../config/system-config.js';
+import { loadWorkerConfig } from '@agent-vm/agent-vm-worker';
+
+import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
+import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
+import { collectVmHostSystemDoctorCheck, type DoctorCheck } from '../operations/doctor.js';
 import {
 	createResolverFromSystemConfig,
 	type CliDependencies,
@@ -24,7 +28,7 @@ interface RunControllerOperationCommandOptions {
 		| 'status'
 		| 'stop'
 		| 'upgrade';
-	readonly systemConfig: SystemConfig;
+	readonly systemConfig: LoadedSystemConfig;
 }
 
 function collectAvailableBinaryNames(requiredBinaries: readonly string[]): ReadonlySet<string> {
@@ -40,6 +44,54 @@ function collectAvailableBinaryNames(requiredBinaries: readonly string[]): Reado
 	return availableBinaries;
 }
 
+async function collectWorkerGatewayConfigChecks(
+	systemConfig: SystemConfig,
+): Promise<readonly DoctorCheck[]> {
+	const checks: DoctorCheck[] = [];
+	for (const zone of systemConfig.zones) {
+		if (zone.gateway.type !== 'worker') {
+			continue;
+		}
+		try {
+			// oxlint-disable-next-line eslint/no-await-in-loop
+			await loadWorkerConfig(zone.gateway.config);
+			checks.push({
+				name: `worker-config-${zone.id}`,
+				ok: true,
+				hint: zone.gateway.config,
+			});
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			checks.push({
+				name: `worker-config-${zone.id}`,
+				ok: false,
+				hint: message,
+			});
+		}
+	}
+	return checks;
+}
+
+async function collectSystemCacheIdentifierCheck(
+	systemConfig: LoadedSystemConfig,
+): Promise<DoctorCheck> {
+	try {
+		await loadSystemCacheIdentifier({ filePath: systemConfig.systemCacheIdentifierPath });
+		return {
+			name: 'system-cache-identifier',
+			ok: true,
+			hint: systemConfig.systemCacheIdentifierPath,
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			name: 'system-cache-identifier',
+			ok: false,
+			hint: message,
+		};
+	}
+}
+
 export async function runControllerOperationCommand(
 	options: RunControllerOperationCommandOptions,
 ): Promise<void> {
@@ -51,19 +103,32 @@ export async function runControllerOperationCommand(
 		case 'doctor': {
 			const availableBinaries = collectAvailableBinaryNames([
 				'qemu-system-aarch64',
-				'age',
+				'qemu-system-x86_64',
 				'op',
 				'security',
 			] as const);
-			writeJson(
-				options.io,
-				options.dependencies.runControllerDoctor({
-					availableBinaries,
-					env: process.env,
-					nodeVersion: process.version,
-					systemConfig: options.systemConfig,
-				}),
+			const doctorResult = options.dependencies.runControllerDoctor({
+				availableBinaries,
+				env: process.env,
+				nodeVersion: process.version,
+				systemConfig: options.systemConfig,
+			});
+			const workerGatewayConfigChecks = await collectWorkerGatewayConfigChecks(
+				options.systemConfig,
 			);
+			const systemCacheIdentifierCheck = await collectSystemCacheIdentifierCheck(
+				options.systemConfig,
+			);
+			const vmHostSystemCheck = await collectVmHostSystemDoctorCheck(options.systemConfig);
+			const dynamicChecks = [
+				systemCacheIdentifierCheck,
+				...(vmHostSystemCheck ? [vmHostSystemCheck] : []),
+				...workerGatewayConfigChecks,
+			] as const satisfies readonly DoctorCheck[];
+			writeJson(options.io, {
+				ok: doctorResult.ok && dynamicChecks.every((check) => check.ok),
+				checks: [...doctorResult.checks, ...dynamicChecks],
+			});
 			return;
 		}
 		case 'status':

@@ -7,6 +7,26 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { workerConfigSchema } from '../config/worker-config.js';
 import { appendEvent, replayEvents } from './event-log.js';
 
+function buildWorkerConfigInput(): Record<string, unknown> {
+	return {
+		phases: {
+			plan: {
+				cycle: { kind: 'review', cycleCount: 1 },
+				agentInstructions: null,
+				reviewerInstructions: null,
+				skills: [],
+			},
+			work: {
+				cycle: { kind: 'review', cycleCount: 1 },
+				agentInstructions: null,
+				reviewerInstructions: null,
+				skills: [],
+			},
+			wrapup: { instructions: null, skills: [] },
+		},
+	};
+}
+
 describe('event-log', () => {
 	let tempDir: string | null = null;
 
@@ -30,7 +50,7 @@ describe('event-log', () => {
 				prompt: 'fix bug',
 				repos: [],
 				context: {},
-				effectiveConfig: workerConfigSchema.parse({}),
+				effectiveConfig: workerConfigSchema.parse(buildWorkerConfigInput()),
 			},
 		});
 		await appendEvent(filePath, { event: 'task-completed' });

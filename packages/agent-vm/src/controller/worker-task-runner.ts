@@ -2,20 +2,44 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { workerConfigSchema, type WorkerConfig } from '@shravansunder/agent-vm-worker';
-import type { SecretResolver } from '@shravansunder/gondolin-core';
+import {
+	appendEvent,
+	computeTotalTaskTimeoutMs,
+	resolveWorkerConfigInstructionReferences,
+	workerConfigSchema,
+	type TaskEvent,
+	type WorkerConfig,
+} from '@agent-vm/agent-vm-worker';
+import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 import { execa } from 'execa';
 import { z } from 'zod';
 
-import type { SystemConfig } from '../config/system-config.js';
-import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
-import type { GatewayZone } from '../gateway/gateway-zone-support.js';
-import type { ActiveWorkerTask } from './active-task-registry.js';
 import {
-	DockerServiceRoutingError,
-	startDockerServicesForTask,
-	stopDockerServicesForTask,
-} from './docker-service-routing.js';
+	workerTaskResourcesSchema,
+	workerTaskControllerRequestSchema,
+	type WorkerTaskControllerRequest,
+	type WorkerTaskControllerRequestInput,
+} from '../config/resource-contracts/index.js';
+import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
+import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import type {
+	GatewayManagedVmFactoryOptions,
+	GatewayZone,
+} from '../gateway/gateway-zone-support.js';
+import {
+	hasRepoResourceDescriptionContract,
+	loadRepoResourceDescriptionContract,
+} from '../resources/repo-resource-contract-loader.js';
+import {
+	startRepoResourceProviders,
+	stopRepoResourceProviders,
+	type StartedRepoResourceProvider,
+} from '../resources/repo-resource-provider-runner.js';
+import { compileResourceOverlay } from '../resources/resource-compiler.js';
+import { resolveTaskResources } from '../resources/resource-resolver.js';
+import type { ActiveWorkerTask } from './active-task-registry.js';
+import { buildGithubAuthConfigArgs, scrubGithubTokenFromOutput } from './git-auth-support.js';
+import { buildTaskConfigFromPreparedInput } from './task-config-builder.js';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -37,11 +61,16 @@ function writeStderr(message: string): void {
 	process.stderr.write(`${message}\n`);
 }
 
+function toError(error: unknown): Error {
+	return error instanceof Error ? error : new Error(String(error));
+}
+
 const taskStatusResponseSchema = z
 	.object({
 		status: z.string(),
 	})
 	.passthrough();
+const GIT_CLONE_TIMEOUT_MS = 120_000;
 
 async function readJsonObjectFile(
 	filePath: string,
@@ -72,20 +101,20 @@ async function copyLocalWorkerTarballIfConfigured(stateDir: string): Promise<voi
 	await fs.copyFile(localWorkerTarballPath, path.join(stateDir, 'agent-vm-worker.tgz'));
 }
 
-export interface WorkerTaskInput {
-	readonly prompt: string;
-	readonly repos: readonly { readonly repoUrl: string; readonly baseBranch: string }[];
-	readonly context: Record<string, unknown>;
-}
+export type WorkerTaskInput = WorkerTaskControllerRequestInput;
 
 export interface PreStartResult {
 	readonly taskId: string;
+	readonly input: WorkerTaskControllerRequest;
 	readonly taskRoot: string;
 	readonly workspaceDir: string;
 	readonly stateDir: string;
-	readonly composeFilePaths: readonly string[];
+	readonly startedResourceProviders: readonly StartedRepoResourceProvider[];
+	readonly environment: Record<string, string>;
 	readonly tcpHosts: Record<string, string>;
+	readonly vfsMounts: GatewayManagedVmFactoryOptions['vfsMounts'];
 	readonly repos: readonly {
+		readonly repoId: string;
 		readonly repoUrl: string;
 		readonly baseBranch: string;
 		readonly hostWorkspacePath: string;
@@ -97,7 +126,11 @@ export interface PreStartResult {
 function deriveRepoDirectoryName(repoUrl: string, usedNames: Set<string>): string {
 	const cleanedUrl = repoUrl.replace(/\.git$/, '');
 	const baseName = cleanedUrl.split('/').pop()?.trim() ?? 'repo';
-	const sanitizedBaseName = baseName.replace(/[^a-zA-Z0-9._-]/g, '-');
+	const sanitizedBaseName =
+		baseName
+			.toLowerCase()
+			.replace(/[^a-z0-9_-]+/gu, '-')
+			.replace(/^-+|-+$/gu, '') || 'repo';
 	let candidate = sanitizedBaseName;
 	let counter = 2;
 	while (usedNames.has(candidate)) {
@@ -117,54 +150,122 @@ export interface WorkerTaskResult {
 export async function preStartGateway(
 	taskInput: WorkerTaskInput,
 	zoneConfig: GatewayZone,
+	options: { readonly githubToken?: string } = {},
 ): Promise<PreStartResult> {
+	const parsedTaskInput = workerTaskControllerRequestSchema.parse(taskInput);
 	const taskId = crypto.randomUUID();
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
 	const workspaceDir = path.join(taskRoot, 'workspace');
 	const stateDir = path.join(taskRoot, 'state');
 
-	let composeFilePaths: readonly string[] = [];
-	await fs.mkdir(workspaceDir, { recursive: true });
-	await fs.mkdir(stateDir, { recursive: true });
-	await copyLocalWorkerTarballIfConfigured(stateDir);
-
+	let startedResourceProviders: readonly StartedRepoResourceProvider[] = [];
 	try {
+		await fs.mkdir(workspaceDir, { recursive: true });
+		await fs.mkdir(stateDir, { recursive: true });
+		await copyLocalWorkerTarballIfConfigured(stateDir);
+
 		const usedRepoNames = new Set<string>();
-		const clonedRepoHostDirs: string[] = [];
+		const preparedRepoTargets = parsedTaskInput.repos.map((repo) => {
+			const repoId = deriveRepoDirectoryName(repo.repoUrl, usedRepoNames);
+			const repoWorkspaceDir = path.join(workspaceDir, repoId);
+			return {
+				...repo,
+				repoId,
+				hostWorkspacePath: repoWorkspaceDir,
+				workspacePath: `/workspace/${repoId}`,
+			};
+		});
+		const cloneResults = await Promise.allSettled(
+			preparedRepoTargets.map(async (repo) => {
+				const authArgs = options.githubToken ? buildGithubAuthConfigArgs(options.githubToken) : [];
+				const cloneArgs = [
+					...authArgs,
+					'clone',
+					'--branch',
+					repo.baseBranch,
+					repo.repoUrl,
+					repo.hostWorkspacePath,
+				];
+				let cloneResult: {
+					readonly exitCode?: number;
+					readonly stderr: string;
+					readonly stdout: string;
+				};
+				try {
+					cloneResult = await execa('git', cloneArgs, {
+						reject: false,
+						timeout: GIT_CLONE_TIMEOUT_MS,
+					});
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					throw new Error(
+						`git clone failed for ${repo.repoUrl}: ${scrubGithubTokenFromOutput(message)}`,
+						{ cause: error },
+					);
+				}
+				if ((cloneResult.exitCode ?? -1) !== 0) {
+					const errorDetail = scrubGithubTokenFromOutput(
+						`${cloneResult.stdout}\n${cloneResult.stderr}`.trim(),
+					);
+					throw new Error(`git clone failed for ${repo.repoUrl}: ${errorDetail}`.trim());
+				}
+				await Promise.all(
+					(
+						[
+							['user.email', 'agent-vm-worker@agent-vm'],
+							['user.name', 'agent-vm-worker'],
+							['http.version', 'HTTP/1.1'],
+							['commit.gpgsign', 'false'],
+						] as const
+					).map(
+						async ([key, value]) =>
+							await execa('git', ['-C', repo.hostWorkspacePath, 'config', key, value], {
+								reject: true,
+								timeout: 10_000,
+							}),
+					),
+				);
+				return {
+					repoId: repo.repoId,
+					repoUrl: repo.repoUrl,
+					baseBranch: repo.baseBranch,
+					hostWorkspacePath: repo.hostWorkspacePath,
+					workspacePath: repo.workspacePath,
+				};
+			}),
+		);
+		const rejectedCloneResult = cloneResults.find((result) => result.status === 'rejected');
+		if (rejectedCloneResult) {
+			throw rejectedCloneResult.reason;
+		}
 		const clonedRepos: {
+			readonly repoId: string;
 			readonly repoUrl: string;
 			readonly baseBranch: string;
 			readonly hostWorkspacePath: string;
 			readonly workspacePath: string;
-		}[] = [];
-		for (const repo of taskInput.repos) {
-			const repoDirectoryName = deriveRepoDirectoryName(repo.repoUrl, usedRepoNames);
-			const repoWorkspaceDir = path.join(workspaceDir, repoDirectoryName);
-			const cloneArgs = ['clone', '--branch', repo.baseBranch, repo.repoUrl, repoWorkspaceDir];
-			// Repo cloning is intentionally sequential to keep host-side side effects easy to reason about.
-			// oxlint-disable-next-line eslint/no-await-in-loop
-			await execa('git', cloneArgs);
-			clonedRepoHostDirs.push(repoWorkspaceDir);
-			clonedRepos.push({
-				repoUrl: repo.repoUrl,
-				baseBranch: repo.baseBranch,
-				hostWorkspacePath: repoWorkspaceDir,
-				workspacePath: `/workspace/${repoDirectoryName}`,
-			});
-		}
+		}[] = cloneResults.map((result) => {
+			if (result.status === 'rejected') {
+				throw result.reason;
+			}
+			return result.value;
+		});
 
-		const primaryRepoWorkspaceDir = clonedRepoHostDirs[0] ?? workspaceDir;
+		const primaryRepoWorkspaceDir = clonedRepos[0]?.hostWorkspacePath ?? workspaceDir;
 		const projectConfigPath = path.join(primaryRepoWorkspaceDir, '.agent-vm', 'config.json');
 		const projectConfig = await readJsonObjectFile(projectConfigPath, {
 			label: 'project config',
 			missingValue: {},
 		});
-		const baseConfig = await readJsonObjectFile(zoneConfig.gateway.gatewayConfig, {
+		const baseConfig = await readJsonObjectFile(zoneConfig.gateway.config, {
 			label: 'gateway config',
 			missingValue: {},
 		});
+		const resolvedBaseConfig = await resolveWorkerConfigInstructionReferences(baseConfig, {
+			configPath: zoneConfig.gateway.config,
+		});
 		const effectiveConfig = workerConfigSchema.parse(
-			deepMerge(baseConfig, projectConfig),
+			deepMerge(resolvedBaseConfig, projectConfig),
 		) satisfies WorkerConfig;
 
 		await fs.writeFile(
@@ -173,81 +274,214 @@ export async function preStartGateway(
 			{ encoding: 'utf8', mode: 0o600 },
 		);
 
-		const dockerRouting = await startDockerServicesForTask(workspaceDir, clonedRepoHostDirs);
-		composeFilePaths = dockerRouting.composeFilePaths;
+		const repoResourceDescriptions = await Promise.all(
+			clonedRepos.map(async (repo) => ({
+				repoId: repo.repoId,
+				repoUrl: repo.repoUrl,
+				hasContract: await hasRepoResourceDescriptionContract(repo.hostWorkspacePath),
+				description: await loadRepoResourceDescriptionContract({
+					repoDir: repo.hostWorkspacePath,
+					repoId: repo.repoId,
+					repoUrl: repo.repoUrl,
+				}),
+			})),
+		);
+		const resources = workerTaskResourcesSchema.parse(parsedTaskInput.resources);
+		const resolvedResources = resolveTaskResources({
+			allowRepoResources: zoneConfig.resources?.allowRepoResources ?? true,
+			externalResources: resources.externalResources,
+			repos: repoResourceDescriptions,
+		});
+		const repoById = new Map(clonedRepos.map((repo) => [repo.repoId, repo]));
+		const providerRun = await startRepoResourceProviders({
+			taskId,
+			repos: repoResourceDescriptions
+				.map((repoDescription) => {
+					if (!repoDescription.hasContract) {
+						return null;
+					}
+					const repo = repoById.get(repoDescription.repoId);
+					if (!repo) {
+						throw new Error(`Resource setup references unknown repo '${repoDescription.repoId}'.`);
+					}
+					return {
+						repoId: repoDescription.repoId,
+						repoUrl: repoDescription.repoUrl,
+						repoDir: repo.hostWorkspacePath,
+						outputDir: path.join(stateDir, 'resources', repoDescription.repoId),
+						setupCommand: repoDescription.description.setupCommand,
+					};
+				})
+				.filter(
+					(
+						repo,
+					): repo is {
+						readonly repoId: string;
+						readonly repoUrl: string;
+						readonly repoDir: string;
+						readonly outputDir: string;
+						readonly setupCommand: string;
+					} => repo !== null,
+				),
+			providers: resolvedResources.selectedRepoProviders.map((provider) => {
+				const repo = repoById.get(provider.repoId);
+				if (!repo) {
+					throw new Error(
+						`Resolved resource provider references unknown repo '${provider.repoId}'.`,
+					);
+				}
+				return {
+					...provider,
+					repoDir: repo.hostWorkspacePath,
+					outputDir: path.join(stateDir, 'resources', provider.repoId),
+				};
+			}),
+		});
+		startedResourceProviders = providerRun.startedProviders;
+		const overlay = compileResourceOverlay({
+			externalResources: resolvedResources.externalResources,
+			repoFinalizations: providerRun.finalizations,
+		});
 
 		return {
 			taskId,
+			input: parsedTaskInput,
 			taskRoot,
 			workspaceDir,
 			stateDir,
-			composeFilePaths,
-			tcpHosts: dockerRouting.tcpHosts,
+			startedResourceProviders: providerRun.startedProviders,
+			environment: overlay.environment,
+			tcpHosts: overlay.tcpHosts,
+			vfsMounts: overlay.vfsMounts,
 			repos: clonedRepos,
 			effectiveConfig,
 		};
 	} catch (error) {
-		const composeFilesToStop =
-			error instanceof DockerServiceRoutingError ? error.startedComposeFilePaths : composeFilePaths;
-		try {
-			await stopDockerServicesForTask(composeFilesToStop);
-		} finally {
-			await fs.rm(taskRoot, { recursive: true, force: true });
-		}
-		throw error;
+		return await cleanupTaskRootAfterPreparationFailure({
+			primaryError: error,
+			startedProviders: startedResourceProviders,
+			taskId,
+			taskRoot,
+		});
 	}
 }
 
 export async function postStopGateway(
 	taskId: string,
 	zoneConfig: GatewayZone,
-	composeFilePaths: readonly string[] = [],
+	startedProviders: readonly StartedRepoResourceProvider[] = [],
 ): Promise<void> {
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
 	const workspaceDir = path.join(taskRoot, 'workspace');
+	const resourcesDir = path.join(taskRoot, 'state', 'resources');
 	let cleanupError: Error | null = null;
 	let workspaceRemovalError: Error | null = null;
+	let resourcesRemovalError: Error | null = null;
 	try {
-		await stopDockerServicesForTask(composeFilePaths);
+		await stopRepoResourceProviders(startedProviders);
 	} catch (error) {
 		cleanupError = error instanceof Error ? error : new Error(String(error));
+	}
+	try {
+		await fs.rm(resourcesDir, { recursive: true, force: true });
+	} catch (error) {
+		resourcesRemovalError = error instanceof Error ? error : new Error(String(error));
 	}
 	try {
 		await fs.rm(workspaceDir, { recursive: true, force: true });
 	} catch (error) {
 		workspaceRemovalError = error instanceof Error ? error : new Error(String(error));
 	}
-	if (cleanupError && workspaceRemovalError) {
-		throw new AggregateError(
-			[cleanupError, workspaceRemovalError],
-			`Failed to stop Docker services and prune the task workspace for ${taskId}.`,
+	const errors = [cleanupError, resourcesRemovalError, workspaceRemovalError].filter(
+		(error): error is Error => error !== null,
+	);
+	if (errors.length > 1) {
+		const aggregateError = new AggregateError(
+			errors,
+			`Failed to stop Docker services and prune task resources/workspace for ${taskId}.`,
 		);
+		aggregateError.cause = errors[0];
+		throw aggregateError;
 	}
-	if (cleanupError) {
-		throw cleanupError;
+	if (errors.length === 1) {
+		throw errors[0];
 	}
-	if (workspaceRemovalError) {
-		throw workspaceRemovalError;
+}
+
+async function cleanupTaskRootAfterPreparationFailure(options: {
+	readonly primaryError: unknown;
+	readonly startedProviders: readonly StartedRepoResourceProvider[];
+	readonly taskId: string;
+	readonly taskRoot: string;
+}): Promise<never> {
+	const errors = [toError(options.primaryError)];
+	try {
+		await stopRepoResourceProviders(options.startedProviders);
+	} catch (cleanupError) {
+		errors.push(toError(cleanupError));
 	}
+	try {
+		await fs.rm(options.taskRoot, { recursive: true, force: true });
+	} catch (removeError) {
+		errors.push(toError(removeError));
+	}
+	if (errors.length === 1) {
+		throw errors[0];
+	}
+	const aggregateError = new AggregateError(
+		errors,
+		`Failed to clean up task ${options.taskId} after preparation failure.`,
+	);
+	aggregateError.cause = errors[0];
+	throw aggregateError;
 }
 
 async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
 	const response = await fetch(url, init);
 	if (!response.ok) {
-		throw new Error(`${init?.method ?? 'GET'} ${url} failed with ${response.status}`);
+		const responseBody = await response.text();
+		throw new Error(
+			`${init?.method ?? 'GET'} ${url} failed with ${String(response.status)}: ${responseBody}`,
+		);
 	}
 	return await response.json();
 }
 
-export async function runWorkerTask(options: {
+export interface PreparedWorkerTask {
+	readonly taskId: string;
+	readonly taskRoot: string;
+	readonly zoneId: string;
+	readonly input: WorkerTaskControllerRequest;
+	readonly preStartResult: PreStartResult;
+	readonly taskZoneConfig: GatewayZone;
+	readonly zone: GatewayZone;
+	readonly eventLogPath: string;
+	readonly recordEvent: (event: TaskEvent) => Promise<void>;
+}
+
+export interface PrepareWorkerTaskOptions {
 	readonly input: WorkerTaskInput;
-	readonly secretResolver: SecretResolver;
 	readonly systemConfig: SystemConfig;
 	readonly zoneId: string;
-	readonly timeoutMs?: number;
+	readonly githubToken?: string;
 	readonly onTaskPrepared?: (task: ActiveWorkerTask) => void | Promise<void>;
+}
+
+export interface ExecuteWorkerTaskOptions {
+	readonly secretResolver: SecretResolver;
+	readonly systemConfig: LoadedSystemConfig;
+	readonly timeoutMs?: number;
+	readonly onWorkerTaskIngress?: (
+		zoneId: string,
+		taskId: string,
+		workerIngress: { readonly host: string; readonly port: number },
+	) => void | Promise<void>;
 	readonly onTaskFinished?: (zoneId: string, taskId: string) => void | Promise<void>;
-}): Promise<WorkerTaskResult> {
+}
+
+export async function prepareWorkerTask(
+	options: PrepareWorkerTaskOptions,
+): Promise<PreparedWorkerTask> {
 	const zone = options.systemConfig.zones.find(
 		(candidateZone) => candidateZone.id === options.zoneId,
 	);
@@ -258,52 +492,111 @@ export async function runWorkerTask(options: {
 		throw new Error(`Zone '${options.zoneId}' is not a worker zone.`);
 	}
 
-	const preStartResult = await preStartGateway(options.input, zone);
-	const taskZoneConfig: GatewayZone = {
-		...zone,
-		gateway: {
-			...zone.gateway,
-			workspaceDir: preStartResult.workspaceDir,
-			stateDir: preStartResult.stateDir,
-		},
-	};
-	await options.onTaskPrepared?.({
-		taskId: preStartResult.taskId,
-		zoneId: options.zoneId,
-		taskRoot: preStartResult.taskRoot,
-		branchPrefix: preStartResult.effectiveConfig.branchPrefix,
-		repos: preStartResult.repos.map((repo) => ({
-			repoUrl: repo.repoUrl,
-			baseBranch: repo.baseBranch,
-			hostWorkspacePath: repo.hostWorkspacePath,
-			vmWorkspacePath: repo.workspacePath,
-		})),
-	});
+	const preStartOptions = options.githubToken ? { githubToken: options.githubToken } : {};
+	const preStartResult = await preStartGateway(options.input, zone, preStartOptions);
+	const parsedInput = preStartResult.input;
+	try {
+		const taskZoneConfig: GatewayZone = {
+			...zone,
+			gateway: {
+				...zone.gateway,
+				workspaceDir: preStartResult.workspaceDir,
+				stateDir: preStartResult.stateDir,
+			},
+		};
 
+		const eventLogPath = path.join(
+			preStartResult.stateDir,
+			'tasks',
+			`${preStartResult.taskId}.jsonl`,
+		);
+		const recordEvent = async (event: TaskEvent): Promise<void> => {
+			await appendEvent(eventLogPath, event);
+		};
+		await recordEvent({
+			event: 'task-accepted',
+			taskId: preStartResult.taskId,
+			config: buildTaskConfigFromPreparedInput({
+				taskId: preStartResult.taskId,
+				input: parsedInput,
+				repos: preStartResult.repos,
+				effectiveConfig: preStartResult.effectiveConfig,
+			}),
+		});
+
+		await options.onTaskPrepared?.({
+			taskId: preStartResult.taskId,
+			zoneId: options.zoneId,
+			taskRoot: preStartResult.taskRoot,
+			branchPrefix: preStartResult.effectiveConfig.branchPrefix,
+			repos: preStartResult.repos.map((repo) => ({
+				repoUrl: repo.repoUrl,
+				baseBranch: repo.baseBranch,
+				hostWorkspacePath: repo.hostWorkspacePath,
+				vmWorkspacePath: repo.workspacePath,
+			})),
+			workerIngress: null,
+		});
+
+		return {
+			taskId: preStartResult.taskId,
+			taskRoot: preStartResult.taskRoot,
+			zoneId: options.zoneId,
+			input: parsedInput,
+			preStartResult,
+			taskZoneConfig,
+			zone,
+			eventLogPath,
+			recordEvent,
+		};
+	} catch (error) {
+		return await cleanupTaskRootAfterPreparationFailure({
+			primaryError: error,
+			startedProviders: preStartResult.startedResourceProviders,
+			taskId: preStartResult.taskId,
+			taskRoot: preStartResult.taskRoot,
+		});
+	}
+}
+
+export async function executeWorkerTask(
+	prepared: PreparedWorkerTask,
+	options: ExecuteWorkerTaskOptions,
+): Promise<WorkerTaskResult> {
 	let gateway: Awaited<ReturnType<typeof startGatewayZone>> | undefined;
+	let result: WorkerTaskResult | undefined;
+	let primaryError: Error | undefined;
 
 	try {
 		gateway = await startGatewayZone({
+			environmentOverride: prepared.preStartResult.environment,
 			secretResolver: options.secretResolver,
 			systemConfig: options.systemConfig,
-			tcpHostsOverride: preStartResult.tcpHosts,
-			zoneId: options.zoneId,
-			zoneOverride: taskZoneConfig,
+			tcpHostsOverride: prepared.preStartResult.tcpHosts,
+			vfsMountsOverride: prepared.preStartResult.vfsMounts,
+			zoneId: prepared.zoneId,
+			zoneOverride: prepared.taskZoneConfig,
 		});
+		await options.onWorkerTaskIngress?.(prepared.zoneId, prepared.taskId, gateway.ingress);
 
 		const baseUrl = `http://${gateway.ingress.host}:${gateway.ingress.port}`;
 		await fetchJson(`${baseUrl}/tasks`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
-				taskId: preStartResult.taskId,
-				prompt: options.input.prompt,
-				repos: preStartResult.repos,
-				context: options.input.context,
+				taskId: prepared.taskId,
+				prompt: prepared.input.prompt,
+				repos: prepared.preStartResult.repos.map((repo) => ({
+					repoUrl: repo.repoUrl,
+					baseBranch: repo.baseBranch,
+					workspacePath: repo.workspacePath,
+				})),
+				context: prepared.input.context,
 			}),
 		});
 
-		const timeoutMs = options.timeoutMs ?? 30 * 60 * 1000;
+		const timeoutMs =
+			options.timeoutMs ?? computeTotalTaskTimeoutMs(prepared.preStartResult.effectiveConfig);
 		const start = Date.now();
 		let consecutivePollFailures = 0;
 		while (Date.now() - start < timeoutMs) {
@@ -315,23 +608,26 @@ export async function runWorkerTask(options: {
 			try {
 				// Polling task state is intentionally sequential because each request depends on prior status.
 				// oxlint-disable-next-line eslint/no-await-in-loop
-				const response = await fetchJson(`${baseUrl}/tasks/${preStartResult.taskId}`);
+				const response = await fetchJson(`${baseUrl}/tasks/${prepared.taskId}`);
 				state = taskStatusResponseSchema.parse(response);
 				consecutivePollFailures = 0;
 			} catch (error) {
 				if (error instanceof z.ZodError) {
 					throw new Error(
-						`Worker task status response did not match the expected schema for task ${preStartResult.taskId}.`,
+						`Worker task status response did not match the expected schema for task ${prepared.taskId}.`,
 						{ cause: error },
 					);
 				}
 				consecutivePollFailures += 1;
 				const message = error instanceof Error ? error.message : String(error);
 				writeStderr(
-					`[worker-task-runner] Poll failure ${consecutivePollFailures} for task ${preStartResult.taskId}: ${message}`,
+					`[worker-task-runner] Poll failure ${consecutivePollFailures} for task ${prepared.taskId}: ${message}`,
 				);
 				if (consecutivePollFailures >= 3) {
-					throw error;
+					throw new Error(
+						`Worker task status polling failed ${String(consecutivePollFailures)} consecutive times for task ${prepared.taskId}; last error: ${message}`,
+						{ cause: error },
+					);
 				}
 			}
 			if (!state) {
@@ -341,27 +637,70 @@ export async function runWorkerTask(options: {
 				continue;
 			}
 			if (state.status === 'completed' || state.status === 'failed' || state.status === 'closed') {
-				return {
-					taskId: preStartResult.taskId,
+				result = {
+					taskId: prepared.taskId,
 					finalState: state,
-					taskRoot: preStartResult.taskRoot,
+					taskRoot: prepared.taskRoot,
 				};
+				break;
 			}
 			// The sleep is part of the serial poll loop and cannot be parallelized.
 			// oxlint-disable-next-line eslint/no-await-in-loop
 			await new Promise((resolve) => setTimeout(resolve, 1000));
 		}
 
-		throw new Error(`Worker task timed out after ${timeoutMs}ms.`);
-	} finally {
-		try {
-			await gateway?.vm.close();
-		} finally {
-			try {
-				await postStopGateway(preStartResult.taskId, zone, preStartResult.composeFilePaths);
-			} finally {
-				await options.onTaskFinished?.(options.zoneId, preStartResult.taskId);
-			}
+		if (!result) {
+			throw new Error(`Worker task timed out after ${timeoutMs}ms.`);
 		}
+	} catch (error) {
+		primaryError = toError(error);
 	}
+
+	const cleanupErrors: Error[] = [];
+	try {
+		await gateway?.vm.close();
+	} catch (error) {
+		cleanupErrors.push(toError(error));
+	}
+	try {
+		await postStopGateway(
+			prepared.taskId,
+			prepared.zone,
+			prepared.preStartResult.startedResourceProviders,
+		);
+	} catch (error) {
+		cleanupErrors.push(toError(error));
+	}
+	try {
+		await options.onTaskFinished?.(prepared.zoneId, prepared.taskId);
+	} catch (error) {
+		cleanupErrors.push(toError(error));
+	}
+
+	if (primaryError) {
+		if (cleanupErrors.length > 0) {
+			const aggregateError = new AggregateError(
+				[primaryError, ...cleanupErrors],
+				`Worker task ${prepared.taskId} failed; cleanup also failed.`,
+			);
+			aggregateError.cause = primaryError;
+			throw aggregateError;
+		}
+		throw primaryError;
+	}
+	if (cleanupErrors.length === 1) {
+		throw cleanupErrors[0];
+	}
+	if (cleanupErrors.length > 1) {
+		const aggregateError = new AggregateError(
+			cleanupErrors,
+			`Failed to clean up worker task ${prepared.taskId}.`,
+		);
+		aggregateError.cause = cleanupErrors[0];
+		throw aggregateError;
+	}
+	if (!result) {
+		throw new Error(`Worker task ${prepared.taskId} exited without a terminal result.`);
+	}
+	return result;
 }

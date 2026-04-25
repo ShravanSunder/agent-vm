@@ -15,11 +15,16 @@ export function createControllerApp(options: {
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly toolProfiles?: Record<
 		string,
-		{ readonly cpus: number; readonly memory: string; readonly workspaceRoot: string }
+		{
+			readonly cpus: number;
+			readonly imageProfile: string;
+			readonly memory: string;
+			readonly workspaceRoot: string;
+		}
 	>;
 	readonly zoneToolProfiles?: Record<string, string>;
+	readonly zoneIds?: ReadonlySet<string>;
 	readonly operations?: Partial<ControllerRouteOperations>;
-	readonly workerTaskRunner?: ControllerRouteOperations['runWorkerTask'];
 }): Hono {
 	const app = new Hono();
 	const readIdentityPem = options.readIdentityPem ?? readIdentityPemFromFile;
@@ -37,10 +42,20 @@ export function createControllerApp(options: {
 				);
 			}
 			const payload = parsedPayload.data;
-			if (options.zoneToolProfiles && !(payload.zoneId in options.zoneToolProfiles)) {
+			if (
+				options.zoneIds
+					? !options.zoneIds.has(payload.zoneId)
+					: options.zoneToolProfiles && !(payload.zoneId in options.zoneToolProfiles)
+			) {
 				return context.json({ error: `Unknown zone '${payload.zoneId}'` }, 400);
 			}
 			const resolvedProfileId = options.zoneToolProfiles?.[payload.zoneId] ?? payload.profileId;
+			if (!resolvedProfileId) {
+				return context.json(
+					{ error: `Zone '${payload.zoneId}' does not have a tool profile configured` },
+					400,
+				);
+			}
 			const toolProfile = options.toolProfiles?.[resolvedProfileId];
 			if (!toolProfile) {
 				return context.json({ error: `Unknown tool profile '${resolvedProfileId}'` }, 400);
@@ -90,7 +105,7 @@ export function createControllerApp(options: {
 		return context.body(null, 204);
 	});
 
-	if (options.operations || options.workerTaskRunner) {
+	if (options.operations) {
 		const defaultOperations: ControllerRouteOperations = {
 			destroyZone: async () => {
 				throw new Error('destroy-zone-unavailable');
@@ -109,7 +124,6 @@ export function createControllerApp(options: {
 		registerControllerZoneOperationRoutes(app, {
 			...defaultOperations,
 			...options.operations,
-			...(options.workerTaskRunner ? { runWorkerTask: options.workerTaskRunner } : {}),
 		});
 	}
 
@@ -120,15 +134,16 @@ export function createControllerService(options: {
 	readonly leaseManager: ControllerLeaseManager;
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly systemConfig: SystemConfig;
-	readonly workerTaskRunner?: ControllerRouteOperations['runWorkerTask'];
 }): Hono {
 	const app = createControllerApp({
 		leaseManager: options.leaseManager,
 		toolProfiles: options.systemConfig.toolProfiles,
+		zoneIds: new Set(options.systemConfig.zones.map((zone) => zone.id)),
 		zoneToolProfiles: Object.fromEntries(
-			options.systemConfig.zones.map((zone) => [zone.id, zone.toolProfile]),
+			options.systemConfig.zones.flatMap((zone) =>
+				zone.toolProfile === undefined ? [] : [[zone.id, zone.toolProfile]],
+			),
 		),
-		...(options.workerTaskRunner ? { workerTaskRunner: options.workerTaskRunner } : {}),
 		...(options.operations ? { operations: options.operations } : {}),
 	});
 

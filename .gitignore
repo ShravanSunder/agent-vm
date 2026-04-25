@@ -48,6 +48,9 @@ coverage/
 /state/
 workspaces/
 tmp/
+/tmp/
+temp/
+/temp/
 test-results/
 playwright-report/
 
@@ -59,7 +62,7 @@ npm-debug.log*
 *.gen.ts
 __generated__/
 *.tgz
-images/gateway/vendor/
+vm-images/gateways/*/vendor/
 config/**
 
 # Secrets (never commit)
@@ -77,3 +80,5 @@ cache/
 *.bak
 *.tgz
 .npmrc
+!.npmrc
+.DS_Store

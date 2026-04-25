@@ -1,58 +1,73 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SystemConfig } from '../config/system-config.js';
+import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { runBackupCommand } from './backup-commands.js';
 
-function createBackupSystemConfig(): SystemConfig {
-	return {
-		cacheDir: './cache',
-		host: {
-			controllerPort: 18800,
-			projectNamespace: 'claw-tests-a1b2c3d4',
-			secretsProvider: {
-				type: '1password',
-				tokenSource: { type: 'env' },
-			},
-		},
-		images: {
-			gateway: {
-				buildConfig: './images/gateway/build-config.json',
-			},
-			tool: {
-				buildConfig: './images/tool/build-config.json',
-			},
-		},
-		tcpPool: {
-			basePort: 19000,
-			size: 5,
-		},
-		toolProfiles: {
-			standard: {
-				cpus: 1,
-				memory: '1G',
-				workspaceRoot: './workspaces/tools',
-			},
-		},
-		zones: [
-			{
-				allowedHosts: ['api.anthropic.com'],
-				gateway: {
-					type: 'openclaw',
-					cpus: 2,
-					memory: '2G',
-					gatewayConfig: './config/shravan/openclaw.json',
-					port: 18791,
-					stateDir: './state/shravan',
-					workspaceDir: './workspaces/shravan',
+function createBackupSystemConfig(): LoadedSystemConfig {
+	return createLoadedSystemConfig(
+		{
+			cacheDir: './cache',
+			host: {
+				controllerPort: 18800,
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				secretsProvider: {
+					type: '1password',
+					tokenSource: { type: 'env' },
 				},
-				id: 'shravan',
-				secrets: {},
-				toolProfile: 'standard',
-				websocketBypass: [],
 			},
-		],
-	};
+			imageProfiles: {
+				gateways: {
+					openclaw: {
+						type: 'openclaw',
+						buildConfig: './vm-images/gateways/openclaw/build-config.json',
+					},
+					worker: {
+						type: 'worker',
+						buildConfig: './vm-images/gateways/worker/build-config.json',
+					},
+				},
+				toolVms: {
+					default: {
+						type: 'toolVm',
+						buildConfig: './vm-images/tool-vms/default/build-config.json',
+					},
+				},
+			},
+			tcpPool: {
+				basePort: 19000,
+				size: 5,
+			},
+			toolProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					workspaceRoot: './workspaces/tools',
+					imageProfile: 'default',
+				},
+			},
+			zones: [
+				{
+					allowedHosts: ['api.anthropic.com'],
+					gateway: {
+						type: 'openclaw',
+						imageProfile: 'openclaw',
+						cpus: 2,
+						memory: '2G',
+						config: './config/shravan/openclaw.json',
+						port: 18791,
+						stateDir: './state/shravan',
+						workspaceDir: './workspaces/shravan',
+					},
+					id: 'shravan',
+					secrets: {},
+					toolProfile: 'standard',
+					websocketBypass: [],
+				},
+			],
+		},
+		{ systemConfigPath: './config/system.json' },
+	);
 }
 
 describe('runBackupCommand', () => {

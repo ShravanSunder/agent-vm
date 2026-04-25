@@ -2,19 +2,25 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVm, ManagedVmInstance } from '@shravansunder/gondolin-core';
+import type { ManagedVm, ManagedVmInstance } from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { SystemConfig } from '../config/system-config.js';
+import type { LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 
 function createSystemConfig(
 	controllerPort: number,
 	stateDirectory: string,
 	workspaceDirectory: string,
-): SystemConfig {
+): LoadedSystemConfig {
 	return {
 		cacheDir: path.join(path.dirname(stateDirectory), 'cache'),
+		systemConfigPath: path.join(path.dirname(stateDirectory), 'config', 'system.json'),
+		systemCacheIdentifierPath: path.join(
+			path.dirname(stateDirectory),
+			'config',
+			'systemCacheIdentifier.json',
+		),
 		host: {
 			controllerPort,
 			projectNamespace: 'claw-tests-a1b2c3d4',
@@ -23,12 +29,22 @@ function createSystemConfig(
 				tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 			},
 		},
-		images: {
-			gateway: {
-				buildConfig: './images/gateway/build-config.json',
+		imageProfiles: {
+			gateways: {
+				openclaw: {
+					type: 'openclaw',
+					buildConfig: './vm-images/gateways/openclaw/build-config.json',
+				},
+				worker: {
+					type: 'worker',
+					buildConfig: './vm-images/gateways/worker/build-config.json',
+				},
 			},
-			tool: {
-				buildConfig: './images/tool/build-config.json',
+			toolVms: {
+				default: {
+					type: 'toolVm',
+					buildConfig: './vm-images/tool-vms/default/build-config.json',
+				},
 			},
 		},
 		zones: [
@@ -36,10 +52,11 @@ function createSystemConfig(
 				id: 'shravan',
 				gateway: {
 					type: 'openclaw',
+					imageProfile: 'openclaw',
 					memory: '2G',
 					cpus: 2,
 					port: controllerPort + 100,
-					gatewayConfig: './config/shravan/openclaw.json',
+					config: './config/shravan/openclaw.json',
 					stateDir: stateDirectory,
 					workspaceDir: workspaceDirectory,
 				},
@@ -54,6 +71,7 @@ function createSystemConfig(
 				memory: '1G',
 				cpus: 1,
 				workspaceRoot: './workspaces/tools',
+				imageProfile: 'default',
 			},
 		},
 		tcpPool: {

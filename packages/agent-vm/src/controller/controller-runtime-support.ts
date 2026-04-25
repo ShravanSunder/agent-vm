@@ -1,5 +1,5 @@
-import type { SecretResolver } from '@shravansunder/gondolin-core';
-import { resolveServiceAccountToken } from '@shravansunder/gondolin-core';
+import type { SecretResolver } from '@agent-vm/gondolin-adapter';
+import { resolveServiceAccountToken } from '@agent-vm/gondolin-adapter';
 
 import type { SystemConfig } from '../config/system-config.js';
 import { createCompositeSecretResolver } from './composite-secret-resolver.js';

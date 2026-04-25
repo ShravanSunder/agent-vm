@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
@@ -7,7 +7,7 @@ import {
 	findStaleImageDirectories as findStaleImageDirectoriesDefault,
 	type StaleImageEntry,
 } from '../build/stale-image-cleaner.js';
-import type { SystemConfig } from '../config/system-config.js';
+import type { LoadedSystemConfig } from '../config/system-config.js';
 
 interface CacheCommandIo {
 	readonly stderr: Pick<NodeJS.WriteStream, 'write'>;
@@ -19,18 +19,39 @@ interface CacheEntry {
 	readonly fingerprint: string;
 }
 
+type ImageProfileFamily = 'gateway' | 'toolVm';
+
+interface CurrentImageFingerprints {
+	readonly gateways: Record<string, string>;
+	readonly toolVms: Record<string, string>;
+}
+
+function recordFromEntries<TValue>(
+	entries: readonly (readonly [string, TValue])[],
+): Record<string, TValue> {
+	return Object.fromEntries(entries) as Record<string, TValue>;
+}
+
 export interface CacheCommandDependencies {
-	readonly computeFingerprintFromConfigPath?: (buildConfigPath: string) => Promise<string>;
-	readonly deleteStaleImageDirectories?: (entries: readonly StaleImageEntry[]) => void;
+	readonly computeFingerprintFromConfigPath?: (
+		buildConfigPath: string,
+		systemCacheIdentifierPath: string,
+	) => Promise<string>;
+	readonly deleteStaleImageDirectories?: (entries: readonly StaleImageEntry[]) => Promise<void>;
 	readonly findStaleImageDirectories?: (options: {
 		readonly cacheDir: string;
-		readonly currentFingerprints: { readonly gateway: string; readonly tool: string };
-	}) => readonly StaleImageEntry[];
+		readonly currentFingerprints: CurrentImageFingerprints;
+	}) => Promise<readonly StaleImageEntry[]>;
 	readonly listCacheEntries?: (
 		cacheDir: string,
-		imageType: 'gateway' | 'tool',
+		family: ImageProfileFamily,
+		profileName: string,
 		currentFingerprint: string,
-	) => readonly CacheEntry[];
+	) => Promise<readonly CacheEntry[]>;
+}
+
+export function imageProfileCacheDirectoryName(family: ImageProfileFamily): string {
+	return family === 'gateway' ? 'gateway-images' : 'tool-vm-images';
 }
 
 function formatBytes(sizeBytes: number): string {
@@ -45,18 +66,24 @@ function formatBytes(sizeBytes: number): string {
 	return `${(sizeBytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
 }
 
-function listCacheEntries(
+async function listCacheEntries(
 	cacheDir: string,
-	imageType: 'gateway' | 'tool',
+	family: ImageProfileFamily,
+	profileName: string,
 	currentFingerprint: string,
-): readonly CacheEntry[] {
-	const typeDirectory = path.join(cacheDir, 'images', imageType);
-	if (!fs.existsSync(typeDirectory)) {
-		return [];
+): Promise<readonly CacheEntry[]> {
+	const typeDirectory = path.join(cacheDir, imageProfileCacheDirectoryName(family), profileName);
+	let entries: { readonly name: string; isDirectory(): boolean }[];
+	try {
+		entries = await fs.readdir(typeDirectory, { withFileTypes: true });
+	} catch (error) {
+		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+			return [];
+		}
+		throw error;
 	}
 
-	return fs
-		.readdirSync(typeDirectory, { withFileTypes: true })
+	return entries
 		.filter((entry) => entry.isDirectory())
 		.map((entry) => ({
 			current: entry.name === currentFingerprint,
@@ -65,23 +92,59 @@ function listCacheEntries(
 }
 
 async function resolveCurrentFingerprints(
-	systemConfig: SystemConfig,
+	systemConfig: LoadedSystemConfig,
 	dependencies: Pick<CacheCommandDependencies, 'computeFingerprintFromConfigPath'>,
-): Promise<{ gateway: string; tool: string }> {
+): Promise<CurrentImageFingerprints> {
 	const computeFingerprint =
 		dependencies.computeFingerprintFromConfigPath ?? computeFingerprintFromConfigPath;
+	const systemCacheIdentifierPath = systemConfig.systemCacheIdentifierPath;
 
 	return {
-		gateway: await computeFingerprint(systemConfig.images.gateway.buildConfig),
-		tool: await computeFingerprint(systemConfig.images.tool.buildConfig),
+		gateways: recordFromEntries(
+			await Promise.all(
+				Object.entries(systemConfig.imageProfiles.gateways).map(async ([profileName, profile]) => [
+					profileName,
+					await computeFingerprint(profile.buildConfig, systemCacheIdentifierPath),
+				]),
+			),
+		),
+		toolVms: recordFromEntries(
+			await Promise.all(
+				Object.entries(systemConfig.imageProfiles.toolVms).map(async ([profileName, profile]) => [
+					profileName,
+					await computeFingerprint(profile.buildConfig, systemCacheIdentifierPath),
+				]),
+			),
+		),
 	};
+}
+
+async function listEntriesByProfile(options: {
+	readonly cacheDir: string;
+	readonly currentFingerprints: Record<string, string>;
+	readonly family: ImageProfileFamily;
+	readonly listEntries: NonNullable<CacheCommandDependencies['listCacheEntries']>;
+}): Promise<Record<string, readonly CacheEntry[]>> {
+	return recordFromEntries<readonly CacheEntry[]>(
+		await Promise.all(
+			Object.entries(options.currentFingerprints).map(async ([profileName, currentFingerprint]) => [
+				profileName,
+				await options.listEntries(
+					options.cacheDir,
+					options.family,
+					profileName,
+					currentFingerprint,
+				),
+			]),
+		),
+	);
 }
 
 export async function runCacheCommand(
 	options: {
 		readonly confirm?: boolean;
 		readonly subcommand: string;
-		readonly systemConfig: SystemConfig;
+		readonly systemConfig: LoadedSystemConfig;
 	},
 	io: CacheCommandIo,
 	dependencies: CacheCommandDependencies = {},
@@ -95,12 +158,18 @@ export async function runCacheCommand(
 				{
 					cacheDir: options.systemConfig.cacheDir,
 					currentFingerprints,
-					gateway: listEntries(
-						options.systemConfig.cacheDir,
-						'gateway',
-						currentFingerprints.gateway,
-					),
-					tool: listEntries(options.systemConfig.cacheDir, 'tool', currentFingerprints.tool),
+					gateways: await listEntriesByProfile({
+						cacheDir: options.systemConfig.cacheDir,
+						currentFingerprints: currentFingerprints.gateways,
+						family: 'gateway',
+						listEntries,
+					}),
+					toolVms: await listEntriesByProfile({
+						cacheDir: options.systemConfig.cacheDir,
+						currentFingerprints: currentFingerprints.toolVms,
+						family: 'toolVm',
+						listEntries,
+					}),
 				},
 				null,
 				2,
@@ -112,7 +181,7 @@ export async function runCacheCommand(
 	if (options.subcommand === 'clean') {
 		const findStaleDirectories =
 			dependencies.findStaleImageDirectories ?? findStaleImageDirectoriesDefault;
-		const staleEntries = findStaleDirectories({
+		const staleEntries = await findStaleDirectories({
 			cacheDir: options.systemConfig.cacheDir,
 			currentFingerprints,
 		});
@@ -124,7 +193,9 @@ export async function runCacheCommand(
 
 		io.stderr.write(`[cache] ${staleEntries.length} stale image(s):\n`);
 		for (const entry of staleEntries) {
-			io.stderr.write(`  ${entry.imageType}/${entry.name} (${formatBytes(entry.sizeBytes)})\n`);
+			io.stderr.write(
+				`  ${imageProfileCacheDirectoryName(entry.family)}/${entry.profileName}/${entry.fingerprint} (${formatBytes(entry.sizeBytes)})\n`,
+			);
 		}
 
 		if (!options.confirm) {
@@ -134,7 +205,7 @@ export async function runCacheCommand(
 
 		const deleteStaleDirectories =
 			dependencies.deleteStaleImageDirectories ?? deleteStaleImageDirectoriesDefault;
-		deleteStaleDirectories(staleEntries);
+		await deleteStaleDirectories(staleEntries);
 		io.stderr.write(`[cache] Deleted ${staleEntries.length} stale image(s).\n`);
 		return;
 	}

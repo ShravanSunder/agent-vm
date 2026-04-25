@@ -1,6 +1,7 @@
 {
-	"name": "@shravansunder/agent-vm-worker",
-	"version": "0.0.17",
+	"name": "@agent-vm/agent-vm-worker",
+	"version": "0.0.19",
+	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
 	"bin": {
 		"agent-vm-worker": "./dist/main.js"
 	},
@@ -17,7 +18,7 @@
 		}
 	},
 	"publishConfig": {
-		"access": "public"
+		"access": "restricted"
 	},
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
@@ -32,7 +33,7 @@
 		"@hono/node-server": "^1.19.14",
 		"@hono/zod-validator": "^0.7.6",
 		"@modelcontextprotocol/sdk": "^1.29.0",
-		"@openai/codex-sdk": "^0.118.0",
+		"@openai/codex-sdk": "^0.122.0",
 		"cmd-ts": "^0.14.0",
 		"execa": "^9.5.2",
 		"hono": "^4.12.14",

@@ -1,10 +1,18 @@
+import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SystemConfig } from '../config/system-config.js';
+import type { LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from './controller-runtime.js';
+import type {
+	ExecuteWorkerTaskOptions,
+	PreparedWorkerTask,
+	PrepareWorkerTaskOptions,
+} from './worker-task-runner.js';
 
 const systemConfig = {
 	cacheDir: './cache',
+	systemConfigPath: './config/system.json',
+	systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
@@ -13,12 +21,22 @@ const systemConfig = {
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 		},
 	},
-	images: {
-		gateway: {
-			buildConfig: './images/gateway/build-config.json',
+	imageProfiles: {
+		gateways: {
+			openclaw: {
+				type: 'openclaw',
+				buildConfig: './vm-images/gateways/openclaw/build-config.json',
+			},
+			worker: {
+				type: 'worker',
+				buildConfig: './vm-images/gateways/worker/build-config.json',
+			},
 		},
-		tool: {
-			buildConfig: './images/tool/build-config.json',
+		toolVms: {
+			default: {
+				type: 'toolVm',
+				buildConfig: './vm-images/tool-vms/default/build-config.json',
+			},
 		},
 	},
 	zones: [
@@ -26,10 +44,11 @@ const systemConfig = {
 			id: 'shravan',
 			gateway: {
 				type: 'openclaw',
+				imageProfile: 'openclaw',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				gatewayConfig: './config/shravan/openclaw.json',
+				config: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
 				workspaceDir: './workspaces/shravan',
 			},
@@ -44,13 +63,14 @@ const systemConfig = {
 			memory: '1G',
 			cpus: 1,
 			workspaceRoot: './workspaces/tools',
+			imageProfile: 'default',
 		},
 	},
 	tcpPool: {
 		basePort: 19000,
 		size: 5,
 	},
-} satisfies SystemConfig;
+} satisfies LoadedSystemConfig;
 
 const openClawProcessSpec = {
 	bootstrapCommand: 'bootstrap-openclaw',
@@ -67,6 +87,75 @@ const workerProcessSpec = {
 	logPath: '/tmp/agent-vm-worker.log',
 	startCommand: 'start-worker',
 };
+
+function createPreparedWorkerTaskStub(
+	taskId: string,
+	requestTaskId: string = `request-${taskId}`,
+): PreparedWorkerTask {
+	const sourceZone = systemConfig.zones[0];
+	if (!sourceZone) {
+		throw new Error('Expected worker zone.');
+	}
+	const workerZone = {
+		...sourceZone,
+		gateway: {
+			...sourceZone.gateway,
+			type: 'worker' as const,
+		},
+	};
+	return {
+		taskId,
+		taskRoot: `/tmp/${taskId}`,
+		zoneId: 'shravan',
+		input: {
+			requestTaskId,
+			prompt: 'test',
+			repos: [],
+			context: {},
+			resources: { externalResources: {} },
+		},
+		preStartResult: {
+			taskId,
+			input: {
+				requestTaskId,
+				prompt: 'test',
+				repos: [],
+				context: {},
+				resources: { externalResources: {} },
+			},
+			taskRoot: `/tmp/${taskId}`,
+			workspaceDir: `/tmp/${taskId}/workspace`,
+			stateDir: `/tmp/${taskId}/state`,
+			environment: {},
+			startedResourceProviders: [],
+			tcpHosts: {},
+			vfsMounts: {},
+			repos: [],
+			effectiveConfig: workerConfigSchema.parse({
+				defaults: { provider: 'codex', model: 'latest-medium' },
+				phases: {
+					plan: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+						skills: [],
+					},
+					work: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+						skills: [],
+					},
+					wrapup: { instructions: null, skills: [] },
+				},
+			}),
+		},
+		taskZoneConfig: workerZone,
+		zone: workerZone,
+		eventLogPath: `/tmp/${taskId}/state/tasks/${taskId}.jsonl`,
+		recordEvent: async () => {},
+	};
+}
 
 describe('startControllerRuntime', () => {
 	it('starts the gateway, creates the controller app, and opens the controller port', async () => {
@@ -252,7 +341,7 @@ describe('startControllerRuntime', () => {
 
 	it('registers stop-controller for worker runtimes', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		const workerSystemConfig: SystemConfig = {
+		const workerSystemConfig: LoadedSystemConfig = {
 			...systemConfig,
 			zones: systemConfig.zones.map((zone) => ({
 				...zone,
@@ -311,11 +400,6 @@ describe('startControllerRuntime', () => {
 					resolve: async () => '',
 					resolveAll: async () => ({}),
 				}),
-				runWorkerTask: vi.fn(async () => ({
-					taskId: 'worker-task-1',
-					finalState: { status: 'completed' },
-					taskRoot: '/tmp/worker-task-1',
-				})),
 				startGatewayZone: vi.fn(async () => ({
 					image: {
 						built: true,
@@ -357,6 +441,252 @@ describe('startControllerRuntime', () => {
 		expect(stopResponse.status).toBe(200);
 		await expect(stopResponse.json()).resolves.toMatchObject({ ok: true });
 		await runtime.close();
+	});
+
+	it('passes the controller GitHub token to worker task cloning', async () => {
+		const previousGithubToken = process.env.GITHUB_TOKEN;
+		process.env.GITHUB_TOKEN = 'controller-token';
+		const workerSystemConfig: LoadedSystemConfig = {
+			...systemConfig,
+			host: {
+				...systemConfig.host,
+				githubToken: {
+					source: 'environment',
+					envVar: 'GITHUB_TOKEN',
+				},
+			},
+			zones: systemConfig.zones.map((zone) => ({
+				...zone,
+				gateway: {
+					...zone.gateway,
+					type: 'worker' as const,
+				},
+			})),
+		};
+		let startHttpServerArgs:
+			| {
+					app: {
+						request(path: string, init?: RequestInit): Response | Promise<Response>;
+					};
+					port: number;
+			  }
+			| undefined;
+		const prepareWorkerTask = vi.fn(async () => createPreparedWorkerTaskStub('worker-task-1'));
+		const executeWorkerTask = vi.fn(async () => ({
+			taskId: 'worker-task-1',
+			finalState: { status: 'completed' },
+			taskRoot: '/tmp/worker-task-1',
+		}));
+		const startHttpServer = vi.fn(
+			async (options: {
+				app: { request(path: string, init?: RequestInit): Response | Promise<Response> };
+				port: number;
+			}) => {
+				startHttpServerArgs = options;
+				return {
+					close: async () => {},
+				};
+			},
+		);
+
+		try {
+			const runtime = await startControllerRuntime(
+				{
+					systemConfig: workerSystemConfig,
+					zoneId: 'shravan',
+				},
+				{
+					createManagedToolVm: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({
+							command: 'ssh ...',
+							host: '127.0.0.1',
+							identityFile: '/tmp/key',
+							port: 19000,
+							user: 'sandbox',
+						})),
+						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+						id: 'tool-vm-worker-task',
+						setIngressRoutes: vi.fn(),
+						getVmInstance: vi.fn(),
+					})),
+					createSecretResolver: async () => ({
+						resolve: async () => 'controller-token',
+						resolveAll: async () => ({}),
+					}),
+					prepareWorkerTask,
+					executeWorkerTask,
+					startGatewayZone: vi.fn(async () => {
+						throw new Error('worker runtime should not start persistent gateway');
+					}),
+					startHttpServer,
+				},
+			);
+
+			if (!startHttpServerArgs) {
+				throw new Error('Expected startHttpServer to be called.');
+			}
+			const response = await startHttpServerArgs.app.request('/zones/shravan/worker-tasks', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					requestTaskId: 'request-task-1',
+					prompt: 'fix private repo task',
+					repos: [{ repoUrl: 'https://github.com/org/private.git', baseBranch: 'main' }],
+					context: {},
+				}),
+			});
+
+			expect(response.status).toBe(202);
+			expect(prepareWorkerTask).toHaveBeenCalledWith(
+				expect.objectContaining({
+					githubToken: 'controller-token',
+				}),
+			);
+			await runtime.close();
+		} finally {
+			if (previousGithubToken === undefined) {
+				delete process.env.GITHUB_TOKEN;
+			} else {
+				process.env.GITHUB_TOKEN = previousGithubToken;
+			}
+		}
+	});
+
+	it('rejects a second worker task while the pod is already occupied', async () => {
+		const workerSystemConfig: LoadedSystemConfig = {
+			...systemConfig,
+			zones: systemConfig.zones.map((zone) => ({
+				...zone,
+				gateway: {
+					...zone.gateway,
+					type: 'worker' as const,
+				},
+			})),
+		};
+		let startHttpServerArgs:
+			| {
+					app: {
+						request(path: string, init?: RequestInit): Response | Promise<Response>;
+					};
+					port: number;
+			  }
+			| undefined;
+		let resolveExecute: (() => Promise<void>) | undefined;
+		let taskCounter = 0;
+		const prepareWorkerTask = vi.fn(async (options: PrepareWorkerTaskOptions) => {
+			taskCounter += 1;
+			const prepared = createPreparedWorkerTaskStub(
+				`worker-task-${String(taskCounter)}`,
+				options.input.requestTaskId,
+			);
+			await options.onTaskPrepared?.({
+				taskId: prepared.taskId,
+				zoneId: prepared.zoneId,
+				taskRoot: prepared.taskRoot,
+				branchPrefix: prepared.preStartResult.effectiveConfig.branchPrefix,
+				repos: [],
+				workerIngress: null,
+			});
+			return prepared;
+		});
+		const executeWorkerTask = vi.fn(
+			async (prepared, options: ExecuteWorkerTaskOptions) =>
+				await new Promise<{
+					taskId: string;
+					finalState: { status: 'completed' };
+					taskRoot: string;
+				}>((resolve) => {
+					resolveExecute = async () => {
+						await options.onTaskFinished?.(prepared.zoneId, prepared.taskId);
+						resolve({
+							taskId: prepared.taskId,
+							finalState: { status: 'completed' },
+							taskRoot: prepared.taskRoot,
+						});
+					};
+				}),
+		);
+
+		const runtime = await startControllerRuntime(
+			{
+				systemConfig: workerSystemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				createManagedToolVm: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
+					})),
+					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+					id: 'tool-vm-worker-capacity',
+					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
+				})),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				prepareWorkerTask,
+				executeWorkerTask,
+				startGatewayZone: vi.fn(async () => {
+					throw new Error('worker runtime should not start persistent gateway');
+				}),
+				startHttpServer: vi.fn(async (options) => {
+					startHttpServerArgs = options;
+					return {
+						close: async () => {},
+					};
+				}),
+			},
+		);
+
+		try {
+			if (!startHttpServerArgs) {
+				throw new Error('Expected startHttpServer to be called.');
+			}
+
+			const firstResponse = await startHttpServerArgs.app.request('/zones/shravan/worker-tasks', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					requestTaskId: 'request-task-1',
+					prompt: 'first task',
+					repos: [],
+					context: {},
+				}),
+			});
+			expect(firstResponse.status).toBe(202);
+
+			const secondResponse = await startHttpServerArgs.app.request('/zones/shravan/worker-tasks', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					requestTaskId: 'request-task-2',
+					prompt: 'second task',
+					repos: [],
+					context: {},
+				}),
+			});
+
+			expect(secondResponse.status).toBe(409);
+			await expect(secondResponse.json()).resolves.toMatchObject({
+				status: 'at-capacity',
+				error: expect.stringContaining('at capacity'),
+			});
+			expect(prepareWorkerTask).toHaveBeenCalledTimes(1);
+
+			await resolveExecute?.();
+		} finally {
+			await runtime.close();
+		}
 	});
 
 	it('deletes the runtime record on close after the gateway stops', async () => {

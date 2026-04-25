@@ -1,14 +1,14 @@
-import type { GatewayProcessSpec } from '@shravansunder/gateway-interface';
-import type { ManagedVm, SecretResolver } from '@shravansunder/gondolin-core';
+import type { GatewayProcessSpec } from '@agent-vm/gateway-interface';
+import type { ManagedVm, SecretResolver } from '@agent-vm/gondolin-adapter';
 
-import type { SystemConfig } from '../config/system-config.js';
+import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { deleteGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
 import type { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
 import type { createControllerService } from './http/controller-http-routes.js';
 import type { ToolProfile } from './leases/lease-manager.js';
-import type { runWorkerTask } from './worker-task-runner.js';
+import type { executeWorkerTask, prepareWorkerTask } from './worker-task-runner.js';
 
 export interface ControllerRuntime {
 	readonly controllerPort: number;
@@ -37,8 +37,14 @@ export interface ControllerRuntimeDependencies {
 	readonly deleteGatewayRuntimeRecord?: typeof deleteGatewayRuntimeRecord;
 	readonly now?: () => number;
 	readonly runTask?: RunTaskFn;
-	readonly runWorkerTask?: typeof runWorkerTask;
+	readonly prepareWorkerTask?: typeof prepareWorkerTask;
+	readonly executeWorkerTask?: typeof executeWorkerTask;
 	readonly onWorkerTaskPrepared?: (task: ActiveWorkerTask) => void | Promise<void>;
+	readonly onWorkerTaskIngress?: (
+		zoneId: string,
+		taskId: string,
+		workerIngress: { readonly host: string; readonly port: number },
+	) => void | Promise<void>;
 	readonly onWorkerTaskFinished?: (zoneId: string, taskId: string) => void | Promise<void>;
 	readonly setIntervalImpl?: (
 		callback: () => void | Promise<void>,
@@ -54,6 +60,6 @@ export interface ControllerRuntimeDependencies {
 }
 
 export interface StartControllerRuntimeOptions {
-	readonly systemConfig: SystemConfig;
+	readonly systemConfig: LoadedSystemConfig;
 	readonly zoneId: string;
 }

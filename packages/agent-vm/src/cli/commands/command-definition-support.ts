@@ -2,10 +2,11 @@
 import { flag, option, optional, restPositionals, string } from 'cmd-ts';
 import { ZodError } from 'zod';
 
-import type { SystemConfig } from '../../config/system-config.js';
+import type { LoadedSystemConfig } from '../../config/system-config.js';
 import type { CliDependencies } from '../agent-vm-cli-support.js';
 import { formatZodError } from '../format-zod-error.js';
-import type { GatewayType } from '../init-command.js';
+import type { GatewayType, SecretsProvider } from '../init-command.js';
+import { secretsProviderSchema } from '../init-command.js';
 
 export function createConfigOption() {
 	return option({
@@ -57,7 +58,7 @@ export function createRemoteCommandArguments() {
 export function loadSystemConfigFromOption(
 	configPath: string | undefined,
 	dependencies: Pick<CliDependencies, 'loadSystemConfig'>,
-): Promise<SystemConfig> {
+): Promise<LoadedSystemConfig> {
 	const resolvedConfigPath = configPath ?? 'config/system.json';
 	return dependencies.loadSystemConfig(resolvedConfigPath).catch((error: unknown) => {
 		if (error instanceof ZodError) {
@@ -89,4 +90,19 @@ export function parseGatewayType(gatewayType: string | undefined): GatewayType {
 	throw new Error(
 		`Gateway type is required. Expected 'openclaw' or 'worker'${gatewayType ? `, got '${gatewayType}'` : ''}.`,
 	);
+}
+
+export function parseSecretsProvider(secretsProvider: string | undefined): SecretsProvider {
+	if (secretsProvider === undefined) {
+		throw new Error(
+			`Secrets provider is required. Expected one of: ${secretsProviderSchema.options.join(', ')}.`,
+		);
+	}
+	const parsed = secretsProviderSchema.safeParse(secretsProvider);
+	if (!parsed.success) {
+		throw new Error(
+			`Invalid secrets provider '${secretsProvider}'. Expected one of: ${secretsProviderSchema.options.join(', ')}.`,
+		);
+	}
+	return parsed.data;
 }

@@ -1,4 +1,4 @@
-import type { GatewayZoneConfig } from '@shravansunder/gateway-interface';
+import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
 import { describe, expect, it } from 'vitest';
 
 import { workerLifecycle } from './worker-lifecycle.js';
@@ -7,7 +7,7 @@ const zone: GatewayZoneConfig = {
 	allowedHosts: ['api.openai.com'],
 	gateway: {
 		cpus: 2,
-		gatewayConfig: '/host/config/shravan/worker.json',
+		config: '/host/config/shravan/worker.json',
 		memory: '2G',
 		port: 18791,
 		stateDir: '/host/state/shravan',
@@ -65,7 +65,7 @@ describe('workerLifecycle', () => {
 			OPENAI_API_KEY: 'openai-token',
 		});
 
-		expect(processSpec.bootstrapCommand).toContain('npm install -g @openai/codex');
+		expect(processSpec.bootstrapCommand).toContain('npm install -g --force @openai/codex');
 		expect(processSpec.bootstrapCommand).toContain('/state/agent-vm-worker.tgz');
 		expect(processSpec.startCommand).toContain('agent-vm-worker');
 		expect(processSpec.startCommand).toContain('serve --port 18789');

@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { createManagedVm } from '@shravansunder/gondolin-core';
-import type { ManagedVm } from '@shravansunder/gondolin-core';
+import { createManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 /**
  * Live smoke test — boots real Gondolin VMs.
  *

@@ -6,8 +6,8 @@ import {
 	gatewayTypeValues,
 	type GatewayProcessSpec,
 	type GatewayType,
-} from '@shravansunder/gateway-interface';
-import { type ManagedVm, writeFileAtomically } from '@shravansunder/gondolin-core';
+} from '@agent-vm/gateway-interface';
+import { type ManagedVm, writeFileAtomically } from '@agent-vm/gondolin-adapter';
 import { ZodError, z } from 'zod';
 
 export const gatewayRuntimeRecordSchema = z.object({

@@ -8,12 +8,10 @@
 import fs from 'node:fs';
 import http from 'node:http';
 
-import { createSecretResolver } from '../packages/gondolin-core/dist/secret-resolver.js';
-import { createManagedVm } from '../packages/gondolin-core/dist/vm-adapter.js';
+import { createSecretResolver } from '../packages/gondolin-adapter/dist/secret-resolver.js';
+import { createManagedVm } from '../packages/gondolin-adapter/dist/vm-adapter.js';
 
-// Dynamic import for Gondolin SDK (needs the full path)
-const gondolin =
-	await import('/Users/shravansunder/Documents/dev/open-source/vm/gondolin/host/dist/src/index.js');
+const gondolin = await import('@earendil-works/gondolin');
 const { VM, createHttpHooks, RealFSProvider, ReadonlyProvider } = gondolin;
 
 // Load .env.local
@@ -184,20 +182,20 @@ const gatewayVm = await VM.create({
 			'/home/openclaw/.openclaw/state': new RealFSProvider(stateDir),
 			'/home/openclaw/workspace': new RealFSProvider(wsDir),
 			// Mount plugin at staging path — will be copied to extensions with correct ownership
-			'/opt/gondolin-plugin-src': new ReadonlyProvider(new RealFSProvider(pluginDir)),
+			'/opt-works/gondolin-plugin-src': new ReadonlyProvider(new RealFSProvider(pluginDir)),
 		},
 	},
 });
 
-// Copy plugin to rootfs /opt/extensions/gondolin/ with root ownership.
+// Copy plugin to rootfs /opt/extensions-works/gondolin/ with root ownership.
 // OPENCLAW_BUNDLED_PLUGINS_DIR points to /opt/extensions.
 await gatewayVm.exec(
-	'mkdir -p /opt/extensions/gondolin && ' +
-		'cp -a /opt/gondolin-plugin-src/. /opt/extensions/gondolin/ && ' +
+	'mkdir -p /opt/extensions-works/gondolin && ' +
+		'cp -a /opt-works/gondolin-plugin-src/. /opt/extensions-works/gondolin/ && ' +
 		'chown -R root:root /opt/extensions',
 );
 const pluginCheck = await gatewayVm.exec(
-	"stat -c '%U' /opt/extensions/gondolin/plugin.js 2>/dev/null || echo no-stat",
+	"stat -c '%U' /opt/extensions-works/gondolin/plugin.js 2>/dev/null || echo no-stat",
 );
 log('plugin ownership: ' + pluginCheck.stdout.trim());
 

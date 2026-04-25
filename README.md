@@ -1,117 +1,110 @@
 # agent-vm
 
-Sandboxed micro-VM infrastructure for AI coding agents. Run tool calls, code execution, and agent workflows inside ephemeral QEMU virtual machines with per-session isolation, managed secrets, and workspace mounting.
+Sandboxed VM infrastructure for autonomous coding agents.
 
-Built on [Gondolin](https://github.com/nicholasgasior/gondolin) (QEMU micro-VMs) with [OpenClaw](https://github.com/nicholasgasior/openclaw) integration for agent orchestration.
+The primary path is the Worker gateway: a caller submits a coding task, the
+controller boots a fresh Gondolin micro-VM, `agent-vm-worker` plans, edits,
+validates, reviews, and asks the host-side controller to push a branch and open
+a PR. The agent can execute code inside the VM, but secrets and git push
+credentials stay on the host.
 
-## Why
+If you want the underlying micro-VM runtime details, see the upstream Gondolin
+docs on [sandbox setup and secret mediation](https://github.com/earendil-works/gondolin/blob/main/README.md#quick-example)
+and [custom image / VFS features](https://github.com/earendil-works/gondolin/blob/main/README.md#feature-highlights).
 
-AI coding agents need to execute code — shell commands, file operations, package installs, network requests — with your credentials and full filesystem access. One bad tool call and credentials leak, repos corrupt, or packages install that you didn't authorize.
+OpenClaw support still exists, but it is the secondary interactive mode. Start
+with the Worker gateway unless you are specifically building an OpenClaw setup.
 
-agent-vm solves this by running each tool call inside an ephemeral QEMU micro-VM:
+## Mental Model
 
-- **Sandboxed execution** — each tool call runs in its own VM with controlled network access, scoped filesystem mounts, and no host credential exposure
-- **Ephemeral by default** — tool VMs are created on demand and destroyed after use. No state leaks between sessions.
-- **Managed secrets** — API keys and tokens sourced from 1Password, injected via HTTP mediation or env vars. Secrets never touch the agent environment directly.
-- **Workspace mounting** — project files mounted read-write into the VM via Gondolin VFS. Changes persist to the host workspace.
-
-## How It Works
-
-```
-Host (macOS)
-├── Controller (Node.js, :18800)
-│   ├── Lease Manager — tool VM lifecycle, scope-based reuse
-│   ├── TCP Pool — port allocation for SSH tunnels
-│   ├── Idle Reaper — 30min TTL, automatic cleanup
-│   └── HTTP API (Hono)
-│
-├── Gateway VM (Debian slim, 2GB RAM, persistent)
-│   ├── OpenClaw — agent orchestration, model routing
-│   ├── Gondolin sandbox plugin
-│   ├── Discord + WhatsApp channels
-│   └── Ingress → :18791
-│
-└── Tool VMs (Debian slim, 1GB RAM, ephemeral)
-    ├── SSH via Gondolin virtio tunnel
-    ├── /workspace — VFS-mounted from host
-    └── Created on-demand per tool call
+```text
+request / API / CI
+      |
+      v
+controller host process
+  - reads system.json
+  - resolves secrets
+  - clones repos
+  - builds/caches VM images
+  - pushes branches and creates PRs
+      |
+      v
+Gondolin VM
+  - runs agent-vm-worker
+  - mounts /workspace and /state only
+  - runs agent-generated commands safely
 ```
 
-The **controller** runs on the host and manages VM lifecycle. It exposes an HTTP API for lease management — requesting, reusing, and releasing tool VMs.
+The controller clones git repositories on the host side, then realfs-mounts
+them into the VM at `/workspace`. The VM can edit the mounted checkout, but git
+push and PR creation still happen through the host-side controller.
 
-The **gateway VM** is a persistent VM running OpenClaw. When an agent receives a tool call, the sandbox plugin routes it to the controller's lease API, which spawns (or reuses) a tool VM to execute the command.
+## Init Presets
 
-**Tool VMs** are ephemeral Debian micro-VMs. Each gets SSH access, a mounted workspace, and scoped network egress. After execution, results return through the gateway and the VM is reaped after idle timeout.
+`agent-vm init` can scaffold the repo for two deployment shapes: bare metal and
+generic container host.
 
-**Worker mode** extends this with multi-phase task execution: planning, git operations, code execution (via Codex SDK), verification, and wrapup actions (PR creation, Slack notifications).
+| Preset | Use when | Expands to |
+| --- | --- | --- |
+| `macos-local` | Local Mac development | local paths, `aarch64`, 1Password secrets, `hostSystemType: "bare-metal"`, writes `.env.local` |
+| `container-x86` | x86_64 Linux container runtime | runtime paths, `x86_64`, environment secrets, `vm-host-system/` |
 
-## Packages
+Explicit flags like `--arch`, `--paths`, and `--secrets` override preset
+defaults.
 
-| Package | Purpose |
-|---------|---------|
-| `gondolin-core` | QEMU micro-VM adapter, secret resolver, build pipeline, policy compiler, volume manager |
-| `agent-vm` | Host controller — CLI, HTTP API, lease manager, gateway manager, backup system |
-| `agent-vm-worker` | Worker task executor — planning, git ops, code execution, verification, wrapup actions |
-| `gateway-interface` | Shared TypeScript interfaces for gateway lifecycle, VM specs, health checks |
-| `worker-gateway` | Worker VM lifecycle — ephemeral Debian VMs per tool call |
-| `openclaw-gateway` | OpenClaw VM lifecycle — persistent gateway with plugin setup and channel config |
-| `openclaw-agent-vm-plugin` | Bridges OpenClaw and Gondolin — sandbox backend, lease client, plugin registration |
+## Validate vs Doctor
 
-## CLI
-
-```
-agent-vm controller doctor              # Validate environment (node, qemu, age, op, ports)
-agent-vm controller start               # Boot controller + gateway VM
-agent-vm controller stop                # Graceful shutdown
-agent-vm controller status              # System status
-agent-vm controller ssh-cmd             # Get SSH command for gateway VM
-agent-vm controller logs                # Gateway OpenClaw logs
-agent-vm controller destroy [--purge]   # Stop zone + optionally purge state
-agent-vm controller upgrade             # Rebuild image + restart
-agent-vm controller credentials refresh # Re-resolve 1Password secrets
-agent-vm controller lease list          # Active tool VM leases
-agent-vm controller lease release <id>  # Release a specific lease
-agent-vm backup create                  # Encrypted backup of zone state
-agent-vm backup restore                 # Decrypt + restore zone state
-agent-vm backup list                    # List backup archives
-```
-
-## Prerequisites
-
-- macOS (host)
-- Node.js >= 24
-- [QEMU](https://www.qemu.org/) — micro-VM hypervisor
-- [age](https://github.com/FiloSottile/age) — backup encryption
-- [1Password CLI](https://developer.1password.com/docs/cli/) — secret management
-
-## Setup
+Use both, but for different questions.
 
 ```bash
-# Install dependencies
-pnpm install
-
-# Copy and configure environment
-cp .env.example .env.local
-
-# Validate environment
-pnpm exec agent-vm controller doctor
-
-# Start the controller + gateway
-pnpm exec agent-vm controller start
+agent-vm validate --config config/system.json
+agent-vm doctor --config config/system.json
 ```
+
+`validate` checks whether the scaffolded files are coherent. `doctor` checks
+whether the current machine can run the config right now.
+
+See [docs/reference/validate-and-doctor.md](docs/reference/validate-and-doctor.md).
+
+## Quick Start
+
+```bash
+pnpm install
+pnpm build
+AGENT_VM="node packages/agent-vm/dist/cli/agent-vm-entrypoint.js"
+
+$AGENT_VM init coding-agent --type worker --preset macos-local
+$AGENT_VM validate --config config/system.json
+$AGENT_VM doctor --config config/system.json
+$AGENT_VM build --config config/system.json
+$AGENT_VM controller start --config config/system.json --zone coding-agent
+```
+
+Container-host scaffold:
+
+```bash
+AGENT_VM="node packages/agent-vm/dist/cli/agent-vm-entrypoint.js"
+
+$AGENT_VM init coding-agent --type worker --preset container-x86 --namespace agent-vm
+$AGENT_VM validate --config config/system.json
+```
+
+## Read Next
+
+| Goal | Read |
+| --- | --- |
+| Understand the docs layout | [docs/README.md](docs/README.md) |
+| Understand system architecture | [docs/architecture/overview.md](docs/architecture/overview.md) |
+| Configure the Worker gateway | [docs/getting-started/worker-guide.md](docs/getting-started/worker-guide.md) |
+| Look up config fields | [docs/reference/configuration/README.md](docs/reference/configuration/README.md) |
+| Use OpenClaw Gateway | [docs/getting-started/openclaw-guide.md](docs/getting-started/openclaw-guide.md) |
 
 ## Development
 
 ```bash
-pnpm build              # Build all packages
-pnpm test               # Run unit tests
-pnpm test:integration   # Run integration tests
-pnpm test:smoke         # Run smoke tests
-pnpm check              # Lint + format check + typecheck
-pnpm lint:fix           # Auto-fix lint issues
-pnpm fmt                # Format all files
+pnpm build
+pnpm test:unit
+pnpm test:integration
+pnpm test:smoke
+pnpm check
 ```
-
-## License
-
-[MIT](LICENSE)

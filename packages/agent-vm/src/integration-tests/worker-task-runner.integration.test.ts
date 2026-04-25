@@ -7,23 +7,48 @@ import { serve } from '@hono/node-server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createApp } from '../../../agent-vm-worker/src/server.js';
-import type { SystemConfig } from '../config/system-config.js';
+import type { LoadedSystemConfig } from '../config/system-config.js';
 
 const startGatewayZoneMock = vi.fn();
-const startDockerServicesForTaskMock = vi.fn(async () => ({
-	composeFilePaths: [],
-	tcpHosts: {},
+const startRepoResourceProvidersMock = vi.fn(async () => ({
+	finalizations: [],
+	startedProviders: [],
 }));
-const stopDockerServicesForTaskMock = vi.fn(async () => {});
+const stopRepoResourceProvidersMock = vi.fn(async () => {});
 
 vi.mock('../gateway/gateway-zone-orchestrator.js', () => ({
 	startGatewayZone: startGatewayZoneMock,
 }));
 
-vi.mock('../controller/docker-service-routing.js', () => ({
-	startDockerServicesForTask: startDockerServicesForTaskMock,
-	stopDockerServicesForTask: stopDockerServicesForTaskMock,
-}));
+vi.mock('../resources/repo-resource-provider-runner.js', async (importOriginal) => {
+	const original =
+		await importOriginal<typeof import('../resources/repo-resource-provider-runner.js')>();
+	return {
+		...original,
+		startRepoResourceProviders: startRepoResourceProvidersMock,
+		stopRepoResourceProviders: stopRepoResourceProvidersMock,
+	};
+});
+
+function buildWorkerConfigInput(): Record<string, unknown> {
+	return {
+		phases: {
+			plan: {
+				cycle: { kind: 'review', cycleCount: 1 },
+				agentInstructions: null,
+				reviewerInstructions: null,
+				skills: [],
+			},
+			work: {
+				cycle: { kind: 'review', cycleCount: 1 },
+				agentInstructions: null,
+				reviewerInstructions: null,
+				skills: [],
+			},
+			wrapup: { instructions: null, skills: [] },
+		},
+	};
+}
 
 async function findOpenPort(): Promise<number> {
 	return await new Promise((resolve, reject) => {
@@ -79,34 +104,47 @@ describe('worker-task-runner integration', () => {
 						effectiveConfig: {
 							defaults: { provider: 'codex', model: 'latest-medium' },
 							phases: {
-								plan: { skills: [], maxReviewLoops: 1 },
-								planReview: { skills: [] },
-								work: { skills: [], maxReviewLoops: 1, maxVerificationRetries: 1 },
-								workReview: { skills: [] },
-								wrapup: { skills: [] },
+								plan: {
+									skills: [],
+									cycle: { kind: 'review', cycleCount: 1 },
+									agentInstructions: null,
+									reviewerInstructions: null,
+									agentTurnTimeoutMs: 900_000,
+									reviewerTurnTimeoutMs: 900_000,
+								},
+								work: {
+									skills: [],
+									cycle: { kind: 'review', cycleCount: 1 },
+									agentInstructions: null,
+									reviewerInstructions: null,
+									agentTurnTimeoutMs: 2_700_000,
+									reviewerTurnTimeoutMs: 900_000,
+								},
+								wrapup: { skills: [], instructions: null, turnTimeoutMs: 900_000 },
 							},
 							mcpServers: [],
 							verification: [{ name: 'test', command: 'pnpm test' }],
 							verificationTimeoutMs: 300_000,
-							wrapupActions: [],
 							branchPrefix: 'agent/',
-							commitCoAuthor: 'agent-vm-worker <noreply@agent-vm>',
-							idleTimeoutMs: 1_800_000,
 							stateDir: '/state',
 						},
 					},
 					plan: null,
 					lastContextError: null,
-					lastDiffError: null,
-					plannerThreadId: null,
-					workThreadId: null,
-					planReviewLoop: 0,
-					workReviewLoop: 0,
-					verificationAttempt: 0,
-					lastReviewSummary: null,
-					lastVerificationResults: null,
+					planAgentThreadId: null,
+					planReviewerThreadId: null,
+					workAgentThreadId: null,
+					workReviewerThreadId: null,
+					wrapupThreadId: null,
+					planReviewCycle: 0,
+					workReviewCycle: 0,
+					currentCycle: 0,
+					currentMaxCycles: 0,
+					lastPlanReview: null,
+					lastWorkReview: null,
+					lastValidationResults: null,
 					failureReason: null,
-					wrapupResults: null,
+					wrapupResult: null,
 					createdAt: new Date().toISOString(),
 					updatedAt: new Date().toISOString(),
 				};
@@ -154,8 +192,12 @@ describe('worker-task-runner integration', () => {
 
 	afterEach(async () => {
 		startGatewayZoneMock.mockReset();
-		startDockerServicesForTaskMock.mockReset();
-		stopDockerServicesForTaskMock.mockReset();
+		startRepoResourceProvidersMock.mockReset();
+		startRepoResourceProvidersMock.mockResolvedValue({
+			finalizations: [],
+			startedProviders: [],
+		});
+		stopRepoResourceProvidersMock.mockReset();
 		if (server) {
 			await new Promise<void>((resolve) => {
 				server?.close(() => resolve());
@@ -167,6 +209,8 @@ describe('worker-task-runner integration', () => {
 
 	const systemConfig = {
 		cacheDir: '/tmp/cache',
+		systemConfigPath: '/tmp/config/system.json',
+		systemCacheIdentifierPath: '/tmp/config/systemCacheIdentifier.json',
 		host: {
 			controllerPort: 18800,
 			projectNamespace: 'claw-tests-a1b2c3d4',
@@ -175,19 +219,25 @@ describe('worker-task-runner integration', () => {
 				tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 			},
 		},
-		images: {
-			gateway: { buildConfig: '/tmp/gateway-build.json' },
-			tool: { buildConfig: '/tmp/tool-build.json' },
+		imageProfiles: {
+			gateways: {
+				openclaw: { type: 'openclaw', buildConfig: '/tmp/gateway-build.json' },
+				worker: { type: 'worker', buildConfig: '/tmp/gateway-build.json' },
+			},
+			toolVms: {
+				default: { type: 'toolVm', buildConfig: '/tmp/tool-build.json' },
+			},
 		},
 		zones: [
 			{
 				id: 'shravan',
 				gateway: {
 					type: 'worker',
+					imageProfile: 'worker',
 					memory: '2G',
 					cpus: 2,
 					port: 18791,
-					gatewayConfig: '',
+					config: '',
 					stateDir: '',
 					workspaceDir: '',
 				},
@@ -198,31 +248,36 @@ describe('worker-task-runner integration', () => {
 			},
 		],
 		toolProfiles: {
-			standard: { memory: '1G', cpus: 1, workspaceRoot: '/tmp/tools' },
+			standard: { memory: '1G', cpus: 1, workspaceRoot: '/tmp/tools', imageProfile: 'default' },
 		},
 		tcpPool: { basePort: 19000, size: 4 },
-	} satisfies SystemConfig;
+	} satisfies LoadedSystemConfig;
 
 	it('posts to a real worker HTTP server, harvests the terminal state, and tears down the vm', async () => {
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected zone config.');
 		}
-		zone.gateway.gatewayConfig = path.join(tempDir, 'gateway-config.json');
+		zone.gateway.config = path.join(tempDir, 'gateway-config.json');
 		zone.gateway.stateDir = path.join(tempDir, 'state');
 		zone.gateway.workspaceDir = path.join(tempDir, 'workspace');
-		await fs.writeFile(zone.gateway.gatewayConfig, JSON.stringify({}));
+		await fs.writeFile(zone.gateway.config, JSON.stringify(buildWorkerConfigInput()));
 
-		const { runWorkerTask } = await import('../controller/worker-task-runner.js');
-		const result = await runWorkerTask({
+		const { executeWorkerTask, prepareWorkerTask } =
+			await import('../controller/worker-task-runner.js');
+		const prepared = await prepareWorkerTask({
 			input: {
+				requestTaskId: 'request-task-1',
 				prompt: 'fix login bug',
 				repos: [],
 				context: { ticket: 'INC-123' },
 			},
-			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
 			systemConfig,
 			zoneId: 'shravan',
+		});
+		const result = await executeWorkerTask(prepared, {
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
 			timeoutMs: 2_000,
 		});
 

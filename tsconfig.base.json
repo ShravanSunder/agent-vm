@@ -26,14 +26,13 @@
 		"skipLibCheck": true,
 		"types": ["node"],
 		"paths": {
-			"@shravansunder/gondolin-core": ["./packages/gondolin-core/src/index.ts"],
-			"@shravansunder/agent-vm-worker": ["./packages/agent-vm-worker/src/index.ts"],
-			"@shravansunder/gateway-interface": ["./packages/gateway-interface/src/index.ts"],
-			"@shravansunder/openclaw-agent-vm-plugin": [
-				"./packages/openclaw-agent-vm-plugin/src/index.ts"
-			],
-			"@shravansunder/openclaw-gateway": ["./packages/openclaw-gateway/src/index.ts"],
-			"@shravansunder/worker-gateway": ["./packages/worker-gateway/src/index.ts"]
+			"@agent-vm/agent-vm": ["./packages/agent-vm/src/index.ts"],
+			"@agent-vm/gondolin-adapter": ["./packages/gondolin-adapter/src/index.ts"],
+			"@agent-vm/agent-vm-worker": ["./packages/agent-vm-worker/src/index.ts"],
+			"@agent-vm/gateway-interface": ["./packages/gateway-interface/src/index.ts"],
+			"@agent-vm/openclaw-agent-vm-plugin": ["./packages/openclaw-agent-vm-plugin/src/index.ts"],
+			"@agent-vm/openclaw-gateway": ["./packages/openclaw-gateway/src/index.ts"],
+			"@agent-vm/worker-gateway": ["./packages/worker-gateway/src/index.ts"]
 		}
 	}
 }

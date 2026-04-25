@@ -1,16 +1,16 @@
-# OpenClaw Mode Guide
+# OpenClaw Gateway Guide
 
-[Overview](../README.md) > Getting Started > OpenClaw Mode
+[Overview](../README.md) > Getting Started > OpenClaw Gateway
 
-How to configure and run agent-vm in OpenClaw mode — interactive chat agent with sandboxed tool execution.
+How to configure and run agent-vm in OpenClaw Gateway — interactive chat agent with sandboxed tool execution.
 
 ---
 
-## What OpenClaw Mode Does
+## What OpenClaw Gateway Does
 
 A long-running gateway VM hosts the OpenClaw interactive agent. Users chat via Discord or WhatsApp. When the agent needs to execute code, it requests a tool VM lease from the controller. Tool VMs are ephemeral — created on demand, destroyed after use.
 
-For the full OpenClaw architecture, see [architecture/openclaw-mode.md](../architecture/openclaw-mode.md).
+For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../architecture/openclaw-gateway.md).
 
 ---
 
@@ -27,7 +27,7 @@ For the full OpenClaw architecture, see [architecture/openclaw-mode.md](../archi
       "memory": "2G",
       "cpus": 2,
       "port": 18791,
-      "gatewayConfig": "./my-openclaw/openclaw.json",
+      "config": "./my-openclaw/openclaw.json",
       "stateDir": "../state/my-openclaw",
       "workspaceDir": "../workspaces/my-openclaw",
       "authProfilesRef": {
@@ -49,7 +49,8 @@ For the full OpenClaw architecture, see [architecture/openclaw-mode.md](../archi
 }
 ```
 
-For all system.json fields, see [reference/configuration-reference.md](../reference/configuration-reference.md#systemjson).
+For all system.json fields, see
+[reference/configuration/system-json.md](../reference/configuration/system-json.md).
 
 ### openclaw.json — OpenClaw Configuration
 
@@ -101,7 +102,7 @@ When the agent needs to run code, OpenClaw requests a tool VM lease from the con
 
 Leases are scoped by `scopeKey` for reuse within the same conversation. Idle leases are reaped after 30 minutes.
 
-For internals, see [architecture/openclaw-mode.md](../architecture/openclaw-mode.md#tool-vm-leases).
+For internals, see [architecture/openclaw-gateway.md](../architecture/openclaw-gateway.md#tool-vm-leases).
 
 ---
 
@@ -130,7 +131,7 @@ Opens an SSH session into the gateway VM for debugging.
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
 | Gateway won't start | Auth profiles missing | Check `authProfilesRef` in system.json |
-| Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth codex --zone <id>` |
+| Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth-interactive codex --zone <id>` |
 | Tool calls fail | Lease creation failing | Check `toolProfile` exists, TCP pool has free slots |
 | Discord not connecting | WebSocket not bypassed | Add `gateway.discord.gg:443` to `websocketBypass` |
 | Can't reach external API | Host not allowlisted | Add to `zones[].allowedHosts` |

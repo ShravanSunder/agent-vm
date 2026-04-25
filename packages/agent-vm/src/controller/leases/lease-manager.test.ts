@@ -36,6 +36,7 @@ describe('createLeaseManager', () => {
 				cpus: 1,
 				memory: '1G',
 				workspaceRoot: '/workspaces/tools',
+				imageProfile: 'default',
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main:session-abc',
@@ -78,7 +79,12 @@ describe('createLeaseManager', () => {
 
 		const lease1 = await leaseManager.createLease({
 			agentWorkspaceDir: '/workspace',
-			profile: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				workspaceRoot: '/workspaces/tools',
+				imageProfile: 'default',
+			},
 			profileId: 'standard',
 			scopeKey: 'scope-a',
 			workspaceDir: '/workspace',
@@ -86,7 +92,12 @@ describe('createLeaseManager', () => {
 		});
 		const lease2 = await leaseManager.createLease({
 			agentWorkspaceDir: '/workspace',
-			profile: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				workspaceRoot: '/workspaces/tools',
+				imageProfile: 'default',
+			},
 			profileId: 'standard',
 			scopeKey: 'scope-b',
 			workspaceDir: '/workspace',
@@ -138,7 +149,12 @@ describe('createLeaseManager', () => {
 
 		const lease = await leaseManager.createLease({
 			agentWorkspaceDir: '/workspace',
-			profile: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				workspaceRoot: '/workspaces/tools',
+				imageProfile: 'default',
+			},
 			profileId: 'standard',
 			scopeKey: 'scope-clean',
 			workspaceDir: '/workspace',
@@ -149,7 +165,12 @@ describe('createLeaseManager', () => {
 
 		expect(closeMock).toHaveBeenCalledTimes(1);
 		expect(cleanWorkspace).toHaveBeenCalledWith({
-			profile: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				workspaceRoot: '/workspaces/tools',
+				imageProfile: 'default',
+			},
 			tcpSlot: 0,
 			zoneId: 'shravan',
 		});
@@ -182,7 +203,12 @@ describe('createLeaseManager', () => {
 
 		const lease = await leaseManager.createLease({
 			agentWorkspaceDir: '/workspace',
-			profile: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				workspaceRoot: '/workspaces/tools',
+				imageProfile: 'default',
+			},
 			profileId: 'standard',
 			scopeKey: 'scope-close-fail',
 			workspaceDir: '/workspace',
@@ -223,7 +249,12 @@ describe('createLeaseManager', () => {
 
 		const lease = await leaseManager.createLease({
 			agentWorkspaceDir: '/workspace',
-			profile: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				workspaceRoot: '/workspaces/tools',
+				imageProfile: 'default',
+			},
 			profileId: 'standard',
 			scopeKey: 'scope-cleanup-fail',
 			workspaceDir: '/workspace',
@@ -249,7 +280,12 @@ describe('createLeaseManager', () => {
 		await expect(
 			leaseManager.createLease({
 				agentWorkspaceDir: '/workspace',
-				profile: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+				profile: {
+					cpus: 1,
+					memory: '1G',
+					workspaceRoot: '/workspaces/tools',
+					imageProfile: 'default',
+				},
 				profileId: 'standard',
 				scopeKey: 'scope-fail',
 				workspaceDir: '/workspace',
@@ -282,7 +318,12 @@ describe('createLeaseManager', () => {
 		await expect(
 			leaseManager.createLease({
 				agentWorkspaceDir: '/workspace',
-				profile: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+				profile: {
+					cpus: 1,
+					memory: '1G',
+					workspaceRoot: '/workspaces/tools',
+					imageProfile: 'default',
+				},
 				profileId: 'standard',
 				scopeKey: 'scope-ssh-fail',
 				workspaceDir: '/workspace',

@@ -1,6 +1,7 @@
 {
-	"name": "@shravansunder/openclaw-agent-vm-plugin",
-	"version": "0.0.17",
+	"name": "@agent-vm/openclaw-agent-vm-plugin",
+	"version": "0.0.19",
+	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
 	"files": [
 		"dist"
 	],
@@ -14,7 +15,7 @@
 		}
 	},
 	"publishConfig": {
-		"access": "public"
+		"access": "restricted"
 	},
 	"scripts": {
 		"build": "tsdown && cp openclaw.plugin.json sdk-validate.mjs dist/",
@@ -22,6 +23,6 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@shravansunder/gondolin-core": "workspace:*"
+		"@agent-vm/gondolin-adapter": "workspace:*"
 	}
 }

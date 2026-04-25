@@ -1,25 +1,28 @@
 import fs from 'node:fs/promises';
 
 import type { Lease, LeaseManager } from '../leases/lease-manager.js';
+import type { PreparedWorkerTask, WorkerTaskInput } from '../worker-task-runner.js';
+
+export class ControllerTaskNotReadyError extends Error {}
+export class ControllerRuntimeAtCapacityError extends Error {}
 
 export interface ControllerRouteOperations {
 	readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
 	readonly enableSshForZone?: (zoneId: string) => Promise<unknown>;
 	readonly execInZone?: (zoneId: string, command: string) => Promise<unknown>;
 	readonly getStatus: () => Promise<unknown>;
+	readonly getTaskState?: (zoneId: string, taskId: string) => Promise<unknown>;
 	readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
 	readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;
-	readonly runWorkerTask?: (
+	readonly prepareWorkerTask?: (
 		zoneId: string,
-		input: {
-			readonly prompt: string;
-			readonly repos: readonly {
-				readonly repoUrl: string;
-				readonly baseBranch: string;
-			}[];
-			readonly context: Record<string, unknown>;
-		},
-	) => Promise<unknown>;
+		input: WorkerTaskInput,
+	) => Promise<PreparedWorkerTask>;
+	readonly executeWorkerTask?: (prepared: PreparedWorkerTask) => Promise<unknown>;
+	readonly closeTaskForZone?: (
+		zoneId: string,
+		taskId: string,
+	) => Promise<{ readonly status: 'closed' }>;
 	readonly pushTaskBranches?: (
 		zoneId: string,
 		taskId: string,
@@ -27,9 +30,14 @@ export interface ControllerRouteOperations {
 			readonly branches: readonly {
 				readonly repoUrl: string;
 				readonly branchName: string;
-				readonly title: string;
-				readonly body: string;
 			}[];
+		},
+	) => Promise<unknown>;
+	readonly pullDefaultForTask?: (
+		zoneId: string,
+		taskId: string,
+		input: {
+			readonly repoUrl: string;
 		},
 	) => Promise<unknown>;
 	readonly stopController?: () => Promise<unknown>;

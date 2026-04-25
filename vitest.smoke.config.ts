@@ -29,11 +29,11 @@ loadDotEnvLocal();
 export default defineConfig({
 	resolve: {
 		alias: {
-			'@shravansunder/gondolin-core': path.resolve('./packages/gondolin-core/src/index.ts'),
-			'@shravansunder/agent-vm-worker': path.resolve('./packages/agent-vm-worker/src/index.ts'),
-			'@shravansunder/gateway-interface': path.resolve('./packages/gateway-interface/src/index.ts'),
-			'@shravansunder/openclaw-gateway': path.resolve('./packages/openclaw-gateway/src/index.ts'),
-			'@shravansunder/worker-gateway': path.resolve('./packages/worker-gateway/src/index.ts'),
+			'@agent-vm/gondolin-adapter': path.resolve('./packages/gondolin-adapter/src/index.ts'),
+			'@agent-vm/agent-vm-worker': path.resolve('./packages/agent-vm-worker/src/index.ts'),
+			'@agent-vm/gateway-interface': path.resolve('./packages/gateway-interface/src/index.ts'),
+			'@agent-vm/openclaw-gateway': path.resolve('./packages/openclaw-gateway/src/index.ts'),
+			'@agent-vm/worker-gateway': path.resolve('./packages/worker-gateway/src/index.ts'),
 		},
 	},
 	test: {

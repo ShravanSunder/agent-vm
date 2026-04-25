@@ -4,7 +4,7 @@ export const reviewResultSchema = z.object({
 	approved: z.boolean(),
 	comments: z.array(
 		z.object({
-			file: z.string().default(''),
+			file: z.string(),
 			line: z.number().optional(),
 			severity: z.enum(['critical', 'suggestion', 'nitpick']),
 			comment: z.string(),

@@ -15,9 +15,17 @@ const systemConfig = {
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 		},
 	},
-	images: {
-		gateway: { buildConfig: './images/gateway/build-config.json' },
-		tool: { buildConfig: './images/tool/build-config.json' },
+	imageProfiles: {
+		gateways: {
+			openclaw: {
+				type: 'openclaw',
+				buildConfig: './vm-images/gateways/openclaw/build-config.json',
+			},
+			worker: { type: 'worker', buildConfig: './vm-images/gateways/worker/build-config.json' },
+		},
+		toolVms: {
+			default: { type: 'toolVm', buildConfig: './vm-images/tool-vms/default/build-config.json' },
+		},
 	},
 	tcpPool: {
 		basePort: 19000,
@@ -28,6 +36,7 @@ const systemConfig = {
 			cpus: 1,
 			memory: '1G',
 			workspaceRoot: './workspaces/tools',
+			imageProfile: 'default',
 		},
 	},
 	zones: [
@@ -35,9 +44,10 @@ const systemConfig = {
 			allowedHosts: ['api.anthropic.com'],
 			gateway: {
 				type: 'openclaw',
+				imageProfile: 'openclaw',
 				cpus: 2,
 				memory: '2G',
-				gatewayConfig: './config/shravan/openclaw.json',
+				config: './config/shravan/openclaw.json',
 				port: 18791,
 				stateDir: './state/shravan',
 				workspaceDir: './workspaces/shravan',

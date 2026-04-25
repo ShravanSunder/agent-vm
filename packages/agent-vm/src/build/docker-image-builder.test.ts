@@ -13,7 +13,7 @@ describe('buildDockerImage', () => {
 
 		await buildDockerImage(
 			{
-				dockerfilePath: '/project/images/gateway/Dockerfile',
+				dockerfilePath: '/project/vm-images/gateways/openclaw/Dockerfile',
 				imageTag: 'agent-vm-gateway:latest',
 			},
 			dependencies,
@@ -25,10 +25,10 @@ describe('buildDockerImage', () => {
 				args: [
 					'build',
 					'-f',
-					'/project/images/gateway/Dockerfile',
+					'/project/vm-images/gateways/openclaw/Dockerfile',
 					'-t',
 					'agent-vm-gateway:latest',
-					'/project/images/gateway',
+					'/project/vm-images/gateways/openclaw',
 				],
 			},
 		]);
@@ -38,7 +38,7 @@ describe('buildDockerImage', () => {
 		await expect(
 			buildDockerImage(
 				{
-					dockerfilePath: '/project/images/gateway/Dockerfile',
+					dockerfilePath: '/project/vm-images/gateways/openclaw/Dockerfile',
 					imageTag: 'agent-vm-gateway:latest',
 				},
 				{

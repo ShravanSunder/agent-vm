@@ -1,15 +1,15 @@
 import fs from 'node:fs/promises';
 import { join } from 'node:path';
 
+import type { ReviewResult } from '../shared/review-result.js';
 import { writeStderr } from '../shared/stderr.js';
 import { replayEvents } from './event-log.js';
 import type {
+	PhaseName,
 	TaskConfig,
 	TaskEvent,
-	PhaseName,
 	TaskStatus,
 	VerificationCommandResult,
-	WrapupActionResult,
 } from './task-event-types.js';
 import { TERMINAL_STATUSES } from './task-event-types.js';
 
@@ -20,15 +20,23 @@ export interface TaskState {
 	readonly failureReason: string | null;
 	readonly plan: string | null;
 	readonly lastContextError: string | null;
-	readonly lastDiffError: string | null;
-	readonly plannerThreadId: string | null;
-	readonly workThreadId: string | null;
-	readonly planReviewLoop: number;
-	readonly workReviewLoop: number;
-	readonly verificationAttempt: number;
-	readonly lastReviewSummary: string | null;
-	readonly lastVerificationResults: readonly VerificationCommandResult[] | null;
-	readonly wrapupResults: readonly WrapupActionResult[] | null;
+	readonly planAgentThreadId: string | null;
+	readonly planReviewerThreadId: string | null;
+	readonly workAgentThreadId: string | null;
+	readonly workReviewerThreadId: string | null;
+	readonly wrapupThreadId: string | null;
+	readonly planReviewCycle: number;
+	readonly workReviewCycle: number;
+	readonly currentCycle: number;
+	readonly currentMaxCycles: number;
+	readonly lastPlanReview: ReviewResult | null;
+	readonly lastWorkReview: ReviewResult | null;
+	readonly lastValidationResults: readonly VerificationCommandResult[] | null;
+	readonly wrapupResult: {
+		readonly prUrl: string | null;
+		readonly branchName: string | null;
+		readonly pushedCommits: readonly string[];
+	} | null;
 	readonly createdAt: string;
 	readonly updatedAt: string;
 }
@@ -36,12 +44,9 @@ export interface TaskState {
 const terminalStatusSet = new Set<string>(TERMINAL_STATUSES);
 
 const phaseStatusMap = {
-	plan: 'planning',
-	'plan-review': 'reviewing-plan',
-	work: 'working',
-	verification: 'verifying',
-	'work-review': 'reviewing-work',
-	wrapup: 'wrapping-up',
+	plan: 'plan-agent',
+	work: 'work-agent',
+	wrapup: 'wrapup',
 } as const satisfies Record<PhaseName, TaskStatus>;
 
 export function createInitialState(taskId: string, config: TaskConfig): TaskState {
@@ -54,18 +59,37 @@ export function createInitialState(taskId: string, config: TaskConfig): TaskStat
 		failureReason: null,
 		plan: null,
 		lastContextError: null,
-		lastDiffError: null,
-		plannerThreadId: null,
-		workThreadId: null,
-		planReviewLoop: 0,
-		workReviewLoop: 0,
-		verificationAttempt: 0,
-		lastReviewSummary: null,
-		lastVerificationResults: null,
-		wrapupResults: null,
+		planAgentThreadId: null,
+		planReviewerThreadId: null,
+		workAgentThreadId: null,
+		workReviewerThreadId: null,
+		wrapupThreadId: null,
+		planReviewCycle: 0,
+		workReviewCycle: 0,
+		currentCycle: 0,
+		currentMaxCycles: 0,
+		lastPlanReview: null,
+		lastWorkReview: null,
+		lastValidationResults: null,
+		wrapupResult: null,
 		createdAt: now,
 		updatedAt: now,
 	};
+}
+
+function maxCyclesForPhase(state: TaskState, phase: PhaseName): number {
+	switch (phase) {
+		case 'plan': {
+			const planCycle = state.config.effectiveConfig.phases.plan.cycle;
+			return planCycle.kind === 'review' ? planCycle.cycleCount : 0;
+		}
+		case 'work':
+			return state.config.effectiveConfig.phases.work.cycle.cycleCount;
+		case 'wrapup':
+			return 0;
+	}
+	const exhaustivePhase: never = phase;
+	throw new Error(`Unhandled phase '${String(exhaustivePhase)}'.`);
 }
 
 export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
@@ -73,65 +97,74 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 
 	switch (event.event) {
 		case 'task-accepted':
+			// Controller may persist this before VM boot, and the worker may replay it when accepted.
 			return { ...state, status: 'pending', updatedAt };
 		case 'context-gather-failed':
 			return { ...state, lastContextError: event.reason, updatedAt };
-		case 'phase-started': {
-			return { ...state, status: phaseStatusMap[event.phase], updatedAt };
-		}
+		case 'phase-started':
+			return {
+				...state,
+				status: phaseStatusMap[event.phase],
+				currentCycle: 0,
+				currentMaxCycles: maxCyclesForPhase(state, event.phase),
+				updatedAt,
+			};
 		case 'phase-completed':
 			return { ...state, updatedAt };
-		case 'plan-created':
+		case 'plan-agent-turn':
 			return {
 				...state,
-				plan: event.plan,
-				plannerThreadId: event.threadId,
+				status: 'plan-agent',
+				planAgentThreadId: event.threadId,
+				currentCycle: event.cycle,
 				updatedAt,
 			};
-		case 'work-started':
+		case 'plan-reviewer-turn':
 			return {
 				...state,
-				workThreadId: event.threadId,
-				verificationAttempt: 0,
+				status: 'plan-reviewer',
+				planReviewerThreadId: event.threadId,
+				planReviewCycle: event.cycle,
+				currentCycle: event.cycle,
+				lastPlanReview: event.review,
 				updatedAt,
 			};
-		case 'review-result':
-			if (event.phase === 'plan-review') {
-				return {
-					...state,
-					planReviewLoop: event.loop,
-					lastReviewSummary: event.approved ? null : event.summary,
-					updatedAt,
-				};
-			}
+		case 'plan-finalized':
+			return { ...state, plan: event.plan, updatedAt };
+		case 'work-agent-turn':
 			return {
 				...state,
-				workReviewLoop: event.loop,
-				lastReviewSummary: event.approved ? null : event.summary,
+				status: 'work-agent',
+				workAgentThreadId: event.threadId,
+				currentCycle: event.cycle,
 				updatedAt,
 			};
-		case 'diff-read-failed':
-			return { ...state, lastDiffError: event.reason, updatedAt };
-		case 'verification-result': {
-			const allPassed = event.results.every((result) => result.passed);
+		case 'work-reviewer-turn':
 			return {
 				...state,
-				verificationAttempt: allPassed ? state.verificationAttempt : state.verificationAttempt + 1,
-				lastVerificationResults: event.results,
+				status: 'work-reviewer',
+				workReviewerThreadId: event.threadId,
+				workReviewCycle: event.cycle,
+				currentCycle: event.cycle,
+				lastWorkReview: event.review,
+				lastValidationResults: event.validationResults,
 				updatedAt,
 			};
-		}
-		case 'fix-applied':
-			return { ...state, updatedAt };
+		case 'wrapup-turn':
+			return {
+				...state,
+				status: 'wrapup',
+				wrapupThreadId: event.threadId,
+				updatedAt,
+			};
 		case 'wrapup-result':
 			return {
 				...state,
-				wrapupResults: event.actions.map((action) => ({
-					key: action.key,
-					type: action.type,
-					success: action.success,
-					...(action.artifact !== undefined ? { artifact: action.artifact } : {}),
-				})),
+				wrapupResult: {
+					prUrl: event.prUrl,
+					branchName: event.branchName,
+					pushedCommits: event.pushedCommits,
+				},
 				updatedAt,
 			};
 		case 'task-completed':
@@ -151,6 +184,34 @@ export function isTerminal(state: TaskState): boolean {
 	return terminalStatusSet.has(state.status);
 }
 
+export async function loadTaskStateFromLog(filePath: string): Promise<TaskState | null> {
+	const events = await replayEvents(filePath);
+	if (events.length === 0) {
+		return null;
+	}
+
+	const firstEvent = events[0];
+	if (!firstEvent || firstEvent.data.event !== 'task-accepted') {
+		writeStderr(`Skipping ${filePath}: first event is not task-accepted`);
+		return null;
+	}
+
+	let state = createInitialState(firstEvent.data.taskId, firstEvent.data.config);
+	state = {
+		...state,
+		createdAt: firstEvent.ts,
+		updatedAt: firstEvent.ts,
+	};
+
+	for (let index = 1; index < events.length; index += 1) {
+		const event = events[index];
+		if (!event) continue;
+		state = applyEvent(state, event.data);
+	}
+
+	return state;
+}
+
 export async function hydrateTaskStates(stateDir: string): Promise<Map<string, TaskState>> {
 	const tasksDir = join(stateDir, 'tasks');
 	const taskStates = new Map<string, TaskState>();
@@ -164,31 +225,10 @@ export async function hydrateTaskStates(stateDir: string): Promise<Map<string, T
 			const filePath = join(tasksDir, file);
 			// Replay stays sequential so stderr warnings and corruption errors point at one file at a time.
 			// oxlint-disable-next-line eslint/no-await-in-loop
-			const events = await replayEvents(filePath);
-			if (events.length === 0) {
-				continue;
+			const state = await loadTaskStateFromLog(filePath);
+			if (state) {
+				taskStates.set(state.taskId, state);
 			}
-
-			const firstEvent = events[0];
-			if (!firstEvent || firstEvent.data.event !== 'task-accepted') {
-				writeStderr(`Skipping ${file}: first event is not task-accepted`);
-				continue;
-			}
-
-			let state = createInitialState(firstEvent.data.taskId, firstEvent.data.config);
-			state = {
-				...state,
-				createdAt: firstEvent.ts,
-				updatedAt: firstEvent.ts,
-			};
-
-			for (let index = 1; index < events.length; index += 1) {
-				const event = events[index];
-				if (!event) continue;
-				state = applyEvent(state, event.data);
-			}
-
-			taskStates.set(state.taskId, state);
 		}
 		return taskStates;
 	} catch (error) {

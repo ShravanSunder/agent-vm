@@ -1,20 +1,78 @@
 import { type Context, type Hono } from 'hono';
+import type { z } from 'zod';
 
+import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { PushBranchesValidationError } from '../git-push-operations.js';
-import type { ControllerRouteOperations } from './controller-http-route-support.js';
+import { buildTaskConfigFromPreparedInput } from '../task-config-builder.js';
+import { writeTaskFailureSentinel } from '../task-state-reader.js';
+import {
+	ControllerRuntimeAtCapacityError,
+	ControllerTaskNotReadyError,
+	type ControllerRouteOperations,
+} from './controller-http-route-support.js';
 import {
 	controllerDestroyZoneRequestSchema,
 	controllerExecuteCommandRequestSchema,
+	controllerPullDefaultRequestSchema,
 	controllerPushBranchesRequestSchema,
 	controllerWorkerTaskRequestSchema,
 } from './controller-request-schemas.js';
 
+class JsonBodyParseError extends Error {
+	public constructor(cause: unknown) {
+		super('Request body must be valid JSON.', { cause });
+		this.name = 'JsonBodyParseError';
+	}
+}
+
 async function parseJsonBody(context: Context): Promise<unknown> {
 	try {
 		return await context.req.json();
-	} catch {
-		throw new PushBranchesValidationError('Request body must be valid JSON.');
+	} catch (error) {
+		throw new JsonBodyParseError(error);
 	}
+}
+
+async function parseJsonBodyWithSchema<TSchema extends z.ZodType>(
+	context: Context,
+	schema: TSchema,
+	invalidRequestError: string,
+): Promise<
+	| { readonly ok: true; readonly data: z.output<TSchema> }
+	| { readonly ok: false; readonly response: Response }
+> {
+	let body: unknown;
+	try {
+		body = await parseJsonBody(context);
+	} catch (error) {
+		if (error instanceof JsonBodyParseError) {
+			return {
+				ok: false,
+				response: context.json(
+					{
+						error: 'invalid-json-request',
+						message: error.message,
+					},
+					400,
+				),
+			};
+		}
+		throw error;
+	}
+	const parsedPayload = schema.safeParse(body);
+	if (!parsedPayload.success) {
+		return {
+			ok: false,
+			response: context.json(
+				{
+					error: invalidRequestError,
+					issues: parsedPayload.error.issues,
+				},
+				400,
+			),
+		};
+	}
+	return { ok: true, data: parsedPayload.data };
 }
 
 function writeControllerRouteLog(message: string): void {
@@ -33,15 +91,13 @@ export function registerControllerZoneOperationRoutes(
 		context.json(await operations.refreshZoneCredentials(context.req.param('zoneId'))),
 	);
 	app.post('/zones/:zoneId/destroy', async (context) => {
-		const parsedPayload = controllerDestroyZoneRequestSchema.safeParse(await context.req.json());
-		if (!parsedPayload.success) {
-			return context.json(
-				{
-					error: 'invalid-destroy-request',
-					issues: parsedPayload.error.issues,
-				},
-				400,
-			);
+		const parsedPayload = await parseJsonBodyWithSchema(
+			context,
+			controllerDestroyZoneRequestSchema,
+			'invalid-destroy-request',
+		);
+		if (!parsedPayload.ok) {
+			return parsedPayload.response;
 		}
 		const payload = parsedPayload.data;
 		return context.json(
@@ -52,31 +108,64 @@ export function registerControllerZoneOperationRoutes(
 		context.json(await operations.upgradeZone(context.req.param('zoneId'))),
 	);
 
-	if (operations.runWorkerTask) {
-		const runWorkerTask = operations.runWorkerTask;
+	if (operations.prepareWorkerTask && operations.executeWorkerTask) {
+		const prepareWorkerTask = operations.prepareWorkerTask;
+		const executeWorkerTask = operations.executeWorkerTask;
 		app.post('/zones/:zoneId/worker-tasks', async (context) => {
-			const parsedPayload = controllerWorkerTaskRequestSchema.safeParse(
-				await parseJsonBody(context),
+			const parsedPayload = await parseJsonBodyWithSchema(
+				context,
+				controllerWorkerTaskRequestSchema,
+				'invalid-worker-task-request',
 			);
-			if (!parsedPayload.success) {
-				return context.json(
-					{
-						error: 'invalid-worker-task-request',
-						issues: parsedPayload.error.issues,
-					},
-					400,
-				);
+			if (!parsedPayload.ok) {
+				return parsedPayload.response;
 			}
 			try {
 				const taskInput = parsedPayload.data;
-				return context.json(
-					await runWorkerTask(context.req.param('zoneId'), {
-						prompt: taskInput.prompt,
-						repos: taskInput.repos,
-						context: taskInput.context,
-					}),
-				);
+				const prepared = await prepareWorkerTask(context.req.param('zoneId'), taskInput);
+
+				void executeWorkerTask(prepared).catch(async (error: unknown) => {
+					const message = error instanceof Error ? error.message : String(error);
+					writeControllerRouteLog(
+						`executeWorkerTask failed for task '${prepared.taskId}': ${message}`,
+					);
+					try {
+						await prepared.recordEvent({ event: 'task-failed', reason: message });
+					} catch (logError) {
+						writeControllerRouteLog(
+							`Failed to record task-failed event for '${prepared.taskId}': ${logError instanceof Error ? logError.message : String(logError)}`,
+						);
+						try {
+							await writeTaskFailureSentinel({
+								config: buildTaskConfigFromPreparedInput({
+									taskId: prepared.taskId,
+									input: prepared.input,
+									repos: prepared.preStartResult.repos,
+									effectiveConfig: prepared.preStartResult.effectiveConfig,
+								}),
+								reason: message,
+								stateDir: prepared.preStartResult.stateDir,
+								taskId: prepared.taskId,
+							});
+						} catch (sentinelError) {
+							writeControllerRouteLog(
+								`Failed to write task-failed sentinel for '${prepared.taskId}': ${sentinelError instanceof Error ? sentinelError.message : String(sentinelError)}`,
+							);
+						}
+					}
+				});
+
+				return context.json({ taskId: prepared.taskId, status: 'accepted' }, 202);
 			} catch (error) {
+				if (error instanceof ControllerRuntimeAtCapacityError) {
+					return context.json(
+						{
+							status: 'at-capacity',
+							error: error.message,
+						},
+						409,
+					);
+				}
 				return context.json(
 					{
 						error: error instanceof Error ? error.message : 'worker-task-failed',
@@ -87,20 +176,49 @@ export function registerControllerZoneOperationRoutes(
 		});
 	}
 
+	if (operations.getTaskState) {
+		const getTaskState = operations.getTaskState;
+		app.get('/zones/:zoneId/tasks/:taskId', async (context) => {
+			try {
+				const state = await getTaskState(context.req.param('zoneId'), context.req.param('taskId'));
+				if (!state) {
+					return context.json({ error: 'task-not-found' }, 404);
+				}
+				return context.json(state);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : 'get-task-state-failed';
+				return context.json({ error: message }, 500);
+			}
+		});
+	}
+
+	if (operations.closeTaskForZone) {
+		const closeTaskForZone = operations.closeTaskForZone;
+		app.post('/zones/:zoneId/tasks/:taskId/close', async (context) => {
+			try {
+				return context.json(
+					await closeTaskForZone(context.req.param('zoneId'), context.req.param('taskId')),
+				);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : 'close-task-failed';
+				if (error instanceof ControllerTaskNotReadyError) {
+					return context.json({ status: 'not-ready', error: message }, 409);
+				}
+				return context.json({ error: message }, 500);
+			}
+		});
+	}
+
 	if (operations.pushTaskBranches) {
 		const pushTaskBranches = operations.pushTaskBranches;
 		app.post('/zones/:zoneId/tasks/:taskId/push-branches', async (context) => {
-			const parsedPayload = controllerPushBranchesRequestSchema.safeParse(
-				await parseJsonBody(context),
+			const parsedPayload = await parseJsonBodyWithSchema(
+				context,
+				controllerPushBranchesRequestSchema,
+				'invalid-push-branches-request',
 			);
-			if (!parsedPayload.success) {
-				return context.json(
-					{
-						error: 'invalid-push-branches-request',
-						issues: parsedPayload.error.issues,
-					},
-					400,
-				);
+			if (!parsedPayload.ok) {
+				return parsedPayload.response;
 			}
 			try {
 				return context.json(
@@ -125,6 +243,40 @@ export function registerControllerZoneOperationRoutes(
 		});
 	}
 
+	if (operations.pullDefaultForTask) {
+		const pullDefaultForTask = operations.pullDefaultForTask;
+		app.post('/zones/:zoneId/tasks/:taskId/pull-default', async (context) => {
+			const parsedPayload = await parseJsonBodyWithSchema(
+				context,
+				controllerPullDefaultRequestSchema,
+				'invalid-pull-default-request',
+			);
+			if (!parsedPayload.ok) {
+				return parsedPayload.response;
+			}
+			try {
+				return context.json(
+					await pullDefaultForTask(
+						context.req.param('zoneId'),
+						context.req.param('taskId'),
+						parsedPayload.data,
+					),
+				);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : 'pull-default-failed';
+				writeControllerRouteLog(
+					`pull-default failed for zone '${context.req.param('zoneId')}' task '${context.req.param('taskId')}': ${message}`,
+				);
+				return context.json(
+					{
+						error: message,
+					},
+					error instanceof PullDefaultValidationError ? 400 : 500,
+				);
+			}
+		});
+	}
+
 	if (operations.enableSshForZone) {
 		const enableSshForZone = operations.enableSshForZone;
 		app.post('/zones/:zoneId/enable-ssh', async (context) => {
@@ -144,17 +296,13 @@ export function registerControllerZoneOperationRoutes(
 	if (operations.execInZone) {
 		const execInZone = operations.execInZone;
 		app.post('/zones/:zoneId/execute-command', async (context) => {
-			const parsedPayload = controllerExecuteCommandRequestSchema.safeParse(
-				await parseJsonBody(context),
+			const parsedPayload = await parseJsonBodyWithSchema(
+				context,
+				controllerExecuteCommandRequestSchema,
+				'invalid-execute-command-request',
 			);
-			if (!parsedPayload.success) {
-				return context.json(
-					{
-						error: 'invalid-execute-command-request',
-						issues: parsedPayload.error.issues,
-					},
-					400,
-				);
+			if (!parsedPayload.ok) {
+				return parsedPayload.response;
 			}
 			const payload = parsedPayload.data;
 			try {

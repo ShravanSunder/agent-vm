@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -13,6 +14,76 @@ afterEach(() => {
 		fs.rmSync(directoryPath, { recursive: true, force: true });
 	}
 });
+
+function createValidSystemConfigInput(): Record<string, unknown> {
+	return {
+		host: {
+			controllerPort: 18800,
+			projectNamespace: 'claw-tests-a1b2c3d4',
+		},
+		cacheDir: '../cache',
+		imageProfiles: {
+			gateways: {
+				openclaw: {
+					type: 'openclaw',
+					buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+				},
+				worker: {
+					type: 'worker',
+					buildConfig: '../vm-images/gateways/worker/build-config.json',
+				},
+			},
+			toolVms: {
+				default: {
+					type: 'toolVm',
+					buildConfig: '../vm-images/tool-vms/default/build-config.json',
+				},
+			},
+		},
+		zones: [
+			{
+				id: 'shravan',
+				gateway: {
+					type: 'openclaw',
+					imageProfile: 'openclaw',
+					memory: '2G',
+					cpus: 2,
+					port: 18791,
+					config: './shravan/openclaw.json',
+					stateDir: '../state/shravan',
+					workspaceDir: '../workspaces/shravan',
+				},
+				secrets: {},
+				allowedHosts: ['discord.com'],
+				toolProfile: 'standard',
+			},
+		],
+		toolProfiles: {
+			standard: {
+				memory: '1G',
+				cpus: 1,
+				workspaceRoot: '../workspaces/tools',
+				imageProfile: 'default',
+			},
+		},
+		tcpPool: {
+			basePort: 19000,
+			size: 5,
+		},
+	};
+}
+
+async function writeSystemConfigForTest(
+	prefix: string,
+	config: Record<string, unknown>,
+): Promise<string> {
+	const workingDirectoryPath = await fsp.mkdtemp(path.join(os.tmpdir(), prefix));
+	createdDirectories.push(workingDirectoryPath);
+	const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
+	await fsp.mkdir(path.dirname(configPath), { recursive: true });
+	await fsp.writeFile(configPath, JSON.stringify(config), 'utf8');
+	return configPath;
+}
 
 describe('loadSystemConfig', () => {
 	test('loads a valid plan-1 controller config', async () => {
@@ -37,14 +108,25 @@ describe('loadSystemConfig', () => {
 					},
 				},
 				cacheDir: '../cache',
-				images: {
-					gateway: {
-						buildConfig: '../images/gateway/build-config.json',
-						dockerfile: '../images/gateway/Dockerfile',
+				imageProfiles: {
+					gateways: {
+						openclaw: {
+							type: 'openclaw',
+							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+							dockerfile: '../vm-images/gateways/openclaw/Dockerfile',
+						},
+						worker: {
+							type: 'worker',
+							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+							dockerfile: '../vm-images/gateways/openclaw/Dockerfile',
+						},
 					},
-					tool: {
-						buildConfig: '../images/tool/build-config.json',
-						dockerfile: '../images/tool/Dockerfile',
+					toolVms: {
+						default: {
+							type: 'toolVm',
+							buildConfig: '../vm-images/tool-vms/default/build-config.json',
+							dockerfile: '../vm-images/tool-vms/default/Dockerfile',
+						},
 					},
 				},
 				zones: [
@@ -52,10 +134,11 @@ describe('loadSystemConfig', () => {
 						id: 'shravan',
 						gateway: {
 							type: 'worker',
+							imageProfile: 'worker',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							gatewayConfig: './shravan/openclaw.json',
+							config: './shravan/openclaw.json',
 							stateDir: '../state/shravan',
 							workspaceDir: '../workspaces/shravan',
 						},
@@ -75,6 +158,7 @@ describe('loadSystemConfig', () => {
 						memory: '1G',
 						cpus: 1,
 						workspaceRoot: '../workspaces/tools',
+						imageProfile: 'default',
 					},
 				},
 				tcpPool: {
@@ -86,6 +170,12 @@ describe('loadSystemConfig', () => {
 		);
 
 		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			systemConfigPath: configPath,
+			systemCacheIdentifierPath: path.join(
+				workingDirectoryPath,
+				'config',
+				'systemCacheIdentifier.json',
+			),
 			host: {
 				controllerPort: 18800,
 				githubToken: {
@@ -95,24 +185,127 @@ describe('loadSystemConfig', () => {
 				projectNamespace: 'claw-tests-a1b2c3d4',
 			},
 			cacheDir: path.join(workingDirectoryPath, 'cache'),
-			images: {
-				gateway: {
-					dockerfile: path.join(workingDirectoryPath, 'images/gateway/Dockerfile'),
+			imageProfiles: {
+				gateways: {
+					openclaw: {
+						type: 'openclaw',
+						buildConfig: path.join(
+							workingDirectoryPath,
+							'vm-images/gateways/openclaw/build-config.json',
+						),
+						dockerfile: path.join(workingDirectoryPath, 'vm-images/gateways/openclaw/Dockerfile'),
+					},
+					worker: {
+						type: 'worker',
+						buildConfig: path.join(
+							workingDirectoryPath,
+							'vm-images/gateways/openclaw/build-config.json',
+						),
+						dockerfile: path.join(workingDirectoryPath, 'vm-images/gateways/openclaw/Dockerfile'),
+					},
 				},
-				tool: {
-					dockerfile: path.join(workingDirectoryPath, 'images/tool/Dockerfile'),
+				toolVms: {
+					default: {
+						type: 'toolVm',
+						buildConfig: path.join(
+							workingDirectoryPath,
+							'vm-images/tool-vms/default/build-config.json',
+						),
+						dockerfile: path.join(workingDirectoryPath, 'vm-images/tool-vms/default/Dockerfile'),
+					},
 				},
 			},
 			zones: [
 				{
 					id: 'shravan',
 					gateway: {
-						gatewayConfig: path.join(workingDirectoryPath, 'config', 'shravan', 'openclaw.json'),
+						config: path.join(workingDirectoryPath, 'config', 'shravan', 'openclaw.json'),
 						type: 'worker',
+						imageProfile: 'worker',
 					},
 				},
 			],
 		});
+	});
+
+	test('adds runtime-only system config and cache identifier paths', async () => {
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-cache-id-',
+			createValidSystemConfigInput(),
+		);
+
+		const config = await loadSystemConfig(configPath);
+
+		expect(config.systemConfigPath).toBe(configPath);
+		expect(config.systemCacheIdentifierPath).toBe(
+			path.join(path.dirname(configPath), 'systemCacheIdentifier.json'),
+		);
+	});
+
+	test('omits zone resource policy when not present', async () => {
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-resources-defaults-',
+			createValidSystemConfigInput(),
+		);
+
+		const config = await loadSystemConfig(configPath);
+
+		expect(config.zones[0]?.resources).toBeUndefined();
+	});
+
+	test('accepts explicit zone repo resource policy', async () => {
+		const config = createValidSystemConfigInput();
+		const zones = config.zones as Array<Record<string, unknown>>;
+		zones[0] = {
+			...zones[0],
+			resources: {
+				allowRepoResources: ['https://github.com/example/app.git'],
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-resources-explicit-',
+			config,
+		);
+
+		const loadedConfig = await loadSystemConfig(configPath);
+
+		expect(loadedConfig.zones[0]?.resources).toEqual({
+			allowRepoResources: ['https://github.com/example/app.git'],
+		});
+	});
+
+	test('rejects legacy zone resource allowedKinds', async () => {
+		const config = createValidSystemConfigInput();
+		const zones = config.zones as Array<Record<string, unknown>>;
+		zones[0] = {
+			...zones[0],
+			resources: {
+				allowRepoResources: true,
+				allowedKinds: ['compose', 'postgres', 'redis'],
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-resources-legacy-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/allowedKinds/u);
+	});
+
+	test('rejects per-profile legacy cache fields', async () => {
+		const config = createValidSystemConfigInput();
+		const legacyFieldName = ['cache', 'Inputs'].join('');
+		const legacyFileName = ['cache', 'inputs'].join('-');
+		const imageProfiles = config.imageProfiles as {
+			readonly gateways: { readonly worker: Record<string, unknown> };
+		};
+		imageProfiles.gateways.worker[legacyFieldName] = `../${legacyFileName}.json`;
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-legacy-cache-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(new RegExp(legacyFieldName, 'u'));
 	});
 
 	test('rejects configs without zones', async () => {
@@ -135,14 +328,25 @@ describe('loadSystemConfig', () => {
 					},
 				},
 				cacheDir: '../cache',
-				images: {
-					gateway: {
-						buildConfig: '../images/gateway/build-config.json',
-						dockerfile: '../images/gateway/Dockerfile',
+				imageProfiles: {
+					gateways: {
+						openclaw: {
+							type: 'openclaw',
+							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+							dockerfile: '../vm-images/gateways/openclaw/Dockerfile',
+						},
+						worker: {
+							type: 'worker',
+							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+							dockerfile: '../vm-images/gateways/openclaw/Dockerfile',
+						},
 					},
-					tool: {
-						buildConfig: '../images/tool/build-config.json',
-						dockerfile: '../images/tool/Dockerfile',
+					toolVms: {
+						default: {
+							type: 'toolVm',
+							buildConfig: '../vm-images/tool-vms/default/build-config.json',
+							dockerfile: '../vm-images/tool-vms/default/Dockerfile',
+						},
 					},
 				},
 				zones: [],
@@ -151,6 +355,7 @@ describe('loadSystemConfig', () => {
 						memory: '1G',
 						cpus: 1,
 						workspaceRoot: '../workspaces/tools',
+						imageProfile: 'default',
 					},
 				},
 				tcpPool: {
@@ -184,12 +389,22 @@ describe('loadSystemConfig', () => {
 					},
 				},
 				cacheDir: '../cache',
-				images: {
-					gateway: {
-						buildConfig: '../images/gateway/build-config.json',
+				imageProfiles: {
+					gateways: {
+						openclaw: {
+							type: 'openclaw',
+							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+						},
+						worker: {
+							type: 'worker',
+							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+						},
 					},
-					tool: {
-						buildConfig: '../images/tool/build-config.json',
+					toolVms: {
+						default: {
+							type: 'toolVm',
+							buildConfig: '../vm-images/tool-vms/default/build-config.json',
+						},
 					},
 				},
 				zones: [
@@ -197,10 +412,11 @@ describe('loadSystemConfig', () => {
 						id: 'shravan',
 						gateway: {
 							type: 'openclaw',
+							imageProfile: 'openclaw',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							gatewayConfig: './shravan/openclaw.json',
+							config: './shravan/openclaw.json',
 							stateDir: '../state/shravan',
 							workspaceDir: '../workspaces/shravan',
 						},
@@ -219,6 +435,7 @@ describe('loadSystemConfig', () => {
 						memory: '1G',
 						cpus: 1,
 						workspaceRoot: '../workspaces/tools',
+						imageProfile: 'default',
 					},
 				},
 				tcpPool: {
@@ -252,12 +469,22 @@ describe('loadSystemConfig', () => {
 					},
 				},
 				cacheDir: '../cache',
-				images: {
-					gateway: {
-						buildConfig: '../images/gateway/build-config.json',
+				imageProfiles: {
+					gateways: {
+						openclaw: {
+							type: 'openclaw',
+							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+						},
+						worker: {
+							type: 'worker',
+							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+						},
 					},
-					tool: {
-						buildConfig: '../images/tool/build-config.json',
+					toolVms: {
+						default: {
+							type: 'toolVm',
+							buildConfig: '../vm-images/tool-vms/default/build-config.json',
+						},
 					},
 				},
 				zones: [
@@ -265,10 +492,11 @@ describe('loadSystemConfig', () => {
 						id: 'shravan',
 						gateway: {
 							type: 'openclaw',
+							imageProfile: 'openclaw',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							gatewayConfig: './shravan/openclaw.json',
+							config: './shravan/openclaw.json',
 							stateDir: '../state/shravan',
 							workspaceDir: '../workspaces/shravan',
 						},
@@ -282,6 +510,7 @@ describe('loadSystemConfig', () => {
 						memory: '1G',
 						cpus: 1,
 						workspaceRoot: '../workspaces/tools',
+						imageProfile: 'default',
 					},
 				},
 				tcpPool: {
@@ -315,12 +544,22 @@ describe('loadSystemConfig', () => {
 					},
 				},
 				cacheDir: '../cache',
-				images: {
-					gateway: {
-						buildConfig: '../images/gateway/build-config.json',
+				imageProfiles: {
+					gateways: {
+						openclaw: {
+							type: 'openclaw',
+							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+						},
+						worker: {
+							type: 'worker',
+							buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+						},
 					},
-					tool: {
-						buildConfig: '../images/tool/build-config.json',
+					toolVms: {
+						default: {
+							type: 'toolVm',
+							buildConfig: '../vm-images/tool-vms/default/build-config.json',
+						},
 					},
 				},
 				zones: [
@@ -328,10 +567,11 @@ describe('loadSystemConfig', () => {
 						id: 'shravan',
 						gateway: {
 							type: 'openclaw',
+							imageProfile: 'openclaw',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							gatewayConfig: './shravan/openclaw.json',
+							config: './shravan/openclaw.json',
 							stateDir: '../state/shravan',
 							workspaceDir: '../workspaces/shravan',
 						},
@@ -345,6 +585,7 @@ describe('loadSystemConfig', () => {
 						memory: '1G',
 						cpus: 1,
 						workspaceRoot: '../workspaces/tools',
+						imageProfile: 'default',
 					},
 				},
 				tcpPool: {
@@ -356,5 +597,202 @@ describe('loadSystemConfig', () => {
 		);
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/unknown toolProfile/u);
+	});
+
+	test('rejects configs with no gateway image profiles', async () => {
+		const config = createValidSystemConfigInput();
+		config.imageProfiles = {
+			gateways: {},
+			toolVms: {
+				default: {
+					type: 'toolVm',
+					buildConfig: '../vm-images/tool-vms/default/build-config.json',
+				},
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-empty-gateway-profiles-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/at least one gateway image profile/u,
+		);
+	});
+
+	test('accepts worker-only configs without tool VM support', async () => {
+		const config = createValidSystemConfigInput();
+		config.imageProfiles = {
+			gateways: {
+				worker: {
+					type: 'worker',
+					buildConfig: '../vm-images/gateways/worker/build-config.json',
+				},
+			},
+		};
+		config.zones = [
+			{
+				id: 'worker-zone',
+				gateway: {
+					type: 'worker',
+					imageProfile: 'worker',
+					memory: '2G',
+					cpus: 2,
+					port: 18791,
+					config: './worker-zone/worker.json',
+					stateDir: '../state/worker-zone',
+					workspaceDir: '../workspaces/worker-zone',
+				},
+				secrets: {},
+				allowedHosts: ['api.openai.com'],
+			},
+		];
+		delete config.toolProfiles;
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-worker-no-tools-',
+			config,
+		);
+
+		const systemConfig = await loadSystemConfig(configPath);
+
+		expect(systemConfig).toMatchObject({
+			imageProfiles: { toolVms: {} },
+			toolProfiles: {},
+			zones: [
+				{
+					id: 'worker-zone',
+				},
+			],
+		});
+		expect(systemConfig.zones[0]).not.toHaveProperty('toolProfile');
+	});
+
+	test('rejects openclaw zones without a tool profile', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = (config.zones as [Record<string, unknown>])[0];
+		delete zone.toolProfile;
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-openclaw-missing-tool-profile-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/must declare a toolProfile/u);
+	});
+
+	test('rejects openclaw configs with no matching tool VM image profiles', async () => {
+		const config = createValidSystemConfigInput();
+		config.imageProfiles = {
+			gateways: {
+				openclaw: {
+					type: 'openclaw',
+					buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+				},
+			},
+			toolVms: {},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-empty-tool-profiles-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/unknown tool VM imageProfile/u);
+	});
+
+	test('rejects zones that reference unknown gateway image profiles', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones = [
+			{
+				id: 'shravan',
+				gateway: {
+					type: 'openclaw',
+					imageProfile: 'missing-openclaw',
+					memory: '2G',
+					cpus: 2,
+					port: 18791,
+					config: './shravan/openclaw.json',
+					stateDir: '../state/shravan',
+					workspaceDir: '../workspaces/shravan',
+				},
+				secrets: {},
+				allowedHosts: ['discord.com'],
+				toolProfile: 'standard',
+			},
+		];
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-missing-gateway-profile-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/unknown gateway imageProfile/u);
+	});
+
+	test('rejects gateway image profiles whose type differs from the zone gateway type', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones = [
+			{
+				id: 'shravan',
+				gateway: {
+					type: 'worker',
+					imageProfile: 'openclaw',
+					memory: '2G',
+					cpus: 2,
+					port: 18791,
+					config: './shravan/worker.json',
+					stateDir: '../state/shravan',
+					workspaceDir: '../workspaces/shravan',
+				},
+				secrets: {},
+				allowedHosts: ['discord.com'],
+				toolProfile: 'standard',
+			},
+		];
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-profile-type-mismatch-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/does not match imageProfile/u);
+	});
+
+	test('rejects tool profiles that reference unknown tool VM image profiles', async () => {
+		const config = createValidSystemConfigInput();
+		config.toolProfiles = {
+			standard: {
+				memory: '1G',
+				cpus: 1,
+				workspaceRoot: '../workspaces/tools',
+				imageProfile: 'missing-tool-vm',
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-missing-tool-vm-profile-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/unknown tool VM imageProfile/u);
+	});
+
+	test('rejects empty image profile names', async () => {
+		const config = createValidSystemConfigInput();
+		config.imageProfiles = {
+			gateways: {
+				'': {
+					type: 'openclaw',
+					buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+				},
+			},
+			toolVms: {
+				default: {
+					type: 'toolVm',
+					buildConfig: '../vm-images/tool-vms/default/build-config.json',
+				},
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-empty-profile-name-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Too small|Invalid key/u);
 	});
 });

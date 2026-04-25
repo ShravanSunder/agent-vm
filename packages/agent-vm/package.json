@@ -1,6 +1,7 @@
 {
-	"name": "@shravansunder/agent-vm",
-	"version": "0.0.18",
+	"name": "@agent-vm/agent-vm",
+	"version": "0.0.19",
+	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
 	"bin": {
 		"agent-vm": "./dist/cli/agent-vm-entrypoint.js"
 	},
@@ -17,7 +18,7 @@
 		}
 	},
 	"publishConfig": {
-		"access": "public"
+		"access": "restricted"
 	},
 	"scripts": {
 		"build": "rm -rf dist && tsc -p tsconfig.build.json",
@@ -25,13 +26,13 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
+		"@agent-vm/agent-vm-worker": "workspace:*",
+		"@agent-vm/gateway-interface": "workspace:*",
+		"@agent-vm/gondolin-adapter": "workspace:*",
+		"@agent-vm/openclaw-agent-vm-plugin": "workspace:*",
+		"@agent-vm/openclaw-gateway": "workspace:*",
+		"@agent-vm/worker-gateway": "workspace:*",
 		"@hono/node-server": "^1.19.14",
-		"@shravansunder/agent-vm-worker": "workspace:*",
-		"@shravansunder/gateway-interface": "workspace:*",
-		"@shravansunder/gondolin-core": "workspace:*",
-		"@shravansunder/openclaw-agent-vm-plugin": "workspace:*",
-		"@shravansunder/openclaw-gateway": "workspace:*",
-		"@shravansunder/worker-gateway": "workspace:*",
 		"cmd-ts": "^0.14.0",
 		"execa": "^9.5.2",
 		"hono": "^4.12.14",

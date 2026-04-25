@@ -2,11 +2,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const openClawPluginVendorDirectory = 'images/gateway/vendor/gondolin';
+export function openClawPluginVendorDirectory(profileName: string): string {
+	return `vm-images/gateways/${profileName}/vendor/gondolin`;
+}
 
 async function resolveBundledOpenClawPluginDistDirectory(): Promise<string> {
 	const pluginEntrypointPath = fileURLToPath(
-		import.meta.resolve('@shravansunder/openclaw-agent-vm-plugin'),
+		import.meta.resolve('@agent-vm/openclaw-agent-vm-plugin'),
 	);
 	const pluginDistDirectory = path.dirname(pluginEntrypointPath);
 	try {
@@ -22,6 +24,7 @@ async function resolveBundledOpenClawPluginDistDirectory(): Promise<string> {
 
 export async function syncBundledOpenClawPluginBundle(
 	targetDir: string,
+	profileName: string,
 	dependencies: {
 		readonly access?: typeof fs.access;
 		readonly copyDirectory?: typeof fs.cp;
@@ -36,7 +39,7 @@ export async function syncBundledOpenClawPluginBundle(
 	const removeDirectory = dependencies.removeDirectory ?? fs.rm;
 	const resolveBundledDistDirectory =
 		dependencies.resolveBundledDistDirectory ?? resolveBundledOpenClawPluginDistDirectory;
-	const pluginTargetDirectory = path.join(targetDir, openClawPluginVendorDirectory);
+	const pluginTargetDirectory = path.join(targetDir, openClawPluginVendorDirectory(profileName));
 	try {
 		await access(path.join(pluginTargetDirectory, 'openclaw.plugin.json'));
 	} catch {

@@ -1,9 +1,10 @@
-import type { ManagedVm } from '@shravansunder/gondolin-core';
+import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 
 import type { TcpPool } from './tcp-pool.js';
 
 export interface ToolProfile {
 	readonly cpus: number;
+	readonly imageProfile: string;
 	readonly memory: string;
 	readonly workspaceRoot: string;
 }

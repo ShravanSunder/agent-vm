@@ -1,4 +1,8 @@
-import type { SystemConfig } from '../config/system-config.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
+import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
+import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
 
 export interface DoctorCheck {
 	readonly name: string;
@@ -22,16 +26,63 @@ export interface ControllerDoctorResult {
 	readonly checks: DoctorCheck[];
 }
 
-function checkBinary(
+function checkAnyBinary(
 	name: string,
-	binaryName: string,
+	binaryNames: readonly string[],
 	installHint: string,
 	availableBinaries: ReadonlySet<string>,
 ): DoctorCheck {
+	const foundBinary = binaryNames.find((binaryName) => availableBinaries.has(binaryName));
 	return {
 		name,
-		ok: availableBinaries.has(binaryName),
-		...(!availableBinaries.has(binaryName) ? { hint: installHint } : {}),
+		ok: foundBinary !== undefined,
+		...(foundBinary ? { hint: foundBinary } : { hint: installHint }),
+	};
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export async function collectVmHostSystemDoctorCheck(
+	systemConfig: LoadedSystemConfig,
+): Promise<DoctorCheck | null> {
+	let identifier: unknown;
+	try {
+		identifier = await loadSystemCacheIdentifier({
+			filePath: systemConfig.systemCacheIdentifierPath,
+		});
+	} catch {
+		return null;
+	}
+	if (!isObjectRecord(identifier) || identifier.hostSystemType !== 'container') {
+		return null;
+	}
+
+	const vmHostSystemPath = path.resolve(
+		path.dirname(systemConfig.systemConfigPath),
+		'..',
+		'vm-host-system',
+	);
+	const requiredFiles = ['Dockerfile', 'start.sh', 'agent-vm-controller.service'] as const;
+	for (const requiredFile of requiredFiles) {
+		const requiredFilePath = path.join(vmHostSystemPath, requiredFile);
+		try {
+			// oxlint-disable-next-line no-await-in-loop -- report the first missing file in stable order
+			await fs.access(requiredFilePath);
+		} catch {
+			return {
+				name: 'vm-host-system',
+				ok: false,
+				hint: `Missing ${requiredFilePath}`,
+			};
+		}
+	}
+
+	return {
+		name: 'vm-host-system',
+		ok: true,
+		hint: vmHostSystemPath,
 	};
 }
 
@@ -95,9 +146,12 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 					} satisfies DoctorCheck,
 				]
 			: []),
-		checkBinary('qemu', 'qemu-system-aarch64', 'brew install qemu', availableBinaries),
-		checkBinary('age', 'age', 'brew install age', availableBinaries),
-		checkBinary('1password-cli', 'op', 'brew install 1password-cli', availableBinaries),
+		checkAnyBinary(
+			'qemu',
+			['qemu-system-aarch64', 'qemu-system-x86_64'],
+			'Install QEMU (for example: brew install qemu).',
+			availableBinaries,
+		),
 		{
 			name: 'controller-port',
 			ok:
@@ -111,6 +165,29 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 					name: `gateway-port-${zone.id}`,
 					ok: zone.gateway.port > 0 && !occupiedPorts.has(zone.gateway.port),
 					value: zone.gateway.port,
+				}) satisfies DoctorCheck,
+		),
+		...Object.entries(options.systemConfig.imageProfiles.gateways).map(
+			([profileName, profile]) =>
+				({
+					name: `gateway-image-profile-${profileName}`,
+					ok: true,
+					hint: `type=${profile.type}`,
+				}) satisfies DoctorCheck,
+		),
+		...Object.entries(options.systemConfig.imageProfiles.toolVms).map(
+			([profileName]) =>
+				({
+					name: `tool-vm-image-profile-${profileName}`,
+					ok: true,
+				}) satisfies DoctorCheck,
+		),
+		...options.systemConfig.zones.map(
+			(zone) =>
+				({
+					name: `gateway-image-profile-selected-${zone.id}`,
+					ok: true,
+					hint: zone.gateway.imageProfile,
 				}) satisfies DoctorCheck,
 		),
 		{

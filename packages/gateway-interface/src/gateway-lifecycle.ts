@@ -1,4 +1,4 @@
-import type { SecretResolver } from '@shravansunder/gondolin-core';
+import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 
 import type { GatewayProcessSpec } from './gateway-process-spec.js';
 import type { GatewayType } from './gateway-runtime-contract.js';
@@ -33,7 +33,7 @@ export interface GatewayZoneConfig {
 		readonly memory: string;
 		readonly cpus: number;
 		readonly port: number;
-		readonly gatewayConfig: string;
+		readonly config: string;
 		readonly stateDir: string;
 		readonly workspaceDir: string;
 		readonly authProfilesRef?:
@@ -64,7 +64,7 @@ export interface GatewayZoneConfig {
 	>;
 	readonly allowedHosts: readonly string[];
 	readonly websocketBypass: readonly string[];
-	readonly toolProfile: string;
+	readonly toolProfile?: string;
 }
 
 export interface BuildGatewayVmSpecOptions {

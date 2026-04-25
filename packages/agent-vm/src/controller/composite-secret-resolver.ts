@@ -1,4 +1,4 @@
-import type { SecretRef, SecretResolver } from '@shravansunder/gondolin-core';
+import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
 
 export function createCompositeSecretResolver(
 	onePasswordResolver: SecretResolver | null,

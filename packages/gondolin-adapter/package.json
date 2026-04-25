@@ -1,0 +1,30 @@
+{
+	"name": "@agent-vm/gondolin-adapter",
+	"version": "0.0.19",
+	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "restricted"
+	},
+	"scripts": {
+		"build": "tsdown",
+		"prepack": "pnpm -C ../.. build",
+		"typecheck": "tsc -p tsconfig.json --noEmit"
+	},
+	"dependencies": {
+		"@1password/sdk": "^0.4.0",
+		"@earendil-works/gondolin": "0.8.0",
+		"zod": "^4"
+	}
+}

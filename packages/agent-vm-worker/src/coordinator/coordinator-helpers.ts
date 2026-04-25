@@ -8,7 +8,13 @@ import { applyEvent, type TaskState } from '../state/task-state.js';
 import type { CreateTaskInput } from './coordinator-types.js';
 
 export function sanitizeErrorMessage(message: string): string {
-	return message.replace(/https:\/\/x-access-token:[^@]*@/g, 'https://x-access-token:***@');
+	return message
+		.replace(/https:\/\/x-access-token:[^@]*@/g, 'https://x-access-token:***@')
+		.replace(/sk-[A-Za-z0-9_-]{20,}/g, 'sk-***')
+		.replace(/ghp_[A-Za-z0-9_]{20,}/g, 'ghp_***')
+		.replace(/ghs_[A-Za-z0-9_]{20,}/g, 'ghs_***')
+		.replace(/Bearer [A-Za-z0-9._-]+/giu, 'Bearer ***')
+		.replace(/OPENAI_API_KEY=[^\s]+/gu, 'OPENAI_API_KEY=***');
 }
 
 export function buildTaskConfig(input: CreateTaskInput, config: WorkerConfig): TaskConfig {
@@ -52,6 +58,13 @@ export function createTaskEventRecorder(
 			if (current) {
 				tasks.set(taskId, applyEvent(current, { event: 'task-failed', reason }));
 			}
+			writeStderr(
+				`[task-event-recorder] Fatal: task-failed could not be persisted for ${taskId}; exiting to avoid state resurrection on restart.`,
+			);
+			process.exitCode = 1;
+			setImmediate(() => {
+				process.exit(1);
+			});
 		}
 	}
 

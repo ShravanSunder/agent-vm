@@ -1,71 +1,100 @@
-# Agent-VM Setup Guide
+# Setup Guide
+
+Use this guide for a local Worker-mode scaffold.
 
 ## Prerequisites
 
-Run `agent-vm controller doctor` to verify:
+Universal:
 
 - Node.js >= 24
+- pnpm
 - QEMU
-- age
-- 1Password CLI
-- Docker
+
+Needed for common local flows:
+
+- Docker, when building gateway OCI images or running repo-level providers
+  declared through `.agent-vm/repo-resources.ts`.
+- 1Password setup, only when using `--secrets 1password`.
+- age, only for encrypted backup/local key generation flows.
+
+Run `agent-vm validate` to check files. Run `agent-vm doctor` to check the
+current host.
 
 ## Quick Start
 
-### 1. Initialize the project
+### 1. Initialize a local Worker project
 
 ```bash
-agent-vm init <your-zone-id>
+agent-vm init coding-agent --type worker --preset macos-local
 ```
 
-This scaffolds:
+`macos-local` expands to:
 
-- `system.json`
+- local relative paths
+- `aarch64` VM images
+- 1Password-backed secrets
+- `hostSystemType: "bare-metal"`
 - `.env.local`
-- `config/<zone>/openclaw.json`
-- `state/<zone>/`
-- `workspaces/<zone>/`
 
-### 2. Configure secrets
+The scaffold includes:
 
-`agent-vm init` defaults to Touch ID via 1Password CLI.
+- `config/system.json`
+- `config/systemCacheIdentifier.json`
+- `config/gateways/coding-agent/worker.json`
+- `config/gateways/coding-agent/prompts/*.md`
+- `vm-images/gateways/worker/Dockerfile`
+- `vm-images/gateways/worker/build-config.json`
 
-Optional tweaks in `.env.local`:
+### 2. Check the files
+
+```bash
+agent-vm validate --config config/system.json
+```
+
+### 3. Check the current machine
+
+```bash
+agent-vm doctor --config config/system.json
+```
+
+### 4. Configure secrets
+
+For `macos-local`, `.env.local` is written so you can adjust local values.
+
+Optional tweaks:
 
 - adjust any `*_REF` values if your 1Password vault paths differ
-- set `OP_SERVICE_ACCOUNT_TOKEN` only if you want a service account instead of Touch ID
-- keep `AGE_IDENTITY_KEY` only if you want a custom checkpoint encryption key
+- set `OP_SERVICE_ACCOUNT_TOKEN` if you want a service account instead of
+  Keychain storage
+- keep `AGE_IDENTITY_KEY` only if you need custom encrypted backup keys. When
+  age is installed, local init may generate this value for you; when age is not
+  installed, init continues without it.
 
-### 3. Build images
-
-```bash
-agent-vm build
-```
-
-Builds Docker OCI images from Dockerfiles, then shared Gondolin VM assets.
-First build takes a few minutes. Subsequent builds reuse cached fingerprints from `./cache/images/`.
-
-### 4. Start the controller
+For container-host or CI scaffolds, use:
 
 ```bash
-agent-vm controller start
+agent-vm init coding-agent --type worker --preset container-x86 --namespace agent-vm
 ```
 
-### 5. Do OAuth setup if needed
+Container presets use environment-backed secrets and do not write `.env.local`.
+
+### 5. Build images
 
 ```bash
-agent-vm auth codex --zone <zone-id>
+agent-vm build --config config/system.json
 ```
 
-For advanced manual access, you can still get the raw SSH command with:
+This builds Docker OCI images from Dockerfiles, then Gondolin VM assets. Later
+builds reuse cached fingerprints.
+
+### 6. Start the controller
 
 ```bash
-agent-vm controller ssh-cmd --zone <zone-id>
+agent-vm controller start --config config/system.json --zone coding-agent
 ```
 
-### 6. Verify
+## More
 
-```bash
-agent-vm controller doctor
-agent-vm controller status
-```
+- Config fields: [../reference/configuration/README.md](../reference/configuration/README.md)
+- Validate vs doctor: [../reference/validate-and-doctor.md](../reference/validate-and-doctor.md)
+- Agent Worker Gateway: [worker-guide.md](worker-guide.md)

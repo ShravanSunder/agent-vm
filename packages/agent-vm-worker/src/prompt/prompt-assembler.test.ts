@@ -1,230 +1,84 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, test } from 'vitest';
 
-import { assemblePrompt, resolveSkillInputs } from './prompt-assembler.js';
+import { buildRoleSystemPrompt } from './prompt-assembler.js';
 
-describe('prompt-assembler', () => {
-	let tempDir: string;
-
-	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), 'prompt-test-'));
-	});
+describe('buildRoleSystemPrompt', () => {
+	const tmpDirs: string[] = [];
 
 	afterEach(async () => {
-		await rm(tempDir, { recursive: true, force: true });
+		const dirs = tmpDirs.splice(0);
+		await Promise.all(dirs.map((dir) => rm(dir, { recursive: true, force: true })));
 	});
 
-	describe('resolveSkillInputs', () => {
-		it('reads skill files and returns structured inputs', async () => {
-			const skillDir = join(tempDir, 'skills', 'tdd');
-			await mkdir(skillDir, { recursive: true });
-			await writeFile(join(skillDir, 'SKILL.md'), '# TDD\nWrite tests first.', 'utf-8');
-
-			const inputs = await resolveSkillInputs([{ name: 'tdd', path: join(skillDir, 'SKILL.md') }]);
-
-			expect(inputs).toHaveLength(1);
-			expect(inputs[0]?.type).toBe('skill');
-			if (inputs[0]?.type === 'skill') {
-				expect(inputs[0].name).toBe('tdd');
-				expect(inputs[0].content).toContain('Write tests first.');
-			}
+	test('composes base and role-specific defaults with branchPrefix', async () => {
+		const output = await buildRoleSystemPrompt({
+			role: 'plan-agent',
+			baseInstructionsOverride: null,
+			roleInstructionsOverride: null,
+			branchPrefix: 'feat/',
+			skills: [],
 		});
 
-		it('skips missing skill files', async () => {
-			await expect(
-				resolveSkillInputs([{ name: 'missing', path: '/nonexistent/SKILL.md' }]),
-			).resolves.toHaveLength(0);
-		});
+		expect(output).toContain('feat/');
+		expect(output.toLowerCase()).toContain('plan');
 	});
 
-	describe('assemblePrompt', () => {
-		it('includes base prompt and default instructions', async () => {
-			const result = await assemblePrompt({
-				phase: 'plan',
-				taskPrompt: 'fix the login bug',
-				skills: [],
-			});
-
-			const text = result[0];
-			expect(text?.type).toBe('text');
-			if (text?.type === 'text') {
-				expect(text.text).toContain('sandboxed VM');
-				expect(text.text).toContain('Do NOT run git push');
-				expect(text.text).toContain('fix the login bug');
-				expect(text.text).toContain('Create an implementation plan');
-			}
+	test('honors base and role overrides', async () => {
+		const output = await buildRoleSystemPrompt({
+			role: 'work-agent',
+			baseInstructionsOverride: 'BASE {branchPrefix}',
+			roleInstructionsOverride: 'ROLE',
+			branchPrefix: 'agent/',
+			skills: [],
 		});
 
-		it('uses custom base instructions when provided', async () => {
-			const result = await assemblePrompt({
-				phase: 'plan',
-				baseInstructions: 'Custom base instructions.',
-				taskPrompt: 'fix the login bug',
-				skills: [],
-			});
+		expect(output).toContain('BASE agent/');
+		expect(output).toContain('ROLE');
+	});
 
-			const text = result[0];
-			if (text?.type === 'text') {
-				expect(text.text).toContain('Custom base instructions.');
-				expect(text.text).not.toContain('Do NOT run git push');
-			}
+	test('appends skill content when skills are provided', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'prompt-skill-'));
+		tmpDirs.push(dir);
+		const skillPath = join(dir, 'skill.md');
+		await writeFile(skillPath, 'Skill body', 'utf-8');
+
+		const output = await buildRoleSystemPrompt({
+			role: 'work-reviewer',
+			baseInstructionsOverride: null,
+			roleInstructionsOverride: null,
+			branchPrefix: 'agent/',
+			skills: [{ name: 'review-skill', path: skillPath }],
 		});
 
-		it('includes review JSON format for review phases', async () => {
-			const result = await assemblePrompt({
-				phase: 'plan-review',
-				taskPrompt: 'review this',
-				skills: [],
-			});
+		expect(output).toContain('## Skill: review-skill');
+		expect(output).toContain('Skill body');
+	});
 
-			const text = result[0];
-			if (text?.type === 'text') {
-				expect(text.text).toContain('ReviewResult schema');
-			}
+	test('skips missing skills but throws on unreadable skill paths', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'prompt-skill-dir-'));
+		tmpDirs.push(dir);
+
+		const output = await buildRoleSystemPrompt({
+			role: 'plan-agent',
+			baseInstructionsOverride: null,
+			roleInstructionsOverride: null,
+			branchPrefix: 'agent/',
+			skills: [{ name: 'missing-skill', path: join(dir, 'missing.md') }],
 		});
+		expect(output).not.toContain('missing-skill');
 
-		it('uses custom phase instructions when provided', async () => {
-			const result = await assemblePrompt({
-				phase: 'plan',
-				phaseInstructions: 'Custom: make a plan and include diagrams.',
-				taskPrompt: 'build feature',
-				skills: [],
-			});
-
-			const text = result[0];
-			if (text?.type === 'text') {
-				expect(text.text).toContain('Custom: make a plan');
-				expect(text.text).not.toContain('Create an implementation plan');
-			}
-		});
-
-		it('includes repo information when provided', async () => {
-			const result = await assemblePrompt({
-				phase: 'work',
-				taskPrompt: 'implement feature',
-				repos: [
-					{
-						repoUrl: 'https://github.com/org/repo.git',
-						baseBranch: 'main',
-						workspacePath: '/workspace/repo',
-					},
-				],
-				skills: [],
-			});
-
-			const text = result[0];
-			if (text?.type === 'text') {
-				expect(text.text).toContain('github.com/org/repo.git');
-				expect(text.text).toContain('branch: main');
-				expect(text.text).toContain('/workspace/repo');
-			}
-		});
-
-		it('includes multiple repos when provided', async () => {
-			const result = await assemblePrompt({
-				phase: 'work',
-				taskPrompt: 'implement feature',
-				repos: [
-					{
-						repoUrl: 'https://github.com/org/frontend.git',
-						baseBranch: 'main',
-						workspacePath: '/workspace/frontend',
-					},
-					{
-						repoUrl: 'https://github.com/org/backend.git',
-						baseBranch: 'develop',
-						workspacePath: '/workspace/backend',
-					},
-				],
-				skills: [],
-			});
-
-			const text = result[0];
-			if (text?.type === 'text') {
-				expect(text.text).toContain('https://github.com/org/frontend.git');
-				expect(text.text).toContain('/workspace/frontend');
-				expect(text.text).toContain('https://github.com/org/backend.git');
-				expect(text.text).toContain('/workspace/backend');
-			}
-		});
-
-		it('includes context when provided', async () => {
-			const result = await assemblePrompt({
-				phase: 'work',
-				taskPrompt: 'triage alert',
-				context: { alertId: 'INC-123', service: 'payments' },
-				skills: [],
-			});
-
-			const text = result[0];
-			if (text?.type === 'text') {
-				expect(text.text).toContain('INC-123');
-				expect(text.text).toContain('payments');
-			}
-		});
-
-		it('includes repo summary when provided', async () => {
-			const result = await assemblePrompt({
-				phase: 'plan',
-				taskPrompt: 'plan work',
-				repoSummary: 'Repository structure (4 files):\nsrc/index.ts',
-				skills: [],
-			});
-
-			const text = result[0];
-			if (text?.type === 'text') {
-				expect(text.text).toContain('Repository summary:');
-				expect(text.text).toContain('src/index.ts');
-			}
-		});
-
-		it('includes plan for work phases', async () => {
-			const result = await assemblePrompt({
-				phase: 'work',
-				taskPrompt: 'implement',
-				plan: 'Step 1: write tests\nStep 2: implement',
-				skills: [],
-			});
-
-			const text = result[0];
-			if (text?.type === 'text') {
-				expect(text.text).toContain('Approved plan:');
-				expect(text.text).toContain('Step 1: write tests');
-			}
-		});
-
-		it('includes failure context for retries', async () => {
-			const result = await assemblePrompt({
-				phase: 'work',
-				taskPrompt: 'fix bug',
-				failureContext: 'Test failed: exit code 1\nassert false',
-				skills: [],
-			});
-
-			const text = result[0];
-			if (text?.type === 'text') {
-				expect(text.text).toContain('Failure context');
-				expect(text.text).toContain('assert false');
-			}
-		});
-
-		it('appends skill inputs after text', async () => {
-			const skillDir = join(tempDir, 'skills', 'debug');
-			await mkdir(skillDir, { recursive: true });
-			await writeFile(join(skillDir, 'SKILL.md'), '# Debug Skill', 'utf-8');
-
-			const result = await assemblePrompt({
-				phase: 'work',
-				taskPrompt: 'debug issue',
-				skills: [{ name: 'debug', path: join(skillDir, 'SKILL.md') }],
-			});
-
-			expect(result).toHaveLength(2);
-			expect(result[0]?.type).toBe('text');
-			expect(result[1]?.type).toBe('skill');
-		});
+		await expect(
+			buildRoleSystemPrompt({
+				role: 'plan-agent',
+				baseInstructionsOverride: null,
+				roleInstructionsOverride: null,
+				branchPrefix: 'agent/',
+				skills: [{ name: 'directory-skill', path: dir }],
+			}),
+		).rejects.toThrow(/Skill load failed/);
 	});
 });

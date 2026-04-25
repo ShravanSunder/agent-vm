@@ -13,19 +13,28 @@ const systemConfig = {
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 		},
 	},
-	images: {
-		gateway: { buildConfig: './images/gateway/build-config.json' },
-		tool: { buildConfig: './images/tool/build-config.json' },
+	imageProfiles: {
+		gateways: {
+			openclaw: {
+				type: 'openclaw',
+				buildConfig: './vm-images/gateways/openclaw/build-config.json',
+			},
+			worker: { type: 'worker', buildConfig: './vm-images/gateways/worker/build-config.json' },
+		},
+		toolVms: {
+			default: { type: 'toolVm', buildConfig: './vm-images/tool-vms/default/build-config.json' },
+		},
 	},
 	zones: [
 		{
 			id: 'shravan',
 			gateway: {
 				type: 'openclaw',
+				imageProfile: 'openclaw',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				gatewayConfig: './config/shravan/openclaw.json',
+				config: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
 				workspaceDir: './workspaces/shravan',
 			},
@@ -40,6 +49,7 @@ const systemConfig = {
 			memory: '1G',
 			cpus: 1,
 			workspaceRoot: './workspaces/tools',
+			imageProfile: 'default',
 		},
 	},
 	tcpPool: {

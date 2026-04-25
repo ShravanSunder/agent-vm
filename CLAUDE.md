@@ -1,77 +1,77 @@
 # agent-vm
 
-Sandboxed QEMU micro-VM system for running LLM coding agents. Controller on host, worker inside VM, secrets injected at network layer.
+Sandboxed QEMU micro-VM controller and worker packages for autonomous coding agents.
 
 ## Rules
 
-@.cursor/rules/ts-rules.mdc
-@.cursor/rules/monorepo-rules.mdc
+@.cursor/rules/ts-rules.md
+@.cursor/rules/monorepo-rules.md
+
+## Orientation
+
+Use progressive disclosure when learning the repo:
+
+1. Start with `README.md`.
+2. Use `docs/README.md` as the docs map.
+3. Use `docs/architecture/overview.md` for the system model.
+4. Use mode-specific gateway docs only when needed:
+   - `docs/architecture/agent-worker-gateway.md`
+   - `docs/architecture/openclaw-gateway.md`
+5. Use subsystem docs for implementation details:
+   - `docs/subsystems/controller.md`
+   - `docs/subsystems/gateway-lifecycle.md`
+   - `docs/subsystems/gondolin-vm-layer.md`
+   - `docs/subsystems/worker-task-pipeline.md`
+
+For configuration questions, start at `docs/reference/configuration/README.md`.
+
+## Tooling
+
+- Install/build: `pnpm install`, then `pnpm build`
+- Unit tests: `pnpm test:unit`
+- Integration tests: `pnpm test:integration`
+- Smoke tests: `pnpm test:smoke`
+- Full quality gate: `pnpm check`
+- Typecheck: `pnpm typecheck`
+
+Prefer targeted commands while iterating, then run the broad gate before
+claiming done.
 
 ## Packages
 
-```
-gondolin-core          → VM build pipeline, adapter, secret resolver (no internal deps)
-gateway-interface      → Types: GatewayLifecycle, VmSpec, ProcessSpec (→ gondolin-core)
-openclaw-gateway       → OpenClaw lifecycle (→ gateway-interface, gondolin-core)
-worker-gateway         → Worker lifecycle (→ gateway-interface, gondolin-core)
-openclaw-agent-vm-plugin → OpenClaw sandbox backend (→ gondolin-core)
-agent-vm-worker        → Worker process, runs inside VM (standalone)
-agent-vm               → Controller CLI + HTTP server (→ all above)
-```
-
-npm scope: `@shravansunder/*`. Publish order: leaves → agent-vm last.
-
-## Install + Build
-
-```bash
-pnpm install && pnpm build
+```text
+gondolin-adapter         → VM build pipeline, adapter, secret resolver
+gateway-interface        → GatewayLifecycle, VmSpec, ProcessSpec
+openclaw-gateway         → OpenClaw lifecycle
+worker-gateway           → Worker lifecycle
+openclaw-agent-vm-plugin → OpenClaw sandbox backend
+agent-vm-worker          → Worker process, runs inside VM
+agent-vm                 → Controller CLI + HTTP server
 ```
 
-tsdown for library packages, tsc for agent-vm + agent-vm-worker.
+## Layout
 
-## Run Locally
+`config/` holds `system.json`, `systemCacheIdentifier.json`, gateway config, and prompts.
 
-```bash
-agent-vm init my-zone --type worker
-# Fix system.json: tokenSource → { "type": "env", "envVar": "OP_SERVICE_ACCOUNT_TOKEN" }
-# Add: "githubToken": { "source": "1password", "ref": "op://agent-vm/github-token/credential" }
-source .env && agent-vm build --config config/system.json
-agent-vm controller start --config config/system.json --zone my-zone
-```
+`vm-images/` holds Gondolin VM image recipes.
+
+`vm-host-system/` is optional boot plumbing for a generic container host that
+runs Docker, QEMU, Zig, and the controller.
 
 ## Controller API
 
-- `GET /health` — readiness
-- `POST /zones/:zoneId/worker-tasks` — synchronous, runs full task lifecycle
-- `POST /zones/:zoneId/tasks/:taskId/push-branches` — controller-side git push (called by worker wrapup)
+- `GET /health`
+- `POST /zones/:zoneId/worker-tasks`
+- `GET /zones/:zoneId/tasks/:taskId`
+- `POST /zones/:zoneId/tasks/:taskId/push-branches`
+- `POST /zones/:zoneId/tasks/:taskId/pull-default`
+- `POST /zones/:zoneId/tasks/:taskId/close`
 
 ## Key Files
 
-- `packages/agent-vm/src/controller/controller-runtime.ts` — startup, gateway type dispatch
-- `packages/agent-vm/src/controller/worker-task-runner.ts` — per-task VM lifecycle
-- `packages/agent-vm/src/controller/git-push-operations.ts` — host-side push + PR
-- `packages/agent-vm-worker/src/coordinator/coordinator.ts` — worker loop
-- `packages/agent-vm-worker/src/config/worker-config.ts` — worker config schema
-- `packages/worker-gateway/src/worker-lifecycle.ts` — VM spec + process spec
-
-## Secrets
-
-Zone secrets: `source: "1password"` (op:// ref) or `source: "environment"` (env var).
-Injection: `"http-mediation"` (proxy layer, VM never sees key) or `"env"` (VM env var).
-`host.githubToken` — controller-only, for git push. Never in VM.
-
-## Publishing
-
-See `docs/PUBLISHING.md`. Quick: bump all versions → `pnpm publish --access public --no-git-checks` in dependency order. Use `workspace:*` not `workspace:X.X.X`.
-
-## Architecture
-
-```
-Controller (host :18800)
-  → clone repo → merge config → docker compose up
-  → boot Gondolin VM
-    Worker (VM :18789): plan → review → work → verify → review → wrapup
-  → worker calls controller push-branches API
-  → controller: git push + gh pr create (token on host)
-  → cleanup: stop docker, delete task dirs
-```
+- `packages/agent-vm/src/controller/controller-runtime.ts`
+- `packages/agent-vm/src/controller/worker-task-runner.ts`
+- `packages/agent-vm/src/controller/git-push-operations.ts`
+- `packages/agent-vm-worker/src/coordinator/coordinator.ts`
+- `packages/agent-vm-worker/src/config/worker-config.ts`
+- `packages/worker-gateway/src/worker-lifecycle.ts`

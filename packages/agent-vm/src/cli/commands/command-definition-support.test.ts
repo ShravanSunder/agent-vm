@@ -15,7 +15,7 @@ describe('loadSystemConfigFromOption', () => {
 							expected: 'string',
 							input: undefined,
 							message: 'Invalid input: expected string, received undefined',
-							path: ['zones', 0, 'gateway', 'gatewayConfig'],
+							path: ['zones', 0, 'gateway', 'config'],
 						},
 					]);
 				},
@@ -23,7 +23,7 @@ describe('loadSystemConfigFromOption', () => {
 		).rejects.toThrow(
 			[
 				'Invalid config/system.json configuration:',
-				'  zones[0].gateway.gatewayConfig: Invalid input: expected string, received undefined',
+				'  zones[0].gateway.config: Invalid input: expected string, received undefined',
 			].join('\n'),
 		);
 	});
@@ -52,22 +52,42 @@ describe('requireZone', () => {
 						projectNamespace: 'claw-tests-a1b2c3d4',
 						secretsProvider: { type: '1password', tokenSource: { type: 'env' } },
 					},
-					images: {
-						gateway: { buildConfig: './images/gateway/build-config.json' },
-						tool: { buildConfig: './images/tool/build-config.json' },
+					imageProfiles: {
+						gateways: {
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: './vm-images/gateways/openclaw/build-config.json',
+							},
+							worker: {
+								type: 'worker',
+								buildConfig: './vm-images/gateways/worker/build-config.json',
+							},
+						},
+						toolVms: {
+							default: {
+								type: 'toolVm',
+								buildConfig: './vm-images/tool-vms/default/build-config.json',
+							},
+						},
 					},
 					tcpPool: { basePort: 19000, size: 5 },
 					toolProfiles: {
-						standard: { cpus: 1, memory: '1G', workspaceRoot: './workspaces/tools' },
+						standard: {
+							cpus: 1,
+							memory: '1G',
+							workspaceRoot: './workspaces/tools',
+							imageProfile: 'default',
+						},
 					},
 					zones: [
 						{
 							allowedHosts: ['api.openai.com'],
 							gateway: {
 								type: 'openclaw',
+								imageProfile: 'openclaw',
 								cpus: 2,
 								memory: '2G',
-								gatewayConfig: './config/shravan/openclaw.json',
+								config: './config/shravan/openclaw.json',
 								port: 18791,
 								stateDir: './state/shravan',
 								workspaceDir: './workspaces/shravan',

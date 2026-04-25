@@ -1,62 +1,77 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SystemConfig } from '../config/system-config.js';
+import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { runCacheCommand, type CacheCommandDependencies } from './cache-commands.js';
 
-function createCacheCommandSystemConfig(): SystemConfig {
-	return {
-		cacheDir: '/cache',
-		host: {
-			controllerPort: 18800,
-			projectNamespace: 'claw-tests-a1b2c3d4',
-			secretsProvider: {
-				type: '1password',
-				tokenSource: { type: 'env' },
-			},
-		},
-		images: {
-			gateway: {
-				buildConfig: '/project/images/gateway/build-config.json',
-			},
-			tool: {
-				buildConfig: '/project/images/tool/build-config.json',
-			},
-		},
-		tcpPool: {
-			basePort: 19000,
-			size: 5,
-		},
-		toolProfiles: {
-			standard: {
-				cpus: 1,
-				memory: '1G',
-				workspaceRoot: '/workspaces/tools',
-			},
-		},
-		zones: [
-			{
-				allowedHosts: ['api.anthropic.com'],
-				gateway: {
-					type: 'openclaw',
-					cpus: 2,
-					memory: '2G',
-					gatewayConfig: './config/shravan/openclaw.json',
-					port: 18791,
-					stateDir: './state/shravan',
-					workspaceDir: './workspaces/shravan',
+function createCacheCommandSystemConfig(): LoadedSystemConfig {
+	return createLoadedSystemConfig(
+		{
+			cacheDir: '/cache',
+			host: {
+				controllerPort: 18800,
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				secretsProvider: {
+					type: '1password',
+					tokenSource: { type: 'env' },
 				},
-				id: 'shravan',
-				secrets: {},
-				toolProfile: 'standard',
-				websocketBypass: [],
 			},
-		],
-	};
+			imageProfiles: {
+				gateways: {
+					openclaw: {
+						type: 'openclaw',
+						buildConfig: '/project/vm-images/gateways/openclaw/build-config.json',
+					},
+				},
+				toolVms: {
+					default: {
+						type: 'toolVm',
+						buildConfig: '/project/vm-images/tool-vms/default/build-config.json',
+					},
+				},
+			},
+			tcpPool: {
+				basePort: 19000,
+				size: 5,
+			},
+			toolProfiles: {
+				standard: {
+					cpus: 1,
+					imageProfile: 'default',
+					memory: '1G',
+					workspaceRoot: '/workspaces/tools',
+				},
+			},
+			zones: [
+				{
+					allowedHosts: ['api.anthropic.com'],
+					gateway: {
+						type: 'openclaw',
+						imageProfile: 'openclaw',
+						cpus: 2,
+						memory: '2G',
+						config: './config/shravan/openclaw.json',
+						port: 18791,
+						stateDir: './state/shravan',
+						workspaceDir: './workspaces/shravan',
+					},
+					id: 'shravan',
+					secrets: {},
+					toolProfile: 'standard',
+					websocketBypass: [],
+				},
+			],
+		},
+		{ systemConfigPath: '/project/config/system.json' },
+	);
 }
 
 describe('runCacheCommand', () => {
 	it('lists cached fingerprints and marks the current ones', async () => {
 		const stdoutChunks: string[] = [];
+		const computeFingerprintFromConfigPath = vi.fn(
+			async (buildConfigPath: string, _systemCacheIdentifierPath: string) =>
+				buildConfigPath.includes('gateway') ? 'gateway-current' : 'tool-current',
+		);
 
 		await runCacheCommand(
 			{
@@ -73,15 +88,22 @@ describe('runCacheCommand', () => {
 				},
 			},
 			{
-				computeFingerprintFromConfigPath: async (buildConfigPath) =>
-					buildConfigPath.includes('gateway') ? 'gateway-current' : 'tool-current',
-				listCacheEntries: () => [
+				computeFingerprintFromConfigPath,
+				listCacheEntries: async () => [
 					{ current: true, fingerprint: 'gateway-current' },
 					{ current: false, fingerprint: 'stale-fingerprint' },
 				],
 			},
 		);
 
+		expect(computeFingerprintFromConfigPath).toHaveBeenCalledWith(
+			'/project/vm-images/gateways/openclaw/build-config.json',
+			'/project/config/systemCacheIdentifier.json',
+		);
+		expect(computeFingerprintFromConfigPath).toHaveBeenCalledWith(
+			'/project/vm-images/tool-vms/default/build-config.json',
+			'/project/config/systemCacheIdentifier.json',
+		);
 		expect(stdoutChunks.join('')).toContain('"gateway-current"');
 		expect(stdoutChunks.join('')).toContain('"stale-fingerprint"');
 	});
@@ -93,11 +115,12 @@ describe('runCacheCommand', () => {
 			computeFingerprintFromConfigPath: async (buildConfigPath) =>
 				buildConfigPath.includes('gateway') ? 'gateway-current' : 'tool-current',
 			deleteStaleImageDirectories,
-			findStaleImageDirectories: () => [
+			findStaleImageDirectories: async () => [
 				{
-					absolutePath: '/cache/images/gateway/stale-fingerprint',
-					imageType: 'gateway',
-					name: 'stale-fingerprint',
+					absolutePath: '/cache/gateway-images/openclaw/stale-fingerprint',
+					family: 'gateway',
+					fingerprint: 'stale-fingerprint',
+					profileName: 'openclaw',
 					sizeBytes: 1024,
 				},
 			],
@@ -130,11 +153,12 @@ describe('runCacheCommand', () => {
 			computeFingerprintFromConfigPath: async (buildConfigPath) =>
 				buildConfigPath.includes('gateway') ? 'gateway-current' : 'tool-current',
 			deleteStaleImageDirectories,
-			findStaleImageDirectories: () => [
+			findStaleImageDirectories: async () => [
 				{
-					absolutePath: '/cache/images/gateway/stale-fingerprint',
-					imageType: 'gateway',
-					name: 'stale-fingerprint',
+					absolutePath: '/cache/gateway-images/openclaw/stale-fingerprint',
+					family: 'gateway',
+					fingerprint: 'stale-fingerprint',
+					profileName: 'openclaw',
 					sizeBytes: 1024,
 				},
 			],
@@ -155,9 +179,10 @@ describe('runCacheCommand', () => {
 
 		expect(deleteStaleImageDirectories).toHaveBeenCalledWith([
 			{
-				absolutePath: '/cache/images/gateway/stale-fingerprint',
-				imageType: 'gateway',
-				name: 'stale-fingerprint',
+				absolutePath: '/cache/gateway-images/openclaw/stale-fingerprint',
+				family: 'gateway',
+				fingerprint: 'stale-fingerprint',
+				profileName: 'openclaw',
 				sizeBytes: 1024,
 			},
 		]);
@@ -183,7 +208,7 @@ describe('runCacheCommand', () => {
 			{
 				computeFingerprintFromConfigPath: async (buildConfigPath) =>
 					buildConfigPath.includes('gateway') ? 'gateway-current' : 'tool-current',
-				findStaleImageDirectories: () => [],
+				findStaleImageDirectories: async () => [],
 			},
 		);
 

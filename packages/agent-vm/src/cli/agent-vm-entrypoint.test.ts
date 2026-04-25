@@ -1,7 +1,11 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
 
-import type { SystemConfig } from '../config/system-config.js';
+import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { ControllerClient } from '../controller/http/controller-client.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import {
@@ -11,9 +15,11 @@ import {
 	runAgentVmCli,
 } from './agent-vm-entrypoint.js';
 
-function createCliBuildSystemConfig(): SystemConfig {
+function createCliBuildSystemConfig(): LoadedSystemConfig {
 	return {
 		cacheDir: './cache',
+		systemConfigPath: './config/system.json',
+		systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 		host: {
 			controllerPort: 18800,
 			projectNamespace: 'claw-tests-a1b2c3d4',
@@ -22,14 +28,25 @@ function createCliBuildSystemConfig(): SystemConfig {
 				tokenSource: { type: 'env' },
 			},
 		},
-		images: {
-			gateway: {
-				buildConfig: './images/gateway/build-config.json',
-				dockerfile: './images/gateway/Dockerfile',
+		imageProfiles: {
+			gateways: {
+				openclaw: {
+					type: 'openclaw',
+					buildConfig: './vm-images/gateways/openclaw/build-config.json',
+					dockerfile: './vm-images/gateways/openclaw/Dockerfile',
+				},
+				worker: {
+					type: 'worker',
+					buildConfig: './vm-images/gateways/worker/build-config.json',
+					dockerfile: './vm-images/gateways/worker/Dockerfile',
+				},
 			},
-			tool: {
-				buildConfig: './images/tool/build-config.json',
-				dockerfile: './images/tool/Dockerfile',
+			toolVms: {
+				default: {
+					type: 'toolVm',
+					buildConfig: './vm-images/tool-vms/default/build-config.json',
+					dockerfile: './vm-images/tool-vms/default/Dockerfile',
+				},
 			},
 		},
 		tcpPool: {
@@ -41,6 +58,7 @@ function createCliBuildSystemConfig(): SystemConfig {
 				cpus: 1,
 				memory: '1G',
 				workspaceRoot: './workspaces/tools',
+				imageProfile: 'default',
 			},
 		},
 		zones: [
@@ -48,9 +66,10 @@ function createCliBuildSystemConfig(): SystemConfig {
 				allowedHosts: ['api.anthropic.com'],
 				gateway: {
 					type: 'openclaw',
+					imageProfile: 'openclaw',
 					cpus: 2,
 					memory: '2G',
-					gatewayConfig: './config/shravan/openclaw.json',
+					config: './config/shravan/openclaw.json',
 					port: 18791,
 					stateDir: './state/shravan',
 					workspaceDir: './workspaces/shravan',
@@ -113,7 +132,7 @@ describe('runAgentVmCli', () => {
 		}));
 
 		await runAgentVmCli(
-			['init', 'test-zone', '--type', 'openclaw'],
+			['init', 'test-zone', '--type', 'openclaw', '--secrets', '1password', '--arch', 'aarch64'],
 			{
 				stderr: { write: () => true },
 				stdout: {
@@ -130,12 +149,151 @@ describe('runAgentVmCli', () => {
 			},
 		);
 
-		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
-			gatewayType: 'openclaw',
-			targetDir: '/tmp/agent-vm-init',
-			zoneId: 'test-zone',
-		});
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
+			expect.objectContaining({
+				gatewayType: 'openclaw',
+				architecture: 'aarch64',
+				hostSystemType: 'bare-metal',
+				paths: 'local',
+				secretsProvider: '1password',
+				targetDir: '/tmp/agent-vm-init',
+				writeLocalEnvironmentFile: false,
+				zoneId: 'test-zone',
+			}),
+		);
 		expect(outputs.join('')).toContain('"config/system.json"');
+	});
+
+	it('routes resources init to the repo resource scaffolder', async () => {
+		const outputs: string[] = [];
+		const initRepoResources = vi.fn(async () => ({
+			created: [
+				'.agent-vm/repo-resources.ts',
+				'.agent-vm/repo-resources.d.ts',
+				'.agent-vm/run-setup.sh',
+				'.agent-vm/docker-compose.yml',
+				'.agent-vm/AGENTS.md',
+				'.agent-vm/README.md',
+			],
+			skipped: [],
+			updated: [],
+		}));
+
+		await runAgentVmCli(
+			['resources', 'init'],
+			{
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/repo',
+				initRepoResources,
+			},
+		);
+
+		expect(initRepoResources).toHaveBeenCalledWith({
+			targetDir: '/tmp/repo',
+		});
+		expect(outputs.join('')).toContain('Scaffolded .agent-vm resources in /tmp/repo');
+		expect(outputs.join('')).toContain('created .agent-vm/repo-resources.ts');
+		expect(outputs.join('')).toContain('Next: edit .agent-vm/repo-resources.ts');
+		expect(outputs.join('')).not.toContain('"created"');
+	});
+
+	it('prints resources init JSON only when requested', async () => {
+		const outputs: string[] = [];
+		const initRepoResources = vi.fn(async () => ({
+			created: ['.agent-vm/repo-resources.ts'],
+			skipped: [],
+			updated: [],
+		}));
+
+		await runAgentVmCli(
+			['resources', 'init', '--json'],
+			{
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/repo',
+				initRepoResources,
+			},
+		);
+
+		expect(outputs.join('')).toContain('"created"');
+		expect(outputs.join('')).toContain('.agent-vm/repo-resources.ts');
+	});
+
+	it('routes resources validate to repo resource validation', async () => {
+		const outputs: string[] = [];
+		const validateRepoResources = vi.fn(async () => ({
+			valid: true as const,
+		}));
+
+		await runAgentVmCli(
+			['resources', 'validate'],
+			{
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/repo',
+				validateRepoResources,
+			},
+		);
+
+		expect(validateRepoResources).toHaveBeenCalledWith({
+			targetDir: '/tmp/repo',
+		});
+		expect(outputs.join('')).toContain('Repo resource contract is valid.');
+	});
+
+	it('routes resources update to generated repo resource file updates', async () => {
+		const outputs: string[] = [];
+		const updateRepoResources = vi.fn(async () => ({
+			updated: ['.agent-vm/repo-resources.d.ts', '.agent-vm/AGENTS.md', '.agent-vm/README.md'],
+		}));
+
+		await runAgentVmCli(
+			['resources', 'update'],
+			{
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/repo',
+				updateRepoResources,
+			},
+		);
+
+		expect(updateRepoResources).toHaveBeenCalledWith({
+			targetDir: '/tmp/repo',
+		});
+		expect(outputs.join('')).toContain('.agent-vm/repo-resources.d.ts');
 	});
 
 	it('passes gateway type through to init scaffolding', async () => {
@@ -146,7 +304,53 @@ describe('runAgentVmCli', () => {
 		}));
 
 		await runAgentVmCli(
-			['init', 'test-zone', '--type', 'worker'],
+			['init', 'test-zone', '--type', 'worker', '--secrets', 'environment', '--arch', 'x86_64'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
+				scaffoldAgentVmProject,
+			},
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
+			expect.objectContaining({
+				gatewayType: 'worker',
+				architecture: 'x86_64',
+				hostSystemType: 'bare-metal',
+				paths: 'local',
+				targetDir: '/tmp/agent-vm-init',
+				writeLocalEnvironmentFile: false,
+				zoneId: 'test-zone',
+			}),
+		);
+	});
+
+	it('passes init path profile and namespace overrides to scaffolding', async () => {
+		const scaffoldAgentVmProject = vi.fn(async () => ({
+			created: ['config/system.json', '.env.local'],
+			keychainStored: false,
+			skipped: [],
+		}));
+
+		await runAgentVmCli(
+			[
+				'init',
+				'coding-agent',
+				'--type',
+				'worker',
+				'--secrets',
+				'environment',
+				'--arch',
+				'x86_64',
+				'--paths',
+				'pod',
+				'--namespace',
+				'agent-vm',
+			],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -160,15 +364,124 @@ describe('runAgentVmCli', () => {
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
 			gatewayType: 'worker',
+			architecture: 'x86_64',
+			hostSystemType: 'container',
+			overwrite: false,
+			secretsProvider: 'environment',
+			paths: 'pod',
+			projectNamespace: 'agent-vm',
 			targetDir: '/tmp/agent-vm-init',
-			zoneId: 'test-zone',
+			writeLocalEnvironmentFile: false,
+			zoneId: 'coding-agent',
 		});
+	});
+
+	it('expands init preset defaults and lets explicit flags override them', async () => {
+		const scaffoldAgentVmProject = vi.fn(async () => ({
+			created: ['config/system.json', '.env.local'],
+			keychainStored: false,
+			skipped: [],
+		}));
+
+		await runAgentVmCli(
+			[
+				'init',
+				'coding-agent',
+				'--type',
+				'worker',
+				'--preset',
+				'container-x86',
+				'--arch',
+				'aarch64',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
+				scaffoldAgentVmProject,
+			},
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
+			architecture: 'aarch64',
+			gatewayType: 'worker',
+			hostSystemType: 'container',
+			overwrite: false,
+			paths: 'pod',
+			secretsProvider: 'environment',
+			targetDir: '/tmp/agent-vm-init',
+			writeLocalEnvironmentFile: false,
+			zoneId: 'coding-agent',
+		});
+	});
+
+	it('uses macOS local preset for local env-file scaffolding', async () => {
+		const scaffoldAgentVmProject = vi.fn(async () => ({
+			created: ['config/system.json', '.env.local'],
+			keychainStored: false,
+			skipped: [],
+		}));
+
+		await runAgentVmCli(
+			['init', 'coding-agent', '--type', 'worker', '--preset', 'macos-local'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
+				scaffoldAgentVmProject,
+			},
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
+			architecture: 'aarch64',
+			gatewayType: 'worker',
+			hostSystemType: 'bare-metal',
+			overwrite: false,
+			paths: 'local',
+			secretsProvider: '1password',
+			targetDir: '/tmp/agent-vm-init',
+			writeLocalEnvironmentFile: true,
+			zoneId: 'coding-agent',
+		});
+	});
+
+	it('passes init overwrite flag to scaffolding', async () => {
+		const scaffoldAgentVmProject = vi.fn(async () => ({
+			created: ['config/system.json'],
+			keychainStored: false,
+			skipped: [],
+		}));
+
+		await runAgentVmCli(
+			['init', 'coding-agent', '--type', 'worker', '--preset', 'container-x86', '--overwrite'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
+				scaffoldAgentVmProject,
+			},
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
+			expect.objectContaining({
+				overwrite: true,
+			}),
+		);
 	});
 
 	it('rejects init when --type is missing', async () => {
 		await expect(
 			runAgentVmCli(
-				['init', 'test-zone'],
+				['init', 'test-zone', '--secrets', '1password'],
 				{
 					stderr: { write: () => true },
 					stdout: { write: () => true },
@@ -176,6 +489,104 @@ describe('runAgentVmCli', () => {
 				defaultCliDependencies,
 			),
 		).rejects.toThrow(/type/u);
+	});
+
+	it('rejects init when --secrets is missing', async () => {
+		await expect(
+			runAgentVmCli(
+				['init', 'test-zone', '--type', 'worker'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				defaultCliDependencies,
+			),
+		).rejects.toThrow(/Secrets provider/u);
+	});
+
+	it('rejects init when --secrets is invalid', async () => {
+		await expect(
+			runAgentVmCli(
+				['init', 'test-zone', '--type', 'worker', '--secrets', 'bogus'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				defaultCliDependencies,
+			),
+		).rejects.toThrow(/Invalid value 'bogus'/u);
+	});
+
+	it('rejects init when --arch is missing', async () => {
+		await expect(
+			runAgentVmCli(
+				['init', 'test-zone', '--type', 'worker', '--secrets', 'environment'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				defaultCliDependencies,
+			),
+		).rejects.toThrow(/Architecture is required/u);
+	});
+
+	it('routes config reset-instructions through the injected reset helper', async () => {
+		const stdoutChunks: string[] = [];
+		const resetWorkerInstructions = vi.fn(async () => ({
+			changed: ['phases.wrapup.instructions'],
+		}));
+		const systemConfig = createCliBuildSystemConfig();
+		const primaryZone = systemConfig.zones[0];
+		if (!primaryZone) {
+			throw new Error('Expected primary zone in test system config');
+		}
+
+		await runAgentVmCli(
+			[
+				'config',
+				'reset-instructions',
+				'--config',
+				'config/system.json',
+				'--zone',
+				'coding-agent',
+				'--phase',
+				'wrapup',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						stdoutChunks.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			{
+				...defaultCliDependencies,
+				loadSystemConfig: vi.fn(async () => ({
+					...systemConfig,
+					zones: [
+						{
+							...primaryZone,
+							gateway: {
+								...primaryZone.gateway,
+								type: 'worker' as const,
+								imageProfile: 'worker',
+								config: '/tmp/worker.json',
+							},
+							id: 'coding-agent',
+						},
+					],
+				})),
+				resetWorkerInstructions,
+			},
+		);
+
+		expect(resetWorkerInstructions).toHaveBeenCalledWith({
+			workerConfigPath: '/tmp/worker.json',
+			phase: 'wrapup',
+		});
+		expect(stdoutChunks.join('')).toContain('"changed"');
 	});
 
 	it('routes build to the build command handler', async () => {
@@ -199,9 +610,14 @@ describe('runAgentVmCli', () => {
 				forceRebuild: false,
 				systemConfig: expect.objectContaining({
 					cacheDir: './cache',
-					images: expect.objectContaining({
-						gateway: expect.objectContaining({
-							dockerfile: './images/gateway/Dockerfile',
+					systemConfigPath: './config/system.json',
+					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
+					imageProfiles: expect.objectContaining({
+						gateways: expect.objectContaining({
+							openclaw: expect.objectContaining({
+								type: 'openclaw',
+								dockerfile: './vm-images/gateways/openclaw/Dockerfile',
+							}),
 						}),
 					}),
 				}),
@@ -260,6 +676,8 @@ describe('runAgentVmCli', () => {
 				subcommand: 'clean',
 				systemConfig: expect.objectContaining({
 					cacheDir: './cache',
+					systemConfigPath: './config/system.json',
+					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 				}),
 			},
 			expect.any(Object),
@@ -287,10 +705,45 @@ describe('runAgentVmCli', () => {
 				subcommand: 'list',
 				systemConfig: expect.objectContaining({
 					cacheDir: './cache',
+					systemConfigPath: './config/system.json',
+					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 				}),
 			},
 			expect.any(Object),
 		);
+	});
+
+	it('routes validate through the injected validation helper', async () => {
+		const stdoutChunks: string[] = [];
+		const runConfigValidation = vi.fn(async () => ({
+			ok: true,
+			checks: [{ name: 'system-cache-identifier', ok: true }],
+		}));
+
+		await runAgentVmCli(
+			['validate', '--config', './custom-system.json'],
+			{
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						stdoutChunks.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			{
+				...defaultCliDependencies,
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				runConfigValidation,
+			},
+		);
+
+		expect(runConfigValidation).toHaveBeenCalledWith({
+			systemConfig: expect.objectContaining({
+				systemConfigPath: './config/system.json',
+			}),
+		});
+		expect(stdoutChunks.join('')).toContain('"ok": true');
 	});
 
 	it('routes auth to an interactive SSH-backed OpenClaw login', async () => {
@@ -379,7 +832,7 @@ describe('runAgentVmCli', () => {
 	it('rejects an invalid gateway type value', async () => {
 		await expect(
 			runAgentVmCli(
-				['init', 'test-zone', '--type', 'banana'],
+				['init', 'test-zone', '--type', 'banana', '--secrets', '1password'],
 				{
 					stderr: { write: () => true },
 					stdout: { write: () => true },
@@ -443,7 +896,7 @@ describe('runAgentVmCli', () => {
 								expected: 'string',
 								input: undefined,
 								message: 'Invalid input: expected string, received undefined',
-								path: ['zones', 0, 'gateway', 'gatewayConfig'],
+								path: ['zones', 0, 'gateway', 'config'],
 							},
 						]);
 					},
@@ -452,7 +905,7 @@ describe('runAgentVmCli', () => {
 		).rejects.toThrow(
 			[
 				'Invalid config/system.json configuration:',
-				'  zones[0].gateway.gatewayConfig: Invalid input: expected string, received undefined',
+				'  zones[0].gateway.config: Invalid input: expected string, received undefined',
 			].join('\n'),
 		);
 	});
@@ -471,6 +924,13 @@ describe('runAgentVmCli', () => {
 	});
 
 	it('routes doctor and status subcommands to their handlers', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cli-'));
+		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
+		const systemCacheIdentifierPath = path.join(
+			temporaryDirectoryPath,
+			'systemCacheIdentifier.json',
+		);
+		await fs.writeFile(systemCacheIdentifierPath, '{"schemaVersion":1}\n', 'utf8');
 		const outputs: string[] = [];
 
 		await runAgentVmCli(
@@ -521,6 +981,8 @@ describe('runAgentVmCli', () => {
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
+					systemConfigPath,
+					systemCacheIdentifierPath,
 					host: {
 						controllerPort: 18800,
 						projectNamespace: 'claw-tests-a1b2c3d4',
@@ -529,12 +991,22 @@ describe('runAgentVmCli', () => {
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 						},
 					},
-					images: {
-						gateway: {
-							buildConfig: './images/gateway/build-config.json',
+					imageProfiles: {
+						gateways: {
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: './vm-images/gateways/openclaw/build-config.json',
+							},
+							worker: {
+								type: 'worker',
+								buildConfig: './vm-images/gateways/worker/build-config.json',
+							},
 						},
-						tool: {
-							buildConfig: './images/tool/build-config.json',
+						toolVms: {
+							default: {
+								type: 'toolVm',
+								buildConfig: './vm-images/tool-vms/default/build-config.json',
+							},
 						},
 					},
 					tcpPool: {
@@ -546,6 +1018,7 @@ describe('runAgentVmCli', () => {
 							cpus: 1,
 							memory: '1G',
 							workspaceRoot: './workspaces/tools',
+							imageProfile: 'default',
 						},
 					},
 					zones: [],
@@ -621,6 +1094,8 @@ describe('runAgentVmCli', () => {
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
+					systemConfigPath: './config/system.json',
+					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 					host: {
 						controllerPort: 18800,
 						projectNamespace: 'claw-tests-a1b2c3d4',
@@ -629,12 +1104,22 @@ describe('runAgentVmCli', () => {
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 						},
 					},
-					images: {
-						gateway: {
-							buildConfig: './images/gateway/build-config.json',
+					imageProfiles: {
+						gateways: {
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: './vm-images/gateways/openclaw/build-config.json',
+							},
+							worker: {
+								type: 'worker',
+								buildConfig: './vm-images/gateways/worker/build-config.json',
+							},
 						},
-						tool: {
-							buildConfig: './images/tool/build-config.json',
+						toolVms: {
+							default: {
+								type: 'toolVm',
+								buildConfig: './vm-images/tool-vms/default/build-config.json',
+							},
 						},
 					},
 					tcpPool: {
@@ -646,6 +1131,7 @@ describe('runAgentVmCli', () => {
 							cpus: 1,
 							memory: '1G',
 							workspaceRoot: './workspaces/tools',
+							imageProfile: 'default',
 						},
 					},
 					zones: [],
@@ -676,6 +1162,7 @@ describe('runAgentVmCli', () => {
 
 		expect(outputs.join('\n')).toContain('"ok": true');
 		expect(outputs.join('\n')).toContain('"controllerPort": 18800');
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
 	it('passes the bundled gondolin plugin source path into controller start', async () => {
@@ -743,6 +1230,8 @@ describe('runAgentVmCli', () => {
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
+					systemConfigPath: './config/system.json',
+					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 					host: {
 						controllerPort: 18800,
 						projectNamespace: 'claw-tests-a1b2c3d4',
@@ -751,12 +1240,22 @@ describe('runAgentVmCli', () => {
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 						},
 					},
-					images: {
-						gateway: {
-							buildConfig: './images/gateway/build-config.json',
+					imageProfiles: {
+						gateways: {
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: './vm-images/gateways/openclaw/build-config.json',
+							},
+							worker: {
+								type: 'worker',
+								buildConfig: './vm-images/gateways/worker/build-config.json',
+							},
 						},
-						tool: {
-							buildConfig: './images/tool/build-config.json',
+						toolVms: {
+							default: {
+								type: 'toolVm',
+								buildConfig: './vm-images/tool-vms/default/build-config.json',
+							},
 						},
 					},
 					tcpPool: {
@@ -768,6 +1267,7 @@ describe('runAgentVmCli', () => {
 							cpus: 1,
 							memory: '1G',
 							workspaceRoot: './workspaces/tools',
+							imageProfile: 'default',
 						},
 					},
 					zones: [
@@ -775,9 +1275,10 @@ describe('runAgentVmCli', () => {
 							allowedHosts: ['api.anthropic.com'],
 							gateway: {
 								type: 'openclaw',
+								imageProfile: 'openclaw',
 								cpus: 2,
 								memory: '2G',
-								gatewayConfig: './config/shravan/openclaw.json',
+								config: './config/shravan/openclaw.json',
 								port: 18791,
 								stateDir: './state/shravan',
 								workspaceDir: './workspaces/shravan',
@@ -957,8 +1458,10 @@ describe('runAgentVmCli', () => {
 				listBackups: () => [],
 			}),
 			resolveServiceAccountToken: async () => 'mock-token',
-			loadSystemConfig: async (): Promise<SystemConfig> => ({
+			loadSystemConfig: async (): Promise<LoadedSystemConfig> => ({
 				cacheDir: './cache',
+				systemConfigPath: './config/system.json',
+				systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 				host: {
 					controllerPort: 18800,
 					projectNamespace: 'claw-tests-a1b2c3d4',
@@ -967,12 +1470,22 @@ describe('runAgentVmCli', () => {
 						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 					},
 				},
-				images: {
-					gateway: {
-						buildConfig: './images/gateway/build-config.json',
+				imageProfiles: {
+					gateways: {
+						openclaw: {
+							type: 'openclaw',
+							buildConfig: './vm-images/gateways/openclaw/build-config.json',
+						},
+						worker: {
+							type: 'worker',
+							buildConfig: './vm-images/gateways/worker/build-config.json',
+						},
 					},
-					tool: {
-						buildConfig: './images/tool/build-config.json',
+					toolVms: {
+						default: {
+							type: 'toolVm',
+							buildConfig: './vm-images/tool-vms/default/build-config.json',
+						},
 					},
 				},
 				tcpPool: {
@@ -984,6 +1497,7 @@ describe('runAgentVmCli', () => {
 						cpus: 1,
 						memory: '1G',
 						workspaceRoot: './workspaces/tools',
+						imageProfile: 'default',
 					},
 				},
 				zones: [
@@ -991,9 +1505,10 @@ describe('runAgentVmCli', () => {
 						allowedHosts: ['api.anthropic.com'],
 						gateway: {
 							type: 'openclaw',
+							imageProfile: 'openclaw',
 							cpus: 2,
 							memory: '2G',
-							gatewayConfig: './config/shravan/openclaw.json',
+							config: './config/shravan/openclaw.json',
 							port: 18791,
 							stateDir: './state/shravan',
 							workspaceDir: './workspaces/shravan',
@@ -1216,6 +1731,8 @@ describe('runAgentVmCli', () => {
 				}),
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
+					systemConfigPath: './config/system.json',
+					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 					host: {
 						controllerPort: 18800,
 						projectNamespace: 'claw-tests-a1b2c3d4',
@@ -1224,22 +1741,32 @@ describe('runAgentVmCli', () => {
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 						},
 					},
-					images: {
-						gateway: { buildConfig: '' },
-						tool: { buildConfig: '' },
+					imageProfiles: {
+						gateways: {
+							openclaw: { type: 'openclaw', buildConfig: '' },
+						},
+						toolVms: {
+							default: { type: 'toolVm', buildConfig: '' },
+						},
 					},
 					tcpPool: { basePort: 19000, size: 5 },
 					toolProfiles: {
-						standard: { cpus: 1, memory: '1G', workspaceRoot: './workspaces/tools' },
+						standard: {
+							cpus: 1,
+							imageProfile: 'default',
+							memory: '1G',
+							workspaceRoot: './workspaces/tools',
+						},
 					},
 					zones: [
 						{
 							allowedHosts: ['api.anthropic.com'],
 							gateway: {
 								type: 'openclaw',
+								imageProfile: 'openclaw',
 								cpus: 2,
 								memory: '2G',
-								gatewayConfig: './config/shravan/openclaw.json',
+								config: './config/shravan/openclaw.json',
 								port: 18791,
 								stateDir: './state/shravan',
 								workspaceDir: './workspaces/shravan',
@@ -1342,6 +1869,8 @@ describe('runAgentVmCli', () => {
 				}),
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
+					systemConfigPath: './config/system.json',
+					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 					host: {
 						controllerPort: 18800,
 						projectNamespace: 'claw-tests-a1b2c3d4',
@@ -1350,22 +1879,32 @@ describe('runAgentVmCli', () => {
 							tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 						},
 					},
-					images: {
-						gateway: { buildConfig: '' },
-						tool: { buildConfig: '' },
+					imageProfiles: {
+						gateways: {
+							openclaw: { type: 'openclaw', buildConfig: '' },
+						},
+						toolVms: {
+							default: { type: 'toolVm', buildConfig: '' },
+						},
 					},
 					tcpPool: { basePort: 19000, size: 5 },
 					toolProfiles: {
-						standard: { cpus: 1, memory: '1G', workspaceRoot: './workspaces/tools' },
+						standard: {
+							cpus: 1,
+							imageProfile: 'default',
+							memory: '1G',
+							workspaceRoot: './workspaces/tools',
+						},
 					},
 					zones: [
 						{
 							allowedHosts: ['api.anthropic.com'],
 							gateway: {
 								type: 'openclaw',
+								imageProfile: 'openclaw',
 								cpus: 2,
 								memory: '2G',
-								gatewayConfig: './config/shravan/openclaw.json',
+								config: './config/shravan/openclaw.json',
 								port: 18791,
 								stateDir: './state/shravan',
 								workspaceDir: './workspaces/shravan',

@@ -8,8 +8,8 @@
 		"sourceMap": true,
 		"noEmit": false,
 		"paths": {
-			"@shravansunder/gateway-interface": ["../gateway-interface/dist/index.d.ts"],
-			"@shravansunder/gondolin-core": ["../gondolin-core/dist/index.d.ts"]
+			"@agent-vm/gateway-interface": ["../gateway-interface/dist/index.d.ts"],
+			"@agent-vm/gondolin-adapter": ["../gondolin-adapter/dist/index.d.ts"]
 		}
 	},
 	"exclude": ["src/**/*.test.ts"]

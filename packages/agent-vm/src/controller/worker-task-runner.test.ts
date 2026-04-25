@@ -1,23 +1,38 @@
+import { Buffer } from 'node:buffer';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ManagedVm } from '@shravansunder/gondolin-core';
+import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
-import type { SystemConfig } from '../config/system-config.js';
+import type { LoadedSystemConfig } from '../config/system-config.js';
+import type { WorkerTaskInput } from './worker-task-runner.js';
 
 const startGatewayZoneMock = vi.fn();
-const stopDockerServicesForTaskMock = vi.fn();
-const startDockerServicesForTaskMock = vi.fn<
-	() => Promise<{ composeFilePaths: readonly string[]; tcpHosts: Record<string, string> }>
+const stopRepoResourceProvidersMock =
+	vi.fn<typeof import('../resources/repo-resource-provider-runner.js').stopRepoResourceProviders>();
+const startRepoResourceProvidersMock = vi.fn<
+	typeof import('../resources/repo-resource-provider-runner.js').startRepoResourceProviders
 >(async () => ({
-	composeFilePaths: [],
-	tcpHosts: {},
+	finalizations: [],
+	startedProviders: [],
 }));
+const loadRepoResourceDescriptionContractMock = vi.fn<
+	typeof import('../resources/repo-resource-contract-loader.js').loadRepoResourceDescriptionContract
+>(async () => ({
+	setupCommand: '.agent-vm/run-setup.sh',
+	requires: {},
+	provides: {},
+}));
+const hasRepoResourceDescriptionContractMock = vi.fn<
+	typeof import('../resources/repo-resource-contract-loader.js').hasRepoResourceDescriptionContract
+>(async () => true);
 const execaMock = vi.fn();
 const effectiveWorkerConfigSchema = z.object({
+	instructions: z.string().optional(),
 	defaults: z
 		.object({
 			provider: z.string().optional(),
@@ -32,6 +47,31 @@ const completedTaskStateSchema = z.object({
 const closedTaskStateSchema = z.object({
 	status: z.literal('closed'),
 });
+
+function buildWorkerConfigInput(): Record<string, unknown> {
+	return {
+		defaults: { provider: 'codex', model: 'latest-medium' },
+		phases: {
+			plan: {
+				cycle: { kind: 'review', cycleCount: 1 },
+				agentInstructions: null,
+				reviewerInstructions: null,
+				skills: [],
+			},
+			work: {
+				cycle: { kind: 'review', cycleCount: 1 },
+				agentInstructions: null,
+				reviewerInstructions: null,
+				skills: [],
+			},
+			wrapup: { instructions: null, skills: [] },
+		},
+		mcpServers: [],
+		verification: [{ name: 'test', command: 'pnpm test' }],
+		branchPrefix: 'agent/',
+		stateDir: '/state',
+	};
+}
 
 function normalizeMockFilePath(filePath: Parameters<typeof fs.readFile>[0]): string {
 	if (typeof filePath === 'string') {
@@ -50,12 +90,23 @@ vi.mock('../gateway/gateway-zone-orchestrator.js', () => ({
 	startGatewayZone: startGatewayZoneMock,
 }));
 
-vi.mock('./docker-service-routing.js', async (importOriginal) => {
-	const original = await importOriginal<typeof import('./docker-service-routing.js')>();
+vi.mock('../resources/repo-resource-provider-runner.js', async (importOriginal) => {
+	const original =
+		await importOriginal<typeof import('../resources/repo-resource-provider-runner.js')>();
 	return {
 		...original,
-		startDockerServicesForTask: startDockerServicesForTaskMock,
-		stopDockerServicesForTask: stopDockerServicesForTaskMock,
+		startRepoResourceProviders: startRepoResourceProvidersMock,
+		stopRepoResourceProviders: stopRepoResourceProvidersMock,
+	};
+});
+
+vi.mock('../resources/repo-resource-contract-loader.js', async (importOriginal) => {
+	const original =
+		await importOriginal<typeof import('../resources/repo-resource-contract-loader.js')>();
+	return {
+		...original,
+		hasRepoResourceDescriptionContract: hasRepoResourceDescriptionContractMock,
+		loadRepoResourceDescriptionContract: loadRepoResourceDescriptionContractMock,
 	};
 });
 
@@ -65,6 +116,8 @@ vi.mock('execa', () => ({
 
 const systemConfig = {
 	cacheDir: '/tmp/cache',
+	systemConfigPath: '/tmp/config/system.json',
+	systemCacheIdentifierPath: '/tmp/config/systemCacheIdentifier.json',
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
@@ -73,19 +126,25 @@ const systemConfig = {
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 		},
 	},
-	images: {
-		gateway: { buildConfig: '/tmp/gateway-build.json' },
-		tool: { buildConfig: '/tmp/tool-build.json' },
+	imageProfiles: {
+		gateways: {
+			openclaw: { type: 'openclaw', buildConfig: '/tmp/gateway-build.json' },
+			worker: { type: 'worker', buildConfig: '/tmp/gateway-build.json' },
+		},
+		toolVms: {
+			default: { type: 'toolVm', buildConfig: '/tmp/tool-build.json' },
+		},
 	},
 	zones: [
 		{
 			id: 'shravan',
 			gateway: {
 				type: 'worker',
+				imageProfile: 'worker',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				gatewayConfig: '',
+				config: '',
 				stateDir: '',
 				workspaceDir: '',
 			},
@@ -96,13 +155,39 @@ const systemConfig = {
 		},
 	],
 	toolProfiles: {
-		standard: { memory: '1G', cpus: 1, workspaceRoot: '/tmp/tools' },
+		standard: { memory: '1G', cpus: 1, workspaceRoot: '/tmp/tools', imageProfile: 'default' },
 	},
 	tcpPool: { basePort: 19000, size: 4 },
-} satisfies SystemConfig;
+} satisfies LoadedSystemConfig;
+
+async function executePreparedWorkerTaskForTest(options: {
+	readonly input: WorkerTaskInput;
+	readonly secretResolver: { resolve: () => Promise<string>; resolveAll: () => Promise<{}> };
+	readonly systemConfig: LoadedSystemConfig;
+	readonly zoneId: string;
+	readonly timeoutMs?: number;
+}): Promise<{
+	readonly taskId: string;
+	readonly finalState: unknown;
+	readonly taskRoot: string;
+}> {
+	const { executeWorkerTask, prepareWorkerTask } = await import('./worker-task-runner.js');
+	const prepared = await prepareWorkerTask({
+		input: options.input,
+		systemConfig: options.systemConfig,
+		zoneId: options.zoneId,
+	});
+	return await executeWorkerTask(prepared, {
+		secretResolver: options.secretResolver,
+		systemConfig: options.systemConfig,
+		...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+	});
+}
 
 describe('worker-task-runner', () => {
 	let tempDir: string;
+	let managedVm: ManagedVm;
+	let managedVmCloseMock: Mock<() => Promise<void>>;
 
 	beforeEach(async () => {
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-runner-'));
@@ -110,23 +195,10 @@ describe('worker-task-runner', () => {
 		if (!zone) {
 			throw new Error('Expected zone config.');
 		}
-		zone.gateway.gatewayConfig = path.join(tempDir, 'gateway-config.json');
+		zone.gateway.config = path.join(tempDir, 'gateway-config.json');
 		zone.gateway.stateDir = path.join(tempDir, 'state');
 		zone.gateway.workspaceDir = path.join(tempDir, 'workspace');
-		await fs.writeFile(
-			zone.gateway.gatewayConfig,
-			JSON.stringify({
-				defaults: { provider: 'codex', model: 'latest-medium' },
-				phases: {},
-				mcpServers: [],
-				verification: [{ name: 'test', command: 'pnpm test' }],
-				wrapupActions: [{ type: 'git-pr', required: true }],
-				branchPrefix: 'agent/',
-				commitCoAuthor: 'agent-vm-worker <noreply@agent-vm>',
-				idleTimeoutMs: 1_800_000,
-				stateDir: '/state',
-			}),
-		);
+		await fs.writeFile(zone.gateway.config, JSON.stringify(buildWorkerConfigInput()));
 
 		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
 			const url =
@@ -147,9 +219,10 @@ describe('worker-task-runner', () => {
 			throw new Error(`Unexpected fetch ${url}`);
 		}) as typeof fetch;
 
-		const managedVm: ManagedVm = {
+		managedVmCloseMock = vi.fn(async (): Promise<void> => {});
+		managedVm = {
 			id: 'worker-vm-1',
-			close: vi.fn(async () => {}),
+			close: async () => await managedVmCloseMock(),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222, user: 'root' })),
 			exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
@@ -171,32 +244,48 @@ describe('worker-task-runner', () => {
 			vm: managedVm,
 			zone,
 		});
+		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
 	});
 
 	afterEach(() => {
 		delete process.env.AGENT_VM_WORKER_TARBALL_PATH;
 		vi.resetModules();
 		startGatewayZoneMock.mockReset();
-		startDockerServicesForTaskMock.mockReset();
-		stopDockerServicesForTaskMock.mockReset();
+		startRepoResourceProvidersMock.mockReset();
+		startRepoResourceProvidersMock.mockResolvedValue({
+			finalizations: [],
+			startedProviders: [],
+		});
+		loadRepoResourceDescriptionContractMock.mockReset();
+		hasRepoResourceDescriptionContractMock.mockReset();
+		hasRepoResourceDescriptionContractMock.mockResolvedValue(true);
+		loadRepoResourceDescriptionContractMock.mockResolvedValue({
+			setupCommand: '.agent-vm/run-setup.sh',
+			requires: {},
+			provides: {},
+		});
+		stopRepoResourceProvidersMock.mockReset();
 		execaMock.mockReset();
 		vi.restoreAllMocks();
 	});
 
-	it('merges docker tcp hosts into the per-task gateway boot', async () => {
-		startDockerServicesForTaskMock.mockImplementation(async () => ({
-			composeFilePaths: ['/tmp/task/.agent-vm/docker-compose.yml'],
-			tcpHosts: {
-				'postgres.local:5432': '172.30.0.10:5432',
-			},
-		}));
-		const { runWorkerTask } = await import('./worker-task-runner.js');
-
-		await runWorkerTask({
+	it('merges resource overlays into the per-task gateway boot', async () => {
+		await executePreparedWorkerTaskForTest({
 			input: {
+				requestTaskId: 'request-task-1',
 				prompt: 'fix login',
 				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
 				context: {},
+				resources: {
+					externalResources: {
+						pg: {
+							name: 'pg',
+							binding: { host: 'postgres.local', port: 5432 },
+							target: { host: '172.30.0.10', port: 5432 },
+							env: { DATABASE_URL: 'postgres://postgres.local:5432/app' },
+						},
+					},
+				},
 			},
 			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
 			systemConfig,
@@ -208,11 +297,11 @@ describe('worker-task-runner', () => {
 				tcpHostsOverride: {
 					'postgres.local:5432': '172.30.0.10:5432',
 				},
+				environmentOverride: {
+					DATABASE_URL: 'postgres://postgres.local:5432/app',
+				},
 			}),
 		);
-		expect(stopDockerServicesForTaskMock).toHaveBeenCalledWith([
-			'/tmp/task/.agent-vm/docker-compose.yml',
-		]);
 	});
 
 	it('writes effective worker config into per-task state during pre-start', async () => {
@@ -224,6 +313,7 @@ describe('worker-task-runner', () => {
 
 		const result = await preStartGateway(
 			{
+				requestTaskId: 'request-task-1',
 				prompt: 'fix login',
 				repos: [],
 				context: {},
@@ -237,16 +327,68 @@ describe('worker-task-runner', () => {
 
 		expect(writtenConfig.defaults?.provider).toBe('codex');
 		expect(result.tcpHosts).toEqual({});
-		expect(result.composeFilePaths).toEqual([]);
+		expect(result.startedResourceProviders).toEqual([]);
 		expect(result.repos).toEqual([]);
+	});
+
+	it('removes the task root when pre-start fails while copying the local worker tarball', async () => {
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		process.env.AGENT_VM_WORKER_TARBALL_PATH = path.join(tempDir, 'missing-worker.tgz');
+
+		await expect(
+			preStartGateway(
+				{
+					requestTaskId: 'request-task-1',
+					prompt: 'fix login',
+					repos: [],
+					context: {},
+				},
+				zone,
+			),
+		).rejects.toThrow(/missing-worker\.tgz/u);
+
+		await expect(fs.readdir(path.join(zone.gateway.stateDir, 'tasks'))).resolves.toEqual([]);
+	});
+
+	it('resolves worker config prompt file references before writing effective config', async () => {
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		await fs.mkdir(path.join(tempDir, 'prompts'), { recursive: true });
+		await fs.writeFile(path.join(tempDir, 'prompts', 'base.md'), 'base from markdown\n', 'utf8');
+		await fs.writeFile(
+			zone.gateway.config,
+			JSON.stringify({
+				...buildWorkerConfigInput(),
+				instructions: { path: './prompts/base.md' },
+			}),
+			'utf8',
+		);
+
+		const result = await preStartGateway(
+			{
+				requestTaskId: 'request-task-1',
+				prompt: 'fix login',
+				repos: [],
+				context: {},
+			},
+			zone,
+		);
+
+		const writtenConfig = effectiveWorkerConfigSchema.parse(
+			JSON.parse(await fs.readFile(path.join(result.stateDir, 'effective-worker.json'), 'utf8')),
+		);
+		expect(writtenConfig.instructions).toBe('base from markdown\n');
 	});
 
 	it('clones repos into named workspace directories and merges primary repo config', async () => {
 		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
-		startDockerServicesForTaskMock.mockResolvedValue({
-			composeFilePaths: [],
-			tcpHosts: {},
-		});
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected zone config.');
@@ -265,6 +407,7 @@ describe('worker-task-runner', () => {
 		const { preStartGateway } = await import('./worker-task-runner.js');
 		const result = await preStartGateway(
 			{
+				requestTaskId: 'request-task-1',
 				prompt: 'cross repo task',
 				repos: [
 					{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' },
@@ -275,28 +418,39 @@ describe('worker-task-runner', () => {
 			zone,
 		);
 
-		expect(execaMock).toHaveBeenNthCalledWith(1, 'git', [
-			'clone',
-			'--branch',
-			'main',
-			'https://github.com/org/frontend.git',
-			path.join(result.workspaceDir, 'frontend'),
-		]);
-		expect(execaMock).toHaveBeenNthCalledWith(2, 'git', [
-			'clone',
-			'--branch',
-			'develop',
-			'https://github.com/org/backend.git',
-			path.join(result.workspaceDir, 'backend'),
-		]);
+		expect(execaMock).toHaveBeenNthCalledWith(
+			1,
+			'git',
+			[
+				'clone',
+				'--branch',
+				'main',
+				'https://github.com/org/frontend.git',
+				path.join(result.workspaceDir, 'frontend'),
+			],
+			expect.objectContaining({ timeout: 120_000 }),
+		);
+		expect(execaMock).toHaveBeenCalledWith(
+			'git',
+			[
+				'clone',
+				'--branch',
+				'develop',
+				'https://github.com/org/backend.git',
+				path.join(result.workspaceDir, 'backend'),
+			],
+			expect.objectContaining({ timeout: 120_000 }),
+		);
 		expect(result.repos).toEqual([
 			{
+				repoId: 'frontend',
 				repoUrl: 'https://github.com/org/frontend.git',
 				baseBranch: 'main',
 				hostWorkspacePath: path.join(result.workspaceDir, 'frontend'),
 				workspacePath: '/workspace/frontend',
 			},
 			{
+				repoId: 'backend',
 				repoUrl: 'https://github.com/org/backend.git',
 				baseBranch: 'develop',
 				hostWorkspacePath: path.join(result.workspaceDir, 'backend'),
@@ -310,12 +464,351 @@ describe('worker-task-runner', () => {
 		expect(writtenConfig.verification?.[0]?.name).toBe('custom');
 	});
 
+	it('derives docker-safe lowercase repo IDs from repo URLs', async () => {
+		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		const result = await preStartGateway(
+			{
+				requestTaskId: 'request-task-1',
+				prompt: 'cross repo task',
+				repos: [
+					{ repoUrl: 'https://github.com/Org/Repo.Dir.git', baseBranch: 'main' },
+					{ repoUrl: 'https://github.com/Org/Repo Dir.git', baseBranch: 'main' },
+				],
+				context: {},
+			},
+			zone,
+		);
+
+		expect(result.repos.map((repo) => repo.repoId)).toEqual(['repo-dir', 'repo-dir-2']);
+		expect(result.repos.map((repo) => repo.workspacePath)).toEqual([
+			'/workspace/repo-dir',
+			'/workspace/repo-dir-2',
+		]);
+	});
+
+	it('resolves a shared repo resource once across multiple repos', async () => {
+		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+		loadRepoResourceDescriptionContractMock.mockImplementation(async ({ repoId }) =>
+			repoId === 'frontend'
+				? {
+						setupCommand: '.agent-vm/run-setup.sh',
+						requires: {
+							pg: { binding: { host: 'pg.local', port: 5432 }, env: {} },
+						},
+						provides: {
+							pg: {
+								type: 'compose',
+								service: 'pg',
+							},
+						},
+					}
+				: {
+						setupCommand: '.agent-vm/run-setup.sh',
+						requires: {
+							pg: { binding: { host: 'pg.local', port: 5432 }, env: {} },
+						},
+						provides: {
+							pg: {
+								type: 'compose',
+								service: 'pg',
+							},
+						},
+					},
+		);
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		await preStartGateway(
+			{
+				requestTaskId: 'request-task-1',
+				prompt: 'cross repo pg task',
+				repos: [
+					{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' },
+					{ repoUrl: 'https://github.com/org/backend.git', baseBranch: 'main' },
+				],
+				context: {},
+			},
+			zone,
+		);
+
+		const providerCall = startRepoResourceProvidersMock.mock.calls[0]?.[0];
+		if (!providerCall) {
+			throw new Error('Expected repo resource providers to start.');
+		}
+		expect(providerCall?.repos).toHaveLength(2);
+		expect(providerCall?.repos).toEqual([
+			expect.objectContaining({
+				repoId: 'frontend',
+				repoDir: expect.stringMatching(/\/workspace\/frontend$/u),
+				outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/state\/resources\/frontend$/u),
+			}),
+			expect.objectContaining({
+				repoId: 'backend',
+				repoDir: expect.stringMatching(/\/workspace\/backend$/u),
+				outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/state\/resources\/backend$/u),
+			}),
+		]);
+		expect(providerCall?.providers).toHaveLength(1);
+		expect(providerCall?.providers[0]).toMatchObject({
+			repoId: 'frontend',
+			repoDir: expect.stringMatching(/\/workspace\/frontend$/u),
+			outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/state\/resources\/frontend$/u),
+			resourceName: 'pg',
+			provider: { service: 'pg' },
+			binding: { host: 'pg.local', port: 5432 },
+		});
+	});
+
+	it('reports pre-start cleanup failures without hiding the original resource error', async () => {
+		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+		const startedProvider = {
+			composeFilePath: '/tmp/task/.agent-vm/docker-compose.yml',
+			composeProjectName: 'agent-vm-task-prestart-failed-repo-a',
+			repoDir: '/tmp/task',
+			repoId: 'repo-a',
+		};
+		startRepoResourceProvidersMock.mockResolvedValue({
+			finalizations: [
+				{
+					repoId: 'repo-a',
+					outputDir: '/tmp/task/resources/repo-a',
+					final: {
+						resources: {
+							pg: {
+								binding: { host: 'pg.local', port: 5432 },
+								target: { host: '172.30.0.8', port: 5432 },
+								env: { PATH: '/tmp/fake-bin' },
+							},
+						},
+						generated: [],
+					},
+				},
+			],
+			startedProviders: [startedProvider],
+		});
+		stopRepoResourceProvidersMock.mockRejectedValue(new Error('compose cleanup failed'));
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const zoneWithResources = {
+			...zone,
+			resources: { allowRepoResources: true },
+		};
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		await expect(
+			preStartGateway(
+				{
+					requestTaskId: 'request-task-1',
+					prompt: 'cross repo pg task',
+					repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+					context: {},
+				},
+				zoneWithResources,
+			),
+		).rejects.toMatchObject({
+			errors: [
+				expect.objectContaining({ message: expect.stringContaining('reserved environment key') }),
+				expect.objectContaining({ message: 'compose cleanup failed' }),
+			],
+		});
+	});
+
+	it('clones repos without auth config args when githubToken is omitted', async () => {
+		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		await preStartGateway(
+			{
+				requestTaskId: 'request-task-1',
+				prompt: 'clone public repo',
+				repos: [{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' }],
+				context: {},
+			},
+			zone,
+		);
+
+		expect(execaMock).toHaveBeenCalledWith(
+			'git',
+			[
+				'clone',
+				'--branch',
+				'main',
+				'https://github.com/org/frontend.git',
+				expect.stringContaining('/frontend'),
+			],
+			expect.objectContaining({ timeout: 120_000 }),
+		);
+	});
+
+	it('clones repos with one-shot GitHub auth config args when githubToken is provided', async () => {
+		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		await preStartGateway(
+			{
+				requestTaskId: 'request-task-1',
+				prompt: 'clone private repo',
+				repos: [{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' }],
+				context: {},
+			},
+			zone,
+			{ githubToken: 'ghp_secret-token' },
+		);
+
+		const cloneCall = execaMock.mock.calls[0];
+		const cloneArgs = cloneCall?.[1] as string[];
+		expect(cloneArgs[0]).toBe('-c');
+		expect(cloneArgs[1]).toMatch(
+			/^http\.https:\/\/github\.com\/\.extraheader=Authorization: Basic /u,
+		);
+		const encodedHeader = cloneArgs[1]?.replace(
+			'http.https://github.com/.extraheader=Authorization: Basic ',
+			'',
+		);
+		expect(Buffer.from(encodedHeader ?? '', 'base64').toString('utf8')).toBe(
+			'x-access-token:ghp_secret-token',
+		);
+		expect(cloneArgs.slice(2, 6)).toEqual([
+			'clone',
+			'--branch',
+			'main',
+			'https://github.com/org/frontend.git',
+		]);
+	});
+
+	it('does not write cloned repo paths to global git safe.directory config', async () => {
+		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		await preStartGateway(
+			{
+				requestTaskId: 'request-task-1',
+				prompt: 'clone public repo',
+				repos: [{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' }],
+				context: {},
+			},
+			zone,
+		);
+
+		expect(execaMock).not.toHaveBeenCalledWith(
+			'git',
+			expect.arrayContaining(['--global', '--add', 'safe.directory']),
+			expect.anything(),
+		);
+	});
+
+	it('scrubs GitHub tokens from clone failures', async () => {
+		execaMock.mockRejectedValue(
+			new Error(
+				'fatal: https://x-access-token:ghp_secret-token@github.com/org/frontend.git failed with Authorization: Basic eC1hY2Nlc3MtdG9rZW46c2VjcmV0',
+			),
+		);
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		await expect(
+			preStartGateway(
+				{
+					requestTaskId: 'request-task-1',
+					prompt: 'clone private repo',
+					repos: [{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' }],
+					context: {},
+				},
+				zone,
+				{ githubToken: 'ghp_secret-token' },
+			),
+		).rejects.toThrow(/x-access-token:\*\*\*@github\.com/);
+		await expect(
+			preStartGateway(
+				{
+					requestTaskId: 'request-task-1',
+					prompt: 'clone private repo',
+					repos: [{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' }],
+					context: {},
+				},
+				zone,
+				{ githubToken: 'ghp_secret-token' },
+			),
+		).rejects.not.toThrow(/ghp_secret-token|Authorization: Basic eC/u);
+	});
+
+	it('waits for parallel clone attempts to settle before deleting the task root', async () => {
+		const events: string[] = [];
+		execaMock.mockImplementation(async (command: string, args: readonly string[]) => {
+			if (command === 'git' && args.includes('https://github.com/org/failing.git')) {
+				events.push('failing-clone-failed');
+				throw new Error('clone failed');
+			}
+			if (command === 'git' && args.includes('https://github.com/org/slow.git')) {
+				events.push('slow-clone-started');
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				events.push('slow-clone-finished');
+				return { stdout: '', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+		const originalRm = fs.rm;
+		vi.spyOn(fs, 'rm').mockImplementation(async (...args) => {
+			events.push('task-root-removed');
+			return await originalRm(...args);
+		});
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		await expect(
+			preStartGateway(
+				{
+					requestTaskId: 'request-task-1',
+					prompt: 'clone two repos',
+					repos: [
+						{ repoUrl: 'https://github.com/org/failing.git', baseBranch: 'main' },
+						{ repoUrl: 'https://github.com/org/slow.git', baseBranch: 'main' },
+					],
+					context: {},
+				},
+				zone,
+			),
+		).rejects.toThrow(/clone failed/u);
+
+		expect(events).toEqual([
+			'failing-clone-failed',
+			'slow-clone-started',
+			'slow-clone-finished',
+			'task-root-removed',
+		]);
+	});
+
 	it('throws on invalid project config instead of silently ignoring it', async () => {
 		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
-		startDockerServicesForTaskMock.mockResolvedValue({
-			composeFilePaths: [],
-			tcpHosts: {},
-		});
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected zone config.');
@@ -333,6 +826,7 @@ describe('worker-task-runner', () => {
 		await expect(
 			preStartGateway(
 				{
+					requestTaskId: 'request-task-1',
 					prompt: 'cross repo task',
 					repos: [{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' }],
 					context: {},
@@ -340,6 +834,37 @@ describe('worker-task-runner', () => {
 				zone,
 			),
 		).rejects.toThrow('Invalid project config');
+	});
+
+	it('rejects project config prompt file references', async () => {
+		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const originalReadFile = fs.readFile;
+		vi.spyOn(fs, 'readFile').mockImplementation(async (filePath, encoding) => {
+			if (normalizeMockFilePath(filePath).endsWith('/frontend/.agent-vm/config.json')) {
+				return JSON.stringify({
+					instructions: { path: './prompts/base.md' },
+				});
+			}
+			return await originalReadFile(filePath, encoding);
+		});
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+
+		await expect(
+			preStartGateway(
+				{
+					requestTaskId: 'request-task-1',
+					prompt: 'cross repo task',
+					repos: [{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' }],
+					context: {},
+				},
+				zone,
+			),
+		).rejects.toThrow(/expected string/u);
 	});
 
 	it('copies the configured local worker tarball into the task state directory', async () => {
@@ -354,6 +879,7 @@ describe('worker-task-runner', () => {
 		const { preStartGateway } = await import('./worker-task-runner.js');
 		const result = await preStartGateway(
 			{
+				requestTaskId: 'request-task-1',
 				prompt: 'fix login',
 				repos: [],
 				context: {},
@@ -367,15 +893,18 @@ describe('worker-task-runner', () => {
 	});
 
 	it('retries transient poll failures before giving up', async () => {
-		startDockerServicesForTaskMock.mockResolvedValue({
-			composeFilePaths: [],
-			tcpHosts: {},
-		});
 		let pollCount = 0;
-		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+		let submittedBody: unknown;
+		globalThis.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
 			const url =
 				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
 			if (url.endsWith('/tasks')) {
+				submittedBody =
+					typeof init?.body === 'string'
+						? JSON.parse(init.body)
+						: input instanceof Request
+							? await input.json()
+							: undefined;
 				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
 					status: 201,
 					headers: { 'content-type': 'application/json' },
@@ -395,9 +924,9 @@ describe('worker-task-runner', () => {
 			throw new Error(`Unexpected fetch ${url}`);
 		}) as typeof fetch;
 
-		const { runWorkerTask } = await import('./worker-task-runner.js');
-		const result = await runWorkerTask({
+		const result = await executePreparedWorkerTaskForTest({
 			input: {
+				requestTaskId: 'request-task-1',
 				prompt: 'fix login',
 				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
 				context: {},
@@ -410,6 +939,16 @@ describe('worker-task-runner', () => {
 
 		expect(completedTaskStateSchema.parse(result.finalState).status).toBe('completed');
 		expect(pollCount).toBeGreaterThanOrEqual(2);
+		expect(submittedBody).toMatchObject({
+			repos: [
+				{
+					repoUrl: 'https://github.com/org/repo.git',
+					baseBranch: 'main',
+					workspacePath: '/workspace/repo',
+				},
+			],
+		});
+		expect(JSON.stringify(submittedBody)).not.toContain('hostWorkspacePath');
 	});
 
 	it('fails immediately when the worker returns an invalid task status payload', async () => {
@@ -431,11 +970,10 @@ describe('worker-task-runner', () => {
 			throw new Error(`Unexpected fetch ${url}`);
 		}) as typeof fetch;
 
-		const { runWorkerTask } = await import('./worker-task-runner.js');
-
 		await expect(
-			runWorkerTask({
+			executePreparedWorkerTaskForTest({
 				input: {
+					requestTaskId: 'request-task-1',
 					prompt: 'fix login',
 					repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
 					context: {},
@@ -466,9 +1004,9 @@ describe('worker-task-runner', () => {
 			throw new Error(`Unexpected fetch ${url}`);
 		}) as typeof fetch;
 
-		const { runWorkerTask } = await import('./worker-task-runner.js');
-		const result = await runWorkerTask({
+		const result = await executePreparedWorkerTaskForTest({
 			input: {
+				requestTaskId: 'request-task-1',
 				prompt: 'fix login',
 				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
 				context: {},
@@ -481,6 +1019,200 @@ describe('worker-task-runner', () => {
 		expect(closedTaskStateSchema.parse(result.finalState).status).toBe('closed');
 	});
 
+	it('includes worker HTTP response bodies in task submission failures', async () => {
+		globalThis.fetch = vi.fn(async () => {
+			return new Response('worker rejected task payload', {
+				status: 500,
+				headers: { 'content-type': 'text/plain' },
+			});
+		}) as typeof fetch;
+
+		await expect(
+			executePreparedWorkerTaskForTest({
+				input: {
+					requestTaskId: 'request-task-1',
+					prompt: 'fix login',
+					repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+					context: {},
+				},
+				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+				systemConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(/worker rejected task payload/u);
+	});
+
+	it('aggregates the primary task failure when shutdown hooks also fail', async () => {
+		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.endsWith('/tasks')) {
+				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
+					status: 201,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (/\/tasks\/[^/]+$/.test(url)) {
+				return new Response(JSON.stringify({ status: 'running', taskId: 'task-1' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		}) as typeof fetch;
+		managedVmCloseMock.mockRejectedValue(new Error('vm close failed'));
+		stopRepoResourceProvidersMock.mockRejectedValue(new Error('compose cleanup failed'));
+
+		let thrownError: unknown;
+		try {
+			await executePreparedWorkerTaskForTest({
+				input: {
+					requestTaskId: 'request-task-1',
+					prompt: 'fix login',
+					repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+					context: {},
+				},
+				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+				systemConfig,
+				zoneId: 'shravan',
+				timeoutMs: 1,
+			});
+		} catch (error) {
+			thrownError = error;
+		}
+
+		expect(thrownError).toBeInstanceOf(AggregateError);
+		const aggregateError = thrownError as AggregateError;
+		expect(aggregateError.message).toMatch(/cleanup also failed/u);
+		expect(aggregateError.errors).toEqual([
+			expect.objectContaining({ message: expect.stringMatching(/Worker task timed out/u) }),
+			expect.objectContaining({ message: 'vm close failed' }),
+			expect.objectContaining({ message: 'compose cleanup failed' }),
+		]);
+		expect(managedVmCloseMock).toHaveBeenCalled();
+		expect(stopRepoResourceProvidersMock).toHaveBeenCalled();
+	});
+
+	it('aggregates provider, resource-directory, and workspace cleanup failures after shutdown', async () => {
+		const { postStopGateway } = await import('./worker-task-runner.js');
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const taskRoot = path.join(zone.gateway.stateDir, 'tasks', 'task-cleanup-failures');
+		await fs.mkdir(path.join(taskRoot, 'workspace'), { recursive: true });
+		await fs.mkdir(path.join(taskRoot, 'state', 'resources'), { recursive: true });
+		stopRepoResourceProvidersMock.mockRejectedValue(new Error('compose cleanup failed'));
+		vi.spyOn(fs, 'rm').mockImplementation(async (targetPath) => {
+			const normalizedTarget = normalizeMockFilePath(targetPath);
+			if (normalizedTarget.endsWith('/state/resources')) {
+				throw new Error('resource removal failed');
+			}
+			if (normalizedTarget.endsWith('/workspace')) {
+				throw new Error('workspace removal failed');
+			}
+		});
+		const startedProvider = {
+			composeFilePath: '/tmp/task/.agent-vm/docker-compose.yml',
+			composeProjectName: 'agent-vm-task-cleanup-failures-repo-a',
+			repoDir: '/tmp/task',
+			repoId: 'repo-a',
+		};
+
+		let thrownError: unknown;
+		try {
+			await postStopGateway('task-cleanup-failures', zone, [startedProvider]);
+		} catch (error) {
+			thrownError = error;
+		}
+
+		expect(thrownError).toBeInstanceOf(AggregateError);
+		const aggregateError = thrownError as AggregateError;
+		expect(aggregateError.errors).toEqual([
+			expect.objectContaining({ message: 'compose cleanup failed' }),
+			expect.objectContaining({ message: 'resource removal failed' }),
+			expect.objectContaining({ message: 'workspace removal failed' }),
+		]);
+	});
+
+	it('preserves the primary task failure when shutdown hooks succeed', async () => {
+		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.endsWith('/tasks')) {
+				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
+					status: 201,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (/\/tasks\/[^/]+$/.test(url)) {
+				return new Response(JSON.stringify({ status: 'running', taskId: 'task-1' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		}) as typeof fetch;
+
+		await expect(
+			executePreparedWorkerTaskForTest({
+				input: {
+					requestTaskId: 'request-task-1',
+					prompt: 'fix login',
+					repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+					context: {},
+				},
+				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+				systemConfig,
+				zoneId: 'shravan',
+				timeoutMs: 1,
+			}),
+		).rejects.toThrow(/Worker task timed out/u);
+	});
+
+	it('cleans up providers and task root when task preparation fails after pre-start', async () => {
+		const startedProvider = {
+			composeFilePath: '/tmp/task/.agent-vm/docker-compose.yml',
+			composeProjectName: 'agent-vm-task-prepare-failed-repo-a',
+			repoDir: '/tmp/task',
+			repoId: 'repo-a',
+		};
+		startRepoResourceProvidersMock.mockResolvedValue({
+			finalizations: [],
+			startedProviders: [startedProvider],
+		});
+		const removedPaths: string[] = [];
+		const originalRm = fs.rm;
+		vi.spyOn(fs, 'rm').mockImplementation(async (...args) => {
+			removedPaths.push(normalizeMockFilePath(args[0]));
+			return await originalRm(...args);
+		});
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { prepareWorkerTask } = await import('./worker-task-runner.js');
+		await expect(
+			prepareWorkerTask({
+				input: {
+					requestTaskId: 'request-task-1',
+					prompt: 'fix login',
+					repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+					context: {},
+				},
+				systemConfig,
+				zoneId: zone.id,
+				onTaskPrepared: () => {
+					throw new Error('registry write failed');
+				},
+			}),
+		).rejects.toThrow(/registry write failed/u);
+
+		expect(stopRepoResourceProvidersMock).toHaveBeenCalledWith([startedProvider]);
+		expect(removedPaths.some((removedPath) => removedPath.includes('/tasks/'))).toBe(true);
+	});
+
 	it('preserves task state while pruning the workspace during shutdown', async () => {
 		const { postStopGateway } = await import('./worker-task-runner.js');
 		const zone = systemConfig.zones[0];
@@ -490,16 +1222,25 @@ describe('worker-task-runner', () => {
 
 		const taskRoot = path.join(zone.gateway.stateDir, 'tasks', 'task-keep-state');
 		await fs.mkdir(path.join(taskRoot, 'workspace'), { recursive: true });
-		await fs.mkdir(path.join(taskRoot, 'state'), { recursive: true });
+		await fs.mkdir(path.join(taskRoot, 'state', 'resources', 'repo-a'), { recursive: true });
 		await fs.writeFile(path.join(taskRoot, 'workspace', 'README.md'), 'workspace data');
 		await fs.writeFile(path.join(taskRoot, 'state', 'events.jsonl'), '{"event":"task-created"}\n');
+		await fs.writeFile(
+			path.join(taskRoot, 'state', 'resources', 'repo-a', 'mock.json'),
+			'{"ok":true}\n',
+		);
 
-		await postStopGateway('task-keep-state', zone, ['/tmp/task/.agent-vm/docker-compose.yml']);
+		const startedProvider = {
+			composeFilePath: '/tmp/task/.agent-vm/docker-compose.yml',
+			composeProjectName: 'agent-vm-task-keep-state-repo-a',
+			repoDir: '/tmp/task',
+			repoId: 'repo-a',
+		};
+		await postStopGateway('task-keep-state', zone, [startedProvider]);
 
-		expect(stopDockerServicesForTaskMock).toHaveBeenCalledWith([
-			'/tmp/task/.agent-vm/docker-compose.yml',
-		]);
+		expect(stopRepoResourceProvidersMock).toHaveBeenCalledWith([startedProvider]);
 		await expect(fs.stat(path.join(taskRoot, 'state'))).resolves.toBeDefined();
+		await expect(fs.stat(path.join(taskRoot, 'state', 'resources'))).rejects.toThrow();
 		await expect(fs.stat(path.join(taskRoot, 'workspace'))).rejects.toThrow();
 	});
 });

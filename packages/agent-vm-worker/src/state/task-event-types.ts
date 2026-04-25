@@ -1,22 +1,20 @@
 import { z } from 'zod';
 
 import { workerConfigSchema } from '../config/worker-config.js';
-import { phaseNames, reviewPhaseNames } from '../shared/phase-names.js';
+import { phaseNames } from '../shared/phase-names.js';
 import { repoLocationSchema } from '../shared/repo-location.js';
-import { wrapupActionResultSchema } from '../wrapup/wrapup-types.js';
-export type { WrapupActionResult } from '../wrapup/wrapup-types.js';
+import { reviewResultSchema } from '../shared/review-result.js';
 
 export const phaseNameSchema = z.enum(phaseNames);
 export type PhaseName = z.infer<typeof phaseNameSchema>;
 
 export const taskStatusValues = [
 	'pending',
-	'planning',
-	'reviewing-plan',
-	'working',
-	'verifying',
-	'reviewing-work',
-	'wrapping-up',
+	'plan-agent',
+	'plan-reviewer',
+	'work-agent',
+	'work-reviewer',
+	'wrapup',
 	'completed',
 	'closed',
 	'failed',
@@ -42,6 +40,7 @@ export const verificationCommandResultSchema = z.object({
 	passed: z.boolean(),
 	exitCode: z.number().int(),
 	output: z.string(),
+	logPath: z.string().optional(),
 });
 
 export type VerificationCommandResult = z.infer<typeof verificationCommandResultSchema>;
@@ -59,45 +58,53 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 	z.object({
 		event: z.literal('phase-started'),
 		phase: phaseNameSchema,
-		loop: z.number().int().nonnegative().optional(),
 	}),
 	z.object({
 		event: z.literal('phase-completed'),
 		phase: phaseNameSchema,
-		tokenCount: z.number().int().nonnegative().optional(),
 	}),
 	z.object({
-		event: z.literal('plan-created'),
+		event: z.literal('plan-agent-turn'),
+		cycle: z.number().int().nonnegative(),
+		threadId: z.string(),
+		tokenCount: z.number().int().nonnegative(),
+	}),
+	z.object({
+		event: z.literal('plan-reviewer-turn'),
+		cycle: z.number().int().positive(),
+		threadId: z.string(),
+		tokenCount: z.number().int().nonnegative(),
+		review: reviewResultSchema,
+	}),
+	z.object({
+		event: z.literal('plan-finalized'),
 		plan: z.string(),
+	}),
+	z.object({
+		event: z.literal('work-agent-turn'),
+		cycle: z.number().int().nonnegative(),
 		threadId: z.string(),
+		tokenCount: z.number().int().nonnegative(),
 	}),
 	z.object({
-		event: z.literal('work-started'),
+		event: z.literal('work-reviewer-turn'),
+		cycle: z.number().int().positive(),
 		threadId: z.string(),
+		tokenCount: z.number().int().nonnegative(),
+		review: reviewResultSchema,
+		validationResults: z.array(verificationCommandResultSchema),
+		validationSkipped: z.boolean().default(false),
 	}),
 	z.object({
-		event: z.literal('review-result'),
-		phase: z.enum(reviewPhaseNames),
-		approved: z.boolean(),
-		summary: z.string(),
-		loop: z.number().int().nonnegative(),
-	}),
-	z.object({
-		event: z.literal('diff-read-failed'),
-		reason: z.string(),
-		loop: z.number().int().nonnegative(),
-	}),
-	z.object({
-		event: z.literal('verification-result'),
-		results: z.array(verificationCommandResultSchema),
-	}),
-	z.object({
-		event: z.literal('fix-applied'),
+		event: z.literal('wrapup-turn'),
+		threadId: z.string(),
 		tokenCount: z.number().int().nonnegative(),
 	}),
 	z.object({
 		event: z.literal('wrapup-result'),
-		actions: z.array(wrapupActionResultSchema),
+		prUrl: z.string().url().nullable(),
+		branchName: z.string().nullable(),
+		pushedCommits: z.array(z.string()),
 	}),
 	z.object({
 		event: z.literal('task-completed'),

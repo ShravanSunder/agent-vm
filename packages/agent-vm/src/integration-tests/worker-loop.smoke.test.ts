@@ -1,19 +1,18 @@
 /* oxlint-disable eslint/no-await-in-loop -- smoke polling must be sequential against live services */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
-import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { SecretRef, SecretResolver } from '@shravansunder/gondolin-core';
+import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
 import { afterAll, describe, expect, it } from 'vitest';
-import { z } from 'zod';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import { scaffoldAgentVmProject } from '../cli/init-command.js';
 import { loadSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
+import { executeWorkerTask, prepareWorkerTask } from '../controller/worker-task-runner.js';
 
 function hasCommand(command: string): boolean {
 	try {
@@ -34,8 +33,12 @@ function rebuildWorkerPackages(repoRoot: string): void {
 async function findReusableGatewayImageDirectory(
 	currentProjectRoot: string,
 	gatewayBuildConfigPath: string,
+	systemCacheIdentifierPath: string,
 ): Promise<string | null> {
-	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
+	const requiredFingerprint = await computeFingerprintFromConfigPath(
+		gatewayBuildConfigPath,
+		systemCacheIdentifierPath,
+	);
 	const tempRootEntries = await fs.readdir(os.tmpdir(), { withFileTypes: true });
 	const smokeRunDirectories = tempRootEntries
 		.filter((entry) => entry.isDirectory() && entry.name.startsWith('worker-loop-smoke-'))
@@ -70,16 +73,21 @@ async function seedGatewayImageCacheIfAvailable(
 	activeCacheDir: string,
 	currentProjectRoot: string,
 	gatewayBuildConfigPath: string,
+	systemCacheIdentifierPath: string,
 ): Promise<void> {
 	const reusableImageDir = await findReusableGatewayImageDirectory(
 		currentProjectRoot,
 		gatewayBuildConfigPath,
+		systemCacheIdentifierPath,
 	);
 	if (!reusableImageDir) {
 		return;
 	}
 
-	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
+	const requiredFingerprint = await computeFingerprintFromConfigPath(
+		gatewayBuildConfigPath,
+		systemCacheIdentifierPath,
+	);
 	const activeImageDir = path.join(activeCacheDir, 'images', 'gateway', requiredFingerprint);
 	if (activeImageDir === reusableImageDir) {
 		return;
@@ -150,52 +158,6 @@ async function waitForControllerReady(controllerPort: number): Promise<void> {
 	throw new Error('Controller did not become ready in time.');
 }
 
-async function postJsonWithLongTimeout(
-	url: string,
-	body: Record<string, unknown>,
-): Promise<{ readonly statusCode: number; readonly json: unknown }> {
-	return await new Promise((resolve, reject) => {
-		const request = http.request(
-			url,
-			{
-				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
-				},
-			},
-			(response) => {
-				const chunks: Buffer[] = [];
-				response.on('data', (chunk) => {
-					chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-				});
-				response.on('end', () => {
-					try {
-						resolve({
-							statusCode: response.statusCode ?? 0,
-							json: JSON.parse(Buffer.concat(chunks).toString('utf8')),
-						});
-					} catch (error) {
-						reject(error);
-					}
-				});
-			},
-		);
-
-		request.on('error', reject);
-		request.write(JSON.stringify(body));
-		request.end();
-	});
-}
-
-const workerTaskResponseSchema = z.object({
-	taskId: z.string().min(1),
-	finalState: z
-		.object({
-			status: z.string(),
-		})
-		.passthrough(),
-});
-
 async function createSampleRepo(baseDir: string): Promise<string> {
 	const repoDir = path.join(baseDir, 'sample-repo');
 	await fs.mkdir(path.join(repoDir, '.agent-vm'), { recursive: true });
@@ -249,6 +211,8 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 				targetDir: tempRoot,
 				zoneId: 'worker-smoke',
 				gatewayType: 'worker',
+				architecture: 'aarch64',
+				secretsProvider: '1password',
 			},
 			{
 				generateAgeIdentityKey: () => undefined,
@@ -256,8 +220,20 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 		);
 		const scaffoldCachePath = path.join(os.tmpdir(), 'agent-vm-smoke-cache');
 		await fs.mkdir(scaffoldCachePath, { recursive: true });
-		const gatewayBuildConfigPath = path.join(tempRoot, 'images', 'gateway', 'build-config.json');
-		await seedGatewayImageCacheIfAvailable(scaffoldCachePath, tempRoot, gatewayBuildConfigPath);
+		const gatewayBuildConfigPath = path.join(
+			tempRoot,
+			'vm-images',
+			'gateways',
+			'worker',
+			'build-config.json',
+		);
+		const systemCacheIdentifierPath = path.join(tempRoot, 'config', 'systemCacheIdentifier.json');
+		await seedGatewayImageCacheIfAvailable(
+			scaffoldCachePath,
+			tempRoot,
+			gatewayBuildConfigPath,
+			systemCacheIdentifierPath,
+		);
 		const localWorkerTarballPath = await prepareLocalWorkerPackageForGatewayImage(repoRoot);
 
 		const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
@@ -277,64 +253,67 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 		workerZone.allowedHosts = [...workerZone.allowedHosts, 'github.com'];
 
 		await fs.writeFile(
-			workerZone.gateway.gatewayConfig,
+			workerZone.gateway.config,
 			JSON.stringify({
 				defaults: { provider: 'codex', model: 'gpt-5.4' },
 				phases: {
-					plan: { skills: [], maxReviewLoops: 0 },
-					planReview: { skills: [] },
-					work: { skills: [], maxReviewLoops: 0, maxVerificationRetries: 1 },
-					workReview: { skills: [] },
-					wrapup: { skills: [] },
+					plan: {
+						skills: [],
+						cycle: { kind: 'noReview' },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					work: {
+						skills: [],
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					wrapup: { skills: [], instructions: null },
 				},
 				mcpServers: [],
 				verification: [{ name: 'verify', command: 'bash scripts/verify.sh' }],
-				wrapupActions: [],
 				branchPrefix: 'agent/',
-				commitCoAuthor: 'agent-vm-worker <noreply@agent-vm>',
-				idleTimeoutMs: 1_800_000,
 				stateDir: '/state',
 			}),
 		);
 		const previousLocalWorkerTarballPath = process.env.AGENT_VM_WORKER_TARBALL_PATH;
 		process.env.AGENT_VM_WORKER_TARBALL_PATH = localWorkerTarballPath;
 		try {
+			const secretResolver: SecretResolver = {
+				resolve: async (_ref: SecretRef) => process.env.OPEN_AI_TEST_KEY ?? '',
+				resolveAll: async (refs: Record<string, SecretRef>) =>
+					Object.fromEntries(
+						Object.keys(refs).map((key) => [key, process.env.OPEN_AI_TEST_KEY ?? '']),
+					),
+			};
 			runtime = await startControllerRuntime(
 				{
 					systemConfig,
 					zoneId: 'worker-smoke',
 				},
 				{
-					createSecretResolver: async (): Promise<SecretResolver> => ({
-						resolve: async (_ref: SecretRef) => process.env.OPEN_AI_TEST_KEY ?? '',
-						resolveAll: async (refs: Record<string, SecretRef>) =>
-							Object.fromEntries(
-								Object.keys(refs).map((key) => [key, process.env.OPEN_AI_TEST_KEY ?? '']),
-							),
-					}),
+					createSecretResolver: async (): Promise<SecretResolver> => secretResolver,
 				},
 			);
 			await waitForControllerReady(controllerPort);
 
-			const response = await postJsonWithLongTimeout(
-				`http://127.0.0.1:${controllerPort}/zones/worker-smoke/worker-tasks`,
-				{
+			const prepared = await prepareWorkerTask({
+				input: {
+					requestTaskId: 'request-worker-smoke',
 					prompt: 'Create a file named READY.txt in the repository root containing exactly READY.',
 					repos: [{ repoUrl: repoDir, baseBranch: 'main' }],
 					context: { source: 'smoke-test' },
 				},
-			);
-
-			if (response.statusCode !== 200) {
+				systemConfig,
+				zoneId: 'worker-smoke',
+			});
+			const result = await executeWorkerTask(prepared, { secretResolver, systemConfig });
+			expect(result.taskId).toBeTruthy();
+			const finalState = result.finalState as { readonly status?: string | undefined };
+			if (finalState.status !== 'completed') {
 				throw new Error(
-					`Worker smoke task request failed with ${response.statusCode}: ${JSON.stringify(response.json)}`,
-				);
-			}
-			const body = workerTaskResponseSchema.parse(response.json);
-			expect(body.taskId).toBeTruthy();
-			if (body.finalState.status !== 'completed') {
-				throw new Error(
-					`Worker smoke task ended in ${body.finalState.status}: ${JSON.stringify(body.finalState)}`,
+					`Worker smoke task ended in ${finalState.status ?? 'unknown'}: ${JSON.stringify(result.finalState)}`,
 				);
 			}
 		} finally {

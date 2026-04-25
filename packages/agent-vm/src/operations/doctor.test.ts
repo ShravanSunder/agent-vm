@@ -1,7 +1,11 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
-import type { SystemConfig } from '../config/system-config.js';
-import { runControllerDoctor } from './doctor.js';
+import { createLoadedSystemConfig, type SystemConfig } from '../config/system-config.js';
+import { collectVmHostSystemDoctorCheck, runControllerDoctor } from './doctor.js';
 
 const systemConfig = {
 	cacheDir: './cache',
@@ -16,12 +20,22 @@ const systemConfig = {
 			},
 		},
 	},
-	images: {
-		gateway: {
-			buildConfig: './images/gateway/build-config.json',
+	imageProfiles: {
+		gateways: {
+			openclaw: {
+				type: 'openclaw',
+				buildConfig: './vm-images/gateways/openclaw/build-config.json',
+			},
+			worker: {
+				type: 'worker',
+				buildConfig: './vm-images/gateways/worker/build-config.json',
+			},
 		},
-		tool: {
-			buildConfig: './images/tool/build-config.json',
+		toolVms: {
+			default: {
+				type: 'toolVm',
+				buildConfig: './vm-images/tool-vms/default/build-config.json',
+			},
 		},
 	},
 	zones: [
@@ -29,10 +43,11 @@ const systemConfig = {
 			id: 'shravan',
 			gateway: {
 				type: 'openclaw',
+				imageProfile: 'openclaw',
 				memory: '2G',
 				cpus: 2,
 				port: 18791,
-				gatewayConfig: './config/shravan/openclaw.json',
+				config: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
 				workspaceDir: './workspaces/shravan',
 			},
@@ -47,6 +62,7 @@ const systemConfig = {
 			memory: '1G',
 			cpus: 1,
 			workspaceRoot: './workspaces/tools',
+			imageProfile: 'default',
 		},
 	},
 	tcpPool: {
@@ -55,7 +71,7 @@ const systemConfig = {
 	},
 } satisfies SystemConfig;
 
-const allBinaries = new Set(['qemu-system-aarch64', 'age', 'op', 'security']);
+const allBinaries = new Set(['qemu-system-aarch64', 'qemu-system-x86_64', 'op', 'security']);
 
 describe('runControllerDoctor', () => {
 	it('reports all checks passing when environment is complete', () => {
@@ -72,11 +88,27 @@ describe('runControllerDoctor', () => {
 		expect(result.ok).toBe(true);
 		expect(result.checks.every((check) => check.ok)).toBe(true);
 		expect(result.checks.find((check) => check.name === 'qemu')?.ok).toBe(true);
-		expect(result.checks.find((check) => check.name === 'age')?.ok).toBe(true);
-		expect(result.checks.find((check) => check.name === '1password-cli')?.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === 'age')).toBeUndefined();
+		expect(result.checks.find((check) => check.name === '1password-cli')).toBeUndefined();
 	});
 
-	it('flags missing binaries with install hints', () => {
+	it('does not require optional 1Password CLI or age binaries for env-backed configs', () => {
+		const result = runControllerDoctor({
+			availableBinaries: new Set<string>(['qemu-system-aarch64']),
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === 'age')).toBeUndefined();
+		expect(result.checks.find((check) => check.name === '1password-cli')).toBeUndefined();
+	});
+
+	it('flags missing qemu with an install hint', () => {
 		const result = runControllerDoctor({
 			availableBinaries: new Set<string>(),
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
@@ -90,11 +122,7 @@ describe('runControllerDoctor', () => {
 		expect(result.ok).toBe(false);
 		const qemuCheck = result.checks.find((check) => check.name === 'qemu');
 		expect(qemuCheck?.ok).toBe(false);
-		expect(qemuCheck?.hint).toBe('brew install qemu');
-
-		const ageCheck = result.checks.find((check) => check.name === 'age');
-		expect(ageCheck?.ok).toBe(false);
-		expect(ageCheck?.hint).toBe('brew install age');
+		expect(qemuCheck?.hint).toBe('Install QEMU (for example: brew install qemu).');
 	});
 
 	it('flags occupied ports and insufficient resources', () => {
@@ -172,5 +200,73 @@ describe('runControllerDoctor', () => {
 		const tokenCheck = result.checks.find((check) => check.name === '1password-token-source');
 		expect(tokenCheck?.ok).toBe(false);
 		expect(tokenCheck?.hint).toContain('1password-cli');
+	});
+});
+
+describe('collectVmHostSystemDoctorCheck', () => {
+	it('flags missing vm-host-system files for container configs', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
+		const configPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
+		await fs.mkdir(path.dirname(configPath), { recursive: true });
+		await fs.writeFile(
+			path.join(path.dirname(configPath), 'systemCacheIdentifier.json'),
+			JSON.stringify({ hostSystemType: 'container' }),
+			'utf8',
+		);
+
+		const check = await collectVmHostSystemDoctorCheck(
+			createLoadedSystemConfig(systemConfig, { systemConfigPath: configPath }),
+		);
+
+		expect(check).toMatchObject({
+			name: 'vm-host-system',
+			ok: false,
+		});
+		expect(check?.hint).toContain('vm-host-system/Dockerfile');
+	});
+
+	it('passes when vm-host-system files exist for container configs', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
+		const configPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
+		const vmHostSystemPath = path.join(temporaryDirectoryPath, 'vm-host-system');
+		await fs.mkdir(path.dirname(configPath), { recursive: true });
+		await fs.mkdir(vmHostSystemPath, { recursive: true });
+		await fs.writeFile(
+			path.join(path.dirname(configPath), 'systemCacheIdentifier.json'),
+			JSON.stringify({ hostSystemType: 'container' }),
+			'utf8',
+		);
+		await Promise.all(
+			['Dockerfile', 'start.sh', 'agent-vm-controller.service'].map(async (fileName) => {
+				await fs.writeFile(path.join(vmHostSystemPath, fileName), '', 'utf8');
+			}),
+		);
+
+		const check = await collectVmHostSystemDoctorCheck(
+			createLoadedSystemConfig(systemConfig, { systemConfigPath: configPath }),
+		);
+
+		expect(check).toMatchObject({
+			name: 'vm-host-system',
+			ok: true,
+			hint: vmHostSystemPath,
+		});
+	});
+
+	it('skips vm-host-system checks for non-container configs', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
+		const configPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
+		await fs.mkdir(path.dirname(configPath), { recursive: true });
+		await fs.writeFile(
+			path.join(path.dirname(configPath), 'systemCacheIdentifier.json'),
+			JSON.stringify({ hostSystemType: 'bare-metal' }),
+			'utf8',
+		);
+
+		await expect(
+			collectVmHostSystemDoctorCheck(
+				createLoadedSystemConfig(systemConfig, { systemConfigPath: configPath }),
+			),
+		).resolves.toBeNull();
 	});
 });

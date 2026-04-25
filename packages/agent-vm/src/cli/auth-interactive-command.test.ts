@@ -1,4 +1,4 @@
-import type { GatewayAuthConfig } from '@shravansunder/gateway-interface';
+import type { GatewayAuthConfig } from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ControllerClient } from '../controller/http/controller-client.js';

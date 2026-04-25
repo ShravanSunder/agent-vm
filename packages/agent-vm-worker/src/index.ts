@@ -1,7 +1,9 @@
 export {
+	computeTotalTaskTimeoutMs,
 	loadWorkerConfig,
 	resolveModelAlias,
 	resolvePhaseExecutor,
+	resolveWorkerConfigInstructionReferences,
 	workerConfigSchema,
 	type WorkerConfig,
 } from './config/worker-config.js';
@@ -21,14 +23,26 @@ export {
 	sanitizeBranchName,
 	stageAndCommit,
 } from './git/git-operations.js';
-export { createPlanReviewer, type PlanReviewer } from './planner/plan-reviewer.js';
-export { createPlanner, type Planner, type PlanResult } from './planner/planner.js';
 export {
 	DEFAULT_BASE_INSTRUCTIONS,
-	DEFAULT_PHASE_INSTRUCTIONS,
-	getDefaultPhaseInstruction,
+	DEFAULT_PLAN_AGENT_INSTRUCTIONS,
+	DEFAULT_PLAN_REVIEWER_INSTRUCTIONS,
+	DEFAULT_WORK_AGENT_INSTRUCTIONS,
+	DEFAULT_WORK_REVIEWER_INSTRUCTIONS,
+	DEFAULT_WRAPUP_INSTRUCTIONS,
+	interpolateBaseInstructions,
+	resolveRoleInstructions,
+	type Role,
 } from './prompt/prompt-defaults.js';
-export { assemblePrompt, resolveSkillInputs } from './prompt/prompt-assembler.js';
+export { buildRoleSystemPrompt } from './prompt/prompt-assembler.js';
+export {
+	buildInitialPlanMessage,
+	buildInitialWorkMessage,
+	buildPlanReviewMessage,
+	buildPlanReviseMessage,
+	buildWorkReviewMessage,
+	buildWorkReviseMessage,
+} from './prompt/message-builders.js';
 export { createTaskRequestSchema, createApp, type ServerDeps } from './server.js';
 export { appendEvent, replayEvents } from './state/event-log.js';
 export {
@@ -36,6 +50,7 @@ export {
 	createInitialState,
 	hydrateTaskStates,
 	isTerminal,
+	loadTaskStateFromLog,
 	type TaskState,
 } from './state/task-state.js';
 export type {
@@ -45,7 +60,6 @@ export type {
 	TaskStatus,
 	TimestampedEvent,
 	VerificationCommandResult,
-	WrapupActionResult,
 } from './state/task-event-types.js';
 export { reviewResultSchema, type ReviewResult } from './shared/review-result.js';
 export {
@@ -65,6 +79,11 @@ export type {
 	WorkExecutor,
 } from './work-executor/executor-interface.js';
 export {
+	createPersistentThread,
+	type PersistentThread,
+	type PersistentThreadResponse,
+} from './work-executor/persistent-thread.js';
+export {
 	allVerificationsPassed,
 	buildVerificationFailureSummary,
 	parseCommand,
@@ -72,22 +91,9 @@ export {
 	runVerification,
 	type RunVerificationOptions,
 	type VerificationCommand,
-} from './work-reviewer/verification-runner.js';
-export {
-	reviewWork,
-	type WorkReviewInput,
-	type WorkReviewResult,
-} from './work-reviewer/work-reviewer.js';
-export { createGitPrToolDefinition } from './wrapup/git-pr-action.js';
-export { createSlackToolDefinition } from './wrapup/slack-action.js';
-export {
-	buildWrapupTools,
-	getWrapupActionConfigs,
-	type WrapupToolRegistryInput,
-	type WrapupToolRegistryResult,
-} from './wrapup/wrapup-action-registry.js';
-export {
-	findMissingRequiredActions,
-	type WrapupActionConfig,
-	type WrapupActionResult as WrapupActionExecutionResult,
-} from './wrapup/wrapup-types.js';
+} from './validation-runner/verification-runner.js';
+export { buildValidationTool } from './work-phase/validation-tool.js';
+export { createGitPullDefaultTool } from './work-phase/controller-tools/git-pull-default-tool.js';
+export { createGitPushTool } from './work-phase/controller-tools/git-push-tool.js';
+export { runWorkCycle, type WorkCycleResult } from './work-phase/work-cycle.js';
+export { runWrapup, type WrapupRunResult } from './wrapup-phase/wrapup-runner.js';

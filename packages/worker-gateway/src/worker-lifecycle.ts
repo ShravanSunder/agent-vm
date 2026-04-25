@@ -3,11 +3,8 @@ import type {
 	GatewayLifecycle,
 	GatewayProcessSpec,
 	GatewayVmSpec,
-} from '@shravansunder/gateway-interface';
-import {
-	buildGatewaySessionLabel,
-	splitResolvedGatewaySecrets,
-} from '@shravansunder/gateway-interface';
+} from '@agent-vm/gateway-interface';
+import { buildGatewaySessionLabel, splitResolvedGatewaySecrets } from '@agent-vm/gateway-interface';
 
 export const workerLifecycle: GatewayLifecycle = {
 	buildVmSpec({
@@ -55,7 +52,7 @@ export const workerLifecycle: GatewayLifecycle = {
 	buildProcessSpec(): GatewayProcessSpec {
 		return {
 			bootstrapCommand:
-				'if [ -f /state/agent-vm-worker.tgz ]; then npm install -g @openai/codex /state/agent-vm-worker.tgz; fi',
+				'if [ -f /state/agent-vm-worker.tgz ]; then npm install -g --force @openai/codex /state/agent-vm-worker.tgz; fi',
 			startCommand:
 				'cd /workspace && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state > /tmp/agent-vm-worker.log 2>&1 &',
 			healthCheck: { type: 'http', port: 18789, path: '/health' },

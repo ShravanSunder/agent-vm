@@ -1,4 +1,4 @@
-import type { SecretResolver } from '@shravansunder/gondolin-core';
+import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createCompositeSecretResolver } from './composite-secret-resolver.js';

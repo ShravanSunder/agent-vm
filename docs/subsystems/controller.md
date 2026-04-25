@@ -100,8 +100,11 @@ Registered conditionally -- only when `operations` or `workerTaskRunner` is prov
 | `POST` | `/zones/:zoneId/upgrade` | Rebuild image and restart gateway | OpenClaw |
 | `POST` | `/zones/:zoneId/enable-ssh` | Enable SSH into gateway VM | OpenClaw |
 | `POST` | `/zones/:zoneId/execute-command` | Run a shell command inside gateway VM | OpenClaw |
-| `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task | Worker |
+| `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
+| `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
+| `POST` | `/zones/:zoneId/tasks/:taskId/close` | Request task cancellation | Worker |
 | `POST` | `/zones/:zoneId/tasks/:taskId/push-branches` | Push branches + open PRs from host | Worker |
+| `POST` | `/zones/:zoneId/tasks/:taskId/pull-default` | Refresh a repo's default branch from the host | Worker |
 | `POST` | `/stop-controller` | Graceful shutdown | Both |
 
 Request bodies are validated with Zod schemas (`controller-request-schemas.ts`). Invalid payloads return 400 with structured `error` and `issues` fields.
@@ -110,7 +113,7 @@ Request bodies are validated with Zod schemas (`controller-request-schemas.ts`).
 
 ## Gateway Zone Orchestrator
 
-`startGatewayZone()` in `gateway-zone-orchestrator.ts` is the boot sequence for any gateway VM. The controller calls it once at startup for OpenClaw zones, and once per task for Worker zones. The full 15-step sequence is documented in [architecture.md](../architecture/overview.md#gateway-zone-orchestrator). Key points for controller integration:
+`startGatewayZone()` in `gateway-zone-orchestrator.ts` is the boot sequence for any gateway VM. The controller calls it once at startup for OpenClaw zones, and once per task for Worker zones. The full 15-step sequence is documented in the [gateway zone orchestrator architecture](../architecture/overview.md#gateway-zone-orchestrator). Key points for controller integration:
 
 - **Step 1 (orphan cleanup)** runs `gateway-recovery.ts`: loads a persisted `GatewayRuntimeRecord` from `stateDir`, checks PID liveness via `kill(pid, 0)`, verifies the command matches `/qemu-system|krun/`, then sends SIGTERM (2s grace) and SIGKILL (2s grace). Non-managed PIDs cause a hard error. Record deletion failures produce a warning but do not block startup.
 - **Step 15 (runtime record write)** persists pid, vmId, and zoneId so orphan cleanup works on next startup if the controller crashes.
@@ -194,7 +197,7 @@ The reaper runs one immediate pass at the end of controller startup, before the 
 | `execInZone` | Runs an arbitrary command inside the gateway VM via `vm.exec()` |
 | `stopController` | Clears reaper timer, releases all leases, stops gateway, closes HTTP server |
 
-The `stopController` operation is available in both OpenClaw and Worker modes. All other operations are OpenClaw-only.
+The `stopController` operation is available in both OpenClaw and Agent Worker Gateways. All other operations are OpenClaw-only.
 
 ---
 
@@ -211,15 +214,16 @@ Worker-mode zones do not start a gateway at boot. Instead, each task gets an eph
     |   1. Generate taskId (crypto.randomUUID)
     |   2. Create taskRoot/{workspace, state} on host
     |   3. Copy local worker tarball if AGENT_VM_WORKER_TARBALL_PATH set
-    |   4. Clone repos into taskRoot/workspace/ (sequential)
+    |   4. Clone repos into taskRoot/workspace/ in parallel
     |      - Derive directory names from repo URLs, deduplicate
     |   5. Read .agent-vm/config.json from primary repo
     |   6. Deep-merge zone gateway config + project config
     |   7. Validate merged config against workerConfigSchema
     |   8. Write effective-worker.json to taskRoot/state/
-    |   9. Start Docker services (docker-compose up) for compose
-    |      files found in workspace repos
-    |  10. Register task in ActiveTaskRegistry
+    |   9. Resolve typed repo resources from each repo's
+    |      .agent-vm/repo-resources.ts contract
+    |  10. Start only selected repo-local Compose providers
+    |  11. Register task in ActiveTaskRegistry
     |
     |== BOOT (startGatewayZone with zoneOverride) ============
     |   Override zone workspace/state dirs to point at taskRoot
@@ -228,7 +232,7 @@ Worker-mode zones do not start a gateway at boot. Instead, each task gets an eph
     |
     |== SUBMIT ================================================
     |   POST http://{vm}:{port}/tasks
-    |   Body: { taskId, prompt, repos, context }
+    |   Body: { requestTaskId, prompt, repos, context }
     |
     |== POLL ==================================================
     |   GET http://{vm}:{port}/tasks/{taskId}
@@ -238,7 +242,7 @@ Worker-mode zones do not start a gateway at boot. Instead, each task gets an eph
     |
     |== TEARDOWN (always runs in finally block) ===============
     |   1. vm.close()
-    |   2. docker-compose down for all started compose files
+    |   2. Stop selected repo resource Compose providers
     |   3. rm -rf taskRoot/workspace/
     |   4. Deregister task from ActiveTaskRegistry
     |

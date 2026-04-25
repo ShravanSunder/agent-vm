@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import net from 'node:net';
 
+import { createManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm, SshAccess } from '@agent-vm/gondolin-adapter';
 import { serve } from '@hono/node-server';
-import { createManagedVm } from '@shravansunder/gondolin-core';
-import type { ManagedVm, SshAccess } from '@shravansunder/gondolin-core';
 import { Hono } from 'hono';
 /**
  * Live end-to-end test: OpenClaw sandbox plugin → controller lease API → tool VM

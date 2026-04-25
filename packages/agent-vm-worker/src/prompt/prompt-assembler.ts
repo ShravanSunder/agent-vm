@@ -1,107 +1,53 @@
 import { readFile } from 'node:fs/promises';
 
-import { reviewPhaseNames } from '../shared/phase-names.js';
-import type { RepoLocation } from '../shared/repo-location.js';
 import type { SkillReference } from '../shared/skill-types.js';
-import type { PhaseName } from '../state/task-event-types.js';
-import type { StructuredInput } from '../work-executor/executor-interface.js';
-import { DEFAULT_BASE_INSTRUCTIONS, getDefaultPhaseInstruction } from './prompt-defaults.js';
+import { writeStderr } from '../shared/stderr.js';
+import {
+	DEFAULT_BASE_INSTRUCTIONS,
+	resolveRoleInstructions,
+	type Role,
+} from './prompt-defaults.js';
 
-const BASE_WORKER_PROMPT =
-	'You are an agent working in a sandboxed VM. You have access to the workspace at /workspace. ' +
-	'Do not attempt to access the network directly - all outbound requests go through a mediation proxy.';
-
-const BASE_REVIEW_PROMPT =
-	'Return your review as structured JSON matching the ReviewResult schema: ' +
-	'{ approved: boolean, comments: [{ file: string, line?: number, severity: "critical" | "suggestion" | "nitpick", comment: string }], summary: string }';
-
-const REVIEW_PHASES = new Set<PhaseName>(reviewPhaseNames);
-
-export async function resolveSkillInputs(
-	skills: readonly SkillReference[],
-): Promise<readonly StructuredInput[]> {
-	const resolvedInputs = await Promise.all(
-		skills.map(async (skill): Promise<StructuredInput | null> => {
-			try {
-				const content = await readFile(skill.path, 'utf-8');
-				return {
-					type: 'skill',
-					name: skill.name,
-					content,
-				};
-			} catch (error) {
-				if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
-					return null;
-				}
-				return null;
-			}
-		}),
-	);
-
-	return resolvedInputs.filter((input): input is StructuredInput => input !== null);
-}
-
-export interface AssemblePromptInput {
-	readonly phase: PhaseName;
-	readonly baseInstructions?: string | undefined;
-	readonly phaseInstructions?: string | undefined;
-	readonly taskPrompt: string;
-	readonly repos?: readonly RepoLocation[];
-	readonly context?: Record<string, unknown>;
-	readonly repoSummary?: string | null;
-	readonly plan?: string | null;
-	readonly failureContext?: string | null;
-	readonly extraContext?: string | null;
+export interface BuildRoleSystemPromptProps {
+	readonly role: Role;
+	readonly baseInstructionsOverride: string | null;
+	readonly roleInstructionsOverride: string | null;
+	readonly branchPrefix: string;
 	readonly skills: readonly SkillReference[];
 }
 
-export async function assemblePrompt(
-	input: AssemblePromptInput,
-): Promise<readonly StructuredInput[]> {
-	const sections: string[] = [];
+async function resolveSkillContent(skills: readonly SkillReference[]): Promise<string> {
+	const bodies = await Promise.all(
+		skills.map(async (skill): Promise<string | null> => {
+			try {
+				const content = await readFile(skill.path, 'utf-8');
+				return `## Skill: ${skill.name}\n${content}`;
+			} catch (error) {
+				const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+				if (code === 'ENOENT') {
+					writeStderr(
+						`[prompt-assembler] Skill not found, skipping: ${skill.name} at ${skill.path}`,
+					);
+					return null;
+				}
+				const message = error instanceof Error ? error.message : String(error);
+				writeStderr(`[prompt-assembler] Skill load failed (${skill.name}): ${message}`);
+				throw new Error(`Skill load failed for "${skill.name}" at "${skill.path}": ${message}`, {
+					cause: error,
+				});
+			}
+		}),
+	);
+	return bodies.filter((body): body is string => body !== null).join('\n\n');
+}
 
-	sections.push(BASE_WORKER_PROMPT);
-	sections.push('', input.baseInstructions ?? DEFAULT_BASE_INSTRUCTIONS);
-	if (REVIEW_PHASES.has(input.phase)) {
-		sections.push('', BASE_REVIEW_PROMPT);
-	}
+export async function buildRoleSystemPrompt(props: BuildRoleSystemPromptProps): Promise<string> {
+	const baseTemplate = props.baseInstructionsOverride ?? DEFAULT_BASE_INSTRUCTIONS;
+	const baseInstructions = baseTemplate.replaceAll('{branchPrefix}', props.branchPrefix);
+	const roleInstructions = resolveRoleInstructions(props.role, props.roleInstructionsOverride);
+	const skillContent = await resolveSkillContent(props.skills);
 
-	const instructions = input.phaseInstructions ?? getDefaultPhaseInstruction(input.phase) ?? '';
-	if (instructions.length > 0) {
-		sections.push('', instructions);
-	}
-
-	sections.push('', `Task: ${input.taskPrompt}`);
-
-	if (input.repos && input.repos.length > 0) {
-		sections.push('', 'Repositories:');
-		for (const repo of input.repos) {
-			sections.push(
-				`- ${repo.repoUrl} (branch: ${repo.baseBranch})`,
-				`  Workspace: ${repo.workspacePath}`,
-			);
-		}
-	}
-
-	if (input.context && Object.keys(input.context).length > 0) {
-		sections.push('', 'Context:', JSON.stringify(input.context, null, 2));
-	}
-
-	if (input.repoSummary) {
-		sections.push('', 'Repository summary:', input.repoSummary);
-	}
-
-	if (input.plan) {
-		sections.push('', 'Approved plan:', input.plan);
-	}
-
-	if (input.failureContext) {
-		sections.push('', 'Failure context from previous attempt:', input.failureContext);
-	}
-
-	if (input.extraContext) {
-		sections.push('', 'Additional context:', input.extraContext);
-	}
-
-	return [{ type: 'text', text: sections.join('\n') }, ...(await resolveSkillInputs(input.skills))];
+	return [baseInstructions, roleInstructions, skillContent]
+		.filter((section) => section.length > 0)
+		.join('\n\n---\n\n');
 }

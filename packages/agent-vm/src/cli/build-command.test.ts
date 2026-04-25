@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { SystemConfig } from '../config/system-config.js';
+import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { runBuildCommand, type BuildCommandDependencies } from './build-command.js';
 
 const createdDirectories: string[] = [];
@@ -21,46 +21,61 @@ function createTemporaryDirectory(): string {
 	return temporaryDirectory;
 }
 
-function createTestSystemConfig(): SystemConfig {
-	return {
-		cacheDir: '/cache',
-		host: {
-			controllerPort: 18800,
-			projectNamespace: 'claw-tests-a1b2c3d4',
-			secretsProvider: { type: '1password', tokenSource: { type: 'env' } },
-		},
-		images: {
-			gateway: {
-				buildConfig: '/project/images/gateway/build-config.json',
-				dockerfile: '/project/images/gateway/Dockerfile',
+function createTestSystemConfig(): LoadedSystemConfig {
+	return createLoadedSystemConfig(
+		{
+			cacheDir: '/cache',
+			host: {
+				controllerPort: 18800,
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				secretsProvider: { type: '1password', tokenSource: { type: 'env' } },
 			},
-			tool: {
-				buildConfig: '/project/images/tool/build-config.json',
-			},
-		},
-		zones: [
-			{
-				allowedHosts: ['example.com'],
-				gateway: {
-					type: 'openclaw',
-					cpus: 2,
-					memory: '2G',
-					gatewayConfig: './config/test/openclaw.json',
-					port: 18791,
-					stateDir: '/state/test',
-					workspaceDir: '/workspaces/test',
+			imageProfiles: {
+				gateways: {
+					openclaw: {
+						type: 'openclaw',
+						buildConfig: '/project/vm-images/gateways/openclaw/build-config.json',
+						dockerfile: '/project/vm-images/gateways/openclaw/Dockerfile',
+					},
 				},
-				id: 'test-zone',
-				secrets: {},
-				toolProfile: 'standard',
-				websocketBypass: [],
+				toolVms: {
+					default: {
+						type: 'toolVm',
+						buildConfig: '/project/vm-images/tool-vms/default/build-config.json',
+					},
+				},
 			},
-		],
-		toolProfiles: {
-			standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' },
+			zones: [
+				{
+					allowedHosts: ['example.com'],
+					gateway: {
+						type: 'openclaw',
+						imageProfile: 'openclaw',
+						cpus: 2,
+						memory: '2G',
+						config: './config/test/openclaw.json',
+						port: 18791,
+						stateDir: '/state/test',
+						workspaceDir: '/workspaces/test',
+					},
+					id: 'test-zone',
+					secrets: {},
+					toolProfile: 'standard',
+					websocketBypass: [],
+				},
+			],
+			toolProfiles: {
+				standard: {
+					cpus: 1,
+					imageProfile: 'default',
+					memory: '1G',
+					workspaceRoot: '/workspaces/tools',
+				},
+			},
+			tcpPool: { basePort: 19000, size: 5 },
 		},
-		tcpPool: { basePort: 19000, size: 5 },
-	};
+		{ systemConfigPath: '/project/config/system.json' },
+	);
 }
 
 const noOpPluginSync: NonNullable<
@@ -96,9 +111,9 @@ describe('runBuildCommand', () => {
 		await runBuildCommand({ systemConfig: createTestSystemConfig() }, dependencies);
 
 		expect(dockerBuilds).toHaveLength(1);
-		expect(dockerBuilds[0]?.dockerfilePath).toBe('/project/images/gateway/Dockerfile');
+		expect(dockerBuilds[0]?.dockerfilePath).toBe('/project/vm-images/gateways/openclaw/Dockerfile');
 		expect(dockerBuilds[0]?.imageTag).toBe('agent-vm-gateway:latest');
-		expect(resolvedProjectRoots).toEqual(['/project/images/gateway/Dockerfile']);
+		expect(resolvedProjectRoots).toEqual(['/project/vm-images/gateways/openclaw/Dockerfile']);
 		expect(pluginSyncs).toEqual(['/project']);
 	});
 
@@ -122,13 +137,14 @@ describe('runBuildCommand', () => {
 			{
 				systemConfig: {
 					...createTestSystemConfig(),
-					images: {
-						gateway: {
-							buildConfig: buildConfigPath,
-							dockerfile: dockerfilePath,
-						},
-						tool: {
-							buildConfig: '/project/images/tool/build-config.json',
+					imageProfiles: {
+						...createTestSystemConfig().imageProfiles,
+						gateways: {
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: buildConfigPath,
+								dockerfile: dockerfilePath,
+							},
 						},
 					},
 				},
@@ -185,12 +201,23 @@ describe('runBuildCommand', () => {
 			{
 				systemConfig: {
 					...baseConfig,
+					imageProfiles: {
+						...baseConfig.imageProfiles,
+						gateways: {
+							worker: {
+								type: 'worker',
+								buildConfig: '/project/vm-images/gateways/worker/build-config.json',
+								dockerfile: '/project/vm-images/gateways/worker/Dockerfile',
+							},
+						},
+					},
 					zones: [
 						{
 							...baseZone,
 							gateway: {
 								...baseZone.gateway,
 								type: 'worker',
+								imageProfile: 'worker',
 							},
 						},
 					],
@@ -216,13 +243,18 @@ describe('runBuildCommand', () => {
 	});
 
 	it('builds shared Gondolin assets once per image type into the shared cache dir', async () => {
-		const gondolinBuilds: { cacheDir: string; fullReset: boolean | undefined }[] = [];
+		const gondolinBuilds: {
+			cacheDir: string;
+			systemCacheIdentifierPath: string;
+			fullReset: boolean | undefined;
+		}[] = [];
 		const dependencies: BuildCommandDependencies = {
 			runTask: async (_title, fn) => fn(),
 			buildDockerImage: async () => {},
 			buildGondolinImage: async (options) => {
 				gondolinBuilds.push({
 					cacheDir: options.cacheDir,
+					systemCacheIdentifierPath: options.systemCacheIdentifierPath,
 					fullReset: options.fullReset,
 				});
 				return { built: true, fingerprint: 'f1', imagePath: '/cache/f1' };
@@ -235,11 +267,13 @@ describe('runBuildCommand', () => {
 
 		expect(gondolinBuilds).toHaveLength(2);
 		expect(gondolinBuilds[0]).toEqual({
-			cacheDir: '/cache/images/gateway',
+			cacheDir: '/cache/gateway-images/openclaw',
+			systemCacheIdentifierPath: '/project/config/systemCacheIdentifier.json',
 			fullReset: true,
 		});
 		expect(gondolinBuilds[1]).toEqual({
-			cacheDir: '/cache/images/tool',
+			cacheDir: '/cache/tool-vm-images/default',
+			systemCacheIdentifierPath: '/project/config/systemCacheIdentifier.json',
 			fullReset: undefined,
 		});
 	});
@@ -265,8 +299,8 @@ describe('runBuildCommand', () => {
 		);
 
 		expect(gondolinBuilds).toEqual([
-			{ cacheDir: '/cache/images/gateway', fullReset: true },
-			{ cacheDir: '/cache/images/tool', fullReset: undefined },
+			{ cacheDir: '/cache/gateway-images/openclaw', fullReset: true },
+			{ cacheDir: '/cache/tool-vm-images/default', fullReset: undefined },
 		]);
 	});
 
@@ -277,7 +311,7 @@ describe('runBuildCommand', () => {
 		if (!baseZone) {
 			throw new Error('Expected base test zone');
 		}
-		const multiZoneConfig: SystemConfig = {
+		const multiZoneConfig: LoadedSystemConfig = {
 			...baseConfig,
 			zones: [
 				{
@@ -313,8 +347,8 @@ describe('runBuildCommand', () => {
 
 		expect(gondolinBuilds).toHaveLength(2);
 		expect(gondolinBuilds.map((build) => build.cacheDir)).toEqual([
-			'/cache/images/gateway',
-			'/cache/images/tool',
+			'/cache/gateway-images/openclaw',
+			'/cache/tool-vm-images/default',
 		]);
 	});
 
@@ -346,11 +380,11 @@ describe('runBuildCommand', () => {
 		);
 
 		expect(gondolinBuilds).toEqual([
-			{ cacheDir: '/cache/images/gateway', fullReset: true },
-			{ cacheDir: '/cache/images/tool', fullReset: true },
+			{ cacheDir: '/cache/gateway-images/openclaw', fullReset: true },
+			{ cacheDir: '/cache/tool-vm-images/default', fullReset: true },
 		]);
-		expect(taskTitles).toContain('Gondolin: gateway');
-		expect(taskTitles).toContain('Gondolin: tool');
+		expect(taskTitles).toContain('Gondolin: gateway/openclaw');
+		expect(taskTitles).toContain('Gondolin: toolVm/default');
 	});
 });
 
@@ -373,11 +407,15 @@ describe('resolveOciImageTagFromConfig', () => {
 			{
 				systemConfig: {
 					...createTestSystemConfig(),
-					images: {
-						...createTestSystemConfig().images,
-						gateway: {
-							buildConfig: gatewayBuildConfigPath,
-							dockerfile: '/project/images/gateway/Dockerfile',
+					imageProfiles: {
+						...createTestSystemConfig().imageProfiles,
+						gateways: {
+							...createTestSystemConfig().imageProfiles.gateways,
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: gatewayBuildConfigPath,
+								dockerfile: '/project/vm-images/gateways/openclaw/Dockerfile',
+							},
 						},
 					},
 				},
@@ -409,11 +447,15 @@ describe('resolveOciImageTagFromConfig', () => {
 				{
 					systemConfig: {
 						...createTestSystemConfig(),
-						images: {
-							...createTestSystemConfig().images,
-							gateway: {
-								buildConfig: gatewayBuildConfigPath,
-								dockerfile: '/project/images/gateway/Dockerfile',
+						imageProfiles: {
+							...createTestSystemConfig().imageProfiles,
+							gateways: {
+								...createTestSystemConfig().imageProfiles.gateways,
+								openclaw: {
+									type: 'openclaw',
+									buildConfig: gatewayBuildConfigPath,
+									dockerfile: '/project/vm-images/gateways/openclaw/Dockerfile',
+								},
 							},
 						},
 					},
@@ -455,11 +497,15 @@ describe('resolveOciImageTagFromConfig', () => {
 				{
 					systemConfig: {
 						...createTestSystemConfig(),
-						images: {
-							...createTestSystemConfig().images,
-							gateway: {
-								buildConfig: gatewayBuildConfigPath,
-								dockerfile: '/project/images/gateway/Dockerfile',
+						imageProfiles: {
+							...createTestSystemConfig().imageProfiles,
+							gateways: {
+								...createTestSystemConfig().imageProfiles.gateways,
+								openclaw: {
+									type: 'openclaw',
+									buildConfig: gatewayBuildConfigPath,
+									dockerfile: '/project/vm-images/gateways/openclaw/Dockerfile',
+								},
 							},
 						},
 					},
@@ -483,6 +529,44 @@ describe('resolveOciImageTagFromConfig', () => {
 		);
 	});
 
+	it('throws when a Docker-backed profile build config is missing', async () => {
+		const missingBuildConfigPath = path.join(
+			createTemporaryDirectory(),
+			'missing-build-config.json',
+		);
+
+		await expect(
+			runBuildCommand(
+				{
+					systemConfig: {
+						...createTestSystemConfig(),
+						imageProfiles: {
+							...createTestSystemConfig().imageProfiles,
+							gateways: {
+								...createTestSystemConfig().imageProfiles.gateways,
+								openclaw: {
+									type: 'openclaw',
+									buildConfig: missingBuildConfigPath,
+									dockerfile: '/project/vm-images/gateways/openclaw/Dockerfile',
+								},
+							},
+						},
+					},
+				},
+				{
+					buildDockerImage: async () => {},
+					buildGondolinImage: async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/cache/fp',
+					}),
+					runTask: async (_title, fn) => fn(),
+					syncBundledOpenClawPlugin: noOpPluginSync,
+				},
+			),
+		).rejects.toThrow(/ENOENT|no such file or directory/u);
+	});
+
 	it('throws when build-config.json is malformed JSON', async () => {
 		const temporaryDirectory = createTemporaryDirectory();
 		const gatewayBuildConfigPath = path.join(temporaryDirectory, 'gateway-build-config.json');
@@ -493,11 +577,15 @@ describe('resolveOciImageTagFromConfig', () => {
 				{
 					systemConfig: {
 						...createTestSystemConfig(),
-						images: {
-							...createTestSystemConfig().images,
-							gateway: {
-								buildConfig: gatewayBuildConfigPath,
-								dockerfile: '/project/images/gateway/Dockerfile',
+						imageProfiles: {
+							...createTestSystemConfig().imageProfiles,
+							gateways: {
+								...createTestSystemConfig().imageProfiles.gateways,
+								openclaw: {
+									type: 'openclaw',
+									buildConfig: gatewayBuildConfigPath,
+									dockerfile: '/project/vm-images/gateways/openclaw/Dockerfile',
+								},
 							},
 						},
 					},
@@ -526,11 +614,15 @@ describe('resolveOciImageTagFromConfig', () => {
 				{
 					systemConfig: {
 						...createTestSystemConfig(),
-						images: {
-							...createTestSystemConfig().images,
-							gateway: {
-								buildConfig: gatewayBuildConfigPath,
-								dockerfile: '/project/images/gateway/Dockerfile',
+						imageProfiles: {
+							...createTestSystemConfig().imageProfiles,
+							gateways: {
+								...createTestSystemConfig().imageProfiles.gateways,
+								openclaw: {
+									type: 'openclaw',
+									buildConfig: gatewayBuildConfigPath,
+									dockerfile: '/project/vm-images/gateways/openclaw/Dockerfile',
+								},
 							},
 						},
 					},

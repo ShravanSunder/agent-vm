@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { GatewayZoneConfig } from '@shravansunder/gateway-interface';
-import type { SecretResolver } from '@shravansunder/gondolin-core';
+import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
+import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { openclawLifecycle } from './openclaw-lifecycle.js';
@@ -29,7 +29,7 @@ function createZone(overrides?: {
 }): GatewayZoneConfig {
 	const baseGateway: GatewayZoneConfig['gateway'] = {
 		cpus: 2,
-		gatewayConfig: '/host/config/shravan/openclaw.json',
+		config: '/host/config/shravan/openclaw.json',
 		memory: '2G',
 		port: 18791,
 		stateDir: '/host/state/shravan',
@@ -195,7 +195,7 @@ describe('openclawLifecycle', () => {
 			);
 			const zone = createZone({
 				gateway: {
-					gatewayConfig: path.join(configDirectory, 'openclaw.json'),
+					config: path.join(configDirectory, 'openclaw.json'),
 					stateDir: path.join(tempDirectory, 'state'),
 					workspaceDir: path.join(tempDirectory, 'workspace'),
 				},
@@ -258,7 +258,7 @@ describe('openclawLifecycle', () => {
 			);
 			const zone = createZone({
 				gateway: {
-					gatewayConfig: path.join(configDirectory, 'openclaw.json'),
+					config: path.join(configDirectory, 'openclaw.json'),
 					stateDir: path.join(tempDirectory, 'state'),
 					workspaceDir: path.join(tempDirectory, 'workspace'),
 				},
@@ -295,7 +295,7 @@ describe('openclawLifecycle', () => {
 			);
 			const zoneWithoutGatewayToken = createZone({
 				gateway: {
-					gatewayConfig: path.join(configDirectory, 'openclaw.json'),
+					config: path.join(configDirectory, 'openclaw.json'),
 					stateDir: path.join(tempDirectory, 'state'),
 					workspaceDir: path.join(tempDirectory, 'workspace'),
 				},
@@ -332,7 +332,7 @@ describe('openclawLifecycle', () => {
 			);
 			const zone = createZone({
 				gateway: {
-					gatewayConfig: path.join(configDirectory, 'openclaw.json'),
+					config: path.join(configDirectory, 'openclaw.json'),
 					stateDir: path.join(tempDirectory, 'state'),
 					workspaceDir: path.join(tempDirectory, 'workspace'),
 				},
@@ -375,7 +375,7 @@ describe('openclawLifecycle', () => {
 			);
 			const zone = createZone({
 				gateway: {
-					gatewayConfig: configPath,
+					config: configPath,
 					stateDir: path.join(tempDirectory, 'state'),
 					workspaceDir: path.join(tempDirectory, 'workspace'),
 				},
@@ -419,7 +419,7 @@ describe('openclawLifecycle', () => {
 			);
 			const zone = createZone({
 				gateway: {
-					gatewayConfig: configPath,
+					config: configPath,
 					stateDir: path.join(tempDirectory, 'state'),
 					workspaceDir: path.join(tempDirectory, 'workspace'),
 				},

@@ -1,6 +1,11 @@
 /* oxlint-disable eslint/no-await-in-loop -- git setup commands intentionally run in order */
 import { execa } from 'execa';
 
+import { writeStderr } from '../shared/stderr.js';
+
+const GIT_COMMAND_TIMEOUT_MS = 120_000;
+let loggedHomeFallback = false;
+
 export interface GitConfigOptions {
 	readonly userEmail: string;
 	readonly userName: string;
@@ -10,6 +15,10 @@ export interface CommitOptions {
 	readonly message: string;
 	readonly coAuthor: string;
 	readonly cwd: string;
+}
+
+export interface CommitResult {
+	readonly committed: boolean;
 }
 
 export interface PushOptions {
@@ -32,11 +41,24 @@ interface GitResult {
 	readonly exitCode: number;
 }
 
+function buildGitEnvironment(): NodeJS.ProcessEnv {
+	if (!process.env.HOME && !loggedHomeFallback) {
+		writeStderr('[git-operations] HOME is unset; using /home/coder for git global config.');
+		loggedHomeFallback = true;
+	}
+	return {
+		...process.env,
+		HOME: process.env.HOME && process.env.HOME.length > 0 ? process.env.HOME : '/home/coder',
+	};
+}
+
 async function execGitShell(command: string, cwd: string): Promise<GitResult> {
 	const result = await execa(command, {
 		shell: true,
 		cwd,
+		env: buildGitEnvironment(),
 		reject: false,
+		timeout: GIT_COMMAND_TIMEOUT_MS,
 	});
 
 	return {
@@ -49,7 +71,9 @@ async function execGitShell(command: string, cwd: string): Promise<GitResult> {
 async function execGitArgs(bin: string, args: readonly string[], cwd: string): Promise<GitResult> {
 	const result = await execa(bin, args, {
 		cwd,
+		env: buildGitEnvironment(),
 		reject: false,
+		timeout: GIT_COMMAND_TIMEOUT_MS,
 	});
 
 	return {
@@ -64,20 +88,24 @@ export function sanitizeBranchName(name: string): string {
 }
 
 export async function configureGit(options: GitConfigOptions, cwd: string): Promise<void> {
-	const commands: readonly (readonly [string, ...string[]])[] = [
-		['git', 'config', '--global', '--add', 'safe.directory', cwd],
-		['git', 'config', 'http.version', 'HTTP/1.1'],
-		['git', 'config', 'user.email', options.userEmail],
-		['git', 'config', 'user.name', options.userName],
+	const commands: readonly {
+		readonly args: readonly string[];
+		readonly cwd: string;
+	}[] = [
+		{ args: ['config', '--global', '--add', 'safe.directory', cwd], cwd: '/' },
+		{ args: ['config', 'http.version', 'HTTP/1.1'], cwd },
+		{ args: ['config', 'user.email', options.userEmail], cwd },
+		{ args: ['config', 'user.name', options.userName], cwd },
+		{ args: ['config', 'commit.gpgsign', 'false'], cwd },
 	];
 
 	// These config writes must remain ordered so later failures identify the exact command.
 	// oxlint-disable-next-line eslint/no-await-in-loop
-	for (const [bin, ...args] of commands) {
-		const result = await execGitArgs(bin, args, cwd);
+	for (const command of commands) {
+		const result = await execGitArgs('git', command.args, command.cwd);
 		if (result.exitCode !== 0) {
 			throw new Error(
-				`Git config failed: ${bin} ${args.join(' ')}\n${result.stdout}\n${result.stderr}`.trim(),
+				`Git config failed: git ${command.args.join(' ')}\n${result.stdout}\n${result.stderr}`.trim(),
 			);
 		}
 	}
@@ -85,7 +113,7 @@ export async function configureGit(options: GitConfigOptions, cwd: string): Prom
 
 export async function createBranch(branchName: string, cwd: string): Promise<void> {
 	const safeBranch = sanitizeBranchName(branchName);
-	const result = await execGitArgs('git', ['checkout', '-b', safeBranch], cwd);
+	const result = await execGitArgs('git', ['checkout', '-B', safeBranch], cwd);
 
 	if (result.exitCode !== 0) {
 		throw new Error(
@@ -94,7 +122,7 @@ export async function createBranch(branchName: string, cwd: string): Promise<voi
 	}
 }
 
-export async function stageAndCommit(options: CommitOptions): Promise<void> {
+export async function stageAndCommit(options: CommitOptions): Promise<CommitResult> {
 	const addResult = await execGitShell('git add -A', options.cwd);
 	if (addResult.exitCode !== 0) {
 		throw new Error(`Failed to stage files\n${addResult.stdout}\n${addResult.stderr}`.trim());
@@ -104,13 +132,15 @@ export async function stageAndCommit(options: CommitOptions): Promise<void> {
 	const commitResult = await execGitArgs('git', ['commit', '-m', commitMessage], options.cwd);
 
 	if (commitResult.exitCode !== 0) {
-		if (commitResult.stdout.includes('nothing to commit')) {
-			return;
+		const output = `${commitResult.stdout}\n${commitResult.stderr}`;
+		if (output.includes('nothing to commit')) {
+			return { committed: false };
 		}
 		throw new Error(
 			`Failed to create commit\n${commitResult.stdout}\n${commitResult.stderr}`.trim(),
 		);
 	}
+	return { committed: true };
 }
 
 export async function getDiffStat(cwd: string): Promise<string> {

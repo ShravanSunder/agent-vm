@@ -1,4 +1,7 @@
 /* oxlint-disable typescript-eslint/no-unsafe-assignment -- expect matchers intentionally carry loose matcher types in tests */
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createWorkExecutor } from './executor-factory.js';
@@ -114,6 +117,7 @@ describe('codex-executor', () => {
 		getOrCreateLocalToolMcpServerMock.mockReset();
 		codexConstructorMock.mockReset();
 		getOrCreateLocalToolMcpServerMock.mockResolvedValue(null);
+		delete process.env.STATE_DIR;
 	});
 
 	it('execute() starts a new thread and returns result', async () => {
@@ -296,7 +300,29 @@ describe('codex-executor', () => {
 			// oxlint-disable-next-line typescript-eslint/no-unsafe-assignment
 			expect.objectContaining({
 				env: expect.objectContaining({
-					HOME: expect.any(String),
+					HOME: expect.stringContaining(`${tmpdir()}/agent-vm-codex-home-`),
+				}),
+			}),
+		);
+	});
+
+	it('uses STATE_DIR for temporary codex home when available', async () => {
+		const thread = createMockThread('thread-1', 'done', 5);
+		mockStartThread.mockReturnValue(thread);
+		process.env.STATE_DIR = join(tmpdir(), 'agent-vm-worker-state-test');
+
+		const { createCodexExecutor } = await import('./codex-executor.js');
+		const executor = createCodexExecutor({
+			model: 'latest',
+			capabilities: { mcpServers: [], tools: [] },
+		});
+
+		await executor.execute([{ type: 'text', text: 'hello' }]);
+
+		expect(codexConstructorMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				env: expect.objectContaining({
+					HOME: expect.stringContaining(`${process.env.STATE_DIR}/agent-vm-codex-home-`),
 				}),
 			}),
 		);
@@ -316,8 +342,8 @@ describe('codex-executor', () => {
 				mcpServers: [],
 				tools: [
 					{
-						name: 'git-pr',
-						description: 'Create a PR',
+						name: 'git-push',
+						description: 'Push branch',
 						inputSchema: { type: 'object', properties: {} },
 						execute: async () => ({ ok: true }),
 					},
@@ -328,7 +354,7 @@ describe('codex-executor', () => {
 		await executor.execute([{ type: 'text', text: 'hello' }]);
 
 		expect(getOrCreateLocalToolMcpServerMock).toHaveBeenCalledWith([
-			expect.objectContaining({ name: 'git-pr' }),
+			expect.objectContaining({ name: 'git-push' }),
 		]);
 		expect(execaMock).toHaveBeenCalledWith(
 			'codex',

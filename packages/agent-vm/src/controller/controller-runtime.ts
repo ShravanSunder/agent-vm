@@ -1,4 +1,4 @@
-import { createOpCliSecretResolver, type ManagedVm } from '@shravansunder/gondolin-core';
+import { createOpCliSecretResolver, type ManagedVm } from '@agent-vm/gondolin-adapter';
 
 import { deleteGatewayRuntimeRecord as deleteGatewayRuntimeRecordDefault } from '../gateway/gateway-runtime-record.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
@@ -24,16 +24,33 @@ import {
 	type StartControllerRuntimeOptions,
 } from './controller-runtime-types.js';
 import {
+	pullDefaultForTask,
+	PullDefaultValidationError,
+	type PullDefaultRequest,
+} from './git-pull-default-operations.js';
+import {
 	pushBranchesForTask,
 	PushBranchesValidationError,
 	type PushBranchRequest,
 } from './git-push-operations.js';
+import {
+	ControllerRuntimeAtCapacityError,
+	ControllerTaskNotReadyError,
+} from './http/controller-http-route-support.js';
 import { createControllerService } from './http/controller-http-routes.js';
 import { startControllerHttpServer } from './http/controller-http-server.js';
 import { createIdleReaper } from './leases/idle-reaper.js';
 import { createLeaseManager } from './leases/lease-manager.js';
 import { createTcpPool } from './leases/tcp-pool.js';
-import { runWorkerTask as runWorkerTaskWithPerTaskVm } from './worker-task-runner.js';
+import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
+import { createTaskStateReader } from './task-state-reader.js';
+import {
+	executeWorkerTask as executeWorkerTaskDefault,
+	prepareWorkerTask as prepareWorkerTaskDefault,
+	type WorkerTaskInput,
+} from './worker-task-runner.js';
+
+const MAX_ACTIVE_TASKS_PER_RUNTIME = 1;
 
 function writeControllerRuntimeLog(message: string): void {
 	process.stderr.write(`[agent-vm] ${message}\n`);
@@ -66,6 +83,7 @@ export async function startControllerRuntime(
 		options.systemConfig,
 		secretResolver,
 	);
+	const callerUrl = process.env.CALLER_URL;
 	const createManagedToolVm =
 		dependencies.createManagedToolVm ??
 		(async (toolVmOptions): Promise<ManagedVm> =>
@@ -79,6 +97,7 @@ export async function startControllerRuntime(
 			}));
 	const tcpPool = createTcpPool(options.systemConfig.tcpPool);
 	const activeTaskRegistry = new ActiveTaskRegistry();
+	const requestHeartbeatRegistry = new RequestHeartbeatRegistry();
 	const activeZone = findConfiguredZone(options.systemConfig, options.zoneId);
 	const leaseManager = createLeaseManager({
 		cleanWorkspace: async ({ profile, tcpSlot, zoneId }) => {
@@ -204,38 +223,95 @@ export async function startControllerRuntime(
 					stopController,
 				}
 			: { stopController };
-	const workerTaskRunner =
+	const prepareWorkerTaskForZone =
 		activeZone.gateway.type === 'worker'
-			? (() => {
-					const runWorkerTask = dependencies.runWorkerTask ?? runWorkerTaskWithPerTaskVm;
-					return async (
-						zoneId: string,
-						input: {
-							readonly prompt: string;
-							readonly repos: readonly {
-								readonly repoUrl: string;
-								readonly baseBranch: string;
-							}[];
-							readonly context: Record<string, unknown>;
-						},
-					) =>
-						await runWorkerTask({
+			? async (zoneId: string, input: WorkerTaskInput) => {
+					const reservationId = activeTaskRegistry.tryReserve(zoneId, MAX_ACTIVE_TASKS_PER_RUNTIME);
+					if (!reservationId) {
+						throw new ControllerRuntimeAtCapacityError(
+							`Worker pod for zone '${zoneId}' is at capacity.`,
+						);
+					}
+					try {
+						return await (dependencies.prepareWorkerTask ?? prepareWorkerTaskDefault)({
 							input,
-							secretResolver,
 							systemConfig: options.systemConfig,
 							zoneId,
-							onTaskPrepared:
-								dependencies.onWorkerTaskPrepared ??
-								(async (task) => {
-									activeTaskRegistry.register(task);
-								}),
-							onTaskFinished:
-								dependencies.onWorkerTaskFinished ??
-								(async (finishedZoneId, taskId) => {
-									activeTaskRegistry.clear(finishedZoneId, taskId);
-								}),
+							...(controllerGithubToken ? { githubToken: controllerGithubToken } : {}),
+							onTaskPrepared: async (task) => {
+								activeTaskRegistry.activateReservation(zoneId, reservationId, task);
+								try {
+									await dependencies.onWorkerTaskPrepared?.(task);
+								} catch (error) {
+									activeTaskRegistry.clear(task.zoneId, task.taskId);
+									throw error;
+								}
+							},
 						});
-				})()
+					} catch (error) {
+						activeTaskRegistry.releaseReservation(zoneId, reservationId);
+						throw error;
+					}
+				}
+			: undefined;
+	const executePreparedWorkerTask =
+		activeZone.gateway.type === 'worker'
+			? async (prepared: Awaited<ReturnType<typeof prepareWorkerTaskDefault>>) => {
+					let heartbeatAcquired = false;
+					try {
+						if (callerUrl) {
+							requestHeartbeatRegistry.acquire(prepared.input.requestTaskId, callerUrl);
+							heartbeatAcquired = true;
+						}
+						return await (dependencies.executeWorkerTask ?? executeWorkerTaskDefault)(prepared, {
+							secretResolver,
+							systemConfig: options.systemConfig,
+							onWorkerTaskIngress: async (zoneId, taskId, workerIngress) => {
+								activeTaskRegistry.setWorkerIngress(zoneId, taskId, workerIngress);
+								await dependencies.onWorkerTaskIngress?.(zoneId, taskId, workerIngress);
+							},
+							onTaskFinished: async (finishedZoneId, taskId) => {
+								activeTaskRegistry.clear(finishedZoneId, taskId);
+								await dependencies.onWorkerTaskFinished?.(finishedZoneId, taskId);
+							},
+						});
+					} catch (error) {
+						if (activeTaskRegistry.get(prepared.zoneId, prepared.taskId)) {
+							activeTaskRegistry.clear(prepared.zoneId, prepared.taskId);
+						}
+						throw error;
+					} finally {
+						if (heartbeatAcquired) {
+							requestHeartbeatRegistry.release(prepared.input.requestTaskId);
+						}
+					}
+				}
+			: undefined;
+	const getTaskState =
+		activeZone.gateway.type === 'worker'
+			? createTaskStateReader({ systemConfig: options.systemConfig }).read
+			: undefined;
+	const closeTaskForZone =
+		activeZone.gateway.type === 'worker'
+			? async (zoneId: string, taskId: string) => {
+					const activeTask = activeTaskRegistry.get(zoneId, taskId);
+					if (!activeTask) {
+						throw new Error(`Task '${taskId}' is not active for zone '${zoneId}'.`);
+					}
+					if (!activeTask.workerIngress) {
+						throw new ControllerTaskNotReadyError(
+							`Task '${taskId}' in zone '${zoneId}' does not have a worker ingress yet.`,
+						);
+					}
+					const response = await fetch(
+						`http://${activeTask.workerIngress.host}:${String(activeTask.workerIngress.port)}/tasks/${taskId}/close`,
+						{ method: 'POST' },
+					);
+					if (!response.ok) {
+						throw new Error(`worker close returned HTTP ${String(response.status)}`);
+					}
+					return { status: 'closed' as const };
+				}
 			: undefined;
 	const pushTaskBranches =
 		activeZone.gateway.type === 'worker'
@@ -262,14 +338,39 @@ export async function startControllerRuntime(
 					});
 				}
 			: undefined;
-	const operations =
-		pushTaskBranches !== undefined
-			? { ...controllerOperations, pushTaskBranches }
-			: controllerOperations;
+	const pullDefaultForActiveTask =
+		activeZone.gateway.type === 'worker'
+			? async (zoneId: string, taskId: string, input: PullDefaultRequest) => {
+					const activeTask = activeTaskRegistry.get(zoneId, taskId);
+					if (!activeTask) {
+						throw new PullDefaultValidationError(
+							`Task '${taskId}' is not active for zone '${zoneId}'.`,
+						);
+					}
+					if (!controllerGithubToken) {
+						throw new Error(
+							'Controller GitHub token is not configured. Set host.githubToken or process.env.GITHUB_TOKEN.',
+						);
+					}
+					return await pullDefaultForTask({
+						activeTask,
+						repoUrl: input.repoUrl,
+						githubToken: controllerGithubToken,
+					});
+				}
+			: undefined;
+	const operations = {
+		...controllerOperations,
+		...(prepareWorkerTaskForZone ? { prepareWorkerTask: prepareWorkerTaskForZone } : {}),
+		...(executePreparedWorkerTask ? { executeWorkerTask: executePreparedWorkerTask } : {}),
+		...(getTaskState ? { getTaskState } : {}),
+		...(closeTaskForZone ? { closeTaskForZone } : {}),
+		...(pushTaskBranches ? { pushTaskBranches } : {}),
+		...(pullDefaultForActiveTask ? { pullDefaultForTask: pullDefaultForActiveTask } : {}),
+	};
 	const controllerApp = createControllerService({
 		leaseManager,
-		...(operations ? { operations } : {}),
-		...(workerTaskRunner ? { workerTaskRunner } : {}),
+		operations,
 		systemConfig: options.systemConfig,
 	});
 	await runTaskStep(`Controller API on :${options.systemConfig.host.controllerPort}`, async () => {
@@ -284,6 +385,7 @@ export async function startControllerRuntime(
 	return {
 		async close(): Promise<void> {
 			clearReaperTimer();
+			requestHeartbeatRegistry.stopAll();
 			const releaseError = await releaseAllLeases();
 			try {
 				await stopGatewayZone();

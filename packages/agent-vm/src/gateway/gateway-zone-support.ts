@@ -1,33 +1,36 @@
-import type { GatewayProcessSpec, GatewayZoneConfig } from '@shravansunder/gateway-interface';
+import type { GatewayProcessSpec, GatewayZoneConfig } from '@agent-vm/gateway-interface';
 
-import type { SystemConfig } from '../config/system-config.js';
+import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 
 export type GatewayZone = SystemConfig['zones'][number];
 
 export interface StartGatewayZoneOptions {
+	readonly environmentOverride?: Record<string, string>;
 	readonly runTask?: RunTaskFn;
-	readonly secretResolver: import('@shravansunder/gondolin-core').SecretResolver;
-	readonly systemConfig: SystemConfig;
+	readonly secretResolver: import('@agent-vm/gondolin-adapter').SecretResolver;
+	readonly systemConfig: LoadedSystemConfig;
 	readonly tcpHostsOverride?: Record<string, string>;
+	readonly vfsMountsOverride?: GatewayManagedVmFactoryOptions['vfsMounts'];
 	readonly zoneId: string;
 	readonly zoneOverride?: GatewayZone;
 }
 
 export interface GatewayZoneStartResult {
-	readonly image: import('@shravansunder/gondolin-core').BuildImageResult;
+	readonly image: import('@agent-vm/gondolin-adapter').BuildImageResult;
 	readonly ingress: {
 		readonly host: string;
 		readonly port: number;
 	};
 	readonly processSpec: GatewayProcessSpec;
-	readonly vm: import('@shravansunder/gondolin-core').ManagedVm;
+	readonly vm: import('@agent-vm/gondolin-adapter').ManagedVm;
 	readonly zone: GatewayZone;
 }
 
 export interface GatewayBuildImageOptions {
 	readonly buildConfig: unknown;
 	readonly cacheDir: string;
+	readonly fingerprintInput: unknown;
 	readonly fullReset?: boolean;
 }
 
@@ -74,7 +77,7 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 		id: zone.id,
 		gateway: {
 			cpus: zone.gateway.cpus,
-			gatewayConfig: zone.gateway.gatewayConfig,
+			config: zone.gateway.config,
 			memory: zone.gateway.memory,
 			port: zone.gateway.port,
 			stateDir: zone.gateway.stateDir,
@@ -101,7 +104,7 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 			]),
 		),
 		allowedHosts: zone.allowedHosts,
-		toolProfile: zone.toolProfile,
+		...(zone.toolProfile ? { toolProfile: zone.toolProfile } : {}),
 		websocketBypass: zone.websocketBypass,
 	};
 }

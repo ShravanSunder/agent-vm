@@ -1,19 +1,20 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { buildToolSessionLabel } from '@shravansunder/gateway-interface';
+import { buildToolSessionLabel } from '@agent-vm/gateway-interface';
 import {
 	createManagedVm as createManagedVmFromCore,
 	type ManagedVm,
-} from '@shravansunder/gondolin-core';
+} from '@agent-vm/gondolin-adapter';
 
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
-import type { SystemConfig } from '../config/system-config.js';
+import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { ToolProfile } from '../controller/leases/lease-manager.js';
 
 export interface ToolVmLifecycleDependencies {
 	readonly buildGondolinImage?: (options: {
 		readonly buildConfigPath: string;
+		readonly systemCacheIdentifierPath: string;
 		readonly cacheDir: string;
 		readonly fullReset?: boolean;
 	}) => ReturnType<typeof buildGondolinImageDefault>;
@@ -49,7 +50,7 @@ export async function createToolVm(
 	options: {
 		readonly cacheDir: string;
 		readonly profile: ToolProfile;
-		readonly systemConfig: SystemConfig;
+		readonly systemConfig: LoadedSystemConfig;
 		readonly tcpSlot: number;
 		readonly workspaceDir: string;
 		readonly zoneId: string;
@@ -58,9 +59,14 @@ export async function createToolVm(
 ): Promise<ManagedVm> {
 	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
+	const toolImageProfile = options.systemConfig.imageProfiles.toolVms[options.profile.imageProfile];
+	if (!toolImageProfile) {
+		throw new Error(`Tool VM image profile '${options.profile.imageProfile}' is not configured.`);
+	}
 	const toolImage = await buildGondolinImage({
-		buildConfigPath: options.systemConfig.images.tool.buildConfig,
-		cacheDir: path.join(options.cacheDir, 'images', 'tool'),
+		buildConfigPath: toolImageProfile.buildConfig,
+		systemCacheIdentifierPath: options.systemConfig.systemCacheIdentifierPath,
+		cacheDir: path.join(options.cacheDir, 'tool-vm-images', options.profile.imageProfile),
 	});
 	const hostWorkspaceDirectory = resolveToolVmWorkspaceDirectory({
 		profile: options.profile,

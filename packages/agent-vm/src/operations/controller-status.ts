@@ -7,7 +7,7 @@ export interface ControllerStatusSummary {
 		readonly gatewayType: SystemConfig['zones'][number]['gateway']['type'];
 		readonly id: string;
 		readonly ingressPort: number;
-		readonly toolProfile: string;
+		readonly toolProfile?: string;
 	}[];
 }
 
@@ -19,7 +19,7 @@ export function buildControllerStatus(systemConfig: SystemConfig): ControllerSta
 			gatewayType: zone.gateway.type,
 			id: zone.id,
 			ingressPort: zone.gateway.port,
-			toolProfile: zone.toolProfile,
+			...(zone.toolProfile ? { toolProfile: zone.toolProfile } : {}),
 		})),
 	};
 }

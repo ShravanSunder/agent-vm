@@ -1,12 +1,12 @@
 {
-	"name": "agent-vm",
+	"name": "agent-vm-workspace",
 	"version": "0.0.1",
 	"private": true,
-	"description": "Gondolin-based VM controller and OpenClaw integration",
+	"description": "Sandboxed VM controller, worker, and gateway packages for autonomous coding agents",
+	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
 	"type": "module",
 	"scripts": {
 		"build": "pnpm -r build",
-		"changeset": "changeset",
 		"clean": "git clean -fdX packages",
 		"lint": "oxlint .",
 		"lint:fix": "oxlint --fix",
@@ -19,12 +19,9 @@
 		"test:unit": "vitest run --config vitest.config.ts",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"test:smoke": "vitest run --config vitest.smoke.config.ts",
-		"test:watch": "vitest",
-		"version:packages": "changeset version",
-		"publish:packages": "changeset publish"
+		"test:watch": "vitest"
 	},
 	"devDependencies": {
-		"@changesets/cli": "^2.29.7",
 		"@types/node": "^25.6.0",
 		"oxfmt": "^0.44.0",
 		"oxlint": "^1.59.0",

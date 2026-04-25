@@ -16,10 +16,6 @@ const mocks = vi.hoisted(() => ({
 	runVerification: vi.fn(),
 	allVerificationsPassed: vi.fn(),
 	buildVerificationFailureSummary: vi.fn(),
-	reviewWork: vi.fn(),
-	buildWrapupTools: vi.fn(),
-	getWrapupActionConfigs: vi.fn(),
-	findMissingRequiredActions: vi.fn(),
 	gatherContext: vi.fn(),
 }));
 
@@ -29,27 +25,14 @@ vi.mock('./work-executor/executor-factory.js', () => ({
 vi.mock('./git/git-operations.js', () => ({
 	getDiff: mocks.getDiff,
 }));
-vi.mock('./work-reviewer/verification-runner.js', async (importOriginal) => {
-	const original = await importOriginal<typeof import('./work-reviewer/verification-runner.js')>();
+vi.mock('./validation-runner/verification-runner.js', async (importOriginal) => {
+	const original =
+		await importOriginal<typeof import('./validation-runner/verification-runner.js')>();
 	return {
 		...original,
 		runVerification: mocks.runVerification,
 		allVerificationsPassed: mocks.allVerificationsPassed,
 		buildVerificationFailureSummary: mocks.buildVerificationFailureSummary,
-	};
-});
-vi.mock('./work-reviewer/work-reviewer.js', () => ({
-	reviewWork: mocks.reviewWork,
-}));
-vi.mock('./wrapup/wrapup-action-registry.js', () => ({
-	buildWrapupTools: mocks.buildWrapupTools,
-	getWrapupActionConfigs: mocks.getWrapupActionConfigs,
-}));
-vi.mock('./wrapup/wrapup-types.js', async (importOriginal) => {
-	const original = await importOriginal<typeof import('./wrapup/wrapup-types.js')>();
-	return {
-		...original,
-		findMissingRequiredActions: mocks.findMissingRequiredActions,
 	};
 });
 vi.mock('./context/gather-context.js', () => ({
@@ -118,35 +101,36 @@ describe('worker runtime integration', () => {
 			packageJson: null,
 		});
 		mocks.getDiff.mockResolvedValue('diff --git');
-		mocks.runVerification.mockResolvedValue([
-			{ name: 'test', passed: true, exitCode: 0, output: '' },
-		]);
-		mocks.allVerificationsPassed.mockReturnValue(true);
-		mocks.buildVerificationFailureSummary.mockReturnValue('');
-		mocks.reviewWork.mockResolvedValue({
-			verificationResults: [{ name: 'test', passed: true, exitCode: 0, output: '' }],
-			verificationPassed: true,
-			review: { approved: true, comments: [], summary: 'Looks good' },
-		});
-		mocks.buildWrapupTools.mockReturnValue({
-			tools: [],
-			getResults: () => [],
-		});
-		mocks.getWrapupActionConfigs.mockReturnValue([]);
-		mocks.findMissingRequiredActions.mockReturnValue([]);
-
-		const planExecutor = createMockExecutor('The implementation plan');
-		const reviewExecutor = createMockExecutor(
-			JSON.stringify({ approved: true, comments: [], summary: 'Looks good' }),
+		const planExecutor = createMockExecutor(JSON.stringify({ plan: 'The implementation plan' }));
+		const planReviewExecutor = createMockExecutor(
+			JSON.stringify({ approved: true, summary: 'Looks good', comments: [] }),
 		);
-		const workExecutor = createMockExecutor('Implemented');
-		const wrapupExecutor = createMockExecutor('Wrapup complete');
+		const workExecutor = createMockExecutor(
+			JSON.stringify({ summary: 'Implemented', commitShas: [], remainingConcerns: '' }),
+		);
+		const workReviewExecutor = createMockExecutor(
+			JSON.stringify({
+				approved: true,
+				summary: 'Looks good',
+				comments: [],
+				validationResults: [{ name: 'test', passed: true, exitCode: 0, output: '' }],
+			}),
+		);
+		const wrapupExecutor = createMockExecutor(
+			JSON.stringify({
+				summary: 'Wrapup complete',
+				prUrl: null,
+				branchName: null,
+				pushedCommits: [],
+			}),
+		);
 		let callCount = 0;
 		mocks.createWorkExecutor.mockImplementation(() => {
 			callCount += 1;
 			if (callCount === 1) return planExecutor;
-			if (callCount === 2) return reviewExecutor;
+			if (callCount === 2) return planReviewExecutor;
 			if (callCount === 3) return workExecutor;
+			if (callCount === 4) return workReviewExecutor;
 			return wrapupExecutor;
 		});
 	});
@@ -157,7 +141,24 @@ describe('worker runtime integration', () => {
 	});
 
 	it('runs a task from HTTP submission through to completed state', async () => {
-		const config = workerConfigSchema.parse({ stateDir });
+		const config = workerConfigSchema.parse({
+			stateDir,
+			phases: {
+				plan: {
+					cycle: { kind: 'review', cycleCount: 1 },
+					agentInstructions: null,
+					reviewerInstructions: null,
+					skills: [],
+				},
+				work: {
+					cycle: { kind: 'review', cycleCount: 1 },
+					agentInstructions: null,
+					reviewerInstructions: null,
+					skills: [],
+				},
+				wrapup: { instructions: null, skills: [] },
+			},
+		});
 		const coordinator = await createCoordinator({ config, workspaceDir });
 		const app = createApp({
 			getActiveTaskId: () => coordinator.getActiveTaskId(),

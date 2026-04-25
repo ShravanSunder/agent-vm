@@ -5,7 +5,23 @@ import { workerConfigSchema } from './config/worker-config.js';
 import { createApp, type ServerDeps } from './server.js';
 import type { TaskState } from './state/task-state.js';
 
-const TEST_EFFECTIVE_CONFIG = workerConfigSchema.parse({});
+const TEST_EFFECTIVE_CONFIG = workerConfigSchema.parse({
+	phases: {
+		plan: {
+			cycle: { kind: 'review', cycleCount: 1 },
+			agentInstructions: null,
+			reviewerInstructions: null,
+			skills: [],
+		},
+		work: {
+			cycle: { kind: 'review', cycleCount: 1 },
+			agentInstructions: null,
+			reviewerInstructions: null,
+			skills: [],
+		},
+		wrapup: { instructions: null, skills: [] },
+	},
+});
 const genericJsonResponseSchema = z.record(z.string(), z.unknown());
 
 function makeTaskState(overrides?: Partial<TaskState>): TaskState {
@@ -21,16 +37,20 @@ function makeTaskState(overrides?: Partial<TaskState>): TaskState {
 		},
 		plan: null,
 		lastContextError: null,
-		lastDiffError: null,
-		plannerThreadId: null,
-		workThreadId: null,
-		planReviewLoop: 0,
-		workReviewLoop: 0,
-		verificationAttempt: 0,
-		lastReviewSummary: null,
-		lastVerificationResults: null,
+		planAgentThreadId: null,
+		planReviewerThreadId: null,
+		workAgentThreadId: null,
+		workReviewerThreadId: null,
+		wrapupThreadId: null,
+		planReviewCycle: 0,
+		workReviewCycle: 0,
+		currentCycle: 0,
+		currentMaxCycles: 0,
+		lastPlanReview: null,
+		lastWorkReview: null,
+		lastValidationResults: null,
 		failureReason: null,
-		wrapupResults: null,
+		wrapupResult: null,
 		createdAt: new Date().toISOString(),
 		updatedAt: new Date().toISOString(),
 		...overrides,
@@ -150,7 +170,9 @@ describe('server', () => {
 	});
 
 	it('POST /tasks/:id/close closes a running task', async () => {
-		const app = createApp(createDeps({ getTaskState: () => makeTaskState({ status: 'working' }) }));
+		const app = createApp(
+			createDeps({ getTaskState: () => makeTaskState({ status: 'work-agent' }) }),
+		);
 		const response = await app.request('/tasks/test-1/close', { method: 'POST' });
 
 		expect(response.status).toBe(200);

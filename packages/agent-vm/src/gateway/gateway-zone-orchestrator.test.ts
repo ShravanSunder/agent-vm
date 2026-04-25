@@ -8,10 +8,10 @@ import type {
 	ManagedVm,
 	ManagedVmInstance,
 	SecretResolver,
-} from '@shravansunder/gondolin-core';
+} from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { SystemConfig } from '../config/system-config.js';
+import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { startGatewayZone } from './gateway-zone-orchestrator.js';
 
 const { cleanupOrphanedGatewayIfPresentMock } = vi.hoisted(() => ({
@@ -56,72 +56,105 @@ function createGatewayConfigPath(): string {
 	return configPath;
 }
 
-function createSystemConfig(): SystemConfig {
-	return {
-		cacheDir: '/cache',
-		host: {
-			controllerPort: 18800,
-			projectNamespace: 'claw-tests-a1b2c3d4',
-			secretsProvider: {
-				type: '1password',
-				tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
-			},
-		},
-		images: {
-			gateway: {
-				buildConfig: './images/gateway/build-config.json',
-			},
-			tool: {
-				buildConfig: './images/tool/build-config.json',
-			},
-		},
-		zones: [
-			{
-				id: 'shravan',
-				gateway: {
-					type: 'openclaw',
-					memory: '2G',
-					cpus: 2,
-					port: 18791,
-					gatewayConfig: createGatewayConfigPath(),
-					stateDir: '../state/shravan',
-					workspaceDir: '../workspaces/shravan',
+function createSystemConfigPathWithIdentifier(): string {
+	const workingDirectoryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-gateway-cache-id-'));
+	createdDirectories.push(workingDirectoryPath);
+	const configDirectory = path.join(workingDirectoryPath, 'config');
+	fs.mkdirSync(configDirectory, { recursive: true });
+	const systemConfigPath = path.join(configDirectory, 'system.json');
+	const systemCacheIdentifierPath = path.join(configDirectory, 'systemCacheIdentifier.json');
+	fs.writeFileSync(
+		systemCacheIdentifierPath,
+		JSON.stringify({
+			gitSha: 'gateway-system-cache-sha',
+			schemaVersion: 1,
+		}),
+		'utf8',
+	);
+	return systemConfigPath;
+}
+
+function createSystemConfig(): LoadedSystemConfig {
+	return createLoadedSystemConfig(
+		{
+			cacheDir: '/cache',
+			host: {
+				controllerPort: 18800,
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				secretsProvider: {
+					type: '1password',
+					tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 				},
-				secrets: {
-					PERPLEXITY_API_KEY: {
-						source: '1password',
-						ref: 'op://agent-vm/shravan-perplexity/credential',
-						injection: 'http-mediation',
-						hosts: ['api.perplexity.ai'],
+			},
+			imageProfiles: {
+				gateways: {
+					openclaw: {
+						type: 'openclaw',
+						buildConfig: './vm-images/gateways/openclaw/build-config.json',
 					},
-					DISCORD_BOT_TOKEN: {
-						source: '1password',
-						ref: 'op://agent-vm/shravan-discord/bot-token',
-						injection: 'env',
-					},
-					OPENCLAW_GATEWAY_TOKEN: {
-						source: '1password',
-						ref: 'op://agent-vm/shravan-gateway-auth/password',
-						injection: 'env',
+					worker: {
+						type: 'worker',
+						buildConfig: './vm-images/gateways/worker/build-config.json',
 					},
 				},
-				allowedHosts: ['api.anthropic.com', 'api.openai.com', 'api.perplexity.ai'],
-				websocketBypass: ['gateway.discord.gg:443'],
-				toolProfile: 'standard',
+				toolVms: {
+					default: {
+						type: 'toolVm',
+						buildConfig: './vm-images/tool-vms/default/build-config.json',
+					},
+				},
 			},
-		],
-		toolProfiles: {
-			standard: {
-				memory: '1G',
-				cpus: 1,
-				workspaceRoot: './workspaces/tools',
+			zones: [
+				{
+					id: 'shravan',
+					gateway: {
+						type: 'openclaw',
+						imageProfile: 'openclaw',
+						memory: '2G',
+						cpus: 2,
+						port: 18791,
+						config: createGatewayConfigPath(),
+						stateDir: '../state/shravan',
+						workspaceDir: '../workspaces/shravan',
+					},
+					secrets: {
+						PERPLEXITY_API_KEY: {
+							source: '1password',
+							ref: 'op://agent-vm/shravan-perplexity/credential',
+							injection: 'http-mediation',
+							hosts: ['api.perplexity.ai'],
+						},
+						DISCORD_BOT_TOKEN: {
+							source: '1password',
+							ref: 'op://agent-vm/shravan-discord/bot-token',
+							injection: 'env',
+						},
+						OPENCLAW_GATEWAY_TOKEN: {
+							source: '1password',
+							ref: 'op://agent-vm/shravan-gateway-auth/password',
+							injection: 'env',
+						},
+					},
+					allowedHosts: ['api.anthropic.com', 'api.openai.com', 'api.perplexity.ai'],
+					websocketBypass: ['gateway.discord.gg:443'],
+					toolProfile: 'standard',
+				},
+			],
+			toolProfiles: {
+				standard: {
+					memory: '1G',
+					cpus: 1,
+					workspaceRoot: './workspaces/tools',
+					imageProfile: 'default',
+				},
+			},
+			tcpPool: {
+				basePort: 19000,
+				size: 5,
 			},
 		},
-		tcpPool: {
-			basePort: 19000,
-			size: 5,
-		},
-	} satisfies SystemConfig;
+		{ systemConfigPath: createSystemConfigPathWithIdentifier() },
+	);
 }
 
 const minimalBuildConfig: BuildConfig = {
@@ -234,8 +267,16 @@ describe('startGatewayZone', () => {
 			},
 		);
 
-		expect(loadBuildConfig).toHaveBeenCalledWith('./images/gateway/build-config.json');
+		expect(loadBuildConfig).toHaveBeenCalledWith('./vm-images/gateways/openclaw/build-config.json');
 		expect(buildImage).toHaveBeenCalled();
+		expect(buildImage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				fingerprintInput: {
+					gitSha: 'gateway-system-cache-sha',
+					schemaVersion: 1,
+				},
+			}),
+		);
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
 				allowedHosts: ['api.anthropic.com', 'api.openai.com', 'api.perplexity.ai'],
@@ -304,6 +345,51 @@ describe('startGatewayZone', () => {
 		});
 	});
 
+	it('merges environmentOverride into vm environment before boot', async () => {
+		const managedVm: ManagedVm = {
+			id: 'vm-override',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '200' })),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28286)),
+			setIngressRoutes: vi.fn(),
+		};
+		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+
+		await startGatewayZone(
+			{
+				environmentOverride: {
+					DATABASE_URL: 'postgres://app:secret@postgres.local:5432/app',
+				},
+				secretResolver: createOpenClawSecretResolver({
+					PERPLEXITY_API_KEY: 'resolved-key',
+					DISCORD_BOT_TOKEN: 'resolved-key',
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig: createSystemConfig(),
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp-env-override',
+					imagePath: '/tmp/gateway-image',
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(createManagedVm).toHaveBeenCalledWith(
+			expect.objectContaining({
+				env: expect.objectContaining({
+					DATABASE_URL: 'postgres://app:secret@postgres.local:5432/app',
+				}),
+			}),
+		);
+	});
+
 	it('throws for an unknown zone id', async () => {
 		const secretResolver: SecretResolver = {
 			resolve: async (): Promise<string> => {
@@ -330,7 +416,7 @@ describe('startGatewayZone', () => {
 
 	it('loads the worker lifecycle for worker gateway zones', async () => {
 		const systemConfig = createSystemConfig();
-		const workerSystemConfig: SystemConfig = {
+		const workerSystemConfig: LoadedSystemConfig = {
 			...systemConfig,
 			zones: systemConfig.zones.map((zone) => ({
 				...zone,

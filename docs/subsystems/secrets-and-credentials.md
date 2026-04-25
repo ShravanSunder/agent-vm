@@ -12,11 +12,11 @@ delivers secrets to Gondolin VMs and host-side controller operations.
 Two discriminated unions drive the entire pipeline:
 
 ```
-SecretRef (gondolin-core/types.ts)
+SecretRef (gondolin-adapter/types.ts)
   | { source: '1password'; ref: string }     -- op:// URI
   | { source: 'environment'; ref: string }    -- process.env key
 
-SecretSpec (gondolin-core/types.ts)
+SecretSpec (gondolin-adapter/types.ts)
   { hosts: readonly string[]; value: string } -- resolved value bound to hosts
 ```
 
@@ -45,7 +45,7 @@ fails, the entire resolver falls back to op-cli for all operations.
 ## Token Source Resolution
 
 Before any 1Password secret can be resolved, the system needs a service account
-token. `resolveServiceAccountToken` (gondolin-core/secret-resolver.ts) supports
+token. `resolveServiceAccountToken` (gondolin-adapter/secret-resolver.ts) supports
 three sources, selected by `host.secretsProvider.tokenSource` in the system
 config:
 
@@ -268,12 +268,12 @@ environment variables expected by SDKs running inside the VM).
 
 | File | Package | Responsibility |
 |------|---------|---------------|
-| `secret-resolver.ts` | gondolin-core | Token source resolution, 1Password SDK/CLI resolver, fallback logic |
-| `types.ts` | gondolin-core | `SecretRef` and `SecretSpec` type definitions |
+| `secret-resolver.ts` | gondolin-adapter | Token source resolution, 1Password SDK/CLI resolver, fallback logic |
+| `types.ts` | gondolin-adapter | `SecretRef` and `SecretSpec` type definitions |
 | `composite-secret-resolver.ts` | agent-vm | Dispatches by source discriminant; exhaustive switch |
 | `controller-runtime-support.ts` | agent-vm | Wires token source -> resolver -> composite; resolves githubToken |
 | `credential-manager.ts` | agent-vm | Maps zone config entries to SecretRefs; resolves per-zone secrets |
 | `split-resolved-gateway-secrets.ts` | gateway-interface | Categorizes resolved secrets into env vs mediated |
 | `system-config.ts` | agent-vm | Zod schemas for secret config, injection modes, token sources |
 | `openclaw-lifecycle.ts` | openclaw-gateway | prepareHostState: writes effective config + auth profiles to disk |
-| `vm-adapter.ts` | gondolin-core | Passes `SecretSpec` map to Gondolin `createHttpHooks` for mediation |
+| `vm-adapter.ts` | gondolin-adapter | Passes `SecretSpec` map to Gondolin `createHttpHooks` for mediation |

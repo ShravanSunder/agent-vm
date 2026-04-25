@@ -139,18 +139,23 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 			JSON.stringify({
 				defaults: { provider: 'codex', model: 'gpt-5.4' },
 				phases: {
-					plan: { skills: [], maxReviewLoops: 0 },
-					planReview: { skills: [] },
-					work: { skills: [], maxReviewLoops: 0, maxVerificationRetries: 1 },
-					workReview: { skills: [] },
-					wrapup: { skills: [] },
+					plan: {
+						skills: [],
+						cycle: { kind: 'noReview' },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					work: {
+						skills: [],
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					wrapup: { skills: [], instructions: null },
 				},
 				mcpServers: [],
 				verification: [{ name: 'verify', command: 'bash scripts/verify.sh' }],
-				wrapupActions: [],
 				branchPrefix: 'agent/',
-				commitCoAuthor: 'agent-vm-worker <noreply@agent-vm>',
-				idleTimeoutMs: 1_800_000,
 				stateDir,
 			}),
 		);

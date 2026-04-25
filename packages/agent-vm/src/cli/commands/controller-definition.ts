@@ -1,11 +1,11 @@
 // oxlint-disable typescript-eslint/explicit-function-return-type
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { command, positional, string, subcommands } from 'cmd-ts';
 
 import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
-import type { SystemConfig } from '../../config/system-config.js';
+import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
 import { runControllerOperationCommand } from '../controller-operation-commands.js';
 import { runLeaseCommand } from '../lease-commands.js';
@@ -59,27 +59,41 @@ function createControllerOperationSubcommand(
 	});
 }
 
-async function isGatewayImageCached(systemConfig: SystemConfig): Promise<boolean> {
+export async function isGatewayImageCached(
+	systemConfig: LoadedSystemConfig,
+	zoneId: string,
+): Promise<boolean> {
+	const zone = requireZone(systemConfig, zoneId);
+	const gatewayImageProfile = systemConfig.imageProfiles.gateways[zone.gateway.imageProfile];
+	if (!gatewayImageProfile) {
+		throw new Error(`Gateway image profile '${zone.gateway.imageProfile}' is not configured.`);
+	}
 	const gatewayFingerprint = await computeFingerprintFromConfigPath(
-		systemConfig.images.gateway.buildConfig,
+		gatewayImageProfile.buildConfig,
+		systemConfig.systemCacheIdentifierPath,
 	);
 	const gatewayCachePath = path.join(
 		systemConfig.cacheDir,
-		'images',
-		'gateway',
+		'gateway-images',
+		zone.gateway.imageProfile,
 		gatewayFingerprint,
 	);
-	return fs.existsSync(path.join(gatewayCachePath, 'manifest.json'));
+	try {
+		await fs.access(path.join(gatewayCachePath, 'manifest.json'));
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 async function requireGatewayImageCache(
-	systemConfig: SystemConfig,
+	systemConfig: LoadedSystemConfig,
 	zoneId: string,
 	dependencies: Pick<CliDependencies, 'isGatewayImageCached'>,
 ): Promise<void> {
 	const cacheIsWarm =
-		(await dependencies.isGatewayImageCached?.(systemConfig)) ??
-		(await isGatewayImageCached(systemConfig));
+		(await dependencies.isGatewayImageCached?.(systemConfig, zoneId)) ??
+		(await isGatewayImageCached(systemConfig, zoneId));
 	if (cacheIsWarm) {
 		return;
 	}

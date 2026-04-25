@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 
-import type { BuildConfig, BuildImageResult } from '@shravansunder/gondolin-core';
+import type { BuildConfig, BuildImageResult } from '@agent-vm/gondolin-adapter';
 
 import {
 	buildGondolinImage as buildGondolinImageDefault,
@@ -21,20 +21,42 @@ async function loadBuildConfigFromJson(buildConfigPath: string): Promise<BuildCo
 export async function buildGatewayImage(
 	options: {
 		readonly buildConfigPath: string;
+		readonly systemCacheIdentifierPath: string;
 		readonly cacheDir: string;
 	},
 	dependencies: GatewayImageBuilderDependencies = {},
 ): Promise<BuildImageResult> {
-	if (dependencies.buildImage) {
+	const buildImage = dependencies.buildImage;
+	if (buildImage) {
 		const loadBuildConfig = dependencies.loadBuildConfig ?? loadBuildConfigFromJson;
-		return await dependencies.buildImage({
-			buildConfig: await loadBuildConfig(options.buildConfigPath),
-			cacheDir: options.cacheDir,
-		});
+		return await buildGondolinImageDefault(
+			{
+				buildConfigPath: options.buildConfigPath,
+				systemCacheIdentifierPath: options.systemCacheIdentifierPath,
+				cacheDir: options.cacheDir,
+			},
+			{
+				buildImage: async (buildImageOptions) =>
+					await buildImage({
+						buildConfig: buildImageOptions.buildConfig,
+						cacheDir: buildImageOptions.cacheDir,
+						fingerprintInput: buildImageOptions.fingerprintInput,
+						...(buildImageOptions.fullReset ? { fullReset: true } : {}),
+					}),
+				loadBuildConfig,
+			},
+		);
 	}
 
-	return await buildGondolinImageDefault(options, {
-		...(dependencies.buildGondolinImage ? { buildImage: dependencies.buildGondolinImage } : {}),
-		...(dependencies.loadBuildConfig ? { loadBuildConfig: dependencies.loadBuildConfig } : {}),
-	});
+	return await buildGondolinImageDefault(
+		{
+			buildConfigPath: options.buildConfigPath,
+			systemCacheIdentifierPath: options.systemCacheIdentifierPath,
+			cacheDir: options.cacheDir,
+		},
+		{
+			...(dependencies.buildGondolinImage ? { buildImage: dependencies.buildGondolinImage } : {}),
+			...(dependencies.loadBuildConfig ? { loadBuildConfig: dependencies.loadBuildConfig } : {}),
+		},
+	);
 }

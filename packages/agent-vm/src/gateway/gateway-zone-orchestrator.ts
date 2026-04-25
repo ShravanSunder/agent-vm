@@ -5,11 +5,11 @@ import type {
 	GatewayHealthCheck,
 	GatewayLifecycle,
 	GatewayZoneConfig,
-} from '@shravansunder/gateway-interface';
+} from '@agent-vm/gateway-interface';
 import {
 	createManagedVm as createManagedVmFromCore,
 	type ManagedVm,
-} from '@shravansunder/gondolin-core';
+} from '@agent-vm/gondolin-adapter';
 
 import { runTaskWithResult } from '../shared/run-task.js';
 import { resolveZoneSecrets } from './credential-manager.js';
@@ -27,6 +27,7 @@ import {
 import {
 	findGatewayZone,
 	mapSystemGatewayZoneToLifecycleZone,
+	type GatewayZone,
 	type GatewayManagedVmFactoryOptions,
 	type GatewayZoneStartResult,
 	type StartGatewayZoneOptions,
@@ -40,6 +41,19 @@ export interface GatewayManagerDependencies extends GatewayImageBuilderDependenc
 		stateDirectory: string,
 		record: GatewayRuntimeRecord,
 	) => Promise<void>;
+}
+
+function selectGatewayImageProfile(options: {
+	readonly systemConfig: import('../config/system-config.js').SystemConfig;
+	readonly zone: GatewayZone;
+}): import('../config/system-config.js').SystemConfig['imageProfiles']['gateways'][string] {
+	const profile = options.systemConfig.imageProfiles.gateways[options.zone.gateway.imageProfile];
+	if (!profile) {
+		throw new Error(
+			`Gateway image profile '${options.zone.gateway.imageProfile}' is not configured.`,
+		);
+	}
+	return profile;
 }
 
 async function waitForHealth(options: {
@@ -109,23 +123,27 @@ export async function startGatewayZone(
 				secretResolver: options.secretResolver,
 			}),
 	);
-	const image = await runTaskWithResult(
-		runTaskStep,
-		'Building gateway image',
-		async () =>
-			await buildGatewayImage(
-				{
-					buildConfigPath: options.systemConfig.images.gateway.buildConfig,
-					cacheDir: path.join(options.systemConfig.cacheDir, 'images', 'gateway'),
-				},
-				{
-					...(dependencies.buildImage ? { buildImage: dependencies.buildImage } : {}),
-					...(dependencies.loadBuildConfig
-						? { loadBuildConfig: dependencies.loadBuildConfig }
-						: {}),
-				},
-			),
-	);
+	const image = await runTaskWithResult(runTaskStep, 'Building gateway image', async () => {
+		const gatewayImageProfile = selectGatewayImageProfile({
+			systemConfig: options.systemConfig,
+			zone,
+		});
+		return await buildGatewayImage(
+			{
+				buildConfigPath: gatewayImageProfile.buildConfig,
+				systemCacheIdentifierPath: options.systemConfig.systemCacheIdentifierPath,
+				cacheDir: path.join(
+					options.systemConfig.cacheDir,
+					'gateway-images',
+					zone.gateway.imageProfile,
+				),
+			},
+			{
+				...(dependencies.buildImage ? { buildImage: dependencies.buildImage } : {}),
+				...(dependencies.loadBuildConfig ? { loadBuildConfig: dependencies.loadBuildConfig } : {}),
+			},
+		);
+	});
 	await fs.mkdir(zone.gateway.stateDir, { recursive: true });
 	await fs.mkdir(zone.gateway.workspaceDir, { recursive: true });
 	await runTaskStep('Preparing host state', async () => {
@@ -139,9 +157,17 @@ export async function startGatewayZone(
 		zone: lifecycleZone,
 	});
 	const processSpec = lifecycle.buildProcessSpec(lifecycleZone, resolvedSecrets);
+	const environment = {
+		...vmSpec.environment,
+		...options.environmentOverride,
+	};
 	const tcpHosts = {
 		...vmSpec.tcpHosts,
 		...options.tcpHostsOverride,
+	};
+	const vfsMounts = {
+		...vmSpec.vfsMounts,
+		...options.vfsMountsOverride,
 	};
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
 	const managedVm = await runTaskWithResult(
@@ -151,14 +177,14 @@ export async function startGatewayZone(
 			await createManagedVm({
 				allowedHosts: vmSpec.allowedHosts,
 				cpus: zone.gateway.cpus,
-				env: vmSpec.environment,
+				env: environment,
 				imagePath: image.imagePath,
 				memory: zone.gateway.memory,
 				rootfsMode: vmSpec.rootfsMode,
 				secrets: vmSpec.mediatedSecrets,
 				sessionLabel: vmSpec.sessionLabel,
 				tcpHosts,
-				vfsMounts: vmSpec.vfsMounts,
+				vfsMounts,
 			}),
 	);
 	await runTaskStep('Configuring gateway', async () => {

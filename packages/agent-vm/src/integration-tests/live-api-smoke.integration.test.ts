@@ -111,7 +111,14 @@ describe('live smoke: API client → controller over real HTTP', () => {
 		const createLease = vi.fn(async () => lease);
 		const controllerApp = createControllerApp({
 			readIdentityPem: async () => 'pem-smoke',
-			toolProfiles: { standard: { cpus: 1, memory: '1G', workspaceRoot: '/workspaces/tools' } },
+			toolProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					workspaceRoot: '/workspaces/tools',
+					imageProfile: 'default',
+				},
+			},
 			leaseManager: {
 				createLease,
 				getLease: vi.fn(() => lease),

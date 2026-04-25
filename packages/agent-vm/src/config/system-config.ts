@@ -3,6 +3,9 @@ import path from 'node:path';
 
 import { z } from 'zod';
 
+import { zoneResourcesPolicySchema } from './resource-contracts/index.js';
+import { resolveSystemCacheIdentifierPath } from './system-cache-identifier.js';
+
 const gatewayTypeValues = ['openclaw', 'worker'] as const;
 
 const secretInjectionSchema = z.enum(['env', 'http-mediation']);
@@ -73,10 +76,11 @@ const hostSecretReferenceSchema = z.discriminatedUnion('source', [
 
 const zoneGatewaySchema = z.object({
 	type: z.enum(gatewayTypeValues).default('openclaw'),
+	imageProfile: z.string().min(1),
 	memory: z.string().min(1),
 	cpus: z.number().int().positive(),
 	port: z.number().int().positive(),
-	gatewayConfig: z.string().min(1),
+	config: z.string().min(1),
 	stateDir: z.string().min(1),
 	workspaceDir: z.string().min(1),
 	authProfilesRef: authProfilesSecretSchema.optional(),
@@ -86,11 +90,27 @@ const toolProfileSchema = z.object({
 	memory: z.string().min(1),
 	cpus: z.number().int().positive(),
 	workspaceRoot: z.string().min(1),
+	imageProfile: z.string().min(1),
 });
 
-const imageConfigSchema = z.object({
-	buildConfig: z.string().min(1),
-	dockerfile: z.string().min(1).optional(),
+const imageConfigSchema = z
+	.object({
+		buildConfig: z.string().min(1),
+		dockerfile: z.string().min(1).optional(),
+	})
+	.strict();
+
+const gatewayImageProfileSchema = imageConfigSchema.extend({
+	type: z.enum(gatewayTypeValues),
+});
+
+const toolVmImageProfileSchema = imageConfigSchema.extend({
+	type: z.literal('toolVm'),
+});
+
+const imageProfilesSchema = z.object({
+	gateways: z.record(z.string().min(1), gatewayImageProfileSchema),
+	toolVms: z.record(z.string().min(1), toolVmImageProfileSchema).default({}),
 });
 
 const systemConfigSchema = z
@@ -113,23 +133,21 @@ const systemConfigSchema = z
 			githubToken: hostSecretReferenceSchema.optional(),
 		}),
 		cacheDir: z.string().min(1).default('./cache'),
-		images: z.object({
-			gateway: imageConfigSchema,
-			tool: imageConfigSchema,
-		}),
+		imageProfiles: imageProfilesSchema,
 		zones: z
 			.array(
 				z.object({
 					id: z.string().min(1),
 					gateway: zoneGatewaySchema,
+					resources: zoneResourcesPolicySchema.optional(),
 					secrets: z.record(z.string(), secretReferenceSchema),
 					allowedHosts: z.array(z.string().min(1)).min(1),
 					websocketBypass: z.array(z.string().min(1)).default([]),
-					toolProfile: z.string().min(1),
+					toolProfile: z.string().min(1).optional(),
 				}),
 			)
 			.min(1, 'system config must define at least one zone'),
-		toolProfiles: z.record(z.string(), toolProfileSchema),
+		toolProfiles: z.record(z.string(), toolProfileSchema).default({}),
 		tcpPool: z.object({
 			basePort: z.number().int().positive(),
 			size: z.number().int().positive(),
@@ -151,52 +169,122 @@ const systemConfigSchema = z
 			});
 		}
 
+		if (Object.keys(config.imageProfiles.gateways).length === 0) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'system config must define at least one gateway image profile.',
+				path: ['imageProfiles', 'gateways'],
+			});
+		}
+
 		for (const [zoneIndex, zone] of config.zones.entries()) {
-			if (config.toolProfiles[zone.toolProfile]) {
+			// Keep zone gateway type readable at the use site while image profiles
+			// remain the source of boot-image details. This cross-check prevents
+			// a worker lifecycle from accidentally booting an OpenClaw image, or
+			// vice versa.
+			const gatewayImageProfile = config.imageProfiles.gateways[zone.gateway.imageProfile];
+			if (!gatewayImageProfile) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Zone '${zone.id}' references unknown gateway imageProfile '${zone.gateway.imageProfile}'.`,
+					path: ['zones', zoneIndex, 'gateway', 'imageProfile'],
+				});
+			} else if (gatewayImageProfile.type !== zone.gateway.type) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Zone '${zone.id}' gateway type '${zone.gateway.type}' does not match imageProfile '${zone.gateway.imageProfile}' type '${gatewayImageProfile.type}'.`,
+					path: ['zones', zoneIndex, 'gateway', 'imageProfile'],
+				});
+			}
+
+			if (zone.gateway.type === 'openclaw' && zone.toolProfile === undefined) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `OpenClaw zone '${zone.id}' must declare a toolProfile.`,
+					path: ['zones', zoneIndex, 'toolProfile'],
+				});
+				continue;
+			}
+			if (zone.toolProfile !== undefined && !config.toolProfiles[zone.toolProfile]) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Zone '${zone.id}' references unknown toolProfile '${zone.toolProfile}'.`,
+					path: ['zones', zoneIndex, 'toolProfile'],
+				});
+			}
+		}
+
+		for (const [profileId, profile] of Object.entries(config.toolProfiles)) {
+			if (config.imageProfiles.toolVms[profile.imageProfile]) {
 				continue;
 			}
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
-				message: `Zone '${zone.id}' references unknown toolProfile '${zone.toolProfile}'.`,
-				path: ['zones', zoneIndex, 'toolProfile'],
+				message: `Tool profile '${profileId}' references unknown tool VM imageProfile '${profile.imageProfile}'.`,
+				path: ['toolProfiles', profileId, 'imageProfile'],
 			});
 		}
 	});
 
 export type SystemConfig = z.infer<typeof systemConfigSchema>;
 
+export type LoadedSystemConfig = SystemConfig & {
+	readonly systemConfigPath: string;
+	readonly systemCacheIdentifierPath: string;
+};
+
+export function createLoadedSystemConfig(
+	config: z.infer<typeof systemConfigSchema>,
+	options: { readonly systemConfigPath: string },
+): LoadedSystemConfig {
+	return {
+		...config,
+		systemConfigPath: options.systemConfigPath,
+		systemCacheIdentifierPath: resolveSystemCacheIdentifierPath(options.systemConfigPath),
+	};
+}
+
 /**
  * Resolve all relative paths in a system config relative to the config file's directory.
  * This ensures paths like "./state/shravan" work regardless of the process CWD.
  */
-function resolveRelativePaths(config: SystemConfig, configDir: string): SystemConfig {
+function resolveRelativePaths(
+	config: z.infer<typeof systemConfigSchema>,
+	configDir: string,
+): z.infer<typeof systemConfigSchema> {
 	const resolvePath = (relativePath: string): string =>
 		path.isAbsolute(relativePath) ? relativePath : path.resolve(configDir, relativePath);
 
 	return {
 		...config,
 		cacheDir: resolvePath(config.cacheDir),
-		images: {
-			gateway: {
-				...config.images.gateway,
-				buildConfig: resolvePath(config.images.gateway.buildConfig),
-				...(config.images.gateway.dockerfile
-					? { dockerfile: resolvePath(config.images.gateway.dockerfile) }
-					: {}),
-			},
-			tool: {
-				...config.images.tool,
-				buildConfig: resolvePath(config.images.tool.buildConfig),
-				...(config.images.tool.dockerfile
-					? { dockerfile: resolvePath(config.images.tool.dockerfile) }
-					: {}),
-			},
+		imageProfiles: {
+			gateways: Object.fromEntries(
+				Object.entries(config.imageProfiles.gateways).map(([profileId, profile]) => [
+					profileId,
+					{
+						...profile,
+						buildConfig: resolvePath(profile.buildConfig),
+						...(profile.dockerfile ? { dockerfile: resolvePath(profile.dockerfile) } : {}),
+					},
+				]),
+			),
+			toolVms: Object.fromEntries(
+				Object.entries(config.imageProfiles.toolVms).map(([profileId, profile]) => [
+					profileId,
+					{
+						...profile,
+						buildConfig: resolvePath(profile.buildConfig),
+						...(profile.dockerfile ? { dockerfile: resolvePath(profile.dockerfile) } : {}),
+					},
+				]),
+			),
 		},
 		zones: config.zones.map((zone) => ({
 			...zone,
 			gateway: {
 				...zone.gateway,
-				gatewayConfig: resolvePath(zone.gateway.gatewayConfig),
+				config: resolvePath(zone.gateway.config),
 				stateDir: resolvePath(zone.gateway.stateDir),
 				workspaceDir: resolvePath(zone.gateway.workspaceDir),
 			},
@@ -210,7 +298,7 @@ function resolveRelativePaths(config: SystemConfig, configDir: string): SystemCo
 	};
 }
 
-export async function loadSystemConfig(configPath: string): Promise<SystemConfig> {
+export async function loadSystemConfig(configPath: string): Promise<LoadedSystemConfig> {
 	const absoluteConfigPath = path.resolve(configPath);
 	const configDir = path.dirname(absoluteConfigPath);
 	const rawConfig = await fs.readFile(absoluteConfigPath, 'utf8');
@@ -224,5 +312,7 @@ export async function loadSystemConfig(configPath: string): Promise<SystemConfig
 		});
 	}
 	const config = systemConfigSchema.parse(parsedConfig);
-	return resolveRelativePaths(config, configDir);
+	return createLoadedSystemConfig(resolveRelativePaths(config, configDir), {
+		systemConfigPath: absoluteConfigPath,
+	});
 }

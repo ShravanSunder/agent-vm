@@ -1,26 +1,37 @@
-import type { SecretResolver } from '@shravansunder/gondolin-core';
-import {
-	createOpCliSecretResolver,
-	resolveServiceAccountToken,
-} from '@shravansunder/gondolin-core';
+import type { SecretResolver } from '@agent-vm/gondolin-adapter';
+import { createOpCliSecretResolver, resolveServiceAccountToken } from '@agent-vm/gondolin-adapter';
 
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';
-import { loadSystemConfig, type SystemConfig } from '../config/system-config.js';
+import {
+	loadSystemConfig,
+	type LoadedSystemConfig,
+	type SystemConfig,
+} from '../config/system-config.js';
 import { createSecretResolver as createControllerSecretResolver } from '../controller/controller-runtime-support.js';
 import type { ControllerRuntimeDependencies } from '../controller/controller-runtime-types.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 import { createControllerClient } from '../controller/http/controller-client.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import { runConfigValidation } from '../operations/config-validation.js';
 import { buildControllerStatus } from '../operations/controller-status.js';
 import { runControllerDoctor } from '../operations/doctor.js';
 import { runBuildCommand } from './build-command.js';
 import { runCacheCommand } from './cache-commands.js';
+import { resetWorkerInstructions } from './config-commands.js';
 import {
 	scaffoldAgentVmProject,
-	type GatewayType,
+	type ScaffoldAgentVmProjectOptions,
 	type ScaffoldAgentVmProjectResult,
 } from './init-command.js';
+import {
+	initRepoResources,
+	updateRepoResources,
+	validateRepoResources,
+	type InitRepoResourcesResult,
+	type UpdateRepoResourcesResult,
+	type ValidateRepoResourcesResult,
+} from './resources-commands.js';
 
 export interface CliDependencies {
 	readonly buildControllerStatus: typeof buildControllerStatus;
@@ -29,8 +40,20 @@ export interface CliDependencies {
 	readonly createSecretResolver: typeof createOpCliSecretResolver;
 	readonly createZoneBackupManager: typeof createZoneBackupManager;
 	readonly getCurrentWorkingDirectory?: () => string;
-	readonly isGatewayImageCached?: (systemConfig: SystemConfig) => Promise<boolean>;
-	readonly loadSystemConfig: typeof loadSystemConfig;
+	readonly initRepoResources?: (options: {
+		readonly targetDir: string;
+	}) => Promise<InitRepoResourcesResult>;
+	readonly updateRepoResources?: (options: {
+		readonly targetDir: string;
+	}) => Promise<UpdateRepoResourcesResult>;
+	readonly validateRepoResources?: (options: {
+		readonly targetDir: string;
+	}) => Promise<ValidateRepoResourcesResult>;
+	readonly isGatewayImageCached?: (
+		systemConfig: LoadedSystemConfig,
+		zoneId: string,
+	) => Promise<boolean>;
+	readonly loadSystemConfig: (configPath: string) => Promise<LoadedSystemConfig>;
 	readonly runBuildCommand?: typeof runBuildCommand;
 	readonly runCacheCommand?: typeof runCacheCommand;
 	readonly runCommand?: (
@@ -43,15 +66,15 @@ export interface CliDependencies {
 	) => Promise<void>;
 	readonly resolveServiceAccountToken: typeof resolveServiceAccountToken;
 	readonly runControllerDoctor: typeof runControllerDoctor;
+	readonly runConfigValidation?: typeof runConfigValidation;
 	readonly promptAndStoreServiceAccountToken?: () => Promise<boolean>;
-	readonly scaffoldAgentVmProject?: (options: {
-		readonly gatewayType: GatewayType;
-		readonly targetDir: string;
-		readonly zoneId: string;
-	}) => Promise<ScaffoldAgentVmProjectResult>;
+	readonly resetWorkerInstructions?: typeof resetWorkerInstructions;
+	readonly scaffoldAgentVmProject?: (
+		options: ScaffoldAgentVmProjectOptions,
+	) => Promise<ScaffoldAgentVmProjectResult>;
 	readonly startControllerRuntime: (
 		options: {
-			readonly systemConfig: SystemConfig;
+			readonly systemConfig: LoadedSystemConfig;
 			readonly zoneId: string;
 		},
 		runtimeDependencies?: ControllerRuntimeDependencies,
@@ -87,7 +110,12 @@ export const defaultCliDependencies: CliDependencies = {
 	runCacheCommand,
 	resolveServiceAccountToken,
 	runControllerDoctor,
+	runConfigValidation,
+	resetWorkerInstructions,
 	scaffoldAgentVmProject,
+	initRepoResources,
+	updateRepoResources,
+	validateRepoResources,
 	startControllerRuntime: async (runtimeOptions, runtimeDependencies) =>
 		await startControllerRuntime(runtimeOptions, runtimeDependencies ?? {}),
 	startGatewayZone,
