@@ -105,6 +105,20 @@ describe('git-push-operations', () => {
 		expect(execaMock).not.toHaveBeenCalled();
 	});
 
+	it('rejects duplicate repo push requests before push', async () => {
+		await expect(
+			pushBranchesForTask({
+				activeTask: buildActiveTask(),
+				branches: [
+					{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/one' },
+					{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/two' },
+				],
+				githubToken: 'token',
+			}),
+		).rejects.toBeInstanceOf(PushBranchesValidationError);
+		expect(execaMock).not.toHaveBeenCalled();
+	});
+
 	it('pushes branch and returns rich branch state without creating a PR', async () => {
 		mockGitSuccess();
 

@@ -237,12 +237,19 @@ export async function pushBranchesForTask(options: {
 	readonly branches: readonly PushBranchRequest[];
 	readonly githubToken: string;
 }): Promise<{ readonly results: readonly PushBranchResult[] }> {
+	const requestedRepoUrls = new Set<string>();
 	for (const branch of options.branches) {
 		if (!branch.branchName.startsWith(options.activeTask.branchPrefix)) {
 			throw new PushBranchesValidationError(
 				`Branch '${branch.branchName}' must start with '${options.activeTask.branchPrefix}'.`,
 			);
 		}
+		if (requestedRepoUrls.has(branch.repoUrl)) {
+			throw new PushBranchesValidationError(
+				`Repo '${branch.repoUrl}' has multiple push requests. Push one branch per repo per request.`,
+			);
+		}
+		requestedRepoUrls.add(branch.repoUrl);
 		const repo = options.activeTask.repos.find((candidate) => candidate.repoUrl === branch.repoUrl);
 		if (!repo) {
 			throw new PushBranchesValidationError(
