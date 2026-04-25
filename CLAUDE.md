@@ -75,3 +75,25 @@ runs Docker, QEMU, Zig, and the controller.
 - `packages/agent-vm-worker/src/coordinator/coordinator.ts`
 - `packages/agent-vm-worker/src/config/worker-config.ts`
 - `packages/worker-gateway/src/worker-lifecycle.ts`
+
+## Gateway Image Security Boundary
+
+Do not bake auth tokens or credential material into gateway images. Runtime
+auth must flow through controller HTTP mediation. Keep token env names,
+registry auth files, and build args out of every generated gateway Dockerfile
+so a future edit cannot accidentally turn a runtime secret into image state.
+
+Forbidden in gateway Dockerfiles:
+
+- `ARG`, `ENV`, or `RUN` referencing token names, even with escaped `${VAR}`
+- writing or copying `.npmrc`, `.docker/config.json`, `.netrc`, or auth files
+- `_authToken`, `_password`, or `_secret` literal substrings
+
+Allowed runtime auth path:
+
+1. `system.json` declares the secret with `injection: "http-mediation"` and allowed hosts.
+2. Gondolin runtime places a placeholder in the VM env at boot.
+3. The agent or its tooling consumes the placeholder env var; the proxy swaps it for the real token only on outbound calls to allowed hosts.
+
+The worker base prompt documents how to use placeholder env vars per tool. The
+gateway image must stay redistributable without secret pinning.

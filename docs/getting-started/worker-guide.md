@@ -67,12 +67,12 @@ Controls which LLM models to use, how review cycles run, and what verification c
   "defaults": { "provider": "codex", "model": "latest-medium" },
   "phases": {
     "plan": {
-      "cycle": { "kind": "review", "cycleCount": 1 },
+      "cycle": { "kind": "review", "cycleCount": 2 },
       "agentInstructions": { "path": "./prompts/plan-agent.md" },
       "reviewerInstructions": { "path": "./prompts/plan-reviewer.md" }
     },
     "work": {
-      "cycle": { "kind": "review", "cycleCount": 2 },
+      "cycle": { "kind": "review", "cycleCount": 4 },
       "agentInstructions": { "path": "./prompts/work-agent.md" },
       "reviewerInstructions": { "path": "./prompts/work-reviewer.md" }
     },

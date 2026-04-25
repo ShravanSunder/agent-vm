@@ -215,8 +215,8 @@ describe('scaffoldAgentVmProject', () => {
 		expect(workerConfig.phases.wrapup.instructions).toBe(`${DEFAULT_WRAPUP_INSTRUCTIONS}\n`);
 		expect(workerConfig.defaults.provider).toBe('codex');
 		expect(workerConfig.defaults.model).toBe('latest-medium');
-		expect(workerConfig.phases.plan.cycle).toEqual({ kind: 'review', cycleCount: 1 });
-		expect(workerConfig.phases.work.cycle).toEqual({ kind: 'review', cycleCount: 2 });
+		expect(workerConfig.phases.plan.cycle).toEqual({ kind: 'review', cycleCount: 2 });
+		expect(workerConfig.phases.work.cycle).toEqual({ kind: 'review', cycleCount: 4 });
 		expect(rawWorkerConfig.wrapupActions).toBeUndefined();
 	});
 

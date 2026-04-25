@@ -50,6 +50,12 @@ describe('role default content', () => {
 	test('base forbids direct git push and mentions tokens', () => {
 		expect(DEFAULT_BASE_INSTRUCTIONS.toLowerCase()).toContain('push');
 		expect(DEFAULT_BASE_INSTRUCTIONS.toLowerCase()).toContain('token');
+		expect(DEFAULT_BASE_INSTRUCTIONS).toContain('Mediated secrets');
+		expect(DEFAULT_BASE_INSTRUCTIONS).toContain('NPM_AUTH_TOKEN');
+		expect(DEFAULT_BASE_INSTRUCTIONS).toContain(
+			'printf \'//registry.npmjs.org/:_authToken=${NPM_AUTH_TOKEN}\\n\' > "$HOME/.npmrc"',
+		);
+		expect(DEFAULT_BASE_INSTRUCTIONS).toContain('Do not inline the env var');
 	});
 
 	test('plan-agent does not mention validation tool', () => {

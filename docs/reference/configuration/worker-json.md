@@ -40,12 +40,12 @@ stateDir
   },
   "phases": {
     "plan": {
-      "cycle": { "kind": "review", "cycleCount": 1 },
+      "cycle": { "kind": "review", "cycleCount": 2 },
       "agentInstructions": { "path": "./prompts/plan-agent.md" },
       "reviewerInstructions": { "path": "./prompts/plan-reviewer.md" }
     },
     "work": {
-      "cycle": { "kind": "review", "cycleCount": 2 },
+      "cycle": { "kind": "review", "cycleCount": 4 },
       "agentInstructions": { "path": "./prompts/work-agent.md" },
       "reviewerInstructions": { "path": "./prompts/work-reviewer.md" }
     },
@@ -66,8 +66,10 @@ stateDir
 | --- | --- |
 | `defaults.provider` | `codex` |
 | `defaults.model` | `latest-medium` |
+| `phases.plan.cycle` | `{ "kind": "review", "cycleCount": 2 }` |
 | `phases.plan.agentTurnTimeoutMs` | `900000` |
 | `phases.plan.reviewerTurnTimeoutMs` | `900000` |
+| `phases.work.cycle` | `{ "kind": "review", "cycleCount": 4 }` |
 | `phases.work.agentTurnTimeoutMs` | `2700000` |
 | `phases.work.reviewerTurnTimeoutMs` | `900000` |
 | `phases.wrapup.turnTimeoutMs` | `900000` |

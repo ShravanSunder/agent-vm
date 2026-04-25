@@ -623,7 +623,7 @@ const defaultWorkerGatewayConfig = (): object => ({
 	},
 	phases: {
 		plan: {
-			cycle: { kind: 'review', cycleCount: 1 },
+			cycle: { kind: 'review', cycleCount: 2 },
 			agentInstructions: defaultWorkerPromptReference('plan-agent.md'),
 			reviewerInstructions: defaultWorkerPromptReference('plan-reviewer.md'),
 			agentTurnTimeoutMs: 900_000,
@@ -631,7 +631,7 @@ const defaultWorkerGatewayConfig = (): object => ({
 			skills: [],
 		},
 		work: {
-			cycle: { kind: 'review', cycleCount: 2 },
+			cycle: { kind: 'review', cycleCount: 4 },
 			agentInstructions: defaultWorkerPromptReference('work-agent.md'),
 			reviewerInstructions: defaultWorkerPromptReference('work-reviewer.md'),
 			agentTurnTimeoutMs: 2_700_000,

@@ -25,6 +25,24 @@ export const DEFAULT_BASE_INSTRUCTIONS = `You are an agent operating inside a sa
       GH_TOKEN="$GITHUB_TOKEN" gh pr create --base <default> --title "..." --body "..."
   - The proxy strips the placeholder and injects the real token at the wire level. You never handle the real token directly.
 
+## Mediated secrets
+
+The same mediation pattern applies to every credential surfaced into your env. The value you see is a Gondolin placeholder; the proxy swaps it for the real secret on outbound requests to the allowed hosts declared in zone config. Never print, log, or try to inspect the value.
+
+Default mediated env vars for worker zones:
+- GITHUB_TOKEN: for github.com / api.github.com
+- OPENAI_API_KEY: for api.openai.com
+
+If your task needs another credential, it must be declared in the zone secrets with injection: "http-mediation" and the relevant allowed host. Without that declaration, no auth flows.
+
+If NPM_AUTH_TOKEN is configured for registry.npmjs.org and the repo needs private npm packages, configure npm at task runtime rather than expecting the gateway image to contain auth files:
+
+\`\`\`bash
+printf '//registry.npmjs.org/:_authToken=\${NPM_AUTH_TOKEN}\\n' > "$HOME/.npmrc"
+\`\`\`
+
+The single quotes preserve the literal template so npm substitutes it from the environment during registry calls. Do not inline the env var with double quotes or bake .npmrc into an image.
+
 ## Output discipline
 - Keep prose brief.
 - When asked for JSON, return only JSON with no markdown fence or prose wrapper.`;

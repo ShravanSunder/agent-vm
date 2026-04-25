@@ -18,13 +18,13 @@ function baseValidConfig(): Record<string, unknown> {
 		defaults: { provider: 'codex', model: 'latest-medium' },
 		phases: {
 			plan: {
-				cycle: { kind: 'review', cycleCount: 1 },
+				cycle: { kind: 'review', cycleCount: 2 },
 				agentInstructions: null,
 				reviewerInstructions: null,
 				skills: [],
 			},
 			work: {
-				cycle: { kind: 'review', cycleCount: 2 },
+				cycle: { kind: 'review', cycleCount: 4 },
 				agentInstructions: null,
 				reviewerInstructions: null,
 				skills: [],
@@ -254,7 +254,7 @@ describe('worker-config', () => {
 			const config = await loadWorkerConfig();
 
 			expect(config.phases.plan.agentInstructions).toBeNull();
-			expect(config.phases.work.cycle).toEqual({ kind: 'review', cycleCount: 2 });
+			expect(config.phases.work.cycle).toEqual({ kind: 'review', cycleCount: 4 });
 			expect(config.phases.wrapup.instructions).toBeNull();
 		});
 
@@ -265,15 +265,15 @@ describe('worker-config', () => {
 
 	describe('computeTotalTaskTimeoutMs', () => {
 		it('sums review-cycle phases with 10% buffer', () => {
-			// Arrange: default catalog — plan 1 cycle, work 2 cycles.
+			// Arrange: default config — plan 2 cycles, work 4 cycles.
 			const config = workerConfigSchema.parse(baseValidConfig());
 
 			// Act
 			const total = computeTotalTaskTimeoutMs(config);
 
-			// Assert: plan = (1+1)*900 + 1*900 = 2700. work = (2+1)*2700 + 2*900 = 9900.
-			//         wrapup = 900. sum = 13500. + 10% = 14850 (× 1000 ms).
-			expect(total).toBe(14_850_000);
+			// Assert: plan = (2+1)*900 + 2*900 = 4500. work = (4+1)*2700 + 4*900 = 17100.
+			//         wrapup = 900. sum = 22500. + 10% = 24750 (× 1000 ms).
+			expect(total).toBe(24_750_000);
 		});
 
 		it('handles noReview plan phase', () => {
@@ -285,25 +285,25 @@ describe('worker-config', () => {
 			// Act
 			const total = computeTotalTaskTimeoutMs(config);
 
-			// Assert: plan = 900 (single agent turn). work = 9900. wrapup = 900. + 10% = 12_870_000.
-			expect(total).toBe(12_870_000);
+			// Assert: plan = 900 (single agent turn). work = 17100. wrapup = 900. + 10%.
+			expect(total).toBe(20_790_000);
 		});
 
 		it('scales with larger cycle counts', () => {
-			// Arrange: push work to 3 cycles — worst case grows linearly.
+			// Arrange: push work to 5 cycles — worst case grows linearly.
 			const raw = baseValidConfig();
 			(raw.phases as { work: { cycle: { kind: string; cycleCount: number } } }).work.cycle = {
 				kind: 'review',
-				cycleCount: 3,
+				cycleCount: 5,
 			};
 			const config = workerConfigSchema.parse(raw);
 
 			// Act
 			const total = computeTotalTaskTimeoutMs(config);
 
-			// Assert: plan = 2700. work = (3+1)*2700 + 3*900 = 13500. wrapup = 900.
-			//         sum = 17100. + 10% = 18_810_000.
-			expect(total).toBe(18_810_000);
+			// Assert: plan = 4500. work = (5+1)*2700 + 5*900 = 20700. wrapup = 900.
+			//         sum = 26100. + 10% = 28_710_000.
+			expect(total).toBe(28_710_000);
 		});
 	});
 });

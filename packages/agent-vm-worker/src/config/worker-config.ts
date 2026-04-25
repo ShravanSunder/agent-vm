@@ -206,13 +206,13 @@ function buildDefaultWorkerConfigInput(): Record<string, unknown> {
 	return {
 		phases: {
 			plan: {
-				cycle: { kind: 'review', cycleCount: 1 },
+				cycle: { kind: 'review', cycleCount: 2 },
 				agentInstructions: null,
 				reviewerInstructions: null,
 				skills: [],
 			},
 			work: {
-				cycle: { kind: 'review', cycleCount: 2 },
+				cycle: { kind: 'review', cycleCount: 4 },
 				agentInstructions: null,
 				reviewerInstructions: null,
 				skills: [],
