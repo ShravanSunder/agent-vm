@@ -40,6 +40,26 @@ function buildActiveTask(): {
 	};
 }
 
+function buildMultiRepoActiveTask(): ReturnType<typeof buildActiveTask> {
+	return {
+		...buildActiveTask(),
+		repos: [
+			{
+				repoUrl: 'https://github.com/acme/widgets.git',
+				baseBranch: 'main',
+				hostWorkspacePath: '/tmp/task-1/widgets',
+				vmWorkspacePath: '/workspace/widgets',
+			},
+			{
+				repoUrl: 'https://github.com/acme/api.git',
+				baseBranch: 'main',
+				hostWorkspacePath: '/tmp/task-1/api',
+				vmWorkspacePath: '/workspace/api',
+			},
+		],
+	};
+}
+
 function mockGitSuccess(): void {
 	execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
 		const joined = args.join(' ');
@@ -154,5 +174,53 @@ describe('git-push-operations', () => {
 			success: false,
 			error: expect.stringContaining('Refusing to push'),
 		});
+	});
+
+	it('pushes branches for different repos concurrently', async () => {
+		const events: string[] = [];
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[], options) => {
+			const cwd = options && typeof options === 'object' && 'cwd' in options ? options.cwd : '';
+			const repoName = typeof cwd === 'string' && cwd.endsWith('/api') ? 'api' : 'widgets';
+			if (args[0] === 'push') {
+				events.push(`push-start:${repoName}`);
+				if (repoName === 'widgets') {
+					await new Promise((resolve) => setTimeout(resolve, 10));
+				}
+				events.push(`push-finish:${repoName}`);
+				return { stdout: '', stderr: '', exitCode: 0 };
+			}
+			if (args[0] === 'rev-parse' && args.includes('HEAD')) {
+				return { stdout: `local-${repoName}`, stderr: '', exitCode: 0 };
+			}
+			if (
+				args[0] === 'rev-parse' &&
+				args.some((arg) => arg.startsWith('refs/remotes/origin/agent/'))
+			) {
+				return { stdout: '', stderr: '', exitCode: 1 };
+			}
+			if (args[0] === 'rev-parse' && args.includes('refs/remotes/origin/main')) {
+				return { stdout: `base-${repoName}`, stderr: '', exitCode: 0 };
+			}
+			if (args[0] === 'log') {
+				return { stdout: `local-${repoName}\tfeat: ${repoName}`, stderr: '', exitCode: 0 };
+			}
+			if (args[0] === 'rev-list') {
+				return { stdout: args.join(' ').includes('HEAD..') ? '0' : '1', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		const result = await pushBranchesForTask({
+			activeTask: buildMultiRepoActiveTask(),
+			branches: [
+				{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/widgets' },
+				{ repoUrl: 'https://github.com/acme/api.git', branchName: 'agent/api' },
+			],
+			githubToken: 'token',
+		});
+
+		expect(result.results).toHaveLength(2);
+		expect(result.results.every((branchResult) => branchResult.success)).toBe(true);
+		expect(events.indexOf('push-start:api')).toBeLessThan(events.indexOf('push-finish:widgets'));
 	});
 });

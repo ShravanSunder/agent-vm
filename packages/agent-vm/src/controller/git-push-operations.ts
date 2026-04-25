@@ -251,91 +251,99 @@ export async function pushBranchesForTask(options: {
 		}
 	}
 
-	const results: PushBranchResult[] = [];
-	for (const branch of options.branches) {
-		// Push flow intentionally stays sequential so git state observation,
-		// remote ref fetches, and error reporting remain easy to reason about.
-		// oxlint-disable-next-line eslint/no-await-in-loop
-		const repo = options.activeTask.repos.find((candidate) => candidate.repoUrl === branch.repoUrl);
-		if (!repo) {
-			throw new PushBranchesValidationError(
-				`Repo '${branch.repoUrl}' is not registered for active task '${options.activeTask.taskId}'.`,
+	const results = await Promise.all(
+		options.branches.map(async (branch) => {
+			const repo = options.activeTask.repos.find(
+				(candidate) => candidate.repoUrl === branch.repoUrl,
 			);
-		}
-
-		const branchName = sanitizeBranchName(branch.branchName);
-		try {
-			if (branchName === repo.baseBranch) {
-				results.push({
-					repoUrl: branch.repoUrl,
-					branch: branchName,
-					success: false,
-					error: `Refusing to push: you are on the default branch "${repo.baseBranch}". Create an ${options.activeTask.branchPrefix} branch first and move your commits to it.`,
-				});
-				continue;
+			if (!repo) {
+				throw new PushBranchesValidationError(
+					`Repo '${branch.repoUrl}' is not registered for active task '${options.activeTask.taskId}'.`,
+				);
 			}
-
-			// oxlint-disable-next-line eslint/no-await-in-loop
-			await fetchRemoteRefs({
-				cwd: repo.hostWorkspacePath,
-				defaultBranch: repo.baseBranch,
-				repoUrl: branch.repoUrl,
+			return await pushOneBranchForTask({
+				branch,
 				githubToken: options.githubToken,
+				repo,
+				task: options.activeTask,
 			});
-			// oxlint-disable-next-line eslint/no-await-in-loop
-			const previousRemoteBranchHead = await remoteBranchHead(repo.hostWorkspacePath, branchName);
-			// oxlint-disable-next-line eslint/no-await-in-loop
-			const localHead = await gitStdout(repo.hostWorkspacePath, ['rev-parse', 'HEAD']);
-			if (previousRemoteBranchHead === localHead) {
-				results.push({
-					repoUrl: branch.repoUrl,
-					branch: branchName,
-					success: false,
-					error: `Nothing new to push on ${branchName}. Local HEAD matches origin/${branchName} (${localHead}). Commit your work and call git-push again.`,
-				});
-				continue;
-			}
-
-			// oxlint-disable-next-line eslint/no-await-in-loop
-			await pushBranch({
-				repoUrl: branch.repoUrl,
-				branchName,
-				cwd: repo.hostWorkspacePath,
-				githubToken: options.githubToken,
-			});
-			// oxlint-disable-next-line eslint/no-await-in-loop
-			await git({
-				cwd: repo.hostWorkspacePath,
-				args: [
-					'fetch',
-					'--prune',
-					buildPushUrl(branch.repoUrl, options.githubToken),
-					`${branchName}:refs/remotes/origin/${branchName}`,
-				],
-				reject: false,
-			});
-			// oxlint-disable-next-line eslint/no-await-in-loop
-			const state = await buildBranchState({
-				cwd: repo.hostWorkspacePath,
-				branchName,
-				defaultBranch: repo.baseBranch,
-				previousRemoteBranchHead,
-			});
-			results.push({
-				repoUrl: branch.repoUrl,
-				branch: branchName,
-				success: true,
-				...state,
-			});
-		} catch (error) {
-			results.push({
-				repoUrl: branch.repoUrl,
-				branch: branchName,
-				success: false,
-				error: error instanceof Error ? error.message : String(error),
-			});
-		}
-	}
+		}),
+	);
 
 	return { results };
+}
+
+async function pushOneBranchForTask(options: {
+	readonly branch: PushBranchRequest;
+	readonly githubToken: string;
+	readonly repo: ActiveWorkerTask['repos'][number];
+	readonly task: ActiveWorkerTask;
+}): Promise<PushBranchResult> {
+	const branchName = sanitizeBranchName(options.branch.branchName);
+	try {
+		if (branchName === options.repo.baseBranch) {
+			return {
+				repoUrl: options.branch.repoUrl,
+				branch: branchName,
+				success: false,
+				error: `Refusing to push: you are on the default branch "${options.repo.baseBranch}". Create an ${options.task.branchPrefix} branch first and move your commits to it.`,
+			};
+		}
+
+		await fetchRemoteRefs({
+			cwd: options.repo.hostWorkspacePath,
+			defaultBranch: options.repo.baseBranch,
+			repoUrl: options.branch.repoUrl,
+			githubToken: options.githubToken,
+		});
+		const previousRemoteBranchHead = await remoteBranchHead(
+			options.repo.hostWorkspacePath,
+			branchName,
+		);
+		const localHead = await gitStdout(options.repo.hostWorkspacePath, ['rev-parse', 'HEAD']);
+		if (previousRemoteBranchHead === localHead) {
+			return {
+				repoUrl: options.branch.repoUrl,
+				branch: branchName,
+				success: false,
+				error: `Nothing new to push on ${branchName}. Local HEAD matches origin/${branchName} (${localHead}). Commit your work and call git-push again.`,
+			};
+		}
+
+		await pushBranch({
+			repoUrl: options.branch.repoUrl,
+			branchName,
+			cwd: options.repo.hostWorkspacePath,
+			githubToken: options.githubToken,
+		});
+		await git({
+			cwd: options.repo.hostWorkspacePath,
+			args: [
+				'fetch',
+				'--prune',
+				buildPushUrl(options.branch.repoUrl, options.githubToken),
+				`${branchName}:refs/remotes/origin/${branchName}`,
+			],
+			reject: false,
+		});
+		const state = await buildBranchState({
+			cwd: options.repo.hostWorkspacePath,
+			branchName,
+			defaultBranch: options.repo.baseBranch,
+			previousRemoteBranchHead,
+		});
+		return {
+			repoUrl: options.branch.repoUrl,
+			branch: branchName,
+			success: true,
+			...state,
+		};
+	} catch (error) {
+		return {
+			repoUrl: options.branch.repoUrl,
+			branch: branchName,
+			success: false,
+			error: error instanceof Error ? error.message : String(error),
+		};
+	}
 }
