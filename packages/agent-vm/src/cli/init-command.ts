@@ -1,6 +1,5 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 
@@ -19,6 +18,7 @@ import {
 } from '@agent-vm/gondolin-adapter';
 import { z } from 'zod';
 
+import { resolveConfigPath } from '../config/path-resolver.js';
 import {
 	SYSTEM_CACHE_IDENTIFIER_FILENAME,
 	buildDefaultSystemCacheIdentifier,
@@ -74,26 +74,6 @@ interface ScaffoldAgentVmProjectDependencies {
 	readonly getHomeDir?: () => string;
 	readonly reportWarning?: (message: string) => void;
 	readonly resolveGondolinMinimumZigVersion?: typeof resolveGondolinMinimumZigVersion;
-}
-
-/**
- * Resolve a path-profile string to an absolute filesystem path so that
- * scaffold-time mkdirs match the paths persisted into system.json.
- * Mirrors the runtime resolver in system-config.ts so user-dir
- * (~/.agent-vm/...) and local (../state/<zone>) profiles produce the
- * directories they advertise.
- */
-function resolveProfilePath(profilePath: string, configDir: string, homeDir: string): string {
-	if (profilePath === '~') {
-		return homeDir;
-	}
-	if (profilePath.startsWith('~/')) {
-		return path.join(homeDir, profilePath.slice(2));
-	}
-	if (path.isAbsolute(profilePath)) {
-		return profilePath;
-	}
-	return path.resolve(configDir, profilePath);
 }
 
 export interface PromptAndStoreTokenDependencies {
@@ -1056,13 +1036,13 @@ async function scaffoldAgentVmProjectInternal(
 	}
 
 	if (pathProfile.createLocalRuntimeDirectories) {
-		const homeDir = (dependencies.getHomeDir ?? os.homedir)();
+		const homeDir = dependencies.getHomeDir?.();
 		const configDir = path.join(options.targetDir, 'config');
 		const directoriesToCreate = [
 			pathProfile.gatewayStateDir(options.zoneId),
 			pathProfile.gatewayWorkspaceDir(options.zoneId),
 			pathProfile.toolWorkspaceRoot,
-		].map((profilePath) => resolveProfilePath(profilePath, configDir, homeDir));
+		].map((profilePath) => resolveConfigPath(profilePath, configDir, homeDir));
 		await Promise.all(
 			directoriesToCreate.map((directoryPath) => fs.mkdir(directoryPath, { recursive: true })),
 		);

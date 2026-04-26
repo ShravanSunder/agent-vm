@@ -72,6 +72,24 @@ const scaffoldedSystemConfigSchema = z.object({
 	]),
 });
 
+/**
+ * Narrower schema for tests that assert runtime path fields written into
+ * the scaffolded `system.json` (cacheDir + per-zone stateDir, workspaceDir,
+ * optional backupDir). Validates instead of `as`-casting `JSON.parse` output.
+ */
+const scaffoldedRuntimePathsSchema = z.object({
+	cacheDir: z.string().min(1),
+	zones: z.tuple([
+		z.object({
+			gateway: z.object({
+				stateDir: z.string().min(1),
+				workspaceDir: z.string().min(1),
+				backupDir: z.string().min(1).optional(),
+			}),
+		}),
+	]),
+});
+
 describe('scaffoldAgentVmProject', () => {
 	it('creates system.json with the requested zone', async () => {
 		const targetDir = await createTestDirectory();
@@ -438,23 +456,21 @@ describe('scaffoldAgentVmProject', () => {
 			path.join(targetDir, 'config', 'system.json'),
 			'utf8',
 		);
-		const systemConfig = JSON.parse(systemConfigText) as {
-			cacheDir: string;
-			zones: ReadonlyArray<{
-				gateway: { stateDir: string; workspaceDir: string; backupDir?: string };
-			}>;
-		};
+		const systemConfig = scaffoldedRuntimePathsSchema.parse(JSON.parse(systemConfigText));
 
 		expect(systemConfig.cacheDir).toBe('~/.agent-vm/cache');
-		expect(systemConfig.zones[0]?.gateway.stateDir).toBe('~/.agent-vm/state/shravan');
-		expect(systemConfig.zones[0]?.gateway.workspaceDir).toBe('~/.agent-vm/workspaces/shravan');
-		expect(systemConfig.zones[0]?.gateway.backupDir).toBe('~/.agent-vm-backups/shravan');
+		expect(systemConfig.zones[0].gateway.stateDir).toBe('~/.agent-vm/state/shravan');
+		expect(systemConfig.zones[0].gateway.workspaceDir).toBe('~/.agent-vm/workspaces/shravan');
+		expect(systemConfig.zones[0].gateway.backupDir).toBe('~/.agent-vm-backups/shravan');
 	});
 
 	it('user-dir scaffold creates configured ~/.agent-vm dirs, not repo-local ones', async () => {
 		const targetDir = await createTestDirectory();
 		const fakeHomeDir = await createTestDirectory();
 
+		// Inject a fake home so the scaffolder writes ~/.agent-vm dirs into a
+		// sandboxed tempdir instead of the real $HOME. Without this, a passing
+		// test would silently mutate the developer's home directory.
 		await scaffoldAgentVmProject(
 			{
 				targetDir,
@@ -501,14 +517,10 @@ describe('scaffoldAgentVmProject', () => {
 			path.join(targetDir, 'config', 'system.json'),
 			'utf8',
 		);
-		const systemConfig = JSON.parse(systemConfigText) as {
-			zones: ReadonlyArray<{
-				gateway: { stateDir: string; workspaceDir: string; backupDir?: string };
-			}>;
-		};
+		const systemConfig = scaffoldedRuntimePathsSchema.parse(JSON.parse(systemConfigText));
 
-		expect(systemConfig.zones[0]?.gateway.stateDir).toBe('../state/my-zone');
-		expect(systemConfig.zones[0]?.gateway.backupDir).toBe('../backups/my-zone');
+		expect(systemConfig.zones[0].gateway.stateDir).toBe('../state/my-zone');
+		expect(systemConfig.zones[0].gateway.backupDir).toBe('../backups/my-zone');
 	});
 
 	it('scaffolds a type-specific gateway config file', async () => {
