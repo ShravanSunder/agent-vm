@@ -22,7 +22,11 @@ export interface InitPresetDefaults {
 	readonly writeLocalEnvironmentFile: boolean;
 }
 
-const scaffoldPathModes = ['local', 'pod'] as const satisfies readonly ScaffoldPathMode[];
+const scaffoldPathModes = [
+	'local',
+	'pod',
+	'user-dir',
+] as const satisfies readonly ScaffoldPathMode[];
 const initPresetNames = ['macos-local', 'container-x86'] as const;
 type InitPresetName = (typeof initPresetNames)[number];
 const initPresetNameSet = new Set<string>(initPresetNames);
@@ -31,7 +35,7 @@ const initPresets = {
 	'macos-local': {
 		architecture: 'aarch64',
 		hostSystemType: 'bare-metal',
-		paths: 'local',
+		paths: 'user-dir',
 		secretsProvider: '1password',
 		writeLocalEnvironmentFile: true,
 	},
@@ -45,8 +49,8 @@ const initPresets = {
 } as const satisfies Record<InitPresetName, InitPresetDefaults>;
 
 const initPresetDescription =
-	'macos-local: local paths, aarch64, 1password, .env.local; ' +
-	'container-x86: container runtime paths, x86_64, environment secrets, vm-host-system';
+	'macos-local: user-dir paths (~/.agent-vm), aarch64, 1password, .env.local; ' +
+	'container-x86: container runtime paths (/var/agent-vm), x86_64, environment secrets';
 
 const presetType: Type<string, InitPresetDefaults> = {
 	displayName: 'preset-name',
@@ -141,7 +145,9 @@ export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 			paths: option({
 				type: optional(oneOf(scaffoldPathModes)),
 				long: 'paths',
-				description: 'Path profile to scaffold: local or pod (default: local)',
+				description:
+					'Path profile to scaffold: local (sibling-of-config), pod (/var/agent-vm), ' +
+					'or user-dir (~/.agent-vm). Defaults from preset.',
 			}),
 			namespace: option({
 				type: optional(string),

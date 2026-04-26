@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/agent-vm",
-	"version": "0.0.20",
+	"version": "0.0.21",
 	"description": "Controller CLI and HTTP server for sandboxed VM coding agents.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {

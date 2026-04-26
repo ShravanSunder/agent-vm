@@ -82,7 +82,7 @@ export interface PromptAndStoreTokenDependencies {
 
 export type { GatewayType } from '@agent-vm/gateway-interface';
 
-export type ScaffoldPathMode = 'local' | 'pod';
+export type ScaffoldPathMode = 'local' | 'pod' | 'user-dir';
 
 interface ScaffoldPathProfile {
 	readonly cacheDir: string;
@@ -90,6 +90,7 @@ interface ScaffoldPathProfile {
 	readonly gatewayConfig: (zoneId: string, gatewayType: GatewayType) => string;
 	readonly gatewayStateDir: (zoneId: string) => string;
 	readonly gatewayWorkspaceDir: (zoneId: string) => string;
+	readonly gatewayBackupDir: (zoneId: string) => string;
 	readonly gatewayBuildConfig: (gatewayType: GatewayType) => string;
 	readonly gatewayDockerfile: (gatewayType: GatewayType) => string;
 	readonly toolVmBuildConfig: string;
@@ -163,6 +164,7 @@ const localPathProfile: ScaffoldPathProfile = {
 		`./gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 	gatewayStateDir: (zoneId) => `../state/${zoneId}`,
 	gatewayWorkspaceDir: (zoneId) => `../workspaces/${zoneId}`,
+	gatewayBackupDir: (zoneId) => `../backups/${zoneId}`,
 	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.json`,
 	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
 	toolVmBuildConfig: '../vm-images/tool-vms/default/build-config.json',
@@ -176,6 +178,7 @@ const podPathProfile: ScaffoldPathProfile = {
 		`/etc/agent-vm/gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 	gatewayStateDir: () => '/var/agent-vm/state',
 	gatewayWorkspaceDir: () => '/var/agent-vm/workspace',
+	gatewayBackupDir: () => '/var/agent-vm/backups',
 	gatewayBuildConfig: (gatewayType) =>
 		`/etc/agent-vm/vm-images/gateways/${gatewayType}/build-config.json`,
 	gatewayDockerfile: (gatewayType) => `/etc/agent-vm/vm-images/gateways/${gatewayType}/Dockerfile`,
@@ -183,8 +186,36 @@ const podPathProfile: ScaffoldPathProfile = {
 	toolWorkspaceRoot: '/var/agent-vm/workspace/tools',
 };
 
+/**
+ * User-home profile: runtime state in ~/.agent-vm/, backups in
+ * ~/.agent-vm-backups/ so a wipe of the runtime tree can't take
+ * its own recovery archive with it.  Catalog files (gateway
+ * config, image recipes) stay in-repo.
+ */
+const userDirPathProfile: ScaffoldPathProfile = {
+	cacheDir: '~/.agent-vm/cache',
+	createLocalRuntimeDirectories: true,
+	gatewayConfig: (zoneId, gatewayType) =>
+		`./gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
+	gatewayStateDir: (zoneId) => `~/.agent-vm/state/${zoneId}`,
+	gatewayWorkspaceDir: (zoneId) => `~/.agent-vm/workspaces/${zoneId}`,
+	gatewayBackupDir: (zoneId) => `~/.agent-vm-backups/${zoneId}`,
+	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.json`,
+	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
+	toolVmBuildConfig: '../vm-images/tool-vms/default/build-config.json',
+	toolWorkspaceRoot: '~/.agent-vm/workspaces/tools',
+};
+
 function resolveScaffoldPathProfile(paths: ScaffoldPathMode | undefined): ScaffoldPathProfile {
-	return paths === 'pod' ? podPathProfile : localPathProfile;
+	switch (paths) {
+		case 'pod':
+			return podPathProfile;
+		case 'user-dir':
+			return userDirPathProfile;
+		case 'local':
+		case undefined:
+			return localPathProfile;
+	}
 }
 
 function defaultToolVmImageProfiles(
@@ -270,6 +301,7 @@ const defaultSystemConfig = (
 				imageProfile: gatewayType,
 				stateDir: pathProfile.gatewayStateDir(zoneId),
 				workspaceDir: pathProfile.gatewayWorkspaceDir(zoneId),
+				backupDir: pathProfile.gatewayBackupDir(zoneId),
 			},
 			secrets: defaultSecretsForGatewayType(zoneId, gatewayType, secretsProvider),
 			runtimeAuthHints: defaultRuntimeAuthHintsForGatewayType(gatewayType),
