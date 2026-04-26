@@ -451,6 +451,37 @@ describe('scaffoldAgentVmProject', () => {
 		expect(systemConfig.zones[0]?.gateway.backupDir).toBe('~/.agent-vm-backups/shravan');
 	});
 
+	it('user-dir scaffold creates configured ~/.agent-vm dirs, not repo-local ones', async () => {
+		const targetDir = await createTestDirectory();
+		const fakeHomeDir = await createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{
+				targetDir,
+				zoneId: 'shravan',
+				gatewayType: 'openclaw',
+				architecture: 'aarch64',
+				secretsProvider: '1password',
+				paths: 'user-dir',
+			},
+			{
+				...noGeneratedAgeIdentityDependencies,
+				getHomeDir: () => fakeHomeDir,
+			},
+		);
+
+		// user-dir profile should NOT create misleading repo-local runtime dirs
+		expect(await pathExists(path.join(targetDir, 'state'))).toBe(false);
+		expect(await pathExists(path.join(targetDir, 'workspaces'))).toBe(false);
+
+		// user-dir profile SHOULD create the dirs it advertises in system.json
+		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'state', 'shravan'))).toBe(true);
+		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'workspaces', 'shravan'))).toBe(
+			true,
+		);
+		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'workspaces', 'tools'))).toBe(true);
+	});
+
 	it('writes backupDir for local profile alongside ../state and ../workspaces', async () => {
 		const targetDir = await createTestDirectory();
 
