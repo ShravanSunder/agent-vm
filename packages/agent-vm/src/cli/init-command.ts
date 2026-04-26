@@ -18,6 +18,7 @@ import {
 } from '@agent-vm/gondolin-adapter';
 import { z } from 'zod';
 
+import { resolveConfigPath } from '../config/path-resolver.js';
 import {
 	SYSTEM_CACHE_IDENTIFIER_FILENAME,
 	buildDefaultSystemCacheIdentifier,
@@ -70,6 +71,7 @@ interface ScaffoldAgentVmProjectDependencies {
 		profileName: string,
 	) => Promise<'created' | 'skipped'>;
 	readonly generateAgeIdentityKey?: () => string | undefined;
+	readonly getHomeDir?: () => string;
 	readonly reportWarning?: (message: string) => void;
 	readonly resolveGondolinMinimumZigVersion?: typeof resolveGondolinMinimumZigVersion;
 }
@@ -1034,14 +1036,15 @@ async function scaffoldAgentVmProjectInternal(
 	}
 
 	if (pathProfile.createLocalRuntimeDirectories) {
+		const homeDir = dependencies.getHomeDir?.();
+		const configDir = path.join(options.targetDir, 'config');
+		const directoriesToCreate = [
+			pathProfile.gatewayStateDir(options.zoneId),
+			pathProfile.gatewayWorkspaceDir(options.zoneId),
+			pathProfile.toolWorkspaceRoot,
+		].map((profilePath) => resolveConfigPath(profilePath, configDir, homeDir));
 		await Promise.all(
-			[
-				path.join(options.targetDir, 'state', options.zoneId),
-				path.join(options.targetDir, 'workspaces', options.zoneId),
-				path.join(options.targetDir, 'workspaces', 'tools'),
-			].map(async (directoryPath) => {
-				await fs.mkdir(directoryPath, { recursive: true });
-			}),
+			directoriesToCreate.map((directoryPath) => fs.mkdir(directoryPath, { recursive: true })),
 		);
 	}
 
