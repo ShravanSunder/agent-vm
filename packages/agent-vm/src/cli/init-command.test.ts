@@ -419,6 +419,67 @@ describe('scaffoldAgentVmProject', () => {
 		expect(await pathExists(path.join(targetDir, 'workspaces'))).toBe(false);
 	});
 
+	it('writes user-dir paths under ~/.agent-vm and backups under ~/.agent-vm-backups', async () => {
+		const targetDir = await createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{
+				targetDir,
+				zoneId: 'shravan',
+				gatewayType: 'openclaw',
+				architecture: 'aarch64',
+				secretsProvider: '1password',
+				paths: 'user-dir',
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		const systemConfigText = await fs.readFile(
+			path.join(targetDir, 'config', 'system.json'),
+			'utf8',
+		);
+		const systemConfig = JSON.parse(systemConfigText) as {
+			cacheDir: string;
+			zones: ReadonlyArray<{
+				gateway: { stateDir: string; workspaceDir: string; backupDir?: string };
+			}>;
+		};
+
+		expect(systemConfig.cacheDir).toBe('~/.agent-vm/cache');
+		expect(systemConfig.zones[0]?.gateway.stateDir).toBe('~/.agent-vm/state/shravan');
+		expect(systemConfig.zones[0]?.gateway.workspaceDir).toBe('~/.agent-vm/workspaces/shravan');
+		expect(systemConfig.zones[0]?.gateway.backupDir).toBe('~/.agent-vm-backups/shravan');
+	});
+
+	it('writes backupDir for local profile alongside ../state and ../workspaces', async () => {
+		const targetDir = await createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{
+				targetDir,
+				zoneId: 'my-zone',
+				gatewayType: 'worker',
+				architecture: 'aarch64',
+				secretsProvider: '1password',
+				paths: 'local',
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		const systemConfigText = await fs.readFile(
+			path.join(targetDir, 'config', 'system.json'),
+			'utf8',
+		);
+		const systemConfig = JSON.parse(systemConfigText) as {
+			zones: ReadonlyArray<{
+				gateway: { stateDir: string; workspaceDir: string; backupDir?: string };
+			}>;
+		};
+
+		expect(systemConfig.zones[0]?.gateway.stateDir).toBe('../state/my-zone');
+		expect(systemConfig.zones[0]?.gateway.backupDir).toBe('../backups/my-zone');
+	});
+
 	it('scaffolds a type-specific gateway config file', async () => {
 		const openClawTargetDir = await createTestDirectory();
 		await scaffoldAgentVmProject(

@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { z } from 'zod';
@@ -95,6 +96,7 @@ const zoneGatewaySchema = z.object({
 	config: z.string().min(1),
 	stateDir: z.string().min(1),
 	workspaceDir: z.string().min(1),
+	backupDir: z.string().min(1).optional(),
 	authProfilesRef: authProfilesSecretSchema.optional(),
 });
 
@@ -290,12 +292,30 @@ export function createLoadedSystemConfig(
  * Resolve all relative paths in a system config relative to the config file's directory.
  * This ensures paths like "./state/shravan" work regardless of the process CWD.
  */
+/**
+ * Expand a leading `~/` to the current user's home directory.
+ * Why: scaffolded `system.json` writes user-relative paths like
+ * `~/.agent-vm/state/<zone>` so the same file is portable across
+ * machines with different home directory locations.
+ */
+function expandTilde(input: string): string {
+	if (input === '~') {
+		return os.homedir();
+	}
+	if (input.startsWith('~/')) {
+		return path.join(os.homedir(), input.slice(2));
+	}
+	return input;
+}
+
 function resolveRelativePaths(
 	config: z.infer<typeof systemConfigSchema>,
 	configDir: string,
 ): z.infer<typeof systemConfigSchema> {
-	const resolvePath = (relativePath: string): string =>
-		path.isAbsolute(relativePath) ? relativePath : path.resolve(configDir, relativePath);
+	const resolvePath = (relativePath: string): string => {
+		const expanded = expandTilde(relativePath);
+		return path.isAbsolute(expanded) ? expanded : path.resolve(configDir, expanded);
+	};
 
 	return {
 		...config,
@@ -329,6 +349,7 @@ function resolveRelativePaths(
 				config: resolvePath(zone.gateway.config),
 				stateDir: resolvePath(zone.gateway.stateDir),
 				workspaceDir: resolvePath(zone.gateway.workspaceDir),
+				...(zone.gateway.backupDir ? { backupDir: resolvePath(zone.gateway.backupDir) } : {}),
 			},
 		})),
 		toolProfiles: Object.fromEntries(

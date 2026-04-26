@@ -260,6 +260,43 @@ describe('loadSystemConfig', () => {
 		);
 	});
 
+	test('expands ~/ paths to the current user home directory', async () => {
+		const input = createValidSystemConfigInput();
+		input.cacheDir = '~/.agent-vm/cache';
+		const firstZone = input.zones[0];
+		firstZone.gateway = {
+			...firstZone.gateway,
+			stateDir: '~/.agent-vm/state/shravan',
+			workspaceDir: '~/.agent-vm/workspaces/shravan',
+			backupDir: '~/.agent-vm-backups/shravan',
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-config-tilde-', input);
+
+		const config = await loadSystemConfig(configPath);
+
+		expect(config.cacheDir).toBe(path.join(os.homedir(), '.agent-vm', 'cache'));
+		expect(config.zones[0]?.gateway.stateDir).toBe(
+			path.join(os.homedir(), '.agent-vm', 'state', 'shravan'),
+		);
+		expect(config.zones[0]?.gateway.workspaceDir).toBe(
+			path.join(os.homedir(), '.agent-vm', 'workspaces', 'shravan'),
+		);
+		expect(config.zones[0]?.gateway.backupDir).toBe(
+			path.join(os.homedir(), '.agent-vm-backups', 'shravan'),
+		);
+	});
+
+	test('accepts zones without an explicit backupDir (legacy fallback applies elsewhere)', async () => {
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-no-backup-',
+			createValidSystemConfigInput(),
+		);
+
+		const config = await loadSystemConfig(configPath);
+
+		expect(config.zones[0]?.gateway.backupDir).toBeUndefined();
+	});
+
 	test('omits zone resource policy when not present', async () => {
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-config-resources-defaults-',

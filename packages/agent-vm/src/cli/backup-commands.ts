@@ -19,7 +19,7 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 	const backupSubcommand = options.restArguments[0];
 	const zone = requireZone(options.systemConfig, readZoneFlag(options.restArguments));
 	const zoneId = zone.id;
-	const backupDir = `${zone.gateway.stateDir}/backups`;
+	const backupDir = zone.gateway.backupDir ?? `${zone.gateway.stateDir}/backups`;
 
 	if (backupSubcommand === 'list') {
 		const backupManager = options.dependencies.createZoneBackupManager({

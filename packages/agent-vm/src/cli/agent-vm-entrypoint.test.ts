@@ -443,7 +443,7 @@ describe('runAgentVmCli', () => {
 			gatewayType: 'worker',
 			hostSystemType: 'bare-metal',
 			overwrite: false,
-			paths: 'local',
+			paths: 'user-dir',
 			secretsProvider: '1password',
 			targetDir: '/tmp/agent-vm-init',
 			writeLocalEnvironmentFile: true,

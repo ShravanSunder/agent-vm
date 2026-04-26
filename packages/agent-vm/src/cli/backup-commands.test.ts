@@ -307,4 +307,59 @@ describe('runBackupCommand', () => {
 			}),
 		).rejects.toThrow('--zone is required');
 	});
+
+	it('uses gateway.backupDir when set, not the legacy stateDir/backups', async () => {
+		const baseConfig = createBackupSystemConfig();
+		const systemConfig: LoadedSystemConfig = {
+			...baseConfig,
+			zones: baseConfig.zones.map((zone) => ({
+				...zone,
+				gateway: { ...zone.gateway, backupDir: '/var/agent-vm-backups/shravan' },
+			})),
+		};
+
+		const listBackups = vi.fn(() => []);
+
+		await runBackupCommand({
+			dependencies: {
+				...defaultCliDependencies,
+				buildControllerStatus: () => ({ controllerPort: 18800, toolProfiles: [], zones: [] }),
+				createAgeBackupEncryption: () => ({ decrypt: async () => {}, encrypt: async () => {} }),
+				createControllerClient: () => ({
+					destroyZone: async () => ({}),
+					enableZoneSsh: async () => ({}),
+					getControllerStatus: async () => ({}),
+					getZoneLogs: async () => ({}),
+					listLeases: async () => [],
+					refreshZoneCredentials: async () => ({}),
+					releaseLease: async () => {},
+					stopController: async () => ({}),
+					upgradeZone: async () => ({}),
+				}),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				createZoneBackupManager: () => ({
+					createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
+					listBackups,
+					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+				}),
+				loadSystemConfig: async () => systemConfig,
+				resolveServiceAccountToken: async () => 'token',
+				runControllerDoctor: () => ({ checks: [], ok: true }),
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			restArguments: ['list', '--zone', 'shravan'],
+			systemConfig,
+		});
+
+		expect(listBackups).toHaveBeenCalledWith({
+			backupDir: '/var/agent-vm-backups/shravan',
+			zoneId: 'shravan',
+		});
+	});
 });
