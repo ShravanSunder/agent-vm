@@ -142,6 +142,8 @@ describe('scaffoldAgentVmProject', () => {
 		expect(gatewayDockerfile).toContain('@openai/codex');
 		expect(gatewayDockerfile).toContain('apt-get install -y --no-install-recommends gh');
 		expect(gatewayDockerfile).toContain('(ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)');
+		expect(gatewayDockerfile).not.toContain('@agent-vm/agent-vm-worker');
+		expect(gatewayDockerfile).not.toContain('/usr/local/lib/node_modules/@agent-vm');
 		expect(gatewayDockerfile).not.toContain('openclaw@');
 		expect(gatewayDockerfile).not.toContain('.npmrc');
 		expect(gatewayDockerfile).not.toContain('_authToken');

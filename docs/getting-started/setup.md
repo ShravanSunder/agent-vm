@@ -45,6 +45,11 @@ The scaffold includes:
 - `vm-images/gateways/worker/Dockerfile`
 - `vm-images/gateways/worker/build-config.json`
 
+The generated local gateway image installs public runtime tooling only. For
+monorepo local task runs, pack `agent-vm-worker` and set
+`AGENT_VM_WORKER_TARBALL_PATH`; the controller copies that tarball into
+`/state/agent-vm-worker.tgz` when a worker task starts.
+
 ### 2. Check the files
 
 ```bash
