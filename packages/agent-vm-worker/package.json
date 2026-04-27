@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/agent-vm-worker",
-	"version": "0.0.29",
+	"version": "0.0.30",
 	"description": "Worker process that runs inside a sandboxed VM, plans, edits, validates, and reviews coding tasks.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
