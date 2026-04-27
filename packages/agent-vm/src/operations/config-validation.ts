@@ -7,6 +7,7 @@ import { execa } from 'execa';
 import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { collectVmHostSystemDoctorCheck } from './doctor.js';
+import { isRuntimeSystemConfigPath, runtimeConfigRoot } from './runtime-config-paths.js';
 
 export interface ConfigValidationCheck {
 	readonly name: string;
@@ -200,11 +201,13 @@ function projectRootForSystemConfig(systemConfig: LoadedSystemConfig): string {
 	return path.resolve(path.dirname(systemConfig.systemConfigPath), '..');
 }
 
-function resolveProjectCheckoutPath(
+export function resolveProjectCheckoutPath(
 	systemConfig: LoadedSystemConfig,
 	configuredPath: string,
 ): string {
-	const runtimeConfigRoot = '/etc/agent-vm';
+	if (isRuntimeSystemConfigPath(systemConfig)) {
+		return configuredPath;
+	}
 	const relativeRuntimePath = path.relative(runtimeConfigRoot, configuredPath);
 	if (
 		!path.isAbsolute(configuredPath) ||

@@ -388,6 +388,34 @@ describe('collectVmHostSystemDoctorCheck', () => {
 		});
 	});
 
+	it('checks runtime host files inside /etc/agent-vm container configs', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
+		const systemCacheIdentifierPath = path.join(
+			temporaryDirectoryPath,
+			'systemCacheIdentifier.json',
+		);
+		await fs.writeFile(
+			systemCacheIdentifierPath,
+			JSON.stringify({ hostSystemType: 'container' }),
+			'utf8',
+		);
+
+		const check = await collectVmHostSystemDoctorCheck({
+			...createLoadedSystemConfig(systemConfig, {
+				systemConfigPath: '/etc/agent-vm/system.json',
+			}),
+			systemCacheIdentifierPath,
+		});
+
+		expect(check).toMatchObject({
+			name: 'vm-host-system',
+			ok: false,
+			hint: 'Missing /usr/local/bin/start.sh',
+		});
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
 	it('skips vm-host-system checks for non-container configs', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
 		const configPath = path.join(temporaryDirectoryPath, 'config', 'system.json');

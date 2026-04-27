@@ -613,6 +613,106 @@ printf '{"ok":true}\\n'
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
+	it('resolves container worker config paths to checkout paths in doctor output', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
+		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
+		const systemCacheIdentifierPath = path.join(
+			temporaryDirectoryPath,
+			'config',
+			'systemCacheIdentifier.json',
+		);
+		const workerConfigPath = path.join(
+			temporaryDirectoryPath,
+			'config',
+			'gateways',
+			'worker',
+			'worker.json',
+		);
+		const vmHostSystemPath = path.join(temporaryDirectoryPath, 'vm-host-system');
+		await fs.mkdir(path.dirname(workerConfigPath), { recursive: true });
+		await fs.mkdir(vmHostSystemPath, { recursive: true });
+		await fs.writeFile(
+			systemCacheIdentifierPath,
+			JSON.stringify({ schemaVersion: 1, hostSystemType: 'container' }),
+			'utf8',
+		);
+		await Promise.all(
+			['Dockerfile', 'start.sh', 'agent-vm-controller.service'].map(async (fileName) => {
+				await fs.writeFile(path.join(vmHostSystemPath, fileName), '', 'utf8');
+			}),
+		);
+		await fs.writeFile(
+			workerConfigPath,
+			JSON.stringify({
+				phases: {
+					plan: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					work: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					wrapup: { instructions: null },
+				},
+			}),
+			'utf8',
+		);
+		const outputs: string[] = [];
+
+		await runControllerOperationCommand({
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: () => ({
+					destroyZone: async () => ({}),
+					enableZoneSsh: async () => ({}),
+					getControllerStatus: async () => ({}),
+					getZoneLogs: async () => ({}),
+					listLeases: async () => [],
+					refreshZoneCredentials: async () => ({}),
+					releaseLease: async () => {},
+					stopController: async () => ({}),
+					upgradeZone: async () => ({}),
+				}),
+				runControllerDoctor: () => ({ ok: true, checks: [] }),
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			restArguments: [],
+			subcommand: 'doctor',
+			systemConfig: createWorkerSystemConfig(
+				'/etc/agent-vm/gateways/worker/worker.json',
+				systemConfigPath,
+			),
+		});
+
+		const result = JSON.parse(outputs.join('')) as {
+			readonly ok: boolean;
+			readonly checks: readonly {
+				readonly name: string;
+				readonly ok: boolean;
+				readonly hint?: string;
+			}[];
+		};
+
+		expect(result.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === 'worker-config-worker')).toMatchObject({
+			ok: true,
+			hint: workerConfigPath,
+		});
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
 	it('reports missing vm-host-system files for container configs in doctor output', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');

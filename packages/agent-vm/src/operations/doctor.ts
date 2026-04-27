@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
+import { isRuntimeSystemConfigPath } from './runtime-config-paths.js';
 
 export interface DoctorCheck {
 	readonly name: string;
@@ -193,6 +194,30 @@ export async function collectVmHostSystemDoctorCheck(
 	}
 	if (!isObjectRecord(identifier) || identifier.hostSystemType !== 'container') {
 		return null;
+	}
+
+	if (isRuntimeSystemConfigPath(systemConfig)) {
+		const requiredRuntimeFiles = [
+			'/usr/local/bin/start.sh',
+			'/etc/systemd/system/agent-vm-controller.service',
+		] as const;
+		for (const requiredRuntimeFile of requiredRuntimeFiles) {
+			try {
+				// oxlint-disable-next-line no-await-in-loop -- report the first missing file in stable order
+				await fs.access(requiredRuntimeFile);
+			} catch {
+				return {
+					name: 'vm-host-system',
+					ok: false,
+					hint: `Missing ${requiredRuntimeFile}`,
+				};
+			}
+		}
+		return {
+			name: 'vm-host-system',
+			ok: true,
+			hint: '/etc/agent-vm runtime host files',
+		};
 	}
 
 	const vmHostSystemPath = path.resolve(

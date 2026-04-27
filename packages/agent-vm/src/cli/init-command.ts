@@ -1162,7 +1162,14 @@ async function scaffoldAgentVmProjectInternal(
 		const zigVersion = await resolveZigVersion();
 		const gondolinPackageSpec = await resolveGondolinPackageSpec();
 		const vmHostSystemFiles = [
-			['Dockerfile', renderVmHostSystemDockerfile({ zigVersion, gondolinPackageSpec })],
+			[
+				'Dockerfile',
+				renderVmHostSystemDockerfile({
+					gondolinPackageSpec,
+					imageArchitecture: options.architecture,
+					zigVersion,
+				}),
+			],
 			['start.sh', renderVmHostSystemStartScript({ zoneId: options.zoneId })],
 			['agent-vm-controller.service', renderVmHostSystemSystemdUnit()],
 			['README.md', renderVmHostSystemReadme({ zoneId: options.zoneId })],

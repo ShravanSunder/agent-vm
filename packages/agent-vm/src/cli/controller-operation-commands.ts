@@ -6,11 +6,12 @@ import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
 import { execa } from 'execa';
 
 import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
-import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
+import type { LoadedSystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import {
 	collectOpenClawConfigChecks,
 	type ConfigValidationCheck,
+	resolveProjectCheckoutPath,
 } from '../operations/config-validation.js';
 import { collectVmHostSystemDoctorCheck, type DoctorCheck } from '../operations/doctor.js';
 import {
@@ -166,20 +167,21 @@ async function collectImageProfileDockerfileChecks(
 }
 
 async function collectWorkerGatewayConfigChecks(
-	systemConfig: SystemConfig,
+	systemConfig: LoadedSystemConfig,
 ): Promise<readonly DoctorCheck[]> {
 	const checks: DoctorCheck[] = [];
 	for (const zone of systemConfig.zones) {
 		if (zone.gateway.type !== 'worker') {
 			continue;
 		}
+		const workerConfigPath = resolveProjectCheckoutPath(systemConfig, zone.gateway.config);
 		try {
 			// oxlint-disable-next-line eslint/no-await-in-loop
-			await loadWorkerConfigDraft(zone.gateway.config);
+			await loadWorkerConfigDraft(workerConfigPath);
 			checks.push({
 				name: `worker-config-${zone.id}`,
 				ok: true,
-				hint: zone.gateway.config,
+				hint: workerConfigPath,
 			});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);

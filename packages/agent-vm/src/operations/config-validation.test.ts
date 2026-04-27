@@ -4,8 +4,8 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { loadSystemConfig } from '../config/system-config.js';
-import { runConfigValidation } from './config-validation.js';
+import { createLoadedSystemConfig, loadSystemConfig } from '../config/system-config.js';
+import { resolveProjectCheckoutPath, runConfigValidation } from './config-validation.js';
 
 type TestCommandRunner = NonNullable<Parameters<typeof runConfigValidation>[0]['runCommand']>;
 
@@ -192,6 +192,48 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 }
 
 describe('runConfigValidation', () => {
+	it('leaves runtime container paths unchanged inside /etc/agent-vm', () => {
+		const systemConfig = createLoadedSystemConfig(
+			{
+				host: { controllerPort: 18800, projectNamespace: 'agent-vm' },
+				imageProfiles: {
+					gateways: {
+						worker: {
+							type: 'worker',
+							buildConfig: '/etc/agent-vm/vm-images/gateways/worker/build-config.json',
+						},
+					},
+				},
+				zones: [
+					{
+						id: 'coding-agent',
+						gateway: {
+							type: 'worker',
+							memory: '2G',
+							cpus: 2,
+							port: 18791,
+							config: '/etc/agent-vm/gateways/coding-agent/worker.json',
+							imageProfile: 'worker',
+							stateDir: '/var/agent-vm/state',
+							workspaceDir: '/var/agent-vm/workspace',
+						},
+						secrets: {},
+						allowedHosts: ['api.openai.com'],
+					},
+				],
+				tcpPool: { basePort: 19000, size: 5 },
+			},
+			{ systemConfigPath: '/etc/agent-vm/system.json' },
+		);
+
+		const resolvedPath = resolveProjectCheckoutPath(
+			systemConfig,
+			'/etc/agent-vm/gateways/coding-agent/worker.json',
+		);
+
+		expect(resolvedPath).toBe('/etc/agent-vm/gateways/coding-agent/worker.json');
+	});
+
 	it('validates a container project from its checkout paths', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);

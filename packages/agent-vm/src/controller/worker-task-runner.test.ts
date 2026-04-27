@@ -748,6 +748,40 @@ describe('worker-task-runner', () => {
 		);
 	});
 
+	it('serializes cloned repo git config writes to avoid config.lock races', async () => {
+		let activeConfigWrites = 0;
+		let maxActiveConfigWrites = 0;
+		const configKeys: string[] = [];
+		execaMock.mockImplementation(async (command: string, args: readonly string[]) => {
+			if (command === 'git' && args[2] === 'config') {
+				activeConfigWrites += 1;
+				maxActiveConfigWrites = Math.max(maxActiveConfigWrites, activeConfigWrites);
+				configKeys.push(args[3] ?? '');
+				await Promise.resolve();
+				activeConfigWrites -= 1;
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		await preStartGateway(
+			{
+				requestTaskId: 'request-task-1',
+				prompt: 'clone public repo',
+				repos: [{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' }],
+				context: {},
+			},
+			zone,
+		);
+
+		expect(configKeys).toEqual(['user.email', 'user.name', 'http.version', 'commit.gpgsign']);
+		expect(maxActiveConfigWrites).toBe(1);
+	});
+
 	it('scrubs GitHub tokens from clone failures', async () => {
 		execaMock.mockRejectedValue(
 			new Error(
