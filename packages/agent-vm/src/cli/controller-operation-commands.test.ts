@@ -2,11 +2,17 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { runControllerOperationCommand } from './controller-operation-commands.js';
+
+const originalPath = process.env.PATH;
+
+afterEach(() => {
+	process.env.PATH = originalPath;
+});
 
 function createWorkerSystemConfig(
 	workerConfigPath: string,
@@ -115,7 +121,12 @@ function createOpenClawSystemConfig(
 						imageProfile: 'openclaw',
 						cpus: 2,
 						memory: '2G',
-						config: './gateways/shravan/openclaw.json',
+						config: path.join(
+							path.dirname(systemConfigPath),
+							'gateways',
+							'shravan',
+							'openclaw.json',
+						),
 						port: 18791,
 						stateDir: './state/shravan',
 						workspaceDir: './workspaces/shravan',
@@ -204,6 +215,99 @@ describe('runControllerOperationCommand', () => {
 
 		expect(result.ok).toBe(true);
 		expect(result.checks.find((check) => check.name === 'worker-config-worker')?.ok).toBe(true);
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('validates OpenClaw gateway configs with the catalog OpenClaw CLI in doctor output', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
+		const binDirectoryPath = path.join(temporaryDirectoryPath, 'node_modules', '.bin');
+		const configDirectoryPath = path.join(temporaryDirectoryPath, 'config');
+		const openClawConfigPath = path.join(
+			configDirectoryPath,
+			'gateways',
+			'shravan',
+			'openclaw.json',
+		);
+		const commandLogPath = path.join(temporaryDirectoryPath, 'openclaw-command.json');
+		await fs.mkdir(binDirectoryPath, { recursive: true });
+		await fs.mkdir(path.dirname(openClawConfigPath), { recursive: true });
+		await fs.writeFile(
+			path.join(configDirectoryPath, 'systemCacheIdentifier.json'),
+			'{"schemaVersion":1}\n',
+			'utf8',
+		);
+		await fs.writeFile(openClawConfigPath, '{"channels":{}}\n', 'utf8');
+		await fs.writeFile(
+			path.join(binDirectoryPath, 'openclaw'),
+			`#!/bin/sh
+printf '{"cwd":"%s","config":"%s","args":"%s"}\\n' "$PWD" "$OPENCLAW_CONFIG_PATH" "$*" > "${commandLogPath}"
+printf '{"ok":true}\\n'
+`,
+			{ encoding: 'utf8', mode: 0o755 },
+		);
+		process.env.PATH = `${binDirectoryPath}:${originalPath ?? ''}`;
+		const outputs: string[] = [];
+
+		await runControllerOperationCommand({
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: () => ({
+					destroyZone: async () => ({}),
+					enableZoneSsh: async () => ({}),
+					getControllerStatus: async () => ({}),
+					getZoneLogs: async () => ({}),
+					listLeases: async () => [],
+					refreshZoneCredentials: async () => ({}),
+					releaseLease: async () => {},
+					stopController: async () => ({}),
+					upgradeZone: async () => ({}),
+				}),
+				resolveGondolinMinimumZigVersion: async () => '0.15.2',
+				runControllerDoctor: () => ({ ok: true, checks: [] }),
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			restArguments: [],
+			subcommand: 'doctor',
+			systemConfig: createOpenClawSystemConfig(
+				path.join(temporaryDirectoryPath, 'vm-images', 'tool-vms', 'default', 'build-config.json'),
+				path.join(configDirectoryPath, 'system.json'),
+			),
+		});
+
+		const result = JSON.parse(outputs.join('')) as {
+			readonly ok: boolean;
+			readonly checks: readonly {
+				readonly hint?: string;
+				readonly name: string;
+				readonly ok: boolean;
+			}[];
+		};
+		const commandLog = JSON.parse(await fs.readFile(commandLogPath, 'utf8')) as {
+			readonly args: string;
+			readonly config: string;
+			readonly cwd: string;
+		};
+		const realTemporaryDirectoryPath = await fs.realpath(temporaryDirectoryPath);
+
+		expect(result.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === 'openclaw-config-shravan')).toMatchObject({
+			ok: true,
+			hint: openClawConfigPath,
+		});
+		expect(commandLog).toEqual({
+			args: 'config validate --json',
+			config: openClawConfigPath,
+			cwd: realTemporaryDirectoryPath,
+		});
 
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});

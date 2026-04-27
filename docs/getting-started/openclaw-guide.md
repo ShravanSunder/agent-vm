@@ -72,6 +72,16 @@ RUN pnpm add -g openclaw@2026.4.24
 
 That pin is a scaffold default, not a host-side package lock. After scaffold, the catalog repo owns `vm-images/gateways/openclaw/Dockerfile`; edit that line in the catalog when you want to try or pin a different OpenClaw release.
 
+For host-side validation, install the same OpenClaw version in the catalog:
+
+```bash
+pnpm add -D openclaw@2026.4.24
+```
+
+`agent-vm doctor` and `agent-vm validate` use the catalog's `openclaw`
+binary, so OpenClaw stays loosely coupled: the catalog chooses the OpenClaw
+version, and agent-vm validates against that choice.
+
 ### Auth Profiles
 
 Auth profiles (OAuth tokens for model providers) are resolved from 1Password and written to the host-side state directory before the VM boots. The VM accesses them via VFS mount.
