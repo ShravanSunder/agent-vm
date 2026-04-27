@@ -241,22 +241,19 @@ export async function preStartGateway(
 					);
 					throw new Error(`git clone failed for ${repo.repoUrl}: ${errorDetail}`.trim());
 				}
-				await Promise.all(
-					(
-						[
-							['user.email', 'agent-vm-worker@agent-vm'],
-							['user.name', 'agent-vm-worker'],
-							['http.version', 'HTTP/1.1'],
-							['commit.gpgsign', 'false'],
-						] as const
-					).map(
-						async ([key, value]) =>
-							await execa('git', ['-C', repo.hostWorkspacePath, 'config', key, value], {
-								reject: true,
-								timeout: 10_000,
-							}),
-					),
-				);
+				for (const [key, value] of [
+					['user.email', 'agent-vm-worker@agent-vm'],
+					['user.name', 'agent-vm-worker'],
+					['http.version', 'HTTP/1.1'],
+					['commit.gpgsign', 'false'],
+				] as const) {
+					// Git serializes config writes through .git/config.lock; keep these ordered.
+					// oxlint-disable-next-line eslint/no-await-in-loop
+					await execa('git', ['-C', repo.hostWorkspacePath, 'config', key, value], {
+						reject: true,
+						timeout: 10_000,
+					});
+				}
 				return {
 					repoId: repo.repoId,
 					repoUrl: repo.repoUrl,

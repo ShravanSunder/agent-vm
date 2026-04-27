@@ -186,11 +186,11 @@ describe('verification-runner', () => {
 				commands: [
 					{
 						name: 'big-timeout',
-						command: `node -e "process.stdout.write('x'.repeat(${String(payloadChars)})); setTimeout(() => {}, 30_000)"`,
+						command: `node -e "require('node:fs').writeSync(1, 'x'.repeat(${String(payloadChars)})); setTimeout(() => {}, 30_000)"`,
 					},
 				],
 				cwd: tempDir,
-				timeoutMs: 100,
+				timeoutMs: 2_000,
 				rawLogDir: logDir,
 				attemptLabel: 'verify-1',
 			});

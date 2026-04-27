@@ -217,7 +217,42 @@ function resolveScaffoldPathProfile(paths: ScaffoldPathMode | undefined): Scaffo
 		case 'local':
 		case undefined:
 			return localPathProfile;
+		default:
+			return localPathProfile;
 	}
+}
+
+function resolveHomeRelativeScaffoldPath(
+	profilePath: string,
+	configDir: string,
+	homeDir: string | undefined,
+): string {
+	if (profilePath === '~' || profilePath.startsWith('~/')) {
+		return resolveConfigPath(profilePath, configDir, homeDir);
+	}
+	return profilePath;
+}
+
+function resolveConfigWritablePathProfile(
+	pathProfile: ScaffoldPathProfile,
+	configDir: string,
+	homeDir: string | undefined,
+): ScaffoldPathProfile {
+	return {
+		...pathProfile,
+		cacheDir: resolveHomeRelativeScaffoldPath(pathProfile.cacheDir, configDir, homeDir),
+		gatewayStateDir: (zoneId) =>
+			resolveHomeRelativeScaffoldPath(pathProfile.gatewayStateDir(zoneId), configDir, homeDir),
+		gatewayWorkspaceDir: (zoneId) =>
+			resolveHomeRelativeScaffoldPath(pathProfile.gatewayWorkspaceDir(zoneId), configDir, homeDir),
+		gatewayBackupDir: (zoneId) =>
+			resolveHomeRelativeScaffoldPath(pathProfile.gatewayBackupDir(zoneId), configDir, homeDir),
+		toolWorkspaceRoot: resolveHomeRelativeScaffoldPath(
+			pathProfile.toolWorkspaceRoot,
+			configDir,
+			homeDir,
+		),
+	};
 }
 
 function defaultToolVmImageProfiles(
@@ -835,8 +870,15 @@ async function scaffoldAgentVmProjectInternal(
 	const pathProfile = resolveScaffoldPathProfile(options.paths);
 	const projectNamespace =
 		options.projectNamespace ?? (await buildDefaultProjectNamespace(options.targetDir));
+	const configDir = path.join(options.targetDir, 'config');
+	const homeDir = dependencies.getHomeDir?.();
+	const configWritablePathProfile = resolveConfigWritablePathProfile(
+		pathProfile,
+		configDir,
+		homeDir,
+	);
 
-	const systemConfigPath = path.join(options.targetDir, 'config', 'system.json');
+	const systemConfigPath = path.join(configDir, 'system.json');
 	const systemConfigStatus = await writeFileIfMissing(
 		systemConfigPath,
 		`${JSON.stringify(
@@ -845,7 +887,7 @@ async function scaffoldAgentVmProjectInternal(
 				gatewayType,
 				projectNamespace,
 				options.secretsProvider,
-				pathProfile,
+				configWritablePathProfile,
 			),
 			null,
 			'\t',
@@ -1036,11 +1078,11 @@ async function scaffoldAgentVmProjectInternal(
 	}
 
 	if (pathProfile.createLocalRuntimeDirectories) {
-		const homeDir = dependencies.getHomeDir?.();
-		const configDir = path.join(options.targetDir, 'config');
 		const directoriesToCreate = [
+			pathProfile.cacheDir,
 			pathProfile.gatewayStateDir(options.zoneId),
 			pathProfile.gatewayWorkspaceDir(options.zoneId),
+			pathProfile.gatewayBackupDir(options.zoneId),
 			pathProfile.toolWorkspaceRoot,
 		].map((profilePath) => resolveConfigPath(profilePath, configDir, homeDir));
 		await Promise.all(
