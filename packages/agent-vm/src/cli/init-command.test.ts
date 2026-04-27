@@ -714,12 +714,58 @@ describe('scaffoldAgentVmProject', () => {
 		]);
 	});
 
+	it('fails loudly when an existing system config does not define the scaffolded zone port', async () => {
+		const targetDir = await createTestDirectory();
+		await fs.mkdir(path.join(targetDir, 'config'), { recursive: true });
+		await fs.writeFile(
+			path.join(targetDir, 'config', 'system.json'),
+			`${JSON.stringify(
+				{
+					zones: [
+						{
+							id: 'shravan',
+							gateway: { port: 18791 },
+						},
+					],
+				},
+				null,
+				'\t',
+			)}\n`,
+			'utf8',
+		);
+
+		await expect(
+			scaffoldAgentVmProject(
+				{
+					targetDir,
+					zoneId: 'alevtina',
+					gatewayType: 'openclaw',
+					architecture: 'aarch64',
+					secretsProvider: '1password',
+				},
+				noGeneratedAgeIdentityDependencies,
+			),
+		).rejects.toThrow(/does not define zone 'alevtina'/u);
+	});
+
 	it('does not overwrite an existing system.json', async () => {
 		const targetDir = await createTestDirectory();
 		await fs.mkdir(path.join(targetDir, 'config'), { recursive: true });
 		await fs.writeFile(
 			path.join(targetDir, 'config', 'system.json'),
-			'{"existing":true}\n',
+			`${JSON.stringify(
+				{
+					existing: true,
+					zones: [
+						{
+							id: 'test-zone',
+							gateway: { port: 18791 },
+						},
+					],
+				},
+				null,
+				'\t',
+			)}\n`,
 			'utf8',
 		);
 

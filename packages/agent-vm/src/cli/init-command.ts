@@ -783,15 +783,26 @@ async function resolveOpenClawControlUiIngressPort(
 		const parsedSystemConfig: unknown = JSON.parse(rawSystemConfig);
 		const parseResult = scaffoldedGatewayPortSystemConfigSchema.safeParse(parsedSystemConfig);
 		if (!parseResult.success) {
-			return defaultGatewayIngressPort;
+			throw new Error(
+				`Cannot scaffold OpenClaw config for zone '${zoneId}': system.json does not define zone gateway ports.`,
+			);
 		}
-		return (
-			parseResult.data.zones.find((zone) => zone.id === zoneId)?.gateway.port ??
-			defaultGatewayIngressPort
-		);
+		const zone = parseResult.data.zones.find((candidateZone) => candidateZone.id === zoneId);
+		if (!zone) {
+			throw new Error(
+				`Cannot scaffold OpenClaw config for zone '${zoneId}': system.json does not define zone '${zoneId}'.`,
+			);
+		}
+		return zone.gateway.port;
 	} catch (error) {
 		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
 			return defaultGatewayIngressPort;
+		}
+		if (error instanceof SyntaxError) {
+			throw new Error(
+				`Cannot scaffold OpenClaw config for zone '${zoneId}': system.json is not valid JSON.`,
+				{ cause: error },
+			);
 		}
 		throw error;
 	}
