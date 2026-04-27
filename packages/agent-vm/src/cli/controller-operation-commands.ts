@@ -1,6 +1,8 @@
-import { execFileSync } from 'node:child_process';
+import { constants } from 'node:fs';
+import fs from 'node:fs/promises';
 
 import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
+import { execa } from 'execa';
 
 import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
@@ -31,17 +33,49 @@ interface RunControllerOperationCommandOptions {
 	readonly systemConfig: LoadedSystemConfig;
 }
 
-function collectAvailableBinaryNames(requiredBinaries: readonly string[]): ReadonlySet<string> {
+async function collectAvailableBinaryNames(
+	requiredBinaries: readonly string[],
+): Promise<ReadonlySet<string>> {
 	const availableBinaries = new Set<string>();
 	for (const binary of requiredBinaries) {
 		try {
-			execFileSync('which', [binary], { stdio: 'ignore' });
+			if (binary.includes('/')) {
+				// oxlint-disable-next-line no-await-in-loop -- stable check order makes doctor output deterministic
+				await fs.access(binary, constants.X_OK);
+			} else {
+				// oxlint-disable-next-line no-await-in-loop -- stable check order makes doctor output deterministic
+				await execa('which', [binary], { stderr: 'ignore', stdout: 'ignore' });
+			}
 			availableBinaries.add(binary);
 		} catch {
 			// Binary not found on the host.
 		}
 	}
 	return availableBinaries;
+}
+
+async function collectCommandOutput(
+	command: string,
+	arguments_: readonly string[],
+): Promise<string | undefined> {
+	try {
+		const result = await execa(command, [...arguments_]);
+		return result.stdout.trim();
+	} catch {
+		return undefined;
+	}
+}
+
+async function collectDockerDaemonReady(availableBinaries: ReadonlySet<string>): Promise<boolean> {
+	if (!availableBinaries.has('docker')) {
+		return false;
+	}
+	try {
+		await execa('docker', ['info'], { stderr: 'ignore', stdout: 'ignore' });
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 async function collectWorkerGatewayConfigChecks(
@@ -101,17 +135,34 @@ export async function runControllerOperationCommand(
 
 	switch (options.subcommand) {
 		case 'doctor': {
-			const availableBinaries = collectAvailableBinaryNames([
+			const availableBinaries = await collectAvailableBinaryNames([
 				'qemu-system-aarch64',
 				'qemu-system-x86_64',
+				'qemu-img',
+				'docker',
 				'op',
 				'security',
+				'mke2fs',
+				'mkfs.ext4',
+				'/opt/homebrew/opt/e2fsprogs/sbin/mke2fs',
+				'/usr/local/opt/e2fsprogs/sbin/mke2fs',
+				'debugfs',
+				'/opt/homebrew/opt/e2fsprogs/sbin/debugfs',
+				'/usr/local/opt/e2fsprogs/sbin/debugfs',
+				'cpio',
+				'lz4',
 			] as const);
+			const requiredZigVersion = await options.dependencies.resolveGondolinMinimumZigVersion();
+			const zigVersion = await collectCommandOutput('zig', ['version']);
+			const dockerDaemonReady = await collectDockerDaemonReady(availableBinaries);
 			const doctorResult = options.dependencies.runControllerDoctor({
 				availableBinaries,
+				dockerDaemonReady,
 				env: process.env,
 				nodeVersion: process.version,
+				requiredZigVersion,
 				systemConfig: options.systemConfig,
+				...(zigVersion ? { zigVersion } : {}),
 			});
 			const workerGatewayConfigChecks = await collectWorkerGatewayConfigChecks(
 				options.systemConfig,

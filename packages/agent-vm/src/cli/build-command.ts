@@ -2,7 +2,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type { BuildImageResult } from '@agent-vm/gondolin-adapter';
-import task from 'tasuku';
 import { z } from 'zod';
 
 import { buildDockerImage as buildDockerImageDefault } from '../build/docker-image-builder.js';
@@ -23,7 +22,7 @@ export interface BuildCommandDependencies {
 		readonly fullReset?: boolean;
 	}) => Promise<BuildImageResult>;
 	readonly resolveOciImageTag?: (buildConfigPath: string) => Promise<string>;
-	/** Override the task runner for testing (bypasses tasuku terminal rendering). */
+	/** Override the task runner for testing or custom CLI progress. */
 	readonly runTask?: (title: string, fn: () => Promise<void>) => Promise<void>;
 	readonly resolveProjectRootFromDockerfile?: (dockerfilePath: string) => Promise<string>;
 	readonly syncBundledOpenClawPlugin?: (
@@ -87,11 +86,9 @@ async function assertUniqueDockerImageTags(
 }
 
 async function defaultRunTask(title: string, fn: () => Promise<void>): Promise<void> {
-	await task(title, async (taskState) => {
-		taskState.startTime();
-		await fn();
-		taskState.setTitle(`${title} done`);
-	});
+	process.stderr.write(`  ${title}...\n`);
+	await fn();
+	process.stderr.write(`  ${title} done\n`);
 }
 
 async function resolveProjectRootFromDockerfile(dockerfilePath: string): Promise<string> {

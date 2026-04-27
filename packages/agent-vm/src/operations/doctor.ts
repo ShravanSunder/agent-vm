@@ -8,17 +8,20 @@ export interface DoctorCheck {
 	readonly name: string;
 	readonly ok: boolean;
 	readonly hint?: string;
-	readonly value?: number;
+	readonly value?: number | string;
 }
 
 export interface RunControllerDoctorOptions {
 	readonly availableBinaries?: ReadonlySet<string>;
 	readonly diskFreeBytes?: number;
+	readonly dockerDaemonReady?: boolean;
 	readonly env: NodeJS.ProcessEnv;
 	readonly occupiedPorts?: ReadonlySet<number>;
 	readonly nodeVersion: string;
+	readonly requiredZigVersion?: string;
 	readonly systemConfig: SystemConfig;
 	readonly totalMemoryBytes?: number;
+	readonly zigVersion?: string;
 }
 
 export interface ControllerDoctorResult {
@@ -42,6 +45,106 @@ function checkAnyBinary(
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseVersionParts(version: string): readonly number[] | null {
+	const versionMatch = /^(\d+)\.(\d+)\.(\d+)/u.exec(version.trim());
+	if (!versionMatch) {
+		return null;
+	}
+	return [versionMatch[1], versionMatch[2], versionMatch[3]].map((part) =>
+		Number.parseInt(part ?? '0', 10),
+	);
+}
+
+function isVersionAtLeast(version: string, minimumVersion: string): boolean {
+	const versionParts = parseVersionParts(version);
+	const minimumVersionParts = parseVersionParts(minimumVersion);
+	if (!versionParts || !minimumVersionParts) {
+		return false;
+	}
+	for (const [index, minimumVersionPart] of minimumVersionParts.entries()) {
+		const versionPart = versionParts[index] ?? 0;
+		if (versionPart > minimumVersionPart) {
+			return true;
+		}
+		if (versionPart < minimumVersionPart) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function buildZigVersionCheck(
+	zigVersion: string | undefined,
+	requiredZigVersion: string | undefined,
+): DoctorCheck | null {
+	if (!zigVersion && !requiredZigVersion) {
+		return null;
+	}
+	if (!zigVersion) {
+		return {
+			name: 'zig-version',
+			ok: false,
+			hint: requiredZigVersion
+				? `Install Zig >= ${requiredZigVersion}.`
+				: 'Install Zig required by Gondolin.',
+		};
+	}
+	if (!requiredZigVersion) {
+		return {
+			name: 'zig-version',
+			ok: true,
+			value: zigVersion,
+		};
+	}
+	const ok = isVersionAtLeast(zigVersion, requiredZigVersion);
+	return {
+		name: 'zig-version',
+		ok,
+		value: zigVersion,
+		...(!ok ? { hint: `Requires Zig >= ${requiredZigVersion}.` } : {}),
+	};
+}
+
+function hasDockerBackedImageProfiles(systemConfig: SystemConfig): boolean {
+	const gatewayProfiles = Object.values(systemConfig.imageProfiles.gateways);
+	const toolVmProfiles = Object.values(systemConfig.imageProfiles.toolVms);
+	return [...gatewayProfiles, ...toolVmProfiles].some(
+		(profile) => profile.dockerfile !== undefined,
+	);
+}
+
+function buildDockerChecks(
+	systemConfig: SystemConfig,
+	availableBinaries: ReadonlySet<string>,
+	dockerDaemonReady: boolean | undefined,
+): readonly DoctorCheck[] {
+	if (!hasDockerBackedImageProfiles(systemConfig)) {
+		return [];
+	}
+
+	const dockerCliReady = availableBinaries.has('docker');
+	return [
+		{
+			name: 'docker-cli',
+			ok: dockerCliReady,
+			...(dockerCliReady
+				? { hint: 'docker' }
+				: {
+						hint: 'Install and start a Docker-compatible runtime. On macOS: brew install --cask orbstack && open -a OrbStack.',
+					}),
+		},
+		{
+			name: 'docker-daemon',
+			ok: dockerCliReady && dockerDaemonReady === true,
+			...(dockerCliReady && dockerDaemonReady === true
+				? { hint: 'docker info' }
+				: {
+						hint: 'Start Docker/OrbStack and verify with: docker info',
+					}),
+		},
+	];
 }
 
 export async function collectVmHostSystemDoctorCheck(
@@ -95,6 +198,11 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 	const diskFreeBytes = options.diskFreeBytes ?? Number.POSITIVE_INFINITY;
 	const totalMemoryBytes = options.totalMemoryBytes ?? Number.POSITIVE_INFINITY;
 	const availableBinaries = options.availableBinaries ?? new Set<string>();
+	const dockerChecks = buildDockerChecks(
+		options.systemConfig,
+		availableBinaries,
+		options.dockerDaemonReady,
+	);
 	const configuredGatewayBytes = options.systemConfig.zones.reduce((totalBytes, zone) => {
 		const memoryMatch = /^(\d+)([GgMm])$/u.exec(zone.gateway.memory);
 		if (!memoryMatch) {
@@ -106,6 +214,7 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 		return totalBytes + numericValue * multiplier;
 	}, 0);
 	const tokenSource = options.systemConfig.host.secretsProvider?.tokenSource;
+	const zigVersionCheck = buildZigVersionCheck(options.zigVersion, options.requiredZigVersion);
 	const tokenSourceReady = (() => {
 		if (!tokenSource) {
 			return true;
@@ -130,6 +239,7 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 			ok: nodeMajorVersion >= 24,
 			...(nodeMajorVersion < 24 ? { hint: 'Requires Node.js >= 24. Install via nvm or fnm.' } : {}),
 		},
+		...(zigVersionCheck ? [zigVersionCheck] : []),
 		...(tokenSource
 			? [
 					{
@@ -152,6 +262,41 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 			'Install QEMU (for example: brew install qemu).',
 			availableBinaries,
 		),
+		checkAnyBinary(
+			'qemu-img',
+			['qemu-img'],
+			'Install qemu-img (for example: brew install qemu).',
+			availableBinaries,
+		),
+		checkAnyBinary(
+			'mke2fs',
+			[
+				'mke2fs',
+				'mkfs.ext4',
+				'/opt/homebrew/opt/e2fsprogs/sbin/mke2fs',
+				'/usr/local/opt/e2fsprogs/sbin/mke2fs',
+			],
+			'Install e2fsprogs (for example: brew install e2fsprogs).',
+			availableBinaries,
+		),
+		checkAnyBinary(
+			'debugfs',
+			[
+				'debugfs',
+				'/opt/homebrew/opt/e2fsprogs/sbin/debugfs',
+				'/usr/local/opt/e2fsprogs/sbin/debugfs',
+			],
+			'Install e2fsprogs (for example: brew install e2fsprogs).',
+			availableBinaries,
+		),
+		checkAnyBinary('cpio', ['cpio'], 'Install cpio.', availableBinaries),
+		checkAnyBinary(
+			'lz4',
+			['lz4'],
+			'Install lz4 (for example: brew install lz4).',
+			availableBinaries,
+		),
+		...dockerChecks,
 		{
 			name: 'controller-port',
 			ok:
