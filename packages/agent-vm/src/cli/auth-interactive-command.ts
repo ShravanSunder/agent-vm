@@ -73,6 +73,7 @@ export async function runAuthInteractiveCommand(options: {
 		CliDependencies,
 		'createControllerClient' | 'runCommand' | 'runInteractiveProcess'
 	>;
+	readonly deviceCode?: boolean;
 	readonly io: CliIo;
 	readonly provider: string;
 	readonly runCommand?: (
@@ -80,6 +81,7 @@ export async function runAuthInteractiveCommand(options: {
 		arguments_: readonly string[],
 	) => Promise<{ readonly exitCode: number; readonly stderr: string; readonly stdout: string }>;
 	readonly systemConfig: SystemConfig;
+	readonly setDefault?: boolean;
 	readonly zoneId: string;
 }): Promise<void> {
 	if (!options.authConfig) {
@@ -113,7 +115,12 @@ export async function runAuthInteractiveCommand(options: {
 		'-p',
 		String(sshResponse.port),
 		`${sshResponse.user ?? 'root'}@${sshResponse.host}`,
-		wrapWithOpenClawShellEnvironment(options.authConfig.buildLoginCommand(options.provider)),
+		wrapWithOpenClawShellEnvironment(
+			options.authConfig.buildLoginCommand(options.provider, {
+				deviceCode: options.deviceCode === true,
+				setDefault: options.setDefault === true,
+			}),
+		),
 	];
 
 	const runInteractiveProcess =

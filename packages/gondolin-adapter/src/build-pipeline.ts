@@ -14,6 +14,11 @@ export interface BuildImageOptions {
 	readonly configDir?: string;
 	readonly fullReset?: boolean;
 	readonly fingerprintInput?: unknown;
+	readonly output?: BuildOutput;
+}
+
+export interface BuildOutput {
+	write(chunk: string | Uint8Array): boolean;
 }
 
 export interface BuildImageResult {
@@ -86,6 +91,49 @@ async function loadBuildAssets(): Promise<
 		} satisfies BuildOptions);
 }
 
+function createRedirectedWrite(output: BuildOutput): typeof process.stderr.write {
+	return ((
+		chunk: string | Uint8Array,
+		encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+		callback?: (error?: Error | null) => void,
+	): boolean => {
+		const writeCallback = typeof encodingOrCallback === 'function' ? encodingOrCallback : callback;
+		const wrote = output.write(chunk);
+		writeCallback?.();
+		return wrote;
+	}) as typeof process.stderr.write;
+}
+
+async function withCapturedBuildOutput<TResult>(
+	output: BuildOutput | undefined,
+	fn: () => Promise<TResult>,
+): Promise<TResult> {
+	if (!output) {
+		return await fn();
+	}
+
+	const originalStderrWrite = process.stderr.write.bind(process.stderr);
+	const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+	const originalCi = process.env.CI;
+	const redirectedWrite = createRedirectedWrite(output);
+
+	process.stderr.write = redirectedWrite;
+	process.stdout.write = redirectedWrite;
+	process.env.CI = 'true';
+
+	try {
+		return await fn();
+	} finally {
+		process.stderr.write = originalStderrWrite;
+		process.stdout.write = originalStdoutWrite;
+		if (originalCi === undefined) {
+			delete process.env.CI;
+		} else {
+			process.env.CI = originalCi;
+		}
+	}
+}
+
 export function computeBuildFingerprint(
 	buildConfig: BuildConfig,
 	gondolinVersion: string = 'unknown',
@@ -124,7 +172,9 @@ export async function buildImage(
 
 	await fs.mkdir(imagePath, { recursive: true });
 	const buildAssetsImplementation = dependencies.buildAssets ?? (await loadBuildAssets());
-	await buildAssetsImplementation(options.buildConfig, imagePath, options.configDir);
+	await withCapturedBuildOutput(options.output, async () => {
+		await buildAssetsImplementation(options.buildConfig, imagePath, options.configDir);
+	});
 
 	if (!(await hasBuiltAssets(imagePath))) {
 		throw new Error(`Expected Gondolin assets to be written to ${imagePath}.`);

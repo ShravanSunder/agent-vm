@@ -57,7 +57,6 @@ describe('production config artifacts', () => {
 					);
 					return 'created';
 				},
-				generateAgeIdentityKey: () => undefined,
 			},
 		);
 

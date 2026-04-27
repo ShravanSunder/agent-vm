@@ -3,7 +3,11 @@ import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 
 import type { SystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
-import { buildControllerStatus } from '../operations/controller-status.js';
+import {
+	buildControllerStatus,
+	buildControllerZoneStatus,
+	type ControllerRuntimeStatus,
+} from '../operations/controller-status.js';
 import { runControllerCredentialsRefresh } from '../operations/credentials-refresh.js';
 import { runControllerDestroy } from '../operations/destroy-zone.js';
 import { runControllerUpgrade } from '../operations/upgrade-zone.js';
@@ -17,6 +21,7 @@ interface GatewayZoneRuntime {
 	};
 	readonly processSpec: GatewayProcessSpec;
 	readonly vm: {
+		readonly id: string;
 		close(): Promise<void>;
 		enableSsh(): Promise<unknown>;
 		exec(command: string): Promise<{
@@ -39,6 +44,7 @@ interface ControllerRuntimeOperations {
 		readonly stdout: string;
 	}>;
 	readonly getStatus: () => Promise<unknown>;
+	readonly getZoneStatus: (targetZoneId: string) => Promise<unknown>;
 	readonly getZoneLogs: (targetZoneId: string) => Promise<{
 		readonly output: string;
 		readonly zoneId: string;
@@ -53,6 +59,7 @@ interface ControllerRuntimeOperations {
 export function createControllerRuntimeOperations(options: {
 	readonly activeZoneId: string;
 	readonly getGateway: () => GatewayZoneRuntime;
+	readonly getGatewayBootedAt: () => string | undefined;
 	readonly getZone: (zoneId: string) => SystemConfig['zones'][number];
 	readonly leaseManager: Pick<LeaseManager, 'listLeases' | 'releaseLease'>;
 	readonly restartGatewayZone: () => Promise<void>;
@@ -66,6 +73,23 @@ export function createControllerRuntimeOperations(options: {
 				`Controller is running zone '${options.activeZoneId}', not '${targetZoneId}'. Multi-zone runtime selection is not implemented yet.`,
 			);
 		}
+	};
+	const getGatewayIfAvailable = (): GatewayZoneRuntime | undefined => {
+		try {
+			return options.getGateway();
+		} catch {
+			return undefined;
+		}
+	};
+	const buildRuntimeStatus = (): ControllerRuntimeStatus => {
+		const gateway = getGatewayIfAvailable();
+		const bootedAt = options.getGatewayBootedAt();
+		return {
+			activeLeases: options.leaseManager.listLeases(),
+			activeZoneId: options.activeZoneId,
+			...(gateway ? { gateway } : {}),
+			...(gateway && bootedAt ? { bootedAt } : {}),
+		};
 	};
 
 	return {
@@ -103,7 +127,9 @@ export function createControllerRuntimeOperations(options: {
 				},
 			);
 		},
-		getStatus: async () => buildControllerStatus(options.systemConfig),
+		getStatus: async () => buildControllerStatus(options.systemConfig, buildRuntimeStatus()),
+		getZoneStatus: async (targetZoneId: string) =>
+			buildControllerZoneStatus(options.systemConfig, targetZoneId, buildRuntimeStatus()),
 		getZoneLogs: async (targetZoneId: string) => {
 			assertActiveZone(targetZoneId);
 			const gateway = options.getGateway();

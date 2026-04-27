@@ -114,6 +114,9 @@ export function createControllerApp(options: {
 			getZoneLogs: async () => {
 				throw new Error('zone-logs-unavailable');
 			},
+			getZoneStatus: async () => {
+				throw new Error('zone-status-unavailable');
+			},
 			refreshZoneCredentials: async () => {
 				throw new Error('refresh-zone-credentials-unavailable');
 			},

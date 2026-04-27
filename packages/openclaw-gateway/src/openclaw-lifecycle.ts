@@ -219,8 +219,15 @@ async function writeEffectiveOpenClawConfig(
 export const openclawLifecycle: GatewayLifecycle = {
 	authConfig: {
 		listProvidersCommand: 'openclaw models auth list --format plain 2>/dev/null || echo ""',
-		buildLoginCommand: (provider: string): string =>
-			`openclaw models auth login --provider ${shellQuote(provider)}`,
+		buildLoginCommand: (
+			provider: string,
+			options: { readonly deviceCode?: boolean; readonly setDefault?: boolean } = {},
+		): string =>
+			[
+				`openclaw models auth login --provider ${shellQuote(provider)}`,
+				...(options.deviceCode === true ? ['--device-code'] : []),
+				...(options.setDefault === true ? ['--set-default'] : []),
+			].join(' '),
 	},
 
 	buildVmSpec({

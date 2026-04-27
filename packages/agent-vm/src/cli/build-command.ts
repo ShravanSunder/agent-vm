@@ -2,11 +2,19 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type { BuildImageResult } from '@agent-vm/gondolin-adapter';
+import { resolveGondolinMinimumZigVersion } from '@agent-vm/gondolin-adapter';
+import { execa } from 'execa';
 import { z } from 'zod';
 
 import { buildDockerImage as buildDockerImageDefault } from '../build/docker-image-builder.js';
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import {
+	buildZigInstallHint,
+	buildZigUpgradeHint,
+	isVersionAtLeast,
+} from '../operations/doctor.js';
+import type { RunTaskFn, TaskOutput } from '../shared/run-task.js';
 import { formatZodError } from './format-zod-error.js';
 import { syncBundledOpenClawPluginBundle } from './openclaw-plugin-bundle.js';
 
@@ -14,16 +22,20 @@ export interface BuildCommandDependencies {
 	readonly buildDockerImage?: (options: {
 		readonly dockerfilePath: string;
 		readonly imageTag: string;
+		readonly streamPreview?: TaskOutput;
 	}) => Promise<void>;
 	readonly buildGondolinImage?: (options: {
 		readonly buildConfigPath: string;
 		readonly systemCacheIdentifierPath: string;
 		readonly cacheDir: string;
 		readonly fullReset?: boolean;
+		readonly streamPreview?: TaskOutput;
 	}) => Promise<BuildImageResult>;
 	readonly resolveOciImageTag?: (buildConfigPath: string) => Promise<string>;
+	readonly resolveRequiredZigVersion?: () => Promise<string>;
+	readonly resolveZigVersion?: () => Promise<string | undefined>;
 	/** Override the task runner for testing or custom CLI progress. */
-	readonly runTask?: (title: string, fn: () => Promise<void>) => Promise<void>;
+	readonly runTask?: RunTaskFn;
 	readonly resolveProjectRootFromDockerfile?: (dockerfilePath: string) => Promise<string>;
 	readonly syncBundledOpenClawPlugin?: (
 		targetDir: string,
@@ -62,6 +74,29 @@ async function resolveOciImageTagFromConfig(buildConfigPath: string): Promise<st
 	return parsedConfig.data.oci.image;
 }
 
+async function resolveHostZigVersion(): Promise<string | undefined> {
+	try {
+		const result = await execa('zig', ['version']);
+		return result.stdout.trim();
+	} catch {
+		return undefined;
+	}
+}
+
+async function assertZigBuildPrerequisite(
+	resolveRequiredZigVersion: () => Promise<string>,
+	resolveZigVersion: () => Promise<string | undefined>,
+): Promise<void> {
+	const requiredZigVersion = await resolveRequiredZigVersion();
+	const zigVersion = await resolveZigVersion();
+	if (!zigVersion) {
+		throw new Error(buildZigInstallHint(requiredZigVersion));
+	}
+	if (!isVersionAtLeast(zigVersion, requiredZigVersion)) {
+		throw new Error(`${buildZigUpgradeHint(requiredZigVersion)} Current version: ${zigVersion}.`);
+	}
+}
+
 async function assertUniqueDockerImageTags(
 	imageTargets: readonly (ImageTarget & { readonly dockerfile: string })[],
 	resolveOciImageTag: (buildConfigPath: string) => Promise<string>,
@@ -85,11 +120,15 @@ async function assertUniqueDockerImageTags(
 	return tagByProfile;
 }
 
-async function defaultRunTask(title: string, fn: () => Promise<void>): Promise<void> {
+const defaultRunTask: RunTaskFn = async (title, fn): Promise<void> => {
 	process.stderr.write(`  ${title}...\n`);
-	await fn();
+	await fn({
+		interactive: false,
+		setOutput: () => {},
+		setStatus: () => {},
+	});
 	process.stderr.write(`  ${title} done\n`);
-}
+};
 
 async function resolveProjectRootFromDockerfile(dockerfilePath: string): Promise<string> {
 	let searchDirectory = path.dirname(path.resolve(dockerfilePath));
@@ -121,12 +160,17 @@ export async function runBuildCommand(
 	const buildDockerImage = dependencies.buildDockerImage ?? buildDockerImageDefault;
 	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
 	const resolveOciImageTag = dependencies.resolveOciImageTag ?? resolveOciImageTagFromConfig;
+	const resolveRequiredZigVersion =
+		dependencies.resolveRequiredZigVersion ?? resolveGondolinMinimumZigVersion;
+	const resolveZigVersion = dependencies.resolveZigVersion ?? resolveHostZigVersion;
 	const runTaskStep = dependencies.runTask ?? defaultRunTask;
 	const resolveProjectRoot =
 		dependencies.resolveProjectRootFromDockerfile ?? resolveProjectRootFromDockerfile;
 	const syncBundledOpenClawPlugin =
 		dependencies.syncBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle;
 	const systemCacheIdentifierPath = options.systemConfig.systemCacheIdentifierPath;
+
+	await assertZigBuildPrerequisite(resolveRequiredZigVersion, resolveZigVersion);
 
 	const gatewayImageTargets: readonly ImageTarget[] = Object.entries(
 		options.systemConfig.imageProfiles.gateways,
@@ -178,11 +222,16 @@ export async function runBuildCommand(
 		// oxlint-disable-next-line no-await-in-loop -- docker builds intentionally run one at a time to keep task output readable
 		await runTaskStep(
 			`Docker: ${imageTarget.family}/${imageTarget.name} (${imageTag})`,
-			async () => {
+			async (taskContext) => {
+				taskContext?.setStatus('docker build');
 				await buildDockerImage({
 					dockerfilePath: imageTarget.dockerfile,
 					imageTag,
+					...(taskContext?.interactive === true && taskContext.streamPreview
+						? { streamPreview: taskContext.streamPreview }
+						: {}),
 				});
+				taskContext?.setStatus('docker image ready');
 			},
 		);
 	}
@@ -194,13 +243,21 @@ export async function runBuildCommand(
 		const shouldResetGondolinCache =
 			options.forceRebuild === true || dockerBackedTargets.has(imageTargetKey(imageTarget));
 		// oxlint-disable-next-line no-await-in-loop -- gondolin cache rebuilds are intentionally sequenced per image target
-		await runTaskStep(`Gondolin: ${imageTarget.family}/${imageTarget.name}`, async () => {
-			await buildGondolinImage({
-				buildConfigPath: imageTarget.buildConfigPath,
-				systemCacheIdentifierPath: imageTarget.systemCacheIdentifierPath,
-				cacheDir: imageTarget.cacheDirectory,
-				...(shouldResetGondolinCache ? { fullReset: true } : {}),
-			});
-		});
+		await runTaskStep(
+			`Gondolin: ${imageTarget.family}/${imageTarget.name}`,
+			async (taskContext) => {
+				taskContext?.setStatus('vm assets');
+				await buildGondolinImage({
+					buildConfigPath: imageTarget.buildConfigPath,
+					systemCacheIdentifierPath: imageTarget.systemCacheIdentifierPath,
+					cacheDir: imageTarget.cacheDirectory,
+					...(taskContext?.interactive === true && taskContext.streamPreview
+						? { streamPreview: taskContext.streamPreview }
+						: {}),
+					...(shouldResetGondolinCache ? { fullReset: true } : {}),
+				});
+				taskContext?.setStatus('vm assets ready');
+			},
+		);
 	}
 }

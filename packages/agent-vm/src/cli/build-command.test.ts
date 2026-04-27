@@ -1,11 +1,15 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Writable } from 'node:stream';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
-import { runBuildCommand, type BuildCommandDependencies } from './build-command.js';
+import {
+	runBuildCommand as runBuildCommandDefault,
+	type BuildCommandDependencies,
+} from './build-command.js';
 
 const createdDirectories: string[] = [];
 
@@ -81,6 +85,17 @@ function createTestSystemConfig(): LoadedSystemConfig {
 const noOpPluginSync: NonNullable<
 	BuildCommandDependencies['syncBundledOpenClawPlugin']
 > = async () => 'created';
+
+async function runBuildCommand(
+	options: Parameters<typeof runBuildCommandDefault>[0],
+	dependencies: BuildCommandDependencies = {},
+): Promise<void> {
+	await runBuildCommandDefault(options, {
+		resolveRequiredZigVersion: async () => '0.15.2',
+		resolveZigVersion: async () => '0.15.2',
+		...dependencies,
+	});
+}
 
 describe('runBuildCommand', () => {
 	it('builds Docker image when dockerfile is configured', async () => {
@@ -385,6 +400,82 @@ describe('runBuildCommand', () => {
 		]);
 		expect(taskTitles).toContain('Gondolin: gateway/openclaw');
 		expect(taskTitles).toContain('Gondolin: toolVm/default');
+	});
+
+	it('routes Tasuku task status and stream preview into Docker and Gondolin builds', async () => {
+		const taskStreamPreview = new Writable({
+			write(_chunk, _encoding, callback) {
+				callback();
+			},
+		});
+		const dockerStreamPreviews: unknown[] = [];
+		const gondolinStreamPreviews: unknown[] = [];
+		const taskStatuses: (string | undefined)[] = [];
+
+		await runBuildCommand(
+			{
+				systemConfig: createTestSystemConfig(),
+			},
+			{
+				buildDockerImage: async (options) => {
+					dockerStreamPreviews.push(options.streamPreview);
+				},
+				buildGondolinImage: async (options) => {
+					gondolinStreamPreviews.push(options.streamPreview);
+					return { built: true, fingerprint: 'interactive-fp', imagePath: '/cache/interactive' };
+				},
+				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+				runTask: async (_title, fn) => {
+					await fn({
+						interactive: true,
+						setOutput: () => {},
+						setStatus: (status) => {
+							taskStatuses.push(status);
+						},
+						streamPreview: taskStreamPreview,
+					});
+				},
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		expect(dockerStreamPreviews).toEqual([taskStreamPreview]);
+		expect(gondolinStreamPreviews).toEqual([taskStreamPreview, taskStreamPreview]);
+		expect(taskStatuses).toContain('docker build');
+		expect(taskStatuses).toContain('docker image ready');
+		expect(taskStatuses).toContain('vm assets');
+		expect(taskStatuses).toContain('vm assets ready');
+	});
+
+	it('fails before image builds when Zig is missing', async () => {
+		const dockerBuilds: string[] = [];
+		const gondolinBuilds: string[] = [];
+
+		await expect(
+			runBuildCommandDefault(
+				{
+					systemConfig: createTestSystemConfig(),
+				},
+				{
+					buildDockerImage: async (options) => {
+						dockerBuilds.push(options.imageTag);
+					},
+					buildGondolinImage: async (options) => {
+						gondolinBuilds.push(options.buildConfigPath);
+						return { built: true, fingerprint: 'zig-fp', imagePath: '/cache/zig' };
+					},
+					resolveRequiredZigVersion: async () => '0.15.2',
+					resolveZigVersion: async () => undefined,
+					runTask: async (_title, fn) => {
+						await fn();
+					},
+					syncBundledOpenClawPlugin: noOpPluginSync,
+				},
+			),
+		).rejects.toThrow('Install Zig >= 0.15.2. On macOS: brew install zig.');
+
+		expect(dockerBuilds).toEqual([]);
+		expect(gondolinBuilds).toEqual([]);
 	});
 });
 

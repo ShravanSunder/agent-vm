@@ -55,7 +55,6 @@ const noGeneratedAgeIdentityDependencies = {
 		await fs.writeFile(path.join(pluginDirectory, 'openclaw.plugin.json'), '{"id":"gondolin"}\n');
 		return 'created';
 	},
-	generateAgeIdentityKey: () => undefined,
 };
 
 const scaffoldedSystemConfigSchema = z.object({
@@ -280,6 +279,7 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(gatewayDockerfile).toContain('Do not bake auth tokens');
 		expect(gatewayDockerfile).toContain('(ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)');
+		expect(gatewayDockerfile).toContain('pnpm add -g openclaw@2026.4.24');
 		expect(gatewayDockerfile).toContain(
 			'COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin',
 		);
@@ -345,7 +345,7 @@ describe('scaffoldAgentVmProject', () => {
 		});
 	});
 
-	it('appends an age identity to .env.local when one is generated', async () => {
+	it('does not append an unused age identity to .env.local', async () => {
 		const targetDir = await createTestDirectory();
 
 		await scaffoldAgentVmProject(
@@ -357,44 +357,29 @@ describe('scaffoldAgentVmProject', () => {
 				secretsProvider: '1password',
 				writeLocalEnvironmentFile: true,
 			},
-			{
-				...noGeneratedAgeIdentityDependencies,
-				generateAgeIdentityKey: () => 'AGE-SECRET-KEY-1TESTVALUE',
-			},
-		);
-		const envContent = await fs.readFile(path.join(targetDir, '.env.local'), 'utf8');
-
-		expect(envContent).toContain('AGE_IDENTITY_KEY=AGE-SECRET-KEY-1TESTVALUE');
-	});
-
-	it('leaves .env.local without an age identity when generation fails', async () => {
-		const targetDir = await createTestDirectory();
-		const warnings: string[] = [];
-
-		await scaffoldAgentVmProject(
-			{
-				targetDir,
-				zoneId: 'test-zone',
-				gatewayType: 'openclaw',
-				architecture: 'aarch64',
-				secretsProvider: '1password',
-				writeLocalEnvironmentFile: true,
-			},
-			{
-				...noGeneratedAgeIdentityDependencies,
-				generateAgeIdentityKey: () => {
-					throw new Error('age-keygen missing');
-				},
-				reportWarning: (message) => {
-					warnings.push(message);
-				},
-			},
+			noGeneratedAgeIdentityDependencies,
 		);
 		const envContent = await fs.readFile(path.join(targetDir, '.env.local'), 'utf8');
 
 		expect(envContent).not.toMatch(/^AGE_IDENTITY_KEY=/mu);
-		expect(warnings.join('\n')).toContain('age-keygen not available');
-		expect(warnings.join('\n')).toContain('age-keygen missing');
+	});
+
+	it('does not run age-keygen for macOS local scaffolds', async () => {
+		const targetDir = await createTestDirectory();
+		await scaffoldAgentVmProject(
+			{
+				targetDir,
+				zoneId: 'test-zone',
+				gatewayType: 'openclaw',
+				architecture: 'aarch64',
+				secretsProvider: '1password',
+				writeLocalEnvironmentFile: true,
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+		const envContent = await fs.readFile(path.join(targetDir, '.env.local'), 'utf8');
+
+		expect(envContent).not.toMatch(/^AGE_IDENTITY_KEY=/mu);
 	});
 
 	it('creates local runtime directories for local scaffolds', async () => {
@@ -607,6 +592,19 @@ describe('scaffoldAgentVmProject', () => {
 				'utf8',
 			),
 		) as {
+			readonly agents: {
+				readonly defaults: {
+					readonly models: {
+						readonly 'openai-codex/gpt-5.4': {
+							readonly params: { readonly thinking: string };
+						};
+						readonly 'openai-codex/gpt-5.4-mini': {
+							readonly params: { readonly thinking: string };
+						};
+					};
+					readonly thinkingDefault?: string;
+				};
+			};
 			readonly gateway: {
 				readonly controlUi: {
 					readonly allowedOrigins: readonly string[];
@@ -623,6 +621,13 @@ describe('scaffoldAgentVmProject', () => {
 			'http://127.0.0.1:18791',
 			'http://localhost:18791',
 		]);
+		expect(openClawConfig.agents.defaults.thinkingDefault).toBeUndefined();
+		expect(openClawConfig.agents.defaults.models['openai-codex/gpt-5.4'].params.thinking).toBe(
+			'low',
+		);
+		expect(openClawConfig.agents.defaults.models['openai-codex/gpt-5.4-mini'].params.thinking).toBe(
+			'high',
+		);
 		expect(openClawConfig.plugins.load.paths).toEqual(['/home/openclaw/.openclaw/extensions']);
 	});
 
@@ -876,6 +881,52 @@ describe('scaffoldAgentVmProject', () => {
 		);
 	});
 
+	it('scaffolds broad model-provider network defaults for openclaw type', async () => {
+		const targetDir = await createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{
+				gatewayType: 'openclaw',
+				architecture: 'aarch64',
+				targetDir,
+				zoneId: 'test-openclaw',
+				secretsProvider: '1password',
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		const config = JSON.parse(
+			await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		);
+		const zone = config.zones[0];
+
+		expect(zone.allowedHosts).toEqual(
+			expect.arrayContaining([
+				'api.anthropic.com',
+				'api.openai.com',
+				'auth.openai.com',
+				'chatgpt.com',
+				'generativelanguage.googleapis.com',
+				'oauth2.googleapis.com',
+				'accounts.google.com',
+				'api.x.ai',
+				'api.groq.com',
+				'api.mistral.ai',
+				'api.deepseek.com',
+				'api.openrouter.ai',
+				'openrouter.ai',
+				'api.perplexity.ai',
+				'api.together.xyz',
+				'api.fireworks.ai',
+				'api.cerebras.ai',
+				'api.cohere.ai',
+			]),
+		);
+		expect(zone.websocketBypass).toEqual(
+			expect.arrayContaining(['gateway.discord.gg:443', 'web.whatsapp.com:443']),
+		);
+	});
+
 	it('scaffolds tool VM support for openclaw gateways', async () => {
 		const targetDir = await createTestDirectory();
 
@@ -918,6 +969,14 @@ describe('scaffoldAgentVmProject', () => {
 		await expect(
 			fs.access(path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'Dockerfile')),
 		).resolves.toBeUndefined();
+		const dockerfile = await fs.readFile(
+			path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'Dockerfile'),
+			'utf8',
+		);
+		expect(dockerfile).toContain('ripgrep');
+		expect(dockerfile).toContain('fd-find');
+		expect(dockerfile).toContain('build-essential');
+		expect(dockerfile).toContain('ln -sf /usr/bin/fdfind /usr/local/bin/fd');
 	});
 
 	it('scaffolds worker-specific env references for worker type', async () => {
@@ -1084,7 +1143,6 @@ describe('scaffoldAgentVmProject', () => {
 			},
 			{
 				...noGeneratedAgeIdentityDependencies,
-				generateAgeIdentityKey: () => 'AGE-SECRET-KEY-SHOULD-NOT-APPEAR',
 			},
 		);
 

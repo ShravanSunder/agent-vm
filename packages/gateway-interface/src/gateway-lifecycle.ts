@@ -19,7 +19,13 @@ export interface GatewayAuthConfig {
 	 * Build the shell command for interactive auth login.
 	 * The CLI passes this as the SSH remote command with -t (TTY).
 	 */
-	readonly buildLoginCommand: (provider: string) => string;
+	readonly buildLoginCommand: (
+		provider: string,
+		options?: {
+			readonly deviceCode?: boolean;
+			readonly setDefault?: boolean;
+		},
+	) => string;
 }
 
 /**

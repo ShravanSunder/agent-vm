@@ -198,13 +198,13 @@ describe('runControllerDoctor', () => {
 		expect(missingResult.ok).toBe(false);
 		expect(missingResult.checks.find((check) => check.name === 'zig-version')).toMatchObject({
 			ok: false,
-			hint: 'Install Zig >= 0.15.2.',
+			hint: 'Install Zig >= 0.15.2. On macOS: brew install zig.',
 		});
 		expect(outdatedResult.ok).toBe(false);
 		expect(outdatedResult.checks.find((check) => check.name === 'zig-version')).toMatchObject({
 			ok: false,
 			value: '0.15.1',
-			hint: 'Requires Zig >= 0.15.2.',
+			hint: 'Requires Zig >= 0.15.2. On macOS: brew install zig.',
 		});
 	});
 

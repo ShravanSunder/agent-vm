@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
@@ -70,9 +69,7 @@ interface ScaffoldAgentVmProjectDependencies {
 		targetDir: string,
 		profileName: string,
 	) => Promise<'created' | 'skipped'>;
-	readonly generateAgeIdentityKey?: () => string | undefined;
 	readonly getHomeDir?: () => string;
-	readonly reportWarning?: (message: string) => void;
 	readonly resolveGondolinMinimumZigVersion?: typeof resolveGondolinMinimumZigVersion;
 }
 
@@ -533,9 +530,24 @@ function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): readonly s
 	}
 
 	return [
+		'api.anthropic.com',
 		'api.openai.com',
 		'auth.openai.com',
+		'chatgpt.com',
+		'generativelanguage.googleapis.com',
+		'oauth2.googleapis.com',
+		'accounts.google.com',
+		'api.x.ai',
+		'api.groq.com',
+		'api.mistral.ai',
+		'api.deepseek.com',
+		'api.openrouter.ai',
+		'openrouter.ai',
 		'api.perplexity.ai',
+		'api.together.xyz',
+		'api.fireworks.ai',
+		'api.cerebras.ai',
+		'api.cohere.ai',
 		'discord.com',
 		'cdn.discordapp.com',
 		'api.github.com',
@@ -614,7 +626,7 @@ RUN apt-get update && \\
     rm -rf /var/lib/apt/lists/* && \\
     update-ca-certificates && \\
     corepack enable && \\
-    pnpm add -g openclaw@2026.4.2 && \\
+    pnpm add -g openclaw@2026.4.24 && \\
     OPENCLAW_PACKAGE_ROOT="$(pnpm root -g)/openclaw" && \\
     (cd "$OPENCLAW_PACKAGE_ROOT" && node scripts/postinstall-bundled-plugins.mjs) && \\
     mkdir -p /opt/openclaw-sdk && \\
@@ -714,10 +726,18 @@ RUN apt-get update && \\
       git \\
       curl \\
       jq \\
-      python3 && \\
+      python3 \\
+      ripgrep \\
+      fd-find \\
+      build-essential \\
+      less \\
+      tree \\
+      nano \\
+      vim-tiny && \\
     rm -rf /var/lib/apt/lists/* && \\
     update-ca-certificates && \\
     corepack enable && \\
+    ln -sf /usr/bin/fdfind /usr/local/bin/fd && \\
     mkdir -p /workspace /run/sshd
 
 WORKDIR /workspace
@@ -783,6 +803,18 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 	agents: {
 		defaults: {
 			model: { primary: 'openai-codex/gpt-5.4' },
+			models: {
+				'openai-codex/gpt-5.4': {
+					params: {
+						thinking: 'low',
+					},
+				},
+				'openai-codex/gpt-5.4-mini': {
+					params: {
+						thinking: 'high',
+					},
+				},
+			},
 			sandbox: { backend: 'gondolin', mode: 'all', scope: 'session' },
 			workspace: '/home/openclaw/workspace',
 		},
@@ -999,29 +1031,6 @@ async function scaffoldAgentVmProjectInternal(
 			overwrite,
 		);
 		(envFileStatus === 'created' ? created : skipped).push('.env.local');
-		if (envFileStatus === 'created' && options.secretsProvider === '1password') {
-			const generateAgeIdentityKey =
-				dependencies.generateAgeIdentityKey ??
-				((): string | undefined => {
-					const keygenOutput = execFileSync('age-keygen', [], { encoding: 'utf8' });
-					return keygenOutput
-						.split('\n')
-						.find((line) => line.startsWith('AGE-SECRET-KEY-'))
-						?.trim();
-				});
-			let ageIdentityKey: string | undefined;
-			try {
-				ageIdentityKey = generateAgeIdentityKey();
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				(dependencies.reportWarning ?? ((warning) => process.stderr.write(`${warning}\n`)))(
-					`[init] age-keygen not available; skipping AGE_IDENTITY_KEY. Install age if you need sops-backed secrets. (${message})`,
-				);
-			}
-			if (ageIdentityKey) {
-				await fs.appendFile(envFilePath, `AGE_IDENTITY_KEY=${ageIdentityKey}\n`, 'utf8');
-			}
-		}
 	}
 
 	const configFileName = resolveGatewayConfigFileName(gatewayType);

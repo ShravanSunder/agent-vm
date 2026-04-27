@@ -279,6 +279,23 @@ describe('startControllerRuntime', () => {
 		expect(statusResponse.status).toBe(200);
 		await expect(statusResponse.json()).resolves.toMatchObject({
 			controllerPort: 18800,
+			zones: expect.arrayContaining([
+				expect.objectContaining({
+					activeLeaseCount: 0,
+					bootedAt: expect.any(String),
+					id: 'shravan',
+					running: true,
+					vmId: 'gateway-vm-1',
+				}),
+			]),
+		});
+		const zoneStatusResponse = await startHttpServerArgs.app.request('/zones/shravan/status');
+		expect(zoneStatusResponse.status).toBe(200);
+		await expect(zoneStatusResponse.json()).resolves.toMatchObject({
+			bootedAt: expect.any(String),
+			id: 'shravan',
+			running: true,
+			vmId: 'gateway-vm-1',
 		});
 		const refreshResponse = await startHttpServerArgs.app.request(
 			'/zones/shravan/credentials/refresh',

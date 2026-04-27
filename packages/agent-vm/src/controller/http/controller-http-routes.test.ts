@@ -359,9 +359,17 @@ describe('createControllerApp', () => {
 					gatewayType: 'openclaw',
 					id: 'shravan',
 					ingressPort: 18791,
+					running: true,
 					toolProfile: 'standard',
 				},
 			],
+		}));
+		const getZoneStatus = vi.fn(async () => ({
+			gatewayType: 'openclaw',
+			id: 'shravan',
+			ingressPort: 18791,
+			running: true,
+			toolProfile: 'standard',
 		}));
 		const getZoneLogs = vi.fn(async () => ({
 			output: 'gateway log line',
@@ -395,6 +403,7 @@ describe('createControllerApp', () => {
 			operations: {
 				destroyZone,
 				getStatus,
+				getZoneStatus,
 				getZoneLogs,
 				refreshZoneCredentials,
 				upgradeZone,
@@ -402,6 +411,7 @@ describe('createControllerApp', () => {
 		});
 
 		const statusResponse = await app.request('/controller-status');
+		const zoneStatusResponse = await app.request('/zones/shravan/status');
 		const logsResponse = await app.request('/zones/shravan/logs');
 		const refreshResponse = await app.request('/zones/shravan/credentials/refresh', {
 			method: 'POST',
@@ -418,11 +428,13 @@ describe('createControllerApp', () => {
 		});
 
 		expect(statusResponse.status).toBe(200);
+		expect(zoneStatusResponse.status).toBe(200);
 		expect(logsResponse.status).toBe(200);
 		expect(refreshResponse.status).toBe(200);
 		expect(destroyResponse.status).toBe(200);
 		expect(upgradeResponse.status).toBe(200);
 		expect(getStatus).toHaveBeenCalled();
+		expect(getZoneStatus).toHaveBeenCalledWith('shravan');
 		expect(getZoneLogs).toHaveBeenCalledWith('shravan');
 		expect(refreshZoneCredentials).toHaveBeenCalledWith('shravan');
 		expect(destroyZone).toHaveBeenCalledWith('shravan', true);

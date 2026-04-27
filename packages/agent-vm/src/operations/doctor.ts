@@ -57,7 +57,7 @@ function parseVersionParts(version: string): readonly number[] | null {
 	);
 }
 
-function isVersionAtLeast(version: string, minimumVersion: string): boolean {
+export function isVersionAtLeast(version: string, minimumVersion: string): boolean {
 	const versionParts = parseVersionParts(version);
 	const minimumVersionParts = parseVersionParts(minimumVersion);
 	if (!versionParts || !minimumVersionParts) {
@@ -75,6 +75,16 @@ function isVersionAtLeast(version: string, minimumVersion: string): boolean {
 	return true;
 }
 
+export function buildZigInstallHint(requiredZigVersion: string | undefined): string {
+	return requiredZigVersion
+		? `Install Zig >= ${requiredZigVersion}. On macOS: brew install zig.`
+		: 'Install Zig required by Gondolin. On macOS: brew install zig.';
+}
+
+export function buildZigUpgradeHint(requiredZigVersion: string): string {
+	return `Requires Zig >= ${requiredZigVersion}. On macOS: brew install zig.`;
+}
+
 function buildZigVersionCheck(
 	zigVersion: string | undefined,
 	requiredZigVersion: string | undefined,
@@ -86,9 +96,7 @@ function buildZigVersionCheck(
 		return {
 			name: 'zig-version',
 			ok: false,
-			hint: requiredZigVersion
-				? `Install Zig >= ${requiredZigVersion}.`
-				: 'Install Zig required by Gondolin.',
+			hint: buildZigInstallHint(requiredZigVersion),
 		};
 	}
 	if (!requiredZigVersion) {
@@ -103,7 +111,7 @@ function buildZigVersionCheck(
 		name: 'zig-version',
 		ok,
 		value: zigVersion,
-		...(!ok ? { hint: `Requires Zig >= ${requiredZigVersion}.` } : {}),
+		...(!ok ? { hint: buildZigUpgradeHint(requiredZigVersion) } : {}),
 	};
 }
 

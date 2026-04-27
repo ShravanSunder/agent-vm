@@ -84,6 +84,9 @@ export function registerControllerZoneOperationRoutes(
 	operations: ControllerRouteOperations,
 ): void {
 	app.get('/controller-status', async (context) => context.json(await operations.getStatus()));
+	app.get('/zones/:zoneId/status', async (context) =>
+		context.json(await operations.getZoneStatus(context.req.param('zoneId'))),
+	);
 	app.get('/zones/:zoneId/logs', async (context) =>
 		context.json(await operations.getZoneLogs(context.req.param('zoneId'))),
 	);

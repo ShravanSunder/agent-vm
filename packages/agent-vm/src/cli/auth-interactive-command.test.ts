@@ -24,7 +24,8 @@ function createControllerClientStub(overrides?: {
 }
 
 const authConfig: GatewayAuthConfig = {
-	buildLoginCommand: (provider: string): string => `login --provider ${provider}`,
+	buildLoginCommand: (provider: string, options = {}): string =>
+		`login --provider ${provider}${options.deviceCode ? ' --device-code' : ''}${options.setDefault ? ' --set-default' : ''}`,
 	listProvidersCommand: 'list-cmd',
 };
 
@@ -159,6 +160,42 @@ describe('runAuthInteractiveCommand', () => {
 				'-t',
 				'root@127.0.0.1',
 				expect.stringContaining('source /etc/profile.d/openclaw-env.sh'),
+			]),
+		);
+	});
+
+	it('passes device-code and set-default options into the login command', async () => {
+		const runInteractiveProcess = vi.fn(async () => {});
+
+		await runAuthInteractiveCommand({
+			authConfig,
+			deviceCode: true,
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: vi.fn(() =>
+					createControllerClientStub({
+						enableZoneSsh: async () => ({
+							host: '127.0.0.1',
+							port: 2222,
+							user: 'root',
+						}),
+					}),
+				),
+				runInteractiveProcess,
+			},
+			io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
+			provider: 'openai-codex',
+			setDefault: true,
+			systemConfig: {
+				host: { controllerPort: 18800, projectNamespace: 'claw-tests-a1b2c3d4' },
+			} as never,
+			zoneId: 'shravan',
+		});
+
+		expect(runInteractiveProcess).toHaveBeenCalledWith(
+			'ssh',
+			expect.arrayContaining([
+				expect.stringContaining('login --provider openai-codex --device-code --set-default'),
 			]),
 		);
 	});

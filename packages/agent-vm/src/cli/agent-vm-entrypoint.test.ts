@@ -125,6 +125,29 @@ describe('runAgentVmCli', () => {
 		expect(loadEnvFileSpy).toHaveBeenCalledWith('.env.local');
 	});
 
+	it('prints the resolved package version', async () => {
+		const outputs: string[] = [];
+
+		await runAgentVmCli(
+			['-v'],
+			{
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			{
+				...defaultCliDependencies,
+				resolveCliVersion: async () => '9.8.7',
+			},
+		);
+
+		expect(outputs.join('')).toBe('9.8.7\n');
+	});
+
 	it('recognizes symlinked package-manager bin paths as the CLI entrypoint', async () => {
 		const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-entrypoint-'));
 		const realEntrypointPath = path.join(targetDir, 'real-entrypoint.js');
@@ -645,7 +668,7 @@ describe('runAgentVmCli', () => {
 		);
 	});
 
-	it('uses plain progress for build even in a TTY', async () => {
+	it('passes a progress task runner to build', async () => {
 		const originalStdoutIsTty = process.stdout.isTTY;
 		Object.defineProperty(process.stdout, 'isTTY', {
 			configurable: true,
@@ -681,8 +704,16 @@ describe('runAgentVmCli', () => {
 			});
 		}
 
-		expect(stderrChunks.join('')).toContain('Gondolin: gateway/openclaw...');
-		expect(stderrChunks.join('')).toContain('Gondolin: gateway/openclaw done');
+		expect(runBuildCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				systemConfig: expect.objectContaining({
+					systemConfigPath: './config/system.json',
+				}),
+			}),
+			{
+				runTask: expect.any(Function),
+			},
+		);
 	});
 
 	it('passes build --force through to the build command handler', async () => {
@@ -839,6 +870,38 @@ describe('runAgentVmCli', () => {
 			'root@127.0.0.1',
 			expect.stringContaining('source /etc/profile.d/openclaw-env.sh'),
 		]);
+	});
+
+	it('passes auth-interactive device-code and set-default flags to the login command', async () => {
+		const runInteractiveProcess = vi.fn(async () => {});
+
+		await runAgentVmCli(
+			['auth-interactive', 'openai-codex', '--zone', 'shravan', '--device-code', '--set-default'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () =>
+					createControllerClientStub(async () => ({
+						host: '127.0.0.1',
+						identityFile: '/tmp/test-key',
+						port: 19000,
+						user: 'root',
+					})),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				runInteractiveProcess,
+			},
+		);
+
+		expect(runInteractiveProcess).toHaveBeenCalledWith(
+			'ssh',
+			expect.arrayContaining([
+				expect.stringContaining('openclaw models auth login --provider'),
+				expect.stringContaining('--device-code --set-default'),
+			]),
+		);
 	});
 
 	it('auth-interactive without --zone shows available zones', async () => {
