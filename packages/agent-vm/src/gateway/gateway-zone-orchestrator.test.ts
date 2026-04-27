@@ -74,6 +74,44 @@ function createSystemConfigPathWithIdentifier(): string {
 	return systemConfigPath;
 }
 
+function createHttpHealthGatewayLifecycle(): {
+	readonly buildProcessSpec: () => {
+		readonly bootstrapCommand: string;
+		readonly guestListenPort: number;
+		readonly healthCheck: { readonly type: 'http'; readonly port: number; readonly path: string };
+		readonly logPath: string;
+		readonly startCommand: string;
+	};
+	readonly buildVmSpec: () => {
+		readonly allowedHosts: readonly string[];
+		readonly environment: Record<string, never>;
+		readonly mediatedSecrets: Record<string, never>;
+		readonly rootfsMode: 'cow';
+		readonly sessionLabel: string;
+		readonly tcpHosts: Record<string, never>;
+		readonly vfsMounts: Record<string, never>;
+	};
+} {
+	return {
+		buildProcessSpec: () => ({
+			bootstrapCommand: 'bootstrap-http-gateway',
+			guestListenPort: 18789,
+			healthCheck: { type: 'http', port: 18789, path: '/' },
+			logPath: '/tmp/http-gateway.log',
+			startCommand: 'start-http-gateway',
+		}),
+		buildVmSpec: () => ({
+			allowedHosts: [],
+			environment: {},
+			mediatedSecrets: {},
+			rootfsMode: 'cow',
+			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+			tcpHosts: {},
+			vfsMounts: {},
+		}),
+	};
+}
+
 function createSystemConfig(): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
@@ -606,6 +644,9 @@ describe('startGatewayZone', () => {
 					stderr: '',
 				};
 			}
+			if (command === `grep -q 'ready (' /tmp/openclaw.log`) {
+				return { exitCode: 1, stdout: '', stderr: '' };
+			}
 			return { exitCode: 0, stdout: '000', stderr: '' };
 		});
 		const managedVm: ManagedVm = {
@@ -640,16 +681,19 @@ describe('startGatewayZone', () => {
 				},
 			),
 		).rejects.toThrow(
-			/Gateway readiness check failed after 2 attempts.*Last probe: http 000.*Gateway process may still be booting, or it may have crashed before opening its health port.*OpenClaw failed to parse config/su,
+			/Gateway readiness check failed after 2 attempts.*Last probe: exit 1.*Gateway process may still be booting, or it may have crashed before opening its health port.*OpenClaw failed to parse config/su,
 		);
 		expect(execMock).toHaveBeenCalledWith('tail -n 80 /tmp/openclaw.log 2>/dev/null || true');
 		expect(closeMock).toHaveBeenCalledTimes(1);
 	});
 
-	it('defaults gateway readiness polling to about 30 seconds', async () => {
+	it('defaults gateway readiness polling to about 60 seconds', async () => {
 		const execMock = vi.fn(async (command: string) => {
 			if (command.includes('tail -n 80')) {
 				return { exitCode: 0, stdout: '', stderr: '' };
+			}
+			if (command === `grep -q 'ready (' /tmp/openclaw.log`) {
+				return { exitCode: 1, stdout: '', stderr: '' };
 			}
 			return { exitCode: 0, stdout: '000', stderr: '' };
 		});
@@ -683,7 +727,7 @@ describe('startGatewayZone', () => {
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				},
 			),
-		).rejects.toThrow(/Gateway readiness check failed after 60 attempts/su);
+		).rejects.toThrow(/Gateway readiness check failed after 120 attempts/su);
 	});
 
 	it('throws command stdout and stderr and closes the vm when gateway configuration fails', async () => {
@@ -768,6 +812,7 @@ describe('startGatewayZone', () => {
 					gatewayReadinessMaxAttempts: 5,
 					gatewayReadinessRetryDelayMs: 0,
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					loadGatewayLifecycle: createHttpHealthGatewayLifecycle,
 				},
 			),
 		).rejects.toThrow(/500/u);
@@ -873,6 +918,7 @@ describe('startGatewayZone', () => {
 				})),
 				createManagedVm: vi.fn(async () => managedVm),
 				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				loadGatewayLifecycle: createHttpHealthGatewayLifecycle,
 			},
 		);
 
