@@ -24,6 +24,7 @@ describe('buildDockerImage', () => {
 				command: 'docker',
 				args: [
 					'build',
+					'--progress=plain',
 					'-f',
 					'/project/vm-images/gateways/openclaw/Dockerfile',
 					'-t',

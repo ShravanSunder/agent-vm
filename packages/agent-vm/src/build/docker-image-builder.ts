@@ -31,6 +31,7 @@ export async function buildDockerImage(
 	try {
 		await executeCommand('docker', [
 			'build',
+			'--progress=plain',
 			'-f',
 			resolvedDockerfilePath,
 			'-t',

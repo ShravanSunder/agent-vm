@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/gondolin-adapter",
-	"version": "0.0.25",
+	"version": "0.0.26",
 	"description": "Adapter over @earendil-works/gondolin: VM build pipeline, image cache, and secret resolver.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
