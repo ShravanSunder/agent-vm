@@ -20,6 +20,8 @@ It checks:
 - Gateway and tool VM image recipe files exist.
 - Worker gateway configs load successfully.
 - Worker prompt file references exist and stay under `prompts/`.
+- OpenClaw gateway configs pass `openclaw config validate --json` for
+  OpenClaw zones.
 - Container runtime paths like `/etc/agent-vm/...` map back to checkout files
   when `system.json` lives under a scaffold `config/` directory.
 - `vm-host-system/` exists when the identifier says
@@ -45,6 +47,8 @@ It checks:
 - Controller and gateway ports.
 - Disk and memory budget.
 - Configured 1Password token source, if the config uses one.
+- OpenClaw CLI availability for OpenClaw zones.
+- OpenClaw gateway configs pass the catalog's own OpenClaw CLI validation.
 - `systemCacheIdentifier.json`.
 - Worker configs using the paths as the current host sees them.
 - `vm-host-system/` files for container configs.
@@ -60,6 +64,20 @@ are only relevant to flows that use them:
 For 1Password-backed local configs, doctor verifies that the configured access
 method is available on the current host. It does not resolve every secret
 during the offline prerequisite check.
+
+For OpenClaw-backed local configs, keep OpenClaw loosely coupled by installing
+it in the catalog rather than inside `@agent-vm/agent-vm`:
+
+```bash
+pnpm add -D openclaw@2026.4.24
+```
+
+When you run `pnpm doctor`, pnpm places `node_modules/.bin` on `PATH`, so
+doctor validates `config/gateways/*/openclaw.json` with that catalog-pinned
+OpenClaw version. The generated OpenClaw config intentionally contains
+VM-internal plugin paths such as `/home/openclaw/.openclaw/extensions`; host
+validation ignores that host-only plugin path existence failure while still
+failing schema, model, channel, and other config issues.
 
 ## Container Runtime Example
 

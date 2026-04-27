@@ -155,6 +155,31 @@ function buildDockerChecks(
 	];
 }
 
+function hasOpenClawZones(systemConfig: SystemConfig): boolean {
+	return systemConfig.zones.some((zone) => zone.gateway.type === 'openclaw');
+}
+
+function buildOpenClawCliCheck(
+	systemConfig: SystemConfig,
+	availableBinaries: ReadonlySet<string>,
+): readonly DoctorCheck[] {
+	if (!hasOpenClawZones(systemConfig)) {
+		return [];
+	}
+	const openClawCliReady = availableBinaries.has('openclaw');
+	return [
+		{
+			name: 'openclaw-cli',
+			ok: openClawCliReady,
+			...(openClawCliReady
+				? { hint: 'openclaw' }
+				: {
+						hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.4.24.',
+					}),
+		},
+	];
+}
+
 export async function collectVmHostSystemDoctorCheck(
 	systemConfig: LoadedSystemConfig,
 ): Promise<DoctorCheck | null> {
@@ -211,6 +236,7 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 		availableBinaries,
 		options.dockerDaemonReady,
 	);
+	const openClawCliChecks = buildOpenClawCliCheck(options.systemConfig, availableBinaries);
 	const configuredGatewayBytes = options.systemConfig.zones.reduce((totalBytes, zone) => {
 		const memoryMatch = /^(\d+)([GgMm])$/u.exec(zone.gateway.memory);
 		if (!memoryMatch) {
@@ -305,6 +331,7 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 			availableBinaries,
 		),
 		...dockerChecks,
+		...openClawCliChecks,
 		{
 			name: 'controller-port',
 			ok:

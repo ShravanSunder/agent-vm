@@ -632,10 +632,50 @@ describe('startGatewayZone', () => {
 				},
 			),
 		).rejects.toThrow(
-			/Gateway readiness check failed after 2 attempts.*Last observation: http 000.*OpenClaw failed to parse config/su,
+			/Gateway readiness check failed after 2 attempts.*Last probe: http 000.*Gateway process may still be booting, or it may have crashed before opening its health port.*OpenClaw failed to parse config/su,
 		);
 		expect(execMock).toHaveBeenCalledWith('tail -n 80 /tmp/openclaw.log 2>/dev/null || true');
 		expect(closeMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('defaults gateway readiness polling to about 30 seconds', async () => {
+		const execMock = vi.fn(async (command: string) => {
+			if (command.includes('tail -n 80')) {
+				return { exitCode: 0, stdout: '', stderr: '' };
+			}
+			return { exitCode: 0, stdout: '000', stderr: '' };
+		});
+		const managedVm: ManagedVm = {
+			id: 'vm-default-timeout',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: execMock,
+			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28285)),
+		};
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({
+						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					}),
+					systemConfig: createSystemConfig(),
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					createManagedVm: vi.fn(async () => managedVm),
+					gatewayReadinessRetryDelayMs: 0,
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				},
+			),
+		).rejects.toThrow(/Gateway readiness check failed after 60 attempts/su);
 	});
 
 	it('throws command stdout and stderr and closes the vm when gateway configuration fails', async () => {
@@ -674,6 +714,8 @@ describe('startGatewayZone', () => {
 						imagePath: '/tmp/img',
 					})),
 					createManagedVm: vi.fn(async () => managedVm),
+					gatewayReadinessMaxAttempts: 5,
+					gatewayReadinessRetryDelayMs: 0,
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				},
 			),
@@ -715,6 +757,8 @@ describe('startGatewayZone', () => {
 						imagePath: '/tmp/img',
 					})),
 					createManagedVm: vi.fn(async () => managedVm),
+					gatewayReadinessMaxAttempts: 5,
+					gatewayReadinessRetryDelayMs: 0,
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				},
 			),

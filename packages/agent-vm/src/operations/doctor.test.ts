@@ -80,6 +80,7 @@ const allBinaries = new Set([
 	'cpio',
 	'lz4',
 	'op',
+	'openclaw',
 	'security',
 ]);
 
@@ -239,6 +240,24 @@ describe('runControllerDoctor', () => {
 		const qemuCheck = result.checks.find((check) => check.name === 'qemu');
 		expect(qemuCheck?.ok).toBe(false);
 		expect(qemuCheck?.hint).toBe('Install QEMU (for example: brew install qemu).');
+	});
+
+	it('flags missing OpenClaw CLI for OpenClaw gateway configs', () => {
+		const result = runControllerDoctor({
+			availableBinaries: new Set([...allBinaries].filter((binary) => binary !== 'openclaw')),
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.checks.find((check) => check.name === 'openclaw-cli')).toMatchObject({
+			ok: false,
+			hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.4.24.',
+		});
 	});
 
 	it('flags occupied ports and insufficient resources', () => {

@@ -7,6 +7,8 @@ import { describe, expect, it } from 'vitest';
 import { loadSystemConfig } from '../config/system-config.js';
 import { runConfigValidation } from './config-validation.js';
 
+type TestCommandRunner = NonNullable<Parameters<typeof runConfigValidation>[0]['runCommand']>;
+
 async function writeJson(filePath: string, value: unknown): Promise<void> {
 	await fs.mkdir(path.dirname(filePath), { recursive: true });
 	await fs.writeFile(filePath, `${JSON.stringify(value, null, '\t')}\n`, 'utf8');
@@ -100,6 +102,95 @@ async function writeContainerProjectFixture(rootPath: string): Promise<string> {
 	return path.join(rootPath, 'config', 'system.json');
 }
 
+async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
+	await writeJson(path.join(rootPath, 'config', 'system.json'), {
+		host: {
+			controllerPort: 18800,
+			projectNamespace: 'agent-vm',
+			githubToken: { source: 'environment', envVar: 'GITHUB_TOKEN' },
+		},
+		cacheDir: path.join(rootPath, 'cache'),
+		imageProfiles: {
+			gateways: {
+				openclaw: {
+					type: 'openclaw',
+					buildConfig: '../vm-images/gateways/openclaw/build-config.json',
+					dockerfile: '../vm-images/gateways/openclaw/Dockerfile',
+				},
+			},
+			toolVms: {
+				default: {
+					type: 'toolVm',
+					buildConfig: '../vm-images/tool-vms/default/build-config.json',
+					dockerfile: '../vm-images/tool-vms/default/Dockerfile',
+				},
+			},
+		},
+		zones: [
+			{
+				id: 'shravan',
+				gateway: {
+					type: 'openclaw',
+					memory: '2G',
+					cpus: 2,
+					port: 18791,
+					config: './gateways/shravan/openclaw.json',
+					imageProfile: 'openclaw',
+					stateDir: path.join(rootPath, 'state', 'shravan'),
+					workspaceDir: path.join(rootPath, 'workspaces', 'shravan'),
+				},
+				secrets: {},
+				allowedHosts: ['api.openai.com'],
+				toolProfile: 'default',
+			},
+		],
+		toolProfiles: {
+			default: {
+				memory: '1G',
+				cpus: 1,
+				workspaceRoot: path.join(rootPath, 'workspaces', 'tools'),
+				imageProfile: 'default',
+			},
+		},
+		tcpPool: { basePort: 19000, size: 5 },
+	});
+	await writeJson(path.join(rootPath, 'config', 'systemCacheIdentifier.json'), {
+		schemaVersion: 1,
+		hostSystemType: 'bare-metal',
+	});
+	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'openclaw.json'), {
+		gateway: {
+			auth: { mode: 'token' },
+			bind: 'loopback',
+			controlUi: {
+				allowedOrigins: ['http://127.0.0.1:18791', 'http://localhost:18791'],
+			},
+			mode: 'local',
+			port: 18789,
+		},
+		channels: {},
+	});
+	await writeJson(path.join(rootPath, 'vm-images', 'gateways', 'openclaw', 'build-config.json'), {
+		arch: 'aarch64',
+		distro: 'alpine',
+	});
+	await fs.writeFile(
+		path.join(rootPath, 'vm-images', 'gateways', 'openclaw', 'Dockerfile'),
+		'FROM node:24-slim\n',
+		'utf8',
+	);
+	await writeJson(path.join(rootPath, 'vm-images', 'tool-vms', 'default', 'build-config.json'), {
+		arch: 'aarch64',
+		distro: 'alpine',
+	});
+	await fs.writeFile(
+		path.join(rootPath, 'vm-images', 'tool-vms', 'default', 'Dockerfile'),
+		'FROM node:24-slim\n',
+		'utf8',
+	);
+	return path.join(rootPath, 'config', 'system.json');
+}
+
 describe('runConfigValidation', () => {
 	it('validates a container project from its checkout paths', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
@@ -143,6 +234,93 @@ describe('runConfigValidation', () => {
 		);
 		expect(workerConfigCheck?.ok).toBe(false);
 		expect(workerConfigCheck?.hint).toMatch(/plan-agent\.md/u);
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('validates OpenClaw gateway configs with the OpenClaw CLI', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+		const runCommandCalls: {
+			readonly command: string;
+			readonly arguments_: readonly string[];
+			readonly cwd: string | undefined;
+			readonly env: Readonly<Record<string, string>> | undefined;
+		}[] = [];
+		const runCommand: TestCommandRunner = async (command, arguments_, options) => {
+			runCommandCalls.push({ command, arguments_, cwd: options?.cwd, env: options?.env });
+			return { exitCode: 0, stderr: '', stdout: '{"ok":true}\\n' };
+		};
+
+		const result = await runConfigValidation({ runCommand, systemConfig });
+
+		expect(result.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === 'openclaw-config-shravan')).toMatchObject({
+			ok: true,
+			hint: path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'openclaw.json'),
+		});
+		expect(runCommandCalls).toEqual([
+			{
+				command: 'openclaw',
+				arguments_: ['config', 'validate', '--json'],
+				cwd: temporaryDirectoryPath,
+				env: {
+					OPENCLAW_CONFIG_PATH: path.join(
+						temporaryDirectoryPath,
+						'config',
+						'gateways',
+						'shravan',
+						'openclaw.json',
+					),
+				},
+			},
+		]);
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('accepts OpenClaw configs when host-only plugin path validation is the only issue', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+		const validationOutput =
+			'{"valid":false,"issues":[{"path":"plugins.load.paths","message":"plugin: plugin path not found: /home/openclaw/.openclaw/extensions"}]}';
+		const runCommand: TestCommandRunner = async () => ({
+			exitCode: 1,
+			stderr: '',
+			stdout: validationOutput,
+		});
+
+		const result = await runConfigValidation({ runCommand, systemConfig });
+
+		expect(result.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === 'openclaw-config-shravan')).toMatchObject({
+			ok: true,
+		});
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('reports OpenClaw schema validation failures before gateway boot', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+		const validationOutput =
+			'{"ok":false,"errors":[{"path":["agents","defaults","thinkingDefault"],"message":"Unrecognized key"}]}';
+		const runCommand: TestCommandRunner = async () => ({
+			exitCode: 1,
+			stderr: '',
+			stdout: validationOutput,
+		});
+
+		const result = await runConfigValidation({ runCommand, systemConfig });
+
+		expect(result.ok).toBe(false);
+		expect(result.checks.find((check) => check.name === 'openclaw-config-shravan')).toMatchObject({
+			ok: false,
+			hint: expect.stringContaining('agents.defaults.thinkingDefault: Unrecognized key'),
+		});
 
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});

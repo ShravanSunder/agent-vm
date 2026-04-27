@@ -33,6 +33,12 @@ import {
 	type StartGatewayZoneOptions,
 } from './gateway-zone-support.js';
 
+const defaultGatewayReadinessRetryDelayMs = 500;
+const defaultGatewayReadinessTimeoutMs = 30_000;
+const defaultGatewayReadinessMaxAttempts = Math.ceil(
+	defaultGatewayReadinessTimeoutMs / defaultGatewayReadinessRetryDelayMs,
+);
+
 export interface GatewayManagerDependencies extends GatewayImageBuilderDependencies {
 	readonly cleanupOrphanedGatewayIfPresent?: typeof cleanupOrphanedGatewayIfPresent;
 	readonly createManagedVm?: (options: GatewayManagedVmFactoryOptions) => Promise<ManagedVm>;
@@ -106,6 +112,10 @@ async function readGatewayLogTail(options: {
 	}
 }
 
+function formatElapsedSeconds(startedAtMs: number): string {
+	return ((Date.now() - startedAtMs) / 1000).toFixed(1);
+}
+
 async function waitForHealth(options: {
 	readonly attempt?: number;
 	readonly healthCheck: GatewayHealthCheck;
@@ -114,10 +124,12 @@ async function waitForHealth(options: {
 	readonly managedVm: ManagedVm;
 	readonly maxAttempts?: number;
 	readonly retryDelayMs?: number;
+	readonly startedAtMs?: number;
 }): Promise<void> {
 	const attempt = options.attempt ?? 0;
-	const maxAttempts = options.maxAttempts ?? 30;
-	const retryDelayMs = options.retryDelayMs ?? 500;
+	const retryDelayMs = options.retryDelayMs ?? defaultGatewayReadinessRetryDelayMs;
+	const maxAttempts = options.maxAttempts ?? defaultGatewayReadinessMaxAttempts;
+	const startedAtMs = options.startedAtMs ?? Date.now();
 	const lastObservation = options.lastObservation ?? 'none';
 	if (attempt >= maxAttempts) {
 		const logTail = await readGatewayLogTail({
@@ -125,7 +137,7 @@ async function waitForHealth(options: {
 			managedVm: options.managedVm,
 		});
 		throw new Error(
-			`Gateway readiness check failed after ${maxAttempts} attempts. Last observation: ${lastObservation}.${logTail ? `\nGateway log tail (${options.logPath}):\n${logTail}` : ''}`,
+			`Gateway readiness check failed after ${maxAttempts} attempts over ${formatElapsedSeconds(startedAtMs)}s. Last probe: ${lastObservation}. Gateway process may still be booting, or it may have crashed before opening its health port.${logTail ? `\nGateway log tail (${options.logPath}):\n${logTail}` : ''}`,
 		);
 	}
 
@@ -154,6 +166,7 @@ async function waitForHealth(options: {
 		managedVm: options.managedVm,
 		maxAttempts,
 		retryDelayMs,
+		startedAtMs,
 	});
 }
 

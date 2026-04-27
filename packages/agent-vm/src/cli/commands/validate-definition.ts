@@ -17,6 +17,7 @@ export function createValidateCommand(io: CliIo, dependencies: CliDependencies) 
 			writeJson(
 				io,
 				await (dependencies.runConfigValidation ?? runConfigValidation)({
+					...(dependencies.runCommand ? { runCommand: dependencies.runCommand } : {}),
 					systemConfig: await loadSystemConfigFromOption(config, dependencies),
 				}),
 			);
