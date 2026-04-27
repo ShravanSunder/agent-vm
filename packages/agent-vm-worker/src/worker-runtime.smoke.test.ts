@@ -75,11 +75,27 @@ async function createSampleRepo(baseDir: string): Promise<string> {
 		'#!/usr/bin/env bash\nset -euo pipefail\ntest -f READY.txt\ngrep -q "^READY$" READY.txt\n',
 		{ mode: 0o755 },
 	);
+	execFileSync('git', ['init', '--initial-branch=main'], {
+		cwd: repoDir,
+		stdio: 'pipe',
+	});
+	execFileSync('git', ['config', 'user.email', 'smoke@example.com'], {
+		cwd: repoDir,
+		stdio: 'pipe',
+	});
+	execFileSync('git', ['config', 'user.name', 'smoke-test'], { cwd: repoDir, stdio: 'pipe' });
+	execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: repoDir, stdio: 'pipe' });
+	execFileSync('git', ['add', '.'], { cwd: repoDir, stdio: 'pipe' });
+	execFileSync('git', ['-c', 'commit.gpgsign=false', 'commit', '-m', 'init'], {
+		cwd: repoDir,
+		stdio: 'pipe',
+	});
 	return repoDir;
 }
 
 const taskStateSchema = z.object({
 	status: z.string(),
+	failureReason: z.string().nullable().optional(),
 });
 
 async function waitForTaskCompletion(
@@ -137,6 +153,7 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 		await fs.writeFile(
 			configPath,
 			JSON.stringify({
+				runtimeInstructions: 'Smoke test runtime instructions.',
 				defaults: { provider: 'codex', model: 'gpt-5.4' },
 				phases: {
 					plan: {
@@ -193,7 +210,7 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 					prompt: 'Create a file named READY.txt in the repository root containing exactly READY.',
 					repos: [
 						{
-							repoUrl: 'local-fixture',
+							repoUrl: 'https://example.com/local-fixture.git',
 							baseBranch: 'main',
 							workspacePath: repoDir,
 						},
@@ -205,7 +222,9 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 			expect(createResponse.status).toBe(201);
 			const createBody = createTaskResponseSchema.parse(await createResponse.json());
 			const finalState = await waitForTaskCompletion(port, createBody.taskId);
-			expect(finalState.status).toBe('completed');
+			if (finalState.status !== 'completed') {
+				throw new Error(`Worker-only smoke failed: ${JSON.stringify(finalState)}`);
+			}
 			expect((await fs.readFile(path.join(repoDir, 'READY.txt'), 'utf8')).trim()).toBe('READY');
 		} catch (error) {
 			const workerLog = await fs.readFile(workerLogPath, 'utf8').catch(() => '');

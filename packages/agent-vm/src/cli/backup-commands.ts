@@ -38,7 +38,7 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 		resolveIdentity: async () =>
 			await secretResolver.resolve({
 				source: '1password',
-				ref: `op://agent-vm/agent-${zoneId}-backup/password`,
+				ref: `op://agent-vm/${zoneId}-gateway-backup/password`,
 			}),
 	});
 	const backupManager = options.dependencies.createZoneBackupManager(backupEncryption);

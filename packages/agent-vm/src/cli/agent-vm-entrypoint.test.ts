@@ -1857,7 +1857,7 @@ describe('runAgentVmCli', () => {
 				createSecretResolver: async () => ({
 					resolve: async (ref: { ref: string }) => {
 						// Verify the 1P ref pattern
-						expect(ref.ref).toBe('op://agent-vm/agent-shravan-backup/password');
+						expect(ref.ref).toBe('op://agent-vm/shravan-gateway-backup/password');
 						return 'resolved-passphrase';
 					},
 					resolveAll: async () => ({}),

@@ -14,6 +14,7 @@ import {
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
+import { loadSystemConfig } from '../config/system-config.js';
 import { scaffoldAgentVmProject } from './init-command.js';
 
 const createdDirectories: string[] = [];
@@ -411,8 +412,10 @@ describe('scaffoldAgentVmProject', () => {
 		);
 
 		expect(await pathExists(path.join(targetDir, 'config', 'gateways', 'my-zone'))).toBe(true);
+		expect(await pathExists(path.join(targetDir, 'cache'))).toBe(true);
 		expect(await pathExists(path.join(targetDir, 'state', 'my-zone'))).toBe(true);
 		expect(await pathExists(path.join(targetDir, 'workspaces', 'my-zone'))).toBe(true);
+		expect(await pathExists(path.join(targetDir, 'backups', 'my-zone'))).toBe(true);
 		expect(await pathExists(path.join(targetDir, 'workspaces', 'tools'))).toBe(true);
 	});
 
@@ -437,8 +440,9 @@ describe('scaffoldAgentVmProject', () => {
 		expect(await pathExists(path.join(targetDir, 'workspaces'))).toBe(false);
 	});
 
-	it('writes user-dir paths under ~/.agent-vm and backups under ~/.agent-vm-backups', async () => {
+	it('writes user-dir paths as absolute paths under the scaffold-time home directory', async () => {
 		const targetDir = await createTestDirectory();
+		const fakeHomeDir = await createTestDirectory();
 
 		await scaffoldAgentVmProject(
 			{
@@ -449,19 +453,37 @@ describe('scaffoldAgentVmProject', () => {
 				secretsProvider: '1password',
 				paths: 'user-dir',
 			},
-			noGeneratedAgeIdentityDependencies,
+			{
+				...noGeneratedAgeIdentityDependencies,
+				getHomeDir: () => fakeHomeDir,
+			},
 		);
 
-		const systemConfigText = await fs.readFile(
-			path.join(targetDir, 'config', 'system.json'),
-			'utf8',
-		);
+		const systemConfigPath = path.join(targetDir, 'config', 'system.json');
+		const systemConfigText = await fs.readFile(systemConfigPath, 'utf8');
 		const systemConfig = scaffoldedRuntimePathsSchema.parse(JSON.parse(systemConfigText));
+		const loadedSystemConfig = await loadSystemConfig(systemConfigPath);
 
-		expect(systemConfig.cacheDir).toBe('~/.agent-vm/cache');
-		expect(systemConfig.zones[0].gateway.stateDir).toBe('~/.agent-vm/state/shravan');
-		expect(systemConfig.zones[0].gateway.workspaceDir).toBe('~/.agent-vm/workspaces/shravan');
-		expect(systemConfig.zones[0].gateway.backupDir).toBe('~/.agent-vm-backups/shravan');
+		expect(systemConfig.cacheDir).toBe(path.join(fakeHomeDir, '.agent-vm', 'cache'));
+		expect(systemConfig.zones[0].gateway.stateDir).toBe(
+			path.join(fakeHomeDir, '.agent-vm', 'state', 'shravan'),
+		);
+		expect(systemConfig.zones[0].gateway.workspaceDir).toBe(
+			path.join(fakeHomeDir, '.agent-vm', 'workspaces', 'shravan'),
+		);
+		expect(systemConfig.zones[0].gateway.backupDir).toBe(
+			path.join(fakeHomeDir, '.agent-vm-backups', 'shravan'),
+		);
+		expect(loadedSystemConfig.cacheDir).toBe(systemConfig.cacheDir);
+		expect(loadedSystemConfig.zones[0]?.gateway.stateDir).toBe(
+			systemConfig.zones[0].gateway.stateDir,
+		);
+		expect(loadedSystemConfig.zones[0]?.gateway.workspaceDir).toBe(
+			systemConfig.zones[0].gateway.workspaceDir,
+		);
+		expect(loadedSystemConfig.zones[0]?.gateway.backupDir).toBe(
+			systemConfig.zones[0].gateway.backupDir,
+		);
 	});
 
 	it('user-dir scaffold creates configured ~/.agent-vm dirs, not repo-local ones', async () => {
@@ -491,10 +513,12 @@ describe('scaffoldAgentVmProject', () => {
 		expect(await pathExists(path.join(targetDir, 'workspaces'))).toBe(false);
 
 		// user-dir profile SHOULD create the dirs it advertises in system.json
+		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'cache'))).toBe(true);
 		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'state', 'shravan'))).toBe(true);
 		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'workspaces', 'shravan'))).toBe(
 			true,
 		);
+		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm-backups', 'shravan'))).toBe(true);
 		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'workspaces', 'tools'))).toBe(true);
 	});
 

@@ -160,7 +160,7 @@ describe('runBackupCommand', () => {
 				}),
 				createSecretResolver: async () => ({
 					resolve: async (secretRef: { ref: string }) => {
-						expect(secretRef.ref).toBe('op://agent-vm/agent-shravan-backup/password');
+						expect(secretRef.ref).toBe('op://agent-vm/shravan-gateway-backup/password');
 						return 'backup-key';
 					},
 					resolveAll: async () => ({}),

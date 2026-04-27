@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -119,7 +120,8 @@ async function prepareLocalWorkerPackageForGatewayImage(repoRoot: string): Promi
 const runWorkerSmoke =
 	typeof process.env.OPEN_AI_TEST_KEY === 'string' &&
 	process.env.OPEN_AI_TEST_KEY.length > 0 &&
-	hasCommand('qemu-system-x86_64');
+	hasCommand('qemu-system-x86_64') &&
+	hasCommand('zig');
 
 const describeWorkerSmoke = runWorkerSmoke ? describe : describe.skip;
 
@@ -255,6 +257,7 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 		await fs.writeFile(
 			workerZone.gateway.config,
 			JSON.stringify({
+				runtimeInstructions: 'Smoke test runtime instructions.',
 				defaults: { provider: 'codex', model: 'gpt-5.4' },
 				phases: {
 					plan: {
@@ -297,12 +300,13 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 				},
 			);
 			await waitForControllerReady(controllerPort);
+			const repoUrl = pathToFileURL(repoDir).href;
 
 			const prepared = await prepareWorkerTask({
 				input: {
 					requestTaskId: 'request-worker-smoke',
 					prompt: 'Create a file named READY.txt in the repository root containing exactly READY.',
-					repos: [{ repoUrl: repoDir, baseBranch: 'main' }],
+					repos: [{ repoUrl, baseBranch: 'main' }],
 					context: { source: 'smoke-test' },
 				},
 				systemConfig,
