@@ -1,5 +1,9 @@
 import type { SecretResolver } from '@agent-vm/gondolin-adapter';
-import { createOpCliSecretResolver, resolveServiceAccountToken } from '@agent-vm/gondolin-adapter';
+import {
+	createOpCliSecretResolver,
+	resolveGondolinMinimumZigVersion,
+	resolveServiceAccountToken,
+} from '@agent-vm/gondolin-adapter';
 
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';
@@ -65,6 +69,7 @@ export interface CliDependencies {
 		arguments_: readonly string[],
 	) => Promise<void>;
 	readonly resolveServiceAccountToken: typeof resolveServiceAccountToken;
+	readonly resolveGondolinMinimumZigVersion: typeof resolveGondolinMinimumZigVersion;
 	readonly runControllerDoctor: typeof runControllerDoctor;
 	readonly runConfigValidation?: typeof runConfigValidation;
 	readonly promptAndStoreServiceAccountToken?: () => Promise<boolean>;
@@ -108,6 +113,7 @@ export const defaultCliDependencies: CliDependencies = {
 	loadSystemConfig,
 	runBuildCommand,
 	runCacheCommand,
+	resolveGondolinMinimumZigVersion,
 	resolveServiceAccountToken,
 	runControllerDoctor,
 	runConfigValidation,

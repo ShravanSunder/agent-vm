@@ -645,6 +645,46 @@ describe('runAgentVmCli', () => {
 		);
 	});
 
+	it('uses plain progress for build even in a TTY', async () => {
+		const originalStdoutIsTty = process.stdout.isTTY;
+		Object.defineProperty(process.stdout, 'isTTY', {
+			configurable: true,
+			value: true,
+		});
+		const stderrChunks: string[] = [];
+		const runBuildCommand = vi.fn(async (_options, dependencies) => {
+			await dependencies.runTask('Gondolin: gateway/openclaw', async () => {});
+		});
+
+		try {
+			await runAgentVmCli(
+				['build', '--config', './custom-system.json'],
+				{
+					stderr: {
+						write: (chunk: string | Uint8Array) => {
+							stderrChunks.push(String(chunk));
+							return true;
+						},
+					},
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+					runBuildCommand,
+				},
+			);
+		} finally {
+			Object.defineProperty(process.stdout, 'isTTY', {
+				configurable: true,
+				value: originalStdoutIsTty,
+			});
+		}
+
+		expect(stderrChunks.join('')).toContain('Gondolin: gateway/openclaw...');
+		expect(stderrChunks.join('')).toContain('Gondolin: gateway/openclaw done');
+	});
+
 	it('passes build --force through to the build command handler', async () => {
 		const runBuildCommand = vi.fn(async () => {});
 
@@ -995,6 +1035,7 @@ describe('runAgentVmCli', () => {
 					listBackups: () => [],
 				}),
 				isGatewayImageCached: async () => true,
+				resolveGondolinMinimumZigVersion: async () => '0.15.2',
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
@@ -1108,6 +1149,7 @@ describe('runAgentVmCli', () => {
 					listBackups: () => [],
 				}),
 				isGatewayImageCached: async () => true,
+				resolveGondolinMinimumZigVersion: async () => '0.15.2',
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
@@ -1244,6 +1286,7 @@ describe('runAgentVmCli', () => {
 					listBackups: () => [],
 				}),
 				isGatewayImageCached: async () => true,
+				resolveGondolinMinimumZigVersion: async () => '0.15.2',
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
@@ -1474,6 +1517,7 @@ describe('runAgentVmCli', () => {
 				restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
 				listBackups: () => [],
 			}),
+			resolveGondolinMinimumZigVersion: async () => '0.15.2',
 			resolveServiceAccountToken: async () => 'mock-token',
 			loadSystemConfig: async (): Promise<LoadedSystemConfig> => ({
 				cacheDir: './cache',
@@ -1800,6 +1844,7 @@ describe('runAgentVmCli', () => {
 					controllerPort: 18800,
 					gateway: { ingress: { host: '127.0.0.1', port: 18791 }, vm: { id: 'vm-1' } },
 				})),
+				resolveGondolinMinimumZigVersion: async () => '0.15.2',
 				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
@@ -1938,6 +1983,7 @@ describe('runAgentVmCli', () => {
 					controllerPort: 18800,
 					gateway: { ingress: { host: '127.0.0.1', port: 18791 }, vm: { id: 'vm-1' } },
 				})),
+				resolveGondolinMinimumZigVersion: async () => '0.15.2',
 				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},

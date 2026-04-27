@@ -71,7 +71,17 @@ const systemConfig = {
 	},
 } satisfies SystemConfig;
 
-const allBinaries = new Set(['qemu-system-aarch64', 'qemu-system-x86_64', 'op', 'security']);
+const allBinaries = new Set([
+	'qemu-system-aarch64',
+	'qemu-system-x86_64',
+	'qemu-img',
+	'mke2fs',
+	'debugfs',
+	'cpio',
+	'lz4',
+	'op',
+	'security',
+]);
 
 describe('runControllerDoctor', () => {
 	it('reports all checks passing when environment is complete', () => {
@@ -81,20 +91,126 @@ describe('runControllerDoctor', () => {
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
 			occupiedPorts: new Set<number>(),
 			nodeVersion: 'v25.9.0',
+			requiredZigVersion: '0.15.2',
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			zigVersion: '0.15.2',
 			systemConfig,
 		});
 
 		expect(result.ok).toBe(true);
 		expect(result.checks.every((check) => check.ok)).toBe(true);
+		expect(result.checks.find((check) => check.name === 'zig-version')).toMatchObject({
+			ok: true,
+			value: '0.15.2',
+		});
 		expect(result.checks.find((check) => check.name === 'qemu')?.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === 'qemu-img')?.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === 'mke2fs')?.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === 'debugfs')?.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === 'cpio')?.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === 'lz4')?.ok).toBe(true);
 		expect(result.checks.find((check) => check.name === 'age')).toBeUndefined();
 		expect(result.checks.find((check) => check.name === '1password-cli')).toBeUndefined();
 	});
 
+	it('checks Docker CLI and daemon when Docker-backed images are configured', () => {
+		const dockerBackedConfig = {
+			...systemConfig,
+			imageProfiles: {
+				...systemConfig.imageProfiles,
+				gateways: {
+					openclaw: {
+						...systemConfig.imageProfiles.gateways.openclaw,
+						dockerfile: './vm-images/gateways/openclaw/Dockerfile',
+					},
+					worker: systemConfig.imageProfiles.gateways.worker,
+				},
+			},
+		} satisfies SystemConfig;
+
+		const missingDockerResult = runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			requiredZigVersion: '0.15.2',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			zigVersion: '0.15.2',
+			systemConfig: dockerBackedConfig,
+		});
+		const readyDockerResult = runControllerDoctor({
+			availableBinaries: new Set([...allBinaries, 'docker']),
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			dockerDaemonReady: true,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			requiredZigVersion: '0.15.2',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			zigVersion: '0.15.2',
+			systemConfig: dockerBackedConfig,
+		});
+
+		expect(missingDockerResult.ok).toBe(false);
+		expect(missingDockerResult.checks.find((check) => check.name === 'docker-cli')).toMatchObject({
+			ok: false,
+		});
+		expect(
+			missingDockerResult.checks.find((check) => check.name === 'docker-daemon'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Start Docker/OrbStack and verify with: docker info',
+		});
+		expect(readyDockerResult.checks.find((check) => check.name === 'docker-cli')).toMatchObject({
+			ok: true,
+			hint: 'docker',
+		});
+		expect(readyDockerResult.checks.find((check) => check.name === 'docker-daemon')).toMatchObject({
+			ok: true,
+			hint: 'docker info',
+		});
+	});
+
+	it('flags missing or too-old Zig versions', () => {
+		const missingResult = runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			requiredZigVersion: '0.15.2',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			systemConfig,
+		});
+		const outdatedResult = runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			requiredZigVersion: '0.15.2',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			zigVersion: '0.15.1',
+			systemConfig,
+		});
+
+		expect(missingResult.ok).toBe(false);
+		expect(missingResult.checks.find((check) => check.name === 'zig-version')).toMatchObject({
+			ok: false,
+			hint: 'Install Zig >= 0.15.2.',
+		});
+		expect(outdatedResult.ok).toBe(false);
+		expect(outdatedResult.checks.find((check) => check.name === 'zig-version')).toMatchObject({
+			ok: false,
+			value: '0.15.1',
+			hint: 'Requires Zig >= 0.15.2.',
+		});
+	});
+
 	it('does not require optional 1Password CLI or age binaries for env-backed configs', () => {
 		const result = runControllerDoctor({
-			availableBinaries: new Set<string>(['qemu-system-aarch64']),
+			availableBinaries: allBinaries,
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
 			occupiedPorts: new Set<number>(),
