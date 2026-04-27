@@ -47,6 +47,7 @@ data assembly -- no side effects.  The options carry:
 | Field              | Type                          | Purpose                                  |
 |--------------------|-------------------------------|------------------------------------------|
 | `controllerPort`   | `number`                      | Host port the controller listens on      |
+| `gatewayCacheDir`  | `string`                      | Per-zone runtime cache directory         |
 | `projectNamespace` | `string`                      | Namespace prefix for session labels      |
 | `resolvedSecrets`  | `Record<string, string>`      | Pre-resolved secret values               |
 | `tcpPool`          | `{ basePort, size }`          | Port range for tool VM SSH tunnels       |
@@ -143,11 +144,13 @@ environment:
   OPENCLAW_HOME         = /home/openclaw
   OPENCLAW_CONFIG_PATH  = /home/openclaw/.openclaw/state/effective-openclaw.json
   OPENCLAW_STATE_DIR    = /home/openclaw/.openclaw/state
+  OPENCLAW_PLUGIN_STAGE_DIR = /home/openclaw/.openclaw/cache/plugin-runtime-deps
   NODE_EXTRA_CA_CERTS   = /run/gondolin/ca-certificates.crt
   + env-injected secrets (minus OPENCLAW_GATEWAY_TOKEN)
 
 vfsMounts:
   /home/openclaw/.openclaw/config    -> configDirectory  (realfs)
+  /home/openclaw/.openclaw/cache     -> gatewayCacheDir  (realfs)
   /home/openclaw/.openclaw/state     -> stateDir         (realfs)
   /home/openclaw/workspace           -> workspaceDir     (realfs)
 
@@ -161,6 +164,13 @@ rootfsMode: cow
 
 The `OPENCLAW_GATEWAY_TOKEN` is explicitly excluded from environment secrets
 because it is already embedded in the effective config file.
+
+Bundled OpenClaw plugin runtime dependencies are staged under
+`OPENCLAW_PLUGIN_STAGE_DIR`. The path must stay inside a VFS-mounted cache
+directory; otherwise a `rootfsMode: cow` gateway VM loses the staged plugin
+dependencies on every boot and repairs them repeatedly. Do not put this under
+`OPENCLAW_STATE_DIR`: staged plugin `node_modules` trees are rebuildable cache
+and must not be included in encrypted zone backups.
 
 ### buildProcessSpec
 
@@ -234,7 +244,7 @@ Not implemented.  Worker has no interactive auth.
 | **prepareHostState**  | Writes effective config + auth profiles          | None                                            |
 | **authConfig**        | list providers / login command                   | None                                            |
 | **HOME**              | `/home/openclaw`                                 | `/home/coder`                                   |
-| **vfsMounts**         | config, state, workspace (3 mounts)              | state, workspace (2 mounts)                     |
+| **vfsMounts**         | config, cache, state, workspace (4 mounts)       | state, workspace (2 mounts)                     |
 | **tcpHosts**          | controller + tool pool + WS bypass               | controller only                                 |
 | **bootstrap**         | Shell env file in `/etc/profile.d/`              | `npm install -g` codex + worker tarball         |
 | **startCommand**      | `openclaw gateway --port 18789`                  | `agent-vm-worker serve --port 18789`            |

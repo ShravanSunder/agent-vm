@@ -110,6 +110,7 @@ describe('openclawLifecycle', () => {
 		it('splits environment and mediated secrets', () => {
 			const vmSpec = openclawLifecycle.buildVmSpec({
 				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
 				tcpPool: {
@@ -131,6 +132,7 @@ describe('openclawLifecycle', () => {
 		it('builds the expected OpenClaw environment, mounts, and tcp hosts', () => {
 			const vmSpec = openclawLifecycle.buildVmSpec({
 				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
 				tcpPool: {
@@ -144,8 +146,15 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.environment.OPENCLAW_CONFIG_PATH).toBe(
 				'/home/openclaw/.openclaw/state/effective-openclaw.json',
 			);
+			expect(vmSpec.environment.OPENCLAW_PLUGIN_STAGE_DIR).toBe(
+				'/home/openclaw/.openclaw/cache/plugin-runtime-deps',
+			);
 			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/config']).toEqual({
 				hostPath: '/host/config/shravan',
+				kind: 'realfs',
+			});
+			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/cache']).toEqual({
+				hostPath: '/host/cache/gateways/shravan',
 				kind: 'realfs',
 			});
 			expect(vmSpec.tcpHosts).toEqual({
@@ -166,6 +175,9 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.bootstrapCommand).not.toContain('OPENCLAW_GATEWAY_TOKEN=');
 			expect(processSpec.bootstrapCommand).toContain(
 				'OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json',
+			);
+			expect(processSpec.bootstrapCommand).toContain(
+				'OPENCLAW_PLUGIN_STAGE_DIR=/home/openclaw/.openclaw/cache/plugin-runtime-deps',
 			);
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');

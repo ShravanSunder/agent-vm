@@ -31,7 +31,7 @@ OpenClaw runs a persistent gateway VM that hosts an interactive chat agent. Tool
   |  | (Zone 2)        |  | (Zone 3)      |  | (Zone 3)      |     |
   |  | long-running    |  | ephemeral     |  | ephemeral     |     |
   |  | OpenClaw :18789 |  | no secrets    |  | no secrets    |     |
-  |  | 3 VFS mounts    |  | no network    |  | no network    |     |
+  |  | 4 VFS mounts    |  | no network    |  | no network    |     |
   |  | TCP to all tools|  | /workspace    |  | /workspace    |     |
   |  +-----------------+  +---------------+  +---------------+      |
   |                        tool-0.vm.host:22  tool-1.vm.host:22     |
@@ -48,7 +48,7 @@ OpenClaw runs a persistent gateway VM that hosts an interactive chat agent. Tool
 | Who runs inside VM | agent-vm-worker (pipeline) | OpenClaw (chat agent platform) |
 | Output | Pull requests | Tool execution results in chat |
 | Tool execution | Agent runs commands directly in gateway VM | Agent requests tool VM lease, runs code there |
-| VFS mounts | 2 (/workspace, /state) | 3 (/config, /state, /workspace) |
+| VFS mounts | 2 (/workspace, /state) | 4 (/config, /cache, /state, /workspace) |
 | TCP hosts | Controller only | Controller + all tool VM SSH ports + WebSocket bypass |
 | Auth | None | Auth profiles (1Password → disk → VFS) |
 | prepareHostState | None | Writes effective config + auth profiles |
@@ -71,7 +71,7 @@ The gateway VM boots at controller startup and stays running. It is NOT per-task
   3. prepareHostState:
      - Write effective-openclaw.json (inject gateway token)
      - Write auth-profiles.json from 1Password
-  4. buildVmSpec → GatewayVmSpec (3 mounts, TCP pool, env)
+  4. buildVmSpec → GatewayVmSpec (4 mounts, TCP pool, env)
   5. buildProcessSpec → bootstrap + start commands
   6. createManagedVm → Gondolin VM
   7. Bootstrap: write shell env to /etc/profile.d/
@@ -84,6 +84,27 @@ The gateway stays alive until `controller stop`, `controller destroy`, or proces
 
 For the full 15-step boot sequence, see [overview.md](overview.md#gateway-zone-orchestrator).
 For the lifecycle implementation, see [subsystems/gateway-lifecycle.md](../subsystems/gateway-lifecycle.md#openclaw-implementation).
+For storage boundaries, see [storage-model.md](storage-model.md).
+
+---
+
+## OpenClaw Runtime Cache
+
+OpenClaw repairs bundled plugin runtime dependencies into a writable staging
+directory controlled by `OPENCLAW_PLUGIN_STAGE_DIR`. agent-vm mounts this under
+`cacheDir`, not `stateDir`:
+
+```text
+host:
+  <cacheDir>/gateways/<zone>/plugin-runtime-deps
+
+guest:
+  /home/openclaw/.openclaw/cache/plugin-runtime-deps
+```
+
+This cache survives gateway VM reboot but is not included in encrypted zone
+backups. If it is missing or stale, OpenClaw should repair it; durable zone
+state and auth profiles remain under `stateDir`.
 
 ---
 

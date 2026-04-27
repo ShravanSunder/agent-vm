@@ -20,6 +20,9 @@ import {
 
 const effectiveOpenClawConfigFileName = 'effective-openclaw.json';
 const effectiveOpenClawConfigVmPath = `/home/openclaw/.openclaw/state/${effectiveOpenClawConfigFileName}`;
+const openClawStateDirVmPath = '/home/openclaw/.openclaw/state';
+const openClawCacheDirVmPath = '/home/openclaw/.openclaw/cache';
+const openClawPluginStageDirVmPath = `${openClawCacheDirVmPath}/plugin-runtime-deps`;
 const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -53,7 +56,8 @@ function buildOpenClawBootstrapCommand(
 	const environmentLines = [
 		'export OPENCLAW_HOME=/home/openclaw',
 		`export OPENCLAW_CONFIG_PATH=${effectiveOpenClawConfigVmPath}`,
-		'export OPENCLAW_STATE_DIR=/home/openclaw/.openclaw/state',
+		`export OPENCLAW_STATE_DIR=${openClawStateDirVmPath}`,
+		`export OPENCLAW_PLUGIN_STAGE_DIR=${openClawPluginStageDirVmPath}`,
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
 	];
 
@@ -232,6 +236,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 
 	buildVmSpec({
 		controllerPort,
+		gatewayCacheDir,
 		projectNamespace,
 		resolvedSecrets,
 		tcpPool,
@@ -252,7 +257,8 @@ export const openclawLifecycle: GatewayLifecycle = {
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
 				OPENCLAW_CONFIG_PATH: effectiveOpenClawConfigVmPath,
 				OPENCLAW_HOME: '/home/openclaw',
-				OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
+				OPENCLAW_PLUGIN_STAGE_DIR: openClawPluginStageDirVmPath,
+				OPENCLAW_STATE_DIR: openClawStateDirVmPath,
 				...environmentSecretsWithoutGatewayToken,
 			},
 			mediatedSecrets,
@@ -262,6 +268,10 @@ export const openclawLifecycle: GatewayLifecycle = {
 			vfsMounts: {
 				'/home/openclaw/.openclaw/config': {
 					hostPath: configDirectory,
+					kind: 'realfs',
+				},
+				[openClawCacheDirVmPath]: {
+					hostPath: gatewayCacheDir,
 					kind: 'realfs',
 				},
 				'/home/openclaw/.openclaw/state': {

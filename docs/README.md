@@ -9,6 +9,7 @@ directory is the deeper map.
 | --- | --- |
 | Run a local Worker gateway | [getting-started/setup.md](getting-started/setup.md) |
 | Understand the Worker gateway | [architecture/agent-worker-gateway.md](architecture/agent-worker-gateway.md) |
+| Understand state/cache/backup boundaries | [architecture/storage-model.md](architecture/storage-model.md) |
 | Look up config fields | [reference/configuration/README.md](reference/configuration/README.md) |
 | Set up repo or external resources | [reference/configuration/resource-contracts.md](reference/configuration/resource-contracts.md) |
 | Know whether to run validate or doctor | [reference/validate-and-doctor.md](reference/validate-and-doctor.md) |
@@ -25,6 +26,7 @@ docs/
 
   architecture/
     overview.md
+    storage-model.md
     agent-worker-gateway.md
     openclaw-gateway.md
 

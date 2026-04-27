@@ -14,10 +14,12 @@ Use progressive disclosure when learning this repo:
 1. Start with `README.md` for the five-minute mental model.
 2. Use `docs/README.md` as the docs map.
 3. Use `docs/architecture/overview.md` for the system model.
-4. Use mode-specific gateway docs only when needed:
+4. Use `docs/architecture/storage-model.md` before changing cache, state,
+   workspace, or backup behavior.
+5. Use mode-specific gateway docs only when needed:
    - `docs/architecture/agent-worker-gateway.md` — Agent Worker Gateway, in-VM pipeline, event log, executors.
    - `docs/architecture/openclaw-gateway.md` — OpenClaw Gateway, long-running gateway VM, tool VM leases.
-5. Use subsystem docs for implementation details:
+6. Use subsystem docs for implementation details:
    - `docs/subsystems/controller.md` — HTTP routes, controller runtime, lease manager.
    - `docs/subsystems/gateway-lifecycle.md` — `GatewayLifecycle`, Agent Worker Gateway vs OpenClaw Gateway implementations.
    - `docs/subsystems/gondolin-vm-layer.md` — Gondolin adapter, VFS, `tcpHosts`, image build.
@@ -93,6 +95,12 @@ agent-vm                  → Controller CLI + HTTP server (→ all above)
 
 `vm-host-system/` is optional boot plumbing for a generic container host that
 runs Docker, QEMU, Zig, and the controller.
+
+Storage boundaries are load-bearing. Durable zone state belongs in `stateDir`
+and is included in encrypted backups. Rebuildable artifacts belong in
+`cacheDir` and must not be made backup state just to survive a copy-on-write VM
+reboot. See `docs/architecture/storage-model.md` before moving generated files
+between repo config, state, cache, workspace, or backup directories.
 
 ## Controller API
 
