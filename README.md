@@ -82,6 +82,11 @@ $AGENT_VM build --config config/system.json
 $AGENT_VM controller start --config config/system.json --zone coding-agent
 ```
 
+For monorepo local task runs, pack `agent-vm-worker` and set
+`AGENT_VM_WORKER_TARBALL_PATH` before starting worker tasks. The local gateway
+image installs public runtime tooling only; the controller copies the tarball
+into `/state/agent-vm-worker.tgz` when a task starts.
+
 Container-host scaffold:
 
 ```bash

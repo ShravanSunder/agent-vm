@@ -662,12 +662,10 @@ RUN apt-get update && \\
     apt-get update && \\
     apt-get install -y --no-install-recommends gh && \\
     rm -rf /var/lib/apt/lists/* && \\
-    npm install -g @openai/codex @agent-vm/agent-vm-worker pnpm@10 && \\
+    npm install -g @openai/codex pnpm@10 && \\
     curl -LsSf https://astral.sh/uv/install.sh | sh && \\
     mv /root/.local/bin/uv /usr/local/bin/uv && \\
     mv /root/.local/bin/uvx /usr/local/bin/uvx && \\
-    mkdir -p /opt/agent-vm-worker && \\
-    ln -s /usr/local/lib/node_modules/@agent-vm/agent-vm-worker /opt/agent-vm-worker && \\
     useradd -m -s /bin/bash coder && \\
     mkdir -p /workspace /run/sshd /state && \\
     chown -R coder:coder /workspace /state && \\
