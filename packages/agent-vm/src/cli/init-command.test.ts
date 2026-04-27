@@ -279,6 +279,7 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(gatewayDockerfile).toContain('Do not bake auth tokens');
 		expect(gatewayDockerfile).toContain('(ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)');
+		expect(gatewayDockerfile).toContain('pnpm add -g openclaw@2026.4.24');
 		expect(gatewayDockerfile).toContain(
 			'COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin',
 		);
@@ -591,6 +592,19 @@ describe('scaffoldAgentVmProject', () => {
 				'utf8',
 			),
 		) as {
+			readonly agents: {
+				readonly defaults: {
+					readonly models: {
+						readonly 'openai-codex/gpt-5.4': {
+							readonly params: { readonly thinking: string };
+						};
+						readonly 'openai-codex/gpt-5.4-mini': {
+							readonly params: { readonly thinking: string };
+						};
+					};
+					readonly thinkingDefault?: string;
+				};
+			};
 			readonly gateway: {
 				readonly controlUi: {
 					readonly allowedOrigins: readonly string[];
@@ -607,6 +621,13 @@ describe('scaffoldAgentVmProject', () => {
 			'http://127.0.0.1:18791',
 			'http://localhost:18791',
 		]);
+		expect(openClawConfig.agents.defaults.thinkingDefault).toBeUndefined();
+		expect(openClawConfig.agents.defaults.models['openai-codex/gpt-5.4'].params.thinking).toBe(
+			'low',
+		);
+		expect(openClawConfig.agents.defaults.models['openai-codex/gpt-5.4-mini'].params.thinking).toBe(
+			'high',
+		);
 		expect(openClawConfig.plugins.load.paths).toEqual(['/home/openclaw/.openclaw/extensions']);
 	});
 
@@ -857,6 +878,52 @@ describe('scaffoldAgentVmProject', () => {
 		);
 		expect(secrets.OPENCLAW_GATEWAY_TOKEN.ref).toBe(
 			'op://agent-vm/test-openclaw-gateway-auth/password',
+		);
+	});
+
+	it('scaffolds broad model-provider network defaults for openclaw type', async () => {
+		const targetDir = await createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{
+				gatewayType: 'openclaw',
+				architecture: 'aarch64',
+				targetDir,
+				zoneId: 'test-openclaw',
+				secretsProvider: '1password',
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		const config = JSON.parse(
+			await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		);
+		const zone = config.zones[0];
+
+		expect(zone.allowedHosts).toEqual(
+			expect.arrayContaining([
+				'api.anthropic.com',
+				'api.openai.com',
+				'auth.openai.com',
+				'chatgpt.com',
+				'generativelanguage.googleapis.com',
+				'oauth2.googleapis.com',
+				'accounts.google.com',
+				'api.x.ai',
+				'api.groq.com',
+				'api.mistral.ai',
+				'api.deepseek.com',
+				'api.openrouter.ai',
+				'openrouter.ai',
+				'api.perplexity.ai',
+				'api.together.xyz',
+				'api.fireworks.ai',
+				'api.cerebras.ai',
+				'api.cohere.ai',
+			]),
+		);
+		expect(zone.websocketBypass).toEqual(
+			expect.arrayContaining(['gateway.discord.gg:443', 'web.whatsapp.com:443']),
 		);
 	});
 

@@ -157,15 +157,20 @@ export async function startControllerRuntime(
 		});
 	const zone = findConfiguredZone(options.systemConfig, options.zoneId);
 	let gateway: Awaited<ReturnType<typeof startGatewayZone>> | undefined;
+	let gatewayBootedAt: string | undefined;
 	const requireGateway = (): Awaited<ReturnType<typeof startGatewayZone>> => {
 		if (!gateway) {
 			throw new Error('Gateway runtime is unavailable because the last restart did not complete.');
 		}
 		return gateway;
 	};
+	const setGateway = (startedGateway: Awaited<ReturnType<typeof startGatewayZone>>): void => {
+		gateway = startedGateway;
+		gatewayBootedAt = new Date(now()).toISOString();
+	};
 	if (activeZone.gateway.type !== 'worker') {
 		await runTaskStep('Starting gateway zone', async () => {
-			gateway = await startGateway();
+			setGateway(await startGateway());
 		});
 	}
 	const stopGatewayZone = async (): Promise<void> => {
@@ -174,6 +179,7 @@ export async function startControllerRuntime(
 		}
 		const activeGateway = gateway;
 		gateway = undefined;
+		gatewayBootedAt = undefined;
 		let closeError: unknown;
 		try {
 			await activeGateway.vm.close();
@@ -197,7 +203,7 @@ export async function startControllerRuntime(
 	};
 	const restartGatewayZone = async (): Promise<void> => {
 		await stopGatewayZone();
-		gateway = await startGateway();
+		setGateway(await startGateway());
 	};
 	const serverRef: { current?: { close(): Promise<void> } } = {};
 	const stopController = createStopControllerOperation({
@@ -213,6 +219,7 @@ export async function startControllerRuntime(
 					...createControllerRuntimeOperations({
 						activeZoneId: options.zoneId,
 						getGateway: () => requireGateway(),
+						getGatewayBootedAt: () => gatewayBootedAt,
 						getZone: (zoneId: string) => findConfiguredZone(options.systemConfig, zoneId),
 						leaseManager,
 						restartGatewayZone,

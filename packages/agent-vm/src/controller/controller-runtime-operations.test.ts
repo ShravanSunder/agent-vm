@@ -77,8 +77,10 @@ describe('createControllerRuntimeOperations', () => {
 					exec: vi.fn(async () => {
 						throw new Error('gateway handle is dead');
 					}),
+					id: 'gateway-vm-1',
 				},
 			}),
+			getGatewayBootedAt: () => '2026-04-27T10:00:00.000Z',
 			getZone: () => {
 				const zone = systemConfig.zones[0];
 				if (!zone) {

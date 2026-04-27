@@ -91,6 +91,12 @@ describe('openclawLifecycle', () => {
 			expect(openclawLifecycle.authConfig?.buildLoginCommand('openai-codex')).toBe(
 				"openclaw models auth login --provider 'openai-codex'",
 			);
+			expect(
+				openclawLifecycle.authConfig?.buildLoginCommand('openai-codex', {
+					deviceCode: true,
+					setDefault: true,
+				}),
+			).toBe("openclaw models auth login --provider 'openai-codex' --device-code --set-default");
 		});
 
 		it('shell-quotes provider values safely', () => {

@@ -288,7 +288,8 @@ The `GatewayLifecycle` interface (`gateway-interface` package) is the contract e
   |
   |-- authConfig?                     Static auth configuration (optional)
   |     listProvidersCommand: string   Shell command to list auth providers
-  |     buildLoginCommand(provider)    Shell command for interactive login
+  |     buildLoginCommand(provider,    Shell command for interactive login
+  |       options?)
   |
   |-- buildVmSpec(options)            Pure data -> GatewayVmSpec
   |     environment                    Env vars for the VM

@@ -49,6 +49,23 @@ const systemConfig = {
 			websocketBypass: [],
 			toolProfile: 'standard',
 		},
+		{
+			id: 'alevtina',
+			gateway: {
+				type: 'openclaw',
+				imageProfile: 'openclaw',
+				memory: '2G',
+				cpus: 2,
+				port: 18792,
+				config: './config/alevtina/openclaw.json',
+				stateDir: './state/alevtina',
+				workspaceDir: './workspaces/alevtina',
+			},
+			secrets: {},
+			allowedHosts: ['api.anthropic.com'],
+			websocketBypass: [],
+			toolProfile: 'standard',
+		},
 	],
 	toolProfiles: {
 		standard: {
@@ -71,9 +88,62 @@ describe('buildControllerStatus', () => {
 			toolProfiles: ['standard'],
 			zones: [
 				{
+					activeLeaseCount: 0,
 					gatewayType: 'openclaw',
 					id: 'shravan',
 					ingressPort: 18791,
+					running: false,
+					toolProfile: 'standard',
+				},
+				{
+					activeLeaseCount: 0,
+					gatewayType: 'openclaw',
+					id: 'alevtina',
+					ingressPort: 18792,
+					running: false,
+					toolProfile: 'standard',
+				},
+			],
+		});
+	});
+
+	it('marks the active runtime zone as running with live runtime details', () => {
+		expect(
+			buildControllerStatus(systemConfig, {
+				activeLeases: [{ zoneId: 'shravan' }, { zoneId: 'other-zone' }],
+				activeZoneId: 'shravan',
+				bootedAt: '2026-04-27T10:00:00.000Z',
+				gateway: {
+					ingress: {
+						host: '127.0.0.1',
+						port: 18791,
+					},
+					vm: {
+						id: 'gateway-vm-1',
+					},
+				},
+			}),
+		).toEqual({
+			controllerPort: 18800,
+			toolProfiles: ['standard'],
+			zones: [
+				{
+					activeLeaseCount: 1,
+					bootedAt: '2026-04-27T10:00:00.000Z',
+					gatewayType: 'openclaw',
+					id: 'shravan',
+					ingressHost: '127.0.0.1',
+					ingressPort: 18791,
+					running: true,
+					toolProfile: 'standard',
+					vmId: 'gateway-vm-1',
+				},
+				{
+					activeLeaseCount: 0,
+					gatewayType: 'openclaw',
+					id: 'alevtina',
+					ingressPort: 18792,
+					running: false,
 					toolProfile: 'standard',
 				},
 			],

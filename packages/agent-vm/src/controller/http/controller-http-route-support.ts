@@ -13,6 +13,7 @@ export interface ControllerRouteOperations {
 	readonly getStatus: () => Promise<unknown>;
 	readonly getTaskState?: (zoneId: string, taskId: string) => Promise<unknown>;
 	readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
+	readonly getZoneStatus: (zoneId: string) => Promise<unknown>;
 	readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;
 	readonly prepareWorkerTask?: (
 		zoneId: string,

@@ -588,13 +588,72 @@ describe('startGatewayZone', () => {
 		});
 	});
 
-	it('throws when gateway readiness polling exhausts all attempts', async () => {
+	it('throws with the gateway log tail and closes the vm when readiness polling exhausts all attempts', async () => {
+		const closeMock = vi.fn(async () => {});
+		const execMock = vi.fn(async (command: string) => {
+			if (command.includes('tail -n 80')) {
+				return {
+					exitCode: 0,
+					stdout: 'OpenClaw failed to parse config: unknown thinkingDefault\n',
+					stderr: '',
+				};
+			}
+			return { exitCode: 0, stdout: '000', stderr: '' };
+		});
 		const managedVm: ManagedVm = {
 			id: 'vm-timeout',
-			close: vi.fn(async () => {}),
+			close: closeMock,
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
-			exec: vi.fn(async () => ({ exitCode: 0, stdout: '000', stderr: '' })),
+			exec: execMock,
+			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28285)),
+		};
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({
+						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					}),
+					systemConfig: createSystemConfig(),
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					createManagedVm: vi.fn(async () => managedVm),
+					gatewayReadinessMaxAttempts: 2,
+					gatewayReadinessRetryDelayMs: 0,
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				},
+			),
+		).rejects.toThrow(
+			/Gateway readiness check failed after 2 attempts.*Last observation: http 000.*OpenClaw failed to parse config/su,
+		);
+		expect(execMock).toHaveBeenCalledWith('tail -n 80 /tmp/openclaw.log 2>/dev/null || true');
+		expect(closeMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('throws command stdout and stderr and closes the vm when gateway configuration fails', async () => {
+		const closeMock = vi.fn(async () => {});
+		const managedVm: ManagedVm = {
+			id: 'vm-config-failed',
+			close: closeMock,
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async (command: string) =>
+				command.includes('cat > /etc/profile.d/openclaw-env.sh')
+					? {
+							exitCode: 42,
+							stdout: 'bootstrap stdout',
+							stderr: 'bootstrap stderr',
+						}
+					: { exitCode: 0, stdout: '200', stderr: '' },
+			),
 			setIngressRoutes: vi.fn(),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28285)),
 		};
@@ -618,7 +677,8 @@ describe('startGatewayZone', () => {
 					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 				},
 			),
-		).rejects.toThrow(/gateway.*readiness/iu);
+		).rejects.toThrow(/Configuring gateway failed.*exit 42.*bootstrap stdout.*bootstrap stderr/su);
+		expect(closeMock).toHaveBeenCalledTimes(1);
 	});
 
 	it('does not treat non-2xx http responses as ready', async () => {

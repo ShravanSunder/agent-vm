@@ -872,6 +872,38 @@ describe('runAgentVmCli', () => {
 		]);
 	});
 
+	it('passes auth-interactive device-code and set-default flags to the login command', async () => {
+		const runInteractiveProcess = vi.fn(async () => {});
+
+		await runAgentVmCli(
+			['auth-interactive', 'openai-codex', '--zone', 'shravan', '--device-code', '--set-default'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () =>
+					createControllerClientStub(async () => ({
+						host: '127.0.0.1',
+						identityFile: '/tmp/test-key',
+						port: 19000,
+						user: 'root',
+					})),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				runInteractiveProcess,
+			},
+		);
+
+		expect(runInteractiveProcess).toHaveBeenCalledWith(
+			'ssh',
+			expect.arrayContaining([
+				expect.stringContaining('openclaw models auth login --provider'),
+				expect.stringContaining('--device-code --set-default'),
+			]),
+		);
+	});
+
 	it('auth-interactive without --zone shows available zones', async () => {
 		const stderrChunks: string[] = [];
 		await expect(

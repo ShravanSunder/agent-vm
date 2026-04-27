@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/openclaw-agent-vm-plugin",
-	"version": "0.0.28",
+	"version": "0.0.29",
 	"description": "OpenClaw sandbox-backend plugin that delegates execution to a Gondolin-managed VM.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {

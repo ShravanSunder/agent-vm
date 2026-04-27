@@ -42,7 +42,13 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
         "injection": "env"
       }
     },
-    "allowedHosts": ["api.openai.com", "chatgpt.com", "deb.debian.org"],
+    "allowedHosts": [
+      "api.anthropic.com",
+      "api.openai.com",
+      "auth.openai.com",
+      "chatgpt.com",
+      "generativelanguage.googleapis.com"
+    ],
     "websocketBypass": ["gateway.discord.gg:443"],
     "toolProfile": "standard"
   }]
@@ -55,6 +61,16 @@ For all system.json fields, see
 ### openclaw.json — OpenClaw Configuration
 
 Controls the OpenClaw agent platform: model selection, sandbox mode, plugin registration.
+
+### OpenClaw Version
+
+`agent-vm init` writes a gateway Dockerfile with a tested OpenClaw version, for example:
+
+```dockerfile
+RUN pnpm add -g openclaw@2026.4.24
+```
+
+That pin is a scaffold default, not a host-side package lock. After scaffold, the catalog repo owns `vm-images/gateways/openclaw/Dockerfile`; edit that line in the catalog when you want to try or pin a different OpenClaw release.
 
 ### Auth Profiles
 

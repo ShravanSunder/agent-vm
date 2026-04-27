@@ -530,9 +530,24 @@ function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): readonly s
 	}
 
 	return [
+		'api.anthropic.com',
 		'api.openai.com',
 		'auth.openai.com',
+		'chatgpt.com',
+		'generativelanguage.googleapis.com',
+		'oauth2.googleapis.com',
+		'accounts.google.com',
+		'api.x.ai',
+		'api.groq.com',
+		'api.mistral.ai',
+		'api.deepseek.com',
+		'api.openrouter.ai',
+		'openrouter.ai',
 		'api.perplexity.ai',
+		'api.together.xyz',
+		'api.fireworks.ai',
+		'api.cerebras.ai',
+		'api.cohere.ai',
 		'discord.com',
 		'cdn.discordapp.com',
 		'api.github.com',
@@ -611,7 +626,7 @@ RUN apt-get update && \\
     rm -rf /var/lib/apt/lists/* && \\
     update-ca-certificates && \\
     corepack enable && \\
-    pnpm add -g openclaw@2026.4.2 && \\
+    pnpm add -g openclaw@2026.4.24 && \\
     OPENCLAW_PACKAGE_ROOT="$(pnpm root -g)/openclaw" && \\
     (cd "$OPENCLAW_PACKAGE_ROOT" && node scripts/postinstall-bundled-plugins.mjs) && \\
     mkdir -p /opt/openclaw-sdk && \\
@@ -788,6 +803,18 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 	agents: {
 		defaults: {
 			model: { primary: 'openai-codex/gpt-5.4' },
+			models: {
+				'openai-codex/gpt-5.4': {
+					params: {
+						thinking: 'low',
+					},
+				},
+				'openai-codex/gpt-5.4-mini': {
+					params: {
+						thinking: 'high',
+					},
+				},
+			},
 			sandbox: { backend: 'gondolin', mode: 'all', scope: 'session' },
 			workspace: '/home/openclaw/workspace',
 		},
