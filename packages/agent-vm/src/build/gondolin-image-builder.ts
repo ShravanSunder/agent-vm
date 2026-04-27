@@ -10,6 +10,7 @@ import {
 } from '@agent-vm/gondolin-adapter';
 
 import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
+import type { TaskOutput } from '../shared/run-task.js';
 import { resolveRuntimeBuildVersionTag as resolveRuntimeBuildVersionTagDefault } from './runtime-versions.js';
 
 export interface GondolinImageBuilderDependencies {
@@ -62,6 +63,7 @@ export async function buildGondolinImage(
 		readonly systemCacheIdentifierPath: string;
 		readonly cacheDir: string;
 		readonly fullReset?: boolean;
+		readonly streamPreview?: TaskOutput;
 	},
 	dependencies: GondolinImageBuilderDependencies = {},
 ): Promise<BuildImageResult> {
@@ -82,6 +84,7 @@ export async function buildGondolinImage(
 			cacheDir: options.cacheDir,
 			configDir,
 			fingerprintInput,
+			...(options.streamPreview ? { output: options.streamPreview } : {}),
 			...(options.fullReset ? { fullReset: true } : {}),
 		},
 		{

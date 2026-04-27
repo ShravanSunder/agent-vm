@@ -66,9 +66,6 @@ Optional tweaks:
 - adjust any `*_REF` values if your 1Password vault paths differ
 - set `OP_SERVICE_ACCOUNT_TOKEN` if you want a service account instead of
   Keychain storage
-- keep `AGE_IDENTITY_KEY` only if you need custom encrypted backup keys. When
-  age is installed, local init may generate this value for you; when age is not
-  installed, init continues without it.
 
 For container-host or CI scaffolds, use:
 

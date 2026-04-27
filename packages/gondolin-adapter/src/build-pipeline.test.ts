@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { Writable } from 'node:stream';
 
 import type { BuildConfig } from '@earendil-works/gondolin';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +10,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildImage, computeBuildFingerprint } from './build-pipeline.js';
 
 const temporaryDirectories: string[] = [];
+
+async function writeFakeAssets(outputDirectory: string): Promise<void> {
+	await fsPromises.mkdir(outputDirectory, { recursive: true });
+	await fsPromises.writeFile(path.join(outputDirectory, 'manifest.json'), '{}', 'utf8');
+	await fsPromises.writeFile(path.join(outputDirectory, 'rootfs.ext4'), '', 'utf8');
+	await fsPromises.writeFile(path.join(outputDirectory, 'initramfs.cpio.lz4'), '', 'utf8');
+	await fsPromises.writeFile(path.join(outputDirectory, 'vmlinuz-virt'), '', 'utf8');
+}
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -100,6 +109,46 @@ describe('buildImage', () => {
 		expect(existsSyncSpy).not.toHaveBeenCalled();
 		expect(mkdirSyncSpy).not.toHaveBeenCalled();
 		expect(rmSyncSpy).not.toHaveBeenCalled();
+	});
+
+	it('routes Gondolin process output to the provided stream and disables dynamic progress', async () => {
+		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
+		temporaryDirectories.push(cacheDirectory);
+		const outputChunks: string[] = [];
+		const output = new Writable({
+			write(chunk, _encoding, callback) {
+				outputChunks.push(String(chunk));
+				callback();
+			},
+		});
+		const originalCi = process.env.CI;
+
+		await buildImage(
+			{
+				buildConfig: {
+					arch: 'aarch64',
+					distro: 'alpine',
+					rootfs: {
+						label: 'gondolin-root',
+					},
+				},
+				cacheDir: cacheDirectory,
+				output,
+			},
+			{
+				buildAssets: async (_buildConfig: BuildConfig, outputDirectory: string): Promise<void> => {
+					if (process.env.CI !== 'true') {
+						throw new Error('Expected CI=true while Gondolin build output is captured.');
+					}
+					process.stderr.write('building rootfs\n');
+					await writeFakeAssets(outputDirectory);
+				},
+				gondolinVersion: 'gondolin@1',
+			},
+		);
+
+		expect(outputChunks.join('')).toContain('building rootfs');
+		expect(process.env.CI).toBe(originalCi);
 	});
 });
 

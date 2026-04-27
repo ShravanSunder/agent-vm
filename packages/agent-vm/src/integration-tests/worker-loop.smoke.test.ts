@@ -208,18 +208,13 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 		const controllerPort = await findAvailablePort();
 		const gatewayPort = await findAvailablePort();
 		const repoDir = await createSampleRepo(tempRoot);
-		await scaffoldAgentVmProject(
-			{
-				targetDir: tempRoot,
-				zoneId: 'worker-smoke',
-				gatewayType: 'worker',
-				architecture: 'aarch64',
-				secretsProvider: '1password',
-			},
-			{
-				generateAgeIdentityKey: () => undefined,
-			},
-		);
+		await scaffoldAgentVmProject({
+			targetDir: tempRoot,
+			zoneId: 'worker-smoke',
+			gatewayType: 'worker',
+			architecture: 'aarch64',
+			secretsProvider: '1password',
+		});
 		const scaffoldCachePath = path.join(os.tmpdir(), 'agent-vm-smoke-cache');
 		await fs.mkdir(scaffoldCachePath, { recursive: true });
 		const gatewayBuildConfigPath = path.join(

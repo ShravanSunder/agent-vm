@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/worker-gateway",
-	"version": "0.0.27",
+	"version": "0.0.28",
 	"description": "Worker gateway lifecycle: boots a Gondolin VM and drives @agent-vm/agent-vm-worker for autonomous coding tasks.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {

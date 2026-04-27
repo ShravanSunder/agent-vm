@@ -55,6 +55,11 @@ fast formatting and linting.
 Prefer targeted commands while iterating, then run the broad gate before
 claiming done. Do not use `npm` or `yarn` in this repo.
 
+For CLI, scaffold, default-value, and generated-config changes, add a local
+black-box smoke test in a temporary directory. Exercise the actual command a
+user would run, inspect the generated files, and run the relevant validation
+command against that generated output before claiming the default is safe.
+
 ## TypeScript Standards
 
 Follow `.cursor/rules/ts-rules.md`; key points:

@@ -125,6 +125,29 @@ describe('runAgentVmCli', () => {
 		expect(loadEnvFileSpy).toHaveBeenCalledWith('.env.local');
 	});
 
+	it('prints the resolved package version', async () => {
+		const outputs: string[] = [];
+
+		await runAgentVmCli(
+			['-v'],
+			{
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			{
+				...defaultCliDependencies,
+				resolveCliVersion: async () => '9.8.7',
+			},
+		);
+
+		expect(outputs.join('')).toBe('9.8.7\n');
+	});
+
 	it('recognizes symlinked package-manager bin paths as the CLI entrypoint', async () => {
 		const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-entrypoint-'));
 		const realEntrypointPath = path.join(targetDir, 'real-entrypoint.js');

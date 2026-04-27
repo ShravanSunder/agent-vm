@@ -14,10 +14,10 @@ import { createPathsSubcommands } from './paths-definition.js';
 import { createResourcesSubcommands } from './resources-definition.js';
 import { createValidateCommand } from './validate-definition.js';
 
-export function createAgentVmApp(io: CliIo, dependencies: CliDependencies) {
+export function createAgentVmApp(io: CliIo, dependencies: CliDependencies, cliVersion: string) {
 	return subcommands({
 		name: 'agent-vm',
-		version: '0.0.1',
+		version: cliVersion,
 		description: 'Gondolin-based VM controller for Worker and OpenClaw agents',
 		cmds: {
 			init: createInitCommand(io, dependencies),

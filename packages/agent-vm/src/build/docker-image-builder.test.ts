@@ -4,10 +4,14 @@ import { buildDockerImage, type DockerImageBuilderDependencies } from './docker-
 
 describe('buildDockerImage', () => {
 	it('runs docker build with the dockerfile directory as build context', async () => {
-		const executedCommands: { command: string; args: readonly string[] }[] = [];
+		const executedCommands: {
+			command: string;
+			args: readonly string[];
+			options: unknown;
+		}[] = [];
 		const dependencies: DockerImageBuilderDependencies = {
-			executeCommand: async (command, args) => {
-				executedCommands.push({ command, args });
+			executeCommand: async (command, args, options) => {
+				executedCommands.push({ command, args, options });
 			},
 		};
 
@@ -31,8 +35,30 @@ describe('buildDockerImage', () => {
 					'agent-vm-gateway:latest',
 					'/project/vm-images/gateways/openclaw',
 				],
+				options: {},
 			},
 		]);
+	});
+
+	it('passes Tasuku stream preview to the Docker executor when provided', async () => {
+		const streamPreview = { write: () => true };
+		const executedOptions: unknown[] = [];
+		const dependencies: DockerImageBuilderDependencies = {
+			executeCommand: async (_command, _args, options) => {
+				executedOptions.push(options);
+			},
+		};
+
+		await buildDockerImage(
+			{
+				dockerfilePath: '/project/vm-images/gateways/openclaw/Dockerfile',
+				imageTag: 'agent-vm-gateway:latest',
+				streamPreview,
+			},
+			dependencies,
+		);
+
+		expect(executedOptions).toEqual([{ streamPreview }]);
 	});
 
 	it('wraps docker build failures with image context', async () => {

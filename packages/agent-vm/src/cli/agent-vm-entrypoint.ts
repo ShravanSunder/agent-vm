@@ -28,6 +28,7 @@ import {
 	type CliDependencies,
 	type CliIo,
 } from './agent-vm-cli-support.js';
+import { resolveCliVersion } from './cli-version.js';
 import { createAgentVmApp } from './commands/create-app.js';
 
 export class ReportedCliError extends Error {}
@@ -37,7 +38,8 @@ export async function runAgentVmCli(
 	io: CliIo,
 	dependencies: CliDependencies = defaultCliDependencies,
 ): Promise<void> {
-	const result = await runSafely(createAgentVmApp(io, dependencies), [...argv]);
+	const cliVersion = await (dependencies.resolveCliVersion ?? resolveCliVersion)();
+	const result = await runSafely(createAgentVmApp(io, dependencies, cliVersion), [...argv]);
 	if (result._tag === 'ok') {
 		return;
 	}

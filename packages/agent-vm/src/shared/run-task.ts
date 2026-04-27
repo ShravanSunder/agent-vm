@@ -1,4 +1,18 @@
-export type RunTaskFn = (title: string, fn: () => Promise<void>) => Promise<void>;
+export interface RunTaskContext {
+	readonly interactive: boolean;
+	readonly setOutput: (output: string | { readonly message: string }) => void;
+	readonly setStatus: (status?: string) => void;
+	readonly streamPreview?: TaskOutput;
+}
+
+export interface TaskOutput {
+	write(chunk: string | Uint8Array): boolean;
+}
+
+export type RunTaskFn = (
+	title: string,
+	fn: (context?: RunTaskContext) => Promise<void>,
+) => Promise<void>;
 
 export async function runTaskWithResult<TResult>(
 	runTaskStep: RunTaskFn,

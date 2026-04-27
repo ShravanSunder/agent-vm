@@ -22,6 +22,7 @@ import { buildControllerStatus } from '../operations/controller-status.js';
 import { runControllerDoctor } from '../operations/doctor.js';
 import { runBuildCommand } from './build-command.js';
 import { runCacheCommand } from './cache-commands.js';
+import { resolveCliVersion } from './cli-version.js';
 import { resetWorkerInstructions } from './config-commands.js';
 import {
 	scaffoldAgentVmProject,
@@ -74,6 +75,7 @@ export interface CliDependencies {
 	readonly runConfigValidation?: typeof runConfigValidation;
 	readonly promptAndStoreServiceAccountToken?: () => Promise<boolean>;
 	readonly resetWorkerInstructions?: typeof resetWorkerInstructions;
+	readonly resolveCliVersion?: typeof resolveCliVersion;
 	readonly scaffoldAgentVmProject?: (
 		options: ScaffoldAgentVmProjectOptions,
 	) => Promise<ScaffoldAgentVmProjectResult>;
@@ -118,6 +120,7 @@ export const defaultCliDependencies: CliDependencies = {
 	runControllerDoctor,
 	runConfigValidation,
 	resetWorkerInstructions,
+	resolveCliVersion,
 	scaffoldAgentVmProject,
 	initRepoResources,
 	updateRepoResources,

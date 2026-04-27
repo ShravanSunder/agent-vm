@@ -55,7 +55,6 @@ const noGeneratedAgeIdentityDependencies = {
 		await fs.writeFile(path.join(pluginDirectory, 'openclaw.plugin.json'), '{"id":"gondolin"}\n');
 		return 'created';
 	},
-	generateAgeIdentityKey: () => undefined,
 };
 
 const scaffoldedSystemConfigSchema = z.object({
@@ -345,7 +344,7 @@ describe('scaffoldAgentVmProject', () => {
 		});
 	});
 
-	it('appends an age identity to .env.local when one is generated', async () => {
+	it('does not append an unused age identity to .env.local', async () => {
 		const targetDir = await createTestDirectory();
 
 		await scaffoldAgentVmProject(
@@ -357,44 +356,29 @@ describe('scaffoldAgentVmProject', () => {
 				secretsProvider: '1password',
 				writeLocalEnvironmentFile: true,
 			},
-			{
-				...noGeneratedAgeIdentityDependencies,
-				generateAgeIdentityKey: () => 'AGE-SECRET-KEY-1TESTVALUE',
-			},
-		);
-		const envContent = await fs.readFile(path.join(targetDir, '.env.local'), 'utf8');
-
-		expect(envContent).toContain('AGE_IDENTITY_KEY=AGE-SECRET-KEY-1TESTVALUE');
-	});
-
-	it('leaves .env.local without an age identity when generation fails', async () => {
-		const targetDir = await createTestDirectory();
-		const warnings: string[] = [];
-
-		await scaffoldAgentVmProject(
-			{
-				targetDir,
-				zoneId: 'test-zone',
-				gatewayType: 'openclaw',
-				architecture: 'aarch64',
-				secretsProvider: '1password',
-				writeLocalEnvironmentFile: true,
-			},
-			{
-				...noGeneratedAgeIdentityDependencies,
-				generateAgeIdentityKey: () => {
-					throw new Error('age-keygen missing');
-				},
-				reportWarning: (message) => {
-					warnings.push(message);
-				},
-			},
+			noGeneratedAgeIdentityDependencies,
 		);
 		const envContent = await fs.readFile(path.join(targetDir, '.env.local'), 'utf8');
 
 		expect(envContent).not.toMatch(/^AGE_IDENTITY_KEY=/mu);
-		expect(warnings.join('\n')).toContain('age-keygen not available');
-		expect(warnings.join('\n')).toContain('age-keygen missing');
+	});
+
+	it('does not run age-keygen for macOS local scaffolds', async () => {
+		const targetDir = await createTestDirectory();
+		await scaffoldAgentVmProject(
+			{
+				targetDir,
+				zoneId: 'test-zone',
+				gatewayType: 'openclaw',
+				architecture: 'aarch64',
+				secretsProvider: '1password',
+				writeLocalEnvironmentFile: true,
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+		const envContent = await fs.readFile(path.join(targetDir, '.env.local'), 'utf8');
+
+		expect(envContent).not.toMatch(/^AGE_IDENTITY_KEY=/mu);
 	});
 
 	it('creates local runtime directories for local scaffolds', async () => {
@@ -918,6 +902,14 @@ describe('scaffoldAgentVmProject', () => {
 		await expect(
 			fs.access(path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'Dockerfile')),
 		).resolves.toBeUndefined();
+		const dockerfile = await fs.readFile(
+			path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'Dockerfile'),
+			'utf8',
+		);
+		expect(dockerfile).toContain('ripgrep');
+		expect(dockerfile).toContain('fd-find');
+		expect(dockerfile).toContain('build-essential');
+		expect(dockerfile).toContain('ln -sf /usr/bin/fdfind /usr/local/bin/fd');
 	});
 
 	it('scaffolds worker-specific env references for worker type', async () => {
@@ -1084,7 +1076,6 @@ describe('scaffoldAgentVmProject', () => {
 			},
 			{
 				...noGeneratedAgeIdentityDependencies,
-				generateAgeIdentityKey: () => 'AGE-SECRET-KEY-SHOULD-NOT-APPEAR',
 			},
 		);
 
