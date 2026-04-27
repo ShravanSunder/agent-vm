@@ -40,6 +40,22 @@ async function runAgentVmResourcesCommand(
 }
 
 describe('smoke: agent-vm resources CLI', () => {
+	it('runs when invoked through a package-manager-style symlinked bin path', async () => {
+		const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-bin-symlink-'));
+		const binDir = path.join(targetDir, 'node_modules', '.bin');
+		const symlinkedBinPath = path.join(binDir, 'agent-vm');
+		await fs.mkdir(binDir, { recursive: true });
+		await fs.symlink(agentVmCliPath, symlinkedBinPath);
+
+		const result = await execa('node', [symlinkedBinPath, '--help'], {
+			cwd: targetDir,
+			reject: true,
+			timeout: 30_000,
+		});
+
+		expect(result.stdout).toContain('agent-vm <subcommand>');
+	});
+
 	it('creates, validates, and updates repo resource files without clobbering user-owned files', async () => {
 		const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-resources-cli-'));
 

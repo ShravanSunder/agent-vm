@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
@@ -10,6 +11,7 @@ import type { ControllerClient } from '../controller/http/controller-client.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import {
 	handleCliMainError,
+	isCliEntrypoint,
 	loadOptionalLocalEnvironmentFile,
 	ReportedCliError,
 	runAgentVmCli,
@@ -121,6 +123,21 @@ describe('runAgentVmCli', () => {
 			'Failed to load .env.local: bad dotenv syntax',
 		);
 		expect(loadEnvFileSpy).toHaveBeenCalledWith('.env.local');
+	});
+
+	it('recognizes symlinked package-manager bin paths as the CLI entrypoint', async () => {
+		const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-entrypoint-'));
+		const realEntrypointPath = path.join(targetDir, 'real-entrypoint.js');
+		const symlinkEntrypointPath = path.join(targetDir, 'agent-vm');
+		await fs.writeFile(realEntrypointPath, 'export {};\n', 'utf8');
+		await fs.symlink(realEntrypointPath, symlinkEntrypointPath);
+
+		expect(isCliEntrypoint(pathToFileURL(realEntrypointPath).href, symlinkEntrypointPath)).toBe(
+			true,
+		);
+		expect(isCliEntrypoint(`file://${realEntrypointPath}`, undefined)).toBe(false);
+
+		await fs.rm(targetDir, { force: true, recursive: true });
 	});
 
 	it('routes init to the project scaffolder', async () => {

@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 function loadOptionalLocalEnvironmentFile(environmentFilePath: string = '.env.local'): void {
 	try {
 		process.loadEnvFile(environmentFilePath);
@@ -17,8 +20,6 @@ function loadOptionalLocalEnvironmentFile(environmentFilePath: string = '.env.lo
 }
 
 loadOptionalLocalEnvironmentFile();
-
-import { pathToFileURL } from 'node:url';
 
 import { runSafely } from 'cmd-ts';
 
@@ -73,7 +74,18 @@ async function main(): Promise<void> {
 	});
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+export function isCliEntrypoint(importMetaUrl: string, argvEntryPath: string | undefined): boolean {
+	if (!argvEntryPath) {
+		return false;
+	}
+	try {
+		return realpathSync(fileURLToPath(importMetaUrl)) === realpathSync(argvEntryPath);
+	} catch {
+		return false;
+	}
+}
+
+if (isCliEntrypoint(import.meta.url, process.argv[1])) {
 	void main().catch((error: unknown) => {
 		handleCliMainError(error, process.stderr);
 		process.exitCode = 1;
