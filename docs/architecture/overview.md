@@ -2,7 +2,11 @@
 
 [Overview](../README.md) > Architecture
 
-System architecture covering all packages, both gateway types, the controller, and the Gondolin VM layer. For mode-specific details: [Agent Worker Gateway](agent-worker-gateway.md) | [OpenClaw Gateway](openclaw-gateway.md).
+System architecture covering all packages, both gateway types, the controller,
+and the Gondolin VM layer. For mode-specific details:
+[Agent Worker Gateway](agent-worker-gateway.md) |
+[OpenClaw Gateway](openclaw-gateway.md) |
+[Storage Model](storage-model.md).
 
 ---
 
@@ -213,7 +217,7 @@ Seven packages compose the system. Dependencies flow downward.
 |---------|----------------|
 | **gondolin-adapter** | Wraps the Gondolin SDK. Creates VMs, resolves secrets (1Password/env), builds images with fingerprint caching, assembles VFS mounts and HTTP mediation hooks. |
 | **gateway-interface** | The contract. `GatewayLifecycle` interface, `GatewayVmSpec`, `GatewayProcessSpec`. Both gateway types implement this. `splitResolvedGatewaySecrets()` routes secrets to env or HTTP mediation. |
-| **openclaw-gateway** | OpenClaw lifecycle: 3 VFS mounts, TCP pool for tool VM SSH, auth profiles, `prepareHostState` writes effective config to disk. |
+| **openclaw-gateway** | OpenClaw lifecycle: 4 VFS mounts, TCP pool for tool VM SSH, auth profiles, `prepareHostState` writes effective config to disk. |
 | **worker-gateway** | Worker lifecycle: 2 VFS mounts (`/workspace` + `/state`), TCP to controller only, no auth, no `prepareHostState`. |
 | **agent-vm** | The controller. CLI (cmd-ts), HTTP API (Hono), lease manager + TCP pool + idle reaper, gateway zone orchestrator, worker task runner, host-side git push. |
 | **agent-vm-worker** | Runs inside the VM. 6-phase coordinator, Codex/Claude executors with thread persistence, JSONL event sourcing, and controller tools such as `git-push` and `git-pull-default`. |
@@ -320,7 +324,7 @@ The `GatewayLifecycle` interface (`gateway-interface` package) is the contract e
 | Concern | OpenClaw (`openclaw-lifecycle.ts`) | Worker (`worker-lifecycle.ts`) |
 |---------|------|--------|
 | **authConfig** | Present: `openclaw models auth login` | Absent: no interactive auth |
-| **VFS mounts** | 3 mounts: config, state, workspace | 2 mounts: state, workspace |
+| **VFS mounts** | 4 mounts: config, cache, state, workspace | 2 mounts: state, workspace |
 | **Environment** | `OPENCLAW_*` vars, `HOME=/home/openclaw` | `CONTROLLER_BASE_URL`, `WORKER_CONFIG_PATH`, `HOME=/home/coder` |
 | **TCP hosts** | Controller + all tool VM slots + websocket bypass | Controller only |
 | **Bootstrap** | Write shell env profile, configure bashrc | Conditionally install worker tarball from `/state/` |
@@ -599,7 +603,7 @@ directory.
 ```
   system.json
   |-- host              Controller port, project namespace, secrets provider, GitHub token
-  |-- cacheDir          Image build cache directory
+  |-- cacheDir          Rebuildable cache directory; not included in zone backups
   |-- images            Build config paths for gateway and tool VM images
   |-- zones[]           Zone definitions: gateway type, resources, secrets, allowed hosts
   |-- toolProfiles      Named VM resource profiles (memory, cpus, workspace root)
@@ -614,6 +618,10 @@ when any secret uses the `1password` source.
 
 For the field-by-field reference, see
 [configuration/README.md](../reference/configuration/README.md).
+
+For state/cache/workspace/backup boundaries, see
+[storage-model.md](storage-model.md). Do not move rebuildable dependency trees
+into `stateDir` just to make them survive VM reboot; mount a cache path instead.
 
 For upstream Gondolin image-build capabilities and sandbox features, see
 [Feature Highlights](https://github.com/earendil-works/gondolin/blob/main/README.md#feature-highlights).

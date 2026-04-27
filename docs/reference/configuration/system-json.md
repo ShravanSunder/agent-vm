@@ -53,6 +53,19 @@ tcpPool
 | `keychain` | Read the service account token from macOS Keychain. |
 | `op-cli` | Resolve the service account token through the 1Password CLI. |
 
+## cacheDir
+
+`cacheDir` stores rebuildable artifacts. It is intentionally outside encrypted
+zone backups. Current uses include Gondolin image outputs and per-zone gateway
+runtime caches such as OpenClaw bundled plugin dependency staging.
+
+Do not place durable secrets or user state under `cacheDir`. Do not place
+rebuildable dependency trees under `stateDir` just to make them survive gateway
+VM reboot; mount a cache path instead.
+
+For the storage boundary model, see
+[storage-model.md](../../architecture/storage-model.md).
+
 ## imageProfiles
 
 Gateway image profiles are used by zones:

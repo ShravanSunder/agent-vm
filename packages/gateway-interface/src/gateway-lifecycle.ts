@@ -75,6 +75,7 @@ export interface GatewayZoneConfig {
 
 export interface BuildGatewayVmSpecOptions {
 	readonly controllerPort: number;
+	readonly gatewayCacheDir: string;
 	readonly projectNamespace: string;
 	readonly resolvedSecrets: Record<string, string>;
 	readonly tcpPool: {

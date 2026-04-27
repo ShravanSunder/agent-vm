@@ -218,11 +218,14 @@ export async function startGatewayZone(
 	});
 	await fs.mkdir(zone.gateway.stateDir, { recursive: true });
 	await fs.mkdir(zone.gateway.workspaceDir, { recursive: true });
+	const gatewayCacheDir = path.join(options.systemConfig.cacheDir, 'gateways', zone.id);
+	await fs.mkdir(gatewayCacheDir, { recursive: true });
 	await runTaskStep('Preparing host state', async () => {
 		await lifecycle.prepareHostState?.(lifecycleZone, options.secretResolver);
 	});
 	const vmSpec = lifecycle.buildVmSpec({
 		controllerPort: options.systemConfig.host.controllerPort,
+		gatewayCacheDir,
 		projectNamespace: options.systemConfig.host.projectNamespace,
 		resolvedSecrets,
 		tcpPool: options.systemConfig.tcpPool,

@@ -34,6 +34,7 @@ describe('workerLifecycle', () => {
 	it('builds a worker VM spec with /state and /workspace mounts', () => {
 		const vmSpec = workerLifecycle.buildVmSpec({
 			controllerPort: 18800,
+			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
 			tcpPool: {

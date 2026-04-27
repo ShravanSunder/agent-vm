@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/gateway-interface",
-	"version": "0.0.30",
+	"version": "0.0.31",
 	"description": "Shared TypeScript interfaces for VM gateway lifecycles, VmSpec, and ProcessSpec.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
