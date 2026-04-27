@@ -19,7 +19,9 @@
 		"test:unit": "vitest run --config vitest.config.ts",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"test:smoke": "vitest run --config vitest.smoke.config.ts",
-		"test:watch": "vitest"
+		"test:watch": "vitest",
+		"perf:gondolin-vfs": "node scripts/perf/gondolin-vfs-benchmark.ts",
+		"perf:worker-git": "node scripts/perf/gondolin-worker-git-benchmark.ts"
 	},
 	"devDependencies": {
 		"@types/node": "^25.6.0",

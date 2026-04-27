@@ -48,7 +48,7 @@ OpenClaw runs a persistent gateway VM that hosts an interactive chat agent. Tool
 | Who runs inside VM | agent-vm-worker (pipeline) | OpenClaw (chat agent platform) |
 | Output | Pull requests | Tool execution results in chat |
 | Tool execution | Agent runs commands directly in gateway VM | Agent requests tool VM lease, runs code there |
-| VFS mounts | 2 (/workspace, /state) | 4 (/config, /cache, /state, /workspace) |
+| VFS mounts | `/state` plus task `/gitdirs`; `/workspace` is rootfs/COW target | `/config`, `/cache`, `/state`, current zone data path at `/home/openclaw/workspace` |
 | TCP hosts | Controller only | Controller + all tool VM SSH ports + WebSocket bypass |
 | Auth | None | Auth profiles (1Password → disk → VFS) |
 | prepareHostState | None | Writes effective config + auth profiles |
@@ -88,23 +88,24 @@ For storage boundaries, see [storage-model.md](storage-model.md).
 
 ---
 
-## OpenClaw Runtime Cache
+## OpenClaw Plugin Runtime Deps And Zone Data
 
-OpenClaw repairs bundled plugin runtime dependencies into a writable staging
-directory controlled by `OPENCLAW_PLUGIN_STAGE_DIR`. agent-vm mounts this under
-`cacheDir`, not `stateDir`:
+Target state: stable bundled OpenClaw plugin runtime dependencies are baked into
+the gateway image/rootfs and exposed through `OPENCLAW_PLUGIN_STAGE_DIR`:
 
 ```text
-host:
-  <cacheDir>/gateways/<zone>/plugin-runtime-deps
-
 guest:
-  /home/openclaw/.openclaw/cache/plugin-runtime-deps
+  /opt/openclaw/plugin-runtime-deps
 ```
 
-This cache survives gateway VM reboot but is not included in encrypted zone
-backups. If it is missing or stale, OpenClaw should repair it; durable zone
+`cacheDir` may still hold repair/download caches, but it is not the normal hot
+import path and is not included in encrypted zone backups. Durable OpenClaw
 state and auth profiles remain under `stateDir`.
+
+The current OpenClaw VM path `/home/openclaw/workspace` is long-lived zone data,
+not the same storage class as a worker rootfs workspace. New docs should call
+this storage class `zoneDataDir`; the existing config field may still be named
+`workspaceDir` until the config schema is cut over.
 
 ---
 
@@ -186,7 +187,8 @@ The `openclaw-agent-vm-plugin` package bridges OpenClaw's sandbox system to Gond
 The plugin provides:
 - **File bridge**: `mkdirp`, `readFile`, `writeFile`, `stat`, `remove`, `rename` — all via SSH into the tool VM
 - **Shell execution**: run arbitrary commands in the tool VM
-- **Workspace access**: `/workspace` is VFS-mounted read/write
+- **Workspace access**: tool VMs use `/workspace` for lease-local execution;
+  OpenClaw gateway zone data is separate from worker/rootfs workspaces
 
 ---
 

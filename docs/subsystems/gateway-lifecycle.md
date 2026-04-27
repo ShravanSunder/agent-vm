@@ -144,7 +144,7 @@ environment:
   OPENCLAW_HOME         = /home/openclaw
   OPENCLAW_CONFIG_PATH  = /home/openclaw/.openclaw/state/effective-openclaw.json
   OPENCLAW_STATE_DIR    = /home/openclaw/.openclaw/state
-  OPENCLAW_PLUGIN_STAGE_DIR = /home/openclaw/.openclaw/cache/plugin-runtime-deps
+  OPENCLAW_PLUGIN_STAGE_DIR = /opt/openclaw/plugin-runtime-deps
   NODE_EXTRA_CA_CERTS   = /run/gondolin/ca-certificates.crt
   + env-injected secrets (minus OPENCLAW_GATEWAY_TOKEN)
 
@@ -152,7 +152,7 @@ vfsMounts:
   /home/openclaw/.openclaw/config    -> configDirectory  (realfs)
   /home/openclaw/.openclaw/cache     -> gatewayCacheDir  (realfs)
   /home/openclaw/.openclaw/state     -> stateDir         (realfs)
-  /home/openclaw/workspace           -> workspaceDir     (realfs)
+  /home/openclaw/workspace           -> zoneDataDir/current workspaceDir (realfs)
 
 tcpHosts:
   controller.vm.host:18800           -> 127.0.0.1:<controllerPort>
@@ -166,11 +166,10 @@ The `OPENCLAW_GATEWAY_TOKEN` is explicitly excluded from environment secrets
 because it is already embedded in the effective config file.
 
 Bundled OpenClaw plugin runtime dependencies are staged under
-`OPENCLAW_PLUGIN_STAGE_DIR`. The path must stay inside a VFS-mounted cache
-directory; otherwise a `rootfsMode: cow` gateway VM loses the staged plugin
-dependencies on every boot and repairs them repeatedly. Do not put this under
-`OPENCLAW_STATE_DIR`: staged plugin `node_modules` trees are rebuildable cache
-and must not be included in encrypted zone backups.
+`OPENCLAW_PLUGIN_STAGE_DIR`. Target state is image/rootfs-local staging at
+`/opt/openclaw/plugin-runtime-deps`, populated during image build. Do not put
+this under `OPENCLAW_STATE_DIR`: staged plugin `node_modules` trees are
+rebuildable and must not be included in encrypted zone backups.
 
 ### buildProcessSpec
 
@@ -210,8 +209,9 @@ environment:
   + env-injected secrets
 
 vfsMounts:
-  /state                -> stateDir      (realfs)
-  /workspace            -> workspaceDir  (realfs)
+  /state                -> task stateDir       (realfs)
+  /gitdirs              -> taskRuntimeDir      (realfs)
+  /workspace            -> VM rootfs/COW, not a RealFS mount
 
 tcpHosts:
   controller.vm.host:18800 -> 127.0.0.1:<controllerPort>

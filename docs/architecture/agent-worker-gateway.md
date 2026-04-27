@@ -44,9 +44,10 @@ There are two processes that work together: a **Controller** (on your host machi
   |   - Tear everything down      |
   +----------|--------------------+
              |
-             |  Shares two folders with the VM:
-             |    /workspace  (your cloned repo)
-             |    /state      (config + event logs)
+             |  Shares control/Git folders with the VM:
+             |    /state    (config + event logs)
+             |    /gitdirs  (Git objects/refs/index)
+             |  /workspace is VM-local rootfs/COW.
              |
   +----------v--------------------+
   |  WORKER  (inside Gondolin VM) |
@@ -74,9 +75,12 @@ The sandbox is a **Gondolin virtual machine** — a lightweight VM that boots in
   +===================================================================+
   |  HOST MACHINE                                                      |
   |                                                                    |
-  |  taskRoot/                                                         |
-  |    workspace/   <-- git clone of your repo (read/write)            |
+  |  stateDir/tasks/<taskId>/                                          |
   |    state/       <-- config file + event logs (read/write)          |
+  |    agent-vm/    <-- generated runtime docs/resources               |
+  |                                                                    |
+  |  taskRuntimeDir/worker-tasks/<zone>/<taskId>/                      |
+  |    gitdirs/     <-- Git objects/refs/index, not normal backup      |
   |                                                                    |
   |  These two folders are the ONLY connection between host and VM.    |
   |  Everything else in the VM is ephemeral.                           |
@@ -84,12 +88,13 @@ The sandbox is a **Gondolin virtual machine** — a lightweight VM that boots in
   |  +--------------------------------------------------------------+  |
   |  |  GONDOLIN VM                                                 |  |
   |  |                                                              |  |
-  |  |  Memory-backed filesystem (RAM only, no disk)                |  |
-  |  |  Erased completely when VM shuts down.                       |  |
+  |  |  rootfs/COW worktree storage                                 |  |
+  |  |  Erased when VM shuts down unless explicitly checkpointed.    |  |
   |  |                                                              |  |
-  |  |  /workspace  --> mounted from host (your repo files)         |  |
+  |  |  /workspace  --> rootfs/COW repo worktrees                   |  |
+  |  |  /gitdirs    --> mounted from task runtime RealFS gitdirs    |  |
   |  |  /state      --> mounted from host (config + logs)           |  |
-  |  |  /everything-else  --> ephemeral, lives only in RAM          |  |
+  |  |  /work/tmp   --> rootfs/COW large temp target                |  |
   |  |                                                              |  |
   |  |  The LLM agent can:                                          |  |
   |  |    - Read and write files in /workspace                      |  |
@@ -97,9 +102,10 @@ The sandbox is a **Gondolin virtual machine** — a lightweight VM that boots in
   |  |    - Install packages                                        |  |
   |  |                                                              |  |
   |  |  The LLM agent CANNOT:                                       |  |
-  |  |    - Access files outside /workspace and /state              |  |
+  |  |    - Access host files outside explicit VFS mounts           |  |
   |  |    - Affect the host filesystem                              |  |
-  |  |    - Persist anything after the VM shuts down                |  |
+  |  |    - Persist work after VM shutdown except committed Git     |  |
+  |  |      state in /gitdirs or explicit recovery artifacts        |  |
   |  |    - Interfere with other tasks (each gets its own VM)       |  |
   |  +--------------------------------------------------------------+  |
   +====================================================================+
@@ -130,18 +136,19 @@ When someone submits a task, the controller runs through 5 stages:
   |  STAGE 1: PREPARE  (on host filesystem)  |
   |                                          |
   |  Create fresh directories:               |
-  |    taskRoot/workspace/                   |
-  |    taskRoot/state/                       |
+  |    stateDir/tasks/<taskId>/state/        |
+  |    stateDir/tasks/<taskId>/agent-vm/     |
+  |    taskRuntimeDir/.../gitdirs/           |
   |                                          |
-  |  Clone your repo:                        |
+  |  Prepare Git metadata:                   |
   |    git clone --branch main <url>         |
-  |      -> taskRoot/workspace/              |
+  |      --separate-git-dir <gitdir>         |
   |                                          |
   |  Build configuration:                    |
   |    Read .agent-vm/config.json from repo  |
   |    Merge: repo config > zone > defaults  |
   |    Write effective-worker.json           |
-  |      -> taskRoot/state/                  |
+  |      -> stateDir/tasks/<taskId>/state/   |
   |                                          |
   |  Resolve repo resources:                 |
   |    load .agent-vm/repo-resources.ts |
@@ -157,9 +164,10 @@ When someone submits a task, the controller runs through 5 stages:
   |                                          |
   |  Build Gondolin VM image (cached)        |
   |  Allocate a TCP port slot                |
-  |  Create VM with two folder mounts:       |
-  |    host:taskRoot/workspace -> /workspace  |
-  |    host:taskRoot/state     -> /state      |
+  |  Create VM with targeted mounts:         |
+  |    /workspace stays rootfs/COW           |
+  |    host:task state        -> /state      |
+  |    host:task gitdirs      -> /gitdirs    |
   |  Apply resource TCP/env/VFS overlays     |
   |  Boot, run startup commands              |
   |  Worker process starts on :18789         |
@@ -666,15 +674,17 @@ Here's a concrete trace of a successful task from start to finish:
   CONTROLLER                                    WORKER (inside VM)
   ----------                                    ------------------
 
-  git clone repo -> taskRoot/workspace/
-  Write config   -> taskRoot/state/
-  Boot Gondolin VM (mount workspace + state)
+  create gitdir -> taskRuntimeDir/.../gitdirs/repo.git
+  Write config  -> stateDir/tasks/<taskId>/state/
+  Boot Gondolin VM (rootfs workspace + /gitdirs + /state)
   POST /tasks { "Add pagination" }
                                                 Emit: task-accepted
                                                 Status: pending
 
                                                 --- PLAN ---
                                                 Status: planning
+                                                Bootstrap /workspace worktree
+                                                from /gitdirs/repo.git
                                                 Scan /workspace (file tree, CLAUDE.md)
                                                 Ask LLM: "Create a plan for pagination"
                                                 LLM returns plan text
@@ -731,7 +741,8 @@ Here's a concrete trace of a successful task from start to finish:
 
   GET /tasks/t-001 -> completed
   vm.close() (VM wiped)
-  stop repo resource providers; remove taskRoot/workspace and taskRoot/state/resources
+  stop repo resource providers; push/export/discard before gitdir cleanup
+  remove task runtime files after cleanup decision
   Return PR URL to caller
 ```
 

@@ -19,10 +19,11 @@ Gondolin VM. Docker services run alongside when repo resources require them.
 The inner VM is the sandbox boundary. In Agent Worker Gateway we usually call it the
 Worker VM or Agent VM because it runs `agent-vm-worker`.
 
-Workspace git repositories live on the controller side first. The controller
-clones them, then mounts the checkout into the VM at `/workspace` with
-Gondolin realfs. The agent edits that mounted checkout. It requests host-side
-push/PR work through the controller instead of pushing directly.
+Target worker storage model: Git metadata lives in a controller-visible RealFS
+gitdir, while the worker edits a VM-local rootfs/COW worktree at `/workspace`.
+The worker requests host-side push/PR work through the controller instead of
+pushing directly. OpenClaw's long-lived files are zone data, not worker
+workspaces; the current VM path is still `/home/openclaw/workspace`.
 
 ```
   Caller (CLI / CI / API)
@@ -47,8 +48,9 @@ push/PR work through the controller instead of pushing directly.
   |  |  | Agent (worker :18789 or openclaw)  |  |       |
   |  |  +------------------------------------+  |       |
   |  |                                          |       |
-  |  |  /workspace (VFS mount from host)        |       |
-  |  |  /state (VFS mount from host)            |       |
+  |  |  /workspace (worker rootfs/COW work)     |       |
+  |  |  /gitdirs   (worker RealFS git metadata) |       |
+  |  |  /state     (RealFS state)               |       |
   |  +------------------------------------------+       |
   +----------------------------------------------------+
 ```
@@ -463,9 +465,9 @@ The full per-task lifecycle is managed by `worker-task-runner.ts`:
        v
   1. PRE-START (preStartGateway)
      |-- Generate task ID (UUID)
-     |-- Create taskRoot/{workspace, state} directories
+     |-- Create task state and non-backup task runtime directories
      |-- Copy local worker tarball if AGENT_VM_WORKER_TARBALL_PATH set
-     |-- Clone repos into taskRoot/workspace/
+     |-- Create RealFS gitdirs under the task runtime root
      |-- Read .agent-vm/config.json from primary repo
      |-- Deep-merge: zone gateway config + project config -> effective config
      |-- Validate against workerConfigSchema
@@ -475,8 +477,9 @@ The full per-task lifecycle is managed by `worker-task-runner.ts`:
      |
   2. BOOT VM (startGatewayZone with zoneOverride)
      |-- Use worker lifecycle (buildVmSpec, buildProcessSpec)
-     |-- Mount taskRoot/workspace -> /workspace
-     |-- Mount taskRoot/state -> /state
+     |-- Keep /workspace as VM-local rootfs/COW
+     |-- Mount task state -> /state
+     |-- Mount task gitdirs -> /gitdirs
      |-- Apply resource TCP, env, and read-only VFS overlays
      |-- Bootstrap: install agent-vm-worker from tarball
      |-- Start: agent-vm-worker serve --port 18789
@@ -495,7 +498,8 @@ The full per-task lifecycle is managed by `worker-task-runner.ts`:
   5. TEARDOWN (always runs, even on failure)
      |-- vm.close() -- RAM filesystem wiped
      |-- Stop selected repo resource Compose providers
-     |-- rm taskRoot/workspace/
+     |-- Check worker gitdirs for unpushed/dirty work before cleanup
+     |-- Clean task runtime gitdirs after push/export/discard decision
      |-- Deregister task from active task registry
 ```
 
@@ -619,9 +623,11 @@ when any secret uses the `1password` source.
 For the field-by-field reference, see
 [configuration/README.md](../reference/configuration/README.md).
 
-For state/cache/workspace/backup boundaries, see
-[storage-model.md](storage-model.md). Do not move rebuildable dependency trees
-into `stateDir` just to make them survive VM reboot; mount a cache path instead.
+For state/cache/workspace/gitdir/backup boundaries, see
+[storage-model.md](storage-model.md) and [storage-matrix.md](storage-matrix.md).
+Do not move rebuildable dependency trees, worker repos, or worker gitdirs into
+`stateDir` just to make them survive VM reboot; use image/rootfs, cache, or
+explicit task recovery paths instead.
 
 For upstream Gondolin image-build capabilities and sandbox features, see
 [Feature Highlights](https://github.com/earendil-works/gondolin/blob/main/README.md#feature-highlights).
