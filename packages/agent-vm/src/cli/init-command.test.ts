@@ -894,7 +894,9 @@ describe('scaffoldAgentVmProject', () => {
 			await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
 		) as {
 			readonly imageProfiles: {
-				readonly toolVms: { readonly default: { readonly buildConfig: string } };
+				readonly toolVms: {
+					readonly default: { readonly buildConfig: string; readonly dockerfile: string };
+				};
 			};
 			readonly toolProfiles: {
 				readonly standard: { readonly imageProfile: string; readonly workspaceRoot: string };
@@ -907,12 +909,15 @@ describe('scaffoldAgentVmProject', () => {
 		expect(config.imageProfiles.toolVms.default.buildConfig).toBe(
 			'../vm-images/tool-vms/default/build-config.json',
 		);
+		expect(config.imageProfiles.toolVms.default.dockerfile).toBe(
+			'../vm-images/tool-vms/default/Dockerfile',
+		);
 		await expect(
 			fs.access(path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'build-config.json')),
 		).resolves.toBeUndefined();
 		await expect(
 			fs.access(path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'Dockerfile')),
-		).rejects.toMatchObject({ code: 'ENOENT' });
+		).resolves.toBeUndefined();
 	});
 
 	it('scaffolds worker-specific env references for worker type', async () => {

@@ -33,6 +33,32 @@ interface RunControllerOperationCommandOptions {
 	readonly systemConfig: LoadedSystemConfig;
 }
 
+interface ImageProfileDoctorTarget {
+	readonly buildConfig: string;
+	readonly checkName: string;
+	readonly dockerfile?: string;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function createImageProfileDoctorTarget(
+	checkName: string,
+	buildConfig: string,
+	dockerfile: string | undefined,
+): ImageProfileDoctorTarget {
+	const target: {
+		buildConfig: string;
+		checkName: string;
+		dockerfile?: string;
+	} = { buildConfig, checkName };
+	if (dockerfile !== undefined) {
+		target.dockerfile = dockerfile;
+	}
+	return target;
+}
+
 async function collectAvailableBinaryNames(
 	requiredBinaries: readonly string[],
 ): Promise<ReadonlySet<string>> {
@@ -76,6 +102,55 @@ async function collectDockerDaemonReady(availableBinaries: ReadonlySet<string>):
 	} catch {
 		return false;
 	}
+}
+
+async function collectImageProfileDockerfileChecks(
+	systemConfig: LoadedSystemConfig,
+): Promise<readonly DoctorCheck[]> {
+	const imageProfileTargets: readonly ImageProfileDoctorTarget[] = [
+		...Object.entries(systemConfig.imageProfiles.gateways).map(([profileName, profile]) =>
+			createImageProfileDoctorTarget(
+				`gateway-image-profile-${profileName}-dockerfile`,
+				profile.buildConfig,
+				profile.dockerfile,
+			),
+		),
+		...Object.entries(systemConfig.imageProfiles.toolVms).map(([profileName, profile]) =>
+			createImageProfileDoctorTarget(
+				`tool-vm-image-profile-${profileName}-dockerfile`,
+				profile.buildConfig,
+				profile.dockerfile,
+			),
+		),
+	];
+	const checks: DoctorCheck[] = [];
+
+	for (const imageProfileTarget of imageProfileTargets) {
+		let buildConfig: unknown;
+		try {
+			// oxlint-disable-next-line no-await-in-loop -- stable doctor output order follows system.json order
+			buildConfig = JSON.parse(await fs.readFile(imageProfileTarget.buildConfig, 'utf8'));
+		} catch {
+			// validate already reports missing or malformed build-config.json files.
+			continue;
+		}
+
+		const ociConfig = isObjectRecord(buildConfig) ? buildConfig.oci : undefined;
+		if (!isObjectRecord(ociConfig) || ociConfig.pullPolicy !== 'never') {
+			continue;
+		}
+
+		const imageName = typeof ociConfig.image === 'string' ? ociConfig.image : 'configured image';
+		checks.push({
+			name: imageProfileTarget.checkName,
+			ok: imageProfileTarget.dockerfile !== undefined,
+			hint:
+				imageProfileTarget.dockerfile ??
+				`pullPolicy=never requires a dockerfile producer for ${imageName}`,
+		});
+	}
+
+	return checks;
 }
 
 async function collectWorkerGatewayConfigChecks(
@@ -167,6 +242,9 @@ export async function runControllerOperationCommand(
 			const workerGatewayConfigChecks = await collectWorkerGatewayConfigChecks(
 				options.systemConfig,
 			);
+			const imageProfileDockerfileChecks = await collectImageProfileDockerfileChecks(
+				options.systemConfig,
+			);
 			const systemCacheIdentifierCheck = await collectSystemCacheIdentifierCheck(
 				options.systemConfig,
 			);
@@ -174,6 +252,7 @@ export async function runControllerOperationCommand(
 			const dynamicChecks = [
 				systemCacheIdentifierCheck,
 				...(vmHostSystemCheck ? [vmHostSystemCheck] : []),
+				...imageProfileDockerfileChecks,
 				...workerGatewayConfigChecks,
 			] as const satisfies readonly DoctorCheck[];
 			writeJson(options.io, {

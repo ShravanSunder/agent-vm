@@ -96,6 +96,7 @@ interface ScaffoldPathProfile {
 	readonly gatewayBuildConfig: (gatewayType: GatewayType) => string;
 	readonly gatewayDockerfile: (gatewayType: GatewayType) => string;
 	readonly toolVmBuildConfig: string;
+	readonly toolVmDockerfile: string;
 	readonly toolWorkspaceRoot: string;
 }
 
@@ -183,6 +184,7 @@ const localPathProfile: ScaffoldPathProfile = {
 	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.json`,
 	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
 	toolVmBuildConfig: '../vm-images/tool-vms/default/build-config.json',
+	toolVmDockerfile: '../vm-images/tool-vms/default/Dockerfile',
 	toolWorkspaceRoot: '../workspaces/tools',
 };
 
@@ -198,6 +200,7 @@ const podPathProfile: ScaffoldPathProfile = {
 		`/etc/agent-vm/vm-images/gateways/${gatewayType}/build-config.json`,
 	gatewayDockerfile: (gatewayType) => `/etc/agent-vm/vm-images/gateways/${gatewayType}/Dockerfile`,
 	toolVmBuildConfig: '/etc/agent-vm/vm-images/tool-vms/default/build-config.json',
+	toolVmDockerfile: '/etc/agent-vm/vm-images/tool-vms/default/Dockerfile',
 	toolWorkspaceRoot: '/var/agent-vm/workspace/tools',
 };
 
@@ -218,6 +221,7 @@ const userDirPathProfile: ScaffoldPathProfile = {
 	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.json`,
 	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
 	toolVmBuildConfig: '../vm-images/tool-vms/default/build-config.json',
+	toolVmDockerfile: '../vm-images/tool-vms/default/Dockerfile',
 	toolWorkspaceRoot: '~/.agent-vm/workspaces/tools',
 };
 
@@ -260,6 +264,11 @@ function resolveConfigWritablePathProfile(
 			resolveHomeRelativeScaffoldPath(pathProfile.gatewayWorkspaceDir(zoneId), configDir, homeDir),
 		gatewayBackupDir: (zoneId) =>
 			resolveHomeRelativeScaffoldPath(pathProfile.gatewayBackupDir(zoneId), configDir, homeDir),
+		toolVmDockerfile: resolveHomeRelativeScaffoldPath(
+			pathProfile.toolVmDockerfile,
+			configDir,
+			homeDir,
+		),
 		toolWorkspaceRoot: resolveHomeRelativeScaffoldPath(
 			pathProfile.toolWorkspaceRoot,
 			configDir,
@@ -271,7 +280,10 @@ function resolveConfigWritablePathProfile(
 function defaultToolVmImageProfiles(
 	gatewayType: GatewayType,
 	pathProfile: ScaffoldPathProfile,
-): Record<string, { readonly type: 'toolVm'; readonly buildConfig: string }> {
+): Record<
+	string,
+	{ readonly type: 'toolVm'; readonly buildConfig: string; readonly dockerfile: string }
+> {
 	if (gatewayType !== 'openclaw') {
 		return {};
 	}
@@ -279,6 +291,7 @@ function defaultToolVmImageProfiles(
 		default: {
 			type: 'toolVm',
 			buildConfig: pathProfile.toolVmBuildConfig,
+			dockerfile: pathProfile.toolVmDockerfile,
 		},
 	};
 }
@@ -678,7 +691,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \\
       -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \\
     chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \\
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \\
-      > /etc/apt/sources.list.d/github-cli.list && \\
+    > /etc/apt/sources.list.d/github-cli.list && \\
     apt-get update && \\
     apt-get install -y --no-install-recommends gh && \\
     rm -rf /var/lib/apt/lists/*
@@ -690,6 +703,24 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \\
 COPY agent-vm-worker/ /opt/agent-vm-worker/
 RUN chmod +x /opt/agent-vm-worker/dist/main.js && \\
     ln -s /opt/agent-vm-worker/dist/main.js /usr/local/bin/agent-vm-worker
+`;
+
+const defaultToolVmDockerfile = `FROM node:24-slim
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      openssh-server \\
+      ca-certificates \\
+      git \\
+      curl \\
+      jq \\
+      python3 && \\
+    rm -rf /var/lib/apt/lists/* && \\
+    update-ca-certificates && \\
+    corepack enable && \\
+    mkdir -p /workspace /run/sshd
+
+WORKDIR /workspace
 `;
 
 function defaultWorkerGatewayDockerfile(paths: ScaffoldPathMode | undefined): string {
@@ -1100,6 +1131,21 @@ async function scaffoldAgentVmProjectInternal(
 		);
 		(toolBuildConfigStatus === 'created' ? created : skipped).push(
 			'vm-images/tool-vms/default/build-config.json',
+		);
+		const toolDockerfilePath = path.join(
+			options.targetDir,
+			'vm-images',
+			'tool-vms',
+			'default',
+			'Dockerfile',
+		);
+		const toolDockerfileStatus = await writeFileIfMissing(
+			toolDockerfilePath,
+			defaultToolVmDockerfile,
+			overwrite,
+		);
+		(toolDockerfileStatus === 'created' ? created : skipped).push(
+			'vm-images/tool-vms/default/Dockerfile',
 		);
 	}
 
