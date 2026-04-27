@@ -626,6 +626,94 @@ describe('scaffoldAgentVmProject', () => {
 		expect(openClawConfig.plugins.load.paths).toEqual(['/home/openclaw/.openclaw/extensions']);
 	});
 
+	it('scaffolds control-ui allowed origins from an existing zone ingress port', async () => {
+		const targetDir = await createTestDirectory();
+		await scaffoldAgentVmProject(
+			{
+				targetDir,
+				zoneId: 'shravan',
+				gatewayType: 'openclaw',
+				architecture: 'aarch64',
+				secretsProvider: '1password',
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+		const systemConfigPath = path.join(targetDir, 'config', 'system.json');
+		const systemConfig = JSON.parse(await fs.readFile(systemConfigPath, 'utf8'));
+		const parsedSystemConfig = z
+			.object({
+				zones: z.tuple([
+					z.object({
+						id: z.literal('shravan'),
+						gateway: z.object({
+							port: z.number().int().positive(),
+						}),
+					}),
+					z
+						.object({
+							id: z.literal('alevtina'),
+							gateway: z.object({
+								port: z.number().int().positive(),
+							}),
+						})
+						.optional(),
+				]),
+			})
+			.parse({
+				...systemConfig,
+				zones: [
+					systemConfig.zones[0],
+					{
+						...systemConfig.zones[0],
+						id: 'alevtina',
+						gateway: {
+							...systemConfig.zones[0].gateway,
+							config: './gateways/alevtina/openclaw.json',
+							port: 18792,
+						},
+					},
+				],
+			});
+		await fs.writeFile(
+			systemConfigPath,
+			`${JSON.stringify({ ...systemConfig, zones: parsedSystemConfig.zones }, null, '\t')}\n`,
+			'utf8',
+		);
+
+		await scaffoldAgentVmProject(
+			{
+				targetDir,
+				zoneId: 'alevtina',
+				gatewayType: 'openclaw',
+				architecture: 'aarch64',
+				secretsProvider: '1password',
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		const openClawConfig = z
+			.object({
+				gateway: z.object({
+					controlUi: z.object({
+						allowedOrigins: z.array(z.string()),
+					}),
+				}),
+			})
+			.parse(
+				JSON.parse(
+					await fs.readFile(
+						path.join(targetDir, 'config', 'gateways', 'alevtina', 'openclaw.json'),
+						'utf8',
+					),
+				),
+			);
+
+		expect(openClawConfig.gateway.controlUi.allowedOrigins).toEqual([
+			'http://127.0.0.1:18792',
+			'http://localhost:18792',
+		]);
+	});
+
 	it('does not overwrite an existing system.json', async () => {
 		const targetDir = await createTestDirectory();
 		await fs.mkdir(path.join(targetDir, 'config'), { recursive: true });

@@ -155,6 +155,19 @@ interface RuntimeAuthHint {
 
 const defaultGatewayIngressPort = 18791;
 const defaultOpenClawExtensionsPath = '/home/openclaw/.openclaw/extensions';
+const scaffoldedGatewayPortSystemConfigSchema = z
+	.object({
+		zones: z.array(
+			z.object({
+				id: z.string().min(1),
+				gateway: z.object({
+					port: z.number().int().positive(),
+				}),
+			}),
+		),
+	})
+	.passthrough();
+
 function resolveGatewayConfigFileName(gatewayType: GatewayType): 'worker.json' | 'openclaw.json' {
 	return gatewayType === 'worker' ? 'worker.json' : 'openclaw.json';
 }
@@ -761,6 +774,29 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 	channels: {},
 });
 
+async function resolveOpenClawControlUiIngressPort(
+	systemConfigPath: string,
+	zoneId: string,
+): Promise<number> {
+	try {
+		const rawSystemConfig = await fs.readFile(systemConfigPath, 'utf8');
+		const parsedSystemConfig: unknown = JSON.parse(rawSystemConfig);
+		const parseResult = scaffoldedGatewayPortSystemConfigSchema.safeParse(parsedSystemConfig);
+		if (!parseResult.success) {
+			return defaultGatewayIngressPort;
+		}
+		return (
+			parseResult.data.zones.find((zone) => zone.id === zoneId)?.gateway.port ??
+			defaultGatewayIngressPort
+		);
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+			return defaultGatewayIngressPort;
+		}
+		throw error;
+	}
+}
+
 const defaultWorkerPromptFiles = [
 	{ fileName: 'common-agent-instructions.md', content: DEFAULT_COMMON_AGENT_INSTRUCTIONS },
 	{ fileName: 'plan-agent.md', content: DEFAULT_PLAN_AGENT_INSTRUCTIONS },
@@ -958,7 +994,10 @@ async function scaffoldAgentVmProjectInternal(
 		configPath,
 		`${JSON.stringify(
 			gatewayType === 'openclaw'
-				? defaultOpenClawConfig(options.zoneId, defaultGatewayIngressPort)
+				? defaultOpenClawConfig(
+						options.zoneId,
+						await resolveOpenClawControlUiIngressPort(systemConfigPath, options.zoneId),
+					)
 				: defaultWorkerGatewayConfig(),
 			null,
 			'\t',

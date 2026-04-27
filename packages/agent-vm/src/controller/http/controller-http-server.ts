@@ -9,6 +9,7 @@ export async function startControllerHttpServer(options: {
 }> {
 	const server = serve({
 		fetch: options.app.fetch,
+		hostname: '127.0.0.1',
 		port: options.port,
 	});
 
