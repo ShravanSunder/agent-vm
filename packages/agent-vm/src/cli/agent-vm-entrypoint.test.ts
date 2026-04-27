@@ -668,7 +668,7 @@ describe('runAgentVmCli', () => {
 		);
 	});
 
-	it('uses plain progress for build even in a TTY', async () => {
+	it('passes a progress task runner to build', async () => {
 		const originalStdoutIsTty = process.stdout.isTTY;
 		Object.defineProperty(process.stdout, 'isTTY', {
 			configurable: true,
@@ -704,8 +704,16 @@ describe('runAgentVmCli', () => {
 			});
 		}
 
-		expect(stderrChunks.join('')).toContain('Gondolin: gateway/openclaw...');
-		expect(stderrChunks.join('')).toContain('Gondolin: gateway/openclaw done');
+		expect(runBuildCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				systemConfig: expect.objectContaining({
+					systemConfigPath: './config/system.json',
+				}),
+			}),
+			{
+				runTask: expect.any(Function),
+			},
+		);
 	});
 
 	it('passes build --force through to the build command handler', async () => {
