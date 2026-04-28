@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 export interface ActiveWorkerTaskRepo {
 	readonly repoUrl: string;
 	readonly baseBranch: string;
-	readonly hostWorkspacePath: string;
+	readonly hostGitDir: string;
 	readonly vmWorkspacePath: string;
 }
 

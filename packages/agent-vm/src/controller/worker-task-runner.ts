@@ -588,7 +588,7 @@ export async function prepareWorkerTask(
 			repos: preStartResult.repos.map((repo) => ({
 				repoUrl: repo.repoUrl,
 				baseBranch: repo.baseBranch,
-				hostWorkspacePath: repo.hostWorkspacePath,
+				hostGitDir: path.join(repo.hostWorkspacePath, '.git'),
 				vmWorkspacePath: repo.workspacePath,
 			})),
 			workerIngress: null,

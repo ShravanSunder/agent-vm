@@ -57,14 +57,17 @@ function buildPushUrl(repoUrl: string, githubToken: string): string {
 
 async function git(options: {
 	readonly args: readonly string[];
-	readonly cwd: string;
+	readonly gitDir: string;
 	readonly reject?: boolean;
 }): Promise<{ readonly stdout: string; readonly stderr: string; readonly exitCode: number }> {
-	const result = await execa('git', [...options.args], {
-		cwd: options.cwd,
-		reject: false,
-		timeout: GIT_OPERATION_TIMEOUT_MS,
-	});
+	const result = await execa(
+		'git',
+		['-c', 'core.hooksPath=/dev/null', `--git-dir=${options.gitDir}`, ...options.args],
+		{
+			reject: false,
+			timeout: GIT_OPERATION_TIMEOUT_MS,
+		},
+	);
 	const normalized = {
 		stdout: result.stdout,
 		stderr: result.stderr,
@@ -78,8 +81,8 @@ async function git(options: {
 	return normalized;
 }
 
-async function gitStdout(cwd: string, args: readonly string[]): Promise<string> {
-	return (await git({ cwd, args, reject: true })).stdout.trim();
+async function gitStdout(gitDir: string, args: readonly string[]): Promise<string> {
+	return (await git({ gitDir, args, reject: true })).stdout.trim();
 }
 
 function parseCommitSummaries(output: string): readonly PullDefaultCommitSummary[] {
@@ -104,11 +107,11 @@ function parseCommitSummaries(output: string): readonly PullDefaultCommitSummary
 }
 
 async function commitSummaries(
-	cwd: string,
+	gitDir: string,
 	range: string,
 ): Promise<readonly PullDefaultCommitSummary[]> {
 	const result = await git({
-		cwd,
+		gitDir,
 		args: ['log', range, '--format=%H%x09%s%x09%an%x09%aI'],
 		reject: false,
 	});
@@ -116,21 +119,21 @@ async function commitSummaries(
 	return parseCommitSummaries(result.stdout);
 }
 
-async function refExists(cwd: string, ref: string): Promise<boolean> {
+async function refExists(gitDir: string, ref: string): Promise<boolean> {
 	return (
-		(await git({ cwd, args: ['rev-parse', '--verify', '--quiet', ref], reject: false }))
+		(await git({ gitDir, args: ['rev-parse', '--verify', '--quiet', ref], reject: false }))
 			.exitCode === 0
 	);
 }
 
-async function countRange(cwd: string, range: string): Promise<number> {
-	const result = await git({ cwd, args: ['rev-list', '--count', range], reject: false });
+async function countRange(gitDir: string, range: string): Promise<number> {
+	const result = await git({ gitDir, args: ['rev-list', '--count', range], reject: false });
 	if (result.exitCode !== 0) return 0;
 	return Number.parseInt(result.stdout.trim(), 10) || 0;
 }
 
-async function currentBranch(cwd: string): Promise<string | null> {
-	const result = await git({ cwd, args: ['branch', '--show-current'], reject: false });
+async function currentBranch(gitDir: string): Promise<string | null> {
+	const result = await git({ gitDir, args: ['branch', '--show-current'], reject: false });
 	if (result.exitCode !== 0) return null;
 	const branch = result.stdout.trim();
 	return branch.length > 0 ? branch : null;
@@ -152,11 +155,11 @@ export async function pullDefaultForTask(options: {
 		const defaultBranch = repo.baseBranch;
 		const defaultRef = `refs/heads/${defaultBranch}`;
 		const remoteDefaultRef = `refs/remotes/origin/${defaultBranch}`;
-		const previousRemoteDefaultHead = (await refExists(repo.hostWorkspacePath, remoteDefaultRef))
-			? await gitStdout(repo.hostWorkspacePath, ['rev-parse', remoteDefaultRef])
+		const previousRemoteDefaultHead = (await refExists(repo.hostGitDir, remoteDefaultRef))
+			? await gitStdout(repo.hostGitDir, ['rev-parse', remoteDefaultRef])
 			: null;
 		const fetchResult = await git({
-			cwd: repo.hostWorkspacePath,
+			gitDir: repo.hostGitDir,
 			args: [
 				'fetch',
 				'--prune',
@@ -173,20 +176,14 @@ export async function pullDefaultForTask(options: {
 			};
 		}
 
-		const remoteDefaultHead = await gitStdout(repo.hostWorkspacePath, [
-			'rev-parse',
-			remoteDefaultRef,
-		]);
+		const remoteDefaultHead = await gitStdout(repo.hostGitDir, ['rev-parse', remoteDefaultRef]);
 		const fetchedCommits = previousRemoteDefaultHead
-			? await commitSummaries(
-					repo.hostWorkspacePath,
-					`${previousRemoteDefaultHead}..${remoteDefaultRef}`,
-				)
+			? await commitSummaries(repo.hostGitDir, `${previousRemoteDefaultHead}..${remoteDefaultRef}`)
 			: [];
 
-		if (await refExists(repo.hostWorkspacePath, defaultRef)) {
+		if (await refExists(repo.hostGitDir, defaultRef)) {
 			const fastForwardCheck = await git({
-				cwd: repo.hostWorkspacePath,
+				gitDir: repo.hostGitDir,
 				args: ['merge-base', '--is-ancestor', defaultRef, remoteDefaultRef],
 				reject: false,
 			});
@@ -202,19 +199,15 @@ export async function pullDefaultForTask(options: {
 		}
 
 		await git({
-			cwd: repo.hostWorkspacePath,
+			gitDir: repo.hostGitDir,
 			args: ['update-ref', defaultRef, remoteDefaultRef],
 			reject: true,
 		});
-		const localDefaultHead = await gitStdout(repo.hostWorkspacePath, ['rev-parse', defaultRef]);
-		const branch = await currentBranch(repo.hostWorkspacePath);
-		const forkPoint = await gitStdout(repo.hostWorkspacePath, [
-			'merge-base',
-			'HEAD',
-			remoteDefaultRef,
-		]);
+		const localDefaultHead = await gitStdout(repo.hostGitDir, ['rev-parse', defaultRef]);
+		const branch = await currentBranch(repo.hostGitDir);
+		const forkPoint = await gitStdout(repo.hostGitDir, ['merge-base', 'HEAD', remoteDefaultRef]);
 		const commitsSinceForkPoint = await commitSummaries(
-			repo.hostWorkspacePath,
+			repo.hostGitDir,
 			`${forkPoint}..${remoteDefaultRef}`,
 		);
 
@@ -228,8 +221,8 @@ export async function pullDefaultForTask(options: {
 			fetchedCommits,
 			commitsSinceForkPoint,
 			divergence: {
-				aheadOfDefault: await countRange(repo.hostWorkspacePath, `${remoteDefaultRef}..HEAD`),
-				behindDefault: await countRange(repo.hostWorkspacePath, `HEAD..${remoteDefaultRef}`),
+				aheadOfDefault: await countRange(repo.hostGitDir, `${remoteDefaultRef}..HEAD`),
+				behindDefault: await countRange(repo.hostGitDir, `HEAD..${remoteDefaultRef}`),
 				forkPoint,
 			},
 		};

@@ -70,14 +70,17 @@ function sanitizeBranchName(name: string): string {
 
 async function git(options: {
 	readonly args: readonly string[];
-	readonly cwd: string;
+	readonly gitDir: string;
 	readonly reject?: boolean;
 }): Promise<{ readonly stdout: string; readonly stderr: string; readonly exitCode: number }> {
-	const result = await execa('git', [...options.args], {
-		cwd: options.cwd,
-		reject: false,
-		timeout: GIT_OPERATION_TIMEOUT_MS,
-	});
+	const result = await execa(
+		'git',
+		['-c', 'core.hooksPath=/dev/null', `--git-dir=${options.gitDir}`, ...options.args],
+		{
+			reject: false,
+			timeout: GIT_OPERATION_TIMEOUT_MS,
+		},
+	);
 	const normalized = {
 		stdout: result.stdout,
 		stderr: result.stderr,
@@ -91,8 +94,8 @@ async function git(options: {
 	return normalized;
 }
 
-async function gitStdout(cwd: string, args: readonly string[]): Promise<string> {
-	return (await git({ args, cwd, reject: true })).stdout.trim();
+async function gitStdout(gitDir: string, args: readonly string[]): Promise<string> {
+	return (await git({ args, gitDir, reject: true })).stdout.trim();
 }
 
 function parseCommitSummaries(output: string): readonly PushCommitSummary[] {
@@ -117,38 +120,38 @@ function parseCommitSummaries(output: string): readonly PushCommitSummary[] {
 }
 
 async function commitSummaries(
-	cwd: string,
+	gitDir: string,
 	range: string,
 	options?: { readonly includeAuthorDate?: boolean },
 ): Promise<readonly PushCommitSummary[]> {
 	const format = options?.includeAuthorDate === true ? '%H%x09%s%x09%an%x09%aI' : '%H%x09%s';
-	const result = await git({ cwd, args: ['log', range, `--format=${format}`], reject: false });
+	const result = await git({ gitDir, args: ['log', range, `--format=${format}`], reject: false });
 	if (result.exitCode !== 0) return [];
 	return parseCommitSummaries(result.stdout);
 }
 
-async function refExists(cwd: string, ref: string): Promise<boolean> {
+async function refExists(gitDir: string, ref: string): Promise<boolean> {
 	return (
-		(await git({ cwd, args: ['rev-parse', '--verify', '--quiet', ref], reject: false }))
+		(await git({ gitDir, args: ['rev-parse', '--verify', '--quiet', ref], reject: false }))
 			.exitCode === 0
 	);
 }
 
-async function countRange(cwd: string, range: string): Promise<number> {
-	const result = await git({ cwd, args: ['rev-list', '--count', range], reject: false });
+async function countRange(gitDir: string, range: string): Promise<number> {
+	const result = await git({ gitDir, args: ['rev-list', '--count', range], reject: false });
 	if (result.exitCode !== 0) return 0;
 	return Number.parseInt(result.stdout.trim(), 10) || 0;
 }
 
 async function fetchRemoteRefs(options: {
-	readonly cwd: string;
+	readonly gitDir: string;
 	readonly defaultBranch: string;
 	readonly repoUrl: string;
 	readonly githubToken: string;
 }): Promise<void> {
 	const pushUrl = buildPushUrl(options.repoUrl, options.githubToken);
 	const result = await git({
-		cwd: options.cwd,
+		gitDir: options.gitDir,
 		args: [
 			'fetch',
 			'--prune',
@@ -163,19 +166,19 @@ async function fetchRemoteRefs(options: {
 	}
 }
 
-async function remoteBranchHead(cwd: string, branchName: string): Promise<string | null> {
-	if (!(await refExists(cwd, `refs/remotes/origin/${branchName}`))) return null;
-	return await gitStdout(cwd, ['rev-parse', `refs/remotes/origin/${branchName}`]);
+async function remoteBranchHead(gitDir: string, branchName: string): Promise<string | null> {
+	if (!(await refExists(gitDir, `refs/remotes/origin/${branchName}`))) return null;
+	return await gitStdout(gitDir, ['rev-parse', `refs/remotes/origin/${branchName}`]);
 }
 
 async function pushBranch(options: {
 	readonly repoUrl: string;
 	readonly branchName: string;
-	readonly cwd: string;
+	readonly gitDir: string;
 	readonly githubToken: string;
 }): Promise<void> {
 	const result = await git({
-		cwd: options.cwd,
+		gitDir: options.gitDir,
 		args: [
 			'push',
 			buildPushUrl(options.repoUrl, options.githubToken),
@@ -194,29 +197,29 @@ async function pushBranch(options: {
 }
 
 async function buildBranchState(options: {
-	readonly cwd: string;
+	readonly gitDir: string;
 	readonly branchName: string;
 	readonly defaultBranch: string;
 	readonly previousRemoteBranchHead: string | null;
 }): Promise<Omit<PushBranchResult, 'repoUrl' | 'branch' | 'success'>> {
-	const localHead = await gitStdout(options.cwd, ['rev-parse', 'HEAD']);
-	const pushedRemoteBranchHead = await remoteBranchHead(options.cwd, options.branchName);
+	const localHead = await gitStdout(options.gitDir, ['rev-parse', 'HEAD']);
+	const pushedRemoteBranchHead = await remoteBranchHead(options.gitDir, options.branchName);
 	const remoteDefaultRef = `refs/remotes/origin/${options.defaultBranch}`;
-	const remoteDefaultHead = (await refExists(options.cwd, remoteDefaultRef))
-		? await gitStdout(options.cwd, ['rev-parse', remoteDefaultRef])
+	const remoteDefaultHead = (await refExists(options.gitDir, remoteDefaultRef))
+		? await gitStdout(options.gitDir, ['rev-parse', remoteDefaultRef])
 		: '';
 	const defaultRange = remoteDefaultHead ? `${remoteDefaultRef}..HEAD` : '';
 	const commitsOnBranch = defaultRange
-		? await commitSummaries(options.cwd, defaultRange, { includeAuthorDate: true })
+		? await commitSummaries(options.gitDir, defaultRange, { includeAuthorDate: true })
 		: [];
 	const pushedRange = options.previousRemoteBranchHead
 		? `${options.previousRemoteBranchHead}..HEAD`
 		: defaultRange;
-	const pushedInThisCall = pushedRange ? await commitSummaries(options.cwd, pushedRange) : [];
+	const pushedInThisCall = pushedRange ? await commitSummaries(options.gitDir, pushedRange) : [];
 	const divergence = remoteDefaultHead
 		? {
-				aheadOfDefault: await countRange(options.cwd, `${remoteDefaultRef}..HEAD`),
-				behindDefault: await countRange(options.cwd, `HEAD..${remoteDefaultRef}`),
+				aheadOfDefault: await countRange(options.gitDir, `${remoteDefaultRef}..HEAD`),
+				behindDefault: await countRange(options.gitDir, `HEAD..${remoteDefaultRef}`),
 			}
 		: { aheadOfDefault: 0, behindDefault: 0 };
 
@@ -298,16 +301,13 @@ async function pushOneBranchForTask(options: {
 		}
 
 		await fetchRemoteRefs({
-			cwd: options.repo.hostWorkspacePath,
+			gitDir: options.repo.hostGitDir,
 			defaultBranch: options.repo.baseBranch,
 			repoUrl: options.branch.repoUrl,
 			githubToken: options.githubToken,
 		});
-		const previousRemoteBranchHead = await remoteBranchHead(
-			options.repo.hostWorkspacePath,
-			branchName,
-		);
-		const localHead = await gitStdout(options.repo.hostWorkspacePath, ['rev-parse', 'HEAD']);
+		const previousRemoteBranchHead = await remoteBranchHead(options.repo.hostGitDir, branchName);
+		const localHead = await gitStdout(options.repo.hostGitDir, ['rev-parse', 'HEAD']);
 		if (previousRemoteBranchHead === localHead) {
 			return {
 				repoUrl: options.branch.repoUrl,
@@ -320,11 +320,11 @@ async function pushOneBranchForTask(options: {
 		await pushBranch({
 			repoUrl: options.branch.repoUrl,
 			branchName,
-			cwd: options.repo.hostWorkspacePath,
+			gitDir: options.repo.hostGitDir,
 			githubToken: options.githubToken,
 		});
 		await git({
-			cwd: options.repo.hostWorkspacePath,
+			gitDir: options.repo.hostGitDir,
 			args: [
 				'fetch',
 				'--prune',
@@ -334,7 +334,7 @@ async function pushOneBranchForTask(options: {
 			reject: false,
 		});
 		const state = await buildBranchState({
-			cwd: options.repo.hostWorkspacePath,
+			gitDir: options.repo.hostGitDir,
 			branchName,
 			defaultBranch: options.repo.baseBranch,
 			previousRemoteBranchHead,
