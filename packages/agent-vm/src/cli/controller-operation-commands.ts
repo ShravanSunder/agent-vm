@@ -43,6 +43,7 @@ interface ImageProfileDoctorTarget {
 	readonly buildConfig: string;
 	readonly checkName: string;
 	readonly dockerfile?: string;
+	readonly type: 'openclaw' | 'toolVm' | 'worker';
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -51,6 +52,7 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 
 function createImageProfileDoctorTarget(
 	checkName: string,
+	type: ImageProfileDoctorTarget['type'],
 	buildConfig: string,
 	dockerfile: string | undefined,
 ): ImageProfileDoctorTarget {
@@ -58,7 +60,8 @@ function createImageProfileDoctorTarget(
 		buildConfig: string;
 		checkName: string;
 		dockerfile?: string;
-	} = { buildConfig, checkName };
+		type: ImageProfileDoctorTarget['type'];
+	} = { buildConfig, checkName, type };
 	if (dockerfile !== undefined) {
 		target.dockerfile = dockerfile;
 	}
@@ -124,6 +127,7 @@ async function collectImageProfileDockerfileChecks(
 		...Object.entries(systemConfig.imageProfiles.gateways).map(([profileName, profile]) =>
 			createImageProfileDoctorTarget(
 				`gateway-image-profile-${profileName}-dockerfile`,
+				profile.type,
 				profile.buildConfig,
 				profile.dockerfile,
 			),
@@ -131,6 +135,7 @@ async function collectImageProfileDockerfileChecks(
 		...Object.entries(systemConfig.imageProfiles.toolVms).map(([profileName, profile]) =>
 			createImageProfileDoctorTarget(
 				`tool-vm-image-profile-${profileName}-dockerfile`,
+				profile.type,
 				profile.buildConfig,
 				profile.dockerfile,
 			),
@@ -150,10 +155,39 @@ async function collectImageProfileDockerfileChecks(
 
 		const ociConfig = isObjectRecord(buildConfig) ? buildConfig.oci : undefined;
 		if (!isObjectRecord(ociConfig) || ociConfig.pullPolicy !== 'never') {
-			continue;
+			if (imageProfileTarget.type !== 'openclaw' || imageProfileTarget.dockerfile === undefined) {
+				continue;
+			}
 		}
 
-		const imageName = typeof ociConfig.image === 'string' ? ociConfig.image : 'configured image';
+		if (imageProfileTarget.type === 'openclaw' && imageProfileTarget.dockerfile !== undefined) {
+			let dockerfileContent: string;
+			try {
+				// oxlint-disable-next-line no-await-in-loop -- stable doctor output order follows system.json order
+				dockerfileContent = await fs.readFile(imageProfileTarget.dockerfile, 'utf8');
+			} catch {
+				dockerfileContent = '';
+			}
+			const stagesPluginRuntimeDeps = dockerfileContent.includes(
+				'OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive',
+			);
+			const verifiesPluginRuntimeDepsMarker = dockerfileContent.includes(
+				'/opt/openclaw/plugin-runtime-deps/.openclaw-runtime-deps.json',
+			);
+			checks.push({
+				name: imageProfileTarget.checkName.replace(/-dockerfile$/u, '-plugin-runtime-deps'),
+				ok: stagesPluginRuntimeDeps && verifiesPluginRuntimeDepsMarker,
+				hint:
+					stagesPluginRuntimeDeps && verifiesPluginRuntimeDepsMarker
+						? imageProfileTarget.dockerfile
+						: 'Bake OpenClaw plugin runtime deps with OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive and verify /opt/openclaw/plugin-runtime-deps/.openclaw-runtime-deps.json.',
+			});
+		}
+
+		const imageName =
+			isObjectRecord(ociConfig) && typeof ociConfig.image === 'string'
+				? ociConfig.image
+				: 'configured image';
 		checks.push({
 			name: imageProfileTarget.checkName,
 			ok: imageProfileTarget.dockerfile !== undefined,

@@ -465,6 +465,143 @@ printf '{"ok":true}\\n'
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
+	it('flags OpenClaw gateway Dockerfiles that do not bake plugin runtime deps', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
+		const configDirectoryPath = path.join(temporaryDirectoryPath, 'config');
+		const systemConfigPath = path.join(configDirectoryPath, 'system.json');
+		const systemCacheIdentifierPath = path.join(configDirectoryPath, 'systemCacheIdentifier.json');
+		const openClawGatewayImageDirectoryPath = path.join(
+			temporaryDirectoryPath,
+			'vm-images',
+			'gateways',
+			'openclaw',
+		);
+		const openClawBuildConfigPath = path.join(
+			openClawGatewayImageDirectoryPath,
+			'build-config.json',
+		);
+		const openClawDockerfilePath = path.join(openClawGatewayImageDirectoryPath, 'Dockerfile');
+		await fs.mkdir(configDirectoryPath, { recursive: true });
+		await fs.mkdir(openClawGatewayImageDirectoryPath, { recursive: true });
+		await fs.writeFile(systemCacheIdentifierPath, '{"schemaVersion":1}\n', 'utf8');
+		await fs.writeFile(
+			openClawBuildConfigPath,
+			JSON.stringify({ oci: { image: 'agent-vm-openclaw:latest', pullPolicy: 'never' } }),
+			'utf8',
+		);
+		await fs.writeFile(openClawDockerfilePath, 'FROM node:24-slim\nRUN pnpm add -g openclaw\n');
+		const outputs: string[] = [];
+
+		await runControllerOperationCommand({
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: () => ({
+					destroyZone: async () => ({}),
+					enableZoneSsh: async () => ({}),
+					getControllerStatus: async () => ({}),
+					getZoneLogs: async () => ({}),
+					listLeases: async () => [],
+					refreshZoneCredentials: async () => ({}),
+					releaseLease: async () => {},
+					stopController: async () => ({}),
+					upgradeZone: async () => ({}),
+				}),
+				runControllerDoctor: () => ({ ok: true, checks: [] }),
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			restArguments: [],
+			subcommand: 'doctor',
+			systemConfig: createLoadedSystemConfig(
+				{
+					cacheDir: './cache',
+					runtimeDir: './runtime',
+					host: {
+						controllerPort: 18800,
+						projectNamespace: 'agent-vm-test',
+					},
+					imageProfiles: {
+						gateways: {
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: openClawBuildConfigPath,
+								dockerfile: openClawDockerfilePath,
+							},
+						},
+						toolVms: {
+							default: {
+								type: 'toolVm',
+								buildConfig: './vm-images/tool-vms/default/build-config.json',
+							},
+						},
+					},
+					tcpPool: {
+						basePort: 19000,
+						size: 5,
+					},
+					toolProfiles: {
+						standard: {
+							cpus: 1,
+							memory: '1G',
+							workspaceRoot: './workspaces/tools',
+							imageProfile: 'default',
+						},
+					},
+					zones: [
+						{
+							allowedHosts: ['api.openai.com'],
+							gateway: {
+								type: 'openclaw',
+								imageProfile: 'openclaw',
+								cpus: 2,
+								memory: '2G',
+								config: './gateways/shravan/openclaw.json',
+								port: 18791,
+								stateDir: './state/shravan',
+								zoneFilesDir: './zone-files/shravan',
+							},
+							id: 'shravan',
+							secrets: {},
+							toolProfile: 'standard',
+							websocketBypass: [],
+						},
+					],
+				},
+				{ systemConfigPath },
+			),
+		});
+
+		const result = JSON.parse(outputs.join('')) as {
+			readonly ok: boolean;
+			readonly checks: readonly {
+				readonly hint?: string;
+				readonly name: string;
+				readonly ok: boolean;
+			}[];
+		};
+
+		expect(result.ok).toBe(false);
+		expect(
+			result.checks.find(
+				(check) => check.name === 'gateway-image-profile-openclaw-plugin-runtime-deps',
+			),
+		).toMatchObject({
+			ok: false,
+			hint: expect.stringContaining(
+				'OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive',
+			),
+		});
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
 	it('reports missing system cache identifier failures in doctor output', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
