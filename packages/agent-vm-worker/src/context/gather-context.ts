@@ -49,10 +49,10 @@ export async function readOptionalFile(filePath: string): Promise<string | null>
 	}
 }
 
-export async function gatherContext(workspaceDir: string): Promise<RepoContext> {
-	const files = await collectFiles(workspaceDir, workspaceDir, 0, 3);
-	const claudeMd = await readOptionalFile(join(workspaceDir, 'CLAUDE.md'));
-	const packageJson = await readOptionalFile(join(workspaceDir, 'package.json'));
+export async function gatherContext(workDir: string): Promise<RepoContext> {
+	const files = await collectFiles(workDir, workDir, 0, 3);
+	const claudeMd = await readOptionalFile(join(workDir, 'CLAUDE.md'));
+	const packageJson = await readOptionalFile(join(workDir, 'package.json'));
 	const repoMetadataLines = files
 		.filter((filePath) => filePath.endsWith('CLAUDE.md') || filePath.endsWith('package.json'))
 		.slice(0, 20);
@@ -70,7 +70,7 @@ export async function gatherContext(workspaceDir: string): Promise<RepoContext> 
 		repoMetadataLines
 			.filter((filePath) => filePath !== 'CLAUDE.md' && filePath !== 'package.json')
 			.map(async (filePath): Promise<string | null> => {
-				const content = await readOptionalFile(join(workspaceDir, filePath));
+				const content = await readOptionalFile(join(workDir, filePath));
 				if (!content) {
 					return null;
 				}

@@ -30,11 +30,11 @@ class TaskClosedError extends Error {
 	}
 }
 
-function getPrimaryRepoWorkspace(
-	config: { readonly repos: readonly { readonly workspacePath: string }[] },
-	workspaceRoot: string,
+function getPrimaryRepoWork(
+	config: { readonly repos: readonly { readonly workPath: string }[] },
+	workRoot: string,
 ): string {
-	return config.repos[0]?.workspacePath ?? workspaceRoot;
+	return config.repos[0]?.workPath ?? workRoot;
 }
 
 function throwIfClosed(taskId: string, eventRecorder: TaskEventRecorder): void {
@@ -109,7 +109,7 @@ function createThreadForPhase(props: {
 export async function runTask(
 	taskId: string,
 	deps: CoordinatorDeps,
-	workspaceDir: string,
+	workDir: string,
 	tasks: Map<string, TaskState>,
 	eventRecorder: TaskEventRecorder,
 	onTaskFinished: () => void,
@@ -124,12 +124,12 @@ export async function runTask(
 		const taskConfig = initialState.config;
 		const controllerBaseUrl = process.env.CONTROLLER_BASE_URL ?? 'http://controller.vm.host:18800';
 		const zoneId = process.env.AGENT_VM_ZONE_ID ?? 'unknown-zone';
-		const primaryWorkspaceDir = getPrimaryRepoWorkspace(taskConfig, workspaceDir);
+		const primaryWorkDir = getPrimaryRepoWork(taskConfig, workDir);
 		const taskLogsDir = join(config.stateDir, 'tasks', taskId, 'logs');
 
 		let repoSummary: string | null = null;
 		try {
-			const repoContext = await gatherContext(workspaceDir);
+			const repoContext = await gatherContext(primaryWorkDir);
 			repoSummary = repoContext.summary;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -158,14 +158,14 @@ export async function runTask(
 			config,
 			phase: config.phases.plan,
 			tools: [],
-			cwd: primaryWorkspaceDir,
+			cwd: primaryWorkDir,
 			turnTimeoutMs: config.phases.plan.agentTurnTimeoutMs,
 		});
 		const planReviewThread = createThreadForPhase({
 			config,
 			phase: config.phases.plan,
 			tools: [],
-			cwd: primaryWorkspaceDir,
+			cwd: primaryWorkDir,
 			turnTimeoutMs: config.phases.plan.reviewerTurnTimeoutMs,
 		});
 		const planResult = await runPlanCycle({
@@ -208,7 +208,7 @@ export async function runTask(
 		await eventRecorder.emit(taskId, { event: 'phase-started', phase: 'work' });
 		const validationTool = buildValidationTool({
 			commands: config.verification,
-			cwd: primaryWorkspaceDir,
+			cwd: primaryWorkDir,
 			timeoutMs: config.verificationTimeoutMs,
 			rawLogDir: taskLogsDir,
 			attemptLabelPrefix: 'verify',
@@ -247,14 +247,14 @@ export async function runTask(
 			config,
 			phase: config.phases.work,
 			tools: [validationTool, ...controllerTools],
-			cwd: primaryWorkspaceDir,
+			cwd: primaryWorkDir,
 			turnTimeoutMs: config.phases.work.agentTurnTimeoutMs,
 		});
 		const workReviewThread = createThreadForPhase({
 			config,
 			phase: config.phases.work,
 			tools: [validationTool],
-			cwd: primaryWorkspaceDir,
+			cwd: primaryWorkDir,
 			turnTimeoutMs: config.phases.work.reviewerTurnTimeoutMs,
 		});
 		const workResult = await runWorkCycle({
@@ -267,7 +267,7 @@ export async function runTask(
 			reviewThread: workReviewThread,
 			systemPromptWorkAgent: workAgentSystem,
 			systemPromptWorkReviewer: workReviewerSystem,
-			getDiff: async () => await getDiff(primaryWorkspaceDir),
+			getDiff: async () => await getDiff(primaryWorkDir),
 			isClosed: () => eventRecorder.isClosed(taskId),
 			onWorkAgentTurn: async (cycle, result) => {
 				await eventRecorder.emit(taskId, {
@@ -322,7 +322,7 @@ export async function runTask(
 			config,
 			phase: config.phases.wrapup,
 			tools: controllerTools,
-			cwd: primaryWorkspaceDir,
+			cwd: primaryWorkDir,
 			turnTimeoutMs: config.phases.wrapup.turnTimeoutMs,
 		});
 		const wrapupResult = await runWrapup({
@@ -332,7 +332,7 @@ export async function runTask(
 			plan: planResult.plan,
 			workSummary: workSummaryResult.response,
 			gitContext: await buildWrapupGitContext(
-				primaryWorkspaceDir,
+				primaryWorkDir,
 				taskConfig.repos[0]?.baseBranch ?? 'main',
 			),
 			validationResults: workResult.validationResults,

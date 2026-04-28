@@ -108,12 +108,12 @@ describe('server', () => {
 					{
 						repoUrl: 'https://github.com/org/frontend.git',
 						baseBranch: 'main',
-						workspacePath: '/workspace/frontend',
+						workPath: '/work/repos/frontend',
 					},
 					{
 						repoUrl: 'https://github.com/org/backend.git',
 						baseBranch: 'main',
-						workspacePath: '/workspace/backend',
+						workPath: '/work/repos/backend',
 					},
 				],
 			}),

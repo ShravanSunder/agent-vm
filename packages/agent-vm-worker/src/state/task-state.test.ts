@@ -153,10 +153,10 @@ describe('task-state reducer', () => {
 		const state = createInitialState('task-1', TEST_CONFIG);
 		const next = applyEvent(state, {
 			event: 'context-gather-failed',
-			reason: 'workspace not readable',
+			reason: 'work dir not readable',
 		});
 
-		expect(next.lastContextError).toBe('workspace not readable');
+		expect(next.lastContextError).toBe('work dir not readable');
 		expect(next.status).toBe('pending');
 	});
 

@@ -395,18 +395,16 @@ describe('worker-task-runner', () => {
 		expect(writtenConfig.runtimeInstructions).toContain('Runtime instructions');
 		expect(writtenConfig.runtimeInstructions).toContain('/work/repos');
 		expect(writtenConfig.runtimeInstructions).toContain('/agent-vm/agents.md');
-		await expect(
-			fs.readFile(path.join(result.workspaceDir, 'AGENTS.md'), 'utf8'),
-		).resolves.toContain('/agent-vm/agents.md');
+		await expect(fs.readFile(path.join(result.workDir, 'AGENTS.md'), 'utf8')).resolves.toContain(
+			'/agent-vm/agents.md',
+		);
 		await expect(
 			fs.readFile(path.join(result.taskRoot, 'agent-vm', 'runtime-instructions.md'), 'utf8'),
 		).resolves.toBe(writtenConfig.runtimeInstructions);
 		await expect(
 			fs.readFile(path.join(result.taskRoot, 'agent-vm', 'agents.md'), 'utf8'),
 		).resolves.toContain('/agent-vm/runtime-instructions.md');
-		await expect(fs.readlink(path.join(result.workspaceDir, 'CLAUDE.md'))).resolves.toBe(
-			'AGENTS.md',
-		);
+		await expect(fs.readlink(path.join(result.workDir, 'CLAUDE.md'))).resolves.toBe('AGENTS.md');
 		await expect(fs.readlink(path.join(result.taskRoot, 'agent-vm', 'CLAUDE.md'))).resolves.toBe(
 			'agents.md',
 		);
@@ -414,11 +412,11 @@ describe('worker-task-runner', () => {
 			expect.objectContaining({ kind: 'realfs-readonly' }),
 		);
 		expect(result.vfsMounts['/work/repos']).toEqual(
-			expect.objectContaining({ hostPath: result.workspaceDir, kind: 'realfs' }),
+			expect.objectContaining({ hostPath: result.workDir, kind: 'realfs' }),
 		);
 	});
 
-	it('clones repos into named workspace directories and merges primary repo config', async () => {
+	it('clones repos into named work directories and merges primary repo config', async () => {
 		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
 		const zone = systemConfig.zones[0];
 		if (!zone) {
@@ -457,7 +455,7 @@ describe('worker-task-runner', () => {
 				'--branch',
 				'main',
 				'https://github.com/org/frontend.git',
-				path.join(result.workspaceDir, 'frontend'),
+				path.join(result.workDir, 'frontend'),
 			],
 			expect.objectContaining({ timeout: 120_000 }),
 		);
@@ -468,7 +466,7 @@ describe('worker-task-runner', () => {
 				'--branch',
 				'develop',
 				'https://github.com/org/backend.git',
-				path.join(result.workspaceDir, 'backend'),
+				path.join(result.workDir, 'backend'),
 			],
 			expect.objectContaining({ timeout: 120_000 }),
 		);
@@ -477,15 +475,15 @@ describe('worker-task-runner', () => {
 				repoId: 'frontend',
 				repoUrl: 'https://github.com/org/frontend.git',
 				baseBranch: 'main',
-				hostWorkspacePath: path.join(result.workspaceDir, 'frontend'),
-				workspacePath: '/work/repos/frontend',
+				hostWorkPath: path.join(result.workDir, 'frontend'),
+				workPath: '/work/repos/frontend',
 			},
 			{
 				repoId: 'backend',
 				repoUrl: 'https://github.com/org/backend.git',
 				baseBranch: 'develop',
-				hostWorkspacePath: path.join(result.workspaceDir, 'backend'),
-				workspacePath: '/work/repos/backend',
+				hostWorkPath: path.join(result.workDir, 'backend'),
+				workPath: '/work/repos/backend',
 			},
 		]);
 		const writtenConfig = effectiveWorkerConfigSchema.parse(
@@ -517,7 +515,7 @@ describe('worker-task-runner', () => {
 		);
 
 		expect(result.repos.map((repo) => repo.repoId)).toEqual(['repo-dir', 'repo-dir-2']);
-		expect(result.repos.map((repo) => repo.workspacePath)).toEqual([
+		expect(result.repos.map((repo) => repo.workPath)).toEqual([
 			'/work/repos/repo-dir',
 			'/work/repos/repo-dir-2',
 		]);
@@ -1015,11 +1013,11 @@ describe('worker-task-runner', () => {
 				{
 					repoUrl: 'https://github.com/org/repo.git',
 					baseBranch: 'main',
-					workspacePath: '/work/repos/repo',
+					workPath: '/work/repos/repo',
 				},
 			],
 		});
-		expect(JSON.stringify(submittedBody)).not.toContain('hostWorkspacePath');
+		expect(JSON.stringify(submittedBody)).not.toContain('hostWorkPath');
 	});
 
 	it('fails immediately when the worker returns an invalid task status payload', async () => {

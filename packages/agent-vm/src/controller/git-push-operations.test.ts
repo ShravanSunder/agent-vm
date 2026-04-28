@@ -20,7 +20,7 @@ function buildActiveTask(): {
 		readonly repoUrl: string;
 		readonly baseBranch: string;
 		readonly hostGitDir: string;
-		readonly vmWorkspacePath: string;
+		readonly vmWorkPath: string;
 	}[];
 } {
 	return {
@@ -34,7 +34,7 @@ function buildActiveTask(): {
 				repoUrl: 'https://github.com/acme/widgets.git',
 				baseBranch: 'main',
 				hostGitDir: '/tmp/task-1/gitdirs/widgets.git',
-				vmWorkspacePath: '/work/repos/widgets',
+				vmWorkPath: '/work/repos/widgets',
 			},
 		],
 	};
@@ -48,13 +48,13 @@ function buildMultiRepoActiveTask(): ReturnType<typeof buildActiveTask> {
 				repoUrl: 'https://github.com/acme/widgets.git',
 				baseBranch: 'main',
 				hostGitDir: '/tmp/task-1/gitdirs/widgets.git',
-				vmWorkspacePath: '/work/repos/widgets',
+				vmWorkPath: '/work/repos/widgets',
 			},
 			{
 				repoUrl: 'https://github.com/acme/api.git',
 				baseBranch: 'main',
 				hostGitDir: '/tmp/task-1/gitdirs/api.git',
-				vmWorkspacePath: '/work/repos/api',
+				vmWorkPath: '/work/repos/api',
 			},
 		],
 	};

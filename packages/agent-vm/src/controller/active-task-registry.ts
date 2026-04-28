@@ -4,7 +4,7 @@ export interface ActiveWorkerTaskRepo {
 	readonly repoUrl: string;
 	readonly baseBranch: string;
 	readonly hostGitDir: string;
-	readonly vmWorkspacePath: string;
+	readonly vmWorkPath: string;
 }
 
 export interface ActiveWorkerTaskIngress {

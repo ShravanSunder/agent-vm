@@ -29,23 +29,23 @@ export interface BuildRuntimeInstructionsOptions {
 	readonly resolvedResources: readonly ResolvedRuntimeResource[];
 	readonly runtimeAuthHints: readonly RuntimeAuthHint[];
 	readonly taskId: string;
-	readonly workspaceDir: string;
+	readonly workDir: string;
 }
 
 export interface BuiltRuntimeInstructions {
 	readonly runtimeInstructions: string;
-	readonly workspaceAgentsMd: string;
+	readonly workAgentsMd: string;
 	readonly agentRuntimeFiles: Readonly<Record<string, string>>;
 }
 
-function buildWorkspaceSection(options: BuildRuntimeInstructionsOptions): string {
+function buildWorkSection(options: BuildRuntimeInstructionsOptions): string {
 	return [
-		'## Workspace',
+		'## Work',
 		`- Task id: ${options.taskId}`,
-		`- Workspace root: ${options.workspaceDir}`,
-		'- Workspace agent index: /workspace/AGENTS.md',
+		`- Work root: ${options.workDir}`,
+		'- Work agent index: /work/repos/AGENTS.md',
 		'- Runtime agent index: /agent-vm/agents.md',
-		'- Requested repositories are cloned under the workspace root. Use the task prompt and workspace contents for repo-specific work.',
+		'- Requested repositories are cloned under the work root. Use the task prompt and work contents for repo-specific work.',
 	].join('\n');
 }
 
@@ -177,8 +177,8 @@ function buildAuthSection(options: BuildRuntimeInstructionsOptions): string {
 function buildRuntimeSurfaceSection(): string {
 	return [
 		'## Runtime files',
-		'- /workspace/AGENTS.md points to /agent-vm/agents.md.',
-		'- /workspace/CLAUDE.md is a symlink to /workspace/AGENTS.md.',
+		'- /work/repos/AGENTS.md points to /agent-vm/agents.md.',
+		'- /work/repos/CLAUDE.md is a symlink to /work/repos/AGENTS.md.',
 		'- /agent-vm/agents.md is the agent-facing index for generated runtime facts.',
 		'- /agent-vm/CLAUDE.md is a symlink to /agent-vm/agents.md.',
 		'- /agent-vm/runtime-instructions.md contains this same generated runtime instruction content.',
@@ -230,7 +230,7 @@ export function buildRuntimeInstructions(
 ): BuiltRuntimeInstructions {
 	const runtimeInstructions = [
 		'# Runtime instructions',
-		buildWorkspaceSection(options),
+		buildWorkSection(options),
 		buildRuntimeSurfaceSection(),
 		buildResourcesSection(options),
 		buildControllerToolsSection(),
@@ -238,8 +238,8 @@ export function buildRuntimeInstructions(
 	].join('\n\n');
 	return {
 		runtimeInstructions,
-		workspaceAgentsMd:
-			'# Workspace agent index\n\nStart with /agent-vm/agents.md for generated runtime facts.\n',
+		workAgentsMd:
+			'# Work agent index\n\nStart with /agent-vm/agents.md for generated runtime facts.\n',
 		agentRuntimeFiles: buildAgentRuntimeFiles(options, runtimeInstructions),
 	};
 }

@@ -138,7 +138,7 @@ export interface PreStartResult {
 	readonly input: WorkerTaskControllerRequest;
 	readonly taskRoot: string;
 	readonly taskRuntimeRoot: string;
-	readonly workspaceDir: string;
+	readonly workDir: string;
 	readonly stateDir: string;
 	readonly startedResourceProviders: readonly StartedRepoResourceProvider[];
 	readonly environment: Record<string, string>;
@@ -148,8 +148,8 @@ export interface PreStartResult {
 		readonly repoId: string;
 		readonly repoUrl: string;
 		readonly baseBranch: string;
-		readonly hostWorkspacePath: string;
-		readonly workspacePath: string;
+		readonly hostWorkPath: string;
+		readonly workPath: string;
 	}[];
 	readonly effectiveConfig: WorkerConfig;
 }
@@ -189,13 +189,13 @@ export async function preStartGateway(
 	const runtimeDir =
 		options.runtimeDir ?? path.join(path.dirname(zoneConfig.gateway.stateDir), 'runtime');
 	const taskRuntimeRoot = path.join(runtimeDir, 'worker-tasks', zoneConfig.id, taskId);
-	const workspaceDir = path.join(taskRuntimeRoot, 'work');
+	const workDir = path.join(taskRuntimeRoot, 'work');
 	const stateDir = path.join(taskRoot, 'state');
 	const agentVmDir = path.join(taskRoot, 'agent-vm');
 
 	let startedResourceProviders: readonly StartedRepoResourceProvider[] = [];
 	try {
-		await fs.mkdir(workspaceDir, { recursive: true });
+		await fs.mkdir(workDir, { recursive: true });
 		await fs.mkdir(stateDir, { recursive: true });
 		await fs.mkdir(agentVmDir, { recursive: true });
 		await copyLocalWorkerTarballIfConfigured(stateDir);
@@ -203,12 +203,12 @@ export async function preStartGateway(
 		const usedRepoNames = new Set<string>();
 		const preparedRepoTargets = parsedTaskInput.repos.map((repo) => {
 			const repoId = deriveRepoDirectoryName(repo.repoUrl, usedRepoNames);
-			const repoWorkspaceDir = path.join(workspaceDir, repoId);
+			const repoWorkDir = path.join(workDir, repoId);
 			return {
 				...repo,
 				repoId,
-				hostWorkspacePath: repoWorkspaceDir,
-				workspacePath: `/work/repos/${repoId}`,
+				hostWorkPath: repoWorkDir,
+				workPath: `/work/repos/${repoId}`,
 			};
 		});
 		const cloneResults = await Promise.allSettled(
@@ -220,7 +220,7 @@ export async function preStartGateway(
 					'--branch',
 					repo.baseBranch,
 					repo.repoUrl,
-					repo.hostWorkspacePath,
+					repo.hostWorkPath,
 				];
 				let cloneResult: {
 					readonly exitCode?: number;
@@ -253,7 +253,7 @@ export async function preStartGateway(
 				] as const) {
 					// Git serializes config writes through .git/config.lock; keep these ordered.
 					// oxlint-disable-next-line eslint/no-await-in-loop
-					await execa('git', ['-C', repo.hostWorkspacePath, 'config', key, value], {
+					await execa('git', ['-C', repo.hostWorkPath, 'config', key, value], {
 						reject: true,
 						timeout: 10_000,
 					});
@@ -262,8 +262,8 @@ export async function preStartGateway(
 					repoId: repo.repoId,
 					repoUrl: repo.repoUrl,
 					baseBranch: repo.baseBranch,
-					hostWorkspacePath: repo.hostWorkspacePath,
-					workspacePath: repo.workspacePath,
+					hostWorkPath: repo.hostWorkPath,
+					workPath: repo.workPath,
 				};
 			}),
 		);
@@ -275,8 +275,8 @@ export async function preStartGateway(
 			readonly repoId: string;
 			readonly repoUrl: string;
 			readonly baseBranch: string;
-			readonly hostWorkspacePath: string;
-			readonly workspacePath: string;
+			readonly hostWorkPath: string;
+			readonly workPath: string;
 		}[] = cloneResults.map((result) => {
 			if (result.status === 'rejected') {
 				throw result.reason;
@@ -284,8 +284,8 @@ export async function preStartGateway(
 			return result.value;
 		});
 
-		const primaryRepoWorkspaceDir = clonedRepos[0]?.hostWorkspacePath ?? workspaceDir;
-		const projectConfigPath = path.join(primaryRepoWorkspaceDir, '.agent-vm', 'config.json');
+		const primaryRepoWorkDir = clonedRepos[0]?.hostWorkPath ?? workDir;
+		const projectConfigPath = path.join(primaryRepoWorkDir, '.agent-vm', 'config.json');
 		const projectConfig = await readJsonObjectFile(projectConfigPath, {
 			label: 'project config',
 			missingValue: {},
@@ -305,9 +305,9 @@ export async function preStartGateway(
 			clonedRepos.map(async (repo) => ({
 				repoId: repo.repoId,
 				repoUrl: repo.repoUrl,
-				hasContract: await hasRepoResourceDescriptionContract(repo.hostWorkspacePath),
+				hasContract: await hasRepoResourceDescriptionContract(repo.hostWorkPath),
 				description: await loadRepoResourceDescriptionContract({
-					repoDir: repo.hostWorkspacePath,
+					repoDir: repo.hostWorkPath,
 					repoId: repo.repoId,
 					repoUrl: repo.repoUrl,
 				}),
@@ -334,7 +334,7 @@ export async function preStartGateway(
 					return {
 						repoId: repoDescription.repoId,
 						repoUrl: repoDescription.repoUrl,
-						repoDir: repo.hostWorkspacePath,
+						repoDir: repo.hostWorkPath,
 						outputDir: path.join(agentVmDir, 'resources', repoDescription.repoId),
 						setupCommand: repoDescription.description.setupCommand,
 					};
@@ -359,7 +359,7 @@ export async function preStartGateway(
 				}
 				return {
 					...provider,
-					repoDir: repo.hostWorkspacePath,
+					repoDir: repo.hostWorkPath,
 					outputDir: path.join(agentVmDir, 'resources', provider.repoId),
 				};
 			}),
@@ -376,7 +376,7 @@ export async function preStartGateway(
 			}),
 			runtimeAuthHints: zoneConfig.runtimeAuthHints ?? [],
 			taskId,
-			workspaceDir: '/work/repos',
+			workDir: '/work/repos',
 		});
 		const effectiveConfig = workerConfigSchema.parse({
 			...effectiveConfigDraft,
@@ -384,11 +384,11 @@ export async function preStartGateway(
 		}) satisfies WorkerConfig;
 		await writeAgentRuntimeFiles(agentVmDir, runtime.agentRuntimeFiles);
 		await replaceRelativeSymlink(path.join(agentVmDir, 'CLAUDE.md'), 'agents.md');
-		await fs.writeFile(path.join(workspaceDir, 'AGENTS.md'), runtime.workspaceAgentsMd, {
+		await fs.writeFile(path.join(workDir, 'AGENTS.md'), runtime.workAgentsMd, {
 			encoding: 'utf8',
 			mode: 0o644,
 		});
-		await replaceRelativeSymlink(path.join(workspaceDir, 'CLAUDE.md'), 'AGENTS.md');
+		await replaceRelativeSymlink(path.join(workDir, 'CLAUDE.md'), 'AGENTS.md');
 		await fs.writeFile(
 			path.join(stateDir, 'effective-worker.json'),
 			JSON.stringify(effectiveConfig, null, 2),
@@ -400,14 +400,14 @@ export async function preStartGateway(
 			input: parsedTaskInput,
 			taskRoot,
 			taskRuntimeRoot,
-			workspaceDir,
+			workDir,
 			stateDir,
 			startedResourceProviders: providerRun.startedProviders,
 			environment: overlay.environment,
 			tcpHosts: overlay.tcpHosts,
 			vfsMounts: {
 				'/work/repos': {
-					hostPath: workspaceDir,
+					hostPath: workDir,
 					kind: 'realfs',
 				},
 				'/agent-vm': {
@@ -439,10 +439,10 @@ export async function postStopGateway(
 	const runtimeDir =
 		options.runtimeDir ?? path.join(path.dirname(zoneConfig.gateway.stateDir), 'runtime');
 	const taskRuntimeRoot = path.join(runtimeDir, 'worker-tasks', zoneConfig.id, taskId);
-	const workspaceDir = path.join(taskRuntimeRoot, 'work');
+	const workDir = path.join(taskRuntimeRoot, 'work');
 	const resourcesDir = path.join(taskRoot, 'agent-vm', 'resources');
 	let cleanupError: Error | null = null;
-	let workspaceRemovalError: Error | null = null;
+	let workRemovalError: Error | null = null;
 	let resourcesRemovalError: Error | null = null;
 	try {
 		await stopRepoResourceProviders(startedProviders);
@@ -455,18 +455,18 @@ export async function postStopGateway(
 		resourcesRemovalError = error instanceof Error ? error : new Error(String(error));
 	}
 	try {
-		await fs.rm(workspaceDir, { recursive: true, force: true });
+		await fs.rm(workDir, { recursive: true, force: true });
 		await fs.rm(taskRuntimeRoot, { recursive: true, force: true });
 	} catch (error) {
-		workspaceRemovalError = error instanceof Error ? error : new Error(String(error));
+		workRemovalError = error instanceof Error ? error : new Error(String(error));
 	}
-	const errors = [cleanupError, resourcesRemovalError, workspaceRemovalError].filter(
+	const errors = [cleanupError, resourcesRemovalError, workRemovalError].filter(
 		(error): error is Error => error !== null,
 	);
 	if (errors.length > 1) {
 		const aggregateError = new AggregateError(
 			errors,
-			`Failed to stop Docker services and prune task resources/workspace for ${taskId}.`,
+			`Failed to stop Docker services and prune task resources/work for ${taskId}.`,
 		);
 		aggregateError.cause = errors[0];
 		throw aggregateError;
@@ -610,8 +610,8 @@ export async function prepareWorkerTask(
 			repos: preStartResult.repos.map((repo) => ({
 				repoUrl: repo.repoUrl,
 				baseBranch: repo.baseBranch,
-				hostGitDir: path.join(repo.hostWorkspacePath, '.git'),
-				vmWorkspacePath: repo.workspacePath,
+				hostGitDir: path.join(repo.hostWorkPath, '.git'),
+				vmWorkPath: repo.workPath,
 			})),
 			workerIngress: null,
 		});
@@ -668,7 +668,7 @@ export async function executeWorkerTask(
 				repos: prepared.preStartResult.repos.map((repo) => ({
 					repoUrl: repo.repoUrl,
 					baseBranch: repo.baseBranch,
-					workspacePath: repo.workspacePath,
+					workPath: repo.workPath,
 				})),
 				context: prepared.input.context,
 			}),

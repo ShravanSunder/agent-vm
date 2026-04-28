@@ -8,7 +8,7 @@ export const repoTargetSchema = z.object({
 export type RepoTarget = z.infer<typeof repoTargetSchema>;
 
 export const repoLocationSchema = repoTargetSchema.extend({
-	workspacePath: z.string().min(1),
+	workPath: z.string().min(1),
 });
 
 export type RepoLocation = z.infer<typeof repoLocationSchema>;

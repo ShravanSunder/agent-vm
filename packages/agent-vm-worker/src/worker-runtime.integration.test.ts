@@ -85,14 +85,14 @@ async function waitForTaskCompletion(
 describe('worker runtime integration', () => {
 	let tempDir: string;
 	let stateDir: string;
-	let workspaceDir: string;
+	let workDir: string;
 
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), 'worker-runtime-integration-'));
 		stateDir = join(tempDir, 'state');
-		workspaceDir = join(tempDir, 'workspace');
+		workDir = join(tempDir, 'work');
 		await mkdir(stateDir, { recursive: true });
-		await mkdir(workspaceDir, { recursive: true });
+		await mkdir(workDir, { recursive: true });
 
 		mocks.gatherContext.mockResolvedValue({
 			fileCount: 2,
@@ -161,7 +161,7 @@ describe('worker runtime integration', () => {
 				wrapup: { instructions: null, skills: [] },
 			},
 		});
-		const coordinator = await createCoordinator({ config, workspaceDir });
+		const coordinator = await createCoordinator({ config, workDir });
 		const app = createApp({
 			getActiveTaskId: () => coordinator.getActiveTaskId(),
 			getActiveTaskStatus: () => coordinator.getActiveTaskId(),

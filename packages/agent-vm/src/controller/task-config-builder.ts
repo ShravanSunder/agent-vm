@@ -8,7 +8,7 @@ export interface BuildTaskConfigFromPreparedInput {
 	readonly repos: readonly {
 		readonly baseBranch: string;
 		readonly repoUrl: string;
-		readonly workspacePath: string;
+		readonly workPath: string;
 	}[];
 	readonly taskId: string;
 }
@@ -22,7 +22,7 @@ export function buildTaskConfigFromPreparedInput(
 		repos: prepared.repos.map((repo) => ({
 			repoUrl: repo.repoUrl,
 			baseBranch: repo.baseBranch,
-			workspacePath: repo.workspacePath,
+			workPath: repo.workPath,
 		})),
 		context: prepared.input.context,
 		effectiveConfig: prepared.effectiveConfig,

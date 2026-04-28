@@ -23,7 +23,7 @@ export function createGitPullDefaultTool(props: CreateGitPullDefaultToolProps): 
 		inputSchema: {
 			type: 'object',
 			properties: {
-				repoWorkspacePath: { type: 'string' },
+				repoWorkPath: { type: 'string' },
 				repoUrl: { type: 'string' },
 			},
 			additionalProperties: false,

@@ -166,7 +166,7 @@ describe('coordinator', () => {
 		enqueueHappyPathExecutors();
 		const coordinator = await createCoordinator({
 			config: makeConfig(stateDir),
-			workspaceDir: tempDir,
+			workDir: tempDir,
 		});
 
 		const { taskId } = await coordinator.submitTask({
@@ -205,7 +205,7 @@ describe('coordinator', () => {
 		mocks.createWorkExecutor.mockReturnValue(createMockExecutor([], { neverResolve: true }));
 		const coordinator = await createCoordinator({
 			config: makeConfig(stateDir),
-			workspaceDir: tempDir,
+			workDir: tempDir,
 		});
 
 		await coordinator.submitTask({ taskId: 'first', prompt: 'one' });
@@ -222,7 +222,7 @@ describe('coordinator', () => {
 		});
 		const coordinator = await createCoordinator({
 			config: makeConfig(stateDir),
-			workspaceDir: tempDir,
+			workDir: tempDir,
 		});
 
 		const { taskId } = await coordinator.submitTask({ taskId: 'sanitize', prompt: 'fix' });
@@ -235,16 +235,16 @@ describe('coordinator', () => {
 
 	it('continues when context gathering fails', async () => {
 		enqueueHappyPathExecutors();
-		mocks.gatherContext.mockRejectedValue(new Error('workspace not readable'));
+		mocks.gatherContext.mockRejectedValue(new Error('work dir not readable'));
 		const coordinator = await createCoordinator({
 			config: makeConfig(stateDir),
-			workspaceDir: tempDir,
+			workDir: tempDir,
 		});
 
 		const { taskId } = await coordinator.submitTask({ taskId: 'context-failed', prompt: 'fix' });
 
 		await waitForStatus(coordinator, taskId, 'completed');
-		expect(coordinator.getTaskState(taskId)?.lastContextError).toBe('workspace not readable');
+		expect(coordinator.getTaskState(taskId)?.lastContextError).toBe('work dir not readable');
 	});
 
 	it('fails when diff reading fails', async () => {
@@ -252,7 +252,7 @@ describe('coordinator', () => {
 		mocks.getDiff.mockRejectedValue(new Error('git diff failed'));
 		const coordinator = await createCoordinator({
 			config: makeConfig(stateDir),
-			workspaceDir: tempDir,
+			workDir: tempDir,
 		});
 
 		const { taskId } = await coordinator.submitTask({ taskId: 'diff-failed', prompt: 'fix' });

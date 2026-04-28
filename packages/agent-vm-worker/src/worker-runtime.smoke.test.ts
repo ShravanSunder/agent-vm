@@ -142,14 +142,14 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 
 		const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-runtime-smoke-'));
 		const stateDir = path.join(tempRoot, 'state');
-		const workspaceDir = path.join(tempRoot, 'workspace');
-		const repoDir = await createSampleRepo(workspaceDir);
+		const workDir = path.join(tempRoot, 'work');
+		const repoDir = await createSampleRepo(workDir);
 		const configPath = path.join(tempRoot, 'worker-config.json');
 		const port = await findAvailablePort();
 		const workerLogPath = path.join(tempRoot, 'worker.log');
 
 		await fs.mkdir(stateDir, { recursive: true });
-		await fs.mkdir(workspaceDir, { recursive: true });
+		await fs.mkdir(workDir, { recursive: true });
 		await fs.writeFile(
 			configPath,
 			JSON.stringify({
@@ -193,7 +193,7 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 				env: {
 					...process.env,
 					OPENAI_API_KEY: process.env.OPEN_AI_TEST_KEY ?? '',
-					WORKSPACE_DIR: workspaceDir,
+					WORK_DIR: workDir,
 				},
 				stdio: ['ignore', workerLogHandle.fd, workerLogHandle.fd],
 			},
@@ -212,7 +212,7 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 						{
 							repoUrl: 'https://example.com/local-fixture.git',
 							baseBranch: 'main',
-							workspacePath: repoDir,
+							workPath: repoDir,
 						},
 					],
 					context: { source: 'worker-only-smoke' },

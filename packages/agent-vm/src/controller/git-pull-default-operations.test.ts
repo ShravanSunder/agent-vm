@@ -17,7 +17,7 @@ const activeTask = {
 			repoUrl: 'https://github.com/acme/widgets.git',
 			baseBranch: 'main',
 			hostGitDir: '/tmp/task-1/gitdirs/widgets.git',
-			vmWorkspacePath: '/work/repos/widgets',
+			vmWorkPath: '/work/repos/widgets',
 		},
 	],
 };

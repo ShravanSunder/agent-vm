@@ -24,7 +24,7 @@ export function createGitPushTool(props: CreateGitPushToolProps): ToolDefinition
 		inputSchema: {
 			type: 'object',
 			properties: {
-				repoWorkspacePath: { type: 'string' },
+				repoWorkPath: { type: 'string' },
 				repoUrl: { type: 'string' },
 			},
 			additionalProperties: false,
@@ -34,7 +34,7 @@ export function createGitPushTool(props: CreateGitPushToolProps): ToolDefinition
 			if (!selected.repo) {
 				return { type: 'push', success: false, artifact: selected.error ?? 'Repo not found.' };
 			}
-			const branchName = await currentBranch(selected.repo.workspacePath);
+			const branchName = await currentBranch(selected.repo.workPath);
 			if (!branchName) {
 				return { type: 'push', success: false, artifact: 'Refusing to push from detached HEAD.' };
 			}

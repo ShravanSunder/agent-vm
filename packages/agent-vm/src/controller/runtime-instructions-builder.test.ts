@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildRuntimeInstructions } from './runtime-instructions-builder.js';
 
 describe('buildRuntimeInstructions', () => {
-	it('describes workspace, agent-visible runtime files, controller tools, resources, and auth hints', () => {
+	it('describes work paths, agent-visible runtime files, controller tools, resources, and auth hints', () => {
 		const runtime = buildRuntimeInstructions({
 			resolvedResources: [
 				{
@@ -45,12 +45,12 @@ describe('buildRuntimeInstructions', () => {
 				},
 			],
 			taskId: 'task-123',
-			workspaceDir: '/workspace',
+			workDir: '/work/repos',
 		});
 
 		expect(runtime.runtimeInstructions).toContain('Runtime instructions');
-		expect(runtime.runtimeInstructions).toContain('/workspace/AGENTS.md');
-		expect(runtime.runtimeInstructions).toContain('/workspace/CLAUDE.md');
+		expect(runtime.runtimeInstructions).toContain('/work/repos/AGENTS.md');
+		expect(runtime.runtimeInstructions).toContain('/work/repos/CLAUDE.md');
 		expect(runtime.runtimeInstructions).toContain('/agent-vm/agents.md');
 		expect(runtime.runtimeInstructions).toContain('/agent-vm/CLAUDE.md');
 		expect(runtime.runtimeInstructions).toContain('/agent-vm/resources/portal');
@@ -82,6 +82,6 @@ describe('buildRuntimeInstructions', () => {
 		expect(runtime.agentRuntimeFiles['agents.md']).toContain('/agent-vm/runtime-instructions.md');
 		expect(runtime.agentRuntimeFiles['agents.md']).toContain('pg.local:5432');
 		expect(runtime.agentRuntimeFiles['agents.md']).not.toContain('$NPM_AUTH_TOKEN');
-		expect(runtime.workspaceAgentsMd).toContain('/agent-vm/agents.md');
+		expect(runtime.workAgentsMd).toContain('/agent-vm/agents.md');
 	});
 });

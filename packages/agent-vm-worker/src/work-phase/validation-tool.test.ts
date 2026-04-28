@@ -34,15 +34,15 @@ describe('buildValidationTool', () => {
 	});
 
 	test('execute runs commands and returns results', async () => {
-		const workspace = await mkdtemp(join(tmpdir(), 'validation-tool-workspace-'));
+		const workDir = await mkdtemp(join(tmpdir(), 'validation-tool-work-'));
 		const logs = await mkdtemp(join(tmpdir(), 'validation-tool-logs-'));
-		tmpDirs.push(workspace, logs);
+		tmpDirs.push(workDir, logs);
 		const tool = buildValidationTool({
 			commands: [
 				{ name: 'echo-ok', command: 'echo hi' },
 				{ name: 'fail', command: 'node -e "process.exit(7)"' },
 			],
-			cwd: workspace,
+			cwd: workDir,
 			timeoutMs: 10_000,
 			rawLogDir: logs,
 			attemptLabelPrefix: 'verify',
@@ -57,12 +57,12 @@ describe('buildValidationTool', () => {
 	});
 
 	test('multiple execute calls use incrementing attempt labels', async () => {
-		const workspace = await mkdtemp(join(tmpdir(), 'validation-tool-workspace-'));
+		const workDir = await mkdtemp(join(tmpdir(), 'validation-tool-work-'));
 		const logs = await mkdtemp(join(tmpdir(), 'validation-tool-logs-'));
-		tmpDirs.push(workspace, logs);
+		tmpDirs.push(workDir, logs);
 		const tool = buildValidationTool({
 			commands: [{ name: 'echo-ok', command: 'echo hi' }],
-			cwd: workspace,
+			cwd: workDir,
 			timeoutMs: 5_000,
 			rawLogDir: logs,
 			attemptLabelPrefix: 'verify',
@@ -78,13 +78,13 @@ describe('buildValidationTool', () => {
 	});
 
 	test('empty command list returns an empty array', async () => {
-		const workspace = await mkdtemp(join(tmpdir(), 'validation-tool-workspace-'));
-		tmpDirs.push(workspace);
+		const workDir = await mkdtemp(join(tmpdir(), 'validation-tool-work-'));
+		tmpDirs.push(workDir);
 		const tool = buildValidationTool({
 			commands: [],
-			cwd: workspace,
+			cwd: workDir,
 			timeoutMs: 5_000,
-			rawLogDir: workspace,
+			rawLogDir: workDir,
 			attemptLabelPrefix: 'verify',
 		});
 

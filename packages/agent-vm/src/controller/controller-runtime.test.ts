@@ -126,7 +126,7 @@ function createPreparedWorkerTaskStub(
 			},
 			taskRoot: `/tmp/${taskId}`,
 			taskRuntimeRoot: `/tmp/runtime/worker-tasks/shravan/${taskId}`,
-			workspaceDir: `/tmp/${taskId}/workspace`,
+			workDir: `/tmp/${taskId}/work`,
 			stateDir: `/tmp/${taskId}/state`,
 			environment: {},
 			startedResourceProviders: [],

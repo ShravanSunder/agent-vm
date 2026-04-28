@@ -13,7 +13,7 @@ describe('message builders', () => {
 	test('buildInitialPlanMessage includes spec, repos, context, and repo summary', () => {
 		const message = buildInitialPlanMessage({
 			spec: 'add feature X',
-			repos: [{ repoUrl: 'https://example.com/repo', baseBranch: 'main', workspacePath: '/w/r' }],
+			repos: [{ repoUrl: 'https://example.com/repo', baseBranch: 'main', workPath: '/w/r' }],
 			repoSummary: 'summary text',
 			context: { ticket: 'ABC-123' },
 		});
