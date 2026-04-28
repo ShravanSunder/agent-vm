@@ -47,6 +47,7 @@ describe('requireZone', () => {
 			requireZone(
 				{
 					cacheDir: './cache',
+					runtimeDir: './runtime',
 					host: {
 						controllerPort: 18800,
 						projectNamespace: 'claw-tests-a1b2c3d4',
@@ -90,7 +91,7 @@ describe('requireZone', () => {
 								config: './config/shravan/openclaw.json',
 								port: 18791,
 								stateDir: './state/shravan',
-								workspaceDir: './workspaces/shravan',
+								zoneFilesDir: './zone-files/shravan',
 							},
 							id: 'shravan',
 							secrets: {},

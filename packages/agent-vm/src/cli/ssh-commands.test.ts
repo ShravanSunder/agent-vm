@@ -7,6 +7,7 @@ import { runSshCommand } from './ssh-commands.js';
 
 const systemConfig = {
 	cacheDir: './cache',
+	runtimeDir: './runtime',
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
@@ -50,7 +51,7 @@ const systemConfig = {
 				config: './config/shravan/openclaw.json',
 				port: 18791,
 				stateDir: './state/shravan',
-				workspaceDir: './workspaces/shravan',
+				zoneFilesDir: './zone-files/shravan',
 			},
 			id: 'shravan',
 			secrets: {},

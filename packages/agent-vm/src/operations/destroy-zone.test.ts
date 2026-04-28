@@ -22,12 +22,13 @@ describe('runControllerDestroy', () => {
 		const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-destroy-'));
 		createdDirectories.push(tempDirectory);
 		const stateDir = path.join(tempDirectory, 'state', 'shravan');
-		const workspaceDir = path.join(tempDirectory, 'workspaces', 'shravan');
+		const zoneFilesDir = path.join(tempDirectory, 'zone-files', 'shravan');
 		fs.mkdirSync(stateDir, { recursive: true });
-		fs.mkdirSync(workspaceDir, { recursive: true });
+		fs.mkdirSync(zoneFilesDir, { recursive: true });
 
 		const systemConfig = {
 			cacheDir: './cache',
+			runtimeDir: './runtime',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -65,7 +66,7 @@ describe('runControllerDestroy', () => {
 						port: 18791,
 						config: './config/shravan/openclaw.json',
 						stateDir,
-						workspaceDir,
+						zoneFilesDir,
 					},
 					secrets: {},
 					allowedHosts: ['api.anthropic.com'],
@@ -106,13 +107,89 @@ describe('runControllerDestroy', () => {
 
 		expect(actions).toEqual(['stop:shravan', 'leases:shravan']);
 		expect(rmSyncSpy).not.toHaveBeenCalledWith(stateDir, expect.anything());
-		expect(rmSyncSpy).not.toHaveBeenCalledWith(workspaceDir, expect.anything());
+		expect(rmSyncSpy).not.toHaveBeenCalledWith(zoneFilesDir, expect.anything());
 		expect(fs.existsSync(stateDir)).toBe(false);
-		expect(fs.existsSync(workspaceDir)).toBe(false);
+		expect(fs.existsSync(zoneFilesDir)).toBe(false);
 		expect(result).toEqual({
 			ok: true,
 			purged: true,
 			zoneId: 'shravan',
 		});
+	});
+
+	it('purges worker runtime artifacts for the zone', async () => {
+		const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-destroy-worker-'));
+		createdDirectories.push(tempDirectory);
+		const runtimeDir = path.join(tempDirectory, 'runtime');
+		const workerRuntimeDir = path.join(runtimeDir, 'worker-tasks', 'shravan');
+		const stateDir = path.join(tempDirectory, 'state', 'shravan');
+		fs.mkdirSync(path.join(workerRuntimeDir, 'task-1', 'gitdirs'), { recursive: true });
+		fs.mkdirSync(stateDir, { recursive: true });
+
+		const systemConfig = {
+			cacheDir: './cache',
+			runtimeDir,
+			host: {
+				controllerPort: 18800,
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				secretsProvider: {
+					type: '1password',
+					tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
+				},
+			},
+			imageProfiles: {
+				gateways: {
+					worker: {
+						type: 'worker',
+						buildConfig: './vm-images/gateways/worker/build-config.json',
+					},
+				},
+				toolVms: {},
+			},
+			zones: [
+				{
+					id: 'shravan',
+					gateway: {
+						type: 'worker',
+						imageProfile: 'worker',
+						memory: '2G',
+						cpus: 2,
+						port: 18791,
+						config: './config/shravan/worker.json',
+						stateDir,
+					},
+					secrets: {},
+					allowedHosts: ['github.com'],
+					websocketBypass: [],
+					toolProfile: 'standard',
+				},
+			],
+			toolProfiles: {
+				standard: {
+					memory: '1G',
+					cpus: 1,
+					workspaceRoot: './workspaces/tools',
+					imageProfile: 'default',
+				},
+			},
+			tcpPool: {
+				basePort: 19000,
+				size: 5,
+			},
+		} satisfies SystemConfig;
+
+		await runControllerDestroy(
+			{
+				purge: true,
+				systemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				releaseZoneLeases: async () => {},
+				stopGatewayZone: async () => {},
+			},
+		);
+
+		expect(fs.existsSync(workerRuntimeDir)).toBe(false);
 	});
 });

@@ -227,7 +227,11 @@ environment:
 vfsMounts:
   /state                -> task stateDir       (realfs)
   /gitdirs              -> runtimeDir task root (realfs)
-  /work/repos            -> VM rootfs/COW, not a RealFS mount
+
+rootfs/COW paths:
+  /work/repos            -> repo files, package installs, builds, tests
+  /work/tmp              -> TMPDIR/TMP/TEMP target
+  /work/cache            -> disposable package-manager cache
 
 tcpHosts:
   controller.vm.host:18800 -> 127.0.0.1:<controllerPort>

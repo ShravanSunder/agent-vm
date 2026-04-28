@@ -36,7 +36,7 @@ export async function createRunTask(io: CliIo): Promise<RunTaskFn> {
 							streamPreview: taskState.streamPreview,
 						});
 					},
-					{ previewLines: 8 },
+					{ previewLines: 1 },
 				);
 			} catch (error) {
 				if (taskStarted) {

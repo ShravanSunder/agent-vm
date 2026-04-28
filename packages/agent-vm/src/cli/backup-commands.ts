@@ -48,8 +48,10 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 			options.io,
 			await backupManager.createBackup({
 				backupDir,
+				cacheDir: options.systemConfig.cacheDir,
+				runtimeDir: options.systemConfig.runtimeDir,
 				stateDir: zone.gateway.stateDir,
-				workspaceDir: zone.gateway.workspaceDir,
+				...(zone.gateway.type === 'openclaw' ? { zoneFilesDir: zone.gateway.zoneFilesDir } : {}),
 				zoneId,
 			}),
 		);
@@ -66,7 +68,7 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 			await backupManager.restoreBackup({
 				backupPath,
 				stateDir: zone.gateway.stateDir,
-				workspaceDir: zone.gateway.workspaceDir,
+				...(zone.gateway.type === 'openclaw' ? { zoneFilesDir: zone.gateway.zoneFilesDir } : {}),
 			}),
 		);
 		return;

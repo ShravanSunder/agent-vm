@@ -22,6 +22,7 @@ interface ValidSystemConfigZoneInput {
 interface ValidSystemConfigInput {
 	host: Record<string, unknown>;
 	cacheDir: string;
+	runtimeDir: string;
 	imageProfiles: Record<string, unknown>;
 	zones: [ValidSystemConfigZoneInput, ...ValidSystemConfigZoneInput[]];
 	toolProfiles?: Record<string, unknown>;
@@ -42,6 +43,7 @@ function createValidSystemConfigInput(): ValidSystemConfigInput {
 			projectNamespace: 'claw-tests-a1b2c3d4',
 		},
 		cacheDir: '../cache',
+		runtimeDir: '../runtime',
 		imageProfiles: {
 			gateways: {
 				openclaw: {
@@ -71,7 +73,7 @@ function createValidSystemConfigInput(): ValidSystemConfigInput {
 					port: 18791,
 					config: './shravan/openclaw.json',
 					stateDir: '../state/shravan',
-					workspaceDir: '../workspaces/shravan',
+					zoneFilesDir: '../zone-files/shravan',
 				},
 				secrets: {},
 				runtimeAuthHints: [],
@@ -158,7 +160,6 @@ describe('loadSystemConfig', () => {
 							port: 18791,
 							config: './shravan/openclaw.json',
 							stateDir: '../state/shravan',
-							workspaceDir: '../workspaces/shravan',
 						},
 						secrets: {
 							ANTHROPIC_API_KEY: {
@@ -258,16 +259,18 @@ describe('loadSystemConfig', () => {
 		expect(config.systemCacheIdentifierPath).toBe(
 			path.join(path.dirname(configPath), 'systemCacheIdentifier.json'),
 		);
+		expect(config.runtimeDir).toBe(path.join(path.dirname(configPath), '..', 'runtime'));
 	});
 
 	test('expands ~/ paths to the current user home directory', async () => {
 		const input = createValidSystemConfigInput();
 		input.cacheDir = '~/.agent-vm/cache';
+		input.runtimeDir = '~/.agent-vm/runtime';
 		const firstZone = input.zones[0];
 		firstZone.gateway = {
 			...firstZone.gateway,
 			stateDir: '~/.agent-vm/state/shravan',
-			workspaceDir: '~/.agent-vm/workspaces/shravan',
+			zoneFilesDir: '~/.agent-vm/zone-files/shravan',
 			backupDir: '~/.agent-vm-backups/shravan',
 		};
 		const configPath = await writeSystemConfigForTest('agent-vm-system-config-tilde-', input);
@@ -275,15 +278,75 @@ describe('loadSystemConfig', () => {
 		const config = await loadSystemConfig(configPath);
 
 		expect(config.cacheDir).toBe(path.join(os.homedir(), '.agent-vm', 'cache'));
+		expect(config.runtimeDir).toBe(path.join(os.homedir(), '.agent-vm', 'runtime'));
 		expect(config.zones[0]?.gateway.stateDir).toBe(
 			path.join(os.homedir(), '.agent-vm', 'state', 'shravan'),
 		);
-		expect(config.zones[0]?.gateway.workspaceDir).toBe(
-			path.join(os.homedir(), '.agent-vm', 'workspaces', 'shravan'),
+		if (config.zones[0]?.gateway.type !== 'openclaw') {
+			throw new Error('Expected fixture zone to be OpenClaw.');
+		}
+		expect(config.zones[0].gateway.zoneFilesDir).toBe(
+			path.join(os.homedir(), '.agent-vm', 'zone-files', 'shravan'),
 		);
 		expect(config.zones[0]?.gateway.backupDir).toBe(
 			path.join(os.homedir(), '.agent-vm-backups', 'shravan'),
 		);
+	});
+
+	test('rejects worker gateway configs with zoneFilesDir', async () => {
+		const input = createValidSystemConfigInput();
+		const existingZone = input.zones[0];
+		input.zones[0] = {
+			id: existingZone.id,
+			secrets: existingZone.secrets,
+			runtimeAuthHints: existingZone.runtimeAuthHints,
+			allowedHosts: existingZone.allowedHosts,
+			gateway: {
+				type: 'worker',
+				imageProfile: 'worker',
+				memory: '2G',
+				cpus: 2,
+				port: 18791,
+				config: './shravan/worker.json',
+				stateDir: '../state/shravan',
+				zoneFilesDir: '../zone-files/shravan',
+			},
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-worker-zone-files-', input);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/zoneFilesDir/u);
+	});
+
+	test('rejects gateway configs without an explicit gateway type', async () => {
+		const input = createValidSystemConfigInput();
+		const { type: _type, ...gatewayWithoutType } = input.zones[0].gateway;
+		input.zones[0] = {
+			...input.zones[0],
+			gateway: gatewayWithoutType,
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-missing-type-', input);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/type/u);
+	});
+
+	test('rejects legacy gateway workspaceDir', async () => {
+		const input = createValidSystemConfigInput();
+		input.zones[0] = {
+			...input.zones[0],
+			gateway: {
+				type: 'openclaw',
+				imageProfile: 'openclaw',
+				memory: '2G',
+				cpus: 2,
+				port: 18791,
+				config: './shravan/openclaw.json',
+				stateDir: '../state/shravan',
+				workspaceDir: '../workspaces/shravan',
+			},
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-legacy-workspace-', input);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/workspaceDir/u);
 	});
 
 	test('accepts zones without an explicit backupDir (legacy fallback applies elsewhere)', async () => {
@@ -473,7 +536,7 @@ describe('loadSystemConfig', () => {
 							port: 18791,
 							config: './shravan/openclaw.json',
 							stateDir: '../state/shravan',
-							workspaceDir: '../workspaces/shravan',
+							zoneFilesDir: '../zone-files/shravan',
 						},
 						secrets: {
 							DISCORD_BOT_TOKEN: {
@@ -553,7 +616,7 @@ describe('loadSystemConfig', () => {
 							port: 18791,
 							config: './shravan/openclaw.json',
 							stateDir: '../state/shravan',
-							workspaceDir: '../workspaces/shravan',
+							zoneFilesDir: '../zone-files/shravan',
 						},
 						secrets: {},
 						runtimeAuthHints: [],
@@ -752,7 +815,7 @@ describe('loadSystemConfig', () => {
 							port: 18791,
 							config: './shravan/openclaw.json',
 							stateDir: '../state/shravan',
-							workspaceDir: '../workspaces/shravan',
+							zoneFilesDir: '../zone-files/shravan',
 						},
 						secrets: {},
 						runtimeAuthHints: [],
@@ -821,7 +884,6 @@ describe('loadSystemConfig', () => {
 					port: 18791,
 					config: './worker-zone/worker.json',
 					stateDir: '../state/worker-zone',
-					workspaceDir: '../workspaces/worker-zone',
 				},
 				secrets: {},
 				runtimeAuthHints: [],
@@ -892,7 +954,7 @@ describe('loadSystemConfig', () => {
 					port: 18791,
 					config: './shravan/openclaw.json',
 					stateDir: '../state/shravan',
-					workspaceDir: '../workspaces/shravan',
+					zoneFilesDir: '../zone-files/shravan',
 				},
 				secrets: {},
 				runtimeAuthHints: [],
@@ -921,7 +983,6 @@ describe('loadSystemConfig', () => {
 					port: 18791,
 					config: './shravan/worker.json',
 					stateDir: '../state/shravan',
-					workspaceDir: '../workspaces/shravan',
 				},
 				secrets: {},
 				runtimeAuthHints: [],
@@ -977,5 +1038,39 @@ describe('loadSystemConfig', () => {
 		);
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Too small|Invalid key/u);
+	});
+
+	test('rejects runtimeDir overlap with cacheDir after resolving paths', async () => {
+		const config = createValidSystemConfigInput();
+		config.cacheDir = '../cache';
+		config.runtimeDir = '../cache/runtime';
+		const configPath = await writeSystemConfigForTest('agent-vm-system-overlap-cache-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/runtimeDir must not overlap cacheDir/u,
+		);
+	});
+
+	test('rejects runtimeDir overlap with zone stateDir after resolving paths', async () => {
+		const config = createValidSystemConfigInput();
+		config.runtimeDir = '../state/shravan/runtime';
+		const configPath = await writeSystemConfigForTest('agent-vm-system-overlap-state-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/runtimeDir must not overlap stateDir/u,
+		);
+	});
+
+	test('rejects runtimeDir overlap with OpenClaw zoneFilesDir after resolving paths', async () => {
+		const config = createValidSystemConfigInput();
+		config.runtimeDir = '../zone-files/shravan/runtime';
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-overlap-zone-files-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/runtimeDir must not overlap zoneFilesDir/u,
+		);
 	});
 });

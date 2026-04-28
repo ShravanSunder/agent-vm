@@ -118,6 +118,7 @@ vi.mock('execa', () => ({
 
 const systemConfig = {
 	cacheDir: '/tmp/cache',
+	runtimeDir: '/tmp/runtime',
 	systemConfigPath: '/tmp/config/system.json',
 	systemCacheIdentifierPath: '/tmp/config/systemCacheIdentifier.json',
 	host: {
@@ -148,7 +149,6 @@ const systemConfig = {
 				port: 18791,
 				config: '',
 				stateDir: '',
-				workspaceDir: '',
 			},
 			secrets: {},
 			runtimeAuthHints: [],
@@ -200,7 +200,7 @@ describe('worker-task-runner', () => {
 		}
 		zone.gateway.config = path.join(tempDir, 'gateway-config.json');
 		zone.gateway.stateDir = path.join(tempDir, 'state');
-		zone.gateway.workspaceDir = path.join(tempDir, 'workspace');
+		systemConfig.runtimeDir = path.join(tempDir, 'runtime');
 		await fs.writeFile(zone.gateway.config, JSON.stringify(buildWorkerConfigInput()));
 
 		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
@@ -393,29 +393,32 @@ describe('worker-task-runner', () => {
 		);
 		expect(writtenConfig.commonAgentInstructions).toBe('common from markdown\n');
 		expect(writtenConfig.runtimeInstructions).toContain('Runtime instructions');
-		expect(writtenConfig.runtimeInstructions).toContain('/workspace');
+		expect(writtenConfig.runtimeInstructions).toContain('/work/repos');
 		expect(writtenConfig.runtimeInstructions).toContain('/agent-vm/agents.md');
-		await expect(
-			fs.readFile(path.join(result.workspaceDir, 'AGENTS.md'), 'utf8'),
-		).resolves.toContain('/agent-vm/agents.md');
 		await expect(
 			fs.readFile(path.join(result.taskRoot, 'agent-vm', 'runtime-instructions.md'), 'utf8'),
 		).resolves.toBe(writtenConfig.runtimeInstructions);
 		await expect(
 			fs.readFile(path.join(result.taskRoot, 'agent-vm', 'agents.md'), 'utf8'),
 		).resolves.toContain('/agent-vm/runtime-instructions.md');
-		await expect(fs.readlink(path.join(result.workspaceDir, 'CLAUDE.md'))).resolves.toBe(
-			'AGENTS.md',
-		);
 		await expect(fs.readlink(path.join(result.taskRoot, 'agent-vm', 'CLAUDE.md'))).resolves.toBe(
 			'agents.md',
 		);
+		await expect(fs.readFile(path.join(result.workDir, 'AGENTS.md'), 'utf8')).rejects.toThrow();
+		await expect(fs.readlink(path.join(result.workDir, 'CLAUDE.md'))).rejects.toThrow();
 		expect(result.vfsMounts['/agent-vm']).toEqual(
 			expect.objectContaining({ kind: 'realfs-readonly' }),
 		);
+		expect(result.vfsMounts['/work/repos']).toBeUndefined();
+		expect(result.vfsMounts['/gitdirs']).toEqual(
+			expect.objectContaining({
+				hostPath: path.join(result.taskRuntimeRoot, 'gitdirs'),
+				kind: 'realfs',
+			}),
+		);
 	});
 
-	it('clones repos into named workspace directories and merges primary repo config', async () => {
+	it('clones repos into named work directories and merges primary repo config', async () => {
 		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
 		const zone = systemConfig.zones[0];
 		if (!zone) {
@@ -423,7 +426,9 @@ describe('worker-task-runner', () => {
 		}
 		const originalReadFile = fs.readFile;
 		vi.spyOn(fs, 'readFile').mockImplementation(async (filePath, encoding) => {
-			if (normalizeMockFilePath(filePath).endsWith('/frontend/.agent-vm/config.json')) {
+			if (
+				normalizeMockFilePath(filePath).endsWith('/repo-metadata/frontend/.agent-vm/config.json')
+			) {
 				return JSON.stringify({
 					branchPrefix: 'feature/',
 					verification: [{ name: 'custom', command: 'pnpm custom-check' }],
@@ -450,22 +455,28 @@ describe('worker-task-runner', () => {
 			1,
 			'git',
 			[
+				'-c',
+				'core.hooksPath=/dev/null',
 				'clone',
+				'--bare',
 				'--branch',
 				'main',
 				'https://github.com/org/frontend.git',
-				path.join(result.workspaceDir, 'frontend'),
+				path.join(result.taskRuntimeRoot, 'gitdirs', 'frontend.git'),
 			],
 			expect.objectContaining({ timeout: 120_000 }),
 		);
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
 			[
+				'-c',
+				'core.hooksPath=/dev/null',
 				'clone',
+				'--bare',
 				'--branch',
 				'develop',
 				'https://github.com/org/backend.git',
-				path.join(result.workspaceDir, 'backend'),
+				path.join(result.taskRuntimeRoot, 'gitdirs', 'backend.git'),
 			],
 			expect.objectContaining({ timeout: 120_000 }),
 		);
@@ -474,15 +485,19 @@ describe('worker-task-runner', () => {
 				repoId: 'frontend',
 				repoUrl: 'https://github.com/org/frontend.git',
 				baseBranch: 'main',
-				hostWorkspacePath: path.join(result.workspaceDir, 'frontend'),
-				workspacePath: '/workspace/frontend',
+				gitDirPath: '/gitdirs/frontend.git',
+				hostGitDir: path.join(result.taskRuntimeRoot, 'gitdirs', 'frontend.git'),
+				hostMetadataPath: path.join(result.taskRuntimeRoot, 'repo-metadata', 'frontend'),
+				workPath: '/work/repos/frontend',
 			},
 			{
 				repoId: 'backend',
 				repoUrl: 'https://github.com/org/backend.git',
 				baseBranch: 'develop',
-				hostWorkspacePath: path.join(result.workspaceDir, 'backend'),
-				workspacePath: '/workspace/backend',
+				gitDirPath: '/gitdirs/backend.git',
+				hostGitDir: path.join(result.taskRuntimeRoot, 'gitdirs', 'backend.git'),
+				hostMetadataPath: path.join(result.taskRuntimeRoot, 'repo-metadata', 'backend'),
+				workPath: '/work/repos/backend',
 			},
 		]);
 		const writtenConfig = effectiveWorkerConfigSchema.parse(
@@ -514,9 +529,9 @@ describe('worker-task-runner', () => {
 		);
 
 		expect(result.repos.map((repo) => repo.repoId)).toEqual(['repo-dir', 'repo-dir-2']);
-		expect(result.repos.map((repo) => repo.workspacePath)).toEqual([
-			'/workspace/repo-dir',
-			'/workspace/repo-dir-2',
+		expect(result.repos.map((repo) => repo.workPath)).toEqual([
+			'/work/repos/repo-dir',
+			'/work/repos/repo-dir-2',
 		]);
 	});
 
@@ -576,19 +591,19 @@ describe('worker-task-runner', () => {
 		expect(providerCall?.repos).toEqual([
 			expect.objectContaining({
 				repoId: 'frontend',
-				repoDir: expect.stringMatching(/\/workspace\/frontend$/u),
+				repoDir: expect.stringMatching(/\/repo-metadata\/frontend$/u),
 				outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/agent-vm\/resources\/frontend$/u),
 			}),
 			expect.objectContaining({
 				repoId: 'backend',
-				repoDir: expect.stringMatching(/\/workspace\/backend$/u),
+				repoDir: expect.stringMatching(/\/repo-metadata\/backend$/u),
 				outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/agent-vm\/resources\/backend$/u),
 			}),
 		]);
 		expect(providerCall?.providers).toHaveLength(1);
 		expect(providerCall?.providers[0]).toMatchObject({
 			repoId: 'frontend',
-			repoDir: expect.stringMatching(/\/workspace\/frontend$/u),
+			repoDir: expect.stringMatching(/\/repo-metadata\/frontend$/u),
 			outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/agent-vm\/resources\/frontend$/u),
 			resourceName: 'pg',
 			provider: { service: 'pg' },
@@ -673,11 +688,14 @@ describe('worker-task-runner', () => {
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
 			[
+				'-c',
+				'core.hooksPath=/dev/null',
 				'clone',
+				'--bare',
 				'--branch',
 				'main',
 				'https://github.com/org/frontend.git',
-				expect.stringContaining('/frontend'),
+				expect.stringContaining('/gitdirs/frontend.git'),
 			],
 			expect.objectContaining({ timeout: 120_000 }),
 		);
@@ -715,12 +733,15 @@ describe('worker-task-runner', () => {
 		expect(Buffer.from(encodedHeader ?? '', 'base64').toString('utf8')).toBe(
 			'x-access-token:ghp_secret-token',
 		);
-		expect(cloneArgs.slice(2, 6)).toEqual([
+		expect(cloneArgs.slice(2, 8)).toEqual([
+			'-c',
+			'core.hooksPath=/dev/null',
 			'clone',
+			'--bare',
 			'--branch',
 			'main',
-			'https://github.com/org/frontend.git',
 		]);
+		expect(cloneArgs[8]).toBe('https://github.com/org/frontend.git');
 	});
 
 	it('does not write cloned repo paths to global git safe.directory config', async () => {
@@ -753,10 +774,10 @@ describe('worker-task-runner', () => {
 		let maxActiveConfigWrites = 0;
 		const configKeys: string[] = [];
 		execaMock.mockImplementation(async (command: string, args: readonly string[]) => {
-			if (command === 'git' && args[2] === 'config') {
+			if (command === 'git' && args[3] === 'config') {
 				activeConfigWrites += 1;
 				maxActiveConfigWrites = Math.max(maxActiveConfigWrites, activeConfigWrites);
-				configKeys.push(args[3] ?? '');
+				configKeys.push(args[4] ?? '');
 				await Promise.resolve();
 				activeConfigWrites -= 1;
 			}
@@ -778,7 +799,13 @@ describe('worker-task-runner', () => {
 			zone,
 		);
 
-		expect(configKeys).toEqual(['user.email', 'user.name', 'http.version', 'commit.gpgsign']);
+		expect(configKeys).toEqual([
+			'core.bare',
+			'user.email',
+			'user.name',
+			'http.version',
+			'commit.gpgsign',
+		]);
 		expect(maxActiveConfigWrites).toBe(1);
 	});
 
@@ -820,6 +847,50 @@ describe('worker-task-runner', () => {
 		).rejects.not.toThrow(/ghp_secret-token|Authorization: Basic eC/u);
 	});
 
+	it('reports every failed repo clone during pre-start', async () => {
+		execaMock.mockImplementation(async (command: string, args: readonly string[]) => {
+			if (command === 'git' && args.includes('clone')) {
+				const repoUrl = args.at(-2) ?? 'unknown';
+				return { stdout: '', stderr: `clone failed for ${repoUrl}`, exitCode: 128 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		let thrownError: unknown;
+		try {
+			await preStartGateway(
+				{
+					requestTaskId: 'request-task-1',
+					prompt: 'clone repos',
+					repos: [
+						{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' },
+						{ repoUrl: 'https://github.com/org/backend.git', baseBranch: 'main' },
+					],
+					context: {},
+				},
+				zone,
+			);
+		} catch (error) {
+			thrownError = error;
+		}
+
+		expect(thrownError).toBeInstanceOf(AggregateError);
+		const aggregateError = thrownError as AggregateError;
+		expect(aggregateError.errors).toEqual([
+			expect.objectContaining({
+				message: expect.stringContaining('https://github.com/org/frontend.git'),
+			}),
+			expect.objectContaining({
+				message: expect.stringContaining('https://github.com/org/backend.git'),
+			}),
+		]);
+	});
+
 	it('waits for parallel clone attempts to settle before deleting the task root', async () => {
 		const events: string[] = [];
 		execaMock.mockImplementation(async (command: string, args: readonly string[]) => {
@@ -837,7 +908,14 @@ describe('worker-task-runner', () => {
 		});
 		const originalRm = fs.rm;
 		vi.spyOn(fs, 'rm').mockImplementation(async (...args) => {
-			events.push('task-root-removed');
+			const normalizedTarget = normalizeMockFilePath(args[0]);
+			if (!normalizedTarget.endsWith('agent-vm-metadata.tar')) {
+				events.push(
+					normalizedTarget.includes('/worker-tasks/')
+						? 'task-runtime-root-removed'
+						: 'task-root-removed',
+				);
+			}
 			return await originalRm(...args);
 		});
 		const zone = systemConfig.zones[0];
@@ -866,6 +944,7 @@ describe('worker-task-runner', () => {
 			'slow-clone-started',
 			'slow-clone-finished',
 			'task-root-removed',
+			'task-runtime-root-removed',
 		]);
 	});
 
@@ -877,7 +956,9 @@ describe('worker-task-runner', () => {
 		}
 		const originalReadFile = fs.readFile;
 		vi.spyOn(fs, 'readFile').mockImplementation(async (filePath, encoding) => {
-			if (normalizeMockFilePath(filePath).endsWith('/frontend/.agent-vm/config.json')) {
+			if (
+				normalizeMockFilePath(filePath).endsWith('/repo-metadata/frontend/.agent-vm/config.json')
+			) {
 				return '{ not-valid-json';
 			}
 			return await originalReadFile(filePath, encoding);
@@ -898,6 +979,33 @@ describe('worker-task-runner', () => {
 		).rejects.toThrow('Invalid project config');
 	});
 
+	it('fails loudly when probing repo metadata fails', async () => {
+		execaMock.mockImplementation(async (command: string, args: readonly string[]) => {
+			if (command === 'git' && args.includes('ls-tree')) {
+				return { stdout: '', stderr: 'fatal: remote branch main not found', exitCode: 128 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+
+		await expect(
+			preStartGateway(
+				{
+					requestTaskId: 'request-task-1',
+					prompt: 'cross repo task',
+					repos: [{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' }],
+					context: {},
+				},
+				zone,
+			),
+		).rejects.toThrow(/Failed to probe \.agent-vm metadata/u);
+	});
+
 	it('rejects project config prompt file references', async () => {
 		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
 		const zone = systemConfig.zones[0];
@@ -906,7 +1014,9 @@ describe('worker-task-runner', () => {
 		}
 		const originalReadFile = fs.readFile;
 		vi.spyOn(fs, 'readFile').mockImplementation(async (filePath, encoding) => {
-			if (normalizeMockFilePath(filePath).endsWith('/frontend/.agent-vm/config.json')) {
+			if (
+				normalizeMockFilePath(filePath).endsWith('/repo-metadata/frontend/.agent-vm/config.json')
+			) {
 				return JSON.stringify({
 					commonAgentInstructions: { path: './prompts/common-agent-instructions.md' },
 				});
@@ -1006,11 +1116,87 @@ describe('worker-task-runner', () => {
 				{
 					repoUrl: 'https://github.com/org/repo.git',
 					baseBranch: 'main',
-					workspacePath: '/workspace/repo',
+					gitDirPath: '/gitdirs/repo.git',
+					workPath: '/work/repos/repo',
 				},
 			],
 		});
-		expect(JSON.stringify(submittedBody)).not.toContain('hostWorkspacePath');
+		expect(JSON.stringify(submittedBody)).not.toContain('hostGitDir');
+	});
+
+	it('deletes task runtime gitdirs when a completed repo task has no controller push', async () => {
+		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.endsWith('/tasks')) {
+				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
+					status: 201,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (/\/tasks\/[^/]+$/.test(url)) {
+				return new Response(JSON.stringify({ status: 'completed', taskId: 'task-1' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		}) as typeof fetch;
+
+		const result = await executePreparedWorkerTaskForTest({
+			input: {
+				requestTaskId: 'request-task-1',
+				prompt: 'fix login',
+				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+				context: {},
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+			zoneId: 'shravan',
+		});
+
+		const taskRuntimeRoot = path.join(
+			systemConfig.runtimeDir,
+			'worker-tasks',
+			'shravan',
+			result.taskId,
+		);
+		await expect(fs.stat(taskRuntimeRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+	});
+
+	it('deletes task runtime gitdirs when a completed repo task has a successful controller push', async () => {
+		const { executeWorkerTask, prepareWorkerTask } = await import('./worker-task-runner.js');
+		const prepared = await prepareWorkerTask({
+			input: {
+				requestTaskId: 'request-task-1',
+				prompt: 'fix login',
+				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+				context: {},
+			},
+			systemConfig,
+			zoneId: 'shravan',
+		});
+		await prepared.recordEvent({
+			event: 'controller-git-push-succeeded',
+			repoUrl: 'https://github.com/org/repo.git',
+			branch: 'agent/task-1',
+			attempts: 1,
+			localHead: 'local-sha',
+			remoteBranchHead: 'local-sha',
+		});
+
+		const result = await executeWorkerTask(prepared, {
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+		});
+
+		const taskRuntimeRoot = path.join(
+			systemConfig.runtimeDir,
+			'worker-tasks',
+			'shravan',
+			result.taskId,
+		);
+		await expect(fs.stat(taskRuntimeRoot)).rejects.toThrow();
 	});
 
 	it('fails immediately when the worker returns an invalid task status payload', async () => {
@@ -1104,6 +1290,46 @@ describe('worker-task-runner', () => {
 		).rejects.toThrow(/worker rejected task payload/u);
 	});
 
+	it('deletes task runtime gitdirs when the worker returns failed status', async () => {
+		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.endsWith('/tasks')) {
+				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
+					status: 201,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (/\/tasks\/[^/]+$/.test(url)) {
+				return new Response(JSON.stringify({ status: 'failed', taskId: 'task-1' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		}) as typeof fetch;
+
+		const result = await executePreparedWorkerTaskForTest({
+			input: {
+				requestTaskId: 'request-task-1',
+				prompt: 'fix login',
+				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+				context: {},
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+			zoneId: 'shravan',
+		});
+
+		const taskRuntimeRoot = path.join(
+			systemConfig.runtimeDir,
+			'worker-tasks',
+			'shravan',
+			result.taskId,
+		);
+		await expect(fs.stat(taskRuntimeRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+	});
+
 	it('aggregates the primary task failure when shutdown hooks also fail', async () => {
 		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
 			const url =
@@ -1155,14 +1381,20 @@ describe('worker-task-runner', () => {
 		expect(stopRepoResourceProvidersMock).toHaveBeenCalled();
 	});
 
-	it('aggregates provider, resource-directory, and workspace cleanup failures after shutdown', async () => {
+	it('aggregates provider, resource-directory, and runtime cleanup failures after shutdown', async () => {
 		const { postStopGateway } = await import('./worker-task-runner.js');
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected zone config.');
 		}
 		const taskRoot = path.join(zone.gateway.stateDir, 'tasks', 'task-cleanup-failures');
-		await fs.mkdir(path.join(taskRoot, 'workspace'), { recursive: true });
+		const taskRuntimeRoot = path.join(
+			systemConfig.runtimeDir,
+			'worker-tasks',
+			zone.id,
+			'task-cleanup-failures',
+		);
+		await fs.mkdir(path.join(taskRuntimeRoot, 'work'), { recursive: true });
 		await fs.mkdir(path.join(taskRoot, 'agent-vm', 'resources'), { recursive: true });
 		stopRepoResourceProvidersMock.mockRejectedValue(new Error('compose cleanup failed'));
 		vi.spyOn(fs, 'rm').mockImplementation(async (targetPath) => {
@@ -1170,8 +1402,8 @@ describe('worker-task-runner', () => {
 			if (normalizedTarget.endsWith('/agent-vm/resources')) {
 				throw new Error('resource removal failed');
 			}
-			if (normalizedTarget.endsWith('/workspace')) {
-				throw new Error('workspace removal failed');
+			if (normalizedTarget.endsWith('/runtime/worker-tasks/shravan/task-cleanup-failures')) {
+				throw new Error('runtime removal failed');
 			}
 		});
 		const startedProvider = {
@@ -1183,7 +1415,9 @@ describe('worker-task-runner', () => {
 
 		let thrownError: unknown;
 		try {
-			await postStopGateway('task-cleanup-failures', zone, [startedProvider]);
+			await postStopGateway('task-cleanup-failures', zone, [startedProvider], {
+				runtimeDir: systemConfig.runtimeDir,
+			});
 		} catch (error) {
 			thrownError = error;
 		}
@@ -1193,7 +1427,7 @@ describe('worker-task-runner', () => {
 		expect(aggregateError.errors).toEqual([
 			expect.objectContaining({ message: 'compose cleanup failed' }),
 			expect.objectContaining({ message: 'resource removal failed' }),
-			expect.objectContaining({ message: 'workspace removal failed' }),
+			expect.objectContaining({ message: 'runtime removal failed' }),
 		]);
 	});
 
@@ -1275,7 +1509,7 @@ describe('worker-task-runner', () => {
 		expect(removedPaths.some((removedPath) => removedPath.includes('/tasks/'))).toBe(true);
 	});
 
-	it('preserves task state while pruning the workspace during shutdown', async () => {
+	it('preserves task state while pruning runtime work during shutdown', async () => {
 		const { postStopGateway } = await import('./worker-task-runner.js');
 		const zone = systemConfig.zones[0];
 		if (!zone) {
@@ -1283,10 +1517,16 @@ describe('worker-task-runner', () => {
 		}
 
 		const taskRoot = path.join(zone.gateway.stateDir, 'tasks', 'task-keep-state');
-		await fs.mkdir(path.join(taskRoot, 'workspace'), { recursive: true });
+		const taskRuntimeRoot = path.join(
+			systemConfig.runtimeDir,
+			'worker-tasks',
+			zone.id,
+			'task-keep-state',
+		);
+		await fs.mkdir(path.join(taskRuntimeRoot, 'work'), { recursive: true });
 		await fs.mkdir(path.join(taskRoot, 'state'), { recursive: true });
 		await fs.mkdir(path.join(taskRoot, 'agent-vm', 'resources', 'repo-a'), { recursive: true });
-		await fs.writeFile(path.join(taskRoot, 'workspace', 'README.md'), 'workspace data');
+		await fs.writeFile(path.join(taskRuntimeRoot, 'work', 'README.md'), 'work data');
 		await fs.writeFile(path.join(taskRoot, 'state', 'events.jsonl'), '{"event":"task-created"}\n');
 		await fs.writeFile(
 			path.join(taskRoot, 'agent-vm', 'resources', 'repo-a', 'mock.json'),
@@ -1299,11 +1539,13 @@ describe('worker-task-runner', () => {
 			repoDir: '/tmp/task',
 			repoId: 'repo-a',
 		};
-		await postStopGateway('task-keep-state', zone, [startedProvider]);
+		await postStopGateway('task-keep-state', zone, [startedProvider], {
+			runtimeDir: systemConfig.runtimeDir,
+		});
 
 		expect(stopRepoResourceProvidersMock).toHaveBeenCalledWith([startedProvider]);
 		await expect(fs.stat(path.join(taskRoot, 'state'))).resolves.toBeDefined();
 		await expect(fs.stat(path.join(taskRoot, 'agent-vm', 'resources'))).rejects.toThrow();
-		await expect(fs.stat(path.join(taskRoot, 'workspace'))).rejects.toThrow();
+		await expect(fs.stat(taskRuntimeRoot)).rejects.toThrow();
 	});
 });

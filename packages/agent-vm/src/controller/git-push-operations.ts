@@ -1,9 +1,14 @@
+import type { TaskEvent } from '@agent-vm/agent-vm-worker';
 import { execa } from 'execa';
 
 import type { ActiveWorkerTask } from './active-task-registry.js';
 import { scrubGithubTokenFromOutput } from './git-auth-support.js';
+import { runGitCommandWithTransientRetries, type GitCommandResult } from './git-retry-support.js';
 
 const GIT_OPERATION_TIMEOUT_MS = 120_000;
+const GIT_PUSH_RETRY_AFTER_MESSAGE =
+	'GitHub or the network is still rejecting the push after retries. Try git-push again in 5 minutes if the task is still running; otherwise start a new task.';
+const GIT_PUSH_RETRY_AFTER_SECONDS = 300;
 
 export interface PushBranchRequest {
 	readonly repoUrl: string;
@@ -41,8 +46,24 @@ export interface PushBranchResult {
 
 export class PushBranchesValidationError extends Error {}
 
+class GitPushFailedAfterRetriesError extends Error {
+	public constructor(
+		message: string,
+		public readonly attempts: number,
+	) {
+		super(message);
+		this.name = 'GitPushFailedAfterRetriesError';
+	}
+}
+
 function writePushFlowLog(message: string): void {
 	process.stderr.write(`[git-push-operations] ${message}\n`);
+}
+
+async function sleep(delayMs: number): Promise<void> {
+	await new Promise<void>((resolve) => {
+		setTimeout(resolve, delayMs);
+	});
 }
 
 function parseRepoFromUrl(repoUrl: string): string {
@@ -68,16 +89,23 @@ function sanitizeBranchName(name: string): string {
 	return name.replace(/[^a-zA-Z0-9\-_./]/gu, '-');
 }
 
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 async function git(options: {
 	readonly args: readonly string[];
-	readonly cwd: string;
+	readonly gitDir: string;
 	readonly reject?: boolean;
-}): Promise<{ readonly stdout: string; readonly stderr: string; readonly exitCode: number }> {
-	const result = await execa('git', [...options.args], {
-		cwd: options.cwd,
-		reject: false,
-		timeout: GIT_OPERATION_TIMEOUT_MS,
-	});
+}): Promise<GitCommandResult> {
+	const result = await execa(
+		'git',
+		['-c', 'core.hooksPath=/dev/null', `--git-dir=${options.gitDir}`, ...options.args],
+		{
+			reject: false,
+			timeout: GIT_OPERATION_TIMEOUT_MS,
+		},
+	);
 	const normalized = {
 		stdout: result.stdout,
 		stderr: result.stderr,
@@ -91,8 +119,26 @@ async function git(options: {
 	return normalized;
 }
 
-async function gitStdout(cwd: string, args: readonly string[]): Promise<string> {
-	return (await git({ args, cwd, reject: true })).stdout.trim();
+function formatGitCommandFailure(args: readonly string[], result: GitCommandResult): string {
+	return `git ${args.join(' ')} failed\n${result.stdout}\n${result.stderr}`.trim();
+}
+
+async function gitWithTransientRetries(options: {
+	readonly args: readonly string[];
+	readonly gitDir: string;
+}): Promise<GitCommandResult> {
+	const retryResult = await runGitCommandWithTransientRetries({
+		run: async () => await git({ args: options.args, gitDir: options.gitDir, reject: false }),
+		sleep,
+	});
+	if (retryResult.result.exitCode !== 0) {
+		throw new Error(formatGitCommandFailure(options.args, retryResult.result));
+	}
+	return retryResult.result;
+}
+
+async function gitStdout(gitDir: string, args: readonly string[]): Promise<string> {
+	return (await gitWithTransientRetries({ args, gitDir })).stdout.trim();
 }
 
 function parseCommitSummaries(output: string): readonly PushCommitSummary[] {
@@ -117,106 +163,221 @@ function parseCommitSummaries(output: string): readonly PushCommitSummary[] {
 }
 
 async function commitSummaries(
-	cwd: string,
+	gitDir: string,
 	range: string,
 	options?: { readonly includeAuthorDate?: boolean },
 ): Promise<readonly PushCommitSummary[]> {
 	const format = options?.includeAuthorDate === true ? '%H%x09%s%x09%an%x09%aI' : '%H%x09%s';
-	const result = await git({ cwd, args: ['log', range, `--format=${format}`], reject: false });
-	if (result.exitCode !== 0) return [];
+	const result = await gitWithTransientRetries({
+		gitDir,
+		args: ['log', range, `--format=${format}`],
+	});
 	return parseCommitSummaries(result.stdout);
 }
 
-async function refExists(cwd: string, ref: string): Promise<boolean> {
-	return (
-		(await git({ cwd, args: ['rev-parse', '--verify', '--quiet', ref], reject: false }))
-			.exitCode === 0
-	);
-}
-
-async function countRange(cwd: string, range: string): Promise<number> {
-	const result = await git({ cwd, args: ['rev-list', '--count', range], reject: false });
-	if (result.exitCode !== 0) return 0;
-	return Number.parseInt(result.stdout.trim(), 10) || 0;
+async function refExists(gitDir: string, ref: string): Promise<boolean> {
+	const args = ['rev-parse', '--verify', '--quiet', ref] as const;
+	const result = await git({ gitDir, args, reject: false });
+	if (result.exitCode === 0) return true;
+	if (result.stderr.trim().length > 0) {
+		throw new Error(formatGitCommandFailure(args, result));
+	}
+	return false;
 }
 
 async function fetchRemoteRefs(options: {
-	readonly cwd: string;
+	readonly gitDir: string;
 	readonly defaultBranch: string;
 	readonly repoUrl: string;
 	readonly githubToken: string;
+	readonly recordEvent?: (event: TaskEvent) => Promise<void>;
 }): Promise<void> {
 	const pushUrl = buildPushUrl(options.repoUrl, options.githubToken);
-	const result = await git({
-		cwd: options.cwd,
-		args: [
-			'fetch',
-			'--prune',
-			pushUrl,
-			`${options.defaultBranch}:refs/remotes/origin/${options.defaultBranch}`,
-		],
-		reject: false,
+	const retryResult = await runGitCommandWithTransientRetries({
+		run: async () =>
+			await git({
+				gitDir: options.gitDir,
+				args: [
+					'fetch',
+					'--prune',
+					pushUrl,
+					`${options.defaultBranch}:refs/remotes/origin/${options.defaultBranch}`,
+				],
+				reject: false,
+			}),
+		onRetry: async ({ attempt, delayMs, result }) => {
+			const detail = scrubGithubTokenFromOutput(`${result.stdout}\n${result.stderr}`).trim();
+			writePushFlowLog(
+				`git fetch failed for ${options.repoUrl} ${options.defaultBranch} on attempt ${attempt}; retrying in ${delayMs / 1000}s: ${detail}`,
+			);
+			await options.recordEvent?.({
+				event: 'controller-git-push-retry',
+				repoUrl: options.repoUrl,
+				branch: options.defaultBranch,
+				attempts: attempt,
+				message: detail,
+				retryDelaySeconds: delayMs / 1000,
+			});
+		},
 	});
-	if (result.exitCode !== 0) {
-		const detail = scrubGithubTokenFromOutput(`${result.stdout}\n${result.stderr}`).trim();
-		throw new Error(`git fetch failed\n${detail}`);
+	if (retryResult.result.exitCode !== 0) {
+		const detail = scrubGithubTokenFromOutput(
+			`${retryResult.result.stdout}\n${retryResult.result.stderr}`,
+		).trim();
+		const message =
+			retryResult.attempts > 1
+				? `git fetch failed\n${GIT_PUSH_RETRY_AFTER_MESSAGE}\n${detail}`
+				: `git fetch failed\n${detail}`;
+		throw new GitPushFailedAfterRetriesError(message, retryResult.attempts);
 	}
 }
 
-async function remoteBranchHead(cwd: string, branchName: string): Promise<string | null> {
-	if (!(await refExists(cwd, `refs/remotes/origin/${branchName}`))) return null;
-	return await gitStdout(cwd, ['rev-parse', `refs/remotes/origin/${branchName}`]);
+async function remoteBranchHead(gitDir: string, branchName: string): Promise<string | null> {
+	if (!(await refExists(gitDir, `refs/remotes/origin/${branchName}`))) return null;
+	return await gitStdout(gitDir, ['rev-parse', `refs/remotes/origin/${branchName}`]);
 }
 
 async function pushBranch(options: {
 	readonly repoUrl: string;
 	readonly branchName: string;
-	readonly cwd: string;
+	readonly gitDir: string;
 	readonly githubToken: string;
-}): Promise<void> {
-	const result = await git({
-		cwd: options.cwd,
-		args: [
-			'push',
-			buildPushUrl(options.repoUrl, options.githubToken),
-			`${sanitizeBranchName(options.branchName)}:refs/heads/${sanitizeBranchName(options.branchName)}`,
-		],
-		reject: false,
+	readonly recordEvent?: (event: TaskEvent) => Promise<void>;
+}): Promise<{ readonly attempts: number }> {
+	const sanitizedBranchName = sanitizeBranchName(options.branchName);
+	const pushArgs = [
+		'push',
+		buildPushUrl(options.repoUrl, options.githubToken),
+		`${sanitizedBranchName}:refs/heads/${sanitizedBranchName}`,
+	] as const;
+	const retryResult = await runGitCommandWithTransientRetries({
+		run: async () =>
+			await git({
+				gitDir: options.gitDir,
+				args: pushArgs,
+				reject: false,
+			}),
+		onRetry: async ({ attempt, delayMs, result }) => {
+			const detail = scrubGithubTokenFromOutput(`${result.stdout}\n${result.stderr}`).trim();
+			writePushFlowLog(
+				`git push failed for ${options.repoUrl} ${sanitizedBranchName} on attempt ${attempt}; retrying in ${delayMs / 1000}s: ${detail}`,
+			);
+			await options.recordEvent?.({
+				event: 'controller-git-push-retry',
+				repoUrl: options.repoUrl,
+				branch: sanitizedBranchName,
+				attempts: attempt,
+				message: detail,
+				retryDelaySeconds: delayMs / 1000,
+			});
+		},
+		sleep,
 	});
 
-	if (result.exitCode !== 0) {
-		const errorDetail = scrubGithubTokenFromOutput(`${result.stdout}\n${result.stderr}`).trim();
-		writePushFlowLog(
-			`git push failed for ${options.repoUrl} ${sanitizeBranchName(options.branchName)}: ${errorDetail}`,
-		);
-		throw new Error(`git push failed\n${errorDetail}`);
+	if (retryResult.result.exitCode === 0) {
+		return { attempts: retryResult.attempts };
+	}
+
+	const lastErrorDetail = scrubGithubTokenFromOutput(
+		`${retryResult.result.stdout}\n${retryResult.result.stderr}`,
+	).trim();
+	writePushFlowLog(
+		`git push failed for ${options.repoUrl} ${sanitizedBranchName} after ${retryResult.attempts} attempts: ${lastErrorDetail}`,
+	);
+	const failureMessage =
+		retryResult.attempts > 1
+			? `git push failed\n${GIT_PUSH_RETRY_AFTER_MESSAGE}\n${lastErrorDetail}`
+			: `git push failed\n${lastErrorDetail}`;
+	throw new GitPushFailedAfterRetriesError(failureMessage, retryResult.attempts);
+}
+
+async function fetchPushedBranchRef(options: {
+	readonly gitDir: string;
+	readonly repoUrl: string;
+	readonly branchName: string;
+	readonly githubToken: string;
+	readonly recordEvent?: (event: TaskEvent) => Promise<void>;
+}): Promise<void> {
+	const retryResult = await runGitCommandWithTransientRetries({
+		run: async () =>
+			await git({
+				gitDir: options.gitDir,
+				args: [
+					'fetch',
+					'--prune',
+					buildPushUrl(options.repoUrl, options.githubToken),
+					`${options.branchName}:refs/remotes/origin/${options.branchName}`,
+				],
+				reject: false,
+			}),
+		onRetry: async ({ attempt, delayMs, result }) => {
+			const detail = scrubGithubTokenFromOutput(`${result.stdout}\n${result.stderr}`).trim();
+			writePushFlowLog(
+				`post-push git fetch failed for ${options.repoUrl} ${options.branchName} on attempt ${attempt}; retrying in ${delayMs / 1000}s: ${detail}`,
+			);
+			await options.recordEvent?.({
+				event: 'controller-git-push-retry',
+				repoUrl: options.repoUrl,
+				branch: options.branchName,
+				attempts: attempt,
+				message: detail,
+				retryDelaySeconds: delayMs / 1000,
+			});
+		},
+		sleep,
+	});
+	if (retryResult.result.exitCode !== 0) {
+		const detail = scrubGithubTokenFromOutput(
+			`${retryResult.result.stdout}\n${retryResult.result.stderr}`,
+		).trim();
+		const message =
+			retryResult.attempts > 1
+				? `git fetch failed\n${GIT_PUSH_RETRY_AFTER_MESSAGE}\n${detail}`
+				: `git fetch failed\n${detail}`;
+		throw new GitPushFailedAfterRetriesError(message, retryResult.attempts);
 	}
 }
 
+function parseCountRangeOutput(output: string, range: string): number {
+	const parsed = Number.parseInt(output.trim(), 10);
+	if (Number.isNaN(parsed)) {
+		throw new Error(`git rev-list --count ${range} returned non-numeric output: ${output}`);
+	}
+	return parsed;
+}
+
+async function countRange(gitDir: string, range: string): Promise<number> {
+	const result = await gitWithTransientRetries({
+		gitDir,
+		args: ['rev-list', '--count', range],
+	});
+	return parseCountRangeOutput(result.stdout, range);
+}
+
 async function buildBranchState(options: {
-	readonly cwd: string;
+	readonly gitDir: string;
 	readonly branchName: string;
 	readonly defaultBranch: string;
 	readonly previousRemoteBranchHead: string | null;
 }): Promise<Omit<PushBranchResult, 'repoUrl' | 'branch' | 'success'>> {
-	const localHead = await gitStdout(options.cwd, ['rev-parse', 'HEAD']);
-	const pushedRemoteBranchHead = await remoteBranchHead(options.cwd, options.branchName);
+	const localHead = await gitStdout(options.gitDir, ['rev-parse', 'HEAD']);
+	const pushedRemoteBranchHead = await remoteBranchHead(options.gitDir, options.branchName);
 	const remoteDefaultRef = `refs/remotes/origin/${options.defaultBranch}`;
-	const remoteDefaultHead = (await refExists(options.cwd, remoteDefaultRef))
-		? await gitStdout(options.cwd, ['rev-parse', remoteDefaultRef])
+	const remoteDefaultHead = (await refExists(options.gitDir, remoteDefaultRef))
+		? await gitStdout(options.gitDir, ['rev-parse', remoteDefaultRef])
 		: '';
 	const defaultRange = remoteDefaultHead ? `${remoteDefaultRef}..HEAD` : '';
 	const commitsOnBranch = defaultRange
-		? await commitSummaries(options.cwd, defaultRange, { includeAuthorDate: true })
+		? await commitSummaries(options.gitDir, defaultRange, { includeAuthorDate: true })
 		: [];
 	const pushedRange = options.previousRemoteBranchHead
 		? `${options.previousRemoteBranchHead}..HEAD`
 		: defaultRange;
-	const pushedInThisCall = pushedRange ? await commitSummaries(options.cwd, pushedRange) : [];
+	const pushedInThisCall = pushedRange ? await commitSummaries(options.gitDir, pushedRange) : [];
 	const divergence = remoteDefaultHead
 		? {
-				aheadOfDefault: await countRange(options.cwd, `${remoteDefaultRef}..HEAD`),
-				behindDefault: await countRange(options.cwd, `HEAD..${remoteDefaultRef}`),
+				aheadOfDefault: await countRange(options.gitDir, `${remoteDefaultRef}..HEAD`),
+				behindDefault: await countRange(options.gitDir, `HEAD..${remoteDefaultRef}`),
 			}
 		: { aheadOfDefault: 0, behindDefault: 0 };
 
@@ -236,8 +397,10 @@ export async function pushBranchesForTask(options: {
 	readonly activeTask: ActiveWorkerTask;
 	readonly branches: readonly PushBranchRequest[];
 	readonly githubToken: string;
+	readonly recordEvent?: (event: TaskEvent) => Promise<void>;
 }): Promise<{ readonly results: readonly PushBranchResult[] }> {
 	const requestedRepoUrls = new Set<string>();
+	const reposByUrl = new Map(options.activeTask.repos.map((repo) => [repo.repoUrl, repo] as const));
 	for (const branch of options.branches) {
 		if (!branch.branchName.startsWith(options.activeTask.branchPrefix)) {
 			throw new PushBranchesValidationError(
@@ -250,7 +413,7 @@ export async function pushBranchesForTask(options: {
 			);
 		}
 		requestedRepoUrls.add(branch.repoUrl);
-		const repo = options.activeTask.repos.find((candidate) => candidate.repoUrl === branch.repoUrl);
+		const repo = reposByUrl.get(branch.repoUrl);
 		if (!repo) {
 			throw new PushBranchesValidationError(
 				`Repo '${branch.repoUrl}' is not registered for active task '${options.activeTask.taskId}'.`,
@@ -258,24 +421,29 @@ export async function pushBranchesForTask(options: {
 		}
 	}
 
-	const results = await Promise.all(
+	const pushResults = await Promise.allSettled(
 		options.branches.map(async (branch) => {
-			const repo = options.activeTask.repos.find(
-				(candidate) => candidate.repoUrl === branch.repoUrl,
-			);
-			if (!repo) {
-				throw new PushBranchesValidationError(
-					`Repo '${branch.repoUrl}' is not registered for active task '${options.activeTask.taskId}'.`,
-				);
-			}
+			const repo = reposByUrl.get(branch.repoUrl);
+			if (!repo) throw new Error(`Validated repo '${branch.repoUrl}' disappeared before push.`);
 			return await pushOneBranchForTask({
 				branch,
 				githubToken: options.githubToken,
+				...(options.recordEvent ? { recordEvent: options.recordEvent } : {}),
 				repo,
 				task: options.activeTask,
 			});
 		}),
 	);
+	const results = pushResults.map((result, index): PushBranchResult => {
+		if (result.status === 'fulfilled') return result.value;
+		const branch = options.branches[index];
+		return {
+			repoUrl: branch?.repoUrl ?? 'unknown',
+			branch: sanitizeBranchName(branch?.branchName ?? 'unknown'),
+			success: false,
+			error: errorMessage(result.reason),
+		};
+	});
 
 	return { results };
 }
@@ -283,10 +451,12 @@ export async function pushBranchesForTask(options: {
 async function pushOneBranchForTask(options: {
 	readonly branch: PushBranchRequest;
 	readonly githubToken: string;
+	readonly recordEvent?: (event: TaskEvent) => Promise<void>;
 	readonly repo: ActiveWorkerTask['repos'][number];
 	readonly task: ActiveWorkerTask;
 }): Promise<PushBranchResult> {
 	const branchName = sanitizeBranchName(options.branch.branchName);
+	let pushAttempts = 0;
 	try {
 		if (branchName === options.repo.baseBranch) {
 			return {
@@ -296,18 +466,21 @@ async function pushOneBranchForTask(options: {
 				error: `Refusing to push: you are on the default branch "${options.repo.baseBranch}". Create an ${options.task.branchPrefix} branch first and move your commits to it.`,
 			};
 		}
+		await options.recordEvent?.({
+			event: 'controller-git-push-started',
+			repoUrl: options.branch.repoUrl,
+			branch: branchName,
+		});
 
 		await fetchRemoteRefs({
-			cwd: options.repo.hostWorkspacePath,
+			gitDir: options.repo.hostGitDir,
 			defaultBranch: options.repo.baseBranch,
 			repoUrl: options.branch.repoUrl,
 			githubToken: options.githubToken,
+			...(options.recordEvent ? { recordEvent: options.recordEvent } : {}),
 		});
-		const previousRemoteBranchHead = await remoteBranchHead(
-			options.repo.hostWorkspacePath,
-			branchName,
-		);
-		const localHead = await gitStdout(options.repo.hostWorkspacePath, ['rev-parse', 'HEAD']);
+		const previousRemoteBranchHead = await remoteBranchHead(options.repo.hostGitDir, branchName);
+		const localHead = await gitStdout(options.repo.hostGitDir, ['rev-parse', 'HEAD']);
 		if (previousRemoteBranchHead === localHead) {
 			return {
 				repoUrl: options.branch.repoUrl,
@@ -317,27 +490,34 @@ async function pushOneBranchForTask(options: {
 			};
 		}
 
-		await pushBranch({
+		const pushResult = await pushBranch({
 			repoUrl: options.branch.repoUrl,
 			branchName,
-			cwd: options.repo.hostWorkspacePath,
+			gitDir: options.repo.hostGitDir,
 			githubToken: options.githubToken,
+			...(options.recordEvent ? { recordEvent: options.recordEvent } : {}),
 		});
-		await git({
-			cwd: options.repo.hostWorkspacePath,
-			args: [
-				'fetch',
-				'--prune',
-				buildPushUrl(options.branch.repoUrl, options.githubToken),
-				`${branchName}:refs/remotes/origin/${branchName}`,
-			],
-			reject: false,
+		pushAttempts = pushResult.attempts;
+		await fetchPushedBranchRef({
+			gitDir: options.repo.hostGitDir,
+			repoUrl: options.branch.repoUrl,
+			branchName,
+			githubToken: options.githubToken,
+			...(options.recordEvent ? { recordEvent: options.recordEvent } : {}),
 		});
 		const state = await buildBranchState({
-			cwd: options.repo.hostWorkspacePath,
+			gitDir: options.repo.hostGitDir,
 			branchName,
 			defaultBranch: options.repo.baseBranch,
 			previousRemoteBranchHead,
+		});
+		await options.recordEvent?.({
+			event: 'controller-git-push-succeeded',
+			repoUrl: options.branch.repoUrl,
+			branch: branchName,
+			attempts: pushAttempts,
+			...(state.localHead ? { localHead: state.localHead } : {}),
+			...(state.remoteBranchHead ? { remoteBranchHead: state.remoteBranchHead } : {}),
 		});
 		return {
 			repoUrl: options.branch.repoUrl,
@@ -346,11 +526,26 @@ async function pushOneBranchForTask(options: {
 			...state,
 		};
 	} catch (error) {
+		const message = errorMessage(error);
+		const attempts =
+			error instanceof GitPushFailedAfterRetriesError ? error.attempts : pushAttempts;
+		const retryAfterSeconds =
+			error instanceof GitPushFailedAfterRetriesError && error.attempts > 1
+				? GIT_PUSH_RETRY_AFTER_SECONDS
+				: undefined;
+		await options.recordEvent?.({
+			event: 'controller-git-push-failed',
+			repoUrl: options.branch.repoUrl,
+			branch: branchName,
+			attempts,
+			message,
+			...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+		});
 		return {
 			repoUrl: options.branch.repoUrl,
 			branch: branchName,
 			success: false,
-			error: error instanceof Error ? error.message : String(error),
+			error: message,
 		};
 	}
 }

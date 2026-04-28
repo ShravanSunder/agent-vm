@@ -17,10 +17,7 @@ function formatComments(comments: readonly ReviewResult['comments'][number][]): 
 function formatRepos(repos: readonly RepoLocation[]): string {
 	if (repos.length === 0) return '(no repositories)';
 	return repos
-		.map(
-			(repo) =>
-				`- ${repo.repoUrl} (branch: ${repo.baseBranch})\n  Workspace: ${repo.workspacePath}`,
-		)
+		.map((repo) => `- ${repo.repoUrl} (branch: ${repo.baseBranch})\n  Work: ${repo.workPath}`)
 		.join('\n');
 }
 

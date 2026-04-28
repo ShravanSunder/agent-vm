@@ -11,6 +11,7 @@ import type {
 
 const systemConfig = {
 	cacheDir: './cache',
+	runtimeDir: './runtime',
 	systemConfigPath: './config/system.json',
 	systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 	host: {
@@ -50,7 +51,7 @@ const systemConfig = {
 				port: 18791,
 				config: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
-				workspaceDir: './workspaces/shravan',
+				zoneFilesDir: './zone-files/shravan',
 			},
 			secrets: {},
 			allowedHosts: ['api.anthropic.com'],
@@ -124,7 +125,8 @@ function createPreparedWorkerTaskStub(
 				resources: { externalResources: {} },
 			},
 			taskRoot: `/tmp/${taskId}`,
-			workspaceDir: `/tmp/${taskId}/workspace`,
+			taskRuntimeRoot: `/tmp/runtime/worker-tasks/shravan/${taskId}`,
+			workDir: `/tmp/${taskId}/work`,
 			stateDir: `/tmp/${taskId}/state`,
 			environment: {},
 			startedResourceProviders: [],
@@ -606,6 +608,7 @@ describe('startControllerRuntime', () => {
 				taskId: prepared.taskId,
 				zoneId: prepared.zoneId,
 				taskRoot: prepared.taskRoot,
+				eventLogPath: prepared.eventLogPath,
 				branchPrefix: prepared.preStartResult.effectiveConfig.branchPrefix,
 				repos: [],
 				workerIngress: null,

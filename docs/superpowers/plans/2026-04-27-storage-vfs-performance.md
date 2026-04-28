@@ -4,7 +4,7 @@
 
 **Goal:** Move hot runtime/package-manager work off Gondolin RealFS while preserving host-visible durable state, repairable caches, git metadata, backups, and controller-owned push/auth boundaries.
 
-**Architecture:** OpenClaw gateway images should carry stable hot runtime dependencies in the VM rootfs, while packable state stays on RealFS and repairable caches stay under cacheDir. OpenClaw's RealFS `/home/openclaw/zone-files` mount is a durable zone-files area, not the same storage class as worker execution files. Worker tasks should use VM-local rootfs/COW paths under `/work` for fast source/package/build operations, with a host-backed separate gitdir mounted through RealFS from a non-backup runtimeDir so commits and refs survive for recovery/push without being swallowed by normal zone backups.
+**Architecture:** OpenClaw gateway images should carry stable hot runtime dependencies in the VM rootfs, while packable state stays on RealFS and repairable caches stay under cacheDir. OpenClaw's RealFS `/home/openclaw/zone-files` mount is a durable zone-files area, not the same storage class as worker execution files. Worker tasks should use VM-local rootfs/COW paths under `/work` for fast source/package/build operations, with a host-backed separate gitdir mounted through RealFS from a non-backup runtimeDir so the controller can push committed work during the task without swallowing git object databases into normal zone backups.
 
 **Tech Stack:** TypeScript, pnpm, Vitest, Gondolin VFS providers, OpenClaw bundled plugin runtime deps, bare Git repositories plus explicit `--git-dir` / `--work-tree`, Node 24.
 
@@ -49,19 +49,18 @@ Worker gitdirs live under a top-level non-backup `runtimeDir`, for example:
 <runtimeDir>/worker-tasks/<zoneId>/<taskId>/gitdirs/<repoId>.git
 ```
 
-This path is not semantically "cache" when it contains unpushed commits, and it
-must not be placed under `cacheDir` because future deployments may put cache on
-network storage such as EFS. It is local task runtime/recovery state. The
-important property for this plan is that normal `backup create` does not copy
-it. Unpushed work must be preserved through an explicit recovery/export path,
-not through silent zone backup bloat.
+This path is not semantically "cache" while the task is running, and it must not
+be placed under `cacheDir` because future deployments may put cache on network
+storage such as EFS. It is local task runtime state. The important property for
+this plan is that normal `backup create` does not copy it. Work that must
+survive the task must be committed and pushed before teardown, not silently
+captured by zone backups.
 
 The worker owns the cleanliness contract before it returns a terminal state.
 Rootfs repo files disappear when the VM closes, so uncommitted dirty files are
 not recoverable after `vm.close()`. Completed tasks must commit their changes
 before returning `completed`; the controller then pushes committed Git state
-from the RealFS gitdir. After close, the controller can inspect refs, commits,
-and unpushed branches in `/gitdirs` only.
+from the RealFS gitdir. After close, the task runtime gitdir is deleted in v1.
 
 If a task fails, closes, or times out before committing, dirty rootfs files are
 not part of the v1 recovery contract. A future recovery feature may request a
@@ -203,11 +202,11 @@ are reconciled.
   RealFS path profile, and exposes the expected visible defaults through command
   metadata.
 
-`packages/agent-vm-worker/src/work/repo-bootstrap.ts`
+`packages/agent-vm-worker/src/git/repo-worktree-bootstrap.ts`
 
-  New worker-side module. On worker startup, creates `/work/repos/<repoId>` rootfs repo files using `/gitdirs/<repoId>.git`.
+New worker-side module. On worker startup, creates `/work/repos/<repoId>` rootfs repo files using `/gitdirs/<repoId>.git`.
 
-`packages/agent-vm-worker/src/work/repo-bootstrap.test.ts`
+`packages/agent-vm-worker/src/git/repo-worktree-bootstrap.test.ts`
 
   Unit tests for `.git` pointer creation and checkout command composition.
 
@@ -540,14 +539,21 @@ OpenClaw gateway image target and asserts the generated Docker build context or
 build step includes a deterministic plugin-deps bake contract:
 
 ```bash
-OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive
+OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json \
+OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps \
+openclaw doctor --fix --non-interactive
 ```
 
-The assertion should also cover the marker file written after a successful
-stage:
+The temporary build-time config is secret-free. It sets `gateway.mode=local` and
+enables the Discord channel so OpenClaw includes the optional Discord runtime
+dependency set during image build instead of installing those packages at
+gateway boot.
+
+The assertion should also cover the marker file written under the
+version/fingerprint-specific stage directory after a successful stage:
 
 ```text
-/opt/openclaw/plugin-runtime-deps/.openclaw-runtime-deps.json
+/opt/openclaw/plugin-runtime-deps/openclaw-<version>-<fingerprint>/.openclaw-runtime-deps.json
 ```
 
 That marker should include the OpenClaw version, the plugin manifest/fingerprint,
@@ -626,7 +632,7 @@ Co-authored-by: Codex <noreply@openai.com>"
 - Modify: `packages/agent-vm/src/controller/git-pull-default-operations.ts`
 - Test: `packages/agent-vm/src/controller/git-pull-default-operations.test.ts`
 - Modify: `packages/agent-vm/src/backup/backup-create-operation.ts`
-- Test: `packages/agent-vm/src/backup/backup-create-operation.test.ts`
+- Test: `packages/agent-vm/src/backup/backup-manager.test.ts`
 - Modify: `packages/agent-vm/src/config/system-config.ts`
 - Test: `packages/agent-vm/src/config/system-config.test.ts`
 - Modify: `packages/agent-vm/src/cli/init-command.ts`
@@ -635,8 +641,8 @@ Co-authored-by: Codex <noreply@openai.com>"
 - Test: `packages/agent-vm/src/cli/init-command.test.ts`
 - Modify: `packages/agent-vm-worker/src/config/worker-config.ts`
 - Test: `packages/agent-vm-worker/src/config/worker-config.test.ts`
-- Create: `packages/agent-vm-worker/src/work/repo-bootstrap.ts`
-- Create: `packages/agent-vm-worker/src/work/repo-bootstrap.test.ts`
+- Create: `packages/agent-vm-worker/src/git/repo-worktree-bootstrap.ts`
+- Create: `packages/agent-vm-worker/src/git/repo-worktree-bootstrap.test.ts`
 - Modify: `packages/agent-vm-worker/src/coordinator/coordinator.ts`
 - Modify: `packages/worker-gateway/src/worker-lifecycle.ts`
 - Test: `packages/worker-gateway/src/worker-lifecycle.test.ts`
@@ -784,7 +790,7 @@ overlap with `stateDir`, `cacheDir`, or the backup-copied OpenClaw
 `zoneFilesDir`. The guard must be symmetric: `runtimeDir` under `stateDir` is
 bad, and `stateDir` under `runtimeDir` is also bad.
 
-Add tests in `packages/agent-vm/src/backup/backup-create-operation.test.ts`
+Add tests in `packages/agent-vm/src/backup/backup-manager.test.ts`
 covering:
 
 ```text
@@ -797,56 +803,44 @@ zoneFilesDir under runtimeDir   -> OpenClaw backup fails before tar staging
 runtimeDir sibling path         -> backup proceeds
 ```
 
-- [ ] **Step 4: Extend worker config schema with repo work metadata**
+- [ ] **Step 4: Add per-task repo metadata schema**
 
-In `packages/agent-vm-worker/src/config/worker-config.ts`, add:
+In `packages/agent-vm-worker/src/shared/repo-location.ts`, define the per-task
+repo location schema used by task input and state:
 
 ```ts
-const repoWorkDirectorySchema = z.object({
-	repoId: z.string().min(1),
+const repoTargetSchema = z.object({
 	repoUrl: z.string().min(1),
 	baseBranch: z.string().min(1),
-	taskBranch: z.string().min(1),
-	repoWorkPath: z.string().min(1),
+});
+
+const repoLocationSchema = repoTargetSchema.extend({
 	gitDirPath: z.string().min(1),
+	workPath: z.string().min(1),
 });
 ```
 
-Add to `workerConfigSchema`:
+Task repo locations are per-task data. Do not add them to the long-lived
+`workerConfigSchema`; they belong in `taskConfig.repos`.
+
+- [ ] **Step 5: Add per-task repo schema test**
+
+In `packages/agent-vm-worker/src/server.test.ts` or the state event tests, verify
+task input accepts multiple repos:
 
 ```ts
-repoWorkDirectories: z.array(repoWorkDirectorySchema).default([]),
-```
-
-- [ ] **Step 5: Add config schema test**
-
-In `packages/agent-vm-worker/src/config/worker-config.test.ts`, add:
-
-```ts
-it('parses repo work metadata', () => {
-	const config = workerConfigSchema.parse({
-		repoWorkDirectories: [
-			{
-				repoId: 'agent-vm',
-				repoUrl: 'https://github.com/ShravanSunder/agent-vm.git',
-				baseBranch: 'main',
-				taskBranch: 'agent/task-001',
-				repoWorkPath: '/work/repos/agent-vm',
-				gitDirPath: '/gitdirs/agent-vm.git',
-			},
-		],
-	});
-
-	expect(config.repoWorkDirectories).toEqual([
+it('POST /tasks accepts multiple repos', async () => {
+	// Arrange / Act against the worker task input schema or HTTP route.
+	const repos = [
 		{
-			repoId: 'agent-vm',
 			repoUrl: 'https://github.com/ShravanSunder/agent-vm.git',
 			baseBranch: 'main',
-			taskBranch: 'agent/task-001',
-			repoWorkPath: '/work/repos/agent-vm',
 			gitDirPath: '/gitdirs/agent-vm.git',
+			workPath: '/work/repos/agent-vm',
 		},
-	]);
+	];
+
+	expect(parsedTaskConfig.repos).toEqual(repos);
 });
 ```
 
@@ -855,42 +849,38 @@ it('parses repo work metadata', () => {
 Run:
 
 ```bash
-pnpm vitest run packages/agent-vm-worker/src/config/worker-config.test.ts
+pnpm vitest run packages/agent-vm-worker/src/server.test.ts
 ```
 
 Expected: FAIL before schema implementation, PASS after schema implementation.
 
-- [ ] **Step 7: Create repo bootstrap module**
+- [ ] **Step 7: Create repo worktree bootstrap module**
 
-Create `packages/agent-vm-worker/src/work/repo-bootstrap.ts`:
+Create `packages/agent-vm-worker/src/git/repo-worktree-bootstrap.ts`:
 
 ```ts
 import { mkdir, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import { dirname, join } from 'node:path';
 import { execa } from 'execa';
 
-export interface RepoWorkDirectory {
-	readonly repoId: string;
-	readonly repoUrl: string;
-	readonly baseBranch: string;
-	readonly taskBranch: string;
-	readonly repoWorkPath: string;
-	readonly gitDirPath: string;
+import type { RepoLocation } from '../shared/repo-location.js';
+
+const GIT_BOOTSTRAP_TIMEOUT_MS = 120_000;
+
+function buildTaskBranchName(branchPrefix: string, taskId: string): string {
+	return `${branchPrefix}${taskId}`;
 }
 
-export async function bootstrapRepoWorkDirs(
-	repoWorkDirectories: readonly RepoWorkDirectory[],
-): Promise<void> {
-	for (const repoWorkDirectory of repoWorkDirectories) {
-		await bootstrapRepoWorkDir(repoWorkDirectory);
-	}
-}
-
-async function bootstrapRepoWorkDir(repoWorkDirectory: RepoWorkDirectory): Promise<void> {
-	await mkdir(repoWorkDirectory.repoWorkPath, { recursive: true });
+async function bootstrapRepoWorktree(options: {
+	readonly branchPrefix: string;
+	readonly repo: RepoLocation;
+	readonly taskId: string;
+}): Promise<void> {
+	await mkdir(options.repo.workPath, { recursive: true });
+	await mkdir(dirname(options.repo.gitDirPath), { recursive: true });
 	await writeFile(
-		path.join(repoWorkDirectory.repoWorkPath, '.git'),
-		`gitdir: ${repoWorkDirectory.gitDirPath}\n`,
+		join(options.repo.workPath, '.git'),
+		`gitdir: ${options.repo.gitDirPath}\n`,
 		{ encoding: 'utf8', mode: 0o644 },
 	);
 	await execa(
@@ -898,21 +888,37 @@ async function bootstrapRepoWorkDir(repoWorkDirectory: RepoWorkDirectory): Promi
 		[
 			'-c',
 			'core.hooksPath=/dev/null',
-			`--git-dir=${repoWorkDirectory.gitDirPath}`,
-			`--work-tree=${repoWorkDirectory.repoWorkPath}`,
+			`--git-dir=${options.repo.gitDirPath}`,
+			`--work-tree=${options.repo.workPath}`,
 			'checkout',
 			'-B',
-			repoWorkDirectory.taskBranch,
-			repoWorkDirectory.baseBranch,
+			buildTaskBranchName(options.branchPrefix, options.taskId),
+			options.repo.baseBranch,
 		],
-		{ reject: true, timeout: 60_000 },
+		{ reject: true, timeout: GIT_BOOTSTRAP_TIMEOUT_MS },
+	);
+}
+
+export async function bootstrapRepoWorktrees(options: {
+	readonly branchPrefix: string;
+	readonly repos: readonly RepoLocation[];
+	readonly taskId: string;
+}): Promise<void> {
+	await Promise.all(
+		options.repos.map(async (repo) => {
+			await bootstrapRepoWorktree({
+				branchPrefix: options.branchPrefix,
+				repo,
+				taskId: options.taskId,
+			});
+		}),
 	);
 }
 ```
 
 - [ ] **Step 8: Add repo bootstrap tests**
 
-Create `packages/agent-vm-worker/src/work/repo-bootstrap.test.ts`:
+Create `packages/agent-vm-worker/src/git/repo-worktree-bootstrap.test.ts`:
 
 ```ts
 import { mkdtemp, readFile } from 'node:fs/promises';
@@ -920,30 +926,32 @@ import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, it, vi } from 'vitest';
-import { bootstrapRepoWorkDirs } from './repo-bootstrap.js';
+import { bootstrapRepoWorktrees } from './repo-worktree-bootstrap.js';
 
 vi.mock('execa', () => ({
 	execa: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
 }));
 
-describe('bootstrapRepoWorkDirs', () => {
+describe('bootstrapRepoWorktrees', () => {
 	it('writes a VM-valid .git pointer and checks out the base branch', async () => {
 		const root = await mkdtemp(path.join(os.tmpdir(), 'worker-repo-'));
-		const repoWorkPath = path.join(root, 'work', 'repos', 'agent-vm');
+		const workPath = path.join(root, 'work', 'repos', 'agent-vm');
 		const gitDirPath = '/gitdirs/agent-vm.git';
 
-		await bootstrapRepoWorkDirs([
-			{
-				repoId: 'agent-vm',
-				repoUrl: 'https://github.com/ShravanSunder/agent-vm.git',
-				baseBranch: 'main',
-				taskBranch: 'agent/task-001',
-				repoWorkPath,
-				gitDirPath,
-			},
-		]);
+		await bootstrapRepoWorktrees({
+			branchPrefix: 'agent/',
+			taskId: 'task-001',
+			repos: [
+				{
+					repoUrl: 'https://github.com/ShravanSunder/agent-vm.git',
+					baseBranch: 'main',
+					workPath,
+					gitDirPath,
+				},
+			],
+		});
 
-		await expect(readFile(path.join(repoWorkPath, '.git'), 'utf8')).resolves.toBe(
+		await expect(readFile(path.join(workPath, '.git'), 'utf8')).resolves.toBe(
 			'gitdir: /gitdirs/agent-vm.git\n',
 		);
 		expect(execa).toHaveBeenCalledWith(
@@ -952,13 +960,13 @@ describe('bootstrapRepoWorkDirs', () => {
 				'-c',
 				'core.hooksPath=/dev/null',
 				'--git-dir=/gitdirs/agent-vm.git',
-				`--work-tree=${repoWorkPath}`,
+				`--work-tree=${workPath}`,
 				'checkout',
 				'-B',
 				'agent/task-001',
 				'main',
 			],
-			{ reject: true, timeout: 60_000 },
+			{ reject: true, timeout: 120_000 },
 		);
 	});
 });
@@ -969,7 +977,7 @@ describe('bootstrapRepoWorkDirs', () => {
 Run:
 
 ```bash
-pnpm vitest run packages/agent-vm-worker/src/work/repo-bootstrap.test.ts
+pnpm vitest run packages/agent-vm-worker/src/git/repo-worktree-bootstrap.test.ts
 ```
 
 Expected: PASS after implementation.
@@ -1071,12 +1079,12 @@ export interface ActiveWorkerTaskRepo {
 	readonly repoUrl: string;
 	readonly baseBranch: string;
 	readonly hostGitDir: string;
-	readonly vmRepoPath: string;
+	readonly vmWorkPath: string;
 }
 ```
 
 `hostWorkspacePath` must not remain on this controller-facing type. There is no
-reliable host worktree after this task. `vmRepoPath` should point at
+reliable host worktree after this task. `vmWorkPath` should point at
 `/work/repos/<repoId>` for agent/runtime instructions; it is not usable by host
 Git commands.
 
@@ -1179,22 +1187,24 @@ half-migrated helper fails.
 This step is part of the same commit as the bare-gitdir worker task runner
 change. Do not land Step 10 without Step 10b.
 
-Also update task cleanup so gitdir removal happens only after the controller has
-checked committed Git state. Rootfs repo files disappear at `vm.close()`, so
-post-close cleanup cannot inspect or recover dirty uncommitted files. The worker
-must commit changes before returning `completed`; the controller then pushes or
-retains committed refs from the gitdir. The cleanup path must report a clear
-recovery decision when committed work is not safely pushed:
+`git push` must retry transient failures before reporting failure to the agent.
+Use three retries with 2s, 4s, and 16s backoff, and log each failed attempt to
+controller stderr after scrubbing tokens. The retry loop must stay serial:
+parallel push retries are invalid because each attempt depends on the previous
+remote result.
 
-```ts
-type TaskCleanupDecision =
-	| { readonly kind: 'delete'; readonly reason: 'clean-and-pushed' }
-	| {
-			readonly kind: 'retain';
-			readonly reason: 'failed-task' | 'unpushed-commits';
-	  }
-	| { readonly kind: 'export'; readonly artifactPath: string };
-```
+The post-push verification fetch must fail loudly. Do not return
+`success: true` with stale remote refs if the fetch that refreshes
+`refs/remotes/origin/<branch>` fails. Branch-state reads (`git log`,
+`git rev-list`, current-branch reads) must also fail the operation instead of
+returning empty summaries, zero divergence, or `null` on Git errors.
+
+Task cleanup is intentionally ephemeral for v1: `postStopGateway` always deletes
+`runtimeDir/worker-tasks/<zone>/<task>` after the VM closes. This matches the
+current worker contract: the agent must commit and call `git-push` before
+terminal completion if work must leave the task. The controller retries
+transient GitHub/network failures but does not promise disk retention after task
+teardown.
 
 If a task fails, closes, or times out before committing, v1 recovery is limited
 to Git state that already reached `/gitdirs`. A future pre-close recovery
@@ -1202,17 +1212,21 @@ feature may ask the worker for a patch/file snapshot before VM close, but this
 implementation must not promise recovery of dirty `/work/repos` files after
 close.
 
-- [ ] **Step 11: Pass repo work metadata to worker config**
+If push retries are exhausted, the agent-facing error should say the controller
+already retried with 2s, 4s, and 16s backoff and that the agent should retry the
+git-push tool again in about 5 minutes if the task is still running; otherwise it
+must start a new task. Do not tell the agent that runtime gitdirs are retained.
 
-When building `effectiveConfig`, include:
+- [ ] **Step 11: Pass repo work metadata to worker task config**
+
+When posting a worker task, include per-task repo locations in `taskConfig.repos`
+rather than in the long-lived worker config:
 
 ```ts
-repoWorkDirectories: clonedRepos.map((repo) => ({
-	repoId: repo.repoId,
+repos: clonedRepos.map((repo) => ({
 	repoUrl: repo.repoUrl,
 	baseBranch: repo.baseBranch,
-	taskBranch: `agent/${taskId}`,
-	repoWorkPath: `/work/repos/${repo.repoId}`,
+	workPath: `/work/repos/${repo.repoId}`,
 	gitDirPath: `/gitdirs/${repo.repoId}.git`,
 })),
 ```
@@ -1281,16 +1295,20 @@ contract in the same task; do not keep `/workspace` as the public worker path.
 
 - [ ] **Step 15: Call repo bootstrap from coordinator startup**
 
-In `packages/agent-vm-worker/src/coordinator/coordinator.ts`, import and call:
+In `packages/agent-vm-worker/src/coordinator/task-runner.ts`, import and call:
 
 ```ts
-import { bootstrapRepoWorkDirs } from '../work/repo-bootstrap.js';
+import { bootstrapRepoWorktrees } from '../git/repo-worktree-bootstrap.js';
 ```
 
 Before task phases begin:
 
 ```ts
-await bootstrapRepoWorkDirs(config.repoWorkDirectories);
+await bootstrapRepoWorktrees({
+	branchPrefix: workerConfig.branchPrefix,
+	repos: taskConfig.repos,
+	taskId,
+});
 ```
 
 - [ ] **Step 16: Run targeted tests**
@@ -1298,10 +1316,15 @@ await bootstrapRepoWorkDirs(config.repoWorkDirectories);
 Run:
 
 ```bash
-pnpm vitest run packages/agent-vm/src/config/system-config.test.ts packages/agent-vm/src/cli/init-command.test.ts packages/agent-vm/src/backup/backup-create-operation.test.ts packages/agent-vm-worker/src/config/worker-config.test.ts packages/agent-vm-worker/src/work/repo-bootstrap.test.ts packages/worker-gateway/src/worker-lifecycle.test.ts packages/agent-vm/src/controller/worker-task-runner.test.ts packages/agent-vm/src/controller/git-push-operations.test.ts packages/agent-vm/src/controller/git-pull-default-operations.test.ts
+pnpm vitest run packages/agent-vm/src/config/system-config.test.ts packages/agent-vm/src/cli/init-command.test.ts packages/agent-vm/src/backup/backup-manager.test.ts packages/agent-vm-worker/src/server.test.ts packages/agent-vm-worker/src/git/repo-worktree-bootstrap.test.ts packages/worker-gateway/src/worker-lifecycle.test.ts packages/agent-vm/src/controller/worker-task-runner.test.ts packages/agent-vm/src/controller/git-push-operations.test.ts packages/agent-vm/src/controller/git-pull-default-operations.test.ts
 ```
 
 Expected: PASS.
+
+Clone and worktree bootstrap failures must aggregate all repo failures. Do not
+throw only the first rejected clone/checkout promise: multi-repo tasks need all
+failed repo URLs/work paths in the surfaced error so the API/logs show the full
+failure set in one pass.
 
 - [ ] **Step 17: Commit in reviewable seams**
 
@@ -1313,12 +1336,12 @@ git commit -m "feat: add runtimeDir and zoneFilesDir config
 
 Co-authored-by: Codex <noreply@openai.com>"
 
-git add packages/agent-vm/src/backup/backup-create-operation.ts packages/agent-vm/src/backup/backup-create-operation.test.ts
+git add packages/agent-vm/src/backup/backup-create-operation.ts packages/agent-vm/src/backup/backup-manager.ts packages/agent-vm/src/backup/backup-manager.test.ts packages/agent-vm/src/cli/backup-commands.ts packages/agent-vm/src/cli/backup-commands.test.ts
 git commit -m "feat: guard backup path overlap
 
 Co-authored-by: Codex <noreply@openai.com>"
 
-git add packages/agent-vm-worker/src/config/worker-config.ts packages/agent-vm-worker/src/config/worker-config.test.ts packages/agent-vm-worker/src/work/repo-bootstrap.ts packages/agent-vm-worker/src/work/repo-bootstrap.test.ts
+git add packages/agent-vm-worker/src/shared/repo-location.ts packages/agent-vm-worker/src/server.ts packages/agent-vm-worker/src/server.test.ts packages/agent-vm-worker/src/git/repo-worktree-bootstrap.ts packages/agent-vm-worker/src/git/repo-worktree-bootstrap.test.ts
 git commit -m "feat: bootstrap worker repos under work dir
 
 Co-authored-by: Codex <noreply@openai.com>"
@@ -1372,8 +1395,8 @@ it('reports missing baked OpenClaw plugin runtime deps with a rebuild hint', asy
 In `packages/agent-vm/src/operations/doctor.ts`, add a check that verifies the current OpenClaw gateway image has the expected plugin runtime stage marker:
 
 ```ts
-const openClawPluginRuntimeDepsMarkerPath =
-	'/opt/openclaw/plugin-runtime-deps/.openclaw-runtime-deps.json';
+const openClawPluginRuntimeDepsMarkerProbe =
+	'find /opt/openclaw/plugin-runtime-deps -name .openclaw-runtime-deps.json -type f -print -quit';
 ```
 
 If the marker is missing, report:
@@ -1634,6 +1657,6 @@ Placeholder scan:
 
 Type consistency:
 
-- `RepoWorkDirectory` fields match the planned `repoWorkDirectories` schema.
-- `repoWorkPath` and `gitDirPath` are used consistently in controller metadata and worker bootstrap.
+- `RepoLocation` fields match the task-level `repos` schema.
+- `workPath` and `gitDirPath` are used consistently in controller metadata and worker bootstrap.
 - OpenClaw plugin stage path is consistently `/opt/openclaw/plugin-runtime-deps`.

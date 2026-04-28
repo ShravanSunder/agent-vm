@@ -43,6 +43,7 @@ interface ImageProfileDoctorTarget {
 	readonly buildConfig: string;
 	readonly checkName: string;
 	readonly dockerfile?: string;
+	readonly type: 'openclaw' | 'toolVm' | 'worker';
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -51,6 +52,7 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 
 function createImageProfileDoctorTarget(
 	checkName: string,
+	type: ImageProfileDoctorTarget['type'],
 	buildConfig: string,
 	dockerfile: string | undefined,
 ): ImageProfileDoctorTarget {
@@ -58,7 +60,8 @@ function createImageProfileDoctorTarget(
 		buildConfig: string;
 		checkName: string;
 		dockerfile?: string;
-	} = { buildConfig, checkName };
+		type: ImageProfileDoctorTarget['type'];
+	} = { buildConfig, checkName, type };
 	if (dockerfile !== undefined) {
 		target.dockerfile = dockerfile;
 	}
@@ -117,13 +120,49 @@ async function collectDockerDaemonReady(availableBinaries: ReadonlySet<string>):
 	}
 }
 
+const openClawPluginRuntimeDepsMarkerFindCommand =
+	'find /opt/openclaw/plugin-runtime-deps -name .openclaw-runtime-deps.json -type f -print -quit';
+
+async function collectOpenClawPluginRuntimeDepsImageCheck(
+	imageName: string,
+	checkName: string,
+): Promise<DoctorCheck> {
+	try {
+		await execa(
+			'docker',
+			[
+				'run',
+				'--rm',
+				imageName,
+				'sh',
+				'-lc',
+				`test -n "$(${openClawPluginRuntimeDepsMarkerFindCommand})"`,
+			],
+			{ stderr: 'ignore', stdout: 'ignore' },
+		);
+		return {
+			name: checkName,
+			ok: true,
+			hint: imageName,
+		};
+	} catch {
+		return {
+			name: checkName,
+			ok: false,
+			hint: `Built OpenClaw image '${imageName}' does not expose a nested .openclaw-runtime-deps.json marker under /opt/openclaw/plugin-runtime-deps. Re-run agent-vm build for this image profile and verify the plugin runtime deps install step succeeds.`,
+		};
+	}
+}
+
 async function collectImageProfileDockerfileChecks(
 	systemConfig: LoadedSystemConfig,
+	canRunDockerImages: boolean,
 ): Promise<readonly DoctorCheck[]> {
 	const imageProfileTargets: readonly ImageProfileDoctorTarget[] = [
 		...Object.entries(systemConfig.imageProfiles.gateways).map(([profileName, profile]) =>
 			createImageProfileDoctorTarget(
 				`gateway-image-profile-${profileName}-dockerfile`,
+				profile.type,
 				profile.buildConfig,
 				profile.dockerfile,
 			),
@@ -131,6 +170,7 @@ async function collectImageProfileDockerfileChecks(
 		...Object.entries(systemConfig.imageProfiles.toolVms).map(([profileName, profile]) =>
 			createImageProfileDoctorTarget(
 				`tool-vm-image-profile-${profileName}-dockerfile`,
+				profile.type,
 				profile.buildConfig,
 				profile.dockerfile,
 			),
@@ -150,10 +190,56 @@ async function collectImageProfileDockerfileChecks(
 
 		const ociConfig = isObjectRecord(buildConfig) ? buildConfig.oci : undefined;
 		if (!isObjectRecord(ociConfig) || ociConfig.pullPolicy !== 'never') {
-			continue;
+			if (imageProfileTarget.type !== 'openclaw' || imageProfileTarget.dockerfile === undefined) {
+				continue;
+			}
 		}
 
-		const imageName = typeof ociConfig.image === 'string' ? ociConfig.image : 'configured image';
+		if (imageProfileTarget.type === 'openclaw' && imageProfileTarget.dockerfile !== undefined) {
+			let dockerfileContent: string;
+			try {
+				// oxlint-disable-next-line no-await-in-loop -- stable doctor output order follows system.json order
+				dockerfileContent = await fs.readFile(imageProfileTarget.dockerfile, 'utf8');
+			} catch {
+				dockerfileContent = '';
+			}
+			const usesPluginRuntimeDepsStageConfig = dockerfileContent.includes(
+				'OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json',
+			);
+			const stagesPluginRuntimeDeps = dockerfileContent.includes(
+				'OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive',
+			);
+			const verifiesPluginRuntimeDepsMarker = dockerfileContent.includes(
+				openClawPluginRuntimeDepsMarkerFindCommand,
+			);
+			checks.push({
+				name: imageProfileTarget.checkName.replace(/-dockerfile$/u, '-plugin-runtime-deps'),
+				ok:
+					usesPluginRuntimeDepsStageConfig &&
+					stagesPluginRuntimeDeps &&
+					verifiesPluginRuntimeDepsMarker,
+				hint:
+					usesPluginRuntimeDepsStageConfig &&
+					stagesPluginRuntimeDeps &&
+					verifiesPluginRuntimeDepsMarker
+						? imageProfileTarget.dockerfile
+						: 'Bake OpenClaw plugin runtime deps with a secret-free OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json, OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive, and verify a nested .openclaw-runtime-deps.json marker under /opt/openclaw/plugin-runtime-deps.',
+			});
+			if (canRunDockerImages && isObjectRecord(ociConfig) && typeof ociConfig.image === 'string') {
+				checks.push(
+					// oxlint-disable-next-line no-await-in-loop -- stable doctor output follows profile order
+					await collectOpenClawPluginRuntimeDepsImageCheck(
+						ociConfig.image,
+						imageProfileTarget.checkName.replace(/-dockerfile$/u, '-plugin-runtime-deps-image'),
+					),
+				);
+			}
+		}
+
+		const imageName =
+			isObjectRecord(ociConfig) && typeof ociConfig.image === 'string'
+				? ociConfig.image
+				: 'configured image';
 		checks.push({
 			name: imageProfileTarget.checkName,
 			ok: imageProfileTarget.dockerfile !== undefined,
@@ -285,6 +371,7 @@ export async function runControllerOperationCommand(
 				: [];
 			const imageProfileDockerfileChecks = await collectImageProfileDockerfileChecks(
 				options.systemConfig,
+				availableBinaries.has('docker') && dockerDaemonReady,
 			);
 			const systemCacheIdentifierCheck = await collectSystemCacheIdentifierCheck(
 				options.systemConfig,

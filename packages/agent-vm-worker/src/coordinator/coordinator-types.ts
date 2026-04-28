@@ -11,7 +11,7 @@ export interface CreateTaskInput {
 
 export interface CoordinatorDeps {
 	readonly config: WorkerConfig;
-	readonly workspaceDir?: string;
+	readonly workDir?: string;
 }
 
 export interface Coordinator {

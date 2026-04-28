@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { createInterface as createReadlineInterface } from 'node:readline';
 
 import { execa } from 'execa';
 
@@ -24,6 +25,19 @@ export interface BuildDockerImageOptions {
 	readonly streamPreview?: TaskOutput;
 }
 
+function pipeStreamAsLines(
+	stream: NodeJS.ReadableStream | null | undefined,
+	sink: TaskOutput,
+): void {
+	if (!stream) {
+		return;
+	}
+	const lineReader = createReadlineInterface({ input: stream });
+	lineReader.on('line', (line: string) => {
+		sink.write(`${line}\n`);
+	});
+}
+
 async function executeDockerCommand(
 	command: string,
 	args: readonly string[],
@@ -35,12 +49,8 @@ async function executeDockerCommand(
 	}
 
 	const child = execa(command, args, { stdio: ['inherit', 'pipe', 'pipe'] });
-	child.stdout?.on('data', (chunk) => {
-		options.streamPreview?.write(chunk);
-	});
-	child.stderr?.on('data', (chunk) => {
-		options.streamPreview?.write(chunk);
-	});
+	pipeStreamAsLines(child.stdout, options.streamPreview);
+	pipeStreamAsLines(child.stderr, options.streamPreview);
 	await child;
 }
 

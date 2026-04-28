@@ -6,6 +6,7 @@ import { createSecretResolver } from './controller-runtime-support.js';
 
 const baseConfig = {
 	cacheDir: './cache',
+	runtimeDir: './runtime',
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
@@ -33,7 +34,7 @@ const baseConfig = {
 				port: 18791,
 				config: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
-				workspaceDir: './workspaces/shravan',
+				zoneFilesDir: './zone-files/shravan',
 			},
 			secrets: {
 				OPENAI_API_KEY: {

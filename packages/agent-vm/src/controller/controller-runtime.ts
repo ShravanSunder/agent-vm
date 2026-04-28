@@ -1,3 +1,4 @@
+import { appendEvent, type TaskEvent } from '@agent-vm/agent-vm-worker';
 import { createOpCliSecretResolver, type ManagedVm } from '@agent-vm/gondolin-adapter';
 
 import { deleteGatewayRuntimeRecord as deleteGatewayRuntimeRecordDefault } from '../gateway/gateway-runtime-record.js';
@@ -61,6 +62,20 @@ function formatUnknownError(error: unknown): string {
 		return error.message;
 	}
 	return typeof error === 'string' ? error : JSON.stringify(error);
+}
+
+async function recordActiveTaskEvent(options: {
+	readonly event: TaskEvent;
+	readonly eventLogPath: string;
+	readonly taskId: string;
+}): Promise<void> {
+	try {
+		await appendEvent(options.eventLogPath, options.event);
+	} catch (error) {
+		writeControllerRuntimeLog(
+			`Failed to record controller event '${options.event.event}' for task '${options.taskId}': ${formatUnknownError(error)}`,
+		);
+	}
 }
 
 export async function startControllerRuntime(
@@ -342,6 +357,13 @@ export async function startControllerRuntime(
 						activeTask,
 						branches: input.branches,
 						githubToken: controllerGithubToken,
+						recordEvent: async (event) => {
+							await recordActiveTaskEvent({
+								event,
+								eventLogPath: activeTask.eventLogPath,
+								taskId,
+							});
+						},
 					});
 				}
 			: undefined;
@@ -363,6 +385,13 @@ export async function startControllerRuntime(
 						activeTask,
 						repoUrl: input.repoUrl,
 						githubToken: controllerGithubToken,
+						recordEvent: async (event) => {
+							await recordActiveTaskEvent({
+								event,
+								eventLogPath: activeTask.eventLogPath,
+								taskId,
+							});
+						},
 					});
 				}
 			: undefined;

@@ -124,7 +124,7 @@ backed up.
 The backup command also copies the OpenClaw `zoneFilesDir`. Worker gitdirs must
 not be placed there either unless backup gains a worker-specific exclusion
 policy. For the target design, gitdirs live in `runtimeDir`, a non-backup task
-runtime root, and are preserved through explicit recovery/export flows.
+runtime root, and are deleted during task teardown.
 
 ## Target Worker Layout
 
@@ -158,15 +158,15 @@ task clones.
 ## Backup Policy
 
 ```text
-active task with unpushed commits       preserve/recover explicitly
+active task with unpushed commits       agent must push before teardown
 completed task with pushed branch       disposable
-failed task                             retain for debugging until cleanup
+failed/closed/timeout task              disposable after VM close
 normal zone backup                      durable state, not task repos
 ```
 
-Worker `.git` storage is controller-visible recovery state. It should not be
-treated as ordinary durable zone state forever without an explicit recovery or
-retention policy.
+Worker `.git` storage is controller-visible runtime state while the task is
+alive. It is not normal durable zone state, and v1 does not retain it after task
+teardown.
 
 ## Worker Gitdir Lifecycle
 
@@ -180,41 +180,37 @@ worker task starts
 ```
 
 Worker gitdirs are not normal backup payload. They are a controller-managed
-task runtime boundary: visible to the host for push/fetch/recovery, but cleaned
-up when the task lifecycle is complete.
+task runtime boundary: visible to the host for push/fetch while the task is
+alive, then cleaned up when the task lifecycle is complete.
 
-Before cleanup, the controller must make unresolved Git state explicit:
+Before terminal completion, the agent must make unresolved Git state explicit:
 
 ```text
-clean and pushed        -> delete gitdir
-unpushed commits        -> push, export recovery artifact, or discard
+clean and pushed        -> task can complete
+unpushed commits        -> agent calls git-push, or reports the failure
 dirty repo files        -> worker must commit before terminal completed state
-failed task             -> retain until operator recovery decision
+failed task             -> runtime artifacts are deleted during teardown
 ```
 
 After the worker VM closes, rootfs/COW `/work/repos` files are gone. The
-controller can inspect RealFS gitdirs, refs, and commits, but it cannot recover
-dirty uncommitted rootfs files unless a future pre-close snapshot/export path is
+controller cannot inspect RealFS gitdirs, refs, commits, or dirty uncommitted
+rootfs files for that task unless a future pre-close snapshot/export path is
 added.
 
 ## Tool VM
 
-Tool VMs are lease-local execution sandboxes. They follow the same hot-path
-storage rule as worker VMs, but their state is narrower: only controller-needed
-lease metadata should cross into RealFS.
+Tool VMs are lease-local execution sandboxes. Current tool VMs are the remaining
+intentional `/workspace` exception: the lease workspace is a RealFS mount from
+the controller's tool `workspaceRoot`, cleaned between leases, and not part of
+normal zone backup. A future hard cutover can move hot tool work to `/work`, but
+the current code still exposes `/workspace` to OpenClaw plugin leases.
 
 ```text
 path or data                           backing                backup
 ──────────────────────────────         ─────────────────      ─────────
 
-/workspace                             rootfs/COW             no
-lease-local agent work                 disposable
-
-/work/tmp                              rootfs/COW             no
-large temp, TMPDIR target              disposable disk
-
-/work/cache                            rootfs/COW             no
-per-lease package cache                disposable
+/workspace                             RealFS workspaceRoot   no
+lease-local agent work                 cleaned per lease
 
 /tmp, /run, /var/log                   guest tmpfs            no
 tiny scratch only                      memory-pressure

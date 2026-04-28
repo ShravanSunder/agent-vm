@@ -15,22 +15,24 @@ export interface BackupResult {
 
 export interface BackupRestoreResult {
 	readonly stateDir: string;
-	readonly workspaceDir: string;
+	readonly zoneFilesDir?: string;
 	readonly zoneId: string;
 }
 
 export interface ZoneBackupManager {
 	createBackup(options: {
 		readonly zoneId: string;
+		readonly cacheDir: string;
 		readonly stateDir: string;
-		readonly workspaceDir: string;
+		readonly runtimeDir: string;
+		readonly zoneFilesDir?: string;
 		readonly backupDir: string;
 	}): Promise<BackupResult>;
 
 	restoreBackup(options: {
 		readonly backupPath: string;
 		readonly stateDir: string;
-		readonly workspaceDir: string;
+		readonly zoneFilesDir?: string;
 	}): Promise<BackupRestoreResult>;
 
 	listBackups(options: { readonly backupDir: string; readonly zoneId?: string }): BackupResult[];
@@ -38,12 +40,12 @@ export interface ZoneBackupManager {
 
 /**
  * Archive layout inside the tar:
- *   state/      — contents of stateDir
- *   workspace/  — contents of workspaceDir
+ *   state/       — contents of stateDir
+ *   zone-files/  — contents of zoneFilesDir, when the gateway has durable zone files
  *   manifest.json
  *
  * This fixed layout decouples archive structure from host paths, so stateDir
- * and workspaceDir can live under completely different parents on restore.
+ * and zoneFilesDir can live under completely different parents on restore.
  */
 export function createZoneBackupManager(encryption: BackupEncryption): ZoneBackupManager {
 	return {
@@ -51,8 +53,10 @@ export function createZoneBackupManager(encryption: BackupEncryption): ZoneBacku
 			return await createEncryptedBackup({
 				encryption,
 				backupDir: options.backupDir,
+				cacheDir: options.cacheDir,
+				runtimeDir: options.runtimeDir,
 				stateDir: options.stateDir,
-				workspaceDir: options.workspaceDir,
+				...(options.zoneFilesDir !== undefined ? { zoneFilesDir: options.zoneFilesDir } : {}),
 				zoneId: options.zoneId,
 			});
 		},
@@ -61,7 +65,7 @@ export function createZoneBackupManager(encryption: BackupEncryption): ZoneBacku
 				encryption,
 				backupPath: options.backupPath,
 				stateDir: options.stateDir,
-				workspaceDir: options.workspaceDir,
+				...(options.zoneFilesDir !== undefined ? { zoneFilesDir: options.zoneFilesDir } : {}),
 			});
 		},
 		listBackups(options) {

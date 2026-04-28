@@ -39,7 +39,7 @@ async function handleRunTaskEscape(
 }
 
 export async function createCoordinator(deps: CoordinatorDeps): Promise<Coordinator> {
-	const workspaceDir = deps.workspaceDir ?? '/workspace';
+	const workDir = deps.workDir ?? '/work';
 	const tasks = await hydrateTaskStates(deps.config.stateDir);
 	const closedTaskIds = new Set<string>();
 	const eventRecorder = createTaskEventRecorder(deps.config.stateDir, tasks, closedTaskIds);
@@ -67,7 +67,7 @@ export async function createCoordinator(deps: CoordinatorDeps): Promise<Coordina
 			});
 
 			activeTaskId = taskId;
-			void runTask(taskId, deps, workspaceDir, tasks, eventRecorder, () =>
+			void runTask(taskId, deps, workDir, tasks, eventRecorder, () =>
 				finishActiveTask(taskId),
 			).catch(async (error) => {
 				await handleRunTaskEscape(taskId, error, tasks, eventRecorder, finishActiveTask);

@@ -40,6 +40,7 @@ import {
 import { compileResourceOverlay } from '../resources/resource-compiler.js';
 import { resolveTaskResources } from '../resources/resource-resolver.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
+import { createHostGitDir, createVmWorkPath } from './active-task-registry.js';
 import { buildGithubAuthConfigArgs, scrubGithubTokenFromOutput } from './git-auth-support.js';
 import {
 	buildResolvedRuntimeResources,
@@ -77,10 +78,10 @@ const taskStatusResponseSchema = z
 	})
 	.passthrough();
 const GIT_CLONE_TIMEOUT_MS = 120_000;
-
+const GIT_METADATA_TIMEOUT_MS = 30_000;
 async function readJsonObjectFile(
 	filePath: string,
-	options: { readonly missingValue: Record<string, unknown>; readonly label: string },
+	options: { readonly missingValue?: Record<string, unknown>; readonly label: string },
 ): Promise<Record<string, unknown>> {
 	try {
 		const raw = await fs.readFile(filePath, 'utf8');
@@ -91,10 +92,75 @@ async function readJsonObjectFile(
 		return parsed;
 	} catch (error) {
 		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
-			return options.missingValue;
+			if (options.missingValue !== undefined) {
+				return options.missingValue;
+			}
+			throw new Error(`${options.label} file not found at ${filePath}`, { cause: error });
 		}
 		const message = error instanceof Error ? error.message : String(error);
 		throw new Error(`Invalid ${options.label}: ${message}`, { cause: error });
+	}
+}
+
+async function materializeRepoAgentVmDirectory(options: {
+	readonly baseBranch: string;
+	readonly gitDir: string;
+	readonly metadataDir: string;
+	readonly repoUrl: string;
+}): Promise<void> {
+	await fs.mkdir(options.metadataDir, { recursive: true });
+	const metadataProbeResult = await execa(
+		'git',
+		[
+			'-c',
+			'core.hooksPath=/dev/null',
+			`--git-dir=${options.gitDir}`,
+			'ls-tree',
+			'--name-only',
+			options.baseBranch,
+			'--',
+			'.agent-vm',
+		],
+		{ reject: false, timeout: GIT_METADATA_TIMEOUT_MS },
+	);
+	if ((metadataProbeResult.exitCode ?? 0) !== 0) {
+		const output = `${metadataProbeResult.stdout}\n${metadataProbeResult.stderr}`.trim();
+		throw new Error(
+			`Failed to probe .agent-vm metadata from ${options.repoUrl}: ${scrubGithubTokenFromOutput(output)}`,
+		);
+	}
+	if (metadataProbeResult.stdout.trim().length === 0) {
+		await fs.mkdir(path.join(options.metadataDir, '.agent-vm'), { recursive: true });
+		return;
+	}
+	const archivePath = path.join(options.metadataDir, 'agent-vm-metadata.tar');
+	const archiveResult = await execa(
+		'git',
+		[
+			'-c',
+			'core.hooksPath=/dev/null',
+			`--git-dir=${options.gitDir}`,
+			'archive',
+			'--format=tar',
+			`--output=${archivePath}`,
+			options.baseBranch,
+			'.agent-vm',
+		],
+		{ reject: false, timeout: GIT_METADATA_TIMEOUT_MS },
+	);
+	if ((archiveResult.exitCode ?? 0) !== 0) {
+		const output = `${archiveResult.stdout}\n${archiveResult.stderr}`.trim();
+		throw new Error(
+			`Failed to archive .agent-vm metadata from ${options.repoUrl}: ${scrubGithubTokenFromOutput(output)}`,
+		);
+	}
+	try {
+		await execa('tar', ['-xf', archivePath, '-C', options.metadataDir], {
+			reject: true,
+			timeout: GIT_METADATA_TIMEOUT_MS,
+		});
+	} finally {
+		await fs.rm(archivePath, { force: true });
 	}
 }
 
@@ -137,7 +203,8 @@ export interface PreStartResult {
 	readonly taskId: string;
 	readonly input: WorkerTaskControllerRequest;
 	readonly taskRoot: string;
-	readonly workspaceDir: string;
+	readonly taskRuntimeRoot: string;
+	readonly workDir: string;
 	readonly stateDir: string;
 	readonly startedResourceProviders: readonly StartedRepoResourceProvider[];
 	readonly environment: Record<string, string>;
@@ -147,8 +214,10 @@ export interface PreStartResult {
 		readonly repoId: string;
 		readonly repoUrl: string;
 		readonly baseBranch: string;
-		readonly hostWorkspacePath: string;
-		readonly workspacePath: string;
+		readonly gitDirPath: string;
+		readonly hostGitDir: string;
+		readonly hostMetadataPath: string;
+		readonly workPath: string;
 	}[];
 	readonly effectiveConfig: WorkerConfig;
 }
@@ -180,31 +249,37 @@ export interface WorkerTaskResult {
 export async function preStartGateway(
 	taskInput: WorkerTaskInput,
 	zoneConfig: GatewayZone,
-	options: { readonly githubToken?: string } = {},
+	options: { readonly githubToken?: string; readonly runtimeDir?: string } = {},
 ): Promise<PreStartResult> {
 	const parsedTaskInput = workerTaskControllerRequestSchema.parse(taskInput);
 	const taskId = crypto.randomUUID();
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
-	const workspaceDir = path.join(taskRoot, 'workspace');
+	const runtimeDir =
+		options.runtimeDir ?? path.join(path.dirname(zoneConfig.gateway.stateDir), 'runtime');
+	const taskRuntimeRoot = path.join(runtimeDir, 'worker-tasks', zoneConfig.id, taskId);
+	const workDir = path.join(taskRuntimeRoot, 'work');
 	const stateDir = path.join(taskRoot, 'state');
 	const agentVmDir = path.join(taskRoot, 'agent-vm');
 
 	let startedResourceProviders: readonly StartedRepoResourceProvider[] = [];
 	try {
-		await fs.mkdir(workspaceDir, { recursive: true });
+		await fs.mkdir(workDir, { recursive: true });
 		await fs.mkdir(stateDir, { recursive: true });
 		await fs.mkdir(agentVmDir, { recursive: true });
 		await copyLocalWorkerTarballIfConfigured(stateDir);
 
+		const gitdirsRoot = path.join(taskRuntimeRoot, 'gitdirs');
+		const metadataRoot = path.join(taskRuntimeRoot, 'repo-metadata');
 		const usedRepoNames = new Set<string>();
 		const preparedRepoTargets = parsedTaskInput.repos.map((repo) => {
 			const repoId = deriveRepoDirectoryName(repo.repoUrl, usedRepoNames);
-			const repoWorkspaceDir = path.join(workspaceDir, repoId);
 			return {
 				...repo,
 				repoId,
-				hostWorkspacePath: repoWorkspaceDir,
-				workspacePath: `/workspace/${repoId}`,
+				gitDirPath: `/gitdirs/${repoId}.git`,
+				hostGitDir: path.join(gitdirsRoot, `${repoId}.git`),
+				hostMetadataPath: path.join(metadataRoot, repoId),
+				workPath: `/work/repos/${repoId}`,
 			};
 		});
 		const cloneResults = await Promise.allSettled(
@@ -212,11 +287,14 @@ export async function preStartGateway(
 				const authArgs = options.githubToken ? buildGithubAuthConfigArgs(options.githubToken) : [];
 				const cloneArgs = [
 					...authArgs,
+					'-c',
+					'core.hooksPath=/dev/null',
 					'clone',
+					'--bare',
 					'--branch',
 					repo.baseBranch,
 					repo.repoUrl,
-					repo.hostWorkspacePath,
+					repo.hostGitDir,
 				];
 				let cloneResult: {
 					readonly exitCode?: number;
@@ -242,6 +320,7 @@ export async function preStartGateway(
 					throw new Error(`git clone failed for ${repo.repoUrl}: ${errorDetail}`.trim());
 				}
 				for (const [key, value] of [
+					['core.bare', 'false'],
 					['user.email', 'agent-vm-worker@agent-vm'],
 					['user.name', 'agent-vm-worker'],
 					['http.version', 'HTTP/1.1'],
@@ -249,30 +328,62 @@ export async function preStartGateway(
 				] as const) {
 					// Git serializes config writes through .git/config.lock; keep these ordered.
 					// oxlint-disable-next-line eslint/no-await-in-loop
-					await execa('git', ['-C', repo.hostWorkspacePath, 'config', key, value], {
-						reject: true,
-						timeout: 10_000,
-					});
+					await execa(
+						'git',
+						[
+							'-c',
+							'core.hooksPath=/dev/null',
+							`--git-dir=${repo.hostGitDir}`,
+							'config',
+							key,
+							value,
+						],
+						{
+							reject: true,
+							timeout: 10_000,
+						},
+					);
 				}
+				await materializeRepoAgentVmDirectory({
+					baseBranch: repo.baseBranch,
+					gitDir: repo.hostGitDir,
+					metadataDir: repo.hostMetadataPath,
+					repoUrl: repo.repoUrl,
+				});
 				return {
 					repoId: repo.repoId,
 					repoUrl: repo.repoUrl,
 					baseBranch: repo.baseBranch,
-					hostWorkspacePath: repo.hostWorkspacePath,
-					workspacePath: repo.workspacePath,
+					gitDirPath: repo.gitDirPath,
+					hostGitDir: repo.hostGitDir,
+					hostMetadataPath: repo.hostMetadataPath,
+					workPath: repo.workPath,
 				};
 			}),
 		);
-		const rejectedCloneResult = cloneResults.find((result) => result.status === 'rejected');
-		if (rejectedCloneResult) {
-			throw rejectedCloneResult.reason;
+		const rejectedCloneResults = cloneResults.filter(
+			(result): result is PromiseRejectedResult => result.status === 'rejected',
+		);
+		if (rejectedCloneResults.length > 0) {
+			const cloneFailureErrors = rejectedCloneResults.map((result) => toError(result.reason));
+			const cloneFailureDetails = rejectedCloneResults
+				.map((result) =>
+					result.reason instanceof Error ? result.reason.message : String(result.reason),
+				)
+				.join('\n');
+			throw new AggregateError(
+				cloneFailureErrors,
+				`Failed to prepare ${rejectedCloneResults.length} repo clone(s).\n${cloneFailureDetails}`,
+			);
 		}
 		const clonedRepos: {
 			readonly repoId: string;
 			readonly repoUrl: string;
 			readonly baseBranch: string;
-			readonly hostWorkspacePath: string;
-			readonly workspacePath: string;
+			readonly gitDirPath: string;
+			readonly hostGitDir: string;
+			readonly hostMetadataPath: string;
+			readonly workPath: string;
 		}[] = cloneResults.map((result) => {
 			if (result.status === 'rejected') {
 				throw result.reason;
@@ -280,15 +391,19 @@ export async function preStartGateway(
 			return result.value;
 		});
 
-		const primaryRepoWorkspaceDir = clonedRepos[0]?.hostWorkspacePath ?? workspaceDir;
-		const projectConfigPath = path.join(primaryRepoWorkspaceDir, '.agent-vm', 'config.json');
-		const projectConfig = await readJsonObjectFile(projectConfigPath, {
-			label: 'project config',
-			missingValue: {},
-		});
+		const primaryRepo = clonedRepos[0] ?? null;
+		const projectConfig =
+			primaryRepo === null
+				? {}
+				: await readJsonObjectFile(
+						path.join(primaryRepo.hostMetadataPath, '.agent-vm', 'config.json'),
+						{
+							label: 'project config',
+							missingValue: {},
+						},
+					);
 		const baseConfig = await readJsonObjectFile(zoneConfig.gateway.config, {
 			label: 'gateway config',
-			missingValue: {},
 		});
 		const resolvedBaseConfig = await resolveWorkerConfigInstructionReferences(baseConfig, {
 			configPath: zoneConfig.gateway.config,
@@ -301,9 +416,9 @@ export async function preStartGateway(
 			clonedRepos.map(async (repo) => ({
 				repoId: repo.repoId,
 				repoUrl: repo.repoUrl,
-				hasContract: await hasRepoResourceDescriptionContract(repo.hostWorkspacePath),
+				hasContract: await hasRepoResourceDescriptionContract(repo.hostMetadataPath),
 				description: await loadRepoResourceDescriptionContract({
-					repoDir: repo.hostWorkspacePath,
+					repoDir: repo.hostMetadataPath,
 					repoId: repo.repoId,
 					repoUrl: repo.repoUrl,
 				}),
@@ -330,7 +445,7 @@ export async function preStartGateway(
 					return {
 						repoId: repoDescription.repoId,
 						repoUrl: repoDescription.repoUrl,
-						repoDir: repo.hostWorkspacePath,
+						repoDir: repo.hostMetadataPath,
 						outputDir: path.join(agentVmDir, 'resources', repoDescription.repoId),
 						setupCommand: repoDescription.description.setupCommand,
 					};
@@ -355,7 +470,7 @@ export async function preStartGateway(
 				}
 				return {
 					...provider,
-					repoDir: repo.hostWorkspacePath,
+					repoDir: repo.hostMetadataPath,
 					outputDir: path.join(agentVmDir, 'resources', provider.repoId),
 				};
 			}),
@@ -372,7 +487,7 @@ export async function preStartGateway(
 			}),
 			runtimeAuthHints: zoneConfig.runtimeAuthHints ?? [],
 			taskId,
-			workspaceDir: '/workspace',
+			workDir: '/work/repos',
 		});
 		const effectiveConfig = workerConfigSchema.parse({
 			...effectiveConfigDraft,
@@ -380,11 +495,6 @@ export async function preStartGateway(
 		}) satisfies WorkerConfig;
 		await writeAgentRuntimeFiles(agentVmDir, runtime.agentRuntimeFiles);
 		await replaceRelativeSymlink(path.join(agentVmDir, 'CLAUDE.md'), 'agents.md');
-		await fs.writeFile(path.join(workspaceDir, 'AGENTS.md'), runtime.workspaceAgentsMd, {
-			encoding: 'utf8',
-			mode: 0o644,
-		});
-		await replaceRelativeSymlink(path.join(workspaceDir, 'CLAUDE.md'), 'AGENTS.md');
 		await fs.writeFile(
 			path.join(stateDir, 'effective-worker.json'),
 			JSON.stringify(effectiveConfig, null, 2),
@@ -395,12 +505,17 @@ export async function preStartGateway(
 			taskId,
 			input: parsedTaskInput,
 			taskRoot,
-			workspaceDir,
+			taskRuntimeRoot,
+			workDir,
 			stateDir,
 			startedResourceProviders: providerRun.startedProviders,
 			environment: overlay.environment,
 			tcpHosts: overlay.tcpHosts,
 			vfsMounts: {
+				'/gitdirs': {
+					hostPath: gitdirsRoot,
+					kind: 'realfs',
+				},
 				'/agent-vm': {
 					hostPath: agentVmDir,
 					kind: 'realfs-readonly',
@@ -414,6 +529,7 @@ export async function preStartGateway(
 			primaryError: error,
 			startedProviders: startedResourceProviders,
 			taskId,
+			taskRuntimeRoot,
 			taskRoot,
 		});
 	}
@@ -423,12 +539,15 @@ export async function postStopGateway(
 	taskId: string,
 	zoneConfig: GatewayZone,
 	startedProviders: readonly StartedRepoResourceProvider[] = [],
+	options: { readonly runtimeDir?: string } = {},
 ): Promise<void> {
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
-	const workspaceDir = path.join(taskRoot, 'workspace');
+	const runtimeDir =
+		options.runtimeDir ?? path.join(path.dirname(zoneConfig.gateway.stateDir), 'runtime');
+	const taskRuntimeRoot = path.join(runtimeDir, 'worker-tasks', zoneConfig.id, taskId);
 	const resourcesDir = path.join(taskRoot, 'agent-vm', 'resources');
 	let cleanupError: Error | null = null;
-	let workspaceRemovalError: Error | null = null;
+	let runtimeRemovalError: Error | null = null;
 	let resourcesRemovalError: Error | null = null;
 	try {
 		await stopRepoResourceProviders(startedProviders);
@@ -441,17 +560,17 @@ export async function postStopGateway(
 		resourcesRemovalError = error instanceof Error ? error : new Error(String(error));
 	}
 	try {
-		await fs.rm(workspaceDir, { recursive: true, force: true });
+		await fs.rm(taskRuntimeRoot, { recursive: true, force: true });
 	} catch (error) {
-		workspaceRemovalError = error instanceof Error ? error : new Error(String(error));
+		runtimeRemovalError = error instanceof Error ? error : new Error(String(error));
 	}
-	const errors = [cleanupError, resourcesRemovalError, workspaceRemovalError].filter(
+	const errors = [cleanupError, resourcesRemovalError, runtimeRemovalError].filter(
 		(error): error is Error => error !== null,
 	);
 	if (errors.length > 1) {
 		const aggregateError = new AggregateError(
 			errors,
-			`Failed to stop Docker services and prune task resources/workspace for ${taskId}.`,
+			`Failed to stop Docker services and prune task resources/work for ${taskId}.`,
 		);
 		aggregateError.cause = errors[0];
 		throw aggregateError;
@@ -465,6 +584,7 @@ async function cleanupTaskRootAfterPreparationFailure(options: {
 	readonly primaryError: unknown;
 	readonly startedProviders: readonly StartedRepoResourceProvider[];
 	readonly taskId: string;
+	readonly taskRuntimeRoot?: string;
 	readonly taskRoot: string;
 }): Promise<never> {
 	const errors = [toError(options.primaryError)];
@@ -477,6 +597,13 @@ async function cleanupTaskRootAfterPreparationFailure(options: {
 		await fs.rm(options.taskRoot, { recursive: true, force: true });
 	} catch (removeError) {
 		errors.push(toError(removeError));
+	}
+	if (options.taskRuntimeRoot !== undefined) {
+		try {
+			await fs.rm(options.taskRuntimeRoot, { recursive: true, force: true });
+		} catch (removeError) {
+			errors.push(toError(removeError));
+		}
 	}
 	if (errors.length === 1) {
 		throw errors[0];
@@ -545,7 +672,10 @@ export async function prepareWorkerTask(
 		throw new Error(`Zone '${options.zoneId}' is not a worker zone.`);
 	}
 
-	const preStartOptions = options.githubToken ? { githubToken: options.githubToken } : {};
+	const preStartOptions = {
+		runtimeDir: options.systemConfig.runtimeDir,
+		...(options.githubToken ? { githubToken: options.githubToken } : {}),
+	};
 	const preStartResult = await preStartGateway(options.input, zone, preStartOptions);
 	const parsedInput = preStartResult.input;
 	try {
@@ -553,7 +683,6 @@ export async function prepareWorkerTask(
 			...zone,
 			gateway: {
 				...zone.gateway,
-				workspaceDir: preStartResult.workspaceDir,
 				stateDir: preStartResult.stateDir,
 			},
 		};
@@ -581,12 +710,13 @@ export async function prepareWorkerTask(
 			taskId: preStartResult.taskId,
 			zoneId: options.zoneId,
 			taskRoot: preStartResult.taskRoot,
+			eventLogPath,
 			branchPrefix: preStartResult.effectiveConfig.branchPrefix,
 			repos: preStartResult.repos.map((repo) => ({
 				repoUrl: repo.repoUrl,
 				baseBranch: repo.baseBranch,
-				hostWorkspacePath: repo.hostWorkspacePath,
-				vmWorkspacePath: repo.workspacePath,
+				hostGitDir: createHostGitDir(repo.hostGitDir),
+				vmWorkPath: createVmWorkPath(repo.workPath),
 			})),
 			workerIngress: null,
 		});
@@ -607,6 +737,7 @@ export async function prepareWorkerTask(
 			primaryError: error,
 			startedProviders: preStartResult.startedResourceProviders,
 			taskId: preStartResult.taskId,
+			taskRuntimeRoot: preStartResult.taskRuntimeRoot,
 			taskRoot: preStartResult.taskRoot,
 		});
 	}
@@ -642,7 +773,8 @@ export async function executeWorkerTask(
 				repos: prepared.preStartResult.repos.map((repo) => ({
 					repoUrl: repo.repoUrl,
 					baseBranch: repo.baseBranch,
-					workspacePath: repo.workspacePath,
+					gitDirPath: repo.gitDirPath,
+					workPath: repo.workPath,
 				})),
 				context: prepared.input.context,
 			}),
@@ -720,6 +852,9 @@ export async function executeWorkerTask(
 			prepared.taskId,
 			prepared.zone,
 			prepared.preStartResult.startedResourceProviders,
+			{
+				runtimeDir: options.systemConfig.runtimeDir,
+			},
 		);
 	} catch (error) {
 		cleanupErrors.push(toError(error));

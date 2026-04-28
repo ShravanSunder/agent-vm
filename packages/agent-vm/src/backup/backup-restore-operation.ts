@@ -32,20 +32,25 @@ async function copyExtractedDirectoryContents(
 
 async function readZoneIdFromManifest(extractDirectory: string): Promise<string> {
 	const manifestPath = path.join(extractDirectory, 'manifest.json');
-	try {
-		const rawManifest = await fs.readFile(manifestPath, 'utf8');
-		const manifest = JSON.parse(rawManifest) as { readonly zoneId?: string };
-		return manifest.zoneId ?? 'unknown';
-	} catch {
-		return 'unknown';
+	const rawManifest = await fs.readFile(manifestPath, 'utf8');
+	const manifest: unknown = JSON.parse(rawManifest);
+	if (
+		typeof manifest !== 'object' ||
+		manifest === null ||
+		!('zoneId' in manifest) ||
+		typeof manifest.zoneId !== 'string' ||
+		manifest.zoneId.length === 0
+	) {
+		throw new Error(`Backup manifest at ${manifestPath} must contain a non-empty zoneId.`);
 	}
+	return manifest.zoneId;
 }
 
 export async function restoreEncryptedBackup(options: {
 	readonly backupPath: string;
 	readonly encryption: BackupEncryption;
 	readonly stateDir: string;
-	readonly workspaceDir: string;
+	readonly zoneFilesDir?: string;
 }): Promise<BackupRestoreResult> {
 	const decryptedTarPath = `${options.backupPath}.decrypted.tar`;
 	await options.encryption.decrypt(options.backupPath, decryptedTarPath);
@@ -54,14 +59,16 @@ export async function restoreEncryptedBackup(options: {
 	try {
 		await execFileAsync('tar', ['xf', decryptedTarPath, '-C', extractDirectory]);
 		await copyExtractedDirectoryContents(path.join(extractDirectory, 'state'), options.stateDir);
-		await copyExtractedDirectoryContents(
-			path.join(extractDirectory, 'workspace'),
-			options.workspaceDir,
-		);
+		if (options.zoneFilesDir !== undefined) {
+			await copyExtractedDirectoryContents(
+				path.join(extractDirectory, 'zone-files'),
+				options.zoneFilesDir,
+			);
+		}
 
 		return {
 			stateDir: options.stateDir,
-			workspaceDir: options.workspaceDir,
+			...(options.zoneFilesDir !== undefined ? { zoneFilesDir: options.zoneFilesDir } : {}),
 			zoneId: await readZoneIdFromManifest(extractDirectory),
 		};
 	} finally {

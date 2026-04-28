@@ -1,29 +1,40 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import type { ActiveWorkerTask } from './active-task-registry.js';
+import { createHostGitDir, createVmWorkPath } from './active-task-registry.js';
 import { pullDefaultForTask, PullDefaultValidationError } from './git-pull-default-operations.js';
 
 const { execaMock } = vi.hoisted(() => ({ execaMock: vi.fn() }));
 
 vi.mock('execa', () => ({ execa: execaMock }));
 
-const activeTask = {
+const activeTask: ActiveWorkerTask = {
 	taskId: 'task-1',
 	zoneId: 'shravan',
 	taskRoot: '/tmp/task-1',
+	eventLogPath: '/tmp/task-1/state/tasks/task-1.jsonl',
 	branchPrefix: 'agent/',
 	workerIngress: null,
 	repos: [
 		{
 			repoUrl: 'https://github.com/acme/widgets.git',
 			baseBranch: 'main',
-			hostWorkspacePath: '/tmp/task-1/widgets',
-			vmWorkspacePath: '/workspace/widgets',
+			hostGitDir: createHostGitDir('/tmp/task-1/gitdirs/widgets.git'),
+			vmWorkPath: createVmWorkPath('/work/repos/widgets'),
 		},
 	],
 };
 
+function extractGitArgs(args: readonly string[]): readonly string[] {
+	expect(args[0]).toBe('-c');
+	expect(args[1]).toBe('core.hooksPath=/dev/null');
+	expect(args[2]).toBe('--git-dir=/tmp/task-1/gitdirs/widgets.git');
+	return args.slice(3);
+}
+
 describe('git-pull-default-operations', () => {
 	afterEach(() => {
+		vi.useRealTimers();
 		vi.clearAllMocks();
 	});
 
@@ -38,27 +49,29 @@ describe('git-pull-default-operations', () => {
 	});
 
 	test('fetches and fast-forwards local default branch', async () => {
+		const recordEvent = vi.fn(async () => {});
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
-			const joined = args.join(' ');
-			if (args[0] === 'rev-parse' && args.includes('refs/remotes/origin/main')) {
+			const gitArgs = extractGitArgs(args);
+			const joined = gitArgs.join(' ');
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
-			if (args[0] === 'rev-parse' && args.includes('refs/heads/main')) {
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
 				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
 			}
-			if (args[0] === 'rev-parse') {
+			if (gitArgs[0] === 'rev-parse') {
 				return { stdout: '', stderr: '', exitCode: 1 };
 			}
-			if (args[0] === 'branch') {
+			if (gitArgs[0] === 'branch') {
 				return { stdout: 'agent/task-1', stderr: '', exitCode: 0 };
 			}
-			if (args[0] === 'merge-base') {
+			if (gitArgs[0] === 'merge-base') {
 				return { stdout: 'fork-sha', stderr: '', exitCode: 0 };
 			}
-			if (args[0] === 'rev-list') {
+			if (gitArgs[0] === 'rev-list') {
 				return { stdout: joined.includes('HEAD..') ? '2' : '3', stderr: '', exitCode: 0 };
 			}
-			if (args[0] === 'log') {
+			if (gitArgs[0] === 'log') {
 				return { stdout: 'sha1\tmain change\tA\t2026-04-21T00:00:00Z', stderr: '', exitCode: 0 };
 			}
 			return { stdout: '', stderr: '', exitCode: 0 };
@@ -68,6 +81,7 @@ describe('git-pull-default-operations', () => {
 			activeTask,
 			repoUrl: 'https://github.com/acme/widgets.git',
 			githubToken: 'token',
+			recordEvent,
 		});
 
 		expect(result).toMatchObject({
@@ -81,20 +95,150 @@ describe('git-pull-default-operations', () => {
 		});
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
-			expect.arrayContaining(['fetch', '--prune']),
-			expect.objectContaining({ cwd: '/tmp/task-1/widgets' }),
+			expect.arrayContaining([
+				'-c',
+				'core.hooksPath=/dev/null',
+				'--git-dir=/tmp/task-1/gitdirs/widgets.git',
+				'fetch',
+				'--prune',
+			]),
+			expect.not.objectContaining({ cwd: expect.any(String) }),
 		);
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
-			['update-ref', 'refs/heads/main', 'refs/remotes/origin/main'],
-			expect.objectContaining({ cwd: '/tmp/task-1/widgets' }),
+			[
+				'-c',
+				'core.hooksPath=/dev/null',
+				'--git-dir=/tmp/task-1/gitdirs/widgets.git',
+				'update-ref',
+				'refs/heads/main',
+				'refs/remotes/origin/main',
+			],
+			expect.not.objectContaining({ cwd: expect.any(String) }),
 		);
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-pull-started',
+			repoUrl: 'https://github.com/acme/widgets.git',
+		});
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-pull-succeeded',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			attempts: 1,
+			defaultBranch: 'main',
+			remoteDefaultHead: 'remote-main-sha',
+			localDefaultHead: 'local-main-sha',
+		});
+	});
+
+	test('retries transient default-branch fetch failures', async () => {
+		vi.useFakeTimers();
+		let fetchAttempts = 0;
+		const recordEvent = vi.fn(async () => {});
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			const joined = gitArgs.join(' ');
+			if (gitArgs[0] === 'fetch') {
+				fetchAttempts += 1;
+				if (fetchAttempts < 4) {
+					return {
+						stdout: '',
+						stderr: `RPC failed; HTTP 503 EAI_AGAIN pull failure ${fetchAttempts}`,
+						exitCode: 128,
+					};
+				}
+				return { stdout: '', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
+				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'branch') {
+				return { stdout: 'agent/task-1', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'merge-base') {
+				return { stdout: 'fork-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-list') {
+				return { stdout: joined.includes('HEAD..') ? '2' : '3', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'log') {
+				return { stdout: 'sha1\tmain change\tA\t2026-04-21T00:00:00Z', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		const resultPromise = pullDefaultForTask({
+			activeTask,
+			repoUrl: 'https://github.com/acme/widgets.git',
+			githubToken: 'token',
+			recordEvent,
+		});
+
+		await vi.advanceTimersByTimeAsync(22_000);
+		const result = await resultPromise;
+
+		expect(fetchAttempts).toBe(4);
+		expect(result.success).toBe(true);
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-pull-retry',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			attempts: 1,
+			message: 'RPC failed; HTTP 503 EAI_AGAIN pull failure 1',
+			retryDelaySeconds: 2,
+		});
 	});
 
 	test('soft-fails when fetch fails', async () => {
+		const recordEvent = vi.fn(async () => {});
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
-			if (args[0] === 'rev-parse') return { stdout: '', stderr: '', exitCode: 1 };
-			if (args[0] === 'fetch') return { stdout: '', stderr: 'network down', exitCode: 1 };
+			const gitArgs = extractGitArgs(args);
+			if (gitArgs[0] === 'rev-parse') return { stdout: '', stderr: '', exitCode: 1 };
+			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: 'network down', exitCode: 1 };
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		await expect(
+			pullDefaultForTask({
+				activeTask,
+				repoUrl: 'https://github.com/acme/widgets.git',
+				githubToken: 'token',
+				recordEvent,
+			}),
+		).resolves.toMatchObject({
+			success: false,
+			error: expect.stringContaining('Fetch failed'),
+		});
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-pull-failed',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			attempts: 1,
+			message: expect.stringContaining('network down'),
+		});
+	});
+
+	test('soft-fails when branch-state git reads fail after fetch', async () => {
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			if (gitArgs[0] === 'log') {
+				return { stdout: '', stderr: 'cannot read commit graph', exitCode: 128 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
+				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'branch') {
+				return { stdout: 'agent/task-1', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'merge-base') {
+				return { stdout: 'fork-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-list') {
+				return { stdout: '1', stderr: '', exitCode: 0 };
+			}
 			return { stdout: '', stderr: '', exitCode: 0 };
 		});
 
@@ -106,7 +250,7 @@ describe('git-pull-default-operations', () => {
 			}),
 		).resolves.toMatchObject({
 			success: false,
-			error: expect.stringContaining('Fetch failed'),
+			error: expect.stringContaining('git log'),
 		});
 	});
 });

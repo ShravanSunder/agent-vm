@@ -49,9 +49,9 @@ const serveCommand = command({
 		const configPath = args.config ?? process.env.WORKER_CONFIG_PATH ?? undefined;
 		const baseConfig = await loadWorkerConfig(configPath);
 		const config = args.stateDir ? { ...baseConfig, stateDir: args.stateDir } : baseConfig;
-		const workspaceDir = process.env.WORKSPACE_DIR ?? '/workspace';
+		const workDir = process.env.WORK_DIR ?? '/work';
 		const startTime = Date.now();
-		const coordinator = await createCoordinator({ config, workspaceDir });
+		const coordinator = await createCoordinator({ config, workDir });
 		const defaultExecutor = resolvePhaseExecutor(config, {});
 
 		const app = createApp({

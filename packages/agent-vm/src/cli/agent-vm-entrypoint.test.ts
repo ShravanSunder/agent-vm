@@ -20,6 +20,7 @@ import {
 function createCliBuildSystemConfig(): LoadedSystemConfig {
 	return {
 		cacheDir: './cache',
+		runtimeDir: './runtime',
 		systemConfigPath: './config/system.json',
 		systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 		host: {
@@ -74,7 +75,7 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 					config: './config/shravan/openclaw.json',
 					port: 18791,
 					stateDir: './state/shravan',
-					workspaceDir: './workspaces/shravan',
+					zoneFilesDir: './zone-files/shravan',
 				},
 				id: 'shravan',
 				secrets: {},
@@ -650,6 +651,7 @@ describe('runAgentVmCli', () => {
 				forceRebuild: false,
 				systemConfig: expect.objectContaining({
 					cacheDir: './cache',
+					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
 					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 					imageProfiles: expect.objectContaining({
@@ -764,6 +766,7 @@ describe('runAgentVmCli', () => {
 				subcommand: 'clean',
 				systemConfig: expect.objectContaining({
 					cacheDir: './cache',
+					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
 					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 				}),
@@ -793,6 +796,7 @@ describe('runAgentVmCli', () => {
 				subcommand: 'list',
 				systemConfig: expect.objectContaining({
 					cacheDir: './cache',
+					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
 					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 				}),
@@ -1094,7 +1098,7 @@ describe('runAgentVmCli', () => {
 				}),
 				createZoneBackupManager: () => ({
 					createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
-					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+					restoreBackup: async () => ({ stateDir: '', zoneFilesDir: '', zoneId: '' }),
 					listBackups: () => [],
 				}),
 				isGatewayImageCached: async () => true,
@@ -1102,6 +1106,7 @@ describe('runAgentVmCli', () => {
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
+					runtimeDir: './runtime',
 					systemConfigPath,
 					systemCacheIdentifierPath,
 					host: {
@@ -1208,7 +1213,7 @@ describe('runAgentVmCli', () => {
 				}),
 				createZoneBackupManager: () => ({
 					createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
-					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+					restoreBackup: async () => ({ stateDir: '', zoneFilesDir: '', zoneId: '' }),
 					listBackups: () => [],
 				}),
 				isGatewayImageCached: async () => true,
@@ -1216,6 +1221,7 @@ describe('runAgentVmCli', () => {
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
+					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
 					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 					host: {
@@ -1345,7 +1351,7 @@ describe('runAgentVmCli', () => {
 				}),
 				createZoneBackupManager: () => ({
 					createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
-					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+					restoreBackup: async () => ({ stateDir: '', zoneFilesDir: '', zoneId: '' }),
 					listBackups: () => [],
 				}),
 				isGatewayImageCached: async () => true,
@@ -1353,6 +1359,7 @@ describe('runAgentVmCli', () => {
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
+					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
 					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 					host: {
@@ -1404,7 +1411,7 @@ describe('runAgentVmCli', () => {
 								config: './config/shravan/openclaw.json',
 								port: 18791,
 								stateDir: './state/shravan',
-								workspaceDir: './workspaces/shravan',
+								zoneFilesDir: './zone-files/shravan',
 							},
 							id: 'shravan',
 							secrets: {},
@@ -1577,13 +1584,14 @@ describe('runAgentVmCli', () => {
 			}),
 			createZoneBackupManager: () => ({
 				createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
-				restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+				restoreBackup: async () => ({ stateDir: '', zoneFilesDir: '', zoneId: '' }),
 				listBackups: () => [],
 			}),
 			resolveGondolinMinimumZigVersion: async () => '0.15.2',
 			resolveServiceAccountToken: async () => 'mock-token',
 			loadSystemConfig: async (): Promise<LoadedSystemConfig> => ({
 				cacheDir: './cache',
+				runtimeDir: './runtime',
 				systemConfigPath: './config/system.json',
 				systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 				host: {
@@ -1635,7 +1643,7 @@ describe('runAgentVmCli', () => {
 							config: './config/shravan/openclaw.json',
 							port: 18791,
 							stateDir: './state/shravan',
-							workspaceDir: './workspaces/shravan',
+							zoneFilesDir: './zone-files/shravan',
 						},
 						id: 'shravan',
 						secrets: {},
@@ -1850,11 +1858,12 @@ describe('runAgentVmCli', () => {
 				}),
 				createZoneBackupManager: () => ({
 					createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
-					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+					restoreBackup: async () => ({ stateDir: '', zoneFilesDir: '', zoneId: '' }),
 					listBackups,
 				}),
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
+					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
 					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 					host: {
@@ -1893,7 +1902,7 @@ describe('runAgentVmCli', () => {
 								config: './config/shravan/openclaw.json',
 								port: 18791,
 								stateDir: './state/shravan',
-								workspaceDir: './workspaces/shravan',
+								zoneFilesDir: './zone-files/shravan',
 							},
 							id: 'shravan',
 							secrets: {},
@@ -1989,11 +1998,12 @@ describe('runAgentVmCli', () => {
 				}),
 				createZoneBackupManager: () => ({
 					createBackup,
-					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+					restoreBackup: async () => ({ stateDir: '', zoneFilesDir: '', zoneId: '' }),
 					listBackups: () => [],
 				}),
 				loadSystemConfig: async () => ({
 					cacheDir: './cache',
+					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
 					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 					host: {
@@ -2032,7 +2042,7 @@ describe('runAgentVmCli', () => {
 								config: './config/shravan/openclaw.json',
 								port: 18791,
 								stateDir: './state/shravan',
-								workspaceDir: './workspaces/shravan',
+								zoneFilesDir: './zone-files/shravan',
 							},
 							id: 'shravan',
 							secrets: {},
@@ -2056,7 +2066,7 @@ describe('runAgentVmCli', () => {
 			expect.objectContaining({
 				zoneId: 'shravan',
 				stateDir: './state/shravan',
-				workspaceDir: './workspaces/shravan',
+				zoneFilesDir: './zone-files/shravan',
 				backupDir: './state/shravan/backups',
 			}),
 		);

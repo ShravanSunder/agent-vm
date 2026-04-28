@@ -5,6 +5,7 @@ import { execa } from 'execa';
 import { resolvePhaseExecutor, type WorkerConfig } from '../config/worker-config.js';
 import { gatherContext } from '../context/gather-context.js';
 import { getDiff } from '../git/git-operations.js';
+import { bootstrapRepoWorktrees } from '../git/repo-worktree-bootstrap.js';
 import { runPlanCycle } from '../plan-phase/plan-cycle.js';
 import { buildRoleSystemPrompt } from '../prompt/prompt-assembler.js';
 import { writeStderr } from '../shared/stderr.js';
@@ -30,11 +31,22 @@ class TaskClosedError extends Error {
 	}
 }
 
-function getPrimaryRepoWorkspace(
-	config: { readonly repos: readonly { readonly workspacePath: string }[] },
-	workspaceRoot: string,
+function getPrimaryRepoWork(
+	config: { readonly repos: readonly { readonly workPath: string }[] },
+	workRoot: string,
 ): string {
-	return config.repos[0]?.workspacePath ?? workspaceRoot;
+	return config.repos[0]?.workPath ?? workRoot;
+}
+
+async function buildWrapupGitContextForTask(props: {
+	readonly workDir: string;
+	readonly repos: readonly { readonly baseBranch: string }[];
+}): Promise<string> {
+	const primaryRepo = props.repos[0];
+	if (!primaryRepo) {
+		return 'No repository is configured for this task.';
+	}
+	return await buildWrapupGitContext(props.workDir, primaryRepo.baseBranch);
 }
 
 function throwIfClosed(taskId: string, eventRecorder: TaskEventRecorder): void {
@@ -50,23 +62,53 @@ async function gitOutput(cwd: string, args: readonly string[]): Promise<string> 
 		timeout: 10_000,
 	});
 	if ((result.exitCode ?? 0) !== 0) {
-		return `${result.stdout}\n${result.stderr}`.trim();
+		throw new Error(`git ${args.join(' ')} failed\n${result.stdout}\n${result.stderr}`.trim());
 	}
 	return result.stdout.trim();
 }
 
+async function gitOutputWithSafeDirectory(cwd: string, args: readonly string[]): Promise<string> {
+	return await gitOutput(cwd, ['-c', `safe.directory=${cwd}`, ...args]);
+}
+
+async function gitRefExists(cwd: string, ref: string): Promise<boolean> {
+	const result = await execa(
+		'git',
+		['-c', `safe.directory=${cwd}`, 'rev-parse', '--verify', '--quiet', ref],
+		{
+			cwd,
+			reject: false,
+			timeout: 10_000,
+		},
+	);
+	if ((result.exitCode ?? 0) === 0) {
+		return true;
+	}
+	if (result.stderr.trim().length > 0) {
+		throw new Error(
+			`git rev-parse --verify --quiet ${ref} failed\n${result.stdout}\n${result.stderr}`.trim(),
+		);
+	}
+	return false;
+}
+
 async function buildWrapupGitContext(cwd: string, defaultBranch: string): Promise<string> {
-	const currentBranch = await gitOutput(cwd, ['branch', '--show-current']);
-	const status = await gitOutput(cwd, ['status', '--short']);
+	const currentBranch = await gitOutputWithSafeDirectory(cwd, ['branch', '--show-current']);
+	const status = await gitOutputWithSafeDirectory(cwd, ['status', '--short']);
 	const defaultRef = `origin/${defaultBranch}`;
-	const log = await gitOutput(cwd, ['log', '--oneline', `${defaultRef}..HEAD`]);
-	const diffStat = await gitOutput(cwd, ['diff', '--stat', `${defaultRef}...HEAD`]);
+	const hasDefaultRef = await gitRefExists(cwd, defaultRef);
+	const log = hasDefaultRef
+		? await gitOutputWithSafeDirectory(cwd, ['log', '--oneline', `${defaultRef}..HEAD`])
+		: '';
+	const diffStat = hasDefaultRef
+		? await gitOutputWithSafeDirectory(cwd, ['diff', '--stat', `${defaultRef}...HEAD`])
+		: '';
 	return [
 		`Current branch: ${currentBranch || '(detached)'}`,
 		`Default branch: ${defaultBranch}`,
 		`git status --short:\n${status || '(clean)'}`,
-		`git log ${defaultRef}..HEAD:\n${log || '(no branch commits)'}`,
-		`git diff --stat ${defaultRef}...HEAD:\n${diffStat || '(no diff)'}`,
+		`git log ${defaultRef}..HEAD:\n${hasDefaultRef ? log || '(no branch commits)' : '(remote default ref unavailable)'}`,
+		`git diff --stat ${defaultRef}...HEAD:\n${hasDefaultRef ? diffStat || '(no diff)' : '(remote default ref unavailable)'}`,
 	].join('\n\n');
 }
 
@@ -109,7 +151,7 @@ function createThreadForPhase(props: {
 export async function runTask(
 	taskId: string,
 	deps: CoordinatorDeps,
-	workspaceDir: string,
+	workDir: string,
 	tasks: Map<string, TaskState>,
 	eventRecorder: TaskEventRecorder,
 	onTaskFinished: () => void,
@@ -124,12 +166,18 @@ export async function runTask(
 		const taskConfig = initialState.config;
 		const controllerBaseUrl = process.env.CONTROLLER_BASE_URL ?? 'http://controller.vm.host:18800';
 		const zoneId = process.env.AGENT_VM_ZONE_ID ?? 'unknown-zone';
-		const primaryWorkspaceDir = getPrimaryRepoWorkspace(taskConfig, workspaceDir);
+		await bootstrapRepoWorktrees({
+			branchPrefix: config.branchPrefix,
+			repoRootPath: join(workDir, 'repos'),
+			repos: taskConfig.repos,
+			taskId,
+		});
+		const primaryWorkDir = getPrimaryRepoWork(taskConfig, workDir);
 		const taskLogsDir = join(config.stateDir, 'tasks', taskId, 'logs');
 
 		let repoSummary: string | null = null;
 		try {
-			const repoContext = await gatherContext(workspaceDir);
+			const repoContext = await gatherContext(primaryWorkDir);
 			repoSummary = repoContext.summary;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -158,14 +206,14 @@ export async function runTask(
 			config,
 			phase: config.phases.plan,
 			tools: [],
-			cwd: primaryWorkspaceDir,
+			cwd: primaryWorkDir,
 			turnTimeoutMs: config.phases.plan.agentTurnTimeoutMs,
 		});
 		const planReviewThread = createThreadForPhase({
 			config,
 			phase: config.phases.plan,
 			tools: [],
-			cwd: primaryWorkspaceDir,
+			cwd: primaryWorkDir,
 			turnTimeoutMs: config.phases.plan.reviewerTurnTimeoutMs,
 		});
 		const planResult = await runPlanCycle({
@@ -208,7 +256,7 @@ export async function runTask(
 		await eventRecorder.emit(taskId, { event: 'phase-started', phase: 'work' });
 		const validationTool = buildValidationTool({
 			commands: config.verification,
-			cwd: primaryWorkspaceDir,
+			cwd: primaryWorkDir,
 			timeoutMs: config.verificationTimeoutMs,
 			rawLogDir: taskLogsDir,
 			attemptLabelPrefix: 'verify',
@@ -247,14 +295,14 @@ export async function runTask(
 			config,
 			phase: config.phases.work,
 			tools: [validationTool, ...controllerTools],
-			cwd: primaryWorkspaceDir,
+			cwd: primaryWorkDir,
 			turnTimeoutMs: config.phases.work.agentTurnTimeoutMs,
 		});
 		const workReviewThread = createThreadForPhase({
 			config,
 			phase: config.phases.work,
 			tools: [validationTool],
-			cwd: primaryWorkspaceDir,
+			cwd: primaryWorkDir,
 			turnTimeoutMs: config.phases.work.reviewerTurnTimeoutMs,
 		});
 		const workResult = await runWorkCycle({
@@ -267,7 +315,7 @@ export async function runTask(
 			reviewThread: workReviewThread,
 			systemPromptWorkAgent: workAgentSystem,
 			systemPromptWorkReviewer: workReviewerSystem,
-			getDiff: async () => await getDiff(primaryWorkspaceDir),
+			getDiff: async () => await getDiff(primaryWorkDir),
 			isClosed: () => eventRecorder.isClosed(taskId),
 			onWorkAgentTurn: async (cycle, result) => {
 				await eventRecorder.emit(taskId, {
@@ -322,7 +370,7 @@ export async function runTask(
 			config,
 			phase: config.phases.wrapup,
 			tools: controllerTools,
-			cwd: primaryWorkspaceDir,
+			cwd: primaryWorkDir,
 			turnTimeoutMs: config.phases.wrapup.turnTimeoutMs,
 		});
 		const wrapupResult = await runWrapup({
@@ -331,10 +379,10 @@ export async function runTask(
 			spec: taskConfig.prompt,
 			plan: planResult.plan,
 			workSummary: workSummaryResult.response,
-			gitContext: await buildWrapupGitContext(
-				primaryWorkspaceDir,
-				taskConfig.repos[0]?.baseBranch ?? 'main',
-			),
+			gitContext: await buildWrapupGitContextForTask({
+				workDir: primaryWorkDir,
+				repos: taskConfig.repos,
+			}),
 			validationResults: workResult.validationResults,
 			validationSkipped: workResult.validationSkipped,
 			onWrapupTurn: async (result) => {

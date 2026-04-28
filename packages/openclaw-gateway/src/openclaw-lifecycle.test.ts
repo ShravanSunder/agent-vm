@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openclawLifecycle } from './openclaw-lifecycle.js';
 
 const createdDirectories: string[] = [];
+type OpenClawGatewayConfig = Extract<GatewayZoneConfig['gateway'], { readonly type: 'openclaw' }>;
 
 afterEach(() => {
 	vi.useRealTimers();
@@ -25,17 +26,17 @@ const resolvedSecrets: Record<string, string> = {
 
 function createZone(overrides?: {
 	readonly authProfilesRef?: GatewayZoneConfig['gateway']['authProfilesRef'];
-	readonly gateway?: Partial<GatewayZoneConfig['gateway']>;
+	readonly gateway?: Partial<OpenClawGatewayConfig>;
 	readonly withoutAuthProfilesRef?: boolean;
 }): GatewayZoneConfig {
-	const baseGateway: GatewayZoneConfig['gateway'] = {
+	const baseGateway: OpenClawGatewayConfig = {
 		cpus: 2,
 		config: '/host/config/shravan/openclaw.json',
 		memory: '2G',
 		port: 18791,
 		stateDir: '/host/state/shravan',
 		type: 'openclaw',
-		workspaceDir: '/host/workspaces/shravan',
+		zoneFilesDir: '/host/zone-files/shravan',
 	};
 
 	return {
@@ -148,8 +149,10 @@ describe('openclawLifecycle', () => {
 				'/home/openclaw/.openclaw/state/effective-openclaw.json',
 			);
 			expect(vmSpec.environment.OPENCLAW_PLUGIN_STAGE_DIR).toBe(
-				'/home/openclaw/.openclaw/cache/plugin-runtime-deps',
+				'/opt/openclaw/plugin-runtime-deps',
 			);
+			expect(vmSpec.environment.TMPDIR).toBe('/work/tmp');
+			expect(vmSpec.environment.npm_config_cache).toBe('/work/cache/npm');
 			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/config']).toEqual({
 				hostPath: '/host/config/shravan',
 				kind: 'realfs',
@@ -158,6 +161,12 @@ describe('openclawLifecycle', () => {
 				hostPath: '/host/cache/gateways/shravan',
 				kind: 'realfs',
 			});
+			expect(vmSpec.vfsMounts['/home/openclaw/zone-files']).toEqual({
+				hostPath: '/host/zone-files/shravan',
+				kind: 'realfs',
+			});
+			expect(vmSpec.vfsMounts['/home/openclaw/workspace']).toBeUndefined();
+			expect(vmSpec.vfsMounts['/opt/openclaw/plugin-runtime-deps']).toBeUndefined();
 			expect(vmSpec.tcpHosts).toEqual({
 				'controller.vm.host:18800': '127.0.0.1:18800',
 				'gateway.discord.gg:443': 'gateway.discord.gg:443',
@@ -178,8 +187,11 @@ describe('openclawLifecycle', () => {
 				'OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json',
 			);
 			expect(processSpec.bootstrapCommand).toContain(
-				'OPENCLAW_PLUGIN_STAGE_DIR=/home/openclaw/.openclaw/cache/plugin-runtime-deps',
+				'OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps',
 			);
+			expect(processSpec.bootstrapCommand).toContain('/work/tmp /work/cache/npm');
+			expect(processSpec.bootstrapCommand).toContain('TMPDIR=/work/tmp');
+			expect(processSpec.bootstrapCommand).toContain('npm_config_cache=/work/cache/npm');
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
 			expect(processSpec.startCommand).toContain('nohup openclaw gateway --port 18789');
@@ -203,7 +215,7 @@ describe('openclawLifecycle', () => {
 				path.join(configDirectory, 'openclaw.json'),
 				JSON.stringify(
 					{
-						agents: { defaults: { workspace: '/home/openclaw/workspace' } },
+						agents: { defaults: { workspace: '/home/openclaw/zone-files' } },
 						gateway: {
 							auth: { mode: 'token' },
 							bind: 'loopback',
@@ -221,7 +233,7 @@ describe('openclawLifecycle', () => {
 				gateway: {
 					config: path.join(configDirectory, 'openclaw.json'),
 					stateDir: path.join(tempDirectory, 'state'),
-					workspaceDir: path.join(tempDirectory, 'workspace'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
 			});
 			const secretResolver: SecretResolver = {
@@ -246,7 +258,7 @@ describe('openclawLifecycle', () => {
 					fs.readFileSync(path.join(zone.gateway.stateDir, 'effective-openclaw.json'), 'utf8'),
 				),
 			).toMatchObject({
-				agents: { defaults: { workspace: '/home/openclaw/workspace' } },
+				agents: { defaults: { workspace: '/home/openclaw/zone-files' } },
 				gateway: {
 					auth: { mode: 'token', token: 'resolved-gateway-token' },
 					bind: 'loopback',
@@ -288,7 +300,7 @@ describe('openclawLifecycle', () => {
 				gateway: {
 					config: path.join(configDirectory, 'openclaw.json'),
 					stateDir: path.join(tempDirectory, 'state'),
-					workspaceDir: path.join(tempDirectory, 'workspace'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
 				withoutAuthProfilesRef: true,
 			});
@@ -325,7 +337,7 @@ describe('openclawLifecycle', () => {
 				gateway: {
 					config: path.join(configDirectory, 'openclaw.json'),
 					stateDir: path.join(tempDirectory, 'state'),
-					workspaceDir: path.join(tempDirectory, 'workspace'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
 			});
 			const { OPENCLAW_GATEWAY_TOKEN: _removedGatewayToken, ...remainingSecrets } =
@@ -362,7 +374,7 @@ describe('openclawLifecycle', () => {
 				gateway: {
 					config: path.join(configDirectory, 'openclaw.json'),
 					stateDir: path.join(tempDirectory, 'state'),
-					workspaceDir: path.join(tempDirectory, 'workspace'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
 			});
 			const secretResolver: SecretResolver = {
@@ -405,7 +417,7 @@ describe('openclawLifecycle', () => {
 				gateway: {
 					config: configPath,
 					stateDir: path.join(tempDirectory, 'state'),
-					workspaceDir: path.join(tempDirectory, 'workspace'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
 				withoutAuthProfilesRef: true,
 			});
@@ -449,7 +461,7 @@ describe('openclawLifecycle', () => {
 				gateway: {
 					config: configPath,
 					stateDir: path.join(tempDirectory, 'state'),
-					workspaceDir: path.join(tempDirectory, 'workspace'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
 				withoutAuthProfilesRef: true,
 			});

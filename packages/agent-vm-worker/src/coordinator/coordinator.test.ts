@@ -12,8 +12,10 @@ import { createCoordinator } from './coordinator.js';
 
 const mocks = vi.hoisted(() => ({
 	createWorkExecutor: vi.fn(),
+	execa: vi.fn(),
 	getDiff: vi.fn(),
 	gatherContext: vi.fn(),
+	bootstrapRepoWorktrees: vi.fn(),
 }));
 
 vi.mock('../work-executor/executor-factory.js', () => ({
@@ -24,6 +26,12 @@ vi.mock('../git/git-operations.js', () => ({
 }));
 vi.mock('../context/gather-context.js', () => ({
 	gatherContext: mocks.gatherContext,
+}));
+vi.mock('../git/repo-worktree-bootstrap.js', () => ({
+	bootstrapRepoWorktrees: mocks.bootstrapRepoWorktrees,
+}));
+vi.mock('execa', () => ({
+	execa: mocks.execa,
 }));
 
 function makeConfig(stateDir: string, overrides: Record<string, unknown> = {}): WorkerConfig {
@@ -154,6 +162,21 @@ describe('coordinator', () => {
 		tempDir = await mkdtemp(join(tmpdir(), 'worker-coordinator-test-'));
 		stateDir = join(tempDir, 'state');
 		vi.clearAllMocks();
+		mocks.execa.mockImplementation(async (_command: string, args: readonly string[]) => {
+			if (args[0] === 'branch') {
+				return { stdout: 'agent/test', stderr: '', exitCode: 0 };
+			}
+			if (args[0] === 'status') {
+				return { stdout: '', stderr: '', exitCode: 0 };
+			}
+			if (args[0] === 'log') {
+				return { stdout: 'abc123 feat: test', stderr: '', exitCode: 0 };
+			}
+			if (args[0] === 'diff') {
+				return { stdout: ' file.ts | 1 +', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
 		mocks.gatherContext.mockResolvedValue({ summary: 'repo summary' });
 		mocks.getDiff.mockResolvedValue('diff --git a/file b/file');
 	});
@@ -166,7 +189,7 @@ describe('coordinator', () => {
 		enqueueHappyPathExecutors();
 		const coordinator = await createCoordinator({
 			config: makeConfig(stateDir),
-			workspaceDir: tempDir,
+			workDir: tempDir,
 		});
 
 		const { taskId } = await coordinator.submitTask({
@@ -199,13 +222,19 @@ describe('coordinator', () => {
 		expect(coordinator.getTaskState(taskId)?.lastValidationResults).toEqual([
 			{ name: 'test', passed: true, exitCode: 0, output: '' },
 		]);
+		expect(mocks.bootstrapRepoWorktrees).toHaveBeenCalledWith({
+			branchPrefix: 'agent/',
+			repoRootPath: join(tempDir, 'repos'),
+			repos: [],
+			taskId,
+		});
 	});
 
 	it('rejects a second task while one is active', async () => {
 		mocks.createWorkExecutor.mockReturnValue(createMockExecutor([], { neverResolve: true }));
 		const coordinator = await createCoordinator({
 			config: makeConfig(stateDir),
-			workspaceDir: tempDir,
+			workDir: tempDir,
 		});
 
 		await coordinator.submitTask({ taskId: 'first', prompt: 'one' });
@@ -222,7 +251,7 @@ describe('coordinator', () => {
 		});
 		const coordinator = await createCoordinator({
 			config: makeConfig(stateDir),
-			workspaceDir: tempDir,
+			workDir: tempDir,
 		});
 
 		const { taskId } = await coordinator.submitTask({ taskId: 'sanitize', prompt: 'fix' });
@@ -235,16 +264,16 @@ describe('coordinator', () => {
 
 	it('continues when context gathering fails', async () => {
 		enqueueHappyPathExecutors();
-		mocks.gatherContext.mockRejectedValue(new Error('workspace not readable'));
+		mocks.gatherContext.mockRejectedValue(new Error('work dir not readable'));
 		const coordinator = await createCoordinator({
 			config: makeConfig(stateDir),
-			workspaceDir: tempDir,
+			workDir: tempDir,
 		});
 
 		const { taskId } = await coordinator.submitTask({ taskId: 'context-failed', prompt: 'fix' });
 
 		await waitForStatus(coordinator, taskId, 'completed');
-		expect(coordinator.getTaskState(taskId)?.lastContextError).toBe('workspace not readable');
+		expect(coordinator.getTaskState(taskId)?.lastContextError).toBe('work dir not readable');
 	});
 
 	it('fails when diff reading fails', async () => {
@@ -252,7 +281,7 @@ describe('coordinator', () => {
 		mocks.getDiff.mockRejectedValue(new Error('git diff failed'));
 		const coordinator = await createCoordinator({
 			config: makeConfig(stateDir),
-			workspaceDir: tempDir,
+			workDir: tempDir,
 		});
 
 		const { taskId } = await coordinator.submitTask({ taskId: 'diff-failed', prompt: 'fix' });

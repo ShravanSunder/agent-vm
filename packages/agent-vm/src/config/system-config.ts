@@ -87,18 +87,34 @@ const hostSecretReferenceSchema = z.discriminatedUnion('source', [
 	}),
 ]);
 
-const zoneGatewaySchema = z.object({
-	type: z.enum(gatewayTypeValues).default('openclaw'),
+const zoneGatewayBaseSchema = z.object({
 	imageProfile: z.string().min(1),
 	memory: z.string().min(1),
 	cpus: z.number().int().positive(),
 	port: z.number().int().positive(),
 	config: z.string().min(1),
 	stateDir: z.string().min(1),
-	workspaceDir: z.string().min(1),
 	backupDir: z.string().min(1).optional(),
 	authProfilesRef: authProfilesSecretSchema.optional(),
 });
+
+const openClawZoneGatewaySchema = zoneGatewayBaseSchema
+	.extend({
+		type: z.literal('openclaw'),
+		zoneFilesDir: z.string().min(1),
+	})
+	.strict();
+
+const workerZoneGatewaySchema = zoneGatewayBaseSchema
+	.extend({
+		type: z.literal('worker'),
+	})
+	.strict();
+
+const zoneGatewaySchema = z.discriminatedUnion('type', [
+	openClawZoneGatewaySchema,
+	workerZoneGatewaySchema,
+]);
 
 const toolProfileSchema = z.object({
 	memory: z.string().min(1),
@@ -147,6 +163,7 @@ const systemConfigSchema = z
 			githubToken: hostSecretReferenceSchema.optional(),
 		}),
 		cacheDir: z.string().min(1).default('./cache'),
+		runtimeDir: z.string().min(1).default('./runtime'),
 		imageProfiles: imageProfilesSchema,
 		zones: z
 			.array(
@@ -276,11 +293,42 @@ export type LoadedSystemConfig = SystemConfig & {
 	readonly systemCacheIdentifierPath: string;
 };
 
+function pathsOverlap(firstPath: string, secondPath: string): boolean {
+	const firstResolved = path.resolve(firstPath);
+	const secondResolved = path.resolve(secondPath);
+	const firstToSecond = path.relative(firstResolved, secondResolved);
+	const secondToFirst = path.relative(secondResolved, firstResolved);
+	return (
+		firstToSecond === '' ||
+		secondToFirst === '' ||
+		(!firstToSecond.startsWith('..') && !path.isAbsolute(firstToSecond)) ||
+		(!secondToFirst.startsWith('..') && !path.isAbsolute(secondToFirst))
+	);
+}
+
+function assertResolvedRuntimePathIsolation(config: z.infer<typeof systemConfigSchema>): void {
+	if (pathsOverlap(config.runtimeDir, config.cacheDir)) {
+		throw new Error('runtimeDir must not overlap cacheDir.');
+	}
+	for (const zone of config.zones) {
+		if (pathsOverlap(config.runtimeDir, zone.gateway.stateDir)) {
+			throw new Error(`runtimeDir must not overlap stateDir for zone '${zone.id}'.`);
+		}
+		if (
+			zone.gateway.type === 'openclaw' &&
+			pathsOverlap(config.runtimeDir, zone.gateway.zoneFilesDir)
+		) {
+			throw new Error(`runtimeDir must not overlap zoneFilesDir for zone '${zone.id}'.`);
+		}
+	}
+}
+
 export function createLoadedSystemConfig(
 	config: SystemConfigInput,
 	options: { readonly systemConfigPath: string },
 ): LoadedSystemConfig {
 	const parsedConfig = systemConfigSchema.parse(config);
+	assertResolvedRuntimePathIsolation(parsedConfig);
 	return {
 		...parsedConfig,
 		systemConfigPath: options.systemConfigPath,
@@ -297,10 +345,36 @@ function resolveRelativePaths(
 	configDir: string,
 ): z.infer<typeof systemConfigSchema> {
 	const resolvePath = (relativePath: string): string => resolveConfigPath(relativePath, configDir);
+	const resolveZoneGatewayPaths = (
+		gateway: z.infer<typeof zoneGatewaySchema>,
+	): z.infer<typeof zoneGatewaySchema> => {
+		switch (gateway.type) {
+			case 'openclaw':
+				return {
+					...gateway,
+					config: resolvePath(gateway.config),
+					stateDir: resolvePath(gateway.stateDir),
+					...(gateway.backupDir ? { backupDir: resolvePath(gateway.backupDir) } : {}),
+					zoneFilesDir: resolvePath(gateway.zoneFilesDir),
+				};
+			case 'worker':
+				return {
+					...gateway,
+					config: resolvePath(gateway.config),
+					stateDir: resolvePath(gateway.stateDir),
+					...(gateway.backupDir ? { backupDir: resolvePath(gateway.backupDir) } : {}),
+				};
+			default: {
+				const exhaustiveGateway: never = gateway;
+				throw new Error(`Unhandled gateway type: ${String(exhaustiveGateway)}`);
+			}
+		}
+	};
 
 	return {
 		...config,
 		cacheDir: resolvePath(config.cacheDir),
+		runtimeDir: resolvePath(config.runtimeDir),
 		imageProfiles: {
 			gateways: Object.fromEntries(
 				Object.entries(config.imageProfiles.gateways).map(([profileId, profile]) => [
@@ -325,13 +399,7 @@ function resolveRelativePaths(
 		},
 		zones: config.zones.map((zone) => ({
 			...zone,
-			gateway: {
-				...zone.gateway,
-				config: resolvePath(zone.gateway.config),
-				stateDir: resolvePath(zone.gateway.stateDir),
-				workspaceDir: resolvePath(zone.gateway.workspaceDir),
-				...(zone.gateway.backupDir ? { backupDir: resolvePath(zone.gateway.backupDir) } : {}),
-			},
+			gateway: resolveZoneGatewayPaths(zone.gateway),
 		})),
 		toolProfiles: Object.fromEntries(
 			Object.entries(config.toolProfiles).map(([profileId, profile]) => [

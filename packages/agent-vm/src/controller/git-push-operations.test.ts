@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { ActiveWorkerTask } from './active-task-registry.js';
+import { createHostGitDir, createVmWorkPath } from './active-task-registry.js';
 import { pushBranchesForTask, PushBranchesValidationError } from './git-push-operations.js';
 
 const { execaMock } = vi.hoisted(() => ({
@@ -10,79 +12,76 @@ vi.mock('execa', () => ({
 	execa: execaMock,
 }));
 
-function buildActiveTask(): {
-	readonly taskId: string;
-	readonly zoneId: string;
-	readonly taskRoot: string;
-	readonly branchPrefix: string;
-	readonly workerIngress: null;
-	readonly repos: readonly {
-		readonly repoUrl: string;
-		readonly baseBranch: string;
-		readonly hostWorkspacePath: string;
-		readonly vmWorkspacePath: string;
-	}[];
-} {
+function buildActiveTask(): ActiveWorkerTask {
 	return {
 		taskId: 'task-1',
 		zoneId: 'shravan',
 		taskRoot: '/tmp/task-1',
+		eventLogPath: '/tmp/task-1/state/tasks/task-1.jsonl',
 		branchPrefix: 'agent/',
 		workerIngress: null,
 		repos: [
 			{
 				repoUrl: 'https://github.com/acme/widgets.git',
 				baseBranch: 'main',
-				hostWorkspacePath: '/tmp/task-1/widgets',
-				vmWorkspacePath: '/workspace/widgets',
+				hostGitDir: createHostGitDir('/tmp/task-1/gitdirs/widgets.git'),
+				vmWorkPath: createVmWorkPath('/work/repos/widgets'),
 			},
 		],
 	};
 }
 
-function buildMultiRepoActiveTask(): ReturnType<typeof buildActiveTask> {
+function buildMultiRepoActiveTask(): ActiveWorkerTask {
 	return {
 		...buildActiveTask(),
 		repos: [
 			{
 				repoUrl: 'https://github.com/acme/widgets.git',
 				baseBranch: 'main',
-				hostWorkspacePath: '/tmp/task-1/widgets',
-				vmWorkspacePath: '/workspace/widgets',
+				hostGitDir: createHostGitDir('/tmp/task-1/gitdirs/widgets.git'),
+				vmWorkPath: createVmWorkPath('/work/repos/widgets'),
 			},
 			{
 				repoUrl: 'https://github.com/acme/api.git',
 				baseBranch: 'main',
-				hostWorkspacePath: '/tmp/task-1/api',
-				vmWorkspacePath: '/workspace/api',
+				hostGitDir: createHostGitDir('/tmp/task-1/gitdirs/api.git'),
+				vmWorkPath: createVmWorkPath('/work/repos/api'),
 			},
 		],
 	};
 }
 
+function extractGitArgs(args: readonly string[]): readonly string[] {
+	expect(args[0]).toBe('-c');
+	expect(args[1]).toBe('core.hooksPath=/dev/null');
+	expect(args[2]).toMatch(/^--git-dir=\/tmp\/task-1\/gitdirs\/(?:api|widgets)\.git$/u);
+	return args.slice(3);
+}
+
 function mockGitSuccess(): void {
 	execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
-		const joined = args.join(' ');
-		if (args[0] === 'rev-parse' && args.includes('refs/remotes/origin/agent/task-1')) {
+		const gitArgs = extractGitArgs(args);
+		const joined = gitArgs.join(' ');
+		if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
 			return { stdout: '', stderr: '', exitCode: 1 };
 		}
-		if (args[0] === 'rev-parse' && args.includes('refs/remotes/origin/main')) {
+		if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
 			return { stdout: 'base-sha', stderr: '', exitCode: 0 };
 		}
-		if (args[0] === 'rev-parse' && args.includes('HEAD')) {
+		if (gitArgs[0] === 'rev-parse' && gitArgs.includes('HEAD')) {
 			return { stdout: 'local-sha', stderr: '', exitCode: 0 };
 		}
-		if (args[0] === 'log' && joined.includes('refs/remotes/origin/main..HEAD')) {
+		if (gitArgs[0] === 'log' && joined.includes('refs/remotes/origin/main..HEAD')) {
 			return {
 				stdout: 'local-sha\tfeat: change\tAgent\t2026-04-21T00:00:00Z',
 				stderr: '',
 				exitCode: 0,
 			};
 		}
-		if (args[0] === 'log') {
+		if (gitArgs[0] === 'log') {
 			return { stdout: 'local-sha\tfeat: change', stderr: '', exitCode: 0 };
 		}
-		if (args[0] === 'rev-list') {
+		if (gitArgs[0] === 'rev-list') {
 			return { stdout: joined.includes('HEAD..') ? '0' : '1', stderr: '', exitCode: 0 };
 		}
 		return { stdout: '', stderr: '', exitCode: 0 };
@@ -91,6 +90,7 @@ function mockGitSuccess(): void {
 
 describe('git-push-operations', () => {
 	afterEach(() => {
+		vi.useRealTimers();
 		vi.clearAllMocks();
 	});
 
@@ -143,21 +143,292 @@ describe('git-push-operations', () => {
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
 			[
+				'-c',
+				'core.hooksPath=/dev/null',
+				'--git-dir=/tmp/task-1/gitdirs/widgets.git',
 				'fetch',
 				'--prune',
 				'https://x-access-token:token@github.com/acme/widgets.git',
 				'agent/task-1:refs/remotes/origin/agent/task-1',
 			],
-			expect.objectContaining({ cwd: '/tmp/task-1/widgets' }),
+			expect.not.objectContaining({ cwd: expect.any(String) }),
 		);
+	});
+
+	it('retries transient git push failures before reporting success', async () => {
+		vi.useFakeTimers();
+		let pushAttempts = 0;
+		const recordEvent = vi.fn(async () => {});
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			const joined = gitArgs.join(' ');
+			if (gitArgs[0] === 'push') {
+				pushAttempts += 1;
+				if (pushAttempts < 4) {
+					return {
+						stdout: '',
+						stderr: `RPC failed; HTTP 503 ECONNRESET transient push failure ${pushAttempts}`,
+						exitCode: 128,
+					};
+				}
+				return { stdout: '', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
+				return pushAttempts >= 4
+					? { stdout: 'local-sha', stderr: '', exitCode: 0 }
+					: { stdout: '', stderr: '', exitCode: 1 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
+				return { stdout: 'base-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('HEAD')) {
+				return { stdout: 'local-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'log' && joined.includes('refs/remotes/origin/main..HEAD')) {
+				return {
+					stdout: 'local-sha\tfeat: change\tAgent\t2026-04-21T00:00:00Z',
+					stderr: '',
+					exitCode: 0,
+				};
+			}
+			if (gitArgs[0] === 'log') {
+				return { stdout: 'local-sha\tfeat: change', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-list') {
+				return { stdout: joined.includes('HEAD..') ? '0' : '1', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		const resultPromise = pushBranchesForTask({
+			activeTask: buildActiveTask(),
+			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
+			githubToken: 'token',
+			recordEvent,
+		});
+
+		await vi.advanceTimersByTimeAsync(22_000);
+		const result = await resultPromise;
+
+		expect(pushAttempts).toBe(4);
+		expect(result.results[0]).toMatchObject({
+			branch: 'agent/task-1',
+			success: true,
+			remoteBranchHead: 'local-sha',
+		});
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-push-succeeded',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'agent/task-1',
+			attempts: 4,
+			localHead: 'local-sha',
+			remoteBranchHead: 'local-sha',
+		});
+	});
+
+	it('tells the agent to retry in five minutes when push retries are exhausted', async () => {
+		vi.useFakeTimers();
+		let pushAttempts = 0;
+		const recordEvent = vi.fn(async () => {});
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			if (gitArgs[0] === 'push') {
+				pushAttempts += 1;
+				return {
+					stdout: '',
+					stderr: `RPC failed; HTTP 503 github unavailable ${pushAttempts}`,
+					exitCode: 128,
+				};
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
+				return { stdout: '', stderr: '', exitCode: 1 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('HEAD')) {
+				return { stdout: 'local-sha', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		const resultPromise = pushBranchesForTask({
+			activeTask: buildActiveTask(),
+			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
+			githubToken: 'token',
+			recordEvent,
+		});
+
+		await vi.advanceTimersByTimeAsync(22_000);
+		const result = await resultPromise;
+
+		expect(pushAttempts).toBe(4);
+		expect(result.results[0]).toMatchObject({
+			branch: 'agent/task-1',
+			success: false,
+			error: expect.stringContaining('Try git-push again in 5 minutes'),
+		});
+		expect(result.results[0]?.error).toContain('github unavailable 4');
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-push-started',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'agent/task-1',
+		});
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-push-retry',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'agent/task-1',
+			attempts: 1,
+			message: 'RPC failed; HTTP 503 github unavailable 1',
+			retryDelaySeconds: 2,
+		});
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-push-failed',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'agent/task-1',
+			attempts: 4,
+			message: expect.stringContaining('Try git-push again in 5 minutes'),
+			retryAfterSeconds: 300,
+		});
+	});
+
+	it('does not retry permanent git push failures', async () => {
+		vi.useFakeTimers();
+		let pushAttempts = 0;
+		const recordEvent = vi.fn(async () => {});
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			if (gitArgs[0] === 'push') {
+				pushAttempts += 1;
+				return { stdout: '', stderr: 'remote rejected: non-fast-forward', exitCode: 1 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
+				return { stdout: '', stderr: '', exitCode: 1 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('HEAD')) {
+				return { stdout: 'local-sha', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		const result = await pushBranchesForTask({
+			activeTask: buildActiveTask(),
+			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
+			githubToken: 'token',
+			recordEvent,
+		});
+
+		expect(pushAttempts).toBe(1);
+		expect(result.results[0]).toMatchObject({
+			branch: 'agent/task-1',
+			success: false,
+			error: expect.not.stringContaining('Try git-push again in 5 minutes'),
+		});
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-push-failed',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'agent/task-1',
+			attempts: 1,
+			message: expect.stringContaining('non-fast-forward'),
+		});
+		expect(recordEvent).not.toHaveBeenCalledWith(
+			expect.objectContaining({ event: 'controller-git-push-retry' }),
+		);
+	});
+
+	it('reports failure when post-push verification fetch fails', async () => {
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			const joined = gitArgs.join(' ');
+			if (
+				gitArgs[0] === 'fetch' &&
+				gitArgs.includes('agent/task-1:refs/remotes/origin/agent/task-1')
+			) {
+				return { stdout: '', stderr: 'verification network failure', exitCode: 128 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
+				return { stdout: '', stderr: '', exitCode: 1 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
+				return { stdout: 'base-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('HEAD')) {
+				return { stdout: 'local-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'log' && joined.includes('refs/remotes/origin/main..HEAD')) {
+				return {
+					stdout: 'local-sha\tfeat: change\tAgent\t2026-04-21T00:00:00Z',
+					stderr: '',
+					exitCode: 0,
+				};
+			}
+			if (gitArgs[0] === 'log') {
+				return { stdout: 'local-sha\tfeat: change', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-list') {
+				return { stdout: joined.includes('HEAD..') ? '0' : '1', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		const result = await pushBranchesForTask({
+			activeTask: buildActiveTask(),
+			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
+			githubToken: 'token',
+		});
+
+		expect(result.results[0]).toMatchObject({
+			branch: 'agent/task-1',
+			success: false,
+			error: expect.stringContaining('verification network failure'),
+		});
+	});
+
+	it('reports failure when branch-state git reads fail after push', async () => {
+		let pushAttempts = 0;
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			if (gitArgs[0] === 'push') {
+				pushAttempts += 1;
+				return { stdout: '', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'log') {
+				return { stdout: '', stderr: 'cannot read commit graph', exitCode: 128 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
+				return pushAttempts > 0
+					? { stdout: 'local-sha', stderr: '', exitCode: 0 }
+					: { stdout: '', stderr: '', exitCode: 1 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
+				return { stdout: 'base-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('HEAD')) {
+				return { stdout: 'local-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-list') {
+				return { stdout: '1', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		const result = await pushBranchesForTask({
+			activeTask: buildActiveTask(),
+			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
+			githubToken: 'token',
+		});
+
+		expect(result.results[0]).toMatchObject({
+			branch: 'agent/task-1',
+			success: false,
+			error: expect.stringContaining('git log'),
+		});
 	});
 
 	it('soft-fails when local head already matches remote branch', async () => {
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
-			if (args[0] === 'rev-parse' && args.includes('refs/remotes/origin/agent/task-1')) {
+			const gitArgs = extractGitArgs(args);
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
 				return { stdout: 'same-sha', stderr: '', exitCode: 0 };
 			}
-			if (args[0] === 'rev-parse' && args.includes('HEAD')) {
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('HEAD')) {
 				return { stdout: 'same-sha', stderr: '', exitCode: 0 };
 			}
 			return { stdout: '', stderr: '', exitCode: 0 };
@@ -192,10 +463,11 @@ describe('git-push-operations', () => {
 
 	it('pushes branches for different repos concurrently', async () => {
 		const events: string[] = [];
-		execaMock.mockImplementation(async (_bin: string, args: readonly string[], options) => {
-			const cwd = options && typeof options === 'object' && 'cwd' in options ? options.cwd : '';
-			const repoName = typeof cwd === 'string' && cwd.endsWith('/api') ? 'api' : 'widgets';
-			if (args[0] === 'push') {
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			const gitDirArgument = args.find((arg) => arg.startsWith('--git-dir='));
+			const repoName = gitDirArgument?.endsWith('/api.git') === true ? 'api' : 'widgets';
+			if (gitArgs[0] === 'push') {
 				events.push(`push-start:${repoName}`);
 				if (repoName === 'widgets') {
 					await new Promise((resolve) => setTimeout(resolve, 10));
@@ -203,23 +475,27 @@ describe('git-push-operations', () => {
 				events.push(`push-finish:${repoName}`);
 				return { stdout: '', stderr: '', exitCode: 0 };
 			}
-			if (args[0] === 'rev-parse' && args.includes('HEAD')) {
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('HEAD')) {
 				return { stdout: `local-${repoName}`, stderr: '', exitCode: 0 };
 			}
 			if (
-				args[0] === 'rev-parse' &&
-				args.some((arg) => arg.startsWith('refs/remotes/origin/agent/'))
+				gitArgs[0] === 'rev-parse' &&
+				gitArgs.some((arg) => arg.startsWith('refs/remotes/origin/agent/'))
 			) {
 				return { stdout: '', stderr: '', exitCode: 1 };
 			}
-			if (args[0] === 'rev-parse' && args.includes('refs/remotes/origin/main')) {
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
 				return { stdout: `base-${repoName}`, stderr: '', exitCode: 0 };
 			}
-			if (args[0] === 'log') {
+			if (gitArgs[0] === 'log') {
 				return { stdout: `local-${repoName}\tfeat: ${repoName}`, stderr: '', exitCode: 0 };
 			}
-			if (args[0] === 'rev-list') {
-				return { stdout: args.join(' ').includes('HEAD..') ? '0' : '1', stderr: '', exitCode: 0 };
+			if (gitArgs[0] === 'rev-list') {
+				return {
+					stdout: gitArgs.join(' ').includes('HEAD..') ? '0' : '1',
+					stderr: '',
+					exitCode: 0,
+				};
 			}
 			return { stdout: '', stderr: '', exitCode: 0 };
 		});

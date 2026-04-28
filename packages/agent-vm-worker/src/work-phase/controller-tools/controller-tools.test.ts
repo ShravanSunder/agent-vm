@@ -11,7 +11,8 @@ const repos = [
 	{
 		repoUrl: 'https://github.com/acme/widgets.git',
 		baseBranch: 'main',
-		workspacePath: '/workspace/widgets',
+		gitDirPath: '/gitdirs/widgets.git',
+		workPath: '/work/repos/widgets',
 	},
 ];
 
@@ -108,7 +109,7 @@ describe('controller tools', () => {
 			repos,
 		});
 
-		await expect(tool.execute({ repoWorkspacePath: '/workspace/widgets' })).resolves.toEqual({
+		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toEqual({
 			type: 'pull-default',
 			success: true,
 			artifact: { success: true, defaultBranch: 'main' },
@@ -133,7 +134,7 @@ describe('controller tools', () => {
 			repos,
 		});
 
-		await expect(tool.execute({ repoWorkspacePath: '/workspace/widgets' })).resolves.toEqual({
+		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toEqual({
 			type: 'pull-default',
 			success: false,
 			artifact: 'Controller request failed with HTTP 400: repo not registered',

@@ -37,7 +37,7 @@ describe('resolveRoleInstructions', () => {
 describe('role default content', () => {
 	test('built-in instructions describe runtime layers and platform boundaries', () => {
 		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('Instruction layers');
-		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('/workspace/AGENTS.md');
+		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('/work/repos/AGENTS.md');
 		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('/agent-vm/agents.md');
 		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('/agent-vm/runtime-instructions.md');
 		expect(DEFAULT_BUILTIN_AGENT_INSTRUCTIONS).toContain('/state');

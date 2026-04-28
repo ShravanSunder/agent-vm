@@ -54,10 +54,6 @@ export function createTaskEventRecorder(
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			writeStderr(`[task-event-recorder] Failed to append task-failed for ${taskId}: ${message}`);
-			const current = tasks.get(taskId);
-			if (current) {
-				tasks.set(taskId, applyEvent(current, { event: 'task-failed', reason }));
-			}
 			writeStderr(
 				`[task-event-recorder] Fatal: task-failed could not be persisted for ${taskId}; exiting to avoid state resurrection on restart.`,
 			);

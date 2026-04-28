@@ -45,6 +45,15 @@ export const verificationCommandResultSchema = z.object({
 
 export type VerificationCommandResult = z.infer<typeof verificationCommandResultSchema>;
 
+const controllerGitPushBaseSchema = z.object({
+	repoUrl: z.string().min(1),
+	branch: z.string().min(1),
+});
+
+const controllerGitPullBaseSchema = z.object({
+	repoUrl: z.string().min(1),
+});
+
 export const taskEventSchema = z.discriminatedUnion('event', [
 	z.object({
 		event: z.literal('task-accepted'),
@@ -105,6 +114,49 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 		prUrl: z.string().url().nullable(),
 		branchName: z.string().nullable(),
 		pushedCommits: z.array(z.string()),
+	}),
+	controllerGitPushBaseSchema.extend({
+		event: z.literal('controller-git-push-started'),
+	}),
+	controllerGitPushBaseSchema.extend({
+		event: z.literal('controller-git-push-retry'),
+		attempts: z.number().int().positive(),
+		message: z.string(),
+		retryDelaySeconds: z.number().int().positive(),
+	}),
+	controllerGitPushBaseSchema.extend({
+		event: z.literal('controller-git-push-succeeded'),
+		attempts: z.number().int().positive(),
+		localHead: z.string().optional(),
+		remoteBranchHead: z.string().optional(),
+	}),
+	controllerGitPushBaseSchema.extend({
+		event: z.literal('controller-git-push-failed'),
+		attempts: z.number().int().nonnegative(),
+		message: z.string(),
+		retryAfterSeconds: z.number().int().positive().optional(),
+	}),
+	controllerGitPullBaseSchema.extend({
+		event: z.literal('controller-git-pull-started'),
+	}),
+	controllerGitPullBaseSchema.extend({
+		event: z.literal('controller-git-pull-retry'),
+		attempts: z.number().int().positive(),
+		message: z.string(),
+		retryDelaySeconds: z.number().int().positive(),
+	}),
+	controllerGitPullBaseSchema.extend({
+		event: z.literal('controller-git-pull-succeeded'),
+		attempts: z.number().int().positive(),
+		defaultBranch: z.string().min(1),
+		remoteDefaultHead: z.string().optional(),
+		localDefaultHead: z.string().optional(),
+	}),
+	controllerGitPullBaseSchema.extend({
+		event: z.literal('controller-git-pull-failed'),
+		attempts: z.number().int().nonnegative(),
+		message: z.string(),
+		retryAfterSeconds: z.number().int().positive().optional(),
 	}),
 	z.object({
 		event: z.literal('task-completed'),

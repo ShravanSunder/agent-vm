@@ -217,7 +217,9 @@ export async function startGatewayZone(
 		);
 	});
 	await fs.mkdir(zone.gateway.stateDir, { recursive: true });
-	await fs.mkdir(zone.gateway.workspaceDir, { recursive: true });
+	if (zone.gateway.type === 'openclaw') {
+		await fs.mkdir(zone.gateway.zoneFilesDir, { recursive: true });
+	}
 	const gatewayCacheDir = path.join(options.systemConfig.cacheDir, 'gateways', zone.id);
 	await fs.mkdir(gatewayCacheDir, { recursive: true });
 	await runTaskStep('Preparing host state', async () => {

@@ -82,7 +82,7 @@ COPY vm-host-system/start.sh /usr/local/bin/start.sh
 COPY vm-host-system/agent-vm-controller.service /etc/systemd/system/agent-vm-controller.service
 
 RUN chmod +x /usr/local/bin/start.sh \\
-    && mkdir -p /var/agent-vm/state /var/agent-vm/workspace /var/agent-vm/cache \\
+    && mkdir -p /var/agent-vm/state /var/agent-vm/runtime /var/agent-vm/cache \\
     && systemctl enable agent-vm-controller.service
 
 EXPOSE 18800

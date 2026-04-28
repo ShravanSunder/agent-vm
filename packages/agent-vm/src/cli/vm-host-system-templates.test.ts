@@ -20,6 +20,10 @@ describe('vm-host-system templates', () => {
 		expect(dockerfile).toContain('zig-x86_64-linux-0.15.2');
 		expect(dockerfile).toContain('@earendil-works/gondolin@0.8.0');
 		expect(dockerfile).toContain('image pull alpine-base:latest --arch x86_64');
+		expect(dockerfile).toContain(
+			'mkdir -p /var/agent-vm/state /var/agent-vm/runtime /var/agent-vm/cache',
+		);
+		expect(dockerfile).not.toContain('/var/agent-vm/workspace');
 	});
 
 	it('uses the selected image architecture for Gondolin warmup', () => {

@@ -30,22 +30,20 @@ export function selectRepo(
 	repos: readonly RepoLocation[],
 	params: Record<string, unknown>,
 ): ControllerToolRepoSelection {
-	const requestedWorkspacePath =
-		typeof params.repoWorkspacePath === 'string' ? params.repoWorkspacePath : null;
+	const requestedWorkPath = typeof params.repoWorkPath === 'string' ? params.repoWorkPath : null;
 	const requestedRepoUrl = typeof params.repoUrl === 'string' ? params.repoUrl : null;
-	const configured = repos.map((repo) => `${repo.workspacePath} (${repo.repoUrl})`).join(', ');
+	const configured = repos.map((repo) => `${repo.workPath} (${repo.repoUrl})`).join(', ');
 
 	if (repos.length === 0) {
 		return { repo: null, error: 'No repo configured.' };
 	}
-	if (requestedWorkspacePath) {
-		const repo =
-			repos.find((candidate) => candidate.workspacePath === requestedWorkspacePath) ?? null;
+	if (requestedWorkPath) {
+		const repo = repos.find((candidate) => candidate.workPath === requestedWorkPath) ?? null;
 		return repo
 			? { repo, error: null }
 			: {
 					repo: null,
-					error: `repoWorkspacePath '${requestedWorkspacePath}' not found; configured repos: ${configured}`,
+					error: `repoWorkPath '${requestedWorkPath}' not found; configured repos: ${configured}`,
 				};
 	}
 	if (requestedRepoUrl) {
@@ -60,7 +58,7 @@ export function selectRepo(
 	if (repos.length > 1) {
 		return {
 			repo: null,
-			error: 'Multiple repos configured; provide repoWorkspacePath or repoUrl.',
+			error: 'Multiple repos configured; provide repoWorkPath or repoUrl.',
 		};
 	}
 	return { repo: repos[0] ?? null, error: null };

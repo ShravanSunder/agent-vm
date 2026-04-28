@@ -60,7 +60,6 @@ async function writeContainerProjectFixture(rootPath: string): Promise<string> {
 					config: '/etc/agent-vm/gateways/coding-agent/worker.json',
 					imageProfile: 'worker',
 					stateDir: '/var/agent-vm/state',
-					workspaceDir: '/var/agent-vm/workspace',
 				},
 				secrets: {},
 				allowedHosts: ['api.openai.com'],
@@ -137,7 +136,7 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 					config: './gateways/shravan/openclaw.json',
 					imageProfile: 'openclaw',
 					stateDir: path.join(rootPath, 'state', 'shravan'),
-					workspaceDir: path.join(rootPath, 'workspaces', 'shravan'),
+					zoneFilesDir: path.join(rootPath, 'zone-files', 'shravan'),
 				},
 				secrets: {},
 				allowedHosts: ['api.openai.com'],
@@ -215,7 +214,6 @@ describe('runConfigValidation', () => {
 							config: '/etc/agent-vm/gateways/coding-agent/worker.json',
 							imageProfile: 'worker',
 							stateDir: '/var/agent-vm/state',
-							workspaceDir: '/var/agent-vm/workspace',
 						},
 						secrets: {},
 						allowedHosts: ['api.openai.com'],
@@ -249,6 +247,30 @@ describe('runConfigValidation', () => {
 		expect(result.checks.find((check) => check.name === 'gateway-worker-build-config')?.ok).toBe(
 			true,
 		);
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('reports runtimeDir overlap with non-runtime storage paths', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			systemConfig: {
+				...systemConfig,
+				cacheDir: path.join(temporaryDirectoryPath, 'cache'),
+				runtimeDir: path.join(temporaryDirectoryPath, 'cache', 'runtime'),
+			},
+		});
+
+		expect(result.ok).toBe(false);
+		expect(
+			result.checks.find((check) => check.name === 'runtime-path-isolation-cacheDir'),
+		).toMatchObject({
+			ok: false,
+			hint: 'runtimeDir must not overlap cacheDir',
+		});
 
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});

@@ -1,10 +1,32 @@
 import crypto from 'node:crypto';
 
+declare const hostGitDirBrand: unique symbol;
+declare const vmWorkPathBrand: unique symbol;
+
+export type HostGitDir = string & { readonly [hostGitDirBrand]: 'HostGitDir' };
+export type VmWorkPath = string & { readonly [vmWorkPathBrand]: 'VmWorkPath' };
+
+export function createHostGitDir(value: string): HostGitDir {
+	if (value.startsWith('/gitdirs/') || value.startsWith('/work/repos/')) {
+		throw new Error(`Expected a host gitdir path, received VM path '${value}'.`);
+	}
+	// oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- constructor validates the host/VM path domain before applying the brand
+	return value as HostGitDir;
+}
+
+export function createVmWorkPath(value: string): VmWorkPath {
+	if (!value.startsWith('/work/repos/')) {
+		throw new Error(`Expected VM work path under /work/repos, received '${value}'.`);
+	}
+	// oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- constructor validates the VM work path domain before applying the brand
+	return value as VmWorkPath;
+}
+
 export interface ActiveWorkerTaskRepo {
 	readonly repoUrl: string;
 	readonly baseBranch: string;
-	readonly hostWorkspacePath: string;
-	readonly vmWorkspacePath: string;
+	readonly hostGitDir: HostGitDir;
+	readonly vmWorkPath: VmWorkPath;
 }
 
 export interface ActiveWorkerTaskIngress {
@@ -16,6 +38,7 @@ export interface ActiveWorkerTask {
 	readonly taskId: string;
 	readonly zoneId: string;
 	readonly taskRoot: string;
+	readonly eventLogPath: string;
 	readonly branchPrefix: string;
 	readonly repos: readonly ActiveWorkerTaskRepo[];
 	readonly workerIngress: ActiveWorkerTaskIngress | null;

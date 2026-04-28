@@ -149,6 +149,7 @@ describe('worker-task-runner integration', () => {
 					lastValidationResults: null,
 					failureReason: null,
 					wrapupResult: null,
+					controllerOperations: { gitPushes: [], gitPulls: [] },
 					createdAt: new Date().toISOString(),
 					updatedAt: new Date().toISOString(),
 				};
@@ -211,6 +212,7 @@ describe('worker-task-runner integration', () => {
 
 	const systemConfig = {
 		cacheDir: '/tmp/cache',
+		runtimeDir: '/tmp/runtime',
 		systemConfigPath: '/tmp/config/system.json',
 		systemCacheIdentifierPath: '/tmp/config/systemCacheIdentifier.json',
 		host: {
@@ -241,7 +243,6 @@ describe('worker-task-runner integration', () => {
 					port: 18791,
 					config: '',
 					stateDir: '',
-					workspaceDir: '',
 				},
 				secrets: {},
 				allowedHosts: ['github.com'],
@@ -262,7 +263,7 @@ describe('worker-task-runner integration', () => {
 		}
 		zone.gateway.config = path.join(tempDir, 'gateway-config.json');
 		zone.gateway.stateDir = path.join(tempDir, 'state');
-		zone.gateway.workspaceDir = path.join(tempDir, 'workspace');
+		systemConfig.runtimeDir = path.join(tempDir, 'runtime');
 		await fs.writeFile(zone.gateway.config, JSON.stringify(buildWorkerConfigInput()));
 
 		const { executeWorkerTask, prepareWorkerTask } =
@@ -296,6 +297,8 @@ describe('worker-task-runner integration', () => {
 		});
 		await expect(fs.stat(result.taskRoot)).resolves.toBeDefined();
 		await expect(fs.stat(path.join(result.taskRoot, 'state'))).resolves.toBeDefined();
-		await expect(fs.stat(path.join(result.taskRoot, 'workspace'))).rejects.toThrow();
+		await expect(
+			fs.stat(path.join(systemConfig.runtimeDir, 'worker-tasks', 'shravan', result.taskId)),
+		).rejects.toThrow();
 	});
 });

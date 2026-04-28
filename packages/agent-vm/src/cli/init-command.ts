@@ -85,10 +85,11 @@ export type ScaffoldPathMode = 'local' | 'pod' | 'user-dir';
 
 interface ScaffoldPathProfile {
 	readonly cacheDir: string;
+	readonly runtimeDir: string;
 	readonly createLocalRuntimeDirectories: boolean;
 	readonly gatewayConfig: (zoneId: string, gatewayType: GatewayType) => string;
 	readonly gatewayStateDir: (zoneId: string) => string;
-	readonly gatewayWorkspaceDir: (zoneId: string) => string;
+	readonly gatewayZoneFilesDir: (zoneId: string) => string;
 	readonly gatewayBackupDir: (zoneId: string) => string;
 	readonly gatewayBuildConfig: (gatewayType: GatewayType) => string;
 	readonly gatewayDockerfile: (gatewayType: GatewayType) => string;
@@ -172,11 +173,12 @@ function resolveGatewayConfigFileName(gatewayType: GatewayType): 'worker.json' |
 
 const localPathProfile: ScaffoldPathProfile = {
 	cacheDir: '../cache',
+	runtimeDir: '../runtime',
 	createLocalRuntimeDirectories: true,
 	gatewayConfig: (zoneId, gatewayType) =>
 		`./gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 	gatewayStateDir: (zoneId) => `../state/${zoneId}`,
-	gatewayWorkspaceDir: (zoneId) => `../workspaces/${zoneId}`,
+	gatewayZoneFilesDir: (zoneId) => `../zone-files/${zoneId}`,
 	gatewayBackupDir: (zoneId) => `../backups/${zoneId}`,
 	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.json`,
 	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
@@ -187,11 +189,12 @@ const localPathProfile: ScaffoldPathProfile = {
 
 const podPathProfile: ScaffoldPathProfile = {
 	cacheDir: '/var/agent-vm/cache',
+	runtimeDir: '/var/agent-vm/runtime',
 	createLocalRuntimeDirectories: false,
 	gatewayConfig: (zoneId, gatewayType) =>
 		`/etc/agent-vm/gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 	gatewayStateDir: () => '/var/agent-vm/state',
-	gatewayWorkspaceDir: () => '/var/agent-vm/workspace',
+	gatewayZoneFilesDir: () => '/var/agent-vm/zone-files',
 	gatewayBackupDir: () => '/var/agent-vm/backups',
 	gatewayBuildConfig: (gatewayType) =>
 		`/etc/agent-vm/vm-images/gateways/${gatewayType}/build-config.json`,
@@ -209,11 +212,12 @@ const podPathProfile: ScaffoldPathProfile = {
  */
 const userDirPathProfile: ScaffoldPathProfile = {
 	cacheDir: '~/.agent-vm/cache',
+	runtimeDir: '~/.agent-vm/runtime',
 	createLocalRuntimeDirectories: true,
 	gatewayConfig: (zoneId, gatewayType) =>
 		`./gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
 	gatewayStateDir: (zoneId) => `~/.agent-vm/state/${zoneId}`,
-	gatewayWorkspaceDir: (zoneId) => `~/.agent-vm/workspaces/${zoneId}`,
+	gatewayZoneFilesDir: (zoneId) => `~/.agent-vm/zone-files/${zoneId}`,
 	gatewayBackupDir: (zoneId) => `~/.agent-vm-backups/${zoneId}`,
 	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.json`,
 	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
@@ -255,10 +259,11 @@ function resolveConfigWritablePathProfile(
 	return {
 		...pathProfile,
 		cacheDir: resolveHomeRelativeScaffoldPath(pathProfile.cacheDir, configDir, homeDir),
+		runtimeDir: resolveHomeRelativeScaffoldPath(pathProfile.runtimeDir, configDir, homeDir),
 		gatewayStateDir: (zoneId) =>
 			resolveHomeRelativeScaffoldPath(pathProfile.gatewayStateDir(zoneId), configDir, homeDir),
-		gatewayWorkspaceDir: (zoneId) =>
-			resolveHomeRelativeScaffoldPath(pathProfile.gatewayWorkspaceDir(zoneId), configDir, homeDir),
+		gatewayZoneFilesDir: (zoneId) =>
+			resolveHomeRelativeScaffoldPath(pathProfile.gatewayZoneFilesDir(zoneId), configDir, homeDir),
 		gatewayBackupDir: (zoneId) =>
 			resolveHomeRelativeScaffoldPath(pathProfile.gatewayBackupDir(zoneId), configDir, homeDir),
 		toolVmDockerfile: resolveHomeRelativeScaffoldPath(
@@ -339,6 +344,7 @@ const defaultSystemConfig = (
 			: {}),
 	},
 	cacheDir: pathProfile.cacheDir,
+	runtimeDir: pathProfile.runtimeDir,
 	imageProfiles: {
 		gateways: {
 			[gatewayType]: {
@@ -360,7 +366,9 @@ const defaultSystemConfig = (
 				config: pathProfile.gatewayConfig(zoneId, gatewayType),
 				imageProfile: gatewayType,
 				stateDir: pathProfile.gatewayStateDir(zoneId),
-				workspaceDir: pathProfile.gatewayWorkspaceDir(zoneId),
+				...(gatewayType === 'openclaw'
+					? { zoneFilesDir: pathProfile.gatewayZoneFilesDir(zoneId) }
+					: {}),
 				backupDir: pathProfile.gatewayBackupDir(zoneId),
 			},
 			secrets: defaultSecretsForGatewayType(zoneId, gatewayType, secretsProvider),
@@ -629,12 +637,22 @@ RUN apt-get update && \\
     pnpm add -g openclaw@2026.4.24 && \\
     OPENCLAW_PACKAGE_ROOT="$(pnpm root -g)/openclaw" && \\
     (cd "$OPENCLAW_PACKAGE_ROOT" && node scripts/postinstall-bundled-plugins.mjs) && \\
+    printf '%s\\n' \\
+      '{' \\
+      '  "gateway": { "mode": "local" },' \\
+      '  "channels": { "discord": { "enabled": true } }' \\
+      '}' > /tmp/openclaw-plugin-stage-config.json && \\
+    chmod 600 /tmp/openclaw-plugin-stage-config.json && \\
+    (OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive || true) && \\
+    test -n "$(find /opt/openclaw/plugin-runtime-deps -name .openclaw-runtime-deps.json -type f -print -quit)" && \\
+    rm -f /tmp/openclaw-plugin-stage-config.json /tmp/openclaw-plugin-stage-config.json.bak && \\
     mkdir -p /opt/openclaw-sdk && \\
     ln -sf "$OPENCLAW_PACKAGE_ROOT/dist/plugin-sdk/sandbox.js" /opt/openclaw-sdk/sandbox.js && \\
     printf '#!/bin/sh\\nexec /pnpm/openclaw "$@"\\n' > /usr/local/bin/openclaw && \\
     chmod 755 /usr/local/bin/openclaw && \\
     useradd -m -s /bin/bash openclaw && \\
-    mkdir -p ${defaultOpenClawExtensionsPath} /home/openclaw/workspace /run/sshd /root && \\
+    mkdir -p ${defaultOpenClawExtensionsPath} /home/openclaw/zone-files /run/sshd /root && \\
+    chown -R openclaw:openclaw /opt/openclaw/plugin-runtime-deps && \\
     chown -R openclaw:openclaw /home/openclaw && \\
     (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
 
@@ -667,8 +685,8 @@ RUN apt-get update && \\
     mv /root/.local/bin/uv /usr/local/bin/uv && \\
     mv /root/.local/bin/uvx /usr/local/bin/uvx && \\
     useradd -m -s /bin/bash coder && \\
-    mkdir -p /workspace /run/sshd /state && \\
-    chown -R coder:coder /workspace /state && \\
+    mkdir -p /work/repos /work/tmp /work/cache /run/sshd /state && \\
+    chown -R coder:coder /work /state && \\
     (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
 `;
 
@@ -690,8 +708,8 @@ RUN apt-get update && \\
     mv /root/.local/bin/uv /usr/local/bin/uv && \\
     mv /root/.local/bin/uvx /usr/local/bin/uvx && \\
     useradd -m -s /bin/bash coder && \\
-    mkdir -p /workspace /run/sshd /state && \\
-    chown -R coder:coder /workspace /state && \\
+    mkdir -p /work/repos /work/tmp /work/cache /run/sshd /state && \\
+    chown -R coder:coder /work /state && \\
     (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
 
 # Install GitHub CLI. The agent uses gh for PR creation; GitHub
@@ -814,7 +832,7 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 				},
 			},
 			sandbox: { backend: 'gondolin', mode: 'all', scope: 'session' },
-			workspace: '/home/openclaw/workspace',
+			workspace: '/home/openclaw/zone-files',
 		},
 	},
 	tools: { elevated: { enabled: false } },
@@ -1190,8 +1208,9 @@ async function scaffoldAgentVmProjectInternal(
 	if (pathProfile.createLocalRuntimeDirectories) {
 		const directoriesToCreate = [
 			pathProfile.cacheDir,
+			pathProfile.runtimeDir,
 			pathProfile.gatewayStateDir(options.zoneId),
-			pathProfile.gatewayWorkspaceDir(options.zoneId),
+			...(gatewayType === 'openclaw' ? [pathProfile.gatewayZoneFilesDir(options.zoneId)] : []),
 			pathProfile.gatewayBackupDir(options.zoneId),
 			pathProfile.toolWorkspaceRoot,
 		].map((profilePath) => resolveConfigPath(profilePath, configDir, homeDir));

@@ -136,6 +136,7 @@ curl -X POST http://localhost:18800/zones/dev-worker/worker-tasks \
 3. Resolves repo resources from `.agent-vm/repo-resources.ts`
    when the zone allows repo resources
 4. Boots a Gondolin VM, mounts `/state` and task `/gitdirs`
+   while keeping repo files on VM-local rootfs/COW under `/work/repos/<repoId>`
 5. Submits task to worker inside VM
 6. Worker runs 6-phase pipeline → see [architecture/agent-worker-gateway.md](../architecture/agent-worker-gateway.md)
 7. Worker calls controller's push-branches endpoint → controller pushes from host
