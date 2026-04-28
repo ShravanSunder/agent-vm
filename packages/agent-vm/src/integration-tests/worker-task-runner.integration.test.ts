@@ -262,6 +262,7 @@ describe('worker-task-runner integration', () => {
 		}
 		zone.gateway.config = path.join(tempDir, 'gateway-config.json');
 		zone.gateway.stateDir = path.join(tempDir, 'state');
+		systemConfig.runtimeDir = path.join(tempDir, 'runtime');
 		await fs.writeFile(zone.gateway.config, JSON.stringify(buildWorkerConfigInput()));
 
 		const { executeWorkerTask, prepareWorkerTask } =
@@ -295,6 +296,8 @@ describe('worker-task-runner integration', () => {
 		});
 		await expect(fs.stat(result.taskRoot)).resolves.toBeDefined();
 		await expect(fs.stat(path.join(result.taskRoot, 'state'))).resolves.toBeDefined();
-		await expect(fs.stat(path.join(result.taskRoot, 'workspace'))).rejects.toThrow();
+		await expect(
+			fs.stat(path.join(systemConfig.runtimeDir, 'worker-tasks', 'shravan', result.taskId)),
+		).rejects.toThrow();
 	});
 });

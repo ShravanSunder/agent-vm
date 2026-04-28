@@ -60,7 +60,6 @@ async function writeContainerProjectFixture(rootPath: string): Promise<string> {
 					config: '/etc/agent-vm/gateways/coding-agent/worker.json',
 					imageProfile: 'worker',
 					stateDir: '/var/agent-vm/state',
-					zoneFilesDir: '/var/agent-vm/zone-files',
 				},
 				secrets: {},
 				allowedHosts: ['api.openai.com'],

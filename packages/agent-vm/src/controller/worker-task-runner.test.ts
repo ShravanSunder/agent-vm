@@ -200,6 +200,7 @@ describe('worker-task-runner', () => {
 		}
 		zone.gateway.config = path.join(tempDir, 'gateway-config.json');
 		zone.gateway.stateDir = path.join(tempDir, 'state');
+		systemConfig.runtimeDir = path.join(tempDir, 'runtime');
 		await fs.writeFile(zone.gateway.config, JSON.stringify(buildWorkerConfigInput()));
 
 		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
@@ -578,19 +579,19 @@ describe('worker-task-runner', () => {
 		expect(providerCall?.repos).toEqual([
 			expect.objectContaining({
 				repoId: 'frontend',
-				repoDir: expect.stringMatching(/\/workspace\/frontend$/u),
+				repoDir: expect.stringMatching(/\/work\/frontend$/u),
 				outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/agent-vm\/resources\/frontend$/u),
 			}),
 			expect.objectContaining({
 				repoId: 'backend',
-				repoDir: expect.stringMatching(/\/workspace\/backend$/u),
+				repoDir: expect.stringMatching(/\/work\/backend$/u),
 				outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/agent-vm\/resources\/backend$/u),
 			}),
 		]);
 		expect(providerCall?.providers).toHaveLength(1);
 		expect(providerCall?.providers[0]).toMatchObject({
 			repoId: 'frontend',
-			repoDir: expect.stringMatching(/\/workspace\/frontend$/u),
+			repoDir: expect.stringMatching(/\/work\/frontend$/u),
 			outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/agent-vm\/resources\/frontend$/u),
 			resourceName: 'pg',
 			provider: { service: 'pg' },
@@ -839,7 +840,12 @@ describe('worker-task-runner', () => {
 		});
 		const originalRm = fs.rm;
 		vi.spyOn(fs, 'rm').mockImplementation(async (...args) => {
-			events.push('task-root-removed');
+			const normalizedTarget = normalizeMockFilePath(args[0]);
+			events.push(
+				normalizedTarget.includes('/worker-tasks/')
+					? 'task-runtime-root-removed'
+					: 'task-root-removed',
+			);
 			return await originalRm(...args);
 		});
 		const zone = systemConfig.zones[0];
@@ -868,6 +874,7 @@ describe('worker-task-runner', () => {
 			'slow-clone-started',
 			'slow-clone-finished',
 			'task-root-removed',
+			'task-runtime-root-removed',
 		]);
 	});
 
@@ -1157,14 +1164,20 @@ describe('worker-task-runner', () => {
 		expect(stopRepoResourceProvidersMock).toHaveBeenCalled();
 	});
 
-	it('aggregates provider, resource-directory, and workspace cleanup failures after shutdown', async () => {
+	it('aggregates provider, resource-directory, and work cleanup failures after shutdown', async () => {
 		const { postStopGateway } = await import('./worker-task-runner.js');
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected zone config.');
 		}
 		const taskRoot = path.join(zone.gateway.stateDir, 'tasks', 'task-cleanup-failures');
-		await fs.mkdir(path.join(taskRoot, 'workspace'), { recursive: true });
+		const taskRuntimeRoot = path.join(
+			systemConfig.runtimeDir,
+			'worker-tasks',
+			zone.id,
+			'task-cleanup-failures',
+		);
+		await fs.mkdir(path.join(taskRuntimeRoot, 'work'), { recursive: true });
 		await fs.mkdir(path.join(taskRoot, 'agent-vm', 'resources'), { recursive: true });
 		stopRepoResourceProvidersMock.mockRejectedValue(new Error('compose cleanup failed'));
 		vi.spyOn(fs, 'rm').mockImplementation(async (targetPath) => {
@@ -1172,8 +1185,8 @@ describe('worker-task-runner', () => {
 			if (normalizedTarget.endsWith('/agent-vm/resources')) {
 				throw new Error('resource removal failed');
 			}
-			if (normalizedTarget.endsWith('/workspace')) {
-				throw new Error('workspace removal failed');
+			if (normalizedTarget.endsWith('/work')) {
+				throw new Error('work removal failed');
 			}
 		});
 		const startedProvider = {
@@ -1185,7 +1198,9 @@ describe('worker-task-runner', () => {
 
 		let thrownError: unknown;
 		try {
-			await postStopGateway('task-cleanup-failures', zone, [startedProvider]);
+			await postStopGateway('task-cleanup-failures', zone, [startedProvider], {
+				runtimeDir: systemConfig.runtimeDir,
+			});
 		} catch (error) {
 			thrownError = error;
 		}
@@ -1195,7 +1210,7 @@ describe('worker-task-runner', () => {
 		expect(aggregateError.errors).toEqual([
 			expect.objectContaining({ message: 'compose cleanup failed' }),
 			expect.objectContaining({ message: 'resource removal failed' }),
-			expect.objectContaining({ message: 'workspace removal failed' }),
+			expect.objectContaining({ message: 'work removal failed' }),
 		]);
 	});
 
@@ -1277,7 +1292,7 @@ describe('worker-task-runner', () => {
 		expect(removedPaths.some((removedPath) => removedPath.includes('/tasks/'))).toBe(true);
 	});
 
-	it('preserves task state while pruning the workspace during shutdown', async () => {
+	it('preserves task state while pruning runtime work during shutdown', async () => {
 		const { postStopGateway } = await import('./worker-task-runner.js');
 		const zone = systemConfig.zones[0];
 		if (!zone) {
@@ -1285,10 +1300,16 @@ describe('worker-task-runner', () => {
 		}
 
 		const taskRoot = path.join(zone.gateway.stateDir, 'tasks', 'task-keep-state');
-		await fs.mkdir(path.join(taskRoot, 'workspace'), { recursive: true });
+		const taskRuntimeRoot = path.join(
+			systemConfig.runtimeDir,
+			'worker-tasks',
+			zone.id,
+			'task-keep-state',
+		);
+		await fs.mkdir(path.join(taskRuntimeRoot, 'work'), { recursive: true });
 		await fs.mkdir(path.join(taskRoot, 'state'), { recursive: true });
 		await fs.mkdir(path.join(taskRoot, 'agent-vm', 'resources', 'repo-a'), { recursive: true });
-		await fs.writeFile(path.join(taskRoot, 'workspace', 'README.md'), 'workspace data');
+		await fs.writeFile(path.join(taskRuntimeRoot, 'work', 'README.md'), 'work data');
 		await fs.writeFile(path.join(taskRoot, 'state', 'events.jsonl'), '{"event":"task-created"}\n');
 		await fs.writeFile(
 			path.join(taskRoot, 'agent-vm', 'resources', 'repo-a', 'mock.json'),
@@ -1301,11 +1322,13 @@ describe('worker-task-runner', () => {
 			repoDir: '/tmp/task',
 			repoId: 'repo-a',
 		};
-		await postStopGateway('task-keep-state', zone, [startedProvider]);
+		await postStopGateway('task-keep-state', zone, [startedProvider], {
+			runtimeDir: systemConfig.runtimeDir,
+		});
 
 		expect(stopRepoResourceProvidersMock).toHaveBeenCalledWith([startedProvider]);
 		await expect(fs.stat(path.join(taskRoot, 'state'))).resolves.toBeDefined();
 		await expect(fs.stat(path.join(taskRoot, 'agent-vm', 'resources'))).rejects.toThrow();
-		await expect(fs.stat(path.join(taskRoot, 'workspace'))).rejects.toThrow();
+		await expect(fs.stat(taskRuntimeRoot)).rejects.toThrow();
 	});
 });

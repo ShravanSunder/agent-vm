@@ -137,6 +137,7 @@ export interface PreStartResult {
 	readonly taskId: string;
 	readonly input: WorkerTaskControllerRequest;
 	readonly taskRoot: string;
+	readonly taskRuntimeRoot: string;
 	readonly workspaceDir: string;
 	readonly stateDir: string;
 	readonly startedResourceProviders: readonly StartedRepoResourceProvider[];
@@ -180,12 +181,15 @@ export interface WorkerTaskResult {
 export async function preStartGateway(
 	taskInput: WorkerTaskInput,
 	zoneConfig: GatewayZone,
-	options: { readonly githubToken?: string } = {},
+	options: { readonly githubToken?: string; readonly runtimeDir?: string } = {},
 ): Promise<PreStartResult> {
 	const parsedTaskInput = workerTaskControllerRequestSchema.parse(taskInput);
 	const taskId = crypto.randomUUID();
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
-	const workspaceDir = path.join(taskRoot, 'workspace');
+	const runtimeDir =
+		options.runtimeDir ?? path.join(path.dirname(zoneConfig.gateway.stateDir), 'runtime');
+	const taskRuntimeRoot = path.join(runtimeDir, 'worker-tasks', zoneConfig.id, taskId);
+	const workspaceDir = path.join(taskRuntimeRoot, 'work');
 	const stateDir = path.join(taskRoot, 'state');
 	const agentVmDir = path.join(taskRoot, 'agent-vm');
 
@@ -395,6 +399,7 @@ export async function preStartGateway(
 			taskId,
 			input: parsedTaskInput,
 			taskRoot,
+			taskRuntimeRoot,
 			workspaceDir,
 			stateDir,
 			startedResourceProviders: providerRun.startedProviders,
@@ -418,6 +423,7 @@ export async function preStartGateway(
 			primaryError: error,
 			startedProviders: startedResourceProviders,
 			taskId,
+			taskRuntimeRoot,
 			taskRoot,
 		});
 	}
@@ -427,9 +433,13 @@ export async function postStopGateway(
 	taskId: string,
 	zoneConfig: GatewayZone,
 	startedProviders: readonly StartedRepoResourceProvider[] = [],
+	options: { readonly runtimeDir?: string } = {},
 ): Promise<void> {
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
-	const workspaceDir = path.join(taskRoot, 'workspace');
+	const runtimeDir =
+		options.runtimeDir ?? path.join(path.dirname(zoneConfig.gateway.stateDir), 'runtime');
+	const taskRuntimeRoot = path.join(runtimeDir, 'worker-tasks', zoneConfig.id, taskId);
+	const workspaceDir = path.join(taskRuntimeRoot, 'work');
 	const resourcesDir = path.join(taskRoot, 'agent-vm', 'resources');
 	let cleanupError: Error | null = null;
 	let workspaceRemovalError: Error | null = null;
@@ -446,6 +456,7 @@ export async function postStopGateway(
 	}
 	try {
 		await fs.rm(workspaceDir, { recursive: true, force: true });
+		await fs.rm(taskRuntimeRoot, { recursive: true, force: true });
 	} catch (error) {
 		workspaceRemovalError = error instanceof Error ? error : new Error(String(error));
 	}
@@ -469,6 +480,7 @@ async function cleanupTaskRootAfterPreparationFailure(options: {
 	readonly primaryError: unknown;
 	readonly startedProviders: readonly StartedRepoResourceProvider[];
 	readonly taskId: string;
+	readonly taskRuntimeRoot?: string;
 	readonly taskRoot: string;
 }): Promise<never> {
 	const errors = [toError(options.primaryError)];
@@ -481,6 +493,13 @@ async function cleanupTaskRootAfterPreparationFailure(options: {
 		await fs.rm(options.taskRoot, { recursive: true, force: true });
 	} catch (removeError) {
 		errors.push(toError(removeError));
+	}
+	if (options.taskRuntimeRoot !== undefined) {
+		try {
+			await fs.rm(options.taskRuntimeRoot, { recursive: true, force: true });
+		} catch (removeError) {
+			errors.push(toError(removeError));
+		}
 	}
 	if (errors.length === 1) {
 		throw errors[0];
@@ -549,7 +568,10 @@ export async function prepareWorkerTask(
 		throw new Error(`Zone '${options.zoneId}' is not a worker zone.`);
 	}
 
-	const preStartOptions = options.githubToken ? { githubToken: options.githubToken } : {};
+	const preStartOptions = {
+		runtimeDir: options.systemConfig.runtimeDir,
+		...(options.githubToken ? { githubToken: options.githubToken } : {}),
+	};
 	const preStartResult = await preStartGateway(options.input, zone, preStartOptions);
 	const parsedInput = preStartResult.input;
 	try {
@@ -610,6 +632,7 @@ export async function prepareWorkerTask(
 			primaryError: error,
 			startedProviders: preStartResult.startedResourceProviders,
 			taskId: preStartResult.taskId,
+			taskRuntimeRoot: preStartResult.taskRuntimeRoot,
 			taskRoot: preStartResult.taskRoot,
 		});
 	}
@@ -723,6 +746,7 @@ export async function executeWorkerTask(
 			prepared.taskId,
 			prepared.zone,
 			prepared.preStartResult.startedResourceProviders,
+			{ runtimeDir: options.systemConfig.runtimeDir },
 		);
 	} catch (error) {
 		cleanupErrors.push(toError(error));

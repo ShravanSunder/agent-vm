@@ -89,6 +89,7 @@ function createPreparedWorkerTaskStub(
 				resources: { externalResources: {} },
 			},
 			taskRoot,
+			taskRuntimeRoot: path.join('/tmp/runtime/worker-tasks/shravan', taskId),
 			workspaceDir: path.join(taskRoot, 'workspace'),
 			stateDir,
 			environment: {},
