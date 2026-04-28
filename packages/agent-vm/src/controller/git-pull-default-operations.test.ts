@@ -25,6 +25,13 @@ const activeTask: ActiveWorkerTask = {
 	],
 };
 
+function extractGitArgs(args: readonly string[]): readonly string[] {
+	expect(args[0]).toBe('-c');
+	expect(args[1]).toBe('core.hooksPath=/dev/null');
+	expect(args[2]).toBe('--git-dir=/tmp/task-1/gitdirs/widgets.git');
+	return args.slice(3);
+}
+
 describe('git-pull-default-operations', () => {
 	afterEach(() => {
 		vi.clearAllMocks();
@@ -42,7 +49,7 @@ describe('git-pull-default-operations', () => {
 
 	test('fetches and fast-forwards local default branch', async () => {
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
-			const gitArgs = args.slice(3);
+			const gitArgs = extractGitArgs(args);
 			const joined = gitArgs.join(' ');
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
@@ -110,7 +117,7 @@ describe('git-pull-default-operations', () => {
 
 	test('soft-fails when fetch fails', async () => {
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
-			const gitArgs = args.slice(3);
+			const gitArgs = extractGitArgs(args);
 			if (gitArgs[0] === 'rev-parse') return { stdout: '', stderr: '', exitCode: 1 };
 			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: 'network down', exitCode: 1 };
 			return { stdout: '', stderr: '', exitCode: 0 };
@@ -130,7 +137,7 @@ describe('git-pull-default-operations', () => {
 
 	test('soft-fails when branch-state git reads fail after fetch', async () => {
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
-			const gitArgs = args.slice(3);
+			const gitArgs = extractGitArgs(args);
 			if (gitArgs[0] === 'log') {
 				return { stdout: '', stderr: 'cannot read commit graph', exitCode: 128 };
 			}

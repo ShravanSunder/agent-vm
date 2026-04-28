@@ -51,9 +51,16 @@ function buildMultiRepoActiveTask(): ActiveWorkerTask {
 	};
 }
 
+function extractGitArgs(args: readonly string[]): readonly string[] {
+	expect(args[0]).toBe('-c');
+	expect(args[1]).toBe('core.hooksPath=/dev/null');
+	expect(args[2]).toMatch(/^--git-dir=\/tmp\/task-1\/gitdirs\/(?:api|widgets)\.git$/u);
+	return args.slice(3);
+}
+
 function mockGitSuccess(): void {
 	execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
-		const gitArgs = args.slice(3);
+		const gitArgs = extractGitArgs(args);
 		const joined = gitArgs.join(' ');
 		if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
 			return { stdout: '', stderr: '', exitCode: 1 };
@@ -153,7 +160,7 @@ describe('git-push-operations', () => {
 		let pushAttempts = 0;
 		const recordEvent = vi.fn(async () => {});
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
-			const gitArgs = args.slice(3);
+			const gitArgs = extractGitArgs(args);
 			const joined = gitArgs.join(' ');
 			if (gitArgs[0] === 'push') {
 				pushAttempts += 1;
@@ -220,7 +227,7 @@ describe('git-push-operations', () => {
 		let pushAttempts = 0;
 		const recordEvent = vi.fn(async () => {});
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
-			const gitArgs = args.slice(3);
+			const gitArgs = extractGitArgs(args);
 			if (gitArgs[0] === 'push') {
 				pushAttempts += 1;
 				return { stdout: '', stderr: `github unavailable ${pushAttempts}`, exitCode: 128 };
@@ -277,7 +284,7 @@ describe('git-push-operations', () => {
 
 	it('reports failure when post-push verification fetch fails', async () => {
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
-			const gitArgs = args.slice(3);
+			const gitArgs = extractGitArgs(args);
 			const joined = gitArgs.join(' ');
 			if (
 				gitArgs[0] === 'fetch' &&
@@ -326,7 +333,7 @@ describe('git-push-operations', () => {
 	it('reports failure when branch-state git reads fail after push', async () => {
 		let pushAttempts = 0;
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
-			const gitArgs = args.slice(3);
+			const gitArgs = extractGitArgs(args);
 			if (gitArgs[0] === 'push') {
 				pushAttempts += 1;
 				return { stdout: '', stderr: '', exitCode: 0 };
@@ -366,7 +373,7 @@ describe('git-push-operations', () => {
 
 	it('soft-fails when local head already matches remote branch', async () => {
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
-			const gitArgs = args.slice(3);
+			const gitArgs = extractGitArgs(args);
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
 				return { stdout: 'same-sha', stderr: '', exitCode: 0 };
 			}
@@ -406,7 +413,7 @@ describe('git-push-operations', () => {
 	it('pushes branches for different repos concurrently', async () => {
 		const events: string[] = [];
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
-			const gitArgs = args.slice(3);
+			const gitArgs = extractGitArgs(args);
 			const gitDirArgument = args.find((arg) => arg.startsWith('--git-dir='));
 			const repoName = gitDirArgument?.endsWith('/api.git') === true ? 'api' : 'widgets';
 			if (gitArgs[0] === 'push') {
