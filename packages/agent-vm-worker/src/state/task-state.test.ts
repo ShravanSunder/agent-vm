@@ -171,6 +171,39 @@ describe('task-state reducer', () => {
 		expect(failedState.failureReason).toBe('tool crashed');
 	});
 
+	it('stores controller git push status for agent-visible retry guidance', () => {
+		const state = createInitialState('task-1', TEST_CONFIG);
+		const started = applyEvent(state, {
+			event: 'controller-git-push-started',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'agent/task-1',
+		});
+		const failed = applyEvent(started, {
+			event: 'controller-git-push-failed',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'agent/task-1',
+			attempts: 4,
+			message: 'GitHub unavailable. Try git-push again in 5 minutes.',
+			retryAfterSeconds: 300,
+			runtimeRetained: true,
+		});
+
+		expect(failed.controllerOperations.gitPushes).toEqual([
+			{
+				repoUrl: 'https://github.com/acme/widgets.git',
+				branch: 'agent/task-1',
+				status: 'failed',
+				attempts: 4,
+				message: 'GitHub unavailable. Try git-push again in 5 minutes.',
+				retryDelaySeconds: null,
+				retryAfterSeconds: 300,
+				runtimeRetained: true,
+				localHead: null,
+				remoteBranchHead: null,
+			},
+		]);
+	});
+
 	it('treats task-closed as terminal', () => {
 		const state = createInitialState('task-1', TEST_CONFIG);
 		const closedState = applyEvent(state, { event: 'task-closed' });

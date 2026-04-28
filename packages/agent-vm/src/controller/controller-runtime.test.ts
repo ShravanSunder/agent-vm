@@ -608,6 +608,7 @@ describe('startControllerRuntime', () => {
 				taskId: prepared.taskId,
 				zoneId: prepared.zoneId,
 				taskRoot: prepared.taskRoot,
+				eventLogPath: prepared.eventLogPath,
 				branchPrefix: prepared.preStartResult.effectiveConfig.branchPrefix,
 				repos: [],
 				workerIngress: null,

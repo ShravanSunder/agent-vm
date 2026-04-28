@@ -16,6 +16,7 @@ export interface ActiveWorkerTask {
 	readonly taskId: string;
 	readonly zoneId: string;
 	readonly taskRoot: string;
+	readonly eventLogPath: string;
 	readonly branchPrefix: string;
 	readonly repos: readonly ActiveWorkerTaskRepo[];
 	readonly workerIngress: ActiveWorkerTaskIngress | null;

@@ -10,6 +10,7 @@ const activeTask = {
 	taskId: 'task-1',
 	zoneId: 'shravan',
 	taskRoot: '/tmp/task-1',
+	eventLogPath: '/tmp/task-1/state/tasks/task-1.jsonl',
 	branchPrefix: 'agent/',
 	workerIngress: null,
 	repos: [

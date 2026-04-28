@@ -13,6 +13,19 @@ import type {
 } from './task-event-types.js';
 import { TERMINAL_STATUSES } from './task-event-types.js';
 
+export interface ControllerGitPushState {
+	readonly repoUrl: string;
+	readonly branch: string;
+	readonly status: 'started' | 'retrying' | 'succeeded' | 'failed';
+	readonly attempts: number;
+	readonly message: string | null;
+	readonly retryDelaySeconds: number | null;
+	readonly retryAfterSeconds: number | null;
+	readonly runtimeRetained: boolean;
+	readonly localHead: string | null;
+	readonly remoteBranchHead: string | null;
+}
+
 export interface TaskState {
 	readonly taskId: string;
 	readonly status: TaskStatus;
@@ -37,6 +50,9 @@ export interface TaskState {
 		readonly branchName: string | null;
 		readonly pushedCommits: readonly string[];
 	} | null;
+	readonly controllerOperations: {
+		readonly gitPushes: readonly ControllerGitPushState[];
+	};
 	readonly createdAt: string;
 	readonly updatedAt: string;
 }
@@ -72,6 +88,9 @@ export function createInitialState(taskId: string, config: TaskConfig): TaskStat
 		lastWorkReview: null,
 		lastValidationResults: null,
 		wrapupResult: null,
+		controllerOperations: {
+			gitPushes: [],
+		},
 		createdAt: now,
 		updatedAt: now,
 	};
@@ -90,6 +109,20 @@ function maxCyclesForPhase(state: TaskState, phase: PhaseName): number {
 	}
 	const exhaustivePhase: never = phase;
 	throw new Error(`Unhandled phase '${String(exhaustivePhase)}'.`);
+}
+
+function upsertGitPushState(state: TaskState, nextPushState: ControllerGitPushState): TaskState {
+	const gitPushes = state.controllerOperations.gitPushes.filter(
+		(pushState) =>
+			pushState.repoUrl !== nextPushState.repoUrl || pushState.branch !== nextPushState.branch,
+	);
+	return {
+		...state,
+		controllerOperations: {
+			...state.controllerOperations,
+			gitPushes: [...gitPushes, nextPushState],
+		},
+	};
 }
 
 export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
@@ -165,6 +198,70 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 					branchName: event.branchName,
 					pushedCommits: event.pushedCommits,
 				},
+				updatedAt,
+			};
+		case 'controller-git-push-started':
+			return {
+				...upsertGitPushState(state, {
+					repoUrl: event.repoUrl,
+					branch: event.branch,
+					status: 'started',
+					attempts: 0,
+					message: null,
+					retryDelaySeconds: null,
+					retryAfterSeconds: null,
+					runtimeRetained: false,
+					localHead: null,
+					remoteBranchHead: null,
+				}),
+				updatedAt,
+			};
+		case 'controller-git-push-retry':
+			return {
+				...upsertGitPushState(state, {
+					repoUrl: event.repoUrl,
+					branch: event.branch,
+					status: 'retrying',
+					attempts: event.attempts,
+					message: event.message,
+					retryDelaySeconds: event.retryDelaySeconds,
+					retryAfterSeconds: null,
+					runtimeRetained: false,
+					localHead: null,
+					remoteBranchHead: null,
+				}),
+				updatedAt,
+			};
+		case 'controller-git-push-succeeded':
+			return {
+				...upsertGitPushState(state, {
+					repoUrl: event.repoUrl,
+					branch: event.branch,
+					status: 'succeeded',
+					attempts: event.attempts,
+					message: null,
+					retryDelaySeconds: null,
+					retryAfterSeconds: null,
+					runtimeRetained: false,
+					localHead: event.localHead ?? null,
+					remoteBranchHead: event.remoteBranchHead ?? null,
+				}),
+				updatedAt,
+			};
+		case 'controller-git-push-failed':
+			return {
+				...upsertGitPushState(state, {
+					repoUrl: event.repoUrl,
+					branch: event.branch,
+					status: 'failed',
+					attempts: event.attempts,
+					message: event.message,
+					retryDelaySeconds: null,
+					retryAfterSeconds: event.retryAfterSeconds,
+					runtimeRetained: event.runtimeRetained,
+					localHead: null,
+					remoteBranchHead: null,
+				}),
 				updatedAt,
 			};
 		case 'task-completed':

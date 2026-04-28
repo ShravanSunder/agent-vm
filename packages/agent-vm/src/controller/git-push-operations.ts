@@ -1,3 +1,4 @@
+import type { TaskEvent } from '@agent-vm/agent-vm-worker';
 import { execa } from 'execa';
 
 import type { ActiveWorkerTask } from './active-task-registry.js';
@@ -7,6 +8,7 @@ const GIT_OPERATION_TIMEOUT_MS = 120_000;
 const GIT_PUSH_RETRY_DELAYS_MS = [2_000, 4_000, 16_000] as const;
 const GIT_PUSH_RETRY_AFTER_MESSAGE =
 	'GitHub or the network is still rejecting the push after retries. Try git-push again in 5 minutes; the task runtime gitdir is retained while this task remains available.';
+const GIT_PUSH_RETRY_AFTER_SECONDS = 300;
 
 export interface PushBranchRequest {
 	readonly repoUrl: string;
@@ -43,6 +45,16 @@ export interface PushBranchResult {
 }
 
 export class PushBranchesValidationError extends Error {}
+
+class GitPushFailedAfterRetriesError extends Error {
+	public constructor(
+		message: string,
+		public readonly attempts: number,
+	) {
+		super(message);
+		this.name = 'GitPushFailedAfterRetriesError';
+	}
+}
 
 function writePushFlowLog(message: string): void {
 	process.stderr.write(`[git-push-operations] ${message}\n`);
@@ -183,7 +195,8 @@ async function pushBranch(options: {
 	readonly branchName: string;
 	readonly gitDir: string;
 	readonly githubToken: string;
-}): Promise<void> {
+	readonly recordEvent?: (event: TaskEvent) => Promise<void>;
+}): Promise<{ readonly attempts: number }> {
 	const sanitizedBranchName = sanitizeBranchName(options.branchName);
 	const pushArgs = [
 		'push',
@@ -206,7 +219,7 @@ async function pushBranch(options: {
 		});
 
 		if (result.exitCode === 0) {
-			return;
+			return { attempts: attemptNumber };
 		}
 
 		lastErrorDetail = scrubGithubTokenFromOutput(`${result.stdout}\n${result.stderr}`).trim();
@@ -217,6 +230,14 @@ async function pushBranch(options: {
 		writePushFlowLog(
 			`git push failed for ${options.repoUrl} ${sanitizedBranchName} on attempt ${attemptNumber}; retrying in ${retryDelayMs / 1000}s: ${lastErrorDetail}`,
 		);
+		await options.recordEvent?.({
+			event: 'controller-git-push-retry',
+			repoUrl: options.repoUrl,
+			branch: sanitizedBranchName,
+			attempts: attemptNumber,
+			message: lastErrorDetail,
+			retryDelaySeconds: retryDelayMs / 1000,
+		});
 		// Backoff sleeps are intentionally serial between retry attempts.
 		// oxlint-disable-next-line eslint/no-await-in-loop
 		await sleep(retryDelayMs);
@@ -225,7 +246,10 @@ async function pushBranch(options: {
 	writePushFlowLog(
 		`git push failed for ${options.repoUrl} ${sanitizedBranchName} after ${GIT_PUSH_RETRY_DELAYS_MS.length + 1} attempts: ${lastErrorDetail}`,
 	);
-	throw new Error(`git push failed\n${GIT_PUSH_RETRY_AFTER_MESSAGE}\n${lastErrorDetail}`);
+	throw new GitPushFailedAfterRetriesError(
+		`git push failed\n${GIT_PUSH_RETRY_AFTER_MESSAGE}\n${lastErrorDetail}`,
+		GIT_PUSH_RETRY_DELAYS_MS.length + 1,
+	);
 }
 
 async function buildBranchState(options: {
@@ -271,6 +295,7 @@ export async function pushBranchesForTask(options: {
 	readonly activeTask: ActiveWorkerTask;
 	readonly branches: readonly PushBranchRequest[];
 	readonly githubToken: string;
+	readonly recordEvent?: (event: TaskEvent) => Promise<void>;
 }): Promise<{ readonly results: readonly PushBranchResult[] }> {
 	const requestedRepoUrls = new Set<string>();
 	for (const branch of options.branches) {
@@ -306,6 +331,7 @@ export async function pushBranchesForTask(options: {
 			return await pushOneBranchForTask({
 				branch,
 				githubToken: options.githubToken,
+				...(options.recordEvent ? { recordEvent: options.recordEvent } : {}),
 				repo,
 				task: options.activeTask,
 			});
@@ -318,10 +344,12 @@ export async function pushBranchesForTask(options: {
 async function pushOneBranchForTask(options: {
 	readonly branch: PushBranchRequest;
 	readonly githubToken: string;
+	readonly recordEvent?: (event: TaskEvent) => Promise<void>;
 	readonly repo: ActiveWorkerTask['repos'][number];
 	readonly task: ActiveWorkerTask;
 }): Promise<PushBranchResult> {
 	const branchName = sanitizeBranchName(options.branch.branchName);
+	let pushAttempts = 0;
 	try {
 		if (branchName === options.repo.baseBranch) {
 			return {
@@ -331,6 +359,11 @@ async function pushOneBranchForTask(options: {
 				error: `Refusing to push: you are on the default branch "${options.repo.baseBranch}". Create an ${options.task.branchPrefix} branch first and move your commits to it.`,
 			};
 		}
+		await options.recordEvent?.({
+			event: 'controller-git-push-started',
+			repoUrl: options.branch.repoUrl,
+			branch: branchName,
+		});
 
 		await fetchRemoteRefs({
 			gitDir: options.repo.hostGitDir,
@@ -349,12 +382,14 @@ async function pushOneBranchForTask(options: {
 			};
 		}
 
-		await pushBranch({
+		const pushResult = await pushBranch({
 			repoUrl: options.branch.repoUrl,
 			branchName,
 			gitDir: options.repo.hostGitDir,
 			githubToken: options.githubToken,
+			...(options.recordEvent ? { recordEvent: options.recordEvent } : {}),
 		});
+		pushAttempts = pushResult.attempts;
 		const verifyFetchResult = await git({
 			gitDir: options.repo.hostGitDir,
 			args: [
@@ -377,6 +412,14 @@ async function pushOneBranchForTask(options: {
 			defaultBranch: options.repo.baseBranch,
 			previousRemoteBranchHead,
 		});
+		await options.recordEvent?.({
+			event: 'controller-git-push-succeeded',
+			repoUrl: options.branch.repoUrl,
+			branch: branchName,
+			attempts: pushAttempts,
+			...(state.localHead ? { localHead: state.localHead } : {}),
+			...(state.remoteBranchHead ? { remoteBranchHead: state.remoteBranchHead } : {}),
+		});
 		return {
 			repoUrl: options.branch.repoUrl,
 			branch: branchName,
@@ -384,11 +427,21 @@ async function pushOneBranchForTask(options: {
 			...state,
 		};
 	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		await options.recordEvent?.({
+			event: 'controller-git-push-failed',
+			repoUrl: options.branch.repoUrl,
+			branch: branchName,
+			attempts: error instanceof GitPushFailedAfterRetriesError ? error.attempts : pushAttempts,
+			message,
+			retryAfterSeconds: GIT_PUSH_RETRY_AFTER_SECONDS,
+			runtimeRetained: true,
+		});
 		return {
 			repoUrl: options.branch.repoUrl,
 			branch: branchName,
 			success: false,
-			error: error instanceof Error ? error.message : String(error),
+			error: message,
 		};
 	}
 }

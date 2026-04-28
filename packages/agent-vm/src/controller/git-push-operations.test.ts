@@ -14,6 +14,7 @@ function buildActiveTask(): {
 	readonly taskId: string;
 	readonly zoneId: string;
 	readonly taskRoot: string;
+	readonly eventLogPath: string;
 	readonly branchPrefix: string;
 	readonly workerIngress: null;
 	readonly repos: readonly {
@@ -27,6 +28,7 @@ function buildActiveTask(): {
 		taskId: 'task-1',
 		zoneId: 'shravan',
 		taskRoot: '/tmp/task-1',
+		eventLogPath: '/tmp/task-1/state/tasks/task-1.jsonl',
 		branchPrefix: 'agent/',
 		workerIngress: null,
 		repos: [
@@ -160,6 +162,7 @@ describe('git-push-operations', () => {
 	it('retries transient git push failures before reporting success', async () => {
 		vi.useFakeTimers();
 		let pushAttempts = 0;
+		const recordEvent = vi.fn(async () => {});
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
 			const gitArgs = args.slice(3);
 			const joined = gitArgs.join(' ');
@@ -201,6 +204,7 @@ describe('git-push-operations', () => {
 			activeTask: buildActiveTask(),
 			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
 			githubToken: 'token',
+			recordEvent,
 		});
 
 		await vi.advanceTimersByTimeAsync(22_000);
@@ -212,11 +216,20 @@ describe('git-push-operations', () => {
 			success: true,
 			remoteBranchHead: 'local-sha',
 		});
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-push-succeeded',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'agent/task-1',
+			attempts: 4,
+			localHead: 'local-sha',
+			remoteBranchHead: 'local-sha',
+		});
 	});
 
 	it('tells the agent to retry in five minutes when push retries are exhausted', async () => {
 		vi.useFakeTimers();
 		let pushAttempts = 0;
+		const recordEvent = vi.fn(async () => {});
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
 			const gitArgs = args.slice(3);
 			if (gitArgs[0] === 'push') {
@@ -236,6 +249,7 @@ describe('git-push-operations', () => {
 			activeTask: buildActiveTask(),
 			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
 			githubToken: 'token',
+			recordEvent,
 		});
 
 		await vi.advanceTimersByTimeAsync(22_000);
@@ -248,6 +262,28 @@ describe('git-push-operations', () => {
 			error: expect.stringContaining('Try git-push again in 5 minutes'),
 		});
 		expect(result.results[0]?.error).toContain('github unavailable 4');
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-push-started',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'agent/task-1',
+		});
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-push-retry',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'agent/task-1',
+			attempts: 1,
+			message: 'github unavailable 1',
+			retryDelaySeconds: 2,
+		});
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-push-failed',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'agent/task-1',
+			attempts: 4,
+			message: expect.stringContaining('Try git-push again in 5 minutes'),
+			retryAfterSeconds: 300,
+			runtimeRetained: true,
+		});
 	});
 
 	it('reports failure when post-push verification fetch fails', async () => {

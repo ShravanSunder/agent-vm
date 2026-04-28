@@ -709,6 +709,7 @@ export async function prepareWorkerTask(
 			taskId: preStartResult.taskId,
 			zoneId: options.zoneId,
 			taskRoot: preStartResult.taskRoot,
+			eventLogPath,
 			branchPrefix: preStartResult.effectiveConfig.branchPrefix,
 			repos: preStartResult.repos.map((repo) => ({
 				repoUrl: repo.repoUrl,
