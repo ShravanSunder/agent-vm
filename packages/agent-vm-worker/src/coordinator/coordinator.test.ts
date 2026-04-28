@@ -154,10 +154,19 @@ async function waitForStatus(
 	);
 }
 
+const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([
+	'-c',
+	'-C',
+	'--exec-path',
+	'--git-dir',
+	'--namespace',
+	'--work-tree',
+]);
+
 function gitSubcommand(args: readonly string[]): string | undefined {
 	for (let index = 0; index < args.length; index += 1) {
 		const arg = args[index];
-		if (arg === '-c') {
+		if (arg !== undefined && GIT_GLOBAL_OPTIONS_WITH_VALUE.has(arg)) {
 			index += 1;
 			continue;
 		}
@@ -204,6 +213,28 @@ describe('coordinator', () => {
 				'core.hooksPath=/dev/null',
 				'--git-dir=/gitdirs/repo.git',
 				'--work-tree=/work/repos/repo',
+				'checkout',
+				'-B',
+				'agent/task-1',
+				'main',
+			]),
+		).toBe('checkout');
+		expect(
+			gitSubcommand([
+				'-C',
+				'/work/repos/repo',
+				'-c',
+				'safe.directory=/work/repos/repo',
+				'status',
+				'--short',
+			]),
+		).toBe('status');
+		expect(
+			gitSubcommand([
+				'--git-dir',
+				'/gitdirs/repo.git',
+				'--work-tree',
+				'/work/repos/repo',
 				'checkout',
 				'-B',
 				'agent/task-1',
