@@ -1027,4 +1027,38 @@ describe('loadSystemConfig', () => {
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Too small|Invalid key/u);
 	});
+
+	test('rejects runtimeDir overlap with cacheDir after resolving paths', async () => {
+		const config = createValidSystemConfigInput();
+		config.cacheDir = '../cache';
+		config.runtimeDir = '../cache/runtime';
+		const configPath = await writeSystemConfigForTest('agent-vm-system-overlap-cache-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/runtimeDir must not overlap cacheDir/u,
+		);
+	});
+
+	test('rejects runtimeDir overlap with zone stateDir after resolving paths', async () => {
+		const config = createValidSystemConfigInput();
+		config.runtimeDir = '../state/shravan/runtime';
+		const configPath = await writeSystemConfigForTest('agent-vm-system-overlap-state-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/runtimeDir must not overlap stateDir/u,
+		);
+	});
+
+	test('rejects runtimeDir overlap with OpenClaw zoneFilesDir after resolving paths', async () => {
+		const config = createValidSystemConfigInput();
+		config.runtimeDir = '../zone-files/shravan/runtime';
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-overlap-zone-files-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/runtimeDir must not overlap zoneFilesDir/u,
+		);
+	});
 });

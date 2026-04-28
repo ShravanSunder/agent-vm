@@ -290,11 +290,42 @@ export type LoadedSystemConfig = SystemConfig & {
 	readonly systemCacheIdentifierPath: string;
 };
 
+function pathsOverlap(firstPath: string, secondPath: string): boolean {
+	const firstResolved = path.resolve(firstPath);
+	const secondResolved = path.resolve(secondPath);
+	const firstToSecond = path.relative(firstResolved, secondResolved);
+	const secondToFirst = path.relative(secondResolved, firstResolved);
+	return (
+		firstToSecond === '' ||
+		secondToFirst === '' ||
+		(!firstToSecond.startsWith('..') && !path.isAbsolute(firstToSecond)) ||
+		(!secondToFirst.startsWith('..') && !path.isAbsolute(secondToFirst))
+	);
+}
+
+function assertResolvedRuntimePathIsolation(config: z.infer<typeof systemConfigSchema>): void {
+	if (pathsOverlap(config.runtimeDir, config.cacheDir)) {
+		throw new Error('runtimeDir must not overlap cacheDir.');
+	}
+	for (const zone of config.zones) {
+		if (pathsOverlap(config.runtimeDir, zone.gateway.stateDir)) {
+			throw new Error(`runtimeDir must not overlap stateDir for zone '${zone.id}'.`);
+		}
+		if (
+			zone.gateway.type === 'openclaw' &&
+			pathsOverlap(config.runtimeDir, zone.gateway.zoneFilesDir)
+		) {
+			throw new Error(`runtimeDir must not overlap zoneFilesDir for zone '${zone.id}'.`);
+		}
+	}
+}
+
 export function createLoadedSystemConfig(
 	config: SystemConfigInput,
 	options: { readonly systemConfigPath: string },
 ): LoadedSystemConfig {
 	const parsedConfig = systemConfigSchema.parse(config);
+	assertResolvedRuntimePathIsolation(parsedConfig);
 	return {
 		...parsedConfig,
 		systemConfigPath: options.systemConfigPath,
