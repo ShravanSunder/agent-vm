@@ -1223,10 +1223,14 @@ feature may ask the worker for a patch/file snapshot before VM close, but this
 implementation must not promise recovery of dirty `/work/repos` files after
 close.
 
-For v1 cleanup, delete task runtime artifacts only for `completed` tasks.
-Retain `runtimeDir/worker-tasks/<zone>/<task>` for `failed`, `closed`, timeout,
-or primary-error paths so host-visible gitdirs remain available for operator
-inspection/recovery.
+For v1 cleanup, delete task runtime artifacts only for `completed` tasks where
+every repo has a successful controller-side push recorded for that task. Retain
+`runtimeDir/worker-tasks/<zone>/<task>` for completed tasks with missing/failed
+pushes, `failed`, `closed`, timeout, or primary-error paths so host-visible
+gitdirs remain available for operator inspection/recovery. If push retries are
+exhausted, the agent-facing error should say the controller already retried with
+2s, 4s, and 16s backoff and that the agent should retry the git-push tool again
+in about 5 minutes.
 
 - [ ] **Step 11: Pass repo work metadata to worker task config**
 

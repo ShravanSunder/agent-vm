@@ -199,22 +199,18 @@ added.
 
 ## Tool VM
 
-Tool VMs are lease-local execution sandboxes. They follow the same hot-path
-storage rule as worker VMs, but their state is narrower: only controller-needed
-lease metadata should cross into RealFS.
+Tool VMs are lease-local execution sandboxes. Current tool VMs are the remaining
+intentional `/workspace` exception: the lease workspace is a RealFS mount from
+the controller's tool `workspaceRoot`, cleaned between leases, and not part of
+normal zone backup. A future hard cutover can move hot tool work to `/work`, but
+the current code still exposes `/workspace` to OpenClaw plugin leases.
 
 ```text
 path or data                           backing                backup
 ──────────────────────────────         ─────────────────      ─────────
 
-/workspace                             rootfs/COW             no
-lease-local agent work                 disposable
-
-/work/tmp                              rootfs/COW             no
-large temp, TMPDIR target              disposable disk
-
-/work/cache                            rootfs/COW             no
-per-lease package cache                disposable
+/workspace                             RealFS workspaceRoot   no
+lease-local agent work                 cleaned per lease
 
 /tmp, /run, /var/log                   guest tmpfs            no
 tiny scratch only                      memory-pressure
