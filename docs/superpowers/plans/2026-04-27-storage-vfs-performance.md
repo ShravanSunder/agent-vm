@@ -540,8 +540,15 @@ OpenClaw gateway image target and asserts the generated Docker build context or
 build step includes a deterministic plugin-deps bake contract:
 
 ```bash
-OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive
+OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json \
+OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps \
+openclaw doctor --fix --non-interactive
 ```
+
+The temporary build-time config is secret-free. It sets `gateway.mode=local` and
+enables the Discord channel so OpenClaw includes the optional Discord runtime
+dependency set during image build instead of installing those packages at
+gateway boot.
 
 The assertion should also cover the marker file written under the
 version/fingerprint-specific stage directory after a successful stage:

@@ -168,6 +168,9 @@ async function collectImageProfileDockerfileChecks(
 			} catch {
 				dockerfileContent = '';
 			}
+			const usesPluginRuntimeDepsStageConfig = dockerfileContent.includes(
+				'OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json',
+			);
 			const stagesPluginRuntimeDeps = dockerfileContent.includes(
 				'OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive',
 			);
@@ -176,11 +179,16 @@ async function collectImageProfileDockerfileChecks(
 			);
 			checks.push({
 				name: imageProfileTarget.checkName.replace(/-dockerfile$/u, '-plugin-runtime-deps'),
-				ok: stagesPluginRuntimeDeps && verifiesPluginRuntimeDepsMarker,
+				ok:
+					usesPluginRuntimeDepsStageConfig &&
+					stagesPluginRuntimeDeps &&
+					verifiesPluginRuntimeDepsMarker,
 				hint:
-					stagesPluginRuntimeDeps && verifiesPluginRuntimeDepsMarker
+					usesPluginRuntimeDepsStageConfig &&
+					stagesPluginRuntimeDeps &&
+					verifiesPluginRuntimeDepsMarker
 						? imageProfileTarget.dockerfile
-						: 'Bake OpenClaw plugin runtime deps with OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive and verify a nested .openclaw-runtime-deps.json marker under /opt/openclaw/plugin-runtime-deps.',
+						: 'Bake OpenClaw plugin runtime deps with a secret-free OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json, OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive, and verify a nested .openclaw-runtime-deps.json marker under /opt/openclaw/plugin-runtime-deps.',
 			});
 		}
 

@@ -294,6 +294,10 @@ describe('scaffoldAgentVmProject', () => {
 		expect(gatewayDockerfile).toContain('Do not bake auth tokens');
 		expect(gatewayDockerfile).toContain('(ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)');
 		expect(gatewayDockerfile).toContain('pnpm add -g openclaw@2026.4.24');
+		expect(gatewayDockerfile).toContain('"channels": { "discord": { "enabled": true } }');
+		expect(gatewayDockerfile).toContain(
+			'OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json',
+		);
 		expect(gatewayDockerfile).toContain(
 			'OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive',
 		);
