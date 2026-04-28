@@ -44,8 +44,7 @@ In your `system.json`, add a zone with `gateway.type: "worker"`:
       "cpus": 2,
       "port": 18791,
       "config": "./dev-worker/worker.json",
-      "stateDir": "../state/dev-worker",
-      "workspaceDir": "../workspaces/dev-worker"
+      "stateDir": "../state/dev-worker"
     },
     "secrets": { ... },
     "allowedHosts": ["api.openai.com", "api.github.com", "registry.npmjs.org", "mcp.deepwiki.com"],
@@ -136,12 +135,12 @@ curl -X POST http://localhost:18800/zones/dev-worker/worker-tasks \
 2. Reads `.agent-vm/config.json` from repo, merges with zone config
 3. Resolves repo resources from `.agent-vm/repo-resources.ts`
    when the zone allows repo resources
-4. Boots a Gondolin VM, mounts `/workspace` and `/state`
+4. Boots a Gondolin VM, mounts `/state` and task `/gitdirs`
 5. Submits task to worker inside VM
 6. Worker runs 6-phase pipeline → see [architecture/agent-worker-gateway.md](../architecture/agent-worker-gateway.md)
 7. Worker calls controller's push-branches endpoint → controller pushes from host
 8. Worker runs `gh pr create` after the push succeeds
-9. VM destroyed, selected repo resource providers stopped, workspace cleaned up
+9. VM destroyed, selected repo resource providers stopped, runtime work cleaned up
 
 For controller-side details, see [subsystems/worker-task-pipeline.md](../subsystems/worker-task-pipeline.md).
 

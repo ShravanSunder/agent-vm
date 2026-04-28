@@ -19,10 +19,11 @@ Gondolin VM. Docker services run alongside when repo resources require them.
 The inner VM is the sandbox boundary. In Agent Worker Gateway we usually call it the
 Worker VM or Agent VM because it runs `agent-vm-worker`.
 
-Workspace git repositories live on the controller side first. The controller
-clones them, then mounts the checkout into the VM at `/workspace` with
-Gondolin realfs. The agent edits that mounted checkout. It requests host-side
-push/PR work through the controller instead of pushing directly.
+Target worker storage model: Git metadata lives in a controller-visible RealFS
+gitdir, while the worker edits VM-local rootfs/COW repo files under `/work/repos/<repoId>`.
+The worker requests host-side push/PR work through the controller instead of
+pushing directly. OpenClaw's long-lived files are zone files, not worker
+zone files; the OpenClaw VM path is `/home/openclaw/zone-files`.
 
 ```
   Caller (CLI / CI / API)
@@ -47,8 +48,9 @@ push/PR work through the controller instead of pushing directly.
   |  |  | Agent (worker :18789 or openclaw)  |  |       |
   |  |  +------------------------------------+  |       |
   |  |                                          |       |
-  |  |  /workspace (VFS mount from host)        |       |
-  |  |  /state (VFS mount from host)            |       |
+  |  |  /work/repos (worker rootfs/COW repo files)     |       |
+  |  |  /gitdirs   (worker RealFS git metadata) |       |
+  |  |  /state     (RealFS state)               |       |
   |  +------------------------------------------+       |
   +----------------------------------------------------+
 ```
@@ -218,7 +220,7 @@ Seven packages compose the system. Dependencies flow downward.
 | **gondolin-adapter** | Wraps the Gondolin SDK. Creates VMs, resolves secrets (1Password/env), builds images with fingerprint caching, assembles VFS mounts and HTTP mediation hooks. |
 | **gateway-interface** | The contract. `GatewayLifecycle` interface, `GatewayVmSpec`, `GatewayProcessSpec`. Both gateway types implement this. `splitResolvedGatewaySecrets()` routes secrets to env or HTTP mediation. |
 | **openclaw-gateway** | OpenClaw lifecycle: 4 VFS mounts, TCP pool for tool VM SSH, auth profiles, `prepareHostState` writes effective config to disk. |
-| **worker-gateway** | Worker lifecycle: 2 VFS mounts (`/workspace` + `/state`), TCP to controller only, no auth, no `prepareHostState`. |
+| **worker-gateway** | Worker lifecycle: RealFS control mounts (`/state` + task `/gitdirs`), rootfs/COW `/work/repos`, TCP to controller only, no auth, no `prepareHostState`. |
 | **agent-vm** | The controller. CLI (cmd-ts), HTTP API (Hono), lease manager + TCP pool + idle reaper, gateway zone orchestrator, worker task runner, host-side git push. |
 | **agent-vm-worker** | Runs inside the VM. 6-phase coordinator, Codex/Claude executors with thread persistence, JSONL event sourcing, and controller tools such as `git-push` and `git-pull-default`. |
 | **openclaw-agent-vm-plugin** | Bridge to OpenClaw's sandbox system. Registers Gondolin VMs as an OpenClaw sandbox backend. File bridge + shell execution via SSH into tool VMs. |
@@ -324,7 +326,7 @@ The `GatewayLifecycle` interface (`gateway-interface` package) is the contract e
 | Concern | OpenClaw (`openclaw-lifecycle.ts`) | Worker (`worker-lifecycle.ts`) |
 |---------|------|--------|
 | **authConfig** | Present: `openclaw models auth login` | Absent: no interactive auth |
-| **VFS mounts** | 4 mounts: config, cache, state, workspace | 2 mounts: state, workspace |
+| **VFS mounts** | config, cache, state, zone files | state + task gitdirs; `/work/repos` is rootfs/COW |
 | **Environment** | `OPENCLAW_*` vars, `HOME=/home/openclaw` | `CONTROLLER_BASE_URL`, `WORKER_CONFIG_PATH`, `HOME=/home/coder` |
 | **TCP hosts** | Controller + all tool VM slots + websocket bypass | Controller only |
 | **Bootstrap** | Write shell env profile, configure bashrc | Conditionally install worker tarball from `/state/` |
@@ -387,7 +389,7 @@ The `gondolin-adapter` package wraps the raw SDK into higher-level operations:
     |-- 2. Load lifecycle            loadGatewayLifecycle(type) -> GatewayLifecycle
     |-- 3. Resolve zone secrets      resolveZoneSecrets() -> Record<string, string>
     |-- 4. Build gateway image       buildGatewayImage() -> { imagePath, fingerprint }
-    |-- 5. Create host directories   mkdir stateDir, workspaceDir
+    |-- 5. Create host directories   mkdir stateDir, cacheDir, zoneFilesDir
     |-- 6. Prepare host state        lifecycle.prepareHostState() [optional]
     |-- 7. Build VM spec             lifecycle.buildVmSpec() -> GatewayVmSpec
     |-- 8. Build process spec        lifecycle.buildProcessSpec() -> GatewayProcessSpec
@@ -416,7 +418,7 @@ OpenClaw Gateway runs a long-lived gateway VM that hosts an interactive chat age
        |      |-- OpenClaw process (:18789)
        |      |-- /home/openclaw/.openclaw/config/  (host: config dir, realfs)
        |      |-- /home/openclaw/.openclaw/state/   (host: stateDir, realfs)
-       |      |-- /home/openclaw/workspace/         (host: workspaceDir, realfs)
+       |      |-- /home/openclaw/zone-files/         (host: zoneFilesDir, realfs)
        |      |
        |      |-- Talks to Controller via controller.vm.host:18800
        |      |-- Requests tool VM leases for code execution
@@ -463,9 +465,9 @@ The full per-task lifecycle is managed by `worker-task-runner.ts`:
        v
   1. PRE-START (preStartGateway)
      |-- Generate task ID (UUID)
-     |-- Create taskRoot/{workspace, state} directories
+     |-- Create task state and non-backup task runtime directories
      |-- Copy local worker tarball if AGENT_VM_WORKER_TARBALL_PATH set
-     |-- Clone repos into taskRoot/workspace/
+     |-- Create RealFS gitdirs under the task runtime root
      |-- Read .agent-vm/config.json from primary repo
      |-- Deep-merge: zone gateway config + project config -> effective config
      |-- Validate against workerConfigSchema
@@ -475,8 +477,9 @@ The full per-task lifecycle is managed by `worker-task-runner.ts`:
      |
   2. BOOT VM (startGatewayZone with zoneOverride)
      |-- Use worker lifecycle (buildVmSpec, buildProcessSpec)
-     |-- Mount taskRoot/workspace -> /workspace
-     |-- Mount taskRoot/state -> /state
+     |-- Keep /work/repos as VM-local rootfs/COW
+     |-- Mount task state -> /state
+     |-- Mount task gitdirs -> /gitdirs
      |-- Apply resource TCP, env, and read-only VFS overlays
      |-- Bootstrap: install agent-vm-worker from tarball
      |-- Start: agent-vm-worker serve --port 18789
@@ -495,7 +498,8 @@ The full per-task lifecycle is managed by `worker-task-runner.ts`:
   5. TEARDOWN (always runs, even on failure)
      |-- vm.close() -- RAM filesystem wiped
      |-- Stop selected repo resource Compose providers
-     |-- rm taskRoot/workspace/
+     |-- Check worker gitdirs for unpushed/dirty work before cleanup
+     |-- Clean task runtime gitdirs after push/export/discard decision
      |-- Deregister task from active task registry
 ```
 
@@ -604,6 +608,8 @@ directory.
   system.json
   |-- host              Controller port, project namespace, secrets provider, GitHub token
   |-- cacheDir          Rebuildable cache directory; not included in zone backups
+  |-- runtimeDir        Active worker runtime dir; not included in zone backups
+  |-- zoneFilesDir      OpenClaw zone files; RealFS and included in zone backups
   |-- images            Build config paths for gateway and tool VM images
   |-- zones[]           Zone definitions: gateway type, resources, secrets, allowed hosts
   |-- toolProfiles      Named VM resource profiles (memory, cpus, workspace root)
@@ -619,9 +625,11 @@ when any secret uses the `1password` source.
 For the field-by-field reference, see
 [configuration/README.md](../reference/configuration/README.md).
 
-For state/cache/workspace/backup boundaries, see
-[storage-model.md](storage-model.md). Do not move rebuildable dependency trees
-into `stateDir` just to make them survive VM reboot; mount a cache path instead.
+For state/cache/repo-files/gitdir/backup boundaries, see
+[storage-model.md](storage-model.md) and [storage-matrix.md](storage-matrix.md).
+Do not move rebuildable dependency trees, worker repos, or worker gitdirs into
+`stateDir` just to make them survive VM reboot; use image/rootfs, cache, or
+explicit task recovery paths instead.
 
 For upstream Gondolin image-build capabilities and sandbox features, see
 [Feature Highlights](https://github.com/earendil-works/gondolin/blob/main/README.md#feature-highlights).

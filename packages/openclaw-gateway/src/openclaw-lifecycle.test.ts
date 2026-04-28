@@ -11,6 +11,7 @@ import { openclawLifecycle } from './openclaw-lifecycle.js';
 const createdDirectories: string[] = [];
 
 afterEach(() => {
+	vi.useRealTimers();
 	for (const directoryPath of createdDirectories.splice(0)) {
 		fs.rmSync(directoryPath, { recursive: true, force: true });
 	}
@@ -182,13 +183,18 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
 			expect(processSpec.startCommand).toContain('nohup openclaw gateway --port 18789');
-			expect(processSpec.healthCheck).toEqual({ type: 'http', port: 18789, path: '/' });
+			expect(processSpec.healthCheck).toEqual({
+				type: 'command',
+				command: `grep -q 'ready (' /tmp/openclaw.log`,
+			});
 			expect(processSpec.logPath).toBe('/tmp/openclaw.log');
 		});
 	});
 
 	describe('prepareHostState', () => {
 		it('writes auth-profiles.json and effective-openclaw.json when auth is configured', async () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date('2026-04-27T16:45:00.000Z'));
 			const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-lifecycle-'));
 			createdDirectories.push(tempDirectory);
 			const configDirectory = path.join(tempDirectory, 'config');
@@ -247,6 +253,10 @@ describe('openclawLifecycle', () => {
 					controlUi: {
 						allowedOrigins: ['http://127.0.0.1:18791', 'http://localhost:18791'],
 					},
+				},
+				meta: {
+					lastTouchedAt: '2026-04-27T16:45:00.000Z',
+					lastTouchedVersion: 'agent-vm',
 				},
 			});
 			expect(

@@ -202,6 +202,11 @@ async function writeEffectiveOpenClawConfig(
 					token: gatewayToken,
 				},
 			},
+			meta: {
+				...(isObjectRecord(parsedBaseConfig.meta) ? parsedBaseConfig.meta : {}),
+				lastTouchedAt: new Date().toISOString(),
+				lastTouchedVersion: 'agent-vm',
+			},
 		};
 		const effectiveConfigPath = getEffectiveOpenClawConfigHostPath(zone);
 		await fs.mkdir(zone.gateway.stateDir, { recursive: true, mode: 0o700 });
@@ -294,7 +299,10 @@ export const openclawLifecycle: GatewayLifecycle = {
 			bootstrapCommand: buildOpenClawBootstrapCommand(zone, resolvedSecrets),
 			startCommand:
 				'cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &',
-			healthCheck: { type: 'http', port: 18789, path: '/' },
+			healthCheck: {
+				type: 'command',
+				command: `grep -q 'ready (' /tmp/openclaw.log`,
+			},
 			guestListenPort: 18789,
 			logPath: '/tmp/openclaw.log',
 		};

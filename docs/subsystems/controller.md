@@ -212,21 +212,22 @@ Worker-mode zones do not start a gateway at boot. Instead, each task gets an eph
     |
     |== PRE-START (preStartGateway) ==========================
     |   1. Generate taskId (crypto.randomUUID)
-    |   2. Create taskRoot/{workspace, state} on host
+    |   2. Create task state and non-backup task runtime roots
     |   3. Copy local worker tarball if AGENT_VM_WORKER_TARBALL_PATH set
-    |   4. Clone repos into taskRoot/workspace/ in parallel
-    |      - Derive directory names from repo URLs, deduplicate
+    |   4. Create RealFS gitdirs under runtimeDir in parallel
+    |      - Derive repo IDs from repo URLs, deduplicate
     |   5. Read .agent-vm/config.json from primary repo
     |   6. Deep-merge zone gateway config + project config
     |   7. Validate merged config against workerConfigSchema
-    |   8. Write effective-worker.json to taskRoot/state/
+    |   8. Write effective-worker.json to task state
     |   9. Resolve typed repo resources from each repo's
     |      .agent-vm/repo-resources.ts contract
     |  10. Start only selected repo-local Compose providers
     |  11. Register task in ActiveTaskRegistry
     |
     |== BOOT (startGatewayZone with zoneOverride) ============
-    |   Override zone workspace/state dirs to point at taskRoot
+    |   Mount task state at /state and task gitdirs at /gitdirs;
+    |   keep /work/repos as VM-local rootfs/COW work-area storage
     |   Full orchestration: orphan cleanup, image, VM, bootstrap,
     |   start, health check, ingress
     |
@@ -243,8 +244,9 @@ Worker-mode zones do not start a gateway at boot. Instead, each task gets an eph
     |== TEARDOWN (always runs in finally block) ===============
     |   1. vm.close()
     |   2. Stop selected repo resource Compose providers
-    |   3. rm -rf taskRoot/workspace/
-    |   4. Deregister task from ActiveTaskRegistry
+    |   3. Check gitdirs for dirty/unpushed work
+    |   4. Push, export recovery artifact, or discard before cleanup
+    |   5. Deregister task from ActiveTaskRegistry
     |
     v
   Returns { taskId, finalState, taskRoot }

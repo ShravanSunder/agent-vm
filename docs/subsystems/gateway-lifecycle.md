@@ -144,7 +144,14 @@ environment:
   OPENCLAW_HOME         = /home/openclaw
   OPENCLAW_CONFIG_PATH  = /home/openclaw/.openclaw/state/effective-openclaw.json
   OPENCLAW_STATE_DIR    = /home/openclaw/.openclaw/state
-  OPENCLAW_PLUGIN_STAGE_DIR = /home/openclaw/.openclaw/cache/plugin-runtime-deps
+  OPENCLAW_PLUGIN_STAGE_DIR = /opt/openclaw/plugin-runtime-deps
+  TMPDIR                = /work/tmp
+  TMP                   = /work/tmp
+  TEMP                  = /work/tmp
+  npm_config_cache      = /work/cache/npm
+  pnpm_config_store_dir = /work/cache/pnpm/store
+  PIP_CACHE_DIR         = /work/cache/pip
+  UV_CACHE_DIR          = /work/cache/uv
   NODE_EXTRA_CA_CERTS   = /run/gondolin/ca-certificates.crt
   + env-injected secrets (minus OPENCLAW_GATEWAY_TOKEN)
 
@@ -152,7 +159,7 @@ vfsMounts:
   /home/openclaw/.openclaw/config    -> configDirectory  (realfs)
   /home/openclaw/.openclaw/cache     -> gatewayCacheDir  (realfs)
   /home/openclaw/.openclaw/state     -> stateDir         (realfs)
-  /home/openclaw/workspace           -> workspaceDir     (realfs)
+  /home/openclaw/zone-files           -> zoneFilesDir (realfs)
 
 tcpHosts:
   controller.vm.host:18800           -> 127.0.0.1:<controllerPort>
@@ -166,16 +173,16 @@ The `OPENCLAW_GATEWAY_TOKEN` is explicitly excluded from environment secrets
 because it is already embedded in the effective config file.
 
 Bundled OpenClaw plugin runtime dependencies are staged under
-`OPENCLAW_PLUGIN_STAGE_DIR`. The path must stay inside a VFS-mounted cache
-directory; otherwise a `rootfsMode: cow` gateway VM loses the staged plugin
-dependencies on every boot and repairs them repeatedly. Do not put this under
-`OPENCLAW_STATE_DIR`: staged plugin `node_modules` trees are rebuildable cache
-and must not be included in encrypted zone backups.
+`OPENCLAW_PLUGIN_STAGE_DIR`. Target state is image/rootfs-local staging at
+`/opt/openclaw/plugin-runtime-deps`, populated during image build. Do not put
+this under `OPENCLAW_STATE_DIR`: staged plugin `node_modules` trees are
+rebuildable and must not be included in encrypted zone backups.
 
 ### buildProcessSpec
 
-- **bootstrap**: creates `/etc/profile.d/openclaw-env.sh` with environment
-  exports, sources it from `/root/.bashrc` and `/root/.bash_profile`.
+- **bootstrap**: creates `/work/tmp` and `/work/cache/*`, writes
+  `/etc/profile.d/openclaw-env.sh` with environment exports, and sources it
+  from `/root/.bashrc` and `/root/.bash_profile`.
 - **start**: `cd /home/openclaw && nohup openclaw gateway --port 18789`
 - **healthCheck**: HTTP on port 18789, path `/`
 - **guestListenPort**: 18789
@@ -206,12 +213,21 @@ environment:
   AGENT_VM_ZONE_ID      = <zone.id>
   STATE_DIR             = /state
   WORKER_CONFIG_PATH    = /state/effective-worker.json
-  WORKSPACE_DIR         = /workspace
+  WORK_DIR              = /work
+  REPOS_DIR             = /work/repos
+  TMPDIR                = /work/tmp
+  TMP                   = /work/tmp
+  TEMP                  = /work/tmp
+  npm_config_cache      = /work/cache/npm
+  pnpm_config_store_dir = /work/cache/pnpm/store
+  PIP_CACHE_DIR         = /work/cache/pip
+  UV_CACHE_DIR          = /work/cache/uv
   + env-injected secrets
 
 vfsMounts:
-  /state                -> stateDir      (realfs)
-  /workspace            -> workspaceDir  (realfs)
+  /state                -> task stateDir       (realfs)
+  /gitdirs              -> runtimeDir task root (realfs)
+  /work/repos            -> VM rootfs/COW, not a RealFS mount
 
 tcpHosts:
   controller.vm.host:18800 -> 127.0.0.1:<controllerPort>
@@ -224,9 +240,10 @@ the controller.
 
 ### buildProcessSpec
 
-- **bootstrap**: `npm install -g @openai/codex /state/agent-vm-worker.tgz`
-  (conditional on tarball existing in /state)
-- **start**: `cd /workspace && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state`
+- **bootstrap**: creates `/work/tmp` and `/work/cache/*`, then runs
+  `npm install -g @openai/codex /state/agent-vm-worker.tgz` (conditional on
+  tarball existing in /state)
+- **start**: `cd /work && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state`
 - **healthCheck**: HTTP on port 18789, path `/health`
 - **guestListenPort**: 18789
 - **logPath**: `/tmp/agent-vm-worker.log`
@@ -244,7 +261,7 @@ Not implemented.  Worker has no interactive auth.
 | **prepareHostState**  | Writes effective config + auth profiles          | None                                            |
 | **authConfig**        | list providers / login command                   | None                                            |
 | **HOME**              | `/home/openclaw`                                 | `/home/coder`                                   |
-| **vfsMounts**         | config, cache, state, workspace (4 mounts)       | state, workspace (2 mounts)                     |
+| **vfsMounts**         | config, cache, state, zone files (4 mounts)    | state + task gitdirs; `/work/repos` is rootfs/COW |
 | **tcpHosts**          | controller + tool pool + WS bypass               | controller only                                 |
 | **bootstrap**         | Shell env file in `/etc/profile.d/`              | `npm install -g` codex + worker tarball         |
 | **startCommand**      | `openclaw gateway --port 18789`                  | `agent-vm-worker serve --port 18789`            |

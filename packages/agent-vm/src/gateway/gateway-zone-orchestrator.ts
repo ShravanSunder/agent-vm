@@ -34,7 +34,7 @@ import {
 } from './gateway-zone-support.js';
 
 const defaultGatewayReadinessRetryDelayMs = 500;
-const defaultGatewayReadinessTimeoutMs = 30_000;
+const defaultGatewayReadinessTimeoutMs = 60_000;
 const defaultGatewayReadinessMaxAttempts = Math.ceil(
 	defaultGatewayReadinessTimeoutMs / defaultGatewayReadinessRetryDelayMs,
 );

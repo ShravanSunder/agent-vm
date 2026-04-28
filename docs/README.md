@@ -10,6 +10,8 @@ directory is the deeper map.
 | Run a local Worker gateway | [getting-started/setup.md](getting-started/setup.md) |
 | Understand the Worker gateway | [architecture/agent-worker-gateway.md](architecture/agent-worker-gateway.md) |
 | Understand state/cache/backup boundaries | [architecture/storage-model.md](architecture/storage-model.md) |
+| Review concrete OpenClaw/Worker storage paths | [architecture/storage-matrix.md](architecture/storage-matrix.md) |
+| Understand Gondolin rootfs/VFS performance knobs | [reference/gondolin/vfs-rootfs-performance.md](reference/gondolin/vfs-rootfs-performance.md) |
 | Look up config fields | [reference/configuration/README.md](reference/configuration/README.md) |
 | Set up repo or external resources | [reference/configuration/resource-contracts.md](reference/configuration/resource-contracts.md) |
 | Know whether to run validate or doctor | [reference/validate-and-doctor.md](reference/validate-and-doctor.md) |
@@ -27,6 +29,7 @@ docs/
   architecture/
     overview.md
     storage-model.md
+    storage-matrix.md
     agent-worker-gateway.md
     openclaw-gateway.md
 
@@ -38,6 +41,8 @@ docs/
     worker-task-pipeline.md
 
   reference/
+    gondolin/
+      vfs-rootfs-performance.md
     configuration/
       README.md
       project-config-json.md
