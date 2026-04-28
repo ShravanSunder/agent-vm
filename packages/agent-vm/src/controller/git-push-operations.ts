@@ -211,7 +211,7 @@ async function fetchRemoteRefs(options: {
 				`git fetch failed for ${options.repoUrl} ${options.defaultBranch} on attempt ${attempt}; retrying in ${delayMs / 1000}s: ${detail}`,
 			);
 			await options.recordEvent?.({
-				event: 'controller-git-push-retry',
+				event: 'controller-git-push-fetch-retry',
 				repoUrl: options.repoUrl,
 				branch: options.defaultBranch,
 				attempts: attempt,

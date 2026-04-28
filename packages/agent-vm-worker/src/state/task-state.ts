@@ -256,6 +256,8 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 				}),
 				updatedAt,
 			};
+		case 'controller-git-push-fetch-retry':
+			return { ...state, updatedAt };
 		case 'controller-git-push-succeeded':
 			return {
 				...upsertGitPushState(state, {

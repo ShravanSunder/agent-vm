@@ -239,6 +239,37 @@ describe('task-state reducer', () => {
 		]);
 	});
 
+	it('does not create push state for default branch fetch retry events', () => {
+		const state = createInitialState('task-1', TEST_CONFIG);
+		const started = applyEvent(state, {
+			event: 'controller-git-push-started',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'agent/task-1',
+		});
+		const retryingFetch = applyEvent(started, {
+			event: 'controller-git-push-fetch-retry',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'main',
+			attempts: 1,
+			message: 'RPC failed; HTTP 503 fetching main',
+			retryDelaySeconds: 2,
+		});
+
+		expect(retryingFetch.controllerOperations.gitPushes).toEqual([
+			{
+				repoUrl: 'https://github.com/acme/widgets.git',
+				branch: 'agent/task-1',
+				status: 'started',
+				attempts: 0,
+				message: null,
+				retryDelaySeconds: null,
+				retryAfterSeconds: null,
+				localHead: null,
+				remoteBranchHead: null,
+			},
+		]);
+	});
+
 	it('treats task-closed as terminal', () => {
 		const state = createInitialState('task-1', TEST_CONFIG);
 		const closedState = applyEvent(state, { event: 'task-closed' });

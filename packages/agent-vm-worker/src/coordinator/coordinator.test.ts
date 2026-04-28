@@ -154,6 +154,10 @@ async function waitForStatus(
 	);
 }
 
+function gitSubcommand(args: readonly string[]): string | undefined {
+	return args[0] === '-c' ? args[2] : args[0];
+}
+
 describe('coordinator', () => {
 	let tempDir: string;
 	let stateDir: string;
@@ -163,16 +167,17 @@ describe('coordinator', () => {
 		stateDir = join(tempDir, 'state');
 		vi.clearAllMocks();
 		mocks.execa.mockImplementation(async (_command: string, args: readonly string[]) => {
-			if (args[0] === 'branch') {
+			const subcommand = gitSubcommand(args);
+			if (subcommand === 'branch') {
 				return { stdout: 'agent/test', stderr: '', exitCode: 0 };
 			}
-			if (args[0] === 'status') {
+			if (subcommand === 'status') {
 				return { stdout: '', stderr: '', exitCode: 0 };
 			}
-			if (args[0] === 'log') {
+			if (subcommand === 'log') {
 				return { stdout: 'abc123 feat: test', stderr: '', exitCode: 0 };
 			}
-			if (args[0] === 'diff') {
+			if (subcommand === 'diff') {
 				return { stdout: ' file.ts | 1 +', stderr: '', exitCode: 0 };
 			}
 			return { stdout: '', stderr: '', exitCode: 0 };
