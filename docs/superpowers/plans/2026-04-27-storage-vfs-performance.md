@@ -1188,6 +1188,18 @@ half-migrated helper fails.
 This step is part of the same commit as the bare-gitdir worker task runner
 change. Do not land Step 10 without Step 10b.
 
+`git push` must retry transient failures before reporting failure to the agent.
+Use three retries with 2s, 4s, and 16s backoff, and log each failed attempt to
+controller stderr after scrubbing tokens. The retry loop must stay serial:
+parallel push retries are invalid because each attempt depends on the previous
+remote result.
+
+The post-push verification fetch must fail loudly. Do not return
+`success: true` with stale remote refs if the fetch that refreshes
+`refs/remotes/origin/<branch>` fails. Branch-state reads (`git log`,
+`git rev-list`, current-branch reads) must also fail the operation instead of
+returning empty summaries, zero divergence, or `null` on Git errors.
+
 Also update task cleanup so gitdir removal happens only after the controller has
 checked committed Git state. Rootfs repo files disappear at `vm.close()`, so
 post-close cleanup cannot inspect or recover dirty uncommitted files. The worker
@@ -1210,6 +1222,11 @@ to Git state that already reached `/gitdirs`. A future pre-close recovery
 feature may ask the worker for a patch/file snapshot before VM close, but this
 implementation must not promise recovery of dirty `/work/repos` files after
 close.
+
+For v1 cleanup, delete task runtime artifacts only for `completed` tasks.
+Retain `runtimeDir/worker-tasks/<zone>/<task>` for `failed`, `closed`, timeout,
+or primary-error paths so host-visible gitdirs remain available for operator
+inspection/recovery.
 
 - [ ] **Step 11: Pass repo work metadata to worker task config**
 
@@ -1314,6 +1331,11 @@ pnpm vitest run packages/agent-vm/src/config/system-config.test.ts packages/agen
 ```
 
 Expected: PASS.
+
+Clone and worktree bootstrap failures must aggregate all repo failures. Do not
+throw only the first rejected clone/checkout promise: multi-repo tasks need all
+failed repo URLs/work paths in the surfaced error so the API/logs show the full
+failure set in one pass.
 
 - [ ] **Step 17: Commit in reviewable seams**
 

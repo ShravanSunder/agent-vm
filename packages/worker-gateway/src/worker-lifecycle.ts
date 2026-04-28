@@ -36,6 +36,7 @@ export const workerLifecycle: GatewayLifecycle = {
 				TMP: '/work/tmp',
 				TEMP: '/work/tmp',
 				npm_config_cache: '/work/cache/npm',
+				pnpm_config_store_dir: '/work/cache/pnpm/store',
 				PIP_CACHE_DIR: '/work/cache/pip',
 				UV_CACHE_DIR: '/work/cache/uv',
 				...environmentSecrets,
@@ -58,7 +59,7 @@ export const workerLifecycle: GatewayLifecycle = {
 	buildProcessSpec(): GatewayProcessSpec {
 		return {
 			bootstrapCommand:
-				'mkdir -p /work/repos /work/tmp /work/cache/npm /work/cache/pip /work/cache/uv && if [ -f /state/agent-vm-worker.tgz ]; then npm install -g --force @openai/codex /state/agent-vm-worker.tgz; fi',
+				'mkdir -p /work/repos /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && if [ -f /state/agent-vm-worker.tgz ]; then npm install -g --force @openai/codex /state/agent-vm-worker.tgz; fi',
 			startCommand:
 				'cd /work && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state > /tmp/agent-vm-worker.log 2>&1 &',
 			healthCheck: { type: 'http', port: 18789, path: '/health' },

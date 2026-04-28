@@ -4,6 +4,7 @@ import type { ActiveWorkerTask } from './active-task-registry.js';
 import { scrubGithubTokenFromOutput } from './git-auth-support.js';
 
 const GIT_OPERATION_TIMEOUT_MS = 120_000;
+const GIT_PUSH_RETRY_DELAYS_MS = [2_000, 4_000, 16_000] as const;
 
 export interface PushBranchRequest {
 	readonly repoUrl: string;
@@ -43,6 +44,12 @@ export class PushBranchesValidationError extends Error {}
 
 function writePushFlowLog(message: string): void {
 	process.stderr.write(`[git-push-operations] ${message}\n`);
+}
+
+async function sleep(delayMs: number): Promise<void> {
+	await new Promise<void>((resolve) => {
+		setTimeout(resolve, delayMs);
+	});
 }
 
 function parseRepoFromUrl(repoUrl: string): string {
@@ -125,8 +132,7 @@ async function commitSummaries(
 	options?: { readonly includeAuthorDate?: boolean },
 ): Promise<readonly PushCommitSummary[]> {
 	const format = options?.includeAuthorDate === true ? '%H%x09%s%x09%an%x09%aI' : '%H%x09%s';
-	const result = await git({ gitDir, args: ['log', range, `--format=${format}`], reject: false });
-	if (result.exitCode !== 0) return [];
+	const result = await git({ gitDir, args: ['log', range, `--format=${format}`], reject: true });
 	return parseCommitSummaries(result.stdout);
 }
 
@@ -138,8 +144,7 @@ async function refExists(gitDir: string, ref: string): Promise<boolean> {
 }
 
 async function countRange(gitDir: string, range: string): Promise<number> {
-	const result = await git({ gitDir, args: ['rev-list', '--count', range], reject: false });
-	if (result.exitCode !== 0) return 0;
+	const result = await git({ gitDir, args: ['rev-list', '--count', range], reject: true });
 	return Number.parseInt(result.stdout.trim(), 10) || 0;
 }
 
@@ -177,23 +182,48 @@ async function pushBranch(options: {
 	readonly gitDir: string;
 	readonly githubToken: string;
 }): Promise<void> {
-	const result = await git({
-		gitDir: options.gitDir,
-		args: [
-			'push',
-			buildPushUrl(options.repoUrl, options.githubToken),
-			`${sanitizeBranchName(options.branchName)}:refs/heads/${sanitizeBranchName(options.branchName)}`,
-		],
-		reject: false,
-	});
+	const sanitizedBranchName = sanitizeBranchName(options.branchName);
+	const pushArgs = [
+		'push',
+		buildPushUrl(options.repoUrl, options.githubToken),
+		`${sanitizedBranchName}:refs/heads/${sanitizedBranchName}`,
+	] as const;
+	let lastErrorDetail = '';
 
-	if (result.exitCode !== 0) {
-		const errorDetail = scrubGithubTokenFromOutput(`${result.stdout}\n${result.stderr}`).trim();
+	for (
+		let attemptNumber = 1;
+		attemptNumber <= GIT_PUSH_RETRY_DELAYS_MS.length + 1;
+		attemptNumber += 1
+	) {
+		// Git push attempts are intentionally serial because each retry depends on the prior result.
+		// oxlint-disable-next-line eslint/no-await-in-loop
+		const result = await git({
+			gitDir: options.gitDir,
+			args: pushArgs,
+			reject: false,
+		});
+
+		if (result.exitCode === 0) {
+			return;
+		}
+
+		lastErrorDetail = scrubGithubTokenFromOutput(`${result.stdout}\n${result.stderr}`).trim();
+		const retryDelayMs = GIT_PUSH_RETRY_DELAYS_MS[attemptNumber - 1];
+		if (retryDelayMs === undefined) {
+			break;
+		}
 		writePushFlowLog(
-			`git push failed for ${options.repoUrl} ${sanitizeBranchName(options.branchName)}: ${errorDetail}`,
+			`git push failed for ${options.repoUrl} ${sanitizedBranchName} on attempt ${attemptNumber}; retrying in ${retryDelayMs / 1000}s: ${lastErrorDetail}`,
 		);
-		throw new Error(`git push failed\n${errorDetail}`);
+		// Backoff sleeps are intentionally serial between retry attempts.
+		// oxlint-disable-next-line eslint/no-await-in-loop
+		await sleep(retryDelayMs);
 	}
+
+	writePushFlowLog(
+		`git push failed for ${options.repoUrl} ${sanitizedBranchName} after ${GIT_PUSH_RETRY_DELAYS_MS.length + 1} attempts: ${lastErrorDetail}`,
+	);
+	throw new Error(`git push failed\n${lastErrorDetail}`);
 }
 
 async function buildBranchState(options: {
@@ -323,7 +353,7 @@ async function pushOneBranchForTask(options: {
 			gitDir: options.repo.hostGitDir,
 			githubToken: options.githubToken,
 		});
-		await git({
+		const verifyFetchResult = await git({
 			gitDir: options.repo.hostGitDir,
 			args: [
 				'fetch',
@@ -333,6 +363,12 @@ async function pushOneBranchForTask(options: {
 			],
 			reject: false,
 		});
+		if (verifyFetchResult.exitCode !== 0) {
+			const detail = scrubGithubTokenFromOutput(
+				`${verifyFetchResult.stdout}\n${verifyFetchResult.stderr}`,
+			).trim();
+			throw new Error(`git fetch failed\n${detail}`);
+		}
 		const state = await buildBranchState({
 			gitDir: options.repo.hostGitDir,
 			branchName,

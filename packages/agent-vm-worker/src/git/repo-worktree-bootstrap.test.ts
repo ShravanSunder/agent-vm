@@ -62,4 +62,43 @@ describe('bootstrapRepoWorktrees', () => {
 			}),
 		);
 	});
+
+	it('reports every failed repo checkout', async () => {
+		execaMock.mockImplementation(async (_command: string, args: readonly string[]) => {
+			const workTreeArg = args.find((arg) => arg.startsWith('--work-tree='));
+			throw new Error(`checkout failed for ${workTreeArg ?? 'unknown'}`);
+		});
+		const { bootstrapRepoWorktrees } = await import('./repo-worktree-bootstrap.js');
+
+		let thrownError: unknown;
+		try {
+			await bootstrapRepoWorktrees({
+				branchPrefix: 'agent/',
+				taskId: 'task-123',
+				repos: [
+					{
+						repoUrl: 'https://github.com/acme/frontend.git',
+						baseBranch: 'main',
+						gitDirPath: join(tempDir, 'gitdirs', 'frontend.git'),
+						workPath: join(tempDir, 'work', 'repos', 'frontend'),
+					},
+					{
+						repoUrl: 'https://github.com/acme/backend.git',
+						baseBranch: 'main',
+						gitDirPath: join(tempDir, 'gitdirs', 'backend.git'),
+						workPath: join(tempDir, 'work', 'repos', 'backend'),
+					},
+				],
+			});
+		} catch (error) {
+			thrownError = error;
+		}
+
+		expect(thrownError).toBeInstanceOf(AggregateError);
+		const aggregateError = thrownError as AggregateError;
+		expect(aggregateError.errors).toEqual([
+			expect.objectContaining({ message: expect.stringContaining('/frontend') }),
+			expect.objectContaining({ message: expect.stringContaining('/backend') }),
+		]);
+	});
 });

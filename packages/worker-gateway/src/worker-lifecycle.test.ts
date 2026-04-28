@@ -56,6 +56,7 @@ describe('workerLifecycle', () => {
 		expect(vmSpec.environment.REPOS_DIR).toBe('/work/repos');
 		expect(vmSpec.environment.TMPDIR).toBe('/work/tmp');
 		expect(vmSpec.environment.npm_config_cache).toBe('/work/cache/npm');
+		expect(vmSpec.environment.pnpm_config_store_dir).toBe('/work/cache/pnpm/store');
 		expect(vmSpec.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');
 		expect(vmSpec.tcpHosts['controller.vm.host:18800']).toBe('127.0.0.1:18800');
 	});
@@ -67,6 +68,7 @@ describe('workerLifecycle', () => {
 
 		expect(processSpec.bootstrapCommand).toContain('npm install -g --force @openai/codex');
 		expect(processSpec.bootstrapCommand).toContain('mkdir -p /work/repos /work/tmp');
+		expect(processSpec.bootstrapCommand).toContain('/work/cache/pnpm/store');
 		expect(processSpec.bootstrapCommand).toContain('/state/agent-vm-worker.tgz');
 		expect(processSpec.startCommand).toContain('agent-vm-worker');
 		expect(processSpec.startCommand).toContain('cd /work');

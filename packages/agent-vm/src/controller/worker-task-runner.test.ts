@@ -849,6 +849,50 @@ describe('worker-task-runner', () => {
 		).rejects.not.toThrow(/ghp_secret-token|Authorization: Basic eC/u);
 	});
 
+	it('reports every failed repo clone during pre-start', async () => {
+		execaMock.mockImplementation(async (command: string, args: readonly string[]) => {
+			if (command === 'git' && args.includes('clone')) {
+				const repoUrl = args.at(-2) ?? 'unknown';
+				return { stdout: '', stderr: `clone failed for ${repoUrl}`, exitCode: 128 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		let thrownError: unknown;
+		try {
+			await preStartGateway(
+				{
+					requestTaskId: 'request-task-1',
+					prompt: 'clone repos',
+					repos: [
+						{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' },
+						{ repoUrl: 'https://github.com/org/backend.git', baseBranch: 'main' },
+					],
+					context: {},
+				},
+				zone,
+			);
+		} catch (error) {
+			thrownError = error;
+		}
+
+		expect(thrownError).toBeInstanceOf(AggregateError);
+		const aggregateError = thrownError as AggregateError;
+		expect(aggregateError.errors).toEqual([
+			expect.objectContaining({
+				message: expect.stringContaining('https://github.com/org/frontend.git'),
+			}),
+			expect.objectContaining({
+				message: expect.stringContaining('https://github.com/org/backend.git'),
+			}),
+		]);
+	});
+
 	it('waits for parallel clone attempts to settle before deleting the task root', async () => {
 		const events: string[] = [];
 		execaMock.mockImplementation(async (command: string, args: readonly string[]) => {
@@ -935,6 +979,33 @@ describe('worker-task-runner', () => {
 				zone,
 			),
 		).rejects.toThrow('Invalid project config');
+	});
+
+	it('does not treat unrelated git archive not-found errors as missing metadata', async () => {
+		execaMock.mockImplementation(async (command: string, args: readonly string[]) => {
+			if (command === 'git' && args.includes('archive')) {
+				return { stdout: '', stderr: 'fatal: remote branch main not found', exitCode: 128 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+
+		await expect(
+			preStartGateway(
+				{
+					requestTaskId: 'request-task-1',
+					prompt: 'cross repo task',
+					repos: [{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' }],
+					context: {},
+				},
+				zone,
+			),
+		).rejects.toThrow(/Failed to archive \.agent-vm metadata/u);
 	});
 
 	it('rejects project config prompt file references', async () => {
@@ -1144,6 +1215,46 @@ describe('worker-task-runner', () => {
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow(/worker rejected task payload/u);
+	});
+
+	it('retains task runtime gitdirs when the worker returns failed status', async () => {
+		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.endsWith('/tasks')) {
+				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
+					status: 201,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (/\/tasks\/[^/]+$/.test(url)) {
+				return new Response(JSON.stringify({ status: 'failed', taskId: 'task-1' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		}) as typeof fetch;
+
+		const result = await executePreparedWorkerTaskForTest({
+			input: {
+				requestTaskId: 'request-task-1',
+				prompt: 'fix login',
+				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+				context: {},
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+			zoneId: 'shravan',
+		});
+
+		const taskRuntimeRoot = path.join(
+			systemConfig.runtimeDir,
+			'worker-tasks',
+			'shravan',
+			result.taskId,
+		);
+		await expect(fs.stat(taskRuntimeRoot)).resolves.toBeTruthy();
 	});
 
 	it('aggregates the primary task failure when shutdown hooks also fail', async () => {

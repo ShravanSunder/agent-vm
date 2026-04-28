@@ -124,4 +124,40 @@ describe('git-pull-default-operations', () => {
 			error: expect.stringContaining('Fetch failed'),
 		});
 	});
+
+	test('soft-fails when branch-state git reads fail after fetch', async () => {
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = args.slice(3);
+			if (gitArgs[0] === 'log') {
+				return { stdout: '', stderr: 'cannot read commit graph', exitCode: 128 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
+				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'branch') {
+				return { stdout: 'agent/task-1', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'merge-base') {
+				return { stdout: 'fork-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-list') {
+				return { stdout: '1', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		await expect(
+			pullDefaultForTask({
+				activeTask,
+				repoUrl: 'https://github.com/acme/widgets.git',
+				githubToken: 'token',
+			}),
+		).resolves.toMatchObject({
+			success: false,
+			error: expect.stringContaining('git log'),
+		});
+	});
 });

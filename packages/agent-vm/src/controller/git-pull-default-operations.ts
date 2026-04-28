@@ -113,9 +113,8 @@ async function commitSummaries(
 	const result = await git({
 		gitDir,
 		args: ['log', range, '--format=%H%x09%s%x09%an%x09%aI'],
-		reject: false,
+		reject: true,
 	});
-	if (result.exitCode !== 0) return [];
 	return parseCommitSummaries(result.stdout);
 }
 
@@ -127,14 +126,12 @@ async function refExists(gitDir: string, ref: string): Promise<boolean> {
 }
 
 async function countRange(gitDir: string, range: string): Promise<number> {
-	const result = await git({ gitDir, args: ['rev-list', '--count', range], reject: false });
-	if (result.exitCode !== 0) return 0;
+	const result = await git({ gitDir, args: ['rev-list', '--count', range], reject: true });
 	return Number.parseInt(result.stdout.trim(), 10) || 0;
 }
 
 async function currentBranch(gitDir: string): Promise<string | null> {
-	const result = await git({ gitDir, args: ['branch', '--show-current'], reject: false });
-	if (result.exitCode !== 0) return null;
+	const result = await git({ gitDir, args: ['branch', '--show-current'], reject: true });
 	const branch = result.stdout.trim();
 	return branch.length > 0 ? branch : null;
 }

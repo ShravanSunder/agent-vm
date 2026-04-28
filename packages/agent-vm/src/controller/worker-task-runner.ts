@@ -78,6 +78,7 @@ const taskStatusResponseSchema = z
 	.passthrough();
 const GIT_CLONE_TIMEOUT_MS = 120_000;
 const GIT_METADATA_TIMEOUT_MS = 30_000;
+const missingAgentVmMetadataPattern = /^fatal: pathspec '\.agent-vm' did not match any files\.?$/mu;
 
 async function readJsonObjectFile(
 	filePath: string,
@@ -123,7 +124,7 @@ async function materializeRepoAgentVmDirectory(options: {
 	);
 	if ((archiveResult.exitCode ?? 0) !== 0) {
 		const output = `${archiveResult.stdout}\n${archiveResult.stderr}`.trim();
-		if (/pathspec|not found|did not match any files/u.test(output)) {
+		if (missingAgentVmMetadataPattern.test(output)) {
 			await fs.mkdir(path.join(options.metadataDir, '.agent-vm'), { recursive: true });
 			return;
 		}
@@ -338,9 +339,20 @@ export async function preStartGateway(
 				};
 			}),
 		);
-		const rejectedCloneResult = cloneResults.find((result) => result.status === 'rejected');
-		if (rejectedCloneResult) {
-			throw rejectedCloneResult.reason;
+		const rejectedCloneResults = cloneResults.filter(
+			(result): result is PromiseRejectedResult => result.status === 'rejected',
+		);
+		if (rejectedCloneResults.length > 0) {
+			const cloneFailureErrors = rejectedCloneResults.map((result) => toError(result.reason));
+			const cloneFailureDetails = rejectedCloneResults
+				.map((result) =>
+					result.reason instanceof Error ? result.reason.message : String(result.reason),
+				)
+				.join('\n');
+			throw new AggregateError(
+				cloneFailureErrors,
+				`Failed to prepare ${rejectedCloneResults.length} repo clone(s).\n${cloneFailureDetails}`,
+			);
 		}
 		const clonedRepos: {
 			readonly repoId: string;
@@ -511,7 +523,7 @@ export async function postStopGateway(
 	taskId: string,
 	zoneConfig: GatewayZone,
 	startedProviders: readonly StartedRepoResourceProvider[] = [],
-	options: { readonly runtimeDir?: string } = {},
+	options: { readonly retainRuntimeRoot?: boolean; readonly runtimeDir?: string } = {},
 ): Promise<void> {
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
 	const runtimeDir =
@@ -532,11 +544,17 @@ export async function postStopGateway(
 	} catch (error) {
 		resourcesRemovalError = error instanceof Error ? error : new Error(String(error));
 	}
-	try {
-		await fs.rm(workDir, { recursive: true, force: true });
-		await fs.rm(taskRuntimeRoot, { recursive: true, force: true });
-	} catch (error) {
-		workRemovalError = error instanceof Error ? error : new Error(String(error));
+	if (options.retainRuntimeRoot === true) {
+		writeStderr(
+			`[worker-task-runner] Retaining runtime artifacts for task ${taskId} at ${taskRuntimeRoot}.`,
+		);
+	} else {
+		try {
+			await fs.rm(workDir, { recursive: true, force: true });
+			await fs.rm(taskRuntimeRoot, { recursive: true, force: true });
+		} catch (error) {
+			workRemovalError = error instanceof Error ? error : new Error(String(error));
+		}
 	}
 	const errors = [cleanupError, resourcesRemovalError, workRemovalError].filter(
 		(error): error is Error => error !== null,
@@ -552,6 +570,18 @@ export async function postStopGateway(
 	if (errors.length === 1) {
 		throw errors[0];
 	}
+}
+
+function shouldRetainRuntimeRootAfterStop(options: {
+	readonly primaryError: Error | undefined;
+	readonly result: WorkerTaskResult | undefined;
+}): boolean {
+	if (options.primaryError !== undefined) return true;
+	const finalState = options.result?.finalState;
+	if (typeof finalState !== 'object' || finalState === null || !('status' in finalState)) {
+		return true;
+	}
+	return finalState.status !== 'completed';
 }
 
 async function cleanupTaskRootAfterPreparationFailure(options: {
@@ -825,7 +855,10 @@ export async function executeWorkerTask(
 			prepared.taskId,
 			prepared.zone,
 			prepared.preStartResult.startedResourceProviders,
-			{ runtimeDir: options.systemConfig.runtimeDir },
+			{
+				retainRuntimeRoot: shouldRetainRuntimeRootAfterStop({ primaryError, result }),
+				runtimeDir: options.systemConfig.runtimeDir,
+			},
 		);
 	} catch (error) {
 		cleanupErrors.push(toError(error));
