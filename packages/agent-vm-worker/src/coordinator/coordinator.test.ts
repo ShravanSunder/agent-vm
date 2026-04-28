@@ -155,7 +155,18 @@ async function waitForStatus(
 }
 
 function gitSubcommand(args: readonly string[]): string | undefined {
-	return args[0] === '-c' ? args[2] : args[0];
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index];
+		if (arg === '-c') {
+			index += 1;
+			continue;
+		}
+		if (arg?.startsWith('-')) {
+			continue;
+		}
+		return arg;
+	}
+	return undefined;
 }
 
 describe('coordinator', () => {
@@ -184,6 +195,21 @@ describe('coordinator', () => {
 		});
 		mocks.gatherContext.mockResolvedValue({ summary: 'repo summary' });
 		mocks.getDiff.mockResolvedValue('diff --git a/file b/file');
+	});
+
+	it('finds git subcommands after global options', () => {
+		expect(
+			gitSubcommand([
+				'-c',
+				'core.hooksPath=/dev/null',
+				'--git-dir=/gitdirs/repo.git',
+				'--work-tree=/work/repos/repo',
+				'checkout',
+				'-B',
+				'agent/task-1',
+				'main',
+			]),
+		).toBe('checkout');
 	});
 
 	afterEach(async () => {
