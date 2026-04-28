@@ -100,7 +100,7 @@ const zoneGatewayBaseSchema = z.object({
 
 const openClawZoneGatewaySchema = zoneGatewayBaseSchema
 	.extend({
-		type: z.literal('openclaw').default('openclaw'),
+		type: z.literal('openclaw'),
 		zoneFilesDir: z.string().min(1),
 	})
 	.strict();
@@ -111,7 +111,10 @@ const workerZoneGatewaySchema = zoneGatewayBaseSchema
 	})
 	.strict();
 
-const zoneGatewaySchema = z.union([openClawZoneGatewaySchema, workerZoneGatewaySchema]);
+const zoneGatewaySchema = z.discriminatedUnion('type', [
+	openClawZoneGatewaySchema,
+	workerZoneGatewaySchema,
+]);
 
 const toolProfileSchema = z.object({
 	memory: z.string().min(1),

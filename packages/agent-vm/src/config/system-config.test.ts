@@ -317,6 +317,18 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/zoneFilesDir/u);
 	});
 
+	test('rejects gateway configs without an explicit gateway type', async () => {
+		const input = createValidSystemConfigInput();
+		const { type: _type, ...gatewayWithoutType } = input.zones[0].gateway;
+		input.zones[0] = {
+			...input.zones[0],
+			gateway: gatewayWithoutType,
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-missing-type-', input);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/type/u);
+	});
+
 	test('rejects legacy gateway workspaceDir', async () => {
 		const input = createValidSystemConfigInput();
 		input.zones[0] = {
