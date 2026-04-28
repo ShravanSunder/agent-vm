@@ -637,12 +637,15 @@ RUN apt-get update && \\
     pnpm add -g openclaw@2026.4.24 && \\
     OPENCLAW_PACKAGE_ROOT="$(pnpm root -g)/openclaw" && \\
     (cd "$OPENCLAW_PACKAGE_ROOT" && node scripts/postinstall-bundled-plugins.mjs) && \\
+    OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive && \\
+    test -f /opt/openclaw/plugin-runtime-deps/.openclaw-runtime-deps.json && \\
     mkdir -p /opt/openclaw-sdk && \\
     ln -sf "$OPENCLAW_PACKAGE_ROOT/dist/plugin-sdk/sandbox.js" /opt/openclaw-sdk/sandbox.js && \\
     printf '#!/bin/sh\\nexec /pnpm/openclaw "$@"\\n' > /usr/local/bin/openclaw && \\
     chmod 755 /usr/local/bin/openclaw && \\
     useradd -m -s /bin/bash openclaw && \\
     mkdir -p ${defaultOpenClawExtensionsPath} /home/openclaw/workspace /run/sshd /root && \\
+    chown -R openclaw:openclaw /opt/openclaw/plugin-runtime-deps && \\
     chown -R openclaw:openclaw /home/openclaw && \\
     (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
 

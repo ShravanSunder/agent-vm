@@ -149,8 +149,10 @@ describe('openclawLifecycle', () => {
 				'/home/openclaw/.openclaw/state/effective-openclaw.json',
 			);
 			expect(vmSpec.environment.OPENCLAW_PLUGIN_STAGE_DIR).toBe(
-				'/home/openclaw/.openclaw/cache/plugin-runtime-deps',
+				'/opt/openclaw/plugin-runtime-deps',
 			);
+			expect(vmSpec.environment.TMPDIR).toBe('/work/tmp');
+			expect(vmSpec.environment.npm_config_cache).toBe('/work/cache/npm');
 			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/config']).toEqual({
 				hostPath: '/host/config/shravan',
 				kind: 'realfs',
@@ -159,6 +161,7 @@ describe('openclawLifecycle', () => {
 				hostPath: '/host/cache/gateways/shravan',
 				kind: 'realfs',
 			});
+			expect(vmSpec.vfsMounts['/opt/openclaw/plugin-runtime-deps']).toBeUndefined();
 			expect(vmSpec.tcpHosts).toEqual({
 				'controller.vm.host:18800': '127.0.0.1:18800',
 				'gateway.discord.gg:443': 'gateway.discord.gg:443',
@@ -179,8 +182,11 @@ describe('openclawLifecycle', () => {
 				'OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json',
 			);
 			expect(processSpec.bootstrapCommand).toContain(
-				'OPENCLAW_PLUGIN_STAGE_DIR=/home/openclaw/.openclaw/cache/plugin-runtime-deps',
+				'OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps',
 			);
+			expect(processSpec.bootstrapCommand).toContain('/work/tmp /work/cache/npm');
+			expect(processSpec.bootstrapCommand).toContain('TMPDIR=/work/tmp');
+			expect(processSpec.bootstrapCommand).toContain('npm_config_cache=/work/cache/npm');
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
 			expect(processSpec.startCommand).toContain('nohup openclaw gateway --port 18789');

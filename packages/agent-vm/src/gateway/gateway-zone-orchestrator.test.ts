@@ -325,7 +325,7 @@ describe('startGatewayZone', () => {
 					NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
 					OPENCLAW_HOME: '/home/openclaw',
 					OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/state/effective-openclaw.json',
-					OPENCLAW_PLUGIN_STAGE_DIR: '/home/openclaw/.openclaw/cache/plugin-runtime-deps',
+					OPENCLAW_PLUGIN_STAGE_DIR: '/opt/openclaw/plugin-runtime-deps',
 					OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
 					DISCORD_BOT_TOKEN: 'resolved-key',
 				}),

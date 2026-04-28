@@ -295,6 +295,12 @@ describe('scaffoldAgentVmProject', () => {
 		expect(gatewayDockerfile).toContain('(ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)');
 		expect(gatewayDockerfile).toContain('pnpm add -g openclaw@2026.4.24');
 		expect(gatewayDockerfile).toContain(
+			'OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive',
+		);
+		expect(gatewayDockerfile).toContain(
+			'test -f /opt/openclaw/plugin-runtime-deps/.openclaw-runtime-deps.json',
+		);
+		expect(gatewayDockerfile).toContain(
 			'COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin',
 		);
 		expect(gatewayDockerfile).not.toContain('@agent-vm/openclaw-agent-vm-plugin');

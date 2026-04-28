@@ -22,7 +22,7 @@ const effectiveOpenClawConfigFileName = 'effective-openclaw.json';
 const effectiveOpenClawConfigVmPath = `/home/openclaw/.openclaw/state/${effectiveOpenClawConfigFileName}`;
 const openClawStateDirVmPath = '/home/openclaw/.openclaw/state';
 const openClawCacheDirVmPath = '/home/openclaw/.openclaw/cache';
-const openClawPluginStageDirVmPath = `${openClawCacheDirVmPath}/plugin-runtime-deps`;
+const openClawPluginStageDirVmPath = '/opt/openclaw/plugin-runtime-deps';
 const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -58,11 +58,18 @@ function buildOpenClawBootstrapCommand(
 		`export OPENCLAW_CONFIG_PATH=${effectiveOpenClawConfigVmPath}`,
 		`export OPENCLAW_STATE_DIR=${openClawStateDirVmPath}`,
 		`export OPENCLAW_PLUGIN_STAGE_DIR=${openClawPluginStageDirVmPath}`,
+		'export TMPDIR=/work/tmp',
+		'export TMP=/work/tmp',
+		'export TEMP=/work/tmp',
+		'export npm_config_cache=/work/cache/npm',
+		'export pnpm_config_store_dir=/work/cache/pnpm/store',
+		'export PIP_CACHE_DIR=/work/cache/pip',
+		'export UV_CACHE_DIR=/work/cache/uv',
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
 	];
 
 	return (
-		`mkdir -p /root /etc/profile.d && cat > ${openClawShellEnvFilePath} << ENVEOF\n` +
+		`mkdir -p /root /etc/profile.d /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && cat > ${openClawShellEnvFilePath} << ENVEOF\n` +
 		environmentLines.join('\n') +
 		'\nENVEOF\n' +
 		`chmod 644 ${openClawShellEnvFilePath} && ` +
@@ -267,6 +274,13 @@ export const openclawLifecycle: GatewayLifecycle = {
 				OPENCLAW_HOME: '/home/openclaw',
 				OPENCLAW_PLUGIN_STAGE_DIR: openClawPluginStageDirVmPath,
 				OPENCLAW_STATE_DIR: openClawStateDirVmPath,
+				PIP_CACHE_DIR: '/work/cache/pip',
+				TEMP: '/work/tmp',
+				TMP: '/work/tmp',
+				TMPDIR: '/work/tmp',
+				UV_CACHE_DIR: '/work/cache/uv',
+				npm_config_cache: '/work/cache/npm',
+				pnpm_config_store_dir: '/work/cache/pnpm/store',
 				...environmentSecretsWithoutGatewayToken,
 			},
 			mediatedSecrets,
