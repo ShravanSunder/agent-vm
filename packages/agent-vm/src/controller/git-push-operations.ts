@@ -5,6 +5,8 @@ import { scrubGithubTokenFromOutput } from './git-auth-support.js';
 
 const GIT_OPERATION_TIMEOUT_MS = 120_000;
 const GIT_PUSH_RETRY_DELAYS_MS = [2_000, 4_000, 16_000] as const;
+const GIT_PUSH_RETRY_AFTER_MESSAGE =
+	'GitHub or the network is still rejecting the push after retries. Try git-push again in 5 minutes; the task runtime gitdir is retained while this task remains available.';
 
 export interface PushBranchRequest {
 	readonly repoUrl: string;
@@ -223,7 +225,7 @@ async function pushBranch(options: {
 	writePushFlowLog(
 		`git push failed for ${options.repoUrl} ${sanitizedBranchName} after ${GIT_PUSH_RETRY_DELAYS_MS.length + 1} attempts: ${lastErrorDetail}`,
 	);
-	throw new Error(`git push failed\n${lastErrorDetail}`);
+	throw new Error(`git push failed\n${GIT_PUSH_RETRY_AFTER_MESSAGE}\n${lastErrorDetail}`);
 }
 
 async function buildBranchState(options: {

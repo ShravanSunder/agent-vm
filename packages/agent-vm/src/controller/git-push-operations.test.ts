@@ -214,6 +214,42 @@ describe('git-push-operations', () => {
 		});
 	});
 
+	it('tells the agent to retry in five minutes when push retries are exhausted', async () => {
+		vi.useFakeTimers();
+		let pushAttempts = 0;
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = args.slice(3);
+			if (gitArgs[0] === 'push') {
+				pushAttempts += 1;
+				return { stdout: '', stderr: `github unavailable ${pushAttempts}`, exitCode: 128 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
+				return { stdout: '', stderr: '', exitCode: 1 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('HEAD')) {
+				return { stdout: 'local-sha', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		const resultPromise = pushBranchesForTask({
+			activeTask: buildActiveTask(),
+			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
+			githubToken: 'token',
+		});
+
+		await vi.advanceTimersByTimeAsync(22_000);
+		const result = await resultPromise;
+
+		expect(pushAttempts).toBe(4);
+		expect(result.results[0]).toMatchObject({
+			branch: 'agent/task-1',
+			success: false,
+			error: expect.stringContaining('Try git-push again in 5 minutes'),
+		});
+		expect(result.results[0]?.error).toContain('github unavailable 4');
+	});
+
 	it('reports failure when post-push verification fetch fails', async () => {
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
 			const gitArgs = args.slice(3);
