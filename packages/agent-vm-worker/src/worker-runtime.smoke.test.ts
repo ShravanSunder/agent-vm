@@ -143,7 +143,16 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 		const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-runtime-smoke-'));
 		const stateDir = path.join(tempRoot, 'state');
 		const workDir = path.join(tempRoot, 'work');
-		const repoDir = await createSampleRepo(workDir);
+		const sourceRepoDir = await createSampleRepo(path.join(tempRoot, 'source'));
+		const repoDir = path.join(workDir, 'sample-repo');
+		const gitDirPath = path.join(tempRoot, 'gitdirs', 'sample-repo.git');
+		await fs.mkdir(path.dirname(gitDirPath), { recursive: true });
+		execFileSync('git', ['clone', '--bare', sourceRepoDir, gitDirPath], {
+			stdio: 'pipe',
+		});
+		execFileSync('git', ['--git-dir', gitDirPath, 'config', 'core.bare', 'false'], {
+			stdio: 'pipe',
+		});
 		const configPath = path.join(tempRoot, 'worker-config.json');
 		const port = await findAvailablePort();
 		const workerLogPath = path.join(tempRoot, 'worker.log');
@@ -212,6 +221,7 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 						{
 							repoUrl: 'https://example.com/local-fixture.git',
 							baseBranch: 'main',
+							gitDirPath,
 							workPath: repoDir,
 						},
 					],

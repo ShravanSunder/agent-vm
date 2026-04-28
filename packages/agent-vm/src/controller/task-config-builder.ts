@@ -7,6 +7,7 @@ export interface BuildTaskConfigFromPreparedInput {
 	readonly input: WorkerTaskControllerRequest;
 	readonly repos: readonly {
 		readonly baseBranch: string;
+		readonly gitDirPath: string;
 		readonly repoUrl: string;
 		readonly workPath: string;
 	}[];
@@ -22,6 +23,7 @@ export function buildTaskConfigFromPreparedInput(
 		repos: prepared.repos.map((repo) => ({
 			repoUrl: repo.repoUrl,
 			baseBranch: repo.baseBranch,
+			gitDirPath: repo.gitDirPath,
 			workPath: repo.workPath,
 		})),
 		context: prepared.input.context,

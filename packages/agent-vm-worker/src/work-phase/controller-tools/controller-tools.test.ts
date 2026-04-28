@@ -11,6 +11,7 @@ const repos = [
 	{
 		repoUrl: 'https://github.com/acme/widgets.git',
 		baseBranch: 'main',
+		gitDirPath: '/gitdirs/widgets.git',
 		workPath: '/work/repos/widgets',
 	},
 ];

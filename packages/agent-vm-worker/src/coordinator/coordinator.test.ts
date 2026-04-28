@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 	createWorkExecutor: vi.fn(),
 	getDiff: vi.fn(),
 	gatherContext: vi.fn(),
+	bootstrapRepoWorktrees: vi.fn(),
 }));
 
 vi.mock('../work-executor/executor-factory.js', () => ({
@@ -24,6 +25,9 @@ vi.mock('../git/git-operations.js', () => ({
 }));
 vi.mock('../context/gather-context.js', () => ({
 	gatherContext: mocks.gatherContext,
+}));
+vi.mock('../git/repo-worktree-bootstrap.js', () => ({
+	bootstrapRepoWorktrees: mocks.bootstrapRepoWorktrees,
 }));
 
 function makeConfig(stateDir: string, overrides: Record<string, unknown> = {}): WorkerConfig {

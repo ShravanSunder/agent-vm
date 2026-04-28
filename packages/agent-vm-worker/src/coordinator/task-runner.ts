@@ -5,6 +5,7 @@ import { execa } from 'execa';
 import { resolvePhaseExecutor, type WorkerConfig } from '../config/worker-config.js';
 import { gatherContext } from '../context/gather-context.js';
 import { getDiff } from '../git/git-operations.js';
+import { bootstrapRepoWorktrees } from '../git/repo-worktree-bootstrap.js';
 import { runPlanCycle } from '../plan-phase/plan-cycle.js';
 import { buildRoleSystemPrompt } from '../prompt/prompt-assembler.js';
 import { writeStderr } from '../shared/stderr.js';
@@ -124,6 +125,11 @@ export async function runTask(
 		const taskConfig = initialState.config;
 		const controllerBaseUrl = process.env.CONTROLLER_BASE_URL ?? 'http://controller.vm.host:18800';
 		const zoneId = process.env.AGENT_VM_ZONE_ID ?? 'unknown-zone';
+		await bootstrapRepoWorktrees({
+			branchPrefix: config.branchPrefix,
+			repos: taskConfig.repos,
+			taskId,
+		});
 		const primaryWorkDir = getPrimaryRepoWork(taskConfig, workDir);
 		const taskLogsDir = join(config.stateDir, 'tasks', taskId, 'logs');
 

@@ -77,6 +77,7 @@ const taskStatusResponseSchema = z
 	})
 	.passthrough();
 const GIT_CLONE_TIMEOUT_MS = 120_000;
+const GIT_METADATA_TIMEOUT_MS = 30_000;
 
 async function readJsonObjectFile(
 	filePath: string,
@@ -95,6 +96,48 @@ async function readJsonObjectFile(
 		}
 		const message = error instanceof Error ? error.message : String(error);
 		throw new Error(`Invalid ${options.label}: ${message}`, { cause: error });
+	}
+}
+
+async function materializeRepoAgentVmDirectory(options: {
+	readonly baseBranch: string;
+	readonly gitDir: string;
+	readonly metadataDir: string;
+	readonly repoUrl: string;
+}): Promise<void> {
+	await fs.mkdir(options.metadataDir, { recursive: true });
+	const archivePath = path.join(options.metadataDir, 'agent-vm-metadata.tar');
+	const archiveResult = await execa(
+		'git',
+		[
+			'-c',
+			'core.hooksPath=/dev/null',
+			`--git-dir=${options.gitDir}`,
+			'archive',
+			'--format=tar',
+			`--output=${archivePath}`,
+			options.baseBranch,
+			'.agent-vm',
+		],
+		{ reject: false, timeout: GIT_METADATA_TIMEOUT_MS },
+	);
+	if ((archiveResult.exitCode ?? 0) !== 0) {
+		const output = `${archiveResult.stdout}\n${archiveResult.stderr}`.trim();
+		if (/pathspec|not found|did not match any files/u.test(output)) {
+			await fs.mkdir(path.join(options.metadataDir, '.agent-vm'), { recursive: true });
+			return;
+		}
+		throw new Error(
+			`Failed to archive .agent-vm metadata from ${options.repoUrl}: ${scrubGithubTokenFromOutput(output)}`,
+		);
+	}
+	try {
+		await execa('tar', ['-xf', archivePath, '-C', options.metadataDir], {
+			reject: true,
+			timeout: GIT_METADATA_TIMEOUT_MS,
+		});
+	} finally {
+		await fs.rm(archivePath, { force: true });
 	}
 }
 
@@ -148,7 +191,9 @@ export interface PreStartResult {
 		readonly repoId: string;
 		readonly repoUrl: string;
 		readonly baseBranch: string;
-		readonly hostWorkPath: string;
+		readonly gitDirPath: string;
+		readonly hostGitDir: string;
+		readonly hostMetadataPath: string;
 		readonly workPath: string;
 	}[];
 	readonly effectiveConfig: WorkerConfig;
@@ -200,14 +245,17 @@ export async function preStartGateway(
 		await fs.mkdir(agentVmDir, { recursive: true });
 		await copyLocalWorkerTarballIfConfigured(stateDir);
 
+		const gitdirsRoot = path.join(taskRuntimeRoot, 'gitdirs');
+		const metadataRoot = path.join(taskRuntimeRoot, 'repo-metadata');
 		const usedRepoNames = new Set<string>();
 		const preparedRepoTargets = parsedTaskInput.repos.map((repo) => {
 			const repoId = deriveRepoDirectoryName(repo.repoUrl, usedRepoNames);
-			const repoWorkDir = path.join(workDir, repoId);
 			return {
 				...repo,
 				repoId,
-				hostWorkPath: repoWorkDir,
+				gitDirPath: `/gitdirs/${repoId}.git`,
+				hostGitDir: path.join(gitdirsRoot, `${repoId}.git`),
+				hostMetadataPath: path.join(metadataRoot, repoId),
 				workPath: `/work/repos/${repoId}`,
 			};
 		});
@@ -216,11 +264,14 @@ export async function preStartGateway(
 				const authArgs = options.githubToken ? buildGithubAuthConfigArgs(options.githubToken) : [];
 				const cloneArgs = [
 					...authArgs,
+					'-c',
+					'core.hooksPath=/dev/null',
 					'clone',
+					'--bare',
 					'--branch',
 					repo.baseBranch,
 					repo.repoUrl,
-					repo.hostWorkPath,
+					repo.hostGitDir,
 				];
 				let cloneResult: {
 					readonly exitCode?: number;
@@ -246,6 +297,7 @@ export async function preStartGateway(
 					throw new Error(`git clone failed for ${repo.repoUrl}: ${errorDetail}`.trim());
 				}
 				for (const [key, value] of [
+					['core.bare', 'false'],
 					['user.email', 'agent-vm-worker@agent-vm'],
 					['user.name', 'agent-vm-worker'],
 					['http.version', 'HTTP/1.1'],
@@ -253,16 +305,35 @@ export async function preStartGateway(
 				] as const) {
 					// Git serializes config writes through .git/config.lock; keep these ordered.
 					// oxlint-disable-next-line eslint/no-await-in-loop
-					await execa('git', ['-C', repo.hostWorkPath, 'config', key, value], {
-						reject: true,
-						timeout: 10_000,
-					});
+					await execa(
+						'git',
+						[
+							'-c',
+							'core.hooksPath=/dev/null',
+							`--git-dir=${repo.hostGitDir}`,
+							'config',
+							key,
+							value,
+						],
+						{
+							reject: true,
+							timeout: 10_000,
+						},
+					);
 				}
+				await materializeRepoAgentVmDirectory({
+					baseBranch: repo.baseBranch,
+					gitDir: repo.hostGitDir,
+					metadataDir: repo.hostMetadataPath,
+					repoUrl: repo.repoUrl,
+				});
 				return {
 					repoId: repo.repoId,
 					repoUrl: repo.repoUrl,
 					baseBranch: repo.baseBranch,
-					hostWorkPath: repo.hostWorkPath,
+					gitDirPath: repo.gitDirPath,
+					hostGitDir: repo.hostGitDir,
+					hostMetadataPath: repo.hostMetadataPath,
 					workPath: repo.workPath,
 				};
 			}),
@@ -275,7 +346,9 @@ export async function preStartGateway(
 			readonly repoId: string;
 			readonly repoUrl: string;
 			readonly baseBranch: string;
-			readonly hostWorkPath: string;
+			readonly gitDirPath: string;
+			readonly hostGitDir: string;
+			readonly hostMetadataPath: string;
 			readonly workPath: string;
 		}[] = cloneResults.map((result) => {
 			if (result.status === 'rejected') {
@@ -284,12 +357,17 @@ export async function preStartGateway(
 			return result.value;
 		});
 
-		const primaryRepoWorkDir = clonedRepos[0]?.hostWorkPath ?? workDir;
-		const projectConfigPath = path.join(primaryRepoWorkDir, '.agent-vm', 'config.json');
-		const projectConfig = await readJsonObjectFile(projectConfigPath, {
-			label: 'project config',
-			missingValue: {},
-		});
+		const primaryRepo = clonedRepos[0] ?? null;
+		const projectConfig =
+			primaryRepo === null
+				? {}
+				: await readJsonObjectFile(
+						path.join(primaryRepo.hostMetadataPath, '.agent-vm', 'config.json'),
+						{
+							label: 'project config',
+							missingValue: {},
+						},
+					);
 		const baseConfig = await readJsonObjectFile(zoneConfig.gateway.config, {
 			label: 'gateway config',
 			missingValue: {},
@@ -305,9 +383,9 @@ export async function preStartGateway(
 			clonedRepos.map(async (repo) => ({
 				repoId: repo.repoId,
 				repoUrl: repo.repoUrl,
-				hasContract: await hasRepoResourceDescriptionContract(repo.hostWorkPath),
+				hasContract: await hasRepoResourceDescriptionContract(repo.hostMetadataPath),
 				description: await loadRepoResourceDescriptionContract({
-					repoDir: repo.hostWorkPath,
+					repoDir: repo.hostMetadataPath,
 					repoId: repo.repoId,
 					repoUrl: repo.repoUrl,
 				}),
@@ -334,7 +412,7 @@ export async function preStartGateway(
 					return {
 						repoId: repoDescription.repoId,
 						repoUrl: repoDescription.repoUrl,
-						repoDir: repo.hostWorkPath,
+						repoDir: repo.hostMetadataPath,
 						outputDir: path.join(agentVmDir, 'resources', repoDescription.repoId),
 						setupCommand: repoDescription.description.setupCommand,
 					};
@@ -359,7 +437,7 @@ export async function preStartGateway(
 				}
 				return {
 					...provider,
-					repoDir: repo.hostWorkPath,
+					repoDir: repo.hostMetadataPath,
 					outputDir: path.join(agentVmDir, 'resources', provider.repoId),
 				};
 			}),
@@ -406,8 +484,8 @@ export async function preStartGateway(
 			environment: overlay.environment,
 			tcpHosts: overlay.tcpHosts,
 			vfsMounts: {
-				'/work/repos': {
-					hostPath: workDir,
+				'/gitdirs': {
+					hostPath: gitdirsRoot,
 					kind: 'realfs',
 				},
 				'/agent-vm': {
@@ -610,7 +688,7 @@ export async function prepareWorkerTask(
 			repos: preStartResult.repos.map((repo) => ({
 				repoUrl: repo.repoUrl,
 				baseBranch: repo.baseBranch,
-				hostGitDir: path.join(repo.hostWorkPath, '.git'),
+				hostGitDir: repo.hostGitDir,
 				vmWorkPath: repo.workPath,
 			})),
 			workerIngress: null,
@@ -668,6 +746,7 @@ export async function executeWorkerTask(
 				repos: prepared.preStartResult.repos.map((repo) => ({
 					repoUrl: repo.repoUrl,
 					baseBranch: repo.baseBranch,
+					gitDirPath: repo.gitDirPath,
 					workPath: repo.workPath,
 				})),
 				context: prepared.input.context,

@@ -411,8 +411,12 @@ describe('worker-task-runner', () => {
 		expect(result.vfsMounts['/agent-vm']).toEqual(
 			expect.objectContaining({ kind: 'realfs-readonly' }),
 		);
-		expect(result.vfsMounts['/work/repos']).toEqual(
-			expect.objectContaining({ hostPath: result.workDir, kind: 'realfs' }),
+		expect(result.vfsMounts['/work/repos']).toBeUndefined();
+		expect(result.vfsMounts['/gitdirs']).toEqual(
+			expect.objectContaining({
+				hostPath: path.join(result.taskRuntimeRoot, 'gitdirs'),
+				kind: 'realfs',
+			}),
 		);
 	});
 
@@ -424,7 +428,9 @@ describe('worker-task-runner', () => {
 		}
 		const originalReadFile = fs.readFile;
 		vi.spyOn(fs, 'readFile').mockImplementation(async (filePath, encoding) => {
-			if (normalizeMockFilePath(filePath).endsWith('/frontend/.agent-vm/config.json')) {
+			if (
+				normalizeMockFilePath(filePath).endsWith('/repo-metadata/frontend/.agent-vm/config.json')
+			) {
 				return JSON.stringify({
 					branchPrefix: 'feature/',
 					verification: [{ name: 'custom', command: 'pnpm custom-check' }],
@@ -451,22 +457,28 @@ describe('worker-task-runner', () => {
 			1,
 			'git',
 			[
+				'-c',
+				'core.hooksPath=/dev/null',
 				'clone',
+				'--bare',
 				'--branch',
 				'main',
 				'https://github.com/org/frontend.git',
-				path.join(result.workDir, 'frontend'),
+				path.join(result.taskRuntimeRoot, 'gitdirs', 'frontend.git'),
 			],
 			expect.objectContaining({ timeout: 120_000 }),
 		);
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
 			[
+				'-c',
+				'core.hooksPath=/dev/null',
 				'clone',
+				'--bare',
 				'--branch',
 				'develop',
 				'https://github.com/org/backend.git',
-				path.join(result.workDir, 'backend'),
+				path.join(result.taskRuntimeRoot, 'gitdirs', 'backend.git'),
 			],
 			expect.objectContaining({ timeout: 120_000 }),
 		);
@@ -475,14 +487,18 @@ describe('worker-task-runner', () => {
 				repoId: 'frontend',
 				repoUrl: 'https://github.com/org/frontend.git',
 				baseBranch: 'main',
-				hostWorkPath: path.join(result.workDir, 'frontend'),
+				gitDirPath: '/gitdirs/frontend.git',
+				hostGitDir: path.join(result.taskRuntimeRoot, 'gitdirs', 'frontend.git'),
+				hostMetadataPath: path.join(result.taskRuntimeRoot, 'repo-metadata', 'frontend'),
 				workPath: '/work/repos/frontend',
 			},
 			{
 				repoId: 'backend',
 				repoUrl: 'https://github.com/org/backend.git',
 				baseBranch: 'develop',
-				hostWorkPath: path.join(result.workDir, 'backend'),
+				gitDirPath: '/gitdirs/backend.git',
+				hostGitDir: path.join(result.taskRuntimeRoot, 'gitdirs', 'backend.git'),
+				hostMetadataPath: path.join(result.taskRuntimeRoot, 'repo-metadata', 'backend'),
 				workPath: '/work/repos/backend',
 			},
 		]);
@@ -577,19 +593,19 @@ describe('worker-task-runner', () => {
 		expect(providerCall?.repos).toEqual([
 			expect.objectContaining({
 				repoId: 'frontend',
-				repoDir: expect.stringMatching(/\/work\/frontend$/u),
+				repoDir: expect.stringMatching(/\/repo-metadata\/frontend$/u),
 				outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/agent-vm\/resources\/frontend$/u),
 			}),
 			expect.objectContaining({
 				repoId: 'backend',
-				repoDir: expect.stringMatching(/\/work\/backend$/u),
+				repoDir: expect.stringMatching(/\/repo-metadata\/backend$/u),
 				outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/agent-vm\/resources\/backend$/u),
 			}),
 		]);
 		expect(providerCall?.providers).toHaveLength(1);
 		expect(providerCall?.providers[0]).toMatchObject({
 			repoId: 'frontend',
-			repoDir: expect.stringMatching(/\/work\/frontend$/u),
+			repoDir: expect.stringMatching(/\/repo-metadata\/frontend$/u),
 			outputDir: expect.stringMatching(/\/state\/tasks\/[^/]+\/agent-vm\/resources\/frontend$/u),
 			resourceName: 'pg',
 			provider: { service: 'pg' },
@@ -674,11 +690,14 @@ describe('worker-task-runner', () => {
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
 			[
+				'-c',
+				'core.hooksPath=/dev/null',
 				'clone',
+				'--bare',
 				'--branch',
 				'main',
 				'https://github.com/org/frontend.git',
-				expect.stringContaining('/frontend'),
+				expect.stringContaining('/gitdirs/frontend.git'),
 			],
 			expect.objectContaining({ timeout: 120_000 }),
 		);
@@ -716,12 +735,15 @@ describe('worker-task-runner', () => {
 		expect(Buffer.from(encodedHeader ?? '', 'base64').toString('utf8')).toBe(
 			'x-access-token:ghp_secret-token',
 		);
-		expect(cloneArgs.slice(2, 6)).toEqual([
+		expect(cloneArgs.slice(2, 8)).toEqual([
+			'-c',
+			'core.hooksPath=/dev/null',
 			'clone',
+			'--bare',
 			'--branch',
 			'main',
-			'https://github.com/org/frontend.git',
 		]);
+		expect(cloneArgs[8]).toBe('https://github.com/org/frontend.git');
 	});
 
 	it('does not write cloned repo paths to global git safe.directory config', async () => {
@@ -754,10 +776,10 @@ describe('worker-task-runner', () => {
 		let maxActiveConfigWrites = 0;
 		const configKeys: string[] = [];
 		execaMock.mockImplementation(async (command: string, args: readonly string[]) => {
-			if (command === 'git' && args[2] === 'config') {
+			if (command === 'git' && args[3] === 'config') {
 				activeConfigWrites += 1;
 				maxActiveConfigWrites = Math.max(maxActiveConfigWrites, activeConfigWrites);
-				configKeys.push(args[3] ?? '');
+				configKeys.push(args[4] ?? '');
 				await Promise.resolve();
 				activeConfigWrites -= 1;
 			}
@@ -779,7 +801,13 @@ describe('worker-task-runner', () => {
 			zone,
 		);
 
-		expect(configKeys).toEqual(['user.email', 'user.name', 'http.version', 'commit.gpgsign']);
+		expect(configKeys).toEqual([
+			'core.bare',
+			'user.email',
+			'user.name',
+			'http.version',
+			'commit.gpgsign',
+		]);
 		expect(maxActiveConfigWrites).toBe(1);
 	});
 
@@ -839,11 +867,13 @@ describe('worker-task-runner', () => {
 		const originalRm = fs.rm;
 		vi.spyOn(fs, 'rm').mockImplementation(async (...args) => {
 			const normalizedTarget = normalizeMockFilePath(args[0]);
-			events.push(
-				normalizedTarget.includes('/worker-tasks/')
-					? 'task-runtime-root-removed'
-					: 'task-root-removed',
-			);
+			if (!normalizedTarget.endsWith('agent-vm-metadata.tar')) {
+				events.push(
+					normalizedTarget.includes('/worker-tasks/')
+						? 'task-runtime-root-removed'
+						: 'task-root-removed',
+				);
+			}
 			return await originalRm(...args);
 		});
 		const zone = systemConfig.zones[0];
@@ -884,7 +914,9 @@ describe('worker-task-runner', () => {
 		}
 		const originalReadFile = fs.readFile;
 		vi.spyOn(fs, 'readFile').mockImplementation(async (filePath, encoding) => {
-			if (normalizeMockFilePath(filePath).endsWith('/frontend/.agent-vm/config.json')) {
+			if (
+				normalizeMockFilePath(filePath).endsWith('/repo-metadata/frontend/.agent-vm/config.json')
+			) {
 				return '{ not-valid-json';
 			}
 			return await originalReadFile(filePath, encoding);
@@ -913,7 +945,9 @@ describe('worker-task-runner', () => {
 		}
 		const originalReadFile = fs.readFile;
 		vi.spyOn(fs, 'readFile').mockImplementation(async (filePath, encoding) => {
-			if (normalizeMockFilePath(filePath).endsWith('/frontend/.agent-vm/config.json')) {
+			if (
+				normalizeMockFilePath(filePath).endsWith('/repo-metadata/frontend/.agent-vm/config.json')
+			) {
 				return JSON.stringify({
 					commonAgentInstructions: { path: './prompts/common-agent-instructions.md' },
 				});
@@ -1013,11 +1047,12 @@ describe('worker-task-runner', () => {
 				{
 					repoUrl: 'https://github.com/org/repo.git',
 					baseBranch: 'main',
+					gitDirPath: '/gitdirs/repo.git',
 					workPath: '/work/repos/repo',
 				},
 			],
 		});
-		expect(JSON.stringify(submittedBody)).not.toContain('hostWorkPath');
+		expect(JSON.stringify(submittedBody)).not.toContain('hostGitDir');
 	});
 
 	it('fails immediately when the worker returns an invalid task status payload', async () => {
