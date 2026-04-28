@@ -48,6 +48,7 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 			options.io,
 			await backupManager.createBackup({
 				backupDir,
+				runtimeDir: options.systemConfig.runtimeDir,
 				stateDir: zone.gateway.stateDir,
 				...(zone.gateway.type === 'openclaw' ? { zoneFilesDir: zone.gateway.zoneFilesDir } : {}),
 				zoneId,

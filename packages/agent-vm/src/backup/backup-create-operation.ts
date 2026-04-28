@@ -12,10 +12,16 @@ const execFileAsync = promisify(execFile);
 export async function createEncryptedBackup(options: {
 	readonly backupDir: string;
 	readonly encryption: BackupEncryption;
+	readonly runtimeDir: string;
 	readonly stateDir: string;
 	readonly zoneFilesDir?: string;
 	readonly zoneId: string;
 }): Promise<BackupResult> {
+	assertRuntimeDirOutsideBackupInputs({
+		runtimeDir: options.runtimeDir,
+		stateDir: options.stateDir,
+		...(options.zoneFilesDir !== undefined ? { zoneFilesDir: options.zoneFilesDir } : {}),
+	});
 	const timestamp = new Date().toISOString().replace(/[:.]/gu, '-');
 	const backupPaths = buildBackupPaths({
 		backupDir: options.backupDir,
@@ -62,4 +68,46 @@ export async function createEncryptedBackup(options: {
 		timestamp,
 		zoneId: options.zoneId,
 	};
+}
+
+function isSameOrDescendantPath(childPath: string, parentPath: string): boolean {
+	const relativePath = path.relative(path.resolve(parentPath), path.resolve(childPath));
+	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
+
+function assertNoPathOverlap(options: {
+	readonly firstLabel: string;
+	readonly firstPath: string;
+	readonly secondLabel: string;
+	readonly secondPath: string;
+}): void {
+	if (
+		isSameOrDescendantPath(options.firstPath, options.secondPath) ||
+		isSameOrDescendantPath(options.secondPath, options.firstPath)
+	) {
+		throw new Error(
+			`${options.firstLabel} (${path.resolve(options.firstPath)}) must not overlap ${options.secondLabel} (${path.resolve(options.secondPath)}).`,
+		);
+	}
+}
+
+function assertRuntimeDirOutsideBackupInputs(options: {
+	readonly runtimeDir: string;
+	readonly stateDir: string;
+	readonly zoneFilesDir?: string;
+}): void {
+	assertNoPathOverlap({
+		firstLabel: 'runtimeDir',
+		firstPath: options.runtimeDir,
+		secondLabel: 'stateDir',
+		secondPath: options.stateDir,
+	});
+	if (options.zoneFilesDir !== undefined) {
+		assertNoPathOverlap({
+			firstLabel: 'runtimeDir',
+			firstPath: options.runtimeDir,
+			secondLabel: 'zoneFilesDir',
+			secondPath: options.zoneFilesDir,
+		});
+	}
 }

@@ -23,6 +23,7 @@ export interface ZoneBackupManager {
 	createBackup(options: {
 		readonly zoneId: string;
 		readonly stateDir: string;
+		readonly runtimeDir: string;
 		readonly zoneFilesDir?: string;
 		readonly backupDir: string;
 	}): Promise<BackupResult>;
@@ -51,6 +52,7 @@ export function createZoneBackupManager(encryption: BackupEncryption): ZoneBacku
 			return await createEncryptedBackup({
 				encryption,
 				backupDir: options.backupDir,
+				runtimeDir: options.runtimeDir,
 				stateDir: options.stateDir,
 				...(options.zoneFilesDir !== undefined ? { zoneFilesDir: options.zoneFilesDir } : {}),
 				zoneId: options.zoneId,

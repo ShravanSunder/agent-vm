@@ -185,6 +185,7 @@ describe('runBackupCommand', () => {
 
 		expect(createBackup).toHaveBeenCalledWith({
 			backupDir: './state/shravan/backups',
+			runtimeDir: './runtime',
 			stateDir: './state/shravan',
 			zoneFilesDir: './zone-files/shravan',
 			zoneId: 'shravan',
@@ -234,7 +235,7 @@ describe('runBackupCommand', () => {
 		).rejects.toThrow('Usage: agent-vm backup restore <path> [--zone <id>]');
 	});
 
-	it('restores a backup into the target zone workspace and state directories', async () => {
+	it('restores a backup into the target zone files and state directories', async () => {
 		const restoreBackup = vi.fn(async () => ({
 			stateDir: './state/shravan',
 			zoneFilesDir: './zone-files/shravan',

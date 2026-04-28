@@ -30,6 +30,7 @@ describe('createZoneBackupManager', () => {
 		const stateDir = path.join(tmpDir, 'state');
 		const zoneFilesDir = path.join(tmpDir, 'zone-files');
 		const backupDir = path.join(tmpDir, 'backups');
+		const runtimeDir = path.join(tmpDir, 'runtime');
 		fs.mkdirSync(stateDir, { recursive: true });
 		fs.mkdirSync(zoneFilesDir, { recursive: true });
 		fs.writeFileSync(path.join(stateDir, 'session.json'), '{"token":"abc"}');
@@ -42,6 +43,7 @@ describe('createZoneBackupManager', () => {
 			stateDir,
 			zoneFilesDir,
 			backupDir,
+			runtimeDir,
 		});
 
 		expect(result.zoneId).toBe('shravan');
@@ -49,11 +51,60 @@ describe('createZoneBackupManager', () => {
 		expect(fs.existsSync(result.backupPath)).toBe(true);
 	});
 
+	it('rejects backups when runtimeDir overlaps backup-copied paths', async () => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-runtime-overlap-'));
+		const stateDir = path.join(tmpDir, 'state');
+		const zoneFilesDir = path.join(tmpDir, 'zone-files');
+		const backupDir = path.join(tmpDir, 'backups');
+		fs.mkdirSync(stateDir, { recursive: true });
+		fs.mkdirSync(zoneFilesDir, { recursive: true });
+
+		const manager = createZoneBackupManager(noopEncryption);
+
+		await expect(
+			manager.createBackup({
+				zoneId: 'shravan',
+				stateDir,
+				zoneFilesDir,
+				backupDir,
+				runtimeDir: path.join(stateDir, 'worker-tasks'),
+			}),
+		).rejects.toThrow(/runtimeDir.*stateDir/u);
+		await expect(
+			manager.createBackup({
+				zoneId: 'shravan',
+				stateDir,
+				zoneFilesDir,
+				backupDir,
+				runtimeDir: path.join(zoneFilesDir, 'runtime'),
+			}),
+		).rejects.toThrow(/runtimeDir.*zoneFilesDir/u);
+		await expect(
+			manager.createBackup({
+				zoneId: 'shravan',
+				stateDir: path.join(tmpDir, 'runtime', 'state'),
+				zoneFilesDir,
+				backupDir,
+				runtimeDir: path.join(tmpDir, 'runtime'),
+			}),
+		).rejects.toThrow(/runtimeDir.*stateDir/u);
+		await expect(
+			manager.createBackup({
+				zoneId: 'shravan',
+				stateDir,
+				zoneFilesDir: path.join(tmpDir, 'runtime', 'zone-files'),
+				backupDir,
+				runtimeDir: path.join(tmpDir, 'runtime'),
+			}),
+		).rejects.toThrow(/runtimeDir.*zoneFilesDir/u);
+	});
+
 	it('restores a backup to state and zone-files dirs', async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-restore-'));
 		const stateDir = path.join(tmpDir, 'state');
 		const zoneFilesDir = path.join(tmpDir, 'zone-files');
 		const backupDir = path.join(tmpDir, 'backups');
+		const runtimeDir = path.join(tmpDir, 'runtime');
 		fs.mkdirSync(stateDir, { recursive: true });
 		fs.mkdirSync(zoneFilesDir, { recursive: true });
 		fs.writeFileSync(path.join(stateDir, 'data.json'), '{"key":"val"}');
@@ -66,6 +117,7 @@ describe('createZoneBackupManager', () => {
 			stateDir,
 			zoneFilesDir,
 			backupDir,
+			runtimeDir,
 		});
 
 		// Clear dirs to simulate a fresh machine
@@ -94,6 +146,7 @@ describe('createZoneBackupManager', () => {
 		const sourceStateDir = path.join(tmpDir, 'parent-a', 'zone-state');
 		const sourceZoneFilesDir = path.join(tmpDir, 'parent-b', 'zone-zone-files');
 		const backupDir = path.join(tmpDir, 'backups');
+		const runtimeDir = path.join(tmpDir, 'runtime');
 		fs.mkdirSync(sourceStateDir, { recursive: true });
 		fs.mkdirSync(sourceZoneFilesDir, { recursive: true });
 		fs.writeFileSync(path.join(sourceStateDir, 'state-file.json'), '{"s":1}');
@@ -106,6 +159,7 @@ describe('createZoneBackupManager', () => {
 			stateDir: sourceStateDir,
 			zoneFilesDir: sourceZoneFilesDir,
 			backupDir,
+			runtimeDir,
 		});
 
 		// Restore to completely different parents
@@ -181,6 +235,7 @@ describe('createZoneBackupManager', () => {
 		const stateDir = path.join(tmpDir, 'state');
 		const zoneFilesDir = path.join(tmpDir, 'zone-files');
 		const backupDir = path.join(tmpDir, 'backups');
+		const runtimeDir = path.join(tmpDir, 'runtime');
 		fs.mkdirSync(stateDir, { recursive: true });
 		fs.mkdirSync(zoneFilesDir, { recursive: true });
 		fs.writeFileSync(path.join(stateDir, 'a.json'), '{}');
@@ -193,6 +248,7 @@ describe('createZoneBackupManager', () => {
 			stateDir,
 			zoneFilesDir,
 			backupDir,
+			runtimeDir,
 		});
 
 		// Clear and restore
