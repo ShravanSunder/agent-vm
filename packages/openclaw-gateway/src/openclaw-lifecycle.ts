@@ -22,6 +22,7 @@ const effectiveOpenClawConfigFileName = 'effective-openclaw.json';
 const effectiveOpenClawConfigVmPath = `/home/openclaw/.openclaw/state/${effectiveOpenClawConfigFileName}`;
 const openClawStateDirVmPath = '/home/openclaw/.openclaw/state';
 const openClawCacheDirVmPath = '/home/openclaw/.openclaw/cache';
+const openClawZoneFilesDirVmPath = '/home/openclaw/zone-files';
 const openClawPluginStageDirVmPath = '/opt/openclaw/plugin-runtime-deps';
 const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
 
@@ -300,7 +301,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 					hostPath: zone.gateway.stateDir,
 					kind: 'realfs',
 				},
-				'/home/openclaw/workspace': {
+				[openClawZoneFilesDirVmPath]: {
 					hostPath: zone.gateway.zoneFilesDir,
 					kind: 'realfs',
 				},

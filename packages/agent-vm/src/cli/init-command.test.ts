@@ -300,6 +300,8 @@ describe('scaffoldAgentVmProject', () => {
 		expect(gatewayDockerfile).toContain(
 			'test -f /opt/openclaw/plugin-runtime-deps/.openclaw-runtime-deps.json',
 		);
+		expect(gatewayDockerfile).toContain('/home/openclaw/zone-files');
+		expect(gatewayDockerfile).not.toContain('/home/openclaw/workspace');
 		expect(gatewayDockerfile).toContain(
 			'COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin',
 		);
@@ -634,6 +636,7 @@ describe('scaffoldAgentVmProject', () => {
 						};
 					};
 					readonly thinkingDefault?: string;
+					readonly workspace: string;
 				};
 			};
 			readonly gateway: {
@@ -653,6 +656,7 @@ describe('scaffoldAgentVmProject', () => {
 			'http://localhost:18791',
 		]);
 		expect(openClawConfig.agents.defaults.thinkingDefault).toBeUndefined();
+		expect(openClawConfig.agents.defaults.workspace).toBe('/home/openclaw/zone-files');
 		expect(openClawConfig.agents.defaults.models['openai-codex/gpt-5.4'].params.thinking).toBe(
 			'low',
 		);

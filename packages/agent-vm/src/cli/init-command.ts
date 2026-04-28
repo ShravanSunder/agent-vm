@@ -644,7 +644,7 @@ RUN apt-get update && \\
     printf '#!/bin/sh\\nexec /pnpm/openclaw "$@"\\n' > /usr/local/bin/openclaw && \\
     chmod 755 /usr/local/bin/openclaw && \\
     useradd -m -s /bin/bash openclaw && \\
-    mkdir -p ${defaultOpenClawExtensionsPath} /home/openclaw/workspace /run/sshd /root && \\
+    mkdir -p ${defaultOpenClawExtensionsPath} /home/openclaw/zone-files /run/sshd /root && \\
     chown -R openclaw:openclaw /opt/openclaw/plugin-runtime-deps && \\
     chown -R openclaw:openclaw /home/openclaw && \\
     (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
@@ -825,7 +825,7 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 				},
 			},
 			sandbox: { backend: 'gondolin', mode: 'all', scope: 'session' },
-			workspace: '/home/openclaw/workspace',
+			workspace: '/home/openclaw/zone-files',
 		},
 	},
 	tools: { elevated: { enabled: false } },

@@ -161,6 +161,11 @@ describe('openclawLifecycle', () => {
 				hostPath: '/host/cache/gateways/shravan',
 				kind: 'realfs',
 			});
+			expect(vmSpec.vfsMounts['/home/openclaw/zone-files']).toEqual({
+				hostPath: '/host/zone-files/shravan',
+				kind: 'realfs',
+			});
+			expect(vmSpec.vfsMounts['/home/openclaw/workspace']).toBeUndefined();
 			expect(vmSpec.vfsMounts['/opt/openclaw/plugin-runtime-deps']).toBeUndefined();
 			expect(vmSpec.tcpHosts).toEqual({
 				'controller.vm.host:18800': '127.0.0.1:18800',
@@ -210,7 +215,7 @@ describe('openclawLifecycle', () => {
 				path.join(configDirectory, 'openclaw.json'),
 				JSON.stringify(
 					{
-						agents: { defaults: { workspace: '/home/openclaw/workspace' } },
+						agents: { defaults: { workspace: '/home/openclaw/zone-files' } },
 						gateway: {
 							auth: { mode: 'token' },
 							bind: 'loopback',
@@ -253,7 +258,7 @@ describe('openclawLifecycle', () => {
 					fs.readFileSync(path.join(zone.gateway.stateDir, 'effective-openclaw.json'), 'utf8'),
 				),
 			).toMatchObject({
-				agents: { defaults: { workspace: '/home/openclaw/workspace' } },
+				agents: { defaults: { workspace: '/home/openclaw/zone-files' } },
 				gateway: {
 					auth: { mode: 'token', token: 'resolved-gateway-token' },
 					bind: 'loopback',
