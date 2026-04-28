@@ -84,9 +84,8 @@ The primary use is worker Git metadata:
 
 Normal `backup create` does not copy `runtimeDir`, and validation fails when
 `runtimeDir` overlaps `cacheDir`, any zone `stateDir`, or any OpenClaw
-`zoneFilesDir`. If a worker task has unpushed commits or dirty work, the
-controller must preserve it through an explicit push, export, retain, or
-discard decision before cleanup.
+`zoneFilesDir`. Worker runtime artifacts are task-lifetime data: the agent must
+commit and call `git-push` before task teardown if work must survive.
 
 ## zoneFilesDir
 

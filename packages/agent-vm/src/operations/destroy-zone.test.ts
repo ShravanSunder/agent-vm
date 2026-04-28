@@ -117,7 +117,7 @@ describe('runControllerDestroy', () => {
 		});
 	});
 
-	it('purges retained worker runtime artifacts for the zone', async () => {
+	it('purges worker runtime artifacts for the zone', async () => {
 		const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-destroy-worker-'));
 		createdDirectories.push(tempDirectory);
 		const runtimeDir = path.join(tempDirectory, 'runtime');

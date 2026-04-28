@@ -165,7 +165,11 @@ describe('git-push-operations', () => {
 			if (gitArgs[0] === 'push') {
 				pushAttempts += 1;
 				if (pushAttempts < 4) {
-					return { stdout: '', stderr: `transient push failure ${pushAttempts}`, exitCode: 128 };
+					return {
+						stdout: '',
+						stderr: `RPC failed; HTTP 503 ECONNRESET transient push failure ${pushAttempts}`,
+						exitCode: 128,
+					};
 				}
 				return { stdout: '', stderr: '', exitCode: 0 };
 			}
@@ -230,7 +234,11 @@ describe('git-push-operations', () => {
 			const gitArgs = extractGitArgs(args);
 			if (gitArgs[0] === 'push') {
 				pushAttempts += 1;
-				return { stdout: '', stderr: `github unavailable ${pushAttempts}`, exitCode: 128 };
+				return {
+					stdout: '',
+					stderr: `RPC failed; HTTP 503 github unavailable ${pushAttempts}`,
+					exitCode: 128,
+				};
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
 				return { stdout: '', stderr: '', exitCode: 1 };
@@ -268,7 +276,7 @@ describe('git-push-operations', () => {
 			repoUrl: 'https://github.com/acme/widgets.git',
 			branch: 'agent/task-1',
 			attempts: 1,
-			message: 'github unavailable 1',
+			message: 'RPC failed; HTTP 503 github unavailable 1',
 			retryDelaySeconds: 2,
 		});
 		expect(recordEvent).toHaveBeenCalledWith({
@@ -278,8 +286,51 @@ describe('git-push-operations', () => {
 			attempts: 4,
 			message: expect.stringContaining('Try git-push again in 5 minutes'),
 			retryAfterSeconds: 300,
-			runtimeRetained: true,
 		});
+	});
+
+	it('does not retry permanent git push failures', async () => {
+		vi.useFakeTimers();
+		let pushAttempts = 0;
+		const recordEvent = vi.fn(async () => {});
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			if (gitArgs[0] === 'push') {
+				pushAttempts += 1;
+				return { stdout: '', stderr: 'remote rejected: non-fast-forward', exitCode: 1 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
+				return { stdout: '', stderr: '', exitCode: 1 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('HEAD')) {
+				return { stdout: 'local-sha', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		const result = await pushBranchesForTask({
+			activeTask: buildActiveTask(),
+			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
+			githubToken: 'token',
+			recordEvent,
+		});
+
+		expect(pushAttempts).toBe(1);
+		expect(result.results[0]).toMatchObject({
+			branch: 'agent/task-1',
+			success: false,
+			error: expect.not.stringContaining('Try git-push again in 5 minutes'),
+		});
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-push-failed',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'agent/task-1',
+			attempts: 1,
+			message: expect.stringContaining('non-fast-forward'),
+		});
+		expect(recordEvent).not.toHaveBeenCalledWith(
+			expect.objectContaining({ event: 'controller-git-push-retry' }),
+		);
 	});
 
 	it('reports failure when post-push verification fetch fails', async () => {

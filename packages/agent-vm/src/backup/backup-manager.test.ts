@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -311,6 +312,27 @@ describe('createZoneBackupManager', () => {
 
 		// zoneId comes from embedded manifest, not filename parsing
 		expect(restoreResult.zoneId).toBe('my-hyphenated-zone');
+	});
+
+	it('rejects restore archives with an invalid manifest', async () => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-invalid-manifest-'));
+		const extractRoot = path.join(tmpDir, 'archive-root');
+		const stateDir = path.join(tmpDir, 'state');
+		const backupPath = path.join(tmpDir, 'shravan__2026-04-06T10-00-00.tar.age');
+		fs.mkdirSync(path.join(extractRoot, 'state'), { recursive: true });
+		fs.mkdirSync(stateDir, { recursive: true });
+		fs.writeFileSync(path.join(extractRoot, 'manifest.json'), '{"zoneId":""}');
+		fs.writeFileSync(path.join(extractRoot, 'state', 'data.json'), '{}');
+		execFileSync('tar', ['cf', backupPath, '-C', extractRoot, '.']);
+
+		const manager = createZoneBackupManager(noopEncryption);
+
+		await expect(
+			manager.restoreBackup({
+				backupPath,
+				stateDir,
+			}),
+		).rejects.toThrow(/manifest.*zoneId/u);
 	});
 
 	it('returns empty list for non-existent backup directory', () => {

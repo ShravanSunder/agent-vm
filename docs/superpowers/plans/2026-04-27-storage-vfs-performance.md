@@ -4,7 +4,7 @@
 
 **Goal:** Move hot runtime/package-manager work off Gondolin RealFS while preserving host-visible durable state, repairable caches, git metadata, backups, and controller-owned push/auth boundaries.
 
-**Architecture:** OpenClaw gateway images should carry stable hot runtime dependencies in the VM rootfs, while packable state stays on RealFS and repairable caches stay under cacheDir. OpenClaw's RealFS `/home/openclaw/zone-files` mount is a durable zone-files area, not the same storage class as worker execution files. Worker tasks should use VM-local rootfs/COW paths under `/work` for fast source/package/build operations, with a host-backed separate gitdir mounted through RealFS from a non-backup runtimeDir so commits and refs survive for recovery/push without being swallowed by normal zone backups.
+**Architecture:** OpenClaw gateway images should carry stable hot runtime dependencies in the VM rootfs, while packable state stays on RealFS and repairable caches stay under cacheDir. OpenClaw's RealFS `/home/openclaw/zone-files` mount is a durable zone-files area, not the same storage class as worker execution files. Worker tasks should use VM-local rootfs/COW paths under `/work` for fast source/package/build operations, with a host-backed separate gitdir mounted through RealFS from a non-backup runtimeDir so the controller can push committed work during the task without swallowing git object databases into normal zone backups.
 
 **Tech Stack:** TypeScript, pnpm, Vitest, Gondolin VFS providers, OpenClaw bundled plugin runtime deps, bare Git repositories plus explicit `--git-dir` / `--work-tree`, Node 24.
 
@@ -49,19 +49,18 @@ Worker gitdirs live under a top-level non-backup `runtimeDir`, for example:
 <runtimeDir>/worker-tasks/<zoneId>/<taskId>/gitdirs/<repoId>.git
 ```
 
-This path is not semantically "cache" when it contains unpushed commits, and it
-must not be placed under `cacheDir` because future deployments may put cache on
-network storage such as EFS. It is local task runtime/recovery state. The
-important property for this plan is that normal `backup create` does not copy
-it. Unpushed work must be preserved through an explicit recovery/export path,
-not through silent zone backup bloat.
+This path is not semantically "cache" while the task is running, and it must not
+be placed under `cacheDir` because future deployments may put cache on network
+storage such as EFS. It is local task runtime state. The important property for
+this plan is that normal `backup create` does not copy it. Work that must
+survive the task must be committed and pushed before teardown, not silently
+captured by zone backups.
 
 The worker owns the cleanliness contract before it returns a terminal state.
 Rootfs repo files disappear when the VM closes, so uncommitted dirty files are
 not recoverable after `vm.close()`. Completed tasks must commit their changes
 before returning `completed`; the controller then pushes committed Git state
-from the RealFS gitdir. After close, the controller can inspect refs, commits,
-and unpushed branches in `/gitdirs` only.
+from the RealFS gitdir. After close, the task runtime gitdir is deleted in v1.
 
 If a task fails, closes, or times out before committing, dirty rootfs files are
 not part of the v1 recovery contract. A future recovery feature may request a
@@ -1200,22 +1199,12 @@ The post-push verification fetch must fail loudly. Do not return
 `git rev-list`, current-branch reads) must also fail the operation instead of
 returning empty summaries, zero divergence, or `null` on Git errors.
 
-Also update task cleanup so gitdir removal happens only after the controller has
-checked committed Git state. Rootfs repo files disappear at `vm.close()`, so
-post-close cleanup cannot inspect or recover dirty uncommitted files. The worker
-must commit changes before returning `completed`; the controller then pushes or
-retains committed refs from the gitdir. The cleanup path must report a clear
-recovery decision when committed work is not safely pushed:
-
-```ts
-type TaskCleanupDecision =
-	| { readonly kind: 'delete'; readonly reason: 'clean-and-pushed' }
-	| {
-			readonly kind: 'retain';
-			readonly reason: 'failed-task' | 'unpushed-commits';
-	  }
-	| { readonly kind: 'export'; readonly artifactPath: string };
-```
+Task cleanup is intentionally ephemeral for v1: `postStopGateway` always deletes
+`runtimeDir/worker-tasks/<zone>/<task>` after the VM closes. This matches the
+current worker contract: the agent must commit and call `git-push` before
+terminal completion if work must leave the task. The controller retries
+transient GitHub/network failures but does not promise disk retention after task
+teardown.
 
 If a task fails, closes, or times out before committing, v1 recovery is limited
 to Git state that already reached `/gitdirs`. A future pre-close recovery
@@ -1223,14 +1212,10 @@ feature may ask the worker for a patch/file snapshot before VM close, but this
 implementation must not promise recovery of dirty `/work/repos` files after
 close.
 
-For v1 cleanup, delete task runtime artifacts only for `completed` tasks where
-every repo has a successful controller-side push recorded for that task. Retain
-`runtimeDir/worker-tasks/<zone>/<task>` for completed tasks with missing/failed
-pushes, `failed`, `closed`, timeout, or primary-error paths so host-visible
-gitdirs remain available for operator inspection/recovery. If push retries are
-exhausted, the agent-facing error should say the controller already retried with
-2s, 4s, and 16s backoff and that the agent should retry the git-push tool again
-in about 5 minutes.
+If push retries are exhausted, the agent-facing error should say the controller
+already retried with 2s, 4s, and 16s backoff and that the agent should retry the
+git-push tool again in about 5 minutes if the task is still running; otherwise it
+must start a new task. Do not tell the agent that runtime gitdirs are retained.
 
 - [ ] **Step 11: Pass repo work metadata to worker task config**
 

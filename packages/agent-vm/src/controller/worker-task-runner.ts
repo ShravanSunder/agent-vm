@@ -5,7 +5,6 @@ import path from 'node:path';
 import {
 	appendEvent,
 	computeTotalTaskTimeoutMs,
-	loadTaskStateFromLog,
 	resolveWorkerConfigInstructionReferences,
 	workerConfigDraftSchema,
 	workerConfigSchema,
@@ -80,11 +79,9 @@ const taskStatusResponseSchema = z
 	.passthrough();
 const GIT_CLONE_TIMEOUT_MS = 120_000;
 const GIT_METADATA_TIMEOUT_MS = 30_000;
-const missingAgentVmMetadataPattern = /^fatal: pathspec '\.agent-vm' did not match any files\.?$/mu;
-
 async function readJsonObjectFile(
 	filePath: string,
-	options: { readonly missingValue: Record<string, unknown>; readonly label: string },
+	options: { readonly missingValue?: Record<string, unknown>; readonly label: string },
 ): Promise<Record<string, unknown>> {
 	try {
 		const raw = await fs.readFile(filePath, 'utf8');
@@ -95,7 +92,10 @@ async function readJsonObjectFile(
 		return parsed;
 	} catch (error) {
 		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
-			return options.missingValue;
+			if (options.missingValue !== undefined) {
+				return options.missingValue;
+			}
+			throw new Error(`${options.label} file not found at ${filePath}`, { cause: error });
 		}
 		const message = error instanceof Error ? error.message : String(error);
 		throw new Error(`Invalid ${options.label}: ${message}`, { cause: error });
@@ -109,6 +109,30 @@ async function materializeRepoAgentVmDirectory(options: {
 	readonly repoUrl: string;
 }): Promise<void> {
 	await fs.mkdir(options.metadataDir, { recursive: true });
+	const metadataProbeResult = await execa(
+		'git',
+		[
+			'-c',
+			'core.hooksPath=/dev/null',
+			`--git-dir=${options.gitDir}`,
+			'ls-tree',
+			'--name-only',
+			options.baseBranch,
+			'--',
+			'.agent-vm',
+		],
+		{ reject: false, timeout: GIT_METADATA_TIMEOUT_MS },
+	);
+	if ((metadataProbeResult.exitCode ?? 0) !== 0) {
+		const output = `${metadataProbeResult.stdout}\n${metadataProbeResult.stderr}`.trim();
+		throw new Error(
+			`Failed to probe .agent-vm metadata from ${options.repoUrl}: ${scrubGithubTokenFromOutput(output)}`,
+		);
+	}
+	if (metadataProbeResult.stdout.trim().length === 0) {
+		await fs.mkdir(path.join(options.metadataDir, '.agent-vm'), { recursive: true });
+		return;
+	}
 	const archivePath = path.join(options.metadataDir, 'agent-vm-metadata.tar');
 	const archiveResult = await execa(
 		'git',
@@ -126,10 +150,6 @@ async function materializeRepoAgentVmDirectory(options: {
 	);
 	if ((archiveResult.exitCode ?? 0) !== 0) {
 		const output = `${archiveResult.stdout}\n${archiveResult.stderr}`.trim();
-		if (missingAgentVmMetadataPattern.test(output)) {
-			await fs.mkdir(path.join(options.metadataDir, '.agent-vm'), { recursive: true });
-			return;
-		}
 		throw new Error(
 			`Failed to archive .agent-vm metadata from ${options.repoUrl}: ${scrubGithubTokenFromOutput(output)}`,
 		);
@@ -384,7 +404,6 @@ export async function preStartGateway(
 					);
 		const baseConfig = await readJsonObjectFile(zoneConfig.gateway.config, {
 			label: 'gateway config',
-			missingValue: {},
 		});
 		const resolvedBaseConfig = await resolveWorkerConfigInstructionReferences(baseConfig, {
 			configPath: zoneConfig.gateway.config,
@@ -520,7 +539,7 @@ export async function postStopGateway(
 	taskId: string,
 	zoneConfig: GatewayZone,
 	startedProviders: readonly StartedRepoResourceProvider[] = [],
-	options: { readonly retainRuntimeRoot?: boolean; readonly runtimeDir?: string } = {},
+	options: { readonly runtimeDir?: string } = {},
 ): Promise<void> {
 	const taskRoot = path.join(zoneConfig.gateway.stateDir, 'tasks', taskId);
 	const runtimeDir =
@@ -541,17 +560,11 @@ export async function postStopGateway(
 	} catch (error) {
 		resourcesRemovalError = error instanceof Error ? error : new Error(String(error));
 	}
-	if (options.retainRuntimeRoot === true) {
-		writeStderr(
-			`[worker-task-runner] Retaining runtime artifacts for task ${taskId} at ${taskRuntimeRoot}.`,
-		);
-	} else {
-		try {
-			await fs.rm(workDir, { recursive: true, force: true });
-			await fs.rm(taskRuntimeRoot, { recursive: true, force: true });
-		} catch (error) {
-			workRemovalError = error instanceof Error ? error : new Error(String(error));
-		}
+	try {
+		await fs.rm(workDir, { recursive: true, force: true });
+		await fs.rm(taskRuntimeRoot, { recursive: true, force: true });
+	} catch (error) {
+		workRemovalError = error instanceof Error ? error : new Error(String(error));
 	}
 	const errors = [cleanupError, resourcesRemovalError, workRemovalError].filter(
 		(error): error is Error => error !== null,
@@ -567,39 +580,6 @@ export async function postStopGateway(
 	if (errors.length === 1) {
 		throw errors[0];
 	}
-}
-
-function hasTerminalCompletedStatus(finalState: unknown): boolean {
-	return (
-		typeof finalState === 'object' &&
-		finalState !== null &&
-		'status' in finalState &&
-		finalState.status === 'completed'
-	);
-}
-
-async function shouldRetainRuntimeRootAfterStop(options: {
-	readonly eventLogPath: string;
-	readonly primaryError: Error | undefined;
-	readonly repoUrls: readonly string[];
-	readonly result: WorkerTaskResult | undefined;
-}): Promise<boolean> {
-	if (options.primaryError !== undefined) return true;
-	const replayedState = await loadTaskStateFromLog(options.eventLogPath);
-	if (
-		!hasTerminalCompletedStatus(options.result?.finalState) &&
-		!hasTerminalCompletedStatus(replayedState)
-	) {
-		return true;
-	}
-	if (options.repoUrls.length === 0) return false;
-	if (!replayedState) return true;
-	const successfulPushRepoUrls = new Set(
-		replayedState.controllerOperations.gitPushes
-			.filter((pushState) => pushState.status === 'succeeded')
-			.map((pushState) => pushState.repoUrl),
-	);
-	return options.repoUrls.some((repoUrl) => !successfulPushRepoUrls.has(repoUrl));
 }
 
 async function cleanupTaskRootAfterPreparationFailure(options: {
@@ -875,12 +855,6 @@ export async function executeWorkerTask(
 			prepared.zone,
 			prepared.preStartResult.startedResourceProviders,
 			{
-				retainRuntimeRoot: await shouldRetainRuntimeRootAfterStop({
-					eventLogPath: prepared.eventLogPath,
-					primaryError,
-					repoUrls: prepared.preStartResult.repos.map((repo) => repo.repoUrl),
-					result,
-				}),
 				runtimeDir: options.systemConfig.runtimeDir,
 			},
 		);

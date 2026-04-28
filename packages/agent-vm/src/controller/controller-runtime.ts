@@ -385,6 +385,13 @@ export async function startControllerRuntime(
 						activeTask,
 						repoUrl: input.repoUrl,
 						githubToken: controllerGithubToken,
+						recordEvent: async (event) => {
+							await recordActiveTaskEvent({
+								event,
+								eventLogPath: activeTask.eventLogPath,
+								taskId,
+							});
+						},
 					});
 				}
 			: undefined;

@@ -233,9 +233,9 @@ Worker zone backups archive `stateDir` only. Worker zones do not have
 
 Zone backups do not archive `cacheDir` or `runtimeDir`. If a cache is missing
 after restore, doctor/repair flows should rebuild it rather than restoring stale
-dependency trees from encrypted backup. If worker runtime state contains
-unpushed commits, recovery must happen through an explicit push/export/retain
-decision before cleanup, not through normal zone backup.
+dependency trees from encrypted backup. Worker runtime state is deleted at task
+teardown in v1, so recovery must happen before teardown through committed work
+and controller-side `git-push`, not through normal zone backup.
 
 ## Design Rule
 

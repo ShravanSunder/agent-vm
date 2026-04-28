@@ -32,13 +32,18 @@ async function copyExtractedDirectoryContents(
 
 async function readZoneIdFromManifest(extractDirectory: string): Promise<string> {
 	const manifestPath = path.join(extractDirectory, 'manifest.json');
-	try {
-		const rawManifest = await fs.readFile(manifestPath, 'utf8');
-		const manifest = JSON.parse(rawManifest) as { readonly zoneId?: string };
-		return manifest.zoneId ?? 'unknown';
-	} catch {
-		return 'unknown';
+	const rawManifest = await fs.readFile(manifestPath, 'utf8');
+	const manifest: unknown = JSON.parse(rawManifest);
+	if (
+		typeof manifest !== 'object' ||
+		manifest === null ||
+		!('zoneId' in manifest) ||
+		typeof manifest.zoneId !== 'string' ||
+		manifest.zoneId.length === 0
+	) {
+		throw new Error(`Backup manifest at ${manifestPath} must contain a non-empty zoneId.`);
 	}
+	return manifest.zoneId;
 }
 
 export async function restoreEncryptedBackup(options: {

@@ -375,11 +375,51 @@ describe('runControllerDoctor', () => {
 			});
 
 			expect(result.ok).toBe(false);
-			expect(result.checks.find((check) => check.name === 'runtime-path-isolation')).toMatchObject({
+			expect(
+				result.checks.find((check) => check.hint === overlappingConfig.expectedHint),
+			).toMatchObject({
 				ok: false,
 				hint: overlappingConfig.expectedHint,
 			});
 		}
+	});
+
+	it('reports every runtimeDir overlap in one doctor run', () => {
+		const firstZone = systemConfig.zones[0];
+		if (firstZone === undefined || firstZone.gateway.type !== 'openclaw') {
+			throw new Error('Test fixture must include an OpenClaw zone.');
+		}
+		const result = runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			systemConfig: {
+				...systemConfig,
+				cacheDir: './runtime/cache',
+				runtimeDir: './runtime',
+				zones: [
+					{
+						...firstZone,
+						gateway: {
+							...firstZone.gateway,
+							stateDir: './runtime/state/shravan',
+							zoneFilesDir: './runtime/zone-files/shravan',
+						},
+					},
+				],
+			},
+		});
+
+		expect(result.checks).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ name: 'runtime-path-isolation-cacheDir' }),
+				expect.objectContaining({ name: 'runtime-path-isolation-stateDir-shravan' }),
+				expect.objectContaining({ name: 'runtime-path-isolation-zoneFilesDir-shravan' }),
+			]),
+		);
 	});
 
 	it('flags worker /work VFS mounts as a performance risk', () => {
@@ -542,7 +582,7 @@ describe('collectVmHostSystemDoctorCheck', () => {
 		expect(check).toMatchObject({
 			name: 'vm-host-system',
 			ok: false,
-			hint: 'Missing /usr/local/bin/start.sh',
+			hint: expect.stringContaining('Cannot access /usr/local/bin/start.sh'),
 		});
 
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });

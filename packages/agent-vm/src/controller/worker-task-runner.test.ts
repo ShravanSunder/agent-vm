@@ -979,9 +979,9 @@ describe('worker-task-runner', () => {
 		).rejects.toThrow('Invalid project config');
 	});
 
-	it('does not treat unrelated git archive not-found errors as missing metadata', async () => {
+	it('fails loudly when probing repo metadata fails', async () => {
 		execaMock.mockImplementation(async (command: string, args: readonly string[]) => {
-			if (command === 'git' && args.includes('archive')) {
+			if (command === 'git' && args.includes('ls-tree')) {
 				return { stdout: '', stderr: 'fatal: remote branch main not found', exitCode: 128 };
 			}
 			return { stdout: '', stderr: '', exitCode: 0 };
@@ -1003,7 +1003,7 @@ describe('worker-task-runner', () => {
 				},
 				zone,
 			),
-		).rejects.toThrow(/Failed to archive \.agent-vm metadata/u);
+		).rejects.toThrow(/Failed to probe \.agent-vm metadata/u);
 	});
 
 	it('rejects project config prompt file references', async () => {
@@ -1124,7 +1124,7 @@ describe('worker-task-runner', () => {
 		expect(JSON.stringify(submittedBody)).not.toContain('hostGitDir');
 	});
 
-	it('retains task runtime gitdirs when a completed repo task has no successful controller push', async () => {
+	it('deletes task runtime gitdirs when a completed repo task has no controller push', async () => {
 		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
 			const url =
 				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -1161,7 +1161,7 @@ describe('worker-task-runner', () => {
 			'shravan',
 			result.taskId,
 		);
-		await expect(fs.stat(taskRuntimeRoot)).resolves.toBeTruthy();
+		await expect(fs.stat(taskRuntimeRoot)).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 
 	it('deletes task runtime gitdirs when a completed repo task has a successful controller push', async () => {
@@ -1290,7 +1290,7 @@ describe('worker-task-runner', () => {
 		).rejects.toThrow(/worker rejected task payload/u);
 	});
 
-	it('retains task runtime gitdirs when the worker returns failed status', async () => {
+	it('deletes task runtime gitdirs when the worker returns failed status', async () => {
 		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
 			const url =
 				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -1327,7 +1327,7 @@ describe('worker-task-runner', () => {
 			'shravan',
 			result.taskId,
 		);
-		await expect(fs.stat(taskRuntimeRoot)).resolves.toBeTruthy();
+		await expect(fs.stat(taskRuntimeRoot)).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 
 	it('aggregates the primary task failure when shutdown hooks also fail', async () => {

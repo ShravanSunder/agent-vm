@@ -21,9 +21,20 @@ export interface ControllerGitPushState {
 	readonly message: string | null;
 	readonly retryDelaySeconds: number | null;
 	readonly retryAfterSeconds: number | null;
-	readonly runtimeRetained: boolean;
 	readonly localHead: string | null;
 	readonly remoteBranchHead: string | null;
+}
+
+export interface ControllerGitPullState {
+	readonly repoUrl: string;
+	readonly status: 'started' | 'retrying' | 'succeeded' | 'failed';
+	readonly attempts: number;
+	readonly message: string | null;
+	readonly retryDelaySeconds: number | null;
+	readonly retryAfterSeconds: number | null;
+	readonly defaultBranch: string | null;
+	readonly remoteDefaultHead: string | null;
+	readonly localDefaultHead: string | null;
 }
 
 export interface TaskState {
@@ -52,6 +63,7 @@ export interface TaskState {
 	} | null;
 	readonly controllerOperations: {
 		readonly gitPushes: readonly ControllerGitPushState[];
+		readonly gitPulls: readonly ControllerGitPullState[];
 	};
 	readonly createdAt: string;
 	readonly updatedAt: string;
@@ -90,6 +102,7 @@ export function createInitialState(taskId: string, config: TaskConfig): TaskStat
 		wrapupResult: null,
 		controllerOperations: {
 			gitPushes: [],
+			gitPulls: [],
 		},
 		createdAt: now,
 		updatedAt: now,
@@ -121,6 +134,19 @@ function upsertGitPushState(state: TaskState, nextPushState: ControllerGitPushSt
 		controllerOperations: {
 			...state.controllerOperations,
 			gitPushes: [...gitPushes, nextPushState],
+		},
+	};
+}
+
+function upsertGitPullState(state: TaskState, nextPullState: ControllerGitPullState): TaskState {
+	const gitPulls = state.controllerOperations.gitPulls.filter(
+		(pullState) => pullState.repoUrl !== nextPullState.repoUrl,
+	);
+	return {
+		...state,
+		controllerOperations: {
+			...state.controllerOperations,
+			gitPulls: [...gitPulls, nextPullState],
 		},
 	};
 }
@@ -210,7 +236,6 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 					message: null,
 					retryDelaySeconds: null,
 					retryAfterSeconds: null,
-					runtimeRetained: false,
 					localHead: null,
 					remoteBranchHead: null,
 				}),
@@ -226,7 +251,6 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 					message: event.message,
 					retryDelaySeconds: event.retryDelaySeconds,
 					retryAfterSeconds: null,
-					runtimeRetained: false,
 					localHead: null,
 					remoteBranchHead: null,
 				}),
@@ -242,7 +266,6 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 					message: null,
 					retryDelaySeconds: null,
 					retryAfterSeconds: null,
-					runtimeRetained: false,
 					localHead: event.localHead ?? null,
 					remoteBranchHead: event.remoteBranchHead ?? null,
 				}),
@@ -257,10 +280,69 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 					attempts: event.attempts,
 					message: event.message,
 					retryDelaySeconds: null,
-					retryAfterSeconds: event.retryAfterSeconds,
-					runtimeRetained: event.runtimeRetained,
+					retryAfterSeconds: event.retryAfterSeconds ?? null,
 					localHead: null,
 					remoteBranchHead: null,
+				}),
+				updatedAt,
+			};
+		case 'controller-git-pull-started':
+			return {
+				...upsertGitPullState(state, {
+					repoUrl: event.repoUrl,
+					status: 'started',
+					attempts: 0,
+					message: null,
+					retryDelaySeconds: null,
+					retryAfterSeconds: null,
+					defaultBranch: null,
+					remoteDefaultHead: null,
+					localDefaultHead: null,
+				}),
+				updatedAt,
+			};
+		case 'controller-git-pull-retry':
+			return {
+				...upsertGitPullState(state, {
+					repoUrl: event.repoUrl,
+					status: 'retrying',
+					attempts: event.attempts,
+					message: event.message,
+					retryDelaySeconds: event.retryDelaySeconds,
+					retryAfterSeconds: null,
+					defaultBranch: null,
+					remoteDefaultHead: null,
+					localDefaultHead: null,
+				}),
+				updatedAt,
+			};
+		case 'controller-git-pull-succeeded':
+			return {
+				...upsertGitPullState(state, {
+					repoUrl: event.repoUrl,
+					status: 'succeeded',
+					attempts: event.attempts,
+					message: null,
+					retryDelaySeconds: null,
+					retryAfterSeconds: null,
+					defaultBranch: event.defaultBranch,
+					remoteDefaultHead: event.remoteDefaultHead ?? null,
+					localDefaultHead: event.localDefaultHead ?? null,
+				}),
+				updatedAt,
+			};
+		case 'controller-git-pull-failed':
+			return {
+				...upsertGitPullState(state, {
+					repoUrl: event.repoUrl,
+					status: 'failed',
+					attempts: event.attempts,
+					message: event.message,
+					retryDelaySeconds: null,
+					retryAfterSeconds: event.retryAfterSeconds ?? null,
+					defaultBranch: null,
+					remoteDefaultHead: null,
+					localDefaultHead: null,
 				}),
 				updatedAt,
 			};

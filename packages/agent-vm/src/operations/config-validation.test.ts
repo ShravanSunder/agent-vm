@@ -265,7 +265,9 @@ describe('runConfigValidation', () => {
 		});
 
 		expect(result.ok).toBe(false);
-		expect(result.checks.find((check) => check.name === 'runtime-path-isolation')).toMatchObject({
+		expect(
+			result.checks.find((check) => check.name === 'runtime-path-isolation-cacheDir'),
+		).toMatchObject({
 			ok: false,
 			hint: 'runtimeDir must not overlap cacheDir',
 		});

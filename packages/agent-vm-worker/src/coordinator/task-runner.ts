@@ -38,6 +38,17 @@ function getPrimaryRepoWork(
 	return config.repos[0]?.workPath ?? workRoot;
 }
 
+async function buildWrapupGitContextForTask(props: {
+	readonly workDir: string;
+	readonly repos: readonly { readonly baseBranch: string }[];
+}): Promise<string> {
+	const primaryRepo = props.repos[0];
+	if (!primaryRepo) {
+		return 'No repository is configured for this task.';
+	}
+	return await buildWrapupGitContext(props.workDir, primaryRepo.baseBranch);
+}
+
 function throwIfClosed(taskId: string, eventRecorder: TaskEventRecorder): void {
 	if (eventRecorder.isClosed(taskId)) {
 		throw new TaskClosedError(taskId);
@@ -51,23 +62,53 @@ async function gitOutput(cwd: string, args: readonly string[]): Promise<string> 
 		timeout: 10_000,
 	});
 	if ((result.exitCode ?? 0) !== 0) {
-		return `${result.stdout}\n${result.stderr}`.trim();
+		throw new Error(`git ${args.join(' ')} failed\n${result.stdout}\n${result.stderr}`.trim());
 	}
 	return result.stdout.trim();
 }
 
+async function gitOutputWithSafeDirectory(cwd: string, args: readonly string[]): Promise<string> {
+	return await gitOutput(cwd, ['-c', `safe.directory=${cwd}`, ...args]);
+}
+
+async function gitRefExists(cwd: string, ref: string): Promise<boolean> {
+	const result = await execa(
+		'git',
+		['-c', `safe.directory=${cwd}`, 'rev-parse', '--verify', '--quiet', ref],
+		{
+			cwd,
+			reject: false,
+			timeout: 10_000,
+		},
+	);
+	if ((result.exitCode ?? 0) === 0) {
+		return true;
+	}
+	if (result.stderr.trim().length > 0) {
+		throw new Error(
+			`git rev-parse --verify --quiet ${ref} failed\n${result.stdout}\n${result.stderr}`.trim(),
+		);
+	}
+	return false;
+}
+
 async function buildWrapupGitContext(cwd: string, defaultBranch: string): Promise<string> {
-	const currentBranch = await gitOutput(cwd, ['branch', '--show-current']);
-	const status = await gitOutput(cwd, ['status', '--short']);
+	const currentBranch = await gitOutputWithSafeDirectory(cwd, ['branch', '--show-current']);
+	const status = await gitOutputWithSafeDirectory(cwd, ['status', '--short']);
 	const defaultRef = `origin/${defaultBranch}`;
-	const log = await gitOutput(cwd, ['log', '--oneline', `${defaultRef}..HEAD`]);
-	const diffStat = await gitOutput(cwd, ['diff', '--stat', `${defaultRef}...HEAD`]);
+	const hasDefaultRef = await gitRefExists(cwd, defaultRef);
+	const log = hasDefaultRef
+		? await gitOutputWithSafeDirectory(cwd, ['log', '--oneline', `${defaultRef}..HEAD`])
+		: '';
+	const diffStat = hasDefaultRef
+		? await gitOutputWithSafeDirectory(cwd, ['diff', '--stat', `${defaultRef}...HEAD`])
+		: '';
 	return [
 		`Current branch: ${currentBranch || '(detached)'}`,
 		`Default branch: ${defaultBranch}`,
 		`git status --short:\n${status || '(clean)'}`,
-		`git log ${defaultRef}..HEAD:\n${log || '(no branch commits)'}`,
-		`git diff --stat ${defaultRef}...HEAD:\n${diffStat || '(no diff)'}`,
+		`git log ${defaultRef}..HEAD:\n${hasDefaultRef ? log || '(no branch commits)' : '(remote default ref unavailable)'}`,
+		`git diff --stat ${defaultRef}...HEAD:\n${hasDefaultRef ? diffStat || '(no diff)' : '(remote default ref unavailable)'}`,
 	].join('\n\n');
 }
 
@@ -338,10 +379,10 @@ export async function runTask(
 			spec: taskConfig.prompt,
 			plan: planResult.plan,
 			workSummary: workSummaryResult.response,
-			gitContext: await buildWrapupGitContext(
-				primaryWorkDir,
-				taskConfig.repos[0]?.baseBranch ?? 'main',
-			),
+			gitContext: await buildWrapupGitContextForTask({
+				workDir: primaryWorkDir,
+				repos: taskConfig.repos,
+			}),
 			validationResults: workResult.validationResults,
 			validationSkipped: workResult.validationSkipped,
 			onWrapupTurn: async (result) => {

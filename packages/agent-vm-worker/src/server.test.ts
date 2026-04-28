@@ -53,7 +53,7 @@ function makeTaskState(overrides?: Partial<TaskState>): TaskState {
 		lastValidationResults: null,
 		failureReason: null,
 		wrapupResult: null,
-		controllerOperations: { gitPushes: [] },
+		controllerOperations: { gitPushes: [], gitPulls: [] },
 		createdAt: new Date().toISOString(),
 		updatedAt: new Date().toISOString(),
 		...overrides,

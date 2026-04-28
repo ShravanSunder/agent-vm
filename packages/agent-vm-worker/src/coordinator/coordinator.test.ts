@@ -12,6 +12,7 @@ import { createCoordinator } from './coordinator.js';
 
 const mocks = vi.hoisted(() => ({
 	createWorkExecutor: vi.fn(),
+	execa: vi.fn(),
 	getDiff: vi.fn(),
 	gatherContext: vi.fn(),
 	bootstrapRepoWorktrees: vi.fn(),
@@ -28,6 +29,9 @@ vi.mock('../context/gather-context.js', () => ({
 }));
 vi.mock('../git/repo-worktree-bootstrap.js', () => ({
 	bootstrapRepoWorktrees: mocks.bootstrapRepoWorktrees,
+}));
+vi.mock('execa', () => ({
+	execa: mocks.execa,
 }));
 
 function makeConfig(stateDir: string, overrides: Record<string, unknown> = {}): WorkerConfig {
@@ -158,6 +162,21 @@ describe('coordinator', () => {
 		tempDir = await mkdtemp(join(tmpdir(), 'worker-coordinator-test-'));
 		stateDir = join(tempDir, 'state');
 		vi.clearAllMocks();
+		mocks.execa.mockImplementation(async (_command: string, args: readonly string[]) => {
+			if (args[0] === 'branch') {
+				return { stdout: 'agent/test', stderr: '', exitCode: 0 };
+			}
+			if (args[0] === 'status') {
+				return { stdout: '', stderr: '', exitCode: 0 };
+			}
+			if (args[0] === 'log') {
+				return { stdout: 'abc123 feat: test', stderr: '', exitCode: 0 };
+			}
+			if (args[0] === 'diff') {
+				return { stdout: ' file.ts | 1 +', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
 		mocks.gatherContext.mockResolvedValue({ summary: 'repo summary' });
 		mocks.getDiff.mockResolvedValue('diff --git a/file b/file');
 	});
@@ -203,6 +222,12 @@ describe('coordinator', () => {
 		expect(coordinator.getTaskState(taskId)?.lastValidationResults).toEqual([
 			{ name: 'test', passed: true, exitCode: 0, output: '' },
 		]);
+		expect(mocks.bootstrapRepoWorktrees).toHaveBeenCalledWith({
+			branchPrefix: 'agent/',
+			repoRootPath: join(tempDir, 'repos'),
+			repos: [],
+			taskId,
+		});
 	});
 
 	it('rejects a second task while one is active', async () => {

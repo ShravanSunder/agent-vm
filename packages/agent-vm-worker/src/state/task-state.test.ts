@@ -185,7 +185,6 @@ describe('task-state reducer', () => {
 			attempts: 4,
 			message: 'GitHub unavailable. Try git-push again in 5 minutes.',
 			retryAfterSeconds: 300,
-			runtimeRetained: true,
 		});
 
 		expect(failed.controllerOperations.gitPushes).toEqual([
@@ -197,9 +196,45 @@ describe('task-state reducer', () => {
 				message: 'GitHub unavailable. Try git-push again in 5 minutes.',
 				retryDelaySeconds: null,
 				retryAfterSeconds: 300,
-				runtimeRetained: true,
 				localHead: null,
 				remoteBranchHead: null,
+			},
+		]);
+	});
+
+	it('stores controller git pull status for agent-visible retry guidance', () => {
+		const state = createInitialState('task-1', TEST_CONFIG);
+		const started = applyEvent(state, {
+			event: 'controller-git-pull-started',
+			repoUrl: 'https://github.com/acme/widgets.git',
+		});
+		const retrying = applyEvent(started, {
+			event: 'controller-git-pull-retry',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			attempts: 1,
+			message: 'ECONNRESET',
+			retryDelaySeconds: 2,
+		});
+		const succeeded = applyEvent(retrying, {
+			event: 'controller-git-pull-succeeded',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			attempts: 2,
+			defaultBranch: 'main',
+			remoteDefaultHead: 'remote-sha',
+			localDefaultHead: 'local-sha',
+		});
+
+		expect(succeeded.controllerOperations.gitPulls).toEqual([
+			{
+				repoUrl: 'https://github.com/acme/widgets.git',
+				status: 'succeeded',
+				attempts: 2,
+				message: null,
+				retryDelaySeconds: null,
+				retryAfterSeconds: null,
+				defaultBranch: 'main',
+				remoteDefaultHead: 'remote-sha',
+				localDefaultHead: 'local-sha',
 			},
 		]);
 	});

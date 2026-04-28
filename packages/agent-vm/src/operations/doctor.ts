@@ -202,38 +202,55 @@ function pathsOverlap(firstPath: string, secondPath: string): boolean {
 	);
 }
 
-export function buildRuntimePathIsolationCheck(systemConfig: SystemConfig): DoctorCheck {
+export function buildRuntimePathIsolationChecks(
+	systemConfig: SystemConfig,
+): readonly DoctorCheck[] {
+	const failedChecks: DoctorCheck[] = [];
 	if (pathsOverlap(systemConfig.runtimeDir, systemConfig.cacheDir)) {
-		return {
-			name: 'runtime-path-isolation',
+		failedChecks.push({
+			name: 'runtime-path-isolation-cacheDir',
 			ok: false,
 			hint: 'runtimeDir must not overlap cacheDir',
-		};
+		});
 	}
 	for (const zone of systemConfig.zones) {
 		if (pathsOverlap(systemConfig.runtimeDir, zone.gateway.stateDir)) {
-			return {
-				name: 'runtime-path-isolation',
+			failedChecks.push({
+				name: `runtime-path-isolation-stateDir-${zone.id}`,
 				ok: false,
 				hint: `runtimeDir must not overlap stateDir for zone '${zone.id}'`,
-			};
+			});
 		}
 		if (
 			zone.gateway.type === 'openclaw' &&
 			pathsOverlap(systemConfig.runtimeDir, zone.gateway.zoneFilesDir)
 		) {
-			return {
-				name: 'runtime-path-isolation',
+			failedChecks.push({
+				name: `runtime-path-isolation-zoneFilesDir-${zone.id}`,
 				ok: false,
 				hint: `runtimeDir must not overlap zoneFilesDir for zone '${zone.id}'`,
-			};
+			});
 		}
 	}
-	return {
-		name: 'runtime-path-isolation',
-		ok: true,
-		hint: systemConfig.runtimeDir,
-	};
+	return failedChecks.length > 0
+		? failedChecks
+		: [
+				{
+					name: 'runtime-path-isolation',
+					ok: true,
+					hint: systemConfig.runtimeDir,
+				},
+			];
+}
+
+export function buildRuntimePathIsolationCheck(systemConfig: SystemConfig): DoctorCheck {
+	return (
+		buildRuntimePathIsolationChecks(systemConfig)[0] ?? {
+			name: 'runtime-path-isolation',
+			ok: true,
+			hint: systemConfig.runtimeDir,
+		}
+	);
 }
 
 function isWorkerRootfsWorkMountPath(guestPath: string): boolean {
@@ -284,8 +301,13 @@ export async function collectVmHostSystemDoctorCheck(
 		identifier = await loadSystemCacheIdentifier({
 			filePath: systemConfig.systemCacheIdentifierPath,
 		});
-	} catch {
-		return null;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			name: 'vm-host-system',
+			ok: false,
+			hint: `Cannot read ${systemConfig.systemCacheIdentifierPath}: ${message}`,
+		};
 	}
 	if (!isObjectRecord(identifier) || identifier.hostSystemType !== 'container') {
 		return null;
@@ -300,11 +322,12 @@ export async function collectVmHostSystemDoctorCheck(
 			try {
 				// oxlint-disable-next-line no-await-in-loop -- report the first missing file in stable order
 				await fs.access(requiredRuntimeFile);
-			} catch {
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
 				return {
 					name: 'vm-host-system',
 					ok: false,
-					hint: `Missing ${requiredRuntimeFile}`,
+					hint: `Cannot access ${requiredRuntimeFile}: ${message}`,
 				};
 			}
 		}
@@ -326,11 +349,12 @@ export async function collectVmHostSystemDoctorCheck(
 		try {
 			// oxlint-disable-next-line no-await-in-loop -- report the first missing file in stable order
 			await fs.access(requiredFilePath);
-		} catch {
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
 			return {
 				name: 'vm-host-system',
 				ok: false,
-				hint: `Missing ${requiredFilePath}`,
+				hint: `Cannot access ${requiredFilePath}: ${message}`,
 			};
 		}
 	}
@@ -460,7 +484,7 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 		),
 		...dockerChecks,
 		...openClawCliChecks,
-		buildRuntimePathIsolationCheck(options.systemConfig),
+		...buildRuntimePathIsolationChecks(options.systemConfig),
 		...workerWorkRootfsChecks,
 		{
 			name: 'controller-port',
