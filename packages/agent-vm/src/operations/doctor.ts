@@ -357,9 +357,13 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 		options.dockerDaemonReady,
 	);
 	const openClawCliChecks = buildOpenClawCliCheck(options.systemConfig, availableBinaries);
+	const workerGatewayVmSpecBuilder =
+		options.workerGatewayVmSpecBuilder ??
+		((buildOptions: BuildGatewayVmSpecOptions): Pick<GatewayVmSpec, 'vfsMounts'> =>
+			workerLifecycle.buildVmSpec(buildOptions));
 	const workerWorkRootfsChecks = buildWorkerWorkRootfsChecks(
 		options.systemConfig,
-		options.workerGatewayVmSpecBuilder ?? workerLifecycle.buildVmSpec,
+		workerGatewayVmSpecBuilder,
 	);
 	const configuredGatewayBytes = options.systemConfig.zones.reduce((totalBytes, zone) => {
 		const memoryMatch = /^(\d+)([GgMm])$/u.exec(zone.gateway.memory);

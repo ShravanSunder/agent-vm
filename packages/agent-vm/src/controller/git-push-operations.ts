@@ -230,6 +230,8 @@ async function pushBranch(options: {
 		writePushFlowLog(
 			`git push failed for ${options.repoUrl} ${sanitizedBranchName} on attempt ${attemptNumber}; retrying in ${retryDelayMs / 1000}s: ${lastErrorDetail}`,
 		);
+		// Retry event ordering follows the serial push attempts.
+		// oxlint-disable-next-line eslint/no-await-in-loop
 		await options.recordEvent?.({
 			event: 'controller-git-push-retry',
 			repoUrl: options.repoUrl,
