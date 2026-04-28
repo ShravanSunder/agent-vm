@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -32,6 +32,7 @@ describe('bootstrapRepoWorktrees', () => {
 
 		await bootstrapRepoWorktrees({
 			branchPrefix: 'agent/',
+			repoRootPath: join(tempDir, 'work', 'repos'),
 			taskId: 'task-123',
 			repos: [
 				{
@@ -44,6 +45,10 @@ describe('bootstrapRepoWorktrees', () => {
 		});
 
 		await expect(readFile(join(workPath, '.git'), 'utf8')).resolves.toBe(`gitdir: ${gitDirPath}\n`);
+		await expect(readlink(join(tempDir, 'work', 'repos', 'AGENTS.md'))).resolves.toBe(
+			'/agent-vm/agents.md',
+		);
+		await expect(readlink(join(tempDir, 'work', 'repos', 'CLAUDE.md'))).resolves.toBe('AGENTS.md');
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
 			[
@@ -74,6 +79,7 @@ describe('bootstrapRepoWorktrees', () => {
 		try {
 			await bootstrapRepoWorktrees({
 				branchPrefix: 'agent/',
+				repoRootPath: join(tempDir, 'work', 'repos'),
 				taskId: 'task-123',
 				repos: [
 					{

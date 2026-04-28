@@ -395,19 +395,17 @@ describe('worker-task-runner', () => {
 		expect(writtenConfig.runtimeInstructions).toContain('Runtime instructions');
 		expect(writtenConfig.runtimeInstructions).toContain('/work/repos');
 		expect(writtenConfig.runtimeInstructions).toContain('/agent-vm/agents.md');
-		await expect(fs.readFile(path.join(result.workDir, 'AGENTS.md'), 'utf8')).resolves.toContain(
-			'/agent-vm/agents.md',
-		);
 		await expect(
 			fs.readFile(path.join(result.taskRoot, 'agent-vm', 'runtime-instructions.md'), 'utf8'),
 		).resolves.toBe(writtenConfig.runtimeInstructions);
 		await expect(
 			fs.readFile(path.join(result.taskRoot, 'agent-vm', 'agents.md'), 'utf8'),
 		).resolves.toContain('/agent-vm/runtime-instructions.md');
-		await expect(fs.readlink(path.join(result.workDir, 'CLAUDE.md'))).resolves.toBe('AGENTS.md');
 		await expect(fs.readlink(path.join(result.taskRoot, 'agent-vm', 'CLAUDE.md'))).resolves.toBe(
 			'agents.md',
 		);
+		await expect(fs.readFile(path.join(result.workDir, 'AGENTS.md'), 'utf8')).rejects.toThrow();
+		await expect(fs.readlink(path.join(result.workDir, 'CLAUDE.md'))).rejects.toThrow();
 		expect(result.vfsMounts['/agent-vm']).toEqual(
 			expect.objectContaining({ kind: 'realfs-readonly' }),
 		);

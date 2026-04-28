@@ -474,11 +474,6 @@ export async function preStartGateway(
 		}) satisfies WorkerConfig;
 		await writeAgentRuntimeFiles(agentVmDir, runtime.agentRuntimeFiles);
 		await replaceRelativeSymlink(path.join(agentVmDir, 'CLAUDE.md'), 'agents.md');
-		await fs.writeFile(path.join(workDir, 'AGENTS.md'), runtime.workAgentsMd, {
-			encoding: 'utf8',
-			mode: 0o644,
-		});
-		await replaceRelativeSymlink(path.join(workDir, 'CLAUDE.md'), 'AGENTS.md');
 		await fs.writeFile(
 			path.join(stateDir, 'effective-worker.json'),
 			JSON.stringify(effectiveConfig, null, 2),

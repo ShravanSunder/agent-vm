@@ -82,6 +82,5 @@ describe('buildRuntimeInstructions', () => {
 		expect(runtime.agentRuntimeFiles['agents.md']).toContain('/agent-vm/runtime-instructions.md');
 		expect(runtime.agentRuntimeFiles['agents.md']).toContain('pg.local:5432');
 		expect(runtime.agentRuntimeFiles['agents.md']).not.toContain('$NPM_AUTH_TOKEN');
-		expect(runtime.workAgentsMd).toContain('/agent-vm/agents.md');
 	});
 });

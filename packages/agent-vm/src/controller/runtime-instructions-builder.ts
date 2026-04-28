@@ -34,7 +34,6 @@ export interface BuildRuntimeInstructionsOptions {
 
 export interface BuiltRuntimeInstructions {
 	readonly runtimeInstructions: string;
-	readonly workAgentsMd: string;
 	readonly agentRuntimeFiles: Readonly<Record<string, string>>;
 }
 
@@ -238,8 +237,6 @@ export function buildRuntimeInstructions(
 	].join('\n\n');
 	return {
 		runtimeInstructions,
-		workAgentsMd:
-			'# Work agent index\n\nStart with /agent-vm/agents.md for generated runtime facts.\n',
 		agentRuntimeFiles: buildAgentRuntimeFiles(options, runtimeInstructions),
 	};
 }

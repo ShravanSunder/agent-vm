@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { execa } from 'execa';
@@ -45,11 +45,20 @@ async function bootstrapRepoWorktree(options: {
 	);
 }
 
+async function replaceSymlink(linkPath: string, target: string): Promise<void> {
+	await rm(linkPath, { force: true });
+	await symlink(target, linkPath);
+}
+
 export async function bootstrapRepoWorktrees(options: {
 	readonly branchPrefix: string;
+	readonly repoRootPath: string;
 	readonly repos: readonly RepoLocation[];
 	readonly taskId: string;
 }): Promise<void> {
+	await mkdir(options.repoRootPath, { recursive: true });
+	await replaceSymlink(join(options.repoRootPath, 'AGENTS.md'), '/agent-vm/agents.md');
+	await replaceSymlink(join(options.repoRootPath, 'CLAUDE.md'), 'AGENTS.md');
 	const bootstrapResults = await Promise.allSettled(
 		options.repos.map(async (repo) => {
 			await bootstrapRepoWorktree({

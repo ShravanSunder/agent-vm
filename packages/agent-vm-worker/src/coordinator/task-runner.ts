@@ -127,6 +127,7 @@ export async function runTask(
 		const zoneId = process.env.AGENT_VM_ZONE_ID ?? 'unknown-zone';
 		await bootstrapRepoWorktrees({
 			branchPrefix: config.branchPrefix,
+			repoRootPath: join(workDir, 'repos'),
 			repos: taskConfig.repos,
 			taskId,
 		});
