@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 
 export async function createEncryptedBackup(options: {
 	readonly backupDir: string;
+	readonly cacheDir: string;
 	readonly encryption: BackupEncryption;
 	readonly runtimeDir: string;
 	readonly stateDir: string;
@@ -18,6 +19,7 @@ export async function createEncryptedBackup(options: {
 	readonly zoneId: string;
 }): Promise<BackupResult> {
 	assertRuntimeDirOutsideBackupInputs({
+		cacheDir: options.cacheDir,
 		runtimeDir: options.runtimeDir,
 		stateDir: options.stateDir,
 		...(options.zoneFilesDir !== undefined ? { zoneFilesDir: options.zoneFilesDir } : {}),
@@ -92,6 +94,7 @@ function assertNoPathOverlap(options: {
 }
 
 function assertRuntimeDirOutsideBackupInputs(options: {
+	readonly cacheDir: string;
 	readonly runtimeDir: string;
 	readonly stateDir: string;
 	readonly zoneFilesDir?: string;
@@ -101,6 +104,12 @@ function assertRuntimeDirOutsideBackupInputs(options: {
 		firstPath: options.runtimeDir,
 		secondLabel: 'stateDir',
 		secondPath: options.stateDir,
+	});
+	assertNoPathOverlap({
+		firstLabel: 'runtimeDir',
+		firstPath: options.runtimeDir,
+		secondLabel: 'cacheDir',
+		secondPath: options.cacheDir,
 	});
 	if (options.zoneFilesDir !== undefined) {
 		assertNoPathOverlap({

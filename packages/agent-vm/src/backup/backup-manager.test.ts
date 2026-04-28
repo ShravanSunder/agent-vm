@@ -30,6 +30,7 @@ describe('createZoneBackupManager', () => {
 		const stateDir = path.join(tmpDir, 'state');
 		const zoneFilesDir = path.join(tmpDir, 'zone-files');
 		const backupDir = path.join(tmpDir, 'backups');
+		const cacheDir = path.join(tmpDir, 'cache');
 		const runtimeDir = path.join(tmpDir, 'runtime');
 		fs.mkdirSync(stateDir, { recursive: true });
 		fs.mkdirSync(zoneFilesDir, { recursive: true });
@@ -40,6 +41,7 @@ describe('createZoneBackupManager', () => {
 
 		const result = await manager.createBackup({
 			zoneId: 'shravan',
+			cacheDir,
 			stateDir,
 			zoneFilesDir,
 			backupDir,
@@ -56,6 +58,60 @@ describe('createZoneBackupManager', () => {
 		const stateDir = path.join(tmpDir, 'state');
 		const zoneFilesDir = path.join(tmpDir, 'zone-files');
 		const backupDir = path.join(tmpDir, 'backups');
+		const cacheDir = path.join(tmpDir, 'cache');
+		fs.mkdirSync(stateDir, { recursive: true });
+		fs.mkdirSync(zoneFilesDir, { recursive: true });
+
+		const manager = createZoneBackupManager(noopEncryption);
+
+		await expect(
+			manager.createBackup({
+				zoneId: 'shravan',
+				cacheDir,
+				stateDir,
+				zoneFilesDir,
+				backupDir,
+				runtimeDir: path.join(stateDir, 'worker-tasks'),
+			}),
+		).rejects.toThrow(/runtimeDir.*stateDir/u);
+		await expect(
+			manager.createBackup({
+				zoneId: 'shravan',
+				cacheDir,
+				stateDir,
+				zoneFilesDir,
+				backupDir,
+				runtimeDir: path.join(zoneFilesDir, 'runtime'),
+			}),
+		).rejects.toThrow(/runtimeDir.*zoneFilesDir/u);
+		await expect(
+			manager.createBackup({
+				zoneId: 'shravan',
+				cacheDir,
+				stateDir: path.join(tmpDir, 'runtime', 'state'),
+				zoneFilesDir,
+				backupDir,
+				runtimeDir: path.join(tmpDir, 'runtime'),
+			}),
+		).rejects.toThrow(/runtimeDir.*stateDir/u);
+		await expect(
+			manager.createBackup({
+				zoneId: 'shravan',
+				cacheDir,
+				stateDir,
+				zoneFilesDir: path.join(tmpDir, 'runtime', 'zone-files'),
+				backupDir,
+				runtimeDir: path.join(tmpDir, 'runtime'),
+			}),
+		).rejects.toThrow(/runtimeDir.*zoneFilesDir/u);
+	});
+
+	it('rejects backups when runtimeDir overlaps cacheDir', async () => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-runtime-cache-overlap-'));
+		const stateDir = path.join(tmpDir, 'state');
+		const zoneFilesDir = path.join(tmpDir, 'zone-files');
+		const backupDir = path.join(tmpDir, 'backups');
+		const cacheDir = path.join(tmpDir, 'cache');
 		fs.mkdirSync(stateDir, { recursive: true });
 		fs.mkdirSync(zoneFilesDir, { recursive: true });
 
@@ -67,36 +123,20 @@ describe('createZoneBackupManager', () => {
 				stateDir,
 				zoneFilesDir,
 				backupDir,
-				runtimeDir: path.join(stateDir, 'worker-tasks'),
+				cacheDir,
+				runtimeDir: path.join(cacheDir, 'worker-tasks'),
 			}),
-		).rejects.toThrow(/runtimeDir.*stateDir/u);
+		).rejects.toThrow(/runtimeDir.*cacheDir/u);
 		await expect(
 			manager.createBackup({
 				zoneId: 'shravan',
 				stateDir,
 				zoneFilesDir,
 				backupDir,
-				runtimeDir: path.join(zoneFilesDir, 'runtime'),
-			}),
-		).rejects.toThrow(/runtimeDir.*zoneFilesDir/u);
-		await expect(
-			manager.createBackup({
-				zoneId: 'shravan',
-				stateDir: path.join(tmpDir, 'runtime', 'state'),
-				zoneFilesDir,
-				backupDir,
+				cacheDir: path.join(tmpDir, 'runtime', 'cache'),
 				runtimeDir: path.join(tmpDir, 'runtime'),
 			}),
-		).rejects.toThrow(/runtimeDir.*stateDir/u);
-		await expect(
-			manager.createBackup({
-				zoneId: 'shravan',
-				stateDir,
-				zoneFilesDir: path.join(tmpDir, 'runtime', 'zone-files'),
-				backupDir,
-				runtimeDir: path.join(tmpDir, 'runtime'),
-			}),
-		).rejects.toThrow(/runtimeDir.*zoneFilesDir/u);
+		).rejects.toThrow(/runtimeDir.*cacheDir/u);
 	});
 
 	it('restores a backup to state and zone-files dirs', async () => {
@@ -104,6 +144,7 @@ describe('createZoneBackupManager', () => {
 		const stateDir = path.join(tmpDir, 'state');
 		const zoneFilesDir = path.join(tmpDir, 'zone-files');
 		const backupDir = path.join(tmpDir, 'backups');
+		const cacheDir = path.join(tmpDir, 'cache');
 		const runtimeDir = path.join(tmpDir, 'runtime');
 		fs.mkdirSync(stateDir, { recursive: true });
 		fs.mkdirSync(zoneFilesDir, { recursive: true });
@@ -114,6 +155,7 @@ describe('createZoneBackupManager', () => {
 
 		const backup = await manager.createBackup({
 			zoneId: 'shravan',
+			cacheDir,
 			stateDir,
 			zoneFilesDir,
 			backupDir,
@@ -146,6 +188,7 @@ describe('createZoneBackupManager', () => {
 		const sourceStateDir = path.join(tmpDir, 'parent-a', 'zone-state');
 		const sourceZoneFilesDir = path.join(tmpDir, 'parent-b', 'zone-zone-files');
 		const backupDir = path.join(tmpDir, 'backups');
+		const cacheDir = path.join(tmpDir, 'cache');
 		const runtimeDir = path.join(tmpDir, 'runtime');
 		fs.mkdirSync(sourceStateDir, { recursive: true });
 		fs.mkdirSync(sourceZoneFilesDir, { recursive: true });
@@ -156,6 +199,7 @@ describe('createZoneBackupManager', () => {
 
 		const backup = await manager.createBackup({
 			zoneId: 'shravan-lab',
+			cacheDir,
 			stateDir: sourceStateDir,
 			zoneFilesDir: sourceZoneFilesDir,
 			backupDir,
@@ -235,6 +279,7 @@ describe('createZoneBackupManager', () => {
 		const stateDir = path.join(tmpDir, 'state');
 		const zoneFilesDir = path.join(tmpDir, 'zone-files');
 		const backupDir = path.join(tmpDir, 'backups');
+		const cacheDir = path.join(tmpDir, 'cache');
 		const runtimeDir = path.join(tmpDir, 'runtime');
 		fs.mkdirSync(stateDir, { recursive: true });
 		fs.mkdirSync(zoneFilesDir, { recursive: true });
@@ -245,6 +290,7 @@ describe('createZoneBackupManager', () => {
 
 		const backup = await manager.createBackup({
 			zoneId: 'my-hyphenated-zone',
+			cacheDir,
 			stateDir,
 			zoneFilesDir,
 			backupDir,

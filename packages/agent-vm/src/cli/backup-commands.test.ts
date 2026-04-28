@@ -185,6 +185,7 @@ describe('runBackupCommand', () => {
 
 		expect(createBackup).toHaveBeenCalledWith({
 			backupDir: './state/shravan/backups',
+			cacheDir: './cache',
 			runtimeDir: './runtime',
 			stateDir: './state/shravan',
 			zoneFilesDir: './zone-files/shravan',
