@@ -95,7 +95,7 @@ describe('createRunTask', () => {
 		});
 
 		expect(tasukuTaskMock).toHaveBeenCalledWith('Docker: gateway/openclaw', expect.any(Function), {
-			previewLines: 8,
+			previewLines: 1,
 		});
 		expect(startTime).toHaveBeenCalledOnce();
 		expect(setStatus).toHaveBeenCalledWith('docker build');
