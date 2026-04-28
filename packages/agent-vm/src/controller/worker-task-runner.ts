@@ -204,7 +204,7 @@ export async function preStartGateway(
 				...repo,
 				repoId,
 				hostWorkspacePath: repoWorkspaceDir,
-				workspacePath: `/workspace/${repoId}`,
+				workspacePath: `/work/repos/${repoId}`,
 			};
 		});
 		const cloneResults = await Promise.allSettled(
@@ -372,7 +372,7 @@ export async function preStartGateway(
 			}),
 			runtimeAuthHints: zoneConfig.runtimeAuthHints ?? [],
 			taskId,
-			workspaceDir: '/workspace',
+			workspaceDir: '/work/repos',
 		});
 		const effectiveConfig = workerConfigSchema.parse({
 			...effectiveConfigDraft,
@@ -401,6 +401,10 @@ export async function preStartGateway(
 			environment: overlay.environment,
 			tcpHosts: overlay.tcpHosts,
 			vfsMounts: {
+				'/work/repos': {
+					hostPath: workspaceDir,
+					kind: 'realfs',
+				},
 				'/agent-vm': {
 					hostPath: agentVmDir,
 					kind: 'realfs-readonly',
@@ -553,7 +557,6 @@ export async function prepareWorkerTask(
 			...zone,
 			gateway: {
 				...zone.gateway,
-				workspaceDir: preStartResult.workspaceDir,
 				stateDir: preStartResult.stateDir,
 			},
 		};

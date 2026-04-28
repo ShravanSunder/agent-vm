@@ -91,7 +91,6 @@ describe('isGatewayImageCached', () => {
 							memory: '2G',
 							port: 18791,
 							stateDir: '/tmp/state',
-							workspaceDir: '/tmp/workspace',
 						},
 						id: 'coding-agent',
 						secrets: {},

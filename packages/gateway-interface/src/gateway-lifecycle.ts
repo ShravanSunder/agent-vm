@@ -28,31 +28,51 @@ export interface GatewayAuthConfig {
 	) => string;
 }
 
+interface GatewayAuthProfilesRef {
+	readonly source: '1password' | 'environment';
+}
+
+interface OnePasswordGatewayAuthProfilesRef extends GatewayAuthProfilesRef {
+	readonly source: '1password';
+	readonly ref: string;
+}
+
+interface EnvironmentGatewayAuthProfilesRef extends GatewayAuthProfilesRef {
+	readonly source: 'environment';
+	readonly envVar: string;
+}
+
+interface GatewayZoneBaseGatewayConfig {
+	readonly type: GatewayType;
+	readonly memory: string;
+	readonly cpus: number;
+	readonly port: number;
+	readonly config: string;
+	readonly stateDir: string;
+	readonly authProfilesRef?:
+		| OnePasswordGatewayAuthProfilesRef
+		| EnvironmentGatewayAuthProfilesRef
+		| undefined;
+}
+
+interface OpenClawGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
+	readonly type: 'openclaw';
+	readonly zoneFilesDir: string;
+}
+
+interface WorkerGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
+	readonly type: 'worker';
+}
+
+type GatewayZoneGatewayConfig = OpenClawGatewayZoneGatewayConfig | WorkerGatewayZoneGatewayConfig;
+
 /**
  * Zone config as the lifecycle sees it.
  * Decoupled from SystemConfig — the controller maps into this shape.
  */
 export interface GatewayZoneConfig {
 	readonly id: string;
-	readonly gateway: {
-		readonly type: GatewayType;
-		readonly memory: string;
-		readonly cpus: number;
-		readonly port: number;
-		readonly config: string;
-		readonly stateDir: string;
-		readonly workspaceDir: string;
-		readonly authProfilesRef?:
-			| {
-					readonly source: '1password';
-					readonly ref: string;
-			  }
-			| {
-					readonly source: 'environment';
-					readonly envVar: string;
-			  }
-			| undefined;
-	};
+	readonly gateway: GatewayZoneGatewayConfig;
 	readonly secrets: Record<
 		string,
 		| {

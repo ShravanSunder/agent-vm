@@ -45,7 +45,7 @@ export async function restoreEncryptedBackup(options: {
 	readonly backupPath: string;
 	readonly encryption: BackupEncryption;
 	readonly stateDir: string;
-	readonly workspaceDir: string;
+	readonly zoneFilesDir?: string;
 }): Promise<BackupRestoreResult> {
 	const decryptedTarPath = `${options.backupPath}.decrypted.tar`;
 	await options.encryption.decrypt(options.backupPath, decryptedTarPath);
@@ -54,14 +54,16 @@ export async function restoreEncryptedBackup(options: {
 	try {
 		await execFileAsync('tar', ['xf', decryptedTarPath, '-C', extractDirectory]);
 		await copyExtractedDirectoryContents(path.join(extractDirectory, 'state'), options.stateDir);
-		await copyExtractedDirectoryContents(
-			path.join(extractDirectory, 'workspace'),
-			options.workspaceDir,
-		);
+		if (options.zoneFilesDir !== undefined) {
+			await copyExtractedDirectoryContents(
+				path.join(extractDirectory, 'zone-files'),
+				options.zoneFilesDir,
+			);
+		}
 
 		return {
 			stateDir: options.stateDir,
-			workspaceDir: options.workspaceDir,
+			...(options.zoneFilesDir !== undefined ? { zoneFilesDir: options.zoneFilesDir } : {}),
 			zoneId: await readZoneIdFromManifest(extractDirectory),
 		};
 	} finally {

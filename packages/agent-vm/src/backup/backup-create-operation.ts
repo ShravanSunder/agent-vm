@@ -13,7 +13,7 @@ export async function createEncryptedBackup(options: {
 	readonly backupDir: string;
 	readonly encryption: BackupEncryption;
 	readonly stateDir: string;
-	readonly workspaceDir: string;
+	readonly zoneFilesDir?: string;
 	readonly zoneId: string;
 }): Promise<BackupResult> {
 	const timestamp = new Date().toISOString().replace(/[:.]/gu, '-');
@@ -28,11 +28,13 @@ export async function createEncryptedBackup(options: {
 	const stagingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'backup-stage-'));
 	try {
 		await execFileAsync('cp', ['-a', options.stateDir, path.join(stagingDirectory, 'state')]);
-		await execFileAsync('cp', [
-			'-a',
-			options.workspaceDir,
-			path.join(stagingDirectory, 'workspace'),
-		]);
+		if (options.zoneFilesDir !== undefined) {
+			await execFileAsync('cp', [
+				'-a',
+				options.zoneFilesDir,
+				path.join(stagingDirectory, 'zone-files'),
+			]);
+		}
 
 		await fs.writeFile(
 			path.join(stagingDirectory, 'manifest.json'),
@@ -43,15 +45,11 @@ export async function createEncryptedBackup(options: {
 			}),
 		);
 
-		await execFileAsync('tar', [
-			'cf',
-			backupPaths.tarPath,
-			'-C',
-			stagingDirectory,
-			'state',
-			'workspace',
-			'manifest.json',
-		]);
+		const tarEntries =
+			options.zoneFilesDir !== undefined
+				? ['state', 'zone-files', 'manifest.json']
+				: ['state', 'manifest.json'];
+		await execFileAsync('tar', ['cf', backupPaths.tarPath, '-C', stagingDirectory, ...tarEntries]);
 	} finally {
 		await fs.rm(stagingDirectory, { recursive: true, force: true });
 	}

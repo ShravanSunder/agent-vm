@@ -22,12 +22,13 @@ describe('runControllerDestroy', () => {
 		const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-destroy-'));
 		createdDirectories.push(tempDirectory);
 		const stateDir = path.join(tempDirectory, 'state', 'shravan');
-		const workspaceDir = path.join(tempDirectory, 'workspaces', 'shravan');
+		const zoneFilesDir = path.join(tempDirectory, 'zone-files', 'shravan');
 		fs.mkdirSync(stateDir, { recursive: true });
-		fs.mkdirSync(workspaceDir, { recursive: true });
+		fs.mkdirSync(zoneFilesDir, { recursive: true });
 
 		const systemConfig = {
 			cacheDir: './cache',
+			runtimeDir: './runtime',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -65,7 +66,7 @@ describe('runControllerDestroy', () => {
 						port: 18791,
 						config: './config/shravan/openclaw.json',
 						stateDir,
-						workspaceDir,
+						zoneFilesDir,
 					},
 					secrets: {},
 					allowedHosts: ['api.anthropic.com'],
@@ -106,9 +107,9 @@ describe('runControllerDestroy', () => {
 
 		expect(actions).toEqual(['stop:shravan', 'leases:shravan']);
 		expect(rmSyncSpy).not.toHaveBeenCalledWith(stateDir, expect.anything());
-		expect(rmSyncSpy).not.toHaveBeenCalledWith(workspaceDir, expect.anything());
+		expect(rmSyncSpy).not.toHaveBeenCalledWith(zoneFilesDir, expect.anything());
 		expect(fs.existsSync(stateDir)).toBe(false);
-		expect(fs.existsSync(workspaceDir)).toBe(false);
+		expect(fs.existsSync(zoneFilesDir)).toBe(false);
 		expect(result).toEqual({
 			ok: true,
 			purged: true,

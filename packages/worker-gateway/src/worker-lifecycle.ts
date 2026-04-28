@@ -13,6 +13,9 @@ export const workerLifecycle: GatewayLifecycle = {
 		resolvedSecrets,
 		zone,
 	}: BuildGatewayVmSpecOptions): GatewayVmSpec {
+		if (zone.gateway.type !== 'worker') {
+			throw new Error(`Worker lifecycle cannot build gateway type '${zone.gateway.type}'.`);
+		}
 		const { environmentSecrets, mediatedSecrets } = splitResolvedGatewaySecrets(
 			zone,
 			resolvedSecrets,
@@ -27,7 +30,14 @@ export const workerLifecycle: GatewayLifecycle = {
 				AGENT_VM_ZONE_ID: zone.id,
 				STATE_DIR: '/state',
 				WORKER_CONFIG_PATH: '/state/effective-worker.json',
-				WORKSPACE_DIR: '/workspace',
+				WORK_DIR: '/work',
+				REPOS_DIR: '/work/repos',
+				TMPDIR: '/work/tmp',
+				TMP: '/work/tmp',
+				TEMP: '/work/tmp',
+				npm_config_cache: '/work/cache/npm',
+				PIP_CACHE_DIR: '/work/cache/pip',
+				UV_CACHE_DIR: '/work/cache/uv',
 				...environmentSecrets,
 			},
 			mediatedSecrets,
@@ -41,10 +51,6 @@ export const workerLifecycle: GatewayLifecycle = {
 					hostPath: zone.gateway.stateDir,
 					kind: 'realfs',
 				},
-				'/workspace': {
-					hostPath: zone.gateway.workspaceDir,
-					kind: 'realfs',
-				},
 			},
 		};
 	},
@@ -52,9 +58,9 @@ export const workerLifecycle: GatewayLifecycle = {
 	buildProcessSpec(): GatewayProcessSpec {
 		return {
 			bootstrapCommand:
-				'if [ -f /state/agent-vm-worker.tgz ]; then npm install -g --force @openai/codex /state/agent-vm-worker.tgz; fi',
+				'mkdir -p /work/repos /work/tmp /work/cache/npm /work/cache/pip /work/cache/uv && if [ -f /state/agent-vm-worker.tgz ]; then npm install -g --force @openai/codex /state/agent-vm-worker.tgz; fi',
 			startCommand:
-				'cd /workspace && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state > /tmp/agent-vm-worker.log 2>&1 &',
+				'cd /work && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state > /tmp/agent-vm-worker.log 2>&1 &',
 			healthCheck: { type: 'http', port: 18789, path: '/health' },
 			guestListenPort: 18789,
 			logPath: '/tmp/agent-vm-worker.log',

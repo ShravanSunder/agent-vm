@@ -25,22 +25,22 @@ describe('createZoneBackupManager', () => {
 		}
 	});
 
-	it('creates a tar archive of zone state and workspace dirs', async () => {
+	it('creates a tar archive of zone state and zone files dirs', async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-create-'));
 		const stateDir = path.join(tmpDir, 'state');
-		const workspaceDir = path.join(tmpDir, 'workspace');
+		const zoneFilesDir = path.join(tmpDir, 'zone-files');
 		const backupDir = path.join(tmpDir, 'backups');
 		fs.mkdirSync(stateDir, { recursive: true });
-		fs.mkdirSync(workspaceDir, { recursive: true });
+		fs.mkdirSync(zoneFilesDir, { recursive: true });
 		fs.writeFileSync(path.join(stateDir, 'session.json'), '{"token":"abc"}');
-		fs.writeFileSync(path.join(workspaceDir, 'notes.txt'), 'hello');
+		fs.writeFileSync(path.join(zoneFilesDir, 'notes.txt'), 'hello');
 
 		const manager = createZoneBackupManager(noopEncryption);
 
 		const result = await manager.createBackup({
 			zoneId: 'shravan',
 			stateDir,
-			workspaceDir,
+			zoneFilesDir,
 			backupDir,
 		});
 
@@ -49,75 +49,75 @@ describe('createZoneBackupManager', () => {
 		expect(fs.existsSync(result.backupPath)).toBe(true);
 	});
 
-	it('restores a backup to state and workspace dirs', async () => {
+	it('restores a backup to state and zone-files dirs', async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-restore-'));
 		const stateDir = path.join(tmpDir, 'state');
-		const workspaceDir = path.join(tmpDir, 'workspace');
+		const zoneFilesDir = path.join(tmpDir, 'zone-files');
 		const backupDir = path.join(tmpDir, 'backups');
 		fs.mkdirSync(stateDir, { recursive: true });
-		fs.mkdirSync(workspaceDir, { recursive: true });
+		fs.mkdirSync(zoneFilesDir, { recursive: true });
 		fs.writeFileSync(path.join(stateDir, 'data.json'), '{"key":"val"}');
-		fs.writeFileSync(path.join(workspaceDir, 'file.txt'), 'content');
+		fs.writeFileSync(path.join(zoneFilesDir, 'file.txt'), 'content');
 
 		const manager = createZoneBackupManager(noopEncryption);
 
 		const backup = await manager.createBackup({
 			zoneId: 'shravan',
 			stateDir,
-			workspaceDir,
+			zoneFilesDir,
 			backupDir,
 		});
 
 		// Clear dirs to simulate a fresh machine
 		fs.rmSync(stateDir, { recursive: true });
-		fs.rmSync(workspaceDir, { recursive: true });
+		fs.rmSync(zoneFilesDir, { recursive: true });
 		fs.mkdirSync(stateDir, { recursive: true });
-		fs.mkdirSync(workspaceDir, { recursive: true });
+		fs.mkdirSync(zoneFilesDir, { recursive: true });
 
 		const restoreResult = await manager.restoreBackup({
 			backupPath: backup.backupPath,
 			stateDir,
-			workspaceDir,
+			zoneFilesDir,
 		});
 
 		expect(restoreResult.zoneId).toBe('shravan');
 		expect(fs.existsSync(path.join(stateDir, 'data.json'))).toBe(true);
 		expect(fs.readFileSync(path.join(stateDir, 'data.json'), 'utf8')).toBe('{"key":"val"}');
-		expect(fs.existsSync(path.join(workspaceDir, 'file.txt'))).toBe(true);
-		expect(fs.readFileSync(path.join(workspaceDir, 'file.txt'), 'utf8')).toBe('content');
+		expect(fs.existsSync(path.join(zoneFilesDir, 'file.txt'))).toBe(true);
+		expect(fs.readFileSync(path.join(zoneFilesDir, 'file.txt'), 'utf8')).toBe('content');
 	});
 
-	it('restores state and workspace to different parent directories', async () => {
+	it('restores state and zone-files to different parent directories', async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-cross-parent-'));
 
 		// Create source dirs under different parents
 		const sourceStateDir = path.join(tmpDir, 'parent-a', 'zone-state');
-		const sourceWorkspaceDir = path.join(tmpDir, 'parent-b', 'zone-workspace');
+		const sourceZoneFilesDir = path.join(tmpDir, 'parent-b', 'zone-zone-files');
 		const backupDir = path.join(tmpDir, 'backups');
 		fs.mkdirSync(sourceStateDir, { recursive: true });
-		fs.mkdirSync(sourceWorkspaceDir, { recursive: true });
+		fs.mkdirSync(sourceZoneFilesDir, { recursive: true });
 		fs.writeFileSync(path.join(sourceStateDir, 'state-file.json'), '{"s":1}');
-		fs.writeFileSync(path.join(sourceWorkspaceDir, 'work-file.txt'), 'workspace-data');
+		fs.writeFileSync(path.join(sourceZoneFilesDir, 'zone-file.txt'), 'zone-files-data');
 
 		const manager = createZoneBackupManager(noopEncryption);
 
 		const backup = await manager.createBackup({
 			zoneId: 'shravan-lab',
 			stateDir: sourceStateDir,
-			workspaceDir: sourceWorkspaceDir,
+			zoneFilesDir: sourceZoneFilesDir,
 			backupDir,
 		});
 
 		// Restore to completely different parents
 		const restoreStateDir = path.join(tmpDir, 'restore-x', 'my-state');
-		const restoreWorkspaceDir = path.join(tmpDir, 'restore-y', 'my-workspace');
+		const restoreZoneFilesDir = path.join(tmpDir, 'restore-y', 'my-zone-files');
 		fs.mkdirSync(restoreStateDir, { recursive: true });
-		fs.mkdirSync(restoreWorkspaceDir, { recursive: true });
+		fs.mkdirSync(restoreZoneFilesDir, { recursive: true });
 
 		const restoreResult = await manager.restoreBackup({
 			backupPath: backup.backupPath,
 			stateDir: restoreStateDir,
-			workspaceDir: restoreWorkspaceDir,
+			zoneFilesDir: restoreZoneFilesDir,
 		});
 
 		expect(restoreResult.zoneId).toBe('shravan-lab');
@@ -126,15 +126,15 @@ describe('createZoneBackupManager', () => {
 		expect(fs.existsSync(path.join(restoreStateDir, 'state-file.json'))).toBe(true);
 		expect(fs.readFileSync(path.join(restoreStateDir, 'state-file.json'), 'utf8')).toBe('{"s":1}');
 
-		// Workspace files land in the target workspaceDir
-		expect(fs.existsSync(path.join(restoreWorkspaceDir, 'work-file.txt'))).toBe(true);
-		expect(fs.readFileSync(path.join(restoreWorkspaceDir, 'work-file.txt'), 'utf8')).toBe(
-			'workspace-data',
+		// Zone files land in the target zoneFilesDir
+		expect(fs.existsSync(path.join(restoreZoneFilesDir, 'zone-file.txt'))).toBe(true);
+		expect(fs.readFileSync(path.join(restoreZoneFilesDir, 'zone-file.txt'), 'utf8')).toBe(
+			'zone-files-data',
 		);
 
 		// Nothing leaked into sibling directories
 		expect(fs.readdirSync(path.join(tmpDir, 'restore-x'))).toEqual(['my-state']);
-		expect(fs.readdirSync(path.join(tmpDir, 'restore-y'))).toEqual(['my-workspace']);
+		expect(fs.readdirSync(path.join(tmpDir, 'restore-y'))).toEqual(['my-zone-files']);
 	});
 
 	it('lists backups filtered by zone using double-underscore delimiter', () => {
@@ -179,32 +179,32 @@ describe('createZoneBackupManager', () => {
 	it('reads zoneId from manifest on restore instead of parsing filename', async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backup-manifest-zone-'));
 		const stateDir = path.join(tmpDir, 'state');
-		const workspaceDir = path.join(tmpDir, 'workspace');
+		const zoneFilesDir = path.join(tmpDir, 'zone-files');
 		const backupDir = path.join(tmpDir, 'backups');
 		fs.mkdirSync(stateDir, { recursive: true });
-		fs.mkdirSync(workspaceDir, { recursive: true });
+		fs.mkdirSync(zoneFilesDir, { recursive: true });
 		fs.writeFileSync(path.join(stateDir, 'a.json'), '{}');
-		fs.writeFileSync(path.join(workspaceDir, 'b.txt'), 'b');
+		fs.writeFileSync(path.join(zoneFilesDir, 'b.txt'), 'b');
 
 		const manager = createZoneBackupManager(noopEncryption);
 
 		const backup = await manager.createBackup({
 			zoneId: 'my-hyphenated-zone',
 			stateDir,
-			workspaceDir,
+			zoneFilesDir,
 			backupDir,
 		});
 
 		// Clear and restore
 		fs.rmSync(stateDir, { recursive: true });
-		fs.rmSync(workspaceDir, { recursive: true });
+		fs.rmSync(zoneFilesDir, { recursive: true });
 		fs.mkdirSync(stateDir, { recursive: true });
-		fs.mkdirSync(workspaceDir, { recursive: true });
+		fs.mkdirSync(zoneFilesDir, { recursive: true });
 
 		const restoreResult = await manager.restoreBackup({
 			backupPath: backup.backupPath,
 			stateDir,
-			workspaceDir,
+			zoneFilesDir,
 		});
 
 		// zoneId comes from embedded manifest, not filename parsing

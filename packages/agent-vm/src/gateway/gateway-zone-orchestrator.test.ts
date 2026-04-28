@@ -153,7 +153,7 @@ function createSystemConfig(): LoadedSystemConfig {
 						port: 18791,
 						config: createGatewayConfigPath(),
 						stateDir: '../state/shravan',
-						workspaceDir: '../workspaces/shravan',
+						zoneFilesDir: '../zone-files/shravan',
 					},
 					secrets: {
 						PERPLEXITY_API_KEY: {

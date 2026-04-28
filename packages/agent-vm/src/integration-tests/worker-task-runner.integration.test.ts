@@ -211,6 +211,7 @@ describe('worker-task-runner integration', () => {
 
 	const systemConfig = {
 		cacheDir: '/tmp/cache',
+		runtimeDir: '/tmp/runtime',
 		systemConfigPath: '/tmp/config/system.json',
 		systemCacheIdentifierPath: '/tmp/config/systemCacheIdentifier.json',
 		host: {
@@ -241,7 +242,6 @@ describe('worker-task-runner integration', () => {
 					port: 18791,
 					config: '',
 					stateDir: '',
-					workspaceDir: '',
 				},
 				secrets: {},
 				allowedHosts: ['github.com'],
@@ -262,7 +262,6 @@ describe('worker-task-runner integration', () => {
 		}
 		zone.gateway.config = path.join(tempDir, 'gateway-config.json');
 		zone.gateway.stateDir = path.join(tempDir, 'state');
-		zone.gateway.workspaceDir = path.join(tempDir, 'workspace');
 		await fs.writeFile(zone.gateway.config, JSON.stringify(buildWorkerConfigInput()));
 
 		const { executeWorkerTask, prepareWorkerTask } =

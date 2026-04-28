@@ -21,6 +21,7 @@ afterEach(async () => {
 function makeSystemConfig(): SystemConfig {
 	return {
 		cacheDir: '/tmp/cache',
+		runtimeDir: '/tmp/runtime',
 		host: {
 			controllerPort: 18800,
 			projectNamespace: 'claw-tests-a1b2c3d4',
@@ -44,7 +45,6 @@ function makeSystemConfig(): SystemConfig {
 					port: 18791,
 					config: '/tmp/gateway-config.json',
 					stateDir,
-					workspaceDir: '/tmp/workspace',
 				},
 				secrets: {},
 				allowedHosts: ['github.com'],

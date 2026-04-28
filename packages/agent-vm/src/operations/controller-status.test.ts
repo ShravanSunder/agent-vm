@@ -5,6 +5,7 @@ import { buildControllerStatus } from './controller-status.js';
 
 const systemConfig = {
 	cacheDir: './cache',
+	runtimeDir: './runtime',
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
@@ -42,7 +43,7 @@ const systemConfig = {
 				port: 18791,
 				config: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
-				workspaceDir: './workspaces/shravan',
+				zoneFilesDir: './zone-files/shravan',
 			},
 			secrets: {},
 			allowedHosts: ['api.anthropic.com'],
@@ -59,7 +60,7 @@ const systemConfig = {
 				port: 18792,
 				config: './config/alevtina/openclaw.json',
 				stateDir: './state/alevtina',
-				workspaceDir: './workspaces/alevtina',
+				zoneFilesDir: './zone-files/alevtina',
 			},
 			secrets: {},
 			allowedHosts: ['api.anthropic.com'],

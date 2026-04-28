@@ -8,6 +8,7 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
 			cacheDir: './cache',
+			runtimeDir: './runtime',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -57,7 +58,7 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 						config: './config/shravan/openclaw.json',
 						port: 18791,
 						stateDir: './state/shravan',
-						workspaceDir: './workspaces/shravan',
+						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
 					secrets: {},
@@ -105,7 +106,7 @@ describe('runBackupCommand', () => {
 				createZoneBackupManager: () => ({
 					createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
 					listBackups,
-					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+					restoreBackup: async () => ({ stateDir: '', zoneFilesDir: '', zoneId: '' }),
 				}),
 				loadSystemConfig: async () => systemConfig,
 				resolveServiceAccountToken: async () => 'token',
@@ -168,7 +169,7 @@ describe('runBackupCommand', () => {
 				createZoneBackupManager: () => ({
 					createBackup,
 					listBackups: () => [],
-					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+					restoreBackup: async () => ({ stateDir: '', zoneFilesDir: '', zoneId: '' }),
 				}),
 				loadSystemConfig: async () => systemConfig,
 				resolveServiceAccountToken: async () => 'token',
@@ -185,7 +186,7 @@ describe('runBackupCommand', () => {
 		expect(createBackup).toHaveBeenCalledWith({
 			backupDir: './state/shravan/backups',
 			stateDir: './state/shravan',
-			workspaceDir: './workspaces/shravan',
+			zoneFilesDir: './zone-files/shravan',
 			zoneId: 'shravan',
 		});
 	});
@@ -217,7 +218,7 @@ describe('runBackupCommand', () => {
 					createZoneBackupManager: () => ({
 						createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
 						listBackups: () => [],
-						restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+						restoreBackup: async () => ({ stateDir: '', zoneFilesDir: '', zoneId: '' }),
 					}),
 					loadSystemConfig: async () => systemConfig,
 					resolveServiceAccountToken: async () => 'token',
@@ -236,7 +237,7 @@ describe('runBackupCommand', () => {
 	it('restores a backup into the target zone workspace and state directories', async () => {
 		const restoreBackup = vi.fn(async () => ({
 			stateDir: './state/shravan',
-			workspaceDir: './workspaces/shravan',
+			zoneFilesDir: './zone-files/shravan',
 			zoneId: 'shravan',
 		}));
 		const systemConfig = createBackupSystemConfig();
@@ -287,7 +288,7 @@ describe('runBackupCommand', () => {
 		expect(restoreBackup).toHaveBeenCalledWith({
 			backupPath: '/tmp/backup.tar.age',
 			stateDir: './state/shravan',
-			workspaceDir: './workspaces/shravan',
+			zoneFilesDir: './zone-files/shravan',
 		});
 		expect(outputs.join('')).toContain('"zoneId": "shravan"');
 	});
@@ -343,7 +344,7 @@ describe('runBackupCommand', () => {
 				createZoneBackupManager: () => ({
 					createBackup: async () => ({ backupPath: '', timestamp: '', zoneId: '' }),
 					listBackups,
-					restoreBackup: async () => ({ stateDir: '', workspaceDir: '', zoneId: '' }),
+					restoreBackup: async () => ({ stateDir: '', zoneFilesDir: '', zoneId: '' }),
 				}),
 				loadSystemConfig: async () => systemConfig,
 				resolveServiceAccountToken: async () => 'token',

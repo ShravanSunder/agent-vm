@@ -79,7 +79,7 @@ function createToolVmSystemConfig(): LoadedSystemConfig {
 						config: './config/shravan/openclaw.json',
 						port: 18791,
 						stateDir: './state/shravan',
-						workspaceDir: './workspaces/shravan',
+						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
 					secrets: {},

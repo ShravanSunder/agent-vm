@@ -118,6 +118,7 @@ vi.mock('execa', () => ({
 
 const systemConfig = {
 	cacheDir: '/tmp/cache',
+	runtimeDir: '/tmp/runtime',
 	systemConfigPath: '/tmp/config/system.json',
 	systemCacheIdentifierPath: '/tmp/config/systemCacheIdentifier.json',
 	host: {
@@ -148,7 +149,6 @@ const systemConfig = {
 				port: 18791,
 				config: '',
 				stateDir: '',
-				workspaceDir: '',
 			},
 			secrets: {},
 			runtimeAuthHints: [],
@@ -200,7 +200,6 @@ describe('worker-task-runner', () => {
 		}
 		zone.gateway.config = path.join(tempDir, 'gateway-config.json');
 		zone.gateway.stateDir = path.join(tempDir, 'state');
-		zone.gateway.workspaceDir = path.join(tempDir, 'workspace');
 		await fs.writeFile(zone.gateway.config, JSON.stringify(buildWorkerConfigInput()));
 
 		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
@@ -393,7 +392,7 @@ describe('worker-task-runner', () => {
 		);
 		expect(writtenConfig.commonAgentInstructions).toBe('common from markdown\n');
 		expect(writtenConfig.runtimeInstructions).toContain('Runtime instructions');
-		expect(writtenConfig.runtimeInstructions).toContain('/workspace');
+		expect(writtenConfig.runtimeInstructions).toContain('/work/repos');
 		expect(writtenConfig.runtimeInstructions).toContain('/agent-vm/agents.md');
 		await expect(
 			fs.readFile(path.join(result.workspaceDir, 'AGENTS.md'), 'utf8'),
@@ -412,6 +411,9 @@ describe('worker-task-runner', () => {
 		);
 		expect(result.vfsMounts['/agent-vm']).toEqual(
 			expect.objectContaining({ kind: 'realfs-readonly' }),
+		);
+		expect(result.vfsMounts['/work/repos']).toEqual(
+			expect.objectContaining({ hostPath: result.workspaceDir, kind: 'realfs' }),
 		);
 	});
 
@@ -475,14 +477,14 @@ describe('worker-task-runner', () => {
 				repoUrl: 'https://github.com/org/frontend.git',
 				baseBranch: 'main',
 				hostWorkspacePath: path.join(result.workspaceDir, 'frontend'),
-				workspacePath: '/workspace/frontend',
+				workspacePath: '/work/repos/frontend',
 			},
 			{
 				repoId: 'backend',
 				repoUrl: 'https://github.com/org/backend.git',
 				baseBranch: 'develop',
 				hostWorkspacePath: path.join(result.workspaceDir, 'backend'),
-				workspacePath: '/workspace/backend',
+				workspacePath: '/work/repos/backend',
 			},
 		]);
 		const writtenConfig = effectiveWorkerConfigSchema.parse(
@@ -515,8 +517,8 @@ describe('worker-task-runner', () => {
 
 		expect(result.repos.map((repo) => repo.repoId)).toEqual(['repo-dir', 'repo-dir-2']);
 		expect(result.repos.map((repo) => repo.workspacePath)).toEqual([
-			'/workspace/repo-dir',
-			'/workspace/repo-dir-2',
+			'/work/repos/repo-dir',
+			'/work/repos/repo-dir-2',
 		]);
 	});
 
@@ -1006,7 +1008,7 @@ describe('worker-task-runner', () => {
 				{
 					repoUrl: 'https://github.com/org/repo.git',
 					baseBranch: 'main',
-					workspacePath: '/workspace/repo',
+					workspacePath: '/work/repos/repo',
 				},
 			],
 		});

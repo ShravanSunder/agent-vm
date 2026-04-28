@@ -11,6 +11,7 @@ import type {
 
 const systemConfig = {
 	cacheDir: './cache',
+	runtimeDir: './runtime',
 	systemConfigPath: './config/system.json',
 	systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 	host: {
@@ -50,7 +51,7 @@ const systemConfig = {
 				port: 18791,
 				config: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
-				workspaceDir: './workspaces/shravan',
+				zoneFilesDir: './zone-files/shravan',
 			},
 			secrets: {},
 			allowedHosts: ['api.anthropic.com'],

@@ -15,6 +15,7 @@ function createSystemConfig(
 ): LoadedSystemConfig {
 	return {
 		cacheDir: path.join(path.dirname(stateDirectory), 'cache'),
+		runtimeDir: path.join(path.dirname(stateDirectory), 'runtime'),
 		systemConfigPath: path.join(path.dirname(stateDirectory), 'config', 'system.json'),
 		systemCacheIdentifierPath: path.join(
 			path.dirname(stateDirectory),
@@ -58,7 +59,7 @@ function createSystemConfig(
 					port: controllerPort + 100,
 					config: './config/shravan/openclaw.json',
 					stateDir: stateDirectory,
-					workspaceDir: workspaceDirectory,
+					zoneFilesDir: workspaceDirectory,
 				},
 				secrets: {},
 				allowedHosts: ['api.openai.com'],

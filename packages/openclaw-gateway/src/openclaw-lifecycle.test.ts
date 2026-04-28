@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openclawLifecycle } from './openclaw-lifecycle.js';
 
 const createdDirectories: string[] = [];
+type OpenClawGatewayConfig = Extract<GatewayZoneConfig['gateway'], { readonly type: 'openclaw' }>;
 
 afterEach(() => {
 	vi.useRealTimers();
@@ -25,17 +26,17 @@ const resolvedSecrets: Record<string, string> = {
 
 function createZone(overrides?: {
 	readonly authProfilesRef?: GatewayZoneConfig['gateway']['authProfilesRef'];
-	readonly gateway?: Partial<GatewayZoneConfig['gateway']>;
+	readonly gateway?: Partial<OpenClawGatewayConfig>;
 	readonly withoutAuthProfilesRef?: boolean;
 }): GatewayZoneConfig {
-	const baseGateway: GatewayZoneConfig['gateway'] = {
+	const baseGateway: OpenClawGatewayConfig = {
 		cpus: 2,
 		config: '/host/config/shravan/openclaw.json',
 		memory: '2G',
 		port: 18791,
 		stateDir: '/host/state/shravan',
 		type: 'openclaw',
-		workspaceDir: '/host/workspaces/shravan',
+		zoneFilesDir: '/host/zone-files/shravan',
 	};
 
 	return {
@@ -221,7 +222,7 @@ describe('openclawLifecycle', () => {
 				gateway: {
 					config: path.join(configDirectory, 'openclaw.json'),
 					stateDir: path.join(tempDirectory, 'state'),
-					workspaceDir: path.join(tempDirectory, 'workspace'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
 			});
 			const secretResolver: SecretResolver = {
@@ -288,7 +289,7 @@ describe('openclawLifecycle', () => {
 				gateway: {
 					config: path.join(configDirectory, 'openclaw.json'),
 					stateDir: path.join(tempDirectory, 'state'),
-					workspaceDir: path.join(tempDirectory, 'workspace'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
 				withoutAuthProfilesRef: true,
 			});
@@ -325,7 +326,7 @@ describe('openclawLifecycle', () => {
 				gateway: {
 					config: path.join(configDirectory, 'openclaw.json'),
 					stateDir: path.join(tempDirectory, 'state'),
-					workspaceDir: path.join(tempDirectory, 'workspace'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
 			});
 			const { OPENCLAW_GATEWAY_TOKEN: _removedGatewayToken, ...remainingSecrets } =
@@ -362,7 +363,7 @@ describe('openclawLifecycle', () => {
 				gateway: {
 					config: path.join(configDirectory, 'openclaw.json'),
 					stateDir: path.join(tempDirectory, 'state'),
-					workspaceDir: path.join(tempDirectory, 'workspace'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
 			});
 			const secretResolver: SecretResolver = {
@@ -405,7 +406,7 @@ describe('openclawLifecycle', () => {
 				gateway: {
 					config: configPath,
 					stateDir: path.join(tempDirectory, 'state'),
-					workspaceDir: path.join(tempDirectory, 'workspace'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
 				withoutAuthProfilesRef: true,
 			});
@@ -449,7 +450,7 @@ describe('openclawLifecycle', () => {
 				gateway: {
 					config: configPath,
 					stateDir: path.join(tempDirectory, 'state'),
-					workspaceDir: path.join(tempDirectory, 'workspace'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
 				withoutAuthProfilesRef: true,
 			});

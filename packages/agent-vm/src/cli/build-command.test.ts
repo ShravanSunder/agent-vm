@@ -29,6 +29,7 @@ function createTestSystemConfig(): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
 			cacheDir: '/cache',
+			runtimeDir: '/runtime',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -60,7 +61,7 @@ function createTestSystemConfig(): LoadedSystemConfig {
 						config: './config/test/openclaw.json',
 						port: 18791,
 						stateDir: '/state/test',
-						workspaceDir: '/workspaces/test',
+						zoneFilesDir: '/zone-files/test',
 					},
 					id: 'test-zone',
 					secrets: {},

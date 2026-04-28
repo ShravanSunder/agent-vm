@@ -21,6 +21,7 @@ function createWorkerSystemConfig(
 	return createLoadedSystemConfig(
 		{
 			cacheDir: './cache',
+			runtimeDir: './runtime',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'agent-vm-test',
@@ -62,7 +63,6 @@ function createWorkerSystemConfig(
 						config: workerConfigPath,
 						port: 18791,
 						stateDir: './state/worker',
-						workspaceDir: './workspaces/worker',
 					},
 					id: 'worker',
 					secrets: {},
@@ -82,6 +82,7 @@ function createOpenClawSystemConfig(
 	return createLoadedSystemConfig(
 		{
 			cacheDir: './cache',
+			runtimeDir: './runtime',
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'agent-vm-test',
@@ -129,7 +130,7 @@ function createOpenClawSystemConfig(
 						),
 						port: 18791,
 						stateDir: './state/shravan',
-						workspaceDir: './workspaces/shravan',
+						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
 					secrets: {},

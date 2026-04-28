@@ -29,7 +29,9 @@ export async function runControllerDestroy(
 
 	if (options.purge) {
 		await fs.rm(zone.gateway.stateDir, { force: true, recursive: true });
-		await fs.rm(zone.gateway.workspaceDir, { force: true, recursive: true });
+		if (zone.gateway.type === 'openclaw') {
+			await fs.rm(zone.gateway.zoneFilesDir, { force: true, recursive: true });
+		}
 	}
 
 	return {

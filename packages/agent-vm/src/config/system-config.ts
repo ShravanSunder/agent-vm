@@ -87,18 +87,31 @@ const hostSecretReferenceSchema = z.discriminatedUnion('source', [
 	}),
 ]);
 
-const zoneGatewaySchema = z.object({
-	type: z.enum(gatewayTypeValues).default('openclaw'),
+const zoneGatewayBaseSchema = z.object({
 	imageProfile: z.string().min(1),
 	memory: z.string().min(1),
 	cpus: z.number().int().positive(),
 	port: z.number().int().positive(),
 	config: z.string().min(1),
 	stateDir: z.string().min(1),
-	workspaceDir: z.string().min(1),
 	backupDir: z.string().min(1).optional(),
 	authProfilesRef: authProfilesSecretSchema.optional(),
 });
+
+const openClawZoneGatewaySchema = zoneGatewayBaseSchema
+	.extend({
+		type: z.literal('openclaw').default('openclaw'),
+		zoneFilesDir: z.string().min(1),
+	})
+	.strict();
+
+const workerZoneGatewaySchema = zoneGatewayBaseSchema
+	.extend({
+		type: z.literal('worker'),
+	})
+	.strict();
+
+const zoneGatewaySchema = z.union([openClawZoneGatewaySchema, workerZoneGatewaySchema]);
 
 const toolProfileSchema = z.object({
 	memory: z.string().min(1),
@@ -147,6 +160,7 @@ const systemConfigSchema = z
 			githubToken: hostSecretReferenceSchema.optional(),
 		}),
 		cacheDir: z.string().min(1).default('./cache'),
+		runtimeDir: z.string().min(1).default('./runtime'),
 		imageProfiles: imageProfilesSchema,
 		zones: z
 			.array(
@@ -297,10 +311,36 @@ function resolveRelativePaths(
 	configDir: string,
 ): z.infer<typeof systemConfigSchema> {
 	const resolvePath = (relativePath: string): string => resolveConfigPath(relativePath, configDir);
+	const resolveZoneGatewayPaths = (
+		gateway: z.infer<typeof zoneGatewaySchema>,
+	): z.infer<typeof zoneGatewaySchema> => {
+		switch (gateway.type) {
+			case 'openclaw':
+				return {
+					...gateway,
+					config: resolvePath(gateway.config),
+					stateDir: resolvePath(gateway.stateDir),
+					...(gateway.backupDir ? { backupDir: resolvePath(gateway.backupDir) } : {}),
+					zoneFilesDir: resolvePath(gateway.zoneFilesDir),
+				};
+			case 'worker':
+				return {
+					...gateway,
+					config: resolvePath(gateway.config),
+					stateDir: resolvePath(gateway.stateDir),
+					...(gateway.backupDir ? { backupDir: resolvePath(gateway.backupDir) } : {}),
+				};
+			default: {
+				const exhaustiveGateway: never = gateway;
+				throw new Error(`Unhandled gateway type: ${String(exhaustiveGateway)}`);
+			}
+		}
+	};
 
 	return {
 		...config,
 		cacheDir: resolvePath(config.cacheDir),
+		runtimeDir: resolvePath(config.runtimeDir),
 		imageProfiles: {
 			gateways: Object.fromEntries(
 				Object.entries(config.imageProfiles.gateways).map(([profileId, profile]) => [
@@ -325,13 +365,7 @@ function resolveRelativePaths(
 		},
 		zones: config.zones.map((zone) => ({
 			...zone,
-			gateway: {
-				...zone.gateway,
-				config: resolvePath(zone.gateway.config),
-				stateDir: resolvePath(zone.gateway.stateDir),
-				workspaceDir: resolvePath(zone.gateway.workspaceDir),
-				...(zone.gateway.backupDir ? { backupDir: resolvePath(zone.gateway.backupDir) } : {}),
-			},
+			gateway: resolveZoneGatewayPaths(zone.gateway),
 		})),
 		toolProfiles: Object.fromEntries(
 			Object.entries(config.toolProfiles).map(([profileId, profile]) => [

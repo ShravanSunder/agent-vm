@@ -73,18 +73,28 @@ export function findGatewayZone(systemConfig: SystemConfig, zoneId: string): Gat
 }
 
 export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZoneConfig {
+	const baseGateway = {
+		cpus: zone.gateway.cpus,
+		config: zone.gateway.config,
+		memory: zone.gateway.memory,
+		port: zone.gateway.port,
+		stateDir: zone.gateway.stateDir,
+		authProfilesRef: zone.gateway.authProfilesRef,
+	};
+
 	return {
 		id: zone.id,
-		gateway: {
-			cpus: zone.gateway.cpus,
-			config: zone.gateway.config,
-			memory: zone.gateway.memory,
-			port: zone.gateway.port,
-			stateDir: zone.gateway.stateDir,
-			type: zone.gateway.type,
-			workspaceDir: zone.gateway.workspaceDir,
-			authProfilesRef: zone.gateway.authProfilesRef,
-		},
+		gateway:
+			zone.gateway.type === 'openclaw'
+				? {
+						...baseGateway,
+						type: 'openclaw',
+						zoneFilesDir: zone.gateway.zoneFilesDir,
+					}
+				: {
+						...baseGateway,
+						type: 'worker',
+					},
 		secrets: Object.fromEntries(
 			Object.entries(zone.secrets).map(([secretName, secretConfig]) => [
 				secretName,

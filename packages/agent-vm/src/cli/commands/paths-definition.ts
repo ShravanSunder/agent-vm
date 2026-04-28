@@ -97,14 +97,20 @@ export function createPathsSubcommands(io: CliIo, dependencies: CliDependencies)
 					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 					const zoneEntryPromises = systemConfig.zones.flatMap((zone) => {
 						const backupDir = zone.gateway.backupDir ?? `${zone.gateway.stateDir}/backups`;
-						return [
+						const entries = [
 							buildResolvedPathEntry(`zone[${zone.id}].stateDir`, zone.gateway.stateDir, sizes),
+							buildResolvedPathEntry(`zone[${zone.id}].backupDir`, backupDir, sizes),
+						];
+						if (zone.gateway.type !== 'openclaw') {
+							return entries;
+						}
+						return [
+							...entries,
 							buildResolvedPathEntry(
-								`zone[${zone.id}].workspaceDir`,
-								zone.gateway.workspaceDir,
+								`zone[${zone.id}].zoneFilesDir`,
+								zone.gateway.zoneFilesDir,
 								sizes,
 							),
-							buildResolvedPathEntry(`zone[${zone.id}].backupDir`, backupDir, sizes),
 						];
 					});
 					const toolProfileEntryPromises = Object.entries(systemConfig.toolProfiles).map(
@@ -117,6 +123,7 @@ export function createPathsSubcommands(io: CliIo, dependencies: CliDependencies)
 					);
 					const entries: ResolvedPathEntry[] = await Promise.all([
 						buildResolvedPathEntry('cacheDir', systemConfig.cacheDir, sizes),
+						buildResolvedPathEntry('runtimeDir', systemConfig.runtimeDir, sizes),
 						...zoneEntryPromises,
 						...toolProfileEntryPromises,
 					]);

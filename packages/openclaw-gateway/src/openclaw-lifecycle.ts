@@ -247,6 +247,9 @@ export const openclawLifecycle: GatewayLifecycle = {
 		tcpPool,
 		zone,
 	}: BuildGatewayVmSpecOptions): GatewayVmSpec {
+		if (zone.gateway.type !== 'openclaw') {
+			throw new Error(`OpenClaw lifecycle cannot build gateway type '${zone.gateway.type}'.`);
+		}
 		const configDirectory = path.dirname(path.resolve(zone.gateway.config));
 		const { environmentSecrets, mediatedSecrets } = splitResolvedGatewaySecrets(
 			zone,
@@ -284,7 +287,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 					kind: 'realfs',
 				},
 				'/home/openclaw/workspace': {
-					hostPath: zone.gateway.workspaceDir,
+					hostPath: zone.gateway.zoneFilesDir,
 					kind: 'realfs',
 				},
 			},
