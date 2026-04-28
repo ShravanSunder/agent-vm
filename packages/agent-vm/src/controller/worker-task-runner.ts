@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
 	appendEvent,
 	computeTotalTaskTimeoutMs,
+	loadTaskStateFromLog,
 	resolveWorkerConfigInstructionReferences,
 	workerConfigDraftSchema,
 	workerConfigSchema,
@@ -567,16 +568,37 @@ export async function postStopGateway(
 	}
 }
 
-function shouldRetainRuntimeRootAfterStop(options: {
+function hasTerminalCompletedStatus(finalState: unknown): boolean {
+	return (
+		typeof finalState === 'object' &&
+		finalState !== null &&
+		'status' in finalState &&
+		finalState.status === 'completed'
+	);
+}
+
+async function shouldRetainRuntimeRootAfterStop(options: {
+	readonly eventLogPath: string;
 	readonly primaryError: Error | undefined;
+	readonly repoUrls: readonly string[];
 	readonly result: WorkerTaskResult | undefined;
-}): boolean {
+}): Promise<boolean> {
 	if (options.primaryError !== undefined) return true;
-	const finalState = options.result?.finalState;
-	if (typeof finalState !== 'object' || finalState === null || !('status' in finalState)) {
+	const replayedState = await loadTaskStateFromLog(options.eventLogPath);
+	if (
+		!hasTerminalCompletedStatus(options.result?.finalState) &&
+		!hasTerminalCompletedStatus(replayedState)
+	) {
 		return true;
 	}
-	return finalState.status !== 'completed';
+	if (options.repoUrls.length === 0) return false;
+	if (!replayedState) return true;
+	const successfulPushRepoUrls = new Set(
+		replayedState.controllerOperations.gitPushes
+			.filter((pushState) => pushState.status === 'succeeded')
+			.map((pushState) => pushState.repoUrl),
+	);
+	return options.repoUrls.some((repoUrl) => !successfulPushRepoUrls.has(repoUrl));
 }
 
 async function cleanupTaskRootAfterPreparationFailure(options: {
@@ -852,7 +874,12 @@ export async function executeWorkerTask(
 			prepared.zone,
 			prepared.preStartResult.startedResourceProviders,
 			{
-				retainRuntimeRoot: shouldRetainRuntimeRootAfterStop({ primaryError, result }),
+				retainRuntimeRoot: await shouldRetainRuntimeRootAfterStop({
+					eventLogPath: prepared.eventLogPath,
+					primaryError,
+					repoUrls: prepared.preStartResult.repos.map((repo) => repo.repoUrl),
+					result,
+				}),
 				runtimeDir: options.systemConfig.runtimeDir,
 			},
 		);

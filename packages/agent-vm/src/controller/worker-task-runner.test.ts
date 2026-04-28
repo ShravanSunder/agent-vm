@@ -1124,6 +1124,81 @@ describe('worker-task-runner', () => {
 		expect(JSON.stringify(submittedBody)).not.toContain('hostGitDir');
 	});
 
+	it('retains task runtime gitdirs when a completed repo task has no successful controller push', async () => {
+		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.endsWith('/tasks')) {
+				return new Response(JSON.stringify({ status: 'accepted', taskId: 'task-1' }), {
+					status: 201,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			if (/\/tasks\/[^/]+$/.test(url)) {
+				return new Response(JSON.stringify({ status: 'completed', taskId: 'task-1' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				});
+			}
+			throw new Error(`Unexpected fetch ${url}`);
+		}) as typeof fetch;
+
+		const result = await executePreparedWorkerTaskForTest({
+			input: {
+				requestTaskId: 'request-task-1',
+				prompt: 'fix login',
+				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+				context: {},
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+			zoneId: 'shravan',
+		});
+
+		const taskRuntimeRoot = path.join(
+			systemConfig.runtimeDir,
+			'worker-tasks',
+			'shravan',
+			result.taskId,
+		);
+		await expect(fs.stat(taskRuntimeRoot)).resolves.toBeTruthy();
+	});
+
+	it('deletes task runtime gitdirs when a completed repo task has a successful controller push', async () => {
+		const { executeWorkerTask, prepareWorkerTask } = await import('./worker-task-runner.js');
+		const prepared = await prepareWorkerTask({
+			input: {
+				requestTaskId: 'request-task-1',
+				prompt: 'fix login',
+				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+				context: {},
+			},
+			systemConfig,
+			zoneId: 'shravan',
+		});
+		await prepared.recordEvent({
+			event: 'controller-git-push-succeeded',
+			repoUrl: 'https://github.com/org/repo.git',
+			branch: 'agent/task-1',
+			attempts: 1,
+			localHead: 'local-sha',
+			remoteBranchHead: 'local-sha',
+		});
+
+		const result = await executeWorkerTask(prepared, {
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig,
+		});
+
+		const taskRuntimeRoot = path.join(
+			systemConfig.runtimeDir,
+			'worker-tasks',
+			'shravan',
+			result.taskId,
+		);
+		await expect(fs.stat(taskRuntimeRoot)).rejects.toThrow();
+	});
+
 	it('fails immediately when the worker returns an invalid task status payload', async () => {
 		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
 			const url =
