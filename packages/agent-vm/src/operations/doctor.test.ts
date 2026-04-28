@@ -93,6 +93,36 @@ interface RuntimePathOverlapCase {
 	readonly zoneFilesDir?: string;
 }
 
+function createWorkerOnlySystemConfig(): SystemConfig {
+	return {
+		...systemConfig,
+		imageProfiles: {
+			...systemConfig.imageProfiles,
+			gateways: {
+				worker: systemConfig.imageProfiles.gateways.worker,
+			},
+		},
+		zones: [
+			{
+				id: 'worker',
+				gateway: {
+					type: 'worker',
+					imageProfile: 'worker',
+					memory: '2G',
+					cpus: 2,
+					port: 18791,
+					config: './config/worker/worker.json',
+					stateDir: './state/worker',
+				},
+				secrets: {},
+				allowedHosts: ['api.openai.com'],
+				websocketBypass: [],
+				toolProfile: 'standard',
+			},
+		],
+	};
+}
+
 describe('runControllerDoctor', () => {
 	it('reports all checks passing when environment is complete', () => {
 		const result = runControllerDoctor({
@@ -350,6 +380,34 @@ describe('runControllerDoctor', () => {
 				hint: overlappingConfig.expectedHint,
 			});
 		}
+	});
+
+	it('flags worker /work VFS mounts as a performance risk', () => {
+		const result = runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			systemConfig: createWorkerOnlySystemConfig(),
+			workerGatewayVmSpecBuilder: () => ({
+				vfsMounts: {
+					'/work/repos': {
+						hostPath: '/host/work/repos',
+						kind: 'realfs',
+					},
+				},
+			}),
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.checks.find((check) => check.name === 'worker-work-rootfs-worker')).toMatchObject(
+			{
+				ok: false,
+				hint: "Worker zone 'worker' mounts '/work/repos' through VFS; /work must stay on rootfs/COW.",
+			},
+		);
 	});
 
 	it('reports ok for op-cli token source when op binary is available', () => {

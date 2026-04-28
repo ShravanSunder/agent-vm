@@ -1,6 +1,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import type {
+	BuildGatewayVmSpecOptions,
+	GatewayVmSpec,
+	GatewayZoneConfig,
+} from '@agent-vm/gateway-interface';
+import { workerLifecycle } from '@agent-vm/worker-gateway';
+
 import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
 import { isRuntimeSystemConfigPath } from './runtime-config-paths.js';
@@ -22,6 +29,9 @@ export interface RunControllerDoctorOptions {
 	readonly requiredZigVersion?: string;
 	readonly systemConfig: SystemConfig;
 	readonly totalMemoryBytes?: number;
+	readonly workerGatewayVmSpecBuilder?: (
+		options: BuildGatewayVmSpecOptions,
+	) => Pick<GatewayVmSpec, 'vfsMounts'>;
 	readonly zigVersion?: string;
 }
 
@@ -226,6 +236,46 @@ export function buildRuntimePathIsolationCheck(systemConfig: SystemConfig): Doct
 	};
 }
 
+function isWorkerRootfsWorkMountPath(guestPath: string): boolean {
+	return guestPath === '/work' || guestPath.startsWith('/work/');
+}
+
+function buildWorkerWorkRootfsChecks(
+	systemConfig: SystemConfig,
+	buildWorkerVmSpec: (options: BuildGatewayVmSpecOptions) => Pick<GatewayVmSpec, 'vfsMounts'>,
+): readonly DoctorCheck[] {
+	return systemConfig.zones
+		.filter((zone) => zone.gateway.type === 'worker')
+		.map((zone) => {
+			const { toolProfile, ...zoneWithoutToolProfile } = zone;
+			const gatewayZone: GatewayZoneConfig = {
+				...zoneWithoutToolProfile,
+				...(toolProfile === undefined ? {} : { toolProfile }),
+			};
+			const vmSpec = buildWorkerVmSpec({
+				controllerPort: systemConfig.host.controllerPort,
+				gatewayCacheDir: systemConfig.cacheDir,
+				projectNamespace: systemConfig.host.projectNamespace,
+				resolvedSecrets: {},
+				tcpPool: systemConfig.tcpPool,
+				zone: gatewayZone,
+			});
+			const vfsWorkMount = Object.keys(vmSpec.vfsMounts).find(isWorkerRootfsWorkMountPath);
+			if (vfsWorkMount) {
+				return {
+					name: `worker-work-rootfs-${zone.id}`,
+					ok: false,
+					hint: `Worker zone '${zone.id}' mounts '${vfsWorkMount}' through VFS; /work must stay on rootfs/COW.`,
+				} satisfies DoctorCheck;
+			}
+			return {
+				name: `worker-work-rootfs-${zone.id}`,
+				ok: true,
+				hint: '/work stays on rootfs/COW',
+			} satisfies DoctorCheck;
+		});
+}
+
 export async function collectVmHostSystemDoctorCheck(
 	systemConfig: LoadedSystemConfig,
 ): Promise<DoctorCheck | null> {
@@ -307,6 +357,10 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 		options.dockerDaemonReady,
 	);
 	const openClawCliChecks = buildOpenClawCliCheck(options.systemConfig, availableBinaries);
+	const workerWorkRootfsChecks = buildWorkerWorkRootfsChecks(
+		options.systemConfig,
+		options.workerGatewayVmSpecBuilder ?? workerLifecycle.buildVmSpec,
+	);
 	const configuredGatewayBytes = options.systemConfig.zones.reduce((totalBytes, zone) => {
 		const memoryMatch = /^(\d+)([GgMm])$/u.exec(zone.gateway.memory);
 		if (!memoryMatch) {
@@ -403,6 +457,7 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 		...dockerChecks,
 		...openClawCliChecks,
 		buildRuntimePathIsolationCheck(options.systemConfig),
+		...workerWorkRootfsChecks,
 		{
 			name: 'controller-port',
 			ok:
