@@ -6,7 +6,7 @@ import { execa } from 'execa';
 
 import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
-import { collectVmHostSystemDoctorCheck } from './doctor.js';
+import { buildRuntimePathIsolationCheck, collectVmHostSystemDoctorCheck } from './doctor.js';
 import { isRuntimeSystemConfigPath, runtimeConfigRoot } from './runtime-config-paths.js';
 
 export interface ConfigValidationCheck {
@@ -401,6 +401,7 @@ export async function runConfigValidation(
 	const vmHostSystemCheck = await collectVmHostSystemDoctorCheck(systemConfig);
 	const checks = [
 		await collectSystemCacheIdentifierCheck(systemConfig),
+		buildRuntimePathIsolationCheck(systemConfig),
 		...(await collectGatewayImageProfileChecks(systemConfig)),
 		...(await collectToolImageProfileChecks(systemConfig)),
 		...(vmHostSystemCheck ? [vmHostSystemCheck] : []),

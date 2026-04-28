@@ -251,6 +251,28 @@ describe('runConfigValidation', () => {
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
+	it('reports runtimeDir overlap with non-runtime storage paths', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			systemConfig: {
+				...systemConfig,
+				cacheDir: path.join(temporaryDirectoryPath, 'cache'),
+				runtimeDir: path.join(temporaryDirectoryPath, 'cache', 'runtime'),
+			},
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.checks.find((check) => check.name === 'runtime-path-isolation')).toMatchObject({
+			ok: false,
+			hint: 'runtimeDir must not overlap cacheDir',
+		});
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
 	it('reports missing project-local worker prompt files', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);

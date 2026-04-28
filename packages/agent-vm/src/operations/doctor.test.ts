@@ -85,6 +85,14 @@ const allBinaries = new Set([
 	'security',
 ]);
 
+interface RuntimePathOverlapCase {
+	readonly cacheDir?: string;
+	readonly expectedHint: string;
+	readonly runtimeDir?: string;
+	readonly stateDir?: string;
+	readonly zoneFilesDir?: string;
+}
+
 describe('runControllerDoctor', () => {
 	it('reports all checks passing when environment is complete', () => {
 		const result = runControllerDoctor({
@@ -277,6 +285,71 @@ describe('runControllerDoctor', () => {
 		expect(result.checks.find((check) => check.name === '1password-token-source')?.ok).toBe(false);
 		expect(result.checks.find((check) => check.name === 'controller-port')?.ok).toBe(false);
 		expect(result.checks.find((check) => check.name === 'disk-space')?.ok).toBe(false);
+	});
+
+	it('flags runtimeDir overlap with cache, state, and zone files paths', () => {
+		const overlappingConfigs = [
+			{
+				runtimeDir: './cache/runtime',
+				expectedHint: 'runtimeDir must not overlap cacheDir',
+			},
+			{
+				cacheDir: './runtime/cache',
+				expectedHint: 'runtimeDir must not overlap cacheDir',
+			},
+			{
+				runtimeDir: './state/shravan/runtime',
+				expectedHint: "runtimeDir must not overlap stateDir for zone 'shravan'",
+			},
+			{
+				stateDir: './runtime/state/shravan',
+				expectedHint: "runtimeDir must not overlap stateDir for zone 'shravan'",
+			},
+			{
+				runtimeDir: './zone-files/shravan/runtime',
+				expectedHint: "runtimeDir must not overlap zoneFilesDir for zone 'shravan'",
+			},
+			{
+				zoneFilesDir: './runtime/zone-files/shravan',
+				expectedHint: "runtimeDir must not overlap zoneFilesDir for zone 'shravan'",
+			},
+		] satisfies readonly RuntimePathOverlapCase[];
+
+		for (const overlappingConfig of overlappingConfigs) {
+			const firstZone = systemConfig.zones[0];
+			if (firstZone === undefined || firstZone.gateway.type !== 'openclaw') {
+				throw new Error('Test fixture must include an OpenClaw zone.');
+			}
+			const result = runControllerDoctor({
+				availableBinaries: allBinaries,
+				diskFreeBytes: 50 * 1024 * 1024 * 1024,
+				env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+				occupiedPorts: new Set<number>(),
+				nodeVersion: 'v25.9.0',
+				totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+				systemConfig: {
+					...systemConfig,
+					cacheDir: overlappingConfig.cacheDir ?? systemConfig.cacheDir,
+					runtimeDir: overlappingConfig.runtimeDir ?? systemConfig.runtimeDir,
+					zones: [
+						{
+							...firstZone,
+							gateway: {
+								...firstZone.gateway,
+								stateDir: overlappingConfig.stateDir ?? firstZone.gateway.stateDir,
+								zoneFilesDir: overlappingConfig.zoneFilesDir ?? firstZone.gateway.zoneFilesDir,
+							},
+						},
+					],
+				},
+			});
+
+			expect(result.ok).toBe(false);
+			expect(result.checks.find((check) => check.name === 'runtime-path-isolation')).toMatchObject({
+				ok: false,
+				hint: overlappingConfig.expectedHint,
+			});
+		}
 	});
 
 	it('reports ok for op-cli token source when op binary is available', () => {

@@ -181,6 +181,51 @@ function buildOpenClawCliCheck(
 	];
 }
 
+function isSameOrDescendantPath(childPath: string, parentPath: string): boolean {
+	const relativePath = path.relative(path.resolve(parentPath), path.resolve(childPath));
+	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
+
+function pathsOverlap(firstPath: string, secondPath: string): boolean {
+	return (
+		isSameOrDescendantPath(firstPath, secondPath) || isSameOrDescendantPath(secondPath, firstPath)
+	);
+}
+
+export function buildRuntimePathIsolationCheck(systemConfig: SystemConfig): DoctorCheck {
+	if (pathsOverlap(systemConfig.runtimeDir, systemConfig.cacheDir)) {
+		return {
+			name: 'runtime-path-isolation',
+			ok: false,
+			hint: 'runtimeDir must not overlap cacheDir',
+		};
+	}
+	for (const zone of systemConfig.zones) {
+		if (pathsOverlap(systemConfig.runtimeDir, zone.gateway.stateDir)) {
+			return {
+				name: 'runtime-path-isolation',
+				ok: false,
+				hint: `runtimeDir must not overlap stateDir for zone '${zone.id}'`,
+			};
+		}
+		if (
+			zone.gateway.type === 'openclaw' &&
+			pathsOverlap(systemConfig.runtimeDir, zone.gateway.zoneFilesDir)
+		) {
+			return {
+				name: 'runtime-path-isolation',
+				ok: false,
+				hint: `runtimeDir must not overlap zoneFilesDir for zone '${zone.id}'`,
+			};
+		}
+	}
+	return {
+		name: 'runtime-path-isolation',
+		ok: true,
+		hint: systemConfig.runtimeDir,
+	};
+}
+
 export async function collectVmHostSystemDoctorCheck(
 	systemConfig: LoadedSystemConfig,
 ): Promise<DoctorCheck | null> {
@@ -357,6 +402,7 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 		),
 		...dockerChecks,
 		...openClawCliChecks,
+		buildRuntimePathIsolationCheck(options.systemConfig),
 		{
 			name: 'controller-port',
 			ok:
