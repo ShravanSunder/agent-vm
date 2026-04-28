@@ -147,9 +147,10 @@ Allowed runtime auth path:
 2. `system.json` declares `runtimeAuthHints` for service tokens the agent should
    know about.
 3. The controller generates `runtimeInstructions` and the agent-facing
-   `/agent-vm/agents.md` runtime index at task boot. `/workspace/CLAUDE.md` and
-   `/agent-vm/CLAUDE.md` are symlinks to generated agent indexes for
-   Claude-compatible discovery.
+   `/agent-vm/agents.md` runtime index at task boot. Worker repo docs live under
+   `/work/repos/<repoId>/AGENTS.md` with a `CLAUDE.md` symlink for
+   Claude-compatible discovery. Tool VMs still use `/workspace` as their
+   lease-local path.
 4. Gondolin runtime puts a placeholder in the VM env at boot; the proxy swaps it
    for the real token only on outbound calls to allowed hosts.
 

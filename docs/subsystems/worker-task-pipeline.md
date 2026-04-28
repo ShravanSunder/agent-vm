@@ -11,16 +11,24 @@ polling, and teardown. For the in-VM task loop itself, see
 
 ```text
 POST /zones/:zoneId/worker-tasks
-  -> clone repos on host
+  -> create host gitdirs under runtimeDir
+  -> export repo metadata for .agent-vm config/resources
   -> merge zone config + repo-local overrides
   -> resolve resources
   -> start selected repo-local providers
-  -> boot Gondolin VM
+  -> boot Gondolin VM with /state, /gitdirs, and rootfs /work/repos
   -> POST /tasks to agent-vm-worker
   -> poll task state
   -> host-side push / pull-default operations
   -> cleanup resources and VM
 ```
+
+Worker repo files are hot execution data. They live on the VM rootfs/COW under
+`/work/repos/<repoId>` so edits, package installs, builds, and tests avoid the
+Gondolin RealFS path. Git metadata lives under
+`<runtimeDir>/worker-tasks/<zone>/<task>/gitdirs/<repoId>.git`, mounted into the
+VM at `/gitdirs/<repoId>.git`; controller push/fetch operations use that host
+gitdir directly and disable hooks.
 
 ## Repo Resource Routing
 

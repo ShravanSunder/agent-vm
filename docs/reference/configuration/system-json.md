@@ -17,6 +17,8 @@ host
 
 cacheDir
 
+runtimeDir
+
 imageProfiles
   gateways
   toolVms
@@ -68,25 +70,23 @@ instead.
 Do not put active worker gitdirs here; unpushed commits are not rebuildable
 cache.
 
-## planned runtimeDir
+## runtimeDir
 
-`runtimeDir` is the planned storage-model target for active, non-backup runtime
-artifacts that are not durable zone state and not repairable cache. It should
-prefer local disk because these paths can be hot during task execution.
+`runtimeDir` stores active, non-backup runtime artifacts that are not durable
+zone state and not repairable cache. It should prefer local disk because these
+paths can be hot during task execution.
 
-Current released schemas may not include this field yet. Until the runtimeDir
-implementation lands, worker gitdir placement must be checked against the
-implementation and not inferred from this target model.
-
-The primary planned use is worker Git metadata:
+The primary use is worker Git metadata:
 
 ```text
 <runtimeDir>/worker-tasks/<zoneId>/<taskId>/gitdirs/<repoId>.git
 ```
 
-Normal `backup create` must not copy `runtimeDir`. If a worker task has
-unpushed commits or dirty work, the controller must preserve it through an
-explicit push, export, retain, or discard decision.
+Normal `backup create` does not copy `runtimeDir`, and validation fails when
+`runtimeDir` overlaps `cacheDir`, any zone `stateDir`, or any OpenClaw
+`zoneFilesDir`. If a worker task has unpushed commits or dirty work, the
+controller must preserve it through an explicit push, export, retain, or
+discard decision before cleanup.
 
 ## zoneFilesDir
 
@@ -94,9 +94,9 @@ explicit push, export, retain, or discard decision.
 RealFS-mounted into the OpenClaw gateway VM at `/home/openclaw/zone-files` and
 is included in OpenClaw zone backups.
 
-Worker gateways do not use `zoneFilesDir` in the target schema. Their repo files
-live in VM-local `/work/repos/<repoId>`, and their Git metadata lives under
-system-level `runtimeDir`.
+Worker gateways do not use `zoneFilesDir`. Their repo files live in VM-local
+`/work/repos/<repoId>`, and their Git metadata lives under system-level
+`runtimeDir`.
 
 Do not call this `workspaceDir`. Worker execution files live under VM-local
 `/work/repos/<repoId>` and are not backed by this host path.

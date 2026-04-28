@@ -675,8 +675,8 @@ RUN apt-get update && \\
     mv /root/.local/bin/uv /usr/local/bin/uv && \\
     mv /root/.local/bin/uvx /usr/local/bin/uvx && \\
     useradd -m -s /bin/bash coder && \\
-    mkdir -p /workspace /run/sshd /state && \\
-    chown -R coder:coder /workspace /state && \\
+    mkdir -p /work/repos /work/tmp /work/cache /run/sshd /state && \\
+    chown -R coder:coder /work /state && \\
     (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
 `;
 
@@ -698,8 +698,8 @@ RUN apt-get update && \\
     mv /root/.local/bin/uv /usr/local/bin/uv && \\
     mv /root/.local/bin/uvx /usr/local/bin/uvx && \\
     useradd -m -s /bin/bash coder && \\
-    mkdir -p /workspace /run/sshd /state && \\
-    chown -R coder:coder /workspace /state && \\
+    mkdir -p /work/repos /work/tmp /work/cache /run/sshd /state && \\
+    chown -R coder:coder /work /state && \\
     (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
 
 # Install GitHub CLI. The agent uses gh for PR creation; GitHub

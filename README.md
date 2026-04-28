@@ -24,22 +24,24 @@ request / API / CI
 controller host process
   - reads system.json
   - resolves secrets
-  - clones repos
+  - creates host gitdirs in runtimeDir
   - builds/caches VM images
   - pushes branches
       |
       v
 Gondolin VM
   - runs agent-vm-worker
-  - mounts /workspace and /state only
+  - mounts /state and task /gitdirs
+  - keeps repo files on rootfs/COW at /work/repos
   - runs agent-generated commands safely
 ```
 
-The controller clones git repositories on the host side, then realfs-mounts
-them into the VM at `/workspace`. The VM can edit the mounted checkout, but git
-push still happens through the host-side controller. PR creation happens from
-the worker via `gh pr create` after `git-push` succeeds, with GitHub HTTP
-traffic mediated by the controller proxy.
+The controller creates host-visible Git metadata under `runtimeDir`, mounts it
+into the VM at `/gitdirs`, and the worker materializes hot repo files on
+rootfs/COW under `/work/repos/<repoId>`. Git push/fetch still happens through
+the host-side controller using `--git-dir` and host credentials. PR creation
+happens from the worker via `gh pr create` after `git-push` succeeds, with
+GitHub HTTP traffic mediated by the controller proxy.
 
 ## Init Presets
 
