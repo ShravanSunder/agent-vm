@@ -545,10 +545,9 @@ export async function postStopGateway(
 	const runtimeDir =
 		options.runtimeDir ?? path.join(path.dirname(zoneConfig.gateway.stateDir), 'runtime');
 	const taskRuntimeRoot = path.join(runtimeDir, 'worker-tasks', zoneConfig.id, taskId);
-	const workDir = path.join(taskRuntimeRoot, 'work');
 	const resourcesDir = path.join(taskRoot, 'agent-vm', 'resources');
 	let cleanupError: Error | null = null;
-	let workRemovalError: Error | null = null;
+	let runtimeRemovalError: Error | null = null;
 	let resourcesRemovalError: Error | null = null;
 	try {
 		await stopRepoResourceProviders(startedProviders);
@@ -561,12 +560,11 @@ export async function postStopGateway(
 		resourcesRemovalError = error instanceof Error ? error : new Error(String(error));
 	}
 	try {
-		await fs.rm(workDir, { recursive: true, force: true });
 		await fs.rm(taskRuntimeRoot, { recursive: true, force: true });
 	} catch (error) {
-		workRemovalError = error instanceof Error ? error : new Error(String(error));
+		runtimeRemovalError = error instanceof Error ? error : new Error(String(error));
 	}
-	const errors = [cleanupError, resourcesRemovalError, workRemovalError].filter(
+	const errors = [cleanupError, resourcesRemovalError, runtimeRemovalError].filter(
 		(error): error is Error => error !== null,
 	);
 	if (errors.length > 1) {

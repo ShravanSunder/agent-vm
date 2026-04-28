@@ -1381,7 +1381,7 @@ describe('worker-task-runner', () => {
 		expect(stopRepoResourceProvidersMock).toHaveBeenCalled();
 	});
 
-	it('aggregates provider, resource-directory, and work cleanup failures after shutdown', async () => {
+	it('aggregates provider, resource-directory, and runtime cleanup failures after shutdown', async () => {
 		const { postStopGateway } = await import('./worker-task-runner.js');
 		const zone = systemConfig.zones[0];
 		if (!zone) {
@@ -1402,8 +1402,8 @@ describe('worker-task-runner', () => {
 			if (normalizedTarget.endsWith('/agent-vm/resources')) {
 				throw new Error('resource removal failed');
 			}
-			if (normalizedTarget.endsWith('/work')) {
-				throw new Error('work removal failed');
+			if (normalizedTarget.endsWith('/runtime/worker-tasks/shravan/task-cleanup-failures')) {
+				throw new Error('runtime removal failed');
 			}
 		});
 		const startedProvider = {
@@ -1427,7 +1427,7 @@ describe('worker-task-runner', () => {
 		expect(aggregateError.errors).toEqual([
 			expect.objectContaining({ message: 'compose cleanup failed' }),
 			expect.objectContaining({ message: 'resource removal failed' }),
-			expect.objectContaining({ message: 'work removal failed' }),
+			expect.objectContaining({ message: 'runtime removal failed' }),
 		]);
 	});
 
