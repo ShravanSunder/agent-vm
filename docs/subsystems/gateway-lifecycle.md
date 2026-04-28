@@ -213,8 +213,8 @@ environment:
   AGENT_VM_ZONE_ID      = <zone.id>
   STATE_DIR             = /state
   WORKER_CONFIG_PATH    = /state/effective-worker.json
-  WORK_ROOT             = /work
-  REPO_ROOT             = /work/repos
+  WORK_DIR              = /work
+  REPOS_DIR             = /work/repos
   TMPDIR                = /work/tmp
   TMP                   = /work/tmp
   TEMP                  = /work/tmp

@@ -94,6 +94,10 @@ explicit push, export, retain, or discard decision.
 RealFS-mounted into the OpenClaw gateway VM at `/home/openclaw/zone-files` and
 is included in OpenClaw zone backups.
 
+Worker gateways do not use `zoneFilesDir` in the target schema. Their repo files
+live in VM-local `/work/repos/<repoId>`, and their Git metadata lives under
+system-level `runtimeDir`.
+
 Do not call this `workspaceDir`. Worker execution files live under VM-local
 `/work/repos/<repoId>` and are not backed by this host path.
 
@@ -135,8 +139,7 @@ Each zone selects one gateway image profile and one gateway behavior config:
     "port": 18791,
     "config": "./gateways/coding-agent/worker.json",
     "imageProfile": "worker",
-    "stateDir": "../state/coding-agent",
-    "zoneFilesDir": "../zone-files/coding-agent"
+    "stateDir": "../state/coding-agent"
   },
   "resources": {
     "allowRepoResources": false
@@ -163,6 +166,26 @@ Each zone selects one gateway image profile and one gateway behavior config:
 ```
 
 Worker zones do not require `toolProfile`. OpenClaw zones do.
+
+OpenClaw zones add `zoneFilesDir` because they own long-lived household/user
+files:
+
+```json
+{
+  "id": "shravan",
+  "gateway": {
+    "type": "openclaw",
+    "memory": "4G",
+    "cpus": 4,
+    "port": 18791,
+    "config": "./gateways/shravan/openclaw.json",
+    "imageProfile": "openclaw",
+    "stateDir": "../state/shravan",
+    "zoneFilesDir": "../zone-files/shravan"
+  },
+  "toolProfile": "default"
+}
+```
 
 ## zones[].resources
 

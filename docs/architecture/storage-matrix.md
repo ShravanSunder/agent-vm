@@ -188,9 +188,14 @@ Before cleanup, the controller must make unresolved Git state explicit:
 ```text
 clean and pushed        -> delete gitdir
 unpushed commits        -> push, export recovery artifact, or discard
-dirty repo files       -> commit/push, export patch/artifact, or discard
+dirty repo files        -> worker must commit before terminal completed state
 failed task             -> retain until operator recovery decision
 ```
+
+After the worker VM closes, rootfs/COW `/work/repos` files are gone. The
+controller can inspect RealFS gitdirs, refs, and commits, but it cannot recover
+dirty uncommitted rootfs files unless a future pre-close snapshot/export path is
+added.
 
 ## Tool VM
 

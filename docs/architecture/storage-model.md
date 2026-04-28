@@ -11,6 +11,38 @@ the Gondolin VFS boundary.
 For the concrete OpenClaw and Worker gateway path matrix, see
 [Storage Matrix](storage-matrix.md).
 
+## Config-Level Path Map
+
+These fields live at different config levels and have different lifecycle
+semantics. Keeping those boundaries explicit prevents `runtimeDir`,
+`zoneFilesDir`, and `cacheDir` from drifting into each other's jobs.
+
+```text
+field             scope                 durable?          backup?   contains
+──────────────    ──────────────────    ──────────────    ───────   ─────────────────────────────
+
+cacheDir          system                yes               no        rebuildable image/plugin/tool
+                                                                       cache
+
+runtimeDir        system                task-lifetime     no        active worker artifacts:
+                                                                       gitdirs, repo metadata,
+                                                                       recovery exports
+
+stateDir          per-zone              yes               yes       identity, auth profiles,
+                                                                       effective config,
+                                                                       runtime records
+
+zoneFilesDir      OpenClaw per-zone     yes               yes       long-lived user/agent files
+                                                                       mounted at
+                                                                       /home/openclaw/zone-files
+
+backupDir         per-zone output       artifact          no        encrypted backup archives
+```
+
+Worker zones do not have `zoneFilesDir` in the target schema. Worker repo files
+live inside the VM under `/work/repos/<repoId>`, while worker gitdirs live under
+`runtimeDir`.
+
 ## Storage Classes
 
 ```text
@@ -32,6 +64,10 @@ durable state
   VM: /home/openclaw/.openclaw/state or /state
   Backup: yes
   Rule: difficult or annoying to recreate; identity, auth profiles, runtime records
+
+  Note: `gateway-runtime.json` is a durable recovery record under `stateDir`.
+  It is not part of `runtimeDir`; the shared word "runtime" does not imply the
+  same lifecycle.
 
 rebuildable cache
   Owner: controller/runtime tooling
@@ -184,13 +220,16 @@ environment-portable interpretation guide, see
 
 ## Backup Contract
 
-Zone backups archive:
+OpenClaw zone backups archive:
 
 ```text
 state/
 zone files/     # config field: gateway.zoneFilesDir
 manifest.json
 ```
+
+Worker zone backups archive `stateDir` only. Worker zones do not have
+`zoneFilesDir` in the target schema.
 
 Zone backups do not archive `cacheDir` or `runtimeDir`. If a cache is missing
 after restore, doctor/repair flows should rebuild it rather than restoring stale

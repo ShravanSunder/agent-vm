@@ -56,10 +56,22 @@ important property for this plan is that normal `backup create` does not copy
 it. Unpushed work must be preserved through an explicit recovery/export path,
 not through silent zone backup bloat.
 
+The worker owns the cleanliness contract before it returns a terminal state.
+Rootfs repo files disappear when the VM closes, so uncommitted dirty files are
+not recoverable after `vm.close()`. Completed tasks must commit their changes
+before returning `completed`; the controller then pushes committed Git state
+from the RealFS gitdir. After close, the controller can inspect refs, commits,
+and unpushed branches in `/gitdirs` only.
+
+If a task fails, closes, or times out before committing, dirty rootfs files are
+not part of the v1 recovery contract. A future recovery feature may request a
+pre-close patch or file snapshot while the VM is still alive, but normal cleanup
+must not pretend it can recover dirty `/work/repos` files after close.
+
 The controller owns the gitdir lifecycle. After a task pushes successfully, the
-controller cleans up the gitdir. If the task has unpushed commits, dirty files,
-or a failed terminal state, cleanup must stop at an explicit push/export/discard
-decision. This is a task lifecycle guardrail, not a backup responsibility.
+controller cleans up the gitdir. If the task has unpushed commits or a failed
+terminal state, cleanup must stop at an explicit push/export/discard decision.
+This is a task lifecycle guardrail, not a backup responsibility.
 
 Every host-side Git invocation against a worker gitdir must use explicit
 `--git-dir=<host gitdir>` and must disable hooks with
@@ -120,15 +132,22 @@ are reconciled.
 
   Owns task preparation. Change repo clone/setup to create a separate gitdir under the non-backup task runtime root and arrange rootfs repo files inside the worker VM.
 
+`packages/agent-vm/src/controller/git-push-operations.ts`
+
+  Owns host-side push/fetch operations. Update every Git invocation to use the
+  host gitdir path explicitly and disable hooks with `-c core.hooksPath=/dev/null`.
+
 `packages/agent-vm/src/controller/worker-task-runner.test.ts`
 
   Verifies task prep creates gitdir metadata, exposes gitdirs to the VM, and gives the worker enough information to check out repos into rootfs.
 
 `packages/agent-vm/src/config/system-config.ts`
 
-  Adds host-level `runtimeDir` as a resolved path next to `cacheDir` and zone
-  path fields. This directory stores active non-backup runtime artifacts such as
-  worker gitdirs.
+  Adds host-level `runtimeDir` as a resolved path next to `cacheDir`, and turns
+  `zoneGatewaySchema` into a discriminated union by `gateway.type`. OpenClaw
+  gateway config requires `zoneFilesDir`; worker gateway config does not have a
+  zone-files field. `runtimeDir` stores active non-backup runtime artifacts such
+  as worker gitdirs.
 
 `packages/agent-vm/src/config/system-config.test.ts`
 
@@ -140,7 +159,8 @@ are reconciled.
   Scaffolds `runtimeDir` for every path profile and keeps the OpenClaw
   zone-files directory visibly separate from worker `/work` paths. The user-dir
   profile should default to `~/.agent-vm/runtime` for runtime artifacts and
-  `~/.agent-vm/zone-files/<zone>` for `gateway.zoneFilesDir`.
+  `~/.agent-vm/zone-files/<zone>` for OpenClaw `gateway.zoneFilesDir`. Worker
+  scaffolds must not write `gateway.zoneFilesDir`.
 
 `packages/agent-vm/src/cli/commands/init-definition.ts`
 
@@ -156,7 +176,8 @@ are reconciled.
 `packages/agent-vm/src/cli/init-command.test.ts`
 
   Verifies init writes and creates the configured `runtimeDir`, writes
-  `zoneFilesDir` instead of `workspaceDir`, creates the zone-files path in the
+  `zoneFilesDir` instead of `workspaceDir` for OpenClaw zones, omits
+  `zoneFilesDir` for worker zones, creates the OpenClaw zone-files path in the
   RealFS path profile, and exposes the expected visible defaults through command
   metadata.
 
@@ -184,6 +205,46 @@ are reconciled.
 
   Documents `runtimeDir` as local, non-backup runtime storage. It is a sibling
   of `cacheDir`, not a child of it.
+
+`docs/architecture/agent-worker-gateway.md`
+
+  Updates the worker diagrams and lifecycle text from `/workspace` to
+  `/work/repos`, and explains that worker repo files are VM-local rootfs/COW.
+
+`docs/architecture/openclaw-gateway.md`
+
+  Renames the OpenClaw durable files concept from `workspaceDir` to
+  `zoneFilesDir` and keeps OpenClaw zone files distinct from worker work dirs.
+
+`docs/architecture/storage-matrix.md`
+
+  Keeps the concrete OpenClaw, Worker, and Tool VM path matrix aligned with the
+  storage model and backup contract.
+
+`docs/architecture/overview.md`
+
+  Updates top-level diagrams and package responsibility tables for `runtimeDir`,
+  `zoneFilesDir`, and worker `/work/repos`.
+
+`docs/subsystems/gateway-lifecycle.md`
+
+  Updates the GatewayLifecycle comparison table and VM spec sections so worker
+  VFS mounts are `state + task gitdirs`, with `/work/repos` on rootfs/COW.
+
+`docs/subsystems/controller.md`
+
+  Updates the worker task runner phase description for bare gitdirs, `/work/repos`,
+  `runtimeDir`, and controller-side Git push/fetch.
+
+`docs/getting-started/openclaw-guide.md`
+
+  Updates the OpenClaw `system.json` example from `workspaceDir` to
+  `zoneFilesDir`.
+
+`docs/getting-started/worker-guide.md`
+
+  Removes `workspaceDir` from worker examples and describes `/state` plus task
+  `/gitdirs` instead of a `/workspace` mount.
 
 `docs/reference/gondolin/vfs-rootfs-performance.md`
 
@@ -537,6 +598,7 @@ Co-authored-by: Codex <noreply@openai.com>"
 **Files:**
 - Modify: `packages/agent-vm/src/controller/worker-task-runner.ts`
 - Test: `packages/agent-vm/src/controller/worker-task-runner.test.ts`
+- Modify: `packages/agent-vm/src/controller/git-push-operations.ts`
 - Modify: `packages/agent-vm/src/backup/backup-create-operation.ts`
 - Test: `packages/agent-vm/src/backup/backup-create-operation.test.ts`
 - Modify: `packages/agent-vm/src/config/system-config.ts`
@@ -553,6 +615,14 @@ Co-authored-by: Codex <noreply@openai.com>"
 - Modify: `packages/worker-gateway/src/worker-lifecycle.ts`
 - Test: `packages/worker-gateway/src/worker-lifecycle.test.ts`
 - Modify: `docs/reference/configuration/system-json.md`
+- Modify: `docs/architecture/agent-worker-gateway.md`
+- Modify: `docs/architecture/openclaw-gateway.md`
+- Modify: `docs/architecture/storage-matrix.md`
+- Modify: `docs/architecture/overview.md`
+- Modify: `docs/subsystems/gateway-lifecycle.md`
+- Modify: `docs/subsystems/controller.md`
+- Modify: `docs/getting-started/openclaw-guide.md`
+- Modify: `docs/getting-started/worker-guide.md`
 
 - [ ] **Step 1: Add host `runtimeDir` to system config and init**
 
@@ -568,15 +638,25 @@ where active worker runtime artifacts live; it is never normal backup scope and
 it is not repairable cache.
 
 In `packages/agent-vm/src/config/system-config.ts`, remove
-`gateway.workspaceDir` from `zoneGatewaySchema` and add
-`gateway.zoneFilesDir`:
+`gateway.workspaceDir` and split gateway config into a discriminated union by
+`gateway.type`. OpenClaw gateways require `zoneFilesDir`; worker gateways do
+not have a zone-files field.
+
+OpenClaw gateway schema:
 
 ```ts
 zoneFilesDir: z.string().min(1),
 ```
 
+Worker gateway schema:
+
+```ts
+// no zoneFilesDir
+```
+
 This is a hard cutover. Do not support both names, do not add an alias, and do
-not silently map `workspaceDir` to `zoneFilesDir`.
+not silently map `workspaceDir` to `zoneFilesDir`. Worker zones should not carry
+a vestigial `zoneFilesDir` just for config-shape compatibility.
 
 In `packages/agent-vm/src/cli/init-command.ts`, add `runtimeDir` and rename the
 path profile helper from `gatewayWorkspaceDir` to `gatewayZoneFilesDir`:
@@ -595,9 +675,10 @@ user-dir:
   gatewayZoneFilesDir: '~/.agent-vm/zone-files/<zone>'
 ```
 
-The init command must write `runtimeDir` and `gateway.zoneFilesDir` to
-`system.json` and create both directories during scaffold, using the same
-absolute-at-scaffold rule as the other user-dir paths. Update
+The init command must write `runtimeDir` to `system.json`. For OpenClaw zones it
+must also write `gateway.zoneFilesDir` and create the zone-files directory
+during scaffold, using the same absolute-at-scaffold rule as the other user-dir
+paths. For worker zones it must not write `gateway.zoneFilesDir`. Update
 `docs/reference/configuration/system-json.md` with the same definition.
 
 Do not default `runtimeDir` under `cacheDir`; cache may be network-backed in
@@ -661,23 +742,33 @@ In `packages/agent-vm/src/backup/backup-create-operation.ts`, add a structural
 guard before staging backup contents:
 
 ```ts
-assertNotDescendant(systemConfig.runtimeDir, zone.gateway.stateDir);
-assertNotDescendant(systemConfig.runtimeDir, zone.gateway.zoneFilesDir);
+assertNoPathOverlap(systemConfig.runtimeDir, zone.gateway.stateDir);
+assertNoPathOverlap(systemConfig.runtimeDir, systemConfig.cacheDir);
+
+if (zone.gateway.type === 'openclaw') {
+	assertNoPathOverlap(systemConfig.runtimeDir, zone.gateway.zoneFilesDir);
+}
 ```
 
 Thread the resolved `runtimeDir` from `runBackupCommand` through
 `ZoneBackupManager.createBackup()` into `createEncryptedBackup()`. The exact
 helper can compare resolved real/absolute paths, but the invariant is
 non-negotiable: normal backup must fail loudly if worker runtime gitdirs could
-be descendants of `stateDir` or the backup-copied OpenClaw `zoneFilesDir`.
+overlap with `stateDir`, `cacheDir`, or the backup-copied OpenClaw
+`zoneFilesDir`. The guard must be symmetric: `runtimeDir` under `stateDir` is
+bad, and `stateDir` under `runtimeDir` is also bad.
 
 Add tests in `packages/agent-vm/src/backup/backup-create-operation.test.ts`
 covering:
 
 ```text
-runtimeDir under stateDir      -> backup fails before tar staging
-runtimeDir under zoneFilesDir  -> backup fails before tar staging
-runtimeDir sibling path        -> backup proceeds
+runtimeDir under stateDir       -> backup fails before tar staging
+stateDir under runtimeDir       -> backup fails before tar staging
+runtimeDir under cacheDir       -> backup fails before tar staging
+cacheDir under runtimeDir       -> backup fails before tar staging
+runtimeDir under zoneFilesDir   -> OpenClaw backup fails before tar staging
+zoneFilesDir under runtimeDir   -> OpenClaw backup fails before tar staging
+runtimeDir sibling path         -> backup proceeds
 ```
 
 - [ ] **Step 4: Extend worker config schema with repo work metadata**
@@ -875,7 +966,9 @@ const repoMetadataRoot = path.join(taskRuntimeRoot, 'repo-metadata');
 
 `taskStateRoot` is packable/backed up. `taskRuntimeRoot` is not copied by normal
 zone backups. Do not create `gitdirs` under `taskStateRoot` or
-`zone.gateway.zoneFilesDir`.
+any backup-copied zone files directory. Worker zones do not have
+`zoneFilesDir`; OpenClaw zone files are irrelevant to worker repo placement
+except as a path-overlap guard.
 
 Clone as a bare gitdir. Do not create a temporary full host checkout just to
 delete it again:
@@ -961,22 +1054,34 @@ await execa(
 ```
 
 Update `ActiveWorkerTaskRepo` and all controller-side push/fetch/default-branch
-operations so host Git commands use the host gitdir path directly. Do not rely
-on `.git` auto-discovery from a host repo files.
+operations so host Git commands use the host gitdir path directly. Include
+`packages/agent-vm/src/controller/git-push-operations.ts` in this audit. Every
+host-side Git invocation in that file must use `--git-dir=<host gitdir>` and
+`-c core.hooksPath=/dev/null`. Do not rely on `.git` auto-discovery from host
+repo files.
 
 Also update task cleanup so gitdir removal happens only after the controller has
-checked for dirty files and unpushed commits. The cleanup path must report a
-clear recovery decision when work is not safely pushed:
+checked committed Git state. Rootfs repo files disappear at `vm.close()`, so
+post-close cleanup cannot inspect or recover dirty uncommitted files. The worker
+must commit changes before returning `completed`; the controller then pushes or
+retains committed refs from the gitdir. The cleanup path must report a clear
+recovery decision when committed work is not safely pushed:
 
 ```ts
 type TaskCleanupDecision =
 	| { readonly kind: 'delete'; readonly reason: 'clean-and-pushed' }
 	| {
 			readonly kind: 'retain';
-			readonly reason: 'failed-task' | 'dirty-repo-files' | 'unpushed-commits';
+			readonly reason: 'failed-task' | 'unpushed-commits';
 	  }
 	| { readonly kind: 'export'; readonly artifactPath: string };
 ```
+
+If a task fails, closes, or times out before committing, v1 recovery is limited
+to Git state that already reached `/gitdirs`. A future pre-close recovery
+feature may ask the worker for a patch/file snapshot before VM close, but this
+implementation must not promise recovery of dirty `/work/repos` files after
+close.
 
 - [ ] **Step 11: Pass repo work metadata to worker config**
 
@@ -1036,6 +1141,8 @@ starts:
 ```bash
 mkdir -p /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv
 cat >/etc/profile.d/agent-vm-workdir.sh <<'EOF'
+export WORK_DIR=/work
+export REPOS_DIR=/work/repos
 export TMPDIR=/work/tmp
 export TMP=/work/tmp
 export TEMP=/work/tmp
@@ -1048,6 +1155,10 @@ EOF
 
 Also set these values in the worker process environment so subprocesses launched
 by `agent-vm-worker` inherit them even when they do not run an interactive shell.
+Remove the old `WORKSPACE_DIR=/workspace` environment variable from the worker
+lifecycle. If an internal executor still needs a compatibility value during the
+implementation, point it deliberately at `/work/repos` and rename the executor
+contract in the same task; do not keep `/workspace` as the public worker path.
 
 - [ ] **Step 15: Call repo bootstrap from coordinator startup**
 
@@ -1073,11 +1184,38 @@ pnpm vitest run packages/agent-vm/src/config/system-config.test.ts packages/agen
 
 Expected: PASS.
 
-- [ ] **Step 17: Commit**
+- [ ] **Step 17: Commit in reviewable seams**
+
+Split this task into small commits instead of one giant changeset:
 
 ```bash
-git add packages/agent-vm/src/config/system-config.ts packages/agent-vm/src/config/system-config.test.ts packages/agent-vm/src/cli/init-command.ts packages/agent-vm/src/cli/init-command.test.ts packages/agent-vm/src/backup/backup-create-operation.ts packages/agent-vm/src/backup/backup-create-operation.test.ts packages/agent-vm-worker/src/config/worker-config.ts packages/agent-vm-worker/src/config/worker-config.test.ts packages/agent-vm-worker/src/work/repo-bootstrap.ts packages/agent-vm-worker/src/work/repo-bootstrap.test.ts packages/agent-vm-worker/src/coordinator/coordinator.ts packages/worker-gateway/src/worker-lifecycle.ts packages/worker-gateway/src/worker-lifecycle.test.ts packages/agent-vm/src/controller/worker-task-runner.ts packages/agent-vm/src/controller/worker-task-runner.test.ts docs/reference/configuration/system-json.md
-git commit -m "feat: use rootfs worker work dir with RealFS gitdirs
+git add packages/agent-vm/src/config/system-config.ts packages/agent-vm/src/config/system-config.test.ts packages/agent-vm/src/cli/init-command.ts packages/agent-vm/src/cli/init-command.test.ts packages/agent-vm/src/cli/commands/init-definition.ts packages/agent-vm/src/cli/commands/paths-definition.ts docs/reference/configuration/system-json.md
+git commit -m "feat: add runtimeDir and zoneFilesDir config
+
+Co-authored-by: Codex <noreply@openai.com>"
+
+git add packages/agent-vm/src/backup/backup-create-operation.ts packages/agent-vm/src/backup/backup-create-operation.test.ts
+git commit -m "feat: guard backup path overlap
+
+Co-authored-by: Codex <noreply@openai.com>"
+
+git add packages/agent-vm-worker/src/config/worker-config.ts packages/agent-vm-worker/src/config/worker-config.test.ts packages/agent-vm-worker/src/work/repo-bootstrap.ts packages/agent-vm-worker/src/work/repo-bootstrap.test.ts
+git commit -m "feat: bootstrap worker repos under work dir
+
+Co-authored-by: Codex <noreply@openai.com>"
+
+git add packages/agent-vm/src/controller/worker-task-runner.ts packages/agent-vm/src/controller/worker-task-runner.test.ts packages/agent-vm/src/controller/git-push-operations.ts
+git commit -m "feat: use RealFS gitdirs for worker tasks
+
+Co-authored-by: Codex <noreply@openai.com>"
+
+git add packages/worker-gateway/src/worker-lifecycle.ts packages/worker-gateway/src/worker-lifecycle.test.ts packages/agent-vm-worker/src/coordinator/coordinator.ts
+git commit -m "feat: wire worker work dirs into lifecycle
+
+Co-authored-by: Codex <noreply@openai.com>"
+
+git add docs/architecture/agent-worker-gateway.md docs/architecture/openclaw-gateway.md docs/architecture/storage-matrix.md docs/architecture/overview.md docs/subsystems/gateway-lifecycle.md docs/subsystems/controller.md docs/getting-started/openclaw-guide.md docs/getting-started/worker-guide.md
+git commit -m "docs: align storage architecture paths
 
 Co-authored-by: Codex <noreply@openai.com>"
 ```
@@ -1147,12 +1285,36 @@ it('reports worker work area RealFS mounts as a performance risk', async () => {
 });
 ```
 
+Add a second test asserting doctor reports an error when worker runtime paths
+would put gitdirs inside backup-copied storage:
+
+```ts
+it('reports runtimeDir under stateDir as a backup safety error', async () => {
+	const report = await runDoctor(
+		createSystemConfigWithWorkerZone({
+			runtimeDir: '/host/state/worker/runtime',
+			stateDir: '/host/state/worker',
+		}),
+	);
+
+	expect(report.findings).toContainEqual(
+		expect.objectContaining({
+			severity: 'error',
+			title: 'Worker runtimeDir overlaps backup-copied state',
+			hint: 'Move runtimeDir outside stateDir, cacheDir, and OpenClaw zoneFilesDir.',
+		}),
+	);
+});
+```
+
 - [ ] **Step 4: Implement worker storage policy finding**
 
 In `packages/agent-vm/src/operations/doctor.ts`, inspect the effective worker
 gateway VM spec and task override policy. Warn if `/work/repos` appears in
-`vfsMounts`, or if any worker task gitdir path is configured under `stateDir` or
-under the zone's normal backup-copied zone files directory.
+`vfsMounts`, or if any worker task gitdir path is configured under `stateDir`,
+`cacheDir`, or an OpenClaw zone's normal backup-copied `zoneFilesDir`. Mirror the
+backup assertions: runtime storage must not overlap backup-copied state or
+networkable cache in either direction.
 
 - [ ] **Step 5: Run targeted doctor tests**
 
@@ -1338,7 +1500,14 @@ Spec coverage:
 - Worker rootfs `/work/repos` plus RealFS gitdir is covered by Task 3.
 - Empirical VFS/rootfs benchmarking is covered by Task 1 and Task 5.
 - Doctor/build guardrails are covered by Task 4.
-- Documentation is covered by Task 1 and Task 5.
+- Documentation is covered by Task 1, Task 3's architecture/subsystem doc pass,
+  and Task 5.
+- The post-close dirty rootfs limitation is covered in Storage Model Decisions,
+  Task 3 cleanup semantics, and `docs/architecture/storage-matrix.md`.
+- Per-task `/state` isolation remains out of scope for this plan: worker tasks
+  currently see zone-level task state under `/state/tasks/`. A future plan should
+  mount per-task state at `/state` if task-to-task state isolation becomes a
+  hard security requirement.
 
 Placeholder scan:
 

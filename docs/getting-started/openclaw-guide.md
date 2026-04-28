@@ -29,7 +29,7 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
       "port": 18791,
       "config": "./my-openclaw/openclaw.json",
       "stateDir": "../state/my-openclaw",
-      "workspaceDir": "../workspaces/my-openclaw",
+      "zoneFilesDir": "../zone-files/my-openclaw",
       "authProfilesRef": {
         "source": "1password",
         "ref": "op://agent-vm/auth-profiles/credential"
