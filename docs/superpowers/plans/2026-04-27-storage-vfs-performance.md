@@ -132,10 +132,32 @@ are reconciled.
 
   Owns task preparation. Change repo clone/setup to create a separate gitdir under the non-backup task runtime root and arrange rootfs repo files inside the worker VM.
 
+`packages/agent-vm/src/controller/active-task-registry.ts`
+
+  Stores active task repo metadata. Replace host worktree discovery fields with
+  a host-absolute gitdir path so push/fetch never depends on a VM-only `.git`
+  pointer.
+
 `packages/agent-vm/src/controller/git-push-operations.ts`
 
   Owns host-side push/fetch operations. Update every Git invocation to use the
   host gitdir path explicitly and disable hooks with `-c core.hooksPath=/dev/null`.
+
+`packages/agent-vm/src/controller/git-push-operations.test.ts`
+
+  Verifies every host-side Git call during `pushBranchesForTask` uses
+  `--git-dir=<host gitdir>` and `-c core.hooksPath=/dev/null`.
+
+`packages/agent-vm/src/controller/git-pull-default-operations.ts`
+
+  Owns controller-side default-branch fetch/merge-base/status operations. Update
+  every Git invocation to use the host gitdir path explicitly and disable hooks
+  with `-c core.hooksPath=/dev/null`.
+
+`packages/agent-vm/src/controller/git-pull-default-operations.test.ts`
+
+  Verifies every host-side Git call during `pullDefaultForTask` uses
+  `--git-dir=<host gitdir>` and `-c core.hooksPath=/dev/null`.
 
 `packages/agent-vm/src/controller/worker-task-runner.test.ts`
 
@@ -598,7 +620,11 @@ Co-authored-by: Codex <noreply@openai.com>"
 **Files:**
 - Modify: `packages/agent-vm/src/controller/worker-task-runner.ts`
 - Test: `packages/agent-vm/src/controller/worker-task-runner.test.ts`
+- Modify: `packages/agent-vm/src/controller/active-task-registry.ts`
 - Modify: `packages/agent-vm/src/controller/git-push-operations.ts`
+- Test: `packages/agent-vm/src/controller/git-push-operations.test.ts`
+- Modify: `packages/agent-vm/src/controller/git-pull-default-operations.ts`
+- Test: `packages/agent-vm/src/controller/git-pull-default-operations.test.ts`
 - Modify: `packages/agent-vm/src/backup/backup-create-operation.ts`
 - Test: `packages/agent-vm/src/backup/backup-create-operation.test.ts`
 - Modify: `packages/agent-vm/src/config/system-config.ts`
@@ -1035,6 +1061,25 @@ empty repo config. Repo config and repo resource contracts are read from
 Do not write VM `.git` pointers on the host. The worker-side bootstrap writes
 the VM `.git` file in the rootfs repo files.
 
+Update `ActiveWorkerTaskRepo` in
+`packages/agent-vm/src/controller/active-task-registry.ts` so controller Git
+operations receive the host gitdir directly:
+
+```ts
+export interface ActiveWorkerTaskRepo {
+	readonly repoId: string;
+	readonly repoUrl: string;
+	readonly baseBranch: string;
+	readonly hostGitDir: string;
+	readonly vmRepoPath: string;
+}
+```
+
+`hostWorkspacePath` must not remain on this controller-facing type. There is no
+reliable host worktree after this task. `vmRepoPath` should point at
+`/work/repos/<repoId>` for agent/runtime instructions; it is not usable by host
+Git commands.
+
 For any host-side Git config/ref operation, use the host gitdir explicitly and
 disable hooks:
 
@@ -1053,12 +1098,86 @@ await execa(
 );
 ```
 
-Update `ActiveWorkerTaskRepo` and all controller-side push/fetch/default-branch
-operations so host Git commands use the host gitdir path directly. Include
-`packages/agent-vm/src/controller/git-push-operations.ts` in this audit. Every
-host-side Git invocation in that file must use `--git-dir=<host gitdir>` and
-`-c core.hooksPath=/dev/null`. Do not rely on `.git` auto-discovery from host
-repo files.
+- [ ] **Step 10b: Migrate controller Git operations to host gitdir paths**
+
+Update all controller-side push/fetch/default-branch operations so host Git
+commands use `ActiveWorkerTaskRepo.hostGitDir` directly. Include both files in
+this audit:
+
+```text
+packages/agent-vm/src/controller/git-push-operations.ts
+packages/agent-vm/src/controller/git-pull-default-operations.ts
+```
+
+No controller Git operation may rely on cwd-based `.git` discovery for worker
+repos after this task. Every host-side Git invocation in both files must include
+these leading args:
+
+```ts
+[
+	'-c',
+	'core.hooksPath=/dev/null',
+	`--git-dir=${options.repo.hostGitDir}`,
+	...operationArgs,
+]
+```
+
+Change helper signatures from cwd-based discovery:
+
+```ts
+async function git(options: {
+	readonly cwd: string;
+	readonly args: readonly string[];
+	readonly reject?: boolean;
+}): Promise<GitResult>
+```
+
+to explicit gitdir use:
+
+```ts
+async function git(options: {
+	readonly gitDir: string;
+	readonly args: readonly string[];
+	readonly reject?: boolean;
+}): Promise<GitResult> {
+	return await execa(
+		'git',
+		['-c', 'core.hooksPath=/dev/null', `--git-dir=${options.gitDir}`, ...options.args],
+		{ reject: false, timeout: GIT_OPERATION_TIMEOUT_MS },
+	);
+}
+```
+
+Apply the same rule to stdout helpers such as `gitStdout`, `refExists`,
+`countRange`, `remoteBranchHead`, and `currentBranch`: they should accept
+`gitDir`, not `cwd`.
+
+Why this is required: after Step 10, the host no longer has a reliable worker
+repo checkout. The VM work repo has a `.git` file pointing at
+`/gitdirs/<repoId>.git`, which is a VM path. If host Git auto-discovers that
+file, it follows a path that does not exist on the host. Push and pull-default
+both fail unless they use the host-absolute gitdir directly.
+
+Add or update `packages/agent-vm/src/controller/git-push-operations.test.ts` so
+it mocks `execa`, calls `pushBranchesForTask`, and asserts every Git call:
+
+```ts
+expect(command).toBe('git');
+expect(args.slice(0, 3)).toEqual([
+	'-c',
+	'core.hooksPath=/dev/null',
+	'--git-dir=/runtime/worker-tasks/zone-1/task-1/gitdirs/widgets.git',
+]);
+expect(options).not.toMatchObject({ cwd: expect.stringContaining('workspace') });
+```
+
+Add or update `packages/agent-vm/src/controller/git-pull-default-operations.test.ts`
+with the same assertion pattern for `pullDefaultForTask`. The tests must cover
+at least one fetch path, one ref/read path, and one branch-state/count path so a
+half-migrated helper fails.
+
+This step is part of the same commit as the bare-gitdir worker task runner
+change. Do not land Step 10 without Step 10b.
 
 Also update task cleanup so gitdir removal happens only after the controller has
 checked committed Git state. Rootfs repo files disappear at `vm.close()`, so
@@ -1179,7 +1298,7 @@ await bootstrapRepoWorkDirs(config.repoWorkDirectories);
 Run:
 
 ```bash
-pnpm vitest run packages/agent-vm/src/config/system-config.test.ts packages/agent-vm/src/cli/init-command.test.ts packages/agent-vm/src/backup/backup-create-operation.test.ts packages/agent-vm-worker/src/config/worker-config.test.ts packages/agent-vm-worker/src/work/repo-bootstrap.test.ts packages/worker-gateway/src/worker-lifecycle.test.ts packages/agent-vm/src/controller/worker-task-runner.test.ts
+pnpm vitest run packages/agent-vm/src/config/system-config.test.ts packages/agent-vm/src/cli/init-command.test.ts packages/agent-vm/src/backup/backup-create-operation.test.ts packages/agent-vm-worker/src/config/worker-config.test.ts packages/agent-vm-worker/src/work/repo-bootstrap.test.ts packages/worker-gateway/src/worker-lifecycle.test.ts packages/agent-vm/src/controller/worker-task-runner.test.ts packages/agent-vm/src/controller/git-push-operations.test.ts packages/agent-vm/src/controller/git-pull-default-operations.test.ts
 ```
 
 Expected: PASS.
@@ -1204,7 +1323,7 @@ git commit -m "feat: bootstrap worker repos under work dir
 
 Co-authored-by: Codex <noreply@openai.com>"
 
-git add packages/agent-vm/src/controller/worker-task-runner.ts packages/agent-vm/src/controller/worker-task-runner.test.ts packages/agent-vm/src/controller/git-push-operations.ts
+git add packages/agent-vm/src/controller/active-task-registry.ts packages/agent-vm/src/controller/worker-task-runner.ts packages/agent-vm/src/controller/worker-task-runner.test.ts packages/agent-vm/src/controller/git-push-operations.ts packages/agent-vm/src/controller/git-push-operations.test.ts packages/agent-vm/src/controller/git-pull-default-operations.ts packages/agent-vm/src/controller/git-pull-default-operations.test.ts
 git commit -m "feat: use RealFS gitdirs for worker tasks
 
 Co-authored-by: Codex <noreply@openai.com>"
