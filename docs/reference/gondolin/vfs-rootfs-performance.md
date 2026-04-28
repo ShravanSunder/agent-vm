@@ -3,7 +3,7 @@
 [Docs](../README.md) > Reference > Gondolin VFS And Rootfs Performance
 
 This page is the working reference for deciding where agent-vm should put hot
-runtime dependencies, worktrees, caches, state, and temporary files when running
+runtime dependencies, repo files, caches, state, and temporary files when running
 inside Gondolin.
 
 The short rule:
@@ -12,7 +12,7 @@ The short rule:
 Hot and disposable filesystem work       -> rootfs/COW path, such as /work
 Small short-lived scratch                -> guest tmpfs, such as /tmp
 Host-visible durable state or outputs    -> RealFS VFS mount
-Host-visible Git metadata                -> RealFS gitdir + rootfs worktree
+Host-visible Git metadata                -> RealFS gitdir + rootfs repo files
 Hidden host junk / denied secrets        -> Shadow/Readonly policy wrapper
 Stable boot-time dependencies            -> image/rootfs, built ahead of boot
 Repairable download caches               -> RealFS cache, not backed up
@@ -31,7 +31,7 @@ These are all temporary, but they are not interchangeable.
 rootfs.mode = "cow"
   Backing: temporary qcow2 overlay on host disk
   Lifetime: deleted on VM close unless checkpointed
-  Best for: large package trees, build outputs, worker worktrees
+  Best for: large package trees, build outputs, worker repo files
   Bad for: state that must survive without an explicit checkpoint or export
 
 rootfs.mode = "memory"
@@ -195,19 +195,20 @@ the default `/tmp` tmpfs, but that is usually a heavier solution than setting
   Purpose: repair/download cache
   Backup: no
 
-/home/openclaw/workspace
-  Backing: RealFS sharedFilesDir/current workspaceDir config field for
+/home/openclaw/zone-files
+  Backing: RealFS zoneFilesDir config field for
            long-lived OpenClaw household files
   Backup: yes
 
-/workspace/<repo>
+/work/repos/<repo>
   Backing: rootfs/COW for worker tasks
   Purpose: hot source edits, node_modules, builds, tests
 
 /gitdirs/<repo>.git
-  Backing: RealFS taskRuntimeDir outside normal zone backup
+  Backing: RealFS runtimeDir outside normal zone backup
   Purpose: host-visible Git objects, refs, and index; explicit recovery/export
            only
+  Backup: no normal backup
 
 /work or /scratch
   Backing: rootfs/COW unless explicitly mounted
@@ -243,7 +244,7 @@ scripts/perf/gondolin-vfs-benchmark.ts
   ShadowProvider path behavior.
 
 scripts/perf/gondolin-worker-git-benchmark.ts
-  Measures full-rootfs, full-RealFS, and rootfs-worktree + RealFS-gitdir worker
+  Measures full-rootfs, full-RealFS, and rootfs-work area + RealFS-gitdir worker
   layouts.
 
 packages/agent-vm/src/perf/gondolin-vfs-benchmark-support.ts
@@ -295,7 +296,7 @@ pnpm perf:gondolin-vfs -- \
   --require-clean-gondolin \
   --json-out tmp/gondolin-vfs-clean.json
 
-# Measure the worker-specific rootfs worktree + RealFS gitdir design.
+# Measure the worker-specific rootfs work area + RealFS gitdir design.
 pnpm perf:worker-git -- \
   --gondolin-repo /path/to/gondolin \
   --image-path /path/to/built/gondolin/assets \
@@ -359,7 +360,7 @@ rootfs/COW beat RealFS by roughly 60x for 128 MiB writes on the 4 GiB image
 Gondolin MemoryProvider and ShadowProvider still behaved like VFS paths
 guest tmpfs was fast in the latest run but remains memory-pressure storage
 cow vs memory rootfs speed was within noise; cow wins as default because checkpointable
-rootfs worktree + RealFS gitdir beat full RealFS for worker file workloads
+rootfs work area + RealFS gitdir beat full RealFS for worker file workloads
 ```
 
 Scope limits:

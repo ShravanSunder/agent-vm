@@ -48,7 +48,7 @@ OpenClaw runs a persistent gateway VM that hosts an interactive chat agent. Tool
 | Who runs inside VM | agent-vm-worker (pipeline) | OpenClaw (chat agent platform) |
 | Output | Pull requests | Tool execution results in chat |
 | Tool execution | Agent runs commands directly in gateway VM | Agent requests tool VM lease, runs code there |
-| VFS mounts | `/state` plus task `/gitdirs`; `/workspace` is rootfs/COW target | `/config`, `/cache`, `/state`, current zone data path at `/home/openclaw/workspace` |
+| VFS mounts | `/state` plus task `/gitdirs`; `/work/repos` is rootfs/COW target | `/config`, `/cache`, `/state`, zone-files path at `/home/openclaw/zone-files` |
 | TCP hosts | Controller only | Controller + all tool VM SSH ports + WebSocket bypass |
 | Auth | None | Auth profiles (1Password → disk → VFS) |
 | prepareHostState | None | Writes effective config + auth profiles |
@@ -102,10 +102,10 @@ guest:
 import path and is not included in encrypted zone backups. Durable OpenClaw
 state and auth profiles remain under `stateDir`.
 
-The current OpenClaw VM path `/home/openclaw/workspace` is long-lived zone data,
-not the same storage class as a worker rootfs workspace. New docs should call
-this storage class `zoneDataDir`; the existing config field may still be named
-`workspaceDir` until the config schema is cut over.
+The OpenClaw VM path `/home/openclaw/zone-files` is long-lived zone files, not
+worker-style hot execution storage. This storage is RealFS-mounted and backed
+up. The host-side config field is `zoneFilesDir`; `workspaceDir` is not part of
+the target schema.
 
 ---
 
@@ -188,7 +188,7 @@ The plugin provides:
 - **File bridge**: `mkdirp`, `readFile`, `writeFile`, `stat`, `remove`, `rename` — all via SSH into the tool VM
 - **Shell execution**: run arbitrary commands in the tool VM
 - **Workspace access**: tool VMs use `/workspace` for lease-local execution;
-  OpenClaw gateway zone data is separate from worker/rootfs workspaces
+  OpenClaw gateway zone files are separate from worker/rootfs `/work` paths
 
 ---
 

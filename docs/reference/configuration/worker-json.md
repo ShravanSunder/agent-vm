@@ -161,8 +161,8 @@ commonAgentInstructions                common-agent-instructions.md or inline te
 roleInstructions                       phase-specific worker config
 skillContent                           resolved skill refs
 
-/workspace/AGENTS.md                   generated pointer to /agent-vm/agents.md
-/workspace/CLAUDE.md                   symlink to /workspace/AGENTS.md
+/work/repos/<repoId>/AGENTS.md       generated pointer to /agent-vm/agents.md
+/work/repos/<repoId>/CLAUDE.md       symlink to /work/repos/<repoId>/AGENTS.md
 /agent-vm/agents.md                    generated runtime index
 /agent-vm/CLAUDE.md                    symlink to /agent-vm/agents.md
 /agent-vm/runtime-instructions.md      generated runtime facts

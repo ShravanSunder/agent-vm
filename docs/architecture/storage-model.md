@@ -3,7 +3,7 @@
 [Overview](../README.md) > [Architecture](overview.md) > Storage Model
 
 agent-vm separates source config, VM-local runtime files, durable state,
-rebuildable cache, workspaces, git metadata, and backup artifacts. Do not
+rebuildable cache, zone files, worker repo files, git metadata, and backup artifacts. Do not
 collapse these storage classes to fix a boot or restore symptom; moving data
 between them changes backup semantics and often changes performance by crossing
 the Gondolin VFS boundary.
@@ -40,27 +40,35 @@ rebuildable cache
   Backup: no
   Rule: can be deleted and repaired; may persist across reboot for speed
 
-shared files
-  Owner: long-lived gateway/user workflow
-  Host: <sharedFilesDir> or the current gateway <workspaceDir> config field
-  VM: current OpenClaw path is /home/openclaw/workspace
-  Backup: yes for OpenClaw-style long-lived zone backups
-  Rule: durable household/user files, not hot package-manager work
+runtime artifacts
+  Owner: controller runtime
+  Host: <runtimeDir>
+  VM: /gitdirs for worker task git metadata, future runtime-only mounts
+  Backup: no normal zone backup; explicit recovery/export only
+  Rule: active task runtime state that is not rebuildable cache and not
+        durable state; local disk preferred because cacheDir may be networked
 
-workspace
+zone files
+  Owner: long-lived gateway/user workflow
+  Host: <zoneFilesDir>
+  VM: /home/openclaw/zone-files
+  Backup: yes for OpenClaw-style long-lived zone backups
+  Rule: RealFS-mounted durable household/user files, not hot package-manager work
+
+worker repo files
   Owner: per-task VM execution
   Host: none for the target worker hot path
-  VM: /workspace
+  VM: /work/repos/<repoId>
   Backup: no
-  Rule: rootfs/COW worktree for source edits, package installs, builds, tests
+  Rule: rootfs/COW repo files for source edits, package installs, builds, tests
 
 gitdir
   Owner: controller + worker runtime
-  Host: <taskRuntimeDir>/gitdirs/<repo>.git
+  Host: <runtimeDir>/worker-tasks/<zone>/<task>/gitdirs/<repo>.git
   VM: /gitdirs/<repo>.git
   Backup: explicit recovery/export only, not normal zone backup
-  Rule: host-visible Git objects/refs/index used with a VM-local worktree;
-        never place under stateDir or normal backup-copied shared files
+  Rule: host-visible Git objects/refs/index used with VM-local repo files;
+        never place under stateDir or normal backup-copied zone files
 
 backup output
   Owner: backup commands
@@ -90,8 +98,13 @@ host cacheDir
     gateways/<zone>/
       plugin-runtime-deps/
 
-host workspaceDir
-  ~/.agent-vm/workspaces/<zone>/
+host runtimeDir
+  ~/.agent-vm/runtime/
+    worker-tasks/<zone>/<task>/
+      gitdirs/<repo>.git
+
+host zoneFilesDir
+  ~/.agent-vm/zone-files/<zone>/
 
 host backupDir
   ~/.agent-vm-backups/<zone>/
@@ -110,13 +123,13 @@ bundled plugin dependencies, and it must not be moved into `stateDir`.
 Putting dependency trees in state makes encrypted backups large, slow, and hard
 to reason about.
 
-## Worker Workspace And Git
+## Worker Repo Files And Git
 
-Worker task worktrees should use VM-local rootfs/COW storage for source files,
+Worker task repo files should use VM-local rootfs/COW storage for source files,
 package manager installs, `node_modules`, build outputs, search, and tests.
 
 Git metadata should be stored separately in a RealFS-backed gitdir. The VM
-worktree can use a `.git` file or explicit `GIT_DIR` / `GIT_WORK_TREE` plumbing
+repo files can use a `.git` file or explicit `GIT_DIR` / `GIT_WORK_TREE` plumbing
 that points at `/gitdirs/<repo>.git`, while the controller retains push
 credentials and default-branch operations.
 
@@ -131,12 +144,13 @@ workload, and pnpm install behavior is still unmeasured.
 
 ```text
 rootfs/COW
-  Use for hot disposable work: worker worktrees, package trees, build outputs.
+  Use for hot disposable work: worker repo files, package trees, build outputs.
   Local data on the real 4 GiB agent-vm image showed 128 MiB rootfs writes in
   roughly 20-30 ms, compared with roughly 1.5 s through RealFS.
 
 RealFS
-  Use for host-visible state, workspace, cache, outputs, and Git metadata.
+  Use for host-visible state, OpenClaw zone files, cache, outputs, and Git
+  metadata.
   Pay this cost at source-control and persistence boundaries, not for every
   source edit, package-manager file, search, or test artifact.
 
@@ -154,9 +168,9 @@ path. They are isolation tools, not a substitute for rootfs when the workload is
 a hot package tree. Linux `/tmp` tmpfs is a different class and is best for
 scratch, not durable runtime state.
 
-The worker Git benchmark directly supports the rootfs worktree + RealFS gitdir
+The worker Git benchmark directly supports the rootfs work area + RealFS gitdir
 split. With 1000 files and a 128 MiB build artifact, full RealFS kept every
-workspace operation on the slow path, while the split preserved rootfs-speed file
+repo-file operation on the slow path, while the split preserved rootfs-speed file
 writes and paid the RealFS cost only for Git object/index operations.
 
 `rootfs.mode = "readonly"` did not boot the default local benchmark VM within
@@ -174,13 +188,15 @@ Zone backups archive:
 
 ```text
 state/
-workspace/
+zone files/     # config field: gateway.zoneFilesDir
 manifest.json
 ```
 
-Zone backups do not archive `cacheDir`. If a cache is missing after restore,
-doctor/repair flows should rebuild it rather than restoring stale dependency
-trees from encrypted backup.
+Zone backups do not archive `cacheDir` or `runtimeDir`. If a cache is missing
+after restore, doctor/repair flows should rebuild it rather than restoring stale
+dependency trees from encrypted backup. If worker runtime state contains
+unpushed commits, recovery must happen through an explicit push/export/retain
+decision before cleanup, not through normal zone backup.
 
 ## Design Rule
 

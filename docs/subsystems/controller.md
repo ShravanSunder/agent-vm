@@ -214,7 +214,7 @@ Worker-mode zones do not start a gateway at boot. Instead, each task gets an eph
     |   1. Generate taskId (crypto.randomUUID)
     |   2. Create task state and non-backup task runtime roots
     |   3. Copy local worker tarball if AGENT_VM_WORKER_TARBALL_PATH set
-    |   4. Create RealFS gitdirs under taskRuntimeDir in parallel
+    |   4. Create RealFS gitdirs under runtimeDir in parallel
     |      - Derive repo IDs from repo URLs, deduplicate
     |   5. Read .agent-vm/config.json from primary repo
     |   6. Deep-merge zone gateway config + project config
@@ -227,7 +227,7 @@ Worker-mode zones do not start a gateway at boot. Instead, each task gets an eph
     |
     |== BOOT (startGatewayZone with zoneOverride) ============
     |   Mount task state at /state and task gitdirs at /gitdirs;
-    |   keep /workspace as VM-local rootfs/COW worktree storage
+    |   keep /work/repos as VM-local rootfs/COW work-area storage
     |   Full orchestration: orphan cleanup, image, VM, bootstrap,
     |   start, health check, ingress
     |

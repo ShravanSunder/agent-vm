@@ -38,9 +38,9 @@ runtime records, metadata
 /home/openclaw/.openclaw/cache          RealFS cacheDir        no
 repair/download caches                  rebuildable
 
-/home/openclaw/shared-files             RealFS sharedFilesDir  yes
-current VM path: /home/openclaw/         long-lived household
-workspace                               user/agent files
+/home/openclaw/zone-files                RealFS zoneFilesDir   yes
+OpenClaw zone files                     long-lived household
+                                       user/agent files
 
 /work/tmp                               rootfs/COW             no
 large temp, TMPDIR target               disposable disk
@@ -55,9 +55,15 @@ gateway-runtime.json                    stateDir               yes
 host runtime record                     durable enough
 ```
 
+OpenClaw gateways are long-lived, so rootfs/COW paths such as `/work/tmp` and
+`/work/cache` can accumulate over days or weeks. Size the OpenClaw rootfs
+explicitly and add either a periodic `/work` cleanup or an operational restart
+window. Tool VMs and worker tasks are shorter-lived, so they naturally shed this
+rootfs state at lease/task teardown.
+
 ## Worker Gateway VM
 
-Worker VMs are per-task execution environments. The hot worktree should be
+Worker VMs are per-task execution environments. The hot repo files should be
 rootfs/COW so source edits, package managers, builds, tests, and search avoid
 the Gondolin VFS path. Git metadata should be RealFS so the controller can
 inspect refs and push/fetch with host credentials.
@@ -73,11 +79,11 @@ stateDir/tasks/<taskId>/agent-vm        RealFS stateDir        yes-ish
 runtime instructions, resource          small generated task
 metadata, agents.md                     metadata
 
-/workspace/<repoId>                     rootfs/COW             no
-source edits, node_modules,             hot task worktree
+/work/repos/<repoId>                     rootfs/COW             no
+source edits, node_modules,             hot task repo files
 builds, tests, package installs
 
-/gitdirs/<repoId>.git                   RealFS taskRuntimeDir  explicit
+/gitdirs/<repoId>.git                   RealFS runtimeDir      explicit
 Git objects, refs, index                recovery/export only
 
 /work/tmp                               rootfs/COW             no
@@ -102,7 +108,7 @@ Never put these under worker `stateDir`:
 
 ```text
 repos
-worktrees
+repo files
 node_modules
 package-manager caches
 build artifacts
@@ -115,11 +121,10 @@ The backup command currently copies `stateDir` wholesale. Anything under worker
 `stateDir` silently becomes encrypted backup payload when a worker zone is
 backed up.
 
-The backup command also copies the zone's current host `workspaceDir`
-wholesale. Worker gitdirs must not be placed there either unless backup gains a
-worker-specific exclusion policy. For the target design, gitdirs live in a
-non-backup task runtime root and are preserved through explicit recovery/export
-flows.
+The backup command also copies the OpenClaw `zoneFilesDir`. Worker gitdirs must
+not be placed there either unless backup gains a worker-specific exclusion
+policy. For the target design, gitdirs live in `runtimeDir`, a non-backup task
+runtime root, and are preserved through explicit recovery/export flows.
 
 ## Target Worker Layout
 
@@ -134,13 +139,13 @@ stateDir/
       runtime-instructions.md
       resources/
 
-taskRuntimeDir/   # derived from cacheDir or a future explicit config field
+runtimeDir/
   worker-tasks/<zoneId>/<taskId>/
     gitdirs/<repoId>.git
     recovery/
 
 inside worker VM rootfs/COW:
-  /workspace/<repoId>
+  /work/repos/<repoId>
   /work/tmp
   /work/cache
 ```
@@ -168,7 +173,7 @@ retention policy.
 ```text
 worker task starts
   -> controller creates RealFS gitdir
-  -> worker rootfs worktree points .git at /gitdirs/<repoId>.git
+  -> worker rootfs repo files point .git at /gitdirs/<repoId>.git
   -> agent edits rootfs files and commits into the gitdir
   -> controller pushes using host credentials
   -> controller cleans up the gitdir after push/task close
@@ -183,6 +188,32 @@ Before cleanup, the controller must make unresolved Git state explicit:
 ```text
 clean and pushed        -> delete gitdir
 unpushed commits        -> push, export recovery artifact, or discard
-dirty worktree          -> commit/push, export patch/artifact, or discard
+dirty repo files       -> commit/push, export patch/artifact, or discard
 failed task             -> retain until operator recovery decision
+```
+
+## Tool VM
+
+Tool VMs are lease-local execution sandboxes. They follow the same hot-path
+storage rule as worker VMs, but their state is narrower: only controller-needed
+lease metadata should cross into RealFS.
+
+```text
+path or data                           backing                backup
+──────────────────────────────         ─────────────────      ─────────
+
+/workspace                             rootfs/COW             no
+lease-local agent work                 disposable
+
+/work/tmp                              rootfs/COW             no
+large temp, TMPDIR target              disposable disk
+
+/work/cache                            rootfs/COW             no
+per-lease package cache                disposable
+
+/tmp, /run, /var/log                   guest tmpfs            no
+tiny scratch only                      memory-pressure
+
+/state or /agent-vm                    RealFS only if needed  varies
+controller lease metadata              narrow control files
 ```

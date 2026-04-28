@@ -57,11 +57,45 @@ tcpPool
 
 `cacheDir` stores rebuildable artifacts. It is intentionally outside encrypted
 zone backups. Current uses include Gondolin image outputs and per-zone gateway
-runtime caches such as OpenClaw bundled plugin dependency staging.
+repair/download caches.
 
 Do not place durable secrets or user state under `cacheDir`. Do not place
 rebuildable dependency trees under `stateDir` just to make them survive gateway
-VM reboot; mount a cache path instead.
+VM reboot; mount a cache path or bake stable dependency trees into the image
+instead.
+
+`cacheDir` may be local disk or network-backed storage in larger deployments.
+Do not put active worker gitdirs here; unpushed commits are not rebuildable
+cache.
+
+## planned runtimeDir
+
+`runtimeDir` is the planned storage-model target for active, non-backup runtime
+artifacts that are not durable zone state and not repairable cache. It should
+prefer local disk because these paths can be hot during task execution.
+
+Current released schemas may not include this field yet. Until the runtimeDir
+implementation lands, worker gitdir placement must be checked against the
+implementation and not inferred from this target model.
+
+The primary planned use is worker Git metadata:
+
+```text
+<runtimeDir>/worker-tasks/<zoneId>/<taskId>/gitdirs/<repoId>.git
+```
+
+Normal `backup create` must not copy `runtimeDir`. If a worker task has
+unpushed commits or dirty work, the controller must preserve it through an
+explicit push, export, retain, or discard decision.
+
+## zoneFilesDir
+
+`zoneFilesDir` is the long-lived OpenClaw household/user files directory. It is
+RealFS-mounted into the OpenClaw gateway VM at `/home/openclaw/zone-files` and
+is included in OpenClaw zone backups.
+
+Do not call this `workspaceDir`. Worker execution files live under VM-local
+`/work/repos/<repoId>` and are not backed by this host path.
 
 For the storage boundary model, see
 [storage-model.md](../../architecture/storage-model.md).
@@ -102,7 +136,7 @@ Each zone selects one gateway image profile and one gateway behavior config:
     "config": "./gateways/coding-agent/worker.json",
     "imageProfile": "worker",
     "stateDir": "../state/coding-agent",
-    "workspaceDir": "../workspaces/coding-agent"
+    "zoneFilesDir": "../zone-files/coding-agent"
   },
   "resources": {
     "allowRepoResources": false

@@ -72,16 +72,17 @@ All VM configuration flows through a single options object passed to `createMana
 The `rootfsMode` controls what happens when a process inside the VM writes to the root filesystem (outside VFS mounts).
 
 ```
-  Mode        Backing         Writes Survive VM Lifetime?    Use Case
-  --------    -----------     ----------------------------    --------
-  cow         Copy-on-write   Yes (within session)            Gateway VMs: install packages,
-                                                              modify /etc, persist within session
-  memory      RAM-backed      No (lost on close)              Tool VMs: fully ephemeral,
-                                                              no state leaks between leases
-  readonly    Immutable       Rejected (write fails)          Not currently used in production
+  Mode        Backing                         Writes Survive VM Lifetime?    Use Case
+  --------    -----------------------------   ----------------------------    --------
+  cow         Copy-on-write qcow2 overlay     Yes (within session)            Gateway VMs: install packages,
+                                                                              modify /etc, persist within session
+  memory      Backend-specific throwaway      No (lost on close)              Tool VMs: fully ephemeral,
+              rootfs mode; QEMU snapshot,                                     no state leaks between leases
+              krun temporary qcow2 on disk
+  readonly    Immutable                       Rejected (write fails)          Not currently used in production
 ```
 
-Gateway VMs use `cow` so the bootstrap command can install packages and write config files that persist for the session. Tool VMs use `memory` so every lease starts from a clean slate.
+Gateway VMs use `cow` so the bootstrap command can install packages and write config files that persist for the session. Tool VMs use `memory` so every lease starts from a clean slate. In Gondolin docs, rootfs `memory` means throwaway rootfs mode, not always RAM-backed storage; guest tmpfs and VFS `MemoryProvider` are the memory-pressure paths.
 
 ---
 
@@ -96,8 +97,8 @@ VFS mounts map host directories into guest paths. The `vfsMounts` field maps a g
                                                         a live directory
   realfs-readonly       ReadonlyProvider(                Read-only: guest can read but
                           RealFSProvider(hostPath))       writes are rejected
-  memory                MemoryProvider()                 RAM-backed: starts empty, lost
-                                                        on VM close
+  memory                MemoryProvider()                 Host-memory-backed VFS provider:
+                                                        starts empty, lost on VM close
   shadow                ShadowProvider(base, config)     Overlay with deny/tmpfs rules:
                           base = RealFS or Memory          deny: block writes to paths
                           deny paths -> writeMode:deny     tmpfs: redirect writes to RAM
@@ -106,7 +107,7 @@ VFS mounts map host directories into guest paths. The `vfsMounts` field maps a g
 
 Shadow mounts support two overlay behaviors configured via `shadowConfig`:
 - `deny`: writes to matching paths fail with an error
-- `tmpfs`: writes to matching paths go to a RAM-backed overlay (visible within session, lost on close)
+- `tmpfs`: writes to matching paths go to a MemoryProvider upper layer (visible within session, lost on close). This is a Gondolin VFS provider path, not Linux guest tmpfs.
 
 Path normalization ensures both absolute and relative shadow paths resolve correctly inside the guest.
 

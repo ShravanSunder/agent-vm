@@ -47,7 +47,7 @@ There are two processes that work together: a **Controller** (on your host machi
              |  Shares control/Git folders with the VM:
              |    /state    (config + event logs)
              |    /gitdirs  (Git objects/refs/index)
-             |  /workspace is VM-local rootfs/COW.
+             |  /work/repos is VM-local rootfs/COW.
              |
   +----------v--------------------+
   |  WORKER  (inside Gondolin VM) |
@@ -79,7 +79,7 @@ The sandbox is a **Gondolin virtual machine** — a lightweight VM that boots in
   |    state/       <-- config file + event logs (read/write)          |
   |    agent-vm/    <-- generated runtime docs/resources               |
   |                                                                    |
-  |  taskRuntimeDir/worker-tasks/<zone>/<taskId>/                      |
+  |  runtimeDir/worker-tasks/<zone>/<taskId>/                          |
   |    gitdirs/     <-- Git objects/refs/index, not normal backup      |
   |                                                                    |
   |  These two folders are the ONLY connection between host and VM.    |
@@ -88,16 +88,16 @@ The sandbox is a **Gondolin virtual machine** — a lightweight VM that boots in
   |  +--------------------------------------------------------------+  |
   |  |  GONDOLIN VM                                                 |  |
   |  |                                                              |  |
-  |  |  rootfs/COW worktree storage                                 |  |
+  |  |  rootfs/COW work-area storage                                 |  |
   |  |  Erased when VM shuts down unless explicitly checkpointed.    |  |
   |  |                                                              |  |
-  |  |  /workspace  --> rootfs/COW repo worktrees                   |  |
+  |  |  /work/repos --> rootfs/COW repo files                   |  |
   |  |  /gitdirs    --> mounted from task runtime RealFS gitdirs    |  |
   |  |  /state      --> mounted from host (config + logs)           |  |
   |  |  /work/tmp   --> rootfs/COW large temp target                |  |
   |  |                                                              |  |
   |  |  The LLM agent can:                                          |  |
-  |  |    - Read and write files in /workspace                      |  |
+  |  |    - Read and write files in /work/repos                      |  |
   |  |    - Run any shell command (npm, git, etc.)                  |  |
   |  |    - Install packages                                        |  |
   |  |                                                              |  |
@@ -138,11 +138,12 @@ When someone submits a task, the controller runs through 5 stages:
   |  Create fresh directories:               |
   |    stateDir/tasks/<taskId>/state/        |
   |    stateDir/tasks/<taskId>/agent-vm/     |
-  |    taskRuntimeDir/.../gitdirs/           |
+  |    runtimeDir/.../gitdirs/               |
   |                                          |
   |  Prepare Git metadata:                   |
-  |    git clone --branch main <url>         |
-  |      --separate-git-dir <gitdir>         |
+  |    git clone --bare --branch main <url>  |
+  |      runtimeDir/.../gitdirs/<repo>.git   |
+  |    extract .agent-vm/ metadata only      |
   |                                          |
   |  Build configuration:                    |
   |    Read .agent-vm/config.json from repo  |
@@ -165,7 +166,7 @@ When someone submits a task, the controller runs through 5 stages:
   |  Build Gondolin VM image (cached)        |
   |  Allocate a TCP port slot                |
   |  Create VM with targeted mounts:         |
-  |    /workspace stays rootfs/COW           |
+  |    /work/repos stays rootfs/COW           |
   |    host:task state        -> /state      |
   |    host:task gitdirs      -> /gitdirs    |
   |  Apply resource TCP/env/VFS overlays     |
@@ -200,7 +201,7 @@ When someone submits a task, the controller runs through 5 stages:
   |    RAM filesystem wiped instantly         |
   |  Release TCP port slot                   |
   |  Stop selected repo resource providers   |
-  |  Remove workspace + generated resources  |
+  |  Remove repo files + generated resources |
   |  Keep task state for status replay       |
   |  Return results to caller                |
   +------------------------------------------+
@@ -208,9 +209,9 @@ When someone submits a task, the controller runs through 5 stages:
 
 **Key point**: Runtime execution state is cleaned up after teardown. The VM's
 memory filesystem is gone, selected repo-resource providers are stopped, the
-cloned workspace and generated resource outputs are deleted, and the port slot
-is freed. Task state and event logs remain on the controller so status reads
-can replay the result.
+VM-local repo files and generated resource outputs are deleted, and the port
+slot is freed. Task state and event logs remain on the controller so status
+reads can replay the result.
 
 ---
 
@@ -293,12 +294,12 @@ stateDiagram-v2
   +===================================================================+
   |  PHASE 3: WORK                                                     |
   |                                                                    |
-  |  The agent writes code. It has full access to /workspace           |
+  |  The agent writes code. It has full access to /work/repos           |
   |  and can run any command (npm install, create files, etc.).        |
   |  The approved plan guides what it builds.                          |
   |                                                                    |
   |  Input:  plan + task prompt + repo context                         |
-  |  Output: code changes in /workspace                                |
+  |  Output: code changes in /work/repos                                |
   +===================================================================+
         |
         v
@@ -393,7 +394,7 @@ sequenceDiagram
 
     Coord->>Exec: execute(prompt + plan)
     Exec->>LLM: Start new conversation thread
-    LLM->>Shell: Write code to /workspace
+    LLM->>Shell: Write code to /work/repos
     LLM-->>Exec: {response, threadId}
 
     Coord->>Shell: Run tests + lint
@@ -674,18 +675,18 @@ Here's a concrete trace of a successful task from start to finish:
   CONTROLLER                                    WORKER (inside VM)
   ----------                                    ------------------
 
-  create gitdir -> taskRuntimeDir/.../gitdirs/repo.git
+  create gitdir -> runtimeDir/.../gitdirs/repo.git
   Write config  -> stateDir/tasks/<taskId>/state/
-  Boot Gondolin VM (rootfs workspace + /gitdirs + /state)
+  Boot Gondolin VM (rootfs /work/repos + /gitdirs + /state)
   POST /tasks { "Add pagination" }
                                                 Emit: task-accepted
                                                 Status: pending
 
                                                 --- PLAN ---
                                                 Status: planning
-                                                Bootstrap /workspace worktree
+                                                Bootstrap /work/repos repo files
                                                 from /gitdirs/repo.git
-                                                Scan /workspace (file tree, CLAUDE.md)
+                                                Scan /work/repos (file tree, CLAUDE.md)
                                                 Ask LLM: "Create a plan for pagination"
                                                 LLM returns plan text
                                                 Emit: plan-created
@@ -699,7 +700,7 @@ Here's a concrete trace of a successful task from start to finish:
                                                 --- WORK ---
                                                 Status: working
                                                 Ask LLM: "Implement this plan"
-                                                LLM writes code to /workspace
+                                                LLM writes code to /work/repos
                                                 Emit: work-started
 
                                                 --- VERIFICATION (attempt 1) ---
@@ -794,7 +795,7 @@ Quick reference for finding things in the code:
   |   |-- prompt-assembler.ts .... Builds structured prompts per phase
   |
   |-- context/
-  |   |-- gather-context.ts ...... Scans workspace for file tree + metadata
+  |   |-- gather-context.ts ...... Scans repo files for file tree + metadata
   |
   |-- git/
   |   |-- git-operations.ts ...... Git primitives (branch, commit, diff)
@@ -802,6 +803,6 @@ Quick reference for finding things in the code:
   |-- shared/
       |-- phase-names.ts ......... Phase name constants
       |-- review-result.ts ....... { approved, comments, summary } schema
-      |-- repo-location.ts ....... { repoUrl, baseBranch, workspacePath }
+      |-- repo-location.ts ....... { repoUrl, baseBranch, repoWorkPath }
       |-- skill-types.ts ......... { name, path } for skill files
 ```
