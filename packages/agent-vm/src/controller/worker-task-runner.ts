@@ -41,6 +41,7 @@ import {
 import { compileResourceOverlay } from '../resources/resource-compiler.js';
 import { resolveTaskResources } from '../resources/resource-resolver.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
+import { createHostGitDir, createVmWorkPath } from './active-task-registry.js';
 import { buildGithubAuthConfigArgs, scrubGithubTokenFromOutput } from './git-auth-support.js';
 import {
 	buildResolvedRuntimeResources,
@@ -736,8 +737,8 @@ export async function prepareWorkerTask(
 			repos: preStartResult.repos.map((repo) => ({
 				repoUrl: repo.repoUrl,
 				baseBranch: repo.baseBranch,
-				hostGitDir: repo.hostGitDir,
-				vmWorkPath: repo.workPath,
+				hostGitDir: createHostGitDir(repo.hostGitDir),
+				vmWorkPath: createVmWorkPath(repo.workPath),
 			})),
 			workerIngress: null,
 		});

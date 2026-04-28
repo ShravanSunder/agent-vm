@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import type { ActiveWorkerTask } from './active-task-registry.js';
+import { createHostGitDir, createVmWorkPath } from './active-task-registry.js';
 import { pullDefaultForTask, PullDefaultValidationError } from './git-pull-default-operations.js';
 
 const { execaMock } = vi.hoisted(() => ({ execaMock: vi.fn() }));
 
 vi.mock('execa', () => ({ execa: execaMock }));
 
-const activeTask = {
+const activeTask: ActiveWorkerTask = {
 	taskId: 'task-1',
 	zoneId: 'shravan',
 	taskRoot: '/tmp/task-1',
@@ -17,8 +19,8 @@ const activeTask = {
 		{
 			repoUrl: 'https://github.com/acme/widgets.git',
 			baseBranch: 'main',
-			hostGitDir: '/tmp/task-1/gitdirs/widgets.git',
-			vmWorkPath: '/work/repos/widgets',
+			hostGitDir: createHostGitDir('/tmp/task-1/gitdirs/widgets.git'),
+			vmWorkPath: createVmWorkPath('/work/repos/widgets'),
 		},
 	],
 };

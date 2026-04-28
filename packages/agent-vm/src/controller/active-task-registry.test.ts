@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ActiveTaskRegistry } from './active-task-registry.js';
+import { ActiveTaskRegistry, createHostGitDir, createVmWorkPath } from './active-task-registry.js';
 
 describe('ActiveTaskRegistry', () => {
 	it('reserves, activates, resolves, and clears a task for a zone', () => {
@@ -146,5 +146,18 @@ describe('ActiveTaskRegistry', () => {
 
 		expect(registry.countOccupiedForZone('shravan')).toBe(0);
 		expect(registry.tryReserve('shravan', 1)).not.toBeNull();
+	});
+
+	it('rejects VM-only paths for host gitdirs', () => {
+		expect(() => createHostGitDir('/gitdirs/widgets.git')).toThrow(/host gitdir/u);
+		expect(() => createHostGitDir('/work/repos/widgets')).toThrow(/host gitdir/u);
+		expect(createHostGitDir('/var/agent-vm/runtime/worker-tasks/z/t/gitdirs/widgets.git')).toBe(
+			'/var/agent-vm/runtime/worker-tasks/z/t/gitdirs/widgets.git',
+		);
+	});
+
+	it('rejects non-work repo paths for VM work paths', () => {
+		expect(() => createVmWorkPath('/tmp/widgets')).toThrow(/VM work path/u);
+		expect(createVmWorkPath('/work/repos/widgets')).toBe('/work/repos/widgets');
 	});
 });

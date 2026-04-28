@@ -1,10 +1,30 @@
 import crypto from 'node:crypto';
 
+declare const hostGitDirBrand: unique symbol;
+declare const vmWorkPathBrand: unique symbol;
+
+export type HostGitDir = string & { readonly [hostGitDirBrand]: 'HostGitDir' };
+export type VmWorkPath = string & { readonly [vmWorkPathBrand]: 'VmWorkPath' };
+
+export function createHostGitDir(value: string): HostGitDir {
+	if (value.startsWith('/gitdirs/') || value.startsWith('/work/repos/')) {
+		throw new Error(`Expected a host gitdir path, received VM path '${value}'.`);
+	}
+	return value as HostGitDir;
+}
+
+export function createVmWorkPath(value: string): VmWorkPath {
+	if (!value.startsWith('/work/repos/')) {
+		throw new Error(`Expected VM work path under /work/repos, received '${value}'.`);
+	}
+	return value as VmWorkPath;
+}
+
 export interface ActiveWorkerTaskRepo {
 	readonly repoUrl: string;
 	readonly baseBranch: string;
-	readonly hostGitDir: string;
-	readonly vmWorkPath: string;
+	readonly hostGitDir: HostGitDir;
+	readonly vmWorkPath: VmWorkPath;
 }
 
 export interface ActiveWorkerTaskIngress {

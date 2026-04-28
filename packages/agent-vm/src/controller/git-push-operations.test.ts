@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { ActiveWorkerTask } from './active-task-registry.js';
+import { createHostGitDir, createVmWorkPath } from './active-task-registry.js';
 import { pushBranchesForTask, PushBranchesValidationError } from './git-push-operations.js';
 
 const { execaMock } = vi.hoisted(() => ({
@@ -10,20 +12,7 @@ vi.mock('execa', () => ({
 	execa: execaMock,
 }));
 
-function buildActiveTask(): {
-	readonly taskId: string;
-	readonly zoneId: string;
-	readonly taskRoot: string;
-	readonly eventLogPath: string;
-	readonly branchPrefix: string;
-	readonly workerIngress: null;
-	readonly repos: readonly {
-		readonly repoUrl: string;
-		readonly baseBranch: string;
-		readonly hostGitDir: string;
-		readonly vmWorkPath: string;
-	}[];
-} {
+function buildActiveTask(): ActiveWorkerTask {
 	return {
 		taskId: 'task-1',
 		zoneId: 'shravan',
@@ -35,28 +24,28 @@ function buildActiveTask(): {
 			{
 				repoUrl: 'https://github.com/acme/widgets.git',
 				baseBranch: 'main',
-				hostGitDir: '/tmp/task-1/gitdirs/widgets.git',
-				vmWorkPath: '/work/repos/widgets',
+				hostGitDir: createHostGitDir('/tmp/task-1/gitdirs/widgets.git'),
+				vmWorkPath: createVmWorkPath('/work/repos/widgets'),
 			},
 		],
 	};
 }
 
-function buildMultiRepoActiveTask(): ReturnType<typeof buildActiveTask> {
+function buildMultiRepoActiveTask(): ActiveWorkerTask {
 	return {
 		...buildActiveTask(),
 		repos: [
 			{
 				repoUrl: 'https://github.com/acme/widgets.git',
 				baseBranch: 'main',
-				hostGitDir: '/tmp/task-1/gitdirs/widgets.git',
-				vmWorkPath: '/work/repos/widgets',
+				hostGitDir: createHostGitDir('/tmp/task-1/gitdirs/widgets.git'),
+				vmWorkPath: createVmWorkPath('/work/repos/widgets'),
 			},
 			{
 				repoUrl: 'https://github.com/acme/api.git',
 				baseBranch: 'main',
-				hostGitDir: '/tmp/task-1/gitdirs/api.git',
-				vmWorkPath: '/work/repos/api',
+				hostGitDir: createHostGitDir('/tmp/task-1/gitdirs/api.git'),
+				vmWorkPath: createVmWorkPath('/work/repos/api'),
 			},
 		],
 	};
