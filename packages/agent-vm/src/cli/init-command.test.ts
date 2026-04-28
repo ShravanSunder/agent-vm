@@ -298,7 +298,7 @@ describe('scaffoldAgentVmProject', () => {
 			'OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive',
 		);
 		expect(gatewayDockerfile).toContain(
-			'test -f /opt/openclaw/plugin-runtime-deps/.openclaw-runtime-deps.json',
+			'find /opt/openclaw/plugin-runtime-deps -name .openclaw-runtime-deps.json -type f -print -quit',
 		);
 		expect(gatewayDockerfile).toContain('/home/openclaw/zone-files');
 		expect(gatewayDockerfile).not.toContain('/home/openclaw/workspace');

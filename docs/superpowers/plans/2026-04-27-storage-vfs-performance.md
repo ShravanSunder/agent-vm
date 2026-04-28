@@ -543,11 +543,11 @@ build step includes a deterministic plugin-deps bake contract:
 OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive
 ```
 
-The assertion should also cover the marker file written after a successful
-stage:
+The assertion should also cover the marker file written under the
+version/fingerprint-specific stage directory after a successful stage:
 
 ```text
-/opt/openclaw/plugin-runtime-deps/.openclaw-runtime-deps.json
+/opt/openclaw/plugin-runtime-deps/openclaw-<version>-<fingerprint>/.openclaw-runtime-deps.json
 ```
 
 That marker should include the OpenClaw version, the plugin manifest/fingerprint,
@@ -1372,8 +1372,8 @@ it('reports missing baked OpenClaw plugin runtime deps with a rebuild hint', asy
 In `packages/agent-vm/src/operations/doctor.ts`, add a check that verifies the current OpenClaw gateway image has the expected plugin runtime stage marker:
 
 ```ts
-const openClawPluginRuntimeDepsMarkerPath =
-	'/opt/openclaw/plugin-runtime-deps/.openclaw-runtime-deps.json';
+const openClawPluginRuntimeDepsMarkerProbe =
+	'find /opt/openclaw/plugin-runtime-deps -name .openclaw-runtime-deps.json -type f -print -quit';
 ```
 
 If the marker is missing, report:

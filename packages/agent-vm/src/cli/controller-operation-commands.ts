@@ -172,7 +172,7 @@ async function collectImageProfileDockerfileChecks(
 				'OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive',
 			);
 			const verifiesPluginRuntimeDepsMarker = dockerfileContent.includes(
-				'/opt/openclaw/plugin-runtime-deps/.openclaw-runtime-deps.json',
+				'find /opt/openclaw/plugin-runtime-deps -name .openclaw-runtime-deps.json -type f -print -quit',
 			);
 			checks.push({
 				name: imageProfileTarget.checkName.replace(/-dockerfile$/u, '-plugin-runtime-deps'),
@@ -180,7 +180,7 @@ async function collectImageProfileDockerfileChecks(
 				hint:
 					stagesPluginRuntimeDeps && verifiesPluginRuntimeDepsMarker
 						? imageProfileTarget.dockerfile
-						: 'Bake OpenClaw plugin runtime deps with OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive and verify /opt/openclaw/plugin-runtime-deps/.openclaw-runtime-deps.json.',
+						: 'Bake OpenClaw plugin runtime deps with OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive and verify a nested .openclaw-runtime-deps.json marker under /opt/openclaw/plugin-runtime-deps.',
 			});
 		}
 

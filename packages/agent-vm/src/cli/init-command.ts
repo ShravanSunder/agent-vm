@@ -638,7 +638,7 @@ RUN apt-get update && \\
     OPENCLAW_PACKAGE_ROOT="$(pnpm root -g)/openclaw" && \\
     (cd "$OPENCLAW_PACKAGE_ROOT" && node scripts/postinstall-bundled-plugins.mjs) && \\
     (OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive || true) && \\
-    test -f /opt/openclaw/plugin-runtime-deps/.openclaw-runtime-deps.json && \\
+    test -n "$(find /opt/openclaw/plugin-runtime-deps -name .openclaw-runtime-deps.json -type f -print -quit)" && \\
     mkdir -p /opt/openclaw-sdk && \\
     ln -sf "$OPENCLAW_PACKAGE_ROOT/dist/plugin-sdk/sandbox.js" /opt/openclaw-sdk/sandbox.js && \\
     printf '#!/bin/sh\\nexec /pnpm/openclaw "$@"\\n' > /usr/local/bin/openclaw && \\

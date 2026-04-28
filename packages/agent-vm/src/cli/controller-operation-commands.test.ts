@@ -594,9 +594,7 @@ printf '{"ok":true}\\n'
 			),
 		).toMatchObject({
 			ok: false,
-			hint: expect.stringContaining(
-				'OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive',
-			),
+			hint: expect.stringContaining('nested .openclaw-runtime-deps.json marker'),
 		});
 
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
