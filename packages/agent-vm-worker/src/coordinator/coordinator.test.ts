@@ -154,6 +154,30 @@ async function waitForStatus(
 	);
 }
 
+const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([
+	'-c',
+	'-C',
+	'--exec-path',
+	'--git-dir',
+	'--namespace',
+	'--work-tree',
+]);
+
+function gitSubcommand(args: readonly string[]): string | undefined {
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index];
+		if (arg !== undefined && GIT_GLOBAL_OPTIONS_WITH_VALUE.has(arg)) {
+			index += 1;
+			continue;
+		}
+		if (arg?.startsWith('-')) {
+			continue;
+		}
+		return arg;
+	}
+	return undefined;
+}
+
 describe('coordinator', () => {
 	let tempDir: string;
 	let stateDir: string;
@@ -163,22 +187,60 @@ describe('coordinator', () => {
 		stateDir = join(tempDir, 'state');
 		vi.clearAllMocks();
 		mocks.execa.mockImplementation(async (_command: string, args: readonly string[]) => {
-			if (args[0] === 'branch') {
+			const subcommand = gitSubcommand(args);
+			if (subcommand === 'branch') {
 				return { stdout: 'agent/test', stderr: '', exitCode: 0 };
 			}
-			if (args[0] === 'status') {
+			if (subcommand === 'status') {
 				return { stdout: '', stderr: '', exitCode: 0 };
 			}
-			if (args[0] === 'log') {
+			if (subcommand === 'log') {
 				return { stdout: 'abc123 feat: test', stderr: '', exitCode: 0 };
 			}
-			if (args[0] === 'diff') {
+			if (subcommand === 'diff') {
 				return { stdout: ' file.ts | 1 +', stderr: '', exitCode: 0 };
 			}
 			return { stdout: '', stderr: '', exitCode: 0 };
 		});
 		mocks.gatherContext.mockResolvedValue({ summary: 'repo summary' });
 		mocks.getDiff.mockResolvedValue('diff --git a/file b/file');
+	});
+
+	it('finds git subcommands after global options', () => {
+		expect(
+			gitSubcommand([
+				'-c',
+				'core.hooksPath=/dev/null',
+				'--git-dir=/gitdirs/repo.git',
+				'--work-tree=/work/repos/repo',
+				'checkout',
+				'-B',
+				'agent/task-1',
+				'main',
+			]),
+		).toBe('checkout');
+		expect(
+			gitSubcommand([
+				'-C',
+				'/work/repos/repo',
+				'-c',
+				'safe.directory=/work/repos/repo',
+				'status',
+				'--short',
+			]),
+		).toBe('status');
+		expect(
+			gitSubcommand([
+				'--git-dir',
+				'/gitdirs/repo.git',
+				'--work-tree',
+				'/work/repos/repo',
+				'checkout',
+				'-B',
+				'agent/task-1',
+				'main',
+			]),
+		).toBe('checkout');
 	});
 
 	afterEach(async () => {

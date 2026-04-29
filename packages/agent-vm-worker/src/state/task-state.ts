@@ -256,6 +256,9 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 				}),
 				updatedAt,
 			};
+		case 'controller-git-push-fetch-retry':
+			// Pre-push default-branch fetch retries are logged without surfacing a phantom push.
+			return { ...state, updatedAt };
 		case 'controller-git-push-succeeded':
 			return {
 				...upsertGitPushState(state, {
