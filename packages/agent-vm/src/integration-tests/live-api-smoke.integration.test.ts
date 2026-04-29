@@ -122,7 +122,11 @@ describe('live smoke: API client → controller over real HTTP', () => {
 			},
 			leaseManager: {
 				createLease,
-				keepLeaseAlive: vi.fn(() => lease),
+				keepLeaseAlive: vi.fn(() => ({
+					kind: 'renewed' as const,
+					lastUsedAt: lease.lastUsedAt,
+					lease,
+				})),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => [lease]),
 				releaseLease: vi.fn(async () => {}),

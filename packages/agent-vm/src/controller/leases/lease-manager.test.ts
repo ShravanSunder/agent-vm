@@ -63,7 +63,7 @@ describe('createLeaseManager', () => {
 		});
 
 		expect(lease.tcpSlot).toBe(0);
-		expect(leaseManager.keepLeaseAlive(lease.id)).toMatchObject({
+		expect(leaseManager.keepLeaseAlive(lease.id)?.lease).toMatchObject({
 			id: lease.id,
 			agentWorkspaceDir: '/home/openclaw/work',
 			workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
@@ -129,11 +129,12 @@ describe('createLeaseManager', () => {
 		const lease = await leaseManager.createLease(request);
 		now = 150;
 
-		const peekedLease = leaseManager.peekLease(lease.id);
-		const keptAliveLease = leaseManager.keepLeaseAlive(lease.id);
+		const peekedLease = leaseManager.peekLease(lease.id)?.lease;
+		const keptAliveLease = leaseManager.keepLeaseAlive(lease.id)?.lease;
 
 		expect(peekedLease).toMatchObject({ id: lease.id, lastUsedAt: 100 });
 		expect(keptAliveLease).toMatchObject({ id: lease.id, lastUsedAt: 150 });
+		expect(leaseManager.peekLease('missing-lease')).toBeUndefined();
 	});
 
 	it('rejects same-scope lease reuse when the workspace changes', async () => {
@@ -445,7 +446,7 @@ describe('createLeaseManager', () => {
 		await leaseManager.releaseLease(lease.id, { ifLastUsedAtBeforeOrAt: 150 });
 
 		expect(closeMock).not.toHaveBeenCalled();
-		expect(leaseManager.keepLeaseAlive(lease.id)).toMatchObject({ id: lease.id });
+		expect(leaseManager.keepLeaseAlive(lease.id)?.lease).toMatchObject({ id: lease.id });
 	});
 
 	it('listLeases returns all active leases', async () => {

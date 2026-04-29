@@ -83,7 +83,8 @@ All routes are served by Hono on the configured `host.controllerPort` (default 1
 |--------|------|-------------|----------|
 | `GET` | `/health` | Liveness probe | `{ ok, port }` |
 | `POST` | `/lease` | Create a tool VM lease | Lease with SSH access details |
-| `GET` | `/lease/:leaseId` | Get a single lease | Lease with SSH identity PEM |
+| `GET` | `/lease/:leaseId` | Keep a lease alive and return agent-facing SSH access | Lease with SSH identity PEM |
+| `GET` | `/lease/:leaseId/peek` | Inspect a lease without extending its idle timer | Lease summary without SSH identity PEM |
 | `GET` | `/leases` | List all active leases | Array of lease summaries |
 | `DELETE` | `/lease/:leaseId` | Release a lease, destroy its VM | 204 No Content |
 

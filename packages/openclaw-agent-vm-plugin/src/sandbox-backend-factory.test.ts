@@ -7,6 +7,54 @@ import {
 	type GondolinFsBridge,
 } from './sandbox-backend-factory.js';
 
+function createLeaseResponse(leaseId: string): {
+	readonly leaseId: string;
+	readonly ssh: {
+		readonly host: string;
+		readonly identityPem: string;
+		readonly knownHostsLine: string;
+		readonly port: number;
+		readonly user: string;
+	};
+	readonly tcpSlot: number;
+	readonly workdir: string;
+} {
+	return {
+		leaseId,
+		ssh: {
+			host: 'tool-0.vm.host',
+			identityPem: 'pem',
+			knownHostsLine: 'known-hosts',
+			port: 22,
+			user: 'sandbox',
+		},
+		tcpSlot: 0,
+		workdir: '/work',
+	};
+}
+
+function createLeasePeekResponse(leaseId: string = 'lease-123'): {
+	readonly createdAt: number;
+	readonly lastUsedAt: number;
+	readonly leaseId: string;
+	readonly profileId: string;
+	readonly scopeKey: string;
+	readonly ssh: { readonly host: string; readonly port: number; readonly user: string };
+	readonly tcpSlot: number;
+	readonly zoneId: string;
+} {
+	return {
+		createdAt: 1,
+		lastUsedAt: 1,
+		leaseId,
+		profileId: 'standard',
+		scopeKey: 'scope',
+		ssh: { host: 'tool-0.vm.host', port: 22, user: 'sandbox' },
+		tcpSlot: 0,
+		zoneId: 'shravan',
+	};
+}
+
 function createMockFsBridge(): GondolinFsBridge {
 	return {
 		mkdirp: vi.fn(async () => {}),
@@ -58,7 +106,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 				buildExecSpec,
 				createFsBridgeBuilder,
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => ({ ok: true }),
+					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
 				}),
@@ -166,7 +215,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => ({ ok: true }),
+					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
 				}),
@@ -238,6 +288,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				})),
 				createLeaseClient: () => ({
 					keepLeaseAlive,
+					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
 				}),
@@ -302,7 +353,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => ({ ok: true }),
+					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
 				}),
@@ -337,7 +389,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			if (leaseId === 'lease-1') {
 				throw new Error('stale');
 			}
-			return { status: 'active' };
+			return createLeaseResponse(leaseId);
 		});
 		const requestLease = vi.fn(async () => {
 			leaseCounter += 1;
@@ -368,6 +420,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				})),
 				createLeaseClient: () => ({
 					keepLeaseAlive,
+					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
 				}),
@@ -409,7 +462,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => ({ ok: true }),
+					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease: vi.fn(async () => ({
 						leaseId: 'lease-finalize',
@@ -453,7 +507,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => ({ ok: true }),
+					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease: vi.fn(async () => ({
 						leaseId: 'lease-noop',
@@ -514,7 +569,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 				})),
 				createFsBridgeBuilder,
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => ({ ok: true }),
+					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease: vi.fn(async () => ({
 						leaseId: 'lease-789',
@@ -577,7 +633,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 			{
 				buildExecSpec: vi.fn(),
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => ({ ok: true }),
+					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease: async () =>
 						// Return a response missing required fields
@@ -624,7 +681,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => ({ ok: true }),
+					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
 				}),
@@ -647,8 +705,11 @@ describe('createGondolinSandboxBackendFactory', () => {
 });
 
 describe('createGondolinSandboxBackendManager', () => {
-	it('describeRuntime returns running true when keepLeaseAlive succeeds', async () => {
-		const keepLeaseAlive = vi.fn(async () => ({ status: 'active' }));
+	it('describeRuntime returns running true when peekLease succeeds', async () => {
+		const keepLeaseAlive = vi.fn(async () => {
+			throw new Error('describeRuntime should not extend lease idle timers');
+		});
+		const peekLease = vi.fn(async () => createLeasePeekResponse());
 		const manager = createGondolinSandboxBackendManager(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
@@ -658,6 +719,7 @@ describe('createGondolinSandboxBackendManager', () => {
 				buildExecSpec: vi.fn(),
 				createLeaseClient: () => ({
 					keepLeaseAlive,
+					peekLease,
 					releaseLease: vi.fn(async () => {}),
 					requestLease: vi.fn(),
 				}),
@@ -670,10 +732,11 @@ describe('createGondolinSandboxBackendManager', () => {
 		});
 
 		expect(result).toEqual({ running: true, configLabelMatch: true });
-		expect(keepLeaseAlive).toHaveBeenCalledWith('lease-123');
+		expect(peekLease).toHaveBeenCalledWith('lease-123');
+		expect(keepLeaseAlive).not.toHaveBeenCalled();
 	});
 
-	it('describeRuntime returns running false when keepLeaseAlive throws', async () => {
+	it('describeRuntime returns running false when peekLease throws', async () => {
 		const manager = createGondolinSandboxBackendManager(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
@@ -682,7 +745,8 @@ describe('createGondolinSandboxBackendManager', () => {
 			{
 				buildExecSpec: vi.fn(),
 				createLeaseClient: () => ({
-					keepLeaseAlive: vi.fn(async () => {
+					keepLeaseAlive: vi.fn(),
+					peekLease: vi.fn(async () => {
 						throw new Error('not found');
 					}),
 					releaseLease: vi.fn(async () => {}),
@@ -710,6 +774,7 @@ describe('createGondolinSandboxBackendManager', () => {
 				buildExecSpec: vi.fn(),
 				createLeaseClient: () => ({
 					keepLeaseAlive: vi.fn(),
+					peekLease: vi.fn(async () => createLeasePeekResponse()),
 					releaseLease,
 					requestLease: vi.fn(),
 				}),

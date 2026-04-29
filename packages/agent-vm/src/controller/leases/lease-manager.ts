@@ -28,6 +28,17 @@ export interface Lease {
 	readonly zoneId: string;
 }
 
+export interface LeaseRenewal {
+	readonly kind: 'renewed';
+	readonly lastUsedAt: number;
+	readonly lease: Lease;
+}
+
+export interface LeaseSnapshot {
+	readonly kind: 'snapshot';
+	readonly lease: Lease;
+}
+
 export interface LeaseManager {
 	createLease(options: {
 		readonly agentWorkspaceDir: string;
@@ -37,9 +48,9 @@ export interface LeaseManager {
 		readonly workspaceDir: string;
 		readonly zoneId: string;
 	}): Promise<Lease>;
-	keepLeaseAlive(leaseId: string): Lease | undefined;
+	keepLeaseAlive(leaseId: string): LeaseRenewal | undefined;
 	listLeases(): Lease[];
-	peekLease(leaseId: string): Lease | undefined;
+	peekLease(leaseId: string): LeaseSnapshot | undefined;
 	releaseLease(
 		leaseId: string,
 		options?: { readonly ifLastUsedAtBeforeOrAt?: number },
@@ -116,6 +127,7 @@ export function createLeaseManager(options: {
 	function deleteLease(lease: Lease): void {
 		leases.delete(lease.id);
 		const indexKey = scopeIndexKey(lease);
+		// Only clear the scope index if it still points at this exact lease.
 		if (leaseIdsByScope.get(indexKey) === lease.id) {
 			leaseIdsByScope.delete(indexKey);
 		}
@@ -216,15 +228,24 @@ export function createLeaseManager(options: {
 				}
 			});
 		},
-		keepLeaseAlive(leaseId: string): Lease | undefined {
+		keepLeaseAlive(leaseId: string): LeaseRenewal | undefined {
 			const lease = leases.get(leaseId);
-			return lease ? touchLease(lease) : undefined;
+			if (!lease) {
+				return undefined;
+			}
+			const renewedLease = touchLease(lease);
+			return {
+				kind: 'renewed',
+				lastUsedAt: renewedLease.lastUsedAt,
+				lease: renewedLease,
+			};
 		},
 		listLeases(): Lease[] {
 			return [...leases.values()];
 		},
-		peekLease(leaseId: string): Lease | undefined {
-			return leases.get(leaseId);
+		peekLease(leaseId: string): LeaseSnapshot | undefined {
+			const lease = leases.get(leaseId);
+			return lease ? { kind: 'snapshot', lease } : undefined;
 		},
 		async releaseLease(
 			leaseId: string,

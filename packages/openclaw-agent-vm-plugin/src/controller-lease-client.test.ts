@@ -3,37 +3,48 @@ import { describe, expect, it } from 'vitest';
 import { createLeaseClient } from './controller-lease-client.js';
 
 describe('createLeaseClient', () => {
-	it('requests, checks, and releases leases through the controller API', async () => {
+	it('requests, keeps alive, peeks, and releases leases through the controller API', async () => {
 		const requests: { method: string; url: string }[] = [];
 		const leaseClient = createLeaseClient({
 			controllerUrl: 'http://controller.vm.host:18800',
 			fetchImpl: async (input, init) => {
+				const url =
+					typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
 				requests.push({
 					method: init?.method ?? 'GET',
-					url:
-						typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url,
+					url,
 				});
 
-				return new Response(
-					JSON.stringify({
-						leaseId: 'lease-123',
-						ssh: {
-							host: 'tool-0.vm.host',
-							identityPem: 'pem',
-							knownHostsLine: 'known-hosts',
-							port: 22,
-							user: 'sandbox',
-						},
-						tcpSlot: 0,
-						workdir: '/work',
-					}),
-					{
-						headers: {
-							'content-type': 'application/json',
-						},
-						status: 200,
+				const responseBody = url.endsWith('/peek')
+					? {
+							createdAt: 1,
+							lastUsedAt: 1,
+							leaseId: 'lease-123',
+							profileId: 'standard',
+							scopeKey: 'agent:main:session-abc',
+							ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
+							tcpSlot: 0,
+							zoneId: 'shravan',
+						}
+					: {
+							leaseId: 'lease-123',
+							ssh: {
+								host: 'tool-0.vm.host',
+								identityPem: 'pem',
+								knownHostsLine: 'known-hosts',
+								port: 22,
+								user: 'sandbox',
+							},
+							tcpSlot: 0,
+							workdir: '/work',
+						};
+
+				return new Response(JSON.stringify(responseBody), {
+					headers: {
+						'content-type': 'application/json',
 					},
-				);
+					status: 200,
+				});
 			},
 		});
 
@@ -45,11 +56,13 @@ describe('createLeaseClient', () => {
 			zoneId: 'shravan',
 		});
 		await leaseClient.keepLeaseAlive('lease-123');
+		await leaseClient.peekLease('lease-123');
 		await leaseClient.releaseLease('lease-123');
 
 		expect(requests).toEqual([
 			{ method: 'POST', url: 'http://controller.vm.host:18800/lease' },
 			{ method: 'GET', url: 'http://controller.vm.host:18800/lease/lease-123' },
+			{ method: 'GET', url: 'http://controller.vm.host:18800/lease/lease-123/peek' },
 			{ method: 'DELETE', url: 'http://controller.vm.host:18800/lease/lease-123' },
 		]);
 	});

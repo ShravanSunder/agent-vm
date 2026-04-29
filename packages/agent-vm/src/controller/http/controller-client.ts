@@ -1,3 +1,8 @@
+import {
+	type ControllerLeasePeekResponse,
+	controllerLeasePeekResponseSchema,
+} from './controller-lease-response-types.js';
+
 export interface ControllerClient {
 	destroyZone(zoneId: string, purge: boolean): Promise<unknown>;
 	enableZoneSsh(zoneId: string): Promise<unknown>;
@@ -5,7 +10,7 @@ export interface ControllerClient {
 	getControllerStatus(): Promise<unknown>;
 	getZoneLogs(zoneId: string): Promise<unknown>;
 	listLeases(): Promise<unknown>;
-	peekLease(leaseId: string): Promise<unknown>;
+	peekLease(leaseId: string): Promise<ControllerLeasePeekResponse>;
 	refreshZoneCredentials(zoneId: string): Promise<unknown>;
 	releaseLease(leaseId: string): Promise<void>;
 	stopController(): Promise<unknown>;
@@ -26,6 +31,18 @@ async function readJsonResponse(response: Response, context: string): Promise<un
 			{ cause: error },
 		);
 	}
+}
+
+async function readLeasePeekResponse(
+	response: Response,
+	context: string,
+): Promise<ControllerLeasePeekResponse> {
+	const payload = await readJsonResponse(response, context);
+	const parsedPayload = controllerLeasePeekResponseSchema.safeParse(payload);
+	if (!parsedPayload.success) {
+		throw new Error(`${context} returned an invalid lease peek response.`);
+	}
+	return parsedPayload.data;
 }
 
 export function createControllerClient(options: {
@@ -80,9 +97,9 @@ export function createControllerClient(options: {
 			const response = await fetchImpl(`${baseUrl}/leases`);
 			return await readJsonResponse(response, 'List leases');
 		},
-		peekLease: async (leaseId: string): Promise<unknown> => {
+		peekLease: async (leaseId: string): Promise<ControllerLeasePeekResponse> => {
 			const response = await fetchImpl(`${baseUrl}/lease/${leaseId}/peek`);
-			return await readJsonResponse(response, `Peek lease '${leaseId}'`);
+			return await readLeasePeekResponse(response, `Peek lease '${leaseId}'`);
 		},
 		releaseLease: async (leaseId: string): Promise<void> => {
 			await fetchImpl(`${baseUrl}/lease/${leaseId}`, { method: 'DELETE' });

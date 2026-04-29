@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createControllerApp } from '../../agent-vm/src/controller/http/controller-http-routes.js';
-import { createLeaseClient, type GondolinLeaseResponse } from './controller-lease-client.js';
+import {
+	createLeaseClient,
+	type GondolinLeaseResponse,
+	type LeasePeekResponse,
+} from './controller-lease-client.js';
 import { createGondolinSandboxBackendFactory } from './sandbox-backend-factory.js';
 
 function createLeaseResponse(leaseId: string): GondolinLeaseResponse {
@@ -16,6 +20,19 @@ function createLeaseResponse(leaseId: string): GondolinLeaseResponse {
 		},
 		tcpSlot: 0,
 		workdir: '/work',
+	};
+}
+
+function createLeasePeekResponse(leaseId: string): LeasePeekResponse {
+	return {
+		createdAt: 1,
+		lastUsedAt: 1,
+		leaseId,
+		profileId: 'standard',
+		scopeKey: 'agent:main',
+		ssh: { host: 'tool-0.vm.host', port: 22, user: 'root' },
+		tcpSlot: 0,
+		zoneId: 'shravan',
 	};
 }
 
@@ -144,7 +161,8 @@ describe('gondolin controller integration', () => {
 					stdinMode: 'pipe-open',
 				}),
 				createLeaseClient: () => ({
-					keepLeaseAlive: vi.fn(async () => ({ status: 'active' })),
+					keepLeaseAlive: vi.fn(async () => createLeaseResponse('lease-1')),
+					peekLease: vi.fn(async () => createLeasePeekResponse('lease-1')),
 					releaseLease: vi.fn(async () => {}),
 					requestLease,
 				}),

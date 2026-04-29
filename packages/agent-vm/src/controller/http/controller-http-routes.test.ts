@@ -167,7 +167,11 @@ describe('createControllerApp', () => {
 			zoneId: 'shravan',
 		};
 		const createLease = vi.fn(async () => lease);
-		const keepLeaseAlive = vi.fn(() => lease);
+		const keepLeaseAlive = vi.fn(() => ({
+			kind: 'renewed' as const,
+			lastUsedAt: lease.lastUsedAt,
+			lease,
+		}));
 		const releaseLease = vi.fn(async () => {});
 		const app = createControllerApp({
 			toolProfiles: {
@@ -638,7 +642,7 @@ describe('createControllerApp', () => {
 		const keepLeaseAlive = vi.fn(() => {
 			throw new Error('keepalive should not be used for peek');
 		});
-		const peekLease = vi.fn(() => lease);
+		const peekLease = vi.fn(() => ({ kind: 'snapshot' as const, lease }));
 		const app = createControllerApp({
 			toolProfiles: {
 				standard: {
@@ -661,7 +665,16 @@ describe('createControllerApp', () => {
 		const response = await app.request('/lease/lease-123/peek');
 
 		expect(response.status).toBe(200);
-		await expect(response.json()).resolves.toMatchObject({ leaseId: 'lease-123' });
+		await expect(response.json()).resolves.toEqual({
+			createdAt: 0,
+			lastUsedAt: 0,
+			leaseId: 'lease-123',
+			profileId: 'standard',
+			scopeKey: 'scope-lease-123',
+			ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
+			tcpSlot: 0,
+			zoneId: 'shravan',
+		});
 		expect(peekLease).toHaveBeenCalledWith('lease-123');
 		expect(keepLeaseAlive).not.toHaveBeenCalled();
 	});
