@@ -1,6 +1,7 @@
 import { type Context, type Hono } from 'hono';
 import type { z } from 'zod';
 
+import { scrubGithubTokenFromOutput } from '../git-auth-support.js';
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { PushBranchesValidationError } from '../git-push-operations.js';
 import { buildTaskConfigFromPreparedInput } from '../task-config-builder.js';
@@ -266,15 +267,25 @@ export function registerControllerZoneOperationRoutes(
 					),
 				);
 			} catch (error) {
-				const message = error instanceof Error ? error.message : 'pull-default-failed';
+				const isValidationError = error instanceof PullDefaultValidationError;
+				const message = scrubGithubTokenFromOutput(
+					error instanceof Error ? error.message : 'pull-default-failed',
+				);
+				const logDetail = scrubGithubTokenFromOutput(
+					error instanceof Error
+						? isValidationError
+							? error.message
+							: (error.stack ?? error.message)
+						: String(error),
+				);
 				writeControllerRouteLog(
-					`pull-default failed for zone '${context.req.param('zoneId')}' task '${context.req.param('taskId')}': ${message}`,
+					`pull-default failed for zone '${context.req.param('zoneId')}' task '${context.req.param('taskId')}': ${logDetail}`,
 				);
 				return context.json(
 					{
 						error: message,
 					},
-					error instanceof PullDefaultValidationError ? 400 : 500,
+					isValidationError ? 400 : 500,
 				);
 			}
 		});

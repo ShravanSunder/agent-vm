@@ -8,6 +8,22 @@ import {
 } from './sandbox-backend-contract.js';
 import { buildShellScriptWithArgs } from './sandbox-shell-script.js';
 
+function scopeCacheKey(params: {
+	readonly agentWorkspaceDir: string;
+	readonly profileId: string;
+	readonly scopeKey: string;
+	readonly workspaceDir: string;
+	readonly zoneId: string;
+}): string {
+	return [
+		params.zoneId,
+		params.scopeKey,
+		params.profileId,
+		params.agentWorkspaceDir,
+		params.workspaceDir,
+	].join('\0');
+}
+
 export function createGondolinSandboxBackendFactory(
 	options: {
 		readonly controllerUrl: string;
@@ -29,22 +45,30 @@ export function createGondolinSandboxBackendFactory(
 	const scopeCache = new Map<string, CachedScopeEntry>();
 
 	return async (params) => {
+		const profileId = options.profileId ?? 'standard';
+		const cacheKey = scopeCacheKey({
+			agentWorkspaceDir: params.agentWorkspaceDir,
+			profileId,
+			scopeKey: params.scopeKey,
+			workspaceDir: params.workspaceDir,
+			zoneId: options.zoneId,
+		});
 		const leaseClient =
 			dependencies.createLeaseClient?.({
 				controllerUrl: options.controllerUrl,
 			}) ?? createLeaseClient({ controllerUrl: options.controllerUrl });
-		const cachedEntry = scopeCache.get(params.scopeKey);
+		const cachedEntry = scopeCache.get(cacheKey);
 		if (cachedEntry) {
 			try {
 				await leaseClient.getLeaseStatus(cachedEntry.lease.leaseId);
 				return cachedEntry.handle;
 			} catch {
-				scopeCache.delete(params.scopeKey);
+				scopeCache.delete(cacheKey);
 			}
 		}
 		const leaseResponse = await leaseClient.requestLease({
 			agentWorkspaceDir: params.agentWorkspaceDir,
-			profileId: options.profileId ?? 'standard',
+			profileId,
 			scopeKey: params.scopeKey,
 			workspaceDir: params.workspaceDir,
 			zoneId: options.zoneId,
@@ -64,7 +88,7 @@ export function createGondolinSandboxBackendFactory(
 			scopeKey: params.scopeKey,
 			zoneId: options.zoneId,
 		});
-		scopeCache.set(params.scopeKey, { handle, lease });
+		scopeCache.set(cacheKey, { handle, lease });
 		return handle;
 	};
 }

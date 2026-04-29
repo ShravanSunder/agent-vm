@@ -44,6 +44,8 @@ export async function createToolVm(
 	if (!toolImageProfile) {
 		throw new Error(`Tool VM image profile '${options.profile.imageProfile}' is not configured.`);
 	}
+	// Internal createToolVm callers bypass the /lease route; keep the mount
+	// boundary validation here so every RealFS /work mount is checked.
 	const hostWorkspaceDirectory = await validateResolvedToolWorkspaceDir({
 		workspaceDir: options.workspaceDir,
 		zone,

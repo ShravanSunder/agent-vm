@@ -204,20 +204,26 @@ export function createLeaseManager(options: {
 			if (!lease) {
 				return;
 			}
+			await withScopeLock(lease, async () => {
+				const currentLease = leases.get(leaseId);
+				if (!currentLease) {
+					return;
+				}
 
-			let releaseError: Error | undefined;
-			try {
-				await lease.vm.close();
-			} catch (error) {
-				releaseError = error instanceof Error ? error : new Error(String(error));
-			}
+				let releaseError: Error | undefined;
+				try {
+					await currentLease.vm.close();
+				} catch (error) {
+					releaseError = error instanceof Error ? error : new Error(String(error));
+				}
 
-			leases.delete(leaseId);
-			options.tcpPool.release(lease.tcpSlot);
+				leases.delete(leaseId);
+				options.tcpPool.release(currentLease.tcpSlot);
 
-			if (releaseError) {
-				throw releaseError;
-			}
+				if (releaseError) {
+					throw releaseError;
+				}
+			});
 		},
 	};
 }

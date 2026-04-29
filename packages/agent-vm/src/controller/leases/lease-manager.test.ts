@@ -334,6 +334,58 @@ describe('createLeaseManager', () => {
 		expect(createManagedVm).toHaveBeenCalledTimes(1);
 	});
 
+	it('serializes releaseLease with same-scope createLease reuse', async () => {
+		let releaseExec: (() => void) | undefined;
+		let markExecStarted: (() => void) | undefined;
+		const execStarted = new Promise<void>((resolve) => {
+			markExecStarted = resolve;
+		});
+		const execCanFinish = new Promise<void>((resolve) => {
+			releaseExec = resolve;
+		});
+		const closeMock = vi.fn(async () => {});
+		const vm = {
+			...createManagedVmStub(),
+			close: closeMock,
+			exec: vi.fn(async () => {
+				markExecStarted?.();
+				await execCanFinish;
+				return { exitCode: 0, stdout: '', stderr: '' };
+			}),
+		};
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => vm),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const request = {
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		};
+		const lease = await leaseManager.createLease(request);
+
+		const reusePromise = leaseManager.createLease(request);
+		await execStarted;
+		const releasePromise = leaseManager.releaseLease(lease.id);
+		await Promise.resolve();
+		expect(closeMock).not.toHaveBeenCalled();
+		releaseExec?.();
+		const reusedLease = await reusePromise;
+		await releasePromise;
+
+		expect(reusedLease.id).toBe(lease.id);
+		expect(closeMock).toHaveBeenCalledTimes(1);
+		expect(leaseManager.getLease(lease.id)).toBeUndefined();
+	});
+
 	it('listLeases returns all active leases', async () => {
 		const leaseManager = createLeaseManager({
 			createManagedVm: vi.fn(async () => ({

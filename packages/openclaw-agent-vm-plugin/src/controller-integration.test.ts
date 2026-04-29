@@ -1,8 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createControllerApp } from '../../agent-vm/src/controller/http/controller-http-routes.js';
-import { createLeaseClient } from './controller-lease-client.js';
+import { createLeaseClient, type GondolinLeaseResponse } from './controller-lease-client.js';
 import { createGondolinSandboxBackendFactory } from './sandbox-backend-factory.js';
+
+function createLeaseResponse(leaseId: string): GondolinLeaseResponse {
+	return {
+		leaseId,
+		ssh: {
+			host: 'tool-0.vm.host',
+			identityPem: 'pem',
+			knownHostsLine: 'known',
+			port: 22,
+			user: 'root',
+		},
+		tcpSlot: 0,
+		workdir: '/work',
+	};
+}
 
 describe('gondolin controller integration', () => {
 	it('requests a lease through the controller app and builds an exec spec from the returned ssh lease', async () => {
@@ -109,5 +124,54 @@ describe('gondolin controller integration', () => {
 		expect(backend.runtimeId).toBe('lease-123');
 		expect(backend.configLabel).toBe('http://controller.vm.host:18800 (shravan)');
 		expect(backend.configLabelKind).toBe('VM');
+	});
+
+	it('does not reuse a cached handle when the same scopeKey changes workspace identity', async () => {
+		const requestLease = vi
+			.fn()
+			.mockResolvedValueOnce(createLeaseResponse('lease-1'))
+			.mockResolvedValueOnce(createLeaseResponse('lease-2'));
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: async ({ command, env, ssh }) => ({
+					argv: ['ssh', ssh.host, command],
+					env,
+					stdinMode: 'pipe-open',
+				}),
+				createLeaseClient: () => ({
+					getLeaseStatus: vi.fn(async () => ({ status: 'active' })),
+					releaseLease: vi.fn(async () => {}),
+					requestLease,
+				}),
+				runRemoteShellScript: async () => ({
+					code: 0,
+					stderr: Buffer.from(''),
+					stdout: Buffer.from('ok'),
+				}),
+			},
+		);
+
+		const first = await factory({
+			agentWorkspaceDir: '/home/openclaw/work',
+			cfg: {},
+			scopeKey: 'agent:main',
+			sessionKey: 'session-1',
+			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/agent-main/work',
+		});
+		const second = await factory({
+			agentWorkspaceDir: '/home/openclaw/other-work',
+			cfg: {},
+			scopeKey: 'agent:main',
+			sessionKey: 'session-1',
+			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/agent-main-other/work',
+		});
+
+		expect(first.runtimeId).toBe('lease-1');
+		expect(second.runtimeId).toBe('lease-2');
+		expect(requestLease).toHaveBeenCalledTimes(2);
 	});
 });

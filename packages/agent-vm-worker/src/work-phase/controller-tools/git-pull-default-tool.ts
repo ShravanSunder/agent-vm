@@ -12,33 +12,135 @@ import {
 const CONTROLLER_TOOL_TIMEOUT_MS = 120_000;
 const GIT_TOOL_TIMEOUT_MS = 30_000;
 
-function hasFastForwardedCurrentBranch(value: unknown): boolean {
-	if (typeof value !== 'object' || value === null || !('currentBranchSync' in value)) {
-		return false;
-	}
-	const currentBranchSync = value.currentBranchSync;
-	return (
-		typeof currentBranchSync === 'object' &&
-		currentBranchSync !== null &&
-		'status' in currentBranchSync &&
-		currentBranchSync.status === 'fast-forwarded'
-	);
+interface GitToolCommandResult {
+	readonly stdout: string;
+	readonly stderr: string;
+	readonly exitCode?: number;
 }
 
-function hasControllerReportedFailure(value: unknown): value is {
-	readonly error?: string;
-	readonly message?: string;
-	readonly success: false;
-} {
-	return (
-		typeof value === 'object' && value !== null && 'success' in value && value.success === false
-	);
+type PullDefaultToolControllerResult =
+	| ({
+			readonly kind: 'advanced';
+			readonly success: true;
+			readonly message: string;
+			readonly currentBranchSync?: PullDefaultToolCurrentBranchSync;
+	  } & Readonly<Record<string, unknown>>)
+	| ({
+			readonly kind: 'failed' | 'refused-not-fast-forward';
+			readonly success: false;
+			readonly error?: string;
+			readonly message?: string;
+	  } & Readonly<Record<string, unknown>>);
+
+type PullDefaultToolCurrentBranchSync =
+	| {
+			readonly status: 'fast-forwarded';
+			readonly branch: string;
+			readonly localHead: string;
+			readonly remoteHead: string;
+	  }
+	| {
+			readonly status: 'default-branch';
+			readonly branch: string;
+			readonly localHead: string;
+			readonly remoteHead: string;
+	  }
+	| {
+			readonly status:
+				| 'ahead'
+				| 'detached'
+				| 'dirty-worktree'
+				| 'diverged'
+				| 'no-upstream'
+				| 'up-to-date';
+	  };
+
+function formatGitToolFailure(command: string, result: GitToolCommandResult): string {
+	const headline =
+		typeof result.exitCode === 'number'
+			? `${command} failed`
+			: `${command} terminated without an exit code`;
+	return [headline, result.stdout, result.stderr]
+		.filter((line) => line.trim().length > 0)
+		.join('\n');
 }
 
-function controllerResultMessage(value: unknown): string {
-	if (typeof value !== 'object' || value === null) {
-		return 'Controller returned an unexpected pull-default response.';
+function isSuccessfulGitToolResult(result: GitToolCommandResult): boolean {
+	return typeof result.exitCode === 'number' && result.exitCode === 0;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
+}
+
+function parseCurrentBranchSync(value: unknown): PullDefaultToolCurrentBranchSync | null {
+	if (!isObjectRecord(value) || typeof value.status !== 'string') return null;
+	switch (value.status) {
+		case 'fast-forwarded':
+		case 'default-branch':
+			return typeof value.branch === 'string' &&
+				typeof value.localHead === 'string' &&
+				typeof value.remoteHead === 'string'
+				? {
+						...value,
+						status: value.status,
+						branch: value.branch,
+						localHead: value.localHead,
+						remoteHead: value.remoteHead,
+					}
+				: null;
+		case 'ahead':
+		case 'detached':
+		case 'dirty-worktree':
+		case 'diverged':
+		case 'no-upstream':
+		case 'up-to-date':
+			return { ...value, status: value.status };
+		default:
+			return null;
 	}
+}
+
+function parseControllerPullDefaultResult(value: unknown): PullDefaultToolControllerResult | null {
+	if (!isObjectRecord(value) || typeof value.kind !== 'string') return null;
+	switch (value.kind) {
+		case 'advanced': {
+			if (value.success !== true || typeof value.message !== 'string') return null;
+			if ('currentBranchSync' in value) {
+				const currentBranchSync = parseCurrentBranchSync(value.currentBranchSync);
+				if (!currentBranchSync) return null;
+				return {
+					...value,
+					kind: 'advanced',
+					success: true,
+					message: value.message,
+					currentBranchSync,
+				};
+			}
+			return {
+				...value,
+				kind: 'advanced',
+				success: true,
+				message: value.message,
+			};
+		}
+		case 'failed':
+		case 'refused-not-fast-forward':
+			return value.success === false
+				? {
+						...value,
+						kind: value.kind,
+						success: false,
+						...(typeof value.error === 'string' ? { error: value.error } : {}),
+						...(typeof value.message === 'string' ? { message: value.message } : {}),
+					}
+				: null;
+		default:
+			return null;
+	}
+}
+
+function controllerResultMessage(value: PullDefaultToolControllerResult): string {
 	if ('message' in value && typeof value.message === 'string') {
 		return value.message;
 	}
@@ -46,6 +148,29 @@ function controllerResultMessage(value: unknown): string {
 		return value.error;
 	}
 	return 'Controller returned pull-default success=false without a message.';
+}
+
+function shouldResetWorktreeAfterControllerPull(result: PullDefaultToolControllerResult): boolean {
+	if (result.kind !== 'advanced') return false;
+	const sync = result.currentBranchSync;
+	if (!sync) return false;
+	switch (sync.status) {
+		case 'fast-forwarded':
+			return true;
+		case 'default-branch':
+			return sync.localHead !== sync.remoteHead;
+		case 'ahead':
+		case 'detached':
+		case 'dirty-worktree':
+		case 'diverged':
+		case 'no-upstream':
+		case 'up-to-date':
+			return false;
+		default: {
+			const exhaustiveStatus: never = sync;
+			return exhaustiveStatus;
+		}
+	}
 }
 
 export interface CreateGitPullDefaultToolProps {
@@ -90,17 +215,11 @@ export function createGitPullDefaultTool(props: CreateGitPullDefaultToolProps): 
 				reject: false,
 				timeout: GIT_TOOL_TIMEOUT_MS,
 			});
-			if ((currentHeadResult.exitCode ?? 0) !== 0) {
+			if (!isSuccessfulGitToolResult(currentHeadResult)) {
 				return {
 					type: 'pull-default',
 					success: false,
-					artifact: `Unable to read current git HEAD: ${[
-						'git rev-parse HEAD failed',
-						currentHeadResult.stdout,
-						currentHeadResult.stderr,
-					]
-						.filter((line) => line.trim().length > 0)
-						.join('\n')}`,
+					artifact: `Unable to read current git HEAD: ${formatGitToolFailure('git rev-parse HEAD', currentHeadResult)}`,
 				};
 			}
 			const statusResult = await execa('git', ['status', '--porcelain'], {
@@ -108,17 +227,11 @@ export function createGitPullDefaultTool(props: CreateGitPullDefaultToolProps): 
 				reject: false,
 				timeout: GIT_TOOL_TIMEOUT_MS,
 			});
-			if ((statusResult.exitCode ?? 0) !== 0) {
+			if (!isSuccessfulGitToolResult(statusResult)) {
 				return {
 					type: 'pull-default',
 					success: false,
-					artifact: `Unable to read worktree status: ${[
-						'git status --porcelain failed',
-						statusResult.stdout,
-						statusResult.stderr,
-					]
-						.filter((line) => line.trim().length > 0)
-						.join('\n')}`,
+					artifact: `Unable to read worktree status: ${formatGitToolFailure('git status --porcelain', statusResult)}`,
 				};
 			}
 
@@ -135,30 +248,32 @@ export function createGitPullDefaultTool(props: CreateGitPullDefaultToolProps): 
 			if (isControllerToolFailure(result)) {
 				return { type: 'pull-default', success: false, artifact: result.artifact };
 			}
-			if (hasControllerReportedFailure(result)) {
+			const pullResult = parseControllerPullDefaultResult(result);
+			if (!pullResult) {
 				return {
 					type: 'pull-default',
 					success: false,
-					artifact: controllerResultMessage(result),
+					artifact: 'Controller returned an unexpected pull-default response.',
 				};
 			}
-			if (hasFastForwardedCurrentBranch(result)) {
+			if (!pullResult.success) {
+				return {
+					type: 'pull-default',
+					success: false,
+					artifact: controllerResultMessage(pullResult),
+				};
+			}
+			if (shouldResetWorktreeAfterControllerPull(pullResult)) {
 				const resetResult = await execa('git', ['reset', '--hard', 'HEAD'], {
 					cwd: selected.repo.workPath,
 					reject: false,
 					timeout: GIT_TOOL_TIMEOUT_MS,
 				});
-				if ((resetResult.exitCode ?? 0) !== 0) {
+				if (!isSuccessfulGitToolResult(resetResult)) {
 					return {
 						type: 'pull-default',
 						success: false,
-						artifact: `Controller fast-forwarded the current branch, but worker reset failed: ${[
-							'git reset --hard HEAD failed',
-							resetResult.stdout,
-							resetResult.stderr,
-						]
-							.filter((line) => line.trim().length > 0)
-							.join('\n')}`,
+						artifact: `Controller fast-forwarded the current branch, but worker reset failed: ${formatGitToolFailure('git reset --hard HEAD', resetResult)}`,
 					};
 				}
 			}
@@ -166,8 +281,8 @@ export function createGitPullDefaultTool(props: CreateGitPullDefaultToolProps): 
 				type: 'pull-default',
 				success: true,
 				artifact: {
-					message: controllerResultMessage(result),
-					result,
+					message: controllerResultMessage(pullResult),
+					result: pullResult,
 				},
 			};
 		},

@@ -109,6 +109,7 @@ export interface PullCurrentBranchDefaultBranchResult extends PullCurrentBranchB
 	readonly status: 'default-branch';
 	readonly branch: string;
 	readonly upstreamTrackingRef: string;
+	readonly localHead: string;
 	readonly remoteHead: string;
 	readonly reason: string;
 }
@@ -255,6 +256,24 @@ async function gitWithTransientRetries(options: {
 	return retryResult.result;
 }
 
+async function updateRefAndVerify(options: {
+	readonly expectedHead: string;
+	readonly gitDir: string;
+	readonly ref: string;
+	readonly sourceRef: string;
+}): Promise<void> {
+	await gitWithTransientRetries({
+		gitDir: options.gitDir,
+		args: ['update-ref', options.ref, options.sourceRef],
+	});
+	const actualHead = await gitStdout(options.gitDir, ['rev-parse', options.ref]);
+	if (actualHead !== options.expectedHead) {
+		throw new GitCommandFailureError(
+			`git update-ref ${options.ref} ${options.expectedHead} did not move the ref; ${options.ref} is at ${actualHead}`,
+		);
+	}
+}
+
 async function gitStdout(gitDir: string, args: readonly string[]): Promise<string> {
 	return (await gitWithTransientRetries({ args, gitDir })).stdout.trim();
 }
@@ -329,28 +348,24 @@ async function fetchCurrentBranch(options: {
 	readonly githubToken: string;
 	readonly repoUrl: string;
 }): Promise<'fetched' | 'no-upstream'> {
+	const authenticatedUrl = buildAuthenticatedGitUrl(options.repoUrl, options.githubToken);
+	const upstreamProbeArgs = ['ls-remote', '--heads', authenticatedUrl, options.branch] as const;
+	const upstreamProbe = await gitWithTransientRetries({
+		gitDir: options.gitDir,
+		args: upstreamProbeArgs,
+	});
+	if (upstreamProbe.stdout.trim().length === 0) {
+		return 'no-upstream';
+	}
 	const remoteRef = `refs/remotes/origin/${options.branch}`;
 	const fetchArgs = [
 		'fetch',
 		'--prune',
-		buildAuthenticatedGitUrl(options.repoUrl, options.githubToken),
+		authenticatedUrl,
 		`refs/heads/${options.branch}:${remoteRef}`,
 	] as const;
-	const retryResult = await runGitCommandWithTransientRetries({
-		run: async () => await git({ gitDir: options.gitDir, args: fetchArgs, reject: false }),
-		sleep,
-	});
-	const result = retryResult.result;
-	if (result.exitCode === 0) return 'fetched';
-	const output = `${result.stdout}\n${result.stderr}`;
-	if (
-		/couldn't find remote ref|could not find remote ref|couldn't find remote branch|remote ref does not exist/iu.test(
-			output,
-		)
-	) {
-		return 'no-upstream';
-	}
-	throw new GitCommandFailureError(formatGitCommandFailure(fetchArgs, result));
+	await gitWithTransientRetries({ gitDir: options.gitDir, args: fetchArgs });
+	return 'fetched';
 }
 
 function describeCurrentBranchSync(sync: PullCurrentBranchSyncResult | undefined): string {
@@ -365,7 +380,9 @@ function describeCurrentBranchSync(sync: PullCurrentBranchSyncResult | undefined
 		case 'ahead':
 			return sync.reason;
 		case 'default-branch':
-			return sync.reason;
+			return sync.localHead === sync.remoteHead
+				? `Current branch '${sync.branch}' is the default branch and was already at ${sync.remoteHead}.`
+				: `Current branch '${sync.branch}' is the default branch; it fast-forwarded from ${sync.localHead} to ${sync.remoteHead}, and the worker reset the worktree to materialize the new HEAD.`;
 		case 'detached':
 			return sync.reason;
 		case 'dirty-worktree':
@@ -430,16 +447,19 @@ async function buildCurrentBranchSyncResult(options: {
 	const remoteRef = `refs/remotes/origin/${branch}`;
 	const upstreamTrackingRef = `origin/${branch}`;
 	if (branch === options.defaultBranch) {
-		const remoteHead = await gitStdout(options.gitDir, [
-			'rev-parse',
-			`refs/remotes/origin/${branch}`,
-		]);
+		const localHead =
+			options.pullRequest.currentHead ?? (await gitStdout(options.gitDir, ['rev-parse', localRef]));
+		const remoteHead = await gitStdout(options.gitDir, ['rev-parse', remoteRef]);
 		return {
 			branch,
 			upstreamTrackingRef,
 			status: 'default-branch',
+			localHead,
 			remoteHead,
-			reason: `Current branch '${branch}' is the default branch; git-pull-default already refreshed it.`,
+			reason:
+				localHead === remoteHead
+					? `Current branch '${branch}' is the default branch and was already up to date.`
+					: `Current branch '${branch}' is the default branch and was fast-forwarded from ${localHead} to ${remoteHead}.`,
 		};
 	}
 	const fetchStatus = await fetchCurrentBranch({
@@ -485,9 +505,11 @@ async function buildCurrentBranchSyncResult(options: {
 				reason: `Current branch '${branch}' can fast-forward to ${upstreamTrackingRef}, but the worker worktree has uncommitted changes.`,
 			};
 		}
-		await gitWithTransientRetries({
+		await updateRefAndVerify({
 			gitDir: options.gitDir,
-			args: ['update-ref', localRef, remoteRef],
+			ref: localRef,
+			sourceRef: remoteRef,
+			expectedHead: remoteHead,
 		});
 		return {
 			branch,
@@ -622,10 +644,29 @@ export async function pullDefaultForTask(options: {
 				};
 			}
 		}
+		const previousLocalDefaultHead = await gitStdout(repo.hostGitDir, ['rev-parse', defaultRef]);
+		if (
+			options.currentBranch === defaultBranch &&
+			options.worktreeDirty === true &&
+			previousLocalDefaultHead !== remoteDefaultHead
+		) {
+			const message = `Current branch '${defaultBranch}' is the default branch and can fast-forward to origin/${defaultBranch}, but the worker worktree has uncommitted changes. Commit or stash before calling git-pull-default.`;
+			return {
+				kind: 'refused-not-fast-forward',
+				repoUrl: options.repoUrl,
+				success: false,
+				message,
+				defaultBranch,
+				remoteDefaultHead,
+				error: message,
+			};
+		}
 
-		await gitWithTransientRetries({
+		await updateRefAndVerify({
 			gitDir: repo.hostGitDir,
-			args: ['update-ref', defaultRef, remoteDefaultRef],
+			ref: defaultRef,
+			sourceRef: remoteDefaultRef,
+			expectedHead: remoteDefaultHead,
 		});
 		const localDefaultHead = await gitStdout(repo.hostGitDir, ['rev-parse', defaultRef]);
 		const shouldSyncCurrentBranch =

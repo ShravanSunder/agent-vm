@@ -801,6 +801,53 @@ describe('createControllerApp', () => {
 		});
 	});
 
+	it('scrubs token-bearing pull-default errors from route logs and responses', async () => {
+		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const pullDefaultForTask = vi.fn(async () => {
+			throw new Error('boom https://x-access-token:secret-token@github.com/acme/widgets.git');
+		});
+		const app = createControllerApp({
+			toolProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				pullDefaultForTask,
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/shravan/tasks/task-1/pull-default', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				repoUrl: 'https://github.com/acme/widgets.git',
+			}),
+		});
+
+		expect(response.status).toBe(500);
+		await expect(response.json()).resolves.toEqual({
+			error: 'boom https://x-access-token:***@github.com/acme/widgets.git',
+		});
+		expect(stderrSpy.mock.calls.join('\n')).not.toContain('secret-token');
+		stderrSpy.mockRestore();
+	});
+
 	it('returns schema details for invalid destroy requests', async () => {
 		const app = createControllerApp({
 			toolProfiles: {

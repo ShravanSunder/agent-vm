@@ -160,6 +160,11 @@ VM; dead leases are evicted and replaced. This means a user's tool VM persists
 across multiple tool calls within the same conversation without silently
 crossing workspace or profile boundaries.
 
+The controller reports reuse conflicts as `LeaseScopeConflictError`, surfaced
+through the lease route as HTTP 409. The message names the zone, `scopeKey`, and
+the mismatched field so operators can distinguish a caller bug from VM capacity
+or startup failure.
+
 ### TCP Pool
 
 Each tool VM gets a TCP port slot. The gateway VM reaches tool VMs via Gondolin synthetic DNS:

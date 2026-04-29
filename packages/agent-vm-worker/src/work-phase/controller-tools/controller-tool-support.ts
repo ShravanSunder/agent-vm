@@ -88,7 +88,19 @@ export async function currentBranch(cwd: string): Promise<CurrentBranchResult> {
 		reject: false,
 		timeout: 10_000,
 	});
-	if ((result.exitCode ?? 0) !== 0) {
+	if (typeof result.exitCode !== 'number') {
+		return {
+			ok: false,
+			error: [
+				'git branch --show-current terminated without an exit code',
+				result.stdout,
+				result.stderr,
+			]
+				.filter((line) => line.trim().length > 0)
+				.join('\n'),
+		};
+	}
+	if (result.exitCode !== 0) {
 		return {
 			ok: false,
 			error: ['git branch --show-current failed', result.stdout, result.stderr]

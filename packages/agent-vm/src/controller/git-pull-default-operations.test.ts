@@ -57,7 +57,7 @@ describe('git-pull-default-operations', () => {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
-				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse') {
 				return { stdout: '', stderr: '', exitCode: 1 };
@@ -89,7 +89,7 @@ describe('git-pull-default-operations', () => {
 			success: true,
 			defaultBranch: 'main',
 			remoteDefaultHead: 'remote-main-sha',
-			localDefaultHead: 'local-main-sha',
+			localDefaultHead: 'remote-main-sha',
 			divergence: { aheadOfDefault: 3, behindDefault: 2, forkPoint: 'fork-sha' },
 		});
 		expect(execaMock).toHaveBeenCalledWith(
@@ -125,7 +125,63 @@ describe('git-pull-default-operations', () => {
 			attempts: 1,
 			defaultBranch: 'main',
 			remoteDefaultHead: 'remote-main-sha',
-			localDefaultHead: 'local-main-sha',
+			localDefaultHead: 'remote-main-sha',
+		});
+	});
+
+	test('fails when default branch update-ref read-back does not match expected head', async () => {
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
+				return { stdout: 'stale-main-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: '', exitCode: 0 };
+			if (gitArgs[0] === 'merge-base') return { stdout: 'fork-sha', stderr: '', exitCode: 0 };
+			if (gitArgs[0] === 'update-ref') return { stdout: '', stderr: '', exitCode: 0 };
+			if (gitArgs[0] === 'log') return { stdout: '', stderr: '', exitCode: 0 };
+			return { stdout: '', stderr: '', exitCode: 1 };
+		});
+
+		await expect(
+			pullDefaultForTask({
+				activeTask,
+				repoUrl: 'https://github.com/acme/widgets.git',
+				githubToken: 'token',
+			}),
+		).resolves.toMatchObject({
+			kind: 'failed',
+			success: false,
+			error: expect.stringContaining('did not move the ref'),
+		});
+	});
+
+	test('refuses when the local default branch ref is missing after fetch', async () => {
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
+				return { stdout: '', stderr: '', exitCode: 1 };
+			}
+			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: '', exitCode: 0 };
+			if (gitArgs[0] === 'log') return { stdout: '', stderr: '', exitCode: 0 };
+			return { stdout: '', stderr: '', exitCode: 1 };
+		});
+
+		await expect(
+			pullDefaultForTask({
+				activeTask,
+				repoUrl: 'https://github.com/acme/widgets.git',
+				githubToken: 'token',
+			}),
+		).resolves.toMatchObject({
+			kind: 'refused-not-fast-forward',
+			success: false,
+			error: expect.stringContaining("Local default branch ref 'refs/heads/main' is missing"),
 		});
 	});
 
@@ -138,17 +194,19 @@ describe('git-pull-default-operations', () => {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
-				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
 				return { stdout: 'remote-agent-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/agent/task-1')) {
-				return { stdout: 'local-agent-sha', stderr: '', exitCode: 0 };
+				return { stdout: 'remote-agent-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'branch') {
 				return { stdout: 'agent/task-1', stderr: '', exitCode: 0 };
 			}
+			if (gitArgs[0] === 'ls-remote')
+				return { stdout: 'remote-agent-sha	refs/heads/agent/task-1', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'fetch') {
 				return { stdout: '', stderr: '', exitCode: 0 };
 			}
@@ -207,7 +265,7 @@ describe('git-pull-default-operations', () => {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
-				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
 				return { stdout: 'remote-agent-sha', stderr: '', exitCode: 0 };
@@ -215,6 +273,8 @@ describe('git-pull-default-operations', () => {
 			if (gitArgs[0] === 'branch') {
 				return { stdout: 'agent/task-1', stderr: '', exitCode: 0 };
 			}
+			if (gitArgs[0] === 'ls-remote')
+				return { stdout: 'remote-agent-sha	refs/heads/agent/task-1', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'fetch') {
 				return { stdout: '', stderr: '', exitCode: 0 };
 			}
@@ -269,11 +329,13 @@ describe('git-pull-default-operations', () => {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
-				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
 				return { stdout: 'remote-agent-sha', stderr: '', exitCode: 0 };
 			}
+			if (gitArgs[0] === 'ls-remote')
+				return { stdout: 'remote-agent-sha	refs/heads/agent/task-1', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'merge-base' && joined.includes('agent/task-1')) {
 				return { stdout: '', stderr: 'fatal: corrupt commit graph', exitCode: 128 };
@@ -310,12 +372,14 @@ describe('git-pull-default-operations', () => {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
-				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
 				return { stdout: 'remote-agent-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'branch') return { stdout: 'agent/task-1', stderr: '', exitCode: 0 };
+			if (gitArgs[0] === 'ls-remote')
+				return { stdout: 'remote-agent-sha	refs/heads/agent/task-1', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'merge-base' && joined.includes('refs/heads/agent/task-1')) {
 				return { stdout: '', stderr: '', exitCode: 0 };
@@ -362,11 +426,13 @@ describe('git-pull-default-operations', () => {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
-				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
 				return { stdout: 'local-agent-sha', stderr: '', exitCode: 0 };
 			}
+			if (gitArgs[0] === 'ls-remote')
+				return { stdout: 'local-agent-sha	refs/heads/agent/task-1', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'merge-base') return { stdout: 'fork-sha', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'update-ref') return { stdout: '', stderr: '', exitCode: 0 };
@@ -405,11 +471,13 @@ describe('git-pull-default-operations', () => {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
-				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
 				return { stdout: 'remote-agent-sha', stderr: '', exitCode: 0 };
 			}
+			if (gitArgs[0] === 'ls-remote')
+				return { stdout: 'remote-agent-sha	refs/heads/agent/task-1', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'merge-base' && joined.includes('refs/heads/agent/task-1')) {
 				return joined.includes('refs/remotes/origin/agent/task-1 refs/heads/agent/task-1')
@@ -449,11 +517,12 @@ describe('git-pull-default-operations', () => {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
-				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'fetch' && gitArgs.join(' ').includes('refs/heads/agent/task-1')) {
 				return { stdout: '', stderr: "fatal: couldn't find remote ref", exitCode: 128 };
 			}
+			if (gitArgs[0] === 'ls-remote') return { stdout: '', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'merge-base') return { stdout: 'fork-sha', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'update-ref') return { stdout: '', stderr: '', exitCode: 0 };
@@ -486,6 +555,8 @@ describe('git-pull-default-operations', () => {
 		const fetches: string[][] = [];
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
 			const gitArgs = extractGitArgs(args);
+			if (gitArgs[0] === 'ls-remote')
+				return { stdout: 'remote-agent-sha	refs/heads/agent/task-1', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'fetch') {
 				fetches.push([...gitArgs]);
 				return { stdout: '', stderr: '', exitCode: 0 };
@@ -494,7 +565,7 @@ describe('git-pull-default-operations', () => {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
-				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'merge-base') return { stdout: 'fork-sha', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'update-ref') return { stdout: '', stderr: '', exitCode: 0 };
@@ -518,8 +589,47 @@ describe('git-pull-default-operations', () => {
 			branch: 'main',
 			upstreamTrackingRef: 'origin/main',
 			status: 'default-branch',
+			localHead: 'local-main-sha',
+			remoteHead: 'remote-main-sha',
 		});
 		expect(fetches).toHaveLength(1);
+	});
+
+	test('refuses to move checked-out default branch when the worker worktree is dirty', async () => {
+		const updatedRefs: string[][] = [];
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: '', exitCode: 0 };
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
+				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'merge-base') return { stdout: 'fork-sha', stderr: '', exitCode: 0 };
+			if (gitArgs[0] === 'update-ref') {
+				updatedRefs.push([...gitArgs]);
+				return { stdout: '', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'log') return { stdout: '', stderr: '', exitCode: 0 };
+			return { stdout: '', stderr: '', exitCode: 1 };
+		});
+
+		const result = await pullDefaultForTask({
+			activeTask,
+			repoUrl: 'https://github.com/acme/widgets.git',
+			githubToken: 'token',
+			currentBranch: 'main',
+			currentHead: 'local-main-sha',
+			worktreeDirty: true,
+		});
+
+		expect(result).toMatchObject({
+			kind: 'refused-not-fast-forward',
+			success: false,
+			error: expect.stringContaining('uncommitted changes'),
+		});
+		expect(updatedRefs).toEqual([]);
 	});
 
 	test('reports detached HEAD without current branch fetch', async () => {
@@ -529,9 +639,11 @@ describe('git-pull-default-operations', () => {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
-				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'branch') return { stdout: '', stderr: '', exitCode: 0 };
+			if (gitArgs[0] === 'ls-remote')
+				return { stdout: 'remote-agent-sha	refs/heads/agent/task-1', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'merge-base') return { stdout: 'fork-sha', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'update-ref') return { stdout: '', stderr: '', exitCode: 0 };
@@ -567,6 +679,8 @@ describe('git-pull-default-operations', () => {
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
 			const gitArgs = extractGitArgs(args);
 			const joined = gitArgs.join(' ');
+			if (gitArgs[0] === 'ls-remote')
+				return { stdout: 'remote-agent-sha	refs/heads/agent/task-1', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'fetch') {
 				fetchAttempts += 1;
 				if (fetchAttempts < 4) {
@@ -582,7 +696,7 @@ describe('git-pull-default-operations', () => {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
-				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'branch') {
 				return { stdout: 'agent/task-1', stderr: '', exitCode: 0 };
@@ -625,6 +739,8 @@ describe('git-pull-default-operations', () => {
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
 			const gitArgs = extractGitArgs(args);
 			if (gitArgs[0] === 'rev-parse') return { stdout: '', stderr: '', exitCode: 1 };
+			if (gitArgs[0] === 'ls-remote')
+				return { stdout: 'remote-agent-sha	refs/heads/agent/task-1', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: 'network down', exitCode: 1 };
 			return { stdout: '', stderr: '', exitCode: 0 };
 		});
@@ -655,7 +771,7 @@ describe('git-pull-default-operations', () => {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
-				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'fetch' && gitArgs.join(' ').includes('refs/heads/agent/task-1')) {
 				return {
@@ -664,6 +780,8 @@ describe('git-pull-default-operations', () => {
 					exitCode: 128,
 				};
 			}
+			if (gitArgs[0] === 'ls-remote')
+				return { stdout: 'remote-agent-sha	refs/heads/agent/task-1', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'merge-base') return { stdout: 'fork-sha', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'update-ref') return { stdout: '', stderr: '', exitCode: 0 };
@@ -695,8 +813,10 @@ describe('git-pull-default-operations', () => {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
-				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
+			if (gitArgs[0] === 'ls-remote')
+				return { stdout: 'remote-agent-sha	refs/heads/agent/task-1', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'merge-base') return { stdout: 'fork-sha', stderr: '', exitCode: 0 };
 			if (gitArgs[0] === 'update-ref') return { stdout: '', stderr: '', exitCode: 0 };
@@ -731,7 +851,7 @@ describe('git-pull-default-operations', () => {
 				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
-				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'branch') {
 				return { stdout: 'agent/task-1', stderr: '', exitCode: 0 };

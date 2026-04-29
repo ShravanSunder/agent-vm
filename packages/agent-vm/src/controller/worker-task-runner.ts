@@ -123,7 +123,13 @@ async function materializeRepoAgentVmDirectory(options: {
 		],
 		{ reject: false, timeout: GIT_METADATA_TIMEOUT_MS },
 	);
-	if ((metadataProbeResult.exitCode ?? 0) !== 0) {
+	if (typeof metadataProbeResult.exitCode !== 'number') {
+		const output = `${metadataProbeResult.stdout}\n${metadataProbeResult.stderr}`.trim();
+		throw new Error(
+			`Failed to probe .agent-vm metadata from ${options.repoUrl}: git ls-tree terminated without an exit code\n${scrubGithubTokenFromOutput(output)}`.trim(),
+		);
+	}
+	if (metadataProbeResult.exitCode !== 0) {
 		const output = `${metadataProbeResult.stdout}\n${metadataProbeResult.stderr}`.trim();
 		throw new Error(
 			`Failed to probe .agent-vm metadata from ${options.repoUrl}: ${scrubGithubTokenFromOutput(output)}`,

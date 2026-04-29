@@ -66,6 +66,11 @@ export const controllerPullDefaultRequestSchema = z.object({
 	repoUrl: z.string().min(1),
 	currentBranch: z.string().min(1).nullable().optional(),
 	currentHead: z.string().min(1).optional(),
+	/**
+	 * Caller-attested `git status --porcelain` dirtiness for the current worktree.
+	 * The controller uses it to decide whether a current-branch fast-forward is
+	 * safe; the host-side bare gitdir cannot inspect the worker worktree itself.
+	 */
 	worktreeDirty: z.boolean().optional(),
 });
 
@@ -82,6 +87,7 @@ const currentBranchDefaultBranchSchema = z.object({
 	status: z.literal('default-branch'),
 	branch: z.string().min(1),
 	upstreamTrackingRef: z.string().min(1),
+	localHead: z.string().min(1),
 	remoteHead: z.string().min(1),
 	reason: z.string().min(1),
 });
