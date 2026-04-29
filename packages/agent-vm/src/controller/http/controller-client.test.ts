@@ -28,6 +28,7 @@ describe('createControllerClient', () => {
 		await controllerClient.refreshZoneCredentials('shravan');
 		await controllerClient.destroyZone('shravan', true);
 		await controllerClient.upgradeZone('shravan');
+		await controllerClient.peekLease('lease-123');
 
 		expect(requests).toEqual([
 			{ method: 'GET', url: 'http://127.0.0.1:18800/controller-status' },
@@ -36,6 +37,7 @@ describe('createControllerClient', () => {
 			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/credentials/refresh' },
 			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/destroy' },
 			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/upgrade' },
+			{ method: 'GET', url: 'http://127.0.0.1:18800/lease/lease-123/peek' },
 		]);
 	});
 

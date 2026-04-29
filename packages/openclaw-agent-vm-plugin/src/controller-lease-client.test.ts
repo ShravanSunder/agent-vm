@@ -44,7 +44,7 @@ describe('createLeaseClient', () => {
 			workspaceDir: '/home/openclaw/.openclaw/sandboxes/work',
 			zoneId: 'shravan',
 		});
-		await leaseClient.getLeaseStatus('lease-123');
+		await leaseClient.keepLeaseAlive('lease-123');
 		await leaseClient.releaseLease('lease-123');
 
 		expect(requests).toEqual([
@@ -106,7 +106,7 @@ describe('createLeaseClient', () => {
 		expect(requests[0]).toBe('http://controller.vm.host:18800/lease');
 	});
 
-	it('throws when lease status returns a non-ok response', async () => {
+	it('throws when lease keepalive returns a non-ok response', async () => {
 		const leaseClient = createLeaseClient({
 			controllerUrl: 'http://controller.vm.host:18800',
 			fetchImpl: async () =>
@@ -116,6 +116,6 @@ describe('createLeaseClient', () => {
 				}),
 		});
 
-		await expect(leaseClient.getLeaseStatus('lease-missing')).rejects.toThrow(/HTTP 404/u);
+		await expect(leaseClient.keepLeaseAlive('lease-missing')).rejects.toThrow(/HTTP 404/u);
 	});
 });

@@ -15,6 +15,7 @@ function createControllerClientStub(overrides?: {
 		...(overrides?.execInZone ? { execInZone: overrides.execInZone } : {}),
 		getControllerStatus: async () => ({}),
 		getZoneLogs: async () => ({}),
+		peekLease: async () => ({}),
 		listLeases: async () => [],
 		refreshZoneCredentials: async () => ({}),
 		releaseLease: async () => {},

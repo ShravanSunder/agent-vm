@@ -34,5 +34,14 @@ export async function runLeaseCommand(options: RunLeaseCommandOptions): Promise<
 		return;
 	}
 
+	if (leaseSubcommand === 'peek') {
+		const leaseId = options.restArguments[1];
+		if (!leaseId) {
+			throw new Error('Usage: agent-vm controller lease peek <leaseId>');
+		}
+		writeJson(options.io, await controllerClient.peekLease(leaseId));
+		return;
+	}
+
 	throw new Error(`Unknown lease subcommand '${leaseSubcommand ?? 'undefined'}'.`);
 }

@@ -64,7 +64,8 @@ describe('gondolin controller integration', () => {
 					workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 					zoneId: 'shravan',
 				})),
-				getLease: vi.fn(),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
 			},
@@ -143,7 +144,7 @@ describe('gondolin controller integration', () => {
 					stdinMode: 'pipe-open',
 				}),
 				createLeaseClient: () => ({
-					getLeaseStatus: vi.fn(async () => ({ status: 'active' })),
+					keepLeaseAlive: vi.fn(async () => ({ status: 'active' })),
 					releaseLease: vi.fn(async () => {}),
 					requestLease,
 				}),

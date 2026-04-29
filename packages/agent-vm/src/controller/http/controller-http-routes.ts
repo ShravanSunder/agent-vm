@@ -97,8 +97,16 @@ export function createControllerApp(options: {
 		}
 	});
 
+	app.get('/lease/:leaseId/peek', async (context) => {
+		const lease = options.leaseManager.peekLease(context.req.param('leaseId'));
+		if (!lease) {
+			return context.json({ error: 'Lease not found' }, 404);
+		}
+		return context.json(await serializeLeaseForResponse(lease, readIdentityPem));
+	});
+
 	app.get('/lease/:leaseId', async (context) => {
-		const lease = options.leaseManager.getLease(context.req.param('leaseId'));
+		const lease = options.leaseManager.keepLeaseAlive(context.req.param('leaseId'));
 		if (!lease) {
 			return context.json({ error: 'Lease not found' }, 404);
 		}

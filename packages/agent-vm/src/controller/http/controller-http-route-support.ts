@@ -50,7 +50,7 @@ export interface ControllerRouteOperations {
 
 export type ControllerLeaseManager = Pick<
 	LeaseManager,
-	'createLease' | 'getLease' | 'listLeases' | 'releaseLease'
+	'createLease' | 'keepLeaseAlive' | 'listLeases' | 'peekLease' | 'releaseLease'
 >;
 
 export async function readIdentityPemFromFile(identityFilePath: string): Promise<string> {

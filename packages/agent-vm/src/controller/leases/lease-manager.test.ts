@@ -63,7 +63,7 @@ describe('createLeaseManager', () => {
 		});
 
 		expect(lease.tcpSlot).toBe(0);
-		expect(leaseManager.getLease(lease.id)).toMatchObject({
+		expect(leaseManager.keepLeaseAlive(lease.id)).toMatchObject({
 			id: lease.id,
 			agentWorkspaceDir: '/home/openclaw/work',
 			workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
@@ -73,7 +73,7 @@ describe('createLeaseManager', () => {
 		await leaseManager.releaseLease(lease.id);
 
 		expect(closeMock).toHaveBeenCalled();
-		expect(leaseManager.getLease(lease.id)).toBeUndefined();
+		expect(leaseManager.keepLeaseAlive(lease.id)).toBeUndefined();
 	});
 
 	it('reuses a live lease for the same zone scope profile and workspace', async () => {
@@ -105,6 +105,35 @@ describe('createLeaseManager', () => {
 		expect(secondLease.tcpSlot).toBe(0);
 		expect(secondLease.lastUsedAt).toBe(150);
 		expect(createManagedVm).toHaveBeenCalledTimes(1);
+	});
+
+	it('peeks a lease without extending its idle timestamp', async () => {
+		let now = 100;
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
+			now: () => now,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const request = {
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		};
+		const lease = await leaseManager.createLease(request);
+		now = 150;
+
+		const peekedLease = leaseManager.peekLease(lease.id);
+		const keptAliveLease = leaseManager.keepLeaseAlive(lease.id);
+
+		expect(peekedLease).toMatchObject({ id: lease.id, lastUsedAt: 100 });
+		expect(keptAliveLease).toMatchObject({ id: lease.id, lastUsedAt: 150 });
 	});
 
 	it('rejects same-scope lease reuse when the workspace changes', async () => {
@@ -383,7 +412,7 @@ describe('createLeaseManager', () => {
 
 		expect(reusedLease.id).toBe(lease.id);
 		expect(closeMock).toHaveBeenCalledTimes(1);
-		expect(leaseManager.getLease(lease.id)).toBeUndefined();
+		expect(leaseManager.keepLeaseAlive(lease.id)).toBeUndefined();
 	});
 
 	it('does not release a lease that was touched after an idle reaper snapshot', async () => {
@@ -416,7 +445,7 @@ describe('createLeaseManager', () => {
 		await leaseManager.releaseLease(lease.id, { ifLastUsedAtBeforeOrAt: 150 });
 
 		expect(closeMock).not.toHaveBeenCalled();
-		expect(leaseManager.getLease(lease.id)).toMatchObject({ id: lease.id });
+		expect(leaseManager.keepLeaseAlive(lease.id)).toMatchObject({ id: lease.id });
 	});
 
 	it('listLeases returns all active leases', async () => {
@@ -523,7 +552,7 @@ describe('createLeaseManager', () => {
 		});
 
 		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow('close failed');
-		expect(leaseManager.getLease(lease.id)).toBeUndefined();
+		expect(leaseManager.keepLeaseAlive(lease.id)).toBeUndefined();
 		expect(tcpPool.allocate()).toBe(0);
 	});
 

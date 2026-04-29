@@ -12,7 +12,7 @@ export interface GondolinLeaseResponse {
 }
 
 export interface LeaseClient {
-	getLeaseStatus(leaseId: string): Promise<unknown>;
+	keepLeaseAlive(leaseId: string): Promise<unknown>;
 	releaseLease(leaseId: string): Promise<void>;
 	requestLease(request: {
 		readonly agentWorkspaceDir: string;
@@ -41,12 +41,12 @@ export function createLeaseClient(options: {
 	const baseUrl = options.controllerUrl.replace(/\/$/u, '');
 
 	return {
-		getLeaseStatus: async (leaseId: string): Promise<unknown> => {
+		keepLeaseAlive: async (leaseId: string): Promise<unknown> => {
 			const response = await fetchImpl(`${baseUrl}/lease/${leaseId}`);
 			if (!response.ok) {
 				const errorBody = await response.text().catch(() => '(unreadable)');
 				throw new TypeError(
-					`Controller lease status API returned HTTP ${response.status}: ${errorBody}`,
+					`Controller lease keepalive API returned HTTP ${response.status}: ${errorBody}`,
 				);
 			}
 			return await response.json();

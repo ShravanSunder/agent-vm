@@ -68,6 +68,7 @@ function createControllerClientStub(
 		enableZoneSsh,
 		getControllerStatus: async () => ({}),
 		getZoneLogs: async () => ({}),
+		peekLease: async () => ({}),
 		listLeases: async () => [],
 		refreshZoneCredentials: async () => ({}),
 		releaseLease: async () => {},

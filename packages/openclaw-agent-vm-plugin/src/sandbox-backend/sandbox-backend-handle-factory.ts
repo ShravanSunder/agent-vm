@@ -60,7 +60,7 @@ export function createGondolinSandboxBackendFactory(
 		const cachedEntry = scopeCache.get(cacheKey);
 		if (cachedEntry) {
 			try {
-				await leaseClient.getLeaseStatus(cachedEntry.lease.leaseId);
+				await leaseClient.keepLeaseAlive(cachedEntry.lease.leaseId);
 				return cachedEntry.handle;
 			} catch {
 				scopeCache.delete(cacheKey);
