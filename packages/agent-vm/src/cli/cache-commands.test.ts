@@ -39,7 +39,6 @@ function createCacheCommandSystemConfig(): LoadedSystemConfig {
 					cpus: 1,
 					imageProfile: 'default',
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 				},
 			},
 			zones: [

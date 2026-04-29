@@ -48,7 +48,6 @@ function createWorkerSystemConfig(
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: './workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -110,7 +109,6 @@ function createOpenClawSystemConfig(
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: './workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -550,7 +548,6 @@ printf '{"ok":true}\\n'
 						standard: {
 							cpus: 1,
 							memory: '1G',
-							workspaceRoot: './workspaces/tools',
 							imageProfile: 'default',
 						},
 					},
@@ -707,7 +704,6 @@ exit 1
 						standard: {
 							cpus: 1,
 							memory: '1G',
-							workspaceRoot: './workspaces/tools',
 							imageProfile: 'default',
 						},
 					},

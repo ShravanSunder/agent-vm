@@ -9,7 +9,7 @@ import type { GondolinFsBridge } from './sandbox-backend-factory.js';
 function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
 	const mockSession = { command: 'ssh', configPath: '/tmp/ssh', host: 'tool-0.vm.host' };
 	return {
-		buildExecRemoteCommand: vi.fn(() => 'cd /workspace && ls -la'),
+		buildExecRemoteCommand: vi.fn(() => 'cd /work && ls -la'),
 		buildRemoteCommand: vi.fn(() => '/bin/sh -c pwd'),
 		buildSshSandboxArgv: vi.fn(() => ['ssh', '-i', '/tmp/key', 'tool-0.vm.host', 'ls']),
 		createRemoteShellSandboxFsBridge: vi.fn(() => ({
@@ -17,7 +17,7 @@ function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
 			readFile: vi.fn(async () => Buffer.from('content')),
 			remove: vi.fn(async () => {}),
 			rename: vi.fn(async () => {}),
-			resolvePath: vi.fn(() => ({ containerPath: '/workspace/f.txt', relativePath: 'f.txt' })),
+			resolvePath: vi.fn(() => ({ containerPath: '/work/f.txt', relativePath: 'f.txt' })),
 			stat: vi.fn(async () => ({ mtimeMs: 0, size: 0, type: 'file' as const })),
 			writeFile: vi.fn(async () => {}),
 		})),
@@ -89,7 +89,7 @@ describe('createBackendDeps', () => {
 				user: 'sandbox',
 			},
 			usePty: false,
-			workdir: '/workspace',
+			workdir: '/work',
 		});
 
 		expect(ssh.createSshSandboxSessionFromSettings).toHaveBeenCalledWith(
@@ -101,7 +101,7 @@ describe('createBackendDeps', () => {
 		);
 		expect(ssh.buildExecRemoteCommand).toHaveBeenCalledWith({
 			command: 'ls -la',
-			workdir: '/workspace',
+			workdir: '/work',
 			env: { TEST: '1' },
 		});
 		expect(execSpec.stdinMode).toBe('pipe-open');
@@ -134,7 +134,7 @@ describe('createBackendDeps', () => {
 				user: 'sandbox',
 			},
 			usePty: false,
-			workdir: '/workspace',
+			workdir: '/work',
 		});
 
 		const token = execSpec.finalizeToken as { dispose: () => Promise<void> };
@@ -159,7 +159,7 @@ describe('createBackendDeps', () => {
 				user: 'sandbox',
 			},
 			usePty: false,
-			workdir: '/workspace',
+			workdir: '/work',
 		});
 
 		const token = execSpec.finalizeToken as { dispose: () => Promise<void> };
@@ -175,7 +175,7 @@ describe('createBackendDeps', () => {
 			runSshSandboxCommand: vi.fn(async () => ({
 				code: 0,
 				stderr: Buffer.from(''),
-				stdout: Buffer.from('/workspace\n'),
+				stdout: Buffer.from('/work\n'),
 			})),
 		});
 
@@ -192,7 +192,7 @@ describe('createBackendDeps', () => {
 		});
 
 		expect(result.code).toBe(0);
-		expect(result.stdout.toString()).toBe('/workspace\n');
+		expect(result.stdout.toString()).toBe('/work\n');
 		expect(ssh.buildRemoteCommand).toHaveBeenCalledWith([
 			'/bin/sh',
 			'-c',
@@ -212,7 +212,7 @@ describe('createBackendDeps', () => {
 			remove: vi.fn(async () => {}),
 			rename: vi.fn(async () => {}),
 			resolvePath: vi.fn(() => ({
-				containerPath: '/workspace/readme.md',
+				containerPath: '/work/readme.md',
 				relativePath: 'readme.md',
 			})),
 			stat: vi.fn(async () => ({ mtimeMs: 2000, size: 100, type: 'file' as const })),
@@ -229,8 +229,8 @@ describe('createBackendDeps', () => {
 			stdout: Buffer.from(''),
 		}));
 		const createFsBridge = deps.createFsBridgeBuilder({
-			remoteWorkspaceDir: '/workspace',
-			remoteAgentWorkspaceDir: '/workspace',
+			remoteWorkspaceDir: '/work',
+			remoteAgentWorkspaceDir: '/work',
 			runRemoteShellScript: mockRunShellScript,
 		});
 
@@ -241,8 +241,8 @@ describe('createBackendDeps', () => {
 		expect(createRemoteShellSandboxFsBridge).toHaveBeenCalledWith({
 			sandbox: fakeSandbox,
 			runtime: {
-				remoteWorkspaceDir: '/workspace',
-				remoteAgentWorkspaceDir: '/workspace',
+				remoteWorkspaceDir: '/work',
+				remoteAgentWorkspaceDir: '/work',
 				runRemoteShellScript: mockRunShellScript,
 			},
 		});

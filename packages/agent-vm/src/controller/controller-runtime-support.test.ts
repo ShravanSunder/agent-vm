@@ -53,7 +53,6 @@ const baseConfig = {
 		standard: {
 			memory: '1G',
 			cpus: 1,
-			workspaceRoot: './workspaces/tools',
 			imageProfile: 'default',
 		},
 	},

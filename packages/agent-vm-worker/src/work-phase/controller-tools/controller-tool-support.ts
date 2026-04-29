@@ -7,18 +7,36 @@ export interface ControllerToolRepoSelection {
 	readonly error: string | null;
 }
 
-export interface ControllerToolFailure {
-	readonly type: 'controller-error';
-	readonly success: false;
-	readonly artifact: string;
-}
+export type ControllerToolFailure =
+	| {
+			readonly type: 'controller-transport-error';
+			readonly success: false;
+			readonly artifact: string;
+	  }
+	| {
+			readonly type: 'controller-http-error';
+			readonly success: false;
+			readonly status: number;
+			readonly artifact: string;
+	  }
+	| {
+			readonly type: 'controller-parse-error';
+			readonly success: false;
+			readonly artifact: string;
+	  };
+
+export type CurrentBranchResult =
+	| { readonly ok: true; readonly branch: string | null }
+	| { readonly ok: false; readonly error: string };
 
 export function isControllerToolFailure(value: unknown): value is ControllerToolFailure {
 	return (
 		typeof value === 'object' &&
 		value !== null &&
 		'type' in value &&
-		value.type === 'controller-error' &&
+		(value.type === 'controller-transport-error' ||
+			value.type === 'controller-http-error' ||
+			value.type === 'controller-parse-error') &&
 		'success' in value &&
 		value.success === false &&
 		'artifact' in value &&
@@ -64,15 +82,22 @@ export function selectRepo(
 	return { repo: repos[0] ?? null, error: null };
 }
 
-export async function currentBranch(cwd: string): Promise<string | null> {
+export async function currentBranch(cwd: string): Promise<CurrentBranchResult> {
 	const result = await execa('git', ['branch', '--show-current'], {
 		cwd,
 		reject: false,
 		timeout: 10_000,
 	});
-	if ((result.exitCode ?? 0) !== 0) return null;
+	if ((result.exitCode ?? 0) !== 0) {
+		return {
+			ok: false,
+			error: ['git branch --show-current failed', result.stdout, result.stderr]
+				.filter((line) => line.trim().length > 0)
+				.join('\n'),
+		};
+	}
 	const branch = result.stdout.trim();
-	return branch.length > 0 ? branch : null;
+	return { ok: true, branch: branch.length > 0 ? branch : null };
 }
 
 export async function postControllerJson(options: {
@@ -90,16 +115,17 @@ export async function postControllerJson(options: {
 		});
 	} catch (error) {
 		return {
-			type: 'controller-error',
+			type: 'controller-transport-error',
 			success: false,
-			artifact: `Controller request failed: ${error instanceof Error ? error.message : String(error)}`,
+			artifact: `Controller request failed before HTTP response: ${error instanceof Error ? error.message : String(error)}`,
 		} satisfies ControllerToolFailure;
 	}
 	const text = await response.text();
 	if (!response.ok) {
 		return {
-			type: 'controller-error',
+			type: 'controller-http-error',
 			success: false,
+			status: response.status,
 			artifact: `Controller request failed with HTTP ${String(response.status)}: ${text}`,
 		} satisfies ControllerToolFailure;
 	}
@@ -107,9 +133,9 @@ export async function postControllerJson(options: {
 		return JSON.parse(text) as unknown;
 	} catch (error) {
 		return {
-			type: 'controller-error',
+			type: 'controller-parse-error',
 			success: false,
-			artifact: `Controller response was not JSON: ${error instanceof Error ? error.message : String(error)}`,
+			artifact: `Controller response parse failed: ${error instanceof Error ? error.message : String(error)}`,
 		} satisfies ControllerToolFailure;
 	}
 }

@@ -19,7 +19,6 @@ export function createControllerApp(options: {
 			readonly cpus: number;
 			readonly imageProfile: string;
 			readonly memory: string;
-			readonly workspaceRoot: string;
 		}
 	>;
 	readonly zoneToolProfiles?: Record<string, string>;

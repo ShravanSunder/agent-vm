@@ -67,7 +67,7 @@ export async function serializeLeaseForResponse(
 		readonly user: string;
 	};
 	readonly tcpSlot: number;
-	readonly workdir: '/workspace';
+	readonly workdir: '/work';
 }> {
 	return {
 		leaseId: lease.id,
@@ -81,6 +81,6 @@ export async function serializeLeaseForResponse(
 			user: lease.sshAccess.user ?? 'root',
 		},
 		tcpSlot: lease.tcpSlot,
-		workdir: '/workspace',
+		workdir: '/work',
 	};
 }

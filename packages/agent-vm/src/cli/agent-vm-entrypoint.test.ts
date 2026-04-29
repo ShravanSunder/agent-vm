@@ -60,7 +60,6 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 			standard: {
 				cpus: 1,
 				memory: '1G',
-				workspaceRoot: './workspaces/tools',
 				imageProfile: 'default',
 			},
 		},
@@ -1143,7 +1142,6 @@ describe('runAgentVmCli', () => {
 						standard: {
 							cpus: 1,
 							memory: '1G',
-							workspaceRoot: './workspaces/tools',
 							imageProfile: 'default',
 						},
 					},
@@ -1258,7 +1256,6 @@ describe('runAgentVmCli', () => {
 						standard: {
 							cpus: 1,
 							memory: '1G',
-							workspaceRoot: './workspaces/tools',
 							imageProfile: 'default',
 						},
 					},
@@ -1396,7 +1393,6 @@ describe('runAgentVmCli', () => {
 						standard: {
 							cpus: 1,
 							memory: '1G',
-							workspaceRoot: './workspaces/tools',
 							imageProfile: 'default',
 						},
 					},
@@ -1628,7 +1624,6 @@ describe('runAgentVmCli', () => {
 					standard: {
 						cpus: 1,
 						memory: '1G',
-						workspaceRoot: './workspaces/tools',
 						imageProfile: 'default',
 					},
 				},
@@ -1888,7 +1883,6 @@ describe('runAgentVmCli', () => {
 							cpus: 1,
 							imageProfile: 'default',
 							memory: '1G',
-							workspaceRoot: './workspaces/tools',
 						},
 					},
 					zones: [
@@ -2028,7 +2022,6 @@ describe('runAgentVmCli', () => {
 							cpus: 1,
 							imageProfile: 'default',
 							memory: '1G',
-							workspaceRoot: './workspaces/tools',
 						},
 					},
 					zones: [

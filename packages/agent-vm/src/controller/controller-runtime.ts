@@ -4,11 +4,7 @@ import { createOpCliSecretResolver, type ManagedVm } from '@agent-vm/gondolin-ad
 import { deleteGatewayRuntimeRecord as deleteGatewayRuntimeRecordDefault } from '../gateway/gateway-runtime-record.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { runTaskWithResult } from '../shared/run-task.js';
-import {
-	cleanToolVmWorkspace,
-	createToolVm,
-	resolveToolVmWorkspaceDirectory,
-} from '../tool-vm/tool-vm-lifecycle.js';
+import { createToolVm } from '../tool-vm/tool-vm-lifecycle.js';
 import { ActiveTaskRegistry } from './active-task-registry.js';
 import {
 	createControllerRuntimeOperations,
@@ -115,15 +111,6 @@ export async function startControllerRuntime(
 	const requestHeartbeatRegistry = new RequestHeartbeatRegistry();
 	const activeZone = findConfiguredZone(options.systemConfig, options.zoneId);
 	const leaseManager = createLeaseManager({
-		cleanWorkspace: async ({ profile, tcpSlot, zoneId }) => {
-			await cleanToolVmWorkspace(
-				resolveToolVmWorkspaceDirectory({
-					profile,
-					tcpSlot,
-					zoneId,
-				}),
-			);
-		},
 		createManagedVm: async (leaseOptions) =>
 			await createManagedToolVm({
 				profile: leaseOptions.profile,

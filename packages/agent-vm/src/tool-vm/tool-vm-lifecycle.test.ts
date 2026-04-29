@@ -65,7 +65,6 @@ function createToolVmSystemConfig(): LoadedSystemConfig {
 					cpus: 1,
 					imageProfile: 'default',
 					memory: '1G',
-					workspaceRoot: path.join(temporaryDirectory, 'workspaces', 'tools'),
 				},
 			},
 			zones: [
@@ -93,6 +92,65 @@ function createToolVmSystemConfig(): LoadedSystemConfig {
 }
 
 describe('createToolVm', () => {
+	it('mounts the lease workspace directory at /work', async () => {
+		const managedVm = {
+			close: async () => {},
+			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+			getVmInstance: () => ({
+				close: async () => {},
+				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				exec: async () => ({ exitCode: 0 }),
+				id: 'vm-instance',
+				setIngressRoutes: () => {},
+			}),
+			id: 'managed-vm',
+			setIngressRoutes: () => {},
+		} satisfies ManagedVm;
+		const createManagedVm = vi.fn(async () => managedVm);
+		const systemConfig = createToolVmSystemConfig();
+		const standardProfile = systemConfig.toolProfiles.standard;
+		if (!standardProfile) {
+			throw new Error('Expected standard tool profile');
+		}
+		const requestedWorkspaceDir = path.join(
+			createTemporaryDirectory(),
+			'openclaw-session-workspace',
+		);
+
+		await createToolVm(
+			{
+				cacheDir: systemConfig.cacheDir,
+				profile: standardProfile,
+				systemConfig,
+				tcpSlot: 0,
+				workspaceDir: requestedWorkspaceDir,
+				zoneId: 'shravan',
+			},
+			{
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'tool-fingerprint',
+					imagePath: '/cache/tool-fingerprint',
+				}),
+				createManagedVm,
+			},
+		);
+
+		expect(createManagedVm).toHaveBeenCalledWith(
+			expect.objectContaining({
+				vfsMounts: {
+					'/work': {
+						hostPath: requestedWorkspaceDir,
+						kind: 'realfs',
+					},
+				},
+			}),
+		);
+	});
+
 	it('creates the tool VM without running redundant runtime setup commands', async () => {
 		const exec = vi.fn(async () => ({
 			exitCode: 0,
@@ -121,6 +179,7 @@ describe('createToolVm', () => {
 		if (!standardProfile) {
 			throw new Error('Expected standard tool profile');
 		}
+		const requestedWorkspaceDir = path.join(createTemporaryDirectory(), 'openclaw-workspace');
 		const buildGondolinImage = vi.fn(async () => ({
 			built: true,
 			fingerprint: 'tool-fingerprint',
@@ -133,7 +192,7 @@ describe('createToolVm', () => {
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
-				workspaceDir: '/workspace',
+				workspaceDir: requestedWorkspaceDir,
 				zoneId: 'shravan',
 			},
 			{
@@ -175,6 +234,7 @@ describe('createToolVm', () => {
 		if (!standardProfile) {
 			throw new Error('Expected standard tool profile');
 		}
+		const requestedWorkspaceDir = path.join(createTemporaryDirectory(), 'openclaw-workspace');
 
 		await createToolVm(
 			{
@@ -182,7 +242,7 @@ describe('createToolVm', () => {
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 1,
-				workspaceDir: '/workspace',
+				workspaceDir: requestedWorkspaceDir,
 				zoneId: 'shravan',
 			},
 			{

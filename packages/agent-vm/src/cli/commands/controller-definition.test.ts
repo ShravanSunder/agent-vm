@@ -77,7 +77,6 @@ describe('isGatewayImageCached', () => {
 						cpus: 1,
 						imageProfile: 'default',
 						memory: '1G',
-						workspaceRoot: '/tmp/tools',
 					},
 				},
 				zones: [

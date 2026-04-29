@@ -63,7 +63,7 @@ export function createBackendDeps(ssh: SshHelpers): {
 				strictHostKeyChecking: false,
 				target: `${sshCreds.user}@${sshCreds.host}:${sshCreds.port}`,
 				updateHostKeys: false,
-				workspaceRoot: '/workspace',
+				workspaceRoot: '/work',
 			});
 			return await ssh.runSshSandboxCommand({
 				...(allowFailure !== undefined ? { allowFailure } : {}),

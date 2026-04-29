@@ -31,16 +31,15 @@ describe('createLeaseManager', () => {
 		});
 
 		const lease = await leaseManager.createLease({
-			agentWorkspaceDir: '/home/openclaw/workspace',
+			agentWorkspaceDir: '/home/openclaw/work',
 			profile: {
 				cpus: 1,
 				memory: '1G',
-				workspaceRoot: '/workspaces/tools',
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main:session-abc',
-			workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/workspace',
+			workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
 			zoneId: 'shravan',
 		});
 
@@ -78,29 +77,27 @@ describe('createLeaseManager', () => {
 		});
 
 		const lease1 = await leaseManager.createLease({
-			agentWorkspaceDir: '/workspace',
+			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
 				memory: '1G',
-				workspaceRoot: '/workspaces/tools',
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
 			scopeKey: 'scope-a',
-			workspaceDir: '/workspace',
+			workspaceDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
 		const lease2 = await leaseManager.createLease({
-			agentWorkspaceDir: '/workspace',
+			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
 				memory: '1G',
-				workspaceRoot: '/workspaces/tools',
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
 			scopeKey: 'scope-b',
-			workspaceDir: '/workspace',
+			workspaceDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
 
@@ -121,59 +118,6 @@ describe('createLeaseManager', () => {
 		await leaseManager.releaseLease('does-not-exist');
 
 		expect(leaseManager.listLeases()).toHaveLength(0);
-	});
-
-	it('cleans the host workspace when releasing a lease', async () => {
-		const closeMock = vi.fn(async () => {});
-		const cleanWorkspace = vi.fn(async () => {});
-		const leaseManager = createLeaseManager({
-			cleanWorkspace,
-			createManagedVm: vi.fn(async () => ({
-				close: closeMock,
-				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-				enableSsh: vi.fn(async () => ({
-					command: 'ssh ...',
-					host: '127.0.0.1',
-					identityFile: '/tmp/key',
-					port: 19000,
-					user: 'sandbox',
-				})),
-				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
-				id: 'tool-vm-clean',
-				setIngressRoutes: vi.fn(),
-				getVmInstance: vi.fn(),
-			})),
-			now: () => 100,
-			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
-		});
-
-		const lease = await leaseManager.createLease({
-			agentWorkspaceDir: '/workspace',
-			profile: {
-				cpus: 1,
-				memory: '1G',
-				workspaceRoot: '/workspaces/tools',
-				imageProfile: 'default',
-			},
-			profileId: 'standard',
-			scopeKey: 'scope-clean',
-			workspaceDir: '/workspace',
-			zoneId: 'shravan',
-		});
-
-		await leaseManager.releaseLease(lease.id);
-
-		expect(closeMock).toHaveBeenCalledTimes(1);
-		expect(cleanWorkspace).toHaveBeenCalledWith({
-			profile: {
-				cpus: 1,
-				memory: '1G',
-				workspaceRoot: '/workspaces/tools',
-				imageProfile: 'default',
-			},
-			tcpSlot: 0,
-			zoneId: 'shravan',
-		});
 	});
 
 	it('releases bookkeeping even when vm.close throws', async () => {
@@ -202,67 +146,19 @@ describe('createLeaseManager', () => {
 		});
 
 		const lease = await leaseManager.createLease({
-			agentWorkspaceDir: '/workspace',
+			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
 				memory: '1G',
-				workspaceRoot: '/workspaces/tools',
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
 			scopeKey: 'scope-close-fail',
-			workspaceDir: '/workspace',
+			workspaceDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
 
 		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow('close failed');
-		expect(leaseManager.getLease(lease.id)).toBeUndefined();
-		expect(tcpPool.allocate()).toBe(0);
-	});
-
-	it('releases bookkeeping even when workspace cleanup throws after vm close', async () => {
-		const closeMock = vi.fn(async () => {});
-		const cleanWorkspace = vi.fn(async () => {
-			throw new Error('cleanup failed');
-		});
-		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
-		const leaseManager = createLeaseManager({
-			cleanWorkspace,
-			createManagedVm: vi.fn(async () => ({
-				close: closeMock,
-				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-				enableSsh: vi.fn(async () => ({
-					command: 'ssh ...',
-					host: '127.0.0.1',
-					identityFile: '/tmp/key',
-					port: 19000,
-					user: 'sandbox',
-				})),
-				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
-				id: 'tool-vm-cleanup-fail',
-				setIngressRoutes: vi.fn(),
-				getVmInstance: vi.fn(),
-			})),
-			now: () => 100,
-			tcpPool,
-		});
-
-		const lease = await leaseManager.createLease({
-			agentWorkspaceDir: '/workspace',
-			profile: {
-				cpus: 1,
-				memory: '1G',
-				workspaceRoot: '/workspaces/tools',
-				imageProfile: 'default',
-			},
-			profileId: 'standard',
-			scopeKey: 'scope-cleanup-fail',
-			workspaceDir: '/workspace',
-			zoneId: 'shravan',
-		});
-
-		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow('cleanup failed');
-		expect(closeMock).toHaveBeenCalledTimes(1);
 		expect(leaseManager.getLease(lease.id)).toBeUndefined();
 		expect(tcpPool.allocate()).toBe(0);
 	});
@@ -279,16 +175,15 @@ describe('createLeaseManager', () => {
 
 		await expect(
 			leaseManager.createLease({
-				agentWorkspaceDir: '/workspace',
+				agentWorkspaceDir: '/host/agent-work',
 				profile: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 				profileId: 'standard',
 				scopeKey: 'scope-fail',
-				workspaceDir: '/workspace',
+				workspaceDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow('vm create failed');
@@ -317,16 +212,15 @@ describe('createLeaseManager', () => {
 
 		await expect(
 			leaseManager.createLease({
-				agentWorkspaceDir: '/workspace',
+				agentWorkspaceDir: '/host/agent-work',
 				profile: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 				profileId: 'standard',
 				scopeKey: 'scope-ssh-fail',
-				workspaceDir: '/workspace',
+				workspaceDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow('ssh setup failed');

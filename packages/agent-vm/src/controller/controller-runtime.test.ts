@@ -63,7 +63,6 @@ const systemConfig = {
 		standard: {
 			memory: '1G',
 			cpus: 1,
-			workspaceRoot: './workspaces/tools',
 			imageProfile: 'default',
 		},
 	},
@@ -882,10 +881,10 @@ describe('startControllerRuntime', () => {
 
 		await startHttpServerArgs.app.request('/lease', {
 			body: JSON.stringify({
-				agentWorkspaceDir: '/workspace',
+				agentWorkspaceDir: '/host/agent-work',
 				profileId: 'standard',
 				scopeKey: 'close-runtime',
-				workspaceDir: '/workspace',
+				workspaceDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
 			headers: {

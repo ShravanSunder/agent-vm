@@ -251,7 +251,7 @@ describe('worker-task-runner integration', () => {
 			},
 		],
 		toolProfiles: {
-			standard: { memory: '1G', cpus: 1, workspaceRoot: '/tmp/tools', imageProfile: 'default' },
+			standard: { memory: '1G', cpus: 1, imageProfile: 'default' },
 		},
 		tcpPool: { basePort: 19000, size: 4 },
 	} satisfies LoadedSystemConfig;

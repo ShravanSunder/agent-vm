@@ -43,7 +43,6 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: './workspaces/tools',
 					imageProfile: 'default',
 				},
 			},

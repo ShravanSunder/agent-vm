@@ -113,19 +113,10 @@ export function createPathsSubcommands(io: CliIo, dependencies: CliDependencies)
 							),
 						];
 					});
-					const toolProfileEntryPromises = Object.entries(systemConfig.toolProfiles).map(
-						([profileId, profile]) =>
-							buildResolvedPathEntry(
-								`toolProfile[${profileId}].workspaceRoot`,
-								profile.workspaceRoot,
-								sizes,
-							),
-					);
 					const entries: ResolvedPathEntry[] = await Promise.all([
 						buildResolvedPathEntry('cacheDir', systemConfig.cacheDir, sizes),
 						buildResolvedPathEntry('runtimeDir', systemConfig.runtimeDir, sizes),
 						...zoneEntryPromises,
-						...toolProfileEntryPromises,
 					]);
 
 					const labelWidth = entries.reduce(

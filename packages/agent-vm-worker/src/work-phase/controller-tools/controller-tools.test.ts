@@ -94,6 +94,27 @@ describe('controller tools', () => {
 		});
 	});
 
+	test('git-push reports git branch read failures instead of detached HEAD', async () => {
+		execaMock.mockResolvedValue({
+			stdout: '',
+			stderr: 'fatal: not a git repository',
+			exitCode: 128,
+		});
+		const tool = createGitPushTool({
+			controllerBaseUrl: 'http://controller',
+			zoneId: 'zone-1',
+			taskId: 'task-1',
+			repos,
+		});
+
+		await expect(tool.execute({})).resolves.toEqual({
+			type: 'push',
+			success: false,
+			artifact:
+				'Unable to read current git branch: git branch --show-current failed\nfatal: not a git repository',
+		});
+	});
+
 	test('git-pull-default posts selected repo to controller', async () => {
 		const fetchMock = vi.fn(
 			async () =>
@@ -138,6 +159,46 @@ describe('controller tools', () => {
 			type: 'pull-default',
 			success: false,
 			artifact: 'Controller request failed with HTTP 400: repo not registered',
+		});
+	});
+
+	test('git-pull-default reports controller transport errors as transport failures', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => {
+				throw new Error('controller offline');
+			}),
+		);
+		const tool = createGitPullDefaultTool({
+			controllerBaseUrl: 'http://controller',
+			zoneId: 'zone-1',
+			taskId: 'task-1',
+			repos,
+		});
+
+		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toEqual({
+			type: 'pull-default',
+			success: false,
+			artifact: 'Controller request failed before HTTP response: controller offline',
+		});
+	});
+
+	test('git-pull-default reports malformed controller JSON separately', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => new Response('not-json', { status: 200 })),
+		);
+		const tool = createGitPullDefaultTool({
+			controllerBaseUrl: 'http://controller',
+			zoneId: 'zone-1',
+			taskId: 'task-1',
+			repos,
+		});
+
+		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toEqual({
+			type: 'pull-default',
+			success: false,
+			artifact: expect.stringContaining('Controller response parse failed:'),
 		});
 	});
 });
