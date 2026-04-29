@@ -2,14 +2,17 @@ import path from 'node:path';
 
 import { buildToolSessionLabel } from '@agent-vm/gateway-interface';
 import {
+	closePinnedRealFsRoot as closePinnedRealFsRootDefault,
 	createManagedVm as createManagedVmFromCore,
+	pinRealFsRoot as pinRealFsRootDefault,
 	type ManagedVm,
+	type PinnedRealFsRoot,
 } from '@agent-vm/gondolin-adapter';
 
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { ToolProfile } from '../controller/leases/lease-manager.js';
-import { validateResolvedToolWorkspaceDir } from '../controller/leases/lease-workspace-paths.js';
+import { validateResolvedToolWorkspaceDir as validateResolvedToolWorkspaceDirDefault } from '../controller/leases/lease-workspace-paths.js';
 
 export interface ToolVmLifecycleDependencies {
 	readonly buildGondolinImage?: (options: {
@@ -19,6 +22,9 @@ export interface ToolVmLifecycleDependencies {
 		readonly fullReset?: boolean;
 	}) => ReturnType<typeof buildGondolinImageDefault>;
 	readonly createManagedVm?: typeof createManagedVmFromCore;
+	readonly closePinnedRealFsRoot?: (root: PinnedRealFsRoot) => void;
+	readonly pinRealFsRoot?: (hostPath: string) => PinnedRealFsRoot;
+	readonly validateResolvedToolWorkspaceDir?: typeof validateResolvedToolWorkspaceDirDefault;
 }
 
 export async function createToolVm(
@@ -34,6 +40,10 @@ export async function createToolVm(
 ): Promise<ManagedVm> {
 	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
+	const closePinnedRealFsRoot = dependencies.closePinnedRealFsRoot ?? closePinnedRealFsRootDefault;
+	const pinRealFsRoot = dependencies.pinRealFsRoot ?? pinRealFsRootDefault;
+	const validateResolvedToolWorkspaceDir =
+		dependencies.validateResolvedToolWorkspaceDir ?? validateResolvedToolWorkspaceDirDefault;
 	const zone = options.systemConfig.zones.find(
 		(configuredZone) => configuredZone.id === options.zoneId,
 	);
@@ -44,9 +54,8 @@ export async function createToolVm(
 	if (!toolImageProfile) {
 		throw new Error(`Tool VM image profile '${options.profile.imageProfile}' is not configured.`);
 	}
-	// Internal createToolVm callers bypass the /lease route; keep the mount
-	// boundary validation here so every RealFS /work mount is checked.
-	const hostWorkspaceDirectory = await validateResolvedToolWorkspaceDir({
+	// Fail bad lease paths before doing any expensive image work.
+	await validateResolvedToolWorkspaceDir({
 		workspaceDir: options.workspaceDir,
 		zone,
 	});
@@ -56,6 +65,22 @@ export async function createToolVm(
 		cacheDir: path.join(options.cacheDir, 'tool-vm-images', options.profile.imageProfile),
 	});
 
+	// Internal createToolVm callers bypass the /lease route; validate and pin
+	// immediately before handing the RealFS root to the VM adapter.
+	const hostWorkspaceDirectory = await validateResolvedToolWorkspaceDir({
+		workspaceDir: options.workspaceDir,
+		zone,
+	});
+	const pinnedWorkspaceRoot = pinRealFsRoot(hostWorkspaceDirectory);
+	try {
+		await validateResolvedToolWorkspaceDir({
+			workspaceDir: pinnedWorkspaceRoot.realPath,
+			zone,
+		});
+	} catch (error) {
+		closePinnedRealFsRoot(pinnedWorkspaceRoot);
+		throw error;
+	}
 	const toolVm = await createManagedVm({
 		allowedHosts: [],
 		cpus: options.profile.cpus,
@@ -72,6 +97,7 @@ export async function createToolVm(
 			'/work': {
 				hostPath: hostWorkspaceDirectory,
 				kind: 'realfs',
+				pinnedHostRoot: pinnedWorkspaceRoot,
 			},
 		},
 	});
