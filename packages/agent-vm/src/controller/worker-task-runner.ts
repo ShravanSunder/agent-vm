@@ -154,7 +154,13 @@ async function materializeRepoAgentVmDirectory(options: {
 		],
 		{ reject: false, timeout: GIT_METADATA_TIMEOUT_MS },
 	);
-	if ((archiveResult.exitCode ?? 0) !== 0) {
+	if (typeof archiveResult.exitCode !== 'number') {
+		const output = `${archiveResult.stdout}\n${archiveResult.stderr}`.trim();
+		throw new Error(
+			`Failed to archive .agent-vm metadata from ${options.repoUrl}: git archive terminated without an exit code\n${scrubGithubTokenFromOutput(output)}`.trim(),
+		);
+	}
+	if (archiveResult.exitCode !== 0) {
 		const output = `${archiveResult.stdout}\n${archiveResult.stderr}`.trim();
 		throw new Error(
 			`Failed to archive .agent-vm metadata from ${options.repoUrl}: ${scrubGithubTokenFromOutput(output)}`,

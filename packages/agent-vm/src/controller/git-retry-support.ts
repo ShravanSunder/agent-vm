@@ -20,12 +20,13 @@ const retryableGitFailurePatterns: readonly RegExp[] = [
 	/\b(?:5\d\d|429)\b.*(?:GitHub|github|HTTP|http)/iu,
 	/early EOF/iu,
 	/RPC failed/iu,
+	/terminated without an exit code/iu,
 ];
 
 const permanentGitFailurePatterns: readonly RegExp[] = [
-	/\b(?:401|403|404)\b/iu,
+	/\bHTTP(?:\/\d(?:\.\d)?)?\s+(?:401|403|404)\b/iu,
 	/non-fast-forward/iu,
-	/rejected/iu,
+	/(?:!\s+\[rejected\]|remote rejected)/iu,
 	/Authentication failed/iu,
 	/Repository not found/iu,
 	/Permission denied/iu,

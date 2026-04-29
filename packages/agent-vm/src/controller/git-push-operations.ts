@@ -50,6 +50,7 @@ class GitPushFailedAfterRetriesError extends Error {
 	public constructor(
 		message: string,
 		public readonly attempts: number,
+		public readonly phase: 'pre-push-fetch' | 'push' | 'post-push-fetch',
 	) {
 		super(message);
 		this.name = 'GitPushFailedAfterRetriesError';
@@ -93,6 +94,19 @@ function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+async function recordPushEvent(options: {
+	readonly event: TaskEvent;
+	readonly recordEvent: ((event: TaskEvent) => Promise<void>) | undefined;
+}): Promise<void> {
+	try {
+		await options.recordEvent?.(options.event);
+	} catch (error) {
+		writePushFlowLog(
+			`Failed to record ${options.event.event}: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+}
+
 async function git(options: {
 	readonly args: readonly string[];
 	readonly gitDir: string;
@@ -106,10 +120,14 @@ async function git(options: {
 			timeout: GIT_OPERATION_TIMEOUT_MS,
 		},
 	);
+	const terminatedWithoutExitCode = typeof result.exitCode !== 'number';
+	const exitCode = typeof result.exitCode === 'number' ? result.exitCode : 128;
 	const normalized = {
 		stdout: result.stdout,
-		stderr: result.stderr,
-		exitCode: result.exitCode ?? 0,
+		stderr: terminatedWithoutExitCode
+			? `${result.stderr}\ngit ${options.args.join(' ')} terminated without an exit code`.trim()
+			: result.stderr,
+		exitCode,
 	};
 	if (options.reject === true && normalized.exitCode !== 0) {
 		throw new Error(
@@ -210,13 +228,16 @@ async function fetchRemoteRefs(options: {
 			writePushFlowLog(
 				`git fetch failed for ${options.repoUrl} ${options.defaultBranch} on attempt ${attempt}; retrying in ${delayMs / 1000}s: ${detail}`,
 			);
-			await options.recordEvent?.({
-				event: 'controller-git-push-fetch-retry',
-				repoUrl: options.repoUrl,
-				branch: options.defaultBranch,
-				attempts: attempt,
-				message: detail,
-				retryDelaySeconds: delayMs / 1000,
+			await recordPushEvent({
+				recordEvent: options.recordEvent,
+				event: {
+					event: 'controller-git-push-fetch-retry',
+					repoUrl: options.repoUrl,
+					branch: options.defaultBranch,
+					attempts: attempt,
+					message: detail,
+					retryDelaySeconds: delayMs / 1000,
+				},
 			});
 		},
 	});
@@ -228,7 +249,7 @@ async function fetchRemoteRefs(options: {
 			retryResult.attempts > 1
 				? `git fetch failed\n${GIT_PUSH_RETRY_AFTER_MESSAGE}\n${detail}`
 				: `git fetch failed\n${detail}`;
-		throw new GitPushFailedAfterRetriesError(message, retryResult.attempts);
+		throw new GitPushFailedAfterRetriesError(message, retryResult.attempts, 'pre-push-fetch');
 	}
 }
 
@@ -262,13 +283,16 @@ async function pushBranch(options: {
 			writePushFlowLog(
 				`git push failed for ${options.repoUrl} ${sanitizedBranchName} on attempt ${attempt}; retrying in ${delayMs / 1000}s: ${detail}`,
 			);
-			await options.recordEvent?.({
-				event: 'controller-git-push-retry',
-				repoUrl: options.repoUrl,
-				branch: sanitizedBranchName,
-				attempts: attempt,
-				message: detail,
-				retryDelaySeconds: delayMs / 1000,
+			await recordPushEvent({
+				recordEvent: options.recordEvent,
+				event: {
+					event: 'controller-git-push-retry',
+					repoUrl: options.repoUrl,
+					branch: sanitizedBranchName,
+					attempts: attempt,
+					message: detail,
+					retryDelaySeconds: delayMs / 1000,
+				},
 			});
 		},
 		sleep,
@@ -288,7 +312,7 @@ async function pushBranch(options: {
 		retryResult.attempts > 1
 			? `git push failed\n${GIT_PUSH_RETRY_AFTER_MESSAGE}\n${lastErrorDetail}`
 			: `git push failed\n${lastErrorDetail}`;
-	throw new GitPushFailedAfterRetriesError(failureMessage, retryResult.attempts);
+	throw new GitPushFailedAfterRetriesError(failureMessage, retryResult.attempts, 'push');
 }
 
 async function fetchPushedBranchRef(options: {
@@ -315,13 +339,16 @@ async function fetchPushedBranchRef(options: {
 			writePushFlowLog(
 				`post-push git fetch failed for ${options.repoUrl} ${options.branchName} on attempt ${attempt}; retrying in ${delayMs / 1000}s: ${detail}`,
 			);
-			await options.recordEvent?.({
-				event: 'controller-git-push-retry',
-				repoUrl: options.repoUrl,
-				branch: options.branchName,
-				attempts: attempt,
-				message: detail,
-				retryDelaySeconds: delayMs / 1000,
+			await recordPushEvent({
+				recordEvent: options.recordEvent,
+				event: {
+					event: 'controller-git-push-fetch-retry',
+					repoUrl: options.repoUrl,
+					branch: options.branchName,
+					attempts: attempt,
+					message: detail,
+					retryDelaySeconds: delayMs / 1000,
+				},
 			});
 		},
 		sleep,
@@ -334,7 +361,7 @@ async function fetchPushedBranchRef(options: {
 			retryResult.attempts > 1
 				? `git fetch failed\n${GIT_PUSH_RETRY_AFTER_MESSAGE}\n${detail}`
 				: `git fetch failed\n${detail}`;
-		throw new GitPushFailedAfterRetriesError(message, retryResult.attempts);
+		throw new GitPushFailedAfterRetriesError(message, retryResult.attempts, 'post-push-fetch');
 	}
 }
 
@@ -466,10 +493,13 @@ async function pushOneBranchForTask(options: {
 				error: `Refusing to push: you are on the default branch "${options.repo.baseBranch}". Create an ${options.task.branchPrefix} branch first and move your commits to it.`,
 			};
 		}
-		await options.recordEvent?.({
-			event: 'controller-git-push-started',
-			repoUrl: options.branch.repoUrl,
-			branch: branchName,
+		await recordPushEvent({
+			recordEvent: options.recordEvent,
+			event: {
+				event: 'controller-git-push-started',
+				repoUrl: options.branch.repoUrl,
+				branch: branchName,
+			},
 		});
 
 		await fetchRemoteRefs({
@@ -511,13 +541,16 @@ async function pushOneBranchForTask(options: {
 			defaultBranch: options.repo.baseBranch,
 			previousRemoteBranchHead,
 		});
-		await options.recordEvent?.({
-			event: 'controller-git-push-succeeded',
-			repoUrl: options.branch.repoUrl,
-			branch: branchName,
-			attempts: pushAttempts,
-			...(state.localHead ? { localHead: state.localHead } : {}),
-			...(state.remoteBranchHead ? { remoteBranchHead: state.remoteBranchHead } : {}),
+		await recordPushEvent({
+			recordEvent: options.recordEvent,
+			event: {
+				event: 'controller-git-push-succeeded',
+				repoUrl: options.branch.repoUrl,
+				branch: branchName,
+				attempts: pushAttempts,
+				...(state.localHead ? { localHead: state.localHead } : {}),
+				...(state.remoteBranchHead ? { remoteBranchHead: state.remoteBranchHead } : {}),
+			},
 		});
 		return {
 			repoUrl: options.branch.repoUrl,
@@ -533,13 +566,18 @@ async function pushOneBranchForTask(options: {
 			error instanceof GitPushFailedAfterRetriesError && error.attempts > 1
 				? GIT_PUSH_RETRY_AFTER_SECONDS
 				: undefined;
-		await options.recordEvent?.({
-			event: 'controller-git-push-failed',
-			repoUrl: options.branch.repoUrl,
-			branch: branchName,
-			attempts,
-			message,
-			...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+		const phase = error instanceof GitPushFailedAfterRetriesError ? error.phase : undefined;
+		await recordPushEvent({
+			recordEvent: options.recordEvent,
+			event: {
+				event: 'controller-git-push-failed',
+				repoUrl: options.branch.repoUrl,
+				branch: branchName,
+				attempts,
+				message,
+				...(phase !== undefined ? { phase } : {}),
+				...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+			},
 		});
 		return {
 			repoUrl: options.branch.repoUrl,

@@ -122,13 +122,13 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 		event: z.literal('controller-git-push-retry'),
 		attempts: z.number().int().positive(),
 		message: z.string(),
-		retryDelaySeconds: z.number().int().positive(),
+		retryDelaySeconds: z.number().positive(),
 	}),
 	controllerGitPushBaseSchema.extend({
 		event: z.literal('controller-git-push-fetch-retry'),
 		attempts: z.number().int().positive(),
 		message: z.string(),
-		retryDelaySeconds: z.number().int().positive(),
+		retryDelaySeconds: z.number().positive(),
 	}),
 	controllerGitPushBaseSchema.extend({
 		event: z.literal('controller-git-push-succeeded'),
@@ -140,6 +140,7 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 		event: z.literal('controller-git-push-failed'),
 		attempts: z.number().int().nonnegative(),
 		message: z.string(),
+		phase: z.enum(['pre-push-fetch', 'push', 'post-push-fetch']).optional(),
 		retryAfterSeconds: z.number().int().positive().optional(),
 	}),
 	controllerGitPullBaseSchema.extend({
@@ -149,7 +150,7 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 		event: z.literal('controller-git-pull-retry'),
 		attempts: z.number().int().positive(),
 		message: z.string(),
-		retryDelaySeconds: z.number().int().positive(),
+		retryDelaySeconds: z.number().positive(),
 	}),
 	controllerGitPullBaseSchema.extend({
 		event: z.literal('controller-git-pull-succeeded'),

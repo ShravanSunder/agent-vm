@@ -155,6 +155,65 @@ describe('git-push-operations', () => {
 		);
 	});
 
+	it('retries git commands that terminate without an exit code', async () => {
+		vi.useFakeTimers();
+		let defaultFetchAttempts = 0;
+		const recordEvent = vi.fn(async () => {});
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			const joined = gitArgs.join(' ');
+			if (gitArgs[0] === 'fetch' && gitArgs.includes('main:refs/remotes/origin/main')) {
+				defaultFetchAttempts += 1;
+				if (defaultFetchAttempts === 1) {
+					return { stdout: '', stderr: 'killed', exitCode: undefined };
+				}
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
+				return { stdout: '', stderr: '', exitCode: 1 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
+				return { stdout: 'base-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('HEAD')) {
+				return { stdout: 'local-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'log' && joined.includes('refs/remotes/origin/main..HEAD')) {
+				return {
+					stdout: 'local-sha\tfeat: change\tAgent\t2026-04-21T00:00:00Z',
+					stderr: '',
+					exitCode: 0,
+				};
+			}
+			if (gitArgs[0] === 'log') {
+				return { stdout: 'local-sha\tfeat: change', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-list') {
+				return { stdout: joined.includes('HEAD..') ? '0' : '1', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		const resultPromise = pushBranchesForTask({
+			activeTask: buildActiveTask(),
+			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
+			githubToken: 'token',
+			recordEvent,
+		});
+		await vi.advanceTimersByTimeAsync(2_000);
+		const result = await resultPromise;
+
+		expect(defaultFetchAttempts).toBe(2);
+		expect(result.results[0]).toMatchObject({ branch: 'agent/task-1', success: true });
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-push-fetch-retry',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'main',
+			attempts: 1,
+			message: expect.stringContaining('terminated without an exit code'),
+			retryDelaySeconds: 2,
+		});
+	});
+
 	it('retries transient git push failures before reporting success', async () => {
 		vi.useFakeTimers();
 		let pushAttempts = 0;
@@ -354,6 +413,7 @@ describe('git-push-operations', () => {
 			branch: 'agent/task-1',
 			attempts: 4,
 			message: expect.stringContaining('Try git-push again in 5 minutes'),
+			phase: 'push',
 			retryAfterSeconds: 300,
 		});
 	});
@@ -396,9 +456,80 @@ describe('git-push-operations', () => {
 			branch: 'agent/task-1',
 			attempts: 1,
 			message: expect.stringContaining('non-fast-forward'),
+			phase: 'push',
 		});
 		expect(recordEvent).not.toHaveBeenCalledWith(
 			expect.objectContaining({ event: 'controller-git-push-retry' }),
+		);
+	});
+
+	it('records post-push fetch retries as fetch retries', async () => {
+		vi.useFakeTimers();
+		let postPushFetchAttempts = 0;
+		const recordEvent = vi.fn(async () => {});
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			const joined = gitArgs.join(' ');
+			if (
+				gitArgs[0] === 'fetch' &&
+				gitArgs.includes('agent/task-1:refs/remotes/origin/agent/task-1')
+			) {
+				postPushFetchAttempts += 1;
+				if (postPushFetchAttempts === 1) {
+					return { stdout: '', stderr: 'RPC failed; HTTP 503 post-push fetch', exitCode: 128 };
+				}
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
+				return postPushFetchAttempts > 0
+					? { stdout: 'local-sha', stderr: '', exitCode: 0 }
+					: { stdout: '', stderr: '', exitCode: 1 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
+				return { stdout: 'base-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('HEAD')) {
+				return { stdout: 'local-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'log' && joined.includes('refs/remotes/origin/main..HEAD')) {
+				return {
+					stdout: 'local-sha\tfeat: change\tAgent\t2026-04-21T00:00:00Z',
+					stderr: '',
+					exitCode: 0,
+				};
+			}
+			if (gitArgs[0] === 'log') {
+				return { stdout: 'local-sha\tfeat: change', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-list') {
+				return { stdout: joined.includes('HEAD..') ? '0' : '1', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		const resultPromise = pushBranchesForTask({
+			activeTask: buildActiveTask(),
+			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
+			githubToken: 'token',
+			recordEvent,
+		});
+		await vi.advanceTimersByTimeAsync(2_000);
+		const result = await resultPromise;
+
+		expect(postPushFetchAttempts).toBe(2);
+		expect(result.results[0]).toMatchObject({ branch: 'agent/task-1', success: true });
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-push-fetch-retry',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'agent/task-1',
+			attempts: 1,
+			message: 'RPC failed; HTTP 503 post-push fetch',
+			retryDelaySeconds: 2,
+		});
+		expect(recordEvent).not.toHaveBeenCalledWith(
+			expect.objectContaining({
+				event: 'controller-git-push-retry',
+				message: 'RPC failed; HTTP 503 post-push fetch',
+			}),
 		);
 	});
 
@@ -489,6 +620,23 @@ describe('git-push-operations', () => {
 			success: false,
 			error: expect.stringContaining('git log'),
 		});
+	});
+
+	it('does not fail the push when event logging fails', async () => {
+		mockGitSuccess();
+		const recordEvent = vi.fn(async () => {
+			throw new Error('event log unavailable');
+		});
+
+		const result = await pushBranchesForTask({
+			activeTask: buildActiveTask(),
+			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
+			githubToken: 'token',
+			recordEvent,
+		});
+
+		expect(result.results[0]).toMatchObject({ branch: 'agent/task-1', success: true });
+		expect(recordEvent).toHaveBeenCalled();
 	});
 
 	it('soft-fails when local head already matches remote branch', async () => {

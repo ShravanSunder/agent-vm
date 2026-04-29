@@ -39,7 +39,10 @@ export interface LeaseManager {
 	}): Promise<Lease>;
 	getLease(leaseId: string): Lease | undefined;
 	listLeases(): Lease[];
-	releaseLease(leaseId: string): Promise<void>;
+	releaseLease(
+		leaseId: string,
+		options?: { readonly ifLastUsedAtBeforeOrAt?: number },
+	): Promise<void>;
 }
 
 export class LeaseScopeConflictError extends Error {}
@@ -199,7 +202,10 @@ export function createLeaseManager(options: {
 		listLeases(): Lease[] {
 			return [...leases.values()];
 		},
-		async releaseLease(leaseId: string): Promise<void> {
+		async releaseLease(
+			leaseId: string,
+			releaseOptions?: { readonly ifLastUsedAtBeforeOrAt?: number },
+		): Promise<void> {
 			const lease = leases.get(leaseId);
 			if (!lease) {
 				return;
@@ -207,6 +213,12 @@ export function createLeaseManager(options: {
 			await withScopeLock(lease, async () => {
 				const currentLease = leases.get(leaseId);
 				if (!currentLease) {
+					return;
+				}
+				if (
+					releaseOptions?.ifLastUsedAtBeforeOrAt !== undefined &&
+					currentLease.lastUsedAt > releaseOptions.ifLastUsedAtBeforeOrAt
+				) {
 					return;
 				}
 

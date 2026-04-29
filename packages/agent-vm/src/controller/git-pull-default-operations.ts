@@ -266,7 +266,13 @@ async function updateRefAndVerify(options: {
 		gitDir: options.gitDir,
 		args: ['update-ref', options.ref, options.sourceRef],
 	});
-	const actualHead = await gitStdout(options.gitDir, ['rev-parse', options.ref]);
+	const actualHead = (
+		await git({
+			gitDir: options.gitDir,
+			args: ['rev-parse', options.ref],
+			reject: true,
+		})
+	).stdout.trim();
 	if (actualHead !== options.expectedHead) {
 		throw new GitCommandFailureError(
 			`git update-ref ${options.ref} ${options.expectedHead} did not move the ref; ${options.ref} is at ${actualHead}`,
@@ -682,7 +688,12 @@ export async function pullDefaultForTask(options: {
 					repoUrl: options.repoUrl,
 				})
 			: undefined;
-		const forkPoint = await gitStdout(repo.hostGitDir, ['merge-base', 'HEAD', remoteDefaultRef]);
+		const currentHeadRef = options.currentHead ?? 'HEAD';
+		const forkPoint = await gitStdout(repo.hostGitDir, [
+			'merge-base',
+			currentHeadRef,
+			remoteDefaultRef,
+		]);
 		const commitsSinceForkPoint = await commitSummaries(
 			repo.hostGitDir,
 			`${forkPoint}..${remoteDefaultRef}`,
@@ -707,8 +718,8 @@ export async function pullDefaultForTask(options: {
 			fetchedCommits,
 			commitsSinceForkPoint,
 			divergence: {
-				aheadOfDefault: await countRange(repo.hostGitDir, `${remoteDefaultRef}..HEAD`),
-				behindDefault: await countRange(repo.hostGitDir, `HEAD..${remoteDefaultRef}`),
+				aheadOfDefault: await countRange(repo.hostGitDir, `${remoteDefaultRef}..${currentHeadRef}`),
+				behindDefault: await countRange(repo.hostGitDir, `${currentHeadRef}..${remoteDefaultRef}`),
 				forkPoint,
 			},
 		} satisfies PullDefaultAdvancedResult;

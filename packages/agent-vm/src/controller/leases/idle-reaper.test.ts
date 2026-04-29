@@ -24,7 +24,7 @@ describe('createIdleReaper', () => {
 		await idleReaper.reapExpiredLeases();
 
 		expect(releaseLease).toHaveBeenCalledTimes(1);
-		expect(releaseLease).toHaveBeenCalledWith('lease-expired');
+		expect(releaseLease).toHaveBeenCalledWith('lease-expired', { ifLastUsedAtBeforeOrAt: 5_000 });
 	});
 
 	it('releases all expired leases in one reap cycle', async () => {
@@ -52,8 +52,12 @@ describe('createIdleReaper', () => {
 		await idleReaper.reapExpiredLeases();
 
 		expect(releaseLease).toHaveBeenCalledTimes(2);
-		expect(releaseLease).toHaveBeenCalledWith('lease-expired-1');
-		expect(releaseLease).toHaveBeenCalledWith('lease-expired-2');
+		expect(releaseLease).toHaveBeenCalledWith('lease-expired-1', {
+			ifLastUsedAtBeforeOrAt: 5_000,
+		});
+		expect(releaseLease).toHaveBeenCalledWith('lease-expired-2', {
+			ifLastUsedAtBeforeOrAt: 5_000,
+		});
 	});
 
 	it('releases expired leases sequentially', async () => {

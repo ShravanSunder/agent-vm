@@ -19,6 +19,7 @@ export interface ControllerGitPushState {
 	readonly status: 'started' | 'retrying' | 'succeeded' | 'failed';
 	readonly attempts: number;
 	readonly message: string | null;
+	readonly phase: 'pre-push-fetch' | 'push' | 'post-push-fetch' | null;
 	readonly retryDelaySeconds: number | null;
 	readonly retryAfterSeconds: number | null;
 	readonly localHead: string | null;
@@ -234,6 +235,7 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 					status: 'started',
 					attempts: 0,
 					message: null,
+					phase: null,
 					retryDelaySeconds: null,
 					retryAfterSeconds: null,
 					localHead: null,
@@ -249,6 +251,7 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 					status: 'retrying',
 					attempts: event.attempts,
 					message: event.message,
+					phase: 'push',
 					retryDelaySeconds: event.retryDelaySeconds,
 					retryAfterSeconds: null,
 					localHead: null,
@@ -267,6 +270,7 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 					status: 'succeeded',
 					attempts: event.attempts,
 					message: null,
+					phase: null,
 					retryDelaySeconds: null,
 					retryAfterSeconds: null,
 					localHead: event.localHead ?? null,
@@ -282,6 +286,7 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 					status: 'failed',
 					attempts: event.attempts,
 					message: event.message,
+					phase: event.phase ?? null,
 					retryDelaySeconds: null,
 					retryAfterSeconds: event.retryAfterSeconds ?? null,
 					localHead: null,

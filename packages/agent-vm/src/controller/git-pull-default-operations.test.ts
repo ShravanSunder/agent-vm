@@ -69,6 +69,12 @@ describe('git-pull-default-operations', () => {
 				return { stdout: 'fork-sha', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'rev-list') {
+				if (joined.includes('local-agent-sha..refs/remotes/origin/main')) {
+					return { stdout: '2', stderr: '', exitCode: 0 };
+				}
+				if (joined.includes('refs/remotes/origin/main..local-agent-sha')) {
+					return { stdout: '3', stderr: '', exitCode: 0 };
+				}
 				return { stdout: joined.includes('HEAD..') ? '2' : '3', stderr: '', exitCode: 0 };
 			}
 			if (gitArgs[0] === 'log') {
@@ -254,6 +260,21 @@ describe('git-pull-default-operations', () => {
 			'refs/heads/agent/task-1',
 			'refs/remotes/origin/agent/task-1',
 		]);
+		expect(execaMock).toHaveBeenCalledWith(
+			'git',
+			expect.arrayContaining(['merge-base', 'local-agent-sha', 'refs/remotes/origin/main']),
+			expect.any(Object),
+		);
+		expect(execaMock).toHaveBeenCalledWith(
+			'git',
+			expect.arrayContaining(['rev-list', '--count', 'refs/remotes/origin/main..local-agent-sha']),
+			expect.any(Object),
+		);
+		expect(execaMock).toHaveBeenCalledWith(
+			'git',
+			expect.arrayContaining(['rev-list', '--count', 'local-agent-sha..refs/remotes/origin/main']),
+			expect.any(Object),
+		);
 	});
 
 	test('reports current branch divergence without updating the branch ref', async () => {

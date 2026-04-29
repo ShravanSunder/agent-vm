@@ -386,6 +386,39 @@ describe('createLeaseManager', () => {
 		expect(leaseManager.getLease(lease.id)).toBeUndefined();
 	});
 
+	it('does not release a lease that was touched after an idle reaper snapshot', async () => {
+		let now = 100;
+		const closeMock = vi.fn(async () => {});
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => ({
+				...createManagedVmStub(),
+				close: closeMock,
+			})),
+			now: () => now,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const request = {
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		};
+		const lease = await leaseManager.createLease(request);
+		now = 200;
+		await leaseManager.createLease(request);
+
+		await leaseManager.releaseLease(lease.id, { ifLastUsedAtBeforeOrAt: 150 });
+
+		expect(closeMock).not.toHaveBeenCalled();
+		expect(leaseManager.getLease(lease.id)).toMatchObject({ id: lease.id });
+	});
+
 	it('listLeases returns all active leases', async () => {
 		const leaseManager = createLeaseManager({
 			createManagedVm: vi.fn(async () => ({
