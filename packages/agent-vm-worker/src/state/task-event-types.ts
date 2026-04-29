@@ -125,6 +125,12 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 		retryDelaySeconds: z.number().int().positive(),
 	}),
 	controllerGitPushBaseSchema.extend({
+		event: z.literal('controller-git-push-fetch-retry'),
+		attempts: z.number().int().positive(),
+		message: z.string(),
+		retryDelaySeconds: z.number().int().positive(),
+	}),
+	controllerGitPushBaseSchema.extend({
 		event: z.literal('controller-git-push-succeeded'),
 		attempts: z.number().int().positive(),
 		localHead: z.string().optional(),

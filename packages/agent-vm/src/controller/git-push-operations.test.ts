@@ -226,6 +226,75 @@ describe('git-push-operations', () => {
 		});
 	});
 
+	it('records default branch fetch retries without updating branch push retry state', async () => {
+		vi.useFakeTimers();
+		let defaultFetchAttempts = 0;
+		const recordEvent = vi.fn(async () => {});
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			const joined = gitArgs.join(' ');
+			if (gitArgs[0] === 'fetch' && gitArgs.includes('main:refs/remotes/origin/main')) {
+				defaultFetchAttempts += 1;
+				if (defaultFetchAttempts === 1) {
+					return { stdout: '', stderr: 'RPC failed; HTTP 503 fetching main', exitCode: 128 };
+				}
+				return { stdout: '', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/agent/task-1')) {
+				return { stdout: '', stderr: '', exitCode: 1 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
+				return { stdout: 'base-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('HEAD')) {
+				return { stdout: 'local-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'log' && joined.includes('refs/remotes/origin/main..HEAD')) {
+				return {
+					stdout: 'local-sha\tfeat: change\tAgent\t2026-04-21T00:00:00Z',
+					stderr: '',
+					exitCode: 0,
+				};
+			}
+			if (gitArgs[0] === 'log') {
+				return { stdout: 'local-sha\tfeat: change', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-list') {
+				return { stdout: joined.includes('HEAD..') ? '0' : '1', stderr: '', exitCode: 0 };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		const resultPromise = pushBranchesForTask({
+			activeTask: buildActiveTask(),
+			branches: [{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' }],
+			githubToken: 'token',
+			recordEvent,
+		});
+
+		await vi.advanceTimersByTimeAsync(2_000);
+		const result = await resultPromise;
+
+		expect(defaultFetchAttempts).toBe(2);
+		expect(result.results[0]).toMatchObject({ branch: 'agent/task-1', success: true });
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-push-fetch-retry',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'main',
+			attempts: 1,
+			message: 'RPC failed; HTTP 503 fetching main',
+			retryDelaySeconds: 2,
+		});
+		expect(recordEvent).not.toHaveBeenCalledWith({
+			event: 'controller-git-push-retry',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'main',
+			attempts: expect.any(Number),
+			message: expect.any(String),
+			retryDelaySeconds: expect.any(Number),
+		});
+	});
+
 	it('tells the agent to retry in five minutes when push retries are exhausted', async () => {
 		vi.useFakeTimers();
 		let pushAttempts = 0;
