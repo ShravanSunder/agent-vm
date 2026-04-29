@@ -236,6 +236,26 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 							});
 						},
 					}),
+					peek: command({
+						name: 'peek',
+						description: 'Inspect a lease without extending its idle timer',
+						args: {
+							config: createConfigOption(),
+							leaseId: positional({
+								displayName: 'lease-id',
+								type: string,
+								description: 'Lease identifier to inspect',
+							}),
+						},
+						handler: async ({ config, leaseId }) => {
+							await runLeaseCommand({
+								dependencies,
+								io,
+								restArguments: ['peek', leaseId],
+								systemConfig: await loadSystemConfigFromOption(config, dependencies),
+							});
+						},
+					}),
 					release: command({
 						name: 'release',
 						description: 'Release a lease',

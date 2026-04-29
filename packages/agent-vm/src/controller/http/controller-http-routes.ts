@@ -10,6 +10,7 @@ import {
 	type ControllerLeaseManager,
 	type ControllerRouteOperations,
 	readIdentityPemFromFile,
+	serializeLeasePeekForResponse,
 	serializeLeaseForResponse,
 } from './controller-http-route-support.js';
 import { controllerLeaseCreateRequestSchema } from './controller-request-schemas.js';
@@ -97,12 +98,20 @@ export function createControllerApp(options: {
 		}
 	});
 
-	app.get('/lease/:leaseId', async (context) => {
-		const lease = options.leaseManager.getLease(context.req.param('leaseId'));
-		if (!lease) {
+	app.get('/lease/:leaseId/peek', async (context) => {
+		const leaseSnapshot = options.leaseManager.peekLease(context.req.param('leaseId'));
+		if (!leaseSnapshot) {
 			return context.json({ error: 'Lease not found' }, 404);
 		}
-		return context.json(await serializeLeaseForResponse(lease, readIdentityPem));
+		return context.json(serializeLeasePeekForResponse(leaseSnapshot.lease));
+	});
+
+	app.get('/lease/:leaseId', async (context) => {
+		const leaseRenewal = options.leaseManager.keepLeaseAlive(context.req.param('leaseId'));
+		if (!leaseRenewal) {
+			return context.json({ error: 'Lease not found' }, 404);
+		}
+		return context.json(await serializeLeaseForResponse(leaseRenewal.lease, readIdentityPem));
 	});
 
 	app.get('/leases', (context) => {

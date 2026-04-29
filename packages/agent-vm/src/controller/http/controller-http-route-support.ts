@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 
 import type { Lease, LeaseManager } from '../leases/lease-manager.js';
 import type { PreparedWorkerTask, WorkerTaskInput } from '../worker-task-runner.js';
+import type { ControllerLeasePeekResponse } from './controller-lease-response-types.js';
 
 export class ControllerTaskNotReadyError extends Error {}
 export class ControllerRuntimeAtCapacityError extends Error {}
@@ -50,7 +51,7 @@ export interface ControllerRouteOperations {
 
 export type ControllerLeaseManager = Pick<
 	LeaseManager,
-	'createLease' | 'getLease' | 'listLeases' | 'releaseLease'
+	'createLease' | 'keepLeaseAlive' | 'listLeases' | 'peekLease' | 'releaseLease'
 >;
 
 export async function readIdentityPemFromFile(identityFilePath: string): Promise<string> {
@@ -85,5 +86,22 @@ export async function serializeLeaseForResponse(
 		},
 		tcpSlot: lease.tcpSlot,
 		workdir: '/work',
+	};
+}
+
+export function serializeLeasePeekForResponse(lease: Lease): ControllerLeasePeekResponse {
+	return {
+		createdAt: lease.createdAt,
+		lastUsedAt: lease.lastUsedAt,
+		leaseId: lease.id,
+		profileId: lease.profileId,
+		scopeKey: lease.scopeKey,
+		ssh: {
+			host: lease.sshAccess.host,
+			port: lease.sshAccess.port,
+			user: lease.sshAccess.user ?? 'root',
+		},
+		tcpSlot: lease.tcpSlot,
+		zoneId: lease.zoneId,
 	};
 }

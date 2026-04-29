@@ -28,6 +28,17 @@ export interface Lease {
 	readonly zoneId: string;
 }
 
+export interface LeaseRenewal {
+	readonly kind: 'renewed';
+	readonly lastUsedAt: number;
+	readonly lease: Lease;
+}
+
+export interface LeaseSnapshot {
+	readonly kind: 'snapshot';
+	readonly lease: Lease;
+}
+
 export interface LeaseManager {
 	createLease(options: {
 		readonly agentWorkspaceDir: string;
@@ -37,8 +48,9 @@ export interface LeaseManager {
 		readonly workspaceDir: string;
 		readonly zoneId: string;
 	}): Promise<Lease>;
-	getLease(leaseId: string): Lease | undefined;
+	keepLeaseAlive(leaseId: string): LeaseRenewal | undefined;
 	listLeases(): Lease[];
+	peekLease(leaseId: string): LeaseSnapshot | undefined;
 	releaseLease(
 		leaseId: string,
 		options?: { readonly ifLastUsedAtBeforeOrAt?: number },
@@ -83,6 +95,13 @@ async function isLeaseVmLive(lease: Lease): Promise<boolean> {
 	}
 }
 
+function scopeIndexKey(scopeRequest: {
+	readonly scopeKey: string;
+	readonly zoneId: string;
+}): string {
+	return `${scopeRequest.zoneId}\0${scopeRequest.scopeKey}`;
+}
+
 export function createLeaseManager(options: {
 	readonly createManagedVm: (leaseOptions: {
 		readonly agentWorkspaceDir: string;
@@ -97,15 +116,29 @@ export function createLeaseManager(options: {
 	readonly tcpPool: TcpPool;
 }): LeaseManager {
 	const leases = new Map<string, Lease>();
+	const leaseIdsByScope = new Map<string, string>();
 	const scopeLocks = new Map<string, Promise<void>>();
+
+	function storeLease(lease: Lease): void {
+		leases.set(lease.id, lease);
+		leaseIdsByScope.set(scopeIndexKey(lease), lease.id);
+	}
+
+	function deleteLease(lease: Lease): void {
+		leases.delete(lease.id);
+		const indexKey = scopeIndexKey(lease);
+		// Only clear the scope index if it still points at this exact lease.
+		if (leaseIdsByScope.get(indexKey) === lease.id) {
+			leaseIdsByScope.delete(indexKey);
+		}
+	}
 
 	function findLeaseForScope(scopeRequest: {
 		readonly scopeKey: string;
 		readonly zoneId: string;
 	}): Lease | undefined {
-		return [...leases.values()].find(
-			(lease) => lease.zoneId === scopeRequest.zoneId && lease.scopeKey === scopeRequest.scopeKey,
-		);
+		const leaseId = leaseIdsByScope.get(scopeIndexKey(scopeRequest));
+		return leaseId ? leases.get(leaseId) : undefined;
 	}
 
 	function touchLease(lease: Lease): Lease {
@@ -113,7 +146,7 @@ export function createLeaseManager(options: {
 			...lease,
 			lastUsedAt: options.now(),
 		};
-		leases.set(lease.id, touchedLease);
+		storeLease(touchedLease);
 		return touchedLease;
 	}
 
@@ -140,7 +173,7 @@ export function createLeaseManager(options: {
 	}
 
 	async function evictLease(lease: Lease): Promise<void> {
-		leases.delete(lease.id);
+		deleteLease(lease);
 		options.tcpPool.release(lease.tcpSlot);
 		await lease.vm.close().catch(() => {});
 	}
@@ -183,7 +216,7 @@ export function createLeaseManager(options: {
 							workspaceDir: leaseOptions.workspaceDir,
 							zoneId: leaseOptions.zoneId,
 						};
-						leases.set(lease.id, lease);
+						storeLease(lease);
 						return lease;
 					} catch (error) {
 						await vm.close().catch(() => {});
@@ -195,12 +228,24 @@ export function createLeaseManager(options: {
 				}
 			});
 		},
-		getLease(leaseId: string): Lease | undefined {
+		keepLeaseAlive(leaseId: string): LeaseRenewal | undefined {
 			const lease = leases.get(leaseId);
-			return lease ? touchLease(lease) : undefined;
+			if (!lease) {
+				return undefined;
+			}
+			const renewedLease = touchLease(lease);
+			return {
+				kind: 'renewed',
+				lastUsedAt: renewedLease.lastUsedAt,
+				lease: renewedLease,
+			};
 		},
 		listLeases(): Lease[] {
 			return [...leases.values()];
+		},
+		peekLease(leaseId: string): LeaseSnapshot | undefined {
+			const lease = leases.get(leaseId);
+			return lease ? { kind: 'snapshot', lease } : undefined;
 		},
 		async releaseLease(
 			leaseId: string,
@@ -229,7 +274,7 @@ export function createLeaseManager(options: {
 					releaseError = error instanceof Error ? error : new Error(String(error));
 				}
 
-				leases.delete(leaseId);
+				deleteLease(currentLease);
 				options.tcpPool.release(currentLease.tcpSlot);
 
 				if (releaseError) {

@@ -256,7 +256,8 @@ The controller exposes a REST API. Routes are split across two modules: core lea
 |--------|------|---------|------|
 | `GET` | `/health` | Controller liveness check | Both |
 | `POST` | `/lease` | Acquire a tool VM lease (scope key, zone, profile) | OpenClaw |
-| `GET` | `/lease/:leaseId` | Inspect a single lease (SSH access, slot) | OpenClaw |
+| `GET` | `/lease/:leaseId` | Keep a lease alive and return agent-facing SSH access | OpenClaw |
+| `GET` | `/lease/:leaseId/peek` | Inspect a lease without extending its idle timer | OpenClaw |
 | `GET` | `/leases` | List all active leases | OpenClaw |
 | `DELETE` | `/lease/:leaseId` | Release a tool VM lease | OpenClaw |
 | `GET` | `/controller-status` | Controller operational status | OpenClaw |

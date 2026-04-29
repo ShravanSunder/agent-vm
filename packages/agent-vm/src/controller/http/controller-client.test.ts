@@ -8,12 +8,26 @@ describe('createControllerClient', () => {
 		const controllerClient = createControllerClient({
 			baseUrl: 'http://127.0.0.1:18800',
 			fetchImpl: async (input: string | URL, init?: RequestInit) => {
+				const url = String(input);
 				requests.push({
 					method: init?.method ?? 'GET',
-					url: String(input),
+					url,
 				});
 
-				return new Response(JSON.stringify({ ok: true, zoneId: 'shravan' }), {
+				const responseBody = url.endsWith('/lease/lease-123/peek')
+					? {
+							createdAt: 1,
+							lastUsedAt: 1,
+							leaseId: 'lease-123',
+							profileId: 'standard',
+							scopeKey: 'scope',
+							ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
+							tcpSlot: 0,
+							zoneId: 'shravan',
+						}
+					: { ok: true, zoneId: 'shravan' };
+
+				return new Response(JSON.stringify(responseBody), {
 					headers: {
 						'content-type': 'application/json',
 					},
@@ -28,6 +42,7 @@ describe('createControllerClient', () => {
 		await controllerClient.refreshZoneCredentials('shravan');
 		await controllerClient.destroyZone('shravan', true);
 		await controllerClient.upgradeZone('shravan');
+		await controllerClient.peekLease('lease-123');
 
 		expect(requests).toEqual([
 			{ method: 'GET', url: 'http://127.0.0.1:18800/controller-status' },
@@ -36,6 +51,7 @@ describe('createControllerClient', () => {
 			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/credentials/refresh' },
 			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/destroy' },
 			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/upgrade' },
+			{ method: 'GET', url: 'http://127.0.0.1:18800/lease/lease-123/peek' },
 		]);
 	});
 

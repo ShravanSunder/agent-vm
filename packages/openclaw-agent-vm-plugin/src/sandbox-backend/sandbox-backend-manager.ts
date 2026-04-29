@@ -20,7 +20,7 @@ export function createGondolinSandboxBackendManager(
 					controllerUrl: options.controllerUrl,
 				}) ?? createLeaseClient({ controllerUrl: options.controllerUrl });
 			try {
-				const leaseStatus = await leaseClient.getLeaseStatus(params.entry.containerName);
+				const leaseStatus = await leaseClient.peekLease(params.entry.containerName);
 				return { configLabelMatch: true, running: leaseStatus !== null };
 			} catch {
 				return { configLabelMatch: false, running: false };

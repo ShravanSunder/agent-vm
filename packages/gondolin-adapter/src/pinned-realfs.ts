@@ -99,7 +99,7 @@ export function createPinnedRealFsProvider(
 
 			return (...methodArguments: readonly unknown[]): unknown => {
 				assertPinnedRealFsRoot(options.root);
-				return Reflect.apply(value as ProviderMethod, target, [...methodArguments]);
+				return Reflect.apply(value as ProviderMethod, target, methodArguments);
 			};
 		},
 	});

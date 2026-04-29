@@ -94,6 +94,16 @@ function createControllerClientStub(
 		execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
 		getControllerStatus: async () => ({}),
 		getZoneLogs: async () => ({}),
+		peekLease: async () => ({
+			createdAt: 1,
+			lastUsedAt: 1,
+			leaseId: 'lease-123',
+			profileId: 'standard',
+			scopeKey: 'scope',
+			ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
+			tcpSlot: 0,
+			zoneId: 'shravan',
+		}),
 		listLeases: async () => [],
 		refreshZoneCredentials: async () => ({}),
 		releaseLease: async () => {},
@@ -1084,6 +1094,16 @@ describe('runAgentVmCli', () => {
 						toolProfiles: ['standard'],
 						zones: [],
 					}),
+					peekLease: async () => ({
+						createdAt: 1,
+						lastUsedAt: 1,
+						leaseId: 'lease-123',
+						profileId: 'standard',
+						scopeKey: 'scope',
+						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
+						tcpSlot: 0,
+						zoneId: 'shravan',
+					}),
 					listLeases: async () => [],
 					refreshZoneCredentials: async () => ({ ok: true, zoneId: 'shravan' }),
 					releaseLease: async () => {},
@@ -1197,6 +1217,16 @@ describe('runAgentVmCli', () => {
 						controllerPort: 18800,
 						toolProfiles: ['standard'],
 						zones: [],
+					}),
+					peekLease: async () => ({
+						createdAt: 1,
+						lastUsedAt: 1,
+						leaseId: 'lease-123',
+						profileId: 'standard',
+						scopeKey: 'scope',
+						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
+						tcpSlot: 0,
+						zoneId: 'shravan',
 					}),
 					listLeases: async () => [],
 					refreshZoneCredentials: async () => ({ ok: true, zoneId: 'shravan' }),
@@ -1334,6 +1364,16 @@ describe('runAgentVmCli', () => {
 						controllerPort: 18800,
 						toolProfiles: ['standard'],
 						zones: [],
+					}),
+					peekLease: async () => ({
+						createdAt: 1,
+						lastUsedAt: 1,
+						leaseId: 'lease-123',
+						profileId: 'standard',
+						scopeKey: 'scope',
+						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
+						tcpSlot: 0,
+						zoneId: 'shravan',
 					}),
 					listLeases: async () => [],
 					refreshZoneCredentials: async () => ({ ok: true, zoneId: 'shravan' }),
@@ -1560,6 +1600,16 @@ describe('runAgentVmCli', () => {
 			})),
 			getZoneLogs: vi.fn(async () => ({ output: 'logs', zoneId: 'shravan' })),
 			listLeases: vi.fn(async () => []),
+			peekLease: vi.fn(async () => ({
+				createdAt: 1,
+				lastUsedAt: 1,
+				leaseId: 'lease-123',
+				profileId: 'standard',
+				scopeKey: 'scope',
+				ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
+				tcpSlot: 0,
+				zoneId: 'shravan',
+			})),
 			refreshZoneCredentials: vi.fn(async () => ({ ok: true, zoneId: 'shravan' })),
 			releaseLease: vi.fn(async () => {}),
 			stopController: vi.fn(async () => ({ ok: true })),
@@ -1739,6 +1789,16 @@ describe('runAgentVmCli', () => {
 					execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
 					getZoneLogs: async () => ({}),
 					getControllerStatus: async () => ({}),
+					peekLease: async () => ({
+						createdAt: 1,
+						lastUsedAt: 1,
+						leaseId: 'lease-123',
+						profileId: 'standard',
+						scopeKey: 'scope',
+						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
+						tcpSlot: 0,
+						zoneId: 'shravan',
+					}),
 					listLeases: async () => [],
 					refreshZoneCredentials: async () => ({}),
 					releaseLease: async () => {},
@@ -1754,6 +1814,16 @@ describe('runAgentVmCli', () => {
 
 	it('routes controller lease list and release through the lease handler', async () => {
 		const listLeases = vi.fn(async () => [{ id: 'lease-123' }]);
+		const peekLease = vi.fn(async () => ({
+			createdAt: 1,
+			lastUsedAt: 1,
+			leaseId: 'lease-123',
+			profileId: 'standard',
+			scopeKey: 'scope',
+			ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
+			tcpSlot: 0,
+			zoneId: 'shravan',
+		}));
 		const releaseLease = vi.fn(async () => {});
 
 		await runAgentVmCli(
@@ -1770,6 +1840,32 @@ describe('runAgentVmCli', () => {
 					execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
 					getZoneLogs: async () => ({}),
 					getControllerStatus: async () => ({}),
+					peekLease,
+					listLeases,
+					refreshZoneCredentials: async () => ({}),
+					releaseLease,
+					stopController: async () => ({ ok: true }),
+					upgradeZone: async () => ({}),
+				}),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+			},
+		);
+
+		await runAgentVmCli(
+			['controller', 'lease', 'peek', 'lease-123'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () => ({
+					destroyZone: async () => ({}),
+					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
+					execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+					getZoneLogs: async () => ({}),
+					getControllerStatus: async () => ({}),
+					peekLease,
 					listLeases,
 					refreshZoneCredentials: async () => ({}),
 					releaseLease,
@@ -1794,6 +1890,16 @@ describe('runAgentVmCli', () => {
 					execInZone: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
 					getZoneLogs: async () => ({}),
 					getControllerStatus: async () => ({}),
+					peekLease: async () => ({
+						createdAt: 1,
+						lastUsedAt: 1,
+						leaseId: 'lease-123',
+						profileId: 'standard',
+						scopeKey: 'scope',
+						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
+						tcpSlot: 0,
+						zoneId: 'shravan',
+					}),
 					listLeases,
 					refreshZoneCredentials: async () => ({}),
 					releaseLease,
@@ -1805,6 +1911,7 @@ describe('runAgentVmCli', () => {
 		);
 
 		expect(listLeases).toHaveBeenCalled();
+		expect(peekLease).toHaveBeenCalledWith('lease-123');
 		expect(releaseLease).toHaveBeenCalledWith('lease-123');
 	});
 
@@ -1841,6 +1948,16 @@ describe('runAgentVmCli', () => {
 					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
 					getZoneLogs: async () => ({}),
 					getControllerStatus: async () => ({}),
+					peekLease: async () => ({
+						createdAt: 1,
+						lastUsedAt: 1,
+						leaseId: 'lease-123',
+						profileId: 'standard',
+						scopeKey: 'scope',
+						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
+						tcpSlot: 0,
+						zoneId: 'shravan',
+					}),
 					listLeases: async () => [],
 					refreshZoneCredentials: async () => ({}),
 					releaseLease: async () => {},
@@ -1976,6 +2093,16 @@ describe('runAgentVmCli', () => {
 					enableZoneSsh: async () => ({ command: 'ssh root@127.0.0.1' }),
 					getZoneLogs: async () => ({}),
 					getControllerStatus: async () => ({}),
+					peekLease: async () => ({
+						createdAt: 1,
+						lastUsedAt: 1,
+						leaseId: 'lease-123',
+						profileId: 'standard',
+						scopeKey: 'scope',
+						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
+						tcpSlot: 0,
+						zoneId: 'shravan',
+					}),
 					listLeases: async () => [],
 					refreshZoneCredentials: async () => ({}),
 					releaseLease: async () => {},
