@@ -147,7 +147,6 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 			default: {
 				memory: '1G',
 				cpus: 1,
-				workspaceRoot: path.join(rootPath, 'workspaces', 'tools'),
 				imageProfile: 'default',
 			},
 		},

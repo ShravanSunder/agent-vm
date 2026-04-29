@@ -115,7 +115,6 @@ describe('live smoke: API client → controller over real HTTP', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -153,10 +152,10 @@ describe('live smoke: API client → controller over real HTTP', () => {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
-				agentWorkspaceDir: '/workspace',
+				agentWorkspaceDir: '/work',
 				profileId: 'standard',
 				scopeKey: 'smoke-test',
-				workspaceDir: '/workspace',
+				workspaceDir: '/work',
 				zoneId: 'shravan',
 			}),
 		});

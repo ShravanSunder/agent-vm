@@ -6,7 +6,6 @@ export interface ToolProfile {
 	readonly cpus: number;
 	readonly imageProfile: string;
 	readonly memory: string;
-	readonly workspaceRoot: string;
 }
 
 export interface Lease {

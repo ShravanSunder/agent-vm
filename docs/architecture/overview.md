@@ -428,7 +428,7 @@ OpenClaw Gateway runs a long-lived gateway VM that hosts an interactive chat age
        |-- ...up to tcpPool.size
 ```
 
-The gateway VM boots at controller startup and stays running. Tool VMs are created on demand via the lease API -- each gets a TCP slot, SSH access, and a workspace mount. Auth profiles and the effective OpenClaw config are written to the host-side state directory before the VM boots via `prepareHostState()`. The gateway reaches tool VMs via synthetic DNS (`tool-{n}.vm.host:22`) and the controller via `controller.vm.host:18800`. Websocket bypass hosts get direct TCP passthrough (for Discord, etc.).
+The gateway VM boots at controller startup and stays running. Tool VMs are created on demand via the lease API -- each gets a TCP slot, SSH access, and a lease-owned `/work` mount. Auth profiles and the effective OpenClaw config are written to the host-side state directory before the VM boots via `prepareHostState()`. The gateway reaches tool VMs via synthetic DNS (`tool-{n}.vm.host:22`) and the controller via `controller.vm.host:18800`. Websocket bypass hosts get direct TCP passthrough (for Discord, etc.).
 
 ---
 
@@ -612,7 +612,7 @@ directory.
   |-- zoneFilesDir      OpenClaw zone files; RealFS and included in zone backups
   |-- images            Build config paths for gateway and tool VM images
   |-- zones[]           Zone definitions: gateway type, resources, secrets, allowed hosts
-  |-- toolProfiles      Named VM resource profiles (memory, cpus, workspace root)
+  |-- toolProfiles      Named tool VM resource profiles (memory, cpus, image profile)
   |-- tcpPool           Port range and pool size for tool VM TCP slots
 ```
 
@@ -660,8 +660,8 @@ The system operates across three trust boundaries:
   |  |  |  ZONE 3: TOOL VM  (untrusted)                            |  |  |
   |  |  |                                                           |  |  |
   |  |  |  Ephemeral, per-lease. Runs LLM-generated code.           |  |  |
-  |  |  |  Has: workspace mount (realfs), no secrets, no network    |  |  |
-  |  |  |  Can: read/write /workspace, run arbitrary commands       |  |  |
+  |  |  |  Has: /work mount (realfs), no secrets, no network        |  |  |
+  |  |  |  Can: read/write /work, run arbitrary commands            |  |  |
   |  |  |  Cannot: reach the internet, access secrets, persist      |  |  |
   |  |  +----------------------------------------------------------+  |  |
   |  +---------------------------------------------------------------+  |

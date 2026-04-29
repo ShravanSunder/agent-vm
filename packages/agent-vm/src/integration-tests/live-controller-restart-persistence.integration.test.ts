@@ -71,7 +71,6 @@ function createSystemConfig(
 			standard: {
 				memory: '1G',
 				cpus: 1,
-				workspaceRoot: './workspaces/tools',
 				imageProfile: 'default',
 			},
 		},
@@ -252,10 +251,10 @@ describe('live integration: controller restart persistence', () => {
 
 		const createLeaseResponse = await fetch(`http://127.0.0.1:${controllerPort}/lease`, {
 			body: JSON.stringify({
-				agentWorkspaceDir: '/workspace',
+				agentWorkspaceDir: '/work',
 				profileId: 'standard',
 				scopeKey: 'restart-test',
-				workspaceDir: '/workspace',
+				workspaceDir: '/work',
 				zoneId: 'shravan',
 			}),
 			headers: { 'content-type': 'application/json' },

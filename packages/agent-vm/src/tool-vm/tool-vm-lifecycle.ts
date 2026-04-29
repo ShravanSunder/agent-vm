@@ -1,4 +1,3 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { buildToolSessionLabel } from '@agent-vm/gateway-interface';
@@ -45,8 +44,6 @@ export async function createToolVm(
 	});
 	const hostWorkspaceDirectory = path.resolve(options.workspaceDir);
 
-	await fs.mkdir(hostWorkspaceDirectory, { recursive: true });
-
 	const toolVm = await createManagedVm({
 		allowedHosts: [],
 		cpus: options.profile.cpus,
@@ -60,7 +57,7 @@ export async function createToolVm(
 		),
 		secrets: {},
 		vfsMounts: {
-			'/workspace': {
+			'/work': {
 				hostPath: hostWorkspaceDirectory,
 				kind: 'realfs',
 			},

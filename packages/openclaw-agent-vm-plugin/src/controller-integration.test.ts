@@ -12,7 +12,6 @@ describe('gondolin controller integration', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -82,7 +81,7 @@ describe('gondolin controller integration', () => {
 		);
 
 		const backend = await factory({
-			agentWorkspaceDir: '/home/openclaw/workspace',
+			agentWorkspaceDir: '/home/openclaw/work',
 			cfg: {
 				docker: {
 					env: {
@@ -92,7 +91,7 @@ describe('gondolin controller integration', () => {
 			},
 			scopeKey: 'agent:main:session-abc',
 			sessionKey: 'session-abc',
-			workspaceDir: '/home/openclaw/.openclaw/sandboxes/workspace',
+			workspaceDir: '/home/openclaw/.openclaw/sandboxes/work',
 		});
 		const execSpec = await backend.buildExecSpec({
 			command: 'ls -la',
@@ -100,7 +99,7 @@ describe('gondolin controller integration', () => {
 				TEST_ENV: '1',
 			},
 			usePty: false,
-			workdir: '/workspace',
+			workdir: '/work',
 		});
 
 		expect(execSpec.argv).toEqual(['ssh', 'tool-0.vm.host', 'ls -la']);

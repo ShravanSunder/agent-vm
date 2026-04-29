@@ -95,7 +95,6 @@ interface ScaffoldPathProfile {
 	readonly gatewayDockerfile: (gatewayType: GatewayType) => string;
 	readonly toolVmBuildConfig: string;
 	readonly toolVmDockerfile: string;
-	readonly toolWorkspaceRoot: string;
 }
 
 interface PromptReference {
@@ -184,7 +183,6 @@ const localPathProfile: ScaffoldPathProfile = {
 	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
 	toolVmBuildConfig: '../vm-images/tool-vms/default/build-config.json',
 	toolVmDockerfile: '../vm-images/tool-vms/default/Dockerfile',
-	toolWorkspaceRoot: '../workspaces/tools',
 };
 
 const podPathProfile: ScaffoldPathProfile = {
@@ -201,7 +199,6 @@ const podPathProfile: ScaffoldPathProfile = {
 	gatewayDockerfile: (gatewayType) => `/etc/agent-vm/vm-images/gateways/${gatewayType}/Dockerfile`,
 	toolVmBuildConfig: '/etc/agent-vm/vm-images/tool-vms/default/build-config.json',
 	toolVmDockerfile: '/etc/agent-vm/vm-images/tool-vms/default/Dockerfile',
-	toolWorkspaceRoot: '/var/agent-vm/workspace/tools',
 };
 
 /**
@@ -223,7 +220,6 @@ const userDirPathProfile: ScaffoldPathProfile = {
 	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
 	toolVmBuildConfig: '../vm-images/tool-vms/default/build-config.json',
 	toolVmDockerfile: '../vm-images/tool-vms/default/Dockerfile',
-	toolWorkspaceRoot: '~/.agent-vm/workspaces/tools',
 };
 
 function resolveScaffoldPathProfile(paths: ScaffoldPathMode | undefined): ScaffoldPathProfile {
@@ -271,11 +267,6 @@ function resolveConfigWritablePathProfile(
 			configDir,
 			homeDir,
 		),
-		toolWorkspaceRoot: resolveHomeRelativeScaffoldPath(
-			pathProfile.toolWorkspaceRoot,
-			configDir,
-			homeDir,
-		),
 	};
 }
 
@@ -298,15 +289,11 @@ function defaultToolVmImageProfiles(
 	};
 }
 
-function defaultToolProfiles(
-	gatewayType: GatewayType,
-	pathProfile: ScaffoldPathProfile,
-): Record<
+function defaultToolProfiles(gatewayType: GatewayType): Record<
 	string,
 	{
 		readonly memory: string;
 		readonly cpus: number;
-		readonly workspaceRoot: string;
 		readonly imageProfile: string;
 	}
 > {
@@ -317,7 +304,6 @@ function defaultToolProfiles(
 		standard: {
 			memory: '1G',
 			cpus: 1,
-			workspaceRoot: pathProfile.toolWorkspaceRoot,
 			imageProfile: 'default',
 		},
 	};
@@ -378,7 +364,7 @@ const defaultSystemConfig = (
 			...(gatewayType === 'openclaw' ? { toolProfile: 'standard' } : {}),
 		},
 	],
-	toolProfiles: defaultToolProfiles(gatewayType, pathProfile),
+	toolProfiles: defaultToolProfiles(gatewayType),
 	tcpPool: {
 		basePort: 19000,
 		size: 5,
@@ -754,9 +740,9 @@ RUN apt-get update && \\
     update-ca-certificates && \\
     corepack enable && \\
     ln -sf /usr/bin/fdfind /usr/local/bin/fd && \\
-    mkdir -p /workspace /run/sshd
+    mkdir -p /work /run/sshd
 
-WORKDIR /workspace
+WORKDIR /work
 `;
 
 function defaultWorkerGatewayDockerfile(paths: ScaffoldPathMode | undefined): string {
@@ -1212,7 +1198,6 @@ async function scaffoldAgentVmProjectInternal(
 			pathProfile.gatewayStateDir(options.zoneId),
 			...(gatewayType === 'openclaw' ? [pathProfile.gatewayZoneFilesDir(options.zoneId)] : []),
 			pathProfile.gatewayBackupDir(options.zoneId),
-			pathProfile.toolWorkspaceRoot,
 		].map((profilePath) => resolveConfigPath(profilePath, configDir, homeDir));
 		await Promise.all(
 			directoriesToCreate.map((directoryPath) => fs.mkdir(directoryPath, { recursive: true })),

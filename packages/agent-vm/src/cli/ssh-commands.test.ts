@@ -36,7 +36,6 @@ const systemConfig = {
 		standard: {
 			cpus: 1,
 			memory: '1G',
-			workspaceRoot: './workspaces/tools',
 			imageProfile: 'default',
 		},
 	},

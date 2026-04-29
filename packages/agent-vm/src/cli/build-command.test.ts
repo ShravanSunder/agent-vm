@@ -74,7 +74,6 @@ function createTestSystemConfig(): LoadedSystemConfig {
 					cpus: 1,
 					imageProfile: 'default',
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 				},
 			},
 			tcpPool: { basePort: 19000, size: 5 },

@@ -169,7 +169,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -184,10 +183,10 @@ describe('createControllerApp', () => {
 
 		const createResponse = await app.request('/lease', {
 			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/workspace',
+				agentWorkspaceDir: '/home/openclaw/work',
 				profileId: 'standard',
 				scopeKey: 'agent:main:session-abc',
-				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/workspace',
+				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
 				zoneId: 'shravan',
 			}),
 			headers: {
@@ -207,7 +206,7 @@ describe('createControllerApp', () => {
 				identityPem: 'pem-from-file',
 			},
 			tcpSlot: 0,
-			workdir: '/workspace',
+			workdir: '/work',
 		});
 		expect(getResponse.status).toBe(200);
 		expect(deleteResponse.status).toBe(204);
@@ -220,7 +219,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -236,10 +234,10 @@ describe('createControllerApp', () => {
 
 		const createResponse = await app.request('/lease', {
 			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/workspace',
+				agentWorkspaceDir: '/home/openclaw/work',
 				profileId: 'standard',
 				scopeKey: 'agent:main:session-abc',
-				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/workspace',
+				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
 				zoneId: 'shravan',
 			}),
 			headers: {
@@ -264,11 +262,10 @@ describe('createControllerApp', () => {
 				releaseLease: vi.fn(async () => {}),
 			},
 			toolProfiles: {
-				gpu: { cpus: 4, memory: '8G', workspaceRoot: '/workspaces/gpu', imageProfile: 'default' },
+				gpu: { cpus: 4, memory: '8G', imageProfile: 'default' },
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -279,10 +276,10 @@ describe('createControllerApp', () => {
 
 		const createResponse = await app.request('/lease', {
 			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/workspace',
+				agentWorkspaceDir: '/home/openclaw/work',
 				profileId: 'standard',
 				scopeKey: 'agent:main:session-abc',
-				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/workspace',
+				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
 				zoneId: 'shravan',
 			}),
 			headers: {
@@ -297,7 +294,6 @@ describe('createControllerApp', () => {
 				profile: {
 					cpus: 4,
 					memory: '8G',
-					workspaceRoot: '/workspaces/gpu',
 					imageProfile: 'default',
 				},
 				profileId: 'gpu',
@@ -319,7 +315,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -330,10 +325,10 @@ describe('createControllerApp', () => {
 
 		const response = await app.request('/lease', {
 			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/workspace',
+				agentWorkspaceDir: '/home/openclaw/work',
 				profileId: 'standard',
 				scopeKey: 'agent:main:session-abc',
-				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/workspace',
+				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
 				zoneId: 'bogus-zone',
 			}),
 			headers: {
@@ -388,7 +383,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -447,7 +441,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -480,7 +473,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -509,7 +501,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -542,7 +533,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -586,7 +576,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -649,7 +638,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -691,7 +679,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -731,7 +718,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -772,7 +758,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -855,7 +840,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -931,7 +915,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -1008,7 +991,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -1064,7 +1046,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -1114,7 +1095,6 @@ describe('createControllerApp', () => {
 				standard: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 			},
@@ -1169,7 +1149,6 @@ describe('createControllerApp', () => {
 					cpus: 1,
 					imageProfile: 'default',
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 				},
 			},
 		});
@@ -1210,7 +1189,6 @@ describe('createControllerApp', () => {
 					cpus: 1,
 					imageProfile: 'default',
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 				},
 			},
 		});
@@ -1245,7 +1223,6 @@ describe('createControllerApp', () => {
 					cpus: 1,
 					imageProfile: 'default',
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 				},
 			},
 		});
@@ -1285,7 +1262,6 @@ describe('createControllerApp', () => {
 					cpus: 1,
 					imageProfile: 'default',
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 				},
 			},
 		});

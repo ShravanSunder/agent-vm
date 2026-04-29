@@ -32,7 +32,7 @@ OpenClaw runs a persistent gateway VM that hosts an interactive chat agent. Tool
   |  | long-running    |  | ephemeral     |  | ephemeral     |     |
   |  | OpenClaw :18789 |  | no secrets    |  | no secrets    |     |
   |  | 4 VFS mounts    |  | no network    |  | no network    |     |
-  |  | TCP to all tools|  | /workspace    |  | /workspace    |     |
+  |  | TCP to all tools|  | /work         |  | /work         |     |
   |  +-----------------+  +---------------+  +---------------+      |
   |                        tool-0.vm.host:22  tool-1.vm.host:22     |
   +----------------------------------------------------------------+
@@ -187,7 +187,7 @@ The `openclaw-agent-vm-plugin` package bridges OpenClaw's sandbox system to Gond
 The plugin provides:
 - **File bridge**: `mkdirp`, `readFile`, `writeFile`, `stat`, `remove`, `rename` — all via SSH into the tool VM
 - **Shell execution**: run arbitrary commands in the tool VM
-- **Workspace access**: tool VMs use `/workspace` for lease-local execution.
+- **Workspace access**: tool VMs use `/work` for lease-local execution.
   The host path is the `workspaceDir` supplied by the OpenClaw sandbox lease
   request, not the worker/rootfs `/work` paths.
 

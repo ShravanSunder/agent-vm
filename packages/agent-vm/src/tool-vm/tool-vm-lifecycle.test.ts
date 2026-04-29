@@ -65,7 +65,6 @@ function createToolVmSystemConfig(): LoadedSystemConfig {
 					cpus: 1,
 					imageProfile: 'default',
 					memory: '1G',
-					workspaceRoot: path.join(temporaryDirectory, 'workspaces', 'tools'),
 				},
 			},
 			zones: [
@@ -93,7 +92,7 @@ function createToolVmSystemConfig(): LoadedSystemConfig {
 }
 
 describe('createToolVm', () => {
-	it('mounts the lease workspace directory at /workspace', async () => {
+	it('mounts the lease workspace directory at /work', async () => {
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -143,7 +142,7 @@ describe('createToolVm', () => {
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
 				vfsMounts: {
-					'/workspace': {
+					'/work': {
 						hostPath: requestedWorkspaceDir,
 						kind: 'realfs',
 					},

@@ -25,7 +25,7 @@ describe('createLeaseClient', () => {
 							user: 'sandbox',
 						},
 						tcpSlot: 0,
-						workdir: '/workspace',
+						workdir: '/work',
 					}),
 					{
 						headers: {
@@ -38,10 +38,10 @@ describe('createLeaseClient', () => {
 		});
 
 		await leaseClient.requestLease({
-			agentWorkspaceDir: '/home/openclaw/workspace',
+			agentWorkspaceDir: '/home/openclaw/work',
 			profileId: 'standard',
 			scopeKey: 'agent:main:session-abc',
-			workspaceDir: '/home/openclaw/.openclaw/sandboxes/workspace',
+			workspaceDir: '/home/openclaw/.openclaw/sandboxes/work',
 			zoneId: 'shravan',
 		});
 		await leaseClient.getLeaseStatus('lease-123');
@@ -66,10 +66,10 @@ describe('createLeaseClient', () => {
 
 		await expect(
 			leaseClient.requestLease({
-				agentWorkspaceDir: '/workspace',
+				agentWorkspaceDir: '/work',
 				profileId: 'standard',
 				scopeKey: 'test',
-				workspaceDir: '/workspace',
+				workspaceDir: '/work',
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow('Controller returned an invalid lease response');
@@ -96,10 +96,10 @@ describe('createLeaseClient', () => {
 		});
 
 		await leaseClient.requestLease({
-			agentWorkspaceDir: '/workspace',
+			agentWorkspaceDir: '/work',
 			profileId: 'standard',
 			scopeKey: 'test',
-			workspaceDir: '/workspace',
+			workspaceDir: '/work',
 			zoneId: 'shravan',
 		});
 

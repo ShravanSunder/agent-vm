@@ -31,16 +31,15 @@ describe('createLeaseManager', () => {
 		});
 
 		const lease = await leaseManager.createLease({
-			agentWorkspaceDir: '/home/openclaw/workspace',
+			agentWorkspaceDir: '/home/openclaw/work',
 			profile: {
 				cpus: 1,
 				memory: '1G',
-				workspaceRoot: '/workspaces/tools',
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main:session-abc',
-			workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/workspace',
+			workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
 			zoneId: 'shravan',
 		});
 
@@ -78,29 +77,27 @@ describe('createLeaseManager', () => {
 		});
 
 		const lease1 = await leaseManager.createLease({
-			agentWorkspaceDir: '/workspace',
+			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
 				memory: '1G',
-				workspaceRoot: '/workspaces/tools',
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
 			scopeKey: 'scope-a',
-			workspaceDir: '/workspace',
+			workspaceDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
 		const lease2 = await leaseManager.createLease({
-			agentWorkspaceDir: '/workspace',
+			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
 				memory: '1G',
-				workspaceRoot: '/workspaces/tools',
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
 			scopeKey: 'scope-b',
-			workspaceDir: '/workspace',
+			workspaceDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
 
@@ -149,16 +146,15 @@ describe('createLeaseManager', () => {
 		});
 
 		const lease = await leaseManager.createLease({
-			agentWorkspaceDir: '/workspace',
+			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
 				memory: '1G',
-				workspaceRoot: '/workspaces/tools',
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
 			scopeKey: 'scope-close-fail',
-			workspaceDir: '/workspace',
+			workspaceDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
 
@@ -179,16 +175,15 @@ describe('createLeaseManager', () => {
 
 		await expect(
 			leaseManager.createLease({
-				agentWorkspaceDir: '/workspace',
+				agentWorkspaceDir: '/host/agent-work',
 				profile: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 				profileId: 'standard',
 				scopeKey: 'scope-fail',
-				workspaceDir: '/workspace',
+				workspaceDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow('vm create failed');
@@ -217,16 +212,15 @@ describe('createLeaseManager', () => {
 
 		await expect(
 			leaseManager.createLease({
-				agentWorkspaceDir: '/workspace',
+				agentWorkspaceDir: '/host/agent-work',
 				profile: {
 					cpus: 1,
 					memory: '1G',
-					workspaceRoot: '/workspaces/tools',
 					imageProfile: 'default',
 				},
 				profileId: 'standard',
 				scopeKey: 'scope-ssh-fail',
-				workspaceDir: '/workspace',
+				workspaceDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow('ssh setup failed');

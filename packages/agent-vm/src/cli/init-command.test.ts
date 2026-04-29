@@ -428,7 +428,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(await pathExists(path.join(targetDir, 'state', 'my-zone'))).toBe(true);
 		expect(await pathExists(path.join(targetDir, 'zone-files', 'my-zone'))).toBe(true);
 		expect(await pathExists(path.join(targetDir, 'backups', 'my-zone'))).toBe(true);
-		expect(await pathExists(path.join(targetDir, 'workspaces', 'tools'))).toBe(true);
+		expect(await pathExists(path.join(targetDir, 'workspaces', 'tools'))).toBe(false);
 	});
 
 	it('does not create checkout-local runtime directories for container scaffolds', async () => {
@@ -540,7 +540,9 @@ describe('scaffoldAgentVmProject', () => {
 			true,
 		);
 		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm-backups', 'shravan'))).toBe(true);
-		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'workspaces', 'tools'))).toBe(true);
+		expect(await pathExists(path.join(fakeHomeDir, '.agent-vm', 'workspaces', 'tools'))).toBe(
+			false,
+		);
 	});
 
 	it('writes backupDir for local profile alongside ../state and ../runtime', async () => {
@@ -989,13 +991,14 @@ describe('scaffoldAgentVmProject', () => {
 				};
 			};
 			readonly toolProfiles: {
-				readonly standard: { readonly imageProfile: string; readonly workspaceRoot: string };
+				readonly standard: { readonly imageProfile: string };
 			};
 			readonly zones: readonly [{ readonly toolProfile: string }];
 		};
 
 		expect(config.zones[0].toolProfile).toBe('standard');
 		expect(config.toolProfiles.standard.imageProfile).toBe('default');
+		expect(config.toolProfiles.standard).not.toHaveProperty('workspaceRoot');
 		expect(config.imageProfiles.toolVms.default.buildConfig).toBe(
 			'../vm-images/tool-vms/default/build-config.json',
 		);

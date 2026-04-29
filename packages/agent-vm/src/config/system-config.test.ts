@@ -85,7 +85,6 @@ function createValidSystemConfigInput(): ValidSystemConfigInput {
 			standard: {
 				memory: '1G',
 				cpus: 1,
-				workspaceRoot: '../workspaces/tools',
 				imageProfile: 'default',
 			},
 		},
@@ -176,7 +175,6 @@ describe('loadSystemConfig', () => {
 					standard: {
 						memory: '1G',
 						cpus: 1,
-						workspaceRoot: '../workspaces/tools',
 						imageProfile: 'default',
 					},
 				},
@@ -349,6 +347,24 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/workspaceDir/u);
 	});
 
+	test('rejects legacy tool profile workspaceRoot', async () => {
+		const input = createValidSystemConfigInput();
+		input.toolProfiles = {
+			standard: {
+				memory: '1G',
+				cpus: 1,
+				imageProfile: 'default',
+				workspaceRoot: '../workspaces/tools',
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-legacy-tool-workspace-',
+			input,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/workspaceRoot/u);
+	});
+
 	test('accepts zones without an explicit backupDir (legacy fallback applies elsewhere)', async () => {
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-config-no-backup-',
@@ -472,7 +488,6 @@ describe('loadSystemConfig', () => {
 					standard: {
 						memory: '1G',
 						cpus: 1,
-						workspaceRoot: '../workspaces/tools',
 						imageProfile: 'default',
 					},
 				},
@@ -552,7 +567,6 @@ describe('loadSystemConfig', () => {
 					standard: {
 						memory: '1G',
 						cpus: 1,
-						workspaceRoot: '../workspaces/tools',
 						imageProfile: 'default',
 					},
 				},
@@ -628,7 +642,6 @@ describe('loadSystemConfig', () => {
 					standard: {
 						memory: '1G',
 						cpus: 1,
-						workspaceRoot: '../workspaces/tools',
 						imageProfile: 'default',
 					},
 				},
@@ -827,7 +840,6 @@ describe('loadSystemConfig', () => {
 					standard: {
 						memory: '1G',
 						cpus: 1,
-						workspaceRoot: '../workspaces/tools',
 						imageProfile: 'default',
 					},
 				},
@@ -1004,7 +1016,6 @@ describe('loadSystemConfig', () => {
 			standard: {
 				memory: '1G',
 				cpus: 1,
-				workspaceRoot: '../workspaces/tools',
 				imageProfile: 'missing-tool-vm',
 			},
 		};

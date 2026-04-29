@@ -116,12 +116,13 @@ const zoneGatewaySchema = z.discriminatedUnion('type', [
 	workerZoneGatewaySchema,
 ]);
 
-const toolProfileSchema = z.object({
-	memory: z.string().min(1),
-	cpus: z.number().int().positive(),
-	workspaceRoot: z.string().min(1),
-	imageProfile: z.string().min(1),
-});
+const toolProfileSchema = z
+	.object({
+		memory: z.string().min(1),
+		cpus: z.number().int().positive(),
+		imageProfile: z.string().min(1),
+	})
+	.strict();
 
 const imageConfigSchema = z
 	.object({
@@ -404,7 +405,7 @@ function resolveRelativePaths(
 		toolProfiles: Object.fromEntries(
 			Object.entries(config.toolProfiles).map(([profileId, profile]) => [
 				profileId,
-				{ ...profile, workspaceRoot: resolvePath(profile.workspaceRoot) },
+				{ ...profile },
 			]),
 		),
 	};

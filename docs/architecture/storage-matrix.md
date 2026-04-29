@@ -200,7 +200,7 @@ added.
 ## Tool VM
 
 Tool VMs are lease-local execution sandboxes. Current tool VMs are the remaining
-intentional `/workspace` exception: the lease workspace is a RealFS mount of the
+intentional `/work` exception: the lease workspace is a RealFS mount of the
 `workspaceDir` supplied by the caller that requested the lease. For OpenClaw,
 that is the selected sandbox workspace: either the seeded per-scope sandbox
 directory or the raw agent workspace, depending on OpenClaw `workspaceAccess`.
@@ -211,7 +211,7 @@ workspace directory.
 path or data                           backing                backup
 ──────────────────────────────         ─────────────────      ─────────
 
-/workspace                             RealFS workspaceDir    varies
+/work                                  RealFS workspaceDir    varies
 OpenClaw-selected tool workspace       owned by lease caller
 
 /tmp, /run, /var/log                   guest tmpfs            no
