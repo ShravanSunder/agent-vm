@@ -1,6 +1,7 @@
 export * from './build-pipeline.js';
 export * from './gondolin-package.js';
 export * from './mount-policy.js';
+export * from './pinned-realfs.js';
 export * from './policy-compiler.js';
 export * from './secret-resolver.js';
 export * from './types.js';

@@ -6,8 +6,21 @@ import {
 	VM,
 	createHttpHooks,
 	createShadowPathPredicate,
+	type CreateHttpHooksResult,
+	type EnableIngressOptions,
+	type EnableSshOptions,
+	type IngressRoute as GondolinIngressRoute,
+	type ShadowPredicate,
+	type ShadowProviderOptions,
+	type VMOptions,
+	type VirtualProvider,
 } from '@earendil-works/gondolin';
 
+import {
+	closePinnedRealFsRoot,
+	createPinnedRealFsProvider,
+	type PinnedRealFsRoot,
+} from './pinned-realfs.js';
 import type { SecretSpec } from './types.js';
 
 export interface ExecResult {
@@ -16,11 +29,7 @@ export interface ExecResult {
 	readonly stderr: string;
 }
 
-export interface IngressRoute {
-	readonly prefix: string;
-	readonly port: number;
-	readonly stripPrefix?: boolean;
-}
+export type IngressRoute = GondolinIngressRoute;
 
 export interface SshAccess {
 	readonly host: string;
@@ -42,33 +51,33 @@ export interface ManagedVmInstance {
 		readonly stdout?: string;
 		readonly stderr?: string;
 	}>;
-	enableSsh(options?: unknown): Promise<SshAccess>;
-	enableIngress(options?: unknown): Promise<IngressAccess>;
+	enableSsh(options?: EnableSshOptions): Promise<SshAccess>;
+	enableIngress(options?: EnableIngressOptions): Promise<IngressAccess>;
 	setIngressRoutes(routes: readonly IngressRoute[]): void;
 	close(): Promise<void>;
 }
 
 export interface ManagedVmDependencies {
-	createVm(vmOptions: unknown): Promise<ManagedVmInstance>;
+	createVm(vmOptions: VMOptions): Promise<ManagedVmInstance>;
 	createHttpHooks(options: {
 		readonly allowedHosts: readonly string[];
 		readonly secrets: Record<string, SecretSpec>;
 		readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
 		readonly onResponse?: (response: Response) => Promise<Response | void>;
-	}): {
-		readonly env: Record<string, string>;
-		readonly httpHooks: unknown;
-	};
-	createRealFsProvider(hostPath: string): unknown;
-	createReadonlyProvider(provider: unknown): unknown;
-	createMemoryProvider(): unknown;
-	createShadowProvider(provider: unknown, options: unknown): unknown;
-	createShadowPathPredicate(paths: readonly string[]): unknown;
+	}): Pick<CreateHttpHooksResult, 'env' | 'httpHooks'>;
+	closePinnedRealFsRoot(root: PinnedRealFsRoot): void;
+	createPinnedRealFsProvider(root: PinnedRealFsRoot): VirtualProvider;
+	createRealFsProvider(hostPath: string): VirtualProvider;
+	createReadonlyProvider(provider: VirtualProvider): VirtualProvider;
+	createMemoryProvider(): VirtualProvider;
+	createShadowProvider(provider: VirtualProvider, options: ShadowProviderOptions): VirtualProvider;
+	createShadowPathPredicate(paths: readonly string[]): ShadowPredicate;
 }
 
 export interface VfsMountSpec {
 	readonly kind: 'realfs' | 'realfs-readonly' | 'memory' | 'shadow';
 	readonly hostPath?: string;
+	readonly pinnedHostRoot?: PinnedRealFsRoot;
 	readonly shadowConfig?: {
 		readonly deny: readonly string[];
 		readonly tmpfs: readonly string[];
@@ -93,20 +102,22 @@ export interface CreateVmOptions {
 export interface ManagedVm {
 	readonly id: string;
 	exec(command: string): Promise<ExecResult>;
-	enableSsh(options?: unknown): Promise<SshAccess>;
-	enableIngress(options?: unknown): Promise<IngressAccess>;
+	enableSsh(options?: EnableSshOptions): Promise<SshAccess>;
+	enableIngress(options?: EnableIngressOptions): Promise<IngressAccess>;
 	getVmInstance(): ManagedVmInstance;
 	setIngressRoutes(routes: readonly IngressRoute[]): void;
 	close(): Promise<void>;
 }
 
-/* oxlint-disable typescript-eslint/no-unsafe-type-assertion -- Gondolin SDK boundary:
-   The dependency injection pattern uses `unknown` to decouple from SDK internals.
-   The `as never` casts bridge our unknown-typed providers to the SDK's concrete types. */
+/* oxlint-disable typescript-eslint/no-unsafe-type-assertion -- VM.create() returns
+   Gondolin's concrete VM class; this adapter exposes only the narrower
+   ManagedVmInstance interface used by agent-vm. */
 function createDefaultDependencies(): ManagedVmDependencies {
+	const createDefaultRealFsProvider = (hostPath: string): VirtualProvider =>
+		new RealFSProvider(hostPath);
 	return {
-		createVm: async (vmOptions: unknown): Promise<ManagedVmInstance> =>
-			(await VM.create(vmOptions as never)) as unknown as ManagedVmInstance,
+		createVm: async (vmOptions: VMOptions): Promise<ManagedVmInstance> =>
+			(await VM.create(vmOptions)) as unknown as ManagedVmInstance,
 		createHttpHooks: (hookOptions) =>
 			createHttpHooks({
 				allowedHosts: [...hookOptions.allowedHosts],
@@ -122,12 +133,21 @@ function createDefaultDependencies(): ManagedVmDependencies {
 				...(hookOptions.onRequest ? { onRequest: hookOptions.onRequest } : {}),
 				...(hookOptions.onResponse ? { onResponse: hookOptions.onResponse } : {}),
 			}),
-		createRealFsProvider: (hostPath: string): unknown => new RealFSProvider(hostPath),
-		createReadonlyProvider: (provider: unknown): unknown => new ReadonlyProvider(provider as never),
-		createMemoryProvider: (): unknown => new MemoryProvider(),
-		createShadowProvider: (provider: unknown, shadowOptions: unknown): unknown =>
-			new ShadowProvider(provider as never, shadowOptions as never),
-		createShadowPathPredicate: (paths: readonly string[]): unknown =>
+		closePinnedRealFsRoot,
+		createPinnedRealFsProvider: (root: PinnedRealFsRoot): VirtualProvider =>
+			createPinnedRealFsProvider({
+				createRealFsProvider: createDefaultRealFsProvider,
+				root,
+			}),
+		createRealFsProvider: createDefaultRealFsProvider,
+		createReadonlyProvider: (provider: VirtualProvider): VirtualProvider =>
+			new ReadonlyProvider(provider),
+		createMemoryProvider: (): VirtualProvider => new MemoryProvider(),
+		createShadowProvider: (
+			provider: VirtualProvider,
+			shadowOptions: ShadowProviderOptions,
+		): VirtualProvider => new ShadowProvider(provider, shadowOptions),
+		createShadowPathPredicate: (paths: readonly string[]): ShadowPredicate =>
 			createShadowPathPredicate([...paths]),
 	};
 }
@@ -143,33 +163,41 @@ function normalizeShadowPath(pathValue: string): string {
 	return `/${relativePath}`;
 }
 
+function createRealFsProviderForSpec(
+	mountSpec: VfsMountSpec,
+	dependencies: ManagedVmDependencies,
+	mountKind: string,
+): VirtualProvider {
+	if (mountSpec.pinnedHostRoot) {
+		return dependencies.createPinnedRealFsProvider(mountSpec.pinnedHostRoot);
+	}
+	if (mountSpec.hostPath) {
+		return dependencies.createRealFsProvider(mountSpec.hostPath);
+	}
+
+	throw new Error(`${mountKind} mounts require hostPath or pinnedHostRoot`);
+}
+
 function createProviderFromSpec(
 	mountSpec: VfsMountSpec,
 	dependencies: ManagedVmDependencies,
-): unknown {
+): VirtualProvider {
 	switch (mountSpec.kind) {
 		case 'memory':
 			return dependencies.createMemoryProvider();
 		case 'realfs': {
-			if (!mountSpec.hostPath) {
-				throw new Error('realfs mounts require hostPath');
-			}
-
-			return dependencies.createRealFsProvider(mountSpec.hostPath);
+			return createRealFsProviderForSpec(mountSpec, dependencies, 'realfs');
 		}
 		case 'realfs-readonly': {
-			if (!mountSpec.hostPath) {
-				throw new Error('realfs-readonly mounts require hostPath');
-			}
-
 			return dependencies.createReadonlyProvider(
-				dependencies.createRealFsProvider(mountSpec.hostPath),
+				createRealFsProviderForSpec(mountSpec, dependencies, 'realfs-readonly'),
 			);
 		}
 		case 'shadow': {
-			const baseProvider = mountSpec.hostPath
-				? dependencies.createRealFsProvider(mountSpec.hostPath)
-				: dependencies.createMemoryProvider();
+			const baseProvider =
+				mountSpec.hostPath || mountSpec.pinnedHostRoot
+					? createRealFsProviderForSpec(mountSpec, dependencies, 'shadow')
+					: dependencies.createMemoryProvider();
 
 			let shadowProvider = baseProvider;
 			const shadowConfig = mountSpec.shadowConfig;
@@ -203,8 +231,8 @@ function createProviderFromSpec(
 function createVfsMounts(
 	vfsMounts: Record<string, VfsMountSpec>,
 	dependencies: ManagedVmDependencies,
-): Record<string, unknown> {
-	const mountMap: Record<string, unknown> = {};
+): Record<string, VirtualProvider> {
+	const mountMap: Record<string, VirtualProvider> = {};
 
 	for (const [guestPath, mountSpec] of Object.entries(vfsMounts)) {
 		mountMap[guestPath] = createProviderFromSpec(mountSpec, dependencies);
@@ -213,49 +241,86 @@ function createVfsMounts(
 	return mountMap;
 }
 
+function collectPinnedRealFsRoots(
+	vfsMounts: Record<string, VfsMountSpec>,
+): readonly PinnedRealFsRoot[] {
+	const roots = new Map<number, PinnedRealFsRoot>();
+	for (const mountSpec of Object.values(vfsMounts)) {
+		if (mountSpec.pinnedHostRoot) {
+			roots.set(mountSpec.pinnedHostRoot.fd, mountSpec.pinnedHostRoot);
+		}
+	}
+	return [...roots.values()];
+}
+
+function closePinnedRealFsRoots(
+	roots: readonly PinnedRealFsRoot[],
+	dependencies: ManagedVmDependencies,
+): void {
+	for (const root of roots) {
+		dependencies.closePinnedRealFsRoot(root);
+	}
+}
+
+function closePinnedRealFsRootsAfterFailure(
+	roots: readonly PinnedRealFsRoot[],
+	dependencies: ManagedVmDependencies,
+): void {
+	try {
+		closePinnedRealFsRoots(roots, dependencies);
+	} catch {
+		// Preserve the VM creation failure; leaked-fd risk is lower than hiding
+		// the root cause of a failed lease.
+	}
+}
+
 export async function createManagedVm(
 	options: CreateVmOptions,
 	dependencies: ManagedVmDependencies = createDefaultDependencies(),
 ): Promise<ManagedVm> {
-	const hookBundle = dependencies.createHttpHooks({
-		allowedHosts: options.allowedHosts,
-		secrets: options.secrets,
-		...(options.onRequest ? { onRequest: options.onRequest } : {}),
-		...(options.onResponse ? { onResponse: options.onResponse } : {}),
-	});
-
 	const hasTcpHosts = options.tcpHosts && Object.keys(options.tcpHosts).length > 0;
-	const hasImagePath = options.imagePath !== undefined && options.imagePath.length > 0;
-	const sandboxOptions = hasImagePath ? { imagePath: options.imagePath } : {};
-	const vmInstance = await dependencies.createVm({
-		...(Object.keys(sandboxOptions).length > 0 ? { sandbox: sandboxOptions } : {}),
-		sessionLabel: options.sessionLabel,
-		rootfs: {
-			mode: options.rootfsMode,
-		},
-		memory: options.memory,
-		cpus: options.cpus,
-		env: {
-			...hookBundle.env,
-			...options.env,
-		},
-		httpHooks: hookBundle.httpHooks,
-		vfs: {
-			fuseMount: '/data',
-			mounts: createVfsMounts(options.vfsMounts, dependencies),
-		},
-		...(hasTcpHosts
-			? {
-					dns: {
-						mode: 'synthetic',
-						syntheticHostMapping: 'per-host',
-					},
-					tcp: {
-						hosts: options.tcpHosts,
-					},
-				}
-			: {}),
-	});
+	const pinnedRealFsRoots = collectPinnedRealFsRoots(options.vfsMounts);
+	let vmInstance: ManagedVmInstance;
+	try {
+		const hookBundle = dependencies.createHttpHooks({
+			allowedHosts: options.allowedHosts,
+			secrets: options.secrets,
+			...(options.onRequest ? { onRequest: options.onRequest } : {}),
+			...(options.onResponse ? { onResponse: options.onResponse } : {}),
+		});
+		vmInstance = await dependencies.createVm({
+			...(options.imagePath.length > 0 ? { sandbox: { imagePath: options.imagePath } } : {}),
+			...(options.sessionLabel ? { sessionLabel: options.sessionLabel } : {}),
+			rootfs: {
+				mode: options.rootfsMode,
+			},
+			memory: options.memory,
+			cpus: options.cpus,
+			env: {
+				...hookBundle.env,
+				...options.env,
+			},
+			httpHooks: hookBundle.httpHooks,
+			vfs: {
+				fuseMount: '/data',
+				mounts: createVfsMounts(options.vfsMounts, dependencies),
+			},
+			...(hasTcpHosts
+				? {
+						dns: {
+							mode: 'synthetic',
+							syntheticHostMapping: 'per-host',
+						},
+						tcp: {
+							hosts: options.tcpHosts,
+						},
+					}
+				: {}),
+		});
+	} catch (error) {
+		closePinnedRealFsRootsAfterFailure(pinnedRealFsRoots, dependencies);
+		throw error;
+	}
 
 	return {
 		id: vmInstance.id,
@@ -267,10 +332,10 @@ export async function createManagedVm(
 				stderr: executionResult.stderr ?? '',
 			};
 		},
-		async enableSsh(sshOptions?: unknown): Promise<SshAccess> {
+		async enableSsh(sshOptions?: EnableSshOptions): Promise<SshAccess> {
 			return await vmInstance.enableSsh(sshOptions);
 		},
-		async enableIngress(ingressOptions?: unknown): Promise<IngressAccess> {
+		async enableIngress(ingressOptions?: EnableIngressOptions): Promise<IngressAccess> {
 			return await vmInstance.enableIngress(ingressOptions);
 		},
 		getVmInstance(): ManagedVmInstance {
@@ -280,7 +345,20 @@ export async function createManagedVm(
 			vmInstance.setIngressRoutes(routes);
 		},
 		async close(): Promise<void> {
-			await vmInstance.close();
+			let closeError: unknown;
+			try {
+				await vmInstance.close();
+			} catch (error) {
+				closeError = error;
+			}
+			try {
+				closePinnedRealFsRoots(pinnedRealFsRoots, dependencies);
+			} catch (error) {
+				closeError ??= error;
+			}
+			if (closeError !== undefined) {
+				throw closeError;
+			}
 		},
 	};
 }
