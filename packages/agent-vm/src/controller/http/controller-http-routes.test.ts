@@ -6,7 +6,7 @@ import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
-import type { Lease } from '../leases/lease-manager.js';
+import { LeaseScopeConflictError, type Lease } from '../leases/lease-manager.js';
 import { LeaseWorkspaceValidationError } from '../leases/lease-workspace-paths.js';
 import type { PreparedWorkerTask } from '../worker-task-runner.js';
 import {
@@ -338,6 +338,45 @@ describe('createControllerApp', () => {
 		expect(createResponse.status).toBe(503);
 		await expect(createResponse.json()).resolves.toMatchObject({
 			error: 'No TCP slots available',
+		});
+	});
+
+	it('returns 409 when lease scope conflicts with an existing live lease', async () => {
+		const app = createControllerApp({
+			toolProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new LeaseScopeConflictError('scope already uses a different workspace');
+				}),
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const createResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				profileId: 'standard',
+				scopeKey: 'agent:main',
+				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(createResponse.status).toBe(409);
+		await expect(createResponse.json()).resolves.toEqual({
+			error: 'scope already uses a different workspace',
 		});
 	});
 

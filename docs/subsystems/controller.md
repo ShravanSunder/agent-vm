@@ -128,15 +128,26 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
 ### Lease Lifecycle
 
 ```
-  POST /lease { zoneId, scopeKey, profileId, ... }
+  POST /lease { zoneId, scopeKey, profileId, agentWorkspaceDir, workspaceDir }
+    |
+    v
+  resolveLeaseWorkspaceDir()
+    |-- 1. Require OpenClaw guest path
+    |-- 2. Translate to <stateDir>/sandboxes or <zoneFilesDir>
+    |-- 3. realpath + containment check
     |
     v
   createLease()
-    |-- 1. tcpPool.allocate()          Claim next free slot
-    |-- 2. createManagedVm(...)        Boot a tool VM with the slot's port
-    |-- 3. vm.enableSsh({ port })      Start SSH listener, get access details
-    |-- 4. Build Lease record          id = "{zoneId}-{scopeKey}-{timestamp}"
-    |-- 5. Store in leases Map
+    |-- 1. Lock on (zoneId, scopeKey)
+    |-- 2. Existing same-scope lease?
+    |       |-- profile/workspace/agentWorkspace mismatch -> 409 conflict
+    |       |-- VM live -> reuse lease
+    |       |-- VM dead -> close/evict/release TCP slot
+    |-- 3. tcpPool.allocate()          Claim next free slot
+    |-- 4. createManagedVm(...)        Boot a tool VM with the slot's port
+    |-- 5. vm.enableSsh({ port })      Start SSH listener, get access details
+    |-- 6. Build Lease record          id = "{zoneId}-{scopeKey}-{timestamp}"
+    |-- 7. Store in leases Map
     |
     |   On failure at step 2-3:
     |     vm.close() (if created) then tcpPool.release(slot)
@@ -151,7 +162,11 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
     |-- 3. tcpPool.release(slot)       Return slot to pool
 ```
 
-Each lease holds: `id`, `zoneId`, `scopeKey`, `profileId`, `tcpSlot`, `vm` (ManagedVm handle), `sshAccess` (host, port, identity file, user), `createdAt`, and `lastUsedAt`. The lease manager does not clean workspace files on release; OpenClaw-selected lease workspaces are owned by the caller that supplied `workspaceDir`.
+Each lease holds: `id`, `zoneId`, `scopeKey`, `profileId`, `agentWorkspaceDir`,
+`workspaceDir`, `tcpSlot`, `vm` (ManagedVm handle), `sshAccess` (host, port,
+identity file, user), `createdAt`, and `lastUsedAt`. The lease manager does not
+clean workspace files on release; OpenClaw-selected lease workspaces are owned
+by the caller that supplied `workspaceDir`.
 
 ### TCP Pool
 

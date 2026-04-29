@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 
 import type { SystemConfig } from '../../config/system-config.js';
+import { LeaseScopeConflictError } from '../leases/lease-manager.js';
 import {
 	LeaseWorkspaceValidationError,
 	resolveLeaseWorkspaceDir as resolveLeaseWorkspaceDirForZone,
@@ -87,7 +88,11 @@ export function createControllerApp(options: {
 				{
 					error: error instanceof Error ? error.message : 'lease-creation-failed',
 				},
-				error instanceof LeaseWorkspaceValidationError ? 400 : 503,
+				error instanceof LeaseWorkspaceValidationError
+					? 400
+					: error instanceof LeaseScopeConflictError
+						? 409
+						: 503,
 			);
 		}
 	});

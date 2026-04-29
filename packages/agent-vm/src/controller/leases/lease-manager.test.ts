@@ -1,7 +1,7 @@
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createLeaseManager } from './lease-manager.js';
+import { createLeaseManager, LeaseScopeConflictError } from './lease-manager.js';
 import { createTcpPool } from './tcp-pool.js';
 
 function createManagedVmStub(id: string = 'tool-vm-1'): ManagedVm {
@@ -148,6 +148,190 @@ describe('createLeaseManager', () => {
 			"Tool VM lease scope conflict for zone 'shravan' scopeKey 'agent:main': existing workspaceDir '/host/sandbox-work' does not match requested workspaceDir '/host/other-sandbox-work'.",
 		);
 		expect(closeMock).not.toHaveBeenCalled();
+	});
+
+	it('rejects same-scope lease reuse when the profile changes', async () => {
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+
+		await leaseManager.createLease({
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		});
+
+		await expect(
+			leaseManager.createLease({
+				agentWorkspaceDir: '/host/agent-work',
+				profile: {
+					cpus: 2,
+					memory: '2G',
+					imageProfile: 'large',
+				},
+				profileId: 'large',
+				scopeKey: 'agent:main',
+				workspaceDir: '/host/sandbox-work',
+				zoneId: 'shravan',
+			}),
+		).rejects.toBeInstanceOf(LeaseScopeConflictError);
+	});
+
+	it('rejects same-scope lease reuse when the agent workspace changes', async () => {
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+
+		await leaseManager.createLease({
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		});
+
+		await expect(
+			leaseManager.createLease({
+				agentWorkspaceDir: '/host/other-agent-work',
+				profile: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+				profileId: 'standard',
+				scopeKey: 'agent:main',
+				workspaceDir: '/host/sandbox-work',
+				zoneId: 'shravan',
+			}),
+		).rejects.toBeInstanceOf(LeaseScopeConflictError);
+	});
+
+	it('does not reuse matching scope keys across zones', async () => {
+		const createManagedVm = vi.fn(async () =>
+			createManagedVmStub(`tool-vm-${createManagedVm.mock.calls.length}`),
+		);
+		const leaseManager = createLeaseManager({
+			createManagedVm,
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+		const request = {
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+		};
+
+		const firstLease = await leaseManager.createLease({ ...request, zoneId: 'shravan' });
+		const secondLease = await leaseManager.createLease({ ...request, zoneId: 'alex' });
+
+		expect(secondLease.id).not.toBe(firstLease.id);
+		expect(secondLease.tcpSlot).toBe(1);
+		expect(createManagedVm).toHaveBeenCalledTimes(2);
+	});
+
+	it('evicts a stale same-scope lease before creating a replacement', async () => {
+		const staleClose = vi.fn(async () => {});
+		const staleVm = {
+			...createManagedVmStub('stale-vm'),
+			close: staleClose,
+			exec: vi.fn(async () => {
+				throw new Error('vm is gone');
+			}),
+		};
+		const freshVm = createManagedVmStub('fresh-vm');
+		const createManagedVm = vi.fn(async () =>
+			createManagedVm.mock.calls.length === 1 ? staleVm : freshVm,
+		);
+		const leaseManager = createLeaseManager({
+			createManagedVm,
+			now: () => createManagedVm.mock.calls.length * 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const request = {
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		};
+
+		const firstLease = await leaseManager.createLease(request);
+		const secondLease = await leaseManager.createLease(request);
+
+		expect(secondLease.id).not.toBe(firstLease.id);
+		expect(secondLease.vm.id).toBe('fresh-vm');
+		expect(staleClose).toHaveBeenCalled();
+		expect(createManagedVm).toHaveBeenCalledTimes(2);
+	});
+
+	it('serializes concurrent createLease calls for the same zone scope', async () => {
+		let releaseCreate: (() => void) | undefined;
+		let markCreateStarted: (() => void) | undefined;
+		const createStarted = new Promise<void>((resolve) => {
+			markCreateStarted = resolve;
+		});
+		const createCanFinish = new Promise<void>((resolve) => {
+			releaseCreate = resolve;
+		});
+		const createManagedVm = vi.fn(async () => {
+			markCreateStarted?.();
+			await createCanFinish;
+			return createManagedVmStub();
+		});
+		const leaseManager = createLeaseManager({
+			createManagedVm,
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+		const request = {
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		};
+
+		const firstLeasePromise = leaseManager.createLease(request);
+		const secondLeasePromise = leaseManager.createLease(request);
+		await createStarted;
+		expect(createManagedVm).toHaveBeenCalledTimes(1);
+		releaseCreate?.();
+		const [firstLease, secondLease] = await Promise.all([firstLeasePromise, secondLeasePromise]);
+
+		expect(secondLease.id).toBe(firstLease.id);
+		expect(createManagedVm).toHaveBeenCalledTimes(1);
 	});
 
 	it('listLeases returns all active leases', async () => {

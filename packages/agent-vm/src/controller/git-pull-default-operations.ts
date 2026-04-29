@@ -31,27 +31,58 @@ interface MutablePullDefaultCommitSummary {
 	date?: string;
 }
 
-export interface PullDefaultResult {
+interface PullDefaultResultBase {
 	readonly repoUrl: string;
-	readonly success: boolean;
-	readonly error?: string;
-	readonly defaultBranch?: string;
-	readonly remoteDefaultHead?: string;
-	readonly localDefaultHead?: string;
+	readonly message: string;
+}
+
+export type PullDefaultResult =
+	| PullDefaultAdvancedResult
+	| PullDefaultRefusedNotFastForwardResult
+	| PullDefaultFailedResult;
+
+export interface PullDefaultAdvancedResult extends PullDefaultResultBase {
+	readonly kind: 'advanced';
+	readonly success: true;
+	readonly defaultBranch: string;
+	readonly remoteDefaultHead: string;
+	readonly localDefaultHead: string;
 	readonly currentBranch?: string | null;
-	readonly fetchedCommits?: readonly PullDefaultCommitSummary[];
-	readonly commitsSinceForkPoint?: readonly PullDefaultCommitSummary[];
+	readonly fetchedCommits: readonly PullDefaultCommitSummary[];
+	readonly commitsSinceForkPoint: readonly PullDefaultCommitSummary[];
 	readonly currentBranchSync?: PullCurrentBranchSyncResult;
-	readonly divergence?: {
+	readonly divergence: {
 		readonly aheadOfDefault: number;
 		readonly behindDefault: number;
 		readonly forkPoint: string;
 	};
 }
 
-export interface PullCurrentBranchSyncResult {
-	readonly branch: string | null;
-	readonly upstreamTrackingRef: string | null;
+export interface PullDefaultRefusedNotFastForwardResult extends PullDefaultResultBase {
+	readonly kind: 'refused-not-fast-forward';
+	readonly success: false;
+	readonly error: string;
+	readonly defaultBranch: string;
+	readonly remoteDefaultHead: string;
+}
+
+export interface PullDefaultFailedResult extends PullDefaultResultBase {
+	readonly kind: 'failed';
+	readonly success: false;
+	readonly error: string;
+}
+
+export type PullCurrentBranchSyncResult =
+	| PullCurrentBranchAheadResult
+	| PullCurrentBranchDefaultBranchResult
+	| PullCurrentBranchDetachedResult
+	| PullCurrentBranchDirtyWorktreeResult
+	| PullCurrentBranchDivergedResult
+	| PullCurrentBranchFastForwardedResult
+	| PullCurrentBranchNoUpstreamResult
+	| PullCurrentBranchUpToDateResult;
+
+interface PullCurrentBranchBaseResult {
 	readonly status:
 		| 'ahead'
 		| 'default-branch'
@@ -61,12 +92,85 @@ export interface PullCurrentBranchSyncResult {
 		| 'fast-forwarded'
 		| 'no-upstream'
 		| 'up-to-date';
-	readonly reason?: string;
+	readonly branch: string | null;
+	readonly upstreamTrackingRef: string | null;
+}
+
+export interface PullCurrentBranchAheadResult extends PullCurrentBranchBaseResult {
+	readonly status: 'ahead';
+	readonly branch: string;
+	readonly upstreamTrackingRef: string;
+	readonly localHead: string;
+	readonly remoteHead: string;
+	readonly reason: string;
+}
+
+export interface PullCurrentBranchDefaultBranchResult extends PullCurrentBranchBaseResult {
+	readonly status: 'default-branch';
+	readonly branch: string;
+	readonly upstreamTrackingRef: string;
+	readonly remoteHead: string;
+	readonly reason: string;
+}
+
+export interface PullCurrentBranchDetachedResult extends PullCurrentBranchBaseResult {
+	readonly status: 'detached';
+	readonly branch: null;
+	readonly upstreamTrackingRef: null;
+	readonly localHead: string;
+	readonly reason: string;
+}
+
+export interface PullCurrentBranchDirtyWorktreeResult extends PullCurrentBranchBaseResult {
+	readonly status: 'dirty-worktree';
+	readonly branch: string;
+	readonly upstreamTrackingRef: string;
+	readonly localHead: string;
+	readonly remoteHead: string;
+	readonly reason: string;
+}
+
+export interface PullCurrentBranchDivergedResult extends PullCurrentBranchBaseResult {
+	readonly status: 'diverged';
+	readonly branch: string;
+	readonly upstreamTrackingRef: string;
+	readonly localHead: string;
+	readonly remoteHead: string;
+	readonly reason: string;
+}
+
+export interface PullCurrentBranchFastForwardedResult extends PullCurrentBranchBaseResult {
+	readonly status: 'fast-forwarded';
+	readonly branch: string;
+	readonly upstreamTrackingRef: string;
+	readonly localHead: string;
+	readonly remoteHead: string;
+}
+
+export interface PullCurrentBranchNoUpstreamResult extends PullCurrentBranchBaseResult {
+	readonly status: 'no-upstream';
+	readonly branch: string;
+	readonly upstreamTrackingRef: null;
 	readonly localHead?: string;
-	readonly remoteHead?: string;
+	readonly reason: string;
+}
+
+export interface PullCurrentBranchUpToDateResult extends PullCurrentBranchBaseResult {
+	readonly status: 'up-to-date';
+	readonly branch: string;
+	readonly upstreamTrackingRef: string;
+	readonly localHead: string;
+	readonly remoteHead: string;
 }
 
 export class PullDefaultValidationError extends Error {}
+
+class GitCommandFailureError extends Error {
+	public constructor(message: string) {
+		super(message);
+		this.name = 'GitCommandFailureError';
+	}
+}
 
 class GitPullFailedAfterRetriesError extends Error {
 	public constructor(
@@ -92,7 +196,7 @@ function buildAuthenticatedGitUrl(repoUrl: string, githubToken: string): string 
 }
 
 function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+	return scrubGithubTokenFromOutput(error instanceof Error ? error.message : String(error));
 }
 
 async function git(options: {
@@ -104,25 +208,31 @@ async function git(options: {
 		'git',
 		['-c', 'core.hooksPath=/dev/null', `--git-dir=${options.gitDir}`, ...options.args],
 		{
+			env: { LANG: 'C', LC_ALL: 'C' },
 			reject: false,
 			timeout: GIT_OPERATION_TIMEOUT_MS,
 		},
 	);
+	if (typeof result.exitCode !== 'number') {
+		throw new GitCommandFailureError(
+			`git ${options.args.join(' ')} terminated without an exit code\n${result.stdout}\n${result.stderr}`.trim(),
+		);
+	}
 	const normalized = {
 		stdout: result.stdout,
 		stderr: result.stderr,
-		exitCode: result.exitCode ?? 0,
+		exitCode: result.exitCode,
 	};
 	if (options.reject === true && normalized.exitCode !== 0) {
-		throw new Error(
-			`git ${options.args.join(' ')} failed\n${normalized.stdout}\n${normalized.stderr}`.trim(),
-		);
+		throw new GitCommandFailureError(formatGitCommandFailure(options.args, normalized));
 	}
 	return normalized;
 }
 
 function formatGitCommandFailure(args: readonly string[], result: GitCommandResult): string {
-	return `git ${args.join(' ')} failed\n${result.stdout}\n${result.stderr}`.trim();
+	return scrubGithubTokenFromOutput(
+		`git ${args.join(' ')} failed\n${result.stdout}\n${result.stderr}`.trim(),
+	);
 }
 
 async function sleep(delayMs: number): Promise<void> {
@@ -140,7 +250,7 @@ async function gitWithTransientRetries(options: {
 		sleep,
 	});
 	if (retryResult.result.exitCode !== 0) {
-		throw new Error(formatGitCommandFailure(options.args, retryResult.result));
+		throw new GitCommandFailureError(formatGitCommandFailure(options.args, retryResult.result));
 	}
 	return retryResult.result;
 }
@@ -185,10 +295,20 @@ async function refExists(gitDir: string, ref: string): Promise<boolean> {
 	const args = ['rev-parse', '--verify', '--quiet', ref] as const;
 	const result = await git({ gitDir, args, reject: false });
 	if (result.exitCode === 0) return true;
-	if (result.stderr.trim().length > 0) {
-		throw new Error(formatGitCommandFailure(args, result));
-	}
-	return false;
+	if (result.exitCode === 1) return false;
+	throw new GitCommandFailureError(formatGitCommandFailure(args, result));
+}
+
+async function isAncestor(options: {
+	readonly ancestorRef: string;
+	readonly descendantRef: string;
+	readonly gitDir: string;
+}): Promise<boolean> {
+	const args = ['merge-base', '--is-ancestor', options.ancestorRef, options.descendantRef] as const;
+	const result = await git({ gitDir: options.gitDir, args, reject: false });
+	if (result.exitCode === 0) return true;
+	if (result.exitCode === 1) return false;
+	throw new GitCommandFailureError(formatGitCommandFailure(args, result));
 }
 
 async function countRange(gitDir: string, range: string): Promise<number> {
@@ -201,11 +321,6 @@ async function countRange(gitDir: string, range: string): Promise<number> {
 		throw new Error(`git rev-list --count ${range} returned non-numeric output: ${result.stdout}`);
 	}
 	return parsed;
-}
-
-async function currentBranch(gitDir: string): Promise<string | null> {
-	const branch = await gitStdout(gitDir, ['branch', '--show-current']);
-	return branch.length > 0 ? branch : null;
 }
 
 async function fetchCurrentBranch(options: {
@@ -235,7 +350,61 @@ async function fetchCurrentBranch(options: {
 	) {
 		return 'no-upstream';
 	}
-	throw new Error(formatGitCommandFailure(fetchArgs, result));
+	throw new GitCommandFailureError(formatGitCommandFailure(fetchArgs, result));
+}
+
+function describeCurrentBranchSync(sync: PullCurrentBranchSyncResult | undefined): string {
+	if (!sync) {
+		return 'No current branch was supplied by the worker, so only the default branch was refreshed.';
+	}
+	switch (sync.status) {
+		case 'fast-forwarded':
+			return `Current branch '${sync.branch}' fast-forwarded from ${sync.localHead} to ${sync.remoteHead}; the worker reset the worktree to materialize the new HEAD.`;
+		case 'up-to-date':
+			return `Current branch '${sync.branch}' was already up to date with ${sync.upstreamTrackingRef}.`;
+		case 'ahead':
+			return sync.reason;
+		case 'default-branch':
+			return sync.reason;
+		case 'detached':
+			return sync.reason;
+		case 'dirty-worktree':
+			return sync.reason;
+		case 'diverged':
+			return sync.reason;
+		case 'no-upstream':
+			return sync.reason;
+		default: {
+			const exhaustiveStatus: never = sync;
+			return `Unhandled current branch sync status: ${String(exhaustiveStatus)}`;
+		}
+	}
+}
+
+function buildAdvancedPullMessage(options: {
+	readonly currentBranchSync: PullCurrentBranchSyncResult | undefined;
+	readonly defaultBranch: string;
+	readonly localDefaultHead: string;
+	readonly remoteDefaultHead: string;
+}): string {
+	const defaultSummary =
+		options.localDefaultHead === options.remoteDefaultHead
+			? `Default branch '${options.defaultBranch}' is now at ${options.localDefaultHead}.`
+			: `Default branch '${options.defaultBranch}' was refreshed, but local head ${options.localDefaultHead} differs from remote ${options.remoteDefaultHead}.`;
+	return `${defaultSummary} ${describeCurrentBranchSync(options.currentBranchSync)}`;
+}
+
+async function recordControllerGitPullEvent(options: {
+	readonly event: TaskEvent;
+	readonly recordEvent: ((event: TaskEvent) => Promise<void>) | undefined;
+}): Promise<void> {
+	try {
+		await options.recordEvent?.(options.event);
+	} catch (error) {
+		process.stderr.write(
+			`[git-pull-default] Failed to record ${options.event.event}: ${errorMessage(error)}\n`,
+		);
+	}
 }
 
 async function buildCurrentBranchSyncResult(options: {
@@ -245,10 +414,7 @@ async function buildCurrentBranchSyncResult(options: {
 	readonly pullRequest: PullDefaultRequest;
 	readonly repoUrl: string;
 }): Promise<PullCurrentBranchSyncResult> {
-	const branch =
-		options.pullRequest.currentBranch !== undefined
-			? options.pullRequest.currentBranch
-			: await currentBranch(options.gitDir);
+	const branch = options.pullRequest.currentBranch;
 	if (!branch) {
 		const detachedHead =
 			options.pullRequest.currentHead ?? (await gitStdout(options.gitDir, ['rev-parse', 'HEAD']));
@@ -303,12 +469,12 @@ async function buildCurrentBranchSyncResult(options: {
 			remoteHead,
 		};
 	}
-	const localAncestorOfRemote = await git({
+	const localAncestorOfRemote = await isAncestor({
 		gitDir: options.gitDir,
-		args: ['merge-base', '--is-ancestor', localRef, remoteRef],
-		reject: false,
+		ancestorRef: localRef,
+		descendantRef: remoteRef,
 	});
-	if (localAncestorOfRemote.exitCode === 0) {
+	if (localAncestorOfRemote) {
 		if (options.pullRequest.worktreeDirty === true) {
 			return {
 				branch,
@@ -331,12 +497,12 @@ async function buildCurrentBranchSyncResult(options: {
 			remoteHead,
 		};
 	}
-	const remoteAncestorOfLocal = await git({
+	const remoteAncestorOfLocal = await isAncestor({
 		gitDir: options.gitDir,
-		args: ['merge-base', '--is-ancestor', remoteRef, localRef],
-		reject: false,
+		ancestorRef: remoteRef,
+		descendantRef: localRef,
 	});
-	if (remoteAncestorOfLocal.exitCode === 0) {
+	if (remoteAncestorOfLocal) {
 		return {
 			branch,
 			upstreamTrackingRef,
@@ -379,9 +545,12 @@ export async function pullDefaultForTask(options: {
 		const previousRemoteDefaultHead = (await refExists(repo.hostGitDir, remoteDefaultRef))
 			? await gitStdout(repo.hostGitDir, ['rev-parse', remoteDefaultRef])
 			: null;
-		await options.recordEvent?.({
-			event: 'controller-git-pull-started',
-			repoUrl: options.repoUrl,
+		await recordControllerGitPullEvent({
+			recordEvent: options.recordEvent,
+			event: {
+				event: 'controller-git-pull-started',
+				repoUrl: options.repoUrl,
+			},
 		});
 		const fetchArgs = [
 			'fetch',
@@ -393,12 +562,15 @@ export async function pullDefaultForTask(options: {
 			run: async () => await git({ gitDir: repo.hostGitDir, args: fetchArgs, reject: false }),
 			onRetry: async ({ attempt, delayMs, result }) => {
 				const detail = scrubGithubTokenFromOutput(`${result.stdout}\n${result.stderr}`).trim();
-				await options.recordEvent?.({
-					event: 'controller-git-pull-retry',
-					repoUrl: options.repoUrl,
-					attempts: attempt,
-					message: detail,
-					retryDelaySeconds: delayMs / 1000,
+				await recordControllerGitPullEvent({
+					recordEvent: options.recordEvent,
+					event: {
+						event: 'controller-git-pull-retry',
+						repoUrl: options.repoUrl,
+						attempts: attempt,
+						message: detail,
+						retryDelaySeconds: delayMs / 1000,
+					},
 				});
 			},
 			sleep,
@@ -419,19 +591,34 @@ export async function pullDefaultForTask(options: {
 			? await commitSummaries(repo.hostGitDir, `${previousRemoteDefaultHead}..${remoteDefaultRef}`)
 			: [];
 
-		if (await refExists(repo.hostGitDir, defaultRef)) {
-			const fastForwardCheck = await git({
+		if (!(await refExists(repo.hostGitDir, defaultRef))) {
+			const message = `Local default branch ref '${defaultRef}' is missing; controller refused to create it during git-pull-default. Recreate the task or inspect the host gitdir.`;
+			return {
+				kind: 'refused-not-fast-forward',
+				repoUrl: options.repoUrl,
+				success: false,
+				message,
+				defaultBranch,
+				remoteDefaultHead,
+				error: message,
+			};
+		}
+		{
+			const fastForwardCheck = await isAncestor({
 				gitDir: repo.hostGitDir,
-				args: ['merge-base', '--is-ancestor', defaultRef, remoteDefaultRef],
-				reject: false,
+				ancestorRef: defaultRef,
+				descendantRef: remoteDefaultRef,
 			});
-			if (fastForwardCheck.exitCode !== 0) {
+			if (!fastForwardCheck) {
+				const message = `Local ${defaultBranch} cannot be fast-forwarded to origin/${defaultBranch}; inspect it manually.`;
 				return {
+					kind: 'refused-not-fast-forward',
 					repoUrl: options.repoUrl,
 					success: false,
+					message,
 					defaultBranch,
 					remoteDefaultHead,
-					error: `Local ${defaultBranch} cannot be fast-forwarded to origin/${defaultBranch}; inspect it manually.`,
+					error: message,
 				};
 			}
 		}
@@ -441,7 +628,6 @@ export async function pullDefaultForTask(options: {
 			args: ['update-ref', defaultRef, remoteDefaultRef],
 		});
 		const localDefaultHead = await gitStdout(repo.hostGitDir, ['rev-parse', defaultRef]);
-		const branch = await currentBranch(repo.hostGitDir);
 		const shouldSyncCurrentBranch =
 			options.currentBranch !== undefined ||
 			options.currentHead !== undefined ||
@@ -461,13 +647,21 @@ export async function pullDefaultForTask(options: {
 			`${forkPoint}..${remoteDefaultRef}`,
 		);
 
+		const message = buildAdvancedPullMessage({
+			currentBranchSync,
+			defaultBranch,
+			localDefaultHead,
+			remoteDefaultHead,
+		});
 		const result = {
+			kind: 'advanced',
 			repoUrl: options.repoUrl,
 			success: true,
+			message,
 			defaultBranch,
 			remoteDefaultHead,
 			localDefaultHead,
-			currentBranch: branch,
+			...(options.currentBranch !== undefined ? { currentBranch: options.currentBranch } : {}),
 			...(currentBranchSync ? { currentBranchSync } : {}),
 			fetchedCommits,
 			commitsSinceForkPoint,
@@ -476,32 +670,47 @@ export async function pullDefaultForTask(options: {
 				behindDefault: await countRange(repo.hostGitDir, `HEAD..${remoteDefaultRef}`),
 				forkPoint,
 			},
-		};
-		await options.recordEvent?.({
-			event: 'controller-git-pull-succeeded',
-			repoUrl: options.repoUrl,
-			attempts: fetchRetryResult.attempts,
-			defaultBranch,
-			remoteDefaultHead,
-			localDefaultHead,
+		} satisfies PullDefaultAdvancedResult;
+		await recordControllerGitPullEvent({
+			recordEvent: options.recordEvent,
+			event: {
+				event: 'controller-git-pull-succeeded',
+				repoUrl: options.repoUrl,
+				attempts: fetchRetryResult.attempts,
+				defaultBranch,
+				remoteDefaultHead,
+				localDefaultHead,
+			},
 		});
 		return result;
 	} catch (error) {
+		if (
+			!(error instanceof GitPullFailedAfterRetriesError) &&
+			!(error instanceof GitCommandFailureError)
+		) {
+			throw error;
+		}
 		const retryAfterSeconds =
 			error instanceof GitPullFailedAfterRetriesError && error.attempts > 1
 				? GIT_PULL_RETRY_AFTER_SECONDS
 				: undefined;
-		await options.recordEvent?.({
-			event: 'controller-git-pull-failed',
-			repoUrl: options.repoUrl,
-			attempts: error instanceof GitPullFailedAfterRetriesError ? error.attempts : 0,
-			message: errorMessage(error),
-			...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+		const message = errorMessage(error);
+		await recordControllerGitPullEvent({
+			recordEvent: options.recordEvent,
+			event: {
+				event: 'controller-git-pull-failed',
+				repoUrl: options.repoUrl,
+				attempts: error instanceof GitPullFailedAfterRetriesError ? error.attempts : 0,
+				message,
+				...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+			},
 		});
 		return {
+			kind: 'failed',
 			repoUrl: options.repoUrl,
 			success: false,
-			error: errorMessage(error),
+			message,
+			error: message,
 		};
 	}
 }

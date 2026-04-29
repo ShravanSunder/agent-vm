@@ -27,7 +27,8 @@ export const DEFAULT_BUILTIN_AGENT_INSTRUCTIONS = `You are an agent operating in
 
 ## Controller tools
 - git-push pushes the current branch via the controller. The VM has no real GitHub token; push auth is handled host-side.
-- git-pull-default updates the local protected/default branch via the controller, fetches your current branch upstream, and fast-forwards your current branch only when it is clean and safe.
+- git-pull-default inspects git status for you, updates the protected/default branch via the controller, fetches your current branch upstream, and may fast-forward your current branch plus reset the worktree when it is clean and behind upstream.
+- git-pull-default never merges or rebases. Read its message and currentBranchSync.status: fast-forwarded means your branch/worktree moved; up-to-date means no branch change; ahead usually means push; diverged means ask for a merge/rebase plan; dirty-worktree means commit or stash first; no-upstream means push/create upstream; detached means switch/create a branch; default-branch means only the default branch was refreshed.
 - gh pr create is available for PR creation after git-push succeeds. GitHub API traffic is mediated by the controller proxy.
 - Agent branches created in this runtime must use the configured prefix: {branchPrefix}.
 - Use runtimeInstructions for the current task's GitHub service token name and tool hints.
@@ -65,7 +66,8 @@ export const DEFAULT_COMMON_AGENT_INSTRUCTIONS = `## Security
 
 ## Controller tools
 - git-push pushes the current branch via the controller. The VM has no real GitHub token; push auth is handled host-side.
-- git-pull-default updates the local protected/default branch via the controller, fetches your current branch upstream, and fast-forwards your current branch only when it is clean and safe.
+- git-pull-default inspects git status for you, updates the protected/default branch via the controller, fetches your current branch upstream, and may fast-forward your current branch plus reset the worktree when it is clean and behind upstream.
+- git-pull-default never merges or rebases. Read its message and currentBranchSync.status: fast-forwarded means your branch/worktree moved; up-to-date means no branch change; ahead usually means push; diverged means ask for a merge/rebase plan; dirty-worktree means commit or stash first; no-upstream means push/create upstream; detached means switch/create a branch; default-branch means only the default branch was refreshed.
 - gh pr create is available for PR creation after git-push succeeds. GitHub API traffic is mediated by the controller proxy.
 
 ## Output discipline
@@ -183,7 +185,7 @@ export const DEFAULT_WORK_REVIEWER_INSTRUCTIONS = `You are the WORK REVIEWER. Re
 export const DEFAULT_WRAPUP_INSTRUCTIONS = `You are in the WRAPUP phase. The work cycle has completed.
 
 ## Tools
-- git-pull-default tool: refresh the local default/protected branch, fetch the current branch upstream, and fast-forward the current branch only when clean and safe.
+- git-pull-default tool: inspect git status, refresh the local default/protected branch, fetch the current branch upstream, and fast-forward the current branch plus reset the worktree only when clean and safe.
 - git-push tool: push the current agent branch through the controller.
 - gh CLI: use GH_TOKEN="$GITHUB_TOKEN" gh pr create from shell after git-push succeeds.
 
@@ -193,7 +195,7 @@ Ship the work that was already implemented. You are a fresh wrapup thread with e
 ## How to ship
 1. Inspect the current branch and git state. You should be on an agent/* branch with committed work.
 2. If work is uncommitted, make a normal local commit with a clear conventional commit message.
-3. Call git-pull-default to update the local protected/default branch and refresh your current branch. If it reports a safe fast-forward, it has already updated your current branch. If it reports diverged, no-upstream, detached, or dirty-worktree, follow the reported action instead of forcing a pull.
+3. Call git-pull-default to update the local protected/default branch and refresh your current branch. Read the returned message. If currentBranchSync.status is fast-forwarded, your branch and worktree have already moved to the new HEAD. If it is up-to-date, ahead, default-branch, diverged, no-upstream, detached, or dirty-worktree, follow the reported action instead of forcing a pull.
 4. If the default branch moved or the current branch diverged, decide whether a rebase or merge is needed. Resolve any conflicts locally, then commit the resolution.
 5. Call git-push. If it returns success=false, read the message and fix the git state instead of pretending the push worked.
 6. After git-push succeeds, run gh pr create from the shell. Use a clear title and body based on the work summary.

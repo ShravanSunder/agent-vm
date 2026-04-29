@@ -126,9 +126,18 @@ describe('controller tools', () => {
 			async () =>
 				new Response(
 					JSON.stringify({
+						kind: 'advanced',
 						success: true,
+						message:
+							"Default branch 'main' is now at remote-main-sha. Current branch 'agent/task-1' was already up to date with origin/agent/task-1.",
 						defaultBranch: 'main',
-						currentBranchSync: { status: 'up-to-date', branch: 'agent/task-1' },
+						currentBranchSync: {
+							status: 'up-to-date',
+							branch: 'agent/task-1',
+							upstreamTrackingRef: 'origin/agent/task-1',
+							localHead: 'local-agent-sha',
+							remoteHead: 'local-agent-sha',
+						},
 					}),
 					{
 						status: 200,
@@ -147,9 +156,22 @@ describe('controller tools', () => {
 			type: 'pull-default',
 			success: true,
 			artifact: {
-				success: true,
-				defaultBranch: 'main',
-				currentBranchSync: { status: 'up-to-date', branch: 'agent/task-1' },
+				message:
+					"Default branch 'main' is now at remote-main-sha. Current branch 'agent/task-1' was already up to date with origin/agent/task-1.",
+				result: {
+					kind: 'advanced',
+					success: true,
+					message:
+						"Default branch 'main' is now at remote-main-sha. Current branch 'agent/task-1' was already up to date with origin/agent/task-1.",
+					defaultBranch: 'main',
+					currentBranchSync: {
+						status: 'up-to-date',
+						branch: 'agent/task-1',
+						upstreamTrackingRef: 'origin/agent/task-1',
+						localHead: 'local-agent-sha',
+						remoteHead: 'local-agent-sha',
+					},
+				},
 			},
 		});
 		expect(fetchMock).toHaveBeenCalledWith(
@@ -179,9 +201,18 @@ describe('controller tools', () => {
 				async () =>
 					new Response(
 						JSON.stringify({
+							kind: 'advanced',
 							success: true,
+							message:
+								"Default branch 'main' is now at remote-main-sha. Current branch 'agent/task-1' fast-forwarded from local-agent-sha to remote-agent-sha; the worker reset the worktree to materialize the new HEAD.",
 							defaultBranch: 'main',
-							currentBranchSync: { status: 'fast-forwarded', branch: 'agent/task-1' },
+							currentBranchSync: {
+								status: 'fast-forwarded',
+								branch: 'agent/task-1',
+								upstreamTrackingRef: 'origin/agent/task-1',
+								localHead: 'local-agent-sha',
+								remoteHead: 'remote-agent-sha',
+							},
 						}),
 						{ status: 200 },
 					),
@@ -203,6 +234,42 @@ describe('controller tools', () => {
 			['reset', '--hard', 'HEAD'],
 			expect.objectContaining({ cwd: '/work/repos/widgets' }),
 		);
+	});
+
+	test('git-pull-default reports in-band controller failures as tool failures', async () => {
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			if (args[0] === 'branch') return { stdout: 'agent/task-1', stderr: '', exitCode: 0 };
+			if (args[0] === 'rev-parse') return { stdout: 'local-agent-sha', stderr: '', exitCode: 0 };
+			if (args[0] === 'status') return { stdout: '', stderr: '', exitCode: 0 };
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({
+							kind: 'failed',
+							success: false,
+							message: 'Fetch failed without leaking tokens.',
+							error: 'Fetch failed without leaking tokens.',
+						}),
+						{ status: 200 },
+					),
+			),
+		);
+		const tool = createGitPullDefaultTool({
+			controllerBaseUrl: 'http://controller',
+			zoneId: 'zone-1',
+			taskId: 'task-1',
+			repos,
+		});
+
+		await expect(tool.execute({ repoWorkPath: '/work/repos/widgets' })).resolves.toEqual({
+			type: 'pull-default',
+			success: false,
+			artifact: 'Fetch failed without leaking tokens.',
+		});
 	});
 
 	test('git-pull-default reports controller HTTP errors as tool failures', async () => {

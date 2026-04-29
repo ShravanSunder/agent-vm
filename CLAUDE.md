@@ -98,6 +98,16 @@ runs Docker, QEMU, Zig, and the controller.
 - `POST /zones/:zoneId/tasks/:taskId/pull-default` — controller-side default/current branch refresh
 - `POST /zones/:zoneId/tasks/:taskId/close` — request task cancellation
 
+`pull-default` returns a discriminated result. `kind: "advanced"` means the
+default branch ref was updated; `kind: "refused-not-fast-forward"` means the
+controller refused to rewrite an unsafe default branch; `kind: "failed"` means
+transport, auth, or git plumbing failed. For current branch refresh, read
+`currentBranchSync.status`: `fast-forwarded` means the agent branch and worktree
+moved, `up-to-date` means no branch change, `ahead` usually means push,
+`diverged` needs a merge/rebase plan, `dirty-worktree` needs commit/stash first,
+`no-upstream` needs an upstream push, `detached` needs a branch, and
+`default-branch` means the current branch was the protected/default branch.
+
 ## Key Files
 
 - `packages/agent-vm/src/controller/controller-runtime.ts` — startup, gateway type dispatch

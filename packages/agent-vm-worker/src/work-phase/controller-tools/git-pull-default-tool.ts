@@ -25,6 +25,29 @@ function hasFastForwardedCurrentBranch(value: unknown): boolean {
 	);
 }
 
+function hasControllerReportedFailure(value: unknown): value is {
+	readonly error?: string;
+	readonly message?: string;
+	readonly success: false;
+} {
+	return (
+		typeof value === 'object' && value !== null && 'success' in value && value.success === false
+	);
+}
+
+function controllerResultMessage(value: unknown): string {
+	if (typeof value !== 'object' || value === null) {
+		return 'Controller returned an unexpected pull-default response.';
+	}
+	if ('message' in value && typeof value.message === 'string') {
+		return value.message;
+	}
+	if ('error' in value && typeof value.error === 'string') {
+		return value.error;
+	}
+	return 'Controller returned pull-default success=false without a message.';
+}
+
 export interface CreateGitPullDefaultToolProps {
 	readonly controllerBaseUrl: string;
 	readonly zoneId: string;
@@ -36,7 +59,7 @@ export function createGitPullDefaultTool(props: CreateGitPullDefaultToolProps): 
 	return {
 		name: 'git-pull-default',
 		description:
-			'Ask the controller to fetch origin/default and fast-forward the local default branch ref. Does not modify your current branch. Returns commits added to default and divergence vs your current branch.',
+			'Ask the controller to refresh origin/default and safely refresh your current branch. It fast-forwards the default branch ref, fetches origin/<currentBranch>, and if your current branch is clean and behind its upstream, fast-forwards that branch and resets the worktree to the new HEAD. It never merges or rebases. currentBranchSync.status can be fast-forwarded, up-to-date, ahead, diverged, dirty-worktree, no-upstream, detached, or default-branch; read the returned message before deciding the next git action.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -112,6 +135,13 @@ export function createGitPullDefaultTool(props: CreateGitPullDefaultToolProps): 
 			if (isControllerToolFailure(result)) {
 				return { type: 'pull-default', success: false, artifact: result.artifact };
 			}
+			if (hasControllerReportedFailure(result)) {
+				return {
+					type: 'pull-default',
+					success: false,
+					artifact: controllerResultMessage(result),
+				};
+			}
 			if (hasFastForwardedCurrentBranch(result)) {
 				const resetResult = await execa('git', ['reset', '--hard', 'HEAD'], {
 					cwd: selected.repo.workPath,
@@ -132,7 +162,14 @@ export function createGitPullDefaultTool(props: CreateGitPullDefaultToolProps): 
 					};
 				}
 			}
-			return { type: 'pull-default', success: true, artifact: result };
+			return {
+				type: 'pull-default',
+				success: true,
+				artifact: {
+					message: controllerResultMessage(result),
+					result,
+				},
+			};
 		},
 	};
 }

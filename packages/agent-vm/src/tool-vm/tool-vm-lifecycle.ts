@@ -9,7 +9,7 @@ import {
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { ToolProfile } from '../controller/leases/lease-manager.js';
-import { resolveLeaseWorkspaceDir } from '../controller/leases/lease-workspace-paths.js';
+import { validateResolvedToolWorkspaceDir } from '../controller/leases/lease-workspace-paths.js';
 
 export interface ToolVmLifecycleDependencies {
 	readonly buildGondolinImage?: (options: {
@@ -44,7 +44,7 @@ export async function createToolVm(
 	if (!toolImageProfile) {
 		throw new Error(`Tool VM image profile '${options.profile.imageProfile}' is not configured.`);
 	}
-	const hostWorkspaceDirectory = await resolveLeaseWorkspaceDir({
+	const hostWorkspaceDirectory = await validateResolvedToolWorkspaceDir({
 		workspaceDir: options.workspaceDir,
 		zone,
 	});

@@ -5,7 +5,10 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { SystemConfig } from '../../config/system-config.js';
-import { resolveLeaseWorkspaceDir } from './lease-workspace-paths.js';
+import {
+	resolveLeaseWorkspaceDir,
+	validateResolvedToolWorkspaceDir,
+} from './lease-workspace-paths.js';
 
 type ZoneConfig = SystemConfig['zones'][number];
 
@@ -53,6 +56,23 @@ describe('resolveLeaseWorkspaceDir', () => {
 		).resolves.toBe(await realpath(path.join(stateDir, 'sandboxes', 'agent', 'work')));
 	});
 
+	it('maps OpenClaw gateway root paths exactly', async () => {
+		await mkdir(path.join(stateDir, 'sandboxes'), { recursive: true });
+
+		await expect(
+			resolveLeaseWorkspaceDir({
+				workspaceDir: '/home/openclaw/.openclaw/state/sandboxes',
+				zone,
+			}),
+		).resolves.toBe(await realpath(path.join(stateDir, 'sandboxes')));
+		await expect(
+			resolveLeaseWorkspaceDir({
+				workspaceDir: '/home/openclaw/zone-files',
+				zone,
+			}),
+		).resolves.toBe(await realpath(zoneFilesDir));
+	});
+
 	it('maps OpenClaw gateway zone-files paths to host zoneFilesDir', async () => {
 		await expect(
 			resolveLeaseWorkspaceDir({
@@ -91,15 +111,84 @@ describe('resolveLeaseWorkspaceDir', () => {
 		).rejects.toThrow(/outside allowed OpenClaw tool workspace roots/u);
 	});
 
+	it('rejects host paths even when they are inside allowed roots', async () => {
+		const hostWorkspaceDir = path.join(zoneFilesDir, 'project');
+
+		await expect(
+			resolveLeaseWorkspaceDir({
+				workspaceDir: hostWorkspaceDir,
+				zone,
+			}),
+		).rejects.toThrow(/must be under \/home\/openclaw/u);
+	});
+
+	it('allows direct lifecycle validation of resolved host workspace paths', async () => {
+		const hostWorkspaceDir = path.join(zoneFilesDir, 'project');
+
+		await expect(
+			validateResolvedToolWorkspaceDir({
+				workspaceDir: hostWorkspaceDir,
+				zone,
+			}),
+		).resolves.toBe(await realpath(hostWorkspaceDir));
+	});
+
 	it('rejects cache runtime and unrelated host paths', async () => {
 		const unrelatedPath = path.join(tempDir, 'cache', 'project');
 		await mkdir(unrelatedPath, { recursive: true });
 
 		await expect(
-			resolveLeaseWorkspaceDir({
+			validateResolvedToolWorkspaceDir({
 				workspaceDir: unrelatedPath,
 				zone,
 			}),
 		).rejects.toThrow(/outside allowed OpenClaw tool workspace roots/u);
+	});
+
+	it('rejects non-absolute workspace paths', async () => {
+		await expect(
+			resolveLeaseWorkspaceDir({
+				workspaceDir: 'relative/work',
+				zone,
+			}),
+		).rejects.toThrow(/must be absolute/u);
+	});
+
+	it('rejects non-OpenClaw zones', async () => {
+		await expect(
+			resolveLeaseWorkspaceDir({
+				workspaceDir: '/home/openclaw/zone-files/project',
+				zone: {
+					...zone,
+					gateway: {
+						type: 'worker',
+						imageProfile: 'worker',
+						cpus: 2,
+						memory: '2G',
+						config: path.join(tempDir, 'worker.json'),
+						port: 18791,
+						stateDir,
+					},
+				},
+			}),
+		).rejects.toThrow(/does not support OpenClaw tool VM leases/u);
+	});
+
+	it('rejects when no allowed workspace roots exist', async () => {
+		const missingRootZone = {
+			...zone,
+			gateway: {
+				...zone.gateway,
+				stateDir: path.join(tempDir, 'missing-state'),
+				zoneFilesDir: path.join(tempDir, 'missing-zone-files'),
+			},
+		};
+
+		await expect(
+			resolveLeaseWorkspaceDir({
+				workspaceDir: '/home/openclaw/zone-files/project',
+				zone: missingRootZone,
+			}),
+		).rejects.toThrow(/failed directory realpath check/u);
 	});
 });
