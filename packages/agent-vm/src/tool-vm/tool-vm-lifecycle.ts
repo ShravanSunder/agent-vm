@@ -21,31 +21,6 @@ export interface ToolVmLifecycleDependencies {
 	readonly createManagedVm?: typeof createManagedVmFromCore;
 }
 
-export function resolveToolVmWorkspaceDirectory(options: {
-	readonly profile: ToolProfile;
-	readonly tcpSlot: number;
-	readonly zoneId: string;
-}): string {
-	return path.resolve(options.profile.workspaceRoot, `${options.zoneId}-${options.tcpSlot}`);
-}
-
-export async function cleanToolVmWorkspace(workspaceDirectory: string): Promise<void> {
-	let entryNames: string[];
-	try {
-		entryNames = await fs.readdir(workspaceDirectory);
-	} catch {
-		return;
-	}
-
-	for (const entryName of entryNames) {
-		// oxlint-disable-next-line eslint/no-await-in-loop -- cleanup must be deterministic per entry
-		await fs.rm(path.join(workspaceDirectory, entryName), {
-			force: true,
-			recursive: true,
-		});
-	}
-}
-
 export async function createToolVm(
 	options: {
 		readonly cacheDir: string;
@@ -68,11 +43,7 @@ export async function createToolVm(
 		systemCacheIdentifierPath: options.systemConfig.systemCacheIdentifierPath,
 		cacheDir: path.join(options.cacheDir, 'tool-vm-images', options.profile.imageProfile),
 	});
-	const hostWorkspaceDirectory = resolveToolVmWorkspaceDirectory({
-		profile: options.profile,
-		tcpSlot: options.tcpSlot,
-		zoneId: options.zoneId,
-	});
+	const hostWorkspaceDirectory = path.resolve(options.workspaceDir);
 
 	await fs.mkdir(hostWorkspaceDirectory, { recursive: true });
 

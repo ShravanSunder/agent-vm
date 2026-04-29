@@ -29,8 +29,8 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
     |      Validates zone exists in config, returns zone definition
     |
     |-- 4. Create lease manager
-    |      createLeaseManager({ tcpPool, createManagedVm, cleanWorkspace, now })
-    |      Wires VM creation and workspace cleanup into the lease lifecycle
+    |      createLeaseManager({ tcpPool, createManagedVm, now })
+    |      Wires VM creation and TCP slot bookkeeping into the lease lifecycle
     |
     |-- 5. Start idle reaper
     |      createIdleReaper({ ttlMs: 30min })
@@ -147,12 +147,11 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
     v
   releaseLease()
     |-- 1. vm.close()                  Destroy the tool VM
-    |-- 2. lease.cleanWorkspace()      Remove host-side workspace files
-    |-- 3. leases.delete(leaseId)      Remove from tracking map
-    |-- 4. tcpPool.release(slot)       Return slot to pool
+    |-- 2. leases.delete(leaseId)      Remove from tracking map
+    |-- 3. tcpPool.release(slot)       Return slot to pool
 ```
 
-Each lease holds: `id`, `zoneId`, `scopeKey`, `profileId`, `tcpSlot`, `vm` (ManagedVm handle), `sshAccess` (host, port, identity file, user), `createdAt`, `lastUsedAt`, and an optional `cleanWorkspace` callback.
+Each lease holds: `id`, `zoneId`, `scopeKey`, `profileId`, `tcpSlot`, `vm` (ManagedVm handle), `sshAccess` (host, port, identity file, user), `createdAt`, and `lastUsedAt`. The lease manager does not clean workspace files on release; OpenClaw-selected lease workspaces are owned by the caller that supplied `workspaceDir`.
 
 ### TCP Pool
 
@@ -280,7 +279,6 @@ The controller uses a consistent function-and-closure pattern for dependency inj
   createLeaseManager(options: {
     tcpPool: TcpPool;
     createManagedVm: (...) => Promise<ManagedVm>;
-    cleanWorkspace: (...) => Promise<void>;
     now: () => number;
   }): LeaseManager
 ```

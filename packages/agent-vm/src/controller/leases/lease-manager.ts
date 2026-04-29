@@ -10,7 +10,6 @@ export interface ToolProfile {
 }
 
 export interface Lease {
-	readonly cleanWorkspace?: () => Promise<void>;
 	readonly createdAt: number;
 	readonly id: string;
 	readonly lastUsedAt: number;
@@ -43,11 +42,6 @@ export interface LeaseManager {
 }
 
 export function createLeaseManager(options: {
-	readonly cleanWorkspace?: (leaseOptions: {
-		readonly profile: ToolProfile;
-		readonly tcpSlot: number;
-		readonly zoneId: string;
-	}) => Promise<void>;
 	readonly createManagedVm: (leaseOptions: {
 		readonly agentWorkspaceDir: string;
 		readonly profile: ToolProfile;
@@ -76,16 +70,6 @@ export function createLeaseManager(options: {
 					});
 					const createdAt = options.now();
 					const lease: Lease = {
-						...(options.cleanWorkspace
-							? {
-									cleanWorkspace: async () =>
-										await options.cleanWorkspace?.({
-											profile: leaseOptions.profile,
-											tcpSlot,
-											zoneId: leaseOptions.zoneId,
-										}),
-								}
-							: {}),
 						createdAt,
 						id: `${leaseOptions.zoneId}-${leaseOptions.scopeKey}-${createdAt}`,
 						lastUsedAt: createdAt,
@@ -124,12 +108,6 @@ export function createLeaseManager(options: {
 				await lease.vm.close();
 			} catch (error) {
 				releaseError = error instanceof Error ? error : new Error(String(error));
-			}
-
-			try {
-				await lease.cleanWorkspace?.();
-			} catch (error) {
-				releaseError ??= error instanceof Error ? error : new Error(String(error));
 			}
 
 			leases.delete(leaseId);

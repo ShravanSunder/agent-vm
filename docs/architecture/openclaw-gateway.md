@@ -187,8 +187,9 @@ The `openclaw-agent-vm-plugin` package bridges OpenClaw's sandbox system to Gond
 The plugin provides:
 - **File bridge**: `mkdirp`, `readFile`, `writeFile`, `stat`, `remove`, `rename` — all via SSH into the tool VM
 - **Shell execution**: run arbitrary commands in the tool VM
-- **Workspace access**: tool VMs use `/workspace` for lease-local execution;
-  OpenClaw gateway zone files are separate from worker/rootfs `/work` paths
+- **Workspace access**: tool VMs use `/workspace` for lease-local execution.
+  The host path is the `workspaceDir` supplied by the OpenClaw sandbox lease
+  request, not the worker/rootfs `/work` paths.
 
 ---
 
