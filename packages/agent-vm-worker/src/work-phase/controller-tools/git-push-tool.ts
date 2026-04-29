@@ -34,11 +34,18 @@ export function createGitPushTool(props: CreateGitPushToolProps): ToolDefinition
 			if (!selected.repo) {
 				return { type: 'push', success: false, artifact: selected.error ?? 'Repo not found.' };
 			}
-			const branchName = await currentBranch(selected.repo.workPath);
-			if (!branchName) {
+			const branchResult = await currentBranch(selected.repo.workPath);
+			if (!branchResult.ok) {
+				return {
+					type: 'push',
+					success: false,
+					artifact: `Unable to read current git branch: ${branchResult.error}`,
+				};
+			}
+			if (!branchResult.branch) {
 				return { type: 'push', success: false, artifact: 'Refusing to push from detached HEAD.' };
 			}
-			if (branchName === selected.repo.baseBranch) {
+			if (branchResult.branch === selected.repo.baseBranch) {
 				return {
 					type: 'push',
 					success: false,
@@ -50,7 +57,7 @@ export function createGitPushTool(props: CreateGitPushToolProps): ToolDefinition
 				url: `${props.controllerBaseUrl}/zones/${props.zoneId}/tasks/${props.taskId}/push-branches`,
 				timeoutMs: CONTROLLER_TOOL_TIMEOUT_MS,
 				body: {
-					branches: [{ repoUrl: selected.repo.repoUrl, branchName }],
+					branches: [{ repoUrl: selected.repo.repoUrl, branchName: branchResult.branch }],
 				},
 			});
 			if (isControllerToolFailure(result)) {
