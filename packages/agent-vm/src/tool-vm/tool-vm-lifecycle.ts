@@ -9,6 +9,7 @@ import {
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { ToolProfile } from '../controller/leases/lease-manager.js';
+import { validateResolvedToolWorkspaceDir } from '../controller/leases/lease-workspace-paths.js';
 
 export interface ToolVmLifecycleDependencies {
 	readonly buildGondolinImage?: (options: {
@@ -33,16 +34,27 @@ export async function createToolVm(
 ): Promise<ManagedVm> {
 	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
 	const createManagedVm = dependencies.createManagedVm ?? createManagedVmFromCore;
+	const zone = options.systemConfig.zones.find(
+		(configuredZone) => configuredZone.id === options.zoneId,
+	);
+	if (!zone) {
+		throw new Error(`Zone '${options.zoneId}' is not configured.`);
+	}
 	const toolImageProfile = options.systemConfig.imageProfiles.toolVms[options.profile.imageProfile];
 	if (!toolImageProfile) {
 		throw new Error(`Tool VM image profile '${options.profile.imageProfile}' is not configured.`);
 	}
+	// Internal createToolVm callers bypass the /lease route; keep the mount
+	// boundary validation here so every RealFS /work mount is checked.
+	const hostWorkspaceDirectory = await validateResolvedToolWorkspaceDir({
+		workspaceDir: options.workspaceDir,
+		zone,
+	});
 	const toolImage = await buildGondolinImage({
 		buildConfigPath: toolImageProfile.buildConfig,
 		systemCacheIdentifierPath: options.systemConfig.systemCacheIdentifierPath,
 		cacheDir: path.join(options.cacheDir, 'tool-vm-images', options.profile.imageProfile),
 	});
-	const hostWorkspaceDirectory = path.resolve(options.workspaceDir);
 
 	const toolVm = await createManagedVm({
 		allowedHosts: [],

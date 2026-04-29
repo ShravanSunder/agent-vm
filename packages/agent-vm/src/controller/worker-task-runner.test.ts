@@ -1006,6 +1006,63 @@ describe('worker-task-runner', () => {
 		).rejects.toThrow(/Failed to probe \.agent-vm metadata/u);
 	});
 
+	it('fails loudly when the repo metadata probe terminates without an exit code', async () => {
+		execaMock.mockImplementation(async (command: string, args: readonly string[]) => {
+			if (command === 'git' && args.includes('ls-tree')) {
+				return { stdout: '', stderr: 'killed', exitCode: undefined };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+
+		await expect(
+			preStartGateway(
+				{
+					requestTaskId: 'request-task-1',
+					prompt: 'cross repo task',
+					repos: [{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' }],
+					context: {},
+				},
+				zone,
+			),
+		).rejects.toThrow(/git ls-tree terminated without an exit code/u);
+	});
+
+	it('fails loudly when repo metadata archive terminates without an exit code', async () => {
+		execaMock.mockImplementation(async (command: string, args: readonly string[]) => {
+			if (command === 'git' && args.includes('ls-tree')) {
+				return { stdout: '.agent-vm', stderr: '', exitCode: 0 };
+			}
+			if (command === 'git' && args.includes('archive')) {
+				return { stdout: '', stderr: 'killed', exitCode: undefined };
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+
+		await expect(
+			preStartGateway(
+				{
+					requestTaskId: 'request-task-1',
+					prompt: 'cross repo task',
+					repos: [{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' }],
+					context: {},
+				},
+				zone,
+			),
+		).rejects.toThrow(/git archive terminated without an exit code/u);
+	});
+
 	it('rejects project config prompt file references', async () => {
 		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
 		const zone = systemConfig.zones[0];

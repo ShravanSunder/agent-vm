@@ -10,6 +10,7 @@ describe('git-retry-support', () => {
 			'HTTP 429 GitHub rate limit',
 			'early EOF',
 			'Connection reset by peer',
+			'git fetch terminated without an exit code',
 		];
 
 		for (const output of retryableOutputs) {
@@ -30,5 +31,13 @@ describe('git-retry-support', () => {
 		for (const output of permanentOutputs) {
 			expect(isRetryableGitFailure(output)).toBe(false);
 		}
+	});
+
+	test('does not classify unrelated 404 text as permanent', () => {
+		expect(
+			isRetryableGitFailure(
+				'RPC failed; HTTP 503 while fetching https://api.github.com/repos/acme/widgets/issues/404',
+			),
+		).toBe(true);
 	});
 });

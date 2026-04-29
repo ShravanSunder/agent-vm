@@ -6,7 +6,8 @@ import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
-import type { Lease } from '../leases/lease-manager.js';
+import { LeaseScopeConflictError, type Lease } from '../leases/lease-manager.js';
+import { LeaseWorkspaceValidationError } from '../leases/lease-workspace-paths.js';
 import type { PreparedWorkerTask } from '../worker-task-runner.js';
 import {
 	ControllerRuntimeAtCapacityError,
@@ -16,6 +17,7 @@ import { createControllerApp } from './controller-http-routes.js';
 
 function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 	return {
+		agentWorkspaceDir: '/host/agent-work',
 		createdAt: tcpSlot,
 		id: leaseId,
 		lastUsedAt: tcpSlot,
@@ -40,6 +42,7 @@ function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 			setIngressRoutes: vi.fn(),
 			getVmInstance: vi.fn(),
 		},
+		workspaceDir: '/host/sandbox-work',
 		zoneId: 'shravan',
 	};
 }
@@ -131,6 +134,7 @@ function createPreparedWorkerTaskStub(
 describe('createControllerApp', () => {
 	it('creates, fetches, and releases leases through the controller api', async () => {
 		const lease: Lease = {
+			agentWorkspaceDir: '/home/openclaw/work',
 			createdAt: 1,
 			id: 'lease-123',
 			lastUsedAt: 1,
@@ -159,6 +163,7 @@ describe('createControllerApp', () => {
 				setIngressRoutes: vi.fn(),
 				getVmInstance: vi.fn(),
 			},
+			workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
 			zoneId: 'shravan',
 		};
 		const createLease = vi.fn(async () => lease);
@@ -213,6 +218,90 @@ describe('createControllerApp', () => {
 		expect(releaseLease).toHaveBeenCalledWith('lease-123');
 	});
 
+	it('normalizes lease workspaceDir before creating the lease', async () => {
+		const createLease = vi.fn(async () => createLeaseStub('lease-normalized', 0));
+		const app = createControllerApp({
+			toolProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			readIdentityPem: async () => 'pem-from-file',
+			leaseManager: {
+				createLease,
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			resolveLeaseWorkspaceDir: vi.fn(async () => '/host/state/shravan/sandboxes/agent/work'),
+		});
+
+		const createResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				profileId: 'standard',
+				scopeKey: 'agent:main',
+				workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(createResponse.status).toBe(200);
+		expect(createLease).toHaveBeenCalledWith(
+			expect.objectContaining({
+				workspaceDir: '/host/state/shravan/sandboxes/agent/work',
+			}),
+		);
+	});
+
+	it('rejects unsafe lease workspaceDir before creating the lease', async () => {
+		const createLease = vi.fn(async () => createLeaseStub('lease-unsafe', 0));
+		const app = createControllerApp({
+			toolProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease,
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			resolveLeaseWorkspaceDir: vi.fn(async () => {
+				throw new LeaseWorkspaceValidationError('workspaceDir outside allowed roots');
+			}),
+		});
+
+		const createResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				profileId: 'standard',
+				scopeKey: 'agent:main',
+				workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/../../../etc',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(createResponse.status).toBe(400);
+		await expect(createResponse.json()).resolves.toEqual({
+			error: 'workspaceDir outside allowed roots',
+		});
+		expect(createLease).not.toHaveBeenCalled();
+	});
+
 	it('returns 503 when the tcp pool is exhausted', async () => {
 		const app = createControllerApp({
 			toolProfiles: {
@@ -249,6 +338,45 @@ describe('createControllerApp', () => {
 		expect(createResponse.status).toBe(503);
 		await expect(createResponse.json()).resolves.toMatchObject({
 			error: 'No TCP slots available',
+		});
+	});
+
+	it('returns 409 when lease scope conflicts with an existing live lease', async () => {
+		const app = createControllerApp({
+			toolProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new LeaseScopeConflictError('scope already uses a different workspace');
+				}),
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const createResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				profileId: 'standard',
+				scopeKey: 'agent:main',
+				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(createResponse.status).toBe(409);
+		await expect(createResponse.json()).resolves.toEqual({
+			error: 'scope already uses a different workspace',
 		});
 	});
 
@@ -671,6 +799,53 @@ describe('createControllerApp', () => {
 		await expect(response.json()).resolves.toEqual({
 			error: 'Repo is not registered for active task.',
 		});
+	});
+
+	it('scrubs token-bearing pull-default errors from route logs and responses', async () => {
+		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const pullDefaultForTask = vi.fn(async () => {
+			throw new Error('boom https://x-access-token:secret-token@github.com/acme/widgets.git');
+		});
+		const app = createControllerApp({
+			toolProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				pullDefaultForTask,
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/shravan/tasks/task-1/pull-default', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				repoUrl: 'https://github.com/acme/widgets.git',
+			}),
+		});
+
+		expect(response.status).toBe(500);
+		await expect(response.json()).resolves.toEqual({
+			error: 'boom https://x-access-token:***@github.com/acme/widgets.git',
+		});
+		expect(stderrSpy.mock.calls.join('\n')).not.toContain('secret-token');
+		stderrSpy.mockRestore();
 	});
 
 	it('returns schema details for invalid destroy requests', async () => {

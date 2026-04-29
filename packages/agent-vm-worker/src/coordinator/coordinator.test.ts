@@ -338,6 +338,43 @@ describe('coordinator', () => {
 		expect(coordinator.getTaskState(taskId)?.lastContextError).toBe('work dir not readable');
 	});
 
+	it('fails wrapup when git context command terminates without an exit code', async () => {
+		enqueueHappyPathExecutors();
+		mocks.execa.mockImplementation(async (_command: string, args: readonly string[]) => {
+			if (args.includes('branch')) {
+				return {
+					stdout: '',
+					stderr: 'fatal: not a git repository',
+					exitCode: undefined,
+				};
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+		const coordinator = await createCoordinator({
+			config: makeConfig(stateDir),
+			workDir: tempDir,
+		});
+
+		const { taskId } = await coordinator.submitTask({
+			taskId: 'git-output-failed',
+			prompt: 'fix',
+			repos: [
+				{
+					repoUrl: 'https://github.com/acme/widgets.git',
+					baseBranch: 'main',
+					gitDirPath: join(tempDir, 'gitdirs', 'widgets.git'),
+					workPath: join(tempDir, 'repos', 'widgets'),
+				},
+			],
+		});
+
+		await waitForStatus(coordinator, taskId, 'failed');
+		expect(coordinator.getTaskState(taskId)?.failureReason).toContain('git -c safe.directory=');
+		expect(coordinator.getTaskState(taskId)?.failureReason).toContain(
+			'terminated without an exit code',
+		);
+	});
+
 	it('fails when diff reading fails', async () => {
 		enqueueHappyPathExecutors();
 		mocks.getDiff.mockRejectedValue(new Error('git diff failed'));

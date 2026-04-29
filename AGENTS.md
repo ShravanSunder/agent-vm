@@ -108,8 +108,18 @@ between repo config, state, cache, workspace, or backup directories.
 - `POST /zones/:zoneId/worker-tasks` — start worker task, returns `202 { taskId, status: "accepted" }`
 - `GET /zones/:zoneId/tasks/:taskId` — replayed worker task state snapshot
 - `POST /zones/:zoneId/tasks/:taskId/push-branches` — controller-side git push
-- `POST /zones/:zoneId/tasks/:taskId/pull-default` — controller-side default-branch pull
+- `POST /zones/:zoneId/tasks/:taskId/pull-default` — controller-side default/current branch refresh
 - `POST /zones/:zoneId/tasks/:taskId/close` — request task cancellation
+
+`pull-default` returns a discriminated result. `kind: "advanced"` means the
+default branch ref was updated; `kind: "refused-not-fast-forward"` means the
+controller refused to rewrite an unsafe default branch; `kind: "failed"` means
+transport, auth, or git plumbing failed. For current branch refresh, read
+`currentBranchSync.status`: `fast-forwarded` means the agent branch and worktree
+moved, `up-to-date` means no branch change, `ahead` usually means push,
+`diverged` needs a merge/rebase plan, `dirty-worktree` needs commit/stash first,
+`no-upstream` needs an upstream push, `detached` needs a branch, and
+`default-branch` means the current branch was the protected/default branch.
 
 ## Key Files
 
@@ -149,7 +159,7 @@ Allowed runtime auth path:
 3. The controller generates `runtimeInstructions` and the agent-facing
    `/agent-vm/agents.md` runtime index at task boot. Worker repo docs live at
    `/work/repos/AGENTS.md` with a `CLAUDE.md` symlink for Claude-compatible
-   discovery. Tool VMs still use `/workspace` as their lease-local path.
+   discovery. OpenClaw Tool VMs mount the validated lease workspace at `/work`.
 4. Gondolin runtime puts a placeholder in the VM env at boot; the proxy swaps it
    for the real token only on outbound calls to allowed hosts.
 

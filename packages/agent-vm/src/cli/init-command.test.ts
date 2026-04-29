@@ -993,10 +993,12 @@ describe('scaffoldAgentVmProject', () => {
 			readonly toolProfiles: {
 				readonly standard: { readonly imageProfile: string };
 			};
+			readonly tcpPool: { readonly basePort: number; readonly size: number };
 			readonly zones: readonly [{ readonly toolProfile: string }];
 		};
 
 		expect(config.zones[0].toolProfile).toBe('standard');
+		expect(config.tcpPool).toEqual({ basePort: 19000, size: 12 });
 		expect(config.toolProfiles.standard.imageProfile).toBe('default');
 		expect(config.toolProfiles.standard).not.toHaveProperty('workspaceRoot');
 		expect(config.imageProfiles.toolVms.default.buildConfig).toBe(
@@ -1019,6 +1021,15 @@ describe('scaffoldAgentVmProject', () => {
 		expect(dockerfile).toContain('fd-find');
 		expect(dockerfile).toContain('build-essential');
 		expect(dockerfile).toContain('ln -sf /usr/bin/fdfind /usr/local/bin/fd');
+		const openClawConfig = JSON.parse(
+			await fs.readFile(
+				path.join(targetDir, 'config', 'gateways', 'test-openclaw', 'openclaw.json'),
+				'utf8',
+			),
+		) as {
+			readonly agents?: { readonly defaults?: { readonly sandbox?: { readonly scope?: string } } };
+		};
+		expect(openClawConfig.agents?.defaults?.sandbox?.scope).toBe('agent');
 	});
 
 	it('scaffolds worker-specific env references for worker type', async () => {

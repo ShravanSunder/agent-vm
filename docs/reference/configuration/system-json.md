@@ -286,7 +286,7 @@ controller mapping. OpenClaw Gateway also uses it for tool VM SSH slots.
 {
   "tcpPool": {
     "basePort": 19000,
-    "size": 5
+    "size": 12
   }
 }
 ```

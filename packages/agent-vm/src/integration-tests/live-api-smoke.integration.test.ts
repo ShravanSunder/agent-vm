@@ -80,6 +80,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 
 		// --- Real controller lease API ---
 		const lease: Lease = {
+			agentWorkspaceDir: '/home/openclaw/work',
 			createdAt: Date.now(),
 			id: 'smoke-lease-001',
 			lastUsedAt: Date.now(),
@@ -106,6 +107,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 				setIngressRoutes: vi.fn(),
 				getVmInstance: vi.fn(),
 			},
+			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
 			zoneId: 'shravan',
 		};
 		const createLease = vi.fn(async () => lease);

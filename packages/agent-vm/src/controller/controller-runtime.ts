@@ -370,6 +370,8 @@ export async function startControllerRuntime(
 					}
 					return await pullDefaultForTask({
 						activeTask,
+						...(input.currentBranch !== undefined ? { currentBranch: input.currentBranch } : {}),
+						...(input.currentHead !== undefined ? { currentHead: input.currentHead } : {}),
 						repoUrl: input.repoUrl,
 						githubToken: controllerGithubToken,
 						recordEvent: async (event) => {
@@ -379,6 +381,7 @@ export async function startControllerRuntime(
 								taskId,
 							});
 						},
+						...(input.worktreeDirty !== undefined ? { worktreeDirty: input.worktreeDirty } : {}),
 					});
 				}
 			: undefined;

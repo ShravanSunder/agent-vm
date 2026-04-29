@@ -26,6 +26,8 @@ function createTemporaryDirectory(): string {
 function createToolVmSystemConfig(): LoadedSystemConfig {
 	const temporaryDirectory = createTemporaryDirectory();
 	const systemConfigPath = path.join(temporaryDirectory, 'config', 'system.json');
+	const stateDir = path.join(temporaryDirectory, 'state', 'shravan');
+	const zoneFilesDir = path.join(temporaryDirectory, 'zone-files', 'shravan');
 
 	return createLoadedSystemConfig(
 		{
@@ -77,8 +79,8 @@ function createToolVmSystemConfig(): LoadedSystemConfig {
 						memory: '2G',
 						config: './config/shravan/openclaw.json',
 						port: 18791,
-						stateDir: './state/shravan',
-						zoneFilesDir: './zone-files/shravan',
+						stateDir,
+						zoneFilesDir,
 					},
 					id: 'shravan',
 					secrets: {},
@@ -89,6 +91,16 @@ function createToolVmSystemConfig(): LoadedSystemConfig {
 		},
 		{ systemConfigPath },
 	);
+}
+
+function createWorkspaceDirectory(systemConfig: LoadedSystemConfig, name: string): string {
+	const zone = systemConfig.zones.find((configuredZone) => configuredZone.id === 'shravan');
+	if (zone?.gateway.type !== 'openclaw') {
+		throw new Error('Expected shravan OpenClaw zone');
+	}
+	const workspaceDir = path.join(zone.gateway.zoneFilesDir, name);
+	fs.mkdirSync(workspaceDir, { recursive: true });
+	return workspaceDir;
 }
 
 describe('createToolVm', () => {
@@ -115,8 +127,8 @@ describe('createToolVm', () => {
 		if (!standardProfile) {
 			throw new Error('Expected standard tool profile');
 		}
-		const requestedWorkspaceDir = path.join(
-			createTemporaryDirectory(),
+		const requestedWorkspaceDir = createWorkspaceDirectory(
+			systemConfig,
 			'openclaw-session-workspace',
 		);
 
@@ -143,7 +155,7 @@ describe('createToolVm', () => {
 			expect.objectContaining({
 				vfsMounts: {
 					'/work': {
-						hostPath: requestedWorkspaceDir,
+						hostPath: fs.realpathSync(requestedWorkspaceDir),
 						kind: 'realfs',
 					},
 				},
@@ -179,7 +191,7 @@ describe('createToolVm', () => {
 		if (!standardProfile) {
 			throw new Error('Expected standard tool profile');
 		}
-		const requestedWorkspaceDir = path.join(createTemporaryDirectory(), 'openclaw-workspace');
+		const requestedWorkspaceDir = createWorkspaceDirectory(systemConfig, 'openclaw-workspace');
 		const buildGondolinImage = vi.fn(async () => ({
 			built: true,
 			fingerprint: 'tool-fingerprint',
@@ -211,7 +223,6 @@ describe('createToolVm', () => {
 	});
 
 	it('does not use mkdirSync inside the async createToolVm path', async () => {
-		const mkdirSyncSpy = vi.spyOn(fs, 'mkdirSync');
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -234,7 +245,8 @@ describe('createToolVm', () => {
 		if (!standardProfile) {
 			throw new Error('Expected standard tool profile');
 		}
-		const requestedWorkspaceDir = path.join(createTemporaryDirectory(), 'openclaw-workspace');
+		const requestedWorkspaceDir = createWorkspaceDirectory(systemConfig, 'openclaw-workspace');
+		const mkdirSyncSpy = vi.spyOn(fs, 'mkdirSync');
 
 		await createToolVm(
 			{
@@ -256,5 +268,34 @@ describe('createToolVm', () => {
 		);
 
 		expect(mkdirSyncSpy).not.toHaveBeenCalled();
+	});
+
+	it('rejects direct lifecycle calls with workspace directories outside OpenClaw roots', async () => {
+		const systemConfig = createToolVmSystemConfig();
+		const standardProfile = systemConfig.toolProfiles.standard;
+		if (!standardProfile) {
+			throw new Error('Expected standard tool profile');
+		}
+
+		await expect(
+			createToolVm(
+				{
+					cacheDir: systemConfig.cacheDir,
+					profile: standardProfile,
+					systemConfig,
+					tcpSlot: 0,
+					workspaceDir: '/etc',
+					zoneId: 'shravan',
+				},
+				{
+					buildGondolinImage: async () => ({
+						built: true,
+						fingerprint: 'tool-fingerprint',
+						imagePath: '/cache/tool-fingerprint',
+					}),
+					createManagedVm: vi.fn(),
+				},
+			),
+		).rejects.toThrow(/outside allowed OpenClaw tool workspace roots/u);
 	});
 });

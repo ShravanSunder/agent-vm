@@ -1,7 +1,26 @@
+import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createLeaseManager } from './lease-manager.js';
+import { createLeaseManager, LeaseScopeConflictError } from './lease-manager.js';
 import { createTcpPool } from './tcp-pool.js';
+
+function createManagedVmStub(id: string = 'tool-vm-1'): ManagedVm {
+	return {
+		close: vi.fn(async () => {}),
+		enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+		enableSsh: vi.fn(async () => ({
+			command: 'ssh ...',
+			host: '127.0.0.1',
+			identityFile: '/tmp/key',
+			port: 19000,
+			user: 'sandbox',
+		})),
+		exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+		id,
+		setIngressRoutes: vi.fn(),
+		getVmInstance: vi.fn(),
+	};
+}
 
 describe('createLeaseManager', () => {
 	it('creates, stores, and releases a lease while returning its tcp slot', async () => {
@@ -46,6 +65,8 @@ describe('createLeaseManager', () => {
 		expect(lease.tcpSlot).toBe(0);
 		expect(leaseManager.getLease(lease.id)).toMatchObject({
 			id: lease.id,
+			agentWorkspaceDir: '/home/openclaw/work',
+			workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
 			zoneId: 'shravan',
 		});
 
@@ -53,6 +74,349 @@ describe('createLeaseManager', () => {
 
 		expect(closeMock).toHaveBeenCalled();
 		expect(leaseManager.getLease(lease.id)).toBeUndefined();
+	});
+
+	it('reuses a live lease for the same zone scope profile and workspace', async () => {
+		let now = 100;
+		const createManagedVm = vi.fn(async () => createManagedVmStub());
+		const leaseManager = createLeaseManager({
+			createManagedVm,
+			now: () => now,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const request = {
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		};
+
+		const firstLease = await leaseManager.createLease(request);
+		now = 150;
+		const secondLease = await leaseManager.createLease(request);
+
+		expect(secondLease.id).toBe(firstLease.id);
+		expect(secondLease.tcpSlot).toBe(0);
+		expect(secondLease.lastUsedAt).toBe(150);
+		expect(createManagedVm).toHaveBeenCalledTimes(1);
+	});
+
+	it('rejects same-scope lease reuse when the workspace changes', async () => {
+		const closeMock = vi.fn(async () => {});
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => ({
+				...createManagedVmStub(),
+				close: closeMock,
+			})),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+
+		await leaseManager.createLease({
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		});
+
+		await expect(
+			leaseManager.createLease({
+				agentWorkspaceDir: '/host/agent-work',
+				profile: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+				profileId: 'standard',
+				scopeKey: 'agent:main',
+				workspaceDir: '/host/other-sandbox-work',
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(
+			"Tool VM lease scope conflict for zone 'shravan' scopeKey 'agent:main': existing workspaceDir '/host/sandbox-work' does not match requested workspaceDir '/host/other-sandbox-work'.",
+		);
+		expect(closeMock).not.toHaveBeenCalled();
+	});
+
+	it('rejects same-scope lease reuse when the profile changes', async () => {
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+
+		await leaseManager.createLease({
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		});
+
+		await expect(
+			leaseManager.createLease({
+				agentWorkspaceDir: '/host/agent-work',
+				profile: {
+					cpus: 2,
+					memory: '2G',
+					imageProfile: 'large',
+				},
+				profileId: 'large',
+				scopeKey: 'agent:main',
+				workspaceDir: '/host/sandbox-work',
+				zoneId: 'shravan',
+			}),
+		).rejects.toBeInstanceOf(LeaseScopeConflictError);
+	});
+
+	it('rejects same-scope lease reuse when the agent workspace changes', async () => {
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+
+		await leaseManager.createLease({
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		});
+
+		await expect(
+			leaseManager.createLease({
+				agentWorkspaceDir: '/host/other-agent-work',
+				profile: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+				profileId: 'standard',
+				scopeKey: 'agent:main',
+				workspaceDir: '/host/sandbox-work',
+				zoneId: 'shravan',
+			}),
+		).rejects.toBeInstanceOf(LeaseScopeConflictError);
+	});
+
+	it('does not reuse matching scope keys across zones', async () => {
+		const createManagedVm = vi.fn(async () =>
+			createManagedVmStub(`tool-vm-${createManagedVm.mock.calls.length}`),
+		);
+		const leaseManager = createLeaseManager({
+			createManagedVm,
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+		const request = {
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+		};
+
+		const firstLease = await leaseManager.createLease({ ...request, zoneId: 'shravan' });
+		const secondLease = await leaseManager.createLease({ ...request, zoneId: 'alex' });
+
+		expect(secondLease.id).not.toBe(firstLease.id);
+		expect(secondLease.tcpSlot).toBe(1);
+		expect(createManagedVm).toHaveBeenCalledTimes(2);
+	});
+
+	it('evicts a stale same-scope lease before creating a replacement', async () => {
+		const staleClose = vi.fn(async () => {});
+		const staleVm = {
+			...createManagedVmStub('stale-vm'),
+			close: staleClose,
+			exec: vi.fn(async () => {
+				throw new Error('vm is gone');
+			}),
+		};
+		const freshVm = createManagedVmStub('fresh-vm');
+		const createManagedVm = vi.fn(async () =>
+			createManagedVm.mock.calls.length === 1 ? staleVm : freshVm,
+		);
+		const leaseManager = createLeaseManager({
+			createManagedVm,
+			now: () => createManagedVm.mock.calls.length * 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const request = {
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		};
+
+		const firstLease = await leaseManager.createLease(request);
+		const secondLease = await leaseManager.createLease(request);
+
+		expect(secondLease.id).not.toBe(firstLease.id);
+		expect(secondLease.vm.id).toBe('fresh-vm');
+		expect(staleClose).toHaveBeenCalled();
+		expect(createManagedVm).toHaveBeenCalledTimes(2);
+	});
+
+	it('serializes concurrent createLease calls for the same zone scope', async () => {
+		let releaseCreate: (() => void) | undefined;
+		let markCreateStarted: (() => void) | undefined;
+		const createStarted = new Promise<void>((resolve) => {
+			markCreateStarted = resolve;
+		});
+		const createCanFinish = new Promise<void>((resolve) => {
+			releaseCreate = resolve;
+		});
+		const createManagedVm = vi.fn(async () => {
+			markCreateStarted?.();
+			await createCanFinish;
+			return createManagedVmStub();
+		});
+		const leaseManager = createLeaseManager({
+			createManagedVm,
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+		const request = {
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		};
+
+		const firstLeasePromise = leaseManager.createLease(request);
+		const secondLeasePromise = leaseManager.createLease(request);
+		await createStarted;
+		expect(createManagedVm).toHaveBeenCalledTimes(1);
+		releaseCreate?.();
+		const [firstLease, secondLease] = await Promise.all([firstLeasePromise, secondLeasePromise]);
+
+		expect(secondLease.id).toBe(firstLease.id);
+		expect(createManagedVm).toHaveBeenCalledTimes(1);
+	});
+
+	it('serializes releaseLease with same-scope createLease reuse', async () => {
+		let releaseExec: (() => void) | undefined;
+		let markExecStarted: (() => void) | undefined;
+		const execStarted = new Promise<void>((resolve) => {
+			markExecStarted = resolve;
+		});
+		const execCanFinish = new Promise<void>((resolve) => {
+			releaseExec = resolve;
+		});
+		const closeMock = vi.fn(async () => {});
+		const vm = {
+			...createManagedVmStub(),
+			close: closeMock,
+			exec: vi.fn(async () => {
+				markExecStarted?.();
+				await execCanFinish;
+				return { exitCode: 0, stdout: '', stderr: '' };
+			}),
+		};
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => vm),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const request = {
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		};
+		const lease = await leaseManager.createLease(request);
+
+		const reusePromise = leaseManager.createLease(request);
+		await execStarted;
+		const releasePromise = leaseManager.releaseLease(lease.id);
+		await Promise.resolve();
+		expect(closeMock).not.toHaveBeenCalled();
+		releaseExec?.();
+		const reusedLease = await reusePromise;
+		await releasePromise;
+
+		expect(reusedLease.id).toBe(lease.id);
+		expect(closeMock).toHaveBeenCalledTimes(1);
+		expect(leaseManager.getLease(lease.id)).toBeUndefined();
+	});
+
+	it('does not release a lease that was touched after an idle reaper snapshot', async () => {
+		let now = 100;
+		const closeMock = vi.fn(async () => {});
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => ({
+				...createManagedVmStub(),
+				close: closeMock,
+			})),
+			now: () => now,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const request = {
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:main',
+			workspaceDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		};
+		const lease = await leaseManager.createLease(request);
+		now = 200;
+		await leaseManager.createLease(request);
+
+		await leaseManager.releaseLease(lease.id, { ifLastUsedAtBeforeOrAt: 150 });
+
+		expect(closeMock).not.toHaveBeenCalled();
+		expect(leaseManager.getLease(lease.id)).toMatchObject({ id: lease.id });
 	});
 
 	it('listLeases returns all active leases', async () => {

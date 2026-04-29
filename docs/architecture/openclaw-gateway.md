@@ -119,15 +119,25 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
   OpenClaw agent: "I need to run this code"
        |
        v
-  POST /lease { scopeKey: "discord:user123", zoneId, profileId }
+  POST /lease {
+    scopeKey: "discord:user123",
+    zoneId,
+    profileId,
+    agentWorkspaceDir,
+    workspaceDir: "/home/openclaw/zone-files/..."
+  }
        |
        v
   Controller: lease-manager.createLease()
        |
-       |  1. tcpPool.allocate() → slot 0 (port 19000)
-       |  2. createManagedVm() → boot tool VM
-       |  3. vm.enableSsh() → SSH access ready
-       |  4. Store lease record
+       |  1. Translate workspaceDir from gateway path to trusted host root
+       |  2. Reuse same scope only if profileId, workspaceDir, and
+       |     agentWorkspaceDir match
+       |  3. Probe existing VM; evict stale leases
+       |  4. tcpPool.allocate() → slot 0 (port 19000)
+       |  5. createManagedVm() → boot tool VM
+       |  6. vm.enableSsh() → SSH access ready
+       |  7. Store lease record
        v
   Response: { leaseId, ssh: { host, port: 19000, user, identityFile } }
        |
@@ -142,7 +152,18 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
 
 ### Scope-Based Reuse
 
-Leases are keyed by `scopeKey` — typically `{channel}:{userId}`. If the same scope already has an active lease, it's reused instead of creating a new VM. This means a user's tool VM persists across multiple tool calls within the same conversation.
+Leases are keyed by `scopeKey` — typically `{channel}:{userId}`. If the same
+scope already has an active lease, it is reused only when `profileId`,
+`workspaceDir`, and `agentWorkspaceDir` also match. A mismatch is treated as a
+caller conflict, not as a new tool VM. Before reuse, the controller probes the
+VM; dead leases are evicted and replaced. This means a user's tool VM persists
+across multiple tool calls within the same conversation without silently
+crossing workspace or profile boundaries.
+
+The controller reports reuse conflicts as `LeaseScopeConflictError`, surfaced
+through the lease route as HTTP 409. The message names the zone, `scopeKey`, and
+the mismatched field so operators can distinguish a caller bug from VM capacity
+or startup failure.
 
 ### TCP Pool
 
@@ -188,8 +209,10 @@ The plugin provides:
 - **File bridge**: `mkdirp`, `readFile`, `writeFile`, `stat`, `remove`, `rename` — all via SSH into the tool VM
 - **Shell execution**: run arbitrary commands in the tool VM
 - **Workspace access**: tool VMs use `/work` for lease-local execution.
-  The host path is the `workspaceDir` supplied by the OpenClaw sandbox lease
-  request, not the worker/rootfs `/work` paths.
+  Lease requests must provide `workspaceDir` as an OpenClaw gateway path under
+  `/home/openclaw/.openclaw/state/sandboxes` or `/home/openclaw/zone-files`.
+  The controller maps that guest path back to trusted host roots and verifies
+  the real path is inside either `stateDir/sandboxes` or `zoneFilesDir`.
 
 ---
 

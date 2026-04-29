@@ -367,7 +367,7 @@ const defaultSystemConfig = (
 	toolProfiles: defaultToolProfiles(gatewayType),
 	tcpPool: {
 		basePort: 19000,
-		size: 5,
+		size: 12,
 	},
 });
 
@@ -817,7 +817,7 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 					},
 				},
 			},
-			sandbox: { backend: 'gondolin', mode: 'all', scope: 'session' },
+			sandbox: { backend: 'gondolin', mode: 'all', scope: 'agent' },
 			workspace: '/home/openclaw/zone-files',
 		},
 	},
