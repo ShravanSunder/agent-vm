@@ -2,6 +2,10 @@ import { Hono } from 'hono';
 
 import type { SystemConfig } from '../../config/system-config.js';
 import {
+	LeaseWorkspaceValidationError,
+	resolveLeaseWorkspaceDir as resolveLeaseWorkspaceDirForZone,
+} from '../leases/lease-workspace-paths.js';
+import {
 	type ControllerLeaseManager,
 	type ControllerRouteOperations,
 	readIdentityPemFromFile,
@@ -24,6 +28,10 @@ export function createControllerApp(options: {
 	readonly zoneToolProfiles?: Record<string, string>;
 	readonly zoneIds?: ReadonlySet<string>;
 	readonly operations?: Partial<ControllerRouteOperations>;
+	readonly resolveLeaseWorkspaceDir?: (options: {
+		readonly workspaceDir: string;
+		readonly zoneId: string;
+	}) => Promise<string>;
 }): Hono {
 	const app = new Hono();
 	const readIdentityPem = options.readIdentityPem ?? readIdentityPemFromFile;
@@ -59,12 +67,18 @@ export function createControllerApp(options: {
 			if (!toolProfile) {
 				return context.json({ error: `Unknown tool profile '${resolvedProfileId}'` }, 400);
 			}
+			const workspaceDir = options.resolveLeaseWorkspaceDir
+				? await options.resolveLeaseWorkspaceDir({
+						workspaceDir: payload.workspaceDir,
+						zoneId: payload.zoneId,
+					})
+				: payload.workspaceDir;
 			const lease = await options.leaseManager.createLease({
 				agentWorkspaceDir: payload.agentWorkspaceDir,
 				profile: toolProfile,
 				profileId: resolvedProfileId,
 				scopeKey: payload.scopeKey,
-				workspaceDir: payload.workspaceDir,
+				workspaceDir,
 				zoneId: payload.zoneId,
 			});
 			return context.json(await serializeLeaseForResponse(lease, readIdentityPem));
@@ -73,7 +87,7 @@ export function createControllerApp(options: {
 				{
 					error: error instanceof Error ? error.message : 'lease-creation-failed',
 				},
-				503,
+				error instanceof LeaseWorkspaceValidationError ? 400 : 503,
 			);
 		}
 	});
@@ -137,6 +151,7 @@ export function createControllerService(options: {
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly systemConfig: SystemConfig;
 }): Hono {
+	const zonesById = new Map(options.systemConfig.zones.map((zone) => [zone.id, zone]));
 	const app = createControllerApp({
 		leaseManager: options.leaseManager,
 		toolProfiles: options.systemConfig.toolProfiles,
@@ -147,6 +162,13 @@ export function createControllerService(options: {
 			),
 		),
 		...(options.operations ? { operations: options.operations } : {}),
+		resolveLeaseWorkspaceDir: async ({ workspaceDir, zoneId }) => {
+			const zone = zonesById.get(zoneId);
+			if (!zone) {
+				throw new Error(`Unknown zone '${zoneId}'`);
+			}
+			return await resolveLeaseWorkspaceDirForZone({ workspaceDir, zone });
+		},
 	});
 
 	app.get('/health', (context) =>

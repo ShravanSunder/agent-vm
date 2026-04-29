@@ -27,7 +27,7 @@ export const DEFAULT_BUILTIN_AGENT_INSTRUCTIONS = `You are an agent operating in
 
 ## Controller tools
 - git-push pushes the current branch via the controller. The VM has no real GitHub token; push auth is handled host-side.
-- git-pull-default updates the local protected/default branch via the controller and reports drift.
+- git-pull-default updates the local protected/default branch via the controller, fetches your current branch upstream, and fast-forwards your current branch only when it is clean and safe.
 - gh pr create is available for PR creation after git-push succeeds. GitHub API traffic is mediated by the controller proxy.
 - Agent branches created in this runtime must use the configured prefix: {branchPrefix}.
 - Use runtimeInstructions for the current task's GitHub service token name and tool hints.
@@ -65,7 +65,7 @@ export const DEFAULT_COMMON_AGENT_INSTRUCTIONS = `## Security
 
 ## Controller tools
 - git-push pushes the current branch via the controller. The VM has no real GitHub token; push auth is handled host-side.
-- git-pull-default updates the local protected/default branch via the controller and reports drift.
+- git-pull-default updates the local protected/default branch via the controller, fetches your current branch upstream, and fast-forwards your current branch only when it is clean and safe.
 - gh pr create is available for PR creation after git-push succeeds. GitHub API traffic is mediated by the controller proxy.
 
 ## Output discipline
@@ -183,7 +183,7 @@ export const DEFAULT_WORK_REVIEWER_INSTRUCTIONS = `You are the WORK REVIEWER. Re
 export const DEFAULT_WRAPUP_INSTRUCTIONS = `You are in the WRAPUP phase. The work cycle has completed.
 
 ## Tools
-- git-pull-default tool: refresh the local default/protected branch and inspect drift.
+- git-pull-default tool: refresh the local default/protected branch, fetch the current branch upstream, and fast-forward the current branch only when clean and safe.
 - git-push tool: push the current agent branch through the controller.
 - gh CLI: use GH_TOKEN="$GITHUB_TOKEN" gh pr create from shell after git-push succeeds.
 
@@ -193,8 +193,8 @@ Ship the work that was already implemented. You are a fresh wrapup thread with e
 ## How to ship
 1. Inspect the current branch and git state. You should be on an agent/* branch with committed work.
 2. If work is uncommitted, make a normal local commit with a clear conventional commit message.
-3. Call git-pull-default to update the local protected/default branch and see whether your branch is behind.
-4. If the default branch moved, decide whether a rebase or merge is needed. Resolve any conflicts locally, then commit the resolution.
+3. Call git-pull-default to update the local protected/default branch and refresh your current branch. If it reports a safe fast-forward, it has already updated your current branch. If it reports diverged, no-upstream, detached, or dirty-worktree, follow the reported action instead of forcing a pull.
+4. If the default branch moved or the current branch diverged, decide whether a rebase or merge is needed. Resolve any conflicts locally, then commit the resolution.
 5. Call git-push. If it returns success=false, read the message and fix the git state instead of pretending the push worked.
 6. After git-push succeeds, run gh pr create from the shell. Use a clear title and body based on the work summary.
    - IMPORTANT: gh short-circuits with a login prompt unless GH_TOKEN is set. The VM env has GITHUB_TOKEN set to a mediation placeholder. Always invoke gh with that placeholder copied into GH_TOKEN:
@@ -203,7 +203,7 @@ Ship the work that was already implemented. You are a fresh wrapup thread with e
 7. Return JSON with the PR URL, branch name, pushed commit SHAs if known, and a concise summary.
 
 ## Expected successful path
-- You call git-pull-default and confirm default-branch drift.
+- You call git-pull-default and confirm default/current branch drift.
 - You call git-push and confirm the controller pushed the agent branch.
 - You run GH_TOKEN="$GITHUB_TOKEN" gh pr create and capture the GitHub PR URL.
 - You return JSON with prUrl, branchName, pushedCommits, and summary.

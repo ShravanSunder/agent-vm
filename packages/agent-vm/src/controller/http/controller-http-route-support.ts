@@ -38,7 +38,10 @@ export interface ControllerRouteOperations {
 		zoneId: string,
 		taskId: string,
 		input: {
+			readonly currentBranch?: string | null | undefined;
+			readonly currentHead?: string | undefined;
 			readonly repoUrl: string;
+			readonly worktreeDirty?: boolean | undefined;
 		},
 	) => Promise<unknown>;
 	readonly stopController?: () => Promise<unknown>;

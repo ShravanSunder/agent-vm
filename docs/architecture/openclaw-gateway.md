@@ -189,7 +189,9 @@ The plugin provides:
 - **Shell execution**: run arbitrary commands in the tool VM
 - **Workspace access**: tool VMs use `/work` for lease-local execution.
   The host path is the `workspaceDir` supplied by the OpenClaw sandbox lease
-  request, not the worker/rootfs `/work` paths.
+  request, after the controller maps gateway VM paths back to trusted host roots
+  and verifies the real path is inside either `stateDir/sandboxes` or
+  `zoneFilesDir`.
 
 ---
 

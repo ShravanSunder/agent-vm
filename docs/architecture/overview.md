@@ -275,7 +275,7 @@ The controller exposes a REST API. Routes are split across two modules: core lea
 
 **TCP Pool** (`tcp-pool.ts`): Manages a fixed pool of TCP port slots. Each tool VM gets a unique slot mapped to `127.0.0.1:{basePort + slot}`. The gateway VM sees these as `tool-{slot}.vm.host:22` via Gondolin's synthetic DNS. Pool size is configured in `systemConfig.tcpPool.size`.
 
-**Lease Manager** (`lease-manager.ts`): Creates, tracks, and releases tool VM leases. Each lease holds a reference to a `ManagedVm`, a TCP slot, SSH access details, and timestamps. Leases are scoped by `scopeKey` to enable reuse within the same agent conversation.
+**Lease Manager** (`lease-manager.ts`): Creates, tracks, and releases tool VM leases. Each lease holds a reference to a `ManagedVm`, a TCP slot, SSH access details, workspace identity, and timestamps. Live leases are reused by `zoneId` and `scopeKey` when the requested profile and validated workspace match, so OpenClaw `scope=agent` can keep using the same tool VM while the idle TTL keeps capacity bounded.
 
 **Idle Reaper** (`idle-reaper.ts`): Runs on a 60-second interval. Any lease with `lastUsedAt` older than the TTL (default 30 minutes) is automatically released. This prevents orphaned tool VMs from consuming resources.
 

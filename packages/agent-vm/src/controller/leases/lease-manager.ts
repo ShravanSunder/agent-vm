@@ -9,6 +9,7 @@ export interface ToolProfile {
 }
 
 export interface Lease {
+	readonly agentWorkspaceDir: string;
 	readonly createdAt: number;
 	readonly id: string;
 	readonly lastUsedAt: number;
@@ -23,6 +24,7 @@ export interface Lease {
 	};
 	readonly tcpSlot: number;
 	readonly vm: ManagedVm;
+	readonly workspaceDir: string;
 	readonly zoneId: string;
 }
 
@@ -40,6 +42,27 @@ export interface LeaseManager {
 	releaseLease(leaseId: string): Promise<void>;
 }
 
+function assertReusableScopeLease(
+	existingLease: Lease,
+	requestedLease: {
+		readonly profileId: string;
+		readonly workspaceDir: string;
+		readonly zoneId: string;
+		readonly scopeKey: string;
+	},
+): void {
+	if (existingLease.profileId !== requestedLease.profileId) {
+		throw new Error(
+			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing profileId '${existingLease.profileId}' does not match requested profileId '${requestedLease.profileId}'.`,
+		);
+	}
+	if (existingLease.workspaceDir !== requestedLease.workspaceDir) {
+		throw new Error(
+			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing workspaceDir '${existingLease.workspaceDir}' does not match requested workspaceDir '${requestedLease.workspaceDir}'.`,
+		);
+	}
+}
+
 export function createLeaseManager(options: {
 	readonly createManagedVm: (leaseOptions: {
 		readonly agentWorkspaceDir: string;
@@ -55,8 +78,34 @@ export function createLeaseManager(options: {
 }): LeaseManager {
 	const leases = new Map<string, Lease>();
 
+	function findLeaseForScope(scopeRequest: {
+		readonly scopeKey: string;
+		readonly zoneId: string;
+	}): Lease | undefined {
+		return [...leases.values()].find(
+			(lease) => lease.zoneId === scopeRequest.zoneId && lease.scopeKey === scopeRequest.scopeKey,
+		);
+	}
+
+	function touchLease(lease: Lease): Lease {
+		const touchedLease = {
+			...lease,
+			lastUsedAt: options.now(),
+		};
+		leases.set(lease.id, touchedLease);
+		return touchedLease;
+	}
+
 	return {
 		async createLease(leaseOptions) {
+			const existingLease = findLeaseForScope({
+				scopeKey: leaseOptions.scopeKey,
+				zoneId: leaseOptions.zoneId,
+			});
+			if (existingLease) {
+				assertReusableScopeLease(existingLease, leaseOptions);
+				return touchLease(existingLease);
+			}
 			const tcpSlot = options.tcpPool.allocate();
 			try {
 				const vm = await options.createManagedVm({
@@ -69,6 +118,7 @@ export function createLeaseManager(options: {
 					});
 					const createdAt = options.now();
 					const lease: Lease = {
+						agentWorkspaceDir: leaseOptions.agentWorkspaceDir,
 						createdAt,
 						id: `${leaseOptions.zoneId}-${leaseOptions.scopeKey}-${createdAt}`,
 						lastUsedAt: createdAt,
@@ -77,6 +127,7 @@ export function createLeaseManager(options: {
 						sshAccess,
 						tcpSlot,
 						vm,
+						workspaceDir: leaseOptions.workspaceDir,
 						zoneId: leaseOptions.zoneId,
 					};
 					leases.set(lease.id, lease);
@@ -91,7 +142,8 @@ export function createLeaseManager(options: {
 			}
 		},
 		getLease(leaseId: string): Lease | undefined {
-			return leases.get(leaseId);
+			const lease = leases.get(leaseId);
+			return lease ? touchLease(lease) : undefined;
 		},
 		listLeases(): Lease[] {
 			return [...leases.values()];

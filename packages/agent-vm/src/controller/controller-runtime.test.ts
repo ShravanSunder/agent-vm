@@ -1,3 +1,7 @@
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
 import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -800,12 +804,28 @@ describe('startControllerRuntime', () => {
 	});
 
 	it('releases active leases when runtime.close is called', async () => {
+		const tempDir = await mkdtemp(path.join(tmpdir(), 'agent-vm-runtime-close-'));
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
-		const zone = systemConfig.zones[0];
+		const testSystemConfig = {
+			...systemConfig,
+			zones: systemConfig.zones.map((zoneConfig) => ({
+				...zoneConfig,
+				gateway:
+					zoneConfig.gateway.type === 'openclaw'
+						? {
+								...zoneConfig.gateway,
+								stateDir: path.join(tempDir, 'state', zoneConfig.id),
+								zoneFilesDir: path.join(tempDir, 'zone-files', zoneConfig.id),
+							}
+						: zoneConfig.gateway,
+			})),
+		} satisfies LoadedSystemConfig;
+		const zone = testSystemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected test zone.');
 		}
 		const toolVmClose = vi.fn(async () => {});
+		await mkdir(path.join(tempDir, 'zone-files', 'shravan', 'sandbox-work'), { recursive: true });
 		let startHttpServerArgs:
 			| {
 					app: {
@@ -815,43 +835,15 @@ describe('startControllerRuntime', () => {
 			  }
 			| undefined;
 
-		const runtime = await startControllerRuntime(
-			{
-				systemConfig,
-				zoneId: 'shravan',
-			},
-			{
-				createManagedToolVm: vi.fn(async () => ({
-					close: toolVmClose,
-					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-					enableSsh: vi.fn(async () => ({
-						command: 'ssh ...',
-						host: '127.0.0.1',
-						port: 19000,
-						user: 'sandbox',
-					})),
-					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
-					id: 'tool-vm-close',
-					setIngressRoutes: vi.fn(),
-					getVmInstance: vi.fn(),
-				})),
-				createSecretResolver: async () => ({
-					resolve: async () => '',
-					resolveAll: async () => ({}),
-				}),
-				startGatewayZone: vi.fn(async () => ({
-					image: {
-						built: true,
-						fingerprint: 'gateway-image',
-						imagePath: '/tmp/gateway-image',
-					},
-					ingress: {
-						host: '127.0.0.1',
-						port: 18791,
-					},
-					processSpec: openClawProcessSpec,
-					vm: {
-						close: vi.fn(async () => {}),
+		try {
+			const runtime = await startControllerRuntime(
+				{
+					systemConfig: testSystemConfig,
+					zoneId: 'shravan',
+				},
+				{
+					createManagedToolVm: vi.fn(async () => ({
+						close: toolVmClose,
 						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 						enableSsh: vi.fn(async () => ({
 							command: 'ssh ...',
@@ -860,42 +852,75 @@ describe('startControllerRuntime', () => {
 							user: 'sandbox',
 						})),
 						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
-						id: 'gateway-vm-close',
+						id: 'tool-vm-close',
 						setIngressRoutes: vi.fn(),
 						getVmInstance: vi.fn(),
-					},
-					zone,
-				})),
-				startHttpServer: vi.fn(async (options) => {
-					startHttpServerArgs = options;
-					return {
-						close: async () => {},
-					};
+					})),
+					createSecretResolver: async () => ({
+						resolve: async () => '',
+						resolveAll: async () => ({}),
+					}),
+					startGatewayZone: vi.fn(async () => ({
+						image: {
+							built: true,
+							fingerprint: 'gateway-image',
+							imagePath: '/tmp/gateway-image',
+						},
+						ingress: {
+							host: '127.0.0.1',
+							port: 18791,
+						},
+						processSpec: openClawProcessSpec,
+						vm: {
+							close: vi.fn(async () => {}),
+							enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+							enableSsh: vi.fn(async () => ({
+								command: 'ssh ...',
+								host: '127.0.0.1',
+								port: 19000,
+								user: 'sandbox',
+							})),
+							exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+							id: 'gateway-vm-close',
+							setIngressRoutes: vi.fn(),
+							getVmInstance: vi.fn(),
+						},
+						zone,
+					})),
+					startHttpServer: vi.fn(async (options) => {
+						startHttpServerArgs = options;
+						return {
+							close: async () => {},
+						};
+					}),
+				},
+			);
+
+			if (!startHttpServerArgs) {
+				throw new Error('Expected runtime HTTP server args');
+			}
+
+			const leaseResponse = await startHttpServerArgs.app.request('/lease', {
+				body: JSON.stringify({
+					agentWorkspaceDir: '/home/openclaw/zone-files',
+					profileId: 'standard',
+					scopeKey: 'close-runtime',
+					workspaceDir: '/home/openclaw/zone-files/sandbox-work',
+					zoneId: 'shravan',
 				}),
-			},
-		);
+				headers: {
+					'content-type': 'application/json',
+				},
+				method: 'POST',
+			});
 
-		if (!startHttpServerArgs) {
-			throw new Error('Expected runtime HTTP server args');
+			expect(leaseResponse.status).toBe(200);
+			await runtime.close();
+
+			expect(toolVmClose).toHaveBeenCalledTimes(1);
+		} finally {
+			await rm(tempDir, { recursive: true, force: true });
 		}
-
-		await startHttpServerArgs.app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/host/agent-work',
-				profileId: 'standard',
-				scopeKey: 'close-runtime',
-				workspaceDir: '/host/sandbox-work',
-				zoneId: 'shravan',
-			}),
-			headers: {
-				'content-type': 'application/json',
-			},
-			method: 'POST',
-		});
-
-		await runtime.close();
-
-		expect(toolVmClose).toHaveBeenCalledTimes(1);
 	});
 
 	it('surfaces runtime record deletion failures during shutdown', async () => {

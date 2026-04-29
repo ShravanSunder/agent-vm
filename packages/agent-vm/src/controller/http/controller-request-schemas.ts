@@ -64,6 +64,9 @@ export const controllerPushBranchesResponseSchema = z.object({
 
 export const controllerPullDefaultRequestSchema = z.object({
 	repoUrl: z.string().min(1),
+	currentBranch: z.string().min(1).nullable().optional(),
+	currentHead: z.string().min(1).optional(),
+	worktreeDirty: z.boolean().optional(),
 });
 
 export const controllerPullDefaultResponseSchema = z.object({
@@ -77,4 +80,23 @@ export const controllerPullDefaultResponseSchema = z.object({
 	fetchedCommits: z.array(commitSummarySchema).optional(),
 	commitsSinceForkPoint: z.array(commitSummarySchema).optional(),
 	divergence: divergenceSchema.extend({ forkPoint: z.string() }).optional(),
+	currentBranchSync: z
+		.object({
+			branch: z.string().nullable(),
+			upstreamTrackingRef: z.string().nullable(),
+			status: z.enum([
+				'ahead',
+				'default-branch',
+				'detached',
+				'dirty-worktree',
+				'diverged',
+				'fast-forwarded',
+				'no-upstream',
+				'up-to-date',
+			]),
+			reason: z.string().optional(),
+			localHead: z.string().optional(),
+			remoteHead: z.string().optional(),
+		})
+		.optional(),
 });

@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import type { Lease } from '../leases/lease-manager.js';
+import { LeaseWorkspaceValidationError } from '../leases/lease-workspace-paths.js';
 import type { PreparedWorkerTask } from '../worker-task-runner.js';
 import {
 	ControllerRuntimeAtCapacityError,
@@ -16,6 +17,7 @@ import { createControllerApp } from './controller-http-routes.js';
 
 function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 	return {
+		agentWorkspaceDir: '/host/agent-work',
 		createdAt: tcpSlot,
 		id: leaseId,
 		lastUsedAt: tcpSlot,
@@ -40,6 +42,7 @@ function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 			setIngressRoutes: vi.fn(),
 			getVmInstance: vi.fn(),
 		},
+		workspaceDir: '/host/sandbox-work',
 		zoneId: 'shravan',
 	};
 }
@@ -131,6 +134,7 @@ function createPreparedWorkerTaskStub(
 describe('createControllerApp', () => {
 	it('creates, fetches, and releases leases through the controller api', async () => {
 		const lease: Lease = {
+			agentWorkspaceDir: '/home/openclaw/work',
 			createdAt: 1,
 			id: 'lease-123',
 			lastUsedAt: 1,
@@ -159,6 +163,7 @@ describe('createControllerApp', () => {
 				setIngressRoutes: vi.fn(),
 				getVmInstance: vi.fn(),
 			},
+			workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
 			zoneId: 'shravan',
 		};
 		const createLease = vi.fn(async () => lease);
@@ -211,6 +216,90 @@ describe('createControllerApp', () => {
 		expect(getResponse.status).toBe(200);
 		expect(deleteResponse.status).toBe(204);
 		expect(releaseLease).toHaveBeenCalledWith('lease-123');
+	});
+
+	it('normalizes lease workspaceDir before creating the lease', async () => {
+		const createLease = vi.fn(async () => createLeaseStub('lease-normalized', 0));
+		const app = createControllerApp({
+			toolProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			readIdentityPem: async () => 'pem-from-file',
+			leaseManager: {
+				createLease,
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			resolveLeaseWorkspaceDir: vi.fn(async () => '/host/state/shravan/sandboxes/agent/work'),
+		});
+
+		const createResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				profileId: 'standard',
+				scopeKey: 'agent:main',
+				workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(createResponse.status).toBe(200);
+		expect(createLease).toHaveBeenCalledWith(
+			expect.objectContaining({
+				workspaceDir: '/host/state/shravan/sandboxes/agent/work',
+			}),
+		);
+	});
+
+	it('rejects unsafe lease workspaceDir before creating the lease', async () => {
+		const createLease = vi.fn(async () => createLeaseStub('lease-unsafe', 0));
+		const app = createControllerApp({
+			toolProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease,
+				getLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			resolveLeaseWorkspaceDir: vi.fn(async () => {
+				throw new LeaseWorkspaceValidationError('workspaceDir outside allowed roots');
+			}),
+		});
+
+		const createResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				profileId: 'standard',
+				scopeKey: 'agent:main',
+				workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/../../../etc',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(createResponse.status).toBe(400);
+		await expect(createResponse.json()).resolves.toEqual({
+			error: 'workspaceDir outside allowed roots',
+		});
+		expect(createLease).not.toHaveBeenCalled();
 	});
 
 	it('returns 503 when the tcp pool is exhausted', async () => {

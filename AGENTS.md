@@ -108,7 +108,7 @@ between repo config, state, cache, workspace, or backup directories.
 - `POST /zones/:zoneId/worker-tasks` — start worker task, returns `202 { taskId, status: "accepted" }`
 - `GET /zones/:zoneId/tasks/:taskId` — replayed worker task state snapshot
 - `POST /zones/:zoneId/tasks/:taskId/push-branches` — controller-side git push
-- `POST /zones/:zoneId/tasks/:taskId/pull-default` — controller-side default-branch pull
+- `POST /zones/:zoneId/tasks/:taskId/pull-default` — controller-side default/current branch refresh
 - `POST /zones/:zoneId/tasks/:taskId/close` — request task cancellation
 
 ## Key Files
@@ -149,7 +149,7 @@ Allowed runtime auth path:
 3. The controller generates `runtimeInstructions` and the agent-facing
    `/agent-vm/agents.md` runtime index at task boot. Worker repo docs live at
    `/work/repos/AGENTS.md` with a `CLAUDE.md` symlink for Claude-compatible
-   discovery. Tool VMs still use `/workspace` as their lease-local path.
+   discovery. OpenClaw Tool VMs mount the validated lease workspace at `/work`.
 4. Gondolin runtime puts a placeholder in the VM env at boot; the proxy swaps it
    for the real token only on outbound calls to allowed hosts.
 

@@ -251,10 +251,10 @@ describe('live integration: controller restart persistence', () => {
 
 		const createLeaseResponse = await fetch(`http://127.0.0.1:${controllerPort}/lease`, {
 			body: JSON.stringify({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/home/openclaw/zone-files',
 				profileId: 'standard',
 				scopeKey: 'restart-test',
-				workspaceDir: '/work',
+				workspaceDir: '/home/openclaw/zone-files',
 				zoneId: 'shravan',
 			}),
 			headers: { 'content-type': 'application/json' },

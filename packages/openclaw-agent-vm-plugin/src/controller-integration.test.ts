@@ -17,6 +17,7 @@ describe('gondolin controller integration', () => {
 			},
 			leaseManager: {
 				createLease: vi.fn(async () => ({
+					agentWorkspaceDir: '/home/openclaw/zone-files',
 					createdAt: 1,
 					id: 'lease-123',
 					lastUsedAt: 1,
@@ -45,6 +46,7 @@ describe('gondolin controller integration', () => {
 						setIngressRoutes: vi.fn(),
 						getVmInstance: vi.fn(),
 					},
+					workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 					zoneId: 'shravan',
 				})),
 				getLease: vi.fn(),
