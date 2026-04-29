@@ -61,7 +61,12 @@ async function gitOutput(cwd: string, args: readonly string[]): Promise<string> 
 		reject: false,
 		timeout: 10_000,
 	});
-	if ((result.exitCode ?? 0) !== 0) {
+	if (typeof result.exitCode !== 'number') {
+		throw new Error(
+			`git ${args.join(' ')} terminated without an exit code\n${result.stdout}\n${result.stderr}`.trim(),
+		);
+	}
+	if (result.exitCode !== 0) {
 		throw new Error(`git ${args.join(' ')} failed\n${result.stdout}\n${result.stderr}`.trim());
 	}
 	return result.stdout.trim();
@@ -81,7 +86,12 @@ async function gitRefExists(cwd: string, ref: string): Promise<boolean> {
 			timeout: 10_000,
 		},
 	);
-	if ((result.exitCode ?? 0) === 0) {
+	if (typeof result.exitCode !== 'number') {
+		throw new Error(
+			`git rev-parse --verify --quiet ${ref} terminated without an exit code\n${result.stdout}\n${result.stderr}`.trim(),
+		);
+	}
+	if (result.exitCode === 0) {
 		return true;
 	}
 	if (result.stderr.trim().length > 0) {
