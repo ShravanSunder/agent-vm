@@ -1,4 +1,4 @@
-import fs from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -68,7 +68,6 @@ function createPreparedWorkerTaskStub(
 		secrets: {},
 		allowedHosts: ['github.com'],
 		websocketBypass: [],
-		toolProfile: 'standard',
 	};
 	return {
 		taskId,
@@ -174,7 +173,7 @@ describe('createControllerApp', () => {
 		}));
 		const releaseLease = vi.fn(async () => {});
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -226,8 +225,9 @@ describe('createControllerApp', () => {
 
 	it('normalizes lease workspaceDir before creating the lease', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-normalized', 0));
+		const resolveLeaseWorkspaceDir = vi.fn(async () => '/host/state/shravan/sandboxes/agent/work');
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -242,7 +242,7 @@ describe('createControllerApp', () => {
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
 			},
-			resolveLeaseWorkspaceDir: vi.fn(async () => '/host/state/shravan/sandboxes/agent/work'),
+			resolveLeaseWorkspaceDir,
 		});
 
 		const createResponse = await app.request('/lease', {
@@ -260,6 +260,11 @@ describe('createControllerApp', () => {
 		});
 
 		expect(createResponse.status).toBe(200);
+		expect(resolveLeaseWorkspaceDir).toHaveBeenCalledWith({
+			scopeKey: 'agent:main',
+			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
+			zoneId: 'shravan',
+		});
 		expect(createLease).toHaveBeenCalledWith(
 			expect.objectContaining({
 				workspaceDir: '/host/state/shravan/sandboxes/agent/work',
@@ -270,7 +275,7 @@ describe('createControllerApp', () => {
 	it('rejects unsafe lease workspaceDir before creating the lease', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-unsafe', 0));
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -312,7 +317,7 @@ describe('createControllerApp', () => {
 
 	it('returns 503 when the tcp pool is exhausted', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -352,7 +357,7 @@ describe('createControllerApp', () => {
 
 	it('returns 409 when lease scope conflicts with an existing live lease', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -390,7 +395,7 @@ describe('createControllerApp', () => {
 		});
 	});
 
-	it('uses the zone toolProfile instead of trusting the requested profileId', async () => {
+	it('uses the zone defaultToolVmProfile instead of trusting the requested profileId', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-gpu', 0));
 		const app = createControllerApp({
 			leaseManager: {
@@ -400,7 +405,7 @@ describe('createControllerApp', () => {
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				gpu: { cpus: 4, memory: '8G', imageProfile: 'default' },
 				standard: {
 					cpus: 1,
@@ -408,7 +413,7 @@ describe('createControllerApp', () => {
 					imageProfile: 'default',
 				},
 			},
-			zoneToolProfiles: {
+			zoneDefaultToolVmProfiles: {
 				shravan: 'gpu',
 			},
 		});
@@ -441,6 +446,66 @@ describe('createControllerApp', () => {
 		);
 	});
 
+	it('uses an agent-specific tool VM profile for agent-scoped leases', async () => {
+		const createLease = vi.fn(async () => createLeaseStub('lease-agent-profile', 0));
+		const app = createControllerApp({
+			leaseManager: {
+				createLease,
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+				toolsDev: {
+					cpus: 4,
+					memory: '8G',
+					imageProfile: 'tools-dev',
+				},
+			},
+			zoneAgentToolVmProfiles: {
+				shravan: {
+					shravan: 'toolsDev',
+				},
+			},
+			zoneDefaultToolVmProfiles: {
+				shravan: 'standard',
+			},
+		});
+
+		const createResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/zone/agents/shravan',
+				profileId: 'standard',
+				scopeKey: 'agent:shravan',
+				workspaceDir: '/zone/agents/shravan',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(createResponse.status).toBe(200);
+		expect(createLease).toHaveBeenCalledWith(
+			expect.objectContaining({
+				profile: {
+					cpus: 4,
+					memory: '8G',
+					imageProfile: 'tools-dev',
+				},
+				profileId: 'toolsDev',
+				scopeKey: 'agent:shravan',
+			}),
+		);
+	});
+
 	it('rejects lease creation for an unknown zone', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-unknown-zone', 0));
 		const app = createControllerApp({
@@ -451,14 +516,14 @@ describe('createControllerApp', () => {
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
 					imageProfile: 'default',
 				},
 			},
-			zoneToolProfiles: {
+			zoneDefaultToolVmProfiles: {
 				shravan: 'standard',
 			},
 		});
@@ -488,14 +553,14 @@ describe('createControllerApp', () => {
 		const destroyZone = vi.fn(async () => ({ ok: true, purged: true, zoneId: 'shravan' }));
 		const getStatus = vi.fn(async () => ({
 			controllerPort: 18800,
-			toolProfiles: ['standard'],
+			toolVmProfiles: ['standard'],
 			zones: [
 				{
 					gatewayType: 'openclaw',
 					id: 'shravan',
 					ingressPort: 18791,
 					running: true,
-					toolProfile: 'standard',
+					agentToolVmProfiles: {},
 				},
 			],
 		}));
@@ -504,7 +569,7 @@ describe('createControllerApp', () => {
 			id: 'shravan',
 			ingressPort: 18791,
 			running: true,
-			toolProfile: 'standard',
+			agentToolVmProfiles: {},
 		}));
 		const getZoneLogs = vi.fn(async () => ({
 			output: 'gateway log line',
@@ -519,7 +584,7 @@ describe('createControllerApp', () => {
 			zoneId: 'shravan',
 		}));
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -578,7 +643,7 @@ describe('createControllerApp', () => {
 
 	it('returns 400 for invalid lease create payload', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -611,7 +676,7 @@ describe('createControllerApp', () => {
 
 	it('returns 404 when fetching a non-existent lease', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -644,7 +709,7 @@ describe('createControllerApp', () => {
 		});
 		const peekLease = vi.fn(() => ({ kind: 'snapshot' as const, lease }));
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -681,7 +746,7 @@ describe('createControllerApp', () => {
 
 	it('returns 404 when peeking a non-existent lease', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -710,7 +775,7 @@ describe('createControllerApp', () => {
 	it('lists active leases via GET /leases', async () => {
 		const listLeases = vi.fn(() => [createLeaseStub('lease-1', 0), createLeaseStub('lease-2', 1)]);
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -743,7 +808,7 @@ describe('createControllerApp', () => {
 	it('gracefully stops the controller via POST /stop', async () => {
 		const stopController = vi.fn(async () => ({ ok: true }));
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -787,7 +852,7 @@ describe('createControllerApp', () => {
 			],
 		}));
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -850,7 +915,7 @@ describe('createControllerApp', () => {
 			throw new PullDefaultValidationError('Repo is not registered for active task.');
 		});
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -896,7 +961,7 @@ describe('createControllerApp', () => {
 			throw new Error('boom https://x-access-token:secret-token@github.com/acme/widgets.git');
 		});
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -940,7 +1005,7 @@ describe('createControllerApp', () => {
 
 	it('returns schema details for invalid destroy requests', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -980,7 +1045,7 @@ describe('createControllerApp', () => {
 
 	it('returns schema details for invalid execute-command requests', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -1021,7 +1086,7 @@ describe('createControllerApp', () => {
 
 	it('returns 400 for malformed JSON bodies on controller operation routes', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -1105,7 +1170,7 @@ describe('createControllerApp', () => {
 				executeWorkerTask,
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -1181,7 +1246,7 @@ describe('createControllerApp', () => {
 				executeWorkerTask,
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -1224,7 +1289,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('writes a task-failed sentinel when background failure event recording fails', async () => {
-		const stateRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'controller-failure-sentinel-'));
+		const stateRoot = await mkdtemp(path.join(os.tmpdir(), 'controller-failure-sentinel-'));
 		const taskId = 'worker-task-sentinel';
 		const taskStateDir = path.join(stateRoot, 'tasks', taskId, 'state');
 		const prepareWorkerTask = vi.fn(async () =>
@@ -1258,7 +1323,7 @@ describe('createControllerApp', () => {
 				executeWorkerTask,
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -1282,7 +1347,7 @@ describe('createControllerApp', () => {
 			expect(response.status).toBe(202);
 			await vi.waitFor(async () => {
 				const sentinel = JSON.parse(
-					await fs.readFile(path.join(taskStateDir, 'tasks', `${taskId}.failed`), 'utf8'),
+					await readFile(path.join(taskStateDir, 'tasks', `${taskId}.failed`), 'utf8'),
 				) as { readonly status?: string; readonly failureReason?: string };
 				expect(sentinel).toMatchObject({
 					status: 'failed',
@@ -1290,7 +1355,7 @@ describe('createControllerApp', () => {
 				});
 			});
 		} finally {
-			await fs.rm(stateRoot, { recursive: true, force: true });
+			await rm(stateRoot, { recursive: true, force: true });
 		}
 	});
 
@@ -1314,7 +1379,7 @@ describe('createControllerApp', () => {
 				executeWorkerTask: vi.fn(async () => ({})),
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -1364,7 +1429,7 @@ describe('createControllerApp', () => {
 				executeWorkerTask: vi.fn(async () => ({})),
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -1418,7 +1483,7 @@ describe('createControllerApp', () => {
 				refreshZoneCredentials: vi.fn(async () => ({})),
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					imageProfile: 'default',
@@ -1459,7 +1524,7 @@ describe('createControllerApp', () => {
 				refreshZoneCredentials: vi.fn(async () => ({})),
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					imageProfile: 'default',
@@ -1494,7 +1559,7 @@ describe('createControllerApp', () => {
 				refreshZoneCredentials: vi.fn(async () => ({})),
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					imageProfile: 'default',
@@ -1534,7 +1599,7 @@ describe('createControllerApp', () => {
 				refreshZoneCredentials: vi.fn(async () => ({})),
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					imageProfile: 'default',

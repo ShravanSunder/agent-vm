@@ -32,7 +32,7 @@ const systemConfig = {
 		basePort: 19000,
 		size: 5,
 	},
-	toolProfiles: {
+	toolVmProfiles: {
 		standard: {
 			cpus: 1,
 			memory: '1G',
@@ -55,7 +55,8 @@ const systemConfig = {
 			id: 'shravan',
 			secrets: {},
 			websocketBypass: [],
-			toolProfile: 'standard',
+			defaultToolVmProfile: 'standard',
+			agentToolVmProfiles: {},
 		},
 	],
 } satisfies SystemConfig;

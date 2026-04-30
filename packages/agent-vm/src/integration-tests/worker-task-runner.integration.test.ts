@@ -247,10 +247,11 @@ describe('worker-task-runner integration', () => {
 				secrets: {},
 				allowedHosts: ['github.com'],
 				websocketBypass: [],
-				toolProfile: 'standard',
+				defaultToolVmProfile: 'standard',
+				agentToolVmProfiles: {},
 			},
 		],
-		toolProfiles: {
+		toolVmProfiles: {
 			standard: { memory: '1G', cpus: 1, imageProfile: 'default' },
 		},
 		tcpPool: { basePort: 19000, size: 4 },

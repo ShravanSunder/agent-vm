@@ -304,7 +304,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(gatewayDockerfile).toContain(
 			'find /opt/openclaw/plugin-runtime-deps -name .openclaw-runtime-deps.json -type f -print -quit',
 		);
-		expect(gatewayDockerfile).toContain('/home/openclaw/zone-files');
+		expect(gatewayDockerfile).toContain('/zone');
 		expect(gatewayDockerfile).not.toContain('/home/openclaw/workspace');
 		expect(gatewayDockerfile).toContain(
 			'COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin',
@@ -662,7 +662,7 @@ describe('scaffoldAgentVmProject', () => {
 			'http://localhost:18791',
 		]);
 		expect(openClawConfig.agents.defaults.thinkingDefault).toBeUndefined();
-		expect(openClawConfig.agents.defaults.workspace).toBe('/home/openclaw/zone-files');
+		expect(openClawConfig.agents.defaults.workspace).toBe('/zone');
 		expect(openClawConfig.agents.defaults.models['openai-codex/gpt-5.4'].params.thinking).toBe(
 			'low',
 		);
@@ -990,17 +990,17 @@ describe('scaffoldAgentVmProject', () => {
 					readonly default: { readonly buildConfig: string; readonly dockerfile: string };
 				};
 			};
-			readonly toolProfiles: {
+			readonly toolVmProfiles: {
 				readonly standard: { readonly imageProfile: string };
 			};
 			readonly tcpPool: { readonly basePort: number; readonly size: number };
-			readonly zones: readonly [{ readonly toolProfile: string }];
+			readonly zones: readonly [{ readonly defaultToolVmProfile: string }];
 		};
 
-		expect(config.zones[0].toolProfile).toBe('standard');
+		expect(config.zones[0].defaultToolVmProfile).toBe('standard');
 		expect(config.tcpPool).toEqual({ basePort: 19000, size: 12 });
-		expect(config.toolProfiles.standard.imageProfile).toBe('default');
-		expect(config.toolProfiles.standard).not.toHaveProperty('workspaceRoot');
+		expect(config.toolVmProfiles.standard.imageProfile).toBe('default');
+		expect(config.toolVmProfiles.standard).not.toHaveProperty('workspaceRoot');
 		expect(config.imageProfiles.toolVms.default.buildConfig).toBe(
 			'../vm-images/tool-vms/default/build-config.json',
 		);
@@ -1367,7 +1367,7 @@ describe('scaffoldAgentVmProject', () => {
 						}),
 					}),
 				]),
-				toolProfiles: z.record(z.string(), z.unknown()).optional(),
+				toolVmProfiles: z.record(z.string(), z.unknown()).optional(),
 			})
 			.parse(systemConfig);
 
@@ -1386,7 +1386,7 @@ describe('scaffoldAgentVmProject', () => {
 		);
 		expect(podWorkerSystemConfig.zones[0].gateway.stateDir).toBe('/var/agent-vm/state');
 		expect(podWorkerSystemConfig.zones[0].gateway).not.toHaveProperty('zoneFilesDir');
-		expect(podWorkerSystemConfig.toolProfiles).toEqual({});
+		expect(podWorkerSystemConfig.toolVmProfiles).toEqual({});
 
 		const gatewayBuildConfig = JSON.parse(
 			await fs.readFile(

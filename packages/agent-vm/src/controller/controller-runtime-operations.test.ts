@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
 import { createControllerRuntimeOperations } from './controller-runtime-operations.js';
+import type { OpenClawZoneRuntime } from './zone-runtimes/zone-runtime-types.js';
 
 const systemConfig = {
 	cacheDir: './cache',
@@ -42,10 +43,29 @@ const systemConfig = {
 			secrets: {},
 			allowedHosts: ['api.openai.com'],
 			websocketBypass: [],
-			toolProfile: 'standard',
+			defaultToolVmProfile: 'standard',
+			agentToolVmProfiles: {},
+		},
+		{
+			id: 'alevtina',
+			gateway: {
+				type: 'openclaw',
+				imageProfile: 'openclaw',
+				memory: '2G',
+				cpus: 2,
+				port: 18792,
+				config: './config/alevtina/openclaw.json',
+				stateDir: './state/alevtina',
+				zoneFilesDir: './zone-files/alevtina',
+			},
+			secrets: {},
+			allowedHosts: ['api.openai.com'],
+			websocketBypass: [],
+			defaultToolVmProfile: 'standard',
+			agentToolVmProfiles: {},
 		},
 	],
-	toolProfiles: {
+	toolVmProfiles: {
 		standard: {
 			memory: '1G',
 			cpus: 1,
@@ -59,48 +79,65 @@ const systemConfig = {
 } satisfies SystemConfig;
 
 describe('createControllerRuntimeOperations', () => {
-	it('propagates gateway log read failures', async () => {
+	it('dispatches OpenClaw operations to the requested zone runtime', async () => {
+		const shravanRuntime = {
+			destroy: vi.fn(async (purged: boolean) => ({ ok: true as const, purged, zoneId: 'shravan' })),
+			enableSsh: vi.fn(async () => ({ command: 'ssh shravan', host: '127.0.0.1', port: 22 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'shravan' })),
+			getLogs: vi.fn(async () => ({ output: 'shravan logs', zoneId: 'shravan' })),
+			refreshCredentials: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
+			upgrade: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
+		} satisfies Pick<
+			OpenClawZoneRuntime,
+			'destroy' | 'enableSsh' | 'exec' | 'getLogs' | 'refreshCredentials' | 'upgrade'
+		>;
+		const alevtinaRuntime = {
+			destroy: vi.fn(async (purged: boolean) => ({
+				ok: true as const,
+				purged,
+				zoneId: 'alevtina',
+			})),
+			enableSsh: vi.fn(async () => ({
+				command: 'ssh alevtina',
+				host: '127.0.0.1',
+				port: 22,
+			})),
+			exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'alevtina' })),
+			getLogs: vi.fn(async () => ({ output: 'alevtina logs', zoneId: 'alevtina' })),
+			refreshCredentials: vi.fn(async () => ({ ok: true as const, zoneId: 'alevtina' })),
+			upgrade: vi.fn(async () => ({ ok: true as const, zoneId: 'alevtina' })),
+		} satisfies Pick<
+			OpenClawZoneRuntime,
+			'destroy' | 'enableSsh' | 'exec' | 'getLogs' | 'refreshCredentials' | 'upgrade'
+		>;
 		const operations = createControllerRuntimeOperations({
-			activeZoneId: 'shravan',
-			getGateway: () => ({
-				ingress: { host: '127.0.0.1', port: 18791 },
-				processSpec: {
-					bootstrapCommand: 'bootstrap-openclaw',
-					guestListenPort: 18789,
-					healthCheck: { type: 'http', port: 18789, path: '/' } as const,
-					logPath: '/tmp/openclaw.log',
-					startCommand: 'start-openclaw',
-				},
-				vm: {
-					close: async () => {},
-					enableSsh: async () => ({}),
-					exec: vi.fn(async () => {
-						throw new Error('gateway handle is dead');
-					}),
-					id: 'gateway-vm-1',
-				},
+			getActiveLeases: () => [],
+			getOpenClawRuntime: (zoneId) => (zoneId === 'shravan' ? shravanRuntime : alevtinaRuntime),
+			getRuntime: (zoneId) => (zoneId === 'shravan' ? shravanRuntime : alevtinaRuntime),
+			getRuntimeStatusByZone: () => ({
+				alevtina: { lifecycleState: 'running' },
+				shravan: { lifecycleState: 'running' },
 			}),
-			getGatewayBootedAt: () => '2026-04-27T10:00:00.000Z',
-			getZone: () => {
-				const zone = systemConfig.zones[0];
-				if (!zone) {
-					throw new Error('Expected test zone');
-				}
-				return zone;
-			},
-			leaseManager: {
-				listLeases: () => [],
-				releaseLease: async () => {},
-			},
-			restartGatewayZone: async () => {},
-			secretResolver: {
-				resolve: async () => '',
-				resolveAll: async () => ({}),
-			},
-			stopGatewayZone: async () => {},
 			systemConfig,
 		});
 
-		await expect(operations.getZoneLogs('shravan')).rejects.toThrow('gateway handle is dead');
+		await expect(operations.getZoneLogs('alevtina')).resolves.toEqual({
+			output: 'alevtina logs',
+			zoneId: 'alevtina',
+		});
+		await expect(operations.execInZone('shravan', 'pwd')).resolves.toEqual({
+			exitCode: 0,
+			stderr: '',
+			stdout: 'shravan',
+		});
+		await expect(operations.destroyZone('alevtina', true)).resolves.toEqual({
+			ok: true,
+			purged: true,
+			zoneId: 'alevtina',
+		});
+
+		expect(alevtinaRuntime.getLogs).toHaveBeenCalledTimes(1);
+		expect(shravanRuntime.exec).toHaveBeenCalledWith('pwd');
+		expect(alevtinaRuntime.destroy).toHaveBeenCalledWith(true);
 	});
 });

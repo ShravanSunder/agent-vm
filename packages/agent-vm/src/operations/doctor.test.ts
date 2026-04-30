@@ -1,4 +1,4 @@
-import fs from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -51,14 +51,27 @@ const systemConfig = {
 				config: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
+				authProfilesByAgent: {
+					shravan: { source: 'environment', envVar: 'SHRAVAN_AUTH_PROFILES' },
+				},
 			},
 			secrets: {},
 			allowedHosts: ['api.anthropic.com'],
 			websocketBypass: [],
-			toolProfile: 'standard',
+			defaultToolVmProfile: 'standard',
+			agentToolVmProfiles: {},
+			agentSandboxSeeds: {
+				shravan: [
+					{
+						source: { source: 'environment', envVar: 'SHRAVAN_GCLOUD_CONFIG' },
+						target: '.config/gcloud/configurations/config_default',
+						mode: 0o600,
+					},
+				],
+			},
 		},
 	],
-	toolProfiles: {
+	toolVmProfiles: {
 		standard: {
 			memory: '1G',
 			cpus: 1,
@@ -116,7 +129,6 @@ function createWorkerOnlySystemConfig(): SystemConfig {
 				secrets: {},
 				allowedHosts: ['api.openai.com'],
 				websocketBypass: [],
-				toolProfile: 'standard',
 			},
 		],
 	};
@@ -148,6 +160,24 @@ describe('runControllerDoctor', () => {
 		expect(result.checks.find((check) => check.name === 'debugfs')?.ok).toBe(true);
 		expect(result.checks.find((check) => check.name === 'cpio')?.ok).toBe(true);
 		expect(result.checks.find((check) => check.name === 'lz4')?.ok).toBe(true);
+		expect(
+			result.checks.find((check) => check.name === 'zone-default-tool-vm-profile-shravan'),
+		).toMatchObject({
+			ok: true,
+			hint: 'standard',
+		});
+		expect(
+			result.checks.find((check) => check.name === 'zone-agent-auth-profile-shravan-shravan'),
+		).toMatchObject({
+			ok: true,
+			hint: 'configured',
+		});
+		expect(
+			result.checks.find((check) => check.name === 'zone-agent-sandbox-seed-shravan-shravan-0'),
+		).toMatchObject({
+			ok: true,
+			hint: '.config/gcloud/configurations/config_default',
+		});
 		expect(result.checks.find((check) => check.name === 'age')).toBeUndefined();
 		expect(result.checks.find((check) => check.name === '1password-cli')).toBeUndefined();
 	});
@@ -511,10 +541,10 @@ describe('runControllerDoctor', () => {
 
 describe('collectVmHostSystemDoctorCheck', () => {
 	it('flags missing vm-host-system files for container configs', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
 		const configPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
-		await fs.mkdir(path.dirname(configPath), { recursive: true });
-		await fs.writeFile(
+		await mkdir(path.dirname(configPath), { recursive: true });
+		await writeFile(
 			path.join(path.dirname(configPath), 'systemCacheIdentifier.json'),
 			JSON.stringify({ hostSystemType: 'container' }),
 			'utf8',
@@ -532,19 +562,19 @@ describe('collectVmHostSystemDoctorCheck', () => {
 	});
 
 	it('passes when vm-host-system files exist for container configs', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
 		const configPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
 		const vmHostSystemPath = path.join(temporaryDirectoryPath, 'vm-host-system');
-		await fs.mkdir(path.dirname(configPath), { recursive: true });
-		await fs.mkdir(vmHostSystemPath, { recursive: true });
-		await fs.writeFile(
+		await mkdir(path.dirname(configPath), { recursive: true });
+		await mkdir(vmHostSystemPath, { recursive: true });
+		await writeFile(
 			path.join(path.dirname(configPath), 'systemCacheIdentifier.json'),
 			JSON.stringify({ hostSystemType: 'container' }),
 			'utf8',
 		);
 		await Promise.all(
 			['Dockerfile', 'start.sh', 'agent-vm-controller.service'].map(async (fileName) => {
-				await fs.writeFile(path.join(vmHostSystemPath, fileName), '', 'utf8');
+				await writeFile(path.join(vmHostSystemPath, fileName), '', 'utf8');
 			}),
 		);
 
@@ -560,12 +590,12 @@ describe('collectVmHostSystemDoctorCheck', () => {
 	});
 
 	it('checks runtime host files inside /etc/agent-vm container configs', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
 		const systemCacheIdentifierPath = path.join(
 			temporaryDirectoryPath,
 			'systemCacheIdentifier.json',
 		);
-		await fs.writeFile(
+		await writeFile(
 			systemCacheIdentifierPath,
 			JSON.stringify({ hostSystemType: 'container' }),
 			'utf8',
@@ -584,14 +614,14 @@ describe('collectVmHostSystemDoctorCheck', () => {
 			hint: expect.stringContaining('Cannot access /usr/local/bin/start.sh'),
 		});
 
-		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
 	it('skips vm-host-system checks for non-container configs', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
 		const configPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
-		await fs.mkdir(path.dirname(configPath), { recursive: true });
-		await fs.writeFile(
+		await mkdir(path.dirname(configPath), { recursive: true });
+		await writeFile(
 			path.join(path.dirname(configPath), 'systemCacheIdentifier.json'),
 			JSON.stringify({ hostSystemType: 'bare-metal' }),
 			'utf8',

@@ -4,7 +4,7 @@
 
 **Goal:** Move hot runtime/package-manager work off Gondolin RealFS while preserving host-visible durable state, repairable caches, git metadata, backups, and controller-owned push/auth boundaries.
 
-**Architecture:** OpenClaw gateway images should carry stable hot runtime dependencies in the VM rootfs, while packable state stays on RealFS and repairable caches stay under cacheDir. OpenClaw's RealFS `/home/openclaw/zone-files` mount is a durable zone-files area, not the same storage class as worker execution files. Worker tasks should use VM-local rootfs/COW paths under `/work` for fast source/package/build operations, with a host-backed separate gitdir mounted through RealFS from a non-backup runtimeDir so the controller can push committed work during the task without swallowing git object databases into normal zone backups.
+**Architecture:** OpenClaw gateway images should carry stable hot runtime dependencies in the VM rootfs, while packable state stays on RealFS and repairable caches stay under cacheDir. OpenClaw's RealFS `/zone` mount is a durable zone-files area, not the same storage class as worker execution files. Worker tasks should use VM-local rootfs/COW paths under `/work` for fast source/package/build operations, with a host-backed separate gitdir mounted through RealFS from a non-backup runtimeDir so the controller can push committed work during the task without swallowing git object databases into normal zone backups.
 
 **Tech Stack:** TypeScript, pnpm, Vitest, Gondolin VFS providers, OpenClaw bundled plugin runtime deps, bare Git repositories plus explicit `--git-dir` / `--work-tree`, Node 24.
 
@@ -20,7 +20,7 @@ Durable household state belongs in RealFS stateDir and is included in backups.
 
 Repairable heavy artifacts belong in RealFS cacheDir and are not included in backups.
 
-The OpenClaw path `/home/openclaw/zone-files` is durable zone files, not
+The OpenClaw path `/zone` is durable zone files, not
 worker-style hot execution storage. It is RealFS-mounted and included in
 OpenClaw zone backups. The config field is `gateway.zoneFilesDir`. Remove
 `gateway.workspaceDir` entirely in this cutover; do not support an alias.

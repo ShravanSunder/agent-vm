@@ -60,10 +60,11 @@ const systemConfig = {
 			secrets: {},
 			allowedHosts: ['api.anthropic.com'],
 			websocketBypass: [],
-			toolProfile: 'standard',
+			defaultToolVmProfile: 'standard',
+			agentToolVmProfiles: {},
 		},
 	],
-	toolProfiles: {
+	toolVmProfiles: {
 		standard: {
 			memory: '1G',
 			cpus: 1,
@@ -228,7 +229,7 @@ describe('startControllerRuntime', () => {
 		const runtime = await startControllerRuntime(
 			{
 				systemConfig,
-				zoneId: 'shravan',
+				zoneIds: ['shravan'],
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
@@ -269,7 +270,7 @@ describe('startControllerRuntime', () => {
 		);
 		expect(taskTitles).toEqual([
 			'Resolving 1Password secrets',
-			'Starting gateway zone',
+			'Starting selected gateway zones',
 			'Controller API on :18800',
 		]);
 		expect(startHttpServer).toHaveBeenCalledWith(
@@ -308,7 +309,7 @@ describe('startControllerRuntime', () => {
 		);
 		expect(refreshResponse.status).toBe(200);
 		const wrongZoneLogsResponse = await startHttpServerArgs.app.request('/zones/alevtina/logs');
-		expect(wrongZoneLogsResponse.status).toBe(500);
+		expect(wrongZoneLogsResponse.status).toBe(404);
 		const upgradeResponse = await startHttpServerArgs.app.request('/zones/shravan/upgrade', {
 			method: 'POST',
 		});
@@ -318,51 +319,63 @@ describe('startControllerRuntime', () => {
 		expect(closeGatewayVm).toHaveBeenCalledTimes(2);
 		expect(setIntervalMock).toHaveBeenCalledTimes(1);
 		expect(runtime.controllerPort).toBe(18800);
-		expect(runtime.gateway?.vm.id).toBe('gateway-vm-1');
+		expect(runtime.zones).toEqual([
+			expect.objectContaining({
+				lifecycleState: 'running',
+				vmId: 'gateway-vm-1',
+				zoneId: 'shravan',
+			}),
+		]);
 		await runtime.close();
 		expect(clearIntervalMock).toHaveBeenCalledTimes(1);
 	});
 
-	it('propagates gateway boot failures without starting the HTTP server', async () => {
+	it('keeps the controller inspectable when a selected gateway fails to boot', async () => {
 		const startHttpServer = vi.fn(async () => ({
 			close: async () => {},
 		}));
 
-		await expect(
-			startControllerRuntime(
-				{
-					systemConfig,
-					zoneId: 'shravan',
-				},
-				{
-					createManagedToolVm: vi.fn(async () => ({
-						close: vi.fn(async () => {}),
-						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-						enableSsh: vi.fn(async () => ({
-							command: 'ssh ...',
-							host: '127.0.0.1',
-							identityFile: '/tmp/key',
-							port: 19000,
-							user: 'sandbox',
-						})),
-						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
-						id: 'tool-vm-boot-fail',
-						setIngressRoutes: vi.fn(),
-						getVmInstance: vi.fn(),
+		const runtime = await startControllerRuntime(
+			{
+				systemConfig,
+				zoneIds: ['shravan'],
+			},
+			{
+				createManagedToolVm: vi.fn(async () => ({
+					close: vi.fn(async () => {}),
+					enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+					enableSsh: vi.fn(async () => ({
+						command: 'ssh ...',
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 19000,
+						user: 'sandbox',
 					})),
-					createSecretResolver: async () => ({
-						resolve: async () => '',
-						resolveAll: async () => ({}),
-					}),
-					startGatewayZone: vi.fn(async () => {
-						throw new Error('gateway boot failed');
-					}),
-					startHttpServer,
-				},
-			),
-		).rejects.toThrow('gateway boot failed');
+					exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+					id: 'tool-vm-boot-fail',
+					setIngressRoutes: vi.fn(),
+					getVmInstance: vi.fn(),
+				})),
+				createSecretResolver: async () => ({
+					resolve: async () => '',
+					resolveAll: async () => ({}),
+				}),
+				startGatewayZone: vi.fn(async () => {
+					throw new Error('gateway boot failed');
+				}),
+				startHttpServer,
+			},
+		);
 
-		expect(startHttpServer).not.toHaveBeenCalled();
+		expect(runtime.zones).toEqual([
+			{
+				lastError: 'gateway boot failed',
+				lifecycleState: 'failed',
+				zoneId: 'shravan',
+			},
+		]);
+		expect(startHttpServer).toHaveBeenCalledTimes(1);
+		await runtime.close();
 	});
 
 	it('registers stop-controller for worker runtimes', async () => {
@@ -403,8 +416,8 @@ describe('startControllerRuntime', () => {
 
 		const runtime = await startControllerRuntime(
 			{
-				systemConfig: workerSystemConfig,
-				zoneId: 'shravan',
+				systemConfig,
+				zoneIds: ['shravan'],
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
@@ -519,7 +532,7 @@ describe('startControllerRuntime', () => {
 			const runtime = await startControllerRuntime(
 				{
 					systemConfig: workerSystemConfig,
-					zoneId: 'shravan',
+					zoneIds: ['shravan'],
 				},
 				{
 					createManagedToolVm: vi.fn(async () => ({
@@ -639,7 +652,7 @@ describe('startControllerRuntime', () => {
 		const runtime = await startControllerRuntime(
 			{
 				systemConfig: workerSystemConfig,
-				zoneId: 'shravan',
+				zoneIds: ['shravan'],
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
@@ -764,7 +777,7 @@ describe('startControllerRuntime', () => {
 		const runtime = await startControllerRuntime(
 			{
 				systemConfig,
-				zoneId: 'shravan',
+				zoneIds: ['shravan'],
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
@@ -839,7 +852,7 @@ describe('startControllerRuntime', () => {
 			const runtime = await startControllerRuntime(
 				{
 					systemConfig: testSystemConfig,
-					zoneId: 'shravan',
+					zoneIds: ['shravan'],
 				},
 				{
 					createManagedToolVm: vi.fn(async () => ({
@@ -902,10 +915,10 @@ describe('startControllerRuntime', () => {
 
 			const leaseResponse = await startHttpServerArgs.app.request('/lease', {
 				body: JSON.stringify({
-					agentWorkspaceDir: '/home/openclaw/zone-files',
+					agentWorkspaceDir: '/zone',
 					profileId: 'standard',
 					scopeKey: 'close-runtime',
-					workspaceDir: '/home/openclaw/zone-files/sandbox-work',
+					workspaceDir: '/zone/sandbox-work',
 					zoneId: 'shravan',
 				}),
 				headers: {
@@ -934,7 +947,7 @@ describe('startControllerRuntime', () => {
 		const runtime = await startControllerRuntime(
 			{
 				systemConfig,
-				zoneId: 'shravan',
+				zoneIds: ['shravan'],
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
@@ -1046,7 +1059,7 @@ describe('startControllerRuntime', () => {
 		const runtime = await startControllerRuntime(
 			{
 				systemConfig,
-				zoneId: 'shravan',
+				zoneIds: ['shravan'],
 			},
 			{
 				createManagedToolVm: vi.fn(async () => ({
@@ -1085,7 +1098,7 @@ describe('startControllerRuntime', () => {
 			'/zones/shravan/credentials/refresh',
 			{ method: 'POST' },
 		);
-		expect(refreshResponse.status).toBe(500);
+		expect(refreshResponse.status).toBe(503);
 		await expect(runtime.close()).resolves.toBeUndefined();
 		expect(closeHttpServer).toHaveBeenCalledTimes(1);
 		expect(closeGatewayVm).toHaveBeenCalledTimes(1);

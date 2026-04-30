@@ -1,7 +1,10 @@
+import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 import { Hono } from 'hono';
 
 import type { SystemConfig } from '../../config/system-config.js';
+import { seedAgentSandboxWorkspace } from '../leases/agent-sandbox-seeding.js';
 import { LeaseScopeConflictError } from '../leases/lease-manager.js';
+import { parseAgentIdFromScopeKey } from '../leases/lease-scope.js';
 import {
 	LeaseWorkspaceValidationError,
 	resolveLeaseWorkspaceDir as resolveLeaseWorkspaceDirForZone,
@@ -19,7 +22,7 @@ import { registerControllerZoneOperationRoutes } from './controller-zone-operati
 export function createControllerApp(options: {
 	readonly leaseManager: ControllerLeaseManager;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
-	readonly toolProfiles?: Record<
+	readonly toolVmProfiles?: Record<
 		string,
 		{
 			readonly cpus: number;
@@ -27,10 +30,12 @@ export function createControllerApp(options: {
 			readonly memory: string;
 		}
 	>;
-	readonly zoneToolProfiles?: Record<string, string>;
+	readonly zoneAgentToolVmProfiles?: Record<string, Record<string, string>>;
+	readonly zoneDefaultToolVmProfiles?: Record<string, string>;
 	readonly zoneIds?: ReadonlySet<string>;
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly resolveLeaseWorkspaceDir?: (options: {
+		readonly scopeKey: string;
 		readonly workspaceDir: string;
 		readonly zoneId: string;
 	}) => Promise<string>;
@@ -54,30 +59,36 @@ export function createControllerApp(options: {
 			if (
 				options.zoneIds
 					? !options.zoneIds.has(payload.zoneId)
-					: options.zoneToolProfiles && !(payload.zoneId in options.zoneToolProfiles)
+					: options.zoneDefaultToolVmProfiles &&
+						!(payload.zoneId in options.zoneDefaultToolVmProfiles)
 			) {
 				return context.json({ error: `Unknown zone '${payload.zoneId}'` }, 400);
 			}
-			const resolvedProfileId = options.zoneToolProfiles?.[payload.zoneId] ?? payload.profileId;
+			const agentId = parseAgentIdFromScopeKey(payload.scopeKey);
+			const resolvedProfileId =
+				(agentId ? options.zoneAgentToolVmProfiles?.[payload.zoneId]?.[agentId] : undefined) ??
+				options.zoneDefaultToolVmProfiles?.[payload.zoneId] ??
+				payload.profileId;
 			if (!resolvedProfileId) {
 				return context.json(
-					{ error: `Zone '${payload.zoneId}' does not have a tool profile configured` },
+					{ error: `Zone '${payload.zoneId}' does not have a tool VM profile configured` },
 					400,
 				);
 			}
-			const toolProfile = options.toolProfiles?.[resolvedProfileId];
-			if (!toolProfile) {
-				return context.json({ error: `Unknown tool profile '${resolvedProfileId}'` }, 400);
+			const defaultToolVmProfile = options.toolVmProfiles?.[resolvedProfileId];
+			if (!defaultToolVmProfile) {
+				return context.json({ error: `Unknown tool VM profile '${resolvedProfileId}'` }, 400);
 			}
 			const workspaceDir = options.resolveLeaseWorkspaceDir
 				? await options.resolveLeaseWorkspaceDir({
+						scopeKey: payload.scopeKey,
 						workspaceDir: payload.workspaceDir,
 						zoneId: payload.zoneId,
 					})
 				: payload.workspaceDir;
 			const lease = await options.leaseManager.createLease({
 				agentWorkspaceDir: payload.agentWorkspaceDir,
-				profile: toolProfile,
+				profile: defaultToolVmProfile,
 				profileId: resolvedProfileId,
 				scopeKey: payload.scopeKey,
 				workspaceDir,
@@ -163,25 +174,42 @@ export function createControllerApp(options: {
 export function createControllerService(options: {
 	readonly leaseManager: ControllerLeaseManager;
 	readonly operations?: Partial<ControllerRouteOperations>;
+	readonly secretResolver?: SecretResolver;
 	readonly systemConfig: SystemConfig;
 }): Hono {
 	const zonesById = new Map(options.systemConfig.zones.map((zone) => [zone.id, zone]));
 	const app = createControllerApp({
 		leaseManager: options.leaseManager,
-		toolProfiles: options.systemConfig.toolProfiles,
+		toolVmProfiles: options.systemConfig.toolVmProfiles,
 		zoneIds: new Set(options.systemConfig.zones.map((zone) => zone.id)),
-		zoneToolProfiles: Object.fromEntries(
+		zoneDefaultToolVmProfiles: Object.fromEntries(
 			options.systemConfig.zones.flatMap((zone) =>
-				zone.toolProfile === undefined ? [] : [[zone.id, zone.toolProfile]],
+				zone.defaultToolVmProfile === undefined ? [] : [[zone.id, zone.defaultToolVmProfile]],
+			),
+		),
+		zoneAgentToolVmProfiles: Object.fromEntries(
+			options.systemConfig.zones.flatMap((zone) =>
+				!zone.agentToolVmProfiles || Object.keys(zone.agentToolVmProfiles).length === 0
+					? []
+					: [[zone.id, zone.agentToolVmProfiles]],
 			),
 		),
 		...(options.operations ? { operations: options.operations } : {}),
-		resolveLeaseWorkspaceDir: async ({ workspaceDir, zoneId }) => {
+		resolveLeaseWorkspaceDir: async ({ scopeKey, workspaceDir, zoneId }) => {
 			const zone = zonesById.get(zoneId);
 			if (!zone) {
 				throw new Error(`Unknown zone '${zoneId}'`);
 			}
-			return await resolveLeaseWorkspaceDirForZone({ workspaceDir, zone });
+			const resolvedWorkspaceDir = await resolveLeaseWorkspaceDirForZone({ workspaceDir, zone });
+			if (options.secretResolver) {
+				await seedAgentSandboxWorkspace({
+					scopeKey,
+					secretResolver: options.secretResolver,
+					workspaceDir: resolvedWorkspaceDir,
+					zone,
+				});
+			}
+			return resolvedWorkspaceDir;
 		},
 	});
 

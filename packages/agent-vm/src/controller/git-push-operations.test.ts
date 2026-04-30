@@ -394,6 +394,7 @@ describe('git-push-operations', () => {
 			error: expect.stringContaining('Try git-push again in 5 minutes'),
 		});
 		expect(result.results[0]?.error).toContain('github unavailable 4');
+		expect(result.results[0]?.error).not.toContain('otherwise start a new task');
 		expect(recordEvent).toHaveBeenCalledWith({
 			event: 'controller-git-push-started',
 			repoUrl: 'https://github.com/acme/widgets.git',

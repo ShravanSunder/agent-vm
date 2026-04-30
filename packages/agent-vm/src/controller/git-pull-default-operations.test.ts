@@ -755,6 +755,51 @@ describe('git-pull-default-operations', () => {
 		});
 	});
 
+	test('does not tell agents to start a new task after retryable pull failures', async () => {
+		vi.useFakeTimers();
+		let fetchAttempts = 0;
+		const recordEvent = vi.fn(async () => {});
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			if (gitArgs[0] === 'ls-remote')
+				return { stdout: 'remote-agent-sha	refs/heads/agent/task-1', stderr: '', exitCode: 0 };
+			if (gitArgs[0] === 'fetch') {
+				fetchAttempts += 1;
+				return {
+					stdout: '',
+					stderr: `RPC failed; HTTP 503 EAI_AGAIN pull failure ${fetchAttempts}`,
+					exitCode: 128,
+				};
+			}
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		const resultPromise = pullDefaultForTask({
+			activeTask,
+			repoUrl: 'https://github.com/acme/widgets.git',
+			githubToken: 'token',
+			recordEvent,
+		});
+
+		await vi.advanceTimersByTimeAsync(22_000);
+		const result = await resultPromise;
+
+		expect(fetchAttempts).toBe(4);
+		expect(result.kind).toBe('failed');
+		if (result.kind !== 'failed') {
+			throw new Error(`Expected failed pull-default result, got ${result.kind}`);
+		}
+		expect(result.error).toContain('Try git-pull-default again in 5 minutes');
+		expect(result.error).not.toContain('otherwise start a new task');
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-pull-failed',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			attempts: 4,
+			message: expect.not.stringContaining('otherwise start a new task'),
+			retryAfterSeconds: 300,
+		});
+	});
+
 	test('soft-fails when fetch fails', async () => {
 		const recordEvent = vi.fn(async () => {});
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {

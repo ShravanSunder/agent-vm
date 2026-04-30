@@ -2,7 +2,7 @@ import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 
 import type { TcpPool } from './tcp-pool.js';
 
-export interface ToolProfile {
+export interface ToolVmProfile {
 	readonly cpus: number;
 	readonly imageProfile: string;
 	readonly memory: string;
@@ -42,7 +42,7 @@ export interface LeaseSnapshot {
 export interface LeaseManager {
 	createLease(options: {
 		readonly agentWorkspaceDir: string;
-		readonly profile: ToolProfile;
+		readonly profile: ToolVmProfile;
 		readonly profileId: string;
 		readonly scopeKey: string;
 		readonly workspaceDir: string;
@@ -105,7 +105,7 @@ function scopeIndexKey(scopeRequest: {
 export function createLeaseManager(options: {
 	readonly createManagedVm: (leaseOptions: {
 		readonly agentWorkspaceDir: string;
-		readonly profile: ToolProfile;
+		readonly profile: ToolVmProfile;
 		readonly profileId: string;
 		readonly scopeKey: string;
 		readonly tcpSlot: number;

@@ -34,7 +34,7 @@ stateDir          per-zone              yes               yes       identity, au
 
 zoneFilesDir      OpenClaw per-zone     yes               yes       long-lived user/agent files
                                                                        mounted at
-                                                                       /home/openclaw/zone-files
+                                                                       /zone
 
 backupDir         per-zone output       artifact          no        encrypted backup archives
 ```
@@ -87,9 +87,16 @@ runtime artifacts
 zone files
   Owner: long-lived gateway/user workflow
   Host: <zoneFilesDir>
-  VM: /home/openclaw/zone-files
+  VM: /zone
   Backup: yes for OpenClaw-style long-lived zone backups
   Rule: RealFS-mounted durable household/user files, not hot package-manager work
+
+OpenClaw gateway /work
+  Owner: gateway runtime
+  Host: none for the target hot path
+  VM: /work/tmp, /work/cache
+  Backup: no
+  Rule: rootfs/COW temp and cache only; do not mount zoneFilesDir at /work
 
 worker repo files
   Owner: per-task VM execution
@@ -124,6 +131,8 @@ host stateDir
   ~/.agent-vm/state/<zone>/
     effective-openclaw.json
     agents/main/agent/auth-profiles.json
+    agents/<agentId>/agent/auth-profiles.json
+    sandboxes/<agentId>/work/
     gateway-runtime.json
     logs/
 
@@ -158,6 +167,11 @@ bundled plugin dependencies, and it must not be moved into `stateDir`.
 `stateDir` is for effective config, auth profiles, runtime metadata, and logs.
 Putting dependency trees in state makes encrypted backups large, slow, and hard
 to reason about.
+
+OpenClaw agent sandbox workspaces live under `stateDir` and can be mounted into
+Tool VMs as `/work`. Per-agent sandbox seeds are written only into these
+sandbox-backed `/work` directories, and only when the target file does not
+already exist. Shared `/zone` workspaces are not seeded this way.
 
 ## Worker Repo Files And Git
 

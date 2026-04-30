@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -11,11 +11,22 @@ import { openclawLifecycle } from './openclaw-lifecycle.js';
 const createdDirectories: string[] = [];
 type OpenClawGatewayConfig = Extract<GatewayZoneConfig['gateway'], { readonly type: 'openclaw' }>;
 
-afterEach(() => {
-	vi.useRealTimers();
-	for (const directoryPath of createdDirectories.splice(0)) {
-		fs.rmSync(directoryPath, { recursive: true, force: true });
+async function pathExists(filePath: string): Promise<boolean> {
+	try {
+		await access(filePath);
+		return true;
+	} catch {
+		return false;
 	}
+}
+
+afterEach(async () => {
+	vi.useRealTimers();
+	await Promise.all(
+		createdDirectories
+			.splice(0)
+			.map((directoryPath) => rm(directoryPath, { recursive: true, force: true })),
+	);
 });
 
 const resolvedSecrets: Record<string, string> = {
@@ -72,7 +83,7 @@ function createZone(overrides?: {
 				ref: 'op://vault/item/perplexity',
 			},
 		},
-		toolProfile: 'standard',
+		defaultToolVmProfile: 'standard',
 		websocketBypass: ['gateway.discord.gg:443'],
 	};
 }
@@ -161,10 +172,12 @@ describe('openclawLifecycle', () => {
 				hostPath: '/host/cache/gateways/shravan',
 				kind: 'realfs',
 			});
-			expect(vmSpec.vfsMounts['/home/openclaw/zone-files']).toEqual({
+			expect(vmSpec.vfsMounts['/zone']).toEqual({
 				hostPath: '/host/zone-files/shravan',
 				kind: 'realfs',
 			});
+			expect(vmSpec.vfsMounts['/work']).toBeUndefined();
+			expect(vmSpec.vfsMounts['/home/openclaw/zone-files']).toBeUndefined();
 			expect(vmSpec.vfsMounts['/home/openclaw/workspace']).toBeUndefined();
 			expect(vmSpec.vfsMounts['/opt/openclaw/plugin-runtime-deps']).toBeUndefined();
 			expect(vmSpec.tcpHosts).toEqual({
@@ -192,6 +205,7 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.bootstrapCommand).toContain('/work/tmp /work/cache/npm');
 			expect(processSpec.bootstrapCommand).toContain('TMPDIR=/work/tmp');
 			expect(processSpec.bootstrapCommand).toContain('npm_config_cache=/work/cache/npm');
+			expect(processSpec.startCommand).toContain('cd /home/openclaw');
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
 			expect(processSpec.startCommand).toContain('nohup openclaw gateway --port 18789');
@@ -207,15 +221,15 @@ describe('openclawLifecycle', () => {
 		it('writes auth-profiles.json and effective-openclaw.json when auth is configured', async () => {
 			vi.useFakeTimers();
 			vi.setSystemTime(new Date('2026-04-27T16:45:00.000Z'));
-			const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-lifecycle-'));
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-'));
 			createdDirectories.push(tempDirectory);
 			const configDirectory = path.join(tempDirectory, 'config');
-			fs.mkdirSync(configDirectory, { recursive: true });
-			fs.writeFileSync(
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
 				path.join(configDirectory, 'openclaw.json'),
 				JSON.stringify(
 					{
-						agents: { defaults: { workspace: '/home/openclaw/zone-files' } },
+						agents: { defaults: { workspace: '/zone' } },
 						gateway: {
 							auth: { mode: 'token' },
 							bind: 'loopback',
@@ -234,12 +248,22 @@ describe('openclawLifecycle', () => {
 					config: path.join(configDirectory, 'openclaw.json'),
 					stateDir: path.join(tempDirectory, 'state'),
 					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+					authProfilesByAgent: {
+						shravan: {
+							source: '1password',
+							ref: 'op://vault/item/shravan-auth-profiles',
+						},
+					},
 				},
 			});
 			const secretResolver: SecretResolver = {
 				resolve: async (secretRef) => {
 					if (secretRef.ref === 'op://vault/item/auth-profiles') {
-						return '{"profiles":[]}';
+						return '{"profiles":["main"]}';
+					}
+
+					if (secretRef.ref === 'op://vault/item/shravan-auth-profiles') {
+						return '{"profiles":["shravan"]}';
 					}
 
 					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
@@ -255,10 +279,10 @@ describe('openclawLifecycle', () => {
 
 			expect(
 				JSON.parse(
-					fs.readFileSync(path.join(zone.gateway.stateDir, 'effective-openclaw.json'), 'utf8'),
+					await readFile(path.join(zone.gateway.stateDir, 'effective-openclaw.json'), 'utf8'),
 				),
 			).toMatchObject({
-				agents: { defaults: { workspace: '/home/openclaw/zone-files' } },
+				agents: { defaults: { workspace: '/zone' } },
 				gateway: {
 					auth: { mode: 'token', token: 'resolved-gateway-token' },
 					bind: 'loopback',
@@ -272,17 +296,29 @@ describe('openclawLifecycle', () => {
 				},
 			});
 			expect(
-				fs.statSync(path.join(zone.gateway.stateDir, 'effective-openclaw.json')).mode & 0o777,
+				(await stat(path.join(zone.gateway.stateDir, 'effective-openclaw.json'))).mode & 0o777,
 			).toBe(0o600);
-			expect(fs.statSync(zone.gateway.stateDir).mode & 0o777).toBe(0o700);
+			await expect(
+				readFile(
+					path.join(zone.gateway.stateDir, 'agents', 'main', 'agent', 'auth-profiles.json'),
+					'utf8',
+				),
+			).resolves.toBe('{"profiles":["main"]}');
+			await expect(
+				readFile(
+					path.join(zone.gateway.stateDir, 'agents', 'shravan', 'agent', 'auth-profiles.json'),
+					'utf8',
+				),
+			).resolves.toBe('{"profiles":["shravan"]}');
+			expect((await stat(zone.gateway.stateDir)).mode & 0o777).toBe(0o700);
 		});
 
 		it('still writes effective-openclaw.json when authProfilesRef is absent', async () => {
-			const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-lifecycle-no-auth-'));
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-no-auth-'));
 			createdDirectories.push(tempDirectory);
 			const configDirectory = path.join(tempDirectory, 'config');
-			fs.mkdirSync(configDirectory, { recursive: true });
-			fs.writeFileSync(
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
 				path.join(configDirectory, 'openclaw.json'),
 				JSON.stringify(
 					{
@@ -317,18 +353,20 @@ describe('openclawLifecycle', () => {
 
 			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
 
-			expect(fs.existsSync(zone.gateway.stateDir)).toBe(true);
-			expect(fs.statSync(zone.gateway.stateDir).mode & 0o777).toBe(0o700);
-			expect(fs.existsSync(path.join(zone.gateway.stateDir, 'agents'))).toBe(false);
-			expect(fs.existsSync(path.join(zone.gateway.stateDir, 'effective-openclaw.json'))).toBe(true);
+			await expect(pathExists(zone.gateway.stateDir)).resolves.toBe(true);
+			expect((await stat(zone.gateway.stateDir)).mode & 0o777).toBe(0o700);
+			await expect(pathExists(path.join(zone.gateway.stateDir, 'agents'))).resolves.toBe(false);
+			await expect(
+				pathExists(path.join(zone.gateway.stateDir, 'effective-openclaw.json')),
+			).resolves.toBe(true);
 		});
 
 		it('throws when OPENCLAW_GATEWAY_TOKEN ref is absent', async () => {
-			const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-lifecycle-no-token-'));
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-no-token-'));
 			createdDirectories.push(tempDirectory);
 			const configDirectory = path.join(tempDirectory, 'config');
-			fs.mkdirSync(configDirectory, { recursive: true });
-			fs.writeFileSync(
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
 				path.join(configDirectory, 'openclaw.json'),
 				JSON.stringify({ gateway: { auth: { mode: 'token' }, bind: 'loopback' } }, null, 2),
 				'utf8',
@@ -359,13 +397,11 @@ describe('openclawLifecycle', () => {
 		});
 
 		it('throws when base config is not a JSON object', async () => {
-			const tempDirectory = fs.mkdtempSync(
-				path.join(os.tmpdir(), 'openclaw-lifecycle-bad-config-'),
-			);
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-bad-config-'));
 			createdDirectories.push(tempDirectory);
 			const configDirectory = path.join(tempDirectory, 'config');
-			fs.mkdirSync(configDirectory, { recursive: true });
-			fs.writeFileSync(
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
 				path.join(configDirectory, 'openclaw.json'),
 				JSON.stringify(['not-an-object'], null, 2),
 				'utf8',
@@ -396,14 +432,14 @@ describe('openclawLifecycle', () => {
 		});
 
 		it('cleans up the temp effective config file if atomic rename fails', async () => {
-			const tempDirectory = fs.mkdtempSync(
+			const tempDirectory = await mkdtemp(
 				path.join(os.tmpdir(), 'openclaw-lifecycle-rename-fail-'),
 			);
 			createdDirectories.push(tempDirectory);
 			const configDirectory = path.join(tempDirectory, 'config');
-			fs.mkdirSync(configDirectory, { recursive: true });
+			await mkdir(configDirectory, { recursive: true });
 			const configPath = path.join(configDirectory, 'openclaw.json');
-			fs.writeFileSync(
+			await writeFile(
 				configPath,
 				JSON.stringify({
 					gateway: {
@@ -421,33 +457,31 @@ describe('openclawLifecycle', () => {
 				},
 				withoutAuthProfilesRef: true,
 			});
+			await mkdir(path.join(zone.gateway.stateDir, 'effective-openclaw.json'), {
+				recursive: true,
+			});
 			const secretResolver: SecretResolver = {
 				resolve: async () => 'resolved-gateway-token',
 				resolveAll: async () => ({}),
 			};
-			const renameSpy = vi
-				.spyOn(fs.promises, 'rename')
-				.mockRejectedValueOnce(new Error('disk full'));
 
 			await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
-				/disk full/u,
+				/directory|EISDIR/u,
 			);
 			expect(
-				fs.readdirSync(zone.gateway.stateDir).filter((entryName) => entryName.includes('.tmp')),
+				(await readdir(zone.gateway.stateDir)).filter((entryName) => entryName.includes('.tmp')),
 			).toEqual([]);
-
-			renameSpy.mockRestore();
 		});
 
 		it('throws the missing gateway token ref error directly', async () => {
-			const tempDirectory = fs.mkdtempSync(
+			const tempDirectory = await mkdtemp(
 				path.join(os.tmpdir(), 'openclaw-lifecycle-missing-ref-'),
 			);
 			createdDirectories.push(tempDirectory);
 			const configDirectory = path.join(tempDirectory, 'config');
-			fs.mkdirSync(configDirectory, { recursive: true });
+			await mkdir(configDirectory, { recursive: true });
 			const configPath = path.join(configDirectory, 'openclaw.json');
-			fs.writeFileSync(
+			await writeFile(
 				configPath,
 				JSON.stringify({
 					gateway: {

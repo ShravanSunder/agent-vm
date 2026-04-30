@@ -31,11 +31,15 @@ zones[]
   runtimeAuthHints
   allowedHosts
   websocketBypass
-  toolProfile
+  defaultToolVmProfile
+  agentToolVmProfiles
+  agentSandboxSeeds
 
-toolProfiles
+toolVmProfiles
 
 tcpPool
+
+leaseIdleTtl
 ```
 
 ## host
@@ -90,7 +94,7 @@ commit and call `git-push` before task teardown if work must survive.
 ## zoneFilesDir
 
 `zoneFilesDir` is the long-lived OpenClaw household/user files directory. It is
-RealFS-mounted into the OpenClaw gateway VM at `/home/openclaw/zone-files` and
+RealFS-mounted into the OpenClaw gateway VM at `/zone` and
 is included in OpenClaw zone backups.
 
 Worker gateways do not use `zoneFilesDir`. Their repo files live in VM-local
@@ -164,7 +168,10 @@ Each zone selects one gateway image profile and one gateway behavior config:
 }
 ```
 
-Worker zones do not require `toolProfile`. OpenClaw zones do.
+Worker zones do not declare Tool VM profile fields. OpenClaw zones must declare
+`defaultToolVmProfile` and `agentToolVmProfiles`, even when the agent mapping is
+empty. This makes the Tool VM image policy visible in generated configs instead
+of hiding it behind defaults.
 
 OpenClaw zones add `zoneFilesDir` because they own long-lived household/user
 files:
@@ -180,11 +187,88 @@ files:
     "config": "./gateways/shravan/openclaw.json",
     "imageProfile": "openclaw",
     "stateDir": "../state/shravan",
-    "zoneFilesDir": "../zone-files/shravan"
+    "zoneFilesDir": "../zone-files/shravan",
+    "authProfilesByAgent": {
+      "shravan": { "source": "environment", "envVar": "SHRAVAN_AUTH_PROFILES" }
+    }
   },
-  "toolProfile": "default"
+  "defaultToolVmProfile": "standard",
+  "agentToolVmProfiles": {
+    "shravan": "tools-dev",
+    "alevtina": "tools-light"
+  },
+  "agentSandboxSeeds": {
+    "shravan": [
+      {
+        "source": { "source": "environment", "envVar": "SHRAVAN_GCLOUD_CONFIG" },
+        "target": ".config/gcloud/configurations/config_default",
+        "mode": 384
+      }
+    ]
+  }
 }
 ```
+
+`agentToolVmProfiles` values must reference entries in top-level `toolVmProfiles`.
+Unmapped agents use the zone fallback `defaultToolVmProfile`.
+
+`gateway.authProfilesByAgent` writes OpenClaw auth profiles to
+`<stateDir>/agents/<agentId>/agent/auth-profiles.json` before the gateway VM
+boots. There is no shared per-agent fallback; configure each agent that needs an
+auth profile.
+
+`agentSandboxSeeds` writes first-boot files into the agent's scoped sandbox
+workspace before the Tool VM starts. Targets are relative to the sandbox
+`/work` backing directory, cannot use `..`, and are not written for shared
+`/zone` workspaces. Existing files are preserved so a user's edited credentials
+or config are not overwritten on later leases.
+
+The important path model is:
+
+```text
+OpenClaw gateway durable zone files:
+  guest /zone  ->  host gateway.zoneFilesDir
+
+Tool VM selected workspace:
+  guest /work  ->  host workspace chosen by OpenClaw lease request
+
+That Tool VM /work backing path may be an agent sandbox work directory under
+stateDir, or a subpath of zoneFilesDir. The Tool VM root filesystem itself is
+disposable.
+```
+
+## toolVmProfiles
+
+`toolVmProfiles` names the Tool VM runtime profiles available to OpenClaw
+zones. The name is intentionally explicit: these are profiles for disposable
+Tool VMs, not gateway profiles and not OpenClaw user profiles.
+
+```json
+{
+  "toolVmProfiles": {
+    "standard": {
+      "memory": "1G",
+      "cpus": 1,
+      "imageProfile": "default"
+    },
+    "tools-dev": {
+      "memory": "2G",
+      "cpus": 2,
+      "imageProfile": "tools-dev"
+    }
+  },
+  "imageProfiles": {
+    "toolVms": {
+      "default": { "type": "toolVm", "buildConfig": "../vm-images/tool-vms/default/build-config.json" },
+      "tools-dev": { "type": "toolVm", "buildConfig": "../vm-images/tool-vms/dev/build-config.json" }
+    }
+  }
+}
+```
+
+`toolVmProfiles[*].imageProfile` must reference
+`imageProfiles.toolVms[*]`. The build pipeline can build multiple Tool VM image
+profiles from one config.
 
 ## zones[].resources
 
@@ -291,6 +375,33 @@ controller mapping. OpenClaw Gateway also uses it for tool VM SSH slots.
 }
 ```
 
+Generated configs use `size: 12` so one controller can run multiple agents and
+zones without exhausting Tool VM SSH slots immediately.
+
+## leaseIdleTtl
+
+`leaseIdleTtl` is optional. When omitted, every lease uses the default 30 minute
+idle timeout. OpenClaw deployments that mix agent, session, and shared workspace
+leases can override by scope kind or by scope-key prefix:
+
+```json
+{
+  "leaseIdleTtl": {
+    "defaultMs": 1800000,
+    "byScopeKind": {
+      "agent": 7200000,
+      "workspace": 900000
+    },
+    "byScopePrefix": {
+      "agent:shravan": 21600000
+    }
+  }
+}
+```
+
+Selection order is exact or longest prefix match in `byScopePrefix`, then
+`byScopeKind`, then `defaultMs`.
+
 ## Cross-Field Validation
 
 The schema rejects:
@@ -300,5 +411,9 @@ The schema rejects:
 - Zone gateway type mismatches against the selected image profile.
 - `runtimeAuthHints` referencing missing secrets, non-mediated secrets, or hosts
   not listed on the referenced secret.
-- OpenClaw zones without `toolProfile`.
-- Tool profiles referencing missing tool VM image profiles.
+- OpenClaw zones without `defaultToolVmProfile`.
+- OpenClaw zones without explicit `agentToolVmProfiles`.
+- Worker zones declaring Tool VM profile or sandbox seed fields.
+- `agentToolVmProfiles` values referencing missing `toolVmProfiles`.
+- `agentSandboxSeeds` targets that are absolute or escape the sandbox workspace.
+- Tool VM profiles referencing missing Tool VM image profiles.

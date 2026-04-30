@@ -38,7 +38,7 @@ runtime records, metadata
 /home/openclaw/.openclaw/cache          RealFS cacheDir        no
 repair/download caches                  rebuildable
 
-/home/openclaw/zone-files                RealFS zoneFilesDir   yes
+/zone                                  RealFS zoneFilesDir   yes
 OpenClaw zone files                     long-lived household
                                        user/agent files
 
@@ -60,6 +60,10 @@ OpenClaw gateways are long-lived, so rootfs/COW paths such as `/work/tmp` and
 explicitly and add either a periodic `/work` cleanup or an operational restart
 window. Tool VMs and worker tasks are shorter-lived, so they naturally shed this
 rootfs state at lease/task teardown.
+
+OpenClaw gateway `/work` is never the durable zone-files mount. Durable
+outside-world files live under `/zone`; `/work` is reserved for disposable
+rootfs/COW temp and cache paths in the gateway VM.
 
 ## Worker Gateway VM
 

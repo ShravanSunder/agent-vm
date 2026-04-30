@@ -79,7 +79,7 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 		memory: zone.gateway.memory,
 		port: zone.gateway.port,
 		stateDir: zone.gateway.stateDir,
-		authProfilesRef: zone.gateway.authProfilesRef,
+		...(zone.gateway.authProfilesRef ? { authProfilesRef: zone.gateway.authProfilesRef } : {}),
 	};
 
 	return {
@@ -90,6 +90,9 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 						...baseGateway,
 						type: 'openclaw',
 						zoneFilesDir: zone.gateway.zoneFilesDir,
+						...(zone.gateway.authProfilesByAgent
+							? { authProfilesByAgent: zone.gateway.authProfilesByAgent }
+							: {}),
 					}
 				: {
 						...baseGateway,
@@ -114,7 +117,7 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 			]),
 		),
 		allowedHosts: zone.allowedHosts,
-		...(zone.toolProfile ? { toolProfile: zone.toolProfile } : {}),
+		...(zone.defaultToolVmProfile ? { defaultToolVmProfile: zone.defaultToolVmProfile } : {}),
 		websocketBypass: zone.websocketBypass,
 	};
 }

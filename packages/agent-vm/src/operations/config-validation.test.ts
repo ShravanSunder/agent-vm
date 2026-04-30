@@ -1,4 +1,4 @@
-import fs from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -10,8 +10,8 @@ import { resolveProjectCheckoutPath, runConfigValidation } from './config-valida
 type TestCommandRunner = NonNullable<Parameters<typeof runConfigValidation>[0]['runCommand']>;
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {
-	await fs.mkdir(path.dirname(filePath), { recursive: true });
-	await fs.writeFile(filePath, `${JSON.stringify(value, null, '\t')}\n`, 'utf8');
+	await mkdir(path.dirname(filePath), { recursive: true });
+	await writeFile(filePath, `${JSON.stringify(value, null, '\t')}\n`, 'utf8');
 }
 
 function minimalWorkerConfig(): unknown {
@@ -75,10 +75,10 @@ async function writeContainerProjectFixture(rootPath: string): Promise<string> {
 		path.join(rootPath, 'config', 'gateways', 'coding-agent', 'worker.json'),
 		minimalWorkerConfig(),
 	);
-	await fs.mkdir(path.join(rootPath, 'config', 'gateways', 'coding-agent', 'prompts'), {
+	await mkdir(path.join(rootPath, 'config', 'gateways', 'coding-agent', 'prompts'), {
 		recursive: true,
 	});
-	await fs.writeFile(
+	await writeFile(
 		path.join(rootPath, 'config', 'gateways', 'coding-agent', 'prompts', 'plan-agent.md'),
 		'Plan carefully.\n',
 		'utf8',
@@ -87,15 +87,15 @@ async function writeContainerProjectFixture(rootPath: string): Promise<string> {
 		arch: 'x86_64',
 		distro: 'alpine',
 	});
-	await fs.writeFile(
+	await writeFile(
 		path.join(rootPath, 'vm-images', 'gateways', 'worker', 'Dockerfile'),
 		'FROM node:24-slim\n',
 		'utf8',
 	);
-	await fs.mkdir(path.join(rootPath, 'vm-host-system'), { recursive: true });
+	await mkdir(path.join(rootPath, 'vm-host-system'), { recursive: true });
 	await Promise.all(
 		['Dockerfile', 'start.sh', 'agent-vm-controller.service'].map(async (fileName) => {
-			await fs.writeFile(path.join(rootPath, 'vm-host-system', fileName), '', 'utf8');
+			await writeFile(path.join(rootPath, 'vm-host-system', fileName), '', 'utf8');
 		}),
 	);
 	return path.join(rootPath, 'config', 'system.json');
@@ -137,13 +137,25 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 					imageProfile: 'openclaw',
 					stateDir: path.join(rootPath, 'state', 'shravan'),
 					zoneFilesDir: path.join(rootPath, 'zone-files', 'shravan'),
+					authProfilesByAgent: {
+						shravan: { source: 'environment', envVar: 'SHRAVAN_AUTH_PROFILES' },
+					},
 				},
 				secrets: {},
 				allowedHosts: ['api.openai.com'],
-				toolProfile: 'default',
+				defaultToolVmProfile: 'default',
+				agentToolVmProfiles: {},
+				agentSandboxSeeds: {
+					shravan: [
+						{
+							source: { source: 'environment', envVar: 'SHRAVAN_GCLOUD_CONFIG' },
+							target: '.config/gcloud/configurations/config_default',
+						},
+					],
+				},
 			},
 		],
-		toolProfiles: {
+		toolVmProfiles: {
 			default: {
 				memory: '1G',
 				cpus: 1,
@@ -172,7 +184,7 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 		arch: 'aarch64',
 		distro: 'alpine',
 	});
-	await fs.writeFile(
+	await writeFile(
 		path.join(rootPath, 'vm-images', 'gateways', 'openclaw', 'Dockerfile'),
 		'FROM node:24-slim\n',
 		'utf8',
@@ -181,7 +193,7 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 		arch: 'aarch64',
 		distro: 'alpine',
 	});
-	await fs.writeFile(
+	await writeFile(
 		path.join(rootPath, 'vm-images', 'tool-vms', 'default', 'Dockerfile'),
 		'FROM node:24-slim\n',
 		'utf8',
@@ -232,7 +244,7 @@ describe('runConfigValidation', () => {
 	});
 
 	it('validates a container project from its checkout paths', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);
 		const systemConfig = await loadSystemConfig(systemConfigPath);
 
@@ -247,11 +259,11 @@ describe('runConfigValidation', () => {
 			true,
 		);
 
-		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
 	it('reports runtimeDir overlap with non-runtime storage paths', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);
 		const systemConfig = await loadSystemConfig(systemConfigPath);
 
@@ -271,13 +283,13 @@ describe('runConfigValidation', () => {
 			hint: 'runtimeDir must not overlap cacheDir',
 		});
 
-		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
 	it('reports missing project-local worker prompt files', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);
-		await fs.rm(
+		await rm(
 			path.join(
 				temporaryDirectoryPath,
 				'config',
@@ -298,11 +310,11 @@ describe('runConfigValidation', () => {
 		expect(workerConfigCheck?.ok).toBe(false);
 		expect(workerConfigCheck?.hint).toMatch(/plan-agent\.md/u);
 
-		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
 	it('validates OpenClaw gateway configs with the OpenClaw CLI', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
 		const systemConfig = await loadSystemConfig(systemConfigPath);
 		const runCommandCalls: {
@@ -323,6 +335,24 @@ describe('runConfigValidation', () => {
 			ok: true,
 			hint: path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'openclaw.json'),
 		});
+		expect(
+			result.checks.find((check) => check.name === 'zone-default-tool-vm-profile-shravan'),
+		).toMatchObject({
+			ok: true,
+			hint: 'default',
+		});
+		expect(
+			result.checks.find((check) => check.name === 'zone-agent-auth-profile-shravan-shravan'),
+		).toMatchObject({
+			ok: true,
+			hint: 'configured',
+		});
+		expect(
+			result.checks.find((check) => check.name === 'zone-agent-sandbox-seed-shravan-shravan-0'),
+		).toMatchObject({
+			ok: true,
+			hint: '.config/gcloud/configurations/config_default',
+		});
 		expect(runCommandCalls).toEqual([
 			{
 				command: 'openclaw',
@@ -340,11 +370,11 @@ describe('runConfigValidation', () => {
 			},
 		]);
 
-		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
 	it('accepts OpenClaw configs when host-only plugin path validation is the only issue', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
 		const systemConfig = await loadSystemConfig(systemConfigPath);
 		const validationOutput =
@@ -362,11 +392,11 @@ describe('runConfigValidation', () => {
 			ok: true,
 		});
 
-		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
 	it('reports OpenClaw schema validation failures before gateway boot', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
 		const systemConfig = await loadSystemConfig(systemConfigPath);
 		const validationOutput =
@@ -385,6 +415,6 @@ describe('runConfigValidation', () => {
 			hint: expect.stringContaining('agents.defaults.thinkingDefault: Unrecognized key'),
 		});
 
-		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 });

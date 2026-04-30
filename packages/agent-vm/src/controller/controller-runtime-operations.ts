@@ -1,36 +1,13 @@
-import type { GatewayProcessSpec } from '@agent-vm/gateway-interface';
-import type { SecretResolver } from '@agent-vm/gondolin-adapter';
-
 import type { SystemConfig } from '../config/system-config.js';
-import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import {
 	buildControllerStatus,
 	buildControllerZoneStatus,
 	type ControllerRuntimeStatus,
 } from '../operations/controller-status.js';
-import { runControllerCredentialsRefresh } from '../operations/credentials-refresh.js';
-import { runControllerDestroy } from '../operations/destroy-zone.js';
-import { runControllerUpgrade } from '../operations/upgrade-zone.js';
-import { runControllerLogs } from '../operations/zone-logs.js';
-import type { LeaseManager } from './leases/lease-manager.js';
-
-interface GatewayZoneRuntime {
-	readonly ingress: {
-		readonly host: string;
-		readonly port: number;
-	};
-	readonly processSpec: GatewayProcessSpec;
-	readonly vm: {
-		readonly id: string;
-		close(): Promise<void>;
-		enableSsh(): Promise<unknown>;
-		exec(command: string): Promise<{
-			readonly exitCode: number;
-			readonly stderr: string;
-			readonly stdout: string;
-		}>;
-	};
-}
+import type {
+	ControllerZoneRuntime,
+	OpenClawZoneRuntime,
+} from './zone-runtimes/zone-runtime-types.js';
 
 interface ControllerRuntimeOperations {
 	readonly destroyZone: (targetZoneId: string, purge: boolean) => Promise<unknown>;
@@ -44,11 +21,11 @@ interface ControllerRuntimeOperations {
 		readonly stdout: string;
 	}>;
 	readonly getStatus: () => Promise<unknown>;
-	readonly getZoneStatus: (targetZoneId: string) => Promise<unknown>;
 	readonly getZoneLogs: (targetZoneId: string) => Promise<{
 		readonly output: string;
 		readonly zoneId: string;
 	}>;
+	readonly getZoneStatus: (targetZoneId: string) => Promise<unknown>;
 	readonly refreshZoneCredentials: (targetZoneId: string) => Promise<{
 		readonly ok: true;
 		readonly zoneId: string;
@@ -57,124 +34,39 @@ interface ControllerRuntimeOperations {
 }
 
 export function createControllerRuntimeOperations(options: {
-	readonly activeZoneId: string;
-	readonly getGateway: () => GatewayZoneRuntime;
-	readonly getGatewayBootedAt: () => string | undefined;
-	readonly getZone: (zoneId: string) => SystemConfig['zones'][number];
-	readonly leaseManager: Pick<LeaseManager, 'listLeases' | 'releaseLease'>;
-	readonly restartGatewayZone: () => Promise<void>;
-	readonly secretResolver: SecretResolver;
-	readonly stopGatewayZone: () => Promise<void>;
+	readonly getActiveLeases: () => readonly { readonly zoneId: string }[];
+	readonly getOpenClawRuntime: (
+		zoneId: string,
+	) => Pick<
+		OpenClawZoneRuntime,
+		'destroy' | 'enableSsh' | 'exec' | 'getLogs' | 'refreshCredentials' | 'upgrade'
+	>;
+	readonly getRuntime: (zoneId: string) => Pick<ControllerZoneRuntime, 'destroy'>;
+	readonly getRuntimeStatusByZone: () => ControllerRuntimeStatus['zones'];
 	readonly systemConfig: SystemConfig;
 }): ControllerRuntimeOperations {
-	const assertActiveZone = (targetZoneId: string): void => {
-		if (targetZoneId !== options.activeZoneId) {
-			throw new Error(
-				`Controller is running zone '${options.activeZoneId}', not '${targetZoneId}'. Multi-zone runtime selection is not implemented yet.`,
-			);
-		}
-	};
-	const getGatewayIfAvailable = (): GatewayZoneRuntime | undefined => {
-		try {
-			return options.getGateway();
-		} catch {
-			return undefined;
-		}
-	};
 	const buildRuntimeStatus = (): ControllerRuntimeStatus => {
-		const gateway = getGatewayIfAvailable();
-		const bootedAt = options.getGatewayBootedAt();
+		const zones = options.getRuntimeStatusByZone();
 		return {
-			activeLeases: options.leaseManager.listLeases(),
-			activeZoneId: options.activeZoneId,
-			...(gateway ? { gateway } : {}),
-			...(gateway && bootedAt ? { bootedAt } : {}),
+			activeLeases: options.getActiveLeases(),
+			...(zones ? { zones } : {}),
 		};
 	};
 
 	return {
-		enableSshForZone: async (targetZoneId: string) => {
-			assertActiveZone(targetZoneId);
-			return await options.getGateway().vm.enableSsh();
-		},
-		execInZone: async (targetZoneId: string, command: string) => {
-			assertActiveZone(targetZoneId);
-			const result = await options.getGateway().vm.exec(command);
-			return {
-				exitCode: result.exitCode,
-				stderr: result.stderr,
-				stdout: result.stdout,
-			};
-		},
-		destroyZone: async (targetZoneId: string, purge: boolean) => {
-			assertActiveZone(targetZoneId);
-			return await runControllerDestroy(
-				{
-					purge,
-					systemConfig: options.systemConfig,
-					zoneId: targetZoneId,
-				},
-				{
-					releaseZoneLeases: async () => {
-						for (const lease of options.leaseManager
-							.listLeases()
-							.filter((activeLease) => activeLease.zoneId === targetZoneId)) {
-							// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP slot races
-							await options.leaseManager.releaseLease(lease.id);
-						}
-					},
-					stopGatewayZone: options.stopGatewayZone,
-				},
-			);
-		},
+		destroyZone: async (targetZoneId, purge) =>
+			await options.getRuntime(targetZoneId).destroy(purge),
+		enableSshForZone: async (targetZoneId) =>
+			await options.getOpenClawRuntime(targetZoneId).enableSsh(),
+		execInZone: async (targetZoneId, command) =>
+			await options.getOpenClawRuntime(targetZoneId).exec(command),
 		getStatus: async () => buildControllerStatus(options.systemConfig, buildRuntimeStatus()),
-		getZoneStatus: async (targetZoneId: string) =>
+		getZoneLogs: async (targetZoneId) => await options.getOpenClawRuntime(targetZoneId).getLogs(),
+		getZoneStatus: async (targetZoneId) =>
 			buildControllerZoneStatus(options.systemConfig, targetZoneId, buildRuntimeStatus()),
-		getZoneLogs: async (targetZoneId: string) => {
-			assertActiveZone(targetZoneId);
-			const gateway = options.getGateway();
-			return await runControllerLogs(
-				{
-					zoneId: targetZoneId,
-				},
-				{
-					readGatewayLogs: async () =>
-						(await gateway.vm.exec(`cat ${gateway.processSpec.logPath} 2>/dev/null || echo ""`))
-							.stdout,
-				},
-			);
-		},
-		refreshZoneCredentials: async (targetZoneId: string) => {
-			assertActiveZone(targetZoneId);
-			return await runControllerCredentialsRefresh(
-				{
-					zoneId: targetZoneId,
-				},
-				{
-					refreshZoneSecrets: async (zoneId: string) => {
-						await resolveZoneSecrets({
-							secretResolver: options.secretResolver,
-							systemConfig: options.systemConfig,
-							zoneId,
-						});
-					},
-					restartGatewayZone: async () => await options.restartGatewayZone(),
-				},
-			);
-		},
-		upgradeZone: async (targetZoneId: string) => {
-			assertActiveZone(targetZoneId);
-			return await runControllerUpgrade(
-				{
-					systemConfig: options.systemConfig,
-					zoneId: targetZoneId,
-				},
-				{
-					rebuildGatewayImage: async () => {},
-					restartGatewayZone: options.restartGatewayZone,
-				},
-			);
-		},
+		refreshZoneCredentials: async (targetZoneId) =>
+			await options.getOpenClawRuntime(targetZoneId).refreshCredentials(),
+		upgradeZone: async (targetZoneId) => await options.getOpenClawRuntime(targetZoneId).upgrade(),
 	};
 }
 
@@ -183,7 +75,7 @@ export function createStopControllerOperation(options: {
 	readonly closeControllerServer: () => void;
 	readonly getLeases: () => readonly { readonly id: string }[];
 	readonly releaseLease: (leaseId: string) => Promise<void>;
-	readonly stopGatewayZone: () => Promise<void>;
+	readonly stopAllZones: () => Promise<void>;
 }): () => Promise<{ readonly ok: true }> {
 	return async (): Promise<{ readonly ok: true }> => {
 		options.clearReaperTimer();
@@ -192,7 +84,7 @@ export function createStopControllerOperation(options: {
 			await options.releaseLease(lease.id);
 		}
 		try {
-			await options.stopGatewayZone();
+			await options.stopAllZones();
 		} finally {
 			options.closeControllerServer();
 		}

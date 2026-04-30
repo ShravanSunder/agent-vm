@@ -1,4 +1,4 @@
-import fs from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { z } from 'zod';
@@ -8,6 +8,17 @@ import { zoneResourcesPolicySchema } from './resource-contracts/index.js';
 import { resolveSystemCacheIdentifierPath } from './system-cache-identifier.js';
 
 const gatewayTypeValues = ['openclaw', 'worker'] as const;
+const agentIdSchema = z
+	.string()
+	.min(1)
+	.regex(
+		/^[a-z0-9][a-z0-9._-]*$/u,
+		'agent id must start with a lowercase letter or number and contain only lowercase letters, numbers, dots, underscores, or hyphens',
+	);
+
+function pathContainsParentTraversal(inputPath: string): boolean {
+	return inputPath.split(/[\\/]+/u).includes('..');
+}
 
 const secretInjectionSchema = z.enum(['env', 'http-mediation']);
 
@@ -76,6 +87,23 @@ const authProfilesSecretSchema = z.discriminatedUnion('source', [
 	}),
 ]);
 
+const agentSandboxSeedSchema = z
+	.object({
+		source: authProfilesSecretSchema,
+		target: z.string().min(1),
+		mode: z.number().int().min(0).max(0o777).default(0o600),
+	})
+	.strict()
+	.superRefine((seed, context) => {
+		if (path.posix.isAbsolute(seed.target) || pathContainsParentTraversal(seed.target)) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'agent sandbox seed target must be a relative path without parent traversal.',
+				path: ['target'],
+			});
+		}
+	});
+
 const hostSecretReferenceSchema = z.discriminatedUnion('source', [
 	z.object({
 		source: z.literal('1password'),
@@ -102,6 +130,7 @@ const openClawZoneGatewaySchema = zoneGatewayBaseSchema
 	.extend({
 		type: z.literal('openclaw'),
 		zoneFilesDir: z.string().min(1),
+		authProfilesByAgent: z.record(agentIdSchema, authProfilesSecretSchema).optional(),
 	})
 	.strict();
 
@@ -116,11 +145,23 @@ const zoneGatewaySchema = z.discriminatedUnion('type', [
 	workerZoneGatewaySchema,
 ]);
 
-const toolProfileSchema = z
+const toolVmProfileSchema = z
 	.object({
 		memory: z.string().min(1),
 		cpus: z.number().int().positive(),
 		imageProfile: z.string().min(1),
+	})
+	.strict();
+
+const leaseIdleTtlSchema = z
+	.object({
+		defaultMs: z
+			.number()
+			.int()
+			.positive()
+			.default(30 * 60 * 1000),
+		byScopeKind: z.record(z.string().min(1), z.number().int().positive()).default({}),
+		byScopePrefix: z.record(z.string().min(1), z.number().int().positive()).default({}),
 	})
 	.strict();
 
@@ -168,29 +209,42 @@ const systemConfigSchema = z
 		imageProfiles: imageProfilesSchema,
 		zones: z
 			.array(
-				z.object({
-					id: z.string().min(1),
-					gateway: zoneGatewaySchema,
-					resources: zoneResourcesPolicySchema.optional(),
-					secrets: z.record(z.string(), secretReferenceSchema),
-					runtimeAuthHints: z.array(runtimeAuthHintSchema).optional(),
-					allowedHosts: z.array(z.string().min(1)).min(1),
-					websocketBypass: z.array(z.string().min(1)).default([]),
-					toolProfile: z.string().min(1).optional(),
-				}),
+				z
+					.object({
+						id: z.string().min(1),
+						gateway: zoneGatewaySchema,
+						resources: zoneResourcesPolicySchema.optional(),
+						secrets: z.record(z.string(), secretReferenceSchema),
+						runtimeAuthHints: z.array(runtimeAuthHintSchema).optional(),
+						allowedHosts: z.array(z.string().min(1)).min(1),
+						websocketBypass: z.array(z.string().min(1)).default([]),
+						defaultToolVmProfile: z.string().min(1).optional(),
+						agentToolVmProfiles: z.record(agentIdSchema, z.string().min(1)).optional(),
+						agentSandboxSeeds: z.record(agentIdSchema, z.array(agentSandboxSeedSchema)).optional(),
+					})
+					.strict(),
 			)
 			.min(1, 'system config must define at least one zone'),
-		toolProfiles: z.record(z.string(), toolProfileSchema).default({}),
+		toolVmProfiles: z.record(z.string(), toolVmProfileSchema).default({}),
 		tcpPool: z.object({
 			basePort: z.number().int().positive(),
 			size: z.number().int().positive(),
 		}),
+		leaseIdleTtl: leaseIdleTtlSchema.optional(),
 	})
+	.strict()
 	.superRefine((config, context) => {
 		const hasOnePasswordSecrets = config.zones.some(
 			(zone) =>
 				Object.values(zone.secrets).some((secret) => secret.source === '1password') ||
-				zone.gateway.authProfilesRef?.source === '1password',
+				zone.gateway.authProfilesRef?.source === '1password' ||
+				(zone.gateway.type === 'openclaw' &&
+					Object.values(zone.gateway.authProfilesByAgent ?? {}).some(
+						(secret) => secret.source === '1password',
+					)) ||
+				Object.values(zone.agentSandboxSeeds ?? {}).some((seeds) =>
+					seeds.some((seed) => seed.source.source === '1password'),
+				),
 		);
 		const hasOnePasswordGithubToken = config.host.githubToken?.source === '1password';
 		if ((hasOnePasswordSecrets || hasOnePasswordGithubToken) && !config.host.secretsProvider) {
@@ -230,19 +284,62 @@ const systemConfigSchema = z
 				});
 			}
 
-			if (zone.gateway.type === 'openclaw' && zone.toolProfile === undefined) {
+			if (zone.gateway.type !== 'openclaw' && zone.defaultToolVmProfile !== undefined) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: `OpenClaw zone '${zone.id}' must declare a toolProfile.`,
-					path: ['zones', zoneIndex, 'toolProfile'],
+					message: `Worker zone '${zone.id}' must not declare defaultToolVmProfile.`,
+					path: ['zones', zoneIndex, 'defaultToolVmProfile'],
 				});
-				continue;
 			}
-			if (zone.toolProfile !== undefined && !config.toolProfiles[zone.toolProfile]) {
+			if (zone.gateway.type !== 'openclaw' && zone.agentToolVmProfiles !== undefined) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: `Zone '${zone.id}' references unknown toolProfile '${zone.toolProfile}'.`,
-					path: ['zones', zoneIndex, 'toolProfile'],
+					message: `Worker zone '${zone.id}' must not declare agentToolVmProfiles.`,
+					path: ['zones', zoneIndex, 'agentToolVmProfiles'],
+				});
+			}
+			if (
+				zone.gateway.type !== 'openclaw' &&
+				Object.keys(zone.agentSandboxSeeds ?? {}).length > 0
+			) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Worker zone '${zone.id}' must not declare agentSandboxSeeds.`,
+					path: ['zones', zoneIndex, 'agentSandboxSeeds'],
+				});
+			}
+			if (zone.gateway.type === 'openclaw' && zone.defaultToolVmProfile === undefined) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `OpenClaw zone '${zone.id}' must declare a defaultToolVmProfile.`,
+					path: ['zones', zoneIndex, 'defaultToolVmProfile'],
+				});
+			}
+			if (zone.gateway.type === 'openclaw' && zone.agentToolVmProfiles === undefined) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `OpenClaw zone '${zone.id}' must declare agentToolVmProfiles, even when it is empty.`,
+					path: ['zones', zoneIndex, 'agentToolVmProfiles'],
+				});
+			}
+			if (
+				zone.defaultToolVmProfile !== undefined &&
+				!config.toolVmProfiles[zone.defaultToolVmProfile]
+			) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Zone '${zone.id}' references unknown defaultToolVmProfile '${zone.defaultToolVmProfile}'.`,
+					path: ['zones', zoneIndex, 'defaultToolVmProfile'],
+				});
+			}
+			for (const [agentId, toolVmProfileId] of Object.entries(zone.agentToolVmProfiles ?? {})) {
+				if (config.toolVmProfiles[toolVmProfileId]) {
+					continue;
+				}
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Zone '${zone.id}' agentToolVmProfiles['${agentId}'] references unknown toolVmProfile '${toolVmProfileId}'.`,
+					path: ['zones', zoneIndex, 'agentToolVmProfiles', agentId],
 				});
 			}
 
@@ -274,14 +371,14 @@ const systemConfigSchema = z
 			}
 		}
 
-		for (const [profileId, profile] of Object.entries(config.toolProfiles)) {
+		for (const [profileId, profile] of Object.entries(config.toolVmProfiles)) {
 			if (config.imageProfiles.toolVms[profile.imageProfile]) {
 				continue;
 			}
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
-				message: `Tool profile '${profileId}' references unknown tool VM imageProfile '${profile.imageProfile}'.`,
-				path: ['toolProfiles', profileId, 'imageProfile'],
+				message: `Tool VM profile '${profileId}' references unknown tool VM imageProfile '${profile.imageProfile}'.`,
+				path: ['toolVmProfiles', profileId, 'imageProfile'],
 			});
 		}
 	});
@@ -402,8 +499,8 @@ function resolveRelativePaths(
 			...zone,
 			gateway: resolveZoneGatewayPaths(zone.gateway),
 		})),
-		toolProfiles: Object.fromEntries(
-			Object.entries(config.toolProfiles).map(([profileId, profile]) => [
+		toolVmProfiles: Object.fromEntries(
+			Object.entries(config.toolVmProfiles).map(([profileId, profile]) => [
 				profileId,
 				{ ...profile },
 			]),
@@ -414,7 +511,7 @@ function resolveRelativePaths(
 export async function loadSystemConfig(configPath: string): Promise<LoadedSystemConfig> {
 	const absoluteConfigPath = path.resolve(configPath);
 	const configDir = path.dirname(absoluteConfigPath);
-	const rawConfig = await fs.readFile(absoluteConfigPath, 'utf8');
+	const rawConfig = await readFile(absoluteConfigPath, 'utf8');
 	let parsedConfig: unknown;
 	try {
 		parsedConfig = JSON.parse(rawConfig) as unknown;

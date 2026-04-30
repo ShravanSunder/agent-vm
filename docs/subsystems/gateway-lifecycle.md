@@ -159,7 +159,7 @@ vfsMounts:
   /home/openclaw/.openclaw/config    -> configDirectory  (realfs)
   /home/openclaw/.openclaw/cache     -> gatewayCacheDir  (realfs)
   /home/openclaw/.openclaw/state     -> stateDir         (realfs)
-  /home/openclaw/zone-files           -> zoneFilesDir (realfs)
+  /zone           -> zoneFilesDir (realfs)
 
 tcpHosts:
   controller.vm.host:18800           -> 127.0.0.1:<controllerPort>
