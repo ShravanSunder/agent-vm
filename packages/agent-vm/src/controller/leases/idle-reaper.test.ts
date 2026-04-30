@@ -141,4 +141,29 @@ describe('createIdleReaper', () => {
 			ifLastUsedAtBeforeOrAt: 9_500,
 		});
 	});
+
+	it('continues releasing expired leases after one release fails', async () => {
+		const releaseLease = vi.fn(async (leaseId: string) => {
+			if (leaseId === 'lease-expired-1') {
+				throw new Error('release failed');
+			}
+		});
+		const idleReaper = createIdleReaper({
+			getLeases: () => [
+				{ id: 'lease-expired-1', lastUsedAt: 1_000, scopeKey: 'agent:shravan' },
+				{ id: 'lease-expired-2', lastUsedAt: 2_000, scopeKey: 'agent:shravan' },
+			],
+			now: () => 10_000,
+			releaseLease,
+			ttlForLease: () => 5_000,
+		});
+
+		await expect(idleReaper.reapExpiredLeases()).rejects.toThrow(
+			'Failed to release 1 expired lease(s).',
+		);
+		expect(releaseLease).toHaveBeenCalledTimes(2);
+		expect(releaseLease).toHaveBeenCalledWith('lease-expired-2', {
+			ifLastUsedAtBeforeOrAt: 5_000,
+		});
+	});
 });

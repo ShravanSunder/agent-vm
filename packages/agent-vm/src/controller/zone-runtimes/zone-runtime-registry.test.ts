@@ -250,7 +250,11 @@ describe('zone runtime contracts', () => {
 		const workerRuntime = {
 			closeTaskForZone: async () => ({ status: 'closed' }),
 			destroy: async (purged: boolean) => ({ ok: true, purged, zoneId: 'worker-zone' }),
-			executeWorkerTask: async () => undefined,
+			executeWorkerTask: async () => ({
+				finalState: null,
+				taskId: 'task-1',
+				taskRoot: '/tmp/task-1',
+			}),
 			gatewayType: 'worker',
 			getSnapshot: () => ({ lifecycleState: 'stopped' }),
 			getTaskState: async () => null,
@@ -438,6 +442,31 @@ describe('createWorkerZoneRuntime', () => {
 		);
 	});
 
+	it('reports worker lifecycle as running while the zone has active tasks', () => {
+		const runtime = createWorkerZoneRuntime({
+			activeTaskRegistry: {
+				activateReservation: vi.fn(),
+				clear: vi.fn(),
+				get: vi.fn(),
+				listForZone: vi.fn(() => [createActiveWorkerTask('task-1')]),
+				releaseReservation: vi.fn(),
+				setWorkerIngress: vi.fn(),
+				tryReserve: vi.fn(() => 'reservation-1'),
+			},
+			controllerGithubToken: null,
+			prepareWorkerTask: vi.fn(async (options) => createPreparedWorkerTask(options.input)),
+			requestHeartbeatRegistry: {
+				acquire: vi.fn(),
+				release: vi.fn(),
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig: loadedSystemConfig,
+			zone: getWorkerZone(),
+		});
+
+		expect(runtime.getSnapshot()).toEqual({ lifecycleState: 'running' });
+	});
+
 	it('destroys worker zone runtime by clearing active tasks for that zone', async () => {
 		const clear = vi.fn();
 		const runtime = createWorkerZoneRuntime({
@@ -517,17 +546,20 @@ describe('createZoneRuntimeRegistry', () => {
 				throw new Error('alevtina boot failed');
 			},
 		});
+		const writeLog = vi.fn();
 		const registry = createZoneRuntimeRegistry({
 			createRuntimeForZone: (zone) => (zone.id === 'shravan' ? shravanRuntime : alevtinaRuntime),
 			systemConfig: {
 				...loadedSystemConfig,
 				zones: [getOpenClawZone(), { ...getOpenClawZone(), id: 'alevtina' }],
 			},
+			writeLog,
 			zoneIds: ['shravan', 'alevtina'],
 		});
 
 		await registry.startSelectedZones();
 
+		expect(writeLog).toHaveBeenCalledWith("Failed to start zone 'alevtina': alevtina boot failed");
 		expect(registry.getSnapshotByZone()).toEqual({
 			alevtina: {
 				lastError: 'alevtina boot failed',
@@ -544,7 +576,7 @@ describe('createZoneRuntimeRegistry', () => {
 		);
 	});
 
-	it('rejects unsupported operations by target zone type', () => {
+	it('rejects unsupported operations by target zone type', async () => {
 		const registry = createZoneRuntimeRegistry({
 			createRuntimeForZone: (zone) =>
 				zone.gateway.type === 'worker'
@@ -560,7 +592,9 @@ describe('createZoneRuntimeRegistry', () => {
 		expect(() => registry.getWorkerRuntime('shravan')).toThrow(
 			"Zone 'shravan' with gateway type 'openclaw' does not support worker operations.",
 		);
-		expect(() => registry.getRuntime('missing-zone')).toThrow("Unknown zone 'missing-zone'.");
+		await expect(registry.destroyZone('missing-zone', false)).rejects.toThrow(
+			"Unknown zone 'missing-zone'.",
+		);
 	});
 });
 
@@ -613,7 +647,11 @@ function createFakeWorkerRuntime(zoneId: string): WorkerZoneRuntime {
 	return {
 		closeTaskForZone: async () => ({ status: 'closed' }),
 		destroy: async (purged) => ({ ok: true, purged, zoneId }),
-		executeWorkerTask: async () => ({}),
+		executeWorkerTask: async () => ({
+			finalState: null,
+			taskId: 'task-1',
+			taskRoot: '/tmp/task-1',
+		}),
 		gatewayType: 'worker',
 		getSnapshot: () => ({ lifecycleState: 'stopped' }),
 		getTaskState: async () => null,

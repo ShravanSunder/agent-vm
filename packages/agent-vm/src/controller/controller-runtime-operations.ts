@@ -4,10 +4,7 @@ import {
 	buildControllerZoneStatus,
 	type ControllerRuntimeStatus,
 } from '../operations/controller-status.js';
-import type {
-	ControllerZoneRuntime,
-	OpenClawZoneRuntime,
-} from './zone-runtimes/zone-runtime-types.js';
+import type { OpenClawZoneRuntime } from './zone-runtimes/zone-runtime-types.js';
 
 interface ControllerRuntimeOperations {
 	readonly destroyZone: (targetZoneId: string, purge: boolean) => Promise<unknown>;
@@ -41,7 +38,14 @@ export function createControllerRuntimeOperations(options: {
 		OpenClawZoneRuntime,
 		'destroy' | 'enableSsh' | 'exec' | 'getLogs' | 'refreshCredentials' | 'upgrade'
 	>;
-	readonly getRuntime: (zoneId: string) => Pick<ControllerZoneRuntime, 'destroy'>;
+	readonly destroyZoneRuntime: (
+		zoneId: string,
+		purge: boolean,
+	) => Promise<{
+		readonly ok: true;
+		readonly purged: boolean;
+		readonly zoneId: string;
+	}>;
 	readonly getRuntimeStatusByZone: () => ControllerRuntimeStatus['zones'];
 	readonly systemConfig: SystemConfig;
 }): ControllerRuntimeOperations {
@@ -55,7 +59,7 @@ export function createControllerRuntimeOperations(options: {
 
 	return {
 		destroyZone: async (targetZoneId, purge) =>
-			await options.getRuntime(targetZoneId).destroy(purge),
+			await options.destroyZoneRuntime(targetZoneId, purge),
 		enableSshForZone: async (targetZoneId) =>
 			await options.getOpenClawRuntime(targetZoneId).enableSsh(),
 		execInZone: async (targetZoneId, command) =>
@@ -72,7 +76,7 @@ export function createControllerRuntimeOperations(options: {
 
 export function createStopControllerOperation(options: {
 	readonly clearReaperTimer: () => void;
-	readonly closeControllerServer: () => void;
+	readonly closeControllerServer: () => Promise<void>;
 	readonly getLeases: () => readonly { readonly id: string }[];
 	readonly releaseLease: (leaseId: string) => Promise<void>;
 	readonly stopAllZones: () => Promise<void>;
@@ -86,7 +90,7 @@ export function createStopControllerOperation(options: {
 		try {
 			await options.stopAllZones();
 		} finally {
-			options.closeControllerServer();
+			await options.closeControllerServer();
 		}
 		return { ok: true } as const;
 	};

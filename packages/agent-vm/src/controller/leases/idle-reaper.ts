@@ -20,11 +20,22 @@ export function createIdleReaper(options: {
 				const expirationCutoff = now - options.ttlForLease(lease);
 				return lease.lastUsedAt < expirationCutoff ? [{ expirationCutoff, leaseId: lease.id }] : [];
 			});
+			const releaseErrors: Error[] = [];
 			for (const expiredLease of expiredLeases) {
-				// oxlint-disable-next-line eslint/no-await-in-loop -- release must stay sequential to avoid TCP pool races
-				await options.releaseLease(expiredLease.leaseId, {
-					ifLastUsedAtBeforeOrAt: expiredLease.expirationCutoff,
-				});
+				try {
+					// oxlint-disable-next-line eslint/no-await-in-loop -- release must stay sequential to avoid TCP pool races
+					await options.releaseLease(expiredLease.leaseId, {
+						ifLastUsedAtBeforeOrAt: expiredLease.expirationCutoff,
+					});
+				} catch (error) {
+					releaseErrors.push(error instanceof Error ? error : new Error(String(error)));
+				}
+			}
+			if (releaseErrors.length > 0) {
+				throw new AggregateError(
+					releaseErrors,
+					`Failed to release ${String(releaseErrors.length)} expired lease(s).`,
+				);
 			}
 		},
 	};

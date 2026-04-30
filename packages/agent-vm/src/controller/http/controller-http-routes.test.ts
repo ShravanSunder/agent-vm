@@ -8,7 +8,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { LeaseScopeConflictError, type Lease } from '../leases/lease-manager.js';
 import { LeaseWorkspaceValidationError } from '../leases/lease-workspace-paths.js';
-import type { PreparedWorkerTask } from '../worker-task-runner.js';
+import type { PreparedWorkerTask, WorkerTaskResult } from '../worker-task-runner.js';
+import { ControllerZoneOperationUnsupportedError } from '../zone-runtimes/zone-runtime-errors.js';
 import {
 	ControllerRuntimeAtCapacityError,
 	ControllerTaskNotReadyError,
@@ -127,6 +128,14 @@ function createPreparedWorkerTaskStub(
 		zone: taskZoneConfig,
 		eventLogPath: path.join(stateDir, 'tasks', `${taskId}.jsonl`),
 		recordEvent,
+	};
+}
+
+function createWorkerTaskResultStub(taskId: string): WorkerTaskResult {
+	return {
+		finalState: null,
+		taskId,
+		taskRoot: `/state/tasks/${taskId}`,
 	};
 }
 
@@ -446,7 +455,7 @@ describe('createControllerApp', () => {
 		);
 	});
 
-	it('uses an agent-specific tool VM profile for agent-scoped leases', async () => {
+	it('uses an agent-specific tool VM profile for agent-scoped leases with sub-scope parts', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-agent-profile', 0));
 		const app = createControllerApp({
 			leaseManager: {
@@ -482,7 +491,7 @@ describe('createControllerApp', () => {
 			body: JSON.stringify({
 				agentWorkspaceDir: '/zone/agents/shravan',
 				profileId: 'standard',
-				scopeKey: 'agent:shravan',
+				scopeKey: 'agent:shravan:discord:channel:123',
 				workspaceDir: '/zone/agents/shravan',
 				zoneId: 'shravan',
 			}),
@@ -501,7 +510,7 @@ describe('createControllerApp', () => {
 					imageProfile: 'tools-dev',
 				},
 				profileId: 'toolsDev',
-				scopeKey: 'agent:shravan',
+				scopeKey: 'agent:shravan:discord:channel:123',
 			}),
 		);
 	});
@@ -840,6 +849,50 @@ describe('createControllerApp', () => {
 		expect(stopController).toHaveBeenCalled();
 	});
 
+	it('returns 405 for operations unsupported by the target zone type', async () => {
+		const app = createControllerApp({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => {
+					throw new ControllerZoneOperationUnsupportedError(
+						'worker-zone',
+						'OpenClaw operations',
+						'worker',
+					);
+				}),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/worker-zone/logs');
+
+		expect(response.status).toBe(405);
+		await expect(response.json()).resolves.toEqual({
+			error: "Zone 'worker-zone' with gateway type 'worker' does not support OpenClaw operations.",
+			gatewayType: 'worker',
+			operationName: 'OpenClaw operations',
+			zoneId: 'worker-zone',
+		});
+	});
+
 	it('pushes branches for an active worker task via POST /zones/:zoneId/tasks/:taskId/push-branches', async () => {
 		const pushTaskBranches = vi.fn(async () => ({
 			results: [
@@ -1111,7 +1164,7 @@ describe('createControllerApp', () => {
 				pushTaskBranches: vi.fn(async () => ({ results: [] })),
 				refreshZoneCredentials: vi.fn(async () => ({})),
 				prepareWorkerTask: vi.fn(async () => createPreparedWorkerTaskStub('worker-task-json')),
-				executeWorkerTask: vi.fn(async () => ({})),
+				executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
 				upgradeZone: vi.fn(async () => ({})),
 			},
 		});
@@ -1146,9 +1199,9 @@ describe('createControllerApp', () => {
 		const prepareWorkerTask = vi.fn(async () => createPreparedWorkerTaskStub('worker-task-1'));
 		const executeWorkerTask = vi.fn(
 			() =>
-				new Promise<void>((resolve) => {
+				new Promise<WorkerTaskResult>((resolve) => {
 					executeStarted = true;
-					resolveExecute = () => resolve();
+					resolveExecute = () => resolve(createWorkerTaskResultStub('worker-task-1'));
 				}),
 		);
 		const app = createControllerApp({
@@ -1376,7 +1429,7 @@ describe('createControllerApp', () => {
 				getZoneLogs: vi.fn(async () => ({})),
 				refreshZoneCredentials: vi.fn(async () => ({})),
 				prepareWorkerTask: vi.fn(async () => createPreparedWorkerTaskStub('worker-task-3')),
-				executeWorkerTask: vi.fn(async () => ({})),
+				executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
 				upgradeZone: vi.fn(async () => ({})),
 			},
 			toolVmProfiles: {
@@ -1426,7 +1479,7 @@ describe('createControllerApp', () => {
 				prepareWorkerTask: vi.fn(async () => {
 					throw new ControllerRuntimeAtCapacityError('worker runtime is at capacity');
 				}),
-				executeWorkerTask: vi.fn(async () => ({})),
+				executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
 				upgradeZone: vi.fn(async () => ({})),
 			},
 			toolVmProfiles: {

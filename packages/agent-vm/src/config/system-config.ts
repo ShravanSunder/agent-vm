@@ -153,6 +153,15 @@ const toolVmProfileSchema = z
 	})
 	.strict();
 
+const leaseScopeKindSchema = z.enum([
+	'agent',
+	'discord',
+	'project',
+	'session',
+	'shared',
+	'workspace',
+]);
+
 const leaseIdleTtlSchema = z
 	.object({
 		defaultMs: z
@@ -160,7 +169,7 @@ const leaseIdleTtlSchema = z
 			.int()
 			.positive()
 			.default(30 * 60 * 1000),
-		byScopeKind: z.record(z.string().min(1), z.number().int().positive()).default({}),
+		byScopeKind: z.partialRecord(leaseScopeKindSchema, z.number().int().positive()).default({}),
 		byScopePrefix: z.record(z.string().min(1), z.number().int().positive()).default({}),
 	})
 	.strict();
@@ -225,7 +234,7 @@ const systemConfigSchema = z
 					.strict(),
 			)
 			.min(1, 'system config must define at least one zone'),
-		toolVmProfiles: z.record(z.string(), toolVmProfileSchema).default({}),
+		toolVmProfiles: z.record(z.string().min(1), toolVmProfileSchema).default({}),
 		tcpPool: z.object({
 			basePort: z.number().int().positive(),
 			size: z.number().int().positive(),
@@ -514,7 +523,7 @@ export async function loadSystemConfig(configPath: string): Promise<LoadedSystem
 	const rawConfig = await readFile(absoluteConfigPath, 'utf8');
 	let parsedConfig: unknown;
 	try {
-		parsedConfig = JSON.parse(rawConfig) as unknown;
+		parsedConfig = JSON.parse(rawConfig);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		throw new Error(`Failed to parse system config '${absoluteConfigPath}': ${message}`, {

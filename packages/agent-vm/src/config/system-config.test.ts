@@ -927,6 +927,21 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/leaseIdleTtl/u);
 	});
 
+	test('rejects unknown lease idle TTL scope kinds', async () => {
+		const config = createValidSystemConfigInput();
+		config.leaseIdleTtl = {
+			byScopeKind: {
+				task: 5 * 60 * 1000,
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-unknown-lease-ttl-scope-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/leaseIdleTtl/u);
+	});
+
 	test('loads per-agent auth profiles and sandbox seed configuration for OpenClaw zones', async () => {
 		const config = createValidSystemConfigInput();
 		if (config.zones[0].gateway.type !== 'openclaw') {
@@ -1188,6 +1203,23 @@ describe('loadSystemConfig', () => {
 		);
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/unknown tool VM imageProfile/u);
+	});
+
+	test('rejects empty tool VM profile ids', async () => {
+		const config = createValidSystemConfigInput();
+		config.toolVmProfiles = {
+			'': {
+				memory: '1G',
+				cpus: 1,
+				imageProfile: 'default',
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-empty-tool-vm-profile-id-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Too small|Invalid key/u);
 	});
 
 	test('rejects empty image profile names', async () => {

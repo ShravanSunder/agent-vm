@@ -144,7 +144,7 @@ async function writeAuthProfilesIfConfigured(
 		...(zone.gateway.type === 'openclaw' ? (zone.gateway.authProfilesByAgent ?? {}) : {}),
 	};
 
-	await Promise.all(
+	const writeResults = await Promise.allSettled(
 		Object.entries(authProfilesByAgent).map(async ([agentId, authProfilesSecretCandidate]) => {
 			if (!isSourceAwareSecretReference(authProfilesSecretCandidate)) {
 				throw new Error(
@@ -172,6 +172,17 @@ async function writeAuthProfilesIfConfigured(
 			}
 		}),
 	);
+	const writeErrors = writeResults
+		.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+		.map((result) =>
+			result.reason instanceof Error ? result.reason : new Error(String(result.reason)),
+		);
+	if (writeErrors.length > 0) {
+		throw new AggregateError(
+			writeErrors,
+			`Failed to write ${String(writeErrors.length)} OpenClaw auth profile file(s) for zone '${zone.id}'.`,
+		);
+	}
 }
 
 async function writeEffectiveOpenClawConfig(

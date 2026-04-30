@@ -11,7 +11,11 @@ import type { PullDefaultRequest, PullDefaultResult } from '../git-pull-default-
 import type { PushBranchRequest, PushBranchResult } from '../git-push-operations.js';
 import type { LeaseManager, ToolVmProfile } from '../leases/lease-manager.js';
 import type { RequestHeartbeatRegistry } from '../request-heartbeat-registry.js';
-import type { PreparedWorkerTask, WorkerTaskInput } from '../worker-task-runner.js';
+import type {
+	PreparedWorkerTask,
+	WorkerTaskInput,
+	WorkerTaskResult,
+} from '../worker-task-runner.js';
 
 export type ControllerZoneConfig = SystemConfig['zones'][number];
 
@@ -54,7 +58,7 @@ export interface OpenClawZoneRuntime extends ControllerZoneRuntimeBase {
 export interface WorkerZoneRuntime extends ControllerZoneRuntimeBase {
 	readonly gatewayType: 'worker';
 	closeTaskForZone(taskId: string): Promise<{ readonly status: 'closed' }>;
-	executeWorkerTask(prepared: PreparedWorkerTask): Promise<unknown>;
+	executeWorkerTask(prepared: PreparedWorkerTask): Promise<WorkerTaskResult>;
 	getTaskState(taskId: string): Promise<TaskState | null>;
 	prepareWorkerTask(input: WorkerTaskInput): Promise<PreparedWorkerTask>;
 	pullDefaultForTask(taskId: string, input: PullDefaultRequest): Promise<PullDefaultResult>;

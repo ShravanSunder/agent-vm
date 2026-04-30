@@ -12,8 +12,15 @@ import type {
 
 export interface ZoneRuntimeRegistry {
 	readonly selectedZoneIds: readonly string[];
+	destroyZone(
+		zoneId: string,
+		purge: boolean,
+	): Promise<{
+		readonly ok: true;
+		readonly purged: boolean;
+		readonly zoneId: string;
+	}>;
 	getOpenClawRuntime(zoneId: string): OpenClawZoneRuntime;
-	getRuntime(zoneId: string): ControllerZoneRuntime;
 	getSnapshotByZone(): Readonly<Record<string, ControllerZoneRuntimeSnapshot>>;
 	getWorkerRuntime(zoneId: string): WorkerZoneRuntime;
 	startSelectedZones(): Promise<void>;
@@ -30,6 +37,7 @@ export function createZoneRuntimeRegistry(options: {
 	}[];
 	readonly systemConfig: LoadedSystemConfig;
 	readonly zoneIds?: readonly string[];
+	readonly writeLog?: (message: string) => void;
 }): ZoneRuntimeRegistry {
 	const runtimeZoneIds = options.zoneIds ?? options.systemConfig.zones.map((zone) => zone.id);
 	const startupFailuresByZoneId = new Map(
@@ -37,6 +45,11 @@ export function createZoneRuntimeRegistry(options: {
 	);
 	const selectedZoneIds = [...new Set([...runtimeZoneIds, ...startupFailuresByZoneId.keys()])];
 	const runtimesByZoneId = new Map<string, ControllerZoneRuntime>();
+	const writeLog =
+		options.writeLog ??
+		((message: string): void => {
+			process.stderr.write(`[zone-runtime-registry] ${message}\n`);
+		});
 
 	for (const zoneId of runtimeZoneIds) {
 		const zone = options.systemConfig.zones.find((candidateZone) => candidateZone.id === zoneId);
@@ -56,6 +69,9 @@ export function createZoneRuntimeRegistry(options: {
 
 	return {
 		selectedZoneIds,
+		async destroyZone(zoneId, purge) {
+			return await getRuntime(zoneId).destroy(purge);
+		},
 		getOpenClawRuntime(zoneId) {
 			const runtime = getRuntime(zoneId);
 			if (runtime.gatewayType !== 'openclaw') {
@@ -67,7 +83,6 @@ export function createZoneRuntimeRegistry(options: {
 			}
 			return runtime;
 		},
-		getRuntime,
 		getSnapshotByZone() {
 			return {
 				...Object.fromEntries(
@@ -105,7 +120,9 @@ export function createZoneRuntimeRegistry(options: {
 					.map(async (runtime) => {
 						try {
 							await runtime.start();
-						} catch {
+						} catch (error) {
+							const message = error instanceof Error ? error.message : String(error);
+							writeLog(`Failed to start zone '${runtime.zoneId}': ${message}`);
 							// Partial start: failed runtimes retain their own failed snapshot.
 						}
 					}),

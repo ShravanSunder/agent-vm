@@ -111,9 +111,10 @@ describe('createControllerRuntimeOperations', () => {
 			'destroy' | 'enableSsh' | 'exec' | 'getLogs' | 'refreshCredentials' | 'upgrade'
 		>;
 		const operations = createControllerRuntimeOperations({
+			destroyZoneRuntime: async (zoneId, purged) =>
+				await (zoneId === 'shravan' ? shravanRuntime : alevtinaRuntime).destroy(purged),
 			getActiveLeases: () => [],
 			getOpenClawRuntime: (zoneId) => (zoneId === 'shravan' ? shravanRuntime : alevtinaRuntime),
-			getRuntime: (zoneId) => (zoneId === 'shravan' ? shravanRuntime : alevtinaRuntime),
 			getRuntimeStatusByZone: () => ({
 				alevtina: { lifecycleState: 'running' },
 				shravan: { lifecycleState: 'running' },

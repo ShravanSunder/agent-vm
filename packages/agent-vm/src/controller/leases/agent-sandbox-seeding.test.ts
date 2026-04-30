@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -69,13 +69,21 @@ describe('seedAgentSandboxWorkspace', () => {
 		const workspaceDir = path.join(zone.gateway.stateDir, 'sandboxes', 'agent-shravan', 'work');
 		await mkdir(workspaceDir, { recursive: true });
 
-		await seedAgentSandboxWorkspace({
+		const result = await seedAgentSandboxWorkspace({
 			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			workspaceDir,
 			zone,
 		});
 
+		expect(result).toEqual({
+			agentId: 'shravan',
+			alreadyExisted: 0,
+			kind: 'seeded',
+			scopeKey: 'agent:shravan',
+			written: 1,
+			zoneId: 'home',
+		});
 		const seededFilePath = path.join(
 			workspaceDir,
 			'.config',
@@ -103,14 +111,68 @@ describe('seedAgentSandboxWorkspace', () => {
 		await mkdir(path.dirname(seededFilePath), { recursive: true });
 		await writeFile(seededFilePath, 'user-edited', 'utf8');
 
-		await seedAgentSandboxWorkspace({
+		const result = await seedAgentSandboxWorkspace({
 			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			workspaceDir,
 			zone,
 		});
 
+		expect(result).toEqual({
+			agentId: 'shravan',
+			alreadyExisted: 1,
+			kind: 'seeded',
+			scopeKey: 'agent:shravan',
+			written: 0,
+			zoneId: 'home',
+		});
 		await expect(readFile(seededFilePath, 'utf8')).resolves.toBe('user-edited');
+	});
+
+	it('seeds Discord sub-scopes for the owning agent', async () => {
+		const rootPath = await createTempDirectory('agent-vm-sandbox-seed-discord-');
+		const zone = createOpenClawZone(rootPath);
+		const workspaceDir = path.join(zone.gateway.stateDir, 'sandboxes', 'agent-shravan', 'work');
+		await mkdir(workspaceDir, { recursive: true });
+
+		const result = await seedAgentSandboxWorkspace({
+			scopeKey: 'agent:shravan:discord:channel:123:thread:456',
+			secretResolver: createSecretResolver(),
+			workspaceDir,
+			zone,
+		});
+
+		expect(result.kind).toBe('seeded');
+		await expect(
+			readFile(
+				path.join(workspaceDir, '.config', 'gcloud', 'configurations', 'config_default'),
+				'utf8',
+			),
+		).resolves.toBe('resolved:op://vault/gcloud-config');
+	});
+
+	it('does not apply another agent seed to an unconfigured agent', async () => {
+		const rootPath = await createTempDirectory('agent-vm-sandbox-seed-isolation-');
+		const zone = createOpenClawZone(rootPath);
+		const workspaceDir = path.join(zone.gateway.stateDir, 'sandboxes', 'agent-alevtina', 'work');
+		await mkdir(workspaceDir, { recursive: true });
+
+		const result = await seedAgentSandboxWorkspace({
+			scopeKey: 'agent:alevtina',
+			secretResolver: createSecretResolver(),
+			workspaceDir,
+			zone,
+		});
+
+		expect(result).toEqual({
+			agentId: 'alevtina',
+			kind: 'no-seeds-configured',
+			scopeKey: 'agent:alevtina',
+			zoneId: 'home',
+		});
+		await expect(
+			readFile(path.join(workspaceDir, '.config', 'gcloud', 'configurations', 'config_default')),
+		).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 
 	it('seeds when the configured stateDir resolves through a symlink', async () => {
@@ -124,13 +186,14 @@ describe('seedAgentSandboxWorkspace', () => {
 		const workspaceDir = path.join(realStateDir, 'sandboxes', 'agent-shravan', 'work');
 		await mkdir(workspaceDir, { recursive: true });
 
-		await seedAgentSandboxWorkspace({
+		const result = await seedAgentSandboxWorkspace({
 			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			workspaceDir,
 			zone,
 		});
 
+		expect(result.kind).toBe('seeded');
 		await expect(
 			readFile(
 				path.join(workspaceDir, '.config', 'gcloud', 'configurations', 'config_default'),
@@ -146,17 +209,49 @@ describe('seedAgentSandboxWorkspace', () => {
 			throw new Error('Expected OpenClaw fixture zone');
 		}
 		const workspaceDir = path.join(zone.gateway.zoneFilesDir, 'project');
+		await mkdir(path.join(zone.gateway.stateDir, 'sandboxes'), { recursive: true });
 		await mkdir(workspaceDir, { recursive: true });
 
-		await seedAgentSandboxWorkspace({
+		const result = await seedAgentSandboxWorkspace({
 			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			workspaceDir,
 			zone,
 		});
 
+		const sandboxRoot = await realpath(path.join(zone.gateway.stateDir, 'sandboxes'));
+		const resolvedWorkspaceDir = await realpath(workspaceDir);
+		expect(result).toEqual({
+			agentId: 'shravan',
+			kind: 'workspace-outside-sandbox',
+			sandboxRoot,
+			scopeKey: 'agent:shravan',
+			workspaceDir: resolvedWorkspaceDir,
+			zoneId: 'home',
+		});
 		await expect(
 			readFile(path.join(workspaceDir, '.config', 'gcloud', 'configurations', 'config_default')),
 		).rejects.toMatchObject({ code: 'ENOENT' });
+	});
+
+	it('returns a malformed result for unsafe agent scope ids', async () => {
+		const rootPath = await createTempDirectory('agent-vm-sandbox-seed-malformed-');
+		const zone = createOpenClawZone(rootPath);
+		const workspaceDir = path.join(zone.gateway.stateDir, 'sandboxes', 'agent-shravan', 'work');
+		await mkdir(workspaceDir, { recursive: true });
+
+		await expect(
+			seedAgentSandboxWorkspace({
+				scopeKey: 'agent:../shravan',
+				secretResolver: createSecretResolver(),
+				workspaceDir,
+				zone,
+			}),
+		).resolves.toEqual({
+			kind: 'malformed-agent-scope',
+			reason: "invalid agent id '../shravan'",
+			scopeKey: 'agent:../shravan',
+			zoneId: 'home',
+		});
 	});
 });

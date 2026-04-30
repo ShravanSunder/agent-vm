@@ -122,25 +122,34 @@ export async function startControllerRuntime(
 			}),
 	});
 	const reaperTimer = (dependencies.setIntervalImpl ?? setInterval)(
-		() => void idleReaper.reapExpiredLeases(),
+		() =>
+			void idleReaper
+				.reapExpiredLeases()
+				.catch((error: unknown) =>
+					writeControllerRuntimeLog(
+						`Idle lease reaper failed: ${error instanceof Error ? error.message : String(error)}`,
+					),
+				),
 		60_000,
 	);
 	const clearReaperTimer = (): void =>
 		(dependencies.clearIntervalImpl ?? clearInterval)(reaperTimer);
 	const releaseAllLeases = async (): Promise<Error | undefined> => {
-		let releaseError: Error | undefined;
+		const releaseErrors: Error[] = [];
 		for (const lease of leaseManager.listLeases()) {
 			try {
 				// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP slot races
 				await leaseManager.releaseLease(lease.id);
 			} catch (error) {
-				releaseError ??= error instanceof Error ? error : new Error(formatUnknownError(error));
+				releaseErrors.push(error instanceof Error ? error : new Error(formatUnknownError(error)));
 				writeControllerRuntimeLog(
 					`Failed to release lease '${lease.id}' during controller shutdown: ${formatUnknownError(error)}`,
 				);
 			}
 		}
-		return releaseError;
+		return releaseErrors.length === 0
+			? undefined
+			: new AggregateError(releaseErrors, 'Failed to release one or more leases.');
 	};
 
 	const registry = createZoneRuntimeRegistry({
@@ -166,6 +175,7 @@ export async function startControllerRuntime(
 				: isWorkerZone(zone)
 					? createWorkerZoneRuntime({
 							activeTaskRegistry,
+							...(process.env.CALLER_URL ? { callerUrl: process.env.CALLER_URL } : {}),
 							controllerGithubToken,
 							...(dependencies.executeWorkerTask
 								? { executeWorkerTask: dependencies.executeWorkerTask }
@@ -192,6 +202,7 @@ export async function startControllerRuntime(
 						})(),
 		...(options.startupFailures ? { startupFailures: options.startupFailures } : {}),
 		systemConfig: options.systemConfig,
+		writeLog: writeControllerRuntimeLog,
 		...(options.zoneIds ? { zoneIds: options.zoneIds } : {}),
 	});
 
@@ -202,16 +213,24 @@ export async function startControllerRuntime(
 	const serverRef: { current?: { close(): Promise<void> } } = {};
 	const stopController = createStopControllerOperation({
 		clearReaperTimer,
-		closeControllerServer: () => setTimeout(() => void serverRef.current?.close(), 100),
+		closeControllerServer: async () => {
+			setTimeout(() => {
+				void serverRef.current?.close().catch((error: unknown) => {
+					writeControllerRuntimeLog(
+						`Failed to close controller HTTP server after stop request: ${formatUnknownError(error)}`,
+					);
+				});
+			}, 100);
+		},
 		getLeases: () => leaseManager.listLeases(),
 		releaseLease: async (leaseId: string) => await leaseManager.releaseLease(leaseId),
 		stopAllZones: async () => await registry.stopAllZones(),
 	});
 	const operations = {
 		...createControllerRuntimeOperations({
+			destroyZoneRuntime: async (zoneId, purge) => await registry.destroyZone(zoneId, purge),
 			getActiveLeases: () => leaseManager.listLeases(),
 			getOpenClawRuntime: (zoneId) => registry.getOpenClawRuntime(zoneId),
-			getRuntime: (zoneId) => registry.getRuntime(zoneId),
 			getRuntimeStatusByZone: () => registry.getSnapshotByZone(),
 			systemConfig: options.systemConfig,
 		}),
@@ -261,11 +280,14 @@ export async function startControllerRuntime(
 			} finally {
 				await serverRef.current?.close();
 			}
-			if (releaseError) {
-				throw releaseError;
+			const closeErrors = [releaseError, stopError].filter(
+				(error): error is Error => error !== undefined,
+			);
+			if (closeErrors.length === 1) {
+				throw closeErrors[0];
 			}
-			if (stopError) {
-				throw stopError;
+			if (closeErrors.length > 1) {
+				throw new AggregateError(closeErrors, 'Controller shutdown failed in multiple steps.');
 			}
 		},
 		controllerPort: options.systemConfig.host.controllerPort,

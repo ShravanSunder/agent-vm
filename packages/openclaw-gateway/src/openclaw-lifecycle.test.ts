@@ -313,6 +313,61 @@ describe('openclawLifecycle', () => {
 			expect((await stat(zone.gateway.stateDir)).mode & 0o777).toBe(0o700);
 		});
 
+		it('attempts all per-agent auth profile writes before reporting failures', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-auth-fail-'));
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify({ gateway: { auth: { mode: 'token' }, bind: 'loopback' } }, null, 2),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					authProfilesByAgent: {
+						alevtina: {
+							source: '1password',
+							ref: 'op://vault/item/alevtina-auth-profiles',
+						},
+						shravan: {
+							source: '1password',
+							ref: 'op://vault/item/shravan-auth-profiles',
+						},
+					},
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				withoutAuthProfilesRef: true,
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+					if (secretRef.ref === 'op://vault/item/alevtina-auth-profiles') {
+						return '{"profiles":["alevtina"]}';
+					}
+					if (secretRef.ref === 'op://vault/item/shravan-auth-profiles') {
+						throw new Error('missing auth secret');
+					}
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await expect(openclawLifecycle.prepareHostState?.(zone, secretResolver)).rejects.toThrow(
+				/Failed to write 1 OpenClaw auth profile/u,
+			);
+			await expect(
+				readFile(
+					path.join(zone.gateway.stateDir, 'agents', 'alevtina', 'agent', 'auth-profiles.json'),
+					'utf8',
+				),
+			).resolves.toBe('{"profiles":["alevtina"]}');
+		});
+
 		it('still writes effective-openclaw.json when authProfilesRef is absent', async () => {
 			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-no-auth-'));
 			createdDirectories.push(tempDirectory);

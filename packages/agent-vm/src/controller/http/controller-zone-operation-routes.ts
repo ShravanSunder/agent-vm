@@ -7,8 +7,10 @@ import { PushBranchesValidationError } from '../git-push-operations.js';
 import { buildTaskConfigFromPreparedInput } from '../task-config-builder.js';
 import { writeTaskFailureSentinel } from '../task-state-reader.js';
 import {
+	ControllerZoneConfigurationError,
 	ControllerZoneNotFoundError,
 	ControllerZoneOperationUnsupportedError,
+	ControllerZoneTaskNotFoundError,
 	ControllerZoneRuntimeStartError,
 	ControllerZoneRuntimeUnavailableError,
 } from '../zone-runtimes/zone-runtime-errors.js';
@@ -86,8 +88,11 @@ function writeControllerRouteLog(message: string): void {
 	process.stderr.write(`[controller-zone-operation-routes] ${message}\n`);
 }
 
-function zoneRuntimeErrorStatus(error: unknown): 404 | 405 | 409 | 500 | 503 {
-	if (error instanceof ControllerZoneNotFoundError) {
+function zoneRuntimeErrorStatus(error: unknown): 404 | 405 | 409 | 412 | 500 | 503 {
+	if (
+		error instanceof ControllerZoneNotFoundError ||
+		error instanceof ControllerZoneTaskNotFoundError
+	) {
 		return 404;
 	}
 	if (error instanceof ControllerZoneOperationUnsupportedError) {
@@ -99,10 +104,28 @@ function zoneRuntimeErrorStatus(error: unknown): 404 | 405 | 409 | 500 | 503 {
 	if (error instanceof ControllerZoneRuntimeStartError) {
 		return 503;
 	}
+	if (error instanceof ControllerZoneConfigurationError) {
+		return 412;
+	}
 	return 500;
 }
 
-function zoneRuntimeErrorBody(error: unknown): { readonly error: string } {
+function zoneRuntimeErrorBody(error: unknown):
+	| {
+			readonly error: string;
+			readonly gatewayType: string;
+			readonly operationName: string;
+			readonly zoneId: string;
+	  }
+	| { readonly error: string } {
+	if (error instanceof ControllerZoneOperationUnsupportedError) {
+		return {
+			error: error.message,
+			gatewayType: error.gatewayType,
+			operationName: error.operationName,
+			zoneId: error.zoneId,
+		};
+	}
 	return {
 		error: error instanceof Error ? error.message : 'zone-operation-failed',
 	};

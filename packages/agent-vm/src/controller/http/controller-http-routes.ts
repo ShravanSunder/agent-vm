@@ -2,7 +2,10 @@ import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 import { Hono } from 'hono';
 
 import type { SystemConfig } from '../../config/system-config.js';
-import { seedAgentSandboxWorkspace } from '../leases/agent-sandbox-seeding.js';
+import {
+	type AgentSandboxSeedResult,
+	seedAgentSandboxWorkspace,
+} from '../leases/agent-sandbox-seeding.js';
 import { LeaseScopeConflictError } from '../leases/lease-manager.js';
 import { parseAgentIdFromScopeKey } from '../leases/lease-scope.js';
 import {
@@ -18,6 +21,44 @@ import {
 } from './controller-http-route-support.js';
 import { controllerLeaseCreateRequestSchema } from './controller-request-schemas.js';
 import { registerControllerZoneOperationRoutes } from './controller-zone-operation-routes.js';
+
+function writeControllerLeaseLog(message: string): void {
+	process.stderr.write(`[controller-http-routes] ${message}\n`);
+}
+
+function logAgentSandboxSeedResult(result: AgentSandboxSeedResult): void {
+	switch (result.kind) {
+		case 'seeded':
+			writeControllerLeaseLog(
+				`seeded sandbox for zone '${result.zoneId}' scope '${result.scopeKey}' agent '${result.agentId}': ${String(result.written)} written, ${String(result.alreadyExisted)} already existed`,
+			);
+			return;
+		case 'malformed-agent-scope':
+			writeControllerLeaseLog(
+				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': ${result.reason}`,
+			);
+			return;
+		case 'sandbox-root-missing':
+			writeControllerLeaseLog(
+				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': sandbox root '${result.sandboxRoot}' does not exist`,
+			);
+			return;
+		case 'workspace-missing':
+			writeControllerLeaseLog(
+				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': workspace '${result.workspaceDir}' does not exist`,
+			);
+			return;
+		case 'workspace-outside-sandbox':
+			writeControllerLeaseLog(
+				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': workspace '${result.workspaceDir}' is outside sandbox root '${result.sandboxRoot}'`,
+			);
+			return;
+		case 'no-seeds-configured':
+		case 'non-agent-scope':
+		case 'not-openclaw-zone':
+			return;
+	}
+}
 
 export function createControllerApp(options: {
 	readonly leaseManager: ControllerLeaseManager;
@@ -202,12 +243,13 @@ export function createControllerService(options: {
 			}
 			const resolvedWorkspaceDir = await resolveLeaseWorkspaceDirForZone({ workspaceDir, zone });
 			if (options.secretResolver) {
-				await seedAgentSandboxWorkspace({
+				const seedResult = await seedAgentSandboxWorkspace({
 					scopeKey,
 					secretResolver: options.secretResolver,
 					workspaceDir: resolvedWorkspaceDir,
 					zone,
 				});
+				logAgentSandboxSeedResult(seedResult);
 			}
 			return resolvedWorkspaceDir;
 		},

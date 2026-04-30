@@ -3,16 +3,8 @@ import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import type { ActiveTaskRegistry, ActiveWorkerTask } from '../active-task-registry.js';
-import {
-	pullDefaultForTask,
-	PullDefaultValidationError,
-	type PullDefaultRequest,
-} from '../git-pull-default-operations.js';
-import {
-	pushBranchesForTask,
-	PushBranchesValidationError,
-	type PushBranchRequest,
-} from '../git-push-operations.js';
+import { pullDefaultForTask, type PullDefaultRequest } from '../git-pull-default-operations.js';
+import { pushBranchesForTask, type PushBranchRequest } from '../git-push-operations.js';
 import {
 	ControllerRuntimeAtCapacityError,
 	ControllerTaskNotReadyError,
@@ -24,7 +16,12 @@ import {
 	prepareWorkerTask as prepareWorkerTaskDefault,
 	type PreparedWorkerTask,
 	type WorkerTaskInput,
+	type WorkerTaskResult,
 } from '../worker-task-runner.js';
+import {
+	ControllerZoneConfigurationError,
+	ControllerZoneTaskNotFoundError,
+} from './zone-runtime-errors.js';
 import type { ControllerZoneConfig, WorkerZoneRuntime } from './zone-runtime-types.js';
 
 const MAX_ACTIVE_TASKS_PER_RUNTIME = 1;
@@ -45,10 +42,11 @@ export interface CreateWorkerZoneRuntimeOptions {
 		| 'tryReserve'
 	>;
 	readonly controllerGithubToken: string | null;
+	readonly callerUrl?: string;
 	readonly executeWorkerTask?: (
 		prepared: PreparedWorkerTask,
 		dependencies: Parameters<typeof executeWorkerTaskDefault>[1],
-	) => ReturnType<typeof executeWorkerTaskDefault>;
+	) => Promise<WorkerTaskResult>;
 	readonly onWorkerTaskFinished?: (zoneId: string, taskId: string) => void | Promise<void>;
 	readonly onWorkerTaskIngress?: (
 		zoneId: string,
@@ -79,7 +77,7 @@ export function createWorkerZoneRuntime(
 		closeTaskForZone: async (taskId) => {
 			const activeTask = options.activeTaskRegistry.get(options.zone.id, taskId);
 			if (!activeTask) {
-				throw new Error(`Task '${taskId}' is not active for zone '${options.zone.id}'.`);
+				throw new ControllerZoneTaskNotFoundError(options.zone.id, taskId);
 			}
 			if (!activeTask.workerIngress) {
 				throw new ControllerTaskNotReadyError(
@@ -104,9 +102,8 @@ export function createWorkerZoneRuntime(
 		executeWorkerTask: async (prepared) => {
 			let heartbeatAcquired = false;
 			try {
-				const callerUrl = process.env.CALLER_URL;
-				if (callerUrl) {
-					options.requestHeartbeatRegistry.acquire(prepared.input.requestTaskId, callerUrl);
+				if (options.callerUrl) {
+					options.requestHeartbeatRegistry.acquire(prepared.input.requestTaskId, options.callerUrl);
 					heartbeatAcquired = true;
 				}
 				return await (options.executeWorkerTask ?? executeWorkerTaskDefault)(prepared, {
@@ -133,7 +130,10 @@ export function createWorkerZoneRuntime(
 			}
 		},
 		gatewayType: 'worker',
-		getSnapshot: () => ({ lifecycleState: 'stopped' }),
+		getSnapshot: () => ({
+			lifecycleState:
+				options.activeTaskRegistry.listForZone(options.zone.id).length > 0 ? 'running' : 'stopped',
+		}),
 		getTaskState: async (taskId) => await readTaskState(options.zone.id, taskId),
 		prepareWorkerTask: async (input: WorkerTaskInput) => {
 			const reservationId = options.activeTaskRegistry.tryReserve(
@@ -164,12 +164,11 @@ export function createWorkerZoneRuntime(
 		pullDefaultForTask: async (taskId, input: PullDefaultRequest) => {
 			const activeTask = options.activeTaskRegistry.get(options.zone.id, taskId);
 			if (!activeTask) {
-				throw new PullDefaultValidationError(
-					`Task '${taskId}' is not active for zone '${options.zone.id}'.`,
-				);
+				throw new ControllerZoneTaskNotFoundError(options.zone.id, taskId);
 			}
 			if (!options.controllerGithubToken) {
-				throw new Error(
+				throw new ControllerZoneConfigurationError(
+					options.zone.id,
 					'Controller GitHub token is not configured. Set host.githubToken or process.env.GITHUB_TOKEN.',
 				);
 			}
@@ -194,12 +193,11 @@ export function createWorkerZoneRuntime(
 		) => {
 			const activeTask = options.activeTaskRegistry.get(options.zone.id, taskId);
 			if (!activeTask) {
-				throw new PushBranchesValidationError(
-					`Task '${taskId}' is not active for zone '${options.zone.id}'.`,
-				);
+				throw new ControllerZoneTaskNotFoundError(options.zone.id, taskId);
 			}
 			if (!options.controllerGithubToken) {
-				throw new Error(
+				throw new ControllerZoneConfigurationError(
+					options.zone.id,
 					'Controller GitHub token is not configured. Set host.githubToken or process.env.GITHUB_TOKEN.',
 				);
 			}
