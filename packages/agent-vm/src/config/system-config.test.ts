@@ -105,6 +105,54 @@ async function writeSystemConfigForTest(prefix: string, config: unknown): Promis
 }
 
 describe('loadSystemConfig', () => {
+	test('loads system.jsonc with comments and trailing commas', async () => {
+		const workingDirectoryPath = await fsp.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-system-config-'),
+		);
+		createdDirectories.push(workingDirectoryPath);
+		const configPath = path.join(workingDirectoryPath, 'config', 'system.jsonc');
+		await fsp.mkdir(path.dirname(configPath), { recursive: true });
+		const config = createValidSystemConfigInput();
+		await fsp.writeFile(
+			configPath,
+			[
+				'{',
+				'  // Controller host settings',
+				`  "host": ${JSON.stringify(config.host)},`,
+				'  "cacheDir": "../cache",',
+				'  "runtimeDir": "../runtime",',
+				`  "imageProfiles": ${JSON.stringify(config.imageProfiles)},`,
+				`  "zones": ${JSON.stringify(config.zones)},`,
+				`  "toolProfiles": ${JSON.stringify(config.toolProfiles)},`,
+				`  "tcpPool": ${JSON.stringify(config.tcpPool)},`,
+				'}',
+			].join('\n'),
+			'utf8',
+		);
+
+		const loadedConfig = await loadSystemConfig(configPath);
+
+		expect(loadedConfig.systemConfigPath).toBe(configPath);
+		expect(loadedConfig.host.controllerPort).toBe(18800);
+		expect(loadedConfig.zones[0]?.id).toBe('shravan');
+	});
+
+	test('falls back to sibling system.jsonc when default system.json is absent', async () => {
+		const workingDirectoryPath = await fsp.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-system-config-'),
+		);
+		createdDirectories.push(workingDirectoryPath);
+		const requestedConfigPath = path.join(workingDirectoryPath, 'config', 'system.json');
+		const jsoncConfigPath = path.join(workingDirectoryPath, 'config', 'system.jsonc');
+		await fsp.mkdir(path.dirname(jsoncConfigPath), { recursive: true });
+		await fsp.writeFile(jsoncConfigPath, JSON.stringify(createValidSystemConfigInput()), 'utf8');
+
+		const loadedConfig = await loadSystemConfig(requestedConfigPath);
+
+		expect(loadedConfig.systemConfigPath).toBe(jsoncConfigPath);
+		expect(loadedConfig.zones[0]?.id).toBe('shravan');
+	});
+
 	test('loads a valid plan-1 controller config', async () => {
 		const workingDirectoryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-system-config-'));
 		createdDirectories.push(workingDirectoryPath);

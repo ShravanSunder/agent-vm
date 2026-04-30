@@ -1,7 +1,13 @@
-# system.json
+# system.jsonc
 
-`system.json` is the controller's top-level config file. Relative paths are
-resolved relative to the directory containing `system.json`.
+`system.jsonc` is the controller's top-level human-authored config file.
+Relative paths are resolved relative to the directory containing the system
+config. `system.json` is still accepted for existing deployments, but new
+scaffolds generate `system.jsonc`.
+
+Comments are allowed in authored config. Runtime files that the controller
+writes, including effective worker config, runtime records, API bodies, and
+task event logs, remain strict JSON/JSONL.
 
 Source schema:
 `packages/agent-vm/src/config/system-config.ts`
@@ -111,7 +117,7 @@ does not enable Discord or any other channel-specific surface by default.
 
 Channel plugins are deployment-owned. Add channel plugins in the deployment
 Dockerfile and `config/gateways/<zone>/openclaw.json`, then declare the matching
-secrets, `allowedHosts`, and `websocketBypass` entries in `config/system.json`.
+secrets, `allowedHosts`, and `websocketBypass` entries in `config/system.jsonc`.
 
 OpenClaw Tool VMs mount their lease workspace at `/work`. Worker task VMs keep
 repo edits under `/work/repos/<repoId>`. Do not use `/workspace` in new
@@ -127,7 +133,7 @@ Gateway image profiles are used by zones:
     "gateways": {
       "worker": {
         "type": "worker",
-        "buildConfig": "../vm-images/gateways/worker/build-config.json",
+        "buildConfig": "../vm-images/gateways/worker/build-config.jsonc",
         "dockerfile": "../vm-images/gateways/worker/Dockerfile"
       }
     }
@@ -150,7 +156,7 @@ Each zone selects one gateway image profile and one gateway behavior config:
     "memory": "2G",
     "cpus": 2,
     "port": 18791,
-    "config": "./gateways/coding-agent/worker.json",
+    "config": "./gateways/coding-agent/worker.jsonc",
     "imageProfile": "worker",
     "stateDir": "../state/coding-agent"
   },

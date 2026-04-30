@@ -1,10 +1,11 @@
-# .agent-vm/config.json
+# .agent-vm/config.jsonc
 
-`.agent-vm/config.json` is a repo-level Worker override. It lives in the
+`.agent-vm/config.jsonc` is a repo-level Worker override. It lives in the
 repository that the agent edits, not in the controller project config.
+Existing `.agent-vm/config.json` files are still accepted.
 
 The controller reads it after cloning the repo, deep-merges it over the
-zone-level `worker.json`, applies Zod defaults, and writes the normalized
+zone-level `worker.jsonc`, applies Zod defaults, and writes the normalized
 `effective-worker.json` into `/state` before the VM boots.
 
 ## Merge Rules
@@ -15,8 +16,8 @@ zone-level `worker.json`, applies Zod defaults, and writes the normalized
 | Arrays | Replace entirely. No concatenation. |
 | Scalars | Project value replaces zone value. |
 
-Missing `.agent-vm/config.json` is valid. The zone-level `worker.json` remains
-the base config.
+Missing `.agent-vm/config.jsonc` and `.agent-vm/config.json` is valid. The
+zone-level `worker.jsonc` remains the base config.
 
 ## Common Overrides
 
@@ -64,5 +65,5 @@ Repo-level configs may use inline strings or `null` for instructions. They may
 not use `{ "path": "./prompts/..." }` prompt file references.
 
 Prompt file references are zone-level only because they resolve relative to
-the zone-level `worker.json` and must stay under that config's sibling
+the zone-level `worker.jsonc` and must stay under that config's sibling
 `prompts/` directory.

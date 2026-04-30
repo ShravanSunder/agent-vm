@@ -469,7 +469,7 @@ The full per-task lifecycle is managed by `worker-task-runner.ts`:
      |-- Create task state and non-backup task runtime directories
      |-- Copy local worker tarball if AGENT_VM_WORKER_TARBALL_PATH set
      |-- Create RealFS gitdirs under the task runtime root
-     |-- Read .agent-vm/config.json from primary repo
+     |-- Read .agent-vm/config.jsonc or .agent-vm/config.json from primary repo
      |-- Deep-merge: zone gateway config + project config -> effective config
      |-- Validate against workerConfigSchema
      |-- Write effective-worker.json to taskRoot/state/
@@ -513,7 +513,7 @@ For the worker pipeline internals (what happens inside the VM after step 3), see
 Secrets are resolved on the host and delivered to VMs through two channels. Host-only secrets (e.g., `githubToken` for push-branches) never enter any VM.
 
 ```
-  system.json
+  system.jsonc
     |
     |  host.secretsProvider.tokenSource
     |    -> resolve 1Password service account token (op-cli | env | keychain)
@@ -539,7 +539,7 @@ Secrets are resolved on the host and delivered to VMs through two channels. Host
 
 ```mermaid
 flowchart TB
-    config["system.json
+    config["system.jsonc
 zone.secrets"]
     resolver["composite resolver"]
     split["split resolved secrets"]
@@ -571,11 +571,11 @@ VM images are built from Docker OCI base images via Gondolin's build pipeline. I
 ### Build Pipeline
 
 ```
-  build-config.json (referenced from system.json)
+  build-config.jsonc (referenced from system.jsonc)
     |
     v
   buildGatewayImage() / buildGondolinImage()
-    |-- 1. Load build config JSON
+    |-- 1. Load authored build config JSONC
     |-- 2. Fingerprint: SHA-256(buildConfig + runtimeBuildVersionTag + fingerprintInput), truncated to 16 hex
     |-- 3. Cache hit?  cacheDir/{fingerprint}/ has all 4 assets -> return cached
     |-- 4. Cache miss: gondolin.buildAssets() -> Docker pull, extract, build rootfs

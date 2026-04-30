@@ -19,20 +19,20 @@ For the full pipeline internals, see [architecture/agent-worker-gateway.md](../a
 Three config files compose together. Project overrides zone, Zod defaults fill gaps.
 
 ```
-  zone worker.json          (team defaults, lives next to system.json)
+  zone worker.jsonc         (team defaults, lives next to system.jsonc)
        |
        v  deep merge
-  .agent-vm/config.json     (project overrides, checked into the PROJECT repo root)
+  .agent-vm/config.jsonc    (project overrides, checked into the PROJECT repo root)
        |
        v  Zod defaults fill gaps
   effective-worker.json     (written to /state/ before VM boots)
 ```
 
-**Merge rules:** Objects merge recursively (project wins per key). Arrays replace entirely (no concatenation). Missing `.agent-vm/config.json` is fine — zone defaults apply. The controller reads `.agent-vm/config.json` from the cloned repo during task prep, NOT from the zone folder.
+**Merge rules:** Objects merge recursively (project wins per key). Arrays replace entirely (no concatenation). Missing `.agent-vm/config.jsonc` and `.agent-vm/config.json` is fine — zone defaults apply. The controller reads `.agent-vm/config.jsonc` or `.agent-vm/config.json` from the cloned repo during task prep, NOT from the zone folder.
 
-### system.json — Define a Worker Zone
+### system.jsonc — Define a Worker Zone
 
-In your `system.json`, add a zone with `gateway.type: "worker"`:
+In your `system.jsonc`, add a zone with `gateway.type: "worker"`:
 
 ```json
 {
@@ -43,7 +43,7 @@ In your `system.json`, add a zone with `gateway.type: "worker"`:
       "memory": "2G",
       "cpus": 2,
       "port": 18791,
-      "config": "./dev-worker/worker.json",
+      "config": "./dev-worker/worker.jsonc",
       "stateDir": "../state/dev-worker"
     },
     "secrets": { ... },
@@ -53,12 +53,12 @@ In your `system.json`, add a zone with `gateway.type: "worker"`:
 }
 ```
 
-For all system.json fields, see
+For all system config fields, see
 [reference/configuration/system-json.md](../reference/configuration/system-json.md).
 
-### worker.json — Pipeline Behavior
+### worker.jsonc — Pipeline Behavior
 
-Controls which LLM models to use, how review cycles run, and what verification commands are available. `agent-vm init --type worker ...` writes the built-in prompt defaults as editable markdown files and references them from `worker.json`:
+Controls which LLM models to use, how review cycles run, and what verification commands are available. `agent-vm init --type worker ...` writes the built-in prompt defaults as editable markdown files and references them from `worker.jsonc`:
 
 ```json
 {
@@ -86,18 +86,18 @@ Controls which LLM models to use, how review cycles run, and what verification c
 }
 ```
 
-Prompt paths are zone-level only: they are supported in zone-level `worker.json`,
-not in repo-level `.agent-vm/config.json`. Paths are relative to `worker.json`
+Prompt paths are zone-level only: they are supported in zone-level `worker.jsonc`,
+not in repo-level `.agent-vm/config.jsonc`. Paths are relative to `worker.jsonc`
 and must stay under its sibling `prompts/` directory. Missing prompt files,
 absolute paths, `../` escapes, and symlink escapes fail fast during config
 loading, task pre-start, `agent-vm validate`, and `agent-vm doctor`.
 
-For all worker.json fields, see
+For all worker config fields, see
 [reference/configuration/worker-json.md](../reference/configuration/worker-json.md).
 
-### .agent-vm/config.json — Per-Project Overrides
+### .agent-vm/config.jsonc — Per-Project Overrides
 
-Checked into your repo root. Same schema as worker.json. Overrides zone defaults for this project:
+Checked into your repo root. Same schema as worker config. Overrides zone defaults for this project:
 
 Use inline strings for project-specific instruction overrides; `{ "path": ... }` prompt references are rejected from project configs.
 
@@ -132,7 +132,7 @@ curl -X POST http://localhost:18800/zones/dev-worker/worker-tasks \
 ### What Happens
 
 1. Controller clones your repos in parallel
-2. Reads `.agent-vm/config.json` from repo, merges with zone config
+2. Reads `.agent-vm/config.jsonc` or `.agent-vm/config.json` from repo, merges with zone config
 3. Resolves repo resources from `.agent-vm/repo-resources.ts`
    when the zone allows repo resources
 4. Boots a Gondolin VM, mounts `/state` and task `/gitdirs`
@@ -199,7 +199,7 @@ The full event history is written to `/state/tasks/{taskId}.jsonl` (JSONL format
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
 | Task stuck in `planning` | LLM timeout or network issue | Check `allowedHosts` includes your LLM provider |
-| Tests fail repeatedly | Wrong test command | Override `verification` in `.agent-vm/config.json` |
-| PR not created | GitHub token missing | Configure `host.githubToken` in system.json |
+| Tests fail repeatedly | Wrong test command | Override `verification` in `.agent-vm/config.jsonc` |
+| PR not created | GitHub token missing | Configure `host.githubToken` in system.jsonc |
 | VM boot fails | Image not built | Run `agent-vm build` |
 | Repo resources unreachable | Missing or invalid contract | Run `agent-vm resources validate` |

@@ -146,7 +146,8 @@ When someone submits a task, the controller runs through 5 stages:
   |    extract .agent-vm/ metadata only      |
   |                                          |
   |  Build configuration:                    |
-  |    Read .agent-vm/config.json from repo  |
+  |    Read .agent-vm/config.jsonc or        |
+  |    .agent-vm/config.json from repo       |
   |    Merge: repo config > zone > defaults  |
   |    Write effective-worker.json           |
   |      -> stateDir/tasks/<taskId>/state/   |
@@ -589,7 +590,7 @@ The worker config controls every aspect of the pipeline. It's assembled by the c
 ### Config Assembly
 
 ```
-  .agent-vm/config.json          (checked into your repo)
+  .agent-vm/config.jsonc         (checked into your repo)
     overrides
   Zone config                    (set when controller starts)
     overrides

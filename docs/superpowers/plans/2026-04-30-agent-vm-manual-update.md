@@ -19,10 +19,19 @@ This plan covers only agent-vm framework work:
 - Add a small generated `AGENTS.md` entrypoint and `CLAUDE.md` symlink.
 - Update `agent-vm init` to use the same manual renderer.
 - Strip Discord from the default OpenClaw scaffold while keeping memory-core enabled.
+- Add JSONC support for agent-vm-owned human-authored config files so generated
+  scaffolds can explain themselves inline without changing runtime JSON
+  contracts.
 
 This plan does not reconfigure `shravan-claw`. That should be a separate deployment worktree after this framework command exists.
 
 This plan does not implement fd-rooted RealFS hardening. That lives in `docs/superpowers/plans/2026-04-30-fd-rooted-realfs-provider.md`.
+
+This plan keeps runtime and interchange formats strict JSON. JSONC is only for
+human-authored agent-vm config surfaces: `system.jsonc`, `worker.jsonc`,
+repo-local `.agent-vm/config.jsonc`, and `build-config.jsonc`. Generated
+effective configs, runtime records, API bodies, task event logs, backup
+manifests, and cache identifiers remain strict JSON/JSONL.
 
 This plan depends on the operator-facing model from the zone-fix worktree plan:
 `docs/superpowers/plans/2026-04-30-multizone-controller-runtime.md`.
@@ -101,6 +110,25 @@ Documents the framework/deployment split for OpenClaw plugin defaults.
 
 Updates channel/plugin guidance so Discord is a deployment recipe, not a framework default.
 
+`packages/agent-vm/src/config/json-config-file.ts`
+
+Owns the JSONC parser boundary. It reads a file, parses JSON-with-comments via
+`jsonc-parser`, returns `unknown`, and formats parser errors with file
+locations for existing Zod validation wrappers.
+
+`packages/agent-vm/src/config/json-config-file.test.ts`
+
+Unit tests for comments, trailing commas, parse diagnostics, and strict unknown
+output before schema validation.
+
+Existing config loaders
+
+`system-config.ts`, `system-cache-identifier.ts`, `worker-config.ts`,
+`build-command.ts`, `gateway-image-builder.ts`, and repo resource/config
+loaders should use the shared parser only for authored config surfaces. Runtime
+event logs and generated effective config readers must continue to call
+`JSON.parse` directly.
+
 ---
 
 ## Generated Manual Contract
@@ -168,12 +196,12 @@ describe('manual templates', () => {
 	it('builds an agent-facing AGENTS.md index that points at the manual', () => {
 		const content = buildAgentVmAgentsTemplate({
 			defaultZoneId: 'shravan',
-			systemConfigPath: 'config/system.json',
+			systemConfigPath: 'config/system.jsonc',
 		});
 
 		expect(content).toContain(GENERATED_MANUAL_MARKER);
 		expect(content).toContain('docs/manual/README.md');
-		expect(content).toContain('config/system.json');
+		expect(content).toContain('config/system.jsonc');
 		expect(content).toContain('shravan');
 		expect(content).not.toContain('Discord is enabled by default');
 	});
@@ -181,7 +209,7 @@ describe('manual templates', () => {
 	it('builds progressive manual files for humans and agents', () => {
 		const files = buildManualTemplateFiles({
 			defaultZoneId: 'shravan',
-			systemConfigPath: 'config/system.json',
+			systemConfigPath: 'config/system.jsonc',
 		});
 
 		expect(files.map((file) => file.relativePath)).toEqual([
@@ -294,7 +322,7 @@ Local deployment notes belong in docs/manual/local-notes.md or another non-gener
 			content: generatedPage(
 				'Generated Layout',
 				`
-config/system.json is the controller config.
+config/system.jsonc is the controller config.
 config/gateways/<zone>/openclaw.json is OpenClaw-owned gateway config.
 vm-images/ contains deployment-owned Dockerfiles and Gondolin build configs.
 stateDir stores durable gateway state.
@@ -357,7 +385,7 @@ Repo resources live under .agent-vm inside target repos and are refreshed with a
 			content: generatedPage(
 				'Secrets And Runtime Auth',
 				`
-Secrets are declared in config/system.json.
+Secrets are declared in config/system.jsonc.
 Use http-mediation for service tokens that should be swapped into outbound requests by the controller.
 Use env only when the gateway process itself must read the raw value.
 Do not bake secrets into Dockerfiles or images.
@@ -400,7 +428,7 @@ To add a channel:
 1. Install or bake the plugin in the deployment Dockerfile if needed.
 2. Add the plugin to plugins.allow in openclaw.json.
 3. Add plugin or channels config in openclaw.json.
-4. Add required secrets in config/system.json.
+4. Add required secrets in config/system.jsonc.
 5. Add allowedHosts and websocketBypass entries for the channel endpoints.
 6. Rebuild the gateway image and run agent-vm doctor.
 
@@ -452,7 +480,7 @@ Agent-vm defaults are channel-neutral. Existing Discord deployments keep Discord
 
 1. Keep Discord plugin/runtime installation in the deployment Dockerfile.
 2. Keep Discord enabled in config/gateways/<zone>/openclaw.json.
-3. Keep DISCORD_BOT_TOKEN in config/system.json zone secrets.
+3. Keep DISCORD_BOT_TOKEN in config/system.jsonc zone secrets.
 4. Keep discord.com and cdn.discordapp.com in allowedHosts.
 5. Keep gateway.discord.gg:443 in websocketBypass.
 
@@ -527,7 +555,7 @@ describe('updateAgentVmManual', () => {
 
 		const result = await updateAgentVmManual({
 			defaultZoneId: 'shravan',
-			systemConfigPath: 'config/system.json',
+			systemConfigPath: 'config/system.jsonc',
 			targetDir,
 			updateAgentIndex: true,
 		});
@@ -552,7 +580,7 @@ describe('updateAgentVmManual', () => {
 
 		await updateAgentVmManual({
 			defaultZoneId: 'shravan',
-			systemConfigPath: 'config/system.json',
+			systemConfigPath: 'config/system.jsonc',
 			targetDir,
 			updateAgentIndex: true,
 		});
@@ -568,7 +596,7 @@ describe('updateAgentVmManual', () => {
 
 		const result = await updateAgentVmManual({
 			defaultZoneId: 'shravan',
-			systemConfigPath: 'config/system.json',
+			systemConfigPath: 'config/system.jsonc',
 			targetDir,
 			updateAgentIndex: false,
 		});
@@ -700,7 +728,7 @@ it('routes manual update to the deployment manual updater', async () => {
 
 	expect(updateAgentVmManual).toHaveBeenCalledWith({
 		defaultZoneId: 'default',
-		systemConfigPath: 'config/system.json',
+		systemConfigPath: 'config/system.jsonc',
 		targetDir: '/tmp/agent-vm-manual',
 		updateAgentIndex: true,
 	});
@@ -786,7 +814,7 @@ export function createManualSubcommands(io: CliIo, dependencies: CliDependencies
 					}),
 					systemConfigPath: option({
 						long: 'config',
-						defaultValue: () => 'config/system.json',
+						defaultValue: () => 'config/system.jsonc',
 						description: 'System config path to mention in generated manual text',
 						type: string,
 					}),
@@ -911,7 +939,7 @@ it('keeps the default OpenClaw scaffold Discord-free and memory-core enabled', a
 		),
 	);
 	const rawSystemConfig = JSON.parse(
-		await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
+		await fs.readFile(path.join(targetDir, 'config', 'system.jsonc'), 'utf8'),
 	);
 	const gatewayDockerfile = await fs.readFile(
 		path.join(targetDir, 'vm-images', 'gateways', 'openclaw', 'Dockerfile'),
@@ -1002,7 +1030,7 @@ Before the final runtime directory creation block, call:
 ```ts
 const manualResult = await updateAgentVmManual({
 	defaultZoneId: options.zoneId,
-	systemConfigPath: 'config/system.json',
+	systemConfigPath: 'config/system.jsonc',
 	targetDir: options.targetDir,
 	updateAgentIndex: true,
 });
@@ -1028,8 +1056,8 @@ Run a generated-config smoke against the scaffold. If the repo has a local `agen
 ```bash
 tmp_dir="$(mktemp -d)"
 node packages/agent-vm/dist/cli/agent-vm-entrypoint.js init test-openclaw --type openclaw --secrets environment --arch aarch64 --target-dir "$tmp_dir"
-node packages/agent-vm/dist/cli/agent-vm-entrypoint.js validate --config "$tmp_dir/config/system.json"
-node packages/agent-vm/dist/cli/agent-vm-entrypoint.js doctor --config "$tmp_dir/config/system.json"
+node packages/agent-vm/dist/cli/agent-vm-entrypoint.js validate --config "$tmp_dir/config/system.jsonc"
+node packages/agent-vm/dist/cli/agent-vm-entrypoint.js doctor --config "$tmp_dir/config/system.jsonc"
 ```
 
 Expected: PASS, or an explicitly documented environment-gated skip if the local machine cannot start/doctor OpenClaw. Do not claim the memory-core default is deployment-safe from unit tests alone.
@@ -1113,13 +1141,13 @@ In `docs/reference/configuration/system-json.md`, add a short OpenClaw default s
 
 `agent-vm init --type openclaw` scaffolds framework primitives: Gondolin, memory-core, VM lifecycle, tool VM lease plumbing, and runtime auth wiring. It does not enable Discord or any other channel-specific surface by default.
 
-Channel plugins are deployment-owned. Add channel plugins in the deployment Dockerfile and `config/gateways/<zone>/openclaw.json`, then declare the matching secrets, `allowedHosts`, and `websocketBypass` entries in `config/system.json`.
+Channel plugins are deployment-owned. Add channel plugins in the deployment Dockerfile and `config/gateways/<zone>/openclaw.json`, then declare the matching secrets, `allowedHosts`, and `websocketBypass` entries in `config/system.jsonc`.
 ```
 
 In `docs/getting-started/openclaw-guide.md`, replace any wording that says Discord is included by default with:
 
 ```md
-Discord is a deployment recipe, not an agent-vm framework default. To enable Discord, configure it in your deployment Dockerfile and OpenClaw config, then add `DISCORD_BOT_TOKEN`, Discord hosts, and the Discord gateway websocket bypass to `system.json`.
+Discord is a deployment recipe, not an agent-vm framework default. To enable Discord, configure it in your deployment Dockerfile and OpenClaw config, then add `DISCORD_BOT_TOKEN`, Discord hosts, and the Discord gateway websocket bypass to `system.jsonc`.
 ```
 
 - [ ] **Step 3: Run targeted tests**
@@ -1139,6 +1167,142 @@ Expected: all commands PASS.
 ```bash
 git add packages/agent-vm/src/integration-tests/manual-cli.smoke.test.ts docs/reference/configuration/system-json.md docs/getting-started/openclaw-guide.md
 git commit -m "docs: document manual update and neutral openclaw defaults" -m "Co-authored-by: Codex <noreply@openai.com>"
+```
+
+---
+
+### Task 6: JSONC Authored Config Support
+
+**Files:**
+- Create: `packages/agent-vm/src/config/json-config-file.ts`
+- Test: `packages/agent-vm/src/config/json-config-file.test.ts`
+- Modify: `package.json`
+- Modify: `packages/agent-vm/src/config/system-config.ts`
+- Modify: `packages/agent-vm/src/config/system-cache-identifier.ts`
+- Modify: `packages/agent-vm/src/cli/build-command.ts`
+- Modify: `packages/agent-vm/src/gateway/gateway-image-builder.ts`
+- Modify: `packages/agent-vm-worker/src/config/worker-config.ts`
+- Modify: `packages/agent-vm/src/cli/init-command.ts`
+- Modify: `packages/agent-vm/src/cli/init-command.test.ts`
+- Modify: `docs/reference/configuration/README.md`
+- Modify: `docs/reference/configuration/system-json.md`
+- Modify: `docs/reference/configuration/worker-json.md`
+- Modify: `docs/reference/configuration/project-config-json.md`
+
+- [ ] **Step 1: Add failing parser tests**
+
+Create `packages/agent-vm/src/config/json-config-file.test.ts` with tests that
+write a `.jsonc` file containing line comments, block comments, and trailing
+commas, then assert `loadJsonConfigFile()` returns `unknown` data that Zod can
+validate. Add a malformed JSONC test that asserts the thrown message includes
+the file path and parser error location.
+
+Run:
+
+```bash
+pnpm vitest run packages/agent-vm/src/config/json-config-file.test.ts
+```
+
+Expected: FAIL because `json-config-file.ts` does not exist.
+
+- [ ] **Step 2: Implement the shared parser boundary**
+
+Add `jsonc-parser` to the workspace dependencies and create
+`loadJsonConfigFile(filePath): Promise<unknown>`. The function must:
+
+```text
+read UTF-8 file
+parse with jsonc-parser
+allow trailing commas
+reject parse errors with file path + line/column
+return unknown
+```
+
+Do not return typed config from this helper. Schema-specific loaders keep their
+Zod parse step.
+
+- [ ] **Step 3: Wire authored config loaders**
+
+Replace direct `JSON.parse(await readFile(...))` only for authored config files:
+
+```text
+config/system.jsonc or config/system.json
+config/gateways/<zone>/worker.jsonc or config/gateways/<zone>/worker.json
+repo .agent-vm/config.jsonc or repo .agent-vm/config.json
+vm-images/**/build-config.jsonc or vm-images/**/build-config.json
+```
+
+Keep strict JSON parsing for:
+
+```text
+/state/effective-worker.json
+/state/effective-openclaw.json
+systemCacheIdentifier.json
+runtime records
+task event JSONL
+API bodies
+backup manifests
+```
+
+- [ ] **Step 4: Generate JSONC for scaffolded authored configs**
+
+Update `agent-vm init` so human-authored scaffold files use `.jsonc` names where
+agent-vm owns the parser:
+
+```text
+config/system.jsonc
+config/gateways/<zone>/worker.jsonc
+vm-images/**/build-config.jsonc
+```
+
+Leave OpenClaw-owned `openclaw.json` strict unless OpenClaw itself is confirmed
+to support JSONC or agent-vm renders strict effective JSON before OpenClaw
+reads it.
+
+- [ ] **Step 5: Add tests for generated JSONC**
+
+Update init and CLI tests so the generated scaffold:
+
+```text
+creates config/system.jsonc
+uses JSONC comments for scope, storage, secrets, allowedHosts, and tool profiles
+loads through validate/build/manual commands
+does not create contradictory .json and .jsonc authored config files
+```
+
+Add one black-box smoke assertion that `agent-vm validate --config
+config/system.jsonc` succeeds against the generated scaffold.
+
+- [ ] **Step 6: Update docs and generated manual language**
+
+Document the rule:
+
+```text
+author JSONC, runtime writes JSON
+```
+
+Update generated manual content to tell agents and humans that comments belong
+in authored `.jsonc` config and not in runtime/effective files.
+
+- [ ] **Step 7: Run targeted and broad checks**
+
+Run:
+
+```bash
+pnpm vitest run packages/agent-vm/src/config/json-config-file.test.ts packages/agent-vm/src/config/system-config.test.ts packages/agent-vm/src/cli/init-command.test.ts packages/agent-vm/src/cli/build-command.test.ts packages/agent-vm-worker/src/config/worker-config.test.ts
+pnpm build
+pnpm check
+pnpm test:unit
+pnpm test:smoke
+```
+
+Expected: all PASS.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add package.json pnpm-lock.yaml packages docs
+git commit -m "feat: support jsonc authored configs" -m "Co-authored-by: Codex <noreply@openai.com>"
 ```
 
 ---
@@ -1198,6 +1362,8 @@ Spec coverage:
 - Discord is not a framework default: Task 4 and Task 5.
 - memory-core is enabled by default: Task 4.
 - Tool access/isolation model is documented: Task 1.
+- JSONC authored config support is implemented without changing runtime JSON
+  contracts: Task 6.
 - Tests follow pyramid: unit tests for templates/writer/CLI/init, smoke test for built CLI.
 
 Placeholder scan:

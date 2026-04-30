@@ -14,6 +14,7 @@ import {
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
+import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { loadSystemConfig } from '../config/system-config.js';
 import { scaffoldAgentVmProject } from './init-command.js';
 
@@ -39,6 +40,16 @@ async function pathExists(filePath: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+async function readGeneratedSystemConfig(targetDir: string): Promise<GeneratedSystemConfigForTest> {
+	return generatedSystemConfigSchema.parse(
+		await loadJsonConfigFile(path.join(targetDir, 'config', 'system.jsonc')),
+	);
+}
+
+async function readGeneratedJsonc(filePath: string): Promise<unknown> {
+	return await loadJsonConfigFile(filePath);
 }
 
 const noGeneratedAgeIdentityDependencies = {
@@ -100,8 +111,108 @@ const scaffoldedRuntimePathsSchema = z.object({
 	]),
 });
 
+const generatedSystemConfigSchema = z
+	.object({
+		host: z
+			.object({
+				githubToken: z.object({
+					envVar: z.string().optional(),
+					ref: z.string().optional(),
+					source: z.string().optional(),
+				}),
+				projectNamespace: z.string().min(1).optional(),
+				secretsProvider: z
+					.object({
+						tokenSource: z
+							.object({
+								type: z.string(),
+								service: z.string().optional(),
+								account: z.string().optional(),
+							})
+							.optional(),
+					})
+					.optional(),
+			})
+			.passthrough(),
+		imageProfiles: z
+			.object({
+				gateways: z.record(
+					z.string(),
+					z.object({ buildConfig: z.string(), dockerfile: z.string().optional() }).passthrough(),
+				),
+				toolVms: z
+					.record(
+						z.string(),
+						z.object({ buildConfig: z.string(), dockerfile: z.string().optional() }).passthrough(),
+					)
+					.optional(),
+			})
+			.optional(),
+		tcpPool: z.object({ basePort: z.number(), size: z.number() }).optional(),
+		toolProfiles: z
+			.record(z.string(), z.object({ imageProfile: z.string() }).passthrough())
+			.optional(),
+		zones: z.tuple([
+			z
+				.object({
+					allowedHosts: z.array(z.string()).optional(),
+					gateway: z
+						.object({ config: z.string().optional(), type: z.string().optional() })
+						.passthrough(),
+					runtimeAuthHints: z
+						.array(
+							z
+								.object({
+									hosts: z.array(z.string()).optional(),
+									kind: z.string(),
+									secret: z.string(),
+									service: z.string(),
+									tools: z.array(z.string()).optional(),
+								})
+								.passthrough(),
+						)
+						.optional(),
+					secrets: z
+						.record(
+							z.string(),
+							z
+								.object({
+									envVar: z.string().optional(),
+									ref: z.string().optional(),
+									source: z.string().optional(),
+								})
+								.passthrough(),
+						)
+						.default({}),
+					toolProfile: z.string().optional(),
+					websocketBypass: z.array(z.unknown()).optional(),
+				})
+				.passthrough(),
+		]),
+	})
+	.passthrough();
+
+type GeneratedSystemConfigForTest = z.infer<typeof generatedSystemConfigSchema>;
+
+const generatedSecretReferenceSchema = z.object({
+	ref: z.string().min(1),
+});
+
+const generatedOpenClawToolVmSystemConfigSchema = generatedSystemConfigSchema.extend({
+	imageProfiles: z.object({
+		toolVms: z.object({
+			default: z.object({ buildConfig: z.string(), dockerfile: z.string() }),
+		}),
+	}),
+	tcpPool: z.object({ basePort: z.number(), size: z.number() }),
+	toolProfiles: z.object({
+		standard: z.object({ imageProfile: z.string() }).passthrough(),
+	}),
+	zones: z.tuple([z.object({ toolProfile: z.string() }).passthrough()]),
+});
+
 describe('scaffoldAgentVmProject', () => {
-	it('creates system.json with the requested zone', async () => {
+	it('creates system.jsonc with the requested zone', async () => {
 		const targetDir = await createTestDirectory();
 
 		const result = await scaffoldAgentVmProject(
@@ -115,11 +226,9 @@ describe('scaffoldAgentVmProject', () => {
 			},
 			noGeneratedAgeIdentityDependencies,
 		);
-		const config = scaffoldedSystemConfigSchema.parse(
-			JSON.parse(await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8')),
-		);
+		const config = scaffoldedSystemConfigSchema.parse(await readGeneratedSystemConfig(targetDir));
 
-		expect(result.created).toContain('config/system.json');
+		expect(result.created).toContain('config/system.jsonc');
 		expect(config.cacheDir).toBe('../cache');
 		expect(config.host.projectNamespace).toMatch(/^agent-vm-init-test-/u);
 		expect(config.zones[0]?.id).toBe('test-zone');
@@ -139,9 +248,7 @@ describe('scaffoldAgentVmProject', () => {
 			},
 			noGeneratedAgeIdentityDependencies,
 		);
-		const config = scaffoldedSystemConfigSchema.parse(
-			JSON.parse(await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8')),
-		);
+		const config = scaffoldedSystemConfigSchema.parse(await readGeneratedSystemConfig(targetDir));
 		const gatewayDockerfile = await fs.readFile(
 			path.join(targetDir, 'vm-images', 'gateways', 'worker', 'Dockerfile'),
 			'utf8',
@@ -161,7 +268,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(gatewayDockerfile).not.toContain('_authToken');
 	});
 
-	it('scaffolds worker.json with editable prompt file references for every default prompt', async () => {
+	it('scaffolds worker.jsonc with editable prompt file references for every default prompt', async () => {
 		const targetDir = await createTestDirectory();
 
 		await scaffoldAgentVmProject(
@@ -180,9 +287,25 @@ describe('scaffoldAgentVmProject', () => {
 			'config',
 			'gateways',
 			'test-worker',
-			'worker.json',
+			'worker.jsonc',
 		);
-		const rawWorkerConfig = JSON.parse(await fs.readFile(workerConfigPath, 'utf8'));
+		const rawWorkerConfig = z
+			.object({
+				commonAgentInstructions: z.unknown(),
+				phases: z.object({
+					plan: z.object({
+						agentInstructions: z.unknown(),
+						reviewerInstructions: z.unknown(),
+					}),
+					work: z.object({
+						agentInstructions: z.unknown(),
+						reviewerInstructions: z.unknown(),
+					}),
+					wrapup: z.object({ instructions: z.unknown() }),
+				}),
+				wrapupActions: z.unknown().optional(),
+			})
+			.parse(await readGeneratedJsonc(workerConfigPath));
 		const workerConfig = await loadWorkerConfigDraft(workerConfigPath);
 
 		expect(rawWorkerConfig.commonAgentInstructions).toEqual({
@@ -388,9 +511,19 @@ describe('scaffoldAgentVmProject', () => {
 			},
 			noGeneratedAgeIdentityDependencies,
 		);
-		const config = JSON.parse(
-			await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
-		);
+		const config = z
+			.object({
+				host: z.object({
+					secretsProvider: z.object({
+						tokenSource: z.object({
+							type: z.string(),
+							service: z.string(),
+							account: z.string(),
+						}),
+					}),
+				}),
+			})
+			.parse(await readGeneratedSystemConfig(targetDir));
 
 		expect(config.host.secretsProvider.tokenSource).toEqual({
 			type: 'keychain',
@@ -499,9 +632,10 @@ describe('scaffoldAgentVmProject', () => {
 			},
 		);
 
-		const systemConfigPath = path.join(targetDir, 'config', 'system.json');
-		const systemConfigText = await fs.readFile(systemConfigPath, 'utf8');
-		const systemConfig = scaffoldedRuntimePathsSchema.parse(JSON.parse(systemConfigText));
+		const systemConfigPath = path.join(targetDir, 'config', 'system.jsonc');
+		const systemConfig = scaffoldedRuntimePathsSchema.parse(
+			await readGeneratedSystemConfig(targetDir),
+		);
 		const loadedSystemConfig = await loadSystemConfig(systemConfigPath);
 
 		expect(systemConfig.cacheDir).toBe(path.join(fakeHomeDir, '.agent-vm', 'cache'));
@@ -588,11 +722,9 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const systemConfigText = await fs.readFile(
-			path.join(targetDir, 'config', 'system.json'),
-			'utf8',
+		const systemConfig = scaffoldedRuntimePathsSchema.parse(
+			await readGeneratedSystemConfig(targetDir),
 		);
-		const systemConfig = scaffoldedRuntimePathsSchema.parse(JSON.parse(systemConfigText));
 
 		expect(systemConfig.runtimeDir).toBe('../runtime');
 		expect(systemConfig.zones[0].gateway.stateDir).toBe('../state/my-zone');
@@ -630,7 +762,7 @@ describe('scaffoldAgentVmProject', () => {
 			),
 		).toBe(true);
 		expect(
-			await pathExists(path.join(workerTargetDir, 'config', 'gateways', 'my-zone', 'worker.json')),
+			await pathExists(path.join(workerTargetDir, 'config', 'gateways', 'my-zone', 'worker.jsonc')),
 		).toBe(true);
 		expect(
 			await pathExists(
@@ -712,8 +844,8 @@ describe('scaffoldAgentVmProject', () => {
 			},
 			noGeneratedAgeIdentityDependencies,
 		);
-		const systemConfigPath = path.join(targetDir, 'config', 'system.json');
-		const systemConfig = JSON.parse(await fs.readFile(systemConfigPath, 'utf8'));
+		const systemConfigPath = path.join(targetDir, 'config', 'system.jsonc');
+		const systemConfig = await readGeneratedSystemConfig(targetDir);
 		const parsedSystemConfig = z
 			.object({
 				zones: z.tuple([
@@ -906,9 +1038,7 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = JSON.parse(
-			await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
-		);
+		const config = await readGeneratedSystemConfig(targetDir);
 		const secrets = config.zones[0].secrets;
 
 		expect(secrets).not.toHaveProperty('DISCORD_BOT_TOKEN');
@@ -933,18 +1063,16 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = JSON.parse(
-			await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
-		);
+		const config = await readGeneratedSystemConfig(targetDir);
 		const secrets = config.zones[0].secrets;
 
 		expect(secrets).not.toHaveProperty('DISCORD_BOT_TOKEN');
 		expect(secrets).toHaveProperty('OPENCLAW_GATEWAY_TOKEN');
 		expect(secrets).not.toHaveProperty('ANTHROPIC_API_KEY');
-		expect(secrets.PERPLEXITY_API_KEY.ref).toBe(
+		expect(generatedSecretReferenceSchema.parse(secrets.PERPLEXITY_API_KEY).ref).toBe(
 			'op://agent-vm/test-openclaw-perplexity/credential',
 		);
-		expect(secrets.OPENCLAW_GATEWAY_TOKEN.ref).toBe(
+		expect(generatedSecretReferenceSchema.parse(secrets.OPENCLAW_GATEWAY_TOKEN).ref).toBe(
 			'op://agent-vm/test-openclaw-gateway-auth/password',
 		);
 	});
@@ -963,9 +1091,7 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = JSON.parse(
-			await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
-		);
+		const config = await readGeneratedSystemConfig(targetDir);
 		const zone = config.zones[0];
 
 		expect(zone.allowedHosts).toEqual(
@@ -1009,33 +1135,25 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = JSON.parse(
-			await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
-		) as {
-			readonly imageProfiles: {
-				readonly toolVms: {
-					readonly default: { readonly buildConfig: string; readonly dockerfile: string };
-				};
-			};
-			readonly toolProfiles: {
-				readonly standard: { readonly imageProfile: string };
-			};
-			readonly tcpPool: { readonly basePort: number; readonly size: number };
-			readonly zones: readonly [{ readonly toolProfile: string }];
-		};
+		const config = generatedOpenClawToolVmSystemConfigSchema.parse(
+			await readGeneratedSystemConfig(targetDir),
+		);
 
 		expect(config.zones[0].toolProfile).toBe('standard');
 		expect(config.tcpPool).toEqual({ basePort: 19000, size: 12 });
 		expect(config.toolProfiles.standard.imageProfile).toBe('default');
 		expect(config.toolProfiles.standard).not.toHaveProperty('workspaceRoot');
 		expect(config.imageProfiles.toolVms.default.buildConfig).toBe(
-			'../vm-images/tool-vms/default/build-config.json',
+			'../vm-images/tool-vms/default/build-config.jsonc',
 		);
 		expect(config.imageProfiles.toolVms.default.dockerfile).toBe(
 			'../vm-images/tool-vms/default/Dockerfile',
 		);
 		await expect(
 			fs.access(path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'build-config.json')),
+		).rejects.toMatchObject({ code: 'ENOENT' });
+		await expect(
+			fs.access(path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'build-config.jsonc')),
 		).resolves.toBeUndefined();
 		await expect(
 			fs.access(path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'Dockerfile')),
@@ -1121,13 +1239,15 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = JSON.parse(
-			await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
-		);
+		const config = await readGeneratedSystemConfig(targetDir);
 		const secrets = config.zones[0].secrets;
 
-		expect(secrets.OPENAI_API_KEY.ref).toBe('op://agent-vm/workers-openai/credential');
-		expect(secrets.GITHUB_TOKEN.ref).toBe('op://agent-vm/github-token/credential');
+		expect(generatedSecretReferenceSchema.parse(secrets.OPENAI_API_KEY).ref).toBe(
+			'op://agent-vm/workers-openai/credential',
+		);
+		expect(generatedSecretReferenceSchema.parse(secrets.GITHUB_TOKEN).ref).toBe(
+			'op://agent-vm/github-token/credential',
+		);
 	});
 
 	it('scaffolds worker-specific network defaults for worker type', async () => {
@@ -1144,9 +1264,7 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = JSON.parse(
-			await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
-		);
+		const config = await readGeneratedSystemConfig(targetDir);
 		const zone = config.zones[0];
 
 		expect(zone.allowedHosts).toContain('api.anthropic.com');
@@ -1170,9 +1288,7 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = JSON.parse(
-			await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
-		) as {
+		const config = (await readGeneratedSystemConfig(targetDir)) as {
 			readonly zones: readonly [
 				{
 					readonly runtimeAuthHints: readonly {
@@ -1211,20 +1327,7 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const config = JSON.parse(
-			await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
-		) as {
-			readonly host: {
-				readonly githubToken: { readonly source: string; readonly envVar?: string };
-				readonly secretsProvider?: unknown;
-			};
-			readonly zones: readonly {
-				readonly secrets: Record<
-					string,
-					{ readonly source: string; readonly envVar?: string; readonly ref?: string }
-				>;
-			}[];
-		};
+		const config = await readGeneratedSystemConfig(targetDir);
 
 		expect(config.host.githubToken).toEqual({ source: 'environment', envVar: 'GITHUB_TOKEN' });
 		expect(config.host.secretsProvider).toBeUndefined();
@@ -1397,9 +1500,7 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const systemConfig = JSON.parse(
-			await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
-		);
+		const systemConfig = await readGeneratedSystemConfig(targetDir);
 		const podWorkerSystemConfig = z
 			.object({
 				host: z.object({ projectNamespace: z.string().min(1) }),
@@ -1430,25 +1531,29 @@ describe('scaffoldAgentVmProject', () => {
 		expect(podWorkerSystemConfig.cacheDir).toBe('/var/agent-vm/cache');
 		expect(podWorkerSystemConfig.runtimeDir).toBe('/var/agent-vm/runtime');
 		expect(podWorkerSystemConfig.imageProfiles.gateways.worker.buildConfig).toBe(
-			'/etc/agent-vm/vm-images/gateways/worker/build-config.json',
+			'/etc/agent-vm/vm-images/gateways/worker/build-config.jsonc',
 		);
 		expect(podWorkerSystemConfig.imageProfiles.gateways.worker.dockerfile).toBe(
 			'/etc/agent-vm/vm-images/gateways/worker/Dockerfile',
 		);
 		expect(podWorkerSystemConfig.imageProfiles.toolVms).toEqual({});
 		expect(podWorkerSystemConfig.zones[0].gateway.config).toBe(
-			'/etc/agent-vm/gateways/coding-agent/worker.json',
+			'/etc/agent-vm/gateways/coding-agent/worker.jsonc',
 		);
 		expect(podWorkerSystemConfig.zones[0].gateway.stateDir).toBe('/var/agent-vm/state');
 		expect(podWorkerSystemConfig.zones[0].gateway).not.toHaveProperty('zoneFilesDir');
 		expect(podWorkerSystemConfig.toolProfiles).toEqual({});
 
-		const gatewayBuildConfig = JSON.parse(
-			await fs.readFile(
-				path.join(targetDir, 'vm-images', 'gateways', 'worker', 'build-config.json'),
-				'utf8',
-			),
-		) as { readonly arch: string };
+		await expect(
+			fs.access(path.join(targetDir, 'vm-images', 'gateways', 'worker', 'build-config.json')),
+		).rejects.toMatchObject({ code: 'ENOENT' });
+		const gatewayBuildConfig = z
+			.object({ arch: z.string() })
+			.parse(
+				await readGeneratedJsonc(
+					path.join(targetDir, 'vm-images', 'gateways', 'worker', 'build-config.jsonc'),
+				),
+			);
 		const workerDockerfile = await fs.readFile(
 			path.join(targetDir, 'vm-images', 'gateways', 'worker', 'Dockerfile'),
 			'utf8',
@@ -1485,9 +1590,9 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const systemConfig = JSON.parse(
-			await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8'),
-		) as { readonly zones: [{ readonly allowedHosts: readonly string[] }] };
+		const systemConfig = (await readGeneratedSystemConfig(targetDir)) as {
+			readonly zones: [{ readonly allowedHosts: readonly string[] }];
+		};
 
 		expect(systemConfig.zones[0].allowedHosts).toContain('api.github.com');
 		expect(systemConfig.zones[0].allowedHosts).toContain('github.com');

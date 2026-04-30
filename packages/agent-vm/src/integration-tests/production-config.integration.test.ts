@@ -5,13 +5,14 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { scaffoldAgentVmProject } from '../cli/init-command.js';
+import { loadJsonConfigFile } from '../config/json-config-file.js';
 
-async function parseJsonFile(filePath: string): Promise<Record<string, unknown>> {
-	const parsed = JSON.parse(await fs.readFile(filePath, 'utf8')) as unknown;
+async function loadJsonObjectConfigFile(filePath: string): Promise<Record<string, unknown>> {
+	const parsed = await loadJsonConfigFile(filePath);
 	if (typeof parsed !== 'object' || parsed === null) {
-		throw new TypeError(`Expected JSON object at ${filePath}`);
+		throw new TypeError(`Expected JSONC object at ${filePath}`);
 	}
-	return parsed as Record<string, unknown>;
+	return Object.fromEntries(Object.entries(parsed));
 }
 
 const createdDirectories: string[] = [];
@@ -60,11 +61,11 @@ describe('production config artifacts', () => {
 			},
 		);
 
-		const gatewayBuildConfig = await parseJsonFile(
-			path.join(projectDirectory, 'vm-images', 'gateways', 'openclaw', 'build-config.json'),
+		const gatewayBuildConfig = await loadJsonObjectConfigFile(
+			path.join(projectDirectory, 'vm-images', 'gateways', 'openclaw', 'build-config.jsonc'),
 		);
-		const toolBuildConfig = await parseJsonFile(
-			path.join(projectDirectory, 'vm-images', 'tool-vms', 'default', 'build-config.json'),
+		const toolBuildConfig = await loadJsonObjectConfigFile(
+			path.join(projectDirectory, 'vm-images', 'tool-vms', 'default', 'build-config.jsonc'),
 		);
 		const envLocal = await fs.readFile(path.join(projectDirectory, '.env.local'), 'utf8');
 

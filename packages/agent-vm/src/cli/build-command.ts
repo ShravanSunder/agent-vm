@@ -8,6 +8,7 @@ import { z } from 'zod';
 
 import { buildDockerImage as buildDockerImageDefault } from '../build/docker-image-builder.js';
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
+import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import {
 	buildZigInstallHint,
@@ -64,7 +65,7 @@ function imageTargetKey(imageTarget: Pick<ImageTarget, 'family' | 'name'>): stri
 }
 
 async function resolveOciImageTagFromConfig(buildConfigPath: string): Promise<string> {
-	const rawConfig: unknown = JSON.parse(await fs.readFile(buildConfigPath, 'utf8'));
+	const rawConfig = await loadJsonConfigFile(buildConfigPath);
 	const parsedConfig = ociImageTagSchema.safeParse(rawConfig);
 	if (!parsedConfig.success) {
 		throw new Error(
@@ -139,13 +140,19 @@ async function resolveProjectRootFromDockerfile(dockerfilePath: string): Promise
 			await fs.access(path.join(searchDirectory, 'config', 'system.json'));
 			return searchDirectory;
 		} catch {
-			const parentDirectory = path.dirname(searchDirectory);
-			if (parentDirectory === searchDirectory) {
-				// Fallback for older test scaffolds and legacy layouts that still follow the
-				// standard vm-images/gateways/openclaw/Dockerfile shape but do not materialize config/system.json.
-				return path.resolve(dockerfilePath, '..', '..', '..');
+			try {
+				// oxlint-disable-next-line no-await-in-loop -- upward root discovery is intentionally sequential
+				await fs.access(path.join(searchDirectory, 'config', 'system.jsonc'));
+				return searchDirectory;
+			} catch {
+				const parentDirectory = path.dirname(searchDirectory);
+				if (parentDirectory === searchDirectory) {
+					// Fallback for older test scaffolds and legacy layouts that still follow the
+					// standard vm-images/gateways/openclaw/Dockerfile shape but do not materialize config/system.json.
+					return path.resolve(dockerfilePath, '..', '..', '..');
+				}
+				searchDirectory = parentDirectory;
 			}
-			searchDirectory = parentDirectory;
 		}
 	}
 }

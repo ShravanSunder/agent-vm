@@ -28,7 +28,7 @@ export function createManualSubcommands(io: CliIo, dependencies: CliDependencies
 						type: optional(string),
 						long: 'config',
 						description: 'Deployment system config path documented in the manual',
-						defaultValue: () => 'config/system.json',
+						defaultValue: () => 'config/system.jsonc',
 					}),
 					defaultZone: option({
 						type: optional(string),
@@ -51,7 +51,7 @@ export function createManualSubcommands(io: CliIo, dependencies: CliDependencies
 						targetDir ?? dependencies.getCurrentWorkingDirectory?.() ?? process.cwd();
 					const result = await (dependencies.updateAgentVmManual ?? updateAgentVmManual)({
 						defaultZoneId: defaultZone ?? 'default',
-						systemConfigPath: config ?? 'config/system.json',
+						systemConfigPath: config ?? 'config/system.jsonc',
 						targetDir: resolvedTargetDir,
 						updateAgentIndex: agents,
 					});

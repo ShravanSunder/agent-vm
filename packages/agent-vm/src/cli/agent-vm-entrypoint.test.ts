@@ -372,7 +372,7 @@ describe('runAgentVmCli', () => {
 
 		expect(updateAgentVmManual).toHaveBeenCalledWith({
 			defaultZoneId: 'default',
-			systemConfigPath: 'config/system.json',
+			systemConfigPath: 'config/system.jsonc',
 			targetDir: '/tmp/agent-vm-manual',
 			updateAgentIndex: true,
 		});

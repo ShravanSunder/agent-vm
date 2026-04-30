@@ -10,12 +10,12 @@ Question: are these files coherent?
 scaffold directory without requiring the target runtime host.
 
 ```bash
-agent-vm validate --config config/system.json
+agent-vm validate --config config/system.jsonc
 ```
 
 It checks:
 
-- `system.json` schema and cross-field validation.
+- `system.jsonc` / `system.json` schema and cross-field validation.
 - `systemCacheIdentifier.json` exists and is valid JSON.
 - Gateway and tool VM image recipe files exist.
 - Worker gateway configs load successfully.
@@ -23,7 +23,7 @@ It checks:
 - OpenClaw gateway configs pass `openclaw config validate --json` for
   OpenClaw zones.
 - Container runtime paths like `/etc/agent-vm/...` map back to checkout files
-  when `system.json` lives under a scaffold `config/` directory.
+  when `system.jsonc` or `system.json` lives under a scaffold `config/` directory.
 - `vm-host-system/` exists when the identifier says
   `hostSystemType: "container"`.
 
@@ -37,7 +37,7 @@ Question: can this machine run this config now?
 `doctor` is runtime readiness. It checks the current host, not just the files.
 
 ```bash
-agent-vm doctor --config config/system.json
+agent-vm doctor --config config/system.jsonc
 ```
 
 It checks:
@@ -84,17 +84,17 @@ failing schema, model, channel, and other config issues.
 From a scaffold or checked-out container runtime layout:
 
 ```bash
-agent-vm validate --config config/system.json
+agent-vm validate --config config/system.jsonc
 ```
 
 Inside the container host:
 
 ```bash
-agent-vm doctor --config /etc/agent-vm/system.json
+agent-vm doctor --config /etc/agent-vm/system.jsonc
 ```
 
 Container-host scaffolds intentionally use paths such as
-`/etc/agent-vm/gateways/coding-agent/worker.json`. `validate` understands how
+`/etc/agent-vm/gateways/coding-agent/worker.jsonc`. `validate` understands how
 to map those back to local scaffold files. `doctor` does not pretend the
 current Mac is the container host; it should fail when runtime paths do not
 exist on the current machine.
@@ -103,8 +103,8 @@ exist on the current machine.
 
 ```bash
 agent-vm init coding-agent --type worker --preset macos-local
-agent-vm validate --config config/system.json
-agent-vm doctor --config config/system.json
+agent-vm validate --config config/system.jsonc
+agent-vm doctor --config config/system.jsonc
 ```
 
 For a local scaffold, validate and doctor usually run from the same checkout

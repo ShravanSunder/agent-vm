@@ -43,7 +43,7 @@ Do not silently edit privileged host/deployment config. Explain the proposed Doc
 }
 
 export function buildManualTemplateFiles(
-	_options: ManualTemplateOptions,
+	options: ManualTemplateOptions,
 ): readonly ManualTemplateFile[] {
 	return [
 		{
@@ -73,14 +73,16 @@ Local deployment notes belong in docs/manual/local-notes.md or another non-gener
 			content: generatedPage(
 				'Generated Layout',
 				`
-config/system.json is the controller config.
+${options.systemConfigPath} is the controller config. Agent-vm-authored config is JSONC so short local comments are allowed.
 config/gateways/<zone>/openclaw.json is OpenClaw-owned gateway config.
-vm-images/ contains deployment-owned Dockerfiles and Gondolin build configs.
+config/gateways/<zone>/worker.jsonc is Agent Worker gateway config when the zone type is worker.
+vm-images/ contains deployment-owned Dockerfiles and Gondolin build-config.jsonc files.
 stateDir stores durable gateway state.
 zoneFilesDir stores durable user/workspace files for OpenClaw zones.
 cacheDir stores rebuildable artifacts.
 runtimeDir stores controller runtime artifacts that are not backup state.
 
+Author JSONC for human-owned agent-vm config. Runtime files such as /state/effective-worker.json, task event JSONL, runtime records, and API bodies stay strict JSON.
 OpenClaw Tool VMs mount the validated lease workspace at /work.
 Worker task VMs keep repo files on rootfs/COW at /work/repos.
 OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work.
@@ -120,8 +122,9 @@ Agent-vm provides VM lifecycle, storage mounts, TCP/HTTP mediation, image build,
 OpenClaw owns plugin lifecycle, agents.list, channels, and gateway behavior.
 
 The default scaffold enables Gondolin and memory-core support. It does not enable Discord.
+OpenClaw-owned openclaw.json stays strict JSON unless OpenClaw itself supports comments or agent-vm renders a strict effective config first.
 
-Multi-zone controller work makes one controller process manage multiple typed zones. Until that schema lands, keep generated config examples conservative and use the current system.json reference for exact field names.
+Multi-zone controller work makes one controller process manage multiple typed zones. Until that schema lands, keep generated config examples conservative and use the current system config reference for exact field names.
 `,
 			),
 		},
@@ -141,7 +144,7 @@ Worker repo edits happen under /work/repos/<repoId> inside the VM. The controlle
 			content: generatedPage(
 				'Secrets And Runtime Auth',
 				`
-Secrets are declared in config/system.json.
+Secrets are declared in ${options.systemConfigPath}.
 Use http-mediation for service tokens that should be swapped into outbound requests by the controller.
 Use env only when the gateway process itself must read the raw value.
 Do not bake secrets into Dockerfiles or images.
@@ -182,7 +185,7 @@ To add a channel:
 1. Install or bake the plugin in the deployment Dockerfile if needed.
 2. Add the plugin to plugins.allow in openclaw.json.
 3. Add plugin or channels config in openclaw.json.
-4. Add required secrets in config/system.json.
+4. Add required secrets in ${options.systemConfigPath}.
 5. Add allowedHosts and websocketBypass entries for the channel endpoints.
 6. Rebuild the gateway image and run agent-vm doctor.
 
@@ -237,7 +240,7 @@ Agent-vm defaults are channel-neutral. Existing Discord deployments keep Discord
 
 1. Keep Discord plugin/runtime installation in the deployment Dockerfile.
 2. Keep Discord enabled in config/gateways/<zone>/openclaw.json.
-3. Keep DISCORD_BOT_TOKEN in config/system.json zone secrets.
+3. Keep DISCORD_BOT_TOKEN in ${options.systemConfigPath} zone secrets.
 4. Keep discord.com and cdn.discordapp.com in allowedHosts.
 5. Keep gateway.discord.gg:443 in websocketBypass.
 

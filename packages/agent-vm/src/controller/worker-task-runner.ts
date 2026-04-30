@@ -16,6 +16,7 @@ import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 import { execa } from 'execa';
 import { z } from 'zod';
 
+import { loadJsonConfigFile } from '../config/json-config-file.js';
 import {
 	workerTaskResourcesSchema,
 	workerTaskControllerRequestSchema,
@@ -79,27 +80,55 @@ const taskStatusResponseSchema = z
 	.passthrough();
 const GIT_CLONE_TIMEOUT_MS = 120_000;
 const GIT_METADATA_TIMEOUT_MS = 30_000;
+
+async function loadJsonObjectFile(
+	filePath: string,
+	label: string,
+): Promise<Record<string, unknown>> {
+	const parsed = await loadJsonConfigFile(filePath);
+	if (!isPlainObject(parsed)) {
+		throw new Error(`${label} must be a JSON object`);
+	}
+	return parsed;
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+	return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT');
+}
+
 async function readJsonObjectFile(
 	filePath: string,
 	options: { readonly missingValue?: Record<string, unknown>; readonly label: string },
 ): Promise<Record<string, unknown>> {
 	try {
-		const raw = await fs.readFile(filePath, 'utf8');
-		const parsed: unknown = JSON.parse(raw);
-		if (!isPlainObject(parsed)) {
-			throw new Error(`${options.label} must be a JSON object`);
-		}
-		return parsed;
+		return await loadJsonObjectFile(filePath, options.label);
 	} catch (error) {
-		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+		if (!isFileNotFoundError(error)) {
+			const message = error instanceof Error ? error.message : String(error);
+			throw new Error(`Invalid ${options.label}: ${message}`, { cause: error });
+		}
+	}
+
+	if (path.basename(filePath) === 'config.json') {
+		const jsoncFilePath = path.join(path.dirname(filePath), 'config.jsonc');
+		try {
+			return await loadJsonObjectFile(jsoncFilePath, options.label);
+		} catch (jsoncError) {
+			if (!isFileNotFoundError(jsoncError)) {
+				const message = jsoncError instanceof Error ? jsoncError.message : String(jsoncError);
+				throw new Error(`Invalid ${options.label}: ${message}`, { cause: jsoncError });
+			}
 			if (options.missingValue !== undefined) {
 				return options.missingValue;
 			}
-			throw new Error(`${options.label} file not found at ${filePath}`, { cause: error });
+			throw new Error(`${options.label} file not found at ${filePath}`, { cause: jsoncError });
 		}
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Invalid ${options.label}: ${message}`, { cause: error });
 	}
+
+	if (options.missingValue !== undefined) {
+		return options.missingValue;
+	}
+	throw new Error(`${options.label} file not found at ${filePath}`);
 }
 
 async function materializeRepoAgentVmDirectory(options: {

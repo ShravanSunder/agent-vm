@@ -528,6 +528,57 @@ describe('resolveOciImageTagFromConfig', () => {
 		expect(dockerBuilds[0]?.imageTag).toBe('agent-vm-gateway:latest');
 	});
 
+	it('reads the oci.image tag from build-config.jsonc', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const gatewayBuildConfigPath = path.join(temporaryDirectory, 'gateway-build-config.jsonc');
+		fs.writeFileSync(
+			gatewayBuildConfigPath,
+			[
+				'{',
+				'  // Human-authored image tag',
+				'  "oci": {',
+				'    "image": "agent-vm-gateway:jsonc",',
+				'  },',
+				'}',
+			].join('\n'),
+			'utf8',
+		);
+		const dockerBuilds: { imageTag: string }[] = [];
+
+		await runBuildCommand(
+			{
+				systemConfig: {
+					...createTestSystemConfig(),
+					imageProfiles: {
+						...createTestSystemConfig().imageProfiles,
+						gateways: {
+							...createTestSystemConfig().imageProfiles.gateways,
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: gatewayBuildConfigPath,
+								dockerfile: '/project/vm-images/gateways/openclaw/Dockerfile',
+							},
+						},
+					},
+				},
+			},
+			{
+				buildDockerImage: async (options) => {
+					dockerBuilds.push({ imageTag: options.imageTag });
+				},
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/cache/fp',
+				}),
+				runTask: async (_title, fn) => fn(),
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		expect(dockerBuilds[0]?.imageTag).toBe('agent-vm-gateway:jsonc');
+	});
+
 	it('throws when build-config.json is missing oci.image', async () => {
 		const temporaryDirectory = createTemporaryDirectory();
 		const gatewayBuildConfigPath = path.join(temporaryDirectory, 'gateway-build-config.json');

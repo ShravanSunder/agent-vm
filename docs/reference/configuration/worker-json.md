@@ -1,9 +1,13 @@
-# worker.json
+# worker.jsonc
 
-`worker.json` configures `agent-vm-worker` inside the VM. It is zone-level:
+`worker.jsonc` configures `agent-vm-worker` inside the VM. It is zone-level:
 operators use it to define defaults for how the agent plans, works, reviews,
 validates, and wraps up. The controller injects generated `runtimeInstructions`
 at task pre-start; do not author that field by hand in scaffolded config.
+Existing `worker.json` files are still accepted.
+
+Comments are allowed in authored worker config. The controller writes the final
+`/state/effective-worker.json` as strict JSON before the worker starts.
 
 Source schema:
 `packages/agent-vm-worker/src/config/worker-config.ts`

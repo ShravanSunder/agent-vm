@@ -48,7 +48,7 @@ live inside the VM under `/work/repos/<repoId>`, while worker gitdirs live under
 ```text
 source/config
   Owner: catalog repo
-  Example: config/system.json, config/gateways/<zone>/openclaw.json, vm-images/
+  Example: config/system.jsonc, config/gateways/<zone>/openclaw.json, vm-images/
   Backup: git, not agent-vm backups
   Rule: human-authored desired state
 

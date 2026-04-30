@@ -1,12 +1,14 @@
 # Configuration
 
-agent-vm uses a small set of JSON files. Each file has a different owner and
-scope.
+agent-vm uses a small set of config files. Human-authored agent-vm configs may
+be JSONC (`.jsonc`) so operators can leave short comments beside load-bearing
+settings. Runtime, effective, API, backup, and event-log files stay strict JSON
+or JSONL.
 
 ## Whole Map
 
 ```
-system.json
+system.jsonc / system.json
   Host/controller config.
   Defines zones, secrets, image profiles, cache, ports, and resource policy.
 
@@ -14,11 +16,11 @@ systemCacheIdentifier.json
   Sibling of system.json.
   Parsed JSON is hashed into every Gondolin image fingerprint.
 
-worker.json
+worker.jsonc / worker.json
   Zone-level Worker behavior.
   Defines prompts, phases, verification, MCP servers, and skills.
 
-.agent-vm/config.json
+.agent-vm/config.jsonc / .agent-vm/config.json
   Repo-level Worker overrides.
   Checked into the project repo that the agent edits.
 
@@ -30,15 +32,15 @@ worker.json
 ## Assembly Flow
 
 ```
-config/system.json
+config/system.jsonc
   |
   | zones[].gateway.config
   v
-config/gateways/<zone>/worker.json
+config/gateways/<zone>/worker.jsonc
   |
   | deep merge with repo override
   v
-<repo>/.agent-vm/config.json
+<repo>/.agent-vm/config.jsonc
   |
   | Zod defaults fill missing fields
   v
@@ -58,10 +60,10 @@ Prompt file references are resolved before the worker starts.
 
 | File | Owner | Changes when |
 | --- | --- | --- |
-| `system.json` | platform/operator | host paths, zones, secrets, image profiles, resources change |
+| `system.jsonc` / `system.json` | platform/operator | host paths, zones, secrets, image profiles, resources change |
 | `systemCacheIdentifier.json` | platform/runtime | outer build environment changes |
-| `worker.json` | operator/team | default agent behavior changes |
-| `.agent-vm/config.json` | project repo | a repo needs different validation, MCP, or prompt overrides |
+| `worker.jsonc` / `worker.json` | operator/team | default agent behavior changes |
+| `.agent-vm/config.jsonc` / `.agent-vm/config.json` | project repo | a repo needs different validation, MCP, or prompt overrides |
 | `.agent-vm/repo-resources.ts` | project repo | a repo needs TCP resources, mocks, fixtures, or repo-local providers |
 
 ## Drill Down

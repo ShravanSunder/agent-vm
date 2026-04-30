@@ -38,12 +38,12 @@ agent-vm init coding-agent --type worker --preset macos-local
 
 The scaffold includes:
 
-- `config/system.json`
+- `config/system.jsonc`
 - `config/systemCacheIdentifier.json`
-- `config/gateways/coding-agent/worker.json`
+- `config/gateways/coding-agent/worker.jsonc`
 - `config/gateways/coding-agent/prompts/*.md`
 - `vm-images/gateways/worker/Dockerfile`
-- `vm-images/gateways/worker/build-config.json`
+- `vm-images/gateways/worker/build-config.jsonc`
 
 The generated local gateway image installs public runtime tooling only. For
 monorepo local task runs, pack `agent-vm-worker` and set
@@ -53,13 +53,13 @@ monorepo local task runs, pack `agent-vm-worker` and set
 ### 2. Check the files
 
 ```bash
-agent-vm validate --config config/system.json
+agent-vm validate --config config/system.jsonc
 ```
 
 ### 3. Check the current machine
 
 ```bash
-agent-vm doctor --config config/system.json
+agent-vm doctor --config config/system.jsonc
 ```
 
 ### 4. Configure secrets
@@ -83,7 +83,7 @@ Container presets use environment-backed secrets and do not write `.env.local`.
 ### 5. Build images
 
 ```bash
-agent-vm build --config config/system.json
+agent-vm build --config config/system.jsonc
 ```
 
 This builds Docker OCI images from Dockerfiles, then Gondolin VM assets. Later
@@ -92,7 +92,7 @@ builds reuse cached fingerprints.
 ### 6. Start the controller
 
 ```bash
-agent-vm controller start --config config/system.json --zone coding-agent
+agent-vm controller start --config config/system.jsonc --zone coding-agent
 ```
 
 ## More

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
 import { execa } from 'execa';
 
+import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
@@ -182,7 +183,7 @@ async function collectImageProfileDockerfileChecks(
 		let buildConfig: unknown;
 		try {
 			// oxlint-disable-next-line no-await-in-loop -- stable doctor output order follows system.json order
-			buildConfig = JSON.parse(await fs.readFile(imageProfileTarget.buildConfig, 'utf8'));
+			buildConfig = await loadJsonConfigFile(imageProfileTarget.buildConfig);
 		} catch {
 			// validate already reports missing or malformed build-config.json files.
 			continue;

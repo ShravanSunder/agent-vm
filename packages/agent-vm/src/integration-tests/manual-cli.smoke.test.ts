@@ -44,7 +44,9 @@ describe('smoke: agent-vm manual CLI', () => {
 		expect(await readText(targetDir, 'docs/manual/runtime-paths.md')).toContain(
 			'OpenClaw Tool VMs run commands in /work',
 		);
+		expect(await readText(targetDir, 'docs/manual/layout.md')).toContain('config/system.jsonc');
 		expect(await readText(targetDir, 'AGENTS.md')).toContain('shravan');
+		expect(await readText(targetDir, 'AGENTS.md')).toContain('config/system.jsonc');
 		expect(await fs.readlink(path.join(targetDir, 'CLAUDE.md'))).toBe('AGENTS.md');
 	});
 });
