@@ -294,7 +294,8 @@ describe('scaffoldAgentVmProject', () => {
 		expect(gatewayDockerfile).toContain('Do not bake auth tokens');
 		expect(gatewayDockerfile).toContain('(ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)');
 		expect(gatewayDockerfile).toContain('pnpm add -g openclaw@2026.4.24');
-		expect(gatewayDockerfile).toContain('"channels": { "discord": { "enabled": true } }');
+		expect(gatewayDockerfile).not.toContain('"channels": { "discord": { "enabled": true } }');
+		expect(gatewayDockerfile).toContain('"allow": ["gondolin", "memory-core"]');
 		expect(gatewayDockerfile).toContain(
 			'OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json',
 		);
@@ -323,6 +324,33 @@ describe('scaffoldAgentVmProject', () => {
 				),
 			),
 		).toBe(true);
+	});
+
+	it('scaffolds generated deployment manual files and CLAUDE.md symlink', async () => {
+		const targetDir = await createTestDirectory();
+
+		const result = await scaffoldAgentVmProject(
+			{
+				targetDir,
+				zoneId: 'test-openclaw',
+				gatewayType: 'openclaw',
+				architecture: 'aarch64',
+				secretsProvider: '1password',
+				writeLocalEnvironmentFile: true,
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		expect(result.created).toEqual(
+			expect.arrayContaining(['AGENTS.md', 'CLAUDE.md', 'docs/manual/README.md']),
+		);
+		expect(await fs.readFile(path.join(targetDir, 'AGENTS.md'), 'utf8')).toContain(
+			'docs/manual/README.md',
+		);
+		expect(
+			await fs.readFile(path.join(targetDir, 'docs', 'manual', 'runtime-paths.md'), 'utf8'),
+		).toContain('OpenClaw Tool VMs run commands in /work');
+		expect(await fs.readlink(path.join(targetDir, 'CLAUDE.md'))).toBe('AGENTS.md');
 	});
 
 	it('creates .env.local from the default template', async () => {
@@ -910,10 +938,9 @@ describe('scaffoldAgentVmProject', () => {
 		);
 		const secrets = config.zones[0].secrets;
 
-		expect(secrets).toHaveProperty('DISCORD_BOT_TOKEN');
+		expect(secrets).not.toHaveProperty('DISCORD_BOT_TOKEN');
 		expect(secrets).toHaveProperty('OPENCLAW_GATEWAY_TOKEN');
 		expect(secrets).not.toHaveProperty('ANTHROPIC_API_KEY');
-		expect(secrets.DISCORD_BOT_TOKEN.ref).toBe('op://agent-vm/test-openclaw-discord/bot-token');
 		expect(secrets.PERPLEXITY_API_KEY.ref).toBe(
 			'op://agent-vm/test-openclaw-perplexity/credential',
 		);
@@ -963,9 +990,9 @@ describe('scaffoldAgentVmProject', () => {
 				'api.cohere.ai',
 			]),
 		);
-		expect(zone.websocketBypass).toEqual(
-			expect.arrayContaining(['gateway.discord.gg:443', 'web.whatsapp.com:443']),
-		);
+		expect(zone.allowedHosts).not.toContain('discord.com');
+		expect(zone.allowedHosts).not.toContain('cdn.discordapp.com');
+		expect(zone.websocketBypass).toEqual([]);
 	});
 
 	it('scaffolds tool VM support for openclaw gateways', async () => {
@@ -1028,8 +1055,36 @@ describe('scaffoldAgentVmProject', () => {
 			),
 		) as {
 			readonly agents?: { readonly defaults?: { readonly sandbox?: { readonly scope?: string } } };
+			readonly plugins?: {
+				readonly allow?: readonly string[];
+				readonly entries?: Record<string, { readonly enabled?: boolean }>;
+			};
 		};
 		expect(openClawConfig.agents?.defaults?.sandbox?.scope).toBe('agent');
+		expect(openClawConfig.plugins?.allow).toContain('memory-core');
+		expect(openClawConfig.plugins?.entries?.['memory-core']).toEqual({ enabled: true });
+	});
+
+	it('does not scaffold Discord environment variables for openclaw defaults', async () => {
+		const targetDir = await createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{
+				gatewayType: 'openclaw',
+				architecture: 'aarch64',
+				targetDir,
+				zoneId: 'test-openclaw',
+				secretsProvider: 'environment',
+				writeLocalEnvironmentFile: true,
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+		const envContent = await fs.readFile(path.join(targetDir, '.env.local'), 'utf8');
+
+		expect(envContent).toContain('# GITHUB_TOKEN=');
+		expect(envContent).toContain('# PERPLEXITY_API_KEY=');
+		expect(envContent).toContain('# OPENCLAW_GATEWAY_TOKEN=');
+		expect(envContent).not.toContain('DISCORD_BOT_TOKEN');
 	});
 
 	it('scaffolds worker-specific env references for worker type', async () => {

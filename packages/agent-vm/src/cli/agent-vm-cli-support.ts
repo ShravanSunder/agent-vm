@@ -29,6 +29,7 @@ import {
 	type ScaffoldAgentVmProjectOptions,
 	type ScaffoldAgentVmProjectResult,
 } from './init-command.js';
+import { updateAgentVmManual, type UpdateAgentVmManualResult } from './manual-commands.js';
 import {
 	initRepoResources,
 	updateRepoResources,
@@ -51,6 +52,12 @@ export interface CliDependencies {
 	readonly updateRepoResources?: (options: {
 		readonly targetDir: string;
 	}) => Promise<UpdateRepoResourcesResult>;
+	readonly updateAgentVmManual?: (options: {
+		readonly defaultZoneId: string;
+		readonly systemConfigPath: string;
+		readonly targetDir: string;
+		readonly updateAgentIndex: boolean;
+	}) => Promise<UpdateAgentVmManualResult>;
 	readonly validateRepoResources?: (options: {
 		readonly targetDir: string;
 	}) => Promise<ValidateRepoResourcesResult>;
@@ -122,6 +129,7 @@ export const defaultCliDependencies: CliDependencies = {
 	resetWorkerInstructions,
 	resolveCliVersion,
 	scaffoldAgentVmProject,
+	updateAgentVmManual,
 	initRepoResources,
 	updateRepoResources,
 	validateRepoResources,

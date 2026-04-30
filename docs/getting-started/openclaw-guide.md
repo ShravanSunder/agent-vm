@@ -8,7 +8,10 @@ How to configure and run agent-vm in OpenClaw Gateway — interactive chat agent
 
 ## What OpenClaw Gateway Does
 
-A long-running gateway VM hosts the OpenClaw interactive agent. Users chat via Discord or WhatsApp. When the agent needs to execute code, it requests a tool VM lease from the controller. Tool VMs are ephemeral — created on demand, destroyed after use.
+A long-running gateway VM hosts the OpenClaw interactive agent. Deployments add
+their own channels, such as Discord or WhatsApp. When the agent needs to execute
+code, it requests a Tool VM lease from the controller. Tool VMs are ephemeral —
+created on demand, destroyed after use.
 
 For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../architecture/openclaw-gateway.md).
 
@@ -49,7 +52,7 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
       "chatgpt.com",
       "generativelanguage.googleapis.com"
     ],
-    "websocketBypass": ["gateway.discord.gg:443"],
+    "websocketBypass": [],
     "toolProfile": "standard"
   }]
 }
@@ -132,13 +135,30 @@ For internals, see [architecture/openclaw-gateway.md](../architecture/openclaw-g
 
 ---
 
-## Channels (Discord, WhatsApp)
+## Channels
 
-WebSocket connections to Discord and WhatsApp bypass HTTP mediation (they need raw WebSocket, not proxied HTTP). Configure in `zones[].websocketBypass`:
+Discord is a deployment recipe, not an agent-vm framework default. To enable
+Discord, configure it in your deployment Dockerfile and OpenClaw config, then
+add `DISCORD_BOT_TOKEN`, Discord hosts, and the Discord gateway websocket bypass
+to `system.json`.
 
 ```json
-"websocketBypass": ["gateway.discord.gg:443", "web.whatsapp.com:443"]
+{
+  "secrets": {
+    "DISCORD_BOT_TOKEN": {
+      "source": "1password",
+      "ref": "op://agent-vm/my-openclaw-discord/bot-token",
+      "injection": "env"
+    }
+  },
+  "allowedHosts": ["discord.com", "cdn.discordapp.com"],
+  "websocketBypass": ["gateway.discord.gg:443"]
+}
 ```
+
+Other channels follow the same deployment-owned pattern: install or bake the
+plugin, enable it in `openclaw.json`, add secrets, allow required HTTP hosts,
+and add websocket bypass hosts only when the channel needs raw WebSocket access.
 
 ---
 
@@ -159,5 +179,5 @@ Opens an SSH session into the gateway VM for debugging.
 | Gateway won't start | Auth profiles missing | Check `authProfilesRef` in system.json |
 | Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth-interactive codex --zone <id>` |
 | Tool calls fail | Lease creation failing | Check `toolProfile` exists, TCP pool has free slots |
-| Discord not connecting | WebSocket not bypassed | Add `gateway.discord.gg:443` to `websocketBypass` |
+| Discord not connecting | Deployment channel config incomplete | Add Discord plugin/config, `DISCORD_BOT_TOKEN`, Discord hosts, and `gateway.discord.gg:443` |
 | Can't reach external API | Host not allowlisted | Add to `zones[].allowedHosts` |

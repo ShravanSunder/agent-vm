@@ -29,6 +29,7 @@ import {
 	hasServiceAccountToken,
 	storeServiceAccountToken,
 } from './keychain-credential.js';
+import { updateAgentVmManual } from './manual-commands.js';
 import {
 	openClawPluginVendorDirectory,
 	syncBundledOpenClawPluginBundle,
@@ -464,14 +465,6 @@ function defaultSecretsForGatewayType(
 	}
 
 	return {
-		DISCORD_BOT_TOKEN: secretFromShape(
-			{
-				envVar: 'DISCORD_BOT_TOKEN',
-				opRef: `op://agent-vm/${zoneId}-discord/bot-token`,
-				injection: 'env',
-			},
-			secretsProvider,
-		),
 		PERPLEXITY_API_KEY: secretFromShape(
 			{
 				envVar: 'PERPLEXITY_API_KEY',
@@ -542,8 +535,6 @@ function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): readonly s
 		'api.fireworks.ai',
 		'api.cerebras.ai',
 		'api.cohere.ai',
-		'discord.com',
-		'cdn.discordapp.com',
 		'api.github.com',
 		'registry.npmjs.org',
 	];
@@ -554,12 +545,7 @@ function defaultWebsocketBypassForGatewayType(gatewayType: GatewayType): readonl
 		return [];
 	}
 
-	return [
-		'gateway.discord.gg:443',
-		'web.whatsapp.com:443',
-		'g.whatsapp.net:443',
-		'mmg.whatsapp.net:443',
-	];
+	return [];
 }
 
 function envVarsForGatewayType(gatewayType: GatewayType): readonly string[] {
@@ -567,7 +553,7 @@ function envVarsForGatewayType(gatewayType: GatewayType): readonly string[] {
 		case 'worker':
 			return ['GITHUB_TOKEN', 'OPENAI_API_KEY'];
 		case 'openclaw':
-			return ['GITHUB_TOKEN', 'DISCORD_BOT_TOKEN', 'PERPLEXITY_API_KEY', 'OPENCLAW_GATEWAY_TOKEN'];
+			return ['GITHUB_TOKEN', 'PERPLEXITY_API_KEY', 'OPENCLAW_GATEWAY_TOKEN'];
 		default: {
 			const exhaustive: never = gatewayType;
 			throw new Error(`Unhandled gateway type: ${String(exhaustive)}`);
@@ -626,7 +612,13 @@ RUN apt-get update && \\
     printf '%s\\n' \\
       '{' \\
       '  "gateway": { "mode": "local" },' \\
-      '  "channels": { "discord": { "enabled": true } }' \\
+      '  "plugins": {' \\
+      '    "allow": ["gondolin", "memory-core"],' \\
+      '    "entries": {' \\
+      '      "gondolin": { "enabled": true },' \\
+      '      "memory-core": { "enabled": true }' \\
+      '    }' \\
+      '  }' \\
       '}' > /tmp/openclaw-plugin-stage-config.json && \\
     chmod 600 /tmp/openclaw-plugin-stage-config.json && \\
     (OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive || true) && \\
@@ -826,6 +818,7 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 		load: {
 			paths: [defaultOpenClawExtensionsPath],
 		},
+		allow: ['gondolin', 'memory-core'],
 		entries: {
 			gondolin: {
 				enabled: true,
@@ -833,6 +826,9 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 					controllerUrl: 'http://controller.vm.host:18800',
 					zoneId,
 				},
+			},
+			'memory-core': {
+				enabled: true,
 			},
 		},
 	},
@@ -1159,6 +1155,14 @@ async function scaffoldAgentVmProjectInternal(
 			'vm-images/tool-vms/default/Dockerfile',
 		);
 	}
+
+	const manualResult = await updateAgentVmManual({
+		defaultZoneId: options.zoneId,
+		systemConfigPath: 'config/system.json',
+		targetDir: options.targetDir,
+		updateAgentIndex: true,
+	});
+	created.push(...manualResult.updated);
 
 	if (options.hostSystemType === 'container') {
 		const resolveZigVersion =

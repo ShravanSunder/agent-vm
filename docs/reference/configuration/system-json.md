@@ -103,6 +103,20 @@ Do not call this `workspaceDir`. Worker execution files live under VM-local
 For the storage boundary model, see
 [storage-model.md](../../architecture/storage-model.md).
 
+## OpenClaw Channel Defaults
+
+`agent-vm init --type openclaw` scaffolds framework primitives: Gondolin,
+memory-core, VM lifecycle, Tool VM lease plumbing, and runtime auth wiring. It
+does not enable Discord or any other channel-specific surface by default.
+
+Channel plugins are deployment-owned. Add channel plugins in the deployment
+Dockerfile and `config/gateways/<zone>/openclaw.json`, then declare the matching
+secrets, `allowedHosts`, and `websocketBypass` entries in `config/system.json`.
+
+OpenClaw Tool VMs mount their lease workspace at `/work`. Worker task VMs keep
+repo edits under `/work/repos/<repoId>`. Do not use `/workspace` in new
+agent-vm examples.
+
 ## imageProfiles
 
 Gateway image profiles are used by zones:

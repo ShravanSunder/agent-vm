@@ -346,6 +346,40 @@ describe('runAgentVmCli', () => {
 		expect(outputs.join('')).toContain('.agent-vm/repo-resources.d.ts');
 	});
 
+	it('routes manual update to the deployment manual updater', async () => {
+		const outputs: string[] = [];
+		const updateAgentVmManual = vi.fn(async () => ({
+			updated: ['docs/manual/README.md', 'AGENTS.md', 'CLAUDE.md'],
+		}));
+
+		await runAgentVmCli(
+			['manual', 'update', '--agents'],
+			{
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-manual',
+				updateAgentVmManual,
+			},
+		);
+
+		expect(updateAgentVmManual).toHaveBeenCalledWith({
+			defaultZoneId: 'default',
+			systemConfigPath: 'config/system.json',
+			targetDir: '/tmp/agent-vm-manual',
+			updateAgentIndex: true,
+		});
+		expect(outputs.join('')).toContain('Updated generated agent-vm manual files');
+		expect(outputs.join('')).toContain('docs/manual/README.md');
+	});
+
 	it('passes gateway type through to init scaffolding', async () => {
 		const scaffoldAgentVmProject = vi.fn(async () => ({
 			created: ['config/system.json', '.env.local'],
