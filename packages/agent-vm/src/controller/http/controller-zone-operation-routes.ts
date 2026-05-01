@@ -11,6 +11,7 @@ import {
 	ControllerZoneNotFoundError,
 	ControllerZoneOperationUnsupportedError,
 	ControllerZoneTaskNotFoundError,
+	ControllerZoneTaskNotReadyError,
 	ControllerZoneRuntimeStartError,
 	ControllerZoneRuntimeUnavailableError,
 } from '../zone-runtimes/zone-runtime-errors.js';
@@ -99,6 +100,9 @@ function zoneRuntimeErrorStatus(error: unknown): 404 | 405 | 409 | 412 | 500 | 5
 		return 405;
 	}
 	if (error instanceof ControllerZoneRuntimeUnavailableError) {
+		return 409;
+	}
+	if (error instanceof ControllerZoneTaskNotReadyError) {
 		return 409;
 	}
 	if (error instanceof ControllerZoneRuntimeStartError) {

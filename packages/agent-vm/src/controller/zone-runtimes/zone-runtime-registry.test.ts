@@ -473,15 +473,23 @@ describe('createWorkerZoneRuntime', () => {
 
 	it('destroys worker zone runtime by clearing active tasks for that zone', async () => {
 		const clear = vi.fn();
+		const activeTask1 = {
+			...createActiveWorkerTask('task-1'),
+			workerIngress: { host: '127.0.0.1', port: 18881 },
+		};
+		const activeTask2 = {
+			...createActiveWorkerTask('task-2'),
+			workerIngress: { host: '127.0.0.1', port: 18882 },
+		};
+		const originalFetch = globalThis.fetch;
+		const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+		globalThis.fetch = fetchMock;
 		const runtime = createWorkerZoneRuntime({
 			activeTaskRegistry: {
 				activateReservation: vi.fn(),
 				clear,
 				get: vi.fn(),
-				listForZone: vi.fn(() => [
-					createActiveWorkerTask('task-1'),
-					createActiveWorkerTask('task-2'),
-				]),
+				listForZone: vi.fn(() => [activeTask1, activeTask2]),
 				releaseReservation: vi.fn(),
 				setWorkerIngress: vi.fn(),
 				tryReserve: vi.fn(() => 'reservation-1'),
@@ -497,13 +505,46 @@ describe('createWorkerZoneRuntime', () => {
 			zone: getWorkerZone(),
 		});
 
-		await expect(runtime.destroy(false)).resolves.toEqual({
-			ok: true,
-			purged: false,
-			zoneId: 'worker-zone',
+		try {
+			await expect(runtime.destroy(false)).resolves.toEqual({
+				ok: true,
+				purged: false,
+				zoneId: 'worker-zone',
+			});
+			expect(clear).toHaveBeenCalledWith('worker-zone', 'task-1');
+			expect(clear).toHaveBeenCalledWith('worker-zone', 'task-2');
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it('refuses worker destroy while an active task is still preparing', async () => {
+		const clear = vi.fn();
+		const runtime = createWorkerZoneRuntime({
+			activeTaskRegistry: {
+				activateReservation: vi.fn(),
+				clear,
+				get: vi.fn(),
+				listForZone: vi.fn(() => [createActiveWorkerTask('task-booting')]),
+				releaseReservation: vi.fn(),
+				setWorkerIngress: vi.fn(),
+				tryReserve: vi.fn(() => 'reservation-1'),
+			},
+			controllerGithubToken: null,
+			prepareWorkerTask: vi.fn(async (options) => createPreparedWorkerTask(options.input)),
+			requestHeartbeatRegistry: {
+				acquire: vi.fn(),
+				release: vi.fn(),
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig: loadedSystemConfig,
+			zone: getWorkerZone(),
 		});
-		expect(clear).toHaveBeenCalledWith('worker-zone', 'task-1');
-		expect(clear).toHaveBeenCalledWith('worker-zone', 'task-2');
+
+		await expect(runtime.destroy(true)).rejects.toThrow(
+			"Task 'task-booting' in zone 'worker-zone' is still preparing",
+		);
+		expect(clear).not.toHaveBeenCalled();
 	});
 
 	it('closes active worker tasks and purges worker state when destroy runs with purge', async () => {

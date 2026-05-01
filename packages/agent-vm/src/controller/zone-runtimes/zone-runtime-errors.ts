@@ -44,6 +44,18 @@ export class ControllerZoneTaskNotFoundError extends Error {
 	}
 }
 
+export class ControllerZoneTaskNotReadyError extends Error {
+	public readonly taskId: string;
+	public readonly zoneId: string;
+
+	public constructor(zoneId: string, taskId: string, message: string) {
+		super(message);
+		this.name = 'ControllerZoneTaskNotReadyError';
+		this.zoneId = zoneId;
+		this.taskId = taskId;
+	}
+}
+
 export class ControllerZoneRuntimeUnavailableError extends Error {
 	public readonly lastError: string | undefined;
 	public readonly zoneId: string;

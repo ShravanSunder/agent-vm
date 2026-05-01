@@ -234,7 +234,7 @@ describe('seedAgentSandboxWorkspace', () => {
 		).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 
-	it('rejects seed parent symlinks that escape the workspace before resolving secrets', async () => {
+	it('rejects seed parent symlinks before resolving secrets', async () => {
 		const rootPath = await createTempDirectory('agent-vm-sandbox-seed-parent-link-');
 		const zone = createOpenClawZone(rootPath);
 		const workspaceDir = path.join(zone.gateway.stateDir, 'sandboxes', 'agent-shravan', 'work');
@@ -254,11 +254,42 @@ describe('seedAgentSandboxWorkspace', () => {
 				workspaceDir,
 				zone,
 			}),
-		).rejects.toThrow(/resolves outside workspace/u);
+		).rejects.toThrow(/must not be a symlink/u);
 		expect(secretResolver.resolve).not.toHaveBeenCalled();
 		await expect(
 			readFile(path.join(outsideDir, 'gcloud', 'configurations', 'config_default'), 'utf8'),
 		).rejects.toMatchObject({ code: 'ENOENT' });
+	});
+
+	it('revalidates seed parents after resolving secrets and before writing', async () => {
+		const rootPath = await createTempDirectory('agent-vm-sandbox-seed-parent-race-');
+		const zone = createOpenClawZone(rootPath);
+		const workspaceDir = path.join(zone.gateway.stateDir, 'sandboxes', 'agent-shravan', 'work');
+		const seedParentPath = path.join(workspaceDir, '.config', 'gcloud', 'configurations');
+		const outsideDir = path.join(rootPath, 'outside');
+		await mkdir(seedParentPath, { recursive: true });
+		await mkdir(outsideDir, { recursive: true });
+		const secretResolver = {
+			resolve: vi.fn(async (secretRef) => {
+				await rm(seedParentPath, { recursive: true, force: true });
+				await symlink(outsideDir, seedParentPath, 'dir');
+				return `resolved:${secretRef.ref}`;
+			}),
+			resolveAll: vi.fn(async () => ({})),
+		} satisfies SecretResolver;
+
+		await expect(
+			seedAgentSandboxWorkspace({
+				scopeKey: 'agent:shravan',
+				secretResolver,
+				workspaceDir,
+				zone,
+			}),
+		).rejects.toThrow(/must not be a symlink/u);
+		expect(secretResolver.resolve).toHaveBeenCalledTimes(1);
+		await expect(readFile(path.join(outsideDir, 'config_default'), 'utf8')).rejects.toMatchObject({
+			code: 'ENOENT',
+		});
 	});
 
 	it('returns a malformed result for unsafe agent scope ids', async () => {

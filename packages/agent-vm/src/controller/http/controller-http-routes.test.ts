@@ -12,6 +12,7 @@ import type { PreparedWorkerTask, WorkerTaskResult } from '../worker-task-runner
 import {
 	ControllerZoneNotFoundError,
 	ControllerZoneOperationUnsupportedError,
+	ControllerZoneTaskNotReadyError,
 } from '../zone-runtimes/zone-runtime-errors.js';
 import {
 	ControllerRuntimeAtCapacityError,
@@ -651,6 +652,53 @@ describe('createControllerApp', () => {
 		expect(refreshZoneCredentials).toHaveBeenCalledWith('shravan');
 		expect(destroyZone).toHaveBeenCalledWith('shravan', true);
 		expect(upgradeZone).toHaveBeenCalledWith('shravan');
+	});
+
+	it('returns 409 when destroy is requested while a worker task is preparing', async () => {
+		const destroyZone = vi.fn(async () => {
+			throw new ControllerZoneTaskNotReadyError(
+				'worker-zone',
+				'task-booting',
+				"Task 'task-booting' in zone 'worker-zone' is still preparing and cannot be destroyed safely yet.",
+			);
+		});
+		const app = createControllerApp({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone,
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/worker-zone/destroy', {
+			body: JSON.stringify({ purge: true }),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(409);
+		await expect(response.json()).resolves.toEqual({
+			error:
+				"Task 'task-booting' in zone 'worker-zone' is still preparing and cannot be destroyed safely yet.",
+		});
 	});
 
 	it('returns 400 for invalid lease create payload', async () => {

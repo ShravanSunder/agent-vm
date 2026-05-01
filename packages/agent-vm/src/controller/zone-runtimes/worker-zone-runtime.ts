@@ -22,6 +22,7 @@ import {
 import {
 	ControllerZoneConfigurationError,
 	ControllerZoneTaskNotFoundError,
+	ControllerZoneTaskNotReadyError,
 } from './zone-runtime-errors.js';
 import type { ControllerZoneConfig, WorkerZoneRuntime } from './zone-runtime-types.js';
 
@@ -101,18 +102,32 @@ export function createWorkerZoneRuntime(
 				{
 					releaseZoneLeases: async () => {},
 					stopGatewayZone: async (zoneId) => {
-						for (const activeTask of options.activeTaskRegistry.listForZone(zoneId)) {
-							if (activeTask.workerIngress) {
-								// oxlint-disable-next-line no-await-in-loop -- worker close requests are scoped to active task order
-								const response = await fetch(
-									`http://${activeTask.workerIngress.host}:${String(activeTask.workerIngress.port)}/tasks/${activeTask.taskId}/close`,
-									{ method: 'POST' },
+						const activeTasks = options.activeTaskRegistry.listForZone(zoneId);
+						const preparingTask = activeTasks.find((activeTask) => !activeTask.workerIngress);
+						if (preparingTask) {
+							throw new ControllerZoneTaskNotReadyError(
+								zoneId,
+								preparingTask.taskId,
+								`Task '${preparingTask.taskId}' in zone '${zoneId}' is still preparing and cannot be destroyed safely yet.`,
+							);
+						}
+						for (const activeTask of activeTasks) {
+							if (!activeTask.workerIngress) {
+								throw new ControllerZoneTaskNotReadyError(
+									zoneId,
+									activeTask.taskId,
+									`Task '${activeTask.taskId}' in zone '${zoneId}' is still preparing and cannot be destroyed safely yet.`,
 								);
-								if (!response.ok) {
-									throw new Error(
-										`worker close returned HTTP ${String(response.status)} for task '${activeTask.taskId}'`,
-									);
-								}
+							}
+							// oxlint-disable-next-line no-await-in-loop -- worker close requests are scoped to active task order
+							const response = await fetch(
+								`http://${activeTask.workerIngress.host}:${String(activeTask.workerIngress.port)}/tasks/${activeTask.taskId}/close`,
+								{ method: 'POST' },
+							);
+							if (!response.ok) {
+								throw new Error(
+									`worker close returned HTTP ${String(response.status)} for task '${activeTask.taskId}'`,
+								);
 							}
 							options.activeTaskRegistry.clear(activeTask.zoneId, activeTask.taskId);
 						}

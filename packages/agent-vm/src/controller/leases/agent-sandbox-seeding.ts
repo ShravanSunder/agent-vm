@@ -87,10 +87,16 @@ async function writeSeedFileIfAbsent(options: {
 	readonly content: string;
 	readonly mode: number;
 	readonly targetPath: string;
+	readonly workspaceDir: string;
 }): Promise<'already-existed' | 'written'> {
 	let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
 	try {
-		fileHandle = await open(options.targetPath, 'wx', options.mode);
+		const targetParentPath = await ensureSeedParentDirectoryInsideWorkspace({
+			targetPath: options.targetPath,
+			workspaceDir: options.workspaceDir,
+		});
+		const safeTargetPath = path.join(targetParentPath, path.basename(options.targetPath));
+		fileHandle = await open(safeTargetPath, 'wx', options.mode);
 		await fileHandle.chmod(options.mode);
 		await fileHandle.writeFile(options.content, 'utf8');
 		await fileHandle.close();
@@ -137,14 +143,7 @@ async function ensureSeedParentDirectoryInsideWorkspace(options: {
 			entry = await lstat(currentPath);
 		}
 		if (entry.isSymbolicLink()) {
-			const resolvedPath = await realpath(currentPath);
-			if (!isPathWithin(resolvedPath, options.workspaceDir)) {
-				throw new Error(
-					`Agent sandbox seed parent '${currentPath}' resolves outside workspace '${options.workspaceDir}'.`,
-				);
-			}
-			currentPath = resolvedPath;
-			continue;
+			throw new Error(`Agent sandbox seed parent '${currentPath}' must not be a symlink.`);
 		}
 		if (!entry.isDirectory()) {
 			throw new Error(`Agent sandbox seed parent '${currentPath}' is not a directory.`);
@@ -243,7 +242,7 @@ export async function seedAgentSandboxWorkspace(options: {
 					`Agent sandbox seed target '${seed.target}' resolves outside workspace '${workspaceDir}'.`,
 				);
 			}
-			const targetParentPath = await ensureSeedParentDirectoryInsideWorkspace({
+			await ensureSeedParentDirectoryInsideWorkspace({
 				targetPath,
 				workspaceDir,
 			});
@@ -251,7 +250,8 @@ export async function seedAgentSandboxWorkspace(options: {
 			return await writeSeedFileIfAbsent({
 				content,
 				mode: seed.mode,
-				targetPath: path.join(targetParentPath, path.basename(targetPath)),
+				targetPath,
+				workspaceDir,
 			});
 		}),
 	);
