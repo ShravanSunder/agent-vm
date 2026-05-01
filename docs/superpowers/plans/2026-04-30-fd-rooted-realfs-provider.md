@@ -22,6 +22,14 @@ Current state on master:
 
 That is better than plain `realpath`, but it is not a complete child-path escape defense. `/proc/self/fd/<rootFd>` prevents the root directory from being swapped, but the kernel still follows child symlinks. The provider must therefore combine fd-rooted root resolution with consistent realpath containment checks for every operation that touches a path.
 
+Additional threat model from the multi-zone branch:
+
+- `packages/openclaw-gateway/src/openclaw-lifecycle.ts` creates `zone.gateway.stateDir` with mode `0o700`, but then mounts that same host directory into the OpenClaw gateway VM as writable RealFS at `/home/openclaw/.openclaw/state`.
+- `packages/agent-vm/src/controller/leases/lease-workspace-paths.ts` translates gateway paths under `/home/openclaw/.openclaw/state/sandboxes/...` back to host `<stateDir>/sandboxes/...`.
+- Host filesystem ownership is therefore not the same as mutation capability. The controller process owns `stateDir` on the host, but the OpenClaw gateway VM can mutate it through writable RealFS, and a Tool VM can mutate its selected `/work` backing path after a lease.
+- Do not justify sandbox seed safety with "controller-owned `0o700`" alone. That protects against unrelated host users, not against buggy or compromised gateway code.
+- `packages/agent-vm/src/controller/leases/agent-sandbox-seeding.ts` writes secret-backed first-boot files into those sandbox workspaces. The current zone-fix hardening narrows the race by revalidating parents immediately before write, but without fd-relative parent walking it remains a name-based check. A process with write access to an ancestor can still swap a validated directory for a symlink between revalidation and `open(...)`.
+
 ---
 
 ## Platform Decision
@@ -51,6 +59,44 @@ The previous version of this plan overclaimed what fd-rooting solves. Execute th
 7. Hardlinks are a separate policy. Realpath containment will not distinguish a hardlink whose inode is also reachable outside the workspace. The implementation should not claim to solve hardlink escape; document it as constrained by host permissions and outside this plan unless a later policy forbids hardlinks.
 8. Before implementation, inspect OpenClaw sandbox seeding for legitimate symlinks. Relative symlinks that remain inside the workspace must continue to work; absolute symlinks that escape must fail.
 9. Linux is the only platform with the intended fd-rooted guarantee in this plan. macOS fallback is for local development and must be named weaker in tests/docs.
+10. `stateDir/sandboxes` is gateway-writable through RealFS. Treat agent sandbox seeding as part of the same threat model as tool workspace mounting. If this plan leaves seeding on path-based writes, the code and spec must explicitly call it best-effort and not race-free.
+11. For immediate seed hardening, add `O_NOFOLLOW` to the leaf file open where Node exposes numeric flags. This blocks the final file from being a symlink, but it does not solve parent-directory swap. Full closure requires fd-relative parent walking (`openat`-style) or moving secret seed writes out of gateway-writable sandbox paths.
+
+---
+
+## Review Dispositions To Reassess In This FS Plan
+
+These items came from the zone branch review. They should be reassessed here, because they are either direct filesystem-boundary work or adjacent cleanup that becomes clearer once the storage threat model is explicit.
+
+1. Seed TOCTOU / `openat` / `O_NOFOLLOW`
+
+   Address in this plan. This is the true fd-rooted RealFS/storage hardening work.
+
+   The current zone-fix hardening narrows the race by revalidating seed parents after secret resolution and before writing, but it does not close the parent-directory swap window. Full closure needs fd-relative parent walking (`openat`-style), or a design change that keeps secret seed writes out of gateway-writable sandbox paths. If this plan cannot fully close the seed path, it must say so in code comments and docs and must use numeric `O_NOFOLLOW` on the leaf where Node exposes it.
+
+2. `Promise.all` seed reporting
+
+   Optional, but reassess here while touching seed writes.
+
+   Current posture: not a zone merge blocker. FS-plan posture: if seed writes become more complex or partially recoverable, consider replacing all-or-nothing `Promise.all` reporting with per-seed outcomes such as `{ written, alreadyExisted, failed }`, preserving clear operator logs without hiding partial success.
+
+3. `closeControllerServer` fire-and-forget cleanup
+
+   Valid cleanup, but not core to fd-rooted RealFS.
+
+   Reassess only if the FS implementation changes controller shutdown or VM creation failure cleanup. Otherwise leave it to a controller lifecycle cleanup PR.
+
+4. `destroy-zone --purge` partial result structure
+
+   Valid API polish, but broader than fd-rooted RealFS.
+
+   Reassess only if storage hardening changes purge semantics or introduces path-level cleanup outcomes worth reporting. Otherwise leave richer destroy results such as `{ stopped, leasesReleased, purgedPaths, warnings }` to a destroy API polish PR.
+
+5. `purge` should not secretly force preparing tasks
+
+   Keep this decision: do not overload `purge` as `force`.
+
+   `purge` means remove persisted state after a safe destroy. If forced admin recovery is needed for stuck preparing tasks, add an explicit `force: true` request field later with route/schema tests and an operator-facing warning. Do not hide force behavior behind purge.
 
 ---
 
@@ -92,9 +138,17 @@ Adds a comment that the adapter is the final mount boundary and the lifecycle la
 
 Keeps leak-prevention tests and adds a validation-failure cleanup assertion if not already present.
 
+`packages/agent-vm/src/controller/leases/agent-sandbox-seeding.ts`
+
+Owns first-boot writes of secret-backed agent sandbox seed files. This plan must either harden seed file creation with numeric `O_NOFOLLOW` and explicit best-effort comments, or move seed writes onto the same fd-relative helper used for provider mutations if that helper becomes available in `agent-vm`.
+
+`packages/agent-vm/src/controller/leases/agent-sandbox-seeding.test.ts`
+
+Adds tests for leaf symlink rejection, parent swap attempts, and the documented weaker boundary when native `openat`-style parent walking is not available.
+
 `docs/specs/fd-rooted-realfs-provider.md`
 
-Explains the threat model, Linux behavior, macOS fallback, and future native `openat` option.
+Explains the threat model, Linux behavior, macOS fallback, future native `openat` option, and why controller-owned host permissions do not make `stateDir/sandboxes` controller-exclusive.
 
 ---
 
@@ -117,6 +171,8 @@ The new provider must:
 The provider may use Node's synchronous fs APIs internally because Gondolin's provider surface has both sync and async methods. Async methods can wrap sync operations with `Promise.resolve()` for the first implementation; correctness beats async elegance here.
 
 Do not claim this eliminates every TOCTOU class. Without a native `openat`/path-walking implementation, there remains a window between realpath containment and the subsequent filesystem operation for child paths. This plan intentionally narrows the boundary and makes the limitation explicit.
+
+Agent sandbox seed writes have the same naming problem when they write into `<stateDir>/sandboxes/...`: revalidating the parent immediately before `open` narrows the race, but it does not hold a trusted directory handle. If the implementation keeps seed writes in gateway-writable sandboxes, use numeric `O_NOFOLLOW` on the leaf and document that parent-swap closure waits for fd-relative parent walking or a different storage location for secret seed material.
 
 ---
 
@@ -841,10 +897,13 @@ Create `docs/specs/fd-rooted-realfs-provider.md`:
 
 OpenClaw tool VM leases contain a caller-provided workspace path. Agent-vm validates that path against allowed roots and pins the final directory with `O_NOFOLLOW | O_DIRECTORY`, but a normal path-based RealFS provider still reopens the root path for guest file operations.
 
+OpenClaw agent sandbox seeding has the same trust-boundary shape. The controller creates `zone.gateway.stateDir` with mode `0700`, but then mounts it into the OpenClaw gateway VM as writable RealFS at `/home/openclaw/.openclaw/state`. Lease paths under `/home/openclaw/.openclaw/state/sandboxes/...` map back to host `<stateDir>/sandboxes/...`, so host ownership is not controller-exclusive mutation control. Gateway code can mutate those sandbox directories through RealFS.
+
 That leaves two boundaries:
 
 1. Root-swap boundary: the validated workspace root can be swapped after validation unless provider operations resolve through the pinned fd.
 2. Child-path boundary: child symlinks can still point outside the workspace unless every provider operation checks resolved containment.
+3. Seed-write boundary: secret-backed agent sandbox seed files are written into gateway-writable sandbox workspaces. Parent revalidation plus `O_NOFOLLOW` on the leaf narrows the race, but without fd-relative parent walking it is still not a race-free write.
 
 Fd-rooting solves the first boundary. Consistent containment checks reduce the second boundary but do not fully eliminate child symlink TOCTOU without native `openat`/path-walking support.
 
@@ -861,6 +920,7 @@ For macOS local development, Node does not expose `openat(2)`, and `/dev/fd/<dir
 This change does not add a native Node addon.
 This change does not change lease API shape.
 This change does not make arbitrary host paths acceptable; allowed-root validation remains required.
+This change does not treat host `0700` ownership as sufficient for sandbox seed safety when that directory is writable from the gateway VM through RealFS.
 This change does not claim to solve hardlink policy. Hardlink behavior is constrained by host permissions and can be tightened in a later policy if needed.
 
 ## Required tests
@@ -871,6 +931,8 @@ This change does not claim to solve hardlink policy. Hardlink behavior is constr
 - Relative symlinks that resolve inside the workspace still work.
 - Root swap after pinning does not redirect Linux fd-rooted operations.
 - Readonly pinned mounts wrap the fd-rooted provider instead of falling back to path-based RealFS.
+- Agent sandbox seed writes reject final-file symlinks with numeric `O_NOFOLLOW` where Node exposes it.
+- Agent sandbox seed docs/comments explicitly state whether parent-directory swap is fully closed with fd-relative walking or only narrowed by revalidation.
 - Pinned fd closes when VM creation fails.
 - Pinned fd closes when managed VM closes.
 - macOS fallback is explicit and tested as weaker than Linux fd-rooting.
