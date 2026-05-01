@@ -8,7 +8,7 @@ import { runGitCommandWithTransientRetries, type GitCommandResult } from './git-
 const GIT_OPERATION_TIMEOUT_MS = 120_000;
 const GIT_PULL_RETRY_AFTER_SECONDS = 300;
 const GIT_PULL_RETRY_AFTER_MESSAGE =
-	'GitHub or the network is still rejecting the pull after retries. Try git-pull-default again in 5 minutes if the task is still running; otherwise start a new task.';
+	'GitHub or the network is still rejecting the pull after retries. Try git-pull-default again in 5 minutes; the controller retains task state while the task remains registered.';
 
 export interface PullDefaultRequest {
 	readonly repoUrl: string;

@@ -1,4 +1,4 @@
-import fs from 'node:fs/promises';
+import { access } from 'node:fs/promises';
 import path from 'node:path';
 
 import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
@@ -235,7 +235,7 @@ async function collectReadableFileCheck(
 	filePath: string,
 ): Promise<ConfigValidationCheck> {
 	try {
-		await fs.access(filePath);
+		await access(filePath);
 		return { name, ok: true, hint: filePath };
 	} catch (error) {
 		return {
@@ -386,6 +386,68 @@ async function collectToolImageProfileChecks(
 	return checks;
 }
 
+function buildZoneToolVmProfileChecks(
+	systemConfig: LoadedSystemConfig,
+): readonly ConfigValidationCheck[] {
+	return systemConfig.zones.flatMap((zone) => {
+		if (zone.gateway.type !== 'openclaw') {
+			return [];
+		}
+		const agentToolVmProfileChecks = Object.entries(zone.agentToolVmProfiles ?? {}).map(
+			([agentId, toolVmProfileId]) =>
+				({
+					name: `zone-agent-tool-vm-profile-${zone.id}-${agentId}`,
+					ok: true,
+					hint: toolVmProfileId,
+				}) satisfies ConfigValidationCheck,
+		);
+		return [
+			zone.defaultToolVmProfile
+				? {
+						name: `zone-default-tool-vm-profile-${zone.id}`,
+						ok: true,
+						hint: zone.defaultToolVmProfile,
+					}
+				: {
+						name: `zone-default-tool-vm-profile-${zone.id}`,
+						ok: false,
+						hint: 'missing defaultToolVmProfile',
+					},
+			...agentToolVmProfileChecks,
+		] as const satisfies readonly ConfigValidationCheck[];
+	});
+}
+
+function buildOpenClawAgentSetupChecks(
+	systemConfig: LoadedSystemConfig,
+): readonly ConfigValidationCheck[] {
+	return systemConfig.zones.flatMap((zone) => {
+		if (zone.gateway.type !== 'openclaw') {
+			return [];
+		}
+		const authProfileChecks = Object.keys(zone.gateway.authProfilesByAgent ?? {}).map(
+			(agentId) =>
+				({
+					name: `zone-agent-auth-profile-${zone.id}-${agentId}`,
+					ok: true,
+					hint: 'configured',
+				}) satisfies ConfigValidationCheck,
+		);
+		const sandboxSeedChecks = Object.entries(zone.agentSandboxSeeds ?? {}).flatMap(
+			([agentId, seeds]) =>
+				seeds.map(
+					(seed, seedIndex) =>
+						({
+							name: `zone-agent-sandbox-seed-${zone.id}-${agentId}-${String(seedIndex)}`,
+							ok: true,
+							hint: seed.target,
+						}) satisfies ConfigValidationCheck,
+				),
+		);
+		return [...authProfileChecks, ...sandboxSeedChecks];
+	});
+}
+
 export async function runConfigValidation(
 	options: RunConfigValidationOptions,
 ): Promise<ConfigValidationResult> {
@@ -404,6 +466,8 @@ export async function runConfigValidation(
 		...buildRuntimePathIsolationChecks(systemConfig),
 		...(await collectGatewayImageProfileChecks(systemConfig)),
 		...(await collectToolImageProfileChecks(systemConfig)),
+		...buildZoneToolVmProfileChecks(systemConfig),
+		...buildOpenClawAgentSetupChecks(systemConfig),
 		...(vmHostSystemCheck ? [vmHostSystemCheck] : []),
 		...zoneConfigChecks,
 		...(await collectOpenClawConfigChecks(systemConfig, runCommand)),

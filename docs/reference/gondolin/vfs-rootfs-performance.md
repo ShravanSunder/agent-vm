@@ -195,7 +195,7 @@ the default `/tmp` tmpfs, but that is usually a heavier solution than setting
   Purpose: repair/download cache
   Backup: no
 
-/home/openclaw/zone-files
+/zone
   Backing: RealFS zoneFilesDir config field for
            long-lived OpenClaw household files
   Backup: yes

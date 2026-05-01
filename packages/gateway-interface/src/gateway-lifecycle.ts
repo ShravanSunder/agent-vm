@@ -58,6 +58,9 @@ interface GatewayZoneBaseGatewayConfig {
 interface OpenClawGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
 	readonly type: 'openclaw';
 	readonly zoneFilesDir: string;
+	readonly authProfilesByAgent?: Readonly<
+		Record<string, OnePasswordGatewayAuthProfilesRef | EnvironmentGatewayAuthProfilesRef>
+	>;
 }
 
 interface WorkerGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
@@ -90,7 +93,7 @@ export interface GatewayZoneConfig {
 	>;
 	readonly allowedHosts: readonly string[];
 	readonly websocketBypass: readonly string[];
-	readonly toolProfile?: string;
+	readonly defaultToolVmProfile?: string;
 }
 
 export interface BuildGatewayVmSpecOptions {

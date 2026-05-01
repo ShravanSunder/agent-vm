@@ -175,10 +175,11 @@ function createSystemConfig(): LoadedSystemConfig {
 					},
 					allowedHosts: ['api.anthropic.com', 'api.openai.com', 'api.perplexity.ai'],
 					websocketBypass: ['gateway.discord.gg:443'],
-					toolProfile: 'standard',
+					defaultToolVmProfile: 'standard',
+					agentToolVmProfiles: {},
 				},
 			],
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					memory: '1G',
 					cpus: 1,

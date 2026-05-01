@@ -81,6 +81,8 @@ Follow `.cursor/rules/ts-rules.md`; key points:
 - Use descriptive multi-word file and folder names.
 - Use tabs and Oxfmt formatting.
 - Keep Zod schemas and inferred types in sync; derive schema variants with Zod helpers.
+- Use direct async filesystem imports from `node:fs/promises` for all new code
+  and tests. Do not introduce `fs.promises` or `fs.*Sync` calls.
 
 ## Packages
 

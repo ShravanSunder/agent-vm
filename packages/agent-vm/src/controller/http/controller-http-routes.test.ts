@@ -1,4 +1,4 @@
-import fs from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -8,7 +8,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { LeaseScopeConflictError, type Lease } from '../leases/lease-manager.js';
 import { LeaseWorkspaceValidationError } from '../leases/lease-workspace-paths.js';
-import type { PreparedWorkerTask } from '../worker-task-runner.js';
+import type { PreparedWorkerTask, WorkerTaskResult } from '../worker-task-runner.js';
+import {
+	ControllerZoneNotFoundError,
+	ControllerZoneOperationUnsupportedError,
+	ControllerZoneTaskNotReadyError,
+	ControllerZoneWorkerCloseError,
+} from '../zone-runtimes/zone-runtime-errors.js';
 import {
 	ControllerRuntimeAtCapacityError,
 	ControllerTaskNotReadyError,
@@ -68,7 +74,6 @@ function createPreparedWorkerTaskStub(
 		secrets: {},
 		allowedHosts: ['github.com'],
 		websocketBypass: [],
-		toolProfile: 'standard',
 	};
 	return {
 		taskId,
@@ -131,6 +136,14 @@ function createPreparedWorkerTaskStub(
 	};
 }
 
+function createWorkerTaskResultStub(taskId: string): WorkerTaskResult {
+	return {
+		finalState: null,
+		taskId,
+		taskRoot: `/state/tasks/${taskId}`,
+	};
+}
+
 describe('createControllerApp', () => {
 	it('creates, fetches, and releases leases through the controller api', async () => {
 		const lease: Lease = {
@@ -174,7 +187,7 @@ describe('createControllerApp', () => {
 		}));
 		const releaseLease = vi.fn(async () => {});
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -226,8 +239,9 @@ describe('createControllerApp', () => {
 
 	it('normalizes lease workspaceDir before creating the lease', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-normalized', 0));
+		const resolveLeaseWorkspaceDir = vi.fn(async () => '/host/state/shravan/sandboxes/agent/work');
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -242,7 +256,7 @@ describe('createControllerApp', () => {
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
 			},
-			resolveLeaseWorkspaceDir: vi.fn(async () => '/host/state/shravan/sandboxes/agent/work'),
+			resolveLeaseWorkspaceDir,
 		});
 
 		const createResponse = await app.request('/lease', {
@@ -260,6 +274,11 @@ describe('createControllerApp', () => {
 		});
 
 		expect(createResponse.status).toBe(200);
+		expect(resolveLeaseWorkspaceDir).toHaveBeenCalledWith({
+			scopeKey: 'agent:main',
+			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
+			zoneId: 'shravan',
+		});
 		expect(createLease).toHaveBeenCalledWith(
 			expect.objectContaining({
 				workspaceDir: '/host/state/shravan/sandboxes/agent/work',
@@ -270,7 +289,7 @@ describe('createControllerApp', () => {
 	it('rejects unsafe lease workspaceDir before creating the lease', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-unsafe', 0));
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -312,7 +331,7 @@ describe('createControllerApp', () => {
 
 	it('returns 503 when the tcp pool is exhausted', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -352,7 +371,7 @@ describe('createControllerApp', () => {
 
 	it('returns 409 when lease scope conflicts with an existing live lease', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -390,7 +409,7 @@ describe('createControllerApp', () => {
 		});
 	});
 
-	it('uses the zone toolProfile instead of trusting the requested profileId', async () => {
+	it('uses the zone defaultToolVmProfile instead of trusting the requested profileId', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-gpu', 0));
 		const app = createControllerApp({
 			leaseManager: {
@@ -400,7 +419,7 @@ describe('createControllerApp', () => {
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				gpu: { cpus: 4, memory: '8G', imageProfile: 'default' },
 				standard: {
 					cpus: 1,
@@ -408,7 +427,7 @@ describe('createControllerApp', () => {
 					imageProfile: 'default',
 				},
 			},
-			zoneToolProfiles: {
+			zoneDefaultToolVmProfiles: {
 				shravan: 'gpu',
 			},
 		});
@@ -441,6 +460,66 @@ describe('createControllerApp', () => {
 		);
 	});
 
+	it('uses an agent-specific tool VM profile for agent-scoped leases with sub-scope parts', async () => {
+		const createLease = vi.fn(async () => createLeaseStub('lease-agent-profile', 0));
+		const app = createControllerApp({
+			leaseManager: {
+				createLease,
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+				toolsDev: {
+					cpus: 4,
+					memory: '8G',
+					imageProfile: 'tools-dev',
+				},
+			},
+			zoneAgentToolVmProfiles: {
+				shravan: {
+					shravan: 'toolsDev',
+				},
+			},
+			zoneDefaultToolVmProfiles: {
+				shravan: 'standard',
+			},
+		});
+
+		const createResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/zone/agents/shravan',
+				profileId: 'standard',
+				scopeKey: 'agent:shravan:discord:channel:123',
+				workspaceDir: '/zone/agents/shravan',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(createResponse.status).toBe(200);
+		expect(createLease).toHaveBeenCalledWith(
+			expect.objectContaining({
+				profile: {
+					cpus: 4,
+					memory: '8G',
+					imageProfile: 'tools-dev',
+				},
+				profileId: 'toolsDev',
+				scopeKey: 'agent:shravan:discord:channel:123',
+			}),
+		);
+	});
+
 	it('rejects lease creation for an unknown zone', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-unknown-zone', 0));
 		const app = createControllerApp({
@@ -451,14 +530,14 @@ describe('createControllerApp', () => {
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
 					imageProfile: 'default',
 				},
 			},
-			zoneToolProfiles: {
+			zoneDefaultToolVmProfiles: {
 				shravan: 'standard',
 			},
 		});
@@ -488,14 +567,14 @@ describe('createControllerApp', () => {
 		const destroyZone = vi.fn(async () => ({ ok: true, purged: true, zoneId: 'shravan' }));
 		const getStatus = vi.fn(async () => ({
 			controllerPort: 18800,
-			toolProfiles: ['standard'],
+			toolVmProfiles: ['standard'],
 			zones: [
 				{
 					gatewayType: 'openclaw',
 					id: 'shravan',
 					ingressPort: 18791,
 					running: true,
-					toolProfile: 'standard',
+					agentToolVmProfiles: {},
 				},
 			],
 		}));
@@ -504,7 +583,7 @@ describe('createControllerApp', () => {
 			id: 'shravan',
 			ingressPort: 18791,
 			running: true,
-			toolProfile: 'standard',
+			agentToolVmProfiles: {},
 		}));
 		const getZoneLogs = vi.fn(async () => ({
 			output: 'gateway log line',
@@ -519,7 +598,7 @@ describe('createControllerApp', () => {
 			zoneId: 'shravan',
 		}));
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -576,9 +655,111 @@ describe('createControllerApp', () => {
 		expect(upgradeZone).toHaveBeenCalledWith('shravan');
 	});
 
+	it('returns 409 when destroy is requested while a worker task is preparing', async () => {
+		const destroyZone = vi.fn(async () => {
+			throw new ControllerZoneTaskNotReadyError(
+				'worker-zone',
+				'task-booting',
+				"Task 'task-booting' in zone 'worker-zone' is still preparing and cannot be destroyed safely yet.",
+			);
+		});
+		const app = createControllerApp({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone,
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/worker-zone/destroy', {
+			body: JSON.stringify({ purge: true }),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(409);
+		await expect(response.json()).resolves.toEqual({
+			error:
+				"Task 'task-booting' in zone 'worker-zone' is still preparing and cannot be destroyed safely yet.",
+			kind: 'task-not-ready',
+			taskId: 'task-booting',
+			zoneId: 'worker-zone',
+		});
+	});
+
+	it('returns worker close failure context from destroy routes', async () => {
+		const destroyZone = vi.fn(async () => {
+			throw new ControllerZoneWorkerCloseError({
+				body: 'close failed',
+				httpStatus: 503,
+				taskId: 'task-1',
+				zoneId: 'worker-zone',
+			});
+		});
+		const app = createControllerApp({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone,
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/worker-zone/destroy', {
+			body: JSON.stringify({ purge: true }),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(502);
+		await expect(response.json()).resolves.toEqual({
+			error: "worker close returned HTTP 503 for task 'task-1'",
+			body: 'close failed',
+			httpStatus: 503,
+			kind: 'worker-close-failed',
+			taskId: 'task-1',
+			zoneId: 'worker-zone',
+		});
+	});
+
 	it('returns 400 for invalid lease create payload', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -611,7 +792,7 @@ describe('createControllerApp', () => {
 
 	it('returns 404 when fetching a non-existent lease', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -644,7 +825,7 @@ describe('createControllerApp', () => {
 		});
 		const peekLease = vi.fn(() => ({ kind: 'snapshot' as const, lease }));
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -681,7 +862,7 @@ describe('createControllerApp', () => {
 
 	it('returns 404 when peeking a non-existent lease', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -710,7 +891,7 @@ describe('createControllerApp', () => {
 	it('lists active leases via GET /leases', async () => {
 		const listLeases = vi.fn(() => [createLeaseStub('lease-1', 0), createLeaseStub('lease-2', 1)]);
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -743,7 +924,7 @@ describe('createControllerApp', () => {
 	it('gracefully stops the controller via POST /stop', async () => {
 		const stopController = vi.fn(async () => ({ ok: true }));
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -775,6 +956,88 @@ describe('createControllerApp', () => {
 		expect(stopController).toHaveBeenCalled();
 	});
 
+	it('returns 405 for operations unsupported by the target zone type', async () => {
+		const app = createControllerApp({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => {
+					throw new ControllerZoneOperationUnsupportedError(
+						'worker-zone',
+						'OpenClaw operations',
+						'worker',
+					);
+				}),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/worker-zone/logs');
+
+		expect(response.status).toBe(405);
+		await expect(response.json()).resolves.toEqual({
+			error: "Zone 'worker-zone' with gateway type 'worker' does not support OpenClaw operations.",
+			gatewayType: 'worker',
+			operationName: 'OpenClaw operations',
+			zoneId: 'worker-zone',
+		});
+	});
+
+	it('returns 404 when zone status is requested for an unknown zone', async () => {
+		const app = createControllerApp({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				getZoneStatus: vi.fn(async () => {
+					throw new ControllerZoneNotFoundError('missing-zone');
+				}),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/missing-zone/status');
+
+		expect(response.status).toBe(404);
+		await expect(response.json()).resolves.toEqual({
+			error: "Unknown zone 'missing-zone'.",
+		});
+	});
+
 	it('pushes branches for an active worker task via POST /zones/:zoneId/tasks/:taskId/push-branches', async () => {
 		const pushTaskBranches = vi.fn(async () => ({
 			results: [
@@ -787,7 +1050,7 @@ describe('createControllerApp', () => {
 			],
 		}));
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -850,7 +1113,7 @@ describe('createControllerApp', () => {
 			throw new PullDefaultValidationError('Repo is not registered for active task.');
 		});
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -896,7 +1159,7 @@ describe('createControllerApp', () => {
 			throw new Error('boom https://x-access-token:secret-token@github.com/acme/widgets.git');
 		});
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -940,7 +1203,7 @@ describe('createControllerApp', () => {
 
 	it('returns schema details for invalid destroy requests', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -980,7 +1243,7 @@ describe('createControllerApp', () => {
 
 	it('returns schema details for invalid execute-command requests', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -1021,7 +1284,7 @@ describe('createControllerApp', () => {
 
 	it('returns 400 for malformed JSON bodies on controller operation routes', async () => {
 		const app = createControllerApp({
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -1046,7 +1309,7 @@ describe('createControllerApp', () => {
 				pushTaskBranches: vi.fn(async () => ({ results: [] })),
 				refreshZoneCredentials: vi.fn(async () => ({})),
 				prepareWorkerTask: vi.fn(async () => createPreparedWorkerTaskStub('worker-task-json')),
-				executeWorkerTask: vi.fn(async () => ({})),
+				executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
 				upgradeZone: vi.fn(async () => ({})),
 			},
 		});
@@ -1081,9 +1344,9 @@ describe('createControllerApp', () => {
 		const prepareWorkerTask = vi.fn(async () => createPreparedWorkerTaskStub('worker-task-1'));
 		const executeWorkerTask = vi.fn(
 			() =>
-				new Promise<void>((resolve) => {
+				new Promise<WorkerTaskResult>((resolve) => {
 					executeStarted = true;
-					resolveExecute = () => resolve();
+					resolveExecute = () => resolve(createWorkerTaskResultStub('worker-task-1'));
 				}),
 		);
 		const app = createControllerApp({
@@ -1105,7 +1368,7 @@ describe('createControllerApp', () => {
 				executeWorkerTask,
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -1181,7 +1444,7 @@ describe('createControllerApp', () => {
 				executeWorkerTask,
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -1224,7 +1487,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('writes a task-failed sentinel when background failure event recording fails', async () => {
-		const stateRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'controller-failure-sentinel-'));
+		const stateRoot = await mkdtemp(path.join(os.tmpdir(), 'controller-failure-sentinel-'));
 		const taskId = 'worker-task-sentinel';
 		const taskStateDir = path.join(stateRoot, 'tasks', taskId, 'state');
 		const prepareWorkerTask = vi.fn(async () =>
@@ -1258,7 +1521,7 @@ describe('createControllerApp', () => {
 				executeWorkerTask,
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -1282,7 +1545,7 @@ describe('createControllerApp', () => {
 			expect(response.status).toBe(202);
 			await vi.waitFor(async () => {
 				const sentinel = JSON.parse(
-					await fs.readFile(path.join(taskStateDir, 'tasks', `${taskId}.failed`), 'utf8'),
+					await readFile(path.join(taskStateDir, 'tasks', `${taskId}.failed`), 'utf8'),
 				) as { readonly status?: string; readonly failureReason?: string };
 				expect(sentinel).toMatchObject({
 					status: 'failed',
@@ -1290,7 +1553,7 @@ describe('createControllerApp', () => {
 				});
 			});
 		} finally {
-			await fs.rm(stateRoot, { recursive: true, force: true });
+			await rm(stateRoot, { recursive: true, force: true });
 		}
 	});
 
@@ -1311,10 +1574,10 @@ describe('createControllerApp', () => {
 				getZoneLogs: vi.fn(async () => ({})),
 				refreshZoneCredentials: vi.fn(async () => ({})),
 				prepareWorkerTask: vi.fn(async () => createPreparedWorkerTaskStub('worker-task-3')),
-				executeWorkerTask: vi.fn(async () => ({})),
+				executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -1361,10 +1624,10 @@ describe('createControllerApp', () => {
 				prepareWorkerTask: vi.fn(async () => {
 					throw new ControllerRuntimeAtCapacityError('worker runtime is at capacity');
 				}),
-				executeWorkerTask: vi.fn(async () => ({})),
+				executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -1418,7 +1681,7 @@ describe('createControllerApp', () => {
 				refreshZoneCredentials: vi.fn(async () => ({})),
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					imageProfile: 'default',
@@ -1459,7 +1722,7 @@ describe('createControllerApp', () => {
 				refreshZoneCredentials: vi.fn(async () => ({})),
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					imageProfile: 'default',
@@ -1494,7 +1757,7 @@ describe('createControllerApp', () => {
 				refreshZoneCredentials: vi.fn(async () => ({})),
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					imageProfile: 'default',
@@ -1534,7 +1797,7 @@ describe('createControllerApp', () => {
 				refreshZoneCredentials: vi.fn(async () => ({})),
 				upgradeZone: vi.fn(async () => ({})),
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					imageProfile: 'default',

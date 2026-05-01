@@ -38,7 +38,8 @@ describe('resolveLeaseWorkspaceDir', () => {
 			},
 			id: 'shravan',
 			secrets: {},
-			toolProfile: 'standard',
+			defaultToolVmProfile: 'standard',
+			agentToolVmProfiles: {},
 			websocketBypass: [],
 		};
 	});
@@ -67,16 +68,16 @@ describe('resolveLeaseWorkspaceDir', () => {
 		).resolves.toBe(await realpath(path.join(stateDir, 'sandboxes')));
 		await expect(
 			resolveLeaseWorkspaceDir({
-				workspaceDir: '/home/openclaw/zone-files',
+				workspaceDir: '/zone',
 				zone,
 			}),
 		).resolves.toBe(await realpath(zoneFilesDir));
 	});
 
-	it('maps OpenClaw gateway zone-files paths to host zoneFilesDir', async () => {
+	it('maps OpenClaw gateway /zone paths to host zoneFilesDir', async () => {
 		await expect(
 			resolveLeaseWorkspaceDir({
-				workspaceDir: '/home/openclaw/zone-files/project',
+				workspaceDir: '/zone/project',
 				zone,
 			}),
 		).resolves.toBe(await realpath(path.join(zoneFilesDir, 'project')));
@@ -91,7 +92,7 @@ describe('resolveLeaseWorkspaceDir', () => {
 		).rejects.toThrow(/must not contain '\.\.' path segments/u);
 		await expect(
 			resolveLeaseWorkspaceDir({
-				workspaceDir: '/home/openclaw/zone-files/../../../etc',
+				workspaceDir: '/zone/../../../etc',
 				zone,
 			}),
 		).rejects.toThrow(/must not contain '\.\.' path segments/u);
@@ -119,7 +120,7 @@ describe('resolveLeaseWorkspaceDir', () => {
 				workspaceDir: hostWorkspaceDir,
 				zone,
 			}),
-		).rejects.toThrow(/must be under \/home\/openclaw/u);
+		).rejects.toThrow(/must be under \/home\/openclaw\/\.openclaw\/state\/sandboxes or \/zone/u);
 	});
 
 	it('allows direct lifecycle validation of resolved host workspace paths', async () => {
@@ -157,7 +158,7 @@ describe('resolveLeaseWorkspaceDir', () => {
 	it('rejects non-OpenClaw zones', async () => {
 		await expect(
 			resolveLeaseWorkspaceDir({
-				workspaceDir: '/home/openclaw/zone-files/project',
+				workspaceDir: '/zone/project',
 				zone: {
 					...zone,
 					gateway: {
@@ -186,7 +187,7 @@ describe('resolveLeaseWorkspaceDir', () => {
 
 		await expect(
 			resolveLeaseWorkspaceDir({
-				workspaceDir: '/home/openclaw/zone-files/project',
+				workspaceDir: '/zone/project',
 				zone: missingRootZone,
 			}),
 		).rejects.toThrow(/failed directory realpath check/u);

@@ -56,7 +56,7 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 			basePort: 19000,
 			size: 5,
 		},
-		toolProfiles: {
+		toolVmProfiles: {
 			standard: {
 				cpus: 1,
 				memory: '1G',
@@ -78,7 +78,8 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 				},
 				id: 'shravan',
 				secrets: {},
-				toolProfile: 'standard',
+				defaultToolVmProfile: 'standard',
+				agentToolVmProfiles: {},
 				websocketBypass: [],
 			},
 		],
@@ -1082,7 +1083,7 @@ describe('runAgentVmCli', () => {
 			{
 				buildControllerStatus: () => ({
 					controllerPort: 18800,
-					toolProfiles: ['standard'],
+					toolVmProfiles: ['standard'],
 					zones: [],
 				}),
 				createControllerClient: () => ({
@@ -1091,7 +1092,7 @@ describe('runAgentVmCli', () => {
 					getZoneLogs: async () => ({ output: '', zoneId: 'shravan' }),
 					getControllerStatus: async () => ({
 						controllerPort: 18800,
-						toolProfiles: ['standard'],
+						toolVmProfiles: ['standard'],
 						zones: [],
 					}),
 					peekLease: async () => ({
@@ -1158,7 +1159,7 @@ describe('runAgentVmCli', () => {
 						basePort: 19000,
 						size: 5,
 					},
-					toolProfiles: {
+					toolVmProfiles: {
 						standard: {
 							cpus: 1,
 							memory: '1G',
@@ -1206,7 +1207,7 @@ describe('runAgentVmCli', () => {
 			{
 				buildControllerStatus: () => ({
 					controllerPort: 18800,
-					toolProfiles: ['standard'],
+					toolVmProfiles: ['standard'],
 					zones: [],
 				}),
 				createControllerClient: () => ({
@@ -1215,7 +1216,7 @@ describe('runAgentVmCli', () => {
 					getZoneLogs: async () => ({ output: '', zoneId: 'shravan' }),
 					getControllerStatus: async () => ({
 						controllerPort: 18800,
-						toolProfiles: ['standard'],
+						toolVmProfiles: ['standard'],
 						zones: [],
 					}),
 					peekLease: async () => ({
@@ -1282,7 +1283,7 @@ describe('runAgentVmCli', () => {
 						basePort: 19000,
 						size: 5,
 					},
-					toolProfiles: {
+					toolVmProfiles: {
 						standard: {
 							cpus: 1,
 							memory: '1G',
@@ -1353,7 +1354,7 @@ describe('runAgentVmCli', () => {
 			{
 				buildControllerStatus: () => ({
 					controllerPort: 18800,
-					toolProfiles: ['standard'],
+					toolVmProfiles: ['standard'],
 					zones: [],
 				}),
 				createControllerClient: () => ({
@@ -1362,7 +1363,7 @@ describe('runAgentVmCli', () => {
 					getZoneLogs: async () => ({ output: '', zoneId: 'shravan' }),
 					getControllerStatus: async () => ({
 						controllerPort: 18800,
-						toolProfiles: ['standard'],
+						toolVmProfiles: ['standard'],
 						zones: [],
 					}),
 					peekLease: async () => ({
@@ -1429,7 +1430,7 @@ describe('runAgentVmCli', () => {
 						basePort: 19000,
 						size: 5,
 					},
-					toolProfiles: {
+					toolVmProfiles: {
 						standard: {
 							cpus: 1,
 							memory: '1G',
@@ -1452,7 +1453,8 @@ describe('runAgentVmCli', () => {
 							id: 'shravan',
 							secrets: {},
 							websocketBypass: [],
-							toolProfile: 'standard',
+							defaultToolVmProfile: 'standard',
+							agentToolVmProfiles: {},
 						},
 					],
 				}),
@@ -1588,13 +1590,13 @@ describe('runAgentVmCli', () => {
 			enableZoneSsh: vi.fn(async () => ({ command: 'ssh root@127.0.0.1' })),
 			getControllerStatus: vi.fn(async () => ({
 				controllerPort: 18800,
-				toolProfiles: ['standard'],
+				toolVmProfiles: ['standard'],
 				zones: [
 					{
 						gatewayType: 'openclaw',
 						id: 'shravan',
 						ingressPort: 18791,
-						toolProfile: 'standard',
+						agentToolVmProfiles: {},
 					},
 				],
 			})),
@@ -1619,7 +1621,7 @@ describe('runAgentVmCli', () => {
 		const baseDependencies = {
 			buildControllerStatus: () => ({
 				controllerPort: 18800,
-				toolProfiles: ['standard'],
+				toolVmProfiles: ['standard'],
 				zones: [],
 			}),
 			createAgeBackupEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
@@ -1670,7 +1672,7 @@ describe('runAgentVmCli', () => {
 					basePort: 19000,
 					size: 5,
 				},
-				toolProfiles: {
+				toolVmProfiles: {
 					standard: {
 						cpus: 1,
 						memory: '1G',
@@ -1693,7 +1695,8 @@ describe('runAgentVmCli', () => {
 						id: 'shravan',
 						secrets: {},
 						websocketBypass: [],
-						toolProfile: 'standard',
+						defaultToolVmProfile: 'standard',
+						agentToolVmProfiles: {},
 					},
 				],
 			}),
@@ -1939,7 +1942,7 @@ describe('runAgentVmCli', () => {
 			{
 				buildControllerStatus: () => ({
 					controllerPort: 18800,
-					toolProfiles: ['standard'],
+					toolVmProfiles: ['standard'],
 					zones: [],
 				}),
 				createAgeBackupEncryption: () => ({ encrypt: async () => {}, decrypt: async () => {} }),
@@ -1995,7 +1998,7 @@ describe('runAgentVmCli', () => {
 						},
 					},
 					tcpPool: { basePort: 19000, size: 5 },
-					toolProfiles: {
+					toolVmProfiles: {
 						standard: {
 							cpus: 1,
 							imageProfile: 'default',
@@ -2018,7 +2021,8 @@ describe('runAgentVmCli', () => {
 							id: 'shravan',
 							secrets: {},
 							websocketBypass: [],
-							toolProfile: 'standard',
+							defaultToolVmProfile: 'standard',
+							agentToolVmProfiles: {},
 						},
 					],
 				}),
@@ -2080,7 +2084,7 @@ describe('runAgentVmCli', () => {
 			{
 				buildControllerStatus: () => ({
 					controllerPort: 18800,
-					toolProfiles: ['standard'],
+					toolVmProfiles: ['standard'],
 					zones: [],
 				}),
 				createAgeBackupEncryption: (deps) => {
@@ -2144,7 +2148,7 @@ describe('runAgentVmCli', () => {
 						},
 					},
 					tcpPool: { basePort: 19000, size: 5 },
-					toolProfiles: {
+					toolVmProfiles: {
 						standard: {
 							cpus: 1,
 							imageProfile: 'default',
@@ -2167,7 +2171,8 @@ describe('runAgentVmCli', () => {
 							id: 'shravan',
 							secrets: {},
 							websocketBypass: [],
-							toolProfile: 'standard',
+							defaultToolVmProfile: 'standard',
+							agentToolVmProfiles: {},
 						},
 					],
 				}),

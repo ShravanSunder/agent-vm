@@ -22,7 +22,7 @@ describe('ActiveTaskRegistry', () => {
 			zoneId: 'shravan',
 		});
 
-		registry.clear('shravan', 'task-1');
+		expect(registry.clear('shravan', 'task-1')).toBe(true);
 		expect(registry.get('shravan', 'task-1')).toBeNull();
 	});
 
@@ -128,11 +128,70 @@ describe('ActiveTaskRegistry', () => {
 			workerIngress: null,
 		});
 
-		registry.clear('shravan', 'task-1');
+		expect(registry.clear('shravan', 'task-1')).toBe(true);
 
 		expect(registry.get('shravan', 'task-1')).toBeNull();
 		expect(registry.get('shravan', 'task-2')).toMatchObject({ taskId: 'task-2' });
 		expect(registry.countOccupiedForZone('shravan')).toBe(1);
+	});
+
+	it('treats clearing a missing task as an idempotent no-op', () => {
+		const registry = new ActiveTaskRegistry();
+
+		expect(registry.clear('shravan', 'missing-task')).toBe(false);
+	});
+
+	it('blocks new reservations while a zone destroy is active', () => {
+		const registry = new ActiveTaskRegistry();
+
+		registry.beginZoneDestroy('shravan');
+
+		expect(registry.tryReserve('shravan', 1)).toBeNull();
+		registry.endZoneDestroy('shravan');
+		expect(registry.tryReserve('shravan', 1)).not.toBeNull();
+	});
+
+	it('rejects activating a reservation while a zone destroy is active', () => {
+		const registry = new ActiveTaskRegistry();
+		const reservationId = registry.tryReserve('shravan', 1);
+		expect(reservationId).not.toBeNull();
+
+		registry.beginZoneDestroy('shravan');
+
+		expect(() =>
+			registry.activateReservation('shravan', reservationId ?? 'missing', {
+				taskId: 'task-1',
+				zoneId: 'shravan',
+				taskRoot: '/tmp/task-1',
+				eventLogPath: '/tmp/task-1/state/tasks/task-1.jsonl',
+				branchPrefix: 'agent/',
+				repos: [],
+				workerIngress: null,
+			}),
+		).toThrow(/destroy in progress/u);
+		registry.endZoneDestroy('shravan');
+	});
+
+	it('rejects setting worker ingress while a zone destroy is active', () => {
+		const registry = new ActiveTaskRegistry();
+		const reservationId = registry.tryReserve('shravan', 1);
+		expect(reservationId).not.toBeNull();
+		registry.activateReservation('shravan', reservationId ?? 'missing', {
+			taskId: 'task-1',
+			zoneId: 'shravan',
+			taskRoot: '/tmp/task-1',
+			eventLogPath: '/tmp/task-1/state/tasks/task-1.jsonl',
+			branchPrefix: 'agent/',
+			repos: [],
+			workerIngress: null,
+		});
+
+		registry.beginZoneDestroy('shravan');
+
+		expect(() =>
+			registry.setWorkerIngress('shravan', 'task-1', { host: '127.0.0.1', port: 18789 }),
+		).toThrow(/destroy in progress/u);
+		registry.endZoneDestroy('shravan');
 	});
 
 	it('releases reservations that never activate', () => {

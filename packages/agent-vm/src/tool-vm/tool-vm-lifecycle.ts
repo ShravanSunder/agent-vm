@@ -11,7 +11,7 @@ import {
 
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
-import type { ToolProfile } from '../controller/leases/lease-manager.js';
+import type { ToolVmProfile } from '../controller/leases/lease-manager.js';
 import { validateResolvedToolWorkspaceDir as validateResolvedToolWorkspaceDirDefault } from '../controller/leases/lease-workspace-paths.js';
 
 export interface ToolVmLifecycleDependencies {
@@ -30,7 +30,7 @@ export interface ToolVmLifecycleDependencies {
 export async function createToolVm(
 	options: {
 		readonly cacheDir: string;
-		readonly profile: ToolProfile;
+		readonly profile: ToolVmProfile;
 		readonly systemConfig: LoadedSystemConfig;
 		readonly tcpSlot: number;
 		readonly workspaceDir: string;

@@ -1,4 +1,4 @@
-import fs from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 
@@ -289,7 +289,7 @@ function defaultToolVmImageProfiles(
 	};
 }
 
-function defaultToolProfiles(gatewayType: GatewayType): Record<
+function defaultToolVmProfiles(gatewayType: GatewayType): Record<
 	string,
 	{
 		readonly memory: string;
@@ -353,7 +353,10 @@ const defaultSystemConfig = (
 				imageProfile: gatewayType,
 				stateDir: pathProfile.gatewayStateDir(zoneId),
 				...(gatewayType === 'openclaw'
-					? { zoneFilesDir: pathProfile.gatewayZoneFilesDir(zoneId) }
+					? {
+							zoneFilesDir: pathProfile.gatewayZoneFilesDir(zoneId),
+							authProfilesByAgent: {},
+						}
 					: {}),
 				backupDir: pathProfile.gatewayBackupDir(zoneId),
 			},
@@ -361,10 +364,12 @@ const defaultSystemConfig = (
 			runtimeAuthHints: defaultRuntimeAuthHintsForGatewayType(gatewayType),
 			allowedHosts: defaultAllowedHostsForGatewayType(gatewayType),
 			websocketBypass: defaultWebsocketBypassForGatewayType(gatewayType),
-			...(gatewayType === 'openclaw' ? { toolProfile: 'standard' } : {}),
+			...(gatewayType === 'openclaw'
+				? { defaultToolVmProfile: 'standard', agentToolVmProfiles: {}, agentSandboxSeeds: {} }
+				: {}),
 		},
 	],
-	toolProfiles: defaultToolProfiles(gatewayType),
+	toolVmProfiles: defaultToolVmProfiles(gatewayType),
 	tcpPool: {
 		basePort: 19000,
 		size: 12,
@@ -637,7 +642,7 @@ RUN apt-get update && \\
     printf '#!/bin/sh\\nexec /pnpm/openclaw "$@"\\n' > /usr/local/bin/openclaw && \\
     chmod 755 /usr/local/bin/openclaw && \\
     useradd -m -s /bin/bash openclaw && \\
-    mkdir -p ${defaultOpenClawExtensionsPath} /home/openclaw/zone-files /run/sshd /root && \\
+    mkdir -p ${defaultOpenClawExtensionsPath} /zone /run/sshd /root && \\
     chown -R openclaw:openclaw /opt/openclaw/plugin-runtime-deps && \\
     chown -R openclaw:openclaw /home/openclaw && \\
     (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
@@ -818,7 +823,7 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 				},
 			},
 			sandbox: { backend: 'gondolin', mode: 'all', scope: 'agent' },
-			workspace: '/home/openclaw/zone-files',
+			workspace: '/zone',
 		},
 	},
 	tools: { elevated: { enabled: false } },
@@ -844,7 +849,7 @@ async function resolveOpenClawControlUiIngressPort(
 	zoneId: string,
 ): Promise<number> {
 	try {
-		const rawSystemConfig = await fs.readFile(systemConfigPath, 'utf8');
+		const rawSystemConfig = await readFile(systemConfigPath, 'utf8');
 		const parsedSystemConfig: unknown = JSON.parse(rawSystemConfig);
 		const parseResult = scaffoldedGatewayPortSystemConfigSchema.safeParse(parsedSystemConfig);
 		if (!parseResult.success) {
@@ -932,13 +937,13 @@ async function writeFileIfMissing(
 	content: string,
 	overwrite = false,
 ): Promise<'created' | 'skipped'> {
-	await fs.mkdir(path.dirname(filePath), { recursive: true });
+	await mkdir(path.dirname(filePath), { recursive: true });
 	if (overwrite) {
-		await fs.writeFile(filePath, content, { encoding: 'utf8' });
+		await writeFile(filePath, content, { encoding: 'utf8' });
 		return 'created';
 	}
 	try {
-		await fs.writeFile(filePath, content, {
+		await writeFile(filePath, content, {
 			encoding: 'utf8',
 			flag: 'wx',
 		});
@@ -1200,7 +1205,7 @@ async function scaffoldAgentVmProjectInternal(
 			pathProfile.gatewayBackupDir(options.zoneId),
 		].map((profilePath) => resolveConfigPath(profilePath, configDir, homeDir));
 		await Promise.all(
-			directoriesToCreate.map((directoryPath) => fs.mkdir(directoryPath, { recursive: true })),
+			directoriesToCreate.map((directoryPath) => mkdir(directoryPath, { recursive: true })),
 		);
 	}
 

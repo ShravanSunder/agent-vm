@@ -48,7 +48,7 @@ In your `system.json`, add a zone with `gateway.type: "worker"`:
     },
     "secrets": { ... },
     "allowedHosts": ["api.openai.com", "api.github.com", "registry.npmjs.org", "mcp.deepwiki.com"],
-    "toolProfile": "standard"
+    "defaultToolVmProfile": "standard"
   }]
 }
 ```

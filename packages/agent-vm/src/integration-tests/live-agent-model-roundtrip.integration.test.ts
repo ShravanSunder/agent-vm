@@ -155,7 +155,7 @@ describeLiveModelRoundtrip('live integration: agent model roundtrip', () => {
 		const runtime = await startControllerRuntime(
 			{
 				systemConfig: isolatedSystemConfig,
-				zoneId: zone.id,
+				zoneIds: [zone.id],
 			},
 			{},
 		);

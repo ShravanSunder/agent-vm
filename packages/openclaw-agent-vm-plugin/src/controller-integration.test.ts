@@ -40,7 +40,7 @@ describe('gondolin controller integration', () => {
 	it('requests a lease through the controller app and builds an exec spec from the returned ssh lease', async () => {
 		const controllerApp = createControllerApp({
 			readIdentityPem: async () => 'pem',
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -49,7 +49,7 @@ describe('gondolin controller integration', () => {
 			},
 			leaseManager: {
 				createLease: vi.fn(async () => ({
-					agentWorkspaceDir: '/home/openclaw/zone-files',
+					agentWorkspaceDir: '/zone',
 					createdAt: 1,
 					id: 'lease-123',
 					lastUsedAt: 1,

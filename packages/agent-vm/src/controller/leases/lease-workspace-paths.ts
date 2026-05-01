@@ -1,4 +1,4 @@
-import fs from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { SystemConfig } from '../../config/system-config.js';
@@ -7,7 +7,7 @@ import type { SystemConfig } from '../../config/system-config.js';
 // must speak in gateway paths; the controller owns translation to host paths.
 const OPENCLAW_STATE_VM_ROOT = '/home/openclaw/.openclaw/state';
 const OPENCLAW_STATE_SANDBOXES_VM_ROOT = `${OPENCLAW_STATE_VM_ROOT}/sandboxes`;
-const OPENCLAW_ZONE_FILES_VM_ROOT = '/home/openclaw/zone-files';
+const OPENCLAW_ZONE_FILES_VM_ROOT = '/zone';
 
 type ZoneConfig = SystemConfig['zones'][number];
 
@@ -40,7 +40,7 @@ function mapGuestPathToHostPath(options: {
 
 async function realpathIfDirectory(directoryPath: string): Promise<string> {
 	try {
-		return await fs.realpath(directoryPath);
+		return await realpath(directoryPath);
 	} catch (error) {
 		const code =
 			error && typeof error === 'object' && 'code' in error ? String(error.code) : 'UNKNOWN';
@@ -54,7 +54,7 @@ async function realpathIfDirectory(directoryPath: string): Promise<string> {
 
 async function realpathAllowedRoot(directoryPath: string): Promise<string | null> {
 	try {
-		return await fs.realpath(directoryPath);
+		return await realpath(directoryPath);
 	} catch (error) {
 		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
 			return null;

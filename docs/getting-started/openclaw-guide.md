@@ -50,7 +50,7 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
       "generativelanguage.googleapis.com"
     ],
     "websocketBypass": ["gateway.discord.gg:443"],
-    "toolProfile": "standard"
+    "defaultToolVmProfile": "standard"
   }]
 }
 ```
@@ -115,7 +115,7 @@ When the agent needs to run code, OpenClaw requests a tool VM lease from the con
 ```
   OpenClaw (inside gateway VM)
        |
-       | POST /lease { scopeKey, zoneId, profileId }
+       | POST /lease { scopeKey, zoneId, workspaceDir }
        v
   Controller
        |
@@ -126,7 +126,11 @@ When the agent needs to run code, OpenClaw requests a tool VM lease from the con
        | SSH access via tool-{slot}.vm.host:22
 ```
 
-Leases are scoped by `scopeKey` for reuse within the same conversation. Idle leases are reaped after 30 minutes.
+Leases are scoped by `scopeKey` for reuse within the same conversation. For
+`agent:<agentId>` scopes, the controller selects the Tool VM profile from the
+zone's `agentToolVmProfiles` map, falling back to `defaultToolVmProfile`. Idle
+leases are reaped by `leaseIdleTtl`, with a 30 minute default when no policy is
+configured.
 
 For internals, see [architecture/openclaw-gateway.md](../architecture/openclaw-gateway.md#tool-vm-leases).
 
@@ -158,6 +162,6 @@ Opens an SSH session into the gateway VM for debugging.
 |---------|-------------|-----|
 | Gateway won't start | Auth profiles missing | Check `authProfilesRef` in system.json |
 | Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth-interactive codex --zone <id>` |
-| Tool calls fail | Lease creation failing | Check `toolProfile` exists, TCP pool has free slots |
+| Tool calls fail | Lease creation failing | Check `defaultToolVmProfile` exists, TCP pool has free slots |
 | Discord not connecting | WebSocket not bypassed | Add `gateway.discord.gg:443` to `websocketBypass` |
 | Can't reach external API | Host not allowlisted | Add to `zones[].allowedHosts` |

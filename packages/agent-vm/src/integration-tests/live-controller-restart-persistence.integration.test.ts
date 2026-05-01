@@ -64,10 +64,11 @@ function createSystemConfig(
 				secrets: {},
 				allowedHosts: ['api.openai.com'],
 				websocketBypass: [],
-				toolProfile: 'standard',
+				defaultToolVmProfile: 'standard',
+				agentToolVmProfiles: {},
 			},
 		],
-		toolProfiles: {
+		toolVmProfiles: {
 			standard: {
 				memory: '1G',
 				cpus: 1,
@@ -167,7 +168,7 @@ describe('live integration: controller restart persistence', () => {
 			await startControllerRuntime(
 				{
 					systemConfig,
-					zoneId: 'shravan',
+					zoneIds: ['shravan'],
 				},
 				{
 					createManagedToolVm: vi.fn(async () => ({
@@ -251,10 +252,10 @@ describe('live integration: controller restart persistence', () => {
 
 		const createLeaseResponse = await fetch(`http://127.0.0.1:${controllerPort}/lease`, {
 			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/zone-files',
+				agentWorkspaceDir: '/zone',
 				profileId: 'standard',
 				scopeKey: 'restart-test',
-				workspaceDir: '/home/openclaw/zone-files',
+				workspaceDir: '/zone',
 				zoneId: 'shravan',
 			}),
 			headers: { 'content-type': 'application/json' },

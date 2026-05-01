@@ -39,7 +39,7 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 				basePort: 19000,
 				size: 5,
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -61,7 +61,8 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 					},
 					id: 'shravan',
 					secrets: {},
-					toolProfile: 'standard',
+					defaultToolVmProfile: 'standard',
+					agentToolVmProfiles: {},
 					websocketBypass: [],
 				},
 			],
@@ -85,7 +86,7 @@ describe('runBackupCommand', () => {
 		await runBackupCommand({
 			dependencies: {
 				...defaultCliDependencies,
-				buildControllerStatus: () => ({ controllerPort: 18800, toolProfiles: [], zones: [] }),
+				buildControllerStatus: () => ({ controllerPort: 18800, toolVmProfiles: [], zones: [] }),
 				createAgeBackupEncryption: () => ({ decrypt: async () => {}, encrypt: async () => {} }),
 				createControllerClient: () => ({
 					destroyZone: async () => ({}),
@@ -152,7 +153,7 @@ describe('runBackupCommand', () => {
 		await runBackupCommand({
 			dependencies: {
 				...defaultCliDependencies,
-				buildControllerStatus: () => ({ controllerPort: 18800, toolProfiles: [], zones: [] }),
+				buildControllerStatus: () => ({ controllerPort: 18800, toolVmProfiles: [], zones: [] }),
 				createAgeBackupEncryption: (dependencies) => {
 					void dependencies.resolveIdentity();
 					return { decrypt: async () => {}, encrypt: async () => {} };
@@ -219,7 +220,7 @@ describe('runBackupCommand', () => {
 			runBackupCommand({
 				dependencies: {
 					...defaultCliDependencies,
-					buildControllerStatus: () => ({ controllerPort: 18800, toolProfiles: [], zones: [] }),
+					buildControllerStatus: () => ({ controllerPort: 18800, toolVmProfiles: [], zones: [] }),
 					createAgeBackupEncryption: () => ({ decrypt: async () => {}, encrypt: async () => {} }),
 					createControllerClient: () => ({
 						destroyZone: async () => ({}),
@@ -277,7 +278,7 @@ describe('runBackupCommand', () => {
 		await runBackupCommand({
 			dependencies: {
 				...defaultCliDependencies,
-				buildControllerStatus: () => ({ controllerPort: 18800, toolProfiles: [], zones: [] }),
+				buildControllerStatus: () => ({ controllerPort: 18800, toolVmProfiles: [], zones: [] }),
 				createAgeBackupEncryption: () => ({ decrypt: async () => {}, encrypt: async () => {} }),
 				createControllerClient: () => ({
 					destroyZone: async () => ({}),
@@ -365,7 +366,7 @@ describe('runBackupCommand', () => {
 		await runBackupCommand({
 			dependencies: {
 				...defaultCliDependencies,
-				buildControllerStatus: () => ({ controllerPort: 18800, toolProfiles: [], zones: [] }),
+				buildControllerStatus: () => ({ controllerPort: 18800, toolVmProfiles: [], zones: [] }),
 				createAgeBackupEncryption: () => ({ decrypt: async () => {}, encrypt: async () => {} }),
 				createControllerClient: () => ({
 					destroyZone: async () => ({}),

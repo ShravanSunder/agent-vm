@@ -1,8 +1,8 @@
 import type { SystemConfig } from '../config/system-config.js';
 
-export interface ControllerRuntimeStatus {
-	readonly activeLeases?: readonly { readonly zoneId: string }[];
-	readonly activeZoneId?: string;
+export type ControllerZoneLifecycleState = 'running' | 'failed' | 'stopped';
+
+export interface ControllerRuntimeZoneStatus {
 	readonly bootedAt?: string;
 	readonly gateway?: {
 		readonly ingress: {
@@ -13,7 +13,13 @@ export interface ControllerRuntimeStatus {
 			readonly id: string;
 		};
 	};
-	readonly lastErrorByZone?: Readonly<Record<string, string>>;
+	readonly lastError?: string;
+	readonly lifecycleState: ControllerZoneLifecycleState;
+}
+
+export interface ControllerRuntimeStatus {
+	readonly activeLeases?: readonly { readonly zoneId: string }[];
+	readonly zones?: Readonly<Record<string, ControllerRuntimeZoneStatus>>;
 }
 
 export interface ControllerZoneStatusSummary {
@@ -24,14 +30,15 @@ export interface ControllerZoneStatusSummary {
 	readonly ingressHost?: string;
 	readonly ingressPort: number;
 	readonly lastError?: string;
+	readonly lifecycleState: ControllerZoneLifecycleState;
 	readonly running: boolean;
-	readonly toolProfile?: string;
+	readonly defaultToolVmProfile?: string;
 	readonly vmId?: string;
 }
 
 export interface ControllerStatusSummary {
 	readonly controllerPort: number;
-	readonly toolProfiles: string[];
+	readonly toolVmProfiles: string[];
 	readonly zones: ControllerZoneStatusSummary[];
 }
 
@@ -39,30 +46,34 @@ function buildZoneStatus(
 	zone: SystemConfig['zones'][number],
 	runtimeStatus: ControllerRuntimeStatus,
 ): ControllerZoneStatusSummary {
-	const running = runtimeStatus.activeZoneId === zone.id && runtimeStatus.gateway !== undefined;
+	const zoneRuntimeStatus = runtimeStatus.zones?.[zone.id] ?? {
+		lifecycleState: 'stopped' as const,
+	};
+	const running =
+		zoneRuntimeStatus.lifecycleState === 'running' && zoneRuntimeStatus.gateway !== undefined;
 	const activeLeaseCount =
 		runtimeStatus.activeLeases?.filter((activeLease) => activeLease.zoneId === zone.id).length ?? 0;
-	const lastError = runtimeStatus.lastErrorByZone?.[zone.id];
 
 	return {
 		activeLeaseCount,
 		gatewayType: zone.gateway.type,
 		id: zone.id,
-		ingressPort: running ? runtimeStatus.gateway.ingress.port : zone.gateway.port,
+		ingressPort: running ? zoneRuntimeStatus.gateway.ingress.port : zone.gateway.port,
+		lifecycleState: zoneRuntimeStatus.lifecycleState,
 		running,
-		...(running && runtimeStatus.bootedAt
+		...(running && zoneRuntimeStatus.bootedAt
 			? {
-					bootedAt: runtimeStatus.bootedAt,
+					bootedAt: zoneRuntimeStatus.bootedAt,
 				}
 			: {}),
 		...(running
 			? {
-					ingressHost: runtimeStatus.gateway.ingress.host,
-					vmId: runtimeStatus.gateway.vm.id,
+					ingressHost: zoneRuntimeStatus.gateway.ingress.host,
+					vmId: zoneRuntimeStatus.gateway.vm.id,
 				}
 			: {}),
-		...(lastError ? { lastError } : {}),
-		...(zone.toolProfile ? { toolProfile: zone.toolProfile } : {}),
+		...(zoneRuntimeStatus.lastError ? { lastError: zoneRuntimeStatus.lastError } : {}),
+		...(zone.defaultToolVmProfile ? { defaultToolVmProfile: zone.defaultToolVmProfile } : {}),
 	};
 }
 
@@ -72,7 +83,7 @@ export function buildControllerStatus(
 ): ControllerStatusSummary {
 	return {
 		controllerPort: systemConfig.host.controllerPort,
-		toolProfiles: Object.keys(systemConfig.toolProfiles),
+		toolVmProfiles: Object.keys(systemConfig.toolVmProfiles),
 		zones: systemConfig.zones.map((zone) => buildZoneStatus(zone, runtimeStatus)),
 	};
 }

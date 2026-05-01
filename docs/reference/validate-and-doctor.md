@@ -18,6 +18,8 @@ It checks:
 - `system.json` schema and cross-field validation.
 - `systemCacheIdentifier.json` exists and is valid JSON.
 - Gateway and tool VM image recipe files exist.
+- OpenClaw Tool VM profile mappings reference existing `toolVmProfiles`.
+- Per-agent auth profiles and sandbox seeds are visible as named checks.
 - Worker gateway configs load successfully.
 - Worker prompt file references exist and stay under `prompts/`.
 - OpenClaw gateway configs pass `openclaw config validate --json` for
@@ -49,6 +51,8 @@ It checks:
 - Configured 1Password token source, if the config uses one.
 - OpenClaw CLI availability for OpenClaw zones.
 - OpenClaw gateway configs pass the catalog's own OpenClaw CLI validation.
+- OpenClaw Tool VM profile mappings, per-agent auth profile entries, and
+  sandbox seed entries are visible as named checks.
 - `systemCacheIdentifier.json`.
 - Worker configs using the paths as the current host sees them.
 - `vm-host-system/` files for container configs.
