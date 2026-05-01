@@ -123,6 +123,9 @@ export class ActiveTaskRegistry {
 		taskId: string,
 		workerIngress: ActiveWorkerTaskIngress,
 	): void {
+		if (this.destroyingZones.has(zoneId)) {
+			throw new Error(`Zone '${zoneId}' has a destroy in progress.`);
+		}
 		const task = this.get(zoneId, taskId);
 		if (!task) {
 			throw new Error(`Zone '${zoneId}' has no active task '${taskId}' to update.`);

@@ -699,6 +699,7 @@ describe('createControllerApp', () => {
 		await expect(response.json()).resolves.toEqual({
 			error:
 				"Task 'task-booting' in zone 'worker-zone' is still preparing and cannot be destroyed safely yet.",
+			kind: 'task-not-ready',
 			taskId: 'task-booting',
 			zoneId: 'worker-zone',
 		});
@@ -750,6 +751,7 @@ describe('createControllerApp', () => {
 			error: "worker close returned HTTP 503 for task 'task-1'",
 			body: 'close failed',
 			httpStatus: 503,
+			kind: 'worker-close-failed',
 			taskId: 'task-1',
 			zoneId: 'worker-zone',
 		});

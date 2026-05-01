@@ -172,6 +172,28 @@ describe('ActiveTaskRegistry', () => {
 		registry.endZoneDestroy('shravan');
 	});
 
+	it('rejects setting worker ingress while a zone destroy is active', () => {
+		const registry = new ActiveTaskRegistry();
+		const reservationId = registry.tryReserve('shravan', 1);
+		expect(reservationId).not.toBeNull();
+		registry.activateReservation('shravan', reservationId ?? 'missing', {
+			taskId: 'task-1',
+			zoneId: 'shravan',
+			taskRoot: '/tmp/task-1',
+			eventLogPath: '/tmp/task-1/state/tasks/task-1.jsonl',
+			branchPrefix: 'agent/',
+			repos: [],
+			workerIngress: null,
+		});
+
+		registry.beginZoneDestroy('shravan');
+
+		expect(() =>
+			registry.setWorkerIngress('shravan', 'task-1', { host: '127.0.0.1', port: 18789 }),
+		).toThrow(/destroy in progress/u);
+		registry.endZoneDestroy('shravan');
+	});
+
 	it('releases reservations that never activate', () => {
 		const registry = new ActiveTaskRegistry();
 		const reservationId = registry.tryReserve('shravan', 1);

@@ -131,6 +131,7 @@ function zoneRuntimeErrorBody(error: unknown):
 	  }
 	| {
 			readonly error: string;
+			readonly kind: 'task-not-ready';
 			readonly taskId: string | null;
 			readonly zoneId: string;
 	  }
@@ -138,6 +139,7 @@ function zoneRuntimeErrorBody(error: unknown):
 			readonly body: string;
 			readonly error: string;
 			readonly httpStatus: number;
+			readonly kind: 'worker-close-failed';
 			readonly taskId: string;
 			readonly zoneId: string;
 	  }
@@ -148,6 +150,7 @@ function zoneRuntimeErrorBody(error: unknown):
 				readonly httpStatus: number;
 				readonly taskId: string;
 			}[];
+			readonly kind: 'worker-close-aggregate-failed';
 			readonly zoneId: string;
 	  }
 	| { readonly error: string } {
@@ -162,6 +165,7 @@ function zoneRuntimeErrorBody(error: unknown):
 	if (error instanceof ControllerZoneTaskNotReadyError) {
 		return {
 			error: error.message,
+			kind: 'task-not-ready',
 			taskId: error.taskId,
 			zoneId: error.zoneId,
 		};
@@ -171,6 +175,7 @@ function zoneRuntimeErrorBody(error: unknown):
 			error: error.message,
 			body: error.body,
 			httpStatus: error.httpStatus,
+			kind: 'worker-close-failed',
 			taskId: error.taskId,
 			zoneId: error.zoneId,
 		};
@@ -183,6 +188,7 @@ function zoneRuntimeErrorBody(error: unknown):
 				httpStatus: failure.httpStatus,
 				taskId: failure.taskId,
 			})),
+			kind: 'worker-close-aggregate-failed',
 			zoneId: error.zoneId,
 		};
 	}

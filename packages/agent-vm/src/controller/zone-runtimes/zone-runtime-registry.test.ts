@@ -621,7 +621,7 @@ describe('createWorkerZoneRuntime', () => {
 		}
 	});
 
-	it('attempts all worker closes and leaves registry untouched when any close fails', async () => {
+	it('attempts all worker closes and clears only successfully closed tasks when a sibling fails', async () => {
 		const activeTask1 = {
 			...createActiveWorkerTask('task-1'),
 			workerIngress: { host: '127.0.0.1', port: 18881 },
@@ -666,7 +666,8 @@ describe('createWorkerZoneRuntime', () => {
 				"worker close returned HTTP 503 for task 'task-2'",
 			);
 			expect(fetchMock).toHaveBeenCalledTimes(2);
-			expect(clear).not.toHaveBeenCalled();
+			expect(clear).toHaveBeenCalledTimes(1);
+			expect(clear).toHaveBeenCalledWith('worker-zone', 'task-1');
 		} finally {
 			globalThis.fetch = originalFetch;
 		}

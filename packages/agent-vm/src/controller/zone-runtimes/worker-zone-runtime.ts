@@ -134,8 +134,10 @@ export function createWorkerZoneRuntime(
 			return { status: 'closed' };
 		},
 		destroy: async (purge) => {
-			options.activeTaskRegistry.beginZoneDestroy(options.zone.id);
+			let destroyGateAcquired = false;
 			try {
+				options.activeTaskRegistry.beginZoneDestroy(options.zone.id);
+				destroyGateAcquired = true;
 				return await (options.runControllerDestroy ?? runControllerDestroyDefault)(
 					{ purge, systemConfig: options.systemConfig, zoneId: options.zone.id },
 					{
@@ -157,12 +159,29 @@ export function createWorkerZoneRuntime(
 							const closeResults = await Promise.allSettled(
 								activeTasks.map(async (activeTask) => await closeActiveWorkerTask(activeTask)),
 							);
-							const closeFailures = closeResults.flatMap((result) => {
+							const closeFailures = closeResults.flatMap((result, index) => {
+								const activeTask = activeTasks[index];
 								if (result.status === 'fulfilled') {
+									if (activeTask) {
+										options.activeTaskRegistry.clear(activeTask.zoneId, activeTask.taskId);
+									}
 									return [];
 								}
-								return result.reason instanceof ControllerZoneWorkerCloseError
-									? [result.reason]
+								if (result.reason instanceof ControllerZoneWorkerCloseError) {
+									return [result.reason];
+								}
+								return activeTask
+									? [
+											new ControllerZoneWorkerCloseError({
+												body:
+													result.reason instanceof Error
+														? result.reason.message
+														: String(result.reason),
+												httpStatus: 0,
+												taskId: activeTask.taskId,
+												zoneId: activeTask.zoneId,
+											}),
+										]
 									: [];
 							});
 							if (closeFailures.length === 1) {
@@ -171,14 +190,13 @@ export function createWorkerZoneRuntime(
 							if (closeFailures.length > 1) {
 								throw new ControllerZoneWorkerCloseAggregateError(zoneId, closeFailures);
 							}
-							for (const activeTask of activeTasks) {
-								options.activeTaskRegistry.clear(activeTask.zoneId, activeTask.taskId);
-							}
 						},
 					},
 				);
 			} finally {
-				options.activeTaskRegistry.endZoneDestroy(options.zone.id);
+				if (destroyGateAcquired) {
+					options.activeTaskRegistry.endZoneDestroy(options.zone.id);
+				}
 			}
 		},
 		executeWorkerTask: async (prepared) => {

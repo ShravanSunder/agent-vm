@@ -77,14 +77,15 @@ export class ControllerZoneWorkerCloseError extends Error {
 	}
 }
 
-export class ControllerZoneWorkerCloseAggregateError extends Error {
+export class ControllerZoneWorkerCloseAggregateError extends AggregateError {
 	public readonly failures: readonly ControllerZoneWorkerCloseError[];
 	public readonly zoneId: string;
 
 	public constructor(zoneId: string, failures: readonly ControllerZoneWorkerCloseError[]) {
-		super(`Failed to close ${String(failures.length)} worker task(s) for zone '${zoneId}'.`, {
-			cause: failures[0],
-		});
+		super(
+			failures,
+			`Failed to close ${String(failures.length)} worker task(s) for zone '${zoneId}'.`,
+		);
 		this.name = 'ControllerZoneWorkerCloseAggregateError';
 		this.zoneId = zoneId;
 		this.failures = failures;
