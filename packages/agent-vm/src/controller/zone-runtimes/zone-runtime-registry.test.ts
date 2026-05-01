@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
 import type { GatewayZone } from '../../gateway/gateway-zone-support.js';
-import type { ActiveWorkerTask } from '../active-task-registry.js';
+import { ActiveTaskRegistry, type ActiveWorkerTask } from '../active-task-registry.js';
 import type { PreparedWorkerTask, WorkerTaskInput } from '../worker-task-runner.js';
 import { createOpenClawZoneRuntime } from './openclaw-zone-runtime.js';
 import { createWorkerZoneRuntime } from './worker-zone-runtime.js';
@@ -408,7 +408,10 @@ describe('createWorkerZoneRuntime', () => {
 		const runtime = createWorkerZoneRuntime({
 			activeTaskRegistry: {
 				activateReservation: vi.fn(),
+				beginZoneDestroy: vi.fn(),
 				clear: vi.fn(),
+				countOccupiedForZone: vi.fn(() => 0),
+				endZoneDestroy: vi.fn(),
 				get: vi.fn(),
 				listForZone: vi.fn(() => []),
 				releaseReservation: vi.fn(),
@@ -450,7 +453,10 @@ describe('createWorkerZoneRuntime', () => {
 		const runtime = createWorkerZoneRuntime({
 			activeTaskRegistry: {
 				activateReservation: vi.fn(),
+				beginZoneDestroy: vi.fn(),
 				clear: vi.fn(),
+				countOccupiedForZone: vi.fn(() => 1),
+				endZoneDestroy: vi.fn(),
 				get: vi.fn(),
 				listForZone: vi.fn(() => [createActiveWorkerTask('task-1')]),
 				releaseReservation: vi.fn(),
@@ -487,7 +493,10 @@ describe('createWorkerZoneRuntime', () => {
 		const runtime = createWorkerZoneRuntime({
 			activeTaskRegistry: {
 				activateReservation: vi.fn(),
+				beginZoneDestroy: vi.fn(),
 				clear,
+				countOccupiedForZone: vi.fn(() => 2),
+				endZoneDestroy: vi.fn(),
 				get: vi.fn(),
 				listForZone: vi.fn(() => [activeTask1, activeTask2]),
 				releaseReservation: vi.fn(),
@@ -520,10 +529,16 @@ describe('createWorkerZoneRuntime', () => {
 
 	it('refuses worker destroy while an active task is still preparing', async () => {
 		const clear = vi.fn();
+		const originalFetch = globalThis.fetch;
+		const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+		globalThis.fetch = fetchMock;
 		const runtime = createWorkerZoneRuntime({
 			activeTaskRegistry: {
 				activateReservation: vi.fn(),
+				beginZoneDestroy: vi.fn(),
 				clear,
+				countOccupiedForZone: vi.fn(() => 1),
+				endZoneDestroy: vi.fn(),
 				get: vi.fn(),
 				listForZone: vi.fn(() => [createActiveWorkerTask('task-booting')]),
 				releaseReservation: vi.fn(),
@@ -541,10 +556,120 @@ describe('createWorkerZoneRuntime', () => {
 			zone: getWorkerZone(),
 		});
 
-		await expect(runtime.destroy(true)).rejects.toThrow(
-			"Task 'task-booting' in zone 'worker-zone' is still preparing",
-		);
-		expect(clear).not.toHaveBeenCalled();
+		try {
+			await expect(runtime.destroy(true)).rejects.toThrow(
+				"Task 'task-booting' in zone 'worker-zone' is still preparing",
+			);
+			expect(clear).not.toHaveBeenCalled();
+			expect(fetchMock).not.toHaveBeenCalled();
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it('gates new worker task reservations while destroy is closing active tasks', async () => {
+		const registry = new ActiveTaskRegistry();
+		const reservationId = registry.tryReserve('worker-zone', 2);
+		expect(reservationId).not.toBeNull();
+		registry.activateReservation('worker-zone', reservationId ?? 'missing', {
+			...createActiveWorkerTask('task-1'),
+			workerIngress: { host: '127.0.0.1', port: 18888 },
+		});
+		let releaseWorkerClose: (() => void) | undefined;
+		let workerCloseStarted: (() => void) | undefined;
+		const workerCloseStartedPromise = new Promise<void>((resolve) => {
+			workerCloseStarted = resolve;
+		});
+		const releaseWorkerClosePromise = new Promise<void>((resolve) => {
+			releaseWorkerClose = resolve;
+		});
+		const originalFetch = globalThis.fetch;
+		const fetchMock = vi.fn(async () => {
+			workerCloseStarted?.();
+			await releaseWorkerClosePromise;
+			return new Response(null, { status: 200 });
+		});
+		globalThis.fetch = fetchMock;
+		const runtime = createWorkerZoneRuntime({
+			activeTaskRegistry: registry,
+			controllerGithubToken: null,
+			prepareWorkerTask: vi.fn(async (options) => createPreparedWorkerTask(options.input)),
+			requestHeartbeatRegistry: {
+				acquire: vi.fn(),
+				release: vi.fn(),
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig: loadedSystemConfig,
+			zone: getWorkerZone(),
+		});
+
+		try {
+			const destroyPromise = runtime.destroy(false);
+			await workerCloseStartedPromise;
+
+			expect(registry.tryReserve('worker-zone', 2)).toBeNull();
+
+			releaseWorkerClose?.();
+			await expect(destroyPromise).resolves.toEqual({
+				ok: true,
+				purged: false,
+				zoneId: 'worker-zone',
+			});
+			expect(registry.tryReserve('worker-zone', 2)).not.toBeNull();
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it('attempts all worker closes and leaves registry untouched when any close fails', async () => {
+		const activeTask1 = {
+			...createActiveWorkerTask('task-1'),
+			workerIngress: { host: '127.0.0.1', port: 18881 },
+		};
+		const activeTask2 = {
+			...createActiveWorkerTask('task-2'),
+			workerIngress: { host: '127.0.0.1', port: 18882 },
+		};
+		const clear = vi.fn();
+		const originalFetch = globalThis.fetch;
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(new Response(null, { status: 200 }))
+			.mockResolvedValueOnce(new Response('close failed', { status: 503 }));
+		globalThis.fetch = fetchMock;
+		const runtime = createWorkerZoneRuntime({
+			activeTaskRegistry: {
+				activateReservation: vi.fn(),
+				beginZoneDestroy: vi.fn(),
+				clear,
+				countOccupiedForZone: vi.fn(() => 2),
+				endZoneDestroy: vi.fn(),
+				get: vi.fn(),
+				listForZone: vi.fn(() => [activeTask1, activeTask2]),
+				releaseReservation: vi.fn(),
+				setWorkerIngress: vi.fn(),
+				tryReserve: vi.fn(() => 'reservation-1'),
+			},
+			controllerGithubToken: null,
+			prepareWorkerTask: vi.fn(async (options) => createPreparedWorkerTask(options.input)),
+			requestHeartbeatRegistry: {
+				acquire: vi.fn(),
+				release: vi.fn(),
+			},
+			secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+			systemConfig: loadedSystemConfig,
+			zone: getWorkerZone(),
+		});
+
+		try {
+			await expect(runtime.destroy(false)).rejects.toThrow(
+				"worker close returned HTTP 503 for task 'task-2'",
+			);
+			expect(fetchMock).toHaveBeenCalledTimes(2);
+			expect(clear).not.toHaveBeenCalled();
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
 	});
 
 	it('closes active worker tasks and purges worker state when destroy runs with purge', async () => {
@@ -575,7 +700,10 @@ describe('createWorkerZoneRuntime', () => {
 			const runtime = createWorkerZoneRuntime({
 				activeTaskRegistry: {
 					activateReservation: vi.fn(),
+					beginZoneDestroy: vi.fn(),
 					clear,
+					countOccupiedForZone: vi.fn(() => 1),
+					endZoneDestroy: vi.fn(),
 					get: vi.fn(),
 					listForZone: vi.fn(() => [activeTask]),
 					releaseReservation: vi.fn(),
@@ -619,7 +747,10 @@ describe('createWorkerZoneRuntime', () => {
 		const runtime = createWorkerZoneRuntime({
 			activeTaskRegistry: {
 				activateReservation: vi.fn(),
+				beginZoneDestroy: vi.fn(),
 				clear,
+				countOccupiedForZone: vi.fn(() => 1),
+				endZoneDestroy: vi.fn(),
 				get: vi.fn(),
 				listForZone: vi.fn(() => [createActiveWorkerTask('task-1')]),
 				releaseReservation: vi.fn(),

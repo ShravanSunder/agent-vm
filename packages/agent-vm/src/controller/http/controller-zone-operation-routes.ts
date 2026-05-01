@@ -12,6 +12,8 @@ import {
 	ControllerZoneOperationUnsupportedError,
 	ControllerZoneTaskNotFoundError,
 	ControllerZoneTaskNotReadyError,
+	ControllerZoneWorkerCloseAggregateError,
+	ControllerZoneWorkerCloseError,
 	ControllerZoneRuntimeStartError,
 	ControllerZoneRuntimeUnavailableError,
 } from '../zone-runtimes/zone-runtime-errors.js';
@@ -89,7 +91,7 @@ function writeControllerRouteLog(message: string): void {
 	process.stderr.write(`[controller-zone-operation-routes] ${message}\n`);
 }
 
-function zoneRuntimeErrorStatus(error: unknown): 404 | 405 | 409 | 412 | 500 | 503 {
+function zoneRuntimeErrorStatus(error: unknown): 404 | 405 | 409 | 412 | 500 | 502 | 503 {
 	if (
 		error instanceof ControllerZoneNotFoundError ||
 		error instanceof ControllerZoneTaskNotFoundError
@@ -104,6 +106,12 @@ function zoneRuntimeErrorStatus(error: unknown): 404 | 405 | 409 | 412 | 500 | 5
 	}
 	if (error instanceof ControllerZoneTaskNotReadyError) {
 		return 409;
+	}
+	if (
+		error instanceof ControllerZoneWorkerCloseError ||
+		error instanceof ControllerZoneWorkerCloseAggregateError
+	) {
+		return 502;
 	}
 	if (error instanceof ControllerZoneRuntimeStartError) {
 		return 503;
@@ -121,12 +129,60 @@ function zoneRuntimeErrorBody(error: unknown):
 			readonly operationName: string;
 			readonly zoneId: string;
 	  }
+	| {
+			readonly error: string;
+			readonly taskId: string | null;
+			readonly zoneId: string;
+	  }
+	| {
+			readonly body: string;
+			readonly error: string;
+			readonly httpStatus: number;
+			readonly taskId: string;
+			readonly zoneId: string;
+	  }
+	| {
+			readonly error: string;
+			readonly failures: readonly {
+				readonly body: string;
+				readonly httpStatus: number;
+				readonly taskId: string;
+			}[];
+			readonly zoneId: string;
+	  }
 	| { readonly error: string } {
 	if (error instanceof ControllerZoneOperationUnsupportedError) {
 		return {
 			error: error.message,
 			gatewayType: error.gatewayType,
 			operationName: error.operationName,
+			zoneId: error.zoneId,
+		};
+	}
+	if (error instanceof ControllerZoneTaskNotReadyError) {
+		return {
+			error: error.message,
+			taskId: error.taskId,
+			zoneId: error.zoneId,
+		};
+	}
+	if (error instanceof ControllerZoneWorkerCloseError) {
+		return {
+			error: error.message,
+			body: error.body,
+			httpStatus: error.httpStatus,
+			taskId: error.taskId,
+			zoneId: error.zoneId,
+		};
+	}
+	if (error instanceof ControllerZoneWorkerCloseAggregateError) {
+		return {
+			error: error.message,
+			failures: error.failures.map((failure) => ({
+				body: failure.body,
+				httpStatus: failure.httpStatus,
+				taskId: failure.taskId,
+			})),
 			zoneId: error.zoneId,
 		};
 	}

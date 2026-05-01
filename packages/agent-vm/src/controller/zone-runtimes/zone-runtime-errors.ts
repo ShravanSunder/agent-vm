@@ -45,14 +45,49 @@ export class ControllerZoneTaskNotFoundError extends Error {
 }
 
 export class ControllerZoneTaskNotReadyError extends Error {
-	public readonly taskId: string;
+	public readonly taskId: string | null;
 	public readonly zoneId: string;
 
-	public constructor(zoneId: string, taskId: string, message: string) {
+	public constructor(zoneId: string, taskId: string | null, message: string) {
 		super(message);
 		this.name = 'ControllerZoneTaskNotReadyError';
 		this.zoneId = zoneId;
 		this.taskId = taskId;
+	}
+}
+
+export class ControllerZoneWorkerCloseError extends Error {
+	public readonly body: string;
+	public readonly httpStatus: number;
+	public readonly taskId: string;
+	public readonly zoneId: string;
+
+	public constructor(options: {
+		readonly body: string;
+		readonly httpStatus: number;
+		readonly taskId: string;
+		readonly zoneId: string;
+	}) {
+		super(`worker close returned HTTP ${String(options.httpStatus)} for task '${options.taskId}'`);
+		this.name = 'ControllerZoneWorkerCloseError';
+		this.body = options.body;
+		this.httpStatus = options.httpStatus;
+		this.taskId = options.taskId;
+		this.zoneId = options.zoneId;
+	}
+}
+
+export class ControllerZoneWorkerCloseAggregateError extends Error {
+	public readonly failures: readonly ControllerZoneWorkerCloseError[];
+	public readonly zoneId: string;
+
+	public constructor(zoneId: string, failures: readonly ControllerZoneWorkerCloseError[]) {
+		super(`Failed to close ${String(failures.length)} worker task(s) for zone '${zoneId}'.`, {
+			cause: failures[0],
+		});
+		this.name = 'ControllerZoneWorkerCloseAggregateError';
+		this.zoneId = zoneId;
+		this.failures = failures;
 	}
 }
 

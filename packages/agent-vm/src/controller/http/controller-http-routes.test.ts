@@ -13,6 +13,7 @@ import {
 	ControllerZoneNotFoundError,
 	ControllerZoneOperationUnsupportedError,
 	ControllerZoneTaskNotReadyError,
+	ControllerZoneWorkerCloseError,
 } from '../zone-runtimes/zone-runtime-errors.js';
 import {
 	ControllerRuntimeAtCapacityError,
@@ -698,6 +699,59 @@ describe('createControllerApp', () => {
 		await expect(response.json()).resolves.toEqual({
 			error:
 				"Task 'task-booting' in zone 'worker-zone' is still preparing and cannot be destroyed safely yet.",
+			taskId: 'task-booting',
+			zoneId: 'worker-zone',
+		});
+	});
+
+	it('returns worker close failure context from destroy routes', async () => {
+		const destroyZone = vi.fn(async () => {
+			throw new ControllerZoneWorkerCloseError({
+				body: 'close failed',
+				httpStatus: 503,
+				taskId: 'task-1',
+				zoneId: 'worker-zone',
+			});
+		});
+		const app = createControllerApp({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone,
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/worker-zone/destroy', {
+			body: JSON.stringify({ purge: true }),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(502);
+		await expect(response.json()).resolves.toEqual({
+			error: "worker close returned HTTP 503 for task 'task-1'",
+			body: 'close failed',
+			httpStatus: 503,
+			taskId: 'task-1',
+			zoneId: 'worker-zone',
 		});
 	});
 

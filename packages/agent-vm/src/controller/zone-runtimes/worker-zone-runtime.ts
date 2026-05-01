@@ -23,6 +23,8 @@ import {
 	ControllerZoneConfigurationError,
 	ControllerZoneTaskNotFoundError,
 	ControllerZoneTaskNotReadyError,
+	ControllerZoneWorkerCloseAggregateError,
+	ControllerZoneWorkerCloseError,
 } from './zone-runtime-errors.js';
 import type { ControllerZoneConfig, WorkerZoneRuntime } from './zone-runtime-types.js';
 
@@ -36,7 +38,10 @@ export interface CreateWorkerZoneRuntimeOptions {
 	readonly activeTaskRegistry: Pick<
 		ActiveTaskRegistry,
 		| 'activateReservation'
+		| 'beginZoneDestroy'
 		| 'clear'
+		| 'countOccupiedForZone'
+		| 'endZoneDestroy'
 		| 'get'
 		| 'listForZone'
 		| 'releaseReservation'
@@ -71,6 +76,44 @@ async function recordActiveTaskEvent(options: {
 	await appendEvent(options.eventLogPath, options.event);
 }
 
+function writeWorkerZoneRuntimeLog(message: string): void {
+	process.stderr.write(`[worker-zone-runtime] ${message}\n`);
+}
+
+async function closeActiveWorkerTask(activeTask: ActiveWorkerTask): Promise<void> {
+	if (!activeTask.workerIngress) {
+		throw new ControllerZoneTaskNotReadyError(
+			activeTask.zoneId,
+			activeTask.taskId,
+			`Task '${activeTask.taskId}' in zone '${activeTask.zoneId}' is still preparing and cannot be destroyed safely yet.`,
+		);
+	}
+	try {
+		const response = await fetch(
+			`http://${activeTask.workerIngress.host}:${String(activeTask.workerIngress.port)}/tasks/${activeTask.taskId}/close`,
+			{ method: 'POST' },
+		);
+		if (!response.ok) {
+			throw new ControllerZoneWorkerCloseError({
+				body: await response.text(),
+				httpStatus: response.status,
+				taskId: activeTask.taskId,
+				zoneId: activeTask.zoneId,
+			});
+		}
+	} catch (error) {
+		if (error instanceof ControllerZoneWorkerCloseError) {
+			throw error;
+		}
+		throw new ControllerZoneWorkerCloseError({
+			body: error instanceof Error ? error.message : String(error),
+			httpStatus: 0,
+			taskId: activeTask.taskId,
+			zoneId: activeTask.zoneId,
+		});
+	}
+}
+
 export function createWorkerZoneRuntime(
 	options: CreateWorkerZoneRuntimeOptions,
 ): WorkerZoneRuntime {
@@ -87,53 +130,57 @@ export function createWorkerZoneRuntime(
 					`Task '${taskId}' in zone '${options.zone.id}' does not have a worker ingress yet.`,
 				);
 			}
-			const response = await fetch(
-				`http://${activeTask.workerIngress.host}:${String(activeTask.workerIngress.port)}/tasks/${taskId}/close`,
-				{ method: 'POST' },
-			);
-			if (!response.ok) {
-				throw new Error(`worker close returned HTTP ${String(response.status)}`);
-			}
+			await closeActiveWorkerTask(activeTask);
 			return { status: 'closed' };
 		},
-		destroy: async (purge) =>
-			await (options.runControllerDestroy ?? runControllerDestroyDefault)(
-				{ purge, systemConfig: options.systemConfig, zoneId: options.zone.id },
-				{
-					releaseZoneLeases: async () => {},
-					stopGatewayZone: async (zoneId) => {
-						const activeTasks = options.activeTaskRegistry.listForZone(zoneId);
-						const preparingTask = activeTasks.find((activeTask) => !activeTask.workerIngress);
-						if (preparingTask) {
-							throw new ControllerZoneTaskNotReadyError(
-								zoneId,
-								preparingTask.taskId,
-								`Task '${preparingTask.taskId}' in zone '${zoneId}' is still preparing and cannot be destroyed safely yet.`,
-							);
-						}
-						for (const activeTask of activeTasks) {
-							if (!activeTask.workerIngress) {
-								throw new ControllerZoneTaskNotReadyError(
-									zoneId,
-									activeTask.taskId,
-									`Task '${activeTask.taskId}' in zone '${zoneId}' is still preparing and cannot be destroyed safely yet.`,
-								);
+		destroy: async (purge) => {
+			options.activeTaskRegistry.beginZoneDestroy(options.zone.id);
+			try {
+				return await (options.runControllerDestroy ?? runControllerDestroyDefault)(
+					{ purge, systemConfig: options.systemConfig, zoneId: options.zone.id },
+					{
+						releaseZoneLeases: async () => {},
+						stopGatewayZone: async (zoneId) => {
+							const activeTasks = options.activeTaskRegistry.listForZone(zoneId);
+							const occupiedTaskCount = options.activeTaskRegistry.countOccupiedForZone(zoneId);
+							if (occupiedTaskCount > activeTasks.length) {
+								const message = `Zone '${zoneId}' has ${String(occupiedTaskCount - activeTasks.length)} worker task reservation(s) still preparing and cannot be destroyed safely yet.`;
+								writeWorkerZoneRuntimeLog(`destroy refused: ${message}`);
+								throw new ControllerZoneTaskNotReadyError(zoneId, null, message);
 							}
-							// oxlint-disable-next-line no-await-in-loop -- worker close requests are scoped to active task order
-							const response = await fetch(
-								`http://${activeTask.workerIngress.host}:${String(activeTask.workerIngress.port)}/tasks/${activeTask.taskId}/close`,
-								{ method: 'POST' },
-							);
-							if (!response.ok) {
-								throw new Error(
-									`worker close returned HTTP ${String(response.status)} for task '${activeTask.taskId}'`,
-								);
+							const preparingTask = activeTasks.find((activeTask) => !activeTask.workerIngress);
+							if (preparingTask) {
+								const message = `Task '${preparingTask.taskId}' in zone '${zoneId}' is still preparing and cannot be destroyed safely yet.`;
+								writeWorkerZoneRuntimeLog(`destroy refused: ${message}`);
+								throw new ControllerZoneTaskNotReadyError(zoneId, preparingTask.taskId, message);
 							}
-							options.activeTaskRegistry.clear(activeTask.zoneId, activeTask.taskId);
-						}
+							const closeResults = await Promise.allSettled(
+								activeTasks.map(async (activeTask) => await closeActiveWorkerTask(activeTask)),
+							);
+							const closeFailures = closeResults.flatMap((result) => {
+								if (result.status === 'fulfilled') {
+									return [];
+								}
+								return result.reason instanceof ControllerZoneWorkerCloseError
+									? [result.reason]
+									: [];
+							});
+							if (closeFailures.length === 1) {
+								throw closeFailures[0];
+							}
+							if (closeFailures.length > 1) {
+								throw new ControllerZoneWorkerCloseAggregateError(zoneId, closeFailures);
+							}
+							for (const activeTask of activeTasks) {
+								options.activeTaskRegistry.clear(activeTask.zoneId, activeTask.taskId);
+							}
+						},
 					},
-				},
-			),
+				);
+			} finally {
+				options.activeTaskRegistry.endZoneDestroy(options.zone.id);
+			}
+		},
 		executeWorkerTask: async (prepared) => {
 			let heartbeatAcquired = false;
 			try {
