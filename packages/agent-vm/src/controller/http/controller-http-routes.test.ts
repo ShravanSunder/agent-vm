@@ -9,7 +9,10 @@ import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { LeaseScopeConflictError, type Lease } from '../leases/lease-manager.js';
 import { LeaseWorkspaceValidationError } from '../leases/lease-workspace-paths.js';
 import type { PreparedWorkerTask, WorkerTaskResult } from '../worker-task-runner.js';
-import { ControllerZoneOperationUnsupportedError } from '../zone-runtimes/zone-runtime-errors.js';
+import {
+	ControllerZoneNotFoundError,
+	ControllerZoneOperationUnsupportedError,
+} from '../zone-runtimes/zone-runtime-errors.js';
 import {
 	ControllerRuntimeAtCapacityError,
 	ControllerTaskNotReadyError,
@@ -890,6 +893,44 @@ describe('createControllerApp', () => {
 			gatewayType: 'worker',
 			operationName: 'OpenClaw operations',
 			zoneId: 'worker-zone',
+		});
+	});
+
+	it('returns 404 when zone status is requested for an unknown zone', async () => {
+		const app = createControllerApp({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				getZoneStatus: vi.fn(async () => {
+					throw new ControllerZoneNotFoundError('missing-zone');
+				}),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/missing-zone/status');
+
+		expect(response.status).toBe(404);
+		await expect(response.json()).resolves.toEqual({
+			error: "Unknown zone 'missing-zone'.",
 		});
 	});
 

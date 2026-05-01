@@ -4,6 +4,7 @@ import {
 	buildControllerZoneStatus,
 	type ControllerRuntimeStatus,
 } from '../operations/controller-status.js';
+import { ControllerZoneNotFoundError } from './zone-runtimes/zone-runtime-errors.js';
 import type { OpenClawZoneRuntime } from './zone-runtimes/zone-runtime-types.js';
 
 interface ControllerRuntimeOperations {
@@ -66,8 +67,12 @@ export function createControllerRuntimeOperations(options: {
 			await options.getOpenClawRuntime(targetZoneId).exec(command),
 		getStatus: async () => buildControllerStatus(options.systemConfig, buildRuntimeStatus()),
 		getZoneLogs: async (targetZoneId) => await options.getOpenClawRuntime(targetZoneId).getLogs(),
-		getZoneStatus: async (targetZoneId) =>
-			buildControllerZoneStatus(options.systemConfig, targetZoneId, buildRuntimeStatus()),
+		getZoneStatus: async (targetZoneId) => {
+			if (!options.systemConfig.zones.some((zone) => zone.id === targetZoneId)) {
+				throw new ControllerZoneNotFoundError(targetZoneId);
+			}
+			return buildControllerZoneStatus(options.systemConfig, targetZoneId, buildRuntimeStatus());
+		},
 		refreshZoneCredentials: async (targetZoneId) =>
 			await options.getOpenClawRuntime(targetZoneId).refreshCredentials(),
 		upgradeZone: async (targetZoneId) => await options.getOpenClawRuntime(targetZoneId).upgrade(),

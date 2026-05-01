@@ -1,3 +1,7 @@
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
@@ -500,6 +504,73 @@ describe('createWorkerZoneRuntime', () => {
 		});
 		expect(clear).toHaveBeenCalledWith('worker-zone', 'task-1');
 		expect(clear).toHaveBeenCalledWith('worker-zone', 'task-2');
+	});
+
+	it('closes active worker tasks and purges worker state when destroy runs with purge', async () => {
+		const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-worker-destroy-'));
+		const originalFetch = globalThis.fetch;
+		try {
+			const stateDir = path.join(tempDirectory, 'state', 'worker-zone');
+			const runtimeDir = path.join(tempDirectory, 'runtime');
+			const workerRuntimeDir = path.join(runtimeDir, 'worker-tasks', 'worker-zone');
+			await mkdir(stateDir, { recursive: true });
+			await mkdir(workerRuntimeDir, { recursive: true });
+			await writeFile(path.join(stateDir, 'state.txt'), 'state', 'utf8');
+			await writeFile(path.join(workerRuntimeDir, 'runtime.txt'), 'runtime', 'utf8');
+			const purgeWorkerZone = {
+				...getWorkerZone(),
+				gateway: {
+					...getWorkerZone().gateway,
+					stateDir,
+				},
+			};
+			const clear = vi.fn();
+			const activeTask = {
+				...createActiveWorkerTask('task-1'),
+				workerIngress: { host: '127.0.0.1', port: 18888 },
+			};
+			const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+			globalThis.fetch = fetchMock;
+			const runtime = createWorkerZoneRuntime({
+				activeTaskRegistry: {
+					activateReservation: vi.fn(),
+					clear,
+					get: vi.fn(),
+					listForZone: vi.fn(() => [activeTask]),
+					releaseReservation: vi.fn(),
+					setWorkerIngress: vi.fn(),
+					tryReserve: vi.fn(() => 'reservation-1'),
+				},
+				controllerGithubToken: null,
+				prepareWorkerTask: vi.fn(async (options) => createPreparedWorkerTask(options.input)),
+				requestHeartbeatRegistry: {
+					acquire: vi.fn(),
+					release: vi.fn(),
+				},
+				secretResolver: { resolve: async () => '', resolveAll: async () => ({}) },
+				systemConfig: {
+					...loadedSystemConfig,
+					runtimeDir,
+					zones: [purgeWorkerZone],
+				},
+				zone: purgeWorkerZone,
+			});
+
+			await expect(runtime.destroy(true)).resolves.toEqual({
+				ok: true,
+				purged: true,
+				zoneId: 'worker-zone',
+			});
+			expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18888/tasks/task-1/close', {
+				method: 'POST',
+			});
+			expect(clear).toHaveBeenCalledWith('worker-zone', 'task-1');
+			await expect(access(stateDir)).rejects.toMatchObject({ code: 'ENOENT' });
+			await expect(access(workerRuntimeDir)).rejects.toMatchObject({ code: 'ENOENT' });
+		} finally {
+			globalThis.fetch = originalFetch;
+			await rm(tempDirectory, { force: true, recursive: true });
+		}
 	});
 
 	it('does not clear active worker tasks during normal shutdown', async () => {

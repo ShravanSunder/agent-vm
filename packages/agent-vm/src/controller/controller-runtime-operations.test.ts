@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
 import { createControllerRuntimeOperations } from './controller-runtime-operations.js';
+import { ControllerZoneNotFoundError } from './zone-runtimes/zone-runtime-errors.js';
 import type { OpenClawZoneRuntime } from './zone-runtimes/zone-runtime-types.js';
 
 const systemConfig = {
@@ -140,5 +141,30 @@ describe('createControllerRuntimeOperations', () => {
 		expect(alevtinaRuntime.getLogs).toHaveBeenCalledTimes(1);
 		expect(shravanRuntime.exec).toHaveBeenCalledWith('pwd');
 		expect(alevtinaRuntime.destroy).toHaveBeenCalledWith(true);
+	});
+
+	it('throws the typed not-found error for unknown zone status', async () => {
+		const runtime = {
+			destroy: vi.fn(async (purged: boolean) => ({ ok: true as const, purged, zoneId: 'shravan' })),
+			enableSsh: vi.fn(async () => ({ command: 'ssh shravan', host: '127.0.0.1', port: 22 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'shravan' })),
+			getLogs: vi.fn(async () => ({ output: 'shravan logs', zoneId: 'shravan' })),
+			refreshCredentials: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
+			upgrade: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
+		} satisfies Pick<
+			OpenClawZoneRuntime,
+			'destroy' | 'enableSsh' | 'exec' | 'getLogs' | 'refreshCredentials' | 'upgrade'
+		>;
+		const operations = createControllerRuntimeOperations({
+			destroyZoneRuntime: async (_zoneId, purged) => await runtime.destroy(purged),
+			getActiveLeases: () => [],
+			getOpenClawRuntime: () => runtime,
+			getRuntimeStatusByZone: () => ({}),
+			systemConfig,
+		});
+
+		await expect(operations.getZoneStatus('missing-zone')).rejects.toBeInstanceOf(
+			ControllerZoneNotFoundError,
+		);
 	});
 });

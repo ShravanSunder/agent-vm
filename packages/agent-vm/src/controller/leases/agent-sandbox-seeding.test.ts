@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { SecretResolver } from '@agent-vm/gondolin-adapter';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../../config/system-config.js';
 import { seedAgentSandboxWorkspace } from './agent-sandbox-seeding.js';
@@ -231,6 +231,33 @@ describe('seedAgentSandboxWorkspace', () => {
 		});
 		await expect(
 			readFile(path.join(workspaceDir, '.config', 'gcloud', 'configurations', 'config_default')),
+		).rejects.toMatchObject({ code: 'ENOENT' });
+	});
+
+	it('rejects seed parent symlinks that escape the workspace before resolving secrets', async () => {
+		const rootPath = await createTempDirectory('agent-vm-sandbox-seed-parent-link-');
+		const zone = createOpenClawZone(rootPath);
+		const workspaceDir = path.join(zone.gateway.stateDir, 'sandboxes', 'agent-shravan', 'work');
+		const outsideDir = path.join(rootPath, 'outside');
+		await mkdir(workspaceDir, { recursive: true });
+		await mkdir(outsideDir, { recursive: true });
+		await symlink(outsideDir, path.join(workspaceDir, '.config'), 'dir');
+		const secretResolver = {
+			resolve: vi.fn(async (secretRef) => `resolved:${secretRef.ref}`),
+			resolveAll: vi.fn(async () => ({})),
+		} satisfies SecretResolver;
+
+		await expect(
+			seedAgentSandboxWorkspace({
+				scopeKey: 'agent:shravan',
+				secretResolver,
+				workspaceDir,
+				zone,
+			}),
+		).rejects.toThrow(/resolves outside workspace/u);
+		expect(secretResolver.resolve).not.toHaveBeenCalled();
+		await expect(
+			readFile(path.join(outsideDir, 'gcloud', 'configurations', 'config_default'), 'utf8'),
 		).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 

@@ -1,4 +1,4 @@
-import { mkdir, open, realpath } from 'node:fs/promises';
+import { lstat, mkdir, open, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
@@ -88,7 +88,6 @@ async function writeSeedFileIfAbsent(options: {
 	readonly mode: number;
 	readonly targetPath: string;
 }): Promise<'already-existed' | 'written'> {
-	await mkdir(path.dirname(options.targetPath), { recursive: true, mode: 0o700 });
 	let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
 	try {
 		fileHandle = await open(options.targetPath, 'wx', options.mode);
@@ -106,6 +105,61 @@ async function writeSeedFileIfAbsent(options: {
 		}
 		throw error;
 	}
+}
+
+async function ensureSeedParentDirectoryInsideWorkspace(options: {
+	readonly targetPath: string;
+	readonly workspaceDir: string;
+}): Promise<string> {
+	const targetParentPath = path.dirname(options.targetPath);
+	const relativeParentPath = path.relative(options.workspaceDir, targetParentPath);
+	if (
+		relativeParentPath !== '' &&
+		(relativeParentPath.startsWith('..') || path.isAbsolute(relativeParentPath))
+	) {
+		throw new Error(
+			`Agent sandbox seed target parent '${targetParentPath}' resolves outside workspace '${options.workspaceDir}'.`,
+		);
+	}
+
+	let currentPath = options.workspaceDir;
+	/* oxlint-disable no-await-in-loop -- each path segment must be validated before the next segment can be trusted */
+	for (const segment of relativeParentPath.split(path.sep).filter((part) => part.length > 0)) {
+		currentPath = path.join(currentPath, segment);
+		let entry = await lstat(currentPath).catch((error: unknown) => {
+			if (isNodeErrorCode(error, 'ENOENT')) {
+				return null;
+			}
+			throw error;
+		});
+		if (!entry) {
+			await mkdir(currentPath, { mode: 0o700 });
+			entry = await lstat(currentPath);
+		}
+		if (entry.isSymbolicLink()) {
+			const resolvedPath = await realpath(currentPath);
+			if (!isPathWithin(resolvedPath, options.workspaceDir)) {
+				throw new Error(
+					`Agent sandbox seed parent '${currentPath}' resolves outside workspace '${options.workspaceDir}'.`,
+				);
+			}
+			currentPath = resolvedPath;
+			continue;
+		}
+		if (!entry.isDirectory()) {
+			throw new Error(`Agent sandbox seed parent '${currentPath}' is not a directory.`);
+		}
+		const resolvedPath = await realpath(currentPath);
+		if (!isPathWithin(resolvedPath, options.workspaceDir)) {
+			throw new Error(
+				`Agent sandbox seed parent '${currentPath}' resolves outside workspace '${options.workspaceDir}'.`,
+			);
+		}
+		currentPath = resolvedPath;
+	}
+	/* oxlint-enable no-await-in-loop */
+
+	return currentPath;
 }
 
 export async function seedAgentSandboxWorkspace(options: {
@@ -189,11 +243,15 @@ export async function seedAgentSandboxWorkspace(options: {
 					`Agent sandbox seed target '${seed.target}' resolves outside workspace '${workspaceDir}'.`,
 				);
 			}
+			const targetParentPath = await ensureSeedParentDirectoryInsideWorkspace({
+				targetPath,
+				workspaceDir,
+			});
 			const content = await options.secretResolver.resolve(toSecretRef(seed));
 			return await writeSeedFileIfAbsent({
 				content,
 				mode: seed.mode,
-				targetPath,
+				targetPath: path.join(targetParentPath, path.basename(targetPath)),
 			});
 		}),
 	);
