@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { ControllerLeaseRequestError } from './controller-lease-client.js';
 import {
 	createGondolinSandboxBackendFactory,
 	createGondolinSandboxBackendManager,
@@ -65,6 +66,15 @@ function createMockFsBridge(): GondolinFsBridge {
 		stat: vi.fn(async () => ({ mtimeMs: 1000, size: 42, type: 'file' as const })),
 		writeFile: vi.fn(async () => {}),
 	};
+}
+
+function createControllerLeaseError(status: number): ControllerLeaseRequestError {
+	return new ControllerLeaseRequestError({
+		bodyText: JSON.stringify({ error: 'lease-error' }),
+		context: 'Controller lease keepalive API',
+		responseBody: { error: 'lease-error' },
+		status,
+	});
 }
 
 describe('createGondolinSandboxBackendFactory', () => {
@@ -274,7 +284,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		const keepLeaseAlive = vi
 			.fn()
 			.mockResolvedValueOnce({ ok: true })
-			.mockRejectedValueOnce(new TypeError('Controller lease keepalive API returned HTTP 404'));
+			.mockRejectedValueOnce(createControllerLeaseError(404));
 
 		const factory = createGondolinSandboxBackendFactory(
 			{
@@ -337,6 +347,145 @@ describe('createGondolinSandboxBackendFactory', () => {
 		}
 	});
 
+	it('does not request a fresh lease when cached keepalive returns a client error other than 404', async () => {
+		const requestLease = vi.fn(async () => createLeaseResponse('lease-client-error'));
+		const keepLeaseAlive = vi.fn().mockRejectedValueOnce(createControllerLeaseError(409));
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					keepLeaseAlive,
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		await factory({
+			agentWorkspaceDir: '/work',
+			cfg: {},
+			scopeKey: 'scope-client-error',
+			sessionKey: 'session-client-error',
+			workspaceDir: '/work',
+		});
+
+		await expect(
+			factory({
+				agentWorkspaceDir: '/work',
+				cfg: {},
+				scopeKey: 'scope-client-error',
+				sessionKey: 'session-client-error',
+				workspaceDir: '/work',
+			}),
+		).rejects.toMatchObject({
+			status: 409,
+		} satisfies Partial<ControllerLeaseRequestError>);
+		expect(requestLease).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not request a fresh lease when cached keepalive returns a server error', async () => {
+		const requestLease = vi.fn(async () => createLeaseResponse('lease-server-error'));
+		const keepLeaseAlive = vi.fn().mockRejectedValueOnce(createControllerLeaseError(503));
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					keepLeaseAlive,
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		await factory({
+			agentWorkspaceDir: '/work',
+			cfg: {},
+			scopeKey: 'scope-server-error',
+			sessionKey: 'session-server-error',
+			workspaceDir: '/work',
+		});
+
+		await expect(
+			factory({
+				agentWorkspaceDir: '/work',
+				cfg: {},
+				scopeKey: 'scope-server-error',
+				sessionKey: 'session-server-error',
+				workspaceDir: '/work',
+			}),
+		).rejects.toMatchObject({
+			status: 503,
+		} satisfies Partial<ControllerLeaseRequestError>);
+		expect(requestLease).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not request a fresh lease when cached keepalive has a network failure', async () => {
+		const requestLease = vi.fn(async () => createLeaseResponse('lease-network-error'));
+		const keepLeaseAlive = vi.fn().mockRejectedValueOnce(new Error('temporary network failure'));
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					keepLeaseAlive,
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		await factory({
+			agentWorkspaceDir: '/work',
+			cfg: {},
+			scopeKey: 'scope-network-error',
+			sessionKey: 'session-network-error',
+			workspaceDir: '/work',
+		});
+
+		await expect(
+			factory({
+				agentWorkspaceDir: '/work',
+				cfg: {},
+				scopeKey: 'scope-network-error',
+				sessionKey: 'session-network-error',
+				workspaceDir: '/work',
+			}),
+		).rejects.toThrow('temporary network failure');
+		expect(requestLease).toHaveBeenCalledTimes(1);
+	});
+
 	it('creates separate handles for different scopeKeys', async () => {
 		let leaseCounter = 0;
 		const requestLease = vi.fn(async () => {
@@ -397,11 +546,11 @@ describe('createGondolinSandboxBackendFactory', () => {
 		expect(requestLease).toHaveBeenCalledTimes(2);
 	});
 
-	it('requests a new lease when the cached scope handle points at a stale lease', async () => {
+	it('requests a new lease when the cached scope handle points at a missing lease', async () => {
 		let leaseCounter = 0;
 		const keepLeaseAlive = vi.fn(async (leaseId: string) => {
 			if (leaseId === 'lease-1') {
-				throw new Error('stale');
+				throw createControllerLeaseError(404);
 			}
 			return createLeaseResponse(leaseId);
 		});

@@ -282,7 +282,10 @@ describe('createLeaseManager', () => {
 	});
 
 	it('evicts a stale same-scope lease before creating a replacement', async () => {
-		const staleClose = vi.fn(async () => {});
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const staleClose = vi.fn(async () => {
+			throw new Error('stale close failed');
+		});
 		const staleVm = {
 			...createManagedVmStub('stale-vm'),
 			close: staleClose,
@@ -312,13 +315,28 @@ describe('createLeaseManager', () => {
 			zoneId: 'shravan',
 		};
 
-		const firstLease = await leaseManager.createLease(request);
-		const secondLease = await leaseManager.createLease(request);
+		try {
+			const firstLease = await leaseManager.createLease(request);
+			const secondLease = await leaseManager.createLease(request);
 
-		expect(secondLease.id).not.toBe(firstLease.id);
-		expect(secondLease.vm.id).toBe('fresh-vm');
-		expect(staleClose).toHaveBeenCalled();
-		expect(createManagedVm).toHaveBeenCalledTimes(2);
+			expect(secondLease.id).not.toBe(firstLease.id);
+			expect(secondLease.vm.id).toBe('fresh-vm');
+			expect(staleClose).toHaveBeenCalled();
+			expect(createManagedVm).toHaveBeenCalledTimes(2);
+			const loggedMessages = stderrWrite.mock.calls.map(([message]) => String(message));
+			expect(
+				loggedMessages.some((message) =>
+					message.includes("liveness check failed for lease 'shravan-agent:main-100'"),
+				),
+			).toBe(true);
+			expect(
+				loggedMessages.some((message) =>
+					message.includes("failed to close evicted lease 'shravan-agent:main-100'"),
+				),
+			).toBe(true);
+		} finally {
+			stderrWrite.mockRestore();
+		}
 	});
 
 	it('serializes concurrent createLease calls for the same zone scope', async () => {
@@ -621,5 +639,58 @@ describe('createLeaseManager', () => {
 
 		expect(closeMock).toHaveBeenCalledTimes(1);
 		expect(tcpPool.allocate()).toBe(0);
+	});
+
+	it('logs rollback close failures when enabling SSH fails', async () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const closeMock = vi.fn(async () => {
+			throw new Error('rollback close failed');
+		});
+		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => ({
+				close: closeMock,
+				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				enableSsh: vi.fn(async () => {
+					throw new Error('ssh setup failed');
+				}),
+				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+				id: 'tool-vm-ssh-fail-close-fail',
+				setIngressRoutes: vi.fn(),
+				getVmInstance: vi.fn(),
+			})),
+			now: () => 100,
+			tcpPool,
+		});
+
+		try {
+			await expect(
+				leaseManager.createLease({
+					agentWorkspaceDir: '/host/agent-work',
+					profile: {
+						cpus: 1,
+						memory: '1G',
+						imageProfile: 'default',
+					},
+					profileId: 'standard',
+					scopeKey: 'scope-ssh-fail',
+					hostWorkMountDir: '/host/sandbox-work',
+					zoneId: 'shravan',
+				}),
+			).rejects.toThrow('ssh setup failed');
+
+			expect(closeMock).toHaveBeenCalledTimes(1);
+			expect(tcpPool.allocate()).toBe(0);
+			const loggedMessages = stderrWrite.mock.calls.map(([message]) => String(message));
+			expect(
+				loggedMessages.some((message) =>
+					message.includes(
+						"failed to close partially-created lease VM for zone 'shravan' scope 'scope-ssh-fail'",
+					),
+				),
+			).toBe(true);
+		} finally {
+			stderrWrite.mockRestore();
+		}
 	});
 });

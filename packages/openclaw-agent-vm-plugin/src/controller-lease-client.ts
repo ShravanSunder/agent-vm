@@ -116,22 +116,34 @@ function isLeasePeekResponse(value: unknown): value is LeasePeekResponse {
 	);
 }
 
-function parseJsonBody(bodyText: string): unknown {
+function formatUnknownError(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function writeLeaseClientLog(message: string): void {
+	process.stderr.write(`[openclaw-agent-vm-plugin] ${message}\n`);
+}
+
+function parseJsonBody(bodyText: string, context: string): unknown {
 	try {
 		return JSON.parse(bodyText);
-	} catch {
+	} catch (error) {
+		writeLeaseClientLog(`${context} returned a non-JSON error body: ${formatUnknownError(error)}`);
 		return undefined;
 	}
 }
 
-async function readErrorBody(response: Response): Promise<{
+async function readErrorBody(
+	response: Response,
+	context: string,
+): Promise<{
 	readonly bodyText: string;
 	readonly responseBody: unknown;
 }> {
 	const bodyText = await response.text().catch(() => '(unreadable)');
 	return {
 		bodyText,
-		responseBody: bodyText === '(unreadable)' ? undefined : parseJsonBody(bodyText),
+		responseBody: bodyText === '(unreadable)' ? undefined : parseJsonBody(bodyText, context),
 	};
 }
 
@@ -141,7 +153,7 @@ async function readJsonResponse<TValue>(
 	isExpectedResponse: (value: unknown) => value is TValue,
 ): Promise<TValue> {
 	if (!response.ok) {
-		const errorBody = await readErrorBody(response);
+		const errorBody = await readErrorBody(response, context);
 		throw new ControllerLeaseRequestError({
 			bodyText: errorBody.bodyText,
 			context,
@@ -179,9 +191,18 @@ export function createLeaseClient(options: {
 			return await readJsonResponse(response, 'Controller lease peek API', isLeasePeekResponse);
 		},
 		releaseLease: async (leaseId: string): Promise<void> => {
-			await fetchImpl(`${baseUrl}/lease/${leaseId}`, {
+			const response = await fetchImpl(`${baseUrl}/lease/${leaseId}`, {
 				method: 'DELETE',
 			});
+			if (!response.ok) {
+				const errorBody = await readErrorBody(response, 'Controller lease release API');
+				throw new ControllerLeaseRequestError({
+					bodyText: errorBody.bodyText,
+					context: 'Controller lease release API',
+					responseBody: errorBody.responseBody,
+					status: response.status,
+				});
+			}
 		},
 		requestLease: async (request): Promise<GondolinLeaseResponse> => {
 			const response = await fetchImpl(`${baseUrl}/lease`, {
@@ -197,22 +218,7 @@ export function createLeaseClient(options: {
 				},
 				method: 'POST',
 			});
-			if (!response.ok) {
-				const errorBody = await readErrorBody(response);
-				throw new ControllerLeaseRequestError({
-					bodyText: errorBody.bodyText,
-					context: 'Controller lease API',
-					responseBody: errorBody.responseBody,
-					status: response.status,
-				});
-			}
-			const payload = await response.json();
-			if (!isGondolinLeaseResponse(payload)) {
-				throw new TypeError(
-					`Controller returned an invalid lease response: ${JSON.stringify(payload).slice(0, 200)}`,
-				);
-			}
-			return payload;
+			return await readJsonResponse(response, 'Controller lease API', isGondolinLeaseResponse);
 		},
 	};
 }

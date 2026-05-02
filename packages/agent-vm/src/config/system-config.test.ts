@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -7,6 +7,10 @@ import { afterEach, describe, expect, test } from 'vitest';
 import { loadSystemConfig } from './system-config.js';
 
 const createdDirectories: string[] = [];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 interface ValidSystemConfigZoneInput {
 	id: string;
@@ -109,6 +113,15 @@ async function writeSystemConfigForTest(prefix: string, config: unknown): Promis
 	return configPath;
 }
 
+function extractFirstJsonCodeBlock(markdown: string): string {
+	const codeBlockMatch = /```json\n(?<jsonText>[\s\S]*?)\n```/u.exec(markdown);
+	const jsonText = codeBlockMatch?.groups?.jsonText;
+	if (!jsonText) {
+		throw new Error('Expected markdown to contain a JSON code block.');
+	}
+	return jsonText;
+}
+
 describe('loadSystemConfig', () => {
 	test('loads system.jsonc with comments and trailing commas', async () => {
 		const workingDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-system-config-'));
@@ -152,6 +165,33 @@ describe('loadSystemConfig', () => {
 
 		expect(loadedConfig.systemConfigPath).toBe(jsoncConfigPath);
 		expect(loadedConfig.zones[0]?.id).toBe('shravan');
+	});
+
+	test('loads the OpenClaw guide system.jsonc example when embedded in a full config', async () => {
+		const guideText = await readFile('docs/getting-started/openclaw-guide.md', 'utf8');
+		const guideConfig: unknown = JSON.parse(extractFirstJsonCodeBlock(guideText));
+		if (!isRecord(guideConfig)) {
+			throw new Error('Expected OpenClaw guide config example to be a JSON object.');
+		}
+		const configPath = await writeSystemConfigForTest('agent-vm-openclaw-guide-config-', {
+			...createValidSystemConfigInput(),
+			...guideConfig,
+		});
+
+		const loadedConfig = await loadSystemConfig(configPath);
+
+		const loadedZone = loadedConfig.zones[0];
+		expect(loadedZone?.gateway.type).toBe('openclaw');
+		if (loadedZone?.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw guide example to load an OpenClaw zone.');
+		}
+		expect(loadedZone.gateway.authProfilesByAgent).toEqual({
+			shravan: {
+				source: 'environment',
+				envVar: 'SHRAVAN_AUTH_PROFILES',
+			},
+		});
+		expect(loadedZone.defaultToolVmProfile).toBe('standard');
 	});
 
 	test('loads a valid plan-1 controller config', async () => {

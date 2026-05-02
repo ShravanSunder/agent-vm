@@ -11,7 +11,7 @@ export interface ManualTemplateFile {
 }
 
 function generatedPage(title: string, body: string): string {
-	return `# ${GENERATED_MANUAL_MARKER}
+	return `<!-- ${GENERATED_MANUAL_MARKER} -->
 
 # ${title}
 

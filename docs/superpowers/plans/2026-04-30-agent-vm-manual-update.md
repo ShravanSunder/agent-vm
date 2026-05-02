@@ -85,9 +85,9 @@ generated manual text must preserve the landed lease work-mount vocabulary
 
 ---
 
-## Review Corrections Before Execution
+## Implementation Constraints
 
-The implementation must address these reviewed gaps before any code is written:
+The implementation must preserve these constraints:
 
 1. `packages/agent-vm/src/cli/init-command.test.ts` already has an existing assertion that the generated OpenClaw Dockerfile enables Discord. Do not merely add a new negative test with a focused `-t` filter. Update the existing positive assertion in the broad scaffold test so the full file cannot pass with contradictory expectations.
 2. `packages/agent-vm/src/cli/init-command.ts` has `envVarsForGatewayType()` returning `DISCORD_BOT_TOKEN` for OpenClaw. Remove that default and add a `.env.local` assertion. Otherwise the scaffold remains Discord-flavored even after Dockerfile and system config cleanup.

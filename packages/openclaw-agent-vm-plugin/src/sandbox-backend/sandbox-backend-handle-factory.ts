@@ -1,4 +1,8 @@
-import { createLeaseClient, type GondolinLeaseResponse } from '../controller-lease-client.js';
+import {
+	ControllerLeaseRequestError,
+	createLeaseClient,
+	type GondolinLeaseResponse,
+} from '../controller-lease-client.js';
 import {
 	type CachedScopeEntry,
 	type CreateBackendDependencies,
@@ -30,6 +34,10 @@ function formatUnknownError(error: unknown): string {
 
 function writeSandboxBackendLog(message: string): void {
 	process.stderr.write(`[openclaw-agent-vm-plugin] ${message}\n`);
+}
+
+function shouldRefreshCachedLease(error: unknown): boolean {
+	return error instanceof ControllerLeaseRequestError && error.status === 404;
 }
 
 export function createGondolinSandboxBackendFactory(
@@ -74,6 +82,9 @@ export function createGondolinSandboxBackendFactory(
 				writeSandboxBackendLog(
 					`lease keepalive failed for zone '${options.zoneId}' scope '${params.scopeKey}' lease '${cachedEntry.lease.leaseId}': ${formatUnknownError(error)}`,
 				);
+				if (!shouldRefreshCachedLease(error)) {
+					throw error;
+				}
 				scopeCache.delete(cacheKey);
 			}
 		}

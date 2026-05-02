@@ -10,6 +10,8 @@ interface PackageManifest {
 
 const workspacePackageDirectory = path.resolve('packages');
 const lockfilePath = path.resolve('pnpm-lock.yaml');
+const sourceRoots = [path.resolve('packages'), path.resolve('scripts')] as const;
+const thisScriptPath = path.resolve('scripts/check-zod-version.ts');
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -34,12 +36,28 @@ function dependencySections(
 	];
 }
 
-function listWorkspacePackageFiles(): readonly string[] {
-	return fs
+function listPackageFiles(): readonly string[] {
+	const workspacePackageFiles = fs
 		.readdirSync(workspacePackageDirectory, { withFileTypes: true })
 		.filter((entry) => entry.isDirectory())
 		.map((entry) => path.join(workspacePackageDirectory, entry.name, 'package.json'))
 		.filter((packageFile) => fs.existsSync(packageFile));
+	return [path.resolve('package.json'), ...workspacePackageFiles];
+}
+
+function listSourceFiles(directoryPath: string): readonly string[] {
+	const sourceFiles: string[] = [];
+	for (const entry of fs.readdirSync(directoryPath, { withFileTypes: true })) {
+		const entryPath = path.join(directoryPath, entry.name);
+		if (entry.isDirectory()) {
+			sourceFiles.push(...listSourceFiles(entryPath));
+			continue;
+		}
+		if (entry.isFile() && /\.(?:c|m)?[jt]sx?$/u.test(entry.name)) {
+			sourceFiles.push(entryPath);
+		}
+	}
+	return sourceFiles;
 }
 
 function hasDirectDependency(manifest: PackageManifest, dependencyName: string): boolean {
@@ -53,7 +71,22 @@ function collectViolations(): readonly string[] {
 		violations.push('pnpm-lock.yaml must not resolve zod@3.x; use direct zod ^4 dependencies.');
 	}
 
-	for (const packageFile of listWorkspacePackageFiles()) {
+	for (const sourceRoot of sourceRoots) {
+		for (const sourceFile of listSourceFiles(sourceRoot)) {
+			if (path.resolve(sourceFile) === thisScriptPath) {
+				continue;
+			}
+			const sourceText = fs.readFileSync(sourceFile, 'utf8');
+			if (
+				/(?:from\s+['"]zod-to-json-schema['"]|require\(['"]zod-to-json-schema['"]\)|import\(['"]zod-to-json-schema['"]\))/u.test(
+					sourceText,
+				)
+			) {
+				violations.push(`${sourceFile} must not import zod-to-json-schema.`);
+			}
+		}
+	}
+	for (const packageFile of listPackageFiles()) {
 		const manifest = parsePackageManifest(packageFile);
 		if (hasDirectDependency(manifest, 'zod-to-json-schema')) {
 			violations.push(`${packageFile} must use z.toJSONSchema() instead of zod-to-json-schema.`);

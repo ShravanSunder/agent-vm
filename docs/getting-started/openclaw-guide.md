@@ -31,17 +31,20 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
       "cpus": 2,
       "port": 18791,
       "config": "./my-openclaw/openclaw.json",
+      "imageProfile": "openclaw",
       "stateDir": "../state/my-openclaw",
       "zoneFilesDir": "../zone-files/my-openclaw",
-      "authProfilesRef": {
-        "source": "1password",
-        "ref": "op://agent-vm/auth-profiles/credential"
+      "authProfilesByAgent": {
+        "shravan": {
+          "source": "environment",
+          "envVar": "SHRAVAN_AUTH_PROFILES"
+        }
       }
     },
     "secrets": {
       "OPENCLAW_GATEWAY_TOKEN": {
-        "source": "1password",
-        "ref": "op://agent-vm/openclaw-token/credential",
+        "source": "environment",
+        "envVar": "OPENCLAW_GATEWAY_TOKEN",
         "injection": "env"
       }
     },
@@ -53,7 +56,8 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
       "generativelanguage.googleapis.com"
     ],
     "websocketBypass": [],
-    "defaultToolVmProfile": "standard"
+    "defaultToolVmProfile": "standard",
+    "agentToolVmProfiles": {}
   }]
 }
 ```
@@ -87,7 +91,9 @@ version, and agent-vm validates against that choice.
 
 ### Auth Profiles
 
-Auth profiles (OAuth tokens for model providers) are resolved from 1Password and written to the host-side state directory before the VM boots. The VM accesses them via VFS mount.
+Auth profiles (OAuth tokens for model providers) are resolved per agent from
+`gateway.authProfilesByAgent` and written to that agent's host-side state
+directory before the VM boots. The VM accesses them via VFS mount.
 
 See [subsystems/secrets-and-credentials.md](../subsystems/secrets-and-credentials.md#auth-profiles) for the full flow.
 
@@ -186,7 +192,7 @@ Opens an SSH session into the gateway VM for debugging.
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Gateway won't start | Auth profiles missing | Check `authProfilesRef` in system.jsonc |
+| Gateway won't start | Auth profiles missing | Check `gateway.authProfilesByAgent` in system.jsonc |
 | Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth-interactive codex --zone <id>` |
 | Tool calls fail | Lease creation failing | Check `defaultToolVmProfile` exists, TCP pool has free slots |
 | Discord not connecting | Deployment channel config incomplete | Add Discord plugin/config, `DISCORD_BOT_TOKEN`, Discord hosts, and `gateway.discord.gg:443` |

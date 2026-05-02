@@ -59,6 +59,14 @@ export interface LeaseManager {
 
 export class LeaseScopeConflictError extends Error {}
 
+function formatLeaseManagerError(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function writeLeaseManagerWarning(message: string): void {
+	process.stderr.write(`[lease-manager] ${message}\n`);
+}
+
 function assertReusableScopeLease(
 	existingLease: Lease,
 	requestedLease: {
@@ -90,7 +98,10 @@ async function isLeaseVmLive(lease: Lease): Promise<boolean> {
 	try {
 		const result = await lease.vm.exec('true');
 		return result.exitCode === 0;
-	} catch {
+	} catch (error) {
+		writeLeaseManagerWarning(
+			`liveness check failed for lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(error)}`,
+		);
 		return false;
 	}
 }
@@ -175,7 +186,13 @@ export function createLeaseManager(options: {
 	async function evictLease(lease: Lease): Promise<void> {
 		deleteLease(lease);
 		options.tcpPool.release(lease.tcpSlot);
-		await lease.vm.close().catch(() => {});
+		try {
+			await lease.vm.close();
+		} catch (error) {
+			writeLeaseManagerWarning(
+				`failed to close evicted lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(error)}`,
+			);
+		}
 	}
 
 	return {
@@ -219,7 +236,13 @@ export function createLeaseManager(options: {
 						storeLease(lease);
 						return lease;
 					} catch (error) {
-						await vm.close().catch(() => {});
+						try {
+							await vm.close();
+						} catch (closeError) {
+							writeLeaseManagerWarning(
+								`failed to close partially-created lease VM for zone '${leaseOptions.zoneId}' scope '${leaseOptions.scopeKey}': ${formatLeaseManagerError(closeError)}`,
+							);
+						}
 						throw error;
 					}
 				} catch (error) {
