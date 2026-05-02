@@ -104,8 +104,8 @@ describe('createManagedVm', () => {
 					'controller.vm.host:18800': '127.0.0.1:18800',
 				},
 				vfsMounts: {
-					'/workspace': {
-						hostPath: '/tmp/workspace',
+					'/project': {
+						hostPath: '/tmp/project',
 						kind: 'realfs',
 					},
 					'/state': {

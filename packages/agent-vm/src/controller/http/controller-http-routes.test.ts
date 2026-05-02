@@ -6,6 +6,7 @@ import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
+import { SandboxSeedingError } from '../leases/agent-sandbox-seeding.js';
 import { LeaseScopeConflictError, type Lease } from '../leases/lease-manager.js';
 import { LeaseWorkMountValidationError } from '../leases/lease-work-mount-paths.js';
 import type { PreparedWorkerTask, WorkerTaskResult } from '../worker-task-runner.js';
@@ -389,7 +390,10 @@ describe('createControllerApp', () => {
 				releaseLease: vi.fn(async () => {}),
 			},
 			resolveLeaseWorkMountDir: vi.fn(async () => {
-				throw new LeaseWorkMountValidationError('workMountDir outside allowed roots');
+				throw new LeaseWorkMountValidationError(
+					'outside-allowed-roots',
+					'workMountDir outside allowed roots',
+				);
 			}),
 		});
 
@@ -410,11 +414,13 @@ describe('createControllerApp', () => {
 		expect(createResponse.status).toBe(400);
 		await expect(createResponse.json()).resolves.toEqual({
 			error: 'workMountDir outside allowed roots',
+			kind: 'outside-allowed-roots',
 		});
 		expect(createLease).not.toHaveBeenCalled();
 	});
 
 	it('returns 503 when the tcp pool is exhausted', async () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
@@ -434,24 +440,98 @@ describe('createControllerApp', () => {
 			},
 		});
 
-		const createResponse = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				profileId: 'standard',
-				scopeKey: 'agent:main:session-abc',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
-				zoneId: 'shravan',
-			}),
-			headers: {
-				'content-type': 'application/json',
+		try {
+			const createResponse = await app.request('/lease', {
+				body: JSON.stringify({
+					agentWorkspaceDir: '/home/openclaw/work',
+					profileId: 'standard',
+					scopeKey: 'agent:main:session-abc',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
+					zoneId: 'shravan',
+				}),
+				headers: {
+					'content-type': 'application/json',
+				},
+				method: 'POST',
+			});
+
+			expect(createResponse.status).toBe(503);
+			await expect(createResponse.json()).resolves.toMatchObject({
+				error: 'lease-creation-failed',
+				diagnosticId: expect.any(String),
+			});
+			const loggedMessages = stderrWrite.mock.calls.map(([message]) => String(message));
+			expect(
+				loggedMessages.some(
+					(message) =>
+						message.includes("lease creation failed diagnosticId='") &&
+						message.includes("zone='shravan'") &&
+						message.includes("scope='agent:main:session-abc'"),
+				),
+			).toBe(true);
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('returns 500 with a diagnostic id when sandbox seeding fails integrity checks', async () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
 			},
-			method: 'POST',
+			leaseManager: {
+				createLease: vi.fn(async () => createLeaseStub('lease-unreachable', 0)),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			resolveLeaseWorkMountDir: vi.fn(async () => {
+				throw new SandboxSeedingError(
+					'parent-symlink',
+					"Agent sandbox seed parent '/host/work/.config' must not be a symlink.",
+				);
+			}),
 		});
 
-		expect(createResponse.status).toBe(503);
-		await expect(createResponse.json()).resolves.toMatchObject({
-			error: 'No TCP slots available',
-		});
+		try {
+			const createResponse = await app.request('/lease', {
+				body: JSON.stringify({
+					agentWorkspaceDir: '/home/openclaw/work',
+					profileId: 'standard',
+					scopeKey: 'agent:main:session-abc',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
+					zoneId: 'shravan',
+				}),
+				headers: {
+					'content-type': 'application/json',
+				},
+				method: 'POST',
+			});
+
+			expect(createResponse.status).toBe(500);
+			await expect(createResponse.json()).resolves.toMatchObject({
+				error: 'sandbox-seeding-failed',
+				diagnosticId: expect.any(String),
+				kind: 'parent-symlink',
+			});
+			const loggedMessages = stderrWrite.mock.calls.map(([message]) => String(message));
+			expect(
+				loggedMessages.some(
+					(message) =>
+						message.includes("status='500'") &&
+						message.includes("zone='shravan'") &&
+						message.includes("scope='agent:main:session-abc'"),
+				),
+			).toBe(true);
+		} finally {
+			stderrWrite.mockRestore();
+		}
 	});
 
 	it('returns 409 when lease scope conflicts with an existing live lease', async () => {

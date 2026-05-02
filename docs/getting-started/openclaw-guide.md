@@ -132,6 +132,12 @@ zone's `agentToolVmProfiles` map, falling back to `defaultToolVmProfile`. Idle
 leases are reaped by `leaseIdleTtl`, with a 30 minute default when no policy is
 configured.
 
+The lease `workMountDir` is a gateway VM path, not a host path. It must name a
+concrete child path under `/zone` or
+`/home/openclaw/.openclaw/state/sandboxes`; the roots themselves are rejected as
+too broad. The controller resolves the selected path to the host directory that
+backs the Tool VM's `/work` mount.
+
 For internals, see [architecture/openclaw-gateway.md](../architecture/openclaw-gateway.md#tool-vm-leases).
 
 ---

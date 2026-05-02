@@ -6,7 +6,7 @@ import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../../config/system-config.js';
-import { seedAgentSandboxWorkspace } from './agent-sandbox-seeding.js';
+import { SandboxSeedingError, seedAgentSandboxWorkspace } from './agent-sandbox-seeding.js';
 
 const createdDirectories: string[] = [];
 
@@ -245,6 +245,28 @@ describe('seedAgentSandboxWorkspace', () => {
 		).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 
+	it('returns work-mount-missing when the resolved work mount disappears before seeding', async () => {
+		const rootPath = await createTempDirectory('agent-vm-sandbox-seed-missing-work-');
+		const zone = createOpenClawZone(rootPath);
+		const hostWorkMountDir = path.join(zone.gateway.stateDir, 'sandboxes', 'agent-shravan', 'work');
+		await mkdir(path.join(zone.gateway.stateDir, 'sandboxes'), { recursive: true });
+
+		const result = await seedAgentSandboxWorkspace({
+			scopeKey: 'agent:shravan',
+			secretResolver: createSecretResolver(),
+			hostWorkMountDir,
+			zone,
+		});
+
+		expect(result).toEqual({
+			agentId: 'shravan',
+			kind: 'work-mount-missing',
+			scopeKey: 'agent:shravan',
+			hostWorkMountDir,
+			zoneId: 'home',
+		});
+	});
+
 	it('rejects seed parent symlinks before resolving secrets', async () => {
 		const rootPath = await createTempDirectory('agent-vm-sandbox-seed-parent-link-');
 		const zone = createOpenClawZone(rootPath);
@@ -265,7 +287,15 @@ describe('seedAgentSandboxWorkspace', () => {
 				hostWorkMountDir,
 				zone,
 			}),
-		).rejects.toThrow(/must not be a symlink/u);
+		).rejects.toThrow(SandboxSeedingError);
+		await expect(
+			seedAgentSandboxWorkspace({
+				scopeKey: 'agent:shravan',
+				secretResolver,
+				hostWorkMountDir,
+				zone,
+			}),
+		).rejects.toMatchObject({ kind: 'parent-symlink' });
 		expect(secretResolver.resolve).not.toHaveBeenCalled();
 		await expect(
 			readFile(path.join(outsideDir, 'gcloud', 'configurations', 'config_default'), 'utf8'),
@@ -296,7 +326,7 @@ describe('seedAgentSandboxWorkspace', () => {
 				hostWorkMountDir,
 				zone,
 			}),
-		).rejects.toThrow(/must not be a symlink/u);
+		).rejects.toMatchObject({ kind: 'parent-symlink' });
 		expect(secretResolver.resolve).toHaveBeenCalledTimes(1);
 		await expect(readFile(path.join(outsideDir, 'config_default'), 'utf8')).rejects.toMatchObject({
 			code: 'ENOENT',

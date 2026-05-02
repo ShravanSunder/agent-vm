@@ -7,10 +7,10 @@ import {
 } from './mount-policy.js';
 
 describe('mount-policy', () => {
-	test('resolveGuestMountPath keeps absolute paths and resolves relative paths from the workspace root', () => {
-		expect(resolveGuestMountPath('/state', '/workspace/project')).toBe('/state');
-		expect(resolveGuestMountPath('./state', '/workspace/project')).toBe('/workspace/project/state');
-		expect(resolveGuestMountPath('logs', '/workspace/project')).toBe('/workspace/project/logs');
+	test('resolveGuestMountPath keeps absolute paths and resolves relative paths from the working directory', () => {
+		expect(resolveGuestMountPath('/state', '/work/project')).toBe('/state');
+		expect(resolveGuestMountPath('./state', '/work/project')).toBe('/work/project/state');
+		expect(resolveGuestMountPath('logs', '/work/project')).toBe('/work/project/logs');
 	});
 
 	test('validateWritableMount rejects guest paths outside the allowlist', () => {
@@ -19,9 +19,9 @@ describe('mount-policy', () => {
 				'/etc',
 				{
 					allowAuthWrite: false,
-					writableAllowedGuestPrefixes: ['/workspace'],
+					writableAllowedGuestPrefixes: ['/work'],
 				},
-				{ workDir: '/workspace/project' },
+				{ workDir: '/work/project' },
 			),
 		).toThrow(/outside writable allowlist/);
 	});
@@ -32,9 +32,9 @@ describe('mount-policy', () => {
 				'/home/agent/.claude/session',
 				{
 					allowAuthWrite: false,
-					writableAllowedGuestPrefixes: ['/home/agent/.claude', '/workspace'],
+					writableAllowedGuestPrefixes: ['/home/agent/.claude', '/work'],
 				},
-				{ workDir: '/workspace/project' },
+				{ workDir: '/work/project' },
 			),
 		).toThrow(/auth mount path/);
 	});
@@ -44,15 +44,15 @@ describe('mount-policy', () => {
 			validateRuntimeMountPolicy(
 				{
 					extraMounts: {
-						'/workspace/config': '/Users/example/.claude',
+						'/work/config': '/Users/example/.claude',
 					},
 					mountControls: {
 						allowAuthWrite: false,
-						writableAllowedGuestPrefixes: ['/workspace'],
+						writableAllowedGuestPrefixes: ['/work'],
 					},
 				},
 				{
-					workDir: '/workspace/project',
+					workDir: '/work/project',
 					hostHome: '/Users/example',
 				},
 			),

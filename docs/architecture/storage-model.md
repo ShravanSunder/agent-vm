@@ -168,10 +168,16 @@ bundled plugin dependencies, and it must not be moved into `stateDir`.
 Putting dependency trees in state makes encrypted backups large, slow, and hard
 to reason about.
 
-OpenClaw agent sandbox workspaces live under `stateDir` and can be mounted into
-Tool VMs as `/work`. Per-agent sandbox seeds are written only into these
+OpenClaw agent sandbox work directories live under `stateDir` and can be mounted
+into Tool VMs as `/work`. Per-agent sandbox seeds are written only into these
 sandbox-backed `/work` directories, and only when the target file does not
-already exist. Shared `/zone` workspaces are not seeded this way.
+already exist. Shared `/zone` work mounts are not seeded this way.
+
+Tool VM lease requests name `workMountDir` as a gateway path under a concrete
+child of `/zone` or `/home/openclaw/.openclaw/state/sandboxes`; the roots
+themselves are validation boundaries and rejected as mount targets. The
+controller resolves that gateway path to a trusted host `hostWorkMountDir`, and
+the Tool VM always sees the resolved directory at `/work`.
 
 ## Worker Repo Files And Git
 

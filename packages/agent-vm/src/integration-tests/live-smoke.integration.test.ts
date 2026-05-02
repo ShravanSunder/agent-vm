@@ -79,7 +79,7 @@ describe('live smoke: real Gondolin VM', () => {
 			vm = null;
 		}
 
-		const workspaceDir = await mkdtemp(path.join(os.tmpdir(), 'gondolin-live-work-'));
+		const hostWorkMountDir = await mkdtemp(path.join(os.tmpdir(), 'gondolin-live-work-'));
 		try {
 			vm = await createManagedVm({
 				imagePath: '',
@@ -91,7 +91,7 @@ describe('live smoke: real Gondolin VM', () => {
 				vfsMounts: {
 					'/work': {
 						kind: 'realfs',
-						hostPath: workspaceDir,
+						hostPath: hostWorkMountDir,
 					},
 				},
 			});
@@ -100,9 +100,9 @@ describe('live smoke: real Gondolin VM', () => {
 				"mkdir -p /work/project && printf 'persisted through realfs' > /work/project/notes.md",
 			);
 			expect(writeResult.exitCode).toBe(0);
-			await expect(readFile(path.join(workspaceDir, 'project', 'notes.md'), 'utf8')).resolves.toBe(
-				'persisted through realfs',
-			);
+			await expect(
+				readFile(path.join(hostWorkMountDir, 'project', 'notes.md'), 'utf8'),
+			).resolves.toBe('persisted through realfs');
 
 			await vm.close();
 			vm = await createManagedVm({
@@ -115,7 +115,7 @@ describe('live smoke: real Gondolin VM', () => {
 				vfsMounts: {
 					'/work': {
 						kind: 'realfs',
-						hostPath: workspaceDir,
+						hostPath: hostWorkMountDir,
 					},
 				},
 			});
@@ -128,7 +128,7 @@ describe('live smoke: real Gondolin VM', () => {
 				await vm.close();
 				vm = null;
 			}
-			await rm(workspaceDir, { recursive: true, force: true });
+			await rm(hostWorkMountDir, { recursive: true, force: true });
 		}
 	}, 120_000);
 

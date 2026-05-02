@@ -32,12 +32,12 @@ function createProvider(): VirtualProvider {
 
 describe('pinned RealFS roots', () => {
 	it('pins the directory identity and closes the pinned fd', () => {
-		const workspaceDirectory = path.join(createTemporaryDirectory(), 'workspace');
-		fs.mkdirSync(workspaceDirectory);
+		const hostRealFsDirectory = path.join(createTemporaryDirectory(), 'realfs-root');
+		fs.mkdirSync(hostRealFsDirectory);
 
-		const root = pinRealFsRoot(workspaceDirectory);
+		const root = pinRealFsRoot(hostRealFsDirectory);
 
-		expect(root.realPath).toBe(fs.realpathSync(workspaceDirectory));
+		expect(root.realPath).toBe(fs.realpathSync(hostRealFsDirectory));
 		expect(fs.fstatSync(root.fd).isDirectory()).toBe(true);
 
 		closePinnedRealFsRoot(root);
@@ -47,10 +47,10 @@ describe('pinned RealFS roots', () => {
 
 	it('detects a root path swap before provider operations reach Gondolin RealFS', () => {
 		const temporaryDirectory = createTemporaryDirectory();
-		const workspaceDirectory = path.join(temporaryDirectory, 'workspace');
-		const movedWorkspaceDirectory = path.join(temporaryDirectory, 'workspace-old');
-		fs.mkdirSync(workspaceDirectory);
-		const root = pinRealFsRoot(workspaceDirectory);
+		const hostRealFsDirectory = path.join(temporaryDirectory, 'realfs-root');
+		const movedHostRealFsDirectory = path.join(temporaryDirectory, 'realfs-root-old');
+		fs.mkdirSync(hostRealFsDirectory);
+		const root = pinRealFsRoot(hostRealFsDirectory);
 		const provider = createProvider();
 		const readdirSyncSpy = vi.spyOn(provider, 'readdirSync');
 		const pinnedProvider = createPinnedRealFsProvider({
@@ -58,8 +58,8 @@ describe('pinned RealFS roots', () => {
 			root,
 		});
 
-		fs.renameSync(workspaceDirectory, movedWorkspaceDirectory);
-		fs.mkdirSync(workspaceDirectory);
+		fs.renameSync(hostRealFsDirectory, movedHostRealFsDirectory);
+		fs.mkdirSync(hostRealFsDirectory);
 
 		expect(() => pinnedProvider.readdirSync('/')).toThrow(/Pinned RealFS root changed/u);
 		expect(readdirSyncSpy).not.toHaveBeenCalled();
@@ -69,18 +69,18 @@ describe('pinned RealFS roots', () => {
 
 	it('rejects a final symlink when pinning a RealFS root', () => {
 		const temporaryDirectory = createTemporaryDirectory();
-		const workspaceDirectory = path.join(temporaryDirectory, 'workspace');
-		const symlinkPath = path.join(temporaryDirectory, 'workspace-link');
-		fs.mkdirSync(workspaceDirectory);
-		fs.symlinkSync(workspaceDirectory, symlinkPath);
+		const hostRealFsDirectory = path.join(temporaryDirectory, 'realfs-root');
+		const symlinkPath = path.join(temporaryDirectory, 'realfs-root-link');
+		fs.mkdirSync(hostRealFsDirectory);
+		fs.symlinkSync(hostRealFsDirectory, symlinkPath);
 
 		expect(() => pinRealFsRoot(symlinkPath)).toThrow();
 	});
 
 	it('allows provider operations while the root identity is unchanged', () => {
-		const workspaceDirectory = path.join(createTemporaryDirectory(), 'workspace');
-		fs.mkdirSync(workspaceDirectory);
-		const root = pinRealFsRoot(workspaceDirectory);
+		const hostRealFsDirectory = path.join(createTemporaryDirectory(), 'realfs-root');
+		fs.mkdirSync(hostRealFsDirectory);
+		const root = pinRealFsRoot(hostRealFsDirectory);
 		const provider = createProvider();
 		const readdirSyncSpy = vi.spyOn(provider, 'readdirSync');
 		const pinnedProvider = createPinnedRealFsProvider({

@@ -11,10 +11,36 @@ const OPENCLAW_ZONE_FILES_VM_ROOT = '/zone';
 
 type ZoneConfig = SystemConfig['zones'][number];
 
-export class LeaseWorkMountValidationError extends Error {}
+export type LeaseWorkMountValidationErrorKind =
+	| 'allowed-root-realpath-failed'
+	| 'host-not-absolute'
+	| 'host-outside-allowed-roots'
+	| 'host-parent-traversal'
+	| 'outside-allowed-roots'
+	| 'realpath-failed'
+	| 'root-mount-target'
+	| 'unsupported-gateway'
+	| 'work-mount-not-absolute'
+	| 'work-mount-parent-traversal';
+
+export class LeaseWorkMountValidationError extends Error {
+	readonly kind: LeaseWorkMountValidationErrorKind;
+
+	constructor(kind: LeaseWorkMountValidationErrorKind, message: string, options?: ErrorOptions) {
+		super(message, options);
+		this.kind = kind;
+	}
+}
 
 function pathContainsParentTraversal(inputPath: string): boolean {
 	return inputPath.split(/[\\/]+/u).includes('..');
+}
+
+function normalizeGuestWorkMountDir(workMountDir: string): string {
+	const normalizedWorkMountDir = path.posix.normalize(workMountDir);
+	return normalizedWorkMountDir.length > 1
+		? normalizedWorkMountDir.replace(/\/+$/u, '')
+		: normalizedWorkMountDir;
 }
 
 function isPathWithin(candidatePath: string, rootPath: string): boolean {
@@ -25,16 +51,12 @@ function isPathWithin(candidatePath: string, rootPath: string): boolean {
 function mapGuestPathToHostPath(options: {
 	readonly guestRoot: string;
 	readonly hostRoot: string;
-	readonly workMountDir: string;
+	readonly normalizedWorkMountDir: string;
 }): string | null {
-	const normalizedWorkMountDir = path.posix.normalize(options.workMountDir);
-	if (
-		normalizedWorkMountDir !== options.guestRoot &&
-		!normalizedWorkMountDir.startsWith(`${options.guestRoot}/`)
-	) {
+	if (!options.normalizedWorkMountDir.startsWith(`${options.guestRoot}/`)) {
 		return null;
 	}
-	const relativePath = path.posix.relative(options.guestRoot, normalizedWorkMountDir);
+	const relativePath = path.posix.relative(options.guestRoot, options.normalizedWorkMountDir);
 	return path.join(options.hostRoot, relativePath);
 }
 
@@ -46,6 +68,7 @@ async function realpathIfDirectory(directoryPath: string): Promise<string> {
 			error && typeof error === 'object' && 'code' in error ? String(error.code) : 'UNKNOWN';
 		const message = error instanceof Error ? error.message : String(error);
 		throw new LeaseWorkMountValidationError(
+			'realpath-failed',
 			`Lease work mount path '${directoryPath}' failed directory realpath check (${code}): ${message}`,
 			{ cause: error },
 		);
@@ -59,7 +82,14 @@ async function realpathAllowedRoot(directoryPath: string): Promise<string | null
 		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
 			return null;
 		}
-		throw error;
+		const code =
+			error && typeof error === 'object' && 'code' in error ? String(error.code) : 'UNKNOWN';
+		const message = error instanceof Error ? error.message : String(error);
+		throw new LeaseWorkMountValidationError(
+			'allowed-root-realpath-failed',
+			`Lease allowed work mount root '${directoryPath}' failed directory realpath check (${code}): ${message}`,
+			{ cause: error },
+		);
 	}
 }
 
@@ -69,6 +99,7 @@ async function validateResolvedLeaseWorkMountDir(options: {
 }): Promise<string> {
 	if (options.zone.gateway.type !== 'openclaw') {
 		throw new LeaseWorkMountValidationError(
+			'unsupported-gateway',
 			`Zone '${options.zone.id}' does not support OpenClaw tool VM leases.`,
 		);
 	}
@@ -83,6 +114,7 @@ async function validateResolvedLeaseWorkMountDir(options: {
 	);
 	if (!allowedRoots.some((root) => isPathWithin(realCandidatePath, root))) {
 		throw new LeaseWorkMountValidationError(
+			'host-outside-allowed-roots',
 			`Lease hostWorkMountDir '${options.hostWorkMountDir}' resolves outside allowed OpenClaw tool work mount roots for zone '${options.zone.id}'.`,
 		);
 	}
@@ -95,16 +127,19 @@ export async function validateResolvedToolWorkMountDir(options: {
 }): Promise<string> {
 	if (options.zone.gateway.type !== 'openclaw') {
 		throw new LeaseWorkMountValidationError(
+			'unsupported-gateway',
 			`Zone '${options.zone.id}' does not support OpenClaw tool VM leases.`,
 		);
 	}
 	if (!path.isAbsolute(options.hostWorkMountDir)) {
 		throw new LeaseWorkMountValidationError(
+			'host-not-absolute',
 			`Lease hostWorkMountDir '${options.hostWorkMountDir}' must be absolute.`,
 		);
 	}
 	if (pathContainsParentTraversal(options.hostWorkMountDir)) {
 		throw new LeaseWorkMountValidationError(
+			'host-parent-traversal',
 			`Lease hostWorkMountDir '${options.hostWorkMountDir}' must not contain '..' path segments.`,
 		);
 	}
@@ -117,17 +152,30 @@ export async function resolveLeaseWorkMountDir(options: {
 }): Promise<string> {
 	if (options.zone.gateway.type !== 'openclaw') {
 		throw new LeaseWorkMountValidationError(
+			'unsupported-gateway',
 			`Zone '${options.zone.id}' does not support OpenClaw tool VM leases.`,
 		);
 	}
 	if (!path.isAbsolute(options.workMountDir)) {
 		throw new LeaseWorkMountValidationError(
+			'work-mount-not-absolute',
 			`Lease workMountDir '${options.workMountDir}' must be absolute.`,
 		);
 	}
 	if (pathContainsParentTraversal(options.workMountDir)) {
 		throw new LeaseWorkMountValidationError(
+			'work-mount-parent-traversal',
 			`Lease workMountDir '${options.workMountDir}' must not contain '..' path segments.`,
+		);
+	}
+	const normalizedWorkMountDir = normalizeGuestWorkMountDir(options.workMountDir);
+	if (
+		normalizedWorkMountDir === OPENCLAW_STATE_SANDBOXES_VM_ROOT ||
+		normalizedWorkMountDir === OPENCLAW_ZONE_FILES_VM_ROOT
+	) {
+		throw new LeaseWorkMountValidationError(
+			'root-mount-target',
+			`Lease workMountDir '${options.workMountDir}' must name a child path under ${OPENCLAW_ZONE_FILES_VM_ROOT} or ${OPENCLAW_STATE_SANDBOXES_VM_ROOT}, not the root itself.`,
 		);
 	}
 
@@ -136,15 +184,16 @@ export async function resolveLeaseWorkMountDir(options: {
 		mapGuestPathToHostPath({
 			guestRoot: OPENCLAW_STATE_SANDBOXES_VM_ROOT,
 			hostRoot: hostSandboxRoot,
-			workMountDir: options.workMountDir,
+			normalizedWorkMountDir,
 		}) ??
 		mapGuestPathToHostPath({
 			guestRoot: OPENCLAW_ZONE_FILES_VM_ROOT,
 			hostRoot: options.zone.gateway.zoneFilesDir,
-			workMountDir: options.workMountDir,
+			normalizedWorkMountDir,
 		});
 	if (!hostWorkMountDir) {
 		throw new LeaseWorkMountValidationError(
+			'outside-allowed-roots',
 			`Lease workMountDir '${options.workMountDir}' must be under ${OPENCLAW_STATE_SANDBOXES_VM_ROOT} or ${OPENCLAW_ZONE_FILES_VM_ROOT}.`,
 		);
 	}

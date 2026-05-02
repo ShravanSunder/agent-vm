@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SystemConfig } from '../../config/system-config.js';
 import {
 	resolveLeaseWorkMountDir,
+	type LeaseWorkMountValidationError,
 	validateResolvedToolWorkMountDir,
 } from './lease-work-mount-paths.js';
 
@@ -57,21 +58,31 @@ describe('resolveLeaseWorkMountDir', () => {
 		).resolves.toBe(await realpath(path.join(stateDir, 'sandboxes', 'agent', 'work')));
 	});
 
-	it('maps OpenClaw gateway root paths exactly', async () => {
-		await mkdir(path.join(stateDir, 'sandboxes'), { recursive: true });
-
+	it('rejects exact OpenClaw gateway work mount roots', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({
 				workMountDir: '/home/openclaw/.openclaw/state/sandboxes',
 				zone,
 			}),
-		).resolves.toBe(await realpath(path.join(stateDir, 'sandboxes')));
+		).rejects.toThrow(/must name a child path under/u);
+		await expect(
+			resolveLeaseWorkMountDir({
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/',
+				zone,
+			}),
+		).rejects.toThrow(/must name a child path under/u);
 		await expect(
 			resolveLeaseWorkMountDir({
 				workMountDir: '/zone',
 				zone,
 			}),
-		).resolves.toBe(await realpath(zoneFilesDir));
+		).rejects.toThrow(/must name a child path under/u);
+		await expect(
+			resolveLeaseWorkMountDir({
+				workMountDir: '/zone/',
+				zone,
+			}),
+		).rejects.toThrow(/must name a child path under/u);
 	});
 
 	it('maps OpenClaw gateway /zone paths to host zoneFilesDir', async () => {
@@ -152,7 +163,15 @@ describe('resolveLeaseWorkMountDir', () => {
 				workMountDir: 'relative/work',
 				zone,
 			}),
-		).rejects.toThrow(/must be absolute/u);
+		).rejects.toThrow(/Lease workMountDir 'relative\/work' must be absolute/u);
+		await expect(
+			resolveLeaseWorkMountDir({
+				workMountDir: 'relative/work',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'work-mount-not-absolute',
+		} satisfies Partial<LeaseWorkMountValidationError>);
 	});
 
 	it('rejects non-OpenClaw zones', async () => {

@@ -9,6 +9,21 @@ import { parseAgentScopeKey } from './lease-scope.js';
 type ZoneConfig = SystemConfig['zones'][number];
 type AgentSandboxSeed = NonNullable<ZoneConfig['agentSandboxSeeds']>[string][number];
 
+export type SandboxSeedingErrorKind =
+	| 'parent-not-directory'
+	| 'parent-resolves-outside-work-mount'
+	| 'parent-symlink'
+	| 'target-outside-work-mount';
+
+export class SandboxSeedingError extends Error {
+	readonly kind: SandboxSeedingErrorKind;
+
+	constructor(kind: SandboxSeedingErrorKind, message: string) {
+		super(message);
+		this.kind = kind;
+	}
+}
+
 export type AgentSandboxSeedResult =
 	| {
 			readonly kind: 'not-openclaw-zone';
@@ -124,7 +139,8 @@ async function ensureSeedParentDirectoryInsideWorkspace(options: {
 		relativeParentPath !== '' &&
 		(relativeParentPath.startsWith('..') || path.isAbsolute(relativeParentPath))
 	) {
-		throw new Error(
+		throw new SandboxSeedingError(
+			'parent-resolves-outside-work-mount',
 			`Agent sandbox seed target parent '${targetParentPath}' resolves outside work mount '${options.hostWorkMountDir}'.`,
 		);
 	}
@@ -144,14 +160,21 @@ async function ensureSeedParentDirectoryInsideWorkspace(options: {
 			entry = await lstat(currentPath);
 		}
 		if (entry.isSymbolicLink()) {
-			throw new Error(`Agent sandbox seed parent '${currentPath}' must not be a symlink.`);
+			throw new SandboxSeedingError(
+				'parent-symlink',
+				`Agent sandbox seed parent '${currentPath}' must not be a symlink.`,
+			);
 		}
 		if (!entry.isDirectory()) {
-			throw new Error(`Agent sandbox seed parent '${currentPath}' is not a directory.`);
+			throw new SandboxSeedingError(
+				'parent-not-directory',
+				`Agent sandbox seed parent '${currentPath}' is not a directory.`,
+			);
 		}
 		const resolvedPath = await realpath(currentPath);
 		if (!isPathWithin(resolvedPath, options.hostWorkMountDir)) {
-			throw new Error(
+			throw new SandboxSeedingError(
+				'parent-resolves-outside-work-mount',
 				`Agent sandbox seed parent '${currentPath}' resolves outside work mount '${options.hostWorkMountDir}'.`,
 			);
 		}
@@ -239,7 +262,8 @@ export async function seedAgentSandboxWorkspace(options: {
 		seeds.map(async (seed) => {
 			const targetPath = path.resolve(hostWorkMountDir, seed.target);
 			if (!isPathWithin(targetPath, hostWorkMountDir)) {
-				throw new Error(
+				throw new SandboxSeedingError(
+					'target-outside-work-mount',
 					`Agent sandbox seed target '${seed.target}' resolves outside work mount '${hostWorkMountDir}'.`,
 				);
 			}

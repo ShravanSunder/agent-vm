@@ -244,6 +244,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 	});
 
 	it('drops a cached handle when lease keepalive returns 404 and requests a fresh lease', async () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const requestLease = vi
 			.fn()
 			.mockResolvedValueOnce({
@@ -296,31 +297,44 @@ describe('createGondolinSandboxBackendFactory', () => {
 			},
 		);
 
-		const firstHandle = await factory({
-			agentWorkspaceDir: '/work',
-			cfg: {},
-			scopeKey: 'agent:main:session-stale',
-			sessionKey: 'session-stale',
-			workspaceDir: '/work',
-		});
-		const secondHandle = await factory({
-			agentWorkspaceDir: '/work',
-			cfg: {},
-			scopeKey: 'agent:main:session-stale',
-			sessionKey: 'session-stale',
-			workspaceDir: '/work',
-		});
-		const thirdHandle = await factory({
-			agentWorkspaceDir: '/work',
-			cfg: {},
-			scopeKey: 'agent:main:session-stale',
-			sessionKey: 'session-stale',
-			workspaceDir: '/work',
-		});
+		try {
+			const firstHandle = await factory({
+				agentWorkspaceDir: '/work',
+				cfg: {},
+				scopeKey: 'agent:main:session-stale',
+				sessionKey: 'session-stale',
+				workspaceDir: '/work',
+			});
+			const secondHandle = await factory({
+				agentWorkspaceDir: '/work',
+				cfg: {},
+				scopeKey: 'agent:main:session-stale',
+				sessionKey: 'session-stale',
+				workspaceDir: '/work',
+			});
+			const thirdHandle = await factory({
+				agentWorkspaceDir: '/work',
+				cfg: {},
+				scopeKey: 'agent:main:session-stale',
+				sessionKey: 'session-stale',
+				workspaceDir: '/work',
+			});
 
-		expect(firstHandle).toBe(secondHandle);
-		expect(thirdHandle).not.toBe(firstHandle);
-		expect(requestLease).toHaveBeenCalledTimes(2);
+			expect(firstHandle).toBe(secondHandle);
+			expect(thirdHandle).not.toBe(firstHandle);
+			expect(requestLease).toHaveBeenCalledTimes(2);
+			const loggedMessages = stderrWrite.mock.calls.map(([message]) => String(message));
+			expect(
+				loggedMessages.some(
+					(message) =>
+						message.includes('lease keepalive failed') &&
+						message.includes("scope 'agent:main:session-stale'") &&
+						message.includes("lease 'lease-old'"),
+				),
+			).toBe(true);
+		} finally {
+			stderrWrite.mockRestore();
+		}
 	});
 
 	it('creates separate handles for different scopeKeys', async () => {

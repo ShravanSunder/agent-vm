@@ -129,7 +129,7 @@ function createPinnedRealFsRoot(hostPath: string): PinnedRealFsRoot {
 }
 
 describe('createToolVm', () => {
-	it('mounts the lease workspace directory at /work', async () => {
+	it('mounts the lease host work mount directory at /work', async () => {
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -158,7 +158,7 @@ describe('createToolVm', () => {
 		}
 		const requestedWorkMountDir = await createWorkMountDirectory(
 			systemConfig,
-			'openclaw-session-workspace',
+			'openclaw-session-work-mount',
 		);
 		const realWorkMountDir = await realpath(requestedWorkMountDir);
 
@@ -201,6 +201,7 @@ describe('createToolVm', () => {
 				realPath: realWorkMountDir,
 			}),
 		);
+		expect(capturedCreateVmOptions?.vfsMounts).not.toHaveProperty('/workspace');
 	});
 
 	it('persists tool writes through the RealFS /work backing directory', async () => {
@@ -227,7 +228,7 @@ describe('createToolVm', () => {
 		}
 		const requestedWorkMountDir = await createWorkMountDirectory(
 			systemConfig,
-			'persisted-workspace',
+			'persisted-work-mount',
 		);
 		const persistedFilePath = path.join(requestedWorkMountDir, 'notes.md');
 
@@ -295,7 +296,7 @@ describe('createToolVm', () => {
 		}
 		const requestedWorkMountDir = await createWorkMountDirectory(
 			systemConfig,
-			'openclaw-workspace',
+			'openclaw-work-mount',
 		);
 		const buildGondolinImage = vi.fn(async () => ({
 			built: true,
@@ -362,7 +363,7 @@ describe('createToolVm', () => {
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 
-	it('revalidates the workspace directory after image build and before pinning', async () => {
+	it('revalidates the host work mount directory after image build and before pinning', async () => {
 		const systemConfig = await createToolVmSystemConfig();
 		const standardProfile = systemConfig.toolVmProfiles.standard;
 		if (!standardProfile) {
@@ -370,9 +371,9 @@ describe('createToolVm', () => {
 		}
 		const requestedWorkMountDir = await createWorkMountDirectory(
 			systemConfig,
-			'openclaw-workspace',
+			'openclaw-work-mount',
 		);
-		const movedWorkMountDir = path.join(path.dirname(requestedWorkMountDir), 'moved-workspace');
+		const movedWorkMountDir = path.join(path.dirname(requestedWorkMountDir), 'moved-work-mount');
 		const outsideDirectory = await createTemporaryDirectory();
 		const buildGondolinImage = vi.fn(async () => {
 			await rename(requestedWorkMountDir, movedWorkMountDir);
@@ -414,7 +415,7 @@ describe('createToolVm', () => {
 		}
 		const requestedWorkMountDir = await createWorkMountDirectory(
 			systemConfig,
-			'openclaw-workspace',
+			'openclaw-work-mount',
 		);
 		const pinnedWorkMountRoot = {
 			device: 1,

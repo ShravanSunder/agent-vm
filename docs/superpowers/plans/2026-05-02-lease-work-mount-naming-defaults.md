@@ -33,6 +33,10 @@ Do not introduce `/workspace` as a guest path. It is retired.
 /zone/projects/home-agent
 ```
 
+`workMountDir` must name a concrete child path under `/zone` or
+`/home/openclaw/.openclaw/state/sandboxes`. The roots themselves are
+allowed-root boundaries and are rejected as mount targets.
+
 `hostWorkMountDir` examples:
 
 ```text
@@ -379,6 +383,14 @@ Inside the file, rename local variables:
 
 ```ts
 const normalizedWorkMountDir = path.posix.normalize(options.workMountDir);
+if (
+	normalizedWorkMountDir === OPENCLAW_STATE_SANDBOXES_VM_ROOT ||
+	normalizedWorkMountDir === OPENCLAW_ZONE_FILES_VM_ROOT
+) {
+	throw new LeaseWorkMountValidationError(
+		`Lease workMountDir '${options.workMountDir}' must name a child path under ${OPENCLAW_ZONE_FILES_VM_ROOT} or ${OPENCLAW_STATE_SANDBOXES_VM_ROOT}, not the root itself.`,
+	);
+}
 const hostWorkMountDir = mapGuestPathToHostPath(...);
 ```
 
@@ -386,6 +398,7 @@ Use error messages that teach the model:
 
 ```ts
 `Lease workMountDir '${options.workMountDir}' must be under ${OPENCLAW_STATE_SANDBOXES_VM_ROOT} or ${OPENCLAW_ZONE_FILES_VM_ROOT}.`
+`Lease workMountDir '${options.workMountDir}' must name a child path under ${OPENCLAW_ZONE_FILES_VM_ROOT} or ${OPENCLAW_STATE_SANDBOXES_VM_ROOT}, not the root itself.`
 ```
 
 - [ ] **Step 4: Update imports**
@@ -791,7 +804,9 @@ In `docs/reference/configuration/system-json.md`, explain that there is no stati
 ```text
 `workMountDir` is not a system.json field. It is selected dynamically by
 OpenClaw when a tool lease is requested. Static config defines the allowed
-roots: the OpenClaw state sandbox root and `zoneFilesDir`.
+roots: the OpenClaw state sandbox root and `zoneFilesDir`. The selected
+`workMountDir` must be a child path under one of those roots; the roots
+themselves are rejected as mount targets.
 ```
 
 Document defaults:

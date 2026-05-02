@@ -153,7 +153,7 @@ start repo services"]
     boot["boot Gondolin VM"]
     run["worker runs task"]
     push["host-side push + PR"]
-    teardown["teardown VM and workspace"]
+    teardown["teardown VM and task files"]
     result["return final state"]
 
     request --> prepare
@@ -280,7 +280,7 @@ The controller exposes a REST API. Routes are split across two modules: core lea
 
 **TCP Pool** (`tcp-pool.ts`): Manages a fixed pool of TCP port slots. Each tool VM gets a unique slot mapped to `127.0.0.1:{basePort + slot}`. The gateway VM sees these as `tool-{slot}.vm.host:22` via Gondolin's synthetic DNS. Pool size is configured in `systemConfig.tcpPool.size`.
 
-**Lease Manager** (`lease-manager.ts`): Creates, tracks, and releases tool VM leases. Each lease holds a reference to a `ManagedVm`, a TCP slot, SSH access details, workspace identity, and timestamps. Live leases are reused by `zoneId` and `scopeKey` when the requested profile and validated workspace match, so OpenClaw `scope=agent` can keep using the same tool VM while the idle TTL keeps capacity bounded.
+**Lease Manager** (`lease-manager.ts`): Creates, tracks, and releases tool VM leases. Each lease holds a reference to a `ManagedVm`, a TCP slot, SSH access details, work mount identity, and timestamps. Live leases are reused by `zoneId` and `scopeKey` when the requested profile and validated work mount match, so OpenClaw `scope=agent` can keep using the same tool VM while the idle TTL keeps capacity bounded.
 
 **Idle Reaper** (`idle-reaper.ts`): Runs on a 60-second interval. Any lease
 with `lastUsedAt` older than its resolved TTL is automatically released. The
@@ -436,7 +436,7 @@ OpenClaw Gateway runs a long-lived gateway VM that hosts an interactive chat age
        |-- ...up to tcpPool.size
 ```
 
-The gateway VM boots at controller startup and stays running. Tool VMs are created on demand via the lease API -- each gets a TCP slot, SSH access, and a lease-owned `/work` mount. Auth profiles and the effective OpenClaw config are written to the host-side state directory before the VM boots via `prepareHostState()`. The gateway reaches tool VMs via synthetic DNS (`tool-{n}.vm.host:22`) and the controller via `controller.vm.host:18800`. Websocket bypass hosts get direct TCP passthrough (for Discord, etc.).
+The gateway VM boots at controller startup and stays running. Tool VMs are created on demand via the lease API -- each gets a TCP slot, SSH access, and a lease-owned `/work` mount. The lease `workMountDir` is a gateway path under a concrete child of `/zone` or `/home/openclaw/.openclaw/state/sandboxes`; the controller resolves it to the host directory backing Tool VM `/work`. Auth profiles and the effective OpenClaw config are written to the host-side state directory before the VM boots via `prepareHostState()`. The gateway reaches tool VMs via synthetic DNS (`tool-{n}.vm.host:22`) and the controller via `controller.vm.host:18800`. Websocket bypass hosts get direct TCP passthrough (for Discord, etc.).
 
 ---
 
@@ -619,6 +619,7 @@ directory.
   |-- runtimeDir        Active worker runtime dir; not included in zone backups
   |-- zones[].gateway.zoneFilesDir
   |                      OpenClaw zone files; RealFS at /zone and included in backups
+  |                      Tool VM leases may select concrete child paths under /zone
   |-- images            Build config paths for gateway and tool VM images
   |-- zones[]           Zone definitions: gateway type, resources, secrets, allowed hosts
   |-- toolVmProfiles    Named Tool VM profiles (memory, cpus, image profile)

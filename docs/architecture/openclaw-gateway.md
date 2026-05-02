@@ -104,8 +104,9 @@ state and auth profiles remain under `stateDir`.
 
 The OpenClaw VM path `/zone` is long-lived zone files, not
 worker-style hot execution storage. This storage is RealFS-mounted and backed
-up. The host-side config field is `zoneFilesDir`; `workspaceDir` is not part of
-the target schema.
+up. The host-side config field is `zoneFilesDir`; there is no static
+`workspaceDir` field in `system.json`. The runtime lease equivalent is
+`workMountDir`, selected dynamically for each Tool VM lease.
 
 ---
 
@@ -166,7 +167,7 @@ exists, it falls back to the zone's `defaultToolVmProfile`. This lets one
 OpenClaw zone serve multiple agents with different Tool VM images while keeping
 the gateway and durable `/zone` namespace shared.
 
-Before the first Tool VM boot for an agent-scoped sandbox workspace, the
+Before the first Tool VM boot for an agent-scoped sandbox work mount, the
 controller can seed configured files such as `.config/gcloud/...` into that
 sandbox's `/work` backing directory. Seeds are first-boot only and do not
 overwrite files that already exist.
@@ -220,8 +221,9 @@ The plugin provides:
 - **File bridge**: `mkdirp`, `readFile`, `writeFile`, `stat`, `remove`, `rename` — all via SSH into the tool VM
 - **Shell execution**: run arbitrary commands in the tool VM
 - **Work mount access**: tool VMs use `/work` for lease-local execution.
-  Lease requests provide `workMountDir` as an OpenClaw gateway path under
-  `/home/openclaw/.openclaw/state/sandboxes` or `/zone`.
+  Lease requests provide `workMountDir` as a concrete OpenClaw gateway child
+  path under `/home/openclaw/.openclaw/state/sandboxes` or `/zone`; the roots
+  themselves are validation boundaries and are rejected as mount targets.
   The controller maps that gateway path to `hostWorkMountDir`, verifies the
   real path is inside either `stateDir/sandboxes` or `zoneFilesDir`, and mounts
   it into the Tool VM at `/work`.

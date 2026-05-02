@@ -24,6 +24,14 @@ function scopeCacheKey(params: {
 	].join('\0');
 }
 
+function formatUnknownError(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function writeSandboxBackendLog(message: string): void {
+	process.stderr.write(`[openclaw-agent-vm-plugin] ${message}\n`);
+}
+
 export function createGondolinSandboxBackendFactory(
 	options: {
 		readonly controllerUrl: string;
@@ -62,7 +70,10 @@ export function createGondolinSandboxBackendFactory(
 			try {
 				await leaseClient.keepLeaseAlive(cachedEntry.lease.leaseId);
 				return cachedEntry.handle;
-			} catch {
+			} catch (error) {
+				writeSandboxBackendLog(
+					`lease keepalive failed for zone '${options.zoneId}' scope '${params.scopeKey}' lease '${cachedEntry.lease.leaseId}': ${formatUnknownError(error)}`,
+				);
 				scopeCache.delete(cacheKey);
 			}
 		}

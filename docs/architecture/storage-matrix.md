@@ -205,10 +205,12 @@ added.
 
 Tool VMs are lease-local execution sandboxes. Tool VMs always see the mounted
 working directory at `/work`. The lease request supplies `workMountDir` as an
-OpenClaw gateway path; the controller validates and translates that value to a
-host `hostWorkMountDir` before creating the RealFS mount. agent-vm closes the
-tool VM on lease release, but it does not clean the supplied work mount
-directory.
+OpenClaw gateway child path under `/zone` or
+`/home/openclaw/.openclaw/state/sandboxes`; those roots are allowed-root
+boundaries, not valid mount targets. The controller validates and translates
+that value to a host `hostWorkMountDir` before creating the RealFS mount.
+agent-vm closes the tool VM on lease release, but it does not clean the
+supplied work mount directory.
 
 ```text
 path or data                           backing                backup

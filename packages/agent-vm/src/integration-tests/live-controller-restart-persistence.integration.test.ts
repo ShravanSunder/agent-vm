@@ -11,7 +11,7 @@ import { startControllerRuntime } from '../controller/controller-runtime.js';
 function createSystemConfig(
 	controllerPort: number,
 	stateDirectory: string,
-	workspaceDirectory: string,
+	zoneFilesDirectory: string,
 ): LoadedSystemConfig {
 	return {
 		cacheDir: path.join(path.dirname(stateDirectory), 'cache'),
@@ -59,7 +59,7 @@ function createSystemConfig(
 					port: controllerPort + 100,
 					config: './config/shravan/openclaw.json',
 					stateDir: stateDirectory,
-					zoneFilesDir: workspaceDirectory,
+					zoneFilesDir: zoneFilesDirectory,
 				},
 				secrets: {},
 				allowedHosts: ['api.openai.com'],
@@ -153,12 +153,13 @@ describe('live integration: controller restart persistence', () => {
 		createdDirectories.push(tempDirectory);
 
 		const stateDirectory = path.join(tempDirectory, 'state');
-		const workspaceDirectory = path.join(tempDirectory, 'workspace');
+		const zoneFilesDirectory = path.join(tempDirectory, 'zone-files');
+		const zoneLeaseDirectory = path.join(zoneFilesDirectory, 'restart-work');
 		fs.mkdirSync(stateDirectory, { recursive: true });
-		fs.mkdirSync(workspaceDirectory, { recursive: true });
+		fs.mkdirSync(zoneLeaseDirectory, { recursive: true });
 
 		const controllerPort = 18841;
-		const systemConfig = createSystemConfig(controllerPort, stateDirectory, workspaceDirectory);
+		const systemConfig = createSystemConfig(controllerPort, stateDirectory, zoneFilesDirectory);
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected restart test zone.');
@@ -255,7 +256,7 @@ describe('live integration: controller restart persistence', () => {
 				agentWorkspaceDir: '/zone',
 				profileId: 'standard',
 				scopeKey: 'restart-test',
-				workMountDir: '/zone',
+				workMountDir: '/zone/restart-work',
 				zoneId: 'shravan',
 			}),
 			headers: { 'content-type': 'application/json' },
