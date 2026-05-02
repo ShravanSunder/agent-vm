@@ -124,14 +124,14 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
     zoneId,
     profileId,
     agentWorkspaceDir,
-    workspaceDir: "/zone/..."
+    workMountDir: "/zone/..."
   }
        |
        v
   Controller: lease-manager.createLease()
        |
-       |  1. Translate workspaceDir from gateway path to trusted host root
-       |  2. Reuse same scope only if profileId, workspaceDir, and
+       |  1. Translate workMountDir from gateway path to trusted hostWorkMountDir
+       |  2. Reuse same scope only if profileId, hostWorkMountDir, and
        |     agentWorkspaceDir match
        |  3. Probe existing VM; evict stale leases
        |  4. tcpPool.allocate() → slot 0 (port 19000)
@@ -154,11 +154,11 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
 
 Leases are keyed by `scopeKey` — typically `{channel}:{userId}`. If the same
 scope already has an active lease, it is reused only when `profileId`,
-`workspaceDir`, and `agentWorkspaceDir` also match. A mismatch is treated as a
-caller conflict, not as a new tool VM. Before reuse, the controller probes the
+`hostWorkMountDir`, and `agentWorkspaceDir` also match. A mismatch is treated as
+a caller conflict, not as a new tool VM. Before reuse, the controller probes the
 VM; dead leases are evicted and replaced. This means a user's tool VM persists
 across multiple tool calls within the same conversation without silently
-crossing workspace or profile boundaries.
+crossing work mount or profile boundaries.
 
 For `scopeKey` values shaped as `agent:<agentId>`, the controller first checks
 the zone's `agentToolVmProfiles[agentId]` mapping. If no agent-specific mapping
@@ -219,11 +219,16 @@ The `openclaw-agent-vm-plugin` package bridges OpenClaw's sandbox system to Gond
 The plugin provides:
 - **File bridge**: `mkdirp`, `readFile`, `writeFile`, `stat`, `remove`, `rename` — all via SSH into the tool VM
 - **Shell execution**: run arbitrary commands in the tool VM
-- **Workspace access**: tool VMs use `/work` for lease-local execution.
-  Lease requests must provide `workspaceDir` as an OpenClaw gateway path under
+- **Work mount access**: tool VMs use `/work` for lease-local execution.
+  Lease requests provide `workMountDir` as an OpenClaw gateway path under
   `/home/openclaw/.openclaw/state/sandboxes` or `/zone`.
-  The controller maps that guest path back to trusted host roots and verifies
-  the real path is inside either `stateDir/sandboxes` or `zoneFilesDir`.
+  The controller maps that gateway path to `hostWorkMountDir`, verifies the
+  real path is inside either `stateDir/sandboxes` or `zoneFilesDir`, and mounts
+  it into the Tool VM at `/work`.
+
+OpenClaw SDK compatibility note: OpenClaw currently names the selected sandbox
+path `workspaceDir`. The agent-vm plugin translates that field to
+`workMountDir` before calling the controller.
 
 ---
 

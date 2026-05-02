@@ -88,8 +88,8 @@ one native rootfs
   /work/tmp
   /work/cache
 
-many VFS mounts
-  /workspace  -> host repo/provider
+many VFS mounts (legacy example)
+  /legacy-workspace  -> host repo/provider
   /cache      -> host cache/provider
   /out        -> host output/provider
 ```

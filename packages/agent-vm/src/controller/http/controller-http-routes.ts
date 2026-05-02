@@ -9,9 +9,9 @@ import {
 import { LeaseScopeConflictError } from '../leases/lease-manager.js';
 import { parseAgentIdFromScopeKey } from '../leases/lease-scope.js';
 import {
-	LeaseWorkspaceValidationError,
-	resolveLeaseWorkspaceDir as resolveLeaseWorkspaceDirForZone,
-} from '../leases/lease-workspace-paths.js';
+	LeaseWorkMountValidationError,
+	resolveLeaseWorkMountDir as resolveLeaseWorkMountDirForZone,
+} from '../leases/lease-work-mount-paths.js';
 import {
 	type ControllerLeaseManager,
 	type ControllerRouteOperations,
@@ -43,14 +43,14 @@ function logAgentSandboxSeedResult(result: AgentSandboxSeedResult): void {
 				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': sandbox root '${result.sandboxRoot}' does not exist`,
 			);
 			return;
-		case 'workspace-missing':
+		case 'work-mount-missing':
 			writeControllerLeaseLog(
-				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': workspace '${result.workspaceDir}' does not exist`,
+				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': work mount '${result.hostWorkMountDir}' does not exist`,
 			);
 			return;
-		case 'workspace-outside-sandbox':
+		case 'work-mount-outside-sandbox':
 			writeControllerLeaseLog(
-				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': workspace '${result.workspaceDir}' is outside sandbox root '${result.sandboxRoot}'`,
+				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': work mount '${result.hostWorkMountDir}' is outside sandbox root '${result.sandboxRoot}'`,
 			);
 			return;
 		case 'no-seeds-configured':
@@ -75,9 +75,9 @@ export function createControllerApp(options: {
 	readonly zoneDefaultToolVmProfiles?: Record<string, string>;
 	readonly zoneIds?: ReadonlySet<string>;
 	readonly operations?: Partial<ControllerRouteOperations>;
-	readonly resolveLeaseWorkspaceDir?: (options: {
+	readonly resolveLeaseWorkMountDir: (options: {
 		readonly scopeKey: string;
-		readonly workspaceDir: string;
+		readonly workMountDir: string;
 		readonly zoneId: string;
 	}) => Promise<string>;
 }): Hono {
@@ -120,19 +120,17 @@ export function createControllerApp(options: {
 			if (!defaultToolVmProfile) {
 				return context.json({ error: `Unknown tool VM profile '${resolvedProfileId}'` }, 400);
 			}
-			const workspaceDir = options.resolveLeaseWorkspaceDir
-				? await options.resolveLeaseWorkspaceDir({
-						scopeKey: payload.scopeKey,
-						workspaceDir: payload.workspaceDir,
-						zoneId: payload.zoneId,
-					})
-				: payload.workspaceDir;
+			const hostWorkMountDir = await options.resolveLeaseWorkMountDir({
+				scopeKey: payload.scopeKey,
+				workMountDir: payload.workMountDir,
+				zoneId: payload.zoneId,
+			});
 			const lease = await options.leaseManager.createLease({
 				agentWorkspaceDir: payload.agentWorkspaceDir,
 				profile: defaultToolVmProfile,
 				profileId: resolvedProfileId,
 				scopeKey: payload.scopeKey,
-				workspaceDir,
+				hostWorkMountDir,
 				zoneId: payload.zoneId,
 			});
 			return context.json(await serializeLeaseForResponse(lease, readIdentityPem));
@@ -141,7 +139,7 @@ export function createControllerApp(options: {
 				{
 					error: error instanceof Error ? error.message : 'lease-creation-failed',
 				},
-				error instanceof LeaseWorkspaceValidationError
+				error instanceof LeaseWorkMountValidationError
 					? 400
 					: error instanceof LeaseScopeConflictError
 						? 409
@@ -236,22 +234,22 @@ export function createControllerService(options: {
 			),
 		),
 		...(options.operations ? { operations: options.operations } : {}),
-		resolveLeaseWorkspaceDir: async ({ scopeKey, workspaceDir, zoneId }) => {
+		resolveLeaseWorkMountDir: async ({ scopeKey, workMountDir, zoneId }) => {
 			const zone = zonesById.get(zoneId);
 			if (!zone) {
 				throw new Error(`Unknown zone '${zoneId}'`);
 			}
-			const resolvedWorkspaceDir = await resolveLeaseWorkspaceDirForZone({ workspaceDir, zone });
+			const hostWorkMountDir = await resolveLeaseWorkMountDirForZone({ workMountDir, zone });
 			if (options.secretResolver) {
 				const seedResult = await seedAgentSandboxWorkspace({
 					scopeKey,
 					secretResolver: options.secretResolver,
-					workspaceDir: resolvedWorkspaceDir,
+					hostWorkMountDir,
 					zone,
 				});
 				logAgentSandboxSeedResult(seedResult);
 			}
-			return resolvedWorkspaceDir;
+			return hostWorkMountDir;
 		},
 	});
 

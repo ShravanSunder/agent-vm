@@ -168,7 +168,7 @@ Allowed runtime auth path:
 3. The controller generates `runtimeInstructions` and the agent-facing
    `/agent-vm/agents.md` runtime index at task boot. Worker repo docs live at
    `/work/repos/AGENTS.md` with a `CLAUDE.md` symlink for Claude-compatible
-   discovery. OpenClaw Tool VMs mount the validated lease workspace at `/work`.
+   discovery. OpenClaw Tool VMs mount the validated lease work mount at `/work`.
 4. Gondolin runtime puts a placeholder in the VM env at boot; the proxy swaps it
    for the real token only on outbound calls to allowed hosts.
 

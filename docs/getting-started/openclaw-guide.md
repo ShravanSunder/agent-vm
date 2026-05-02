@@ -115,11 +115,11 @@ When the agent needs to run code, OpenClaw requests a tool VM lease from the con
 ```
   OpenClaw (inside gateway VM)
        |
-       | POST /lease { scopeKey, zoneId, workspaceDir }
+       | POST /lease { scopeKey, zoneId, workMountDir }
        v
   Controller
        |
-       | Allocates TCP slot, boots tool VM
+       | Resolves hostWorkMountDir, allocates TCP slot, boots tool VM
        v
   Tool VM (Zone 3 — untrusted)
        | /work mounted, no secrets, no network

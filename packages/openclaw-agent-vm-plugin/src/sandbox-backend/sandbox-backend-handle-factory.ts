@@ -66,11 +66,14 @@ export function createGondolinSandboxBackendFactory(
 				scopeCache.delete(cacheKey);
 			}
 		}
+		// OpenClaw SDK still names the selected sandbox path `workspaceDir`.
+		// agent-vm's controller calls the same value `workMountDir` because it
+		// backs the Tool VM /work mount.
 		const leaseResponse = await leaseClient.requestLease({
 			agentWorkspaceDir: params.agentWorkspaceDir,
 			profileId,
 			scopeKey: params.scopeKey,
-			workspaceDir: params.workspaceDir,
+			workMountDir: params.workspaceDir,
 			zoneId: options.zoneId,
 		});
 		if (!isGondolinLeaseResponse(leaseResponse)) {

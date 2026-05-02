@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { LeaseScopeConflictError, type Lease } from '../leases/lease-manager.js';
-import { LeaseWorkspaceValidationError } from '../leases/lease-workspace-paths.js';
+import { LeaseWorkMountValidationError } from '../leases/lease-work-mount-paths.js';
 import type { PreparedWorkerTask, WorkerTaskResult } from '../worker-task-runner.js';
 import {
 	ControllerZoneNotFoundError,
@@ -20,6 +20,18 @@ import {
 	ControllerTaskNotReadyError,
 } from './controller-http-route-support.js';
 import { createControllerApp } from './controller-http-routes.js';
+
+type ControllerAppOptions = Parameters<typeof createControllerApp>[0];
+
+function createControllerAppForTest(
+	options: Omit<ControllerAppOptions, 'resolveLeaseWorkMountDir'> &
+		Partial<Pick<ControllerAppOptions, 'resolveLeaseWorkMountDir'>>,
+): ReturnType<typeof createControllerApp> {
+	return createControllerApp({
+		resolveLeaseWorkMountDir: async ({ workMountDir }) => workMountDir,
+		...options,
+	});
+}
 
 function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 	return {
@@ -48,7 +60,7 @@ function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 			setIngressRoutes: vi.fn(),
 			getVmInstance: vi.fn(),
 		},
-		workspaceDir: '/host/sandbox-work',
+		hostWorkMountDir: '/host/sandbox-work',
 		zoneId: 'shravan',
 	};
 }
@@ -176,7 +188,7 @@ describe('createControllerApp', () => {
 				setIngressRoutes: vi.fn(),
 				getVmInstance: vi.fn(),
 			},
-			workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
+			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
 			zoneId: 'shravan',
 		};
 		const createLease = vi.fn(async () => lease);
@@ -186,7 +198,7 @@ describe('createControllerApp', () => {
 			lease,
 		}));
 		const releaseLease = vi.fn(async () => {});
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -209,7 +221,7 @@ describe('createControllerApp', () => {
 				agentWorkspaceDir: '/home/openclaw/work',
 				profileId: 'standard',
 				scopeKey: 'agent:main:session-abc',
-				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
 				zoneId: 'shravan',
 			}),
 			headers: {
@@ -237,10 +249,83 @@ describe('createControllerApp', () => {
 		expect(releaseLease).toHaveBeenCalledWith('lease-123');
 	});
 
-	it('normalizes lease workspaceDir before creating the lease', async () => {
+	it('rejects the old workspaceDir lease field', async () => {
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => createLeaseStub('lease-legacy', 0)),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const response = await app.request('/lease', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				profileId: 'standard',
+				scopeKey: 'agent:shravan',
+				workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/agent-shravan/work',
+				zoneId: 'shravan',
+			}),
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toMatchObject({
+			error: 'invalid-lease-request',
+		});
+	});
+
+	it('rejects requests that include legacy workspaceDir even with workMountDir', async () => {
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => createLeaseStub('lease-mixed', 0)),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const response = await app.request('/lease', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				profileId: 'standard',
+				scopeKey: 'agent:shravan',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent-shravan/work',
+				workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/legacy/work',
+				zoneId: 'shravan',
+			}),
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toMatchObject({
+			error: 'invalid-lease-request',
+		});
+	});
+
+	it('normalizes lease workMountDir before creating the lease', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-normalized', 0));
-		const resolveLeaseWorkspaceDir = vi.fn(async () => '/host/state/shravan/sandboxes/agent/work');
-		const app = createControllerApp({
+		const resolveLeaseWorkMountDir = vi.fn(async () => '/host/state/shravan/sandboxes/agent/work');
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -256,7 +341,7 @@ describe('createControllerApp', () => {
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
 			},
-			resolveLeaseWorkspaceDir,
+			resolveLeaseWorkMountDir,
 		});
 
 		const createResponse = await app.request('/lease', {
@@ -264,7 +349,7 @@ describe('createControllerApp', () => {
 				agentWorkspaceDir: '/home/openclaw/work',
 				profileId: 'standard',
 				scopeKey: 'agent:main',
-				workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
 				zoneId: 'shravan',
 			}),
 			headers: {
@@ -274,21 +359,21 @@ describe('createControllerApp', () => {
 		});
 
 		expect(createResponse.status).toBe(200);
-		expect(resolveLeaseWorkspaceDir).toHaveBeenCalledWith({
+		expect(resolveLeaseWorkMountDir).toHaveBeenCalledWith({
 			scopeKey: 'agent:main',
-			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
+			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
 			zoneId: 'shravan',
 		});
 		expect(createLease).toHaveBeenCalledWith(
 			expect.objectContaining({
-				workspaceDir: '/host/state/shravan/sandboxes/agent/work',
+				hostWorkMountDir: '/host/state/shravan/sandboxes/agent/work',
 			}),
 		);
 	});
 
-	it('rejects unsafe lease workspaceDir before creating the lease', async () => {
+	it('rejects unsafe lease workMountDir before creating the lease', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-unsafe', 0));
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -303,8 +388,8 @@ describe('createControllerApp', () => {
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
 			},
-			resolveLeaseWorkspaceDir: vi.fn(async () => {
-				throw new LeaseWorkspaceValidationError('workspaceDir outside allowed roots');
+			resolveLeaseWorkMountDir: vi.fn(async () => {
+				throw new LeaseWorkMountValidationError('workMountDir outside allowed roots');
 			}),
 		});
 
@@ -313,7 +398,7 @@ describe('createControllerApp', () => {
 				agentWorkspaceDir: '/home/openclaw/work',
 				profileId: 'standard',
 				scopeKey: 'agent:main',
-				workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/../../../etc',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/../../../etc',
 				zoneId: 'shravan',
 			}),
 			headers: {
@@ -324,13 +409,13 @@ describe('createControllerApp', () => {
 
 		expect(createResponse.status).toBe(400);
 		await expect(createResponse.json()).resolves.toEqual({
-			error: 'workspaceDir outside allowed roots',
+			error: 'workMountDir outside allowed roots',
 		});
 		expect(createLease).not.toHaveBeenCalled();
 	});
 
 	it('returns 503 when the tcp pool is exhausted', async () => {
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -354,7 +439,7 @@ describe('createControllerApp', () => {
 				agentWorkspaceDir: '/home/openclaw/work',
 				profileId: 'standard',
 				scopeKey: 'agent:main:session-abc',
-				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
 				zoneId: 'shravan',
 			}),
 			headers: {
@@ -370,7 +455,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('returns 409 when lease scope conflicts with an existing live lease', async () => {
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -394,7 +479,7 @@ describe('createControllerApp', () => {
 				agentWorkspaceDir: '/home/openclaw/work',
 				profileId: 'standard',
 				scopeKey: 'agent:main',
-				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
 				zoneId: 'shravan',
 			}),
 			headers: {
@@ -411,7 +496,7 @@ describe('createControllerApp', () => {
 
 	it('uses the zone defaultToolVmProfile instead of trusting the requested profileId', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-gpu', 0));
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			leaseManager: {
 				createLease,
 				keepLeaseAlive: vi.fn(),
@@ -437,7 +522,7 @@ describe('createControllerApp', () => {
 				agentWorkspaceDir: '/home/openclaw/work',
 				profileId: 'standard',
 				scopeKey: 'agent:main:session-abc',
-				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
 				zoneId: 'shravan',
 			}),
 			headers: {
@@ -462,7 +547,7 @@ describe('createControllerApp', () => {
 
 	it('uses an agent-specific tool VM profile for agent-scoped leases with sub-scope parts', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-agent-profile', 0));
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			leaseManager: {
 				createLease,
 				keepLeaseAlive: vi.fn(),
@@ -497,7 +582,7 @@ describe('createControllerApp', () => {
 				agentWorkspaceDir: '/zone/agents/shravan',
 				profileId: 'standard',
 				scopeKey: 'agent:shravan:discord:channel:123',
-				workspaceDir: '/zone/agents/shravan',
+				workMountDir: '/zone/agents/shravan',
 				zoneId: 'shravan',
 			}),
 			headers: {
@@ -522,7 +607,7 @@ describe('createControllerApp', () => {
 
 	it('rejects lease creation for an unknown zone', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-unknown-zone', 0));
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			leaseManager: {
 				createLease,
 				keepLeaseAlive: vi.fn(),
@@ -547,7 +632,7 @@ describe('createControllerApp', () => {
 				agentWorkspaceDir: '/home/openclaw/work',
 				profileId: 'standard',
 				scopeKey: 'agent:main:session-abc',
-				workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
 				zoneId: 'bogus-zone',
 			}),
 			headers: {
@@ -597,7 +682,7 @@ describe('createControllerApp', () => {
 			ok: true,
 			zoneId: 'shravan',
 		}));
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -663,7 +748,7 @@ describe('createControllerApp', () => {
 				"Task 'task-booting' in zone 'worker-zone' is still preparing and cannot be destroyed safely yet.",
 			);
 		});
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -714,7 +799,7 @@ describe('createControllerApp', () => {
 				zoneId: 'worker-zone',
 			});
 		});
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -758,7 +843,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('returns 400 for invalid lease create payload', async () => {
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -791,7 +876,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('returns 404 when fetching a non-existent lease', async () => {
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -824,7 +909,7 @@ describe('createControllerApp', () => {
 			throw new Error('keepalive should not be used for peek');
 		});
 		const peekLease = vi.fn(() => ({ kind: 'snapshot' as const, lease }));
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -861,7 +946,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('returns 404 when peeking a non-existent lease', async () => {
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -890,7 +975,7 @@ describe('createControllerApp', () => {
 
 	it('lists active leases via GET /leases', async () => {
 		const listLeases = vi.fn(() => [createLeaseStub('lease-1', 0), createLeaseStub('lease-2', 1)]);
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -923,7 +1008,7 @@ describe('createControllerApp', () => {
 
 	it('gracefully stops the controller via POST /stop', async () => {
 		const stopController = vi.fn(async () => ({ ok: true }));
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -957,7 +1042,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('returns 405 for operations unsupported by the target zone type', async () => {
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -1001,7 +1086,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('returns 404 when zone status is requested for an unknown zone', async () => {
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -1049,7 +1134,7 @@ describe('createControllerApp', () => {
 				},
 			],
 		}));
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -1112,7 +1197,7 @@ describe('createControllerApp', () => {
 		const pullDefaultForTask = vi.fn(async () => {
 			throw new PullDefaultValidationError('Repo is not registered for active task.');
 		});
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -1158,7 +1243,7 @@ describe('createControllerApp', () => {
 		const pullDefaultForTask = vi.fn(async () => {
 			throw new Error('boom https://x-access-token:secret-token@github.com/acme/widgets.git');
 		});
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -1202,7 +1287,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('returns schema details for invalid destroy requests', async () => {
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -1242,7 +1327,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('returns schema details for invalid execute-command requests', async () => {
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -1283,7 +1368,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('returns 400 for malformed JSON bodies on controller operation routes', async () => {
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
 					cpus: 1,
@@ -1349,7 +1434,7 @@ describe('createControllerApp', () => {
 					resolveExecute = () => resolve(createWorkerTaskResultStub('worker-task-1'));
 				}),
 		);
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			leaseManager: {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
@@ -1425,7 +1510,7 @@ describe('createControllerApp', () => {
 		const executeWorkerTask = vi.fn(async () => {
 			throw new Error('vm-boot-failed');
 		});
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			leaseManager: {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
@@ -1502,7 +1587,7 @@ describe('createControllerApp', () => {
 		const executeWorkerTask = vi.fn(async () => {
 			throw new Error('vm-boot-failed');
 		});
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			leaseManager: {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
@@ -1558,7 +1643,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('rejects worker task requests missing requestTaskId', async () => {
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			leaseManager: {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
@@ -1606,7 +1691,7 @@ describe('createControllerApp', () => {
 	});
 
 	it('returns 409 when the worker runtime is at capacity', async () => {
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			leaseManager: {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
@@ -1663,7 +1748,7 @@ describe('createControllerApp', () => {
 			currentCycle: 1,
 			currentMaxCycles: 2,
 		}));
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			leaseManager: {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
@@ -1704,7 +1789,7 @@ describe('createControllerApp', () => {
 
 	it('returns 404 when task state is unknown', async () => {
 		const getTaskState = vi.fn(async () => null);
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			leaseManager: {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
@@ -1739,7 +1824,7 @@ describe('createControllerApp', () => {
 
 	it('proxies close through the configured close operation', async () => {
 		const closeTaskForZone = vi.fn(async () => ({ status: 'closed' as const }));
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			leaseManager: {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
@@ -1779,7 +1864,7 @@ describe('createControllerApp', () => {
 		const closeTaskForZone = vi.fn(async () => {
 			throw new ControllerTaskNotReadyError('worker ingress is not ready');
 		});
-		const app = createControllerApp({
+		const app = createControllerAppForTest({
 			leaseManager: {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');

@@ -35,7 +35,7 @@ export interface LeaseClient {
 		readonly agentWorkspaceDir: string;
 		readonly profileId: string;
 		readonly scopeKey: string;
-		readonly workspaceDir: string;
+		readonly workMountDir: string;
 		readonly zoneId: string;
 	}): Promise<GondolinLeaseResponse>;
 }
@@ -137,7 +137,13 @@ export function createLeaseClient(options: {
 		},
 		requestLease: async (request): Promise<GondolinLeaseResponse> => {
 			const response = await fetchImpl(`${baseUrl}/lease`, {
-				body: JSON.stringify(request),
+				body: JSON.stringify({
+					agentWorkspaceDir: request.agentWorkspaceDir,
+					profileId: request.profileId,
+					scopeKey: request.scopeKey,
+					workMountDir: request.workMountDir,
+					zoneId: request.zoneId,
+				}),
 				headers: {
 					'content-type': 'application/json',
 				},

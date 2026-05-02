@@ -104,6 +104,16 @@ Worker gateways do not use `zoneFilesDir`. Their repo files live in VM-local
 Do not call this `workspaceDir`. Worker execution files live under VM-local
 `/work/repos/<repoId>` and are not backed by this host path.
 
+`workMountDir` is not a `system.json` field. It is selected dynamically by
+OpenClaw when a tool lease is requested. Static config defines the allowed
+roots: the OpenClaw state sandbox root and `zoneFilesDir`.
+
+```text
+Tool VM guest path: /work
+OpenClaw gateway zone files: /zone
+OpenClaw state sandboxes: /home/openclaw/.openclaw/state/sandboxes
+```
+
 For the storage boundary model, see
 [storage-model.md](../../architecture/storage-model.md).
 

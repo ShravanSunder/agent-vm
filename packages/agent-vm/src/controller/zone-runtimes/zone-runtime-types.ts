@@ -76,7 +76,7 @@ export interface SharedZoneRuntimeDependencies {
 	readonly createManagedToolVm: (options: {
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;
-		readonly workspaceDir: string;
+		readonly hostWorkMountDir: string;
 		readonly zoneId: string;
 	}) => Promise<ManagedVm>;
 	readonly deleteGatewayRuntimeRecord: (stateDirectory: string) => Promise<void>;

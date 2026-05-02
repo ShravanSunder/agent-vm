@@ -11,7 +11,7 @@ const OPENCLAW_ZONE_FILES_VM_ROOT = '/zone';
 
 type ZoneConfig = SystemConfig['zones'][number];
 
-export class LeaseWorkspaceValidationError extends Error {}
+export class LeaseWorkMountValidationError extends Error {}
 
 function pathContainsParentTraversal(inputPath: string): boolean {
 	return inputPath.split(/[\\/]+/u).includes('..');
@@ -25,16 +25,16 @@ function isPathWithin(candidatePath: string, rootPath: string): boolean {
 function mapGuestPathToHostPath(options: {
 	readonly guestRoot: string;
 	readonly hostRoot: string;
-	readonly workspaceDir: string;
+	readonly workMountDir: string;
 }): string | null {
-	const normalizedWorkspaceDir = path.posix.normalize(options.workspaceDir);
+	const normalizedWorkMountDir = path.posix.normalize(options.workMountDir);
 	if (
-		normalizedWorkspaceDir !== options.guestRoot &&
-		!normalizedWorkspaceDir.startsWith(`${options.guestRoot}/`)
+		normalizedWorkMountDir !== options.guestRoot &&
+		!normalizedWorkMountDir.startsWith(`${options.guestRoot}/`)
 	) {
 		return null;
 	}
-	const relativePath = path.posix.relative(options.guestRoot, normalizedWorkspaceDir);
+	const relativePath = path.posix.relative(options.guestRoot, normalizedWorkMountDir);
 	return path.join(options.hostRoot, relativePath);
 }
 
@@ -45,8 +45,8 @@ async function realpathIfDirectory(directoryPath: string): Promise<string> {
 		const code =
 			error && typeof error === 'object' && 'code' in error ? String(error.code) : 'UNKNOWN';
 		const message = error instanceof Error ? error.message : String(error);
-		throw new LeaseWorkspaceValidationError(
-			`Lease workspace path '${directoryPath}' failed directory realpath check (${code}): ${message}`,
+		throw new LeaseWorkMountValidationError(
+			`Lease work mount path '${directoryPath}' failed directory realpath check (${code}): ${message}`,
 			{ cause: error },
 		);
 	}
@@ -63,18 +63,18 @@ async function realpathAllowedRoot(directoryPath: string): Promise<string | null
 	}
 }
 
-async function validateResolvedLeaseWorkspaceDir(options: {
-	readonly workspaceDir: string;
+async function validateResolvedLeaseWorkMountDir(options: {
+	readonly hostWorkMountDir: string;
 	readonly zone: ZoneConfig;
 }): Promise<string> {
 	if (options.zone.gateway.type !== 'openclaw') {
-		throw new LeaseWorkspaceValidationError(
+		throw new LeaseWorkMountValidationError(
 			`Zone '${options.zone.id}' does not support OpenClaw tool VM leases.`,
 		);
 	}
 	const hostSandboxRoot = path.join(options.zone.gateway.stateDir, 'sandboxes');
 	const [realCandidatePath, realSandboxRoot, realZoneFilesRoot] = await Promise.all([
-		realpathIfDirectory(options.workspaceDir),
+		realpathIfDirectory(options.hostWorkMountDir),
 		realpathAllowedRoot(hostSandboxRoot),
 		realpathAllowedRoot(options.zone.gateway.zoneFilesDir),
 	]);
@@ -82,74 +82,74 @@ async function validateResolvedLeaseWorkspaceDir(options: {
 		(root): root is string => root !== null,
 	);
 	if (!allowedRoots.some((root) => isPathWithin(realCandidatePath, root))) {
-		throw new LeaseWorkspaceValidationError(
-			`Lease workspaceDir '${options.workspaceDir}' resolves outside allowed OpenClaw tool workspace roots for zone '${options.zone.id}'.`,
+		throw new LeaseWorkMountValidationError(
+			`Lease hostWorkMountDir '${options.hostWorkMountDir}' resolves outside allowed OpenClaw tool work mount roots for zone '${options.zone.id}'.`,
 		);
 	}
 	return realCandidatePath;
 }
 
-export async function validateResolvedToolWorkspaceDir(options: {
-	readonly workspaceDir: string;
+export async function validateResolvedToolWorkMountDir(options: {
+	readonly hostWorkMountDir: string;
 	readonly zone: ZoneConfig;
 }): Promise<string> {
 	if (options.zone.gateway.type !== 'openclaw') {
-		throw new LeaseWorkspaceValidationError(
+		throw new LeaseWorkMountValidationError(
 			`Zone '${options.zone.id}' does not support OpenClaw tool VM leases.`,
 		);
 	}
-	if (!path.isAbsolute(options.workspaceDir)) {
-		throw new LeaseWorkspaceValidationError(
-			`Lease workspaceDir '${options.workspaceDir}' must be absolute.`,
+	if (!path.isAbsolute(options.hostWorkMountDir)) {
+		throw new LeaseWorkMountValidationError(
+			`Lease hostWorkMountDir '${options.hostWorkMountDir}' must be absolute.`,
 		);
 	}
-	if (pathContainsParentTraversal(options.workspaceDir)) {
-		throw new LeaseWorkspaceValidationError(
-			`Lease workspaceDir '${options.workspaceDir}' must not contain '..' path segments.`,
+	if (pathContainsParentTraversal(options.hostWorkMountDir)) {
+		throw new LeaseWorkMountValidationError(
+			`Lease hostWorkMountDir '${options.hostWorkMountDir}' must not contain '..' path segments.`,
 		);
 	}
-	return await validateResolvedLeaseWorkspaceDir(options);
+	return await validateResolvedLeaseWorkMountDir(options);
 }
 
-export async function resolveLeaseWorkspaceDir(options: {
-	readonly workspaceDir: string;
+export async function resolveLeaseWorkMountDir(options: {
+	readonly workMountDir: string;
 	readonly zone: ZoneConfig;
 }): Promise<string> {
 	if (options.zone.gateway.type !== 'openclaw') {
-		throw new LeaseWorkspaceValidationError(
+		throw new LeaseWorkMountValidationError(
 			`Zone '${options.zone.id}' does not support OpenClaw tool VM leases.`,
 		);
 	}
-	if (!path.isAbsolute(options.workspaceDir)) {
-		throw new LeaseWorkspaceValidationError(
-			`Lease workspaceDir '${options.workspaceDir}' must be absolute.`,
+	if (!path.isAbsolute(options.workMountDir)) {
+		throw new LeaseWorkMountValidationError(
+			`Lease workMountDir '${options.workMountDir}' must be absolute.`,
 		);
 	}
-	if (pathContainsParentTraversal(options.workspaceDir)) {
-		throw new LeaseWorkspaceValidationError(
-			`Lease workspaceDir '${options.workspaceDir}' must not contain '..' path segments.`,
+	if (pathContainsParentTraversal(options.workMountDir)) {
+		throw new LeaseWorkMountValidationError(
+			`Lease workMountDir '${options.workMountDir}' must not contain '..' path segments.`,
 		);
 	}
 
 	const hostSandboxRoot = path.join(options.zone.gateway.stateDir, 'sandboxes');
-	const candidatePath =
+	const hostWorkMountDir =
 		mapGuestPathToHostPath({
 			guestRoot: OPENCLAW_STATE_SANDBOXES_VM_ROOT,
 			hostRoot: hostSandboxRoot,
-			workspaceDir: options.workspaceDir,
+			workMountDir: options.workMountDir,
 		}) ??
 		mapGuestPathToHostPath({
 			guestRoot: OPENCLAW_ZONE_FILES_VM_ROOT,
 			hostRoot: options.zone.gateway.zoneFilesDir,
-			workspaceDir: options.workspaceDir,
+			workMountDir: options.workMountDir,
 		});
-	if (!candidatePath) {
-		throw new LeaseWorkspaceValidationError(
-			`Lease workspaceDir '${options.workspaceDir}' must be under ${OPENCLAW_STATE_SANDBOXES_VM_ROOT} or ${OPENCLAW_ZONE_FILES_VM_ROOT}.`,
+	if (!hostWorkMountDir) {
+		throw new LeaseWorkMountValidationError(
+			`Lease workMountDir '${options.workMountDir}' must be under ${OPENCLAW_STATE_SANDBOXES_VM_ROOT} or ${OPENCLAW_ZONE_FILES_VM_ROOT}.`,
 		);
 	}
-	return await validateResolvedLeaseWorkspaceDir({
-		workspaceDir: candidatePath,
+	return await validateResolvedLeaseWorkMountDir({
+		hostWorkMountDir,
 		zone: options.zone,
 	});
 }

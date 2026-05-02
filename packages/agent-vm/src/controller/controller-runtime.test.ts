@@ -918,7 +918,7 @@ describe('startControllerRuntime', () => {
 					agentWorkspaceDir: '/zone',
 					profileId: 'standard',
 					scopeKey: 'close-runtime',
-					workspaceDir: '/zone/sandbox-work',
+					workMountDir: '/zone/sandbox-work',
 					zoneId: 'shravan',
 				}),
 				headers: {

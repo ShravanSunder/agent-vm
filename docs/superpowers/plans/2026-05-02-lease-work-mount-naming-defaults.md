@@ -82,6 +82,7 @@ packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-fac
   params.workspaceDir to controller workMountDir.
 
 docs/architecture/openclaw-gateway.md
+docs/architecture/storage-matrix.md
 docs/subsystems/controller.md
 docs/reference/configuration/system-json.md
 docs/getting-started/openclaw-guide.md
@@ -103,6 +104,8 @@ docs/reference/gondolin/vfs-rootfs-performance.md
 - Modify: `packages/agent-vm/src/controller/http/controller-request-schemas.ts`
 - Modify: `packages/agent-vm/src/controller/http/controller-http-routes.test.ts`
 - Modify: `packages/agent-vm/src/controller/http/controller-http-routes.ts`
+- Modify: `packages/agent-vm/src/integration-tests/live-api-smoke.integration.test.ts`
+- Modify: `packages/agent-vm/src/integration-tests/live-sandbox-e2e.integration.test.ts`
 
 Hard-cutover request schemas must reject legacy fields. `z.object()` strips
 unknown keys by default, which would allow a request containing both the new
@@ -210,13 +213,11 @@ export const controllerLeaseCreateRequestSchema = z.strictObject({
 In `controller-http-routes.ts`, replace the route-local `workspaceDir` variable with `hostWorkMountDir`:
 
 ```ts
-const hostWorkMountDir = options.resolveLeaseWorkMountDir
-	? await options.resolveLeaseWorkMountDir({
-			scopeKey: payload.scopeKey,
-			workMountDir: payload.workMountDir,
-			zoneId: payload.zoneId,
-		})
-	: payload.workMountDir;
+const hostWorkMountDir = await options.resolveLeaseWorkMountDir({
+	scopeKey: payload.scopeKey,
+	workMountDir: payload.workMountDir,
+	zoneId: payload.zoneId,
+});
 ```
 
 Pass the translated path to the lease manager:
@@ -235,27 +236,75 @@ const lease = await options.leaseManager.createLease({
 Update the `createControllerApp` dependency type:
 
 ```ts
-readonly resolveLeaseWorkMountDir?: (options: {
+readonly resolveLeaseWorkMountDir: (options: {
 	readonly scopeKey: string;
 	readonly workMountDir: string;
 	readonly zoneId: string;
 }) => Promise<string>;
 ```
 
-- [ ] **Step 5: Run targeted route tests**
+Do not keep a production fallback from `workMountDir` to `hostWorkMountDir`.
+The `/lease` route is a security boundary: a gateway VM path must be resolved
+through the allowed-root mapper before it can become the host path passed to
+`LeaseManager.createLease()`. Unit tests that do not exercise path mapping may
+pass an explicit identity resolver:
+
+```ts
+resolveLeaseWorkMountDir: async ({ workMountDir }) => workMountDir,
+```
+
+but real controller startup must pass the zone-aware resolver.
+
+- [ ] **Step 5: Update integration and smoke tests**
+
+Update lease request payloads in:
+
+```text
+packages/agent-vm/src/integration-tests/live-api-smoke.integration.test.ts
+packages/agent-vm/src/integration-tests/live-sandbox-e2e.integration.test.ts
+```
+
+Replace:
+
+```ts
+workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
+```
+
+with:
+
+```ts
+workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
+```
+
+For shell-embedded JSON payloads, replace:
+
+```json
+{"zoneId":"shravan","scopeKey":"test","profileId":"standard","workspaceDir":"/tmp","agentWorkspaceDir":"/tmp"}
+```
+
+with:
+
+```json
+{"zoneId":"shravan","scopeKey":"test","profileId":"standard","workMountDir":"/tmp","agentWorkspaceDir":"/tmp"}
+```
+
+- [ ] **Step 6: Run targeted route and smoke compile tests**
 
 Run:
 
 ```bash
-pnpm vitest run packages/agent-vm/src/controller/http/controller-http-routes.test.ts
+pnpm vitest run packages/agent-vm/src/controller/http/controller-http-routes.test.ts packages/agent-vm/src/integration-tests/live-api-smoke.integration.test.ts
 ```
 
-Expected: all tests in the file pass.
+Expected: route tests and the lightweight live API smoke test pass. The
+QEMU-backed `live-sandbox-e2e.integration.test.ts` should compile through
+`pnpm typecheck` and can be run manually when the live sandbox prerequisites
+are available.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add packages/agent-vm/src/controller/http/controller-request-schemas.ts packages/agent-vm/src/controller/http/controller-http-routes.ts packages/agent-vm/src/controller/http/controller-http-routes.test.ts
+git add packages/agent-vm/src/controller/http/controller-request-schemas.ts packages/agent-vm/src/controller/http/controller-http-routes.ts packages/agent-vm/src/controller/http/controller-http-routes.test.ts packages/agent-vm/src/integration-tests/live-api-smoke.integration.test.ts packages/agent-vm/src/integration-tests/live-sandbox-e2e.integration.test.ts
 git commit -m "refactor: rename lease request work mount field" -m "Replace the controller lease request field workspaceDir with workMountDir so the API names the directory that backs Tool VM /work instead of implying a guest /workspace path." -m "Co-authored-by: Codex <noreply@openai.com>"
 ```
 
@@ -672,6 +721,7 @@ git commit -m "refactor: clarify sandbox seeding work mount paths" -m "Rename sa
 - Modify: `packages/agent-vm/src/cli/init-command.test.ts`
 - Modify: `docs/reference/configuration/system-json.md`
 - Modify: `docs/architecture/storage-model.md`
+- Modify: `docs/architecture/storage-matrix.md`
 - Modify: `docs/architecture/openclaw-gateway.md`
 - Modify: `docs/subsystems/controller.md`
 - Modify: `docs/getting-started/openclaw-guide.md`
@@ -754,7 +804,8 @@ OpenClaw state sandboxes: /home/openclaw/.openclaw/state/sandboxes
 
 - [ ] **Step 5: Update architecture docs**
 
-In `docs/architecture/openclaw-gateway.md` and `docs/subsystems/controller.md`, replace:
+In `docs/architecture/openclaw-gateway.md`, `docs/subsystems/controller.md`,
+and `docs/architecture/storage-matrix.md`, replace:
 
 ```text
 POST /lease { zoneId, scopeKey, profileId, agentWorkspaceDir, workspaceDir }
@@ -804,7 +855,7 @@ Expected: pass.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add packages/agent-vm/src/cli/init-command.ts packages/agent-vm/src/cli/init-command.test.ts docs/reference/configuration/system-json.md docs/architecture/storage-model.md docs/architecture/openclaw-gateway.md docs/subsystems/controller.md docs/getting-started/openclaw-guide.md docs/reference/gondolin/vfs-rootfs-performance.md AGENTS.md CLAUDE.md
+git add packages/agent-vm/src/cli/init-command.ts packages/agent-vm/src/cli/init-command.test.ts docs/reference/configuration/system-json.md docs/architecture/storage-model.md docs/architecture/storage-matrix.md docs/architecture/openclaw-gateway.md docs/subsystems/controller.md docs/getting-started/openclaw-guide.md docs/reference/gondolin/vfs-rootfs-performance.md AGENTS.md CLAUDE.md
 git commit -m "docs: explain tool work mount defaults" -m "Update generated defaults and docs to describe workMountDir as the lease-selected backing directory for Tool VM /work, while keeping /workspace retired." -m "Co-authored-by: Codex <noreply@openai.com>"
 ```
 

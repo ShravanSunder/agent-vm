@@ -4,13 +4,14 @@ import { createLeaseClient } from './controller-lease-client.js';
 
 describe('createLeaseClient', () => {
 	it('requests, keeps alive, peeks, and releases leases through the controller API', async () => {
-		const requests: { method: string; url: string }[] = [];
+		const requests: { body: string | undefined; method: string; url: string }[] = [];
 		const leaseClient = createLeaseClient({
 			controllerUrl: 'http://controller.vm.host:18800',
 			fetchImpl: async (input, init) => {
 				const url =
 					typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
 				requests.push({
+					body: typeof init?.body === 'string' ? init.body : undefined,
 					method: init?.method ?? 'GET',
 					url,
 				});
@@ -52,7 +53,7 @@ describe('createLeaseClient', () => {
 			agentWorkspaceDir: '/home/openclaw/work',
 			profileId: 'standard',
 			scopeKey: 'agent:main:session-abc',
-			workspaceDir: '/home/openclaw/.openclaw/sandboxes/work',
+			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 			zoneId: 'shravan',
 		});
 		await leaseClient.keepLeaseAlive('lease-123');
@@ -60,10 +61,28 @@ describe('createLeaseClient', () => {
 		await leaseClient.releaseLease('lease-123');
 
 		expect(requests).toEqual([
-			{ method: 'POST', url: 'http://controller.vm.host:18800/lease' },
-			{ method: 'GET', url: 'http://controller.vm.host:18800/lease/lease-123' },
-			{ method: 'GET', url: 'http://controller.vm.host:18800/lease/lease-123/peek' },
-			{ method: 'DELETE', url: 'http://controller.vm.host:18800/lease/lease-123' },
+			{
+				body: JSON.stringify({
+					agentWorkspaceDir: '/home/openclaw/work',
+					profileId: 'standard',
+					scopeKey: 'agent:main:session-abc',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
+					zoneId: 'shravan',
+				}),
+				method: 'POST',
+				url: 'http://controller.vm.host:18800/lease',
+			},
+			{ body: undefined, method: 'GET', url: 'http://controller.vm.host:18800/lease/lease-123' },
+			{
+				body: undefined,
+				method: 'GET',
+				url: 'http://controller.vm.host:18800/lease/lease-123/peek',
+			},
+			{
+				body: undefined,
+				method: 'DELETE',
+				url: 'http://controller.vm.host:18800/lease/lease-123',
+			},
 		]);
 	});
 
@@ -82,7 +101,7 @@ describe('createLeaseClient', () => {
 				agentWorkspaceDir: '/work',
 				profileId: 'standard',
 				scopeKey: 'test',
-				workspaceDir: '/work',
+				workMountDir: '/work',
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow('Controller returned an invalid lease response');
@@ -112,7 +131,7 @@ describe('createLeaseClient', () => {
 			agentWorkspaceDir: '/work',
 			profileId: 'standard',
 			scopeKey: 'test',
-			workspaceDir: '/work',
+			workMountDir: '/work',
 			zoneId: 'shravan',
 		});
 

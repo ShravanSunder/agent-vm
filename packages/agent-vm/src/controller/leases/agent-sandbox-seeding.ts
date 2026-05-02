@@ -40,22 +40,23 @@ export type AgentSandboxSeedResult =
 	  }
 	| {
 			readonly agentId: string;
-			readonly kind: 'workspace-missing';
+			readonly kind: 'work-mount-missing';
 			readonly scopeKey: string;
-			readonly workspaceDir: string;
+			readonly hostWorkMountDir: string;
 			readonly zoneId: string;
 	  }
 	| {
 			readonly agentId: string;
-			readonly kind: 'workspace-outside-sandbox';
+			readonly kind: 'work-mount-outside-sandbox';
 			readonly sandboxRoot: string;
 			readonly scopeKey: string;
-			readonly workspaceDir: string;
+			readonly hostWorkMountDir: string;
 			readonly zoneId: string;
 	  }
 	| {
 			readonly agentId: string;
 			readonly alreadyExisted: number;
+			readonly hostWorkMountDir: string;
 			readonly kind: 'seeded';
 			readonly scopeKey: string;
 			readonly written: number;
@@ -87,13 +88,13 @@ async function writeSeedFileIfAbsent(options: {
 	readonly content: string;
 	readonly mode: number;
 	readonly targetPath: string;
-	readonly workspaceDir: string;
+	readonly hostWorkMountDir: string;
 }): Promise<'already-existed' | 'written'> {
 	let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
 	try {
 		const targetParentPath = await ensureSeedParentDirectoryInsideWorkspace({
 			targetPath: options.targetPath,
-			workspaceDir: options.workspaceDir,
+			hostWorkMountDir: options.hostWorkMountDir,
 		});
 		const safeTargetPath = path.join(targetParentPath, path.basename(options.targetPath));
 		fileHandle = await open(safeTargetPath, 'wx', options.mode);
@@ -115,20 +116,20 @@ async function writeSeedFileIfAbsent(options: {
 
 async function ensureSeedParentDirectoryInsideWorkspace(options: {
 	readonly targetPath: string;
-	readonly workspaceDir: string;
+	readonly hostWorkMountDir: string;
 }): Promise<string> {
 	const targetParentPath = path.dirname(options.targetPath);
-	const relativeParentPath = path.relative(options.workspaceDir, targetParentPath);
+	const relativeParentPath = path.relative(options.hostWorkMountDir, targetParentPath);
 	if (
 		relativeParentPath !== '' &&
 		(relativeParentPath.startsWith('..') || path.isAbsolute(relativeParentPath))
 	) {
 		throw new Error(
-			`Agent sandbox seed target parent '${targetParentPath}' resolves outside workspace '${options.workspaceDir}'.`,
+			`Agent sandbox seed target parent '${targetParentPath}' resolves outside work mount '${options.hostWorkMountDir}'.`,
 		);
 	}
 
-	let currentPath = options.workspaceDir;
+	let currentPath = options.hostWorkMountDir;
 	/* oxlint-disable no-await-in-loop -- each path segment must be validated before the next segment can be trusted */
 	for (const segment of relativeParentPath.split(path.sep).filter((part) => part.length > 0)) {
 		currentPath = path.join(currentPath, segment);
@@ -149,9 +150,9 @@ async function ensureSeedParentDirectoryInsideWorkspace(options: {
 			throw new Error(`Agent sandbox seed parent '${currentPath}' is not a directory.`);
 		}
 		const resolvedPath = await realpath(currentPath);
-		if (!isPathWithin(resolvedPath, options.workspaceDir)) {
+		if (!isPathWithin(resolvedPath, options.hostWorkMountDir)) {
 			throw new Error(
-				`Agent sandbox seed parent '${currentPath}' resolves outside workspace '${options.workspaceDir}'.`,
+				`Agent sandbox seed parent '${currentPath}' resolves outside work mount '${options.hostWorkMountDir}'.`,
 			);
 		}
 		currentPath = resolvedPath;
@@ -164,7 +165,7 @@ async function ensureSeedParentDirectoryInsideWorkspace(options: {
 export async function seedAgentSandboxWorkspace(options: {
 	readonly scopeKey: string;
 	readonly secretResolver: SecretResolver;
-	readonly workspaceDir: string;
+	readonly hostWorkMountDir: string;
 	readonly zone: ZoneConfig;
 }): Promise<AgentSandboxSeedResult> {
 	if (options.zone.gateway.type !== 'openclaw') {
@@ -208,56 +209,57 @@ export async function seedAgentSandboxWorkspace(options: {
 		}
 		throw error;
 	}
-	let workspaceDir: string;
+	let hostWorkMountDir: string;
 	try {
-		workspaceDir = await realpath(options.workspaceDir);
+		hostWorkMountDir = await realpath(options.hostWorkMountDir);
 	} catch (error) {
 		if (isNodeErrorCode(error, 'ENOENT')) {
 			return {
 				agentId,
-				kind: 'workspace-missing',
+				kind: 'work-mount-missing',
 				scopeKey: options.scopeKey,
-				workspaceDir: options.workspaceDir,
+				hostWorkMountDir: options.hostWorkMountDir,
 				zoneId: options.zone.id,
 			};
 		}
 		throw error;
 	}
-	if (!isPathWithin(workspaceDir, sandboxRoot)) {
+	if (!isPathWithin(hostWorkMountDir, sandboxRoot)) {
 		return {
 			agentId,
-			kind: 'workspace-outside-sandbox',
+			kind: 'work-mount-outside-sandbox',
 			sandboxRoot,
 			scopeKey: options.scopeKey,
-			workspaceDir,
+			hostWorkMountDir,
 			zoneId: options.zone.id,
 		};
 	}
 
 	const seedResults = await Promise.all(
 		seeds.map(async (seed) => {
-			const targetPath = path.resolve(workspaceDir, seed.target);
-			if (!isPathWithin(targetPath, workspaceDir)) {
+			const targetPath = path.resolve(hostWorkMountDir, seed.target);
+			if (!isPathWithin(targetPath, hostWorkMountDir)) {
 				throw new Error(
-					`Agent sandbox seed target '${seed.target}' resolves outside workspace '${workspaceDir}'.`,
+					`Agent sandbox seed target '${seed.target}' resolves outside work mount '${hostWorkMountDir}'.`,
 				);
 			}
 			await ensureSeedParentDirectoryInsideWorkspace({
 				targetPath,
-				workspaceDir,
+				hostWorkMountDir,
 			});
 			const content = await options.secretResolver.resolve(toSecretRef(seed));
 			return await writeSeedFileIfAbsent({
 				content,
 				mode: seed.mode,
 				targetPath,
-				workspaceDir,
+				hostWorkMountDir,
 			});
 		}),
 	);
 	return {
 		agentId,
 		alreadyExisted: seedResults.filter((result) => result === 'already-existed').length,
+		hostWorkMountDir,
 		kind: 'seeded',
 		scopeKey: options.scopeKey,
 		written: seedResults.filter((result) => result === 'written').length,

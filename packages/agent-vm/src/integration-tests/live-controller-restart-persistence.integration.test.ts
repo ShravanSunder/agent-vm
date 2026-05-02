@@ -255,7 +255,7 @@ describe('live integration: controller restart persistence', () => {
 				agentWorkspaceDir: '/zone',
 				profileId: 'standard',
 				scopeKey: 'restart-test',
-				workspaceDir: '/zone',
+				workMountDir: '/zone',
 				zoneId: 'shravan',
 			}),
 			headers: { 'content-type': 'application/json' },

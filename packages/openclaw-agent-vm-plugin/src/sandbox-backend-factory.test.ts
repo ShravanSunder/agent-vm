@@ -126,7 +126,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			},
 			scopeKey: 'agent:main:session-abc',
 			sessionKey: 'session-abc',
-			workspaceDir: '/home/openclaw/.openclaw/sandboxes/work',
+			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 		});
 
 		const execSpec = await backend.buildExecSpec({
@@ -145,7 +145,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentWorkspaceDir: '/home/openclaw/work',
 			profileId: 'gpu',
 			scopeKey: 'agent:main:session-abc',
-			workspaceDir: '/home/openclaw/.openclaw/sandboxes/work',
+			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 			zoneId: 'shravan',
 		});
 		expect(buildExecSpec).toHaveBeenCalledWith({
