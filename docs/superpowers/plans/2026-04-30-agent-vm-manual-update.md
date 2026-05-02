@@ -27,6 +27,12 @@ This plan does not reconfigure `shravan-claw`. That should be a separate deploym
 
 This plan does not implement fd-rooted RealFS hardening. That lives in `docs/superpowers/plans/2026-04-30-fd-rooted-realfs-provider.md`.
 
+This plan owns Zod v4 and native JSON Schema cleanup for agent-vm systems:
+remove `zod-to-json-schema`, use Zod v4's native `z.toJSONSchema()` API, and
+add a repo guard so Zod 3 and the legacy converter cannot return. Lease API
+field renaming (`workspaceDir` -> `workMountDir`) remains in
+`docs/superpowers/plans/2026-05-02-lease-work-mount-naming-defaults.md`.
+
 This plan keeps runtime and interchange formats strict JSON. JSONC is only for
 human-authored agent-vm config surfaces: `system.jsonc`, `worker.jsonc`,
 repo-local `.agent-vm/config.jsonc`, and `build-config.jsonc`. Generated
@@ -42,6 +48,36 @@ manual examples for those fields until zone-fix lands or the implementation
 branch confirms the same schema names. Stable manual work may proceed now:
 `/work`, Discord-as-deployment, teaching-vs-automation, memory-core defaults,
 and the `agent-vm manual update` command.
+
+## Current Main/Branch State To Preserve
+
+Before executing this plan, current `master` is at `b7339ba` / `v0.0.33`.
+
+```text
+main currently has:
+  direct zod dependencies using "^4"
+  pnpm-lock.yaml resolving zod@4.3.6
+  zod-to-json-schema still present in agent-vm-worker
+  no jsonc-parser support
+  no agent-vm manual update command
+
+manual-plan branch currently has:
+  jsonc-parser support in agent-vm and agent-vm-worker config readers
+  agent-vm manual update command
+  generated JSONC scaffold names
+  zod-to-json-schema still present
+  workspaceDir lease vocabulary still present
+```
+
+Execution target:
+
+```text
+Zod v4 direct deps stay
+zod-to-json-schema is removed
+native z.toJSONSchema behavior is pinned by tests
+JSONC support and manual update are refreshed onto current master
+lease hard-cutover naming stays in the lease-work-mount plan
+```
 
 ---
 
@@ -120,6 +156,16 @@ locations for existing Zod validation wrappers.
 
 Unit tests for comments, trailing commas, parse diagnostics, and strict unknown
 output before schema validation.
+
+`scripts/check-zod-version.ts`
+
+Owns the repo-level dependency guard for Zod v4 and native JSON Schema usage.
+It rejects `zod@3` in the lockfile and rejects direct `zod-to-json-schema`
+dependencies in workspace packages.
+
+`packages/agent-vm-worker/src/shared/zod-json-schema.test.ts`
+
+Pins the native Zod v4 JSON Schema behavior this repo depends on.
 
 Existing config loaders
 
@@ -1307,11 +1353,203 @@ git commit -m "feat: support jsonc authored configs" -m "Co-authored-by: Codex <
 
 ---
 
+### Task 7: Native Zod v4 JSON Schema And Dependency Guard
+
+**Files:**
+- Modify: `package.json`
+- Modify: `pnpm-lock.yaml`
+- Create: `scripts/check-zod-version.ts`
+- Modify: `packages/agent-vm-worker/package.json`
+- Create: `packages/agent-vm-worker/src/shared/zod-json-schema.test.ts`
+
+- [ ] **Step 1: Add failing native JSON Schema behavior tests**
+
+Create `packages/agent-vm-worker/src/shared/zod-json-schema.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
+
+describe('Zod v4 JSON Schema conversion', () => {
+	it('uses native z.toJSONSchema for draft-07 object schemas', () => {
+		const schema = z.strictObject({
+			taskId: z.string().min(1),
+			context: z.record(z.string(), z.unknown()).default({}),
+		});
+
+		const jsonSchema = z.toJSONSchema(schema, { target: 'draft-07', io: 'input' });
+
+		expect(jsonSchema).toMatchObject({
+			$schema: 'http://json-schema.org/draft-07/schema#',
+			type: 'object',
+			additionalProperties: false,
+			properties: {
+				taskId: { type: 'string', minLength: 1 },
+				context: {
+					type: 'object',
+					additionalProperties: {},
+				},
+			},
+			required: ['taskId'],
+		});
+	});
+
+	it('uses native z.toJSONSchema for OpenAPI nullable output', () => {
+		const jsonSchema = z.toJSONSchema(z.string().nullable(), {
+			target: 'openapi-3.0',
+		});
+
+		expect(jsonSchema).toEqual({
+			nullable: true,
+			type: 'string',
+		});
+	});
+});
+```
+
+Run:
+
+```bash
+pnpm vitest run packages/agent-vm-worker/src/shared/zod-json-schema.test.ts
+```
+
+Expected: PASS on current Zod v4. If this fails, inspect Zod v4 API drift
+before continuing.
+
+- [ ] **Step 2: Remove the legacy converter package**
+
+In `packages/agent-vm-worker/package.json`, delete:
+
+```json
+"zod-to-json-schema": "^3.24.1"
+```
+
+Then run:
+
+```bash
+pnpm install --lockfile-only
+```
+
+Expected: `pnpm-lock.yaml` no longer contains a direct importer entry for
+`packages/agent-vm-worker` -> `zod-to-json-schema`.
+
+- [ ] **Step 3: Add the repo dependency guard**
+
+Create `scripts/check-zod-version.ts`:
+
+```ts
+import { readFileSync } from 'node:fs';
+
+const lockfileText = readFileSync('pnpm-lock.yaml', 'utf8');
+const packageFiles = [
+	'packages/agent-vm/package.json',
+	'packages/agent-vm-worker/package.json',
+	'packages/gondolin-adapter/package.json',
+	'packages/gateway-interface/package.json',
+	'packages/openclaw-agent-vm-plugin/package.json',
+	'packages/openclaw-gateway/package.json',
+	'packages/worker-gateway/package.json',
+] as const;
+
+const zodThreeLockPatterns = [
+	/(^|\n)\s{2}zod@3\./u,
+	/(^|\n)\s{2}\/zod\/3\./u,
+	/zod@npm:3\./u,
+] as const;
+
+const violations: string[] = [];
+
+for (const pattern of zodThreeLockPatterns) {
+	if (pattern.test(lockfileText)) {
+		violations.push(`pnpm-lock.yaml matches forbidden Zod 3 pattern ${String(pattern)}`);
+	}
+}
+
+for (const packageFile of packageFiles) {
+	const packageJson = JSON.parse(readFileSync(packageFile, 'utf8')) as {
+		readonly dependencies?: Record<string, string>;
+		readonly devDependencies?: Record<string, string>;
+	};
+	const zodSpecifier = packageJson.dependencies?.zod;
+	if (zodSpecifier !== undefined && zodSpecifier !== '^4') {
+		violations.push(`${packageFile} must declare "zod": "^4" when it depends on zod, found ${zodSpecifier}`);
+	}
+	if (packageJson.dependencies?.['zod-to-json-schema'] !== undefined) {
+		violations.push(`${packageFile} must use z.toJSONSchema() instead of zod-to-json-schema`);
+	}
+	if (packageJson.devDependencies?.['zod-to-json-schema'] !== undefined) {
+		violations.push(`${packageFile} must use z.toJSONSchema() instead of zod-to-json-schema`);
+	}
+}
+
+if (violations.length > 0) {
+	console.error(violations.join('\n'));
+	process.exit(1);
+}
+```
+
+- [ ] **Step 4: Wire the guard into root checks**
+
+In root `package.json`, add:
+
+```json
+"check:zod": "node scripts/check-zod-version.ts"
+```
+
+Then update `check`:
+
+```json
+"check": "pnpm check:zod && pnpm lint:types && pnpm fmt:check && pnpm typecheck"
+```
+
+- [ ] **Step 5: Verify the cleanup**
+
+Run:
+
+```bash
+pnpm vitest run packages/agent-vm-worker/src/shared/zod-json-schema.test.ts
+pnpm check:zod
+rg -n '"zod":|"zod-to-json-schema"|zod@3|zod@4' packages/*/package.json pnpm-lock.yaml
+```
+
+Expected:
+
+```text
+test passes
+pnpm check:zod exits 0
+direct package zod dependencies are "^4"
+pnpm-lock.yaml resolves zod@4.x only
+no workspace package declares zod-to-json-schema
+no pnpm-lock.yaml package key resolves zod@3.x
+```
+
+- [ ] **Step 6: Run package checks**
+
+Run:
+
+```bash
+pnpm typecheck
+pnpm test:unit
+pnpm check
+```
+
+Expected: all PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add package.json pnpm-lock.yaml scripts/check-zod-version.ts packages/agent-vm-worker/package.json packages/agent-vm-worker/src/shared/zod-json-schema.test.ts
+git commit -m "chore: use native zod json schema" -m "Remove zod-to-json-schema, pin the Zod v4 native z.toJSONSchema behavior with tests, and add a repo guard against Zod 3 or the legacy converter returning." -m "Co-authored-by: Codex <noreply@openai.com>"
+```
+
+---
+
 ## Final Verification
 
 - [ ] Run formatting and type checks:
 
 ```bash
+pnpm check:zod
 pnpm fmt:check
 pnpm lint
 pnpm lint:types
