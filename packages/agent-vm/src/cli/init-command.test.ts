@@ -115,15 +115,15 @@ describe('scaffoldAgentVmProject', () => {
 			},
 			noGeneratedAgeIdentityDependencies,
 		);
-		const config = scaffoldedSystemConfigSchema.parse(
-			JSON.parse(await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8')),
-		);
+		const systemJsonText = await fs.readFile(path.join(targetDir, 'config', 'system.json'), 'utf8');
+		const config = scaffoldedSystemConfigSchema.parse(JSON.parse(systemJsonText));
 
 		expect(result.created).toContain('config/system.json');
 		expect(config.cacheDir).toBe('../cache');
 		expect(config.host.projectNamespace).toMatch(/^agent-vm-init-test-/u);
 		expect(config.zones[0]?.id).toBe('test-zone');
 		expect(config.zones[0]?.gateway.type).toBe('openclaw');
+		expect(systemJsonText).not.toContain('workspaceDir');
 	});
 
 	it('scaffolds a worker gateway when requested', async () => {

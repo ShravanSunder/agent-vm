@@ -89,7 +89,7 @@ export async function startControllerRuntime(
 				profile: toolVmOptions.profile,
 				systemConfig: options.systemConfig,
 				tcpSlot: toolVmOptions.tcpSlot,
-				workspaceDir: toolVmOptions.workspaceDir,
+				hostWorkMountDir: toolVmOptions.hostWorkMountDir,
 				zoneId: toolVmOptions.zoneId,
 			}));
 	const tcpPool = createTcpPool(options.systemConfig.tcpPool);
@@ -100,7 +100,7 @@ export async function startControllerRuntime(
 			await createManagedToolVm({
 				profile: leaseOptions.profile,
 				tcpSlot: leaseOptions.tcpSlot,
-				workspaceDir: leaseOptions.workspaceDir,
+				hostWorkMountDir: leaseOptions.hostWorkMountDir,
 				zoneId: leaseOptions.zoneId,
 			}),
 		now,

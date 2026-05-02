@@ -2,11 +2,11 @@ import { z } from 'zod';
 
 import { workerTaskControllerRequestSchema } from '../../config/resource-contracts/index.js';
 
-export const controllerLeaseCreateRequestSchema = z.object({
+export const controllerLeaseCreateRequestSchema = z.strictObject({
 	agentWorkspaceDir: z.string().min(1),
 	profileId: z.string().min(1),
 	scopeKey: z.string().min(1),
-	workspaceDir: z.string().min(1),
+	workMountDir: z.string().min(1),
 	zoneId: z.string().min(1),
 });
 

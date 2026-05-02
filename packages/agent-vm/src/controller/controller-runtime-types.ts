@@ -29,7 +29,7 @@ export interface ControllerRuntimeDependencies {
 	readonly createManagedToolVm?: (options: {
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;
-		readonly workspaceDir: string;
+		readonly hostWorkMountDir: string;
 		readonly zoneId: string;
 	}) => Promise<import('@agent-vm/gondolin-adapter').ManagedVm>;
 	readonly createSecretResolver?: (options: {

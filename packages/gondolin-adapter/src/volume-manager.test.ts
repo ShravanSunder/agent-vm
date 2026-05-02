@@ -30,18 +30,18 @@ describe('volume-manager', () => {
 		createdDirectories.push(cacheBasePath);
 
 		expect(
-			await resolveVolumeDirs(cacheBasePath, 'workspace-b', {
+			await resolveVolumeDirs(cacheBasePath, 'session-b', {
 				state: { guestPath: '/state' },
-				workspace: { guestPath: '/workspace' },
+				project: { guestPath: '/project' },
 			}),
 		).toEqual({
 			state: {
 				guestPath: '/state',
-				hostDir: path.join(cacheBasePath, 'workspace-b', 'state'),
+				hostDir: path.join(cacheBasePath, 'session-b', 'state'),
 			},
-			workspace: {
-				guestPath: '/workspace',
-				hostDir: path.join(cacheBasePath, 'workspace-b', 'workspace'),
+			project: {
+				guestPath: '/project',
+				hostDir: path.join(cacheBasePath, 'session-b', 'project'),
 			},
 		});
 	});

@@ -203,20 +203,24 @@ added.
 
 ## Tool VM
 
-Tool VMs are lease-local execution sandboxes. Current tool VMs are the remaining
-intentional `/work` exception: the lease workspace is a RealFS mount of the
-`workspaceDir` supplied by the caller that requested the lease. For OpenClaw,
-that is the selected sandbox workspace: either the seeded per-scope sandbox
-directory or the raw agent workspace, depending on OpenClaw `workspaceAccess`.
-agent-vm closes the tool VM on lease release, but it does not clean the supplied
-workspace directory.
+Tool VMs are lease-local execution sandboxes. Tool VMs always see the mounted
+working directory at `/work`. The lease request supplies `workMountDir` as an
+OpenClaw gateway child path under `/zone` or
+`/home/openclaw/.openclaw/state/sandboxes`; those roots are allowed-root
+boundaries, not valid mount targets. The controller validates and translates
+that value to a host `hostWorkMountDir` before creating the RealFS mount.
+agent-vm closes the tool VM on lease release, but it does not clean the
+supplied work mount directory.
+
+For the canonical name/location/storage vocabulary, see
+[Lease Path Vocabulary](storage-model.md#lease-path-vocabulary).
 
 ```text
 path or data                           backing                backup
 ──────────────────────────────         ─────────────────      ─────────
 
-/work                                  RealFS workspaceDir    varies
-OpenClaw-selected tool workspace       owned by lease caller
+/work                                  RealFS hostWorkMountDir varies
+OpenClaw-selected tool work mount      owned by lease caller
 
 /tmp, /run, /var/log                   guest tmpfs            no
 tiny scratch only                      memory-pressure

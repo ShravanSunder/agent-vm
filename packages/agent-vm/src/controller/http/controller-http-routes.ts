@@ -1,17 +1,20 @@
+import { randomUUID } from 'node:crypto';
+
 import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 import { Hono } from 'hono';
 
 import type { SystemConfig } from '../../config/system-config.js';
 import {
 	type AgentSandboxSeedResult,
+	SandboxSeedingError,
 	seedAgentSandboxWorkspace,
 } from '../leases/agent-sandbox-seeding.js';
 import { LeaseScopeConflictError } from '../leases/lease-manager.js';
 import { parseAgentIdFromScopeKey } from '../leases/lease-scope.js';
 import {
-	LeaseWorkspaceValidationError,
-	resolveLeaseWorkspaceDir as resolveLeaseWorkspaceDirForZone,
-} from '../leases/lease-workspace-paths.js';
+	LeaseWorkMountValidationError,
+	resolveLeaseWorkMountDir as resolveLeaseWorkMountDirForZone,
+} from '../leases/lease-work-mount-paths.js';
 import {
 	type ControllerLeaseManager,
 	type ControllerRouteOperations,
@@ -24,6 +27,24 @@ import { registerControllerZoneOperationRoutes } from './controller-zone-operati
 
 function writeControllerLeaseLog(message: string): void {
 	process.stderr.write(`[controller-http-routes] ${message}\n`);
+}
+
+function formatUnknownError(error: unknown): string {
+	if (error instanceof Error) {
+		return error.stack ?? error.message;
+	}
+	return String(error);
+}
+
+function logLeaseCreationFailure(options: {
+	readonly diagnosticId: string;
+	readonly error: unknown;
+	readonly requestContext: LeaseRequestLogContext | undefined;
+	readonly status: number;
+}): void {
+	writeControllerLeaseLog(
+		`[ERROR] lease creation failed diagnosticId='${options.diagnosticId}' status='${String(options.status)}' zone='${options.requestContext?.zoneId ?? '(unknown)'}' scope='${options.requestContext?.scopeKey ?? '(unknown)'}' workMountDir='${options.requestContext?.workMountDir ?? '(unknown)'}': ${formatUnknownError(options.error)}`,
+	);
 }
 
 function logAgentSandboxSeedResult(result: AgentSandboxSeedResult): void {
@@ -43,14 +64,14 @@ function logAgentSandboxSeedResult(result: AgentSandboxSeedResult): void {
 				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': sandbox root '${result.sandboxRoot}' does not exist`,
 			);
 			return;
-		case 'workspace-missing':
+		case 'work-mount-missing':
 			writeControllerLeaseLog(
-				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': workspace '${result.workspaceDir}' does not exist`,
+				`[WARN] skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': work mount '${result.hostWorkMountDir}' does not exist`,
 			);
 			return;
-		case 'workspace-outside-sandbox':
+		case 'work-mount-outside-sandbox':
 			writeControllerLeaseLog(
-				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': workspace '${result.workspaceDir}' is outside sandbox root '${result.sandboxRoot}'`,
+				`[WARN] skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': work mount '${result.hostWorkMountDir}' is outside sandbox root '${result.sandboxRoot}'`,
 			);
 			return;
 		case 'no-seeds-configured':
@@ -58,6 +79,12 @@ function logAgentSandboxSeedResult(result: AgentSandboxSeedResult): void {
 		case 'not-openclaw-zone':
 			return;
 	}
+}
+
+interface LeaseRequestLogContext {
+	readonly scopeKey: string;
+	readonly workMountDir: string;
+	readonly zoneId: string;
 }
 
 export function createControllerApp(options: {
@@ -75,9 +102,9 @@ export function createControllerApp(options: {
 	readonly zoneDefaultToolVmProfiles?: Record<string, string>;
 	readonly zoneIds?: ReadonlySet<string>;
 	readonly operations?: Partial<ControllerRouteOperations>;
-	readonly resolveLeaseWorkspaceDir?: (options: {
+	readonly resolveLeaseWorkMountDir: (options: {
 		readonly scopeKey: string;
-		readonly workspaceDir: string;
+		readonly workMountDir: string;
 		readonly zoneId: string;
 	}) => Promise<string>;
 }): Hono {
@@ -85,6 +112,7 @@ export function createControllerApp(options: {
 	const readIdentityPem = options.readIdentityPem ?? readIdentityPemFromFile;
 
 	app.post('/lease', async (context) => {
+		let requestContext: LeaseRequestLogContext | undefined;
 		try {
 			const parsedPayload = controllerLeaseCreateRequestSchema.safeParse(await context.req.json());
 			if (!parsedPayload.success) {
@@ -97,6 +125,11 @@ export function createControllerApp(options: {
 				);
 			}
 			const payload = parsedPayload.data;
+			requestContext = {
+				scopeKey: payload.scopeKey,
+				workMountDir: payload.workMountDir,
+				zoneId: payload.zoneId,
+			};
 			if (
 				options.zoneIds
 					? !options.zoneIds.has(payload.zoneId)
@@ -120,33 +153,47 @@ export function createControllerApp(options: {
 			if (!defaultToolVmProfile) {
 				return context.json({ error: `Unknown tool VM profile '${resolvedProfileId}'` }, 400);
 			}
-			const workspaceDir = options.resolveLeaseWorkspaceDir
-				? await options.resolveLeaseWorkspaceDir({
-						scopeKey: payload.scopeKey,
-						workspaceDir: payload.workspaceDir,
-						zoneId: payload.zoneId,
-					})
-				: payload.workspaceDir;
+			const hostWorkMountDir = await options.resolveLeaseWorkMountDir({
+				scopeKey: payload.scopeKey,
+				workMountDir: payload.workMountDir,
+				zoneId: payload.zoneId,
+			});
 			const lease = await options.leaseManager.createLease({
 				agentWorkspaceDir: payload.agentWorkspaceDir,
 				profile: defaultToolVmProfile,
 				profileId: resolvedProfileId,
 				scopeKey: payload.scopeKey,
-				workspaceDir,
+				hostWorkMountDir,
 				zoneId: payload.zoneId,
 			});
 			return context.json(await serializeLeaseForResponse(lease, readIdentityPem));
 		} catch (error) {
-			return context.json(
-				{
-					error: error instanceof Error ? error.message : 'lease-creation-failed',
-				},
-				error instanceof LeaseWorkspaceValidationError
-					? 400
-					: error instanceof LeaseScopeConflictError
-						? 409
-						: 503,
-			);
+			if (error instanceof LeaseWorkMountValidationError) {
+				return context.json({ error: error.message, kind: error.kind }, 400);
+			}
+			if (error instanceof LeaseScopeConflictError) {
+				return context.json({ error: error.message }, 409);
+			}
+			const diagnosticId = randomUUID();
+			if (error instanceof SandboxSeedingError) {
+				logLeaseCreationFailure({
+					diagnosticId,
+					error,
+					requestContext,
+					status: 500,
+				});
+				return context.json(
+					{ error: 'sandbox-seeding-failed', diagnosticId, kind: error.kind },
+					500,
+				);
+			}
+			logLeaseCreationFailure({
+				diagnosticId,
+				error,
+				requestContext,
+				status: 503,
+			});
+			return context.json({ error: 'lease-creation-failed', diagnosticId }, 503);
 		}
 	});
 
@@ -236,22 +283,22 @@ export function createControllerService(options: {
 			),
 		),
 		...(options.operations ? { operations: options.operations } : {}),
-		resolveLeaseWorkspaceDir: async ({ scopeKey, workspaceDir, zoneId }) => {
+		resolveLeaseWorkMountDir: async ({ scopeKey, workMountDir, zoneId }) => {
 			const zone = zonesById.get(zoneId);
 			if (!zone) {
 				throw new Error(`Unknown zone '${zoneId}'`);
 			}
-			const resolvedWorkspaceDir = await resolveLeaseWorkspaceDirForZone({ workspaceDir, zone });
+			const hostWorkMountDir = await resolveLeaseWorkMountDirForZone({ workMountDir, zone });
 			if (options.secretResolver) {
 				const seedResult = await seedAgentSandboxWorkspace({
 					scopeKey,
 					secretResolver: options.secretResolver,
-					workspaceDir: resolvedWorkspaceDir,
+					hostWorkMountDir,
 					zone,
 				});
 				logAgentSandboxSeedResult(seedResult);
 			}
-			return resolvedWorkspaceDir;
+			return hostWorkMountDir;
 		},
 	});
 

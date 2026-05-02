@@ -104,6 +104,20 @@ Worker gateways do not use `zoneFilesDir`. Their repo files live in VM-local
 Do not call this `workspaceDir`. Worker execution files live under VM-local
 `/work/repos/<repoId>` and are not backed by this host path.
 
+`workMountDir` is not a `system.json` field. It is selected dynamically by
+OpenClaw when a tool lease is requested. Static config defines the allowed
+roots: the OpenClaw state sandbox root and `zoneFilesDir`. A lease
+`workMountDir` must be a concrete child path under one of those roots; the roots
+themselves are validation boundaries and are rejected as mount targets.
+For the canonical name/location/storage vocabulary, see
+[Lease Path Vocabulary](../../architecture/storage-model.md#lease-path-vocabulary).
+
+```text
+Tool VM guest path: /work
+OpenClaw gateway zone files: /zone
+OpenClaw state sandboxes: /home/openclaw/.openclaw/state/sandboxes
+```
+
 For the storage boundary model, see
 [storage-model.md](../../architecture/storage-model.md).
 
@@ -217,10 +231,10 @@ Unmapped agents use the zone fallback `defaultToolVmProfile`.
 boots. There is no shared per-agent fallback; configure each agent that needs an
 auth profile.
 
-`agentSandboxSeeds` writes first-boot files into the agent's scoped sandbox
-workspace before the Tool VM starts. Targets are relative to the sandbox
+`agentSandboxSeeds` writes first-boot files into the agent's scoped sandbox work
+mount before the Tool VM starts. Targets are relative to the sandbox
 `/work` backing directory, cannot use `..`, and are not written for shared
-`/zone` workspaces. Existing files are preserved so a user's edited credentials
+`/zone` work mounts. Existing files are preserved so a user's edited credentials
 or config are not overwritten on later leases.
 
 The important path model is:
@@ -229,8 +243,8 @@ The important path model is:
 OpenClaw gateway durable zone files:
   guest /zone  ->  host gateway.zoneFilesDir
 
-Tool VM selected workspace:
-  guest /work  ->  host workspace chosen by OpenClaw lease request
+Tool VM selected work mount:
+  guest /work  ->  host path chosen by OpenClaw lease request
 
 That Tool VM /work backing path may be an agent sandbox work directory under
 stateDir, or a subpath of zoneFilesDir. The Tool VM root filesystem itself is
@@ -381,7 +395,7 @@ zones without exhausting Tool VM SSH slots immediately.
 ## leaseIdleTtl
 
 `leaseIdleTtl` is optional. When omitted, every lease uses the default 30 minute
-idle timeout. OpenClaw deployments that mix agent, session, and shared workspace
+idle timeout. OpenClaw deployments that mix agent, session, and workspace-scope
 leases can override by scope kind or by scope-key prefix:
 
 ```json
@@ -415,5 +429,5 @@ The schema rejects:
 - OpenClaw zones without explicit `agentToolVmProfiles`.
 - Worker zones declaring Tool VM profile or sandbox seed fields.
 - `agentToolVmProfiles` values referencing missing `toolVmProfiles`.
-- `agentSandboxSeeds` targets that are absolute or escape the sandbox workspace.
+- `agentSandboxSeeds` targets that are absolute or escape the sandbox work mount.
 - Tool VM profiles referencing missing Tool VM image profiles.

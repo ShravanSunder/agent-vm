@@ -115,11 +115,11 @@ When the agent needs to run code, OpenClaw requests a tool VM lease from the con
 ```
   OpenClaw (inside gateway VM)
        |
-       | POST /lease { scopeKey, zoneId, workspaceDir }
+       | POST /lease { scopeKey, zoneId, workMountDir }
        v
   Controller
        |
-       | Allocates TCP slot, boots tool VM
+       | Resolves hostWorkMountDir, allocates TCP slot, boots tool VM
        v
   Tool VM (Zone 3 — untrusted)
        | /work mounted, no secrets, no network
@@ -131,6 +131,12 @@ Leases are scoped by `scopeKey` for reuse within the same conversation. For
 zone's `agentToolVmProfiles` map, falling back to `defaultToolVmProfile`. Idle
 leases are reaped by `leaseIdleTtl`, with a 30 minute default when no policy is
 configured.
+
+The lease `workMountDir` is a gateway VM path, not a host path. It must name a
+concrete child path under `/zone` or
+`/home/openclaw/.openclaw/state/sandboxes`; the roots themselves are rejected as
+too broad. The controller resolves the selected path to the host directory that
+backs the Tool VM's `/work` mount.
 
 For internals, see [architecture/openclaw-gateway.md](../architecture/openclaw-gateway.md#tool-vm-leases).
 
