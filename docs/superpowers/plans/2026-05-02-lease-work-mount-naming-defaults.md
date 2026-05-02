@@ -935,11 +935,9 @@ OpenClaw SDK boundary preserved       Task 4
 Tests                                 Every task starts with failing tests
 ```
 
-Potential follow-up intentionally not included:
+Out of scope:
 
 ```text
 True fd-rooted/openat RealFS provider support.
-
-That belongs in docs/superpowers/plans/2026-04-30-fd-rooted-realfs-provider.md
-because it changes storage safety semantics, not just naming.
+This changes storage safety semantics, not lease naming.
 ```
