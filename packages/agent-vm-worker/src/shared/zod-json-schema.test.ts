@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
+import { workerConfigSchema } from '../config/worker-config.js';
+
 describe('Zod native JSON Schema conversion', () => {
 	it('uses z.toJSONSchema for draft-7 input object schemas', () => {
 		const schema = z
@@ -46,6 +48,37 @@ describe('Zod native JSON Schema conversion', () => {
 		expect(jsonSchema).toEqual({
 			nullable: true,
 			type: 'string',
+		});
+	});
+
+	it('converts the production worker config schema with native z.toJSONSchema', () => {
+		const jsonSchema = z.toJSONSchema(workerConfigSchema, {
+			io: 'input',
+			target: 'draft-7',
+		});
+
+		expect(jsonSchema).toMatchObject({
+			additionalProperties: false,
+			properties: {
+				branchPrefix: {
+					default: 'agent/',
+					type: 'string',
+				},
+				mcpServers: {
+					default: [],
+					type: 'array',
+				},
+				phases: {
+					additionalProperties: false,
+					type: 'object',
+				},
+				runtimeInstructions: {
+					minLength: 1,
+					type: 'string',
+				},
+			},
+			required: ['runtimeInstructions', 'phases'],
+			type: 'object',
 		});
 	});
 });

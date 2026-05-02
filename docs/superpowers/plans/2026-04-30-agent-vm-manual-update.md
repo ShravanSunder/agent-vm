@@ -30,8 +30,11 @@ This plan does not implement filesystem hardening. It only updates manual,
 config-authoring, scaffold, and dependency behavior.
 
 This plan owns Zod v4 and native JSON Schema cleanup for agent-vm systems:
-remove `zod-to-json-schema`, use Zod v4's native `z.toJSONSchema()` API, and
-add a repo guard so Zod 3 and the legacy converter cannot return.
+remove direct `zod-to-json-schema` dependencies and source imports, use Zod
+v4's native `z.toJSONSchema()` API, and add a repo guard so Zod 3 and direct
+legacy converter usage cannot return. The MCP SDK currently brings a transitive
+`zod-to-json-schema` lockfile entry; that is accepted until the upstream
+dependency changes because agent-vm does not import or declare it directly.
 
 This plan keeps runtime and interchange formats strict JSON. JSONC is only for
 human-authored agent-vm config surfaces: `system.jsonc`, `worker.jsonc`,
@@ -77,7 +80,7 @@ Execution target:
 
 ```text
 Zod v4 direct deps stay
-zod-to-json-schema is removed
+direct zod-to-json-schema dependencies/imports are removed
 native z.toJSONSchema behavior is pinned by tests
 JSONC support and manual update are refreshed onto current master
 generated manual text must preserve the landed lease work-mount vocabulary
@@ -97,7 +100,7 @@ The implementation must preserve these constraints:
 6. Add a real per-agent walkthrough: multi-agent OpenClaw gateway, `scope=agent`, per-agent sandbox/auth replication, and when per-agent tool VM images require multiple zones or future per-agent tool profiles.
 7. Add an explicit teaching-vs-automation boundary in `AGENTS.md`: the generated agent index may help explain privileged host/deployment config, but must not silently edit secrets, allowed hosts, Dockerfiles, or OpenClaw channel config unless the human asks for those edits.
 8. Expand the Discord recipe with concrete keys and endpoints: `DISCORD_BOT_TOKEN`, `discord.com`, `cdn.discordapp.com`, `gateway.discord.gg:443`, websocket bypass, and runtime auth hints.
-9. Treat Zod cleanup as required implementation work, not optional dependency polish. `packages/agent-vm-worker` still declares `zod-to-json-schema`; this plan must remove it, pin native `z.toJSONSchema()` behavior with tests, and add a repo guard against Zod 3 or the legacy converter returning.
+9. Treat Zod cleanup as required implementation work, not optional dependency polish. `packages/agent-vm-worker` previously declared `zod-to-json-schema`; this plan removes that direct dependency, pins native `z.toJSONSchema()` behavior with tests, and adds a repo guard against Zod 3 or direct legacy converter usage returning.
 10. OpenClaw startup/config verification is environment-gated. Do not add OpenClaw as a repo dependency just to run this branch. Add a clear smoke path that validates generated OpenClaw config when the `openclaw` CLI is available and skips with an explicit reason when it is not.
 
 ---
@@ -167,7 +170,10 @@ output before schema validation.
 
 Owns the repo-level dependency guard for Zod v4 and native JSON Schema usage.
 It rejects `zod@3` in the lockfile and rejects direct `zod-to-json-schema`
-dependencies in workspace packages.
+dependencies in workspace packages. It also rejects source imports of
+`zod-to-json-schema`. The current MCP SDK transitive `zod-to-json-schema`
+lockfile entry is allowed by policy because it is not an agent-vm direct
+dependency or source import.
 
 `packages/agent-vm-worker/src/shared/zod-json-schema.test.ts`
 
@@ -1450,7 +1456,8 @@ pnpm install --lockfile-only
 ```
 
 Expected: `pnpm-lock.yaml` no longer contains a direct importer entry for
-`packages/agent-vm-worker` -> `zod-to-json-schema`.
+`packages/agent-vm-worker` -> `zod-to-json-schema`. A transitive entry through
+`@modelcontextprotocol/sdk` is acceptable under this plan's direct-use policy.
 
 - [ ] **Step 3: Add the repo dependency guard**
 
@@ -1540,6 +1547,8 @@ direct package zod dependencies are "^4"
 pnpm-lock.yaml resolves zod@4.x only
 no workspace package declares zod-to-json-schema
 no pnpm-lock.yaml package key resolves zod@3.x
+zod-to-json-schema may remain only as a transitive package of dependencies such
+  as @modelcontextprotocol/sdk
 ```
 
 - [ ] **Step 6: Run package checks**

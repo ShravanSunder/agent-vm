@@ -236,16 +236,23 @@ path `workspaceDir`. The agent-vm plugin translates that field to
 
 ## Auth Profiles
 
-OAuth tokens for model providers are managed through 1Password:
+OAuth tokens for model providers are written as OpenClaw auth profiles before
+the gateway VM boots. Prefer `zone.gateway.authProfilesByAgent` for current
+deployments: each configured agent gets its own
+`<stateDir>/agents/<agentId>/agent/auth-profiles.json`.
+
+`zone.gateway.authProfilesRef` is still accepted as a legacy/shared fallback
+for older single-agent deployments. It writes one profile file for the `main`
+agent only and should not be used for new per-agent setups.
 
 ```
-  zone.gateway.authProfilesRef (1Password secret)
+  zone.gateway.authProfilesByAgent[agentId] (1Password or environment secret)
        |
        v
   prepareHostState: secretResolver.resolve(ref)
        |
        v
-  Write auth-profiles.json to host stateDir (mode 0600)
+  Write auth-profiles.json to host stateDir/agents/<agentId>/agent/ (mode 0600)
        |
        v
   VM reads via VFS mount of stateDir
