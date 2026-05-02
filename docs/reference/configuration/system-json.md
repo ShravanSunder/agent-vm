@@ -137,9 +137,8 @@ Channel plugins are deployment-owned. Add channel plugins in the deployment
 Dockerfile and `config/gateways/<zone>/openclaw.json`, then declare the matching
 secrets, `allowedHosts`, and `websocketBypass` entries in `config/system.jsonc`.
 
-OpenClaw Tool VMs mount their lease workspace at `/work`. Worker task VMs keep
-repo edits under `/work/repos/<repoId>`. Do not use `/workspace` in new
-agent-vm examples.
+OpenClaw Tool VMs mount their validated lease work mount at `/work`. Worker task VMs keep
+repo edits under `/work/repos/<repoId>`.
 
 ## imageProfiles
 

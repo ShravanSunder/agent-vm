@@ -72,5 +72,9 @@ describe('manual templates', () => {
 		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfile');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfiles');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('/home/openclaw/zone-files');
+		expect(files.map((file) => file.content).join('\n')).not.toContain('/workspace');
+		expect(files.map((file) => file.content).join('\n')).not.toContain('stable workspace');
+		expect(files.map((file) => file.content).join('\n')).not.toContain('one workspace');
+		expect(files.map((file) => file.content).join('\n')).not.toContain('which workspace');
 	});
 });

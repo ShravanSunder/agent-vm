@@ -87,7 +87,6 @@ OpenClaw gateway VMs mount zoneFilesDir at /zone.
 OpenClaw Tool VMs mount the validated lease work mount at /work.
 Worker task VMs keep repo files on rootfs/COW at /work/repos.
 OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work.
-Do not describe agent-vm Tool VM work mounts as /workspace.
 `,
 			),
 		},
@@ -96,11 +95,11 @@ Do not describe agent-vm Tool VM work mounts as /workspace.
 			content: generatedPage(
 				'Scope And Tool VM Reuse',
 				`
-OpenClaw sandbox scope decides which workspace a tool VM sees.
+OpenClaw sandbox scope decides which work mount a Tool VM sees.
 
 session scope isolates per conversation.
-agent scope reuses a stable workspace for one agent identity.
-shared scope intentionally shares one workspace across participants.
+agent scope reuses a stable work mount for one agent identity.
+shared scope intentionally shares one work mount across participants.
 
 Tool VM lease identity follows scopeKey. TCP slots are capacity; they are not identity.
 
@@ -218,8 +217,6 @@ OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work; 
 workMountDir is a gateway VM path under /zone or /home/openclaw/.openclaw/state/sandboxes. The roots themselves are validation boundaries; leases must choose concrete child paths.
 hostWorkMountDir is the host realpath after controller validation.
 OpenClaw SDK compatibility note: OpenClaw may call the selected sandbox path workspaceDir. The agent-vm plugin translates that external SDK name to controller workMountDir.
-
-Do not use /workspace in new docs, prompts, or examples for agent-vm Tool VMs.
 `,
 			),
 		},
@@ -228,7 +225,7 @@ Do not use /workspace in new docs, prompts, or examples for agent-vm Tool VMs.
 			content: generatedPage(
 				'Per-Agent Setup',
 				`
-A single OpenClaw gateway can host multiple agents. Use scope=agent when each agent should have a stable workspace and reusable Tool VM lease identity.
+A single OpenClaw gateway can host multiple agents. Use scope=agent when each agent should have a stable work mount and reusable Tool VM lease identity.
 
 Per-agent auth isolation works by writing auth profiles through gateway.authProfilesByAgent and first-boot files through agentSandboxSeeds. Seeds target paths relative to the agent sandbox's /work backing directory and do not overwrite existing files.
 

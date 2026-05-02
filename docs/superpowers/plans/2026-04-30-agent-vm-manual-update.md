@@ -40,36 +40,37 @@ effective configs, runtime records, API bodies, task event logs, backup
 manifests, and cache identifiers remain strict JSON/JSONL.
 
 Use the landed controller/runtime schema as the source for final names and
-examples for `agentToolProfiles`, `agentSandboxSeeds`,
-`gateway.authProfilesByAgent`, `leaseIdleTtl`, and process-wide
-`tcpPool.size: 12`. Do not freeze generated manual examples for those fields
-until the implementation branch confirms the schema names. Stable manual work
-may proceed now: `/work`, Discord-as-deployment, teaching-vs-automation,
-memory-core defaults, and the `agent-vm manual update` command.
+examples for `defaultToolVmProfile`, `agentToolVmProfiles`,
+`agentSandboxSeeds`, `gateway.authProfilesByAgent`, `leaseIdleTtl`, and
+process-wide `tcpPool.size: 12`.
 
-Execute the lease work-mount naming plan before finalizing generated manual
-text that names the controller lease request field. Until that lands, generated
-manuals must use neutral language such as "the validated directory backing Tool
-VM /work" and must not teach `workspaceDir` as an agent-vm controller term.
+PR #33 (`Rename lease workspace mount contract`) is merged. Generated manual
+text may name the controller lease request field `workMountDir`, the translated
+host path `hostWorkMountDir`, and the Tool VM guest mount `/work`. Do not teach
+`workspaceDir` as an agent-vm controller term.
 
 ## Current Main/Branch State To Preserve
 
-Before executing this plan, current `master` is at `b7339ba` / `v0.0.33`.
+As of 2026-05-02, this manual-update branch has merged `origin/master`
+`41feb14`; branch HEAD after the merge is `d36cdae`. PR #33 is already merged
+into `master`, so lease work-mount naming is part of the baseline for this
+plan.
 
 ```text
-main currently has:
+master currently has:
   direct zod dependencies using "^4"
   pnpm-lock.yaml resolving zod@4.3.6
-  zod-to-json-schema still present in agent-vm-worker
-  no jsonc-parser support
-  no agent-vm manual update command
+  lease request field workMountDir
+  host-side translated lease field hostWorkMountDir
+  OpenClaw Tool VM guest mount /work
+  defaultToolVmProfile and agentToolVmProfiles schema names
 
 manual-plan branch currently has:
   jsonc-parser support in agent-vm and agent-vm-worker config readers
   agent-vm manual update command
   generated JSONC scaffold names
-  zod-to-json-schema still present
-  workspaceDir lease vocabulary still present
+  native z.toJSONSchema() behavior tests
+  repo guard preventing direct zod-to-json-schema dependencies and Zod 3 lock entries
 ```
 
 Execution target:
@@ -79,8 +80,7 @@ Zod v4 direct deps stay
 zod-to-json-schema is removed
 native z.toJSONSchema behavior is pinned by tests
 JSONC support and manual update are refreshed onto current master
-lease request naming is out of scope for this plan, but generated manual text
-  must not preserve stale workspaceDir vocabulary
+generated manual text must preserve the landed lease work-mount vocabulary
 ```
 
 ---

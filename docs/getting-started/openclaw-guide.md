@@ -19,7 +19,7 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
 
 ## Configuration
 
-### system.json — Define an OpenClaw Zone
+### system.jsonc — Define an OpenClaw Zone
 
 ```json
 {
@@ -58,7 +58,7 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
 }
 ```
 
-For all system.json fields, see
+For all system.jsonc fields, see
 [reference/configuration/system-json.md](../reference/configuration/system-json.md).
 
 ### openclaw.json — OpenClaw Configuration
@@ -150,7 +150,7 @@ For internals, see [architecture/openclaw-gateway.md](../architecture/openclaw-g
 Discord is a deployment recipe, not an agent-vm framework default. To enable
 Discord, configure it in your deployment Dockerfile and OpenClaw config, then
 add `DISCORD_BOT_TOKEN`, Discord hosts, and the Discord gateway websocket bypass
-to `system.json`.
+to `system.jsonc`.
 
 ```json
 {
@@ -186,7 +186,7 @@ Opens an SSH session into the gateway VM for debugging.
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Gateway won't start | Auth profiles missing | Check `authProfilesRef` in system.json |
+| Gateway won't start | Auth profiles missing | Check `authProfilesRef` in system.jsonc |
 | Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth-interactive codex --zone <id>` |
 | Tool calls fail | Lease creation failing | Check `defaultToolVmProfile` exists, TCP pool has free slots |
 | Discord not connecting | Deployment channel config incomplete | Add Discord plugin/config, `DISCORD_BOT_TOKEN`, Discord hosts, and `gateway.discord.gg:443` |
