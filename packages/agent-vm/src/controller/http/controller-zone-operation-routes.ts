@@ -7,6 +7,17 @@ import { PushBranchesValidationError } from '../git-push-operations.js';
 import { buildTaskConfigFromPreparedInput } from '../task-config-builder.js';
 import { writeTaskFailureSentinel } from '../task-state-reader.js';
 import {
+	ControllerZoneConfigurationError,
+	ControllerZoneNotFoundError,
+	ControllerZoneOperationUnsupportedError,
+	ControllerZoneTaskNotFoundError,
+	ControllerZoneTaskNotReadyError,
+	ControllerZoneWorkerCloseAggregateError,
+	ControllerZoneWorkerCloseError,
+	ControllerZoneRuntimeStartError,
+	ControllerZoneRuntimeUnavailableError,
+} from '../zone-runtimes/zone-runtime-errors.js';
+import {
 	ControllerRuntimeAtCapacityError,
 	ControllerTaskNotReadyError,
 	type ControllerRouteOperations,
@@ -80,20 +91,138 @@ function writeControllerRouteLog(message: string): void {
 	process.stderr.write(`[controller-zone-operation-routes] ${message}\n`);
 }
 
+function zoneRuntimeErrorStatus(error: unknown): 404 | 405 | 409 | 412 | 500 | 502 | 503 {
+	if (
+		error instanceof ControllerZoneNotFoundError ||
+		error instanceof ControllerZoneTaskNotFoundError
+	) {
+		return 404;
+	}
+	if (error instanceof ControllerZoneOperationUnsupportedError) {
+		return 405;
+	}
+	if (error instanceof ControllerZoneRuntimeUnavailableError) {
+		return 409;
+	}
+	if (error instanceof ControllerZoneTaskNotReadyError) {
+		return 409;
+	}
+	if (
+		error instanceof ControllerZoneWorkerCloseError ||
+		error instanceof ControllerZoneWorkerCloseAggregateError
+	) {
+		return 502;
+	}
+	if (error instanceof ControllerZoneRuntimeStartError) {
+		return 503;
+	}
+	if (error instanceof ControllerZoneConfigurationError) {
+		return 412;
+	}
+	return 500;
+}
+
+function zoneRuntimeErrorBody(error: unknown):
+	| {
+			readonly error: string;
+			readonly gatewayType: string;
+			readonly operationName: string;
+			readonly zoneId: string;
+	  }
+	| {
+			readonly error: string;
+			readonly kind: 'task-not-ready';
+			readonly taskId: string | null;
+			readonly zoneId: string;
+	  }
+	| {
+			readonly body: string;
+			readonly error: string;
+			readonly httpStatus: number;
+			readonly kind: 'worker-close-failed';
+			readonly taskId: string;
+			readonly zoneId: string;
+	  }
+	| {
+			readonly error: string;
+			readonly failures: readonly {
+				readonly body: string;
+				readonly httpStatus: number;
+				readonly taskId: string;
+			}[];
+			readonly kind: 'worker-close-aggregate-failed';
+			readonly zoneId: string;
+	  }
+	| { readonly error: string } {
+	if (error instanceof ControllerZoneOperationUnsupportedError) {
+		return {
+			error: error.message,
+			gatewayType: error.gatewayType,
+			operationName: error.operationName,
+			zoneId: error.zoneId,
+		};
+	}
+	if (error instanceof ControllerZoneTaskNotReadyError) {
+		return {
+			error: error.message,
+			kind: 'task-not-ready',
+			taskId: error.taskId,
+			zoneId: error.zoneId,
+		};
+	}
+	if (error instanceof ControllerZoneWorkerCloseError) {
+		return {
+			error: error.message,
+			body: error.body,
+			httpStatus: error.httpStatus,
+			kind: 'worker-close-failed',
+			taskId: error.taskId,
+			zoneId: error.zoneId,
+		};
+	}
+	if (error instanceof ControllerZoneWorkerCloseAggregateError) {
+		return {
+			error: error.message,
+			failures: error.failures.map((failure) => ({
+				body: failure.body,
+				httpStatus: failure.httpStatus,
+				taskId: failure.taskId,
+			})),
+			kind: 'worker-close-aggregate-failed',
+			zoneId: error.zoneId,
+		};
+	}
+	return {
+		error: error instanceof Error ? error.message : 'zone-operation-failed',
+	};
+}
+
 export function registerControllerZoneOperationRoutes(
 	app: Hono,
 	operations: ControllerRouteOperations,
 ): void {
 	app.get('/controller-status', async (context) => context.json(await operations.getStatus()));
-	app.get('/zones/:zoneId/status', async (context) =>
-		context.json(await operations.getZoneStatus(context.req.param('zoneId'))),
-	);
-	app.get('/zones/:zoneId/logs', async (context) =>
-		context.json(await operations.getZoneLogs(context.req.param('zoneId'))),
-	);
-	app.post('/zones/:zoneId/credentials/refresh', async (context) =>
-		context.json(await operations.refreshZoneCredentials(context.req.param('zoneId'))),
-	);
+	app.get('/zones/:zoneId/status', async (context) => {
+		try {
+			return context.json(await operations.getZoneStatus(context.req.param('zoneId')));
+		} catch (error) {
+			return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
+		}
+	});
+	app.get('/zones/:zoneId/logs', async (context) => {
+		try {
+			return context.json(await operations.getZoneLogs(context.req.param('zoneId')));
+		} catch (error) {
+			return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
+		}
+	});
+	app.post('/zones/:zoneId/credentials/refresh', async (context) => {
+		try {
+			return context.json(await operations.refreshZoneCredentials(context.req.param('zoneId')));
+		} catch (error) {
+			return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
+		}
+	});
 	app.post('/zones/:zoneId/destroy', async (context) => {
 		const parsedPayload = await parseJsonBodyWithSchema(
 			context,
@@ -104,13 +233,21 @@ export function registerControllerZoneOperationRoutes(
 			return parsedPayload.response;
 		}
 		const payload = parsedPayload.data;
-		return context.json(
-			await operations.destroyZone(context.req.param('zoneId'), payload.purge === true),
-		);
+		try {
+			return context.json(
+				await operations.destroyZone(context.req.param('zoneId'), payload.purge === true),
+			);
+		} catch (error) {
+			return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
+		}
 	});
-	app.post('/zones/:zoneId/upgrade', async (context) =>
-		context.json(await operations.upgradeZone(context.req.param('zoneId'))),
-	);
+	app.post('/zones/:zoneId/upgrade', async (context) => {
+		try {
+			return context.json(await operations.upgradeZone(context.req.param('zoneId')));
+		} catch (error) {
+			return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
+		}
+	});
 
 	if (operations.prepareWorkerTask && operations.executeWorkerTask) {
 		const prepareWorkerTask = operations.prepareWorkerTask;
@@ -161,6 +298,10 @@ export function registerControllerZoneOperationRoutes(
 
 				return context.json({ taskId: prepared.taskId, status: 'accepted' }, 202);
 			} catch (error) {
+				const runtimeStatus = zoneRuntimeErrorStatus(error);
+				if (runtimeStatus !== 500) {
+					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
+				}
 				if (error instanceof ControllerRuntimeAtCapacityError) {
 					return context.json(
 						{
@@ -190,6 +331,10 @@ export function registerControllerZoneOperationRoutes(
 				}
 				return context.json(state);
 			} catch (error) {
+				const runtimeStatus = zoneRuntimeErrorStatus(error);
+				if (runtimeStatus !== 500) {
+					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
+				}
 				const message = error instanceof Error ? error.message : 'get-task-state-failed';
 				return context.json({ error: message }, 500);
 			}
@@ -204,6 +349,10 @@ export function registerControllerZoneOperationRoutes(
 					await closeTaskForZone(context.req.param('zoneId'), context.req.param('taskId')),
 				);
 			} catch (error) {
+				const runtimeStatus = zoneRuntimeErrorStatus(error);
+				if (runtimeStatus !== 500) {
+					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
+				}
 				const message = error instanceof Error ? error.message : 'close-task-failed';
 				if (error instanceof ControllerTaskNotReadyError) {
 					return context.json({ status: 'not-ready', error: message }, 409);
@@ -233,6 +382,10 @@ export function registerControllerZoneOperationRoutes(
 					),
 				);
 			} catch (error) {
+				const runtimeStatus = zoneRuntimeErrorStatus(error);
+				if (runtimeStatus !== 500) {
+					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
+				}
 				const message = error instanceof Error ? error.message : 'push-branches-failed';
 				writeControllerRouteLog(
 					`push-branches failed for zone '${context.req.param('zoneId')}' task '${context.req.param('taskId')}': ${message}`,
@@ -267,6 +420,10 @@ export function registerControllerZoneOperationRoutes(
 					),
 				);
 			} catch (error) {
+				const runtimeStatus = zoneRuntimeErrorStatus(error);
+				if (runtimeStatus !== 500) {
+					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
+				}
 				const isValidationError = error instanceof PullDefaultValidationError;
 				const message = scrubGithubTokenFromOutput(
 					error instanceof Error ? error.message : 'pull-default-failed',
@@ -297,12 +454,7 @@ export function registerControllerZoneOperationRoutes(
 			try {
 				return context.json(await enableSshForZone(context.req.param('zoneId')));
 			} catch (error) {
-				return context.json(
-					{
-						error: error instanceof Error ? error.message : 'zone-ssh-enable-failed',
-					},
-					500,
-				);
+				return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
 			}
 		});
 	}
@@ -322,12 +474,7 @@ export function registerControllerZoneOperationRoutes(
 			try {
 				return context.json(await execInZone(context.req.param('zoneId'), payload.command));
 			} catch (error) {
-				return context.json(
-					{
-						error: error instanceof Error ? error.message : 'zone-command-execution-failed',
-					},
-					500,
-				);
+				return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
 			}
 		});
 	}

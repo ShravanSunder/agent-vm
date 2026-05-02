@@ -21,7 +21,6 @@ const zone: GatewayZoneConfig = {
 			ref: 'op://vault/item/openai',
 		},
 	},
-	toolProfile: 'standard',
 	websocketBypass: [],
 };
 
@@ -47,6 +46,7 @@ describe('workerLifecycle', () => {
 			hostPath: '/host/state/shravan',
 			kind: 'realfs',
 		});
+		expect(vmSpec.vfsMounts['/work']).toBeUndefined();
 		expect(vmSpec.vfsMounts['/workspace']).toBeUndefined();
 		expect(vmSpec.environment.OPENAI_API_KEY).toBe('openai-token');
 		expect(vmSpec.environment.AGENT_VM_ZONE_ID).toBe('shravan');

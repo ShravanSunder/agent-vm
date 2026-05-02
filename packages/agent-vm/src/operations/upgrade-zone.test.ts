@@ -48,10 +48,11 @@ const systemConfig = {
 			secrets: {},
 			allowedHosts: ['api.anthropic.com'],
 			websocketBypass: [],
-			toolProfile: 'standard',
+			defaultToolVmProfile: 'standard',
+			agentToolVmProfiles: {},
 		},
 	],
-	toolProfiles: {
+	toolVmProfiles: {
 		standard: {
 			memory: '1G',
 			cpus: 1,

@@ -1,4 +1,13 @@
-import fs from 'node:fs';
+import {
+	mkdir,
+	mkdtemp,
+	readFile,
+	realpath,
+	rename,
+	rm,
+	symlink,
+	writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -10,21 +19,23 @@ import { createToolVm } from './tool-vm-lifecycle.js';
 
 const createdDirectories: string[] = [];
 
-afterEach(() => {
+afterEach(async () => {
 	vi.restoreAllMocks();
-	for (const directoryPath of createdDirectories.splice(0)) {
-		fs.rmSync(directoryPath, { recursive: true, force: true });
-	}
+	await Promise.all(
+		createdDirectories
+			.splice(0)
+			.map((directoryPath) => rm(directoryPath, { recursive: true, force: true })),
+	);
 });
 
-function createTemporaryDirectory(): string {
-	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-tool-vm-lifecycle-'));
+async function createTemporaryDirectory(): Promise<string> {
+	const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-tool-vm-lifecycle-'));
 	createdDirectories.push(temporaryDirectory);
 	return temporaryDirectory;
 }
 
-function createToolVmSystemConfig(): LoadedSystemConfig {
-	const temporaryDirectory = createTemporaryDirectory();
+async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
+	const temporaryDirectory = await createTemporaryDirectory();
 	const systemConfigPath = path.join(temporaryDirectory, 'config', 'system.json');
 	const stateDir = path.join(temporaryDirectory, 'state', 'shravan');
 	const zoneFilesDir = path.join(temporaryDirectory, 'zone-files', 'shravan');
@@ -62,7 +73,7 @@ function createToolVmSystemConfig(): LoadedSystemConfig {
 				basePort: 19000,
 				size: 5,
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					imageProfile: 'default',
@@ -84,7 +95,8 @@ function createToolVmSystemConfig(): LoadedSystemConfig {
 					},
 					id: 'shravan',
 					secrets: {},
-					toolProfile: 'standard',
+					defaultToolVmProfile: 'standard',
+					agentToolVmProfiles: {},
 					websocketBypass: [],
 				},
 			],
@@ -93,25 +105,31 @@ function createToolVmSystemConfig(): LoadedSystemConfig {
 	);
 }
 
-function createWorkspaceDirectory(systemConfig: LoadedSystemConfig, name: string): string {
+async function createWorkMountDirectory(
+	systemConfig: LoadedSystemConfig,
+	name: string,
+): Promise<string> {
 	const zone = systemConfig.zones.find((configuredZone) => configuredZone.id === 'shravan');
 	if (zone?.gateway.type !== 'openclaw') {
 		throw new Error('Expected shravan OpenClaw zone');
 	}
-	const workspaceDir = path.join(zone.gateway.zoneFilesDir, name);
-	fs.mkdirSync(workspaceDir, { recursive: true });
-	return workspaceDir;
+	const hostWorkMountDir = path.join(zone.gateway.zoneFilesDir, name);
+	await mkdir(hostWorkMountDir, { recursive: true });
+	return hostWorkMountDir;
 }
 
-function closePinnedWorkspaceRoot(createVmOptions: CreateVmOptions): void {
-	const pinnedWorkspaceRoot = createVmOptions.vfsMounts['/work']?.pinnedHostRoot;
-	if (pinnedWorkspaceRoot) {
-		fs.closeSync(pinnedWorkspaceRoot.fd);
-	}
+function createPinnedRealFsRoot(hostPath: string): PinnedRealFsRoot {
+	return {
+		device: 1,
+		fd: -1,
+		hostPath,
+		inode: 1,
+		realPath: hostPath,
+	};
 }
 
 describe('createToolVm', () => {
-	it('mounts the lease workspace directory at /work', async () => {
+	it('mounts the lease host work mount directory at /work', async () => {
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -131,18 +149,18 @@ describe('createToolVm', () => {
 		let capturedCreateVmOptions: CreateVmOptions | undefined;
 		const createManagedVm = vi.fn(async (createVmOptions: CreateVmOptions) => {
 			capturedCreateVmOptions = createVmOptions;
-			closePinnedWorkspaceRoot(createVmOptions);
 			return managedVm;
 		});
-		const systemConfig = createToolVmSystemConfig();
-		const standardProfile = systemConfig.toolProfiles.standard;
+		const systemConfig = await createToolVmSystemConfig();
+		const standardProfile = systemConfig.toolVmProfiles.standard;
 		if (!standardProfile) {
-			throw new Error('Expected standard tool profile');
+			throw new Error('Expected standard tool VM profile');
 		}
-		const requestedWorkspaceDir = createWorkspaceDirectory(
+		const requestedWorkMountDir = await createWorkMountDirectory(
 			systemConfig,
-			'openclaw-session-workspace',
+			'openclaw-session-work-mount',
 		);
+		const realWorkMountDir = await realpath(requestedWorkMountDir);
 
 		await createToolVm(
 			{
@@ -150,7 +168,7 @@ describe('createToolVm', () => {
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
-				workspaceDir: requestedWorkspaceDir,
+				hostWorkMountDir: requestedWorkMountDir,
 				zoneId: 'shravan',
 			},
 			{
@@ -160,6 +178,8 @@ describe('createToolVm', () => {
 					imagePath: '/cache/tool-fingerprint',
 				}),
 				createManagedVm,
+				closePinnedRealFsRoot: () => {},
+				pinRealFsRoot: createPinnedRealFsRoot,
 			},
 		);
 
@@ -167,10 +187,10 @@ describe('createToolVm', () => {
 			expect.objectContaining({
 				vfsMounts: {
 					'/work': {
-						hostPath: fs.realpathSync(requestedWorkspaceDir),
+						hostPath: realWorkMountDir,
 						kind: 'realfs',
 						pinnedHostRoot: expect.objectContaining({
-							realPath: fs.realpathSync(requestedWorkspaceDir),
+							realPath: realWorkMountDir,
 						}),
 					},
 				},
@@ -178,9 +198,72 @@ describe('createToolVm', () => {
 		);
 		expect(capturedCreateVmOptions?.vfsMounts['/work']?.pinnedHostRoot).toEqual(
 			expect.objectContaining({
-				realPath: fs.realpathSync(requestedWorkspaceDir),
+				realPath: realWorkMountDir,
 			}),
 		);
+		expect(capturedCreateVmOptions?.vfsMounts).not.toHaveProperty('/workspace');
+	});
+
+	it('persists tool writes through the RealFS /work backing directory', async () => {
+		const managedVm = {
+			close: async () => {},
+			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+			getVmInstance: () => ({
+				close: async () => {},
+				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				exec: async () => ({ exitCode: 0 }),
+				id: 'vm-instance',
+				setIngressRoutes: () => {},
+			}),
+			id: 'managed-vm',
+			setIngressRoutes: () => {},
+		} satisfies ManagedVm;
+		const systemConfig = await createToolVmSystemConfig();
+		const standardProfile = systemConfig.toolVmProfiles.standard;
+		if (!standardProfile) {
+			throw new Error('Expected standard tool VM profile');
+		}
+		const requestedWorkMountDir = await createWorkMountDirectory(
+			systemConfig,
+			'persisted-work-mount',
+		);
+		const persistedFilePath = path.join(requestedWorkMountDir, 'notes.md');
+
+		await createToolVm(
+			{
+				cacheDir: systemConfig.cacheDir,
+				profile: standardProfile,
+				systemConfig,
+				tcpSlot: 0,
+				hostWorkMountDir: requestedWorkMountDir,
+				zoneId: 'shravan',
+			},
+			{
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'tool-fingerprint',
+					imagePath: '/cache/tool-fingerprint',
+				}),
+				createManagedVm: async (createVmOptions) => {
+					const workMount = createVmOptions.vfsMounts['/work'];
+					if (!workMount || workMount.kind !== 'realfs') {
+						throw new Error('Expected Tool VM /work to be a RealFS mount.');
+					}
+					if (typeof workMount.hostPath !== 'string') {
+						throw new Error('Expected Tool VM /work RealFS mount to include hostPath.');
+					}
+					await writeFile(path.join(workMount.hostPath, 'notes.md'), 'persisted through /work');
+					return managedVm;
+				},
+				closePinnedRealFsRoot: () => {},
+				pinRealFsRoot: createPinnedRealFsRoot,
+			},
+		);
+
+		await expect(readFile(persistedFilePath, 'utf8')).resolves.toBe('persisted through /work');
 	});
 
 	it('creates the tool VM without running redundant runtime setup commands', async () => {
@@ -206,12 +289,15 @@ describe('createToolVm', () => {
 			setIngressRoutes: () => {},
 		} satisfies ManagedVm;
 
-		const systemConfig = createToolVmSystemConfig();
-		const standardProfile = systemConfig.toolProfiles.standard;
+		const systemConfig = await createToolVmSystemConfig();
+		const standardProfile = systemConfig.toolVmProfiles.standard;
 		if (!standardProfile) {
-			throw new Error('Expected standard tool profile');
+			throw new Error('Expected standard tool VM profile');
 		}
-		const requestedWorkspaceDir = createWorkspaceDirectory(systemConfig, 'openclaw-workspace');
+		const requestedWorkMountDir = await createWorkMountDirectory(
+			systemConfig,
+			'openclaw-work-mount',
+		);
 		const buildGondolinImage = vi.fn(async () => ({
 			built: true,
 			fingerprint: 'tool-fingerprint',
@@ -224,15 +310,14 @@ describe('createToolVm', () => {
 				profile: standardProfile,
 				systemConfig,
 				tcpSlot: 0,
-				workspaceDir: requestedWorkspaceDir,
+				hostWorkMountDir: requestedWorkMountDir,
 				zoneId: 'shravan',
 			},
 			{
 				buildGondolinImage,
-				createManagedVm: async (createVmOptions) => {
-					closePinnedWorkspaceRoot(createVmOptions);
-					return managedVm;
-				},
+				createManagedVm: async () => managedVm,
+				closePinnedRealFsRoot: () => {},
+				pinRealFsRoot: createPinnedRealFsRoot,
 			},
 		);
 
@@ -245,62 +330,11 @@ describe('createToolVm', () => {
 		expect(exec).not.toHaveBeenCalled();
 	});
 
-	it('does not use mkdirSync inside the async createToolVm path', async () => {
-		const managedVm = {
-			close: async () => {},
-			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
-			exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
-			getVmInstance: () => ({
-				close: async () => {},
-				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
-				exec: async () => ({ exitCode: 0 }),
-				id: 'vm-instance',
-				setIngressRoutes: () => {},
-			}),
-			id: 'managed-vm',
-			setIngressRoutes: () => {},
-		} satisfies ManagedVm;
-
-		const systemConfig = createToolVmSystemConfig();
-		const standardProfile = systemConfig.toolProfiles.standard;
+	it('rejects direct lifecycle calls with host work mount paths outside OpenClaw roots', async () => {
+		const systemConfig = await createToolVmSystemConfig();
+		const standardProfile = systemConfig.toolVmProfiles.standard;
 		if (!standardProfile) {
-			throw new Error('Expected standard tool profile');
-		}
-		const requestedWorkspaceDir = createWorkspaceDirectory(systemConfig, 'openclaw-workspace');
-		const mkdirSyncSpy = vi.spyOn(fs, 'mkdirSync');
-
-		await createToolVm(
-			{
-				cacheDir: systemConfig.cacheDir,
-				profile: standardProfile,
-				systemConfig,
-				tcpSlot: 1,
-				workspaceDir: requestedWorkspaceDir,
-				zoneId: 'shravan',
-			},
-			{
-				buildGondolinImage: async () => ({
-					built: true,
-					fingerprint: 'tool-fingerprint',
-					imagePath: '/cache/tool-fingerprint',
-				}),
-				createManagedVm: async (createVmOptions) => {
-					closePinnedWorkspaceRoot(createVmOptions);
-					return managedVm;
-				},
-			},
-		);
-
-		expect(mkdirSyncSpy).not.toHaveBeenCalled();
-	});
-
-	it('rejects direct lifecycle calls with workspace directories outside OpenClaw roots', async () => {
-		const systemConfig = createToolVmSystemConfig();
-		const standardProfile = systemConfig.toolProfiles.standard;
-		if (!standardProfile) {
-			throw new Error('Expected standard tool profile');
+			throw new Error('Expected standard tool VM profile');
 		}
 		const buildGondolinImage = vi.fn(async () => ({
 			built: true,
@@ -316,7 +350,7 @@ describe('createToolVm', () => {
 					profile: standardProfile,
 					systemConfig,
 					tcpSlot: 0,
-					workspaceDir: '/etc',
+					hostWorkMountDir: '/etc',
 					zoneId: 'shravan',
 				},
 				{
@@ -324,23 +358,26 @@ describe('createToolVm', () => {
 					createManagedVm,
 				},
 			),
-		).rejects.toThrow(/outside allowed OpenClaw tool workspace roots/u);
+		).rejects.toThrow(/outside allowed OpenClaw tool work mount roots/u);
 		expect(buildGondolinImage).not.toHaveBeenCalled();
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 
-	it('revalidates the workspace directory after image build and before pinning', async () => {
-		const systemConfig = createToolVmSystemConfig();
-		const standardProfile = systemConfig.toolProfiles.standard;
+	it('revalidates the host work mount directory after image build and before pinning', async () => {
+		const systemConfig = await createToolVmSystemConfig();
+		const standardProfile = systemConfig.toolVmProfiles.standard;
 		if (!standardProfile) {
-			throw new Error('Expected standard tool profile');
+			throw new Error('Expected standard tool VM profile');
 		}
-		const requestedWorkspaceDir = createWorkspaceDirectory(systemConfig, 'openclaw-workspace');
-		const movedWorkspaceDir = path.join(path.dirname(requestedWorkspaceDir), 'moved-workspace');
-		const outsideDirectory = createTemporaryDirectory();
+		const requestedWorkMountDir = await createWorkMountDirectory(
+			systemConfig,
+			'openclaw-work-mount',
+		);
+		const movedWorkMountDir = path.join(path.dirname(requestedWorkMountDir), 'moved-work-mount');
+		const outsideDirectory = await createTemporaryDirectory();
 		const buildGondolinImage = vi.fn(async () => {
-			fs.renameSync(requestedWorkspaceDir, movedWorkspaceDir);
-			fs.symlinkSync(outsideDirectory, requestedWorkspaceDir);
+			await rename(requestedWorkMountDir, movedWorkMountDir);
+			await symlink(outsideDirectory, requestedWorkMountDir);
 			return {
 				built: true,
 				fingerprint: 'tool-fingerprint',
@@ -356,7 +393,7 @@ describe('createToolVm', () => {
 					profile: standardProfile,
 					systemConfig,
 					tcpSlot: 0,
-					workspaceDir: requestedWorkspaceDir,
+					hostWorkMountDir: requestedWorkMountDir,
 					zoneId: 'shravan',
 				},
 				{
@@ -364,30 +401,33 @@ describe('createToolVm', () => {
 					createManagedVm,
 				},
 			),
-		).rejects.toThrow(/outside allowed OpenClaw tool workspace roots/u);
+		).rejects.toThrow(/outside allowed OpenClaw tool work mount roots/u);
 
 		expect(buildGondolinImage).toHaveBeenCalledOnce();
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 
-	it('closes the pinned workspace root when post-pin revalidation fails', async () => {
-		const systemConfig = createToolVmSystemConfig();
-		const standardProfile = systemConfig.toolProfiles.standard;
+	it('closes the pinned work mount root when post-pin revalidation fails', async () => {
+		const systemConfig = await createToolVmSystemConfig();
+		const standardProfile = systemConfig.toolVmProfiles.standard;
 		if (!standardProfile) {
-			throw new Error('Expected standard tool profile');
+			throw new Error('Expected standard tool VM profile');
 		}
-		const requestedWorkspaceDir = createWorkspaceDirectory(systemConfig, 'openclaw-workspace');
-		const pinnedWorkspaceRoot = {
+		const requestedWorkMountDir = await createWorkMountDirectory(
+			systemConfig,
+			'openclaw-work-mount',
+		);
+		const pinnedWorkMountRoot = {
 			device: 1,
 			fd: 123,
-			hostPath: requestedWorkspaceDir,
+			hostPath: requestedWorkMountDir,
 			inode: 456,
-			realPath: requestedWorkspaceDir,
+			realPath: requestedWorkMountDir,
 		} satisfies PinnedRealFsRoot;
-		const validateResolvedToolWorkspaceDir = vi
+		const validateResolvedToolWorkMountDir = vi
 			.fn()
-			.mockResolvedValueOnce(requestedWorkspaceDir)
-			.mockResolvedValueOnce(requestedWorkspaceDir)
+			.mockResolvedValueOnce(requestedWorkMountDir)
+			.mockResolvedValueOnce(requestedWorkMountDir)
 			.mockRejectedValueOnce(new Error('post-pin validation failed'));
 		const closePinnedRealFsRoot = vi.fn();
 		const createManagedVm = vi.fn();
@@ -399,7 +439,7 @@ describe('createToolVm', () => {
 					profile: standardProfile,
 					systemConfig,
 					tcpSlot: 0,
-					workspaceDir: requestedWorkspaceDir,
+					hostWorkMountDir: requestedWorkMountDir,
 					zoneId: 'shravan',
 				},
 				{
@@ -410,14 +450,14 @@ describe('createToolVm', () => {
 					}),
 					closePinnedRealFsRoot,
 					createManagedVm,
-					pinRealFsRoot: () => pinnedWorkspaceRoot,
-					validateResolvedToolWorkspaceDir,
+					pinRealFsRoot: () => pinnedWorkMountRoot,
+					validateResolvedToolWorkMountDir,
 				},
 			),
 		).rejects.toThrow('post-pin validation failed');
 
-		expect(validateResolvedToolWorkspaceDir).toHaveBeenCalledTimes(3);
-		expect(closePinnedRealFsRoot).toHaveBeenCalledWith(pinnedWorkspaceRoot);
+		expect(validateResolvedToolWorkMountDir).toHaveBeenCalledTimes(3);
+		expect(closePinnedRealFsRoot).toHaveBeenCalledWith(pinnedWorkMountRoot);
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 });

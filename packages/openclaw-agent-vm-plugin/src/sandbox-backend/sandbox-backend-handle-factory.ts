@@ -24,6 +24,14 @@ function scopeCacheKey(params: {
 	].join('\0');
 }
 
+function formatUnknownError(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function writeSandboxBackendLog(message: string): void {
+	process.stderr.write(`[openclaw-agent-vm-plugin] ${message}\n`);
+}
+
 export function createGondolinSandboxBackendFactory(
 	options: {
 		readonly controllerUrl: string;
@@ -62,15 +70,21 @@ export function createGondolinSandboxBackendFactory(
 			try {
 				await leaseClient.keepLeaseAlive(cachedEntry.lease.leaseId);
 				return cachedEntry.handle;
-			} catch {
+			} catch (error) {
+				writeSandboxBackendLog(
+					`lease keepalive failed for zone '${options.zoneId}' scope '${params.scopeKey}' lease '${cachedEntry.lease.leaseId}': ${formatUnknownError(error)}`,
+				);
 				scopeCache.delete(cacheKey);
 			}
 		}
+		// OpenClaw SDK still names the selected sandbox path `workspaceDir`.
+		// agent-vm's controller calls the same value `workMountDir` because it
+		// backs the Tool VM /work mount.
 		const leaseResponse = await leaseClient.requestLease({
 			agentWorkspaceDir: params.agentWorkspaceDir,
 			profileId,
 			scopeKey: params.scopeKey,
-			workspaceDir: params.workspaceDir,
+			workMountDir: params.workspaceDir,
 			zoneId: options.zoneId,
 		});
 		if (!isGondolinLeaseResponse(leaseResponse)) {

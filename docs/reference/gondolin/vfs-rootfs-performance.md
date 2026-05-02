@@ -88,8 +88,8 @@ one native rootfs
   /work/tmp
   /work/cache
 
-many VFS mounts
-  /workspace  -> host repo/provider
+many VFS mounts (legacy example)
+  /legacy-workspace  -> host repo/provider
   /cache      -> host cache/provider
   /out        -> host output/provider
 ```
@@ -195,7 +195,7 @@ the default `/tmp` tmpfs, but that is usually a heavier solution than setting
   Purpose: repair/download cache
   Backup: no
 
-/home/openclaw/zone-files
+/zone
   Backing: RealFS zoneFilesDir config field for
            long-lived OpenClaw household files
   Backup: yes
@@ -213,6 +213,11 @@ the default `/tmp` tmpfs, but that is usually a heavier solution than setting
 /work or /scratch
   Backing: rootfs/COW unless explicitly mounted
   Purpose: large temporary disk-backed files
+
+OpenClaw Tool VM /work
+  Backing: RealFS hostWorkMountDir resolved from lease workMountDir
+  Purpose: lease-selected execution directory; workMountDir must be a concrete
+           child path under /zone or /home/openclaw/.openclaw/state/sandboxes
 
 /tmp
   Backing: guest tmpfs unless overridden

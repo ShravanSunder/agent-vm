@@ -1,4 +1,4 @@
-import fs from 'node:fs/promises';
+import { chmod, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
@@ -22,7 +22,7 @@ const effectiveOpenClawConfigFileName = 'effective-openclaw.json';
 const effectiveOpenClawConfigVmPath = `/home/openclaw/.openclaw/state/${effectiveOpenClawConfigFileName}`;
 const openClawStateDirVmPath = '/home/openclaw/.openclaw/state';
 const openClawCacheDirVmPath = '/home/openclaw/.openclaw/cache';
-const openClawZoneFilesDirVmPath = '/home/openclaw/zone-files';
+const openClawZoneFilesDirVmPath = '/zone';
 const openClawPluginStageDirVmPath = '/opt/openclaw/plugin-runtime-deps';
 const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
 
@@ -139,30 +139,48 @@ async function writeAuthProfilesIfConfigured(
 	zone: GatewayZoneConfig,
 	secretResolver: SecretResolver,
 ): Promise<void> {
-	const authProfilesSecretCandidate: unknown = zone.gateway.authProfilesRef;
-	if (authProfilesSecretCandidate === undefined) {
-		return;
-	}
-	if (!isSourceAwareSecretReference(authProfilesSecretCandidate)) {
-		throw new Error(`Zone '${zone.id}' has an invalid authProfilesRef shape.`);
-	}
-	const authProfilesSecret = authProfilesSecretCandidate;
+	const authProfilesByAgent = {
+		...(zone.gateway.authProfilesRef ? { main: zone.gateway.authProfilesRef } : {}),
+		...(zone.gateway.type === 'openclaw' ? (zone.gateway.authProfilesByAgent ?? {}) : {}),
+	};
 
-	try {
-		const authProfilesDirectory = path.join(zone.gateway.stateDir, 'agents', 'main', 'agent');
-		await fs.mkdir(authProfilesDirectory, { recursive: true, mode: 0o700 });
-		await fs.chmod(authProfilesDirectory, 0o700);
-		const authProfiles = await secretResolver.resolve(toSecretRef(authProfilesSecret));
-		await writeFileAtomically(
-			path.join(authProfilesDirectory, 'auth-profiles.json'),
-			authProfiles,
-			{ mode: 0o600 },
+	const writeResults = await Promise.allSettled(
+		Object.entries(authProfilesByAgent).map(async ([agentId, authProfilesSecretCandidate]) => {
+			if (!isSourceAwareSecretReference(authProfilesSecretCandidate)) {
+				throw new Error(
+					`Zone '${zone.id}' has an invalid auth profile shape for agent '${agentId}'.`,
+				);
+			}
+			const authProfilesSecret = authProfilesSecretCandidate;
+
+			try {
+				const authProfilesDirectory = path.join(zone.gateway.stateDir, 'agents', agentId, 'agent');
+				await mkdir(authProfilesDirectory, { recursive: true, mode: 0o700 });
+				await chmod(authProfilesDirectory, 0o700);
+				const authProfiles = await secretResolver.resolve(toSecretRef(authProfilesSecret));
+				await writeFileAtomically(
+					path.join(authProfilesDirectory, 'auth-profiles.json'),
+					authProfiles,
+					{ mode: 0o600 },
+				);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				throw new Error(
+					`Failed to write OpenClaw auth profiles for zone '${zone.id}' agent '${agentId}' from '${describeSecretReference(authProfilesSecret)}': ${message}`,
+					{ cause: error },
+				);
+			}
+		}),
+	);
+	const writeErrors = writeResults
+		.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+		.map((result) =>
+			result.reason instanceof Error ? result.reason : new Error(String(result.reason)),
 		);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(
-			`Failed to write OpenClaw auth profiles for zone '${zone.id}' from '${describeSecretReference(authProfilesSecret)}': ${message}`,
-			{ cause: error },
+	if (writeErrors.length > 0) {
+		throw new AggregateError(
+			writeErrors,
+			`Failed to write ${String(writeErrors.length)} OpenClaw auth profile file(s) for zone '${zone.id}'.`,
 		);
 	}
 }
@@ -193,7 +211,7 @@ async function writeEffectiveOpenClawConfig(
 			);
 		}
 		const gatewayToken = await secretResolver.resolve(toSecretRef(gatewayTokenSecret));
-		const rawBaseConfig = await fs.readFile(zone.gateway.config, 'utf8');
+		const rawBaseConfig = await readFile(zone.gateway.config, 'utf8');
 		const parsedBaseConfig: unknown = JSON.parse(rawBaseConfig);
 		if (!isObjectRecord(parsedBaseConfig)) {
 			throw new Error(`OpenClaw config at '${zone.gateway.config}' must be a JSON object.`);
@@ -217,8 +235,8 @@ async function writeEffectiveOpenClawConfig(
 			},
 		};
 		const effectiveConfigPath = getEffectiveOpenClawConfigHostPath(zone);
-		await fs.mkdir(zone.gateway.stateDir, { recursive: true, mode: 0o700 });
-		await fs.chmod(zone.gateway.stateDir, 0o700);
+		await mkdir(zone.gateway.stateDir, { recursive: true, mode: 0o700 });
+		await chmod(zone.gateway.stateDir, 0o700);
 		await writeFileAtomically(
 			effectiveConfigPath,
 			`${JSON.stringify(effectiveConfig, null, 2)}\n`,

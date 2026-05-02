@@ -33,7 +33,7 @@ Use docs/manual/layout.md before moving files or changing generated folders.
 Use docs/manual/scope.md before changing OpenClaw sandbox scope or tool VM lease behavior.
 Use docs/manual/tool-access.md before answering whether a tool binary, auth profile, or tool VM image should be agent-specific.
 Use docs/manual/channels.md before helping a human configure Discord, Slack, Telegram, or another OpenClaw channel.
-Use docs/manual/runtime-paths.md before answering where files appear inside VMs.
+Use docs/manual/runtime-paths.md before answering where files appear inside VMs or how workMountDir backs Tool VM /work.
 Use docs/manual/per-agent-setup.md before changing multi-agent layouts, scope=agent behavior, or per-agent tool/auth isolation.
 
 Do not assume Discord is enabled by the framework. Channels and channel secrets are deployment-owned.
@@ -78,15 +78,16 @@ config/gateways/<zone>/openclaw.json is OpenClaw-owned gateway config.
 config/gateways/<zone>/worker.jsonc is Agent Worker gateway config when the zone type is worker.
 vm-images/ contains deployment-owned Dockerfiles and Gondolin build-config.jsonc files.
 stateDir stores durable gateway state.
-zoneFilesDir stores durable user/workspace files for OpenClaw zones.
+zoneFilesDir stores durable user/household files for OpenClaw zones.
 cacheDir stores rebuildable artifacts.
 runtimeDir stores controller runtime artifacts that are not backup state.
 
 Author JSONC for human-owned agent-vm config. Runtime files such as /state/effective-worker.json, task event JSONL, runtime records, and API bodies stay strict JSON.
-OpenClaw Tool VMs mount the validated lease workspace at /work.
+OpenClaw gateway VMs mount zoneFilesDir at /zone.
+OpenClaw Tool VMs mount the validated lease work mount at /work.
 Worker task VMs keep repo files on rootfs/COW at /work/repos.
 OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work.
-Do not describe agent-vm Tool VM workspaces as /workspace.
+Do not describe agent-vm Tool VM work mounts as /workspace.
 `,
 			),
 		},
@@ -107,9 +108,10 @@ Example:
 - shravan agent uses scope=agent and scopeKey=agent-shravan.
 - alevtina agent uses scope=agent and scopeKey=agent-alevtina.
 - Each agent gets its own scoped sandbox mounted at /work in its Tool VM.
-- If both agents share one OpenClaw zone, they still share the zone's fallback toolProfile image.
-- Use per-agent auth in the scoped sandbox for cheap isolation.
-- Use separate zones or the final zone-fix per-agent tool-profile schema when binary-level tool isolation matters.
+- If both agents share one OpenClaw zone, unmapped agents use defaultToolVmProfile.
+- Configure agentToolVmProfiles when agents in one zone need different Tool VM images.
+- Configure gateway.authProfilesByAgent and agentSandboxSeeds for per-agent auth/profile files.
+- Use separate zones when gateway lifecycle isolation or shared-zone cost is worse than another gateway VM.
 `,
 			),
 		},
@@ -124,7 +126,7 @@ OpenClaw owns plugin lifecycle, agents.list, channels, and gateway behavior.
 The default scaffold enables Gondolin and memory-core support. It does not enable Discord.
 OpenClaw-owned openclaw.json stays strict JSON unless OpenClaw itself supports comments or agent-vm renders a strict effective config first.
 
-Multi-zone controller work makes one controller process manage multiple typed zones. Until that schema lands, keep generated config examples conservative and use the current system config reference for exact field names.
+Multi-zone controller work makes one controller process manage multiple typed zones. Use defaultToolVmProfile, agentToolVmProfiles, gateway.authProfilesByAgent, agentSandboxSeeds, leaseIdleTtl, and tcpPool from the current system config reference for exact field names.
 `,
 			),
 		},
@@ -156,21 +158,22 @@ Do not bake secrets into Dockerfiles or images.
 			content: generatedPage(
 				'Tool Access And Isolation',
 				`
-Today every agent in one OpenClaw zone uses the zone's configured toolProfile unless the installed agent-vm version documents per-agent tool-profile overrides.
+OpenClaw zones choose Tool VM images with defaultToolVmProfile and optional agentToolVmProfiles.
 
 There are three isolation layers:
 
 1. Auth-based isolation.
-   The binary may exist for every agent, but only an agent's scoped sandbox contains credentials. This works today and is cheap, but the binary is still callable.
+   The binary may exist for every agent, but only an agent's scoped sandbox contains credentials or seeded profile files. This is cheap, but the binary is still callable.
 
 2. OpenClaw tool allowlists.
    Per-agent tool policy can stop an agent from invoking certain named tools. This is useful, but it is not binary-level isolation if a broad shell tool can still run arbitrary commands.
 
-3. Per-zone or per-agent tool VM images.
-   This is binary-level isolation. Use separate zones today when agents need different installed binaries. Use the final zone-fix per-agent tool-profile schema after that work lands.
+3. Per-agent or per-zone Tool VM images.
+   agentToolVmProfiles gives binary-level image differences inside one zone. Separate zones add gateway lifecycle isolation.
 
 Use one OpenClaw zone when agents should share gateway resources and the same tool image is acceptable.
-Use multiple zones when tool binary isolation, gateway lifecycle isolation, or per-agent image profiles matter more than memory cost.
+Use agentToolVmProfiles when agents share a gateway but need different Tool VM images.
+Use multiple zones when gateway lifecycle, channel, secret, or zone-files isolation matters more than memory cost.
 `,
 			),
 		},
@@ -205,12 +208,16 @@ Discord recipe:
 				'Runtime Paths',
 				`
 OpenClaw Tool VMs run commands in /work.
-/work is the validated, scope-selected workspaceDir from the OpenClaw lease request.
+/work is the Tool VM guest mount. It is backed by the validated workMountDir selected by OpenClaw and resolved by the controller to hostWorkMountDir.
 /agent-vm contains generated agent-vm runtime instructions.
 /state is controller/gateway plumbing, not the primary place for agent docs.
 worker repo edits live under /work/repos inside Worker gateway task VMs.
 Worker gateway task VMs use /work/tmp for temporary files and /work/cache for disposable package-manager cache.
-OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work; persistent zone files live at the configured zoneFilesDir path.
+OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work; persistent zone files live at /zone and are backed by gateway.zoneFilesDir.
+
+workMountDir is a gateway VM path under /zone or /home/openclaw/.openclaw/state/sandboxes. The roots themselves are validation boundaries; leases must choose concrete child paths.
+hostWorkMountDir is the host realpath after controller validation.
+OpenClaw SDK compatibility note: OpenClaw may call the selected sandbox path workspaceDir. The agent-vm plugin translates that external SDK name to controller workMountDir.
 
 Do not use /workspace in new docs, prompts, or examples for agent-vm Tool VMs.
 `,
@@ -223,11 +230,11 @@ Do not use /workspace in new docs, prompts, or examples for agent-vm Tool VMs.
 				`
 A single OpenClaw gateway can host multiple agents. Use scope=agent when each agent should have a stable workspace and reusable Tool VM lease identity.
 
-Per-agent auth isolation works today by placing credentials in the agent's scoped sandbox. The same tool binary can exist for every agent, but only the intended agent's /work contains usable credentials.
+Per-agent auth isolation works by writing auth profiles through gateway.authProfilesByAgent and first-boot files through agentSandboxSeeds. Seeds target paths relative to the agent sandbox's /work backing directory and do not overwrite existing files.
 
 OpenClaw tool allowlists are a policy layer. They do not remove binaries from the Tool VM image if a broad shell tool can still run them.
 
-Binary-level isolation requires different Tool VM images. Today that means separate zones with different toolProfiles, or the final per-agent tool-profile schema after the multi-zone work lands.
+Binary-level isolation requires different Tool VM images. Use agentToolVmProfiles for per-agent image differences inside one zone, or separate zones when gateway lifecycle and zone-files isolation should also differ.
 `,
 			),
 		},

@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/agent-vm-worker",
-	"version": "0.0.32",
+	"version": "0.0.33",
 	"description": "Worker process that runs inside a sandboxed VM, plans, edits, validates, and reviews coding tasks.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -49,8 +49,7 @@
 		"execa": "^9.5.2",
 		"hono": "^4.12.14",
 		"jsonc-parser": "^3.3.1",
-		"zod": "^4",
-		"zod-to-json-schema": "^3.24.1"
+		"zod": "^4"
 	},
 	"devDependencies": {
 		"vitest": "^4.1.4"

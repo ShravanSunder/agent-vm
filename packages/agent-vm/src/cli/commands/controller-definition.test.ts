@@ -72,7 +72,7 @@ describe('isGatewayImageCached', () => {
 					basePort: 19000,
 					size: 5,
 				},
-				toolProfiles: {
+				toolVmProfiles: {
 					standard: {
 						cpus: 1,
 						imageProfile: 'default',
@@ -93,7 +93,6 @@ describe('isGatewayImageCached', () => {
 						},
 						id: 'coding-agent',
 						secrets: {},
-						toolProfile: 'standard',
 						websocketBypass: [],
 					},
 				],

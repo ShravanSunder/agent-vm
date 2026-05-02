@@ -51,8 +51,12 @@ interface ZoneTaskState {
 
 export class ActiveTaskRegistry {
 	private readonly tasksByZone = new Map<string, ZoneTaskState>();
+	private readonly destroyingZones = new Set<string>();
 
 	public tryReserve(zoneId: string, maxActiveTasksPerPod: number): string | null {
+		if (this.destroyingZones.has(zoneId)) {
+			return null;
+		}
 		const state = this.getOrCreateZoneState(zoneId);
 		if (state.tasksById.size + state.reservations.size >= maxActiveTasksPerPod) {
 			return null;
@@ -63,6 +67,9 @@ export class ActiveTaskRegistry {
 	}
 
 	public activateReservation(zoneId: string, reservationId: string, task: ActiveWorkerTask): void {
+		if (this.destroyingZones.has(zoneId)) {
+			throw new Error(`Zone '${zoneId}' has a destroy in progress.`);
+		}
 		const state = this.getOrCreateZoneState(zoneId);
 		if (!state.reservations.has(reservationId)) {
 			throw new Error(
@@ -103,11 +110,22 @@ export class ActiveTaskRegistry {
 		return state.tasksById.size + state.reservations.size;
 	}
 
+	public beginZoneDestroy(zoneId: string): void {
+		this.destroyingZones.add(zoneId);
+	}
+
+	public endZoneDestroy(zoneId: string): void {
+		this.destroyingZones.delete(zoneId);
+	}
+
 	public setWorkerIngress(
 		zoneId: string,
 		taskId: string,
 		workerIngress: ActiveWorkerTaskIngress,
 	): void {
+		if (this.destroyingZones.has(zoneId)) {
+			throw new Error(`Zone '${zoneId}' has a destroy in progress.`);
+		}
 		const task = this.get(zoneId, taskId);
 		if (!task) {
 			throw new Error(`Zone '${zoneId}' has no active task '${taskId}' to update.`);
@@ -116,15 +134,16 @@ export class ActiveTaskRegistry {
 		state.tasksById.set(taskId, { ...task, workerIngress });
 	}
 
-	public clear(zoneId: string, taskId: string): void {
+	public clear(zoneId: string, taskId: string): boolean {
 		const state = this.tasksByZone.get(zoneId);
 		if (!state) {
-			throw new Error(`Zone '${zoneId}' has no active task '${taskId}' to clear.`);
+			return false;
 		}
 		if (!state.tasksById.delete(taskId)) {
-			throw new Error(`Zone '${zoneId}' has no active task '${taskId}' to clear.`);
+			return false;
 		}
 		this.deleteZoneIfEmpty(zoneId, state);
+		return true;
 	}
 
 	private getOrCreateZoneState(zoneId: string): ZoneTaskState {

@@ -23,7 +23,7 @@ Target worker storage model: Git metadata lives in a controller-visible RealFS
 gitdir, while the worker edits VM-local rootfs/COW repo files under `/work/repos/<repoId>`.
 The worker requests host-side push/PR work through the controller instead of
 pushing directly. OpenClaw's long-lived files are zone files, not worker
-zone files; the OpenClaw VM path is `/home/openclaw/zone-files`.
+zone files; the OpenClaw VM path is `/zone`.
 
 ```
   Caller (CLI / CI / API)
@@ -153,7 +153,7 @@ start repo services"]
     boot["boot Gondolin VM"]
     run["worker runs task"]
     push["host-side push + PR"]
-    teardown["teardown VM and workspace"]
+    teardown["teardown VM and task files"]
     result["return final state"]
 
     request --> prepare
@@ -239,14 +239,18 @@ The controller is the host-side process that owns VM lifecycles, serves the HTTP
   1. Resolve secrets         createSecretResolver() -> composite resolver
   2. Create TCP pool         createTcpPool(config.tcpPool)
   3. Create lease manager    createLeaseManager({ tcpPool, createManagedVm })
-  4. Start idle reaper       createIdleReaper({ ttlMs: 30min }) on 60s interval
-  5. Find active zone        findConfiguredZone(systemConfig, zoneId)
-  6. Start gateway zone      startGatewayZone() -- skipped for worker type
+  4. Start idle reaper       createIdleReaper({ ttlForLease }) on 60s interval
+  5. Create zone registry    one runtime per selected configured zone
+  6. Start selected zones    OpenClaw gateways at boot; Worker zones on task submit
   7. Wire HTTP routes        createControllerService() -> Hono app
   8. Bind HTTP server        startControllerHttpServer({ port: config.host.controllerPort })
 ```
 
-For worker-type zones, the gateway is not started at boot. Instead, a per-task VM is created on demand when a worker task is submitted (see Agent Worker Gateway below).
+For worker-type zones, the gateway is not started at boot. Instead, a per-task
+VM is created on demand when a worker task is submitted (see Agent Worker
+Gateway below). OpenClaw and Worker routes dispatch through the requested
+`zoneId`; wrong-type operations return typed HTTP errors instead of using one
+process-wide active zone.
 
 ### HTTP API (Hono on :18800)
 
@@ -276,9 +280,12 @@ The controller exposes a REST API. Routes are split across two modules: core lea
 
 **TCP Pool** (`tcp-pool.ts`): Manages a fixed pool of TCP port slots. Each tool VM gets a unique slot mapped to `127.0.0.1:{basePort + slot}`. The gateway VM sees these as `tool-{slot}.vm.host:22` via Gondolin's synthetic DNS. Pool size is configured in `systemConfig.tcpPool.size`.
 
-**Lease Manager** (`lease-manager.ts`): Creates, tracks, and releases tool VM leases. Each lease holds a reference to a `ManagedVm`, a TCP slot, SSH access details, workspace identity, and timestamps. Live leases are reused by `zoneId` and `scopeKey` when the requested profile and validated workspace match, so OpenClaw `scope=agent` can keep using the same tool VM while the idle TTL keeps capacity bounded.
+**Lease Manager** (`lease-manager.ts`): Creates, tracks, and releases tool VM leases. Each lease holds a reference to a `ManagedVm`, a TCP slot, SSH access details, work mount identity, and timestamps. Live leases are reused by `zoneId` and `scopeKey` when the requested profile and validated work mount match, so OpenClaw `scope=agent` can keep using the same tool VM while the idle TTL keeps capacity bounded.
 
-**Idle Reaper** (`idle-reaper.ts`): Runs on a 60-second interval. Any lease with `lastUsedAt` older than the TTL (default 30 minutes) is automatically released. This prevents orphaned tool VMs from consuming resources.
+**Idle Reaper** (`idle-reaper.ts`): Runs on a 60-second interval. Any lease
+with `lastUsedAt` older than its resolved TTL is automatically released. The
+policy checks exact or prefix `leaseIdleTtl.byScopePrefix`, then
+`leaseIdleTtl.byScopeKind`, then the default 30 minute fallback.
 
 **Active Task Registry** (`active-task-registry.ts`): Tracks in-flight worker tasks by zone and task ID. Used by the push-branches endpoint to verify a task is still active before allowing branch pushes.
 
@@ -333,7 +340,7 @@ The `GatewayLifecycle` interface (`gateway-interface` package) is the contract e
 | **Bootstrap** | Write shell env profile, configure bashrc | Conditionally install worker tarball from `/state/` |
 | **Start command** | `openclaw gateway --port 18789` | `agent-vm-worker serve --port 18789 --config ...` |
 | **Health check** | HTTP GET `:18789/` | HTTP GET `:18789/health` |
-| **prepareHostState** | Writes effective-openclaw.json (config + gateway token), writes auth-profiles.json from 1Password | None |
+| **prepareHostState** | Writes effective-openclaw.json (config + gateway token), writes configured per-agent auth profile files | None |
 | **Rootfs mode** | `cow` (copy-on-write) | `cow` (copy-on-write) |
 
 Both implementations call `splitResolvedGatewaySecrets()` to partition resolved secrets into environment variables (injection: `env`) and HTTP-mediated secrets (injection: `http-mediation` with required `hosts[]`). See the Secrets Flow section below for the full picture.
@@ -419,7 +426,7 @@ OpenClaw Gateway runs a long-lived gateway VM that hosts an interactive chat age
        |      |-- OpenClaw process (:18789)
        |      |-- /home/openclaw/.openclaw/config/  (host: config dir, realfs)
        |      |-- /home/openclaw/.openclaw/state/   (host: stateDir, realfs)
-       |      |-- /home/openclaw/zone-files/         (host: zoneFilesDir, realfs)
+       |      |-- /zone/         (host: zoneFilesDir, realfs)
        |      |
        |      |-- Talks to Controller via controller.vm.host:18800
        |      |-- Requests tool VM leases for code execution
@@ -429,7 +436,7 @@ OpenClaw Gateway runs a long-lived gateway VM that hosts an interactive chat age
        |-- ...up to tcpPool.size
 ```
 
-The gateway VM boots at controller startup and stays running. Tool VMs are created on demand via the lease API -- each gets a TCP slot, SSH access, and a lease-owned `/work` mount. Auth profiles and the effective OpenClaw config are written to the host-side state directory before the VM boots via `prepareHostState()`. The gateway reaches tool VMs via synthetic DNS (`tool-{n}.vm.host:22`) and the controller via `controller.vm.host:18800`. Websocket bypass hosts get direct TCP passthrough (for Discord, etc.).
+The gateway VM boots at controller startup and stays running. Tool VMs are created on demand via the lease API -- each gets a TCP slot, SSH access, and a lease-owned `/work` mount. The lease `workMountDir` is a gateway path under a concrete child of `/zone` or `/home/openclaw/.openclaw/state/sandboxes`; the controller resolves it to the host directory backing Tool VM `/work`. Auth profiles and the effective OpenClaw config are written to the host-side state directory before the VM boots via `prepareHostState()`. The gateway reaches tool VMs via synthetic DNS (`tool-{n}.vm.host:22`) and the controller via `controller.vm.host:18800`. Websocket bypass hosts get direct TCP passthrough (for Discord, etc.).
 
 ---
 
@@ -610,18 +617,23 @@ directory.
   |-- host              Controller port, project namespace, secrets provider, GitHub token
   |-- cacheDir          Rebuildable cache directory; not included in zone backups
   |-- runtimeDir        Active worker runtime dir; not included in zone backups
-  |-- zoneFilesDir      OpenClaw zone files; RealFS and included in zone backups
+  |-- zones[].gateway.zoneFilesDir
+  |                      OpenClaw zone files; RealFS at /zone and included in backups
+  |                      Tool VM leases may select concrete child paths under /zone
   |-- images            Build config paths for gateway and tool VM images
   |-- zones[]           Zone definitions: gateway type, resources, secrets, allowed hosts
-  |-- toolProfiles      Named tool VM resource profiles (memory, cpus, image profile)
+  |-- toolVmProfiles    Named Tool VM profiles (memory, cpus, image profile)
   |-- tcpPool           Port range and pool size for tool VM TCP slots
+  |-- leaseIdleTtl      Optional per-scope lease idle TTL policy
 ```
 
 Each zone declares its `gateway.type` (`openclaw` or `worker`), resource
 limits, secret references, and an outbound host allowlist. OpenClaw zones also
-declare a `toolProfile`; Worker-only zones omit tool profiles by default. The
-schema validates image profile references and requires `host.secretsProvider`
-when any secret uses the `1password` source.
+declare a fallback `defaultToolVmProfile` and an explicit
+`agentToolVmProfiles` map. `agentToolVmProfiles` can override that fallback for
+`agent:<agentId>` tool leases inside the same zone. Worker-only zones omit Tool
+VM profile fields. The schema validates image profile references and requires
+`host.secretsProvider` when any secret uses the `1password` source.
 
 For the field-by-field reference, see
 [configuration/README.md](../reference/configuration/README.md).

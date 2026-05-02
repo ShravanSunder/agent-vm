@@ -58,7 +58,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main:session-abc',
-			workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
+			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
 			zoneId: 'shravan',
 		});
 
@@ -66,7 +66,7 @@ describe('createLeaseManager', () => {
 		expect(leaseManager.keepLeaseAlive(lease.id)?.lease).toMatchObject({
 			id: lease.id,
 			agentWorkspaceDir: '/home/openclaw/work',
-			workspaceDir: '/home/openclaw/.openclaw/sandboxes/session/work',
+			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
 			zoneId: 'shravan',
 		});
 
@@ -93,7 +93,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			workspaceDir: '/host/sandbox-work',
+			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
 
@@ -123,7 +123,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			workspaceDir: '/host/sandbox-work',
+			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
 		const lease = await leaseManager.createLease(request);
@@ -157,7 +157,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			workspaceDir: '/host/sandbox-work',
+			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
 
@@ -171,11 +171,11 @@ describe('createLeaseManager', () => {
 				},
 				profileId: 'standard',
 				scopeKey: 'agent:main',
-				workspaceDir: '/host/other-sandbox-work',
+				hostWorkMountDir: '/host/other-sandbox-work',
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow(
-			"Tool VM lease scope conflict for zone 'shravan' scopeKey 'agent:main': existing workspaceDir '/host/sandbox-work' does not match requested workspaceDir '/host/other-sandbox-work'.",
+			"Tool VM lease scope conflict for zone 'shravan' scopeKey 'agent:main': existing hostWorkMountDir '/host/sandbox-work' does not match requested hostWorkMountDir '/host/other-sandbox-work'.",
 		);
 		expect(closeMock).not.toHaveBeenCalled();
 	});
@@ -196,7 +196,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			workspaceDir: '/host/sandbox-work',
+			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
 
@@ -210,7 +210,7 @@ describe('createLeaseManager', () => {
 				},
 				profileId: 'large',
 				scopeKey: 'agent:main',
-				workspaceDir: '/host/sandbox-work',
+				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
 		).rejects.toBeInstanceOf(LeaseScopeConflictError);
@@ -232,7 +232,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			workspaceDir: '/host/sandbox-work',
+			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
 
@@ -246,7 +246,7 @@ describe('createLeaseManager', () => {
 				},
 				profileId: 'standard',
 				scopeKey: 'agent:main',
-				workspaceDir: '/host/sandbox-work',
+				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
 		).rejects.toBeInstanceOf(LeaseScopeConflictError);
@@ -270,7 +270,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			workspaceDir: '/host/sandbox-work',
+			hostWorkMountDir: '/host/sandbox-work',
 		};
 
 		const firstLease = await leaseManager.createLease({ ...request, zoneId: 'shravan' });
@@ -308,7 +308,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			workspaceDir: '/host/sandbox-work',
+			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
 
@@ -349,7 +349,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			workspaceDir: '/host/sandbox-work',
+			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
 
@@ -397,7 +397,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			workspaceDir: '/host/sandbox-work',
+			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
 		const lease = await leaseManager.createLease(request);
@@ -436,7 +436,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			workspaceDir: '/host/sandbox-work',
+			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
 		const lease = await leaseManager.createLease(request);
@@ -479,7 +479,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'scope-a',
-			workspaceDir: '/host/sandbox-work',
+			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
 		const lease2 = await leaseManager.createLease({
@@ -491,7 +491,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'scope-b',
-			workspaceDir: '/host/sandbox-work',
+			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
 
@@ -548,7 +548,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'scope-close-fail',
-			workspaceDir: '/host/sandbox-work',
+			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
 
@@ -577,7 +577,7 @@ describe('createLeaseManager', () => {
 				},
 				profileId: 'standard',
 				scopeKey: 'scope-fail',
-				workspaceDir: '/host/sandbox-work',
+				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow('vm create failed');
@@ -614,7 +614,7 @@ describe('createLeaseManager', () => {
 				},
 				profileId: 'standard',
 				scopeKey: 'scope-ssh-fail',
-				workspaceDir: '/host/sandbox-work',
+				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow('ssh setup failed');

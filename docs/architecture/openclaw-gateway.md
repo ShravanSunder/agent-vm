@@ -22,7 +22,7 @@ OpenClaw runs a persistent gateway VM that hosts an interactive chat agent. Tool
   |  | - secret resolver         |                                  |
   |  | - lease manager           |                                  |
   |  | - TCP pool (port slots)   |                                  |
-  |  | - idle reaper (30min TTL) |                                  |
+  |  | - idle reaper (scope TTL) |                                  |
   |  +---------------------------+                                  |
   |       |              |                                          |
   |       v              v (on-demand leases)                       |
@@ -48,7 +48,7 @@ OpenClaw runs a persistent gateway VM that hosts an interactive chat agent. Tool
 | Who runs inside VM | agent-vm-worker (pipeline) | OpenClaw (chat agent platform) |
 | Output | Pull requests | Tool execution results in chat |
 | Tool execution | Agent runs commands directly in gateway VM | Agent requests tool VM lease, runs code there |
-| VFS mounts | `/state` plus task `/gitdirs`; `/work/repos` is rootfs/COW target | `/config`, `/cache`, `/state`, zone-files path at `/home/openclaw/zone-files` |
+| VFS mounts | `/state` plus task `/gitdirs`; `/work/repos` is rootfs/COW target | `/config`, `/cache`, `/state`, zone files at `/zone` |
 | TCP hosts | Controller only | Controller + all tool VM SSH ports + WebSocket bypass |
 | Auth | None | Auth profiles (1Password → disk → VFS) |
 | prepareHostState | None | Writes effective config + auth profiles |
@@ -70,7 +70,7 @@ The gateway VM boots at controller startup and stays running. It is NOT per-task
   2. Build gateway image (cached by fingerprint)
   3. prepareHostState:
      - Write effective-openclaw.json (inject gateway token)
-     - Write auth-profiles.json from 1Password
+     - Write per-agent auth-profiles.json files from configured sources
   4. buildVmSpec → GatewayVmSpec (4 mounts, TCP pool, env)
   5. buildProcessSpec → bootstrap + start commands
   6. createManagedVm → Gondolin VM
@@ -102,10 +102,11 @@ guest:
 import path and is not included in encrypted zone backups. Durable OpenClaw
 state and auth profiles remain under `stateDir`.
 
-The OpenClaw VM path `/home/openclaw/zone-files` is long-lived zone files, not
+The OpenClaw VM path `/zone` is long-lived zone files, not
 worker-style hot execution storage. This storage is RealFS-mounted and backed
-up. The host-side config field is `zoneFilesDir`; `workspaceDir` is not part of
-the target schema.
+up. The host-side config field is `zoneFilesDir`; there is no static
+`workspaceDir` field in `system.json`. The runtime lease equivalent is
+`workMountDir`, selected dynamically for each Tool VM lease.
 
 ---
 
@@ -124,14 +125,14 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
     zoneId,
     profileId,
     agentWorkspaceDir,
-    workspaceDir: "/home/openclaw/zone-files/..."
+    workMountDir: "/zone/..."
   }
        |
        v
   Controller: lease-manager.createLease()
        |
-       |  1. Translate workspaceDir from gateway path to trusted host root
-       |  2. Reuse same scope only if profileId, workspaceDir, and
+       |  1. Translate workMountDir from gateway path to trusted hostWorkMountDir
+       |  2. Reuse same scope only if profileId, hostWorkMountDir, and
        |     agentWorkspaceDir match
        |  3. Probe existing VM; evict stale leases
        |  4. tcpPool.allocate() → slot 0 (port 19000)
@@ -144,7 +145,7 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
        v
   OpenClaw uses SSH to execute code in tool VM
        |
-       v  (30 minutes idle)
+  v  (scope-specific idle TTL; default 30 minutes)
   Idle reaper: releaseLease()
        |  1. vm.close() → tool VM destroyed
        |  2. tcpPool.release(slot) → port freed
@@ -154,11 +155,22 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
 
 Leases are keyed by `scopeKey` — typically `{channel}:{userId}`. If the same
 scope already has an active lease, it is reused only when `profileId`,
-`workspaceDir`, and `agentWorkspaceDir` also match. A mismatch is treated as a
-caller conflict, not as a new tool VM. Before reuse, the controller probes the
+`hostWorkMountDir`, and `agentWorkspaceDir` also match. A mismatch is treated as
+a caller conflict, not as a new tool VM. Before reuse, the controller probes the
 VM; dead leases are evicted and replaced. This means a user's tool VM persists
 across multiple tool calls within the same conversation without silently
-crossing workspace or profile boundaries.
+crossing work mount or profile boundaries.
+
+For `scopeKey` values shaped as `agent:<agentId>`, the controller first checks
+the zone's `agentToolVmProfiles[agentId]` mapping. If no agent-specific mapping
+exists, it falls back to the zone's `defaultToolVmProfile`. This lets one
+OpenClaw zone serve multiple agents with different Tool VM images while keeping
+the gateway and durable `/zone` namespace shared.
+
+Before the first Tool VM boot for an agent-scoped sandbox work mount, the
+controller can seed configured files such as `.config/gcloud/...` into that
+sandbox's `/work` backing directory. Seeds are first-boot only and do not
+overwrite files that already exist.
 
 The controller reports reuse conflicts as `LeaseScopeConflictError`, surfaced
 through the lease route as HTTP 409. The message names the zone, `scopeKey`, and
@@ -208,11 +220,17 @@ The `openclaw-agent-vm-plugin` package bridges OpenClaw's sandbox system to Gond
 The plugin provides:
 - **File bridge**: `mkdirp`, `readFile`, `writeFile`, `stat`, `remove`, `rename` — all via SSH into the tool VM
 - **Shell execution**: run arbitrary commands in the tool VM
-- **Workspace access**: tool VMs use `/work` for lease-local execution.
-  Lease requests must provide `workspaceDir` as an OpenClaw gateway path under
-  `/home/openclaw/.openclaw/state/sandboxes` or `/home/openclaw/zone-files`.
-  The controller maps that guest path back to trusted host roots and verifies
-  the real path is inside either `stateDir/sandboxes` or `zoneFilesDir`.
+- **Work mount access**: tool VMs use `/work` for lease-local execution.
+  Lease requests provide `workMountDir` as a concrete OpenClaw gateway child
+  path under `/home/openclaw/.openclaw/state/sandboxes` or `/zone`; the roots
+  themselves are validation boundaries and are rejected as mount targets.
+  The controller maps that gateway path to `hostWorkMountDir`, verifies the
+  real path is inside either `stateDir/sandboxes` or `zoneFilesDir`, and mounts
+  it into the Tool VM at `/work`.
+
+OpenClaw SDK compatibility note: OpenClaw currently names the selected sandbox
+path `workspaceDir`. The agent-vm plugin translates that field to
+`workMountDir` before calling the controller.
 
 ---
 

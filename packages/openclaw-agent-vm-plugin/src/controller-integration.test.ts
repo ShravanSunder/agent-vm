@@ -40,7 +40,7 @@ describe('gondolin controller integration', () => {
 	it('requests a lease through the controller app and builds an exec spec from the returned ssh lease', async () => {
 		const controllerApp = createControllerApp({
 			readIdentityPem: async () => 'pem',
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -49,7 +49,7 @@ describe('gondolin controller integration', () => {
 			},
 			leaseManager: {
 				createLease: vi.fn(async () => ({
-					agentWorkspaceDir: '/home/openclaw/zone-files',
+					agentWorkspaceDir: '/zone',
 					createdAt: 1,
 					id: 'lease-123',
 					lastUsedAt: 1,
@@ -78,7 +78,7 @@ describe('gondolin controller integration', () => {
 						setIngressRoutes: vi.fn(),
 						getVmInstance: vi.fn(),
 					},
-					workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/work',
+					hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 					zoneId: 'shravan',
 				})),
 				keepLeaseAlive: vi.fn(),
@@ -86,6 +86,7 @@ describe('gondolin controller integration', () => {
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
 			},
+			resolveLeaseWorkMountDir: async ({ workMountDir }) => workMountDir,
 		});
 		const leaseClient = createLeaseClient({
 			controllerUrl: 'http://controller.vm.host:18800',
@@ -126,7 +127,7 @@ describe('gondolin controller integration', () => {
 			},
 			scopeKey: 'agent:main:session-abc',
 			sessionKey: 'session-abc',
-			workspaceDir: '/home/openclaw/.openclaw/sandboxes/work',
+			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 		});
 		const execSpec = await backend.buildExecSpec({
 			command: 'ls -la',

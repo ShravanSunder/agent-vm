@@ -47,6 +47,11 @@ until the implementation branch confirms the schema names. Stable manual work
 may proceed now: `/work`, Discord-as-deployment, teaching-vs-automation,
 memory-core defaults, and the `agent-vm manual update` command.
 
+Execute the lease work-mount naming plan before finalizing generated manual
+text that names the controller lease request field. Until that lands, generated
+manuals must use neutral language such as "the validated directory backing Tool
+VM /work" and must not teach `workspaceDir` as an agent-vm controller term.
+
 ## Current Main/Branch State To Preserve
 
 Before executing this plan, current `master` is at `b7339ba` / `v0.0.33`.
@@ -74,7 +79,8 @@ Zod v4 direct deps stay
 zod-to-json-schema is removed
 native z.toJSONSchema behavior is pinned by tests
 JSONC support and manual update are refreshed onto current master
-lease request naming is out of scope for this plan
+lease request naming is out of scope for this plan, but generated manual text
+  must not preserve stale workspaceDir vocabulary
 ```
 
 ---
@@ -91,6 +97,8 @@ The implementation must address these reviewed gaps before any code is written:
 6. Add a real per-agent walkthrough: multi-agent OpenClaw gateway, `scope=agent`, per-agent sandbox/auth replication, and when per-agent tool VM images require multiple zones or future per-agent tool profiles.
 7. Add an explicit teaching-vs-automation boundary in `AGENTS.md`: the generated agent index may help explain privileged host/deployment config, but must not silently edit secrets, allowed hosts, Dockerfiles, or OpenClaw channel config unless the human asks for those edits.
 8. Expand the Discord recipe with concrete keys and endpoints: `DISCORD_BOT_TOKEN`, `discord.com`, `cdn.discordapp.com`, `gateway.discord.gg:443`, websocket bypass, and runtime auth hints.
+9. Treat Zod cleanup as required implementation work, not optional dependency polish. `packages/agent-vm-worker` still declares `zod-to-json-schema`; this plan must remove it, pin native `z.toJSONSchema()` behavior with tests, and add a repo guard against Zod 3 or the legacy converter returning.
+10. OpenClaw startup/config verification is environment-gated. Do not add OpenClaw as a repo dependency just to run this branch. Add a clear smoke path that validates generated OpenClaw config when the `openclaw` CLI is available and skips with an explicit reason when it is not.
 
 ---
 
@@ -370,12 +378,12 @@ config/system.jsonc is the controller config.
 config/gateways/<zone>/openclaw.json is OpenClaw-owned gateway config.
 vm-images/ contains deployment-owned Dockerfiles and Gondolin build configs.
 stateDir stores durable gateway state.
-zoneFilesDir stores durable user/workspace files for OpenClaw zones.
+zoneFilesDir stores durable OpenClaw zone files.
 cacheDir stores rebuildable artifacts.
 runtimeDir stores controller runtime artifacts that are not backup state.
 
-OpenClaw Tool VMs mount the validated lease workspace at /work.
-Do not describe Tool VM workspaces as /workspace. /workspace is stale for the agent-vm Tool VM path.
+OpenClaw Tool VMs mount the validated lease work mount at /work.
+Do not describe Tool VM work mounts as /workspace. /workspace is stale for the agent-vm Tool VM path.
 `,
 			),
 		},
@@ -384,11 +392,11 @@ Do not describe Tool VM workspaces as /workspace. /workspace is stale for the ag
 			content: generatedPage(
 				'Scope And Tool VM Reuse',
 				`
-OpenClaw sandbox scope decides which workspace a tool VM sees.
+OpenClaw sandbox scope decides which work mount a Tool VM sees.
 
 session scope isolates per conversation.
-agent scope reuses a stable workspace for one agent identity.
-shared scope intentionally shares one workspace across participants.
+agent scope reuses a stable work mount for one agent identity.
+shared scope intentionally shares one work mount across participants.
 
 Tool VM lease identity follows scopeKey. TCP slots are capacity; they are not identity.
 
@@ -396,9 +404,9 @@ Example:
 - shravan agent uses scope=agent and scopeKey=agent-shravan.
 - alevtina agent uses scope=agent and scopeKey=agent-alevtina.
 - Each agent gets its own scoped sandbox mounted at /work in its Tool VM.
-- If both agents share one OpenClaw zone, they still share the zone's toolProfile image.
+- If both agents share one OpenClaw zone, they still share the zone's defaultToolVmProfile image.
 - Use per-agent auth in the scoped sandbox for cheap isolation.
-- Use separate zones or a future per-agent toolProfile field when binary-level tool isolation matters.
+- Use separate zones or agentToolVmProfiles when binary-level tool isolation matters.
 `,
 			),
 		},
@@ -441,7 +449,7 @@ Do not bake secrets into Dockerfiles or images.
 			content: generatedPage(
 				'Tool Access And Isolation',
 				`
-Today every agent in one OpenClaw zone uses the zone's configured toolProfile. That means every agent lease in the zone gets the same tool VM image.
+Today every agent in one OpenClaw zone uses the zone's defaultToolVmProfile unless agentToolVmProfiles overrides that agent. Agents using the same Tool VM profile get the same Tool VM image.
 
 There are three isolation layers:
 
@@ -452,10 +460,10 @@ There are three isolation layers:
    Per-agent tool policy can stop an agent from invoking certain named tools. This is useful, but it is not binary-level isolation if a broad shell tool can still run arbitrary commands.
 
 3. Per-zone or per-agent tool VM images.
-   This is binary-level isolation. Put agents that need different installed tools into zones or future per-agent tool profiles that point at different tool VM image profiles.
+   This is binary-level isolation. Put agents that need different installed tools into zones or agentToolVmProfiles entries that point at different Tool VM profiles.
 
 Use one OpenClaw zone when agents should share gateway resources and the same tool image is acceptable.
-Use multiple zones when tool binary isolation, gateway lifecycle isolation, or per-agent image profiles matter more than memory cost.
+Use multiple zones when gateway lifecycle isolation or zone-level storage isolation matters more than memory cost.
 
 This manual page explains the operator model. It does not implement multizone
 dispatch by itself.
@@ -493,11 +501,13 @@ Discord recipe:
 				'Runtime Paths',
 				`
 OpenClaw Tool VMs run commands in /work.
-/work is the validated, scope-selected workspaceDir from the OpenClaw lease request.
+/work is the validated, scope-selected directory backing the Tool VM work mount.
 /agent-vm contains generated agent-vm runtime instructions.
 /state is controller/gateway plumbing, not the primary place for agent docs.
 
 Do not use /workspace in new docs, prompts, or examples for Tool VMs.
+Do not describe agent-vm controller lease fields here; use the current lease
+work-mount naming plan as the source of truth after it lands.
 `,
 			),
 		},
@@ -506,13 +516,13 @@ Do not use /workspace in new docs, prompts, or examples for Tool VMs.
 			content: generatedPage(
 				'Per-Agent Setup',
 				`
-A single OpenClaw gateway can host multiple agents. Use scope=agent when each agent should have a stable workspace and reusable Tool VM lease identity.
+A single OpenClaw gateway can host multiple agents. Use scope=agent when each agent should have a stable work mount and reusable Tool VM lease identity.
 
 Per-agent auth isolation works today by placing credentials in the agent's scoped sandbox. The same tool binary can exist for every agent, but only the intended agent's /work contains usable credentials.
 
 OpenClaw tool allowlists are a policy layer. They do not remove binaries from the Tool VM image if a broad shell tool can still run them.
 
-Binary-level isolation requires different Tool VM images. Today that means separate zones with different toolProfiles, or future per-agent toolProfile support.
+Binary-level isolation requires different Tool VM images. Today that means separate zones with different defaultToolVmProfile values or agentToolVmProfiles overrides.
 `,
 			),
 		},
@@ -1096,16 +1106,26 @@ Expected: PASS.
 
 - [ ] **Step 6: Run startup-oriented OpenClaw config verification**
 
-Run a generated-config smoke against the scaffold. If the repo has a local `agent-vm validate` or doctor command for generated config, use that command; otherwise run the strongest available OpenClaw config validation command in the generated gateway directory and record the limitation in the PR:
+Run a generated-config smoke against the scaffold. This is environment-gated:
+use the installed `openclaw` CLI when available, and skip with a precise reason
+when it is not. Do not add OpenClaw as a repo dependency for this check.
 
 ```bash
 tmp_dir="$(mktemp -d)"
 node packages/agent-vm/dist/cli/agent-vm-entrypoint.js init test-openclaw --type openclaw --secrets environment --arch aarch64 --target-dir "$tmp_dir"
 node packages/agent-vm/dist/cli/agent-vm-entrypoint.js validate --config "$tmp_dir/config/system.jsonc"
 node packages/agent-vm/dist/cli/agent-vm-entrypoint.js doctor --config "$tmp_dir/config/system.jsonc"
+if command -v openclaw >/dev/null 2>&1; then
+  (cd "$tmp_dir" && openclaw config validate --config config/gateways/test-openclaw/openclaw.json)
+else
+  printf '%s\n' 'SKIP: openclaw CLI is not installed; generated OpenClaw config validation is environment-gated.'
+fi
 ```
 
-Expected: PASS, or an explicitly documented environment-gated skip if the local machine cannot start/doctor OpenClaw. Do not claim the memory-core default is deployment-safe from unit tests alone.
+Expected: agent-vm validate/doctor PASS. If `openclaw` is installed, the
+OpenClaw config validation also PASSes. If `openclaw` is unavailable, the skip
+message is recorded in the PR/test output and the limitation is documented. Do
+not claim the memory-core default is deployment-safe from unit tests alone.
 
 - [ ] **Step 7: Commit**
 

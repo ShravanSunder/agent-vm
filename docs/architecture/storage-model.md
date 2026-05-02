@@ -34,7 +34,7 @@ stateDir          per-zone              yes               yes       identity, au
 
 zoneFilesDir      OpenClaw per-zone     yes               yes       long-lived user/agent files
                                                                        mounted at
-                                                                       /home/openclaw/zone-files
+                                                                       /zone
 
 backupDir         per-zone output       artifact          no        encrypted backup archives
 ```
@@ -42,6 +42,53 @@ backupDir         per-zone output       artifact          no        encrypted ba
 Worker zones do not have `zoneFilesDir` in the target schema. Worker repo files
 live inside the VM under `/work/repos/<repoId>`, while worker gitdirs live under
 `runtimeDir`.
+
+## Lease Path Vocabulary
+
+Tool VM lease paths cross three naming layers: OpenClaw SDK input, gateway VM
+paths, and controller-trusted host paths. Keep these names distinct.
+
+```text
+name / path                         layer / location                  storage / backing
+────────────────────────────────    ───────────────────────────────   ─────────────────────────────
+
+zoneFilesDir                        system.json host config            durable RealFS, backed up
+                                    OpenClaw zones only                mounted in gateway at /zone
+
+/zone                               OpenClaw gateway VM                RealFS -> zoneFilesDir
+                                    durable zone files                 shared, backed up
+
+workMountDir                        POST /lease request                gateway VM path, untrusted input
+                                    chosen by OpenClaw/plugin          must be child of /zone or sandboxes
+
+/home/openclaw/.openclaw/state/
+sandboxes/<child>                   OpenClaw gateway VM                RealFS -> stateDir/sandboxes/<child>
+                                    agent sandbox namespace            durable state, backed up
+
+hostWorkMountDir                    controller internal                trusted resolved host path
+                                    after validation/realpath          passed to lease manager / RealFS
+
+/work                               Tool VM guest path                 RealFS -> hostWorkMountDir
+                                    lease-local execution dir          survives if backing host dir does
+
+agentWorkspaceDir                   OpenClaw/tool process cwd concept  guest-side agent working dir
+                                    controller lease field             not a host storage root
+
+workspaceDir                        OpenClaw SDK boundary only          external SDK name
+                                    plugin input                       translated immediately to workMountDir
+
+/work/repos/<repoId>                Worker VM guest path               rootfs/COW
+                                    worker task repo files             disposable after worker VM closes
+
+/gitdirs/<repoId>.git               Worker VM / host runtime           RealFS runtimeDir
+                                    git metadata                       not normal zone backup
+
+/cache                              OpenClaw gateway VM                RealFS -> cacheDir
+                                    rebuildable cache                  not backed up
+
+/state                              gateway / worker VM                RealFS -> stateDir or runtime state
+                                    control/state plumbing             depends on gateway type
+```
 
 ## Storage Classes
 
@@ -87,9 +134,16 @@ runtime artifacts
 zone files
   Owner: long-lived gateway/user workflow
   Host: <zoneFilesDir>
-  VM: /home/openclaw/zone-files
+  VM: /zone
   Backup: yes for OpenClaw-style long-lived zone backups
   Rule: RealFS-mounted durable household/user files, not hot package-manager work
+
+OpenClaw gateway /work
+  Owner: gateway runtime
+  Host: none for the target hot path
+  VM: /work/tmp, /work/cache
+  Backup: no
+  Rule: rootfs/COW temp and cache only; do not mount zoneFilesDir at /work
 
 worker repo files
   Owner: per-task VM execution
@@ -124,6 +178,8 @@ host stateDir
   ~/.agent-vm/state/<zone>/
     effective-openclaw.json
     agents/main/agent/auth-profiles.json
+    agents/<agentId>/agent/auth-profiles.json
+    sandboxes/<agentId>/work/
     gateway-runtime.json
     logs/
 
@@ -158,6 +214,17 @@ bundled plugin dependencies, and it must not be moved into `stateDir`.
 `stateDir` is for effective config, auth profiles, runtime metadata, and logs.
 Putting dependency trees in state makes encrypted backups large, slow, and hard
 to reason about.
+
+OpenClaw agent sandbox work directories live under `stateDir` and can be mounted
+into Tool VMs as `/work`. Per-agent sandbox seeds are written only into these
+sandbox-backed `/work` directories, and only when the target file does not
+already exist. Shared `/zone` work mounts are not seeded this way.
+
+Tool VM lease requests name `workMountDir` as a gateway path under a concrete
+child of `/zone` or `/home/openclaw/.openclaw/state/sandboxes`; the roots
+themselves are validation boundaries and rejected as mount targets. The
+controller resolves that gateway path to a trusted host `hostWorkMountDir`, and
+the Tool VM always sees the resolved directory at `/work`.
 
 ## Worker Repo Files And Git
 

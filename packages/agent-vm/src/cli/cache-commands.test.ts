@@ -34,7 +34,7 @@ function createCacheCommandSystemConfig(): LoadedSystemConfig {
 				basePort: 19000,
 				size: 5,
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					imageProfile: 'default',
@@ -56,7 +56,8 @@ function createCacheCommandSystemConfig(): LoadedSystemConfig {
 					},
 					id: 'shravan',
 					secrets: {},
-					toolProfile: 'standard',
+					defaultToolVmProfile: 'standard',
+					agentToolVmProfiles: {},
 					websocketBypass: [],
 				},
 			],

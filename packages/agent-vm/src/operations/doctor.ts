@@ -1,4 +1,4 @@
-import fs from 'node:fs/promises';
+import { access } from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
@@ -264,10 +264,22 @@ function buildWorkerWorkRootfsChecks(
 	return systemConfig.zones
 		.filter((zone) => zone.gateway.type === 'worker')
 		.map((zone) => {
-			const { toolProfile, ...zoneWithoutToolProfile } = zone;
 			const gatewayZone: GatewayZoneConfig = {
-				...zoneWithoutToolProfile,
-				...(toolProfile === undefined ? {} : { toolProfile }),
+				id: zone.id,
+				gateway: {
+					type: 'worker',
+					cpus: zone.gateway.cpus,
+					config: zone.gateway.config,
+					memory: zone.gateway.memory,
+					port: zone.gateway.port,
+					stateDir: zone.gateway.stateDir,
+					...(zone.gateway.authProfilesRef
+						? { authProfilesRef: zone.gateway.authProfilesRef }
+						: {}),
+				},
+				secrets: zone.secrets,
+				allowedHosts: zone.allowedHosts,
+				websocketBypass: zone.websocketBypass,
 			};
 			const vmSpec = buildWorkerVmSpec({
 				controllerPort: systemConfig.host.controllerPort,
@@ -291,6 +303,64 @@ function buildWorkerWorkRootfsChecks(
 				hint: '/work stays on rootfs/COW',
 			} satisfies DoctorCheck;
 		});
+}
+
+function buildZoneToolVmProfileChecks(systemConfig: SystemConfig): readonly DoctorCheck[] {
+	return systemConfig.zones.flatMap((zone) => {
+		if (zone.gateway.type !== 'openclaw') {
+			return [];
+		}
+		const agentToolVmProfileChecks = Object.entries(zone.agentToolVmProfiles ?? {}).map(
+			([agentId, toolVmProfileId]) =>
+				({
+					name: `zone-agent-tool-vm-profile-${zone.id}-${agentId}`,
+					ok: true,
+					hint: toolVmProfileId,
+				}) satisfies DoctorCheck,
+		);
+		return [
+			zone.defaultToolVmProfile
+				? {
+						name: `zone-default-tool-vm-profile-${zone.id}`,
+						ok: true,
+						hint: zone.defaultToolVmProfile,
+					}
+				: {
+						name: `zone-default-tool-vm-profile-${zone.id}`,
+						ok: false,
+						hint: 'missing defaultToolVmProfile',
+					},
+			...agentToolVmProfileChecks,
+		] as const satisfies readonly DoctorCheck[];
+	});
+}
+
+function buildOpenClawAgentSetupChecks(systemConfig: SystemConfig): readonly DoctorCheck[] {
+	return systemConfig.zones.flatMap((zone) => {
+		if (zone.gateway.type !== 'openclaw') {
+			return [];
+		}
+		const authProfileChecks = Object.keys(zone.gateway.authProfilesByAgent ?? {}).map(
+			(agentId) =>
+				({
+					name: `zone-agent-auth-profile-${zone.id}-${agentId}`,
+					ok: true,
+					hint: 'configured',
+				}) satisfies DoctorCheck,
+		);
+		const sandboxSeedChecks = Object.entries(zone.agentSandboxSeeds ?? {}).flatMap(
+			([agentId, seeds]) =>
+				seeds.map(
+					(seed, seedIndex) =>
+						({
+							name: `zone-agent-sandbox-seed-${zone.id}-${agentId}-${String(seedIndex)}`,
+							ok: true,
+							hint: seed.target,
+						}) satisfies DoctorCheck,
+				),
+		);
+		return [...authProfileChecks, ...sandboxSeedChecks];
+	});
 }
 
 export async function collectVmHostSystemDoctorCheck(
@@ -321,7 +391,7 @@ export async function collectVmHostSystemDoctorCheck(
 		for (const requiredRuntimeFile of requiredRuntimeFiles) {
 			try {
 				// oxlint-disable-next-line no-await-in-loop -- report the first missing file in stable order
-				await fs.access(requiredRuntimeFile);
+				await access(requiredRuntimeFile);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return {
@@ -348,7 +418,7 @@ export async function collectVmHostSystemDoctorCheck(
 		const requiredFilePath = path.join(vmHostSystemPath, requiredFile);
 		try {
 			// oxlint-disable-next-line no-await-in-loop -- report the first missing file in stable order
-			await fs.access(requiredFilePath);
+			await access(requiredFilePath);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return {
@@ -516,6 +586,8 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 					ok: true,
 				}) satisfies DoctorCheck,
 		),
+		...buildZoneToolVmProfileChecks(options.systemConfig),
+		...buildOpenClawAgentSetupChecks(options.systemConfig),
 		...options.systemConfig.zones.map(
 			(zone) =>
 				({

@@ -1,7 +1,11 @@
 import fs from 'node:fs/promises';
 
 import type { Lease, LeaseManager } from '../leases/lease-manager.js';
-import type { PreparedWorkerTask, WorkerTaskInput } from '../worker-task-runner.js';
+import type {
+	PreparedWorkerTask,
+	WorkerTaskInput,
+	WorkerTaskResult,
+} from '../worker-task-runner.js';
 import type { ControllerLeasePeekResponse } from './controller-lease-response-types.js';
 
 export class ControllerTaskNotReadyError extends Error {}
@@ -20,7 +24,7 @@ export interface ControllerRouteOperations {
 		zoneId: string,
 		input: WorkerTaskInput,
 	) => Promise<PreparedWorkerTask>;
-	readonly executeWorkerTask?: (prepared: PreparedWorkerTask) => Promise<unknown>;
+	readonly executeWorkerTask?: (prepared: PreparedWorkerTask) => Promise<WorkerTaskResult>;
 	readonly closeTaskForZone?: (
 		zoneId: string,
 		taskId: string,

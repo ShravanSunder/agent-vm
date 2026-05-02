@@ -10,12 +10,12 @@ describe('manual templates', () => {
 	it('builds an agent-facing AGENTS.md index that points at the manual', () => {
 		const content = buildAgentVmAgentsTemplate({
 			defaultZoneId: 'shravan',
-			systemConfigPath: 'config/system.json',
+			systemConfigPath: 'config/system.jsonc',
 		});
 
 		expect(content).toContain(GENERATED_MANUAL_MARKER);
 		expect(content).toContain('docs/manual/README.md');
-		expect(content).toContain('config/system.json');
+		expect(content).toContain('config/system.jsonc');
 		expect(content).toContain('shravan');
 		expect(content).toContain('Do not silently edit privileged host/deployment config');
 		expect(content).not.toContain('Discord is enabled by default');
@@ -24,7 +24,7 @@ describe('manual templates', () => {
 	it('builds progressive manual files for humans and agents', () => {
 		const files = buildManualTemplateFiles({
 			defaultZoneId: 'shravan',
-			systemConfigPath: 'config/system.json',
+			systemConfigPath: 'config/system.jsonc',
 		});
 
 		expect(files.map((file) => file.relativePath)).toEqual([
@@ -49,7 +49,28 @@ describe('manual templates', () => {
 			'OpenClaw Tool VMs run commands in /work',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'workMountDir',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'hostWorkMountDir',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'persistent zone files live at /zone',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'worker repo edits live under /work/repos',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
+			'defaultToolVmProfile',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('tool-access.md'))?.content).toContain(
+			'agentToolVmProfiles',
+		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
+		).toContain('gateway.authProfilesByAgent');
+		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfile');
+		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfiles');
+		expect(files.map((file) => file.content).join('\n')).not.toContain('/home/openclaw/zone-files');
 	});
 });

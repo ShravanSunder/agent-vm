@@ -65,11 +65,12 @@ function createTestSystemConfig(): LoadedSystemConfig {
 					},
 					id: 'test-zone',
 					secrets: {},
-					toolProfile: 'standard',
+					defaultToolVmProfile: 'standard',
+					agentToolVmProfiles: {},
 					websocketBypass: [],
 				},
 			],
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					imageProfile: 'default',

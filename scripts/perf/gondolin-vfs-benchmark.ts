@@ -20,8 +20,8 @@ type BenchmarkPathKind =
 	| 'guest-tmpfs'
 	| 'gondolin-memory-vfs'
 	| 'gondolin-realfs'
-	| 'workspace-realfs-node-modules'
-	| 'workspace-shadow-node-modules';
+	| 'work-realfs-node-modules'
+	| 'work-shadow-node-modules';
 
 interface BenchmarkOptions {
 	readonly childTimeoutMs: number;
@@ -548,12 +548,12 @@ async function runRootfsMode(
 ): Promise<RootfsModeResult> {
 	const gondolin = await loadGondolinModules(options.gondolinRepo);
 	const hostRealFsDirectory = createHostDirectory('agent-vm-realfs-bench-');
-	const hostWorkspaceDirectory = createHostDirectory('agent-vm-workspace-bench-');
-	fs.mkdirSync(path.join(hostWorkspaceDirectory, 'node_modules'), { recursive: true });
-	fs.writeFileSync(path.join(hostWorkspaceDirectory, 'package.json'), '{"private":true}\n');
+	const hostWorkMountDirectory = createHostDirectory('agent-vm-work-mount-bench-');
+	fs.mkdirSync(path.join(hostWorkMountDirectory, 'node_modules'), { recursive: true });
+	fs.writeFileSync(path.join(hostWorkMountDirectory, 'package.json'), '{"private":true}\n');
 
-	const workspaceBaseProvider = new gondolin.RealFSProvider(hostWorkspaceDirectory);
-	const shadowedWorkspaceProvider = new gondolin.ShadowProvider(workspaceBaseProvider, {
+	const workMountBaseProvider = new gondolin.RealFSProvider(hostWorkMountDirectory);
+	const shadowedWorkMountProvider = new gondolin.ShadowProvider(workMountBaseProvider, {
 		shouldShadow: gondolin.createShadowPathPredicate(['/node_modules']),
 		writeMode: 'tmpfs',
 	});
@@ -574,8 +574,8 @@ async function runRootfsMode(
 				mounts: {
 					'/memory-vfs': new gondolin.MemoryProvider(),
 					'/realfs': new gondolin.RealFSProvider(hostRealFsDirectory),
-					'/workspace-realfs': new gondolin.RealFSProvider(hostWorkspaceDirectory),
-					'/workspace-shadow': shadowedWorkspaceProvider,
+					'/work-realfs': new gondolin.RealFSProvider(hostWorkMountDirectory),
+					'/work-shadow': shadowedWorkMountProvider,
 				},
 			},
 		});
@@ -616,18 +616,18 @@ async function runRootfsMode(
 				label: 'gondolin-realfs',
 			},
 			{
-				directory: '/workspace-realfs/node_modules/bench',
+				directory: '/work-realfs/node_modules/bench',
 				expectWritable: true,
 				expectedMountToken: 'fuse.sandboxfs',
-				kind: 'workspace-realfs-node-modules',
-				label: 'workspace-realfs-node-modules',
+				kind: 'work-realfs-node-modules',
+				label: 'work-realfs-node-modules',
 			},
 			{
-				directory: '/workspace-shadow/node_modules/bench',
+				directory: '/work-shadow/node_modules/bench',
 				expectWritable: true,
 				expectedMountToken: 'fuse.sandboxfs',
-				kind: 'workspace-shadow-node-modules',
-				label: 'workspace-shadow-node-modules',
+				kind: 'work-shadow-node-modules',
+				label: 'work-shadow-node-modules',
 			},
 		];
 
@@ -664,7 +664,7 @@ async function runRootfsMode(
 			await vm.close();
 		}
 		fs.rmSync(hostRealFsDirectory, { force: true, recursive: true });
-		fs.rmSync(hostWorkspaceDirectory, { force: true, recursive: true });
+		fs.rmSync(hostWorkMountDirectory, { force: true, recursive: true });
 	}
 }
 
@@ -676,11 +676,11 @@ async function collectEnvironment(props: {
 	const uname = await runCommand(props.vm, 'uname -a');
 	const df = await runCommand(
 		props.vm,
-		'df -T / /opt /tmp /memory-vfs /realfs /workspace-realfs /workspace-shadow 2>/dev/null || true',
+		'df -T / /opt /tmp /memory-vfs /realfs /work-realfs /work-shadow 2>/dev/null || true',
 	);
 	const mounts = await runCommand(
 		props.vm,
-		"mount | grep -E ' / | /opt | /tmp | /memory-vfs | /realfs | /workspace-realfs | /workspace-shadow ' || true",
+		"mount | grep -E ' / | /opt | /tmp | /memory-vfs | /realfs | /work-realfs | /work-shadow ' || true",
 	);
 
 	return {

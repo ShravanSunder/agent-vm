@@ -119,8 +119,8 @@ const { httpHooks, env } = createHttpHooks({
 // Use persisted state from previous sessions (has WhatsApp creds, Codex OAuth, etc.)
 const cfgDir = '/tmp/oc-persistent/config';
 const stateDir = '/tmp/oc-persistent/state';
-const wsDir = '/tmp/oc-persistent/workspace';
-[cfgDir, stateDir, wsDir].forEach((d) => fs.mkdirSync(d, { recursive: true }));
+const zoneFilesDir = '/tmp/oc-persistent/zone-files';
+[cfgDir, stateDir, zoneFilesDir].forEach((d) => fs.mkdirSync(d, { recursive: true }));
 
 const pluginDir = `${process.cwd()}/packages/openclaw-agent-vm-plugin/dist`;
 
@@ -131,7 +131,7 @@ const existingConfig = fs.existsSync(`${cfgDir}/openclaw.json`)
 			gateway: { port: 18789, mode: 'local', bind: 'loopback', auth: { mode: 'token' } },
 			agents: {
 				defaults: {
-					workspace: '/home/openclaw/workspace',
+					workspace: '/zone',
 					model: { primary: 'openai-codex/gpt-5.4' },
 				},
 			},
@@ -180,7 +180,7 @@ const gatewayVm = await VM.create({
 		mounts: {
 			'/home/openclaw/.openclaw': new RealFSProvider(cfgDir),
 			'/home/openclaw/.openclaw/state': new RealFSProvider(stateDir),
-			'/home/openclaw/workspace': new RealFSProvider(wsDir),
+			'/zone': new RealFSProvider(zoneFilesDir),
 			// Mount plugin at staging path — will be copied to extensions with correct ownership
 			'/opt-works/gondolin-plugin-src': new ReadonlyProvider(new RealFSProvider(pluginDir)),
 		},

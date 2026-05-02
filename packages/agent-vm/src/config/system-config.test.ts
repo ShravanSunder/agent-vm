@@ -1,5 +1,4 @@
-import fs from 'node:fs';
-import fsp from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -15,8 +14,10 @@ interface ValidSystemConfigZoneInput {
 	secrets: Record<string, unknown>;
 	runtimeAuthHints?: unknown;
 	allowedHosts: readonly string[];
-	toolProfile?: string;
-	readonly [key: string]: unknown;
+	defaultToolVmProfile?: string;
+	agentToolVmProfiles?: Record<string, string>;
+	agentSandboxSeeds?: Record<string, unknown>;
+	[key: string]: unknown;
 }
 
 interface ValidSystemConfigInput {
@@ -25,15 +26,18 @@ interface ValidSystemConfigInput {
 	runtimeDir: string;
 	imageProfiles: Record<string, unknown>;
 	zones: [ValidSystemConfigZoneInput, ...ValidSystemConfigZoneInput[]];
-	toolProfiles?: Record<string, unknown>;
+	toolVmProfiles?: Record<string, unknown>;
 	tcpPool: Record<string, unknown>;
-	readonly [key: string]: unknown;
+	leaseIdleTtl?: unknown;
+	[key: string]: unknown;
 }
 
-afterEach(() => {
-	for (const directoryPath of createdDirectories.splice(0)) {
-		fs.rmSync(directoryPath, { recursive: true, force: true });
-	}
+afterEach(async () => {
+	await Promise.all(
+		createdDirectories
+			.splice(0)
+			.map((directoryPath) => rm(directoryPath, { recursive: true, force: true })),
+	);
 });
 
 function createValidSystemConfigInput(): ValidSystemConfigInput {
@@ -78,10 +82,11 @@ function createValidSystemConfigInput(): ValidSystemConfigInput {
 				secrets: {},
 				runtimeAuthHints: [],
 				allowedHosts: ['discord.com'],
-				toolProfile: 'standard',
+				defaultToolVmProfile: 'standard',
+				agentToolVmProfiles: {},
 			},
 		],
-		toolProfiles: {
+		toolVmProfiles: {
 			standard: {
 				memory: '1G',
 				cpus: 1,
@@ -96,24 +101,22 @@ function createValidSystemConfigInput(): ValidSystemConfigInput {
 }
 
 async function writeSystemConfigForTest(prefix: string, config: unknown): Promise<string> {
-	const workingDirectoryPath = await fsp.mkdtemp(path.join(os.tmpdir(), prefix));
+	const workingDirectoryPath = await mkdtemp(path.join(os.tmpdir(), prefix));
 	createdDirectories.push(workingDirectoryPath);
 	const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
-	await fsp.mkdir(path.dirname(configPath), { recursive: true });
-	await fsp.writeFile(configPath, JSON.stringify(config), 'utf8');
+	await mkdir(path.dirname(configPath), { recursive: true });
+	await writeFile(configPath, JSON.stringify(config), 'utf8');
 	return configPath;
 }
 
 describe('loadSystemConfig', () => {
 	test('loads system.jsonc with comments and trailing commas', async () => {
-		const workingDirectoryPath = await fsp.mkdtemp(
-			path.join(os.tmpdir(), 'agent-vm-system-config-'),
-		);
+		const workingDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-system-config-'));
 		createdDirectories.push(workingDirectoryPath);
 		const configPath = path.join(workingDirectoryPath, 'config', 'system.jsonc');
-		await fsp.mkdir(path.dirname(configPath), { recursive: true });
+		await mkdir(path.dirname(configPath), { recursive: true });
 		const config = createValidSystemConfigInput();
-		await fsp.writeFile(
+		await writeFile(
 			configPath,
 			[
 				'{',
@@ -123,7 +126,7 @@ describe('loadSystemConfig', () => {
 				'  "runtimeDir": "../runtime",',
 				`  "imageProfiles": ${JSON.stringify(config.imageProfiles)},`,
 				`  "zones": ${JSON.stringify(config.zones)},`,
-				`  "toolProfiles": ${JSON.stringify(config.toolProfiles)},`,
+				`  "toolVmProfiles": ${JSON.stringify(config.toolVmProfiles)},`,
 				`  "tcpPool": ${JSON.stringify(config.tcpPool)},`,
 				'}',
 			].join('\n'),
@@ -138,14 +141,12 @@ describe('loadSystemConfig', () => {
 	});
 
 	test('falls back to sibling system.jsonc when default system.json is absent', async () => {
-		const workingDirectoryPath = await fsp.mkdtemp(
-			path.join(os.tmpdir(), 'agent-vm-system-config-'),
-		);
+		const workingDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-system-config-'));
 		createdDirectories.push(workingDirectoryPath);
 		const requestedConfigPath = path.join(workingDirectoryPath, 'config', 'system.json');
 		const jsoncConfigPath = path.join(workingDirectoryPath, 'config', 'system.jsonc');
-		await fsp.mkdir(path.dirname(jsoncConfigPath), { recursive: true });
-		await fsp.writeFile(jsoncConfigPath, JSON.stringify(createValidSystemConfigInput()), 'utf8');
+		await mkdir(path.dirname(jsoncConfigPath), { recursive: true });
+		await writeFile(jsoncConfigPath, JSON.stringify(createValidSystemConfigInput()), 'utf8');
 
 		const loadedConfig = await loadSystemConfig(requestedConfigPath);
 
@@ -154,12 +155,12 @@ describe('loadSystemConfig', () => {
 	});
 
 	test('loads a valid plan-1 controller config', async () => {
-		const workingDirectoryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-system-config-'));
+		const workingDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-system-config-'));
 		createdDirectories.push(workingDirectoryPath);
 		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
-		fs.mkdirSync(path.dirname(configPath), { recursive: true });
+		await mkdir(path.dirname(configPath), { recursive: true });
 
-		fs.writeFileSync(
+		await writeFile(
 			configPath,
 			JSON.stringify({
 				host: {
@@ -216,10 +217,9 @@ describe('loadSystemConfig', () => {
 							},
 						},
 						allowedHosts: ['api.anthropic.com', 'api.openai.com'],
-						toolProfile: 'standard',
 					},
 				],
-				toolProfiles: {
+				toolVmProfiles: {
 					standard: {
 						memory: '1G',
 						cpus: 1,
@@ -395,9 +395,9 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/workspaceDir/u);
 	});
 
-	test('rejects legacy tool profile workspaceRoot', async () => {
+	test('rejects legacy tool VM profile workspaceRoot', async () => {
 		const input = createValidSystemConfigInput();
-		input.toolProfiles = {
+		input.toolVmProfiles = {
 			standard: {
 				memory: '1G',
 				cpus: 1,
@@ -491,14 +491,14 @@ describe('loadSystemConfig', () => {
 	});
 
 	test('rejects configs without zones', async () => {
-		const workingDirectoryPath = fs.mkdtempSync(
+		const workingDirectoryPath = await mkdtemp(
 			path.join(os.tmpdir(), 'agent-vm-system-config-invalid-'),
 		);
 		createdDirectories.push(workingDirectoryPath);
 		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
-		fs.mkdirSync(path.dirname(configPath), { recursive: true });
+		await mkdir(path.dirname(configPath), { recursive: true });
 
-		fs.writeFileSync(
+		await writeFile(
 			configPath,
 			JSON.stringify({
 				host: {
@@ -532,7 +532,7 @@ describe('loadSystemConfig', () => {
 					},
 				},
 				zones: [],
-				toolProfiles: {
+				toolVmProfiles: {
 					standard: {
 						memory: '1G',
 						cpus: 1,
@@ -551,14 +551,14 @@ describe('loadSystemConfig', () => {
 	});
 
 	test('rejects configs with zone secrets missing ref', async () => {
-		const workingDirectoryPath = fs.mkdtempSync(
+		const workingDirectoryPath = await mkdtemp(
 			path.join(os.tmpdir(), 'agent-vm-system-config-missing-ref-'),
 		);
 		createdDirectories.push(workingDirectoryPath);
 		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
-		fs.mkdirSync(path.dirname(configPath), { recursive: true });
+		await mkdir(path.dirname(configPath), { recursive: true });
 
-		fs.writeFileSync(
+		await writeFile(
 			configPath,
 			JSON.stringify({
 				host: {
@@ -608,10 +608,11 @@ describe('loadSystemConfig', () => {
 							},
 						},
 						allowedHosts: ['discord.com'],
-						toolProfile: 'standard',
+						defaultToolVmProfile: 'standard',
+						agentToolVmProfiles: {},
 					},
 				],
-				toolProfiles: {
+				toolVmProfiles: {
 					standard: {
 						memory: '1G',
 						cpus: 1,
@@ -630,14 +631,14 @@ describe('loadSystemConfig', () => {
 	});
 
 	test('rejects project namespaces that contain label separators', async () => {
-		const workingDirectoryPath = fs.mkdtempSync(
+		const workingDirectoryPath = await mkdtemp(
 			path.join(os.tmpdir(), 'agent-vm-system-config-invalid-namespace-'),
 		);
 		createdDirectories.push(workingDirectoryPath);
 		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
-		fs.mkdirSync(path.dirname(configPath), { recursive: true });
+		await mkdir(path.dirname(configPath), { recursive: true });
 
-		fs.writeFileSync(
+		await writeFile(
 			configPath,
 			JSON.stringify({
 				host: {
@@ -683,10 +684,11 @@ describe('loadSystemConfig', () => {
 						secrets: {},
 						runtimeAuthHints: [],
 						allowedHosts: ['discord.com'],
-						toolProfile: 'standard',
+						defaultToolVmProfile: 'standard',
+						agentToolVmProfiles: {},
 					},
 				],
-				toolProfiles: {
+				toolVmProfiles: {
 					standard: {
 						memory: '1G',
 						cpus: 1,
@@ -827,15 +829,15 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/http-mediation/u);
 	});
 
-	test('rejects zones that reference unknown tool profiles', async () => {
-		const workingDirectoryPath = fs.mkdtempSync(
-			path.join(os.tmpdir(), 'agent-vm-system-config-missing-tool-profile-'),
+	test('rejects zones that reference unknown tool VM profiles', async () => {
+		const workingDirectoryPath = await mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-system-config-missing-tool-vm-profile-'),
 		);
 		createdDirectories.push(workingDirectoryPath);
 		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
-		fs.mkdirSync(path.dirname(configPath), { recursive: true });
+		await mkdir(path.dirname(configPath), { recursive: true });
 
-		fs.writeFileSync(
+		await writeFile(
 			configPath,
 			JSON.stringify({
 				host: {
@@ -881,10 +883,11 @@ describe('loadSystemConfig', () => {
 						secrets: {},
 						runtimeAuthHints: [],
 						allowedHosts: ['discord.com'],
-						toolProfile: 'missing-profile',
+						defaultToolVmProfile: 'missing-profile',
+						agentToolVmProfiles: {},
 					},
 				],
-				toolProfiles: {
+				toolVmProfiles: {
 					standard: {
 						memory: '1G',
 						cpus: 1,
@@ -899,7 +902,174 @@ describe('loadSystemConfig', () => {
 			'utf8',
 		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/unknown toolProfile/u);
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/unknown defaultToolVmProfile/u);
+	});
+
+	test('requires OpenClaw zones to declare agentToolVmProfiles explicitly', async () => {
+		const config = createValidSystemConfigInput();
+		delete config.zones[0].agentToolVmProfiles;
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-openclaw-missing-agent-tool-vm-profiles-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/must declare agentToolVmProfiles/u);
+	});
+
+	test('rejects legacy tool VM profile field names', async () => {
+		const config = createValidSystemConfigInput();
+		const legacyConfig = {
+			...config,
+			toolProfiles: config.toolVmProfiles,
+			zones: [
+				{
+					...config.zones[0],
+					toolProfile: config.zones[0].defaultToolVmProfile,
+					agentToolProfiles: { shravan: 'standard' },
+				},
+			],
+		};
+		delete (legacyConfig as { toolVmProfiles?: unknown }).toolVmProfiles;
+		delete (legacyConfig.zones[0] as { defaultToolVmProfile?: unknown }).defaultToolVmProfile;
+		delete (legacyConfig.zones[0] as { agentToolVmProfiles?: unknown }).agentToolVmProfiles;
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-legacy-tool-vm-profile-names-',
+			legacyConfig,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Unrecognized key/u);
+	});
+
+	test('loads lease idle TTL policy by scope prefix and scope kind', async () => {
+		const config = createValidSystemConfigInput();
+		config.leaseIdleTtl = {
+			defaultMs: 30 * 60 * 1000,
+			byScopeKind: {
+				agent: 2 * 60 * 60 * 1000,
+				workspace: 15 * 60 * 1000,
+			},
+			byScopePrefix: {
+				'agent:shravan': 6 * 60 * 60 * 1000,
+			},
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-lease-ttl-', config);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			leaseIdleTtl: {
+				defaultMs: 1_800_000,
+				byScopeKind: { agent: 7_200_000, workspace: 900_000 },
+				byScopePrefix: { 'agent:shravan': 21_600_000 },
+			},
+		});
+	});
+
+	test('rejects non-positive lease idle TTL values', async () => {
+		const config = createValidSystemConfigInput();
+		config.leaseIdleTtl = { defaultMs: 0 };
+		const configPath = await writeSystemConfigForTest('agent-vm-system-bad-lease-ttl-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/leaseIdleTtl/u);
+	});
+
+	test('rejects unknown lease idle TTL scope kinds', async () => {
+		const config = createValidSystemConfigInput();
+		config.leaseIdleTtl = {
+			byScopeKind: {
+				task: 5 * 60 * 1000,
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-unknown-lease-ttl-scope-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/leaseIdleTtl/u);
+	});
+
+	test('loads per-agent auth profiles and sandbox seed configuration for OpenClaw zones', async () => {
+		const config = createValidSystemConfigInput();
+		if (config.zones[0].gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw fixture zone');
+		}
+		config.zones[0].gateway.authProfilesByAgent = {
+			shravan: {
+				source: 'environment',
+				envVar: 'SHRAVAN_AUTH_PROFILES',
+			},
+		};
+		config.zones[0].agentSandboxSeeds = {
+			shravan: [
+				{
+					source: { source: 'environment', envVar: 'SHRAVAN_GCLOUD_CONFIG' },
+					target: '.config/gcloud/configurations/config_default',
+					mode: 0o600,
+				},
+			],
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-agent-auth-and-seeds-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			zones: [
+				{
+					gateway: {
+						authProfilesByAgent: {
+							shravan: {
+								source: 'environment',
+								envVar: 'SHRAVAN_AUTH_PROFILES',
+							},
+						},
+					},
+					agentSandboxSeeds: {
+						shravan: [
+							{
+								target: '.config/gcloud/configurations/config_default',
+								mode: 0o600,
+							},
+						],
+					},
+				},
+			],
+		});
+	});
+
+	test('rejects path-unsafe agent identifiers in per-agent maps', async () => {
+		const config = createValidSystemConfigInput();
+		if (config.zones[0].gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw fixture zone');
+		}
+		config.zones[0].gateway.authProfilesByAgent = {
+			'../shravan': {
+				source: 'environment',
+				envVar: 'SHRAVAN_AUTH_PROFILES',
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-path-unsafe-agent-id-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/agent id must/u);
+	});
+
+	test('rejects sandbox seed targets that escape the agent workspace', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].agentSandboxSeeds = {
+			shravan: [
+				{
+					source: { source: '1password', ref: 'op://vault/gcloud-config' },
+					target: '../outside',
+				},
+			],
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-bad-agent-sandbox-seed-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/agent sandbox seed target/u);
 	});
 
 	test('rejects configs with no gateway image profiles', async () => {
@@ -950,7 +1120,7 @@ describe('loadSystemConfig', () => {
 				allowedHosts: ['api.openai.com'],
 			},
 		];
-		delete config.toolProfiles;
+		delete config.toolVmProfiles;
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-config-worker-no-tools-',
 			config,
@@ -960,26 +1130,28 @@ describe('loadSystemConfig', () => {
 
 		expect(systemConfig).toMatchObject({
 			imageProfiles: { toolVms: {} },
-			toolProfiles: {},
+			toolVmProfiles: {},
 			zones: [
 				{
 					id: 'worker-zone',
 				},
 			],
 		});
-		expect(systemConfig.zones[0]).not.toHaveProperty('toolProfile');
+		expect(systemConfig.zones[0]).not.toHaveProperty('defaultToolVmProfile');
 	});
 
-	test('rejects openclaw zones without a tool profile', async () => {
+	test('rejects openclaw zones without a tool VM profile', async () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
-		delete zone.toolProfile;
+		delete zone.defaultToolVmProfile;
 		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-openclaw-missing-tool-profile-',
+			'agent-vm-system-config-openclaw-missing-tool-vm-profile-',
 			config,
 		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/must declare a toolProfile/u);
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/must declare a defaultToolVmProfile/u,
+		);
 	});
 
 	test('rejects openclaw configs with no matching tool VM image profiles', async () => {
@@ -994,7 +1166,7 @@ describe('loadSystemConfig', () => {
 			toolVms: {},
 		};
 		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-empty-tool-profiles-',
+			'agent-vm-system-config-empty-tool-vm-profiles-',
 			config,
 		);
 
@@ -1019,7 +1191,8 @@ describe('loadSystemConfig', () => {
 				secrets: {},
 				runtimeAuthHints: [],
 				allowedHosts: ['discord.com'],
-				toolProfile: 'standard',
+				defaultToolVmProfile: 'standard',
+				agentToolVmProfiles: {},
 			},
 		];
 		const configPath = await writeSystemConfigForTest(
@@ -1047,7 +1220,8 @@ describe('loadSystemConfig', () => {
 				secrets: {},
 				runtimeAuthHints: [],
 				allowedHosts: ['discord.com'],
-				toolProfile: 'standard',
+				defaultToolVmProfile: 'standard',
+				agentToolVmProfiles: {},
 			},
 		];
 		const configPath = await writeSystemConfigForTest(
@@ -1058,9 +1232,9 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/does not match imageProfile/u);
 	});
 
-	test('rejects tool profiles that reference unknown tool VM image profiles', async () => {
+	test('rejects tool VM profiles that reference unknown tool VM image profiles', async () => {
 		const config = createValidSystemConfigInput();
-		config.toolProfiles = {
+		config.toolVmProfiles = {
 			standard: {
 				memory: '1G',
 				cpus: 1,
@@ -1073,6 +1247,23 @@ describe('loadSystemConfig', () => {
 		);
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/unknown tool VM imageProfile/u);
+	});
+
+	test('rejects empty tool VM profile ids', async () => {
+		const config = createValidSystemConfigInput();
+		config.toolVmProfiles = {
+			'': {
+				memory: '1G',
+				cpus: 1,
+				imageProfile: 'default',
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-empty-tool-vm-profile-id-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Too small|Invalid key/u);
 	});
 
 	test('rejects empty image profile names', async () => {

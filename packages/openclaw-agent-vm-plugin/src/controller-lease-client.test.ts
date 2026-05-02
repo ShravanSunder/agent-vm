@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { createLeaseClient } from './controller-lease-client.js';
+import { type ControllerLeaseRequestError, createLeaseClient } from './controller-lease-client.js';
 
 describe('createLeaseClient', () => {
 	it('requests, keeps alive, peeks, and releases leases through the controller API', async () => {
-		const requests: { method: string; url: string }[] = [];
+		const requests: { body: string | undefined; method: string; url: string }[] = [];
 		const leaseClient = createLeaseClient({
 			controllerUrl: 'http://controller.vm.host:18800',
 			fetchImpl: async (input, init) => {
 				const url =
 					typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
 				requests.push({
+					body: typeof init?.body === 'string' ? init.body : undefined,
 					method: init?.method ?? 'GET',
 					url,
 				});
@@ -52,7 +53,7 @@ describe('createLeaseClient', () => {
 			agentWorkspaceDir: '/home/openclaw/work',
 			profileId: 'standard',
 			scopeKey: 'agent:main:session-abc',
-			workspaceDir: '/home/openclaw/.openclaw/sandboxes/work',
+			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 			zoneId: 'shravan',
 		});
 		await leaseClient.keepLeaseAlive('lease-123');
@@ -60,10 +61,28 @@ describe('createLeaseClient', () => {
 		await leaseClient.releaseLease('lease-123');
 
 		expect(requests).toEqual([
-			{ method: 'POST', url: 'http://controller.vm.host:18800/lease' },
-			{ method: 'GET', url: 'http://controller.vm.host:18800/lease/lease-123' },
-			{ method: 'GET', url: 'http://controller.vm.host:18800/lease/lease-123/peek' },
-			{ method: 'DELETE', url: 'http://controller.vm.host:18800/lease/lease-123' },
+			{
+				body: JSON.stringify({
+					agentWorkspaceDir: '/home/openclaw/work',
+					profileId: 'standard',
+					scopeKey: 'agent:main:session-abc',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
+					zoneId: 'shravan',
+				}),
+				method: 'POST',
+				url: 'http://controller.vm.host:18800/lease',
+			},
+			{ body: undefined, method: 'GET', url: 'http://controller.vm.host:18800/lease/lease-123' },
+			{
+				body: undefined,
+				method: 'GET',
+				url: 'http://controller.vm.host:18800/lease/lease-123/peek',
+			},
+			{
+				body: undefined,
+				method: 'DELETE',
+				url: 'http://controller.vm.host:18800/lease/lease-123',
+			},
 		]);
 	});
 
@@ -82,7 +101,7 @@ describe('createLeaseClient', () => {
 				agentWorkspaceDir: '/work',
 				profileId: 'standard',
 				scopeKey: 'test',
-				workspaceDir: '/work',
+				workMountDir: '/work',
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow('Controller returned an invalid lease response');
@@ -112,7 +131,7 @@ describe('createLeaseClient', () => {
 			agentWorkspaceDir: '/work',
 			profileId: 'standard',
 			scopeKey: 'test',
-			workspaceDir: '/work',
+			workMountDir: '/work',
 			zoneId: 'shravan',
 		});
 
@@ -129,6 +148,72 @@ describe('createLeaseClient', () => {
 				}),
 		});
 
-		await expect(leaseClient.keepLeaseAlive('lease-missing')).rejects.toThrow(/HTTP 404/u);
+		await expect(leaseClient.keepLeaseAlive('lease-missing')).rejects.toMatchObject({
+			bodyText: JSON.stringify({ error: 'missing lease' }),
+			kind: 'client-error',
+			responseBody: { error: 'missing lease' },
+			status: 404,
+		} satisfies Partial<ControllerLeaseRequestError>);
+	});
+
+	it('preserves controller validation issues for bad lease requests', async () => {
+		const issues = Array.from({ length: 3 }, (_, index) => ({
+			code: 'custom',
+			message: `validation issue ${String(index)}`,
+			path: ['workMountDir'],
+		}));
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async () =>
+				new Response(JSON.stringify({ error: 'invalid-lease-request', issues }), {
+					headers: { 'content-type': 'application/json' },
+					status: 400,
+				}),
+		});
+
+		await expect(
+			leaseClient.requestLease({
+				agentWorkspaceDir: '/work',
+				profileId: 'standard',
+				scopeKey: 'test',
+				workMountDir: '/work',
+				zoneId: 'shravan',
+			}),
+		).rejects.toMatchObject({
+			kind: 'client-error',
+			responseBody: {
+				error: 'invalid-lease-request',
+				issues,
+			},
+			status: 400,
+		} satisfies Partial<ControllerLeaseRequestError>);
+	});
+
+	it('distinguishes controller server failures from bad lease requests', async () => {
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async () =>
+				new Response(JSON.stringify({ error: 'lease-creation-failed', diagnosticId: 'diag-1' }), {
+					headers: { 'content-type': 'application/json' },
+					status: 503,
+				}),
+		});
+
+		await expect(
+			leaseClient.requestLease({
+				agentWorkspaceDir: '/work',
+				profileId: 'standard',
+				scopeKey: 'test',
+				workMountDir: '/work',
+				zoneId: 'shravan',
+			}),
+		).rejects.toMatchObject({
+			kind: 'server-error',
+			responseBody: {
+				diagnosticId: 'diag-1',
+				error: 'lease-creation-failed',
+			},
+			status: 503,
+		} satisfies Partial<ControllerLeaseRequestError>);
 	});
 });

@@ -44,7 +44,7 @@ function createWorkerSystemConfig(
 				basePort: 19000,
 				size: 5,
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -65,7 +65,6 @@ function createWorkerSystemConfig(
 					},
 					id: 'worker',
 					secrets: {},
-					toolProfile: 'standard',
 					websocketBypass: [],
 				},
 			],
@@ -105,7 +104,7 @@ function createOpenClawSystemConfig(
 				basePort: 19000,
 				size: 5,
 			},
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -132,7 +131,8 @@ function createOpenClawSystemConfig(
 					},
 					id: 'shravan',
 					secrets: {},
-					toolProfile: 'standard',
+					defaultToolVmProfile: 'standard',
+					agentToolVmProfiles: {},
 					websocketBypass: [],
 				},
 			],
@@ -594,7 +594,7 @@ printf '{"ok":true}\\n'
 						basePort: 19000,
 						size: 5,
 					},
-					toolProfiles: {
+					toolVmProfiles: {
 						standard: {
 							cpus: 1,
 							memory: '1G',
@@ -616,7 +616,8 @@ printf '{"ok":true}\\n'
 							},
 							id: 'shravan',
 							secrets: {},
-							toolProfile: 'standard',
+							defaultToolVmProfile: 'standard',
+							agentToolVmProfiles: {},
 							websocketBypass: [],
 						},
 					],
@@ -760,7 +761,7 @@ exit 1
 						basePort: 19000,
 						size: 5,
 					},
-					toolProfiles: {
+					toolVmProfiles: {
 						standard: {
 							cpus: 1,
 							memory: '1G',
@@ -782,7 +783,8 @@ exit 1
 							},
 							id: 'shravan',
 							secrets: {},
-							toolProfile: 'standard',
+							defaultToolVmProfile: 'standard',
+							agentToolVmProfiles: {},
 							websocketBypass: [],
 						},
 					],

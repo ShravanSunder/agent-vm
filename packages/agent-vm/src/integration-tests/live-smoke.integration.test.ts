@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -45,8 +45,8 @@ describe('live smoke: real Gondolin VM', () => {
 	it('should support VFS mounts', async () => {
 		if (!vm) throw new Error('VM not available from previous test');
 
-		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-live-smoke-'));
-		fs.writeFileSync(path.join(tmpDir, 'test.txt'), 'vfs_mount_works');
+		const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'gondolin-live-smoke-'));
+		await writeFile(path.join(tmpDir, 'test.txt'), 'vfs_mount_works');
 
 		// Close previous VM and create one with VFS
 		await vm.close();
@@ -70,13 +70,70 @@ describe('live smoke: real Gondolin VM', () => {
 
 		expect(result.stdout.trim()).toBe('vfs_mount_works');
 
-		fs.rmSync(tmpDir, { recursive: true, force: true });
+		await rm(tmpDir, { recursive: true, force: true });
 	}, 60_000);
 
-	it('should support HTTP mediation with secret injection', async () => {
-		if (!vm) throw new Error('VM not available from previous test');
+	it('should persist writable RealFS /work files across disposable VM lifetimes', async () => {
+		if (vm) {
+			await vm.close();
+			vm = null;
+		}
 
-		await vm.close();
+		const hostWorkMountDir = await mkdtemp(path.join(os.tmpdir(), 'gondolin-live-work-'));
+		try {
+			vm = await createManagedVm({
+				imagePath: '',
+				memory: '512M',
+				cpus: 1,
+				rootfsMode: 'memory',
+				allowedHosts: [],
+				secrets: {},
+				vfsMounts: {
+					'/work': {
+						kind: 'realfs',
+						hostPath: hostWorkMountDir,
+					},
+				},
+			});
+
+			const writeResult = await vm.exec(
+				"mkdir -p /work/project && printf 'persisted through realfs' > /work/project/notes.md",
+			);
+			expect(writeResult.exitCode).toBe(0);
+			await expect(
+				readFile(path.join(hostWorkMountDir, 'project', 'notes.md'), 'utf8'),
+			).resolves.toBe('persisted through realfs');
+
+			await vm.close();
+			vm = await createManagedVm({
+				imagePath: '',
+				memory: '512M',
+				cpus: 1,
+				rootfsMode: 'memory',
+				allowedHosts: [],
+				secrets: {},
+				vfsMounts: {
+					'/work': {
+						kind: 'realfs',
+						hostPath: hostWorkMountDir,
+					},
+				},
+			});
+
+			const readResult = await vm.exec('cat /work/project/notes.md');
+			expect(readResult.exitCode).toBe(0);
+			expect(readResult.stdout.trim()).toBe('persisted through realfs');
+		} finally {
+			if (vm) {
+				await vm.close();
+				vm = null;
+			}
+			await rm(hostWorkMountDir, { recursive: true, force: true });
+		}
+	}, 120_000);
+
+	it('should support HTTP mediation with secret injection', async () => {
+		if (vm) await vm.close();
 
 		vm = await createManagedVm({
 			imagePath: '',

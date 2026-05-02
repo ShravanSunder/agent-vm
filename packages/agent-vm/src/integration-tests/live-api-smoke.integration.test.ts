@@ -107,13 +107,13 @@ describe('live smoke: API client → controller over real HTTP', () => {
 				setIngressRoutes: vi.fn(),
 				getVmInstance: vi.fn(),
 			},
-			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
+			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
 			zoneId: 'shravan',
 		};
 		const createLease = vi.fn(async () => lease);
 		const controllerApp = createControllerApp({
 			readIdentityPem: async () => 'pem-smoke',
-			toolProfiles: {
+			toolVmProfiles: {
 				standard: {
 					cpus: 1,
 					memory: '1G',
@@ -131,6 +131,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 				listLeases: vi.fn(() => [lease]),
 				releaseLease: vi.fn(async () => {}),
 			},
+			resolveLeaseWorkMountDir: async ({ workMountDir }) => workMountDir,
 		});
 		controllerServer = serve({ fetch: controllerApp.fetch, port: controllerPort });
 
@@ -162,7 +163,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 				agentWorkspaceDir: '/work',
 				profileId: 'standard',
 				scopeKey: 'smoke-test',
-				workspaceDir: '/work',
+				workMountDir: '/work',
 				zoneId: 'shravan',
 			}),
 		});

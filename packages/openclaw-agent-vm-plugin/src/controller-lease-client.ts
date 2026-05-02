@@ -35,9 +35,33 @@ export interface LeaseClient {
 		readonly agentWorkspaceDir: string;
 		readonly profileId: string;
 		readonly scopeKey: string;
-		readonly workspaceDir: string;
+		readonly workMountDir: string;
 		readonly zoneId: string;
 	}): Promise<GondolinLeaseResponse>;
+}
+
+export type ControllerLeaseRequestErrorKind = 'client-error' | 'server-error';
+
+export class ControllerLeaseRequestError extends Error {
+	readonly bodyText: string;
+	readonly kind: ControllerLeaseRequestErrorKind;
+	readonly responseBody: unknown;
+	readonly status: number;
+
+	constructor(options: {
+		readonly bodyText: string;
+		readonly context: string;
+		readonly responseBody: unknown;
+		readonly status: number;
+	}) {
+		const kind: ControllerLeaseRequestErrorKind =
+			options.status >= 400 && options.status < 500 ? 'client-error' : 'server-error';
+		super(`${options.context} returned HTTP ${String(options.status)} (${kind})`);
+		this.bodyText = options.bodyText;
+		this.kind = kind;
+		this.responseBody = options.responseBody;
+		this.status = options.status;
+	}
 }
 
 function objectValue(value: unknown): object | undefined {
@@ -92,14 +116,38 @@ function isLeasePeekResponse(value: unknown): value is LeasePeekResponse {
 	);
 }
 
+function parseJsonBody(bodyText: string): unknown {
+	try {
+		return JSON.parse(bodyText);
+	} catch {
+		return undefined;
+	}
+}
+
+async function readErrorBody(response: Response): Promise<{
+	readonly bodyText: string;
+	readonly responseBody: unknown;
+}> {
+	const bodyText = await response.text().catch(() => '(unreadable)');
+	return {
+		bodyText,
+		responseBody: bodyText === '(unreadable)' ? undefined : parseJsonBody(bodyText),
+	};
+}
+
 async function readJsonResponse<TValue>(
 	response: Response,
 	context: string,
 	isExpectedResponse: (value: unknown) => value is TValue,
 ): Promise<TValue> {
 	if (!response.ok) {
-		const errorBody = await response.text().catch(() => '(unreadable)');
-		throw new TypeError(`${context} returned HTTP ${response.status}: ${errorBody}`);
+		const errorBody = await readErrorBody(response);
+		throw new ControllerLeaseRequestError({
+			bodyText: errorBody.bodyText,
+			context,
+			responseBody: errorBody.responseBody,
+			status: response.status,
+		});
 	}
 	const payload = await response.json();
 	if (!isExpectedResponse(payload)) {
@@ -137,15 +185,26 @@ export function createLeaseClient(options: {
 		},
 		requestLease: async (request): Promise<GondolinLeaseResponse> => {
 			const response = await fetchImpl(`${baseUrl}/lease`, {
-				body: JSON.stringify(request),
+				body: JSON.stringify({
+					agentWorkspaceDir: request.agentWorkspaceDir,
+					profileId: request.profileId,
+					scopeKey: request.scopeKey,
+					workMountDir: request.workMountDir,
+					zoneId: request.zoneId,
+				}),
 				headers: {
 					'content-type': 'application/json',
 				},
 				method: 'POST',
 			});
 			if (!response.ok) {
-				const errorBody = await response.text().catch(() => '(unreadable)');
-				throw new TypeError(`Controller lease API returned HTTP ${response.status}: ${errorBody}`);
+				const errorBody = await readErrorBody(response);
+				throw new ControllerLeaseRequestError({
+					bodyText: errorBody.bodyText,
+					context: 'Controller lease API',
+					responseBody: errorBody.responseBody,
+					status: response.status,
+				});
 			}
 			const payload = await response.json();
 			if (!isGondolinLeaseResponse(payload)) {

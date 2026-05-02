@@ -24,26 +24,27 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
     |      createTcpPool({ basePort, size })
     |      Fixed array of port slots for tool VM SSH forwarding
     |
-    |-- 3. Find active zone
-    |      findConfiguredZone(systemConfig, zoneId)
-    |      Validates zone exists in config, returns zone definition
+    |-- 3. Create zone runtime registry
+    |      Builds one runtime per selected zone
+    |      OpenClaw and Worker zones dispatch by gateway type
     |
     |-- 4. Create lease manager
     |      createLeaseManager({ tcpPool, createManagedVm, now })
     |      Wires VM creation and TCP slot bookkeeping into the lease lifecycle
     |
     |-- 5. Start idle reaper
-    |      createIdleReaper({ ttlMs: 30min })
+    |      createIdleReaper({ ttlForLease })
+    |      TTL comes from leaseIdleTtl exact/prefix scope policy
     |      Attached to a 60-second interval timer
     |      Runs one immediate reap pass before accepting requests
     |
-    |-- 6. Start gateway zone  [skipped for worker-type zones]
+    |-- 6. Start selected gateway zones
     |      startGatewayZone({ secretResolver, systemConfig, zoneId })
     |      Full orchestration: orphan cleanup, image build, VM boot, health check
     |
     |-- 7. Wire operations + task runner
-    |      OpenClaw zones: createControllerRuntimeOperations() + stopController
-    |      Worker zones:   workerTaskRunner + pushTaskBranches + stopController
+    |      OpenClaw zones: zone runtime operations + stopController
+    |      Worker zones:   worker task runtime + push/pull/close + stopController
     |
     |-- 8. Build Hono app
     |      createControllerService({ leaseManager, operations, workerTaskRunner })
@@ -129,23 +130,29 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
 ### Lease Lifecycle
 
 ```
-  POST /lease { zoneId, scopeKey, profileId, agentWorkspaceDir, workspaceDir }
+  POST /lease { zoneId, scopeKey, profileId, agentWorkspaceDir, workMountDir }
     |
     v
-  resolveLeaseWorkspaceDir()
-    |-- 1. Require OpenClaw guest path
-    |-- 2. Translate to <stateDir>/sandboxes or <zoneFilesDir>
-    |-- 3. realpath + containment check
+  resolveLeaseWorkMountDir()
+    |-- 1. Require OpenClaw gateway path under /zone/<child> or
+    |      /home/openclaw/.openclaw/state/sandboxes/<child>
+    |-- 2. Reject the allowed-root boundaries themselves as too broad
+    |-- 3. Translate workMountDir to hostWorkMountDir under <stateDir>/sandboxes or <zoneFilesDir>
+    |-- 4. realpath + containment check
+    |-- 5. For agent:<agentId> sandbox work mounts, seed first-boot files
     |
     v
   createLease()
     |-- 1. Lock on (zoneId, scopeKey)
     |-- 2. Existing same-scope lease?
-    |       |-- profile/workspace/agentWorkspace mismatch -> 409 conflict
+    |       |-- profile/hostWorkMountDir/agentWorkspace mismatch -> 409 conflict
     |       |-- VM live -> reuse lease
     |       |-- VM dead -> close/evict/release TCP slot
     |-- 3. tcpPool.allocate()          Claim next free slot
-    |-- 4. createManagedVm(...)        Boot a tool VM with the slot's port
+    |-- 4. selectToolVmProfileForLease()
+    |       |-- agent:<agentId> -> zone.agentToolVmProfiles[agentId]
+    |       |-- otherwise zone.defaultToolVmProfile
+    |-- 5. createManagedVm(...)        Boot a tool VM with the slot's port
     |-- 5. vm.enableSsh({ port })      Start SSH listener, get access details
     |-- 6. Build Lease record          id = "{zoneId}-{scopeKey}-{timestamp}"
     |-- 7. Store in leases Map
@@ -164,10 +171,23 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
 ```
 
 Each lease holds: `id`, `zoneId`, `scopeKey`, `profileId`, `agentWorkspaceDir`,
-`workspaceDir`, `tcpSlot`, `vm` (ManagedVm handle), `sshAccess` (host, port,
+`hostWorkMountDir`, `tcpSlot`, `vm` (ManagedVm handle), `sshAccess` (host, port,
 identity file, user), `createdAt`, and `lastUsedAt`. The lease manager does not
-clean workspace files on release; OpenClaw-selected lease workspaces are owned
-by the caller that supplied `workspaceDir`.
+clean work mount files on release; OpenClaw-selected lease work mounts are owned
+by the caller that supplied `workMountDir`.
+
+`workMountDir` is a gateway VM path, not a host path and not a `system.json`
+field. It must name a concrete child path below `/zone` or
+`/home/openclaw/.openclaw/state/sandboxes`; those roots are validation
+boundaries and are rejected as mount targets. The controller resolves the
+gateway path to `hostWorkMountDir` before handing it to the lease manager.
+For the canonical name/location/storage vocabulary, see
+[Lease Path Vocabulary](../architecture/storage-model.md#lease-path-vocabulary).
+
+For OpenClaw `agent:<agentId>` scopes, the route resolves `profileId` from the
+zone's Tool VM policy. `agentToolVmProfiles[agentId]` wins when present;
+otherwise the lease uses `defaultToolVmProfile`. This lets one zone serve
+multiple agents with different disposable Tool VM images.
 
 ### TCP Pool
 
@@ -184,11 +204,15 @@ Operations: `allocate()` returns the lowest free slot (throws if pool exhausted)
 
 ### Idle Reaper
 
-`idle-reaper.ts` prevents orphaned tool VMs from leaking resources. It runs on a 60-second interval and releases any lease whose `lastUsedAt` exceeds the TTL (default 30 minutes).
+`idle-reaper.ts` prevents orphaned tool VMs from leaking resources. It runs on
+a 60-second interval and releases any lease whose `lastUsedAt` exceeds its
+scope-specific TTL. If `leaseIdleTtl` is omitted, the fallback remains 30
+minutes for every lease.
 
 ```
   reapExpiredLeases()
-    |-- Filter leases where (now - lastUsedAt) > ttlMs
+    |-- Compute ttlForLease(lease) from scopeKey
+    |-- Filter leases where (now - lastUsedAt) > ttl
     |-- For each expired: releaseLease(leaseId)
     |   Sequential to avoid TCP slot allocation races
 ```
@@ -199,7 +223,10 @@ The reaper runs one immediate pass at the end of controller startup, before the 
 
 ## Operations
 
-`createControllerRuntimeOperations()` builds the operations object for OpenClaw-mode zones. Each operation asserts the target zone matches the active zone (multi-zone is not implemented yet).
+`createControllerRuntimeOperations()` builds operations over a zone runtime
+registry. Each route resolves the requested `zoneId`, checks that the operation
+matches the zone gateway type, and returns typed HTTP errors for missing,
+failed, or wrong-type zones.
 
 | Operation | What It Does |
 |-----------|-------------|

@@ -10,15 +10,17 @@ describe('createIdleReaper', () => {
 				{
 					id: 'lease-expired',
 					lastUsedAt: 1_000,
+					scopeKey: 'agent:shravan',
 				},
 				{
 					id: 'lease-active',
 					lastUsedAt: 9_500,
+					scopeKey: 'agent:shravan',
 				},
 			],
 			now: () => 10_000,
 			releaseLease,
-			ttlMs: 5_000,
+			ttlForLease: () => 5_000,
 		});
 
 		await idleReaper.reapExpiredLeases();
@@ -34,19 +36,22 @@ describe('createIdleReaper', () => {
 				{
 					id: 'lease-expired-1',
 					lastUsedAt: 1_000,
+					scopeKey: 'agent:shravan',
 				},
 				{
 					id: 'lease-expired-2',
 					lastUsedAt: 2_000,
+					scopeKey: 'agent:shravan',
 				},
 				{
 					id: 'lease-active',
 					lastUsedAt: 9_900,
+					scopeKey: 'agent:shravan',
 				},
 			],
 			now: () => 10_000,
 			releaseLease,
-			ttlMs: 5_000,
+			ttlForLease: () => 5_000,
 		});
 
 		await idleReaper.reapExpiredLeases();
@@ -71,12 +76,12 @@ describe('createIdleReaper', () => {
 		});
 		const idleReaper = createIdleReaper({
 			getLeases: () => [
-				{ id: 'lease-expired-1', lastUsedAt: 1_000 },
-				{ id: 'lease-expired-2', lastUsedAt: 2_000 },
+				{ id: 'lease-expired-1', lastUsedAt: 1_000, scopeKey: 'agent:shravan' },
+				{ id: 'lease-expired-2', lastUsedAt: 2_000, scopeKey: 'agent:shravan' },
 			],
 			now: () => 10_000,
 			releaseLease,
-			ttlMs: 5_000,
+			ttlForLease: () => 5_000,
 		});
 
 		await idleReaper.reapExpiredLeases();
@@ -91,19 +96,74 @@ describe('createIdleReaper', () => {
 				{
 					id: 'lease-active-1',
 					lastUsedAt: 9_995,
+					scopeKey: 'agent:shravan',
 				},
 				{
 					id: 'lease-active-2',
 					lastUsedAt: 9_999,
+					scopeKey: 'agent:shravan',
 				},
 			],
 			now: () => 10_000,
 			releaseLease,
-			ttlMs: 5_000,
+			ttlForLease: () => 5_000,
 		});
 
 		await idleReaper.reapExpiredLeases();
 
 		expect(releaseLease).not.toHaveBeenCalled();
+	});
+
+	it('uses a separate TTL for each lease scope', async () => {
+		const releaseLease = vi.fn(async () => {});
+		const idleReaper = createIdleReaper({
+			getLeases: () => [
+				{
+					id: 'short-agent-lease',
+					lastUsedAt: 9_000,
+					scopeKey: 'agent:short',
+				},
+				{
+					id: 'long-agent-lease',
+					lastUsedAt: 9_000,
+					scopeKey: 'agent:long',
+				},
+			],
+			now: () => 10_000,
+			releaseLease,
+			ttlForLease: (lease) => (lease.scopeKey === 'agent:short' ? 500 : 5_000),
+		});
+
+		await idleReaper.reapExpiredLeases();
+
+		expect(releaseLease).toHaveBeenCalledTimes(1);
+		expect(releaseLease).toHaveBeenCalledWith('short-agent-lease', {
+			ifLastUsedAtBeforeOrAt: 9_500,
+		});
+	});
+
+	it('continues releasing expired leases after one release fails', async () => {
+		const releaseLease = vi.fn(async (leaseId: string) => {
+			if (leaseId === 'lease-expired-1') {
+				throw new Error('release failed');
+			}
+		});
+		const idleReaper = createIdleReaper({
+			getLeases: () => [
+				{ id: 'lease-expired-1', lastUsedAt: 1_000, scopeKey: 'agent:shravan' },
+				{ id: 'lease-expired-2', lastUsedAt: 2_000, scopeKey: 'agent:shravan' },
+			],
+			now: () => 10_000,
+			releaseLease,
+			ttlForLease: () => 5_000,
+		});
+
+		await expect(idleReaper.reapExpiredLeases()).rejects.toThrow(
+			'Failed to release 1 expired lease(s).',
+		);
+		expect(releaseLease).toHaveBeenCalledTimes(2);
+		expect(releaseLease).toHaveBeenCalledWith('lease-expired-2', {
+			ifLastUsedAtBeforeOrAt: 5_000,
+		});
 	});
 });

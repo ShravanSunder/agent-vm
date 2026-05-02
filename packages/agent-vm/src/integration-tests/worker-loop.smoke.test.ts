@@ -288,7 +288,7 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 			runtime = await startControllerRuntime(
 				{
 					systemConfig,
-					zoneId: 'worker-smoke',
+					zoneIds: ['worker-smoke'],
 				},
 				{
 					createSecretResolver: async (): Promise<SecretResolver> => secretResolver,

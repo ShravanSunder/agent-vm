@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
-import { buildControllerStatus } from './controller-status.js';
+import { buildControllerStatus, buildControllerZoneStatus } from './controller-status.js';
 
 const systemConfig = {
 	cacheDir: './cache',
@@ -48,7 +48,8 @@ const systemConfig = {
 			secrets: {},
 			allowedHosts: ['api.anthropic.com'],
 			websocketBypass: [],
-			toolProfile: 'standard',
+			defaultToolVmProfile: 'standard',
+			agentToolVmProfiles: {},
 		},
 		{
 			id: 'alevtina',
@@ -65,10 +66,26 @@ const systemConfig = {
 			secrets: {},
 			allowedHosts: ['api.anthropic.com'],
 			websocketBypass: [],
-			toolProfile: 'standard',
+			defaultToolVmProfile: 'standard',
+			agentToolVmProfiles: {},
+		},
+		{
+			id: 'worker-zone',
+			gateway: {
+				type: 'worker',
+				imageProfile: 'worker',
+				memory: '2G',
+				cpus: 2,
+				port: 18793,
+				config: './config/worker/worker.json',
+				stateDir: './state/worker',
+			},
+			secrets: {},
+			allowedHosts: ['api.anthropic.com'],
+			websocketBypass: [],
 		},
 	],
-	toolProfiles: {
+	toolVmProfiles: {
 		standard: {
 			memory: '1G',
 			cpus: 1,
@@ -82,71 +99,121 @@ const systemConfig = {
 } satisfies SystemConfig;
 
 describe('buildControllerStatus', () => {
-	it('summarizes zones, tool profiles, and controller port', () => {
+	it('summarizes zones, tool VM profiles, and controller port', () => {
 		expect(buildControllerStatus(systemConfig)).toEqual({
 			controllerPort: 18800,
-			toolProfiles: ['standard'],
+			toolVmProfiles: ['standard'],
 			zones: [
 				{
 					activeLeaseCount: 0,
 					gatewayType: 'openclaw',
 					id: 'shravan',
 					ingressPort: 18791,
+					lifecycleState: 'stopped',
 					running: false,
-					toolProfile: 'standard',
+					defaultToolVmProfile: 'standard',
 				},
 				{
 					activeLeaseCount: 0,
 					gatewayType: 'openclaw',
 					id: 'alevtina',
 					ingressPort: 18792,
+					lifecycleState: 'stopped',
 					running: false,
-					toolProfile: 'standard',
+					defaultToolVmProfile: 'standard',
+				},
+				{
+					activeLeaseCount: 0,
+					gatewayType: 'worker',
+					id: 'worker-zone',
+					ingressPort: 18793,
+					lifecycleState: 'stopped',
+					running: false,
 				},
 			],
 		});
 	});
 
-	it('marks the active runtime zone as running with live runtime details', () => {
+	it('summarizes multiple zone lifecycle states from runtime snapshots', () => {
 		expect(
 			buildControllerStatus(systemConfig, {
-				activeLeases: [{ zoneId: 'shravan' }, { zoneId: 'other-zone' }],
-				activeZoneId: 'shravan',
-				bootedAt: '2026-04-27T10:00:00.000Z',
-				gateway: {
-					ingress: {
-						host: '127.0.0.1',
-						port: 18791,
+				activeLeases: [{ zoneId: 'shravan' }, { zoneId: 'shravan' }, { zoneId: 'alevtina' }],
+				zones: {
+					shravan: {
+						bootedAt: '2026-04-30T10:00:00.000Z',
+						lifecycleState: 'running',
+						gateway: {
+							ingress: {
+								host: '127.0.0.1',
+								port: 18791,
+							},
+							vm: {
+								id: 'vm-shravan',
+							},
+						},
 					},
-					vm: {
-						id: 'gateway-vm-1',
+					alevtina: {
+						lastError: 'gateway boot failed',
+						lifecycleState: 'failed',
+					},
+					'worker-zone': {
+						lifecycleState: 'stopped',
 					},
 				},
 			}),
 		).toEqual({
 			controllerPort: 18800,
-			toolProfiles: ['standard'],
+			toolVmProfiles: ['standard'],
 			zones: [
 				{
-					activeLeaseCount: 1,
-					bootedAt: '2026-04-27T10:00:00.000Z',
+					activeLeaseCount: 2,
+					bootedAt: '2026-04-30T10:00:00.000Z',
 					gatewayType: 'openclaw',
 					id: 'shravan',
 					ingressHost: '127.0.0.1',
 					ingressPort: 18791,
+					lifecycleState: 'running',
 					running: true,
-					toolProfile: 'standard',
-					vmId: 'gateway-vm-1',
+					defaultToolVmProfile: 'standard',
+					vmId: 'vm-shravan',
 				},
 				{
-					activeLeaseCount: 0,
+					activeLeaseCount: 1,
 					gatewayType: 'openclaw',
 					id: 'alevtina',
 					ingressPort: 18792,
+					lastError: 'gateway boot failed',
+					lifecycleState: 'failed',
 					running: false,
-					toolProfile: 'standard',
+					defaultToolVmProfile: 'standard',
+				},
+				{
+					activeLeaseCount: 0,
+					gatewayType: 'worker',
+					id: 'worker-zone',
+					ingressPort: 18793,
+					lifecycleState: 'stopped',
+					running: false,
 				},
 			],
+		});
+	});
+
+	it('returns one zone status from the same per-zone runtime snapshot', () => {
+		const zoneStatus = buildControllerZoneStatus(systemConfig, 'alevtina', {
+			zones: {
+				alevtina: {
+					lastError: 'gateway boot failed',
+					lifecycleState: 'failed',
+				},
+			},
+		});
+
+		expect(zoneStatus).toMatchObject({
+			id: 'alevtina',
+			lastError: 'gateway boot failed',
+			lifecycleState: 'failed',
+			running: false,
 		});
 	});
 });

@@ -2,7 +2,7 @@ import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 
 import type { TcpPool } from './tcp-pool.js';
 
-export interface ToolProfile {
+export interface ToolVmProfile {
 	readonly cpus: number;
 	readonly imageProfile: string;
 	readonly memory: string;
@@ -24,7 +24,7 @@ export interface Lease {
 	};
 	readonly tcpSlot: number;
 	readonly vm: ManagedVm;
-	readonly workspaceDir: string;
+	readonly hostWorkMountDir: string;
 	readonly zoneId: string;
 }
 
@@ -42,10 +42,10 @@ export interface LeaseSnapshot {
 export interface LeaseManager {
 	createLease(options: {
 		readonly agentWorkspaceDir: string;
-		readonly profile: ToolProfile;
+		readonly profile: ToolVmProfile;
 		readonly profileId: string;
 		readonly scopeKey: string;
-		readonly workspaceDir: string;
+		readonly hostWorkMountDir: string;
 		readonly zoneId: string;
 	}): Promise<Lease>;
 	keepLeaseAlive(leaseId: string): LeaseRenewal | undefined;
@@ -64,7 +64,7 @@ function assertReusableScopeLease(
 	requestedLease: {
 		readonly agentWorkspaceDir: string;
 		readonly profileId: string;
-		readonly workspaceDir: string;
+		readonly hostWorkMountDir: string;
 		readonly zoneId: string;
 		readonly scopeKey: string;
 	},
@@ -74,9 +74,9 @@ function assertReusableScopeLease(
 			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing profileId '${existingLease.profileId}' does not match requested profileId '${requestedLease.profileId}'.`,
 		);
 	}
-	if (existingLease.workspaceDir !== requestedLease.workspaceDir) {
+	if (existingLease.hostWorkMountDir !== requestedLease.hostWorkMountDir) {
 		throw new LeaseScopeConflictError(
-			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing workspaceDir '${existingLease.workspaceDir}' does not match requested workspaceDir '${requestedLease.workspaceDir}'.`,
+			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing hostWorkMountDir '${existingLease.hostWorkMountDir}' does not match requested hostWorkMountDir '${requestedLease.hostWorkMountDir}'.`,
 		);
 	}
 	if (existingLease.agentWorkspaceDir !== requestedLease.agentWorkspaceDir) {
@@ -105,11 +105,11 @@ function scopeIndexKey(scopeRequest: {
 export function createLeaseManager(options: {
 	readonly createManagedVm: (leaseOptions: {
 		readonly agentWorkspaceDir: string;
-		readonly profile: ToolProfile;
+		readonly profile: ToolVmProfile;
 		readonly profileId: string;
 		readonly scopeKey: string;
 		readonly tcpSlot: number;
-		readonly workspaceDir: string;
+		readonly hostWorkMountDir: string;
 		readonly zoneId: string;
 	}) => Promise<ManagedVm>;
 	readonly now: () => number;
@@ -213,7 +213,7 @@ export function createLeaseManager(options: {
 							sshAccess,
 							tcpSlot,
 							vm,
-							workspaceDir: leaseOptions.workspaceDir,
+							hostWorkMountDir: leaseOptions.hostWorkMountDir,
 							zoneId: leaseOptions.zoneId,
 						};
 						storeLease(lease);
