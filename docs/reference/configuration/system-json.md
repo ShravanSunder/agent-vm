@@ -109,6 +109,8 @@ OpenClaw when a tool lease is requested. Static config defines the allowed
 roots: the OpenClaw state sandbox root and `zoneFilesDir`. A lease
 `workMountDir` must be a concrete child path under one of those roots; the roots
 themselves are validation boundaries and are rejected as mount targets.
+For the canonical name/location/storage vocabulary, see
+[Lease Path Vocabulary](../../architecture/storage-model.md#lease-path-vocabulary).
 
 ```text
 Tool VM guest path: /work

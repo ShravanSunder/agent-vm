@@ -43,6 +43,53 @@ Worker zones do not have `zoneFilesDir` in the target schema. Worker repo files
 live inside the VM under `/work/repos/<repoId>`, while worker gitdirs live under
 `runtimeDir`.
 
+## Lease Path Vocabulary
+
+Tool VM lease paths cross three naming layers: OpenClaw SDK input, gateway VM
+paths, and controller-trusted host paths. Keep these names distinct.
+
+```text
+name / path                         layer / location                  storage / backing
+────────────────────────────────    ───────────────────────────────   ─────────────────────────────
+
+zoneFilesDir                        system.json host config            durable RealFS, backed up
+                                    OpenClaw zones only                mounted in gateway at /zone
+
+/zone                               OpenClaw gateway VM                RealFS -> zoneFilesDir
+                                    durable zone files                 shared, backed up
+
+workMountDir                        POST /lease request                gateway VM path, untrusted input
+                                    chosen by OpenClaw/plugin          must be child of /zone or sandboxes
+
+/home/openclaw/.openclaw/state/
+sandboxes/<child>                   OpenClaw gateway VM                RealFS -> stateDir/sandboxes/<child>
+                                    agent sandbox namespace            durable state, backed up
+
+hostWorkMountDir                    controller internal                trusted resolved host path
+                                    after validation/realpath          passed to lease manager / RealFS
+
+/work                               Tool VM guest path                 RealFS -> hostWorkMountDir
+                                    lease-local execution dir          survives if backing host dir does
+
+agentWorkspaceDir                   OpenClaw/tool process cwd concept  guest-side agent working dir
+                                    controller lease field             not a host storage root
+
+workspaceDir                        OpenClaw SDK boundary only          external SDK name
+                                    plugin input                       translated immediately to workMountDir
+
+/work/repos/<repoId>                Worker VM guest path               rootfs/COW
+                                    worker task repo files             disposable after worker VM closes
+
+/gitdirs/<repoId>.git               Worker VM / host runtime           RealFS runtimeDir
+                                    git metadata                       not normal zone backup
+
+/cache                              OpenClaw gateway VM                RealFS -> cacheDir
+                                    rebuildable cache                  not backed up
+
+/state                              gateway / worker VM                RealFS -> stateDir or runtime state
+                                    control/state plumbing             depends on gateway type
+```
+
 ## Storage Classes
 
 ```text

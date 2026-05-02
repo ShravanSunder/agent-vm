@@ -14,8 +14,10 @@ Use progressive disclosure when learning this repo:
 1. Start with `README.md` for the five-minute mental model.
 2. Use `docs/README.md` as the docs map.
 3. Use `docs/architecture/overview.md` for the system model.
-4. Use `docs/architecture/storage-model.md` before changing cache, state,
-   workspace, or backup behavior.
+4. Use [docs/architecture/storage-model.md](docs/architecture/storage-model.md)
+   before changing cache, state, workspace, work mount, or backup behavior. Its
+   [Lease Path Vocabulary](docs/architecture/storage-model.md#lease-path-vocabulary)
+   section is the canonical name/location/storage table.
 5. Use mode-specific gateway docs only when needed:
    - `docs/architecture/agent-worker-gateway.md` — Agent Worker Gateway, in-VM pipeline, event log, executors.
    - `docs/architecture/openclaw-gateway.md` — OpenClaw Gateway, long-running gateway VM, tool VM leases.
@@ -110,6 +112,14 @@ and is included in encrypted backups. Rebuildable artifacts belong in
 `cacheDir` and must not be made backup state just to survive a copy-on-write VM
 reboot. See `docs/architecture/storage-model.md` before moving generated files
 between repo config, state, cache, workspace, or backup directories.
+
+Lease path vocabulary is intentionally layered; see
+[Lease Path Vocabulary](docs/architecture/storage-model.md#lease-path-vocabulary)
+before renaming or threading these fields. `workMountDir` is the untrusted
+OpenClaw gateway path in `POST /lease`; `hostWorkMountDir` is the
+controller-validated host path; Tool VMs always see the selected mount at
+`/work`. OpenClaw SDK `workspaceDir` exists only at the plugin boundary and
+must be translated immediately to controller `workMountDir`.
 
 ## Controller API
 

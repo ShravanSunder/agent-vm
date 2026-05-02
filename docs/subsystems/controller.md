@@ -181,6 +181,8 @@ field. It must name a concrete child path below `/zone` or
 `/home/openclaw/.openclaw/state/sandboxes`; those roots are validation
 boundaries and are rejected as mount targets. The controller resolves the
 gateway path to `hostWorkMountDir` before handing it to the lease manager.
+For the canonical name/location/storage vocabulary, see
+[Lease Path Vocabulary](../architecture/storage-model.md#lease-path-vocabulary).
 
 For OpenClaw `agent:<agentId>` scopes, the route resolves `profileId` from the
 zone's Tool VM policy. `agentToolVmProfiles[agentId]` wins when present;

@@ -212,6 +212,9 @@ that value to a host `hostWorkMountDir` before creating the RealFS mount.
 agent-vm closes the tool VM on lease release, but it does not clean the
 supplied work mount directory.
 
+For the canonical name/location/storage vocabulary, see
+[Lease Path Vocabulary](storage-model.md#lease-path-vocabulary).
+
 ```text
 path or data                           backing                backup
 ──────────────────────────────         ─────────────────      ─────────
