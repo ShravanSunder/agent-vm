@@ -222,7 +222,7 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 			'vm-images',
 			'gateways',
 			'worker',
-			'build-config.json',
+			'build-config.jsonc',
 		);
 		const systemCacheIdentifierPath = path.join(tempRoot, 'config', 'systemCacheIdentifier.json');
 		await seedGatewayImageCacheIfAvailable(

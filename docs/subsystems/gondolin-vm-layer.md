@@ -166,7 +166,7 @@ Worker VMs only map the controller endpoint. OpenClaw Gateway VMs map the contro
 VM images are built from a `BuildConfig` (loaded from JSON) through Gondolin's `buildAssets()`. The pipeline uses content-addressed fingerprinting to cache builds.
 
 ```
-  build-config.json
+  build-config.jsonc
     |
     v
   buildGondolinImage({ buildConfigPath, cacheDir })

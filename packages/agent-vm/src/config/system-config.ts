@@ -1,8 +1,9 @@
-import { readFile } from 'node:fs/promises';
+import { access } from 'node:fs/promises';
 import path from 'node:path';
 
 import { z } from 'zod';
 
+import { loadJsonConfigFile } from './json-config-file.js';
 import { resolveConfigPath } from './path-resolver.js';
 import { zoneResourcesPolicySchema } from './resource-contracts/index.js';
 import { resolveSystemCacheIdentifierPath } from './system-cache-identifier.js';
@@ -517,19 +518,30 @@ function resolveRelativePaths(
 	};
 }
 
-export async function loadSystemConfig(configPath: string): Promise<LoadedSystemConfig> {
+function isMissingFileError(error: unknown): boolean {
+	return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
+}
+
+async function resolveExistingSystemConfigPath(configPath: string): Promise<string> {
 	const absoluteConfigPath = path.resolve(configPath);
-	const configDir = path.dirname(absoluteConfigPath);
-	const rawConfig = await readFile(absoluteConfigPath, 'utf8');
-	let parsedConfig: unknown;
 	try {
-		parsedConfig = JSON.parse(rawConfig);
+		await access(absoluteConfigPath);
+		return absoluteConfigPath;
 	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Failed to parse system config '${absoluteConfigPath}': ${message}`, {
-			cause: error,
-		});
+		if (!isMissingFileError(error) || path.basename(absoluteConfigPath) !== 'system.json') {
+			throw error;
+		}
 	}
+
+	const jsoncConfigPath = path.join(path.dirname(absoluteConfigPath), 'system.jsonc');
+	await access(jsoncConfigPath);
+	return jsoncConfigPath;
+}
+
+export async function loadSystemConfig(configPath: string): Promise<LoadedSystemConfig> {
+	const absoluteConfigPath = await resolveExistingSystemConfigPath(configPath);
+	const configDir = path.dirname(absoluteConfigPath);
+	const parsedConfig = await loadJsonConfigFile(absoluteConfigPath);
 	const config = systemConfigSchema.parse(parsedConfig);
 	return createLoadedSystemConfig(resolveRelativePaths(config, configDir), {
 		systemConfigPath: absoluteConfigPath,

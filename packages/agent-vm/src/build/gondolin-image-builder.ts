@@ -1,4 +1,3 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -10,6 +9,7 @@ import {
 } from '@agent-vm/gondolin-adapter';
 
 import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
+import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { TaskOutput } from '../shared/run-task.js';
 import { resolveRuntimeBuildVersionTag as resolveRuntimeBuildVersionTagDefault } from './runtime-versions.js';
 
@@ -23,20 +23,15 @@ export interface GondolinImageBuilderDependencies {
 }
 
 async function loadBuildConfigFromJson(buildConfigPath: string): Promise<BuildConfig> {
-	let rawContents: string;
 	try {
-		rawContents = await fs.readFile(buildConfigPath, 'utf8');
+		return (await loadJsonConfigFile(buildConfigPath)) as BuildConfig;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Failed to read build config '${buildConfigPath}': ${message}`, {
-			cause: error,
-		});
-	}
-
-	try {
-		return JSON.parse(rawContents) as BuildConfig;
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+			throw new Error(`Failed to read build config '${buildConfigPath}': ${message}`, {
+				cause: error,
+			});
+		}
 		throw new Error(`Failed to parse build config '${buildConfigPath}': ${message}`, {
 			cause: error,
 		});

@@ -68,6 +68,9 @@ importers:
       hono:
         specifier: ^4.12.14
         version: 4.12.14
+      jsonc-parser:
+        specifier: ^3.3.1
+        version: 3.3.1
       tasuku:
         specifier: ^2.3.0
         version: 2.3.0
@@ -98,6 +101,9 @@ importers:
       hono:
         specifier: ^4.12.14
         version: 4.12.14
+      jsonc-parser:
+        specifier: ^3.3.1
+        version: 3.3.1
       zod:
         specifier: ^4
         version: 4.3.6
@@ -1440,6 +1446,9 @@ packages:
 
   json-schema-typed@8.0.2:
     resolution: {integrity: sha512-fQhoXdcvc3V28x7C7BMs4P5+kNlgUURe2jmUT1T//oBRMDrqy1QPelJimwZGo7Hg9VPV3EQV5Bnq4hbFy2vetA==}
+
+  jsonc-parser@3.3.1:
+    resolution: {integrity: sha512-HUgH65KyejrUFPvHFPbqOY0rsFip3Bo5wb4ngvdi1EpCYWUQDC5V+Y7mZws+DLkr4M//zQJoanu1SP+87Dv1oQ==}
 
   lightningcss-android-arm64@1.32.0:
     resolution: {integrity: sha512-YK7/ClTt4kAK0vo6w3X+Pnm0D2cf2vPHbhOXdoNti1Ga0al1P4TBZhwjATvjNwLEBCnKvjJc2jQgHXH0NEwlAg==}
@@ -3106,6 +3115,8 @@ snapshots:
   json-schema-traverse@1.0.0: {}
 
   json-schema-typed@8.0.2: {}
+
+  jsonc-parser@3.3.1: {}
 
   lightningcss-android-arm64@1.32.0:
     optional: true

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 
 import { skillReferenceSchema } from '../shared/skill-types.js';
+import { loadJsonConfigFile } from './json-config-file.js';
 
 export const mcpServerSchema = z.object({
 	name: z.string().min(1),
@@ -416,7 +417,7 @@ async function loadWorkerConfigWithSchema<TConfig>(
 	}
 
 	try {
-		const raw: unknown = JSON.parse(await readFile(configPath, 'utf-8'));
+		const raw = await loadJsonConfigFile(configPath);
 		const resolvedRaw = isObjectRecord(raw)
 			? await resolveWorkerConfigInstructionReferences(raw, { configPath })
 			: raw;

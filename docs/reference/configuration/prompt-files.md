@@ -1,13 +1,13 @@
 # Prompt Files
 
 Worker prompt defaults can be stored as markdown files next to zone-level
-`worker.json`.
+`worker.jsonc` or `worker.json`.
 
 Generated Worker projects use this shape:
 
 ```
 config/gateways/<zone>/
-  worker.json
+  worker.jsonc
   prompts/
     common-agent-instructions.md
     plan-agent.md
@@ -17,7 +17,7 @@ config/gateways/<zone>/
     wrapup.md
 ```
 
-`worker.json` references those files:
+`worker.jsonc` references those files:
 
 ```json
 {
@@ -33,14 +33,14 @@ config/gateways/<zone>/
 
 ## Rules
 
-- Prompt paths are relative to the `worker.json` file that contains them.
+- Prompt paths are relative to the worker config file that contains them.
 - Prompt files must stay under that config's sibling `prompts/` directory.
 - Absolute paths are rejected.
 - `../` escapes are rejected.
 - Symlink escapes are rejected.
 - Missing files fail fast during config loading, task pre-start, validate, and
   doctor.
-- Repo-level `.agent-vm/config.json` may not use prompt file references.
+- Repo-level `.agent-vm/config.jsonc` and `.agent-vm/config.json` may not use prompt file references.
 
 ## Why Files Instead Of JSON Strings
 
@@ -52,7 +52,7 @@ kept as the wiring layer: it says which prompt file a phase uses.
 Use:
 
 ```bash
-agent-vm config reset-instructions --config config/system.json --zone <zone> --phase all
+agent-vm config reset-instructions --config config/system.jsonc --zone <zone> --phase all
 ```
 
 This updates scaffolded prompt defaults while preserving file references for

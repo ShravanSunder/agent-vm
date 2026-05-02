@@ -2,6 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Historical vocabulary note:** This plan predates PR #33's lease work-mount
+> naming cutover. Snippets that use `workspaceDir` describe the old plan state;
+> new implementation and manual work must use `workMountDir` for the controller
+> request path, `hostWorkMountDir` for the translated host path, and `/work` for
+> the Tool VM guest mount.
+
 **Goal:** Make one `agent-vm controller start` process control all configured zones, with partial-start semantics, route dispatch by target zone, and per-agent tool VM profile selection inside a zone.
 
 **Architecture:** Use a BC-combined design: a `ZoneRuntimeRegistry` owns lifecycle and partial-start state for every selected zone, while type-specific zone runtimes (`OpenClawZoneRuntime`, `WorkerZoneRuntime`) own the behavior each gateway type supports. The controller keeps one shared HTTP server, secret resolver, TCP pool, lease manager, idle reaper, and task registry; every `/zones/:zoneId/...` route dispatches through the target zone runtime instead of through one process-wide active zone. Tool VM leases stay zone-scoped for reuse and locking, but resolve their tool VM profile from `scopeKey` so multiple agents in the same zone can receive distinct tool VM images.
@@ -2869,7 +2875,7 @@ function createMixedZoneSystemConfig(controllerPort: number): LoadedSystemConfig
 		},
 	};
 }
-	
+
 let currentSmokeSystemConfig: LoadedSystemConfig;
 
 function createFakeGatewayStartResult(zoneId: string) {

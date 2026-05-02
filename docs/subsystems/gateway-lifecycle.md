@@ -132,9 +132,11 @@ Two host-side writes before VM boot:
    writes the result atomically to `<stateDir>/effective-openclaw.json`
    with mode 0600.
 
-2. **Auth profiles** -- if `authProfilesRef` is configured on the zone,
-   resolves the secret and writes `auth-profiles.json` to
-   `<stateDir>/agents/main/agent/` with mode 0600.
+2. **Auth profiles** -- if `gateway.authProfilesByAgent` is configured on the
+   zone, resolves each agent's secret and writes `auth-profiles.json` to
+   `<stateDir>/agents/<agentId>/agent/` with mode 0600. Legacy
+   `authProfilesRef` is still accepted as a shared single-agent fallback and
+   writes only `<stateDir>/agents/main/agent/auth-profiles.json`.
 
 ### buildVmSpec
 

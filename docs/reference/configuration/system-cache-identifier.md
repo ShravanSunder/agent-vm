@@ -1,10 +1,11 @@
 # systemCacheIdentifier.json
 
-`systemCacheIdentifier.json` is required and must live next to `system.json`.
+`systemCacheIdentifier.json` is required and must live next to `system.jsonc`
+or `system.json`.
 Its parsed JSON contents are hashed into every Gondolin image fingerprint.
 
 This file describes the outer build environment: things that can change the VM
-image contents even when `build-config.json` does not change.
+image contents even when `build-config.jsonc` does not change.
 
 ## Default Shape
 

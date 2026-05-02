@@ -13,7 +13,7 @@ repo files.
 
 ## Zone policy
 
-`system.json` controls whether repo-local providers may be selected:
+`system.jsonc` controls whether repo-local providers may be selected:
 
 ```json
 {

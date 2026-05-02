@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 
@@ -17,6 +17,7 @@ import {
 } from '@agent-vm/gondolin-adapter';
 import { z } from 'zod';
 
+import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { resolveConfigPath } from '../config/path-resolver.js';
 import {
 	SYSTEM_CACHE_IDENTIFIER_FILENAME,
@@ -29,6 +30,7 @@ import {
 	hasServiceAccountToken,
 	storeServiceAccountToken,
 } from './keychain-credential.js';
+import { updateAgentVmManual } from './manual-commands.js';
 import {
 	openClawPluginVendorDirectory,
 	syncBundledOpenClawPluginBundle,
@@ -166,8 +168,8 @@ const scaffoldedGatewayPortSystemConfigSchema = z
 	})
 	.passthrough();
 
-function resolveGatewayConfigFileName(gatewayType: GatewayType): 'worker.json' | 'openclaw.json' {
-	return gatewayType === 'worker' ? 'worker.json' : 'openclaw.json';
+function resolveGatewayConfigFileName(gatewayType: GatewayType): 'worker.jsonc' | 'openclaw.json' {
+	return gatewayType === 'worker' ? 'worker.jsonc' : 'openclaw.json';
 }
 
 const localPathProfile: ScaffoldPathProfile = {
@@ -179,9 +181,9 @@ const localPathProfile: ScaffoldPathProfile = {
 	gatewayStateDir: (zoneId) => `../state/${zoneId}`,
 	gatewayZoneFilesDir: (zoneId) => `../zone-files/${zoneId}`,
 	gatewayBackupDir: (zoneId) => `../backups/${zoneId}`,
-	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.json`,
+	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.jsonc`,
 	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
-	toolVmBuildConfig: '../vm-images/tool-vms/default/build-config.json',
+	toolVmBuildConfig: '../vm-images/tool-vms/default/build-config.jsonc',
 	toolVmDockerfile: '../vm-images/tool-vms/default/Dockerfile',
 };
 
@@ -195,9 +197,9 @@ const podPathProfile: ScaffoldPathProfile = {
 	gatewayZoneFilesDir: () => '/var/agent-vm/zone-files',
 	gatewayBackupDir: () => '/var/agent-vm/backups',
 	gatewayBuildConfig: (gatewayType) =>
-		`/etc/agent-vm/vm-images/gateways/${gatewayType}/build-config.json`,
+		`/etc/agent-vm/vm-images/gateways/${gatewayType}/build-config.jsonc`,
 	gatewayDockerfile: (gatewayType) => `/etc/agent-vm/vm-images/gateways/${gatewayType}/Dockerfile`,
-	toolVmBuildConfig: '/etc/agent-vm/vm-images/tool-vms/default/build-config.json',
+	toolVmBuildConfig: '/etc/agent-vm/vm-images/tool-vms/default/build-config.jsonc',
 	toolVmDockerfile: '/etc/agent-vm/vm-images/tool-vms/default/Dockerfile',
 };
 
@@ -216,9 +218,9 @@ const userDirPathProfile: ScaffoldPathProfile = {
 	gatewayStateDir: (zoneId) => `~/.agent-vm/state/${zoneId}`,
 	gatewayZoneFilesDir: (zoneId) => `~/.agent-vm/zone-files/${zoneId}`,
 	gatewayBackupDir: (zoneId) => `~/.agent-vm-backups/${zoneId}`,
-	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.json`,
+	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.jsonc`,
 	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
-	toolVmBuildConfig: '../vm-images/tool-vms/default/build-config.json',
+	toolVmBuildConfig: '../vm-images/tool-vms/default/build-config.jsonc',
 	toolVmDockerfile: '../vm-images/tool-vms/default/Dockerfile',
 };
 
@@ -469,14 +471,6 @@ function defaultSecretsForGatewayType(
 	}
 
 	return {
-		DISCORD_BOT_TOKEN: secretFromShape(
-			{
-				envVar: 'DISCORD_BOT_TOKEN',
-				opRef: `op://agent-vm/${zoneId}-discord/bot-token`,
-				injection: 'env',
-			},
-			secretsProvider,
-		),
 		PERPLEXITY_API_KEY: secretFromShape(
 			{
 				envVar: 'PERPLEXITY_API_KEY',
@@ -547,8 +541,6 @@ function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): readonly s
 		'api.fireworks.ai',
 		'api.cerebras.ai',
 		'api.cohere.ai',
-		'discord.com',
-		'cdn.discordapp.com',
 		'api.github.com',
 		'registry.npmjs.org',
 	];
@@ -559,12 +551,7 @@ function defaultWebsocketBypassForGatewayType(gatewayType: GatewayType): readonl
 		return [];
 	}
 
-	return [
-		'gateway.discord.gg:443',
-		'web.whatsapp.com:443',
-		'g.whatsapp.net:443',
-		'mmg.whatsapp.net:443',
-	];
+	return [];
 }
 
 function envVarsForGatewayType(gatewayType: GatewayType): readonly string[] {
@@ -572,7 +559,7 @@ function envVarsForGatewayType(gatewayType: GatewayType): readonly string[] {
 		case 'worker':
 			return ['GITHUB_TOKEN', 'OPENAI_API_KEY'];
 		case 'openclaw':
-			return ['GITHUB_TOKEN', 'DISCORD_BOT_TOKEN', 'PERPLEXITY_API_KEY', 'OPENCLAW_GATEWAY_TOKEN'];
+			return ['GITHUB_TOKEN', 'PERPLEXITY_API_KEY', 'OPENCLAW_GATEWAY_TOKEN'];
 		default: {
 			const exhaustive: never = gatewayType;
 			throw new Error(`Unhandled gateway type: ${String(exhaustive)}`);
@@ -631,7 +618,13 @@ RUN apt-get update && \\
     printf '%s\\n' \\
       '{' \\
       '  "gateway": { "mode": "local" },' \\
-      '  "channels": { "discord": { "enabled": true } }' \\
+      '  "plugins": {' \\
+      '    "allow": ["gondolin", "memory-core"],' \\
+      '    "entries": {' \\
+      '      "gondolin": { "enabled": true },' \\
+      '      "memory-core": { "enabled": true }' \\
+      '    }' \\
+      '  }' \\
       '}' > /tmp/openclaw-plugin-stage-config.json && \\
     chmod 600 /tmp/openclaw-plugin-stage-config.json && \\
     (OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive || true) && \\
@@ -831,6 +824,7 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 		load: {
 			paths: [defaultOpenClawExtensionsPath],
 		},
+		allow: ['gondolin', 'memory-core'],
 		entries: {
 			gondolin: {
 				enabled: true,
@@ -838,6 +832,9 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 					controllerUrl: 'http://controller.vm.host:18800',
 					zoneId,
 				},
+			},
+			'memory-core': {
+				enabled: true,
 			},
 		},
 	},
@@ -849,18 +846,17 @@ async function resolveOpenClawControlUiIngressPort(
 	zoneId: string,
 ): Promise<number> {
 	try {
-		const rawSystemConfig = await readFile(systemConfigPath, 'utf8');
-		const parsedSystemConfig: unknown = JSON.parse(rawSystemConfig);
+		const parsedSystemConfig = await loadJsonConfigFile(systemConfigPath);
 		const parseResult = scaffoldedGatewayPortSystemConfigSchema.safeParse(parsedSystemConfig);
 		if (!parseResult.success) {
 			throw new Error(
-				`Cannot scaffold OpenClaw config for zone '${zoneId}': system.json does not define zone gateway ports.`,
+				`Cannot scaffold OpenClaw config for zone '${zoneId}': system config does not define zone gateway ports.`,
 			);
 		}
 		const zone = parseResult.data.zones.find((candidateZone) => candidateZone.id === zoneId);
 		if (!zone) {
 			throw new Error(
-				`Cannot scaffold OpenClaw config for zone '${zoneId}': system.json does not define zone '${zoneId}'.`,
+				`Cannot scaffold OpenClaw config for zone '${zoneId}': system config does not define zone '${zoneId}'.`,
 			);
 		}
 		return zone.gateway.port;
@@ -868,14 +864,34 @@ async function resolveOpenClawControlUiIngressPort(
 		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
 			return defaultGatewayIngressPort;
 		}
-		if (error instanceof SyntaxError) {
-			throw new Error(
-				`Cannot scaffold OpenClaw config for zone '${zoneId}': system.json is not valid JSON.`,
-				{ cause: error },
-			);
-		}
 		throw error;
 	}
+}
+
+function formatJsoncConfig(comment: string, value: unknown): string {
+	return `// ${comment}\n${JSON.stringify(value, null, '\t')}\n`;
+}
+
+function formatAuthoredConfig(filePath: string, comment: string, value: unknown): string {
+	if (filePath.endsWith('.jsonc')) {
+		return formatJsoncConfig(comment, value);
+	}
+	return `${JSON.stringify(value, null, '\t')}\n`;
+}
+
+async function resolveScaffoldSystemConfigPath(configDir: string): Promise<string> {
+	const legacyJsonPath = path.join(configDir, 'system.json');
+	try {
+		await access(legacyJsonPath);
+		return legacyJsonPath;
+	} catch (error) {
+		if (
+			!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT')
+		) {
+			throw error;
+		}
+	}
+	return path.join(configDir, 'system.jsonc');
 }
 
 const defaultWorkerPromptFiles = [
@@ -995,10 +1011,13 @@ async function scaffoldAgentVmProjectInternal(
 		homeDir,
 	);
 
-	const systemConfigPath = path.join(configDir, 'system.json');
+	const systemConfigPath = await resolveScaffoldSystemConfigPath(configDir);
+	const systemConfigRelativePath = path.relative(options.targetDir, systemConfigPath);
 	const systemConfigStatus = await writeFileIfMissing(
 		systemConfigPath,
-		`${JSON.stringify(
+		formatAuthoredConfig(
+			systemConfigPath,
+			'Human-authored agent-vm system config. Comments are allowed here; runtime effective files stay strict JSON.',
 			defaultSystemConfig(
 				options.zoneId,
 				gatewayType,
@@ -1006,12 +1025,10 @@ async function scaffoldAgentVmProjectInternal(
 				options.secretsProvider,
 				configWritablePathProfile,
 			),
-			null,
-			'\t',
-		)}\n`,
+		),
 		overwrite,
 	);
-	(systemConfigStatus === 'created' ? created : skipped).push('config/system.json');
+	(systemConfigStatus === 'created' ? created : skipped).push(systemConfigRelativePath);
 
 	const systemCacheIdentifierPath = path.join(
 		options.targetDir,
@@ -1050,16 +1067,19 @@ async function scaffoldAgentVmProjectInternal(
 	);
 	const configStatus = await writeFileIfMissing(
 		configPath,
-		`${JSON.stringify(
-			gatewayType === 'openclaw'
-				? defaultOpenClawConfig(
+		gatewayType === 'openclaw'
+			? `${JSON.stringify(
+					defaultOpenClawConfig(
 						options.zoneId,
 						await resolveOpenClawControlUiIngressPort(systemConfigPath, options.zoneId),
-					)
-				: defaultWorkerGatewayConfig(),
-			null,
-			'\t',
-		)}\n`,
+					),
+					null,
+					'\t',
+				)}\n`
+			: formatJsoncConfig(
+					'Human-authored Agent Worker gateway config. Comments are allowed here; /state/effective-worker.json stays strict JSON.',
+					defaultWorkerGatewayConfig(),
+				),
 		overwrite,
 	);
 	(configStatus === 'created' ? created : skipped).push(
@@ -1113,15 +1133,18 @@ async function scaffoldAgentVmProjectInternal(
 		'vm-images',
 		'gateways',
 		gatewayType,
-		'build-config.json',
+		'build-config.jsonc',
 	);
 	const gatewayBuildConfigStatus = await writeFileIfMissing(
 		gatewayBuildConfigPath,
-		`${JSON.stringify(defaultGatewayBuildConfig(architecture), null, '\t')}\n`,
+		formatJsoncConfig(
+			'Human-authored Gondolin image build config. Comments are allowed here.',
+			defaultGatewayBuildConfig(architecture),
+		),
 		overwrite,
 	);
 	(gatewayBuildConfigStatus === 'created' ? created : skipped).push(
-		`vm-images/gateways/${gatewayType}/build-config.json`,
+		`vm-images/gateways/${gatewayType}/build-config.jsonc`,
 	);
 	if (gatewayType === 'openclaw') {
 		const pluginCopyStatus = await (
@@ -1138,15 +1161,18 @@ async function scaffoldAgentVmProjectInternal(
 			'vm-images',
 			'tool-vms',
 			'default',
-			'build-config.json',
+			'build-config.jsonc',
 		);
 		const toolBuildConfigStatus = await writeFileIfMissing(
 			toolBuildConfigPath,
-			`${JSON.stringify(defaultToolBuildConfig(architecture), null, '\t')}\n`,
+			formatJsoncConfig(
+				'Human-authored Tool VM image build config. Comments are allowed here.',
+				defaultToolBuildConfig(architecture),
+			),
 			overwrite,
 		);
 		(toolBuildConfigStatus === 'created' ? created : skipped).push(
-			'vm-images/tool-vms/default/build-config.json',
+			'vm-images/tool-vms/default/build-config.jsonc',
 		);
 		const toolDockerfilePath = path.join(
 			options.targetDir,
@@ -1164,6 +1190,14 @@ async function scaffoldAgentVmProjectInternal(
 			'vm-images/tool-vms/default/Dockerfile',
 		);
 	}
+
+	const manualResult = await updateAgentVmManual({
+		defaultZoneId: options.zoneId,
+		systemConfigPath: systemConfigRelativePath,
+		targetDir: options.targetDir,
+		updateAgentIndex: true,
+	});
+	created.push(...manualResult.updated);
 
 	if (options.hostSystemType === 'container') {
 		const resolveZigVersion =

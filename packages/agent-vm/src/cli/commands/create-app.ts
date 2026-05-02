@@ -10,6 +10,7 @@ import { createConfigSubcommands } from './config-definition.js';
 import { createControllerSubcommands } from './controller-definition.js';
 import { createDoctorCommand } from './doctor-definition.js';
 import { createInitCommand } from './init-definition.js';
+import { createManualSubcommands } from './manual-definition.js';
 import { createPathsSubcommands } from './paths-definition.js';
 import { createResourcesSubcommands } from './resources-definition.js';
 import { createValidateCommand } from './validate-definition.js';
@@ -21,6 +22,7 @@ export function createAgentVmApp(io: CliIo, dependencies: CliDependencies, cliVe
 		description: 'Gondolin-based VM controller for Worker and OpenClaw agents',
 		cmds: {
 			init: createInitCommand(io, dependencies),
+			manual: createManualSubcommands(io, dependencies),
 			resources: createResourcesSubcommands(io, dependencies),
 			build: createBuildCommand(io, dependencies),
 			validate: createValidateCommand(io, dependencies),

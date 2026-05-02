@@ -1,11 +1,10 @@
-import fs from 'node:fs/promises';
-
 import type { BuildConfig, BuildImageResult } from '@agent-vm/gondolin-adapter';
 
 import {
 	buildGondolinImage as buildGondolinImageDefault,
 	type GondolinImageBuilderDependencies,
 } from '../build/gondolin-image-builder.js';
+import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { GatewayBuildImageOptions } from './gateway-zone-support.js';
 
 export interface GatewayImageBuilderDependencies {
@@ -15,7 +14,7 @@ export interface GatewayImageBuilderDependencies {
 }
 
 async function loadBuildConfigFromJson(buildConfigPath: string): Promise<BuildConfig> {
-	return JSON.parse(await fs.readFile(buildConfigPath, 'utf8')) as BuildConfig;
+	return (await loadJsonConfigFile(buildConfigPath)) as BuildConfig;
 }
 
 export async function buildGatewayImage(

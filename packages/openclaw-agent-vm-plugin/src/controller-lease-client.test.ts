@@ -60,15 +60,17 @@ describe('createLeaseClient', () => {
 		await leaseClient.peekLease('lease-123');
 		await leaseClient.releaseLease('lease-123');
 
+		expect(requests[0]?.body).toBeDefined();
+		expect(JSON.parse(requests[0]?.body ?? '{}')).toEqual({
+			agentWorkspaceDir: '/home/openclaw/work',
+			profileId: 'standard',
+			scopeKey: 'agent:main:session-abc',
+			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
+			zoneId: 'shravan',
+		});
 		expect(requests).toEqual([
 			{
-				body: JSON.stringify({
-					agentWorkspaceDir: '/home/openclaw/work',
-					profileId: 'standard',
-					scopeKey: 'agent:main:session-abc',
-					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
-					zoneId: 'shravan',
-				}),
+				body: expect.any(String),
 				method: 'POST',
 				url: 'http://controller.vm.host:18800/lease',
 			},
@@ -104,7 +106,7 @@ describe('createLeaseClient', () => {
 				workMountDir: '/work',
 				zoneId: 'shravan',
 			}),
-		).rejects.toThrow('Controller returned an invalid lease response');
+		).rejects.toThrow('Controller lease API returned an invalid response');
 	});
 
 	it('strips trailing slash from controller url', async () => {
@@ -153,6 +155,44 @@ describe('createLeaseClient', () => {
 			kind: 'client-error',
 			responseBody: { error: 'missing lease' },
 			status: 404,
+		} satisfies Partial<ControllerLeaseRequestError>);
+	});
+
+	it('throws when lease release returns a missing lease response', async () => {
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async () =>
+				new Response(JSON.stringify({ error: 'missing lease' }), {
+					headers: { 'content-type': 'application/json' },
+					status: 404,
+				}),
+		});
+
+		await expect(leaseClient.releaseLease('lease-missing')).rejects.toMatchObject({
+			bodyText: JSON.stringify({ error: 'missing lease' }),
+			kind: 'client-error',
+			responseBody: { error: 'missing lease' },
+			status: 404,
+		} satisfies Partial<ControllerLeaseRequestError>);
+	});
+
+	it('throws when lease release returns a controller server error', async () => {
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async () =>
+				new Response(JSON.stringify({ error: 'lease-release-failed', diagnosticId: 'diag-2' }), {
+					headers: { 'content-type': 'application/json' },
+					status: 503,
+				}),
+		});
+
+		await expect(leaseClient.releaseLease('lease-unavailable')).rejects.toMatchObject({
+			kind: 'server-error',
+			responseBody: {
+				diagnosticId: 'diag-2',
+				error: 'lease-release-failed',
+			},
+			status: 503,
 		} satisfies Partial<ControllerLeaseRequestError>);
 	});
 

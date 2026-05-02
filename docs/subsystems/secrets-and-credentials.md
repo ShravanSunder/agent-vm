@@ -218,15 +218,23 @@ environment or mediated secret set.
 
 ## Auth Profiles
 
-The `authProfilesRef` field on `zone.gateway` points to a secret containing
-a JSON blob of authentication profiles (e.g. OAuth tokens for model providers).
+`gateway.authProfilesByAgent` maps agent IDs to secrets containing JSON blobs
+of authentication profiles (e.g. OAuth tokens for model providers). Use this
+for new OpenClaw deployments so each agent gets an explicit profile.
+
+`gateway.authProfilesRef` is still supported as a legacy/shared fallback for
+older single-agent deployments. It writes a profile only for the `main` agent.
 
 Resolution happens in `prepareHostState` (openclaw-lifecycle.ts), which runs
 before the VM boots:
 
-1. Resolve `authProfilesRef` via the composite secret resolver
-2. Create `<stateDir>/agents/main/agent/` with mode 0700
+1. Resolve every `authProfilesByAgent[agentId]` secret via the composite
+   secret resolver
+2. Create `<stateDir>/agents/<agentId>/agent/` with mode 0700
 3. Write `auth-profiles.json` atomically with mode 0600
+
+When only legacy `authProfilesRef` is configured, the same write happens for
+`<stateDir>/agents/main/agent/auth-profiles.json`.
 
 The file lands on the host filesystem. The VM accesses it through a `realfs`
 VFS mount of the state directory. The secret content flows through the resolver
@@ -234,11 +242,11 @@ but the resolved value is written to disk on the host, not injected as an
 environment variable.
 
 ```
-  authProfilesRef (1password or env)
+  authProfilesByAgent[agentId] (1password or env)
     |
     secretResolver.resolve(ref)
     |
-    writeFileAtomically(stateDir/agents/main/agent/auth-profiles.json)
+    writeFileAtomically(stateDir/agents/<agentId>/agent/auth-profiles.json)
     |
     VM reads via VFS mount of stateDir
 ```
@@ -271,7 +279,8 @@ toolchain setup is not known.
 | runtimeAuthHints for mediated secrets | Host | Placeholder name only | Generated runtime instructions under `/agent-vm` |
 | OPENCLAW_GATEWAY_TOKEN | Host | No | Baked into effective config file on host; VFS-mounted read-only |
 | githubToken | Host | No | Controller-side git push only |
-| authProfilesRef | Host | Indirectly | Written to host disk; VM reads via VFS mount |
+| gateway.authProfilesByAgent | Host | Indirectly | Per-agent profile written to host disk; VM reads via VFS mount |
+| gateway.authProfilesRef | Host | Indirectly | Legacy main-agent fallback written to host disk; VM reads via VFS mount |
 | Service account token | Host | No | Used only to authenticate the 1Password SDK/CLI |
 
 All secret resolution happens on the host. The VM never has access to the

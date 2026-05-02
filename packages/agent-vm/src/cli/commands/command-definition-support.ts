@@ -13,7 +13,7 @@ export function createConfigOption() {
 		type: optional(string),
 		long: 'config',
 		short: 'c',
-		description: 'Path to config/system.json',
+		description: 'Path to config/system.jsonc or config/system.json',
 		defaultValue: () => 'config/system.json',
 	});
 }
