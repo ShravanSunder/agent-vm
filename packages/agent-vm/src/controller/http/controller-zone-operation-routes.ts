@@ -157,6 +157,18 @@ function buildErrorResponseBody(
 	};
 }
 
+function scrubErrorResponseBody(responseBody: {
+	readonly details?: readonly string[];
+	readonly error: string;
+}): { readonly details?: readonly string[]; readonly error: string } {
+	return {
+		error: scrubGithubTokenFromOutput(responseBody.error),
+		...(responseBody.details
+			? { details: responseBody.details.map((detail) => scrubGithubTokenFromOutput(detail)) }
+			: {}),
+	};
+}
+
 function zoneRuntimeErrorStatus(error: unknown): 404 | 405 | 409 | 412 | 500 | 502 | 503 {
 	if (
 		error instanceof ControllerZoneNotFoundError ||
@@ -258,9 +270,7 @@ function zoneRuntimeErrorBody(error: unknown):
 			zoneId: error.zoneId,
 		};
 	}
-	return {
-		error: error instanceof Error ? error.message : 'zone-operation-failed',
-	};
+	return buildErrorResponseBody(error, 'zone-operation-failed');
 }
 
 export function registerControllerZoneOperationRoutes(
@@ -396,8 +406,7 @@ export function registerControllerZoneOperationRoutes(
 				if (runtimeStatus !== 500) {
 					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
 				}
-				const message = error instanceof Error ? error.message : 'get-task-state-failed';
-				return context.json({ error: message }, 500);
+				return context.json(buildErrorResponseBody(error, 'get-task-state-failed'), 500);
 			}
 		});
 	}
@@ -414,11 +423,16 @@ export function registerControllerZoneOperationRoutes(
 				if (runtimeStatus !== 500) {
 					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
 				}
-				const message = error instanceof Error ? error.message : 'close-task-failed';
 				if (error instanceof ControllerTaskNotReadyError) {
-					return context.json({ status: 'not-ready', error: message }, 409);
+					return context.json(
+						{
+							status: 'not-ready',
+							...buildErrorResponseBody(error, 'close-task-failed'),
+						},
+						409,
+					);
 				}
-				return context.json({ error: message }, 500);
+				return context.json(buildErrorResponseBody(error, 'close-task-failed'), 500);
 			}
 		});
 	}
@@ -447,16 +461,11 @@ export function registerControllerZoneOperationRoutes(
 				if (runtimeStatus !== 500) {
 					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
 				}
-				const message = error instanceof Error ? error.message : 'push-branches-failed';
+				const responseBody = buildErrorResponseBody(error, 'push-branches-failed');
 				writeControllerRouteLog(
-					`push-branches failed for zone '${context.req.param('zoneId')}' task '${context.req.param('taskId')}': ${message}`,
+					`push-branches failed for zone '${context.req.param('zoneId')}' task '${context.req.param('taskId')}': ${responseBody.error}`,
 				);
-				return context.json(
-					{
-						error: message,
-					},
-					error instanceof PushBranchesValidationError ? 400 : 500,
-				);
+				return context.json(responseBody, error instanceof PushBranchesValidationError ? 400 : 500);
 			}
 		});
 	}
@@ -486,9 +495,6 @@ export function registerControllerZoneOperationRoutes(
 					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
 				}
 				const isValidationError = error instanceof PullDefaultValidationError;
-				const message = scrubGithubTokenFromOutput(
-					error instanceof Error ? error.message : 'pull-default-failed',
-				);
 				const logDetail = scrubGithubTokenFromOutput(
 					error instanceof Error
 						? isValidationError
@@ -500,9 +506,7 @@ export function registerControllerZoneOperationRoutes(
 					`pull-default failed for zone '${context.req.param('zoneId')}' task '${context.req.param('taskId')}': ${logDetail}`,
 				);
 				return context.json(
-					{
-						error: message,
-					},
+					scrubErrorResponseBody(buildErrorResponseBody(error, 'pull-default-failed')),
 					isValidationError ? 400 : 500,
 				);
 			}

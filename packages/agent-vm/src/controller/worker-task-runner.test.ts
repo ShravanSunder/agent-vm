@@ -657,6 +657,66 @@ describe('worker-task-runner', () => {
 		expect(providerCall.providers.map((provider) => provider.repoId)).toEqual(['frontend']);
 	});
 
+	it('passes selected external resources to repo resource setup at the task boundary', async () => {
+		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+		loadRepoResourceDescriptionContractMock.mockResolvedValue({
+			setupCommand: '.agent-vm/run-setup.sh',
+			requires: {
+				pg: { binding: { host: 'pg.local', port: 5432 }, env: {} },
+			},
+			provides: {},
+		});
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const zoneWithExternalResources = {
+			...zone,
+			resources: {
+				allowRepoResources: true,
+				externalResources: {
+					pg: {
+						name: 'pg',
+						binding: { host: 'pg.local', port: 5432 },
+						target: { host: '127.0.0.1', port: 15432 },
+						env: { DATABASE_URL: 'postgres://127.0.0.1:15432/app' },
+					},
+					unused: {
+						name: 'unused',
+						binding: { host: 'unused.external', port: 1234 },
+						target: { host: '127.0.0.1', port: 11234 },
+						env: {},
+					},
+				},
+			},
+		};
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		await preStartGateway(
+			{
+				requestTaskId: 'request-task-1',
+				prompt: 'external resource task',
+				repos: [{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' }],
+				resources: {
+					externalResources: zoneWithExternalResources.resources.externalResources,
+				},
+				context: {},
+			},
+			zoneWithExternalResources,
+		);
+
+		const providerCall = startRepoResourceProvidersMock.mock.calls[0]?.[0];
+		if (!providerCall) {
+			throw new Error('Expected repo resource providers to start.');
+		}
+		expect(providerCall.repos[0]?.selectedExternalResources).toEqual({
+			pg: {
+				binding: { host: 'pg.local', port: 5432 },
+				target: { host: '127.0.0.1', port: 15432 },
+			},
+		});
+	});
+
 	it('does not execute repo resource contracts when repo resources are disabled', async () => {
 		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
 		loadRepoResourceDescriptionContractMock.mockRejectedValue(

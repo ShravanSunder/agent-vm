@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	assertGondolinZigCompatibility,
@@ -7,12 +7,48 @@ import {
 	checkGondolinZigCompatibility,
 	isZigVersionAtLeast,
 	resolveGondolinCompatibleZigVersion,
+	resolveHostZigVersion,
 } from './zig-compatibility.js';
 
+const { execaMock } = vi.hoisted(() => ({ execaMock: vi.fn() }));
+
+vi.mock('execa', () => ({ execa: execaMock }));
+
 describe('Zig compatibility', () => {
+	beforeEach(() => {
+		execaMock.mockReset();
+	});
+
 	it('resolves the required Gondolin Zig version through the supplied resolver', async () => {
 		await expect(resolveGondolinCompatibleZigVersion(async () => '0.15.2')).resolves.toBe(
 			'0.15.2',
+		);
+	});
+
+	it('resolves the host Zig version from the zig binary', async () => {
+		execaMock.mockResolvedValue({ stdout: '0.15.2\n' });
+
+		await expect(resolveHostZigVersion()).resolves.toBe('0.15.2');
+		expect(execaMock).toHaveBeenCalledWith('zig', ['version']);
+	});
+
+	it('treats missing zig binary as an absent host Zig version', async () => {
+		const missingBinaryError = Object.assign(new Error('spawn zig ENOENT'), {
+			code: 'ENOENT',
+		}) satisfies Error & { readonly code: string };
+		execaMock.mockRejectedValue(missingBinaryError);
+
+		await expect(resolveHostZigVersion()).resolves.toBeUndefined();
+	});
+
+	it('preserves non-missing zig execution failures', async () => {
+		const permissionError = Object.assign(new Error('permission denied'), {
+			code: 'EACCES',
+		}) satisfies Error & { readonly code: string };
+		execaMock.mockRejectedValue(permissionError);
+
+		await expect(resolveHostZigVersion()).rejects.toThrow(
+			'Failed to run zig version: permission denied',
 		);
 	});
 

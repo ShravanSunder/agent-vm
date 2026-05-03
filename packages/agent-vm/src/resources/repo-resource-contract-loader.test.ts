@@ -24,7 +24,7 @@ describe('repo resource contract loader', () => {
 			expect(description).toBeNull();
 			expect(stderrSpy).toHaveBeenCalledWith(
 				expect.stringContaining(
-					'[repo-resource-contract-loader] repo-a: no .agent-vm/repo-resources.ts; no contract loaded.',
+					'[repo-resource-contract-loader] repo-a: no .agent-vm/repo-resources.ts; skipping repo resource setup.',
 				),
 			);
 		} finally {

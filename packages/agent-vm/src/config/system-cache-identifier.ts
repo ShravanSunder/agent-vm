@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { z } from 'zod';
+
 export const SYSTEM_CACHE_IDENTIFIER_FILENAME = 'systemCacheIdentifier.json';
 
 export interface LoadSystemCacheIdentifierOptions {
@@ -29,6 +31,18 @@ export interface DefaultSystemCacheIdentifier {
 
 const systemCacheIdentifierComment =
 	'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change cacheProfile or cacheFormat when the outer cache contract changes.';
+
+const legacySystemCacheIdentifierSchema = z.object({}).passthrough();
+const systemCacheIdentifierV1Schema = z
+	.object({
+		$comment: z.string(),
+		schemaVersion: z.literal(1),
+		os: z.enum(['darwin', 'linux', 'unknown']),
+		hostSystemType: z.enum(['bare-metal', 'container']),
+		cacheProfile: z.string().min(1),
+		cacheFormat: z.string().min(1),
+	})
+	.strict();
 
 function getErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -65,7 +79,7 @@ export function buildDefaultSystemCacheIdentifier(
 
 export async function loadSystemCacheIdentifier(
 	options: LoadSystemCacheIdentifierOptions,
-): Promise<unknown> {
+): Promise<Record<string, unknown>> {
 	let rawContents: string;
 	try {
 		rawContents = await fs.readFile(options.filePath, 'utf8');
@@ -79,12 +93,41 @@ export async function loadSystemCacheIdentifier(
 		);
 	}
 
+	let parsedContents: unknown;
 	try {
-		return JSON.parse(rawContents) as unknown;
+		parsedContents = JSON.parse(rawContents);
 	} catch (error) {
 		throw new Error(
 			`Failed to parse system cache identifier '${options.filePath}': ${getErrorMessage(error)}`,
 			{ cause: error },
 		);
 	}
+
+	const legacyResult = legacySystemCacheIdentifierSchema.safeParse(parsedContents);
+	if (!legacyResult.success) {
+		throw new Error(
+			`Invalid system cache identifier '${options.filePath}': expected JSON object.`,
+			{
+				cause: legacyResult.error,
+			},
+		);
+	}
+
+	const hasV1Fields =
+		'schemaVersion' in legacyResult.data &&
+		'os' in legacyResult.data &&
+		'hostSystemType' in legacyResult.data &&
+		'cacheProfile' in legacyResult.data &&
+		'cacheFormat' in legacyResult.data;
+	if (!hasV1Fields) {
+		return legacyResult.data;
+	}
+
+	const v1Result = systemCacheIdentifierV1Schema.safeParse(legacyResult.data);
+	if (!v1Result.success) {
+		throw new Error(`Invalid system cache identifier '${options.filePath}': v1 schema mismatch.`, {
+			cause: v1Result.error,
+		});
+	}
+	return v1Result.data;
 }

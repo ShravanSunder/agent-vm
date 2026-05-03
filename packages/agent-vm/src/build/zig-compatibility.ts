@@ -29,12 +29,28 @@ export async function resolveGondolinCompatibleZigVersion(
 	return await resolveRequiredVersion();
 }
 
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function isMissingExecutableError(error: unknown): boolean {
+	return (
+		typeof error === 'object' &&
+		error !== null &&
+		'code' in error &&
+		error.code === 'ENOENT'
+	);
+}
+
 export async function resolveHostZigVersion(): Promise<string | undefined> {
 	try {
 		const result = await execa('zig', ['version']);
 		return result.stdout.trim();
-	} catch {
-		return undefined;
+	} catch (error) {
+		if (isMissingExecutableError(error)) {
+			return undefined;
+		}
+		throw new Error(`Failed to run zig version: ${errorMessage(error)}`, { cause: error });
 	}
 }
 

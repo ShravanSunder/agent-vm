@@ -42,7 +42,7 @@ describe('system cache identifier', () => {
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
-	it('returns parsed JSON contents without validating the object shape', async () => {
+	it('keeps legacy identifier contents permissive while validating object shape', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-id-'));
 		const filePath = path.join(temporaryDirectoryPath, SYSTEM_CACHE_IDENTIFIER_FILENAME);
 		const value = {
@@ -55,6 +55,41 @@ describe('system cache identifier', () => {
 		await fs.writeFile(filePath, `${JSON.stringify(value)}\n`, 'utf8');
 
 		await expect(loadSystemCacheIdentifier({ filePath })).resolves.toEqual(value);
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('fails when the identifier file is not a JSON object', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-id-'));
+		const filePath = path.join(temporaryDirectoryPath, SYSTEM_CACHE_IDENTIFIER_FILENAME);
+		await fs.writeFile(filePath, '"not-an-object"\n', 'utf8');
+
+		await expect(loadSystemCacheIdentifier({ filePath })).rejects.toThrow(
+			`Invalid system cache identifier '${filePath}'`,
+		);
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('validates newly written v1 identifier fields', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-id-'));
+		const filePath = path.join(temporaryDirectoryPath, SYSTEM_CACHE_IDENTIFIER_FILENAME);
+		await fs.writeFile(
+			filePath,
+			`${JSON.stringify({
+				$comment: 'example',
+				schemaVersion: 1,
+				os: 'windows',
+				hostSystemType: 'bare-metal',
+				cacheProfile: 'default',
+				cacheFormat: 'gondolin-cache-v1',
+			})}\n`,
+			'utf8',
+		);
+
+		await expect(loadSystemCacheIdentifier({ filePath })).rejects.toThrow(
+			`Invalid system cache identifier '${filePath}'`,
+		);
 
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});

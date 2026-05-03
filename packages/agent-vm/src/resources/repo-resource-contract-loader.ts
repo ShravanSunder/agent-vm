@@ -108,7 +108,9 @@ export async function loadRepoResourceDescriptionContract(options: {
 }): Promise<ResolvedRepoResourcesDescription | null> {
 	const contractPath = path.join(options.repoDir, REPO_RESOURCES_PATH);
 	if (!(await fileExists(contractPath))) {
-		writeRepoContractLoaderLog(`${options.repoId}: no ${REPO_RESOURCES_PATH}; no contract loaded.`);
+		writeRepoContractLoaderLog(
+			`${options.repoId}: no ${REPO_RESOURCES_PATH}; skipping repo resource setup.`,
+		);
 		return null;
 	}
 

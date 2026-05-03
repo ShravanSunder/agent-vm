@@ -1893,6 +1893,48 @@ describe('createControllerApp', () => {
 		});
 	});
 
+	it('returns error details when task state lookup fails with an aggregate error', async () => {
+		const app = createControllerAppForTest({
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				getTaskState: vi.fn(async () => {
+					throw new AggregateError(
+						[new Error('state log unreadable'), new Error('task index corrupt')],
+						'task state failed',
+					);
+				}),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+		});
+
+		const response = await app.request('/zones/shravan/tasks/task-1');
+
+		expect(response.status).toBe(500);
+		await expect(response.json()).resolves.toEqual({
+			error: 'task state failed',
+			details: ['task state failed', 'state log unreadable', 'task index corrupt'],
+		});
+	});
+
 	it('returns task state snapshots via GET /zones/:zoneId/tasks/:taskId', async () => {
 		const getTaskState = vi.fn(async () => ({
 			taskId: 'worker-task-1',

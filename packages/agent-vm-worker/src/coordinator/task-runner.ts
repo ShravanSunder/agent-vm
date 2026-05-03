@@ -23,7 +23,7 @@ import { buildValidationTool } from '../work-phase/validation-tool.js';
 import { runWorkCycle } from '../work-phase/work-cycle.js';
 import { runWrapup } from '../wrapup-phase/wrapup-runner.js';
 import type { TaskEventRecorder } from './coordinator-helpers.js';
-import { sanitizeErrorMessage } from './coordinator-helpers.js';
+import { formatTaskFailureReason } from './coordinator-helpers.js';
 import type { CoordinatorDeps } from './coordinator-types.js';
 
 class TaskClosedError extends Error {
@@ -411,7 +411,7 @@ export async function runTask(
 		if (error instanceof TaskClosedError) {
 			return;
 		}
-		const reason = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
+		const reason = formatTaskFailureReason(error);
 		await eventRecorder.recordTaskFailure(taskId, reason);
 	} finally {
 		onTaskFinished();

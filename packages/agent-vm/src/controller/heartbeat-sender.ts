@@ -1,5 +1,6 @@
 const HEARTBEAT_CADENCE_MS_DEFAULT = 10_000;
 const HEARTBEAT_REQUEST_TIMEOUT_MS = 5_000;
+const HEARTBEAT_FAILURE_REWARN_INTERVAL = 10;
 
 const TERMINAL_STATUS_CODES = new Set([404, 410]);
 
@@ -62,6 +63,15 @@ export function startHeartbeatSender(
 		if (consecutiveFailureCount === 3) {
 			logWarning(
 				`task ${requestTaskId}: heartbeat has failed 3 consecutive times; the caller may treat this run as stalled`,
+			);
+			return;
+		}
+		if (
+			consecutiveFailureCount > 3 &&
+			consecutiveFailureCount % HEARTBEAT_FAILURE_REWARN_INTERVAL === 0
+		) {
+			logWarning(
+				`task ${requestTaskId}: heartbeat has failed ${String(consecutiveFailureCount)} consecutive times; still retrying`,
 			);
 		}
 	}

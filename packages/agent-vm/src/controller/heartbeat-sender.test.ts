@@ -179,7 +179,7 @@ describe('startHeartbeatSender', () => {
 		expect(fakeTimer.active()).toHaveLength(0);
 	});
 
-	it('escalates after repeated heartbeat failures without spamming every tick', async () => {
+	it('escalates and periodically re-warns after repeated heartbeat failures', async () => {
 		fetchMock.mockResolvedValue(new Response(null, { status: 502 }));
 
 		startHeartbeatSender('task-1', {
@@ -195,11 +195,19 @@ describe('startHeartbeatSender', () => {
 		await Promise.resolve();
 		await fakeTimer.fire();
 		await fakeTimer.fire();
+		await fakeTimer.fire();
+		await fakeTimer.fire();
+		await fakeTimer.fire();
+		await fakeTimer.fire();
+		await fakeTimer.fire();
+		await fakeTimer.fire();
+		await fakeTimer.fire();
 
-		expect(fetchMock).toHaveBeenCalledTimes(3);
-		expect(warnings).toHaveLength(2);
+		expect(fetchMock).toHaveBeenCalledTimes(10);
+		expect(warnings).toHaveLength(3);
 		expect(warnings[0]).toContain('HTTP 502');
 		expect(warnings[1]).toContain('3 consecutive times');
+		expect(warnings[2]).toContain('10 consecutive times');
 	});
 
 	it('aborts an in-flight heartbeat fetch when stopped', async () => {
