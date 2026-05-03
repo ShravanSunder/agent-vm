@@ -3,6 +3,7 @@ import { execa } from 'execa';
 import type { RepoLocation } from '../../shared/repo-location.js';
 import type { ToolDefinition } from '../../work-executor/executor-interface.js';
 import {
+	buildSafeGitEnvironment,
 	currentBranch,
 	isControllerToolFailure,
 	postControllerJson,
@@ -212,6 +213,7 @@ export function createGitPullDefaultTool(props: CreateGitPullDefaultToolProps): 
 			}
 			const currentHeadResult = await execa('git', ['rev-parse', 'HEAD'], {
 				cwd: selected.repo.workPath,
+				env: buildSafeGitEnvironment(selected.repo.workPath),
 				reject: false,
 				timeout: GIT_TOOL_TIMEOUT_MS,
 			});
@@ -224,6 +226,7 @@ export function createGitPullDefaultTool(props: CreateGitPullDefaultToolProps): 
 			}
 			const statusResult = await execa('git', ['status', '--porcelain'], {
 				cwd: selected.repo.workPath,
+				env: buildSafeGitEnvironment(selected.repo.workPath),
 				reject: false,
 				timeout: GIT_TOOL_TIMEOUT_MS,
 			});
@@ -266,6 +269,7 @@ export function createGitPullDefaultTool(props: CreateGitPullDefaultToolProps): 
 			if (shouldResetWorktreeAfterControllerPull(pullResult)) {
 				const resetResult = await execa('git', ['reset', '--hard', 'HEAD'], {
 					cwd: selected.repo.workPath,
+					env: buildSafeGitEnvironment(selected.repo.workPath),
 					reject: false,
 					timeout: GIT_TOOL_TIMEOUT_MS,
 				});

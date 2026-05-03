@@ -2,19 +2,17 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type { BuildImageResult } from '@agent-vm/gondolin-adapter';
-import { resolveGondolinMinimumZigVersion } from '@agent-vm/gondolin-adapter';
-import { execa } from 'execa';
 import { z } from 'zod';
 
 import { buildDockerImage as buildDockerImageDefault } from '../build/docker-image-builder.js';
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
+import {
+	assertGondolinZigCompatibility,
+	resolveGondolinCompatibleZigVersion,
+	resolveHostZigVersion,
+} from '../build/zig-compatibility.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
-import {
-	buildZigInstallHint,
-	buildZigUpgradeHint,
-	isVersionAtLeast,
-} from '../operations/doctor.js';
 import type { RunTaskFn, TaskOutput } from '../shared/run-task.js';
 import { formatZodError } from './format-zod-error.js';
 import { syncBundledOpenClawPluginBundle } from './openclaw-plugin-bundle.js';
@@ -75,27 +73,16 @@ async function resolveOciImageTagFromConfig(buildConfigPath: string): Promise<st
 	return parsedConfig.data.oci.image;
 }
 
-async function resolveHostZigVersion(): Promise<string | undefined> {
-	try {
-		const result = await execa('zig', ['version']);
-		return result.stdout.trim();
-	} catch {
-		return undefined;
-	}
-}
-
 async function assertZigBuildPrerequisite(
 	resolveRequiredZigVersion: () => Promise<string>,
 	resolveZigVersion: () => Promise<string | undefined>,
 ): Promise<void> {
 	const requiredZigVersion = await resolveRequiredZigVersion();
 	const zigVersion = await resolveZigVersion();
-	if (!zigVersion) {
-		throw new Error(buildZigInstallHint(requiredZigVersion));
-	}
-	if (!isVersionAtLeast(zigVersion, requiredZigVersion)) {
-		throw new Error(`${buildZigUpgradeHint(requiredZigVersion)} Current version: ${zigVersion}.`);
-	}
+	assertGondolinZigCompatibility({
+		requiredVersion: requiredZigVersion,
+		...(zigVersion ? { installedVersion: zigVersion } : {}),
+	});
 }
 
 async function assertUniqueDockerImageTags(
@@ -168,7 +155,7 @@ export async function runBuildCommand(
 	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
 	const resolveOciImageTag = dependencies.resolveOciImageTag ?? resolveOciImageTagFromConfig;
 	const resolveRequiredZigVersion =
-		dependencies.resolveRequiredZigVersion ?? resolveGondolinMinimumZigVersion;
+		dependencies.resolveRequiredZigVersion ?? resolveGondolinCompatibleZigVersion;
 	const resolveZigVersion = dependencies.resolveZigVersion ?? resolveHostZigVersion;
 	const runTaskStep = dependencies.runTask ?? defaultRunTask;
 	const resolveProjectRoot =

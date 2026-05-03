@@ -91,6 +91,72 @@ function writeControllerRouteLog(message: string): void {
 	process.stderr.write(`[controller-zone-operation-routes] ${message}\n`);
 }
 
+function errorMessage(error: unknown, fallbackError: string): string {
+	return error instanceof Error ? error.message : fallbackError;
+}
+
+function errorDetails(error: unknown): readonly string[] | undefined {
+	if (!(error instanceof AggregateError)) {
+		return undefined;
+	}
+	const details = collectErrorDetailMessages(error, new Set<unknown>());
+	return details.length > 0 ? details : undefined;
+}
+
+function formatNonErrorDetail(error: unknown): string {
+	if (typeof error === 'string') {
+		return error;
+	}
+	if (typeof error === 'number' || typeof error === 'boolean' || typeof error === 'bigint') {
+		return error.toString();
+	}
+	if (typeof error === 'symbol') {
+		return error.description ?? 'Symbol';
+	}
+	if (error === null) {
+		return 'null';
+	}
+	try {
+		return JSON.stringify(error) ?? 'undefined';
+	} catch {
+		return 'unserializable non-error value';
+	}
+}
+
+function collectErrorDetailMessages(error: unknown, seen: Set<unknown>): readonly string[] {
+	if (seen.has(error)) {
+		return [];
+	}
+	seen.add(error);
+
+	if (error instanceof AggregateError) {
+		const childMessages = error.errors.flatMap((innerError: unknown) =>
+			collectErrorDetailMessages(innerError, seen),
+		);
+		const causeMessages = collectErrorDetailMessages(error.cause, seen);
+		return [error.message, ...childMessages, ...causeMessages];
+	}
+	if (error instanceof Error) {
+		const causeMessages = collectErrorDetailMessages(error.cause, seen);
+		return causeMessages.length > 0 ? [error.message, ...causeMessages] : [error.message];
+	}
+	if (error === undefined) {
+		return [];
+	}
+	return [formatNonErrorDetail(error)];
+}
+
+function buildErrorResponseBody(
+	error: unknown,
+	fallbackError: string,
+): { readonly details?: readonly string[]; readonly error: string } {
+	const details = errorDetails(error);
+	return {
+		error: errorMessage(error, fallbackError),
+		...(details ? { details } : {}),
+	};
+}
+
 function zoneRuntimeErrorStatus(error: unknown): 404 | 405 | 409 | 412 | 500 | 502 | 503 {
 	if (
 		error instanceof ControllerZoneNotFoundError ||
@@ -311,12 +377,7 @@ export function registerControllerZoneOperationRoutes(
 						409,
 					);
 				}
-				return context.json(
-					{
-						error: error instanceof Error ? error.message : 'worker-task-failed',
-					},
-					500,
-				);
+				return context.json(buildErrorResponseBody(error, 'worker-task-failed'), 500);
 			}
 		});
 	}

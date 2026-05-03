@@ -612,6 +612,85 @@ describe('worker-task-runner', () => {
 		});
 	});
 
+	it('skips bare repos without resource contracts while setting up contract repos', async () => {
+		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+		loadRepoResourceDescriptionContractMock.mockImplementation(async ({ repoId }) =>
+			repoId === 'frontend'
+				? {
+						setupCommand: '.agent-vm/run-setup.sh',
+						requires: {
+							pg: { binding: { host: 'pg.local', port: 5432 }, env: {} },
+						},
+						provides: {
+							pg: {
+								type: 'compose',
+								service: 'pg',
+							},
+						},
+					}
+				: null,
+		);
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		await preStartGateway(
+			{
+				requestTaskId: 'request-task-1',
+				prompt: 'mixed repo resource task',
+				repos: [
+					{ repoUrl: 'https://github.com/org/frontend.git', baseBranch: 'main' },
+					{ repoUrl: 'https://github.com/org/backend.git', baseBranch: 'main' },
+				],
+				context: {},
+			},
+			zone,
+		);
+
+		const providerCall = startRepoResourceProvidersMock.mock.calls[0]?.[0];
+		if (!providerCall) {
+			throw new Error('Expected repo resource providers to start.');
+		}
+		expect(providerCall.repos.map((repo) => repo.repoId)).toEqual(['frontend']);
+		expect(providerCall.providers.map((provider) => provider.repoId)).toEqual(['frontend']);
+	});
+
+	it('does not execute repo resource contracts when repo resources are disabled', async () => {
+		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+		loadRepoResourceDescriptionContractMock.mockRejectedValue(
+			new Error('repo-local contract should not run'),
+		);
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected zone config.');
+		}
+		const zoneWithRepoResourcesDisabled = {
+			...zone,
+			resources: { allowRepoResources: false },
+		};
+
+		const { preStartGateway } = await import('./worker-task-runner.js');
+		await preStartGateway(
+			{
+				requestTaskId: 'request-task-1',
+				prompt: 'repo resources disabled task',
+				repos: [{ repoUrl: 'https://github.com/org/repo.git', baseBranch: 'main' }],
+				context: {},
+			},
+			zoneWithRepoResourcesDisabled,
+		);
+
+		expect(loadRepoResourceDescriptionContractMock).not.toHaveBeenCalled();
+		expect(startRepoResourceProvidersMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				repos: [],
+				providers: [],
+			}),
+		);
+	});
+
 	it('reports pre-start cleanup failures without hiding the original resource error', async () => {
 		execaMock.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
 		const startedProvider = {

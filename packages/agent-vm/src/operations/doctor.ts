@@ -8,6 +8,7 @@ import type {
 } from '@agent-vm/gateway-interface';
 import { workerLifecycle } from '@agent-vm/worker-gateway';
 
+import { buildZigInstallHint, checkGondolinZigCompatibility } from '../build/zig-compatibility.js';
 import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
 import { isRuntimeSystemConfigPath } from './runtime-config-paths.js';
@@ -58,44 +59,6 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseVersionParts(version: string): readonly number[] | null {
-	const versionMatch = /^(\d+)\.(\d+)\.(\d+)/u.exec(version.trim());
-	if (!versionMatch) {
-		return null;
-	}
-	return [versionMatch[1], versionMatch[2], versionMatch[3]].map((part) =>
-		Number.parseInt(part ?? '0', 10),
-	);
-}
-
-export function isVersionAtLeast(version: string, minimumVersion: string): boolean {
-	const versionParts = parseVersionParts(version);
-	const minimumVersionParts = parseVersionParts(minimumVersion);
-	if (!versionParts || !minimumVersionParts) {
-		return false;
-	}
-	for (const [index, minimumVersionPart] of minimumVersionParts.entries()) {
-		const versionPart = versionParts[index] ?? 0;
-		if (versionPart > minimumVersionPart) {
-			return true;
-		}
-		if (versionPart < minimumVersionPart) {
-			return false;
-		}
-	}
-	return true;
-}
-
-export function buildZigInstallHint(requiredZigVersion: string | undefined): string {
-	return requiredZigVersion
-		? `Install Zig >= ${requiredZigVersion}. On macOS: brew install zig.`
-		: 'Install Zig required by Gondolin. On macOS: brew install zig.';
-}
-
-export function buildZigUpgradeHint(requiredZigVersion: string): string {
-	return `Requires Zig >= ${requiredZigVersion}. On macOS: brew install zig.`;
-}
-
 function buildZigVersionCheck(
 	zigVersion: string | undefined,
 	requiredZigVersion: string | undefined,
@@ -117,12 +80,15 @@ function buildZigVersionCheck(
 			value: zigVersion,
 		};
 	}
-	const ok = isVersionAtLeast(zigVersion, requiredZigVersion);
+	const compatibility = checkGondolinZigCompatibility({
+		requiredVersion: requiredZigVersion,
+		installedVersion: zigVersion,
+	});
 	return {
 		name: 'zig-version',
-		ok,
+		ok: compatibility.compatible,
 		value: zigVersion,
-		...(!ok ? { hint: buildZigUpgradeHint(requiredZigVersion) } : {}),
+		...(!compatibility.compatible ? { hint: compatibility.hint } : {}),
 	};
 }
 

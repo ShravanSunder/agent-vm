@@ -1,9 +1,10 @@
 import type { TaskEvent } from '@agent-vm/agent-vm-worker';
 import { execa } from 'execa';
 
-import type { ActiveWorkerTask } from './active-task-registry.js';
+import type { ActiveWorkerTask, HostGitDir } from './active-task-registry.js';
 import { scrubGithubTokenFromOutput } from './git-auth-support.js';
 import { runGitCommandWithTransientRetries, type GitCommandResult } from './git-retry-support.js';
+import { buildHostGitArgs } from './host-git-command.js';
 
 const GIT_OPERATION_TIMEOUT_MS = 120_000;
 const GIT_PULL_RETRY_AFTER_SECONDS = 300;
@@ -202,27 +203,27 @@ function errorMessage(error: unknown): string {
 
 async function git(options: {
 	readonly args: readonly string[];
-	readonly gitDir: string;
+	readonly gitDir: HostGitDir;
 	readonly reject?: boolean;
+	readonly signal?: AbortSignal;
 }): Promise<{ readonly stdout: string; readonly stderr: string; readonly exitCode: number }> {
 	const result = await execa(
 		'git',
-		['-c', 'core.hooksPath=/dev/null', `--git-dir=${options.gitDir}`, ...options.args],
+		buildHostGitArgs({ args: options.args, gitDir: options.gitDir }),
 		{
+			...(options.signal ? { cancelSignal: options.signal } : {}),
 			env: { LANG: 'C', LC_ALL: 'C' },
 			reject: false,
 			timeout: GIT_OPERATION_TIMEOUT_MS,
 		},
 	);
-	if (typeof result.exitCode !== 'number') {
-		throw new GitCommandFailureError(
-			`git ${options.args.join(' ')} terminated without an exit code\n${result.stdout}\n${result.stderr}`.trim(),
-		);
-	}
+	const terminatedWithoutExitCode = typeof result.exitCode !== 'number';
 	const normalized = {
 		stdout: result.stdout,
-		stderr: result.stderr,
-		exitCode: result.exitCode,
+		stderr: terminatedWithoutExitCode
+			? `${result.stderr}\ngit ${options.args.join(' ')} terminated without an exit code`.trim()
+			: result.stderr,
+		exitCode: typeof result.exitCode === 'number' ? result.exitCode : 128,
 	};
 	if (options.reject === true && normalized.exitCode !== 0) {
 		throw new GitCommandFailureError(formatGitCommandFailure(options.args, normalized));
@@ -236,19 +237,20 @@ function formatGitCommandFailure(args: readonly string[], result: GitCommandResu
 	);
 }
 
-async function sleep(delayMs: number): Promise<void> {
-	await new Promise<void>((resolve) => {
-		setTimeout(resolve, delayMs);
-	});
-}
-
 async function gitWithTransientRetries(options: {
 	readonly args: readonly string[];
-	readonly gitDir: string;
+	readonly gitDir: HostGitDir;
+	readonly signal?: AbortSignal;
 }): Promise<GitCommandResult> {
 	const retryResult = await runGitCommandWithTransientRetries({
-		run: async () => await git({ args: options.args, gitDir: options.gitDir, reject: false }),
-		sleep,
+		run: async (signal) =>
+			await git({
+				args: options.args,
+				gitDir: options.gitDir,
+				reject: false,
+				...(signal ? { signal } : {}),
+			}),
+		...(options.signal ? { signal: options.signal } : {}),
 	});
 	if (retryResult.result.exitCode !== 0) {
 		throw new GitCommandFailureError(formatGitCommandFailure(options.args, retryResult.result));
@@ -258,19 +260,22 @@ async function gitWithTransientRetries(options: {
 
 async function updateRefAndVerify(options: {
 	readonly expectedHead: string;
-	readonly gitDir: string;
+	readonly gitDir: HostGitDir;
 	readonly ref: string;
+	readonly signal?: AbortSignal;
 	readonly sourceRef: string;
 }): Promise<void> {
 	await gitWithTransientRetries({
 		gitDir: options.gitDir,
 		args: ['update-ref', options.ref, options.sourceRef],
+		...(options.signal ? { signal: options.signal } : {}),
 	});
 	const actualHead = (
 		await git({
 			gitDir: options.gitDir,
 			args: ['rev-parse', options.ref],
 			reject: true,
+			...(options.signal ? { signal: options.signal } : {}),
 		})
 	).stdout.trim();
 	if (actualHead !== options.expectedHead) {
@@ -280,8 +285,14 @@ async function updateRefAndVerify(options: {
 	}
 }
 
-async function gitStdout(gitDir: string, args: readonly string[]): Promise<string> {
-	return (await gitWithTransientRetries({ args, gitDir })).stdout.trim();
+async function gitStdout(
+	gitDir: HostGitDir,
+	args: readonly string[],
+	signal?: AbortSignal,
+): Promise<string> {
+	return (
+		await gitWithTransientRetries({ args, gitDir, ...(signal ? { signal } : {}) })
+	).stdout.trim();
 }
 
 function parseCommitSummaries(output: string): readonly PullDefaultCommitSummary[] {
@@ -306,19 +317,21 @@ function parseCommitSummaries(output: string): readonly PullDefaultCommitSummary
 }
 
 async function commitSummaries(
-	gitDir: string,
+	gitDir: HostGitDir,
 	range: string,
+	signal?: AbortSignal,
 ): Promise<readonly PullDefaultCommitSummary[]> {
 	const result = await gitWithTransientRetries({
 		gitDir,
 		args: ['log', range, '--format=%H%x09%s%x09%an%x09%aI'],
+		...(signal ? { signal } : {}),
 	});
 	return parseCommitSummaries(result.stdout);
 }
 
-async function refExists(gitDir: string, ref: string): Promise<boolean> {
+async function refExists(gitDir: HostGitDir, ref: string, signal?: AbortSignal): Promise<boolean> {
 	const args = ['rev-parse', '--verify', '--quiet', ref] as const;
-	const result = await git({ gitDir, args, reject: false });
+	const result = await git({ gitDir, args, reject: false, ...(signal ? { signal } : {}) });
 	if (result.exitCode === 0) return true;
 	if (result.exitCode === 1) return false;
 	throw new GitCommandFailureError(formatGitCommandFailure(args, result));
@@ -327,19 +340,30 @@ async function refExists(gitDir: string, ref: string): Promise<boolean> {
 async function isAncestor(options: {
 	readonly ancestorRef: string;
 	readonly descendantRef: string;
-	readonly gitDir: string;
+	readonly gitDir: HostGitDir;
+	readonly signal?: AbortSignal;
 }): Promise<boolean> {
 	const args = ['merge-base', '--is-ancestor', options.ancestorRef, options.descendantRef] as const;
-	const result = await git({ gitDir: options.gitDir, args, reject: false });
+	const result = await git({
+		gitDir: options.gitDir,
+		args,
+		reject: false,
+		...(options.signal ? { signal: options.signal } : {}),
+	});
 	if (result.exitCode === 0) return true;
 	if (result.exitCode === 1) return false;
 	throw new GitCommandFailureError(formatGitCommandFailure(args, result));
 }
 
-async function countRange(gitDir: string, range: string): Promise<number> {
+async function countRange(
+	gitDir: HostGitDir,
+	range: string,
+	signal?: AbortSignal,
+): Promise<number> {
 	const result = await gitWithTransientRetries({
 		gitDir,
 		args: ['rev-list', '--count', range],
+		...(signal ? { signal } : {}),
 	});
 	const parsed = Number.parseInt(result.stdout.trim(), 10);
 	if (Number.isNaN(parsed)) {
@@ -350,15 +374,17 @@ async function countRange(gitDir: string, range: string): Promise<number> {
 
 async function fetchCurrentBranch(options: {
 	readonly branch: string;
-	readonly gitDir: string;
+	readonly gitDir: HostGitDir;
 	readonly githubToken: string;
 	readonly repoUrl: string;
+	readonly signal?: AbortSignal;
 }): Promise<'fetched' | 'no-upstream'> {
 	const authenticatedUrl = buildAuthenticatedGitUrl(options.repoUrl, options.githubToken);
 	const upstreamProbeArgs = ['ls-remote', '--heads', authenticatedUrl, options.branch] as const;
 	const upstreamProbe = await gitWithTransientRetries({
 		gitDir: options.gitDir,
 		args: upstreamProbeArgs,
+		...(options.signal ? { signal: options.signal } : {}),
 	});
 	if (upstreamProbe.stdout.trim().length === 0) {
 		return 'no-upstream';
@@ -370,7 +396,11 @@ async function fetchCurrentBranch(options: {
 		authenticatedUrl,
 		`refs/heads/${options.branch}:${remoteRef}`,
 	] as const;
-	await gitWithTransientRetries({ gitDir: options.gitDir, args: fetchArgs });
+	await gitWithTransientRetries({
+		gitDir: options.gitDir,
+		args: fetchArgs,
+		...(options.signal ? { signal: options.signal } : {}),
+	});
 	return 'fetched';
 }
 
@@ -430,17 +460,35 @@ async function recordControllerGitPullEvent(options: {
 	}
 }
 
+async function recordControllerGitPullRefused(options: {
+	readonly message: string;
+	readonly recordEvent: ((event: TaskEvent) => Promise<void>) | undefined;
+	readonly repoUrl: string;
+}): Promise<void> {
+	await recordControllerGitPullEvent({
+		recordEvent: options.recordEvent,
+		event: {
+			event: 'controller-git-pull-failed',
+			repoUrl: options.repoUrl,
+			attempts: 0,
+			message: options.message,
+		},
+	});
+}
+
 async function buildCurrentBranchSyncResult(options: {
 	readonly defaultBranch: string;
-	readonly gitDir: string;
+	readonly gitDir: HostGitDir;
 	readonly githubToken: string;
 	readonly pullRequest: PullDefaultRequest;
 	readonly repoUrl: string;
+	readonly signal?: AbortSignal;
 }): Promise<PullCurrentBranchSyncResult> {
 	const branch = options.pullRequest.currentBranch;
 	if (!branch) {
 		const detachedHead =
-			options.pullRequest.currentHead ?? (await gitStdout(options.gitDir, ['rev-parse', 'HEAD']));
+			options.pullRequest.currentHead ??
+			(await gitStdout(options.gitDir, ['rev-parse', 'HEAD'], options.signal));
 		return {
 			branch: null,
 			upstreamTrackingRef: null,
@@ -454,8 +502,9 @@ async function buildCurrentBranchSyncResult(options: {
 	const upstreamTrackingRef = `origin/${branch}`;
 	if (branch === options.defaultBranch) {
 		const localHead =
-			options.pullRequest.currentHead ?? (await gitStdout(options.gitDir, ['rev-parse', localRef]));
-		const remoteHead = await gitStdout(options.gitDir, ['rev-parse', remoteRef]);
+			options.pullRequest.currentHead ??
+			(await gitStdout(options.gitDir, ['rev-parse', localRef], options.signal));
+		const remoteHead = await gitStdout(options.gitDir, ['rev-parse', remoteRef], options.signal);
 		return {
 			branch,
 			upstreamTrackingRef,
@@ -473,6 +522,7 @@ async function buildCurrentBranchSyncResult(options: {
 		gitDir: options.gitDir,
 		githubToken: options.githubToken,
 		repoUrl: options.repoUrl,
+		...(options.signal ? { signal: options.signal } : {}),
 	});
 	if (fetchStatus === 'no-upstream') {
 		return {
@@ -484,8 +534,9 @@ async function buildCurrentBranchSyncResult(options: {
 		};
 	}
 	const localHead =
-		options.pullRequest.currentHead ?? (await gitStdout(options.gitDir, ['rev-parse', localRef]));
-	const remoteHead = await gitStdout(options.gitDir, ['rev-parse', remoteRef]);
+		options.pullRequest.currentHead ??
+		(await gitStdout(options.gitDir, ['rev-parse', localRef], options.signal));
+	const remoteHead = await gitStdout(options.gitDir, ['rev-parse', remoteRef], options.signal);
 	if (localHead === remoteHead) {
 		return {
 			branch,
@@ -499,6 +550,7 @@ async function buildCurrentBranchSyncResult(options: {
 		gitDir: options.gitDir,
 		ancestorRef: localRef,
 		descendantRef: remoteRef,
+		...(options.signal ? { signal: options.signal } : {}),
 	});
 	if (localAncestorOfRemote) {
 		if (options.pullRequest.worktreeDirty === true) {
@@ -516,6 +568,7 @@ async function buildCurrentBranchSyncResult(options: {
 			ref: localRef,
 			sourceRef: remoteRef,
 			expectedHead: remoteHead,
+			...(options.signal ? { signal: options.signal } : {}),
 		});
 		return {
 			branch,
@@ -529,6 +582,7 @@ async function buildCurrentBranchSyncResult(options: {
 		gitDir: options.gitDir,
 		ancestorRef: remoteRef,
 		descendantRef: localRef,
+		...(options.signal ? { signal: options.signal } : {}),
 	});
 	if (remoteAncestorOfLocal) {
 		return {
@@ -557,6 +611,7 @@ export async function pullDefaultForTask(options: {
 	readonly repoUrl: string;
 	readonly githubToken: string;
 	readonly recordEvent?: (event: TaskEvent) => Promise<void>;
+	readonly signal?: AbortSignal;
 	readonly worktreeDirty?: boolean;
 }): Promise<PullDefaultResult> {
 	const repo = options.activeTask.repos.find((candidate) => candidate.repoUrl === options.repoUrl);
@@ -570,8 +625,12 @@ export async function pullDefaultForTask(options: {
 		const defaultBranch = repo.baseBranch;
 		const defaultRef = `refs/heads/${defaultBranch}`;
 		const remoteDefaultRef = `refs/remotes/origin/${defaultBranch}`;
-		const previousRemoteDefaultHead = (await refExists(repo.hostGitDir, remoteDefaultRef))
-			? await gitStdout(repo.hostGitDir, ['rev-parse', remoteDefaultRef])
+		const previousRemoteDefaultHead = (await refExists(
+			repo.hostGitDir,
+			remoteDefaultRef,
+			options.signal,
+		))
+			? await gitStdout(repo.hostGitDir, ['rev-parse', remoteDefaultRef], options.signal)
 			: null;
 		await recordControllerGitPullEvent({
 			recordEvent: options.recordEvent,
@@ -587,7 +646,13 @@ export async function pullDefaultForTask(options: {
 			`${defaultBranch}:${remoteDefaultRef}`,
 		] as const;
 		const fetchRetryResult = await runGitCommandWithTransientRetries({
-			run: async () => await git({ gitDir: repo.hostGitDir, args: fetchArgs, reject: false }),
+			run: async (signal) =>
+				await git({
+					gitDir: repo.hostGitDir,
+					args: fetchArgs,
+					reject: false,
+					...(signal ? { signal } : {}),
+				}),
 			onRetry: async ({ attempt, delayMs, result }) => {
 				const detail = scrubGithubTokenFromOutput(`${result.stdout}\n${result.stderr}`).trim();
 				await recordControllerGitPullEvent({
@@ -601,7 +666,7 @@ export async function pullDefaultForTask(options: {
 					},
 				});
 			},
-			sleep,
+			...(options.signal ? { signal: options.signal } : {}),
 		});
 		if (fetchRetryResult.result.exitCode !== 0) {
 			const detail = scrubGithubTokenFromOutput(
@@ -614,13 +679,26 @@ export async function pullDefaultForTask(options: {
 			throw new GitPullFailedAfterRetriesError(message, fetchRetryResult.attempts);
 		}
 
-		const remoteDefaultHead = await gitStdout(repo.hostGitDir, ['rev-parse', remoteDefaultRef]);
+		const remoteDefaultHead = await gitStdout(
+			repo.hostGitDir,
+			['rev-parse', remoteDefaultRef],
+			options.signal,
+		);
 		const fetchedCommits = previousRemoteDefaultHead
-			? await commitSummaries(repo.hostGitDir, `${previousRemoteDefaultHead}..${remoteDefaultRef}`)
+			? await commitSummaries(
+					repo.hostGitDir,
+					`${previousRemoteDefaultHead}..${remoteDefaultRef}`,
+					options.signal,
+				)
 			: [];
 
-		if (!(await refExists(repo.hostGitDir, defaultRef))) {
+		if (!(await refExists(repo.hostGitDir, defaultRef, options.signal))) {
 			const message = `Local default branch ref '${defaultRef}' is missing; controller refused to create it during git-pull-default. Recreate the task or inspect the host gitdir.`;
+			await recordControllerGitPullRefused({
+				recordEvent: options.recordEvent,
+				repoUrl: options.repoUrl,
+				message,
+			});
 			return {
 				kind: 'refused-not-fast-forward',
 				repoUrl: options.repoUrl,
@@ -636,9 +714,15 @@ export async function pullDefaultForTask(options: {
 				gitDir: repo.hostGitDir,
 				ancestorRef: defaultRef,
 				descendantRef: remoteDefaultRef,
+				...(options.signal ? { signal: options.signal } : {}),
 			});
 			if (!fastForwardCheck) {
 				const message = `Local ${defaultBranch} cannot be fast-forwarded to origin/${defaultBranch}; inspect it manually.`;
+				await recordControllerGitPullRefused({
+					recordEvent: options.recordEvent,
+					repoUrl: options.repoUrl,
+					message,
+				});
 				return {
 					kind: 'refused-not-fast-forward',
 					repoUrl: options.repoUrl,
@@ -650,13 +734,22 @@ export async function pullDefaultForTask(options: {
 				};
 			}
 		}
-		const previousLocalDefaultHead = await gitStdout(repo.hostGitDir, ['rev-parse', defaultRef]);
+		const previousLocalDefaultHead = await gitStdout(
+			repo.hostGitDir,
+			['rev-parse', defaultRef],
+			options.signal,
+		);
 		if (
 			options.currentBranch === defaultBranch &&
 			options.worktreeDirty === true &&
 			previousLocalDefaultHead !== remoteDefaultHead
 		) {
 			const message = `Current branch '${defaultBranch}' is the default branch and can fast-forward to origin/${defaultBranch}, but the worker worktree has uncommitted changes. Commit or stash before calling git-pull-default.`;
+			await recordControllerGitPullRefused({
+				recordEvent: options.recordEvent,
+				repoUrl: options.repoUrl,
+				message,
+			});
 			return {
 				kind: 'refused-not-fast-forward',
 				repoUrl: options.repoUrl,
@@ -673,8 +766,13 @@ export async function pullDefaultForTask(options: {
 			ref: defaultRef,
 			sourceRef: remoteDefaultRef,
 			expectedHead: remoteDefaultHead,
+			...(options.signal ? { signal: options.signal } : {}),
 		});
-		const localDefaultHead = await gitStdout(repo.hostGitDir, ['rev-parse', defaultRef]);
+		const localDefaultHead = await gitStdout(
+			repo.hostGitDir,
+			['rev-parse', defaultRef],
+			options.signal,
+		);
 		const shouldSyncCurrentBranch =
 			options.currentBranch !== undefined ||
 			options.currentHead !== undefined ||
@@ -686,17 +784,19 @@ export async function pullDefaultForTask(options: {
 					githubToken: options.githubToken,
 					pullRequest: options,
 					repoUrl: options.repoUrl,
+					...(options.signal ? { signal: options.signal } : {}),
 				})
 			: undefined;
 		const currentHeadRef = options.currentHead ?? 'HEAD';
-		const forkPoint = await gitStdout(repo.hostGitDir, [
-			'merge-base',
-			currentHeadRef,
-			remoteDefaultRef,
-		]);
+		const forkPoint = await gitStdout(
+			repo.hostGitDir,
+			['merge-base', currentHeadRef, remoteDefaultRef],
+			options.signal,
+		);
 		const commitsSinceForkPoint = await commitSummaries(
 			repo.hostGitDir,
 			`${forkPoint}..${remoteDefaultRef}`,
+			options.signal,
 		);
 
 		const message = buildAdvancedPullMessage({
@@ -718,8 +818,16 @@ export async function pullDefaultForTask(options: {
 			fetchedCommits,
 			commitsSinceForkPoint,
 			divergence: {
-				aheadOfDefault: await countRange(repo.hostGitDir, `${remoteDefaultRef}..${currentHeadRef}`),
-				behindDefault: await countRange(repo.hostGitDir, `${currentHeadRef}..${remoteDefaultRef}`),
+				aheadOfDefault: await countRange(
+					repo.hostGitDir,
+					`${remoteDefaultRef}..${currentHeadRef}`,
+					options.signal,
+				),
+				behindDefault: await countRange(
+					repo.hostGitDir,
+					`${currentHeadRef}..${remoteDefaultRef}`,
+					options.signal,
+				),
 				forkPoint,
 			},
 		} satisfies PullDefaultAdvancedResult;

@@ -16,6 +16,7 @@ import {
 	createPersistentThread,
 	type PersistentThread,
 } from '../work-executor/persistent-thread.js';
+import { buildSafeGitEnvironment } from '../work-phase/controller-tools/controller-tool-support.js';
 import { createGitPullDefaultTool } from '../work-phase/controller-tools/git-pull-default-tool.js';
 import { createGitPushTool } from '../work-phase/controller-tools/git-push-tool.js';
 import { buildValidationTool } from '../work-phase/validation-tool.js';
@@ -58,6 +59,7 @@ function throwIfClosed(taskId: string, eventRecorder: TaskEventRecorder): void {
 async function gitOutput(cwd: string, args: readonly string[]): Promise<string> {
 	const result = await execa('git', [...args], {
 		cwd,
+		env: buildSafeGitEnvironment(cwd),
 		reject: false,
 		timeout: 10_000,
 	});
@@ -72,20 +74,13 @@ async function gitOutput(cwd: string, args: readonly string[]): Promise<string> 
 	return result.stdout.trim();
 }
 
-async function gitOutputWithSafeDirectory(cwd: string, args: readonly string[]): Promise<string> {
-	return await gitOutput(cwd, ['-c', `safe.directory=${cwd}`, ...args]);
-}
-
 async function gitRefExists(cwd: string, ref: string): Promise<boolean> {
-	const result = await execa(
-		'git',
-		['-c', `safe.directory=${cwd}`, 'rev-parse', '--verify', '--quiet', ref],
-		{
-			cwd,
-			reject: false,
-			timeout: 10_000,
-		},
-	);
+	const result = await execa('git', ['rev-parse', '--verify', '--quiet', ref], {
+		cwd,
+		env: buildSafeGitEnvironment(cwd),
+		reject: false,
+		timeout: 10_000,
+	});
 	if (typeof result.exitCode !== 'number') {
 		throw new Error(
 			`git rev-parse --verify --quiet ${ref} terminated without an exit code\n${result.stdout}\n${result.stderr}`.trim(),
@@ -102,16 +97,16 @@ async function gitRefExists(cwd: string, ref: string): Promise<boolean> {
 	return false;
 }
 
-async function buildWrapupGitContext(cwd: string, defaultBranch: string): Promise<string> {
-	const currentBranch = await gitOutputWithSafeDirectory(cwd, ['branch', '--show-current']);
-	const status = await gitOutputWithSafeDirectory(cwd, ['status', '--short']);
+export async function buildWrapupGitContext(cwd: string, defaultBranch: string): Promise<string> {
+	const currentBranch = await gitOutput(cwd, ['branch', '--show-current']);
+	const status = await gitOutput(cwd, ['status', '--short']);
 	const defaultRef = `origin/${defaultBranch}`;
 	const hasDefaultRef = await gitRefExists(cwd, defaultRef);
 	const log = hasDefaultRef
-		? await gitOutputWithSafeDirectory(cwd, ['log', '--oneline', `${defaultRef}..HEAD`])
+		? await gitOutput(cwd, ['log', '--oneline', `${defaultRef}..HEAD`])
 		: '';
 	const diffStat = hasDefaultRef
-		? await gitOutputWithSafeDirectory(cwd, ['diff', '--stat', `${defaultRef}...HEAD`])
+		? await gitOutput(cwd, ['diff', '--stat', `${defaultRef}...HEAD`])
 		: '';
 	return [
 		`Current branch: ${currentBranch || '(detached)'}`,

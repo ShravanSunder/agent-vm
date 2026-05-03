@@ -50,6 +50,9 @@ const controllerGitPushBaseSchema = z.object({
 	branch: z.string().min(1),
 });
 
+export const controllerGitPushPhaseSchema = z.enum(['pre-push-fetch', 'push', 'post-push-fetch']);
+export type ControllerGitPushPhase = z.infer<typeof controllerGitPushPhaseSchema>;
+
 const controllerGitPullBaseSchema = z.object({
 	repoUrl: z.string().min(1),
 });
@@ -122,6 +125,7 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 		event: z.literal('controller-git-push-retry'),
 		attempts: z.number().int().positive(),
 		message: z.string(),
+		phase: controllerGitPushPhaseSchema,
 		retryDelaySeconds: z.number().positive(),
 	}),
 	controllerGitPushBaseSchema.extend({
@@ -140,7 +144,7 @@ export const taskEventSchema = z.discriminatedUnion('event', [
 		event: z.literal('controller-git-push-failed'),
 		attempts: z.number().int().nonnegative(),
 		message: z.string(),
-		phase: z.enum(['pre-push-fetch', 'push', 'post-push-fetch']).optional(),
+		phase: controllerGitPushPhaseSchema.optional(),
 		retryAfterSeconds: z.number().int().positive().optional(),
 	}),
 	controllerGitPullBaseSchema.extend({

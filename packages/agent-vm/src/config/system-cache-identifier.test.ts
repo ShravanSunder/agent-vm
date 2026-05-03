@@ -72,11 +72,12 @@ describe('system cache identifier', () => {
 
 		expect(identifier).toEqual({
 			$comment:
-				"System cache identifier. Contents hash into every Gondolin image fingerprint. gitSha='local' is the intentional sentinel for bare-metal dev. Container-host builds usually replace gitSha with a build provenance string such as a commit SHA.",
+				'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change cacheProfile or cacheFormat when the outer cache contract changes.',
 			schemaVersion: 1,
 			os: 'linux',
 			hostSystemType: 'bare-metal',
-			gitSha: 'local',
+			cacheProfile: 'default',
+			cacheFormat: 'gondolin-cache-v1',
 		});
 	});
 
@@ -88,11 +89,12 @@ describe('system cache identifier', () => {
 
 		expect(identifier).toEqual({
 			$comment:
-				"System cache identifier. Contents hash into every Gondolin image fingerprint. gitSha='local' is the intentional sentinel for bare-metal dev. Container-host builds usually replace gitSha with a build provenance string such as a commit SHA.",
+				'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change cacheProfile or cacheFormat when the outer cache contract changes.',
 			schemaVersion: 1,
 			os: 'darwin',
 			hostSystemType: 'container',
-			gitSha: 'local',
+			cacheProfile: 'default',
+			cacheFormat: 'gondolin-cache-v1',
 		});
 	});
 
@@ -115,11 +117,12 @@ describe('system cache identifier', () => {
 
 		expect(identifier).toEqual({
 			$comment:
-				"System cache identifier. Contents hash into every Gondolin image fingerprint. gitSha='local' is the intentional sentinel for bare-metal dev. Container-host builds usually replace gitSha with a build provenance string such as a commit SHA.",
+				'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change cacheProfile or cacheFormat when the outer cache contract changes.',
 			schemaVersion: 1,
 			os: 'unknown',
 			hostSystemType: 'bare-metal',
-			gitSha: 'local',
+			cacheProfile: 'default',
+			cacheFormat: 'gondolin-cache-v1',
 		});
 	});
 });

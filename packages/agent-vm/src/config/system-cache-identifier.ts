@@ -9,6 +9,8 @@ export interface LoadSystemCacheIdentifierOptions {
 }
 
 export interface SystemCacheIdentifierPlatformDependencies {
+	readonly cacheFormat?: string;
+	readonly cacheProfile?: string;
 	readonly hostSystemType?: HostSystemType;
 	readonly platform?: () => string;
 }
@@ -21,11 +23,12 @@ export interface DefaultSystemCacheIdentifier {
 	readonly schemaVersion: 1;
 	readonly os: SystemCacheOs;
 	readonly hostSystemType: HostSystemType;
-	readonly gitSha: string;
+	readonly cacheProfile: string;
+	readonly cacheFormat: string;
 }
 
 const systemCacheIdentifierComment =
-	"System cache identifier. Contents hash into every Gondolin image fingerprint. gitSha='local' is the intentional sentinel for bare-metal dev. Container-host builds usually replace gitSha with a build provenance string such as a commit SHA.";
+	'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change cacheProfile or cacheFormat when the outer cache contract changes.';
 
 function getErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -55,7 +58,8 @@ export function buildDefaultSystemCacheIdentifier(
 		schemaVersion: 1,
 		os: captureSystemOsName(platform),
 		hostSystemType: dependencies.hostSystemType ?? 'bare-metal',
-		gitSha: 'local',
+		cacheProfile: dependencies.cacheProfile ?? 'default',
+		cacheFormat: dependencies.cacheFormat ?? 'gondolin-cache-v1',
 	};
 }
 

@@ -1389,11 +1389,12 @@ describe('scaffoldAgentVmProject', () => {
 		);
 		expect(JSON.parse(raw)).toMatchObject({
 			$comment:
-				"System cache identifier. Contents hash into every Gondolin image fingerprint. gitSha='local' is the intentional sentinel for bare-metal dev. Container-host builds usually replace gitSha with a build provenance string such as a commit SHA.",
+				'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change cacheProfile or cacheFormat when the outer cache contract changes.',
 			schemaVersion: 1,
 			os: expect.any(String),
 			hostSystemType: 'bare-metal',
-			gitSha: 'local',
+			cacheProfile: 'default',
+			cacheFormat: 'gondolin-cache-v1',
 		});
 		expect(result.created).toContain('config/systemCacheIdentifier.json');
 	});
@@ -1423,8 +1424,10 @@ describe('scaffoldAgentVmProject', () => {
 			schemaVersion: 1,
 			os: expect.any(String),
 			hostSystemType: 'container',
-			gitSha: 'local',
+			cacheProfile: 'default',
+			cacheFormat: 'gondolin-cache-v1',
 		});
+		expect(JSON.parse(raw)).not.toHaveProperty('gitSha');
 		expect(result.created).not.toContain('.env.local');
 		await expect(fs.access(path.join(targetDir, '.env.local'))).rejects.toMatchObject({
 			code: 'ENOENT',
@@ -1451,7 +1454,9 @@ describe('scaffoldAgentVmProject', () => {
 			path.join(targetDir, 'vm-host-system', 'Dockerfile'),
 			'utf8',
 		);
-		expect(dockerfile).toMatch(/ARG GIT_SHA\b(?!=)/u);
+		expect(dockerfile).not.toContain('ARG GIT_SHA');
+		expect(dockerfile).not.toContain('gitSha');
+		expect(dockerfile).not.toContain('/etc/agent-vm/systemCacheIdentifier.json');
 		expect(dockerfile).toContain('zig-x86_64-linux-');
 
 		const startScript = await fs.readFile(

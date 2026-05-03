@@ -203,6 +203,35 @@ describe('task-state reducer', () => {
 		]);
 	});
 
+	it('preserves controller git push retry phase during replay', () => {
+		const state = createInitialState('task-1', TEST_CONFIG);
+
+		const retrying = applyEvent(state, {
+			event: 'controller-git-push-retry',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			branch: 'agent/task-1',
+			attempts: 2,
+			message: 'RPC failed after push while fetching branch',
+			phase: 'post-push-fetch',
+			retryDelaySeconds: 4,
+		});
+
+		expect(retrying.controllerOperations.gitPushes).toEqual([
+			{
+				repoUrl: 'https://github.com/acme/widgets.git',
+				branch: 'agent/task-1',
+				status: 'retrying',
+				attempts: 2,
+				message: 'RPC failed after push while fetching branch',
+				phase: 'post-push-fetch',
+				retryDelaySeconds: 4,
+				retryAfterSeconds: null,
+				localHead: null,
+				remoteBranchHead: null,
+			},
+		]);
+	});
+
 	it('stores controller git pull status for agent-visible retry guidance', () => {
 		const state = createInitialState('task-1', TEST_CONFIG);
 		const started = applyEvent(state, {
