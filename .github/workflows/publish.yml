@@ -63,6 +63,12 @@ jobs:
       - name: Unit tests
         run: pnpm test:unit
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
       - name: Publish managed base images to GHCR
         env:
           GHCR_TOKEN: ${{ github.token }}
@@ -71,12 +77,41 @@ jobs:
           set -euo pipefail
           PACKAGE_VERSION="$(node -p "require('./packages/agent-vm/package.json').version")"
           echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
-          docker build -t "ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:${PACKAGE_VERSION}" docker/base-images/openclaw-gateway
-          docker build -t "ghcr.io/shravansunder/agent-vm-worker-gateway-base:${PACKAGE_VERSION}" docker/base-images/worker-gateway
-          docker build -t "ghcr.io/shravansunder/agent-vm-tool-vm-base:${PACKAGE_VERSION}" docker/base-images/tool-vm
-          docker push "ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:${PACKAGE_VERSION}"
-          docker push "ghcr.io/shravansunder/agent-vm-worker-gateway-base:${PACKAGE_VERSION}"
-          docker push "ghcr.io/shravansunder/agent-vm-tool-vm-base:${PACKAGE_VERSION}"
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --push \
+            -t "ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:${PACKAGE_VERSION}" \
+            docker/base-images/openclaw-gateway
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --push \
+            -t "ghcr.io/shravansunder/agent-vm-worker-gateway-base:${PACKAGE_VERSION}" \
+            docker/base-images/worker-gateway
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --push \
+            -t "ghcr.io/shravansunder/agent-vm-tool-vm-base:${PACKAGE_VERSION}" \
+            docker/base-images/tool-vm
+          for IMAGE in \
+            "ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:${PACKAGE_VERSION}" \
+            "ghcr.io/shravansunder/agent-vm-worker-gateway-base:${PACKAGE_VERSION}" \
+            "ghcr.io/shravansunder/agent-vm-tool-vm-base:${PACKAGE_VERSION}"
+          do
+            docker buildx imagetools inspect --raw "${IMAGE}" | node -e '
+              let raw = "";
+              process.stdin.setEncoding("utf8");
+              process.stdin.on("data", (chunk) => { raw += chunk; });
+              process.stdin.on("end", () => {
+                const manifest = JSON.parse(raw);
+                const platforms = new Set((manifest.manifests ?? []).map((entry) => `${entry.platform?.os}/${entry.platform?.architecture}`));
+                for (const platform of ["linux/amd64", "linux/arm64"]) {
+                  if (!platforms.has(platform)) {
+                    throw new Error(`${process.argv[1]} is missing ${platform}`);
+                  }
+                }
+              });
+            ' "${IMAGE}"
+          done
 
       - name: Publish to npm via OIDC
         run: pnpm -r publish --access=public --no-git-checks
