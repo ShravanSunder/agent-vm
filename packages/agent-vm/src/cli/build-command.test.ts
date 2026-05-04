@@ -403,7 +403,7 @@ describe('runBuildCommand', () => {
 		expect(taskTitles).toContain('Gondolin: toolVm/default');
 	});
 
-	it('routes Tasuku task status and stream preview into Docker and Gondolin builds', async () => {
+	it('routes Tasuku stream preview only into child-process Docker builds', async () => {
 		const taskStreamPreview = new Writable({
 			write(_chunk, _encoding, callback) {
 				callback();
@@ -441,11 +441,51 @@ describe('runBuildCommand', () => {
 		);
 
 		expect(dockerStreamPreviews).toEqual([taskStreamPreview]);
-		expect(gondolinStreamPreviews).toEqual([taskStreamPreview, taskStreamPreview]);
+		expect(gondolinStreamPreviews).toEqual([undefined, undefined]);
 		expect(taskStatuses).toContain('docker build');
 		expect(taskStatuses).toContain('docker image ready');
-		expect(taskStatuses).toContain('vm assets');
+		expect(taskStatuses).toContain('building vm assets');
 		expect(taskStatuses).toContain('vm assets ready');
+	});
+
+	it('shows Gondolin cache-hit status when VM assets are already built', async () => {
+		const taskStatuses: (string | undefined)[] = [];
+		const baseSystemConfig = createTestSystemConfig();
+		const systemConfig = {
+			...baseSystemConfig,
+			imageProfiles: {
+				...baseSystemConfig.imageProfiles,
+				gateways: {},
+			},
+		} satisfies LoadedSystemConfig;
+
+		await runBuildCommand(
+			{
+				systemConfig,
+			},
+			{
+				buildDockerImage: async () => {},
+				buildGondolinImage: async () => ({
+					built: false,
+					fingerprint: 'cached-fp',
+					imagePath: '/cache/cached',
+				}),
+				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+				runTask: async (_title, fn) => {
+					await fn({
+						interactive: true,
+						setOutput: () => {},
+						setStatus: (status) => {
+							taskStatuses.push(status);
+						},
+					});
+				},
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		expect(taskStatuses).toContain('checking vm assets');
+		expect(taskStatuses).toContain('vm assets cache hit');
 	});
 
 	it('fails before image builds when Zig is missing', async () => {

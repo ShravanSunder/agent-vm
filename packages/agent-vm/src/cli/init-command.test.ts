@@ -444,9 +444,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(gatewayDockerfile).toContain('/zone');
 		expect(gatewayDockerfile).toContain('/work/tmp /work/cache');
 		expect(gatewayDockerfile).toContain('chown -R openclaw:openclaw /home/openclaw /work');
-		expect(gatewayDockerfile).toContain(
-			'chown -R root:root /home/openclaw/.openclaw/extensions',
-		);
+		expect(gatewayDockerfile).toContain('chown -R root:root /home/openclaw/.openclaw/extensions');
 		expect(gatewayDockerfile).not.toContain('/home/openclaw/workspace');
 		expect(gatewayDockerfile).toContain(
 			'COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin',

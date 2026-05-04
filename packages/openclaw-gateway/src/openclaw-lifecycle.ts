@@ -345,8 +345,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 	): GatewayProcessSpec {
 		return {
 			bootstrapCommand: buildOpenClawBootstrapCommand(zone, resolvedSecrets),
-			startCommand:
-				`set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &`,
+			startCommand: `set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &`,
 			healthCheck: {
 				type: 'http',
 				port: 18789,

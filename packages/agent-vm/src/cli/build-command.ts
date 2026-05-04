@@ -253,17 +253,16 @@ export async function runBuildCommand(
 		await runTaskStep(
 			`Gondolin: ${imageTarget.family}/${imageTarget.name}`,
 			async (taskContext) => {
-				taskContext?.setStatus('vm assets');
-				await buildGondolinImage({
+				taskContext?.setStatus(
+					shouldResetGondolinCache ? 'building vm assets' : 'checking vm assets',
+				);
+				const result = await buildGondolinImage({
 					buildConfigPath: imageTarget.buildConfigPath,
 					systemCacheIdentifierPath: imageTarget.systemCacheIdentifierPath,
 					cacheDir: imageTarget.cacheDirectory,
-					...(taskContext?.interactive === true && taskContext.streamPreview
-						? { streamPreview: taskContext.streamPreview }
-						: {}),
 					...(shouldResetGondolinCache ? { fullReset: true } : {}),
 				});
-				taskContext?.setStatus('vm assets ready');
+				taskContext?.setStatus(result.built ? 'vm assets ready' : 'vm assets cache hit');
 			},
 		);
 	}
