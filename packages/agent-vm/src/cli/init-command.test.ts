@@ -845,7 +845,7 @@ describe('scaffoldAgentVmProject', () => {
 			'/pnpm/global/5/node_modules/@openclaw',
 		]);
 		expect(openClawConfig.agents.defaults.thinkingDefault).toBeUndefined();
-		expect(openClawConfig.agents.defaults.workspace).toBe('/zone');
+		expect(openClawConfig.agents.defaults.workspace).toBe('/zone/agents/default');
 		expect(openClawConfig.agents.defaults.models['openai-codex/gpt-5.4'].params.thinking).toBe(
 			'low',
 		);

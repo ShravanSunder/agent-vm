@@ -197,6 +197,7 @@ host runtimeDir
 
 host zoneFilesDir
   ~/.agent-vm/zone-files/<zone>/
+    agents/default/
 
 host backupDir
   ~/.agent-vm-backups/<zone>/

@@ -242,6 +242,14 @@ files:
 }
 ```
 
+New OpenClaw scaffolds set `agents.defaults.workspace` to
+`/zone/agents/default`. This keeps the default agent's authored workspace files
+under `zoneFilesDir` while leaving `/zone` itself available for shared
+zone-level notes and reference material. Multi-agent deployments should set
+explicit `agents.list[].workspace` values such as `/zone/agents/shravan` and
+`/zone/agents/sun`; otherwise OpenClaw derives non-default agent workspaces
+under the fallback path.
+
 `agentToolVmProfiles` values must reference entries in top-level `toolVmProfiles`.
 Unmapped agents use the zone fallback `defaultToolVmProfile`.
 
