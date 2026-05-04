@@ -134,7 +134,7 @@ describe('openclawLifecycle', () => {
 			});
 
 			expect(vmSpec.environment.DISCORD_BOT_TOKEN).toBe('discord-token');
-			expect(vmSpec.environment.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
+			expect(vmSpec.environment.OPENCLAW_GATEWAY_TOKEN).toBe("gateway'token");
 			expect(vmSpec.environment.PERPLEXITY_API_KEY).toBeUndefined();
 			expect(vmSpec.mediatedSecrets.PERPLEXITY_API_KEY).toEqual({
 				hosts: ['api.perplexity.ai'],
@@ -191,14 +191,13 @@ describe('openclawLifecycle', () => {
 	});
 
 	describe('buildProcessSpec', () => {
-		it('builds bootstrap and start commands with escaped gateway token', () => {
+		it('builds bootstrap and start commands with runtime-injected gateway token', () => {
 			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
 
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('/run/openclaw/secrets.env');
 			expect(processSpec.bootstrapCommand).toContain("DISCORD_BOT_TOKEN='discord-token'");
-			expect(processSpec.bootstrapCommand).not.toContain('OPENCLAW_GATEWAY_TOKEN=');
-			expect(processSpec.bootstrapCommand).not.toContain("gateway'\\''token");
+			expect(processSpec.bootstrapCommand).toContain("OPENCLAW_GATEWAY_TOKEN='gateway'\\''token'");
 			expect(processSpec.bootstrapCommand).toContain(
 				'OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json',
 			);
@@ -283,17 +282,30 @@ describe('openclawLifecycle', () => {
 
 			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
 
-			expect(
-				JSON.parse(
-					await readFile(path.join(zone.gateway.stateDir, 'effective-openclaw.json'), 'utf8'),
-				),
-			).toMatchObject({
+			const effectiveOpenClawConfigContent = await readFile(
+				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
+				'utf8',
+			);
+			expect(effectiveOpenClawConfigContent).not.toContain('resolved-gateway-token');
+			expect(JSON.parse(effectiveOpenClawConfigContent)).toMatchObject({
 				agents: { defaults: { workspace: '/zone' } },
 				gateway: {
-					auth: { mode: 'token', token: 'resolved-gateway-token' },
+					auth: {
+						mode: 'token',
+						token: {
+							id: 'OPENCLAW_GATEWAY_TOKEN',
+							provider: 'default',
+							source: 'env',
+						},
+					},
 					bind: 'loopback',
 					controlUi: {
 						allowedOrigins: ['http://127.0.0.1:18791', 'http://localhost:18791'],
+					},
+				},
+				secrets: {
+					providers: {
+						default: { source: 'env' },
 					},
 				},
 				meta: {
