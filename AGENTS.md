@@ -124,6 +124,7 @@ must be translated immediately to controller `workMountDir`.
 ## Controller API
 
 - `GET /health` — readiness
+- `GET /zones/:zoneId/health` — live OpenClaw gateway health probe
 - `POST /zones/:zoneId/worker-tasks` — start worker task, returns `202 { taskId, status: "accepted" }`
 - `GET /zones/:zoneId/tasks/:taskId` — replayed worker task state snapshot
 - `POST /zones/:zoneId/tasks/:taskId/push-branches` — controller-side git push

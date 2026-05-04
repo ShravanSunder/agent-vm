@@ -265,6 +265,7 @@ The controller exposes a REST API. Routes are split across two modules: core lea
 | `GET` | `/leases` | List all active leases | OpenClaw |
 | `DELETE` | `/lease/:leaseId` | Release a tool VM lease | OpenClaw |
 | `GET` | `/controller-status` | Controller operational status | OpenClaw |
+| `GET` | `/zones/:zoneId/health` | Live gateway health probe | OpenClaw |
 | `GET` | `/zones/:zoneId/logs` | Fetch gateway VM logs | OpenClaw |
 | `POST` | `/zones/:zoneId/credentials/refresh` | Re-resolve zone secrets and update auth | OpenClaw |
 | `POST` | `/zones/:zoneId/destroy` | Stop and destroy a gateway zone | OpenClaw |

@@ -210,8 +210,9 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
 			expect(processSpec.startCommand).toContain('nohup openclaw gateway --port 18789');
 			expect(processSpec.healthCheck).toEqual({
-				type: 'command',
-				command: `grep -q 'ready (' /tmp/openclaw.log`,
+				type: 'http',
+				port: 18789,
+				path: '/readyz',
 			});
 			expect(processSpec.logPath).toBe('/tmp/openclaw.log');
 		});

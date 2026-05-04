@@ -23,6 +23,11 @@ interface ControllerRuntimeOperations {
 		readonly output: string;
 		readonly zoneId: string;
 	}>;
+	readonly getZoneHealth: (targetZoneId: string) => Promise<{
+		readonly ok: boolean;
+		readonly observation: string;
+		readonly zoneId: string;
+	}>;
 	readonly getZoneStatus: (targetZoneId: string) => Promise<unknown>;
 	readonly refreshZoneCredentials: (targetZoneId: string) => Promise<{
 		readonly ok: true;
@@ -37,7 +42,7 @@ export function createControllerRuntimeOperations(options: {
 		zoneId: string,
 	) => Pick<
 		OpenClawZoneRuntime,
-		'destroy' | 'enableSsh' | 'exec' | 'getLogs' | 'refreshCredentials' | 'upgrade'
+		'destroy' | 'enableSsh' | 'exec' | 'getHealth' | 'getLogs' | 'refreshCredentials' | 'upgrade'
 	>;
 	readonly destroyZoneRuntime: (
 		zoneId: string,
@@ -66,6 +71,8 @@ export function createControllerRuntimeOperations(options: {
 		execInZone: async (targetZoneId, command) =>
 			await options.getOpenClawRuntime(targetZoneId).exec(command),
 		getStatus: async () => buildControllerStatus(options.systemConfig, buildRuntimeStatus()),
+		getZoneHealth: async (targetZoneId) =>
+			await options.getOpenClawRuntime(targetZoneId).getHealth(),
 		getZoneLogs: async (targetZoneId) => await options.getOpenClawRuntime(targetZoneId).getLogs(),
 		getZoneStatus: async (targetZoneId) => {
 			if (!options.systemConfig.zones.some((zone) => zone.id === targetZoneId)) {

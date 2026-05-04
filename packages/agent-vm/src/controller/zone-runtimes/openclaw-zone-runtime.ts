@@ -2,6 +2,7 @@ import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { resolveZoneSecrets } from '../../gateway/credential-manager.js';
+import { runGatewayHealthCheck } from '../../gateway/gateway-health-check.js';
 import { deleteGatewayRuntimeRecord as deleteGatewayRuntimeRecordDefault } from '../../gateway/gateway-runtime-record.js';
 import { startGatewayZone } from '../../gateway/gateway-zone-orchestrator.js';
 import type { GatewayZoneStartResult } from '../../gateway/gateway-zone-support.js';
@@ -116,6 +117,18 @@ export function createOpenClawZoneRuntime(
 		enableSsh: async () => await requireGateway().vm.enableSsh(),
 		exec: async (command) => await requireGateway().vm.exec(command),
 		gatewayType: 'openclaw',
+		getHealth: async () => {
+			const activeGateway = requireGateway();
+			const result = await runGatewayHealthCheck({
+				exec: async (command) => await activeGateway.vm.exec(command),
+				healthCheck: activeGateway.processSpec.healthCheck,
+			});
+			return {
+				ok: result.ok,
+				observation: result.observation,
+				zoneId: options.zone.id,
+			};
+		},
 		getLogs: async () => {
 			const activeGateway = requireGateway();
 			return await (options.runControllerLogs ?? runControllerLogsDefault)(

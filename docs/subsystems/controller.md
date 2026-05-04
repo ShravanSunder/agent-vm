@@ -96,6 +96,7 @@ Registered conditionally -- only when `operations` or `workerTaskRunner` is prov
 | Method | Path | Description | Availability |
 |--------|------|-------------|-------------|
 | `GET` | `/controller-status` | System config and zone health | OpenClaw |
+| `GET` | `/zones/:zoneId/health` | Live gateway health probe using the zone's `GatewayHealthCheck` | OpenClaw |
 | `GET` | `/zones/:zoneId/logs` | Gateway VM process logs | OpenClaw |
 | `POST` | `/zones/:zoneId/credentials/refresh` | Re-resolve secrets, restart gateway | OpenClaw |
 | `POST` | `/zones/:zoneId/destroy` | Stop gateway, release zone leases, purge state | OpenClaw |
