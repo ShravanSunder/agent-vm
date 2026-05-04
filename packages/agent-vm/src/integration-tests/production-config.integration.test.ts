@@ -15,6 +15,15 @@ async function loadJsonObjectConfigFile(filePath: string): Promise<Record<string
 	return Object.fromEntries(Object.entries(parsed));
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+	try {
+		await fs.access(filePath);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 const createdDirectories: string[] = [];
 
 afterEach(async () => {
@@ -64,8 +73,17 @@ describe('production config artifacts', () => {
 		const gatewayBuildConfig = await loadJsonObjectConfigFile(
 			path.join(projectDirectory, 'vm-images', 'gateways', 'openclaw', 'build-config.jsonc'),
 		);
+		const gatewayOverlayConfig = await loadJsonObjectConfigFile(
+			path.join(projectDirectory, 'vm-images', 'gateways', 'openclaw', 'overlay.jsonc'),
+		);
+		const systemConfig = await loadJsonObjectConfigFile(
+			path.join(projectDirectory, 'config', 'system.jsonc'),
+		);
 		const toolBuildConfig = await loadJsonObjectConfigFile(
 			path.join(projectDirectory, 'vm-images', 'tool-vms', 'default', 'build-config.jsonc'),
+		);
+		const toolOverlayConfig = await loadJsonObjectConfigFile(
+			path.join(projectDirectory, 'vm-images', 'tool-vms', 'default', 'overlay.jsonc'),
 		);
 		const envLocal = await fs.readFile(path.join(projectDirectory, '.env.local'), 'utf8');
 
@@ -78,11 +96,38 @@ describe('production config artifacts', () => {
 		expect(toolBuildConfig).toMatchObject({
 			arch: 'aarch64',
 		});
-		expect(
-			await fs.readFile(
-				path.join(projectDirectory, 'vm-images', 'gateways', 'openclaw', 'Dockerfile'),
-				'utf8',
-			),
-		).toContain('COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin');
+		expect(gatewayOverlayConfig).toMatchObject({
+			extraAptPackages: [],
+			schemaVersion: 1,
+		});
+		expect(toolOverlayConfig).toMatchObject({
+			extraAptPackages: [],
+			schemaVersion: 1,
+		});
+		expect(systemConfig).toMatchObject({
+			imageProfiles: {
+				gateways: {
+					openclaw: {
+						source: {
+							base: 'openclaw-gateway',
+							kind: 'managedBase',
+							overlay: '../vm-images/gateways/openclaw/overlay.jsonc',
+						},
+					},
+				},
+				toolVms: {
+					default: {
+						source: {
+							base: 'tool-vm',
+							kind: 'managedBase',
+							overlay: '../vm-images/tool-vms/default/overlay.jsonc',
+						},
+					},
+				},
+			},
+		});
+		await expect(
+			pathExists(path.join(projectDirectory, 'vm-images', 'gateways', 'openclaw', 'Dockerfile')),
+		).resolves.toBe(false);
 	});
 });
