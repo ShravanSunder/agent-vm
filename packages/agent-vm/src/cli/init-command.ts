@@ -620,6 +620,7 @@ RUN apt-get update && \\
       '  "gateway": { "mode": "local" },' \\
       '  "plugins": {' \\
       '    "allow": ["gondolin", "memory-core"],' \\
+      '    "slots": { "memory": "memory-core" },' \\
       '    "entries": {' \\
       '      "gondolin": { "enabled": true },' \\
       '      "memory-core": { "enabled": true }' \\
@@ -825,6 +826,7 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 			paths: [defaultOpenClawExtensionsPath],
 		},
 		allow: ['gondolin', 'memory-core'],
+		slots: { memory: 'memory-core' },
 		entries: {
 			gondolin: {
 				enabled: true,

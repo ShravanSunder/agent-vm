@@ -425,6 +425,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(gatewayDockerfile).toContain('pnpm add -g openclaw@2026.4.24');
 		expect(gatewayDockerfile).not.toContain('"channels": { "discord": { "enabled": true } }');
 		expect(gatewayDockerfile).toContain('"allow": ["gondolin", "memory-core"]');
+		expect(gatewayDockerfile).toContain('"slots": { "memory": "memory-core" }');
 		expect(gatewayDockerfile).toContain(
 			'OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json',
 		);
@@ -1184,12 +1185,14 @@ describe('scaffoldAgentVmProject', () => {
 			readonly agents?: { readonly defaults?: { readonly sandbox?: { readonly scope?: string } } };
 			readonly plugins?: {
 				readonly allow?: readonly string[];
+				readonly slots?: { readonly memory?: string };
 				readonly entries?: Record<string, { readonly enabled?: boolean }>;
 			};
 		};
 		expect(openClawConfig.gateway?.auth?.mode).toBe('token');
 		expect(openClawConfig.agents?.defaults?.sandbox?.scope).toBe('agent');
 		expect(openClawConfig.plugins?.allow).toContain('memory-core');
+		expect(openClawConfig.plugins?.slots?.memory).toBe('memory-core');
 		expect(openClawConfig.plugins?.entries?.['memory-core']).toEqual({ enabled: true });
 	});
 
