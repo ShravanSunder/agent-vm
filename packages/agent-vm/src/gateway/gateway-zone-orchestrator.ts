@@ -13,6 +13,7 @@ import {
 
 import { runTaskWithResult } from '../shared/run-task.js';
 import { resolveZoneSecrets } from './credential-manager.js';
+import { runGatewayHealthCheck } from './gateway-health-check.js';
 import {
 	buildGatewayImage,
 	type GatewayImageBuilderDependencies,
@@ -141,19 +142,11 @@ async function waitForHealth(options: {
 		);
 	}
 
-	const healthCommand =
-		options.healthCheck.type === 'http'
-			? `curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:${options.healthCheck.port}${options.healthCheck.path} 2>/dev/null || true`
-			: options.healthCheck.command;
-	const result = await options.managedVm.exec(healthCommand);
-	const currentObservation =
-		options.healthCheck.type === 'http'
-			? `http ${result.stdout.trim() || '(empty)'}`
-			: `exit ${result.exitCode}`;
-	if (
-		(options.healthCheck.type === 'http' && result.stdout.trim().startsWith('2')) ||
-		(options.healthCheck.type === 'command' && result.exitCode === 0)
-	) {
+	const result = await runGatewayHealthCheck({
+		exec: async (command) => await options.managedVm.exec(command),
+		healthCheck: options.healthCheck,
+	});
+	if (result.ok) {
 		return;
 	}
 
@@ -161,7 +154,7 @@ async function waitForHealth(options: {
 	await waitForHealth({
 		attempt: attempt + 1,
 		healthCheck: options.healthCheck,
-		lastObservation: currentObservation,
+		lastObservation: result.observation,
 		logPath: options.logPath,
 		managedVm: options.managedVm,
 		maxAttempts,

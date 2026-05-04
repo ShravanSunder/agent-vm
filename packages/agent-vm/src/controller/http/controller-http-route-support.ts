@@ -17,6 +17,9 @@ export interface ControllerRouteOperations {
 	readonly execInZone?: (zoneId: string, command: string) => Promise<unknown>;
 	readonly getStatus: () => Promise<unknown>;
 	readonly getTaskState?: (zoneId: string, taskId: string) => Promise<unknown>;
+	readonly getZoneHealth?: (
+		zoneId: string,
+	) => Promise<{ readonly ok: boolean } & Record<string, unknown>>;
 	readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
 	readonly getZoneStatus: (zoneId: string) => Promise<unknown>;
 	readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;

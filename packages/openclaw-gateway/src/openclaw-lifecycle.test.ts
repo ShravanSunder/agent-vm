@@ -159,10 +159,10 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.environment.OPENCLAW_CONFIG_PATH).toBe(
 				'/home/openclaw/.openclaw/state/effective-openclaw.json',
 			);
-			expect(vmSpec.environment.OPENCLAW_PLUGIN_STAGE_DIR).toBe(
-				'/opt/openclaw/plugin-runtime-deps',
-			);
+			expect(vmSpec.environment.OPENCLAW_PLUGIN_STAGE_DIR).toBeUndefined();
 			expect(vmSpec.environment.TMPDIR).toBe('/work/tmp');
+			expect(vmSpec.environment.PNPM_HOME).toBe('/pnpm');
+			expect(vmSpec.environment.PATH).toContain('/pnpm:');
 			expect(vmSpec.environment.npm_config_cache).toBe('/work/cache/npm');
 			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/config']).toEqual({
 				hostPath: '/host/config/shravan',
@@ -179,7 +179,7 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.vfsMounts['/work']).toBeUndefined();
 			expect(vmSpec.vfsMounts['/home/openclaw/zone-files']).toBeUndefined();
 			expect(vmSpec.vfsMounts['/home/openclaw/workspace']).toBeUndefined();
-			expect(vmSpec.vfsMounts['/opt/openclaw/plugin-runtime-deps']).toBeUndefined();
+			expect(vmSpec.vfsMounts['/var/lib/openclaw/plugin-runtime-deps']).toBeUndefined();
 			expect(vmSpec.tcpHosts).toEqual({
 				'controller.vm.host:18800': '127.0.0.1:18800',
 				'gateway.discord.gg:443': 'gateway.discord.gg:443',
@@ -195,23 +195,29 @@ describe('openclawLifecycle', () => {
 			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
 
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
+			expect(processSpec.bootstrapCommand).toContain('/run/openclaw/secrets.env');
+			expect(processSpec.bootstrapCommand).toContain("DISCORD_BOT_TOKEN='discord-token'");
 			expect(processSpec.bootstrapCommand).not.toContain('OPENCLAW_GATEWAY_TOKEN=');
+			expect(processSpec.bootstrapCommand).not.toContain("gateway'\\''token");
 			expect(processSpec.bootstrapCommand).toContain(
 				'OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json',
 			);
-			expect(processSpec.bootstrapCommand).toContain(
-				'OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps',
-			);
+			expect(processSpec.bootstrapCommand).not.toContain('OPENCLAW_PLUGIN_STAGE_DIR');
 			expect(processSpec.bootstrapCommand).toContain('/work/tmp /work/cache/npm');
+			expect(processSpec.bootstrapCommand).toContain('chown -R openclaw:openclaw /work');
 			expect(processSpec.bootstrapCommand).toContain('TMPDIR=/work/tmp');
+			expect(processSpec.bootstrapCommand).toContain('PNPM_HOME=/pnpm');
+			expect(processSpec.bootstrapCommand).toContain('PATH=/pnpm:$PATH');
 			expect(processSpec.bootstrapCommand).toContain('npm_config_cache=/work/cache/npm');
+			expect(processSpec.startCommand).toContain('. /run/openclaw/secrets.env');
 			expect(processSpec.startCommand).toContain('cd /home/openclaw');
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
 			expect(processSpec.startCommand).toContain('nohup openclaw gateway --port 18789');
 			expect(processSpec.healthCheck).toEqual({
-				type: 'command',
-				command: `grep -q 'ready (' /tmp/openclaw.log`,
+				type: 'http',
+				port: 18789,
+				path: '/readyz',
 			});
 			expect(processSpec.logPath).toBe('/tmp/openclaw.log');
 		});

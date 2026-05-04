@@ -34,6 +34,7 @@ describe('buildHostGitArgs', () => {
 		await git(['init', '--initial-branch=main'], sourceRepoPath);
 		await git(['config', 'user.email', 'agent-vm@example.com'], sourceRepoPath);
 		await git(['config', 'user.name', 'Agent VM'], sourceRepoPath);
+		await git(['config', 'commit.gpgsign', 'false'], sourceRepoPath);
 		await fs.writeFile(path.join(sourceRepoPath, 'README.md'), 'hello\n', 'utf8');
 		await git(['add', 'README.md'], sourceRepoPath);
 		await git(['commit', '-m', 'initial commit'], sourceRepoPath);

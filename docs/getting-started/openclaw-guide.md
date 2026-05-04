@@ -71,18 +71,16 @@ Controls the OpenClaw agent platform: model selection, sandbox mode, plugin regi
 
 ### OpenClaw Version
 
-`agent-vm init` writes a gateway Dockerfile with a tested OpenClaw version, for example:
-
-```dockerfile
-RUN pnpm add -g openclaw@2026.4.24
-```
-
-That pin is a scaffold default, not a host-side package lock. After scaffold, the catalog repo owns `vm-images/gateways/openclaw/Dockerfile`; edit that line in the catalog when you want to try or pin a different OpenClaw release.
+`agent-vm init` writes a managed image profile. The installed
+`@agent-vm/agent-vm` package version selects the matching GHCR base image, and
+that base image pins the tested OpenClaw version. Deployment repos customize the
+image through `vm-images/gateways/openclaw/overlay.jsonc`, not by owning a full
+gateway Dockerfile.
 
 For host-side validation, install the same OpenClaw version in the catalog:
 
 ```bash
-pnpm add -D openclaw@2026.4.24
+pnpm add -D openclaw@2026.5.2
 ```
 
 `agent-vm doctor` and `agent-vm validate` use the catalog's `openclaw`
@@ -154,9 +152,10 @@ For internals, see [architecture/openclaw-gateway.md](../architecture/openclaw-g
 ## Channels
 
 Discord is a deployment recipe, not an agent-vm framework default. To enable
-Discord, configure it in your deployment Dockerfile and OpenClaw config, then
-add `DISCORD_BOT_TOKEN`, Discord hosts, and the Discord gateway websocket bypass
-to `system.jsonc`.
+Discord, configure `channels.discord` in OpenClaw config, then add
+`DISCORD_BOT_TOKEN`, Discord hosts, and the Discord gateway websocket bypass to
+`system.jsonc`. Managed OpenClaw images install `@openclaw/discord`
+automatically when `channels.discord.enabled` is true.
 
 ```json
 {

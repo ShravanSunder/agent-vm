@@ -240,6 +240,7 @@ describe('zone runtime contracts', () => {
 			}),
 			exec: async () => ({ exitCode: 0, stderr: '', stdout: 'ok' }),
 			gatewayType: 'openclaw',
+			getHealth: async () => ({ ok: true, observation: 'http 200', zoneId: 'shravan' }),
 			getLogs: async () => ({ output: 'logs', zoneId: 'shravan' }),
 			getSnapshot: () => ({ lifecycleState: 'stopped' }),
 			refreshCredentials: async () => ({ ok: true, zoneId: 'shravan' }),
@@ -296,7 +297,11 @@ describe('createOpenClawZoneRuntime', () => {
 		const exec = vi.fn(async (command: string) => ({
 			exitCode: 0,
 			stderr: '',
-			stdout: command.startsWith('cat ') ? 'gateway log output' : 'command output',
+			stdout: command.startsWith('cat ')
+				? 'gateway log output'
+				: command.includes('/readyz')
+					? '200'
+					: 'command output',
 		}));
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
@@ -310,7 +315,7 @@ describe('createOpenClawZoneRuntime', () => {
 					processSpec: {
 						bootstrapCommand: 'bootstrap',
 						guestListenPort: 18789,
-						healthCheck: { type: 'http', port: 18789, path: '/' },
+						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
 						logPath: '/tmp/openclaw.log',
 						startCommand: 'start',
 					},
@@ -366,6 +371,11 @@ describe('createOpenClawZoneRuntime', () => {
 		});
 		await expect(runtime.getLogs()).resolves.toEqual({
 			output: 'gateway log output',
+			zoneId: 'shravan',
+		});
+		await expect(runtime.getHealth()).resolves.toEqual({
+			ok: true,
+			observation: 'http 200',
 			zoneId: 'shravan',
 		});
 		await runtime.stop();
@@ -868,6 +878,7 @@ function createFakeOpenClawRuntime(
 		}),
 		exec: async () => ({ exitCode: 0, stderr: '', stdout: zoneId }),
 		gatewayType: 'openclaw',
+		getHealth: async () => ({ ok: true, observation: 'http 200', zoneId }),
 		getLogs: async () => ({ output: `logs for ${zoneId}`, zoneId }),
 		getSnapshot: () => ({ lifecycleState }),
 		refreshCredentials: async () => ({ ok: true, zoneId }),

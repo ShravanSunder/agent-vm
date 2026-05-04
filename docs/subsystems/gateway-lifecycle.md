@@ -186,7 +186,7 @@ rebuildable and must not be included in encrypted zone backups.
   `/etc/profile.d/openclaw-env.sh` with environment exports, and sources it
   from `/root/.bashrc` and `/root/.bash_profile`.
 - **start**: `cd /home/openclaw && nohup openclaw gateway --port 18789`
-- **healthCheck**: HTTP on port 18789, path `/`
+- **healthCheck**: HTTP on port 18789, path `/readyz`
 - **guestListenPort**: 18789
 - **logPath**: `/tmp/openclaw.log`
 
@@ -271,7 +271,7 @@ Not implemented.  Worker has no interactive auth.
 | **tcpHosts**          | controller + tool pool + WS bypass               | controller only                                 |
 | **bootstrap**         | Shell env file in `/etc/profile.d/`              | `npm install -g` codex + worker tarball         |
 | **startCommand**      | `openclaw gateway --port 18789`                  | `agent-vm-worker serve --port 18789`            |
-| **healthCheck path**  | `/`                                              | `/health`                                       |
+| **healthCheck path**  | `/readyz`                                        | `/health`                                       |
 | **guestListenPort**   | 18789                                            | 18789                                           |
 | **logPath**           | `/tmp/openclaw.log`                              | `/tmp/agent-vm-worker.log`                      |
 | **rootfsMode**        | `cow`                                            | `cow`                                            |

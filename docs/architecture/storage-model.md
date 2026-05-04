@@ -95,12 +95,13 @@ workspaceDir                        OpenClaw SDK boundary only          external
 ```text
 source/config
   Owner: catalog repo
-  Example: config/system.jsonc, config/gateways/<zone>/openclaw.json, vm-images/
+  Example: config/system.jsonc, config/gateways/<zone>/openclaw.json,
+           vm-images/**/build-config.jsonc, vm-images/**/overlay.jsonc
   Backup: git, not agent-vm backups
   Rule: human-authored desired state
 
 rootfs / image
-  Owner: image build
+  Owner: agent-vm managed base image + deployment overlay
   VM: /
   Backup: no; rebuilt from image recipes
   Rule: hot runtime dependencies and package trees needed during normal boot
@@ -172,7 +173,8 @@ backup output
 ```text
 catalog repo
   config/gateways/<zone>/openclaw.json
-  vm-images/gateways/openclaw/
+  vm-images/gateways/openclaw/build-config.jsonc
+  vm-images/gateways/openclaw/overlay.jsonc
 
 host stateDir
   ~/.agent-vm/state/<zone>/
@@ -197,6 +199,7 @@ host runtimeDir
 
 host zoneFilesDir
   ~/.agent-vm/zone-files/<zone>/
+    agents/default/
 
 host backupDir
   ~/.agent-vm-backups/<zone>/

@@ -23,8 +23,8 @@ const effectiveOpenClawConfigVmPath = `/home/openclaw/.openclaw/state/${effectiv
 const openClawStateDirVmPath = '/home/openclaw/.openclaw/state';
 const openClawCacheDirVmPath = '/home/openclaw/.openclaw/cache';
 const openClawZoneFilesDirVmPath = '/zone';
-const openClawPluginStageDirVmPath = '/opt/openclaw/plugin-runtime-deps';
 const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
+const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -51,14 +51,18 @@ function buildGatewayTcpHosts(
 }
 
 function buildOpenClawBootstrapCommand(
-	_zone: GatewayZoneConfig,
-	_resolvedSecrets: Record<string, string>,
+	zone: GatewayZoneConfig,
+	resolvedSecrets: Record<string, string>,
 ): string {
+	const { environmentSecrets } = splitResolvedGatewaySecrets(zone, resolvedSecrets);
+	const { OPENCLAW_GATEWAY_TOKEN: _gatewayToken, ...environmentSecretsWithoutGatewayToken } =
+		environmentSecrets;
 	const environmentLines = [
 		'export OPENCLAW_HOME=/home/openclaw',
 		`export OPENCLAW_CONFIG_PATH=${effectiveOpenClawConfigVmPath}`,
 		`export OPENCLAW_STATE_DIR=${openClawStateDirVmPath}`,
-		`export OPENCLAW_PLUGIN_STAGE_DIR=${openClawPluginStageDirVmPath}`,
+		'export PNPM_HOME=/pnpm',
+		'export PATH=/pnpm:$PATH',
 		'export TMPDIR=/work/tmp',
 		'export TMP=/work/tmp',
 		'export TEMP=/work/tmp',
@@ -68,12 +72,19 @@ function buildOpenClawBootstrapCommand(
 		'export UV_CACHE_DIR=/work/cache/uv',
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
 	];
+	const secretEnvironmentLines = Object.entries(environmentSecretsWithoutGatewayToken).map(
+		([secretName, secretValue]) => `export ${secretName}=${shellQuote(secretValue)}`,
+	);
 
 	return (
-		`mkdir -p /root /etc/profile.d /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && cat > ${openClawShellEnvFilePath} << ENVEOF\n` +
+		`mkdir -p /root /etc/profile.d /run/openclaw /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && chown -R openclaw:openclaw /work && cat > ${openClawShellEnvFilePath} << ENVEOF\n` +
 		environmentLines.join('\n') +
 		'\nENVEOF\n' +
 		`chmod 644 ${openClawShellEnvFilePath} && ` +
+		`cat > ${openClawRuntimeSecretsEnvFilePath} << ENVEOF\n` +
+		secretEnvironmentLines.join('\n') +
+		'\nENVEOF\n' +
+		`chmod 600 ${openClawRuntimeSecretsEnvFilePath} && ` +
 		'touch /root/.bashrc && ' +
 		`grep -qxF 'source ${openClawShellEnvFilePath}' /root/.bashrc || echo 'source ${openClawShellEnvFilePath}' >> /root/.bashrc && ` +
 		'touch /root/.bash_profile && ' +
@@ -291,9 +302,10 @@ export const openclawLifecycle: GatewayLifecycle = {
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
 				OPENCLAW_CONFIG_PATH: effectiveOpenClawConfigVmPath,
 				OPENCLAW_HOME: '/home/openclaw',
-				OPENCLAW_PLUGIN_STAGE_DIR: openClawPluginStageDirVmPath,
 				OPENCLAW_STATE_DIR: openClawStateDirVmPath,
+				PATH: `/pnpm:${process.env.PATH ?? ''}`,
 				PIP_CACHE_DIR: '/work/cache/pip',
+				PNPM_HOME: '/pnpm',
 				TEMP: '/work/tmp',
 				TMP: '/work/tmp',
 				TMPDIR: '/work/tmp',
@@ -333,11 +345,11 @@ export const openclawLifecycle: GatewayLifecycle = {
 	): GatewayProcessSpec {
 		return {
 			bootstrapCommand: buildOpenClawBootstrapCommand(zone, resolvedSecrets),
-			startCommand:
-				'cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &',
+			startCommand: `set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &`,
 			healthCheck: {
-				type: 'command',
-				command: `grep -q 'ready (' /tmp/openclaw.log`,
+				type: 'http',
+				port: 18789,
+				path: '/readyz',
 			},
 			guestListenPort: 18789,
 			logPath: '/tmp/openclaw.log',

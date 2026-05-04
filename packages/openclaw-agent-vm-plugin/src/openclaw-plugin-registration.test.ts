@@ -1,3 +1,6 @@
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import defaultPlugin, {
@@ -33,6 +36,17 @@ function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
 }
 
 describe('createGondolinPlugin', () => {
+	it('marks the plugin for gateway startup activation', async () => {
+		const manifestPath = path.resolve(import.meta.dirname, '..', 'openclaw.plugin.json');
+		const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+			readonly activation?: { readonly onStartup?: boolean };
+			readonly cliBackends?: readonly string[];
+		};
+
+		expect(manifest.activation?.onStartup).toBe(true);
+		expect(manifest.cliBackends).toContain('gondolin');
+	});
+
 	it('exports a default plugin descriptor with the gondolin id', () => {
 		expect(defaultPlugin.id).toBe('gondolin');
 		expect(defaultPlugin.name).toBe('Gondolin VM Sandbox');

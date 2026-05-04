@@ -64,8 +64,14 @@ describe('production config artifacts', () => {
 		const gatewayBuildConfig = await loadJsonObjectConfigFile(
 			path.join(projectDirectory, 'vm-images', 'gateways', 'openclaw', 'build-config.jsonc'),
 		);
+		const systemConfig = await loadJsonObjectConfigFile(
+			path.join(projectDirectory, 'config', 'system.jsonc'),
+		);
 		const toolBuildConfig = await loadJsonObjectConfigFile(
 			path.join(projectDirectory, 'vm-images', 'tool-vms', 'default', 'build-config.jsonc'),
+		);
+		const gatewayOverlay = await loadJsonObjectConfigFile(
+			path.join(projectDirectory, 'vm-images', 'gateways', 'openclaw', 'overlay.jsonc'),
 		);
 		const envLocal = await fs.readFile(path.join(projectDirectory, '.env.local'), 'utf8');
 
@@ -78,11 +84,22 @@ describe('production config artifacts', () => {
 		expect(toolBuildConfig).toMatchObject({
 			arch: 'aarch64',
 		});
-		expect(
-			await fs.readFile(
-				path.join(projectDirectory, 'vm-images', 'gateways', 'openclaw', 'Dockerfile'),
-				'utf8',
-			),
-		).toContain('COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin');
+		expect(systemConfig).toMatchObject({
+			imageProfiles: {
+				gateways: {
+					openclaw: {
+						source: {
+							kind: 'managedBase',
+							base: 'openclaw-gateway',
+							overlay: '../vm-images/gateways/openclaw/overlay.jsonc',
+						},
+					},
+				},
+			},
+		});
+		expect(gatewayOverlay).toEqual({ schemaVersion: 1, extraAptPackages: [] });
+		await expect(
+			fs.access(path.join(projectDirectory, 'vm-images', 'gateways', 'openclaw', 'Dockerfile')),
+		).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 });

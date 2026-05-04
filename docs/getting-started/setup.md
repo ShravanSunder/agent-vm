@@ -42,8 +42,8 @@ The scaffold includes:
 - `config/systemCacheIdentifier.json`
 - `config/gateways/coding-agent/worker.jsonc`
 - `config/gateways/coding-agent/prompts/*.md`
-- `vm-images/gateways/worker/Dockerfile`
 - `vm-images/gateways/worker/build-config.jsonc`
+- `vm-images/gateways/worker/overlay.jsonc`
 
 The generated local gateway image installs public runtime tooling only. For
 monorepo local task runs, pack `agent-vm-worker` and set
@@ -86,8 +86,9 @@ Container presets use environment-backed secrets and do not write `.env.local`.
 agent-vm build --config config/system.jsonc
 ```
 
-This builds Docker OCI images from Dockerfiles, then Gondolin VM assets. Later
-builds reuse cached fingerprints.
+This generates Dockerfiles from managed agent-vm base images plus your overlay,
+builds Docker OCI images, then builds Gondolin VM assets. Later builds reuse
+cached fingerprints.
 
 ### 6. Start the controller
 

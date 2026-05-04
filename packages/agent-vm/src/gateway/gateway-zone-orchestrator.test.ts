@@ -325,7 +325,6 @@ describe('startGatewayZone', () => {
 					NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
 					OPENCLAW_HOME: '/home/openclaw',
 					OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/state/effective-openclaw.json',
-					OPENCLAW_PLUGIN_STAGE_DIR: '/opt/openclaw/plugin-runtime-deps',
 					OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
 					DISCORD_BOT_TOKEN: 'resolved-key',
 				}),
@@ -352,7 +351,7 @@ describe('startGatewayZone', () => {
 			}),
 		);
 		expect(execMock).toHaveBeenCalledWith(
-			'cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &',
+			'set -a && . /run/openclaw/secrets.env && set +a && cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &',
 		);
 		expect(setIngressRoutesMock).toHaveBeenCalledWith([
 			{
@@ -644,7 +643,7 @@ describe('startGatewayZone', () => {
 					stderr: '',
 				};
 			}
-			if (command === `grep -q 'ready (' /tmp/openclaw.log`) {
+			if (command.includes('http://127.0.0.1:18789/readyz')) {
 				return { exitCode: 1, stdout: '', stderr: '' };
 			}
 			return { exitCode: 0, stdout: '000', stderr: '' };
@@ -681,7 +680,7 @@ describe('startGatewayZone', () => {
 				},
 			),
 		).rejects.toThrow(
-			/Gateway readiness check failed after 2 attempts.*Last probe: exit 1.*Gateway process may still be booting, or it may have crashed before opening its health port.*OpenClaw failed to parse config/su,
+			/Gateway readiness check failed after 2 attempts.*Last probe: http \(empty\).*Gateway process may still be booting, or it may have crashed before opening its health port.*OpenClaw failed to parse config/su,
 		);
 		expect(execMock).toHaveBeenCalledWith('tail -n 80 /tmp/openclaw.log 2>/dev/null || true');
 		expect(closeMock).toHaveBeenCalledTimes(1);
@@ -692,7 +691,7 @@ describe('startGatewayZone', () => {
 			if (command.includes('tail -n 80')) {
 				return { exitCode: 0, stdout: '', stderr: '' };
 			}
-			if (command === `grep -q 'ready (' /tmp/openclaw.log`) {
+			if (command.includes('http://127.0.0.1:18789/readyz')) {
 				return { exitCode: 1, stdout: '', stderr: '' };
 			}
 			return { exitCode: 0, stdout: '000', stderr: '' };
