@@ -435,6 +435,8 @@ describe('scaffoldAgentVmProject', () => {
 			'find /opt/openclaw/plugin-runtime-deps -name .openclaw-runtime-deps.json -type f -print -quit',
 		);
 		expect(gatewayDockerfile).toContain('/zone');
+		expect(gatewayDockerfile).toContain('/work/tmp /work/cache');
+		expect(gatewayDockerfile).toContain('chown -R openclaw:openclaw /home/openclaw /work');
 		expect(gatewayDockerfile).not.toContain('/home/openclaw/workspace');
 		expect(gatewayDockerfile).toContain(
 			'COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin',
@@ -1178,12 +1180,14 @@ describe('scaffoldAgentVmProject', () => {
 				'utf8',
 			),
 		) as {
+			readonly gateway?: { readonly auth?: { readonly mode?: string } };
 			readonly agents?: { readonly defaults?: { readonly sandbox?: { readonly scope?: string } } };
 			readonly plugins?: {
 				readonly allow?: readonly string[];
 				readonly entries?: Record<string, { readonly enabled?: boolean }>;
 			};
 		};
+		expect(openClawConfig.gateway?.auth?.mode).toBe('token');
 		expect(openClawConfig.agents?.defaults?.sandbox?.scope).toBe('agent');
 		expect(openClawConfig.plugins?.allow).toContain('memory-core');
 		expect(openClawConfig.plugins?.entries?.['memory-core']).toEqual({ enabled: true });

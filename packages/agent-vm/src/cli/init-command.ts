@@ -635,9 +635,9 @@ RUN apt-get update && \\
     printf '#!/bin/sh\\nexec /pnpm/openclaw "$@"\\n' > /usr/local/bin/openclaw && \\
     chmod 755 /usr/local/bin/openclaw && \\
     useradd -m -s /bin/bash openclaw && \\
-    mkdir -p ${defaultOpenClawExtensionsPath} /zone /run/sshd /root && \\
+    mkdir -p ${defaultOpenClawExtensionsPath} /zone /run/sshd /root /work/tmp /work/cache && \\
     chown -R openclaw:openclaw /opt/openclaw/plugin-runtime-deps && \\
-    chown -R openclaw:openclaw /home/openclaw && \\
+    chown -R openclaw:openclaw /home/openclaw /work && \\
     (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
 
 COPY vendor/gondolin ${defaultOpenClawExtensionsPath}/gondolin
