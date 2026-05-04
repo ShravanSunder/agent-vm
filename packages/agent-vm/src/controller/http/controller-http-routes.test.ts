@@ -750,6 +750,11 @@ describe('createControllerApp', () => {
 			running: true,
 			agentToolVmProfiles: {},
 		}));
+		const getZoneHealth = vi.fn(async () => ({
+			ok: true,
+			observation: 'http 200',
+			zoneId: 'shravan',
+		}));
 		const getZoneLogs = vi.fn(async () => ({
 			output: 'gateway log line',
 			zoneId: 'shravan',
@@ -782,6 +787,7 @@ describe('createControllerApp', () => {
 			operations: {
 				destroyZone,
 				getStatus,
+				getZoneHealth,
 				getZoneStatus,
 				getZoneLogs,
 				refreshZoneCredentials,
@@ -791,6 +797,7 @@ describe('createControllerApp', () => {
 
 		const statusResponse = await app.request('/controller-status');
 		const zoneStatusResponse = await app.request('/zones/shravan/status');
+		const zoneHealthResponse = await app.request('/zones/shravan/health');
 		const logsResponse = await app.request('/zones/shravan/logs');
 		const refreshResponse = await app.request('/zones/shravan/credentials/refresh', {
 			method: 'POST',
@@ -808,16 +815,61 @@ describe('createControllerApp', () => {
 
 		expect(statusResponse.status).toBe(200);
 		expect(zoneStatusResponse.status).toBe(200);
+		expect(zoneHealthResponse.status).toBe(200);
 		expect(logsResponse.status).toBe(200);
 		expect(refreshResponse.status).toBe(200);
 		expect(destroyResponse.status).toBe(200);
 		expect(upgradeResponse.status).toBe(200);
 		expect(getStatus).toHaveBeenCalled();
 		expect(getZoneStatus).toHaveBeenCalledWith('shravan');
+		expect(getZoneHealth).toHaveBeenCalledWith('shravan');
 		expect(getZoneLogs).toHaveBeenCalledWith('shravan');
 		expect(refreshZoneCredentials).toHaveBeenCalledWith('shravan');
 		expect(destroyZone).toHaveBeenCalledWith('shravan', true);
 		expect(upgradeZone).toHaveBeenCalledWith('shravan');
+	});
+
+	it('returns 503 when a zone gateway health probe is unhealthy', async () => {
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneHealth: vi.fn(async () => ({
+					ok: false,
+					observation: 'http 503',
+					zoneId: 'shravan',
+				})),
+				getZoneLogs: vi.fn(async () => ({})),
+				getZoneStatus: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/shravan/health');
+
+		expect(response.status).toBe(503);
+		await expect(response.json()).resolves.toEqual({
+			ok: false,
+			observation: 'http 503',
+			zoneId: 'shravan',
+		});
 	});
 
 	it('returns 409 when destroy is requested while a worker task is preparing', async () => {

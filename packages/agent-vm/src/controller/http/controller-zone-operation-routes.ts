@@ -209,6 +209,17 @@ export function registerControllerZoneOperationRoutes(
 			return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
 		}
 	});
+	app.get('/zones/:zoneId/health', async (context) => {
+		if (!operations.getZoneHealth) {
+			return context.json({ error: 'zone-health-unavailable' }, 405);
+		}
+		try {
+			const health = await operations.getZoneHealth(context.req.param('zoneId'));
+			return context.json(health, health.ok ? 200 : 503);
+		} catch (error) {
+			return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
+		}
+	});
 	app.get('/zones/:zoneId/logs', async (context) => {
 		try {
 			return context.json(await operations.getZoneLogs(context.req.param('zoneId')));

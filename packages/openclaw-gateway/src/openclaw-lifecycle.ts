@@ -336,8 +336,9 @@ export const openclawLifecycle: GatewayLifecycle = {
 			startCommand:
 				'cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &',
 			healthCheck: {
-				type: 'command',
-				command: `grep -q 'ready (' /tmp/openclaw.log`,
+				type: 'http',
+				port: 18789,
+				path: '/readyz',
 			},
 			guestListenPort: 18789,
 			logPath: '/tmp/openclaw.log',

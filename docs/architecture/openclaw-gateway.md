@@ -52,7 +52,7 @@ OpenClaw runs a persistent gateway VM that hosts an interactive chat agent. Tool
 | TCP hosts | Controller only | Controller + all tool VM SSH ports + WebSocket bypass |
 | Auth | None | Auth profiles (1Password → disk → VFS) |
 | prepareHostState | None | Writes effective config + auth profiles |
-| Health check | `GET /health` | `GET /` |
+| Health check | `GET /health` | `GET /readyz` |
 
 See [overview.md](overview.md#gateway-lifecycle-contract) for the GatewayLifecycle interface that both gateways implement.
 
@@ -281,6 +281,7 @@ The controller exposes operations for managing the OpenClaw Gateway:
 | Operation | Endpoint | What it does |
 |-----------|----------|-------------|
 | Status | `GET /controller-status` | System config and zone health |
+| Health | `GET /zones/:id/health` | Live gateway health probe from inside the VM |
 | Logs | `GET /zones/:id/logs` | Gateway process logs from VM |
 | Credentials | `POST /zones/:id/credentials/refresh` | Re-resolve secrets, restart gateway |
 | Destroy | `POST /zones/:id/destroy` | Stop gateway, release leases, purge state |
