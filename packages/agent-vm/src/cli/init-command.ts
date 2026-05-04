@@ -617,7 +617,7 @@ RUN apt-get update && \\
     (cd "$OPENCLAW_PACKAGE_ROOT" && node scripts/postinstall-bundled-plugins.mjs) && \\
     printf '%s\\n' \\
       '{' \\
-      '  "gateway": { "mode": "local" },' \\
+      '  "gateway": { "mode": "local", "auth": { "mode": "token" } },' \\
       '  "plugins": {' \\
       '    "allow": ["gondolin", "memory-core"],' \\
       '    "slots": { "memory": "memory-core" },' \\
@@ -821,6 +821,7 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 		},
 	},
 	tools: { elevated: { enabled: false } },
+	commands: { ownerAllowFrom: [] },
 	plugins: {
 		load: {
 			paths: [defaultOpenClawExtensionsPath],

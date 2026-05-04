@@ -423,6 +423,9 @@ describe('scaffoldAgentVmProject', () => {
 		expect(gatewayDockerfile).toContain('Do not bake auth tokens');
 		expect(gatewayDockerfile).toContain('(ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)');
 		expect(gatewayDockerfile).toContain('pnpm add -g openclaw@2026.4.24');
+		expect(gatewayDockerfile).toContain(
+			'"gateway": { "mode": "local", "auth": { "mode": "token" } }',
+		);
 		expect(gatewayDockerfile).not.toContain('"channels": { "discord": { "enabled": true } }');
 		expect(gatewayDockerfile).toContain('"allow": ["gondolin", "memory-core"]');
 		expect(gatewayDockerfile).toContain('"slots": { "memory": "memory-core" }');
@@ -1183,6 +1186,7 @@ describe('scaffoldAgentVmProject', () => {
 		) as {
 			readonly gateway?: { readonly auth?: { readonly mode?: string } };
 			readonly agents?: { readonly defaults?: { readonly sandbox?: { readonly scope?: string } } };
+			readonly commands?: { readonly ownerAllowFrom?: readonly string[] };
 			readonly plugins?: {
 				readonly allow?: readonly string[];
 				readonly slots?: { readonly memory?: string };
@@ -1191,6 +1195,7 @@ describe('scaffoldAgentVmProject', () => {
 		};
 		expect(openClawConfig.gateway?.auth?.mode).toBe('token');
 		expect(openClawConfig.agents?.defaults?.sandbox?.scope).toBe('agent');
+		expect(openClawConfig.commands?.ownerAllowFrom).toEqual([]);
 		expect(openClawConfig.plugins?.allow).toContain('memory-core');
 		expect(openClawConfig.plugins?.slots?.memory).toBe('memory-core');
 		expect(openClawConfig.plugins?.entries?.['memory-core']).toEqual({ enabled: true });
