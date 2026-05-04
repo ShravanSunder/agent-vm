@@ -601,6 +601,8 @@ ${gatewayDockerfileAuthBoundaryNote}
 ENV PNPM_HOME=/pnpm
 ENV PATH=\${PNPM_HOME}:\${PATH}
 
+COPY vendor/gondolin ${defaultOpenClawExtensionsPath}/gondolin
+
 RUN apt-get update && \\
     apt-get install -y --no-install-recommends \\
       openssh-server \\
@@ -619,17 +621,17 @@ RUN apt-get update && \\
       '{' \\
       '  "gateway": { "mode": "local", "auth": { "mode": "token" } },' \\
       '  "plugins": {' \\
+      '    "load": { "paths": ["${defaultOpenClawExtensionsPath}", "/pnpm/global/5/node_modules/@openclaw"] },' \\
       '    "allow": ["gondolin", "memory-core"],' \\
       '    "slots": { "memory": "memory-core" },' \\
       '    "entries": {' \\
-      '      "gondolin": { "enabled": true },' \\
+      '      "gondolin": { "enabled": true, "config": { "controllerUrl": "http://controller.vm.host:18800", "zoneId": "build" } },' \\
       '      "memory-core": { "enabled": true }' \\
       '    }' \\
       '  }' \\
       '}' > /tmp/openclaw-plugin-stage-config.json && \\
     chmod 600 /tmp/openclaw-plugin-stage-config.json && \\
-    (OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive || true) && \\
-    test -n "$(find /opt/openclaw/plugin-runtime-deps -name .openclaw-runtime-deps.json -type f -print -quit)" && \\
+    (OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json openclaw doctor --fix --non-interactive || true) && \\
     rm -f /tmp/openclaw-plugin-stage-config.json /tmp/openclaw-plugin-stage-config.json.bak && \\
     mkdir -p /opt/openclaw-sdk && \\
     ln -sf "$OPENCLAW_PACKAGE_ROOT/dist/plugin-sdk/sandbox.js" /opt/openclaw-sdk/sandbox.js && \\
@@ -637,11 +639,9 @@ RUN apt-get update && \\
     chmod 755 /usr/local/bin/openclaw && \\
     useradd -m -s /bin/bash openclaw && \\
     mkdir -p ${defaultOpenClawExtensionsPath} /zone /run/sshd /root /work/tmp /work/cache && \\
-    chown -R openclaw:openclaw /opt/openclaw/plugin-runtime-deps && \\
     chown -R openclaw:openclaw /home/openclaw /work && \\
+    chown -R root:root ${defaultOpenClawExtensionsPath} && \\
     (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
-
-COPY vendor/gondolin ${defaultOpenClawExtensionsPath}/gondolin
 `;
 
 const defaultLocalWorkerGatewayDockerfile = `FROM node:24-slim
@@ -824,7 +824,7 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 	commands: { ownerAllowFrom: [] },
 	plugins: {
 		load: {
-			paths: [defaultOpenClawExtensionsPath],
+			paths: [defaultOpenClawExtensionsPath, '/pnpm/global/5/node_modules/@openclaw'],
 		},
 		allow: ['gondolin', 'memory-core'],
 		slots: { memory: 'memory-core' },

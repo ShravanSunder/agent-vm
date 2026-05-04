@@ -427,23 +427,32 @@ describe('scaffoldAgentVmProject', () => {
 			'"gateway": { "mode": "local", "auth": { "mode": "token" } }',
 		);
 		expect(gatewayDockerfile).not.toContain('"channels": { "discord": { "enabled": true } }');
+		expect(gatewayDockerfile).toContain(
+			'"load": { "paths": ["/home/openclaw/.openclaw/extensions", "/pnpm/global/5/node_modules/@openclaw"] }',
+		);
 		expect(gatewayDockerfile).toContain('"allow": ["gondolin", "memory-core"]');
 		expect(gatewayDockerfile).toContain('"slots": { "memory": "memory-core" }');
 		expect(gatewayDockerfile).toContain(
+			'"gondolin": { "enabled": true, "config": { "controllerUrl": "http://controller.vm.host:18800", "zoneId": "build" } }',
+		);
+		expect(gatewayDockerfile).toContain(
 			'OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json',
 		);
-		expect(gatewayDockerfile).toContain(
-			'OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps openclaw doctor --fix --non-interactive',
-		);
-		expect(gatewayDockerfile).toContain(
-			'find /opt/openclaw/plugin-runtime-deps -name .openclaw-runtime-deps.json -type f -print -quit',
-		);
+		expect(gatewayDockerfile).not.toContain('OPENCLAW_PLUGIN_STAGE_DIR');
+		expect(gatewayDockerfile).not.toContain('plugin-runtime-deps');
+		expect(gatewayDockerfile).not.toContain('.openclaw-runtime-deps.json');
 		expect(gatewayDockerfile).toContain('/zone');
 		expect(gatewayDockerfile).toContain('/work/tmp /work/cache');
 		expect(gatewayDockerfile).toContain('chown -R openclaw:openclaw /home/openclaw /work');
+		expect(gatewayDockerfile).toContain(
+			'chown -R root:root /home/openclaw/.openclaw/extensions',
+		);
 		expect(gatewayDockerfile).not.toContain('/home/openclaw/workspace');
 		expect(gatewayDockerfile).toContain(
 			'COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin',
+		);
+		expect(gatewayDockerfile.indexOf('COPY vendor/gondolin')).toBeLessThan(
+			gatewayDockerfile.indexOf('openclaw doctor --fix --non-interactive'),
 		);
 		expect(gatewayDockerfile).not.toContain('@agent-vm/openclaw-agent-vm-plugin');
 		expect(
@@ -833,6 +842,10 @@ describe('scaffoldAgentVmProject', () => {
 			'http://127.0.0.1:18791',
 			'http://localhost:18791',
 		]);
+		expect(openClawConfig.plugins.load.paths).toEqual([
+			'/home/openclaw/.openclaw/extensions',
+			'/pnpm/global/5/node_modules/@openclaw',
+		]);
 		expect(openClawConfig.agents.defaults.thinkingDefault).toBeUndefined();
 		expect(openClawConfig.agents.defaults.workspace).toBe('/zone');
 		expect(openClawConfig.agents.defaults.models['openai-codex/gpt-5.4'].params.thinking).toBe(
@@ -841,7 +854,6 @@ describe('scaffoldAgentVmProject', () => {
 		expect(openClawConfig.agents.defaults.models['openai-codex/gpt-5.4-mini'].params.thinking).toBe(
 			'high',
 		);
-		expect(openClawConfig.plugins.load.paths).toEqual(['/home/openclaw/.openclaw/extensions']);
 	});
 
 	it('scaffolds control-ui allowed origins from an existing zone ingress port', async () => {

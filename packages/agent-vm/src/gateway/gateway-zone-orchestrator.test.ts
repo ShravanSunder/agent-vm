@@ -325,7 +325,6 @@ describe('startGatewayZone', () => {
 					NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
 					OPENCLAW_HOME: '/home/openclaw',
 					OPENCLAW_CONFIG_PATH: '/home/openclaw/.openclaw/state/effective-openclaw.json',
-					OPENCLAW_PLUGIN_STAGE_DIR: '/opt/openclaw/plugin-runtime-deps',
 					OPENCLAW_STATE_DIR: '/home/openclaw/.openclaw/state',
 					DISCORD_BOT_TOKEN: 'resolved-key',
 				}),
@@ -352,7 +351,7 @@ describe('startGatewayZone', () => {
 			}),
 		);
 		expect(execMock).toHaveBeenCalledWith(
-			'cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &',
+			'set -a && . /run/openclaw/secrets.env && set +a && cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &',
 		);
 		expect(setIngressRoutesMock).toHaveBeenCalledWith([
 			{

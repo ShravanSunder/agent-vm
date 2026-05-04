@@ -40,9 +40,11 @@ describe('createGondolinPlugin', () => {
 		const manifestPath = path.resolve(import.meta.dirname, '..', 'openclaw.plugin.json');
 		const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
 			readonly activation?: { readonly onStartup?: boolean };
+			readonly cliBackends?: readonly string[];
 		};
 
 		expect(manifest.activation?.onStartup).toBe(true);
+		expect(manifest.cliBackends).toContain('gondolin');
 	});
 
 	it('exports a default plugin descriptor with the gondolin id', () => {
