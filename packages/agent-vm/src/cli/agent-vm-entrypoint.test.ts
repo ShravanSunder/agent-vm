@@ -536,6 +536,39 @@ describe('runAgentVmCli', () => {
 		});
 	});
 
+	it('expands container arm64 preset defaults', async () => {
+		const scaffoldAgentVmProject = vi.fn(async () => ({
+			created: ['config/system.json'],
+			keychainStored: false,
+			skipped: [],
+		}));
+
+		await runAgentVmCli(
+			['init', 'coding-agent', '--type', 'worker', '--preset', 'container-arm64'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
+				scaffoldAgentVmProject,
+			},
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
+			architecture: 'aarch64',
+			gatewayType: 'worker',
+			hostSystemType: 'container',
+			overwrite: false,
+			paths: 'pod',
+			secretsProvider: 'environment',
+			targetDir: '/tmp/agent-vm-init',
+			writeLocalEnvironmentFile: false,
+			zoneId: 'coding-agent',
+		});
+	});
+
 	it('passes init overwrite flag to scaffolding', async () => {
 		const scaffoldAgentVmProject = vi.fn(async () => ({
 			created: ['config/system.json'],

@@ -198,7 +198,7 @@ describe('runBuildCommand', () => {
 					fingerprint: 'managed-fp',
 					imagePath: '/cache/managed',
 				}),
-				resolveAgentVmPackageVersion: async () => '0.0.40',
+				resolveAgentVmPackageVersion: async () => '0.0.41',
 				runTask: async (_title, fn) => fn(),
 			},
 		);
@@ -210,7 +210,7 @@ describe('runBuildCommand', () => {
 		);
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
 		expect(generatedDockerfile).toContain(
-			'FROM ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:0.0.40',
+			'FROM ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:0.0.41',
 		);
 		expect(generatedDockerfile).toContain(
 			'RUN apt-get update && apt-get install -y --no-install-recommends "ca-certificates"',
@@ -282,7 +282,7 @@ describe('runBuildCommand', () => {
 					fingerprint: 'discord-fp',
 					imagePath: '/cache/discord',
 				}),
-				resolveAgentVmPackageVersion: async () => '0.0.40',
+				resolveAgentVmPackageVersion: async () => '0.0.41',
 				runTask: async (_title, fn) => fn(),
 			},
 		);

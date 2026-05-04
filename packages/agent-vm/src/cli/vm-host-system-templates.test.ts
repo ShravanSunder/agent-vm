@@ -33,6 +33,8 @@ describe('vm-host-system templates', () => {
 		});
 
 		expect(dockerfile).toContain('image pull alpine-base:latest --arch aarch64');
+		expect(dockerfile).toContain('zig-aarch64-linux-0.15.2');
+		expect(dockerfile).not.toContain('zig-x86_64-linux-0.15.2');
 	});
 
 	it('includes the ARG GIT_SHA guard without a default', () => {

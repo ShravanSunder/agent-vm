@@ -76,6 +76,8 @@ For container-host or CI scaffolds, use:
 
 ```bash
 agent-vm init coding-agent --type worker --preset container-x86 --namespace agent-vm
+# or, on an arm64 container host:
+agent-vm init coding-agent --type worker --preset container-arm64 --namespace agent-vm
 ```
 
 Container presets use environment-backed secrets and do not write `.env.local`.

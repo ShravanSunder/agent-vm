@@ -81,6 +81,14 @@ describe('repo resource commands', () => {
 		).resolves.toBe('#!/usr/bin/env bash\necho custom\n');
 	});
 
+	it('requires resources init before updating generated files', async () => {
+		const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resource-update-missing-'));
+
+		await expect(updateRepoResources({ targetDir })).rejects.toThrow(
+			/Run agent-vm resources init first/u,
+		);
+	});
+
 	it('validates current repo resource files and rejects stale resource hook files', async () => {
 		const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resource-validate-'));
 		await initRepoResources({ targetDir });
