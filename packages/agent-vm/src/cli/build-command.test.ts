@@ -707,6 +707,49 @@ describe('runBuildCommand', () => {
 		expect(statusMessages).toContain('deleted 1 old image generation');
 	});
 
+	it('waits for every Gondolin image target before auto-pruning', async () => {
+		const buildOrder: string[] = [];
+
+		await runBuildCommand(
+			{
+				systemConfig: createTestSystemConfig(),
+			},
+			{
+				buildDockerImage: async () => {},
+				buildGondolinImage: async (options) => {
+					buildOrder.push(`gondolin:${options.cacheDir}`);
+					return {
+						built: false,
+						fingerprint: options.cacheDir.includes('gateway-images')
+							? 'current-gateway'
+							: 'current-tool',
+						imagePath: path.join(options.cacheDir, 'current'),
+					};
+				},
+				deleteStaleImageDirectories: async () => {},
+				findPrunableImageDirectories: async () => {
+					buildOrder.push('prune');
+					return [];
+				},
+				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+				runTask: async (_title, fn) => {
+					await fn({
+						interactive: false,
+						setOutput: () => {},
+						setStatus: () => {},
+					});
+				},
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		expect(buildOrder).toEqual([
+			'gondolin:/cache/gateway-images/openclaw',
+			'gondolin:/cache/tool-vm-images/default',
+			'prune',
+		]);
+	});
+
 	it('does not auto-prune when a Docker build fails', async () => {
 		const deleteStaleImageDirectories = vi.fn(async () => {});
 		const findPrunableImageDirectories = vi.fn(async () => []);

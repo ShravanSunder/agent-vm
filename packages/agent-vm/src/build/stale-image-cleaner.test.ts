@@ -171,6 +171,25 @@ describe('findPrunableImageDirectories', () => {
 		expect(prunableEntries.map((entry) => entry.fingerprint)).toEqual(['stale-third']);
 	});
 
+	it('keeps the only stale generation for a profile', async () => {
+		const cacheDirectory = await createTemporaryDirectory();
+		const profileDirectory = path.join(cacheDirectory, 'gateway-images', 'openclaw');
+
+		await fs.mkdir(path.join(profileDirectory, 'current'), { recursive: true });
+		await fs.mkdir(path.join(profileDirectory, 'only-stale'), { recursive: true });
+
+		const prunableEntries = await findPrunableImageDirectories({
+			cacheDir: cacheDirectory,
+			currentFingerprints: {
+				gateways: { openclaw: 'current' },
+				toolVms: {},
+			},
+			retainStaleGenerationsPerProfile: 2,
+		});
+
+		expect(prunableEntries).toEqual([]);
+	});
+
 	it('applies stale generation retention independently per family and profile', async () => {
 		const cacheDirectory = await createTemporaryDirectory();
 
