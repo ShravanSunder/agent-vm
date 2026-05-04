@@ -202,7 +202,14 @@ const generatedSecretReferenceSchema = z.object({
 const generatedOpenClawToolVmSystemConfigSchema = generatedSystemConfigSchema.extend({
 	imageProfiles: z.object({
 		toolVms: z.object({
-			default: z.object({ buildConfig: z.string(), dockerfile: z.string() }),
+			default: z.object({
+				buildConfig: z.string(),
+				source: z.object({
+					kind: z.literal('managedBase'),
+					base: z.literal('tool-vm'),
+					overlay: z.string(),
+				}),
+			}),
 		}),
 	}),
 	tcpPool: z.object({ basePort: z.number(), size: z.number() }),
@@ -255,23 +262,20 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 		const config = scaffoldedSystemConfigSchema.parse(await readGeneratedSystemConfig(targetDir));
-		const gatewayDockerfile = await fs.readFile(
-			path.join(targetDir, 'vm-images', 'gateways', 'worker', 'Dockerfile'),
-			'utf8',
-		);
+		const systemConfig = await readGeneratedSystemConfig(targetDir);
 
 		expect(config.zones[0]?.gateway.type).toBe('worker');
-		expect(gatewayDockerfile).toContain('Do not bake auth tokens');
-		expect(gatewayDockerfile).toContain('@openai/codex');
-		expect(gatewayDockerfile).toContain('apt-get install -y --no-install-recommends gh');
-		expect(gatewayDockerfile).toContain('(ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)');
-		expect(gatewayDockerfile).toContain('mkdir -p /work/repos /work/tmp /work/cache');
-		expect(gatewayDockerfile).not.toContain('/workspace');
-		expect(gatewayDockerfile).not.toContain('@agent-vm/agent-vm-worker');
-		expect(gatewayDockerfile).not.toContain('/usr/local/lib/node_modules/@agent-vm');
-		expect(gatewayDockerfile).not.toContain('openclaw@');
-		expect(gatewayDockerfile).not.toContain('.npmrc');
-		expect(gatewayDockerfile).not.toContain('_authToken');
+		expect(systemConfig.imageProfiles?.gateways.worker?.source).toEqual({
+			kind: 'managedBase',
+			base: 'worker-gateway',
+			overlay: '../vm-images/gateways/worker/overlay.jsonc',
+		});
+		await expect(
+			fs.access(path.join(targetDir, 'vm-images', 'gateways', 'worker', 'Dockerfile')),
+		).rejects.toMatchObject({ code: 'ENOENT' });
+		await expect(
+			fs.access(path.join(targetDir, 'vm-images', 'gateways', 'worker', 'overlay.jsonc')),
+		).resolves.toBeUndefined();
 	});
 
 	it('scaffolds worker.jsonc with editable prompt file references for every default prompt', async () => {
@@ -401,7 +405,7 @@ describe('scaffoldAgentVmProject', () => {
 		]);
 	});
 
-	it('scaffolds the published gondolin plugin install into the openclaw gateway Dockerfile', async () => {
+	it('scaffolds openclaw gateways with a managed base image overlay', async () => {
 		const targetDir = await createTestDirectory();
 
 		await scaffoldAgentVmProject(
@@ -415,57 +419,29 @@ describe('scaffoldAgentVmProject', () => {
 			},
 			noGeneratedAgeIdentityDependencies,
 		);
-		const gatewayDockerfile = await fs.readFile(
-			path.join(targetDir, 'vm-images', 'gateways', 'openclaw', 'Dockerfile'),
-			'utf8',
-		);
+		const systemConfig = await readGeneratedSystemConfig(targetDir);
+		const overlay = z
+			.object({ schemaVersion: z.literal(1), extraAptPackages: z.array(z.string()) })
+			.parse(
+				await readGeneratedJsonc(
+					path.join(targetDir, 'vm-images', 'gateways', 'openclaw', 'overlay.jsonc'),
+				),
+			);
 
-		expect(gatewayDockerfile).toContain('Do not bake auth tokens');
-		expect(gatewayDockerfile).toContain('(ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)');
-		expect(gatewayDockerfile).toContain('pnpm add -g openclaw@2026.4.24');
-		expect(gatewayDockerfile).toContain(
-			'"gateway": { "mode": "local", "auth": { "mode": "token" } }',
-		);
-		expect(gatewayDockerfile).not.toContain('"channels": { "discord": { "enabled": true } }');
-		expect(gatewayDockerfile).toContain(
-			'"load": { "paths": ["/home/openclaw/.openclaw/extensions", "/pnpm/global/5/node_modules/@openclaw"] }',
-		);
-		expect(gatewayDockerfile).toContain('"allow": ["gondolin", "memory-core"]');
-		expect(gatewayDockerfile).toContain('"slots": { "memory": "memory-core" }');
-		expect(gatewayDockerfile).toContain(
-			'"gondolin": { "enabled": true, "config": { "controllerUrl": "http://controller.vm.host:18800", "zoneId": "build" } }',
-		);
-		expect(gatewayDockerfile).toContain(
-			'OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json',
-		);
-		expect(gatewayDockerfile).not.toContain('OPENCLAW_PLUGIN_STAGE_DIR');
-		expect(gatewayDockerfile).not.toContain('plugin-runtime-deps');
-		expect(gatewayDockerfile).not.toContain('.openclaw-runtime-deps.json');
-		expect(gatewayDockerfile).toContain('/zone');
-		expect(gatewayDockerfile).toContain('/work/tmp /work/cache');
-		expect(gatewayDockerfile).toContain('chown -R openclaw:openclaw /home/openclaw /work');
-		expect(gatewayDockerfile).toContain('chown -R root:root /home/openclaw/.openclaw/extensions');
-		expect(gatewayDockerfile).not.toContain('/home/openclaw/workspace');
-		expect(gatewayDockerfile).toContain(
-			'COPY vendor/gondolin /home/openclaw/.openclaw/extensions/gondolin',
-		);
-		expect(gatewayDockerfile.indexOf('COPY vendor/gondolin')).toBeLessThan(
-			gatewayDockerfile.indexOf('openclaw doctor --fix --non-interactive'),
-		);
-		expect(gatewayDockerfile).not.toContain('@agent-vm/openclaw-agent-vm-plugin');
+		expect(systemConfig.imageProfiles?.gateways.openclaw?.source).toEqual({
+			kind: 'managedBase',
+			base: 'openclaw-gateway',
+			overlay: '../vm-images/gateways/openclaw/overlay.jsonc',
+		});
+		expect(overlay).toEqual({ schemaVersion: 1, extraAptPackages: [] });
+		await expect(
+			fs.access(path.join(targetDir, 'vm-images', 'gateways', 'openclaw', 'Dockerfile')),
+		).rejects.toMatchObject({ code: 'ENOENT' });
 		expect(
 			await pathExists(
-				path.join(
-					targetDir,
-					'vm-images',
-					'gateways',
-					'openclaw',
-					'vendor',
-					'gondolin',
-					'openclaw.plugin.json',
-				),
+				path.join(targetDir, 'vm-images', 'gateways', 'openclaw', 'vendor', 'gondolin'),
 			),
-		).toBe(true);
+		).toBe(false);
 	});
 
 	it('scaffolds generated deployment manual files and CLAUDE.md symlink', async () => {
@@ -1168,9 +1144,11 @@ describe('scaffoldAgentVmProject', () => {
 		expect(config.imageProfiles.toolVms.default.buildConfig).toBe(
 			'../vm-images/tool-vms/default/build-config.jsonc',
 		);
-		expect(config.imageProfiles.toolVms.default.dockerfile).toBe(
-			'../vm-images/tool-vms/default/Dockerfile',
-		);
+		expect(config.imageProfiles.toolVms.default.source).toEqual({
+			kind: 'managedBase',
+			base: 'tool-vm',
+			overlay: '../vm-images/tool-vms/default/overlay.jsonc',
+		});
 		await expect(
 			fs.access(path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'build-config.json')),
 		).rejects.toMatchObject({ code: 'ENOENT' });
@@ -1179,15 +1157,10 @@ describe('scaffoldAgentVmProject', () => {
 		).resolves.toBeUndefined();
 		await expect(
 			fs.access(path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'Dockerfile')),
+		).rejects.toMatchObject({ code: 'ENOENT' });
+		await expect(
+			fs.access(path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'overlay.jsonc')),
 		).resolves.toBeUndefined();
-		const dockerfile = await fs.readFile(
-			path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'Dockerfile'),
-			'utf8',
-		);
-		expect(dockerfile).toContain('ripgrep');
-		expect(dockerfile).toContain('fd-find');
-		expect(dockerfile).toContain('build-essential');
-		expect(dockerfile).toContain('ln -sf /usr/bin/fdfind /usr/local/bin/fd');
 		const openClawConfig = JSON.parse(
 			await fs.readFile(
 				path.join(targetDir, 'config', 'gateways', 'test-openclaw', 'openclaw.json'),
@@ -1538,7 +1511,11 @@ describe('scaffoldAgentVmProject', () => {
 					gateways: z.object({
 						worker: z.object({
 							buildConfig: z.string().min(1),
-							dockerfile: z.string().min(1),
+							source: z.object({
+								kind: z.literal('managedBase'),
+								base: z.literal('worker-gateway'),
+								overlay: z.string().min(1),
+							}),
 						}),
 					}),
 					toolVms: z.record(z.string(), z.unknown()).optional(),
@@ -1561,9 +1538,11 @@ describe('scaffoldAgentVmProject', () => {
 		expect(podWorkerSystemConfig.imageProfiles.gateways.worker.buildConfig).toBe(
 			'/etc/agent-vm/vm-images/gateways/worker/build-config.jsonc',
 		);
-		expect(podWorkerSystemConfig.imageProfiles.gateways.worker.dockerfile).toBe(
-			'/etc/agent-vm/vm-images/gateways/worker/Dockerfile',
-		);
+		expect(podWorkerSystemConfig.imageProfiles.gateways.worker.source).toEqual({
+			kind: 'managedBase',
+			base: 'worker-gateway',
+			overlay: '/etc/agent-vm/vm-images/gateways/worker/overlay.jsonc',
+		});
 		expect(podWorkerSystemConfig.imageProfiles.toolVms).toEqual({});
 		expect(podWorkerSystemConfig.zones[0].gateway.config).toBe(
 			'/etc/agent-vm/gateways/coding-agent/worker.jsonc',
@@ -1582,23 +1561,10 @@ describe('scaffoldAgentVmProject', () => {
 					path.join(targetDir, 'vm-images', 'gateways', 'worker', 'build-config.jsonc'),
 				),
 			);
-		const workerDockerfile = await fs.readFile(
-			path.join(targetDir, 'vm-images', 'gateways', 'worker', 'Dockerfile'),
-			'utf8',
-		);
 		expect(gatewayBuildConfig.arch).toBe('x86_64');
-		expect(workerDockerfile).toContain('Do not bake auth tokens');
-		expect(workerDockerfile).toContain('apt-get install -y --no-install-recommends gh');
-		expect(workerDockerfile).toContain('COPY agent-vm-worker/ /opt/agent-vm-worker/');
-		expect(workerDockerfile).toContain('/usr/local/bin/agent-vm-worker');
-		expect(workerDockerfile).toContain('pnpm@10');
-		expect(workerDockerfile).toContain('astral.sh/uv/install.sh');
-		expect(workerDockerfile).toContain('/usr/local/bin/uv');
-		expect(workerDockerfile).toContain('(ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)');
-		expect(workerDockerfile).toContain('mkdir -p /work/repos /work/tmp /work/cache');
-		expect(workerDockerfile).not.toContain('/workspace');
-		expect(workerDockerfile).not.toContain('.npmrc');
-		expect(workerDockerfile).not.toContain('_authToken');
+		await expect(
+			fs.access(path.join(targetDir, 'vm-images', 'gateways', 'worker', 'Dockerfile')),
+		).rejects.toMatchObject({ code: 'ENOENT' });
 		await expect(
 			fs.access(path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'build-config.json')),
 		).rejects.toMatchObject({ code: 'ENOENT' });

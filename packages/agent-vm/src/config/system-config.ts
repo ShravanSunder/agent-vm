@@ -179,6 +179,14 @@ const imageConfigSchema = z
 	.object({
 		buildConfig: z.string().min(1),
 		dockerfile: z.string().min(1).optional(),
+		source: z
+			.object({
+				kind: z.literal('managedBase'),
+				base: z.enum(['openclaw-gateway', 'worker-gateway', 'tool-vm']),
+				overlay: z.string().min(1).optional(),
+			})
+			.strict()
+			.optional(),
 	})
 	.strict();
 
@@ -272,6 +280,31 @@ const systemConfigSchema = z
 				message: 'system config must define at least one gateway image profile.',
 				path: ['imageProfiles', 'gateways'],
 			});
+		}
+
+		for (const [profileName, profile] of Object.entries(config.imageProfiles.gateways)) {
+			if (!profile.source) {
+				continue;
+			}
+			const expectedManagedBase =
+				profile.type === 'openclaw' ? 'openclaw-gateway' : 'worker-gateway';
+			if (profile.source.base !== expectedManagedBase) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Gateway image profile '${profileName}' type '${profile.type}' must use managed base '${expectedManagedBase}'.`,
+					path: ['imageProfiles', 'gateways', profileName, 'source', 'base'],
+				});
+			}
+		}
+
+		for (const [profileName, profile] of Object.entries(config.imageProfiles.toolVms)) {
+			if (profile.source && profile.source.base !== 'tool-vm') {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Tool VM image profile '${profileName}' must use managed base 'tool-vm'.`,
+					path: ['imageProfiles', 'toolVms', profileName, 'source', 'base'],
+				});
+			}
 		}
 
 		for (const [zoneIndex, zone] of config.zones.entries()) {
@@ -491,6 +524,9 @@ function resolveRelativePaths(
 						...profile,
 						buildConfig: resolvePath(profile.buildConfig),
 						...(profile.dockerfile ? { dockerfile: resolvePath(profile.dockerfile) } : {}),
+						...(profile.source?.overlay
+							? { source: { ...profile.source, overlay: resolvePath(profile.source.overlay) } }
+							: {}),
 					},
 				]),
 			),
@@ -501,6 +537,9 @@ function resolveRelativePaths(
 						...profile,
 						buildConfig: resolvePath(profile.buildConfig),
 						...(profile.dockerfile ? { dockerfile: resolvePath(profile.dockerfile) } : {}),
+						...(profile.source?.overlay
+							? { source: { ...profile.source, overlay: resolvePath(profile.source.overlay) } }
+							: {}),
 					},
 				]),
 			),

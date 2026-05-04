@@ -32,10 +32,6 @@ import {
 } from './keychain-credential.js';
 import { updateAgentVmManual } from './manual-commands.js';
 import {
-	openClawPluginVendorDirectory,
-	syncBundledOpenClawPluginBundle,
-} from './openclaw-plugin-bundle.js';
-import {
 	renderVmHostSystemDockerfile,
 	renderVmHostSystemReadme,
 	renderVmHostSystemStartScript,
@@ -94,9 +90,9 @@ interface ScaffoldPathProfile {
 	readonly gatewayZoneFilesDir: (zoneId: string) => string;
 	readonly gatewayBackupDir: (zoneId: string) => string;
 	readonly gatewayBuildConfig: (gatewayType: GatewayType) => string;
-	readonly gatewayDockerfile: (gatewayType: GatewayType) => string;
+	readonly gatewayOverlay: (gatewayType: GatewayType) => string;
 	readonly toolVmBuildConfig: string;
-	readonly toolVmDockerfile: string;
+	readonly toolVmOverlay: string;
 }
 
 interface PromptReference {
@@ -182,9 +178,9 @@ const localPathProfile: ScaffoldPathProfile = {
 	gatewayZoneFilesDir: (zoneId) => `../zone-files/${zoneId}`,
 	gatewayBackupDir: (zoneId) => `../backups/${zoneId}`,
 	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.jsonc`,
-	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
+	gatewayOverlay: (gatewayType) => `../vm-images/gateways/${gatewayType}/overlay.jsonc`,
 	toolVmBuildConfig: '../vm-images/tool-vms/default/build-config.jsonc',
-	toolVmDockerfile: '../vm-images/tool-vms/default/Dockerfile',
+	toolVmOverlay: '../vm-images/tool-vms/default/overlay.jsonc',
 };
 
 const podPathProfile: ScaffoldPathProfile = {
@@ -198,9 +194,9 @@ const podPathProfile: ScaffoldPathProfile = {
 	gatewayBackupDir: () => '/var/agent-vm/backups',
 	gatewayBuildConfig: (gatewayType) =>
 		`/etc/agent-vm/vm-images/gateways/${gatewayType}/build-config.jsonc`,
-	gatewayDockerfile: (gatewayType) => `/etc/agent-vm/vm-images/gateways/${gatewayType}/Dockerfile`,
+	gatewayOverlay: (gatewayType) => `/etc/agent-vm/vm-images/gateways/${gatewayType}/overlay.jsonc`,
 	toolVmBuildConfig: '/etc/agent-vm/vm-images/tool-vms/default/build-config.jsonc',
-	toolVmDockerfile: '/etc/agent-vm/vm-images/tool-vms/default/Dockerfile',
+	toolVmOverlay: '/etc/agent-vm/vm-images/tool-vms/default/overlay.jsonc',
 };
 
 /**
@@ -219,9 +215,9 @@ const userDirPathProfile: ScaffoldPathProfile = {
 	gatewayZoneFilesDir: (zoneId) => `~/.agent-vm/zone-files/${zoneId}`,
 	gatewayBackupDir: (zoneId) => `~/.agent-vm-backups/${zoneId}`,
 	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.jsonc`,
-	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
+	gatewayOverlay: (gatewayType) => `../vm-images/gateways/${gatewayType}/overlay.jsonc`,
 	toolVmBuildConfig: '../vm-images/tool-vms/default/build-config.jsonc',
-	toolVmDockerfile: '../vm-images/tool-vms/default/Dockerfile',
+	toolVmOverlay: '../vm-images/tool-vms/default/overlay.jsonc',
 };
 
 function resolveScaffoldPathProfile(paths: ScaffoldPathMode | undefined): ScaffoldPathProfile {
@@ -264,11 +260,7 @@ function resolveConfigWritablePathProfile(
 			resolveHomeRelativeScaffoldPath(pathProfile.gatewayZoneFilesDir(zoneId), configDir, homeDir),
 		gatewayBackupDir: (zoneId) =>
 			resolveHomeRelativeScaffoldPath(pathProfile.gatewayBackupDir(zoneId), configDir, homeDir),
-		toolVmDockerfile: resolveHomeRelativeScaffoldPath(
-			pathProfile.toolVmDockerfile,
-			configDir,
-			homeDir,
-		),
+		toolVmOverlay: resolveHomeRelativeScaffoldPath(pathProfile.toolVmOverlay, configDir, homeDir),
 	};
 }
 
@@ -277,7 +269,15 @@ function defaultToolVmImageProfiles(
 	pathProfile: ScaffoldPathProfile,
 ): Record<
 	string,
-	{ readonly type: 'toolVm'; readonly buildConfig: string; readonly dockerfile: string }
+	{
+		readonly type: 'toolVm';
+		readonly buildConfig: string;
+		readonly source: {
+			readonly kind: 'managedBase';
+			readonly base: 'tool-vm';
+			readonly overlay: string;
+		};
+	}
 > {
 	if (gatewayType !== 'openclaw') {
 		return {};
@@ -286,8 +286,25 @@ function defaultToolVmImageProfiles(
 		default: {
 			type: 'toolVm',
 			buildConfig: pathProfile.toolVmBuildConfig,
-			dockerfile: pathProfile.toolVmDockerfile,
+			source: {
+				kind: 'managedBase',
+				base: 'tool-vm',
+				overlay: pathProfile.toolVmOverlay,
+			},
 		},
+	};
+}
+
+function defaultGatewayManagedBase(
+	gatewayType: GatewayType,
+): 'openclaw-gateway' | 'worker-gateway' {
+	return gatewayType === 'openclaw' ? 'openclaw-gateway' : 'worker-gateway';
+}
+
+function defaultManagedImageOverlay(): object {
+	return {
+		schemaVersion: 1,
+		extraAptPackages: [],
 	};
 }
 
@@ -338,7 +355,11 @@ const defaultSystemConfig = (
 			[gatewayType]: {
 				type: gatewayType,
 				buildConfig: pathProfile.gatewayBuildConfig(gatewayType),
-				dockerfile: pathProfile.gatewayDockerfile(gatewayType),
+				source: {
+					kind: 'managedBase',
+					base: defaultGatewayManagedBase(gatewayType),
+					overlay: pathProfile.gatewayOverlay(gatewayType),
+				},
 			},
 		},
 		toolVms: defaultToolVmImageProfiles(gatewayType, pathProfile),
@@ -587,165 +608,6 @@ function defaultEnvTemplate(gatewayType: GatewayType, secretsProvider: SecretsPr
 		default:
 			return assertNeverSecretsProvider(secretsProvider);
 	}
-}
-
-const gatewayDockerfileAuthBoundaryNote = `# NOTE: Do not bake auth tokens or credential material into this gateway image.
-# Runtime auth must flow through controller HTTP mediation. Keep token env
-# names, registry auth files, and build args out of this Dockerfile so a
-# future edit cannot accidentally turn a runtime secret into image state.`;
-
-const defaultGatewayDockerfile = `FROM node:24-slim
-
-${gatewayDockerfileAuthBoundaryNote}
-
-ENV PNPM_HOME=/pnpm
-ENV PATH=\${PNPM_HOME}:\${PATH}
-
-COPY vendor/gondolin ${defaultOpenClawExtensionsPath}/gondolin
-
-RUN apt-get update && \\
-    apt-get install -y --no-install-recommends \\
-      openssh-server \\
-      ca-certificates \\
-      git \\
-      gh \\
-      curl \\
-      python3 && \\
-    rm -rf /var/lib/apt/lists/* && \\
-    update-ca-certificates && \\
-    corepack enable && \\
-    pnpm add -g openclaw@2026.4.24 && \\
-    OPENCLAW_PACKAGE_ROOT="$(pnpm root -g)/openclaw" && \\
-    (cd "$OPENCLAW_PACKAGE_ROOT" && node scripts/postinstall-bundled-plugins.mjs) && \\
-    printf '%s\\n' \\
-      '{' \\
-      '  "gateway": { "mode": "local", "auth": { "mode": "token" } },' \\
-      '  "plugins": {' \\
-      '    "load": { "paths": ["${defaultOpenClawExtensionsPath}", "/pnpm/global/5/node_modules/@openclaw"] },' \\
-      '    "allow": ["gondolin", "memory-core"],' \\
-      '    "slots": { "memory": "memory-core" },' \\
-      '    "entries": {' \\
-      '      "gondolin": { "enabled": true, "config": { "controllerUrl": "http://controller.vm.host:18800", "zoneId": "build" } },' \\
-      '      "memory-core": { "enabled": true }' \\
-      '    }' \\
-      '  }' \\
-      '}' > /tmp/openclaw-plugin-stage-config.json && \\
-    chmod 600 /tmp/openclaw-plugin-stage-config.json && \\
-    (OPENCLAW_CONFIG_PATH=/tmp/openclaw-plugin-stage-config.json openclaw doctor --fix --non-interactive || true) && \\
-    rm -f /tmp/openclaw-plugin-stage-config.json /tmp/openclaw-plugin-stage-config.json.bak && \\
-    mkdir -p /opt/openclaw-sdk && \\
-    ln -sf "$OPENCLAW_PACKAGE_ROOT/dist/plugin-sdk/sandbox.js" /opt/openclaw-sdk/sandbox.js && \\
-    printf '#!/bin/sh\\nexec /pnpm/openclaw "$@"\\n' > /usr/local/bin/openclaw && \\
-    chmod 755 /usr/local/bin/openclaw && \\
-    useradd -m -s /bin/bash openclaw && \\
-    mkdir -p ${defaultOpenClawExtensionsPath} /zone /run/sshd /root /work/tmp /work/cache && \\
-    chown -R openclaw:openclaw /home/openclaw /work && \\
-    chown -R root:root ${defaultOpenClawExtensionsPath} && \\
-    (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
-`;
-
-const defaultLocalWorkerGatewayDockerfile = `FROM node:24-slim
-
-${gatewayDockerfileAuthBoundaryNote}
-
-RUN apt-get update && \\
-    apt-get install -y --no-install-recommends \\
-      openssh-server \\
-      ca-certificates \\
-      git \\
-      curl \\
-      python3 && \\
-    rm -rf /var/lib/apt/lists/* && \\
-    update-ca-certificates && \\
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \\
-      -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \\
-    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \\
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \\
-      > /etc/apt/sources.list.d/github-cli.list && \\
-    apt-get update && \\
-    apt-get install -y --no-install-recommends gh && \\
-    rm -rf /var/lib/apt/lists/* && \\
-    npm install -g @openai/codex pnpm@10 && \\
-    curl -LsSf https://astral.sh/uv/install.sh | sh && \\
-    mv /root/.local/bin/uv /usr/local/bin/uv && \\
-    mv /root/.local/bin/uvx /usr/local/bin/uvx && \\
-    useradd -m -s /bin/bash coder && \\
-    mkdir -p /work/repos /work/tmp /work/cache /run/sshd /state && \\
-    chown -R coder:coder /work /state && \\
-    (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
-`;
-
-const defaultPodWorkerGatewayDockerfile = `FROM node:24-slim
-
-${gatewayDockerfileAuthBoundaryNote}
-
-RUN apt-get update && \\
-    apt-get install -y --no-install-recommends \\
-      openssh-server \\
-      ca-certificates \\
-      git \\
-      curl \\
-      python3 && \\
-    rm -rf /var/lib/apt/lists/* && \\
-    update-ca-certificates && \\
-    npm install -g @openai/codex pnpm@10 && \\
-    curl -LsSf https://astral.sh/uv/install.sh | sh && \\
-    mv /root/.local/bin/uv /usr/local/bin/uv && \\
-    mv /root/.local/bin/uvx /usr/local/bin/uvx && \\
-    useradd -m -s /bin/bash coder && \\
-    mkdir -p /work/repos /work/tmp /work/cache /run/sshd /state && \\
-    chown -R coder:coder /work /state && \\
-    (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
-
-# Install GitHub CLI. The agent uses gh for PR creation; GitHub
-# auth is mediated by the controller proxy rather than exposed in
-# the VM environment.
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \\
-      -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \\
-    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \\
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \\
-    > /etc/apt/sources.list.d/github-cli.list && \\
-    apt-get update && \\
-    apt-get install -y --no-install-recommends gh && \\
-    rm -rf /var/lib/apt/lists/*
-
-# Install agent-vm-worker from deploy output copied into this directory
-# by the container-host runtime stage at build time.
-# pnpm deploy does not create a .bin entry for the deployed package itself,
-# so point directly at the package bin entrypoint.
-COPY agent-vm-worker/ /opt/agent-vm-worker/
-RUN chmod +x /opt/agent-vm-worker/dist/main.js && \\
-    ln -s /opt/agent-vm-worker/dist/main.js /usr/local/bin/agent-vm-worker
-`;
-
-const defaultToolVmDockerfile = `FROM node:24-slim
-
-RUN apt-get update && \\
-    apt-get install -y --no-install-recommends \\
-      openssh-server \\
-      ca-certificates \\
-      git \\
-      curl \\
-      jq \\
-      python3 \\
-      ripgrep \\
-      fd-find \\
-      build-essential \\
-      less \\
-      tree \\
-      nano \\
-      vim-tiny && \\
-    rm -rf /var/lib/apt/lists/* && \\
-    update-ca-certificates && \\
-    corepack enable && \\
-    ln -sf /usr/bin/fdfind /usr/local/bin/fd && \\
-    mkdir -p /work /run/sshd
-
-WORKDIR /work
-`;
-
-function defaultWorkerGatewayDockerfile(paths: ScaffoldPathMode | undefined): string {
-	return paths === 'pod' ? defaultPodWorkerGatewayDockerfile : defaultLocalWorkerGatewayDockerfile;
 }
 
 const defaultGatewayBuildConfig = (architecture: ImageArchitecture): object => ({
@@ -1113,22 +975,23 @@ async function scaffoldAgentVmProjectInternal(
 		}
 	}
 
-	const gatewayDockerfilePath = path.join(
+	const gatewayOverlayPath = path.join(
 		options.targetDir,
 		'vm-images',
 		'gateways',
 		gatewayType,
-		'Dockerfile',
+		'overlay.jsonc',
 	);
-	const gatewayDockerfileStatus = await writeFileIfMissing(
-		gatewayDockerfilePath,
-		gatewayType === 'openclaw'
-			? defaultGatewayDockerfile
-			: defaultWorkerGatewayDockerfile(options.paths),
+	const gatewayOverlayStatus = await writeFileIfMissing(
+		gatewayOverlayPath,
+		formatJsoncConfig(
+			'Human-authored managed gateway image overlay. Comments are allowed here.',
+			defaultManagedImageOverlay(),
+		),
 		overwrite,
 	);
-	(gatewayDockerfileStatus === 'created' ? created : skipped).push(
-		`vm-images/gateways/${gatewayType}/Dockerfile`,
+	(gatewayOverlayStatus === 'created' ? created : skipped).push(
+		`vm-images/gateways/${gatewayType}/overlay.jsonc`,
 	);
 
 	const gatewayBuildConfigPath = path.join(
@@ -1150,15 +1013,6 @@ async function scaffoldAgentVmProjectInternal(
 		`vm-images/gateways/${gatewayType}/build-config.jsonc`,
 	);
 	if (gatewayType === 'openclaw') {
-		const pluginCopyStatus = await (
-			dependencies.copyBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle
-		)(options.targetDir, gatewayType);
-		(pluginCopyStatus === 'created' ? created : skipped).push(
-			openClawPluginVendorDirectory(gatewayType),
-		);
-	}
-
-	if (gatewayType === 'openclaw') {
 		const toolBuildConfigPath = path.join(
 			options.targetDir,
 			'vm-images',
@@ -1177,20 +1031,23 @@ async function scaffoldAgentVmProjectInternal(
 		(toolBuildConfigStatus === 'created' ? created : skipped).push(
 			'vm-images/tool-vms/default/build-config.jsonc',
 		);
-		const toolDockerfilePath = path.join(
+		const toolOverlayPath = path.join(
 			options.targetDir,
 			'vm-images',
 			'tool-vms',
 			'default',
-			'Dockerfile',
+			'overlay.jsonc',
 		);
-		const toolDockerfileStatus = await writeFileIfMissing(
-			toolDockerfilePath,
-			defaultToolVmDockerfile,
+		const toolOverlayStatus = await writeFileIfMissing(
+			toolOverlayPath,
+			formatJsoncConfig(
+				'Human-authored managed Tool VM image overlay. Comments are allowed here.',
+				defaultManagedImageOverlay(),
+			),
 			overwrite,
 		);
-		(toolDockerfileStatus === 'created' ? created : skipped).push(
-			'vm-images/tool-vms/default/Dockerfile',
+		(toolOverlayStatus === 'created' ? created : skipped).push(
+			'vm-images/tool-vms/default/overlay.jsonc',
 		);
 	}
 

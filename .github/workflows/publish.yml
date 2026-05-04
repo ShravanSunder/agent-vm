@@ -29,6 +29,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      packages: write
 
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +62,21 @@ jobs:
 
       - name: Unit tests
         run: pnpm test:unit
+
+      - name: Publish managed base images to GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          PACKAGE_VERSION="$(node -p "require('./packages/agent-vm/package.json').version")"
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+          docker build -t "ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:${PACKAGE_VERSION}" docker/base-images/openclaw-gateway
+          docker build -t "ghcr.io/shravansunder/agent-vm-worker-gateway-base:${PACKAGE_VERSION}" docker/base-images/worker-gateway
+          docker build -t "ghcr.io/shravansunder/agent-vm-tool-vm-base:${PACKAGE_VERSION}" docker/base-images/tool-vm
+          docker push "ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:${PACKAGE_VERSION}"
+          docker push "ghcr.io/shravansunder/agent-vm-worker-gateway-base:${PACKAGE_VERSION}"
+          docker push "ghcr.io/shravansunder/agent-vm-tool-vm-base:${PACKAGE_VERSION}"
 
       - name: Publish to npm via OIDC
         run: pnpm -r publish --access=public --no-git-checks

@@ -25,8 +25,8 @@ openclaw.json, prompts                 git/catalog repo       git only
                                        desired config         not backup
 
 vm-images/gateways/openclaw/
-Dockerfile, build config               git/catalog repo       git only
-                                       image recipe           not backup
+build config, overlay                  git/catalog repo       git only
+                                       image customization    not backup
 
 /opt/openclaw/plugin-runtime-deps       image/rootfs baked     no
 Discord + stable plugin deps            hot boot deps          rebuild image
