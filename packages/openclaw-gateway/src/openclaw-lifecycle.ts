@@ -70,7 +70,7 @@ function buildOpenClawBootstrapCommand(
 	];
 
 	return (
-		`mkdir -p /root /etc/profile.d /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && cat > ${openClawShellEnvFilePath} << ENVEOF\n` +
+		`mkdir -p /root /etc/profile.d /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && chown -R openclaw:openclaw /work && cat > ${openClawShellEnvFilePath} << ENVEOF\n` +
 		environmentLines.join('\n') +
 		'\nENVEOF\n' +
 		`chmod 644 ${openClawShellEnvFilePath} && ` +

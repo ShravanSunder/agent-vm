@@ -617,9 +617,10 @@ RUN apt-get update && \\
     (cd "$OPENCLAW_PACKAGE_ROOT" && node scripts/postinstall-bundled-plugins.mjs) && \\
     printf '%s\\n' \\
       '{' \\
-      '  "gateway": { "mode": "local" },' \\
+      '  "gateway": { "mode": "local", "auth": { "mode": "token" } },' \\
       '  "plugins": {' \\
       '    "allow": ["gondolin", "memory-core"],' \\
+      '    "slots": { "memory": "memory-core" },' \\
       '    "entries": {' \\
       '      "gondolin": { "enabled": true },' \\
       '      "memory-core": { "enabled": true }' \\
@@ -635,9 +636,9 @@ RUN apt-get update && \\
     printf '#!/bin/sh\\nexec /pnpm/openclaw "$@"\\n' > /usr/local/bin/openclaw && \\
     chmod 755 /usr/local/bin/openclaw && \\
     useradd -m -s /bin/bash openclaw && \\
-    mkdir -p ${defaultOpenClawExtensionsPath} /zone /run/sshd /root && \\
+    mkdir -p ${defaultOpenClawExtensionsPath} /zone /run/sshd /root /work/tmp /work/cache && \\
     chown -R openclaw:openclaw /opt/openclaw/plugin-runtime-deps && \\
-    chown -R openclaw:openclaw /home/openclaw && \\
+    chown -R openclaw:openclaw /home/openclaw /work && \\
     (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
 
 COPY vendor/gondolin ${defaultOpenClawExtensionsPath}/gondolin
@@ -820,11 +821,13 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 		},
 	},
 	tools: { elevated: { enabled: false } },
+	commands: { ownerAllowFrom: [] },
 	plugins: {
 		load: {
 			paths: [defaultOpenClawExtensionsPath],
 		},
 		allow: ['gondolin', 'memory-core'],
+		slots: { memory: 'memory-core' },
 		entries: {
 			gondolin: {
 				enabled: true,

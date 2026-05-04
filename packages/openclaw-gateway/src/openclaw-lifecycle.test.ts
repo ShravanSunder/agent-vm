@@ -203,6 +203,7 @@ describe('openclawLifecycle', () => {
 				'OPENCLAW_PLUGIN_STAGE_DIR=/opt/openclaw/plugin-runtime-deps',
 			);
 			expect(processSpec.bootstrapCommand).toContain('/work/tmp /work/cache/npm');
+			expect(processSpec.bootstrapCommand).toContain('chown -R openclaw:openclaw /work');
 			expect(processSpec.bootstrapCommand).toContain('TMPDIR=/work/tmp');
 			expect(processSpec.bootstrapCommand).toContain('npm_config_cache=/work/cache/npm');
 			expect(processSpec.startCommand).toContain('cd /home/openclaw');
