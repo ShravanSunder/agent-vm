@@ -39,22 +39,35 @@ export function isRetryableGitFailure(output: string): boolean {
 	return retryableGitFailurePatterns.some((pattern) => pattern.test(output));
 }
 
+async function defaultSleep(delayMs: number, signal?: AbortSignal): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(signal.reason);
+			return;
+		}
+		const timeout = setTimeout(resolve, delayMs);
+		signal?.addEventListener(
+			'abort',
+			() => {
+				clearTimeout(timeout);
+				reject(signal.reason);
+			},
+			{ once: true },
+		);
+	});
+}
+
 export async function runGitCommandWithTransientRetries(options: {
-	readonly run: () => Promise<GitCommandResult>;
+	readonly run: (signal?: AbortSignal) => Promise<GitCommandResult>;
 	readonly onRetry?: (props: {
 		readonly attempt: number;
 		readonly delayMs: number;
 		readonly result: GitCommandResult;
 	}) => Promise<void>;
-	readonly sleep?: (delayMs: number) => Promise<void>;
+	readonly signal?: AbortSignal;
+	readonly sleep?: (delayMs: number, signal?: AbortSignal) => Promise<void>;
 }): Promise<GitCommandRetryResult> {
-	const sleep =
-		options.sleep ??
-		(async (delayMs): Promise<void> => {
-			await new Promise<void>((resolve) => {
-				setTimeout(resolve, delayMs);
-			});
-		});
+	const sleep = options.sleep ?? defaultSleep;
 	let lastResult: GitCommandResult | undefined;
 
 	for (
@@ -64,7 +77,7 @@ export async function runGitCommandWithTransientRetries(options: {
 	) {
 		// Retry attempts are serial because each Git operation observes remote state.
 		// oxlint-disable-next-line eslint/no-await-in-loop
-		const result = await options.run();
+		const result = await options.run(options.signal);
 		lastResult = result;
 		if (result.exitCode === 0) {
 			return { attempts: attemptNumber, result };
@@ -79,7 +92,7 @@ export async function runGitCommandWithTransientRetries(options: {
 		await options.onRetry?.({ attempt: attemptNumber, delayMs: retryDelayMs, result });
 		// Backoff sleeps are intentionally serial between retry attempts.
 		// oxlint-disable-next-line eslint/no-await-in-loop
-		await sleep(retryDelayMs);
+		await (options.signal ? sleep(retryDelayMs, options.signal) : sleep(retryDelayMs));
 	}
 
 	if (!lastResult) {

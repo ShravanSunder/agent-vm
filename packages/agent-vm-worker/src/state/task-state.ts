@@ -6,6 +6,7 @@ import { writeStderr } from '../shared/stderr.js';
 import { replayEvents } from './event-log.js';
 import type {
 	PhaseName,
+	ControllerGitPushPhase,
 	TaskConfig,
 	TaskEvent,
 	TaskStatus,
@@ -19,7 +20,7 @@ export interface ControllerGitPushState {
 	readonly status: 'started' | 'retrying' | 'succeeded' | 'failed';
 	readonly attempts: number;
 	readonly message: string | null;
-	readonly phase: 'pre-push-fetch' | 'push' | 'post-push-fetch' | null;
+	readonly phase: ControllerGitPushPhase | null;
 	readonly retryDelaySeconds: number | null;
 	readonly retryAfterSeconds: number | null;
 	readonly localHead: string | null;
@@ -251,7 +252,7 @@ export function applyEvent(state: TaskState, event: TaskEvent): TaskState {
 					status: 'retrying',
 					attempts: event.attempts,
 					message: event.message,
-					phase: 'push',
+					phase: event.phase,
 					retryDelaySeconds: event.retryDelaySeconds,
 					retryAfterSeconds: null,
 					localHead: null,

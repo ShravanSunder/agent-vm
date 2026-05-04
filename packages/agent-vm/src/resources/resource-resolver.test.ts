@@ -92,6 +92,36 @@ describe('resolveTaskResources', () => {
 		expect(resolved.externalResources.pg?.target.host).toBe('example-postgres.internal');
 	});
 
+	it('resolves external-only resources when repo resources are disabled', () => {
+		const resolved = resolveTaskResources({
+			allowRepoResources: false,
+			externalResources: {
+				pg: {
+					name: 'pg',
+					binding: { host: 'pg.local', port: 5432 },
+					target: { host: 'postgres.internal', port: 5432 },
+					env: { DATABASE_URL: 'postgres://postgres.internal:5432/app' },
+				},
+			},
+			repos: [
+				{
+					repoId: 'repo-a',
+					repoUrl: 'https://github.com/example/repo-a.git',
+					description: {
+						setupCommand: '.agent-vm/run-setup.sh',
+						requires: {
+							pg: { binding: { host: 'pg.local', port: 5432 }, env: {} },
+						},
+						provides: {},
+					},
+				},
+			],
+		});
+
+		expect(resolved.externalResources.pg?.target.host).toBe('postgres.internal');
+		expect(resolved.selectedRepoProviders).toEqual([]);
+	});
+
 	it('rejects deduped repo resources when consumers disagree on the binding', () => {
 		expect(() =>
 			resolveTaskResources({

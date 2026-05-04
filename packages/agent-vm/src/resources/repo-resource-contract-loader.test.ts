@@ -10,7 +10,7 @@ import {
 } from './repo-resource-contract-loader.js';
 
 describe('repo resource contract loader', () => {
-	it('returns an empty description contract when repo-resources.ts is missing', async () => {
+	it('returns null when repo-resources.ts is missing', async () => {
 		const repoDir = await fs.mkdtemp(path.join(os.tmpdir(), 'repo-resource-missing-'));
 		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
@@ -21,14 +21,10 @@ describe('repo resource contract loader', () => {
 				repoUrl: 'https://github.com/example/repo-a.git',
 			});
 
-			expect(description).toEqual({
-				setupCommand: '.agent-vm/run-setup.sh',
-				requires: {},
-				provides: {},
-			});
+			expect(description).toBeNull();
 			expect(stderrSpy).toHaveBeenCalledWith(
 				expect.stringContaining(
-					'[repo-resource-contract-loader] repo-a: no .agent-vm/repo-resources.ts; treating repo resources as empty.',
+					'[repo-resource-contract-loader] repo-a: no .agent-vm/repo-resources.ts; skipping repo resource setup.',
 				),
 			);
 		} finally {
@@ -62,6 +58,10 @@ export function describeRepoResources(): RepoResourcesDescription {
 			repoUrl: 'https://github.com/example/repo-a.git',
 		});
 
+		expect(description).not.toBeNull();
+		if (!description) {
+			throw new Error('Expected repo resource contract description.');
+		}
 		expect(description.provides.pg?.service).toBe('pg');
 	});
 

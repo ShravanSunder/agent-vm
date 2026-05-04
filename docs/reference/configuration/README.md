@@ -61,7 +61,7 @@ Prompt file references are resolved before the worker starts.
 | File | Owner | Changes when |
 | --- | --- | --- |
 | `system.jsonc` / `system.json` | platform/operator | host paths, zones, secrets, image profiles, resources change |
-| `systemCacheIdentifier.json` | platform/runtime | outer build environment changes |
+| `systemCacheIdentifier.json` | platform/runtime | cache compatibility contract changes |
 | `worker.jsonc` / `worker.json` | operator/team | default agent behavior changes |
 | `.agent-vm/config.jsonc` / `.agent-vm/config.json` | project repo | a repo needs different validation, MCP, or prompt overrides |
 | `.agent-vm/repo-resources.ts` | project repo | a repo needs TCP resources, mocks, fixtures, or repo-local providers |

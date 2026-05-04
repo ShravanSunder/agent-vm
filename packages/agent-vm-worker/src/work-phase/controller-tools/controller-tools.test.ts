@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import { buildSafeGitEnvironment } from './controller-tool-support.js';
 import { createGitPullDefaultTool } from './git-pull-default-tool.js';
 import { createGitPushTool } from './git-push-tool.js';
 
@@ -20,6 +21,25 @@ describe('controller tools', () => {
 	afterEach(() => {
 		vi.clearAllMocks();
 		vi.unstubAllGlobals();
+		delete process.env.GIT_CONFIG_COUNT;
+		delete process.env.GIT_CONFIG_KEY_0;
+		delete process.env.GIT_CONFIG_VALUE_0;
+		delete process.env.GIT_CONFIG_KEY_1;
+		delete process.env.GIT_CONFIG_VALUE_1;
+	});
+
+	test('buildSafeGitEnvironment appends safe.directory to existing Git config slots', () => {
+		process.env.GIT_CONFIG_COUNT = '1';
+		process.env.GIT_CONFIG_KEY_0 = 'url.https://example.invalid/.insteadOf';
+		process.env.GIT_CONFIG_VALUE_0 = 'git@example.invalid:';
+
+		expect(buildSafeGitEnvironment('/work/repos/widgets')).toMatchObject({
+			GIT_CONFIG_COUNT: '2',
+			GIT_CONFIG_KEY_0: 'url.https://example.invalid/.insteadOf',
+			GIT_CONFIG_VALUE_0: 'git@example.invalid:',
+			GIT_CONFIG_KEY_1: 'safe.directory',
+			GIT_CONFIG_VALUE_1: '/work/repos/widgets',
+		});
 	});
 
 	test('git-push posts current branch to controller', async () => {
@@ -53,6 +73,18 @@ describe('controller tools', () => {
 					branches: [
 						{ repoUrl: 'https://github.com/acme/widgets.git', branchName: 'agent/task-1' },
 					],
+				}),
+			}),
+		);
+		expect(execaMock).toHaveBeenCalledWith(
+			'git',
+			['branch', '--show-current'],
+			expect.objectContaining({
+				cwd: '/work/repos/widgets',
+				env: expect.objectContaining({
+					GIT_CONFIG_COUNT: '1',
+					GIT_CONFIG_KEY_0: 'safe.directory',
+					GIT_CONFIG_VALUE_0: '/work/repos/widgets',
 				}),
 			}),
 		);
@@ -255,7 +287,14 @@ describe('controller tools', () => {
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
 			['reset', '--hard', 'HEAD'],
-			expect.objectContaining({ cwd: '/work/repos/widgets' }),
+			expect.objectContaining({
+				cwd: '/work/repos/widgets',
+				env: expect.objectContaining({
+					GIT_CONFIG_COUNT: '1',
+					GIT_CONFIG_KEY_0: 'safe.directory',
+					GIT_CONFIG_VALUE_0: '/work/repos/widgets',
+				}),
+			}),
 		);
 	});
 

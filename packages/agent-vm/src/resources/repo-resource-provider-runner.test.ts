@@ -4,6 +4,8 @@ import path from 'node:path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { SelectedRepoResources } from './repo-resource-provider-runner.js';
+
 const execaMock = vi.fn();
 
 vi.mock('execa', () => ({
@@ -20,6 +22,7 @@ function buildRepoResourceSetup(options: {
 	readonly repoDir: string;
 	readonly repoId: string;
 	readonly repoUrl: string;
+	readonly selectedExternalResources: SelectedRepoResources;
 	readonly setupCommand: string;
 } {
 	const repoId = options.repoId ?? 'repo-a';
@@ -28,6 +31,7 @@ function buildRepoResourceSetup(options: {
 		repoUrl: options.repoUrl ?? `https://github.com/example/${repoId}.git`,
 		repoDir: options.repoDir,
 		outputDir: options.outputDir ?? path.join(options.repoDir, 'output'),
+		selectedExternalResources: {},
 		setupCommand: '.agent-vm/run-setup.sh',
 	};
 }
@@ -36,6 +40,22 @@ describe('repo resource provider runner', () => {
 	beforeEach(() => {
 		execaMock.mockReset();
 		delete process.env.AGENT_VM_SECRET_LEAK_TEST;
+	});
+
+	it('returns an empty provider run when no repo setup or providers are selected', async () => {
+		const { startRepoResourceProviders } = await import('./repo-resource-provider-runner.js');
+
+		await expect(
+			startRepoResourceProviders({
+				taskId: 'task-123',
+				repos: [],
+				providers: [],
+			}),
+		).resolves.toEqual({
+			finalizations: [],
+			startedProviders: [],
+		});
+		expect(execaMock).not.toHaveBeenCalled();
 	});
 
 	it('starts selected compose providers with task and repo scoped compose project names', async () => {
@@ -353,6 +373,65 @@ export function finalizeRepoResourceSetup(
 		).rejects.toThrow(/unknown setup repo 'repo-a'/u);
 	});
 
+	it('accepts duplicate repo setup entries when selected external resources match by value', async () => {
+		const repoDir = await fs.mkdtemp(path.join(os.tmpdir(), 'repo-provider-dedupe-'));
+		const outputDir = path.join(repoDir, 'output');
+		await fs.mkdir(path.join(repoDir, '.agent-vm'), { recursive: true });
+		await fs.writeFile(path.join(repoDir, '.agent-vm', 'docker-compose.yml'), 'services: {}');
+		const pgResource = {
+			binding: { host: 'pg.local', port: 5432 },
+			target: { host: 'postgres.internal', port: 5432 },
+		} satisfies SelectedRepoResources[string];
+		const redisResource = {
+			binding: { host: 'redis.local', port: 6379 },
+			target: { host: 'redis.internal', port: 6379 },
+		} satisfies SelectedRepoResources[string];
+		const selectedResources = {
+			pg: pgResource,
+			redis: redisResource,
+		} satisfies SelectedRepoResources;
+		const selectedResourcesDifferentInsertionOrder = {
+			redis: redisResource,
+			pg: pgResource,
+		} satisfies SelectedRepoResources;
+		execaMock.mockImplementation(async (command: string) => {
+			if (command.endsWith('/.agent-vm/run-setup.sh')) {
+				return { stdout: '', stderr: '', exitCode: 0 };
+			}
+			if (command === 'node') {
+				return {
+					stdout: JSON.stringify({
+						resources: {},
+						generated: [],
+					}),
+					stderr: '',
+					exitCode: 0,
+				};
+			}
+			throw new Error(`unexpected command: ${command}`);
+		});
+
+		const { startRepoResourceProviders } = await import('./repo-resource-provider-runner.js');
+		await expect(
+			startRepoResourceProviders({
+				taskId: 'task-123',
+				repos: [
+					{
+						...buildRepoResourceSetup({ repoDir, outputDir }),
+						selectedExternalResources: selectedResources,
+					},
+					{
+						...buildRepoResourceSetup({ repoDir, outputDir }),
+						selectedExternalResources: selectedResourcesDifferentInsertionOrder,
+					},
+				],
+				providers: [],
+			}),
+		).resolves.toMatchObject({
+			startedProviders: [],
+		});
+	});
+
 	it('runs repo setup once for every repo while starting compose only for selected providers', async () => {
 		const providerRepoDir = await fs.mkdtemp(path.join(os.tmpdir(), 'repo-provider-all-a-'));
 		const consumerRepoDir = await fs.mkdtemp(path.join(os.tmpdir(), 'repo-provider-all-b-'));
@@ -462,6 +541,71 @@ export function finalizeRepoResourceSetup(
 			'repo-a',
 			'repo-b',
 		]);
+	});
+
+	it('passes selected external resources to repo finalizers without starting compose services', async () => {
+		const repoDir = await fs.mkdtemp(path.join(os.tmpdir(), 'repo-provider-external-'));
+		const outputDir = path.join(repoDir, 'output');
+		await fs.mkdir(path.join(repoDir, '.agent-vm'), { recursive: true });
+		await fs.writeFile(path.join(repoDir, '.agent-vm', 'docker-compose.yml'), 'services: {}');
+		let finalizeSource = '';
+		execaMock.mockImplementation(async (command: string, args: readonly string[]) => {
+			if (command.endsWith('/.agent-vm/run-setup.sh')) {
+				return { stdout: '', stderr: '', exitCode: 0 };
+			}
+			if (command === 'node') {
+				finalizeSource = args[3] ?? '';
+				return {
+					stdout: JSON.stringify({
+						resources: {
+							pg: {
+								binding: { host: 'pg.local', port: 5432 },
+								target: { host: 'postgres.internal', port: 5432 },
+								env: {},
+							},
+						},
+						generated: [],
+					}),
+					stderr: '',
+					exitCode: 0,
+				};
+			}
+			throw new Error(`unexpected command: ${command} ${args.join(' ')}`);
+		});
+
+		const { startRepoResourceProviders } = await import('./repo-resource-provider-runner.js');
+		const result = await startRepoResourceProviders({
+			taskId: 'task-123',
+			repos: [
+				{
+					...buildRepoResourceSetup({ repoDir, outputDir }),
+					selectedExternalResources: {
+						pg: {
+							binding: { host: 'pg.local', port: 5432 },
+							target: { host: 'postgres.internal', port: 5432 },
+						},
+					},
+				},
+			],
+			providers: [],
+		});
+
+		expect(execaMock).not.toHaveBeenCalledWith('docker', expect.anything(), expect.anything());
+		expect(finalizeSource).toContain(
+			JSON.stringify({
+				repoId: 'repo-a',
+				repoUrl: 'https://github.com/example/repo-a.git',
+				repoDir,
+				outputDir,
+				selectedResources: {
+					pg: {
+						binding: { host: 'pg.local', port: 5432 },
+						target: { host: 'postgres.internal', port: 5432 },
+					},
+				},
+			}),
+		);
+		expect(result.finalizations[0]?.final.resources.pg?.target.host).toBe('postgres.internal');
 	});
 
 	it('cleans up a compose project when setup fails after docker compose up', async () => {
