@@ -113,3 +113,13 @@ agent-vm doctor --config config/system.jsonc
 
 For a local scaffold, validate and doctor usually run from the same checkout
 because the generated paths are local relative paths.
+
+## Image Cache Cleanup
+
+`agent-vm build` performs a retention prune after successful builds. For each
+gateway or Tool VM image profile, it keeps the current fingerprint plus the two
+newest previous generations. Failed builds do not prune cache entries.
+
+`agent-vm cache clean --confirm` is an explicit manual cleanup command. It
+deletes every stale image generation that is not the current fingerprint, so it
+is more aggressive than the automatic build cleanup.

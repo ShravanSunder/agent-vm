@@ -5,6 +5,7 @@ import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builde
 import {
 	deleteStaleImageDirectories as deleteStaleImageDirectoriesDefault,
 	findStaleImageDirectories as findStaleImageDirectoriesDefault,
+	type CurrentImageFingerprints,
 	type StaleImageEntry,
 } from '../build/stale-image-cleaner.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
@@ -20,11 +21,6 @@ interface CacheEntry {
 }
 
 type ImageProfileFamily = 'gateway' | 'toolVm';
-
-interface CurrentImageFingerprints {
-	readonly gateways: Record<string, string>;
-	readonly toolVms: Record<string, string>;
-}
 
 function recordFromEntries<TValue>(
 	entries: readonly (readonly [string, TValue])[],
