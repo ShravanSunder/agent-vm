@@ -241,6 +241,87 @@ describe('runControllerDoctor', () => {
 		});
 	});
 
+	it('checks Docker CLI and daemon when managed base images are configured', () => {
+		const managedBaseConfig = {
+			...systemConfig,
+			imageProfiles: {
+				...systemConfig.imageProfiles,
+				gateways: {
+					openclaw: {
+						...systemConfig.imageProfiles.gateways.openclaw,
+						source: {
+							kind: 'managedBase',
+							base: 'openclaw-gateway',
+						},
+					},
+					worker: systemConfig.imageProfiles.gateways.worker,
+				},
+			},
+		} satisfies SystemConfig;
+
+		const result = runControllerDoctor({
+			availableBinaries: allBinaries,
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			requiredZigVersion: '0.15.2',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			zigVersion: '0.15.2',
+			systemConfig: managedBaseConfig,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.checks.find((check) => check.name === 'docker-cli')).toMatchObject({
+			ok: false,
+		});
+		expect(
+			result.checks.find((check) => check.name === 'gateway-image-profile-openclaw'),
+		).toMatchObject({
+			ok: true,
+			hint: 'type=openclaw source=managedBase base=openclaw-gateway',
+		});
+	});
+
+	it('flags legacy Dockerfile image profiles for migration', () => {
+		const dockerBackedConfig = {
+			...systemConfig,
+			imageProfiles: {
+				...systemConfig.imageProfiles,
+				gateways: {
+					openclaw: {
+						...systemConfig.imageProfiles.gateways.openclaw,
+						dockerfile: './vm-images/gateways/openclaw/Dockerfile',
+					},
+					worker: systemConfig.imageProfiles.gateways.worker,
+				},
+			},
+		} satisfies SystemConfig;
+
+		const result = runControllerDoctor({
+			availableBinaries: new Set([...allBinaries, 'docker']),
+			diskFreeBytes: 50 * 1024 * 1024 * 1024,
+			dockerDaemonReady: true,
+			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
+			occupiedPorts: new Set<number>(),
+			nodeVersion: 'v25.9.0',
+			requiredZigVersion: '0.15.2',
+			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+			zigVersion: '0.15.2',
+			systemConfig: dockerBackedConfig,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(
+			result.checks.find(
+				(check) => check.name === 'legacy-dockerfile-image-profile-gateway-openclaw',
+			),
+		).toMatchObject({
+			ok: false,
+			hint: 'Run agent-vm migrate images to switch this profile to a managed base overlay.',
+		});
+	});
+
 	it('flags missing or too-old Zig versions', () => {
 		const missingResult = runControllerDoctor({
 			availableBinaries: allBinaries,
@@ -324,7 +405,7 @@ describe('runControllerDoctor', () => {
 		expect(result.ok).toBe(false);
 		expect(result.checks.find((check) => check.name === 'openclaw-cli')).toMatchObject({
 			ok: false,
-			hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.4.24.',
+			hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.5.2.',
 		});
 	});
 

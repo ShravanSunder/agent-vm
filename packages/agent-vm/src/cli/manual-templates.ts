@@ -76,7 +76,8 @@ Local deployment notes belong in docs/manual/local-notes.md or another non-gener
 ${options.systemConfigPath} is the controller config. Agent-vm-authored config is JSONC so short local comments are allowed.
 config/gateways/<zone>/openclaw.json is OpenClaw-owned gateway config.
 config/gateways/<zone>/worker.jsonc is Agent Worker gateway config when the zone type is worker.
-vm-images/ contains deployment-owned Dockerfiles and Gondolin build-config.jsonc files.
+vm-images/ contains deployment-owned Gondolin build-config.jsonc files and small managed image overlays.
+agent-vm owns the gateway/tool base image recipes and publishes the versioned GHCR base layers.
 stateDir stores durable gateway state.
 zoneFilesDir stores durable user/household files for OpenClaw zones.
 cacheDir stores rebuildable artifacts.
@@ -184,19 +185,18 @@ Use multiple zones when gateway lifecycle, channel, secret, or zone-files isolat
 Discord is configured by the deployment, not by agent-vm defaults.
 
 To add a channel:
-1. Install or bake the plugin in the deployment Dockerfile if needed.
-2. Add the plugin to plugins.allow in openclaw.json.
-3. Add plugin or channels config in openclaw.json.
-4. Add required secrets in ${options.systemConfigPath}.
-5. Add allowedHosts and websocketBypass entries for the channel endpoints.
-6. Rebuild the gateway image and run agent-vm doctor.
+1. Add the channel config in openclaw.json.
+2. Add required secrets in ${options.systemConfigPath}.
+3. Add allowedHosts and websocketBypass entries for the channel endpoints.
+4. Rebuild the gateway image and run agent-vm doctor.
 
 Discord recipe:
 - Add DISCORD_BOT_TOKEN as a zone secret.
 - Add discord.com and cdn.discordapp.com to allowedHosts.
 - Add gateway.discord.gg:443 to websocketBypass.
-- Enable channels.discord or the Discord plugin entry in deployment-owned openclaw.json.
-- Bake any required Discord plugin/runtime dependencies in the deployment Dockerfile.
+- Enable channels.discord in deployment-owned openclaw.json.
+- Do not add Discord under plugins.allow or plugins.entries.
+- agent-vm build installs @openclaw/discord automatically for managed OpenClaw images.
 - Add runtimeAuthHints only if the agent should know that a Discord service token exists.
 `,
 			),
@@ -240,10 +240,10 @@ Binary-level isolation requires different Tool VM images. Use agentToolVmProfile
 			content: generatedPage(
 				'Discord Migration',
 				`
-Agent-vm defaults are channel-neutral. Existing Discord deployments keep Discord by owning the deployment layer:
+Agent-vm defaults are channel-neutral. Existing Discord deployments keep Discord by owning the channel config:
 
-1. Keep Discord plugin/runtime installation in the deployment Dockerfile.
-2. Keep Discord enabled in config/gateways/<zone>/openclaw.json.
+1. Run agent-vm migrate images if the deployment still references Dockerfiles.
+2. Keep Discord enabled under channels.discord in config/gateways/<zone>/openclaw.json.
 3. Keep DISCORD_BOT_TOKEN in ${options.systemConfigPath} zone secrets.
 4. Keep discord.com and cdn.discordapp.com in allowedHosts.
 5. Keep gateway.discord.gg:443 in websocketBypass.

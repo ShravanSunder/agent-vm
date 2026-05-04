@@ -133,6 +133,164 @@ describe('runBuildCommand', () => {
 		expect(pluginSyncs).toEqual(['/project']);
 	});
 
+	it('builds Docker image from a managed base profile', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		fs.writeFileSync(
+			overlayPath,
+			JSON.stringify({
+				schemaVersion: 1,
+				extraAptPackages: ['ca-certificates'],
+				copy: [{ from: 'certs/strip-nonascii-certs.py', to: '/tmp/strip-nonascii-certs.py' }],
+				runAfterBase: ['python3 /tmp/strip-nonascii-certs.py'],
+			}),
+			'utf8',
+		);
+		fs.mkdirSync(path.join(temporaryDirectory, 'certs'));
+		fs.writeFileSync(path.join(temporaryDirectory, 'certs', 'strip-nonascii-certs.py'), 'pass\n');
+		const gatewayConfigDirectory = path.join(temporaryDirectory, 'config', 'test');
+		fs.mkdirSync(gatewayConfigDirectory, { recursive: true });
+		const gatewayConfigPath = path.join(gatewayConfigDirectory, 'openclaw.json');
+		fs.writeFileSync(gatewayConfigPath, JSON.stringify({ channels: {} }), 'utf8');
+		const buildConfigPath = path.join(temporaryDirectory, 'build-config.json');
+		fs.writeFileSync(
+			buildConfigPath,
+			JSON.stringify({ oci: { image: 'agent-vm-gateway:managed' } }),
+			'utf8',
+		);
+		const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
+
+		await runBuildCommand(
+			{
+				systemConfig: {
+					...createTestSystemConfig(),
+					systemConfigPath: path.join(temporaryDirectory, 'config', 'system.jsonc'),
+					cacheDir: temporaryDirectory,
+					zones: createTestSystemConfig().zones.map((zone) => ({
+						...zone,
+						gateway:
+							zone.gateway.type === 'openclaw'
+								? { ...zone.gateway, config: gatewayConfigPath }
+								: zone.gateway,
+					})),
+					imageProfiles: {
+						gateways: {
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: buildConfigPath,
+								source: {
+									kind: 'managedBase',
+									base: 'openclaw-gateway',
+									overlay: overlayPath,
+								},
+							},
+						},
+						toolVms: {},
+					},
+				},
+			},
+			{
+				buildDockerImage: async (options) => {
+					dockerBuilds.push(options);
+				},
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'managed-fp',
+					imagePath: '/cache/managed',
+				}),
+				resolveAgentVmPackageVersion: async () => '0.0.40',
+				runTask: async (_title, fn) => fn(),
+			},
+		);
+
+		expect(dockerBuilds).toHaveLength(1);
+		expect(dockerBuilds[0]?.imageTag).toBe('agent-vm-gateway:managed');
+		expect(dockerBuilds[0]?.dockerfilePath).toContain(
+			path.join('generated-dockerfiles', 'gateway', 'openclaw', 'Dockerfile'),
+		);
+		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
+		expect(generatedDockerfile).toContain(
+			'FROM ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:0.0.40',
+		);
+		expect(generatedDockerfile).toContain(
+			'RUN apt-get update && apt-get install -y --no-install-recommends "ca-certificates"',
+		);
+		expect(generatedDockerfile).toContain(
+			'COPY overlay/certs/strip-nonascii-certs.py /tmp/strip-nonascii-certs.py',
+		);
+		expect(generatedDockerfile).toContain('RUN python3 /tmp/strip-nonascii-certs.py');
+	});
+
+	it('adds Discord OpenClaw package when a managed openclaw profile serves a Discord zone', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const gatewayConfigDirectory = path.join(temporaryDirectory, 'config', 'gateways', 'sunfam');
+		fs.mkdirSync(gatewayConfigDirectory, { recursive: true });
+		const gatewayConfigPath = path.join(gatewayConfigDirectory, 'openclaw.json');
+		fs.writeFileSync(
+			gatewayConfigPath,
+			JSON.stringify({ channels: { discord: { enabled: true } } }),
+			'utf8',
+		);
+		const buildConfigPath = path.join(temporaryDirectory, 'build-config.json');
+		fs.writeFileSync(
+			buildConfigPath,
+			JSON.stringify({ oci: { image: 'agent-vm-gateway:discord' } }),
+			'utf8',
+		);
+		const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
+		const baseConfig = createTestSystemConfig();
+		const baseZone = baseConfig.zones[0];
+		if (!baseZone || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected an OpenClaw test zone.');
+		}
+
+		await runBuildCommand(
+			{
+				systemConfig: {
+					...baseConfig,
+					cacheDir: temporaryDirectory,
+					zones: [
+						{
+							...baseZone,
+							gateway: {
+								...baseZone.gateway,
+								config: gatewayConfigPath,
+							},
+						},
+					],
+					imageProfiles: {
+						gateways: {
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: buildConfigPath,
+								source: {
+									kind: 'managedBase',
+									base: 'openclaw-gateway',
+								},
+							},
+						},
+						toolVms: {},
+					},
+				},
+			},
+			{
+				buildDockerImage: async (options) => {
+					dockerBuilds.push(options);
+				},
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'discord-fp',
+					imagePath: '/cache/discord',
+				}),
+				resolveAgentVmPackageVersion: async () => '0.0.40',
+				runTask: async (_title, fn) => fn(),
+			},
+		);
+
+		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
+		expect(generatedDockerfile).toContain('RUN pnpm add -g "@openclaw/discord@2026.5.2"');
+	});
+
 	it('finds the scaffold root by walking up to config/system.json instead of assuming dockerfile depth', async () => {
 		const projectRootDirectory = createTemporaryDirectory();
 		const dockerfileDirectory = path.join(projectRootDirectory, 'nested', 'images', 'gateway');

@@ -133,9 +133,11 @@ For the storage boundary model, see
 memory-core, VM lifecycle, Tool VM lease plumbing, and runtime auth wiring. It
 does not enable Discord or any other channel-specific surface by default.
 
-Channel plugins are deployment-owned. Add channel plugins in the deployment
-Dockerfile and `config/gateways/<zone>/openclaw.json`, then declare the matching
-secrets, `allowedHosts`, and `websocketBypass` entries in `config/system.jsonc`.
+Channel config is deployment-owned. Enable channels in
+`config/gateways/<zone>/openclaw.json`, then declare the matching secrets,
+`allowedHosts`, and `websocketBypass` entries in `config/system.jsonc`.
+Managed OpenClaw image profiles install known extracted channel packages, such
+as `@openclaw/discord`, from the OpenClaw channel config.
 
 OpenClaw Tool VMs mount their validated lease work mount at `/work`. Worker task VMs keep
 repo edits under `/work/repos/<repoId>`.
@@ -151,12 +153,22 @@ Gateway image profiles are used by zones:
       "worker": {
         "type": "worker",
         "buildConfig": "../vm-images/gateways/worker/build-config.jsonc",
-        "dockerfile": "../vm-images/gateways/worker/Dockerfile"
+        "source": {
+          "kind": "managedBase",
+          "base": "worker-gateway",
+          "overlay": "../vm-images/gateways/worker/overlay.jsonc"
+        }
       }
     }
   }
 }
 ```
+
+`source.kind = "managedBase"` means `agent-vm build` generates the Dockerfile
+from the installed `@agent-vm/agent-vm` version and a versioned GHCR base image.
+The deployment overlay is intentionally small; use it for extra apt packages,
+copy steps, and post-base commands. Legacy `dockerfile` profiles are reported by
+`agent-vm doctor`; migrate them with `agent-vm migrate images`.
 
 OpenClaw tool VMs use `imageProfiles.toolVms`. Worker-only configs normally
 omit tool VM image profiles.
@@ -241,6 +253,14 @@ files:
   }
 }
 ```
+
+New OpenClaw scaffolds set `agents.defaults.workspace` to
+`/zone/agents/default`. This keeps the default agent's authored workspace files
+under `zoneFilesDir` while leaving `/zone` itself available for shared
+zone-level notes and reference material. Multi-agent deployments should set
+explicit `agents.list[].workspace` values such as `/zone/agents/shravan` and
+`/zone/agents/sun`; otherwise OpenClaw derives non-default agent workspaces
+under the fallback path.
 
 `agentToolVmProfiles` values must reference entries in top-level `toolVmProfiles`.
 Unmapped agents use the zone fallback `defaultToolVmProfile`.

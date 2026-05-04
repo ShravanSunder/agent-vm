@@ -8,6 +8,12 @@ import { z } from 'zod';
 
 import { buildDockerImage as buildDockerImageDefault } from '../build/docker-image-builder.js';
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
+import {
+	MANAGED_OPENCLAW_VERSION,
+	generateManagedDockerfile as generateManagedDockerfileDefault,
+	resolveAgentVmPackageVersion as resolveAgentVmPackageVersionDefault,
+	type ManagedImageSource,
+} from '../build/managed-image-dockerfile.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import {
@@ -38,6 +44,16 @@ export interface BuildCommandDependencies {
 	/** Override the task runner for testing or custom CLI progress. */
 	readonly runTask?: RunTaskFn;
 	readonly resolveProjectRootFromDockerfile?: (dockerfilePath: string) => Promise<string>;
+	readonly generateManagedDockerfile?: (options: {
+		readonly base: ManagedImageSource['base'];
+		readonly imageTargetFamily: 'gateway' | 'toolVm';
+		readonly imageTargetName: string;
+		readonly outputDirectory: string;
+		readonly overlayPath?: string | undefined;
+		readonly packageVersion: string;
+		readonly requiredOpenClawPackages?: readonly string[];
+	}) => Promise<string>;
+	readonly resolveAgentVmPackageVersion?: () => Promise<string>;
 	readonly syncBundledOpenClawPlugin?: (
 		targetDir: string,
 		profileName: string,
@@ -50,6 +66,17 @@ const ociImageTagSchema = z.object({
 	}),
 });
 
+const openClawChannelConfigSchema = z
+	.object({
+		channels: z
+			.object({
+				discord: z.object({ enabled: z.boolean().optional() }).passthrough().optional(),
+			})
+			.passthrough()
+			.optional(),
+	})
+	.passthrough();
+
 interface ImageTarget {
 	readonly buildConfigPath: string;
 	readonly cacheDirectory: string;
@@ -58,6 +85,7 @@ interface ImageTarget {
 	readonly family: 'gateway' | 'toolVm';
 	readonly gatewayType?: 'worker' | 'openclaw';
 	readonly name: string;
+	readonly source: ManagedImageSource | undefined;
 }
 
 function imageTargetKey(imageTarget: Pick<ImageTarget, 'family' | 'name'>): string {
@@ -99,7 +127,7 @@ async function assertZigBuildPrerequisite(
 }
 
 async function assertUniqueDockerImageTags(
-	imageTargets: readonly (ImageTarget & { readonly dockerfile: string })[],
+	imageTargets: readonly ImageTarget[],
 	resolveOciImageTag: (buildConfigPath: string) => Promise<string>,
 ): Promise<Map<string, string>> {
 	const profileByTag = new Map<string, string>();
@@ -157,6 +185,32 @@ async function resolveProjectRootFromDockerfile(dockerfilePath: string): Promise
 	}
 }
 
+async function resolveRequiredOpenClawPackagesForTarget(
+	systemConfig: LoadedSystemConfig,
+	imageTarget: ImageTarget,
+): Promise<readonly string[]> {
+	if (
+		imageTarget.family !== 'gateway' ||
+		imageTarget.gatewayType !== 'openclaw' ||
+		imageTarget.source?.base !== 'openclaw-gateway'
+	) {
+		return [];
+	}
+	const requiredPackageSpecs = new Set<string>();
+	for (const zone of systemConfig.zones) {
+		if (zone.gateway.type !== 'openclaw' || zone.gateway.imageProfile !== imageTarget.name) {
+			continue;
+		}
+		// oxlint-disable-next-line no-await-in-loop -- zone config reads are tiny and error messages stay profile-local
+		const rawOpenClawConfig = await loadJsonConfigFile(zone.gateway.config);
+		const openClawConfig = openClawChannelConfigSchema.parse(rawOpenClawConfig);
+		if (openClawConfig.channels?.discord?.enabled === true) {
+			requiredPackageSpecs.add(`@openclaw/discord@${MANAGED_OPENCLAW_VERSION}`);
+		}
+	}
+	return [...requiredPackageSpecs].toSorted();
+}
+
 export async function runBuildCommand(
 	options: {
 		readonly forceRebuild?: boolean;
@@ -173,6 +227,10 @@ export async function runBuildCommand(
 	const runTaskStep = dependencies.runTask ?? defaultRunTask;
 	const resolveProjectRoot =
 		dependencies.resolveProjectRootFromDockerfile ?? resolveProjectRootFromDockerfile;
+	const generateManagedDockerfile =
+		dependencies.generateManagedDockerfile ?? generateManagedDockerfileDefault;
+	const resolveAgentVmPackageVersion =
+		dependencies.resolveAgentVmPackageVersion ?? resolveAgentVmPackageVersionDefault;
 	const syncBundledOpenClawPlugin =
 		dependencies.syncBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle;
 	const systemCacheIdentifierPath = options.systemConfig.systemCacheIdentifierPath;
@@ -189,6 +247,7 @@ export async function runBuildCommand(
 		family: 'gateway' as const,
 		gatewayType: profile.type,
 		name: profileName,
+		source: profile.source,
 	}));
 	const toolVmImageTargets: readonly ImageTarget[] = Object.entries(
 		options.systemConfig.imageProfiles.toolVms,
@@ -199,16 +258,21 @@ export async function runBuildCommand(
 		dockerfile: profile.dockerfile,
 		family: 'toolVm' as const,
 		name: profileName,
+		source: profile.source,
 	}));
 	const imageTargets: readonly ImageTarget[] = [...gatewayImageTargets, ...toolVmImageTargets];
 	const dockerImageTargets = imageTargets.filter(
-		(imageTarget): imageTarget is ImageTarget & { readonly dockerfile: string } =>
-			imageTarget.dockerfile !== undefined,
+		(imageTarget) => imageTarget.dockerfile !== undefined || imageTarget.source !== undefined,
 	);
 	const dockerImageTagByProfile = await assertUniqueDockerImageTags(
 		dockerImageTargets,
 		resolveOciImageTag,
 	);
+	const agentVmPackageVersion = dockerImageTargets.some(
+		(imageTarget) => imageTarget.source !== undefined,
+	)
+		? await resolveAgentVmPackageVersion()
+		: undefined;
 
 	// oxlint-disable-next-line no-await-in-loop -- image builds are intentionally sequential for stable task output and shared image tags
 	for (const imageTarget of dockerImageTargets) {
@@ -216,11 +280,44 @@ export async function runBuildCommand(
 		if (!imageTag) {
 			throw new Error(`Missing resolved Docker image tag for image profile '${imageTarget.name}'.`);
 		}
-		if (imageTarget.family === 'gateway' && imageTarget.gatewayType === 'openclaw') {
+		let dockerfilePath = imageTarget.dockerfile;
+		if (imageTarget.source) {
+			if (!agentVmPackageVersion) {
+				throw new Error('Missing @agent-vm/agent-vm package version for managed image build.');
+			}
+			// oxlint-disable-next-line no-await-in-loop -- package detection is profile-local and low-volume
+			const requiredOpenClawPackages = await resolveRequiredOpenClawPackagesForTarget(
+				options.systemConfig,
+				imageTarget,
+			);
+			// oxlint-disable-next-line no-await-in-loop -- each generated Docker context belongs to one image target
+			dockerfilePath = await generateManagedDockerfile({
+				base: imageTarget.source.base,
+				imageTargetFamily: imageTarget.family,
+				imageTargetName: imageTarget.name,
+				outputDirectory: path.join(
+					options.systemConfig.cacheDir,
+					'generated-dockerfiles',
+					imageTarget.family,
+					imageTarget.name,
+				),
+				...(imageTarget.source.overlay ? { overlayPath: imageTarget.source.overlay } : {}),
+				packageVersion: agentVmPackageVersion,
+				requiredOpenClawPackages,
+			});
+		}
+		if (!dockerfilePath) {
+			throw new Error(`Missing Dockerfile path for image profile '${imageTarget.name}'.`);
+		}
+		if (
+			imageTarget.family === 'gateway' &&
+			imageTarget.gatewayType === 'openclaw' &&
+			!imageTarget.source
+		) {
 			// Resolve the scaffold root via config/system.json instead of assuming a fixed
 			// vm-images/gateways/openclaw/Dockerfile depth.
 			// oxlint-disable-next-line no-await-in-loop -- root discovery belongs to the matching build target
-			const projectRootDirectory = await resolveProjectRoot(imageTarget.dockerfile);
+			const projectRootDirectory = await resolveProjectRoot(dockerfilePath);
 			// oxlint-disable-next-line no-await-in-loop -- bundle sync must complete before the matching docker build starts
 			await runTaskStep('OpenClaw plugin bundle', async () => {
 				await syncBundledOpenClawPlugin(projectRootDirectory, imageTarget.name);
@@ -232,7 +329,7 @@ export async function runBuildCommand(
 			async (taskContext) => {
 				taskContext?.setStatus('docker build');
 				await buildDockerImage({
-					dockerfilePath: imageTarget.dockerfile,
+					dockerfilePath,
 					imageTag,
 					...(taskContext?.interactive === true && taskContext.streamPreview
 						? { streamPreview: taskContext.streamPreview }

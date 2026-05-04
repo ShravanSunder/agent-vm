@@ -130,7 +130,7 @@ function hasDockerBackedImageProfiles(systemConfig: SystemConfig): boolean {
 	const gatewayProfiles = Object.values(systemConfig.imageProfiles.gateways);
 	const toolVmProfiles = Object.values(systemConfig.imageProfiles.toolVms);
 	return [...gatewayProfiles, ...toolVmProfiles].some(
-		(profile) => profile.dockerfile !== undefined,
+		(profile) => profile.dockerfile !== undefined || profile.source !== undefined,
 	);
 }
 
@@ -185,7 +185,7 @@ function buildOpenClawCliCheck(
 			...(openClawCliReady
 				? { hint: 'openclaw' }
 				: {
-						hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.4.24.',
+						hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.5.2.',
 					}),
 		},
 	];
@@ -361,6 +361,42 @@ function buildOpenClawAgentSetupChecks(systemConfig: SystemConfig): readonly Doc
 		);
 		return [...authProfileChecks, ...sandboxSeedChecks];
 	});
+}
+
+function buildLegacyDockerfileImageProfileChecks(
+	systemConfig: SystemConfig,
+): readonly DoctorCheck[] {
+	const gatewayChecks = Object.entries(systemConfig.imageProfiles.gateways)
+		.filter(([, profile]) => profile.dockerfile !== undefined)
+		.map(
+			([profileName]) =>
+				({
+					name: `legacy-dockerfile-image-profile-gateway-${profileName}`,
+					ok: false,
+					hint: 'Run agent-vm migrate images to switch this profile to a managed base overlay.',
+				}) satisfies DoctorCheck,
+		);
+	const toolVmChecks = Object.entries(systemConfig.imageProfiles.toolVms)
+		.filter(([, profile]) => profile.dockerfile !== undefined)
+		.map(
+			([profileName]) =>
+				({
+					name: `legacy-dockerfile-image-profile-toolVm-${profileName}`,
+					ok: false,
+					hint: 'Run agent-vm migrate images to switch this profile to a managed base overlay.',
+				}) satisfies DoctorCheck,
+		);
+	return [...gatewayChecks, ...toolVmChecks];
+}
+
+function formatImageProfileHint(profile: {
+	readonly type: string;
+	readonly source?: { readonly kind: 'managedBase'; readonly base: string } | undefined;
+}): string {
+	if (!profile.source) {
+		return `type=${profile.type}`;
+	}
+	return `type=${profile.type} source=${profile.source.kind} base=${profile.source.base}`;
 }
 
 export async function collectVmHostSystemDoctorCheck(
@@ -576,7 +612,7 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 				({
 					name: `gateway-image-profile-${profileName}`,
 					ok: true,
-					hint: `type=${profile.type}`,
+					hint: formatImageProfileHint(profile),
 				}) satisfies DoctorCheck,
 		),
 		...Object.entries(options.systemConfig.imageProfiles.toolVms).map(
@@ -588,6 +624,7 @@ export function runControllerDoctor(options: RunControllerDoctorOptions): Contro
 		),
 		...buildZoneToolVmProfileChecks(options.systemConfig),
 		...buildOpenClawAgentSetupChecks(options.systemConfig),
+		...buildLegacyDockerfileImageProfileChecks(options.systemConfig),
 		...options.systemConfig.zones.map(
 			(zone) =>
 				({

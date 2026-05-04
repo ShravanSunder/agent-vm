@@ -153,6 +153,89 @@ describe('loadSystemConfig', () => {
 		expect(loadedConfig.zones[0]?.id).toBe('shravan');
 	});
 
+	test('loads managed base image profiles', async () => {
+		const config = createValidSystemConfigInput();
+		config.imageProfiles = {
+			gateways: {
+				openclaw: {
+					type: 'openclaw',
+					buildConfig: '../vm-images/gateways/openclaw/build-config.jsonc',
+					source: {
+						kind: 'managedBase',
+						base: 'openclaw-gateway',
+						overlay: '../vm-images/gateways/openclaw/overlay.jsonc',
+					},
+				},
+			},
+			toolVms: {
+				default: {
+					type: 'toolVm',
+					buildConfig: '../vm-images/tool-vms/default/build-config.jsonc',
+					source: {
+						kind: 'managedBase',
+						base: 'tool-vm',
+						overlay: '../vm-images/tool-vms/default/overlay.jsonc',
+					},
+				},
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-managed-base-',
+			config,
+		);
+
+		const loadedConfig = await loadSystemConfig(configPath);
+
+		expect(loadedConfig.imageProfiles.gateways.openclaw?.source).toMatchObject({
+			kind: 'managedBase',
+			base: 'openclaw-gateway',
+		});
+		expect(loadedConfig.imageProfiles.gateways.openclaw?.source?.overlay).toContain(
+			path.join('vm-images', 'gateways', 'openclaw', 'overlay.jsonc'),
+		);
+		expect(loadedConfig.imageProfiles.toolVms.default?.source).toMatchObject({
+			kind: 'managedBase',
+			base: 'tool-vm',
+		});
+		expect(loadedConfig.imageProfiles.toolVms.default?.source?.overlay).toContain(
+			path.join('vm-images', 'tool-vms', 'default', 'overlay.jsonc'),
+		);
+	});
+
+	test('rejects a managed base that does not match the image profile family', async () => {
+		const config = createValidSystemConfigInput();
+		config.imageProfiles = {
+			gateways: {
+				openclaw: {
+					type: 'openclaw',
+					buildConfig: '../vm-images/gateways/openclaw/build-config.jsonc',
+					source: {
+						kind: 'managedBase',
+						base: 'tool-vm',
+					},
+				},
+			},
+			toolVms: {
+				default: {
+					type: 'toolVm',
+					buildConfig: '../vm-images/tool-vms/default/build-config.jsonc',
+					source: {
+						kind: 'managedBase',
+						base: 'tool-vm',
+					},
+				},
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-managed-base-mismatch-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			"Gateway image profile 'openclaw' type 'openclaw' must use managed base 'openclaw-gateway'.",
+		);
+	});
+
 	test('falls back to sibling system.jsonc when default system.json is absent', async () => {
 		const workingDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-system-config-'));
 		createdDirectories.push(workingDirectoryPath);
