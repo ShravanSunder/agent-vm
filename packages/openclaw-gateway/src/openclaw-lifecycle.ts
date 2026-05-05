@@ -105,19 +105,19 @@ function buildOpenClawBootstrapCommand(
 	];
 
 	return (
-		`mkdir -p /root /etc/profile.d /run/openclaw /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && chown -R openclaw:openclaw /work && cat > ${openClawShellEnvFilePath} << ENVEOF\n` +
+		`mkdir -p /root /etc/profile.d /run/openclaw /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && chown -R openclaw:openclaw /work && cat > ${openClawShellEnvFilePath} << 'ENVEOF'\n` +
 		environmentLines.join('\n') +
 		'\nENVEOF\n' +
 		`chmod 644 ${openClawShellEnvFilePath} && ` +
-		`cat > ${openClawRuntimeSecretsEnvFilePath} << ENVEOF\n` +
+		`cat > ${openClawRuntimeSecretsEnvFilePath} << 'ENVEOF'\n` +
 		secretEnvironmentLines.join('\n') +
 		'\nENVEOF\n' +
 		`chmod 600 ${openClawRuntimeSecretsEnvFilePath} && ` +
-		`cat > ${openClawGatewayAuthEnvFilePath} << ENVEOF\n` +
+		`cat > ${openClawGatewayAuthEnvFilePath} << 'ENVEOF'\n` +
 		gatewayAuthLines.join('\n') +
 		'\nENVEOF\n' +
 		`chmod 600 ${openClawGatewayAuthEnvFilePath} && ` +
-		`cat > ${openClawAdminShellEnvFilePath} << ENVEOF\n` +
+		`cat > ${openClawAdminShellEnvFilePath} << 'ENVEOF'\n` +
 		adminShellLines.join('\n') +
 		'\nENVEOF\n' +
 		`chmod 644 ${openClawAdminShellEnvFilePath} && ` +

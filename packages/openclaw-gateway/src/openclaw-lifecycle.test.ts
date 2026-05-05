@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
 import type { SecretResolver } from '@agent-vm/gondolin-adapter';
@@ -9,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openclawLifecycle } from './openclaw-lifecycle.js';
 
 const createdDirectories: string[] = [];
+const execFileAsync = promisify(execFile);
 type OpenClawGatewayConfig = Extract<GatewayZoneConfig['gateway'], { readonly type: 'openclaw' }>;
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -21,13 +24,27 @@ async function pathExists(filePath: string): Promise<boolean> {
 }
 
 function extractHeredocBody(command: string, targetPath: string): string {
-	const marker = `cat > ${targetPath} << ENVEOF\n`;
+	const marker = `cat > ${targetPath} << 'ENVEOF'\n`;
 	const startIndex = command.indexOf(marker);
 	expect(startIndex).toBeGreaterThanOrEqual(0);
 	const bodyStartIndex = startIndex + marker.length;
 	const bodyEndIndex = command.indexOf('\nENVEOF', bodyStartIndex);
 	expect(bodyEndIndex).toBeGreaterThan(bodyStartIndex);
 	return command.slice(bodyStartIndex, bodyEndIndex);
+}
+
+async function renderBootstrapFiles(command: string, rootDirectory: string): Promise<void> {
+	const rootedCommand = command
+		.replaceAll('/root', path.join(rootDirectory, 'root'))
+		.replaceAll('/etc/profile.d', path.join(rootDirectory, 'etc', 'profile.d'))
+		.replaceAll('/run/openclaw', path.join(rootDirectory, 'run', 'openclaw'))
+		.replaceAll('/work', path.join(rootDirectory, 'work'))
+		.replace(`chown -R openclaw:openclaw ${path.join(rootDirectory, 'work')} && `, '');
+	await execFileAsync('bash', ['-lc', rootedCommand]);
+}
+
+function shellQuoteForTest(value: string): string {
+	return `'${value.replace(/'/gu, `'\\''`)}'`;
 }
 
 afterEach(async () => {
@@ -245,6 +262,59 @@ describe('openclawLifecycle', () => {
 				path: '/readyz',
 			});
 			expect(processSpec.logPath).toBe('/tmp/openclaw.log');
+		});
+
+		it('writes profile scripts without expanding runtime shell expressions', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-bootstrap-'));
+			createdDirectories.push(tempDirectory);
+			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
+
+			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory);
+
+			const adminShellScript = await readFile(
+				path.join(tempDirectory, 'etc', 'profile.d', 'openclaw-admin.sh'),
+				'utf8',
+			);
+			const environmentShellScript = await readFile(
+				path.join(tempDirectory, 'etc', 'profile.d', 'openclaw-env.sh'),
+				'utf8',
+			);
+			expect(adminShellScript).toContain('if [ "$(id -u)" = "0" ]; then');
+			expect(adminShellScript).toContain('command openclaw "$@"');
+			expect(adminShellScript).not.toContain('command openclaw ""');
+			expect(environmentShellScript).toContain('export PATH=/pnpm:$PATH');
+		});
+
+		it('forwards OpenClaw admin wrapper arguments exactly', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-admin-wrapper-'));
+			createdDirectories.push(tempDirectory);
+			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
+			const fakeBinDirectory = path.join(tempDirectory, 'bin');
+			await mkdir(fakeBinDirectory, { recursive: true });
+			const fakeOpenClawPath = path.join(fakeBinDirectory, 'openclaw');
+			const capturedArgvPath = path.join(tempDirectory, 'argv.json');
+			await writeFile(
+				fakeOpenClawPath,
+				[
+					'#!/usr/bin/env node',
+					`await import('node:fs/promises').then((fs) => fs.writeFile(${JSON.stringify(capturedArgvPath)}, JSON.stringify(process.argv.slice(2))))`,
+				].join('\n'),
+				{ mode: 0o755 },
+			);
+			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory);
+
+			await execFileAsync('bash', [
+				'-lc',
+				[
+					`PATH=${shellQuoteForTest(fakeBinDirectory)}:$PATH`,
+					`source ${shellQuoteForTest(path.join(tempDirectory, 'etc', 'profile.d', 'openclaw-admin.sh'))}`,
+					`openclaw tui --flag 'value with spaces' '' '--literal=$PATH'`,
+				].join(' && '),
+			]);
+
+			await expect(readFile(capturedArgvPath, 'utf8')).resolves.toBe(
+				JSON.stringify(['tui', '--flag', 'value with spaces', '', '--literal=$PATH']),
+			);
 		});
 	});
 
