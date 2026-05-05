@@ -14,6 +14,13 @@ export const controllerDestroyZoneRequestSchema = z.object({
 	purge: z.boolean().optional(),
 });
 
+export const controllerEnableSshRequestSchema = z
+	.object({
+		adminToken: z.string().min(1).optional(),
+		secretEnv: z.enum(['default', 'with-secrets']).default('default'),
+	})
+	.strict();
+
 export const controllerExecuteCommandRequestSchema = z.object({
 	command: z.string().min(1),
 });

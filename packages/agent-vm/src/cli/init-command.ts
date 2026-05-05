@@ -367,6 +367,10 @@ const defaultSystemConfig = (
 	zones: [
 		{
 			id: zoneId,
+			adminAccess: {
+				mode: 'secret',
+				secret: defaultZoneSshAccessSecret(zoneId, secretsProvider),
+			},
 			gateway: {
 				type: gatewayType,
 				memory: '2G',
@@ -375,6 +379,7 @@ const defaultSystemConfig = (
 				config: pathProfile.gatewayConfig(zoneId, gatewayType),
 				imageProfile: gatewayType,
 				stateDir: pathProfile.gatewayStateDir(zoneId),
+				ssh: { secretEnv: 'explicit' },
 				...(gatewayType === 'openclaw'
 					? {
 							zoneFilesDir: pathProfile.gatewayZoneFilesDir(zoneId),
@@ -405,6 +410,10 @@ type HostGithubToken =
 	| { readonly source: '1password'; readonly ref: string }
 	| { readonly source: 'environment'; readonly envVar: string };
 
+type AdminAccessReference =
+	| { readonly source: '1password'; readonly ref: string }
+	| { readonly source: 'environment'; readonly envVar: string };
+
 type SecretReference =
 	| {
 			readonly source: '1password';
@@ -429,6 +438,20 @@ function defaultHostGithubToken(secretsProvider: SecretsProvider): HostGithubTok
 			return { source: '1password', ref: 'op://agent-vm/github-token/credential' };
 		case 'environment':
 			return { source: 'environment', envVar: 'GITHUB_TOKEN' };
+		default:
+			return assertNeverSecretsProvider(secretsProvider);
+	}
+}
+
+function defaultZoneSshAccessSecret(
+	zoneId: string,
+	secretsProvider: SecretsProvider,
+): AdminAccessReference {
+	switch (secretsProvider) {
+		case '1password':
+			return { source: '1password', ref: `op://agent-vm/${zoneId}-ssh-access/token` };
+		case 'environment':
+			return { source: 'environment', envVar: 'AGENT_VM_SSH_ACCESS_TOKEN' };
 		default:
 			return assertNeverSecretsProvider(secretsProvider);
 	}

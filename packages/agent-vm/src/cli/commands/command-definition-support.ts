@@ -41,10 +41,10 @@ export function createPurgeFlag() {
 	});
 }
 
-export function createPrintFlag() {
+export function createWithSecretsFlag() {
 	return flag({
-		long: 'print',
-		description: 'Print the SSH command instead of opening a shell',
+		long: 'with-secrets',
+		description: 'Load gateway runtime secrets into the SSH session or remote command',
 	});
 }
 

@@ -5,9 +5,14 @@ import type { SystemConfig } from '../config/system-config.js';
 import {
 	type CliDependencies,
 	type CliIo,
+	requireZone,
 	resolveControllerBaseUrl,
 } from './agent-vm-cli-support.js';
-import { zoneSshAccessResponseSchema, type ZoneSshAccessResponse } from './ssh-commands.js';
+import {
+	resolveZoneAdminToken,
+	zoneSshAccessResponseSchema,
+	type ZoneSshAccessResponse,
+} from './ssh-commands.js';
 
 const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
 
@@ -71,7 +76,11 @@ export async function runAuthInteractiveCommand(options: {
 	readonly authConfig: GatewayAuthConfig | undefined;
 	readonly dependencies: Pick<
 		CliDependencies,
-		'createControllerClient' | 'runCommand' | 'runInteractiveProcess'
+		| 'createControllerClient'
+		| 'createSecretResolver'
+		| 'resolveServiceAccountToken'
+		| 'runCommand'
+		| 'runInteractiveProcess'
 	>;
 	readonly deviceCode?: boolean;
 	readonly io: CliIo;
@@ -91,8 +100,17 @@ export async function runAuthInteractiveCommand(options: {
 	const controllerClient = options.dependencies.createControllerClient({
 		baseUrl: resolveControllerBaseUrl(options.systemConfig),
 	});
+	const zone = requireZone(options.systemConfig, options.zoneId);
+	const adminToken = await resolveZoneAdminToken({
+		dependencies: options.dependencies,
+		systemConfig: options.systemConfig,
+		zone,
+	});
 	const parsedSshResponse = zoneSshAccessResponseSchema.safeParse(
-		await controllerClient.enableZoneSsh(options.zoneId),
+		await controllerClient.enableZoneSsh(options.zoneId, {
+			...(adminToken ? { adminToken } : {}),
+			secretEnv: 'default',
+		}),
 	);
 	if (!parsedSshResponse.success) {
 		throw new Error('Controller returned an invalid SSH response.');

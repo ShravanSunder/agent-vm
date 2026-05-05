@@ -11,9 +11,17 @@ import type { ControllerLeasePeekResponse } from './controller-lease-response-ty
 export class ControllerTaskNotReadyError extends Error {}
 export class ControllerRuntimeAtCapacityError extends Error {}
 
+export interface EnableSshForZoneOptions {
+	readonly adminToken?: string;
+	readonly secretEnv: 'default' | 'with-secrets';
+}
+
 export interface ControllerRouteOperations {
 	readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
-	readonly enableSshForZone?: (zoneId: string) => Promise<unknown>;
+	readonly enableSshForZone?: (
+		zoneId: string,
+		options: EnableSshForZoneOptions,
+	) => Promise<unknown>;
 	readonly execInZone?: (zoneId: string, command: string) => Promise<unknown>;
 	readonly getStatus: () => Promise<unknown>;
 	readonly getTaskState?: (zoneId: string, taskId: string) => Promise<unknown>;

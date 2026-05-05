@@ -24,9 +24,7 @@ const openClawStateDirVmPath = '/home/openclaw/.openclaw/state';
 const openClawCacheDirVmPath = '/home/openclaw/.openclaw/cache';
 const openClawZoneFilesDirVmPath = '/zone';
 const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
-const openClawAdminShellEnvFilePath = '/etc/profile.d/openclaw-admin.sh';
 const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
-const openClawGatewayAuthEnvFilePath = '/run/openclaw/gateway-auth.env';
 const openClawGatewayTokenEnvVar = 'OPENCLAW_GATEWAY_TOKEN';
 
 interface OpenClawSecretRef {
@@ -88,21 +86,6 @@ function buildOpenClawBootstrapCommand(
 	const secretEnvironmentLines = Object.entries(environmentSecrets).map(
 		([secretName, secretValue]) => `export ${secretName}=${shellQuote(secretValue)}`,
 	);
-	const gatewayToken = resolvedSecrets[openClawGatewayTokenEnvVar];
-	const gatewayAuthLines =
-		typeof gatewayToken === 'string'
-			? [`export ${openClawGatewayTokenEnvVar}=${shellQuote(gatewayToken)}`]
-			: [];
-	const adminShellLines = [
-		'if [ "$(id -u)" = "0" ]; then',
-		'\topenclaw() (',
-		'\t\tset -a',
-		`\t\t[ -r ${openClawGatewayAuthEnvFilePath} ] && . ${openClawGatewayAuthEnvFilePath}`,
-		'\t\tset +a',
-		'\t\tcommand openclaw "$@"',
-		'\t)',
-		'fi',
-	];
 
 	return (
 		`mkdir -p /root /etc/profile.d /run/openclaw /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && chown -R openclaw:openclaw /work && cat > ${openClawShellEnvFilePath} << 'ENVEOF'\n` +
@@ -113,17 +96,8 @@ function buildOpenClawBootstrapCommand(
 		secretEnvironmentLines.join('\n') +
 		'\nENVEOF\n' +
 		`chmod 600 ${openClawRuntimeSecretsEnvFilePath} && ` +
-		`cat > ${openClawGatewayAuthEnvFilePath} << 'ENVEOF'\n` +
-		gatewayAuthLines.join('\n') +
-		'\nENVEOF\n' +
-		`chmod 600 ${openClawGatewayAuthEnvFilePath} && ` +
-		`cat > ${openClawAdminShellEnvFilePath} << 'ENVEOF'\n` +
-		adminShellLines.join('\n') +
-		'\nENVEOF\n' +
-		`chmod 644 ${openClawAdminShellEnvFilePath} && ` +
 		'touch /root/.bashrc && ' +
 		`grep -qxF 'source ${openClawShellEnvFilePath}' /root/.bashrc || echo 'source ${openClawShellEnvFilePath}' >> /root/.bashrc && ` +
-		`grep -qxF 'source ${openClawAdminShellEnvFilePath}' /root/.bashrc || echo 'source ${openClawAdminShellEnvFilePath}' >> /root/.bashrc && ` +
 		'touch /root/.bash_profile && ' +
 		"grep -qxF 'source /root/.bashrc' /root/.bash_profile || echo 'source /root/.bashrc' >> /root/.bash_profile"
 	);

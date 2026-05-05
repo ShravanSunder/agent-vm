@@ -4,12 +4,13 @@ import { createControllerClient } from './controller-client.js';
 
 describe('createControllerClient', () => {
 	it('calls the controller service routes for operational commands', async () => {
-		const requests: { method: string; url: string }[] = [];
+		const requests: { body?: string; method: string; url: string }[] = [];
 		const controllerClient = createControllerClient({
 			baseUrl: 'http://127.0.0.1:18800',
 			fetchImpl: async (input: string | URL, init?: RequestInit) => {
 				const url = String(input);
 				requests.push({
+					...(typeof init?.body === 'string' ? { body: init.body } : {}),
 					method: init?.method ?? 'GET',
 					url,
 				});
@@ -40,6 +41,10 @@ describe('createControllerClient', () => {
 		await controllerClient.getZoneLogs('shravan');
 		await controllerClient.execInZone?.('shravan', 'echo hi');
 		await controllerClient.refreshZoneCredentials('shravan');
+		await controllerClient.enableZoneSsh('shravan', {
+			adminToken: 'admin-token',
+			secretEnv: 'with-secrets',
+		});
 		await controllerClient.destroyZone('shravan', true);
 		await controllerClient.upgradeZone('shravan');
 		await controllerClient.peekLease('lease-123');
@@ -47,9 +52,22 @@ describe('createControllerClient', () => {
 		expect(requests).toEqual([
 			{ method: 'GET', url: 'http://127.0.0.1:18800/controller-status' },
 			{ method: 'GET', url: 'http://127.0.0.1:18800/zones/shravan/logs' },
-			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/execute-command' },
+			{
+				body: JSON.stringify({ command: 'echo hi' }),
+				method: 'POST',
+				url: 'http://127.0.0.1:18800/zones/shravan/execute-command',
+			},
 			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/credentials/refresh' },
-			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/destroy' },
+			{
+				body: JSON.stringify({ adminToken: 'admin-token', secretEnv: 'with-secrets' }),
+				method: 'POST',
+				url: 'http://127.0.0.1:18800/zones/shravan/enable-ssh',
+			},
+			{
+				body: JSON.stringify({ purge: true }),
+				method: 'POST',
+				url: 'http://127.0.0.1:18800/zones/shravan/destroy',
+			},
 			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/upgrade' },
 			{ method: 'GET', url: 'http://127.0.0.1:18800/lease/lease-123/peek' },
 		]);

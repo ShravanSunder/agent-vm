@@ -61,6 +61,27 @@ const systemConfig = {
 	],
 } satisfies SystemConfig;
 
+const baseZone = systemConfig.zones[0];
+if (!baseZone) {
+	throw new Error('Expected test system config to include a zone.');
+}
+
+const systemConfigWithAdminAccess = {
+	...systemConfig,
+	zones: [
+		{
+			...baseZone,
+			adminAccess: {
+				mode: 'secret',
+				secret: {
+					source: '1password',
+					ref: 'op://agent-vm/shravan-ssh-access/token',
+				},
+			},
+		},
+	],
+} satisfies SystemConfig;
+
 function createControllerClientStub(
 	enableZoneSsh: ControllerClient['enableZoneSsh'],
 ): ControllerClient {
@@ -89,7 +110,9 @@ function createControllerClientStub(
 
 describe('runSshCommand', () => {
 	it('spawns an interactive ssh session', async () => {
-		const runInteractiveProcess = vi.fn(async () => {});
+		const runInteractiveProcess = vi.fn(
+			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
+		);
 
 		await runSshCommand({
 			dependencies: {
@@ -124,31 +147,24 @@ describe('runSshCommand', () => {
 		]);
 	});
 
-	it('prints the command when --print is passed', async () => {
-		const outputs: string[] = [];
-
-		await runSshCommand({
-			dependencies: {
-				...defaultCliDependencies,
-				createControllerClient: () =>
-					createControllerClientStub(async () => ({
-						command: 'ssh -i /tmp/key -p 2222 root@127.0.0.1',
-					})),
-			},
-			io: {
-				stderr: { write: () => true },
-				stdout: {
-					write: (chunk: string | Uint8Array) => {
-						outputs.push(String(chunk));
-						return true;
-					},
+	it('rejects --print for ssh sessions', async () => {
+		await expect(
+			runSshCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: () =>
+						createControllerClientStub(async () => ({
+							command: 'ssh -i /tmp/key -p 2222 root@127.0.0.1',
+						})),
 				},
-			},
-			restArguments: ['--zone', 'shravan', '--print'],
-			systemConfig,
-		});
-
-		expect(outputs.join('')).toContain('ssh -i /tmp/key -p 2222 root@127.0.0.1');
+				io: {
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				restArguments: ['--zone', 'shravan', '--print'],
+				systemConfig,
+			}),
+		).rejects.toThrow('--print is not supported');
 	});
 
 	it('passes through remote command arguments', async () => {
@@ -194,11 +210,106 @@ describe('runSshCommand', () => {
 		if (typeof remoteCommand !== 'string') {
 			throw new Error('Expected SSH remote command to be present.');
 		}
-		expect(remoteCommand).toContain('source /etc/profile.d/openclaw-admin.sh');
 		expect(remoteCommand).toContain('openclaw');
 		expect(remoteCommand).toContain('auth');
 		expect(remoteCommand).toContain('login');
+		expect(remoteCommand).not.toContain('/run/openclaw/secrets.env');
+		expect(remoteCommand).not.toContain('source /etc/profile.d/openclaw-admin.sh');
 		expect(remoteCommand).not.toContain('exec openclaw');
+	});
+
+	it('preserves remote command arguments with spaces and quotes', async () => {
+		const runInteractiveProcess = vi.fn(
+			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
+		);
+
+		await runSshCommand({
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: () =>
+					createControllerClientStub(async () => ({
+						host: '127.0.0.1',
+						identityFile: '/tmp/key',
+						port: 2222,
+						user: 'root',
+					})),
+				runInteractiveProcess,
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			restArguments: [
+				'--zone',
+				'shravan',
+				'--',
+				'openclaw',
+				'config',
+				'set',
+				'commands.owner',
+				"Shravan's shell",
+			],
+			systemConfig,
+		});
+
+		const sshInvocation = vi.mocked(runInteractiveProcess).mock.calls.at(0);
+		if (!sshInvocation) {
+			throw new Error('Expected SSH invocation.');
+		}
+		const remoteCommand = sshInvocation[1].at(-1);
+		if (typeof remoteCommand !== 'string') {
+			throw new Error('Expected SSH remote command to be present.');
+		}
+		expect(remoteCommand).toContain("'commands.owner'");
+		expect(remoteCommand).toContain(`'\\''Shravan'\\''\\'\\'''\\''s shell'\\'''`);
+	});
+
+	it('resolves zone admin access and requests a secret-backed ssh session', async () => {
+		const enableZoneSsh = vi.fn(async () => ({
+			host: '127.0.0.1',
+			identityFile: '/tmp/key',
+			port: 2222,
+			secretEnvEnabled: true,
+			user: 'root',
+		}));
+		const runInteractiveProcess = vi.fn(
+			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
+		);
+		const createSecretResolver = vi.fn(async () => ({
+			resolve: vi.fn(async () => 'resolved-admin-token'),
+			resolveAll: vi.fn(async () => ({})),
+		}));
+
+		await runSshCommand({
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: () => createControllerClientStub(enableZoneSsh),
+				createSecretResolver,
+				resolveServiceAccountToken: vi.fn(async () => 'op-service-account-token'),
+				runInteractiveProcess,
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			restArguments: ['--zone', 'shravan', '--with-secrets'],
+			systemConfig: systemConfigWithAdminAccess,
+		});
+
+		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
+			adminToken: 'resolved-admin-token',
+			secretEnv: 'with-secrets',
+		});
+		const sshInvocation = vi.mocked(runInteractiveProcess).mock.calls.at(0);
+		if (!sshInvocation) {
+			throw new Error('Expected SSH invocation.');
+		}
+		const remoteCommand = sshInvocation[1].at(-1);
+		if (typeof remoteCommand !== 'string') {
+			throw new Error('Expected SSH remote command to be present.');
+		}
+		expect(remoteCommand).toContain('/run/openclaw/secrets.env');
+		expect(remoteCommand).not.toContain('resolved-admin-token');
 	});
 
 	it('throws when the controller returns incomplete ssh data without a printable command', async () => {

@@ -78,6 +78,7 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 		config: zone.gateway.config,
 		memory: zone.gateway.memory,
 		port: zone.gateway.port,
+		ssh: zone.gateway.ssh ?? { secretEnv: 'explicit' },
 		stateDir: zone.gateway.stateDir,
 		...(zone.gateway.authProfilesRef ? { authProfilesRef: zone.gateway.authProfilesRef } : {}),
 	};

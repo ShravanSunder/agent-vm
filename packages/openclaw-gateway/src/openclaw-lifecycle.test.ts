@@ -43,10 +43,6 @@ async function renderBootstrapFiles(command: string, rootDirectory: string): Pro
 	await execFileAsync('bash', ['-lc', rootedCommand]);
 }
 
-function shellQuoteForTest(value: string): string {
-	return `'${value.replace(/'/gu, `'\\''`)}'`;
-}
-
 afterEach(async () => {
 	vi.useRealTimers();
 	await Promise.all(
@@ -72,6 +68,7 @@ function createZone(overrides?: {
 		config: '/host/config/shravan/openclaw.json',
 		memory: '2G',
 		port: 18791,
+		ssh: { secretEnv: 'explicit' },
 		stateDir: '/host/state/shravan',
 		type: 'openclaw',
 		zoneFilesDir: '/host/zone-files/shravan',
@@ -222,24 +219,15 @@ describe('openclawLifecycle', () => {
 			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
 
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
-			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-admin.sh');
 			expect(processSpec.bootstrapCommand).toContain('/run/openclaw/secrets.env');
-			expect(processSpec.bootstrapCommand).toContain('/run/openclaw/gateway-auth.env');
 			expect(processSpec.bootstrapCommand).toContain("DISCORD_BOT_TOKEN='discord-token'");
 			expect(processSpec.bootstrapCommand).toContain("OPENCLAW_GATEWAY_TOKEN='gateway'\\''token'");
 			expect(
-				extractHeredocBody(processSpec.bootstrapCommand, '/run/openclaw/gateway-auth.env'),
-			).toBe("export OPENCLAW_GATEWAY_TOKEN='gateway'\\''token'");
-			expect(
-				extractHeredocBody(processSpec.bootstrapCommand, '/etc/profile.d/openclaw-admin.sh'),
-			).toContain('openclaw() (');
-			expect(
-				extractHeredocBody(processSpec.bootstrapCommand, '/etc/profile.d/openclaw-admin.sh'),
-			).toContain('. /run/openclaw/gateway-auth.env');
-			expect(
-				extractHeredocBody(processSpec.bootstrapCommand, '/etc/profile.d/openclaw-admin.sh'),
-			).not.toContain('/run/openclaw/secrets.env');
-			expect(processSpec.bootstrapCommand).toContain('chmod 600 /run/openclaw/gateway-auth.env');
+				extractHeredocBody(processSpec.bootstrapCommand, '/run/openclaw/secrets.env'),
+			).toContain("export OPENCLAW_GATEWAY_TOKEN='gateway'\\''token'");
+			expect(processSpec.bootstrapCommand).not.toContain('/etc/profile.d/openclaw-admin.sh');
+			expect(processSpec.bootstrapCommand).not.toContain('/run/openclaw/gateway-auth.env');
+			expect(processSpec.bootstrapCommand).not.toContain('openclaw()');
 			expect(processSpec.bootstrapCommand).toContain(
 				'OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json',
 			);
@@ -253,7 +241,6 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.startCommand).toContain('. /run/openclaw/secrets.env');
 			expect(processSpec.startCommand).toContain('cd /home/openclaw');
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
-			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-admin.sh');
 			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
 			expect(processSpec.startCommand).toContain('nohup openclaw gateway --port 18789');
 			expect(processSpec.healthCheck).toEqual({
@@ -271,50 +258,14 @@ describe('openclawLifecycle', () => {
 
 			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory);
 
-			const adminShellScript = await readFile(
-				path.join(tempDirectory, 'etc', 'profile.d', 'openclaw-admin.sh'),
-				'utf8',
-			);
 			const environmentShellScript = await readFile(
 				path.join(tempDirectory, 'etc', 'profile.d', 'openclaw-env.sh'),
 				'utf8',
 			);
-			expect(adminShellScript).toContain('if [ "$(id -u)" = "0" ]; then');
-			expect(adminShellScript).toContain('command openclaw "$@"');
-			expect(adminShellScript).not.toContain('command openclaw ""');
+			await expect(
+				readFile(path.join(tempDirectory, 'etc', 'profile.d', 'openclaw-admin.sh'), 'utf8'),
+			).rejects.toThrow();
 			expect(environmentShellScript).toContain('export PATH=/pnpm:$PATH');
-		});
-
-		it('forwards OpenClaw admin wrapper arguments exactly', async () => {
-			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-admin-wrapper-'));
-			createdDirectories.push(tempDirectory);
-			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
-			const fakeBinDirectory = path.join(tempDirectory, 'bin');
-			await mkdir(fakeBinDirectory, { recursive: true });
-			const fakeOpenClawPath = path.join(fakeBinDirectory, 'openclaw');
-			const capturedArgvPath = path.join(tempDirectory, 'argv.json');
-			await writeFile(
-				fakeOpenClawPath,
-				[
-					'#!/usr/bin/env node',
-					`await import('node:fs/promises').then((fs) => fs.writeFile(${JSON.stringify(capturedArgvPath)}, JSON.stringify(process.argv.slice(2))))`,
-				].join('\n'),
-				{ mode: 0o755 },
-			);
-			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory);
-
-			await execFileAsync('bash', [
-				'-lc',
-				[
-					`PATH=${shellQuoteForTest(fakeBinDirectory)}:$PATH`,
-					`source ${shellQuoteForTest(path.join(tempDirectory, 'etc', 'profile.d', 'openclaw-admin.sh'))}`,
-					`openclaw tui --flag 'value with spaces' '' '--literal=$PATH'`,
-				].join(' && '),
-			]);
-
-			await expect(readFile(capturedArgvPath, 'utf8')).resolves.toBe(
-				JSON.stringify(['tui', '--flag', 'value with spaces', '', '--literal=$PATH']),
-			);
 		});
 	});
 
