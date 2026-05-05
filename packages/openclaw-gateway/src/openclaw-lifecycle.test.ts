@@ -20,6 +20,16 @@ async function pathExists(filePath: string): Promise<boolean> {
 	}
 }
 
+function extractHeredocBody(command: string, targetPath: string): string {
+	const marker = `cat > ${targetPath} << ENVEOF\n`;
+	const startIndex = command.indexOf(marker);
+	expect(startIndex).toBeGreaterThanOrEqual(0);
+	const bodyStartIndex = startIndex + marker.length;
+	const bodyEndIndex = command.indexOf('\nENVEOF', bodyStartIndex);
+	expect(bodyEndIndex).toBeGreaterThan(bodyStartIndex);
+	return command.slice(bodyStartIndex, bodyEndIndex);
+}
+
 afterEach(async () => {
 	vi.useRealTimers();
 	await Promise.all(
@@ -195,9 +205,24 @@ describe('openclawLifecycle', () => {
 			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
 
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
+			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-admin.sh');
 			expect(processSpec.bootstrapCommand).toContain('/run/openclaw/secrets.env');
+			expect(processSpec.bootstrapCommand).toContain('/run/openclaw/gateway-auth.env');
 			expect(processSpec.bootstrapCommand).toContain("DISCORD_BOT_TOKEN='discord-token'");
 			expect(processSpec.bootstrapCommand).toContain("OPENCLAW_GATEWAY_TOKEN='gateway'\\''token'");
+			expect(
+				extractHeredocBody(processSpec.bootstrapCommand, '/run/openclaw/gateway-auth.env'),
+			).toBe("export OPENCLAW_GATEWAY_TOKEN='gateway'\\''token'");
+			expect(
+				extractHeredocBody(processSpec.bootstrapCommand, '/etc/profile.d/openclaw-admin.sh'),
+			).toContain('openclaw() (');
+			expect(
+				extractHeredocBody(processSpec.bootstrapCommand, '/etc/profile.d/openclaw-admin.sh'),
+			).toContain('. /run/openclaw/gateway-auth.env');
+			expect(
+				extractHeredocBody(processSpec.bootstrapCommand, '/etc/profile.d/openclaw-admin.sh'),
+			).not.toContain('/run/openclaw/secrets.env');
+			expect(processSpec.bootstrapCommand).toContain('chmod 600 /run/openclaw/gateway-auth.env');
 			expect(processSpec.bootstrapCommand).toContain(
 				'OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json',
 			);
@@ -211,6 +236,7 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.startCommand).toContain('. /run/openclaw/secrets.env');
 			expect(processSpec.startCommand).toContain('cd /home/openclaw');
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
+			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-admin.sh');
 			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
 			expect(processSpec.startCommand).toContain('nohup openclaw gateway --port 18789');
 			expect(processSpec.healthCheck).toEqual({
