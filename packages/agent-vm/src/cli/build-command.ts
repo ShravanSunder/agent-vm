@@ -11,7 +11,7 @@ import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondol
 import {
 	MANAGED_OPENCLAW_VERSION,
 	generateManagedDockerfile as generateManagedDockerfileDefault,
-	resolveAgentVmPackageVersion as resolveAgentVmPackageVersionDefault,
+	resolveManagedBaseImageVersion as resolveManagedBaseImageVersionDefault,
 	type ManagedImageSource,
 } from '../build/managed-image-dockerfile.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
@@ -50,10 +50,10 @@ export interface BuildCommandDependencies {
 		readonly imageTargetName: string;
 		readonly outputDirectory: string;
 		readonly overlayPath?: string | undefined;
-		readonly packageVersion: string;
+		readonly baseImageVersion: string;
 		readonly requiredOpenClawPackages?: readonly string[];
 	}) => Promise<string>;
-	readonly resolveAgentVmPackageVersion?: () => Promise<string>;
+	readonly resolveManagedBaseImageVersion?: () => Promise<string>;
 	readonly syncBundledOpenClawPlugin?: (
 		targetDir: string,
 		profileName: string,
@@ -229,8 +229,8 @@ export async function runBuildCommand(
 		dependencies.resolveProjectRootFromDockerfile ?? resolveProjectRootFromDockerfile;
 	const generateManagedDockerfile =
 		dependencies.generateManagedDockerfile ?? generateManagedDockerfileDefault;
-	const resolveAgentVmPackageVersion =
-		dependencies.resolveAgentVmPackageVersion ?? resolveAgentVmPackageVersionDefault;
+	const resolveManagedBaseImageVersion =
+		dependencies.resolveManagedBaseImageVersion ?? resolveManagedBaseImageVersionDefault;
 	const syncBundledOpenClawPlugin =
 		dependencies.syncBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle;
 	const systemCacheIdentifierPath = options.systemConfig.systemCacheIdentifierPath;
@@ -268,10 +268,10 @@ export async function runBuildCommand(
 		dockerImageTargets,
 		resolveOciImageTag,
 	);
-	const agentVmPackageVersion = dockerImageTargets.some(
+	const managedBaseImageVersion = dockerImageTargets.some(
 		(imageTarget) => imageTarget.source !== undefined,
 	)
-		? await resolveAgentVmPackageVersion()
+		? await resolveManagedBaseImageVersion()
 		: undefined;
 
 	// oxlint-disable-next-line no-await-in-loop -- image builds are intentionally sequential for stable task output and shared image tags
@@ -282,8 +282,8 @@ export async function runBuildCommand(
 		}
 		let dockerfilePath = imageTarget.dockerfile;
 		if (imageTarget.source) {
-			if (!agentVmPackageVersion) {
-				throw new Error('Missing @agent-vm/agent-vm package version for managed image build.');
+			if (!managedBaseImageVersion) {
+				throw new Error('Missing managed base image version for managed image build.');
 			}
 			// oxlint-disable-next-line no-await-in-loop -- package detection is profile-local and low-volume
 			const requiredOpenClawPackages = await resolveRequiredOpenClawPackagesForTarget(
@@ -302,7 +302,7 @@ export async function runBuildCommand(
 					imageTarget.name,
 				),
 				...(imageTarget.source.overlay ? { overlayPath: imageTarget.source.overlay } : {}),
-				packageVersion: agentVmPackageVersion,
+				baseImageVersion: managedBaseImageVersion,
 				requiredOpenClawPackages,
 			});
 		}

@@ -165,7 +165,8 @@ Gateway image profiles are used by zones:
 ```
 
 `source.kind = "managedBase"` means `agent-vm build` generates the Dockerfile
-from the installed `@agent-vm/agent-vm` version and a versioned GHCR base image.
+from the installed `@agent-vm/agent-vm` package and the managed GHCR base image
+version pinned by that package.
 The deployment overlay is intentionally small; use it for extra apt packages,
 copy steps, and post-base commands. Legacy `dockerfile` profiles are reported by
 `agent-vm doctor`; migrate them with `agent-vm migrate images`.

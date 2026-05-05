@@ -77,7 +77,7 @@ ${options.systemConfigPath} is the controller config. Agent-vm-authored config i
 config/gateways/<zone>/openclaw.json is OpenClaw-owned gateway config.
 config/gateways/<zone>/worker.jsonc is Agent Worker gateway config when the zone type is worker.
 vm-images/ contains deployment-owned Gondolin build-config.jsonc files and small managed image overlays.
-agent-vm owns the gateway/tool base image recipes and publishes the versioned GHCR base layers.
+agent-vm owns the gateway/tool base image recipes and pins the managed GHCR base layer version.
 stateDir stores durable gateway state.
 zoneFilesDir stores durable user/household files for OpenClaw zones.
 cacheDir stores rebuildable artifacts.

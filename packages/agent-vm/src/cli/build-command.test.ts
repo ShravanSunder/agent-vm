@@ -198,7 +198,7 @@ describe('runBuildCommand', () => {
 					fingerprint: 'managed-fp',
 					imagePath: '/cache/managed',
 				}),
-				resolveAgentVmPackageVersion: async () => '0.0.41',
+				resolveManagedBaseImageVersion: async () => '0.0.41',
 				runTask: async (_title, fn) => fn(),
 			},
 		);
@@ -282,7 +282,7 @@ describe('runBuildCommand', () => {
 					fingerprint: 'discord-fp',
 					imagePath: '/cache/discord',
 				}),
-				resolveAgentVmPackageVersion: async () => '0.0.41',
+				resolveManagedBaseImageVersion: async () => '0.0.41',
 				runTask: async (_title, fn) => fn(),
 			},
 		);
