@@ -152,7 +152,9 @@ describe('runSshCommand', () => {
 	});
 
 	it('passes through remote command arguments', async () => {
-		const runInteractiveProcess = vi.fn(async () => {});
+		const runInteractiveProcess = vi.fn(
+			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
+		);
 
 		await runSshCommand({
 			dependencies: {
@@ -186,6 +188,17 @@ describe('runSshCommand', () => {
 			'root@127.0.0.1',
 			expect.stringContaining('source /etc/profile.d/openclaw-env.sh'),
 		]);
+		const sshInvocation = vi.mocked(runInteractiveProcess).mock.calls.at(0);
+		expect(sshInvocation).toBeDefined();
+		const remoteCommand = sshInvocation?.[1].at(-1);
+		if (typeof remoteCommand !== 'string') {
+			throw new Error('Expected SSH remote command to be present.');
+		}
+		expect(remoteCommand).toContain('source /etc/profile.d/openclaw-admin.sh');
+		expect(remoteCommand).toContain('openclaw');
+		expect(remoteCommand).toContain('auth');
+		expect(remoteCommand).toContain('login');
+		expect(remoteCommand).not.toContain('exec openclaw');
 	});
 
 	it('throws when the controller returns incomplete ssh data without a printable command', async () => {

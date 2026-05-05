@@ -69,14 +69,14 @@ The gateway VM boots at controller startup and stays running. It is NOT per-task
   1. Resolve zone secrets
   2. Build gateway image (cached by fingerprint)
   3. prepareHostState:
-     - Write effective-openclaw.json (inject gateway token)
+     - Write effective-openclaw.json (env SecretRef for gateway token)
      - Write per-agent auth-profiles.json files from configured sources
   4. buildVmSpec → GatewayVmSpec (4 mounts, TCP pool, env)
   5. buildProcessSpec → bootstrap + start commands
   6. createManagedVm → Gondolin VM
-  7. Bootstrap: write shell env to /etc/profile.d/
-  8. Start: openclaw gateway --port 18789
-  9. Wait for health check (GET / on :18789)
+  7. Bootstrap: write shell/admin profiles and runtime secret env files
+  8. Start: source runtime secrets, then run openclaw gateway --port 18789
+  9. Wait for health check (GET /readyz on :18789)
   10. Enable ingress
 ```
 
