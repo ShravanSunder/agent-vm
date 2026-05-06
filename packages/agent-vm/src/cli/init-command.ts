@@ -689,6 +689,7 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 	},
 	tools: { elevated: { enabled: false } },
 	commands: { ownerAllowFrom: [] },
+	session: { dmScope: 'per-channel-peer' },
 	plugins: {
 		load: {
 			paths: [defaultOpenClawExtensionsPath, '/pnpm/global/5/node_modules/@openclaw'],

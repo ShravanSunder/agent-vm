@@ -13,6 +13,13 @@ interface OpenClawDeploymentConfig {
 			readonly workspace?: unknown;
 		};
 	};
+	readonly bindings?: readonly unknown[];
+	readonly channels?: {
+		readonly discord?: {
+			readonly enabled?: unknown;
+			readonly guilds?: Record<string, unknown>;
+		};
+	};
 	readonly plugins?: {
 		readonly allow?: readonly unknown[];
 		readonly entries?: Record<string, unknown>;
@@ -22,6 +29,9 @@ interface OpenClawDeploymentConfig {
 		readonly slots?: {
 			readonly memory?: unknown;
 		};
+	};
+	readonly session?: {
+		readonly dmScope?: unknown;
 	};
 }
 
@@ -51,6 +61,33 @@ function parseOpenClawDeploymentConfig(rawConfig: string): OpenClawDeploymentCon
 	return isObjectRecord(parsedConfig) ? parsedConfig : {};
 }
 
+function getDiscordBindingGuildIds(bindings: readonly unknown[] | undefined): readonly string[] {
+	const guildIds = new Set<string>();
+	for (const binding of bindings ?? []) {
+		if (!isObjectRecord(binding) || !isObjectRecord(binding.match)) {
+			continue;
+		}
+		if (binding.match.channel === 'discord' && typeof binding.match.guildId === 'string') {
+			guildIds.add(binding.match.guildId);
+		}
+	}
+	return [...guildIds].toSorted();
+}
+
+function getMissingDiscordGuildIds(config: OpenClawDeploymentConfig): readonly string[] {
+	const configuredGuilds = config.channels?.discord?.guilds ?? {};
+	return getDiscordBindingGuildIds(config.bindings).filter(
+		(guildId) => !Object.hasOwn(configuredGuilds, guildId),
+	);
+}
+
+function hasIsolatedDmScope(config: OpenClawDeploymentConfig): boolean {
+	return (
+		config.session?.dmScope === 'per-channel-peer' ||
+		config.session?.dmScope === 'per-account-channel-peer'
+	);
+}
+
 export function buildOpenClawDeploymentDoctorChecks(
 	targets: readonly OpenClawDeploymentDoctorTarget[],
 ): readonly DoctorCheck[] {
@@ -64,6 +101,8 @@ export function buildOpenClawDeploymentDoctorChecks(
 			includesString(config.plugins?.allow, 'discord') ||
 			hasEnabledEntry(config.plugins?.entries, 'discord');
 		const workspace = config.agents?.defaults?.workspace;
+		const discordEnabled = config.channels?.discord?.enabled === true;
+		const missingDiscordGuildIds = getMissingDiscordGuildIds(config);
 		return [
 			{
 				name: `openclaw-workspace-access-${target.zoneId}`,
@@ -104,6 +143,22 @@ export function buildOpenClawDeploymentDoctorChecks(
 						: typeof workspace === 'string'
 							? workspace
 							: 'agents.defaults.workspace is unset',
+			},
+			{
+				name: `openclaw-dm-scope-${target.zoneId}`,
+				ok: !discordEnabled || hasIsolatedDmScope(config),
+				hint:
+					!discordEnabled || hasIsolatedDmScope(config)
+						? 'session.dmScope isolates Discord DMs'
+						: 'Set session.dmScope to "per-channel-peer" for Discord multi-user isolation.',
+			},
+			{
+				name: `openclaw-discord-guild-bindings-${target.zoneId}`,
+				ok: !discordEnabled || missingDiscordGuildIds.length === 0,
+				hint:
+					!discordEnabled || missingDiscordGuildIds.length === 0
+						? 'Discord binding guildIds are present under channels.discord.guilds'
+						: `Add channels.discord.guilds entries for binding guildId values: ${missingDiscordGuildIds.join(', ')}.`,
 			},
 		] as const satisfies readonly DoctorCheck[];
 	});

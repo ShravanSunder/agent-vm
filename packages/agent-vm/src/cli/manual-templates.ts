@@ -138,16 +138,18 @@ Multi-zone controller work makes one controller process manage multiple typed zo
 				`
 Agent-vm scaffolds OpenClaw defaults that make the deployment usable without hand-editing Dockerfiles or OpenClaw internals.
 
-agents.defaults.sandbox.workspaceAccess is rw so agents can write their workspace.
-agents.defaults.workspace points at /zone/agents/default so /zone remains shared zone storage.
-plugins.load.paths includes /home/openclaw/.openclaw/extensions for vendored extensions and /pnpm/global/5/node_modules/@openclaw for managed OpenClaw packages.
-plugins.slots.memory selects memory-core when memory-core is enabled.
-gateway.auth.mode is token for agent-vm-managed gateways.
+	agents.defaults.sandbox.workspaceAccess is rw so agents can write their workspace.
+	agents.defaults.workspace points at /zone/agents/default so /zone remains shared zone storage.
+	session.dmScope is per-channel-peer so Discord DMs from different people do not share one agent session.
+	plugins.load.paths includes /home/openclaw/.openclaw/extensions for vendored extensions and /pnpm/global/5/node_modules/@openclaw for managed OpenClaw packages.
+	plugins.slots.memory selects memory-core when memory-core is enabled.
+	gateway.auth.mode is token for agent-vm-managed gateways.
 
-Managed OpenClaw gateway images install external channel packages from config. For example, channels.discord.enabled installs @openclaw/discord for the managed OpenClaw release.
+	Managed OpenClaw gateway images install @agent-vm/openclaw-agent-vm-plugin and register it as the gondolin extension.
+	Managed OpenClaw gateway images install external channel packages from config. For example, channels.discord.enabled installs @openclaw/discord for the managed OpenClaw release.
 
-Run agent-vm doctor after editing OpenClaw config. Doctor warns about stale Discord plugin entries, missing memory slots, missing plugin load paths, /zone used as an agent workspace, and missing writable workspace access.
-`,
+	Run agent-vm doctor after editing OpenClaw config. Doctor warns about stale Discord plugin entries, missing memory slots, missing plugin load paths, /zone used as an agent workspace, missing writable workspace access, unsafe DM session scope, and Discord binding guildIds missing from channels.discord.guilds.
+	`,
 			),
 		},
 		{

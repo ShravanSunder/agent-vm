@@ -10,6 +10,13 @@ export type ManagedImageBase = 'openclaw-gateway' | 'tool-vm' | 'worker-gateway'
 
 export const MANAGED_BASE_IMAGE_VERSION = '0.0.43';
 export const MANAGED_OPENCLAW_VERSION = '2026.5.2';
+export const MANAGED_OPENCLAW_AGENT_VM_PLUGIN_VERSION = '0.0.47';
+
+const managedOpenClawAgentVmPluginPackageName = '@agent-vm/openclaw-agent-vm-plugin';
+const managedOpenClawAgentVmPluginPackage = `${managedOpenClawAgentVmPluginPackageName}@${MANAGED_OPENCLAW_AGENT_VM_PLUGIN_VERSION}`;
+const managedOpenClawAgentVmPluginExtensionPath = '/home/openclaw/.openclaw/extensions/gondolin';
+const managedOpenClawAgentVmPluginPackagePath =
+	'/pnpm/global/5/node_modules/@agent-vm/openclaw-agent-vm-plugin/dist';
 
 export interface ManagedImageSource {
 	readonly kind: 'managedBase';
@@ -94,9 +101,17 @@ function renderManagedDockerfile(props: {
 				' && rm -rf /var/lib/apt/lists/*',
 		);
 	}
+	if (props.base === 'openclaw-gateway') {
+		lines.push('RUN pnpm add -g ' + shellJoin([managedOpenClawAgentVmPluginPackage]));
+	}
+	const overlayOpenClawPackages = props.overlay.extraOpenClawPackages.filter(
+		(packageSpec) =>
+			packageSpec !== managedOpenClawAgentVmPluginPackageName &&
+			!packageSpec.startsWith(`${managedOpenClawAgentVmPluginPackageName}@`),
+	);
 	const openClawPackages = [
 		...props.requiredOpenClawPackages,
-		...props.overlay.extraOpenClawPackages,
+		...overlayOpenClawPackages,
 	];
 	if (openClawPackages.length > 0) {
 		lines.push('RUN pnpm add -g ' + shellJoin(openClawPackages));
@@ -106,6 +121,11 @@ function renderManagedDockerfile(props: {
 	}
 	for (const command of props.overlay.runAfterBase) {
 		lines.push(`RUN ${command}`);
+	}
+	if (props.base === 'openclaw-gateway') {
+		lines.push(
+			`RUN ln -sf ${managedOpenClawAgentVmPluginPackagePath} ${managedOpenClawAgentVmPluginExtensionPath}`,
+		);
 	}
 	lines.push('');
 	return lines.join('\n');

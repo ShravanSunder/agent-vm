@@ -80,6 +80,26 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 							workspace: '/zone/agents/default',
 						},
 					},
+					session: {
+						dmScope: 'per-channel-peer',
+					},
+					channels: {
+						discord: {
+							enabled: true,
+							guilds: {
+								'guild-1': {},
+							},
+						},
+					},
+					bindings: [
+						{
+							match: {
+								channel: 'discord',
+								guildId: 'guild-1',
+							},
+							agentId: 'shravan',
+						},
+					],
 					plugins: {
 						allow: ['gondolin', 'memory-core'],
 						entries: {
@@ -123,6 +143,23 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 							'memory-core': { enabled: true },
 						},
 					},
+					channels: {
+						discord: {
+							enabled: true,
+							guilds: {
+								'allowed-guild': {},
+							},
+						},
+					},
+					bindings: [
+						{
+							match: {
+								channel: 'discord',
+								guildId: 'missing-guild',
+							},
+							agentId: 'shravan',
+						},
+					],
 				},
 			},
 		]);
@@ -155,6 +192,16 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			ok: false,
 			hint: 'Use /zone/agents/default or per-agent workspaces; keep /zone for shared zone files.',
 		});
+		expect(checks.find((check) => check.name === 'openclaw-dm-scope-shravan')).toMatchObject({
+			ok: false,
+			hint: 'Set session.dmScope to "per-channel-peer" for Discord multi-user isolation.',
+		});
+		expect(
+			checks.find((check) => check.name === 'openclaw-discord-guild-bindings-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Add channels.discord.guilds entries for binding guildId values: missing-guild.',
+		});
 	});
 });
 
@@ -171,6 +218,9 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 						sandbox: { workspaceAccess: 'rw' },
 						workspace: '/zone/agents/default',
 					},
+				},
+				session: {
+					dmScope: 'per-channel-peer',
 				},
 				plugins: {
 					allow: ['memory-core'],
