@@ -678,7 +678,12 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 					},
 				},
 			},
-			sandbox: { backend: 'gondolin', mode: 'all', scope: 'agent' },
+			sandbox: {
+				backend: 'gondolin',
+				mode: 'all',
+				scope: 'agent',
+				workspaceAccess: 'rw',
+			},
 			workspace: '/zone/agents/default',
 		},
 	},

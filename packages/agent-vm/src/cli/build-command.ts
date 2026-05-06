@@ -66,7 +66,7 @@ const ociImageTagSchema = z.object({
 	}),
 });
 
-const openClawChannelConfigSchema = z
+const openClawManagedPackageConfigSchema = z
 	.object({
 		channels: z
 			.object({
@@ -76,6 +76,18 @@ const openClawChannelConfigSchema = z
 			.optional(),
 	})
 	.passthrough();
+
+interface OpenClawManagedPackageRule {
+	readonly isEnabled: (config: z.infer<typeof openClawManagedPackageConfigSchema>) => boolean;
+	readonly packageName: string;
+}
+
+const openClawManagedPackageRules = [
+	{
+		packageName: '@openclaw/discord',
+		isEnabled: (config) => config.channels?.discord?.enabled === true,
+	},
+] as const satisfies readonly OpenClawManagedPackageRule[];
 
 interface ImageTarget {
 	readonly buildConfigPath: string;
@@ -203,9 +215,11 @@ async function resolveRequiredOpenClawPackagesForTarget(
 		}
 		// oxlint-disable-next-line no-await-in-loop -- zone config reads are tiny and error messages stay profile-local
 		const rawOpenClawConfig = await loadJsonConfigFile(zone.gateway.config);
-		const openClawConfig = openClawChannelConfigSchema.parse(rawOpenClawConfig);
-		if (openClawConfig.channels?.discord?.enabled === true) {
-			requiredPackageSpecs.add(`@openclaw/discord@${MANAGED_OPENCLAW_VERSION}`);
+		const openClawConfig = openClawManagedPackageConfigSchema.parse(rawOpenClawConfig);
+		for (const packageRule of openClawManagedPackageRules) {
+			if (packageRule.isEnabled(openClawConfig)) {
+				requiredPackageSpecs.add(`${packageRule.packageName}@${MANAGED_OPENCLAW_VERSION}`);
+			}
 		}
 	}
 	return [...requiredPackageSpecs].toSorted();

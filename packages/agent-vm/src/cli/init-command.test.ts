@@ -1168,7 +1168,14 @@ describe('scaffoldAgentVmProject', () => {
 			),
 		) as {
 			readonly gateway?: { readonly auth?: { readonly mode?: string } };
-			readonly agents?: { readonly defaults?: { readonly sandbox?: { readonly scope?: string } } };
+			readonly agents?: {
+				readonly defaults?: {
+					readonly sandbox?: {
+						readonly scope?: string;
+						readonly workspaceAccess?: string;
+					};
+				};
+			};
 			readonly commands?: { readonly ownerAllowFrom?: readonly string[] };
 			readonly plugins?: {
 				readonly allow?: readonly string[];
@@ -1178,6 +1185,7 @@ describe('scaffoldAgentVmProject', () => {
 		};
 		expect(openClawConfig.gateway?.auth?.mode).toBe('token');
 		expect(openClawConfig.agents?.defaults?.sandbox?.scope).toBe('agent');
+		expect(openClawConfig.agents?.defaults?.sandbox?.workspaceAccess).toBe('rw');
 		expect(openClawConfig.commands?.ownerAllowFrom).toEqual([]);
 		expect(openClawConfig.plugins?.allow).toContain('memory-core');
 		expect(openClawConfig.plugins?.slots?.memory).toBe('memory-core');
