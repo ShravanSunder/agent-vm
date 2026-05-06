@@ -32,6 +32,7 @@ describe('manual templates', () => {
 			'docs/manual/layout.md',
 			'docs/manual/scope.md',
 			'docs/manual/openclaw.md',
+			'docs/manual/openclaw-defaults.md',
 			'docs/manual/agent-worker.md',
 			'docs/manual/secrets.md',
 			'docs/manual/tool-access.md',
@@ -45,6 +46,18 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
 			'DISCORD_BOT_TOKEN',
 		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
+		).toContain('workspaceAccess');
+		expect(
+			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
+		).toContain('plugins.slots.memory');
+		expect(
+			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
+		).toContain('plugins.load.paths');
+		expect(
+			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
+		).toContain('@openclaw/discord');
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'OpenClaw Tool VMs run commands in /work',
 		);

@@ -16,6 +16,7 @@ import {
 	resolveProjectCheckoutPath,
 } from '../operations/config-validation.js';
 import { collectVmHostSystemDoctorCheck, type DoctorCheck } from '../operations/doctor.js';
+import { collectOpenClawDeploymentDoctorChecks } from '../operations/openclaw-deployment-doctor.js';
 import {
 	createResolverFromSystemConfig,
 	type CliDependencies,
@@ -334,6 +335,9 @@ export async function runControllerOperationCommand(
 						await collectOpenClawConfigChecks(options.systemConfig),
 					)
 				: [];
+			const openClawDeploymentChecks = await collectOpenClawDeploymentDoctorChecks(
+				options.systemConfig,
+			);
 			const imageProfileDockerfileChecks = await collectImageProfileDockerfileChecks(
 				options.systemConfig,
 				availableBinaries.has('docker') && dockerDaemonReady,
@@ -348,6 +352,7 @@ export async function runControllerOperationCommand(
 				...imageProfileDockerfileChecks,
 				...workerGatewayConfigChecks,
 				...openClawConfigChecks,
+				...openClawDeploymentChecks,
 			] as const satisfies readonly DoctorCheck[];
 			writeJson(options.io, {
 				ok: doctorResult.ok && dynamicChecks.every((check) => check.ok),

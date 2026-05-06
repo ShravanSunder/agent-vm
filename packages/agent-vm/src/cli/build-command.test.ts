@@ -291,6 +291,76 @@ describe('runBuildCommand', () => {
 		expect(generatedDockerfile).toContain('RUN pnpm add -g "@openclaw/discord@2026.5.2"');
 	});
 
+	it('does not add disabled OpenClaw channel packages', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const gatewayConfigDirectory = path.join(temporaryDirectory, 'config', 'gateways', 'sunfam');
+		fs.mkdirSync(gatewayConfigDirectory, { recursive: true });
+		const gatewayConfigPath = path.join(gatewayConfigDirectory, 'openclaw.json');
+		fs.writeFileSync(
+			gatewayConfigPath,
+			JSON.stringify({ channels: { discord: { enabled: false } } }),
+			'utf8',
+		);
+		const buildConfigPath = path.join(temporaryDirectory, 'build-config.json');
+		fs.writeFileSync(
+			buildConfigPath,
+			JSON.stringify({ oci: { image: 'agent-vm-gateway:no-discord' } }),
+			'utf8',
+		);
+		const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
+		const baseConfig = createTestSystemConfig();
+		const baseZone = baseConfig.zones[0];
+		if (!baseZone || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected an OpenClaw test zone.');
+		}
+
+		await runBuildCommand(
+			{
+				systemConfig: {
+					...baseConfig,
+					cacheDir: temporaryDirectory,
+					zones: [
+						{
+							...baseZone,
+							gateway: {
+								...baseZone.gateway,
+								config: gatewayConfigPath,
+							},
+						},
+					],
+					imageProfiles: {
+						gateways: {
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: buildConfigPath,
+								source: {
+									kind: 'managedBase',
+									base: 'openclaw-gateway',
+								},
+							},
+						},
+						toolVms: {},
+					},
+				},
+			},
+			{
+				buildDockerImage: async (options) => {
+					dockerBuilds.push(options);
+				},
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'disabled-discord-fp',
+					imagePath: '/cache/disabled-discord',
+				}),
+				resolveManagedBaseImageVersion: async () => '0.0.41',
+				runTask: async (_title, fn) => fn(),
+			},
+		);
+
+		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
+		expect(generatedDockerfile).not.toContain('@openclaw/discord');
+	});
+
 	it('finds the scaffold root by walking up to config/system.json instead of assuming dockerfile depth', async () => {
 		const projectRootDirectory = createTemporaryDirectory();
 		const dockerfileDirectory = path.join(projectRootDirectory, 'nested', 'images', 'gateway');
