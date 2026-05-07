@@ -14,6 +14,12 @@ import {
 	type ManagedImageRelease,
 	type ManagedImageSource,
 } from '../build/managed-image-dockerfile.js';
+import {
+	deleteStaleImageDirectories as deleteStaleImageDirectoriesDefault,
+	findPrunableImageDirectories as findPrunableImageDirectoriesDefault,
+	type CurrentImageFingerprints,
+	type StaleImageEntry,
+} from '../build/stale-image-cleaner.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import {
@@ -38,6 +44,12 @@ export interface BuildCommandDependencies {
 		readonly fullReset?: boolean;
 		readonly streamPreview?: TaskOutput;
 	}) => Promise<BuildImageResult>;
+	readonly deleteStaleImageDirectories?: (entries: readonly StaleImageEntry[]) => Promise<void>;
+	readonly findPrunableImageDirectories?: (options: {
+		readonly cacheDir: string;
+		readonly currentFingerprints: CurrentImageFingerprints;
+		readonly retainStaleGenerationsPerProfile: number;
+	}) => Promise<readonly StaleImageEntry[]>;
 	readonly resolveOciImageTag?: (buildConfigPath: string) => Promise<string>;
 	readonly resolveRequiredZigVersion?: () => Promise<string>;
 	readonly resolveZigVersion?: () => Promise<string | undefined>;
@@ -65,6 +77,9 @@ const ociImageTagSchema = z.object({
 		image: z.string().min(1),
 	}),
 });
+
+const RETAIN_STALE_IMAGE_GENERATIONS_PER_PROFILE = 2;
+const gatewayRuntimeRecordFileName = 'gateway-runtime.json';
 
 const openClawManagedPackageConfigSchema = z
 	.object({
@@ -102,6 +117,53 @@ interface ImageTarget {
 
 function imageTargetKey(imageTarget: Pick<ImageTarget, 'family' | 'name'>): string {
 	return `${imageTarget.family}/${imageTarget.name}`;
+}
+
+function createEmptyCurrentImageFingerprints(): CurrentImageFingerprints {
+	return {
+		gateways: {},
+		toolVms: {},
+	};
+}
+
+function setCurrentImageFingerprint(
+	currentFingerprints: CurrentImageFingerprints,
+	imageTarget: Pick<ImageTarget, 'family' | 'name'>,
+	fingerprint: string,
+): void {
+	if (imageTarget.family === 'gateway') {
+		currentFingerprints.gateways[imageTarget.name] = fingerprint;
+		return;
+	}
+	currentFingerprints.toolVms[imageTarget.name] = fingerprint;
+}
+
+async function findZoneIdsWithGatewayRuntimeRecords(
+	systemConfig: LoadedSystemConfig,
+): Promise<readonly string[]> {
+	const zoneIds: string[] = [];
+	for (const zone of systemConfig.zones) {
+		const runtimeRecordPath = path.join(zone.gateway.stateDir, gatewayRuntimeRecordFileName);
+		let runtimeRecordExists = false;
+		try {
+			// oxlint-disable-next-line no-await-in-loop -- state dirs are zone-local and errors should point at one zone
+			await fs.access(runtimeRecordPath);
+			runtimeRecordExists = true;
+		} catch (error) {
+			if (
+				typeof error !== 'object' ||
+				error === null ||
+				!('code' in error) ||
+				error.code !== 'ENOENT'
+			) {
+				throw error;
+			}
+		}
+		if (runtimeRecordExists) {
+			zoneIds.push(zone.id);
+		}
+	}
+	return zoneIds;
 }
 
 function startElapsedStatusHeartbeat(
@@ -257,6 +319,10 @@ export async function runBuildCommand(
 ): Promise<void> {
 	const buildDockerImage = dependencies.buildDockerImage ?? buildDockerImageDefault;
 	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
+	const deleteStaleImageDirectories =
+		dependencies.deleteStaleImageDirectories ?? deleteStaleImageDirectoriesDefault;
+	const findPrunableImageDirectories =
+		dependencies.findPrunableImageDirectories ?? findPrunableImageDirectoriesDefault;
 	const resolveOciImageTag = dependencies.resolveOciImageTag ?? resolveOciImageTagFromConfig;
 	const resolveRequiredZigVersion =
 		dependencies.resolveRequiredZigVersion ?? resolveGondolinMinimumZigVersion;
@@ -380,6 +446,7 @@ export async function runBuildCommand(
 	const dockerBackedTargets = new Set(
 		dockerImageTargets.map((imageTarget) => imageTargetKey(imageTarget)),
 	);
+	const currentFingerprints = createEmptyCurrentImageFingerprints();
 
 	for (const imageTarget of imageTargets) {
 		const shouldResetGondolinCache =
@@ -406,8 +473,49 @@ export async function runBuildCommand(
 				} finally {
 					stopHeartbeat();
 				}
+				setCurrentImageFingerprint(currentFingerprints, imageTarget, result.fingerprint);
 				taskContext?.setStatus(result.built ? 'vm assets ready' : 'vm assets cache hit');
 			},
 		);
 	}
+
+	await runTaskStep('Cache auto-prune', async (taskContext) => {
+		taskContext?.setStatus('checking old image generations');
+		try {
+			const activeGatewayRuntimeZoneIds = await findZoneIdsWithGatewayRuntimeRecords(
+				options.systemConfig,
+			);
+			if (activeGatewayRuntimeZoneIds.length > 0) {
+				taskContext?.setOutput({
+					message: `Image cache auto-prune skipped because gateway runtime records exist for zone(s): ${activeGatewayRuntimeZoneIds.join(', ')}. Stop the controller before pruning old image generations.`,
+				});
+				taskContext?.setStatus('image cache auto-prune skipped');
+				return;
+			}
+
+			const prunableEntries = await findPrunableImageDirectories({
+				cacheDir: options.systemConfig.cacheDir,
+				currentFingerprints,
+				retainStaleGenerationsPerProfile: RETAIN_STALE_IMAGE_GENERATIONS_PER_PROFILE,
+			});
+
+			if (prunableEntries.length === 0) {
+				taskContext?.setStatus('no old image generations found');
+				return;
+			}
+
+			await deleteStaleImageDirectories(prunableEntries);
+			taskContext?.setStatus(
+				`deleted ${prunableEntries.length} old image generation${
+					prunableEntries.length === 1 ? '' : 's'
+				}`,
+			);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			taskContext?.setOutput({
+				message: `Image cache auto-prune failed after build succeeded: ${message}`,
+			});
+			taskContext?.setStatus('image cache auto-prune failed');
+		}
+	});
 }
