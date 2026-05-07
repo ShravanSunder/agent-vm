@@ -96,7 +96,7 @@ describe('system cache identifier', () => {
 			`${JSON.stringify({
 				$comment: 'example',
 				schemaVersion: 1,
-				os: 'windows',
+				os: 'linux',
 				hostSystemType: 'bare-metal',
 				cacheProfile: 'default',
 				cacheFormat: 'gondolin-cache-v1',
@@ -105,7 +105,31 @@ describe('system cache identifier', () => {
 		);
 
 		await expect(loadSystemCacheIdentifier({ filePath })).rejects.toThrow(
-			`Invalid system cache identifier '${filePath}'`,
+			`Invalid system cache identifier '${filePath}': v1 schema mismatch.`,
+		);
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('rejects mixed old and new versioned v1 identifier fields', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-id-'));
+		const filePath = path.join(temporaryDirectoryPath, SYSTEM_CACHE_IDENTIFIER_FILENAME);
+		await fs.writeFile(
+			filePath,
+			`${JSON.stringify({
+				$comment: 'example',
+				schemaVersion: 1,
+				os: 'linux',
+				hostSystemType: 'bare-metal',
+				cacheProfile: 'default',
+				cacheFormat: 'gondolin-cache-v1',
+				imageCacheFormat: 'gondolin-image-cache-v1',
+			})}\n`,
+			'utf8',
+		);
+
+		await expect(loadSystemCacheIdentifier({ filePath })).rejects.toThrow(
+			`Invalid system cache identifier '${filePath}': v1 schema mismatch.`,
 		);
 
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });

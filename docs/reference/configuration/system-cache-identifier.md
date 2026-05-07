@@ -31,6 +31,7 @@ Local scaffold:
 
 ```json
 {
+  "$comment": "Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change imageCacheFormat when the image cache contract changes.",
   "schemaVersion": 1,
   "hostSystemType": "bare-metal",
   "imageCacheFormat": "gondolin-image-cache-v1"
@@ -41,6 +42,7 @@ Container-host scaffold:
 
 ```json
 {
+  "$comment": "Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change imageCacheFormat when the image cache contract changes.",
   "schemaVersion": 1,
   "hostSystemType": "container",
   "imageCacheFormat": "gondolin-image-cache-v1"
