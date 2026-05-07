@@ -18,4 +18,15 @@ describe('managed base Dockerfiles', () => {
 			expect(dockerfile).toContain('ln -sfn /proc/self/fd /dev/fd');
 		},
 	);
+
+	it('pins pnpm in the OpenClaw gateway base to preserve the global package layout', async () => {
+		const dockerfile = await fs.readFile(
+			path.join(process.cwd(), 'docker', 'base-images', 'openclaw-gateway', 'Dockerfile'),
+			'utf8',
+		);
+
+		expect(dockerfile).toContain('corepack prepare pnpm@10.33.0 --activate');
+		expect(dockerfile).toContain('ENV PATH=${PNPM_HOME}:${PATH}');
+		expect(dockerfile).toContain('exec /pnpm/openclaw "$@"');
+	});
 });
