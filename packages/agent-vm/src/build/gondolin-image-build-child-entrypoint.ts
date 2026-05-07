@@ -1,7 +1,4 @@
-import {
-	runGondolinImageBuildRequest,
-	type GondolinImageBuildRequest,
-} from './gondolin-image-builder.js';
+import type { GondolinImageBuildRequest } from './gondolin-image-builder.js';
 
 interface GondolinBuildRequestMessage {
 	readonly request: GondolinImageBuildRequest;
@@ -23,7 +20,27 @@ function disconnectFromParent(): void {
 	process.disconnect?.();
 }
 
-process.on('message', (message: unknown) => {
+function sendStructuredError(error: unknown): void {
+	process.send?.({
+		message: error instanceof Error ? error.message : String(error),
+		...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
+		type: 'error',
+	});
+}
+
+process.on('uncaughtException', (error) => {
+	sendStructuredError(error);
+	disconnectFromParent();
+	process.exitCode = 1;
+});
+
+process.on('unhandledRejection', (reason) => {
+	sendStructuredError(reason);
+	disconnectFromParent();
+	process.exitCode = 1;
+});
+
+process.once('message', (message: unknown) => {
 	void (async (): Promise<void> => {
 		if (!isGondolinBuildRequestMessage(message)) {
 			process.send?.({
@@ -35,14 +52,11 @@ process.on('message', (message: unknown) => {
 		}
 
 		try {
+			const { runGondolinImageBuildRequest } = await import('./gondolin-image-builder.js');
 			const result = await runGondolinImageBuildRequest(message.request);
 			process.send?.({ result, type: 'result' });
 		} catch (error) {
-			process.send?.({
-				message: error instanceof Error ? error.message : String(error),
-				...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
-				type: 'error',
-			});
+			sendStructuredError(error);
 		} finally {
 			disconnectFromParent();
 		}

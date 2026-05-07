@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { fork } from 'node:child_process';
+import type { Readable } from 'node:stream';
 
 import {
 	buildImage as buildImageFromCore,
@@ -54,6 +55,9 @@ type GondolinBuildChildMessage =
 	| GondolinBuildChildErrorMessage
 	| GondolinBuildChildResultMessage;
 
+const CHILD_EXIT_GRACE_MS = 2_000;
+const CHILD_STDERR_TAIL_BYTES = 16_384;
+
 async function loadBuildConfigFromJson(buildConfigPath: string): Promise<BuildConfig> {
 	try {
 		return (await loadJsonConfigFile(buildConfigPath)) as BuildConfig;
@@ -94,21 +98,52 @@ function isGondolinBuildChildMessage(value: unknown): value is GondolinBuildChil
 
 function childProcessExecArgv(): readonly string[] {
 	const filteredArgs: string[] = [];
-	for (let index = 0; index < process.execArgv.length; index += 1) {
-		const arg = process.execArgv[index];
+	let skipNextArg = false;
+	for (const arg of process.execArgv) {
+		if (skipNextArg) {
+			skipNextArg = false;
+			continue;
+		}
 		if (arg === '--input-type') {
-			index += 1;
+			skipNextArg = true;
 			continue;
 		}
-		if (arg?.startsWith('--input-type=')) {
-			continue;
-		}
-		if (arg === undefined) {
+		if (arg.startsWith('--input-type=')) {
 			continue;
 		}
 		filteredArgs.push(arg);
 	}
 	return filteredArgs;
+}
+
+function appendStderrTail(currentTail: string, chunk: Buffer): string {
+	const nextTail = `${currentTail}${chunk.toString('utf8')}`;
+	if (Buffer.byteLength(nextTail, 'utf8') <= CHILD_STDERR_TAIL_BYTES) {
+		return nextTail;
+	}
+	return nextTail.slice(-CHILD_STDERR_TAIL_BYTES);
+}
+
+function formatChildExitError(exitCode: number | null, signal: NodeJS.Signals | null, stderrTail: string): Error {
+	const details = [`exitCode=${String(exitCode)}`, `signal=${String(signal)}`];
+	const trimmedStderrTail = stderrTail.trim();
+	if (trimmedStderrTail.length > 0) {
+		details.push(`stderr tail:\n${trimmedStderrTail}`);
+	}
+	return new Error(`Gondolin build child process exited without a result: ${details.join(' ')}`);
+}
+
+function forwardChildStream(stream: Readable | null, output: TaskOutput, onChunk?: (chunk: Buffer) => void): void {
+	stream?.on('data', (chunk: Buffer) => {
+		onChunk?.(chunk);
+		const canContinue = output.write(chunk);
+		if (!canContinue) {
+			stream.pause();
+			process.nextTick(() => {
+				stream.resume();
+			});
+		}
+	});
 }
 
 export async function runGondolinImageBuildRequest(
@@ -153,30 +188,59 @@ export async function runGondolinBuildChildProcess(
 		});
 		let childResult: BuildImageResult | undefined;
 		let childError: Error | undefined;
+		let settled = false;
+		let stderrTail = '';
+		let graceTimer: NodeJS.Timeout | undefined;
 
-		childProcess.stdout?.on('data', (chunk: Buffer) => {
-			options.streamPreview.write(chunk);
-		});
-		childProcess.stderr?.on('data', (chunk: Buffer) => {
-			options.streamPreview.write(chunk);
+		const clearGraceTimer = (): void => {
+			if (graceTimer) {
+				clearTimeout(graceTimer);
+				graceTimer = undefined;
+			}
+		};
+
+		forwardChildStream(childProcess.stdout, options.streamPreview);
+		forwardChildStream(childProcess.stderr, options.streamPreview, (chunk) => {
+			stderrTail = appendStderrTail(stderrTail, chunk);
 		});
 		childProcess.on('message', (message: unknown) => {
+			if (settled) {
+				return;
+			}
 			if (!isGondolinBuildChildMessage(message)) {
 				return;
 			}
 			if (message.type === 'result') {
 				childResult = message.result;
+				settled = true;
+				resolve(message.result);
+				graceTimer = setTimeout(() => {
+					if (!childProcess.killed) {
+						childProcess.kill();
+					}
+				}, CHILD_EXIT_GRACE_MS);
 				return;
 			}
 			childError = new Error(message.message);
 			if (message.stack) {
 				childError.stack = message.stack;
 			}
+			settled = true;
+			reject(childError);
 		});
 		childProcess.on('error', (error) => {
+			if (settled) {
+				return;
+			}
 			childError = error;
+			settled = true;
+			reject(error);
 		});
 		childProcess.on('close', (exitCode, signal) => {
+			clearGraceTimer();
+			if (settled) {
+				return;
+			}
 			if (childResult) {
 				resolve(childResult);
 				return;
@@ -185,11 +249,7 @@ export async function runGondolinBuildChildProcess(
 				reject(childError);
 				return;
 			}
-			reject(
-				new Error(
-					`Gondolin build child process exited without a result: exitCode=${String(exitCode)} signal=${String(signal)}`,
-				),
-			);
+			reject(formatChildExitError(exitCode, signal, stderrTail));
 		});
 		childProcess.send({
 			request: options.request,

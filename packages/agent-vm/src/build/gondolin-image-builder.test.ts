@@ -62,6 +62,81 @@ process.on('message', () => {
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
+	it('resolves when the child sends a result even if the child stays alive briefly', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-gondolin-child-'),
+		);
+		const childModulePath = path.join(temporaryDirectoryPath, 'sticky-gondolin-child.mjs');
+		await fs.writeFile(
+			childModulePath,
+			`
+process.on('message', () => {
+	process.send({
+		type: 'result',
+		result: { built: true, fingerprint: 'sticky-fp', imagePath: '/cache/sticky-fp' },
+	});
+	setInterval(() => {}, 1000);
+});
+`,
+			'utf8',
+		);
+
+		const result = await runGondolinBuildChildProcess({
+			childModuleUrl: pathToFileURL(childModulePath),
+			request: {
+				buildConfigPath: '/project/build-config.json',
+				cacheDir: '/cache/gateway-images/openclaw',
+				systemCacheIdentifierPath: '/project/system-cache-identifier.json',
+			},
+			streamPreview: {
+				write() {
+					return true;
+				},
+			},
+		});
+
+		expect(result).toEqual({
+			built: true,
+			fingerprint: 'sticky-fp',
+			imagePath: '/cache/sticky-fp',
+		});
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('includes stderr tail when the child exits before sending a structured result', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-gondolin-child-'),
+		);
+		const childModulePath = path.join(temporaryDirectoryPath, 'failing-gondolin-child.mjs');
+		await fs.writeFile(
+			childModulePath,
+			`
+process.stderr.write('exploded before ipc\\n');
+process.exit(1);
+`,
+			'utf8',
+		);
+
+		await expect(
+			runGondolinBuildChildProcess({
+				childModuleUrl: pathToFileURL(childModulePath),
+				request: {
+					buildConfigPath: '/project/build-config.json',
+					cacheDir: '/cache/gateway-images/openclaw',
+					systemCacheIdentifierPath: '/project/system-cache-identifier.json',
+				},
+				streamPreview: {
+					write() {
+						return true;
+					},
+				},
+			}),
+		).rejects.toThrow('exploded before ipc');
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
 	it('delegates interactive builds to the child-process runner', async () => {
 		const childBuildRequests: {
 			readonly request: GondolinImageBuildRequest;
