@@ -101,4 +101,56 @@ describe('runMigrateImagesCommand', () => {
 			),
 		).resolves.toContain('"schemaVersion": 1');
 	});
+
+	it('preserves authored JSONC comments while rewriting image profiles', async () => {
+		const targetDirectory = await createTestDirectory();
+		const configPath = path.join(targetDirectory, 'config', 'system.jsonc');
+		await mkdir(path.dirname(configPath), { recursive: true });
+		await mkdir(path.join(targetDirectory, 'vm-images', 'gateways', 'openclaw'), {
+			recursive: true,
+		});
+		await writeFile(
+			configPath,
+			[
+				'{',
+				'  // deployment-owned comment',
+				'  "imageProfiles": {',
+				'    "gateways": {',
+				'      "openclaw": {',
+				'        "type": "openclaw",',
+				'        // keep this near the gateway image',
+				'        "buildConfig": "../vm-images/gateways/openclaw/build-config.jsonc",',
+				'        "dockerfile": "../vm-images/gateways/openclaw/Dockerfile"',
+				'      }',
+				'    },',
+				'    "toolVms": {}',
+				'  }',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		const result = await runMigrateImagesCommand({ systemConfigPath: configPath });
+
+		const migratedConfigText = await readFile(configPath, 'utf8');
+		const migratedConfig = await loadJsonConfigFile(configPath);
+		expect(result.migratedProfiles).toEqual(['gateway/openclaw']);
+		expect(migratedConfigText).toContain('// deployment-owned comment');
+		expect(migratedConfigText).toContain('// keep this near the gateway image');
+		expect(migratedConfigText).not.toContain('"dockerfile"');
+		expect(migratedConfig).toMatchObject({
+			imageProfiles: {
+				gateways: {
+					openclaw: {
+						source: {
+							kind: 'managedBase',
+							base: 'openclaw-gateway',
+							overlay: '../vm-images/gateways/openclaw/overlay.jsonc',
+						},
+					},
+				},
+			},
+		});
+	});
 });

@@ -186,9 +186,12 @@ Returns:
 }
 ```
 
-The OpenClaw lifecycle further strips `OPENCLAW_GATEWAY_TOKEN` from
-`environmentSecrets` because it is already baked into the effective config
-file written to the host state directory.
+The OpenClaw lifecycle keeps `OPENCLAW_GATEWAY_TOKEN` as an environment
+secret. The effective config references it through OpenClaw's env SecretRef
+shape instead of storing the plaintext token in `<stateDir>/effective-openclaw.json`.
+The gateway daemon sources the runtime secret file during startup, and root
+admin shells get a narrow `openclaw` wrapper that sources only the gateway
+token for that child process.
 
 ---
 
@@ -277,7 +280,7 @@ toolchain setup is not known.
 | Zone secret (injection: env) | Host | Yes | VM environment variable |
 | Zone secret (injection: http-mediation) | Host | No | Gondolin proxy injects into HTTP requests |
 | runtimeAuthHints for mediated secrets | Host | Placeholder name only | Generated runtime instructions under `/agent-vm` |
-| OPENCLAW_GATEWAY_TOKEN | Host | No | Baked into effective config file on host; VFS-mounted read-only |
+| OPENCLAW_GATEWAY_TOKEN | Host | Gateway VM only | Env SecretRef plus runtime-only `/run/openclaw/gateway-auth.env` for root `openclaw` admin commands |
 | githubToken | Host | No | Controller-side git push only |
 | gateway.authProfilesByAgent | Host | Indirectly | Per-agent profile written to host disk; VM reads via VFS mount |
 | gateway.authProfilesRef | Host | Indirectly | Legacy main-agent fallback written to host disk; VM reads via VFS mount |
@@ -285,9 +288,10 @@ toolchain setup is not known.
 
 All secret resolution happens on the host. The VM never has access to the
 1Password service account token or to any http-mediated secret values. For
-`env`-injected secrets, the plaintext is visible inside the VM -- this is an
-intentional tradeoff for secrets that the VM process must use directly (e.g.
-environment variables expected by SDKs running inside the VM).
+`env`-injected secrets, the plaintext is visible inside the gateway VM -- this
+is an intentional tradeoff for secrets that the gateway process must use
+directly. The root SSH parent shell does not receive these secrets by default;
+OpenClaw admin commands source the gateway token in a subshell wrapper.
 
 ---
 

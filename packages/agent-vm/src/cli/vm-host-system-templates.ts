@@ -8,7 +8,12 @@ export interface RenderVmHostSystemZoneOptions {
 	readonly zoneId: string;
 }
 
+function resolveLinuxZigArchitecture(imageArchitecture: 'aarch64' | 'x86_64'): string {
+	return imageArchitecture === 'aarch64' ? 'aarch64' : 'x86_64';
+}
+
 export function renderVmHostSystemDockerfile(options: RenderVmHostSystemDockerfileOptions): string {
+	const zigArchitecture = resolveLinuxZigArchitecture(options.imageArchitecture);
 	return `# syntax=docker/dockerfile:1.7
 # --------------------------------------------------------------------
 # agent-vm vm-host-system - container host runtime image (multi-stage)
@@ -51,9 +56,9 @@ RUN apt-get update \\
     && apt-get clean \\
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://ziglang.org/download/${options.zigVersion}/zig-x86_64-linux-${options.zigVersion}.tar.xz \\
+RUN curl -fsSL https://ziglang.org/download/${options.zigVersion}/zig-${zigArchitecture}-linux-${options.zigVersion}.tar.xz \\
     | tar -xJ -C /opt \\
-    && ln -s /opt/zig-x86_64-linux-${options.zigVersion}/zig /usr/local/bin/zig
+    && ln -s /opt/zig-${zigArchitecture}-linux-${options.zigVersion}/zig /usr/local/bin/zig
 
 COPY --from=builder /deploy-agent-vm /opt/agent-vm
 RUN printf '#!/bin/sh\\nexec node /opt/agent-vm/dist/cli/agent-vm-entrypoint.js "$@"\\n' > /usr/local/bin/agent-vm && \\
@@ -193,6 +198,8 @@ Regenerate these files with:
 
 \`\`\`bash
 agent-vm init ${options.zoneId} --type worker --preset container-x86 --overwrite
+# or, on an arm64 container host:
+agent-vm init ${options.zoneId} --type worker --preset container-arm64 --overwrite
 \`\`\`
 `;
 }

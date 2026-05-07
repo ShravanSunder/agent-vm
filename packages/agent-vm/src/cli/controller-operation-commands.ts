@@ -5,6 +5,7 @@ import path from 'node:path';
 import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
 import { execa } from 'execa';
 
+import type { ManagedImageSource } from '../build/managed-image-dockerfile.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
@@ -15,6 +16,7 @@ import {
 	resolveProjectCheckoutPath,
 } from '../operations/config-validation.js';
 import { collectVmHostSystemDoctorCheck, type DoctorCheck } from '../operations/doctor.js';
+import { collectOpenClawDeploymentDoctorChecks } from '../operations/openclaw-deployment-doctor.js';
 import {
 	createResolverFromSystemConfig,
 	type CliDependencies,
@@ -42,8 +44,10 @@ interface RunControllerOperationCommandOptions {
 
 interface ImageProfileDoctorTarget {
 	readonly buildConfig: string;
+	readonly buildConfigCheckName: string;
 	readonly checkName: string;
 	readonly dockerfile?: string;
+	readonly source?: ManagedImageSource;
 	readonly type: 'openclaw' | 'toolVm' | 'worker';
 }
 
@@ -53,20 +57,49 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 
 function createImageProfileDoctorTarget(
 	checkName: string,
+	buildConfigCheckName: string,
 	type: ImageProfileDoctorTarget['type'],
 	buildConfig: string,
 	dockerfile: string | undefined,
+	source: ManagedImageSource | undefined,
 ): ImageProfileDoctorTarget {
 	const target: {
 		buildConfig: string;
+		buildConfigCheckName: string;
 		checkName: string;
 		dockerfile?: string;
+		source?: ManagedImageSource;
 		type: ImageProfileDoctorTarget['type'];
-	} = { buildConfig, checkName, type };
+	} = { buildConfig, buildConfigCheckName, checkName, type };
 	if (dockerfile !== undefined) {
 		target.dockerfile = dockerfile;
 	}
+	if (source !== undefined) {
+		target.source = source;
+	}
 	return target;
+}
+
+function imageProfileHasProducer(imageProfileTarget: ImageProfileDoctorTarget): boolean {
+	return (
+		imageProfileTarget.dockerfile !== undefined || imageProfileTarget.source?.kind === 'managedBase'
+	);
+}
+
+function formatImageProfileProducerHint(
+	imageProfileTarget: ImageProfileDoctorTarget,
+	imageName: string,
+): string {
+	if (imageProfileTarget.dockerfile !== undefined) {
+		return imageProfileTarget.dockerfile;
+	}
+	if (imageProfileTarget.source !== undefined) {
+		return (
+			imageProfileTarget.source.overlay ??
+			`source=${imageProfileTarget.source.kind} base=${imageProfileTarget.source.base}`
+		);
+	}
+	return `pullPolicy=never requires a dockerfile producer for ${imageName}`;
 }
 
 async function collectAvailableBinaryNames(
@@ -129,17 +162,21 @@ async function collectImageProfileDockerfileChecks(
 		...Object.entries(systemConfig.imageProfiles.gateways).map(([profileName, profile]) =>
 			createImageProfileDoctorTarget(
 				`gateway-image-profile-${profileName}-dockerfile`,
+				`gateway-image-profile-${profileName}-build-config`,
 				profile.type,
 				profile.buildConfig,
 				profile.dockerfile,
+				profile.source,
 			),
 		),
 		...Object.entries(systemConfig.imageProfiles.toolVms).map(([profileName, profile]) =>
 			createImageProfileDoctorTarget(
 				`tool-vm-image-profile-${profileName}-dockerfile`,
+				`tool-vm-image-profile-${profileName}-build-config`,
 				profile.type,
 				profile.buildConfig,
 				profile.dockerfile,
+				profile.source,
 			),
 		),
 	];
@@ -150,14 +187,19 @@ async function collectImageProfileDockerfileChecks(
 		try {
 			// oxlint-disable-next-line no-await-in-loop -- stable doctor output order follows system.json order
 			buildConfig = await loadJsonConfigFile(imageProfileTarget.buildConfig);
-		} catch {
-			// validate already reports missing or malformed build-config.json files.
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			checks.push({
+				name: imageProfileTarget.buildConfigCheckName,
+				ok: false,
+				hint: `Cannot read ${imageProfileTarget.buildConfig}: ${message}`,
+			});
 			continue;
 		}
 
 		const ociConfig = isObjectRecord(buildConfig) ? buildConfig.oci : undefined;
 		if (!isObjectRecord(ociConfig) || ociConfig.pullPolicy !== 'never') {
-			if (imageProfileTarget.type !== 'openclaw' || imageProfileTarget.dockerfile === undefined) {
+			if (imageProfileTarget.type !== 'openclaw' || !imageProfileHasProducer(imageProfileTarget)) {
 				continue;
 			}
 		}
@@ -168,10 +210,8 @@ async function collectImageProfileDockerfileChecks(
 				: 'configured image';
 		checks.push({
 			name: imageProfileTarget.checkName,
-			ok: imageProfileTarget.dockerfile !== undefined,
-			hint:
-				imageProfileTarget.dockerfile ??
-				`pullPolicy=never requires a dockerfile producer for ${imageName}`,
+			ok: imageProfileHasProducer(imageProfileTarget),
+			hint: formatImageProfileProducerHint(imageProfileTarget, imageName),
 		});
 	}
 
@@ -295,6 +335,9 @@ export async function runControllerOperationCommand(
 						await collectOpenClawConfigChecks(options.systemConfig),
 					)
 				: [];
+			const openClawDeploymentChecks = await collectOpenClawDeploymentDoctorChecks(
+				options.systemConfig,
+			);
 			const imageProfileDockerfileChecks = await collectImageProfileDockerfileChecks(
 				options.systemConfig,
 				availableBinaries.has('docker') && dockerDaemonReady,
@@ -309,6 +352,7 @@ export async function runControllerOperationCommand(
 				...imageProfileDockerfileChecks,
 				...workerGatewayConfigChecks,
 				...openClawConfigChecks,
+				...openClawDeploymentChecks,
 			] as const satisfies readonly DoctorCheck[];
 			writeJson(options.io, {
 				ok: doctorResult.ok && dynamicChecks.every((check) => check.ok),

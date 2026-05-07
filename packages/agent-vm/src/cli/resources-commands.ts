@@ -100,6 +100,26 @@ async function fileExists(filePath: string): Promise<boolean> {
 	}
 }
 
+async function assertAgentVmResourceDirectoryExists(targetDir: string): Promise<void> {
+	const resourceDirectory = path.join(targetDir, AGENT_VM_DIR);
+	try {
+		const stats = await fs.stat(resourceDirectory);
+		if (stats.isDirectory()) {
+			return;
+		}
+	} catch (error) {
+		if (
+			typeof error !== 'object' ||
+			error === null ||
+			!('code' in error) ||
+			error.code !== 'ENOENT'
+		) {
+			throw error;
+		}
+	}
+	throw new Error(`Missing ${AGENT_VM_DIR} resource directory. Run agent-vm resources init first.`);
+}
+
 async function writeTemplateFile(
 	targetDir: string,
 	file: ResourceTemplateFile,
@@ -153,7 +173,7 @@ export async function initRepoResources(
 export async function updateRepoResources(
 	options: RepoResourcesCommandOptions,
 ): Promise<UpdateRepoResourcesResult> {
-	await fs.mkdir(path.join(options.targetDir, AGENT_VM_DIR), { recursive: true });
+	await assertAgentVmResourceDirectoryExists(options.targetDir);
 	const updated = await Promise.all(
 		buildResourceTemplateFiles()
 			.filter((templateFile) => templateFile.generated)

@@ -52,6 +52,7 @@ generic container host.
 | --- | --- | --- |
 | `macos-local` | Local Mac development | local paths, `aarch64`, 1Password secrets, `hostSystemType: "bare-metal"`, writes `.env.local` |
 | `container-x86` | x86_64 Linux container runtime | runtime paths, `x86_64`, environment secrets, `vm-host-system/` |
+| `container-arm64` | arm64 Linux container runtime | runtime paths, `aarch64`, environment secrets, `vm-host-system/` |
 
 Explicit flags like `--arch`, `--paths`, and `--secrets` override preset
 defaults.
@@ -95,6 +96,8 @@ Container-host scaffold:
 AGENT_VM="node packages/agent-vm/dist/cli/agent-vm-entrypoint.js"
 
 $AGENT_VM init coding-agent --type worker --preset container-x86 --namespace agent-vm
+# or, on an arm64 container host:
+$AGENT_VM init coding-agent --type worker --preset container-arm64 --namespace agent-vm
 $AGENT_VM validate --config config/system.json
 ```
 

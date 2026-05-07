@@ -24,7 +24,22 @@ const openClawStateDirVmPath = '/home/openclaw/.openclaw/state';
 const openClawCacheDirVmPath = '/home/openclaw/.openclaw/cache';
 const openClawZoneFilesDirVmPath = '/zone';
 const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
+const openClawAdminShellEnvFilePath = '/etc/profile.d/openclaw-admin.sh';
 const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
+const openClawGatewayAuthEnvFilePath = '/run/openclaw/gateway-auth.env';
+const openClawGatewayTokenEnvVar = 'OPENCLAW_GATEWAY_TOKEN';
+
+interface OpenClawSecretRef {
+	readonly id: string;
+	readonly provider: string;
+	readonly source: 'env';
+}
+
+const openClawGatewayTokenSecretRef: OpenClawSecretRef = {
+	id: openClawGatewayTokenEnvVar,
+	provider: 'default',
+	source: 'env',
+};
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -55,8 +70,6 @@ function buildOpenClawBootstrapCommand(
 	resolvedSecrets: Record<string, string>,
 ): string {
 	const { environmentSecrets } = splitResolvedGatewaySecrets(zone, resolvedSecrets);
-	const { OPENCLAW_GATEWAY_TOKEN: _gatewayToken, ...environmentSecretsWithoutGatewayToken } =
-		environmentSecrets;
 	const environmentLines = [
 		'export OPENCLAW_HOME=/home/openclaw',
 		`export OPENCLAW_CONFIG_PATH=${effectiveOpenClawConfigVmPath}`,
@@ -72,21 +85,45 @@ function buildOpenClawBootstrapCommand(
 		'export UV_CACHE_DIR=/work/cache/uv',
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
 	];
-	const secretEnvironmentLines = Object.entries(environmentSecretsWithoutGatewayToken).map(
+	const secretEnvironmentLines = Object.entries(environmentSecrets).map(
 		([secretName, secretValue]) => `export ${secretName}=${shellQuote(secretValue)}`,
 	);
+	const gatewayToken = resolvedSecrets[openClawGatewayTokenEnvVar];
+	const gatewayAuthLines =
+		typeof gatewayToken === 'string'
+			? [`export ${openClawGatewayTokenEnvVar}=${shellQuote(gatewayToken)}`]
+			: [];
+	const adminShellLines = [
+		'if [ "$(id -u)" = "0" ]; then',
+		'\topenclaw() (',
+		'\t\tset -a',
+		`\t\t[ -r ${openClawGatewayAuthEnvFilePath} ] && . ${openClawGatewayAuthEnvFilePath}`,
+		'\t\tset +a',
+		'\t\tcommand openclaw "$@"',
+		'\t)',
+		'fi',
+	];
 
 	return (
-		`mkdir -p /root /etc/profile.d /run/openclaw /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && chown -R openclaw:openclaw /work && cat > ${openClawShellEnvFilePath} << ENVEOF\n` +
+		`mkdir -p /root /etc/profile.d /run/openclaw /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && chown -R openclaw:openclaw /work && cat > ${openClawShellEnvFilePath} << 'ENVEOF'\n` +
 		environmentLines.join('\n') +
 		'\nENVEOF\n' +
 		`chmod 644 ${openClawShellEnvFilePath} && ` +
-		`cat > ${openClawRuntimeSecretsEnvFilePath} << ENVEOF\n` +
+		`cat > ${openClawRuntimeSecretsEnvFilePath} << 'ENVEOF'\n` +
 		secretEnvironmentLines.join('\n') +
 		'\nENVEOF\n' +
 		`chmod 600 ${openClawRuntimeSecretsEnvFilePath} && ` +
+		`cat > ${openClawGatewayAuthEnvFilePath} << 'ENVEOF'\n` +
+		gatewayAuthLines.join('\n') +
+		'\nENVEOF\n' +
+		`chmod 600 ${openClawGatewayAuthEnvFilePath} && ` +
+		`cat > ${openClawAdminShellEnvFilePath} << 'ENVEOF'\n` +
+		adminShellLines.join('\n') +
+		'\nENVEOF\n' +
+		`chmod 644 ${openClawAdminShellEnvFilePath} && ` +
 		'touch /root/.bashrc && ' +
 		`grep -qxF 'source ${openClawShellEnvFilePath}' /root/.bashrc || echo 'source ${openClawShellEnvFilePath}' >> /root/.bashrc && ` +
+		`grep -qxF 'source ${openClawAdminShellEnvFilePath}' /root/.bashrc || echo 'source ${openClawAdminShellEnvFilePath}' >> /root/.bashrc && ` +
 		'touch /root/.bash_profile && ' +
 		"grep -qxF 'source /root/.bashrc' /root/.bash_profile || echo 'source /root/.bashrc' >> /root/.bash_profile"
 	);
@@ -146,6 +183,27 @@ function describeSecretReference(secret: SourceAwareSecretReference): string {
 	return secret.source === 'environment' ? secret.envVar : secret.ref;
 }
 
+function buildEffectiveSecretsConfig(
+	parsedBaseConfig: Record<string, unknown>,
+): Record<string, unknown> {
+	const existingSecretsConfig = isObjectRecord(parsedBaseConfig.secrets)
+		? parsedBaseConfig.secrets
+		: {};
+	const existingProvidersConfig = isObjectRecord(existingSecretsConfig.providers)
+		? existingSecretsConfig.providers
+		: {};
+
+	return {
+		...existingSecretsConfig,
+		providers: {
+			...existingProvidersConfig,
+			default: {
+				source: 'env',
+			},
+		},
+	};
+}
+
 async function writeAuthProfilesIfConfigured(
 	zone: GatewayZoneConfig,
 	secretResolver: SecretResolver,
@@ -196,10 +254,7 @@ async function writeAuthProfilesIfConfigured(
 	}
 }
 
-async function writeEffectiveOpenClawConfig(
-	zone: GatewayZoneConfig,
-	secretResolver: SecretResolver,
-): Promise<void> {
+async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<void> {
 	const gatewayTokenSecret = zone.secrets.OPENCLAW_GATEWAY_TOKEN;
 	if (!gatewayTokenSecret) {
 		throw new Error(
@@ -221,7 +276,6 @@ async function writeEffectiveOpenClawConfig(
 				`Zone '${zone.id}' secret 'OPENCLAW_GATEWAY_TOKEN' is missing 'envVar'. Add an explicit environment variable name.`,
 			);
 		}
-		const gatewayToken = await secretResolver.resolve(toSecretRef(gatewayTokenSecret));
 		const rawBaseConfig = await readFile(zone.gateway.config, 'utf8');
 		const parsedBaseConfig: unknown = JSON.parse(rawBaseConfig);
 		if (!isObjectRecord(parsedBaseConfig)) {
@@ -236,7 +290,7 @@ async function writeEffectiveOpenClawConfig(
 				auth: {
 					...existingAuthConfig,
 					mode: 'token',
-					token: gatewayToken,
+					token: openClawGatewayTokenSecretRef,
 				},
 			},
 			meta: {
@@ -244,6 +298,7 @@ async function writeEffectiveOpenClawConfig(
 				lastTouchedAt: new Date().toISOString(),
 				lastTouchedVersion: 'agent-vm',
 			},
+			secrets: buildEffectiveSecretsConfig(parsedBaseConfig),
 		};
 		const effectiveConfigPath = getEffectiveOpenClawConfigHostPath(zone);
 		await mkdir(zone.gateway.stateDir, { recursive: true, mode: 0o700 });
@@ -292,8 +347,6 @@ export const openclawLifecycle: GatewayLifecycle = {
 			zone,
 			resolvedSecrets,
 		);
-		const { OPENCLAW_GATEWAY_TOKEN: _gatewayToken, ...environmentSecretsWithoutGatewayToken } =
-			environmentSecrets;
 
 		return {
 			allowedHosts: [...zone.allowedHosts],
@@ -312,7 +365,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 				UV_CACHE_DIR: '/work/cache/uv',
 				npm_config_cache: '/work/cache/npm',
 				pnpm_config_store_dir: '/work/cache/pnpm/store',
-				...environmentSecretsWithoutGatewayToken,
+				...environmentSecrets,
 			},
 			mediatedSecrets,
 			rootfsMode: 'cow',
@@ -357,7 +410,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 	},
 
 	async prepareHostState(zone: GatewayZoneConfig, secretResolver: SecretResolver): Promise<void> {
-		await writeEffectiveOpenClawConfig(zone, secretResolver);
+		await writeEffectiveOpenClawConfig(zone);
 		await writeAuthProfilesIfConfigured(zone, secretResolver);
 	},
 };

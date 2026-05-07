@@ -11,7 +11,7 @@ import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondol
 import {
 	MANAGED_OPENCLAW_VERSION,
 	generateManagedDockerfile as generateManagedDockerfileDefault,
-	resolveAgentVmPackageVersion as resolveAgentVmPackageVersionDefault,
+	resolveManagedBaseImageVersion as resolveManagedBaseImageVersionDefault,
 	type ManagedImageSource,
 } from '../build/managed-image-dockerfile.js';
 import {
@@ -62,10 +62,10 @@ export interface BuildCommandDependencies {
 		readonly imageTargetName: string;
 		readonly outputDirectory: string;
 		readonly overlayPath?: string | undefined;
-		readonly packageVersion: string;
+		readonly baseImageVersion: string;
 		readonly requiredOpenClawPackages?: readonly string[];
 	}) => Promise<string>;
-	readonly resolveAgentVmPackageVersion?: () => Promise<string>;
+	readonly resolveManagedBaseImageVersion?: () => Promise<string>;
 	readonly syncBundledOpenClawPlugin?: (
 		targetDir: string,
 		profileName: string,
@@ -79,8 +79,9 @@ const ociImageTagSchema = z.object({
 });
 
 const RETAIN_STALE_IMAGE_GENERATIONS_PER_PROFILE = 2;
+const gatewayRuntimeRecordFileName = 'gateway-runtime.json';
 
-const openClawChannelConfigSchema = z
+const openClawManagedPackageConfigSchema = z
 	.object({
 		channels: z
 			.object({
@@ -90,6 +91,18 @@ const openClawChannelConfigSchema = z
 			.optional(),
 	})
 	.passthrough();
+
+interface OpenClawManagedPackageRule {
+	readonly isEnabled: (config: z.infer<typeof openClawManagedPackageConfigSchema>) => boolean;
+	readonly packageName: string;
+}
+
+const openClawManagedPackageRules = [
+	{
+		packageName: '@openclaw/discord',
+		isEnabled: (config) => config.channels?.discord?.enabled === true,
+	},
+] as const satisfies readonly OpenClawManagedPackageRule[];
 
 interface ImageTarget {
 	readonly buildConfigPath: string;
@@ -123,6 +136,34 @@ function setCurrentImageFingerprint(
 		return;
 	}
 	currentFingerprints.toolVms[imageTarget.name] = fingerprint;
+}
+
+async function findZoneIdsWithGatewayRuntimeRecords(
+	systemConfig: LoadedSystemConfig,
+): Promise<readonly string[]> {
+	const zoneIds: string[] = [];
+	for (const zone of systemConfig.zones) {
+		const runtimeRecordPath = path.join(zone.gateway.stateDir, gatewayRuntimeRecordFileName);
+		let runtimeRecordExists = false;
+		try {
+			// oxlint-disable-next-line no-await-in-loop -- state dirs are zone-local and errors should point at one zone
+			await fs.access(runtimeRecordPath);
+			runtimeRecordExists = true;
+		} catch (error) {
+			if (
+				typeof error !== 'object' ||
+				error === null ||
+				!('code' in error) ||
+				error.code !== 'ENOENT'
+			) {
+				throw error;
+			}
+		}
+		if (runtimeRecordExists) {
+			zoneIds.push(zone.id);
+		}
+	}
+	return zoneIds;
 }
 
 async function resolveOciImageTagFromConfig(buildConfigPath: string): Promise<string> {
@@ -236,9 +277,11 @@ async function resolveRequiredOpenClawPackagesForTarget(
 		}
 		// oxlint-disable-next-line no-await-in-loop -- zone config reads are tiny and error messages stay profile-local
 		const rawOpenClawConfig = await loadJsonConfigFile(zone.gateway.config);
-		const openClawConfig = openClawChannelConfigSchema.parse(rawOpenClawConfig);
-		if (openClawConfig.channels?.discord?.enabled === true) {
-			requiredPackageSpecs.add(`@openclaw/discord@${MANAGED_OPENCLAW_VERSION}`);
+		const openClawConfig = openClawManagedPackageConfigSchema.parse(rawOpenClawConfig);
+		for (const packageRule of openClawManagedPackageRules) {
+			if (packageRule.isEnabled(openClawConfig)) {
+				requiredPackageSpecs.add(`${packageRule.packageName}@${MANAGED_OPENCLAW_VERSION}`);
+			}
 		}
 	}
 	return [...requiredPackageSpecs].toSorted();
@@ -266,8 +309,8 @@ export async function runBuildCommand(
 		dependencies.resolveProjectRootFromDockerfile ?? resolveProjectRootFromDockerfile;
 	const generateManagedDockerfile =
 		dependencies.generateManagedDockerfile ?? generateManagedDockerfileDefault;
-	const resolveAgentVmPackageVersion =
-		dependencies.resolveAgentVmPackageVersion ?? resolveAgentVmPackageVersionDefault;
+	const resolveManagedBaseImageVersion =
+		dependencies.resolveManagedBaseImageVersion ?? resolveManagedBaseImageVersionDefault;
 	const syncBundledOpenClawPlugin =
 		dependencies.syncBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle;
 	const systemCacheIdentifierPath = options.systemConfig.systemCacheIdentifierPath;
@@ -305,10 +348,10 @@ export async function runBuildCommand(
 		dockerImageTargets,
 		resolveOciImageTag,
 	);
-	const agentVmPackageVersion = dockerImageTargets.some(
+	const managedBaseImageVersion = dockerImageTargets.some(
 		(imageTarget) => imageTarget.source !== undefined,
 	)
-		? await resolveAgentVmPackageVersion()
+		? await resolveManagedBaseImageVersion()
 		: undefined;
 
 	// oxlint-disable-next-line no-await-in-loop -- image builds are intentionally sequential for stable task output and shared image tags
@@ -319,8 +362,8 @@ export async function runBuildCommand(
 		}
 		let dockerfilePath = imageTarget.dockerfile;
 		if (imageTarget.source) {
-			if (!agentVmPackageVersion) {
-				throw new Error('Missing @agent-vm/agent-vm package version for managed image build.');
+			if (!managedBaseImageVersion) {
+				throw new Error('Missing managed base image version for managed image build.');
 			}
 			// oxlint-disable-next-line no-await-in-loop -- package detection is profile-local and low-volume
 			const requiredOpenClawPackages = await resolveRequiredOpenClawPackagesForTarget(
@@ -339,7 +382,7 @@ export async function runBuildCommand(
 					imageTarget.name,
 				),
 				...(imageTarget.source.overlay ? { overlayPath: imageTarget.source.overlay } : {}),
-				packageVersion: agentVmPackageVersion,
+				baseImageVersion: managedBaseImageVersion,
 				requiredOpenClawPackages,
 			});
 		}
@@ -405,18 +448,29 @@ export async function runBuildCommand(
 
 	await runTaskStep('Cache auto-prune', async (taskContext) => {
 		taskContext?.setStatus('checking old image generations');
-		const prunableEntries = await findPrunableImageDirectories({
-			cacheDir: options.systemConfig.cacheDir,
-			currentFingerprints,
-			retainStaleGenerationsPerProfile: RETAIN_STALE_IMAGE_GENERATIONS_PER_PROFILE,
-		});
-
-		if (prunableEntries.length === 0) {
-			taskContext?.setStatus('no old image generations found');
-			return;
-		}
-
 		try {
+			const activeGatewayRuntimeZoneIds = await findZoneIdsWithGatewayRuntimeRecords(
+				options.systemConfig,
+			);
+			if (activeGatewayRuntimeZoneIds.length > 0) {
+				taskContext?.setOutput({
+					message: `Image cache auto-prune skipped because gateway runtime records exist for zone(s): ${activeGatewayRuntimeZoneIds.join(', ')}. Stop the controller before pruning old image generations.`,
+				});
+				taskContext?.setStatus('image cache auto-prune skipped');
+				return;
+			}
+
+			const prunableEntries = await findPrunableImageDirectories({
+				cacheDir: options.systemConfig.cacheDir,
+				currentFingerprints,
+				retainStaleGenerationsPerProfile: RETAIN_STALE_IMAGE_GENERATIONS_PER_PROFILE,
+			});
+
+			if (prunableEntries.length === 0) {
+				taskContext?.setStatus('no old image generations found');
+				return;
+			}
+
 			await deleteStaleImageDirectories(prunableEntries);
 			taskContext?.setStatus(
 				`deleted ${prunableEntries.length} old image generation${
