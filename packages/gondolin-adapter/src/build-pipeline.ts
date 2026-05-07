@@ -4,7 +4,10 @@ import path from 'node:path';
 
 import type { BuildConfig, BuildOptions } from '@earendil-works/gondolin';
 
-import { prepareBuildConfigWithAgentVmRootfsInitExtra } from './rootfs-init-extra.js';
+import {
+	prepareBuildConfigWithAgentVmRootfsInitExtra,
+	resolveRootfsInitExtra,
+} from './rootfs-init-extra.js';
 
 export type { BuildConfig } from '@earendil-works/gondolin';
 
@@ -149,15 +152,45 @@ export function computeBuildFingerprint(
 	return crypto.createHash('sha256').update(payload).digest('hex').slice(0, 16);
 }
 
+export async function computeEffectiveBuildFingerprint(options: {
+	readonly buildConfig: BuildConfig;
+	readonly configDir?: string;
+	readonly fingerprintInput?: unknown;
+	readonly gondolinVersion?: string;
+}): Promise<{
+	readonly fingerprint: string;
+	readonly rootfsInitExtraContent: string;
+}> {
+	const resolvedRootfsInitExtra = await resolveRootfsInitExtra({
+		buildConfig: options.buildConfig,
+		...(options.configDir ? { configDir: options.configDir } : {}),
+	});
+	const fingerprint = computeBuildFingerprint(options.buildConfig, options.gondolinVersion, {
+		agentVmRootfsInitExtra: resolvedRootfsInitExtra.fingerprintInput,
+		...(options.fingerprintInput === undefined
+			? {}
+			: { callerFingerprintInput: options.fingerprintInput }),
+	});
+
+	return {
+		fingerprint,
+		rootfsInitExtraContent: resolvedRootfsInitExtra.content,
+	};
+}
+
 export async function buildImage(
 	options: BuildImageOptions,
 	dependencies: BuildPipelineDependencies = {},
 ): Promise<BuildImageResult> {
-	const fingerprint = computeBuildFingerprint(
-		options.buildConfig,
-		dependencies.gondolinVersion,
-		options.fingerprintInput,
-	);
+	const effectiveBuildFingerprint = await computeEffectiveBuildFingerprint({
+		buildConfig: options.buildConfig,
+		...(options.configDir ? { configDir: options.configDir } : {}),
+		...(options.fingerprintInput === undefined
+			? {}
+			: { fingerprintInput: options.fingerprintInput }),
+		...(dependencies.gondolinVersion ? { gondolinVersion: dependencies.gondolinVersion } : {}),
+	});
+	const fingerprint = effectiveBuildFingerprint.fingerprint;
 	const imagePath = path.join(options.cacheDir, fingerprint);
 
 	if (options.fullReset) {
@@ -177,7 +210,7 @@ export async function buildImage(
 	const effectiveBuildConfig = await prepareBuildConfigWithAgentVmRootfsInitExtra({
 		buildConfig: options.buildConfig,
 		imagePath,
-		...(options.configDir ? { configDir: options.configDir } : {}),
+		rootfsInitExtraContent: effectiveBuildFingerprint.rootfsInitExtraContent,
 	});
 	await withCapturedBuildOutput(options.output, async () => {
 		await buildAssetsImplementation(effectiveBuildConfig, imagePath, options.configDir);

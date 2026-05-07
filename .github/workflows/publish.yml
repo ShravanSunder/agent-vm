@@ -1,19 +1,9 @@
 name: Publish
 
-# Publishes every workspace package to npm using Trusted Publishing
-# (OIDC).  No NPM_TOKEN secret is stored — npm exchanges the
-# GitHub-issued OIDC token for a short-lived publish credential.
-#
-# Configure trusted publishers per package on npmjs.com BEFORE the
-# first OIDC publish:
-#   Package settings ▸ Trusted Publisher ▸ GitHub Actions
-#   organization: ShravanSunder
-#   repository:   agent-vm
-#   workflow:     publish.yml
-#   environment:  npm-publish
-#
-# Repeat for each of the 7 @agent-vm/* packages.  Provenance is
-# generated automatically.
+# Publishes managed GHCR base images. npm publishing is optional and
+# disabled by default until npm Trusted Publishing is configured for
+# each @agent-vm/* package. Use scripts/publish-local.sh from master
+# for npm releases today.
 
 on:
   push:
@@ -34,7 +24,7 @@ on:
       publish_npm:
         description: 'Publish npm packages after ensuring base image tags'
         required: true
-        default: true
+        default: false
         type: boolean
       managed_image_tag:
         description: 'Optional managed GHCR image tag to create; defaults to packages/agent-vm/managed-images.json'
@@ -50,7 +40,6 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment: npm-publish
 
     permissions:
       id-token: write
@@ -71,13 +60,50 @@ jobs:
           cache: pnpm
 
       - name: Upgrade npm to >= 11.5.1 (Trusted Publishing requirement)
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_npm
         run: npm install -g npm@latest
-
-      - name: Install age
-        run: sudo apt-get update && sudo apt-get install -y age
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: .cache/apt-packages
+          key: ${{ runner.os }}-apt-v1-age-qemu-system-arm-qemu-system-x86-xz-utils
+
+      - name: Install system packages
+        env:
+          APT_CACHE_DIR: .cache/apt-packages
+        run: |
+          set -euo pipefail
+          mkdir -p "${APT_CACHE_DIR}"
+          sudo mkdir -p /var/cache/apt/archives
+          sudo cp -f "${APT_CACHE_DIR}"/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+          sudo apt-get update
+          sudo apt-get install -y --download-only age qemu-system-arm qemu-system-x86 xz-utils
+          sudo find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -n {} "${APT_CACHE_DIR}/" \;
+          sudo chown -R "${USER}:${USER}" "${APT_CACHE_DIR}"
+          sudo apt-get install -y age qemu-system-arm qemu-system-x86 xz-utils
+
+      - name: Install Zig for Gondolin smoke tests
+        run: |
+          set -euo pipefail
+          ZON_PATH="$(find node_modules -path '*/@earendil-works/gondolin/dist/guest/build.zig.zon' -print -quit)"
+          ZIG_VERSION="$(sed -n 's/.*\.minimum_zig_version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${ZON_PATH}")"
+          if [[ -z "${ZIG_VERSION}" ]]; then
+            echo "Could not resolve Gondolin minimum Zig version from ${ZON_PATH}" >&2
+            exit 1
+          fi
+          case "$(uname -m)" in
+            x86_64) ZIG_ARCH="x86_64" ;;
+            aarch64|arm64) ZIG_ARCH="aarch64" ;;
+            *) echo "Unsupported CI architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-${ZIG_ARCH}-linux-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+          sudo tar -C /opt -xf /tmp/zig.tar.xz
+          sudo ln -sf "/opt/zig-${ZIG_ARCH}-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
+          zig version
 
       - name: Build
         run: pnpm build
@@ -91,13 +117,16 @@ jobs:
       - name: Unit tests
         run: pnpm test:unit
 
+      - name: Gondolin rootfs smoke test
+        run: pnpm vitest run --config vitest.smoke.config.ts packages/gondolin-adapter/src/build-pipeline.smoke.test.ts
+
       - name: Detect managed base image changes
         id: base_images
         env:
           REQUESTED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.base_images_mode || 'auto' }}
           REQUESTED_MANAGED_IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.managed_image_tag || '' }}
           REQUESTED_SOURCE_MANAGED_IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.source_managed_image_tag || '' }}
-          PUBLISH_NPM: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_npm }}
+          PUBLISH_NPM: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_npm }}
         run: |
           set -euo pipefail
           PACKAGE_VERSION="$(node -p "require('./packages/agent-vm/package.json').version")"
@@ -223,5 +252,5 @@ jobs:
           done
 
       - name: Publish to npm via OIDC
-        if: github.event_name != 'workflow_dispatch' || inputs.publish_npm
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_npm
         run: pnpm -r publish --access=public --no-git-checks

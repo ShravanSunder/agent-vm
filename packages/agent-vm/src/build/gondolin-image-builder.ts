@@ -4,7 +4,7 @@ import type { Readable } from 'node:stream';
 
 import {
 	buildImage as buildImageFromCore,
-	computeBuildFingerprint,
+	computeEffectiveBuildFingerprint,
 	type BuildConfig,
 	type BuildImageOptions,
 	type BuildImageResult,
@@ -85,7 +85,13 @@ export async function computeFingerprintFromConfigPath(
 		dependencies.resolveRuntimeBuildVersionTag ?? resolveRuntimeBuildVersionTagDefault
 	)();
 
-	return computeBuildFingerprint(buildConfig, runtimeBuildVersionTag, fingerprintInput);
+	const effectiveBuildFingerprint = await computeEffectiveBuildFingerprint({
+		buildConfig,
+		configDir: path.dirname(path.resolve(buildConfigPath)),
+		fingerprintInput,
+		gondolinVersion: runtimeBuildVersionTag,
+	});
+	return effectiveBuildFingerprint.fingerprint;
 }
 
 function isGondolinBuildChildMessage(value: unknown): value is GondolinBuildChildMessage {

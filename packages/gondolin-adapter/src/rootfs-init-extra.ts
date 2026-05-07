@@ -17,8 +17,21 @@ fi
 
 interface PrepareRootfsInitExtraOptions {
 	readonly buildConfig: BuildConfig;
-	readonly configDir?: string;
 	readonly imagePath: string;
+	readonly rootfsInitExtraContent: string;
+}
+
+interface ResolveRootfsInitExtraOptions {
+	readonly buildConfig: BuildConfig;
+	readonly configDir?: string;
+}
+
+export interface ResolvedRootfsInitExtra {
+	readonly content: string;
+	readonly fingerprintInput: {
+		readonly agentVmRootfsInitExtra: string;
+		readonly deploymentRootfsInitExtra?: string;
+	};
 }
 
 function resolveBuildConfigPath(filePath: string, configDir: string | undefined): string {
@@ -48,20 +61,35 @@ async function readExistingRootfsInitExtra(
 
 function composeRootfsInitExtra(existingRootfsInitExtra: string | undefined): string {
 	return existingRootfsInitExtra
-		? `${existingRootfsInitExtra.trimEnd()}\n\n${agentVmRootfsInitExtraScript}`
+		? `${agentVmRootfsInitExtraScript.trimEnd()}\n\n${existingRootfsInitExtra}`
 		: agentVmRootfsInitExtraScript;
+}
+
+export async function resolveRootfsInitExtra(
+	options: ResolveRootfsInitExtraOptions,
+): Promise<ResolvedRootfsInitExtra> {
+	const existingRootfsInitExtra = await readExistingRootfsInitExtra(
+		options.buildConfig,
+		options.configDir,
+	);
+
+	return {
+		content: composeRootfsInitExtra(existingRootfsInitExtra),
+		fingerprintInput: {
+			agentVmRootfsInitExtra: agentVmRootfsInitExtraScript,
+			...(existingRootfsInitExtra === undefined
+				? {}
+				: { deploymentRootfsInitExtra: existingRootfsInitExtra }),
+		},
+	};
 }
 
 export async function prepareBuildConfigWithAgentVmRootfsInitExtra(
 	options: PrepareRootfsInitExtraOptions,
 ): Promise<BuildConfig> {
 	const rootfsInitExtraPath = path.join(options.imagePath, 'agent-vm-rootfs-init-extra.sh');
-	const existingRootfsInitExtra = await readExistingRootfsInitExtra(
-		options.buildConfig,
-		options.configDir,
-	);
 
-	await fs.writeFile(rootfsInitExtraPath, composeRootfsInitExtra(existingRootfsInitExtra), {
+	await fs.writeFile(rootfsInitExtraPath, options.rootfsInitExtraContent, {
 		encoding: 'utf8',
 		mode: 0o755,
 	});

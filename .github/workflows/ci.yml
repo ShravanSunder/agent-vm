@@ -21,8 +21,44 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Install age
-        run: sudo apt-get update && sudo apt-get install -y age
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: .cache/apt-packages
+          key: ${{ runner.os }}-apt-v1-age-qemu-system-arm-qemu-system-x86-xz-utils
+
+      - name: Install system packages
+        env:
+          APT_CACHE_DIR: .cache/apt-packages
+        run: |
+          set -euo pipefail
+          mkdir -p "${APT_CACHE_DIR}"
+          sudo mkdir -p /var/cache/apt/archives
+          sudo cp -f "${APT_CACHE_DIR}"/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+          sudo apt-get update
+          sudo apt-get install -y --download-only age qemu-system-arm qemu-system-x86 xz-utils
+          sudo find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -n {} "${APT_CACHE_DIR}/" \;
+          sudo chown -R "${USER}:${USER}" "${APT_CACHE_DIR}"
+          sudo apt-get install -y age qemu-system-arm qemu-system-x86 xz-utils
+
+      - name: Install Zig for Gondolin smoke tests
+        run: |
+          set -euo pipefail
+          ZON_PATH="$(find node_modules -path '*/@earendil-works/gondolin/dist/guest/build.zig.zon' -print -quit)"
+          ZIG_VERSION="$(sed -n 's/.*\.minimum_zig_version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${ZON_PATH}")"
+          if [[ -z "${ZIG_VERSION}" ]]; then
+            echo "Could not resolve Gondolin minimum Zig version from ${ZON_PATH}" >&2
+            exit 1
+          fi
+          case "$(uname -m)" in
+            x86_64) ZIG_ARCH="x86_64" ;;
+            aarch64|arm64) ZIG_ARCH="aarch64" ;;
+            *) echo "Unsupported CI architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-${ZIG_ARCH}-linux-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+          sudo tar -C /opt -xf /tmp/zig.tar.xz
+          sudo ln -sf "/opt/zig-${ZIG_ARCH}-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
+          zig version
 
       - name: Build
         run: pnpm build
@@ -38,3 +74,6 @@ jobs:
 
       - name: Unit tests
         run: pnpm test
+
+      - name: Gondolin rootfs smoke test
+        run: pnpm vitest run --config vitest.smoke.config.ts packages/gondolin-adapter/src/build-pipeline.smoke.test.ts

@@ -43,7 +43,7 @@ function createTestManagedImageRelease(): ManagedImageRelease {
 			},
 		},
 		openClawVersion: '2026.5.2',
-		openClawAgentVmPluginVersion: '0.0.51',
+		openClawAgentVmPluginVersion: '0.0.52',
 	};
 }
 
@@ -236,7 +236,7 @@ describe('runBuildCommand', () => {
 			'FROM ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:2026.05.07.1',
 		);
 		expect(generatedDockerfile).toContain(
-			'RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@0.0.51"',
+			'RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@0.0.52"',
 		);
 		expect(generatedDockerfile).not.toContain('@agent-vm/openclaw-agent-vm-plugin@0.0.45');
 		expect(generatedDockerfile).toContain(
