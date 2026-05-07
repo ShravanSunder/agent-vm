@@ -14,5 +14,6 @@
 			"tag": "2026.05.07.1"
 		}
 	},
-	"openClawAgentVmPluginVersion": "0.0.49"
+	"openClawVersion": "2026.5.2",
+	"openClawAgentVmPluginVersion": "0.0.50"
 }

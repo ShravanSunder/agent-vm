@@ -9,7 +9,6 @@ import { z } from 'zod';
 import { buildDockerImage as buildDockerImageDefault } from '../build/docker-image-builder.js';
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import {
-	MANAGED_OPENCLAW_VERSION,
 	generateManagedDockerfile as generateManagedDockerfileDefault,
 	resolveManagedImageRelease as resolveManagedImageReleaseDefault,
 	type ManagedImageRelease,
@@ -221,6 +220,7 @@ async function resolveProjectRootFromDockerfile(dockerfilePath: string): Promise
 async function resolveRequiredOpenClawPackagesForTarget(
 	systemConfig: LoadedSystemConfig,
 	imageTarget: ImageTarget,
+	managedImageRelease: ManagedImageRelease,
 ): Promise<readonly string[]> {
 	if (
 		imageTarget.family !== 'gateway' ||
@@ -239,7 +239,9 @@ async function resolveRequiredOpenClawPackagesForTarget(
 		const openClawConfig = openClawManagedPackageConfigSchema.parse(rawOpenClawConfig);
 		for (const packageRule of openClawManagedPackageRules) {
 			if (packageRule.isEnabled(openClawConfig)) {
-				requiredPackageSpecs.add(`${packageRule.packageName}@${MANAGED_OPENCLAW_VERSION}`);
+				requiredPackageSpecs.add(
+					`${packageRule.packageName}@${managedImageRelease.openClawVersion}`,
+				);
 			}
 		}
 	}
@@ -324,6 +326,7 @@ export async function runBuildCommand(
 			const requiredOpenClawPackages = await resolveRequiredOpenClawPackagesForTarget(
 				options.systemConfig,
 				imageTarget,
+				managedImageRelease,
 			);
 			// oxlint-disable-next-line no-await-in-loop -- each generated Docker context belongs to one image target
 			dockerfilePath = await generateManagedDockerfile({
