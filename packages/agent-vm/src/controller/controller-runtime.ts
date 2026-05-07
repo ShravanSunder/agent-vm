@@ -232,6 +232,7 @@ export async function startControllerRuntime(
 			getActiveLeases: () => leaseManager.listLeases(),
 			getOpenClawRuntime: (zoneId) => registry.getOpenClawRuntime(zoneId),
 			getRuntimeStatusByZone: () => registry.getSnapshotByZone(),
+			secretResolver,
 			systemConfig: options.systemConfig,
 		}),
 		closeTaskForZone: async (zoneId: string, taskId: string) =>

@@ -287,7 +287,7 @@ The controller exposes operations for managing the OpenClaw Gateway:
 | Destroy | `POST /zones/:id/destroy` | Stop gateway, release leases, purge state |
 | Upgrade | `POST /zones/:id/upgrade` | Rebuild image, restart gateway |
 | SSH | `POST /zones/:id/enable-ssh` | SSH access to gateway VM |
-| Exec | `POST /zones/:id/execute-command` | Run command in gateway VM |
+| Exec | `POST /zones/:id/execute-command` | Run command in gateway VM after zone admin authorization when configured |
 
 For implementation details, see [subsystems/controller.md](../subsystems/controller.md#operations).
 

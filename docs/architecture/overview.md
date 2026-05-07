@@ -271,7 +271,7 @@ The controller exposes a REST API. Routes are split across two modules: core lea
 | `POST` | `/zones/:zoneId/destroy` | Stop and destroy a gateway zone | OpenClaw |
 | `POST` | `/zones/:zoneId/upgrade` | Restart gateway zone with fresh image | OpenClaw |
 | `POST` | `/zones/:zoneId/enable-ssh` | Enable SSH access to the gateway VM | OpenClaw |
-| `POST` | `/zones/:zoneId/execute-command` | Execute a shell command in the gateway VM | OpenClaw |
+| `POST` | `/zones/:zoneId/execute-command` | Execute a shell command in the gateway VM; requires zone admin token when adminAccess is configured | OpenClaw |
 | `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
 | `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
 | `POST` | `/zones/:zoneId/tasks/:taskId/push-branches` | Push task branches to remote | Worker |

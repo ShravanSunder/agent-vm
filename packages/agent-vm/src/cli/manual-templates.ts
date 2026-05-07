@@ -172,6 +172,11 @@ Secrets are declared in ${options.systemConfigPath}.
 Use http-mediation for service tokens that should be swapped into outbound requests by the controller.
 Use env only when the gateway process itself must read the raw value.
 Do not bake secrets into Dockerfiles or images.
+
+Each zone can protect controller-mediated SSH with adminAccess. For 1Password-backed configs, create op://agent-vm/<zoneId>-ssh-access/token.
+Use agent-vm controller ssh --zone <zoneId> for a clean admin shell.
+Use agent-vm controller ssh --zone <zoneId> --with-secrets only for gateway admin workflows such as OpenClaw onboarding.
+Tool VMs and agent sandboxes do not receive gateway SSH secrets.
 `,
 			),
 		},

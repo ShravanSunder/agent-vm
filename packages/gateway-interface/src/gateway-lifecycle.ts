@@ -42,6 +42,12 @@ interface EnvironmentGatewayAuthProfilesRef extends GatewayAuthProfilesRef {
 	readonly envVar: string;
 }
 
+export type GatewaySshSecretEnvMode = 'always' | 'explicit' | 'never';
+
+export interface GatewaySshConfig {
+	readonly secretEnv: GatewaySshSecretEnvMode;
+}
+
 interface GatewayZoneBaseGatewayConfig {
 	readonly type: GatewayType;
 	readonly memory: string;
@@ -49,6 +55,7 @@ interface GatewayZoneBaseGatewayConfig {
 	readonly port: number;
 	readonly config: string;
 	readonly stateDir: string;
+	readonly ssh: GatewaySshConfig;
 	readonly authProfilesRef?:
 		| OnePasswordGatewayAuthProfilesRef
 		| EnvironmentGatewayAuthProfilesRef

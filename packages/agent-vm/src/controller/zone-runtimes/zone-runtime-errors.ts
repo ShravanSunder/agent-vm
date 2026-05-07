@@ -32,6 +32,28 @@ export class ControllerZoneConfigurationError extends Error {
 	}
 }
 
+export class ControllerZoneAdminAuthError extends Error {
+	public readonly code: 'zone-admin-auth-denied' | 'zone-admin-auth-required';
+	public readonly httpStatus: 401 | 403;
+	public readonly zoneId: string;
+
+	public constructor(options: {
+		readonly code: 'zone-admin-auth-denied' | 'zone-admin-auth-required';
+		readonly httpStatus: 401 | 403;
+		readonly zoneId: string;
+	}) {
+		super(
+			options.code === 'zone-admin-auth-required'
+				? `Zone '${options.zoneId}' requires admin authorization.`
+				: `Zone '${options.zoneId}' rejected admin authorization.`,
+		);
+		this.name = 'ControllerZoneAdminAuthError';
+		this.code = options.code;
+		this.httpStatus = options.httpStatus;
+		this.zoneId = options.zoneId;
+	}
+}
+
 export class ControllerZoneTaskNotFoundError extends Error {
 	public readonly taskId: string;
 	public readonly zoneId: string;

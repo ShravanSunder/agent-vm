@@ -7,6 +7,7 @@ import { PushBranchesValidationError } from '../git-push-operations.js';
 import { buildTaskConfigFromPreparedInput } from '../task-config-builder.js';
 import { writeTaskFailureSentinel } from '../task-state-reader.js';
 import {
+	ControllerZoneAdminAuthError,
 	ControllerZoneConfigurationError,
 	ControllerZoneNotFoundError,
 	ControllerZoneOperationUnsupportedError,
@@ -21,9 +22,11 @@ import {
 	ControllerRuntimeAtCapacityError,
 	ControllerTaskNotReadyError,
 	type ControllerRouteOperations,
+	type ExecInZoneOptions,
 } from './controller-http-route-support.js';
 import {
 	controllerDestroyZoneRequestSchema,
+	controllerEnableSshRequestSchema,
 	controllerExecuteCommandRequestSchema,
 	controllerPullDefaultRequestSchema,
 	controllerPushBranchesRequestSchema,
@@ -169,7 +172,12 @@ function scrubErrorResponseBody(responseBody: {
 	};
 }
 
-function zoneRuntimeErrorStatus(error: unknown): 404 | 405 | 409 | 412 | 500 | 502 | 503 {
+function zoneRuntimeErrorStatus(
+	error: unknown,
+): 401 | 403 | 404 | 405 | 409 | 412 | 500 | 502 | 503 {
+	if (error instanceof ControllerZoneAdminAuthError) {
+		return error.httpStatus;
+	}
 	if (
 		error instanceof ControllerZoneNotFoundError ||
 		error instanceof ControllerZoneTaskNotFoundError
@@ -202,6 +210,11 @@ function zoneRuntimeErrorStatus(error: unknown): 404 | 405 | 409 | 412 | 500 | 5
 
 function zoneRuntimeErrorBody(error: unknown):
 	| {
+			readonly code: 'zone-admin-auth-denied' | 'zone-admin-auth-required';
+			readonly error: string;
+			readonly zoneId: string;
+	  }
+	| {
 			readonly error: string;
 			readonly gatewayType: string;
 			readonly operationName: string;
@@ -232,6 +245,13 @@ function zoneRuntimeErrorBody(error: unknown):
 			readonly zoneId: string;
 	  }
 	| { readonly error: string } {
+	if (error instanceof ControllerZoneAdminAuthError) {
+		return {
+			code: error.code,
+			error: error.message,
+			zoneId: error.zoneId,
+		};
+	}
 	if (error instanceof ControllerZoneOperationUnsupportedError) {
 		return {
 			error: error.message,
@@ -527,8 +547,20 @@ export function registerControllerZoneOperationRoutes(
 	if (operations.enableSshForZone) {
 		const enableSshForZone = operations.enableSshForZone;
 		app.post('/zones/:zoneId/enable-ssh', async (context) => {
+			const parsedPayload = await parseJsonBodyWithSchema(
+				context,
+				controllerEnableSshRequestSchema,
+				'invalid-enable-ssh-request',
+			);
+			if (!parsedPayload.ok) {
+				return parsedPayload.response;
+			}
 			try {
-				return context.json(await enableSshForZone(context.req.param('zoneId')));
+				const enableSshOptions = {
+					...(parsedPayload.data.adminToken ? { adminToken: parsedPayload.data.adminToken } : {}),
+					secretEnv: parsedPayload.data.secretEnv,
+				};
+				return context.json(await enableSshForZone(context.req.param('zoneId'), enableSshOptions));
 			} catch (error) {
 				return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
 			}
@@ -547,8 +579,13 @@ export function registerControllerZoneOperationRoutes(
 				return parsedPayload.response;
 			}
 			const payload = parsedPayload.data;
+			const execOptions: ExecInZoneOptions = payload.adminToken
+				? { adminToken: payload.adminToken }
+				: {};
 			try {
-				return context.json(await execInZone(context.req.param('zoneId'), payload.command));
+				return context.json(
+					await execInZone(context.req.param('zoneId'), payload.command, execOptions),
+				);
 			} catch (error) {
 				return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
 			}

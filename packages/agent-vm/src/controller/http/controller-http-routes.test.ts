@@ -1499,6 +1499,45 @@ describe('createControllerApp', () => {
 		});
 	});
 
+	it('passes admin tokens through execute-command requests', async () => {
+		const execInZone = vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'ok' }));
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				execInZone,
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const response = await app.request('/zones/shravan/execute-command', {
+			body: JSON.stringify({ adminToken: 'admin-token', command: 'pwd' }),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(200);
+		expect(execInZone).toHaveBeenCalledWith('shravan', 'pwd', { adminToken: 'admin-token' });
+	});
+
 	it('returns 400 for malformed JSON bodies on controller operation routes', async () => {
 		const app = createControllerAppForTest({
 			toolVmProfiles: {

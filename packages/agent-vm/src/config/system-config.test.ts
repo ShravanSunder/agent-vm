@@ -202,6 +202,14 @@ describe('loadSystemConfig', () => {
 		);
 	});
 
+	test('rejects implicit always-on gateway SSH secret environments', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].gateway.ssh = { secretEnv: 'always' };
+		const configPath = await writeSystemConfigForTest('agent-vm-system-ssh-secret-env-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/secretEnv/u);
+	});
+
 	test('rejects a managed base that does not match the image profile family', async () => {
 		const config = createValidSystemConfigInput();
 		config.imageProfiles = {

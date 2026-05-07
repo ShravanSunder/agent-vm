@@ -1,18 +1,33 @@
+import { timingSafeEqual } from 'node:crypto';
+
+import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
+
 import type { SystemConfig } from '../config/system-config.js';
 import {
 	buildControllerStatus,
 	buildControllerZoneStatus,
 	type ControllerRuntimeStatus,
 } from '../operations/controller-status.js';
-import { ControllerZoneNotFoundError } from './zone-runtimes/zone-runtime-errors.js';
+import type {
+	EnableSshForZoneOptions,
+	ExecInZoneOptions,
+} from './http/controller-http-route-support.js';
+import {
+	ControllerZoneAdminAuthError,
+	ControllerZoneNotFoundError,
+} from './zone-runtimes/zone-runtime-errors.js';
 import type { OpenClawZoneRuntime } from './zone-runtimes/zone-runtime-types.js';
 
 interface ControllerRuntimeOperations {
 	readonly destroyZone: (targetZoneId: string, purge: boolean) => Promise<unknown>;
-	readonly enableSshForZone: (targetZoneId: string) => Promise<unknown>;
+	readonly enableSshForZone: (
+		targetZoneId: string,
+		options: EnableSshForZoneOptions,
+	) => Promise<unknown>;
 	readonly execInZone: (
 		targetZoneId: string,
 		command: string,
+		options: ExecInZoneOptions,
 	) => Promise<{
 		readonly exitCode: number;
 		readonly stderr: string;
@@ -53,6 +68,7 @@ export function createControllerRuntimeOperations(options: {
 		readonly zoneId: string;
 	}>;
 	readonly getRuntimeStatusByZone: () => ControllerRuntimeStatus['zones'];
+	readonly secretResolver: SecretResolver;
 	readonly systemConfig: SystemConfig;
 }): ControllerRuntimeOperations {
 	const buildRuntimeStatus = (): ControllerRuntimeStatus => {
@@ -63,27 +79,112 @@ export function createControllerRuntimeOperations(options: {
 		};
 	};
 
+	const findZone = (targetZoneId: string): SystemConfig['zones'][number] => {
+		const zone = options.systemConfig.zones.find(
+			(candidateZone) => candidateZone.id === targetZoneId,
+		);
+		if (!zone) {
+			throw new ControllerZoneNotFoundError(targetZoneId);
+		}
+		return zone;
+	};
+
 	return {
 		destroyZone: async (targetZoneId, purge) =>
 			await options.destroyZoneRuntime(targetZoneId, purge),
-		enableSshForZone: async (targetZoneId) =>
-			await options.getOpenClawRuntime(targetZoneId).enableSsh(),
-		execInZone: async (targetZoneId, command) =>
-			await options.getOpenClawRuntime(targetZoneId).exec(command),
+		enableSshForZone: async (targetZoneId, enableOptions) => {
+			const zone = findZone(targetZoneId);
+			await verifyZoneAdminAccess({
+				providedToken: enableOptions.adminToken,
+				secretResolver: options.secretResolver,
+				zone,
+			});
+			const sshAccess = await options.getOpenClawRuntime(targetZoneId).enableSsh();
+			return {
+				...sshAccess,
+				secretEnvEnabled: shouldEnableSshSecretEnv({
+					policy: zone.gateway.ssh?.secretEnv ?? 'explicit',
+					request: enableOptions.secretEnv,
+				}),
+			};
+		},
+		execInZone: async (targetZoneId, command, execOptions) => {
+			const zone = findZone(targetZoneId);
+			await verifyZoneAdminAccess({
+				providedToken: execOptions.adminToken,
+				secretResolver: options.secretResolver,
+				zone,
+			});
+			return await options.getOpenClawRuntime(targetZoneId).exec(command);
+		},
 		getStatus: async () => buildControllerStatus(options.systemConfig, buildRuntimeStatus()),
 		getZoneHealth: async (targetZoneId) =>
 			await options.getOpenClawRuntime(targetZoneId).getHealth(),
 		getZoneLogs: async (targetZoneId) => await options.getOpenClawRuntime(targetZoneId).getLogs(),
 		getZoneStatus: async (targetZoneId) => {
-			if (!options.systemConfig.zones.some((zone) => zone.id === targetZoneId)) {
-				throw new ControllerZoneNotFoundError(targetZoneId);
-			}
+			findZone(targetZoneId);
 			return buildControllerZoneStatus(options.systemConfig, targetZoneId, buildRuntimeStatus());
 		},
 		refreshZoneCredentials: async (targetZoneId) =>
 			await options.getOpenClawRuntime(targetZoneId).refreshCredentials(),
 		upgradeZone: async (targetZoneId) => await options.getOpenClawRuntime(targetZoneId).upgrade(),
 	};
+}
+
+function toSecretRef(secret: {
+	readonly envVar?: string;
+	readonly ref?: string;
+	readonly source: '1password' | 'environment';
+}): SecretRef {
+	return secret.source === 'environment'
+		? { source: 'environment', ref: secret.envVar ?? '' }
+		: { source: '1password', ref: secret.ref ?? '' };
+}
+
+function timingSafeEqualString(left: string, right: string): boolean {
+	const leftBuffer = Buffer.from(left);
+	const rightBuffer = Buffer.from(right);
+	if (leftBuffer.length !== rightBuffer.length) {
+		return false;
+	}
+	return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+export function shouldEnableSshSecretEnv(options: {
+	readonly policy: 'explicit' | 'never';
+	readonly request: 'default' | 'with-secrets';
+}): boolean {
+	if (options.policy === 'never') {
+		return false;
+	}
+	return options.request === 'with-secrets';
+}
+
+async function verifyZoneAdminAccess(options: {
+	readonly providedToken: string | undefined;
+	readonly secretResolver: SecretResolver;
+	readonly zone: SystemConfig['zones'][number];
+}): Promise<void> {
+	const adminAccess = options.zone.adminAccess ?? { mode: 'none' as const };
+	if (adminAccess.mode === 'none') {
+		return;
+	}
+	if (!options.providedToken) {
+		throw new ControllerZoneAdminAuthError({
+			code: 'zone-admin-auth-required',
+			httpStatus: 401,
+			zoneId: options.zone.id,
+		});
+	}
+
+	const expectedToken = await options.secretResolver.resolve(toSecretRef(adminAccess.secret));
+	if (!timingSafeEqualString(options.providedToken, expectedToken)) {
+		throw new ControllerZoneAdminAuthError({
+			code: 'zone-admin-auth-denied',
+			httpStatus: 403,
+			zoneId: options.zone.id,
+		});
+	}
 }
 
 export function createStopControllerOperation(options: {

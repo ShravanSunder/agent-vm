@@ -102,7 +102,7 @@ Registered conditionally -- only when `operations` or `workerTaskRunner` is prov
 | `POST` | `/zones/:zoneId/destroy` | Stop gateway, release zone leases, purge state | OpenClaw |
 | `POST` | `/zones/:zoneId/upgrade` | Rebuild image and restart gateway | OpenClaw |
 | `POST` | `/zones/:zoneId/enable-ssh` | Enable SSH into gateway VM | OpenClaw |
-| `POST` | `/zones/:zoneId/execute-command` | Run a shell command inside gateway VM | OpenClaw |
+| `POST` | `/zones/:zoneId/execute-command` | Run a shell command inside gateway VM; requires zone admin token when adminAccess is configured | OpenClaw |
 | `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
 | `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
 | `POST` | `/zones/:zoneId/tasks/:taskId/close` | Request task cancellation | Worker |
@@ -237,7 +237,7 @@ failed, or wrong-type zones.
 | `destroyZone` | Releases all zone leases (sequential), stops the gateway VM, optionally purges state |
 | `upgradeZone` | Rebuilds the gateway image (no-op currently), then restarts the gateway zone |
 | `enableSshForZone` | Calls `vm.enableSsh()` on the gateway VM |
-| `execInZone` | Runs an arbitrary command inside the gateway VM via `vm.exec()` |
+| `execInZone` | Runs an arbitrary command inside the gateway VM via `vm.exec()` after zone admin authorization when configured |
 | `stopController` | Clears reaper timer, releases all leases, stops gateway, closes HTTP server |
 
 The `stopController` operation is available in both OpenClaw and Agent Worker Gateways. All other operations are OpenClaw-only.

@@ -1,18 +1,17 @@
 import type { GatewayAuthConfig } from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { SystemConfig } from '../config/system-config.js';
 import type { ControllerClient } from '../controller/http/controller-client.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { listAuthProviders, runAuthInteractiveCommand } from './auth-interactive-command.js';
 
 function createControllerClientStub(overrides?: {
 	readonly enableZoneSsh?: ControllerClient['enableZoneSsh'];
-	readonly execInZone?: ControllerClient['execInZone'];
 }): ControllerClient {
 	return {
 		destroyZone: async () => ({}),
 		enableZoneSsh: overrides?.enableZoneSsh ?? (async () => ({})),
-		...(overrides?.execInZone ? { execInZone: overrides.execInZone } : {}),
 		getControllerStatus: async () => ({}),
 		getZoneLogs: async () => ({}),
 		peekLease: async () => ({
@@ -38,6 +37,43 @@ const authConfig: GatewayAuthConfig = {
 		`login --provider ${provider}${options.deviceCode ? ' --device-code' : ''}${options.setDefault ? ' --set-default' : ''}`,
 	listProvidersCommand: 'list-cmd',
 };
+
+const systemConfig = {
+	cacheDir: './cache',
+	runtimeDir: './runtime',
+	host: { controllerPort: 18800, projectNamespace: 'claw-tests-a1b2c3d4' },
+	imageProfiles: {
+		gateways: {
+			openclaw: {
+				type: 'openclaw',
+				buildConfig: './vm-images/gateways/openclaw/build-config.json',
+			},
+		},
+		toolVms: {},
+	},
+	tcpPool: { basePort: 19000, size: 5 },
+	toolVmProfiles: {},
+	zones: [
+		{
+			allowedHosts: ['api.openai.com'],
+			gateway: {
+				type: 'openclaw',
+				imageProfile: 'openclaw',
+				cpus: 2,
+				memory: '2G',
+				config: './config/shravan/openclaw.json',
+				port: 18791,
+				stateDir: './state/shravan',
+				zoneFilesDir: './zone-files/shravan',
+			},
+			id: 'shravan',
+			secrets: {},
+			websocketBypass: [],
+			defaultToolVmProfile: 'standard',
+			agentToolVmProfiles: {},
+		},
+	],
+} satisfies SystemConfig;
 
 describe('listAuthProviders', () => {
 	it('queries over SSH and parses provider names from stdout', async () => {
@@ -117,6 +153,7 @@ describe('runAuthInteractiveCommand', () => {
 			runAuthInteractiveCommand({
 				authConfig: undefined,
 				dependencies: {
+					...defaultCliDependencies,
 					createControllerClient: vi.fn(),
 					runInteractiveProcess: vi.fn(),
 				},
@@ -146,24 +183,17 @@ describe('runAuthInteractiveCommand', () => {
 				createControllerClient: vi.fn(() =>
 					createControllerClientStub({
 						enableZoneSsh,
-						execInZone: vi.fn(async () => ({
-							exitCode: 0,
-							stdout: '',
-							stderr: '',
-						})),
 					}),
 				),
 				runInteractiveProcess,
 			},
 			io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
 			provider: 'codex',
-			systemConfig: {
-				host: { controllerPort: 18800, projectNamespace: 'claw-tests-a1b2c3d4' },
-			} as never,
+			systemConfig,
 			zoneId: 'shravan',
 		});
 
-		expect(enableZoneSsh).toHaveBeenCalledWith('shravan');
+		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', { secretEnv: 'default' });
 		expect(runInteractiveProcess).toHaveBeenCalledWith(
 			'ssh',
 			expect.arrayContaining([
@@ -172,6 +202,65 @@ describe('runAuthInteractiveCommand', () => {
 				expect.stringContaining('source /etc/profile.d/openclaw-env.sh'),
 			]),
 		);
+	});
+
+	it('resolves zone admin access before starting interactive auth SSH', async () => {
+		const enableZoneSsh = vi.fn(async () => ({
+			host: '127.0.0.1',
+			port: 2222,
+			user: 'root',
+		}));
+		const createSecretResolver = vi.fn(async () => ({
+			resolve: vi.fn(async () => 'resolved-admin-token'),
+			resolveAll: vi.fn(async () => ({})),
+		}));
+		const runInteractiveProcess = vi.fn(async () => {});
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone.');
+		}
+
+		await runAuthInteractiveCommand({
+			authConfig,
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: vi.fn(() => createControllerClientStub({ enableZoneSsh })),
+				createSecretResolver,
+				resolveServiceAccountToken: vi.fn(async () => 'op-service-account-token'),
+				runInteractiveProcess,
+			},
+			io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
+			provider: 'codex',
+			systemConfig: {
+				...systemConfig,
+				host: {
+					...systemConfig.host,
+					secretsProvider: {
+						type: '1password',
+						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
+					},
+				},
+				zones: [
+					{
+						...zone,
+						adminAccess: {
+							mode: 'secret',
+							secret: {
+								source: '1password',
+								ref: 'op://agent-vm/shravan-ssh-access/token',
+							},
+						},
+					},
+				],
+			},
+			zoneId: 'shravan',
+		});
+
+		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
+			adminToken: 'resolved-admin-token',
+			secretEnv: 'default',
+		});
+		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', expect.any(Array));
 	});
 
 	it('passes device-code and set-default options into the login command', async () => {
@@ -196,9 +285,7 @@ describe('runAuthInteractiveCommand', () => {
 			io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
 			provider: 'openai-codex',
 			setDefault: true,
-			systemConfig: {
-				host: { controllerPort: 18800, projectNamespace: 'claw-tests-a1b2c3d4' },
-			} as never,
+			systemConfig,
 			zoneId: 'shravan',
 		});
 
@@ -234,9 +321,7 @@ describe('runAuthInteractiveCommand', () => {
 				},
 				io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
 				provider: 'codex',
-				systemConfig: {
-					host: { controllerPort: 18800, projectNamespace: 'claw-tests-a1b2c3d4' },
-				} as never,
+				systemConfig,
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow("Auth failed for codex in zone 'shravan': connect ECONNREFUSED");

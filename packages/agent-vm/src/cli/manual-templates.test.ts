@@ -46,6 +46,15 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
 			'DISCORD_BOT_TOKEN',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'op://agent-vm/<zoneId>-ssh-access/token',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'agent-vm controller ssh --zone <zoneId> --with-secrets',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'Tool VMs and agent sandboxes do not receive gateway SSH secrets',
+		);
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('workspaceAccess');

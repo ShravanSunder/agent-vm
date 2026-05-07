@@ -116,6 +116,28 @@ const hostSecretReferenceSchema = z.discriminatedUnion('source', [
 	}),
 ]);
 
+const zoneAdminAccessSchema = z.discriminatedUnion('mode', [
+	z
+		.object({
+			mode: z.literal('none'),
+		})
+		.strict(),
+	z
+		.object({
+			mode: z.literal('secret'),
+			secret: hostSecretReferenceSchema,
+		})
+		.strict(),
+]);
+
+const gatewaySshSecretEnvSchema = z.enum(['never', 'explicit']);
+
+const gatewaySshSchema = z
+	.object({
+		secretEnv: gatewaySshSecretEnvSchema.default('explicit'),
+	})
+	.strict();
+
 const zoneGatewayBaseSchema = z.object({
 	imageProfile: z.string().min(1),
 	memory: z.string().min(1),
@@ -125,6 +147,7 @@ const zoneGatewayBaseSchema = z.object({
 	stateDir: z.string().min(1),
 	backupDir: z.string().min(1).optional(),
 	authProfilesRef: authProfilesSecretSchema.optional(),
+	ssh: gatewaySshSchema.optional(),
 });
 
 const openClawZoneGatewaySchema = zoneGatewayBaseSchema
@@ -230,6 +253,7 @@ const systemConfigSchema = z
 				z
 					.object({
 						id: z.string().min(1),
+						adminAccess: zoneAdminAccessSchema.optional(),
 						gateway: zoneGatewaySchema,
 						resources: zoneResourcesPolicySchema.optional(),
 						secrets: z.record(z.string(), secretReferenceSchema),
@@ -255,6 +279,7 @@ const systemConfigSchema = z
 		const hasOnePasswordSecrets = config.zones.some(
 			(zone) =>
 				Object.values(zone.secrets).some((secret) => secret.source === '1password') ||
+				(zone.adminAccess?.mode === 'secret' && zone.adminAccess.secret.source === '1password') ||
 				zone.gateway.authProfilesRef?.source === '1password' ||
 				(zone.gateway.type === 'openclaw' &&
 					Object.values(zone.gateway.authProfilesByAgent ?? {}).some(

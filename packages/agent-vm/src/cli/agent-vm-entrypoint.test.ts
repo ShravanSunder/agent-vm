@@ -1819,11 +1819,11 @@ describe('runAgentVmCli', () => {
 		expect(outputs.join('\n')).toContain('"zoneId": "shravan"');
 	});
 
-	it('routes controller ssh through the ssh command handler', async () => {
+	it('routes controller ssh with secrets through the ssh command handler', async () => {
 		const runInteractiveProcess = vi.fn(async () => {});
 
 		await runAgentVmCli(
-			['controller', 'ssh', '--zone', 'shravan', '--print'],
+			['controller', 'ssh', '--zone', 'shravan', '--with-secrets'],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -1832,14 +1832,20 @@ describe('runAgentVmCli', () => {
 				...defaultCliDependencies,
 				createControllerClient: () =>
 					createControllerClientStub(async () => ({
-						command: 'ssh root@127.0.0.1',
+						host: '127.0.0.1',
+						port: 2222,
+						secretEnvEnabled: true,
+						user: 'root',
 					})),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
 				runInteractiveProcess,
 			},
 		);
 
-		expect(runInteractiveProcess).not.toHaveBeenCalled();
+		expect(runInteractiveProcess).toHaveBeenCalledWith(
+			'ssh',
+			expect.arrayContaining([expect.stringContaining('/run/openclaw/secrets.env')]),
+		);
 	});
 
 	it('routes controller stop through the controller client', async () => {

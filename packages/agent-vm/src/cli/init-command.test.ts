@@ -1073,6 +1073,14 @@ describe('scaffoldAgentVmProject', () => {
 		expect(generatedSecretReferenceSchema.parse(secrets.OPENCLAW_GATEWAY_TOKEN).ref).toBe(
 			'op://agent-vm/test-openclaw-gateway-auth/password',
 		);
+		expect(config.zones[0].adminAccess).toEqual({
+			mode: 'secret',
+			secret: {
+				source: '1password',
+				ref: 'op://agent-vm/test-openclaw-ssh-access/token',
+			},
+		});
+		expect(config.zones[0].gateway.ssh).toEqual({ secretEnv: 'explicit' });
 	});
 
 	it('scaffolds broad model-provider network defaults for openclaw type', async () => {
@@ -1209,11 +1217,17 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 		const envContent = await fs.readFile(path.join(targetDir, '.env.local'), 'utf8');
+		const config = await readGeneratedSystemConfig(targetDir);
 
 		expect(envContent).toContain('# GITHUB_TOKEN=');
 		expect(envContent).toContain('# PERPLEXITY_API_KEY=');
 		expect(envContent).toContain('# OPENCLAW_GATEWAY_TOKEN=');
+		expect(envContent).toContain('# AGENT_VM_TEST_OPENCLAW_SSH_ACCESS_TOKEN=');
 		expect(envContent).not.toContain('DISCORD_BOT_TOKEN');
+		expect(config.zones[0].adminAccess).toEqual({
+			mode: 'secret',
+			secret: { source: 'environment', envVar: 'AGENT_VM_TEST_OPENCLAW_SSH_ACCESS_TOKEN' },
+		});
 	});
 
 	it('scaffolds worker-specific env references for worker type', async () => {
@@ -1342,6 +1356,10 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(config.host.githubToken).toEqual({ source: 'environment', envVar: 'GITHUB_TOKEN' });
 		expect(config.host.secretsProvider).toBeUndefined();
+		expect(config.zones[0].adminAccess).toEqual({
+			mode: 'secret',
+			secret: { source: 'environment', envVar: 'AGENT_VM_ENV_WORKER_SSH_ACCESS_TOKEN' },
+		});
 		const secrets = config.zones[0]?.secrets ?? {};
 		expect(secrets['GITHUB_TOKEN']?.source).toBe('environment');
 		expect(secrets['GITHUB_TOKEN']?.envVar).toBe('GITHUB_TOKEN');
