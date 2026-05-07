@@ -749,6 +749,7 @@ describe('runBuildCommand', () => {
 			},
 		);
 		const gondolinBuilds: { cacheDir: string; fullReset: boolean | undefined }[] = [];
+		const fingerprintComputations: string[] = [];
 		const writeFakeAssets = (imagePath: string): void => {
 			fs.mkdirSync(imagePath, { recursive: true });
 			for (const fileName of buildImageAssetFileNames) {
@@ -785,14 +786,17 @@ describe('runBuildCommand', () => {
 					});
 					return [];
 				},
-				computeGondolinFingerprint: async (options) =>
-					options.buildConfigPath === gatewayBuildConfigPath
+				computeGondolinFingerprint: async (options) => {
+					fingerprintComputations.push(options.buildConfigPath);
+					return options.buildConfigPath === gatewayBuildConfigPath
 						? 'gateway-fingerprint'
-						: builtFingerprint,
+						: builtFingerprint;
+				},
 				runTask: async (_title, fn) => fn(),
 			},
 		);
 
+		expect(fingerprintComputations).toEqual([gatewayBuildConfigPath, buildConfigPath]);
 		expect(gondolinBuilds).toEqual([
 			{
 				cacheDir: path.join(cacheDirectory, 'gateway-images', 'openclaw'),

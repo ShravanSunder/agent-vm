@@ -138,6 +138,16 @@ function imageTargetDedupeKey(options: {
 	});
 }
 
+function imageTargetFingerprintKey(options: {
+	readonly buildConfigPath: string;
+	readonly systemCacheIdentifierPath: string;
+}): string {
+	return JSON.stringify({
+		buildConfigPath: path.resolve(options.buildConfigPath),
+		systemCacheIdentifierPath: path.resolve(options.systemCacheIdentifierPath),
+	});
+}
+
 function createEmptyCurrentImageFingerprints(): CurrentImageFingerprints {
 	return {
 		gateways: {},
@@ -184,7 +194,10 @@ async function linkOrCopyImageAsset(sourcePath: string, targetPath: string): Pro
 			typeof error === 'object' &&
 			error !== null &&
 			'code' in error &&
-			(error.code === 'EXDEV' || error.code === 'EPERM' || error.code === 'EOPNOTSUPP')
+			(error.code === 'EXDEV' ||
+				error.code === 'EPERM' ||
+				error.code === 'EOPNOTSUPP' ||
+				error.code === 'EACCES')
 		) {
 			await fs.copyFile(sourcePath, targetPath);
 			return;
@@ -526,16 +539,25 @@ export async function runBuildCommand(
 		dockerImageTargets.map((imageTarget) => imageTargetKey(imageTarget)),
 	);
 	const currentFingerprints = createEmptyCurrentImageFingerprints();
+	const fingerprintByInputKey = new Map<string, string>();
 	const effectiveFingerprintByTargetKey = new Map<string, string>();
 	const dedupeKeyByTargetKey = new Map<string, string>();
 	const shouldResetGondolinCacheByDedupeKey = new Map<string, boolean>();
 
 	for (const imageTarget of imageTargets) {
-		// oxlint-disable-next-line no-await-in-loop -- fingerprint errors should identify the matching profile path
-		const fingerprint = await computeGondolinFingerprint({
+		const fingerprintInputKey = imageTargetFingerprintKey({
 			buildConfigPath: imageTarget.buildConfigPath,
 			systemCacheIdentifierPath: imageTarget.systemCacheIdentifierPath,
 		});
+		let fingerprint = fingerprintByInputKey.get(fingerprintInputKey);
+		if (fingerprint === undefined) {
+			// oxlint-disable-next-line no-await-in-loop -- fingerprint errors should identify the matching profile path
+			fingerprint = await computeGondolinFingerprint({
+				buildConfigPath: imageTarget.buildConfigPath,
+				systemCacheIdentifierPath: imageTarget.systemCacheIdentifierPath,
+			});
+			fingerprintByInputKey.set(fingerprintInputKey, fingerprint);
+		}
 		const key = imageTargetKey(imageTarget);
 		const dedupeKey = imageTargetDedupeKey({
 			buildConfigPath: imageTarget.buildConfigPath,
