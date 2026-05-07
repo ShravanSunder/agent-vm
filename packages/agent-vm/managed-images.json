@@ -1,0 +1,18 @@
+{
+	"schemaVersion": 1,
+	"baseImages": {
+		"openclaw-gateway": {
+			"repository": "ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base",
+			"tag": "2026.05.07.1"
+		},
+		"worker-gateway": {
+			"repository": "ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base",
+			"tag": "2026.05.07.1"
+		},
+		"tool-vm": {
+			"repository": "ghcr.io/shravansunder/agent-vm-managed-tool-vm-base",
+			"tag": "2026.05.07.1"
+		}
+	},
+	"openClawAgentVmPluginVersion": "0.0.49"
+}

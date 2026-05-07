@@ -36,13 +36,13 @@ on:
         required: true
         default: true
         type: boolean
-      base_images_version:
-        description: 'Optional GHCR base image version to create; defaults to the package version'
+      managed_image_tag:
+        description: 'Optional managed GHCR image tag to create; defaults to packages/agent-vm/managed-images.json'
         required: false
         default: ''
         type: string
-      source_base_images_version:
-        description: 'Optional GHCR source version for retag mode; defaults to the previous release tag'
+      source_managed_image_tag:
+        description: 'Optional managed GHCR source tag for retag mode'
         required: false
         default: ''
         type: string
@@ -95,18 +95,25 @@ jobs:
         id: base_images
         env:
           REQUESTED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.base_images_mode || 'auto' }}
-          REQUESTED_IMAGE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.base_images_version || '' }}
-          REQUESTED_SOURCE_IMAGE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.source_base_images_version || '' }}
+          REQUESTED_MANAGED_IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.managed_image_tag || '' }}
+          REQUESTED_SOURCE_MANAGED_IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.source_managed_image_tag || '' }}
+          PUBLISH_NPM: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_npm }}
         run: |
           set -euo pipefail
           PACKAGE_VERSION="$(node -p "require('./packages/agent-vm/package.json').version")"
-          IMAGE_VERSION="${REQUESTED_IMAGE_VERSION:-${PACKAGE_VERSION}}"
+          MANAGED_IMAGE_TAG="$(node -e "console.log(require('./packages/agent-vm/managed-images.json').baseImages['tool-vm'].tag)")"
+          IMAGE_TAG="${REQUESTED_MANAGED_IMAGE_TAG:-${MANAGED_IMAGE_TAG}}"
+          if [[ "${PUBLISH_NPM}" == "true" && "${IMAGE_TAG}" != "${MANAGED_IMAGE_TAG}" ]]; then
+            echo "Cannot publish npm with managed_image_tag override; update packages/agent-vm/managed-images.json instead." >&2
+            exit 1
+          fi
           PREVIOUS_VERSION="$(git tag --sort=-v:refname --list 'v*.*.*' | sed 's/^v//' | grep -v "^${PACKAGE_VERSION}$" | head -n 1 || true)"
-          SOURCE_IMAGE_VERSION="${REQUESTED_SOURCE_IMAGE_VERSION:-${PREVIOUS_VERSION}}"
+          SOURCE_IMAGE_TAG="${REQUESTED_SOURCE_MANAGED_IMAGE_TAG}"
           if [[ -z "${PREVIOUS_VERSION}" ]]; then
             AUTO_MODE="rebuild"
           elif git diff --quiet "v${PREVIOUS_VERSION}..HEAD" -- \
             docker/base-images \
+            packages/agent-vm/managed-images.json \
             packages/agent-vm/src/build/managed-image-dockerfile.ts \
             packages/agent-vm/src/cli/vm-host-system-templates.ts \
             packages/agent-vm/src/cli/openclaw-plugin-bundle.ts; then
@@ -120,28 +127,28 @@ jobs:
           else
             MODE="${REQUESTED_MODE}"
           fi
-          if [[ "${MODE}" == "retag" && -z "${SOURCE_IMAGE_VERSION}" ]]; then
-            echo "Cannot retag managed base images because no source image version exists." >&2
+          if [[ "${MODE}" == "retag" && -z "${SOURCE_IMAGE_TAG}" ]]; then
+            echo "Cannot retag managed base images because no source managed image tag was provided." >&2
             exit 1
           fi
 
           echo "package_version=${PACKAGE_VERSION}" >> "${GITHUB_OUTPUT}"
-          echo "image_version=${IMAGE_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "image_tag=${IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
           echo "previous_version=${PREVIOUS_VERSION}" >> "${GITHUB_OUTPUT}"
-          echo "source_image_version=${SOURCE_IMAGE_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "source_image_tag=${SOURCE_IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
           echo "mode=${MODE}" >> "${GITHUB_OUTPUT}"
-          echo "Managed base image mode: ${MODE} (auto=${AUTO_MODE}, package=${PACKAGE_VERSION}, image=${IMAGE_VERSION}, source=${SOURCE_IMAGE_VERSION:-none})"
+          echo "Managed base image mode: ${MODE} (auto=${AUTO_MODE}, package=${PACKAGE_VERSION}, image=${IMAGE_TAG}, source=${SOURCE_IMAGE_TAG:-none})"
 
       - name: Set up QEMU
         if: steps.base_images.outputs.mode == 'rebuild'
         uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        if: steps.base_images.outputs.mode != 'skip'
+        if: steps.base_images.outputs.mode != 'skip' || github.event_name != 'workflow_dispatch' || inputs.publish_npm
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        if: steps.base_images.outputs.mode != 'skip'
+        if: steps.base_images.outputs.mode != 'skip' || github.event_name != 'workflow_dispatch' || inputs.publish_npm
         env:
           GHCR_TOKEN: ${{ github.token }}
           GHCR_USER: ${{ github.actor }}
@@ -152,52 +159,52 @@ jobs:
       - name: Rebuild managed base images in GHCR
         if: steps.base_images.outputs.mode == 'rebuild'
         env:
-          IMAGE_VERSION: ${{ steps.base_images.outputs.image_version }}
+          IMAGE_TAG: ${{ steps.base_images.outputs.image_tag }}
         run: |
           set -euo pipefail
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --push \
-            -t "ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:${IMAGE_VERSION}" \
+            -t "ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:${IMAGE_TAG}" \
             docker/base-images/openclaw-gateway
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --push \
-            -t "ghcr.io/shravansunder/agent-vm-worker-gateway-base:${IMAGE_VERSION}" \
+            -t "ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base:${IMAGE_TAG}" \
             docker/base-images/worker-gateway
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --push \
-            -t "ghcr.io/shravansunder/agent-vm-tool-vm-base:${IMAGE_VERSION}" \
+            -t "ghcr.io/shravansunder/agent-vm-managed-tool-vm-base:${IMAGE_TAG}" \
             docker/base-images/tool-vm
 
       - name: Retag managed base images in GHCR
         if: steps.base_images.outputs.mode == 'retag'
         env:
-          IMAGE_VERSION: ${{ steps.base_images.outputs.image_version }}
-          SOURCE_IMAGE_VERSION: ${{ steps.base_images.outputs.source_image_version }}
+          IMAGE_TAG: ${{ steps.base_images.outputs.image_tag }}
+          SOURCE_IMAGE_TAG: ${{ steps.base_images.outputs.source_image_tag }}
         run: |
           set -euo pipefail
           for IMAGE in \
-            "ghcr.io/shravansunder/agent-vm-openclaw-gateway-base" \
-            "ghcr.io/shravansunder/agent-vm-worker-gateway-base" \
-            "ghcr.io/shravansunder/agent-vm-tool-vm-base"
+            "ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base" \
+            "ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base" \
+            "ghcr.io/shravansunder/agent-vm-managed-tool-vm-base"
           do
             docker buildx imagetools create \
-              -t "${IMAGE}:${IMAGE_VERSION}" \
-              "${IMAGE}:${SOURCE_IMAGE_VERSION}"
+              -t "${IMAGE}:${IMAGE_TAG}" \
+              "${IMAGE}:${SOURCE_IMAGE_TAG}"
           done
 
       - name: Verify managed base image tags
-        if: steps.base_images.outputs.mode != 'skip'
+        if: steps.base_images.outputs.mode != 'skip' || github.event_name != 'workflow_dispatch' || inputs.publish_npm
         env:
-          IMAGE_VERSION: ${{ steps.base_images.outputs.image_version }}
+          IMAGE_TAG: ${{ steps.base_images.outputs.image_tag }}
         run: |
           set -euo pipefail
           for IMAGE in \
-            "ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:${IMAGE_VERSION}" \
-            "ghcr.io/shravansunder/agent-vm-worker-gateway-base:${IMAGE_VERSION}" \
-            "ghcr.io/shravansunder/agent-vm-tool-vm-base:${IMAGE_VERSION}"
+            "ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:${IMAGE_TAG}" \
+            "ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base:${IMAGE_TAG}" \
+            "ghcr.io/shravansunder/agent-vm-managed-tool-vm-base:${IMAGE_TAG}"
           do
             docker buildx imagetools inspect --raw "${IMAGE}" | node -e '
               let raw = "";
