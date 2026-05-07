@@ -1131,7 +1131,7 @@ describe('runAgentVmCli', () => {
 			temporaryDirectoryPath,
 			'systemCacheIdentifier.json',
 		);
-		await fs.writeFile(systemCacheIdentifierPath, '{"schemaVersion":1}\n', 'utf8');
+		await fs.writeFile(systemCacheIdentifierPath, '{}\n', 'utf8');
 		const outputs: string[] = [];
 
 		await runAgentVmCli(

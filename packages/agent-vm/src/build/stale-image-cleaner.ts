@@ -5,6 +5,7 @@ export interface StaleImageEntry {
 	readonly absolutePath: string;
 	readonly family: 'gateway' | 'toolVm';
 	readonly fingerprint: string;
+	readonly modifiedAtMs: number;
 	readonly profileName: string;
 	readonly sizeBytes: number;
 }
@@ -72,10 +73,12 @@ export async function findStaleImageDirectories(options: {
 				}
 
 				const absolutePath = path.join(imageCacheDirectory, directoryEntry.name);
+				const directoryStat = await fs.stat(absolutePath);
 				staleEntries.push({
 					absolutePath,
 					family,
 					fingerprint: directoryEntry.name,
+					modifiedAtMs: directoryStat.mtimeMs,
 					profileName,
 					sizeBytes: await getDirectorySizeBytes(absolutePath),
 				});
@@ -84,6 +87,49 @@ export async function findStaleImageDirectories(options: {
 	}
 
 	return staleEntries;
+}
+
+function groupImageEntriesByProfile(
+	entries: readonly StaleImageEntry[],
+): Map<string, readonly StaleImageEntry[]> {
+	const groupedEntries = new Map<string, StaleImageEntry[]>();
+	for (const entry of entries) {
+		const groupKey = `${entry.family}/${entry.profileName}`;
+		const group = groupedEntries.get(groupKey) ?? [];
+		group.push(entry);
+		groupedEntries.set(groupKey, group);
+	}
+
+	return new Map(
+		[...groupedEntries.entries()].map(([groupKey, group]) => [
+			groupKey,
+			group.toSorted((leftEntry, rightEntry) => {
+				const modifiedDifference = rightEntry.modifiedAtMs - leftEntry.modifiedAtMs;
+				if (modifiedDifference !== 0) {
+					return modifiedDifference;
+				}
+				return leftEntry.fingerprint.localeCompare(rightEntry.fingerprint);
+			}),
+		]),
+	);
+}
+
+export async function findPrunableImageDirectories(options: {
+	readonly cacheDir: string;
+	readonly currentFingerprints: CurrentImageFingerprints;
+	readonly retainStaleGenerationsPerProfile: number;
+}): Promise<readonly StaleImageEntry[]> {
+	const staleEntries = await findStaleImageDirectories({
+		cacheDir: options.cacheDir,
+		currentFingerprints: options.currentFingerprints,
+	});
+	const prunableEntries: StaleImageEntry[] = [];
+
+	for (const group of groupImageEntriesByProfile(staleEntries).values()) {
+		prunableEntries.push(...group.slice(options.retainStaleGenerationsPerProfile));
+	}
+
+	return prunableEntries;
 }
 
 export async function deleteStaleImageDirectories(

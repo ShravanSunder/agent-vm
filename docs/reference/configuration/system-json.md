@@ -80,6 +80,13 @@ instead.
 Do not put active worker gitdirs here; unpushed commits are not rebuildable
 cache.
 
+`agent-vm build` automatically prunes old image-cache generations after every
+successful build. For each gateway or Tool VM image profile, it keeps the
+current fingerprint plus the two newest previous fingerprint directories. The
+retention count is fixed; there is no `system.jsonc` cache retention field.
+Failed builds do not prune cache entries. Manual `agent-vm cache clean
+--confirm` remains more aggressive and deletes every stale image generation.
+
 ## runtimeDir
 
 `runtimeDir` stores active, non-backup runtime artifacts that are not durable
@@ -351,11 +358,12 @@ Repo resources are TCP-only and compile to Gondolin `tcpHosts`, env, and
 read-only VFS mounts. They do not modify `allowedHosts`; HTTP egress remains a
 zone-level policy.
 
-`allowRepoResources` gates provider selection. Requested repos may still run
-their `.agent-vm/run-setup.sh` and `finalizeRepoResourceSetup(input)`
-after resource resolution, for example to publish generated fixtures or derive
-env from selected external resources. See
-[resource-contracts.md](resource-contracts.md).
+`allowRepoResources: false` disables the entire repo-local resource contract
+pipeline. The controller does not load `.agent-vm/repo-resources.ts`, does not
+run `.agent-vm/run-setup.sh`, and does not call
+`finalizeRepoResourceSetup(input)`. Required resources must be supplied as
+task external resources. `true` and `string[]` allow matching repos with a
+contract file to run setup/finalization after resource resolution.
 
 ## secrets
 

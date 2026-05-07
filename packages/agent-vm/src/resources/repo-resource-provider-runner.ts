@@ -5,6 +5,7 @@ import { execa } from 'execa';
 import { z } from 'zod';
 
 import type {
+	FinalizeRepoResourceSetupInput,
 	ResolvedRepoResourcesFinal,
 	ResourceBinding,
 } from '../config/resource-contracts/index.js';
@@ -65,11 +66,14 @@ const dockerComposeConfigSchema = z
 	})
 	.passthrough();
 
+export type SelectedRepoResources = FinalizeRepoResourceSetupInput['selectedResources'];
+
 export interface RepoResourceSetupInput {
 	readonly outputDir: string;
 	readonly repoDir: string;
 	readonly repoId: string;
 	readonly repoUrl: string;
+	readonly selectedExternalResources: SelectedRepoResources;
 	readonly setupCommand: string;
 }
 
@@ -99,6 +103,7 @@ interface RepoResourceProviderGroup {
 	readonly repoDir: string;
 	readonly repoId: string;
 	readonly repoUrl: string;
+	readonly selectedExternalResources: SelectedRepoResources;
 	readonly setupCommand: string;
 }
 
@@ -195,6 +200,19 @@ function buildCleanupAggregateError(options: {
 	return aggregateError;
 }
 
+function buildSelectedResourcesComparisonKey(resources: SelectedRepoResources): string {
+	const entries = Object.entries(resources).toSorted(([leftName], [rightName]) =>
+		leftName.localeCompare(rightName),
+	);
+	return JSON.stringify(
+		entries.map(([resourceName, resource]) => ({
+			resourceName,
+			binding: resource.binding,
+			target: resource.target,
+		})),
+	);
+}
+
 function groupReposByComposeProject(options: {
 	readonly providers: readonly RepoResourceProviderStartInput[];
 	readonly repos: readonly RepoResourceSetupInput[];
@@ -210,6 +228,7 @@ function groupReposByComposeProject(options: {
 			repoDir: string;
 			repoId: string;
 			repoUrl: string;
+			selectedExternalResources: SelectedRepoResources;
 			setupCommand: string;
 		}
 	>();
@@ -220,6 +239,8 @@ function groupReposByComposeProject(options: {
 				existingGroup.repoDir !== repo.repoDir ||
 				existingGroup.outputDir !== repo.outputDir ||
 				existingGroup.repoUrl !== repo.repoUrl ||
+				buildSelectedResourcesComparisonKey(existingGroup.selectedExternalResources) !==
+					buildSelectedResourcesComparisonKey(repo.selectedExternalResources) ||
 				existingGroup.setupCommand !== repo.setupCommand
 			) {
 				throw new Error(`Resource setup repo '${repo.repoId}' has inconsistent paths.`);
@@ -234,6 +255,7 @@ function groupReposByComposeProject(options: {
 			repoDir: repo.repoDir,
 			repoId: repo.repoId,
 			repoUrl: repo.repoUrl,
+			selectedExternalResources: repo.selectedExternalResources,
 			setupCommand: repo.setupCommand,
 		});
 	}
@@ -424,20 +446,23 @@ async function startOneProviderGroup(options: {
 				timeoutMs: DOCKER_COMPOSE_TIMEOUT_MS,
 			});
 		}
-		const selectedResources = Object.fromEntries(
-			await Promise.all(
-				options.group.providers.map(async (provider) => {
-					const target = await resolveComposeTarget({
-						binding: provider.binding,
-						composeFilePath: options.group.composeFilePath,
-						composeProjectName: options.group.composeProjectName,
-						repoDir: options.group.repoDir,
-						service: provider.provider.service,
-					});
-					return [provider.resourceName, { binding: provider.binding, target }] as const;
-				}),
+		const selectedResources = {
+			...options.group.selectedExternalResources,
+			...Object.fromEntries(
+				await Promise.all(
+					options.group.providers.map(async (provider) => {
+						const target = await resolveComposeTarget({
+							binding: provider.binding,
+							composeFilePath: options.group.composeFilePath,
+							composeProjectName: options.group.composeProjectName,
+							repoDir: options.group.repoDir,
+							service: provider.provider.service,
+						});
+						return [provider.resourceName, { binding: provider.binding, target }] as const;
+					}),
+				),
 			),
-		);
+		} satisfies SelectedRepoResources;
 		const setupCommand = path.resolve(options.group.repoDir, options.group.setupCommand);
 		const relativeSetupCommand = path.relative(options.group.repoDir, setupCommand);
 		if (relativeSetupCommand.startsWith('..') || path.isAbsolute(relativeSetupCommand)) {

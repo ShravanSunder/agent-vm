@@ -37,11 +37,12 @@ describe('vm-host-system templates', () => {
 		expect(dockerfile).not.toContain('zig-x86_64-linux-0.15.2');
 	});
 
-	it('includes the ARG GIT_SHA guard without a default', () => {
+	it('does not rewrite system cache identity with a generated Git SHA', () => {
 		const dockerfile = renderVmHostSystemDockerfile(renderOptions);
 
-		expect(dockerfile).toMatch(/ARG GIT_SHA\b(?!=)/u);
-		expect(dockerfile).toContain('GIT_SHA build-arg required');
+		expect(dockerfile).not.toContain('ARG GIT_SHA');
+		expect(dockerfile).not.toContain('gitSha');
+		expect(dockerfile).not.toContain('/etc/agent-vm/systemCacheIdentifier.json');
 	});
 
 	it('substitutes zone id into the start script exec line', () => {

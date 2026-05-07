@@ -121,6 +121,7 @@ describe('runCacheCommand', () => {
 					absolutePath: '/cache/gateway-images/openclaw/stale-fingerprint',
 					family: 'gateway',
 					fingerprint: 'stale-fingerprint',
+					modifiedAtMs: 1,
 					profileName: 'openclaw',
 					sizeBytes: 1024,
 				},
@@ -159,6 +160,7 @@ describe('runCacheCommand', () => {
 					absolutePath: '/cache/gateway-images/openclaw/stale-fingerprint',
 					family: 'gateway',
 					fingerprint: 'stale-fingerprint',
+					modifiedAtMs: 1,
 					profileName: 'openclaw',
 					sizeBytes: 1024,
 				},
@@ -183,10 +185,53 @@ describe('runCacheCommand', () => {
 				absolutePath: '/cache/gateway-images/openclaw/stale-fingerprint',
 				family: 'gateway',
 				fingerprint: 'stale-fingerprint',
+				modifiedAtMs: 1,
 				profileName: 'openclaw',
 				sizeBytes: 1024,
 			},
 		]);
+	});
+
+	it('manual clean deletes every stale image returned by the stale-image scanner', async () => {
+		const deleteStaleImageDirectories = vi.fn();
+		const staleEntries = [
+			{
+				absolutePath: '/cache/gateway-images/openclaw/stale-oldest',
+				family: 'gateway' as const,
+				fingerprint: 'stale-oldest',
+				modifiedAtMs: 1,
+				profileName: 'openclaw',
+				sizeBytes: 1024,
+			},
+			{
+				absolutePath: '/cache/gateway-images/openclaw/stale-newest',
+				family: 'gateway' as const,
+				fingerprint: 'stale-newest',
+				modifiedAtMs: 2,
+				profileName: 'openclaw',
+				sizeBytes: 1024,
+			},
+		];
+
+		await runCacheCommand(
+			{
+				confirm: true,
+				subcommand: 'clean',
+				systemConfig: createCacheCommandSystemConfig(),
+			},
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				computeFingerprintFromConfigPath: async (buildConfigPath) =>
+					buildConfigPath.includes('gateway') ? 'gateway-current' : 'tool-current',
+				deleteStaleImageDirectories,
+				findStaleImageDirectories: async () => staleEntries,
+			},
+		);
+
+		expect(deleteStaleImageDirectories).toHaveBeenCalledWith(staleEntries);
 	});
 
 	it('prints a friendly message when no stale images are found', async () => {

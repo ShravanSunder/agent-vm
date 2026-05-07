@@ -52,10 +52,24 @@ function buildMultiRepoActiveTask(): ActiveWorkerTask {
 }
 
 function extractGitArgs(args: readonly string[]): readonly string[] {
-	expect(args[0]).toBe('-c');
-	expect(args[1]).toBe('core.hooksPath=/dev/null');
-	expect(args[2]).toMatch(/^--git-dir=\/tmp\/task-1\/gitdirs\/(?:api|widgets)\.git$/u);
-	return args.slice(3);
+	expect(args).toContain('--work-tree=/tmp/task-1/gitdirs');
+	let index = 0;
+	while (args[index] === '-c') {
+		index += 2;
+	}
+	while (index < args.length) {
+		const arg = args[index];
+		if (arg === '--git-dir' || arg === '--work-tree') {
+			index += 2;
+			continue;
+		}
+		if (arg?.startsWith('--git-dir=') || arg?.startsWith('--work-tree=')) {
+			index += 1;
+			continue;
+		}
+		break;
+	}
+	return args.slice(index);
 }
 
 function mockGitSuccess(): void {
@@ -146,6 +160,7 @@ describe('git-push-operations', () => {
 				'-c',
 				'core.hooksPath=/dev/null',
 				'--git-dir=/tmp/task-1/gitdirs/widgets.git',
+				'--work-tree=/tmp/task-1/gitdirs',
 				'fetch',
 				'--prune',
 				'https://x-access-token:token@github.com/acme/widgets.git',
@@ -406,6 +421,7 @@ describe('git-push-operations', () => {
 			branch: 'agent/task-1',
 			attempts: 1,
 			message: 'RPC failed; HTTP 503 github unavailable 1',
+			phase: 'push',
 			retryDelaySeconds: 2,
 		});
 		expect(recordEvent).toHaveBeenCalledWith({

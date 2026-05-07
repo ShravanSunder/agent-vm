@@ -1912,6 +1912,120 @@ describe('createControllerApp', () => {
 		});
 	});
 
+	it('returns resource preparation error details when worker task preparation fails', async () => {
+		const app = createControllerAppForTest({
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				prepareWorkerTask: vi.fn(async () => {
+					throw new AggregateError(
+						[
+							new AggregateError(
+								[
+									new Error('run-setup.sh failed: missing DATABASE_URL'),
+									new Error('docker compose up failed: port already allocated'),
+								],
+								"Failed to start repo resource provider 'repo-1'.",
+							),
+							new Error('compose cleanup failed', {
+								cause: new Error('docker compose down exited 1'),
+							}),
+						],
+						'Failed to start repo resource providers and clean up started providers.',
+					);
+				}),
+				executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+		});
+
+		const response = await app.request('/zones/shravan/worker-tasks', {
+			body: JSON.stringify({
+				requestTaskId: 'request-task-resource-error',
+				prompt: 'resource error test',
+				repos: [],
+				context: {},
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(500);
+		await expect(response.json()).resolves.toEqual({
+			error: 'Failed to start repo resource providers and clean up started providers.',
+			details: [
+				'Failed to start repo resource providers and clean up started providers.',
+				"Failed to start repo resource provider 'repo-1'.",
+				'run-setup.sh failed: missing DATABASE_URL',
+				'docker compose up failed: port already allocated',
+				'compose cleanup failed',
+				'docker compose down exited 1',
+			],
+		});
+	});
+
+	it('returns error details when task state lookup fails with an aggregate error', async () => {
+		const app = createControllerAppForTest({
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				getTaskState: vi.fn(async () => {
+					throw new AggregateError(
+						[new Error('state log unreadable'), new Error('task index corrupt')],
+						'task state failed',
+					);
+				}),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+		});
+
+		const response = await app.request('/zones/shravan/tasks/task-1');
+
+		expect(response.status).toBe(500);
+		await expect(response.json()).resolves.toEqual({
+			error: 'task state failed',
+			details: ['task state failed', 'state log unreadable', 'task index corrupt'],
+		});
+	});
+
 	it('returns task state snapshots via GET /zones/:zoneId/tasks/:taskId', async () => {
 		const getTaskState = vi.fn(async () => ({
 			taskId: 'worker-task-1',

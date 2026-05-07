@@ -8,7 +8,7 @@ import {
 import {
 	buildTaskConfig,
 	createTaskEventRecorder,
-	sanitizeErrorMessage,
+	formatTaskFailureReason,
 } from './coordinator-helpers.js';
 import type { Coordinator, CoordinatorDeps, CreateTaskInput } from './coordinator-types.js';
 import { runTask } from './task-runner.js';
@@ -22,7 +22,7 @@ async function handleRunTaskEscape(
 	eventRecorder: ReturnType<typeof createTaskEventRecorder>,
 	finishActiveTask: (taskId: string) => void,
 ): Promise<void> {
-	const reason = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
+	const reason = formatTaskFailureReason(error);
 	writeStderr(`[coordinator] Unhandled runTask error for ${taskId}: ${reason}`);
 	try {
 		await eventRecorder.recordTaskFailure(taskId, reason);

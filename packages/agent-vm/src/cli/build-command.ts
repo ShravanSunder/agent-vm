@@ -2,26 +2,29 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type { BuildImageResult } from '@agent-vm/gondolin-adapter';
-import { resolveGondolinMinimumZigVersion } from '@agent-vm/gondolin-adapter';
-import { execa } from 'execa';
 import { z } from 'zod';
 
 import { buildDockerImage as buildDockerImageDefault } from '../build/docker-image-builder.js';
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import {
-	MANAGED_OPENCLAW_VERSION,
 	generateManagedDockerfile as generateManagedDockerfileDefault,
 	resolveManagedImageRelease as resolveManagedImageReleaseDefault,
 	type ManagedImageRelease,
 	type ManagedImageSource,
 } from '../build/managed-image-dockerfile.js';
+import {
+	deleteStaleImageDirectories as deleteStaleImageDirectoriesDefault,
+	findPrunableImageDirectories as findPrunableImageDirectoriesDefault,
+	type CurrentImageFingerprints,
+	type StaleImageEntry,
+} from '../build/stale-image-cleaner.js';
+import {
+	assertGondolinZigCompatibility,
+	resolveGondolinCompatibleZigVersion,
+	resolveHostZigVersion,
+} from '../build/zig-compatibility.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
-import {
-	buildZigInstallHint,
-	buildZigUpgradeHint,
-	isVersionAtLeast,
-} from '../operations/doctor.js';
 import type { RunTaskContext, RunTaskFn, TaskOutput } from '../shared/run-task.js';
 import { formatZodError } from './format-zod-error.js';
 import { syncBundledOpenClawPluginBundle } from './openclaw-plugin-bundle.js';
@@ -39,6 +42,12 @@ export interface BuildCommandDependencies {
 		readonly fullReset?: boolean;
 		readonly streamPreview?: TaskOutput;
 	}) => Promise<BuildImageResult>;
+	readonly deleteStaleImageDirectories?: (entries: readonly StaleImageEntry[]) => Promise<void>;
+	readonly findPrunableImageDirectories?: (options: {
+		readonly cacheDir: string;
+		readonly currentFingerprints: CurrentImageFingerprints;
+		readonly retainStaleGenerationsPerProfile: number;
+	}) => Promise<readonly StaleImageEntry[]>;
 	readonly resolveOciImageTag?: (buildConfigPath: string) => Promise<string>;
 	readonly resolveRequiredZigVersion?: () => Promise<string>;
 	readonly resolveZigVersion?: () => Promise<string | undefined>;
@@ -66,6 +75,9 @@ const ociImageTagSchema = z.object({
 		image: z.string().min(1),
 	}),
 });
+
+const RETAIN_STALE_IMAGE_GENERATIONS_PER_PROFILE = 2;
+const gatewayRuntimeRecordFileName = 'gateway-runtime.json';
 
 const openClawManagedPackageConfigSchema = z
 	.object({
@@ -105,6 +117,53 @@ function imageTargetKey(imageTarget: Pick<ImageTarget, 'family' | 'name'>): stri
 	return `${imageTarget.family}/${imageTarget.name}`;
 }
 
+function createEmptyCurrentImageFingerprints(): CurrentImageFingerprints {
+	return {
+		gateways: {},
+		toolVms: {},
+	};
+}
+
+function setCurrentImageFingerprint(
+	currentFingerprints: CurrentImageFingerprints,
+	imageTarget: Pick<ImageTarget, 'family' | 'name'>,
+	fingerprint: string,
+): void {
+	if (imageTarget.family === 'gateway') {
+		currentFingerprints.gateways[imageTarget.name] = fingerprint;
+		return;
+	}
+	currentFingerprints.toolVms[imageTarget.name] = fingerprint;
+}
+
+async function findZoneIdsWithGatewayRuntimeRecords(
+	systemConfig: LoadedSystemConfig,
+): Promise<readonly string[]> {
+	const zoneIds: string[] = [];
+	for (const zone of systemConfig.zones) {
+		const runtimeRecordPath = path.join(zone.gateway.stateDir, gatewayRuntimeRecordFileName);
+		let runtimeRecordExists = false;
+		try {
+			// oxlint-disable-next-line no-await-in-loop -- state dirs are zone-local and errors should point at one zone
+			await fs.access(runtimeRecordPath);
+			runtimeRecordExists = true;
+		} catch (error) {
+			if (
+				typeof error !== 'object' ||
+				error === null ||
+				!('code' in error) ||
+				error.code !== 'ENOENT'
+			) {
+				throw error;
+			}
+		}
+		if (runtimeRecordExists) {
+			zoneIds.push(zone.id);
+		}
+	}
+	return zoneIds;
+}
+
 function startElapsedStatusHeartbeat(
 	taskContext: RunTaskContext | undefined,
 	baseStatus: string,
@@ -136,27 +195,16 @@ async function resolveOciImageTagFromConfig(buildConfigPath: string): Promise<st
 	return parsedConfig.data.oci.image;
 }
 
-async function resolveHostZigVersion(): Promise<string | undefined> {
-	try {
-		const result = await execa('zig', ['version']);
-		return result.stdout.trim();
-	} catch {
-		return undefined;
-	}
-}
-
 async function assertZigBuildPrerequisite(
 	resolveRequiredZigVersion: () => Promise<string>,
 	resolveZigVersion: () => Promise<string | undefined>,
 ): Promise<void> {
 	const requiredZigVersion = await resolveRequiredZigVersion();
 	const zigVersion = await resolveZigVersion();
-	if (!zigVersion) {
-		throw new Error(buildZigInstallHint(requiredZigVersion));
-	}
-	if (!isVersionAtLeast(zigVersion, requiredZigVersion)) {
-		throw new Error(`${buildZigUpgradeHint(requiredZigVersion)} Current version: ${zigVersion}.`);
-	}
+	assertGondolinZigCompatibility({
+		requiredVersion: requiredZigVersion,
+		...(zigVersion ? { installedVersion: zigVersion } : {}),
+	});
 }
 
 async function assertUniqueDockerImageTags(
@@ -221,6 +269,7 @@ async function resolveProjectRootFromDockerfile(dockerfilePath: string): Promise
 async function resolveRequiredOpenClawPackagesForTarget(
 	systemConfig: LoadedSystemConfig,
 	imageTarget: ImageTarget,
+	managedImageRelease: ManagedImageRelease,
 ): Promise<readonly string[]> {
 	if (
 		imageTarget.family !== 'gateway' ||
@@ -239,7 +288,9 @@ async function resolveRequiredOpenClawPackagesForTarget(
 		const openClawConfig = openClawManagedPackageConfigSchema.parse(rawOpenClawConfig);
 		for (const packageRule of openClawManagedPackageRules) {
 			if (packageRule.isEnabled(openClawConfig)) {
-				requiredPackageSpecs.add(`${packageRule.packageName}@${MANAGED_OPENCLAW_VERSION}`);
+				requiredPackageSpecs.add(
+					`${packageRule.packageName}@${managedImageRelease.openClawVersion}`,
+				);
 			}
 		}
 	}
@@ -255,9 +306,13 @@ export async function runBuildCommand(
 ): Promise<void> {
 	const buildDockerImage = dependencies.buildDockerImage ?? buildDockerImageDefault;
 	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
+	const deleteStaleImageDirectories =
+		dependencies.deleteStaleImageDirectories ?? deleteStaleImageDirectoriesDefault;
+	const findPrunableImageDirectories =
+		dependencies.findPrunableImageDirectories ?? findPrunableImageDirectoriesDefault;
 	const resolveOciImageTag = dependencies.resolveOciImageTag ?? resolveOciImageTagFromConfig;
 	const resolveRequiredZigVersion =
-		dependencies.resolveRequiredZigVersion ?? resolveGondolinMinimumZigVersion;
+		dependencies.resolveRequiredZigVersion ?? resolveGondolinCompatibleZigVersion;
 	const resolveZigVersion = dependencies.resolveZigVersion ?? resolveHostZigVersion;
 	const runTaskStep = dependencies.runTask ?? defaultRunTask;
 	const resolveProjectRoot =
@@ -324,6 +379,7 @@ export async function runBuildCommand(
 			const requiredOpenClawPackages = await resolveRequiredOpenClawPackagesForTarget(
 				options.systemConfig,
 				imageTarget,
+				managedImageRelease,
 			);
 			// oxlint-disable-next-line no-await-in-loop -- each generated Docker context belongs to one image target
 			dockerfilePath = await generateManagedDockerfile({
@@ -377,6 +433,7 @@ export async function runBuildCommand(
 	const dockerBackedTargets = new Set(
 		dockerImageTargets.map((imageTarget) => imageTargetKey(imageTarget)),
 	);
+	const currentFingerprints = createEmptyCurrentImageFingerprints();
 
 	for (const imageTarget of imageTargets) {
 		const shouldResetGondolinCache =
@@ -403,8 +460,49 @@ export async function runBuildCommand(
 				} finally {
 					stopHeartbeat();
 				}
+				setCurrentImageFingerprint(currentFingerprints, imageTarget, result.fingerprint);
 				taskContext?.setStatus(result.built ? 'vm assets ready' : 'vm assets cache hit');
 			},
 		);
 	}
+
+	await runTaskStep('Cache auto-prune', async (taskContext) => {
+		taskContext?.setStatus('checking old image generations');
+		try {
+			const activeGatewayRuntimeZoneIds = await findZoneIdsWithGatewayRuntimeRecords(
+				options.systemConfig,
+			);
+			if (activeGatewayRuntimeZoneIds.length > 0) {
+				taskContext?.setOutput({
+					message: `Image cache auto-prune skipped because gateway runtime records exist for zone(s): ${activeGatewayRuntimeZoneIds.join(', ')}. Stop the controller before pruning old image generations.`,
+				});
+				taskContext?.setStatus('image cache auto-prune skipped');
+				return;
+			}
+
+			const prunableEntries = await findPrunableImageDirectories({
+				cacheDir: options.systemConfig.cacheDir,
+				currentFingerprints,
+				retainStaleGenerationsPerProfile: RETAIN_STALE_IMAGE_GENERATIONS_PER_PROFILE,
+			});
+
+			if (prunableEntries.length === 0) {
+				taskContext?.setStatus('no old image generations found');
+				return;
+			}
+
+			await deleteStaleImageDirectories(prunableEntries);
+			taskContext?.setStatus(
+				`deleted ${prunableEntries.length} old image generation${
+					prunableEntries.length === 1 ? '' : 's'
+				}`,
+			);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			taskContext?.setOutput({
+				message: `Image cache auto-prune failed after build succeeded: ${message}`,
+			});
+			taskContext?.setStatus('image cache auto-prune failed');
+		}
+	});
 }

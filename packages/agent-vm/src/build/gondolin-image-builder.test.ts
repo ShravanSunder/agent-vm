@@ -62,6 +62,81 @@ process.on('message', () => {
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
+	it('resolves when the child sends a result even if the child stays alive briefly', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-gondolin-child-'),
+		);
+		const childModulePath = path.join(temporaryDirectoryPath, 'sticky-gondolin-child.mjs');
+		await fs.writeFile(
+			childModulePath,
+			`
+process.on('message', () => {
+	process.send({
+		type: 'result',
+		result: { built: true, fingerprint: 'sticky-fp', imagePath: '/cache/sticky-fp' },
+	});
+	setInterval(() => {}, 1000);
+});
+`,
+			'utf8',
+		);
+
+		const result = await runGondolinBuildChildProcess({
+			childModuleUrl: pathToFileURL(childModulePath),
+			request: {
+				buildConfigPath: '/project/build-config.json',
+				cacheDir: '/cache/gateway-images/openclaw',
+				systemCacheIdentifierPath: '/project/system-cache-identifier.json',
+			},
+			streamPreview: {
+				write() {
+					return true;
+				},
+			},
+		});
+
+		expect(result).toEqual({
+			built: true,
+			fingerprint: 'sticky-fp',
+			imagePath: '/cache/sticky-fp',
+		});
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('includes stderr tail when the child exits before sending a structured result', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-gondolin-child-'),
+		);
+		const childModulePath = path.join(temporaryDirectoryPath, 'failing-gondolin-child.mjs');
+		await fs.writeFile(
+			childModulePath,
+			`
+process.stderr.write('exploded before ipc\\n');
+process.exit(1);
+`,
+			'utf8',
+		);
+
+		await expect(
+			runGondolinBuildChildProcess({
+				childModuleUrl: pathToFileURL(childModulePath),
+				request: {
+					buildConfigPath: '/project/build-config.json',
+					cacheDir: '/cache/gateway-images/openclaw',
+					systemCacheIdentifierPath: '/project/system-cache-identifier.json',
+				},
+				streamPreview: {
+					write() {
+						return true;
+					},
+				},
+			}),
+		).rejects.toThrow('exploded before ipc');
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
 	it('delegates interactive builds to the child-process runner', async () => {
 		const childBuildRequests: {
 			readonly request: GondolinImageBuildRequest;
@@ -149,7 +224,7 @@ process.on('message', () => {
 		);
 		await fs.writeFile(
 			systemCacheIdentifierPath,
-			JSON.stringify({ gitSha: 'abc123', schemaVersion: 1 }),
+			JSON.stringify({ gitSha: 'abc123' }),
 			'utf8',
 		);
 		const dependencies: GondolinImageBuilderDependencies = {
@@ -199,7 +274,6 @@ process.on('message', () => {
 			{
 				fingerprintInput: {
 					gitSha: 'abc123',
-					schemaVersion: 1,
 				},
 				cacheDir: '/cache/gateway-images/openclaw',
 				configDir: '/project/vm-images/gateways/openclaw',
@@ -226,7 +300,7 @@ describe('computeFingerprintFromConfigPath', () => {
 		await fs.writeFile(temporaryConfigPath, fileContents, 'utf8');
 		await fs.writeFile(
 			systemCacheIdentifierPath,
-			JSON.stringify({ gitSha: 'abc123', schemaVersion: 1 }),
+			JSON.stringify({ gitSha: 'abc123' }),
 			'utf8',
 		);
 
@@ -321,7 +395,7 @@ describe('computeFingerprintFromConfigPath', () => {
 		const temporaryConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
 		const identifierPath = path.join(temporaryDirectoryPath, 'systemCacheIdentifier.json');
 		await fs.writeFile(temporaryConfigPath, JSON.stringify(baseBuildConfig()), 'utf8');
-		await fs.writeFile(identifierPath, JSON.stringify({ schemaVersion: 1, gitSha: 'abc123' }), 'utf8');
+		await fs.writeFile(identifierPath, JSON.stringify({ gitSha: 'abc123' }), 'utf8');
 
 		const firstFingerprint = await computeFingerprintFromConfigPath(
 			temporaryConfigPath,
@@ -353,12 +427,12 @@ describe('computeFingerprintFromConfigPath', () => {
 		);
 		await fs.writeFile(
 			firstIdentifierPath,
-			JSON.stringify({ schemaVersion: 1, gitSha: 'abc123' }),
+			JSON.stringify({ gitSha: 'abc123' }),
 			'utf8',
 		);
 		await fs.writeFile(
 			secondIdentifierPath,
-			JSON.stringify({ schemaVersion: 1, gitSha: 'def456' }),
+			JSON.stringify({ gitSha: 'def456' }),
 			'utf8',
 		);
 

@@ -19,6 +19,8 @@ import { z } from 'zod';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import {
 	workerTaskResourcesSchema,
+	type ExternalResources,
+	type ResolvedRepoResourcesDescription,
 	workerTaskControllerRequestSchema,
 	type WorkerTaskControllerRequest,
 	type WorkerTaskControllerRequestInput,
@@ -29,13 +31,11 @@ import type {
 	GatewayManagedVmFactoryOptions,
 	GatewayZone,
 } from '../gateway/gateway-zone-support.js';
-import {
-	hasRepoResourceDescriptionContract,
-	loadRepoResourceDescriptionContract,
-} from '../resources/repo-resource-contract-loader.js';
+import { loadRepoResourceDescriptionContract } from '../resources/repo-resource-contract-loader.js';
 import {
 	startRepoResourceProviders,
 	stopRepoResourceProviders,
+	type SelectedRepoResources,
 	type StartedRepoResourceProvider,
 } from '../resources/repo-resource-provider-runner.js';
 import { compileResourceOverlay } from '../resources/resource-compiler.js';
@@ -71,6 +71,34 @@ function writeStderr(message: string): void {
 
 function toError(error: unknown): Error {
 	return error instanceof Error ? error : new Error(String(error));
+}
+
+interface LoadedRepoResourceDescription {
+	readonly description: ResolvedRepoResourcesDescription;
+	readonly repoId: string;
+	readonly repoUrl: string;
+}
+
+function selectExternalResourcesForRepo(options: {
+	readonly description: ResolvedRepoResourcesDescription;
+	readonly externalResources: ExternalResources;
+}): SelectedRepoResources {
+	return Object.fromEntries(
+		Object.keys(options.description.requires).flatMap((resourceName) => {
+			const externalResource = options.externalResources[resourceName];
+			return externalResource
+				? [
+						[
+							resourceName,
+							{
+								binding: externalResource.binding,
+								target: externalResource.target,
+							},
+						] as const,
+					]
+				: [];
+		}),
+	);
 }
 
 const taskStatusResponseSchema = z
@@ -453,55 +481,55 @@ export async function preStartGateway(
 			deepMerge(resolvedBaseConfig, projectConfig),
 		) satisfies WorkerConfigDraft;
 
-		const repoResourceDescriptions = await Promise.all(
-			clonedRepos.map(async (repo) => ({
-				repoId: repo.repoId,
-				repoUrl: repo.repoUrl,
-				hasContract: await hasRepoResourceDescriptionContract(repo.hostMetadataPath),
-				description: await loadRepoResourceDescriptionContract({
-					repoDir: repo.hostMetadataPath,
-					repoId: repo.repoId,
-					repoUrl: repo.repoUrl,
-				}),
-			})),
-		);
 		const resources = workerTaskResourcesSchema.parse(parsedTaskInput.resources);
+		const allowRepoResources = zoneConfig.resources?.allowRepoResources ?? true;
+		const loadedRepoResourceDescriptions =
+			allowRepoResources === false
+				? []
+				: await Promise.all(
+						clonedRepos.map(async (repo) => {
+							const description = await loadRepoResourceDescriptionContract({
+								repoDir: repo.hostMetadataPath,
+								repoId: repo.repoId,
+								repoUrl: repo.repoUrl,
+							});
+							return description
+								? {
+										repoId: repo.repoId,
+										repoUrl: repo.repoUrl,
+										description,
+									}
+								: null;
+						}),
+					);
+		const repoResourceDescriptions = loadedRepoResourceDescriptions.filter(
+			(description): description is LoadedRepoResourceDescription => description !== null,
+		);
 		const resolvedResources = resolveTaskResources({
-			allowRepoResources: zoneConfig.resources?.allowRepoResources ?? true,
+			allowRepoResources,
 			externalResources: resources.externalResources,
 			repos: repoResourceDescriptions,
 		});
 		const repoById = new Map(clonedRepos.map((repo) => [repo.repoId, repo]));
 		const providerRun = await startRepoResourceProviders({
 			taskId,
-			repos: repoResourceDescriptions
-				.map((repoDescription) => {
-					if (!repoDescription.hasContract) {
-						return null;
-					}
-					const repo = repoById.get(repoDescription.repoId);
-					if (!repo) {
-						throw new Error(`Resource setup references unknown repo '${repoDescription.repoId}'.`);
-					}
-					return {
-						repoId: repoDescription.repoId,
-						repoUrl: repoDescription.repoUrl,
-						repoDir: repo.hostMetadataPath,
-						outputDir: path.join(agentVmDir, 'resources', repoDescription.repoId),
-						setupCommand: repoDescription.description.setupCommand,
-					};
-				})
-				.filter(
-					(
-						repo,
-					): repo is {
-						readonly repoId: string;
-						readonly repoUrl: string;
-						readonly repoDir: string;
-						readonly outputDir: string;
-						readonly setupCommand: string;
-					} => repo !== null,
-				),
+			repos: repoResourceDescriptions.map((repoDescription) => {
+				const repo = repoById.get(repoDescription.repoId);
+				if (!repo) {
+					throw new Error(`Resource setup references unknown repo '${repoDescription.repoId}'.`);
+				}
+				return {
+					repoId: repoDescription.repoId,
+					repoUrl: repoDescription.repoUrl,
+					repoDir: repo.hostMetadataPath,
+					outputDir: path.join(agentVmDir, 'resources', repoDescription.repoId),
+					selectedExternalResources: selectExternalResourcesForRepo({
+						description: repoDescription.description,
+						externalResources: resolvedResources.externalResources,
+					}),
+					setupCommand: repoDescription.description.setupCommand,
+				};
+			}),
 			providers: resolvedResources.selectedRepoProviders.map((provider) => {
 				const repo = repoById.get(provider.repoId);
 				if (!repo) {

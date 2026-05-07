@@ -44,6 +44,17 @@ export function isControllerToolFailure(value: unknown): value is ControllerTool
 	);
 }
 
+export function buildSafeGitEnvironment(cwd: string): NodeJS.ProcessEnv {
+	const existingCount = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? '0', 10);
+	const nextIndex = Number.isFinite(existingCount) && existingCount >= 0 ? existingCount : 0;
+	return {
+		...process.env,
+		GIT_CONFIG_COUNT: String(nextIndex + 1),
+		[`GIT_CONFIG_KEY_${String(nextIndex)}`]: 'safe.directory',
+		[`GIT_CONFIG_VALUE_${String(nextIndex)}`]: cwd,
+	};
+}
+
 export function selectRepo(
 	repos: readonly RepoLocation[],
 	params: Record<string, unknown>,
@@ -85,6 +96,7 @@ export function selectRepo(
 export async function currentBranch(cwd: string): Promise<CurrentBranchResult> {
 	const result = await execa('git', ['branch', '--show-current'], {
 		cwd,
+		env: buildSafeGitEnvironment(cwd),
 		reject: false,
 		timeout: 10_000,
 	});
