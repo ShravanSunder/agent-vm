@@ -214,7 +214,7 @@ describe('runBuildCommand', () => {
 			'FROM ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:0.0.41',
 		);
 		expect(generatedDockerfile).toContain(
-			'RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@0.0.47"',
+			'RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@0.0.48"',
 		);
 		expect(generatedDockerfile).not.toContain('@agent-vm/openclaw-agent-vm-plugin@0.0.45');
 		expect(generatedDockerfile).toContain(
