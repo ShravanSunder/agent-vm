@@ -27,6 +27,97 @@ afterEach(() => {
 });
 
 describe('buildImage', () => {
+	it('injects rootfs init lines that recreate standard /dev fd symlinks at boot', async () => {
+		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
+		temporaryDirectories.push(cacheDirectory);
+		const buildConfig: BuildConfig = {
+			arch: 'aarch64',
+			distro: 'alpine',
+			rootfs: {
+				label: 'gondolin-root',
+			},
+		};
+		let effectiveRootfsInitExtraPath: string | undefined;
+
+		await buildImage(
+			{
+				buildConfig,
+				cacheDir: cacheDirectory,
+			},
+			{
+				buildAssets: async (
+					effectiveBuildConfig: BuildConfig,
+					outputDirectory: string,
+				): Promise<void> => {
+					effectiveRootfsInitExtraPath = effectiveBuildConfig.init?.rootfsInitExtra;
+					await writeFakeAssets(outputDirectory);
+				},
+				gondolinVersion: 'gondolin@1',
+			},
+		);
+
+		expect(effectiveRootfsInitExtraPath).toBeDefined();
+		const rootfsInitExtraContent = await fsPromises.readFile(
+			effectiveRootfsInitExtraPath ?? '',
+			'utf8',
+		);
+		const rootfsInitExtraStat = await fsPromises.stat(effectiveRootfsInitExtraPath ?? '');
+
+		expect(rootfsInitExtraContent).toContain('ln -sfn /proc/self/fd /dev/fd');
+		expect(rootfsInitExtraContent).toContain('ln -sfn /proc/self/fd/0 /dev/stdin');
+		expect(rootfsInitExtraContent).toContain('ln -sfn /proc/self/fd/1 /dev/stdout');
+		expect(rootfsInitExtraContent).toContain('ln -sfn /proc/self/fd/2 /dev/stderr');
+		expect(rootfsInitExtraContent).toContain('ln -sfn pts/ptmx /dev/ptmx');
+		expect(rootfsInitExtraStat.mode & 0o777).toBe(0o755);
+	});
+
+	it('preserves deployment rootfs init extras before appending agent-vm /dev setup', async () => {
+		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
+		const configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-config-'));
+		temporaryDirectories.push(cacheDirectory, configDirectory);
+		await fsPromises.writeFile(
+			path.join(configDirectory, 'deployment-init-extra.sh'),
+			'echo deployment init extra\n',
+			'utf8',
+		);
+		const buildConfig: BuildConfig = {
+			arch: 'aarch64',
+			distro: 'alpine',
+			init: {
+				rootfsInitExtra: './deployment-init-extra.sh',
+			},
+		};
+		let effectiveRootfsInitExtraPath: string | undefined;
+
+		await buildImage(
+			{
+				buildConfig,
+				cacheDir: cacheDirectory,
+				configDir: configDirectory,
+			},
+			{
+				buildAssets: async (
+					effectiveBuildConfig: BuildConfig,
+					outputDirectory: string,
+				): Promise<void> => {
+					effectiveRootfsInitExtraPath = effectiveBuildConfig.init?.rootfsInitExtra;
+					await writeFakeAssets(outputDirectory);
+				},
+				gondolinVersion: 'gondolin@1',
+			},
+		);
+
+		expect(effectiveRootfsInitExtraPath).toBeDefined();
+		const rootfsInitExtraContent = await fsPromises.readFile(
+			effectiveRootfsInitExtraPath ?? '',
+			'utf8',
+		);
+
+		expect(rootfsInitExtraContent.indexOf('echo deployment init extra')).toBeLessThan(
+			rootfsInitExtraContent.indexOf('ln -sfn /proc/self/fd /dev/fd'),
+		);
+	});
+
 	it('reuses an existing fingerprinted image directory without rebuilding', async () => {
 		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
 		temporaryDirectories.push(cacheDirectory);

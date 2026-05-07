@@ -28,6 +28,7 @@ export default defineConfig({
 		include: ['packages/**/*.test.ts', 'packages/**/*.spec.ts'],
 		exclude: [
 			'**/node_modules/**',
+			'**/*.smoke.test.ts',
 			'**/*.integration.test.ts',
 			'**/tests/integration/**',
 			'**/tests/e2e/**',
