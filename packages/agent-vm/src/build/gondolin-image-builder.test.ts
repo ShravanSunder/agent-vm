@@ -451,6 +451,41 @@ describe('computeFingerprintFromConfigPath', () => {
 
 		expect(firstFingerprint).not.toBe(secondFingerprint);
 	});
+
+	it('changes fingerprints when rootfs init extra contents change', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-image-'),
+		);
+		const temporaryConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
+		const identifierPath = path.join(temporaryDirectoryPath, 'systemCacheIdentifier.json');
+		const rootfsInitExtraPath = path.join(temporaryDirectoryPath, 'rootfs-init-extra.sh');
+		await fs.writeFile(
+			temporaryConfigPath,
+			JSON.stringify({
+				...baseBuildConfig(),
+				init: { rootfsInitExtra: './rootfs-init-extra.sh' },
+			}),
+			'utf8',
+		);
+		await fs.writeFile(identifierPath, JSON.stringify({ gitSha: 'abc123' }), 'utf8');
+
+		await fs.writeFile(rootfsInitExtraPath, 'echo init-extra-v1\n', 'utf8');
+		const firstFingerprint = await computeFingerprintFromConfigPath(
+			temporaryConfigPath,
+			identifierPath,
+			{ resolveRuntimeBuildVersionTag: async () => 'runtime@1' },
+		);
+		await fs.writeFile(rootfsInitExtraPath, 'echo init-extra-v2\n', 'utf8');
+		const secondFingerprint = await computeFingerprintFromConfigPath(
+			temporaryConfigPath,
+			identifierPath,
+			{ resolveRuntimeBuildVersionTag: async () => 'runtime@1' },
+		);
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+
+		expect(firstFingerprint).not.toBe(secondFingerprint);
+	});
 });
 
 function baseBuildConfig(): { readonly arch: string; readonly distro: string } {

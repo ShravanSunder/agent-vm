@@ -71,13 +71,13 @@ describe('buildImage', () => {
 		expect(rootfsInitExtraStat.mode & 0o777).toBe(0o755);
 	});
 
-	it('preserves deployment rootfs init extras before appending agent-vm /dev setup', async () => {
+	it('runs agent-vm /dev setup before deployment rootfs init extras', async () => {
 		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
 		const configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-config-'));
 		temporaryDirectories.push(cacheDirectory, configDirectory);
 		await fsPromises.writeFile(
 			path.join(configDirectory, 'deployment-init-extra.sh'),
-			'echo deployment init extra\n',
+			'if [ ! -e /dev/fd ]; then exit 91; fi\n',
 			'utf8',
 		);
 		const buildConfig: BuildConfig = {
@@ -113,9 +113,59 @@ describe('buildImage', () => {
 			'utf8',
 		);
 
-		expect(rootfsInitExtraContent.indexOf('echo deployment init extra')).toBeLessThan(
-			rootfsInitExtraContent.indexOf('ln -sfn /proc/self/fd /dev/fd'),
+		expect(rootfsInitExtraContent.indexOf('ln -sfn /proc/self/fd /dev/fd')).toBeLessThan(
+			rootfsInitExtraContent.indexOf('if [ ! -e /dev/fd ]; then exit 91; fi'),
 		);
+	});
+
+	it('rebuilds when deployment rootfs init extra content changes', async () => {
+		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
+		const configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-config-'));
+		temporaryDirectories.push(cacheDirectory, configDirectory);
+		const deploymentRootfsInitExtraPath = path.join(configDirectory, 'deployment-init-extra.sh');
+		const buildConfig: BuildConfig = {
+			arch: 'aarch64',
+			distro: 'alpine',
+			init: {
+				rootfsInitExtra: './deployment-init-extra.sh',
+			},
+		};
+		const fakeBuildIntoDirectory = vi.fn(
+			async (_buildConfig: BuildConfig, outputDirectory: string): Promise<void> => {
+				await writeFakeAssets(outputDirectory);
+			},
+		);
+
+		await fsPromises.writeFile(deploymentRootfsInitExtraPath, 'echo init-extra-v1\n', 'utf8');
+		const firstResult = await buildImage(
+			{
+				buildConfig,
+				cacheDir: cacheDirectory,
+				configDir: configDirectory,
+			},
+			{
+				buildAssets: fakeBuildIntoDirectory,
+				gondolinVersion: 'gondolin@1',
+			},
+		);
+		await fsPromises.writeFile(deploymentRootfsInitExtraPath, 'echo init-extra-v2\n', 'utf8');
+		const secondResult = await buildImage(
+			{
+				buildConfig,
+				cacheDir: cacheDirectory,
+				configDir: configDirectory,
+			},
+			{
+				buildAssets: fakeBuildIntoDirectory,
+				gondolinVersion: 'gondolin@1',
+			},
+		);
+
+		expect(firstResult.built).toBe(true);
+		expect(secondResult.built).toBe(true);
+		expect(secondResult.fingerprint).not.toBe(firstResult.fingerprint);
+		expect(secondResult.imagePath).not.toBe(firstResult.imagePath);
+		expect(fakeBuildIntoDirectory).toHaveBeenCalledTimes(2);
 	});
 
 	it('reuses an existing fingerprinted image directory without rebuilding', async () => {
