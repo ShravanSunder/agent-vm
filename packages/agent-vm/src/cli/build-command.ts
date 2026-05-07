@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import type { BuildImageResult } from '@agent-vm/gondolin-adapter';
+import { buildImageAssetFileNames, type BuildImageResult } from '@agent-vm/gondolin-adapter';
 import { z } from 'zod';
 
 import { buildDockerImage as buildDockerImageDefault } from '../build/docker-image-builder.js';
@@ -85,13 +85,6 @@ const ociImageTagSchema = z.object({
 
 const RETAIN_STALE_IMAGE_GENERATIONS_PER_PROFILE = 2;
 const gatewayRuntimeRecordFileName = 'gateway-runtime.json';
-const gondolinAssetFileNames = [
-	'manifest.json',
-	'rootfs.ext4',
-	'initramfs.cpio.lz4',
-	'vmlinuz-virt',
-] as const;
-
 const openClawManagedPackageConfigSchema = z
 	.object({
 		channels: z
@@ -126,8 +119,23 @@ interface ImageTarget {
 	readonly source: ManagedImageSource | undefined;
 }
 
+interface BuiltImageCacheEntry {
+	readonly imageTarget: ImageTarget;
+	readonly result: BuildImageResult;
+}
+
 function imageTargetKey(imageTarget: Pick<ImageTarget, 'family' | 'name'>): string {
 	return `${imageTarget.family}/${imageTarget.name}`;
+}
+
+function imageTargetDedupeKey(options: {
+	readonly buildConfigPath: string;
+	readonly fingerprint: string;
+}): string {
+	return JSON.stringify({
+		buildConfigPath: path.resolve(options.buildConfigPath),
+		fingerprint: options.fingerprint,
+	});
 }
 
 function createEmptyCurrentImageFingerprints(): CurrentImageFingerprints {
@@ -159,7 +167,7 @@ async function pathExists(filePath: string): Promise<boolean> {
 }
 
 async function hasGondolinAssets(imagePath: string): Promise<boolean> {
-	for (const fileName of gondolinAssetFileNames) {
+	for (const fileName of buildImageAssetFileNames) {
 		// oxlint-disable-next-line no-await-in-loop -- each missing file points at the same image generation
 		if (!(await pathExists(path.join(imagePath, fileName)))) {
 			return false;
@@ -203,7 +211,7 @@ async function materializeGondolinImageAlias(options: {
 	}
 	await fs.rm(targetImagePath, { recursive: true, force: true });
 	await fs.mkdir(targetImagePath, { recursive: true });
-	for (const fileName of gondolinAssetFileNames) {
+	for (const fileName of buildImageAssetFileNames) {
 		// oxlint-disable-next-line no-await-in-loop -- preserve deterministic asset copy/link ordering
 		await linkOrCopyImageAsset(
 			path.join(options.sourceImagePath, fileName),
@@ -519,7 +527,8 @@ export async function runBuildCommand(
 	);
 	const currentFingerprints = createEmptyCurrentImageFingerprints();
 	const effectiveFingerprintByTargetKey = new Map<string, string>();
-	const shouldResetGondolinCacheByFingerprint = new Map<string, boolean>();
+	const dedupeKeyByTargetKey = new Map<string, string>();
+	const shouldResetGondolinCacheByDedupeKey = new Map<string, boolean>();
 
 	for (const imageTarget of imageTargets) {
 		// oxlint-disable-next-line no-await-in-loop -- fingerprint errors should identify the matching profile path
@@ -528,20 +537,19 @@ export async function runBuildCommand(
 			systemCacheIdentifierPath: imageTarget.systemCacheIdentifierPath,
 		});
 		const key = imageTargetKey(imageTarget);
+		const dedupeKey = imageTargetDedupeKey({
+			buildConfigPath: imageTarget.buildConfigPath,
+			fingerprint,
+		});
 		const shouldResetGondolinCache = options.forceRebuild === true || dockerBackedTargets.has(key);
 		effectiveFingerprintByTargetKey.set(key, fingerprint);
-		shouldResetGondolinCacheByFingerprint.set(
-			fingerprint,
-			(shouldResetGondolinCacheByFingerprint.get(fingerprint) ?? false) || shouldResetGondolinCache,
+		dedupeKeyByTargetKey.set(key, dedupeKey);
+		shouldResetGondolinCacheByDedupeKey.set(
+			dedupeKey,
+			(shouldResetGondolinCacheByDedupeKey.get(dedupeKey) ?? false) || shouldResetGondolinCache,
 		);
 	}
-	const builtImageByFingerprint = new Map<
-		string,
-		{
-			readonly imageTarget: ImageTarget;
-			readonly result: BuildImageResult;
-		}
-	>();
+	const builtImageByDedupeKey = new Map<string, BuiltImageCacheEntry>();
 
 	for (const imageTarget of imageTargets) {
 		const key = imageTargetKey(imageTarget);
@@ -549,13 +557,16 @@ export async function runBuildCommand(
 		if (!fingerprint) {
 			throw new Error(`Missing computed Gondolin fingerprint for image profile '${key}'.`);
 		}
-		const shouldResetGondolinCache =
-			shouldResetGondolinCacheByFingerprint.get(fingerprint) ?? false;
+		const dedupeKey = dedupeKeyByTargetKey.get(key);
+		if (!dedupeKey) {
+			throw new Error(`Missing Gondolin dedupe key for image profile '${key}'.`);
+		}
+		const shouldResetGondolinCache = shouldResetGondolinCacheByDedupeKey.get(dedupeKey) ?? false;
 		// oxlint-disable-next-line no-await-in-loop -- gondolin cache rebuilds are intentionally sequenced per image target
 		await runTaskStep(
 			`Gondolin: ${imageTarget.family}/${imageTarget.name}`,
 			async (taskContext) => {
-				const existingBuild = builtImageByFingerprint.get(fingerprint);
+				const existingBuild = builtImageByDedupeKey.get(dedupeKey);
 				if (existingBuild) {
 					await materializeGondolinImageAlias({
 						fingerprint: existingBuild.result.fingerprint,
@@ -591,7 +602,7 @@ export async function runBuildCommand(
 				} finally {
 					stopHeartbeat();
 				}
-				builtImageByFingerprint.set(fingerprint, {
+				builtImageByDedupeKey.set(dedupeKey, {
 					imageTarget,
 					result,
 				});

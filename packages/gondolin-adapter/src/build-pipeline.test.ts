@@ -7,16 +7,16 @@ import { Writable } from 'node:stream';
 import type { BuildConfig } from '@earendil-works/gondolin';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { buildImage, computeBuildFingerprint } from './build-pipeline.js';
+import { buildImage, buildImageAssetFileNames, computeBuildFingerprint } from './build-pipeline.js';
 
 const temporaryDirectories: string[] = [];
 
 async function writeFakeAssets(outputDirectory: string): Promise<void> {
 	await fsPromises.mkdir(outputDirectory, { recursive: true });
-	await fsPromises.writeFile(path.join(outputDirectory, 'manifest.json'), '{}', 'utf8');
-	await fsPromises.writeFile(path.join(outputDirectory, 'rootfs.ext4'), '', 'utf8');
-	await fsPromises.writeFile(path.join(outputDirectory, 'initramfs.cpio.lz4'), '', 'utf8');
-	await fsPromises.writeFile(path.join(outputDirectory, 'vmlinuz-virt'), '', 'utf8');
+	for (const fileName of buildImageAssetFileNames) {
+		// oxlint-disable-next-line no-await-in-loop -- fake assets mirror the build cache contract
+		await fsPromises.writeFile(path.join(outputDirectory, fileName), '', 'utf8');
+	}
 }
 
 afterEach(() => {

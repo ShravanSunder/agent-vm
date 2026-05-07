@@ -3,8 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { Writable } from 'node:stream';
 
+import { buildImageAssetFileNames } from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import {
+	buildGondolinImage,
+	computeFingerprintFromConfigPath,
+} from '../build/gondolin-image-builder.js';
 import type { ManagedImageRelease } from '../build/managed-image-dockerfile.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import {
@@ -735,14 +740,20 @@ describe('runBuildCommand', () => {
 			},
 			{ systemConfigPath: path.join(configDirectory, 'system.json') },
 		);
+		const runtimeBuildVersionTag = 'runtime@dedupe-test';
+		const builtFingerprint = await computeFingerprintFromConfigPath(
+			buildConfigPath,
+			systemConfig.systemCacheIdentifierPath,
+			{
+				resolveRuntimeBuildVersionTag: async () => runtimeBuildVersionTag,
+			},
+		);
 		const gondolinBuilds: { cacheDir: string; fullReset: boolean | undefined }[] = [];
-		const builtFingerprint = 'shared-tool-fingerprint';
 		const writeFakeAssets = (imagePath: string): void => {
 			fs.mkdirSync(imagePath, { recursive: true });
-			fs.writeFileSync(path.join(imagePath, 'manifest.json'), '{}\n', 'utf8');
-			fs.writeFileSync(path.join(imagePath, 'rootfs.ext4'), 'rootfs\n', 'utf8');
-			fs.writeFileSync(path.join(imagePath, 'initramfs.cpio.lz4'), 'initramfs\n', 'utf8');
-			fs.writeFileSync(path.join(imagePath, 'vmlinuz-virt'), 'kernel\n', 'utf8');
+			for (const fileName of buildImageAssetFileNames) {
+				fs.writeFileSync(path.join(imagePath, fileName), `${fileName}\n`, 'utf8');
+			}
 		};
 
 		await runBuildCommand(
@@ -755,13 +766,16 @@ describe('runBuildCommand', () => {
 						cacheDir: options.cacheDir,
 						fullReset: options.fullReset,
 					});
-					const imagePath = path.join(options.cacheDir, builtFingerprint);
+					const fingerprint = options.cacheDir.includes('gateway-images')
+						? 'gateway-fingerprint'
+						: builtFingerprint;
+					const imagePath = path.join(options.cacheDir, fingerprint);
 					writeFakeAssets(imagePath);
-					return { built: true, fingerprint: builtFingerprint, imagePath };
+					return { built: true, fingerprint, imagePath };
 				},
 				findPrunableImageDirectories: async (options) => {
 					expect(options.currentFingerprints.gateways).toEqual({
-						openclaw: builtFingerprint,
+						openclaw: 'gateway-fingerprint',
 					});
 					expect(options.currentFingerprints.toolVms).toEqual({
 						default: builtFingerprint,
@@ -771,6 +785,10 @@ describe('runBuildCommand', () => {
 					});
 					return [];
 				},
+				computeGondolinFingerprint: async (options) =>
+					options.buildConfigPath === gatewayBuildConfigPath
+						? 'gateway-fingerprint'
+						: builtFingerprint,
 				runTask: async (_title, fn) => fn(),
 			},
 		);
@@ -787,8 +805,156 @@ describe('runBuildCommand', () => {
 		]);
 		for (const profileName of toolProfileNames) {
 			const imagePath = path.join(cacheDirectory, 'tool-vm-images', profileName, builtFingerprint);
-			expect(fs.existsSync(path.join(imagePath, 'rootfs.ext4'))).toBe(true);
+			for (const fileName of buildImageAssetFileNames) {
+				expect(fs.existsSync(path.join(imagePath, fileName))).toBe(true);
+			}
 		}
+		const duplicateProfileCacheResult = await buildGondolinImage(
+			{
+				buildConfigPath,
+				cacheDir: path.join(cacheDirectory, 'tool-vm-images', 'sun'),
+				systemCacheIdentifierPath: systemConfig.systemCacheIdentifierPath,
+			},
+			{
+				resolveRuntimeBuildVersionTag: async () => runtimeBuildVersionTag,
+			},
+		);
+		expect(duplicateProfileCacheResult).toEqual({
+			built: false,
+			fingerprint: builtFingerprint,
+			imagePath: path.join(cacheDirectory, 'tool-vm-images', 'sun', builtFingerprint),
+		});
+	});
+
+	it('does not dedupe identical fingerprints across different build config paths', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const configDirectory = path.join(temporaryDirectory, 'config');
+		const cacheDirectory = path.join(temporaryDirectory, 'cache');
+		const firstBuildConfigPath = path.join(
+			temporaryDirectory,
+			'vm-images',
+			'tool-vms',
+			'first',
+			'build-config.jsonc',
+		);
+		const secondBuildConfigPath = path.join(
+			temporaryDirectory,
+			'vm-images',
+			'tool-vms',
+			'second',
+			'build-config.jsonc',
+		);
+		const gatewayBuildConfigPath = path.join(
+			temporaryDirectory,
+			'vm-images',
+			'gateways',
+			'openclaw',
+			'build-config.jsonc',
+		);
+		fs.mkdirSync(path.dirname(firstBuildConfigPath), { recursive: true });
+		fs.mkdirSync(path.dirname(secondBuildConfigPath), { recursive: true });
+		fs.mkdirSync(path.dirname(gatewayBuildConfigPath), { recursive: true });
+		fs.mkdirSync(configDirectory, { recursive: true });
+		fs.writeFileSync(
+			path.join(configDirectory, 'systemCacheIdentifier.json'),
+			JSON.stringify({
+				$comment: 'test cache identifier',
+				schemaVersion: 1,
+				hostSystemType: 'bare-metal',
+				imageCacheFormat: 'gondolin-image-cache-v1',
+			}),
+			'utf8',
+		);
+		const sharedBuildConfig = {
+			arch: 'aarch64',
+			distro: 'alpine',
+			postBuild: {
+				copy: [{ src: './sidecar.txt', dest: '/etc/sidecar.txt' }],
+			},
+			rootfs: {
+				label: 'tool-root',
+				sizeMb: 2048,
+			},
+		};
+		fs.writeFileSync(firstBuildConfigPath, JSON.stringify(sharedBuildConfig), 'utf8');
+		fs.writeFileSync(secondBuildConfigPath, JSON.stringify(sharedBuildConfig), 'utf8');
+		fs.writeFileSync(
+			path.join(path.dirname(firstBuildConfigPath), 'sidecar.txt'),
+			'first\n',
+			'utf8',
+		);
+		fs.writeFileSync(
+			path.join(path.dirname(secondBuildConfigPath), 'sidecar.txt'),
+			'second\n',
+			'utf8',
+		);
+		fs.writeFileSync(
+			gatewayBuildConfigPath,
+			JSON.stringify({
+				arch: 'aarch64',
+				distro: 'alpine',
+				rootfs: { label: 'gateway-root', sizeMb: 4096 },
+			}),
+			'utf8',
+		);
+		const {
+			systemConfigPath: _systemConfigPath,
+			systemCacheIdentifierPath: _systemCacheIdentifierPath,
+			...baseConfig
+		} = createTestSystemConfig();
+		const systemConfig = createLoadedSystemConfig(
+			{
+				...baseConfig,
+				cacheDir: cacheDirectory,
+				imageProfiles: {
+					gateways: {
+						openclaw: {
+							type: 'openclaw',
+							buildConfig: gatewayBuildConfigPath,
+						},
+					},
+					toolVms: {
+						first: { type: 'toolVm', buildConfig: firstBuildConfigPath },
+						second: { type: 'toolVm', buildConfig: secondBuildConfigPath },
+					},
+				},
+				toolVmProfiles: {
+					standard: { cpus: 1, imageProfile: 'first', memory: '1G' },
+					second: { cpus: 2, imageProfile: 'second', memory: '2G' },
+				},
+			},
+			{ systemConfigPath: path.join(configDirectory, 'system.json') },
+		);
+		const gondolinBuilds: string[] = [];
+
+		await runBuildCommand(
+			{ systemConfig },
+			{
+				buildGondolinImage: async (options) => {
+					gondolinBuilds.push(options.cacheDir);
+					const fingerprint = options.cacheDir.includes('gateway-images')
+						? 'gateway-fingerprint'
+						: 'same-tool-fingerprint';
+					const imagePath = path.join(options.cacheDir, fingerprint);
+					fs.mkdirSync(imagePath, { recursive: true });
+					for (const fileName of buildImageAssetFileNames) {
+						fs.writeFileSync(path.join(imagePath, fileName), `${fileName}\n`, 'utf8');
+					}
+					return { built: true, fingerprint, imagePath };
+				},
+				computeGondolinFingerprint: async (options) =>
+					options.buildConfigPath === gatewayBuildConfigPath
+						? 'gateway-fingerprint'
+						: 'same-tool-fingerprint',
+				runTask: async (_title, fn) => fn(),
+			},
+		);
+
+		expect(gondolinBuilds).toEqual([
+			path.join(cacheDirectory, 'gateway-images', 'openclaw'),
+			path.join(cacheDirectory, 'tool-vm-images', 'first'),
+			path.join(cacheDirectory, 'tool-vm-images', 'second'),
+		]);
 	});
 
 	it('passes fullReset to shared Gondolin builds when forceRebuild is enabled', async () => {

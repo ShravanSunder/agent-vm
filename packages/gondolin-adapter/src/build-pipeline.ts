@@ -32,6 +32,13 @@ export interface BuildImageResult {
 	readonly imagePath: string;
 }
 
+export const buildImageAssetFileNames = [
+	'manifest.json',
+	'rootfs.ext4',
+	'initramfs.cpio.lz4',
+	'vmlinuz-virt',
+] as const;
+
 interface BuildPipelineDependencies {
 	readonly buildAssets?: (
 		buildConfig: BuildConfig,
@@ -72,12 +79,13 @@ async function pathExists(filePath: string): Promise<boolean> {
 }
 
 async function hasBuiltAssets(outputDirectoryPath: string): Promise<boolean> {
-	return (
-		(await pathExists(path.join(outputDirectoryPath, 'manifest.json'))) &&
-		(await pathExists(path.join(outputDirectoryPath, 'rootfs.ext4'))) &&
-		(await pathExists(path.join(outputDirectoryPath, 'initramfs.cpio.lz4'))) &&
-		(await pathExists(path.join(outputDirectoryPath, 'vmlinuz-virt')))
-	);
+	for (const fileName of buildImageAssetFileNames) {
+		// oxlint-disable-next-line no-await-in-loop -- each missing file points at the same image generation
+		if (!(await pathExists(path.join(outputDirectoryPath, fileName)))) {
+			return false;
+		}
+	}
+	return true;
 }
 
 async function loadBuildAssets(): Promise<
