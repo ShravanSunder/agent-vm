@@ -957,6 +957,116 @@ describe('runBuildCommand', () => {
 		]);
 	});
 
+	it('dedupes mixed gateway and tool VM targets while propagating reset', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const configDirectory = path.join(temporaryDirectory, 'config');
+		const cacheDirectory = path.join(temporaryDirectory, 'cache');
+		const sharedImageDirectory = path.join(temporaryDirectory, 'vm-images', 'shared');
+		const buildConfigPath = path.join(sharedImageDirectory, 'build-config.jsonc');
+		const dockerfilePath = path.join(sharedImageDirectory, 'Dockerfile');
+		fs.mkdirSync(sharedImageDirectory, { recursive: true });
+		fs.mkdirSync(configDirectory, { recursive: true });
+		fs.writeFileSync(
+			path.join(configDirectory, 'systemCacheIdentifier.json'),
+			JSON.stringify({
+				$comment: 'test cache identifier',
+				schemaVersion: 1,
+				hostSystemType: 'bare-metal',
+				imageCacheFormat: 'gondolin-image-cache-v1',
+			}),
+			'utf8',
+		);
+		fs.writeFileSync(
+			buildConfigPath,
+			JSON.stringify({
+				arch: 'aarch64',
+				distro: 'alpine',
+				rootfs: { label: 'shared-root', sizeMb: 2048 },
+			}),
+			'utf8',
+		);
+		fs.writeFileSync(dockerfilePath, 'FROM scratch\n');
+		const {
+			systemConfigPath: _systemConfigPath,
+			systemCacheIdentifierPath: _systemCacheIdentifierPath,
+			...baseConfig
+		} = createTestSystemConfig();
+		const systemConfig = createLoadedSystemConfig(
+			{
+				...baseConfig,
+				cacheDir: cacheDirectory,
+				imageProfiles: {
+					gateways: {
+						openclaw: {
+							type: 'openclaw',
+							buildConfig: buildConfigPath,
+							dockerfile: dockerfilePath,
+						},
+					},
+					toolVms: {
+						default: { type: 'toolVm', buildConfig: buildConfigPath },
+					},
+				},
+				toolVmProfiles: {
+					standard: { cpus: 1, imageProfile: 'default', memory: '1G' },
+				},
+			},
+			{ systemConfigPath: path.join(configDirectory, 'system.json') },
+		);
+		const sharedFingerprint = 'shared-gateway-tool-fingerprint';
+		const dockerBuilds: string[] = [];
+		const gondolinBuilds: { cacheDir: string; fullReset: boolean | undefined }[] = [];
+
+		await runBuildCommand(
+			{ systemConfig },
+			{
+				buildDockerImage: async (options) => {
+					dockerBuilds.push(options.imageTag);
+				},
+				buildGondolinImage: async (options) => {
+					gondolinBuilds.push({
+						cacheDir: options.cacheDir,
+						fullReset: options.fullReset,
+					});
+					const imagePath = path.join(options.cacheDir, sharedFingerprint);
+					fs.mkdirSync(imagePath, { recursive: true });
+					for (const fileName of buildImageAssetFileNames) {
+						fs.writeFileSync(path.join(imagePath, fileName), `${fileName}\n`, 'utf8');
+					}
+					return { built: true, fingerprint: sharedFingerprint, imagePath };
+				},
+				computeGondolinFingerprint: async () => sharedFingerprint,
+				findPrunableImageDirectories: async (options) => {
+					expect(options.currentFingerprints).toEqual({
+						gateways: { openclaw: sharedFingerprint },
+						toolVms: { default: sharedFingerprint },
+					});
+					return [];
+				},
+				resolveOciImageTag: async () => 'agent-vm-shared:latest',
+				resolveProjectRootFromDockerfile: async () => temporaryDirectory,
+				runTask: async (_title, fn) => fn(),
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		expect(dockerBuilds).toEqual(['agent-vm-shared:latest']);
+		expect(gondolinBuilds).toEqual([
+			{
+				cacheDir: path.join(cacheDirectory, 'gateway-images', 'openclaw'),
+				fullReset: true,
+			},
+		]);
+		for (const imagePath of [
+			path.join(cacheDirectory, 'gateway-images', 'openclaw', sharedFingerprint),
+			path.join(cacheDirectory, 'tool-vm-images', 'default', sharedFingerprint),
+		]) {
+			for (const fileName of buildImageAssetFileNames) {
+				expect(fs.existsSync(path.join(imagePath, fileName))).toBe(true);
+			}
+		}
+	});
+
 	it('passes fullReset to shared Gondolin builds when forceRebuild is enabled', async () => {
 		const gondolinBuilds: { cacheDir: string; fullReset: boolean | undefined }[] = [];
 		const taskTitles: string[] = [];
