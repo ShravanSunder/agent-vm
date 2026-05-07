@@ -1176,8 +1176,16 @@ describe('scaffoldAgentVmProject', () => {
 			),
 		) as {
 			readonly gateway?: { readonly auth?: { readonly mode?: string } };
-			readonly agents?: { readonly defaults?: { readonly sandbox?: { readonly scope?: string } } };
+			readonly agents?: {
+				readonly defaults?: {
+					readonly sandbox?: {
+						readonly scope?: string;
+						readonly workspaceAccess?: string;
+					};
+				};
+			};
 			readonly commands?: { readonly ownerAllowFrom?: readonly string[] };
+			readonly session?: { readonly dmScope?: string };
 			readonly plugins?: {
 				readonly allow?: readonly string[];
 				readonly slots?: { readonly memory?: string };
@@ -1186,6 +1194,8 @@ describe('scaffoldAgentVmProject', () => {
 		};
 		expect(openClawConfig.gateway?.auth?.mode).toBe('token');
 		expect(openClawConfig.agents?.defaults?.sandbox?.scope).toBe('agent');
+		expect(openClawConfig.agents?.defaults?.sandbox?.workspaceAccess).toBe('rw');
+		expect(openClawConfig.session?.dmScope).toBe('per-channel-peer');
 		expect(openClawConfig.commands?.ownerAllowFrom).toEqual([]);
 		expect(openClawConfig.plugins?.allow).toContain('memory-core');
 		expect(openClawConfig.plugins?.slots?.memory).toBe('memory-core');
@@ -1212,10 +1222,11 @@ describe('scaffoldAgentVmProject', () => {
 		expect(envContent).toContain('# GITHUB_TOKEN=');
 		expect(envContent).toContain('# PERPLEXITY_API_KEY=');
 		expect(envContent).toContain('# OPENCLAW_GATEWAY_TOKEN=');
+		expect(envContent).toContain('# AGENT_VM_TEST_OPENCLAW_SSH_ACCESS_TOKEN=');
 		expect(envContent).not.toContain('DISCORD_BOT_TOKEN');
 		expect(config.zones[0].adminAccess).toEqual({
 			mode: 'secret',
-			secret: { source: 'environment', envVar: 'AGENT_VM_SSH_ACCESS_TOKEN' },
+			secret: { source: 'environment', envVar: 'AGENT_VM_TEST_OPENCLAW_SSH_ACCESS_TOKEN' },
 		});
 	});
 
@@ -1345,6 +1356,10 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(config.host.githubToken).toEqual({ source: 'environment', envVar: 'GITHUB_TOKEN' });
 		expect(config.host.secretsProvider).toBeUndefined();
+		expect(config.zones[0].adminAccess).toEqual({
+			mode: 'secret',
+			secret: { source: 'environment', envVar: 'AGENT_VM_ENV_WORKER_SSH_ACCESS_TOKEN' },
+		});
 		const secrets = config.zones[0]?.secrets ?? {};
 		expect(secrets['GITHUB_TOKEN']?.source).toBe('environment');
 		expect(secrets['GITHUB_TOKEN']?.envVar).toBe('GITHUB_TOKEN');

@@ -1,5 +1,5 @@
 // oxlint-disable typescript-eslint/explicit-function-return-type
-import { flag, option, optional, restPositionals, string } from 'cmd-ts';
+import { flag, option, optional, string } from 'cmd-ts';
 import { ZodError } from 'zod';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
@@ -44,14 +44,7 @@ export function createPurgeFlag() {
 export function createWithSecretsFlag() {
 	return flag({
 		long: 'with-secrets',
-		description: 'Load gateway runtime secrets into the SSH session or remote command',
-	});
-}
-
-export function createRemoteCommandArguments() {
-	return restPositionals({
-		displayName: 'remote-command',
-		description: 'Command to run in the remote gateway shell',
+		description: 'Load gateway runtime secrets into the SSH session',
 	});
 }
 

@@ -21,9 +21,12 @@ export const controllerEnableSshRequestSchema = z
 	})
 	.strict();
 
-export const controllerExecuteCommandRequestSchema = z.object({
-	command: z.string().min(1),
-});
+export const controllerExecuteCommandRequestSchema = z
+	.object({
+		adminToken: z.string().min(1).optional(),
+		command: z.string().min(1),
+	})
+	.strict();
 
 export const controllerWorkerTaskRequestSchema = workerTaskControllerRequestSchema;
 

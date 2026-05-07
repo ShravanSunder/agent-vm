@@ -159,6 +159,33 @@ function createOpenClawSystemConfig(
 	);
 }
 
+function createHealthyOpenClawConfig(): object {
+	return {
+		agents: {
+			defaults: {
+				sandbox: {
+					backend: 'gondolin',
+					scope: 'agent',
+					workspaceAccess: 'rw',
+				},
+				workspace: '/zone/agents/default',
+			},
+		},
+		channels: {},
+		plugins: {
+			allow: ['gondolin', 'memory-core'],
+			entries: {
+				gondolin: { enabled: true },
+				'memory-core': { enabled: true },
+			},
+			load: {
+				paths: ['/home/openclaw/.openclaw/extensions', '/pnpm/global/5/node_modules/@openclaw'],
+			},
+			slots: { memory: 'memory-core' },
+		},
+	};
+}
+
 function createManagedBaseOpenClawSystemConfig(
 	gatewayBuildConfigPath: string,
 	toolVmBuildConfigPath: string,
@@ -392,7 +419,7 @@ describe('runControllerOperationCommand', () => {
 			'{"schemaVersion":1}\n',
 			'utf8',
 		);
-		await fs.writeFile(openClawConfigPath, '{"channels":{}}\n', 'utf8');
+		await fs.writeFile(openClawConfigPath, JSON.stringify(createHealthyOpenClawConfig()), 'utf8');
 		await fs.writeFile(
 			path.join(binDirectoryPath, 'openclaw'),
 			`#!/bin/sh
@@ -687,7 +714,7 @@ printf '{"ok":true}\\n'
 		await fs.mkdir(path.dirname(toolVmBuildConfigPath), { recursive: true });
 		await fs.mkdir(path.dirname(openClawConfigPath), { recursive: true });
 		await fs.writeFile(systemCacheIdentifierPath, '{"schemaVersion":1}\n', 'utf8');
-		await fs.writeFile(openClawConfigPath, '{"channels":{}}\n', 'utf8');
+		await fs.writeFile(openClawConfigPath, JSON.stringify(createHealthyOpenClawConfig()), 'utf8');
 		await fs.writeFile(
 			gatewayBuildConfigPath,
 			JSON.stringify({ oci: { image: 'agent-vm-openclaw:latest', pullPolicy: 'never' } }),

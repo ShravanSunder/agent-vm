@@ -8,7 +8,10 @@ import {
 	buildControllerZoneStatus,
 	type ControllerRuntimeStatus,
 } from '../operations/controller-status.js';
-import type { EnableSshForZoneOptions } from './http/controller-http-route-support.js';
+import type {
+	EnableSshForZoneOptions,
+	ExecInZoneOptions,
+} from './http/controller-http-route-support.js';
 import {
 	ControllerZoneAdminAuthError,
 	ControllerZoneNotFoundError,
@@ -24,6 +27,7 @@ interface ControllerRuntimeOperations {
 	readonly execInZone: (
 		targetZoneId: string,
 		command: string,
+		options: ExecInZoneOptions,
 	) => Promise<{
 		readonly exitCode: number;
 		readonly stderr: string;
@@ -104,8 +108,15 @@ export function createControllerRuntimeOperations(options: {
 				}),
 			};
 		},
-		execInZone: async (targetZoneId, command) =>
-			await options.getOpenClawRuntime(targetZoneId).exec(command),
+		execInZone: async (targetZoneId, command, execOptions) => {
+			const zone = findZone(targetZoneId);
+			await verifyZoneAdminAccess({
+				providedToken: execOptions.adminToken,
+				secretResolver: options.secretResolver,
+				zone,
+			});
+			return await options.getOpenClawRuntime(targetZoneId).exec(command);
+		},
 		getStatus: async () => buildControllerStatus(options.systemConfig, buildRuntimeStatus()),
 		getZoneHealth: async (targetZoneId) =>
 			await options.getOpenClawRuntime(targetZoneId).getHealth(),
@@ -140,14 +151,11 @@ function timingSafeEqualString(left: string, right: string): boolean {
 }
 
 export function shouldEnableSshSecretEnv(options: {
-	readonly policy: 'always' | 'explicit' | 'never';
+	readonly policy: 'explicit' | 'never';
 	readonly request: 'default' | 'with-secrets';
 }): boolean {
 	if (options.policy === 'never') {
 		return false;
-	}
-	if (options.policy === 'always') {
-		return true;
 	}
 	return options.request === 'with-secrets';
 }

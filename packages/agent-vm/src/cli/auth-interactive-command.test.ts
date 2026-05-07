@@ -8,12 +8,10 @@ import { listAuthProviders, runAuthInteractiveCommand } from './auth-interactive
 
 function createControllerClientStub(overrides?: {
 	readonly enableZoneSsh?: ControllerClient['enableZoneSsh'];
-	readonly execInZone?: ControllerClient['execInZone'];
 }): ControllerClient {
 	return {
 		destroyZone: async () => ({}),
 		enableZoneSsh: overrides?.enableZoneSsh ?? (async () => ({})),
-		...(overrides?.execInZone ? { execInZone: overrides.execInZone } : {}),
 		getControllerStatus: async () => ({}),
 		getZoneLogs: async () => ({}),
 		peekLease: async () => ({
@@ -185,11 +183,6 @@ describe('runAuthInteractiveCommand', () => {
 				createControllerClient: vi.fn(() =>
 					createControllerClientStub({
 						enableZoneSsh,
-						execInZone: vi.fn(async () => ({
-							exitCode: 0,
-							stdout: '',
-							stderr: '',
-						})),
 					}),
 				),
 				runInteractiveProcess,
@@ -209,6 +202,65 @@ describe('runAuthInteractiveCommand', () => {
 				expect.stringContaining('source /etc/profile.d/openclaw-env.sh'),
 			]),
 		);
+	});
+
+	it('resolves zone admin access before starting interactive auth SSH', async () => {
+		const enableZoneSsh = vi.fn(async () => ({
+			host: '127.0.0.1',
+			port: 2222,
+			user: 'root',
+		}));
+		const createSecretResolver = vi.fn(async () => ({
+			resolve: vi.fn(async () => 'resolved-admin-token'),
+			resolveAll: vi.fn(async () => ({})),
+		}));
+		const runInteractiveProcess = vi.fn(async () => {});
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone.');
+		}
+
+		await runAuthInteractiveCommand({
+			authConfig,
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: vi.fn(() => createControllerClientStub({ enableZoneSsh })),
+				createSecretResolver,
+				resolveServiceAccountToken: vi.fn(async () => 'op-service-account-token'),
+				runInteractiveProcess,
+			},
+			io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
+			provider: 'codex',
+			systemConfig: {
+				...systemConfig,
+				host: {
+					...systemConfig.host,
+					secretsProvider: {
+						type: '1password',
+						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
+					},
+				},
+				zones: [
+					{
+						...zone,
+						adminAccess: {
+							mode: 'secret',
+							secret: {
+								source: '1password',
+								ref: 'op://agent-vm/shravan-ssh-access/token',
+							},
+						},
+					},
+				],
+			},
+			zoneId: 'shravan',
+		});
+
+		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
+			adminToken: 'resolved-admin-token',
+			secretEnv: 'default',
+		});
+		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', expect.any(Array));
 	});
 
 	it('passes device-code and set-default options into the login command', async () => {

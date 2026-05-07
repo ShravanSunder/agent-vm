@@ -34,23 +34,15 @@ export type ZoneSshAccessResponse = z.infer<typeof zoneSshAccessResponseSchema>;
 const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
 const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
 
-function shellQuote(value: string): string {
-	return `'${value.replace(/'/gu, `'\\''`)}'`;
-}
-
-function buildRemoteCommand(
-	commandArguments: readonly string[],
-	options: { readonly withSecrets: boolean },
-): string {
-	const quotedCommand = commandArguments.map((commandPart) => shellQuote(commandPart)).join(' ');
-	return `bash -lc ${shellQuote(`${buildRemoteCommandPrefix(options)}${quotedCommand}`)}`;
-}
-
 function buildRemoteCommandPrefix(options: { readonly withSecrets: boolean }): string {
 	if (!options.withSecrets) {
 		return `source ${openClawShellEnvFilePath} && `;
 	}
 	return `source ${openClawShellEnvFilePath} && set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && `;
+}
+
+function shellQuote(value: string): string {
+	return `'${value.replace(/'/gu, `'\\''`)}'`;
 }
 
 function buildInteractiveSecretShellCommand(): string {
@@ -86,6 +78,11 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	const controllerClient = options.dependencies.createControllerClient({
 		baseUrl: resolveControllerBaseUrl(options.systemConfig),
 	});
+	if (options.restArguments.includes('--')) {
+		throw new Error(
+			'controller ssh opens an interactive shell only; remote commands are not supported.',
+		);
+	}
 	const withSecrets = options.restArguments.includes('--with-secrets');
 	const restArguments = options.restArguments.filter((argument) => argument !== '--with-secrets');
 	if (restArguments.includes('--print')) {
@@ -107,9 +104,6 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 		throw new Error('Controller returned an invalid SSH response.');
 	}
 	const sshResponse: ZoneSshAccessResponse = parsedSshResponse.data;
-	const commandSeparatorIndex = restArguments.indexOf('--');
-	const remoteCommandArguments =
-		commandSeparatorIndex >= 0 ? restArguments.slice(commandSeparatorIndex + 1) : [];
 
 	if (!sshResponse.host || !sshResponse.port) {
 		throw new Error('Controller returned incomplete SSH access details.');
@@ -125,11 +119,7 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 		'-p',
 		String(sshResponse.port),
 		`${sshResponse.user ?? 'root'}@${sshResponse.host}`,
-		...(remoteCommandArguments.length > 0
-			? [buildRemoteCommand(remoteCommandArguments, { withSecrets: secretEnvEnabled })]
-			: secretEnvEnabled
-				? [buildInteractiveSecretShellCommand()]
-				: []),
+		...(secretEnvEnabled ? [buildInteractiveSecretShellCommand()] : []),
 	];
 	const runInteractiveProcess =
 		options.dependencies.runInteractiveProcess ??

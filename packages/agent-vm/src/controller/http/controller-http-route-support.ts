@@ -16,13 +16,21 @@ export interface EnableSshForZoneOptions {
 	readonly secretEnv: 'default' | 'with-secrets';
 }
 
+export interface ExecInZoneOptions {
+	readonly adminToken?: string;
+}
+
 export interface ControllerRouteOperations {
 	readonly destroyZone: (zoneId: string, purge: boolean) => Promise<unknown>;
 	readonly enableSshForZone?: (
 		zoneId: string,
 		options: EnableSshForZoneOptions,
 	) => Promise<unknown>;
-	readonly execInZone?: (zoneId: string, command: string) => Promise<unknown>;
+	readonly execInZone?: (
+		zoneId: string,
+		command: string,
+		options: ExecInZoneOptions,
+	) => Promise<unknown>;
 	readonly getStatus: () => Promise<unknown>;
 	readonly getTaskState?: (zoneId: string, taskId: string) => Promise<unknown>;
 	readonly getZoneHealth?: (

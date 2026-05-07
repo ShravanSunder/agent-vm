@@ -151,7 +151,7 @@ describe('createControllerRuntimeOperations', () => {
 			output: 'alevtina logs',
 			zoneId: 'alevtina',
 		});
-		await expect(operations.execInZone('shravan', 'pwd')).resolves.toEqual({
+		await expect(operations.execInZone('shravan', 'pwd', {})).resolves.toEqual({
 			exitCode: 0,
 			stderr: '',
 			stdout: 'shravan',
@@ -268,13 +268,68 @@ describe('createControllerRuntimeOperations', () => {
 		expect(enableSsh).toHaveBeenCalledTimes(1);
 	});
 
+	it('requires the configured zone admin token before executing gateway commands', async () => {
+		const exec = vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'shravan' }));
+		const runtime = {
+			destroy: vi.fn(async (purged: boolean) => ({ ok: true as const, purged, zoneId: 'shravan' })),
+			enableSsh: vi.fn(async () => ({ command: 'ssh shravan', host: '127.0.0.1', port: 22 })),
+			exec,
+			getHealth: vi.fn(async () => ({ ok: true, observation: 'http 200', zoneId: 'shravan' })),
+			getLogs: vi.fn(async () => ({ output: 'shravan logs', zoneId: 'shravan' })),
+			refreshCredentials: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
+			upgrade: vi.fn(async () => ({ ok: true as const, zoneId: 'shravan' })),
+		} satisfies Pick<
+			OpenClawZoneRuntime,
+			'destroy' | 'enableSsh' | 'exec' | 'getHealth' | 'getLogs' | 'refreshCredentials' | 'upgrade'
+		>;
+		const operations = createControllerRuntimeOperations({
+			destroyZoneRuntime: async (_zoneId, purged) => await runtime.destroy(purged),
+			getActiveLeases: () => [],
+			getOpenClawRuntime: () => runtime,
+			getRuntimeStatusByZone: () => ({}),
+			secretResolver: {
+				resolve: async () => 'expected-admin-token',
+				resolveAll: async () => ({}),
+			},
+			systemConfig: {
+				...systemConfig,
+				zones: [
+					{
+						...baseZone,
+						adminAccess: {
+							mode: 'secret',
+							secret: { source: 'environment', envVar: 'SUNFAM_SSH_ACCESS_TOKEN' },
+						},
+					},
+				],
+			},
+		});
+
+		await expect(operations.execInZone('shravan', 'pwd', {})).rejects.toMatchObject({
+			code: 'zone-admin-auth-required',
+			httpStatus: 401,
+		} satisfies Partial<ControllerZoneAdminAuthError>);
+		await expect(
+			operations.execInZone('shravan', 'pwd', { adminToken: 'wrong-admin-token' }),
+		).rejects.toMatchObject({
+			code: 'zone-admin-auth-denied',
+			httpStatus: 403,
+		} satisfies Partial<ControllerZoneAdminAuthError>);
+		await expect(
+			operations.execInZone('shravan', 'pwd', { adminToken: 'expected-admin-token' }),
+		).resolves.toEqual({
+			exitCode: 0,
+			stderr: '',
+			stdout: 'shravan',
+		});
+		expect(exec).toHaveBeenCalledTimes(1);
+	});
+
 	it.each([
 		{ expected: false, policy: 'never', request: 'default' },
 		{ expected: false, policy: 'never', request: 'with-secrets' },
 		{ expected: false, policy: 'explicit', request: 'default' },
 		{ expected: true, policy: 'explicit', request: 'with-secrets' },
-		{ expected: true, policy: 'always', request: 'default' },
-		{ expected: true, policy: 'always', request: 'with-secrets' },
 	] as const)(
 		'resolves ssh secret env policy $policy with request $request',
 		({ expected, policy, request }) => {

@@ -46,4 +46,4 @@ RUN apt-get update && \
     touch /var/log/lastlog /var/log/faillog && \
     chown -R openclaw:openclaw /home/openclaw /work && \
     chown -R root:root /home/openclaw/.openclaw/extensions && \
-    (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
+    (ln -sfn /proc/self/fd /dev/fd 2>/dev/null || true)

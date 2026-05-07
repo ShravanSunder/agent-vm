@@ -22,6 +22,7 @@ import {
 	ControllerRuntimeAtCapacityError,
 	ControllerTaskNotReadyError,
 	type ControllerRouteOperations,
+	type ExecInZoneOptions,
 } from './controller-http-route-support.js';
 import {
 	controllerDestroyZoneRequestSchema,
@@ -513,8 +514,13 @@ export function registerControllerZoneOperationRoutes(
 				return parsedPayload.response;
 			}
 			const payload = parsedPayload.data;
+			const execOptions: ExecInZoneOptions = payload.adminToken
+				? { adminToken: payload.adminToken }
+				: {};
 			try {
-				return context.json(await execInZone(context.req.param('zoneId'), payload.command));
+				return context.json(
+					await execInZone(context.req.param('zoneId'), payload.command, execOptions),
+				);
 			} catch (error) {
 				return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
 			}

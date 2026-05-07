@@ -451,10 +451,18 @@ function defaultZoneSshAccessSecret(
 		case '1password':
 			return { source: '1password', ref: `op://agent-vm/${zoneId}-ssh-access/token` };
 		case 'environment':
-			return { source: 'environment', envVar: 'AGENT_VM_SSH_ACCESS_TOKEN' };
+			return { source: 'environment', envVar: defaultZoneSshAccessEnvVar(zoneId) };
 		default:
 			return assertNeverSecretsProvider(secretsProvider);
 	}
+}
+
+function defaultZoneSshAccessEnvVar(zoneId: string): string {
+	const zoneSegment = zoneId
+		.replace(/[^A-Z0-9]+/giu, '_')
+		.replace(/^_+|_+$/gu, '')
+		.toUpperCase();
+	return `AGENT_VM_${zoneSegment}_SSH_ACCESS_TOKEN`;
 }
 
 interface SecretShape {
@@ -598,12 +606,13 @@ function defaultWebsocketBypassForGatewayType(gatewayType: GatewayType): readonl
 	return [];
 }
 
-function envVarsForGatewayType(gatewayType: GatewayType): readonly string[] {
+function envVarsForGatewayType(gatewayType: GatewayType, zoneId: string): readonly string[] {
+	const zoneSshAccessEnvVar = defaultZoneSshAccessEnvVar(zoneId);
 	switch (gatewayType) {
 		case 'worker':
-			return ['GITHUB_TOKEN', 'OPENAI_API_KEY'];
+			return ['GITHUB_TOKEN', 'OPENAI_API_KEY', zoneSshAccessEnvVar];
 		case 'openclaw':
-			return ['GITHUB_TOKEN', 'PERPLEXITY_API_KEY', 'OPENCLAW_GATEWAY_TOKEN'];
+			return ['GITHUB_TOKEN', 'PERPLEXITY_API_KEY', 'OPENCLAW_GATEWAY_TOKEN', zoneSshAccessEnvVar];
 		default: {
 			const exhaustive: never = gatewayType;
 			throw new Error(`Unhandled gateway type: ${String(exhaustive)}`);
@@ -611,7 +620,11 @@ function envVarsForGatewayType(gatewayType: GatewayType): readonly string[] {
 	}
 }
 
-function defaultEnvTemplate(gatewayType: GatewayType, secretsProvider: SecretsProvider): string {
+function defaultEnvTemplate(
+	gatewayType: GatewayType,
+	secretsProvider: SecretsProvider,
+	zoneId: string,
+): string {
 	switch (secretsProvider) {
 		case '1password':
 			return `# agent-vm environment configuration
@@ -624,7 +637,7 @@ function defaultEnvTemplate(gatewayType: GatewayType, secretsProvider: SecretsPr
 				'# agent-vm environment configuration (environment-backed secrets)',
 				'# Populate these variables in your runtime (container env, CI, shell, etc.).',
 				'',
-				...envVarsForGatewayType(gatewayType).map((name) => `# ${name}=`),
+				...envVarsForGatewayType(gatewayType, zoneId).map((name) => `# ${name}=`),
 			];
 			return `${lines.join('\n')}\n`;
 		}
@@ -701,12 +714,18 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 					},
 				},
 			},
-			sandbox: { backend: 'gondolin', mode: 'all', scope: 'agent' },
+			sandbox: {
+				backend: 'gondolin',
+				mode: 'all',
+				scope: 'agent',
+				workspaceAccess: 'rw',
+			},
 			workspace: '/zone/agents/default',
 		},
 	},
 	tools: { elevated: { enabled: false } },
 	commands: { ownerAllowFrom: [] },
+	session: { dmScope: 'per-channel-peer' },
 	plugins: {
 		load: {
 			paths: [defaultOpenClawExtensionsPath, '/pnpm/global/5/node_modules/@openclaw'],
@@ -938,7 +957,7 @@ async function scaffoldAgentVmProjectInternal(
 		const envFilePath = path.join(options.targetDir, '.env.local');
 		const envFileStatus = await writeFileIfMissing(
 			envFilePath,
-			defaultEnvTemplate(gatewayType, options.secretsProvider),
+			defaultEnvTemplate(gatewayType, options.secretsProvider, options.zoneId),
 			overwrite,
 		);
 		(envFileStatus === 'created' ? created : skipped).push('.env.local');

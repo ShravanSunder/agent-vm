@@ -6,7 +6,7 @@ import {
 export interface ControllerClient {
 	destroyZone(zoneId: string, purge: boolean): Promise<unknown>;
 	enableZoneSsh(zoneId: string, options?: EnableZoneSshOptions): Promise<unknown>;
-	execInZone?(zoneId: string, command: string): Promise<unknown>;
+	execInZone?(zoneId: string, command: string, options?: ExecInZoneOptions): Promise<unknown>;
 	getControllerStatus(): Promise<unknown>;
 	getZoneLogs(zoneId: string): Promise<unknown>;
 	listLeases(): Promise<unknown>;
@@ -20,6 +20,10 @@ export interface ControllerClient {
 export interface EnableZoneSshOptions {
 	readonly adminToken?: string;
 	readonly secretEnv?: 'default' | 'with-secrets';
+}
+
+export interface ExecInZoneOptions {
+	readonly adminToken?: string;
 }
 
 async function readJsonResponse(response: Response, context: string): Promise<unknown> {
@@ -74,9 +78,16 @@ export function createControllerClient(options: {
 			});
 			return await readJsonResponse(response, `Enable SSH for zone '${zoneId}'`);
 		},
-		execInZone: async (zoneId: string, command: string): Promise<unknown> => {
+		execInZone: async (
+			zoneId: string,
+			command: string,
+			execOptions: ExecInZoneOptions = {},
+		): Promise<unknown> => {
 			const response = await fetchImpl(`${baseUrl}/zones/${zoneId}/execute-command`, {
-				body: JSON.stringify({ command }),
+				body: JSON.stringify({
+					...(execOptions.adminToken ? { adminToken: execOptions.adminToken } : {}),
+					command,
+				}),
 				headers: {
 					'content-type': 'application/json',
 				},

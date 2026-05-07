@@ -167,101 +167,35 @@ describe('runSshCommand', () => {
 		).rejects.toThrow('--print is not supported');
 	});
 
-	it('passes through remote command arguments', async () => {
+	it('rejects remote command arguments', async () => {
 		const runInteractiveProcess = vi.fn(
 			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
 		);
 
-		await runSshCommand({
-			dependencies: {
-				...defaultCliDependencies,
-				createControllerClient: () =>
-					createControllerClientStub(async () => ({
-						host: '127.0.0.1',
-						identityFile: '/tmp/key',
-						port: 2222,
-						user: 'root',
-					})),
-				runInteractiveProcess,
-			},
-			io: {
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			restArguments: ['--zone', 'shravan', '--', 'openclaw', 'auth', 'login'],
-			systemConfig,
-		});
-
-		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', [
-			'-o',
-			'StrictHostKeyChecking=no',
-			'-o',
-			'UserKnownHostsFile=/dev/null',
-			'-i',
-			'/tmp/key',
-			'-p',
-			'2222',
-			'root@127.0.0.1',
-			expect.stringContaining('source /etc/profile.d/openclaw-env.sh'),
-		]);
-		const sshInvocation = vi.mocked(runInteractiveProcess).mock.calls.at(0);
-		expect(sshInvocation).toBeDefined();
-		const remoteCommand = sshInvocation?.[1].at(-1);
-		if (typeof remoteCommand !== 'string') {
-			throw new Error('Expected SSH remote command to be present.');
-		}
-		expect(remoteCommand).toContain('openclaw');
-		expect(remoteCommand).toContain('auth');
-		expect(remoteCommand).toContain('login');
-		expect(remoteCommand).not.toContain('/run/openclaw/secrets.env');
-		expect(remoteCommand).not.toContain('source /etc/profile.d/openclaw-admin.sh');
-		expect(remoteCommand).not.toContain('exec openclaw');
-	});
-
-	it('preserves remote command arguments with spaces and quotes', async () => {
-		const runInteractiveProcess = vi.fn(
-			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
+		await expect(
+			runSshCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: () =>
+						createControllerClientStub(async () => ({
+							host: '127.0.0.1',
+							identityFile: '/tmp/key',
+							port: 2222,
+							user: 'root',
+						})),
+					runInteractiveProcess,
+				},
+				io: {
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				restArguments: ['--zone', 'shravan', '--', 'openclaw', 'auth', 'login'],
+				systemConfig,
+			}),
+		).rejects.toThrow(
+			'controller ssh opens an interactive shell only; remote commands are not supported.',
 		);
-
-		await runSshCommand({
-			dependencies: {
-				...defaultCliDependencies,
-				createControllerClient: () =>
-					createControllerClientStub(async () => ({
-						host: '127.0.0.1',
-						identityFile: '/tmp/key',
-						port: 2222,
-						user: 'root',
-					})),
-				runInteractiveProcess,
-			},
-			io: {
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			restArguments: [
-				'--zone',
-				'shravan',
-				'--',
-				'openclaw',
-				'config',
-				'set',
-				'commands.owner',
-				"Shravan's shell",
-			],
-			systemConfig,
-		});
-
-		const sshInvocation = vi.mocked(runInteractiveProcess).mock.calls.at(0);
-		if (!sshInvocation) {
-			throw new Error('Expected SSH invocation.');
-		}
-		const remoteCommand = sshInvocation[1].at(-1);
-		if (typeof remoteCommand !== 'string') {
-			throw new Error('Expected SSH remote command to be present.');
-		}
-		expect(remoteCommand).toContain("'commands.owner'");
-		expect(remoteCommand).toContain(`'\\''Shravan'\\''\\'\\'''\\''s shell'\\'''`);
+		expect(runInteractiveProcess).not.toHaveBeenCalled();
 	});
 
 	it('resolves zone admin access and requests a secret-backed ssh session', async () => {
@@ -304,12 +238,12 @@ describe('runSshCommand', () => {
 		if (!sshInvocation) {
 			throw new Error('Expected SSH invocation.');
 		}
-		const remoteCommand = sshInvocation[1].at(-1);
-		if (typeof remoteCommand !== 'string') {
-			throw new Error('Expected SSH remote command to be present.');
+		const shellCommand = sshInvocation[1].at(-1);
+		if (typeof shellCommand !== 'string') {
+			throw new Error('Expected SSH shell command to be present.');
 		}
-		expect(remoteCommand).toContain('/run/openclaw/secrets.env');
-		expect(remoteCommand).not.toContain('resolved-admin-token');
+		expect(shellCommand).toContain('/run/openclaw/secrets.env');
+		expect(shellCommand).not.toContain('resolved-admin-token');
 	});
 
 	it('throws when the controller returns incomplete ssh data without a printable command', async () => {

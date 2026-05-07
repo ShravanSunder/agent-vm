@@ -15,7 +15,6 @@ import {
 	appendZoneArgument,
 	createConfigOption,
 	createPurgeFlag,
-	createRemoteCommandArguments,
 	createWithSecretsFlag,
 	createZoneOption,
 	loadSystemConfigFromOption,
@@ -155,18 +154,16 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 				description: 'Open an SSH session into the gateway VM',
 				args: {
 					config: createConfigOption(),
-					remoteCommandArguments: createRemoteCommandArguments(),
 					withSecrets: createWithSecretsFlag(),
 					zone: createZoneOption(),
 				},
-				handler: async ({ config, remoteCommandArguments, withSecrets, zone }) => {
+				handler: async ({ config, withSecrets, zone }) => {
 					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 					const selectedZone = requireZone(systemConfig, zone);
 					const restArguments = [
 						'--zone',
 						selectedZone.id,
 						...(withSecrets ? ['--with-secrets'] : []),
-						...(remoteCommandArguments.length > 0 ? ['--', ...remoteCommandArguments] : []),
 					];
 					await runSshCommand({
 						dependencies,

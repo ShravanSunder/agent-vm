@@ -39,7 +39,7 @@ describe('createControllerClient', () => {
 
 		await controllerClient.getControllerStatus();
 		await controllerClient.getZoneLogs('shravan');
-		await controllerClient.execInZone?.('shravan', 'echo hi');
+		await controllerClient.execInZone?.('shravan', 'echo hi', { adminToken: 'admin-token' });
 		await controllerClient.refreshZoneCredentials('shravan');
 		await controllerClient.enableZoneSsh('shravan', {
 			adminToken: 'admin-token',
@@ -53,7 +53,7 @@ describe('createControllerClient', () => {
 			{ method: 'GET', url: 'http://127.0.0.1:18800/controller-status' },
 			{ method: 'GET', url: 'http://127.0.0.1:18800/zones/shravan/logs' },
 			{
-				body: JSON.stringify({ command: 'echo hi' }),
+				body: JSON.stringify({ adminToken: 'admin-token', command: 'echo hi' }),
 				method: 'POST',
 				url: 'http://127.0.0.1:18800/zones/shravan/execute-command',
 			},

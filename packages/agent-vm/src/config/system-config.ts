@@ -130,7 +130,7 @@ const zoneAdminAccessSchema = z.discriminatedUnion('mode', [
 		.strict(),
 ]);
 
-const gatewaySshSecretEnvSchema = z.enum(['never', 'explicit', 'always']);
+const gatewaySshSecretEnvSchema = z.enum(['never', 'explicit']);
 
 const gatewaySshSchema = z
 	.object({
