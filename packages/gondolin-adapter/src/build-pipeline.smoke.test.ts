@@ -16,6 +16,17 @@ async function createTemporaryDirectory(prefix: string): Promise<string> {
 	return temporaryDirectory;
 }
 
+function resolveHostCompatibleGuestArchitecture(): 'aarch64' | 'x86_64' {
+	if (process.arch === 'arm64') {
+		return 'aarch64';
+	}
+	if (process.arch === 'x64') {
+		return 'x86_64';
+	}
+
+	throw new Error(`Unsupported smoke test host architecture: ${process.arch}`);
+}
+
 afterEach(async () => {
 	await Promise.all(
 		temporaryDirectories.splice(0).map(async (temporaryDirectory) => {
@@ -28,7 +39,7 @@ describe('smoke: Gondolin image build rootfs init', () => {
 	it('boots an OCI-backed image with /dev/fd available for fd-number script paths', async () => {
 		const cacheDirectory = await createTemporaryDirectory('agent-vm-dev-fd-smoke-cache-');
 		const buildConfig = {
-			arch: 'aarch64',
+			arch: resolveHostCompatibleGuestArchitecture(),
 			distro: 'alpine',
 			alpine: {
 				version: '3.23.0',

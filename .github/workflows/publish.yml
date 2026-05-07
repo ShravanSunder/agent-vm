@@ -70,7 +70,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/apt-packages
-          key: ${{ runner.os }}-apt-v1-age-qemu-system-arm-xz-utils
+          key: ${{ runner.os }}-apt-v1-age-qemu-system-arm-qemu-system-x86-xz-utils
 
       - name: Install system packages
         env:
@@ -81,10 +81,10 @@ jobs:
           sudo mkdir -p /var/cache/apt/archives
           sudo cp -f "${APT_CACHE_DIR}"/*.deb /var/cache/apt/archives/ 2>/dev/null || true
           sudo apt-get update
-          sudo apt-get install -y --download-only age qemu-system-arm xz-utils
+          sudo apt-get install -y --download-only age qemu-system-arm qemu-system-x86 xz-utils
           sudo find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -n {} "${APT_CACHE_DIR}/" \;
           sudo chown -R "${USER}:${USER}" "${APT_CACHE_DIR}"
-          sudo apt-get install -y age qemu-system-arm xz-utils
+          sudo apt-get install -y age qemu-system-arm qemu-system-x86 xz-utils
 
       - name: Install Zig for Gondolin smoke tests
         run: |
