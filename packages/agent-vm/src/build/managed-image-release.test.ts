@@ -18,7 +18,8 @@ describe('managed image release', () => {
 			repository: 'ghcr.io/shravansunder/agent-vm-managed-tool-vm-base',
 			tag: '2026.05.07.1',
 		});
-		expect(release.openClawAgentVmPluginVersion).toBe('0.0.49');
+		expect(release.openClawVersion).toBe('2026.5.2');
+		expect(release.openClawAgentVmPluginVersion).toBe('0.0.50');
 		expect(release.baseImages['tool-vm'].tag).not.toMatch(/^0\.0\.\d+$/u);
 	});
 });
