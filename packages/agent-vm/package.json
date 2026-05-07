@@ -17,7 +17,8 @@
 		"agent-vm": "./dist/cli/agent-vm-entrypoint.js"
 	},
 	"files": [
-		"dist"
+		"dist",
+		"managed-images.json"
 	],
 	"type": "module",
 	"main": "./dist/index.js",

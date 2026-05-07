@@ -5,6 +5,7 @@ import { Writable } from 'node:stream';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type { ManagedImageRelease } from '../build/managed-image-dockerfile.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import {
 	runBuildCommand as runBuildCommandDefault,
@@ -23,6 +24,26 @@ function createTemporaryDirectory(): string {
 	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-build-command-'));
 	createdDirectories.push(temporaryDirectory);
 	return temporaryDirectory;
+}
+
+function createTestManagedImageRelease(): ManagedImageRelease {
+	return {
+		baseImages: {
+			'openclaw-gateway': {
+				repository: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base',
+				tag: '2026.05.07.1',
+			},
+			'worker-gateway': {
+				repository: 'ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base',
+				tag: '2026.05.07.1',
+			},
+			'tool-vm': {
+				repository: 'ghcr.io/shravansunder/agent-vm-managed-tool-vm-base',
+				tag: '2026.05.07.1',
+			},
+		},
+		openClawAgentVmPluginVersion: '0.0.49',
+	};
 }
 
 function createTestSystemConfig(): LoadedSystemConfig {
@@ -199,7 +220,7 @@ describe('runBuildCommand', () => {
 					fingerprint: 'managed-fp',
 					imagePath: '/cache/managed',
 				}),
-				resolveManagedBaseImageVersion: async () => '0.0.41',
+				resolveManagedImageRelease: async () => createTestManagedImageRelease(),
 				runTask: async (_title, fn) => fn(),
 			},
 		);
@@ -211,7 +232,7 @@ describe('runBuildCommand', () => {
 		);
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
 		expect(generatedDockerfile).toContain(
-			'FROM ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:0.0.41',
+			'FROM ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:2026.05.07.1',
 		);
 		expect(generatedDockerfile).toContain(
 			'RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@0.0.49"',
@@ -290,7 +311,7 @@ describe('runBuildCommand', () => {
 					fingerprint: 'discord-fp',
 					imagePath: '/cache/discord',
 				}),
-				resolveManagedBaseImageVersion: async () => '0.0.41',
+				resolveManagedImageRelease: async () => createTestManagedImageRelease(),
 				runTask: async (_title, fn) => fn(),
 			},
 		);
@@ -360,7 +381,7 @@ describe('runBuildCommand', () => {
 					fingerprint: 'disabled-discord-fp',
 					imagePath: '/cache/disabled-discord',
 				}),
-				resolveManagedBaseImageVersion: async () => '0.0.41',
+				resolveManagedImageRelease: async () => createTestManagedImageRelease(),
 				runTask: async (_title, fn) => fn(),
 			},
 		);
