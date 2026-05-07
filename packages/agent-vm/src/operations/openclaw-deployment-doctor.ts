@@ -4,6 +4,7 @@ import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { DoctorCheck } from './doctor.js';
 
 interface OpenClawDeploymentConfig {
+	readonly [key: string]: unknown;
 	readonly agents?: {
 		readonly defaults?: {
 			readonly sandbox?: {
@@ -60,9 +61,6 @@ export function buildOpenClawDeploymentDoctorChecks(
 		const hasMemoryCore =
 			includesString(config.plugins?.allow, 'memory-core') ||
 			hasEnabledEntry(config.plugins?.entries, 'memory-core');
-		const hasDiscordPlugin =
-			includesString(config.plugins?.allow, 'discord') ||
-			hasEnabledEntry(config.plugins?.entries, 'discord');
 		const workspace = config.agents?.defaults?.workspace;
 		return [
 			{
@@ -87,13 +85,6 @@ export function buildOpenClawDeploymentDoctorChecks(
 					!hasMemoryCore || config.plugins?.slots?.memory === 'memory-core'
 						? 'plugins.slots.memory=memory-core'
 						: 'Set plugins.slots.memory to "memory-core" when memory-core is enabled.',
-			},
-			{
-				name: `openclaw-stale-discord-plugin-${target.zoneId}`,
-				ok: !hasDiscordPlugin,
-				hint: hasDiscordPlugin
-					? 'Remove Discord from plugins.allow/plugins.entries; configure Discord under channels.discord instead.'
-					: 'Discord plugin entries absent',
 			},
 			{
 				name: `openclaw-shared-zone-workspace-${target.zoneId}`,

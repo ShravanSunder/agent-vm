@@ -141,6 +141,7 @@ describe('runBuildCommand', () => {
 			JSON.stringify({
 				schemaVersion: 1,
 				extraAptPackages: ['ca-certificates'],
+				extraOpenClawPackages: ['@agent-vm/openclaw-agent-vm-plugin@0.0.45'],
 				copy: [{ from: 'certs/strip-nonascii-certs.py', to: '/tmp/strip-nonascii-certs.py' }],
 				runAfterBase: ['python3 /tmp/strip-nonascii-certs.py'],
 			}),
@@ -211,6 +212,13 @@ describe('runBuildCommand', () => {
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
 		expect(generatedDockerfile).toContain(
 			'FROM ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:0.0.41',
+		);
+		expect(generatedDockerfile).toContain(
+			'RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@0.0.48"',
+		);
+		expect(generatedDockerfile).not.toContain('@agent-vm/openclaw-agent-vm-plugin@0.0.45');
+		expect(generatedDockerfile).toContain(
+			'RUN ln -sf /pnpm/global/5/node_modules/@agent-vm/openclaw-agent-vm-plugin/dist /home/openclaw/.openclaw/extensions/gondolin',
 		);
 		expect(generatedDockerfile).toContain(
 			'RUN apt-get update && apt-get install -y --no-install-recommends "ca-certificates"',

@@ -80,6 +80,26 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 							workspace: '/zone/agents/default',
 						},
 					},
+					session: {
+						dmScope: 'per-channel-peer',
+					},
+					channels: {
+						discord: {
+							enabled: true,
+							guilds: {
+								'guild-1': {},
+							},
+						},
+					},
+					bindings: [
+						{
+							match: {
+								channel: 'discord',
+								guildId: 'guild-1',
+							},
+							agentId: 'shravan',
+						},
+					],
 					plugins: {
 						allow: ['gondolin', 'memory-core'],
 						entries: {
@@ -101,7 +121,72 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		expect(checks.every((check) => check.ok)).toBe(true);
 	});
 
-	it('flags stale OpenClaw defaults from pre-managed deployments', () => {
+	it('ignores OpenClaw-owned Discord session and binding semantics', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							sandbox: {
+								workspaceAccess: 'rw',
+							},
+							workspace: '/zone/agents/default',
+						},
+					},
+					session: {
+						dmScope: 'per-peer',
+						identityLinks: {
+							shravan: ['discord:709857988919164981'],
+						},
+					},
+					channels: {
+						discord: {
+							enabled: true,
+							guilds: {
+								'allowed-guild': {},
+							},
+						},
+					},
+					bindings: [
+						{
+							match: {
+								channel: 'discord',
+								guildId: 'missing-guild',
+							},
+							agentId: 'shravan',
+						},
+					],
+					plugins: {
+						allow: ['gondolin', 'memory-core', 'discord'],
+						entries: {
+							discord: { enabled: true },
+							gondolin: { enabled: true },
+							'memory-core': { enabled: true },
+						},
+						load: {
+							paths: [
+								'/home/openclaw/.openclaw/extensions',
+								'/pnpm/global/5/node_modules/@openclaw',
+							],
+						},
+						slots: { memory: 'memory-core' },
+					},
+				},
+			},
+		]);
+
+		expect(checks.every((check) => check.ok)).toBe(true);
+		expect(checks.map((check) => check.name)).not.toContain('openclaw-dm-scope-shravan');
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-discord-guild-bindings-shravan',
+		);
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-stale-discord-plugin-shravan',
+		);
+	});
+
+	it('flags stale agent-vm OpenClaw integration defaults from pre-managed deployments', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
 				zoneId: 'shravan',
@@ -123,6 +208,23 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 							'memory-core': { enabled: true },
 						},
 					},
+					channels: {
+						discord: {
+							enabled: true,
+							guilds: {
+								'allowed-guild': {},
+							},
+						},
+					},
+					bindings: [
+						{
+							match: {
+								channel: 'discord',
+								guildId: 'missing-guild',
+							},
+							agentId: 'shravan',
+						},
+					],
 				},
 			},
 		]);
@@ -142,12 +244,6 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		).toMatchObject({
 			ok: false,
 			hint: 'Add plugins.load.paths for /home/openclaw/.openclaw/extensions and /pnpm/global/5/node_modules/@openclaw.',
-		});
-		expect(
-			checks.find((check) => check.name === 'openclaw-stale-discord-plugin-shravan'),
-		).toMatchObject({
-			ok: false,
-			hint: 'Remove Discord from plugins.allow/plugins.entries; configure Discord under channels.discord instead.',
 		});
 		expect(
 			checks.find((check) => check.name === 'openclaw-shared-zone-workspace-shravan'),
@@ -171,6 +267,9 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 						sandbox: { workspaceAccess: 'rw' },
 						workspace: '/zone/agents/default',
 					},
+				},
+				session: {
+					dmScope: 'per-channel-peer',
 				},
 				plugins: {
 					allow: ['memory-core'],

@@ -1177,6 +1177,7 @@ describe('scaffoldAgentVmProject', () => {
 				};
 			};
 			readonly commands?: { readonly ownerAllowFrom?: readonly string[] };
+			readonly session?: { readonly dmScope?: string };
 			readonly plugins?: {
 				readonly allow?: readonly string[];
 				readonly slots?: { readonly memory?: string };
@@ -1186,6 +1187,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(openClawConfig.gateway?.auth?.mode).toBe('token');
 		expect(openClawConfig.agents?.defaults?.sandbox?.scope).toBe('agent');
 		expect(openClawConfig.agents?.defaults?.sandbox?.workspaceAccess).toBe('rw');
+		expect(openClawConfig.session?.dmScope).toBe('per-channel-peer');
 		expect(openClawConfig.commands?.ownerAllowFrom).toEqual([]);
 		expect(openClawConfig.plugins?.allow).toContain('memory-core');
 		expect(openClawConfig.plugins?.slots?.memory).toBe('memory-core');
