@@ -167,22 +167,22 @@ describe('runSshCommand', () => {
 		).rejects.toThrow('--print is not supported');
 	});
 
-	it('rejects remote command arguments', async () => {
+	it('keeps controller ssh interactive-only instead of exposing remote command execution', async () => {
 		const runInteractiveProcess = vi.fn(
 			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
 		);
+		const enableZoneSsh = vi.fn(async () => ({
+			host: '127.0.0.1',
+			identityFile: '/tmp/key',
+			port: 2222,
+			user: 'root',
+		}));
 
 		await expect(
 			runSshCommand({
 				dependencies: {
 					...defaultCliDependencies,
-					createControllerClient: () =>
-						createControllerClientStub(async () => ({
-							host: '127.0.0.1',
-							identityFile: '/tmp/key',
-							port: 2222,
-							user: 'root',
-						})),
+					createControllerClient: () => createControllerClientStub(enableZoneSsh),
 					runInteractiveProcess,
 				},
 				io: {
@@ -195,6 +195,7 @@ describe('runSshCommand', () => {
 		).rejects.toThrow(
 			'controller ssh opens an interactive shell only; remote commands are not supported.',
 		);
+		expect(enableZoneSsh).not.toHaveBeenCalled();
 		expect(runInteractiveProcess).not.toHaveBeenCalled();
 	});
 

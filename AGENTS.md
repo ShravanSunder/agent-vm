@@ -71,6 +71,45 @@ black-box smoke test in a temporary directory. Exercise the actual command a
 user would run, inspect the generated files, and run the relevant validation
 command against that generated output before claiming the default is safe.
 
+## Release Process
+
+Keep every published `@agent-vm/*` package version in sync for normal releases.
+If any package version has already been published incorrectly, do not try to
+reuse that version. Bump the whole package set to a fresh patch version and
+publish all packages together.
+
+Managed image release pins are a separate release train from npm package
+versions. Do not change `packages/agent-vm/managed-images.json` base image tags
+just to match npm versions. Do keep npm package pins inside that manifest
+aligned with the package release train, especially `openClawAgentVmPluginVersion`,
+because generated OpenClaw gateway Dockerfiles install
+`@agent-vm/openclaw-agent-vm-plugin@<that version>`.
+
+Before publishing, pack and inspect `@agent-vm/agent-vm` from the exact commit
+that will be released. Confirm the packed `package/package.json` has sibling
+`@agent-vm/*` dependencies on the intended version, and confirm packed
+`package/managed-images.json` has the intended managed image tags and
+`openClawAgentVmPluginVersion`.
+
+Publish only after the release PR is merged and local `master` is
+fast-forwarded to `origin/master`. After publishing, verify with `npm view` for
+every package and inspect the published `@agent-vm/agent-vm` tarball before
+calling the release done.
+
+## Security Invariants
+
+`agent-vm controller ssh` is an interactive admin shell only. Do not add support
+for `controller ssh -- <remote command>`, `--print`, or any other mode that
+turns the SSH command into an exposed remote-command runner. Admin convenience
+belongs in explicit, protected flows such as `auth-interactive` or
+`controller ssh --with-secrets`, where the operator gets an interactive shell and
+the controller still resolves zone admin access first.
+
+The HTTP `/zones/:zoneId/execute-command` route is a separate controller
+operation for internal/admin workflows and must remain protected by zone admin
+authorization when `adminAccess` is configured. Do not re-expose that capability
+through the public SSH CLI surface.
+
 ## TypeScript Standards
 
 Follow `.cursor/rules/ts-rules.md`; key points:

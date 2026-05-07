@@ -112,6 +112,12 @@ Registered conditionally -- only when `operations` or `workerTaskRunner` is prov
 
 Request bodies are validated with Zod schemas (`controller-request-schemas.ts`). Invalid payloads return 400 with structured `error` and `issues` fields.
 
+`agent-vm controller ssh` intentionally exposes only an interactive SSH session.
+It must reject `-- <remote command>` and `--print` so the CLI does not become an
+unreviewed remote-command runner. Command execution inside a gateway VM is a
+separate `/zones/:zoneId/execute-command` controller operation and is protected
+by zone admin authorization when `adminAccess` is configured.
+
 ---
 
 ## Gateway Zone Orchestrator
