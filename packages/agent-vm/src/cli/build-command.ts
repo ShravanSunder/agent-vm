@@ -9,7 +9,8 @@ import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondol
 import {
 	MANAGED_OPENCLAW_VERSION,
 	generateManagedDockerfile as generateManagedDockerfileDefault,
-	resolveManagedBaseImageVersion as resolveManagedBaseImageVersionDefault,
+	resolveManagedImageRelease as resolveManagedImageReleaseDefault,
+	type ManagedImageRelease,
 	type ManagedImageSource,
 } from '../build/managed-image-dockerfile.js';
 import {
@@ -19,7 +20,7 @@ import {
 } from '../build/zig-compatibility.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
-import type { RunTaskFn, TaskOutput } from '../shared/run-task.js';
+import type { RunTaskContext, RunTaskFn, TaskOutput } from '../shared/run-task.js';
 import { formatZodError } from './format-zod-error.js';
 import { syncBundledOpenClawPluginBundle } from './openclaw-plugin-bundle.js';
 
@@ -48,10 +49,10 @@ export interface BuildCommandDependencies {
 		readonly imageTargetName: string;
 		readonly outputDirectory: string;
 		readonly overlayPath?: string | undefined;
-		readonly baseImageVersion: string;
+		readonly managedImageRelease: ManagedImageRelease;
 		readonly requiredOpenClawPackages?: readonly string[];
 	}) => Promise<string>;
-	readonly resolveManagedBaseImageVersion?: () => Promise<string>;
+	readonly resolveManagedImageRelease?: () => Promise<ManagedImageRelease>;
 	readonly syncBundledOpenClawPlugin?: (
 		targetDir: string,
 		profileName: string,
@@ -100,6 +101,26 @@ interface ImageTarget {
 
 function imageTargetKey(imageTarget: Pick<ImageTarget, 'family' | 'name'>): string {
 	return `${imageTarget.family}/${imageTarget.name}`;
+}
+
+function startElapsedStatusHeartbeat(
+	taskContext: RunTaskContext | undefined,
+	baseStatus: string,
+): () => void {
+	taskContext?.setStatus(baseStatus);
+	if (taskContext?.interactive !== true) {
+		return () => {};
+	}
+
+	const startedAtMs = Date.now();
+	const heartbeatInterval = setInterval(() => {
+		const elapsedSeconds = Math.max(1, Math.floor((Date.now() - startedAtMs) / 1000));
+		taskContext.setStatus(`${baseStatus} · ${elapsedSeconds}s elapsed`);
+	}, 8_000);
+
+	return () => {
+		clearInterval(heartbeatInterval);
+	};
 }
 
 async function resolveOciImageTagFromConfig(buildConfigPath: string): Promise<string> {
@@ -230,8 +251,8 @@ export async function runBuildCommand(
 		dependencies.resolveProjectRootFromDockerfile ?? resolveProjectRootFromDockerfile;
 	const generateManagedDockerfile =
 		dependencies.generateManagedDockerfile ?? generateManagedDockerfileDefault;
-	const resolveManagedBaseImageVersion =
-		dependencies.resolveManagedBaseImageVersion ?? resolveManagedBaseImageVersionDefault;
+	const resolveManagedImageRelease =
+		dependencies.resolveManagedImageRelease ?? resolveManagedImageReleaseDefault;
 	const syncBundledOpenClawPlugin =
 		dependencies.syncBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle;
 	const systemCacheIdentifierPath = options.systemConfig.systemCacheIdentifierPath;
@@ -269,10 +290,10 @@ export async function runBuildCommand(
 		dockerImageTargets,
 		resolveOciImageTag,
 	);
-	const managedBaseImageVersion = dockerImageTargets.some(
+	const managedImageRelease = dockerImageTargets.some(
 		(imageTarget) => imageTarget.source !== undefined,
 	)
-		? await resolveManagedBaseImageVersion()
+		? await resolveManagedImageRelease()
 		: undefined;
 
 	// oxlint-disable-next-line no-await-in-loop -- image builds are intentionally sequential for stable task output and shared image tags
@@ -283,8 +304,8 @@ export async function runBuildCommand(
 		}
 		let dockerfilePath = imageTarget.dockerfile;
 		if (imageTarget.source) {
-			if (!managedBaseImageVersion) {
-				throw new Error('Missing managed base image version for managed image build.');
+			if (!managedImageRelease) {
+				throw new Error('Missing managed image release for managed image build.');
 			}
 			// oxlint-disable-next-line no-await-in-loop -- package detection is profile-local and low-volume
 			const requiredOpenClawPackages = await resolveRequiredOpenClawPackagesForTarget(
@@ -303,7 +324,7 @@ export async function runBuildCommand(
 					imageTarget.name,
 				),
 				...(imageTarget.source.overlay ? { overlayPath: imageTarget.source.overlay } : {}),
-				baseImageVersion: managedBaseImageVersion,
+				managedImageRelease,
 				requiredOpenClawPackages,
 			});
 		}
@@ -351,15 +372,24 @@ export async function runBuildCommand(
 		await runTaskStep(
 			`Gondolin: ${imageTarget.family}/${imageTarget.name}`,
 			async (taskContext) => {
-				taskContext?.setStatus(
+				const stopHeartbeat = startElapsedStatusHeartbeat(
+					taskContext,
 					shouldResetGondolinCache ? 'building vm assets' : 'checking vm assets',
 				);
-				const result = await buildGondolinImage({
-					buildConfigPath: imageTarget.buildConfigPath,
-					systemCacheIdentifierPath: imageTarget.systemCacheIdentifierPath,
-					cacheDir: imageTarget.cacheDirectory,
-					...(shouldResetGondolinCache ? { fullReset: true } : {}),
-				});
+				let result: BuildImageResult;
+				try {
+					result = await buildGondolinImage({
+						buildConfigPath: imageTarget.buildConfigPath,
+						systemCacheIdentifierPath: imageTarget.systemCacheIdentifierPath,
+						cacheDir: imageTarget.cacheDirectory,
+						...(shouldResetGondolinCache ? { fullReset: true } : {}),
+						...(taskContext?.interactive === true && taskContext.streamPreview
+							? { streamPreview: taskContext.streamPreview }
+							: {}),
+					});
+				} finally {
+					stopHeartbeat();
+				}
 				taskContext?.setStatus(result.built ? 'vm assets ready' : 'vm assets cache hit');
 			},
 		);

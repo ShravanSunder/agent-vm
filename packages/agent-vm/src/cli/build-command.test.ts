@@ -3,8 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { Writable } from 'node:stream';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { ManagedImageRelease } from '../build/managed-image-dockerfile.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import {
 	runBuildCommand as runBuildCommandDefault,
@@ -23,6 +24,26 @@ function createTemporaryDirectory(): string {
 	const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-build-command-'));
 	createdDirectories.push(temporaryDirectory);
 	return temporaryDirectory;
+}
+
+function createTestManagedImageRelease(): ManagedImageRelease {
+	return {
+		baseImages: {
+			'openclaw-gateway': {
+				repository: 'ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base',
+				tag: '2026.05.07.1',
+			},
+			'worker-gateway': {
+				repository: 'ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base',
+				tag: '2026.05.07.1',
+			},
+			'tool-vm': {
+				repository: 'ghcr.io/shravansunder/agent-vm-managed-tool-vm-base',
+				tag: '2026.05.07.1',
+			},
+		},
+		openClawAgentVmPluginVersion: '0.0.49',
+	};
 }
 
 function createTestSystemConfig(): LoadedSystemConfig {
@@ -199,7 +220,7 @@ describe('runBuildCommand', () => {
 					fingerprint: 'managed-fp',
 					imagePath: '/cache/managed',
 				}),
-				resolveManagedBaseImageVersion: async () => '0.0.41',
+				resolveManagedImageRelease: async () => createTestManagedImageRelease(),
 				runTask: async (_title, fn) => fn(),
 			},
 		);
@@ -211,7 +232,7 @@ describe('runBuildCommand', () => {
 		);
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
 		expect(generatedDockerfile).toContain(
-			'FROM ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:0.0.41',
+			'FROM ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:2026.05.07.1',
 		);
 		expect(generatedDockerfile).toContain(
 			'RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@0.0.49"',
@@ -290,7 +311,7 @@ describe('runBuildCommand', () => {
 					fingerprint: 'discord-fp',
 					imagePath: '/cache/discord',
 				}),
-				resolveManagedBaseImageVersion: async () => '0.0.41',
+				resolveManagedImageRelease: async () => createTestManagedImageRelease(),
 				runTask: async (_title, fn) => fn(),
 			},
 		);
@@ -360,7 +381,7 @@ describe('runBuildCommand', () => {
 					fingerprint: 'disabled-discord-fp',
 					imagePath: '/cache/disabled-discord',
 				}),
-				resolveManagedBaseImageVersion: async () => '0.0.41',
+				resolveManagedImageRelease: async () => createTestManagedImageRelease(),
 				runTask: async (_title, fn) => fn(),
 			},
 		);
@@ -639,7 +660,7 @@ describe('runBuildCommand', () => {
 		expect(taskTitles).toContain('Gondolin: toolVm/default');
 	});
 
-	it('routes Tasuku stream preview only into child-process Docker builds', async () => {
+	it('routes Tasuku stream preview into child-process image builds', async () => {
 		const taskStreamPreview = new Writable({
 			write(_chunk, _encoding, callback) {
 				callback();
@@ -677,10 +698,68 @@ describe('runBuildCommand', () => {
 		);
 
 		expect(dockerStreamPreviews).toEqual([taskStreamPreview]);
-		expect(gondolinStreamPreviews).toEqual([undefined, undefined]);
+		expect(gondolinStreamPreviews).toEqual([taskStreamPreview, taskStreamPreview]);
 		expect(taskStatuses).toContain('docker build');
 		expect(taskStatuses).toContain('docker image ready');
 		expect(taskStatuses).toContain('building vm assets');
+		expect(taskStatuses).toContain('vm assets ready');
+	});
+
+	it('keeps Gondolin task status alive while VM assets are building quietly', async () => {
+		vi.useFakeTimers();
+		const taskStatuses: (string | undefined)[] = [];
+		let finishGondolinBuild: (() => void) | undefined;
+
+		const buildPromise = runBuildCommand(
+			{
+				forceRebuild: true,
+				systemConfig: {
+					...createTestSystemConfig(),
+					imageProfiles: {
+						gateways: {},
+						toolVms: {
+							default: {
+								type: 'toolVm',
+								buildConfig: '/project/vm-images/tool-vms/default/build-config.json',
+							},
+						},
+					},
+				},
+			},
+			{
+				buildGondolinImage: async () => {
+					await new Promise<void>((resolve) => {
+						finishGondolinBuild = resolve;
+					});
+					return { built: true, fingerprint: 'interactive-fp', imagePath: '/cache/interactive' };
+				},
+				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+				runTask: async (_title, fn) => {
+					await fn({
+						interactive: true,
+						setOutput: () => {},
+						setStatus: (status) => {
+							taskStatuses.push(status);
+						},
+						streamPreview: new Writable({
+							write(_chunk, _encoding, callback) {
+								callback();
+							},
+						}),
+					});
+				},
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		await vi.advanceTimersByTimeAsync(16_000);
+		finishGondolinBuild?.();
+		await buildPromise;
+		vi.useRealTimers();
+
+		expect(taskStatuses).toContain('building vm assets');
+		expect(taskStatuses).toContain('building vm assets · 8s elapsed');
+		expect(taskStatuses).toContain('building vm assets · 16s elapsed');
 		expect(taskStatuses).toContain('vm assets ready');
 	});
 
