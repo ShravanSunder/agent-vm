@@ -29,4 +29,4 @@ RUN apt-get update && \
     mkdir -p /work/repos /work/tmp /work/cache /run/sshd /state /var/log && \
     touch /var/log/lastlog /var/log/faillog && \
     chown -R coder:coder /work /state && \
-    (ln -sf /proc/self/fd /dev/fd 2>/dev/null || true)
+    (ln -sfn /proc/self/fd /dev/fd 2>/dev/null || true)
