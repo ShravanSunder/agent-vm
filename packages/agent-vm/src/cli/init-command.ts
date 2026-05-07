@@ -938,11 +938,7 @@ async function scaffoldAgentVmProjectInternal(
 		SYSTEM_CACHE_IDENTIFIER_FILENAME,
 	);
 	const systemCacheIdentifier = buildDefaultSystemCacheIdentifier(
-		options.hostSystemType === 'container'
-			? { hostSystemType: options.hostSystemType, platform: () => 'linux' }
-			: options.hostSystemType
-				? { hostSystemType: options.hostSystemType }
-				: {},
+		options.hostSystemType ? { hostSystemType: options.hostSystemType } : {},
 	);
 	const systemCacheIdentifierStatus = await writeFileIfMissing(
 		systemCacheIdentifierPath,

@@ -7,7 +7,6 @@ import { describe, expect, it } from 'vitest';
 import {
 	SYSTEM_CACHE_IDENTIFIER_FILENAME,
 	buildDefaultSystemCacheIdentifier,
-	captureSystemOsName,
 	loadSystemCacheIdentifier,
 	resolveSystemCacheIdentifierPath,
 } from './system-cache-identifier.js';
@@ -65,7 +64,7 @@ describe('system cache identifier', () => {
 			`${JSON.stringify({
 				$comment: 'example',
 				schemaVersion: 1,
-				os: 'linux',
+				hostSystemType: 'bare-metal',
 			})}\n`,
 			'utf8',
 		);
@@ -89,7 +88,7 @@ describe('system cache identifier', () => {
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
-	it('validates newly written v1 identifier fields', async () => {
+	it('rejects obsolete versioned v1 identifier fields', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-id-'));
 		const filePath = path.join(temporaryDirectoryPath, SYSTEM_CACHE_IDENTIFIER_FILENAME);
 		await fs.writeFile(
@@ -112,70 +111,65 @@ describe('system cache identifier', () => {
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
-	it('captures only the supported operating system name', () => {
-		expect(captureSystemOsName('darwin')).toBe('darwin');
-		expect(captureSystemOsName('linux')).toBe('linux');
-		expect(captureSystemOsName('freebsd')).toBe('unknown');
+	it('loads a valid v1 identifier with the image cache format', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-id-'));
+		const filePath = path.join(temporaryDirectoryPath, SYSTEM_CACHE_IDENTIFIER_FILENAME);
+		const value = {
+			$comment: 'example',
+			schemaVersion: 1,
+			hostSystemType: 'container',
+			imageCacheFormat: 'gondolin-image-cache-v1',
+		};
+		await fs.writeFile(filePath, `${JSON.stringify(value)}\n`, 'utf8');
+
+		await expect(loadSystemCacheIdentifier({ filePath })).resolves.toEqual(value);
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
-	it('builds the default bare-metal identifier from the platform supplier', () => {
-		const identifier = buildDefaultSystemCacheIdentifier({
-			platform: () => 'linux',
-		});
+	it('builds the default bare-metal identifier', () => {
+		const identifier = buildDefaultSystemCacheIdentifier();
 
 		expect(identifier).toEqual({
 			$comment:
-				'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change cacheProfile or cacheFormat when the outer cache contract changes.',
+				'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change imageCacheFormat when the image cache contract changes.',
 			schemaVersion: 1,
-			os: 'linux',
 			hostSystemType: 'bare-metal',
-			cacheProfile: 'default',
-			cacheFormat: 'gondolin-cache-v1',
+			imageCacheFormat: 'gondolin-image-cache-v1',
 		});
+		expect(identifier).not.toHaveProperty('os');
+		expect(identifier).not.toHaveProperty('cacheProfile');
+		expect(identifier).not.toHaveProperty('cacheFormat');
 	});
 
-	it('builds a container identifier while keeping the operating system host-captured', () => {
+	it('builds a container identifier without host operating system capture', () => {
 		const identifier = buildDefaultSystemCacheIdentifier({
 			hostSystemType: 'container',
-			platform: () => 'darwin',
 		});
 
 		expect(identifier).toEqual({
 			$comment:
-				'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change cacheProfile or cacheFormat when the outer cache contract changes.',
+				'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change imageCacheFormat when the image cache contract changes.',
 			schemaVersion: 1,
-			os: 'darwin',
 			hostSystemType: 'container',
-			cacheProfile: 'default',
-			cacheFormat: 'gondolin-cache-v1',
+			imageCacheFormat: 'gondolin-image-cache-v1',
 		});
+		expect(identifier).not.toHaveProperty('os');
+		expect(identifier).not.toHaveProperty('cacheProfile');
+		expect(identifier).not.toHaveProperty('cacheFormat');
 	});
 
-	it('surfaces platform capture failures', () => {
-		expect(() =>
-			buildDefaultSystemCacheIdentifier({
-				platform: () => {
-					throw new Error('platform unavailable');
-				},
-			}),
-		).toThrow('platform unavailable');
-	});
-
-	it('uses unknown only for unsupported platform names', () => {
+	it('supports overriding the image cache format', () => {
 		const identifier = buildDefaultSystemCacheIdentifier({
-			platform: () => {
-				return 'freebsd';
-			},
+			imageCacheFormat: 'gondolin-image-cache-v2',
 		});
 
 		expect(identifier).toEqual({
 			$comment:
-				'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change cacheProfile or cacheFormat when the outer cache contract changes.',
+				'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change imageCacheFormat when the image cache contract changes.',
 			schemaVersion: 1,
-			os: 'unknown',
 			hostSystemType: 'bare-metal',
-			cacheProfile: 'default',
-			cacheFormat: 'gondolin-cache-v1',
+			imageCacheFormat: 'gondolin-image-cache-v2',
 		});
 	});
 });

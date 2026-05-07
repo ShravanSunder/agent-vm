@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import { z } from 'zod';
@@ -11,36 +10,29 @@ export interface LoadSystemCacheIdentifierOptions {
 }
 
 export interface SystemCacheIdentifierPlatformDependencies {
-	readonly cacheFormat?: string;
-	readonly cacheProfile?: string;
 	readonly hostSystemType?: HostSystemType;
-	readonly platform?: () => string;
+	readonly imageCacheFormat?: string;
 }
 
-export type SystemCacheOs = 'darwin' | 'linux' | 'unknown';
 export type HostSystemType = 'bare-metal' | 'container';
 
 export interface DefaultSystemCacheIdentifier {
 	readonly $comment: string;
 	readonly schemaVersion: 1;
-	readonly os: SystemCacheOs;
 	readonly hostSystemType: HostSystemType;
-	readonly cacheProfile: string;
-	readonly cacheFormat: string;
+	readonly imageCacheFormat: string;
 }
 
 const systemCacheIdentifierComment =
-	'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change cacheProfile or cacheFormat when the outer cache contract changes.';
+	'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change imageCacheFormat when the image cache contract changes.';
 
 const legacySystemCacheIdentifierSchema = z.object({}).passthrough();
 const systemCacheIdentifierV1Schema = z
 	.object({
 		$comment: z.string(),
 		schemaVersion: z.literal(1),
-		os: z.enum(['darwin', 'linux', 'unknown']),
 		hostSystemType: z.enum(['bare-metal', 'container']),
-		cacheProfile: z.string().min(1),
-		cacheFormat: z.string().min(1),
+		imageCacheFormat: z.string().min(1),
 	})
 	.strict();
 
@@ -56,24 +48,14 @@ export function resolveSystemCacheIdentifierPath(systemConfigPath: string): stri
 	return path.join(path.dirname(path.resolve(systemConfigPath)), SYSTEM_CACHE_IDENTIFIER_FILENAME);
 }
 
-export function captureSystemOsName(platform: string): SystemCacheOs {
-	if (platform === 'darwin' || platform === 'linux') {
-		return platform;
-	}
-	return 'unknown';
-}
-
 export function buildDefaultSystemCacheIdentifier(
 	dependencies: SystemCacheIdentifierPlatformDependencies = {},
 ): DefaultSystemCacheIdentifier {
-	const platform = dependencies.platform?.() ?? os.platform();
 	return {
 		$comment: systemCacheIdentifierComment,
 		schemaVersion: 1,
-		os: captureSystemOsName(platform),
 		hostSystemType: dependencies.hostSystemType ?? 'bare-metal',
-		cacheProfile: dependencies.cacheProfile ?? 'default',
-		cacheFormat: dependencies.cacheFormat ?? 'gondolin-cache-v1',
+		imageCacheFormat: dependencies.imageCacheFormat ?? 'gondolin-image-cache-v1',
 	};
 }
 
