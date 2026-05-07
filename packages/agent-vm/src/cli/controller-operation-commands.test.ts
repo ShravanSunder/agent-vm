@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { buildDefaultSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { runControllerOperationCommand } from './controller-operation-commands.js';
@@ -321,7 +322,7 @@ describe('runControllerOperationCommand', () => {
 			'systemCacheIdentifier.json',
 		);
 		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
-		await fs.writeFile(systemCacheIdentifierPath, '{"schemaVersion":1}\n', 'utf8');
+		await fs.writeFile(systemCacheIdentifierPath, '{}\n', 'utf8');
 		await fs.writeFile(
 			workerConfigPath,
 			JSON.stringify({
@@ -416,7 +417,7 @@ describe('runControllerOperationCommand', () => {
 		await fs.mkdir(path.dirname(openClawConfigPath), { recursive: true });
 		await fs.writeFile(
 			path.join(configDirectoryPath, 'systemCacheIdentifier.json'),
-			'{"schemaVersion":1}\n',
+			'{}\n',
 			'utf8',
 		);
 		await fs.writeFile(openClawConfigPath, JSON.stringify(createHealthyOpenClawConfig()), 'utf8');
@@ -514,7 +515,7 @@ printf '{"ok":true}\\n'
 			'systemCacheIdentifier.json',
 		);
 		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
-		await fs.writeFile(systemCacheIdentifierPath, '{"schemaVersion":1}\n', 'utf8');
+		await fs.writeFile(systemCacheIdentifierPath, '{}\n', 'utf8');
 		await fs.writeFile(
 			workerConfigPath,
 			JSON.stringify({
@@ -612,7 +613,7 @@ printf '{"ok":true}\\n'
 		);
 		await fs.mkdir(path.dirname(systemConfigPath), { recursive: true });
 		await fs.mkdir(path.dirname(toolVmBuildConfigPath), { recursive: true });
-		await fs.writeFile(systemCacheIdentifierPath, '{"schemaVersion":1}\n', 'utf8');
+		await fs.writeFile(systemCacheIdentifierPath, '{}\n', 'utf8');
 		await fs.writeFile(
 			toolVmBuildConfigPath,
 			JSON.stringify({ oci: { image: 'agent-vm-tool:latest', pullPolicy: 'never' } }),
@@ -713,7 +714,7 @@ printf '{"ok":true}\\n'
 		await fs.mkdir(path.dirname(gatewayBuildConfigPath), { recursive: true });
 		await fs.mkdir(path.dirname(toolVmBuildConfigPath), { recursive: true });
 		await fs.mkdir(path.dirname(openClawConfigPath), { recursive: true });
-		await fs.writeFile(systemCacheIdentifierPath, '{"schemaVersion":1}\n', 'utf8');
+		await fs.writeFile(systemCacheIdentifierPath, '{}\n', 'utf8');
 		await fs.writeFile(openClawConfigPath, JSON.stringify(createHealthyOpenClawConfig()), 'utf8');
 		await fs.writeFile(
 			gatewayBuildConfigPath,
@@ -803,7 +804,7 @@ printf '{"ok":true}\\n'
 		);
 		await fs.mkdir(path.dirname(systemConfigPath), { recursive: true });
 		await fs.mkdir(path.dirname(toolVmBuildConfigPath), { recursive: true });
-		await fs.writeFile(systemCacheIdentifierPath, '{"schemaVersion":1}\n', 'utf8');
+		await fs.writeFile(systemCacheIdentifierPath, '{}\n', 'utf8');
 		await fs.writeFile(
 			toolVmBuildConfigPath,
 			JSON.stringify({ oci: { image: 'agent-vm-tool:latest', pullPolicy: 'ifNotPresent' } }),
@@ -1044,7 +1045,10 @@ printf '{"ok":true}\\n'
 		await fs.mkdir(vmHostSystemPath, { recursive: true });
 		await fs.writeFile(
 			systemCacheIdentifierPath,
-			JSON.stringify({ schemaVersion: 1, hostSystemType: 'container' }),
+			JSON.stringify({
+				...buildDefaultSystemCacheIdentifier(),
+				hostSystemType: 'container',
+			}),
 			'utf8',
 		);
 		await Promise.all(
@@ -1148,7 +1152,10 @@ printf '{"ok":true}\\n'
 		await fs.mkdir(path.dirname(systemConfigPath), { recursive: true });
 		await fs.writeFile(
 			systemCacheIdentifierPath,
-			JSON.stringify({ schemaVersion: 1, hostSystemType: 'container' }),
+			JSON.stringify({
+				...buildDefaultSystemCacheIdentifier(),
+				hostSystemType: 'container',
+			}),
 			'utf8',
 		);
 		await fs.writeFile(

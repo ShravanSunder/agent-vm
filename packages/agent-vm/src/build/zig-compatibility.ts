@@ -54,12 +54,19 @@ export async function resolveHostZigVersion(): Promise<string | undefined> {
 	}
 }
 
-function parseZigVersionParts(version: string): readonly [number, number, number] | null {
-	const versionMatch = /^(\d+)\.(\d+)\.(\d+)/u.exec(version.trim());
+interface ParsedZigVersion {
+	readonly major: number;
+	readonly minor: number;
+	readonly patch: number;
+	readonly prerelease: readonly string[];
+}
+
+function parseZigVersion(version: string): ParsedZigVersion | null {
+	const versionMatch = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/u.exec(version.trim());
 	if (!versionMatch) {
 		return null;
 	}
-	const [majorVersion, minorVersion, patchVersion] = versionMatch.slice(1).map((part) =>
+	const [majorVersion, minorVersion, patchVersion] = versionMatch.slice(1, 4).map((part) =>
 		Number.parseInt(part, 10),
 	);
 	if (
@@ -69,25 +76,76 @@ function parseZigVersionParts(version: string): readonly [number, number, number
 	) {
 		return null;
 	}
-	return [majorVersion, minorVersion, patchVersion];
+	const prereleaseText = versionMatch[4];
+	return {
+		major: majorVersion,
+		minor: minorVersion,
+		patch: patchVersion,
+		prerelease: prereleaseText ? prereleaseText.split('.') : [],
+	};
+}
+
+function compareNumbers(left: number, right: number): number {
+	return left === right ? 0 : left > right ? 1 : -1;
+}
+
+function isNumericIdentifier(identifier: string): boolean {
+	return /^\d+$/u.test(identifier);
+}
+
+function comparePrereleaseIdentifiers(left: string, right: string): number {
+	const leftIsNumeric = isNumericIdentifier(left);
+	const rightIsNumeric = isNumericIdentifier(right);
+	if (leftIsNumeric && rightIsNumeric) {
+		return compareNumbers(Number.parseInt(left, 10), Number.parseInt(right, 10));
+	}
+	if (leftIsNumeric !== rightIsNumeric) {
+		return leftIsNumeric ? -1 : 1;
+	}
+	return left.localeCompare(right);
+}
+
+function compareZigVersions(left: ParsedZigVersion, right: ParsedZigVersion): number {
+	for (const key of ['major', 'minor', 'patch'] as const) {
+		const result = compareNumbers(left[key], right[key]);
+		if (result !== 0) {
+			return result;
+		}
+	}
+	if (left.prerelease.length === 0 && right.prerelease.length === 0) {
+		return 0;
+	}
+	if (left.prerelease.length === 0) {
+		return 1;
+	}
+	if (right.prerelease.length === 0) {
+		return -1;
+	}
+	const identifierCount = Math.max(left.prerelease.length, right.prerelease.length);
+	for (let index = 0; index < identifierCount; index += 1) {
+		const leftIdentifier = left.prerelease[index];
+		const rightIdentifier = right.prerelease[index];
+		if (leftIdentifier === undefined) {
+			return -1;
+		}
+		if (rightIdentifier === undefined) {
+			return 1;
+		}
+		const result = comparePrereleaseIdentifiers(leftIdentifier, rightIdentifier);
+		if (result !== 0) {
+			return result;
+		}
+	}
+	return 0;
 }
 
 export function isZigVersionAtLeast(version: string, minimumVersion: string): boolean {
-	const versionParts = parseZigVersionParts(version);
-	const minimumVersionParts = parseZigVersionParts(minimumVersion);
-	if (!versionParts || !minimumVersionParts) {
+	const parsedVersion = parseZigVersion(version);
+	const parsedMinimumVersion = parseZigVersion(minimumVersion);
+	if (!parsedVersion || !parsedMinimumVersion) {
 		return false;
 	}
-
-	const [versionMajor, versionMinor, versionPatch] = versionParts;
-	const [minimumMajor, minimumMinor, minimumPatch] = minimumVersionParts;
-	if (versionMajor !== minimumMajor) {
-		return versionMajor > minimumMajor;
-	}
-	if (versionMinor !== minimumMinor) {
-		return versionMinor > minimumMinor;
-	}
-	return versionPatch >= minimumPatch;
+	return compareZigVersions(parsedVersion, parsedMinimumVersion) >= 0;
 }
 
 export function buildZigInstallHint(requiredZigVersion: string | undefined): string {

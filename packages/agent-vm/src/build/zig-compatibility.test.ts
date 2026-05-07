@@ -56,6 +56,9 @@ describe('Zig compatibility', () => {
 		expect(isZigVersionAtLeast('0.15.2', '0.15.2')).toBe(true);
 		expect(isZigVersionAtLeast('0.15.3', '0.15.2')).toBe(true);
 		expect(isZigVersionAtLeast('0.16.0-rc.1', '0.15.2')).toBe(true);
+		expect(isZigVersionAtLeast('0.15.2-dev.1', '0.15.2')).toBe(false);
+		expect(isZigVersionAtLeast('0.15.2-rc.1', '0.15.2')).toBe(false);
+		expect(isZigVersionAtLeast('0.15.2', '0.15.2-rc.1')).toBe(true);
 		expect(isZigVersionAtLeast('0.15.1', '0.15.2')).toBe(false);
 		expect(isZigVersionAtLeast('not-a-version', '0.15.2')).toBe(false);
 	});

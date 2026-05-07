@@ -47,14 +47,32 @@ describe('system cache identifier', () => {
 		const filePath = path.join(temporaryDirectoryPath, SYSTEM_CACHE_IDENTIFIER_FILENAME);
 		const value = {
 			$comment: 'example',
-			schemaVersion: 1,
-			os: 'linux',
 			gitSha: 'abc123',
 			extra: { nested: true },
 		};
 		await fs.writeFile(filePath, `${JSON.stringify(value)}\n`, 'utf8');
 
 		await expect(loadSystemCacheIdentifier({ filePath })).resolves.toEqual(value);
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('fails closed when a versioned identifier is missing v1 fields', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-id-'));
+		const filePath = path.join(temporaryDirectoryPath, SYSTEM_CACHE_IDENTIFIER_FILENAME);
+		await fs.writeFile(
+			filePath,
+			`${JSON.stringify({
+				$comment: 'example',
+				schemaVersion: 1,
+				os: 'linux',
+			})}\n`,
+			'utf8',
+		);
+
+		await expect(loadSystemCacheIdentifier({ filePath })).rejects.toThrow(
+			`Invalid system cache identifier '${filePath}': v1 schema mismatch.`,
+		);
 
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});

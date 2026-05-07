@@ -788,9 +788,14 @@ export async function pullDefaultForTask(options: {
 				})
 			: undefined;
 		const currentHeadRef = options.currentHead ?? 'HEAD';
+		const effectiveCurrentHeadRef =
+			currentBranchSync?.status === 'fast-forwarded' ||
+			currentBranchSync?.status === 'default-branch'
+				? currentBranchSync.remoteHead
+				: currentHeadRef;
 		const forkPoint = await gitStdout(
 			repo.hostGitDir,
-			['merge-base', currentHeadRef, remoteDefaultRef],
+			['merge-base', effectiveCurrentHeadRef, remoteDefaultRef],
 			options.signal,
 		);
 		const commitsSinceForkPoint = await commitSummaries(
@@ -820,12 +825,12 @@ export async function pullDefaultForTask(options: {
 			divergence: {
 				aheadOfDefault: await countRange(
 					repo.hostGitDir,
-					`${remoteDefaultRef}..${currentHeadRef}`,
+					`${remoteDefaultRef}..${effectiveCurrentHeadRef}`,
 					options.signal,
 				),
 				behindDefault: await countRange(
 					repo.hostGitDir,
-					`${currentHeadRef}..${remoteDefaultRef}`,
+					`${effectiveCurrentHeadRef}..${remoteDefaultRef}`,
 					options.signal,
 				),
 				forkPoint,

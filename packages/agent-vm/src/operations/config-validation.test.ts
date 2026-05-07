@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { buildDefaultSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import { createLoadedSystemConfig, loadSystemConfig } from '../config/system-config.js';
 import { resolveProjectCheckoutPath, runConfigValidation } from './config-validation.js';
 
@@ -68,7 +69,7 @@ async function writeContainerProjectFixture(rootPath: string): Promise<string> {
 		tcpPool: { basePort: 19000, size: 5 },
 	});
 	await writeJson(path.join(rootPath, 'config', 'systemCacheIdentifier.json'), {
-		schemaVersion: 1,
+		...buildDefaultSystemCacheIdentifier(),
 		hostSystemType: 'container',
 	});
 	await writeJson(
@@ -165,7 +166,7 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 		tcpPool: { basePort: 19000, size: 5 },
 	});
 	await writeJson(path.join(rootPath, 'config', 'systemCacheIdentifier.json'), {
-		schemaVersion: 1,
+		...buildDefaultSystemCacheIdentifier(),
 		hostSystemType: 'bare-metal',
 	});
 	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'openclaw.json'), {

@@ -113,13 +113,7 @@ export async function loadSystemCacheIdentifier(
 		);
 	}
 
-	const hasV1Fields =
-		'schemaVersion' in legacyResult.data &&
-		'os' in legacyResult.data &&
-		'hostSystemType' in legacyResult.data &&
-		'cacheProfile' in legacyResult.data &&
-		'cacheFormat' in legacyResult.data;
-	if (!hasV1Fields) {
+	if (!('schemaVersion' in legacyResult.data)) {
 		return legacyResult.data;
 	}
 

@@ -67,7 +67,6 @@ function createSystemConfigPathWithIdentifier(): string {
 		systemCacheIdentifierPath,
 		JSON.stringify({
 			gitSha: 'gateway-system-cache-sha',
-			schemaVersion: 1,
 		}),
 		'utf8',
 	);
@@ -312,7 +311,6 @@ describe('startGatewayZone', () => {
 			expect.objectContaining({
 				fingerprintInput: {
 					gitSha: 'gateway-system-cache-sha',
-					schemaVersion: 1,
 				},
 			}),
 		);

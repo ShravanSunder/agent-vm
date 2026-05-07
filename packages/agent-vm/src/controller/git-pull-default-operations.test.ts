@@ -324,17 +324,17 @@ describe('git-pull-default-operations', () => {
 		]);
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
-			expect.arrayContaining(['merge-base', 'local-agent-sha', 'refs/remotes/origin/main']),
+			expect.arrayContaining(['merge-base', 'remote-agent-sha', 'refs/remotes/origin/main']),
 			expect.any(Object),
 		);
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
-			expect.arrayContaining(['rev-list', '--count', 'refs/remotes/origin/main..local-agent-sha']),
+			expect.arrayContaining(['rev-list', '--count', 'refs/remotes/origin/main..remote-agent-sha']),
 			expect.any(Object),
 		);
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
-			expect.arrayContaining(['rev-list', '--count', 'local-agent-sha..refs/remotes/origin/main']),
+			expect.arrayContaining(['rev-list', '--count', 'remote-agent-sha..refs/remotes/origin/main']),
 			expect.any(Object),
 		);
 	});
@@ -675,6 +675,11 @@ describe('git-pull-default-operations', () => {
 			localHead: 'local-main-sha',
 			remoteHead: 'remote-main-sha',
 		});
+		expect(execaMock).toHaveBeenCalledWith(
+			'git',
+			expect.arrayContaining(['merge-base', 'remote-main-sha', 'refs/remotes/origin/main']),
+			expect.any(Object),
+		);
 		expect(fetches).toHaveLength(1);
 	});
 
