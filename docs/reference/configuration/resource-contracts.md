@@ -39,11 +39,15 @@ repo files.
 
 Repo URL matching normalizes trailing `.git` and trailing slash forms.
 
-This policy gates provider selection, not repo contract loading. When resource
-resolution succeeds, the controller still runs each requested repo's
-`run-setup.sh` and `finalizeRepoResourceSetup(input)` so repos can publish
-generated mocks, fixtures, logs, or env derived from selected external
-resources.
+`allowRepoResources: false` gates the full repo-local contract pipeline. The
+controller skips loading `.agent-vm/repo-resources.ts`, skips
+`.agent-vm/run-setup.sh`, and skips `finalizeRepoResourceSetup(input)`.
+Required resources must be supplied as task external resources.
+
+When repo resources are allowed, only requested repos that declare
+`.agent-vm/repo-resources.ts` participate in setup/finalization. A missing
+contract file means the repo has no repo-local resource contract; it does not
+run an implicit empty setup.
 
 ## Repo files
 

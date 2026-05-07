@@ -77,12 +77,6 @@ COPY vm-images/gateways/worker/Dockerfile \\
      vm-images/gateways/worker/build-config.json \\
      /etc/agent-vm/vm-images/gateways/worker/
 
-ARG GIT_SHA
-RUN test -n "\${GIT_SHA}" \\
-    || (echo "GIT_SHA build-arg required" >&2; exit 1) \\
-    && printf '{\\n  "$comment": "System cache identifier. Contents hash into every Gondolin image fingerprint. gitSha=local is the intentional sentinel for bare-metal dev. Container-host builds usually replace gitSha with a build provenance string such as a commit SHA.",\\n  "schemaVersion": 1,\\n  "os": "linux",\\n  "hostSystemType": "container",\\n  "gitSha": "%s"\\n}\\n' "\${GIT_SHA}" \\
-    > /etc/agent-vm/systemCacheIdentifier.json
-
 COPY vm-host-system/start.sh /usr/local/bin/start.sh
 COPY vm-host-system/agent-vm-controller.service /etc/systemd/system/agent-vm-controller.service
 

@@ -57,6 +57,7 @@ export {
 	type TaskState,
 } from './state/task-state.js';
 export type {
+	ControllerGitPushPhase,
 	PhaseName,
 	TaskConfig,
 	TaskEvent,

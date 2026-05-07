@@ -105,17 +105,13 @@ export async function loadRepoResourceDescriptionContract(options: {
 	readonly repoDir: string;
 	readonly repoId: string;
 	readonly repoUrl: string;
-}): Promise<ResolvedRepoResourcesDescription> {
+}): Promise<ResolvedRepoResourcesDescription | null> {
 	const contractPath = path.join(options.repoDir, REPO_RESOURCES_PATH);
 	if (!(await fileExists(contractPath))) {
 		writeRepoContractLoaderLog(
-			`${options.repoId}: no ${REPO_RESOURCES_PATH}; treating repo resources as empty.`,
+			`${options.repoId}: no ${REPO_RESOURCES_PATH}; skipping repo resource setup.`,
 		);
-		return {
-			setupCommand: '.agent-vm/run-setup.sh',
-			requires: {},
-			provides: {},
-		};
+		return null;
 	}
 
 	const result = await runRepoResourcesFunction({

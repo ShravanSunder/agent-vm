@@ -224,7 +224,7 @@ process.exit(1);
 		);
 		await fs.writeFile(
 			systemCacheIdentifierPath,
-			JSON.stringify({ gitSha: 'abc123', schemaVersion: 1 }),
+			JSON.stringify({ gitSha: 'abc123' }),
 			'utf8',
 		);
 		const dependencies: GondolinImageBuilderDependencies = {
@@ -274,7 +274,6 @@ process.exit(1);
 			{
 				fingerprintInput: {
 					gitSha: 'abc123',
-					schemaVersion: 1,
 				},
 				cacheDir: '/cache/gateway-images/openclaw',
 				configDir: '/project/vm-images/gateways/openclaw',
@@ -301,7 +300,7 @@ describe('computeFingerprintFromConfigPath', () => {
 		await fs.writeFile(temporaryConfigPath, fileContents, 'utf8');
 		await fs.writeFile(
 			systemCacheIdentifierPath,
-			JSON.stringify({ gitSha: 'abc123', schemaVersion: 1 }),
+			JSON.stringify({ gitSha: 'abc123' }),
 			'utf8',
 		);
 
@@ -396,7 +395,7 @@ describe('computeFingerprintFromConfigPath', () => {
 		const temporaryConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
 		const identifierPath = path.join(temporaryDirectoryPath, 'systemCacheIdentifier.json');
 		await fs.writeFile(temporaryConfigPath, JSON.stringify(baseBuildConfig()), 'utf8');
-		await fs.writeFile(identifierPath, JSON.stringify({ schemaVersion: 1, gitSha: 'abc123' }), 'utf8');
+		await fs.writeFile(identifierPath, JSON.stringify({ gitSha: 'abc123' }), 'utf8');
 
 		const firstFingerprint = await computeFingerprintFromConfigPath(
 			temporaryConfigPath,
@@ -428,12 +427,12 @@ describe('computeFingerprintFromConfigPath', () => {
 		);
 		await fs.writeFile(
 			firstIdentifierPath,
-			JSON.stringify({ schemaVersion: 1, gitSha: 'abc123' }),
+			JSON.stringify({ gitSha: 'abc123' }),
 			'utf8',
 		);
 		await fs.writeFile(
 			secondIdentifierPath,
-			JSON.stringify({ schemaVersion: 1, gitSha: 'def456' }),
+			JSON.stringify({ gitSha: 'def456' }),
 			'utf8',
 		);
 

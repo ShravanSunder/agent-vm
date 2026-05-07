@@ -26,10 +26,24 @@ const activeTask: ActiveWorkerTask = {
 };
 
 function extractGitArgs(args: readonly string[]): readonly string[] {
-	expect(args[0]).toBe('-c');
-	expect(args[1]).toBe('core.hooksPath=/dev/null');
-	expect(args[2]).toBe('--git-dir=/tmp/task-1/gitdirs/widgets.git');
-	return args.slice(3);
+	expect(args).toContain('--work-tree=/tmp/task-1/gitdirs');
+	let index = 0;
+	while (args[index] === '-c') {
+		index += 2;
+	}
+	while (index < args.length) {
+		const arg = args[index];
+		if (arg === '--git-dir' || arg === '--work-tree') {
+			index += 2;
+			continue;
+		}
+		if (arg?.startsWith('--git-dir=') || arg?.startsWith('--work-tree=')) {
+			index += 1;
+			continue;
+		}
+		break;
+	}
+	return args.slice(index);
 }
 
 describe('git-pull-default-operations', () => {
@@ -104,6 +118,7 @@ describe('git-pull-default-operations', () => {
 				'-c',
 				'core.hooksPath=/dev/null',
 				'--git-dir=/tmp/task-1/gitdirs/widgets.git',
+				'--work-tree=/tmp/task-1/gitdirs',
 				'fetch',
 				'--prune',
 			]),
@@ -115,6 +130,7 @@ describe('git-pull-default-operations', () => {
 				'-c',
 				'core.hooksPath=/dev/null',
 				'--git-dir=/tmp/task-1/gitdirs/widgets.git',
+				'--work-tree=/tmp/task-1/gitdirs',
 				'update-ref',
 				'refs/heads/main',
 				'refs/remotes/origin/main',
@@ -165,6 +181,7 @@ describe('git-pull-default-operations', () => {
 	});
 
 	test('refuses when the local default branch ref is missing after fetch', async () => {
+		const recordEvent = vi.fn(async () => {});
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
 			const gitArgs = extractGitArgs(args);
 			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
@@ -183,11 +200,56 @@ describe('git-pull-default-operations', () => {
 				activeTask,
 				repoUrl: 'https://github.com/acme/widgets.git',
 				githubToken: 'token',
+				recordEvent,
 			}),
 		).resolves.toMatchObject({
 			kind: 'refused-not-fast-forward',
 			success: false,
 			error: expect.stringContaining("Local default branch ref 'refs/heads/main' is missing"),
+		});
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-pull-failed',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			attempts: 0,
+			message: expect.stringContaining("Local default branch ref 'refs/heads/main' is missing"),
+		});
+	});
+
+	test('refuses and emits a terminal event when local default cannot fast-forward', async () => {
+		const recordEvent = vi.fn(async () => {});
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: '', exitCode: 0 };
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
+				return { stdout: 'local-main-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'merge-base' && gitArgs.includes('--is-ancestor')) {
+				return { stdout: '', stderr: '', exitCode: 1 };
+			}
+			if (gitArgs[0] === 'log') return { stdout: '', stderr: '', exitCode: 0 };
+			return { stdout: '', stderr: '', exitCode: 1 };
+		});
+
+		const result = await pullDefaultForTask({
+			activeTask,
+			repoUrl: 'https://github.com/acme/widgets.git',
+			githubToken: 'token',
+			recordEvent,
+		});
+
+		expect(result).toMatchObject({
+			kind: 'refused-not-fast-forward',
+			success: false,
+			error: expect.stringContaining('cannot be fast-forwarded'),
+		});
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-pull-failed',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			attempts: 0,
+			message: expect.stringContaining('cannot be fast-forwarded'),
 		});
 	});
 
@@ -262,17 +324,17 @@ describe('git-pull-default-operations', () => {
 		]);
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
-			expect.arrayContaining(['merge-base', 'local-agent-sha', 'refs/remotes/origin/main']),
+			expect.arrayContaining(['merge-base', 'remote-agent-sha', 'refs/remotes/origin/main']),
 			expect.any(Object),
 		);
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
-			expect.arrayContaining(['rev-list', '--count', 'refs/remotes/origin/main..local-agent-sha']),
+			expect.arrayContaining(['rev-list', '--count', 'refs/remotes/origin/main..remote-agent-sha']),
 			expect.any(Object),
 		);
 		expect(execaMock).toHaveBeenCalledWith(
 			'git',
-			expect.arrayContaining(['rev-list', '--count', 'local-agent-sha..refs/remotes/origin/main']),
+			expect.arrayContaining(['rev-list', '--count', 'remote-agent-sha..refs/remotes/origin/main']),
 			expect.any(Object),
 		);
 	});
@@ -613,11 +675,17 @@ describe('git-pull-default-operations', () => {
 			localHead: 'local-main-sha',
 			remoteHead: 'remote-main-sha',
 		});
+		expect(execaMock).toHaveBeenCalledWith(
+			'git',
+			expect.arrayContaining(['merge-base', 'remote-main-sha', 'refs/remotes/origin/main']),
+			expect.any(Object),
+		);
 		expect(fetches).toHaveLength(1);
 	});
 
 	test('refuses to move checked-out default branch when the worker worktree is dirty', async () => {
 		const updatedRefs: string[][] = [];
+		const recordEvent = vi.fn(async () => {});
 		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
 			const gitArgs = extractGitArgs(args);
 			if (gitArgs[0] === 'fetch') return { stdout: '', stderr: '', exitCode: 0 };
@@ -643,6 +711,7 @@ describe('git-pull-default-operations', () => {
 			currentBranch: 'main',
 			currentHead: 'local-main-sha',
 			worktreeDirty: true,
+			recordEvent,
 		});
 
 		expect(result).toMatchObject({
@@ -651,6 +720,12 @@ describe('git-pull-default-operations', () => {
 			error: expect.stringContaining('uncommitted changes'),
 		});
 		expect(updatedRefs).toEqual([]);
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-pull-failed',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			attempts: 0,
+			message: expect.stringContaining('uncommitted changes'),
+		});
 	});
 
 	test('reports detached HEAD without current branch fetch', async () => {
@@ -751,6 +826,57 @@ describe('git-pull-default-operations', () => {
 			repoUrl: 'https://github.com/acme/widgets.git',
 			attempts: 1,
 			message: 'RPC failed; HTTP 503 EAI_AGAIN pull failure 1',
+			retryDelaySeconds: 2,
+		});
+	});
+
+	test('retries fetches that terminate without an exit code', async () => {
+		vi.useFakeTimers();
+		let fetchAttempts = 0;
+		const recordEvent = vi.fn(async () => {});
+		execaMock.mockImplementation(async (_bin: string, args: readonly string[]) => {
+			const gitArgs = extractGitArgs(args);
+			if (gitArgs[0] === 'fetch') {
+				fetchAttempts += 1;
+				if (fetchAttempts === 1) {
+					return {
+						stdout: '',
+						stderr: 'killed',
+						exitCode: undefined,
+					};
+				}
+				return { stdout: '', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/remotes/origin/main')) {
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'rev-parse' && gitArgs.includes('refs/heads/main')) {
+				return { stdout: 'remote-main-sha', stderr: '', exitCode: 0 };
+			}
+			if (gitArgs[0] === 'branch') return { stdout: 'agent/task-1', stderr: '', exitCode: 0 };
+			if (gitArgs[0] === 'merge-base') return { stdout: 'fork-sha', stderr: '', exitCode: 0 };
+			if (gitArgs[0] === 'rev-list') return { stdout: '0', stderr: '', exitCode: 0 };
+			if (gitArgs[0] === 'log') return { stdout: '', stderr: '', exitCode: 0 };
+			return { stdout: '', stderr: '', exitCode: 0 };
+		});
+
+		const resultPromise = pullDefaultForTask({
+			activeTask,
+			repoUrl: 'https://github.com/acme/widgets.git',
+			githubToken: 'token',
+			recordEvent,
+		});
+
+		await vi.advanceTimersByTimeAsync(2_000);
+		const result = await resultPromise;
+
+		expect(fetchAttempts).toBe(2);
+		expect(result.success).toBe(true);
+		expect(recordEvent).toHaveBeenCalledWith({
+			event: 'controller-git-pull-retry',
+			repoUrl: 'https://github.com/acme/widgets.git',
+			attempts: 1,
+			message: expect.stringContaining('terminated without an exit code'),
 			retryDelaySeconds: 2,
 		});
 	});

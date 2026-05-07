@@ -358,11 +358,12 @@ Repo resources are TCP-only and compile to Gondolin `tcpHosts`, env, and
 read-only VFS mounts. They do not modify `allowedHosts`; HTTP egress remains a
 zone-level policy.
 
-`allowRepoResources` gates provider selection. Requested repos may still run
-their `.agent-vm/run-setup.sh` and `finalizeRepoResourceSetup(input)`
-after resource resolution, for example to publish generated fixtures or derive
-env from selected external resources. See
-[resource-contracts.md](resource-contracts.md).
+`allowRepoResources: false` disables the entire repo-local resource contract
+pipeline. The controller does not load `.agent-vm/repo-resources.ts`, does not
+run `.agent-vm/run-setup.sh`, and does not call
+`finalizeRepoResourceSetup(input)`. Required resources must be supplied as
+task external resources. `true` and `string[]` allow matching repos with a
+contract file to run setup/finalization after resource resolution.
 
 ## secrets
 

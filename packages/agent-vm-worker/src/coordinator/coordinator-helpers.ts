@@ -17,6 +17,50 @@ export function sanitizeErrorMessage(message: string): string {
 		.replace(/OPENAI_API_KEY=[^\s]+/gu, 'OPENAI_API_KEY=***');
 }
 
+function formatNonErrorDetail(error: unknown): string {
+	if (typeof error === 'string') {
+		return error;
+	}
+	if (typeof error === 'number' || typeof error === 'boolean' || typeof error === 'bigint') {
+		return error.toString();
+	}
+	if (typeof error === 'symbol') {
+		return error.description ?? 'Symbol';
+	}
+	if (error === null) {
+		return 'null';
+	}
+	try {
+		return JSON.stringify(error) ?? 'undefined';
+	} catch {
+		return 'unserializable non-error value';
+	}
+}
+
+function collectErrorMessages(error: unknown, seen: Set<unknown>): readonly string[] {
+	if (error === undefined || seen.has(error)) {
+		return [];
+	}
+	seen.add(error);
+
+	if (error instanceof AggregateError) {
+		const childMessages = error.errors.flatMap((innerError: unknown) =>
+			collectErrorMessages(innerError, seen),
+		);
+		const causeMessages = collectErrorMessages(error.cause, seen);
+		return [error.message, ...childMessages, ...causeMessages];
+	}
+	if (error instanceof Error) {
+		return [error.message, ...collectErrorMessages(error.cause, seen)];
+	}
+	return [formatNonErrorDetail(error)];
+}
+
+export function formatTaskFailureReason(error: unknown): string {
+	const messages = collectErrorMessages(error, new Set<unknown>());
+	return sanitizeErrorMessage(messages.length > 0 ? messages.join('\nCaused by: ') : String(error));
+}
+
 export function buildTaskConfig(input: CreateTaskInput, config: WorkerConfig): TaskConfig {
 	return {
 		taskId: input.taskId,

@@ -28,7 +28,6 @@ describe('isGatewayImageCached', () => {
 		} satisfies Partial<BuildConfig>;
 		const systemCacheIdentifier = {
 			gitSha: 'controller-cache-sha',
-			schemaVersion: 1,
 		};
 		await fs.mkdir(path.dirname(systemConfigPath), { recursive: true });
 		await fs.writeFile(buildConfigPath, JSON.stringify(buildConfig), 'utf8');

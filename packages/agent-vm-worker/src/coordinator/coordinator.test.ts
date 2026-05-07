@@ -369,7 +369,7 @@ describe('coordinator', () => {
 		});
 
 		await waitForStatus(coordinator, taskId, 'failed');
-		expect(coordinator.getTaskState(taskId)?.failureReason).toContain('git -c safe.directory=');
+		expect(coordinator.getTaskState(taskId)?.failureReason).toContain('git branch --show-current');
 		expect(coordinator.getTaskState(taskId)?.failureReason).toContain(
 			'terminated without an exit code',
 		);

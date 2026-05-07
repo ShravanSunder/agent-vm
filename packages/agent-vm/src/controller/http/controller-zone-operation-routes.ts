@@ -91,6 +91,84 @@ function writeControllerRouteLog(message: string): void {
 	process.stderr.write(`[controller-zone-operation-routes] ${message}\n`);
 }
 
+function errorMessage(error: unknown, fallbackError: string): string {
+	return error instanceof Error ? error.message : fallbackError;
+}
+
+function errorDetails(error: unknown): readonly string[] | undefined {
+	if (!(error instanceof AggregateError)) {
+		return undefined;
+	}
+	const details = collectErrorDetailMessages(error, new Set<unknown>());
+	return details.length > 0 ? details : undefined;
+}
+
+function formatNonErrorDetail(error: unknown): string {
+	if (typeof error === 'string') {
+		return error;
+	}
+	if (typeof error === 'number' || typeof error === 'boolean' || typeof error === 'bigint') {
+		return error.toString();
+	}
+	if (typeof error === 'symbol') {
+		return error.description ?? 'Symbol';
+	}
+	if (error === null) {
+		return 'null';
+	}
+	try {
+		return JSON.stringify(error) ?? 'undefined';
+	} catch {
+		return 'unserializable non-error value';
+	}
+}
+
+function collectErrorDetailMessages(error: unknown, seen: Set<unknown>): readonly string[] {
+	if (seen.has(error)) {
+		return [];
+	}
+	seen.add(error);
+
+	if (error instanceof AggregateError) {
+		const childMessages = error.errors.flatMap((innerError: unknown) =>
+			collectErrorDetailMessages(innerError, seen),
+		);
+		const causeMessages = collectErrorDetailMessages(error.cause, seen);
+		return [error.message, ...childMessages, ...causeMessages];
+	}
+	if (error instanceof Error) {
+		const causeMessages = collectErrorDetailMessages(error.cause, seen);
+		return causeMessages.length > 0 ? [error.message, ...causeMessages] : [error.message];
+	}
+	if (error === undefined) {
+		return [];
+	}
+	return [formatNonErrorDetail(error)];
+}
+
+function buildErrorResponseBody(
+	error: unknown,
+	fallbackError: string,
+): { readonly details?: readonly string[]; readonly error: string } {
+	const details = errorDetails(error);
+	return {
+		error: errorMessage(error, fallbackError),
+		...(details ? { details } : {}),
+	};
+}
+
+function scrubErrorResponseBody(responseBody: {
+	readonly details?: readonly string[];
+	readonly error: string;
+}): { readonly details?: readonly string[]; readonly error: string } {
+	return {
+		error: scrubGithubTokenFromOutput(responseBody.error),
+		...(responseBody.details
+			? { details: responseBody.details.map((detail) => scrubGithubTokenFromOutput(detail)) }
+			: {}),
+	};
+}
+
 function zoneRuntimeErrorStatus(error: unknown): 404 | 405 | 409 | 412 | 500 | 502 | 503 {
 	if (
 		error instanceof ControllerZoneNotFoundError ||
@@ -192,9 +270,7 @@ function zoneRuntimeErrorBody(error: unknown):
 			zoneId: error.zoneId,
 		};
 	}
-	return {
-		error: error instanceof Error ? error.message : 'zone-operation-failed',
-	};
+	return buildErrorResponseBody(error, 'zone-operation-failed');
 }
 
 export function registerControllerZoneOperationRoutes(
@@ -322,12 +398,7 @@ export function registerControllerZoneOperationRoutes(
 						409,
 					);
 				}
-				return context.json(
-					{
-						error: error instanceof Error ? error.message : 'worker-task-failed',
-					},
-					500,
-				);
+				return context.json(buildErrorResponseBody(error, 'worker-task-failed'), 500);
 			}
 		});
 	}
@@ -346,8 +417,7 @@ export function registerControllerZoneOperationRoutes(
 				if (runtimeStatus !== 500) {
 					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
 				}
-				const message = error instanceof Error ? error.message : 'get-task-state-failed';
-				return context.json({ error: message }, 500);
+				return context.json(buildErrorResponseBody(error, 'get-task-state-failed'), 500);
 			}
 		});
 	}
@@ -364,11 +434,16 @@ export function registerControllerZoneOperationRoutes(
 				if (runtimeStatus !== 500) {
 					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
 				}
-				const message = error instanceof Error ? error.message : 'close-task-failed';
 				if (error instanceof ControllerTaskNotReadyError) {
-					return context.json({ status: 'not-ready', error: message }, 409);
+					return context.json(
+						{
+							status: 'not-ready',
+							...buildErrorResponseBody(error, 'close-task-failed'),
+						},
+						409,
+					);
 				}
-				return context.json({ error: message }, 500);
+				return context.json(buildErrorResponseBody(error, 'close-task-failed'), 500);
 			}
 		});
 	}
@@ -397,16 +472,11 @@ export function registerControllerZoneOperationRoutes(
 				if (runtimeStatus !== 500) {
 					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
 				}
-				const message = error instanceof Error ? error.message : 'push-branches-failed';
+				const responseBody = buildErrorResponseBody(error, 'push-branches-failed');
 				writeControllerRouteLog(
-					`push-branches failed for zone '${context.req.param('zoneId')}' task '${context.req.param('taskId')}': ${message}`,
+					`push-branches failed for zone '${context.req.param('zoneId')}' task '${context.req.param('taskId')}': ${responseBody.error}`,
 				);
-				return context.json(
-					{
-						error: message,
-					},
-					error instanceof PushBranchesValidationError ? 400 : 500,
-				);
+				return context.json(responseBody, error instanceof PushBranchesValidationError ? 400 : 500);
 			}
 		});
 	}
@@ -436,9 +506,6 @@ export function registerControllerZoneOperationRoutes(
 					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
 				}
 				const isValidationError = error instanceof PullDefaultValidationError;
-				const message = scrubGithubTokenFromOutput(
-					error instanceof Error ? error.message : 'pull-default-failed',
-				);
 				const logDetail = scrubGithubTokenFromOutput(
 					error instanceof Error
 						? isValidationError
@@ -450,9 +517,7 @@ export function registerControllerZoneOperationRoutes(
 					`pull-default failed for zone '${context.req.param('zoneId')}' task '${context.req.param('taskId')}': ${logDetail}`,
 				);
 				return context.json(
-					{
-						error: message,
-					},
+					scrubErrorResponseBody(buildErrorResponseBody(error, 'pull-default-failed')),
 					isValidationError ? 400 : 500,
 				);
 			}
