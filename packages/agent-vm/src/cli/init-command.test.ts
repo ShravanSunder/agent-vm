@@ -1412,17 +1412,18 @@ describe('scaffoldAgentVmProject', () => {
 		);
 		expect(JSON.parse(raw)).toMatchObject({
 			$comment:
-				'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change cacheProfile or cacheFormat when the outer cache contract changes.',
+				'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change imageCacheFormat when the image cache contract changes.',
 			schemaVersion: 1,
-			os: expect.any(String),
 			hostSystemType: 'bare-metal',
-			cacheProfile: 'default',
-			cacheFormat: 'gondolin-cache-v1',
+			imageCacheFormat: 'gondolin-image-cache-v1',
 		});
+		expect(JSON.parse(raw)).not.toHaveProperty('os');
+		expect(JSON.parse(raw)).not.toHaveProperty('cacheProfile');
+		expect(JSON.parse(raw)).not.toHaveProperty('cacheFormat');
 		expect(result.created).toContain('config/systemCacheIdentifier.json');
 	});
 
-	it('writes linux container identifiers and no .env.local for container scaffolds', async () => {
+	it('writes container identifiers and no .env.local for container scaffolds', async () => {
 		const targetDir = await createTestDirectory();
 
 		const result = await scaffoldAgentVmProject(
@@ -1445,12 +1446,13 @@ describe('scaffoldAgentVmProject', () => {
 		);
 		expect(JSON.parse(raw)).toMatchObject({
 			schemaVersion: 1,
-			os: 'linux',
 			hostSystemType: 'container',
-			cacheProfile: 'default',
-			cacheFormat: 'gondolin-cache-v1',
+			imageCacheFormat: 'gondolin-image-cache-v1',
 		});
 		expect(JSON.parse(raw)).not.toHaveProperty('gitSha');
+		expect(JSON.parse(raw)).not.toHaveProperty('os');
+		expect(JSON.parse(raw)).not.toHaveProperty('cacheProfile');
+		expect(JSON.parse(raw)).not.toHaveProperty('cacheFormat');
 		expect(result.created).not.toContain('.env.local');
 		await expect(fs.access(path.join(targetDir, '.env.local'))).rejects.toMatchObject({
 			code: 'ENOENT',
@@ -1514,8 +1516,8 @@ describe('scaffoldAgentVmProject', () => {
 
 		const systemCacheIdentifier = z
 			.object({
-				os: z.literal('linux'),
 				hostSystemType: z.literal('container'),
+				imageCacheFormat: z.literal('gondolin-image-cache-v1'),
 			})
 			.parse(
 				JSON.parse(

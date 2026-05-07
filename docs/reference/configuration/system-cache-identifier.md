@@ -11,22 +11,19 @@ image contents even when `build-config.jsonc` does not change.
 
 ```json
 {
-  "$comment": "Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change cacheProfile or cacheFormat when the outer cache contract changes.",
+  "$comment": "Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change imageCacheFormat when the image cache contract changes.",
   "schemaVersion": 1,
-  "os": "darwin",
   "hostSystemType": "bare-metal",
-  "cacheProfile": "default",
-  "cacheFormat": "gondolin-cache-v1"
+  "imageCacheFormat": "gondolin-image-cache-v1"
 }
 ```
 
-The loader only requires valid JSON. The fields above are the scaffolded
-convention, not a strict schema.
+Versioned identifiers use a strict schema. Legacy unversioned identifiers stay
+permissive so existing caches remain readable.
 
-`cacheProfile` names the broad cache compatibility profile. `cacheFormat`
-names the expected cache layout/contract. Change either value when the outer
-cache contract changes in a way that should invalidate shared Gondolin image
-fingerprints.
+`imageCacheFormat` names the expected image cache layout/contract. Change it
+when the image cache contract changes in a way that should invalidate shared
+Gondolin image fingerprints.
 
 ## Local vs Container
 
@@ -34,11 +31,10 @@ Local scaffold:
 
 ```json
 {
+  "$comment": "Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change imageCacheFormat when the image cache contract changes.",
   "schemaVersion": 1,
-  "os": "darwin",
   "hostSystemType": "bare-metal",
-  "cacheProfile": "default",
-  "cacheFormat": "gondolin-cache-v1"
+  "imageCacheFormat": "gondolin-image-cache-v1"
 }
 ```
 
@@ -46,17 +42,17 @@ Container-host scaffold:
 
 ```json
 {
+  "$comment": "Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change imageCacheFormat when the image cache contract changes.",
   "schemaVersion": 1,
-  "os": "darwin",
   "hostSystemType": "container",
-  "cacheProfile": "default",
-  "cacheFormat": "gondolin-cache-v1"
+  "imageCacheFormat": "gondolin-image-cache-v1"
 }
 ```
 
-The `os` value is captured from the machine that ran `agent-vm init`. Container
-host scaffolds use the same checked-in compatibility identifier instead of
-rewriting it during image builds.
+`hostSystemType` distinguishes local bare-metal controllers from generic
+container-host deployments. The identifier intentionally does not capture host
+operating system names; the current image cache contract is the same across
+macOS and Linux for matching Tool VM and gateway image inputs.
 
 ## Failure Behavior
 
