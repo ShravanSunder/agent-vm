@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('publish workflow', () => {
-	it('ensures managed base images exist as multi-arch manifest lists before npm publish', async () => {
+	it('ensures managed base images exist as multi-arch manifest lists before optional npm publish', async () => {
 		const workflow = await fs.readFile(
 			path.join(process.cwd(), '.github', 'workflows', 'publish.yml'),
 			'utf8',
@@ -13,7 +13,13 @@ describe('publish workflow', () => {
 		expect(workflow).toContain('base_images_mode');
 		expect(workflow).toContain('managed_image_tag');
 		expect(workflow).toContain('source_managed_image_tag');
+		expect(workflow).toContain('default: false');
+		expect(workflow).toContain('Cache apt packages');
+		expect(workflow).toContain('Install Zig for Gondolin smoke tests');
 		expect(workflow).toContain('Detect managed base image changes');
+		expect(workflow).toContain(
+			"PUBLISH_NPM: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_npm }}",
+		);
 		expect(workflow).toContain('MANAGED_IMAGE_TAG="$(node -e');
 		expect(workflow).toContain(
 			'Cannot publish npm with managed_image_tag override; update packages/agent-vm/managed-images.json instead.',
