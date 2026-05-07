@@ -21,7 +21,7 @@ import {
 	buildZigUpgradeHint,
 	isVersionAtLeast,
 } from '../operations/doctor.js';
-import type { RunTaskFn, TaskOutput } from '../shared/run-task.js';
+import type { RunTaskContext, RunTaskFn, TaskOutput } from '../shared/run-task.js';
 import { formatZodError } from './format-zod-error.js';
 import { syncBundledOpenClawPluginBundle } from './openclaw-plugin-bundle.js';
 
@@ -102,6 +102,26 @@ interface ImageTarget {
 
 function imageTargetKey(imageTarget: Pick<ImageTarget, 'family' | 'name'>): string {
 	return `${imageTarget.family}/${imageTarget.name}`;
+}
+
+function startElapsedStatusHeartbeat(
+	taskContext: RunTaskContext | undefined,
+	baseStatus: string,
+): () => void {
+	taskContext?.setStatus(baseStatus);
+	if (taskContext?.interactive !== true) {
+		return () => {};
+	}
+
+	const startedAtMs = Date.now();
+	const heartbeatInterval = setInterval(() => {
+		const elapsedSeconds = Math.max(1, Math.floor((Date.now() - startedAtMs) / 1000));
+		taskContext.setStatus(`${baseStatus} · ${elapsedSeconds}s elapsed`);
+	}, 8_000);
+
+	return () => {
+		clearInterval(heartbeatInterval);
+	};
 }
 
 async function resolveOciImageTagFromConfig(buildConfigPath: string): Promise<string> {
@@ -364,15 +384,24 @@ export async function runBuildCommand(
 		await runTaskStep(
 			`Gondolin: ${imageTarget.family}/${imageTarget.name}`,
 			async (taskContext) => {
-				taskContext?.setStatus(
+				const stopHeartbeat = startElapsedStatusHeartbeat(
+					taskContext,
 					shouldResetGondolinCache ? 'building vm assets' : 'checking vm assets',
 				);
-				const result = await buildGondolinImage({
-					buildConfigPath: imageTarget.buildConfigPath,
-					systemCacheIdentifierPath: imageTarget.systemCacheIdentifierPath,
-					cacheDir: imageTarget.cacheDirectory,
-					...(shouldResetGondolinCache ? { fullReset: true } : {}),
-				});
+				let result: BuildImageResult;
+				try {
+					result = await buildGondolinImage({
+						buildConfigPath: imageTarget.buildConfigPath,
+						systemCacheIdentifierPath: imageTarget.systemCacheIdentifierPath,
+						cacheDir: imageTarget.cacheDirectory,
+						...(shouldResetGondolinCache ? { fullReset: true } : {}),
+						...(taskContext?.interactive === true && taskContext.streamPreview
+							? { streamPreview: taskContext.streamPreview }
+							: {}),
+					});
+				} finally {
+					stopHeartbeat();
+				}
 				taskContext?.setStatus(result.built ? 'vm assets ready' : 'vm assets cache hit');
 			},
 		);

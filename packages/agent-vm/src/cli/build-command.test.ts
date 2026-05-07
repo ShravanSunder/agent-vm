@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Writable } from 'node:stream';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import {
@@ -639,7 +639,7 @@ describe('runBuildCommand', () => {
 		expect(taskTitles).toContain('Gondolin: toolVm/default');
 	});
 
-	it('routes Tasuku stream preview only into child-process Docker builds', async () => {
+	it('routes Tasuku stream preview into child-process image builds', async () => {
 		const taskStreamPreview = new Writable({
 			write(_chunk, _encoding, callback) {
 				callback();
@@ -677,10 +677,68 @@ describe('runBuildCommand', () => {
 		);
 
 		expect(dockerStreamPreviews).toEqual([taskStreamPreview]);
-		expect(gondolinStreamPreviews).toEqual([undefined, undefined]);
+		expect(gondolinStreamPreviews).toEqual([taskStreamPreview, taskStreamPreview]);
 		expect(taskStatuses).toContain('docker build');
 		expect(taskStatuses).toContain('docker image ready');
 		expect(taskStatuses).toContain('building vm assets');
+		expect(taskStatuses).toContain('vm assets ready');
+	});
+
+	it('keeps Gondolin task status alive while VM assets are building quietly', async () => {
+		vi.useFakeTimers();
+		const taskStatuses: (string | undefined)[] = [];
+		let finishGondolinBuild: (() => void) | undefined;
+
+		const buildPromise = runBuildCommand(
+			{
+				forceRebuild: true,
+				systemConfig: {
+					...createTestSystemConfig(),
+					imageProfiles: {
+						gateways: {},
+						toolVms: {
+							default: {
+								type: 'toolVm',
+								buildConfig: '/project/vm-images/tool-vms/default/build-config.json',
+							},
+						},
+					},
+				},
+			},
+			{
+				buildGondolinImage: async () => {
+					await new Promise<void>((resolve) => {
+						finishGondolinBuild = resolve;
+					});
+					return { built: true, fingerprint: 'interactive-fp', imagePath: '/cache/interactive' };
+				},
+				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+				runTask: async (_title, fn) => {
+					await fn({
+						interactive: true,
+						setOutput: () => {},
+						setStatus: (status) => {
+							taskStatuses.push(status);
+						},
+						streamPreview: new Writable({
+							write(_chunk, _encoding, callback) {
+								callback();
+							},
+						}),
+					});
+				},
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		await vi.advanceTimersByTimeAsync(16_000);
+		finishGondolinBuild?.();
+		await buildPromise;
+		vi.useRealTimers();
+
+		expect(taskStatuses).toContain('building vm assets');
+		expect(taskStatuses).toContain('building vm assets · 8s elapsed');
+		expect(taskStatuses).toContain('building vm assets · 16s elapsed');
 		expect(taskStatuses).toContain('vm assets ready');
 	});
 
