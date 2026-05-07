@@ -189,9 +189,7 @@ async function runBuildCommand(
 ): Promise<void> {
 	await runBuildCommandDefault(options, {
 		computeGondolinFingerprint: async (fingerprintOptions) =>
-			fingerprintOptions.buildConfigPath.includes('tool-vms')
-				? 'test-tool-fingerprint'
-				: `test-gateway-fingerprint:${fingerprintOptions.buildConfigPath}`,
+			`test-fingerprint:${fingerprintOptions.buildConfigPath}`,
 		resolveRequiredZigVersion: async () => '0.15.2',
 		resolveZigVersion: async () => '0.15.2',
 		...dependencies,
