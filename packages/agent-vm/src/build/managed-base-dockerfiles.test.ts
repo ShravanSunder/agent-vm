@@ -15,7 +15,7 @@ describe('managed base Dockerfiles', () => {
 		async (_baseName: string, dockerfilePath: string) => {
 			const dockerfile = await fs.readFile(path.join(process.cwd(), dockerfilePath), 'utf8');
 
-			expect(dockerfile).toContain('ln -sf /proc/self/fd /dev/fd');
+			expect(dockerfile).toContain('ln -sfn /proc/self/fd /dev/fd');
 		},
 	);
 });

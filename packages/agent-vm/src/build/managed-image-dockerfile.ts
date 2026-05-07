@@ -8,9 +8,9 @@ import { formatZodError } from '../cli/format-zod-error.js';
 
 export type ManagedImageBase = 'openclaw-gateway' | 'tool-vm' | 'worker-gateway';
 
-export const MANAGED_BASE_IMAGE_VERSION = '0.0.48';
+export const MANAGED_BASE_IMAGE_VERSION = '0.0.49';
 export const MANAGED_OPENCLAW_VERSION = '2026.5.2';
-export const MANAGED_OPENCLAW_AGENT_VM_PLUGIN_VERSION = '0.0.48';
+export const MANAGED_OPENCLAW_AGENT_VM_PLUGIN_VERSION = '0.0.49';
 
 const managedOpenClawAgentVmPluginPackageName = '@agent-vm/openclaw-agent-vm-plugin';
 const managedOpenClawAgentVmPluginPackage = `${managedOpenClawAgentVmPluginPackageName}@${MANAGED_OPENCLAW_AGENT_VM_PLUGIN_VERSION}`;
