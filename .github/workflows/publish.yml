@@ -74,7 +74,26 @@ jobs:
         run: npm install -g npm@latest
 
       - name: Install age
-        run: sudo apt-get update && sudo apt-get install -y age qemu-system-arm
+        run: sudo apt-get update && sudo apt-get install -y age qemu-system-arm xz-utils
+
+      - name: Install Zig for Gondolin smoke tests
+        run: |
+          set -euo pipefail
+          ZON_PATH="$(find node_modules -path '*/@earendil-works/gondolin/dist/guest/build.zig.zon' -print -quit)"
+          ZIG_VERSION="$(sed -n 's/.*\.minimum_zig_version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${ZON_PATH}")"
+          if [[ -z "${ZIG_VERSION}" ]]; then
+            echo "Could not resolve Gondolin minimum Zig version from ${ZON_PATH}" >&2
+            exit 1
+          fi
+          case "$(uname -m)" in
+            x86_64) ZIG_ARCH="x86_64" ;;
+            aarch64|arm64) ZIG_ARCH="aarch64" ;;
+            *) echo "Unsupported CI architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-${ZIG_ARCH}-linux-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+          sudo tar -C /opt -xf /tmp/zig.tar.xz
+          sudo ln -sf "/opt/zig-${ZIG_ARCH}-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
+          zig version
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
