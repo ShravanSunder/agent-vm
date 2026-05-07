@@ -86,6 +86,9 @@ current fingerprint plus the two newest previous fingerprint directories. The
 retention count is fixed; there is no `system.jsonc` cache retention field.
 Failed builds do not prune cache entries. Manual `agent-vm cache clean
 --confirm` remains more aggressive and deletes every stale image generation.
+When multiple image profiles resolve to the same effective Gondolin fingerprint
+in one build, the first profile performs the expensive asset build and later
+profiles materialize profile-local cache entries from those assets.
 
 ## runtimeDir
 
@@ -331,7 +334,9 @@ Tool VMs, not gateway profiles and not OpenClaw user profiles.
 
 `toolVmProfiles[*].imageProfile` must reference
 `imageProfiles.toolVms[*]`. The build pipeline can build multiple Tool VM image
-profiles from one config.
+profiles from one config. Identical effective image fingerprints are deduped
+during `agent-vm build`, so separate profile names do not by themselves force
+separate Gondolin asset conversion work.
 
 ## zones[].resources
 

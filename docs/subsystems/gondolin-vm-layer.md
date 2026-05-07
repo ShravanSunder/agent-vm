@@ -197,6 +197,12 @@ VM images are built from a `BuildConfig` (loaded from JSON) through Gondolin's `
 
 `buildGatewayImage()` in `gateway-image-builder.ts` is a thin wrapper that loads the config and delegates to `buildGondolinImage()`, supporting dependency injection for testing.
 
+`agent-vm build` dedupes repeated effective fingerprints across configured image
+profiles in the same invocation. The canonical profile runs the Gondolin asset
+build; duplicate profiles get profile-local cache entries materialized from the
+canonical assets, preserving runtime profile cache hits without repeating the
+Docker-to-ext4 conversion.
+
 The `fullReset` option deletes the cached image directory before building, forcing a clean rebuild.
 
 ---

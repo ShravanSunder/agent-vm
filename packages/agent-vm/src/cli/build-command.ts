@@ -5,7 +5,10 @@ import type { BuildImageResult } from '@agent-vm/gondolin-adapter';
 import { z } from 'zod';
 
 import { buildDockerImage as buildDockerImageDefault } from '../build/docker-image-builder.js';
-import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
+import {
+	buildGondolinImage as buildGondolinImageDefault,
+	computeFingerprintFromConfigPath,
+} from '../build/gondolin-image-builder.js';
 import {
 	generateManagedDockerfile as generateManagedDockerfileDefault,
 	resolveManagedImageRelease as resolveManagedImageReleaseDefault,
@@ -42,6 +45,10 @@ export interface BuildCommandDependencies {
 		readonly fullReset?: boolean;
 		readonly streamPreview?: TaskOutput;
 	}) => Promise<BuildImageResult>;
+	readonly computeGondolinFingerprint?: (options: {
+		readonly buildConfigPath: string;
+		readonly systemCacheIdentifierPath: string;
+	}) => Promise<string>;
 	readonly deleteStaleImageDirectories?: (entries: readonly StaleImageEntry[]) => Promise<void>;
 	readonly findPrunableImageDirectories?: (options: {
 		readonly cacheDir: string;
@@ -78,6 +85,12 @@ const ociImageTagSchema = z.object({
 
 const RETAIN_STALE_IMAGE_GENERATIONS_PER_PROFILE = 2;
 const gatewayRuntimeRecordFileName = 'gateway-runtime.json';
+const gondolinAssetFileNames = [
+	'manifest.json',
+	'rootfs.ext4',
+	'initramfs.cpio.lz4',
+	'vmlinuz-virt',
+] as const;
 
 const openClawManagedPackageConfigSchema = z
 	.object({
@@ -134,6 +147,70 @@ function setCurrentImageFingerprint(
 		return;
 	}
 	currentFingerprints.toolVms[imageTarget.name] = fingerprint;
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+	try {
+		await fs.access(filePath);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function hasGondolinAssets(imagePath: string): Promise<boolean> {
+	for (const fileName of gondolinAssetFileNames) {
+		// oxlint-disable-next-line no-await-in-loop -- each missing file points at the same image generation
+		if (!(await pathExists(path.join(imagePath, fileName)))) {
+			return false;
+		}
+	}
+	return true;
+}
+
+async function linkOrCopyImageAsset(sourcePath: string, targetPath: string): Promise<void> {
+	try {
+		await fs.link(sourcePath, targetPath);
+	} catch (error) {
+		if (
+			typeof error === 'object' &&
+			error !== null &&
+			'code' in error &&
+			(error.code === 'EXDEV' || error.code === 'EPERM' || error.code === 'EOPNOTSUPP')
+		) {
+			await fs.copyFile(sourcePath, targetPath);
+			return;
+		}
+		throw error;
+	}
+}
+
+async function materializeGondolinImageAlias(options: {
+	readonly fingerprint: string;
+	readonly fullReset: boolean;
+	readonly sourceImagePath: string;
+	readonly targetCacheDirectory: string;
+}): Promise<string> {
+	const targetImagePath = path.join(options.targetCacheDirectory, options.fingerprint);
+	if (path.resolve(options.sourceImagePath) === path.resolve(targetImagePath)) {
+		return targetImagePath;
+	}
+	if (options.fullReset) {
+		await fs.rm(targetImagePath, { recursive: true, force: true });
+	}
+	if (await hasGondolinAssets(targetImagePath)) {
+		return targetImagePath;
+	}
+	await fs.rm(targetImagePath, { recursive: true, force: true });
+	await fs.mkdir(targetImagePath, { recursive: true });
+	for (const fileName of gondolinAssetFileNames) {
+		// oxlint-disable-next-line no-await-in-loop -- preserve deterministic asset copy/link ordering
+		await linkOrCopyImageAsset(
+			path.join(options.sourceImagePath, fileName),
+			path.join(targetImagePath, fileName),
+		);
+	}
+	return targetImagePath;
 }
 
 async function findZoneIdsWithGatewayRuntimeRecords(
@@ -306,6 +383,13 @@ export async function runBuildCommand(
 ): Promise<void> {
 	const buildDockerImage = dependencies.buildDockerImage ?? buildDockerImageDefault;
 	const buildGondolinImage = dependencies.buildGondolinImage ?? buildGondolinImageDefault;
+	const computeGondolinFingerprint =
+		dependencies.computeGondolinFingerprint ??
+		(async (fingerprintOptions): Promise<string> =>
+			await computeFingerprintFromConfigPath(
+				fingerprintOptions.buildConfigPath,
+				fingerprintOptions.systemCacheIdentifierPath,
+			));
 	const deleteStaleImageDirectories =
 		dependencies.deleteStaleImageDirectories ?? deleteStaleImageDirectoriesDefault;
 	const findPrunableImageDirectories =
@@ -434,14 +518,61 @@ export async function runBuildCommand(
 		dockerImageTargets.map((imageTarget) => imageTargetKey(imageTarget)),
 	);
 	const currentFingerprints = createEmptyCurrentImageFingerprints();
+	const effectiveFingerprintByTargetKey = new Map<string, string>();
+	const shouldResetGondolinCacheByFingerprint = new Map<string, boolean>();
 
 	for (const imageTarget of imageTargets) {
+		// oxlint-disable-next-line no-await-in-loop -- fingerprint errors should identify the matching profile path
+		const fingerprint = await computeGondolinFingerprint({
+			buildConfigPath: imageTarget.buildConfigPath,
+			systemCacheIdentifierPath: imageTarget.systemCacheIdentifierPath,
+		});
+		const key = imageTargetKey(imageTarget);
+		const shouldResetGondolinCache = options.forceRebuild === true || dockerBackedTargets.has(key);
+		effectiveFingerprintByTargetKey.set(key, fingerprint);
+		shouldResetGondolinCacheByFingerprint.set(
+			fingerprint,
+			(shouldResetGondolinCacheByFingerprint.get(fingerprint) ?? false) || shouldResetGondolinCache,
+		);
+	}
+	const builtImageByFingerprint = new Map<
+		string,
+		{
+			readonly imageTarget: ImageTarget;
+			readonly result: BuildImageResult;
+		}
+	>();
+
+	for (const imageTarget of imageTargets) {
+		const key = imageTargetKey(imageTarget);
+		const fingerprint = effectiveFingerprintByTargetKey.get(key);
+		if (!fingerprint) {
+			throw new Error(`Missing computed Gondolin fingerprint for image profile '${key}'.`);
+		}
 		const shouldResetGondolinCache =
-			options.forceRebuild === true || dockerBackedTargets.has(imageTargetKey(imageTarget));
+			shouldResetGondolinCacheByFingerprint.get(fingerprint) ?? false;
 		// oxlint-disable-next-line no-await-in-loop -- gondolin cache rebuilds are intentionally sequenced per image target
 		await runTaskStep(
 			`Gondolin: ${imageTarget.family}/${imageTarget.name}`,
 			async (taskContext) => {
+				const existingBuild = builtImageByFingerprint.get(fingerprint);
+				if (existingBuild) {
+					await materializeGondolinImageAlias({
+						fingerprint: existingBuild.result.fingerprint,
+						fullReset: shouldResetGondolinCache,
+						sourceImagePath: existingBuild.result.imagePath,
+						targetCacheDirectory: imageTarget.cacheDirectory,
+					});
+					setCurrentImageFingerprint(
+						currentFingerprints,
+						imageTarget,
+						existingBuild.result.fingerprint,
+					);
+					taskContext?.setStatus(
+						`vm assets reused from ${existingBuild.imageTarget.family}/${existingBuild.imageTarget.name}`,
+					);
+					return;
+				}
 				const stopHeartbeat = startElapsedStatusHeartbeat(
 					taskContext,
 					shouldResetGondolinCache ? 'building vm assets' : 'checking vm assets',
@@ -460,6 +591,10 @@ export async function runBuildCommand(
 				} finally {
 					stopHeartbeat();
 				}
+				builtImageByFingerprint.set(fingerprint, {
+					imageTarget,
+					result,
+				});
 				setCurrentImageFingerprint(currentFingerprints, imageTarget, result.fingerprint);
 				taskContext?.setStatus(result.built ? 'vm assets ready' : 'vm assets cache hit');
 			},
