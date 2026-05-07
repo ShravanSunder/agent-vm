@@ -4,6 +4,8 @@ import path from 'node:path';
 
 import type { BuildConfig, BuildOptions } from '@earendil-works/gondolin';
 
+import { prepareBuildConfigWithAgentVmRootfsInitExtra } from './rootfs-init-extra.js';
+
 export type { BuildConfig } from '@earendil-works/gondolin';
 
 export interface BuildImageOptions {
@@ -172,8 +174,13 @@ export async function buildImage(
 
 	await fs.mkdir(imagePath, { recursive: true });
 	const buildAssetsImplementation = dependencies.buildAssets ?? (await loadBuildAssets());
+	const effectiveBuildConfig = await prepareBuildConfigWithAgentVmRootfsInitExtra({
+		buildConfig: options.buildConfig,
+		imagePath,
+		...(options.configDir ? { configDir: options.configDir } : {}),
+	});
 	await withCapturedBuildOutput(options.output, async () => {
-		await buildAssetsImplementation(options.buildConfig, imagePath, options.configDir);
+		await buildAssetsImplementation(effectiveBuildConfig, imagePath, options.configDir);
 	});
 
 	if (!(await hasBuiltAssets(imagePath))) {
