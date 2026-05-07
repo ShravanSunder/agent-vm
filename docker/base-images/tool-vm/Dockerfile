@@ -19,6 +19,7 @@ RUN apt-get update && \
     update-ca-certificates && \
     corepack enable && \
     ln -sf /usr/bin/fdfind /usr/local/bin/fd && \
+    ln -sfn /proc/self/fd /dev/fd && \
     mkdir -p /work /run/sshd /var/log && \
     touch /var/log/lastlog /var/log/faillog
 

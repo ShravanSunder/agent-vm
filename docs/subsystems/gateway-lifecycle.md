@@ -127,10 +127,10 @@ Defined in `packages/openclaw-gateway/src/openclaw-lifecycle.ts`.
 
 Two host-side writes before VM boot:
 
-1. **Effective config** -- reads the base OpenClaw JSON config, injects the
-   resolved `OPENCLAW_GATEWAY_TOKEN` into `gateway.auth.{mode,token}`, and
+1. **Effective config** -- reads the base OpenClaw JSON config, configures
+   `gateway.auth.token` as an env SecretRef for `OPENCLAW_GATEWAY_TOKEN`, and
    writes the result atomically to `<stateDir>/effective-openclaw.json`
-   with mode 0600.
+   with mode 0600. The plaintext gateway token is not written to this file.
 
 2. **Auth profiles** -- if `gateway.authProfilesByAgent` is configured on the
    zone, resolves each agent's secret and writes `auth-profiles.json` to
@@ -155,7 +155,7 @@ environment:
   PIP_CACHE_DIR         = /work/cache/pip
   UV_CACHE_DIR          = /work/cache/uv
   NODE_EXTRA_CA_CERTS   = /run/gondolin/ca-certificates.crt
-  + env-injected secrets (minus OPENCLAW_GATEWAY_TOKEN)
+  + env-injected secrets, including OPENCLAW_GATEWAY_TOKEN
 
 vfsMounts:
   /home/openclaw/.openclaw/config    -> configDirectory  (realfs)
@@ -171,8 +171,10 @@ tcpHosts:
 rootfsMode: cow
 ```
 
-The `OPENCLAW_GATEWAY_TOKEN` is explicitly excluded from environment secrets
-because it is already embedded in the effective config file.
+The effective config references `OPENCLAW_GATEWAY_TOKEN` through OpenClaw's env
+SecretRef shape. The gateway VM receives the token as an env-injected secret so
+the daemon can resolve that SecretRef at startup without storing the plaintext
+token in persistent state.
 
 Bundled OpenClaw plugin runtime dependencies are staged under
 `OPENCLAW_PLUGIN_STAGE_DIR`. Target state is image/rootfs-local staging at
@@ -183,9 +185,12 @@ rebuildable and must not be included in encrypted zone backups.
 ### buildProcessSpec
 
 - **bootstrap**: creates `/work/tmp` and `/work/cache/*`, writes
-  `/etc/profile.d/openclaw-env.sh` with environment exports, and sources it
-  from `/root/.bashrc` and `/root/.bash_profile`.
-- **start**: `cd /home/openclaw && nohup openclaw gateway --port 18789`
+  `/etc/profile.d/openclaw-env.sh` with non-secret environment exports, writes
+  runtime-only secret env files under `/run/openclaw`, and installs a root-only
+  `openclaw` shell wrapper that sources only the gateway token for admin
+  commands.
+- **start**: sources `/run/openclaw/secrets.env`, then runs
+  `cd /home/openclaw && nohup openclaw gateway --port 18789`
 - **healthCheck**: HTTP on port 18789, path `/readyz`
 - **guestListenPort**: 18789
 - **logPath**: `/tmp/openclaw.log`

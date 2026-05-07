@@ -20,6 +20,32 @@ on:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
+    inputs:
+      base_images_mode:
+        description: 'How to handle managed GHCR base image tags'
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - rebuild
+          - retag
+          - skip
+      publish_npm:
+        description: 'Publish npm packages after ensuring base image tags'
+        required: true
+        default: true
+        type: boolean
+      base_images_version:
+        description: 'Optional GHCR base image version to create; defaults to the package version'
+        required: false
+        default: ''
+        type: string
+      source_base_images_version:
+        description: 'Optional GHCR source version for retag mode; defaults to the previous release tag'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   publish:
@@ -33,6 +59,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
 
@@ -63,20 +91,130 @@ jobs:
       - name: Unit tests
         run: pnpm test:unit
 
-      - name: Publish managed base images to GHCR
+      - name: Detect managed base image changes
+        id: base_images
+        env:
+          REQUESTED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.base_images_mode || 'auto' }}
+          REQUESTED_IMAGE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.base_images_version || '' }}
+          REQUESTED_SOURCE_IMAGE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.source_base_images_version || '' }}
+        run: |
+          set -euo pipefail
+          PACKAGE_VERSION="$(node -p "require('./packages/agent-vm/package.json').version")"
+          IMAGE_VERSION="${REQUESTED_IMAGE_VERSION:-${PACKAGE_VERSION}}"
+          PREVIOUS_VERSION="$(git tag --sort=-v:refname --list 'v*.*.*' | sed 's/^v//' | grep -v "^${PACKAGE_VERSION}$" | head -n 1 || true)"
+          SOURCE_IMAGE_VERSION="${REQUESTED_SOURCE_IMAGE_VERSION:-${PREVIOUS_VERSION}}"
+          if [[ -z "${PREVIOUS_VERSION}" ]]; then
+            AUTO_MODE="rebuild"
+          elif git diff --quiet "v${PREVIOUS_VERSION}..HEAD" -- \
+            docker/base-images \
+            packages/agent-vm/src/build/managed-image-dockerfile.ts \
+            packages/agent-vm/src/cli/vm-host-system-templates.ts \
+            packages/agent-vm/src/cli/openclaw-plugin-bundle.ts; then
+            AUTO_MODE="skip"
+          else
+            AUTO_MODE="rebuild"
+          fi
+
+          if [[ "${REQUESTED_MODE}" == "auto" ]]; then
+            MODE="${AUTO_MODE}"
+          else
+            MODE="${REQUESTED_MODE}"
+          fi
+          if [[ "${MODE}" == "retag" && -z "${SOURCE_IMAGE_VERSION}" ]]; then
+            echo "Cannot retag managed base images because no source image version exists." >&2
+            exit 1
+          fi
+
+          echo "package_version=${PACKAGE_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "image_version=${IMAGE_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "previous_version=${PREVIOUS_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "source_image_version=${SOURCE_IMAGE_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "mode=${MODE}" >> "${GITHUB_OUTPUT}"
+          echo "Managed base image mode: ${MODE} (auto=${AUTO_MODE}, package=${PACKAGE_VERSION}, image=${IMAGE_VERSION}, source=${SOURCE_IMAGE_VERSION:-none})"
+
+      - name: Set up QEMU
+        if: steps.base_images.outputs.mode == 'rebuild'
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        if: steps.base_images.outputs.mode != 'skip'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        if: steps.base_images.outputs.mode != 'skip'
         env:
           GHCR_TOKEN: ${{ github.token }}
           GHCR_USER: ${{ github.actor }}
         run: |
           set -euo pipefail
-          PACKAGE_VERSION="$(node -p "require('./packages/agent-vm/package.json').version")"
           echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
-          docker build -t "ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:${PACKAGE_VERSION}" docker/base-images/openclaw-gateway
-          docker build -t "ghcr.io/shravansunder/agent-vm-worker-gateway-base:${PACKAGE_VERSION}" docker/base-images/worker-gateway
-          docker build -t "ghcr.io/shravansunder/agent-vm-tool-vm-base:${PACKAGE_VERSION}" docker/base-images/tool-vm
-          docker push "ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:${PACKAGE_VERSION}"
-          docker push "ghcr.io/shravansunder/agent-vm-worker-gateway-base:${PACKAGE_VERSION}"
-          docker push "ghcr.io/shravansunder/agent-vm-tool-vm-base:${PACKAGE_VERSION}"
+
+      - name: Rebuild managed base images in GHCR
+        if: steps.base_images.outputs.mode == 'rebuild'
+        env:
+          IMAGE_VERSION: ${{ steps.base_images.outputs.image_version }}
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --push \
+            -t "ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:${IMAGE_VERSION}" \
+            docker/base-images/openclaw-gateway
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --push \
+            -t "ghcr.io/shravansunder/agent-vm-worker-gateway-base:${IMAGE_VERSION}" \
+            docker/base-images/worker-gateway
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --push \
+            -t "ghcr.io/shravansunder/agent-vm-tool-vm-base:${IMAGE_VERSION}" \
+            docker/base-images/tool-vm
+
+      - name: Retag managed base images in GHCR
+        if: steps.base_images.outputs.mode == 'retag'
+        env:
+          IMAGE_VERSION: ${{ steps.base_images.outputs.image_version }}
+          SOURCE_IMAGE_VERSION: ${{ steps.base_images.outputs.source_image_version }}
+        run: |
+          set -euo pipefail
+          for IMAGE in \
+            "ghcr.io/shravansunder/agent-vm-openclaw-gateway-base" \
+            "ghcr.io/shravansunder/agent-vm-worker-gateway-base" \
+            "ghcr.io/shravansunder/agent-vm-tool-vm-base"
+          do
+            docker buildx imagetools create \
+              -t "${IMAGE}:${IMAGE_VERSION}" \
+              "${IMAGE}:${SOURCE_IMAGE_VERSION}"
+          done
+
+      - name: Verify managed base image tags
+        if: steps.base_images.outputs.mode != 'skip'
+        env:
+          IMAGE_VERSION: ${{ steps.base_images.outputs.image_version }}
+        run: |
+          set -euo pipefail
+          for IMAGE in \
+            "ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:${IMAGE_VERSION}" \
+            "ghcr.io/shravansunder/agent-vm-worker-gateway-base:${IMAGE_VERSION}" \
+            "ghcr.io/shravansunder/agent-vm-tool-vm-base:${IMAGE_VERSION}"
+          do
+            docker buildx imagetools inspect --raw "${IMAGE}" | node -e '
+              let raw = "";
+              process.stdin.setEncoding("utf8");
+              process.stdin.on("data", (chunk) => { raw += chunk; });
+              process.stdin.on("end", () => {
+                const manifest = JSON.parse(raw);
+                const platforms = new Set((manifest.manifests ?? []).map((entry) => `${entry.platform?.os}/${entry.platform?.architecture}`));
+                for (const platform of ["linux/amd64", "linux/arm64"]) {
+                  if (!platforms.has(platform)) {
+                    throw new Error(`${process.argv[1]} is missing ${platform}`);
+                  }
+                }
+              });
+            ' "${IMAGE}"
+          done
 
       - name: Publish to npm via OIDC
+        if: github.event_name != 'workflow_dispatch' || inputs.publish_npm
         run: pnpm -r publish --access=public --no-git-checks

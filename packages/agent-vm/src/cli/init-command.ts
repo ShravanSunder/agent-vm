@@ -678,12 +678,18 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 					},
 				},
 			},
-			sandbox: { backend: 'gondolin', mode: 'all', scope: 'agent' },
+			sandbox: {
+				backend: 'gondolin',
+				mode: 'all',
+				scope: 'agent',
+				workspaceAccess: 'rw',
+			},
 			workspace: '/zone/agents/default',
 		},
 	},
 	tools: { elevated: { enabled: false } },
 	commands: { ownerAllowFrom: [] },
+	session: { dmScope: 'per-channel-peer' },
 	plugins: {
 		load: {
 			paths: [defaultOpenClawExtensionsPath, '/pnpm/global/5/node_modules/@openclaw'],
@@ -853,11 +859,6 @@ async function scaffoldAgentVmProjectInternal(
 		if (options.gatewayType !== 'worker') {
 			throw new Error('Container-host scaffolds currently support only worker gateways.');
 		}
-		if (options.architecture !== 'x86_64') {
-			throw new Error(
-				'Container-host scaffolds currently support only x86_64. Use macos-local for aarch64 or add container-host arm64 support first.',
-			);
-		}
 	}
 
 	const created: string[] = [];
@@ -901,7 +902,11 @@ async function scaffoldAgentVmProjectInternal(
 		SYSTEM_CACHE_IDENTIFIER_FILENAME,
 	);
 	const systemCacheIdentifier = buildDefaultSystemCacheIdentifier(
-		options.hostSystemType ? { hostSystemType: options.hostSystemType } : {},
+		options.hostSystemType === 'container'
+			? { hostSystemType: options.hostSystemType, platform: () => 'linux' }
+			: options.hostSystemType
+				? { hostSystemType: options.hostSystemType }
+				: {},
 	);
 	const systemCacheIdentifierStatus = await writeFileIfMissing(
 		systemCacheIdentifierPath,

@@ -1168,8 +1168,16 @@ describe('scaffoldAgentVmProject', () => {
 			),
 		) as {
 			readonly gateway?: { readonly auth?: { readonly mode?: string } };
-			readonly agents?: { readonly defaults?: { readonly sandbox?: { readonly scope?: string } } };
+			readonly agents?: {
+				readonly defaults?: {
+					readonly sandbox?: {
+						readonly scope?: string;
+						readonly workspaceAccess?: string;
+					};
+				};
+			};
 			readonly commands?: { readonly ownerAllowFrom?: readonly string[] };
+			readonly session?: { readonly dmScope?: string };
 			readonly plugins?: {
 				readonly allow?: readonly string[];
 				readonly slots?: { readonly memory?: string };
@@ -1178,6 +1186,8 @@ describe('scaffoldAgentVmProject', () => {
 		};
 		expect(openClawConfig.gateway?.auth?.mode).toBe('token');
 		expect(openClawConfig.agents?.defaults?.sandbox?.scope).toBe('agent');
+		expect(openClawConfig.agents?.defaults?.sandbox?.workspaceAccess).toBe('rw');
+		expect(openClawConfig.session?.dmScope).toBe('per-channel-peer');
 		expect(openClawConfig.commands?.ownerAllowFrom).toEqual([]);
 		expect(openClawConfig.plugins?.allow).toContain('memory-core');
 		expect(openClawConfig.plugins?.slots?.memory).toBe('memory-core');
@@ -1417,7 +1427,7 @@ describe('scaffoldAgentVmProject', () => {
 		);
 		expect(JSON.parse(raw)).toMatchObject({
 			schemaVersion: 1,
-			os: expect.any(String),
+			os: 'linux',
 			hostSystemType: 'container',
 			cacheProfile: 'default',
 			cacheFormat: 'gondolin-cache-v1',
@@ -1466,6 +1476,50 @@ describe('scaffoldAgentVmProject', () => {
 		await expect(
 			fs.access(path.join(targetDir, 'vm-host-system', 'README.md')),
 		).resolves.toBeUndefined();
+	});
+
+	it('scaffolds arm64 container hosts with matching config and host tooling', async () => {
+		const targetDir = await createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{
+				targetDir,
+				zoneId: 'coding-agent',
+				gatewayType: 'worker',
+				architecture: 'aarch64',
+				hostSystemType: 'container',
+				paths: 'pod',
+				secretsProvider: 'environment',
+			},
+			noGeneratedAgeIdentityDependencies,
+		);
+
+		const systemCacheIdentifier = z
+			.object({
+				os: z.literal('linux'),
+				hostSystemType: z.literal('container'),
+			})
+			.parse(
+				JSON.parse(
+					await fs.readFile(path.join(targetDir, 'config', 'systemCacheIdentifier.json'), 'utf8'),
+				),
+			);
+		const gatewayBuildConfig = z
+			.object({ arch: z.literal('aarch64') })
+			.parse(
+				await readGeneratedJsonc(
+					path.join(targetDir, 'vm-images', 'gateways', 'worker', 'build-config.jsonc'),
+				),
+			);
+		const dockerfile = await fs.readFile(
+			path.join(targetDir, 'vm-host-system', 'Dockerfile'),
+			'utf8',
+		);
+
+		expect(systemCacheIdentifier.hostSystemType).toBe('container');
+		expect(gatewayBuildConfig.arch).toBe('aarch64');
+		expect(dockerfile).toContain('zig-aarch64-linux-');
+		expect(dockerfile).toContain('image pull alpine-base:latest --arch aarch64');
 	});
 
 	it('does not scaffold vm-host-system for bare-metal presets', async () => {

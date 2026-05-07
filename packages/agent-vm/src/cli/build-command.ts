@@ -9,7 +9,7 @@ import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondol
 import {
 	MANAGED_OPENCLAW_VERSION,
 	generateManagedDockerfile as generateManagedDockerfileDefault,
-	resolveAgentVmPackageVersion as resolveAgentVmPackageVersionDefault,
+	resolveManagedBaseImageVersion as resolveManagedBaseImageVersionDefault,
 	type ManagedImageSource,
 } from '../build/managed-image-dockerfile.js';
 import {
@@ -48,10 +48,10 @@ export interface BuildCommandDependencies {
 		readonly imageTargetName: string;
 		readonly outputDirectory: string;
 		readonly overlayPath?: string | undefined;
-		readonly packageVersion: string;
+		readonly baseImageVersion: string;
 		readonly requiredOpenClawPackages?: readonly string[];
 	}) => Promise<string>;
-	readonly resolveAgentVmPackageVersion?: () => Promise<string>;
+	readonly resolveManagedBaseImageVersion?: () => Promise<string>;
 	readonly syncBundledOpenClawPlugin?: (
 		targetDir: string,
 		profileName: string,
@@ -64,7 +64,7 @@ const ociImageTagSchema = z.object({
 	}),
 });
 
-const openClawChannelConfigSchema = z
+const openClawManagedPackageConfigSchema = z
 	.object({
 		channels: z
 			.object({
@@ -74,6 +74,18 @@ const openClawChannelConfigSchema = z
 			.optional(),
 	})
 	.passthrough();
+
+interface OpenClawManagedPackageRule {
+	readonly isEnabled: (config: z.infer<typeof openClawManagedPackageConfigSchema>) => boolean;
+	readonly packageName: string;
+}
+
+const openClawManagedPackageRules = [
+	{
+		packageName: '@openclaw/discord',
+		isEnabled: (config) => config.channels?.discord?.enabled === true,
+	},
+] as const satisfies readonly OpenClawManagedPackageRule[];
 
 interface ImageTarget {
 	readonly buildConfigPath: string;
@@ -190,9 +202,11 @@ async function resolveRequiredOpenClawPackagesForTarget(
 		}
 		// oxlint-disable-next-line no-await-in-loop -- zone config reads are tiny and error messages stay profile-local
 		const rawOpenClawConfig = await loadJsonConfigFile(zone.gateway.config);
-		const openClawConfig = openClawChannelConfigSchema.parse(rawOpenClawConfig);
-		if (openClawConfig.channels?.discord?.enabled === true) {
-			requiredPackageSpecs.add(`@openclaw/discord@${MANAGED_OPENCLAW_VERSION}`);
+		const openClawConfig = openClawManagedPackageConfigSchema.parse(rawOpenClawConfig);
+		for (const packageRule of openClawManagedPackageRules) {
+			if (packageRule.isEnabled(openClawConfig)) {
+				requiredPackageSpecs.add(`${packageRule.packageName}@${MANAGED_OPENCLAW_VERSION}`);
+			}
 		}
 	}
 	return [...requiredPackageSpecs].toSorted();
@@ -216,8 +230,8 @@ export async function runBuildCommand(
 		dependencies.resolveProjectRootFromDockerfile ?? resolveProjectRootFromDockerfile;
 	const generateManagedDockerfile =
 		dependencies.generateManagedDockerfile ?? generateManagedDockerfileDefault;
-	const resolveAgentVmPackageVersion =
-		dependencies.resolveAgentVmPackageVersion ?? resolveAgentVmPackageVersionDefault;
+	const resolveManagedBaseImageVersion =
+		dependencies.resolveManagedBaseImageVersion ?? resolveManagedBaseImageVersionDefault;
 	const syncBundledOpenClawPlugin =
 		dependencies.syncBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle;
 	const systemCacheIdentifierPath = options.systemConfig.systemCacheIdentifierPath;
@@ -255,10 +269,10 @@ export async function runBuildCommand(
 		dockerImageTargets,
 		resolveOciImageTag,
 	);
-	const agentVmPackageVersion = dockerImageTargets.some(
+	const managedBaseImageVersion = dockerImageTargets.some(
 		(imageTarget) => imageTarget.source !== undefined,
 	)
-		? await resolveAgentVmPackageVersion()
+		? await resolveManagedBaseImageVersion()
 		: undefined;
 
 	// oxlint-disable-next-line no-await-in-loop -- image builds are intentionally sequential for stable task output and shared image tags
@@ -269,8 +283,8 @@ export async function runBuildCommand(
 		}
 		let dockerfilePath = imageTarget.dockerfile;
 		if (imageTarget.source) {
-			if (!agentVmPackageVersion) {
-				throw new Error('Missing @agent-vm/agent-vm package version for managed image build.');
+			if (!managedBaseImageVersion) {
+				throw new Error('Missing managed base image version for managed image build.');
 			}
 			// oxlint-disable-next-line no-await-in-loop -- package detection is profile-local and low-volume
 			const requiredOpenClawPackages = await resolveRequiredOpenClawPackagesForTarget(
@@ -289,7 +303,7 @@ export async function runBuildCommand(
 					imageTarget.name,
 				),
 				...(imageTarget.source.overlay ? { overlayPath: imageTarget.source.overlay } : {}),
-				packageVersion: agentVmPackageVersion,
+				baseImageVersion: managedBaseImageVersion,
 				requiredOpenClawPackages,
 			});
 		}

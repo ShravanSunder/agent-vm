@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
 import type { SecretResolver } from '@agent-vm/gondolin-adapter';
@@ -9,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openclawLifecycle } from './openclaw-lifecycle.js';
 
 const createdDirectories: string[] = [];
+const execFileAsync = promisify(execFile);
 type OpenClawGatewayConfig = Extract<GatewayZoneConfig['gateway'], { readonly type: 'openclaw' }>;
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -18,6 +21,30 @@ async function pathExists(filePath: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+function extractHeredocBody(command: string, targetPath: string): string {
+	const marker = `cat > ${targetPath} << 'ENVEOF'\n`;
+	const startIndex = command.indexOf(marker);
+	expect(startIndex).toBeGreaterThanOrEqual(0);
+	const bodyStartIndex = startIndex + marker.length;
+	const bodyEndIndex = command.indexOf('\nENVEOF', bodyStartIndex);
+	expect(bodyEndIndex).toBeGreaterThan(bodyStartIndex);
+	return command.slice(bodyStartIndex, bodyEndIndex);
+}
+
+async function renderBootstrapFiles(command: string, rootDirectory: string): Promise<void> {
+	const rootedCommand = command
+		.replaceAll('/root', path.join(rootDirectory, 'root'))
+		.replaceAll('/etc/profile.d', path.join(rootDirectory, 'etc', 'profile.d'))
+		.replaceAll('/run/openclaw', path.join(rootDirectory, 'run', 'openclaw'))
+		.replaceAll('/work', path.join(rootDirectory, 'work'))
+		.replace(`chown -R openclaw:openclaw ${path.join(rootDirectory, 'work')} && `, '');
+	await execFileAsync('bash', ['-lc', rootedCommand]);
+}
+
+function shellQuoteForTest(value: string): string {
+	return `'${value.replace(/'/gu, `'\\''`)}'`;
 }
 
 afterEach(async () => {
@@ -134,7 +161,7 @@ describe('openclawLifecycle', () => {
 			});
 
 			expect(vmSpec.environment.DISCORD_BOT_TOKEN).toBe('discord-token');
-			expect(vmSpec.environment.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
+			expect(vmSpec.environment.OPENCLAW_GATEWAY_TOKEN).toBe("gateway'token");
 			expect(vmSpec.environment.PERPLEXITY_API_KEY).toBeUndefined();
 			expect(vmSpec.mediatedSecrets.PERPLEXITY_API_KEY).toEqual({
 				hosts: ['api.perplexity.ai'],
@@ -191,14 +218,28 @@ describe('openclawLifecycle', () => {
 	});
 
 	describe('buildProcessSpec', () => {
-		it('builds bootstrap and start commands with escaped gateway token', () => {
+		it('builds bootstrap and start commands with runtime-injected gateway token', () => {
 			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
 
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
+			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-admin.sh');
 			expect(processSpec.bootstrapCommand).toContain('/run/openclaw/secrets.env');
+			expect(processSpec.bootstrapCommand).toContain('/run/openclaw/gateway-auth.env');
 			expect(processSpec.bootstrapCommand).toContain("DISCORD_BOT_TOKEN='discord-token'");
-			expect(processSpec.bootstrapCommand).not.toContain('OPENCLAW_GATEWAY_TOKEN=');
-			expect(processSpec.bootstrapCommand).not.toContain("gateway'\\''token");
+			expect(processSpec.bootstrapCommand).toContain("OPENCLAW_GATEWAY_TOKEN='gateway'\\''token'");
+			expect(
+				extractHeredocBody(processSpec.bootstrapCommand, '/run/openclaw/gateway-auth.env'),
+			).toBe("export OPENCLAW_GATEWAY_TOKEN='gateway'\\''token'");
+			expect(
+				extractHeredocBody(processSpec.bootstrapCommand, '/etc/profile.d/openclaw-admin.sh'),
+			).toContain('openclaw() (');
+			expect(
+				extractHeredocBody(processSpec.bootstrapCommand, '/etc/profile.d/openclaw-admin.sh'),
+			).toContain('. /run/openclaw/gateway-auth.env');
+			expect(
+				extractHeredocBody(processSpec.bootstrapCommand, '/etc/profile.d/openclaw-admin.sh'),
+			).not.toContain('/run/openclaw/secrets.env');
+			expect(processSpec.bootstrapCommand).toContain('chmod 600 /run/openclaw/gateway-auth.env');
 			expect(processSpec.bootstrapCommand).toContain(
 				'OPENCLAW_CONFIG_PATH=/home/openclaw/.openclaw/state/effective-openclaw.json',
 			);
@@ -212,6 +253,7 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.startCommand).toContain('. /run/openclaw/secrets.env');
 			expect(processSpec.startCommand).toContain('cd /home/openclaw');
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
+			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-admin.sh');
 			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
 			expect(processSpec.startCommand).toContain('nohup openclaw gateway --port 18789');
 			expect(processSpec.healthCheck).toEqual({
@@ -220,6 +262,59 @@ describe('openclawLifecycle', () => {
 				path: '/readyz',
 			});
 			expect(processSpec.logPath).toBe('/tmp/openclaw.log');
+		});
+
+		it('writes profile scripts without expanding runtime shell expressions', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-bootstrap-'));
+			createdDirectories.push(tempDirectory);
+			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
+
+			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory);
+
+			const adminShellScript = await readFile(
+				path.join(tempDirectory, 'etc', 'profile.d', 'openclaw-admin.sh'),
+				'utf8',
+			);
+			const environmentShellScript = await readFile(
+				path.join(tempDirectory, 'etc', 'profile.d', 'openclaw-env.sh'),
+				'utf8',
+			);
+			expect(adminShellScript).toContain('if [ "$(id -u)" = "0" ]; then');
+			expect(adminShellScript).toContain('command openclaw "$@"');
+			expect(adminShellScript).not.toContain('command openclaw ""');
+			expect(environmentShellScript).toContain('export PATH=/pnpm:$PATH');
+		});
+
+		it('forwards OpenClaw admin wrapper arguments exactly', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-admin-wrapper-'));
+			createdDirectories.push(tempDirectory);
+			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
+			const fakeBinDirectory = path.join(tempDirectory, 'bin');
+			await mkdir(fakeBinDirectory, { recursive: true });
+			const fakeOpenClawPath = path.join(fakeBinDirectory, 'openclaw');
+			const capturedArgvPath = path.join(tempDirectory, 'argv.json');
+			await writeFile(
+				fakeOpenClawPath,
+				[
+					'#!/usr/bin/env node',
+					`await import('node:fs/promises').then((fs) => fs.writeFile(${JSON.stringify(capturedArgvPath)}, JSON.stringify(process.argv.slice(2))))`,
+				].join('\n'),
+				{ mode: 0o755 },
+			);
+			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory);
+
+			await execFileAsync('bash', [
+				'-lc',
+				[
+					`PATH=${shellQuoteForTest(fakeBinDirectory)}:$PATH`,
+					`source ${shellQuoteForTest(path.join(tempDirectory, 'etc', 'profile.d', 'openclaw-admin.sh'))}`,
+					`openclaw tui --flag 'value with spaces' '' '--literal=$PATH'`,
+				].join(' && '),
+			]);
+
+			await expect(readFile(capturedArgvPath, 'utf8')).resolves.toBe(
+				JSON.stringify(['tui', '--flag', 'value with spaces', '', '--literal=$PATH']),
+			);
 		});
 	});
 
@@ -283,17 +378,30 @@ describe('openclawLifecycle', () => {
 
 			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
 
-			expect(
-				JSON.parse(
-					await readFile(path.join(zone.gateway.stateDir, 'effective-openclaw.json'), 'utf8'),
-				),
-			).toMatchObject({
+			const effectiveOpenClawConfigContent = await readFile(
+				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
+				'utf8',
+			);
+			expect(effectiveOpenClawConfigContent).not.toContain('resolved-gateway-token');
+			expect(JSON.parse(effectiveOpenClawConfigContent)).toMatchObject({
 				agents: { defaults: { workspace: '/zone' } },
 				gateway: {
-					auth: { mode: 'token', token: 'resolved-gateway-token' },
+					auth: {
+						mode: 'token',
+						token: {
+							id: 'OPENCLAW_GATEWAY_TOKEN',
+							provider: 'default',
+							source: 'env',
+						},
+					},
 					bind: 'loopback',
 					controlUi: {
 						allowedOrigins: ['http://127.0.0.1:18791', 'http://localhost:18791'],
+					},
+				},
+				secrets: {
+					providers: {
+						default: { source: 'env' },
 					},
 				},
 				meta: {

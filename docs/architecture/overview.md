@@ -338,10 +338,10 @@ The `GatewayLifecycle` interface (`gateway-interface` package) is the contract e
 | **VFS mounts** | config, cache, state, zone files | state + task gitdirs; `/work/repos` is rootfs/COW |
 | **Environment** | `OPENCLAW_*` vars, `HOME=/home/openclaw` | `CONTROLLER_BASE_URL`, `WORKER_CONFIG_PATH`, `HOME=/home/coder` |
 | **TCP hosts** | Controller + all tool VM slots + websocket bypass | Controller only |
-| **Bootstrap** | Write shell env profile, configure bashrc | Conditionally install worker tarball from `/state/` |
-| **Start command** | `openclaw gateway --port 18789` | `agent-vm-worker serve --port 18789 --config ...` |
-| **Health check** | HTTP GET `:18789/` | HTTP GET `:18789/health` |
-| **prepareHostState** | Writes effective-openclaw.json (config + gateway token), writes configured per-agent auth profile files | None |
+| **Bootstrap** | Write shell/admin profiles, configure bashrc, write runtime secret env files | Conditionally install worker tarball from `/state/` |
+| **Start command** | Source runtime secrets, then run `openclaw gateway --port 18789` | `agent-vm-worker serve --port 18789 --config ...` |
+| **Health check** | HTTP GET `:18789/readyz` | HTTP GET `:18789/health` |
+| **prepareHostState** | Writes effective-openclaw.json (config + env SecretRef), writes configured per-agent auth profile files | None |
 | **Rootfs mode** | `cow` (copy-on-write) | `cow` (copy-on-write) |
 
 Both implementations call `splitResolvedGatewaySecrets()` to partition resolved secrets into environment variables (injection: `env`) and HTTP-mediated secrets (injection: `http-mediation` with required `hosts[]`). See the Secrets Flow section below for the full picture.

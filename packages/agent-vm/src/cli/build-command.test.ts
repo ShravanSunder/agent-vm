@@ -141,6 +141,7 @@ describe('runBuildCommand', () => {
 			JSON.stringify({
 				schemaVersion: 1,
 				extraAptPackages: ['ca-certificates'],
+				extraOpenClawPackages: ['@agent-vm/openclaw-agent-vm-plugin@0.0.45'],
 				copy: [{ from: 'certs/strip-nonascii-certs.py', to: '/tmp/strip-nonascii-certs.py' }],
 				runAfterBase: ['python3 /tmp/strip-nonascii-certs.py'],
 			}),
@@ -198,7 +199,7 @@ describe('runBuildCommand', () => {
 					fingerprint: 'managed-fp',
 					imagePath: '/cache/managed',
 				}),
-				resolveAgentVmPackageVersion: async () => '0.0.40',
+				resolveManagedBaseImageVersion: async () => '0.0.41',
 				runTask: async (_title, fn) => fn(),
 			},
 		);
@@ -210,7 +211,14 @@ describe('runBuildCommand', () => {
 		);
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
 		expect(generatedDockerfile).toContain(
-			'FROM ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:0.0.40',
+			'FROM ghcr.io/shravansunder/agent-vm-openclaw-gateway-base:0.0.41',
+		);
+		expect(generatedDockerfile).toContain(
+			'RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@0.0.49"',
+		);
+		expect(generatedDockerfile).not.toContain('@agent-vm/openclaw-agent-vm-plugin@0.0.45');
+		expect(generatedDockerfile).toContain(
+			'RUN ln -sf /pnpm/global/5/node_modules/@agent-vm/openclaw-agent-vm-plugin/dist /home/openclaw/.openclaw/extensions/gondolin',
 		);
 		expect(generatedDockerfile).toContain(
 			'RUN apt-get update && apt-get install -y --no-install-recommends "ca-certificates"',
@@ -282,13 +290,83 @@ describe('runBuildCommand', () => {
 					fingerprint: 'discord-fp',
 					imagePath: '/cache/discord',
 				}),
-				resolveAgentVmPackageVersion: async () => '0.0.40',
+				resolveManagedBaseImageVersion: async () => '0.0.41',
 				runTask: async (_title, fn) => fn(),
 			},
 		);
 
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
 		expect(generatedDockerfile).toContain('RUN pnpm add -g "@openclaw/discord@2026.5.2"');
+	});
+
+	it('does not add disabled OpenClaw channel packages', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const gatewayConfigDirectory = path.join(temporaryDirectory, 'config', 'gateways', 'sunfam');
+		fs.mkdirSync(gatewayConfigDirectory, { recursive: true });
+		const gatewayConfigPath = path.join(gatewayConfigDirectory, 'openclaw.json');
+		fs.writeFileSync(
+			gatewayConfigPath,
+			JSON.stringify({ channels: { discord: { enabled: false } } }),
+			'utf8',
+		);
+		const buildConfigPath = path.join(temporaryDirectory, 'build-config.json');
+		fs.writeFileSync(
+			buildConfigPath,
+			JSON.stringify({ oci: { image: 'agent-vm-gateway:no-discord' } }),
+			'utf8',
+		);
+		const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
+		const baseConfig = createTestSystemConfig();
+		const baseZone = baseConfig.zones[0];
+		if (!baseZone || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected an OpenClaw test zone.');
+		}
+
+		await runBuildCommand(
+			{
+				systemConfig: {
+					...baseConfig,
+					cacheDir: temporaryDirectory,
+					zones: [
+						{
+							...baseZone,
+							gateway: {
+								...baseZone.gateway,
+								config: gatewayConfigPath,
+							},
+						},
+					],
+					imageProfiles: {
+						gateways: {
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: buildConfigPath,
+								source: {
+									kind: 'managedBase',
+									base: 'openclaw-gateway',
+								},
+							},
+						},
+						toolVms: {},
+					},
+				},
+			},
+			{
+				buildDockerImage: async (options) => {
+					dockerBuilds.push(options);
+				},
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'disabled-discord-fp',
+					imagePath: '/cache/disabled-discord',
+				}),
+				resolveManagedBaseImageVersion: async () => '0.0.41',
+				runTask: async (_title, fn) => fn(),
+			},
+		);
+
+		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
+		expect(generatedDockerfile).not.toContain('@openclaw/discord');
 	});
 
 	it('finds the scaffold root by walking up to config/system.json instead of assuming dockerfile depth', async () => {

@@ -970,7 +970,7 @@ describe('startGatewayZone', () => {
 		);
 
 		expect(execMock).toHaveBeenCalledWith(
-			expect.stringContaining('cat > /etc/profile.d/openclaw-env.sh << ENVEOF'),
+			expect.stringContaining("cat > /etc/profile.d/openclaw-env.sh << 'ENVEOF'"),
 		);
 		expect(execMock).toHaveBeenCalledWith(
 			expect.stringContaining('chmod 644 /etc/profile.d/openclaw-env.sh'),
