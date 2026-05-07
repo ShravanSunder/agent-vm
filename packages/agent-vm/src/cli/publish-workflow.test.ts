@@ -4,6 +4,33 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('publish workflow', () => {
+	it('caches Gondolin Zig tarballs in CI and publish workflows', async () => {
+		const workflowPaths = [
+			path.join(process.cwd(), '.github', 'workflows', 'ci.yml'),
+			path.join(process.cwd(), '.github', 'workflows', 'publish.yml'),
+		];
+		const workflows = await Promise.all(
+			workflowPaths.map(async (workflowPath: string): Promise<string> => {
+				return fs.readFile(workflowPath, 'utf8');
+			}),
+		);
+
+		for (const workflow of workflows) {
+			expect(workflow).toContain('Resolve Gondolin Zig version');
+			expect(workflow).toContain('Cache Zig tarballs');
+			expect(workflow).toContain('path: .cache/zig');
+			expect(workflow).toContain(
+				'key: ${{ runner.os }}-zig-${{ steps.zig-version.outputs.arch }}-${{ steps.zig-version.outputs.version }}',
+			);
+			expect(workflow).toContain('--continue-at -');
+			expect(workflow).toContain('--speed-limit 1024');
+			expect(workflow).toContain('xz --test "${ZIG_ARCHIVE}"');
+			expect(workflow).toContain('sudo tar -xJf "${ZIG_ARCHIVE}" -C /opt');
+			expect(workflow).not.toContain('curl -fsSL "https://ziglang.org');
+			expect(workflow).not.toContain('-o /tmp/zig.tar.xz');
+		}
+	});
+
 	it('ensures managed base images exist as multi-arch manifest lists before optional npm publish', async () => {
 		const workflow = await fs.readFile(
 			path.join(process.cwd(), '.github', 'workflows', 'publish.yml'),
