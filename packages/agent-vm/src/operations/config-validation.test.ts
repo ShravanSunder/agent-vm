@@ -263,6 +263,30 @@ describe('runConfigValidation', () => {
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
+	it('reports obsolete versioned system cache identifiers', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);
+		await writeJson(path.join(temporaryDirectoryPath, 'config', 'systemCacheIdentifier.json'), {
+			$comment: 'example',
+			schemaVersion: 1,
+			os: 'linux',
+			hostSystemType: 'container',
+			cacheProfile: 'default',
+			cacheFormat: 'gondolin-cache-v1',
+		});
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({ systemConfig });
+
+		expect(result.ok).toBe(false);
+		expect(result.checks.find((check) => check.name === 'system-cache-identifier')).toMatchObject({
+			ok: false,
+			hint: expect.stringContaining('v1 schema mismatch'),
+		});
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
 	it('reports runtimeDir overlap with non-runtime storage paths', async () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);
