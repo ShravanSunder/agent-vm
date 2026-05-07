@@ -7,16 +7,22 @@ import { Writable } from 'node:stream';
 import type { BuildConfig } from '@earendil-works/gondolin';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { buildImage, computeBuildFingerprint } from './build-pipeline.js';
+import { buildImage, buildImageAssetFileNames, computeBuildFingerprint } from './build-pipeline.js';
 
 const temporaryDirectories: string[] = [];
 
 async function writeFakeAssets(outputDirectory: string): Promise<void> {
 	await fsPromises.mkdir(outputDirectory, { recursive: true });
-	await fsPromises.writeFile(path.join(outputDirectory, 'manifest.json'), '{}', 'utf8');
-	await fsPromises.writeFile(path.join(outputDirectory, 'rootfs.ext4'), '', 'utf8');
-	await fsPromises.writeFile(path.join(outputDirectory, 'initramfs.cpio.lz4'), '', 'utf8');
-	await fsPromises.writeFile(path.join(outputDirectory, 'vmlinuz-virt'), '', 'utf8');
+	for (const fileName of buildImageAssetFileNames) {
+		// oxlint-disable-next-line no-await-in-loop -- fake assets mirror the build cache contract
+		await fsPromises.writeFile(path.join(outputDirectory, fileName), '', 'utf8');
+	}
+}
+
+function createFileSystemError(code: string, message: string): NodeJS.ErrnoException {
+	const error = new Error(message) as NodeJS.ErrnoException;
+	error.code = code;
+	return error;
 }
 
 afterEach(() => {
@@ -213,6 +219,55 @@ describe('buildImage', () => {
 		expect(secondResult.built).toBe(false);
 		expect(secondResult.fingerprint).toBe(firstResult.fingerprint);
 		expect(secondResult.imagePath).toBe(firstResult.imagePath);
+		expect(fakeBuildIntoDirectory).toHaveBeenCalledTimes(1);
+	});
+
+	it('surfaces access failures while checking existing fingerprinted image assets', async () => {
+		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
+		temporaryDirectories.push(cacheDirectory);
+		const buildConfig: BuildConfig = {
+			arch: 'aarch64',
+			distro: 'alpine',
+			rootfs: {
+				label: 'gondolin-root',
+			},
+		};
+		const fakeBuildIntoDirectory = vi.fn(
+			async (_buildConfig: unknown, outputDirectory: string): Promise<void> => {
+				await writeFakeAssets(outputDirectory);
+			},
+		);
+		const firstResult = await buildImage(
+			{
+				buildConfig,
+				cacheDir: cacheDirectory,
+			},
+			{
+				buildAssets: fakeBuildIntoDirectory,
+			},
+		);
+		const inaccessibleAssetPath = path.join(firstResult.imagePath, 'manifest.json');
+		const originalAccess = fsPromises.access;
+		vi.spyOn(fsPromises, 'access').mockImplementation(
+			async (...accessArgs: Parameters<typeof fsPromises.access>): Promise<void> => {
+				if (path.resolve(String(accessArgs[0])) === path.resolve(inaccessibleAssetPath)) {
+					throw createFileSystemError('EACCES', `permission denied: ${inaccessibleAssetPath}`);
+				}
+				await originalAccess(...accessArgs);
+			},
+		);
+
+		await expect(
+			buildImage(
+				{
+					buildConfig,
+					cacheDir: cacheDirectory,
+				},
+				{
+					buildAssets: fakeBuildIntoDirectory,
+				},
+			),
+		).rejects.toMatchObject({ code: 'EACCES' });
 		expect(fakeBuildIntoDirectory).toHaveBeenCalledTimes(1);
 	});
 
