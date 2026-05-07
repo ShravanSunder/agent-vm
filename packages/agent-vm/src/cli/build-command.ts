@@ -1,7 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { buildImageAssetFileNames, type BuildImageResult } from '@agent-vm/gondolin-adapter';
+import {
+	buildImageAssetFileNames,
+	hasBuiltImageAssets,
+	type BuildImageResult,
+} from '@agent-vm/gondolin-adapter';
 import { z } from 'zod';
 
 import { buildDockerImage as buildDockerImageDefault } from '../build/docker-image-builder.js';
@@ -167,25 +171,6 @@ function setCurrentImageFingerprint(
 	currentFingerprints.toolVms[imageTarget.name] = fingerprint;
 }
 
-async function pathExists(filePath: string): Promise<boolean> {
-	try {
-		await fs.access(filePath);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-async function hasGondolinAssets(imagePath: string): Promise<boolean> {
-	for (const fileName of buildImageAssetFileNames) {
-		// oxlint-disable-next-line no-await-in-loop -- each missing file points at the same image generation
-		if (!(await pathExists(path.join(imagePath, fileName)))) {
-			return false;
-		}
-	}
-	return true;
-}
-
 async function linkOrCopyImageAsset(sourcePath: string, targetPath: string): Promise<void> {
 	try {
 		await fs.link(sourcePath, targetPath);
@@ -197,12 +182,23 @@ async function linkOrCopyImageAsset(sourcePath: string, targetPath: string): Pro
 			(error.code === 'EXDEV' ||
 				error.code === 'EPERM' ||
 				error.code === 'EOPNOTSUPP' ||
+				error.code === 'ENOTSUP' ||
 				error.code === 'EACCES')
 		) {
-			await fs.copyFile(sourcePath, targetPath);
-			return;
+			try {
+				await fs.copyFile(sourcePath, targetPath);
+				return;
+			} catch (copyError) {
+				throw new Error(
+					`Failed to copy Gondolin image asset from '${sourcePath}' to '${targetPath}'.`,
+					{ cause: copyError },
+				);
+			}
 		}
-		throw error;
+		throw new Error(
+			`Failed to link Gondolin image asset from '${sourcePath}' to '${targetPath}'.`,
+			{ cause: error },
+		);
 	}
 }
 
@@ -216,10 +212,7 @@ async function materializeGondolinImageAlias(options: {
 	if (path.resolve(options.sourceImagePath) === path.resolve(targetImagePath)) {
 		return targetImagePath;
 	}
-	if (options.fullReset) {
-		await fs.rm(targetImagePath, { recursive: true, force: true });
-	}
-	if (await hasGondolinAssets(targetImagePath)) {
+	if (!options.fullReset && (await hasBuiltImageAssets(targetImagePath))) {
 		return targetImagePath;
 	}
 	await fs.rm(targetImagePath, { recursive: true, force: true });
@@ -542,6 +535,7 @@ export async function runBuildCommand(
 	const fingerprintByInputKey = new Map<string, string>();
 	const effectiveFingerprintByTargetKey = new Map<string, string>();
 	const dedupeKeyByTargetKey = new Map<string, string>();
+	const targetCountByDedupeKey = new Map<string, number>();
 	const shouldResetGondolinCacheByDedupeKey = new Map<string, boolean>();
 
 	for (const imageTarget of imageTargets) {
@@ -566,6 +560,7 @@ export async function runBuildCommand(
 		const shouldResetGondolinCache = options.forceRebuild === true || dockerBackedTargets.has(key);
 		effectiveFingerprintByTargetKey.set(key, fingerprint);
 		dedupeKeyByTargetKey.set(key, dedupeKey);
+		targetCountByDedupeKey.set(dedupeKey, (targetCountByDedupeKey.get(dedupeKey) ?? 0) + 1);
 		shouldResetGondolinCacheByDedupeKey.set(
 			dedupeKey,
 			(shouldResetGondolinCacheByDedupeKey.get(dedupeKey) ?? false) || shouldResetGondolinCache,
@@ -623,6 +618,14 @@ export async function runBuildCommand(
 					});
 				} finally {
 					stopHeartbeat();
+				}
+				if (
+					(targetCountByDedupeKey.get(dedupeKey) ?? 0) > 1 &&
+					result.fingerprint !== fingerprint
+				) {
+					throw new Error(
+						`Fingerprint mismatch for image profile '${key}': precomputed '${fingerprint}' but build returned '${result.fingerprint}'.`,
+					);
 				}
 				builtImageByDedupeKey.set(dedupeKey, {
 					imageTarget,

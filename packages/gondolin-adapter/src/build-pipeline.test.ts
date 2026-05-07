@@ -19,6 +19,12 @@ async function writeFakeAssets(outputDirectory: string): Promise<void> {
 	}
 }
 
+function createFileSystemError(code: string, message: string): NodeJS.ErrnoException {
+	const error = new Error(message) as NodeJS.ErrnoException;
+	error.code = code;
+	return error;
+}
+
 afterEach(() => {
 	vi.restoreAllMocks();
 	for (const temporaryDirectory of temporaryDirectories.splice(0)) {
@@ -213,6 +219,55 @@ describe('buildImage', () => {
 		expect(secondResult.built).toBe(false);
 		expect(secondResult.fingerprint).toBe(firstResult.fingerprint);
 		expect(secondResult.imagePath).toBe(firstResult.imagePath);
+		expect(fakeBuildIntoDirectory).toHaveBeenCalledTimes(1);
+	});
+
+	it('surfaces access failures while checking existing fingerprinted image assets', async () => {
+		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
+		temporaryDirectories.push(cacheDirectory);
+		const buildConfig: BuildConfig = {
+			arch: 'aarch64',
+			distro: 'alpine',
+			rootfs: {
+				label: 'gondolin-root',
+			},
+		};
+		const fakeBuildIntoDirectory = vi.fn(
+			async (_buildConfig: unknown, outputDirectory: string): Promise<void> => {
+				await writeFakeAssets(outputDirectory);
+			},
+		);
+		const firstResult = await buildImage(
+			{
+				buildConfig,
+				cacheDir: cacheDirectory,
+			},
+			{
+				buildAssets: fakeBuildIntoDirectory,
+			},
+		);
+		const inaccessibleAssetPath = path.join(firstResult.imagePath, 'manifest.json');
+		const originalAccess = fsPromises.access;
+		vi.spyOn(fsPromises, 'access').mockImplementation(
+			async (...accessArgs: Parameters<typeof fsPromises.access>): Promise<void> => {
+				if (path.resolve(String(accessArgs[0])) === path.resolve(inaccessibleAssetPath)) {
+					throw createFileSystemError('EACCES', `permission denied: ${inaccessibleAssetPath}`);
+				}
+				await originalAccess(...accessArgs);
+			},
+		);
+
+		await expect(
+			buildImage(
+				{
+					buildConfig,
+					cacheDir: cacheDirectory,
+				},
+				{
+					buildAssets: fakeBuildIntoDirectory,
+				},
+			),
+		).rejects.toMatchObject({ code: 'EACCES' });
 		expect(fakeBuildIntoDirectory).toHaveBeenCalledTimes(1);
 	});
 

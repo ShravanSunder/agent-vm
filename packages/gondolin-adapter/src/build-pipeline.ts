@@ -69,16 +69,23 @@ function stableSerialize(value: unknown): string {
 	return JSON.stringify(value);
 }
 
+function isMissingPathError(error: unknown): boolean {
+	return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
+}
+
 async function pathExists(filePath: string): Promise<boolean> {
 	try {
 		await fs.access(filePath);
 		return true;
-	} catch {
+	} catch (error) {
+		if (!isMissingPathError(error)) {
+			throw error;
+		}
 		return false;
 	}
 }
 
-async function hasBuiltAssets(outputDirectoryPath: string): Promise<boolean> {
+export async function hasBuiltImageAssets(outputDirectoryPath: string): Promise<boolean> {
 	for (const fileName of buildImageAssetFileNames) {
 		// oxlint-disable-next-line no-await-in-loop -- each missing file points at the same image generation
 		if (!(await pathExists(path.join(outputDirectoryPath, fileName)))) {
@@ -205,7 +212,7 @@ export async function buildImage(
 		await fs.rm(imagePath, { recursive: true, force: true });
 	}
 
-	if (await hasBuiltAssets(imagePath)) {
+	if (await hasBuiltImageAssets(imagePath)) {
 		return {
 			built: false,
 			fingerprint,
@@ -224,7 +231,7 @@ export async function buildImage(
 		await buildAssetsImplementation(effectiveBuildConfig, imagePath, options.configDir);
 	});
 
-	if (!(await hasBuiltAssets(imagePath))) {
+	if (!(await hasBuiltImageAssets(imagePath))) {
 		throw new Error(`Expected Gondolin assets to be written to ${imagePath}.`);
 	}
 
