@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { fork } from 'node:child_process';
 
 import {
 	buildImage as buildImageFromCore,
@@ -13,14 +14,45 @@ import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { TaskOutput } from '../shared/run-task.js';
 import { resolveRuntimeBuildVersionTag as resolveRuntimeBuildVersionTagDefault } from './runtime-versions.js';
 
+export interface GondolinImageBuildRequest {
+	readonly buildConfigPath: string;
+	readonly systemCacheIdentifierPath: string;
+	readonly cacheDir: string;
+	readonly fullReset?: boolean;
+}
+
+export interface RunGondolinBuildChildProcessOptions {
+	readonly childModuleUrl?: URL;
+	readonly request: GondolinImageBuildRequest;
+	readonly streamPreview: TaskOutput;
+}
+
 export interface GondolinImageBuilderDependencies {
 	readonly buildImage?: (
 		options: BuildImageOptions,
 		dependencies?: { readonly gondolinVersion?: string },
 	) => Promise<BuildImageResult>;
 	readonly loadBuildConfig?: (buildConfigPath: string) => Promise<BuildConfig>;
+	readonly runBuildChildProcess?: (
+		options: RunGondolinBuildChildProcessOptions,
+	) => Promise<BuildImageResult>;
 	readonly resolveRuntimeBuildVersionTag?: () => Promise<string>;
 }
+
+interface GondolinBuildChildResultMessage {
+	readonly result: BuildImageResult;
+	readonly type: 'result';
+}
+
+interface GondolinBuildChildErrorMessage {
+	readonly message: string;
+	readonly stack?: string;
+	readonly type: 'error';
+}
+
+type GondolinBuildChildMessage =
+	| GondolinBuildChildErrorMessage
+	| GondolinBuildChildResultMessage;
 
 async function loadBuildConfigFromJson(buildConfigPath: string): Promise<BuildConfig> {
 	try {
@@ -52,6 +84,120 @@ export async function computeFingerprintFromConfigPath(
 	return computeBuildFingerprint(buildConfig, runtimeBuildVersionTag, fingerprintInput);
 }
 
+function isGondolinBuildChildMessage(value: unknown): value is GondolinBuildChildMessage {
+	if (typeof value !== 'object' || value === null || !('type' in value)) {
+		return false;
+	}
+	const message = value as { readonly type?: unknown };
+	return message.type === 'result' || message.type === 'error';
+}
+
+function childProcessExecArgv(): readonly string[] {
+	const filteredArgs: string[] = [];
+	for (let index = 0; index < process.execArgv.length; index += 1) {
+		const arg = process.execArgv[index];
+		if (arg === '--input-type') {
+			index += 1;
+			continue;
+		}
+		if (arg?.startsWith('--input-type=')) {
+			continue;
+		}
+		if (arg === undefined) {
+			continue;
+		}
+		filteredArgs.push(arg);
+	}
+	return filteredArgs;
+}
+
+export async function runGondolinImageBuildRequest(
+	request: GondolinImageBuildRequest,
+	dependencies: Omit<GondolinImageBuilderDependencies, 'runBuildChildProcess'> = {},
+): Promise<BuildImageResult> {
+	const loadBuildConfig = dependencies.loadBuildConfig ?? loadBuildConfigFromJson;
+	const buildImage = dependencies.buildImage ?? buildImageFromCore;
+	const configDir = path.dirname(path.resolve(request.buildConfigPath));
+	const buildConfig = await loadBuildConfig(request.buildConfigPath);
+	const fingerprintInput = await loadSystemCacheIdentifier({
+		filePath: request.systemCacheIdentifierPath,
+	});
+	const runtimeBuildVersionTag = await (
+		dependencies.resolveRuntimeBuildVersionTag ?? resolveRuntimeBuildVersionTagDefault
+	)();
+
+	return await buildImage(
+		{
+			buildConfig,
+			cacheDir: request.cacheDir,
+			configDir,
+			fingerprintInput,
+			...(request.fullReset ? { fullReset: true } : {}),
+		},
+		{
+			gondolinVersion: runtimeBuildVersionTag,
+		},
+	);
+}
+
+export async function runGondolinBuildChildProcess(
+	options: RunGondolinBuildChildProcessOptions,
+): Promise<BuildImageResult> {
+	return await new Promise<BuildImageResult>((resolve, reject) => {
+		const childModuleUrl =
+			options.childModuleUrl ??
+			new URL('./gondolin-image-build-child-entrypoint.js', import.meta.url);
+		const childProcess = fork(childModuleUrl, [], {
+			execArgv: [...childProcessExecArgv()],
+			stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+		});
+		let childResult: BuildImageResult | undefined;
+		let childError: Error | undefined;
+
+		childProcess.stdout?.on('data', (chunk: Buffer) => {
+			options.streamPreview.write(chunk);
+		});
+		childProcess.stderr?.on('data', (chunk: Buffer) => {
+			options.streamPreview.write(chunk);
+		});
+		childProcess.on('message', (message: unknown) => {
+			if (!isGondolinBuildChildMessage(message)) {
+				return;
+			}
+			if (message.type === 'result') {
+				childResult = message.result;
+				return;
+			}
+			childError = new Error(message.message);
+			if (message.stack) {
+				childError.stack = message.stack;
+			}
+		});
+		childProcess.on('error', (error) => {
+			childError = error;
+		});
+		childProcess.on('close', (exitCode, signal) => {
+			if (childResult) {
+				resolve(childResult);
+				return;
+			}
+			if (childError) {
+				reject(childError);
+				return;
+			}
+			reject(
+				new Error(
+					`Gondolin build child process exited without a result: exitCode=${String(exitCode)} signal=${String(signal)}`,
+				),
+			);
+		});
+		childProcess.send({
+			request: options.request,
+			type: 'build-request',
+		});
+	});
+}
+
 export async function buildGondolinImage(
 	options: {
 		readonly buildConfigPath: string;
@@ -62,28 +208,18 @@ export async function buildGondolinImage(
 	},
 	dependencies: GondolinImageBuilderDependencies = {},
 ): Promise<BuildImageResult> {
-	const loadBuildConfig = dependencies.loadBuildConfig ?? loadBuildConfigFromJson;
-	const buildImage = dependencies.buildImage ?? buildImageFromCore;
-	const configDir = path.dirname(path.resolve(options.buildConfigPath));
-	const buildConfig = await loadBuildConfig(options.buildConfigPath);
-	const fingerprintInput = await loadSystemCacheIdentifier({
-		filePath: options.systemCacheIdentifierPath,
-	});
-	const runtimeBuildVersionTag = await (
-		dependencies.resolveRuntimeBuildVersionTag ?? resolveRuntimeBuildVersionTagDefault
-	)();
+	const request: GondolinImageBuildRequest = {
+		buildConfigPath: options.buildConfigPath,
+		cacheDir: options.cacheDir,
+		systemCacheIdentifierPath: options.systemCacheIdentifierPath,
+		...(options.fullReset ? { fullReset: true } : {}),
+	};
 
-	return await buildImage(
-		{
-			buildConfig,
-			cacheDir: options.cacheDir,
-			configDir,
-			fingerprintInput,
-			...(options.streamPreview ? { output: options.streamPreview } : {}),
-			...(options.fullReset ? { fullReset: true } : {}),
-		},
-		{
-			gondolinVersion: runtimeBuildVersionTag,
-		},
-	);
+	if (options.streamPreview) {
+		const runBuildChildProcess =
+			dependencies.runBuildChildProcess ?? runGondolinBuildChildProcess;
+		return await runBuildChildProcess({ request, streamPreview: options.streamPreview });
+	}
+
+	return await runGondolinImageBuildRequest(request, dependencies);
 }

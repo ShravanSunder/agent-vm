@@ -18,6 +18,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* && \
     update-ca-certificates && \
     corepack enable && \
+    corepack prepare pnpm@10.33.0 --activate && \
     pnpm add -g openclaw@2026.5.2 && \
     OPENCLAW_PACKAGE_ROOT="$(pnpm root -g)/openclaw" && \
     (cd "$OPENCLAW_PACKAGE_ROOT" && node scripts/postinstall-bundled-plugins.mjs) && \

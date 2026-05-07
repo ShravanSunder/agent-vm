@@ -72,8 +72,9 @@ Controls the OpenClaw agent platform: model selection, sandbox mode, plugin regi
 ### OpenClaw Version
 
 `agent-vm init` writes a managed image profile. The installed
-`@agent-vm/agent-vm` package selects a pinned GHCR base image version, and that
-base image pins the tested OpenClaw version. Deployment repos customize the
+`@agent-vm/agent-vm` package includes `managed-images.json`, which selects a
+pinned GHCR managed base image tag. That tag is separate from the npm package
+version and pins the tested OpenClaw version. Deployment repos customize the
 image through `vm-images/gateways/openclaw/overlay.jsonc`, not by owning a full
 gateway Dockerfile.
 
