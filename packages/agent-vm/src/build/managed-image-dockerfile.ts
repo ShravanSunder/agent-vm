@@ -9,8 +9,6 @@ import { formatZodError } from '../cli/format-zod-error.js';
 
 export type ManagedImageBase = 'openclaw-gateway' | 'tool-vm' | 'worker-gateway';
 
-export const MANAGED_OPENCLAW_VERSION = '2026.5.2';
-
 const managedOpenClawAgentVmPluginPackageName = '@agent-vm/openclaw-agent-vm-plugin';
 const managedOpenClawAgentVmPluginExtensionPath = '/home/openclaw/.openclaw/extensions/gondolin';
 const managedOpenClawAgentVmPluginPackagePath =
@@ -39,6 +37,7 @@ export interface ManagedBaseImageReference {
 
 export interface ManagedImageRelease {
 	readonly baseImages: Readonly<Record<ManagedImageBase, ManagedBaseImageReference>>;
+	readonly openClawVersion: string;
 	readonly openClawAgentVmPluginVersion: string;
 }
 
@@ -76,6 +75,7 @@ const managedImageReleaseSchema = z
 				'worker-gateway': managedBaseImageReferenceSchema,
 			})
 			.strict(),
+		openClawVersion: z.string().min(1),
 		openClawAgentVmPluginVersion: z.string().min(1),
 	})
 	.strict();

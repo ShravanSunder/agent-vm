@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
 	deleteStaleImageDirectories,
+	findPrunableImageDirectories,
 	findStaleImageDirectories,
 } from './stale-image-cleaner.js';
 
@@ -126,6 +127,129 @@ describe('findStaleImageDirectories', () => {
 	});
 });
 
+describe('findPrunableImageDirectories', () => {
+	it('keeps current plus the two newest stale generations per image profile', async () => {
+		const cacheDirectory = await createTemporaryDirectory();
+		const profileDirectory = path.join(cacheDirectory, 'gateway-images', 'openclaw');
+		const currentDirectory = path.join(profileDirectory, 'current');
+		const newestStaleDirectory = path.join(profileDirectory, 'stale-newest');
+		const secondNewestStaleDirectory = path.join(profileDirectory, 'stale-second');
+		const prunableStaleDirectory = path.join(profileDirectory, 'stale-third');
+
+		await fs.mkdir(currentDirectory, { recursive: true });
+		await fs.mkdir(newestStaleDirectory, { recursive: true });
+		await fs.mkdir(secondNewestStaleDirectory, { recursive: true });
+		await fs.mkdir(prunableStaleDirectory, { recursive: true });
+
+		const baseTime = new Date('2026-05-04T12:00:00.000Z');
+		await fs.utimes(
+			prunableStaleDirectory,
+			baseTime,
+			new Date('2026-05-04T12:01:00.000Z'),
+		);
+		await fs.utimes(
+			secondNewestStaleDirectory,
+			baseTime,
+			new Date('2026-05-04T12:02:00.000Z'),
+		);
+		await fs.utimes(
+			newestStaleDirectory,
+			baseTime,
+			new Date('2026-05-04T12:03:00.000Z'),
+		);
+		await fs.utimes(currentDirectory, baseTime, new Date('2026-05-04T12:04:00.000Z'));
+
+		const prunableEntries = await findPrunableImageDirectories({
+			cacheDir: cacheDirectory,
+			currentFingerprints: {
+				gateways: { openclaw: 'current' },
+				toolVms: {},
+			},
+			retainStaleGenerationsPerProfile: 2,
+		});
+
+		expect(prunableEntries.map((entry) => entry.fingerprint)).toEqual(['stale-third']);
+	});
+
+	it('keeps the only stale generation for a profile', async () => {
+		const cacheDirectory = await createTemporaryDirectory();
+		const profileDirectory = path.join(cacheDirectory, 'gateway-images', 'openclaw');
+
+		await fs.mkdir(path.join(profileDirectory, 'current'), { recursive: true });
+		await fs.mkdir(path.join(profileDirectory, 'only-stale'), { recursive: true });
+
+		const prunableEntries = await findPrunableImageDirectories({
+			cacheDir: cacheDirectory,
+			currentFingerprints: {
+				gateways: { openclaw: 'current' },
+				toolVms: {},
+			},
+			retainStaleGenerationsPerProfile: 2,
+		});
+
+		expect(prunableEntries).toEqual([]);
+	});
+
+	it('applies stale generation retention independently per family and profile', async () => {
+		const cacheDirectory = await createTemporaryDirectory();
+
+		for (const [familyDirectory, profileName] of [
+			['gateway-images', 'openclaw'],
+			['gateway-images', 'worker'],
+			['tool-vm-images', 'default'],
+			['tool-vm-images', 'shravan'],
+		] as const) {
+			const profileDirectory = path.join(cacheDirectory, familyDirectory, profileName);
+			await fs.mkdir(path.join(profileDirectory, 'current'), { recursive: true });
+			await fs.mkdir(path.join(profileDirectory, 'keep-one'), { recursive: true });
+			await fs.mkdir(path.join(profileDirectory, 'keep-two'), { recursive: true });
+			await fs.mkdir(path.join(profileDirectory, 'delete-one'), { recursive: true });
+
+			const baseTime = new Date('2026-05-04T12:00:00.000Z');
+			await fs.utimes(
+				path.join(profileDirectory, 'delete-one'),
+				baseTime,
+				new Date('2026-05-04T12:01:00.000Z'),
+			);
+			await fs.utimes(
+				path.join(profileDirectory, 'keep-two'),
+				baseTime,
+				new Date('2026-05-04T12:02:00.000Z'),
+			);
+			await fs.utimes(
+				path.join(profileDirectory, 'keep-one'),
+				baseTime,
+				new Date('2026-05-04T12:03:00.000Z'),
+			);
+			await fs.utimes(
+				path.join(profileDirectory, 'current'),
+				baseTime,
+				new Date('2026-05-04T12:04:00.000Z'),
+			);
+		}
+
+		const prunableEntries = await findPrunableImageDirectories({
+			cacheDir: cacheDirectory,
+			currentFingerprints: {
+				gateways: { openclaw: 'current', worker: 'current' },
+				toolVms: { default: 'current', shravan: 'current' },
+			},
+			retainStaleGenerationsPerProfile: 2,
+		});
+
+		expect(
+			prunableEntries
+				.map((entry) => `${entry.family}/${entry.profileName}/${entry.fingerprint}`)
+				.toSorted(),
+		).toEqual([
+			'gateway/openclaw/delete-one',
+			'gateway/worker/delete-one',
+			'toolVm/default/delete-one',
+			'toolVm/shravan/delete-one',
+		]);
+	});
+});
+
 describe('deleteStaleImageDirectories', () => {
 	it('removes every provided stale image directory', async () => {
 			const cacheDirectory = await createTemporaryDirectory();
@@ -138,6 +262,7 @@ describe('deleteStaleImageDirectories', () => {
 					absolutePath: staleDirectory,
 					family: 'gateway',
 					fingerprint: 'stale-gateway',
+					modifiedAtMs: 1,
 					profileName: 'worker',
 					sizeBytes: 7,
 				},

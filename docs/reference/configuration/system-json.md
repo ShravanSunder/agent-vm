@@ -80,6 +80,13 @@ instead.
 Do not put active worker gitdirs here; unpushed commits are not rebuildable
 cache.
 
+`agent-vm build` automatically prunes old image-cache generations after every
+successful build. For each gateway or Tool VM image profile, it keeps the
+current fingerprint plus the two newest previous fingerprint directories. The
+retention count is fixed; there is no `system.jsonc` cache retention field.
+Failed builds do not prune cache entries. Manual `agent-vm cache clean
+--confirm` remains more aggressive and deletes every stale image generation.
+
 ## runtimeDir
 
 `runtimeDir` stores active, non-backup runtime artifacts that are not durable

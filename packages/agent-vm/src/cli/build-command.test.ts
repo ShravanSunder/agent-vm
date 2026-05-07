@@ -42,7 +42,8 @@ function createTestManagedImageRelease(): ManagedImageRelease {
 				tag: '2026.05.07.1',
 			},
 		},
-		openClawAgentVmPluginVersion: '0.0.49',
+		openClawVersion: '2026.5.2',
+		openClawAgentVmPluginVersion: '0.0.50',
 	};
 }
 
@@ -235,7 +236,7 @@ describe('runBuildCommand', () => {
 			'FROM ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:2026.05.07.1',
 		);
 		expect(generatedDockerfile).toContain(
-			'RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@0.0.49"',
+			'RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@0.0.50"',
 		);
 		expect(generatedDockerfile).not.toContain('@agent-vm/openclaw-agent-vm-plugin@0.0.45');
 		expect(generatedDockerfile).toContain(
@@ -801,6 +802,346 @@ describe('runBuildCommand', () => {
 
 		expect(taskStatuses).toContain('checking vm assets');
 		expect(taskStatuses).toContain('vm assets cache hit');
+	});
+
+	it('auto-prunes old image generations after successful builds', async () => {
+		const deleteStaleImageDirectories = vi.fn(async () => {});
+		const findPrunableImageDirectories = vi.fn(async () => [
+			{
+				absolutePath: '/cache/gateway-images/openclaw/old',
+				family: 'gateway' as const,
+				fingerprint: 'old',
+				modifiedAtMs: 1,
+				profileName: 'openclaw',
+				sizeBytes: 1024,
+			},
+		]);
+		const statusMessages: string[] = [];
+
+		await runBuildCommand(
+			{
+				systemConfig: createTestSystemConfig(),
+			},
+			{
+				buildDockerImage: async () => {},
+				buildGondolinImage: async (options) => ({
+					built: false,
+					fingerprint: options.cacheDir.includes('gateway-images')
+						? 'current-gateway'
+						: 'current-tool',
+					imagePath: path.join(options.cacheDir, 'current'),
+				}),
+				deleteStaleImageDirectories,
+				findPrunableImageDirectories,
+				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+				runTask: async (_title, fn) => {
+					await fn({
+						interactive: true,
+						setOutput: () => {},
+						setStatus: (status) => {
+							if (status) {
+								statusMessages.push(status);
+							}
+						},
+					});
+				},
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		expect(findPrunableImageDirectories).toHaveBeenCalledWith({
+			cacheDir: '/cache',
+			currentFingerprints: {
+				gateways: { openclaw: 'current-gateway' },
+				toolVms: { default: 'current-tool' },
+			},
+			retainStaleGenerationsPerProfile: 2,
+		});
+		expect(deleteStaleImageDirectories).toHaveBeenCalledWith([
+			expect.objectContaining({
+				absolutePath: '/cache/gateway-images/openclaw/old',
+			}),
+		]);
+		expect(statusMessages).toContain('deleted 1 old image generation');
+	});
+
+	it('waits for every Gondolin image target before auto-pruning', async () => {
+		const buildOrder: string[] = [];
+
+		await runBuildCommand(
+			{
+				systemConfig: createTestSystemConfig(),
+			},
+			{
+				buildDockerImage: async () => {},
+				buildGondolinImage: async (options) => {
+					buildOrder.push(`gondolin:${options.cacheDir}`);
+					return {
+						built: false,
+						fingerprint: options.cacheDir.includes('gateway-images')
+							? 'current-gateway'
+							: 'current-tool',
+						imagePath: path.join(options.cacheDir, 'current'),
+					};
+				},
+				deleteStaleImageDirectories: async () => {},
+				findPrunableImageDirectories: async () => {
+					buildOrder.push('prune');
+					return [];
+				},
+				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+				runTask: async (_title, fn) => {
+					await fn({
+						interactive: false,
+						setOutput: () => {},
+						setStatus: () => {},
+					});
+				},
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		expect(buildOrder).toEqual([
+			'gondolin:/cache/gateway-images/openclaw',
+			'gondolin:/cache/tool-vm-images/default',
+			'prune',
+		]);
+	});
+
+	it('does not auto-prune when a Docker build fails', async () => {
+		const deleteStaleImageDirectories = vi.fn(async () => {});
+		const findPrunableImageDirectories = vi.fn(async () => []);
+
+		await expect(
+			runBuildCommand(
+				{
+					systemConfig: createTestSystemConfig(),
+				},
+				{
+					buildDockerImage: async () => {
+						throw new Error('docker failed');
+					},
+					buildGondolinImage: async () => ({
+						built: false,
+						fingerprint: 'current',
+						imagePath: '/cache/current',
+					}),
+					deleteStaleImageDirectories,
+					findPrunableImageDirectories,
+					resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+					runTask: async (_title, fn) => {
+						await fn({
+							interactive: false,
+							setOutput: () => {},
+							setStatus: () => {},
+						});
+					},
+					syncBundledOpenClawPlugin: noOpPluginSync,
+				},
+			),
+		).rejects.toThrow('docker failed');
+
+		expect(findPrunableImageDirectories).not.toHaveBeenCalled();
+		expect(deleteStaleImageDirectories).not.toHaveBeenCalled();
+	});
+
+	it('does not auto-prune when a Gondolin build fails', async () => {
+		const deleteStaleImageDirectories = vi.fn(async () => {});
+		const findPrunableImageDirectories = vi.fn(async () => []);
+
+		await expect(
+			runBuildCommand(
+				{
+					systemConfig: createTestSystemConfig(),
+				},
+				{
+					buildDockerImage: async () => {},
+					buildGondolinImage: async () => {
+						throw new Error('gondolin failed');
+					},
+					deleteStaleImageDirectories,
+					findPrunableImageDirectories,
+					resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+					runTask: async (_title, fn) => {
+						await fn({
+							interactive: false,
+							setOutput: () => {},
+							setStatus: () => {},
+						});
+					},
+					syncBundledOpenClawPlugin: noOpPluginSync,
+				},
+			),
+		).rejects.toThrow('gondolin failed');
+
+		expect(findPrunableImageDirectories).not.toHaveBeenCalled();
+		expect(deleteStaleImageDirectories).not.toHaveBeenCalled();
+	});
+
+	it('warns without failing when post-build auto-prune deletion fails', async () => {
+		const outputMessages: string[] = [];
+		const statusMessages: string[] = [];
+
+		await runBuildCommand(
+			{
+				systemConfig: createTestSystemConfig(),
+			},
+			{
+				buildDockerImage: async () => {},
+				buildGondolinImage: async (options) => ({
+					built: false,
+					fingerprint: options.cacheDir.includes('gateway-images')
+						? 'current-gateway'
+						: 'current-tool',
+					imagePath: path.join(options.cacheDir, 'current'),
+				}),
+				deleteStaleImageDirectories: async () => {
+					throw new Error('file busy');
+				},
+				findPrunableImageDirectories: async () => [
+					{
+						absolutePath: '/cache/tool-vm-images/default/old',
+						family: 'toolVm',
+						fingerprint: 'old',
+						modifiedAtMs: 1,
+						profileName: 'default',
+						sizeBytes: 1024,
+					},
+				],
+				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+				runTask: async (_title, fn) => {
+					await fn({
+						interactive: true,
+						setOutput: (output) => {
+							outputMessages.push(typeof output === 'string' ? output : output.message);
+						},
+						setStatus: (status) => {
+							if (status) {
+								statusMessages.push(status);
+							}
+						},
+					});
+				},
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		expect(outputMessages).toContain(
+			'Image cache auto-prune failed after build succeeded: file busy',
+		);
+		expect(statusMessages).toContain('image cache auto-prune failed');
+	});
+
+	it('skips auto-prune when a gateway runtime record exists', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const stateDirectory = path.join(temporaryDirectory, 'state', 'test');
+		fs.mkdirSync(stateDirectory, { recursive: true });
+		fs.writeFileSync(path.join(stateDirectory, 'gateway-runtime.json'), '{}\n', 'utf8');
+		const deleteStaleImageDirectories = vi.fn(async () => {});
+		const findPrunableImageDirectories = vi.fn(async () => []);
+		const outputMessages: string[] = [];
+		const statusMessages: string[] = [];
+		const systemConfig = createTestSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (!baseZone || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected an OpenClaw test zone.');
+		}
+
+		await runBuildCommand(
+			{
+				systemConfig: {
+					...systemConfig,
+					zones: [
+						{
+							...baseZone,
+							gateway: {
+								...baseZone.gateway,
+								stateDir: stateDirectory,
+							},
+						},
+					],
+				},
+			},
+			{
+				buildDockerImage: async () => {},
+				buildGondolinImage: async (options) => ({
+					built: false,
+					fingerprint: options.cacheDir.includes('gateway-images')
+						? 'current-gateway'
+						: 'current-tool',
+					imagePath: path.join(options.cacheDir, 'current'),
+				}),
+				deleteStaleImageDirectories,
+				findPrunableImageDirectories,
+				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+				runTask: async (_title, fn) => {
+					await fn({
+						interactive: true,
+						setOutput: (output) => {
+							outputMessages.push(typeof output === 'string' ? output : output.message);
+						},
+						setStatus: (status) => {
+							if (status) {
+								statusMessages.push(status);
+							}
+						},
+					});
+				},
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		expect(findPrunableImageDirectories).not.toHaveBeenCalled();
+		expect(deleteStaleImageDirectories).not.toHaveBeenCalled();
+		expect(outputMessages).toContain(
+			'Image cache auto-prune skipped because gateway runtime records exist for zone(s): test-zone. Stop the controller before pruning old image generations.',
+		);
+		expect(statusMessages).toContain('image cache auto-prune skipped');
+	});
+
+	it('warns without failing when post-build auto-prune discovery fails', async () => {
+		const outputMessages: string[] = [];
+		const statusMessages: string[] = [];
+
+		await runBuildCommand(
+			{
+				systemConfig: createTestSystemConfig(),
+			},
+			{
+				buildDockerImage: async () => {},
+				buildGondolinImage: async (options) => ({
+					built: false,
+					fingerprint: options.cacheDir.includes('gateway-images')
+						? 'current-gateway'
+						: 'current-tool',
+					imagePath: path.join(options.cacheDir, 'current'),
+				}),
+				deleteStaleImageDirectories: async () => {},
+				findPrunableImageDirectories: async () => {
+					throw new Error('cache scan failed');
+				},
+				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
+				runTask: async (_title, fn) => {
+					await fn({
+						interactive: true,
+						setOutput: (output) => {
+							outputMessages.push(typeof output === 'string' ? output : output.message);
+						},
+						setStatus: (status) => {
+							if (status) {
+								statusMessages.push(status);
+							}
+						},
+					});
+				},
+				syncBundledOpenClawPlugin: noOpPluginSync,
+			},
+		);
+
+		expect(outputMessages).toContain(
+			'Image cache auto-prune failed after build succeeded: cache scan failed',
+		);
+		expect(statusMessages).toContain('image cache auto-prune failed');
 	});
 
 	it('fails before image builds when Zig is missing', async () => {
