@@ -23,8 +23,8 @@ import {
 } from './pinned-realfs.js';
 import type { SecretSpec } from './types.js';
 
-const SYNTHETIC_DNS_IPV4_BENCHMARK = '198.18.0.1';
-const SYNTHETIC_DNS_IPV6_UNIQUE_LOCAL = 'fc00::1';
+export const SYNTHETIC_DNS_IPV4_BENCHMARK = '198.18.0.1';
+export const SYNTHETIC_DNS_IPV6_UNIQUE_LOCAL = 'fc00::1';
 
 export interface ExecResult {
 	readonly exitCode: number;

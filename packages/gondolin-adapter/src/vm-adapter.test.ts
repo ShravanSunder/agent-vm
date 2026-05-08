@@ -8,6 +8,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { PinnedRealFsRoot } from './pinned-realfs.js';
 import {
+	SYNTHETIC_DNS_IPV4_BENCHMARK,
+	SYNTHETIC_DNS_IPV6_UNIQUE_LOCAL,
 	createManagedVm,
 	type ManagedVmDependencies,
 	type ManagedVmInstance,
@@ -90,8 +92,8 @@ describe('createManagedVm', () => {
 
 		expect(capturedVmOptions?.dns).toEqual({
 			mode: 'synthetic',
-			syntheticIPv4: '198.18.0.1',
-			syntheticIPv6: 'fc00::1',
+			syntheticIPv4: SYNTHETIC_DNS_IPV4_BENCHMARK,
+			syntheticIPv6: SYNTHETIC_DNS_IPV6_UNIQUE_LOCAL,
 			syntheticHostMapping: 'per-host',
 		});
 	});
@@ -155,8 +157,8 @@ describe('createManagedVm', () => {
 			cpus: 2,
 			dns: {
 				mode: 'synthetic',
-				syntheticIPv4: '198.18.0.1',
-				syntheticIPv6: 'fc00::1',
+				syntheticIPv4: SYNTHETIC_DNS_IPV4_BENCHMARK,
+				syntheticIPv6: SYNTHETIC_DNS_IPV6_UNIQUE_LOCAL,
 				syntheticHostMapping: 'per-host',
 			},
 			env: {
