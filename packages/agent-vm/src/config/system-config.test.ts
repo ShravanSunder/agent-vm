@@ -367,11 +367,6 @@ describe('loadSystemConfig', () => {
 
 		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
 			systemConfigPath: configPath,
-			systemCacheIdentifierPath: path.join(
-				workingDirectoryPath,
-				'config',
-				'systemCacheIdentifier.json',
-			),
 			host: {
 				controllerPort: 18800,
 				githubToken: {
@@ -424,7 +419,7 @@ describe('loadSystemConfig', () => {
 		});
 	});
 
-	test('adds runtime-only system config and cache identifier paths', async () => {
+	test('adds only the runtime system config path', async () => {
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-config-cache-id-',
 			createValidSystemConfigInput(),
@@ -433,9 +428,6 @@ describe('loadSystemConfig', () => {
 		const config = await loadSystemConfig(configPath);
 
 		expect(config.systemConfigPath).toBe(configPath);
-		expect(config.systemCacheIdentifierPath).toBe(
-			path.join(path.dirname(configPath), 'systemCacheIdentifier.json'),
-		);
 		expect(config.runtimeDir).toBe(path.join(path.dirname(configPath), '..', 'runtime'));
 	});
 

@@ -50,7 +50,7 @@ generic container host.
 
 | Preset | Use when | Expands to |
 | --- | --- | --- |
-| `macos-local` | Local Mac development | local paths, `aarch64`, 1Password secrets, `hostSystemType: "bare-metal"`, writes `.env.local` |
+| `macos-local` | Local Mac development | local paths, `aarch64`, 1Password secrets, writes `.env.local` |
 | `container-x86` | x86_64 Linux container runtime | runtime paths, `x86_64`, environment secrets, `vm-host-system/` |
 | `container-arm64` | arm64 Linux container runtime | runtime paths, `aarch64`, environment secrets, `vm-host-system/` |
 

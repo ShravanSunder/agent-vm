@@ -16,7 +16,6 @@ agent-vm validate --config config/system.jsonc
 It checks:
 
 - `system.jsonc` / `system.json` schema and cross-field validation.
-- `systemCacheIdentifier.json` exists and is valid JSON.
 - Gateway and tool VM image recipe files exist.
 - OpenClaw Tool VM profile mappings reference existing `toolVmProfiles`.
 - Per-agent auth profiles and sandbox seeds are visible as named checks.
@@ -26,8 +25,8 @@ It checks:
   OpenClaw zones.
 - Container runtime paths like `/etc/agent-vm/...` map back to checkout files
   when `system.jsonc` or `system.json` lives under a scaffold `config/` directory.
-- `vm-host-system/` exists when the identifier says
-  `hostSystemType: "container"`.
+- `vm-host-system/` is complete when present in a checked-out container
+  runtime layout.
 
 Use `validate` after editing config, prompts, scaffold files, or image recipe
 paths.
@@ -53,9 +52,9 @@ It checks:
 - OpenClaw gateway configs pass the catalog's own OpenClaw CLI validation.
 - OpenClaw Tool VM profile mappings, per-agent auth profile entries, and
   sandbox seed entries are visible as named checks.
-- `systemCacheIdentifier.json`.
 - Worker configs using the paths as the current host sees them.
-- `vm-host-system/` files for container configs.
+- `vm-host-system/` files when present in a checked-out container runtime
+  layout, or runtime host files when running from `/etc/agent-vm/system.json`.
 
 `doctor` does not treat age or 1Password CLI as universal requirements. They
 are only relevant to flows that use them:

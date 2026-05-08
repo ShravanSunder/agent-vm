@@ -17,11 +17,6 @@ function createSystemConfig(
 		cacheDir: path.join(path.dirname(stateDirectory), 'cache'),
 		runtimeDir: path.join(path.dirname(stateDirectory), 'runtime'),
 		systemConfigPath: path.join(path.dirname(stateDirectory), 'config', 'system.json'),
-		systemCacheIdentifierPath: path.join(
-			path.dirname(stateDirectory),
-			'config',
-			'systemCacheIdentifier.json',
-		),
 		host: {
 			controllerPort,
 			projectNamespace: 'claw-tests-a1b2c3d4',

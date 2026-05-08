@@ -56,21 +56,12 @@ function createGatewayConfigPath(): string {
 	return configPath;
 }
 
-function createSystemConfigPathWithIdentifier(): string {
+function createSystemConfigPath(): string {
 	const workingDirectoryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-gateway-cache-id-'));
 	createdDirectories.push(workingDirectoryPath);
 	const configDirectory = path.join(workingDirectoryPath, 'config');
 	fs.mkdirSync(configDirectory, { recursive: true });
-	const systemConfigPath = path.join(configDirectory, 'system.json');
-	const systemCacheIdentifierPath = path.join(configDirectory, 'systemCacheIdentifier.json');
-	fs.writeFileSync(
-		systemCacheIdentifierPath,
-		JSON.stringify({
-			gitSha: 'gateway-system-cache-sha',
-		}),
-		'utf8',
-	);
-	return systemConfigPath;
+	return path.join(configDirectory, 'system.json');
 }
 
 function createHttpHealthGatewayLifecycle(): {
@@ -190,7 +181,7 @@ function createSystemConfig(): LoadedSystemConfig {
 				size: 5,
 			},
 		},
-		{ systemConfigPath: createSystemConfigPathWithIdentifier() },
+		{ systemConfigPath: createSystemConfigPath() },
 	);
 }
 
@@ -307,13 +298,6 @@ describe('startGatewayZone', () => {
 
 		expect(loadBuildConfig).toHaveBeenCalledWith('./vm-images/gateways/openclaw/build-config.json');
 		expect(buildImage).toHaveBeenCalled();
-		expect(buildImage).toHaveBeenCalledWith(
-			expect.objectContaining({
-				fingerprintInput: {
-					gitSha: 'gateway-system-cache-sha',
-				},
-			}),
-		);
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
 				allowedHosts: ['api.anthropic.com', 'api.openai.com', 'api.perplexity.ai'],

@@ -40,7 +40,6 @@ const systemConfig = {
 
 const loadedSystemConfig = {
 	...systemConfig,
-	systemCacheIdentifierPath: '/tmp/systemCacheIdentifier.json',
 	systemConfigPath: '/tmp/system.json',
 } satisfies LoadedSystemConfig;
 

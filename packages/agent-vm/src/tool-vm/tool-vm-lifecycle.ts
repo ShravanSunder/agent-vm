@@ -17,7 +17,6 @@ import { validateResolvedToolWorkMountDir as validateResolvedToolWorkMountDirDef
 export interface ToolVmLifecycleDependencies {
 	readonly buildGondolinImage?: (options: {
 		readonly buildConfigPath: string;
-		readonly systemCacheIdentifierPath: string;
 		readonly cacheDir: string;
 		readonly fullReset?: boolean;
 	}) => ReturnType<typeof buildGondolinImageDefault>;
@@ -61,7 +60,6 @@ export async function createToolVm(
 	});
 	const toolImage = await buildGondolinImage({
 		buildConfigPath: toolImageProfile.buildConfig,
-		systemCacheIdentifierPath: options.systemConfig.systemCacheIdentifierPath,
 		cacheDir: path.join(options.cacheDir, 'tool-vm-images', options.profile.imageProfile),
 	});
 

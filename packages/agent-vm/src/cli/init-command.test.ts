@@ -1391,42 +1391,10 @@ describe('scaffoldAgentVmProject', () => {
 		});
 	});
 
-	it('writes systemCacheIdentifier.json for local scaffolds', async () => {
+	it('does not write .env.local for container scaffolds', async () => {
 		const targetDir = await createTestDirectory();
 
-		const result = await scaffoldAgentVmProject(
-			{
-				targetDir,
-				zoneId: 'coding-agent',
-				gatewayType: 'worker',
-				architecture: 'x86_64',
-				secretsProvider: '1password',
-				writeLocalEnvironmentFile: true,
-			},
-			noGeneratedAgeIdentityDependencies,
-		);
-
-		const raw = await fs.readFile(
-			path.join(targetDir, 'config', 'systemCacheIdentifier.json'),
-			'utf8',
-		);
-		expect(JSON.parse(raw)).toMatchObject({
-			$comment:
-				'Cache compatibility identifier. Contents hash into Gondolin image fingerprints. Change imageCacheFormat when the image cache contract changes.',
-			schemaVersion: 1,
-			hostSystemType: 'bare-metal',
-			imageCacheFormat: 'gondolin-image-cache-v1',
-		});
-		expect(JSON.parse(raw)).not.toHaveProperty('os');
-		expect(JSON.parse(raw)).not.toHaveProperty('cacheProfile');
-		expect(JSON.parse(raw)).not.toHaveProperty('cacheFormat');
-		expect(result.created).toContain('config/systemCacheIdentifier.json');
-	});
-
-	it('writes container identifiers and no .env.local for container scaffolds', async () => {
-		const targetDir = await createTestDirectory();
-
-		const result = await scaffoldAgentVmProject(
+		await scaffoldAgentVmProject(
 			{
 				targetDir,
 				zoneId: 'coding-agent',
@@ -1440,20 +1408,6 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const raw = await fs.readFile(
-			path.join(targetDir, 'config', 'systemCacheIdentifier.json'),
-			'utf8',
-		);
-		expect(JSON.parse(raw)).toMatchObject({
-			schemaVersion: 1,
-			hostSystemType: 'container',
-			imageCacheFormat: 'gondolin-image-cache-v1',
-		});
-		expect(JSON.parse(raw)).not.toHaveProperty('gitSha');
-		expect(JSON.parse(raw)).not.toHaveProperty('os');
-		expect(JSON.parse(raw)).not.toHaveProperty('cacheProfile');
-		expect(JSON.parse(raw)).not.toHaveProperty('cacheFormat');
-		expect(result.created).not.toContain('.env.local');
 		await expect(fs.access(path.join(targetDir, '.env.local'))).rejects.toMatchObject({
 			code: 'ENOENT',
 		});
@@ -1481,7 +1435,6 @@ describe('scaffoldAgentVmProject', () => {
 		);
 		expect(dockerfile).not.toContain('ARG GIT_SHA');
 		expect(dockerfile).not.toContain('gitSha');
-		expect(dockerfile).not.toContain('/etc/agent-vm/systemCacheIdentifier.json');
 		expect(dockerfile).toContain('zig-x86_64-linux-');
 
 		const startScript = await fs.readFile(
@@ -1514,16 +1467,6 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 
-		const systemCacheIdentifier = z
-			.object({
-				hostSystemType: z.literal('container'),
-				imageCacheFormat: z.literal('gondolin-image-cache-v1'),
-			})
-			.parse(
-				JSON.parse(
-					await fs.readFile(path.join(targetDir, 'config', 'systemCacheIdentifier.json'), 'utf8'),
-				),
-			);
 		const gatewayBuildConfig = z
 			.object({ arch: z.literal('aarch64') })
 			.parse(
@@ -1536,7 +1479,6 @@ describe('scaffoldAgentVmProject', () => {
 			'utf8',
 		);
 
-		expect(systemCacheIdentifier.hostSystemType).toBe('container');
 		expect(gatewayBuildConfig.arch).toBe('aarch64');
 		expect(dockerfile).toContain('zig-aarch64-linux-');
 		expect(dockerfile).toContain('image pull alpine-base:latest --arch aarch64');

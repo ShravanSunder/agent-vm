@@ -10,39 +10,22 @@ import { createLoadedSystemConfig } from '../../config/system-config.js';
 import { isGatewayImageCached } from './controller-definition.js';
 
 describe('isGatewayImageCached', () => {
-	it('uses the system cache identifier when resolving the current gateway fingerprint', async () => {
+	it('uses the current gateway fingerprint when checking the cache', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(
 			path.join(os.tmpdir(), 'agent-vm-controller-cache-'),
 		);
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
 		const buildConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
-		const systemCacheIdentifierPath = path.join(
-			temporaryDirectoryPath,
-			'config',
-			'systemCacheIdentifier.json',
-		);
 		const cacheDir = path.join(temporaryDirectoryPath, 'cache');
 		const buildConfig = {
 			arch: 'aarch64',
 			distro: 'alpine',
 		} satisfies Partial<BuildConfig>;
-		const systemCacheIdentifier = {
-			gitSha: 'controller-cache-sha',
-		};
 		await fs.mkdir(path.dirname(systemConfigPath), { recursive: true });
 		await fs.writeFile(buildConfigPath, JSON.stringify(buildConfig), 'utf8');
-		await fs.writeFile(systemCacheIdentifierPath, JSON.stringify(systemCacheIdentifier), 'utf8');
 
-		const fingerprintWithSystemCacheIdentifier = await computeFingerprintFromConfigPath(
-			buildConfigPath,
-			systemCacheIdentifierPath,
-		);
-		const gatewayCachePath = path.join(
-			cacheDir,
-			'gateway-images',
-			'worker',
-			fingerprintWithSystemCacheIdentifier,
-		);
+		const currentFingerprint = await computeFingerprintFromConfigPath(buildConfigPath);
+		const gatewayCachePath = path.join(cacheDir, 'gateway-images', 'worker', currentFingerprint);
 		await fs.mkdir(gatewayCachePath, { recursive: true });
 		await fs.writeFile(path.join(gatewayCachePath, 'manifest.json'), '{}\n', 'utf8');
 

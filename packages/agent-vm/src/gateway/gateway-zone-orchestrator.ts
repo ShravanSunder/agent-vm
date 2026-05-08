@@ -196,7 +196,6 @@ export async function startGatewayZone(
 		return await buildGatewayImage(
 			{
 				buildConfigPath: gatewayImageProfile.buildConfig,
-				systemCacheIdentifierPath: options.systemConfig.systemCacheIdentifierPath,
 				cacheDir: path.join(
 					options.systemConfig.cacheDir,
 					'gateway-images',

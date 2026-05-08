@@ -4,10 +4,13 @@ import path from 'node:path';
 import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
 import { execa } from 'execa';
 
-import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { buildRuntimePathIsolationChecks, collectVmHostSystemDoctorCheck } from './doctor.js';
-import { isRuntimeSystemConfigPath, runtimeConfigRoot } from './runtime-config-paths.js';
+import {
+	isRuntimeConfigReference,
+	isRuntimeSystemConfigPath,
+	runtimeConfigRoot,
+} from './runtime-config-paths.js';
 
 export interface ConfigValidationCheck {
 	readonly name: string;
@@ -208,21 +211,14 @@ export function resolveProjectCheckoutPath(
 	if (isRuntimeSystemConfigPath(systemConfig)) {
 		return configuredPath;
 	}
-	const relativeRuntimePath = path.relative(runtimeConfigRoot, configuredPath);
-	if (
-		!path.isAbsolute(configuredPath) ||
-		relativeRuntimePath.startsWith('..') ||
-		path.isAbsolute(relativeRuntimePath)
-	) {
+	if (!isRuntimeConfigReference(configuredPath)) {
 		return configuredPath;
 	}
 
+	const relativeRuntimePath = path.relative(runtimeConfigRoot, configuredPath);
 	const projectRoot = projectRootForSystemConfig(systemConfig);
 	if (relativeRuntimePath === 'system.json') {
 		return path.join(projectRoot, 'config', 'system.json');
-	}
-	if (relativeRuntimePath === 'systemCacheIdentifier.json') {
-		return path.join(projectRoot, 'config', 'systemCacheIdentifier.json');
 	}
 	if (relativeRuntimePath.startsWith(`gateways${path.sep}`) || relativeRuntimePath === 'gateways') {
 		return path.join(projectRoot, 'config', relativeRuntimePath);
@@ -242,25 +238,6 @@ async function collectReadableFileCheck(
 			name,
 			ok: false,
 			hint: `Missing ${filePath}: ${getErrorMessage(error)}`,
-		};
-	}
-}
-
-async function collectSystemCacheIdentifierCheck(
-	systemConfig: LoadedSystemConfig,
-): Promise<ConfigValidationCheck> {
-	try {
-		await loadSystemCacheIdentifier({ filePath: systemConfig.systemCacheIdentifierPath });
-		return {
-			name: 'system-cache-identifier',
-			ok: true,
-			hint: systemConfig.systemCacheIdentifierPath,
-		};
-	} catch (error) {
-		return {
-			name: 'system-cache-identifier',
-			ok: false,
-			hint: getErrorMessage(error),
 		};
 	}
 }
@@ -462,7 +439,6 @@ export async function runConfigValidation(
 	);
 	const vmHostSystemCheck = await collectVmHostSystemDoctorCheck(systemConfig);
 	const checks = [
-		await collectSystemCacheIdentifierCheck(systemConfig),
 		...buildRuntimePathIsolationChecks(systemConfig),
 		...(await collectGatewayImageProfileChecks(systemConfig)),
 		...(await collectToolImageProfileChecks(systemConfig)),

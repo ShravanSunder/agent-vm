@@ -48,7 +48,6 @@ docs/
       project-config-json.md
       prompt-files.md
       resource-contracts.md
-      system-cache-identifier.md
       system-json.md
       worker-json.md
     validate-and-doctor.md

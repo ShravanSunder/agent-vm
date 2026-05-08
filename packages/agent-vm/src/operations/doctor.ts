@@ -9,9 +9,8 @@ import type {
 import { workerLifecycle } from '@agent-vm/worker-gateway';
 
 import { buildZigInstallHint, checkGondolinZigCompatibility } from '../build/zig-compatibility.js';
-import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
-import { isRuntimeSystemConfigPath } from './runtime-config-paths.js';
+import { hasRuntimeConfigReferences, isRuntimeSystemConfigPath } from './runtime-config-paths.js';
 
 export interface DoctorCheck {
 	readonly name: string;
@@ -53,10 +52,6 @@ function checkAnyBinary(
 		ok: foundBinary !== undefined,
 		...(foundBinary ? { hint: foundBinary } : { hint: installHint }),
 	};
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function buildZigVersionCheck(
@@ -369,23 +364,6 @@ function formatImageProfileHint(profile: {
 export async function collectVmHostSystemDoctorCheck(
 	systemConfig: LoadedSystemConfig,
 ): Promise<DoctorCheck | null> {
-	let identifier: unknown;
-	try {
-		identifier = await loadSystemCacheIdentifier({
-			filePath: systemConfig.systemCacheIdentifierPath,
-		});
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return {
-			name: 'vm-host-system',
-			ok: false,
-			hint: `Cannot read ${systemConfig.systemCacheIdentifierPath}: ${message}`,
-		};
-	}
-	if (!isObjectRecord(identifier) || identifier.hostSystemType !== 'container') {
-		return null;
-	}
-
 	if (isRuntimeSystemConfigPath(systemConfig)) {
 		const requiredRuntimeFiles = [
 			'/usr/local/bin/start.sh',
@@ -416,6 +394,28 @@ export async function collectVmHostSystemDoctorCheck(
 		'..',
 		'vm-host-system',
 	);
+	const shouldRequireCheckoutHostFiles = hasRuntimeConfigReferences(systemConfig);
+	try {
+		await access(vmHostSystemPath);
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+			if (!shouldRequireCheckoutHostFiles) {
+				return null;
+			}
+			const message = error instanceof Error ? error.message : 'unknown error';
+			return {
+				name: 'vm-host-system',
+				ok: false,
+				hint: `Cannot access ${vmHostSystemPath}: ${message}`,
+			};
+		}
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			name: 'vm-host-system',
+			ok: false,
+			hint: `Cannot access ${vmHostSystemPath}: ${message}`,
+		};
+	}
 	const requiredFiles = ['Dockerfile', 'start.sh', 'agent-vm-controller.service'] as const;
 	for (const requiredFile of requiredFiles) {
 		const requiredFilePath = path.join(vmHostSystemPath, requiredFile);

@@ -214,7 +214,6 @@ describe('worker-task-runner integration', () => {
 		cacheDir: '/tmp/cache',
 		runtimeDir: '/tmp/runtime',
 		systemConfigPath: '/tmp/config/system.json',
-		systemCacheIdentifierPath: '/tmp/config/systemCacheIdentifier.json',
 		host: {
 			controllerPort: 18800,
 			projectNamespace: 'claw-tests-a1b2c3d4',

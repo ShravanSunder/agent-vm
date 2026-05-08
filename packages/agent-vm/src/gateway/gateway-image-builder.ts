@@ -20,7 +20,6 @@ async function loadBuildConfigFromJson(buildConfigPath: string): Promise<BuildCo
 export async function buildGatewayImage(
 	options: {
 		readonly buildConfigPath: string;
-		readonly systemCacheIdentifierPath: string;
 		readonly cacheDir: string;
 	},
 	dependencies: GatewayImageBuilderDependencies = {},
@@ -31,7 +30,6 @@ export async function buildGatewayImage(
 		return await buildGondolinImageDefault(
 			{
 				buildConfigPath: options.buildConfigPath,
-				systemCacheIdentifierPath: options.systemCacheIdentifierPath,
 				cacheDir: options.cacheDir,
 			},
 			{
@@ -39,7 +37,6 @@ export async function buildGatewayImage(
 					await buildImage({
 						buildConfig: buildImageOptions.buildConfig,
 						cacheDir: buildImageOptions.cacheDir,
-						fingerprintInput: buildImageOptions.fingerprintInput,
 						...(buildImageOptions.fullReset ? { fullReset: true } : {}),
 					}),
 				loadBuildConfig,
@@ -50,7 +47,6 @@ export async function buildGatewayImage(
 	return await buildGondolinImageDefault(
 		{
 			buildConfigPath: options.buildConfigPath,
-			systemCacheIdentifierPath: options.systemCacheIdentifierPath,
 			cacheDir: options.cacheDir,
 		},
 		{

@@ -34,12 +34,8 @@ function rebuildWorkerPackages(repoRoot: string): void {
 async function findReusableGatewayImageDirectory(
 	currentProjectRoot: string,
 	gatewayBuildConfigPath: string,
-	systemCacheIdentifierPath: string,
 ): Promise<string | null> {
-	const requiredFingerprint = await computeFingerprintFromConfigPath(
-		gatewayBuildConfigPath,
-		systemCacheIdentifierPath,
-	);
+	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
 	const tempRootEntries = await fs.readdir(os.tmpdir(), { withFileTypes: true });
 	const smokeRunDirectories = tempRootEntries
 		.filter((entry) => entry.isDirectory() && entry.name.startsWith('worker-loop-smoke-'))
@@ -74,21 +70,16 @@ async function seedGatewayImageCacheIfAvailable(
 	activeCacheDir: string,
 	currentProjectRoot: string,
 	gatewayBuildConfigPath: string,
-	systemCacheIdentifierPath: string,
 ): Promise<void> {
 	const reusableImageDir = await findReusableGatewayImageDirectory(
 		currentProjectRoot,
 		gatewayBuildConfigPath,
-		systemCacheIdentifierPath,
 	);
 	if (!reusableImageDir) {
 		return;
 	}
 
-	const requiredFingerprint = await computeFingerprintFromConfigPath(
-		gatewayBuildConfigPath,
-		systemCacheIdentifierPath,
-	);
+	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
 	const activeImageDir = path.join(activeCacheDir, 'images', 'gateway', requiredFingerprint);
 	if (activeImageDir === reusableImageDir) {
 		return;
@@ -224,13 +215,7 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 			'worker',
 			'build-config.jsonc',
 		);
-		const systemCacheIdentifierPath = path.join(tempRoot, 'config', 'systemCacheIdentifier.json');
-		await seedGatewayImageCacheIfAvailable(
-			scaffoldCachePath,
-			tempRoot,
-			gatewayBuildConfigPath,
-			systemCacheIdentifierPath,
-		);
+		await seedGatewayImageCacheIfAvailable(scaffoldCachePath, tempRoot, gatewayBuildConfigPath);
 		const localWorkerTarballPath = await prepareLocalWorkerPackageForGatewayImage(repoRoot);
 
 		const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));

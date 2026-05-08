@@ -29,10 +29,7 @@ function recordFromEntries<TValue>(
 }
 
 export interface CacheCommandDependencies {
-	readonly computeFingerprintFromConfigPath?: (
-		buildConfigPath: string,
-		systemCacheIdentifierPath: string,
-	) => Promise<string>;
+	readonly computeFingerprintFromConfigPath?: (buildConfigPath: string) => Promise<string>;
 	readonly deleteStaleImageDirectories?: (entries: readonly StaleImageEntry[]) => Promise<void>;
 	readonly findStaleImageDirectories?: (options: {
 		readonly cacheDir: string;
@@ -93,14 +90,13 @@ async function resolveCurrentFingerprints(
 ): Promise<CurrentImageFingerprints> {
 	const computeFingerprint =
 		dependencies.computeFingerprintFromConfigPath ?? computeFingerprintFromConfigPath;
-	const systemCacheIdentifierPath = systemConfig.systemCacheIdentifierPath;
 
 	return {
 		gateways: recordFromEntries(
 			await Promise.all(
 				Object.entries(systemConfig.imageProfiles.gateways).map(async ([profileName, profile]) => [
 					profileName,
-					await computeFingerprint(profile.buildConfig, systemCacheIdentifierPath),
+					await computeFingerprint(profile.buildConfig),
 				]),
 			),
 		),
@@ -108,7 +104,7 @@ async function resolveCurrentFingerprints(
 			await Promise.all(
 				Object.entries(systemConfig.imageProfiles.toolVms).map(async ([profileName, profile]) => [
 					profileName,
-					await computeFingerprint(profile.buildConfig, systemCacheIdentifierPath),
+					await computeFingerprint(profile.buildConfig),
 				]),
 			),
 		),

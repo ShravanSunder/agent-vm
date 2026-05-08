@@ -4,7 +4,6 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { buildDefaultSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { runControllerOperationCommand } from './controller-operation-commands.js';
@@ -317,12 +316,7 @@ describe('runControllerOperationCommand', () => {
 	it('accepts authored worker config drafts without generated runtime instructions in doctor output', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
-		const systemCacheIdentifierPath = path.join(
-			temporaryDirectoryPath,
-			'systemCacheIdentifier.json',
-		);
 		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
-		await fs.writeFile(systemCacheIdentifierPath, '{}\n', 'utf8');
 		await fs.writeFile(
 			workerConfigPath,
 			JSON.stringify({
@@ -415,11 +409,6 @@ describe('runControllerOperationCommand', () => {
 		const commandLogPath = path.join(temporaryDirectoryPath, 'openclaw-command.json');
 		await fs.mkdir(binDirectoryPath, { recursive: true });
 		await fs.mkdir(path.dirname(openClawConfigPath), { recursive: true });
-		await fs.writeFile(
-			path.join(configDirectoryPath, 'systemCacheIdentifier.json'),
-			'{}\n',
-			'utf8',
-		);
 		await fs.writeFile(openClawConfigPath, JSON.stringify(createHealthyOpenClawConfig()), 'utf8');
 		await fs.writeFile(
 			path.join(binDirectoryPath, 'openclaw'),
@@ -510,12 +499,7 @@ printf '{"ok":true}\\n'
 	it('reports worker prompt reference failures in doctor output', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
-		const systemCacheIdentifierPath = path.join(
-			temporaryDirectoryPath,
-			'systemCacheIdentifier.json',
-		);
 		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
-		await fs.writeFile(systemCacheIdentifierPath, '{}\n', 'utf8');
 		await fs.writeFile(
 			workerConfigPath,
 			JSON.stringify({
@@ -599,11 +583,6 @@ printf '{"ok":true}\\n'
 	it('flags never-pulled tool VM image profiles without a Dockerfile producer', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
-		const systemCacheIdentifierPath = path.join(
-			temporaryDirectoryPath,
-			'config',
-			'systemCacheIdentifier.json',
-		);
 		const toolVmBuildConfigPath = path.join(
 			temporaryDirectoryPath,
 			'vm-images',
@@ -613,7 +592,6 @@ printf '{"ok":true}\\n'
 		);
 		await fs.mkdir(path.dirname(systemConfigPath), { recursive: true });
 		await fs.mkdir(path.dirname(toolVmBuildConfigPath), { recursive: true });
-		await fs.writeFile(systemCacheIdentifierPath, '{}\n', 'utf8');
 		await fs.writeFile(
 			toolVmBuildConfigPath,
 			JSON.stringify({ oci: { image: 'agent-vm-tool:latest', pullPolicy: 'never' } }),
@@ -684,11 +662,6 @@ printf '{"ok":true}\\n'
 	it('accepts never-pulled managed base image profiles without a Dockerfile producer', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
-		const systemCacheIdentifierPath = path.join(
-			temporaryDirectoryPath,
-			'config',
-			'systemCacheIdentifier.json',
-		);
 		const gatewayBuildConfigPath = path.join(
 			temporaryDirectoryPath,
 			'vm-images',
@@ -714,7 +687,6 @@ printf '{"ok":true}\\n'
 		await fs.mkdir(path.dirname(gatewayBuildConfigPath), { recursive: true });
 		await fs.mkdir(path.dirname(toolVmBuildConfigPath), { recursive: true });
 		await fs.mkdir(path.dirname(openClawConfigPath), { recursive: true });
-		await fs.writeFile(systemCacheIdentifierPath, '{}\n', 'utf8');
 		await fs.writeFile(openClawConfigPath, JSON.stringify(createHealthyOpenClawConfig()), 'utf8');
 		await fs.writeFile(
 			gatewayBuildConfigPath,
@@ -783,11 +755,6 @@ printf '{"ok":true}\\n'
 	it('reports missing image profile build configs in controller doctor output', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
-		const systemCacheIdentifierPath = path.join(
-			temporaryDirectoryPath,
-			'config',
-			'systemCacheIdentifier.json',
-		);
 		const missingGatewayBuildConfigPath = path.join(
 			temporaryDirectoryPath,
 			'vm-images',
@@ -804,7 +771,6 @@ printf '{"ok":true}\\n'
 		);
 		await fs.mkdir(path.dirname(systemConfigPath), { recursive: true });
 		await fs.mkdir(path.dirname(toolVmBuildConfigPath), { recursive: true });
-		await fs.writeFile(systemCacheIdentifierPath, '{}\n', 'utf8');
 		await fs.writeFile(
 			toolVmBuildConfigPath,
 			JSON.stringify({ oci: { image: 'agent-vm-tool:latest', pullPolicy: 'ifNotPresent' } }),
@@ -856,183 +822,9 @@ printf '{"ok":true}\\n'
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
-	it('reports missing system cache identifier failures in doctor output', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
-		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
-		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
-		await fs.writeFile(
-			workerConfigPath,
-			JSON.stringify({
-				phases: {
-					plan: {
-						cycle: { kind: 'review', cycleCount: 1 },
-						agentInstructions: null,
-						reviewerInstructions: null,
-					},
-					work: {
-						cycle: { kind: 'review', cycleCount: 1 },
-						agentInstructions: null,
-						reviewerInstructions: null,
-					},
-					wrapup: { instructions: null },
-				},
-			}),
-			'utf8',
-		);
-		const outputs: string[] = [];
-
-		await runControllerOperationCommand({
-			dependencies: {
-				...defaultCliDependencies,
-				createControllerClient: () => ({
-					destroyZone: async () => ({}),
-					enableZoneSsh: async () => ({}),
-					getControllerStatus: async () => ({}),
-					getZoneLogs: async () => ({}),
-					peekLease: async () => ({
-						createdAt: 1,
-						lastUsedAt: 1,
-						leaseId: 'lease-123',
-						profileId: 'standard',
-						scopeKey: 'scope',
-						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
-						tcpSlot: 0,
-						zoneId: 'shravan',
-					}),
-					listLeases: async () => [],
-					refreshZoneCredentials: async () => ({}),
-					releaseLease: async () => {},
-					stopController: async () => ({}),
-					upgradeZone: async () => ({}),
-				}),
-				runControllerDoctor: () => ({ ok: true, checks: [] }),
-			},
-			io: {
-				stderr: { write: () => true },
-				stdout: {
-					write: (chunk: string | Uint8Array) => {
-						outputs.push(String(chunk));
-						return true;
-					},
-				},
-			},
-			restArguments: [],
-			subcommand: 'doctor',
-			systemConfig: createWorkerSystemConfig(workerConfigPath, systemConfigPath),
-		});
-
-		const result = JSON.parse(outputs.join('')) as {
-			readonly ok: boolean;
-			readonly checks: readonly {
-				readonly name: string;
-				readonly ok: boolean;
-				readonly hint?: string;
-			}[];
-		};
-
-		expect(result.ok).toBe(false);
-		const identifierCheck = result.checks.find((check) => check.name === 'system-cache-identifier');
-		expect(identifierCheck?.ok).toBe(false);
-		expect(identifierCheck?.hint).toMatch(/Missing system cache identifier/u);
-
-		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
-	});
-
-	it('reports malformed system cache identifier failures in doctor output', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
-		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
-		const systemCacheIdentifierPath = path.join(
-			temporaryDirectoryPath,
-			'systemCacheIdentifier.json',
-		);
-		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
-		await fs.writeFile(systemCacheIdentifierPath, '{not-json', 'utf8');
-		await fs.writeFile(
-			workerConfigPath,
-			JSON.stringify({
-				phases: {
-					plan: {
-						cycle: { kind: 'review', cycleCount: 1 },
-						agentInstructions: null,
-						reviewerInstructions: null,
-					},
-					work: {
-						cycle: { kind: 'review', cycleCount: 1 },
-						agentInstructions: null,
-						reviewerInstructions: null,
-					},
-					wrapup: { instructions: null },
-				},
-			}),
-			'utf8',
-		);
-		const outputs: string[] = [];
-
-		await runControllerOperationCommand({
-			dependencies: {
-				...defaultCliDependencies,
-				createControllerClient: () => ({
-					destroyZone: async () => ({}),
-					enableZoneSsh: async () => ({}),
-					getControllerStatus: async () => ({}),
-					getZoneLogs: async () => ({}),
-					peekLease: async () => ({
-						createdAt: 1,
-						lastUsedAt: 1,
-						leaseId: 'lease-123',
-						profileId: 'standard',
-						scopeKey: 'scope',
-						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
-						tcpSlot: 0,
-						zoneId: 'shravan',
-					}),
-					listLeases: async () => [],
-					refreshZoneCredentials: async () => ({}),
-					releaseLease: async () => {},
-					stopController: async () => ({}),
-					upgradeZone: async () => ({}),
-				}),
-				runControllerDoctor: () => ({ ok: true, checks: [] }),
-			},
-			io: {
-				stderr: { write: () => true },
-				stdout: {
-					write: (chunk: string | Uint8Array) => {
-						outputs.push(String(chunk));
-						return true;
-					},
-				},
-			},
-			restArguments: [],
-			subcommand: 'doctor',
-			systemConfig: createWorkerSystemConfig(workerConfigPath, systemConfigPath),
-		});
-
-		const result = JSON.parse(outputs.join('')) as {
-			readonly ok: boolean;
-			readonly checks: readonly {
-				readonly name: string;
-				readonly ok: boolean;
-				readonly hint?: string;
-			}[];
-		};
-
-		expect(result.ok).toBe(false);
-		const identifierCheck = result.checks.find((check) => check.name === 'system-cache-identifier');
-		expect(identifierCheck?.ok).toBe(false);
-		expect(identifierCheck?.hint).toMatch(/Failed to parse system cache identifier/u);
-
-		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
-	});
-
 	it('resolves container worker config paths to checkout paths in doctor output', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
-		const systemCacheIdentifierPath = path.join(
-			temporaryDirectoryPath,
-			'config',
-			'systemCacheIdentifier.json',
-		);
 		const workerConfigPath = path.join(
 			temporaryDirectoryPath,
 			'config',
@@ -1043,14 +835,6 @@ printf '{"ok":true}\\n'
 		const vmHostSystemPath = path.join(temporaryDirectoryPath, 'vm-host-system');
 		await fs.mkdir(path.dirname(workerConfigPath), { recursive: true });
 		await fs.mkdir(vmHostSystemPath, { recursive: true });
-		await fs.writeFile(
-			systemCacheIdentifierPath,
-			JSON.stringify({
-				...buildDefaultSystemCacheIdentifier(),
-				hostSystemType: 'container',
-			}),
-			'utf8',
-		);
 		await Promise.all(
 			['Dockerfile', 'start.sh', 'agent-vm-controller.service'].map(async (fileName) => {
 				await fs.writeFile(path.join(vmHostSystemPath, fileName), '', 'utf8');
@@ -1143,21 +927,10 @@ printf '{"ok":true}\\n'
 	it('reports missing vm-host-system files for container configs in doctor output', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
-		const systemCacheIdentifierPath = path.join(
-			temporaryDirectoryPath,
-			'config',
-			'systemCacheIdentifier.json',
-		);
 		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
+		const vmHostSystemPath = path.join(temporaryDirectoryPath, 'vm-host-system');
 		await fs.mkdir(path.dirname(systemConfigPath), { recursive: true });
-		await fs.writeFile(
-			systemCacheIdentifierPath,
-			JSON.stringify({
-				...buildDefaultSystemCacheIdentifier(),
-				hostSystemType: 'container',
-			}),
-			'utf8',
-		);
+		await fs.mkdir(vmHostSystemPath, { recursive: true });
 		await fs.writeFile(
 			workerConfigPath,
 			JSON.stringify({

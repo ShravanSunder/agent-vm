@@ -324,7 +324,6 @@ describe('createToolVm', () => {
 		expect(result).toBe(managedVm);
 		expect(buildGondolinImage).toHaveBeenCalledWith({
 			buildConfigPath: '/project/vm-images/tool-vms/default/build-config.json',
-			systemCacheIdentifierPath: systemConfig.systemCacheIdentifierPath,
 			cacheDir: path.join(systemConfig.cacheDir, 'tool-vm-images', 'default'),
 		});
 		expect(exec).not.toHaveBeenCalled();

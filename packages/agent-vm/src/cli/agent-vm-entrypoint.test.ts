@@ -22,7 +22,6 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 		cacheDir: './cache',
 		runtimeDir: './runtime',
 		systemConfigPath: './config/system.json',
-		systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 		host: {
 			controllerPort: 18800,
 			projectNamespace: 'claw-tests-a1b2c3d4',
@@ -730,7 +729,6 @@ describe('runAgentVmCli', () => {
 					cacheDir: './cache',
 					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
-					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 					imageProfiles: expect.objectContaining({
 						gateways: expect.objectContaining({
 							openclaw: expect.objectContaining({
@@ -845,7 +843,6 @@ describe('runAgentVmCli', () => {
 					cacheDir: './cache',
 					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
-					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 				}),
 			},
 			expect.any(Object),
@@ -875,7 +872,6 @@ describe('runAgentVmCli', () => {
 					cacheDir: './cache',
 					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
-					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 				}),
 			},
 			expect.any(Object),
@@ -886,7 +882,7 @@ describe('runAgentVmCli', () => {
 		const stdoutChunks: string[] = [];
 		const runConfigValidation = vi.fn(async () => ({
 			ok: true,
-			checks: [{ name: 'system-cache-identifier', ok: true }],
+			checks: [{ name: 'system-config', ok: true }],
 		}));
 
 		await runAgentVmCli(
@@ -1127,12 +1123,40 @@ describe('runAgentVmCli', () => {
 	it('routes doctor and status subcommands to their handlers', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cli-'));
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
-		const systemCacheIdentifierPath = path.join(
+		const openClawBuildConfigPath = path.join(
 			temporaryDirectoryPath,
-			'systemCacheIdentifier.json',
+			'vm-images',
+			'gateways',
+			'openclaw',
+			'build-config.json',
 		);
-		await fs.writeFile(systemCacheIdentifierPath, '{}\n', 'utf8');
+		const workerBuildConfigPath = path.join(
+			temporaryDirectoryPath,
+			'vm-images',
+			'gateways',
+			'worker',
+			'build-config.json',
+		);
+		const toolVmBuildConfigPath = path.join(
+			temporaryDirectoryPath,
+			'vm-images',
+			'tool-vms',
+			'default',
+			'build-config.json',
+		);
 		const outputs: string[] = [];
+		await Promise.all(
+			[openClawBuildConfigPath, workerBuildConfigPath, toolVmBuildConfigPath].map(
+				async (buildConfigPath) => {
+					await fs.mkdir(path.dirname(buildConfigPath), { recursive: true });
+					await fs.writeFile(
+						buildConfigPath,
+						JSON.stringify({ oci: { image: 'agent-vm-test:latest' } }),
+						'utf8',
+					);
+				},
+			),
+		);
 
 		await runAgentVmCli(
 			['doctor'],
@@ -1195,7 +1219,6 @@ describe('runAgentVmCli', () => {
 					cacheDir: './cache',
 					runtimeDir: './runtime',
 					systemConfigPath,
-					systemCacheIdentifierPath,
 					host: {
 						controllerPort: 18800,
 						projectNamespace: 'claw-tests-a1b2c3d4',
@@ -1208,17 +1231,17 @@ describe('runAgentVmCli', () => {
 						gateways: {
 							openclaw: {
 								type: 'openclaw',
-								buildConfig: './vm-images/gateways/openclaw/build-config.json',
+								buildConfig: openClawBuildConfigPath,
 							},
 							worker: {
 								type: 'worker',
-								buildConfig: './vm-images/gateways/worker/build-config.json',
+								buildConfig: workerBuildConfigPath,
 							},
 						},
 						toolVms: {
 							default: {
 								type: 'toolVm',
-								buildConfig: './vm-images/tool-vms/default/build-config.json',
+								buildConfig: toolVmBuildConfigPath,
 							},
 						},
 					},
@@ -1319,7 +1342,6 @@ describe('runAgentVmCli', () => {
 					cacheDir: './cache',
 					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
-					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 					host: {
 						controllerPort: 18800,
 						projectNamespace: 'claw-tests-a1b2c3d4',
@@ -1332,17 +1354,17 @@ describe('runAgentVmCli', () => {
 						gateways: {
 							openclaw: {
 								type: 'openclaw',
-								buildConfig: './vm-images/gateways/openclaw/build-config.json',
+								buildConfig: openClawBuildConfigPath,
 							},
 							worker: {
 								type: 'worker',
-								buildConfig: './vm-images/gateways/worker/build-config.json',
+								buildConfig: workerBuildConfigPath,
 							},
 						},
 						toolVms: {
 							default: {
 								type: 'toolVm',
-								buildConfig: './vm-images/tool-vms/default/build-config.json',
+								buildConfig: toolVmBuildConfigPath,
 							},
 						},
 					},
@@ -1466,7 +1488,6 @@ describe('runAgentVmCli', () => {
 					cacheDir: './cache',
 					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
-					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 					host: {
 						controllerPort: 18800,
 						projectNamespace: 'claw-tests-a1b2c3d4',
@@ -1708,7 +1729,6 @@ describe('runAgentVmCli', () => {
 				cacheDir: './cache',
 				runtimeDir: './runtime',
 				systemConfigPath: './config/system.json',
-				systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 				host: {
 					controllerPort: 18800,
 					projectNamespace: 'claw-tests-a1b2c3d4',
@@ -2053,7 +2073,6 @@ describe('runAgentVmCli', () => {
 					cacheDir: './cache',
 					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
-					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 					host: {
 						controllerPort: 18800,
 						projectNamespace: 'claw-tests-a1b2c3d4',
@@ -2203,7 +2222,6 @@ describe('runAgentVmCli', () => {
 					cacheDir: './cache',
 					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
-					systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 					host: {
 						controllerPort: 18800,
 						projectNamespace: 'claw-tests-a1b2c3d4',

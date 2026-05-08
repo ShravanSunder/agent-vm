@@ -1,13 +1,13 @@
 // oxlint-disable typescript-eslint/explicit-function-return-type
 import { command, flag, oneOf, option, optional, positional, string, type Type } from 'cmd-ts';
 
-import type { HostSystemType } from '../../config/system-cache-identifier.js';
 import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
 import {
 	imageArchitectureSchema,
 	promptAndStoreServiceAccountToken,
 	scaffoldAgentVmProject,
 	secretsProviderSchema,
+	type HostSystemType,
 	type ImageArchitecture,
 	type ScaffoldPathMode,
 	type SecretsProvider,

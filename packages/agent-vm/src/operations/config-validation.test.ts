@@ -4,7 +4,6 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { buildDefaultSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import { createLoadedSystemConfig, loadSystemConfig } from '../config/system-config.js';
 import { resolveProjectCheckoutPath, runConfigValidation } from './config-validation.js';
 
@@ -67,10 +66,6 @@ async function writeContainerProjectFixture(rootPath: string): Promise<string> {
 			},
 		],
 		tcpPool: { basePort: 19000, size: 5 },
-	});
-	await writeJson(path.join(rootPath, 'config', 'systemCacheIdentifier.json'), {
-		...buildDefaultSystemCacheIdentifier(),
-		hostSystemType: 'container',
 	});
 	await writeJson(
 		path.join(rootPath, 'config', 'gateways', 'coding-agent', 'worker.json'),
@@ -164,10 +159,6 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 			},
 		},
 		tcpPool: { basePort: 19000, size: 5 },
-	});
-	await writeJson(path.join(rootPath, 'config', 'systemCacheIdentifier.json'), {
-		...buildDefaultSystemCacheIdentifier(),
-		hostSystemType: 'bare-metal',
 	});
 	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'openclaw.json'), {
 		gateway: {
@@ -263,25 +254,21 @@ describe('runConfigValidation', () => {
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
-	it('reports obsolete versioned system cache identifiers', async () => {
+	it('reports missing vm-host-system for container checkout paths', async () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);
-		await writeJson(path.join(temporaryDirectoryPath, 'config', 'systemCacheIdentifier.json'), {
-			$comment: 'example',
-			schemaVersion: 1,
-			os: 'linux',
-			hostSystemType: 'container',
-			cacheProfile: 'default',
-			cacheFormat: 'gondolin-cache-v1',
+		await rm(path.join(temporaryDirectoryPath, 'vm-host-system'), {
+			force: true,
+			recursive: true,
 		});
 		const systemConfig = await loadSystemConfig(systemConfigPath);
 
 		const result = await runConfigValidation({ systemConfig });
 
 		expect(result.ok).toBe(false);
-		expect(result.checks.find((check) => check.name === 'system-cache-identifier')).toMatchObject({
+		expect(result.checks.find((check) => check.name === 'vm-host-system')).toMatchObject({
 			ok: false,
-			hint: expect.stringContaining('v1 schema mismatch'),
+			hint: expect.stringContaining('vm-host-system'),
 		});
 
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });

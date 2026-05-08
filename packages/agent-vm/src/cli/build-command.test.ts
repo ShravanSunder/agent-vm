@@ -46,16 +46,30 @@ function writeFakeImageAssets(imagePath: string, contentPrefix: string): void {
 	}
 }
 
+interface PackageJson {
+	readonly version?: unknown;
+}
+
+function readOpenClawAgentVmPluginVersion(): string {
+	const packageJsonPath = path.join(
+		process.cwd(),
+		'packages',
+		'openclaw-agent-vm-plugin',
+		'package.json',
+	);
+	const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as PackageJson;
+	if (typeof packageJson.version !== 'string') {
+		throw new Error(`Missing package version in ${packageJsonPath}.`);
+	}
+	return packageJson.version;
+}
+
 function createSharedToolVmSystemConfig(options: {
 	readonly buildConfigPath: string;
 	readonly cacheDirectory: string;
 	readonly toolProfileNames: readonly string[];
 }): LoadedSystemConfig {
-	const {
-		systemConfigPath: _systemConfigPath,
-		systemCacheIdentifierPath: _systemCacheIdentifierPath,
-		...baseConfig
-	} = createTestSystemConfig();
+	const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
 	return createLoadedSystemConfig(
 		{
 			...baseConfig,
@@ -117,7 +131,6 @@ function createTestManagedImageRelease(): ManagedImageRelease {
 			},
 		},
 		openClawVersion: '2026.5.2',
-		openClawAgentVmPluginVersion: '0.0.52',
 	};
 }
 
@@ -312,8 +325,9 @@ describe('runBuildCommand', () => {
 			'FROM ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:2026.05.07.1',
 		);
 		expect(generatedDockerfile).toContain(
-			'RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@0.0.52"',
+			`RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@${readOpenClawAgentVmPluginVersion()}"`,
 		);
+		expect(generatedDockerfile).not.toContain('@agent-vm/openclaw-agent-vm-plugin@0.0.52');
 		expect(generatedDockerfile).not.toContain('@agent-vm/openclaw-agent-vm-plugin@0.0.45');
 		expect(generatedDockerfile).toContain(
 			'RUN ln -sf /pnpm/global/5/node_modules/@agent-vm/openclaw-agent-vm-plugin/dist /home/openclaw/.openclaw/extensions/gondolin',
@@ -595,7 +609,6 @@ describe('runBuildCommand', () => {
 	it('builds shared Gondolin assets once per image type into the shared cache dir', async () => {
 		const gondolinBuilds: {
 			cacheDir: string;
-			systemCacheIdentifierPath: string;
 			fullReset: boolean | undefined;
 		}[] = [];
 		const dependencies: BuildCommandDependencies = {
@@ -604,7 +617,6 @@ describe('runBuildCommand', () => {
 			buildGondolinImage: async (options) => {
 				gondolinBuilds.push({
 					cacheDir: options.cacheDir,
-					systemCacheIdentifierPath: options.systemCacheIdentifierPath,
 					fullReset: options.fullReset,
 				});
 				return { built: true, fingerprint: 'f1', imagePath: '/cache/f1' };
@@ -618,12 +630,10 @@ describe('runBuildCommand', () => {
 		expect(gondolinBuilds).toHaveLength(2);
 		expect(gondolinBuilds[0]).toEqual({
 			cacheDir: '/cache/gateway-images/openclaw',
-			systemCacheIdentifierPath: '/project/config/systemCacheIdentifier.json',
 			fullReset: true,
 		});
 		expect(gondolinBuilds[1]).toEqual({
 			cacheDir: '/cache/tool-vm-images/default',
-			systemCacheIdentifierPath: '/project/config/systemCacheIdentifier.json',
 			fullReset: undefined,
 		});
 	});
@@ -724,16 +734,6 @@ describe('runBuildCommand', () => {
 		fs.mkdirSync(path.dirname(gatewayBuildConfigPath), { recursive: true });
 		fs.mkdirSync(configDirectory, { recursive: true });
 		fs.writeFileSync(
-			path.join(configDirectory, 'systemCacheIdentifier.json'),
-			JSON.stringify({
-				$comment: 'test cache identifier',
-				schemaVersion: 1,
-				hostSystemType: 'bare-metal',
-				imageCacheFormat: 'gondolin-image-cache-v1',
-			}),
-			'utf8',
-		);
-		fs.writeFileSync(
 			buildConfigPath,
 			JSON.stringify({
 				arch: 'aarch64',
@@ -757,11 +757,7 @@ describe('runBuildCommand', () => {
 			}),
 			'utf8',
 		);
-		const {
-			systemConfigPath: _systemConfigPath,
-			systemCacheIdentifierPath: _systemCacheIdentifierPath,
-			...baseConfig
-		} = createTestSystemConfig();
+		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
 		const toolProfileNames = ['default', 'shravan', 'alevtina', 'sun'] as const;
 		const systemConfig = createLoadedSystemConfig(
 			{
@@ -808,13 +804,9 @@ describe('runBuildCommand', () => {
 			{ systemConfigPath: path.join(configDirectory, 'system.json') },
 		);
 		const runtimeBuildVersionTag = 'runtime@dedupe-test';
-		const builtFingerprint = await computeFingerprintFromConfigPath(
-			buildConfigPath,
-			systemConfig.systemCacheIdentifierPath,
-			{
-				resolveRuntimeBuildVersionTag: async () => runtimeBuildVersionTag,
-			},
-		);
+		const builtFingerprint = await computeFingerprintFromConfigPath(buildConfigPath, {
+			resolveRuntimeBuildVersionTag: async () => runtimeBuildVersionTag,
+		});
 		const gondolinBuilds: { cacheDir: string; fullReset: boolean | undefined }[] = [];
 		const fingerprintComputations: string[] = [];
 		const writeFakeAssets = (imagePath: string): void => {
@@ -884,7 +876,6 @@ describe('runBuildCommand', () => {
 			{
 				buildConfigPath,
 				cacheDir: path.join(cacheDirectory, 'tool-vm-images', 'sun'),
-				systemCacheIdentifierPath: systemConfig.systemCacheIdentifierPath,
 			},
 			{
 				resolveRuntimeBuildVersionTag: async () => runtimeBuildVersionTag,
@@ -1219,16 +1210,6 @@ describe('runBuildCommand', () => {
 		fs.mkdirSync(path.dirname(secondBuildConfigPath), { recursive: true });
 		fs.mkdirSync(path.dirname(gatewayBuildConfigPath), { recursive: true });
 		fs.mkdirSync(configDirectory, { recursive: true });
-		fs.writeFileSync(
-			path.join(configDirectory, 'systemCacheIdentifier.json'),
-			JSON.stringify({
-				$comment: 'test cache identifier',
-				schemaVersion: 1,
-				hostSystemType: 'bare-metal',
-				imageCacheFormat: 'gondolin-image-cache-v1',
-			}),
-			'utf8',
-		);
 		const sharedBuildConfig = {
 			arch: 'aarch64',
 			distro: 'alpine',
@@ -1261,11 +1242,7 @@ describe('runBuildCommand', () => {
 			}),
 			'utf8',
 		);
-		const {
-			systemConfigPath: _systemConfigPath,
-			systemCacheIdentifierPath: _systemCacheIdentifierPath,
-			...baseConfig
-		} = createTestSystemConfig();
+		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
@@ -1331,16 +1308,6 @@ describe('runBuildCommand', () => {
 		fs.mkdirSync(sharedImageDirectory, { recursive: true });
 		fs.mkdirSync(configDirectory, { recursive: true });
 		fs.writeFileSync(
-			path.join(configDirectory, 'systemCacheIdentifier.json'),
-			JSON.stringify({
-				$comment: 'test cache identifier',
-				schemaVersion: 1,
-				hostSystemType: 'bare-metal',
-				imageCacheFormat: 'gondolin-image-cache-v1',
-			}),
-			'utf8',
-		);
-		fs.writeFileSync(
 			buildConfigPath,
 			JSON.stringify({
 				arch: 'aarch64',
@@ -1350,11 +1317,7 @@ describe('runBuildCommand', () => {
 			'utf8',
 		);
 		fs.writeFileSync(dockerfilePath, 'FROM scratch\n');
-		const {
-			systemConfigPath: _systemConfigPath,
-			systemCacheIdentifierPath: _systemCacheIdentifierPath,
-			...baseConfig
-		} = createTestSystemConfig();
+		const { systemConfigPath: _systemConfigPath, ...baseConfig } = createTestSystemConfig();
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
