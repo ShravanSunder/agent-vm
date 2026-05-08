@@ -23,6 +23,9 @@ import {
 } from './pinned-realfs.js';
 import type { SecretSpec } from './types.js';
 
+const SYNTHETIC_DNS_IPV4_BENCHMARK = '198.18.0.1';
+const SYNTHETIC_DNS_IPV6_UNIQUE_LOCAL = 'fc00::1';
+
 export interface ExecResult {
 	readonly exitCode: number;
 	readonly stdout: string;
@@ -309,6 +312,8 @@ export async function createManagedVm(
 				? {
 						dns: {
 							mode: 'synthetic',
+							syntheticIPv4: SYNTHETIC_DNS_IPV4_BENCHMARK,
+							syntheticIPv6: SYNTHETIC_DNS_IPV6_UNIQUE_LOCAL,
 							syntheticHostMapping: 'per-host',
 						},
 						tcp: {
