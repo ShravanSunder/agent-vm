@@ -7,7 +7,6 @@ import { execa } from 'execa';
 
 import type { ManagedImageSource } from '../build/managed-image-dockerfile.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
-import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import {
@@ -247,26 +246,6 @@ async function collectWorkerGatewayConfigChecks(
 	return checks;
 }
 
-async function collectSystemCacheIdentifierCheck(
-	systemConfig: LoadedSystemConfig,
-): Promise<DoctorCheck> {
-	try {
-		await loadSystemCacheIdentifier({ filePath: systemConfig.systemCacheIdentifierPath });
-		return {
-			name: 'system-cache-identifier',
-			ok: true,
-			hint: systemConfig.systemCacheIdentifierPath,
-		};
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return {
-			name: 'system-cache-identifier',
-			ok: false,
-			hint: message,
-		};
-	}
-}
-
 function convertConfigValidationChecksToDoctorChecks(
 	checks: readonly ConfigValidationCheck[],
 ): readonly DoctorCheck[] {
@@ -342,12 +321,8 @@ export async function runControllerOperationCommand(
 				options.systemConfig,
 				availableBinaries.has('docker') && dockerDaemonReady,
 			);
-			const systemCacheIdentifierCheck = await collectSystemCacheIdentifierCheck(
-				options.systemConfig,
-			);
 			const vmHostSystemCheck = await collectVmHostSystemDoctorCheck(options.systemConfig);
 			const dynamicChecks = [
-				systemCacheIdentifierCheck,
 				...(vmHostSystemCheck ? [vmHostSystemCheck] : []),
 				...imageProfileDockerfileChecks,
 				...workerGatewayConfigChecks,

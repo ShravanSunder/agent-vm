@@ -38,6 +38,9 @@ if ! command -v pnpm >/dev/null 2>&1; then
 	exit 1
 fi
 
+echo "[publish] checking @agent-vm package version sync"
+bash scripts/check-package-version-sync.sh
+
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 

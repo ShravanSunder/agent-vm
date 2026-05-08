@@ -44,14 +44,12 @@ export interface BuildCommandDependencies {
 	}) => Promise<void>;
 	readonly buildGondolinImage?: (options: {
 		readonly buildConfigPath: string;
-		readonly systemCacheIdentifierPath: string;
 		readonly cacheDir: string;
 		readonly fullReset?: boolean;
 		readonly streamPreview?: TaskOutput;
 	}) => Promise<BuildImageResult>;
 	readonly computeGondolinFingerprint?: (options: {
 		readonly buildConfigPath: string;
-		readonly systemCacheIdentifierPath: string;
 	}) => Promise<string>;
 	readonly deleteStaleImageDirectories?: (entries: readonly StaleImageEntry[]) => Promise<void>;
 	readonly findPrunableImageDirectories?: (options: {
@@ -115,7 +113,6 @@ const openClawManagedPackageRules = [
 interface ImageTarget {
 	readonly buildConfigPath: string;
 	readonly cacheDirectory: string;
-	readonly systemCacheIdentifierPath: string;
 	readonly dockerfile: string | undefined;
 	readonly family: 'gateway' | 'toolVm';
 	readonly gatewayType?: 'worker' | 'openclaw';
@@ -150,11 +147,8 @@ function imageTargetDedupeKey(options: {
 	return `${path.resolve(options.buildConfigPath)}${imageTargetKeySeparator}${options.fingerprint}`;
 }
 
-function imageTargetFingerprintKey(options: {
-	readonly buildConfigPath: string;
-	readonly systemCacheIdentifierPath: string;
-}): string {
-	return `${path.resolve(options.buildConfigPath)}${imageTargetKeySeparator}${path.resolve(options.systemCacheIdentifierPath)}`;
+function imageTargetFingerprintKey(options: { readonly buildConfigPath: string }): string {
+	return path.resolve(options.buildConfigPath);
 }
 
 function createEmptyCurrentImageFingerprints(): CurrentImageFingerprints {
@@ -405,10 +399,7 @@ export async function runBuildCommand(
 	const computeGondolinFingerprint =
 		dependencies.computeGondolinFingerprint ??
 		(async (fingerprintOptions): Promise<string> =>
-			await computeFingerprintFromConfigPath(
-				fingerprintOptions.buildConfigPath,
-				fingerprintOptions.systemCacheIdentifierPath,
-			));
+			await computeFingerprintFromConfigPath(fingerprintOptions.buildConfigPath));
 	const deleteStaleImageDirectories =
 		dependencies.deleteStaleImageDirectories ?? deleteStaleImageDirectoriesDefault;
 	const findPrunableImageDirectories =
@@ -426,7 +417,6 @@ export async function runBuildCommand(
 		dependencies.resolveManagedImageRelease ?? resolveManagedImageReleaseDefault;
 	const syncBundledOpenClawPlugin =
 		dependencies.syncBundledOpenClawPlugin ?? syncBundledOpenClawPluginBundle;
-	const systemCacheIdentifierPath = options.systemConfig.systemCacheIdentifierPath;
 
 	await assertZigBuildPrerequisite(resolveRequiredZigVersion, resolveZigVersion);
 
@@ -435,7 +425,6 @@ export async function runBuildCommand(
 	).map(([profileName, profile]) => ({
 		buildConfigPath: profile.buildConfig,
 		cacheDirectory: path.join(options.systemConfig.cacheDir, 'gateway-images', profileName),
-		systemCacheIdentifierPath,
 		dockerfile: profile.dockerfile,
 		family: 'gateway' as const,
 		gatewayType: profile.type,
@@ -447,7 +436,6 @@ export async function runBuildCommand(
 	).map(([profileName, profile]) => ({
 		buildConfigPath: profile.buildConfig,
 		cacheDirectory: path.join(options.systemConfig.cacheDir, 'tool-vm-images', profileName),
-		systemCacheIdentifierPath,
 		dockerfile: profile.dockerfile,
 		family: 'toolVm' as const,
 		name: profileName,
@@ -544,14 +532,12 @@ export async function runBuildCommand(
 	for (const imageTarget of imageTargets) {
 		const fingerprintInputKey = imageTargetFingerprintKey({
 			buildConfigPath: imageTarget.buildConfigPath,
-			systemCacheIdentifierPath: imageTarget.systemCacheIdentifierPath,
 		});
 		let fingerprint = fingerprintByInputKey.get(fingerprintInputKey);
 		if (fingerprint === undefined) {
 			// oxlint-disable-next-line no-await-in-loop -- fingerprint errors should identify the matching profile path
 			fingerprint = await computeGondolinFingerprint({
 				buildConfigPath: imageTarget.buildConfigPath,
-				systemCacheIdentifierPath: imageTarget.systemCacheIdentifierPath,
 			});
 			fingerprintByInputKey.set(fingerprintInputKey, fingerprint);
 		}
@@ -617,7 +603,6 @@ export async function runBuildCommand(
 				try {
 					result = await buildGondolinImage({
 						buildConfigPath: targetPlan.imageTarget.buildConfigPath,
-						systemCacheIdentifierPath: targetPlan.imageTarget.systemCacheIdentifierPath,
 						cacheDir: targetPlan.imageTarget.cacheDirectory,
 						...(targetPlan.shouldResetGondolinCache ? { fullReset: true } : {}),
 						...(taskContext?.interactive === true && taskContext.streamPreview

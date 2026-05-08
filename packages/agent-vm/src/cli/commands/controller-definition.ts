@@ -69,7 +69,6 @@ export async function isGatewayImageCached(
 	}
 	const gatewayFingerprint = await computeFingerprintFromConfigPath(
 		gatewayImageProfile.buildConfig,
-		systemConfig.systemCacheIdentifierPath,
 	);
 	const gatewayCachePath = path.join(
 		systemConfig.cacheDir,

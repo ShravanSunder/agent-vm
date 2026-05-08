@@ -69,9 +69,8 @@ function createCacheCommandSystemConfig(): LoadedSystemConfig {
 describe('runCacheCommand', () => {
 	it('lists cached fingerprints and marks the current ones', async () => {
 		const stdoutChunks: string[] = [];
-		const computeFingerprintFromConfigPath = vi.fn(
-			async (buildConfigPath: string, _systemCacheIdentifierPath: string) =>
-				buildConfigPath.includes('gateway') ? 'gateway-current' : 'tool-current',
+		const computeFingerprintFromConfigPath = vi.fn(async (buildConfigPath: string) =>
+			buildConfigPath.includes('gateway') ? 'gateway-current' : 'tool-current',
 		);
 
 		await runCacheCommand(
@@ -99,11 +98,9 @@ describe('runCacheCommand', () => {
 
 		expect(computeFingerprintFromConfigPath).toHaveBeenCalledWith(
 			'/project/vm-images/gateways/openclaw/build-config.json',
-			'/project/config/systemCacheIdentifier.json',
 		);
 		expect(computeFingerprintFromConfigPath).toHaveBeenCalledWith(
 			'/project/vm-images/tool-vms/default/build-config.json',
-			'/project/config/systemCacheIdentifier.json',
 		);
 		expect(stdoutChunks.join('')).toContain('"gateway-current"');
 		expect(stdoutChunks.join('')).toContain('"stale-fingerprint"');

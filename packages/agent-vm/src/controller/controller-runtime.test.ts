@@ -17,7 +17,6 @@ const systemConfig = {
 	cacheDir: './cache',
 	runtimeDir: './runtime',
 	systemConfigPath: './config/system.json',
-	systemCacheIdentifierPath: './config/systemCacheIdentifier.json',
 	host: {
 		controllerPort: 18800,
 		projectNamespace: 'claw-tests-a1b2c3d4',

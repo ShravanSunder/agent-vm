@@ -38,7 +38,6 @@ export interface ManagedBaseImageReference {
 export interface ManagedImageRelease {
 	readonly baseImages: Readonly<Record<ManagedImageBase, ManagedBaseImageReference>>;
 	readonly openClawVersion: string;
-	readonly openClawAgentVmPluginVersion: string;
 }
 
 const overlayCopySchema = z
@@ -73,10 +72,9 @@ const managedImageReleaseSchema = z
 				'openclaw-gateway': managedBaseImageReferenceSchema,
 				'tool-vm': managedBaseImageReferenceSchema,
 				'worker-gateway': managedBaseImageReferenceSchema,
-			})
+		})
 			.strict(),
 		openClawVersion: z.string().min(1),
-		openClawAgentVmPluginVersion: z.string().min(1),
 	})
 	.strict();
 
@@ -110,10 +108,9 @@ function renderManagedDockerfile(props: {
 	readonly base: ManagedImageBase;
 	readonly baseImage: ManagedBaseImageReference;
 	readonly overlay: ManagedImageOverlay;
-	readonly openClawAgentVmPluginVersion: string;
+	readonly openClawAgentVmPluginPackageSpec?: string;
 	readonly requiredOpenClawPackages: readonly string[];
 }): string {
-	const managedOpenClawAgentVmPluginPackage = `${managedOpenClawAgentVmPluginPackageName}@${props.openClawAgentVmPluginVersion}`;
 	const lines = [
 		`FROM ${props.baseImage.repository}:${props.baseImage.tag}`,
 		'',
@@ -127,7 +124,10 @@ function renderManagedDockerfile(props: {
 		);
 	}
 	if (props.base === 'openclaw-gateway') {
-		lines.push('RUN pnpm add -g ' + shellJoin([managedOpenClawAgentVmPluginPackage]));
+		if (!props.openClawAgentVmPluginPackageSpec) {
+			throw new Error('OpenClaw gateway managed Dockerfiles require the OpenClaw plugin package spec.');
+		}
+		lines.push('RUN pnpm add -g ' + shellJoin([props.openClawAgentVmPluginPackageSpec]));
 	}
 	const overlayOpenClawPackages = props.overlay.extraOpenClawPackages.filter(
 		(packageSpec) =>
@@ -168,6 +168,10 @@ export async function generateManagedDockerfile(
 	options: GenerateManagedDockerfileOptions,
 ): Promise<string> {
 	const overlay = await loadManagedImageOverlay(options.overlayPath);
+	const openClawAgentVmPluginPackageSpec =
+		options.base === 'openclaw-gateway'
+			? await resolveManagedOpenClawAgentVmPluginPackageSpec()
+			: undefined;
 	await fs.rm(options.outputDirectory, { force: true, recursive: true });
 	await fs.mkdir(path.join(options.outputDirectory, 'overlay'), { recursive: true });
 	const overlayDirectory = options.overlayPath ? path.dirname(options.overlayPath) : undefined;
@@ -188,13 +192,68 @@ export async function generateManagedDockerfile(
 			base: options.base,
 			baseImage: options.managedImageRelease.baseImages[options.base],
 			overlay,
-			openClawAgentVmPluginVersion:
-				options.managedImageRelease.openClawAgentVmPluginVersion,
+			...(openClawAgentVmPluginPackageSpec === undefined
+				? {}
+				: { openClawAgentVmPluginPackageSpec }),
 			requiredOpenClawPackages: options.requiredOpenClawPackages ?? [],
 		}),
 		'utf8',
 	);
 	return dockerfilePath;
+}
+
+async function resolvePackageRootFromEntrypoint(packageName: string): Promise<string> {
+	let searchDirectory = path.dirname(fileURLToPath(import.meta.resolve(packageName)));
+	for (;;) {
+		const packageJsonPath = path.join(searchDirectory, 'package.json');
+		try {
+			// oxlint-disable-next-line no-await-in-loop -- upward package root discovery is intentionally sequential
+			const packageJson = await loadJsonConfigFile(packageJsonPath);
+			if (
+				typeof packageJson === 'object' &&
+				packageJson !== null &&
+				'name' in packageJson &&
+				packageJson.name === packageName
+			) {
+				return searchDirectory;
+			}
+		} catch (error) {
+			if (
+				typeof error !== 'object' ||
+				error === null ||
+				!('code' in error) ||
+				error.code !== 'ENOENT'
+			) {
+				throw error;
+			}
+		}
+		const parentDirectory = path.dirname(searchDirectory);
+		if (parentDirectory === searchDirectory) {
+			throw new Error(`Unable to resolve ${packageName} package root.`);
+		}
+		searchDirectory = parentDirectory;
+	}
+}
+
+export async function resolveManagedOpenClawAgentVmPluginPackageSpec(): Promise<string> {
+	const packageRoot = await resolvePackageRootFromEntrypoint(
+		managedOpenClawAgentVmPluginPackageName,
+	);
+	const packageJsonPath = path.join(packageRoot, 'package.json');
+	const packageJson: unknown = await loadJsonConfigFile(packageJsonPath);
+	if (
+		typeof packageJson !== 'object' ||
+		packageJson === null ||
+		!('name' in packageJson) ||
+		packageJson.name !== managedOpenClawAgentVmPluginPackageName ||
+		!('version' in packageJson) ||
+		typeof packageJson.version !== 'string'
+	) {
+		throw new Error(
+			`Expected ${packageJsonPath} to describe ${managedOpenClawAgentVmPluginPackageName} with a version.`,
+		);
+	}
+	return `${packageJson.name}@${packageJson.version}`;
 }
 
 async function resolveAgentVmPackageRoot(): Promise<string> {

@@ -39,8 +39,8 @@ dependency changes because agent-vm does not import or declare it directly.
 This plan keeps runtime and interchange formats strict JSON. JSONC is only for
 human-authored agent-vm config surfaces: `system.jsonc`, `worker.jsonc`,
 repo-local `.agent-vm/config.jsonc`, and `build-config.jsonc`. Generated
-effective configs, runtime records, API bodies, task event logs, backup
-manifests, and cache identifiers remain strict JSON/JSONL.
+effective configs, runtime records, API bodies, task event logs, and backup
+manifests remain strict JSON/JSONL.
 
 Use the landed controller/runtime schema as the source for final names and
 examples for `defaultToolVmProfile`, `agentToolVmProfiles`,
@@ -181,7 +181,7 @@ Pins the native Zod v4 JSON Schema behavior this repo depends on.
 
 Existing config loaders
 
-`system-config.ts`, `system-cache-identifier.ts`, `worker-config.ts`,
+`system-config.ts`, `worker-config.ts`,
 `build-command.ts`, `gateway-image-builder.ts`, and repo resource/config
 loaders should use the shared parser only for authored config surfaces. Runtime
 event logs and generated effective config readers must continue to call
@@ -1249,7 +1249,6 @@ git commit -m "docs: document manual update and neutral openclaw defaults" -m "C
 - Test: `packages/agent-vm/src/config/json-config-file.test.ts`
 - Modify: `package.json`
 - Modify: `packages/agent-vm/src/config/system-config.ts`
-- Modify: `packages/agent-vm/src/config/system-cache-identifier.ts`
 - Modify: `packages/agent-vm/src/cli/build-command.ts`
 - Modify: `packages/agent-vm/src/gateway/gateway-image-builder.ts`
 - Modify: `packages/agent-vm-worker/src/config/worker-config.ts`
@@ -1308,7 +1307,6 @@ Keep strict JSON parsing for:
 ```text
 /state/effective-worker.json
 /state/effective-openclaw.json
-systemCacheIdentifier.json
 runtime records
 task event JSONL
 API bodies

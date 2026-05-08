@@ -12,10 +12,6 @@ system.jsonc / system.json
   Host/controller config.
   Defines zones, secrets, image profiles, cache, ports, and resource policy.
 
-systemCacheIdentifier.json
-  Sibling of system.json.
-  Parsed JSON is hashed into every Gondolin image fingerprint.
-
 worker.jsonc / worker.json
   Zone-level Worker behavior.
   Defines prompts, phases, verification, MCP servers, and skills.
@@ -61,7 +57,6 @@ Prompt file references are resolved before the worker starts.
 | File | Owner | Changes when |
 | --- | --- | --- |
 | `system.jsonc` / `system.json` | platform/operator | host paths, zones, secrets, image profiles, resources change |
-| `systemCacheIdentifier.json` | platform/runtime | cache compatibility contract changes |
 | `worker.jsonc` / `worker.json` | operator/team | default agent behavior changes |
 | `.agent-vm/config.jsonc` / `.agent-vm/config.json` | project repo | a repo needs different validation, MCP, or prompt overrides |
 | `.agent-vm/repo-resources.ts` | project repo | a repo needs TCP resources, mocks, fixtures, or repo-local providers |
@@ -74,6 +69,5 @@ Prompt file references are resolved before the worker starts.
 | Worker phase behavior | [worker-json.md](worker-json.md) |
 | Repo-level overrides | [project-config-json.md](project-config-json.md) |
 | Repo/external resources | [resource-contracts.md](resource-contracts.md) |
-| Image fingerprint input | [system-cache-identifier.md](system-cache-identifier.md) |
 | Prompt file references | [prompt-files.md](prompt-files.md) |
 | Static vs runtime checks | [../validate-and-doctor.md](../validate-and-doctor.md) |

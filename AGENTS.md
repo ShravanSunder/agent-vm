@@ -34,7 +34,6 @@ then drill down:
 - `docs/reference/configuration/worker-json.md` — Agent Worker Gateway phases, prompts, verification, MCP servers.
 - `docs/reference/configuration/project-config-json.md` — repo-local `.agent-vm/config.json` overrides.
 - `docs/reference/configuration/resource-contracts.md` — `.agent-vm/` repo resources and task external resources.
-- `docs/reference/configuration/system-cache-identifier.md` — cache fingerprint inputs.
 - `docs/reference/configuration/prompt-files.md` — prompt file references and resolution.
 
 For package ownership, use the package map below first, then inspect the package
@@ -52,6 +51,8 @@ fast formatting and linting.
 - Integration tests: `pnpm test:integration`.
 - Smoke tests: `pnpm test:smoke`.
 - Full quality gate: `pnpm check`.
+  This includes the `@agent-vm/*` package version sync guard used by the
+  publish script.
 - OXC formatting: `pnpm fmt:check` to verify, `pnpm fmt` to apply Oxfmt.
 - OXC linting: `pnpm lint` for Oxlint, `pnpm lint:types` for type-aware Oxlint.
 - Typecheck: `pnpm typecheck`.
@@ -74,22 +75,30 @@ command against that generated output before claiming the default is safe.
 ## Release Process
 
 Keep every published `@agent-vm/*` package version in sync for normal releases.
+`pnpm check` and `scripts/publish-local.sh` both fail when package versions
+drift.
 If any package version has already been published incorrectly, do not try to
 reuse that version. Bump the whole package set to a fresh patch version and
 publish all packages together.
 
 Managed image release pins are a separate release train from npm package
 versions. Do not change `packages/agent-vm/managed-images.json` base image tags
-just to match npm versions. Do keep npm package pins inside that manifest
-aligned with the package release train, especially `openClawAgentVmPluginVersion`,
-because generated OpenClaw gateway Dockerfiles install
-`@agent-vm/openclaw-agent-vm-plugin@<that version>`.
+just to match npm versions. Keep that manifest focused on managed base image
+metadata such as GHCR tags and the OpenClaw upstream version; do not add
+`@agent-vm/*` npm package pins to it.
 
 Before publishing, pack and inspect `@agent-vm/agent-vm` from the exact commit
 that will be released. Confirm the packed `package/package.json` has sibling
-`@agent-vm/*` dependencies on the intended version, and confirm packed
-`package/managed-images.json` has the intended managed image tags and
-`openClawAgentVmPluginVersion`.
+`@agent-vm/*` dependencies on the intended version. Confirm packed
+`package/managed-images.json` has the intended managed image tags and no npm
+package version pins. Generated OpenClaw gateway Dockerfiles derive the
+`@agent-vm/openclaw-agent-vm-plugin` install spec from the installed package
+metadata.
+
+Because there is no separate user-authored image cache identifier, VM image
+fingerprints rely on image recipe contents plus the package/runtime version
+inputs. Cache-contract changes must ship with a package version bump for the
+full `@agent-vm/*` set.
 
 Publish only after the release PR is merged and local `master` is
 fast-forwarded to `origin/master`. After publishing, verify with `npm view` for
@@ -139,7 +148,7 @@ agent-vm                  → Controller CLI + HTTP server (→ all above)
 
 ## Layout
 
-`config/` holds `system.json`, `systemCacheIdentifier.json`, gateway config, and prompts.
+`config/` holds `system.json`, gateway config, and prompts.
 
 `vm-images/` holds Gondolin VM image recipes.
 

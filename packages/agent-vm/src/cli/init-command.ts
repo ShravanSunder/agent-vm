@@ -19,11 +19,6 @@ import { z } from 'zod';
 
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { resolveConfigPath } from '../config/path-resolver.js';
-import {
-	SYSTEM_CACHE_IDENTIFIER_FILENAME,
-	buildDefaultSystemCacheIdentifier,
-	type HostSystemType,
-} from '../config/system-cache-identifier.js';
 import { buildDefaultProjectNamespace } from '../runtime/project-namespace.js';
 import {
 	getKeychainTokenSource,
@@ -42,6 +37,7 @@ export const secretsProviderSchema = z.enum(['1password', 'environment']);
 export type SecretsProvider = z.infer<typeof secretsProviderSchema>;
 export const imageArchitectureSchema = z.enum(['aarch64', 'x86_64']);
 export type ImageArchitecture = z.infer<typeof imageArchitectureSchema>;
+export type HostSystemType = 'bare-metal' | 'container';
 
 export interface ScaffoldAgentVmProjectOptions {
 	readonly architecture: ImageArchitecture;
@@ -931,23 +927,6 @@ async function scaffoldAgentVmProjectInternal(
 		overwrite,
 	);
 	(systemConfigStatus === 'created' ? created : skipped).push(systemConfigRelativePath);
-
-	const systemCacheIdentifierPath = path.join(
-		options.targetDir,
-		'config',
-		SYSTEM_CACHE_IDENTIFIER_FILENAME,
-	);
-	const systemCacheIdentifier = buildDefaultSystemCacheIdentifier(
-		options.hostSystemType ? { hostSystemType: options.hostSystemType } : {},
-	);
-	const systemCacheIdentifierStatus = await writeFileIfMissing(
-		systemCacheIdentifierPath,
-		`${JSON.stringify(systemCacheIdentifier, null, '\t')}\n`,
-		overwrite,
-	);
-	(systemCacheIdentifierStatus === 'created' ? created : skipped).push(
-		`config/${SYSTEM_CACHE_IDENTIFIER_FILENAME}`,
-	);
 
 	if (options.writeLocalEnvironmentFile) {
 		const envFilePath = path.join(options.targetDir, '.env.local');

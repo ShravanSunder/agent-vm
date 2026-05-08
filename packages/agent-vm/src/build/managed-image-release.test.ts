@@ -2,19 +2,10 @@ import fs from 'node:fs/promises';
 
 import { describe, expect, it } from 'vitest';
 
-import { resolveManagedImageRelease } from './managed-image-dockerfile.js';
-
-interface PackageJson {
-	readonly version?: unknown;
-}
-
-async function readPackageVersion(packageJsonUrl: URL): Promise<string> {
-	const packageJson = JSON.parse(await fs.readFile(packageJsonUrl, 'utf8')) as PackageJson;
-	if (typeof packageJson.version !== 'string') {
-		throw new Error(`Missing package version in ${packageJsonUrl.href}.`);
-	}
-	return packageJson.version;
-}
+import {
+	resolveManagedImageRelease,
+	resolveManagedOpenClawAgentVmPluginPackageSpec,
+} from './managed-image-dockerfile.js';
 
 describe('managed image release', () => {
 	it('keeps managed image tags separate from npm package versions', async () => {
@@ -36,12 +27,26 @@ describe('managed image release', () => {
 		expect(release.baseImages['tool-vm'].tag).not.toMatch(/^0\.0\.\d+$/u);
 	});
 
-	it('pins the bundled OpenClaw plugin to the package release version', async () => {
+	it('does not carry the OpenClaw plugin npm version in the managed image release', async () => {
 		const release = await resolveManagedImageRelease();
-		const openClawAgentVmPluginVersion = await readPackageVersion(
-			new URL('../../../openclaw-agent-vm-plugin/package.json', import.meta.url),
-		);
+		const manifest = JSON.parse(
+			await fs.readFile(new URL('../../managed-images.json', import.meta.url), 'utf8'),
+		) as Record<string, unknown>;
 
-		expect(release.openClawAgentVmPluginVersion).toBe(openClawAgentVmPluginVersion);
+		expect(manifest).not.toHaveProperty('openClawAgentVmPluginVersion');
+		expect(release).not.toHaveProperty('openClawAgentVmPluginVersion');
+	});
+
+	it('derives the OpenClaw plugin npm spec from the installed package metadata', async () => {
+		const pluginPackageJson = JSON.parse(
+			await fs.readFile(
+				new URL('../../../openclaw-agent-vm-plugin/package.json', import.meta.url),
+				'utf8',
+			),
+		) as Record<string, unknown>;
+
+		await expect(resolveManagedOpenClawAgentVmPluginPackageSpec()).resolves.toBe(
+			`${pluginPackageJson.name}@${pluginPackageJson.version}`,
+		);
 	});
 });

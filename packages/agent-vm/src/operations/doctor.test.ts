@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -621,15 +621,12 @@ describe('runControllerDoctor', () => {
 });
 
 describe('collectVmHostSystemDoctorCheck', () => {
-	it('flags missing vm-host-system files for container configs', async () => {
+	it('flags incomplete vm-host-system directories', async () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
 		const configPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
+		const vmHostSystemPath = path.join(temporaryDirectoryPath, 'vm-host-system');
 		await mkdir(path.dirname(configPath), { recursive: true });
-		await writeFile(
-			path.join(path.dirname(configPath), 'systemCacheIdentifier.json'),
-			JSON.stringify({ hostSystemType: 'container' }),
-			'utf8',
-		);
+		await mkdir(vmHostSystemPath, { recursive: true });
 
 		const check = await collectVmHostSystemDoctorCheck(
 			createLoadedSystemConfig(systemConfig, { systemConfigPath: configPath }),
@@ -642,17 +639,12 @@ describe('collectVmHostSystemDoctorCheck', () => {
 		expect(check?.hint).toContain('vm-host-system/Dockerfile');
 	});
 
-	it('passes when vm-host-system files exist for container configs', async () => {
+	it('passes when vm-host-system files exist', async () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
 		const configPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
 		const vmHostSystemPath = path.join(temporaryDirectoryPath, 'vm-host-system');
 		await mkdir(path.dirname(configPath), { recursive: true });
 		await mkdir(vmHostSystemPath, { recursive: true });
-		await writeFile(
-			path.join(path.dirname(configPath), 'systemCacheIdentifier.json'),
-			JSON.stringify({ hostSystemType: 'container' }),
-			'utf8',
-		);
 		await Promise.all(
 			['Dockerfile', 'start.sh', 'agent-vm-controller.service'].map(async (fileName) => {
 				await writeFile(path.join(vmHostSystemPath, fileName), '', 'utf8');
@@ -671,22 +663,10 @@ describe('collectVmHostSystemDoctorCheck', () => {
 	});
 
 	it('checks runtime host files inside /etc/agent-vm container configs', async () => {
-		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
-		const systemCacheIdentifierPath = path.join(
-			temporaryDirectoryPath,
-			'systemCacheIdentifier.json',
-		);
-		await writeFile(
-			systemCacheIdentifierPath,
-			JSON.stringify({ hostSystemType: 'container' }),
-			'utf8',
-		);
-
 		const check = await collectVmHostSystemDoctorCheck({
 			...createLoadedSystemConfig(systemConfig, {
 				systemConfigPath: '/etc/agent-vm/system.json',
 			}),
-			systemCacheIdentifierPath,
 		});
 
 		expect(check).toMatchObject({
@@ -694,19 +674,45 @@ describe('collectVmHostSystemDoctorCheck', () => {
 			ok: false,
 			hint: expect.stringContaining('Cannot access /usr/local/bin/start.sh'),
 		});
-
-		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
-	it('skips vm-host-system checks for non-container configs', async () => {
+	it('flags missing vm-host-system directories for container checkout configs', async () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
 		const configPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
 		await mkdir(path.dirname(configPath), { recursive: true });
-		await writeFile(
-			path.join(path.dirname(configPath), 'systemCacheIdentifier.json'),
-			JSON.stringify({ hostSystemType: 'bare-metal' }),
-			'utf8',
+
+		const containerSystemConfig = {
+			...systemConfig,
+			imageProfiles: {
+				...systemConfig.imageProfiles,
+				gateways: {
+					openclaw: {
+						...systemConfig.imageProfiles.gateways.openclaw,
+						buildConfig: '/etc/agent-vm/vm-images/gateways/openclaw/build-config.json',
+					},
+					worker: {
+						...systemConfig.imageProfiles.gateways.worker,
+						buildConfig: '/etc/agent-vm/vm-images/gateways/worker/build-config.json',
+					},
+				},
+			},
+		} satisfies SystemConfig;
+
+		const check = await collectVmHostSystemDoctorCheck(
+			createLoadedSystemConfig(containerSystemConfig, { systemConfigPath: configPath }),
 		);
+
+		expect(check).toMatchObject({
+			name: 'vm-host-system',
+			ok: false,
+			hint: expect.stringContaining('vm-host-system'),
+		});
+	});
+
+	it('skips vm-host-system checks for local configs when the directory is absent', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
+		const configPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
+		await mkdir(path.dirname(configPath), { recursive: true });
 
 		await expect(
 			collectVmHostSystemDoctorCheck(

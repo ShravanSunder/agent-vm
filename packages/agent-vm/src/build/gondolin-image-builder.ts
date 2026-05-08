@@ -10,14 +10,12 @@ import {
 	type BuildImageResult,
 } from '@agent-vm/gondolin-adapter';
 
-import { loadSystemCacheIdentifier } from '../config/system-cache-identifier.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { TaskOutput } from '../shared/run-task.js';
 import { resolveRuntimeBuildVersionTag as resolveRuntimeBuildVersionTagDefault } from './runtime-versions.js';
 
 export interface GondolinImageBuildRequest {
 	readonly buildConfigPath: string;
-	readonly systemCacheIdentifierPath: string;
 	readonly cacheDir: string;
 	readonly fullReset?: boolean;
 }
@@ -76,11 +74,9 @@ async function loadBuildConfigFromJson(buildConfigPath: string): Promise<BuildCo
 
 export async function computeFingerprintFromConfigPath(
 	buildConfigPath: string,
-	systemCacheIdentifierPath: string,
 	dependencies: Pick<GondolinImageBuilderDependencies, 'resolveRuntimeBuildVersionTag'> = {},
 ): Promise<string> {
 	const buildConfig = await loadBuildConfigFromJson(buildConfigPath);
-	const fingerprintInput = await loadSystemCacheIdentifier({ filePath: systemCacheIdentifierPath });
 	const runtimeBuildVersionTag = await (
 		dependencies.resolveRuntimeBuildVersionTag ?? resolveRuntimeBuildVersionTagDefault
 	)();
@@ -88,7 +84,6 @@ export async function computeFingerprintFromConfigPath(
 	const effectiveBuildFingerprint = await computeEffectiveBuildFingerprint({
 		buildConfig,
 		configDir: path.dirname(path.resolve(buildConfigPath)),
-		fingerprintInput,
 		gondolinVersion: runtimeBuildVersionTag,
 	});
 	return effectiveBuildFingerprint.fingerprint;
@@ -160,9 +155,6 @@ export async function runGondolinImageBuildRequest(
 	const buildImage = dependencies.buildImage ?? buildImageFromCore;
 	const configDir = path.dirname(path.resolve(request.buildConfigPath));
 	const buildConfig = await loadBuildConfig(request.buildConfigPath);
-	const fingerprintInput = await loadSystemCacheIdentifier({
-		filePath: request.systemCacheIdentifierPath,
-	});
 	const runtimeBuildVersionTag = await (
 		dependencies.resolveRuntimeBuildVersionTag ?? resolveRuntimeBuildVersionTagDefault
 	)();
@@ -172,7 +164,6 @@ export async function runGondolinImageBuildRequest(
 			buildConfig,
 			cacheDir: request.cacheDir,
 			configDir,
-			fingerprintInput,
 			...(request.fullReset ? { fullReset: true } : {}),
 		},
 		{
@@ -267,7 +258,6 @@ export async function runGondolinBuildChildProcess(
 export async function buildGondolinImage(
 	options: {
 		readonly buildConfigPath: string;
-		readonly systemCacheIdentifierPath: string;
 		readonly cacheDir: string;
 		readonly fullReset?: boolean;
 		readonly streamPreview?: TaskOutput;
@@ -277,7 +267,6 @@ export async function buildGondolinImage(
 	const request: GondolinImageBuildRequest = {
 		buildConfigPath: options.buildConfigPath,
 		cacheDir: options.cacheDir,
-		systemCacheIdentifierPath: options.systemCacheIdentifierPath,
 		...(options.fullReset ? { fullReset: true } : {}),
 	};
 

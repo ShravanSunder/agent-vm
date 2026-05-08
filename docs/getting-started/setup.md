@@ -33,13 +33,11 @@ agent-vm init coding-agent --type worker --preset macos-local
 - local relative paths
 - `aarch64` VM images
 - 1Password-backed secrets
-- `hostSystemType: "bare-metal"`
 - `.env.local`
 
 The scaffold includes:
 
 - `config/system.jsonc`
-- `config/systemCacheIdentifier.json`
 - `config/gateways/coding-agent/worker.jsonc`
 - `config/gateways/coding-agent/prompts/*.md`
 - `vm-images/gateways/worker/build-config.jsonc`

@@ -30,7 +30,6 @@ export interface GatewayZoneStartResult {
 export interface GatewayBuildImageOptions {
 	readonly buildConfig: unknown;
 	readonly cacheDir: string;
-	readonly fingerprintInput: unknown;
 	readonly fullReset?: boolean;
 }
 

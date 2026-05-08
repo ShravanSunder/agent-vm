@@ -6,7 +6,6 @@ import { z } from 'zod';
 import { loadJsonConfigFile } from './json-config-file.js';
 import { resolveConfigPath } from './path-resolver.js';
 import { zoneResourcesPolicySchema } from './resource-contracts/index.js';
-import { resolveSystemCacheIdentifierPath } from './system-cache-identifier.js';
 
 const gatewayTypeValues = ['openclaw', 'worker'] as const;
 const agentIdSchema = z
@@ -456,7 +455,6 @@ export type SystemConfigInput = z.input<typeof systemConfigSchema>;
 
 export type LoadedSystemConfig = SystemConfig & {
 	readonly systemConfigPath: string;
-	readonly systemCacheIdentifierPath: string;
 };
 
 function pathsOverlap(firstPath: string, secondPath: string): boolean {
@@ -498,7 +496,6 @@ export function createLoadedSystemConfig(
 	return {
 		...parsedConfig,
 		systemConfigPath: options.systemConfigPath,
-		systemCacheIdentifierPath: resolveSystemCacheIdentifierPath(options.systemConfigPath),
 	};
 }
 

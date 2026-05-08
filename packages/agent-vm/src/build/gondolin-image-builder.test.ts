@@ -41,7 +41,6 @@ process.on('message', () => {
 			request: {
 				buildConfigPath: '/project/build-config.json',
 				cacheDir: '/cache/gateway-images/openclaw',
-				systemCacheIdentifierPath: '/project/system-cache-identifier.json',
 			},
 			streamPreview: {
 				write(chunk) {
@@ -86,7 +85,6 @@ process.on('message', () => {
 			request: {
 				buildConfigPath: '/project/build-config.json',
 				cacheDir: '/cache/gateway-images/openclaw',
-				systemCacheIdentifierPath: '/project/system-cache-identifier.json',
 			},
 			streamPreview: {
 				write() {
@@ -124,7 +122,6 @@ process.exit(1);
 				request: {
 					buildConfigPath: '/project/build-config.json',
 					cacheDir: '/cache/gateway-images/openclaw',
-					systemCacheIdentifierPath: '/project/system-cache-identifier.json',
 				},
 				streamPreview: {
 					write() {
@@ -143,18 +140,6 @@ process.exit(1);
 			readonly streamPreviewChunks: readonly string[];
 		}[] = [];
 		const streamPreviewChunks: string[] = [];
-		const temporaryDirectoryPath = await fs.mkdtemp(
-			path.join(os.tmpdir(), 'agent-vm-system-cache-id-'),
-		);
-		const systemCacheIdentifierPath = path.join(
-			temporaryDirectoryPath,
-			'systemCacheIdentifier.json',
-		);
-		await fs.writeFile(
-			systemCacheIdentifierPath,
-			JSON.stringify({ gitSha: 'abc123', schemaVersion: 1 }),
-			'utf8',
-		);
 		const dependencies: GondolinImageBuilderDependencies = {
 			loadBuildConfig: async () => ({
 				arch: 'aarch64',
@@ -177,7 +162,6 @@ process.exit(1);
 		const result = await buildGondolinImage(
 			{
 				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
-				systemCacheIdentifierPath,
 				cacheDir: '/cache/gateway-images/openclaw',
 				fullReset: true,
 				streamPreview: {
@@ -198,35 +182,19 @@ process.exit(1);
 					buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
 					cacheDir: '/cache/gateway-images/openclaw',
 					fullReset: true,
-					systemCacheIdentifierPath,
 				},
 				streamPreviewChunks: ['building rootfs\n'],
 			},
 		]);
-
-		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
 	it('passes cacheDir, configDir, and fullReset through to the core builder', async () => {
 		const buildImageCalls: {
-			readonly fingerprintInput: unknown;
 			readonly cacheDir: string;
 			readonly configDir?: string;
 			readonly fullReset?: boolean;
 			readonly gondolinVersion?: string;
 		}[] = [];
-		const temporaryDirectoryPath = await fs.mkdtemp(
-			path.join(os.tmpdir(), 'agent-vm-system-cache-id-'),
-		);
-		const systemCacheIdentifierPath = path.join(
-			temporaryDirectoryPath,
-			'systemCacheIdentifier.json',
-		);
-		await fs.writeFile(
-			systemCacheIdentifierPath,
-			JSON.stringify({ gitSha: 'abc123' }),
-			'utf8',
-		);
 		const dependencies: GondolinImageBuilderDependencies = {
 			loadBuildConfig: async () => ({
 				arch: 'aarch64',
@@ -237,14 +205,12 @@ process.exit(1);
 				buildImageCalls.push(
 					{
 						cacheDir: options.cacheDir,
-						fingerprintInput: options.fingerprintInput,
 						...(options.configDir ? { configDir: options.configDir } : {}),
 						...(options.fullReset ? { fullReset: true } : {}),
 						...(buildDependencies?.gondolinVersion
 							? { gondolinVersion: buildDependencies.gondolinVersion }
 							: {}),
 					} satisfies {
-						readonly fingerprintInput: unknown;
 						readonly cacheDir: string;
 						readonly configDir?: string;
 						readonly fullReset?: boolean;
@@ -262,7 +228,6 @@ process.exit(1);
 		const result = await buildGondolinImage(
 			{
 				buildConfigPath: '/project/vm-images/gateways/openclaw/build-config.json',
-				systemCacheIdentifierPath,
 				cacheDir: '/cache/gateway-images/openclaw',
 				fullReset: true,
 			},
@@ -272,17 +237,12 @@ process.exit(1);
 		expect(result.fingerprint).toBe('abc123');
 		expect(buildImageCalls).toEqual([
 			{
-				fingerprintInput: {
-					gitSha: 'abc123',
-				},
 				cacheDir: '/cache/gateway-images/openclaw',
 				configDir: '/project/vm-images/gateways/openclaw',
 				fullReset: true,
 				gondolinVersion: 'runtime@1',
 			},
 		]);
-
-		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 });
 
@@ -292,26 +252,15 @@ describe('computeFingerprintFromConfigPath', () => {
 			path.join(os.tmpdir(), 'agent-vm-build-config-'),
 		);
 		const temporaryConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
-		const systemCacheIdentifierPath = path.join(
-			temporaryDirectoryPath,
-			'systemCacheIdentifier.json',
-		);
 		const fileContents = JSON.stringify({ arch: 'aarch64', distro: 'alpine' });
 		await fs.writeFile(temporaryConfigPath, fileContents, 'utf8');
-		await fs.writeFile(
-			systemCacheIdentifierPath,
-			JSON.stringify({ gitSha: 'abc123' }),
-			'utf8',
-		);
 
 		const firstFingerprint = await computeFingerprintFromConfigPath(
 			temporaryConfigPath,
-			systemCacheIdentifierPath,
 			{ resolveRuntimeBuildVersionTag: async () => 'runtime@1' },
 		);
 		const secondFingerprint = await computeFingerprintFromConfigPath(
 			temporaryConfigPath,
-			systemCacheIdentifierPath,
 			{ resolveRuntimeBuildVersionTag: async () => 'runtime@1' },
 		);
 
@@ -320,32 +269,14 @@ describe('computeFingerprintFromConfigPath', () => {
 		expect(firstFingerprint).toBe(secondFingerprint);
 	});
 
-	it('fails when system cache identifier is missing while computing fingerprints', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(
-			path.join(os.tmpdir(), 'agent-vm-image-'),
-		);
-		const temporaryConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
-		const identifierPath = path.join(temporaryDirectoryPath, 'systemCacheIdentifier.json');
-		await fs.writeFile(temporaryConfigPath, JSON.stringify(baseBuildConfig()), 'utf8');
-
-		await expect(
-			computeFingerprintFromConfigPath(temporaryConfigPath, identifierPath, {
-				resolveRuntimeBuildVersionTag: async () => 'runtime@1',
-			}),
-		).rejects.toThrow(`Missing system cache identifier '${identifierPath}'`);
-
-		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
-	});
-
 	it('includes the build config path when the build config is missing', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(
 			path.join(os.tmpdir(), 'agent-vm-image-'),
 		);
 		const temporaryConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
-		const identifierPath = path.join(temporaryDirectoryPath, 'systemCacheIdentifier.json');
 
 		await expect(
-			computeFingerprintFromConfigPath(temporaryConfigPath, identifierPath, {
+			computeFingerprintFromConfigPath(temporaryConfigPath, {
 				resolveRuntimeBuildVersionTag: async () => 'runtime@1',
 			}),
 		).rejects.toThrow(`Failed to read build config '${temporaryConfigPath}'`);
@@ -358,32 +289,13 @@ describe('computeFingerprintFromConfigPath', () => {
 			path.join(os.tmpdir(), 'agent-vm-image-'),
 		);
 		const temporaryConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
-		const identifierPath = path.join(temporaryDirectoryPath, 'systemCacheIdentifier.json');
 		await fs.writeFile(temporaryConfigPath, '{broken', 'utf8');
 
 		await expect(
-			computeFingerprintFromConfigPath(temporaryConfigPath, identifierPath, {
+			computeFingerprintFromConfigPath(temporaryConfigPath, {
 				resolveRuntimeBuildVersionTag: async () => 'runtime@1',
 			}),
 		).rejects.toThrow(`Failed to parse build config '${temporaryConfigPath}'`);
-
-		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
-	});
-
-	it('fails when system cache identifier is malformed while computing fingerprints', async () => {
-		const temporaryDirectoryPath = await fs.mkdtemp(
-			path.join(os.tmpdir(), 'agent-vm-image-'),
-		);
-		const temporaryConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
-		const identifierPath = path.join(temporaryDirectoryPath, 'systemCacheIdentifier.json');
-		await fs.writeFile(temporaryConfigPath, JSON.stringify(baseBuildConfig()), 'utf8');
-		await fs.writeFile(identifierPath, '{broken', 'utf8');
-
-		await expect(
-			computeFingerprintFromConfigPath(temporaryConfigPath, identifierPath, {
-				resolveRuntimeBuildVersionTag: async () => 'runtime@1',
-			}),
-		).rejects.toThrow(`Failed to parse system cache identifier '${identifierPath}'`);
 
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
@@ -393,18 +305,14 @@ describe('computeFingerprintFromConfigPath', () => {
 			path.join(os.tmpdir(), 'agent-vm-image-'),
 		);
 		const temporaryConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
-		const identifierPath = path.join(temporaryDirectoryPath, 'systemCacheIdentifier.json');
 		await fs.writeFile(temporaryConfigPath, JSON.stringify(baseBuildConfig()), 'utf8');
-		await fs.writeFile(identifierPath, JSON.stringify({ gitSha: 'abc123' }), 'utf8');
 
 		const firstFingerprint = await computeFingerprintFromConfigPath(
 			temporaryConfigPath,
-			identifierPath,
 			{ resolveRuntimeBuildVersionTag: async () => 'runtime@1' },
 		);
 		const secondFingerprint = await computeFingerprintFromConfigPath(
 			temporaryConfigPath,
-			identifierPath,
 			{ resolveRuntimeBuildVersionTag: async () => 'runtime@2' },
 		);
 
@@ -413,43 +321,32 @@ describe('computeFingerprintFromConfigPath', () => {
 		expect(firstFingerprint).not.toBe(secondFingerprint);
 	});
 
-	it('changes fingerprints when the system cache identifier contents change', async () => {
+	it('computes fingerprints from the build config and runtime build tag', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(
 			path.join(os.tmpdir(), 'agent-vm-image-'),
 		);
 		const temporaryConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
-		const firstIdentifierPath = path.join(temporaryDirectoryPath, 'systemCacheIdentifier-a.json');
-		const secondIdentifierPath = path.join(temporaryDirectoryPath, 'systemCacheIdentifier-b.json');
+		const ignoredSidecarPath = path.join(temporaryDirectoryPath, 'ignored-sidecar.json');
 		await fs.writeFile(
 			temporaryConfigPath,
 			JSON.stringify(baseBuildConfig()),
 			'utf8',
 		);
-		await fs.writeFile(
-			firstIdentifierPath,
-			JSON.stringify({ gitSha: 'abc123' }),
-			'utf8',
-		);
-		await fs.writeFile(
-			secondIdentifierPath,
-			JSON.stringify({ gitSha: 'def456' }),
-			'utf8',
-		);
+		await fs.writeFile(ignoredSidecarPath, JSON.stringify({ gitSha: 'abc123' }), 'utf8');
 
 		const firstFingerprint = await computeFingerprintFromConfigPath(
 			temporaryConfigPath,
-			firstIdentifierPath,
 			{ resolveRuntimeBuildVersionTag: async () => 'runtime@1' },
 		);
+		await fs.writeFile(ignoredSidecarPath, JSON.stringify({ gitSha: 'def456' }), 'utf8');
 		const secondFingerprint = await computeFingerprintFromConfigPath(
 			temporaryConfigPath,
-			secondIdentifierPath,
 			{ resolveRuntimeBuildVersionTag: async () => 'runtime@1' },
 		);
 
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 
-		expect(firstFingerprint).not.toBe(secondFingerprint);
+		expect(firstFingerprint).toBe(secondFingerprint);
 	});
 
 	it('changes fingerprints when rootfs init extra contents change', async () => {
@@ -457,7 +354,6 @@ describe('computeFingerprintFromConfigPath', () => {
 			path.join(os.tmpdir(), 'agent-vm-image-'),
 		);
 		const temporaryConfigPath = path.join(temporaryDirectoryPath, 'build-config.json');
-		const identifierPath = path.join(temporaryDirectoryPath, 'systemCacheIdentifier.json');
 		const rootfsInitExtraPath = path.join(temporaryDirectoryPath, 'rootfs-init-extra.sh');
 		await fs.writeFile(
 			temporaryConfigPath,
@@ -467,18 +363,15 @@ describe('computeFingerprintFromConfigPath', () => {
 			}),
 			'utf8',
 		);
-		await fs.writeFile(identifierPath, JSON.stringify({ gitSha: 'abc123' }), 'utf8');
 
 		await fs.writeFile(rootfsInitExtraPath, 'echo init-extra-v1\n', 'utf8');
 		const firstFingerprint = await computeFingerprintFromConfigPath(
 			temporaryConfigPath,
-			identifierPath,
 			{ resolveRuntimeBuildVersionTag: async () => 'runtime@1' },
 		);
 		await fs.writeFile(rootfsInitExtraPath, 'echo init-extra-v2\n', 'utf8');
 		const secondFingerprint = await computeFingerprintFromConfigPath(
 			temporaryConfigPath,
-			identifierPath,
 			{ resolveRuntimeBuildVersionTag: async () => 'runtime@1' },
 		);
 

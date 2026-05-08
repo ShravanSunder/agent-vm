@@ -34,7 +34,6 @@ then drill down:
 - `docs/reference/configuration/worker-json.md` — Agent Worker Gateway phases, prompts, verification, MCP servers.
 - `docs/reference/configuration/project-config-json.md` — repo-local `.agent-vm/config.json` overrides.
 - `docs/reference/configuration/resource-contracts.md` — `.agent-vm/` repo resources and task external resources.
-- `docs/reference/configuration/system-cache-identifier.md` — cache fingerprint inputs.
 - `docs/reference/configuration/prompt-files.md` — prompt file references and resolution.
 
 For package ownership, use the package map below first, then inspect the package
@@ -52,6 +51,8 @@ fast formatting and linting.
 - Integration tests: `pnpm test:integration`.
 - Smoke tests: `pnpm test:smoke`.
 - Full quality gate: `pnpm check`.
+  This includes the `@agent-vm/*` package version sync guard used by the
+  publish script.
 - OXC formatting: `pnpm fmt:check` to verify, `pnpm fmt` to apply Oxfmt.
 - OXC linting: `pnpm lint` for Oxlint, `pnpm lint:types` for type-aware Oxlint.
 - Typecheck: `pnpm typecheck`.
@@ -86,7 +87,7 @@ agent-vm                  → Controller CLI + HTTP server (→ all above)
 
 ## Layout
 
-`config/` holds `system.json`, `systemCacheIdentifier.json`, gateway config, and prompts.
+`config/` holds `system.json`, gateway config, and prompts.
 
 `vm-images/` holds Gondolin VM image recipes.
 
