@@ -40,6 +40,7 @@ export type ImageArchitecture = z.infer<typeof imageArchitectureSchema>;
 export type HostSystemType = 'bare-metal' | 'container';
 
 export interface ScaffoldAgentVmProjectOptions {
+	readonly agents?: readonly string[];
 	readonly architecture: ImageArchitecture;
 	readonly gatewayType: GatewayType;
 	readonly hostSystemType?: HostSystemType;
@@ -682,7 +683,40 @@ const defaultToolBuildConfig = (architecture: ImageArchitecture): object => ({
 	},
 });
 
-const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): object => ({
+function formatAgentIdentityName(agentId: string): string {
+	return agentId.charAt(0).toUpperCase() + agentId.slice(1);
+}
+
+function defaultOpenClawAgentsConfig(agentIds: readonly string[] | undefined): object {
+	return {
+		defaults: {
+			model: { primary: 'openai-codex/gpt-5.5' },
+			thinkingDefault: 'low',
+			sandbox: {
+				backend: 'gondolin',
+				mode: 'all',
+				scope: 'agent',
+				workspaceAccess: 'rw',
+			},
+			workspace: '/zone/agents/default',
+		},
+		...(agentIds && agentIds.length > 0
+			? {
+					list: agentIds.map((agentId) => ({
+						id: agentId,
+						workspace: `/zone/agents/${agentId}`,
+						identity: { name: formatAgentIdentityName(agentId) },
+					})),
+				}
+			: {}),
+	};
+}
+
+const defaultOpenClawConfig = (
+	zoneId: string,
+	gatewayIngressPort: number,
+	agentIds?: readonly string[],
+): object => ({
 	gateway: {
 		auth: { mode: 'token' },
 		bind: 'loopback',
@@ -695,31 +729,23 @@ const defaultOpenClawConfig = (zoneId: string, gatewayIngressPort: number): obje
 		mode: 'local',
 		port: 18789,
 	},
-	agents: {
-		defaults: {
-			model: { primary: 'openai-codex/gpt-5.4' },
-			models: {
-				'openai-codex/gpt-5.4': {
-					params: {
-						thinking: 'low',
-					},
-				},
-				'openai-codex/gpt-5.4-mini': {
-					params: {
-						thinking: 'high',
-					},
+	agents: defaultOpenClawAgentsConfig(agentIds),
+	tools: {
+		elevated: { enabled: false },
+		sandbox: {
+			tools: {
+				alsoAllow: ['web_search', 'web_fetch'],
+			},
+		},
+		web: {
+			fetch: {
+				ssrfPolicy: {
+					allowRfc2544BenchmarkRange: true,
+					allowIpv6UniqueLocalRange: true,
 				},
 			},
-			sandbox: {
-				backend: 'gondolin',
-				mode: 'all',
-				scope: 'agent',
-				workspaceAccess: 'rw',
-			},
-			workspace: '/zone/agents/default',
 		},
 	},
-	tools: { elevated: { enabled: false } },
 	commands: { ownerAllowFrom: [] },
 	session: { dmScope: 'per-channel-peer' },
 	plugins: {
@@ -953,6 +979,7 @@ async function scaffoldAgentVmProjectInternal(
 					defaultOpenClawConfig(
 						options.zoneId,
 						await resolveOpenClawControlUiIngressPort(systemConfigPath, options.zoneId),
+						options.agents,
 					),
 					null,
 					'\t',

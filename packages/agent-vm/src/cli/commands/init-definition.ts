@@ -121,6 +121,17 @@ function resolveHostSystemType(
 	return preset?.hostSystemType ?? (paths === 'pod' ? 'container' : 'bare-metal');
 }
 
+function parseAgentIds(agentIds: string): readonly string[] {
+	const parsedAgentIds = agentIds
+		.split(',')
+		.map((agentId) => agentId.trim())
+		.filter((agentId) => agentId.length > 0);
+	if (parsedAgentIds.length === 0) {
+		throw new Error('--openclaw-agents must include at least one non-empty agent id.');
+	}
+	return parsedAgentIds;
+}
+
 export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 	return command({
 		name: 'init',
@@ -169,8 +180,24 @@ export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 				long: 'overwrite',
 				description: 'Overwrite existing scaffolded files (default: skip existing files)',
 			}),
+			agents: option({
+				type: optional(string),
+				long: 'openclaw-agents',
+				description:
+					'Comma-separated OpenClaw agent ids to scaffold, for example: sun,shravan,alevtina.',
+			}),
 		},
-		handler: async ({ arch, namespace, overwrite, paths, preset, secrets, type, zoneId }) => {
+		handler: async ({
+			agents,
+			arch,
+			namespace,
+			overwrite,
+			paths,
+			preset,
+			secrets,
+			type,
+			zoneId,
+		}) => {
 			const gatewayType = parseGatewayType(type);
 			const presetDefaults = preset;
 			const secretsProvider = resolveSecretsProvider(secrets, presetDefaults);
@@ -178,6 +205,7 @@ export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 			const pathMode = resolvePathMode(paths, presetDefaults);
 			const hostSystemType = resolveHostSystemType(pathMode, presetDefaults);
 			const result = await (dependencies.scaffoldAgentVmProject ?? scaffoldAgentVmProject)({
+				...(agents === undefined ? {} : { agents: parseAgentIds(agents) }),
 				architecture,
 				gatewayType,
 				hostSystemType,

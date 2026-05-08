@@ -13,6 +13,7 @@ interface OpenClawDeploymentConfig {
 			};
 			readonly workspace?: unknown;
 		};
+		readonly list?: readonly unknown[];
 	};
 	readonly plugins?: {
 		readonly allow?: readonly unknown[];
@@ -27,6 +28,7 @@ interface OpenClawDeploymentConfig {
 }
 
 export interface OpenClawDeploymentDoctorTarget {
+	readonly configuredAuthProfileAgentIds?: readonly string[];
 	readonly config: OpenClawDeploymentConfig;
 	readonly zoneId: string;
 }
@@ -50,6 +52,29 @@ function hasEnabledEntry(
 function parseOpenClawDeploymentConfig(rawConfig: string): OpenClawDeploymentConfig {
 	const parsedConfig: unknown = JSON.parse(rawConfig);
 	return isObjectRecord(parsedConfig) ? parsedConfig : {};
+}
+
+function collectOpenClawAgentIds(config: OpenClawDeploymentConfig): readonly string[] {
+	return (config.agents?.list ?? [])
+		.filter(isObjectRecord)
+		.map((agent) => agent.id)
+		.filter((agentId): agentId is string => typeof agentId === 'string' && agentId.length > 0);
+}
+
+function buildAgentAuthProfileChecks(
+	target: OpenClawDeploymentDoctorTarget,
+): readonly DoctorCheck[] {
+	const configuredAuthProfileAgentIds = new Set(target.configuredAuthProfileAgentIds ?? []);
+	return collectOpenClawAgentIds(target.config).map((agentId) => {
+		const hasAuthProfile = configuredAuthProfileAgentIds.has(agentId);
+		return {
+			name: `openclaw-agent-auth-profile-${target.zoneId}-${agentId}`,
+			ok: hasAuthProfile,
+			hint: hasAuthProfile
+				? `auth profile configured for agent ${agentId}`
+				: `Configure gateway.authProfilesByAgent.${agentId} or run OpenClaw auth onboarding for agent ${agentId}.`,
+		} satisfies DoctorCheck;
+	});
 }
 
 export function buildOpenClawDeploymentDoctorChecks(
@@ -96,6 +121,7 @@ export function buildOpenClawDeploymentDoctorChecks(
 							? workspace
 							: 'agents.defaults.workspace is unset',
 			},
+			...buildAgentAuthProfileChecks(target),
 		] as const satisfies readonly DoctorCheck[];
 	});
 }
@@ -103,23 +129,27 @@ export function buildOpenClawDeploymentDoctorChecks(
 export async function collectOpenClawDeploymentDoctorChecks(
 	systemConfig: LoadedSystemConfig,
 ): Promise<readonly DoctorCheck[]> {
-	const targets = await Promise.all(
-		systemConfig.zones
-			.filter((zone) => zone.gateway.type === 'openclaw')
-			.map(async (zone): Promise<OpenClawDeploymentDoctorTarget> => {
-				try {
-					const rawConfig = await readFile(zone.gateway.config, 'utf8');
-					return {
-						zoneId: zone.id,
-						config: parseOpenClawDeploymentConfig(rawConfig),
-					};
-				} catch {
-					return {
-						zoneId: zone.id,
-						config: {},
-					};
-				}
-			}),
-	);
+	const targets: OpenClawDeploymentDoctorTarget[] = [];
+	for (const zone of systemConfig.zones) {
+		if (zone.gateway.type !== 'openclaw') {
+			continue;
+		}
+		const configuredAuthProfileAgentIds = Object.keys(zone.gateway.authProfilesByAgent ?? {});
+		try {
+			// oxlint-disable-next-line no-await-in-loop -- deployment checks follow zone config order
+			const rawConfig = await readFile(zone.gateway.config, 'utf8');
+			targets.push({
+				zoneId: zone.id,
+				configuredAuthProfileAgentIds,
+				config: parseOpenClawDeploymentConfig(rawConfig),
+			});
+		} catch {
+			targets.push({
+				zoneId: zone.id,
+				configuredAuthProfileAgentIds,
+				config: {},
+			});
+		}
+	}
 	return buildOpenClawDeploymentDoctorChecks(targets);
 }

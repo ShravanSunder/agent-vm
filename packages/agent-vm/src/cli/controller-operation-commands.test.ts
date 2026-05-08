@@ -383,7 +383,10 @@ describe('runControllerOperationCommand', () => {
 		});
 
 		const result = JSON.parse(outputs.join('')) as {
+			readonly failed: number;
 			readonly ok: boolean;
+			readonly passed: number;
+			readonly summary: string;
 			readonly checks: readonly {
 				readonly name: string;
 				readonly ok: boolean;
@@ -565,6 +568,9 @@ printf '{"ok":true}\\n'
 
 		const result = JSON.parse(outputs.join('')) as {
 			readonly ok: boolean;
+			readonly failed: number;
+			readonly passed: number;
+			readonly summary: string;
 			readonly checks: readonly {
 				readonly name: string;
 				readonly ok: boolean;
@@ -641,6 +647,9 @@ printf '{"ok":true}\\n'
 
 		const result = JSON.parse(outputs.join('')) as {
 			readonly ok: boolean;
+			readonly failed: number;
+			readonly passed: number;
+			readonly summary: string;
 			readonly checks: readonly {
 				readonly name: string;
 				readonly ok: boolean;
@@ -907,7 +916,10 @@ printf '{"ok":true}\\n'
 		});
 
 		const result = JSON.parse(outputs.join('')) as {
+			readonly failed: number;
 			readonly ok: boolean;
+			readonly passed: number;
+			readonly summary: string;
 			readonly checks: readonly {
 				readonly name: string;
 				readonly ok: boolean;
@@ -916,6 +928,9 @@ printf '{"ok":true}\\n'
 		};
 
 		expect(result.ok).toBe(true);
+		expect(result.failed).toBe(0);
+		expect(result.passed).toBeGreaterThan(0);
+		expect(result.summary).toBe('all checks passed');
 		expect(result.checks.find((check) => check.name === 'worker-config-worker')).toMatchObject({
 			ok: true,
 			hint: workerConfigPath,

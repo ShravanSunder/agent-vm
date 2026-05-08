@@ -43,6 +43,16 @@ function formatUnknownError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+function buildOpenClawCombinedLogsCommand(logPath: string): string {
+	return [
+		`echo '===== gateway boot log (${logPath}) ====='`,
+		`cat ${logPath} 2>/dev/null || true`,
+		'echo',
+		"echo '===== openclaw runtime logs (/tmp/openclaw/openclaw-*.log) ====='",
+		'tail -n 400 /tmp/openclaw/openclaw-*.log 2>/dev/null || true',
+	].join('; ');
+}
+
 export function createOpenClawZoneRuntime(
 	options: CreateOpenClawZoneRuntimeOptions,
 ): OpenClawZoneRuntime {
@@ -137,7 +147,7 @@ export function createOpenClawZoneRuntime(
 					readGatewayLogs: async () =>
 						(
 							await activeGateway.vm.exec(
-								`cat ${activeGateway.processSpec.logPath} 2>/dev/null || echo ""`,
+								buildOpenClawCombinedLogsCommand(activeGateway.processSpec.logPath),
 							)
 						).stdout,
 				},

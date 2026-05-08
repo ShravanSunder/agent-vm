@@ -10,7 +10,10 @@ import {
 	collectOpenClawDeploymentDoctorChecks,
 } from './openclaw-deployment-doctor.js';
 
-function createSystemConfig(openClawConfigPath: string): LoadedSystemConfig {
+function createSystemConfig(
+	openClawConfigPath: string,
+	authProfilesByAgent: Record<string, { readonly ref: string; readonly source: '1password' }> = {},
+): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
 			cacheDir: './cache',
@@ -55,6 +58,7 @@ function createSystemConfig(openClawConfigPath: string): LoadedSystemConfig {
 						port: 18791,
 						stateDir: './state/shravan',
 						zoneFilesDir: './zone-files/shravan',
+						authProfilesByAgent,
 					},
 					id: 'shravan',
 					secrets: {},
@@ -250,6 +254,50 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		).toMatchObject({
 			ok: false,
 			hint: 'Use /zone/agents/default or per-agent workspaces; keep /zone for shared zone files.',
+		});
+	});
+
+	it('flags configured OpenClaw agents without matching auth profile material', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				configuredAuthProfileAgentIds: ['sun'],
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							sandbox: {
+								workspaceAccess: 'rw',
+							},
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'sun' }, { id: 'shravan' }],
+					},
+					plugins: {
+						allow: ['memory-core'],
+						entries: { 'memory-core': { enabled: true } },
+						load: {
+							paths: [
+								'/home/openclaw/.openclaw/extensions',
+								'/pnpm/global/5/node_modules/@openclaw',
+							],
+						},
+						slots: { memory: 'memory-core' },
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-sun'),
+		).toMatchObject({
+			ok: true,
+			hint: 'auth profile configured for agent sun',
+		});
+		expect(
+			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Configure gateway.authProfilesByAgent.shravan or run OpenClaw auth onboarding for agent shravan.',
 		});
 	});
 });

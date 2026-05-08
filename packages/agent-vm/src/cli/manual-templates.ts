@@ -140,7 +140,10 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 
 	agents.defaults.sandbox.workspaceAccess is rw so agents can write their workspace.
 	agents.defaults.workspace points at /zone/agents/default so /zone remains shared zone storage.
+	agents.defaults.model.primary is openai-codex/gpt-5.5 with thinkingDefault low.
 	session.dmScope is per-channel-peer so Discord DMs from different people do not share one agent session.
+	tools.web.fetch.ssrfPolicy trusts Gondolin's OpenClaw-compatible fake IP ranges for web_fetch.
+	tools.sandbox.tools.alsoAllow includes web_search and web_fetch so sandboxed sessions can see web tools once a provider is configured.
 	plugins.load.paths includes /home/openclaw/.openclaw/extensions for vendored extensions and /pnpm/global/5/node_modules/@openclaw for managed OpenClaw packages.
 	plugins.slots.memory selects memory-core when memory-core is enabled.
 	gateway.auth.mode is token for agent-vm-managed gateways.
@@ -148,7 +151,9 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	Managed OpenClaw gateway images install @agent-vm/openclaw-agent-vm-plugin and register it as the gondolin extension.
 	Managed OpenClaw gateway images install external channel packages from config. For example, channels.discord.enabled installs @openclaw/discord for the managed OpenClaw release.
 
-	Run agent-vm doctor after editing OpenClaw config. Doctor warns about stale Discord plugin entries, missing memory slots, missing plugin load paths, /zone used as an agent workspace, missing writable workspace access, unsafe DM session scope, and Discord binding guildIds missing from channels.discord.guilds.
+	Use agent-vm init --openclaw-agents sun,shravan,alevtina to scaffold agents.list entries with per-agent /zone/agents/<id> workspaces.
+
+	Run agent-vm doctor after editing OpenClaw config. Doctor prints a pass/fail summary and warns about missing memory slots, missing plugin load paths, /zone used as an agent workspace, missing writable workspace access, and configured agents without auth profile material.
 	`,
 			),
 		},

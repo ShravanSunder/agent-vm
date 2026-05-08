@@ -214,6 +214,44 @@ describe('runAgentVmCli', () => {
 		expect(outputs.join('')).toContain('"config/system.json"');
 	});
 
+	it('passes comma-separated init agent ids to the project scaffolder', async () => {
+		const scaffoldAgentVmProject = vi.fn(async () => ({
+			created: ['config/system.json'],
+			keychainStored: false,
+			skipped: [],
+		}));
+
+		await runAgentVmCli(
+			[
+				'init',
+				'test-zone',
+				'--type',
+				'openclaw',
+				'--secrets',
+				'1password',
+				'--arch',
+				'aarch64',
+				'--openclaw-agents',
+				'sun,shravan,alevtina',
+			],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
+				scaffoldAgentVmProject,
+			},
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agents: ['sun', 'shravan', 'alevtina'],
+			}),
+		);
+	});
+
 	it('routes resources init to the repo resource scaffolder', async () => {
 		const outputs: string[] = [];
 		const initRepoResources = vi.fn(async () => ({

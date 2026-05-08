@@ -282,7 +282,7 @@ The controller exposes operations for managing the OpenClaw Gateway:
 |-----------|----------|-------------|
 | Status | `GET /controller-status` | System config and zone health |
 | Health | `GET /zones/:id/health` | Live gateway health probe from inside the VM |
-| Logs | `GET /zones/:id/logs` | Gateway process logs from VM |
+| Logs | `GET /zones/:id/logs` | Gateway boot log plus OpenClaw runtime log tail from inside the VM |
 | Credentials | `POST /zones/:id/credentials/refresh` | Re-resolve secrets, restart gateway |
 | Destroy | `POST /zones/:id/destroy` | Stop gateway, release leases, purge state |
 | Upgrade | `POST /zones/:id/upgrade` | Rebuild image, restart gateway |

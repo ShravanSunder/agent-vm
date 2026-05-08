@@ -329,9 +329,20 @@ export async function runControllerOperationCommand(
 				...openClawConfigChecks,
 				...openClawDeploymentChecks,
 			] as const satisfies readonly DoctorCheck[];
+			const checks = [...doctorResult.checks, ...dynamicChecks];
+			const failed = checks.filter((check) => !check.ok).length;
+			const passed = checks.length - failed;
+			const ok = doctorResult.ok && failed === 0;
 			writeJson(options.io, {
-				ok: doctorResult.ok && dynamicChecks.every((check) => check.ok),
-				checks: [...doctorResult.checks, ...dynamicChecks],
+				ok,
+				summary: ok
+					? 'all checks passed'
+					: failed > 0
+						? `${failed} check(s) failed`
+						: 'doctor reported failure',
+				passed,
+				failed,
+				checks,
 			});
 			return;
 		}
