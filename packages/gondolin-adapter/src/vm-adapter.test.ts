@@ -62,6 +62,40 @@ function createPinnedRoot(fd: number): PinnedRealFsRoot {
 }
 
 describe('createManagedVm', () => {
+	it('uses OpenClaw-compatible synthetic DNS ranges when TCP host mapping is enabled', async () => {
+		let capturedVmOptions: VMOptions | undefined;
+		const dependencies = createBaseDependencies({
+			createVm: vi.fn(async (vmOptions: VMOptions): Promise<ManagedVmInstance> => {
+				capturedVmOptions = vmOptions;
+				return createFakeVmInstance();
+			}),
+		});
+
+		await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				env: {},
+				imagePath: '',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				tcpHosts: {
+					'controller.vm.host:18800': '127.0.0.1:18800',
+				},
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		expect(capturedVmOptions?.dns).toEqual({
+			mode: 'synthetic',
+			syntheticIPv4: '198.18.0.1',
+			syntheticIPv6: 'fc00::1',
+			syntheticHostMapping: 'per-host',
+		});
+	});
+
 	it('translates controller options into gondolin vm options and delegates runtime methods', async () => {
 		let capturedVmOptions: VMOptions | undefined;
 		const execMock = vi.fn(async () => ({ exitCode: 0, stdout: 'ok', stderr: '' }));
@@ -121,6 +155,8 @@ describe('createManagedVm', () => {
 			cpus: 2,
 			dns: {
 				mode: 'synthetic',
+				syntheticIPv4: '198.18.0.1',
+				syntheticIPv6: 'fc00::1',
 				syntheticHostMapping: 'per-host',
 			},
 			env: {
