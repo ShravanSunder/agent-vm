@@ -1,6 +1,6 @@
 # Gondolin VFS And Rootfs Performance
 
-[Docs](../README.md) > Reference > Gondolin VFS And Rootfs Performance
+[Docs](../../README.md) > Reference > Gondolin VFS And Rootfs Performance
 
 This page is the working reference for deciding where agent-vm should put hot
 runtime dependencies, repo files, caches, state, and temporary files when running

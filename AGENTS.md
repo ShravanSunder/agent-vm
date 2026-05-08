@@ -41,6 +41,28 @@ README/source. Keep boundaries explicit: gateway packages produce VM/process
 specs; `agent-vm` owns controller/CLI orchestration; `agent-vm-worker` owns the
 in-VM task loop.
 
+## Docs And Manuals
+
+Repo docs under `docs/**` are the maintainer source of truth. Generated
+deployment manuals are not rendered from `docs/**`; they come from
+`packages/agent-vm/src/cli/manual-templates.ts` and are written into user repos
+as `docs/manual/**` by `agent-vm manual update`.
+
+Treat generated manuals as agent operating contracts for helping end users set
+up and operate agent-vm deployments. Humans direct the agents; agents read the
+manuals before touching deployment config or runtime systems.
+When changing behavior that deployment agents need to know, update both layers
+with progressive disclosure:
+
+1. Update the canonical repo doc that explains the system or subsystem.
+2. Update the generated manual template with the short operational guidance.
+3. Update `manual-templates.test.ts` and run a built-CLI `agent-vm manual update`
+   smoke check when the generated output matters.
+
+Keep manuals concise, procedural, and safe-by-default. Do not teach forbidden
+command shapes as examples. Point agents toward deeper repo docs conceptually;
+do not copy full architecture docs into deployment manuals.
+
 ## Repo Tooling
 
 This is a pnpm TypeScript monorepo targeting Node 24. It uses the OXC stack for

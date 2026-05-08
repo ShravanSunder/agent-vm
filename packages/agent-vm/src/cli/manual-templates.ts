@@ -51,7 +51,7 @@ export function buildManualTemplateFiles(
 			content: generatedPage(
 				'agent-vm Deployment Manual',
 				`
-This manual is generated from the installed agent-vm package. It is the deployment-local guide for humans and coding agents.
+This manual is generated from the installed agent-vm package. It is the deployment-local guide for coding agents helping end users set up and operate agent-vm deployments.
 
 Read in this order:
 1. layout.md explains generated folders and ownership.
@@ -176,6 +176,8 @@ Do not bake secrets into Dockerfiles or images.
 Each zone can protect controller-mediated SSH with adminAccess. For 1Password-backed configs, create op://agent-vm/<zoneId>-ssh-access/token.
 Use agent-vm controller ssh --zone <zoneId> for a clean admin shell.
 Use agent-vm controller ssh --zone <zoneId> --with-secrets only for gateway admin workflows such as OpenClaw onboarding.
+Controller SSH opens an interactive shell only. Do not use it as a one-shot command runner, and do not try to print raw SSH commands from the CLI.
+For auth flows, prefer agent-vm auth-interactive <provider> --zone <zoneId>.
 Tool VMs and agent sandboxes do not receive gateway SSH secrets.
 `,
 			),

@@ -21,7 +21,7 @@ describe('manual templates', () => {
 		expect(content).not.toContain('Discord is enabled by default');
 	});
 
-	it('builds progressive manual files for humans and agents', () => {
+	it('builds progressive manual files for agents helping end users', () => {
 		const files = buildManualTemplateFiles({
 			defaultZoneId: 'shravan',
 			systemConfigPath: 'config/system.jsonc',
@@ -46,11 +46,29 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
 			'DISCORD_BOT_TOKEN',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
+			'coding agents helping end users set up and operate agent-vm deployments',
+		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'op://agent-vm/<zoneId>-ssh-access/token',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'agent-vm controller ssh --zone <zoneId> --with-secrets',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'Controller SSH opens an interactive shell only',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'Do not use it as a one-shot command runner',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'agent-vm auth-interactive <provider> --zone <zoneId>',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).not.toContain(
+			'controller ssh -- <remote command>',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).not.toContain(
+			'/execute-command',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'Tool VMs and agent sandboxes do not receive gateway SSH secrets',
