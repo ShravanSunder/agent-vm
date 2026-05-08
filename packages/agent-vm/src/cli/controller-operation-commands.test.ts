@@ -399,6 +399,69 @@ describe('runControllerOperationCommand', () => {
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
+	it('summarizes failed doctor checks', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
+		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
+		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
+		await fs.writeFile(
+			workerConfigPath,
+			JSON.stringify({
+				phases: {
+					plan: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					work: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					wrapup: { instructions: null },
+				},
+			}),
+			'utf8',
+		);
+		const outputs: string[] = [];
+		const systemConfig = createWorkerSystemConfig(workerConfigPath, systemConfigPath);
+		await writeImageBuildConfigsForDoctor(systemConfig);
+
+		await runControllerOperationCommand({
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: createControllerClientStub,
+				runControllerDoctor: () => ({
+					ok: false,
+					checks: [{ name: 'controller-required-binary', ok: false, hint: 'missing binary' }],
+				}),
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			restArguments: [],
+			subcommand: 'doctor',
+			systemConfig,
+		});
+
+		const result = JSON.parse(outputs.join('')) as {
+			readonly failed: number;
+			readonly ok: boolean;
+			readonly summary: string;
+		};
+
+		expect(result.ok).toBe(false);
+		expect(result.failed).toBe(1);
+		expect(result.summary).toBe('1 check(s) failed');
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
 	it('validates OpenClaw gateway configs with the catalog OpenClaw CLI in doctor output', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
 		const binDirectoryPath = path.join(temporaryDirectoryPath, 'node_modules', '.bin');

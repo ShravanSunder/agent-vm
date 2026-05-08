@@ -16,6 +16,7 @@ import {
 	ReportedCliError,
 	runAgentVmCli,
 } from './agent-vm-entrypoint.js';
+import { parseAgentIds } from './commands/init-definition.js';
 
 function createCliBuildSystemConfig(): LoadedSystemConfig {
 	return {
@@ -113,6 +114,16 @@ function createControllerClientStub(
 }
 
 describe('runAgentVmCli', () => {
+	it('parses OpenClaw init agent ids with validation and dedupe', () => {
+		expect(parseAgentIds(' sun,shravan, sun ,alevtina ')).toEqual(['sun', 'shravan', 'alevtina']);
+		expect(() => parseAgentIds(' , , ')).toThrow(
+			'--openclaw-agents must include at least one non-empty agent id.',
+		);
+		expect(() => parseAgentIds('sun,Hello World')).toThrow(
+			"Invalid --openclaw-agents value 'Hello World'",
+		);
+	});
+
 	it('ignores a missing .env.local file', () => {
 		const loadEnvFileSpy = vi.spyOn(process, 'loadEnvFile').mockImplementation(() => {
 			const missingFileError = new Error('missing');

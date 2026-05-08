@@ -8,7 +8,7 @@ import { resolveConfigPath } from './path-resolver.js';
 import { zoneResourcesPolicySchema } from './resource-contracts/index.js';
 
 const gatewayTypeValues = ['openclaw', 'worker'] as const;
-const agentIdSchema = z
+export const agentIdSchema = z
 	.string()
 	.min(1)
 	.regex(

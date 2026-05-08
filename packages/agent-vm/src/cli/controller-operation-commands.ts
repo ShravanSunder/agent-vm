@@ -332,14 +332,9 @@ export async function runControllerOperationCommand(
 			const checks = [...doctorResult.checks, ...dynamicChecks];
 			const failed = checks.filter((check) => !check.ok).length;
 			const passed = checks.length - failed;
-			const ok = doctorResult.ok && failed === 0;
 			writeJson(options.io, {
-				ok,
-				summary: ok
-					? 'all checks passed'
-					: failed > 0
-						? `${failed} check(s) failed`
-						: 'doctor reported failure',
+				ok: doctorResult.ok && failed === 0,
+				summary: failed === 0 ? 'all checks passed' : `${failed} check(s) failed`,
 				passed,
 				failed,
 				checks,

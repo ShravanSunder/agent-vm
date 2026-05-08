@@ -862,6 +862,9 @@ describe('scaffoldAgentVmProject', () => {
 			),
 		) as {
 			readonly agents: {
+				readonly defaults: {
+					readonly workspace: string;
+				};
 				readonly list?: readonly {
 					readonly id: string;
 					readonly identity?: { readonly name?: string };
@@ -870,6 +873,7 @@ describe('scaffoldAgentVmProject', () => {
 			};
 		};
 
+		expect(openClawConfig.agents.defaults.workspace).toBe('/zone/agents/default');
 		expect(openClawConfig.agents.list).toEqual([
 			{ id: 'sun', workspace: '/zone/agents/sun', identity: { name: 'Sun' } },
 			{ id: 'shravan', workspace: '/zone/agents/shravan', identity: { name: 'Shravan' } },
