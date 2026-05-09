@@ -47,7 +47,7 @@
 		"@hono/node-server": "^1.19.14",
 		"cmd-ts": "^0.14.0",
 		"execa": "^9.5.2",
-		"hono": "^4.12.16",
+		"hono": "^4.12.18",
 		"jsonc-parser": "^3.3.1",
 		"tasuku": "^2.3.0",
 		"zod": "^4"
