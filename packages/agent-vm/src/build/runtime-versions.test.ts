@@ -17,10 +17,10 @@ describe('runtime build versions', () => {
 			formatRuntimeBuildVersionTag({
 				agentVm: '0.0.19',
 				gondolinAdapter: '0.0.19',
-				gondolinPackage: '@earendil-works/gondolin@0.8.0',
+				gondolinPackage: '@earendil-works/gondolin@0.9.1',
 			}),
 		).toBe(
-			'agent-vm@0.0.19+gondolin-adapter@0.0.19+gondolin@@earendil-works/gondolin@0.8.0',
+			'agent-vm@0.0.19+gondolin-adapter@0.0.19+gondolin@@earendil-works/gondolin@0.9.1',
 		);
 	});
 
@@ -76,7 +76,7 @@ describe('runtime build versions', () => {
 				name: '@agent-vm/gondolin-adapter',
 				version: '0.0.19',
 				dependencies: {
-					'@earendil-works/gondolin': 'npm:@example/gondolin@0.8.0',
+					'@earendil-works/gondolin': 'npm:@example/gondolin@0.9.1',
 				},
 			}),
 			'utf8',
@@ -90,7 +90,7 @@ describe('runtime build versions', () => {
 		).resolves.toEqual({
 			agentVm: '0.0.19',
 			gondolinAdapter: '0.0.19',
-			gondolinPackage: '@earendil-works/gondolin@0.8.0',
+			gondolinPackage: '@earendil-works/gondolin@0.9.1',
 		});
 
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });

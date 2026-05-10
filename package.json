@@ -26,15 +26,15 @@
 		"perf:worker-git": "node scripts/perf/gondolin-worker-git-benchmark.ts"
 	},
 	"devDependencies": {
-		"@types/node": "^25.6.0",
-		"oxfmt": "^0.44.0",
-		"oxlint": "^1.59.0",
-		"oxlint-tsgolint": "^0.20.0",
+		"@types/node": "^25.6.2",
+		"oxfmt": "^0.48.0",
+		"oxlint": "^1.63.0",
+		"oxlint-tsgolint": "^0.22.1",
 		"tasuku": "^2.3.0",
-		"tsdown": "^0.15.4",
-		"typescript": "^6.0.2",
-		"vite": "^8.0.8",
-		"vitest": "^4.1.4"
+		"tsdown": "^0.22.0",
+		"typescript": "^6.0.3",
+		"vite": "^8.0.11",
+		"vitest": "^4.1.5"
 	},
 	"engines": {
 		"node": ">=24"

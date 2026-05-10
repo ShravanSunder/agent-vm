@@ -126,7 +126,7 @@ export async function runAgentVmWorkerCli(
 	io: CliIo = { stdout: process.stdout, stderr: process.stderr },
 ): Promise<void> {
 	const result = await runSafely(app, [...argv]);
-	if (result._tag === 'ok') {
+	if (!('error' in result)) {
 		return;
 	}
 

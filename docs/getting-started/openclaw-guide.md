@@ -81,7 +81,7 @@ gateway Dockerfile.
 For host-side validation, install the same OpenClaw version in the catalog:
 
 ```bash
-pnpm add -D openclaw@2026.5.2
+pnpm add -D openclaw@2026.5.7
 ```
 
 `agent-vm doctor` and `agent-vm validate` use the catalog's `openclaw`

@@ -103,9 +103,14 @@ function createHttpHealthGatewayLifecycle(): {
 }
 
 function createSystemConfig(): LoadedSystemConfig {
+	const workingDirectoryPath = fs.mkdtempSync(
+		path.join(os.tmpdir(), 'agent-vm-gateway-zone-state-'),
+	);
+	createdDirectories.push(workingDirectoryPath);
 	return createLoadedSystemConfig(
 		{
-			cacheDir: '../cache',
+			cacheDir: path.join(workingDirectoryPath, 'cache'),
+			runtimeDir: path.join(workingDirectoryPath, 'runtime'),
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -142,8 +147,8 @@ function createSystemConfig(): LoadedSystemConfig {
 						cpus: 2,
 						port: 18791,
 						config: createGatewayConfigPath(),
-						stateDir: '../state/shravan',
-						zoneFilesDir: '../zone-files/shravan',
+						stateDir: path.join(workingDirectoryPath, 'state', 'shravan'),
+						zoneFilesDir: path.join(workingDirectoryPath, 'zone-files', 'shravan'),
 					},
 					secrets: {
 						PERPLEXITY_API_KEY: {

@@ -146,7 +146,7 @@ function buildOpenClawCliCheck(
 			...(openClawCliReady
 				? { hint: 'openclaw' }
 				: {
-						hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.5.2.',
+						hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.5.7.',
 					}),
 		},
 	];
