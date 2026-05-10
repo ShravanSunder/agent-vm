@@ -215,9 +215,9 @@ export async function startGatewayZone(
 	const gatewayCacheDir = path.join(options.systemConfig.cacheDir, 'gateways', zone.id);
 	await fs.mkdir(gatewayCacheDir, { recursive: true });
 	if (zone.gateway.type === 'openclaw') {
-		await fs.mkdir(path.join(options.systemConfig.runtimeDir, 'zones', zone.id, 'logs'), {
-			recursive: true,
-		});
+		const logDir = path.join(options.systemConfig.runtimeDir, 'zones', zone.id, 'logs');
+		await fs.mkdir(logDir, { recursive: true, mode: 0o700 });
+		await fs.chmod(logDir, 0o700);
 	}
 	await runTaskStep('Preparing host state', async () => {
 		await lifecycle.prepareHostState?.(lifecycleZone, options.secretResolver);

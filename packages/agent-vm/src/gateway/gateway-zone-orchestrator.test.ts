@@ -302,9 +302,9 @@ describe('startGatewayZone', () => {
 		);
 
 		expect(loadBuildConfig).toHaveBeenCalledWith('./vm-images/gateways/openclaw/build-config.json');
-		expect(fs.existsSync(path.join(systemConfig.runtimeDir, 'zones', 'shravan', 'logs'))).toBe(
-			true,
-		);
+		const logDirectoryPath = path.join(systemConfig.runtimeDir, 'zones', 'shravan', 'logs');
+		expect(fs.existsSync(logDirectoryPath)).toBe(true);
+		expect(fs.statSync(logDirectoryPath).mode & 0o777).toBe(0o700);
 		expect(buildImage).toHaveBeenCalled();
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
