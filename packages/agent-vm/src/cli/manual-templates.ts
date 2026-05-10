@@ -142,7 +142,7 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	agents.defaults.workspace points at /zone/agents/default so /zone remains shared zone storage.
 	agents.defaults.model.primary is openai-codex/gpt-5.5 with thinkingDefault low.
 	session.dmScope is per-channel-peer so Discord DMs from different people do not share one agent session.
-	tools.web.fetch.ssrfPolicy trusts Gondolin's OpenClaw-compatible fake IP ranges for web_fetch.
+	tools.web.fetch.ssrfPolicy trusts fake-IP ranges for web_fetch. For gateway/tool TCP mappings, agent-vm's Gondolin adapter uses RFC2544 synthetic IPv4 plus ::ffff:198.18.0.1 as the synthetic AAAA answer so OpenClaw SSRF checks can validate all DNS answers without a broad hostname bypass.
 	tools.sandbox.tools.alsoAllow includes web_search and web_fetch so sandboxed sessions can see web tools once a provider is configured.
 	plugins.load.paths includes /home/openclaw/.openclaw/extensions for vendored extensions and /pnpm/global/5/node_modules/@openclaw for managed OpenClaw packages.
 	plugins.slots.memory selects memory-core when memory-core is enabled.
@@ -226,7 +226,8 @@ To add a channel:
 
 Discord recipe:
 - Add DISCORD_BOT_TOKEN as a zone secret.
-- Add discord.com and cdn.discordapp.com to allowedHosts.
+- Add discord.com, discordapp.com, *.discordapp.com, and *.discordapp.net to allowedHosts.
+- Discord media downloads use OpenClaw's Discord media SSRF policy, not tools.web.fetch.ssrfPolicy. If media logs show blocked URL fetch for cdn.discordapp.com or media.discordapp.net, verify the installed agent-vm version emits ::ffff:198.18.0.1 synthetic AAAA for Gondolin TCP-host VMs before adding broader OpenClaw hostname bypasses.
 - Add gateway.discord.gg:443 to websocketBypass.
 - Enable channels.discord in deployment-owned openclaw.json.
 - Do not add Discord under plugins.allow or plugins.entries.
@@ -279,7 +280,7 @@ Agent-vm defaults are channel-neutral. Existing Discord deployments keep Discord
 1. Run agent-vm migrate images if the deployment still references Dockerfiles.
 2. Keep Discord enabled under channels.discord in config/gateways/<zone>/openclaw.json.
 3. Keep DISCORD_BOT_TOKEN in ${options.systemConfigPath} zone secrets.
-4. Keep discord.com and cdn.discordapp.com in allowedHosts.
+4. Keep discord.com, discordapp.com, *.discordapp.com, and *.discordapp.net in allowedHosts.
 5. Keep gateway.discord.gg:443 in websocketBypass.
 
 Do not reintroduce Discord into agent-vm init defaults. Use this page as the deployment recipe.
@@ -294,6 +295,13 @@ Do not reintroduce Discord into agent-vm init defaults. Use this page as the dep
 Run agent-vm validate after config edits.
 Run agent-vm doctor before starting or after changing images, secrets, or channel plugins.
 Run agent-vm manual update after upgrading agent-vm to refresh this manual.
+
+Discord media symptom:
+- Log text: blocked URL fetch, resolves to private/internal/special-use IP address, cdn.discordapp.com, or media.discordapp.net.
+- First check: the gateway is running an agent-vm version whose Gondolin adapter emits ::ffff:198.18.0.1 for synthetic AAAA when tcpHosts are enabled.
+- Expected behavior: normal fetches use the IPv4/per-host synthetic path. curl -6 inside the guest may fail because this is not general guest IPv6 egress.
+- Safer fix order: adapter synthetic DNS fix first, Discord allowedHosts second, exact browser.ssrfPolicy.allowedHostnames bypass only after naming the broader private-IP-check tradeoff.
+- Non-fix: Gondolin allowedInternalHosts only affects Gondolin HTTP hooks. It does not change OpenClaw Discord media SSRF and does not apply to raw tcpHosts.
 `,
 			),
 		},

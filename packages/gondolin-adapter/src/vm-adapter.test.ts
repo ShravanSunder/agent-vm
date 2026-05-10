@@ -1,5 +1,8 @@
+import net from 'node:net';
+
 import {
 	MemoryProvider,
+	createHttpHooks,
 	type HttpHooks,
 	type VMOptions,
 	type VirtualProvider,
@@ -9,7 +12,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PinnedRealFsRoot } from './pinned-realfs.js';
 import {
 	SYNTHETIC_DNS_IPV4_BENCHMARK,
-	SYNTHETIC_DNS_IPV6_UNIQUE_LOCAL,
+	SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK,
 	createManagedVm,
 	type ManagedVmDependencies,
 	type ManagedVmInstance,
@@ -64,6 +67,33 @@ function createPinnedRoot(fd: number): PinnedRealFsRoot {
 }
 
 describe('createManagedVm', () => {
+	it('uses an IPv4-mapped RFC2544 synthetic AAAA address for OpenClaw SSRF compatibility', () => {
+		expect(SYNTHETIC_DNS_IPV4_BENCHMARK).toBe('198.18.0.1');
+		expect(SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK).toBe('::ffff:198.18.0.1');
+		expect(net.isIP(SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK)).toBe(6);
+		expect(SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK).toContain(SYNTHETIC_DNS_IPV4_BENCHMARK);
+	});
+
+	it('keeps the synthetic AAAA value outside Gondolin default internal-range blocking', async () => {
+		const { httpHooks } = createHttpHooks({
+			allowedHosts: ['cdn.discordapp.com'],
+		});
+		const isIpAllowed = httpHooks.isIpAllowed;
+		if (!isIpAllowed) {
+			throw new Error('expected Gondolin createHttpHooks to provide isIpAllowed');
+		}
+
+		await expect(
+			isIpAllowed({
+				family: 6,
+				hostname: 'cdn.discordapp.com',
+				ip: SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK,
+				port: 443,
+				protocol: 'https',
+			}),
+		).resolves.toBe(true);
+	});
+
 	it('uses OpenClaw-compatible synthetic DNS ranges when TCP host mapping is enabled', async () => {
 		let capturedVmOptions: VMOptions | undefined;
 		const dependencies = createBaseDependencies({
@@ -93,7 +123,7 @@ describe('createManagedVm', () => {
 		expect(capturedVmOptions?.dns).toEqual({
 			mode: 'synthetic',
 			syntheticIPv4: SYNTHETIC_DNS_IPV4_BENCHMARK,
-			syntheticIPv6: SYNTHETIC_DNS_IPV6_UNIQUE_LOCAL,
+			syntheticIPv6: SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK,
 			syntheticHostMapping: 'per-host',
 		});
 	});
@@ -158,7 +188,7 @@ describe('createManagedVm', () => {
 			dns: {
 				mode: 'synthetic',
 				syntheticIPv4: SYNTHETIC_DNS_IPV4_BENCHMARK,
-				syntheticIPv6: SYNTHETIC_DNS_IPV6_UNIQUE_LOCAL,
+				syntheticIPv6: SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK,
 				syntheticHostMapping: 'per-host',
 			},
 			env: {

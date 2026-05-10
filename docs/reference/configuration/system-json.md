@@ -155,8 +155,8 @@ as `@openclaw/discord`, from the OpenClaw channel config.
 not scaffold channel bindings or Discord guild allowlists because those are
 deployment-owned IDs.
 
-OpenClaw `web_fetch` in Gondolin deployments needs the fake-IP SSRF policy that
-matches Gondolin's mediated DNS ranges:
+OpenClaw `web_fetch` in Gondolin deployments needs fake-IP SSRF policy for
+mediated DNS and proxy-style environments:
 
 ```json
 {
@@ -176,6 +176,18 @@ matches Gondolin's mediated DNS ranges:
 This is separate from `zones[].allowedHosts`. The SSRF policy lets OpenClaw
 connect to Gondolin's synthetic addresses; `allowedHosts` still decides which
 real destinations Gondolin may fetch.
+
+Agent-vm's Gondolin adapter uses RFC2544 synthetic IPv4 answers and
+`::ffff:198.18.0.1` for synthetic AAAA when `tcpHosts` are enabled. That value
+is accepted by OpenClaw when `allowRfc2544BenchmarkRange` is true. Do not use
+`browser.ssrfPolicy.allowedHostnames` as the first fix for Discord media; that
+exact-host bypass skips private-IP checks for the named host and is broader
+than the adapter-level synthetic DNS fix.
+
+Gondolin `allowedInternalHosts` is also not the first fix for this symptom. It
+relaxes Gondolin HTTP hook internal-IP blocking for matching hostnames, while
+the observed Discord media failure happens earlier in OpenClaw's own SSRF guard
+as it validates synthetic DNS answers.
 
 The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search` and
 `web_fetch`. That does not configure a search provider by itself; it prevents

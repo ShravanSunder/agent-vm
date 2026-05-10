@@ -154,8 +154,21 @@ TCP host mapping lets processes inside the VM reach host-side TCP services via s
 ```
 
 When `tcpHosts` is provided in `CreateVmOptions`, the adapter configures:
-- `dns.mode: 'synthetic'` with `syntheticHostMapping: 'per-host'` -- Gondolin resolves virtual hostnames to loopback addresses inside the VM
+- `dns.mode: 'synthetic'` with `syntheticHostMapping: 'per-host'` -- Gondolin resolves virtual hostnames to per-host RFC2544 IPv4 answers such as `198.19.x.y`
+- `dns.syntheticIPv4: '198.18.0.1'` -- fallback synthetic A answer when no per-host mapping applies
+- `dns.syntheticIPv6: '::ffff:198.18.0.1'` -- shared IPv4-mapped RFC2544 AAAA answer so OpenClaw SSRF checks that validate all A/AAAA answers can accept the fake address under `allowRfc2544BenchmarkRange`
 - `tcp.hosts` -- maps each virtual hostname to a real host-side TCP endpoint
+
+The IPv4-mapped AAAA answer is an SSRF-validation compatibility value, not a
+promise of general guest IPv6 egress. Raw TCP mappings such as
+`controller.vm.host`, `tool-0.vm.host`, and WebSocket bypass hosts still depend
+on the per-host IPv4 answer because Gondolin derives mapped-TCP identity from
+the synthetic IPv4 host map.
+
+`allowedInternalHosts` is a Gondolin HTTP-hook escape hatch, not the fix for
+Discord media SSRF failures. It can relax Gondolin's host-side HTTP internal-IP
+block for matching request hostnames, but it does not change OpenClaw's own
+Discord media SSRF resolver and does not apply to raw mapped TCP.
 
 Worker VMs only map the controller endpoint. OpenClaw Gateway VMs map the controller plus all tool VM slots from the TCP pool.
 
