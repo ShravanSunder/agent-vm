@@ -8,6 +8,8 @@ import { execa } from 'execa';
 import type { ManagedImageSource } from '../build/managed-image-dockerfile.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import { resolveControllerGithubToken } from '../controller/controller-runtime-support.js';
+import { isOpenClawZoneGitConfigured } from '../controller/zone-git/zone-git-paths.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import {
 	collectOpenClawConfigChecks,
@@ -16,6 +18,7 @@ import {
 } from '../operations/config-validation.js';
 import { collectVmHostSystemDoctorCheck, type DoctorCheck } from '../operations/doctor.js';
 import { collectOpenClawDeploymentDoctorChecks } from '../operations/openclaw-deployment-doctor.js';
+import { collectZoneGitDoctorChecks } from '../operations/zone-git-doctor.js';
 import {
 	createResolverFromSystemConfig,
 	type CliDependencies,
@@ -317,6 +320,17 @@ export async function runControllerOperationCommand(
 			const openClawDeploymentChecks = await collectOpenClawDeploymentDoctorChecks(
 				options.systemConfig,
 			);
+			const hasZoneGitConfig = options.systemConfig.zones.some(isOpenClawZoneGitConfigured);
+			const controllerGithubToken = hasZoneGitConfig
+				? await resolveControllerGithubToken(
+						options.systemConfig,
+						await createResolverFromSystemConfig(options.systemConfig, options.dependencies),
+					)
+				: null;
+			const zoneGitChecks = await collectZoneGitDoctorChecks({
+				githubToken: controllerGithubToken,
+				systemConfig: options.systemConfig,
+			});
 			const imageProfileDockerfileChecks = await collectImageProfileDockerfileChecks(
 				options.systemConfig,
 				availableBinaries.has('docker') && dockerDaemonReady,
@@ -328,6 +342,7 @@ export async function runControllerOperationCommand(
 				...workerGatewayConfigChecks,
 				...openClawConfigChecks,
 				...openClawDeploymentChecks,
+				...zoneGitChecks,
 			] as const satisfies readonly DoctorCheck[];
 			const checks = [...doctorResult.checks, ...dynamicChecks];
 			const failed = checks.filter((check) => !check.ok).length;

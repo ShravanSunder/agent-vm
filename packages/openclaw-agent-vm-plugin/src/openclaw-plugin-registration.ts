@@ -2,6 +2,7 @@ import { resolveGondolinPluginConfig } from './gondolin-plugin-config.js';
 import { createBackendDeps } from './openclaw-backend-dependencies.js';
 import {
 	assertSdkShape,
+	type OpenClawToolRegistrationApi,
 	type SshHelpers,
 	type SshSandboxSession,
 } from './openclaw-sandbox-sdk-contract.js';
@@ -9,6 +10,7 @@ import {
 	createGondolinSandboxBackendFactory,
 	createGondolinSandboxBackendManager,
 } from './sandbox-backend-factory.js';
+import { registerZoneGitTool } from './zone-git-tool.js';
 
 const plugin = {
 	id: 'gondolin',
@@ -17,13 +19,28 @@ const plugin = {
 
 	register(api: {
 		readonly pluginConfig: Record<string, unknown>;
+		readonly registerTool?: OpenClawToolRegistrationApi['registerTool'];
 		readonly registrationMode: string;
 	}): void {
+		if (api.registrationMode !== 'full' && typeof api.registerTool !== 'function') {
+			return;
+		}
+		const pluginConfig = resolveGondolinPluginConfig(api.pluginConfig);
+		const toolRegistrationApi: OpenClawToolRegistrationApi =
+			typeof api.registerTool === 'function' ? { registerTool: api.registerTool } : {};
+		const zoneGitToken =
+			pluginConfig.zoneGitToken ??
+			(pluginConfig.zoneGitTokenEnv ? process.env[pluginConfig.zoneGitTokenEnv] : undefined);
+		registerZoneGitTool({
+			api: toolRegistrationApi,
+			controllerUrl: pluginConfig.controllerUrl,
+			...(zoneGitToken ? { zoneGitToken } : {}),
+			zoneId: pluginConfig.zoneId,
+		});
 		if (api.registrationMode !== 'full') {
 			return;
 		}
 
-		const pluginConfig = resolveGondolinPluginConfig(api.pluginConfig);
 		const sdkPath = '/opt/openclaw-sdk/sandbox.js';
 		const sdkPromise = import(sdkPath).then((sdkRaw: Record<string, unknown>) => {
 			assertSdkShape(sdkRaw);

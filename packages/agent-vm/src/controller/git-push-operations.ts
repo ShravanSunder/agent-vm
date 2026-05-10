@@ -2,7 +2,11 @@ import type { ControllerGitPushPhase, TaskEvent } from '@agent-vm/agent-vm-worke
 import { execa } from 'execa';
 
 import type { ActiveWorkerTask, HostGitDir } from './active-task-registry.js';
-import { scrubGithubTokenFromOutput } from './git-auth-support.js';
+import {
+	buildGithubTokenUrl,
+	GitHubRepositoryValidationError,
+	scrubGithubTokenFromOutput,
+} from './git-auth-support.js';
 import { runGitCommandWithTransientRetries, type GitCommandResult } from './git-retry-support.js';
 import { buildHostGitArgs } from './host-git-command.js';
 
@@ -62,23 +66,15 @@ function writePushFlowLog(message: string): void {
 	process.stderr.write(`[git-push-operations] ${message}\n`);
 }
 
-function parseRepoFromUrl(repoUrl: string): string {
-	const cleaned = repoUrl.replace(/\.git$/, '');
-	const urlPattern = /(?:https?:\/\/)?github\.com\/([^/]+\/[^/]+)$/u;
-	const match = urlPattern.exec(cleaned);
-
-	if (match?.[1]) {
-		return match[1];
-	}
-	if (/^[^\s/]+\/[^\s/]+$/u.test(cleaned)) {
-		return cleaned;
-	}
-
-	throw new PushBranchesValidationError(`Invalid GitHub repository: ${repoUrl}`);
-}
-
 function buildPushUrl(repoUrl: string, githubToken: string): string {
-	return `https://x-access-token:${githubToken}@github.com/${parseRepoFromUrl(repoUrl)}.git`;
+	try {
+		return buildGithubTokenUrl(repoUrl, githubToken);
+	} catch (error) {
+		if (error instanceof GitHubRepositoryValidationError) {
+			throw new PushBranchesValidationError(error.message);
+		}
+		throw error;
+	}
 }
 
 function sanitizeBranchName(name: string): string {

@@ -26,11 +26,9 @@ RUN apt-get update && \
       '{' \
       '  "gateway": { "mode": "local", "auth": { "mode": "token" } },' \
       '  "plugins": {' \
-      '    "load": { "paths": ["/home/openclaw/.openclaw/extensions", "/pnpm/global/5/node_modules/@openclaw"] },' \
-      '    "allow": ["gondolin", "memory-core"],' \
+      '    "allow": ["memory-core"],' \
       '    "slots": { "memory": "memory-core" },' \
       '    "entries": {' \
-      '      "gondolin": { "enabled": true, "config": { "controllerUrl": "http://controller.vm.host:18800", "zoneId": "build" } },' \
       '      "memory-core": { "enabled": true }' \
       '    }' \
       '  }' \
@@ -43,7 +41,7 @@ RUN apt-get update && \
     printf '#!/bin/sh\nexec /pnpm/openclaw "$@"\n' > /usr/local/bin/openclaw && \
     chmod 755 /usr/local/bin/openclaw && \
     useradd -m -s /bin/bash openclaw && \
-    mkdir -p /home/openclaw/.openclaw/extensions /zone /run/sshd /root /work/tmp /work/cache /var/log && \
+    mkdir -p /home/openclaw/.openclaw/extensions /pnpm/global/5/node_modules/@openclaw /zone /run/sshd /root /work/tmp /work/cache /var/log && \
     touch /var/log/lastlog /var/log/faillog && \
     chown -R openclaw:openclaw /home/openclaw /work && \
     chown -R root:root /home/openclaw/.openclaw/extensions && \

@@ -15,12 +15,14 @@ type ZoneConfig = SystemConfig['zones'][number];
 
 describe('resolveLeaseWorkMountDir', () => {
 	let tempDir: string;
+	let runtimeDir: string;
 	let zoneFilesDir: string;
 	let stateDir: string;
 	let zone: ZoneConfig;
 
 	beforeEach(async () => {
 		tempDir = await mkdtemp(path.join(tmpdir(), 'agent-vm-lease-work-mount-'));
+		runtimeDir = path.join(tempDir, 'runtime');
 		zoneFilesDir = path.join(tempDir, 'zone-files', 'shravan');
 		stateDir = path.join(tempDir, 'state', 'shravan');
 		await mkdir(path.join(zoneFilesDir, 'project'), { recursive: true });
@@ -52,33 +54,41 @@ describe('resolveLeaseWorkMountDir', () => {
 	it('maps OpenClaw gateway sandbox paths to host stateDir sandboxes', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({
+				runtimeDir,
 				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
 				zone,
 			}),
-		).resolves.toBe(await realpath(path.join(stateDir, 'sandboxes', 'agent', 'work')));
+		).resolves.toEqual({
+			guestWorkdir: '/work',
+			hostWorkMountDir: await realpath(path.join(stateDir, 'sandboxes', 'agent', 'work')),
+		});
 	});
 
 	it('rejects exact OpenClaw gateway work mount roots', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({
+				runtimeDir,
 				workMountDir: '/home/openclaw/.openclaw/state/sandboxes',
 				zone,
 			}),
 		).rejects.toThrow(/must name a child path under/u);
 		await expect(
 			resolveLeaseWorkMountDir({
+				runtimeDir,
 				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/',
 				zone,
 			}),
 		).rejects.toThrow(/must name a child path under/u);
 		await expect(
 			resolveLeaseWorkMountDir({
+				runtimeDir,
 				workMountDir: '/zone',
 				zone,
 			}),
 		).rejects.toThrow(/must name a child path under/u);
 		await expect(
 			resolveLeaseWorkMountDir({
+				runtimeDir,
 				workMountDir: '/zone/',
 				zone,
 			}),
@@ -88,21 +98,60 @@ describe('resolveLeaseWorkMountDir', () => {
 	it('maps OpenClaw gateway /zone paths to host zoneFilesDir', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({
+				runtimeDir,
 				workMountDir: '/zone/project',
 				zone,
 			}),
-		).resolves.toBe(await realpath(path.join(zoneFilesDir, 'project')));
+		).resolves.toEqual({
+			guestWorkdir: '/work',
+			hostWorkMountDir: await realpath(path.join(zoneFilesDir, 'project')),
+		});
+	});
+
+	it('returns zone Git mount metadata for configured OpenClaw /zone leases', async () => {
+		if (zone.gateway.type !== 'openclaw') {
+			throw new Error('test fixture must use an OpenClaw gateway');
+		}
+		const zoneWithZoneGit = {
+			...zone,
+			gateway: {
+				...zone.gateway,
+				zoneGit: {
+					remote: {
+						repoUrl: 'https://github.com/shravansunder/sunfam-zone-files.git',
+						branch: 'main',
+					},
+				},
+			},
+		} satisfies ZoneConfig;
+
+		await expect(
+			resolveLeaseWorkMountDir({
+				runtimeDir,
+				workMountDir: '/zone/project',
+				zone: zoneWithZoneGit,
+			}),
+		).resolves.toEqual({
+			guestWorkdir: '/zone/project',
+			hostWorkMountDir: await realpath(path.join(zoneFilesDir, 'project')),
+			zoneGitMount: {
+				hostZoneFilesDir: zoneFilesDir,
+				hostZoneGitRoot: path.join(runtimeDir, 'zones', 'shravan', 'zone-git'),
+			},
+		});
 	});
 
 	it('rejects traversal before path translation', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({
+				runtimeDir,
 				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/../../../etc',
 				zone,
 			}),
 		).rejects.toThrow(/must not contain '\.\.' path segments/u);
 		await expect(
 			resolveLeaseWorkMountDir({
+				runtimeDir,
 				workMountDir: '/zone/../../../etc',
 				zone,
 			}),
@@ -117,6 +166,7 @@ describe('resolveLeaseWorkMountDir', () => {
 
 		await expect(
 			resolveLeaseWorkMountDir({
+				runtimeDir,
 				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/ssh-link',
 				zone,
 			}),
@@ -128,6 +178,7 @@ describe('resolveLeaseWorkMountDir', () => {
 
 		await expect(
 			resolveLeaseWorkMountDir({
+				runtimeDir,
 				workMountDir: hostWorkMountDir,
 				zone,
 			}),
@@ -160,12 +211,14 @@ describe('resolveLeaseWorkMountDir', () => {
 	it('rejects non-absolute work mount paths', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({
+				runtimeDir,
 				workMountDir: 'relative/work',
 				zone,
 			}),
 		).rejects.toThrow(/Lease workMountDir 'relative\/work' must be absolute/u);
 		await expect(
 			resolveLeaseWorkMountDir({
+				runtimeDir,
 				workMountDir: 'relative/work',
 				zone,
 			}),
@@ -177,6 +230,7 @@ describe('resolveLeaseWorkMountDir', () => {
 	it('rejects non-OpenClaw zones', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({
+				runtimeDir,
 				workMountDir: '/zone/project',
 				zone: {
 					...zone,
@@ -206,6 +260,7 @@ describe('resolveLeaseWorkMountDir', () => {
 
 		await expect(
 			resolveLeaseWorkMountDir({
+				runtimeDir,
 				workMountDir: '/zone/project',
 				zone: missingRootZone,
 			}),

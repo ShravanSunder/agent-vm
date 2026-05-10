@@ -2,12 +2,18 @@ import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { SystemConfig } from '../../config/system-config.js';
+import {
+	OPENCLAW_ZONE_FILES_GUEST_ROOT,
+	isOpenClawZoneGitConfigured,
+	resolveZoneGitPaths,
+	type ZoneGitToolVmMount,
+} from '../zone-git/zone-git-paths.js';
 
 // These guest roots are mounted by the OpenClaw gateway image. Lease callers
 // must speak in gateway paths; the controller owns translation to host paths.
 const OPENCLAW_STATE_VM_ROOT = '/home/openclaw/.openclaw/state';
 const OPENCLAW_STATE_SANDBOXES_VM_ROOT = `${OPENCLAW_STATE_VM_ROOT}/sandboxes`;
-const OPENCLAW_ZONE_FILES_VM_ROOT = '/zone';
+const OPENCLAW_ZONE_FILES_VM_ROOT = OPENCLAW_ZONE_FILES_GUEST_ROOT;
 
 type ZoneConfig = SystemConfig['zones'][number];
 
@@ -30,6 +36,12 @@ export class LeaseWorkMountValidationError extends Error {
 		super(message, options);
 		this.kind = kind;
 	}
+}
+
+export interface ResolvedLeaseWorkMount {
+	readonly guestWorkdir: string;
+	readonly hostWorkMountDir: string;
+	readonly zoneGitMount?: ZoneGitToolVmMount;
 }
 
 function pathContainsParentTraversal(inputPath: string): boolean {
@@ -147,9 +159,10 @@ export async function validateResolvedToolWorkMountDir(options: {
 }
 
 export async function resolveLeaseWorkMountDir(options: {
+	readonly runtimeDir: string;
 	readonly workMountDir: string;
 	readonly zone: ZoneConfig;
-}): Promise<string> {
+}): Promise<ResolvedLeaseWorkMount> {
 	if (options.zone.gateway.type !== 'openclaw') {
 		throw new LeaseWorkMountValidationError(
 			'unsupported-gateway',
@@ -197,8 +210,29 @@ export async function resolveLeaseWorkMountDir(options: {
 			`Lease workMountDir '${options.workMountDir}' must be under ${OPENCLAW_STATE_SANDBOXES_VM_ROOT} or ${OPENCLAW_ZONE_FILES_VM_ROOT}.`,
 		);
 	}
-	return await validateResolvedLeaseWorkMountDir({
+	const realHostWorkMountDir = await validateResolvedLeaseWorkMountDir({
 		hostWorkMountDir,
 		zone: options.zone,
 	});
+	if (
+		isOpenClawZoneGitConfigured(options.zone) &&
+		normalizedWorkMountDir.startsWith(`${OPENCLAW_ZONE_FILES_VM_ROOT}/`)
+	) {
+		const zoneGitPaths = resolveZoneGitPaths({
+			runtimeDir: options.runtimeDir,
+			zoneId: options.zone.id,
+		});
+		return {
+			guestWorkdir: normalizedWorkMountDir,
+			hostWorkMountDir: realHostWorkMountDir,
+			zoneGitMount: {
+				hostZoneFilesDir: options.zone.gateway.zoneFilesDir,
+				hostZoneGitRoot: zoneGitPaths.hostZoneGitRoot,
+			},
+		};
+	}
+	return {
+		guestWorkdir: '/work',
+		hostWorkMountDir: realHostWorkMountDir,
+	};
 }

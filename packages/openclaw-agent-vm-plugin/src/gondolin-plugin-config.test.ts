@@ -8,11 +8,15 @@ describe('resolveGondolinPluginConfig', () => {
 			resolveGondolinPluginConfig({
 				controllerUrl: 'http://controller.vm.host:18800',
 				profileId: 'gpu',
+				zoneGitToken: 'push-token',
+				zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
 				zoneId: 'shravan',
 			}),
 		).toEqual({
 			controllerUrl: 'http://controller.vm.host:18800',
 			profileId: 'gpu',
+			zoneGitToken: 'push-token',
+			zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
 			zoneId: 'shravan',
 		});
 	});

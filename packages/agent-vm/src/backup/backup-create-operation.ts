@@ -4,6 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import {
+	getZoneGitStatus,
+	type ZoneGitOperationConfig,
+} from '../controller/zone-git/zone-git-operations.js';
 import { buildBackupPaths } from './backup-archive-layout.js';
 import type { BackupEncryption, BackupResult } from './backup-manager.js';
 
@@ -16,6 +20,7 @@ export async function createEncryptedBackup(options: {
 	readonly runtimeDir: string;
 	readonly stateDir: string;
 	readonly zoneFilesDir?: string;
+	readonly zoneGit?: ZoneGitOperationConfig;
 	readonly zoneId: string;
 }): Promise<BackupResult> {
 	assertRuntimeDirOutsideBackupInputs({
@@ -24,6 +29,9 @@ export async function createEncryptedBackup(options: {
 		stateDir: options.stateDir,
 		...(options.zoneFilesDir !== undefined ? { zoneFilesDir: options.zoneFilesDir } : {}),
 	});
+	if (options.zoneGit) {
+		await assertZoneGitReadyForBackup(options.zoneGit);
+	}
 	const timestamp = new Date().toISOString().replace(/[:.]/gu, '-');
 	const backupPaths = buildBackupPaths({
 		backupDir: options.backupDir,
@@ -70,6 +78,25 @@ export async function createEncryptedBackup(options: {
 		timestamp,
 		zoneId: options.zoneId,
 	};
+}
+
+async function assertZoneGitReadyForBackup(zoneGit: ZoneGitOperationConfig): Promise<void> {
+	const status = await getZoneGitStatus(zoneGit);
+	if (!status.initialized) {
+		throw new Error(
+			`Zone '${zoneGit.zoneId}' has zone Git configured but is not initialized. Run agent-vm zone-git init --zone ${zoneGit.zoneId} before backup.`,
+		);
+	}
+	if (status.dirty) {
+		throw new Error(
+			`Zone '${zoneGit.zoneId}' has uncommitted zone Git changes. Run git status, git add, and git commit before backup.`,
+		);
+	}
+	if (status.aheadOfRemote > 0) {
+		throw new Error(
+			`Zone '${zoneGit.zoneId}' has ${String(status.aheadOfRemote)} unpushed zone Git commit(s). Run agent-vm zone-git push --zone ${zoneGit.zoneId} before backup.`,
+		);
+	}
 }
 
 function isSameOrDescendantPath(childPath: string, parentPath: string): boolean {

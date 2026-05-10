@@ -68,7 +68,7 @@ describe('createGatewayApiClient', () => {
 		});
 
 		await expect(client.invokeTool({ tool: 'shell', args: { command: 'ls' } })).rejects.toThrow(
-			'Gateway API returned status 401',
+			'Gateway API returned status 401: {"error":"unauthorized"}',
 		);
 	});
 

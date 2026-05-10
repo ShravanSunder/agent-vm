@@ -147,7 +147,7 @@ interface RuntimeAuthHint {
 }
 
 const defaultGatewayIngressPort = 18791;
-const defaultOpenClawExtensionsPath = '/home/openclaw/.openclaw/extensions';
+const defaultOpenClawExtensionsPath = '/home/openclaw/.openclaw/extensions/gondolin';
 const scaffoldedGatewayPortSystemConfigSchema = z
 	.object({
 		zones: z.array(
@@ -731,6 +731,7 @@ const defaultOpenClawConfig = (
 	},
 	agents: defaultOpenClawAgentsConfig(agentIds),
 	tools: {
+		allow: ['zone_git_push'],
 		elevated: { enabled: false },
 		sandbox: {
 			tools: {
@@ -750,7 +751,7 @@ const defaultOpenClawConfig = (
 	session: { dmScope: 'per-channel-peer' },
 	plugins: {
 		load: {
-			paths: [defaultOpenClawExtensionsPath, '/pnpm/global/5/node_modules/@openclaw'],
+			paths: [defaultOpenClawExtensionsPath],
 		},
 		allow: ['gondolin', 'memory-core'],
 		slots: { memory: 'memory-core' },

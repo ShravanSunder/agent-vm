@@ -61,6 +61,8 @@ const resolvedSecrets: Record<string, string> = {
 function createZone(overrides?: {
 	readonly authProfilesRef?: GatewayZoneConfig['gateway']['authProfilesRef'];
 	readonly gateway?: Partial<OpenClawGatewayConfig>;
+	readonly runtimeEnvironment?: GatewayZoneConfig['runtimeEnvironment'];
+	readonly runtimePluginConfigs?: GatewayZoneConfig['runtimePluginConfigs'];
 	readonly withoutAuthProfilesRef?: boolean;
 }): GatewayZoneConfig {
 	const baseGateway: OpenClawGatewayConfig = {
@@ -108,6 +110,10 @@ function createZone(overrides?: {
 			},
 		},
 		defaultToolVmProfile: 'standard',
+		...(overrides?.runtimeEnvironment ? { runtimeEnvironment: overrides.runtimeEnvironment } : {}),
+		...(overrides?.runtimePluginConfigs
+			? { runtimePluginConfigs: overrides.runtimePluginConfigs }
+			: {}),
 		websocketBypass: ['gateway.discord.gg:443'],
 	};
 }
@@ -166,6 +172,27 @@ describe('openclawLifecycle', () => {
 			});
 		});
 
+		it('injects runtime environment without mediating or persisting it', () => {
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				tcpPool: {
+					basePort: 19000,
+					size: 3,
+				},
+				zone: createZone({
+					runtimeEnvironment: {
+						AGENT_VM_ZONE_GIT_TOKEN: 'runtime-zone-git-token',
+					},
+				}),
+			});
+
+			expect(vmSpec.environment.AGENT_VM_ZONE_GIT_TOKEN).toBe('runtime-zone-git-token');
+			expect(vmSpec.mediatedSecrets.AGENT_VM_ZONE_GIT_TOKEN).toBeUndefined();
+		});
+
 		it('builds the expected OpenClaw environment, mounts, and tcp hosts', () => {
 			const vmSpec = openclawLifecycle.buildVmSpec({
 				controllerPort: 18800,
@@ -216,7 +243,14 @@ describe('openclawLifecycle', () => {
 
 	describe('buildProcessSpec', () => {
 		it('builds bootstrap and start commands with runtime-injected gateway token', () => {
-			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
+			const processSpec = openclawLifecycle.buildProcessSpec(
+				createZone({
+					runtimeEnvironment: {
+						AGENT_VM_ZONE_GIT_TOKEN: 'runtime-zone-git-token',
+					},
+				}),
+				resolvedSecrets,
+			);
 
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('/run/openclaw/secrets.env');
@@ -225,6 +259,9 @@ describe('openclawLifecycle', () => {
 			expect(
 				extractHeredocBody(processSpec.bootstrapCommand, '/run/openclaw/secrets.env'),
 			).toContain("export OPENCLAW_GATEWAY_TOKEN='gateway'\\''token'");
+			expect(
+				extractHeredocBody(processSpec.bootstrapCommand, '/run/openclaw/secrets.env'),
+			).toContain("export AGENT_VM_ZONE_GIT_TOKEN='runtime-zone-git-token'");
 			expect(processSpec.bootstrapCommand).not.toContain('/etc/profile.d/openclaw-admin.sh');
 			expect(processSpec.bootstrapCommand).not.toContain('/run/openclaw/gateway-auth.env');
 			expect(processSpec.bootstrapCommand).not.toContain('openclaw()');
@@ -289,6 +326,18 @@ describe('openclawLifecycle', () => {
 								allowedOrigins: ['http://127.0.0.1:18791', 'http://localhost:18791'],
 							},
 						},
+						plugins: {
+							allow: ['gondolin'],
+							entries: {
+								gondolin: {
+									enabled: true,
+									config: {
+										controllerUrl: 'http://controller.vm.host:18800',
+										zoneId: 'shravan',
+									},
+								},
+							},
+						},
 					},
 					null,
 					2,
@@ -305,6 +354,11 @@ describe('openclawLifecycle', () => {
 							source: '1password',
 							ref: 'op://vault/item/shravan-auth-profiles',
 						},
+					},
+				},
+				runtimePluginConfigs: {
+					gondolin: {
+						zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
 					},
 				},
 			});
@@ -348,6 +402,19 @@ describe('openclawLifecycle', () => {
 					bind: 'loopback',
 					controlUi: {
 						allowedOrigins: ['http://127.0.0.1:18791', 'http://localhost:18791'],
+					},
+				},
+				plugins: {
+					allow: ['gondolin'],
+					entries: {
+						gondolin: {
+							enabled: true,
+							config: {
+								controllerUrl: 'http://controller.vm.host:18800',
+								zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
+								zoneId: 'shravan',
+							},
+						},
 					},
 				},
 				secrets: {

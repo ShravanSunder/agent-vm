@@ -83,10 +83,12 @@ stateDir stores durable gateway state.
 zoneFilesDir stores durable user/household files for OpenClaw zones.
 cacheDir stores rebuildable artifacts.
 runtimeDir stores controller runtime artifacts that are not backup state.
+When OpenClaw zoneGit is enabled, runtimeDir stores Git metadata at runtimeDir/zones/<zoneId>/zone-git/zone-files.git while zoneFilesDir remains the worktree.
 
 Author JSONC for human-owned agent-vm config. Runtime files such as /state/effective-worker.json, task event JSONL, runtime records, and API bodies stay strict JSON.
 OpenClaw gateway VMs mount zoneFilesDir at /zone.
 OpenClaw Tool VMs mount the validated lease work mount at /work.
+OpenClaw Tool VMs with zoneGit mount zoneFilesDir at /zone and runtimeDir/zones/<zoneId>/zone-git at /agent-vm/zone-git.
 Worker task VMs keep repo files on rootfs/COW at /work/repos.
 OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work.
 `,
@@ -144,7 +146,7 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	session.dmScope is per-channel-peer so Discord DMs from different people do not share one agent session.
 	tools.web.fetch.ssrfPolicy trusts Gondolin's OpenClaw-compatible fake IP ranges for web_fetch.
 	tools.sandbox.tools.alsoAllow includes web_search and web_fetch so sandboxed sessions can see web tools once a provider is configured.
-	plugins.load.paths includes /home/openclaw/.openclaw/extensions for vendored extensions and /pnpm/global/5/node_modules/@openclaw for managed OpenClaw packages.
+	plugins.load.paths includes /home/openclaw/.openclaw/extensions/gondolin for the vendored Gondolin extension. Add exact package directories for extra OpenClaw packages when enabling them.
 	plugins.slots.memory selects memory-core when memory-core is enabled.
 	gateway.auth.mode is token for agent-vm-managed gateways.
 
@@ -251,6 +253,15 @@ OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work; 
 workMountDir is a gateway VM path under /zone or /home/openclaw/.openclaw/state/sandboxes. The roots themselves are validation boundaries; leases must choose concrete child paths.
 hostWorkMountDir is the host realpath after controller validation.
 OpenClaw SDK compatibility note: OpenClaw may call the selected sandbox path workspaceDir. The agent-vm plugin translates that external SDK name to controller workMountDir.
+
+When gateway.zoneGit is configured:
+- Host zone files stay in gateway.zoneFilesDir.
+- Host Git metadata lives in runtimeDir/zones/<zoneId>/zone-git/zone-files.git.
+- Gateway VM zone files stay mounted at /zone.
+- Tool VMs mount /zone and /agent-vm/zone-git instead of /work.
+- Tool VM workdir is the requested /zone child path, such as /zone/agents/shravan.
+- Backups include current zone files and exclude runtimeDir Git metadata.
+- Backups require a clean and pushed zone Git repo.
 `,
 			),
 		},
@@ -266,6 +277,12 @@ Per-agent auth isolation works by writing auth profiles through gateway.authProf
 OpenClaw tool allowlists are a policy layer. They do not remove binaries from the Tool VM image if a broad shell tool can still run them.
 
 Binary-level isolation requires different Tool VM images. Use agentToolVmProfiles for per-agent image differences inside one zone, or separate zones when gateway lifecycle and zone-files isolation should also differ.
+
+Git workflow with gateway.zoneGit:
+- Agents may inspect, stage, and commit workspace changes with git status, git add, and git commit.
+- Do not run raw git push. Tool VMs do not have GitHub credentials.
+- After committing, use the zone_git_push tool to ask the agent-vm controller to push the zone branch.
+- If zone_git_push reports divergence or rejection, stop and report the exact message.
 `,
 			),
 		},

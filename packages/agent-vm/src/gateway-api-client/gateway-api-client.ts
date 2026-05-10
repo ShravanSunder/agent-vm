@@ -1,6 +1,7 @@
 export interface GatewayToolInvocation {
 	readonly tool: string;
 	readonly args: Record<string, unknown>;
+	readonly agentId?: string;
 	readonly sessionKey?: string;
 	readonly dryRun?: boolean;
 }
@@ -57,7 +58,8 @@ export function createGatewayApiClient(options: {
 				method: 'POST',
 			});
 			if (!response.ok) {
-				throw new Error(`Gateway API returned status ${response.status}`);
+				const responseBody = await response.text().catch(() => '(unreadable response body)');
+				throw new Error(`Gateway API returned status ${response.status}: ${responseBody}`);
 			}
 			return await response.json();
 		},

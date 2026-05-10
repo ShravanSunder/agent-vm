@@ -16,6 +16,7 @@ import type {
 	WorkerTaskInput,
 	WorkerTaskResult,
 } from '../worker-task-runner.js';
+import type { ZoneGitToolVmMount } from '../zone-git/zone-git-paths.js';
 
 export type ControllerZoneConfig = SystemConfig['zones'][number];
 
@@ -82,6 +83,7 @@ export interface SharedZoneRuntimeDependencies {
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;
 		readonly hostWorkMountDir: string;
+		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
 	}) => Promise<ManagedVm>;
 	readonly deleteGatewayRuntimeRecord: (stateDirectory: string) => Promise<void>;
