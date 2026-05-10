@@ -150,6 +150,37 @@ Channel config is deployment-owned. Enable channels in
 Managed OpenClaw image profiles install known extracted channel packages, such
 as `@openclaw/discord`, from the OpenClaw channel config.
 
+`agent-vm init --type openclaw --openclaw-agents sun,shravan,alevtina` scaffolds
+`agents.list` entries with `/zone/agents/<id>` workspaces. It deliberately does
+not scaffold channel bindings or Discord guild allowlists because those are
+deployment-owned IDs.
+
+OpenClaw `web_fetch` in Gondolin deployments needs the fake-IP SSRF policy that
+matches Gondolin's mediated DNS ranges:
+
+```json
+{
+  "tools": {
+    "web": {
+      "fetch": {
+        "ssrfPolicy": {
+          "allowRfc2544BenchmarkRange": true,
+          "allowIpv6UniqueLocalRange": true
+        }
+      }
+    }
+  }
+}
+```
+
+This is separate from `zones[].allowedHosts`. The SSRF policy lets OpenClaw
+connect to Gondolin's synthetic addresses; `allowedHosts` still decides which
+real destinations Gondolin may fetch.
+
+The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search` and
+`web_fetch`. That does not configure a search provider by itself; it prevents
+sandbox tool policy from hiding those tools after the deployment adds a provider.
+
 OpenClaw Tool VMs mount their validated lease work mount at `/work`. Worker task VMs keep
 repo edits under `/work/repos/<repoId>`.
 

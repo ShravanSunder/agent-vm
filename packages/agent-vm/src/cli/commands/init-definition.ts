@@ -1,6 +1,7 @@
 // oxlint-disable typescript-eslint/explicit-function-return-type
 import { command, flag, oneOf, option, optional, positional, string, type Type } from 'cmd-ts';
 
+import { agentIdSchema } from '../../config/system-config.js';
 import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
 import {
 	imageArchitectureSchema,
@@ -121,6 +122,25 @@ function resolveHostSystemType(
 	return preset?.hostSystemType ?? (paths === 'pod' ? 'container' : 'bare-metal');
 }
 
+export function parseAgentIds(agentIds: string): readonly string[] {
+	const parsedAgentIds = agentIds
+		.split(',')
+		.map((agentId) => agentId.trim())
+		.filter((agentId) => agentId.length > 0);
+	if (parsedAgentIds.length === 0) {
+		throw new Error('--openclaw-agents must include at least one non-empty agent id.');
+	}
+	for (const agentId of parsedAgentIds) {
+		const parsedAgentId = agentIdSchema.safeParse(agentId);
+		if (!parsedAgentId.success) {
+			throw new Error(
+				`Invalid --openclaw-agents value '${agentId}': ${parsedAgentId.error.issues[0]?.message ?? 'invalid agent id'}`,
+			);
+		}
+	}
+	return Array.from(new Set(parsedAgentIds));
+}
+
 export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 	return command({
 		name: 'init',
@@ -169,8 +189,24 @@ export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 				long: 'overwrite',
 				description: 'Overwrite existing scaffolded files (default: skip existing files)',
 			}),
+			agents: option({
+				type: optional(string),
+				long: 'openclaw-agents',
+				description:
+					'Comma-separated OpenClaw agent ids to scaffold, for example: sun,shravan,alevtina.',
+			}),
 		},
-		handler: async ({ arch, namespace, overwrite, paths, preset, secrets, type, zoneId }) => {
+		handler: async ({
+			agents,
+			arch,
+			namespace,
+			overwrite,
+			paths,
+			preset,
+			secrets,
+			type,
+			zoneId,
+		}) => {
 			const gatewayType = parseGatewayType(type);
 			const presetDefaults = preset;
 			const secretsProvider = resolveSecretsProvider(secrets, presetDefaults);
@@ -178,6 +214,7 @@ export function createInitCommand(io: CliIo, dependencies: CliDependencies) {
 			const pathMode = resolvePathMode(paths, presetDefaults);
 			const hostSystemType = resolveHostSystemType(pathMode, presetDefaults);
 			const result = await (dependencies.scaffoldAgentVmProject ?? scaffoldAgentVmProject)({
+				...(agents === undefined ? {} : { agents: parseAgentIds(agents) }),
 				architecture,
 				gatewayType,
 				hostSystemType,

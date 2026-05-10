@@ -788,14 +788,8 @@ describe('scaffoldAgentVmProject', () => {
 		) as {
 			readonly agents: {
 				readonly defaults: {
-					readonly models: {
-						readonly 'openai-codex/gpt-5.4': {
-							readonly params: { readonly thinking: string };
-						};
-						readonly 'openai-codex/gpt-5.4-mini': {
-							readonly params: { readonly thinking: string };
-						};
-					};
+					readonly model: { readonly primary: string };
+					readonly models?: Record<string, unknown>;
 					readonly thinkingDefault?: string;
 					readonly workspace: string;
 				};
@@ -810,6 +804,21 @@ describe('scaffoldAgentVmProject', () => {
 					readonly paths: readonly string[];
 				};
 			};
+			readonly tools: {
+				readonly sandbox: {
+					readonly tools: {
+						readonly alsoAllow: readonly string[];
+					};
+				};
+				readonly web: {
+					readonly fetch: {
+						readonly ssrfPolicy: {
+							readonly allowIpv6UniqueLocalRange: boolean;
+							readonly allowRfc2544BenchmarkRange: boolean;
+						};
+					};
+				};
+			};
 		};
 
 		expect(openClawConfig.gateway.controlUi.allowedOrigins).toEqual([
@@ -820,14 +829,56 @@ describe('scaffoldAgentVmProject', () => {
 			'/home/openclaw/.openclaw/extensions',
 			'/pnpm/global/5/node_modules/@openclaw',
 		]);
-		expect(openClawConfig.agents.defaults.thinkingDefault).toBeUndefined();
+		expect(openClawConfig.agents.defaults.model.primary).toBe('openai-codex/gpt-5.5');
+		expect(openClawConfig.agents.defaults.thinkingDefault).toBe('low');
 		expect(openClawConfig.agents.defaults.workspace).toBe('/zone/agents/default');
-		expect(openClawConfig.agents.defaults.models['openai-codex/gpt-5.4'].params.thinking).toBe(
-			'low',
+		expect(openClawConfig.agents.defaults.models).toBeUndefined();
+		expect(openClawConfig.tools.web.fetch.ssrfPolicy).toEqual({
+			allowIpv6UniqueLocalRange: true,
+			allowRfc2544BenchmarkRange: true,
+		});
+		expect(openClawConfig.tools.sandbox.tools.alsoAllow).toEqual(['web_search', 'web_fetch']);
+	});
+
+	it('scaffolds OpenClaw agent list from requested multi-agent ids', async () => {
+		const targetDir = await createTestDirectory();
+
+		await scaffoldAgentVmProject(
+			{
+				targetDir,
+				zoneId: 'my-zone',
+				gatewayType: 'openclaw',
+				architecture: 'aarch64',
+				agents: ['sun', 'shravan', 'alevtina'],
+				secretsProvider: '1password',
+			},
+			noGeneratedAgeIdentityDependencies,
 		);
-		expect(openClawConfig.agents.defaults.models['openai-codex/gpt-5.4-mini'].params.thinking).toBe(
-			'high',
-		);
+
+		const openClawConfig = JSON.parse(
+			await fs.readFile(
+				path.join(targetDir, 'config', 'gateways', 'my-zone', 'openclaw.json'),
+				'utf8',
+			),
+		) as {
+			readonly agents: {
+				readonly defaults: {
+					readonly workspace: string;
+				};
+				readonly list?: readonly {
+					readonly id: string;
+					readonly identity?: { readonly name?: string };
+					readonly workspace?: string;
+				}[];
+			};
+		};
+
+		expect(openClawConfig.agents.defaults.workspace).toBe('/zone/agents/default');
+		expect(openClawConfig.agents.list).toEqual([
+			{ id: 'sun', workspace: '/zone/agents/sun', identity: { name: 'Sun' } },
+			{ id: 'shravan', workspace: '/zone/agents/shravan', identity: { name: 'Shravan' } },
+			{ id: 'alevtina', workspace: '/zone/agents/alevtina', identity: { name: 'Alevtina' } },
+		]);
 	});
 
 	it('scaffolds control-ui allowed origins from an existing zone ingress port', async () => {

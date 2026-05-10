@@ -296,8 +296,8 @@ describe('createOpenClawZoneRuntime', () => {
 		const exec = vi.fn(async (command: string) => ({
 			exitCode: 0,
 			stderr: '',
-			stdout: command.startsWith('cat ')
-				? 'gateway log output'
+			stdout: command.includes('/tmp/openclaw/openclaw-*.log')
+				? 'gateway and runtime log output'
 				: command.includes('/readyz')
 					? '200'
 					: 'command output',
@@ -369,9 +369,18 @@ describe('createOpenClawZoneRuntime', () => {
 			lifecycleState: 'running',
 		});
 		await expect(runtime.getLogs()).resolves.toEqual({
-			output: 'gateway log output',
+			output: 'gateway and runtime log output',
 			zoneId: 'shravan',
 		});
+		expect(exec).toHaveBeenCalledWith(
+			[
+				"echo '===== gateway boot log (/tmp/openclaw.log) ====='",
+				'cat /tmp/openclaw.log 2>/dev/null || true',
+				'echo',
+				"echo '===== latest openclaw runtime log (/tmp/openclaw/openclaw-*.log) ====='",
+				'latest_openclaw_log=$(ls -1t /tmp/openclaw/openclaw-*.log 2>/dev/null | head -n 1); if [ -n "$latest_openclaw_log" ]; then tail -n 400 "$latest_openclaw_log"; fi',
+			].join('; '),
+		);
 		await expect(runtime.getHealth()).resolves.toEqual({
 			ok: true,
 			observation: 'http 200',

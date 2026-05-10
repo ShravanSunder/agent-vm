@@ -150,6 +150,53 @@ For internals, see [architecture/openclaw-gateway.md](../architecture/openclaw-g
 
 ---
 
+## Multi-Agent Scaffold
+
+For a household or small team zone, scaffold named OpenClaw agents up front:
+
+```bash
+agent-vm init sunfam --type openclaw --openclaw-agents sun,shravan,alevtina
+```
+
+This writes `agents.list` entries with `/zone/agents/<id>` workspaces and
+identity-name stubs. Channel bindings, Discord allowlists, and per-agent auth
+profiles stay deployment-owned because those depend on real account and guild
+IDs.
+
+---
+
+## Web Fetch With Gondolin
+
+Gondolin uses synthetic DNS for mediated egress. Current agent-vm scaffolds
+OpenClaw `web_fetch` with the matching fake-IP SSRF policy so OpenClaw trusts
+the mediated boundary:
+
+```json
+{
+  "tools": {
+    "web": {
+      "fetch": {
+        "ssrfPolicy": {
+          "allowRfc2544BenchmarkRange": true,
+          "allowIpv6UniqueLocalRange": true
+        }
+      }
+    }
+  }
+}
+```
+
+This only passes OpenClaw's SSRF check. Gondolin still enforces
+`zones[].allowedHosts`, so arbitrary public websites are not reachable unless
+the deployment allows them or routes `web_fetch` through a provider such as
+Firecrawl/Jina.
+
+The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search` and
+`web_fetch` so sandboxed sessions can see those tools when the deployment later
+configures a search or fetch provider.
+
+---
+
 ## Channels
 
 Discord is a deployment recipe, not an agent-vm framework default. To enable
@@ -185,6 +232,13 @@ agent-vm controller ssh --zone my-openclaw
 ```
 
 Opens an SSH session into the gateway VM for debugging.
+
+Use controller logs for both the gateway boot log and the OpenClaw runtime log
+tail:
+
+```bash
+agent-vm controller logs --zone my-openclaw
+```
 
 ---
 

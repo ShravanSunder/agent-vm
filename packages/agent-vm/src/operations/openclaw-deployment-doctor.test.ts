@@ -10,7 +10,10 @@ import {
 	collectOpenClawDeploymentDoctorChecks,
 } from './openclaw-deployment-doctor.js';
 
-function createSystemConfig(openClawConfigPath: string): LoadedSystemConfig {
+function createSystemConfig(
+	openClawConfigPath: string,
+	authProfilesByAgent: Record<string, { readonly ref: string; readonly source: '1password' }> = {},
+): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
 			cacheDir: './cache',
@@ -55,6 +58,7 @@ function createSystemConfig(openClawConfigPath: string): LoadedSystemConfig {
 						port: 18791,
 						stateDir: './state/shravan',
 						zoneFilesDir: './zone-files/shravan',
+						authProfilesByAgent,
 					},
 					id: 'shravan',
 					secrets: {},
@@ -74,6 +78,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 				config: {
 					agents: {
 						defaults: {
+							model: { primary: 'openai-codex/gpt-5.5' },
 							sandbox: {
 								workspaceAccess: 'rw',
 							},
@@ -128,6 +133,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 				config: {
 					agents: {
 						defaults: {
+							model: { primary: 'openai-codex/gpt-5.5' },
 							sandbox: {
 								workspaceAccess: 'rw',
 							},
@@ -252,6 +258,114 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			hint: 'Use /zone/agents/default or per-agent workspaces; keep /zone for shared zone files.',
 		});
 	});
+
+	it('flags configured OpenClaw agents without matching auth profile material', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				configuredAuthProfileAgentIds: ['sun'],
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'openai-codex/gpt-5.5' },
+							sandbox: {
+								workspaceAccess: 'rw',
+							},
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'sun' }, { id: 'shravan' }],
+					},
+					plugins: {
+						allow: ['memory-core'],
+						entries: { 'memory-core': { enabled: true } },
+						load: {
+							paths: [
+								'/home/openclaw/.openclaw/extensions',
+								'/pnpm/global/5/node_modules/@openclaw',
+							],
+						},
+						slots: { memory: 'memory-core' },
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-sun'),
+		).toMatchObject({
+			ok: true,
+			hint: 'auth profile configured for agent sun',
+		});
+		expect(
+			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Configure gateway.authProfilesByAgent.shravan or run OpenClaw auth onboarding for agent shravan.',
+		});
+	});
+
+	it('skips per-agent auth profile checks for non-Codex agents', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'anthropic/claude-opus-4-6' },
+							sandbox: { workspaceAccess: 'rw' },
+							workspace: '/zone/agents/default',
+						},
+						list: [
+							{ id: 'claude-agent' },
+							{ id: 'codex-agent', model: { primary: 'openai-codex/gpt-5.5' } },
+						],
+					},
+					plugins: {
+						load: {
+							paths: [
+								'/home/openclaw/.openclaw/extensions',
+								'/pnpm/global/5/node_modules/@openclaw',
+							],
+						},
+					},
+				},
+			},
+		]);
+
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-agent-auth-profile-shravan-claude-agent',
+		);
+		expect(checks.map((check) => check.name)).toContain(
+			'openclaw-agent-auth-profile-shravan-codex-agent',
+		);
+	});
+
+	it('does not emit auth profile checks when agents.list is missing or empty', () => {
+		for (const list of [undefined, []] as const) {
+			const checks = buildOpenClawDeploymentDoctorChecks([
+				{
+					zoneId: 'shravan',
+					config: {
+						agents: {
+							defaults: {
+								model: { primary: 'openai-codex/gpt-5.5' },
+								sandbox: { workspaceAccess: 'rw' },
+								workspace: '/zone/agents/default',
+							},
+							...(list === undefined ? {} : { list }),
+						},
+					},
+				},
+			]);
+
+			expect(checks.map((check) => check.name)).not.toContain(
+				'openclaw-agent-auth-profile-shravan',
+			);
+			expect(
+				checks.filter((check) => check.name.startsWith('openclaw-agent-auth-profile-')),
+			).toEqual([]);
+		}
+	});
 });
 
 describe('collectOpenClawDeploymentDoctorChecks', () => {
@@ -289,6 +403,32 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 			);
 
 			expect(checks.every((check) => check.ok)).toBe(true);
+			expect(
+				checks.find((check) => check.name === 'openclaw-deployment-config-readable-shravan'),
+			).toMatchObject({
+				ok: true,
+				hint: openClawConfigPath,
+			});
+		} finally {
+			await rm(temporaryDirectory, { force: true, recursive: true });
+		}
+	});
+
+	it('reports unreadable OpenClaw config paths directly', async () => {
+		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-doctor-'));
+		const openClawConfigPath = path.join(temporaryDirectory, 'config', 'missing-openclaw.json');
+
+		try {
+			const checks = await collectOpenClawDeploymentDoctorChecks(
+				createSystemConfig(openClawConfigPath),
+			);
+
+			expect(
+				checks.find((check) => check.name === 'openclaw-deployment-config-readable-shravan'),
+			).toMatchObject({
+				ok: false,
+				hint: expect.stringContaining(`Cannot read ${openClawConfigPath}:`),
+			});
 		} finally {
 			await rm(temporaryDirectory, { force: true, recursive: true });
 		}
