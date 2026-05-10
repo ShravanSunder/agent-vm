@@ -61,7 +61,7 @@ export NPM_CONFIG_USERCONFIG="$WORKDIR/.npmrc"
 echo "[publish] verifying npm auth"
 npm whoami
 
-echo "[publish] running pnpm -r publish $DRY_RUN_FLAG"
-pnpm -r publish --access=public $DRY_RUN_FLAG
+echo "[publish] running pnpm -r publish --no-git-checks $DRY_RUN_FLAG"
+pnpm -r publish --access=public --no-git-checks $DRY_RUN_FLAG
 
 echo "[publish] done"
