@@ -105,9 +105,7 @@ OpenClaw-side fallback explicitly and document the tradeoff:
     "ssrfPolicy": {
       "allowedHostnames": [
         "cdn.discordapp.com",
-        "media.discordapp.net",
-        "*.discordapp.com",
-        "*.discordapp.net"
+        "media.discordapp.net"
       ]
     }
   }
@@ -117,4 +115,6 @@ OpenClaw-side fallback explicitly and document the tradeoff:
 Tradeoff: `allowedHostnames` skips private-IP checks for matching hostnames. It
 is narrower than disabling SSRF globally, but broader than the adapter-level
 synthetic DNS fix because every resolved address for those exact hostnames is
-trusted.
+trusted. OpenClaw treats `allowedHostnames` as exact matches, not wildcard
+patterns; add any additional Discord media hostnames literally as they appear in
+logs.
