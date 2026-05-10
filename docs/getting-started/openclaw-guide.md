@@ -171,9 +171,9 @@ IDs.
 
 ## Web Fetch With Gondolin
 
-Gondolin uses synthetic DNS for mediated egress. Current agent-vm scaffolds
-OpenClaw `web_fetch` with the matching fake-IP SSRF policy so OpenClaw trusts
-the mediated boundary:
+Gondolin uses synthetic DNS for mediated egress and TCP host mapping. Current
+agent-vm scaffolds OpenClaw `web_fetch` with fake-IP SSRF policy so OpenClaw
+trusts the mediated boundary:
 
 ```json
 {
@@ -194,6 +194,11 @@ This only passes OpenClaw's SSRF check. Gondolin still enforces
 `zones[].allowedHosts`, so arbitrary public websites are not reachable unless
 the deployment allows them or routes `web_fetch` through a provider such as
 Firecrawl/Jina.
+
+For gateway/tool TCP mappings, agent-vm uses RFC2544 synthetic IPv4 addresses
+and an IPv4-mapped RFC2544 synthetic AAAA answer (`::ffff:198.18.0.1`). The
+AAAA answer prevents OpenClaw from rejecting a host only because DNS returned a
+fake IPv6 answer. It does not mean the guest has general IPv6 egress.
 
 The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search`,
 `web_fetch`, and `message` so sandboxed sessions can see web tools when the
@@ -219,7 +224,7 @@ automatically when `channels.discord.enabled` is true.
       "injection": "env"
     }
   },
-  "allowedHosts": ["discord.com", "cdn.discordapp.com"],
+  "allowedHosts": ["discord.com", "discordapp.com", "*.discordapp.com", "*.discordapp.net"],
   "websocketBypass": ["gateway.discord.gg:443"]
 }
 ```

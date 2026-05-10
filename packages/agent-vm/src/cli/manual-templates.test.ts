@@ -48,9 +48,24 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
 			'DISCORD_BOT_TOKEN',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'cdn.discordapp.com',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'media.discordapp.net',
+		);
 		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
 			'coding agents helping end users set up and operate agent-vm deployments',
 		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('troubleshooting.md'))?.content,
+		).toContain('blocked URL fetch');
+		expect(
+			files.find((file) => file.relativePath.endsWith('troubleshooting.md'))?.content,
+		).toContain('curl -6');
+		expect(
+			files.find((file) => file.relativePath.endsWith('troubleshooting.md'))?.content,
+		).toContain('allowedInternalHosts');
 		const imageVersioningManual = files.find((file) =>
 			file.relativePath.endsWith('image-versioning.md'),
 		)?.content;
@@ -99,6 +114,9 @@ describe('manual templates', () => {
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('session.dmScope');
+		expect(
+			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
+		).toContain('::ffff:198.18.0.1');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('@agent-vm/openclaw-agent-vm-plugin');

@@ -80,7 +80,7 @@ fast formatting and linting.
 - Typecheck: `pnpm typecheck`.
 - Local npm publish: `set -a; source .env.local; set +a; scripts/publish-local.sh`.
   This script reads the npm token from
-  `op://agent-vm/npm-token-agent-vm-publish/credential` through 1Password,
+  `op://agent-vm/npm-token/credential` through 1Password,
   writes it only to a temporary npm user config, and runs `pnpm -r publish`.
   Do this before trying browser `npm login` or assuming npm auth is blocked.
   Verify publication with `npm view <package> version` for every
