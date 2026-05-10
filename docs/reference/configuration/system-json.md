@@ -189,9 +189,11 @@ relaxes Gondolin HTTP hook internal-IP blocking for matching hostnames, while
 the observed Discord media failure happens earlier in OpenClaw's own SSRF guard
 as it validates synthetic DNS answers.
 
-The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search` and
-`web_fetch`. That does not configure a search provider by itself; it prevents
-sandbox tool policy from hiding those tools after the deployment adds a provider.
+The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search`,
+`web_fetch`, and `message`. That does not configure a search provider by
+itself; it prevents sandbox tool policy from hiding web tools after the
+deployment adds a provider, and keeps OpenClaw's `message_tool_only` group reply
+mode usable by exposing the explicit channel reply tool.
 
 OpenClaw Tool VMs mount their validated lease work mount at `/work`. Worker task VMs keep
 repo edits under `/work/repos/<repoId>`.
@@ -224,8 +226,17 @@ tag pinned by that package's `managed-images.json` manifest. Managed image tags
 use their own release line and are intentionally separate from npm package
 versions.
 The deployment overlay is intentionally small; use it for extra apt packages,
-copy steps, and post-base commands. Legacy `dockerfile` profiles are reported by
-`agent-vm doctor`; migrate them with `agent-vm migrate images`.
+copy steps, post-base commands, and runtime OpenClaw packages. `agent-vm build`
+regenerates Dockerfiles under `cacheDir/generated-dockerfiles/...`; do not edit
+generated Dockerfiles by hand. OpenClaw gateway deployments that need specific
+OpenClaw package versions should pin them in the overlay's
+`extraOpenClawPackages`. Overlay package pins override managed default companion
+packages during Dockerfile generation. If the overlay pins `openclaw@X` and an
+`@openclaw/*@Y` package with a different version, build output warns before
+Docker and Gondolin work begin.
+
+Legacy `dockerfile` profiles are reported by `agent-vm doctor`; migrate them
+with `agent-vm migrate images`.
 
 OpenClaw tool VMs use `imageProfiles.toolVms`. Worker-only configs normally
 omit tool VM image profiles.
