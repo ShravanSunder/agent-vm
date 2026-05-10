@@ -17,6 +17,7 @@ describe('manual templates', () => {
 		expect(content).toContain('docs/manual/README.md');
 		expect(content).toContain('config/system.jsonc');
 		expect(content).toContain('shravan');
+		expect(content).toContain('docs/manual/image-versioning.md');
 		expect(content).toContain('Do not silently edit privileged host/deployment config');
 		expect(content).not.toContain('Discord is enabled by default');
 	});
@@ -30,6 +31,7 @@ describe('manual templates', () => {
 		expect(files.map((file) => file.relativePath)).toEqual([
 			'docs/manual/README.md',
 			'docs/manual/layout.md',
+			'docs/manual/image-versioning.md',
 			'docs/manual/scope.md',
 			'docs/manual/openclaw.md',
 			'docs/manual/openclaw-defaults.md',
@@ -46,9 +48,33 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
 			'DISCORD_BOT_TOKEN',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'cdn.discordapp.com',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'media.discordapp.net',
+		);
 		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
 			'coding agents helping end users set up and operate agent-vm deployments',
 		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('troubleshooting.md'))?.content,
+		).toContain('blocked URL fetch');
+		expect(
+			files.find((file) => file.relativePath.endsWith('troubleshooting.md'))?.content,
+		).toContain('curl -6');
+		expect(
+			files.find((file) => file.relativePath.endsWith('troubleshooting.md'))?.content,
+		).toContain('allowedInternalHosts');
+		const imageVersioningManual = files.find((file) =>
+			file.relativePath.endsWith('image-versioning.md'),
+		)?.content;
+		expect(imageVersioningManual).toContain('There is one owner for each version decision');
+		expect(imageVersioningManual).toContain('package.json owns which installed @agent-vm/*');
+		expect(imageVersioningManual).toContain('managed-images.json');
+		expect(imageVersioningManual).toContain('extraOpenClawPackages');
+		expect(imageVersioningManual).toContain('cacheDir/generated-dockerfiles');
+		expect(imageVersioningManual).toContain('validation tool mirror');
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'op://agent-vm/<zoneId>-ssh-access/token',
 		);
@@ -90,7 +116,13 @@ describe('manual templates', () => {
 		).toContain('session.dmScope');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
+		).toContain('::ffff:198.18.0.1');
+		expect(
+			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('@agent-vm/openclaw-agent-vm-plugin');
+		expect(
+			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
+		).toContain('message_tool_only');
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'OpenClaw Tool VMs run commands in /work',
 		);

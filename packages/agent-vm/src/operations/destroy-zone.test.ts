@@ -21,14 +21,18 @@ describe('runControllerDestroy', () => {
 		const rmSyncSpy = vi.spyOn(fs, 'rmSync');
 		const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-destroy-'));
 		createdDirectories.push(tempDirectory);
+		const runtimeDir = path.join(tempDirectory, 'runtime');
+		const runtimeLogsDir = path.join(runtimeDir, 'zones', 'shravan', 'logs');
 		const stateDir = path.join(tempDirectory, 'state', 'shravan');
 		const zoneFilesDir = path.join(tempDirectory, 'zone-files', 'shravan');
+		fs.mkdirSync(runtimeLogsDir, { recursive: true });
+		fs.writeFileSync(path.join(runtimeLogsDir, 'openclaw-2026-05-10.log'), 'runtime log');
 		fs.mkdirSync(stateDir, { recursive: true });
 		fs.mkdirSync(zoneFilesDir, { recursive: true });
 
 		const systemConfig = {
 			cacheDir: './cache',
-			runtimeDir: './runtime',
+			runtimeDir,
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -110,6 +114,7 @@ describe('runControllerDestroy', () => {
 		expect(rmSyncSpy).not.toHaveBeenCalledWith(zoneFilesDir, expect.anything());
 		expect(fs.existsSync(stateDir)).toBe(false);
 		expect(fs.existsSync(zoneFilesDir)).toBe(false);
+		expect(fs.existsSync(runtimeLogsDir)).toBe(false);
 		expect(result).toEqual({
 			ok: true,
 			purged: true,

@@ -156,6 +156,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
+				runtimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 3,
@@ -178,6 +179,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
+				runtimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 3,
@@ -199,6 +201,7 @@ describe('openclawLifecycle', () => {
 				gatewayCacheDir: '/host/cache/gateways/shravan',
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				resolvedSecrets,
+				runtimeDir: '/host/runtime',
 				tcpPool: {
 					basePort: 19000,
 					size: 2,
@@ -221,6 +224,10 @@ describe('openclawLifecycle', () => {
 			});
 			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/cache']).toEqual({
 				hostPath: '/host/cache/gateways/shravan',
+				kind: 'realfs',
+			});
+			expect(vmSpec.vfsMounts['/agent-vm/logs']).toEqual({
+				hostPath: '/host/runtime/zones/shravan/logs',
 				kind: 'realfs',
 			});
 			expect(vmSpec.vfsMounts['/zone']).toEqual({
@@ -280,12 +287,13 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('source /root/.bashrc');
 			expect(processSpec.startCommand).toContain('nohup openclaw gateway --port 18789');
+			expect(processSpec.startCommand).toContain('> /agent-vm/logs/gateway-boot-latest.log 2>&1');
 			expect(processSpec.healthCheck).toEqual({
 				type: 'http',
 				port: 18789,
 				path: '/readyz',
 			});
-			expect(processSpec.logPath).toBe('/tmp/openclaw.log');
+			expect(processSpec.logPath).toBe('/agent-vm/logs/gateway-boot-latest.log');
 		});
 
 		it('writes profile scripts without expanding runtime shell expressions', async () => {
@@ -319,6 +327,7 @@ describe('openclawLifecycle', () => {
 				JSON.stringify(
 					{
 						agents: { defaults: { workspace: '/zone' } },
+						logging: { level: 'debug' },
 						gateway: {
 							auth: { mode: 'token' },
 							bind: 'loopback',
@@ -390,6 +399,10 @@ describe('openclawLifecycle', () => {
 			expect(effectiveOpenClawConfigContent).not.toContain('resolved-gateway-token');
 			expect(JSON.parse(effectiveOpenClawConfigContent)).toMatchObject({
 				agents: { defaults: { workspace: '/zone' } },
+				logging: {
+					level: 'debug',
+					file: '/agent-vm/logs/openclaw-YYYY-MM-DD.log',
+				},
 				gateway: {
 					auth: {
 						mode: 'token',
@@ -546,6 +559,67 @@ describe('openclawLifecycle', () => {
 			await expect(
 				pathExists(path.join(zone.gateway.stateDir, 'effective-openclaw.json')),
 			).resolves.toBe(true);
+			const effectiveOpenClawConfigContent = await readFile(
+				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
+				'utf8',
+			);
+			expect(JSON.parse(effectiveOpenClawConfigContent).logging).toEqual({
+				file: '/agent-vm/logs/openclaw-YYYY-MM-DD.log',
+			});
+		});
+
+		it('preserves an authored logging file path in effective-openclaw.json', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-logs-'));
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify(
+					{
+						logging: {
+							file: '/agent-vm/logs/custom-openclaw.log',
+							level: 'debug',
+						},
+						gateway: {
+							auth: { mode: 'token' },
+							bind: 'loopback',
+						},
+					},
+					null,
+					2,
+				),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				withoutAuthProfilesRef: true,
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
+
+			const effectiveOpenClawConfigContent = await readFile(
+				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
+				'utf8',
+			);
+			expect(JSON.parse(effectiveOpenClawConfigContent).logging).toEqual({
+				file: '/agent-vm/logs/custom-openclaw.log',
+				level: 'debug',
+			});
 		});
 
 		it('throws when OPENCLAW_GATEWAY_TOKEN ref is absent', async () => {

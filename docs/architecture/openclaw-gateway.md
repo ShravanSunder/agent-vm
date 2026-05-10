@@ -272,6 +272,13 @@ Discord and WhatsApp use WebSocket connections that can't go through HTTP mediat
 
 Bypass hosts get direct TCP forwarding via `tcpHosts` — no HTTP interception, no secret injection.
 
+Because bypass hosts use raw `tcpHosts`, they rely on Gondolin's per-host
+synthetic IPv4 mapping. The adapter also emits an IPv4-mapped RFC2544 synthetic
+AAAA answer for OpenClaw SSRF compatibility, but that AAAA answer is not the
+identity-bearing route for raw TCP. After changing synthetic DNS behavior,
+verify that Discord stays online through the normal WebSocket client path and
+that forced IPv6 attempts do not delay reconnects.
+
 ---
 
 ## Zone Operations
@@ -282,7 +289,7 @@ The controller exposes operations for managing the OpenClaw Gateway:
 |-----------|----------|-------------|
 | Status | `GET /controller-status` | System config and zone health |
 | Health | `GET /zones/:id/health` | Live gateway health probe from inside the VM |
-| Logs | `GET /zones/:id/logs` | Gateway boot log plus OpenClaw runtime log tail from inside the VM |
+| Logs | `GET /zones/:id/logs` | Gateway boot log plus OpenClaw runtime log tail from `/agent-vm/logs` in the VM |
 | Credentials | `POST /zones/:id/credentials/refresh` | Re-resolve secrets, restart gateway |
 | Destroy | `POST /zones/:id/destroy` | Stop gateway, release leases, purge state |
 | Upgrade | `POST /zones/:id/upgrade` | Rebuild image, restart gateway |

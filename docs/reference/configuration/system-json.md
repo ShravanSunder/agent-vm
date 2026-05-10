@@ -97,16 +97,20 @@ from those assets.
 zone state and not repairable cache. It should prefer local disk because these
 paths can be hot during task execution.
 
-The primary use is worker Git metadata:
+Current uses include OpenClaw gateway logs and worker Git metadata:
 
 ```text
+<runtimeDir>/zones/<zoneId>/logs/
 <runtimeDir>/worker-tasks/<zoneId>/<taskId>/gitdirs/<repoId>.git
 ```
 
 Normal `backup create` does not copy `runtimeDir`, and validation fails when
 `runtimeDir` overlaps `cacheDir`, any zone `stateDir`, or any OpenClaw
 `zoneFilesDir`. Worker runtime artifacts are task-lifetime data: the agent must
-commit and call `git-push` before task teardown if work must survive.
+commit and call `git-push` before task teardown if work must survive. OpenClaw
+gateway logs are runtime evidence for post-mortems and performance debugging;
+they persist across gateway VM restarts but are intentionally excluded from
+normal zone backups.
 
 ## zoneFilesDir
 
@@ -155,8 +159,8 @@ as `@openclaw/discord`, from the OpenClaw channel config.
 not scaffold channel bindings or Discord guild allowlists because those are
 deployment-owned IDs.
 
-OpenClaw `web_fetch` in Gondolin deployments needs the fake-IP SSRF policy that
-matches Gondolin's mediated DNS ranges:
+OpenClaw `web_fetch` in Gondolin deployments needs fake-IP SSRF policy for
+mediated DNS and proxy-style environments:
 
 ```json
 {
@@ -177,9 +181,23 @@ This is separate from `zones[].allowedHosts`. The SSRF policy lets OpenClaw
 connect to Gondolin's synthetic addresses; `allowedHosts` still decides which
 real destinations Gondolin may fetch.
 
-The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search` and
-`web_fetch`. That does not configure a search provider by itself; it prevents
-sandbox tool policy from hiding those tools after the deployment adds a provider.
+Agent-vm's Gondolin adapter uses RFC2544 synthetic IPv4 answers and
+`::ffff:198.18.0.1` for synthetic AAAA when `tcpHosts` are enabled. That value
+is accepted by OpenClaw when `allowRfc2544BenchmarkRange` is true. Do not use
+`browser.ssrfPolicy.allowedHostnames` as the first fix for Discord media; that
+exact-host bypass skips private-IP checks for the named host and is broader
+than the adapter-level synthetic DNS fix.
+
+Gondolin `allowedInternalHosts` is also not the first fix for this symptom. It
+relaxes Gondolin HTTP hook internal-IP blocking for matching hostnames, while
+the observed Discord media failure happens earlier in OpenClaw's own SSRF guard
+as it validates synthetic DNS answers.
+
+The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search`,
+`web_fetch`, and `message`. That does not configure a search provider by
+itself; it prevents sandbox tool policy from hiding web tools after the
+deployment adds a provider, and keeps OpenClaw's `message_tool_only` group reply
+mode usable by exposing the explicit channel reply tool.
 
 OpenClaw Tool VMs mount their validated lease work mount at `/work`. Worker task VMs keep
 repo edits under `/work/repos/<repoId>`.
@@ -212,8 +230,17 @@ tag pinned by that package's `managed-images.json` manifest. Managed image tags
 use their own release line and are intentionally separate from npm package
 versions.
 The deployment overlay is intentionally small; use it for extra apt packages,
-copy steps, and post-base commands. Legacy `dockerfile` profiles are reported by
-`agent-vm doctor`; migrate them with `agent-vm migrate images`.
+copy steps, post-base commands, and runtime OpenClaw packages. `agent-vm build`
+regenerates Dockerfiles under `cacheDir/generated-dockerfiles/...`; do not edit
+generated Dockerfiles by hand. OpenClaw gateway deployments that need specific
+OpenClaw package versions should pin them in the overlay's
+`extraOpenClawPackages`. Overlay package pins override managed default companion
+packages during Dockerfile generation. If the overlay pins `openclaw@X` and an
+`@openclaw/*@Y` package with a different version, build output warns before
+Docker and Gondolin work begin.
+
+Legacy `dockerfile` profiles are reported by `agent-vm doctor`; migrate them
+with `agent-vm migrate images`.
 
 OpenClaw tool VMs use `imageProfiles.toolVms`. Worker-only configs normally
 omit tool VM image profiles.

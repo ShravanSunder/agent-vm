@@ -296,7 +296,7 @@ describe('createOpenClawZoneRuntime', () => {
 		const exec = vi.fn(async (command: string) => ({
 			exitCode: 0,
 			stderr: '',
-			stdout: command.includes('/tmp/openclaw/openclaw-*.log')
+			stdout: command.includes('/agent-vm/logs/*.log')
 				? 'gateway and runtime log output'
 				: command.includes('/readyz')
 					? '200'
@@ -315,7 +315,7 @@ describe('createOpenClawZoneRuntime', () => {
 						bootstrapCommand: 'bootstrap',
 						guestListenPort: 18789,
 						healthCheck: { type: 'http', port: 18789, path: '/readyz' },
-						logPath: '/tmp/openclaw.log',
+						logPath: '/agent-vm/logs/gateway-boot-latest.log',
 						startCommand: 'start',
 					},
 					vm: {
@@ -374,11 +374,11 @@ describe('createOpenClawZoneRuntime', () => {
 		});
 		expect(exec).toHaveBeenCalledWith(
 			[
-				"echo '===== gateway boot log (/tmp/openclaw.log) ====='",
-				'cat /tmp/openclaw.log 2>/dev/null || true',
+				"echo '===== gateway boot log (/agent-vm/logs/gateway-boot-latest.log) ====='",
+				'cat /agent-vm/logs/gateway-boot-latest.log 2>/dev/null || true',
 				'echo',
-				"echo '===== latest openclaw runtime log (/tmp/openclaw/openclaw-*.log) ====='",
-				'latest_openclaw_log=$(ls -1t /tmp/openclaw/openclaw-*.log 2>/dev/null | head -n 1); if [ -n "$latest_openclaw_log" ]; then tail -n 400 "$latest_openclaw_log"; fi',
+				"echo '===== latest openclaw runtime log (/agent-vm/logs/*.log) ====='",
+				'latest_openclaw_log=$(ls -1t /agent-vm/logs/*.log 2>/dev/null | grep -v "/gateway-boot-latest\\.log$" | head -n 1); if [ -n "$latest_openclaw_log" ]; then tail -n 400 "$latest_openclaw_log"; fi',
 			].join('; '),
 		);
 		await expect(runtime.getHealth()).resolves.toEqual({

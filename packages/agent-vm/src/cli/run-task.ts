@@ -6,7 +6,10 @@ export function createPlainRunTask(io: CliIo): RunTaskFn {
 		io.stderr.write(`  ${title}...\n`);
 		await fn({
 			interactive: false,
-			setOutput: () => {},
+			setOutput: (output) => {
+				const message = typeof output === 'string' ? output : output.message;
+				io.stderr.write(`${message}\n`);
+			},
 			setStatus: () => {},
 		});
 		io.stderr.write(`  ${title} done\n`);

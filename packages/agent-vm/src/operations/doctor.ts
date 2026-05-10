@@ -146,7 +146,7 @@ function buildOpenClawCliCheck(
 			...(openClawCliReady
 				? { hint: 'openclaw' }
 				: {
-						hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.5.2.',
+						hint: 'Install OpenClaw in this catalog for local schema validation: pnpm add -D openclaw@2026.5.7.',
 					}),
 		},
 	];
@@ -248,6 +248,7 @@ function buildWorkerWorkRootfsChecks(
 				gatewayCacheDir: systemConfig.cacheDir,
 				projectNamespace: systemConfig.host.projectNamespace,
 				resolvedSecrets: {},
+				runtimeDir: systemConfig.runtimeDir,
 				tcpPool: systemConfig.tcpPool,
 				zone: gatewayZone,
 			});

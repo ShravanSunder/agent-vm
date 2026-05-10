@@ -72,21 +72,25 @@ Controls the OpenClaw agent platform: model selection, sandbox mode, plugin regi
 ### OpenClaw Version
 
 `agent-vm init` writes a managed image profile. The installed
-`@agent-vm/agent-vm` package includes `managed-images.json`, which selects a
-pinned GHCR managed base image tag. That tag is separate from the npm package
-version and pins the tested OpenClaw version. Deployment repos customize the
-image through `vm-images/gateways/openclaw/overlay.jsonc`, not by owning a full
-gateway Dockerfile.
+`@agent-vm/agent-vm` package includes `managed-images.json`, which selects
+managed base image tags. Deployment overlays own extra runtime packages such as
+`openclaw@...` or `@openclaw/discord@...`.
+
+During `agent-vm build`, the generated Dockerfile is written under the
+configured cache directory and the build output prints the resolved base image,
+agent-vm OpenClaw plugin package, OpenClaw runtime packages, and the source of
+each version. Treat generated Dockerfiles as build output; update package
+versions in `package.json` and runtime image additions in the overlay.
 
 For host-side validation, install the same OpenClaw version in the catalog:
 
 ```bash
-pnpm add -D openclaw@2026.5.2
+pnpm add -D openclaw@2026.5.7
 ```
 
 `agent-vm doctor` and `agent-vm validate` use the catalog's `openclaw`
 binary, so OpenClaw stays loosely coupled: the catalog chooses the OpenClaw
-version, and agent-vm validates against that choice.
+version for host-side validation, and agent-vm validates against that choice.
 
 ### Auth Profiles
 
@@ -167,9 +171,9 @@ IDs.
 
 ## Web Fetch With Gondolin
 
-Gondolin uses synthetic DNS for mediated egress. Current agent-vm scaffolds
-OpenClaw `web_fetch` with the matching fake-IP SSRF policy so OpenClaw trusts
-the mediated boundary:
+Gondolin uses synthetic DNS for mediated egress and TCP host mapping. Current
+agent-vm scaffolds OpenClaw `web_fetch` with fake-IP SSRF policy so OpenClaw
+trusts the mediated boundary:
 
 ```json
 {
@@ -191,9 +195,15 @@ This only passes OpenClaw's SSRF check. Gondolin still enforces
 the deployment allows them or routes `web_fetch` through a provider such as
 Firecrawl/Jina.
 
-The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search` and
-`web_fetch` so sandboxed sessions can see those tools when the deployment later
-configures a search or fetch provider.
+For gateway/tool TCP mappings, agent-vm uses RFC2544 synthetic IPv4 addresses
+and an IPv4-mapped RFC2544 synthetic AAAA answer (`::ffff:198.18.0.1`). The
+AAAA answer prevents OpenClaw from rejecting a host only because DNS returned a
+fake IPv6 answer. It does not mean the guest has general IPv6 egress.
+
+The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search`,
+`web_fetch`, and `message` so sandboxed sessions can see web tools when the
+deployment later configures a search or fetch provider, and can explicitly send
+channel replies when OpenClaw uses `message_tool_only` group reply delivery.
 
 ---
 
@@ -214,7 +224,7 @@ automatically when `channels.discord.enabled` is true.
       "injection": "env"
     }
   },
-  "allowedHosts": ["discord.com", "cdn.discordapp.com"],
+  "allowedHosts": ["discord.com", "discordapp.com", "*.discordapp.com", "*.discordapp.net"],
   "websocketBypass": ["gateway.discord.gg:443"]
 }
 ```
@@ -234,7 +244,9 @@ agent-vm controller ssh --zone my-openclaw
 Opens an SSH session into the gateway VM for debugging.
 
 Use controller logs for both the gateway boot log and the OpenClaw runtime log
-tail:
+tail. The gateway VM writes these logs under `/agent-vm/logs`, backed by
+`<runtimeDir>/zones/<zone>/logs` on the host, so they survive gateway restarts
+without entering normal zone backups:
 
 ```bash
 agent-vm controller logs --zone my-openclaw

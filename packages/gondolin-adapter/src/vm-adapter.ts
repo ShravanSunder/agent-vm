@@ -24,7 +24,7 @@ import {
 import type { SecretSpec } from './types.js';
 
 export const SYNTHETIC_DNS_IPV4_BENCHMARK = '198.18.0.1';
-export const SYNTHETIC_DNS_IPV6_UNIQUE_LOCAL = 'fc00::1';
+export const SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK = '::ffff:198.18.0.1';
 
 export interface ExecResult {
 	readonly exitCode: number;
@@ -313,7 +313,7 @@ export async function createManagedVm(
 						dns: {
 							mode: 'synthetic',
 							syntheticIPv4: SYNTHETIC_DNS_IPV4_BENCHMARK,
-							syntheticIPv6: SYNTHETIC_DNS_IPV6_UNIQUE_LOCAL,
+							syntheticIPv6: SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK,
 							syntheticHostMapping: 'per-host',
 						},
 						tcp: {

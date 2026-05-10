@@ -219,6 +219,14 @@ const generatedOpenClawToolVmSystemConfigSchema = generatedSystemConfigSchema.ex
 	zones: z.tuple([z.object({ defaultToolVmProfile: z.string() }).passthrough()]),
 });
 
+const generatedManagedImageOverlaySchema = z.object({
+	schemaVersion: z.literal(1),
+	extraAptPackages: z.array(z.string()),
+	extraOpenClawPackages: z.array(z.string()),
+	copy: z.array(z.unknown()),
+	runAfterBase: z.array(z.string()),
+});
+
 describe('scaffoldAgentVmProject', () => {
 	it('creates system.jsonc with the requested zone', async () => {
 		const targetDir = await createTestDirectory();
@@ -420,20 +428,24 @@ describe('scaffoldAgentVmProject', () => {
 			noGeneratedAgeIdentityDependencies,
 		);
 		const systemConfig = await readGeneratedSystemConfig(targetDir);
-		const overlay = z
-			.object({ schemaVersion: z.literal(1), extraAptPackages: z.array(z.string()) })
-			.parse(
-				await readGeneratedJsonc(
-					path.join(targetDir, 'vm-images', 'gateways', 'openclaw', 'overlay.jsonc'),
-				),
-			);
+		const overlay = generatedManagedImageOverlaySchema.parse(
+			await readGeneratedJsonc(
+				path.join(targetDir, 'vm-images', 'gateways', 'openclaw', 'overlay.jsonc'),
+			),
+		);
 
 		expect(systemConfig.imageProfiles?.gateways.openclaw?.source).toEqual({
 			kind: 'managedBase',
 			base: 'openclaw-gateway',
 			overlay: '../vm-images/gateways/openclaw/overlay.jsonc',
 		});
-		expect(overlay).toEqual({ schemaVersion: 1, extraAptPackages: [] });
+		expect(overlay).toEqual({
+			schemaVersion: 1,
+			extraAptPackages: [],
+			extraOpenClawPackages: [],
+			copy: [],
+			runAfterBase: [],
+		});
 		await expect(
 			fs.access(path.join(targetDir, 'vm-images', 'gateways', 'openclaw', 'Dockerfile')),
 		).rejects.toMatchObject({ code: 'ENOENT' });
@@ -844,7 +856,11 @@ describe('scaffoldAgentVmProject', () => {
 			allowRfc2544BenchmarkRange: true,
 		});
 		expect(openClawConfig.tools.allow).toContain('zone_git_push');
-		expect(openClawConfig.tools.sandbox.tools.alsoAllow).toEqual(['web_search', 'web_fetch']);
+		expect(openClawConfig.tools.sandbox.tools.alsoAllow).toEqual([
+			'web_search',
+			'web_fetch',
+			'message',
+		]);
 	});
 
 	it('scaffolds OpenClaw agent list from requested multi-agent ids', async () => {
@@ -1227,6 +1243,19 @@ describe('scaffoldAgentVmProject', () => {
 		await expect(
 			fs.access(path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'overlay.jsonc')),
 		).resolves.toBeUndefined();
+		expect(
+			generatedManagedImageOverlaySchema.parse(
+				await readGeneratedJsonc(
+					path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'overlay.jsonc'),
+				),
+			),
+		).toEqual({
+			schemaVersion: 1,
+			extraAptPackages: [],
+			extraOpenClawPackages: [],
+			copy: [],
+			runAfterBase: [],
+		});
 		const openClawConfig = JSON.parse(
 			await fs.readFile(
 				path.join(targetDir, 'config', 'gateways', 'test-openclaw', 'openclaw.json'),

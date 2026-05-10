@@ -161,6 +161,7 @@ vfsMounts:
   /home/openclaw/.openclaw/config    -> configDirectory  (realfs)
   /home/openclaw/.openclaw/cache     -> gatewayCacheDir  (realfs)
   /home/openclaw/.openclaw/state     -> stateDir         (realfs)
+  /agent-vm/logs                     -> runtimeDir/zones/<zone>/logs (realfs)
   /zone           -> zoneFilesDir (realfs)
 
 tcpHosts:
@@ -193,7 +194,7 @@ rebuildable and must not be included in encrypted zone backups.
   `cd /home/openclaw && nohup openclaw gateway --port 18789`
 - **healthCheck**: HTTP on port 18789, path `/readyz`
 - **guestListenPort**: 18789
-- **logPath**: `/tmp/openclaw.log`
+- **logPath**: `/agent-vm/logs/gateway-boot-latest.log`
 
 ### authConfig
 
@@ -272,13 +273,13 @@ Not implemented.  Worker has no interactive auth.
 | **prepareHostState**  | Writes effective config + auth profiles          | None                                            |
 | **authConfig**        | list providers / login command                   | None                                            |
 | **HOME**              | `/home/openclaw`                                 | `/home/coder`                                   |
-| **vfsMounts**         | config, cache, state, zone files (4 mounts)    | state + task gitdirs; `/work/repos` is rootfs/COW |
+| **vfsMounts**         | config, cache, state, logs, zone files          | state + task gitdirs; `/work/repos` is rootfs/COW |
 | **tcpHosts**          | controller + tool pool + WS bypass               | controller only                                 |
 | **bootstrap**         | Shell env file in `/etc/profile.d/`              | `npm install -g` codex + worker tarball         |
 | **startCommand**      | `openclaw gateway --port 18789`                  | `agent-vm-worker serve --port 18789`            |
 | **healthCheck path**  | `/readyz`                                        | `/health`                                       |
 | **guestListenPort**   | 18789                                            | 18789                                           |
-| **logPath**           | `/tmp/openclaw.log`                              | `/tmp/agent-vm-worker.log`                      |
+| **logPath**           | `/agent-vm/logs/gateway-boot-latest.log`         | `/tmp/agent-vm-worker.log`                      |
 | **rootfsMode**        | `cow`                                            | `cow`                                            |
 | **secret handling**   | Strips OPENCLAW_GATEWAY_TOKEN from env           | Passes all env secrets through                  |
 

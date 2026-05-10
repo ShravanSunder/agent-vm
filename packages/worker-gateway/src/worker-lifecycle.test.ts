@@ -36,6 +36,7 @@ describe('workerLifecycle', () => {
 			gatewayCacheDir: '/host/cache/gateways/shravan',
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
+			runtimeDir: '/host/runtime',
 			tcpPool: {
 				basePort: 19000,
 				size: 5,

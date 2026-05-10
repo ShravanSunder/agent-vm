@@ -27,7 +27,46 @@ export interface GenerateManagedDockerfileOptions {
 	readonly outputDirectory: string;
 	readonly overlayPath?: string | undefined;
 	readonly managedImageRelease: ManagedImageRelease;
-	readonly requiredOpenClawPackages?: readonly string[];
+	readonly requiredOpenClawPackageNames?: readonly string[];
+}
+
+export type ManagedDockerfilePlanSource =
+	| 'installed-package'
+	| 'managed-default'
+	| 'managed-images.json'
+	| 'overlay';
+
+export interface ManagedDockerfilePackagePlanEntry {
+	readonly name: string;
+	readonly source: ManagedDockerfilePlanSource;
+	readonly spec: string;
+	readonly version?: string;
+}
+
+export interface ManagedDockerfilePlanWarning {
+	readonly message: string;
+	readonly type: 'openclaw-package-version-mismatch';
+}
+
+export interface ManagedDockerfilePlan {
+	readonly base: ManagedImageBase;
+	readonly baseImage: {
+		readonly reference: string;
+		readonly repository: string;
+		readonly source: 'managed-images.json';
+		readonly tag: string;
+	};
+	readonly dockerfilePath: string;
+	readonly imageTargetFamily: 'gateway' | 'toolVm';
+	readonly imageTargetName: string;
+	readonly openClawAgentVmPluginPackage?: ManagedDockerfilePackagePlanEntry;
+	readonly openClawPackages: readonly ManagedDockerfilePackagePlanEntry[];
+	readonly warnings: readonly ManagedDockerfilePlanWarning[];
+}
+
+export interface GenerateManagedDockerfileResult {
+	readonly dockerfilePath: string;
+	readonly plan: ManagedDockerfilePlan;
 }
 
 export interface ManagedBaseImageReference {
@@ -104,12 +143,47 @@ function shellJoin(argumentsToQuote: readonly string[]): string {
 	return argumentsToQuote.map((argument) => JSON.stringify(argument)).join(' ');
 }
 
+interface ParsedPackageSpec {
+	readonly name: string;
+	readonly version?: string;
+}
+
+function parsePackageSpec(packageSpec: string): ParsedPackageSpec {
+	if (packageSpec.startsWith('@')) {
+		const scopeSeparatorIndex = packageSpec.indexOf('/');
+		if (scopeSeparatorIndex === -1) {
+			return { name: packageSpec };
+		}
+		const versionSeparatorIndex = packageSpec.indexOf('@', scopeSeparatorIndex + 1);
+		if (versionSeparatorIndex === -1) {
+			return { name: packageSpec };
+		}
+		return {
+			name: packageSpec.slice(0, versionSeparatorIndex),
+			version: packageSpec.slice(versionSeparatorIndex + 1),
+		};
+	}
+
+	const versionSeparatorIndex = packageSpec.indexOf('@');
+	if (versionSeparatorIndex === -1) {
+		return { name: packageSpec };
+	}
+	return {
+		name: packageSpec.slice(0, versionSeparatorIndex),
+		version: packageSpec.slice(versionSeparatorIndex + 1),
+	};
+}
+
+function packageSpec(packageName: string, version: string): string {
+	return `${packageName}@${version}`;
+}
+
 function renderManagedDockerfile(props: {
 	readonly base: ManagedImageBase;
 	readonly baseImage: ManagedBaseImageReference;
 	readonly overlay: ManagedImageOverlay;
 	readonly openClawAgentVmPluginPackageSpec?: string;
-	readonly requiredOpenClawPackages: readonly string[];
+	readonly openClawPackages: readonly ManagedDockerfilePackagePlanEntry[];
 }): string {
 	const lines = [
 		`FROM ${props.baseImage.repository}:${props.baseImage.tag}`,
@@ -129,17 +203,8 @@ function renderManagedDockerfile(props: {
 		}
 		lines.push('RUN pnpm add -g ' + shellJoin([props.openClawAgentVmPluginPackageSpec]));
 	}
-	const overlayOpenClawPackages = props.overlay.extraOpenClawPackages.filter(
-		(packageSpec) =>
-			packageSpec !== managedOpenClawAgentVmPluginPackageName &&
-			!packageSpec.startsWith(`${managedOpenClawAgentVmPluginPackageName}@`),
-	);
-	const openClawPackages = [
-		...props.requiredOpenClawPackages,
-		...overlayOpenClawPackages,
-	];
-	if (openClawPackages.length > 0) {
-		lines.push('RUN pnpm add -g ' + shellJoin(openClawPackages));
+	if (props.openClawPackages.length > 0) {
+		lines.push('RUN pnpm add -g ' + shellJoin(props.openClawPackages.map((entry) => entry.spec)));
 	}
 	for (const copy of props.overlay.copy) {
 		lines.push(`COPY overlay/${copy.from} ${copy.to}`);
@@ -157,6 +222,75 @@ function renderManagedDockerfile(props: {
 	return lines.join('\n');
 }
 
+function resolveOpenClawPackagePlanEntries(props: {
+	readonly managedImageRelease: ManagedImageRelease;
+	readonly overlay: ManagedImageOverlay;
+	readonly requiredOpenClawPackageNames: readonly string[];
+}): readonly ManagedDockerfilePackagePlanEntry[] {
+	const entriesByName = new Map<string, ManagedDockerfilePackagePlanEntry>();
+	let overlayOpenClawVersion: string | undefined;
+
+	for (const overlayPackageSpec of props.overlay.extraOpenClawPackages) {
+		if (
+			overlayPackageSpec === managedOpenClawAgentVmPluginPackageName ||
+			overlayPackageSpec.startsWith(`${managedOpenClawAgentVmPluginPackageName}@`)
+		) {
+			continue;
+		}
+		const parsedPackageSpec = parsePackageSpec(overlayPackageSpec);
+		const name = parsedPackageSpec.name;
+		const version = parsedPackageSpec.version;
+		if (name === 'openclaw' && version !== undefined) {
+			overlayOpenClawVersion = version;
+		}
+		entriesByName.set(name, {
+			name,
+			source: 'overlay',
+			spec: overlayPackageSpec,
+			...(version === undefined ? {} : { version }),
+		});
+	}
+
+	const fallbackOpenClawVersion = overlayOpenClawVersion ?? props.managedImageRelease.openClawVersion;
+	for (const packageName of props.requiredOpenClawPackageNames) {
+		if (entriesByName.has(packageName)) {
+			continue;
+		}
+		entriesByName.set(packageName, {
+			name: packageName,
+			source: overlayOpenClawVersion === undefined ? 'managed-default' : 'overlay',
+			spec: packageSpec(packageName, fallbackOpenClawVersion),
+			version: fallbackOpenClawVersion,
+		});
+	}
+
+	return [...entriesByName.values()];
+}
+
+function collectOpenClawPackagePlanWarnings(
+	openClawPackages: readonly ManagedDockerfilePackagePlanEntry[],
+): readonly ManagedDockerfilePlanWarning[] {
+	const coreOpenClawPackage = openClawPackages.find((packageEntry) => packageEntry.name === 'openclaw');
+	if (!coreOpenClawPackage?.version) {
+		return [];
+	}
+	const warnings: ManagedDockerfilePlanWarning[] = [];
+	for (const packageEntry of openClawPackages) {
+		if (
+			!packageEntry.name.startsWith('@openclaw/') ||
+			!packageEntry.version ||
+			packageEntry.version === coreOpenClawPackage.version
+		) {
+			continue;
+		}
+		warnings.push({
+			type: 'openclaw-package-version-mismatch',
+			message: `OpenClaw package versions differ: openclaw uses ${coreOpenClawPackage.version}, but ${packageEntry.name} uses ${packageEntry.version}.`,
+		});
+	}
+	return warnings;
+}
+
 function assertOverlayCopySourceIsSafe(sourcePath: string): void {
 	if (path.isAbsolute(sourcePath) || sourcePath.split(/[\\/]+/u).includes('..')) {
 		throw new Error(
@@ -167,8 +301,18 @@ function assertOverlayCopySourceIsSafe(sourcePath: string): void {
 
 export async function generateManagedDockerfile(
 	options: GenerateManagedDockerfileOptions,
-): Promise<string> {
+): Promise<GenerateManagedDockerfileResult> {
 	const overlay = await loadManagedImageOverlay(options.overlayPath);
+	const baseImage = options.managedImageRelease.baseImages[options.base];
+	const openClawPackages =
+		options.base === 'openclaw-gateway'
+			? resolveOpenClawPackagePlanEntries({
+					managedImageRelease: options.managedImageRelease,
+					overlay,
+					requiredOpenClawPackageNames: options.requiredOpenClawPackageNames ?? [],
+				})
+			: [];
+	const warnings = collectOpenClawPackagePlanWarnings(openClawPackages);
 	const openClawAgentVmPluginPackageSpec =
 		options.base === 'openclaw-gateway'
 			? await resolveManagedOpenClawAgentVmPluginPackageSpec()
@@ -191,16 +335,41 @@ export async function generateManagedDockerfile(
 		dockerfilePath,
 		renderManagedDockerfile({
 			base: options.base,
-			baseImage: options.managedImageRelease.baseImages[options.base],
+			baseImage,
 			overlay,
 			...(openClawAgentVmPluginPackageSpec === undefined
 				? {}
 				: { openClawAgentVmPluginPackageSpec }),
-			requiredOpenClawPackages: options.requiredOpenClawPackages ?? [],
+			openClawPackages,
 		}),
 		'utf8',
 	);
-	return dockerfilePath;
+	return {
+		dockerfilePath,
+		plan: {
+			base: options.base,
+			baseImage: {
+				reference: `${baseImage.repository}:${baseImage.tag}`,
+				repository: baseImage.repository,
+				source: 'managed-images.json',
+				tag: baseImage.tag,
+			},
+			dockerfilePath,
+			imageTargetFamily: options.imageTargetFamily,
+			imageTargetName: options.imageTargetName,
+			...(openClawAgentVmPluginPackageSpec === undefined
+				? {}
+				: {
+						openClawAgentVmPluginPackage: {
+							name: managedOpenClawAgentVmPluginPackageName,
+							source: 'installed-package',
+							spec: openClawAgentVmPluginPackageSpec,
+						},
+					}),
+			openClawPackages,
+			warnings,
+		},
+	};
 }
 
 async function resolvePackageRootFromEntrypoint(packageName: string): Promise<string> {
