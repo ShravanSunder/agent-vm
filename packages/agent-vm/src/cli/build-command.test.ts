@@ -196,6 +196,20 @@ const noOpPluginSync: NonNullable<
 	BuildCommandDependencies['syncBundledOpenClawPlugin']
 > = async () => 'created';
 
+function createRecordingRunTask(
+	outputLines: string[],
+): NonNullable<BuildCommandDependencies['runTask']> {
+	return async (_title, fn) => {
+		await fn({
+			interactive: false,
+			setOutput: (output) => {
+				outputLines.push(typeof output === 'string' ? output : output.message);
+			},
+			setStatus: () => {},
+		});
+	};
+}
+
 async function runBuildCommand(
 	options: Parameters<typeof runBuildCommandDefault>[0],
 	dependencies: BuildCommandDependencies = {},
@@ -339,6 +353,177 @@ describe('runBuildCommand', () => {
 			'COPY overlay/certs/strip-nonascii-certs.py /tmp/strip-nonascii-certs.py',
 		);
 		expect(generatedDockerfile).toContain('RUN python3 /tmp/strip-nonascii-certs.py');
+	});
+
+	it('prints the resolved managed Dockerfile plan before Docker build', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const buildConfigPath = path.join(temporaryDirectory, 'build-config.json');
+		const gatewayConfigDirectory = path.join(temporaryDirectory, 'config', 'gateways', 'sunfam');
+		fs.mkdirSync(gatewayConfigDirectory, { recursive: true });
+		const gatewayConfigPath = path.join(gatewayConfigDirectory, 'openclaw.json');
+		fs.writeFileSync(
+			gatewayConfigPath,
+			JSON.stringify({ channels: { discord: { enabled: true } } }),
+		);
+		fs.writeFileSync(
+			overlayPath,
+			JSON.stringify({
+				schemaVersion: 1,
+				extraAptPackages: [],
+				extraOpenClawPackages: ['openclaw@2026.5.7', '@openclaw/discord@2026.5.7'],
+				runAfterBase: [],
+			}),
+			'utf8',
+		);
+		fs.writeFileSync(
+			buildConfigPath,
+			JSON.stringify({ oci: { image: 'agent-vm-gateway:latest' } }),
+			'utf8',
+		);
+		const outputLines: string[] = [];
+		const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
+		const baseConfig = createTestSystemConfig();
+		const baseZone = baseConfig.zones[0];
+		if (!baseZone || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected an OpenClaw test zone.');
+		}
+
+		await runBuildCommand(
+			{
+				systemConfig: {
+					...baseConfig,
+					cacheDir: path.join(temporaryDirectory, 'cache'),
+					imageProfiles: {
+						gateways: {
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: buildConfigPath,
+								source: {
+									kind: 'managedBase',
+									base: 'openclaw-gateway',
+									overlay: overlayPath,
+								},
+							},
+						},
+						toolVms: {},
+					},
+					zones: [
+						{
+							...baseZone,
+							gateway: {
+								...baseZone.gateway,
+								config: gatewayConfigPath,
+							},
+						},
+					],
+				},
+			},
+			{
+				buildDockerImage: async (options) => {
+					dockerBuilds.push(options);
+				},
+				buildGondolinImage: async (options) => ({
+					built: true,
+					fingerprint: 'plan-fp',
+					imagePath: path.join(options.cacheDir, 'plan-fp'),
+				}),
+				resolveManagedImageRelease: async () => createTestManagedImageRelease(),
+				runTask: createRecordingRunTask(outputLines),
+			},
+		);
+
+		expect(dockerBuilds).toHaveLength(1);
+		const output = outputLines.join('\n');
+		expect(output).toContain('Managed image plan: gateway/openclaw');
+		expect(output).toContain(
+			'base image: ghcr.io/shravansunder/agent-vm-managed-openclaw-gateway-base:2026.05.07.1',
+		);
+		expect(output).toContain('@agent-vm/openclaw-agent-vm-plugin@');
+		expect(output).toContain('source: installed-package');
+		expect(output).toContain('openclaw@2026.5.7');
+		expect(output).toContain('@openclaw/discord@2026.5.7');
+		expect(output).toContain('source: overlay');
+		expect(output).toContain('generated Dockerfile:');
+	});
+
+	it('prints OpenClaw package-version mismatch warnings in the managed Dockerfile plan', async () => {
+		const temporaryDirectory = createTemporaryDirectory();
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const buildConfigPath = path.join(temporaryDirectory, 'build-config.json');
+		const gatewayConfigDirectory = path.join(temporaryDirectory, 'config', 'gateways', 'sunfam');
+		fs.mkdirSync(gatewayConfigDirectory, { recursive: true });
+		const gatewayConfigPath = path.join(gatewayConfigDirectory, 'openclaw.json');
+		fs.writeFileSync(gatewayConfigPath, JSON.stringify({ channels: {} }), 'utf8');
+		fs.writeFileSync(
+			overlayPath,
+			JSON.stringify({
+				schemaVersion: 1,
+				extraAptPackages: [],
+				extraOpenClawPackages: ['openclaw@2026.5.7', '@openclaw/discord@2026.5.2'],
+				runAfterBase: [],
+			}),
+			'utf8',
+		);
+		fs.writeFileSync(
+			buildConfigPath,
+			JSON.stringify({ oci: { image: 'agent-vm-gateway:latest' } }),
+			'utf8',
+		);
+		const outputLines: string[] = [];
+		const baseConfig = createTestSystemConfig();
+		const baseZone = baseConfig.zones[0];
+		if (!baseZone || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected an OpenClaw test zone.');
+		}
+
+		await runBuildCommand(
+			{
+				systemConfig: {
+					...baseConfig,
+					cacheDir: path.join(temporaryDirectory, 'cache'),
+					imageProfiles: {
+						gateways: {
+							openclaw: {
+								type: 'openclaw',
+								buildConfig: buildConfigPath,
+								source: {
+									kind: 'managedBase',
+									base: 'openclaw-gateway',
+									overlay: overlayPath,
+								},
+							},
+						},
+						toolVms: {},
+					},
+					zones: [
+						{
+							...baseZone,
+							gateway: {
+								...baseZone.gateway,
+								config: gatewayConfigPath,
+							},
+						},
+					],
+				},
+			},
+			{
+				buildDockerImage: async () => {},
+				buildGondolinImage: async (options) => ({
+					built: true,
+					fingerprint: 'warning-fp',
+					imagePath: path.join(options.cacheDir, 'warning-fp'),
+				}),
+				resolveManagedImageRelease: async () => createTestManagedImageRelease(),
+				runTask: createRecordingRunTask(outputLines),
+			},
+		);
+
+		const output = outputLines.join('\n');
+		expect(output).toContain('warnings:');
+		expect(output).toContain(
+			'OpenClaw package versions differ: openclaw uses 2026.5.7, but @openclaw/discord uses 2026.5.2.',
+		);
 	});
 
 	it('adds Discord OpenClaw package when a managed openclaw profile serves a Discord zone', async () => {

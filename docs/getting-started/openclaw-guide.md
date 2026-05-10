@@ -72,11 +72,15 @@ Controls the OpenClaw agent platform: model selection, sandbox mode, plugin regi
 ### OpenClaw Version
 
 `agent-vm init` writes a managed image profile. The installed
-`@agent-vm/agent-vm` package includes `managed-images.json`, which selects a
-pinned GHCR managed base image tag. That tag is separate from the npm package
-version and pins the tested OpenClaw version. Deployment repos customize the
-image through `vm-images/gateways/openclaw/overlay.jsonc`, not by owning a full
-gateway Dockerfile.
+`@agent-vm/agent-vm` package includes `managed-images.json`, which selects
+managed base image tags. Deployment overlays own extra runtime packages such as
+`openclaw@...` or `@openclaw/discord@...`.
+
+During `agent-vm build`, the generated Dockerfile is written under the
+configured cache directory and the build output prints the resolved base image,
+agent-vm OpenClaw plugin package, OpenClaw runtime packages, and the source of
+each version. Treat generated Dockerfiles as build output; update package
+versions in `package.json` and runtime image additions in the overlay.
 
 For host-side validation, install the same OpenClaw version in the catalog:
 
@@ -86,7 +90,7 @@ pnpm add -D openclaw@2026.5.7
 
 `agent-vm doctor` and `agent-vm validate` use the catalog's `openclaw`
 binary, so OpenClaw stays loosely coupled: the catalog chooses the OpenClaw
-version, and agent-vm validates against that choice.
+version for host-side validation, and agent-vm validates against that choice.
 
 ### Auth Profiles
 
@@ -191,9 +195,10 @@ This only passes OpenClaw's SSRF check. Gondolin still enforces
 the deployment allows them or routes `web_fetch` through a provider such as
 Firecrawl/Jina.
 
-The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search` and
-`web_fetch` so sandboxed sessions can see those tools when the deployment later
-configures a search or fetch provider.
+The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search`,
+`web_fetch`, and `message` so sandboxed sessions can see web tools when the
+deployment later configures a search or fetch provider, and can explicitly send
+channel replies when OpenClaw uses `message_tool_only` group reply delivery.
 
 ---
 
