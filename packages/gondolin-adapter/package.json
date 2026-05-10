@@ -35,7 +35,7 @@
 	},
 	"dependencies": {
 		"@1password/sdk": "^0.4.0",
-		"@earendil-works/gondolin": "0.8.0",
-		"zod": "^4"
+		"@earendil-works/gondolin": "0.9.1",
+		"zod": "^4.4.3"
 	}
 }

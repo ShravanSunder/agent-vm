@@ -130,7 +130,7 @@ function createTestManagedImageRelease(): ManagedImageRelease {
 				tag: '2026.05.07.1',
 			},
 		},
-		openClawVersion: '2026.5.2',
+		openClawVersion: '2026.5.7',
 	};
 }
 
@@ -408,7 +408,7 @@ describe('runBuildCommand', () => {
 		);
 
 		const generatedDockerfile = fs.readFileSync(dockerBuilds[0]?.dockerfilePath ?? '', 'utf8');
-		expect(generatedDockerfile).toContain('RUN pnpm add -g "@openclaw/discord@2026.5.2"');
+		expect(generatedDockerfile).toContain('RUN pnpm add -g "@openclaw/discord@2026.5.7"');
 	});
 
 	it('does not add disabled OpenClaw channel packages', async () => {

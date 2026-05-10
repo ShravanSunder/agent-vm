@@ -72,7 +72,7 @@ For OpenClaw-backed local configs, keep OpenClaw loosely coupled by installing
 it in the catalog rather than inside `@agent-vm/agent-vm`:
 
 ```bash
-pnpm add -D openclaw@2026.5.2
+pnpm add -D openclaw@2026.5.7
 ```
 
 When you run `pnpm doctor`, pnpm places `node_modules/.bin` on `PATH`, so

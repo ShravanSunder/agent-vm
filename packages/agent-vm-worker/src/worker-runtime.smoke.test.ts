@@ -163,7 +163,7 @@ describeWorkerOnlySmoke('smoke: worker package real executor loop', () => {
 			configPath,
 			JSON.stringify({
 				runtimeInstructions: 'Smoke test runtime instructions.',
-				defaults: { provider: 'codex', model: 'gpt-5.4' },
+				defaults: { provider: 'codex', model: 'gpt-5.4-mini' },
 				phases: {
 					plan: {
 						skills: [],

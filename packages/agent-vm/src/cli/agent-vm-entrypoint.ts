@@ -40,7 +40,7 @@ export async function runAgentVmCli(
 ): Promise<void> {
 	const cliVersion = await (dependencies.resolveCliVersion ?? resolveCliVersion)();
 	const result = await runSafely(createAgentVmApp(io, dependencies, cliVersion), [...argv]);
-	if (result._tag === 'ok') {
+	if (!('error' in result)) {
 		return;
 	}
 	const outputStream = result.error.config.into === 'stderr' ? io.stderr : io.stdout;
