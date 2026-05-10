@@ -23,6 +23,9 @@ const effectiveOpenClawConfigVmPath = `/home/openclaw/.openclaw/state/${effectiv
 const openClawStateDirVmPath = '/home/openclaw/.openclaw/state';
 const openClawCacheDirVmPath = '/home/openclaw/.openclaw/cache';
 const openClawZoneFilesDirVmPath = '/zone';
+const agentVmLogsDirVmPath = '/agent-vm/logs';
+const openClawRuntimeLogFileVmPath = `${agentVmLogsDirVmPath}/openclaw-YYYY-MM-DD.log`;
+const openClawGatewayBootLogFileVmPath = `${agentVmLogsDirVmPath}/gateway-boot-latest.log`;
 const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
 const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
 const openClawGatewayTokenEnvVar = 'OPENCLAW_GATEWAY_TOKEN';
@@ -178,6 +181,19 @@ function buildEffectiveSecretsConfig(
 	};
 }
 
+function buildEffectiveLoggingConfig(
+	parsedBaseConfig: Record<string, unknown>,
+): Record<string, unknown> {
+	const existingLoggingConfig = isObjectRecord(parsedBaseConfig.logging)
+		? parsedBaseConfig.logging
+		: {};
+
+	return {
+		file: openClawRuntimeLogFileVmPath,
+		...existingLoggingConfig,
+	};
+}
+
 async function writeAuthProfilesIfConfigured(
 	zone: GatewayZoneConfig,
 	secretResolver: SecretResolver,
@@ -259,6 +275,7 @@ async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<vo
 		const existingAuthConfig = isObjectRecord(config.auth) ? config.auth : {};
 		const effectiveConfig = {
 			...parsedBaseConfig,
+			logging: buildEffectiveLoggingConfig(parsedBaseConfig),
 			gateway: {
 				...config,
 				auth: {
@@ -310,6 +327,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 		gatewayCacheDir,
 		projectNamespace,
 		resolvedSecrets,
+		runtimeDir,
 		tcpPool,
 		zone,
 	}: BuildGatewayVmSpecOptions): GatewayVmSpec {
@@ -362,6 +380,10 @@ export const openclawLifecycle: GatewayLifecycle = {
 					hostPath: zone.gateway.zoneFilesDir,
 					kind: 'realfs',
 				},
+				[agentVmLogsDirVmPath]: {
+					hostPath: path.join(runtimeDir, 'zones', zone.id, 'logs'),
+					kind: 'realfs',
+				},
 			},
 		};
 	},
@@ -372,14 +394,14 @@ export const openclawLifecycle: GatewayLifecycle = {
 	): GatewayProcessSpec {
 		return {
 			bootstrapCommand: buildOpenClawBootstrapCommand(zone, resolvedSecrets),
-			startCommand: `set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &`,
+			startCommand: `set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && cd /home/openclaw && nohup openclaw gateway --port 18789 > ${openClawGatewayBootLogFileVmPath} 2>&1 &`,
 			healthCheck: {
 				type: 'http',
 				port: 18789,
 				path: '/readyz',
 			},
 			guestListenPort: 18789,
-			logPath: '/tmp/openclaw.log',
+			logPath: openClawGatewayBootLogFileVmPath,
 		};
 	},
 

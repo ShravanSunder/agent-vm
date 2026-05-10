@@ -24,7 +24,8 @@ field             scope                 durable?          backup?   contains
 cacheDir          system                yes               no        rebuildable image/plugin/tool
                                                                        cache
 
-runtimeDir        system                task-lifetime     no        active worker artifacts:
+runtimeDir        system                task-lifetime     no        active worker artifacts,
+                                                                       zone runtime logs,
                                                                        gitdirs, repo metadata,
                                                                        recovery exports
 
@@ -82,6 +83,10 @@ workspaceDir                        OpenClaw SDK boundary only          external
 
 /gitdirs/<repoId>.git               Worker VM / host runtime           RealFS runtimeDir
                                     git metadata                       not normal zone backup
+
+/agent-vm/logs                      OpenClaw gateway VM                RealFS ->
+                                                                       runtimeDir/zones/<zone>/logs
+                                    gateway/runtime logs               not normal zone backup
 
 /cache                              OpenClaw gateway VM                RealFS -> cacheDir
                                     rebuildable cache                  not backed up
@@ -183,7 +188,6 @@ host stateDir
     agents/<agentId>/agent/auth-profiles.json
     sandboxes/<agentId>/work/
     gateway-runtime.json
-    logs/
 
 host cacheDir
   ~/.agent-vm/cache/
@@ -194,6 +198,8 @@ host cacheDir
 
 host runtimeDir
   ~/.agent-vm/runtime/
+    zones/<zone>/
+      logs/
     worker-tasks/<zone>/<task>/
       gitdirs/<repo>.git
 
@@ -214,9 +220,13 @@ trees through a Gondolin VFS mount.
 download cache. It must not be the primary runtime import path for stable
 bundled plugin dependencies, and it must not be moved into `stateDir`.
 
-`stateDir` is for effective config, auth profiles, runtime metadata, and logs.
+`stateDir` is for effective config, auth profiles, and durable runtime metadata.
 Putting dependency trees in state makes encrypted backups large, slow, and hard
 to reason about.
+
+Gateway logs are runtime evidence, not backup state and not rebuildable cache.
+OpenClaw gateway logs belong under `runtimeDir/zones/<zone>/logs` and are
+mounted into the gateway VM at `/agent-vm/logs`.
 
 OpenClaw agent sandbox work directories live under `stateDir` and can be mounted
 into Tool VMs as `/work`. Per-agent sandbox seeds are written only into these

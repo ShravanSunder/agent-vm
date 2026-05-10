@@ -103,9 +103,13 @@ function createHttpHealthGatewayLifecycle(): {
 }
 
 function createSystemConfig(): LoadedSystemConfig {
+	const storageDirectoryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-gateway-storage-'));
+	createdDirectories.push(storageDirectoryPath);
+
 	return createLoadedSystemConfig(
 		{
-			cacheDir: '../cache',
+			cacheDir: path.join(storageDirectoryPath, 'cache'),
+			runtimeDir: path.join(storageDirectoryPath, 'runtime'),
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
@@ -142,8 +146,8 @@ function createSystemConfig(): LoadedSystemConfig {
 						cpus: 2,
 						port: 18791,
 						config: createGatewayConfigPath(),
-						stateDir: '../state/shravan',
-						zoneFilesDir: '../zone-files/shravan',
+						stateDir: path.join(storageDirectoryPath, 'state', 'shravan'),
+						zoneFilesDir: path.join(storageDirectoryPath, 'zone-files', 'shravan'),
 					},
 					secrets: {
 						PERPLEXITY_API_KEY: {
@@ -325,6 +329,10 @@ describe('startGatewayZone', () => {
 					'gateway.discord.gg:443': 'gateway.discord.gg:443',
 				}),
 				vfsMounts: expect.objectContaining({
+					'/agent-vm/logs': {
+						hostPath: path.join(systemConfig.runtimeDir, 'zones', 'shravan', 'logs'),
+						kind: 'realfs',
+					},
 					'/home/openclaw/.openclaw/cache': {
 						hostPath: path.join(systemConfig.cacheDir, 'gateways', 'shravan'),
 						kind: 'realfs',
@@ -333,7 +341,7 @@ describe('startGatewayZone', () => {
 			}),
 		);
 		expect(execMock).toHaveBeenCalledWith(
-			'set -a && . /run/openclaw/secrets.env && set +a && cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &',
+			'set -a && . /run/openclaw/secrets.env && set +a && cd /home/openclaw && nohup openclaw gateway --port 18789 > /agent-vm/logs/gateway-boot-latest.log 2>&1 &',
 		);
 		expect(setIngressRoutesMock).toHaveBeenCalledWith([
 			{
@@ -367,7 +375,7 @@ describe('startGatewayZone', () => {
 			},
 			processSpec: {
 				guestListenPort: 18789,
-				logPath: '/tmp/openclaw.log',
+				logPath: '/agent-vm/logs/gateway-boot-latest.log',
 			},
 		});
 	});
@@ -664,7 +672,9 @@ describe('startGatewayZone', () => {
 		).rejects.toThrow(
 			/Gateway readiness check failed after 2 attempts.*Last probe: http \(empty\).*Gateway process may still be booting, or it may have crashed before opening its health port.*OpenClaw failed to parse config/su,
 		);
-		expect(execMock).toHaveBeenCalledWith('tail -n 80 /tmp/openclaw.log 2>/dev/null || true');
+		expect(execMock).toHaveBeenCalledWith(
+			'tail -n 80 /agent-vm/logs/gateway-boot-latest.log 2>/dev/null || true',
+		);
 		expect(closeMock).toHaveBeenCalledTimes(1);
 	});
 
