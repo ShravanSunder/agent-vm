@@ -5,6 +5,10 @@ export default defineConfig({
 	dts: true,
 	entry: 'src/index.ts',
 	format: 'esm',
+	outExtensions: () => ({
+		dts: '.d.ts',
+		js: '.js',
+	}),
 	outDir: 'dist',
 	tsconfig: 'tsconfig.build.json',
 });

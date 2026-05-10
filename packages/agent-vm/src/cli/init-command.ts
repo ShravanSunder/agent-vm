@@ -146,6 +146,14 @@ interface RuntimeAuthHint {
 	readonly tools: readonly string[];
 }
 
+interface DefaultManagedImageOverlay {
+	readonly schemaVersion: 1;
+	readonly extraAptPackages: readonly string[];
+	readonly extraOpenClawPackages: readonly string[];
+	readonly copy: readonly [];
+	readonly runAfterBase: readonly string[];
+}
+
 const defaultGatewayIngressPort = 18791;
 const defaultOpenClawExtensionsPath = '/home/openclaw/.openclaw/extensions';
 const scaffoldedGatewayPortSystemConfigSchema = z
@@ -298,11 +306,14 @@ function defaultGatewayManagedBase(
 	return gatewayType === 'openclaw' ? 'openclaw-gateway' : 'worker-gateway';
 }
 
-function defaultManagedImageOverlay(): object {
+function defaultManagedImageOverlay(): DefaultManagedImageOverlay {
 	return {
 		schemaVersion: 1,
 		extraAptPackages: [],
-	};
+		extraOpenClawPackages: [],
+		copy: [],
+		runAfterBase: [],
+	} satisfies DefaultManagedImageOverlay;
 }
 
 function defaultToolVmProfiles(gatewayType: GatewayType): Record<
@@ -734,7 +745,7 @@ const defaultOpenClawConfig = (
 		elevated: { enabled: false },
 		sandbox: {
 			tools: {
-				alsoAllow: ['web_search', 'web_fetch'],
+				alsoAllow: ['web_search', 'web_fetch', 'message'],
 			},
 		},
 		web: {

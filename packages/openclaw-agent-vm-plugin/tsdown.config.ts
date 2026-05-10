@@ -6,6 +6,10 @@ export default defineConfig({
 	entry: 'src/index.ts',
 	external: ['/opt/openclaw-sdk/sandbox.js'],
 	format: 'esm',
+	outExtensions: () => ({
+		dts: '.d.ts',
+		js: '.js',
+	}),
 	outDir: 'dist',
 	tsconfig: 'tsconfig.build.json',
 });

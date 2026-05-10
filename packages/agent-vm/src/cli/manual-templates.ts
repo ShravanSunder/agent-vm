@@ -30,6 +30,7 @@ Primary config:
 - Default zone: ${options.defaultZoneId}
 
 Use docs/manual/layout.md before moving files or changing generated folders.
+Use docs/manual/image-versioning.md before changing agent-vm package pins, managed image pins, OpenClaw runtime package pins, or generated Dockerfiles.
 Use docs/manual/scope.md before changing OpenClaw sandbox scope or tool VM lease behavior.
 Use docs/manual/tool-access.md before answering whether a tool binary, auth profile, or tool VM image should be agent-specific.
 Use docs/manual/channels.md before helping a human configure Discord, Slack, Telegram, or another OpenClaw channel.
@@ -55,15 +56,16 @@ This manual is generated from the installed agent-vm package. It is the deployme
 
 Read in this order:
 1. layout.md explains generated folders and ownership.
-2. scope.md explains session, agent, and shared scope.
-3. openclaw.md explains OpenClaw gateway configuration.
-4. openclaw-defaults.md explains agent-vm-owned OpenClaw defaults and doctor checks.
-5. tool-access.md explains binary, auth, OpenClaw tool, and zone/image isolation.
-6. channels.md explains how deployments add Discord or other channels.
-7. runtime-paths.md explains /work and other in-VM paths.
-8. per-agent-setup.md explains multi-agent scope and tool access choices.
-9. migration-discord.md explains how existing Discord deployments keep working.
-10. secrets.md explains runtime auth and HTTP mediation.
+2. image-versioning.md explains package pins, managed image pins, overlays, and generated Dockerfiles.
+3. scope.md explains session, agent, and shared scope.
+4. openclaw.md explains OpenClaw gateway configuration.
+5. openclaw-defaults.md explains agent-vm-owned OpenClaw defaults and doctor checks.
+6. tool-access.md explains binary, auth, OpenClaw tool, and zone/image isolation.
+7. channels.md explains how deployments add Discord or other channels.
+8. runtime-paths.md explains /work and other in-VM paths.
+9. per-agent-setup.md explains multi-agent scope and tool access choices.
+10. migration-discord.md explains how existing Discord deployments keep working.
+11. secrets.md explains runtime auth and HTTP mediation.
 
 Local deployment notes belong in docs/manual/local-notes.md or another non-generated file.
 `,
@@ -89,6 +91,33 @@ OpenClaw gateway VMs mount zoneFilesDir at /zone.
 OpenClaw Tool VMs mount the validated lease work mount at /work.
 Worker task VMs keep repo files on rootfs/COW at /work/repos.
 OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work.
+`,
+			),
+		},
+		{
+			relativePath: 'docs/manual/image-versioning.md',
+			content: generatedPage(
+				'Image Versioning',
+				`
+There is one owner for each version decision.
+
+package.json owns which installed @agent-vm/* package version this deployment uses. Upgrade agent-vm by changing package.json and the lockfile, then run agent-vm manual update and agent-vm build from that installed package.
+
+The installed @agent-vm/agent-vm package owns managed-images.json. That manifest selects the managed GHCR base image tags and managed OpenClaw default version tested with that package. Deployment repos should not copy or edit managed-images.json.
+
+vm-images/.../overlay.jsonc owns deployment image additions. Use extraAptPackages for apt packages, copy for deployment files, runAfterBase for post-base commands, and extraOpenClawPackages for OpenClaw runtime package pins such as openclaw@2026.5.7 or @openclaw/discord@2026.5.7.
+
+Do not edit cacheDir/generated-dockerfiles/... by hand. Generated Dockerfiles are build output. If a generated Dockerfile contains the wrong package version, change package.json or the overlay that produced it, then rebuild.
+
+For OpenClaw gateway images, agent-vm build resolves packages in this order:
+1. @agent-vm/openclaw-agent-vm-plugin comes from the installed agent-vm package.
+2. managed default OpenClaw companion packages come from managed-images.json.
+3. overlay extraOpenClawPackages override managed companion defaults by package name.
+4. generated Dockerfiles receive the resolved package specs only as disposable output.
+
+If the deployment installs openclaw in package.json for host-side validation, keep it aligned with the runtime version chosen by the overlay. Treat package.json's openclaw entry as the validation tool mirror, not the runtime image owner.
+
+agent-vm build prints the resolved base image, generated Dockerfile path, OpenClaw plugin package, OpenClaw runtime packages, and the source of each version before Docker and Gondolin work begin. Read that plan before debugging Docker output.
 `,
 			),
 		},
@@ -143,14 +172,14 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	agents.defaults.model.primary is openai-codex/gpt-5.5 with thinkingDefault low.
 	session.dmScope is per-channel-peer so Discord DMs from different people do not share one agent session.
 	tools.web.fetch.ssrfPolicy trusts Gondolin's OpenClaw-compatible fake IP ranges for web_fetch.
-	tools.sandbox.tools.alsoAllow includes web_search and web_fetch so sandboxed sessions can see web tools once a provider is configured.
+	tools.sandbox.tools.alsoAllow includes web_search, web_fetch, and message so sandboxed sessions can see web tools once a provider is configured and can explicitly send channel replies when OpenClaw uses message_tool_only group reply delivery.
 	plugins.load.paths includes /home/openclaw/.openclaw/extensions for vendored extensions and /pnpm/global/5/node_modules/@openclaw for managed OpenClaw packages.
 	plugins.slots.memory selects memory-core when memory-core is enabled.
 	gateway.auth.mode is token for agent-vm-managed gateways.
 	logging.file is rendered in the effective OpenClaw config as /agent-vm/logs/openclaw-YYYY-MM-DD.log unless the deployment explicitly sets its own logging.file.
 
 	Managed OpenClaw gateway images install @agent-vm/openclaw-agent-vm-plugin and register it as the gondolin extension.
-	Managed OpenClaw gateway images install external channel packages from config. For example, channels.discord.enabled installs @openclaw/discord for the managed OpenClaw release.
+	Managed OpenClaw gateway images install external channel packages required by config. For example, channels.discord.enabled asks for @openclaw/discord. The managed release supplies the default version unless vm-images/gateways/openclaw/overlay.jsonc pins that package in extraOpenClawPackages.
 
 	Use agent-vm init --openclaw-agents sun,shravan,alevtina to scaffold agents.list entries with per-agent /zone/agents/<id> workspaces.
 
@@ -231,7 +260,8 @@ Discord recipe:
 - Add gateway.discord.gg:443 to websocketBypass.
 - Enable channels.discord in deployment-owned openclaw.json.
 - Do not add Discord under plugins.allow or plugins.entries.
-- agent-vm build installs @openclaw/discord automatically for managed OpenClaw images.
+- agent-vm build installs @openclaw/discord for managed OpenClaw images when channels.discord is enabled.
+- Pin @openclaw/discord in vm-images/gateways/openclaw/overlay.jsonc only when the deployment needs to override the managed default version.
 - Add runtimeAuthHints only if the agent should know that a Discord service token exists.
 `,
 			),

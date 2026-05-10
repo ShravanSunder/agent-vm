@@ -16,6 +16,8 @@ import {
 import {
 	generateManagedDockerfile as generateManagedDockerfileDefault,
 	resolveManagedImageRelease as resolveManagedImageReleaseDefault,
+	type GenerateManagedDockerfileResult,
+	type ManagedDockerfilePlan,
 	type ManagedImageRelease,
 	type ManagedImageSource,
 } from '../build/managed-image-dockerfile.js';
@@ -70,8 +72,8 @@ export interface BuildCommandDependencies {
 		readonly outputDirectory: string;
 		readonly overlayPath?: string | undefined;
 		readonly managedImageRelease: ManagedImageRelease;
-		readonly requiredOpenClawPackages?: readonly string[];
-	}) => Promise<string>;
+		readonly requiredOpenClawPackageNames?: readonly string[];
+	}) => Promise<GenerateManagedDockerfileResult>;
 	readonly resolveManagedImageRelease?: () => Promise<ManagedImageRelease>;
 	readonly syncBundledOpenClawPlugin?: (
 		targetDir: string,
@@ -359,7 +361,6 @@ async function resolveProjectRootFromDockerfile(dockerfilePath: string): Promise
 async function resolveRequiredOpenClawPackagesForTarget(
 	systemConfig: LoadedSystemConfig,
 	imageTarget: ImageTarget,
-	managedImageRelease: ManagedImageRelease,
 ): Promise<readonly string[]> {
 	if (
 		imageTarget.family !== 'gateway' ||
@@ -368,7 +369,7 @@ async function resolveRequiredOpenClawPackagesForTarget(
 	) {
 		return [];
 	}
-	const requiredPackageSpecs = new Set<string>();
+	const requiredPackageNames = new Set<string>();
 	for (const zone of systemConfig.zones) {
 		if (zone.gateway.type !== 'openclaw' || zone.gateway.imageProfile !== imageTarget.name) {
 			continue;
@@ -378,13 +379,39 @@ async function resolveRequiredOpenClawPackagesForTarget(
 		const openClawConfig = openClawManagedPackageConfigSchema.parse(rawOpenClawConfig);
 		for (const packageRule of openClawManagedPackageRules) {
 			if (packageRule.isEnabled(openClawConfig)) {
-				requiredPackageSpecs.add(
-					`${packageRule.packageName}@${managedImageRelease.openClawVersion}`,
-				);
+				requiredPackageNames.add(packageRule.packageName);
 			}
 		}
 	}
-	return [...requiredPackageSpecs].toSorted();
+	return [...requiredPackageNames].toSorted();
+}
+
+function formatManagedDockerfilePlan(plan: ManagedDockerfilePlan): string {
+	const lines = [
+		`Managed image plan: ${plan.imageTargetFamily}/${plan.imageTargetName}`,
+		`base image: ${plan.baseImage.reference}`,
+		`source: ${plan.baseImage.source}`,
+		`generated Dockerfile: ${plan.dockerfilePath}`,
+	];
+	if (plan.openClawAgentVmPluginPackage) {
+		lines.push(
+			`agent-vm plugin: ${plan.openClawAgentVmPluginPackage.spec}`,
+			`source: ${plan.openClawAgentVmPluginPackage.source}`,
+		);
+	}
+	if (plan.openClawPackages.length > 0) {
+		lines.push('OpenClaw packages:');
+		for (const packageEntry of plan.openClawPackages) {
+			lines.push(`  ${packageEntry.spec}`, `  source: ${packageEntry.source}`);
+		}
+	}
+	if (plan.warnings.length > 0) {
+		lines.push('warnings:');
+		for (const warning of plan.warnings) {
+			lines.push(`  ${warning.message}`);
+		}
+	}
+	return lines.join('\n');
 }
 
 export async function runBuildCommand(
@@ -462,18 +489,18 @@ export async function runBuildCommand(
 			throw new Error(`Missing resolved Docker image tag for image profile '${imageTarget.name}'.`);
 		}
 		let dockerfilePath = imageTarget.dockerfile;
+		let managedDockerfilePlan: ManagedDockerfilePlan | undefined;
 		if (imageTarget.source) {
 			if (!managedImageRelease) {
 				throw new Error('Missing managed image release for managed image build.');
 			}
 			// oxlint-disable-next-line no-await-in-loop -- package detection is profile-local and low-volume
-			const requiredOpenClawPackages = await resolveRequiredOpenClawPackagesForTarget(
+			const requiredOpenClawPackageNames = await resolveRequiredOpenClawPackagesForTarget(
 				options.systemConfig,
 				imageTarget,
-				managedImageRelease,
 			);
 			// oxlint-disable-next-line no-await-in-loop -- each generated Docker context belongs to one image target
-			dockerfilePath = await generateManagedDockerfile({
+			const managedDockerfile = await generateManagedDockerfile({
 				base: imageTarget.source.base,
 				imageTargetFamily: imageTarget.family,
 				imageTargetName: imageTarget.name,
@@ -485,8 +512,10 @@ export async function runBuildCommand(
 				),
 				...(imageTarget.source.overlay ? { overlayPath: imageTarget.source.overlay } : {}),
 				managedImageRelease,
-				requiredOpenClawPackages,
+				requiredOpenClawPackageNames,
 			});
+			dockerfilePath = managedDockerfile.dockerfilePath;
+			managedDockerfilePlan = managedDockerfile.plan;
 		}
 		if (!dockerfilePath) {
 			throw new Error(`Missing Dockerfile path for image profile '${imageTarget.name}'.`);
@@ -509,6 +538,9 @@ export async function runBuildCommand(
 		await runTaskStep(
 			`Docker: ${imageTarget.family}/${imageTarget.name} (${imageTag})`,
 			async (taskContext) => {
+				if (managedDockerfilePlan) {
+					taskContext?.setOutput({ message: formatManagedDockerfilePlan(managedDockerfilePlan) });
+				}
 				taskContext?.setStatus('docker build');
 				await buildDockerImage({
 					dockerfilePath,
