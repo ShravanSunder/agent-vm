@@ -59,6 +59,31 @@ export interface SshHelpers {
 	};
 }
 
+export interface OpenClawToolRegistration {
+	readonly description: string;
+	readonly execute: (toolCallId: string, params: unknown) => Promise<OpenClawToolResult>;
+	readonly name: string;
+	readonly parameters: Record<string, unknown>;
+}
+
+export interface OpenClawToolRegistrationOptions {
+	readonly name?: string;
+	readonly names?: readonly string[];
+	readonly optional?: boolean;
+}
+
+export interface OpenClawToolResult {
+	readonly content: string;
+	readonly details?: unknown;
+}
+
+export interface OpenClawToolRegistrationApi {
+	readonly registerTool?: (
+		tool: OpenClawToolRegistration,
+		options?: OpenClawToolRegistrationOptions,
+	) => void;
+}
+
 export function assertSdkShape(value: unknown): asserts value is SshHelpers & {
 	registerSandboxBackend: (
 		id: string,

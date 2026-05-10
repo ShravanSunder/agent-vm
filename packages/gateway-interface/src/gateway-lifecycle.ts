@@ -83,6 +83,8 @@ type GatewayZoneGatewayConfig = OpenClawGatewayZoneGatewayConfig | WorkerGateway
 export interface GatewayZoneConfig {
 	readonly id: string;
 	readonly gateway: GatewayZoneGatewayConfig;
+	readonly runtimeEnvironment?: Readonly<Record<string, string>>;
+	readonly runtimePluginConfigs?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 	readonly secrets: Record<
 		string,
 		| {

@@ -10,12 +10,23 @@
 
 ---
 
+## May 10 Main Refresh
+
+Current `origin/master` is `1562812` (`Merge pull request #63 from ShravanSunder/feat/openclaw-defaults-logs-multiagent-wt`). The zone Git design still holds, but the implementation plan must align with these now-landed changes:
+
+- OpenClaw scaffolds now default `agents.defaults.workspace` to `/zone/agents/default`, not `/zone`.
+- `agent-vm init --openclaw-agents sun,shravan,alevtina` now scaffolds explicit `/zone/agents/<id>` workspaces.
+- OpenClaw deployment doctor checks now live in `packages/agent-vm/src/operations/openclaw-deployment-doctor.ts`, with `controller doctor` collecting those checks in `packages/agent-vm/src/cli/controller-operation-commands.ts`.
+- Controller SSH/admin access now has explicit options (`EnableSshForZoneOptions`, `ExecInZoneOptions`) in `controller-http-route-support.ts`; zone Git should not reuse those secret-bearing admin paths.
+- Lease roots still reject `/zone` as a requested `workMountDir`, but a zoneGit-enabled lease may still mount the zone root internally while returning the requested child workdir, for example `/zone/agents/shravan`.
+
 ## Evidence And Constraints
 
 - Current worker design already has the desired security split: agents may commit, but must not raw `git push`; controller handles authenticated push. Reference: `packages/agent-vm-worker/src/prompt/prompt-defaults.ts`.
 - Worker split-Git uses a `.git` pointer in the VM worktree and a Git dir under runtime storage. Reference: `packages/agent-vm-worker/src/git/repo-worktree-bootstrap.ts`.
 - Current OpenClaw Tool VM leases always mount the selected host work directory at `/work` and serialize `workdir: '/work'`. References: `packages/agent-vm/src/tool-vm/tool-vm-lifecycle.ts`, `packages/agent-vm/src/controller/http/controller-http-route-support.ts`.
 - A single zone-root repo cannot be discovered from `/work` if `/work` is only `/zone/agents/<agentId>`. To preserve one zone repo and allow raw `git commit`, the Tool VM must see the zone root at `/zone` and run inside `/zone/...`.
+- Current OpenClaw multi-agent defaults make `/zone/agents/<agentId>` the normal authored workspace. Zone Git must treat `/zone` as the repository root and those agent workspaces as subdirectories of the same worktree.
 - DeepWiki confirmed OpenClaw plugins can register agent-visible tools via `api.registerTool`; use this to expose `zone_git_push` from the existing gondolin plugin without putting credentials in the Tool VM.
 
 ---
@@ -89,6 +100,12 @@
 - `packages/agent-vm/src/backup/backup-create-operation.test.ts`
   Tests backup behavior for clean, dirty, and unpushed zone Git states.
 
+- `packages/agent-vm/src/operations/zone-git-doctor.ts`
+  Produces zone Git doctor checks that need filesystem/Git state.
+
+- `packages/agent-vm/src/operations/zone-git-doctor.test.ts`
+  Tests missing GitHub token, uninitialized Git metadata, dirty state, and unpushed commits.
+
 - `packages/openclaw-agent-vm-plugin/src/openclaw-plugin-registration.ts`
   Registers the `zone_git_push` tool when the plugin API supports `registerTool`.
 
@@ -100,6 +117,9 @@
 
 - `packages/agent-vm/src/cli/commands/create-app.ts`
   Adds the `zone-git` CLI group.
+
+- `packages/agent-vm/src/cli/controller-operation-commands.ts`
+  Adds zone Git doctor checks to the existing `controller doctor` dynamic checks.
 
 - `docs/manual/runtime-paths.md`
   Documents zone Git paths and backup boundary.
@@ -470,6 +490,8 @@ When the zone is OpenClaw with `gateway.zoneGit` and the work mount is under `/z
 	},
 }
 ```
+
+`resolveLeaseWorkMountDir()` currently only accepts `{ workMountDir, zone }`; change its options to also accept `runtimeDir` so it can compute the zone Git mount root without reaching into global state.
 
 Keep current behavior for non-zoneGit leases:
 
@@ -851,8 +873,12 @@ git commit -m "feat: add zone git CLI commands" -m "Co-authored-by: Codex <norep
 **Files:**
 - Modify: `packages/agent-vm/src/backup/backup-create-operation.ts`
 - Modify: `packages/agent-vm/src/backup/backup-create-operation.test.ts`
-- Modify: `packages/agent-vm/src/operations/doctor.ts`
-- Modify: `packages/agent-vm/src/operations/doctor.test.ts`
+- Create: `packages/agent-vm/src/operations/zone-git-doctor.ts`
+- Create: `packages/agent-vm/src/operations/zone-git-doctor.test.ts`
+- Modify: `packages/agent-vm/src/cli/controller-operation-commands.ts`
+- Modify: `packages/agent-vm/src/cli/controller-operation-commands.test.ts`
+- Modify: `packages/agent-vm/src/operations/openclaw-deployment-doctor.ts`
+- Modify: `packages/agent-vm/src/operations/openclaw-deployment-doctor.test.ts`
 
 - [ ] **Step 1: Write guardrail tests**
 
@@ -868,6 +894,7 @@ Doctor tests:
 - zoneGit configured without `host.githubToken` is an error
 - zoneGit configured and repo not initialized is a warning with `agent-vm zone-git init --zone <zone>`
 - zoneGit dirty/ahead status is reported
+- OpenClaw deployment doctor still checks workspace access, plugin load paths, memory slot, shared `/zone` workspace, and per-agent auth profiles.
 
 - [ ] **Step 2: Implement backup preflight**
 
@@ -891,7 +918,7 @@ Do not copy `runtimeDir` into backups.
 
 - [ ] **Step 3: Implement doctor checks**
 
-Add checks to `doctor.ts`:
+Add filesystem/Git checks to `zone-git-doctor.ts` and collect them from `controller-operation-commands.ts` beside `collectOpenClawDeploymentDoctorChecks()`. Do not put mutable Git status checks into the base `operations/doctor.ts`; that file owns host/system readiness checks.
 
 ```text
 zone-git-github-token-<zoneId>
@@ -906,12 +933,18 @@ Keep failures actionable and include paths:
 runtimeDir/zones/<zoneId>/zone-git/zone-files.git
 ```
 
+Add any OpenClaw-config-only hints, such as reminding multi-agent deployments that `/zone/agents/<id>` workspaces are subdirectories of the zone Git repo, to `openclaw-deployment-doctor.ts`.
+
 - [ ] **Step 4: Run focused tests**
 
 Run:
 
 ```bash
-pnpm vitest run packages/agent-vm/src/backup/backup-create-operation.test.ts packages/agent-vm/src/operations/doctor.test.ts
+pnpm vitest run \
+  packages/agent-vm/src/backup/backup-create-operation.test.ts \
+  packages/agent-vm/src/operations/zone-git-doctor.test.ts \
+  packages/agent-vm/src/operations/openclaw-deployment-doctor.test.ts \
+  packages/agent-vm/src/cli/controller-operation-commands.test.ts
 ```
 
 Expected: backup and doctor tests pass.
@@ -919,7 +952,7 @@ Expected: backup and doctor tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/agent-vm/src/backup packages/agent-vm/src/operations
+git add packages/agent-vm/src/backup packages/agent-vm/src/operations packages/agent-vm/src/cli/controller-operation-commands.ts packages/agent-vm/src/cli/controller-operation-commands.test.ts
 git commit -m "feat: guard zone git backups and doctor checks" -m "Co-authored-by: Codex <noreply@openai.com>"
 ```
 
@@ -967,6 +1000,8 @@ Where OpenClaw per-agent files are scaffolded, change Git instructions to:
 - If zone_git_push reports divergence or rejection, stop and report the exact message.
 ```
 
+This instruction belongs in the generated workspace files under `/zone/agents/default` and each `/zone/agents/<id>` created by `--openclaw-agents`.
+
 - [ ] **Step 3: Add init tests**
 
 Assert new scaffolded OpenClaw `AGENTS.md` includes:
@@ -1009,7 +1044,9 @@ pnpm vitest run \
   packages/agent-vm/src/tool-vm/tool-vm-lifecycle.test.ts \
   packages/agent-vm/src/controller/http/controller-http-routes.test.ts \
   packages/agent-vm/src/backup/backup-create-operation.test.ts \
-  packages/agent-vm/src/operations/doctor.test.ts \
+  packages/agent-vm/src/operations/zone-git-doctor.test.ts \
+  packages/agent-vm/src/operations/openclaw-deployment-doctor.test.ts \
+  packages/agent-vm/src/cli/controller-operation-commands.test.ts \
   packages/openclaw-agent-vm-plugin/src/zone-git-tool.test.ts \
   packages/openclaw-agent-vm-plugin/src/openclaw-plugin-registration.test.ts
 ```
@@ -1117,4 +1154,3 @@ Skip this commit if no validation fixes were needed.
 - `backup create` does not include runtime Git metadata and refuses dirty or unpushed zone Git states.
 - Doctor catches missing GitHub token, missing zone Git init, dirty worktree, and unpushed commits.
 - Full lint, typecheck, test, format check, and `git diff --check` pass.
-

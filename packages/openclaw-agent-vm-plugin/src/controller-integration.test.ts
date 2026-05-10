@@ -55,6 +55,7 @@ describe('gondolin controller integration', () => {
 					lastUsedAt: 1,
 					profileId: 'standard',
 					scopeKey: 'agent:main:session-abc',
+					guestWorkdir: '/work',
 					sshAccess: {
 						command: 'ssh ...',
 						host: '127.0.0.1',
@@ -86,7 +87,10 @@ describe('gondolin controller integration', () => {
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
 			},
-			resolveLeaseWorkMountDir: async ({ workMountDir }) => workMountDir,
+			resolveLeaseWorkMountDir: async ({ workMountDir }) => ({
+				guestWorkdir: '/work',
+				hostWorkMountDir: workMountDir,
+			}),
 		});
 		const leaseClient = createLeaseClient({
 			controllerUrl: 'http://controller.vm.host:18800',

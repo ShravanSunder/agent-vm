@@ -84,6 +84,12 @@ export const controllerPullDefaultRequestSchema = z.object({
 	worktreeDirty: z.boolean().optional(),
 });
 
+export const controllerZoneGitPushRequestSchema = z
+	.object({
+		expectedHead: z.string().min(1),
+	})
+	.strict();
+
 const currentBranchAheadSchema = z.object({
 	status: z.literal('ahead'),
 	branch: z.string().min(1),

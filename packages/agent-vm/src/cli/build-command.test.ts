@@ -343,6 +343,7 @@ describe('runBuildCommand', () => {
 		);
 		expect(generatedDockerfile).not.toContain('@agent-vm/openclaw-agent-vm-plugin@0.0.52');
 		expect(generatedDockerfile).not.toContain('@agent-vm/openclaw-agent-vm-plugin@0.0.45');
+		expect(generatedDockerfile).toContain('RUN mkdir -p /pnpm/global/5/node_modules/@openclaw');
 		expect(generatedDockerfile).toContain(
 			'RUN ln -sf /pnpm/global/5/node_modules/@agent-vm/openclaw-agent-vm-plugin/dist /home/openclaw/.openclaw/extensions/gondolin',
 		);

@@ -479,7 +479,13 @@ describe('scaffoldAgentVmProject', () => {
 		);
 		expect(
 			await fs.readFile(path.join(targetDir, 'docs', 'manual', 'runtime-paths.md'), 'utf8'),
-		).toContain('OpenClaw Tool VMs run commands in /work');
+		).toContain('runtimeDir/zones/<zoneId>/zone-git/zone-files.git');
+		const perAgentManual = await fs.readFile(
+			path.join(targetDir, 'docs', 'manual', 'per-agent-setup.md'),
+			'utf8',
+		);
+		expect(perAgentManual).toContain('Do not run raw git push.');
+		expect(perAgentManual).toContain('zone_git_push');
 		expect(await fs.readlink(path.join(targetDir, 'CLAUDE.md'))).toBe('AGENTS.md');
 	});
 
@@ -817,6 +823,7 @@ describe('scaffoldAgentVmProject', () => {
 				};
 			};
 			readonly tools: {
+				readonly allow: readonly string[];
 				readonly sandbox: {
 					readonly tools: {
 						readonly alsoAllow: readonly string[];
@@ -838,8 +845,7 @@ describe('scaffoldAgentVmProject', () => {
 			'http://localhost:18791',
 		]);
 		expect(openClawConfig.plugins.load.paths).toEqual([
-			'/home/openclaw/.openclaw/extensions',
-			'/pnpm/global/5/node_modules/@openclaw',
+			'/home/openclaw/.openclaw/extensions/gondolin',
 		]);
 		expect(openClawConfig.agents.defaults.model.primary).toBe('openai-codex/gpt-5.5');
 		expect(openClawConfig.agents.defaults.thinkingDefault).toBe('low');
@@ -849,6 +855,7 @@ describe('scaffoldAgentVmProject', () => {
 			allowIpv6UniqueLocalRange: true,
 			allowRfc2544BenchmarkRange: true,
 		});
+		expect(openClawConfig.tools.allow).toContain('zone_git_push');
 		expect(openClawConfig.tools.sandbox.tools.alsoAllow).toEqual([
 			'web_search',
 			'web_fetch',
@@ -1271,6 +1278,7 @@ describe('scaffoldAgentVmProject', () => {
 				readonly slots?: { readonly memory?: string };
 				readonly entries?: Record<string, { readonly enabled?: boolean }>;
 			};
+			readonly tools?: { readonly allow?: readonly string[] };
 		};
 		expect(openClawConfig.gateway?.auth?.mode).toBe('token');
 		expect(openClawConfig.agents?.defaults?.sandbox?.scope).toBe('agent');
@@ -1280,6 +1288,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(openClawConfig.plugins?.allow).toContain('memory-core');
 		expect(openClawConfig.plugins?.slots?.memory).toBe('memory-core');
 		expect(openClawConfig.plugins?.entries?.['memory-core']).toEqual({ enabled: true });
+		expect(openClawConfig.tools?.allow).toContain('zone_git_push');
 	});
 
 	it('does not scaffold Discord environment variables for openclaw defaults', async () => {

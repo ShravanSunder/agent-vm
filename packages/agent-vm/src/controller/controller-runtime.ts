@@ -10,6 +10,7 @@ import {
 } from './controller-runtime-operations.js';
 import {
 	createSecretResolver,
+	findConfiguredZone,
 	resolveControllerGithubToken,
 } from './controller-runtime-support.js';
 import {
@@ -27,8 +28,21 @@ import { createLeaseManager } from './leases/lease-manager.js';
 import { createTcpPool } from './leases/tcp-pool.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
 import type { PreparedWorkerTask, WorkerTaskInput } from './worker-task-runner.js';
+import { ZoneGitCapabilityStore } from './zone-git/zone-git-capability-store.js';
+import { ZoneGitOperationLocks } from './zone-git/zone-git-operation-locks.js';
+import {
+	getZoneGitStatus,
+	pushZoneGit,
+	type ZoneGitReadConfig,
+} from './zone-git/zone-git-operations.js';
+import { isOpenClawZoneGitConfigured } from './zone-git/zone-git-paths.js';
 import { createOpenClawZoneRuntime } from './zone-runtimes/openclaw-zone-runtime.js';
 import { createWorkerZoneRuntime } from './zone-runtimes/worker-zone-runtime.js';
+import {
+	ControllerZoneConfigurationError,
+	ControllerZoneNotFoundError,
+	ControllerZoneOperationUnsupportedError,
+} from './zone-runtimes/zone-runtime-errors.js';
 import { createZoneRuntimeRegistry } from './zone-runtimes/zone-runtime-registry.js';
 import type { ControllerZoneConfig } from './zone-runtimes/zone-runtime-types.js';
 
@@ -61,6 +75,40 @@ function isWorkerZone(zone: ControllerZoneConfig): zone is ControllerZoneConfig 
 	return zone.gateway.type === 'worker';
 }
 
+function resolveZoneGitOperationConfig(options: {
+	readonly controllerGithubToken: string | null;
+	readonly systemConfig: StartControllerRuntimeOptions['systemConfig'];
+	readonly zoneId: string;
+}): ZoneGitReadConfig {
+	let zone: ControllerZoneConfig;
+	try {
+		zone = findConfiguredZone(options.systemConfig, options.zoneId);
+	} catch {
+		throw new ControllerZoneNotFoundError(options.zoneId);
+	}
+	if (!isOpenClawZoneGitConfigured(zone)) {
+		throw new ControllerZoneOperationUnsupportedError(
+			options.zoneId,
+			'OpenClaw zone Git operations',
+			zone.gateway.type,
+		);
+	}
+	if (!options.controllerGithubToken) {
+		throw new ControllerZoneConfigurationError(
+			options.zoneId,
+			`zoneGit for zone '${options.zoneId}' requires host.githubToken so the controller can push without exposing credentials to VMs.`,
+		);
+	}
+	return {
+		branch: zone.gateway.zoneGit.remote.branch,
+		githubToken: options.controllerGithubToken,
+		remoteUrl: zone.gateway.zoneGit.remote.repoUrl,
+		runtimeDir: options.systemConfig.runtimeDir,
+		zoneFilesDir: zone.gateway.zoneFilesDir,
+		zoneId: options.zoneId,
+	};
+}
+
 export async function startControllerRuntime(
 	options: StartControllerRuntimeOptions,
 	dependencies: ControllerRuntimeDependencies,
@@ -90,17 +138,22 @@ export async function startControllerRuntime(
 				systemConfig: options.systemConfig,
 				tcpSlot: toolVmOptions.tcpSlot,
 				hostWorkMountDir: toolVmOptions.hostWorkMountDir,
+				...(toolVmOptions.zoneGitMount ? { zoneGitMount: toolVmOptions.zoneGitMount } : {}),
 				zoneId: toolVmOptions.zoneId,
 			}));
 	const tcpPool = createTcpPool(options.systemConfig.tcpPool);
 	const activeTaskRegistry = new ActiveTaskRegistry();
 	const requestHeartbeatRegistry = new RequestHeartbeatRegistry();
+	const zoneGitCapabilityStore =
+		dependencies.zoneGitCapabilityStore ?? new ZoneGitCapabilityStore();
+	const zoneGitOperationLocks = dependencies.zoneGitOperationLocks ?? new ZoneGitOperationLocks();
 	const leaseManager = createLeaseManager({
 		createManagedVm: async (leaseOptions) =>
 			await createManagedToolVm({
 				profile: leaseOptions.profile,
 				tcpSlot: leaseOptions.tcpSlot,
 				hostWorkMountDir: leaseOptions.hostWorkMountDir,
+				...(leaseOptions.zoneGitMount ? { zoneGitMount: leaseOptions.zoneGitMount } : {}),
 				zoneId: leaseOptions.zoneId,
 			}),
 		now,
@@ -164,6 +217,8 @@ export async function startControllerRuntime(
 						restartGatewayZone: async (zoneId) =>
 							await (dependencies.startGatewayZone ?? startGatewayZone)({
 								runTask: runTaskStep,
+								runtimeEnvironment: zoneGitCapabilityStore.buildRuntimeEnvironment(zoneId),
+								runtimePluginConfigs: zoneGitCapabilityStore.buildRuntimePluginConfig(zoneId),
 								secretResolver,
 								systemConfig: options.systemConfig,
 								zoneId,
@@ -241,6 +296,14 @@ export async function startControllerRuntime(
 			await registry.getWorkerRuntime(prepared.zoneId).executeWorkerTask(prepared),
 		getTaskState: async (zoneId: string, taskId: string) =>
 			await registry.getWorkerRuntime(zoneId).getTaskState(taskId),
+		getZoneGitStatus: async (zoneId: string) =>
+			await getZoneGitStatus(
+				resolveZoneGitOperationConfig({
+					controllerGithubToken,
+					systemConfig: options.systemConfig,
+					zoneId,
+				}),
+			),
 		prepareWorkerTask: async (zoneId: string, input: WorkerTaskInput) =>
 			await registry.getWorkerRuntime(zoneId).prepareWorkerTask(input),
 		pullDefaultForTask: async (zoneId: string, taskId: string, input: PullDefaultRequest) =>
@@ -250,6 +313,21 @@ export async function startControllerRuntime(
 			taskId: string,
 			input: { readonly branches: readonly PushBranchRequest[] },
 		) => await registry.getWorkerRuntime(zoneId).pushTaskBranches(taskId, input),
+		pushZoneGit: async (zoneId: string, input: { readonly expectedHead: string }) =>
+			await zoneGitOperationLocks.runExclusive(
+				zoneId,
+				async () =>
+					await pushZoneGit({
+						...resolveZoneGitOperationConfig({
+							controllerGithubToken,
+							systemConfig: options.systemConfig,
+							zoneId,
+						}),
+						expectedHead: input.expectedHead,
+					}),
+			),
+		verifyZoneGitPushToken: (zoneId: string, token: string | undefined) =>
+			zoneGitCapabilityStore.verifyTokenForZone(zoneId, token),
 		stopController,
 	};
 	const controllerApp = createControllerService({

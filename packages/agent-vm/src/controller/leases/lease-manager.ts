@@ -1,5 +1,6 @@
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 
+import type { ZoneGitToolVmMount } from '../zone-git/zone-git-paths.js';
 import type { TcpPool } from './tcp-pool.js';
 
 export interface ToolVmProfile {
@@ -11,6 +12,7 @@ export interface ToolVmProfile {
 export interface Lease {
 	readonly agentWorkspaceDir: string;
 	readonly createdAt: number;
+	readonly guestWorkdir: string;
 	readonly id: string;
 	readonly lastUsedAt: number;
 	readonly profileId: string;
@@ -25,6 +27,7 @@ export interface Lease {
 	readonly tcpSlot: number;
 	readonly vm: ManagedVm;
 	readonly hostWorkMountDir: string;
+	readonly zoneGitMount?: ZoneGitToolVmMount;
 	readonly zoneId: string;
 }
 
@@ -45,7 +48,9 @@ export interface LeaseManager {
 		readonly profile: ToolVmProfile;
 		readonly profileId: string;
 		readonly scopeKey: string;
+		readonly guestWorkdir: string;
 		readonly hostWorkMountDir: string;
+		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
 	}): Promise<Lease>;
 	keepLeaseAlive(leaseId: string): LeaseRenewal | undefined;
@@ -72,7 +77,9 @@ function assertReusableScopeLease(
 	requestedLease: {
 		readonly agentWorkspaceDir: string;
 		readonly profileId: string;
+		readonly guestWorkdir: string;
 		readonly hostWorkMountDir: string;
+		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
 		readonly scopeKey: string;
 	},
@@ -87,11 +94,34 @@ function assertReusableScopeLease(
 			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing hostWorkMountDir '${existingLease.hostWorkMountDir}' does not match requested hostWorkMountDir '${requestedLease.hostWorkMountDir}'.`,
 		);
 	}
+	if (existingLease.guestWorkdir !== requestedLease.guestWorkdir) {
+		throw new LeaseScopeConflictError(
+			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing guestWorkdir '${existingLease.guestWorkdir}' does not match requested guestWorkdir '${requestedLease.guestWorkdir}'.`,
+		);
+	}
+	if (!zoneGitMountsEqual(existingLease.zoneGitMount, requestedLease.zoneGitMount)) {
+		throw new LeaseScopeConflictError(
+			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing zoneGitMount does not match requested zoneGitMount.`,
+		);
+	}
 	if (existingLease.agentWorkspaceDir !== requestedLease.agentWorkspaceDir) {
 		throw new LeaseScopeConflictError(
 			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing agentWorkspaceDir '${existingLease.agentWorkspaceDir}' does not match requested agentWorkspaceDir '${requestedLease.agentWorkspaceDir}'.`,
 		);
 	}
+}
+
+function zoneGitMountsEqual(
+	leftMount: ZoneGitToolVmMount | undefined,
+	rightMount: ZoneGitToolVmMount | undefined,
+): boolean {
+	if (!leftMount || !rightMount) {
+		return leftMount === rightMount;
+	}
+	return (
+		leftMount.hostZoneFilesDir === rightMount.hostZoneFilesDir &&
+		leftMount.hostZoneGitRoot === rightMount.hostZoneGitRoot
+	);
 }
 
 async function isLeaseVmLive(lease: Lease): Promise<boolean> {
@@ -120,7 +150,9 @@ export function createLeaseManager(options: {
 		readonly profileId: string;
 		readonly scopeKey: string;
 		readonly tcpSlot: number;
+		readonly guestWorkdir: string;
 		readonly hostWorkMountDir: string;
+		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
 	}) => Promise<ManagedVm>;
 	readonly now: () => number;
@@ -223,6 +255,7 @@ export function createLeaseManager(options: {
 						const lease: Lease = {
 							agentWorkspaceDir: leaseOptions.agentWorkspaceDir,
 							createdAt,
+							guestWorkdir: leaseOptions.guestWorkdir,
 							id: `${leaseOptions.zoneId}-${leaseOptions.scopeKey}-${createdAt}`,
 							lastUsedAt: createdAt,
 							profileId: leaseOptions.profileId,
@@ -231,6 +264,7 @@ export function createLeaseManager(options: {
 							tcpSlot,
 							vm,
 							hostWorkMountDir: leaseOptions.hostWorkMountDir,
+							...(leaseOptions.zoneGitMount ? { zoneGitMount: leaseOptions.zoneGitMount } : {}),
 							zoneId: leaseOptions.zoneId,
 						};
 						storeLease(lease);

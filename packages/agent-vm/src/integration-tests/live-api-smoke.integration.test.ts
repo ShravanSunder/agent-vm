@@ -86,6 +86,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 			lastUsedAt: Date.now(),
 			profileId: 'standard',
 			scopeKey: 'agent:main:smoke',
+			guestWorkdir: '/work',
 			sshAccess: {
 				host: '127.0.0.1',
 				identityFile: '/tmp/key',
@@ -131,7 +132,10 @@ describe('live smoke: API client → controller over real HTTP', () => {
 				listLeases: vi.fn(() => [lease]),
 				releaseLease: vi.fn(async () => {}),
 			},
-			resolveLeaseWorkMountDir: async ({ workMountDir }) => workMountDir,
+			resolveLeaseWorkMountDir: async ({ workMountDir }) => ({
+				guestWorkdir: '/work',
+				hostWorkMountDir: workMountDir,
+			}),
 		});
 		controllerServer = serve({ fetch: controllerApp.fetch, port: controllerPort });
 

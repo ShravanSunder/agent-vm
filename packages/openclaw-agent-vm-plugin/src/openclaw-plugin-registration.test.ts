@@ -41,10 +41,12 @@ describe('createGondolinPlugin', () => {
 		const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
 			readonly activation?: { readonly onStartup?: boolean };
 			readonly cliBackends?: readonly string[];
+			readonly contracts?: { readonly tools?: readonly string[] };
 		};
 
 		expect(manifest.activation?.onStartup).toBe(true);
 		expect(manifest.cliBackends).toContain('gondolin');
+		expect(manifest.contracts?.tools).toContain('zone_git_push');
 	});
 
 	it('exports a default plugin descriptor with the gondolin id', () => {
@@ -84,6 +86,122 @@ describe('createGondolinPlugin', () => {
 			expect.stringContaining('[gondolin] failed to load OpenClaw SDK'),
 		);
 		consoleSpy.mockRestore();
+	});
+
+	it('registers the zone_git_push tool from plugin config when available', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const registerTool = vi.fn();
+
+		try {
+			defaultPlugin.register({
+				pluginConfig: {
+					controllerUrl: 'http://controller.vm.host:18800',
+					zoneId: 'shravan',
+				},
+				registerTool,
+				registrationMode: 'full',
+			});
+
+			expect(registerTool).toHaveBeenCalledWith(
+				expect.objectContaining({
+					name: 'zone_git_push',
+					parameters: expect.objectContaining({ type: 'object' }),
+				}),
+				{ name: 'zone_git_push', optional: true },
+			);
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('registers zone_git_push during OpenClaw tool discovery without loading the sandbox SDK', () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const registerTool = vi.fn();
+
+		try {
+			defaultPlugin.register({
+				pluginConfig: {
+					controllerUrl: 'http://controller.vm.host:18800',
+					zoneId: 'shravan',
+				},
+				registerTool,
+				registrationMode: 'tool-discovery',
+			});
+
+			expect(registerTool).toHaveBeenCalledWith(
+				expect.objectContaining({
+					name: 'zone_git_push',
+					parameters: expect.objectContaining({ type: 'object' }),
+				}),
+				{ name: 'zone_git_push', optional: true },
+			);
+			expect(stderrWrite).not.toHaveBeenCalled();
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('fails full registration when OpenClaw does not expose registerTool', () => {
+		expect(() =>
+			defaultPlugin.register({
+				pluginConfig: {
+					controllerUrl: 'http://controller.vm.host:18800',
+					zoneId: 'shravan',
+				},
+				registrationMode: 'full',
+			}),
+		).toThrow('Gondolin full registration requires OpenClaw registerTool.');
+	});
+
+	it('resolves zone_git_push token from the configured environment variable', async () => {
+		const previousToken = process.env.AGENT_VM_ZONE_GIT_TOKEN;
+		process.env.AGENT_VM_ZONE_GIT_TOKEN = 'runtime-push-token';
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		let registeredTool:
+			| Parameters<NonNullable<Parameters<typeof defaultPlugin.register>[0]['registerTool']>>[0]
+			| undefined;
+
+		try {
+			defaultPlugin.register({
+				pluginConfig: {
+					controllerUrl: 'http://controller.vm.host:18800',
+					zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
+					zoneId: 'shravan',
+				},
+				registerTool: (tool) => {
+					registeredTool = tool;
+				},
+				registrationMode: 'tool-discovery',
+			});
+
+			if (!registeredTool) {
+				throw new Error('Expected zone_git_push tool to be registered.');
+			}
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValue(new Response(JSON.stringify({ success: true })));
+			try {
+				await registeredTool.execute('tool-call-1', { expectedHead: 'abc123' });
+				expect(fetchSpy).toHaveBeenCalledWith(
+					'http://controller.vm.host:18800/zones/shravan/zone-git/push',
+					expect.objectContaining({
+						headers: {
+							'content-type': 'application/json',
+							'x-agent-vm-zone-git-token': 'runtime-push-token',
+						},
+					}),
+				);
+			} finally {
+				fetchSpy.mockRestore();
+			}
+		} finally {
+			stderrWrite.mockRestore();
+			if (previousToken === undefined) {
+				delete process.env.AGENT_VM_ZONE_GIT_TOKEN;
+			} else {
+				process.env.AGENT_VM_ZONE_GIT_TOKEN = previousToken;
+			}
+		}
 	});
 });
 

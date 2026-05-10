@@ -486,6 +486,100 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/zoneFilesDir/u);
 	});
 
+	test('loads OpenClaw zone Git config', async () => {
+		const input = createValidSystemConfigInput();
+		input.host.githubToken = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+		};
+		input.zones[0].gateway.zoneGit = {
+			remote: {
+				repoUrl: 'ShravanSunder/sunfam-zone-files',
+				branch: 'main',
+			},
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-zone-git-', input);
+
+		const config = await loadSystemConfig(configPath);
+		const zone = config.zones[0];
+		if (zone?.gateway.type !== 'openclaw') {
+			throw new Error('Expected fixture zone to be OpenClaw.');
+		}
+
+		expect(zone.gateway.zoneGit).toEqual({
+			remote: {
+				repoUrl: 'ShravanSunder/sunfam-zone-files',
+				branch: 'main',
+			},
+		});
+	});
+
+	test('defaults OpenClaw zone Git branch to main', async () => {
+		const input = createValidSystemConfigInput();
+		input.zones[0].gateway.zoneGit = {
+			remote: {
+				repoUrl: 'ShravanSunder/sunfam-zone-files',
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-zone-git-default-branch-',
+			input,
+		);
+
+		const config = await loadSystemConfig(configPath);
+		const zone = config.zones[0];
+		if (zone?.gateway.type !== 'openclaw') {
+			throw new Error('Expected fixture zone to be OpenClaw.');
+		}
+
+		expect(zone.gateway.zoneGit?.remote.branch).toBe('main');
+	});
+
+	test('rejects unsafe OpenClaw zone Git branch names', async () => {
+		const input = createValidSystemConfigInput();
+		input.zones[0].gateway.zoneGit = {
+			remote: {
+				repoUrl: 'ShravanSunder/sunfam-zone-files',
+				branch: 'main:refs/heads/pwn',
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-zone-git-unsafe-branch-',
+			input,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/git branch must/u);
+	});
+
+	test('rejects worker gateway configs with zoneGit', async () => {
+		const input = createValidSystemConfigInput();
+		const existingZone = input.zones[0];
+		input.zones[0] = {
+			id: existingZone.id,
+			secrets: existingZone.secrets,
+			runtimeAuthHints: existingZone.runtimeAuthHints,
+			allowedHosts: existingZone.allowedHosts,
+			gateway: {
+				type: 'worker',
+				imageProfile: 'worker',
+				memory: '2G',
+				cpus: 2,
+				port: 18791,
+				config: './shravan/worker.json',
+				stateDir: '../state/shravan',
+				zoneGit: {
+					remote: {
+						repoUrl: 'ShravanSunder/sunfam-zone-files',
+						branch: 'main',
+					},
+				},
+			},
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-worker-zone-git-', input);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/zoneGit/u);
+	});
+
 	test('rejects gateway configs without an explicit gateway type', async () => {
 		const input = createValidSystemConfigInput();
 		const { type: _type, ...gatewayWithoutType } = input.zones[0].gateway;
@@ -1175,6 +1269,20 @@ describe('loadSystemConfig', () => {
 		);
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/agent id must/u);
+	});
+
+	test('rejects path-unsafe zone identifiers', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0] = {
+			...config.zones[0],
+			id: '../sunfam',
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-path-unsafe-zone-id-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/zone id must/u);
 	});
 
 	test('rejects sandbox seed targets that escape the agent workspace', async () => {

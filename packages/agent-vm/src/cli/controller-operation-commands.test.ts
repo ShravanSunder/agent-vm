@@ -179,7 +179,7 @@ function createHealthyOpenClawConfig(): object {
 				'memory-core': { enabled: true },
 			},
 			load: {
-				paths: ['/home/openclaw/.openclaw/extensions', '/pnpm/global/5/node_modules/@openclaw'],
+				paths: ['/home/openclaw/.openclaw/extensions/gondolin'],
 			},
 			slots: { memory: 'memory-core' },
 		},

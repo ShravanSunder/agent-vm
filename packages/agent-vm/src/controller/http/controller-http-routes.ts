@@ -13,6 +13,7 @@ import { LeaseScopeConflictError } from '../leases/lease-manager.js';
 import { parseAgentIdFromScopeKey } from '../leases/lease-scope.js';
 import {
 	LeaseWorkMountValidationError,
+	type ResolvedLeaseWorkMount,
 	resolveLeaseWorkMountDir as resolveLeaseWorkMountDirForZone,
 } from '../leases/lease-work-mount-paths.js';
 import {
@@ -106,7 +107,7 @@ export function createControllerApp(options: {
 		readonly scopeKey: string;
 		readonly workMountDir: string;
 		readonly zoneId: string;
-	}) => Promise<string>;
+	}) => Promise<ResolvedLeaseWorkMount>;
 }): Hono {
 	const app = new Hono();
 	const readIdentityPem = options.readIdentityPem ?? readIdentityPemFromFile;
@@ -153,7 +154,7 @@ export function createControllerApp(options: {
 			if (!defaultToolVmProfile) {
 				return context.json({ error: `Unknown tool VM profile '${resolvedProfileId}'` }, 400);
 			}
-			const hostWorkMountDir = await options.resolveLeaseWorkMountDir({
+			const resolvedWorkMount = await options.resolveLeaseWorkMountDir({
 				scopeKey: payload.scopeKey,
 				workMountDir: payload.workMountDir,
 				zoneId: payload.zoneId,
@@ -163,7 +164,9 @@ export function createControllerApp(options: {
 				profile: defaultToolVmProfile,
 				profileId: resolvedProfileId,
 				scopeKey: payload.scopeKey,
-				hostWorkMountDir,
+				guestWorkdir: resolvedWorkMount.guestWorkdir,
+				hostWorkMountDir: resolvedWorkMount.hostWorkMountDir,
+				...(resolvedWorkMount.zoneGitMount ? { zoneGitMount: resolvedWorkMount.zoneGitMount } : {}),
 				zoneId: payload.zoneId,
 			});
 			return context.json(await serializeLeaseForResponse(lease, readIdentityPem));
@@ -288,17 +291,21 @@ export function createControllerService(options: {
 			if (!zone) {
 				throw new Error(`Unknown zone '${zoneId}'`);
 			}
-			const hostWorkMountDir = await resolveLeaseWorkMountDirForZone({ workMountDir, zone });
+			const resolvedWorkMount = await resolveLeaseWorkMountDirForZone({
+				runtimeDir: options.systemConfig.runtimeDir,
+				workMountDir,
+				zone,
+			});
 			if (options.secretResolver) {
 				const seedResult = await seedAgentSandboxWorkspace({
 					scopeKey,
 					secretResolver: options.secretResolver,
-					hostWorkMountDir,
+					hostWorkMountDir: resolvedWorkMount.hostWorkMountDir,
 					zone,
 				});
 				logAgentSandboxSeedResult(seedResult);
 			}
-			return hostWorkMountDir;
+			return resolvedWorkMount;
 		},
 	});
 

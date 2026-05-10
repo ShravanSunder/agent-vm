@@ -1,6 +1,8 @@
 export interface ResolvedGondolinPluginConfig {
 	readonly controllerUrl: string;
 	readonly profileId?: string;
+	readonly zoneGitToken?: string;
+	readonly zoneGitTokenEnv?: string;
 	readonly zoneId: string;
 }
 
@@ -14,6 +16,10 @@ export function resolveGondolinPluginConfig(
 	return {
 		controllerUrl: config.controllerUrl,
 		...(typeof config.profileId === 'string' ? { profileId: config.profileId } : {}),
+		...(typeof config.zoneGitToken === 'string' ? { zoneGitToken: config.zoneGitToken } : {}),
+		...(typeof config.zoneGitTokenEnv === 'string'
+			? { zoneGitTokenEnv: config.zoneGitTokenEnv }
+			: {}),
 		zoneId: config.zoneId,
 	};
 }

@@ -264,6 +264,12 @@ describe('startControllerRuntime', () => {
 		expect(startGatewayZone).toHaveBeenCalledWith(
 			expect.objectContaining({
 				runTask: expect.any(Function),
+				runtimeEnvironment: {
+					AGENT_VM_ZONE_GIT_TOKEN: expect.any(String),
+				},
+				runtimePluginConfigs: {
+					gondolin: { zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN' },
+				},
 				zoneId: 'shravan',
 			}),
 		);
@@ -588,6 +594,184 @@ describe('startControllerRuntime', () => {
 				delete process.env.GITHUB_TOKEN;
 			} else {
 				process.env.GITHUB_TOKEN = previousGithubToken;
+			}
+		}
+	});
+
+	it('exposes zone Git status through the controller using the host GitHub token', async () => {
+		const previousGithubToken = process.env.GITHUB_TOKEN;
+		const previousOpToken = process.env.OP_SERVICE_ACCOUNT_TOKEN;
+		process.env.GITHUB_TOKEN = 'controller-token';
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'op-token';
+		const tempDir = await mkdtemp(path.join(tmpdir(), 'agent-vm-zone-git-runtime-'));
+		const zoneFilesDir = path.join(tempDir, 'zone-files', 'shravan');
+		await mkdir(zoneFilesDir, { recursive: true });
+		const zoneGitSystemConfig: LoadedSystemConfig = {
+			...systemConfig,
+			runtimeDir: path.join(tempDir, 'runtime'),
+			zones: systemConfig.zones.map((zone) => ({
+				...zone,
+				gateway: {
+					...zone.gateway,
+					stateDir: path.join(tempDir, 'state', zone.id),
+					zoneFilesDir,
+					zoneGit: {
+						remote: {
+							repoUrl: 'https://github.com/shravansunder/zone-files.git',
+							branch: 'main',
+						},
+					},
+				},
+			})),
+		};
+		let startHttpServerArgs:
+			| {
+					app: {
+						request(path: string, init?: RequestInit): Response | Promise<Response>;
+					};
+					port: number;
+			  }
+			| undefined;
+		const startHttpServer = vi.fn(
+			async (options: {
+				app: { request(path: string, init?: RequestInit): Response | Promise<Response> };
+				port: number;
+			}) => {
+				startHttpServerArgs = options;
+				return {
+					close: async () => {},
+				};
+			},
+		);
+
+		try {
+			const runtime = await startControllerRuntime(
+				{
+					systemConfig: zoneGitSystemConfig,
+					zoneIds: [],
+				},
+				{
+					createSecretResolver: async () => ({
+						resolve: async () => 'controller-token',
+						resolveAll: async () => ({}),
+					}),
+					startGatewayZone: vi.fn(async () => {
+						throw new Error('zone git status should not require a booted gateway');
+					}),
+					startHttpServer,
+				},
+			);
+
+			if (!startHttpServerArgs) {
+				throw new Error('Expected startHttpServer to be called.');
+			}
+			const response = await startHttpServerArgs.app.request('/zones/shravan/zone-git/status');
+
+			expect(response.status).toBe(200);
+			await expect(response.json()).resolves.toMatchObject({
+				branch: 'main',
+				initialized: false,
+				localHead: null,
+				remoteHead: null,
+			});
+			await runtime.close();
+		} finally {
+			await rm(tempDir, { recursive: true, force: true });
+			if (previousGithubToken === undefined) {
+				delete process.env.GITHUB_TOKEN;
+			} else {
+				process.env.GITHUB_TOKEN = previousGithubToken;
+			}
+			if (previousOpToken === undefined) {
+				delete process.env.OP_SERVICE_ACCOUNT_TOKEN;
+			} else {
+				process.env.OP_SERVICE_ACCOUNT_TOKEN = previousOpToken;
+			}
+		}
+	});
+
+	it('reports a configuration error when zone Git is configured without a controller GitHub token', async () => {
+		const previousGithubToken = process.env.GITHUB_TOKEN;
+		const previousOpToken = process.env.OP_SERVICE_ACCOUNT_TOKEN;
+		delete process.env.GITHUB_TOKEN;
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'op-token';
+		const tempDir = await mkdtemp(path.join(tmpdir(), 'agent-vm-zone-git-runtime-'));
+		const zoneGitSystemConfig: LoadedSystemConfig = {
+			...systemConfig,
+			runtimeDir: path.join(tempDir, 'runtime'),
+			zones: systemConfig.zones.map((zone) => ({
+				...zone,
+				gateway: {
+					...zone.gateway,
+					stateDir: path.join(tempDir, 'state', zone.id),
+					zoneFilesDir: path.join(tempDir, 'zone-files', zone.id),
+					zoneGit: {
+						remote: {
+							repoUrl: 'https://github.com/shravansunder/zone-files.git',
+							branch: 'main',
+						},
+					},
+				},
+			})),
+		};
+		let startHttpServerArgs:
+			| {
+					app: {
+						request(path: string, init?: RequestInit): Response | Promise<Response>;
+					};
+					port: number;
+			  }
+			| undefined;
+		const startHttpServer = vi.fn(
+			async (options: {
+				app: { request(path: string, init?: RequestInit): Response | Promise<Response> };
+				port: number;
+			}) => {
+				startHttpServerArgs = options;
+				return {
+					close: async () => {},
+				};
+			},
+		);
+
+		try {
+			const runtime = await startControllerRuntime(
+				{
+					systemConfig: zoneGitSystemConfig,
+					zoneIds: [],
+				},
+				{
+					createSecretResolver: async () => ({
+						resolve: async () => '',
+						resolveAll: async () => ({}),
+					}),
+					startGatewayZone: vi.fn(async () => {
+						throw new Error('zone git status should not require a booted gateway');
+					}),
+					startHttpServer,
+				},
+			);
+
+			if (!startHttpServerArgs) {
+				throw new Error('Expected startHttpServer to be called.');
+			}
+			const response = await startHttpServerArgs.app.request('/zones/shravan/zone-git/status');
+
+			expect(response.status).toBe(412);
+			await expect(response.json()).resolves.toEqual({
+				error:
+					"zoneGit for zone 'shravan' requires host.githubToken so the controller can push without exposing credentials to VMs.",
+			});
+			await runtime.close();
+		} finally {
+			await rm(tempDir, { recursive: true, force: true });
+			if (previousGithubToken !== undefined) {
+				process.env.GITHUB_TOKEN = previousGithubToken;
+			}
+			if (previousOpToken === undefined) {
+				delete process.env.OP_SERVICE_ACCOUNT_TOKEN;
+			} else {
+				process.env.OP_SERVICE_ACCOUNT_TOKEN = previousOpToken;
 			}
 		}
 	});
