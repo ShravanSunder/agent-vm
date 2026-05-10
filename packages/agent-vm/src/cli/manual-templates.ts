@@ -84,7 +84,7 @@ agent-vm owns the gateway/tool base image recipes and pins the managed GHCR base
 stateDir stores durable gateway state.
 zoneFilesDir stores durable user/household files for OpenClaw zones.
 cacheDir stores rebuildable artifacts.
-runtimeDir stores controller runtime artifacts that are not backup state.
+runtimeDir stores controller runtime artifacts that are not backup state, including OpenClaw gateway logs under runtimeDir/zones/<zone>/logs.
 
 Author JSONC for human-owned agent-vm config. Runtime files such as /state/effective-worker.json, task event JSONL, runtime records, and API bodies stay strict JSON.
 OpenClaw gateway VMs mount zoneFilesDir at /zone.
@@ -176,6 +176,7 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	plugins.load.paths includes /home/openclaw/.openclaw/extensions for vendored extensions and /pnpm/global/5/node_modules/@openclaw for managed OpenClaw packages.
 	plugins.slots.memory selects memory-core when memory-core is enabled.
 	gateway.auth.mode is token for agent-vm-managed gateways.
+	logging.file is rendered in the effective OpenClaw config as /agent-vm/logs/openclaw-YYYY-MM-DD.log unless the deployment explicitly sets its own logging.file.
 
 	Managed OpenClaw gateway images install @agent-vm/openclaw-agent-vm-plugin and register it as the gondolin extension.
 	Managed OpenClaw gateway images install external channel packages required by config. For example, channels.discord.enabled asks for @openclaw/discord. The managed release supplies the default version unless vm-images/gateways/openclaw/overlay.jsonc pins that package in extraOpenClawPackages.

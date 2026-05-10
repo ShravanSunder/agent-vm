@@ -248,6 +248,7 @@ function buildWorkerWorkRootfsChecks(
 				gatewayCacheDir: systemConfig.cacheDir,
 				projectNamespace: systemConfig.host.projectNamespace,
 				resolvedSecrets: {},
+				runtimeDir: systemConfig.runtimeDir,
 				tcpPool: systemConfig.tcpPool,
 				zone: gatewayZone,
 			});

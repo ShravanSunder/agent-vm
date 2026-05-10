@@ -239,7 +239,9 @@ agent-vm controller ssh --zone my-openclaw
 Opens an SSH session into the gateway VM for debugging.
 
 Use controller logs for both the gateway boot log and the OpenClaw runtime log
-tail:
+tail. The gateway VM writes these logs under `/agent-vm/logs`, backed by
+`<runtimeDir>/zones/<zone>/logs` on the host, so they survive gateway restarts
+without entering normal zone backups:
 
 ```bash
 agent-vm controller logs --zone my-openclaw

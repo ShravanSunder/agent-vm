@@ -106,7 +106,7 @@ function createGatewayVmMock(
 				};
 			}
 
-			if (command.includes('cat /tmp/openclaw.log')) {
+			if (command.includes('cat /agent-vm/logs/gateway-boot-latest.log')) {
 				return { exitCode: 0, stderr: '', stdout: 'gateway-log' };
 			}
 
@@ -202,7 +202,7 @@ describe('live integration: controller restart persistence', () => {
 							bootstrapCommand: 'bootstrap-openclaw',
 							guestListenPort: 18789,
 							healthCheck: { type: 'http', port: 18789, path: '/' } as const,
-							logPath: '/tmp/openclaw.log',
+							logPath: '/agent-vm/logs/gateway-boot-latest.log',
 							startCommand: 'start-openclaw',
 						},
 						vm: createGatewayVmMock(stateDirectory),

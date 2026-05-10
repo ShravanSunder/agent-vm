@@ -80,7 +80,7 @@ const openClawProcessSpec = {
 	bootstrapCommand: 'bootstrap-openclaw',
 	guestListenPort: 18789,
 	healthCheck: { type: 'http', port: 18789, path: '/' } as const,
-	logPath: '/tmp/openclaw.log',
+	logPath: '/agent-vm/logs/gateway-boot-latest.log',
 	startCommand: 'start-openclaw',
 };
 

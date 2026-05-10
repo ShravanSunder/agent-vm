@@ -97,16 +97,20 @@ from those assets.
 zone state and not repairable cache. It should prefer local disk because these
 paths can be hot during task execution.
 
-The primary use is worker Git metadata:
+Current uses include OpenClaw gateway logs and worker Git metadata:
 
 ```text
+<runtimeDir>/zones/<zoneId>/logs/
 <runtimeDir>/worker-tasks/<zoneId>/<taskId>/gitdirs/<repoId>.git
 ```
 
 Normal `backup create` does not copy `runtimeDir`, and validation fails when
 `runtimeDir` overlaps `cacheDir`, any zone `stateDir`, or any OpenClaw
 `zoneFilesDir`. Worker runtime artifacts are task-lifetime data: the agent must
-commit and call `git-push` before task teardown if work must survive.
+commit and call `git-push` before task teardown if work must survive. OpenClaw
+gateway logs are runtime evidence for post-mortems and performance debugging;
+they persist across gateway VM restarts but are intentionally excluded from
+normal zone backups.
 
 ## zoneFilesDir
 

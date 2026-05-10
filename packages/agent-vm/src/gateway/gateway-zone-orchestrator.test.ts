@@ -302,6 +302,9 @@ describe('startGatewayZone', () => {
 		);
 
 		expect(loadBuildConfig).toHaveBeenCalledWith('./vm-images/gateways/openclaw/build-config.json');
+		const logDirectoryPath = path.join(systemConfig.runtimeDir, 'zones', 'shravan', 'logs');
+		expect(fs.existsSync(logDirectoryPath)).toBe(true);
+		expect(fs.statSync(logDirectoryPath).mode & 0o777).toBe(0o700);
 		expect(buildImage).toHaveBeenCalled();
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -330,6 +333,10 @@ describe('startGatewayZone', () => {
 					'gateway.discord.gg:443': 'gateway.discord.gg:443',
 				}),
 				vfsMounts: expect.objectContaining({
+					'/agent-vm/logs': {
+						hostPath: path.join(systemConfig.runtimeDir, 'zones', 'shravan', 'logs'),
+						kind: 'realfs',
+					},
 					'/home/openclaw/.openclaw/cache': {
 						hostPath: path.join(systemConfig.cacheDir, 'gateways', 'shravan'),
 						kind: 'realfs',
@@ -338,7 +345,7 @@ describe('startGatewayZone', () => {
 			}),
 		);
 		expect(execMock).toHaveBeenCalledWith(
-			'set -a && . /run/openclaw/secrets.env && set +a && cd /home/openclaw && nohup openclaw gateway --port 18789 > /tmp/openclaw.log 2>&1 &',
+			'set -a && . /run/openclaw/secrets.env && set +a && cd /home/openclaw && nohup openclaw gateway --port 18789 > /agent-vm/logs/gateway-boot-latest.log 2>&1 &',
 		);
 		expect(setIngressRoutesMock).toHaveBeenCalledWith([
 			{
@@ -372,7 +379,7 @@ describe('startGatewayZone', () => {
 			},
 			processSpec: {
 				guestListenPort: 18789,
-				logPath: '/tmp/openclaw.log',
+				logPath: '/agent-vm/logs/gateway-boot-latest.log',
 			},
 		});
 	});
@@ -669,7 +676,9 @@ describe('startGatewayZone', () => {
 		).rejects.toThrow(
 			/Gateway readiness check failed after 2 attempts.*Last probe: http \(empty\).*Gateway process may still be booting, or it may have crashed before opening its health port.*OpenClaw failed to parse config/su,
 		);
-		expect(execMock).toHaveBeenCalledWith('tail -n 80 /tmp/openclaw.log 2>/dev/null || true');
+		expect(execMock).toHaveBeenCalledWith(
+			'tail -n 80 /agent-vm/logs/gateway-boot-latest.log 2>/dev/null || true',
+		);
 		expect(closeMock).toHaveBeenCalledTimes(1);
 	});
 

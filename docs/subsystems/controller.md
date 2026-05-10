@@ -238,7 +238,7 @@ failed, or wrong-type zones.
 | Operation | What It Does |
 |-----------|-------------|
 | `getStatus` | Calls `buildControllerStatus(systemConfig)` -- returns system configuration summary |
-| `getZoneLogs` | Executes `cat {logPath}` inside the gateway VM, returns stdout |
+| `getZoneLogs` | Reads the OpenClaw gateway boot log and latest runtime log from `/agent-vm/logs` inside the gateway VM |
 | `refreshZoneCredentials` | Re-resolves zone secrets via `resolveZoneSecrets()`, then restarts the gateway zone |
 | `destroyZone` | Releases all zone leases (sequential), stops the gateway VM, optionally purges state |
 | `upgradeZone` | Rebuilds the gateway image (no-op currently), then restarts the gateway zone |
