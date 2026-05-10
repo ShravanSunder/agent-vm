@@ -48,8 +48,8 @@ function buildOpenClawCombinedLogsCommand(logPath: string): string {
 		`echo '===== gateway boot log (${logPath}) ====='`,
 		`cat ${logPath} 2>/dev/null || true`,
 		'echo',
-		"echo '===== latest openclaw runtime log (/agent-vm/logs/openclaw-*.log) ====='",
-		'latest_openclaw_log=$(ls -1t /agent-vm/logs/openclaw-*.log 2>/dev/null | head -n 1); if [ -n "$latest_openclaw_log" ]; then tail -n 400 "$latest_openclaw_log"; fi',
+		"echo '===== latest openclaw runtime log (/agent-vm/logs/*.log) ====='",
+		'latest_openclaw_log=$(ls -1t /agent-vm/logs/*.log 2>/dev/null | grep -v "/gateway-boot-latest\\.log$" | head -n 1); if [ -n "$latest_openclaw_log" ]; then tail -n 400 "$latest_openclaw_log"; fi',
 	].join('; ');
 }
 

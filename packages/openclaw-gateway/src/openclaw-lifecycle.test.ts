@@ -500,6 +500,60 @@ describe('openclawLifecycle', () => {
 			});
 		});
 
+		it('preserves an authored logging file path in effective-openclaw.json', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-logs-'));
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify(
+					{
+						logging: {
+							file: '/agent-vm/logs/custom-openclaw.log',
+							level: 'debug',
+						},
+						gateway: {
+							auth: { mode: 'token' },
+							bind: 'loopback',
+						},
+					},
+					null,
+					2,
+				),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				withoutAuthProfilesRef: true,
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
+
+			const effectiveOpenClawConfigContent = await readFile(
+				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
+				'utf8',
+			);
+			expect(JSON.parse(effectiveOpenClawConfigContent).logging).toEqual({
+				file: '/agent-vm/logs/custom-openclaw.log',
+				level: 'debug',
+			});
+		});
+
 		it('throws when OPENCLAW_GATEWAY_TOKEN ref is absent', async () => {
 			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-no-token-'));
 			createdDirectories.push(tempDirectory);
