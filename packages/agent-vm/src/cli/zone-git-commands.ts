@@ -4,8 +4,8 @@ import {
 	ensureZoneGitRepository,
 	getZoneGitStatus,
 	pushZoneGit,
-	type ZoneGitOperationConfig,
 	type ZoneGitPushResult,
+	type ZoneGitReadConfig,
 	type ZoneGitStatus,
 } from '../controller/zone-git/zone-git-operations.js';
 import { isOpenClawZoneGitConfigured } from '../controller/zone-git/zone-git-paths.js';
@@ -71,7 +71,7 @@ async function resolveZoneGitConfig(options: {
 	>;
 	readonly systemConfig: LoadedSystemConfig;
 	readonly zoneId: string;
-}): Promise<ZoneGitOperationConfig> {
+}): Promise<ZoneGitReadConfig> {
 	const zone = requireZone(options.systemConfig, options.zoneId);
 	if (!isOpenClawZoneGitConfigured(zone)) {
 		throw new Error(`Zone '${zone.id}' does not have OpenClaw zoneGit configured.`);

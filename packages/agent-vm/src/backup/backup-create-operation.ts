@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 
 import {
 	getZoneGitStatus,
-	type ZoneGitOperationConfig,
+	type ZoneGitReadConfig,
 } from '../controller/zone-git/zone-git-operations.js';
 import { buildBackupPaths } from './backup-archive-layout.js';
 import type { BackupEncryption, BackupResult } from './backup-manager.js';
@@ -20,7 +20,7 @@ export async function createEncryptedBackup(options: {
 	readonly runtimeDir: string;
 	readonly stateDir: string;
 	readonly zoneFilesDir?: string;
-	readonly zoneGit?: ZoneGitOperationConfig;
+	readonly zoneGit?: ZoneGitReadConfig;
 	readonly zoneId: string;
 }): Promise<BackupResult> {
 	assertRuntimeDirOutsideBackupInputs({
@@ -80,21 +80,30 @@ export async function createEncryptedBackup(options: {
 	};
 }
 
-async function assertZoneGitReadyForBackup(zoneGit: ZoneGitOperationConfig): Promise<void> {
+async function assertZoneGitReadyForBackup(zoneGit: ZoneGitReadConfig): Promise<void> {
 	const status = await getZoneGitStatus(zoneGit);
+	const violations: string[] = [];
 	if (!status.initialized) {
-		throw new Error(
-			`Zone '${zoneGit.zoneId}' has zone Git configured but is not initialized. Run agent-vm zone-git init --zone ${zoneGit.zoneId} before backup.`,
+		violations.push(
+			`zone Git is configured but not initialized. Run agent-vm zone-git init --zone ${zoneGit.zoneId} before backup.`,
 		);
 	}
 	if (status.dirty) {
-		throw new Error(
-			`Zone '${zoneGit.zoneId}' has uncommitted zone Git changes. Run git status, git add, and git commit before backup.`,
+		violations.push(
+			'uncommitted zone Git changes are present. Run git status, git add, and git commit before backup.',
 		);
 	}
 	if (status.aheadOfRemote > 0) {
+		violations.push(
+			`${String(status.aheadOfRemote)} unpushed zone Git commit(s) are present. Run agent-vm zone-git push --zone ${zoneGit.zoneId} before backup.`,
+		);
+	}
+	if (violations.length > 0) {
 		throw new Error(
-			`Zone '${zoneGit.zoneId}' has ${String(status.aheadOfRemote)} unpushed zone Git commit(s). Run agent-vm zone-git push --zone ${zoneGit.zoneId} before backup.`,
+			[
+				`Zone '${zoneGit.zoneId}' is not ready for backup:`,
+				...violations.map((item) => `- ${item}`),
+			].join('\n'),
 		);
 	}
 }

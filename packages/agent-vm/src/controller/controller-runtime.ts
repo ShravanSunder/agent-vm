@@ -33,7 +33,7 @@ import { ZoneGitOperationLocks } from './zone-git/zone-git-operation-locks.js';
 import {
 	getZoneGitStatus,
 	pushZoneGit,
-	type ZoneGitOperationConfig,
+	type ZoneGitReadConfig,
 } from './zone-git/zone-git-operations.js';
 import { isOpenClawZoneGitConfigured } from './zone-git/zone-git-paths.js';
 import { createOpenClawZoneRuntime } from './zone-runtimes/openclaw-zone-runtime.js';
@@ -79,7 +79,7 @@ function resolveZoneGitOperationConfig(options: {
 	readonly controllerGithubToken: string | null;
 	readonly systemConfig: StartControllerRuntimeOptions['systemConfig'];
 	readonly zoneId: string;
-}): ZoneGitOperationConfig {
+}): ZoneGitReadConfig {
 	let zone: ControllerZoneConfig;
 	try {
 		zone = findConfiguredZone(options.systemConfig, options.zoneId);

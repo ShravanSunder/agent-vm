@@ -22,17 +22,19 @@ const plugin = {
 		readonly registerTool?: OpenClawToolRegistrationApi['registerTool'];
 		readonly registrationMode: string;
 	}): void {
-		if (api.registrationMode !== 'full' && typeof api.registerTool !== 'function') {
+		const registerTool = api.registerTool;
+		if (typeof registerTool !== 'function') {
+			if (api.registrationMode === 'full') {
+				throw new Error('Gondolin full registration requires OpenClaw registerTool.');
+			}
 			return;
 		}
 		const pluginConfig = resolveGondolinPluginConfig(api.pluginConfig);
-		const toolRegistrationApi: OpenClawToolRegistrationApi =
-			typeof api.registerTool === 'function' ? { registerTool: api.registerTool } : {};
 		const zoneGitToken =
 			pluginConfig.zoneGitToken ??
 			(pluginConfig.zoneGitTokenEnv ? process.env[pluginConfig.zoneGitTokenEnv] : undefined);
 		registerZoneGitTool({
-			api: toolRegistrationApi,
+			api: { registerTool },
 			controllerUrl: pluginConfig.controllerUrl,
 			...(zoneGitToken ? { zoneGitToken } : {}),
 			zoneId: pluginConfig.zoneId,

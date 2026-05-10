@@ -1,6 +1,6 @@
 import type { SystemConfig } from '../config/system-config.js';
 import { resolveControllerGithubToken } from '../controller/controller-runtime-support.js';
-import type { ZoneGitOperationConfig } from '../controller/zone-git/zone-git-operations.js';
+import type { ZoneGitReadConfig } from '../controller/zone-git/zone-git-operations.js';
 import { isOpenClawZoneGitConfigured } from '../controller/zone-git/zone-git-paths.js';
 import {
 	createResolverFromSystemConfig,
@@ -47,7 +47,7 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 	const backupManager = options.dependencies.createZoneBackupManager(backupEncryption);
 
 	if (backupSubcommand === 'create') {
-		let zoneGit: ZoneGitOperationConfig | undefined;
+		let zoneGit: ZoneGitReadConfig | undefined;
 		if (isOpenClawZoneGitConfigured(zone)) {
 			const githubToken = await resolveControllerGithubToken(options.systemConfig, secretResolver);
 			if (!githubToken) {

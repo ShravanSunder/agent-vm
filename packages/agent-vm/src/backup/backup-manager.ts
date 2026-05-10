@@ -1,4 +1,4 @@
-import type { ZoneGitOperationConfig } from '../controller/zone-git/zone-git-operations.js';
+import type { ZoneGitReadConfig } from '../controller/zone-git/zone-git-operations.js';
 import { listBackupArtifacts } from './backup-archive-layout.js';
 import { createEncryptedBackup } from './backup-create-operation.js';
 import { restoreEncryptedBackup } from './backup-restore-operation.js';
@@ -27,7 +27,7 @@ export interface ZoneBackupManager {
 		readonly stateDir: string;
 		readonly runtimeDir: string;
 		readonly zoneFilesDir?: string;
-		readonly zoneGit?: ZoneGitOperationConfig;
+		readonly zoneGit?: ZoneGitReadConfig;
 		readonly backupDir: string;
 	}): Promise<BackupResult>;
 

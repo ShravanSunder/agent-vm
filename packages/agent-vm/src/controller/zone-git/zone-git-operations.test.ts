@@ -158,7 +158,6 @@ describe('zone-git-operations', () => {
 
 		expect(pushResult).toMatchObject({
 			branch: 'main',
-			success: true,
 			localHead,
 			remoteHead: localHead,
 		});

@@ -1,7 +1,11 @@
 import type { OpenClawToolRegistrationApi } from './openclaw-sandbox-sdk-contract.js';
 
+type RequiredOpenClawToolRegistrationApi = OpenClawToolRegistrationApi & {
+	readonly registerTool: NonNullable<OpenClawToolRegistrationApi['registerTool']>;
+};
+
 export interface RegisterZoneGitToolOptions {
-	readonly api: OpenClawToolRegistrationApi;
+	readonly api: RequiredOpenClawToolRegistrationApi;
 	readonly controllerUrl: string;
 	readonly fetchImpl?: typeof fetch;
 	readonly zoneGitToken?: string;
@@ -44,9 +48,6 @@ function parseJsonPayload(responseText: string): unknown {
 }
 
 export function registerZoneGitTool(options: RegisterZoneGitToolOptions): void {
-	if (!options.api.registerTool) {
-		return;
-	}
 	options.api.registerTool(
 		{
 			name: 'zone_git_push',

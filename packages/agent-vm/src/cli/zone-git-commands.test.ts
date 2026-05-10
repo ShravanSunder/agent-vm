@@ -192,9 +192,9 @@ describe('runZoneGitCommand', () => {
 				zoneId: 'sunfam',
 			});
 			const pushPayload = JSON.parse(outputs.join('')) as {
-				readonly result: { readonly success: boolean };
+				readonly result: { readonly localHead: string };
 			};
-			expect(pushPayload.result.success).toBe(true);
+			expect(pushPayload.result.localHead).toMatch(/^[0-9a-f]{40}$/u);
 		} finally {
 			if (previousGithubToken === undefined) {
 				delete process.env.GITHUB_TOKEN;

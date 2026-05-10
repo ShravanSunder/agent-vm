@@ -141,6 +141,18 @@ describe('createGondolinPlugin', () => {
 		}
 	});
 
+	it('fails full registration when OpenClaw does not expose registerTool', () => {
+		expect(() =>
+			defaultPlugin.register({
+				pluginConfig: {
+					controllerUrl: 'http://controller.vm.host:18800',
+					zoneId: 'shravan',
+				},
+				registrationMode: 'full',
+			}),
+		).toThrow('Gondolin full registration requires OpenClaw registerTool.');
+	});
+
 	it('resolves zone_git_push token from the configured environment variable', async () => {
 		const previousToken = process.env.AGENT_VM_ZONE_GIT_TOKEN;
 		process.env.AGENT_VM_ZONE_GIT_TOKEN = 'runtime-push-token';

@@ -959,7 +959,6 @@ describe('createControllerApp', () => {
 		}));
 		const pushZoneGit = vi.fn(async () => ({
 			branch: 'main',
-			success: true,
 			localHead: 'abc123',
 			remoteHead: 'abc123',
 			pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
@@ -1014,7 +1013,6 @@ describe('createControllerApp', () => {
 		expect(pushResponse.status).toBe(200);
 		await expect(pushResponse.json()).resolves.toMatchObject({
 			branch: 'main',
-			success: true,
 			pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
 		});
 		expect(getZoneGitStatus).toHaveBeenCalledWith('sunfam');

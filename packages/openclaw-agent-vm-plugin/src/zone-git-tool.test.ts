@@ -23,16 +23,6 @@ describe('registerZoneGitTool', () => {
 		);
 	});
 
-	it('does not throw when registerTool is unavailable', () => {
-		expect(() =>
-			registerZoneGitTool({
-				api: {},
-				controllerUrl: 'http://127.0.0.1:18800',
-				zoneId: 'sunfam',
-			}),
-		).not.toThrow();
-	});
-
 	it('executes push through the controller endpoint', async () => {
 		let registeredTool: OpenClawToolRegistration | undefined;
 		const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ success: true })));

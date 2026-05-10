@@ -9,7 +9,7 @@ import { OPENCLAW_ZONE_GIT_GUEST_DIR, resolveZoneGitPaths } from './zone-git-pat
 
 const GIT_OPERATION_TIMEOUT_MS = 120_000;
 
-export interface ZoneGitOperationConfig {
+export interface ZoneGitReadConfig {
 	readonly branch: string;
 	readonly githubToken?: string;
 	readonly remoteUrl: string;
@@ -18,15 +18,29 @@ export interface ZoneGitOperationConfig {
 	readonly zoneId: string;
 }
 
-export interface ZoneGitStatus {
+interface InitializedZoneGitStatus {
 	readonly aheadOfRemote: number;
 	readonly behindRemote: number;
 	readonly branch: string;
 	readonly dirty: boolean;
-	readonly initialized: boolean;
+	readonly initialized: true;
+	readonly kind: 'initialized';
 	readonly localHead: string | null;
 	readonly remoteHead: string | null;
 }
+
+interface UninitializedZoneGitStatus {
+	readonly aheadOfRemote: 0;
+	readonly behindRemote: 0;
+	readonly branch: string;
+	readonly dirty: false;
+	readonly initialized: false;
+	readonly kind: 'uninitialized';
+	readonly localHead: null;
+	readonly remoteHead: null;
+}
+
+export type ZoneGitStatus = InitializedZoneGitStatus | UninitializedZoneGitStatus;
 
 export interface ZoneGitCommitSummary {
 	readonly sha: string;
@@ -38,10 +52,9 @@ export interface ZoneGitPushResult {
 	readonly localHead: string;
 	readonly pushedCommits: readonly ZoneGitCommitSummary[];
 	readonly remoteHead: string;
-	readonly success: true;
 }
 
-export interface ZoneGitPushOptions extends ZoneGitOperationConfig {
+export interface ZoneGitPushOptions extends ZoneGitReadConfig {
 	readonly expectedHead: string;
 }
 
@@ -193,7 +206,7 @@ function parseCommitSummaries(output: string): readonly ZoneGitCommitSummary[] {
 }
 
 async function fetchRemoteBranch(
-	options: ZoneGitOperationConfig & { readonly gitDir: string },
+	options: ZoneGitReadConfig & { readonly gitDir: string },
 ): Promise<void> {
 	const remoteUrl = buildRemoteUrl(options);
 	const result = await git({
@@ -245,7 +258,7 @@ async function countCommits(options: {
 	return Number.parseInt(stdout, 10);
 }
 
-export async function ensureZoneGitRepository(options: ZoneGitOperationConfig): Promise<void> {
+export async function ensureZoneGitRepository(options: ZoneGitReadConfig): Promise<void> {
 	const zoneGitPaths = resolveZoneGitPaths({
 		runtimeDir: options.runtimeDir,
 		zoneId: options.zoneId,
@@ -315,7 +328,7 @@ export async function ensureZoneGitRepository(options: ZoneGitOperationConfig): 
 	});
 }
 
-export async function getZoneGitStatus(options: ZoneGitOperationConfig): Promise<ZoneGitStatus> {
+export async function getZoneGitStatus(options: ZoneGitReadConfig): Promise<ZoneGitStatus> {
 	const zoneGitPaths = resolveZoneGitPaths({
 		runtimeDir: options.runtimeDir,
 		zoneId: options.zoneId,
@@ -327,6 +340,7 @@ export async function getZoneGitStatus(options: ZoneGitOperationConfig): Promise
 			branch: options.branch,
 			dirty: false,
 			initialized: false,
+			kind: 'uninitialized',
 			localHead: null,
 			remoteHead: null,
 		};
@@ -373,6 +387,7 @@ export async function getZoneGitStatus(options: ZoneGitOperationConfig): Promise
 		branch: options.branch,
 		dirty: statusOutput.length > 0,
 		initialized: true,
+		kind: 'initialized',
 		localHead,
 		remoteHead,
 	};
@@ -426,6 +441,5 @@ export async function pushZoneGit(options: ZoneGitPushOptions): Promise<ZoneGitP
 		localHead: status.localHead,
 		pushedCommits,
 		remoteHead,
-		success: true,
 	};
 }
