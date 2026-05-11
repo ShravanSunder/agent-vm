@@ -10,6 +10,8 @@
 
 ---
 
+> **2026-05-11 scope correction:** this plan remains the right home for Tool VM egress allowlists and HTTP-mediated header-token secrets. Auth-heavy CLI execution for Google OAuth/keyrings, SigV4, `gog`, `gcloud`, `aws`, and similar tools moved to `docs/superpowers/plans/2026-05-11-ephemeral-credential-runner-vm.md`. Do not implement the broad gateway-side OAuth/keyring refresh route from this plan without re-checking the Credential Runner VM split.
+
 ## Current Evidence To Preserve
 
 - `packages/gondolin-adapter/src/vm-adapter.ts` already passes `allowedHosts`, `secrets`, `env`, and `httpHooks` to `VM.create(...)`, but it drops `CreateHttpHooksResult.secretManager`.
