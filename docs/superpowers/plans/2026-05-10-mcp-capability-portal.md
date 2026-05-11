@@ -1,102 +1,237 @@
 # MCP Capability Portal Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> superpowers:subagent-driven-development (recommended) or
+> superpowers:executing-plans to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking. Do not run git commit, merge, rebase,
+> tag, or push commands unless the user explicitly asks for git writes.
 
-**Goal:** Build an OpenClaw gateway plugin that consolidates configured MCP servers and local skill docs behind two progressive-disclosure tools: `mcp_portal_search` and `mcp_portal_execute`.
+**Goal:** Build a managed, TypeScript-first OpenClaw MCP capability portal that
+turns per-agent MCP server access into a linked progressive-disclosure catalog,
+schema/code artifacts, and safe gateway-owned execution.
 
-**Architecture:** The portal runs in the gateway process, owns upstream MCP auth/config, and exposes a small search/execute surface to agents. This stays separate from `gondolin-secret-source`: the portal brokers MCP capabilities, while Gondolin secret sources broker Tool VM HTTP-mediated secrets.
+**Architecture:** The OpenClaw gateway is the MCP client and owns upstream MCP
+auth, headers, stdio env, transport sessions, and per-agent catalog caches. The
+agent sees only portal tools and compact prompt context; the Tool VM gets
+TypeScript/Zod catalog helpers in its base image but never receives raw MCP auth
+or direct server credentials. MCP JSON Schema is the canonical wire/catalog
+format; Zod schemas and TypeScript helpers are derived artifacts for agent code
+composition.
 
-**Tech Stack:** TypeScript, OpenClaw plugin `api.registerTool`/`api.registerHook('before_tool_call')`, official MCP TypeScript SDK client transports, Zod, Vitest.
+**Tech Stack:** TypeScript, Node 24, pnpm, OpenClaw plugin
+`api.registerTool`/`api.registerHook`, MCP TypeScript SDK `Client` transports,
+Zod 4.4.x JSON Schema conversion/metadata, Vitest, OXC/Oxfmt, managed
+OpenClaw gateway and Tool VM Dockerfiles.
 
 ---
 
 ## Current Evidence To Preserve
 
-- OpenClaw plugins can register tools with `api.registerTool(...)`; the existing agent-vm plugin already registers `zone_git_push`.
-- OpenClaw plugin hooks use `api.registerHook(...)`; `before_tool_call` can return `requireApproval` and OpenClaw routes it through the existing approval UI and `/approve`.
-- The current local OpenClaw plugin API exposes the resolved config tree as `api.config`, and also exposes both `registerHook(...)` and typed `on(...)` hook registration. The plan may use `registerHook(...)` for compatibility or `api.on('before_tool_call', ...)` when the typed API is available, but it must test the installed OpenClaw contract.
-- OpenClaw already supports `mcp.servers` with stdio and remote HTTP/SSE server configs. The portal must read that existing gateway registry instead of introducing a second `mcpServers` config surface.
-- The official MCP TypeScript SDK supports clients with `Client`, `StdioClientTransport`, `StreamableHTTPClientTransport`, and `SSEClientTransport`.
-- The portal should not expose upstream MCP server env vars, auth headers, or raw config values in search results.
+- OpenClaw plugin tools are registered with `api.registerTool(...)`.
+- OpenClaw hooks include `before_tool_call`, `before_prompt_build`, and
+  `agent_turn_prepare`; prompt hooks can inject compact portal context, while
+  `before_tool_call` can return `requireApproval`.
+- OpenClaw `before_tool_call` context carries `agentId`, `sessionKey`,
+  `sessionId`, and `runId`; portal caches must be keyed by agent/session where
+  those values are available and must not be a global cross-agent cache.
+- OpenClaw tool handlers receive `toolCallId` but do not reliably receive full
+  agent/session identity directly. The portal must bridge tool calls to
+  `before_tool_call` context by `toolCallId` before choosing a per-agent view.
+- OpenClaw already supports `mcp.servers`; the portal must read that registry
+  and must not introduce a second plugin-owned MCP server surface.
+- MCP TypeScript SDK `Client.listTools()` returns `tools` plus `nextCursor`;
+  the portal must page until `nextCursor` is absent.
+- MCP tool contracts are JSON Schema: `inputSchema`, optional `outputSchema`,
+  annotations, execution metadata, and `_meta`. Keep JSON Schema canonical.
+- Zod 4 supports `z.toJSONSchema()` and experimental `z.fromJSONSchema()`.
+  Use this to derive local Tool VM validators/helpers, not as the MCP wire
+  format.
+- For remote SSE MCP servers, headers must apply to both the initial SSE stream
+  request and recurring POST requests. `requestInit` alone is insufficient.
+- Gateway images must not bake auth tokens, token env names, registry auth
+  files, `.npmrc`, `.netrc`, or other credential material into image layers.
 
 ## Non-Goals
 
-- Do not implement arbitrary JavaScript Code Mode execution in this plan. The v1 portal is deterministic search plus direct tool execution by capability ID. Code execution can be a later design after choosing an isolate boundary.
-- Do not put Tool VM credentials into the portal. Tool VM secrets remain under `gondolin-secret-source`.
-- Do not replace OpenClaw's existing MCP support. This plugin is an agent-visible progressive-disclosure proxy for selected servers.
+- Do not register every upstream MCP tool directly as a model-visible tool.
+  The visible model surface is the small portal tool set.
+- Do not implement arbitrary portal-hosted JavaScript execution.
+- Do not put upstream MCP auth headers or stdio env secrets into Tool VMs.
+- Do not share MCP client sessions or capability caches across agents.
+- Do not replace OpenClaw's native MCP support; this is a progressive
+  disclosure layer over configured OpenClaw MCP servers.
+- Do not make `z.fromJSONSchema()` required for correctness. It is a derived
+  TypeScript convenience and remains optional because the API is experimental.
 
 ## File Structure
 
-Create a new package:
+Create a shared TypeScript package:
+
+- `packages/mcp-capability-portal-core/package.json`
+  - Shared catalog, search, schema, and Tool VM helper package.
+- `packages/mcp-capability-portal-core/tsconfig.json`
+- `packages/mcp-capability-portal-core/tsconfig.build.json`
+- `packages/mcp-capability-portal-core/tsdown.config.ts`
+- `packages/mcp-capability-portal-core/src/index.ts`
+- `packages/mcp-capability-portal-core/src/json-schema.ts`
+  - JSON-compatible schema/value types used by catalog objects.
+- `packages/mcp-capability-portal-core/src/capability-id.ts`
+  - Encodes/decodes stable capability IDs without `:` ambiguity.
+- `packages/mcp-capability-portal-core/src/catalog-types.ts`
+  - Zod 4 schemas and TypeScript types for namespaces, capabilities,
+    relationships, schema artifacts, and catalog snapshots.
+- `packages/mcp-capability-portal-core/src/capability-graph.ts`
+  - Builds namespace, schema, skill, and workflow links.
+- `packages/mcp-capability-portal-core/src/search-index.ts`
+  - Progressive search across capability metadata, schema fields, and links.
+- `packages/mcp-capability-portal-core/src/tool-vm/zod-schema-loader.ts`
+  - Optional `z.fromJSONSchema()` helper for Tool VM code.
+- `packages/mcp-capability-portal-core/src/tool-vm/typescript-artifact.ts`
+  - Emits TypeScript catalog helper source from selected schema artifacts.
+- `packages/mcp-capability-portal-core/src/bin/agent-vm-mcp-portal.ts`
+  - Tool VM CLI for validating catalogs and writing TypeScript helpers.
+
+Create a managed OpenClaw plugin package:
 
 - `packages/openclaw-mcp-capability-portal-plugin/package.json`
-  - Publishable OpenClaw plugin package.
 - `packages/openclaw-mcp-capability-portal-plugin/tsconfig.json`
-  - Package TypeScript config.
 - `packages/openclaw-mcp-capability-portal-plugin/tsconfig.build.json`
-  - Build TypeScript config.
 - `packages/openclaw-mcp-capability-portal-plugin/tsdown.config.ts`
-  - ESM build config.
 - `packages/openclaw-mcp-capability-portal-plugin/openclaw.plugin.json`
-  - OpenClaw plugin manifest and config schema.
 - `packages/openclaw-mcp-capability-portal-plugin/src/index.ts`
-  - Exports plugin registration.
-- `packages/openclaw-mcp-capability-portal-plugin/src/plugin-registration.ts`
-  - Registers portal tools and approval hook.
+- `packages/openclaw-mcp-capability-portal-plugin/src/openclaw-plugin-api.ts`
+  - Narrow local OpenClaw API types used by this plugin.
 - `packages/openclaw-mcp-capability-portal-plugin/src/portal-config.ts`
-  - Parses portal-only plugin config: skills directories, enabled server IDs, and approval metadata.
-- `packages/openclaw-mcp-capability-portal-plugin/src/capability-types.ts`
-  - Defines capability IDs and portal result types.
-- `packages/openclaw-mcp-capability-portal-plugin/src/skill-directory.ts`
-  - Loads local markdown skills into searchable capabilities.
-- `packages/openclaw-mcp-capability-portal-plugin/src/mcp-client-runtime.ts`
-  - Connects to configured upstream MCP servers and calls tools.
+  - Portal plugin config and per-agent exposure policy.
 - `packages/openclaw-mcp-capability-portal-plugin/src/openclaw-mcp-server-config.ts`
-  - Normalizes OpenClaw's existing `api.config.mcp.servers` records into portal runtime records without exposing env/header values to agents.
-- `packages/openclaw-mcp-capability-portal-plugin/src/capability-index.ts`
-  - Builds/searches the merged skill and MCP capability index.
+  - Normalizes OpenClaw `api.config.mcp.servers`.
+- `packages/openclaw-mcp-capability-portal-plugin/src/mcp-client-runtime.ts`
+  - Creates MCP clients and transports with correct stdio/HTTP/SSE behavior.
+- `packages/openclaw-mcp-capability-portal-plugin/src/mcp-tool-catalog-loader.ts`
+  - Calls `listTools()` with pagination and converts tools to catalog nodes.
+- `packages/openclaw-mcp-capability-portal-plugin/src/portal-session-store.ts`
+  - Per-agent/session TTL caches for clients and linked catalog snapshots.
+- `packages/openclaw-mcp-capability-portal-plugin/src/portal-tool-context-bridge.ts`
+  - Captures OpenClaw hook context by `toolCallId` so portal tools can resolve
+    the active `agentId`, `sessionKey`, `sessionId`, and `runId`.
+- `packages/openclaw-mcp-capability-portal-plugin/src/portal-prompt-context.ts`
+  - Injects compact progressive-disclosure guidance into agent context.
 - `packages/openclaw-mcp-capability-portal-plugin/src/portal-tools.ts`
-  - Implements `mcp_portal_search` and `mcp_portal_execute`.
+  - Registers `mcp_portal_list`, `mcp_portal_search`,
+    `mcp_portal_describe`, `mcp_portal_execute`, and
+    `mcp_portal_materialize`.
 - `packages/openclaw-mcp-capability-portal-plugin/src/portal-approval-hook.ts`
-  - Uses `before_tool_call` to ask on configured capability IDs.
-- `packages/openclaw-mcp-capability-portal-plugin/src/*.test.ts`
-  - Unit tests for parser, index, runtime wrapper, tools, and approval hook.
+  - Applies approval policy to execution and materialization.
+- `packages/openclaw-mcp-capability-portal-plugin/src/plugin-registration.ts`
+  - Wires config, runtime, prompt hooks, tools, and approval hook.
 
-Modify:
+Modify agent-vm integration:
 
-- `pnpm-workspace.yaml`
-  - Includes the new package if the workspace does not already include `packages/*`.
-- `package.json`
-  - No script change if recursive package scripts already cover `packages/*`.
-- `docs/subsystems/secrets-and-credentials.md`
-  - Notes that MCP portal auth lives in OpenClaw gateway `mcp.servers`, not in Tool VM env.
-- `docs/reference/configuration/system-json.md`
-  - Links to OpenClaw plugin config example if the docs already contain plugin config guidance.
+- `packages/agent-vm/src/build/managed-image-dockerfile.ts`
+  - Install/symlink the managed portal plugin into OpenClaw gateway images.
+  - Install the Tool VM TypeScript helper package into managed Tool VM images.
+- `packages/agent-vm/package.json`
+  - Depends on both portal packages so managed image generation can resolve
+    their installed package metadata.
+- `tsconfig.base.json`
+  - Adds path aliases for both portal packages.
+- `packages/agent-vm/tsconfig.build.json`
+  - Adds build-time paths for both portal packages.
+- `packages/agent-vm/src/cli/init-command.ts`
+  - Generated OpenClaw config loads/allows the portal plugin and allows portal
+    tools.
+- `packages/agent-vm/src/cli/build-command.test.ts`
+  - Managed Dockerfile tests cover gateway plugin and Tool VM helper installs.
+- `packages/agent-vm/src/cli/init-command.test.ts`
+  - Generated OpenClaw config contains portal plugin defaults.
+- `packages/agent-vm/src/operations/openclaw-deployment-doctor.ts`
+  - Validates portal plugin load path, entry, and tool allowlist.
+- `packages/agent-vm/src/operations/openclaw-deployment-doctor.test.ts`
+  - Covers missing/broken portal deployment diagnostics.
+- `docker/base-images/tool-vm/Dockerfile`
+  - Prepare pnpm global install support for the Tool VM helper package.
+- `docs/subsystems/mcp-capability-portal.md`
 - `docs/architecture/openclaw-gateway.md`
-  - Adds gateway-side capability portal diagram.
+- `docs/subsystems/secrets-and-credentials.md`
+- `docs/reference/configuration/system-json.md`
+- `packages/agent-vm/src/cli/manual-templates.ts`
+- `packages/agent-vm/src/cli/manual-templates.test.ts`
 
 ---
 
-### Task 1: Scaffold The Separate Portal Plugin Package
+## Portal Tool Contract
+
+The agent receives a small, stable tool surface:
+
+- `mcp_portal_list`
+  - Progressive overview of namespaces, MCP servers, skill groups, counts, and
+    representative capabilities.
+  - Does not return every schema.
+- `mcp_portal_search`
+  - Search capability names, descriptions, namespaces, skill text, input schema
+    property names/descriptions, output schema property names/descriptions, and
+    relationships.
+  - Returns compact ranked hits.
+- `mcp_portal_describe`
+  - Batch exact capability IDs.
+  - Returns canonical MCP JSON Schema, annotations, execution metadata,
+    relationships, examples, and Tool VM code-generation hints.
+- `mcp_portal_execute`
+  - Executes one exact MCP tool capability by ID through the gateway MCP client.
+- `mcp_portal_materialize`
+  - Returns TypeScript helper source for selected capabilities.
+  - It does not execute arbitrary code and does not write files by itself.
+
+The Tool VM base image contains `agent-vm-mcp-portal`, a TypeScript/Zod helper
+CLI that can validate catalog JSON and write local helper files when the agent
+chooses to materialize portal output into its workspace.
+
+## Capability ID Rules
+
+Do not use ambiguous raw IDs like `mcp:${serverId}:${toolName}`. Encode
+components so server IDs and tool names can contain punctuation.
+
+Use:
+
+```text
+mcp:<base64url(serverId)>:<base64url(toolName)>
+skill:<base64url(skillName)>
+```
+
+Display fields must keep human-readable names separately:
+
+```ts
+{
+	serverId: "linear",
+	toolName: "create_issue",
+	id: "mcp:bGluZWFy:Y3JlYXRlX2lzc3Vl"
+}
+```
+
+---
+
+### Task 1: Create Shared TypeScript Catalog Core
 
 **Files:**
-- Create: `packages/openclaw-mcp-capability-portal-plugin/package.json`
-- Create: `packages/openclaw-mcp-capability-portal-plugin/tsconfig.json`
-- Create: `packages/openclaw-mcp-capability-portal-plugin/tsconfig.build.json`
-- Create: `packages/openclaw-mcp-capability-portal-plugin/tsdown.config.ts`
-- Create: `packages/openclaw-mcp-capability-portal-plugin/openclaw.plugin.json`
-- Create: `packages/openclaw-mcp-capability-portal-plugin/src/index.ts`
-- Modify: `pnpm-workspace.yaml`
+- Create: `packages/mcp-capability-portal-core/package.json`
+- Create: `packages/mcp-capability-portal-core/tsconfig.json`
+- Create: `packages/mcp-capability-portal-core/tsconfig.build.json`
+- Create: `packages/mcp-capability-portal-core/tsdown.config.ts`
+- Create: `packages/mcp-capability-portal-core/src/index.ts`
+- Create: `packages/mcp-capability-portal-core/src/json-schema.ts`
+- Create: `packages/mcp-capability-portal-core/src/capability-id.ts`
+- Create: `packages/mcp-capability-portal-core/src/catalog-types.ts`
+- Create: `packages/mcp-capability-portal-core/src/*.test.ts`
 
-- [ ] **Step 1: Create package metadata**
+- [ ] **Step 1: Add package metadata**
 
-Create `packages/openclaw-mcp-capability-portal-plugin/package.json`:
+Create package metadata matching existing repo package conventions:
 
 ```json
 {
-	"name": "@agent-vm/openclaw-mcp-capability-portal-plugin",
+	"name": "@agent-vm/mcp-capability-portal-core",
 	"version": "0.0.58",
-	"description": "OpenClaw plugin that exposes configured MCP servers through a progressive-disclosure capability portal.",
+	"description": "Shared TypeScript catalog, schema, and Tool VM helpers for the agent-vm MCP capability portal.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
 		"url": "https://github.com/ShravanSunder/agent-vm/issues"
@@ -106,11 +241,9 @@ Create `packages/openclaw-mcp-capability-portal-plugin/package.json`:
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
-		"directory": "packages/openclaw-mcp-capability-portal-plugin"
+		"directory": "packages/mcp-capability-portal-core"
 	},
-	"files": [
-		"dist"
-	],
+	"files": ["dist"],
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -120,1775 +253,782 @@ Create `packages/openclaw-mcp-capability-portal-plugin/package.json`:
 			"import": "./dist/index.js"
 		}
 	},
+	"bin": {
+		"agent-vm-mcp-portal": "./dist/bin/agent-vm-mcp-portal.js"
+	},
 	"publishConfig": {
 		"access": "public"
 	},
 	"scripts": {
-		"build": "tsdown && cp openclaw.plugin.json dist/",
+		"build": "tsdown",
 		"prepack": "pnpm -C ../.. build",
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@modelcontextprotocol/sdk": "^1.24.0",
-		"zod": "^4.1.13"
+		"zod": "^4.4.3"
 	}
 }
 ```
 
-- [ ] **Step 2: Add TypeScript build files**
+- [ ] **Step 2: Add build config**
 
-Create `packages/openclaw-mcp-capability-portal-plugin/tsconfig.json`:
+Use the same tsconfig shape as `openclaw-agent-vm-plugin`: rootDir, outDir,
+declarations, declaration maps, source maps, and test exclusion.
+
+- [ ] **Step 3: Define JSON-compatible schema types**
+
+`json-schema.ts` must expose JSON value types and a conservative object-schema
+type for MCP `inputSchema`/`outputSchema`.
+
+Acceptance tests:
+
+- A schema with `type: "object"`, `properties`, `required`, `$defs`, and `$ref`
+  parses through the catalog Zod schema.
+- A schema value containing a function is rejected because catalog artifacts are
+  JSON-compatible only.
+
+- [ ] **Step 4: Implement encoded capability IDs**
+
+Acceptance tests:
+
+- `encodeMcpCapabilityId("linear", "create_issue")` round-trips through
+  `decodeCapabilityId`.
+- IDs round-trip when server/tool names contain `:`, `/`, spaces, and `_`.
+- `decodeCapabilityId("mcp:linear:create_issue")` rejects legacy ambiguous IDs.
+
+- [ ] **Step 5: Define catalog Zod schemas**
+
+Catalog schemas must include:
+
+- namespaces
+- capabilities
+- schema artifacts
+- relationships
+- safety/approval hints
+- code-generation hints
+- catalog metadata with `agentId`, `generatedAt`, and `sourceHash`
+
+Acceptance tests:
+
+- A catalog containing one namespace, one MCP capability, input/output JSON
+  Schema, annotations, and relationships parses successfully.
+- Portal wrapper metadata containing raw transport config fields such as `env`,
+  `headers`, or `authorization` is rejected.
+- MCP `inputSchema` and `outputSchema` are preserved verbatim even when a real
+  tool schema legitimately contains properties named `headers`,
+  `authorization`, or `apiKey`.
+
+- [ ] **Step 6: Run focused tests**
+
+Run:
+
+```bash
+pnpm vitest run packages/mcp-capability-portal-core/src
+```
+
+Expected: PASS with all new core tests.
+
+---
+
+### Task 2: Build Linked Capability Search And Graph
+
+**Files:**
+- Create: `packages/mcp-capability-portal-core/src/capability-graph.ts`
+- Create: `packages/mcp-capability-portal-core/src/search-index.ts`
+- Create: `packages/mcp-capability-portal-core/src/capability-graph.test.ts`
+- Create: `packages/mcp-capability-portal-core/src/search-index.test.ts`
+
+- [ ] **Step 1: Build relationship graph**
+
+Implement deterministic links:
+
+- namespace links: same MCP server
+- schema links: output field names matching input field names
+- entity links: matching schema `title`, `$id`, or metadata entity name
+- skill links: capability IDs referenced in skill metadata or matching skill
+  tags
+- safety links: read/write/destructive groupings
+
+Acceptance tests:
+
+- `search_issues` links to `get_issue` and `create_comment` when output and
+  input schemas share `issueId`.
+- Tools from different servers do not link through generic names like `id`
+  unless a stronger entity/title match exists.
+- Relationship output is stable-sorted by relation type and capability ID.
+
+- [ ] **Step 2: Build progressive search**
+
+Search must index:
+
+- namespace name and description
+- tool name, title, and description
+- input schema property names and descriptions
+- output schema property names and descriptions
+- relationship target names
+- skill title and description
+
+Acceptance tests:
+
+- Searching `linear issue comment` ranks a comment-writing tool above unrelated
+  issue readers.
+- Searching for an input property name returns tools that accept that property.
+- Search results are compact and do not include full schemas.
+
+- [ ] **Step 3: Run focused tests**
+
+Run:
+
+```bash
+pnpm vitest run packages/mcp-capability-portal-core/src/capability-graph.test.ts packages/mcp-capability-portal-core/src/search-index.test.ts
+```
+
+Expected: PASS.
+
+---
+
+### Task 3: Add Tool VM TypeScript/Zod Helper Package Surface
+
+**Files:**
+- Create: `packages/mcp-capability-portal-core/src/tool-vm/zod-schema-loader.ts`
+- Create: `packages/mcp-capability-portal-core/src/tool-vm/typescript-artifact.ts`
+- Create: `packages/mcp-capability-portal-core/src/bin/agent-vm-mcp-portal.ts`
+- Create: `packages/mcp-capability-portal-core/src/tool-vm/*.test.ts`
+- Create: `packages/mcp-capability-portal-core/src/bin/*.test.ts`
+
+- [ ] **Step 1: Add optional Zod reconstruction helper**
+
+`zod-schema-loader.ts` must:
+
+- accept canonical JSON Schema
+- call `z.fromJSONSchema(...)` when available
+- return a typed success/failure result
+- report that conversion is experimental
+- never mutate the original schema object
+
+Acceptance tests:
+
+- A simple object JSON Schema converts to a Zod schema that parses valid input.
+- Unsupported/cyclic schemas return a failure result rather than throwing out of
+  the public helper.
+
+- [ ] **Step 2: Add TypeScript materializer**
+
+`typescript-artifact.ts` must emit a TypeScript module that contains:
+
+- a catalog constant
+- selected capability constants
+- `createInputValidator(capabilityId)` using Zod 4 `fromJSONSchema`
+- type-safe helper names derived from stable capability IDs
+- a top-level comment that states JSON Schema is canonical and Zod is derived
+
+Acceptance tests:
+
+- Generated source contains no auth headers/env values.
+- Generated source references `z.fromJSONSchema`.
+- Generated names are deterministic for the same catalog.
+
+- [ ] **Step 3: Add CLI**
+
+`agent-vm-mcp-portal` commands:
+
+```text
+agent-vm-mcp-portal validate <catalog.json>
+agent-vm-mcp-portal materialize <catalog.json> --out <directory>
+```
+
+Acceptance tests:
+
+- `validate` exits 0 for a valid catalog.
+- `validate` exits non-zero for a catalog with a forbidden secret-shaped field.
+- `materialize` writes `catalog.ts` and `catalog.json` under the output
+  directory.
+
+- [ ] **Step 4: Run focused tests**
+
+Run:
+
+```bash
+pnpm vitest run packages/mcp-capability-portal-core/src/tool-vm packages/mcp-capability-portal-core/src/bin
+```
+
+Expected: PASS.
+
+---
+
+### Task 4: Scaffold Managed OpenClaw Portal Plugin
+
+**Files:**
+- Create: `packages/openclaw-mcp-capability-portal-plugin/package.json`
+- Create: `packages/openclaw-mcp-capability-portal-plugin/tsconfig.json`
+- Create: `packages/openclaw-mcp-capability-portal-plugin/tsconfig.build.json`
+- Create: `packages/openclaw-mcp-capability-portal-plugin/tsdown.config.ts`
+- Create: `packages/openclaw-mcp-capability-portal-plugin/openclaw.plugin.json`
+- Create: `packages/openclaw-mcp-capability-portal-plugin/src/index.ts`
+- Create: `packages/openclaw-mcp-capability-portal-plugin/src/openclaw-plugin-api.ts`
+- Modify: `packages/agent-vm/package.json`
+- Modify: `tsconfig.base.json`
+- Modify: `packages/agent-vm/tsconfig.build.json`
+
+- [ ] **Step 1: Add package metadata**
+
+Use dependencies:
 
 ```json
 {
-	"extends": "../../tsconfig.base.json",
-	"include": ["src/**/*.ts"],
-	"exclude": ["dist"]
+	"@agent-vm/mcp-capability-portal-core": "workspace:*",
+	"@modelcontextprotocol/sdk": "^1.29.0",
+	"zod": "^4.4.3"
 }
 ```
 
-Create `packages/openclaw-mcp-capability-portal-plugin/tsconfig.build.json`:
+- [ ] **Step 2: Add OpenClaw manifest**
 
-```json
-{
-	"extends": "./tsconfig.json",
-	"exclude": ["dist", "src/**/*.test.ts"]
-}
-```
-
-Create `packages/openclaw-mcp-capability-portal-plugin/tsdown.config.ts`:
-
-```ts
-import { defineConfig } from 'tsdown';
-
-export default defineConfig({
-	clean: true,
-	dts: true,
-	entry: 'src/index.ts',
-	format: 'esm',
-	outExtensions: () => ({
-		dts: '.d.ts',
-		js: '.js',
-	}),
-	outDir: 'dist',
-	tsconfig: 'tsconfig.build.json',
-});
-```
-
-- [ ] **Step 3: Add the OpenClaw manifest**
-
-Create `packages/openclaw-mcp-capability-portal-plugin/openclaw.plugin.json`:
+`openclaw.plugin.json` must declare:
 
 ```json
 {
 	"id": "mcp-capability-portal",
 	"name": "MCP Capability Portal",
-	"description": "Gateway-side MCP capability portal with search and execute tools.",
-	"activation": {
-		"onStartup": true
-	},
+	"description": "Gateway-owned linked MCP capability catalog with progressive disclosure and safe execution.",
+	"activation": { "onStartup": true },
 	"contracts": {
-		"tools": ["mcp_portal_search", "mcp_portal_execute"]
-	},
-	"configSchema": {
-		"type": "object",
-		"additionalProperties": false,
-		"properties": {
-			"skillsDirs": {
-				"type": "array",
-				"items": { "type": "string", "minLength": 1 }
-			},
-			"enabledServerIds": {
-				"type": "array",
-				"items": { "type": "string", "minLength": 1 }
-			},
-			"approval": {
-				"type": "object",
-				"additionalProperties": false,
-				"properties": {
-					"alwaysAskCapabilityIds": {
-						"type": "array",
-						"items": { "type": "string", "minLength": 1 }
-					},
-					"writeCapabilityIds": {
-						"type": "array",
-						"items": { "type": "string", "minLength": 1 }
-					}
-				}
-			}
-		}
+		"tools": [
+			"mcp_portal_list",
+			"mcp_portal_search",
+			"mcp_portal_describe",
+			"mcp_portal_execute",
+			"mcp_portal_materialize"
+		]
 	}
 }
 ```
 
-- [ ] **Step 4: Add the package entry point**
+The config schema must allow portal metadata only: enabled server IDs, skill
+directories, prompt context settings, cache TTL, and approval policy. It must
+reject `mcpServers` because OpenClaw `mcp.servers` is the source of truth.
 
-Create `packages/openclaw-mcp-capability-portal-plugin/src/index.ts`:
+- [ ] **Step 3: Add local OpenClaw API types**
 
-```ts
-import plugin from './plugin-registration.js';
+Type the exact API surface this plugin uses:
 
-export default plugin;
-```
+- `config`
+- `pluginConfig`
+- `logger`
+- `registerTool`
+- `registerHook`
+- optional `registerRuntimeLifecycle`
 
-- [ ] **Step 5: Verify workspace inclusion**
+Acceptance tests:
 
-Run:
+- Plugin registration throws a useful error if `registerTool` is missing.
+- Plugin registration throws a useful error if `registerHook` is missing.
 
-```bash
-cat pnpm-workspace.yaml
-```
+- [ ] **Step 4: Wire workspace package resolution**
 
-If the workspace already includes `packages/*`, no edit is needed. If it lists packages explicitly, add:
+Update repo package wiring:
 
-```yaml
-  - packages/openclaw-mcp-capability-portal-plugin
-```
+- `packages/agent-vm/package.json` depends on
+  `@agent-vm/mcp-capability-portal-core` and
+  `@agent-vm/openclaw-mcp-capability-portal-plugin` with `workspace:*`.
+- `tsconfig.base.json` adds path aliases for both packages.
+- `packages/agent-vm/tsconfig.build.json` adds build-time path aliases for both
+  packages.
+- `packages/openclaw-mcp-capability-portal-plugin/tsconfig.build.json` maps
+  `@agent-vm/mcp-capability-portal-core` to the core package declarations.
 
-- [ ] **Step 6: Install dependencies**
+Acceptance tests:
 
-Run:
-
-```bash
-pnpm install
-```
-
-Expected: lockfile updates with `@modelcontextprotocol/sdk`.
-
-- [ ] **Step 7: Commit Task 1**
-
-Run:
-
-```bash
-git add pnpm-lock.yaml pnpm-workspace.yaml packages/openclaw-mcp-capability-portal-plugin
-git commit -m "feat: scaffold mcp capability portal plugin
-
-Co-authored-by: Codex <noreply@openai.com>"
-```
+- `pnpm --filter @agent-vm/openclaw-mcp-capability-portal-plugin typecheck`
+  resolves the core package import.
+- `pnpm --filter @agent-vm/agent-vm typecheck` resolves both portal packages
+  for managed image package-spec discovery.
 
 ---
 
-### Task 2: Parse Portal Config
+### Task 5: Normalize OpenClaw MCP Servers And Connect With Proper Protocol
 
 **Files:**
 - Create: `packages/openclaw-mcp-capability-portal-plugin/src/portal-config.ts`
-- Create: `packages/openclaw-mcp-capability-portal-plugin/src/portal-config.test.ts`
-
-- [ ] **Step 1: Write parser tests**
-
-Create `packages/openclaw-mcp-capability-portal-plugin/src/portal-config.test.ts`:
-
-```ts
-import { describe, expect, it } from 'vitest';
-
-import { parsePortalConfig } from './portal-config.js';
-
-describe('parsePortalConfig', () => {
-	it('parses portal metadata without accepting MCP server definitions', () => {
-		expect(
-			parsePortalConfig({
-				approval: {
-					alwaysAskCapabilityIds: ['mcp:calendar:create_event'],
-					writeCapabilityIds: ['mcp:calendar:delete_event'],
-				},
-				enabledServerIds: ['calendar', 'readwise'],
-				skillsDirs: ['/opt/agent-vm/skills'],
-			}),
-		).toEqual({
-			approval: {
-				alwaysAskCapabilityIds: ['mcp:calendar:create_event'],
-				writeCapabilityIds: ['mcp:calendar:delete_event'],
-			},
-			enabledServerIds: ['calendar', 'readwise'],
-			skillsDirs: ['/opt/agent-vm/skills'],
-		});
-	});
-
-	it('defaults to all OpenClaw MCP servers, no skills, and no approval overrides', () => {
-		expect(parsePortalConfig({})).toEqual({
-			approval: {
-				alwaysAskCapabilityIds: [],
-				writeCapabilityIds: [],
-			},
-			enabledServerIds: [],
-			skillsDirs: [],
-		});
-	});
-
-	it('rejects a duplicate mcpServers surface in plugin config', () => {
-		expect(() =>
-			parsePortalConfig({
-				mcpServers: {
-					calendar: {
-						command: 'node',
-					},
-				},
-			}),
-		).toThrow();
-	});
-});
-```
-
-- [ ] **Step 2: Run parser tests and verify they fail**
-
-Run:
-
-```bash
-pnpm vitest run packages/openclaw-mcp-capability-portal-plugin/src/portal-config.test.ts
-```
-
-Expected: FAIL because `portal-config.ts` does not exist.
-
-- [ ] **Step 3: Implement parser**
-
-Create `packages/openclaw-mcp-capability-portal-plugin/src/portal-config.ts`:
-
-```ts
-import { z } from 'zod';
-
-const portalConfigSchema = z
-	.object({
-		approval: z
-			.object({
-				alwaysAskCapabilityIds: z.array(z.string().min(1)).default([]),
-				writeCapabilityIds: z.array(z.string().min(1)).default([]),
-			})
-			.strict()
-			.default({
-				alwaysAskCapabilityIds: [],
-				writeCapabilityIds: [],
-			}),
-		enabledServerIds: z.array(z.string().min(1)).default([]),
-		skillsDirs: z.array(z.string().min(1)).default([]),
-	})
-	.strict();
-
-export type PortalConfig = z.infer<typeof portalConfigSchema>;
-
-export function parsePortalConfig(value: unknown): PortalConfig {
-	return portalConfigSchema.parse(value ?? {});
-}
-```
-
-- [ ] **Step 4: Run parser tests**
-
-Run:
-
-```bash
-pnpm vitest run packages/openclaw-mcp-capability-portal-plugin/src/portal-config.test.ts
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit Task 2**
-
-Run:
-
-```bash
-git add packages/openclaw-mcp-capability-portal-plugin/src/portal-config.ts packages/openclaw-mcp-capability-portal-plugin/src/portal-config.test.ts
-git commit -m "feat: parse mcp portal config
-
-Co-authored-by: Codex <noreply@openai.com>"
-```
-
----
-
-### Task 3: Define Capability Types And Search Index
-
-**Files:**
-- Create: `packages/openclaw-mcp-capability-portal-plugin/src/capability-types.ts`
-- Create: `packages/openclaw-mcp-capability-portal-plugin/src/capability-index.ts`
-- Create: `packages/openclaw-mcp-capability-portal-plugin/src/capability-index.test.ts`
-
-- [ ] **Step 1: Write index tests**
-
-Create `packages/openclaw-mcp-capability-portal-plugin/src/capability-index.test.ts`:
-
-```ts
-import { describe, expect, it } from 'vitest';
-
-import { createCapabilityIndex } from './capability-index.js';
-import type { PortalCapability } from './capability-types.js';
-
-const capabilities: readonly PortalCapability[] = [
-	{
-		description: 'List calendar events for a day.',
-		id: 'mcp:calendar:list_events',
-		kind: 'mcp-tool',
-		source: 'calendar',
-		title: 'List events',
-	},
-	{
-		description: 'Create a calendar event.',
-		id: 'mcp:calendar:create_event',
-		inputSchema: {
-			type: 'object',
-			properties: {
-				summary: { type: 'string' },
-			},
-		},
-		kind: 'mcp-tool',
-		source: 'calendar',
-		title: 'Create event',
-	},
-	{
-		description: 'How to use Readwise from agents.',
-		id: 'skill:readwise',
-		kind: 'skill',
-		source: '/skills/readwise.md',
-		title: 'Readwise skill',
-	},
-];
-
-describe('createCapabilityIndex', () => {
-	it('searches capabilities by title, description, source, and id', () => {
-		const index = createCapabilityIndex(capabilities);
-
-		expect(index.search({ query: 'calendar create', limit: 5 })).toEqual([
-			expect.objectContaining({
-				id: 'mcp:calendar:create_event',
-			}),
-			expect.objectContaining({
-				id: 'mcp:calendar:list_events',
-			}),
-		]);
-	});
-
-	it('looks up a capability by id', () => {
-		const index = createCapabilityIndex(capabilities);
-
-		expect(index.getById('skill:readwise')).toEqual(capabilities[2]);
-	});
-
-	it('returns all capabilities for empty query up to the limit', () => {
-		const index = createCapabilityIndex(capabilities);
-
-		expect(index.search({ limit: 2 })).toHaveLength(2);
-	});
-});
-```
-
-- [ ] **Step 2: Run index tests and verify they fail**
-
-Run:
-
-```bash
-pnpm vitest run packages/openclaw-mcp-capability-portal-plugin/src/capability-index.test.ts
-```
-
-Expected: FAIL because the files do not exist.
-
-- [ ] **Step 3: Implement capability types**
-
-Create `packages/openclaw-mcp-capability-portal-plugin/src/capability-types.ts`:
-
-```ts
-export type PortalCapabilityKind = 'mcp-tool' | 'skill';
-
-export interface PortalCapability {
-	readonly description: string;
-	readonly id: string;
-	readonly inputSchema?: Record<string, unknown>;
-	readonly kind: PortalCapabilityKind;
-	readonly source: string;
-	readonly title: string;
-}
-
-export interface PortalSearchRequest {
-	readonly kind?: PortalCapabilityKind;
-	readonly limit?: number;
-	readonly query?: string;
-}
-
-export interface PortalSearchResult {
-	readonly capabilities: readonly PortalCapability[];
-}
-
-export interface PortalExecuteRequest {
-	readonly arguments?: Record<string, unknown>;
-	readonly id: string;
-}
-```
-
-- [ ] **Step 4: Implement search index**
-
-Create `packages/openclaw-mcp-capability-portal-plugin/src/capability-index.ts`:
-
-```ts
-import type { PortalCapability, PortalSearchRequest } from './capability-types.js';
-
-export interface CapabilityIndex {
-	getById(capabilityId: string): PortalCapability | undefined;
-	search(request: PortalSearchRequest): readonly PortalCapability[];
-}
-
-function normalizeSearchText(value: string): string {
-	return value.toLowerCase().replace(/[_:-]+/gu, ' ');
-}
-
-function scoreCapability(capability: PortalCapability, terms: readonly string[]): number {
-	const haystack = normalizeSearchText(
-		[
-			capability.id,
-			capability.kind,
-			capability.source,
-			capability.title,
-			capability.description,
-		].join(' '),
-	);
-	return terms.reduce((score, term) => score + (haystack.includes(term) ? 1 : 0), 0);
-}
-
-export function createCapabilityIndex(capabilities: readonly PortalCapability[]): CapabilityIndex {
-	const capabilitiesById = new Map(capabilities.map((capability) => [capability.id, capability]));
-	return {
-		getById(capabilityId) {
-			return capabilitiesById.get(capabilityId);
-		},
-		search(request) {
-			const limit = request.limit ?? 10;
-			const query = normalizeSearchText(request.query ?? '').trim();
-			const terms = query.length === 0 ? [] : query.split(/\s+/u);
-			const filteredCapabilities = capabilities.filter(
-				(capability) => !request.kind || capability.kind === request.kind,
-			);
-			if (terms.length === 0) {
-				return filteredCapabilities.slice(0, limit);
-			}
-			return filteredCapabilities
-				.map((capability) => ({
-					capability,
-					score: scoreCapability(capability, terms),
-				}))
-				.filter((entry) => entry.score > 0)
-				.sort((left, right) => right.score - left.score || left.capability.id.localeCompare(right.capability.id))
-				.slice(0, limit)
-				.map((entry) => entry.capability);
-		},
-	};
-}
-```
-
-- [ ] **Step 5: Run index tests**
-
-Run:
-
-```bash
-pnpm vitest run packages/openclaw-mcp-capability-portal-plugin/src/capability-index.test.ts
-```
-
-Expected: PASS.
-
-- [ ] **Step 6: Commit Task 3**
-
-Run:
-
-```bash
-git add packages/openclaw-mcp-capability-portal-plugin/src/capability-types.ts packages/openclaw-mcp-capability-portal-plugin/src/capability-index.ts packages/openclaw-mcp-capability-portal-plugin/src/capability-index.test.ts
-git commit -m "feat: add mcp portal capability index
-
-Co-authored-by: Codex <noreply@openai.com>"
-```
-
----
-
-### Task 4: Load Skill Directory Capabilities
-
-**Files:**
-- Create: `packages/openclaw-mcp-capability-portal-plugin/src/skill-directory.ts`
-- Create: `packages/openclaw-mcp-capability-portal-plugin/src/skill-directory.test.ts`
-
-- [ ] **Step 1: Write skill loader tests**
-
-Create `packages/openclaw-mcp-capability-portal-plugin/src/skill-directory.test.ts`:
-
-```ts
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-
-import { describe, expect, it } from 'vitest';
-
-import { loadSkillCapabilities } from './skill-directory.js';
-
-describe('loadSkillCapabilities', () => {
-	it('loads markdown skills as searchable capabilities', async () => {
-		const root = await mkdtemp(path.join(os.tmpdir(), 'mcp-portal-skills-'));
-		await mkdir(path.join(root, 'readwise'), { recursive: true });
-		await writeFile(
-			path.join(root, 'readwise', 'SKILL.md'),
-			[
-				'---',
-				'name: readwise',
-				'description: Search and read saved articles from Readwise.',
-				'---',
-				'Use readwise search for saved articles.',
-				'',
-			].join('\n'),
-		);
-
-		await expect(loadSkillCapabilities({ skillsDirs: [root] })).resolves.toEqual([
-			{
-				description: 'Search and read saved articles from Readwise.',
-				id: 'skill:readwise',
-				kind: 'skill',
-				source: path.join(root, 'readwise', 'SKILL.md'),
-				title: 'readwise',
-			},
-		]);
-	});
-});
-```
-
-- [ ] **Step 2: Run skill loader tests and verify they fail**
-
-Run:
-
-```bash
-pnpm vitest run packages/openclaw-mcp-capability-portal-plugin/src/skill-directory.test.ts
-```
-
-Expected: FAIL because `skill-directory.ts` does not exist.
-
-- [ ] **Step 3: Implement skill loader**
-
-Create `packages/openclaw-mcp-capability-portal-plugin/src/skill-directory.ts`:
-
-```ts
-import { readdir, readFile } from 'node:fs/promises';
-import path from 'node:path';
-
-import type { PortalCapability } from './capability-types.js';
-
-function parseFrontmatterValue(content: string, fieldName: string): string | undefined {
-	const match = new RegExp(`^${fieldName}:\\s*(.+)$`, 'mu').exec(content);
-	return match?.[1]?.trim();
-}
-
-export async function loadSkillCapabilities(options: {
-	readonly skillsDirs: readonly string[];
-}): Promise<readonly PortalCapability[]> {
-	const capabilities: PortalCapability[] = [];
-	for (const skillsDir of options.skillsDirs) {
-		const entries = await readdir(skillsDir, { withFileTypes: true }).catch(() => []);
-		for (const entry of entries) {
-			if (!entry.isDirectory()) {
-				continue;
-			}
-			const skillPath = path.join(skillsDir, entry.name, 'SKILL.md');
-			const content = await readFile(skillPath, 'utf8').catch(() => undefined);
-			if (!content) {
-				continue;
-			}
-			const name = parseFrontmatterValue(content, 'name') ?? entry.name;
-			const description =
-				parseFrontmatterValue(content, 'description') ?? `Skill instructions from ${skillPath}.`;
-			capabilities.push({
-				description,
-				id: `skill:${name}`,
-				kind: 'skill',
-				source: skillPath,
-				title: name,
-			});
-		}
-	}
-	return capabilities.sort((left, right) => left.id.localeCompare(right.id));
-}
-```
-
-This v1 loader intentionally supports only the small frontmatter subset needed
-for `name` and `description`. If OpenClaw exports its full skill loader by
-implementation time, import that instead. If not, document the divergence in
-`docs/subsystems/mcp-capability-portal.md` so operators do not assume full
-OpenClaw skill metadata parsing (`requires.bins`, block scalars, nested YAML)
-is supported by the portal search index.
-
-- [ ] **Step 4: Run skill loader tests**
-
-Run:
-
-```bash
-pnpm vitest run packages/openclaw-mcp-capability-portal-plugin/src/skill-directory.test.ts
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit Task 4**
-
-Run:
-
-```bash
-git add packages/openclaw-mcp-capability-portal-plugin/src/skill-directory.ts packages/openclaw-mcp-capability-portal-plugin/src/skill-directory.test.ts
-git commit -m "feat: load mcp portal skill capabilities
-
-Co-authored-by: Codex <noreply@openai.com>"
-```
-
----
-
-### Task 5: Build MCP Client Runtime
-
-**Files:**
 - Create: `packages/openclaw-mcp-capability-portal-plugin/src/openclaw-mcp-server-config.ts`
-- Create: `packages/openclaw-mcp-capability-portal-plugin/src/openclaw-mcp-server-config.test.ts`
 - Create: `packages/openclaw-mcp-capability-portal-plugin/src/mcp-client-runtime.ts`
-- Create: `packages/openclaw-mcp-capability-portal-plugin/src/mcp-client-runtime.test.ts`
+- Create: matching `*.test.ts`
 
-- [ ] **Step 0: Normalize OpenClaw MCP server records, not plugin-owned records**
+- [ ] **Step 1: Parse portal config**
 
-Create `packages/openclaw-mcp-capability-portal-plugin/src/openclaw-mcp-server-config.test.ts` with tests that mirror OpenClaw's existing MCP transport behavior:
+Config defaults:
 
-```ts
-import { describe, expect, it } from 'vitest';
+- `enabledServerIds: []` means all configured OpenClaw MCP servers.
+- `enabledServerIdsByAgent: {}` lets specific agents receive narrower or
+  different namespace views.
+- `hiddenCapabilityIdsByAgent: {}` hides specific capabilities for specific
+  agents after namespace selection.
+- `skillsDirs: []`
+- `promptContext.enabled: true`
+- `promptContext.maxNamespaces: 12`
+- `cache.catalogTtlMs: 60_000`
+- `approval.alwaysAskCapabilityIds: []`
+- `approval.writeCapabilityIds: []`
+- `approval.annotationPolicy: "destructive-requires-approval"`
 
-import { normalizeOpenClawMcpServers } from './openclaw-mcp-server-config.js';
+Acceptance tests:
 
-describe('normalizeOpenClawMcpServers', () => {
-	it('normalizes stdio and HTTP servers from OpenClaw mcp.servers', () => {
-		expect(
-			normalizeOpenClawMcpServers({
-				calendar: {
-					args: ['calendar-server.js'],
-					command: 'node',
-					env: { CALENDAR_TOKEN: 'secret-value' },
-				},
-				linear: {
-					headers: { authorization: 'Bearer secret-value' },
-					transport: 'streamable-http',
-					url: 'https://mcp.linear.app/mcp',
-				},
-			}),
-		).toEqual({
-			calendar: {
-				args: ['calendar-server.js'],
-				command: 'node',
-				env: { CALENDAR_TOKEN: 'secret-value' },
-				kind: 'stdio',
-			},
-			linear: {
-				headers: { authorization: 'Bearer secret-value' },
-				kind: 'http',
-				transport: 'streamable-http',
-				url: 'https://mcp.linear.app/mcp',
-			},
-		});
-	});
+- Empty config produces defaults.
+- `mcpServers` in plugin config is rejected.
+- Invalid approval policy is rejected.
+- Agent-specific exposure config can make Agent A see `linear` while Agent B
+  sees `readwise`.
 
-	it('drops dangerous stdio env entries the same way OpenClaw bundle-mcp does', () => {
-		expect(
-			normalizeOpenClawMcpServers({
-				unsafe: {
-					command: 'node',
-					env: {
-						LD_PRELOAD: '/tmp/hook.so',
-						SAFE_TOKEN: 'ok',
-					},
-				},
-			}).unsafe,
-		).toEqual({
-			args: [],
-			command: 'node',
-			env: { SAFE_TOKEN: 'ok' },
-			kind: 'stdio',
-		});
-	});
-});
-```
+- [ ] **Step 2: Normalize OpenClaw MCP server records**
 
-Create `packages/openclaw-mcp-capability-portal-plugin/src/openclaw-mcp-server-config.ts`.
+Mirror OpenClaw semantics for:
 
-Implementation constraint: base this adapter on OpenClaw's `src/agents/mcp-transport-config.ts` and `src/agents/mcp-config-shared.ts` semantics. If OpenClaw exports a public helper by implementation time, import that helper instead of copying the rules. If it does not, keep this as a tiny compatibility adapter with tests for dangerous env filtering, HTTP header coercion, transport aliases, and skipped malformed servers.
+- stdio: `command`, `args`, `env`, `cwd`, `workingDirectory`
+- remote: `url`, `transport`, `type`, `headers`
+- `connectionTimeoutMs`
+- env sanitization
+- header value coercion to strings
+- skipping malformed servers with redacted diagnostics
 
-- [ ] **Step 1: Write runtime tests with fake clients**
+Implementation preference: import OpenClaw's public MCP normalization/runtime
+helpers if OpenClaw exposes them. If no public helper exists, keep the adapter
+small and add conformance fixtures copied from the installed OpenClaw version
+used by `managed-images.json`.
 
-Create `packages/openclaw-mcp-capability-portal-plugin/src/mcp-client-runtime.test.ts`:
+Acceptance tests:
 
-```ts
-import { describe, expect, it, vi } from 'vitest';
+- stdio and streamable-http normalize correctly.
+- SSE normalizes headers correctly.
+- `LD_PRELOAD` and other dangerous env keys are dropped from stdio env.
+- malformed servers are skipped without exposing raw header/env values.
+- `type: "sse"` and `transport: "sse"` resolve the same way OpenClaw resolves
+  them.
+- config-change disposal closes clients and rebuilds normalized server records.
 
-import { createMcpClientRuntime } from './mcp-client-runtime.js';
-import type { PortalConfig } from './portal-config.js';
+- [ ] **Step 3: Implement MCP client runtime**
 
-describe('createMcpClientRuntime', () => {
-	it('lists MCP tools as portal capabilities without leaking env or headers', async () => {
-		const runtime = createMcpClientRuntime({
-			clientFactory: async () => ({
-				callTool: vi.fn(),
-				close: vi.fn(),
-				listTools: vi.fn(async () => ({
-					tools: [
-						{
-							description: 'Create a calendar event.',
-							inputSchema: {
-								type: 'object',
-							},
-							name: 'create_event',
-						},
-					],
-				})),
-			}),
-			mcpServers: {
-				calendar: {
-					args: ['server.js'],
-					command: 'node',
-					env: {
-						CALENDAR_TOKEN: 'secret-value',
-					},
-					kind: 'stdio',
-				},
-			},
-			config: {
-				approval: {
-					alwaysAskCapabilityIds: [],
-					writeCapabilityIds: [],
-				},
-				enabledServerIds: [],
-				skillsDirs: [],
-			} satisfies PortalConfig,
-		});
+Runtime must:
 
-		await expect(runtime.listCapabilities()).resolves.toEqual([
-			{
-				description: 'Create a calendar event.',
-				id: 'mcp:calendar:create_event',
-				inputSchema: {
-					type: 'object',
-				},
-				kind: 'mcp-tool',
-				source: 'calendar',
-				title: 'create_event',
-			},
-		]);
-	});
+- use `StdioClientTransport` for stdio
+- use `StreamableHTTPClientTransport` for streamable-http
+- use `SSEClientTransport` for SSE
+- pass SSE headers to both `requestInit` and `eventSourceInit`
+- connect with timeout
+- call `listTools()` until `nextCursor` is absent
+- call `callTool({ name, arguments })`
+- cache clients per agent/session/server
+- evict failed or closed clients deterministically
+- close clients on runtime lifecycle stop
 
-	it('executes MCP tools by capability id', async () => {
-		const callTool = vi.fn(async () => ({
-			content: [{ type: 'text', text: 'created' }],
-		}));
-		const runtime = createMcpClientRuntime({
-			clientFactory: async () => ({
-				callTool,
-				close: vi.fn(),
-				listTools: vi.fn(async () => ({ tools: [] })),
-			}),
-			mcpServers: {
-				calendar: {
-					args: ['server.js'],
-					command: 'node',
-					env: {},
-					kind: 'stdio',
-				},
-			},
-			config: {
-				approval: {
-					alwaysAskCapabilityIds: [],
-					writeCapabilityIds: [],
-				},
-				enabledServerIds: [],
-				skillsDirs: [],
-			} satisfies PortalConfig,
-		});
+Acceptance tests:
 
-		await expect(
-			runtime.executeTool({
-				arguments: { summary: 'Review' },
-				id: 'mcp:calendar:create_event',
-			}),
-		).resolves.toEqual({
-			content: [{ type: 'text', text: 'created' }],
-		});
-		expect(callTool).toHaveBeenCalledWith({
-			arguments: { summary: 'Review' },
-			name: 'create_event',
-		});
-	});
-
-	it('evicts a cached MCP client when the transport closes', async () => {
-		const firstClient = {
-			callTool: vi.fn(async () => {
-				throw new Error('transport closed');
-			}),
-			close: vi.fn(),
-			listTools: vi.fn(async () => ({ tools: [] })),
-		};
-		const secondClient = {
-			callTool: vi.fn(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
-			close: vi.fn(),
-			listTools: vi.fn(async () => ({ tools: [] })),
-		};
-		const clientFactory = vi.fn().mockResolvedValueOnce(firstClient).mockResolvedValueOnce(secondClient);
-		const runtime = createMcpClientRuntime({
-			clientFactory,
-			mcpServers: {
-				calendar: { args: ['server.js'], command: 'node', env: {}, kind: 'stdio' },
-			},
-			config: {
-				approval: { alwaysAskCapabilityIds: [], writeCapabilityIds: [] },
-				enabledServerIds: [],
-				skillsDirs: [],
-			} satisfies PortalConfig,
-		});
-
-		await expect(runtime.executeTool({ id: 'mcp:calendar:create_event' })).rejects.toThrow(
-			'transport closed',
-		);
-		await expect(runtime.executeTool({ id: 'mcp:calendar:create_event' })).resolves.toEqual({
-			content: [{ type: 'text', text: 'ok' }],
-		});
-		expect(clientFactory).toHaveBeenCalledTimes(2);
-	});
-
-	it('serializes concurrent calls to the same MCP server', async () => {
-		const order: string[] = [];
-		const runtime = createMcpClientRuntime({
-			clientFactory: async () => ({
-				callTool: vi.fn(async ({ name }) => {
-					order.push(`start:${name}`);
-					await Promise.resolve();
-					order.push(`end:${name}`);
-					return {};
-				}),
-				close: vi.fn(),
-				listTools: vi.fn(async () => ({ tools: [] })),
-			}),
-			mcpServers: {
-				calendar: { args: ['server.js'], command: 'node', env: {}, kind: 'stdio' },
-			},
-			config: {
-				approval: { alwaysAskCapabilityIds: [], writeCapabilityIds: [] },
-				enabledServerIds: [],
-				skillsDirs: [],
-			} satisfies PortalConfig,
-		});
-
-		await Promise.all([
-			runtime.executeTool({ id: 'mcp:calendar:first' }),
-			runtime.executeTool({ id: 'mcp:calendar:second' }),
-		]);
-
-		expect(order).toEqual(['start:first', 'end:first', 'start:second', 'end:second']);
-	});
-});
-```
-
-- [ ] **Step 2: Run runtime tests and verify they fail**
-
-Run:
-
-```bash
-pnpm vitest run packages/openclaw-mcp-capability-portal-plugin/src/mcp-client-runtime.test.ts
-```
-
-Expected: FAIL because `mcp-client-runtime.ts` does not exist.
-
-- [ ] **Step 3: Implement runtime wrapper**
-
-Create `packages/openclaw-mcp-capability-portal-plugin/src/mcp-client-runtime.ts`:
-
-```ts
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-
-import type { PortalCapability, PortalExecuteRequest } from './capability-types.js';
-import type { PortalConfig } from './portal-config.js';
-
-export type PortalMcpServerConfig =
-	| {
-			readonly args: readonly string[];
-			readonly command: string;
-			readonly cwd?: string;
-			readonly env: Readonly<Record<string, string>>;
-			readonly kind: 'stdio';
-	  }
-	| {
-			readonly headers: Readonly<Record<string, string>>;
-			readonly kind: 'http';
-			readonly transport: 'sse' | 'streamable-http';
-			readonly url: string;
-	  };
-
-interface MinimalMcpClient {
-	callTool(request: { readonly arguments?: Record<string, unknown>; readonly name: string }): Promise<unknown>;
-	close(): Promise<void> | void;
-	listTools(): Promise<{
-		readonly tools: readonly {
-			readonly description?: string;
-			readonly inputSchema?: Record<string, unknown>;
-			readonly name: string;
-		}[];
-	}>;
-}
-
-export interface McpClientRuntime {
-	executeTool(request: PortalExecuteRequest): Promise<unknown>;
-	listCapabilities(): Promise<readonly PortalCapability[]>;
-}
-
-function capabilityIdFor(serverId: string, toolName: string): string {
-	return `mcp:${serverId}:${toolName}`;
-}
-
-function parseMcpCapabilityId(capabilityId: string): { readonly serverId: string; readonly toolName: string } {
-	const parts = capabilityId.split(':');
-	if (parts.length !== 3 || parts[0] !== 'mcp' || !parts[1] || !parts[2]) {
-		throw new Error(`Invalid MCP capability id '${capabilityId}'.`);
-	}
-	return {
-		serverId: parts[1],
-		toolName: parts[2],
-	};
-}
-
-async function createSdkClient(serverId: string, server: PortalMcpServerConfig): Promise<MinimalMcpClient> {
-	const client = new Client({
-		name: `agent-vm-mcp-portal-${serverId}`,
-		version: '1.0.0',
-	});
-	if (server.kind === 'stdio') {
-		await client.connect(
-			new StdioClientTransport({
-				args: server.args,
-				command: server.command,
-				cwd: server.cwd,
-				env: server.env,
-			}),
-		);
-		return client;
-	}
-	if (server.transport === 'sse') {
-		await client.connect(
-			new SSEClientTransport(new URL(server.url), {
-				requestInit: {
-					headers: server.headers,
-				},
-			}),
-		);
-		return client;
-	}
-	await client.connect(
-		new StreamableHTTPClientTransport(new URL(server.url), {
-			requestInit: {
-				headers: server.headers,
-			},
-		}),
-	);
-	return client;
-}
-
-export function createMcpClientRuntime(options: {
-	readonly clientFactory?: (serverId: string, server: PortalMcpServerConfig) => Promise<MinimalMcpClient>;
-	readonly config: PortalConfig;
-	readonly mcpServers: Readonly<Record<string, PortalMcpServerConfig>>;
-}): McpClientRuntime {
-	const clientFactory = options.clientFactory ?? createSdkClient;
-	const clients = new Map<string, Promise<MinimalMcpClient>>();
-	const serverQueues = new Map<string, Promise<unknown>>();
-	const selectedServerIds =
-		options.config.enabledServerIds.length > 0
-			? options.config.enabledServerIds
-			: Object.keys(options.mcpServers);
-
-	function getClient(serverId: string): Promise<MinimalMcpClient> {
-		const server = options.mcpServers[serverId];
-		if (!server) {
-			throw new Error(`Unknown MCP server '${serverId}'.`);
-		}
-		const existingClient = clients.get(serverId);
-		if (existingClient) {
-			return existingClient;
-		}
-		const nextClient = clientFactory(serverId, server);
-		clients.set(serverId, nextClient);
-		return nextClient;
-	}
-
-	function isTransportClosedError(error: unknown): boolean {
-		return error instanceof Error && /transport.*closed|connection.*closed|socket.*closed/i.test(error.message);
-	}
-
-	async function withServerQueue<TResult>(
-		serverId: string,
-		operation: (client: MinimalMcpClient) => Promise<TResult>,
-	): Promise<TResult> {
-		const previous = serverQueues.get(serverId) ?? Promise.resolve();
-		const next = previous.then(async () => {
-			const client = await getClient(serverId);
-			try {
-				return await operation(client);
-			} catch (error) {
-				if (isTransportClosedError(error)) {
-					clients.delete(serverId);
-					await client.close();
-				}
-				throw error;
-			}
-		});
-		serverQueues.set(
-			serverId,
-			next.catch(() => undefined),
-		);
-		return await next;
-	}
-
-	return {
-		async executeTool(request) {
-			const { serverId, toolName } = parseMcpCapabilityId(request.id);
-			return await withServerQueue(serverId, async (client) =>
-				client.callTool({
-					arguments: request.arguments ?? {},
-					name: toolName,
-				}),
-			);
-		},
-		async listCapabilities() {
-			const capabilities: PortalCapability[] = [];
-			for (const serverId of selectedServerIds) {
-				const result = await withServerQueue(serverId, async (client) => client.listTools());
-				for (const tool of result.tools) {
-					capabilities.push({
-						description: tool.description ?? `MCP tool '${tool.name}' from '${serverId}'.`,
-						id: capabilityIdFor(serverId, tool.name),
-						...(tool.inputSchema ? { inputSchema: tool.inputSchema } : {}),
-						kind: 'mcp-tool',
-						source: serverId,
-						title: tool.name,
-					});
-				}
-			}
-			return capabilities.sort((left, right) => left.id.localeCompare(right.id));
-		},
-	};
-}
-```
-
-- [ ] **Step 4: Run runtime tests**
-
-Run:
-
-```bash
-pnpm vitest run packages/openclaw-mcp-capability-portal-plugin/src/mcp-client-runtime.test.ts
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit Task 5**
-
-Run:
-
-```bash
-git add packages/openclaw-mcp-capability-portal-plugin/src/openclaw-mcp-server-config.ts packages/openclaw-mcp-capability-portal-plugin/src/openclaw-mcp-server-config.test.ts packages/openclaw-mcp-capability-portal-plugin/src/mcp-client-runtime.ts packages/openclaw-mcp-capability-portal-plugin/src/mcp-client-runtime.test.ts
-git commit -m "feat: add mcp portal client runtime
-
-Co-authored-by: Codex <noreply@openai.com>"
-```
+- paginated `listTools` returns all pages.
+- SSE transport receives both request and initial stream header handling.
+- failed client creation does not poison the cache forever.
+- concurrent calls to the same server serialize.
+- calls for different agents do not share clients.
 
 ---
 
-### Task 6: Implement Portal Tools
+### Task 6: Build Per-Agent Linked Catalogs And Prompt Context
+
+**Files:**
+- Create: `packages/openclaw-mcp-capability-portal-plugin/src/mcp-tool-catalog-loader.ts`
+- Create: `packages/openclaw-mcp-capability-portal-plugin/src/portal-session-store.ts`
+- Create: `packages/openclaw-mcp-capability-portal-plugin/src/portal-tool-context-bridge.ts`
+- Create: `packages/openclaw-mcp-capability-portal-plugin/src/portal-prompt-context.ts`
+- Create: matching `*.test.ts`
+
+- [ ] **Step 1: Convert MCP tools to catalog nodes**
+
+Catalog conversion must preserve:
+
+- MCP server ID
+- safe server display name
+- MCP tool name
+- title
+- description
+- inputSchema
+- outputSchema
+- annotations
+- execution metadata
+- scrubbed `_meta` only when explicitly safe
+
+Acceptance tests:
+
+- input and output schemas are preserved exactly.
+- `annotations.destructiveHint` and `readOnlyHint` are preserved.
+- raw headers/env values never appear in catalog JSON.
+
+- [ ] **Step 2: Add tool-call context bridge**
+
+`portal-tool-context-bridge.ts` must:
+
+- record `agentId`, `sessionKey`, `sessionId`, `runId`, and `toolCallId` from
+  OpenClaw `before_tool_call` context
+- resolve the active portal context inside tool handlers from `toolCallId`
+- fall back to explicit `"unknown-agent"`/`"unknown-session"` only when
+  OpenClaw truly provides no context
+- clean context on `after_tool_call`, TTL expiry, and runtime lifecycle stop
+
+Acceptance tests:
+
+- `toolCallId` recorded in `before_tool_call` resolves inside a portal tool
+  execute handler.
+- Two concurrent tool calls for two agents resolve different agent IDs.
+- Context entries are removed after `after_tool_call`.
+
+- [ ] **Step 3: Add per-agent/session store**
+
+Cache key shape:
+
+```text
+agentId || "unknown-agent"
+sessionKey || sessionId || "unknown-session"
+serverId
+```
+
+Acceptance tests:
+
+- Agent A and Agent B get separate catalog snapshots.
+- Agent-specific exposure policy makes Agent A and Agent B see different
+  namespaces from the same gateway config.
+- Session cache expires after TTL.
+- Cache clear closes clients for that agent/session only.
+
+- [ ] **Step 4: Inject compact prompt context**
+
+Register a prompt hook using `before_prompt_build` or `agent_turn_prepare`.
+The injected context must be compact and stable:
+
+```text
+MCP capability portal is available.
+Use mcp_portal_list for namespaces, mcp_portal_search for discovery,
+mcp_portal_describe for batch schemas/code hints, and mcp_portal_execute
+for exact execution. Gateway owns MCP auth. Tool VM helpers are available
+through agent-vm-mcp-portal.
+Namespaces: linear(18 tools), readwise(9 tools), calendar(6 tools)
+```
+
+Acceptance tests:
+
+- Prompt context appears when enabled.
+- Prompt context omits raw schemas and secrets.
+- Prompt context degrades gracefully when no MCP servers are configured.
+
+---
+
+### Task 7: Register Progressive Disclosure Portal Tools
 
 **Files:**
 - Create: `packages/openclaw-mcp-capability-portal-plugin/src/portal-tools.ts`
 - Create: `packages/openclaw-mcp-capability-portal-plugin/src/portal-tools.test.ts`
 
-- [ ] **Step 1: Write portal tool tests**
+- [ ] **Step 1: Register `mcp_portal_list`**
 
-Create `packages/openclaw-mcp-capability-portal-plugin/src/portal-tools.test.ts`:
+Input:
 
-```ts
-import { describe, expect, it, vi } from 'vitest';
-
-import { registerPortalTools } from './portal-tools.js';
-
-describe('registerPortalTools', () => {
-	it('registers search and execute tools', async () => {
-		const registerTool = vi.fn();
-		registerPortalTools({
-			api: { registerTool },
-			createIndex: async () => ({
-				getById: (id) =>
-					id === 'mcp:calendar:create_event'
-						? {
-								description: 'Create event.',
-								id,
-								kind: 'mcp-tool',
-								source: 'calendar',
-								title: 'create_event',
-							}
-						: undefined,
-				search: () => [
-					{
-						description: 'Create event.',
-						id: 'mcp:calendar:create_event',
-						kind: 'mcp-tool',
-						source: 'calendar',
-						title: 'create_event',
-					},
-				],
-			}),
-			runtime: {
-				executeTool: vi.fn(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
-				listCapabilities: vi.fn(async () => []),
-			},
-		});
-
-		const [searchTool, executeTool] = registerTool.mock.calls.map((call) => call[0]);
-
-		await expect(searchTool.execute('call-1', { query: 'calendar' })).resolves.toEqual({
-			content: JSON.stringify(
-				{
-					capabilities: [
-						{
-							description: 'Create event.',
-							id: 'mcp:calendar:create_event',
-							kind: 'mcp-tool',
-							source: 'calendar',
-							title: 'create_event',
-						},
-					],
-				},
-				null,
-				2,
-			),
-		});
-		await expect(
-			executeTool.execute('call-2', {
-				arguments: { summary: 'Review' },
-				id: 'mcp:calendar:create_event',
-			}),
-		).resolves.toEqual({
-			content: JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }, null, 2),
-		});
-	});
-
-	it('caches the capability index for the configured TTL', async () => {
-		const registerTool = vi.fn();
-		const createIndex = vi.fn(async () => ({
-			getById: () => undefined,
-			search: () => [],
-		}));
-		registerPortalTools({
-			api: { registerTool },
-			createIndex,
-			indexTtlMs: 60_000,
-			runtime: {
-				executeTool: vi.fn(),
-				listCapabilities: vi.fn(async () => []),
-			},
-		});
-		const [searchTool] = registerTool.mock.calls.map((call) => call[0]);
-
-		await searchTool.execute('call-1', { query: 'calendar' });
-		await searchTool.execute('call-2', { query: 'readwise' });
-
-		expect(createIndex).toHaveBeenCalledTimes(1);
-	});
-});
-```
-
-- [ ] **Step 2: Run tests and verify they fail**
-
-Run:
-
-```bash
-pnpm vitest run packages/openclaw-mcp-capability-portal-plugin/src/portal-tools.test.ts
-```
-
-Expected: FAIL because `portal-tools.ts` does not exist.
-
-- [ ] **Step 3: Implement portal tools**
-
-Create `packages/openclaw-mcp-capability-portal-plugin/src/portal-tools.ts`:
-
-```ts
-import { createCapabilityIndex, type CapabilityIndex } from './capability-index.js';
-import type { PortalExecuteRequest, PortalSearchRequest } from './capability-types.js';
-import type { McpClientRuntime } from './mcp-client-runtime.js';
-import { loadSkillCapabilities } from './skill-directory.js';
-
-interface RegisterToolApi {
-	registerTool(
-		tool: {
-			readonly description: string;
-			readonly execute: (toolCallId: string, params: unknown) => Promise<{ readonly content: string }>;
-			readonly name: string;
-			readonly parameters: Record<string, unknown>;
-		},
-		options?: { readonly name?: string; readonly optional?: boolean },
-	): void;
-}
-
-function asSearchRequest(params: unknown): PortalSearchRequest {
-	if (typeof params !== 'object' || params === null) {
-		return {};
-	}
-	const record = params as Record<string, unknown>;
-	return {
-		...(record.kind === 'mcp-tool' || record.kind === 'skill' ? { kind: record.kind } : {}),
-		...(typeof record.limit === 'number' ? { limit: record.limit } : {}),
-		...(typeof record.query === 'string' ? { query: record.query } : {}),
-	};
-}
-
-function asExecuteRequest(params: unknown): PortalExecuteRequest {
-	if (typeof params !== 'object' || params === null) {
-		throw new Error('mcp_portal_execute requires an object input.');
-	}
-	const record = params as Record<string, unknown>;
-	if (typeof record.id !== 'string' || record.id.length === 0) {
-		throw new Error('mcp_portal_execute requires id.');
-	}
-	return {
-		...(typeof record.arguments === 'object' && record.arguments !== null
-			? { arguments: record.arguments as Record<string, unknown> }
-			: {}),
-		id: record.id,
-	};
-}
-
-export function registerPortalTools(options: {
-	readonly api: RegisterToolApi;
-	readonly createIndex?: () => Promise<CapabilityIndex>;
-	readonly indexTtlMs?: number;
-	readonly runtime: McpClientRuntime;
-	readonly skillsDirs?: readonly string[];
-}): void {
-	let cachedIndex:
-		| {
-				readonly expiresAtMs: number;
-				readonly index: CapabilityIndex;
-		  }
-		| undefined;
-	const indexTtlMs = options.indexTtlMs ?? 60_000;
-	const createIndex =
-		options.createIndex ??
-		(async () =>
-			createCapabilityIndex([
-				...(await options.runtime.listCapabilities()),
-				...(await loadSkillCapabilities({ skillsDirs: options.skillsDirs ?? [] })),
-			]));
-	async function getIndex(): Promise<CapabilityIndex> {
-		const now = Date.now();
-		if (cachedIndex && cachedIndex.expiresAtMs > now) {
-			return cachedIndex.index;
-		}
-		const index = await createIndex();
-		cachedIndex = {
-			expiresAtMs: now + indexTtlMs,
-			index,
-		};
-		return index;
-	}
-
-	options.api.registerTool(
-		{
-			description: 'Search gateway-proxied MCP tools and local skill instructions.',
-			execute: async (_toolCallId, params) => {
-				const index = await getIndex();
-				const result = {
-					capabilities: index.search(asSearchRequest(params)),
-				};
-				return {
-					content: JSON.stringify(result, null, 2),
-				};
-			},
-			name: 'mcp_portal_search',
-			parameters: {
-				additionalProperties: false,
-				properties: {
-					kind: { enum: ['mcp-tool', 'skill'], type: 'string' },
-					limit: { minimum: 1, type: 'number' },
-					query: { type: 'string' },
-				},
-				type: 'object',
-			},
-		},
-		{ name: 'mcp_portal_search', optional: true },
-	);
-
-	options.api.registerTool(
-		{
-			description: 'Execute a selected MCP portal capability by id.',
-			execute: async (_toolCallId, params) => {
-				const request = asExecuteRequest(params);
-				const index = await getIndex();
-				const capability = index.getById(request.id);
-				if (!capability) {
-					throw new Error(`Unknown portal capability '${request.id}'.`);
-				}
-				if (capability.kind !== 'mcp-tool') {
-					throw new Error(`Capability '${request.id}' is searchable but not executable.`);
-				}
-				return {
-					content: JSON.stringify(await options.runtime.executeTool(request), null, 2),
-				};
-			},
-			name: 'mcp_portal_execute',
-			parameters: {
-				additionalProperties: false,
-				properties: {
-					arguments: {
-						additionalProperties: true,
-						type: 'object',
-					},
-					id: { minLength: 1, type: 'string' },
-				},
-				required: ['id'],
-				type: 'object',
-			},
-		},
-		{ name: 'mcp_portal_execute', optional: true },
-	);
+```json
+{
+	"namespace": "optional namespace filter",
+	"limit": 20,
+	"cursor": "optional cursor"
 }
 ```
 
-- [ ] **Step 4: Run tool tests**
+Output:
 
-Run:
+- namespaces
+- counts
+- representative capability IDs
+- next cursor
 
-```bash
-pnpm vitest run packages/openclaw-mcp-capability-portal-plugin/src/portal-tools.test.ts
+Acceptance tests:
+
+- list returns namespace summaries without full schemas.
+- pagination is stable.
+
+- [ ] **Step 2: Register `mcp_portal_search`**
+
+Input:
+
+```json
+{
+	"query": "linear issue comment",
+	"kind": "optional mcp-tool or skill",
+	"limit": 10
+}
 ```
 
-Expected: PASS.
+Output:
 
-- [ ] **Step 5: Commit Task 6**
+- compact ranked hits
+- relationship hints
+- schema field matches
+- no full schemas
 
-Run:
+Acceptance tests:
 
-```bash
-git add packages/openclaw-mcp-capability-portal-plugin/src/portal-tools.ts packages/openclaw-mcp-capability-portal-plugin/src/portal-tools.test.ts
-git commit -m "feat: register mcp portal tools
+- search finds matches through schema property names.
+- search results omit full schema bodies.
 
-Co-authored-by: Codex <noreply@openai.com>"
+- [ ] **Step 3: Register `mcp_portal_describe`**
+
+Input:
+
+```json
+{
+	"ids": ["mcp:..."],
+	"includeSchemas": true,
+	"includeRelated": true,
+	"includeMaterializationHints": true
+}
 ```
+
+Output:
+
+- full canonical JSON Schemas
+- output schemas
+- annotations
+- related capabilities
+- TypeScript/Zod materialization hints
+
+Acceptance tests:
+
+- describe accepts multiple IDs.
+- describe returns input/output schemas and annotations.
+- describe rejects unknown IDs with a clear, secret-free error.
+
+- [ ] **Step 4: Register `mcp_portal_materialize`**
+
+Input:
+
+```json
+{
+	"ids": ["mcp:..."],
+	"format": "typescript-zod",
+	"moduleName": "linearPortal"
+}
+```
+
+Output:
+
+- generated TypeScript source as text
+- catalog JSON fragment
+- instructions for using Tool VM `agent-vm-mcp-portal`
+
+Acceptance tests:
+
+- materialize emits deterministic TypeScript source.
+- materialize does not write files.
+- materialize output contains no raw headers/env values.
+
+- [ ] **Step 5: Register `mcp_portal_execute`**
+
+Input:
+
+```json
+{
+	"id": "mcp:...",
+	"arguments": {}
+}
+```
+
+Acceptance tests:
+
+- execute calls MCP SDK `callTool({ name, arguments })`.
+- execute only allows MCP tool capabilities, not skill capabilities.
+- execute returns MCP result content and structured content unchanged except
+  for secret redaction in thrown errors.
 
 ---
 
-### Task 7: Add Approval Hook For Portal Execution
+### Task 8: Approval, Redaction, And Safety Policy
 
 **Files:**
 - Create: `packages/openclaw-mcp-capability-portal-plugin/src/portal-approval-hook.ts`
-- Create: `packages/openclaw-mcp-capability-portal-plugin/src/portal-approval-hook.test.ts`
+- Create: `packages/openclaw-mcp-capability-portal-plugin/src/redaction.ts`
+- Create: matching `*.test.ts`
 
-- [ ] **Step 1: Write approval hook tests**
+- [ ] **Step 1: Implement redaction**
 
-Create `packages/openclaw-mcp-capability-portal-plugin/src/portal-approval-hook.test.ts`:
+Redact:
 
-```ts
-import { describe, expect, it, vi } from 'vitest';
+- authorization headers
+- token-like query params
+- env values
+- `*_TOKEN`, `*_KEY`, `*_SECRET`, `PASSWORD`
+- bearer/basic auth strings
 
-import { registerPortalApprovalHook } from './portal-approval-hook.js';
+Acceptance tests:
 
-describe('registerPortalApprovalHook', () => {
-	it('requires approval for configured portal execute capability ids', async () => {
-		const on = vi.fn();
-		registerPortalApprovalHook({
-			api: { on },
-			approval: {
-				alwaysAskCapabilityIds: ['mcp:calendar:create_event'],
-				writeCapabilityIds: [],
-			},
-		});
+- Errors containing `Bearer secret-value` are reported without the secret.
+- Search/list/describe/materialize outputs never contain configured env/header
+  values.
+- A legitimate MCP tool schema with input properties named `headers`,
+  `authorization`, or `apiKey` remains intact in `mcp_portal_describe`.
 
-		const handler = on.mock.calls[0][1];
-		await expect(
-			handler({
-				params: {
-					id: 'mcp:calendar:create_event',
-				},
-				toolName: 'mcp_portal_execute',
-			}),
-		).resolves.toEqual({
-			requireApproval: {
-				description: "Allow MCP portal capability 'mcp:calendar:create_event' to execute.",
-				severity: 'warning',
-				timeoutBehavior: 'deny',
-				timeoutMs: 60_000,
-				title: 'Execute MCP portal capability',
-			},
-		});
-	});
+- [ ] **Step 2: Implement approval hook**
 
-	it('does not require approval for search', async () => {
-		const on = vi.fn();
-		registerPortalApprovalHook({
-			api: { on },
-			approval: {
-				alwaysAskCapabilityIds: ['mcp:calendar:create_event'],
-				writeCapabilityIds: [],
-			},
-		});
+Use `api.registerHook("before_tool_call", handler, { priority: 50 })`.
+The hook must also write the active tool-call context into
+`portal-tool-context-bridge.ts` before any approval decision returns.
 
-		const handler = on.mock.calls[0][1];
-		await expect(
-			handler({
-				params: {
-					query: 'calendar',
-				},
-				toolName: 'mcp_portal_search',
-			}),
-		).resolves.toBeUndefined();
-	});
-});
-```
+Approval rules:
 
-- [ ] **Step 2: Run tests and verify they fail**
+- `alwaysAskCapabilityIds` always require approval.
+- `writeCapabilityIds` always require critical approval.
+- `annotationPolicy: "destructive-requires-approval"` requires approval when
+  the described capability has `annotations.destructiveHint === true`.
+- `mcp_portal_materialize` does not require approval by default because it only
+  returns code artifacts; it must be configurable through `alwaysAskCapabilityIds`.
 
-Run:
+Acceptance tests:
 
-```bash
-pnpm vitest run packages/openclaw-mcp-capability-portal-plugin/src/portal-approval-hook.test.ts
-```
-
-Expected: FAIL because `portal-approval-hook.ts` does not exist.
-
-- [ ] **Step 3: Implement approval hook**
-
-Create `packages/openclaw-mcp-capability-portal-plugin/src/portal-approval-hook.ts`:
-
-```ts
-import type { PortalConfig } from './portal-config.js';
-
-interface BeforeToolCallEvent {
-	readonly params?: Record<string, unknown>;
-	readonly toolName: string;
-}
-
-interface BeforeToolCallResult {
-	readonly requireApproval?: {
-		readonly description: string;
-		readonly severity?: 'info' | 'warning' | 'critical';
-		readonly timeoutBehavior?: 'allow' | 'deny';
-		readonly timeoutMs?: number;
-		readonly title: string;
-	};
-}
-
-interface HookApi {
-	registerHook(
-		name: 'before_tool_call',
-		handler: (event: BeforeToolCallEvent) => Promise<BeforeToolCallResult | undefined>,
-		options?: { readonly priority?: number },
-	): void;
-}
-
-export function registerPortalApprovalHook(options: {
-	readonly api: HookApi;
-	readonly approval: PortalConfig['approval'];
-}): void {
-	const alwaysAsk = new Set(options.approval.alwaysAskCapabilityIds);
-	const writeCapabilities = new Set(options.approval.writeCapabilityIds);
-	options.api.registerHook(
-		'before_tool_call',
-		async (event) => {
-			if (event.toolName !== 'mcp_portal_execute') {
-				return undefined;
-			}
-			const capabilityId = event.params?.id;
-			if (typeof capabilityId !== 'string') {
-				return undefined;
-			}
-			if (!alwaysAsk.has(capabilityId) && !writeCapabilities.has(capabilityId)) {
-				return undefined;
-			}
-			return {
-				requireApproval: {
-					description: `Allow MCP portal capability '${capabilityId}' to execute.`,
-					severity: writeCapabilities.has(capabilityId) ? 'critical' : 'warning',
-					timeoutBehavior: 'deny',
-					timeoutMs: 60_000,
-					title: 'Execute MCP portal capability',
-				},
-			};
-		},
-		{ priority: 50 },
-	);
-}
-```
-
-- [ ] **Step 4: Run approval hook tests**
-
-Run:
-
-```bash
-pnpm vitest run packages/openclaw-mcp-capability-portal-plugin/src/portal-approval-hook.test.ts
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit Task 7**
-
-Run:
-
-```bash
-git add packages/openclaw-mcp-capability-portal-plugin/src/portal-approval-hook.ts packages/openclaw-mcp-capability-portal-plugin/src/portal-approval-hook.test.ts
-git commit -m "feat: add mcp portal approval hook
-
-Co-authored-by: Codex <noreply@openai.com>"
-```
+- read-only execute does not require approval by default.
+- destructive annotated execute requires approval.
+- configured write capability returns critical approval.
+- search/list/describe do not require approval.
 
 ---
 
-### Task 8: Wire Plugin Registration
+### Task 9: Wire Plugin Registration
 
 **Files:**
 - Create: `packages/openclaw-mcp-capability-portal-plugin/src/plugin-registration.ts`
 - Create: `packages/openclaw-mcp-capability-portal-plugin/src/plugin-registration.test.ts`
 
-- [ ] **Step 1: Write registration tests**
+- [ ] **Step 1: Register all portal systems**
 
-Create `packages/openclaw-mcp-capability-portal-plugin/src/plugin-registration.test.ts`:
+Registration must:
 
-```ts
-import { describe, expect, it, vi } from 'vitest';
+- parse portal config
+- normalize OpenClaw `mcp.servers`
+- create per-agent/session store
+- create tool-call context bridge
+- register prompt context hook
+- register portal tools
+- register approval hook and after-tool cleanup hook
+- register runtime lifecycle cleanup when OpenClaw provides it
 
-import plugin from './plugin-registration.js';
+Acceptance tests:
 
-describe('mcp capability portal plugin', () => {
-	it('registers portal tools and approval hook', () => {
-		const registerTool = vi.fn();
-		const registerHook = vi.fn();
-
-		plugin.register({
-			config: {
-				mcp: {
-					servers: {
-						calendar: {
-							args: ['calendar-server.js'],
-							command: 'node',
-						},
-					},
-				},
-			},
-			pluginConfig: {
-				approval: {
-					alwaysAskCapabilityIds: ['mcp:calendar:create_event'],
-				},
-				enabledServerIds: ['calendar'],
-				skillsDirs: [],
-			},
-			registerHook,
-			registerTool,
-		});
-
-		expect(registerTool).toHaveBeenCalledWith(
-			expect.objectContaining({ name: 'mcp_portal_search' }),
-			{ name: 'mcp_portal_search', optional: true },
-		);
-		expect(registerTool).toHaveBeenCalledWith(
-			expect.objectContaining({ name: 'mcp_portal_execute' }),
-			{ name: 'mcp_portal_execute', optional: true },
-		);
-		expect(registerHook).toHaveBeenCalledWith('before_tool_call', expect.any(Function), {
-			priority: 50,
-		});
-	});
-});
-```
-
-- [ ] **Step 2: Run registration tests and verify they fail**
-
-Run:
-
-```bash
-pnpm vitest run packages/openclaw-mcp-capability-portal-plugin/src/plugin-registration.test.ts
-```
-
-Expected: FAIL because `plugin-registration.ts` does not exist.
-
-- [ ] **Step 3: Implement plugin registration**
-
-Create `packages/openclaw-mcp-capability-portal-plugin/src/plugin-registration.ts`:
-
-```ts
-import { createMcpClientRuntime } from './mcp-client-runtime.js';
-import { normalizeOpenClawMcpServers } from './openclaw-mcp-server-config.js';
-import { parsePortalConfig } from './portal-config.js';
-import { registerPortalApprovalHook } from './portal-approval-hook.js';
-import { registerPortalTools } from './portal-tools.js';
-
-const plugin = {
-	description: 'Gateway-side MCP capability portal with search and execute tools.',
-	id: 'mcp-capability-portal',
-	name: 'MCP Capability Portal',
-
-	register(api: {
-		readonly config?: { readonly mcp?: { readonly servers?: unknown } };
-		readonly pluginConfig: Record<string, unknown>;
-		readonly registerHook?: Parameters<typeof registerPortalApprovalHook>[0]['api']['registerHook'];
-		readonly registerTool?: Parameters<typeof registerPortalTools>[0]['api']['registerTool'];
-	}): void {
-		if (typeof api.registerTool !== 'function') {
-			throw new Error('MCP capability portal requires OpenClaw registerTool.');
-		}
-		if (typeof api.registerHook !== 'function') {
-			throw new Error('MCP capability portal requires OpenClaw plugin hooks.');
-		}
-
-		const config = parsePortalConfig(api.pluginConfig);
-		const mcpServers = normalizeOpenClawMcpServers(api.config?.mcp?.servers ?? {});
-		const runtime = createMcpClientRuntime({ config, mcpServers });
-		registerPortalTools({
-			api: { registerTool: api.registerTool },
-			runtime,
-			skillsDirs: config.skillsDirs,
-		});
-		registerPortalApprovalHook({
-			api: { registerHook: api.registerHook },
-			approval: config.approval,
-		});
-	},
-};
-
-export default plugin;
-```
-
-- [ ] **Step 4: Run registration tests**
-
-Run:
-
-```bash
-pnpm vitest run packages/openclaw-mcp-capability-portal-plugin/src/plugin-registration.test.ts
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit Task 8**
-
-Run:
-
-```bash
-git add packages/openclaw-mcp-capability-portal-plugin/src/plugin-registration.ts packages/openclaw-mcp-capability-portal-plugin/src/plugin-registration.test.ts
-git commit -m "feat: wire mcp capability portal plugin
-
-Co-authored-by: Codex <noreply@openai.com>"
-```
+- all five tools are registered as optional tools.
+- `before_tool_call` hook is registered.
+- `after_tool_call` hook is registered for context cleanup.
+- prompt context hook is registered.
+- runtime lifecycle cleanup is registered when available.
+- registration fails if OpenClaw MCP servers are provided in plugin config
+  instead of `api.config.mcp.servers`.
 
 ---
 
-### Task 9: Document Gateway Portal Security And Usage
+### Task 10: Install Portal Into Managed Gateway And Tool VM Images
 
 **Files:**
+- Modify: `packages/agent-vm/src/build/managed-image-dockerfile.ts`
+- Modify: `packages/agent-vm/src/cli/build-command.test.ts`
+- Modify: `docker/base-images/tool-vm/Dockerfile`
+
+- [ ] **Step 1: Managed OpenClaw gateway image installs portal plugin**
+
+Extend managed Dockerfile generation:
+
+- resolve `@agent-vm/openclaw-mcp-capability-portal-plugin` package spec from
+  installed package metadata, same as the gondolin plugin
+- install it globally in OpenClaw gateway images
+- symlink its `dist` directory to:
+  `/home/openclaw/.openclaw/extensions/mcp-capability-portal`
+- include the package in the generated Dockerfile plan
+
+Acceptance tests:
+
+- generated OpenClaw gateway Dockerfile installs both gondolin and portal
+  packages.
+- generated Dockerfile symlinks both extension directories.
+- overlay `extraOpenClawPackages` cannot override the managed portal plugin
+  package by accident.
+
+- [ ] **Step 2: Managed Tool VM image installs TypeScript helper**
+
+Update Tool VM base/Dockerfile generation so managed Tool VM images have:
+
+- pnpm available for global package installation
+- `@agent-vm/mcp-capability-portal-core` installed globally
+- `agent-vm-mcp-portal` available on PATH
+- no auth config, no MCP server config, no token names
+
+Acceptance tests:
+
+- generated Tool VM Dockerfile contains the portal helper package install.
+- generated Tool VM Dockerfile does not contain `TOKEN`, `Authorization`,
+  `.npmrc`, `.netrc`, or `_authToken`.
+
+---
+
+### Task 11: Update Init Defaults And Deployment Manuals
+
+**Files:**
+- Modify: `packages/agent-vm/src/cli/init-command.ts`
+- Modify: `packages/agent-vm/src/cli/init-command.test.ts`
+- Modify: `packages/agent-vm/src/operations/openclaw-deployment-doctor.ts`
+- Modify: `packages/agent-vm/src/operations/openclaw-deployment-doctor.test.ts`
+- Modify: `packages/agent-vm/src/cli/manual-templates.ts`
+- Modify: `packages/agent-vm/src/cli/manual-templates.test.ts`
 - Create: `docs/subsystems/mcp-capability-portal.md`
 - Modify: `docs/architecture/openclaw-gateway.md`
 - Modify: `docs/subsystems/secrets-and-credentials.md`
-- Modify: `packages/agent-vm/src/cli/manual-templates.ts`
-- Modify: `packages/agent-vm/src/cli/manual-templates.test.ts`
+- Modify: `docs/reference/configuration/system-json.md`
 
-- [ ] **Step 1: Add subsystem doc**
+- [ ] **Step 1: Generated OpenClaw config loads portal plugin**
 
-Create `docs/subsystems/mcp-capability-portal.md`:
+Default OpenClaw config must:
 
-```md
-# MCP Capability Portal
+- include both extension load paths:
+  - `/home/openclaw/.openclaw/extensions/gondolin`
+  - `/home/openclaw/.openclaw/extensions/mcp-capability-portal`
+- allow `gondolin`, `memory-core`, and `mcp-capability-portal`
+- enable `mcp-capability-portal`
+- allow the five portal tools
+- keep `mcp.servers` empty unless user config adds servers
 
-The MCP capability portal is a gateway-side OpenClaw plugin. It connects to
-selected upstream MCP servers and exposes two agent-visible tools:
+Acceptance tests:
 
-- `mcp_portal_search`: searches available MCP tools and local skill docs.
-- `mcp_portal_execute`: executes one MCP tool by capability id.
+- `agent-vm init` output contains the portal plugin entry.
+- generated config allows portal tools.
+- generated config does not add fake MCP servers or secret placeholders.
 
-The portal is intentionally separate from Tool VM CLI execution:
+- [ ] **Step 2: Add deployment doctor coverage**
 
-- MCP server auth and headers stay in OpenClaw's gateway-owned `mcp.servers` config.
-- Search results never include upstream env vars, headers, or raw server config.
-- OpenClaw `before_tool_call` approval handles write-sensitive portal execution.
-- Tool VM HTTP-mediated secrets remain under `gondolin-secret-source`.
-- `enabledServerIds: []` exposes all configured OpenClaw MCP servers through the
-  portal. Set an explicit list for narrower exposure.
-- Approval severity is display/audit metadata only. Both `alwaysAskCapabilityIds`
-  and `writeCapabilityIds` require approval before execution.
-- The v1 skill loader indexes only `name` and `description` from simple
-  frontmatter unless the implementation imports OpenClaw's full skill loader.
+Doctor must validate:
 
-Capability IDs use stable prefixes:
+- portal extension load path exists in generated/configured OpenClaw config
+- portal plugin is allowed
+- portal plugin entry is enabled when managed portal tools are allowed
+- the five portal tools are in `tools.allow`
+- missing/broken portal config reports redacted diagnostics
 
-- `mcp:<serverId>:<toolName>` for executable upstream MCP tools.
-- `skill:<skillName>` for searchable local skill docs.
+Acceptance tests:
 
-Example OpenClaw config:
+- valid generated OpenClaw config passes portal doctor checks.
+- missing portal extension path produces an actionable doctor warning.
+- tool allowlist drift is reported.
+- diagnostics do not include raw MCP header/env values.
 
-```jsonc
-{
-  "mcp": {
-    "servers": {
-      "linear": {
-        "url": "https://mcp.linear.app/mcp",
-        "transport": "streamable-http",
-        "headers": {
-          "authorization": "Bearer ${LINEAR_MCP_TOKEN}"
-        }
-      }
-    }
-  },
-  "plugins": {
-    "entries": {
-      "mcp-capability-portal": {
-        "enabled": true,
-        "path": "@agent-vm/openclaw-mcp-capability-portal-plugin",
-        "config": {
-          "skillsDirs": ["/opt/agent-vm/skills"],
-          "enabledServerIds": ["linear"],
-          "approval": {
-            "writeCapabilityIds": ["mcp:linear:create_issue"]
-          }
-        }
-      }
-    }
-  },
-  "tools": {
-    "allow": ["mcp_portal_search", "mcp_portal_execute"]
-  }
-}
-```
-```
+- [ ] **Step 3: Document the model**
 
-- [ ] **Step 2: Add architecture note**
+Docs must state:
 
-In `docs/architecture/openclaw-gateway.md`, add:
+- Each agent/gateway gets its own portal view and cache.
+- Gateway owns MCP auth and connections.
+- Tool VM receives TypeScript/Zod helpers only.
+- MCP JSON Schema is canonical.
+- Zod reconstruction is optional and experimental.
+- Portal materialization returns code artifacts but does not execute code.
+- `gondolin-secret-source` remains separate and owns Tool VM HTTP-mediated
+  secrets.
 
-```md
-## MCP Capability Portal
-
-The MCP capability portal is a gateway plugin, not a Tool VM service. It
-connects to configured upstream MCP servers from OpenClaw's existing
-`mcp.servers` registry, keeps their auth material in gateway-owned config, and
-exposes only `mcp_portal_search` and `mcp_portal_execute` to agents.
-
-```text
-Agent
-  |
-  | mcp_portal_search / mcp_portal_execute
-  v
-OpenClaw gateway plugin
-  |
-  | MCP client transports
-  v
-Configured upstream MCP servers
-```
-```
-
-- [ ] **Step 3: Add manual references**
-
-In `packages/agent-vm/src/cli/manual-templates.ts`, add:
-
-```ts
-For MCP integrations that should not expose every tool schema to the model,
-use the MCP capability portal plugin. It exposes mcp_portal_search and
-mcp_portal_execute while reusing OpenClaw mcp.servers for upstream auth.
-```
-
-Update `packages/agent-vm/src/cli/manual-templates.test.ts`:
-
-```ts
-expect(manual).toContain('MCP capability portal');
-expect(manual).toContain('mcp_portal_search');
-expect(manual).toContain('mcp_portal_execute');
-```
-
-- [ ] **Step 4: Regenerate manual docs**
+- [ ] **Step 4: Regenerate manuals**
 
 Run:
 
@@ -1897,37 +1037,27 @@ pnpm --filter @agent-vm/agent-vm build
 pnpm agent-vm manual update
 ```
 
-Expected: generated docs mention `MCP capability portal`, `mcp_portal_search`, and `mcp_portal_execute`.
-
-- [ ] **Step 5: Commit Task 9**
-
-Run:
-
-```bash
-git add docs packages/agent-vm/src/cli/manual-templates.ts packages/agent-vm/src/cli/manual-templates.test.ts
-git commit -m "docs: add mcp capability portal guidance
-
-Co-authored-by: Codex <noreply@openai.com>"
-```
+Expected: generated manuals mention progressive disclosure, portal tools,
+gateway-owned MCP auth, and Tool VM helper availability.
 
 ---
 
-### Task 10: Full Verification
+### Task 12: Verification
 
 **Files:**
-- No source edits.
+- No planned source edits except fixes found by verification.
 
-- [ ] **Step 1: Run portal package tests**
+- [ ] **Step 1: Run focused package tests**
 
 Run:
 
 ```bash
-pnpm vitest run packages/openclaw-mcp-capability-portal-plugin/src
+pnpm vitest run packages/mcp-capability-portal-core/src packages/openclaw-mcp-capability-portal-plugin/src
 ```
 
 Expected: PASS.
 
-- [ ] **Step 2: Run full unit tests**
+- [ ] **Step 2: Run unit tests**
 
 Run:
 
@@ -1935,7 +1065,7 @@ Run:
 pnpm test:unit
 ```
 
-Expected: PASS, all Vitest unit tests pass with exit code 0.
+Expected: PASS with exit code 0.
 
 - [ ] **Step 3: Run build**
 
@@ -1945,9 +1075,9 @@ Run:
 pnpm -r build
 ```
 
-Expected: PASS, including `@agent-vm/openclaw-mcp-capability-portal-plugin`.
+Expected: PASS, including the two new portal packages.
 
-- [ ] **Step 4: Run checks**
+- [ ] **Step 4: Run full checks**
 
 Run:
 
@@ -1955,35 +1085,51 @@ Run:
 pnpm check
 ```
 
-Expected: PASS, package version sync, Zod check, type-aware lint, format check, and typecheck all pass with exit code 0.
+Expected: PASS, including package-version sync, Zod version check,
+type-aware lint, format check, and typecheck.
 
-- [ ] **Step 5: Final commit if verification fixes were needed**
+- [ ] **Step 5: Run managed-image smoke checks**
 
-If verification required code or docs changes, commit them:
+Create a temporary deployment directory, run `agent-vm init`, build generated
+managed Dockerfiles, and inspect them.
 
-```bash
-git add .
-git commit -m "fix: stabilize mcp capability portal
+Expected:
 
-Co-authored-by: Codex <noreply@openai.com>"
-```
+- OpenClaw gateway Dockerfile installs and symlinks the portal plugin.
+- Tool VM Dockerfile installs the TypeScript helper CLI.
+- Generated OpenClaw config loads/allows the portal plugin and tools.
+- No generated Dockerfile or config contains raw auth header values or token
+  literals except user-authored MCP server config supplied by the operator.
 
-If no changes were required, do not create an empty commit.
+- [ ] **Step 6: Run portal runtime smoke checks**
+
+Add a smoke test that boots the plugin against controlled MCP test servers:
+
+- one paginated stdio MCP server
+- one remote SSE or streamable-http MCP server with auth headers
+- two OpenClaw agents with different portal exposure policies
+
+Expected:
+
+- `mcp_portal_list` shows only each agent's allowed namespaces.
+- `mcp_portal_search` finds tools through schema field names.
+- `mcp_portal_describe` returns full input/output schemas and annotations.
+- `mcp_portal_materialize` returns deterministic TypeScript/Zod helper source.
+- `mcp_portal_execute` calls the selected MCP tool.
+- Agent A cannot see or execute Agent B-only capabilities.
+- SSE/HTTP auth headers are used by the gateway and never appear in portal
+  outputs, Tool VM helper artifacts, logs, or thrown errors.
 
 ---
 
-## Security Notes
-
-- The portal is a gateway plugin because upstream MCP auth belongs outside Tool VM process memory.
-- `mcp_portal_search` is read-only and returns redacted capability metadata.
-- `mcp_portal_execute` is the action surface; use `approval.writeCapabilityIds` and `approval.alwaysAskCapabilityIds` for escalation.
-- `enabledServerIds: []` means "all configured OpenClaw MCP servers"; use an explicit list when the portal should expose only a subset.
-- Approval severity is UI/audit metadata. `writeCapabilityIds` and `alwaysAskCapabilityIds` both pause for approval; `critical` does not create a stronger enforcement path than `warning`.
-- Upstream MCP server config can include env vars or headers, but those values must never appear in search results, tool errors, or logs.
-- This plan intentionally does not implement arbitrary JS Code Mode execution. Deterministic search/execute gives progressive disclosure without adding an isolate security problem.
-
 ## Self-Review
 
-- Spec coverage: separate portal plugin, gateway-owned MCP auth, progressive search/execute, skill directory, MCP client transports, and OpenClaw approval hook are all mapped to tasks.
-- Placeholder scan: the plan uses concrete file paths, function names, test code, implementation code, commands, and expected results.
-- Type consistency: `PortalConfig`, `PortalCapability`, `mcp_portal_search`, `mcp_portal_execute`, `createMcpClientRuntime`, and `registerPortalApprovalHook` are named consistently across tasks.
+- Spec coverage: The plan covers managed built-in plugin installation, per-agent
+  gateway scoping, progressive disclosure, linked capability catalog, MCP
+  schema preservation, TypeScript/Zod Tool VM helpers, code-artifact
+  materialization, approval, redaction, docs, and verification.
+- Placeholder scan: The plan avoids placeholder implementation steps and names
+  exact files, tools, commands, and acceptance tests.
+- Type consistency: `PortalCatalog`, encoded capability IDs,
+  `mcp_portal_list`, `mcp_portal_search`, `mcp_portal_describe`,
+  `mcp_portal_execute`, and `mcp_portal_materialize` are used consistently.
