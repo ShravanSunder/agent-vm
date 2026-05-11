@@ -14,6 +14,7 @@
 
 - OpenClaw plugins can register tools with `api.registerTool(...)`; the existing agent-vm plugin already registers `zone_git_push`.
 - OpenClaw plugin hooks use `api.registerHook(...)`; `before_tool_call` can return `requireApproval` and OpenClaw routes it through the existing approval UI and `/approve`.
+- The current local OpenClaw plugin API exposes the resolved config tree as `api.config`, and also exposes both `registerHook(...)` and typed `on(...)` hook registration. The plan may use `registerHook(...)` for compatibility or `api.on('before_tool_call', ...)` when the typed API is available, but it must test the installed OpenClaw contract.
 - OpenClaw already supports `mcp.servers` with stdio and remote HTTP/SSE server configs. The portal must read that existing gateway registry instead of introducing a second `mcpServers` config surface.
 - The official MCP TypeScript SDK supports clients with `Client`, `StdioClientTransport`, `StreamableHTTPClientTransport`, and `SSEClientTransport`.
 - The portal should not expose upstream MCP server env vars, auth headers, or raw config values in search results.
@@ -695,6 +696,13 @@ export async function loadSkillCapabilities(options: {
 }
 ```
 
+This v1 loader intentionally supports only the small frontmatter subset needed
+for `name` and `description`. If OpenClaw exports its full skill loader by
+implementation time, import that instead. If not, document the divergence in
+`docs/subsystems/mcp-capability-portal.md` so operators do not assume full
+OpenClaw skill metadata parsing (`requires.bins`, block scalars, nested YAML)
+is supported by the portal search index.
+
 - [ ] **Step 4: Run skill loader tests**
 
 Run:
@@ -894,6 +902,72 @@ describe('createMcpClientRuntime', () => {
 			name: 'create_event',
 		});
 	});
+
+	it('evicts a cached MCP client when the transport closes', async () => {
+		const firstClient = {
+			callTool: vi.fn(async () => {
+				throw new Error('transport closed');
+			}),
+			close: vi.fn(),
+			listTools: vi.fn(async () => ({ tools: [] })),
+		};
+		const secondClient = {
+			callTool: vi.fn(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
+			close: vi.fn(),
+			listTools: vi.fn(async () => ({ tools: [] })),
+		};
+		const clientFactory = vi.fn().mockResolvedValueOnce(firstClient).mockResolvedValueOnce(secondClient);
+		const runtime = createMcpClientRuntime({
+			clientFactory,
+			mcpServers: {
+				calendar: { args: ['server.js'], command: 'node', env: {}, kind: 'stdio' },
+			},
+			config: {
+				approval: { alwaysAskCapabilityIds: [], writeCapabilityIds: [] },
+				enabledServerIds: [],
+				skillsDirs: [],
+			} satisfies PortalConfig,
+		});
+
+		await expect(runtime.executeTool({ id: 'mcp:calendar:create_event' })).rejects.toThrow(
+			'transport closed',
+		);
+		await expect(runtime.executeTool({ id: 'mcp:calendar:create_event' })).resolves.toEqual({
+			content: [{ type: 'text', text: 'ok' }],
+		});
+		expect(clientFactory).toHaveBeenCalledTimes(2);
+	});
+
+	it('serializes concurrent calls to the same MCP server', async () => {
+		const order: string[] = [];
+		const runtime = createMcpClientRuntime({
+			clientFactory: async () => ({
+				callTool: vi.fn(async ({ name }) => {
+					order.push(`start:${name}`);
+					await Promise.resolve();
+					order.push(`end:${name}`);
+					return {};
+				}),
+				close: vi.fn(),
+				listTools: vi.fn(async () => ({ tools: [] })),
+			}),
+			mcpServers: {
+				calendar: { args: ['server.js'], command: 'node', env: {}, kind: 'stdio' },
+			},
+			config: {
+				approval: { alwaysAskCapabilityIds: [], writeCapabilityIds: [] },
+				enabledServerIds: [],
+				skillsDirs: [],
+			} satisfies PortalConfig,
+		});
+
+		await Promise.all([
+			runtime.executeTool({ id: 'mcp:calendar:first' }),
+			runtime.executeTool({ id: 'mcp:calendar:second' }),
+		]);
+
+		expect(order).toEqual(['start:first', 'end:first', 'start:second', 'end:second']);
+	});
 });
 ```
 
@@ -1010,6 +1084,7 @@ export function createMcpClientRuntime(options: {
 }): McpClientRuntime {
 	const clientFactory = options.clientFactory ?? createSdkClient;
 	const clients = new Map<string, Promise<MinimalMcpClient>>();
+	const serverQueues = new Map<string, Promise<unknown>>();
 	const selectedServerIds =
 		options.config.enabledServerIds.length > 0
 			? options.config.enabledServerIds
@@ -1029,20 +1104,48 @@ export function createMcpClientRuntime(options: {
 		return nextClient;
 	}
 
+	function isTransportClosedError(error: unknown): boolean {
+		return error instanceof Error && /transport.*closed|connection.*closed|socket.*closed/i.test(error.message);
+	}
+
+	async function withServerQueue<TResult>(
+		serverId: string,
+		operation: (client: MinimalMcpClient) => Promise<TResult>,
+	): Promise<TResult> {
+		const previous = serverQueues.get(serverId) ?? Promise.resolve();
+		const next = previous.then(async () => {
+			const client = await getClient(serverId);
+			try {
+				return await operation(client);
+			} catch (error) {
+				if (isTransportClosedError(error)) {
+					clients.delete(serverId);
+					await client.close();
+				}
+				throw error;
+			}
+		});
+		serverQueues.set(
+			serverId,
+			next.catch(() => undefined),
+		);
+		return await next;
+	}
+
 	return {
 		async executeTool(request) {
 			const { serverId, toolName } = parseMcpCapabilityId(request.id);
-			const client = await getClient(serverId);
-			return await client.callTool({
-				arguments: request.arguments ?? {},
-				name: toolName,
-			});
+			return await withServerQueue(serverId, async (client) =>
+				client.callTool({
+					arguments: request.arguments ?? {},
+					name: toolName,
+				}),
+			);
 		},
 		async listCapabilities() {
 			const capabilities: PortalCapability[] = [];
 			for (const serverId of selectedServerIds) {
-				const client = await getClient(serverId);
-				const result = await client.listTools();
+				const result = await withServerQueue(serverId, async (client) => client.listTools());
 				for (const tool of result.tools) {
 					capabilities.push({
 						description: tool.description ?? `MCP tool '${tool.name}' from '${serverId}'.`,
@@ -1158,6 +1261,29 @@ describe('registerPortalTools', () => {
 			content: JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }, null, 2),
 		});
 	});
+
+	it('caches the capability index for the configured TTL', async () => {
+		const registerTool = vi.fn();
+		const createIndex = vi.fn(async () => ({
+			getById: () => undefined,
+			search: () => [],
+		}));
+		registerPortalTools({
+			api: { registerTool },
+			createIndex,
+			indexTtlMs: 60_000,
+			runtime: {
+				executeTool: vi.fn(),
+				listCapabilities: vi.fn(async () => []),
+			},
+		});
+		const [searchTool] = registerTool.mock.calls.map((call) => call[0]);
+
+		await searchTool.execute('call-1', { query: 'calendar' });
+		await searchTool.execute('call-2', { query: 'readwise' });
+
+		expect(createIndex).toHaveBeenCalledTimes(1);
+	});
 });
 ```
 
@@ -1224,9 +1350,17 @@ function asExecuteRequest(params: unknown): PortalExecuteRequest {
 export function registerPortalTools(options: {
 	readonly api: RegisterToolApi;
 	readonly createIndex?: () => Promise<CapabilityIndex>;
+	readonly indexTtlMs?: number;
 	readonly runtime: McpClientRuntime;
 	readonly skillsDirs?: readonly string[];
 }): void {
+	let cachedIndex:
+		| {
+				readonly expiresAtMs: number;
+				readonly index: CapabilityIndex;
+		  }
+		| undefined;
+	const indexTtlMs = options.indexTtlMs ?? 60_000;
 	const createIndex =
 		options.createIndex ??
 		(async () =>
@@ -1234,12 +1368,24 @@ export function registerPortalTools(options: {
 				...(await options.runtime.listCapabilities()),
 				...(await loadSkillCapabilities({ skillsDirs: options.skillsDirs ?? [] })),
 			]));
+	async function getIndex(): Promise<CapabilityIndex> {
+		const now = Date.now();
+		if (cachedIndex && cachedIndex.expiresAtMs > now) {
+			return cachedIndex.index;
+		}
+		const index = await createIndex();
+		cachedIndex = {
+			expiresAtMs: now + indexTtlMs,
+			index,
+		};
+		return index;
+	}
 
 	options.api.registerTool(
 		{
 			description: 'Search gateway-proxied MCP tools and local skill instructions.',
 			execute: async (_toolCallId, params) => {
-				const index = await createIndex();
+				const index = await getIndex();
 				const result = {
 					capabilities: index.search(asSearchRequest(params)),
 				};
@@ -1266,7 +1412,7 @@ export function registerPortalTools(options: {
 			description: 'Execute a selected MCP portal capability by id.',
 			execute: async (_toolCallId, params) => {
 				const request = asExecuteRequest(params);
-				const index = await createIndex();
+				const index = await getIndex();
 				const capability = index.getById(request.id);
 				if (!capability) {
 					throw new Error(`Unknown portal capability '${request.id}'.`);
@@ -1650,6 +1796,12 @@ The portal is intentionally separate from Tool VM CLI execution:
 - Search results never include upstream env vars, headers, or raw server config.
 - OpenClaw `before_tool_call` approval handles write-sensitive portal execution.
 - Tool VM HTTP-mediated secrets remain under `gondolin-secret-source`.
+- `enabledServerIds: []` exposes all configured OpenClaw MCP servers through the
+  portal. Set an explicit list for narrower exposure.
+- Approval severity is display/audit metadata only. Both `alwaysAskCapabilityIds`
+  and `writeCapabilityIds` require approval before execution.
+- The v1 skill loader indexes only `name` and `description` from simple
+  frontmatter unless the implementation imports OpenClaw's full skill loader.
 
 Capability IDs use stable prefixes:
 
@@ -1825,6 +1977,8 @@ If no changes were required, do not create an empty commit.
 - The portal is a gateway plugin because upstream MCP auth belongs outside Tool VM process memory.
 - `mcp_portal_search` is read-only and returns redacted capability metadata.
 - `mcp_portal_execute` is the action surface; use `approval.writeCapabilityIds` and `approval.alwaysAskCapabilityIds` for escalation.
+- `enabledServerIds: []` means "all configured OpenClaw MCP servers"; use an explicit list when the portal should expose only a subset.
+- Approval severity is UI/audit metadata. `writeCapabilityIds` and `alwaysAskCapabilityIds` both pause for approval; `critical` does not create a stronger enforcement path than `warning`.
 - Upstream MCP server config can include env vars or headers, but those values must never appear in search results, tool errors, or logs.
 - This plan intentionally does not implement arbitrary JS Code Mode execution. Deterministic search/execute gives progressive disclosure without adding an isolate security problem.
 

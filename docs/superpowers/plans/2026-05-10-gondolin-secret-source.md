@@ -20,6 +20,7 @@
 - The default generated Tool VM overlay is intentionally minimal: `extraAptPackages: []`, `extraOpenClawPackages: []`, `copy: []`, and `runAfterBase: []`.
 - Gateway VMs already resolve zone secrets through `packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts`; Tool VM mediation needs a separate config surface so we do not blur gateway egress with Tool VM egress.
 - The local Gondolin checkout at `/Users/shravansunder/Documents/dev/open-source/gondolin/host/src/http/hooks.ts` exposes `secretManager.listSecrets()`, `secretManager.updateSecret()`, and `secretManager.deleteSecret()`. DeepWiki currently reports a stale shape for this API, so implementation must test the installed package contract before relying on it.
+- The local Gondolin VFS RPC layer passes guest uid/gid into `access(...)`, but `open(...)`, `create(...)`, and `write(...)` delegate to the provider/host process after the file handle exists. Guest-owner RealFS mapping is therefore a non-root compatibility mechanism, not an authorization boundary. Security-sensitive mount denial must come from readonly providers, explicit mount policy, or host filesystem permissions.
 - OpenClaw plugin tools and plugin approval hooks exist, but this plan does not put approval policy in the secret source. Approval belongs in OpenClaw tool policy and `before_tool_call`; this component only supplies and rotates mediated secrets.
 
 ## File Structure
@@ -53,7 +54,9 @@ Modify:
 - `packages/agent-vm/src/controller/http/controller-request-schemas.ts`
   - Adds a lease secret update body schema.
 - `packages/agent-vm/src/controller/http/controller-http-routes.ts`
-  - Adds `POST /lease/:leaseId/secrets/:secretName`.
+  - Adds authenticated `POST /lease/:leaseId/secrets/:secretName`.
+- `packages/agent-vm/src/controller/http/controller-http-route-support.ts`
+  - Adds the controller-side verifier for lease secret update tokens.
 - `packages/agent-vm/src/controller/http/controller-http-routes.test.ts`
   - Covers successful update, 404, and invalid payload.
 - `packages/openclaw-agent-vm-plugin/src/controller-lease-client.ts`
@@ -1040,9 +1043,11 @@ Co-authored-by: Codex <noreply@openai.com>"
 Create `packages/gondolin-adapter/src/vfs-guest-owner-map.test.ts` with tests that wrap a fake `VirtualProvider` and prove:
 
 - `stat(...)` and `lstat(...)` report the configured guest `uid` and `gid`.
+- `readdir(...)` entries report the configured guest `uid` and `gid` when the wrapped provider includes stat-like directory entries.
 - mode bits are preserved.
 - write calls are still delegated to the wrapped provider.
 - host path ownership is not changed.
+- denied mounts are enforced by explicit provider/policy behavior, not by relying on `guestOwner` uid/gid mapping as an authorization boundary.
 
 The core assertion should look like:
 
@@ -1060,9 +1065,12 @@ expect(fakeProvider.stat).toHaveBeenCalledWith('/work');
 ```
 
 This is the systematic non-root fix. Do not solve `/work` by `chmod 777`.
-Gondolin VFS access checks compare the guest uid/gid against provider `stat`
-metadata, so the Tool VM mount should present `/work` as owned by the guest
-agent user while the host process continues to perform host filesystem writes.
+Gondolin VFS `access(...)` checks can compare the guest uid/gid against provider
+`stat` metadata, so the Tool VM mount should present `/work` as owned by the
+guest agent user for normal shell/tool compatibility. This is not a security
+boundary: Gondolin's open/create/write paths ultimately delegate to the wrapped
+provider and host process. Do not use `guestOwner` to protect privileged host
+paths.
 
 - [ ] **Step 2: Implement guest-owner mapping in the adapter**
 
@@ -1095,6 +1103,13 @@ readonly guestOwner?: {
 
 Wrap `realfs` and `realfs-readonly` providers when `guestOwner` is present.
 Keep memory and shadow mounts unchanged.
+
+If the wrapped provider exposes an `access(...)` method, do not accidentally
+bypass the guest-owner mapping by delegating `access(...)` directly to host
+filesystem access checks. Either omit `access(...)` so Gondolin's stat-based
+fallback is exercised, or implement `access(...)` in the wrapper using the
+mapped stat metadata. This remains a compatibility check; readonly mounts and
+host permissions still own real authorization.
 
 - [ ] **Step 3: Add lease-manager non-root SSH test**
 
@@ -1259,10 +1274,16 @@ host memory pressure of `memory`. Use `memory` only when a test explicitly
 needs an in-memory throwaway rootfs.
 ```
 
-- [ ] **Step 7: Add a live non-root Tool VM canary**
+- [ ] **Step 7: Add live Tool VM canaries for root and non-root profiles**
 
-Add or extend an integration test that boots a Tool VM lease with the default
-profile and runs:
+Add or extend integration tests that boot both profile shapes:
+
+- schema-default/root profile: proves existing deployments still boot and run
+  `/work` commands as root when `sshUser` is unset.
+- explicit non-root profile: uses `sshUser: "agent"`, `sshUid: 10000`, and
+  `sshGid: 10000`; proves the scaffolded protected Tool VM path works.
+
+The non-root canary runs:
 
 ```bash
 id -u
@@ -1319,6 +1340,7 @@ Co-authored-by: Codex <noreply@openai.com>"
 - Modify: `packages/agent-vm/src/controller/http/controller-request-schemas.ts`
 - Modify: `packages/agent-vm/src/controller/http/controller-http-routes.ts`
 - Modify: `packages/agent-vm/src/controller/http/controller-http-routes.test.ts`
+- Modify: `packages/agent-vm/src/controller/http/controller-http-route-support.ts`
 - Modify: `packages/openclaw-agent-vm-plugin/src/controller-lease-client.ts`
 - Modify: `packages/openclaw-agent-vm-plugin/src/controller-lease-client.test.ts`
 
@@ -1351,6 +1373,7 @@ Add this test to `packages/agent-vm/src/controller/http/controller-http-routes.t
 			}),
 			headers: {
 				'content-type': 'application/json',
+				'x-agent-vm-lease-secret-token': 'controller-secret-token',
 			},
 			method: 'POST',
 		});
@@ -1368,7 +1391,36 @@ Add this test to `packages/agent-vm/src/controller/http/controller-http-routes.t
 	});
 ```
 
+Add auth tests before the success test:
+
+```ts
+	it('rejects mediated secret updates without the controller secret token', async () => {
+		const app = createControllerAppForTest({
+			verifyLeaseSecretUpdateToken: (token) => token === 'controller-secret-token',
+		});
+
+		const response = await app.request('/lease/lease-123/secrets/TOKEN', {
+			body: JSON.stringify({ value: 'token' }),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(403);
+		await expect(response.json()).resolves.toEqual({ error: 'Forbidden' });
+	});
+```
+
+The success test must create the app with the same verifier:
+
+```ts
+verifyLeaseSecretUpdateToken: (token) => token === 'controller-secret-token',
+```
+
 Add 404 and validation tests:
+
+These tests should also pass `verifyLeaseSecretUpdateToken: (token) => token ===
+'controller-secret-token'` so they exercise missing lease/validation behavior
+after authentication has succeeded.
 
 ```ts
 	it('returns 404 when updating a secret for a missing lease', async () => {
@@ -1380,7 +1432,10 @@ Add 404 and validation tests:
 
 		const response = await app.request('/lease/missing/secrets/TOKEN', {
 			body: JSON.stringify({ value: 'token' }),
-			headers: { 'content-type': 'application/json' },
+			headers: {
+				'content-type': 'application/json',
+				'x-agent-vm-lease-secret-token': 'controller-secret-token',
+			},
 			method: 'POST',
 		});
 
@@ -1393,7 +1448,10 @@ Add 404 and validation tests:
 
 		const response = await app.request('/lease/lease-123/secrets/TOKEN', {
 			body: JSON.stringify({}),
-			headers: { 'content-type': 'application/json' },
+			headers: {
+				'content-type': 'application/json',
+				'x-agent-vm-lease-secret-token': 'controller-secret-token',
+			},
 			method: 'POST',
 		});
 
@@ -1437,6 +1495,13 @@ export const controllerLeaseSecretUpdateRequestSchema = z
 
 - [ ] **Step 4: Add the controller route**
 
+In `packages/agent-vm/src/controller/http/controller-http-route-support.ts`, add a
+controller operation/verifier for this route:
+
+```ts
+readonly verifyLeaseSecretUpdateToken?: (token: string | undefined) => boolean;
+```
+
 Update the import in `packages/agent-vm/src/controller/http/controller-http-routes.ts`:
 
 ```ts
@@ -1450,6 +1515,10 @@ Add this route before `app.delete('/lease/:leaseId', ...)`:
 
 ```ts
 	app.post('/lease/:leaseId/secrets/:secretName', async (context) => {
+		const token = context.req.header('x-agent-vm-lease-secret-token');
+		if (!options.operations?.verifyLeaseSecretUpdateToken?.(token)) {
+			return context.json({ error: 'Forbidden' }, 403);
+		}
 		const parsedPayload = controllerLeaseSecretUpdateRequestSchema.safeParse(
 			await context.req.json(),
 		);
@@ -1480,7 +1549,14 @@ Add this route before `app.delete('/lease/:leaseId', ...)`:
 
 - [ ] **Step 5: Add lease client support**
 
-In `packages/openclaw-agent-vm-plugin/src/controller-lease-client.ts`, add this to `LeaseClient`:
+In `packages/openclaw-agent-vm-plugin/src/controller-lease-client.ts`, add a
+lease-client option:
+
+```ts
+readonly leaseSecretUpdateToken?: string;
+```
+
+Then add this to `LeaseClient`:
 
 ```ts
 	updateLeaseSecret(
@@ -1506,6 +1582,9 @@ Add this method in `createLeaseClient(...)`:
 					}),
 					headers: {
 						'content-type': 'application/json',
+						...(options.leaseSecretUpdateToken
+							? { 'x-agent-vm-lease-secret-token': options.leaseSecretUpdateToken }
+							: {}),
 					},
 					method: 'POST',
 				},
@@ -1533,6 +1612,7 @@ Add a client test in `packages/openclaw-agent-vm-plugin/src/controller-lease-cli
 		}[] = [];
 		const leaseClient = createLeaseClient({
 			controllerUrl: 'http://controller.vm.host:18800',
+			leaseSecretUpdateToken: 'controller-secret-token',
 			fetchImpl: async (input, init) => {
 				requests.push({
 					body: typeof init?.body === 'string' ? init.body : undefined,
@@ -1555,7 +1635,10 @@ Add a client test in `packages/openclaw-agent-vm-plugin/src/controller-lease-cli
 					value: 'access-token-2',
 				}),
 				init: expect.objectContaining({
-					headers: { 'content-type': 'application/json' },
+					headers: {
+						'content-type': 'application/json',
+						'x-agent-vm-lease-secret-token': 'controller-secret-token',
+					},
 					method: 'POST',
 				}),
 				url: 'http://controller.vm.host:18800/lease/lease-123/secrets/GOOGLE_CALENDAR_ACCESS_TOKEN',
@@ -1606,6 +1689,7 @@ Create `packages/openclaw-agent-vm-plugin/src/secret-source/secret-source-regist
 ```ts
 import { describe, expect, it, vi } from 'vitest';
 
+import { ControllerLeaseRequestError } from '../controller-lease-client.js';
 import { parseSecretSourceConfig } from './secret-source-config.js';
 import { createSecretSourceRegistry } from './secret-source-registry.js';
 
@@ -1727,6 +1811,129 @@ describe('createSecretSourceRegistry', () => {
 			value: 'access-token-1',
 		});
 	});
+
+	it('refreshes tracked leases during long-lived sessions before access tokens expire', async () => {
+		let now = 1_000;
+		const updateLeaseSecret = vi.fn(async () => {});
+		const fetchImpl = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ access_token: 'access-token-1', expires_in: 3600 }), {
+					headers: { 'content-type': 'application/json' },
+					status: 200,
+				}),
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ access_token: 'access-token-2', expires_in: 3600 }), {
+					headers: { 'content-type': 'application/json' },
+					status: 200,
+				}),
+			);
+		const registry = createSecretSourceRegistry({
+			env: {
+				GOOGLE_CALENDAR_REFRESH_TOKEN: 'refresh-token',
+				GOOGLE_OAUTH_CLIENT_ID: 'client-id',
+				GOOGLE_OAUTH_CLIENT_SECRET: 'client-secret',
+			},
+			fetchImpl,
+			leaseClient: { updateLeaseSecret },
+			now: () => now,
+			secretSources: parseSecretSourceConfig({
+				GOOGLE_CALENDAR_ACCESS_TOKEN: {
+					clientIdEnv: 'GOOGLE_OAUTH_CLIENT_ID',
+					clientSecretEnv: 'GOOGLE_OAUTH_CLIENT_SECRET',
+					hosts: ['www.googleapis.com'],
+					kind: 'google-oauth-refresh',
+					refreshSkewMs: 300_000,
+					refreshTokenEnv: 'GOOGLE_CALENDAR_REFRESH_TOKEN',
+				},
+			}),
+		});
+
+		await registry.trackLease({ leaseId: 'lease-123' });
+		now = 3_302_000;
+		await registry.ensureTrackedLeasesFresh();
+
+		expect(fetchImpl).toHaveBeenCalledTimes(2);
+		expect(updateLeaseSecret).toHaveBeenLastCalledWith(
+			'lease-123',
+			'GOOGLE_CALENDAR_ACCESS_TOKEN',
+			expect.objectContaining({ value: 'access-token-2' }),
+		);
+	});
+
+	it('does not resend unchanged cached secrets to tracked leases', async () => {
+		const updateLeaseSecret = vi.fn(async () => {});
+		const registry = createSecretSourceRegistry({
+			env: {
+				GOOGLE_CALENDAR_REFRESH_TOKEN: 'refresh-token',
+				GOOGLE_OAUTH_CLIENT_ID: 'client-id',
+				GOOGLE_OAUTH_CLIENT_SECRET: 'client-secret',
+			},
+			fetchImpl: vi.fn(async () =>
+				new Response(JSON.stringify({ access_token: 'access-token-1', expires_in: 3600 }), {
+					headers: { 'content-type': 'application/json' },
+					status: 200,
+				}),
+			),
+			leaseClient: { updateLeaseSecret },
+			now: () => 1_000,
+			secretSources: parseSecretSourceConfig({
+				GOOGLE_CALENDAR_ACCESS_TOKEN: {
+					clientIdEnv: 'GOOGLE_OAUTH_CLIENT_ID',
+					clientSecretEnv: 'GOOGLE_OAUTH_CLIENT_SECRET',
+					hosts: ['www.googleapis.com'],
+					kind: 'google-oauth-refresh',
+					refreshTokenEnv: 'GOOGLE_CALENDAR_REFRESH_TOKEN',
+				},
+			}),
+		});
+
+		await registry.trackLease({ leaseId: 'lease-123' });
+		await registry.ensureTrackedLeasesFresh();
+
+		expect(updateLeaseSecret).toHaveBeenCalledTimes(1);
+	});
+
+	it('forgets tracked leases when the controller reports the lease is gone', async () => {
+		const updateLeaseSecret = vi.fn(async () => {
+			throw new ControllerLeaseRequestError({
+				bodyText: '{"error":"Lease not found"}',
+				context: 'Controller lease secret update API',
+				responseBody: { error: 'Lease not found' },
+				status: 404,
+			});
+		});
+		const registry = createSecretSourceRegistry({
+			env: {
+				GOOGLE_CALENDAR_REFRESH_TOKEN: 'refresh-token',
+				GOOGLE_OAUTH_CLIENT_ID: 'client-id',
+				GOOGLE_OAUTH_CLIENT_SECRET: 'client-secret',
+			},
+			fetchImpl: vi.fn(async () =>
+				new Response(JSON.stringify({ access_token: 'access-token-1', expires_in: 3600 }), {
+					headers: { 'content-type': 'application/json' },
+					status: 200,
+				}),
+			),
+			leaseClient: { updateLeaseSecret },
+			now: () => 1_000,
+			secretSources: parseSecretSourceConfig({
+				GOOGLE_CALENDAR_ACCESS_TOKEN: {
+					clientIdEnv: 'GOOGLE_OAUTH_CLIENT_ID',
+					clientSecretEnv: 'GOOGLE_OAUTH_CLIENT_SECRET',
+					hosts: ['www.googleapis.com'],
+					kind: 'google-oauth-refresh',
+					refreshTokenEnv: 'GOOGLE_CALENDAR_REFRESH_TOKEN',
+				},
+			}),
+		});
+
+		await registry.trackLease({ leaseId: 'lease-123' });
+		await registry.ensureTrackedLeasesFresh();
+
+		expect(updateLeaseSecret).toHaveBeenCalledTimes(1);
+	});
 });
 ```
 
@@ -1802,7 +2009,7 @@ export async function refreshGoogleOAuthAccessToken(options: {
 Create `packages/openclaw-agent-vm-plugin/src/secret-source/secret-source-registry.ts`:
 
 ```ts
-import type { LeaseClient } from '../controller-lease-client.js';
+import { ControllerLeaseRequestError, type LeaseClient } from '../controller-lease-client.js';
 import { refreshGoogleOAuthAccessToken } from './google-oauth-token-provider.js';
 import type { SecretSourceConfig } from './secret-source-config.js';
 
@@ -1813,6 +2020,11 @@ interface CachedSecretValue {
 
 export interface SecretSourceRegistry {
 	ensureLeaseSecretsFresh(options: { readonly leaseId: string }): Promise<void>;
+	ensureTrackedLeasesFresh(): Promise<void>;
+	forgetLease(options: { readonly leaseId: string }): void;
+	start(): void;
+	stop(): void;
+	trackLease(options: { readonly leaseId: string }): Promise<void>;
 }
 
 export function createSecretSourceRegistry(options: {
@@ -1826,6 +2038,9 @@ export function createSecretSourceRegistry(options: {
 	const fetchImpl = options.fetchImpl ?? fetch;
 	const now = options.now ?? Date.now;
 	const cache = new Map<string, CachedSecretValue>();
+	const appliedLeaseSecrets = new Map<string, Map<string, string>>();
+	const trackedLeaseIds = new Set<string>();
+	let refreshTimer: NodeJS.Timeout | undefined;
 
 	async function resolveSecretValue(secretName: string): Promise<CachedSecretValue> {
 		const source = options.secretSources[secretName];
@@ -1855,15 +2070,73 @@ export function createSecretSourceRegistry(options: {
 		}
 	}
 
-	return {
-		async ensureLeaseSecretsFresh({ leaseId }) {
+	function isMissingLeaseError(error: unknown): boolean {
+		return error instanceof ControllerLeaseRequestError && error.status === 404;
+	}
+
+	async function ensureLeaseSecretsFresh({ leaseId }: { readonly leaseId: string }): Promise<void> {
+		if (Object.keys(options.secretSources).length === 0) {
+			return;
+		}
+		try {
 			for (const [secretName, source] of Object.entries(options.secretSources)) {
 				const resolvedSecret = await resolveSecretValue(secretName);
+				const appliedKey = JSON.stringify({
+					hosts: source.hosts,
+					value: resolvedSecret.value,
+				});
+				const leaseAppliedSecrets = appliedLeaseSecrets.get(leaseId) ?? new Map<string, string>();
+				if (leaseAppliedSecrets.get(secretName) === appliedKey) {
+					continue;
+				}
 				await options.leaseClient.updateLeaseSecret(leaseId, secretName, {
 					hosts: source.hosts,
 					value: resolvedSecret.value,
 				});
+				leaseAppliedSecrets.set(secretName, appliedKey);
+				appliedLeaseSecrets.set(leaseId, leaseAppliedSecrets);
 			}
+		} catch (error) {
+			if (isMissingLeaseError(error)) {
+				trackedLeaseIds.delete(leaseId);
+				appliedLeaseSecrets.delete(leaseId);
+				return;
+			}
+			throw error;
+		}
+	}
+
+	async function ensureTrackedLeasesFresh(): Promise<void> {
+		for (const leaseId of trackedLeaseIds) {
+			await ensureLeaseSecretsFresh({ leaseId });
+		}
+	}
+
+	return {
+		ensureLeaseSecretsFresh,
+		ensureTrackedLeasesFresh,
+		forgetLease({ leaseId }) {
+			trackedLeaseIds.delete(leaseId);
+			appliedLeaseSecrets.delete(leaseId);
+		},
+		start() {
+			if (refreshTimer || Object.keys(options.secretSources).length === 0) {
+				return;
+			}
+			refreshTimer = setInterval(() => {
+				void ensureTrackedLeasesFresh();
+			}, 60_000);
+		},
+		stop() {
+			if (!refreshTimer) {
+				return;
+			}
+			clearInterval(refreshTimer);
+			refreshTimer = undefined;
+		},
+		async trackLease({ leaseId }) {
+			trackedLeaseIds.add(leaseId);
+			await ensureLeaseSecretsFresh({ leaseId });
 		},
 	};
 }
@@ -1881,13 +2154,19 @@ Extend `ResolvedGondolinPluginConfig`:
 
 ```ts
 	readonly secretSources: SecretSourceConfig;
+	readonly leaseSecretUpdateTokenEnv?: string;
 ```
 
 Add to the returned config:
 
 ```ts
+		leaseSecretUpdateTokenEnv: optionalString(config.leaseSecretUpdateTokenEnv),
 		secretSources: parseSecretSourceConfig(config.secretSources),
 ```
+
+When `secretSources` is non-empty, require `leaseSecretUpdateTokenEnv` and a
+non-empty env value at plugin startup. This keeps the controller secret update
+endpoint protected even though the controller itself is bound to loopback.
 
 - [ ] **Step 6: Wire lease-ready refresh into sandbox backend**
 
@@ -1921,12 +2200,28 @@ import { createSecretSourceRegistry } from './secret-source/secret-source-regist
 Create the lease client once after `pluginConfig`:
 
 ```ts
-		const leaseClient = createLeaseClient({ controllerUrl: pluginConfig.controllerUrl });
+		const leaseSecretUpdateToken = resolveLeaseSecretUpdateToken(pluginConfig);
+		const leaseClient = createLeaseClient({
+			controllerUrl: pluginConfig.controllerUrl,
+			leaseSecretUpdateToken,
+		});
 		const secretSourceRegistry = createSecretSourceRegistry({
 			leaseClient,
 			secretSources: pluginConfig.secretSources,
 		});
+		secretSourceRegistry.start();
+		api.registerRuntimeLifecycle?.({
+			id: 'gondolin-secret-source-refresh',
+			cleanup: async () => {
+				secretSourceRegistry.stop();
+			},
+		});
 ```
+
+`resolveLeaseSecretUpdateToken(...)` reads the env var named by
+`leaseSecretUpdateTokenEnv`. If `secretSources` is non-empty and the token is
+missing, plugin registration must fail fast. If `secretSources` is empty, the
+token is optional and no secret refresh loop starts.
 
 Use the same lease client in backend dependencies by adding `createLeaseClient` to `createBackendDeps(...)` dependencies when available, or pass it in the factory dependency override:
 
@@ -1944,7 +2239,7 @@ Pass `onLeaseReady` to the backend factory:
 					{
 						...pluginConfig,
 						onLeaseReady: async (lease) => {
-							await secretSourceRegistry.ensureLeaseSecretsFresh({
+							await secretSourceRegistry.trackLease({
 								leaseId: lease.leaseId,
 							});
 						},
@@ -1958,6 +2253,10 @@ Pass `onLeaseReady` to the backend factory:
 In `packages/openclaw-agent-vm-plugin/openclaw.plugin.json`, add `secretSources` under `properties`:
 
 ```json
+			"leaseSecretUpdateTokenEnv": {
+				"type": "string",
+				"minLength": 1
+			},
 			"secretSources": {
 				"type": "object",
 				"additionalProperties": {
@@ -2037,11 +2336,21 @@ The boundary is:
    host matches the secret's host allowlist.
 5. The plugin can rotate the real value for a live lease through
    `POST /lease/:leaseId/secrets/:secretName`.
+6. That controller route requires the gateway-held
+   `x-agent-vm-lease-secret-token`; loopback binding is not the security
+   boundary.
+7. Long-lived leases are tracked and refreshed before token expiry. A missing
+   lease response removes that lease from the refresh set.
 
 This is not an approval system. OpenClaw exec approvals and plugin
 `before_tool_call` approvals decide whether a tool action should run.
 `gondolin-secret-source` only decides which real secret value a placeholder
 maps to at the HTTP mediation layer.
+
+Non-root Tool VM support is a separate compatibility layer. `guestOwner` makes
+RealFS mounts look owned by the configured guest uid/gid so normal shell tools
+can write `/work`; it must not be treated as the authorization boundary for
+privileged host paths.
 ```
 
 - [ ] **Step 2: Add generated manual text**
