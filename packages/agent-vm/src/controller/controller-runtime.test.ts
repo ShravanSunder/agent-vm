@@ -56,8 +56,15 @@ const systemConfig = {
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
 			},
-			secrets: {},
-			allowedHosts: ['api.anthropic.com'],
+			secrets: {
+				OPENCLAW_GATEWAY_TOKEN: {
+					source: 'environment',
+					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					injection: 'env',
+					audience: 'gateway',
+				},
+			},
+			egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			websocketBypass: [],
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
@@ -167,6 +174,7 @@ function createPreparedWorkerTaskStub(
 describe('startControllerRuntime', () => {
 	it('starts the gateway, creates the controller app, and opens the controller port', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
 		const taskTitles: string[] = [];
 		const zone = systemConfig.zones[0];
 		if (!zone) {
@@ -1010,6 +1018,7 @@ describe('startControllerRuntime', () => {
 
 	it('still closes the HTTP server when gateway restart fails before runtime.close', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected test zone.');

@@ -1,18 +1,24 @@
 import path from 'node:path';
 
-import { buildToolSessionLabel } from '@agent-vm/gateway-interface';
+import {
+	buildToolSessionLabel,
+	egressHostsForAudience,
+	splitResolvedSecretsByInjection,
+} from '@agent-vm/gateway-interface';
 import {
 	closePinnedRealFsRoot as closePinnedRealFsRootDefault,
 	createManagedVm as createManagedVmFromCore,
 	pinRealFsRoot as pinRealFsRootDefault,
 	type ManagedVm,
 	type PinnedRealFsRoot,
+	type SecretResolver,
 } from '@agent-vm/gondolin-adapter';
 
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { ToolVmProfile } from '../controller/leases/lease-manager.js';
 import { validateResolvedToolWorkMountDir as validateResolvedToolWorkMountDirDefault } from '../controller/leases/lease-work-mount-paths.js';
+import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 
 export interface ToolVmLifecycleDependencies {
 	readonly buildGondolinImage?: (options: {
@@ -34,6 +40,7 @@ export async function createToolVm(
 		readonly tcpSlot: number;
 		readonly hostWorkMountDir: string;
 		readonly zoneId: string;
+		readonly secretResolver: SecretResolver;
 	},
 	dependencies: ToolVmLifecycleDependencies = {},
 ): Promise<ManagedVm> {
@@ -58,6 +65,17 @@ export async function createToolVm(
 		hostWorkMountDir: options.hostWorkMountDir,
 		zone,
 	});
+	const resolvedSecrets = await resolveZoneSecrets({
+		audience: 'tool-vm',
+		injection: 'http-mediation',
+		secretResolver: options.secretResolver,
+		systemConfig: options.systemConfig,
+		zoneId: options.zoneId,
+	});
+	const { mediatedSecrets } = splitResolvedSecretsByInjection(zone.secrets, resolvedSecrets, {
+		audience: 'tool-vm',
+		logPrefix: 'tool-vm-secrets',
+	});
 	const toolImage = await buildGondolinImage({
 		buildConfigPath: toolImageProfile.buildConfig,
 		cacheDir: path.join(options.cacheDir, 'tool-vm-images', options.profile.imageProfile),
@@ -80,7 +98,7 @@ export async function createToolVm(
 		throw error;
 	}
 	const toolVm = await createManagedVm({
-		allowedHosts: [],
+		allowedHosts: egressHostsForAudience(zone.egressHosts, 'tool-vm'),
 		cpus: options.profile.cpus,
 		imagePath: toolImage.imagePath,
 		memory: options.profile.memory,
@@ -90,7 +108,7 @@ export async function createToolVm(
 			options.zoneId,
 			options.tcpSlot,
 		),
-		secrets: {},
+		secrets: mediatedSecrets,
 		vfsMounts: {
 			'/work': {
 				hostPath: hostWorkMountDirectory,

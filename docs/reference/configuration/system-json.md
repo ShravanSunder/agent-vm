@@ -35,7 +35,7 @@ zones[]
   resources
   secrets
   runtimeAuthHints
-  allowedHosts
+  egressHosts
   websocketBypass
   defaultToolVmProfile
   agentToolVmProfiles
@@ -150,7 +150,7 @@ does not enable Discord or any other channel-specific surface by default.
 
 Channel config is deployment-owned. Enable channels in
 `config/gateways/<zone>/openclaw.json`, then declare the matching secrets,
-`allowedHosts`, and `websocketBypass` entries in `config/system.jsonc`.
+`egressHosts`, and `websocketBypass` entries in `config/system.jsonc`.
 Managed OpenClaw image profiles install known extracted channel packages, such
 as `@openclaw/discord`, from the OpenClaw channel config.
 
@@ -177,8 +177,8 @@ mediated DNS and proxy-style environments:
 }
 ```
 
-This is separate from `zones[].allowedHosts`. The SSRF policy lets OpenClaw
-connect to Gondolin's synthetic addresses; `allowedHosts` still decides which
+This is separate from `zones[].egressHosts`. The SSRF policy lets OpenClaw
+connect to Gondolin's synthetic addresses; `egressHosts` still decides which
 real destinations Gondolin may fetch.
 
 Agent-vm's Gondolin adapter uses RFC2544 synthetic IPv4 answers and
@@ -269,6 +269,7 @@ Each zone selects one gateway image profile and one gateway behavior config:
       "source": "environment",
       "envVar": "GITHUB_TOKEN",
       "injection": "http-mediation",
+      "audience": "gateway",
       "hosts": ["api.github.com", "github.com"]
     }
   },
@@ -281,7 +282,12 @@ Each zone selects one gateway image profile and one gateway behavior config:
       "tools": ["gh"]
     }
   ],
-  "allowedHosts": ["api.openai.com", "api.github.com", "github.com", "mcp.deepwiki.com"]
+  "egressHosts": [
+    { "host": "api.openai.com", "audience": "gateway" },
+    { "host": "api.github.com", "audience": "gateway" },
+    { "host": "github.com", "audience": "gateway" },
+    { "host": "mcp.deepwiki.com", "audience": "gateway" }
+  ]
 }
 ```
 
@@ -420,7 +426,7 @@ resources. If omitted, `allowRepoResources` behaves as `true`.
 | `string[]` | Only matching repo URLs may provide resources. |
 
 Repo resources are TCP-only and compile to Gondolin `tcpHosts`, env, and
-read-only VFS mounts. They do not modify `allowedHosts`; HTTP egress remains a
+read-only VFS mounts. They do not modify `egressHosts`; HTTP egress remains a
 zone-level policy.
 
 `allowRepoResources: false` disables the entire repo-local resource contract
@@ -450,17 +456,19 @@ For `http-mediation`, `hosts` is required.
 
 ## runtimeAuthHints
 
-Zones may declare `runtimeAuthHints` to describe mediated service tokens to the
-agent. These hints generate runtime instructions only; they do not mount config
-files and do not expose real secret values. They name the service, mediated host
-list, tool names, and placeholder env var so the agent can use normal tooling
-without guessing which token exists.
+Worker zones may declare `runtimeAuthHints` to describe mediated service tokens
+to the worker agent. These hints generate worker runtime instructions only; they
+do not mount config files and do not expose real secret values. They name the
+service, mediated host list, tool names, and placeholder env var so the worker
+agent can use normal tooling without guessing which token exists. OpenClaw zones
+must not declare `runtimeAuthHints`; Tool VM auth is controlled by Tool
+VM-audience mediated secrets and `egressHosts`.
 
 Known services get setup recipes in the generated runtime instructions. Current
-recipes cover `github`, `npm`, and Python package indexes (`pypi`,
-`pypi-private`, `python`, or `python-package-index`). Unknown services are still
-listed, but the generated guidance tells the agent to report an auth setup gap
-if the correct toolchain setup is not known.
+recipes cover `github`, `npm`, Linear, Readwise, and Python package indexes
+(`pypi`, `pypi-private`, `python`, or `python-package-index`). Unknown services
+are still listed, but the generated guidance tells the agent to report an auth
+setup gap if the correct toolchain setup is not known.
 
 ```json
 {
@@ -483,8 +491,10 @@ if the correct toolchain setup is not known.
 }
 ```
 
-Each hint must reference a zone secret with `injection: "http-mediation"`, and
-every hint host must also appear in that secret's `hosts`.
+Each hint must reference a worker-zone secret with `injection:
+"http-mediation"` and an audience that reaches the worker gateway runtime
+(`"gateway"` or `"both"`). Every hint host must also appear in that secret's
+`hosts`.
 
 Generated auth guidance appears in `/agent-vm/agents.md`,
 `/agent-vm/runtime-instructions.md`, and the prompt's `runtimeInstructions`
@@ -536,10 +546,16 @@ Selection order is exact or longest prefix match in `byScopePrefix`, then
 The schema rejects:
 
 - 1Password secrets without `host.secretsProvider`.
+- Legacy `allowedHosts`; use `egressHosts` with explicit `audience`.
+- Zone secrets without explicit `audience`.
+- Env-injected zone secrets with non-gateway audience or declared `hosts`.
+- Mediated secret hosts not declared in `egressHosts` for the same audience.
+- OpenClaw zones without gateway-only env `OPENCLAW_GATEWAY_TOKEN`.
 - Zones referencing missing gateway image profiles.
 - Zone gateway type mismatches against the selected image profile.
-- `runtimeAuthHints` referencing missing secrets, non-mediated secrets, or hosts
-  not listed on the referenced secret.
+- OpenClaw zones declaring `runtimeAuthHints`.
+- Worker `runtimeAuthHints` referencing missing secrets, non-mediated secrets,
+  Tool VM-only secrets, or hosts not listed on the referenced secret.
 - OpenClaw zones without `defaultToolVmProfile`.
 - OpenClaw zones without explicit `agentToolVmProfiles`.
 - Worker zones declaring Tool VM profile or sandbox seed fields.

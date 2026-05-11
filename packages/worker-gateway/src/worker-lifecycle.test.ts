@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { workerLifecycle } from './worker-lifecycle.js';
 
 const zone: GatewayZoneConfig = {
-	allowedHosts: ['api.openai.com'],
+	egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 	gateway: {
 		cpus: 2,
 		config: '/host/config/shravan/worker.json',
@@ -18,6 +18,7 @@ const zone: GatewayZoneConfig = {
 	secrets: {
 		OPENAI_API_KEY: {
 			injection: 'env',
+			audience: 'gateway',
 			source: '1password',
 			ref: 'op://vault/item/openai',
 		},

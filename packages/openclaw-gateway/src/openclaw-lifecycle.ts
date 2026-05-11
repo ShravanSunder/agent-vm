@@ -10,6 +10,7 @@ import type {
 } from '@agent-vm/gateway-interface';
 import {
 	buildGatewaySessionLabel as buildGatewaySessionLabelValue,
+	egressHostsForAudience,
 	splitResolvedGatewaySecrets,
 } from '@agent-vm/gateway-interface';
 import {
@@ -341,7 +342,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 		);
 
 		return {
-			allowedHosts: [...zone.allowedHosts],
+			allowedHosts: egressHostsForAudience(zone.egressHosts, 'gateway'),
 			environment: {
 				HOME: '/home/openclaw',
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',

@@ -1,3 +1,4 @@
+import { targetsAudience, type RuntimeVmAudience } from '@agent-vm/gateway-interface';
 import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
 
 import type { SystemConfig } from '../config/system-config.js';
@@ -30,6 +31,8 @@ export async function resolveZoneSecrets(options: {
 	readonly systemConfig: SystemConfig;
 	readonly zoneId: string;
 	readonly secretResolver: SecretResolver;
+	readonly audience: RuntimeVmAudience;
+	readonly injection?: 'env' | 'http-mediation';
 }): Promise<Record<string, string>> {
 	const zone = findZone(options.systemConfig, options.zoneId);
 	if (!zone) {
@@ -38,6 +41,12 @@ export async function resolveZoneSecrets(options: {
 
 	const resolvedSecrets: Record<string, string> = {};
 	for (const [secretName, secretConfig] of Object.entries(zone.secrets)) {
+		if (!targetsAudience(secretConfig.audience, options.audience)) {
+			continue;
+		}
+		if (options.injection && secretConfig.injection !== options.injection) {
+			continue;
+		}
 		let secretRef: SecretRef;
 		switch (secretConfig.source) {
 			case 'environment':

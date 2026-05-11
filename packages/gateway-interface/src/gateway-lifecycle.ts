@@ -1,5 +1,6 @@
 import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 
+import type { EgressHostConfig, VmAudience } from './audience.js';
 import type { GatewayProcessSpec } from './gateway-process-spec.js';
 import type { GatewayType } from './gateway-runtime-contract.js';
 import type { GatewayVmSpec } from './gateway-vm-spec.js';
@@ -89,16 +90,18 @@ export interface GatewayZoneConfig {
 				readonly source: '1password';
 				readonly ref: string;
 				readonly injection: 'env' | 'http-mediation';
+				readonly audience: VmAudience;
 				readonly hosts?: readonly string[] | undefined;
 		  }
 		| {
 				readonly source: 'environment';
 				readonly envVar: string;
 				readonly injection: 'env' | 'http-mediation';
+				readonly audience: VmAudience;
 				readonly hosts?: readonly string[] | undefined;
 		  }
 	>;
-	readonly allowedHosts: readonly string[];
+	readonly egressHosts: readonly EgressHostConfig[];
 	readonly websocketBypass: readonly string[];
 	readonly defaultToolVmProfile?: string;
 }

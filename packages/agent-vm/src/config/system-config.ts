@@ -1,6 +1,8 @@
 import { access } from 'node:fs/promises';
 import path from 'node:path';
 
+import { targetsAudience, vmAudienceValues } from '@agent-vm/gateway-interface';
+import type { EgressHostConfig, VmAudience } from '@agent-vm/gateway-interface';
 import { z } from 'zod';
 
 import { loadJsonConfigFile } from './json-config-file.js';
@@ -21,18 +23,27 @@ function pathContainsParentTraversal(inputPath: string): boolean {
 }
 
 const secretInjectionSchema = z.enum(['env', 'http-mediation']);
+const vmAudienceSchema = z.enum(vmAudienceValues);
+const egressHostSchema = z
+	.object({
+		host: z.string().min(1),
+		audience: vmAudienceSchema,
+	})
+	.strict();
 
 const onePasswordSecretSchema = z.object({
 	source: z.literal('1password'),
 	ref: z.string().min(1),
-	injection: secretInjectionSchema.default('http-mediation'),
+	injection: secretInjectionSchema,
+	audience: vmAudienceSchema,
 	hosts: z.array(z.string().min(1)).optional(),
 });
 
 const environmentSecretSchema = z.object({
 	source: z.literal('environment'),
 	envVar: z.string().min(1),
-	injection: secretInjectionSchema.default('http-mediation'),
+	injection: secretInjectionSchema,
+	audience: vmAudienceSchema,
 	hosts: z.array(z.string().min(1)).optional(),
 });
 
@@ -43,6 +54,20 @@ const secretReferenceSchema = z
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				message: "Injection 'http-mediation' requires at least one host.",
+				path: ['hosts'],
+			});
+		}
+		if (secret.injection === 'env' && secret.audience !== 'gateway') {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Injection 'env' requires audience 'gateway'.",
+				path: ['audience'],
+			});
+		}
+		if (secret.injection === 'env' && secret.hosts !== undefined) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Injection 'env' must not declare hosts.",
 				path: ['hosts'],
 			});
 		}
@@ -257,7 +282,7 @@ const systemConfigSchema = z
 						resources: zoneResourcesPolicySchema.optional(),
 						secrets: z.record(z.string(), secretReferenceSchema),
 						runtimeAuthHints: z.array(runtimeAuthHintSchema).optional(),
-						allowedHosts: z.array(z.string().min(1)).min(1),
+						egressHosts: z.array(egressHostSchema).min(1),
 						websocketBypass: z.array(z.string().min(1)).default([]),
 						defaultToolVmProfile: z.string().min(1).optional(),
 						agentToolVmProfiles: z.record(agentIdSchema, z.string().min(1)).optional(),
@@ -275,6 +300,21 @@ const systemConfigSchema = z
 	})
 	.strict()
 	.superRefine((config, context) => {
+		const egressHostTargetsAudience = (
+			egressHosts: readonly EgressHostConfig[],
+			host: string,
+			audience: VmAudience,
+		): boolean => {
+			if (audience === 'both') {
+				return (
+					egressHostTargetsAudience(egressHosts, host, 'gateway') &&
+					egressHostTargetsAudience(egressHosts, host, 'tool-vm')
+				);
+			}
+			return egressHosts.some(
+				(egressHost) => egressHost.host === host && targetsAudience(egressHost.audience, audience),
+			);
+		};
 		const hasOnePasswordSecrets = config.zones.some(
 			(zone) =>
 				Object.values(zone.secrets).some((secret) => secret.source === '1password') ||
@@ -332,6 +372,55 @@ const systemConfigSchema = z
 		}
 
 		for (const [zoneIndex, zone] of config.zones.entries()) {
+			if (zone.gateway.type === 'openclaw') {
+				const openClawGatewayToken = zone.secrets.OPENCLAW_GATEWAY_TOKEN;
+				if (!openClawGatewayToken) {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `OpenClaw zone '${zone.id}' must declare OPENCLAW_GATEWAY_TOKEN as a gateway env secret.`,
+						path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN'],
+					});
+				} else {
+					if (openClawGatewayToken.injection !== 'env') {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `OpenClaw zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must use injection 'env'.`,
+							path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'injection'],
+						});
+					}
+					if (openClawGatewayToken.audience !== 'gateway') {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `OpenClaw zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must target audience 'gateway'.`,
+							path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'audience'],
+						});
+					}
+					if (openClawGatewayToken.hosts !== undefined) {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `OpenClaw zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must not declare hosts.`,
+							path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'hosts'],
+						});
+					}
+				}
+			}
+
+			for (const [secretName, secret] of Object.entries(zone.secrets)) {
+				if (secret.injection !== 'http-mediation') {
+					continue;
+				}
+				for (const [hostIndex, host] of (secret.hosts ?? []).entries()) {
+					if (egressHostTargetsAudience(zone.egressHosts, host, secret.audience)) {
+						continue;
+					}
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `Zone '${zone.id}' secret '${secretName}' host '${host}' must be declared in egressHosts for audience '${secret.audience}'.`,
+						path: ['zones', zoneIndex, 'secrets', secretName, 'hosts', hostIndex],
+					});
+				}
+			}
+
 			// Keep zone gateway type readable at the use site while image profiles
 			// remain the source of boot-image details. This cross-check prevents
 			// a worker lifecycle from accidentally booting an OpenClaw image, or
@@ -410,6 +499,14 @@ const systemConfigSchema = z
 				});
 			}
 
+			if (zone.gateway.type === 'openclaw' && zone.runtimeAuthHints !== undefined) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `OpenClaw zone '${zone.id}' must not declare runtimeAuthHints because they are consumed only by worker gateway runtime instructions.`,
+					path: ['zones', zoneIndex, 'runtimeAuthHints'],
+				});
+			}
+
 			for (const [hintIndex, hint] of (zone.runtimeAuthHints ?? []).entries()) {
 				const secret = zone.secrets[hint.secret];
 				if (!secret) {
@@ -424,6 +521,13 @@ const systemConfigSchema = z
 					context.addIssue({
 						code: z.ZodIssueCode.custom,
 						message: `Zone '${zone.id}' runtimeAuthHints[${String(hintIndex)}] secret '${hint.secret}' must use injection 'http-mediation'.`,
+						path: ['zones', zoneIndex, 'runtimeAuthHints', hintIndex, 'secret'],
+					});
+				}
+				if (zone.gateway.type === 'worker' && secret.audience === 'tool-vm') {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `Zone '${zone.id}' runtimeAuthHints[${String(hintIndex)}] secret '${hint.secret}' must target the agent runtime audience for gateway type '${zone.gateway.type}'.`,
 						path: ['zones', zoneIndex, 'runtimeAuthHints', hintIndex, 'secret'],
 					});
 				}

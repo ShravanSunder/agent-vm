@@ -31,6 +31,7 @@ export interface ControllerRuntimeDependencies {
 		readonly tcpSlot: number;
 		readonly hostWorkMountDir: string;
 		readonly zoneId: string;
+		readonly secretResolver: SecretResolver;
 	}) => Promise<import('@agent-vm/gondolin-adapter').ManagedVm>;
 	readonly createSecretResolver?: (options: {
 		readonly serviceAccountToken: string;

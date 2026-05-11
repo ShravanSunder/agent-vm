@@ -4,7 +4,11 @@ import type {
 	GatewayProcessSpec,
 	GatewayVmSpec,
 } from '@agent-vm/gateway-interface';
-import { buildGatewaySessionLabel, splitResolvedGatewaySecrets } from '@agent-vm/gateway-interface';
+import {
+	buildGatewaySessionLabel,
+	egressHostsForAudience,
+	splitResolvedGatewaySecrets,
+} from '@agent-vm/gateway-interface';
 
 export const workerLifecycle: GatewayLifecycle = {
 	buildVmSpec({
@@ -22,7 +26,7 @@ export const workerLifecycle: GatewayLifecycle = {
 		);
 
 		return {
-			allowedHosts: [...zone.allowedHosts],
+			allowedHosts: egressHostsForAudience(zone.egressHosts, 'gateway'),
 			environment: {
 				HOME: '/home/coder',
 				CONTROLLER_BASE_URL: 'http://controller.vm.host:18800',

@@ -183,6 +183,7 @@ export async function startGatewayZone(
 		'Resolving zone secrets',
 		async () =>
 			await resolveZoneSecrets({
+				audience: 'gateway',
 				systemConfig: options.systemConfig,
 				zoneId: zone.id,
 				secretResolver: options.secretResolver,

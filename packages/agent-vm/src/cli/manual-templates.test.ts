@@ -54,6 +54,12 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
 			'media.discordapp.net',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).not.toContain(
+			'Add runtimeAuthHints',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'Do not add runtimeAuthHints to OpenClaw zones',
+		);
 		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
 			'coding agents helping end users set up and operate agent-vm deployments',
 		);

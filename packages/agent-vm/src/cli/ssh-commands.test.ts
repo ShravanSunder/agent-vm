@@ -41,7 +41,7 @@ const systemConfig = {
 	},
 	zones: [
 		{
-			allowedHosts: ['api.anthropic.com'],
+			egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			gateway: {
 				type: 'openclaw',
 				imageProfile: 'openclaw',
@@ -53,7 +53,14 @@ const systemConfig = {
 				zoneFilesDir: './zone-files/shravan',
 			},
 			id: 'shravan',
-			secrets: {},
+			secrets: {
+				OPENCLAW_GATEWAY_TOKEN: {
+					source: 'environment',
+					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					injection: 'env',
+					audience: 'gateway',
+				},
+			},
 			websocketBypass: [],
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},

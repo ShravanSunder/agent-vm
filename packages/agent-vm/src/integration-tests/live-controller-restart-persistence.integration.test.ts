@@ -56,8 +56,15 @@ function createSystemConfig(
 					stateDir: stateDirectory,
 					zoneFilesDir: zoneFilesDirectory,
 				},
-				secrets: {},
-				allowedHosts: ['api.openai.com'],
+				secrets: {
+					OPENCLAW_GATEWAY_TOKEN: {
+						source: 'environment',
+						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						injection: 'env',
+						audience: 'gateway',
+					},
+				},
+				egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 				websocketBypass: [],
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},

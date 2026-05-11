@@ -85,7 +85,7 @@ function createPreparedWorkerTaskStub(
 			stateDir: zoneStateDir,
 		},
 		secrets: {},
-		allowedHosts: ['github.com'],
+		egressHosts: ['github.com'].map((host) => ({ host, audience: 'gateway' as const })),
 		websocketBypass: [],
 	};
 	return {

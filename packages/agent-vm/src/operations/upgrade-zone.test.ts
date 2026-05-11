@@ -45,8 +45,15 @@ const systemConfig = {
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
 			},
-			secrets: {},
-			allowedHosts: ['api.anthropic.com'],
+			secrets: {
+				OPENCLAW_GATEWAY_TOKEN: {
+					source: 'environment',
+					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					injection: 'env',
+					audience: 'gateway',
+				},
+			},
+			egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			websocketBypass: [],
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},

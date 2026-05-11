@@ -240,7 +240,7 @@ function buildWorkerWorkRootfsChecks(
 						: {}),
 				},
 				secrets: zone.secrets,
-				allowedHosts: zone.allowedHosts,
+				egressHosts: zone.egressHosts,
 				websocketBypass: zone.websocketBypass,
 			};
 			const vmSpec = buildWorkerVmSpec({

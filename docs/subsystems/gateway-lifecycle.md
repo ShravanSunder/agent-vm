@@ -90,8 +90,13 @@ the full Gondolin-facing contract -- everything needed to create a VM.
 | `rootfsMode`       | `'readonly' | 'memory' | 'cow'` | Root filesystem strategy (both impls use `cow`)  |
 | `sessionLabel`     | `string`                        | Gondolin session identifier                      |
 
-Secrets are split by `splitResolvedGatewaySecrets` based on the zone config's
-`injection` field per secret: `'env'` secrets land in `environment`,
+`allowedHosts` is the low-level Gondolin VM field. Controller `system.json`
+zones declare audience-scoped `egressHosts`; gateway lifecycle code passes only
+`gateway` and `both` entries into this VM spec.
+
+Secrets are split by `splitResolvedGatewaySecrets` based on each zone secret's
+`audience` and `injection` fields. Gateway VMs receive only `gateway` and
+`both` secrets: `'env'` secrets land in `environment`, and
 `'http-mediation'` secrets land in `mediatedSecrets`.
 
 ---

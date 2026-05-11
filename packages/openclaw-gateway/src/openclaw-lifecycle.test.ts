@@ -75,7 +75,10 @@ function createZone(overrides?: {
 	};
 
 	return {
-		allowedHosts: ['api.openai.com', 'api.perplexity.ai'],
+		egressHosts: ['api.openai.com', 'api.perplexity.ai'].map((host) => ({
+			host,
+			audience: 'gateway' as const,
+		})),
 		gateway: {
 			...baseGateway,
 			...(overrides?.withoutAuthProfilesRef
@@ -92,17 +95,20 @@ function createZone(overrides?: {
 		secrets: {
 			DISCORD_BOT_TOKEN: {
 				injection: 'env',
+				audience: 'gateway',
 				source: '1password',
 				ref: 'op://vault/item/discord',
 			},
 			OPENCLAW_GATEWAY_TOKEN: {
 				injection: 'env',
+				audience: 'gateway',
 				source: '1password',
 				ref: 'op://vault/item/openclaw-gateway-token',
 			},
 			PERPLEXITY_API_KEY: {
 				hosts: ['api.perplexity.ai'],
 				injection: 'http-mediation',
+				audience: 'gateway',
 				source: '1password',
 				ref: 'op://vault/item/perplexity',
 			},
@@ -698,6 +704,7 @@ describe('openclawLifecycle', () => {
 					...zone.secrets,
 					OPENCLAW_GATEWAY_TOKEN: {
 						injection: 'env',
+						audience: 'gateway',
 						source: '1password',
 					},
 				},

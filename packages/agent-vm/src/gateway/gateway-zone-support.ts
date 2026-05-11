@@ -106,17 +106,19 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 							source: 'environment' as const,
 							...(secretConfig.hosts ? { hosts: secretConfig.hosts } : {}),
 							injection: secretConfig.injection,
+							audience: secretConfig.audience,
 							envVar: secretConfig.envVar,
 						}
 					: {
 							source: '1password' as const,
 							...(secretConfig.hosts ? { hosts: secretConfig.hosts } : {}),
 							injection: secretConfig.injection,
+							audience: secretConfig.audience,
 							ref: secretConfig.ref,
 						},
 			]),
 		),
-		allowedHosts: zone.allowedHosts,
+		egressHosts: zone.egressHosts,
 		...(zone.defaultToolVmProfile ? { defaultToolVmProfile: zone.defaultToolVmProfile } : {}),
 		websocketBypass: zone.websocketBypass,
 	};

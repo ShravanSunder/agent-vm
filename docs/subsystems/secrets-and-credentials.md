@@ -258,10 +258,13 @@ environment variable.
 
 ## Runtime Auth Hints
 
-Mediated secrets can be described to agents with zone `runtimeAuthHints`. The
-controller turns those hints into generated runtime instructions under
-`/agent-vm/agents.md` and `/agent-vm/runtime-instructions.md`, and injects the
-same text into the prompt `runtimeInstructions` layer.
+Worker-zone mediated secrets can be described to agents with zone
+`runtimeAuthHints`. The controller turns those hints into generated worker
+runtime instructions under `/agent-vm/agents.md` and
+`/agent-vm/runtime-instructions.md`, and injects the same text into the prompt
+`runtimeInstructions` layer. OpenClaw zones do not consume `runtimeAuthHints`;
+Tool VM service auth is controlled by Tool VM-audience mediated secrets and
+`egressHosts`.
 
 `runtimeAuthHints` do not mount credential files or expose real secret values.
 They name the service, mediated host list, tool names, and placeholder env var
@@ -277,9 +280,10 @@ toolchain setup is not known.
 
 | Secret | Resolved On | Enters VM? | Mechanism |
 |--------|------------|------------|-----------|
-| Zone secret (injection: env) | Host | Yes | VM environment variable |
-| Zone secret (injection: http-mediation) | Host | No | Gondolin proxy injects into HTTP requests |
-| runtimeAuthHints for mediated secrets | Host | Placeholder name only | Generated runtime instructions under `/agent-vm` |
+| Zone secret (injection: env, audience: gateway) | Host | Gateway VM only | VM environment variable |
+| Zone secret (injection: http-mediation, audience: gateway/both) | Host | Placeholder only | Gateway VM Gondolin proxy injects into HTTP requests |
+| Zone secret (injection: http-mediation, audience: tool-vm/both) | Host | Placeholder only | Tool VM Gondolin proxy injects into HTTP requests |
+| Worker runtimeAuthHints for mediated secrets | Host | Placeholder name only | Generated worker runtime instructions under `/agent-vm` |
 | OPENCLAW_GATEWAY_TOKEN | Host | Gateway VM only | Env SecretRef plus runtime-only `/run/openclaw/gateway-auth.env` for root `openclaw` admin commands |
 | githubToken | Host | No | Controller-side git push only |
 | gateway.authProfilesByAgent | Host | Indirectly | Per-agent profile written to host disk; VM reads via VFS mount |
