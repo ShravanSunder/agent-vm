@@ -194,6 +194,30 @@ For implementation details, see [subsystems/controller.md](../subsystems/control
 
 ---
 
+## MCP Portal Bindings
+
+Managed OpenClaw gateway images install the MCP Portal plugin and the
+`@agent-vm/mcp-portal` package. The plugin creates one agent-scoped
+Streamable HTTP MCP binding per configured agent and writes the matching
+OpenClaw `mcp.servers.<portalServerName>` entry. Generated multi-agent configs
+use `agents.list[].tools.deny` to hide sibling agents' materialized portal tool
+names while preserving the normal OpenClaw tool surface for each agent.
+
+The portal is both an MCP server and an MCP client aggregator. On the
+agent-facing side it exposes only `mcp_portal_list`, `mcp_portal_search`,
+`mcp_portal_describe`, and `mcp_portal_call`. On the upstream side the gateway
+process connects to operator-configured MCP servers, keeping upstream auth and
+transport details out of the Tool VM and out of model-visible tool inputs.
+
+Each binding owns its allowed namespace policy, upstream MCP clients, catalog,
+and search index. Denied tools are excluded before catalog and search index
+construction rather than post-filtered from a global index.
+
+See [MCP Portal](../subsystems/mcp-portal.md) for the portal API, schema,
+approval, and redaction model.
+
+---
+
 ## Sandbox Plugin (openclaw-agent-vm-plugin)
 
 The `openclaw-agent-vm-plugin` package bridges OpenClaw's sandbox system to Gondolin VMs.

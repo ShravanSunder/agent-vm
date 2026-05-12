@@ -74,6 +74,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 	it('accepts current agent-vm OpenClaw scaffold defaults', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
+				configuredAuthProfileAgentIds: ['sun', 'shravan'],
 				zoneId: 'shravan',
 				config: {
 					agents: {
@@ -83,6 +84,44 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 								workspaceAccess: 'rw',
 							},
 							workspace: '/zone/agents/default',
+						},
+						list: [
+							{
+								id: 'sun',
+								tools: {
+									deny: [
+										'mcp_portal_shravan_07417e5860df__mcp_portal_list',
+										'mcp_portal_shravan_07417e5860df__mcp_portal_search',
+										'mcp_portal_shravan_07417e5860df__mcp_portal_describe',
+										'mcp_portal_shravan_07417e5860df__mcp_portal_call',
+									],
+								},
+							},
+							{
+								id: 'shravan',
+								tools: {
+									deny: [
+										'mcp_portal_sun_27756f050e14__mcp_portal_list',
+										'mcp_portal_sun_27756f050e14__mcp_portal_search',
+										'mcp_portal_sun_27756f050e14__mcp_portal_describe',
+										'mcp_portal_sun_27756f050e14__mcp_portal_call',
+									],
+								},
+							},
+						],
+					},
+					mcp: {
+						servers: {
+							mcp_portal_sun_27756f050e14: {
+								headers: { 'x-mcp-portal-binding-secret': 'sun-secret' },
+								transport: 'streamable-http',
+								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-sun-27756f050e14/mcp',
+							},
+							mcp_portal_shravan_07417e5860df: {
+								headers: { 'x-mcp-portal-binding-secret': 'shravan-secret' },
+								transport: 'streamable-http',
+								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-shravan-07417e5860df/mcp',
+							},
 						},
 					},
 					session: {
@@ -106,13 +145,17 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						},
 					],
 					plugins: {
-						allow: ['gondolin', 'memory-core'],
+						allow: ['gondolin', 'memory-core', 'mcp-portal'],
 						entries: {
 							gondolin: { enabled: true },
 							'memory-core': { enabled: true },
+							'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
 						},
 						load: {
-							paths: ['/home/openclaw/.openclaw/extensions/gondolin'],
+							paths: [
+								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/home/openclaw/.openclaw/extensions/mcp-portal',
+							],
 						},
 						slots: { memory: 'memory-core' },
 					},
@@ -161,14 +204,18 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						},
 					],
 					plugins: {
-						allow: ['gondolin', 'memory-core', 'discord'],
+						allow: ['gondolin', 'memory-core', 'discord', 'mcp-portal'],
 						entries: {
 							discord: { enabled: true },
 							gondolin: { enabled: true },
 							'memory-core': { enabled: true },
+							'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
 						},
 						load: {
-							paths: ['/home/openclaw/.openclaw/extensions/gondolin'],
+							paths: [
+								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/home/openclaw/.openclaw/extensions/mcp-portal',
+							],
 						},
 						slots: { memory: 'memory-core' },
 					},
@@ -251,6 +298,205 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			ok: false,
 			hint: 'Use /zone/agents/default or per-agent workspaces; keep /zone for shared zone files.',
 		});
+	});
+
+	it('flags portal bindings that do not deny sibling agent portal tools', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							sandbox: { workspaceAccess: 'rw' },
+							workspace: '/zone/agents/default',
+						},
+						list: [
+							{ id: 'sun', tools: { deny: [] } },
+							{ id: 'shravan', tools: { deny: [] } },
+						],
+					},
+					mcp: {
+						servers: {
+							mcp_portal_sun_27756f050e14: {},
+							mcp_portal_shravan_07417e5860df: {},
+						},
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-bindings-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Generate one mcp.servers portal binding per OpenClaw agent and deny sibling portal tool names on each agent.',
+		});
+	});
+
+	it('flags portal bindings without the generated binding secret header', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						list: [
+							{
+								id: 'sun',
+								tools: {
+									deny: [
+										'mcp_portal_shravan_07417e5860df__mcp_portal_list',
+										'mcp_portal_shravan_07417e5860df__mcp_portal_search',
+										'mcp_portal_shravan_07417e5860df__mcp_portal_describe',
+										'mcp_portal_shravan_07417e5860df__mcp_portal_call',
+									],
+								},
+							},
+							{
+								id: 'shravan',
+								tools: {
+									deny: [
+										'mcp_portal_sun_27756f050e14__mcp_portal_list',
+										'mcp_portal_sun_27756f050e14__mcp_portal_search',
+										'mcp_portal_sun_27756f050e14__mcp_portal_describe',
+										'mcp_portal_sun_27756f050e14__mcp_portal_call',
+									],
+								},
+							},
+						],
+					},
+					mcp: {
+						servers: {
+							mcp_portal_sun_27756f050e14: {
+								transport: 'streamable-http',
+								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-sun-27756f050e14/mcp',
+							},
+							mcp_portal_shravan_07417e5860df: {
+								headers: { 'x-mcp-portal-binding-secret': 'shravan-secret' },
+								transport: 'streamable-http',
+								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-shravan-07417e5860df/mcp',
+							},
+						},
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-bindings-shravan'),
+		).toMatchObject({ ok: false });
+	});
+
+	it('flags portal bindings with a non-generated loopback URL', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						list: [
+							{
+								id: 'sun',
+								tools: {
+									deny: [
+										'mcp_portal_shravan_07417e5860df__mcp_portal_list',
+										'mcp_portal_shravan_07417e5860df__mcp_portal_search',
+										'mcp_portal_shravan_07417e5860df__mcp_portal_describe',
+										'mcp_portal_shravan_07417e5860df__mcp_portal_call',
+									],
+								},
+							},
+							{
+								id: 'shravan',
+								tools: {
+									deny: [
+										'mcp_portal_sun_27756f050e14__mcp_portal_list',
+										'mcp_portal_sun_27756f050e14__mcp_portal_search',
+										'mcp_portal_sun_27756f050e14__mcp_portal_describe',
+										'mcp_portal_sun_27756f050e14__mcp_portal_call',
+									],
+								},
+							},
+						],
+					},
+					mcp: {
+						servers: {
+							mcp_portal_sun_27756f050e14: {
+								headers: { 'x-mcp-portal-binding-secret': 'sun-secret' },
+								transport: 'streamable-http',
+								url: 'http://127.0.0.1:19999/mcp-portal/bindings/mcp-portal-sun-27756f050e14/mcp',
+							},
+							mcp_portal_shravan_07417e5860df: {
+								headers: { 'x-mcp-portal-binding-secret': 'shravan-secret' },
+								transport: 'streamable-http',
+								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-shravan-07417e5860df/mcp',
+							},
+						},
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-bindings-shravan'),
+		).toMatchObject({ ok: false });
+	});
+
+	it('flags orphaned portal servers that are not bound to a configured agent', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						list: [
+							{
+								id: 'sun',
+								tools: {
+									deny: [
+										'mcp_portal_shravan_07417e5860df__mcp_portal_list',
+										'mcp_portal_shravan_07417e5860df__mcp_portal_search',
+										'mcp_portal_shravan_07417e5860df__mcp_portal_describe',
+										'mcp_portal_shravan_07417e5860df__mcp_portal_call',
+									],
+								},
+							},
+							{
+								id: 'shravan',
+								tools: {
+									deny: [
+										'mcp_portal_sun_27756f050e14__mcp_portal_list',
+										'mcp_portal_sun_27756f050e14__mcp_portal_search',
+										'mcp_portal_sun_27756f050e14__mcp_portal_describe',
+										'mcp_portal_sun_27756f050e14__mcp_portal_call',
+									],
+								},
+							},
+						],
+					},
+					mcp: {
+						servers: {
+							mcp_portal_sun_27756f050e14: {
+								headers: { 'x-mcp-portal-binding-secret': 'sun-secret' },
+								transport: 'streamable-http',
+								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-sun-27756f050e14/mcp',
+							},
+							mcp_portal_shravan_07417e5860df: {
+								headers: { 'x-mcp-portal-binding-secret': 'shravan-secret' },
+								transport: 'streamable-http',
+								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-shravan-07417e5860df/mcp',
+							},
+							mcp_portal_old_agent_15044beaedcc: {
+								headers: { 'x-mcp-portal-binding-secret': 'old-secret' },
+								transport: 'streamable-http',
+								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-old-agent-15044beaedcc/mcp',
+							},
+						},
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-bindings-shravan'),
+		).toMatchObject({ ok: false });
 	});
 
 	it('flags configured OpenClaw agents without matching auth profile material', () => {
@@ -374,10 +620,16 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 					dmScope: 'per-channel-peer',
 				},
 				plugins: {
-					allow: ['memory-core'],
-					entries: { 'memory-core': { enabled: true } },
+					allow: ['memory-core', 'mcp-portal'],
+					entries: {
+						'memory-core': { enabled: true },
+						'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
+					},
 					load: {
-						paths: ['/home/openclaw/.openclaw/extensions/gondolin'],
+						paths: [
+							'/home/openclaw/.openclaw/extensions/gondolin',
+							'/home/openclaw/.openclaw/extensions/mcp-portal',
+						],
 					},
 					slots: { memory: 'memory-core' },
 				},

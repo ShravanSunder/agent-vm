@@ -12,6 +12,10 @@ export default defineConfig({
 			'@agent-vm/openclaw-agent-vm-plugin': path.resolve(
 				'./packages/openclaw-agent-vm-plugin/src/index.ts',
 			),
+			'@agent-vm/mcp-portal': path.resolve('./packages/mcp-portal/src/index.ts'),
+			'@agent-vm/openclaw-mcp-portal-plugin': path.resolve(
+				'./packages/openclaw-mcp-portal-plugin/src/index.ts',
+			),
 			'@agent-vm/openclaw-gateway': path.resolve('./packages/openclaw-gateway/src/index.ts'),
 			'@agent-vm/worker-gateway': path.resolve('./packages/worker-gateway/src/index.ts'),
 		},

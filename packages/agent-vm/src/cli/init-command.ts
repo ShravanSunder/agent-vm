@@ -15,6 +15,12 @@ import {
 	resolveGondolinMinimumZigVersion,
 	resolveGondolinPackageSpec,
 } from '@agent-vm/gondolin-adapter';
+import {
+	createPortalBindingId,
+	createPortalBindingSecret,
+	createPortalServerName,
+	materializedPortalToolNames,
+} from '@agent-vm/openclaw-mcp-portal-plugin';
 import { z } from 'zod';
 
 import { loadJsonConfigFile } from '../config/json-config-file.js';
@@ -156,6 +162,7 @@ interface DefaultManagedImageOverlay {
 
 const defaultGatewayIngressPort = 18791;
 const defaultOpenClawExtensionsPath = '/home/openclaw/.openclaw/extensions/gondolin';
+const defaultOpenClawMcpPortalExtensionsPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
 const scaffoldedGatewayPortSystemConfigSchema = z
 	.object({
 		zones: z.array(
@@ -698,6 +705,17 @@ function formatAgentIdentityName(agentId: string): string {
 	return agentId.charAt(0).toUpperCase() + agentId.slice(1);
 }
 
+function defaultOpenClawPortalToolDenyList(
+	agentId: string,
+	agentIds: readonly string[],
+): readonly string[] {
+	return agentIds
+		.filter((candidateAgentId) => candidateAgentId !== agentId)
+		.flatMap((candidateAgentId) =>
+			materializedPortalToolNames(createPortalServerName(candidateAgentId)),
+		);
+}
+
 function defaultOpenClawAgentsConfig(agentIds: readonly string[] | undefined): object {
 	return {
 		defaults: {
@@ -717,10 +735,34 @@ function defaultOpenClawAgentsConfig(agentIds: readonly string[] | undefined): o
 						id: agentId,
 						workspace: `/zone/agents/${agentId}`,
 						identity: { name: formatAgentIdentityName(agentId) },
+						tools: { deny: defaultOpenClawPortalToolDenyList(agentId, agentIds) },
 					})),
 				}
 			: {}),
 	};
+}
+
+function defaultOpenClawMcpPortalServers(agentIds: readonly string[] | undefined): object {
+	if (!agentIds || agentIds.length === 0) {
+		return {};
+	}
+
+	return Object.fromEntries(
+		agentIds.map((agentId) => {
+			const serverName = createPortalServerName(agentId);
+			const bindingId = createPortalBindingId(agentId);
+			return [
+				serverName,
+				{
+					transport: 'streamable-http',
+					url: `http://127.0.0.1:18789/mcp-portal/bindings/${bindingId}/mcp`,
+					headers: {
+						'x-mcp-portal-binding-secret': createPortalBindingSecret(),
+					},
+				},
+			];
+		}),
+	);
 }
 
 const defaultOpenClawConfig = (
@@ -741,6 +783,9 @@ const defaultOpenClawConfig = (
 		port: 18789,
 	},
 	agents: defaultOpenClawAgentsConfig(agentIds),
+	mcp: {
+		servers: defaultOpenClawMcpPortalServers(agentIds),
+	},
 	tools: {
 		allow: ['zone_git_push'],
 		elevated: { enabled: false },
@@ -762,9 +807,9 @@ const defaultOpenClawConfig = (
 	session: { dmScope: 'per-channel-peer' },
 	plugins: {
 		load: {
-			paths: [defaultOpenClawExtensionsPath],
+			paths: [defaultOpenClawExtensionsPath, defaultOpenClawMcpPortalExtensionsPath],
 		},
-		allow: ['gondolin', 'memory-core'],
+		allow: ['gondolin', 'memory-core', 'mcp-portal'],
 		slots: { memory: 'memory-core' },
 		entries: {
 			gondolin: {
@@ -776,6 +821,13 @@ const defaultOpenClawConfig = (
 			},
 			'memory-core': {
 				enabled: true,
+			},
+			'mcp-portal': {
+				enabled: true,
+				hooks: { allowPromptInjection: true },
+				config: {
+					promptContext: { enabled: true },
+				},
 			},
 		},
 	},

@@ -193,6 +193,13 @@ The gateway daemon sources the runtime secret file during startup, and root
 admin shells get a narrow `openclaw` wrapper that sources only the gateway
 token for that child process.
 
+MCP Portal upstream credentials stay in the OpenClaw gateway process. The
+portal exposes schema, summaries, helper source, and validated call results to
+agents, but it does not put upstream MCP headers, stdio env, or portal binding
+secrets into Tool VM helper artifacts or model-visible portal tool inputs. The
+legacy HTTP+SSE upstream transport must receive auth headers on both the initial
+SSE stream request and subsequent POST requests.
+
 ---
 
 ## Host-Only Secrets

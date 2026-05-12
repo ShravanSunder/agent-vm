@@ -60,12 +60,13 @@ Read in this order:
 3. scope.md explains session, agent, and shared scope.
 4. openclaw.md explains OpenClaw gateway configuration.
 5. openclaw-defaults.md explains agent-vm-owned OpenClaw defaults and doctor checks.
-6. tool-access.md explains binary, auth, OpenClaw tool, and zone/image isolation.
-7. channels.md explains how deployments add Discord or other channels.
-8. runtime-paths.md explains /work and other in-VM paths.
-9. per-agent-setup.md explains multi-agent scope and tool access choices.
-10. migration-discord.md explains how existing Discord deployments keep working.
-11. secrets.md explains runtime auth and HTTP mediation.
+6. mcp-portal.md explains progressive MCP discovery and gateway-owned MCP auth.
+7. tool-access.md explains binary, auth, OpenClaw tool, and zone/image isolation.
+8. channels.md explains how deployments add Discord or other channels.
+9. runtime-paths.md explains /work and other in-VM paths.
+10. per-agent-setup.md explains multi-agent scope and tool access choices.
+11. migration-discord.md explains how existing Discord deployments keep working.
+12. secrets.md explains runtime auth and HTTP mediation.
 
 Local deployment notes belong in docs/manual/local-notes.md or another non-generated file.
 `,
@@ -181,12 +182,37 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	logging.file is rendered in the effective OpenClaw config as /agent-vm/logs/openclaw-YYYY-MM-DD.log unless the deployment explicitly sets its own logging.file.
 
 	Managed OpenClaw gateway images install @agent-vm/openclaw-agent-vm-plugin and register it as the gondolin extension.
+	Managed OpenClaw gateway images install @agent-vm/openclaw-mcp-portal-plugin and @agent-vm/mcp-portal, then register mcp-portal as a managed extension.
+	plugins.entries.mcp-portal.hooks.allowPromptInjection must stay true when promptContext is enabled.
 	Managed OpenClaw gateway images install external channel packages required by config. For example, channels.discord.enabled asks for @openclaw/discord. The managed release supplies the default version unless vm-images/gateways/openclaw/overlay.jsonc pins that package in extraOpenClawPackages.
 
 	Use agent-vm init --openclaw-agents sun,shravan,alevtina to scaffold agents.list entries with per-agent /zone/agents/<id> workspaces.
 
 	Run agent-vm doctor after editing OpenClaw config. Doctor prints a pass/fail summary and warns about missing memory slots, missing plugin load paths, /zone used as an agent workspace, missing writable workspace access, and configured agents without auth profile material.
 	`,
+			),
+		},
+		{
+			relativePath: 'docs/manual/mcp-portal.md',
+			content: generatedPage(
+				'MCP Portal',
+				`
+MCP Portal is an MCP server facade over deployment-owned upstream MCP servers.
+
+	Agents should use progressive disclosure:
+	1. mcp_portal_list with requests[] for allowed namespaces and compact summaries.
+	2. mcp_portal_search with requests[] for discovery inside the scoped index.
+	3. mcp_portal_describe with requests[] for full JSON Schema and optional TypeScript/Zod helpers.
+	4. mcp_portal_call with calls[] to call upstream tools by namespace + toolName after seeing the schema.
+
+	All portal responses are { ok, results, errors }. results is keyed by request/call id. Each keyed result is either { ok: true, input, output } or { ok: false, input, error }.
+
+Each agent receives a separate portal binding. The gateway owns upstream MCP auth, MCP clients, catalog caching, and search indexes. Denied tools do not enter the agent's catalog or search index.
+
+MCP JSON Schema is canonical. Zod is derived for validation and helper code. Invalid call arguments return Zod-style issues without calling upstream. Tool VMs can use the agent-vm-mcp-portal helper package but do not receive upstream MCP credentials.
+
+Credential redaction is not general PII filtering. Treat upstream tool response content as agent-visible unless a deployment adds future response middleware policy.
+`,
 			),
 		},
 		{

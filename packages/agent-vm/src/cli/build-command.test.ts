@@ -266,7 +266,7 @@ describe('runBuildCommand', () => {
 			JSON.stringify({
 				schemaVersion: 1,
 				extraAptPackages: ['ca-certificates'],
-				extraOpenClawPackages: ['@agent-vm/openclaw-agent-vm-plugin@0.0.45'],
+				extraOpenClawPackages: ['@openclaw/discord@2026.5.7'],
 				copy: [{ from: 'certs/strip-nonascii-certs.py', to: '/tmp/strip-nonascii-certs.py' }],
 				runAfterBase: ['python3 /tmp/strip-nonascii-certs.py'],
 			}),

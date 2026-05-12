@@ -173,13 +173,17 @@ function createHealthyOpenClawConfig(): object {
 		},
 		channels: {},
 		plugins: {
-			allow: ['gondolin', 'memory-core'],
+			allow: ['gondolin', 'memory-core', 'mcp-portal'],
 			entries: {
 				gondolin: { enabled: true },
 				'memory-core': { enabled: true },
+				'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
 			},
 			load: {
-				paths: ['/home/openclaw/.openclaw/extensions/gondolin'],
+				paths: [
+					'/home/openclaw/.openclaw/extensions/gondolin',
+					'/home/openclaw/.openclaw/extensions/mcp-portal',
+				],
 			},
 			slots: { memory: 'memory-core' },
 		},

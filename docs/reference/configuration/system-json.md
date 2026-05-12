@@ -154,6 +154,23 @@ Channel config is deployment-owned. Enable channels in
 Managed OpenClaw image profiles install known extracted channel packages, such
 as `@openclaw/discord`, from the OpenClaw channel config.
 
+## OpenClaw MCP Portal Defaults
+
+Managed OpenClaw gateway images install `@agent-vm/openclaw-mcp-portal-plugin`
+and `@agent-vm/mcp-portal`. New OpenClaw scaffolds allow and enable the
+`mcp-portal` plugin, set
+`plugins.entries.mcp-portal.hooks.allowPromptInjection=true`, and add
+`/home/openclaw/.openclaw/extensions/mcp-portal` to `plugins.load.paths`.
+
+When `agents.list` is configured, agent-vm scaffolds one generated
+`mcp.servers.<portalServerName>` entry per agent. Each generated server points
+at that agent's Hono Streamable HTTP portal binding. Each agent keeps the normal
+OpenClaw tool surface and receives a `tools.deny` list for sibling agents'
+materialized portal tool names, so it can call only its own four portal tools.
+Operator-authored upstream MCP servers remain deployment-owned under OpenClaw
+`mcp.servers`; the portal plugin uses those upstream servers but does not put
+upstream MCP auth into Tool VMs.
+
 `agent-vm init --type openclaw --openclaw-agents sun,shravan,alevtina` scaffolds
 `agents.list` entries with `/zone/agents/<id>` workspaces. It deliberately does
 not scaffold channel bindings or Discord guild allowlists because those are

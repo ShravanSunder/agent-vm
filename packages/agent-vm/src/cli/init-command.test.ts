@@ -846,6 +846,7 @@ describe('scaffoldAgentVmProject', () => {
 		]);
 		expect(openClawConfig.plugins.load.paths).toEqual([
 			'/home/openclaw/.openclaw/extensions/gondolin',
+			'/home/openclaw/.openclaw/extensions/mcp-portal',
 		]);
 		expect(openClawConfig.agents.defaults.model.primary).toBe('openai-codex/gpt-5.5');
 		expect(openClawConfig.agents.defaults.thinkingDefault).toBe('low');
@@ -891,17 +892,83 @@ describe('scaffoldAgentVmProject', () => {
 				readonly list?: readonly {
 					readonly id: string;
 					readonly identity?: { readonly name?: string };
+					readonly tools?: { readonly deny?: readonly string[] };
 					readonly workspace?: string;
 				}[];
+			};
+			readonly mcp?: {
+				readonly servers?: Record<
+					string,
+					{
+						readonly headers?: Record<string, string>;
+						readonly transport?: string;
+						readonly url?: string;
+					}
+				>;
 			};
 		};
 
 		expect(openClawConfig.agents.defaults.workspace).toBe('/zone/agents/default');
 		expect(openClawConfig.agents.list).toEqual([
-			{ id: 'sun', workspace: '/zone/agents/sun', identity: { name: 'Sun' } },
-			{ id: 'shravan', workspace: '/zone/agents/shravan', identity: { name: 'Shravan' } },
-			{ id: 'alevtina', workspace: '/zone/agents/alevtina', identity: { name: 'Alevtina' } },
+			{
+				id: 'sun',
+				workspace: '/zone/agents/sun',
+				identity: { name: 'Sun' },
+				tools: {
+					deny: [
+						'mcp_portal_shravan_07417e5860df__mcp_portal_list',
+						'mcp_portal_shravan_07417e5860df__mcp_portal_search',
+						'mcp_portal_shravan_07417e5860df__mcp_portal_describe',
+						'mcp_portal_shravan_07417e5860df__mcp_portal_call',
+						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_list',
+						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_search',
+						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_describe',
+						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_call',
+					],
+				},
+			},
+			{
+				id: 'shravan',
+				workspace: '/zone/agents/shravan',
+				identity: { name: 'Shravan' },
+				tools: {
+					deny: [
+						'mcp_portal_sun_27756f050e14__mcp_portal_list',
+						'mcp_portal_sun_27756f050e14__mcp_portal_search',
+						'mcp_portal_sun_27756f050e14__mcp_portal_describe',
+						'mcp_portal_sun_27756f050e14__mcp_portal_call',
+						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_list',
+						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_search',
+						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_describe',
+						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_call',
+					],
+				},
+			},
+			{
+				id: 'alevtina',
+				workspace: '/zone/agents/alevtina',
+				identity: { name: 'Alevtina' },
+				tools: {
+					deny: [
+						'mcp_portal_sun_27756f050e14__mcp_portal_list',
+						'mcp_portal_sun_27756f050e14__mcp_portal_search',
+						'mcp_portal_sun_27756f050e14__mcp_portal_describe',
+						'mcp_portal_sun_27756f050e14__mcp_portal_call',
+						'mcp_portal_shravan_07417e5860df__mcp_portal_list',
+						'mcp_portal_shravan_07417e5860df__mcp_portal_search',
+						'mcp_portal_shravan_07417e5860df__mcp_portal_describe',
+						'mcp_portal_shravan_07417e5860df__mcp_portal_call',
+					],
+				},
+			},
 		]);
+		expect(openClawConfig.mcp?.servers?.mcp_portal_sun_27756f050e14).toMatchObject({
+			transport: 'streamable-http',
+			url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-sun-27756f050e14/mcp',
+			headers: {
+				'x-mcp-portal-binding-secret': expect.stringMatching(/^[A-Za-z0-9_-]{32,}$/u),
+			},
+		});
 	});
 
 	it('scaffolds control-ui allowed origins from an existing zone ingress port', async () => {
@@ -1273,10 +1340,17 @@ describe('scaffoldAgentVmProject', () => {
 			};
 			readonly commands?: { readonly ownerAllowFrom?: readonly string[] };
 			readonly session?: { readonly dmScope?: string };
+			readonly mcp?: { readonly servers?: Record<string, unknown> };
 			readonly plugins?: {
 				readonly allow?: readonly string[];
 				readonly slots?: { readonly memory?: string };
-				readonly entries?: Record<string, { readonly enabled?: boolean }>;
+				readonly entries?: Record<
+					string,
+					{
+						readonly enabled?: boolean;
+						readonly hooks?: { readonly allowPromptInjection?: boolean };
+					}
+				>;
 			};
 			readonly tools?: { readonly allow?: readonly string[] };
 		};
@@ -1286,8 +1360,14 @@ describe('scaffoldAgentVmProject', () => {
 		expect(openClawConfig.session?.dmScope).toBe('per-channel-peer');
 		expect(openClawConfig.commands?.ownerAllowFrom).toEqual([]);
 		expect(openClawConfig.plugins?.allow).toContain('memory-core');
+		expect(openClawConfig.plugins?.allow).toContain('mcp-portal');
 		expect(openClawConfig.plugins?.slots?.memory).toBe('memory-core');
 		expect(openClawConfig.plugins?.entries?.['memory-core']).toEqual({ enabled: true });
+		expect(openClawConfig.plugins?.entries?.['mcp-portal']).toMatchObject({
+			enabled: true,
+			hooks: { allowPromptInjection: true },
+		});
+		expect(openClawConfig.mcp?.servers).toEqual({});
 		expect(openClawConfig.tools?.allow).toContain('zone_git_push');
 	});
 

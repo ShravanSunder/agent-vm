@@ -31,6 +31,10 @@
 			"@agent-vm/agent-vm-worker": ["./packages/agent-vm-worker/src/index.ts"],
 			"@agent-vm/gateway-interface": ["./packages/gateway-interface/src/index.ts"],
 			"@agent-vm/openclaw-agent-vm-plugin": ["./packages/openclaw-agent-vm-plugin/src/index.ts"],
+			"@agent-vm/mcp-portal": ["./packages/mcp-portal/src/index.ts"],
+			"@agent-vm/openclaw-mcp-portal-plugin": [
+				"./packages/openclaw-mcp-portal-plugin/src/index.ts"
+			],
 			"@agent-vm/openclaw-gateway": ["./packages/openclaw-gateway/src/index.ts"],
 			"@agent-vm/worker-gateway": ["./packages/worker-gateway/src/index.ts"]
 		}
