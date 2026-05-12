@@ -327,7 +327,12 @@ describe('startGatewayZone', () => {
 		expect(buildImage).toHaveBeenCalled();
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
-				allowedHosts: ['api.anthropic.com', 'api.openai.com', 'api.perplexity.ai'],
+				allowedHosts: [
+					'controller.vm.host',
+					'api.anthropic.com',
+					'api.openai.com',
+					'api.perplexity.ai',
+				],
 				cpus: 2,
 				env: expect.objectContaining({
 					HOME: '/home/openclaw',

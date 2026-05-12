@@ -10,7 +10,8 @@ import type {
 } from '@agent-vm/gateway-interface';
 import {
 	buildGatewaySessionLabel as buildGatewaySessionLabelValue,
-	egressHostsForAudience,
+	controllerVmHost,
+	gatewayVmAllowedHosts,
 	splitResolvedGatewaySecrets,
 } from '@agent-vm/gateway-interface';
 import {
@@ -53,7 +54,7 @@ function buildGatewayTcpHosts(
 	tcpPool: { readonly basePort: number; readonly size: number },
 ): Record<string, string> {
 	const tcpHosts: Record<string, string> = {
-		'controller.vm.host:18800': `127.0.0.1:${controllerPort}`,
+		[`${controllerVmHost}:18800`]: `127.0.0.1:${controllerPort}`,
 	};
 
 	for (let slot = 0; slot < tcpPool.size; slot += 1) {
@@ -86,6 +87,7 @@ function buildOpenClawBootstrapCommand(
 		'export PIP_CACHE_DIR=/work/cache/pip',
 		'export UV_CACHE_DIR=/work/cache/uv',
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
+		'export NODE_OPTIONS=--dns-result-order=ipv4first',
 	];
 	const secretEnvironmentLines = Object.entries({
 		...environmentSecrets,
@@ -98,6 +100,14 @@ function buildOpenClawBootstrapCommand(
 		secretEnvironmentLines.length === 0
 			? `: > ${openClawRuntimeSecretsEnvFilePath} && `
 			: `printf '%s\\n' ${secretEnvironmentLines.map((line) => shellQuote(line)).join(' ')} > ${openClawRuntimeSecretsEnvFilePath} && `;
+	const sshConfigLines = ['Host tool-*.vm.host', '  AddressFamily inet'];
+	const sshConfigCommand =
+		`mkdir -p /root/.ssh /home/openclaw/.ssh && ` +
+		`printf '%s\\n' ${sshConfigLines.map((line) => shellQuote(line)).join(' ')} > /root/.ssh/config && ` +
+		'cp /root/.ssh/config /home/openclaw/.ssh/config && ' +
+		'chown -R openclaw:openclaw /home/openclaw/.ssh && ' +
+		'chmod 700 /root/.ssh /home/openclaw/.ssh && ' +
+		'chmod 600 /root/.ssh/config /home/openclaw/.ssh/config && ';
 
 	return (
 		`mkdir -p /root /etc/profile.d /run/openclaw /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && chown -R openclaw:openclaw /work && cat > ${openClawShellEnvFilePath} << 'ENVEOF'\n` +
@@ -106,6 +116,7 @@ function buildOpenClawBootstrapCommand(
 		`chmod 644 ${openClawShellEnvFilePath} && ` +
 		secretsFileCommand +
 		`chmod 600 ${openClawRuntimeSecretsEnvFilePath} && ` +
+		sshConfigCommand +
 		'touch /root/.bashrc && ' +
 		`grep -qxF 'source ${openClawShellEnvFilePath}' /root/.bashrc || echo 'source ${openClawShellEnvFilePath}' >> /root/.bashrc && ` +
 		'touch /root/.bash_profile && ' +
@@ -398,10 +409,11 @@ export const openclawLifecycle: GatewayLifecycle = {
 		);
 
 		return {
-			allowedHosts: egressHostsForAudience(zone.egressHosts, 'gateway'),
+			allowedHosts: gatewayVmAllowedHosts(zone.egressHosts),
 			environment: {
 				HOME: '/home/openclaw',
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
+				NODE_OPTIONS: '--dns-result-order=ipv4first',
 				OPENCLAW_CONFIG_PATH: effectiveOpenClawConfigVmPath,
 				OPENCLAW_HOME: '/home/openclaw',
 				OPENCLAW_STATE_DIR: openClawStateDirVmPath,

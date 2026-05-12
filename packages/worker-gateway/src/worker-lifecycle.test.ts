@@ -116,7 +116,7 @@ describe('workerLifecycle', () => {
 				value: 'github-token',
 			},
 		});
-		expect(vmSpec.allowedHosts).toEqual(['api.openai.com', 'api.github.com']);
+		expect(vmSpec.allowedHosts).toEqual(['controller.vm.host', 'api.openai.com', 'api.github.com']);
 	});
 
 	it('builds a process spec that starts the worker HTTP server', () => {

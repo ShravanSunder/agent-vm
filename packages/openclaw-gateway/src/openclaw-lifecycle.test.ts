@@ -214,6 +214,11 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.environment.PNPM_HOME).toBe('/pnpm');
 			expect(vmSpec.environment.PATH).toContain('/pnpm:');
 			expect(vmSpec.environment.npm_config_cache).toBe('/work/cache/npm');
+			expect(vmSpec.allowedHosts).toEqual([
+				'controller.vm.host',
+				'api.openai.com',
+				'api.perplexity.ai',
+			]);
 			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/config']).toEqual({
 				hostPath: '/host/config/shravan',
 				kind: 'realfs',

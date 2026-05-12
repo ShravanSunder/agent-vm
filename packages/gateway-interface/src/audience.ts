@@ -8,6 +8,8 @@ export interface EgressHostConfig {
 	readonly audience: VmAudience;
 }
 
+export const controllerVmHost = 'controller.vm.host';
+
 export function targetsAudience(
 	configAudience: VmAudience,
 	runtimeAudience: RuntimeVmAudience,
@@ -22,4 +24,8 @@ export function egressHostsForAudience(
 	return egressHosts
 		.filter((egressHost) => targetsAudience(egressHost.audience, runtimeAudience))
 		.map((egressHost) => egressHost.host);
+}
+
+export function gatewayVmAllowedHosts(egressHosts: readonly EgressHostConfig[]): readonly string[] {
+	return Array.from(new Set([controllerVmHost, ...egressHostsForAudience(egressHosts, 'gateway')]));
 }

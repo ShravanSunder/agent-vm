@@ -3,7 +3,13 @@ export {
 	buildToolSessionLabel,
 	gatewayTypeValues,
 } from './gateway-runtime-contract.js';
-export { egressHostsForAudience, targetsAudience, vmAudienceValues } from './audience.js';
+export {
+	controllerVmHost,
+	egressHostsForAudience,
+	gatewayVmAllowedHosts,
+	targetsAudience,
+	vmAudienceValues,
+} from './audience.js';
 export type { EgressHostConfig, RuntimeVmAudience, VmAudience } from './audience.js';
 export type { GatewayType } from './gateway-runtime-contract.js';
 export type {
