@@ -37,6 +37,7 @@ export interface ControllerRouteOperations {
 		zoneId: string,
 	) => Promise<{ readonly ok: boolean } & Record<string, unknown>>;
 	readonly getZoneLogs: (zoneId: string) => Promise<unknown>;
+	readonly getZoneGitStatus?: (zoneId: string) => Promise<unknown>;
 	readonly getZoneStatus: (zoneId: string) => Promise<unknown>;
 	readonly refreshZoneCredentials: (zoneId: string) => Promise<unknown>;
 	readonly prepareWorkerTask?: (
@@ -58,6 +59,11 @@ export interface ControllerRouteOperations {
 			}[];
 		},
 	) => Promise<unknown>;
+	readonly pushZoneGit?: (
+		zoneId: string,
+		input: { readonly expectedHead: string },
+	) => Promise<unknown>;
+	readonly verifyZoneGitPushToken?: (zoneId: string, token: string | undefined) => boolean;
 	readonly pullDefaultForTask?: (
 		zoneId: string,
 		taskId: string,
@@ -94,7 +100,7 @@ export async function serializeLeaseForResponse(
 		readonly user: string;
 	};
 	readonly tcpSlot: number;
-	readonly workdir: '/work';
+	readonly workdir: string;
 }> {
 	return {
 		leaseId: lease.id,
@@ -108,7 +114,7 @@ export async function serializeLeaseForResponse(
 			user: lease.sshAccess.user ?? 'root',
 		},
 		tcpSlot: lease.tcpSlot,
-		workdir: '/work',
+		workdir: lease.guestWorkdir,
 	};
 }
 

@@ -58,6 +58,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main:session-abc',
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
 			zoneId: 'shravan',
 		});
@@ -66,6 +67,7 @@ describe('createLeaseManager', () => {
 		expect(leaseManager.keepLeaseAlive(lease.id)?.lease).toMatchObject({
 			id: lease.id,
 			agentWorkspaceDir: '/home/openclaw/work',
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
 			zoneId: 'shravan',
 		});
@@ -93,6 +95,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
@@ -123,6 +126,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
@@ -157,6 +161,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
@@ -171,6 +176,7 @@ describe('createLeaseManager', () => {
 				},
 				profileId: 'standard',
 				scopeKey: 'agent:main',
+				guestWorkdir: '/work',
 				hostWorkMountDir: '/host/other-sandbox-work',
 				zoneId: 'shravan',
 			}),
@@ -196,6 +202,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
@@ -210,6 +217,7 @@ describe('createLeaseManager', () => {
 				},
 				profileId: 'large',
 				scopeKey: 'agent:main',
+				guestWorkdir: '/work',
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
@@ -232,6 +240,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
@@ -246,6 +255,7 @@ describe('createLeaseManager', () => {
 				},
 				profileId: 'standard',
 				scopeKey: 'agent:main',
+				guestWorkdir: '/work',
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
@@ -270,6 +280,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/host/sandbox-work',
 		};
 
@@ -311,6 +322,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
@@ -367,6 +379,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
@@ -415,6 +428,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
@@ -454,6 +468,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
@@ -497,6 +512,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'scope-a',
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
@@ -509,6 +525,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'scope-b',
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
@@ -566,6 +583,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'scope-close-fail',
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
@@ -595,6 +613,7 @@ describe('createLeaseManager', () => {
 				},
 				profileId: 'standard',
 				scopeKey: 'scope-fail',
+				guestWorkdir: '/work',
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
@@ -632,6 +651,7 @@ describe('createLeaseManager', () => {
 				},
 				profileId: 'standard',
 				scopeKey: 'scope-ssh-fail',
+				guestWorkdir: '/work',
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
@@ -674,6 +694,7 @@ describe('createLeaseManager', () => {
 					},
 					profileId: 'standard',
 					scopeKey: 'scope-ssh-fail',
+					guestWorkdir: '/work',
 					hostWorkMountDir: '/host/sandbox-work',
 					zoneId: 'shravan',
 				}),

@@ -213,6 +213,7 @@ function renderManagedDockerfile(props: {
 		lines.push(`RUN ${command}`);
 	}
 	if (props.base === 'openclaw-gateway') {
+		lines.push('RUN mkdir -p /pnpm/global/5/node_modules/@openclaw');
 		lines.push(
 			`RUN ln -sf ${managedOpenClawAgentVmPluginPackagePath} ${managedOpenClawAgentVmPluginExtensionPath}`,
 		);

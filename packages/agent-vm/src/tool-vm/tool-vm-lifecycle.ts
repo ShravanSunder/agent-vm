@@ -1,3 +1,4 @@
+import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -18,6 +19,12 @@ import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondol
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { ToolVmProfile } from '../controller/leases/lease-manager.js';
 import { validateResolvedToolWorkMountDir as validateResolvedToolWorkMountDirDefault } from '../controller/leases/lease-work-mount-paths.js';
+import {
+	OPENCLAW_ZONE_FILES_GUEST_ROOT,
+	OPENCLAW_ZONE_GIT_GUEST_ROOT,
+	resolveZoneGitPaths,
+	type ZoneGitToolVmMount,
+} from '../controller/zone-git/zone-git-paths.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 
 export interface ToolVmLifecycleDependencies {
@@ -32,6 +39,17 @@ export interface ToolVmLifecycleDependencies {
 	readonly validateResolvedToolWorkMountDir?: typeof validateResolvedToolWorkMountDirDefault;
 }
 
+async function configureZoneGitToolVm(toolVm: ManagedVm): Promise<void> {
+	const result = await toolVm.exec(
+		`git config --global --add safe.directory ${OPENCLAW_ZONE_FILES_GUEST_ROOT}`,
+	);
+	if (result.exitCode !== 0) {
+		throw new Error(
+			`Failed to configure Tool VM Git safe.directory for ${OPENCLAW_ZONE_FILES_GUEST_ROOT}: ${result.stderr || result.stdout}`,
+		);
+	}
+}
+
 export async function createToolVm(
 	options: {
 		readonly cacheDir: string;
@@ -39,6 +57,7 @@ export async function createToolVm(
 		readonly systemConfig: LoadedSystemConfig;
 		readonly tcpSlot: number;
 		readonly hostWorkMountDir: string;
+		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
 		readonly secretResolver: SecretResolver;
 	},
@@ -87,36 +106,95 @@ export async function createToolVm(
 		hostWorkMountDir: options.hostWorkMountDir,
 		zone,
 	});
-	const pinnedWorkMountRoot = pinRealFsRoot(hostWorkMountDirectory);
+	const pinnedRoots: PinnedRealFsRoot[] = [];
+	const pinRoot = (hostPath: string): PinnedRealFsRoot => {
+		const pinnedRoot = pinRealFsRoot(hostPath);
+		pinnedRoots.push(pinnedRoot);
+		return pinnedRoot;
+	};
+	let toolVm: ManagedVm | undefined;
 	try {
-		await validateResolvedToolWorkMountDir({
-			hostWorkMountDir: pinnedWorkMountRoot.realPath,
-			zone,
+		let vfsMounts: Parameters<typeof createManagedVm>[0]['vfsMounts'];
+		if (options.zoneGitMount) {
+			const hostZoneFilesDirectory = await validateResolvedToolWorkMountDir({
+				hostWorkMountDir: options.zoneGitMount.hostZoneFilesDir,
+				zone,
+			});
+			const hostZoneGitRoot = await realpath(options.zoneGitMount.hostZoneGitRoot);
+			const expectedZoneGitRoot = await realpath(
+				resolveZoneGitPaths({
+					runtimeDir: options.systemConfig.runtimeDir,
+					zoneId: options.zoneId,
+				}).hostZoneGitRoot,
+			);
+			if (hostZoneGitRoot !== expectedZoneGitRoot) {
+				throw new Error(
+					`Zone Git root '${hostZoneGitRoot}' does not match expected runtime path '${expectedZoneGitRoot}' for zone '${options.zoneId}'.`,
+				);
+			}
+			const pinnedZoneFilesRoot = pinRoot(hostZoneFilesDirectory);
+			const pinnedZoneGitRoot = pinRoot(hostZoneGitRoot);
+			await validateResolvedToolWorkMountDir({
+				hostWorkMountDir: pinnedZoneFilesRoot.realPath,
+				zone,
+			});
+			vfsMounts = {
+				[OPENCLAW_ZONE_GIT_GUEST_ROOT]: {
+					hostPath: hostZoneGitRoot,
+					kind: 'realfs',
+					pinnedHostRoot: pinnedZoneGitRoot,
+				},
+				[OPENCLAW_ZONE_FILES_GUEST_ROOT]: {
+					hostPath: hostZoneFilesDirectory,
+					kind: 'realfs',
+					pinnedHostRoot: pinnedZoneFilesRoot,
+				},
+			};
+		} else {
+			const pinnedWorkMountRoot = pinRoot(hostWorkMountDirectory);
+			await validateResolvedToolWorkMountDir({
+				hostWorkMountDir: pinnedWorkMountRoot.realPath,
+				zone,
+			});
+			vfsMounts = {
+				'/work': {
+					hostPath: hostWorkMountDirectory,
+					kind: 'realfs',
+					pinnedHostRoot: pinnedWorkMountRoot,
+				},
+			};
+		}
+		toolVm = await createManagedVm({
+			allowedHosts: egressHostsForAudience(zone.egressHosts, 'tool-vm'),
+			cpus: options.profile.cpus,
+			imagePath: toolImage.imagePath,
+			memory: options.profile.memory,
+			rootfsMode: 'memory',
+			sessionLabel: buildToolSessionLabel(
+				options.systemConfig.host.projectNamespace,
+				options.zoneId,
+				options.tcpSlot,
+			),
+			secrets: mediatedSecrets,
+			vfsMounts,
 		});
+		if (options.zoneGitMount) {
+			await configureZoneGitToolVm(toolVm);
+		}
+		return toolVm;
 	} catch (error) {
-		closePinnedRealFsRoot(pinnedWorkMountRoot);
+		if (toolVm) {
+			try {
+				await toolVm.close();
+			} catch (closeError) {
+				process.stderr.write(
+					`Failed to close Tool VM after create failure: ${closeError instanceof Error ? closeError.message : String(closeError)}\n`,
+				);
+			}
+		}
+		for (const pinnedRoot of pinnedRoots) {
+			closePinnedRealFsRoot(pinnedRoot);
+		}
 		throw error;
 	}
-	const toolVm = await createManagedVm({
-		allowedHosts: egressHostsForAudience(zone.egressHosts, 'tool-vm'),
-		cpus: options.profile.cpus,
-		imagePath: toolImage.imagePath,
-		memory: options.profile.memory,
-		rootfsMode: 'memory',
-		sessionLabel: buildToolSessionLabel(
-			options.systemConfig.host.projectNamespace,
-			options.zoneId,
-			options.tcpSlot,
-		),
-		secrets: mediatedSecrets,
-		vfsMounts: {
-			'/work': {
-				hostPath: hostWorkMountDirectory,
-				kind: 'realfs',
-				pinnedHostRoot: pinnedWorkMountRoot,
-			},
-		},
-	});
-
-	return toolVm;
 }

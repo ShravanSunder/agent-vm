@@ -11,6 +11,7 @@ import { SandboxSeedingError } from '../leases/agent-sandbox-seeding.js';
 import { LeaseScopeConflictError, type Lease } from '../leases/lease-manager.js';
 import { LeaseWorkMountValidationError } from '../leases/lease-work-mount-paths.js';
 import type { PreparedWorkerTask, WorkerTaskResult } from '../worker-task-runner.js';
+import { ZoneGitConflictError } from '../zone-git/zone-git-operations.js';
 import {
 	ControllerZoneNotFoundError,
 	ControllerZoneOperationUnsupportedError,
@@ -30,7 +31,10 @@ function createControllerAppForTest(
 		Partial<Pick<ControllerAppOptions, 'resolveLeaseWorkMountDir'>>,
 ): ReturnType<typeof createControllerApp> {
 	return createControllerApp({
-		resolveLeaseWorkMountDir: async ({ workMountDir }) => workMountDir,
+		resolveLeaseWorkMountDir: async ({ workMountDir }) => ({
+			guestWorkdir: '/work',
+			hostWorkMountDir: workMountDir,
+		}),
 		...options,
 	});
 }
@@ -39,6 +43,7 @@ function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 	return {
 		agentWorkspaceDir: '/host/agent-work',
 		createdAt: tcpSlot,
+		guestWorkdir: '/work',
 		id: leaseId,
 		lastUsedAt: tcpSlot,
 		profileId: 'standard',
@@ -190,6 +195,7 @@ describe('createControllerApp', () => {
 				setIngressRoutes: vi.fn(),
 				getVmInstance: vi.fn(),
 			},
+			guestWorkdir: '/work',
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
 			zoneId: 'shravan',
 		};
@@ -417,7 +423,10 @@ describe('createControllerApp', () => {
 
 	it('normalizes lease workMountDir before creating the lease', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-normalized', 0));
-		const resolveLeaseWorkMountDir = vi.fn(async () => '/host/state/shravan/sandboxes/agent/work');
+		const resolveLeaseWorkMountDir = vi.fn(async () => ({
+			guestWorkdir: '/work',
+			hostWorkMountDir: '/host/state/shravan/sandboxes/agent/work',
+		}));
 		const app = createControllerAppForTest({
 			toolVmProfiles: {
 				standard: {
@@ -460,6 +469,72 @@ describe('createControllerApp', () => {
 		expect(createLease).toHaveBeenCalledWith(
 			expect.objectContaining({
 				hostWorkMountDir: '/host/state/shravan/sandboxes/agent/work',
+				guestWorkdir: '/work',
+			}),
+		);
+	});
+
+	it('returns the resolved zone Git guest workdir and passes zone Git mounts to leases', async () => {
+		const zoneGitMount = {
+			hostZoneFilesDir: '/host/zone-files/shravan',
+			hostZoneGitRoot: '/host/runtime/zones/shravan/zone-git',
+		};
+		const lease: Lease = {
+			...createLeaseStub('lease-zone-git', 0),
+			guestWorkdir: '/zone/agents/shravan',
+			hostWorkMountDir: '/host/zone-files/shravan/agents/shravan',
+			zoneGitMount,
+		};
+		const createLease = vi.fn(async () => lease);
+		const resolveLeaseWorkMountDir = vi.fn(async () => ({
+			guestWorkdir: '/zone/agents/shravan',
+			hostWorkMountDir: '/host/zone-files/shravan/agents/shravan',
+			zoneGitMount,
+		}));
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			readIdentityPem: async () => 'pem-from-file',
+			leaseManager: {
+				createLease,
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			resolveLeaseWorkMountDir,
+		});
+
+		const createResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/zone/agents/shravan',
+				profileId: 'standard',
+				scopeKey: 'agent:shravan',
+				workMountDir: '/zone/agents/shravan',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(createResponse.status).toBe(200);
+		await expect(createResponse.json()).resolves.toMatchObject({
+			leaseId: 'lease-zone-git',
+			tcpSlot: 0,
+			workdir: '/zone/agents/shravan',
+		});
+		expect(createLease).toHaveBeenCalledWith(
+			expect.objectContaining({
+				guestWorkdir: '/zone/agents/shravan',
+				hostWorkMountDir: '/host/zone-files/shravan/agents/shravan',
+				zoneGitMount,
 			}),
 		);
 	});
@@ -961,6 +1036,270 @@ describe('createControllerApp', () => {
 			ok: false,
 			observation: 'http 503',
 			zoneId: 'shravan',
+		});
+	});
+
+	it('serves zone Git status and push through controller operations', async () => {
+		const getZoneGitStatus = vi.fn(async () => ({
+			aheadOfRemote: 1,
+			behindRemote: 0,
+			branch: 'main',
+			dirty: false,
+			initialized: true,
+			localHead: 'abc123',
+			remoteHead: 'def456',
+		}));
+		const pushZoneGit = vi.fn(async () => ({
+			branch: 'main',
+			localHead: 'abc123',
+			remoteHead: 'abc123',
+			pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
+		}));
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneGitStatus,
+				getZoneLogs: vi.fn(async () => ({})),
+				getZoneStatus: vi.fn(async () => ({})),
+				pushZoneGit,
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+				verifyZoneGitPushToken: vi.fn(
+					(zoneId, token) => zoneId === 'sunfam' && token === 'push-token',
+				),
+			},
+		});
+
+		const statusResponse = await app.request('/zones/sunfam/zone-git/status');
+		const pushResponse = await app.request('/zones/sunfam/zone-git/push', {
+			body: JSON.stringify({ expectedHead: 'abc123' }),
+			headers: {
+				'content-type': 'application/json',
+				'x-agent-vm-zone-git-token': 'push-token',
+			},
+			method: 'POST',
+		});
+
+		expect(statusResponse.status).toBe(200);
+		await expect(statusResponse.json()).resolves.toMatchObject({
+			branch: 'main',
+			aheadOfRemote: 1,
+		});
+		expect(pushResponse.status).toBe(200);
+		await expect(pushResponse.json()).resolves.toMatchObject({
+			branch: 'main',
+			pushedCommits: [{ sha: 'abc123', subject: 'docs: update memory' }],
+		});
+		expect(getZoneGitStatus).toHaveBeenCalledWith('sunfam');
+		expect(pushZoneGit).toHaveBeenCalledWith('sunfam', { expectedHead: 'abc123' });
+	});
+
+	it('returns 405 when zone Git operations are unavailable', async () => {
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				getZoneStatus: vi.fn(async () => ({})),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+			},
+		});
+
+		const statusResponse = await app.request('/zones/sunfam/zone-git/status');
+		const pushResponse = await app.request('/zones/sunfam/zone-git/push', {
+			body: JSON.stringify({}),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(statusResponse.status).toBe(405);
+		await expect(statusResponse.json()).resolves.toEqual({
+			error: 'zone-git-status-unavailable',
+		});
+		expect(pushResponse.status).toBe(405);
+		await expect(pushResponse.json()).resolves.toEqual({
+			error: 'zone-git-push-unavailable',
+		});
+	});
+
+	it('returns 403 when zone Git push token is missing or invalid', async () => {
+		const pushZoneGit = vi.fn(async () => ({}));
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				getZoneStatus: vi.fn(async () => ({})),
+				pushZoneGit,
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+				verifyZoneGitPushToken: vi.fn(
+					(zoneId, token) => zoneId === 'sunfam' && token === 'push-token',
+				),
+			},
+		});
+
+		const response = await app.request('/zones/sunfam/zone-git/push', {
+			body: JSON.stringify({ expectedHead: 'abc123' }),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(403);
+		await expect(response.json()).resolves.toEqual({ error: 'zone-git-push-forbidden' });
+		expect(pushZoneGit).not.toHaveBeenCalled();
+	});
+
+	it('returns 409 when zone Git push expectedHead is stale', async () => {
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				getZoneStatus: vi.fn(async () => ({})),
+				pushZoneGit: vi.fn(async () => {
+					throw new ZoneGitConflictError('expectedHead is stale');
+				}),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+				verifyZoneGitPushToken: vi.fn(
+					(zoneId, token) => zoneId === 'sunfam' && token === 'push-token',
+				),
+			},
+		});
+
+		const response = await app.request('/zones/sunfam/zone-git/push', {
+			body: JSON.stringify({ expectedHead: 'abc123' }),
+			headers: {
+				'content-type': 'application/json',
+				'x-agent-vm-zone-git-token': 'push-token',
+			},
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(409);
+		await expect(response.json()).resolves.toEqual({
+			error: 'zone-git-push-conflict',
+			message: 'expectedHead is stale',
+		});
+	});
+
+	it('scrubs GitHub tokens from zone Git operation errors', async () => {
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			operations: {
+				destroyZone: vi.fn(async () => ({})),
+				getStatus: vi.fn(async () => ({})),
+				getZoneLogs: vi.fn(async () => ({})),
+				getZoneStatus: vi.fn(async () => ({})),
+				pushZoneGit: vi.fn(async () => {
+					throw new Error(
+						'git push failed https://x-access-token:ghp_secret123@github.com/org/repo.git',
+					);
+				}),
+				refreshZoneCredentials: vi.fn(async () => ({})),
+				upgradeZone: vi.fn(async () => ({})),
+				verifyZoneGitPushToken: vi.fn(
+					(zoneId, token) => zoneId === 'sunfam' && token === 'push-token',
+				),
+			},
+		});
+
+		const response = await app.request('/zones/sunfam/zone-git/push', {
+			body: JSON.stringify({ expectedHead: 'abc123' }),
+			headers: {
+				'content-type': 'application/json',
+				'x-agent-vm-zone-git-token': 'push-token',
+			},
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(500);
+		const body = await response.json();
+		expect(JSON.stringify(body)).not.toContain('ghp_secret123');
+		expect(body).toMatchObject({
+			error: expect.stringContaining('https://x-access-token:***@github.com/org/repo.git'),
 		});
 	});
 

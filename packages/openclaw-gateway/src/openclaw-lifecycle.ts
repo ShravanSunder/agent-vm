@@ -87,7 +87,10 @@ function buildOpenClawBootstrapCommand(
 		'export UV_CACHE_DIR=/work/cache/uv',
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
 	];
-	const secretEnvironmentLines = Object.entries(environmentSecrets).map(
+	const secretEnvironmentLines = Object.entries({
+		...environmentSecrets,
+		...zone.runtimeEnvironment,
+	}).map(
 		([secretName, secretValue]) =>
 			`export ${secretName}=${shellQuoteEnvSecretValue(secretName, secretValue)}`,
 	);
@@ -190,6 +193,46 @@ function buildEffectiveSecretsConfig(
 			default: {
 				source: 'env',
 			},
+		},
+	};
+}
+
+function buildEffectivePluginsConfig(
+	parsedBaseConfig: Record<string, unknown>,
+	runtimePluginConfigs: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined,
+): Record<string, unknown> {
+	const existingPluginsConfig = isObjectRecord(parsedBaseConfig.plugins)
+		? parsedBaseConfig.plugins
+		: {};
+	const existingEntriesConfig = isObjectRecord(existingPluginsConfig.entries)
+		? existingPluginsConfig.entries
+		: {};
+	const runtimeEntriesConfig = Object.fromEntries(
+		Object.entries(runtimePluginConfigs ?? {}).map(([pluginId, runtimeConfig]) => {
+			const existingEntryConfig = isObjectRecord(existingEntriesConfig[pluginId])
+				? existingEntriesConfig[pluginId]
+				: {};
+			const existingPluginConfig = isObjectRecord(existingEntryConfig.config)
+				? existingEntryConfig.config
+				: {};
+			return [
+				pluginId,
+				{
+					...existingEntryConfig,
+					config: {
+						...existingPluginConfig,
+						...runtimeConfig,
+					},
+				},
+			] as const;
+		}),
+	);
+
+	return {
+		...existingPluginsConfig,
+		entries: {
+			...existingEntriesConfig,
+			...runtimeEntriesConfig,
 		},
 	};
 }
@@ -302,6 +345,7 @@ async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<vo
 				lastTouchedAt: new Date().toISOString(),
 				lastTouchedVersion: 'agent-vm',
 			},
+			plugins: buildEffectivePluginsConfig(parsedBaseConfig, zone.runtimePluginConfigs),
 			secrets: buildEffectiveSecretsConfig(parsedBaseConfig),
 		};
 		const effectiveConfigPath = getEffectiveOpenClawConfigHostPath(zone);
@@ -371,6 +415,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 				npm_config_cache: '/work/cache/npm',
 				pnpm_config_store_dir: '/work/cache/pnpm/store',
 				...environmentSecrets,
+				...zone.runtimeEnvironment,
 			},
 			mediatedSecrets,
 			rootfsMode: 'cow',

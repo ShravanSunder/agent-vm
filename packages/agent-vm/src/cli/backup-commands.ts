@@ -1,4 +1,7 @@
 import type { SystemConfig } from '../config/system-config.js';
+import { resolveControllerGithubToken } from '../controller/controller-runtime-support.js';
+import type { ZoneGitReadConfig } from '../controller/zone-git/zone-git-operations.js';
+import { isOpenClawZoneGitConfigured } from '../controller/zone-git/zone-git-paths.js';
 import {
 	createResolverFromSystemConfig,
 	type CliDependencies,
@@ -44,6 +47,23 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 	const backupManager = options.dependencies.createZoneBackupManager(backupEncryption);
 
 	if (backupSubcommand === 'create') {
+		let zoneGit: ZoneGitReadConfig | undefined;
+		if (isOpenClawZoneGitConfigured(zone)) {
+			const githubToken = await resolveControllerGithubToken(options.systemConfig, secretResolver);
+			if (!githubToken) {
+				throw new Error(
+					`zoneGit for zone '${zoneId}' requires host.githubToken so the controller can push without exposing credentials to VMs.`,
+				);
+			}
+			zoneGit = {
+				branch: zone.gateway.zoneGit.remote.branch,
+				githubToken,
+				remoteUrl: zone.gateway.zoneGit.remote.repoUrl,
+				runtimeDir: options.systemConfig.runtimeDir,
+				zoneFilesDir: zone.gateway.zoneFilesDir,
+				zoneId,
+			};
+		}
 		writeJson(
 			options.io,
 			await backupManager.createBackup({
@@ -52,6 +72,7 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 				runtimeDir: options.systemConfig.runtimeDir,
 				stateDir: zone.gateway.stateDir,
 				...(zone.gateway.type === 'openclaw' ? { zoneFilesDir: zone.gateway.zoneFilesDir } : {}),
+				...(zoneGit ? { zoneGit } : {}),
 				zoneId,
 			}),
 		);

@@ -171,7 +171,16 @@ export async function startGatewayZone(
 	const runTaskStep =
 		options.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
 	const zone = options.zoneOverride ?? findGatewayZone(options.systemConfig, options.zoneId);
-	const lifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone);
+	const mappedLifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone);
+	const lifecycleZone = {
+		...mappedLifecycleZone,
+		...(options.runtimeEnvironment === undefined
+			? {}
+			: { runtimeEnvironment: options.runtimeEnvironment }),
+		...(options.runtimePluginConfigs === undefined
+			? {}
+			: { runtimePluginConfigs: options.runtimePluginConfigs }),
+	};
 	await runTaskStep('Cleaning orphaned gateway runtime', async () => {
 		await (dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent)({
 			stateDir: zone.gateway.stateDir,

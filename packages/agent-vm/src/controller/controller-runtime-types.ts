@@ -8,6 +8,9 @@ import type { ActiveWorkerTask } from './active-task-registry.js';
 import type { createControllerService } from './http/controller-http-routes.js';
 import type { ToolVmProfile } from './leases/lease-manager.js';
 import type { executeWorkerTask, prepareWorkerTask } from './worker-task-runner.js';
+import type { ZoneGitCapabilityStore } from './zone-git/zone-git-capability-store.js';
+import type { ZoneGitOperationLocks } from './zone-git/zone-git-operation-locks.js';
+import type { ZoneGitToolVmMount } from './zone-git/zone-git-paths.js';
 
 export interface ControllerRuntime {
 	readonly controllerPort: number;
@@ -30,6 +33,7 @@ export interface ControllerRuntimeDependencies {
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;
 		readonly hostWorkMountDir: string;
+		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
 		readonly secretResolver: SecretResolver;
 	}) => Promise<import('@agent-vm/gondolin-adapter').ManagedVm>;
@@ -59,6 +63,8 @@ export interface ControllerRuntimeDependencies {
 	}) => Promise<{
 		close(): Promise<void>;
 	}>;
+	readonly zoneGitCapabilityStore?: ZoneGitCapabilityStore;
+	readonly zoneGitOperationLocks?: ZoneGitOperationLocks;
 }
 
 export interface StartControllerRuntimeOptions {

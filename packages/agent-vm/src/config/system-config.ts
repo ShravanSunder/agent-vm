@@ -17,6 +17,13 @@ export const agentIdSchema = z
 		/^[a-z0-9][a-z0-9._-]*$/u,
 		'agent id must start with a lowercase letter or number and contain only lowercase letters, numbers, dots, underscores, or hyphens',
 	);
+export const zoneIdSchema = z
+	.string()
+	.min(1)
+	.regex(
+		/^[a-z0-9][a-z0-9._-]*$/u,
+		'zone id must start with a lowercase letter or number and contain only lowercase letters, numbers, dots, underscores, or hyphens',
+	);
 
 function pathContainsParentTraversal(inputPath: string): boolean {
 	return inputPath.split(/[\\/]+/u).includes('..');
@@ -205,6 +212,27 @@ const gatewaySshSchema = z
 	})
 	.strict();
 
+const gitBranchNameSchema = z
+	.string()
+	.min(1)
+	.regex(
+		/^(?!\/)(?!.*(?:^|\/)\.)(?!.*\.\.)(?!.*\/\/)(?!.*@\{)(?!.*[\\\s~^:?*[])(?!.*\/$)(?!.*\.lock$)[A-Za-z0-9._/-]+$/u,
+		'git branch must be a safe branch name without spaces, control characters, traversal, refspec, or glob metacharacters',
+	);
+
+const zoneGitRemoteSchema = z
+	.object({
+		repoUrl: z.string().min(1),
+		branch: gitBranchNameSchema.default('main'),
+	})
+	.strict();
+
+const zoneGitSchema = z
+	.object({
+		remote: zoneGitRemoteSchema,
+	})
+	.strict();
+
 const zoneGatewayBaseSchema = z.object({
 	imageProfile: z.string().min(1),
 	memory: z.string().min(1),
@@ -222,6 +250,7 @@ const openClawZoneGatewaySchema = zoneGatewayBaseSchema
 		type: z.literal('openclaw'),
 		zoneFilesDir: z.string().min(1),
 		authProfilesByAgent: z.record(agentIdSchema, authProfilesSecretSchema).optional(),
+		zoneGit: zoneGitSchema.optional(),
 	})
 	.strict();
 
@@ -319,7 +348,7 @@ const systemConfigSchema = z
 			.array(
 				z
 					.object({
-						id: z.string().min(1),
+						id: zoneIdSchema,
 						adminAccess: zoneAdminAccessSchema.optional(),
 						gateway: zoneGatewaySchema,
 						resources: zoneResourcesPolicySchema.optional(),

@@ -155,11 +155,12 @@ function createSecretResolver(values: Record<string, string>): SecretResolver {
 
 describe('createToolVm', () => {
 	it('mounts the lease host work mount directory at /work', async () => {
+		const exec = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
-			exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+			exec,
 			getVmInstance: () => ({
 				close: async () => {},
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -371,6 +372,148 @@ describe('createToolVm', () => {
 		expect(resolveSecret).not.toHaveBeenCalledWith(
 			expect.objectContaining({ ref: 'GATEWAY_ONLY_TOKEN' }),
 		);
+	});
+
+	it('mounts zone Git leases at /zone and /agent-vm/zone-git', async () => {
+		const exec = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+		const managedVm = {
+			close: async () => {},
+			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			exec,
+			getVmInstance: () => ({
+				close: async () => {},
+				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				exec: async () => ({ exitCode: 0 }),
+				id: 'vm-instance',
+				setIngressRoutes: () => {},
+			}),
+			id: 'managed-vm',
+			setIngressRoutes: () => {},
+		} satisfies ManagedVm;
+		let capturedCreateVmOptions: CreateVmOptions | undefined;
+		const createManagedVm = vi.fn(async (createVmOptions: CreateVmOptions) => {
+			capturedCreateVmOptions = createVmOptions;
+			return managedVm;
+		});
+		const systemConfig = await createToolVmSystemConfig();
+		const zone = systemConfig.zones.find((configuredZone) => configuredZone.id === 'shravan');
+		if (zone?.gateway.type !== 'openclaw') {
+			throw new Error('Expected shravan OpenClaw zone');
+		}
+		const standardProfile = systemConfig.toolVmProfiles.standard;
+		if (!standardProfile) {
+			throw new Error('Expected standard tool VM profile');
+		}
+		const requestedWorkMountDir = await createWorkMountDirectory(systemConfig, 'agents/shravan');
+		const hostZoneGitRoot = path.join(systemConfig.runtimeDir, 'zones', 'shravan', 'zone-git');
+		await mkdir(hostZoneGitRoot, { recursive: true });
+		const realWorkMountDir = await realpath(requestedWorkMountDir);
+		const realZoneFilesDir = await realpath(zone.gateway.zoneFilesDir);
+		const realZoneGitRoot = await realpath(hostZoneGitRoot);
+
+		await createToolVm(
+			{
+				cacheDir: systemConfig.cacheDir,
+				profile: standardProfile,
+				systemConfig,
+				tcpSlot: 0,
+				hostWorkMountDir: requestedWorkMountDir,
+				zoneGitMount: {
+					hostZoneFilesDir: zone.gateway.zoneFilesDir,
+					hostZoneGitRoot,
+				},
+				zoneId: 'shravan',
+				secretResolver: createSecretResolver({}),
+			},
+			{
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'tool-fingerprint',
+					imagePath: '/cache/tool-fingerprint',
+				}),
+				createManagedVm,
+				closePinnedRealFsRoot: () => {},
+				pinRealFsRoot: createPinnedRealFsRoot,
+			},
+		);
+
+		expect(capturedCreateVmOptions?.vfsMounts).not.toHaveProperty('/work');
+		expect(createManagedVm).toHaveBeenCalledWith(
+			expect.objectContaining({
+				vfsMounts: {
+					'/agent-vm/zone-git': {
+						hostPath: realZoneGitRoot,
+						kind: 'realfs',
+						pinnedHostRoot: expect.objectContaining({
+							realPath: realZoneGitRoot,
+						}),
+					},
+					'/zone': {
+						hostPath: realZoneFilesDir,
+						kind: 'realfs',
+						pinnedHostRoot: expect.objectContaining({
+							realPath: realZoneFilesDir,
+						}),
+					},
+				},
+			}),
+		);
+		expect(realWorkMountDir).toBe(path.join(realZoneFilesDir, 'agents', 'shravan'));
+		expect(exec).toHaveBeenCalledWith('git config --global --add safe.directory /zone');
+	});
+
+	it('rejects zone git mounts outside the configured runtime zone git root', async () => {
+		const createManagedVm = vi.fn(async () => {
+			throw new Error('createManagedVm should not be called for an invalid zone git root.');
+		});
+		const systemConfig = await createToolVmSystemConfig();
+		const zone = systemConfig.zones.find((configuredZone) => configuredZone.id === 'shravan');
+		if (zone?.gateway.type !== 'openclaw') {
+			throw new Error('Expected shravan OpenClaw zone');
+		}
+		const standardProfile = systemConfig.toolVmProfiles.standard;
+		if (!standardProfile) {
+			throw new Error('Expected standard tool VM profile');
+		}
+		const requestedWorkMountDir = await createWorkMountDirectory(systemConfig, 'agents/shravan');
+		const expectedHostZoneGitRoot = path.join(
+			systemConfig.runtimeDir,
+			'zones',
+			'shravan',
+			'zone-git',
+		);
+		const wrongHostZoneGitRoot = path.join(systemConfig.runtimeDir, 'zones', 'other', 'zone-git');
+		await mkdir(expectedHostZoneGitRoot, { recursive: true });
+		await mkdir(wrongHostZoneGitRoot, { recursive: true });
+
+		await expect(
+			createToolVm(
+				{
+					cacheDir: systemConfig.cacheDir,
+					profile: standardProfile,
+					systemConfig,
+					tcpSlot: 0,
+					hostWorkMountDir: requestedWorkMountDir,
+					zoneGitMount: {
+						hostZoneFilesDir: zone.gateway.zoneFilesDir,
+						hostZoneGitRoot: wrongHostZoneGitRoot,
+					},
+					zoneId: 'shravan',
+					secretResolver: createSecretResolver({}),
+				},
+				{
+					buildGondolinImage: async () => ({
+						built: true,
+						fingerprint: 'tool-fingerprint',
+						imagePath: '/cache/tool-fingerprint',
+					}),
+					createManagedVm,
+				},
+			),
+		).rejects.toThrow(/does not match expected runtime path/u);
+		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 
 	it('persists tool writes through the RealFS /work backing directory', async () => {

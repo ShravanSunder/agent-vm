@@ -90,10 +90,8 @@ export function buildOpenClawDeploymentDoctorChecks(
 			...requirementChecks,
 			{
 				name: `openclaw-plugin-load-paths-${target.zoneId}`,
-				ok:
-					includesString(pluginLoadPaths, '/home/openclaw/.openclaw/extensions') &&
-					includesString(pluginLoadPaths, '/pnpm/global/5/node_modules/@openclaw'),
-				hint: 'Add plugins.load.paths for /home/openclaw/.openclaw/extensions and /pnpm/global/5/node_modules/@openclaw.',
+				ok: includesString(pluginLoadPaths, '/home/openclaw/.openclaw/extensions/gondolin'),
+				hint: 'Add plugins.load.paths for /home/openclaw/.openclaw/extensions/gondolin.',
 			},
 			{
 				name: `openclaw-memory-slot-${target.zoneId}`,

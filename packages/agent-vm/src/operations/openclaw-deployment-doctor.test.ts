@@ -122,10 +122,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 							'memory-core': { enabled: true },
 						},
 						load: {
-							paths: [
-								'/home/openclaw/.openclaw/extensions',
-								'/pnpm/global/5/node_modules/@openclaw',
-							],
+							paths: ['/home/openclaw/.openclaw/extensions/gondolin'],
 						},
 						slots: { memory: 'memory-core' },
 					},
@@ -184,10 +181,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 							'memory-core': { enabled: true },
 						},
 						load: {
-							paths: [
-								'/home/openclaw/.openclaw/extensions',
-								'/pnpm/global/5/node_modules/@openclaw',
-							],
+							paths: ['/home/openclaw/.openclaw/extensions/gondolin'],
 						},
 						slots: { memory: 'memory-core' },
 					},
@@ -266,7 +260,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-plugin-load-paths-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Add plugins.load.paths for /home/openclaw/.openclaw/extensions and /pnpm/global/5/node_modules/@openclaw.',
+			hint: 'Add plugins.load.paths for /home/openclaw/.openclaw/extensions/gondolin.',
 		});
 		expect(
 			checks.find((check) => check.name === 'openclaw-tool-vm-workspace-shravan-defaults'),
@@ -299,10 +293,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						allow: ['memory-core'],
 						entries: { 'memory-core': { enabled: true } },
 						load: {
-							paths: [
-								'/home/openclaw/.openclaw/extensions',
-								'/pnpm/global/5/node_modules/@openclaw',
-							],
+							paths: ['/home/openclaw/.openclaw/extensions/gondolin'],
 						},
 						slots: { memory: 'memory-core' },
 					},
@@ -347,10 +338,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 					},
 					plugins: {
 						load: {
-							paths: [
-								'/home/openclaw/.openclaw/extensions',
-								'/pnpm/global/5/node_modules/@openclaw',
-							],
+							paths: ['/home/openclaw/.openclaw/extensions/gondolin'],
 						},
 					},
 				},
@@ -424,7 +412,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 					allow: ['memory-core'],
 					entries: { 'memory-core': { enabled: true } },
 					load: {
-						paths: ['/home/openclaw/.openclaw/extensions', '/pnpm/global/5/node_modules/@openclaw'],
+						paths: ['/home/openclaw/.openclaw/extensions/gondolin'],
 					},
 					slots: { memory: 'memory-core' },
 				},
