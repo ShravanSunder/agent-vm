@@ -132,10 +132,20 @@ function shellQuote(value: string): string {
 	return `'${value.replace(/'/gu, `'\\''`)}'`;
 }
 
+function includesShellUnsafeControlByte(value: string): boolean {
+	for (const character of value) {
+		const codePoint = character.codePointAt(0);
+		if (codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 function shellQuoteEnvSecretValue(secretName: string, value: string): string {
-	if (value.includes('\n') || value.includes('\r') || value.includes(String.fromCharCode(0))) {
+	if (includesShellUnsafeControlByte(value)) {
 		throw new Error(
-			`OpenClaw env-injected gateway secret '${secretName}' must be a single-line value without NUL bytes. Use http-mediation for secrets that require structured transport.`,
+			`OpenClaw env-injected gateway secret '${secretName}' must be a single-line value without control bytes. Use http-mediation for secrets that require structured transport.`,
 		);
 	}
 	return shellQuote(value);

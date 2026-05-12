@@ -47,12 +47,19 @@ interface OpenClawAgentConfig {
 	readonly workspace?: unknown;
 }
 
-export interface OpenClawDeploymentRequirementTarget {
-	readonly config: OpenClawDeploymentConfig;
-	readonly configPath?: string | undefined;
-	readonly configReadError?: string | undefined;
-	readonly zoneId: string;
-}
+export type OpenClawDeploymentRequirementTarget =
+	| {
+			readonly config: OpenClawDeploymentConfig;
+			readonly configPath?: string | undefined;
+			readonly kind: 'readable';
+			readonly zoneId: string;
+	  }
+	| {
+			readonly configPath?: string | undefined;
+			readonly configReadError: string;
+			readonly kind: 'unreadable';
+			readonly zoneId: string;
+	  };
 
 export interface OpenClawDeploymentRequirementFinding {
 	readonly hint: string;
@@ -166,7 +173,7 @@ function requirementFinding(options: {
 export function evaluateOpenClawDeploymentRequirements(
 	target: OpenClawDeploymentRequirementTarget,
 ): readonly OpenClawDeploymentRequirementFinding[] {
-	if (target.configReadError !== undefined) {
+	if (target.kind === 'unreadable') {
 		return [
 			{
 				id: `openclaw-deployment-config-readable-${target.zoneId}`,
@@ -247,13 +254,14 @@ export async function collectOpenClawDeploymentRequirementTargets(
 					zoneId: zone.id,
 					configPath,
 					config: parseOpenClawDeploymentConfig(rawConfig),
+					kind: 'readable',
 				} satisfies OpenClawDeploymentRequirementTarget;
 			} catch (error) {
 				return {
 					zoneId: zone.id,
 					configPath,
-					config: {},
 					configReadError: error instanceof Error ? error.message : String(error),
+					kind: 'unreadable',
 				} satisfies OpenClawDeploymentRequirementTarget;
 			}
 		}),

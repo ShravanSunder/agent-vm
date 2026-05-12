@@ -10,7 +10,7 @@ import {
 
 export interface OpenClawDeploymentDoctorTarget {
 	readonly configuredAuthProfileAgentIds?: readonly string[];
-	readonly config: OpenClawDeploymentRequirementTarget['config'];
+	readonly config: OpenClawDeploymentConfig;
 	readonly configPath?: string | undefined;
 	readonly configReadError?: string | undefined;
 	readonly zoneId: OpenClawDeploymentRequirementTarget['zoneId'];
@@ -78,7 +78,21 @@ export function buildOpenClawDeploymentDoctorChecks(
 		const hasMemoryCore =
 			includesString(config.plugins?.allow, 'memory-core') ||
 			hasEnabledEntry(config.plugins?.entries, 'memory-core');
-		const requirementChecks = evaluateOpenClawDeploymentRequirements(target).map(
+		const requirementTarget: OpenClawDeploymentRequirementTarget =
+			target.configReadError === undefined
+				? {
+						config: target.config,
+						...(target.configPath ? { configPath: target.configPath } : {}),
+						kind: 'readable',
+						zoneId: target.zoneId,
+					}
+				: {
+						...(target.configPath ? { configPath: target.configPath } : {}),
+						configReadError: target.configReadError,
+						kind: 'unreadable',
+						zoneId: target.zoneId,
+					};
+		const requirementChecks = evaluateOpenClawDeploymentRequirements(requirementTarget).map(
 			(finding) =>
 				({
 					name: finding.id,
@@ -126,13 +140,24 @@ export async function collectOpenClawDeploymentDoctorChecks(
 	const targets = await collectOpenClawDeploymentRequirementTargets(systemConfig);
 	const doctorTargets: OpenClawDeploymentDoctorTarget[] = [];
 	for (const target of targets) {
-		doctorTargets.push({
-			config: target.config,
-			configuredAuthProfileAgentIds: configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],
-			configPath: target.configPath,
-			configReadError: target.configReadError,
-			zoneId: target.zoneId,
-		});
+		doctorTargets.push(
+			target.kind === 'readable'
+				? {
+						config: target.config,
+						configuredAuthProfileAgentIds:
+							configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],
+						configPath: target.configPath,
+						zoneId: target.zoneId,
+					}
+				: {
+						config: {},
+						configuredAuthProfileAgentIds:
+							configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],
+						configPath: target.configPath,
+						configReadError: target.configReadError,
+						zoneId: target.zoneId,
+					},
+		);
 	}
 	return buildOpenClawDeploymentDoctorChecks(doctorTargets);
 }

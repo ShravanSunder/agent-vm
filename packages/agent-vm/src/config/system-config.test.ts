@@ -1157,6 +1157,27 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/audience/u);
 	});
 
+	test('rejects zone secret names that collide with JavaScript prototype properties', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		Object.defineProperty(zone.secrets, 'constructor', {
+			configurable: true,
+			enumerable: true,
+			value: {
+				source: 'environment',
+				envVar: 'POLLUTED_SECRET',
+				injection: 'env',
+				audience: 'gateway',
+			},
+		});
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-secret-prototype-name-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/prototype property names/u);
+	});
+
 	test('rejects http-mediated secrets without hosts', async () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
@@ -1308,6 +1329,25 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/egressHosts/u);
 	});
 
+	test('rejects shared mediated secret hosts that are not declared for both audiences', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [{ host: 'api.github.com', audience: 'gateway' }];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'both',
+			hosts: ['api.github.com'],
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-mediated-egress-shared-audience-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/egressHosts/u);
+	});
+
 	test('rejects OpenClaw zones without gateway env token', async () => {
 		const config = createValidSystemConfigInput();
 		delete config.zones[0].secrets.OPENCLAW_GATEWAY_TOKEN;
@@ -1330,6 +1370,23 @@ describe('loadSystemConfig', () => {
 		};
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-openclaw-token-wrong-surface-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/OPENCLAW_GATEWAY_TOKEN/u);
+	});
+
+	test('rejects OpenClaw gateway token with shared audience', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].secrets.OPENCLAW_GATEWAY_TOKEN = {
+			source: 'environment',
+			envVar: 'OPENCLAW_GATEWAY_TOKEN',
+			injection: 'http-mediation',
+			audience: 'both',
+			hosts: ['openclaw.local'],
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-openclaw-token-shared-audience-',
 			config,
 		);
 

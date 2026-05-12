@@ -33,6 +33,10 @@ async function renderBootstrapFiles(command: string, rootDirectory: string): Pro
 	await execFileAsync('bash', ['-lc', rootedCommand]);
 }
 
+function shellQuoteForTest(value: string): string {
+	return `'${value.replace(/'/gu, `'\\''`)}'`;
+}
+
 afterEach(async () => {
 	vi.useRealTimers();
 	await Promise.all(
@@ -299,13 +303,54 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.logPath).toBe('/agent-vm/logs/gateway-boot-latest.log');
 		});
 
-		it('rejects multiline env-injected secrets before building the bootstrap command', () => {
-			expect(() =>
-				openclawLifecycle.buildProcessSpec(createZone(), {
-					...resolvedSecrets,
-					OPENCLAW_GATEWAY_TOKEN: 'gateway\nENVEOF\ncommand',
-				}),
-			).toThrow(/single-line value/u);
+		it('rejects control bytes in env-injected secrets before building the bootstrap command', () => {
+			for (const secretValue of [
+				'gateway\nENVEOF\ncommand',
+				'gateway\rcommand',
+				`gateway${String.fromCharCode(0)}command`,
+				`gateway${String.fromCharCode(7)}command`,
+			]) {
+				expect(() =>
+					openclawLifecycle.buildProcessSpec(createZone(), {
+						...resolvedSecrets,
+						OPENCLAW_GATEWAY_TOKEN: secretValue,
+					}),
+				).toThrow(/single-line value without control bytes/u);
+			}
+		});
+
+		it('renders an empty runtime secrets file when no env secrets are resolved', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-bootstrap-empty-'));
+			createdDirectories.push(tempDirectory);
+			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), {});
+
+			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory);
+
+			await expect(
+				readFile(path.join(tempDirectory, 'run', 'openclaw', 'secrets.env'), 'utf8'),
+			).resolves.toBe('');
+		});
+
+		it('round-trips shell-sensitive env secrets through the generated secrets file', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-bootstrap-secrets-'));
+			createdDirectories.push(tempDirectory);
+			const gatewayToken = "gateway' $ ` token";
+			const discordToken = "discord' $ ` token";
+			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), {
+				...resolvedSecrets,
+				DISCORD_BOT_TOKEN: discordToken,
+				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
+			});
+
+			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory);
+
+			const secretsFilePath = path.join(tempDirectory, 'run', 'openclaw', 'secrets.env');
+			const { stdout } = await execFileAsync('bash', [
+				'-lc',
+				`set -eu; source ${shellQuoteForTest(secretsFilePath)}; printf '%s\\n%s' "$OPENCLAW_GATEWAY_TOKEN" "$DISCORD_BOT_TOKEN"`,
+			]);
+
+			expect(stdout).toBe(`${gatewayToken}\n${discordToken}`);
 		});
 
 		it('writes profile scripts without expanding runtime shell expressions', async () => {

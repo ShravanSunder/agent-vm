@@ -53,9 +53,10 @@ const vmAudienceSchema = z.enum(vmAudienceValues);
 const secretNameSchema = z
 	.string()
 	.min(1)
-	.regex(
-		/^[A-Za-z_][A-Za-z0-9_]*$/u,
-		'secret names must be valid shell environment variable names',
+	.regex(/^[A-Za-z_][A-Za-z0-9_]*$/u, 'secret names must be valid shell environment variable names')
+	.refine(
+		(secretName) => !['__proto__', 'constructor', 'prototype'].includes(secretName),
+		'secret names must not use JavaScript prototype property names',
 	);
 const egressHostSchema = z
 	.object({
@@ -552,6 +553,7 @@ const systemConfigSchema = z
 				});
 			}
 			if (
+				zone.gateway.type === 'openclaw' &&
 				zone.defaultToolVmProfile !== undefined &&
 				!config.toolVmProfiles[zone.defaultToolVmProfile]
 			) {
@@ -561,15 +563,17 @@ const systemConfigSchema = z
 					path: ['zones', zoneIndex, 'defaultToolVmProfile'],
 				});
 			}
-			for (const [agentId, toolVmProfileId] of Object.entries(zone.agentToolVmProfiles ?? {})) {
-				if (config.toolVmProfiles[toolVmProfileId]) {
-					continue;
+			if (zone.gateway.type === 'openclaw') {
+				for (const [agentId, toolVmProfileId] of Object.entries(zone.agentToolVmProfiles ?? {})) {
+					if (config.toolVmProfiles[toolVmProfileId]) {
+						continue;
+					}
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `Zone '${zone.id}' agentToolVmProfiles['${agentId}'] references unknown toolVmProfile '${toolVmProfileId}'.`,
+						path: ['zones', zoneIndex, 'agentToolVmProfiles', agentId],
+					});
 				}
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `Zone '${zone.id}' agentToolVmProfiles['${agentId}'] references unknown toolVmProfile '${toolVmProfileId}'.`,
-					path: ['zones', zoneIndex, 'agentToolVmProfiles', agentId],
-				});
 			}
 
 			if (zone.gateway.type === 'openclaw' && zone.runtimeAuthHints !== undefined) {
