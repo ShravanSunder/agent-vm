@@ -155,27 +155,38 @@ VM makes requests to the allowed hosts without any secret material.
 ```
 
 The `http-mediation` injection mode requires at least one entry in `hosts`.
-This is enforced by a Zod `superRefine` validator in the system config schema.
+Tool VM secrets must use `http-mediation`; the Tool VM never receives raw
+`env`-injected secrets. A secret may still use `source: "environment"` for a
+Tool VM audience, but that only tells the controller where to read the value
+before handing it to Gondolin mediation.
 
 ---
 
 ## splitResolvedGatewaySecrets
 
-After zone secrets are resolved to plaintext, `splitResolvedGatewaySecrets`
-(gateway-interface/split-resolved-gateway-secrets.ts) categorizes them:
+After zone secrets are resolved to plaintext,
+`splitResolvedSecretsByInjection` categorizes them by runtime audience and
+injection mode:
 
 ```
   resolvedSecrets: Record<string, string>
     |
     for each (secretName, secretValue):
       |
+      +-- zone.secrets[secretName].audience does not target runtime
+      |     --> skipped
+      |
       +-- zone.secrets[secretName].injection === 'http-mediation'
-      |   AND zone.secrets[secretName].hosts exists
+      |   AND zone.secrets[secretName].hosts is non-empty
       |     --> mediatedSecrets[secretName] = { hosts, value }   (SecretSpec)
       |
-      +-- otherwise (injection === 'env' or no hosts)
+      +-- runtime audience is gateway AND injection === 'env'
             --> environmentSecrets[secretName] = value            (plain string)
 ```
+
+Schema validation rejects `env` injection for non-gateway audiences. The
+splitter repeats the check as defense in depth so programmatic config bypasses
+do not silently turn into Tool VM raw secret injection.
 
 Returns:
 

@@ -3,14 +3,18 @@ import { randomUUID } from 'node:crypto';
 import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 import { Hono } from 'hono';
 
-import type { SystemConfig } from '../../config/system-config.js';
+import type { LoadedSystemConfig } from '../../config/system-config.js';
+import {
+	assertOpenClawToolVmRequirements,
+	OpenClawDeploymentRequirementError,
+} from '../../operations/openclaw-deployment-requirements.js';
 import {
 	type AgentSandboxSeedResult,
 	SandboxSeedingError,
 	seedAgentSandboxWorkspace,
 } from '../leases/agent-sandbox-seeding.js';
 import { LeaseScopeConflictError } from '../leases/lease-manager.js';
-import { parseAgentIdFromScopeKey } from '../leases/lease-scope.js';
+import { parseAgentScopeKey } from '../leases/lease-scope.js';
 import {
 	LeaseWorkMountValidationError,
 	resolveLeaseWorkMountDir as resolveLeaseWorkMountDirForZone,
@@ -102,6 +106,7 @@ export function createControllerApp(options: {
 	readonly zoneDefaultToolVmProfiles?: Record<string, string>;
 	readonly zoneIds?: ReadonlySet<string>;
 	readonly operations?: Partial<ControllerRouteOperations>;
+	readonly validateToolVmLeaseRequirements?: (zoneId: string) => Promise<void>;
 	readonly resolveLeaseWorkMountDir: (options: {
 		readonly scopeKey: string;
 		readonly workMountDir: string;
@@ -138,7 +143,21 @@ export function createControllerApp(options: {
 			) {
 				return context.json({ error: `Unknown zone '${payload.zoneId}'` }, 400);
 			}
-			const agentId = parseAgentIdFromScopeKey(payload.scopeKey);
+			const parsedScope = parseAgentScopeKey(payload.scopeKey);
+			if (parsedScope.kind !== 'agent') {
+				const reason =
+					parsedScope.kind === 'malformed-agent-scope'
+						? parsedScope.reason
+						: 'Tool VM leases require agent-scoped OpenClaw sandboxes.';
+				return context.json(
+					{
+						error: `Invalid Tool VM lease scope '${payload.scopeKey}': ${reason}`,
+						kind: parsedScope.kind,
+					},
+					400,
+				);
+			}
+			const agentId = parsedScope.agentId;
 			const resolvedProfileId =
 				(agentId ? options.zoneAgentToolVmProfiles?.[payload.zoneId]?.[agentId] : undefined) ??
 				options.zoneDefaultToolVmProfiles?.[payload.zoneId] ??
@@ -153,6 +172,7 @@ export function createControllerApp(options: {
 			if (!defaultToolVmProfile) {
 				return context.json({ error: `Unknown tool VM profile '${resolvedProfileId}'` }, 400);
 			}
+			await options.validateToolVmLeaseRequirements?.(payload.zoneId);
 			const hostWorkMountDir = await options.resolveLeaseWorkMountDir({
 				scopeKey: payload.scopeKey,
 				workMountDir: payload.workMountDir,
@@ -173,6 +193,9 @@ export function createControllerApp(options: {
 			}
 			if (error instanceof LeaseScopeConflictError) {
 				return context.json({ error: error.message }, 409);
+			}
+			if (error instanceof OpenClawDeploymentRequirementError) {
+				return context.json({ error: error.message, kind: error.kind }, 400);
 			}
 			const diagnosticId = randomUUID();
 			if (error instanceof SandboxSeedingError) {
@@ -263,7 +286,7 @@ export function createControllerService(options: {
 	readonly leaseManager: ControllerLeaseManager;
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly secretResolver?: SecretResolver;
-	readonly systemConfig: SystemConfig;
+	readonly systemConfig: LoadedSystemConfig;
 }): Hono {
 	const zonesById = new Map(options.systemConfig.zones.map((zone) => [zone.id, zone]));
 	const app = createControllerApp({
@@ -283,6 +306,9 @@ export function createControllerService(options: {
 			),
 		),
 		...(options.operations ? { operations: options.operations } : {}),
+		validateToolVmLeaseRequirements: async (zoneId) => {
+			await assertOpenClawToolVmRequirements(options.systemConfig, zoneId);
+		},
 		resolveLeaseWorkMountDir: async ({ scopeKey, workMountDir, zoneId }) => {
 			const zone = zonesById.get(zoneId);
 			if (!zone) {

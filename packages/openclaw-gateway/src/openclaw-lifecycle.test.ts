@@ -23,16 +23,6 @@ async function pathExists(filePath: string): Promise<boolean> {
 	}
 }
 
-function extractHeredocBody(command: string, targetPath: string): string {
-	const marker = `cat > ${targetPath} << 'ENVEOF'\n`;
-	const startIndex = command.indexOf(marker);
-	expect(startIndex).toBeGreaterThanOrEqual(0);
-	const bodyStartIndex = startIndex + marker.length;
-	const bodyEndIndex = command.indexOf('\nENVEOF', bodyStartIndex);
-	expect(bodyEndIndex).toBeGreaterThan(bodyStartIndex);
-	return command.slice(bodyStartIndex, bodyEndIndex);
-}
-
 async function renderBootstrapFiles(command: string, rootDirectory: string): Promise<void> {
 	const rootedCommand = command
 		.replaceAll('/root', path.join(rootDirectory, 'root'))
@@ -232,11 +222,14 @@ describe('openclawLifecycle', () => {
 
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('/run/openclaw/secrets.env');
-			expect(processSpec.bootstrapCommand).toContain("DISCORD_BOT_TOKEN='discord-token'");
-			expect(processSpec.bootstrapCommand).toContain("OPENCLAW_GATEWAY_TOKEN='gateway'\\''token'");
-			expect(
-				extractHeredocBody(processSpec.bootstrapCommand, '/run/openclaw/secrets.env'),
-			).toContain("export OPENCLAW_GATEWAY_TOKEN='gateway'\\''token'");
+			expect(processSpec.bootstrapCommand).toContain("printf '%s\\n'");
+			expect(processSpec.bootstrapCommand).toContain('DISCORD_BOT_TOKEN');
+			expect(processSpec.bootstrapCommand).toContain('discord-token');
+			expect(processSpec.bootstrapCommand).toContain('OPENCLAW_GATEWAY_TOKEN');
+			expect(processSpec.bootstrapCommand).toContain('gateway');
+			expect(processSpec.bootstrapCommand).not.toContain(
+				`cat > /run/openclaw/secrets.env << 'ENVEOF'`,
+			);
 			expect(processSpec.bootstrapCommand).not.toContain('/etc/profile.d/openclaw-admin.sh');
 			expect(processSpec.bootstrapCommand).not.toContain('/run/openclaw/gateway-auth.env');
 			expect(processSpec.bootstrapCommand).not.toContain('openclaw()');
@@ -262,6 +255,15 @@ describe('openclawLifecycle', () => {
 				path: '/readyz',
 			});
 			expect(processSpec.logPath).toBe('/agent-vm/logs/gateway-boot-latest.log');
+		});
+
+		it('rejects multiline env-injected secrets before building the bootstrap command', () => {
+			expect(() =>
+				openclawLifecycle.buildProcessSpec(createZone(), {
+					...resolvedSecrets,
+					OPENCLAW_GATEWAY_TOKEN: 'gateway\nENVEOF\ncommand',
+				}),
+			).toThrow(/single-line value/u);
 		});
 
 		it('writes profile scripts without expanding runtime shell expressions', async () => {

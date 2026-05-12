@@ -151,7 +151,7 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 		expect(healthCheck.stdout).toContain('ok');
 
 		const leaseRequest = await gatewayVm.exec(
-			'curl -sS -X POST -H "Content-Type: application/json" -d \'{"zoneId":"shravan","scopeKey":"test","profileId":"standard","workMountDir":"/tmp","agentWorkspaceDir":"/tmp"}\' http://controller.vm.host:18800/lease',
+			'curl -sS -X POST -H "Content-Type: application/json" -d \'{"zoneId":"shravan","scopeKey":"agent:test","profileId":"standard","workMountDir":"/tmp","agentWorkspaceDir":"/tmp"}\' http://controller.vm.host:18800/lease',
 		);
 		log(`lease response: ${leaseRequest.stdout.trim().slice(0, 100)}`);
 		expect(leaseRequest.stdout).toContain('test-lease-001');

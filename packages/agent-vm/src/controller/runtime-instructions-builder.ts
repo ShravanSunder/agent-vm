@@ -26,6 +26,7 @@ export interface BuildResolvedRuntimeResourcesOptions {
 }
 
 export interface BuildRuntimeInstructionsOptions {
+	readonly gatewayType: 'worker';
 	readonly resolvedResources: readonly ResolvedRuntimeResource[];
 	readonly runtimeAuthHints: readonly RuntimeAuthHint[];
 	readonly taskId: string;
@@ -259,6 +260,9 @@ export function buildResolvedRuntimeResources(
 export function buildRuntimeInstructions(
 	options: BuildRuntimeInstructionsOptions,
 ): BuiltRuntimeInstructions {
+	if (options.gatewayType !== 'worker') {
+		throw new Error('Runtime instructions are only supported for worker gateway zones.');
+	}
 	const runtimeInstructions = [
 		'# Runtime instructions',
 		buildWorkSection(options),

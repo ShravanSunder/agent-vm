@@ -162,7 +162,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 			body: JSON.stringify({
 				agentWorkspaceDir: '/work',
 				profileId: 'standard',
-				scopeKey: 'smoke-test',
+				scopeKey: 'agent:smoke-test',
 				workMountDir: '/work',
 				zoneId: 'shravan',
 			}),

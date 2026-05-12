@@ -1199,6 +1199,7 @@ describe('scaffoldAgentVmProject', () => {
 		);
 		expect(egressHosts).not.toContain('discord.com');
 		expect(egressHosts).not.toContain('cdn.discordapp.com');
+		expect(zone).not.toHaveProperty('allowedHosts');
 		expect(zone).not.toHaveProperty('runtimeAuthHints');
 		expect(zone.websocketBypass).toEqual([]);
 	});
@@ -1268,6 +1269,8 @@ describe('scaffoldAgentVmProject', () => {
 			readonly agents?: {
 				readonly defaults?: {
 					readonly sandbox?: {
+						readonly backend?: string;
+						readonly mode?: string;
 						readonly scope?: string;
 						readonly workspaceAccess?: string;
 					};
@@ -1282,6 +1285,8 @@ describe('scaffoldAgentVmProject', () => {
 			};
 		};
 		expect(openClawConfig.gateway?.auth?.mode).toBe('token');
+		expect(openClawConfig.agents?.defaults?.sandbox?.backend).toBe('gondolin');
+		expect(openClawConfig.agents?.defaults?.sandbox?.mode).toBe('all');
 		expect(openClawConfig.agents?.defaults?.sandbox?.scope).toBe('agent');
 		expect(openClawConfig.agents?.defaults?.sandbox?.workspaceAccess).toBe('rw');
 		expect(openClawConfig.session?.dmScope).toBe('per-channel-peer');

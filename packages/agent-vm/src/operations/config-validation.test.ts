@@ -168,6 +168,19 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 		tcpPool: { basePort: 19000, size: 5 },
 	});
 	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'openclaw.json'), {
+		agents: {
+			defaults: {
+				model: { primary: 'openai-codex/gpt-5.5' },
+				sandbox: {
+					backend: 'gondolin',
+					mode: 'all',
+					scope: 'agent',
+					workspaceAccess: 'rw',
+				},
+				workspace: '/zone/agents/default',
+			},
+			list: [{ id: 'shravan' }],
+		},
 		gateway: {
 			auth: { mode: 'token' },
 			bind: 'loopback',

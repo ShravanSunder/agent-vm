@@ -87,6 +87,9 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						defaults: {
 							model: { primary: 'openai-codex/gpt-5.5' },
 							sandbox: {
+								backend: 'gondolin',
+								mode: 'all',
+								scope: 'agent',
 								workspaceAccess: 'rw',
 							},
 							workspace: '/zone/agents/default',
@@ -142,6 +145,9 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						defaults: {
 							model: { primary: 'openai-codex/gpt-5.5' },
 							sandbox: {
+								backend: 'gondolin',
+								mode: 'all',
+								scope: 'agent',
 								workspaceAccess: 'rw',
 							},
 							workspace: '/zone/agents/default',
@@ -243,10 +249,14 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		]);
 
 		expect(
-			checks.find((check) => check.name === 'openclaw-workspace-access-shravan'),
+			checks.find(
+				(check) =>
+					check.name ===
+					'openclaw-tool-vm-agents-defaults-sandbox-workspaceAccess-shravan-defaults',
+			),
 		).toMatchObject({
 			ok: false,
-			hint: 'Set agents.defaults.sandbox.workspaceAccess to "rw" so agents can write their workspace.',
+			hint: 'Set agents.defaults.sandbox.workspaceAccess to "rw" for OpenClaw Tool VM mediation.',
 		});
 		expect(checks.find((check) => check.name === 'openclaw-memory-slot-shravan')).toMatchObject({
 			ok: false,
@@ -259,7 +269,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			hint: 'Add plugins.load.paths for /home/openclaw/.openclaw/extensions and /pnpm/global/5/node_modules/@openclaw.',
 		});
 		expect(
-			checks.find((check) => check.name === 'openclaw-shared-zone-workspace-shravan'),
+			checks.find((check) => check.name === 'openclaw-tool-vm-workspace-shravan-defaults'),
 		).toMatchObject({
 			ok: false,
 			hint: 'Use /zone/agents/default or per-agent workspaces; keep /zone for shared zone files.',
@@ -276,6 +286,9 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						defaults: {
 							model: { primary: 'openai-codex/gpt-5.5' },
 							sandbox: {
+								backend: 'gondolin',
+								mode: 'all',
+								scope: 'agent',
 								workspaceAccess: 'rw',
 							},
 							workspace: '/zone/agents/default',
@@ -319,7 +332,12 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 					agents: {
 						defaults: {
 							model: { primary: 'anthropic/claude-opus-4-6' },
-							sandbox: { workspaceAccess: 'rw' },
+							sandbox: {
+								backend: 'gondolin',
+								mode: 'all',
+								scope: 'agent',
+								workspaceAccess: 'rw',
+							},
 							workspace: '/zone/agents/default',
 						},
 						list: [
@@ -356,7 +374,12 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						agents: {
 							defaults: {
 								model: { primary: 'openai-codex/gpt-5.5' },
-								sandbox: { workspaceAccess: 'rw' },
+								sandbox: {
+									backend: 'gondolin',
+									mode: 'all',
+									scope: 'agent',
+									workspaceAccess: 'rw',
+								},
 								workspace: '/zone/agents/default',
 							},
 							...(list === undefined ? {} : { list }),
@@ -385,7 +408,12 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 			JSON.stringify({
 				agents: {
 					defaults: {
-						sandbox: { workspaceAccess: 'rw' },
+						sandbox: {
+							backend: 'gondolin',
+							mode: 'all',
+							scope: 'agent',
+							workspaceAccess: 'rw',
+						},
 						workspace: '/zone/agents/default',
 					},
 				},

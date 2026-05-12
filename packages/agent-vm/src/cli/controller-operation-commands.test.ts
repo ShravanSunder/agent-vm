@@ -172,6 +172,7 @@ function createHealthyOpenClawConfig(): object {
 			defaults: {
 				sandbox: {
 					backend: 'gondolin',
+					mode: 'all',
 					scope: 'agent',
 					workspaceAccess: 'rw',
 				},

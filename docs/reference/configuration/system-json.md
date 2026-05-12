@@ -452,7 +452,14 @@ Secrets support two injection modes:
 | `http-mediation` | Gondolin injects the secret into outbound HTTP requests for listed `hosts`. The VM process does not see the raw secret. |
 | `env` | Secret is exposed as a VM environment variable. |
 
-For `http-mediation`, `hosts` is required.
+For `http-mediation`, `hosts` is required and must be non-empty. For `env`,
+`audience` must be `gateway` and `hosts` must be omitted. Tool VM secrets are
+always mediated. `source: "environment"` is allowed for a Tool VM secret only
+when `injection` is `http-mediation`; in that case the controller reads the
+environment variable and Gondolin mediates the value.
+
+Secret names must be valid environment variable identifiers. This keeps
+gateway env-file rendering and runtime placeholder names safe and predictable.
 
 ## runtimeAuthHints
 

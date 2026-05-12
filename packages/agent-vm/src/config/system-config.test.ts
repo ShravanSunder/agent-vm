@@ -970,6 +970,58 @@ describe('loadSystemConfig', () => {
 		});
 	});
 
+	test('allows mediated secret hosts covered by egress host wildcard patterns', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [
+			{ host: '*.github.com', audience: 'both' },
+			{ host: 'discord.com', audience: 'gateway' },
+		];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'both',
+			hosts: ['api.github.com'],
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-egress-wildcard-', config);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			zones: [
+				expect.objectContaining({
+					egressHosts: expect.arrayContaining([{ host: '*.github.com', audience: 'both' }]),
+					secrets: expect.objectContaining({
+						GITHUB_TOKEN: expect.objectContaining({
+							hosts: ['api.github.com'],
+						}),
+					}),
+				}),
+			],
+		});
+	});
+
+	test('does not treat subdomain wildcards as suffix contains checks', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [
+			{ host: '*.github.com', audience: 'gateway' },
+			{ host: 'discord.com', audience: 'gateway' },
+		];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'gateway',
+			hosts: ['evilgithub.com'],
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-egress-wildcard-no-suffix-contains-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/egressHosts/u);
+	});
+
 	test('rejects legacy allowedHosts without explicit egress host audiences', async () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
@@ -1008,13 +1060,7 @@ describe('loadSystemConfig', () => {
 		};
 		const configPath = await writeSystemConfigForTest('agent-vm-system-secret-audience-', config);
 
-		await expect(loadSystemConfig(configPath)).rejects.toMatchObject({
-			issues: expect.arrayContaining([
-				expect.objectContaining({
-					path: ['zones', 0, 'secrets', 'GITHUB_TOKEN', 'audience'],
-				}),
-			]),
-		});
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/audience/u);
 	});
 
 	test('rejects http-mediated secrets without hosts', async () => {
@@ -1031,13 +1077,7 @@ describe('loadSystemConfig', () => {
 			config,
 		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toMatchObject({
-			issues: expect.arrayContaining([
-				expect.objectContaining({
-					path: ['zones', 0, 'secrets', 'GITHUB_TOKEN', 'hosts'],
-				}),
-			]),
-		});
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/hosts/u);
 	});
 
 	test('rejects http-mediated secrets with empty hosts', async () => {
@@ -1089,13 +1129,7 @@ describe('loadSystemConfig', () => {
 		};
 		const configPath = await writeSystemConfigForTest('agent-vm-system-env-both-', config);
 
-		await expect(loadSystemConfig(configPath)).rejects.toMatchObject({
-			issues: expect.arrayContaining([
-				expect.objectContaining({
-					path: ['zones', 0, 'secrets', 'DISCORD_BOT_TOKEN', 'audience'],
-				}),
-			]),
-		});
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/audience/u);
 	});
 
 	test('rejects env secrets that declare hosts', async () => {
@@ -1110,7 +1144,55 @@ describe('loadSystemConfig', () => {
 		};
 		const configPath = await writeSystemConfigForTest('agent-vm-system-env-hosts-', config);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/must not declare hosts/u);
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/hosts/u);
+	});
+
+	test('rejects secret names that cannot be exported safely', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.secrets['BAD-NAME'] = {
+			source: 'environment',
+			envVar: 'BAD_NAME',
+			injection: 'env',
+			audience: 'gateway',
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-secret-name-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/environment variable names/u);
+	});
+
+	test('allows environment-sourced Tool VM secrets only through http mediation', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [
+			...(zone.egressHosts ?? []),
+			{ host: 'api.linear.app', audience: 'tool-vm' },
+		];
+		zone.secrets.LINEAR_API_KEY = {
+			source: 'environment',
+			envVar: 'LINEAR_API_KEY',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.linear.app'],
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-env-source-tool-vm-mediated-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			zones: [
+				expect.objectContaining({
+					secrets: expect.objectContaining({
+						LINEAR_API_KEY: expect.objectContaining({
+							source: 'environment',
+							injection: 'http-mediation',
+							audience: 'tool-vm',
+						}),
+					}),
+				}),
+			],
+		});
 	});
 
 	test('rejects mediated secret hosts that are not declared for the same audience', async () => {

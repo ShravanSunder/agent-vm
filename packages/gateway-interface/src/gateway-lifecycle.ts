@@ -77,6 +77,31 @@ interface WorkerGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
 
 type GatewayZoneGatewayConfig = OpenClawGatewayZoneGatewayConfig | WorkerGatewayZoneGatewayConfig;
 
+interface OnePasswordSecretSourceConfig {
+	readonly source: '1password';
+	readonly ref: string;
+}
+
+interface EnvironmentSecretSourceConfig {
+	readonly source: 'environment';
+	readonly envVar: string;
+}
+
+type SecretSourceConfig = OnePasswordSecretSourceConfig | EnvironmentSecretSourceConfig;
+
+export type EnvInjectedGatewaySecretConfig = SecretSourceConfig & {
+	readonly audience: 'gateway';
+	readonly injection: 'env';
+};
+
+export type HttpMediatedGatewaySecretConfig = SecretSourceConfig & {
+	readonly audience: VmAudience;
+	readonly injection: 'http-mediation';
+	readonly hosts: readonly string[];
+};
+
+export type GatewaySecretConfig = EnvInjectedGatewaySecretConfig | HttpMediatedGatewaySecretConfig;
+
 /**
  * Zone config as the lifecycle sees it.
  * Decoupled from SystemConfig — the controller maps into this shape.
@@ -84,23 +109,7 @@ type GatewayZoneGatewayConfig = OpenClawGatewayZoneGatewayConfig | WorkerGateway
 export interface GatewayZoneConfig {
 	readonly id: string;
 	readonly gateway: GatewayZoneGatewayConfig;
-	readonly secrets: Record<
-		string,
-		| {
-				readonly source: '1password';
-				readonly ref: string;
-				readonly injection: 'env' | 'http-mediation';
-				readonly audience: VmAudience;
-				readonly hosts?: readonly string[] | undefined;
-		  }
-		| {
-				readonly source: 'environment';
-				readonly envVar: string;
-				readonly injection: 'env' | 'http-mediation';
-				readonly audience: VmAudience;
-				readonly hosts?: readonly string[] | undefined;
-		  }
-	>;
+	readonly secrets: Readonly<Record<string, GatewaySecretConfig>>;
 	readonly egressHosts: readonly EgressHostConfig[];
 	readonly websocketBypass: readonly string[];
 	readonly defaultToolVmProfile?: string;

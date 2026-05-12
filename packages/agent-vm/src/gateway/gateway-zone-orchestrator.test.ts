@@ -43,6 +43,19 @@ function createGatewayConfigPath(): string {
 	fs.writeFileSync(
 		configPath,
 		JSON.stringify({
+			agents: {
+				defaults: {
+					model: { primary: 'openai-codex/gpt-5.5' },
+					sandbox: {
+						backend: 'gondolin',
+						mode: 'all',
+						scope: 'agent',
+						workspaceAccess: 'rw',
+					},
+					workspace: '/zone/agents/default',
+				},
+				list: [],
+			},
 			gateway: {
 				auth: { mode: 'token' },
 				bind: 'loopback',
@@ -365,6 +378,7 @@ describe('startGatewayZone', () => {
 		});
 		expect(taskTitles).toEqual([
 			'Cleaning orphaned gateway runtime',
+			'Validating OpenClaw Tool VM requirements',
 			'Resolving zone secrets',
 			'Building gateway image',
 			'Preparing host state',
@@ -390,6 +404,62 @@ describe('startGatewayZone', () => {
 		});
 	});
 
+	it('cleans orphaned gateway runtime before rejecting invalid OpenClaw Tool VM requirements', async () => {
+		const systemConfig = createSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (!zone || zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw gateway test zone.');
+		}
+		fs.writeFileSync(
+			zone.gateway.config,
+			JSON.stringify({
+				agents: {
+					defaults: {
+						sandbox: {
+							backend: 'host',
+							mode: 'all',
+							scope: 'agent',
+							workspaceAccess: 'rw',
+						},
+						workspace: '/zone/agents/default',
+					},
+					list: [],
+				},
+			}),
+			'utf8',
+		);
+		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => ({
+			cleanedUp: true,
+			killedPid: 28282,
+		}));
+		const buildImage = vi.fn(async () => ({
+			built: true,
+			fingerprint: 'fp',
+			imagePath: '/tmp/img',
+		}));
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({}),
+					systemConfig,
+					zoneId: 'shravan',
+				},
+				{
+					buildImage,
+					cleanupOrphanedGatewayIfPresent,
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				},
+			),
+		).rejects.toThrow("OpenClaw zone 'shravan' Tool VM requirements failed");
+
+		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledWith({
+			stateDir: zone.gateway.stateDir,
+			zoneId: 'shravan',
+		});
+		expect(buildImage).not.toHaveBeenCalled();
+	});
+
 	it('resolves only gateway audience secrets while starting the gateway VM', async () => {
 		const managedVm: ManagedVm = {
 			id: 'vm-gateway-only',
@@ -413,6 +483,7 @@ describe('startGatewayZone', () => {
 			hosts: ['api.linear.app'],
 		};
 		zone.egressHosts = [...zone.egressHosts, { host: 'api.linear.app', audience: 'tool-vm' }];
+		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => managedVm);
 
 		await startGatewayZone(
 			{
@@ -430,9 +501,21 @@ describe('startGatewayZone', () => {
 					fingerprint: 'fp',
 					imagePath: '/tmp/img',
 				})),
-				createManagedVm: vi.fn(async (): Promise<ManagedVm> => managedVm),
+				createManagedVm,
 				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
 			},
+		);
+
+		expect(createManagedVm).toHaveBeenCalledWith(
+			expect.objectContaining({
+				allowedHosts: expect.not.arrayContaining(['api.linear.app']),
+				env: expect.not.objectContaining({
+					LINEAR_API_KEY: expect.any(String),
+				}),
+				secrets: expect.not.objectContaining({
+					LINEAR_API_KEY: expect.anything(),
+				}),
+			}),
 		);
 	});
 

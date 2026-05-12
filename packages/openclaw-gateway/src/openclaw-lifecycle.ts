@@ -88,17 +88,20 @@ function buildOpenClawBootstrapCommand(
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
 	];
 	const secretEnvironmentLines = Object.entries(environmentSecrets).map(
-		([secretName, secretValue]) => `export ${secretName}=${shellQuote(secretValue)}`,
+		([secretName, secretValue]) =>
+			`export ${secretName}=${shellQuoteEnvSecretValue(secretName, secretValue)}`,
 	);
+	const secretsFileCommand =
+		secretEnvironmentLines.length === 0
+			? `: > ${openClawRuntimeSecretsEnvFilePath} && `
+			: `printf '%s\\n' ${secretEnvironmentLines.map((line) => shellQuote(line)).join(' ')} > ${openClawRuntimeSecretsEnvFilePath} && `;
 
 	return (
 		`mkdir -p /root /etc/profile.d /run/openclaw /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && chown -R openclaw:openclaw /work && cat > ${openClawShellEnvFilePath} << 'ENVEOF'\n` +
 		environmentLines.join('\n') +
 		'\nENVEOF\n' +
 		`chmod 644 ${openClawShellEnvFilePath} && ` +
-		`cat > ${openClawRuntimeSecretsEnvFilePath} << 'ENVEOF'\n` +
-		secretEnvironmentLines.join('\n') +
-		'\nENVEOF\n' +
+		secretsFileCommand +
 		`chmod 600 ${openClawRuntimeSecretsEnvFilePath} && ` +
 		'touch /root/.bashrc && ' +
 		`grep -qxF 'source ${openClawShellEnvFilePath}' /root/.bashrc || echo 'source ${openClawShellEnvFilePath}' >> /root/.bashrc && ` +
@@ -113,6 +116,15 @@ function getEffectiveOpenClawConfigHostPath(zone: GatewayZoneConfig): string {
 
 function shellQuote(value: string): string {
 	return `'${value.replace(/'/gu, `'\\''`)}'`;
+}
+
+function shellQuoteEnvSecretValue(secretName: string, value: string): string {
+	if (value.includes('\n') || value.includes('\r') || value.includes(String.fromCharCode(0))) {
+		throw new Error(
+			`OpenClaw env-injected gateway secret '${secretName}' must be a single-line value without NUL bytes. Use http-mediation for secrets that require structured transport.`,
+		);
+	}
+	return shellQuote(value);
 }
 
 type SourceAwareSecretReference =

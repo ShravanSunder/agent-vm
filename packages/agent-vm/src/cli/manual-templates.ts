@@ -167,6 +167,7 @@ Multi-zone controller work makes one controller process manage multiple typed zo
 				`
 Agent-vm scaffolds OpenClaw defaults that make the deployment usable without hand-editing Dockerfiles or OpenClaw internals.
 
+	agents.defaults.sandbox.backend is gondolin, mode is all, and scope is agent. Agent-vm rejects OpenClaw Tool VM leases that are not agent-scoped.
 	agents.defaults.sandbox.workspaceAccess is rw so agents can write their workspace.
 	agents.defaults.workspace points at /zone/agents/default so /zone remains shared zone storage.
 	agents.defaults.model.primary is openai-codex/gpt-5.5 with thinkingDefault low.
@@ -264,6 +265,7 @@ Discord recipe:
 - agent-vm build installs @openclaw/discord for managed OpenClaw images when channels.discord is enabled.
 - Pin @openclaw/discord in vm-images/gateways/openclaw/overlay.jsonc only when the deployment needs to override the managed default version.
 - Do not add runtimeAuthHints to OpenClaw zones; they are worker gateway runtime instructions only.
+- Tool VM secrets must use injection http-mediation. source environment is allowed only as the controller-side source for mediated Tool VM secrets; never use injection env for Tool VM audience.
 `,
 			),
 		},

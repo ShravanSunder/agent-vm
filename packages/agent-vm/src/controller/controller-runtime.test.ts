@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -826,6 +826,25 @@ describe('startControllerRuntime', () => {
 	it('releases active leases when runtime.close is called', async () => {
 		const tempDir = await mkdtemp(path.join(tmpdir(), 'agent-vm-runtime-close-'));
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		const openClawConfigPath = path.join(tempDir, 'openclaw.json');
+		await writeFile(
+			openClawConfigPath,
+			JSON.stringify({
+				agents: {
+					defaults: {
+						sandbox: {
+							backend: 'gondolin',
+							mode: 'all',
+							scope: 'agent',
+							workspaceAccess: 'rw',
+						},
+						workspace: '/zone/agents/default',
+					},
+					list: [],
+				},
+			}),
+			'utf8',
+		);
 		const testSystemConfig = {
 			...systemConfig,
 			zones: systemConfig.zones.map((zoneConfig) => ({
@@ -834,6 +853,7 @@ describe('startControllerRuntime', () => {
 					zoneConfig.gateway.type === 'openclaw'
 						? {
 								...zoneConfig.gateway,
+								config: openClawConfigPath,
 								stateDir: path.join(tempDir, 'state', zoneConfig.id),
 								zoneFilesDir: path.join(tempDir, 'zone-files', zoneConfig.id),
 							}
@@ -924,7 +944,7 @@ describe('startControllerRuntime', () => {
 				body: JSON.stringify({
 					agentWorkspaceDir: '/zone',
 					profileId: 'standard',
-					scopeKey: 'close-runtime',
+					scopeKey: 'agent:close-runtime',
 					workMountDir: '/zone/sandbox-work',
 					zoneId: 'shravan',
 				}),

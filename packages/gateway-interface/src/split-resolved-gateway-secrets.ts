@@ -1,18 +1,14 @@
 import type { SecretSpec } from '@agent-vm/gondolin-adapter';
 
-import { targetsAudience, type RuntimeVmAudience, type VmAudience } from './audience.js';
-import type { GatewayZoneConfig } from './gateway-lifecycle.js';
+import { targetsAudience, type RuntimeVmAudience } from './audience.js';
+import type { GatewaySecretConfig, GatewayZoneConfig } from './gateway-lifecycle.js';
 
 export interface SplitResolvedSecretsResult {
 	readonly environmentSecrets: Record<string, string>;
 	readonly mediatedSecrets: Record<string, SecretSpec>;
 }
 
-export interface SecretInjectionConfig {
-	readonly audience: VmAudience;
-	readonly injection: 'env' | 'http-mediation';
-	readonly hosts?: readonly string[] | undefined;
-}
+export type SecretInjectionConfig = GatewaySecretConfig;
 
 export interface SplitResolvedSecretsOptions {
 	readonly audience: RuntimeVmAudience;
@@ -31,16 +27,20 @@ export function splitResolvedSecretsByInjection(
 	for (const [secretName, secretValue] of Object.entries(resolvedSecrets)) {
 		const secretConfig = secretConfigs[secretName];
 		if (!secretConfig) {
-			process.stderr.write(
-				`[${logPrefix}] Secret '${secretName}' was resolved but has no matching secret config.\n`,
+			throw new Error(
+				`[${logPrefix}] Secret '${secretName}' was resolved but has no matching secret config.`,
 			);
-			continue;
 		}
 		if (!targetsAudience(secretConfig.audience, options.audience)) {
 			continue;
 		}
 
-		if (secretConfig.injection === 'http-mediation' && secretConfig.hosts) {
+		if (secretConfig.injection === 'http-mediation') {
+			if (secretConfig.hosts.length === 0) {
+				throw new Error(
+					`[${logPrefix}] Secret '${secretName}' uses http-mediation but declares no hosts.`,
+				);
+			}
 			mediatedSecrets[secretName] = {
 				hosts: [...secretConfig.hosts],
 				value: secretValue,
@@ -48,7 +48,13 @@ export function splitResolvedSecretsByInjection(
 			continue;
 		}
 
-		if (options.audience === 'gateway' && secretConfig.injection === 'env') {
+		const envSecretAudience = (secretConfig as { readonly audience: string }).audience;
+		if (envSecretAudience !== 'gateway') {
+			throw new Error(
+				`[${logPrefix}] Secret '${secretName}' uses env injection with non-gateway audience '${envSecretAudience}'.`,
+			);
+		}
+		if (options.audience === 'gateway') {
 			environmentSecrets[secretName] = secretValue;
 		}
 	}

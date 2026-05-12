@@ -110,6 +110,12 @@ describe('manual templates', () => {
 		).toContain('workspaceAccess');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
+		).toContain('scope is agent');
+		expect(files.map((file) => file.content).join('\n')).toContain(
+			'Tool VM secrets must use injection http-mediation',
+		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('plugins.slots.memory');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
@@ -160,5 +166,6 @@ describe('manual templates', () => {
 		expect(files.map((file) => file.content).join('\n')).not.toContain('stable workspace');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('one workspace');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('which workspace');
+		expect(files.map((file) => file.content).join('\n')).not.toContain('allowedHosts');
 	});
 });

@@ -98,26 +98,7 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 						...baseGateway,
 						type: 'worker',
 					},
-		secrets: Object.fromEntries(
-			Object.entries(zone.secrets).map(([secretName, secretConfig]) => [
-				secretName,
-				secretConfig.source === 'environment'
-					? {
-							source: 'environment' as const,
-							...(secretConfig.hosts ? { hosts: secretConfig.hosts } : {}),
-							injection: secretConfig.injection,
-							audience: secretConfig.audience,
-							envVar: secretConfig.envVar,
-						}
-					: {
-							source: '1password' as const,
-							...(secretConfig.hosts ? { hosts: secretConfig.hosts } : {}),
-							injection: secretConfig.injection,
-							audience: secretConfig.audience,
-							ref: secretConfig.ref,
-						},
-			]),
-		),
+		secrets: zone.secrets,
 		egressHosts: zone.egressHosts,
 		...(zone.defaultToolVmProfile ? { defaultToolVmProfile: zone.defaultToolVmProfile } : {}),
 		websocketBypass: zone.websocketBypass,

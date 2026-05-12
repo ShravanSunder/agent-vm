@@ -18,6 +18,9 @@ It checks:
 - `system.jsonc` / `system.json` schema and cross-field validation.
 - Gateway and tool VM image recipe files exist.
 - OpenClaw Tool VM profile mappings reference existing `toolVmProfiles`.
+- OpenClaw Tool VM deployment requirements are enforced for OpenClaw zones:
+  `agents.*.sandbox.backend: "gondolin"`, `mode: "all"`, `scope: "agent"`,
+  `workspaceAccess: "rw"`, and a non-root agent workspace.
 - Per-agent auth profiles and sandbox seeds are visible as named checks.
 - Worker gateway configs load successfully.
 - Worker prompt file references exist and stay under `prompts/`.
@@ -52,6 +55,8 @@ It checks:
 - OpenClaw gateway configs pass the catalog's own OpenClaw CLI validation.
 - OpenClaw Tool VM profile mappings, per-agent auth profile entries, and
   sandbox seed entries are visible as named checks.
+- OpenClaw Tool VM deployment requirements use the same finding IDs as
+  `validate`, so a config that would fail startup is visible before boot.
 - Worker configs using the paths as the current host sees them.
 - `vm-host-system/` files when present in a checked-out container runtime
   layout, or runtime host files when running from `/etc/agent-vm/system.json`.

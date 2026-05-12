@@ -5,6 +5,7 @@ import { buildRuntimeInstructions } from './runtime-instructions-builder.js';
 describe('buildRuntimeInstructions', () => {
 	it('describes work paths, agent-visible runtime files, controller tools, resources, and auth hints', () => {
 		const runtime = buildRuntimeInstructions({
+			gatewayType: 'worker',
 			resolvedResources: [
 				{
 					name: 'pg',
@@ -86,6 +87,7 @@ describe('buildRuntimeInstructions', () => {
 
 	it('describes Linear mediated auth through LINEAR_API_KEY', () => {
 		const runtime = buildRuntimeInstructions({
+			gatewayType: 'worker',
 			resolvedResources: [],
 			runtimeAuthHints: [
 				{
@@ -109,6 +111,7 @@ describe('buildRuntimeInstructions', () => {
 
 	it('describes Readwise mediated auth through MCP-backed CLI commands', () => {
 		const runtime = buildRuntimeInstructions({
+			gatewayType: 'worker',
 			resolvedResources: [],
 			runtimeAuthHints: [
 				{
@@ -131,5 +134,17 @@ describe('buildRuntimeInstructions', () => {
 			'readwise reader-search-documents --query "test"',
 		);
 		expect(runtime.runtimeInstructions).toContain('stores the placeholder, not the raw token');
+	});
+
+	it('rejects non-worker runtime instruction callers after type bypass', () => {
+		expect(() =>
+			buildRuntimeInstructions({
+				gatewayType: 'openclaw',
+				resolvedResources: [],
+				runtimeAuthHints: [],
+				taskId: 'task-openclaw',
+				workDir: '/work',
+			} as never),
+		).toThrow('Runtime instructions are only supported for worker gateway zones.');
 	});
 });

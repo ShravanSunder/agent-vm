@@ -10,7 +10,10 @@ export type {
 	BuildGatewayVmSpecOptions,
 	GatewayAuthConfig,
 	GatewayLifecycle,
+	GatewaySecretConfig,
 	GatewayZoneConfig,
+	EnvInjectedGatewaySecretConfig,
+	HttpMediatedGatewaySecretConfig,
 } from './gateway-lifecycle.js';
 export type { GatewayHealthCheck, GatewayProcessSpec } from './gateway-process-spec.js';
 export type { GatewayVmSpec } from './gateway-vm-spec.js';

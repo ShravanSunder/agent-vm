@@ -22,8 +22,34 @@ function pathContainsParentTraversal(inputPath: string): boolean {
 	return inputPath.split(/[\\/]+/u).includes('..');
 }
 
-const secretInjectionSchema = z.enum(['env', 'http-mediation']);
+function escapeRegExpLiteral(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+function hostMatchesPattern(host: string, pattern: string): boolean {
+	const normalizedPattern = pattern.trim().toLowerCase();
+	if (normalizedPattern === '') {
+		return false;
+	}
+	if (normalizedPattern === '*') {
+		return true;
+	}
+
+	const patternRegex = new RegExp(
+		`^${normalizedPattern.split('*').map(escapeRegExpLiteral).join('.*')}$`,
+		'iu',
+	);
+	return patternRegex.test(host.toLowerCase());
+}
+
 const vmAudienceSchema = z.enum(vmAudienceValues);
+const secretNameSchema = z
+	.string()
+	.min(1)
+	.regex(
+		/^[A-Za-z_][A-Za-z0-9_]*$/u,
+		'secret names must be valid shell environment variable names',
+	);
 const egressHostSchema = z
 	.object({
 		host: z.string().min(1),
@@ -31,53 +57,56 @@ const egressHostSchema = z
 	})
 	.strict();
 
-const onePasswordSecretSchema = z.object({
-	source: z.literal('1password'),
-	ref: z.string().min(1),
-	injection: secretInjectionSchema,
-	audience: vmAudienceSchema,
-	hosts: z.array(z.string().min(1)).optional(),
-});
+const onePasswordEnvSecretSchema = z
+	.object({
+		source: z.literal('1password'),
+		ref: z.string().min(1),
+		injection: z.literal('env'),
+		audience: z.literal('gateway'),
+	})
+	.strict();
 
-const environmentSecretSchema = z.object({
-	source: z.literal('environment'),
-	envVar: z.string().min(1),
-	injection: secretInjectionSchema,
-	audience: vmAudienceSchema,
-	hosts: z.array(z.string().min(1)).optional(),
-});
+const environmentEnvSecretSchema = z
+	.object({
+		source: z.literal('environment'),
+		envVar: z.string().min(1),
+		injection: z.literal('env'),
+		audience: z.literal('gateway'),
+	})
+	.strict();
 
-const secretReferenceSchema = z
-	.discriminatedUnion('source', [onePasswordSecretSchema, environmentSecretSchema])
-	.superRefine((secret, context) => {
-		if (secret.injection === 'http-mediation' && (!secret.hosts || secret.hosts.length === 0)) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: "Injection 'http-mediation' requires at least one host.",
-				path: ['hosts'],
-			});
-		}
-		if (secret.injection === 'env' && secret.audience !== 'gateway') {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: "Injection 'env' requires audience 'gateway'.",
-				path: ['audience'],
-			});
-		}
-		if (secret.injection === 'env' && secret.hosts !== undefined) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: "Injection 'env' must not declare hosts.",
-				path: ['hosts'],
-			});
-		}
-	});
+const onePasswordMediatedSecretSchema = z
+	.object({
+		source: z.literal('1password'),
+		ref: z.string().min(1),
+		injection: z.literal('http-mediation'),
+		audience: vmAudienceSchema,
+		hosts: z.array(z.string().min(1)).min(1),
+	})
+	.strict();
+
+const environmentMediatedSecretSchema = z
+	.object({
+		source: z.literal('environment'),
+		envVar: z.string().min(1),
+		injection: z.literal('http-mediation'),
+		audience: vmAudienceSchema,
+		hosts: z.array(z.string().min(1)).min(1),
+	})
+	.strict();
+
+const secretReferenceSchema = z.union([
+	onePasswordEnvSecretSchema,
+	environmentEnvSecretSchema,
+	onePasswordMediatedSecretSchema,
+	environmentMediatedSecretSchema,
+]);
 
 const runtimeAuthHintSchema = z.discriminatedUnion('kind', [
 	z
 		.object({
 			kind: z.literal('service-token'),
-			secret: z.string().min(1),
+			secret: secretNameSchema,
 			service: z.string().min(1),
 			hosts: z.array(z.string().min(1)).min(1),
 			tools: z.array(z.string().min(1)).default([]),
@@ -86,30 +115,40 @@ const runtimeAuthHintSchema = z.discriminatedUnion('kind', [
 ]);
 
 const tokenSourceSchema = z.discriminatedUnion('type', [
-	z.object({
-		type: z.literal('op-cli'),
-		ref: z.string().min(1),
-	}),
-	z.object({
-		type: z.literal('env'),
-		envVar: z.string().min(1).optional(),
-	}),
-	z.object({
-		type: z.literal('keychain'),
-		service: z.string().min(1),
-		account: z.string().min(1),
-	}),
+	z
+		.object({
+			type: z.literal('op-cli'),
+			ref: z.string().min(1),
+		})
+		.strict(),
+	z
+		.object({
+			type: z.literal('env'),
+			envVar: z.string().min(1).optional(),
+		})
+		.strict(),
+	z
+		.object({
+			type: z.literal('keychain'),
+			service: z.string().min(1),
+			account: z.string().min(1),
+		})
+		.strict(),
 ]);
 
 const authProfilesSecretSchema = z.discriminatedUnion('source', [
-	z.object({
-		source: z.literal('1password'),
-		ref: z.string().min(1),
-	}),
-	z.object({
-		source: z.literal('environment'),
-		envVar: z.string().min(1),
-	}),
+	z
+		.object({
+			source: z.literal('1password'),
+			ref: z.string().min(1),
+		})
+		.strict(),
+	z
+		.object({
+			source: z.literal('environment'),
+			envVar: z.string().min(1),
+		})
+		.strict(),
 ]);
 
 const agentSandboxSeedSchema = z
@@ -130,14 +169,18 @@ const agentSandboxSeedSchema = z
 	});
 
 const hostSecretReferenceSchema = z.discriminatedUnion('source', [
-	z.object({
-		source: z.literal('1password'),
-		ref: z.string().min(1),
-	}),
-	z.object({
-		source: z.literal('environment'),
-		envVar: z.string().min(1),
-	}),
+	z
+		.object({
+			source: z.literal('1password'),
+			ref: z.string().min(1),
+		})
+		.strict(),
+	z
+		.object({
+			source: z.literal('environment'),
+			envVar: z.string().min(1),
+		})
+		.strict(),
 ]);
 
 const zoneAdminAccessSchema = z.discriminatedUnion('mode', [
@@ -280,7 +323,7 @@ const systemConfigSchema = z
 						adminAccess: zoneAdminAccessSchema.optional(),
 						gateway: zoneGatewaySchema,
 						resources: zoneResourcesPolicySchema.optional(),
-						secrets: z.record(z.string(), secretReferenceSchema),
+						secrets: z.record(secretNameSchema, secretReferenceSchema),
 						runtimeAuthHints: z.array(runtimeAuthHintSchema).optional(),
 						egressHosts: z.array(egressHostSchema).min(1),
 						websocketBypass: z.array(z.string().min(1)).default([]),
@@ -312,7 +355,9 @@ const systemConfigSchema = z
 				);
 			}
 			return egressHosts.some(
-				(egressHost) => egressHost.host === host && targetsAudience(egressHost.audience, audience),
+				(egressHost) =>
+					hostMatchesPattern(host, egressHost.host) &&
+					targetsAudience(egressHost.audience, audience),
 			);
 		};
 		const hasOnePasswordSecrets = config.zones.some(
@@ -372,37 +417,36 @@ const systemConfigSchema = z
 		}
 
 		for (const [zoneIndex, zone] of config.zones.entries()) {
-			if (zone.gateway.type === 'openclaw') {
-				const openClawGatewayToken = zone.secrets.OPENCLAW_GATEWAY_TOKEN;
-				if (!openClawGatewayToken) {
+			const openClawGatewayToken = zone.secrets.OPENCLAW_GATEWAY_TOKEN;
+			if (openClawGatewayToken) {
+				if (openClawGatewayToken.injection !== 'env') {
 					context.addIssue({
 						code: z.ZodIssueCode.custom,
-						message: `OpenClaw zone '${zone.id}' must declare OPENCLAW_GATEWAY_TOKEN as a gateway env secret.`,
-						path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN'],
+						message: `Zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must use injection 'env'.`,
+						path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'injection'],
 					});
-				} else {
-					if (openClawGatewayToken.injection !== 'env') {
-						context.addIssue({
-							code: z.ZodIssueCode.custom,
-							message: `OpenClaw zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must use injection 'env'.`,
-							path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'injection'],
-						});
-					}
-					if (openClawGatewayToken.audience !== 'gateway') {
-						context.addIssue({
-							code: z.ZodIssueCode.custom,
-							message: `OpenClaw zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must target audience 'gateway'.`,
-							path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'audience'],
-						});
-					}
-					if (openClawGatewayToken.hosts !== undefined) {
-						context.addIssue({
-							code: z.ZodIssueCode.custom,
-							message: `OpenClaw zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must not declare hosts.`,
-							path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'hosts'],
-						});
-					}
 				}
+				if (openClawGatewayToken.audience !== 'gateway') {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `Zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must target audience 'gateway'.`,
+						path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'audience'],
+					});
+				}
+				if ('hosts' in openClawGatewayToken) {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `Zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must not declare hosts.`,
+						path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'hosts'],
+					});
+				}
+			}
+			if (zone.gateway.type === 'openclaw' && !openClawGatewayToken) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `OpenClaw zone '${zone.id}' must declare OPENCLAW_GATEWAY_TOKEN as a gateway env secret.`,
+					path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN'],
+				});
 			}
 
 			for (const [secretName, secret] of Object.entries(zone.secrets)) {
@@ -531,7 +575,8 @@ const systemConfigSchema = z
 						path: ['zones', zoneIndex, 'runtimeAuthHints', hintIndex, 'secret'],
 					});
 				}
-				const missingHosts = hint.hosts.filter((host) => !secret.hosts?.includes(host));
+				const secretHosts = secret.injection === 'http-mediation' ? secret.hosts : [];
+				const missingHosts = hint.hosts.filter((host) => !secretHosts.includes(host));
 				for (const missingHost of missingHosts) {
 					context.addIssue({
 						code: z.ZodIssueCode.custom,

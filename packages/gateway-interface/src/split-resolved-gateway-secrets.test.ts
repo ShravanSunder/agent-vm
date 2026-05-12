@@ -10,15 +10,21 @@ describe('splitResolvedSecretsByInjection', () => {
 		const result = splitResolvedSecretsByInjection(
 			{
 				DISCORD_BOT_TOKEN: {
+					source: 'environment',
+					envVar: 'DISCORD_BOT_TOKEN',
 					audience: 'gateway',
 					injection: 'env',
 				},
 				GITHUB_TOKEN: {
+					source: 'environment',
+					envVar: 'GITHUB_TOKEN',
 					audience: 'both',
 					injection: 'http-mediation',
 					hosts: ['api.github.com'],
 				},
 				LINEAR_API_KEY: {
+					source: 'environment',
+					envVar: 'LINEAR_API_KEY',
 					audience: 'tool-vm',
 					injection: 'http-mediation',
 					hosts: ['api.linear.app'],
@@ -51,15 +57,21 @@ describe('splitResolvedSecretsByInjection', () => {
 			const result = splitResolvedSecretsByInjection(
 				{
 					DISCORD_BOT_TOKEN: {
+						source: 'environment',
+						envVar: 'DISCORD_BOT_TOKEN',
 						audience: 'gateway',
 						injection: 'env',
 					},
 					GITHUB_TOKEN: {
+						source: 'environment',
+						envVar: 'GITHUB_TOKEN',
 						audience: 'both',
 						injection: 'http-mediation',
 						hosts: ['api.github.com'],
 					},
 					LINEAR_API_KEY: {
+						source: 'environment',
+						envVar: 'LINEAR_API_KEY',
 						audience: 'tool-vm',
 						injection: 'http-mediation',
 						hosts: ['api.linear.app'],
@@ -92,14 +104,68 @@ describe('splitResolvedSecretsByInjection', () => {
 		}
 	});
 
-	it('warns and skips resolved secrets missing from config', () => {
-		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+	it('throws when resolved secrets are missing from config', () => {
+		expect(() =>
+			splitResolvedSecretsByInjection(
+				{},
+				{
+					UNDECLARED_TOKEN: 'undeclared-real-secret',
+				},
+				{ audience: 'tool-vm', logPrefix: 'test-split' },
+			),
+		).toThrow("Secret 'UNDECLARED_TOKEN' was resolved but has no matching secret config");
+	});
 
+	it('throws on mediated secrets with empty hosts after schema bypass', () => {
+		expect(() =>
+			splitResolvedSecretsByInjection(
+				{
+					LINEAR_API_KEY: {
+						source: 'environment',
+						envVar: 'LINEAR_API_KEY',
+						audience: 'tool-vm',
+						injection: 'http-mediation',
+						hosts: [],
+					},
+				},
+				{
+					LINEAR_API_KEY: 'linear-real-secret',
+				},
+				{ audience: 'tool-vm', logPrefix: 'test-split' },
+			),
+		).toThrow("Secret 'LINEAR_API_KEY' uses http-mediation but declares no hosts");
+	});
+
+	it('throws on env-injected non-gateway secrets after schema bypass', () => {
+		expect(() =>
+			splitResolvedSecretsByInjection(
+				{
+					LINEAR_API_KEY: {
+						source: 'environment',
+						envVar: 'LINEAR_API_KEY',
+						audience: 'tool-vm',
+						injection: 'env',
+					} as never,
+				},
+				{
+					LINEAR_API_KEY: 'linear-real-secret',
+				},
+				{ audience: 'tool-vm', logPrefix: 'test-split' },
+			),
+		).toThrow("Secret 'LINEAR_API_KEY' uses env injection with non-gateway audience 'tool-vm'");
+	});
+
+	it('keeps gateway env secrets out of Tool VM splitting', () => {
 		const result = splitResolvedSecretsByInjection(
-			{},
 			{
-				UNDECLARED_TOKEN: 'undeclared-real-secret',
+				DISCORD_BOT_TOKEN: {
+					source: 'environment',
+					envVar: 'DISCORD_BOT_TOKEN',
+					audience: 'gateway',
+					injection: 'env',
+				},
 			},
+			{},
 			{ audience: 'tool-vm', logPrefix: 'test-split' },
 		);
 
@@ -107,10 +173,6 @@ describe('splitResolvedSecretsByInjection', () => {
 			environmentSecrets: {},
 			mediatedSecrets: {},
 		});
-		expect(stderrSpy).toHaveBeenCalledWith(
-			"[test-split] Secret 'UNDECLARED_TOKEN' was resolved but has no matching secret config.\n",
-		);
-		stderrSpy.mockRestore();
 	});
 });
 

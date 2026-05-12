@@ -5,6 +5,7 @@ import path from 'node:path';
 import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { describe, expect, it, vi } from 'vitest';
 
+import { OpenClawDeploymentRequirementError } from '../../operations/openclaw-deployment-requirements.js';
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { SandboxSeedingError } from '../leases/agent-sandbox-seeding.js';
 import { LeaseScopeConflictError, type Lease } from '../leases/lease-manager.js';
@@ -248,6 +249,97 @@ describe('createControllerApp', () => {
 		expect(deleteResponse.status).toBe(204);
 		expect(keepLeaseAlive).toHaveBeenCalledWith('lease-123');
 		expect(releaseLease).toHaveBeenCalledWith('lease-123');
+	});
+
+	it('rejects non-agent Tool VM lease scopes before creating a lease', async () => {
+		const createLease = vi.fn(async () => createLeaseStub('lease-123', 0));
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease,
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const response = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				profileId: 'standard',
+				scopeKey: 'session:main',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toMatchObject({
+			kind: 'non-agent-scope',
+		});
+		expect(createLease).not.toHaveBeenCalled();
+	});
+
+	it('rejects Tool VM leases when OpenClaw deployment requirements fail', async () => {
+		const createLease = vi.fn(async () => createLeaseStub('lease-123', 0));
+		const validateToolVmLeaseRequirements = vi.fn(async () => {
+			throw new OpenClawDeploymentRequirementError('shravan', [
+				{
+					id: 'openclaw-tool-vm-agents-defaults-sandbox-backend-shravan-defaults',
+					ok: false,
+					hint: 'Set agents.defaults.sandbox.backend to "gondolin" for OpenClaw Tool VM mediation.',
+				},
+			]);
+		});
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			validateToolVmLeaseRequirements,
+			leaseManager: {
+				createLease,
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const response = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				profileId: 'standard',
+				scopeKey: 'agent:main',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toMatchObject({
+			kind: 'openclaw-tool-vm-requirements-failed',
+		});
+		expect(validateToolVmLeaseRequirements).toHaveBeenCalledWith('shravan');
+		expect(createLease).not.toHaveBeenCalled();
 	});
 
 	it('rejects the old workspaceDir lease field', async () => {

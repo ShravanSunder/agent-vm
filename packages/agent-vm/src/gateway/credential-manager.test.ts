@@ -170,6 +170,64 @@ describe('resolveZoneSecrets', () => {
 		).rejects.toThrow("Unknown zone 'missing-zone'.");
 	});
 
+	it('requires Tool VM secret resolution to use http mediation', async () => {
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => '',
+			resolveAll: async () => ({}),
+		};
+
+		await expect(
+			resolveZoneSecrets({
+				audience: 'tool-vm',
+				injection: 'env',
+				secretResolver,
+				systemConfig,
+				zoneId: 'shravan',
+			} as never),
+		).rejects.toThrow("Tool VM secret resolution requires injection 'http-mediation'.");
+	});
+
+	it('rejects targeted Tool VM secrets that bypass the schema with env injection', async () => {
+		const baseZone = systemConfig.zones[0];
+		if (!baseZone) {
+			throw new Error('Expected base test zone');
+		}
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => {
+				throw new Error('secret should not be resolved');
+			},
+			resolveAll: async () => ({}),
+		};
+		const unsafeConfig = {
+			...systemConfig,
+			zones: [
+				{
+					...baseZone,
+					secrets: {
+						LINEAR_API_KEY: {
+							source: 'environment',
+							envVar: 'LINEAR_API_KEY',
+							injection: 'env',
+							audience: 'tool-vm',
+						},
+					},
+				},
+			],
+		} as never;
+
+		await expect(
+			resolveZoneSecrets({
+				audience: 'tool-vm',
+				injection: 'http-mediation',
+				secretResolver,
+				systemConfig: unsafeConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(
+			"Tool VM secret 'LINEAR_API_KEY' in zone 'shravan' must use injection 'http-mediation'.",
+		);
+	});
+
 	it('throws when a zone secret is missing an explicit ref', async () => {
 		const baseZone = systemConfig.zones[0];
 		if (!baseZone) {
