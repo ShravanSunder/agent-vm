@@ -14,7 +14,7 @@ import {
 	seedAgentSandboxWorkspace,
 } from '../leases/agent-sandbox-seeding.js';
 import { LeaseScopeConflictError } from '../leases/lease-manager.js';
-import { parseAgentScopeKey } from '../leases/lease-scope.js';
+import { parseAgentScopeKey, type AgentScopeParseResult } from '../leases/lease-scope.js';
 import {
 	LeaseWorkMountValidationError,
 	type ResolvedLeaseWorkMount,
@@ -32,6 +32,23 @@ import { registerControllerZoneOperationRoutes } from './controller-zone-operati
 
 function writeControllerLeaseLog(message: string): void {
 	process.stderr.write(`[controller-http-routes] ${message}\n`);
+}
+
+type InvalidAgentScopeParseResult = Exclude<AgentScopeParseResult, { readonly kind: 'agent' }>;
+
+function assertUnreachableAgentScope(value: never): never {
+	throw new Error(`Unhandled agent scope parse result: ${JSON.stringify(value)}`);
+}
+
+function formatInvalidAgentScopeReason(parsedScope: InvalidAgentScopeParseResult): string {
+	switch (parsedScope.kind) {
+		case 'malformed-agent-scope':
+			return parsedScope.reason;
+		case 'non-agent-scope':
+			return 'Tool VM leases require agent-scoped OpenClaw sandboxes.';
+		default:
+			return assertUnreachableAgentScope(parsedScope);
+	}
 }
 
 function formatUnknownError(error: unknown): string {
@@ -146,10 +163,7 @@ export function createControllerApp(options: {
 			}
 			const parsedScope = parseAgentScopeKey(payload.scopeKey);
 			if (parsedScope.kind !== 'agent') {
-				const reason =
-					parsedScope.kind === 'malformed-agent-scope'
-						? parsedScope.reason
-						: 'Tool VM leases require agent-scoped OpenClaw sandboxes.';
+				const reason = formatInvalidAgentScopeReason(parsedScope);
 				return context.json(
 					{
 						error: `Invalid Tool VM lease scope '${payload.scopeKey}': ${reason}`,
