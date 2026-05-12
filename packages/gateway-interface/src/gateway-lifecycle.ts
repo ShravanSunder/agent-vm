@@ -1,5 +1,6 @@
 import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 
+import type { EgressHostConfig, VmAudience } from './audience.js';
 import type { GatewayProcessSpec } from './gateway-process-spec.js';
 import type { GatewayType } from './gateway-runtime-contract.js';
 import type { GatewayVmSpec } from './gateway-vm-spec.js';
@@ -76,6 +77,31 @@ interface WorkerGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
 
 type GatewayZoneGatewayConfig = OpenClawGatewayZoneGatewayConfig | WorkerGatewayZoneGatewayConfig;
 
+interface OnePasswordSecretSourceConfig {
+	readonly source: '1password';
+	readonly ref: string;
+}
+
+interface EnvironmentSecretSourceConfig {
+	readonly source: 'environment';
+	readonly envVar: string;
+}
+
+type SecretSourceConfig = OnePasswordSecretSourceConfig | EnvironmentSecretSourceConfig;
+
+export type EnvInjectedGatewaySecretConfig = SecretSourceConfig & {
+	readonly audience: 'gateway';
+	readonly injection: 'env';
+};
+
+export type HttpMediatedGatewaySecretConfig = SecretSourceConfig & {
+	readonly audience: VmAudience;
+	readonly injection: 'http-mediation';
+	readonly hosts: readonly string[];
+};
+
+export type GatewaySecretConfig = EnvInjectedGatewaySecretConfig | HttpMediatedGatewaySecretConfig;
+
 /**
  * Zone config as the lifecycle sees it.
  * Decoupled from SystemConfig — the controller maps into this shape.
@@ -85,22 +111,8 @@ export interface GatewayZoneConfig {
 	readonly gateway: GatewayZoneGatewayConfig;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;
 	readonly runtimePluginConfigs?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
-	readonly secrets: Record<
-		string,
-		| {
-				readonly source: '1password';
-				readonly ref: string;
-				readonly injection: 'env' | 'http-mediation';
-				readonly hosts?: readonly string[] | undefined;
-		  }
-		| {
-				readonly source: 'environment';
-				readonly envVar: string;
-				readonly injection: 'env' | 'http-mediation';
-				readonly hosts?: readonly string[] | undefined;
-		  }
-	>;
-	readonly allowedHosts: readonly string[];
+	readonly secrets: Readonly<Record<string, GatewaySecretConfig>>;
+	readonly egressHosts: readonly EgressHostConfig[];
 	readonly websocketBypass: readonly string[];
 	readonly defaultToolVmProfile?: string;
 }

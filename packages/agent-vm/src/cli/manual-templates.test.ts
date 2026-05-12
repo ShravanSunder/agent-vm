@@ -54,6 +54,12 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
 			'media.discordapp.net',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).not.toContain(
+			'Add runtimeAuthHints',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'Do not add runtimeAuthHints to OpenClaw zones',
+		);
 		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
 			'coding agents helping end users set up and operate agent-vm deployments',
 		);
@@ -102,6 +108,12 @@ describe('manual templates', () => {
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('workspaceAccess');
+		expect(
+			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
+		).toContain('scope is agent');
+		expect(files.map((file) => file.content).join('\n')).toContain(
+			'Tool VM secrets must use injection http-mediation',
+		);
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('plugins.slots.memory');
@@ -154,5 +166,6 @@ describe('manual templates', () => {
 		expect(files.map((file) => file.content).join('\n')).not.toContain('stable workspace');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('one workspace');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('which workspace');
+		expect(files.map((file) => file.content).join('\n')).not.toContain('allowedHosts');
 	});
 });

@@ -69,7 +69,7 @@ function createSystemConfig(options: {
 		},
 		zones: [
 			{
-				allowedHosts: ['api.openai.com'],
+				egressHosts: [{ host: 'api.openai.com', audience: 'gateway' }],
 				gateway: {
 					type: 'openclaw',
 					imageProfile: 'openclaw',

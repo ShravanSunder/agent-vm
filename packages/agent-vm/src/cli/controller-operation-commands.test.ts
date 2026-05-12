@@ -65,7 +65,7 @@ function createWorkerSystemConfig(
 			},
 			zones: [
 				{
-					allowedHosts: ['api.openai.com'],
+					egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 					gateway: {
 						type: 'worker',
 						imageProfile: 'worker',
@@ -131,7 +131,7 @@ function createOpenClawSystemConfig(
 			},
 			zones: [
 				{
-					allowedHosts: ['api.openai.com'],
+					egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 					gateway: {
 						type: 'openclaw',
 						imageProfile: 'openclaw',
@@ -148,7 +148,14 @@ function createOpenClawSystemConfig(
 						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
-					secrets: {},
+					secrets: {
+						OPENCLAW_GATEWAY_TOKEN: {
+							source: 'environment',
+							envVar: 'OPENCLAW_GATEWAY_TOKEN',
+							injection: 'env',
+							audience: 'gateway',
+						},
+					},
 					defaultToolVmProfile: 'standard',
 					agentToolVmProfiles: {},
 					websocketBypass: [],
@@ -165,6 +172,7 @@ function createHealthyOpenClawConfig(): object {
 			defaults: {
 				sandbox: {
 					backend: 'gondolin',
+					mode: 'all',
 					scope: 'agent',
 					workspaceAccess: 'rw',
 				},
@@ -236,7 +244,7 @@ function createManagedBaseOpenClawSystemConfig(
 			},
 			zones: [
 				{
-					allowedHosts: ['api.openai.com'],
+					egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 					gateway: {
 						type: 'openclaw',
 						imageProfile: 'openclaw',
@@ -253,7 +261,14 @@ function createManagedBaseOpenClawSystemConfig(
 						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
-					secrets: {},
+					secrets: {
+						OPENCLAW_GATEWAY_TOKEN: {
+							source: 'environment',
+							envVar: 'OPENCLAW_GATEWAY_TOKEN',
+							injection: 'env',
+							audience: 'gateway',
+						},
+					},
 					defaultToolVmProfile: 'standard',
 					agentToolVmProfiles: {},
 					websocketBypass: [],
@@ -313,6 +328,67 @@ async function writeImageBuildConfigsForDoctor(systemConfig: LoadedSystemConfig)
 }
 
 describe('runControllerOperationCommand', () => {
+	it('refreshes OpenClaw credentials without resolving Tool VM-only secrets', async () => {
+		const previousGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'test-gateway-token';
+		const temporaryDirectoryPath = await fs.mkdtemp(
+			path.join(os.tmpdir(), 'agent-vm-credentials-'),
+		);
+		const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
+		const toolVmBuildConfigPath = path.join(
+			temporaryDirectoryPath,
+			'vm-images',
+			'tool-vms',
+			'default',
+			'build-config.json',
+		);
+		const outputs: string[] = [];
+		const systemConfig = createOpenClawSystemConfig(toolVmBuildConfigPath, systemConfigPath);
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected OpenClaw test system config to include a zone.');
+		}
+		zone.secrets.LINEAR_API_KEY = {
+			source: '1password',
+			ref: 'op://agent-vm/shravan-linear/credential',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.linear.app'],
+		};
+		zone.egressHosts = [...zone.egressHosts, { host: 'api.linear.app', audience: 'tool-vm' }];
+
+		try {
+			await runControllerOperationCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: () => createControllerClientStub(),
+					runControllerDoctor: () => ({ ok: true, checks: [] }),
+				},
+				io: {
+					stderr: { write: () => true },
+					stdout: {
+						write: (chunk: string | Uint8Array) => {
+							outputs.push(String(chunk));
+							return true;
+						},
+					},
+				},
+				restArguments: ['refresh', '--zone', 'shravan'],
+				subcommand: 'credentials',
+				systemConfig,
+			});
+		} finally {
+			if (previousGatewayToken === undefined) {
+				delete process.env.OPENCLAW_GATEWAY_TOKEN;
+			} else {
+				process.env.OPENCLAW_GATEWAY_TOKEN = previousGatewayToken;
+			}
+			await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+		}
+
+		expect(JSON.parse(outputs.join(''))).toEqual({});
+	});
+
 	it('accepts authored worker config drafts without generated runtime instructions in doctor output', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');

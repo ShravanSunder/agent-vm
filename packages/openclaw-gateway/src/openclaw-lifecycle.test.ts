@@ -23,16 +23,6 @@ async function pathExists(filePath: string): Promise<boolean> {
 	}
 }
 
-function extractHeredocBody(command: string, targetPath: string): string {
-	const marker = `cat > ${targetPath} << 'ENVEOF'\n`;
-	const startIndex = command.indexOf(marker);
-	expect(startIndex).toBeGreaterThanOrEqual(0);
-	const bodyStartIndex = startIndex + marker.length;
-	const bodyEndIndex = command.indexOf('\nENVEOF', bodyStartIndex);
-	expect(bodyEndIndex).toBeGreaterThan(bodyStartIndex);
-	return command.slice(bodyStartIndex, bodyEndIndex);
-}
-
 async function renderBootstrapFiles(command: string, rootDirectory: string): Promise<void> {
 	const rootedCommand = command
 		.replaceAll('/root', path.join(rootDirectory, 'root'))
@@ -77,7 +67,10 @@ function createZone(overrides?: {
 	};
 
 	return {
-		allowedHosts: ['api.openai.com', 'api.perplexity.ai'],
+		egressHosts: ['api.openai.com', 'api.perplexity.ai'].map((host) => ({
+			host,
+			audience: 'gateway' as const,
+		})),
 		gateway: {
 			...baseGateway,
 			...(overrides?.withoutAuthProfilesRef
@@ -94,17 +87,20 @@ function createZone(overrides?: {
 		secrets: {
 			DISCORD_BOT_TOKEN: {
 				injection: 'env',
+				audience: 'gateway',
 				source: '1password',
 				ref: 'op://vault/item/discord',
 			},
 			OPENCLAW_GATEWAY_TOKEN: {
 				injection: 'env',
+				audience: 'gateway',
 				source: '1password',
 				ref: 'op://vault/item/openclaw-gateway-token',
 			},
 			PERPLEXITY_API_KEY: {
 				hosts: ['api.perplexity.ai'],
 				injection: 'http-mediation',
+				audience: 'gateway',
 				source: '1password',
 				ref: 'op://vault/item/perplexity',
 			},
@@ -218,6 +214,11 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.environment.PNPM_HOME).toBe('/pnpm');
 			expect(vmSpec.environment.PATH).toContain('/pnpm:');
 			expect(vmSpec.environment.npm_config_cache).toBe('/work/cache/npm');
+			expect(vmSpec.allowedHosts).toEqual([
+				'controller.vm.host',
+				'api.openai.com',
+				'api.perplexity.ai',
+			]);
 			expect(vmSpec.vfsMounts['/home/openclaw/.openclaw/config']).toEqual({
 				hostPath: '/host/config/shravan',
 				kind: 'realfs',
@@ -261,14 +262,16 @@ describe('openclawLifecycle', () => {
 
 			expect(processSpec.bootstrapCommand).toContain('/etc/profile.d/openclaw-env.sh');
 			expect(processSpec.bootstrapCommand).toContain('/run/openclaw/secrets.env');
-			expect(processSpec.bootstrapCommand).toContain("DISCORD_BOT_TOKEN='discord-token'");
-			expect(processSpec.bootstrapCommand).toContain("OPENCLAW_GATEWAY_TOKEN='gateway'\\''token'");
-			expect(
-				extractHeredocBody(processSpec.bootstrapCommand, '/run/openclaw/secrets.env'),
-			).toContain("export OPENCLAW_GATEWAY_TOKEN='gateway'\\''token'");
-			expect(
-				extractHeredocBody(processSpec.bootstrapCommand, '/run/openclaw/secrets.env'),
-			).toContain("export AGENT_VM_ZONE_GIT_TOKEN='runtime-zone-git-token'");
+			expect(processSpec.bootstrapCommand).toContain("printf '%s\\n'");
+			expect(processSpec.bootstrapCommand).toContain('DISCORD_BOT_TOKEN');
+			expect(processSpec.bootstrapCommand).toContain('discord-token');
+			expect(processSpec.bootstrapCommand).toContain('OPENCLAW_GATEWAY_TOKEN');
+			expect(processSpec.bootstrapCommand).toContain('gateway');
+			expect(processSpec.bootstrapCommand).toContain('AGENT_VM_ZONE_GIT_TOKEN');
+			expect(processSpec.bootstrapCommand).toContain('runtime-zone-git-token');
+			expect(processSpec.bootstrapCommand).not.toContain(
+				`cat > /run/openclaw/secrets.env << 'ENVEOF'`,
+			);
 			expect(processSpec.bootstrapCommand).not.toContain('/etc/profile.d/openclaw-admin.sh');
 			expect(processSpec.bootstrapCommand).not.toContain('/run/openclaw/gateway-auth.env');
 			expect(processSpec.bootstrapCommand).not.toContain('openclaw()');
@@ -294,6 +297,15 @@ describe('openclawLifecycle', () => {
 				path: '/readyz',
 			});
 			expect(processSpec.logPath).toBe('/agent-vm/logs/gateway-boot-latest.log');
+		});
+
+		it('rejects multiline env-injected secrets before building the bootstrap command', () => {
+			expect(() =>
+				openclawLifecycle.buildProcessSpec(createZone(), {
+					...resolvedSecrets,
+					OPENCLAW_GATEWAY_TOKEN: 'gateway\nENVEOF\ncommand',
+				}),
+			).toThrow(/single-line value/u);
 		});
 
 		it('writes profile scripts without expanding runtime shell expressions', async () => {
@@ -766,6 +778,7 @@ describe('openclawLifecycle', () => {
 					...zone.secrets,
 					OPENCLAW_GATEWAY_TOKEN: {
 						injection: 'env',
+						audience: 'gateway',
 						source: '1password',
 					},
 				},

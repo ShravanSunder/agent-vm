@@ -63,7 +63,7 @@ describe('isGatewayImageCached', () => {
 				},
 				zones: [
 					{
-						allowedHosts: ['api.openai.com'],
+						egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 						gateway: {
 							type: 'worker',
 							imageProfile: 'worker',

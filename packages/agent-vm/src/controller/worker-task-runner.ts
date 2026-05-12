@@ -550,6 +550,7 @@ export async function preStartGateway(
 			repoFinalizations: providerRun.finalizations,
 		});
 		const runtime = buildRuntimeInstructions({
+			gatewayType: 'worker',
 			resolvedResources: buildResolvedRuntimeResources({
 				externalResources: resolvedResources.externalResources,
 				repoFinalizations: providerRun.finalizations,

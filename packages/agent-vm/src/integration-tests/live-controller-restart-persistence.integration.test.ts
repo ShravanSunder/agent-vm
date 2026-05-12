@@ -12,6 +12,7 @@ function createSystemConfig(
 	controllerPort: number,
 	stateDirectory: string,
 	zoneFilesDirectory: string,
+	openClawConfigPath: string,
 ): LoadedSystemConfig {
 	return {
 		cacheDir: path.join(path.dirname(stateDirectory), 'cache'),
@@ -52,12 +53,19 @@ function createSystemConfig(
 					memory: '2G',
 					cpus: 2,
 					port: controllerPort + 100,
-					config: './config/shravan/openclaw.json',
+					config: openClawConfigPath,
 					stateDir: stateDirectory,
 					zoneFilesDir: zoneFilesDirectory,
 				},
-				secrets: {},
-				allowedHosts: ['api.openai.com'],
+				secrets: {
+					OPENCLAW_GATEWAY_TOKEN: {
+						source: 'environment',
+						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						injection: 'env',
+						audience: 'gateway',
+					},
+				},
+				egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 				websocketBypass: [],
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},
@@ -150,11 +158,35 @@ describe('live integration: controller restart persistence', () => {
 		const stateDirectory = path.join(tempDirectory, 'state');
 		const zoneFilesDirectory = path.join(tempDirectory, 'zone-files');
 		const zoneLeaseDirectory = path.join(zoneFilesDirectory, 'restart-work');
+		const openClawConfigPath = path.join(tempDirectory, 'openclaw.json');
 		fs.mkdirSync(stateDirectory, { recursive: true });
 		fs.mkdirSync(zoneLeaseDirectory, { recursive: true });
+		fs.writeFileSync(
+			openClawConfigPath,
+			JSON.stringify({
+				agents: {
+					defaults: {
+						sandbox: {
+							backend: 'gondolin',
+							mode: 'all',
+							scope: 'agent',
+							workspaceAccess: 'rw',
+						},
+						workspace: '/zone/agents/default',
+					},
+					list: [],
+				},
+			}),
+			'utf8',
+		);
 
 		const controllerPort = 18841;
-		const systemConfig = createSystemConfig(controllerPort, stateDirectory, zoneFilesDirectory);
+		const systemConfig = createSystemConfig(
+			controllerPort,
+			stateDirectory,
+			zoneFilesDirectory,
+			openClawConfigPath,
+		);
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected restart test zone.');
@@ -250,7 +282,7 @@ describe('live integration: controller restart persistence', () => {
 			body: JSON.stringify({
 				agentWorkspaceDir: '/zone',
 				profileId: 'standard',
-				scopeKey: 'restart-test',
+				scopeKey: 'agent:restart-test',
 				workMountDir: '/zone/restart-work',
 				zoneId: 'shravan',
 			}),

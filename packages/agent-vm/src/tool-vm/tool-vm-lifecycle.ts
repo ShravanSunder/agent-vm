@@ -1,13 +1,18 @@
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import { buildToolSessionLabel } from '@agent-vm/gateway-interface';
+import {
+	buildToolSessionLabel,
+	egressHostsForAudience,
+	splitResolvedSecretsByInjection,
+} from '@agent-vm/gateway-interface';
 import {
 	closePinnedRealFsRoot as closePinnedRealFsRootDefault,
 	createManagedVm as createManagedVmFromCore,
 	pinRealFsRoot as pinRealFsRootDefault,
 	type ManagedVm,
 	type PinnedRealFsRoot,
+	type SecretResolver,
 } from '@agent-vm/gondolin-adapter';
 
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
@@ -20,6 +25,7 @@ import {
 	resolveZoneGitPaths,
 	type ZoneGitToolVmMount,
 } from '../controller/zone-git/zone-git-paths.js';
+import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 
 export interface ToolVmLifecycleDependencies {
 	readonly buildGondolinImage?: (options: {
@@ -53,6 +59,7 @@ export async function createToolVm(
 		readonly hostWorkMountDir: string;
 		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
+		readonly secretResolver: SecretResolver;
 	},
 	dependencies: ToolVmLifecycleDependencies = {},
 ): Promise<ManagedVm> {
@@ -76,6 +83,17 @@ export async function createToolVm(
 	await validateResolvedToolWorkMountDir({
 		hostWorkMountDir: options.hostWorkMountDir,
 		zone,
+	});
+	const resolvedSecrets = await resolveZoneSecrets({
+		audience: 'tool-vm',
+		injection: 'http-mediation',
+		secretResolver: options.secretResolver,
+		systemConfig: options.systemConfig,
+		zoneId: options.zoneId,
+	});
+	const { mediatedSecrets } = splitResolvedSecretsByInjection(zone.secrets, resolvedSecrets, {
+		audience: 'tool-vm',
+		logPrefix: 'tool-vm-secrets',
 	});
 	const toolImage = await buildGondolinImage({
 		buildConfigPath: toolImageProfile.buildConfig,
@@ -147,7 +165,7 @@ export async function createToolVm(
 			};
 		}
 		toolVm = await createManagedVm({
-			allowedHosts: [],
+			allowedHosts: egressHostsForAudience(zone.egressHosts, 'tool-vm'),
 			cpus: options.profile.cpus,
 			imagePath: toolImage.imagePath,
 			memory: options.profile.memory,
@@ -157,7 +175,7 @@ export async function createToolVm(
 				options.zoneId,
 				options.tcpSlot,
 			),
-			secrets: {},
+			secrets: mediatedSecrets,
 			vfsMounts,
 		});
 		if (options.zoneGitMount) {

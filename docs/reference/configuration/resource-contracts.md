@@ -235,8 +235,8 @@ The mount is read-only inside the VM.
 
 ## HTTP egress
 
-Resources are TCP bindings. They do not update `zones[].allowedHosts`.
+Resources are TCP bindings. They do not update `zones[].egressHosts`.
 
 If the task needs direct HTTPS access to Stripe, OpenAI, or another public API,
-add that host to `zones[].allowedHosts` and configure mediated secrets
+add that host to `zones[].egressHosts` with the right audience and configure mediated secrets
 separately.

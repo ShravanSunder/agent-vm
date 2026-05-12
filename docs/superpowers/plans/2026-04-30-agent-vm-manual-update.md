@@ -1,5 +1,7 @@
 # Agent VM Manual Update Implementation Plan
 
+Status: superseded for VM network/secrets config vocabulary by `2026-05-10-tool-vm-mediated-cli-auth.md` (`allowedHosts` -> audience-scoped `egressHosts`).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add `agent-vm manual update` so deployments can refresh generated human and agent manuals without burying the entire manual in `AGENTS.md`.

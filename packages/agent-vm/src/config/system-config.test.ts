@@ -17,7 +17,8 @@ interface ValidSystemConfigZoneInput {
 	gateway: Record<string, unknown>;
 	secrets: Record<string, unknown>;
 	runtimeAuthHints?: unknown;
-	allowedHosts: readonly string[];
+	egressHosts?: readonly { readonly host: string; readonly audience: string }[];
+	allowedHosts?: unknown;
 	defaultToolVmProfile?: string;
 	agentToolVmProfiles?: Record<string, string>;
 	agentSandboxSeeds?: Record<string, unknown>;
@@ -34,6 +35,26 @@ interface ValidSystemConfigInput {
 	tcpPool: Record<string, unknown>;
 	leaseIdleTtl?: unknown;
 	[key: string]: unknown;
+}
+
+function configureFirstZoneAsWorker(config: ValidSystemConfigInput): ValidSystemConfigZoneInput {
+	const zone = config.zones[0];
+	zone.gateway = {
+		type: 'worker',
+		imageProfile: 'worker',
+		memory: '2G',
+		cpus: 2,
+		port: 18791,
+		config: './shravan/worker.json',
+		stateDir: '../state/shravan',
+	};
+	delete zone.defaultToolVmProfile;
+	delete zone.agentToolVmProfiles;
+	delete zone.agentSandboxSeeds;
+	delete zone.runtimeAuthHints;
+	zone.egressHosts = [];
+	zone.secrets = {};
+	return zone;
 }
 
 afterEach(async () => {
@@ -83,9 +104,15 @@ function createValidSystemConfigInput(): ValidSystemConfigInput {
 					stateDir: '../state/shravan',
 					zoneFilesDir: '../zone-files/shravan',
 				},
-				secrets: {},
-				runtimeAuthHints: [],
-				allowedHosts: ['discord.com'],
+				secrets: {
+					OPENCLAW_GATEWAY_TOKEN: {
+						source: 'environment',
+						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						injection: 'env',
+						audience: 'gateway',
+					},
+				},
+				egressHosts: [{ host: 'discord.com', audience: 'gateway' }],
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},
 			},
@@ -344,10 +371,15 @@ describe('loadSystemConfig', () => {
 							ANTHROPIC_API_KEY: {
 								source: '1password',
 								ref: 'op://AI/anthropic/api-key',
+								injection: 'http-mediation',
+								audience: 'gateway',
 								hosts: ['api.anthropic.com'],
 							},
 						},
-						allowedHosts: ['api.anthropic.com', 'api.openai.com'],
+						egressHosts: ['api.anthropic.com', 'api.openai.com'].map((host) => ({
+							host,
+							audience: 'gateway' as const,
+						})),
 					},
 				],
 				toolVmProfiles: {
@@ -469,7 +501,7 @@ describe('loadSystemConfig', () => {
 			id: existingZone.id,
 			secrets: existingZone.secrets,
 			runtimeAuthHints: existingZone.runtimeAuthHints,
-			allowedHosts: existingZone.allowedHosts,
+			egressHosts: existingZone.egressHosts ?? [],
 			gateway: {
 				type: 'worker',
 				imageProfile: 'worker',
@@ -824,7 +856,7 @@ describe('loadSystemConfig', () => {
 								injection: 'env',
 							},
 						},
-						allowedHosts: ['discord.com'],
+						egressHosts: ['discord.com'].map((host) => ({ host, audience: 'gateway' as const })),
 						defaultToolVmProfile: 'standard',
 						agentToolVmProfiles: {},
 					},
@@ -898,9 +930,15 @@ describe('loadSystemConfig', () => {
 							stateDir: '../state/shravan',
 							zoneFilesDir: '../zone-files/shravan',
 						},
-						secrets: {},
-						runtimeAuthHints: [],
-						allowedHosts: ['discord.com'],
+						secrets: {
+							OPENCLAW_GATEWAY_TOKEN: {
+								source: 'environment',
+								envVar: 'OPENCLAW_GATEWAY_TOKEN',
+								injection: 'env',
+								audience: 'gateway',
+							},
+						},
+						egressHosts: ['discord.com'].map((host) => ({ host, audience: 'gateway' as const })),
 						defaultToolVmProfile: 'standard',
 						agentToolVmProfiles: {},
 					},
@@ -925,19 +963,26 @@ describe('loadSystemConfig', () => {
 
 	test('loads service token runtime auth hints from zone config', async () => {
 		const config = createValidSystemConfigInput();
-		const zones = config.zones as Array<{
-			runtimeAuthHints?: unknown;
-			secrets: Record<string, unknown>;
-		}>;
-		const zone = zones[0];
-		if (!zone) {
-			throw new Error('Expected valid config fixture to include a zone.');
-		}
-		zone.secrets.GITHUB_TOKEN = {
-			source: 'environment',
-			envVar: 'GITHUB_TOKEN',
-			injection: 'http-mediation',
-			hosts: ['api.github.com'],
+		const zone = configureFirstZoneAsWorker(config);
+		zone.egressHosts = [
+			{ host: 'api.github.com', audience: 'gateway' },
+			{ host: 'api.linear.app', audience: 'both' },
+		];
+		zone.secrets = {
+			GITHUB_TOKEN: {
+				source: 'environment',
+				envVar: 'GITHUB_TOKEN',
+				injection: 'http-mediation',
+				audience: 'gateway',
+				hosts: ['api.github.com'],
+			},
+			LINEAR_API_KEY: {
+				source: 'environment',
+				envVar: 'LINEAR_API_KEY',
+				injection: 'http-mediation',
+				audience: 'both',
+				hosts: ['api.linear.app'],
+			},
 		};
 		zone.runtimeAuthHints = [
 			{
@@ -946,6 +991,13 @@ describe('loadSystemConfig', () => {
 				service: 'github',
 				hosts: ['api.github.com'],
 				tools: ['gh'],
+			},
+			{
+				kind: 'service-token',
+				secret: 'LINEAR_API_KEY',
+				service: 'linear',
+				hosts: ['api.linear.app'],
+				tools: ['linear'],
 			},
 		];
 		const configPath = await writeSystemConfigForTest('agent-vm-system-runtime-auth-', config);
@@ -961,10 +1013,370 @@ describe('loadSystemConfig', () => {
 							hosts: ['api.github.com'],
 							tools: ['gh'],
 						},
+						{
+							kind: 'service-token',
+							secret: 'LINEAR_API_KEY',
+							service: 'linear',
+							hosts: ['api.linear.app'],
+							tools: ['linear'],
+						},
 					],
 				},
 			],
 		});
+	});
+
+	test('loads explicit egress host and secret audiences', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		delete zone.allowedHosts;
+		zone.egressHosts = [
+			{ host: 'api.github.com', audience: 'both' },
+			{ host: 'api.linear.app', audience: 'tool-vm' },
+			{ host: 'discord.com', audience: 'gateway' },
+		];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'both',
+			hosts: ['api.github.com'],
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-audience-', config);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			zones: [
+				{
+					egressHosts: [
+						{ host: 'api.github.com', audience: 'both' },
+						{ host: 'api.linear.app', audience: 'tool-vm' },
+						{ host: 'discord.com', audience: 'gateway' },
+					],
+					secrets: {
+						GITHUB_TOKEN: {
+							audience: 'both',
+							hosts: ['api.github.com'],
+							injection: 'http-mediation',
+						},
+					},
+				},
+			],
+		});
+	});
+
+	test('allows mediated secret hosts covered by egress host wildcard patterns', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [
+			{ host: '*.github.com', audience: 'both' },
+			{ host: 'discord.com', audience: 'gateway' },
+		];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'both',
+			hosts: ['api.github.com'],
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-egress-wildcard-', config);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			zones: [
+				expect.objectContaining({
+					egressHosts: expect.arrayContaining([{ host: '*.github.com', audience: 'both' }]),
+					secrets: expect.objectContaining({
+						GITHUB_TOKEN: expect.objectContaining({
+							hosts: ['api.github.com'],
+						}),
+					}),
+				}),
+			],
+		});
+	});
+
+	test('does not treat subdomain wildcards as suffix contains checks', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [
+			{ host: '*.github.com', audience: 'gateway' },
+			{ host: 'discord.com', audience: 'gateway' },
+		];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'gateway',
+			hosts: ['evilgithub.com'],
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-egress-wildcard-no-suffix-contains-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/egressHosts/u);
+	});
+
+	test('rejects legacy allowedHosts without explicit egress host audiences', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		delete zone.egressHosts;
+		zone.allowedHosts = ['discord.com'];
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-legacy-allowed-hosts-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/egressHosts/u);
+	});
+
+	test('rejects egress host entries without audience', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [
+			{ host: 'api.github.com' } as unknown as { host: string; audience: string },
+		];
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-egress-host-audience-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/audience/u);
+	});
+
+	test('rejects zone secrets without audience', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			hosts: ['api.github.com'],
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-secret-audience-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/audience/u);
+	});
+
+	test('rejects http-mediated secrets without hosts', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'gateway',
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-secret-mediation-hosts-missing-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/hosts/u);
+	});
+
+	test('rejects http-mediated secrets with empty hosts', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'gateway',
+			hosts: [],
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-secret-mediation-hosts-empty-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toMatchObject({
+			issues: expect.arrayContaining([
+				expect.objectContaining({
+					path: ['zones', 0, 'secrets', 'GITHUB_TOKEN', 'hosts'],
+				}),
+			]),
+		});
+	});
+
+	test('rejects env secrets outside the gateway audience', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.secrets.DISCORD_BOT_TOKEN = {
+			source: 'environment',
+			envVar: 'DISCORD_BOT_TOKEN',
+			injection: 'env',
+			audience: 'tool-vm',
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-env-tool-vm-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/gateway/u);
+	});
+
+	test('rejects env secrets shared with both audiences', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.secrets.DISCORD_BOT_TOKEN = {
+			source: 'environment',
+			envVar: 'DISCORD_BOT_TOKEN',
+			injection: 'env',
+			audience: 'both',
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-env-both-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/audience/u);
+	});
+
+	test('rejects env secrets that declare hosts', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.secrets.DISCORD_BOT_TOKEN = {
+			source: 'environment',
+			envVar: 'DISCORD_BOT_TOKEN',
+			injection: 'env',
+			audience: 'gateway',
+			hosts: ['discord.com'],
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-env-hosts-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/hosts/u);
+	});
+
+	test('rejects secret names that cannot be exported safely', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.secrets['BAD-NAME'] = {
+			source: 'environment',
+			envVar: 'BAD_NAME',
+			injection: 'env',
+			audience: 'gateway',
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-secret-name-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/environment variable names/u);
+	});
+
+	test('allows environment-sourced Tool VM secrets only through http mediation', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [
+			...(zone.egressHosts ?? []),
+			{ host: 'api.linear.app', audience: 'tool-vm' },
+		];
+		zone.secrets.LINEAR_API_KEY = {
+			source: 'environment',
+			envVar: 'LINEAR_API_KEY',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.linear.app'],
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-env-source-tool-vm-mediated-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			zones: [
+				expect.objectContaining({
+					secrets: expect.objectContaining({
+						LINEAR_API_KEY: expect.objectContaining({
+							source: 'environment',
+							injection: 'http-mediation',
+							audience: 'tool-vm',
+						}),
+					}),
+				}),
+			],
+		});
+	});
+
+	test('rejects mediated secret hosts that are not declared for the same audience', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [{ host: 'api.linear.app', audience: 'gateway' }];
+		zone.secrets.LINEAR_API_KEY = {
+			source: 'environment',
+			envVar: 'LINEAR_API_KEY',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.linear.app'],
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-mediated-egress-audience-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/egressHosts/u);
+	});
+
+	test('rejects OpenClaw zones without gateway env token', async () => {
+		const config = createValidSystemConfigInput();
+		delete config.zones[0].secrets.OPENCLAW_GATEWAY_TOKEN;
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-openclaw-token-missing-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/OPENCLAW_GATEWAY_TOKEN/u);
+	});
+
+	test('rejects OpenClaw gateway token outside gateway env injection', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].secrets.OPENCLAW_GATEWAY_TOKEN = {
+			source: 'environment',
+			envVar: 'OPENCLAW_GATEWAY_TOKEN',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['openclaw.local'],
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-openclaw-token-wrong-surface-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/OPENCLAW_GATEWAY_TOKEN/u);
+	});
+
+	test('rejects runtime auth hints on OpenClaw zones', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.egressHosts = [
+			...(zone.egressHosts ?? []),
+			{ host: 'api.github.com', audience: 'gateway' },
+		];
+		zone.secrets.GITHUB_TOKEN = {
+			source: 'environment',
+			envVar: 'GITHUB_TOKEN',
+			injection: 'http-mediation',
+			audience: 'gateway',
+			hosts: ['api.github.com'],
+		};
+		zone.runtimeAuthHints = [
+			{
+				kind: 'service-token',
+				secret: 'GITHUB_TOKEN',
+				service: 'github',
+				hosts: ['api.github.com'],
+				tools: ['gh'],
+			},
+		];
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-runtime-auth-gateway-secret-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/worker gateway runtime/u);
+	});
+
+	test('rejects empty runtime auth hints on OpenClaw zones', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.runtimeAuthHints = [];
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-runtime-auth-openclaw-empty-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/worker gateway runtime/u);
 	});
 
 	test('allows omitted runtime auth hints', async () => {
@@ -983,7 +1395,7 @@ describe('loadSystemConfig', () => {
 
 	test('rejects runtime auth hints that reference missing secrets', async () => {
 		const config = createValidSystemConfigInput();
-		const zone = config.zones[0];
+		const zone = configureFirstZoneAsWorker(config);
 		zone.runtimeAuthHints = [
 			{
 				kind: 'service-token',
@@ -1003,11 +1415,13 @@ describe('loadSystemConfig', () => {
 
 	test('rejects runtime auth hints that reference hosts outside the mediated secret', async () => {
 		const config = createValidSystemConfigInput();
-		const zone = config.zones[0];
+		const zone = configureFirstZoneAsWorker(config);
+		zone.egressHosts = [{ host: 'registry.npmjs.org', audience: 'gateway' }];
 		zone.secrets.NPM_AUTH_TOKEN = {
 			source: 'environment',
 			envVar: 'NPM_AUTH_TOKEN',
 			injection: 'http-mediation',
+			audience: 'gateway',
 			hosts: ['registry.npmjs.org'],
 		};
 		zone.runtimeAuthHints = [
@@ -1026,11 +1440,12 @@ describe('loadSystemConfig', () => {
 
 	test('rejects runtime auth hints that reference env-injected secrets', async () => {
 		const config = createValidSystemConfigInput();
-		const zone = config.zones[0];
+		const zone = configureFirstZoneAsWorker(config);
 		zone.secrets.GITHUB_TOKEN = {
 			source: 'environment',
 			envVar: 'GITHUB_TOKEN',
 			injection: 'env',
+			audience: 'gateway',
 		};
 		zone.runtimeAuthHints = [
 			{
@@ -1044,6 +1459,40 @@ describe('loadSystemConfig', () => {
 		const configPath = await writeSystemConfigForTest('agent-vm-system-runtime-auth-env-', config);
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/http-mediation/u);
+	});
+
+	test('rejects worker runtime auth hints that reference Tool VM-only secrets', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = configureFirstZoneAsWorker(config);
+		zone.egressHosts = [{ host: 'api.linear.app', audience: 'tool-vm' }];
+		zone.secrets.LINEAR_API_KEY = {
+			source: 'environment',
+			envVar: 'LINEAR_API_KEY',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.linear.app'],
+		};
+		zone.runtimeAuthHints = [
+			{
+				kind: 'service-token',
+				secret: 'LINEAR_API_KEY',
+				service: 'linear',
+				hosts: ['api.linear.app'],
+				tools: ['linear'],
+			},
+		];
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-runtime-auth-tool-vm-secret-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toMatchObject({
+			issues: expect.arrayContaining([
+				expect.objectContaining({
+					path: ['zones', 0, 'runtimeAuthHints', 0, 'secret'],
+				}),
+			]),
+		});
 	});
 
 	test('rejects zones that reference unknown tool VM profiles', async () => {
@@ -1097,9 +1546,15 @@ describe('loadSystemConfig', () => {
 							stateDir: '../state/shravan',
 							zoneFilesDir: '../zone-files/shravan',
 						},
-						secrets: {},
-						runtimeAuthHints: [],
-						allowedHosts: ['discord.com'],
+						secrets: {
+							OPENCLAW_GATEWAY_TOKEN: {
+								source: 'environment',
+								envVar: 'OPENCLAW_GATEWAY_TOKEN',
+								injection: 'env',
+								audience: 'gateway',
+							},
+						},
+						egressHosts: ['discord.com'].map((host) => ({ host, audience: 'gateway' as const })),
 						defaultToolVmProfile: 'missing-profile',
 						agentToolVmProfiles: {},
 					},
@@ -1348,7 +1803,7 @@ describe('loadSystemConfig', () => {
 				},
 				secrets: {},
 				runtimeAuthHints: [],
-				allowedHosts: ['api.openai.com'],
+				egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			},
 		];
 		delete config.toolVmProfiles;
@@ -1419,9 +1874,15 @@ describe('loadSystemConfig', () => {
 					stateDir: '../state/shravan',
 					zoneFilesDir: '../zone-files/shravan',
 				},
-				secrets: {},
-				runtimeAuthHints: [],
-				allowedHosts: ['discord.com'],
+				secrets: {
+					OPENCLAW_GATEWAY_TOKEN: {
+						source: 'environment',
+						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						injection: 'env',
+						audience: 'gateway',
+					},
+				},
+				egressHosts: ['discord.com'].map((host) => ({ host, audience: 'gateway' as const })),
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},
 			},
@@ -1450,7 +1911,7 @@ describe('loadSystemConfig', () => {
 				},
 				secrets: {},
 				runtimeAuthHints: [],
-				allowedHosts: ['discord.com'],
+				egressHosts: ['discord.com'].map((host) => ({ host, audience: 'gateway' as const })),
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},
 			},

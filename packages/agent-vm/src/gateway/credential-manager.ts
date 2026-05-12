@@ -1,3 +1,4 @@
+import { targetsAudience, type RuntimeVmAudience } from '@agent-vm/gateway-interface';
 import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
 
 import type { SystemConfig } from '../config/system-config.js';
@@ -26,11 +27,30 @@ function findZone(
 	return systemConfig.zones.find((zone) => zone.id === zoneId);
 }
 
-export async function resolveZoneSecrets(options: {
-	readonly systemConfig: SystemConfig;
-	readonly zoneId: string;
-	readonly secretResolver: SecretResolver;
-}): Promise<Record<string, string>> {
+type ResolveZoneSecretsOptions =
+	| {
+			readonly systemConfig: SystemConfig;
+			readonly zoneId: string;
+			readonly secretResolver: SecretResolver;
+			readonly audience: 'gateway';
+			readonly injection?: 'env' | 'http-mediation';
+	  }
+	| {
+			readonly systemConfig: SystemConfig;
+			readonly zoneId: string;
+			readonly secretResolver: SecretResolver;
+			readonly audience: 'tool-vm';
+			readonly injection: 'http-mediation';
+	  };
+
+export async function resolveZoneSecrets(
+	options: ResolveZoneSecretsOptions,
+): Promise<Record<string, string>> {
+	if (options.audience === 'tool-vm' && options.injection !== 'http-mediation') {
+		throw new Error("Tool VM secret resolution requires injection 'http-mediation'.");
+	}
+	const runtimeAudience: RuntimeVmAudience = options.audience;
+	const injectionFilter = options.injection;
 	const zone = findZone(options.systemConfig, options.zoneId);
 	if (!zone) {
 		throw new Error(`Unknown zone '${options.zoneId}'.`);
@@ -38,6 +58,17 @@ export async function resolveZoneSecrets(options: {
 
 	const resolvedSecrets: Record<string, string> = {};
 	for (const [secretName, secretConfig] of Object.entries(zone.secrets)) {
+		if (!targetsAudience(secretConfig.audience, runtimeAudience)) {
+			continue;
+		}
+		if (options.audience === 'tool-vm' && secretConfig.injection !== 'http-mediation') {
+			throw new Error(
+				`Tool VM secret '${secretName}' in zone '${zone.id}' must use injection 'http-mediation'.`,
+			);
+		}
+		if (injectionFilter && secretConfig.injection !== injectionFilter) {
+			continue;
+		}
 		let secretRef: SecretRef;
 		switch (secretConfig.source) {
 			case 'environment':

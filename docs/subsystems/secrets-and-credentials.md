@@ -155,27 +155,38 @@ VM makes requests to the allowed hosts without any secret material.
 ```
 
 The `http-mediation` injection mode requires at least one entry in `hosts`.
-This is enforced by a Zod `superRefine` validator in the system config schema.
+Tool VM secrets must use `http-mediation`; the Tool VM never receives raw
+`env`-injected secrets. A secret may still use `source: "environment"` for a
+Tool VM audience, but that only tells the controller where to read the value
+before handing it to Gondolin mediation.
 
 ---
 
 ## splitResolvedGatewaySecrets
 
-After zone secrets are resolved to plaintext, `splitResolvedGatewaySecrets`
-(gateway-interface/split-resolved-gateway-secrets.ts) categorizes them:
+After zone secrets are resolved to plaintext,
+`splitResolvedSecretsByInjection` categorizes them by runtime audience and
+injection mode:
 
 ```
   resolvedSecrets: Record<string, string>
     |
     for each (secretName, secretValue):
       |
+      +-- zone.secrets[secretName].audience does not target runtime
+      |     --> skipped
+      |
       +-- zone.secrets[secretName].injection === 'http-mediation'
-      |   AND zone.secrets[secretName].hosts exists
+      |   AND zone.secrets[secretName].hosts is non-empty
       |     --> mediatedSecrets[secretName] = { hosts, value }   (SecretSpec)
       |
-      +-- otherwise (injection === 'env' or no hosts)
+      +-- runtime audience is gateway AND injection === 'env'
             --> environmentSecrets[secretName] = value            (plain string)
 ```
+
+Schema validation rejects `env` injection for non-gateway audiences. The
+splitter repeats the check as defense in depth so programmatic config bypasses
+do not silently turn into Tool VM raw secret injection.
 
 Returns:
 
@@ -258,10 +269,13 @@ environment variable.
 
 ## Runtime Auth Hints
 
-Mediated secrets can be described to agents with zone `runtimeAuthHints`. The
-controller turns those hints into generated runtime instructions under
-`/agent-vm/agents.md` and `/agent-vm/runtime-instructions.md`, and injects the
-same text into the prompt `runtimeInstructions` layer.
+Worker-zone mediated secrets can be described to agents with zone
+`runtimeAuthHints`. The controller turns those hints into generated worker
+runtime instructions under `/agent-vm/agents.md` and
+`/agent-vm/runtime-instructions.md`, and injects the same text into the prompt
+`runtimeInstructions` layer. OpenClaw zones do not consume `runtimeAuthHints`;
+Tool VM service auth is controlled by Tool VM-audience mediated secrets and
+`egressHosts`.
 
 `runtimeAuthHints` do not mount credential files or expose real secret values.
 They name the service, mediated host list, tool names, and placeholder env var
@@ -277,9 +291,10 @@ toolchain setup is not known.
 
 | Secret | Resolved On | Enters VM? | Mechanism |
 |--------|------------|------------|-----------|
-| Zone secret (injection: env) | Host | Yes | VM environment variable |
-| Zone secret (injection: http-mediation) | Host | No | Gondolin proxy injects into HTTP requests |
-| runtimeAuthHints for mediated secrets | Host | Placeholder name only | Generated runtime instructions under `/agent-vm` |
+| Zone secret (injection: env, audience: gateway) | Host | Gateway VM only | VM environment variable |
+| Zone secret (injection: http-mediation, audience: gateway/both) | Host | Placeholder only | Gateway VM Gondolin proxy injects into HTTP requests |
+| Zone secret (injection: http-mediation, audience: tool-vm/both) | Host | Placeholder only | Tool VM Gondolin proxy injects into HTTP requests |
+| Worker runtimeAuthHints for mediated secrets | Host | Placeholder name only | Generated worker runtime instructions under `/agent-vm` |
 | OPENCLAW_GATEWAY_TOKEN | Host | Gateway VM only | Env SecretRef plus runtime-only `/run/openclaw/gateway-auth.env` for root `openclaw` admin commands |
 | githubToken | Host | No | Controller-side git push only |
 | gateway.authProfilesByAgent | Host | Indirectly | Per-agent profile written to host disk; VM reads via VFS mount |

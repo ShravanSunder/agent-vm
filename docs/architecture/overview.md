@@ -57,7 +57,7 @@ zone files; the OpenClaw VM path is `/zone`.
 
 ### Controller ↔ Gondolin
 
-The controller calls `gondolin-adapter` to create VMs. It passes a `GatewayVmSpec` (VFS mounts, secrets, tcpHosts, allowedHosts, rootfsMode) and gets back a `ManagedVm` handle with `exec()`, `enableSsh()`, `enableIngress()`, `close()`.
+The controller calls `gondolin-adapter` to create VMs. It passes a `GatewayVmSpec` (VFS mounts, secrets, tcpHosts, derived VM `allowedHosts`, rootfsMode) and gets back a `ManagedVm` handle with `exec()`, `enableSsh()`, `enableIngress()`, `close()`. Zone config uses audience-scoped `egressHosts`; lifecycle code derives the per-VM `allowedHosts` list from that higher-level policy.
 
 → Deep dive: [subsystems/gondolin-vm-layer.md](../subsystems/gondolin-vm-layer.md)
 → Upstream Gondolin sandbox example:
@@ -311,7 +311,7 @@ The `GatewayLifecycle` interface (`gateway-interface` package) is the contract e
   |     vfsMounts                      Host-to-guest folder mappings
   |     mediatedSecrets                Secrets injected via HTTP mediation
   |     tcpHosts                       Synthetic DNS -> TCP host mappings
-  |     allowedHosts                   Outbound HTTP allowlist
+  |     allowedHosts                   Derived outbound HTTP allowlist
   |     rootfsMode                     cow | memory | readonly
   |     sessionLabel                   {namespace}:{zone}:gateway
   |
@@ -622,15 +622,17 @@ directory.
   |                      OpenClaw zone files; RealFS at /zone and included in backups
   |                      Tool VM leases may select concrete child paths under /zone
   |-- images            Build config paths for gateway and tool VM images
-  |-- zones[]           Zone definitions: gateway type, resources, secrets, allowed hosts
+  |-- zones[]           Zone definitions: gateway type, resources, secrets, audience-scoped egress hosts
   |-- toolVmProfiles    Named Tool VM profiles (memory, cpus, image profile)
   |-- tcpPool           Port range and pool size for tool VM TCP slots
   |-- leaseIdleTtl      Optional per-scope lease idle TTL policy
 ```
 
 Each zone declares its `gateway.type` (`openclaw` or `worker`), resource
-limits, secret references, and an outbound host allowlist. OpenClaw zones also
-declare a fallback `defaultToolVmProfile` and an explicit
+limits, secret references, and audience-scoped outbound `egressHosts`.
+Gateway VMs receive `gateway | both` egress hosts and secrets; OpenClaw Tool
+VMs receive only `tool-vm | both` mediated secrets and egress hosts. OpenClaw
+zones also declare a fallback `defaultToolVmProfile` and an explicit
 `agentToolVmProfiles` map. `agentToolVmProfiles` can override that fallback for
 `agent:<agentId>` tool leases inside the same zone. Worker-only zones omit Tool
 VM profile fields. The schema validates image profile references and requires
@@ -666,8 +668,9 @@ The system operates across three trust boundaries:
   |  |  ZONE 2: GATEWAY VM  (partially trusted)                      |  |
   |  |                                                                |  |
   |  |  Long-running (OpenClaw) or per-task (Worker) process          |  |
-  |  |  Has: env-injected secrets, HTTP-mediated secrets               |  |
-  |  |  Can: make outbound HTTP (allowlisted), reach controller       |  |
+  |  |  Has: gateway-audience env and HTTP-mediated secrets            |  |
+  |  |  Can: make outbound HTTP to gateway-audience hosts, reach       |  |
+  |  |       controller                                                |  |
   |  |  Cannot: access host filesystem outside VFS mounts             |  |
   |  |                                                                |  |
   |  |  +----------------------------------------------------------+  |  |

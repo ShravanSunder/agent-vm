@@ -172,6 +172,7 @@ export function createOpenClawZoneRuntime(
 				{
 					refreshZoneSecrets: async (zoneId) => {
 						await resolveZoneSecrets({
+							audience: 'gateway',
 							secretResolver: options.secretResolver,
 							systemConfig: options.systemConfig,
 							zoneId,

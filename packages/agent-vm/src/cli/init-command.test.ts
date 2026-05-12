@@ -155,7 +155,14 @@ const generatedSystemConfigSchema = z
 		zones: z.tuple([
 			z
 				.object({
-					allowedHosts: z.array(z.string()).optional(),
+					egressHosts: z
+						.array(
+							z.object({
+								host: z.string(),
+								audience: z.enum(['gateway', 'tool-vm', 'both']),
+							}),
+						)
+						.optional(),
 					gateway: z
 						.object({ config: z.string().optional(), type: z.string().optional() })
 						.passthrough(),
@@ -1173,8 +1180,9 @@ describe('scaffoldAgentVmProject', () => {
 
 		const config = await readGeneratedSystemConfig(targetDir);
 		const zone = config.zones[0];
+		const egressHosts = (zone.egressHosts ?? []).map((entry) => entry.host);
 
-		expect(zone.allowedHosts).toEqual(
+		expect(egressHosts).toEqual(
 			expect.arrayContaining([
 				'api.anthropic.com',
 				'api.openai.com',
@@ -1196,8 +1204,10 @@ describe('scaffoldAgentVmProject', () => {
 				'api.cohere.ai',
 			]),
 		);
-		expect(zone.allowedHosts).not.toContain('discord.com');
-		expect(zone.allowedHosts).not.toContain('cdn.discordapp.com');
+		expect(egressHosts).not.toContain('discord.com');
+		expect(egressHosts).not.toContain('cdn.discordapp.com');
+		expect(zone).not.toHaveProperty('allowedHosts');
+		expect(zone).not.toHaveProperty('runtimeAuthHints');
 		expect(zone.websocketBypass).toEqual([]);
 	});
 
@@ -1266,6 +1276,8 @@ describe('scaffoldAgentVmProject', () => {
 			readonly agents?: {
 				readonly defaults?: {
 					readonly sandbox?: {
+						readonly backend?: string;
+						readonly mode?: string;
 						readonly scope?: string;
 						readonly workspaceAccess?: string;
 					};
@@ -1281,6 +1293,8 @@ describe('scaffoldAgentVmProject', () => {
 			readonly tools?: { readonly allow?: readonly string[] };
 		};
 		expect(openClawConfig.gateway?.auth?.mode).toBe('token');
+		expect(openClawConfig.agents?.defaults?.sandbox?.backend).toBe('gondolin');
+		expect(openClawConfig.agents?.defaults?.sandbox?.mode).toBe('all');
 		expect(openClawConfig.agents?.defaults?.sandbox?.scope).toBe('agent');
 		expect(openClawConfig.agents?.defaults?.sandbox?.workspaceAccess).toBe('rw');
 		expect(openClawConfig.session?.dmScope).toBe('per-channel-peer');
@@ -1380,11 +1394,12 @@ describe('scaffoldAgentVmProject', () => {
 
 		const config = await readGeneratedSystemConfig(targetDir);
 		const zone = config.zones[0];
+		const egressHosts = (zone.egressHosts ?? []).map((entry) => entry.host);
 
-		expect(zone.allowedHosts).toContain('api.anthropic.com');
-		expect(zone.allowedHosts).toContain('api.openai.com');
-		expect(zone.allowedHosts).toContain('mcp.deepwiki.com');
-		expect(zone.allowedHosts).not.toContain('discord.com');
+		expect(egressHosts).toContain('api.anthropic.com');
+		expect(egressHosts).toContain('api.openai.com');
+		expect(egressHosts).toContain('mcp.deepwiki.com');
+		expect(egressHosts).not.toContain('discord.com');
 		expect(zone.websocketBypass).toEqual([]);
 	});
 
@@ -1695,11 +1710,12 @@ describe('scaffoldAgentVmProject', () => {
 		);
 
 		const systemConfig = (await readGeneratedSystemConfig(targetDir)) as {
-			readonly zones: [{ readonly allowedHosts: readonly string[] }];
+			readonly zones: [{ readonly egressHosts: readonly { readonly host: string }[] }];
 		};
+		const egressHosts = systemConfig.zones[0].egressHosts.map((entry) => entry.host);
 
-		expect(systemConfig.zones[0].allowedHosts).toContain('api.github.com');
-		expect(systemConfig.zones[0].allowedHosts).toContain('github.com');
-		expect(systemConfig.zones[0].allowedHosts).toContain('mcp.deepwiki.com');
+		expect(egressHosts).toContain('api.github.com');
+		expect(egressHosts).toContain('github.com');
+		expect(egressHosts).toContain('mcp.deepwiki.com');
 	});
 });

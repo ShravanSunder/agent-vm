@@ -1,5 +1,7 @@
 # OpenClaw Discord Media SSRF Compatibility Implementation Plan
 
+Status: superseded for VM network/secrets config vocabulary by `2026-05-10-tool-vm-mediated-cli-auth.md` (`allowedHosts` -> audience-scoped `egressHosts`).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Do not commit unless the human explicitly asks; commit checkpoints below are handoff boundaries, not permission.
 
 **Goal:** Make OpenClaw Discord media downloads pass SSRF validation inside agent-vm's Gondolin-backed OpenClaw gateways without broad Discord hostname bypasses.

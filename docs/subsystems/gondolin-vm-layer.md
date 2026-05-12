@@ -137,7 +137,7 @@ The `secrets` parameter in `CreateVmOptions` is a `Record<string, SecretSpec>` w
 
 The hook bundle also sets environment variables (`hookBundle.env`) that configure the in-VM HTTP client to route through the mediation proxy. The VM process makes normal HTTP requests -- it never knows secrets are being injected.
 
-Only hosts in the `allowedHosts` list can be reached. Requests to unlisted hosts are blocked at the proxy layer.
+Only hosts in the `allowedHosts` list can be reached. Requests to unlisted hosts are blocked at the proxy layer. At the controller configuration layer, zones declare audience-scoped `egressHosts`; gateway and Tool VM lifecycle code translate that higher-level policy into the low-level Gondolin `allowedHosts` list for each VM.
 
 ---
 
@@ -238,7 +238,7 @@ The `gondolin-adapter` package (`packages/gondolin-adapter/src/index.ts`) re-exp
 | `buildImage`, `computeBuildFingerprint` | `build-pipeline.ts` | Fingerprint-cached image builds |
 | `BuildConfig`, `BuildImageOptions`, `BuildImageResult` | `build-pipeline.ts` | Build configuration and result types |
 | `getDefaultBuildConfig` | `@earendil-works/gondolin` | SDK default build config (re-exported) |
-| `compilePolicy`, `PolicySources` | `policy-compiler.ts` | Merge and dedupe host allowlists from multiple sources |
+| `compilePolicy`, `PolicySources` | `policy-compiler.ts` | Merge and dedupe VM host allowlists from multiple sources |
 | `validateWritableMount`, `validateRuntimeMountPolicy` | `mount-policy.ts` | Enforce writable mount restrictions and auth path protection |
 | `ensureVolumeDir`, `resolveVolumeDirs` | `volume-manager.ts` | Create and resolve persistent volume directories |
 
@@ -253,7 +253,7 @@ The `gondolin-adapter` package (`packages/gondolin-adapter/src/index.ts`) re-exp
 | `packages/gondolin-adapter/src/types.ts` | 14 | `SecretSpec` and `SecretRef` type definitions |
 | `packages/gondolin-adapter/src/build-pipeline.ts` | 132 | `buildImage()`, `computeBuildFingerprint()`, asset verification |
 | `packages/gondolin-adapter/src/mount-policy.ts` | 117 | Writable mount validation, auth path protection |
-| `packages/gondolin-adapter/src/policy-compiler.ts` | 33 | Host allowlist compilation and deduplication |
+| `packages/gondolin-adapter/src/policy-compiler.ts` | 33 | VM host allowlist compilation and deduplication |
 | `packages/gondolin-adapter/src/volume-manager.ts` | 39 | Persistent volume directory management |
 | `packages/gondolin-adapter/src/write-file-atomically.ts` | 29 | Atomic file write via write-then-rename |
 | `packages/gondolin-adapter/src/index.ts` | 11 | Barrel re-exports |

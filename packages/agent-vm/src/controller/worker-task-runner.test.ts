@@ -149,9 +149,16 @@ const systemConfig = {
 				config: '',
 				stateDir: '',
 			},
-			secrets: {},
+			secrets: {
+				OPENCLAW_GATEWAY_TOKEN: {
+					source: 'environment',
+					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					injection: 'env',
+					audience: 'gateway',
+				},
+			},
 			runtimeAuthHints: [],
-			allowedHosts: ['github.com'],
+			egressHosts: ['github.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			websocketBypass: [],
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},

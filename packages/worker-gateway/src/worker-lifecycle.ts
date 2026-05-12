@@ -4,7 +4,12 @@ import type {
 	GatewayProcessSpec,
 	GatewayVmSpec,
 } from '@agent-vm/gateway-interface';
-import { buildGatewaySessionLabel, splitResolvedGatewaySecrets } from '@agent-vm/gateway-interface';
+import {
+	buildGatewaySessionLabel,
+	controllerVmHost,
+	gatewayVmAllowedHosts,
+	splitResolvedGatewaySecrets,
+} from '@agent-vm/gateway-interface';
 
 export const workerLifecycle: GatewayLifecycle = {
 	buildVmSpec({
@@ -22,7 +27,7 @@ export const workerLifecycle: GatewayLifecycle = {
 		);
 
 		return {
-			allowedHosts: [...zone.allowedHosts],
+			allowedHosts: gatewayVmAllowedHosts(zone.egressHosts),
 			environment: {
 				HOME: '/home/coder',
 				CONTROLLER_BASE_URL: 'http://controller.vm.host:18800',
@@ -45,7 +50,7 @@ export const workerLifecycle: GatewayLifecycle = {
 			rootfsMode: 'cow',
 			sessionLabel: buildGatewaySessionLabel(projectNamespace, zone.id),
 			tcpHosts: {
-				'controller.vm.host:18800': `127.0.0.1:${controllerPort}`,
+				[`${controllerVmHost}:18800`]: `127.0.0.1:${controllerPort}`,
 			},
 			vfsMounts: {
 				'/state': {

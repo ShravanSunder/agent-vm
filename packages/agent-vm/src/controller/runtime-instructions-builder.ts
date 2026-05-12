@@ -26,6 +26,7 @@ export interface BuildResolvedRuntimeResourcesOptions {
 }
 
 export interface BuildRuntimeInstructionsOptions {
+	readonly gatewayType: 'worker';
 	readonly resolvedResources: readonly ResolvedRuntimeResource[];
 	readonly runtimeAuthHints: readonly RuntimeAuthHint[];
 	readonly taskId: string;
@@ -120,6 +121,20 @@ function buildGithubAuthRecipe(hint: RuntimeAuthHint): readonly string[] {
 	];
 }
 
+function buildLinearAuthRecipe(hint: RuntimeAuthHint): readonly string[] {
+	return [
+		'Use the mediated placeholder as LINEAR_API_KEY for each Linear CLI command:',
+		'',
+		`  LINEAR_API_KEY="$${hint.secret}" linear auth whoami`,
+		`  LINEAR_API_KEY="$${hint.secret}" linear issue mine`,
+		`  LINEAR_API_KEY="$${hint.secret}" linear issue query --all-teams`,
+		'',
+		'The schpet/linear-cli reads LINEAR_API_KEY directly, so no auth file is required for basic read/query flows.',
+		'Do not store the API key in .linear.toml or run login flows that write raw credentials.',
+		'If a project needs default team/workspace settings, use non-secret config such as LINEAR_TEAM_ID, LINEAR_WORKSPACE, or a checked-in .linear.toml without api_key.',
+	];
+}
+
 function buildPythonPackageIndexAuthRecipe(hint: RuntimeAuthHint): readonly string[] {
 	const indexHost = hint.hosts[0] ?? '<private-python-index-host>';
 	return [
@@ -133,13 +148,31 @@ function buildPythonPackageIndexAuthRecipe(hint: RuntimeAuthHint): readonly stri
 	];
 }
 
+function buildReadwiseAuthRecipe(hint: RuntimeAuthHint): readonly string[] {
+	return [
+		'Before Readwise commands, log in with the mediated placeholder token:',
+		'',
+		`  readwise login-with-token "$${hint.secret}"`,
+		'',
+		'This stores the placeholder, not the raw token. The Readwise CLI sends authenticated commands to its hosted MCP endpoint with an Authorization header.',
+		`The configured Readwise host should include ${hint.hosts.join(', ')}; current Readwise CLI traffic uses mcp2.readwise.io.`,
+		'Smoke-check the CLI with:',
+		'',
+		'  readwise reader-search-documents --query "test"',
+		'',
+		'If Readwise returns 401, 403, or 404 after this setup, report an infrastructure/auth setup failure with the exact command and output.',
+	];
+}
+
 const authRecipes: Readonly<Record<string, RuntimeAuthRecipeBuilder>> = {
 	github: buildGithubAuthRecipe,
+	linear: buildLinearAuthRecipe,
 	npm: buildNpmAuthRecipe,
 	pypi: buildPythonPackageIndexAuthRecipe,
 	'pypi-private': buildPythonPackageIndexAuthRecipe,
 	python: buildPythonPackageIndexAuthRecipe,
 	'python-package-index': buildPythonPackageIndexAuthRecipe,
+	readwise: buildReadwiseAuthRecipe,
 };
 
 function buildUnknownAuthRecipe(hint: RuntimeAuthHint): readonly string[] {
@@ -227,6 +260,9 @@ export function buildResolvedRuntimeResources(
 export function buildRuntimeInstructions(
 	options: BuildRuntimeInstructionsOptions,
 ): BuiltRuntimeInstructions {
+	if (options.gatewayType !== 'worker') {
+		throw new Error('Runtime instructions are only supported for worker gateway zones.');
+	}
 	const runtimeInstructions = [
 		'# Runtime instructions',
 		buildWorkSection(options),

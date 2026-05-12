@@ -140,6 +140,7 @@ export async function startControllerRuntime(
 				hostWorkMountDir: toolVmOptions.hostWorkMountDir,
 				...(toolVmOptions.zoneGitMount ? { zoneGitMount: toolVmOptions.zoneGitMount } : {}),
 				zoneId: toolVmOptions.zoneId,
+				secretResolver: toolVmOptions.secretResolver,
 			}));
 	const tcpPool = createTcpPool(options.systemConfig.tcpPool);
 	const activeTaskRegistry = new ActiveTaskRegistry();
@@ -155,6 +156,7 @@ export async function startControllerRuntime(
 				hostWorkMountDir: leaseOptions.hostWorkMountDir,
 				...(leaseOptions.zoneGitMount ? { zoneGitMount: leaseOptions.zoneGitMount } : {}),
 				zoneId: leaseOptions.zoneId,
+				secretResolver,
 			}),
 		now,
 		tcpPool,

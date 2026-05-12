@@ -45,15 +45,16 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
       "OPENCLAW_GATEWAY_TOKEN": {
         "source": "environment",
         "envVar": "OPENCLAW_GATEWAY_TOKEN",
-        "injection": "env"
+        "injection": "env",
+        "audience": "gateway"
       }
     },
-    "allowedHosts": [
-      "api.anthropic.com",
-      "api.openai.com",
-      "auth.openai.com",
-      "chatgpt.com",
-      "generativelanguage.googleapis.com"
+    "egressHosts": [
+      { "host": "api.anthropic.com", "audience": "gateway" },
+      { "host": "api.openai.com", "audience": "gateway" },
+      { "host": "auth.openai.com", "audience": "gateway" },
+      { "host": "chatgpt.com", "audience": "gateway" },
+      { "host": "generativelanguage.googleapis.com", "audience": "gateway" }
     ],
     "websocketBypass": [],
     "defaultToolVmProfile": "standard",
@@ -191,7 +192,7 @@ trusts the mediated boundary:
 ```
 
 This only passes OpenClaw's SSRF check. Gondolin still enforces
-`zones[].allowedHosts`, so arbitrary public websites are not reachable unless
+`zones[].egressHosts`, so arbitrary public websites are not reachable unless
 the deployment allows them or routes `web_fetch` through a provider such as
 Firecrawl/Jina.
 
@@ -221,10 +222,16 @@ automatically when `channels.discord.enabled` is true.
     "DISCORD_BOT_TOKEN": {
       "source": "1password",
       "ref": "op://agent-vm/my-openclaw-discord/bot-token",
-      "injection": "env"
+      "injection": "env",
+      "audience": "gateway"
     }
   },
-  "allowedHosts": ["discord.com", "discordapp.com", "*.discordapp.com", "*.discordapp.net"],
+  "egressHosts": [
+    { "host": "discord.com", "audience": "gateway" },
+    { "host": "discordapp.com", "audience": "gateway" },
+    { "host": "*.discordapp.com", "audience": "gateway" },
+    { "host": "*.discordapp.net", "audience": "gateway" }
+  ],
   "websocketBypass": ["gateway.discord.gg:443"]
 }
 ```
@@ -262,4 +269,4 @@ agent-vm controller logs --zone my-openclaw
 | Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth-interactive codex --zone <id>` |
 | Tool calls fail | Lease creation failing | Check `defaultToolVmProfile` exists, TCP pool has free slots |
 | Discord not connecting | Deployment channel config incomplete | Add Discord plugin/config, `DISCORD_BOT_TOKEN`, Discord hosts, and `gateway.discord.gg:443` |
-| Can't reach external API | Host not allowlisted | Add to `zones[].allowedHosts` |
+| Can't reach external API | Host not allowlisted | Add to `zones[].egressHosts` with the needed audience |
