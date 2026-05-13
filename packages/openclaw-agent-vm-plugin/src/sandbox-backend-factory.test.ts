@@ -91,6 +91,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			tcpSlot: 0,
 			workdir: '/work',
 		}));
+		const publishOpenClawRuntimeStatus = vi.fn(async () => {});
 		const runRemoteShellScript = vi.fn(async () => ({
 			code: 0,
 			stderr: Buffer.from(''),
@@ -109,6 +110,17 @@ describe('createGondolinSandboxBackendFactory', () => {
 		const factory = createGondolinSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
+				openClawRuntimeStatusProvider: () => ({
+					pluginId: 'gondolin',
+					zoneId: 'shravan',
+					findings: [
+						{
+							id: 'openclaw-tool-vm-agents-defaults-sandbox-backend-shravan-defaults',
+							ok: true,
+							hint: 'agents.defaults.sandbox.backend=gondolin',
+						},
+					],
+				}),
 				profileId: 'gpu',
 				zoneId: 'shravan',
 			},
@@ -118,6 +130,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				createLeaseClient: () => ({
 					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
 					peekLease: async () => createLeasePeekResponse(),
+					publishOpenClawRuntimeStatus,
 					releaseLease: async () => {},
 					requestLease,
 				}),
@@ -158,6 +171,10 @@ describe('createGondolinSandboxBackendFactory', () => {
 			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 			zoneId: 'shravan',
 		});
+		expect(publishOpenClawRuntimeStatus).toHaveBeenCalledTimes(1);
+		expect(publishOpenClawRuntimeStatus.mock.invocationCallOrder[0]).toBeLessThan(
+			requestLease.mock.invocationCallOrder[0] ?? 0,
+		);
 		expect(buildExecSpec).toHaveBeenCalledWith({
 			command: 'ls -la',
 			env: {

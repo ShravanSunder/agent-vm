@@ -1124,6 +1124,28 @@ describe('startControllerRuntime', () => {
 				throw new Error('Expected runtime HTTP server args');
 			}
 
+			const runtimeStatusResponse = await startHttpServerArgs.app.request(
+				'/zones/shravan/openclaw-runtime-status',
+				{
+					body: JSON.stringify({
+						pluginId: 'gondolin',
+						zoneId: 'shravan',
+						findings: [
+							{
+								id: 'openclaw-tool-vm-agents-defaults-sandbox-backend-shravan-defaults',
+								ok: true,
+								hint: 'agents.defaults.sandbox.backend=gondolin',
+							},
+						],
+					}),
+					headers: {
+						'content-type': 'application/json',
+					},
+					method: 'POST',
+				},
+			);
+			expect(runtimeStatusResponse.status).toBe(200);
+
 			const leaseResponse = await startHttpServerArgs.app.request('/lease', {
 				body: JSON.stringify({
 					agentWorkspaceDir: '/zone',

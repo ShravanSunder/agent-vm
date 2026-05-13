@@ -1,6 +1,30 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { defineConfig } from 'vitest/config';
+
+function loadDotEnvLocal(): void {
+	const envLocalPath = path.resolve('.env.local');
+	if (!fs.existsSync(envLocalPath)) {
+		return;
+	}
+
+	for (const line of fs.readFileSync(envLocalPath, 'utf8').split('\n')) {
+		const trimmedLine = line.trim();
+		if (trimmedLine.length === 0 || trimmedLine.startsWith('#') || !trimmedLine.includes('=')) {
+			continue;
+		}
+
+		const delimiterIndex = trimmedLine.indexOf('=');
+		const key = trimmedLine.slice(0, delimiterIndex).trim();
+		const value = trimmedLine.slice(delimiterIndex + 1).trim();
+		if (key.length > 0 && process.env[key] === undefined) {
+			process.env[key] = value;
+		}
+	}
+}
+
+loadDotEnvLocal();
 
 export default defineConfig({
 	resolve: {
@@ -23,17 +47,8 @@ export default defineConfig({
 		hookTimeout: 120_000,
 		pool: 'forks',
 		fileParallelism: false,
-		// Default suite runs unit-style tests. Live integration coverage uses
-		// the explicit .integration.test.ts suffix and runs separately.
-		include: ['packages/**/*.test.ts', 'packages/**/*.spec.ts'],
-		exclude: [
-			'**/node_modules/**',
-			'**/*.smoke.test.ts',
-			'**/*.integration.test.ts',
-			'**/*.llm.integration.test.ts',
-			'**/tests/integration/**',
-			'**/tests/e2e/**',
-		],
+		include: ['packages/**/*.llm.integration.test.ts'],
+		exclude: ['**/node_modules/**'],
 		setupFiles: ['./vitest.setup.ts'],
 	},
 });

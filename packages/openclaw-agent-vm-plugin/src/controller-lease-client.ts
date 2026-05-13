@@ -26,10 +26,21 @@ export interface LeasePeekResponse {
 	readonly zoneId: string;
 }
 
+export interface OpenClawRuntimeStatusReport {
+	readonly findings: readonly {
+		readonly hint: string;
+		readonly id: string;
+		readonly ok: boolean;
+	}[];
+	readonly pluginId: 'gondolin';
+	readonly zoneId: string;
+}
+
 export interface LeaseClient {
 	// Cached handles use keepalive; read-only runtime probes use peekLease.
 	keepLeaseAlive(leaseId: string): Promise<GondolinLeaseResponse>;
 	peekLease(leaseId: string): Promise<LeasePeekResponse>;
+	publishOpenClawRuntimeStatus?(report: OpenClawRuntimeStatusReport): Promise<void>;
 	releaseLease(leaseId: string): Promise<void>;
 	requestLease(request: {
 		readonly agentWorkspaceDir: string;
@@ -189,6 +200,27 @@ export function createLeaseClient(options: {
 		peekLease: async (leaseId: string): Promise<LeasePeekResponse> => {
 			const response = await fetchImpl(`${baseUrl}/lease/${leaseId}/peek`);
 			return await readJsonResponse(response, 'Controller lease peek API', isLeasePeekResponse);
+		},
+		publishOpenClawRuntimeStatus: async (report): Promise<void> => {
+			const response = await fetchImpl(
+				`${baseUrl}/zones/${encodeURIComponent(report.zoneId)}/openclaw-runtime-status`,
+				{
+					body: JSON.stringify(report),
+					headers: {
+						'content-type': 'application/json',
+					},
+					method: 'POST',
+				},
+			);
+			if (!response.ok) {
+				const errorBody = await readErrorBody(response, 'Controller OpenClaw runtime status API');
+				throw new ControllerLeaseRequestError({
+					bodyText: errorBody.bodyText,
+					context: 'Controller OpenClaw runtime status API',
+					responseBody: errorBody.responseBody,
+					status: response.status,
+				});
+			}
 		},
 		releaseLease: async (leaseId: string): Promise<void> => {
 			const response = await fetchImpl(`${baseUrl}/lease/${leaseId}`, {

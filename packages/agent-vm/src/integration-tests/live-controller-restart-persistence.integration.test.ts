@@ -278,6 +278,26 @@ describe('live integration: controller restart persistence', () => {
 		const leasesBody = (await leasesResponse.json()) as unknown[];
 		expect(leasesBody).toHaveLength(0);
 
+		const runtimeStatusResponse = await fetch(
+			`http://127.0.0.1:${controllerPort}/zones/shravan/openclaw-runtime-status`,
+			{
+				body: JSON.stringify({
+					pluginId: 'gondolin',
+					zoneId: 'shravan',
+					findings: [
+						{
+							id: 'openclaw-tool-vm-agents-defaults-sandbox-backend-shravan-defaults',
+							ok: true,
+							hint: 'agents.defaults.sandbox.backend=gondolin',
+						},
+					],
+				}),
+				headers: { 'content-type': 'application/json' },
+				method: 'POST',
+			},
+		);
+		expect(runtimeStatusResponse.status).toBe(200);
+
 		const createLeaseResponse = await fetch(`http://127.0.0.1:${controllerPort}/lease`, {
 			body: JSON.stringify({
 				agentWorkspaceDir: '/zone',

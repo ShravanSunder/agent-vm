@@ -10,6 +10,7 @@ import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { SandboxSeedingError } from '../leases/agent-sandbox-seeding.js';
 import { LeaseScopeConflictError, type Lease } from '../leases/lease-manager.js';
 import { LeaseWorkMountValidationError } from '../leases/lease-work-mount-paths.js';
+import { OpenClawRuntimeStatusStore } from '../openclaw-runtime-status.js';
 import type { PreparedWorkerTask, WorkerTaskResult } from '../worker-task-runner.js';
 import { ZoneGitConflictError } from '../zone-git/zone-git-operations.js';
 import {
@@ -293,6 +294,200 @@ describe('createControllerApp', () => {
 		expect(response.status).toBe(400);
 		await expect(response.json()).resolves.toMatchObject({
 			kind: 'non-agent-scope',
+		});
+		expect(createLease).not.toHaveBeenCalled();
+	});
+
+	it('rejects Tool VM leases until the OpenClaw plugin reports fresh runtime status', async () => {
+		let nowMs = 1_000;
+		const runtimeStatusStore = new OpenClawRuntimeStatusStore({
+			maxAgeMs: 500,
+			nowMs: () => nowMs,
+		});
+		const createLease = vi.fn(async () => createLeaseStub('lease-123', 0));
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			openClawRuntimeStatusStore: runtimeStatusStore,
+			validateToolVmLeaseRequirements: async (zoneId) => runtimeStatusStore.assertFreshOk(zoneId),
+			leaseManager: {
+				createLease,
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const missingStatusResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				profileId: 'standard',
+				scopeKey: 'agent:main',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(missingStatusResponse.status).toBe(409);
+		await expect(missingStatusResponse.json()).resolves.toMatchObject({
+			kind: 'openclaw-runtime-status-unavailable',
+		});
+		expect(createLease).not.toHaveBeenCalled();
+
+		const statusResponse = await app.request('/zones/shravan/openclaw-runtime-status', {
+			body: JSON.stringify({
+				pluginId: 'gondolin',
+				zoneId: 'shravan',
+				findings: [
+					{
+						id: 'openclaw-tool-vm-agents-defaults-sandbox-backend-shravan-defaults',
+						ok: true,
+						hint: 'agents.defaults.sandbox.backend=gondolin',
+					},
+				],
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(statusResponse.status).toBe(200);
+		const leaseResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				profileId: 'standard',
+				scopeKey: 'agent:main',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(leaseResponse.status).toBe(200);
+		expect(createLease).toHaveBeenCalledTimes(1);
+
+		nowMs = 2_000;
+		const staleStatusResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				profileId: 'standard',
+				scopeKey: 'agent:main:later',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(staleStatusResponse.status).toBe(409);
+		await expect(staleStatusResponse.json()).resolves.toMatchObject({
+			kind: 'openclaw-runtime-status-unavailable',
+		});
+		expect(createLease).toHaveBeenCalledTimes(1);
+	});
+
+	it('returns structured JSON for malformed OpenClaw runtime status requests', async () => {
+		const app = createControllerAppForTest({
+			toolVmProfiles: {},
+			openClawRuntimeStatusStore: new OpenClawRuntimeStatusStore(),
+			leaseManager: {
+				createLease: vi.fn(async () => createLeaseStub('lease-123', 0)),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const response = await app.request('/zones/shravan/openclaw-runtime-status', {
+			body: '{',
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toEqual({
+			error: 'invalid-json-request',
+			message: 'Request body must be valid JSON.',
+		});
+	});
+
+	it('rejects Tool VM leases when plugin-reported OpenClaw runtime status is unsafe', async () => {
+		const runtimeStatusStore = new OpenClawRuntimeStatusStore({ nowMs: () => 1_000 });
+		const createLease = vi.fn(async () => createLeaseStub('lease-123', 0));
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			openClawRuntimeStatusStore: runtimeStatusStore,
+			validateToolVmLeaseRequirements: async (zoneId) => runtimeStatusStore.assertFreshOk(zoneId),
+			leaseManager: {
+				createLease,
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const statusResponse = await app.request('/zones/shravan/openclaw-runtime-status', {
+			body: JSON.stringify({
+				pluginId: 'gondolin',
+				zoneId: 'shravan',
+				findings: [
+					{
+						id: 'openclaw-tool-vm-agents-defaults-sandbox-mode-shravan-defaults',
+						ok: false,
+						hint: 'Set agents.defaults.sandbox.mode to "all" for OpenClaw Tool VM mediation.',
+					},
+				],
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(statusResponse.status).toBe(200);
+		const leaseResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				profileId: 'standard',
+				scopeKey: 'agent:main',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(leaseResponse.status).toBe(400);
+		await expect(leaseResponse.json()).resolves.toMatchObject({
+			kind: 'openclaw-tool-vm-requirements-failed',
 		});
 		expect(createLease).not.toHaveBeenCalled();
 	});
