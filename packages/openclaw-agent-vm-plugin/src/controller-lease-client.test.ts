@@ -56,6 +56,20 @@ describe('createLeaseClient', () => {
 			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 			zoneId: 'shravan',
 		});
+		if (!leaseClient.publishOpenClawRuntimeStatus) {
+			throw new Error('Expected runtime status publisher.');
+		}
+		await leaseClient.publishOpenClawRuntimeStatus({
+			pluginId: 'gondolin',
+			zoneId: 'shravan',
+			findings: [
+				{
+					id: 'openclaw-tool-vm-agents-defaults-sandbox-backend-shravan-defaults',
+					ok: true,
+					hint: 'agents.defaults.sandbox.backend=gondolin',
+				},
+			],
+		});
 		await leaseClient.keepLeaseAlive('lease-123');
 		await leaseClient.peekLease('lease-123');
 		await leaseClient.releaseLease('lease-123');
@@ -73,6 +87,11 @@ describe('createLeaseClient', () => {
 				body: expect.any(String),
 				method: 'POST',
 				url: 'http://controller.vm.host:18800/lease',
+			},
+			{
+				body: expect.any(String),
+				method: 'POST',
+				url: 'http://controller.vm.host:18800/zones/shravan/openclaw-runtime-status',
 			},
 			{ body: undefined, method: 'GET', url: 'http://controller.vm.host:18800/lease/lease-123' },
 			{

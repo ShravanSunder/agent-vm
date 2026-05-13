@@ -141,6 +141,61 @@ describe('createGondolinPlugin', () => {
 		}
 	});
 
+	it('publishes Tool VM runtime status from OpenClaw runtime config during full registration', async () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+		try {
+			defaultPlugin.register({
+				config: {
+					agents: {
+						defaults: {
+							sandbox: {
+								backend: 'gondolin',
+								mode: 'all',
+								scope: 'agent',
+								workspaceAccess: 'rw',
+							},
+							workspace: '/zone/agents/default',
+						},
+					},
+				},
+				pluginConfig: {
+					controllerUrl: 'http://controller.vm.host:18800',
+					zoneId: 'shravan',
+				},
+				registerTool: vi.fn(),
+				registrationMode: 'full',
+			});
+
+			await vi.waitFor(() => {
+				expect(fetchSpy).toHaveBeenCalledWith(
+					'http://controller.vm.host:18800/zones/shravan/openclaw-runtime-status',
+					expect.objectContaining({
+						method: 'POST',
+					}),
+				);
+			});
+			const requestInit = fetchSpy.mock.calls[0]?.[1];
+			if (typeof requestInit?.body !== 'string') {
+				throw new TypeError('Expected runtime status request body to be a string.');
+			}
+			const body = JSON.parse(requestInit.body) as {
+				readonly findings: readonly { readonly ok: boolean }[];
+				readonly pluginId: string;
+				readonly zoneId: string;
+			};
+			expect(body.pluginId).toBe('gondolin');
+			expect(body.zoneId).toBe('shravan');
+			expect(body.findings.every((finding) => finding.ok)).toBe(true);
+		} finally {
+			fetchSpy.mockRestore();
+			stderrWrite.mockRestore();
+		}
+	});
+
 	it('fails full registration when OpenClaw does not expose registerTool', () => {
 		expect(() =>
 			defaultPlugin.register({

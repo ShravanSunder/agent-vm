@@ -10,6 +10,20 @@ export const controllerLeaseCreateRequestSchema = z.strictObject({
 	zoneId: z.string().min(1),
 });
 
+export const controllerOpenClawRuntimeStatusRequestSchema = z.strictObject({
+	findings: z
+		.array(
+			z.strictObject({
+				hint: z.string(),
+				id: z.string().min(1),
+				ok: z.boolean(),
+			}),
+		)
+		.min(1),
+	pluginId: z.literal('gondolin'),
+	zoneId: z.string().min(1),
+});
+
 export const controllerDestroyZoneRequestSchema = z.object({
 	purge: z.boolean().optional(),
 });
