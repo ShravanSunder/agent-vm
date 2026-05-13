@@ -14,6 +14,15 @@ import type { ManagedVm } from '@agent-vm/gondolin-adapter';
  */
 import { describe, it, expect, afterAll } from 'vitest';
 
+async function fetchIngressUntilReady(url: string, attempt = 0): Promise<Response> {
+	const response = await fetch(url);
+	if (response.status !== 502 || attempt >= 30) {
+		return response;
+	}
+	await new Promise((resolve) => setTimeout(resolve, 100));
+	return await fetchIngressUntilReady(url, attempt + 1);
+}
+
 describe('live smoke: real Gondolin VM', () => {
 	let vm: ManagedVm | null = null;
 
@@ -205,7 +214,7 @@ describe('live smoke: real Gondolin VM', () => {
 		const ingress = await vm.enableIngress({ listenPort: 0 });
 
 		// Fetch from host
-		const response = await fetch(`http://${ingress.host}:${ingress.port}/`);
+		const response = await fetchIngressUntilReady(`http://${ingress.host}:${ingress.port}/`);
 		const body = await response.text();
 
 		expect(response.status).toBe(200);

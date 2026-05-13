@@ -402,6 +402,34 @@ describe('createControllerApp', () => {
 		expect(createLease).toHaveBeenCalledTimes(1);
 	});
 
+	it('returns structured JSON for malformed OpenClaw runtime status requests', async () => {
+		const app = createControllerAppForTest({
+			toolVmProfiles: {},
+			openClawRuntimeStatusStore: new OpenClawRuntimeStatusStore(),
+			leaseManager: {
+				createLease: vi.fn(async () => createLeaseStub('lease-123', 0)),
+				keepLeaseAlive: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const response = await app.request('/zones/shravan/openclaw-runtime-status', {
+			body: '{',
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toEqual({
+			error: 'invalid-json-request',
+			message: 'Request body must be valid JSON.',
+		});
+	});
+
 	it('rejects Tool VM leases when plugin-reported OpenClaw runtime status is unsafe', async () => {
 		const runtimeStatusStore = new OpenClawRuntimeStatusStore({ nowMs: () => 1_000 });
 		const createLease = vi.fn(async () => createLeaseStub('lease-123', 0));

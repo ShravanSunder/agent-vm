@@ -286,9 +286,19 @@ export function createControllerApp(options: {
 			if (options.zoneIds && !options.zoneIds.has(zoneId)) {
 				return context.json({ error: `Unknown zone '${zoneId}'` }, 404);
 			}
-			const parsedPayload = controllerOpenClawRuntimeStatusRequestSchema.safeParse(
-				await context.req.json(),
-			);
+			let requestBody: unknown;
+			try {
+				requestBody = await context.req.json();
+			} catch {
+				return context.json(
+					{
+						error: 'invalid-json-request',
+						message: 'Request body must be valid JSON.',
+					},
+					400,
+				);
+			}
+			const parsedPayload = controllerOpenClawRuntimeStatusRequestSchema.safeParse(requestBody);
 			if (!parsedPayload.success) {
 				return context.json(
 					{
