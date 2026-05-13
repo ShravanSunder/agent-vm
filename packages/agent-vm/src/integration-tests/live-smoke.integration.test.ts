@@ -165,22 +165,42 @@ describe('live smoke: real Gondolin VM', () => {
 		expect(curlResult.exitCode).toBe(0);
 	}, 60_000);
 
-	it.skip('should enable ingress and expose a guest HTTP server', async () => {
-		// TODO: ingress hangs when reusing a VM created with httpHooks.
-		// Ingress works in dedicated VMs — validated in experiments/src/06-ingress-http-ws.test.ts
-		if (!vm) throw new Error('VM not available from previous test');
+	it('should enable ingress and expose a guest HTTP server', async () => {
+		if (vm) {
+			await vm.close();
+			vm = null;
+		}
 
-		// Reuse existing VM — start a simple HTTP server inside it
+		vm = await createManagedVm({
+			imagePath: '',
+			memory: '512M',
+			cpus: 1,
+			rootfsMode: 'cow',
+			allowedHosts: [],
+			secrets: {},
+			vfsMounts: {},
+		});
+
 		await vm.exec(
-			"node -e \"require('http').createServer((req,res)=>{res.writeHead(200);res.end('ingress_works')}).listen(18080)\" &",
+			"while true; do printf 'HTTP/1.1 200 OK\\r\\nConnection: close\\r\\nContent-Length: 13\\r\\n\\r\\ningress_works' | nc -l -p 18080; done >/tmp/ingress-server.log 2>&1 &",
 		);
-		// Wait for server to bind
-		await new Promise((resolve) => setTimeout(resolve, 2000));
+		const guestResponse = await vm.exec(
+			[
+				'for attempt in $(seq 1 30); do',
+				'  wget -qO- http://127.0.0.1:18080/ && exit 0',
+				'  sleep 0.1',
+				'done',
+				'cat /tmp/ingress-server.log >&2',
+				'exit 1',
+			].join('\n'),
+		);
+		if (guestResponse.exitCode !== 0) {
+			throw new Error(
+				`Guest HTTP server did not respond.\nstdout:\n${guestResponse.stdout}\nstderr:\n${guestResponse.stderr}`,
+			);
+		}
+		expect(guestResponse.stdout.trim()).toBe('ingress_works');
 
-		// Verify server is running inside VM
-		await vm.exec('wget -qO- http://127.0.0.1:18080/ 2>/dev/null || echo not_ready');
-
-		// Configure ingress and expose to host
 		vm.setIngressRoutes([{ prefix: '/', port: 18080, stripPrefix: true }]);
 		const ingress = await vm.enableIngress({ listenPort: 0 });
 

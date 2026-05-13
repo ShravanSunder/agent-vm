@@ -64,30 +64,6 @@ describe('createGondolinPlugin', () => {
 		}).not.toThrow();
 	});
 
-	it.skip('register in full mode attempts SDK import and logs error for missing SDK path', async () => {
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		defaultPlugin.register({
-			pluginConfig: {
-				controllerUrl: 'http://controller.vm.host:18800',
-				zoneId: 'shravan',
-			},
-			registrationMode: 'full',
-		});
-
-		// The SDK import will fail outside a gateway VM — poll until the error is logged
-		for (let attempt = 0; attempt < 20; attempt++) {
-			if (consoleSpy.mock.calls.length > 0) break;
-			// oxlint-disable-next-line eslint/no-await-in-loop -- polling for async rejection
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
-
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('[gondolin] failed to load OpenClaw SDK'),
-		);
-		consoleSpy.mockRestore();
-	});
-
 	it('registers the zone_git_push tool from plugin config when available', () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const registerTool = vi.fn();

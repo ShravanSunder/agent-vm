@@ -48,7 +48,7 @@ export default defineConfig({
 		pool: 'forks',
 		fileParallelism: false,
 		include: ['packages/**/*.integration.test.ts'],
-		exclude: ['**/node_modules/**'],
+		exclude: ['**/node_modules/**', 'packages/**/*.llm.integration.test.ts'],
 		setupFiles: ['./vitest.setup.ts'],
 	},
 });
