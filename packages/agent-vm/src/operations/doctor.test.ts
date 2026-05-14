@@ -8,6 +8,7 @@ import { createLoadedSystemConfig, type SystemConfig } from '../config/system-co
 import { collectVmHostSystemDoctorCheck, runControllerDoctor } from './doctor.js';
 
 const systemConfig = {
+	schemaVersion: 1,
 	cacheDir: './cache',
 	runtimeDir: './runtime',
 	host: {

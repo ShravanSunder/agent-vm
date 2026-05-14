@@ -61,6 +61,8 @@ const resolvedSecrets: Record<string, string> = {
 function createZone(overrides?: {
 	readonly authProfilesRef?: GatewayZoneConfig['gateway']['authProfilesRef'];
 	readonly gateway?: Partial<OpenClawGatewayConfig>;
+	readonly mcp?: GatewayZoneConfig['mcp'];
+	readonly runtimeMcpServers?: GatewayZoneConfig['runtimeMcpServers'];
 	readonly runtimeEnvironment?: GatewayZoneConfig['runtimeEnvironment'];
 	readonly runtimePluginConfigs?: GatewayZoneConfig['runtimePluginConfigs'];
 	readonly withoutAuthProfilesRef?: boolean;
@@ -91,6 +93,7 @@ function createZone(overrides?: {
 			...overrides?.gateway,
 		},
 		id: 'shravan',
+		...(overrides?.mcp ? { mcp: overrides.mcp } : {}),
 		secrets: {
 			DISCORD_BOT_TOKEN: {
 				injection: 'env',
@@ -114,6 +117,7 @@ function createZone(overrides?: {
 		...(overrides?.runtimePluginConfigs
 			? { runtimePluginConfigs: overrides.runtimePluginConfigs }
 			: {}),
+		...(overrides?.runtimeMcpServers ? { runtimeMcpServers: overrides.runtimeMcpServers } : {}),
 		websocketBypass: ['gateway.discord.gg:443'],
 	};
 }
@@ -456,6 +460,91 @@ describe('openclawLifecycle', () => {
 				),
 			).resolves.toBe('{"profiles":["shravan"]}');
 			expect((await stat(zone.gateway.stateDir)).mode & 0o777).toBe(0o700);
+		});
+
+		it('injects MCP Portal configDir and replaces stale plugin config', async () => {
+			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-lifecycle-mcp-'));
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify(
+					{
+						plugins: {
+							allow: ['mcp-portal'],
+							entries: {
+								'mcp-portal': {
+									enabled: true,
+									hooks: { allowPromptInjection: true },
+									config: {
+										binPath: '/custom/bin/agent-vm-mcp-portal-server',
+										promptContext: { enabled: true },
+									},
+								},
+							},
+						},
+					},
+					null,
+					2,
+				),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				mcp: { configDir: configDirectory },
+				runtimeMcpServers: {
+					mcp_portal_shravan: {
+						headers: { 'x-agent-vm-mcp-portal-secret': '${MCP_PORTAL_SERVER_SECRET}' },
+						transport: 'streamable-http',
+						url: 'http://127.0.0.1:18790/agents/shravan/mcp',
+					},
+				},
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/auth-profiles') {
+						return '{"profiles":["main"]}';
+					}
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
+
+			const effectiveOpenClawConfigContent = await readFile(
+				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
+				'utf8',
+			);
+			expect(JSON.parse(effectiveOpenClawConfigContent)).toMatchObject({
+				plugins: {
+					entries: {
+						'mcp-portal': {
+							config: {
+								binPath: '/custom/bin/agent-vm-mcp-portal-server',
+								configDir: '/home/openclaw/.openclaw/config',
+							},
+						},
+					},
+				},
+				mcp: {
+					servers: {
+						mcp_portal_shravan: {
+							transport: 'streamable-http',
+							url: 'http://127.0.0.1:18790/agents/shravan/mcp',
+						},
+					},
+				},
+			});
+			expect(effectiveOpenClawConfigContent).not.toContain('promptContext');
 		});
 
 		it('attempts all per-agent auth profile writes before reporting failures', async () => {

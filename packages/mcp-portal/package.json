@@ -15,7 +15,7 @@
 	},
 	"bin": {
 		"agent-vm-mcp-portal": "./dist/bin/agent-vm-mcp-portal.js",
-		"mcp-portal-server": "./dist/bin/mcp-portal-server.js"
+		"agent-vm-mcp-portal-server": "./dist/bin/portal-server.js"
 	},
 	"files": [
 		"dist"
@@ -31,6 +31,14 @@
 		"./tool-vm": {
 			"types": "./dist/tool-vm/index.d.ts",
 			"import": "./dist/tool-vm/index.js"
+		},
+		"./auth/hmac-token": {
+			"types": "./dist/auth/hmac-token.d.ts",
+			"import": "./dist/auth/hmac-token.js"
+		},
+		"./auth/hmac-env": {
+			"types": "./dist/auth/hmac-env.d.ts",
+			"import": "./dist/auth/hmac-env.js"
 		}
 	},
 	"publishConfig": {
@@ -44,6 +52,7 @@
 		"test:unit": "vitest run --root ../../ --config vitest.config.ts packages/mcp-portal/src"
 	},
 	"dependencies": {
+		"@agent-vm/config-contracts": "workspace:*",
 		"@hono/node-server": "^2.0.2",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"hono": "^4.12.18",

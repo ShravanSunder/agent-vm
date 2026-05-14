@@ -4,8 +4,8 @@ import { z } from 'zod';
 import type { PortalToolRecord } from '../catalog-types.js';
 import { jsonObjectSchema, type JsonObject } from '../json-schema.js';
 import {
-	portalBindingScopeKey,
-	type PortalBindingIdentity,
+	portalAgentScopeKey,
+	type PortalAgentIdentity,
 	type PortalToolSelector,
 } from '../portal-access-policy.js';
 import type { PortalSession } from '../portal-session.js';
@@ -117,7 +117,7 @@ const callInputSchema = z.object({ calls: z.array(callRequestSchema).min(1) }).s
 const callExecutionInputSchema = z
 	.object({
 		calls: z.array(callRequestSchema).min(1),
-		portalApprovalNonce: z.string().min(1).optional(),
+		portalApprovalToken: z.string().min(1).optional(),
 	})
 	.strict();
 
@@ -173,13 +173,13 @@ export const portalToolInputSchemas = {
 } as const;
 
 export interface PortalToolHandlerCall {
-	readonly identity: PortalBindingIdentity;
+	readonly identity: PortalAgentIdentity;
 	readonly input: unknown;
 }
 
 export interface PortalCallUpstreamTool {
 	readonly arguments: JsonObject;
-	readonly bindingId: string;
+	readonly agentScopeId: string;
 	readonly namespace: string;
 	readonly toolName: string;
 }
@@ -187,13 +187,15 @@ export interface PortalCallUpstreamTool {
 export interface PortalToolRuntime {
 	readonly approval?: (
 		calls: readonly PortalApprovalCall[],
-		identity: PortalBindingIdentity,
-		approvalNonce: string | undefined,
+		identity: PortalAgentIdentity,
+		approvalToken: string | undefined,
 	) =>
 		| { readonly kind: 'allow' }
+		| { readonly kind: 'approval_token_invalid'; readonly reason: string }
+		| { readonly kind: 'approval_token_missing' }
 		| { readonly kind: 'approval_required'; readonly level: 'critical' | 'standard' };
 	readonly callUpstreamTool: (call: PortalCallUpstreamTool) => Promise<unknown>;
-	readonly getSession: (identity: PortalBindingIdentity) => Promise<PortalSession>;
+	readonly getSession: (identity: PortalAgentIdentity) => Promise<PortalSession>;
 }
 
 export interface PortalToolHandlers {
@@ -361,7 +363,7 @@ function missingSelectorError(
 
 	return {
 		kind: 'unknown_or_denied_tool',
-		message: 'One or more requested tools are unknown or denied for this portal binding.',
+		message: 'One or more requested tools are unknown or denied for this portal agent scope.',
 	};
 }
 
@@ -538,7 +540,7 @@ function preparePortalCall(
 		return itemError({
 			error: {
 				kind: 'unknown_or_denied_tool',
-				message: 'The requested tool is unknown or denied for this portal binding.',
+				message: 'The requested tool is unknown or denied for this portal agent scope.',
 				namespace: request.namespace,
 				toolName: request.toolName,
 			},
@@ -566,7 +568,7 @@ function preparePortalCall(
 
 async function executePreparedPortalCall(
 	call: PreparedPortalCall,
-	identity: PortalBindingIdentity,
+	identity: PortalAgentIdentity,
 	runtime: PortalToolRuntime,
 ): Promise<PortalToolResult> {
 	const input = { ...call.input, arguments: call.validatedArguments };
@@ -577,7 +579,7 @@ async function executePreparedPortalCall(
 				namespace: call.tool.namespace,
 				result: await runtime.callUpstreamTool({
 					arguments: call.validatedArguments,
-					bindingId: portalBindingScopeKey(identity),
+					agentScopeId: portalAgentScopeKey(identity),
 					namespace: call.tool.namespace,
 					toolName: call.tool.toolName,
 				}),
@@ -605,7 +607,7 @@ function isPreparedPortalCall(
 
 async function addExecutableCallResults(
 	props: {
-		readonly identity: PortalBindingIdentity;
+		readonly identity: PortalAgentIdentity;
 		readonly preparedCalls: readonly PreparedPortalCall[];
 		readonly results: Record<string, PortalToolResult>;
 		readonly runtime: PortalToolRuntime;
@@ -658,7 +660,7 @@ export function createPortalToolHandlers(runtime: PortalToolRuntime): PortalTool
 					: (runtime.approval?.(
 							approvalCalls,
 							call.identity,
-							parsedInput.data.portalApprovalNonce,
+							parsedInput.data.portalApprovalToken,
 						) ?? allowDecision);
 
 			const results: Record<string, PortalToolResult> = {};
@@ -682,6 +684,31 @@ export function createPortalToolHandlers(runtime: PortalToolRuntime): PortalTool
 							level: approval.level,
 							message: 'Operator approval is required before this batch can run.',
 							namespace: preparedResult.tool.namespace,
+							toolName: preparedResult.tool.toolName,
+						},
+						input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },
+					});
+					continue;
+				}
+				if (approval.kind === 'approval_token_missing') {
+					results[preparedResult.input.id] = itemError({
+						error: {
+							kind: 'approval_token_missing',
+							message: 'An MCP Portal approval token is required before this batch can run.',
+							namespace: preparedResult.tool.namespace,
+							toolName: preparedResult.tool.toolName,
+						},
+						input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },
+					});
+					continue;
+				}
+				if (approval.kind === 'approval_token_invalid') {
+					results[preparedResult.input.id] = itemError({
+						error: {
+							kind: 'approval_token_invalid',
+							message: `MCP Portal approval token is invalid: ${approval.reason}.`,
+							namespace: preparedResult.tool.namespace,
+							reason: approval.reason,
 							toolName: preparedResult.tool.toolName,
 						},
 						input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },

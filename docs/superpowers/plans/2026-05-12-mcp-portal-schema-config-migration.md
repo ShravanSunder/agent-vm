@@ -2,30 +2,21 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Move MCP Portal agent/profile policy into a dedicated zone MCP config file, make `system.json` the canonical agent registry/reference surface, and provide a tested migration for generated and existing agent configs.
+**Goal:** Move MCP Portal configuration into explicit JSONC contracts: `system.jsonc` owns zone agents and the MCP config directory, `mcp.config.jsonc` owns upstream MCP providers, and `mcp-portal.config.jsonc` owns portal server settings, agent profile bindings, and policy.
 
-**Architecture:** `system.json` owns zone identity, the canonical `zones[].agents` list, Tool VM profile selection, and a pointer to a deployment-owned MCP config file. The separate MCP config file owns MCP profiles, namespace/tool enablement, approval, logging, prompt context, and upstream MCP server policy. The loader validates cross-file references so MCP profiles can only target agents declared by the zone.
+**Architecture:** `@agent-vm/config-contracts` is the shared package for MCP-related JSONC schemas, JSON Schema artifacts, config loaders, and TypeScript types. `agent-vm` owns controller-only `system.jsonc` validation and materializes OpenClaw runtime config from the three authored files. OpenClaw `openclaw.json` may contain generated MCP server endpoints, but it must not contain human-authored MCP Portal namespace/profile policy.
 
-**Tech Stack:** TypeScript, Zod 4, JSONC config loading, `jsonc-parser` migrations, cmd-ts CLI subcommands, Vitest, OXC/Oxfmt.
+**Tech Stack:** TypeScript, Zod 4, JSONC config loading, JSON Schema artifacts generated from Zod, `jsonc-parser` migrations, cmd-ts CLI subcommands, Vitest, OXC/Oxfmt.
 
 ---
 
-## Existing Schema System
-
-The repo already has the building blocks for this:
-
-- `packages/agent-vm/src/config/system-config.ts` is the canonical Zod schema and cross-field validator for `config/system.json` / `system.jsonc`.
-- `packages/agent-vm/src/config/json-config-file.ts` loads strict JSON or JSONC-like deployment config.
-- `packages/agent-vm/src/operations/config-validation.ts` validates system config plus referenced gateway config before boot.
-- `packages/agent-vm/src/operations/doctor.ts` and `packages/agent-vm/src/operations/openclaw-deployment-doctor.ts` report actionable deployment diagnostics.
-- `packages/agent-vm/src/cli/migrate-commands.ts` already uses `jsonc-parser` edits for `agent-vm migrate images`; MCP migration should follow that pattern.
-- `packages/agent-vm/src/cli/init-command.ts` currently writes OpenClaw `agents.list` and generated portal `mcp.servers` entries directly into `openclaw.json`; the schema update should move agent/profile policy to `system.json` + `mcp.json` while keeping OpenClaw runtime materialization generated from those sources.
-
 ## Target Config Shape
 
-`system.json` becomes the zone-level reference:
+New scaffolds use JSONC for human-authored config. `system.json` remains accepted only as a legacy input when it already exists.
 
-```json
+`config/system.jsonc` owns the zone and agent registry:
+
+```jsonc
 {
 	"$schema": "./schemas/system.schema.json",
 	"schemaVersion": 1,
@@ -36,32 +27,66 @@ The repo already has the building blocks for this:
 				"type": "openclaw",
 				"config": "./gateways/shravan/openclaw.json"
 			},
-			"agents": ["sun", "shravan", "alevtina"],
+			"agents": [
+				{ "id": "sun" },
+				{ "id": "shravan", "toolVmProfile": "tools-dev" },
+				{ "id": "alevtina", "toolVmProfile": "tools-light" }
+			],
 			"defaultToolVmProfile": "standard",
-			"agentToolVmProfiles": {
-				"shravan": "tools-dev",
-				"alevtina": "tools-light"
-			},
+			"agentToolVmProfiles": {},
 			"mcp": {
-				"config": "./gateways/shravan/mcp.json",
-				"defaultProfile": "default",
-				"agentProfiles": {
-					"sun": "research",
-					"shravan": "builder",
-					"alevtina": "reviewer"
-				}
+				"configDir": "./gateways/shravan"
 			}
 		}
 	]
 }
 ```
 
-`config/gateways/<zone>/mcp.json` owns MCP Portal policy:
+`config/gateways/<zone>/mcp.config.jsonc` owns upstream MCP providers:
 
-```json
+```jsonc
 {
-	"$schema": "./schemas/mcp-portal.schema.json",
+	"$schema": "../../schemas/mcp.schema.json",
 	"schemaVersion": 1,
+	"providers": {
+		"linear": {
+			"kind": "mcp",
+			"namespace": "linear",
+			"discovery": { "summary": "Linear issue tracker" },
+			"transport": {
+				"kind": "streamable-http",
+				"url": "https://mcp.linear.app/mcp",
+				"headers": {
+					"authorization": {
+						"source": "environment",
+						"name": "LINEAR_MCP_TOKEN"
+					}
+				}
+			}
+		}
+	}
+}
+```
+
+`config/gateways/<zone>/mcp-portal.config.jsonc` owns portal server settings, agent-to-profile assignments, and portal policy:
+
+```jsonc
+{
+	"$schema": "../../schemas/mcp-portal.schema.json",
+	"schemaVersion": 1,
+	"server": {
+		"host": "127.0.0.1",
+		"port": 18790,
+		"accessHeader": {
+			"name": "x-agent-vm-mcp-portal-secret",
+			"secret": { "source": "environment", "name": "MCP_PORTAL_SERVER_SECRET" }
+		}
+	},
+	"agents": {
+		"sun": { "profile": "research" },
+		"shravan": { "profile": "builder" },
+		"alevtina": { "profile": "reviewer" }
+	},
 	"profiles": {
 		"default": {
 			"enabledNamespaces": [],
@@ -93,66 +118,59 @@ The repo already has the building blocks for this:
 
 Important semantics:
 
-- `$schema` is an editor/tooling hint. It is never used as the runtime migration
-  gate and must not be required for hand-authored JSONC files to load. Use
-  deployment-local relative schema paths; do not require an `agent-vm.dev`
-  website or GitHub Pages hosting.
-- `schemaVersion` is the runtime/migration gate. It is required in newly
-  scaffolded `system.jsonc` and `mcp.json`, and migration adds it to existing
-  system configs when missing.
-- Empty `enabledNamespaces` means no namespaces by default. Explicit allow-all can be represented later, but the safe v1 schema is deny-all unless names are listed.
-- `enabledToolsByNamespace` narrows tools within an enabled namespace. Missing namespace entries mean all tools in that enabled namespace are available unless hidden.
-- `hiddenToolsByNamespace` removes tools after namespace/tool allow selection and before catalog/index construction.
+- `$schema` is an editor/tooling hint. It must point to deployment-local schema files; no `agent-vm.dev` site or GitHub Pages hosting is required.
+- `schemaVersion` is the runtime and migration gate. New scaffolds and migrations write `schemaVersion: 1`.
+- `enabledNamespaces: []` means deny all namespaces. V1 has no implicit allow-all.
+- `enabledToolsByNamespace` narrows tools inside an enabled namespace. Missing namespace entries mean all tools in that enabled namespace are available unless hidden.
+- `hiddenToolsByNamespace` removes tools before catalog and search-index construction.
 - `logging.enabled` controls MCP Portal audit logging only. It is not content filtering.
-- MCP config references profile names only. Agent IDs remain in `system.json`.
-- Secure tools profiles are not part of this plan.
+- MCP provider credentials live only in `mcp.config.jsonc`. Portal profiles select namespaces/tools and policy; they do not own upstream secrets.
+- Agent-to-MCP-profile assignment lives in `mcp-portal.config.jsonc`, not `system.jsonc`. `system.jsonc` only declares which agents exist in the zone.
+- Secure tools profiles are intentionally out of scope for this plan.
+
+---
 
 ## File Structure
 
-- Create `packages/agent-vm/src/config/mcp-config.ts`
-  - Zod schema and loader for deployment MCP config files.
-- Create `packages/agent-vm/src/config/mcp-config.test.ts`
-  - Unit tests for MCP profile parsing, defaults, extension, deny-all, and malformed config.
-- Create `packages/agent-vm/src/config/config-schema-artifacts.ts`
-  - Canonical schema IDs, schema versions, and JSON Schema artifact builders for
-    generated config files.
-- Create `packages/agent-vm/src/config/config-schema-artifacts.test.ts`
-  - Unit tests that exported JSON Schemas include the expected `$id`,
-    `schemaVersion`, and root properties.
+- Create/modify `packages/config-contracts/`
+  - `src/json-config-file.ts`: shared JSONC loader.
+  - `src/secret-value.ts`: shared environment / 1Password secret reference schema.
+  - `src/mcp-config.ts`: upstream MCP provider schema, loader, and resolved provider helper.
+  - `src/mcp-portal-config.ts`: portal server, agent binding, profile, approval, prompt, cache, and logging schema.
+  - `src/schema-artifacts.ts`: JSON Schema artifacts generated from Zod for `mcp.config.jsonc` and `mcp-portal.config.jsonc`.
+  - Tests for strict parsing, profile inheritance, defaults, and schema artifacts.
 - Modify `packages/agent-vm/src/config/system-config.ts`
-  - Add root `schemaVersion`, `zones[].agents`, and `zones[].mcp`.
-  - Validate OpenClaw-only fields.
-  - Validate agent-keyed maps reference `zones[].agents`.
-  - Resolve `mcp.config` relative to `system.json`.
-- Modify `packages/agent-vm/src/config/system-config.test.ts`
-  - Add schema/cross-field tests for agents and MCP config references.
+  - Add root `$schema` and `schemaVersion`.
+  - Add `zones[].agents[]` objects and `zones[].mcp.configDir`.
+  - Resolve `mcp.configDir` relative to the system config file.
+  - Reject worker zones that declare agents/MCP fields.
+  - Validate duplicate agents, tool VM profile references, and agent-keyed maps.
+  - Export or provide a system JSON Schema artifact used by scaffolding.
 - Modify `packages/gateway-interface/src/gateway-lifecycle.ts`
-  - Carry normalized `agents`, `agentToolVmProfiles`, and MCP config reference into lifecycle zone config.
+  - Carry normalized agents, MCP config directory, generated runtime MCP servers, and generated runtime plugin config.
 - Modify `packages/agent-vm/src/gateway/gateway-zone-support.ts`
-  - Map system config zones into the expanded gateway interface shape.
-- Modify `packages/openclaw-mcp-portal-plugin/src/portal-config.ts`
-  - Parse profile-derived portal config rather than old global `enabledNamespacesByAgent`.
-- Modify `packages/openclaw-mcp-portal-plugin/src/portal-agent-registry.ts`
-  - Stop reading canonical agent IDs from OpenClaw `agents.list`; receive system/gateway agent records.
+  - Map system config zones into lifecycle zone config.
+- Create/modify `packages/agent-vm/src/gateway/mcp-portal-openclaw-materialization.ts`
+  - Build OpenClaw `mcp.servers` entries from `mcp-portal.config.jsonc`.
+  - Build OpenClaw plugin config `{ configDir }`.
+- Modify `packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts`
+  - Load `mcp-portal.config.jsonc` from `zone.mcp.configDir`.
+  - Attach runtime MCP servers and runtime plugin config before lifecycle boot.
+- Modify `packages/openclaw-gateway/src/openclaw-lifecycle.ts`
+  - Write effective OpenClaw config with generated MCP servers.
+  - Replace stale `mcp-portal.config` instead of merging old policy fields.
 - Modify `packages/agent-vm/src/cli/init-command.ts`
-  - Scaffold `zones[].agents`, `zones[].mcp`, and `config/gateways/<zone>/mcp.json`.
-- Modify `packages/agent-vm/src/cli/init-command.test.ts`
-  - Assert generated system config and MCP config are coherent.
+  - Scaffold `config/system.jsonc`, `mcp.config.jsonc`, `mcp-portal.config.jsonc`, and deployment-local schema files.
 - Modify `packages/agent-vm/src/cli/migrate-commands.ts`
   - Add `runMigrateMcpPortalConfigCommand`.
+  - Preserve JSONC comments while adding `$schema`, `schemaVersion`, `zones[].agents`, and `zones[].mcp.configDir`.
+  - Create missing MCP config files and schema files without overwriting existing authored files.
 - Modify `packages/agent-vm/src/cli/commands/migrate-definition.ts`
   - Add `agent-vm migrate mcp-portal`.
-- Modify `packages/agent-vm/src/cli/migrate-commands.test.ts`
-  - Cover JSONC-preserving migration from current OpenClaw agent/plugin config.
-- Modify `packages/agent-vm/src/operations/config-validation.ts`
-  - Load and validate referenced `mcp.config` files.
-- Modify `packages/agent-vm/src/operations/config-validation.test.ts`
-  - Cover missing and malformed MCP config.
-- Modify `packages/agent-vm/src/operations/openclaw-deployment-doctor.ts`
-  - Validate agent/profile consistency and report stale OpenClaw-owned portal policy.
-- Modify `packages/agent-vm/src/operations/openclaw-deployment-doctor.test.ts`
-  - Cover zero agents, unknown MCP profile, and stale OpenClaw policy diagnostics.
-- Modify docs:
+- Modify validation and doctor:
+  - `packages/agent-vm/src/operations/config-validation.ts`
+  - `packages/agent-vm/src/operations/openclaw-deployment-doctor.ts`
+- Modify docs and generated manuals:
   - `docs/reference/configuration/system-json.md`
   - `docs/subsystems/mcp-portal.md`
   - `docs/architecture/openclaw-gateway.md`
@@ -161,174 +179,83 @@ Important semantics:
 
 ---
 
-### Task 1: Add Config Schema Artifacts And Version Constants
+### Task 1: Add Shared Config Contracts Package
 
 **Files:**
-- Create: `packages/agent-vm/src/config/config-schema-artifacts.ts`
-- Create: `packages/agent-vm/src/config/config-schema-artifacts.test.ts`
+- Create/modify: `packages/config-contracts/package.json`
+- Create/modify: `packages/config-contracts/src/json-config-file.ts`
+- Create/modify: `packages/config-contracts/src/secret-value.ts`
+- Create/modify: `packages/config-contracts/src/mcp-config.ts`
+- Create/modify: `packages/config-contracts/src/mcp-portal-config.ts`
+- Create/modify: `packages/config-contracts/src/schema-artifacts.ts`
+- Create/modify: `packages/config-contracts/src/*.test.ts`
+- Modify: `tsconfig.base.json`
+- Modify: consuming package `package.json` files
 
-- [ ] **Step 1: Write failing schema artifact tests**
-
-Add tests:
-
-```ts
-test('exports stable schema IDs and version constants', () => {
-	expect(agentVmConfigSchemaIds.system).toBe('agent-vm:system:1');
-	expect(agentVmConfigSchemaIds.mcpPortal).toBe('agent-vm:mcp-portal:1');
-	expect(agentVmConfigSchemaPaths.systemFromSystemConfig).toBe('./schemas/system.schema.json');
-	expect(agentVmConfigSchemaPaths.mcpPortalFromGatewayConfig).toBe('./schemas/mcp-portal.schema.json');
-	expect(agentVmConfigSchemaVersions.system).toBe(1);
-	expect(agentVmConfigSchemaVersions.mcpPortal).toBe(1);
-});
-
-test('builds JSON Schema artifacts with root schemaVersion', () => {
-	const schemas = buildAgentVmConfigJsonSchemas();
-
-	expect(schemas.system.$id).toBe(agentVmConfigSchemaIds.system);
-	expect(schemas.system.properties.schemaVersion.const).toBe(1);
-	expect(schemas.mcpPortal.$id).toBe(agentVmConfigSchemaIds.mcpPortal);
-	expect(schemas.mcpPortal.properties.schemaVersion.const).toBe(1);
-});
-```
+- [ ] **Step 1: Write failing config-contract tests**
 
 Run:
 
 ```bash
-pnpm vitest run packages/agent-vm/src/config/config-schema-artifacts.test.ts
+pnpm vitest run packages/config-contracts/src
 ```
 
-Expected: FAIL because the artifact module does not exist yet.
+Expected before implementation: tests fail because the package and schemas do not exist.
 
-- [ ] **Step 2: Implement schema IDs and builders**
+Required tests:
 
-Implement constants:
+- `loadMcpConfig` accepts JSONC comments and strict upstream provider config.
+- `loadMcpConfig` rejects unknown fields.
+- `mcpConfigToResolvedProviders` preserves `streamable-http`, `sse`, and `stdio` as a discriminated union.
+- `loadMcpPortalConfig` accepts server settings, agent profile bindings, and profile policy.
+- `resolveMcpPortalProfile` applies inheritance without mutating parent profiles.
+- `resolveMcpPortalProfile` rejects unknown parents and cycles.
+- `createConfigContractSchemaArtifacts` returns separate JSON Schemas for `mcp` and `mcpPortal` with stable `$id` and `schemaVersion`.
+
+- [ ] **Step 2: Implement shared schemas and loaders**
+
+Implementation rules:
+
+- No `any`.
+- No non-null assertions.
+- Use `z.infer` from Zod schemas.
+- Use strict object schemas unless a field is deliberately open.
+- Keep JSON Schema canonical on the wire; Zod is the runtime validator and artifact generator.
+
+The MCP provider transport union must be:
 
 ```ts
-export const agentVmConfigSchemaIds = {
-	system: 'agent-vm:system:1',
-	mcpPortal: 'agent-vm:mcp-portal:1',
-} as const;
-
-export const agentVmConfigSchemaPaths = {
-	systemFromSystemConfig: './schemas/system.schema.json',
-	mcpPortalFromGatewayConfig: './schemas/mcp-portal.schema.json',
-} as const;
-
-export const agentVmConfigSchemaVersions = {
-	system: 1,
-	mcpPortal: 1,
-} as const;
+type ResolvedMcpProvider =
+	| {
+			readonly headers: Readonly<Record<string, SecretValue>>;
+			readonly namespace: string;
+			readonly transport: 'streamable-http' | 'sse';
+			readonly url: string;
+	  }
+	| {
+			readonly args: readonly string[];
+			readonly command: string;
+			readonly cwd?: string;
+			readonly env: Readonly<Record<string, SecretValue>>;
+			readonly namespace: string;
+			readonly transport: 'stdio';
+	  };
 ```
 
-Build JSON Schema artifacts with `z.toJSONSchema(..., { target: 'draft-07', io: 'input' })`.
-The artifacts are for editor/tooling hints and tests; runtime validation remains
-the Zod loader.
-
-- [ ] **Step 3: Run focused test**
+- [ ] **Step 3: Run focused tests**
 
 Run:
 
 ```bash
-pnpm vitest run packages/agent-vm/src/config/config-schema-artifacts.test.ts
+pnpm vitest run packages/config-contracts/src
+pnpm --filter @agent-vm/config-contracts typecheck
 ```
 
 Expected: PASS.
 
 ---
 
-### Task 2: Add MCP Config Schema
-
-**Files:**
-- Create: `packages/agent-vm/src/config/mcp-config.ts`
-- Create: `packages/agent-vm/src/config/mcp-config.test.ts`
-
-- [ ] **Step 1: Write failing parser tests**
-
-Add tests proving:
-
-```ts
-test('defaults profiles to deny all namespaces', async () => {
-	const loadedConfig = await loadMcpPortalConfig(configPath);
-
-	expect(loadedConfig.schemaVersion).toBe(1);
-	expect(loadedConfig.profiles.default.enabledNamespaces).toEqual([]);
-	expect(resolveMcpPortalProfile(loadedConfig, 'default').enabledNamespaces).toEqual([]);
-});
-
-test('resolves profile inheritance without mutating base profiles', async () => {
-	const resolvedBuilder = resolveMcpPortalProfile(loadedConfig, 'builder');
-	const resolvedDefault = resolveMcpPortalProfile(loadedConfig, 'default');
-
-	expect(resolvedBuilder.enabledNamespaces).toEqual(['github', 'linear']);
-	expect(resolvedDefault.enabledNamespaces).toEqual([]);
-});
-
-test('rejects unknown inherited profiles', async () => {
-	await expect(loadMcpPortalConfig(configPath)).rejects.toThrow(/unknown MCP profile 'missing'/u);
-});
-```
-
-Run:
-
-```bash
-pnpm vitest run packages/agent-vm/src/config/mcp-config.test.ts
-```
-
-Expected: FAIL because `mcp-config.ts` does not exist yet.
-
-- [ ] **Step 2: Implement schema and loader**
-
-Implement:
-
-```ts
-export const mcpPortalProfileSchema = z.object({
-	extends: z.string().min(1).optional(),
-	enabledNamespaces: z.array(z.string().min(1)).default([]),
-	enabledToolsByNamespace: z.record(z.string().min(1), z.array(z.string().min(1))).default({}),
-	hiddenToolsByNamespace: z.record(z.string().min(1), z.array(z.string().min(1))).default({}),
-	logging: z.object({ enabled: z.boolean().default(false) }).default({ enabled: false }),
-	promptContext: z.object({
-		enabled: z.boolean().default(true),
-		maxNamespaces: z.number().int().positive().default(12),
-	}).default({ enabled: true, maxNamespaces: 12 }),
-	cache: z.object({
-		catalogTtlMs: z.number().int().positive().default(60_000),
-	}).default({ catalogTtlMs: 60_000 }),
-	approval: portalApprovalConfigSchema.default({
-		allowWithoutApprovalTools: [],
-		alwaysAskTools: [],
-		annotationPolicy: 'destructive-requires-approval',
-		trustedAnnotationNamespaces: [],
-		writeTools: [],
-	}),
-}).strict();
-```
-
-The root config schema must include:
-
-```ts
-export const mcpPortalConfigSchema = z.object({
-	$schema: z.string().min(1).optional(),
-	schemaVersion: z.literal(agentVmConfigSchemaVersions.mcpPortal),
-	profiles: z.record(z.string().min(1), mcpPortalProfileSchema).min(1),
-}).strict();
-```
-
-Use imports at file top. Use `z.infer`. Do not use `any` or non-null assertions.
-
-- [ ] **Step 3: Run focused test**
-
-Run:
-
-```bash
-pnpm vitest run packages/agent-vm/src/config/mcp-config.test.ts
-```
-
-Expected: PASS.
-
----
-
-### Task 3: Add System Config Agent And MCP References
+### Task 2: Add System Config Agent Registry And MCP Config Directory
 
 **Files:**
 - Modify: `packages/agent-vm/src/config/system-config.ts`
@@ -336,29 +263,15 @@ Expected: PASS.
 
 - [ ] **Step 1: Write failing system schema tests**
 
-Add tests proving:
+Required tests:
 
-```ts
-test('loads OpenClaw zone agents and MCP config reference', async () => {
-	const loadedConfig = await loadSystemConfig(configPath);
-
-	expect(loadedConfig.schemaVersion).toBe(1);
-	expect(loadedConfig.zones[0].agents).toEqual(['shravan', 'sun']);
-	expect(loadedConfig.zones[0].mcp).toEqual({
-		config: path.join(targetDirectory, 'config', 'gateways', 'shravan', 'mcp.json'),
-		defaultProfile: 'default',
-		agentProfiles: { shravan: 'builder' },
-	});
-});
-
-test('rejects agent keyed profile maps for agents not declared in zones agents', async () => {
-	await expect(loadSystemConfig(configPath)).rejects.toThrow(/references unknown agent 'ghost'/u);
-});
-
-test('rejects worker zones declaring MCP portal references', async () => {
-	await expect(loadSystemConfig(configPath)).rejects.toThrow(/Worker zone 'worker' must not declare mcp/u);
-});
-```
+- Loads root `$schema` and `schemaVersion`.
+- Loads OpenClaw `zones[].agents` as objects.
+- Loads and resolves `zones[].mcp.configDir`.
+- Rejects duplicate agent IDs.
+- Rejects `agent.toolVmProfile`, `defaultToolVmProfile`, and `agentToolVmProfiles` references to unknown Tool VM profiles.
+- Rejects worker zones that declare `agents`, `agentToolVmProfiles`, `agentSandboxSeeds`, or `mcp`.
+- Keeps legacy `system.json` load support while new scaffolds use `system.jsonc`.
 
 Run:
 
@@ -366,47 +279,41 @@ Run:
 pnpm vitest run packages/agent-vm/src/config/system-config.test.ts
 ```
 
-Expected: FAIL on unknown fields.
+Expected before implementation: FAIL.
 
-- [ ] **Step 2: Add schema fields**
+- [ ] **Step 2: Implement system schema updates**
 
-Add:
-
-```ts
-const zoneMcpReferenceSchema = z.object({
-	config: z.string().min(1),
-	defaultProfile: z.string().min(1).optional(),
-	agentProfiles: z.record(agentIdSchema, z.string().min(1)).default({}),
-}).strict();
-```
-
-Add to zone schema:
+Required shape:
 
 ```ts
-schemaVersion: z.literal(agentVmConfigSchemaVersions.system).default(1),
-agents: z.array(agentIdSchema).default([]),
-mcp: zoneMcpReferenceSchema.optional(),
+const zoneAgentSchema = z
+	.object({
+		id: agentIdSchema,
+		toolVmProfile: z.string().min(1).optional(),
+	})
+	.strict();
+
+const zoneMcpConfigSchema = z
+	.object({
+		configDir: z.string().min(1),
+	})
+	.strict();
 ```
 
-Cross-field rules:
-
-- Existing system configs without `schemaVersion` continue to load for this
-  migration release, but new scaffolds and `agent-vm migrate mcp-portal` write
-  `schemaVersion: 1`.
-- Worker zones must not declare `agents`, `agentToolVmProfiles`, `agentSandboxSeeds`, or `mcp`.
-- OpenClaw zones must declare `agents` explicitly. Empty is allowed only when the operator does not want per-agent MCP Portal bindings.
-- Every key in `agentToolVmProfiles`, `agentSandboxSeeds`, `gateway.authProfilesByAgent`, and `mcp.agentProfiles` must exist in `zones[].agents`.
-- `mcp.defaultProfile` and `mcp.agentProfiles` values are names only; existence is checked when the referenced `mcp.config` file is loaded.
-
-- [ ] **Step 3: Resolve MCP config paths**
-
-In `resolveRelativePaths`, resolve:
+Root fields:
 
 ```ts
-...(zone.mcp ? { mcp: { ...zone.mcp, config: resolvePath(zone.mcp.config) } } : {}),
+$schema: z.string().min(1).optional(),
+schemaVersion: z.literal(1).default(1),
 ```
 
-- [ ] **Step 4: Run focused tests**
+Path resolution:
+
+```ts
+...(zone.mcp === undefined ? {} : { mcp: { configDir: resolvePath(zone.mcp.configDir) } }),
+```
+
+- [ ] **Step 3: Run focused tests**
 
 Run:
 
@@ -418,76 +325,7 @@ Expected: PASS.
 
 ---
 
-### Task 4: Carry Normalized Agents Through Gateway Interface
-
-**Files:**
-- Modify: `packages/gateway-interface/src/gateway-lifecycle.ts`
-- Modify: `packages/agent-vm/src/gateway/gateway-zone-support.ts`
-- Modify: relevant tests that construct `GatewayZoneConfig`
-
-- [ ] **Step 1: Write failing mapper test**
-
-Add a test to `packages/agent-vm/src/gateway/gateway-zone-orchestrator.test.ts` or `gateway-zone-support.test.ts` if created:
-
-```ts
-test('maps OpenClaw zone agents and MCP reference into lifecycle zone config', () => {
-	const lifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone);
-
-	expect(lifecycleZone.agents).toEqual(['shravan']);
-	expect(lifecycleZone.agentToolVmProfiles).toEqual({ shravan: 'tools-dev' });
-	expect(lifecycleZone.mcp).toEqual({
-		config: '/repo/config/gateways/shravan/mcp.json',
-		defaultProfile: 'default',
-		agentProfiles: { shravan: 'builder' },
-	});
-});
-```
-
-Run:
-
-```bash
-pnpm vitest run packages/agent-vm/src/gateway/gateway-zone-orchestrator.test.ts
-```
-
-Expected: FAIL because the interface does not expose these fields.
-
-- [ ] **Step 2: Extend gateway interface**
-
-Add to `GatewayZoneConfig`:
-
-```ts
-readonly agents: readonly string[];
-readonly agentToolVmProfiles?: Readonly<Record<string, string>>;
-readonly mcp?: {
-	readonly config: string;
-	readonly defaultProfile?: string;
-	readonly agentProfiles: Readonly<Record<string, string>>;
-};
-```
-
-- [ ] **Step 3: Map system config into lifecycle zone**
-
-Update `mapSystemGatewayZoneToLifecycleZone` to include:
-
-```ts
-agents: zone.agents,
-...(zone.agentToolVmProfiles ? { agentToolVmProfiles: zone.agentToolVmProfiles } : {}),
-...(zone.mcp ? { mcp: zone.mcp } : {}),
-```
-
-- [ ] **Step 4: Run focused tests**
-
-Run:
-
-```bash
-pnpm vitest run packages/agent-vm/src/gateway packages/gateway-interface
-```
-
-Expected: PASS.
-
----
-
-### Task 5: Scaffold Separate MCP Config Files
+### Task 3: Scaffold Authored JSONC Files And Local Schema Files
 
 **Files:**
 - Modify: `packages/agent-vm/src/cli/init-command.ts`
@@ -495,34 +333,26 @@ Expected: PASS.
 
 - [ ] **Step 1: Write failing scaffold tests**
 
-Add assertions to the existing OpenClaw multi-agent scaffold test:
+For OpenClaw scaffolds, assert these files are created:
 
-```ts
-expect(systemConfig.zones[0].agents).toEqual(['sun', 'shravan', 'alevtina']);
-expect(systemConfig.$schema).toBe('./schemas/system.schema.json');
-expect(systemConfig.schemaVersion).toBe(1);
-expect(systemConfig.zones[0].mcp).toEqual({
-	config: './gateways/my-zone/mcp.json',
-	defaultProfile: 'default',
-	agentProfiles: {
-		sun: 'default',
-		shravan: 'default',
-		alevtina: 'default',
-	},
-});
-
-const mcpConfig = await loadJsonConfigFile(path.join(targetDir, 'config', 'gateways', 'my-zone', 'mcp.json'));
-expect(mcpConfig).toMatchObject({
-	$schema: './schemas/mcp-portal.schema.json',
-	schemaVersion: 1,
-	profiles: {
-		default: {
-			enabledNamespaces: [],
-			logging: { enabled: false },
-		},
-	},
-});
+```text
+config/system.jsonc
+config/schemas/system.schema.json
+config/schemas/mcp.schema.json
+config/schemas/mcp-portal.schema.json
+config/gateways/<zone>/openclaw.json
+config/gateways/<zone>/mcp.config.jsonc
+config/gateways/<zone>/mcp-portal.config.jsonc
 ```
+
+Required generated references:
+
+- `system.jsonc.$schema === "./schemas/system.schema.json"`
+- `mcp.config.jsonc.$schema === "../../schemas/mcp.schema.json"`
+- `mcp-portal.config.jsonc.$schema === "../../schemas/mcp-portal.schema.json"`
+- `system.jsonc.zones[0].mcp.configDir === "./gateways/<zone>"`
+- `mcp-portal.config.jsonc.agents[agentId].profile === "default"` for every scaffolded agent.
+- `openclaw.json.plugins.entries["mcp-portal"].config` is absent or contains only runtime-safe fields; it must not contain `promptContext`, `enabledNamespaces`, or old policy fields.
 
 Run:
 
@@ -530,38 +360,19 @@ Run:
 pnpm vitest run packages/agent-vm/src/cli/init-command.test.ts
 ```
 
-Expected: FAIL because the file is not generated.
+Expected before implementation: FAIL.
 
-- [ ] **Step 2: Generate MCP config**
+- [ ] **Step 2: Implement scaffold output**
 
-Add `defaultMcpPortalConfig()` in `init-command.ts` and write it beside `openclaw.json`:
+Implementation details:
 
-```ts
-const defaultMcpPortalConfig = (): object => ({
-	schemaVersion: 1,
-	profiles: {
-		default: {
-			enabledNamespaces: [],
-			enabledToolsByNamespace: {},
-			hiddenToolsByNamespace: {},
-			logging: { enabled: false },
-			promptContext: { enabled: true, maxNamespaces: 12 },
-			cache: { catalogTtlMs: 60_000 },
-			approval: {
-				allowWithoutApprovalTools: [],
-				alwaysAskTools: [],
-				annotationPolicy: 'destructive-requires-approval',
-				trustedAnnotationNamespaces: [],
-				writeTools: [],
-			},
-		},
-	},
-});
-```
+- Use `formatJsoncConfig(...)` for authored JSONC files.
+- Use `createConfigContractSchemaArtifacts()` for MCP schema files.
+- Use the system schema artifact from `agent-vm` for `system.schema.json`.
+- Do not overwrite existing authored config unless `overwrite` is true.
+- New scaffolds should prefer `system.jsonc`; if a legacy `system.json` already exists, preserve that path.
 
-`openclaw.json` may still contain generated loopback portal `mcp.servers` entries because OpenClaw consumes them at runtime. It must not contain the human-authored per-agent namespace/profile policy.
-
-- [ ] **Step 3: Run focused test**
+- [ ] **Step 3: Run focused tests**
 
 Run:
 
@@ -573,7 +384,7 @@ Expected: PASS.
 
 ---
 
-### Task 6: Add MCP Portal Config Migration
+### Task 4: Add MCP Portal Config Migration Command
 
 **Files:**
 - Modify: `packages/agent-vm/src/cli/migrate-commands.ts`
@@ -582,71 +393,29 @@ Expected: PASS.
 
 - [ ] **Step 1: Write failing migration tests**
 
-Add tests:
+Required tests:
 
-```ts
-describe('runMigrateMcpPortalConfigCommand', () => {
-	it('creates mcp.json and system zone references from existing OpenClaw agents', async () => {
-		const result = await runMigrateMcpPortalConfigCommand({ systemConfigPath });
-
-		expect(result.migratedZones).toEqual(['shravan']);
-expect(await loadJsonConfigFile(systemConfigPath)).toMatchObject({
-	$schema: './schemas/system.schema.json',
-	schemaVersion: 1,
-	zones: [
-				{
-					id: 'shravan',
-					agents: ['sun', 'shravan'],
-					mcp: {
-						config: './gateways/shravan/mcp.json',
-						defaultProfile: 'default',
-						agentProfiles: { sun: 'default', shravan: 'default' },
-					},
-				},
-			],
-		});
-expect(await loadJsonConfigFile(mcpConfigPath)).toMatchObject({
-	$schema: './schemas/mcp-portal.schema.json',
-	schemaVersion: 1,
-			profiles: { default: { enabledNamespaces: [] } },
-		});
-	});
-
-	it('preserves JSONC comments in system config while adding MCP references', async () => {
-		const updatedText = await readFile(systemConfigPath, 'utf8');
-
-		expect(updatedText).toContain('// deployment-owned comment');
-		expect(updatedText).toContain('"mcp"');
-	});
-});
-```
+- Creates `mcp.config.jsonc`, `mcp-portal.config.jsonc`, and schema files for OpenClaw zones.
+- Adds root `$schema` and `schemaVersion` to `system.jsonc` if missing.
+- Adds `zones[].agents` from existing `openclaw.json.agents.list`.
+- Adds `zones[].mcp.configDir`.
+- Preserves comments in `system.jsonc`.
+- Rewrites `openclaw.json.mcp.servers` to `http://127.0.0.1:18790/agents/<agentId>/mcp`.
+- Removes old `mcp_portal_*` server entries before adding current entries.
+- Replaces stale OpenClaw plugin `config.promptContext` with `{ configDir: "/home/openclaw/.openclaw/config" }`.
+- Does not copy access secrets into the generated MCP provider config.
 
 Run:
 
 ```bash
-pnpm vitest run packages/agent-vm/src/cli/migrate-commands.test.ts
+pnpm vitest run packages/agent-vm/src/cli/migrate-commands.test.ts -t "runMigrateMcpPortalConfigCommand"
 ```
 
-Expected: FAIL because `runMigrateMcpPortalConfigCommand` does not exist.
+Expected before implementation: FAIL.
 
 - [ ] **Step 2: Implement migration**
 
-Use `jsonc-parser` `modify` / `applyEdits`, following `runMigrateImagesCommand`.
-
-Migration behavior:
-
-- Read `config/system.json` or `system.jsonc`.
-- For each OpenClaw zone, read its `gateway.config` OpenClaw config.
-- Extract agent IDs from `openclawConfig.agents.list[].id`.
-- Add `zones[index].agents` if missing.
-- Add `zones[index].mcp` if missing.
-- Add root `$schema` and `schemaVersion: 1` to `system.jsonc` if missing.
-- Create `config/gateways/<zone>/mcp.json` if missing.
-- Do not overwrite an existing `mcp.json`.
-- Do not migrate secure tools fields.
-- Do not copy generated loopback portal binding secrets into `mcp.json`.
-
-Return:
+Add:
 
 ```ts
 export interface MigrateMcpPortalConfigCommandResult {
@@ -656,258 +425,186 @@ export interface MigrateMcpPortalConfigCommandResult {
 }
 ```
 
-- [ ] **Step 3: Add CLI command**
+The command is:
 
-Add:
-
-```text
-agent-vm migrate mcp-portal --config config/system.json
+```bash
+agent-vm migrate mcp-portal --config config/system.jsonc
 ```
 
-Output:
+It prints migrated zones, created files, and skipped zones.
 
-```text
-migrated MCP portal zones: shravan
-created MCP config files: config/gateways/shravan/mcp.json
-skipped MCP portal zones: none
-```
-
-- [ ] **Step 4: Run migration tests**
+- [ ] **Step 3: Run focused tests**
 
 Run:
 
 ```bash
-pnpm vitest run packages/agent-vm/src/cli/migrate-commands.test.ts packages/agent-vm/src/cli/commands/command-definition-support.test.ts
+pnpm vitest run packages/agent-vm/src/cli/migrate-commands.test.ts
 ```
 
 Expected: PASS.
 
 ---
 
-### Task 7: Validate Cross-File MCP Profile References
+### Task 5: Validate Cross-File Config Consistency
 
 **Files:**
 - Modify: `packages/agent-vm/src/operations/config-validation.ts`
 - Modify: `packages/agent-vm/src/operations/config-validation.test.ts`
-
-- [ ] **Step 1: Write failing validation tests**
-
-Add tests:
-
-```ts
-it('reports missing referenced MCP config files', async () => {
-	const result = await runConfigValidation({ systemConfig });
-
-	expect(result.ok).toBe(false);
-	expect(result.checks).toContainEqual({
-		name: 'mcp-config:shravan',
-		ok: false,
-		hint: expect.stringContaining('Missing'),
-	});
-});
-
-it('reports agent profiles that reference missing MCP profiles', async () => {
-	const result = await runConfigValidation({ systemConfig });
-
-	expect(result.ok).toBe(false);
-	expect(result.checks).toContainEqual({
-		name: 'mcp-profile:shravan:agent:shravan',
-		ok: false,
-		hint: "Agent 'shravan' references unknown MCP profile 'builder'.",
-	});
-});
-```
-
-Run:
-
-```bash
-pnpm vitest run packages/agent-vm/src/operations/config-validation.test.ts
-```
-
-Expected: FAIL.
-
-- [ ] **Step 2: Implement validation**
-
-For each OpenClaw zone with `zone.mcp`:
-
-- Check `zone.mcp.config` exists.
-- Load `loadMcpPortalConfig(zone.mcp.config)`.
-- Check `zone.mcp.defaultProfile` exists when present.
-- Check every `zone.mcp.agentProfiles[agentId]` value exists.
-- Check every `zone.mcp.agentProfiles` key exists in `zone.agents`.
-
-- [ ] **Step 3: Run validation tests**
-
-Run:
-
-```bash
-pnpm vitest run packages/agent-vm/src/operations/config-validation.test.ts
-```
-
-Expected: PASS.
-
----
-
-### Task 8: Wire Plugin Policy From MCP Profiles
-
-**Files:**
-- Modify: `packages/openclaw-mcp-portal-plugin/src/portal-config.ts`
-- Modify: `packages/openclaw-mcp-portal-plugin/src/portal-agent-registry.ts`
-- Modify: `packages/openclaw-mcp-portal-plugin/src/plugin-registration.ts`
-- Modify: matching plugin tests
-
-- [ ] **Step 1: Write failing plugin config tests**
-
-Add tests proving:
-
-```ts
-test('builds per-agent portal configs from system agent MCP profile mapping', () => {
-	const registry = resolvePortalAgentsFromGatewayZone(gatewayZone);
-	const portalConfig = resolvePortalConfigForAgent({
-		agentId: 'shravan',
-		mcpConfig,
-		zoneMcpReference: gatewayZone.mcp,
-	});
-
-	expect(registry).toEqual([{ id: 'shravan' }]);
-	expect(portalConfig.enabledNamespaces).toEqual(['github', 'linear']);
-});
-```
-
-Run:
-
-```bash
-pnpm vitest run packages/openclaw-mcp-portal-plugin/src/portal-config.test.ts packages/openclaw-mcp-portal-plugin/src/portal-agent-registry.test.ts
-```
-
-Expected: FAIL.
-
-- [ ] **Step 2: Replace old global exposure config**
-
-Map resolved profile fields into the existing portal access policy shape:
-
-- `enabledNamespaces`
-- `enabledToolsByNamespace`
-- `hiddenToolsByNamespace`
-- `logging`
-- `promptContext`
-- `cache`
-- `approval`
-
-Keep backward compatibility only through the migration command, not through long-lived dual runtime paths.
-
-- [ ] **Step 3: Run plugin tests**
-
-Run:
-
-```bash
-pnpm vitest run packages/openclaw-mcp-portal-plugin/src
-```
-
-Expected: PASS.
-
----
-
-### Task 9: Update Doctor And Docs
-
-**Files:**
 - Modify: `packages/agent-vm/src/operations/openclaw-deployment-doctor.ts`
 - Modify: `packages/agent-vm/src/operations/openclaw-deployment-doctor.test.ts`
+
+- [ ] **Step 1: Write failing validation and doctor tests**
+
+Config validation must report:
+
+- Missing `mcp.config.jsonc`.
+- Missing `mcp-portal.config.jsonc`.
+- Portal agents not declared in `system.jsonc` `zones[].agents`.
+- System agents missing portal profile bindings.
+- Portal agent bindings that reference missing profiles.
+
+Doctor must report:
+
+- OpenClaw MCP Portal zones with zero agents.
+- Stale portal policy in OpenClaw plugin config.
+- Config read failures without cascading misleading diagnostics.
+
+Run:
+
+```bash
+pnpm vitest run packages/agent-vm/src/operations/config-validation.test.ts packages/agent-vm/src/operations/openclaw-deployment-doctor.test.ts
+```
+
+Expected before implementation: FAIL.
+
+- [ ] **Step 2: Implement validation and doctor checks**
+
+Validation rules:
+
+- If `zone.mcp` exists, both `mcp.config.jsonc` and `mcp-portal.config.jsonc` must load from `zone.mcp.configDir`.
+- `zone.agents[].id` and `mcp-portal.config.jsonc.agents` must be the same set for configured portal zones.
+- Every portal agent profile must resolve through `resolveMcpPortalProfile`.
+- OpenClaw config may contain generated `mcp.servers` entries, but it must not own namespace/tool policy.
+
+- [ ] **Step 3: Run focused tests**
+
+Run:
+
+```bash
+pnpm vitest run packages/agent-vm/src/operations/config-validation.test.ts packages/agent-vm/src/operations/openclaw-deployment-doctor.test.ts
+```
+
+Expected: PASS.
+
+---
+
+### Task 6: Materialize OpenClaw Runtime Config From MCP Portal Config
+
+**Files:**
+- Modify: `packages/gateway-interface/src/gateway-lifecycle.ts`
+- Modify: `packages/agent-vm/src/gateway/gateway-zone-support.ts`
+- Create/modify: `packages/agent-vm/src/gateway/mcp-portal-openclaw-materialization.ts`
+- Create/modify: `packages/agent-vm/src/gateway/mcp-portal-openclaw-materialization.test.ts`
+- Modify: `packages/agent-vm/src/gateway/gateway-zone-orchestrator.ts`
+- Modify: `packages/agent-vm/src/gateway/gateway-zone-orchestrator.test.ts`
+- Modify: `packages/openclaw-gateway/src/openclaw-lifecycle.ts`
+- Modify: `packages/openclaw-gateway/src/openclaw-lifecycle.test.ts`
+
+- [ ] **Step 1: Write failing materialization tests**
+
+Required tests:
+
+- Builds one OpenClaw MCP server entry per system agent.
+- Fails before boot if a system agent has no portal profile binding.
+- Uses `mcp-portal.config.jsonc.server.accessHeader` for generated MCP server headers.
+- Uses URL shape `http://127.0.0.1:<port>/agents/<agentId>/mcp`.
+- Replaces stale OpenClaw plugin config with `{ configDir: "/home/openclaw/.openclaw/config" }`.
+- Preserves explicit caller-provided runtime plugin config overrides when supplied.
+
+Run:
+
+```bash
+pnpm vitest run packages/agent-vm/src/gateway packages/openclaw-gateway/src/openclaw-lifecycle.test.ts
+```
+
+Expected before implementation: FAIL.
+
+- [ ] **Step 2: Implement materialization**
+
+Implementation rules:
+
+- `gateway-interface` carries runtime materialization as data.
+- `agent-vm` loads config before starting the VM.
+- `openclaw-gateway` writes the final effective `openclaw.json`.
+- The plugin receives only runtime process config such as `configDir` and optional `binPath`; namespace/tool policy stays in `mcp-portal.config.jsonc`.
+
+- [ ] **Step 3: Run focused tests**
+
+Run:
+
+```bash
+pnpm vitest run packages/agent-vm/src/gateway packages/openclaw-gateway/src/openclaw-lifecycle.test.ts
+```
+
+Expected: PASS.
+
+---
+
+### Task 7: Update Docs And Generated Manuals
+
+**Files:**
 - Modify: `docs/reference/configuration/system-json.md`
 - Modify: `docs/subsystems/mcp-portal.md`
 - Modify: `docs/architecture/openclaw-gateway.md`
 - Modify: `packages/agent-vm/src/cli/manual-templates.ts`
 - Modify: `packages/agent-vm/src/cli/manual-templates.test.ts`
 
-- [ ] **Step 1: Write failing doctor tests**
-
-Add tests:
-
-```ts
-it('flags OpenClaw MCP Portal config with zero agents', () => {
-	const result = runOpenClawDeploymentDoctor(config);
-
-	expect(result.checks).toContainEqual({
-		name: 'mcp-portal-agents:shravan',
-		ok: false,
-		hint: 'Declare zones[].agents or run agent-vm migrate mcp-portal.',
-	});
-});
-
-it('flags stale portal policy in OpenClaw plugin config', () => {
-	const result = runOpenClawDeploymentDoctor(config);
-
-	expect(result.checks).toContainEqual({
-		name: 'mcp-portal-config-source:shravan',
-		ok: false,
-		hint: 'Move MCP Portal namespace/tool policy to the zone mcp.config file.',
-	});
-});
-```
-
-Run:
-
-```bash
-pnpm vitest run packages/agent-vm/src/operations/openclaw-deployment-doctor.test.ts
-```
-
-Expected: FAIL.
-
-- [ ] **Step 2: Implement doctor checks**
-
-Checks:
-
-- `zones[].agents` present for OpenClaw MCP Portal zones.
-- `zones[].mcp.config` exists when portal plugin is enabled.
-- All `agentProfiles` reference declared agents.
-- OpenClaw plugin config does not own `enabledNamespaces`, `enabledNamespacesByAgent`, or `hiddenToolsByAgent`.
-- Generated loopback portal `mcp.servers` entries remain allowed in OpenClaw config.
-
-- [ ] **Step 3: Update docs/manuals**
+- [ ] **Step 1: Update operator-facing docs**
 
 Docs must state:
 
-- `system.json` references agents and profile names.
-- Generated `system.jsonc` and `mcp.json` include `$schema` and `schemaVersion`.
+- New authored config files are JSONC.
+- `system.jsonc` declares zone agents and `mcp.configDir`.
+- `mcp.config.jsonc` declares upstream MCP providers and credentials.
+- `mcp-portal.config.jsonc` declares server access header, agent profile bindings, profiles, policy, logging, prompt context, and cache.
+- `openclaw.json` can contain generated portal endpoint servers, but not human-authored portal policy.
+- Run `agent-vm migrate mcp-portal` for existing multi-agent OpenClaw configs.
 - `$schema` is an editor hint; `schemaVersion` is the migration gate.
-- MCP Portal profile policy lives in `mcp.json`.
-- `openclaw.json` can contain generated portal binding servers but not the human-authored portal policy.
-- Run `agent-vm migrate mcp-portal` for existing multi-agent configs.
-- Secure tools profiles are intentionally out of scope.
+- Secure tools profiles are out of scope.
 
-- [ ] **Step 4: Run docs/manual tests**
+- [ ] **Step 2: Run docs/manual tests**
 
 Run:
 
 ```bash
-pnpm vitest run packages/agent-vm/src/operations/openclaw-deployment-doctor.test.ts packages/agent-vm/src/cli/manual-templates.test.ts
+pnpm vitest run packages/agent-vm/src/cli/manual-templates.test.ts
 ```
 
 Expected: PASS.
 
 ---
 
-### Task 10: Full Verification
+### Task 8: Full Verification
 
 **Files:**
 - No planned source edits except fixes discovered by verification.
 
-- [ ] **Step 1: Run focused schema and migration tests**
+- [ ] **Step 1: Run focused config tests**
 
 Run:
 
 ```bash
-pnpm vitest run packages/agent-vm/src/config packages/agent-vm/src/cli/migrate-commands.test.ts packages/agent-vm/src/operations/config-validation.test.ts
+pnpm vitest run packages/config-contracts/src packages/agent-vm/src/config/system-config.test.ts packages/agent-vm/src/cli/init-command.test.ts packages/agent-vm/src/cli/migrate-commands.test.ts packages/agent-vm/src/operations/config-validation.test.ts packages/agent-vm/src/operations/openclaw-deployment-doctor.test.ts
 ```
 
 Expected: PASS.
 
-- [ ] **Step 2: Run portal/plugin focused tests**
+- [ ] **Step 2: Run focused gateway materialization tests**
 
 Run:
 
 ```bash
-pnpm vitest run packages/mcp-portal/src packages/openclaw-mcp-portal-plugin/src
+pnpm vitest run packages/agent-vm/src/gateway packages/openclaw-gateway/src/openclaw-lifecycle.test.ts
 ```
 
 Expected: PASS.
@@ -927,7 +624,7 @@ Expected: PASS.
 Run:
 
 ```bash
-pnpm -r build
+pnpm build
 ```
 
 Expected: PASS.
@@ -956,6 +653,6 @@ Expected: PASS, or document any known non-portal environment failure with exact 
 
 ## Self-Review
 
-- Spec coverage: This plan covers the schema split, separate MCP config file, system-agent canonical registry, migration command, generated init updates, cross-file validation, doctor diagnostics, and tests for agent updates.
+- Spec coverage: This plan covers the shared config package, JSONC config split, local schema artifacts, system-agent registry, migration command, cross-file validation, doctor diagnostics, OpenClaw runtime materialization, generated manuals, and verification.
 - Placeholder scan: No placeholder tasks remain; every task names exact files and commands.
-- Type consistency: The plan consistently uses `agents`, `mcp.config`, `mcp.defaultProfile`, `mcp.agentProfiles`, `profiles`, `enabledNamespaces`, `enabledToolsByNamespace`, and `hiddenToolsByNamespace`.
+- Type consistency: The plan consistently uses `system.jsonc`, `mcp.config.jsonc`, `mcp-portal.config.jsonc`, `zones[].agents[]`, `zones[].mcp.configDir`, `providers`, `profiles`, `enabledNamespaces`, `enabledToolsByNamespace`, and `hiddenToolsByNamespace`.

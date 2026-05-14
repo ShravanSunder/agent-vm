@@ -9,6 +9,17 @@ Comments are allowed in authored config. Runtime files that the controller
 writes, including effective worker config, runtime records, API bodies, and
 task event logs, remain strict JSON/JSONL.
 
+New scaffolds and `agent-vm migrate mcp-portal` write deployment-local JSON
+Schema files under `config/schemas/`:
+
+- `system.schema.json`
+- `mcp.schema.json`
+- `mcp-portal.schema.json`
+
+The `$schema` fields in authored JSONC files point at those local files for
+editor tooling. Runtime compatibility is controlled by `schemaVersion`, not by
+fetching schema URLs.
+
 Source schema:
 `packages/agent-vm/src/config/system-config.ts`
 
@@ -159,17 +170,33 @@ as `@openclaw/discord`, from the OpenClaw channel config.
 Managed OpenClaw gateway images install `@agent-vm/openclaw-mcp-portal-plugin`
 and `@agent-vm/mcp-portal`. New OpenClaw scaffolds allow and enable the
 `mcp-portal` plugin, set
-`plugins.entries.mcp-portal.hooks.allowPromptInjection=true`, and add
-`/home/openclaw/.openclaw/extensions/mcp-portal` to `plugins.load.paths`.
+`plugins.entries.mcp-portal.hooks.allowPromptInjection=true`, add
+`/home/openclaw/.openclaw/extensions/mcp-portal` to `plugins.load.paths`, and
+configure the plugin with the gateway MCP config directory.
 
-When `agents.list` is configured, agent-vm scaffolds one generated
-`mcp.servers.<portalServerName>` entry per agent. Each generated server points
-at that agent's Hono Streamable HTTP portal binding. Each agent keeps the normal
-OpenClaw tool surface and receives a `tools.deny` list for sibling agents'
-materialized portal tool names, so it can call only its own four portal tools.
-Operator-authored upstream MCP servers remain deployment-owned under OpenClaw
-`mcp.servers`; the portal plugin uses those upstream servers but does not put
-upstream MCP auth into Tool VMs.
+When `agents.list` is configured, agent-vm scaffolds sibling MCP config files in
+`config/gateways/<zone>/`:
+
+- `mcp.config.jsonc` describes upstream MCP providers and discovery.
+- `mcp-portal.config.jsonc` describes the portal server, access header, agent
+  profile assignments, and profile policies.
+
+The effective OpenClaw config contains one generated
+`mcp.servers.mcp_portal_<agentId>` entry per agent. Each generated server points
+at that agent's Streamable HTTP portal endpoint:
+
+```text
+http://127.0.0.1:18790/agents/<agentId>/mcp
+```
+
+Each generated server also carries the access header configured in
+`mcp-portal.config.jsonc`, normally
+`x-agent-vm-mcp-portal-secret: ${MCP_PORTAL_SERVER_SECRET}`. Each agent keeps the
+normal OpenClaw tool surface and receives a `tools.deny` list for sibling
+agents' materialized portal tool names, so it can call only its own four portal
+tools. Operator-authored upstream MCP servers live in `mcp.config.jsonc`; the
+portal process uses those upstream servers but does not put upstream MCP auth
+into Tool VMs.
 
 `agent-vm init --type openclaw --openclaw-agents sun,shravan,alevtina` scaffolds
 `agents.list` entries with `/zone/agents/<id>` workspaces. It deliberately does

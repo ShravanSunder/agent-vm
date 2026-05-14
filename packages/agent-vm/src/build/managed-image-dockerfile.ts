@@ -23,6 +23,10 @@ const managedOpenClawAgentVmPluginPackagePath =
 	'/pnpm/global/5/node_modules/@agent-vm/openclaw-agent-vm-plugin/dist';
 const managedOpenClawMcpPortalPluginPackagePath =
 	'/pnpm/global/5/node_modules/@agent-vm/openclaw-mcp-portal-plugin/dist';
+const managedMcpPortalServerScriptPath =
+	'/pnpm/global/5/node_modules/@agent-vm/mcp-portal/dist/bin/portal-server.js';
+const managedMcpPortalServerWrapperPath =
+	'/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server';
 
 export interface ManagedImageSource {
 	readonly kind: 'managedBase';
@@ -246,6 +250,10 @@ function renderManagedDockerfile(props: {
 		);
 		lines.push(
 			`RUN ln -sf ${managedOpenClawMcpPortalPluginPackagePath} ${managedOpenClawMcpPortalPluginExtensionPath}`,
+		);
+		lines.push('RUN mkdir -p /opt/agent-vm/portal/bin');
+		lines.push(
+			`RUN printf '%s\\n' '#!/bin/sh' 'exec node ${managedMcpPortalServerScriptPath} "$@"' > ${managedMcpPortalServerWrapperPath} && chmod 0755 ${managedMcpPortalServerWrapperPath}`,
 		);
 	}
 	lines.push('');

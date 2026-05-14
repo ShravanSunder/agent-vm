@@ -6,13 +6,13 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PortalBindingIdentity } from '../portal-access-policy.js';
+import { createPortalAgentIdentity, type PortalAgentIdentity } from '../portal-access-policy.js';
 import type { PortalSession } from '../portal-session.js';
 import { createPortalHttpApp } from './portal-http-server.js';
 
 const session = {
 	catalog: {
-		bindingId: 'binding-a',
+		agentScopeId: 'agent-scope-a',
 		discoveryFailures: [],
 		generatedAt: '2026-05-10T00:00:00.000Z',
 		sourceHash: 'hash',
@@ -25,9 +25,11 @@ const session = {
 		],
 	},
 	graph: { relationships: [], skills: [] },
-	identity: { agentId: 'agent-a', bindingId: 'binding-a' },
+	identity: createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-scope-a' }),
 	searchIndex: { search: () => ({ results: [] }) },
 } satisfies PortalSession;
+
+const portalAccessHeader = 'x-agent-vm-mcp-portal-secret';
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -49,12 +51,9 @@ function asClientTransport(transport: StreamableHTTPClientTransport): Transport 
 }
 
 describe('portal HTTP server', () => {
-	it('requires the server-side binding secret before handling MCP requests', async () => {
+	it('GET /health returns registered agent ids', async () => {
 		const app = createPortalHttpApp({
-			getBinding: (bindingId) =>
-				bindingId === 'binding-a'
-					? { agentId: 'agent-a', bindingId: 'binding-a', secret: 'server-secret' }
-					: null,
+			registeredAgentIds: ['agent-b', 'agent-a'],
 			toolRuntime: {
 				callUpstreamTool: async () => ({}),
 				getSession: async () => {
@@ -63,24 +62,46 @@ describe('portal HTTP server', () => {
 			},
 		});
 
-		await expect(app.request('/mcp-portal/bindings/binding-a/mcp')).resolves.toMatchObject({
+		const response = await app.request('/health');
+
+		expect(response.status).toBe(200);
+		await expect(response.json()).resolves.toEqual({ agents: ['agent-a', 'agent-b'], ok: true });
+	});
+
+	it('requires the portal access header before handling agent MCP requests', async () => {
+		const app = createPortalHttpApp({
+			resolveAgentIdentity: (agentId) =>
+				agentId === 'agent-a'
+					? createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-a' })
+					: null,
+			serverAccess: { expectedValue: 'server-secret', headerName: portalAccessHeader },
+			toolRuntime: {
+				callUpstreamTool: async () => ({}),
+				getSession: async () => {
+					throw new Error('not used');
+				},
+			},
+		});
+
+		await expect(app.request('/agents/agent-a/mcp')).resolves.toMatchObject({
 			status: 401,
 		});
 		await expect(
-			app.request('/mcp-portal/bindings/binding-a/mcp', {
-				headers: { 'x-mcp-portal-binding-secret': 'server-secret' },
+			app.request('/agents/agent-a/mcp', {
+				headers: { [portalAccessHeader]: 'server-secret' },
 			}),
 		).resolves.not.toMatchObject({ status: 401 });
 	});
 
 	it('serves initialize, tools/list, and tools/call through Streamable HTTP', async () => {
-		const seenIdentities: PortalBindingIdentity[] = [];
-		const closedIdentities: PortalBindingIdentity[] = [];
+		const seenIdentities: PortalAgentIdentity[] = [];
+		const closedIdentities: PortalAgentIdentity[] = [];
 		const app = createPortalHttpApp({
-			getBinding: (bindingId) =>
-				bindingId === 'binding-a'
-					? { agentId: 'agent-a', bindingId: 'binding-a', secret: 'server-secret' }
+			resolveAgentIdentity: (agentId) =>
+				agentId === 'agent-a'
+					? createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-a' })
 					: null,
+			serverAccess: { expectedValue: 'server-secret', headerName: portalAccessHeader },
 			onSessionClosed: (identity) => {
 				closedIdentities.push(identity);
 			},
@@ -96,8 +117,8 @@ describe('portal HTTP server', () => {
 		try {
 			const address = server.address() as AddressInfo;
 			const transport = new StreamableHTTPClientTransport(
-				new URL(`http://127.0.0.1:${address.port}/mcp-portal/bindings/binding-a/mcp`),
-				{ requestInit: { headers: { 'x-mcp-portal-binding-secret': 'server-secret' } } },
+				new URL(`http://127.0.0.1:${address.port}/agents/agent-a/mcp`),
+				{ requestInit: { headers: { [portalAccessHeader]: 'server-secret' } } },
 			);
 			const client = new Client({ name: 'portal-http-test', version: '1.0.0' });
 			await client.connect(asClientTransport(transport));
@@ -125,7 +146,7 @@ describe('portal HTTP server', () => {
 			expect(seenIdentities).toEqual([
 				expect.objectContaining({
 					agentId: 'agent-a',
-					bindingId: 'binding-a',
+					agentScopeId: 'agent-a',
 					sessionId: expect.any(String),
 				}),
 			]);
@@ -136,7 +157,7 @@ describe('portal HTTP server', () => {
 				expect(closedIdentities).toEqual([
 					expect.objectContaining({
 						agentId: 'agent-a',
-						bindingId: 'binding-a',
+						agentScopeId: 'agent-a',
 						sessionId: expect.any(String),
 					}),
 				]),
@@ -156,10 +177,11 @@ describe('portal HTTP server', () => {
 
 	it('force-closes active sessions so reloaded runtimes make clients reconnect', async () => {
 		const app = createPortalHttpApp({
-			getBinding: (bindingId) =>
-				bindingId === 'binding-a'
-					? { agentId: 'agent-a', bindingId: 'binding-a', secret: 'server-secret' }
+			resolveAgentIdentity: (agentId) =>
+				agentId === 'agent-a'
+					? createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-a' })
 					: null,
+			serverAccess: { expectedValue: 'server-secret', headerName: portalAccessHeader },
 			toolRuntime: {
 				callUpstreamTool: async () => ({}),
 				getSession: async (identity) => ({ ...session, identity }),
@@ -169,8 +191,8 @@ describe('portal HTTP server', () => {
 		try {
 			const address = server.address() as AddressInfo;
 			const transport = new StreamableHTTPClientTransport(
-				new URL(`http://127.0.0.1:${address.port}/mcp-portal/bindings/binding-a/mcp`),
-				{ requestInit: { headers: { 'x-mcp-portal-binding-secret': 'server-secret' } } },
+				new URL(`http://127.0.0.1:${address.port}/agents/agent-a/mcp`),
+				{ requestInit: { headers: { [portalAccessHeader]: 'server-secret' } } },
 			);
 			const client = new Client({ name: 'portal-http-test', version: '1.0.0' });
 			await client.connect(asClientTransport(transport));
@@ -186,10 +208,10 @@ describe('portal HTTP server', () => {
 			);
 			await app.closePortalSessions();
 			await expect(
-				app.request('/mcp-portal/bindings/binding-a/mcp', {
+				app.request('/agents/agent-a/mcp', {
 					headers: {
 						'mcp-session-id': sessionId,
-						'x-mcp-portal-binding-secret': 'server-secret',
+						[portalAccessHeader]: 'server-secret',
 					},
 				}),
 			).resolves.toMatchObject({ status: 404 });

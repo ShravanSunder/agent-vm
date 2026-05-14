@@ -20,6 +20,7 @@ afterEach(async () => {
 
 function makeSystemConfig(): SystemConfig {
 	return {
+		schemaVersion: 1,
 		cacheDir: '/tmp/cache',
 		runtimeDir: '/tmp/runtime',
 		host: {

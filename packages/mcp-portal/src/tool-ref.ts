@@ -11,6 +11,9 @@ const toolIdentitySchema = z
 		toolName: z.string().min(1),
 	})
 	.strict();
+const toolRefSchema = z.string().startsWith('mcp:').brand<'ToolRef'>();
+
+export type ToolRef = z.infer<typeof toolRefSchema>;
 
 function decodeToolRefSegment(segment: string): string {
 	if (!/^[A-Za-z0-9_-]+$/.test(segment)) {
@@ -26,15 +29,15 @@ function decodeToolRefSegment(segment: string): string {
 	return decoded;
 }
 
-export function encodeToolRef(identity: ToolIdentity): string {
+export function encodeToolRef(identity: ToolIdentity): ToolRef {
 	const parsed = toolIdentitySchema.parse(identity);
 	const encodedNamespace = Buffer.from(parsed.namespace, 'utf-8').toString('base64url');
 	const encodedToolName = Buffer.from(parsed.toolName, 'utf-8').toString('base64url');
 
-	return `mcp:${encodedNamespace}:${encodedToolName}`;
+	return toolRefSchema.parse(`mcp:${encodedNamespace}:${encodedToolName}`);
 }
 
-export function decodeToolRef(toolRef: string): ToolIdentity {
+export function decodeToolRef(toolRef: string | ToolRef): ToolIdentity {
 	const [scheme, encodedNamespace, encodedToolName, ...extraParts] = toolRef.split(':');
 	if (scheme !== 'mcp' || !encodedNamespace || !encodedToolName || extraParts.length > 0) {
 		throw new Error('Invalid MCP toolRef.');

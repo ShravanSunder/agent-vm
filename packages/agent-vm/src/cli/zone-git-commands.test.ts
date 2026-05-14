@@ -35,6 +35,7 @@ function createSystemConfig(options: {
 	readonly rootPath: string;
 }): LoadedSystemConfig {
 	return {
+		schemaVersion: 1,
 		cacheDir: path.join(options.rootPath, 'cache'),
 		runtimeDir: path.join(options.rootPath, 'runtime'),
 		systemConfigPath: path.join(options.rootPath, 'config', 'system.json'),

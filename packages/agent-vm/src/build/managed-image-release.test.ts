@@ -115,6 +115,12 @@ describe('managed image release', () => {
 		expect(generatedDockerfile).toContain(
 			'RUN ln -sf /pnpm/global/5/node_modules/@agent-vm/openclaw-mcp-portal-plugin/dist /home/openclaw/.openclaw/extensions/mcp-portal',
 		);
+		expect(generatedDockerfile).toContain(
+			'/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server',
+		);
+		expect(generatedDockerfile).toContain(
+			'exec node /pnpm/global/5/node_modules/@agent-vm/mcp-portal/dist/bin/portal-server.js "$@"',
+		);
 		expect(generatedDockerfile).not.toContain('@openclaw/discord@2026.5.2');
 		expect(result.plan).toMatchObject({
 			baseImage: {
@@ -146,6 +152,43 @@ describe('managed image release', () => {
 				},
 			],
 			warnings: [],
+		});
+	});
+
+	it('installs MCP Portal in Tool VM Dockerfiles without credential literals', async () => {
+		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-tool-vm-plan-'));
+		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+		await fs.writeFile(
+			overlayPath,
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "extraAptPackages": [],',
+				'  "runAfterBase": []',
+				'}',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		const result = await generateManagedDockerfile({
+			base: 'tool-vm',
+			imageTargetFamily: 'toolVm',
+			imageTargetName: 'default',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory,
+			overlayPath,
+		});
+
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).toContain('RUN pnpm add -g "@agent-vm/mcp-portal@');
+		expect(generatedDockerfile).not.toMatch(
+			/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u,
+		);
+		expect(result.plan.mcpPortalPackage).toMatchObject({
+			name: '@agent-vm/mcp-portal',
+			source: 'installed-package',
 		});
 	});
 

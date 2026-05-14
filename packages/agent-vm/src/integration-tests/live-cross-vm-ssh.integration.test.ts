@@ -84,8 +84,10 @@ describe('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
 
 		// Step 4: SSH from gateway VM to tool VM through tcp.hosts
 		log('SSHing from gateway to tool...');
+		// tcp.hosts maps the synthetic per-host IPv4 answer; the shared AAAA
+		// answer is only present for SSRF compatibility and is not a raw TCP path.
 		const sshResult = await gatewayVm.exec(
-			'ssh -p 22 -i /root/.ssh/tool_key ' +
+			'ssh -4 -p 22 -i /root/.ssh/tool_key ' +
 				'-o StrictHostKeyChecking=no ' +
 				'-o UserKnownHostsFile=/dev/null ' +
 				'-o BatchMode=yes ' +

@@ -27,6 +27,7 @@
 		"types": ["node"],
 		"paths": {
 			"@agent-vm/agent-vm": ["./packages/agent-vm/src/index.ts"],
+			"@agent-vm/config-contracts": ["./packages/config-contracts/src/index.ts"],
 			"@agent-vm/gondolin-adapter": ["./packages/gondolin-adapter/src/index.ts"],
 			"@agent-vm/agent-vm-worker": ["./packages/agent-vm-worker/src/index.ts"],
 			"@agent-vm/gateway-interface": ["./packages/gateway-interface/src/index.ts"],

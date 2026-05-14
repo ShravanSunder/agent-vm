@@ -146,12 +146,14 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 
 		// --- Step 4: Test the lease API from inside the gateway VM ---
 		log('testing lease API from gateway VM...');
-		const healthCheck = await gatewayVm.exec('curl -sS http://controller.vm.host:18800/health');
+		// tcp.hosts maps the synthetic per-host IPv4 answer; the shared AAAA
+		// answer is only present for SSRF compatibility and is not a raw TCP path.
+		const healthCheck = await gatewayVm.exec('curl -4 -sS http://controller.vm.host:18800/health');
 		log(`health check: ${healthCheck.stdout.trim()}`);
 		expect(healthCheck.stdout).toContain('ok');
 
 		const leaseRequest = await gatewayVm.exec(
-			'curl -sS -X POST -H "Content-Type: application/json" -d \'{"zoneId":"shravan","scopeKey":"test","profileId":"standard","workMountDir":"/tmp","agentWorkspaceDir":"/tmp"}\' http://controller.vm.host:18800/lease',
+			'curl -4 -sS -X POST -H "Content-Type: application/json" -d \'{"zoneId":"shravan","scopeKey":"test","profileId":"standard","workMountDir":"/tmp","agentWorkspaceDir":"/tmp"}\' http://controller.vm.host:18800/lease',
 		);
 		log(`lease response: ${leaseRequest.stdout.trim().slice(0, 100)}`);
 		expect(leaseRequest.stdout).toContain('test-lease-001');
@@ -167,7 +169,7 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 		);
 
 		const sshResult = await gatewayVm.exec(
-			'ssh -p 22 -i /root/.ssh/tool_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10 root@tool-0.vm.host "cat /tmp/marker.txt"',
+			'ssh -4 -p 22 -i /root/.ssh/tool_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10 root@tool-0.vm.host "cat /tmp/marker.txt"',
 		);
 		log(`SSH exec result: ${sshResult.stdout.trim()}`);
 

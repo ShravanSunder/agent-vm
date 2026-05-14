@@ -82,7 +82,10 @@ type GatewayZoneGatewayConfig = OpenClawGatewayZoneGatewayConfig | WorkerGateway
  */
 export interface GatewayZoneConfig {
 	readonly id: string;
+	readonly agents?: readonly GatewayZoneAgentConfig[];
 	readonly gateway: GatewayZoneGatewayConfig;
+	readonly mcp?: GatewayZoneMcpPortalConfig;
+	readonly runtimeMcpServers?: Readonly<Record<string, GatewayZoneMcpServerConfig>>;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;
 	readonly runtimePluginConfigs?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 	readonly secrets: Record<
@@ -103,6 +106,21 @@ export interface GatewayZoneConfig {
 	readonly allowedHosts: readonly string[];
 	readonly websocketBypass: readonly string[];
 	readonly defaultToolVmProfile?: string;
+}
+
+export interface GatewayZoneAgentConfig {
+	readonly id: string;
+	readonly toolVmProfile?: string | undefined;
+}
+
+export interface GatewayZoneMcpPortalConfig {
+	readonly configDir: string;
+}
+
+export interface GatewayZoneMcpServerConfig {
+	readonly headers?: Readonly<Record<string, string>>;
+	readonly transport: 'streamable-http';
+	readonly url: string;
 }
 
 export interface BuildGatewayVmSpecOptions {

@@ -5,14 +5,9 @@ import { jsonObjectSchema, type JsonObject, type JsonValue } from './json-schema
 const forbiddenMetadataKeys = new Set([
 	'agentid',
 	'authprofile',
-	'authorization',
 	'bindingid',
-	'env',
-	'headers',
 	'runid',
-	'secret',
 	'sessionid',
-	'token',
 ]);
 
 function findForbiddenMetadataKey(value: JsonObject): string | null {

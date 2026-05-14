@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { createPortalAgentIdentity } from '../portal-access-policy.js';
 import type { PortalSession } from '../portal-session.js';
 import { createPortalToolHandlers } from './portal-tools.js';
 
 const session = {
 	catalog: {
-		bindingId: 'binding-a',
+		agentScopeId: 'agent-scope-a',
 		discoveryFailures: [],
 		generatedAt: '2026-05-10T00:00:00.000Z',
 		sourceHash: 'hash',
@@ -32,7 +33,7 @@ const session = {
 		],
 	},
 	graph: { relationships: [], skills: [] },
-	identity: { agentId: 'agent-a', bindingId: 'binding-a' },
+	identity: createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-scope-a' }),
 	searchIndex: {
 		search: () => ({
 			results: [
@@ -415,6 +416,62 @@ describe('portal tool handlers', () => {
 		expect(callUpstreamTool).toHaveBeenCalledTimes(1);
 	});
 
+	it('fails closed when a tool schema cannot be converted for validation', async () => {
+		const callUpstreamTool = vi.fn(async () => ({ content: [{ text: 'created', type: 'text' }] }));
+		const handlers = createPortalToolHandlers({
+			callUpstreamTool,
+			getSession: vi.fn(async () => ({
+				...session,
+				catalog: {
+					...session.catalog,
+					tools: [
+						...session.catalog.tools,
+						{
+							inputSchema: {
+								properties: { title: { type: 'string' } },
+								unevaluatedProperties: false,
+								type: 'object',
+							},
+							namespace: 'linear',
+							toolName: 'unsupported_schema',
+						},
+					],
+				},
+			})),
+		});
+
+		await expect(
+			handlers.call({
+				identity: session.identity,
+				input: {
+					calls: [
+						{
+							arguments: { title: 'Fix deploy' },
+							id: 'unsupported-create',
+							namespace: 'linear',
+							toolName: 'unsupported_schema',
+						},
+					],
+				},
+			}),
+		).resolves.toMatchObject({
+			ok: false,
+			results: {
+				'unsupported-create': {
+					error: {
+						feature: 'unevaluatedProperties',
+						kind: 'schema_validation_unavailable',
+						namespace: 'linear',
+						path: ['unevaluatedProperties'],
+						toolName: 'unsupported_schema',
+					},
+					ok: false,
+				},
+			},
+		});
+		expect(callUpstreamTool).not.toHaveBeenCalled();
+	});
+
 	it('returns upstream failures as keyed item errors without aborting sibling calls', async () => {
 		const callUpstreamTool = vi.fn(async (call: { readonly toolName: string }) => {
 			if (call.toolName === 'create_issue') {
@@ -480,7 +537,11 @@ describe('portal tool handlers', () => {
 	it('passes canonical validated batch arguments to approval and upstream calls', async () => {
 		const approval = vi.fn(allowDecision);
 		const callUpstreamTool = vi.fn(async () => ({ content: [{ text: 'created', type: 'text' }] }));
-		const identity = { ...session.identity, sessionId: 'session-a' };
+		const identity = createPortalAgentIdentity({
+			agentId: session.identity.agentId,
+			agentScopeId: session.identity.agentScopeId,
+			sessionId: 'session-a',
+		});
 		const handlers = createPortalToolHandlers({
 			approval,
 			callUpstreamTool,
@@ -517,12 +578,12 @@ describe('portal tool handlers', () => {
 		expect(callUpstreamTool).toHaveBeenCalledWith(
 			expect.objectContaining({
 				arguments: { title: 'Fallback title' },
-				bindingId: 'binding-a\nsession-a',
+				agentScopeId: 'agent-scope-a\nsession-a',
 			}),
 		);
 	});
 
-	it('accepts the unadvertised server-injected approval nonce for approval bridging', async () => {
+	it('accepts the unadvertised server-injected approval token for approval bridging', async () => {
 		const approval = vi.fn(allowDecision);
 		const callUpstreamTool = vi.fn(async () => ({ content: [{ text: 'created', type: 'text' }] }));
 		const handlers = createPortalToolHandlers({
@@ -535,7 +596,7 @@ describe('portal tool handlers', () => {
 			handlers.call({
 				identity: session.identity,
 				input: {
-					portalApprovalNonce: 'server-injected-nonce',
+					portalApprovalToken: 'server-injected-token',
 					calls: [
 						{
 							arguments: { title: 'Fix deploy' },
@@ -551,7 +612,7 @@ describe('portal tool handlers', () => {
 		expect(approval).toHaveBeenCalledWith(
 			[expect.objectContaining({ id: 'approved-create', toolName: 'create_issue' })],
 			session.identity,
-			'server-injected-nonce',
+			'server-injected-token',
 		);
 	});
 

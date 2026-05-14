@@ -10,6 +10,7 @@ import { ControllerZoneNotFoundError } from './zone-runtimes/zone-runtime-errors
 import type { OpenClawZoneRuntime } from './zone-runtimes/zone-runtime-types.js';
 
 const systemConfig = {
+	schemaVersion: 1,
 	cacheDir: './cache',
 	runtimeDir: './runtime',
 	host: {

@@ -13,6 +13,7 @@ import {
 function createSystemConfig(
 	openClawConfigPath: string,
 	authProfilesByAgent: Record<string, { readonly ref: string; readonly source: '1password' }> = {},
+	mcpConfigDir?: string,
 ): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
@@ -61,6 +62,7 @@ function createSystemConfig(
 						authProfilesByAgent,
 					},
 					id: 'shravan',
+					...(mcpConfigDir === undefined ? {} : { mcp: { configDir: mcpConfigDir } }),
 					secrets: {},
 					websocketBypass: [],
 				},
@@ -90,10 +92,10 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 								id: 'sun',
 								tools: {
 									deny: [
-										'mcp_portal_shravan_07417e5860df__mcp_portal_list',
-										'mcp_portal_shravan_07417e5860df__mcp_portal_search',
-										'mcp_portal_shravan_07417e5860df__mcp_portal_describe',
-										'mcp_portal_shravan_07417e5860df__mcp_portal_call',
+										'mcp_portal_shravan__mcp_portal_list',
+										'mcp_portal_shravan__mcp_portal_search',
+										'mcp_portal_shravan__mcp_portal_describe',
+										'mcp_portal_shravan__mcp_portal_call',
 									],
 								},
 							},
@@ -101,10 +103,10 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 								id: 'shravan',
 								tools: {
 									deny: [
-										'mcp_portal_sun_27756f050e14__mcp_portal_list',
-										'mcp_portal_sun_27756f050e14__mcp_portal_search',
-										'mcp_portal_sun_27756f050e14__mcp_portal_describe',
-										'mcp_portal_sun_27756f050e14__mcp_portal_call',
+										'mcp_portal_sun__mcp_portal_list',
+										'mcp_portal_sun__mcp_portal_search',
+										'mcp_portal_sun__mcp_portal_describe',
+										'mcp_portal_sun__mcp_portal_call',
 									],
 								},
 							},
@@ -112,15 +114,15 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 					},
 					mcp: {
 						servers: {
-							mcp_portal_sun_27756f050e14: {
-								headers: { 'x-mcp-portal-binding-secret': 'sun-secret' },
+							mcp_portal_sun: {
+								headers: { 'x-agent-vm-mcp-portal-secret': 'sun-secret' },
 								transport: 'streamable-http',
-								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-sun-27756f050e14/mcp',
+								url: 'http://127.0.0.1:18790/agents/sun/mcp',
 							},
-							mcp_portal_shravan_07417e5860df: {
-								headers: { 'x-mcp-portal-binding-secret': 'shravan-secret' },
+							mcp_portal_shravan: {
+								headers: { 'x-agent-vm-mcp-portal-secret': 'shravan-secret' },
 								transport: 'streamable-http',
-								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-shravan-07417e5860df/mcp',
+								url: 'http://127.0.0.1:18790/agents/shravan/mcp',
 							},
 						},
 					},
@@ -169,6 +171,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 	it('ignores OpenClaw-owned Discord session and binding semantics', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
+				configuredAuthProfileAgentIds: ['sun'],
 				zoneId: 'shravan',
 				config: {
 					agents: {
@@ -178,6 +181,16 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 								workspaceAccess: 'rw',
 							},
 							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'sun' }],
+					},
+					mcp: {
+						servers: {
+							mcp_portal_sun: {
+								headers: { 'x-agent-vm-mcp-portal-secret': 'sun-secret' },
+								transport: 'streamable-http',
+								url: 'http://127.0.0.1:18790/agents/sun/mcp',
+							},
 						},
 					},
 					session: {
@@ -300,7 +313,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		});
 	});
 
-	it('flags portal bindings that do not deny sibling agent portal tools', () => {
+	it('flags portal endpoints that do not deny sibling agent portal tools', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
 				zoneId: 'shravan',
@@ -317,8 +330,8 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 					},
 					mcp: {
 						servers: {
-							mcp_portal_sun_27756f050e14: {},
-							mcp_portal_shravan_07417e5860df: {},
+							mcp_portal_sun: {},
+							mcp_portal_shravan: {},
 						},
 					},
 				},
@@ -326,14 +339,14 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		]);
 
 		expect(
-			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-bindings-shravan'),
+			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Generate one mcp.servers portal binding per OpenClaw agent and deny sibling portal tool names on each agent.',
+			hint: 'Generate one mcp.servers portal endpoint per OpenClaw agent and deny sibling portal tool names on each agent.',
 		});
 	});
 
-	it('flags portal bindings without the generated binding secret header', () => {
+	it('flags portal endpoints without the generated access header', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
 				zoneId: 'shravan',
@@ -344,10 +357,10 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 								id: 'sun',
 								tools: {
 									deny: [
-										'mcp_portal_shravan_07417e5860df__mcp_portal_list',
-										'mcp_portal_shravan_07417e5860df__mcp_portal_search',
-										'mcp_portal_shravan_07417e5860df__mcp_portal_describe',
-										'mcp_portal_shravan_07417e5860df__mcp_portal_call',
+										'mcp_portal_shravan__mcp_portal_list',
+										'mcp_portal_shravan__mcp_portal_search',
+										'mcp_portal_shravan__mcp_portal_describe',
+										'mcp_portal_shravan__mcp_portal_call',
 									],
 								},
 							},
@@ -355,10 +368,10 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 								id: 'shravan',
 								tools: {
 									deny: [
-										'mcp_portal_sun_27756f050e14__mcp_portal_list',
-										'mcp_portal_sun_27756f050e14__mcp_portal_search',
-										'mcp_portal_sun_27756f050e14__mcp_portal_describe',
-										'mcp_portal_sun_27756f050e14__mcp_portal_call',
+										'mcp_portal_sun__mcp_portal_list',
+										'mcp_portal_sun__mcp_portal_search',
+										'mcp_portal_sun__mcp_portal_describe',
+										'mcp_portal_sun__mcp_portal_call',
 									],
 								},
 							},
@@ -366,14 +379,14 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 					},
 					mcp: {
 						servers: {
-							mcp_portal_sun_27756f050e14: {
+							mcp_portal_sun: {
 								transport: 'streamable-http',
-								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-sun-27756f050e14/mcp',
+								url: 'http://127.0.0.1:18790/agents/sun/mcp',
 							},
-							mcp_portal_shravan_07417e5860df: {
-								headers: { 'x-mcp-portal-binding-secret': 'shravan-secret' },
+							mcp_portal_shravan: {
+								headers: { 'x-agent-vm-mcp-portal-secret': 'shravan-secret' },
 								transport: 'streamable-http',
-								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-shravan-07417e5860df/mcp',
+								url: 'http://127.0.0.1:18790/agents/shravan/mcp',
 							},
 						},
 					},
@@ -382,11 +395,11 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		]);
 
 		expect(
-			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-bindings-shravan'),
+			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
 		).toMatchObject({ ok: false });
 	});
 
-	it('flags portal bindings with a non-generated loopback URL', () => {
+	it('flags portal endpoints with a non-generated loopback URL', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
 				zoneId: 'shravan',
@@ -397,10 +410,10 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 								id: 'sun',
 								tools: {
 									deny: [
-										'mcp_portal_shravan_07417e5860df__mcp_portal_list',
-										'mcp_portal_shravan_07417e5860df__mcp_portal_search',
-										'mcp_portal_shravan_07417e5860df__mcp_portal_describe',
-										'mcp_portal_shravan_07417e5860df__mcp_portal_call',
+										'mcp_portal_shravan__mcp_portal_list',
+										'mcp_portal_shravan__mcp_portal_search',
+										'mcp_portal_shravan__mcp_portal_describe',
+										'mcp_portal_shravan__mcp_portal_call',
 									],
 								},
 							},
@@ -408,10 +421,10 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 								id: 'shravan',
 								tools: {
 									deny: [
-										'mcp_portal_sun_27756f050e14__mcp_portal_list',
-										'mcp_portal_sun_27756f050e14__mcp_portal_search',
-										'mcp_portal_sun_27756f050e14__mcp_portal_describe',
-										'mcp_portal_sun_27756f050e14__mcp_portal_call',
+										'mcp_portal_sun__mcp_portal_list',
+										'mcp_portal_sun__mcp_portal_search',
+										'mcp_portal_sun__mcp_portal_describe',
+										'mcp_portal_sun__mcp_portal_call',
 									],
 								},
 							},
@@ -419,15 +432,15 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 					},
 					mcp: {
 						servers: {
-							mcp_portal_sun_27756f050e14: {
-								headers: { 'x-mcp-portal-binding-secret': 'sun-secret' },
+							mcp_portal_sun: {
+								headers: { 'x-agent-vm-mcp-portal-secret': 'sun-secret' },
 								transport: 'streamable-http',
-								url: 'http://127.0.0.1:19999/mcp-portal/bindings/mcp-portal-sun-27756f050e14/mcp',
+								url: 'http://127.0.0.1:19999/agents/sun/mcp',
 							},
-							mcp_portal_shravan_07417e5860df: {
-								headers: { 'x-mcp-portal-binding-secret': 'shravan-secret' },
+							mcp_portal_shravan: {
+								headers: { 'x-agent-vm-mcp-portal-secret': 'shravan-secret' },
 								transport: 'streamable-http',
-								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-shravan-07417e5860df/mcp',
+								url: 'http://127.0.0.1:18790/agents/shravan/mcp',
 							},
 						},
 					},
@@ -436,7 +449,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		]);
 
 		expect(
-			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-bindings-shravan'),
+			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
 		).toMatchObject({ ok: false });
 	});
 
@@ -451,10 +464,10 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 								id: 'sun',
 								tools: {
 									deny: [
-										'mcp_portal_shravan_07417e5860df__mcp_portal_list',
-										'mcp_portal_shravan_07417e5860df__mcp_portal_search',
-										'mcp_portal_shravan_07417e5860df__mcp_portal_describe',
-										'mcp_portal_shravan_07417e5860df__mcp_portal_call',
+										'mcp_portal_shravan__mcp_portal_list',
+										'mcp_portal_shravan__mcp_portal_search',
+										'mcp_portal_shravan__mcp_portal_describe',
+										'mcp_portal_shravan__mcp_portal_call',
 									],
 								},
 							},
@@ -462,10 +475,10 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 								id: 'shravan',
 								tools: {
 									deny: [
-										'mcp_portal_sun_27756f050e14__mcp_portal_list',
-										'mcp_portal_sun_27756f050e14__mcp_portal_search',
-										'mcp_portal_sun_27756f050e14__mcp_portal_describe',
-										'mcp_portal_sun_27756f050e14__mcp_portal_call',
+										'mcp_portal_sun__mcp_portal_list',
+										'mcp_portal_sun__mcp_portal_search',
+										'mcp_portal_sun__mcp_portal_describe',
+										'mcp_portal_sun__mcp_portal_call',
 									],
 								},
 							},
@@ -473,20 +486,20 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 					},
 					mcp: {
 						servers: {
-							mcp_portal_sun_27756f050e14: {
-								headers: { 'x-mcp-portal-binding-secret': 'sun-secret' },
+							mcp_portal_sun: {
+								headers: { 'x-agent-vm-mcp-portal-secret': 'sun-secret' },
 								transport: 'streamable-http',
-								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-sun-27756f050e14/mcp',
+								url: 'http://127.0.0.1:18790/agents/sun/mcp',
 							},
-							mcp_portal_shravan_07417e5860df: {
-								headers: { 'x-mcp-portal-binding-secret': 'shravan-secret' },
+							mcp_portal_shravan: {
+								headers: { 'x-agent-vm-mcp-portal-secret': 'shravan-secret' },
 								transport: 'streamable-http',
-								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-shravan-07417e5860df/mcp',
+								url: 'http://127.0.0.1:18790/agents/shravan/mcp',
 							},
-							mcp_portal_old_agent_15044beaedcc: {
-								headers: { 'x-mcp-portal-binding-secret': 'old-secret' },
+							mcp_portal_old_agent: {
+								headers: { 'x-agent-vm-mcp-portal-secret': 'old-secret' },
 								transport: 'streamable-http',
-								url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-old-agent-15044beaedcc/mcp',
+								url: 'http://127.0.0.1:18790/agents/old-agent/mcp',
 							},
 						},
 					},
@@ -495,8 +508,130 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		]);
 
 		expect(
-			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-bindings-shravan'),
+			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
 		).toMatchObject({ ok: false });
+	});
+
+	it('flags portal endpoint checks when no agents are configured', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						list: [],
+					},
+					mcp: {
+						servers: {},
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Generate one mcp.servers portal endpoint per OpenClaw agent and deny sibling portal tool names on each agent.',
+		});
+	});
+
+	it('accepts portal endpoints using configured non-default server settings', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				configuredAuthProfileAgentIds: ['sun'],
+				portalServer: {
+					accessHeaderName: 'x-custom-portal-secret',
+					host: '127.0.0.2',
+					port: 18_888,
+				},
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'openai-codex/gpt-5.5' },
+							sandbox: { workspaceAccess: 'rw' },
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'sun', tools: { deny: [] } }],
+					},
+					mcp: {
+						servers: {
+							mcp_portal_sun: {
+								headers: { 'x-custom-portal-secret': '${MCP_PORTAL_SERVER_SECRET}' },
+								transport: 'streamable-http',
+								url: 'http://127.0.0.2:18888/agents/sun/mcp',
+							},
+						},
+					},
+					plugins: {
+						allow: ['gondolin', 'memory-core', 'mcp-portal'],
+						entries: {
+							gondolin: { enabled: true },
+							'memory-core': { enabled: true },
+							'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
+						},
+						load: {
+							paths: [
+								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/home/openclaw/.openclaw/extensions/mcp-portal',
+							],
+						},
+						slots: { memory: 'memory-core' },
+					},
+				},
+			},
+		]);
+
+		expect(checks.every((check) => check.ok)).toBe(true);
+	});
+
+	it('flags stale MCP Portal policy in OpenClaw plugin config', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							sandbox: { workspaceAccess: 'rw' },
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'sun' }],
+					},
+					mcp: {
+						servers: {
+							mcp_portal_sun: {
+								headers: { 'x-agent-vm-mcp-portal-secret': 'sun-secret' },
+								transport: 'streamable-http',
+								url: 'http://127.0.0.1:18790/agents/sun/mcp',
+							},
+						},
+					},
+					plugins: {
+						allow: ['mcp-portal'],
+						entries: {
+							'mcp-portal': {
+								enabled: true,
+								hooks: { allowPromptInjection: true },
+								config: {
+									configDir: '/home/openclaw/.openclaw/config',
+									promptContext: { enabled: true },
+								},
+							},
+						},
+						load: {
+							paths: ['/home/openclaw/.openclaw/extensions/mcp-portal'],
+						},
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-mcp-portal-config-source-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Move MCP Portal namespace/tool policy to mcp-portal.config.jsonc; OpenClaw plugin config may only carry configDir/binPath.',
+		});
 	});
 
 	it('flags configured OpenClaw agents without matching auth profile material', () => {
@@ -615,6 +750,16 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 						sandbox: { workspaceAccess: 'rw' },
 						workspace: '/zone/agents/default',
 					},
+					list: [{ id: 'sun' }],
+				},
+				mcp: {
+					servers: {
+						mcp_portal_sun: {
+							headers: { 'x-agent-vm-mcp-portal-secret': 'sun-secret' },
+							transport: 'streamable-http',
+							url: 'http://127.0.0.1:18790/agents/sun/mcp',
+						},
+					},
 				},
 				session: {
 					dmScope: 'per-channel-peer',
@@ -654,6 +799,76 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 		}
 	});
 
+	it('loads MCP Portal server expectations from mcp-portal.config.jsonc', async () => {
+		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-doctor-'));
+		const configDirectory = path.join(temporaryDirectory, 'config');
+		const openClawConfigPath = path.join(configDirectory, 'openclaw.json');
+		await mkdir(configDirectory, { recursive: true });
+		await writeFile(
+			path.join(configDirectory, 'mcp-portal.config.jsonc'),
+			JSON.stringify({
+				agents: { sun: { profile: 'default' } },
+				profiles: { default: { enabledNamespaces: [] } },
+				schemaVersion: 1,
+				server: {
+					accessHeader: {
+						name: 'x-custom-portal-secret',
+						secret: { source: 'environment', name: 'MCP_PORTAL_SERVER_SECRET' },
+					},
+					host: '127.0.0.2',
+					port: 18_888,
+				},
+			}),
+			'utf8',
+		);
+		await writeFile(
+			openClawConfigPath,
+			JSON.stringify({
+				agents: {
+					defaults: {
+						sandbox: { workspaceAccess: 'rw' },
+						workspace: '/zone/agents/default',
+					},
+					list: [{ id: 'sun' }],
+				},
+				mcp: {
+					servers: {
+						mcp_portal_sun: {
+							headers: { 'x-custom-portal-secret': 'sun-secret' },
+							transport: 'streamable-http',
+							url: 'http://127.0.0.2:18888/agents/sun/mcp',
+						},
+					},
+				},
+				plugins: {
+					allow: ['memory-core', 'mcp-portal'],
+					entries: {
+						'memory-core': { enabled: true },
+						'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
+					},
+					load: {
+						paths: [
+							'/home/openclaw/.openclaw/extensions/gondolin',
+							'/home/openclaw/.openclaw/extensions/mcp-portal',
+						],
+					},
+					slots: { memory: 'memory-core' },
+				},
+			}),
+			'utf8',
+		);
+
+		try {
+			const checks = await collectOpenClawDeploymentDoctorChecks(
+				createSystemConfig(openClawConfigPath, {}, configDirectory),
+			);
+
+			expect(checks.every((check) => check.ok)).toBe(true);
+		} finally {
+			await rm(temporaryDirectory, { force: true, recursive: true });
+		}
+	});
+
 	it('reports unreadable OpenClaw config paths directly', async () => {
 		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-doctor-'));
 		const openClawConfigPath = path.join(temporaryDirectory, 'config', 'missing-openclaw.json');
@@ -669,6 +884,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 				ok: false,
 				hint: expect.stringContaining(`Cannot read ${openClawConfigPath}:`),
 			});
+			expect(checks).toHaveLength(1);
 		} finally {
 			await rm(temporaryDirectory, { force: true, recursive: true });
 		}

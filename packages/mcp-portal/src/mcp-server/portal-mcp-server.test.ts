@@ -51,7 +51,7 @@ describe('portal MCP server', () => {
 			'commitToken',
 		);
 		expect(JSON.stringify(toolsByName.get('mcp_portal_call')?.inputSchema)).not.toContain(
-			'portalApprovalNonce',
+			'portalApprovalToken',
 		);
 	});
 });

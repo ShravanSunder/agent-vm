@@ -5,16 +5,16 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { portalToolRecordSchema, type PortalToolRecord } from './catalog-types.js';
 import {
 	resolvePortalAccessPolicy,
-	portalBindingScopeKey,
+	portalAgentScopeKey,
 	type PortalAccessPolicyConfig,
-	type PortalBindingIdentity,
+	type PortalAgentIdentity,
 	type PortalToolSelector,
 } from './portal-access-policy.js';
 import { createSearchIndex, type SearchIndex } from './search-index.js';
 import { buildToolGraph, type SkillGraphInput, type ToolGraph } from './tool-graph.js';
 
 export interface PortalCatalogSnapshot {
-	readonly bindingId: string;
+	readonly agentScopeId: string;
 	readonly discoveryFailures: readonly PortalDiscoveryFailure[];
 	readonly generatedAt: string;
 	readonly sourceHash: string;
@@ -29,15 +29,15 @@ export interface PortalDiscoveryFailure {
 export interface PortalSession {
 	readonly catalog: PortalCatalogSnapshot;
 	readonly graph: ToolGraph;
-	readonly identity: PortalBindingIdentity;
+	readonly identity: PortalAgentIdentity;
 	readonly searchIndex: SearchIndex;
 }
 
 export interface PortalSessionRuntime {
-	readonly closeBinding: (bindingId: string) => Promise<void> | void;
+	readonly closeAgentScope: (agentScopeId: string) => Promise<void> | void;
 	readonly closeSession?: (scopeKey: string) => Promise<void> | void;
 	readonly listTools: (call: {
-		readonly bindingId: string;
+		readonly agentScopeId: string;
 		readonly namespace: string;
 	}) => Promise<readonly Tool[]>;
 }
@@ -53,9 +53,9 @@ export interface PortalSessionManagerOptions {
 }
 
 export interface PortalSessionManager {
-	readonly getSession: (identity: PortalBindingIdentity) => Promise<PortalSession>;
-	readonly invalidateBinding: (bindingId: string) => Promise<void>;
-	readonly invalidateSession: (identity: PortalBindingIdentity) => Promise<void>;
+	readonly getSession: (identity: PortalAgentIdentity) => Promise<PortalSession>;
+	readonly invalidateAgentScope: (agentScopeId: string) => Promise<void>;
+	readonly invalidateSession: (identity: PortalAgentIdentity) => Promise<void>;
 }
 
 interface CachedPortalSession {
@@ -67,6 +67,19 @@ function isHiddenTool(tool: PortalToolRecord, hiddenTools: readonly PortalToolSe
 	return hiddenTools.some(
 		(hiddenTool) =>
 			hiddenTool.namespace === tool.namespace && hiddenTool.toolName === tool.toolName,
+	);
+}
+
+function isEnabledTool(
+	tool: PortalToolRecord,
+	enabledTools: readonly PortalToolSelector[],
+): boolean {
+	if (enabledTools.length === 0) {
+		return true;
+	}
+	return enabledTools.some(
+		(enabledTool) =>
+			enabledTool.namespace === tool.namespace && enabledTool.toolName === tool.toolName,
 	);
 }
 
@@ -94,29 +107,29 @@ export function createPortalSessionManager(
 	options: PortalSessionManagerOptions,
 ): PortalSessionManager {
 	const sessions = new Map<string, CachedPortalSession>();
-	const bindingGenerations = new Map<string, number>();
+	const agentScopeGenerations = new Map<string, number>();
 	const getNow = options.now ?? (() => Date.now());
 
-	function generationForBinding(bindingId: string): number {
-		return bindingGenerations.get(bindingId) ?? 0;
+	function generationForAgentScope(agentScopeId: string): number {
+		return agentScopeGenerations.get(agentScopeId) ?? 0;
 	}
 
-	function incrementBindingGeneration(bindingId: string): void {
-		bindingGenerations.set(bindingId, generationForBinding(bindingId) + 1);
+	function incrementAgentScopeGeneration(agentScopeId: string): void {
+		agentScopeGenerations.set(agentScopeId, generationForAgentScope(agentScopeId) + 1);
 	}
 
 	function generationForScope(scopeKey: string): number {
 		return (
-			bindingGenerations.get(scopeKey) ??
-			generationForBinding(scopeKey.split('\n', 1)[0] ?? scopeKey)
+			agentScopeGenerations.get(scopeKey) ??
+			generationForAgentScope(scopeKey.split('\n', 1)[0] ?? scopeKey)
 		);
 	}
 
 	function incrementScopeGeneration(scopeKey: string): void {
-		bindingGenerations.set(scopeKey, generationForScope(scopeKey) + 1);
+		agentScopeGenerations.set(scopeKey, generationForScope(scopeKey) + 1);
 	}
 
-	async function buildSession(identity: PortalBindingIdentity): Promise<PortalSession> {
+	async function buildSession(identity: PortalAgentIdentity): Promise<PortalSession> {
 		const policy = resolvePortalAccessPolicy({
 			config: options.accessPolicy,
 			identity,
@@ -129,7 +142,7 @@ export function createPortalSessionManager(
 		const namespaceToolGroups = await Promise.allSettled(
 			allowedNamespaces.map(async (namespace) => ({
 				mcpTools: await options.runtime.listTools({
-					bindingId: portalBindingScopeKey(identity),
+					agentScopeId: portalAgentScopeKey(identity),
 					namespace,
 				}),
 				namespace,
@@ -144,7 +157,10 @@ export function createPortalSessionManager(
 			const { mcpTools, namespace } = namespaceToolGroup.value;
 			for (const mcpTool of mcpTools) {
 				const portalTool = portalToolFromMcpTool(namespace, mcpTool);
-				if (!isHiddenTool(portalTool, policy.hiddenTools)) {
+				if (
+					isEnabledTool(portalTool, policy.enabledTools) &&
+					!isHiddenTool(portalTool, policy.hiddenTools)
+				) {
 					tools.push(portalTool);
 				}
 			}
@@ -156,7 +172,7 @@ export function createPortalSessionManager(
 		});
 		const graph = buildToolGraph({ skills: options.skills ?? [], tools: sortedTools });
 		const catalog = {
-			bindingId: identity.bindingId,
+			agentScopeId: identity.agentScopeId,
 			discoveryFailures,
 			generatedAt: new Date(getNow()).toISOString(),
 			sourceHash: createSourceHash(sortedTools),
@@ -172,8 +188,8 @@ export function createPortalSessionManager(
 	}
 
 	return {
-		async getSession(identity: PortalBindingIdentity): Promise<PortalSession> {
-			const key = portalBindingScopeKey(identity);
+		async getSession(identity: PortalAgentIdentity): Promise<PortalSession> {
+			const key = portalAgentScopeKey(identity);
 			const now = getNow();
 			const cached = sessions.get(key);
 			if (cached && cached.expiresAt > now) {
@@ -190,24 +206,24 @@ export function createPortalSessionManager(
 			}
 			return session;
 		},
-		async invalidateBinding(bindingId: string): Promise<void> {
-			incrementBindingGeneration(bindingId);
+		async invalidateAgentScope(agentScopeId: string): Promise<void> {
+			incrementAgentScopeGeneration(agentScopeId);
 			for (const key of sessions.keys()) {
-				if (key === bindingId || key.startsWith(`${bindingId}\n`)) {
+				if (key === agentScopeId || key.startsWith(`${agentScopeId}\n`)) {
 					sessions.delete(key);
 				}
 			}
-			await options.runtime.closeBinding(bindingId);
+			await options.runtime.closeAgentScope(agentScopeId);
 		},
-		async invalidateSession(identity: PortalBindingIdentity): Promise<void> {
-			const scopeKey = portalBindingScopeKey(identity);
+		async invalidateSession(identity: PortalAgentIdentity): Promise<void> {
+			const scopeKey = portalAgentScopeKey(identity);
 			incrementScopeGeneration(scopeKey);
 			sessions.delete(scopeKey);
 			if (options.runtime.closeSession) {
 				await options.runtime.closeSession(scopeKey);
 				return;
 			}
-			await options.runtime.closeBinding(scopeKey);
+			await options.runtime.closeAgentScope(scopeKey);
 		},
 	};
 }

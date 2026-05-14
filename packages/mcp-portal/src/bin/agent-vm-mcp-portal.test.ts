@@ -26,7 +26,7 @@ describe('agent-vm-mcp-portal CLI', () => {
 					tools: [
 						{
 							inputSchema: { type: 'object' },
-							metadata: { headers: { Authorization: 'Bearer secret' } },
+							metadata: { sessionId: 'portal-session' },
 							namespace: 'linear',
 							toolName: 'create_issue',
 						},

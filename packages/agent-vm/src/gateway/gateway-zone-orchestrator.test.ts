@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
 import type {
 	BuildConfig,
 	BuildImageResult,
@@ -380,6 +381,98 @@ describe('startGatewayZone', () => {
 			processSpec: {
 				guestListenPort: 18789,
 				logPath: '/agent-vm/logs/gateway-boot-latest.log',
+			},
+		});
+	});
+
+	it('materializes MCP Portal runtime plugin config and server entries from zone MCP config', async () => {
+		const systemConfig = createSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const configDir = path.dirname(baseZone.gateway.config);
+		fs.writeFileSync(
+			path.join(configDir, 'mcp-portal.config.jsonc'),
+			JSON.stringify({
+				schemaVersion: 1,
+				server: {
+					host: '127.0.0.1',
+					port: 18790,
+					accessHeader: {
+						name: 'x-agent-vm-mcp-portal-secret',
+						secret: { source: 'environment', name: 'MCP_PORTAL_SERVER_SECRET' },
+					},
+				},
+				agents: { shravan: { profile: 'default' } },
+				profiles: { default: { enabledNamespaces: [] } },
+			}),
+			'utf8',
+		);
+		const lifecycleZones: GatewayZoneConfig[] = [];
+		const managedVm: ManagedVm = {
+			id: 'vm-mcp',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28290)),
+			setIngressRoutes: vi.fn(),
+		};
+
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+				zoneOverride: {
+					...baseZone,
+					agents: [{ id: 'shravan' }],
+					mcp: { configDir },
+				},
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				loadGatewayLifecycle: () => ({
+					buildProcessSpec: () => ({
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/' } as const,
+						logPath: '/tmp/gateway.log',
+						startCommand: 'start',
+					}),
+					buildVmSpec: (options) => {
+						lifecycleZones.push(options.zone);
+						return {
+							allowedHosts: [],
+							environment: {},
+							mediatedSecrets: {},
+							rootfsMode: 'cow' as const,
+							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+							tcpHosts: {},
+							vfsMounts: {},
+						};
+					},
+				}),
+			},
+		);
+
+		expect(lifecycleZones[0]?.runtimePluginConfigs).toEqual({
+			'mcp-portal': { configDir: '/home/openclaw/.openclaw/config' },
+		});
+		expect(lifecycleZones[0]?.runtimeMcpServers).toEqual({
+			mcp_portal_shravan: {
+				headers: { 'x-agent-vm-mcp-portal-secret': '${MCP_PORTAL_SERVER_SECRET}' },
+				transport: 'streamable-http',
+				url: 'http://127.0.0.1:18790/agents/shravan/mcp',
 			},
 		});
 	});

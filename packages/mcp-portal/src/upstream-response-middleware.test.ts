@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { redactCredentialText, redactUpstreamResponse } from './upstream-response-middleware.js';
+import {
+	redactCredentialText,
+	redactThrownError,
+	redactUpstreamResponse,
+} from './upstream-response-middleware.js';
+
+interface StructuredUpstreamError extends Error {
+	readonly code: string;
+	readonly data: {
+		readonly token: string;
+	};
+}
 
 describe('upstream response middleware', () => {
 	it('redacts credential-shaped text from nested result content', () => {
@@ -36,6 +47,36 @@ describe('upstream response middleware', () => {
 		expect(redactCredentialText('Authorization: Bearer super-secret')).toBe(
 			'Authorization: [REDACTED]',
 		);
+	});
+
+	it('preserves thrown error diagnostics while redacting sensitive fields', () => {
+		const cause = new Error('connect ECONNRESET');
+		const upstreamError = new Error('request failed with Bearer super-secret', {
+			cause,
+		}) as StructuredUpstreamError;
+		upstreamError.name = 'McpError';
+		Object.defineProperty(upstreamError, 'code', {
+			configurable: true,
+			enumerable: true,
+			value: 'TRANSPORT_FAILURE',
+		});
+		Object.defineProperty(upstreamError, 'data', {
+			configurable: true,
+			enumerable: true,
+			value: { token: 'super-secret' },
+		});
+		upstreamError.stack = 'McpError: request failed with Bearer super-secret';
+
+		const redacted = redactThrownError(upstreamError);
+
+		expect(redacted.name).toBe('McpError');
+		expect(redacted.cause).toBe(upstreamError);
+		expect(redacted.stack).toBe('McpError: request failed with [REDACTED]');
+		expect(redacted.message).toBe('request failed with [REDACTED]');
+		expect(Object.getOwnPropertyDescriptor(redacted, 'code')?.value).toBe('TRANSPORT_FAILURE');
+		expect(Object.getOwnPropertyDescriptor(redacted, 'data')?.value).toEqual({
+			token: '[REDACTED]',
+		});
 	});
 
 	it('does not redact non-credential author and oauth fields', () => {

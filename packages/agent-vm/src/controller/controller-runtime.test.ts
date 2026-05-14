@@ -14,6 +14,7 @@ import type {
 } from './worker-task-runner.js';
 
 const systemConfig = {
+	schemaVersion: 1,
 	cacheDir: './cache',
 	runtimeDir: './runtime',
 	systemConfigPath: './config/system.json',

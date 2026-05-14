@@ -170,8 +170,18 @@ function createHealthyOpenClawConfig(): object {
 				},
 				workspace: '/zone/agents/default',
 			},
+			list: [{ id: 'sun' }],
 		},
 		channels: {},
+		mcp: {
+			servers: {
+				mcp_portal_sun: {
+					headers: { 'x-agent-vm-mcp-portal-secret': 'sun-secret' },
+					transport: 'streamable-http',
+					url: 'http://127.0.0.1:18790/agents/sun/mcp',
+				},
+			},
+		},
 		plugins: {
 			allow: ['gondolin', 'memory-core', 'mcp-portal'],
 			entries: {

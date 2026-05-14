@@ -8,7 +8,9 @@ export type {
 	BuildGatewayVmSpecOptions,
 	GatewayAuthConfig,
 	GatewayLifecycle,
+	GatewayZoneAgentConfig,
 	GatewayZoneConfig,
+	GatewayZoneMcpPortalConfig,
 } from './gateway-lifecycle.js';
 export type { GatewayHealthCheck, GatewayProcessSpec } from './gateway-process-spec.js';
 export type { GatewayVmSpec } from './gateway-vm-spec.js';

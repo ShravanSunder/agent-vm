@@ -1,0 +1,197 @@
+import { spawn } from 'node:child_process';
+import type { ChildProcess, SpawnOptions } from 'node:child_process';
+
+export interface PortalSubprocessLogger {
+	readonly error: (message: string) => void;
+	readonly info: (message: string) => void;
+	readonly warn: (message: string) => void;
+}
+
+export type PortalSubprocessSpawnFunction = (
+	command: string,
+	args: readonly string[],
+	options: SpawnOptions,
+) => ChildProcess;
+
+export interface CreatePortalSubprocessSupervisorProps {
+	readonly backoffSteps?: readonly number[];
+	readonly binPath: string;
+	readonly configDir: string;
+	readonly fetchFn?: typeof fetch;
+	readonly healthPollIntervalMs?: number;
+	readonly healthTimeoutMs?: number;
+	readonly host: string;
+	readonly hmacEnv: Readonly<Record<string, string>>;
+	readonly logger: PortalSubprocessLogger;
+	readonly maxRestarts?: number;
+	readonly onFatal?: (reason: string) => void;
+	readonly port: number;
+	readonly spawnFn?: PortalSubprocessSpawnFunction;
+	readonly stopGraceMs?: number;
+}
+
+export interface PortalSubprocessSupervisor {
+	readonly isAlive: () => boolean;
+	readonly start: () => Promise<void>;
+	readonly stop: () => Promise<void>;
+}
+
+const defaultBackoffSteps = [200, 400, 800, 1_600, 3_200, 5_000] as const;
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => {
+		setTimeout(resolve, ms);
+	});
+}
+
+async function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+	return new Promise<boolean>((resolve) => {
+		let settled = false;
+		const timer = setTimeout(() => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			child.off('exit', handleExit);
+			resolve(false);
+		}, timeoutMs);
+		const handleExit = (): void => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			clearTimeout(timer);
+			resolve(true);
+		};
+		child.once('exit', handleExit);
+	});
+}
+
+interface WaitForHealthProps {
+	readonly fetchFn: typeof fetch;
+	readonly host: string;
+	readonly intervalMs: number;
+	readonly port: number;
+	readonly timeoutMs: number;
+}
+
+async function waitForHealthAttempt(props: {
+	readonly fetchFn: typeof fetch;
+	readonly host: string;
+	readonly intervalMs: number;
+	readonly lastError: unknown;
+	readonly port: number;
+	readonly startedAt: number;
+	readonly timeoutMs: number;
+}): Promise<void> {
+	if (Date.now() - props.startedAt > props.timeoutMs) {
+		const message =
+			props.lastError instanceof Error ? props.lastError.message : String(props.lastError);
+		throw new Error(`Timed out waiting for MCP Portal health: ${message}`);
+	}
+	try {
+		const response = await props.fetchFn(`http://${props.host}:${String(props.port)}/health`);
+		if (response.ok) {
+			return;
+		}
+		await delay(props.intervalMs);
+		return waitForHealthAttempt({
+			...props,
+			lastError: new Error(`health returned ${String(response.status)}`),
+		});
+	} catch (error) {
+		await delay(props.intervalMs);
+		return waitForHealthAttempt({ ...props, lastError: error });
+	}
+}
+
+async function waitForHealth(props: WaitForHealthProps): Promise<void> {
+	const startedAt = Date.now();
+	return waitForHealthAttempt({ ...props, lastError: undefined, startedAt });
+}
+
+export function createPortalSubprocessSupervisor(
+	props: CreatePortalSubprocessSupervisorProps,
+): PortalSubprocessSupervisor {
+	const spawnFn: PortalSubprocessSpawnFunction =
+		props.spawnFn ?? ((command, args, options) => spawn(command, [...args], options));
+	const fetchFn = props.fetchFn ?? fetch;
+	const healthPollIntervalMs = props.healthPollIntervalMs ?? 200;
+	const healthTimeoutMs = props.healthTimeoutMs ?? 10_000;
+	const stopGraceMs = props.stopGraceMs ?? 5_000;
+	const maxRestarts = props.maxRestarts ?? 5;
+	const backoffSteps = props.backoffSteps ?? defaultBackoffSteps;
+	let child: ChildProcess | null = null;
+	let stopping = false;
+	let restartCount = 0;
+	let restartWindowStartedAt = 0;
+
+	const spawnChild = (): ChildProcess => {
+		const nextChild = spawnFn(props.binPath, ['--config-dir', props.configDir], {
+			env: { ...process.env, ...props.hmacEnv },
+			stdio: ['ignore', 'pipe', 'pipe'],
+		});
+		child = nextChild;
+		nextChild.on('exit', () => {
+			if (child === nextChild) {
+				child = null;
+			}
+			if (stopping) {
+				return;
+			}
+			void scheduleRestart();
+		});
+		return nextChild;
+	};
+
+	const scheduleRestart = async (): Promise<void> => {
+		const now = Date.now();
+		if (restartWindowStartedAt === 0 || now - restartWindowStartedAt > 60_000) {
+			restartWindowStartedAt = now;
+			restartCount = 0;
+		}
+		restartCount += 1;
+		if (restartCount > maxRestarts) {
+			props.logger.error('[mcp-portal] subprocess restart limit exhausted.');
+			props.onFatal?.('backoff-exhausted');
+			return;
+		}
+		const backoffIndex = Math.min(restartCount - 1, backoffSteps.length - 1);
+		const backoffMs = backoffSteps[backoffIndex] ?? backoffSteps[backoffSteps.length - 1] ?? 5_000;
+		props.logger.warn(`[mcp-portal] subprocess exited; restarting in ${String(backoffMs)}ms.`);
+		await delay(backoffMs);
+		if (stopping) {
+			return;
+		}
+		spawnChild();
+	};
+
+	return {
+		isAlive: () => child !== null && !child.killed,
+		start: async () => {
+			stopping = false;
+			spawnChild();
+			await waitForHealth({
+				fetchFn,
+				host: props.host,
+				intervalMs: healthPollIntervalMs,
+				port: props.port,
+				timeoutMs: healthTimeoutMs,
+			});
+			props.logger.info('[mcp-portal] subprocess is healthy.');
+		},
+		stop: async () => {
+			stopping = true;
+			const activeChild = child;
+			child = null;
+			if (activeChild === null || activeChild.killed) {
+				return;
+			}
+			activeChild.kill('SIGTERM');
+			const exited = await waitForExit(activeChild, stopGraceMs);
+			if (!exited && !activeChild.killed) {
+				activeChild.kill('SIGKILL');
+			}
+		},
+	};
+}

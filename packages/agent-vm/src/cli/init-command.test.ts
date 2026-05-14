@@ -69,6 +69,8 @@ const noGeneratedAgeIdentityDependencies = {
 };
 
 const scaffoldedSystemConfigSchema = z.object({
+	$schema: z.string().min(1),
+	schemaVersion: z.literal(1),
 	cacheDir: z.string().min(1),
 	host: z.object({
 		projectNamespace: z.string().min(1),
@@ -249,11 +251,25 @@ describe('scaffoldAgentVmProject', () => {
 		const config = scaffoldedSystemConfigSchema.parse(await readGeneratedSystemConfig(targetDir));
 
 		expect(result.created).toContain('config/system.jsonc');
+		expect(result.created).toContain('config/schemas/system.schema.json');
+		expect(result.created).toContain('config/schemas/mcp.schema.json');
+		expect(result.created).toContain('config/schemas/mcp-portal.schema.json');
+		expect(config.$schema).toBe('./schemas/system.schema.json');
+		expect(config.schemaVersion).toBe(1);
 		expect(config.cacheDir).toBe('../cache');
 		expect(config.host.projectNamespace).toMatch(/^agent-vm-init-test-/u);
 		expect(config.zones[0]?.id).toBe('test-zone');
 		expect(config.zones[0]?.gateway.type).toBe('openclaw');
 		expect(systemJsonText).not.toContain('workspaceDir');
+		await expect(
+			readGeneratedJsonc(path.join(targetDir, 'config', 'schemas', 'system.schema.json')),
+		).resolves.toMatchObject({ $id: 'agent-vm:system:1' });
+		await expect(
+			readGeneratedJsonc(path.join(targetDir, 'config', 'schemas', 'mcp.schema.json')),
+		).resolves.toMatchObject({ $id: 'agent-vm:mcp:1' });
+		await expect(
+			readGeneratedJsonc(path.join(targetDir, 'config', 'schemas', 'mcp-portal.schema.json')),
+		).resolves.toMatchObject({ $id: 'agent-vm:mcp-portal:1' });
 	});
 
 	it('scaffolds a worker gateway when requested', async () => {
@@ -916,14 +932,14 @@ describe('scaffoldAgentVmProject', () => {
 				identity: { name: 'Sun' },
 				tools: {
 					deny: [
-						'mcp_portal_shravan_07417e5860df__mcp_portal_list',
-						'mcp_portal_shravan_07417e5860df__mcp_portal_search',
-						'mcp_portal_shravan_07417e5860df__mcp_portal_describe',
-						'mcp_portal_shravan_07417e5860df__mcp_portal_call',
-						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_list',
-						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_search',
-						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_describe',
-						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_call',
+						'mcp_portal_shravan__mcp_portal_list',
+						'mcp_portal_shravan__mcp_portal_search',
+						'mcp_portal_shravan__mcp_portal_describe',
+						'mcp_portal_shravan__mcp_portal_call',
+						'mcp_portal_alevtina__mcp_portal_list',
+						'mcp_portal_alevtina__mcp_portal_search',
+						'mcp_portal_alevtina__mcp_portal_describe',
+						'mcp_portal_alevtina__mcp_portal_call',
 					],
 				},
 			},
@@ -933,14 +949,14 @@ describe('scaffoldAgentVmProject', () => {
 				identity: { name: 'Shravan' },
 				tools: {
 					deny: [
-						'mcp_portal_sun_27756f050e14__mcp_portal_list',
-						'mcp_portal_sun_27756f050e14__mcp_portal_search',
-						'mcp_portal_sun_27756f050e14__mcp_portal_describe',
-						'mcp_portal_sun_27756f050e14__mcp_portal_call',
-						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_list',
-						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_search',
-						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_describe',
-						'mcp_portal_alevtina_1fd02772c4d1__mcp_portal_call',
+						'mcp_portal_sun__mcp_portal_list',
+						'mcp_portal_sun__mcp_portal_search',
+						'mcp_portal_sun__mcp_portal_describe',
+						'mcp_portal_sun__mcp_portal_call',
+						'mcp_portal_alevtina__mcp_portal_list',
+						'mcp_portal_alevtina__mcp_portal_search',
+						'mcp_portal_alevtina__mcp_portal_describe',
+						'mcp_portal_alevtina__mcp_portal_call',
 					],
 				},
 			},
@@ -950,24 +966,45 @@ describe('scaffoldAgentVmProject', () => {
 				identity: { name: 'Alevtina' },
 				tools: {
 					deny: [
-						'mcp_portal_sun_27756f050e14__mcp_portal_list',
-						'mcp_portal_sun_27756f050e14__mcp_portal_search',
-						'mcp_portal_sun_27756f050e14__mcp_portal_describe',
-						'mcp_portal_sun_27756f050e14__mcp_portal_call',
-						'mcp_portal_shravan_07417e5860df__mcp_portal_list',
-						'mcp_portal_shravan_07417e5860df__mcp_portal_search',
-						'mcp_portal_shravan_07417e5860df__mcp_portal_describe',
-						'mcp_portal_shravan_07417e5860df__mcp_portal_call',
+						'mcp_portal_sun__mcp_portal_list',
+						'mcp_portal_sun__mcp_portal_search',
+						'mcp_portal_sun__mcp_portal_describe',
+						'mcp_portal_sun__mcp_portal_call',
+						'mcp_portal_shravan__mcp_portal_list',
+						'mcp_portal_shravan__mcp_portal_search',
+						'mcp_portal_shravan__mcp_portal_describe',
+						'mcp_portal_shravan__mcp_portal_call',
 					],
 				},
 			},
 		]);
-		expect(openClawConfig.mcp?.servers?.mcp_portal_sun_27756f050e14).toMatchObject({
+		expect(openClawConfig.mcp?.servers?.mcp_portal_sun).toMatchObject({
 			transport: 'streamable-http',
-			url: 'http://127.0.0.1:18789/mcp-portal/bindings/mcp-portal-sun-27756f050e14/mcp',
+			url: 'http://127.0.0.1:18790/agents/sun/mcp',
 			headers: {
-				'x-mcp-portal-binding-secret': expect.stringMatching(/^[A-Za-z0-9_-]{32,}$/u),
+				'x-agent-vm-mcp-portal-secret': '${MCP_PORTAL_SERVER_SECRET}',
 			},
+		});
+		await expect(
+			readGeneratedJsonc(path.join(targetDir, 'config', 'gateways', 'my-zone', 'mcp.config.jsonc')),
+		).resolves.toMatchObject({
+			$schema: '../../schemas/mcp.schema.json',
+			schemaVersion: 1,
+			providers: {},
+		});
+		await expect(
+			readGeneratedJsonc(
+				path.join(targetDir, 'config', 'gateways', 'my-zone', 'mcp-portal.config.jsonc'),
+			),
+		).resolves.toMatchObject({
+			$schema: '../../schemas/mcp-portal.schema.json',
+			schemaVersion: 1,
+			agents: {
+				sun: { profile: 'default' },
+				shravan: { profile: 'default' },
+				alevtina: { profile: 'default' },
+			},
+			profiles: { default: { enabledNamespaces: [] } },
 		});
 	});
 
@@ -1367,6 +1404,9 @@ describe('scaffoldAgentVmProject', () => {
 			enabled: true,
 			hooks: { allowPromptInjection: true },
 		});
+		expect(openClawConfig.plugins?.entries?.['mcp-portal']).not.toHaveProperty(
+			'config.promptContext',
+		);
 		expect(openClawConfig.mcp?.servers).toEqual({});
 		expect(openClawConfig.tools?.allow).toContain('zone_git_push');
 	});

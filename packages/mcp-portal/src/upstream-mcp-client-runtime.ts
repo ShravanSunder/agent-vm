@@ -15,6 +15,7 @@ import type { JsonObject } from './json-schema.js';
 import {
 	isCredentialConfigKey,
 	redactThrownError,
+	redactUpstreamCatalogValue,
 	redactUpstreamResponse,
 } from './upstream-response-middleware.js';
 
@@ -45,13 +46,13 @@ export interface StdioUpstreamMcpServer extends BaseUpstreamMcpServer {
 export type NormalizedUpstreamMcpServer = RemoteUpstreamMcpServer | StdioUpstreamMcpServer;
 
 export interface ListToolsCall {
-	readonly bindingId: string;
+	readonly agentScopeId: string;
 	readonly namespace: string;
 }
 
 export interface UpstreamToolCall {
 	readonly arguments: JsonObject;
-	readonly bindingId: string;
+	readonly agentScopeId: string;
 	readonly namespace: string;
 	readonly toolName: string;
 }
@@ -78,12 +79,18 @@ export interface UpstreamMcpRuntimeOptions {
 		server: NormalizedUpstreamMcpServer,
 		transport: Exclude<UpstreamMcpTransportKind, 'auto-http'>,
 	) => unknown;
+	readonly onCloseError?: (error: Error, context: UpstreamMcpCloseErrorContext) => void;
 	readonly servers: readonly NormalizedUpstreamMcpServer[];
+}
+
+export interface UpstreamMcpCloseErrorContext {
+	readonly agentScopeId: string;
+	readonly namespace?: string;
 }
 
 export interface UpstreamMcpClientRuntime {
 	readonly callTool: (call: UpstreamToolCall) => Promise<unknown>;
-	readonly closeBinding: (bindingId: string) => Promise<void>;
+	readonly closeAgentScope: (agentScopeId: string) => Promise<void>;
 	readonly closeSession: (scopeKey: string) => Promise<void>;
 	readonly listTools: (call: ListToolsCall) => Promise<readonly Tool[]>;
 }
@@ -193,12 +200,12 @@ function createSdkTransport(
 	return new StreamableHTTPClientTransport(new URL(remoteServer.url), options);
 }
 
-function cacheKey(bindingId: string, namespace: string): string {
-	return `${bindingId}\n${namespace}`;
+function cacheKey(agentScopeId: string, namespace: string): string {
+	return `${agentScopeId}\n${namespace}`;
 }
 
-function rootBindingId(bindingId: string): string {
-	return bindingId.split('\n', 1)[0] ?? bindingId;
+function rootAgentScopeId(agentScopeId: string): string {
+	return agentScopeId.split('\n', 1)[0] ?? agentScopeId;
 }
 
 function transportAttempts(
@@ -278,11 +285,41 @@ async function closeClientAfterFailure(client: UpstreamMcpClientLike | null): Pr
 	}
 }
 
+async function closeClientForTeardown(
+	client: UpstreamMcpClientLike | null,
+	props: {
+		readonly context: UpstreamMcpCloseErrorContext;
+		readonly onCloseError?:
+			| ((error: Error, context: UpstreamMcpCloseErrorContext) => void)
+			| undefined;
+	},
+): Promise<void> {
+	if (!client) {
+		return;
+	}
+	try {
+		await client.close();
+	} catch (error) {
+		props.onCloseError?.(redactThrownError(error), props.context);
+	}
+}
+
+function closeErrorContextFromCacheKey(cacheKeyValue: string): UpstreamMcpCloseErrorContext {
+	const keyParts = cacheKeyValue.split('\n');
+	const namespace = keyParts.length > 1 ? keyParts[keyParts.length - 1] : undefined;
+	const agentScopeId =
+		namespace !== undefined ? keyParts.slice(0, keyParts.length - 1).join('\n') : cacheKeyValue;
+	return {
+		agentScopeId,
+		...(namespace !== undefined ? { namespace } : {}),
+	};
+}
+
 function redactToolCatalog(
 	tools: readonly Tool[],
 	options: { readonly exactValues: readonly string[] },
 ): readonly Tool[] {
-	return tools.map((tool) => ToolSchema.parse(redactUpstreamResponse(tool, options)));
+	return tools.map((tool) => ToolSchema.parse(redactUpstreamCatalogValue(tool, options)));
 }
 
 export function createUpstreamMcpClientRuntime(
@@ -291,7 +328,7 @@ export function createUpstreamMcpClientRuntime(
 	const serversByNamespace = new Map(options.servers.map((server) => [server.namespace, server]));
 	const clients = new Map<string, CachedClient>();
 	const pendingClients = new Map<string, PendingClient>();
-	const bindingGenerations = new Map<string, number>();
+	const agentScopeGenerations = new Map<string, number>();
 	const createClient = options.createClient ?? createSdkClient;
 	const createTransport = options.createTransport ?? createSdkTransport;
 	const redactionValues = [
@@ -299,19 +336,21 @@ export function createUpstreamMcpClientRuntime(
 		...options.servers.flatMap((server) => redactionValuesFromServer(server)),
 	];
 
-	function generationForBinding(bindingId: string): number {
+	function generationForAgentScope(agentScopeId: string): number {
 		return (
-			bindingGenerations.get(bindingId) ?? bindingGenerations.get(rootBindingId(bindingId)) ?? 0
+			agentScopeGenerations.get(agentScopeId) ??
+			agentScopeGenerations.get(rootAgentScopeId(agentScopeId)) ??
+			0
 		);
 	}
 
-	function incrementBindingGeneration(bindingId: string): void {
-		const rootBinding = rootBindingId(bindingId);
-		bindingGenerations.set(rootBinding, (bindingGenerations.get(rootBinding) ?? 0) + 1);
+	function incrementAgentScopeGeneration(agentScopeId: string): void {
+		const rootAgentScope = rootAgentScopeId(agentScopeId);
+		agentScopeGenerations.set(rootAgentScope, (agentScopeGenerations.get(rootAgentScope) ?? 0) + 1);
 	}
 
 	function incrementScopeGeneration(scopeKey: string): void {
-		bindingGenerations.set(scopeKey, (bindingGenerations.get(scopeKey) ?? 0) + 1);
+		agentScopeGenerations.set(scopeKey, (agentScopeGenerations.get(scopeKey) ?? 0) + 1);
 	}
 
 	async function createConnectedClient(
@@ -352,14 +391,17 @@ export function createUpstreamMcpClientRuntime(
 		return tryAttempt(0, null);
 	}
 
-	async function getClient(bindingId: string, namespace: string): Promise<UpstreamMcpClientLike> {
-		const key = cacheKey(bindingId, namespace);
+	async function getClient(
+		agentScopeId: string,
+		namespace: string,
+	): Promise<UpstreamMcpClientLike> {
+		const key = cacheKey(agentScopeId, namespace);
 		const cachedClient = clients.get(key);
 		if (cachedClient) {
 			return cachedClient.client;
 		}
 		const pendingClient = pendingClients.get(key);
-		const generation = generationForBinding(bindingId);
+		const generation = generationForAgentScope(agentScopeId);
 		if (pendingClient && pendingClient.generation === generation) {
 			return pendingClient.promise;
 		}
@@ -378,9 +420,11 @@ export function createUpstreamMcpClientRuntime(
 		pendingClients.set(key, pendingRecord);
 		try {
 			const client = await pending;
-			if (generationForBinding(bindingId) !== generation) {
+			if (generationForAgentScope(agentScopeId) !== generation) {
 				await closeClientAfterFailure(client);
-				throw new Error(`MCP client for binding "${rootBindingId(bindingId)}" was invalidated.`);
+				throw new Error(
+					`MCP client for agent scope "${rootAgentScopeId(agentScopeId)}" was invalidated.`,
+				);
 			}
 			clients.set(key, { client });
 			return client;
@@ -393,10 +437,10 @@ export function createUpstreamMcpClientRuntime(
 
 	return {
 		async callTool(call: UpstreamToolCall): Promise<unknown> {
-			const key = cacheKey(call.bindingId, call.namespace);
+			const key = cacheKey(call.agentScopeId, call.namespace);
 			let client: UpstreamMcpClientLike | null = null;
 			try {
-				client = await getClient(call.bindingId, call.namespace);
+				client = await getClient(call.agentScopeId, call.namespace);
 				const server = serversByNamespace.get(call.namespace);
 				return redactUpstreamResponse(
 					await withTimeout(client.callTool({ arguments: call.arguments, name: call.toolName }), {
@@ -411,22 +455,36 @@ export function createUpstreamMcpClientRuntime(
 				throw redactThrownError(error, { exactValues: redactionValues });
 			}
 		},
-		async closeBinding(bindingId: string): Promise<void> {
-			incrementBindingGeneration(bindingId);
+		async closeAgentScope(agentScopeId: string): Promise<void> {
+			incrementAgentScopeGeneration(agentScopeId);
 			const closePromises: Promise<void>[] = [];
 			for (const [key, cachedClient] of clients.entries()) {
-				if (key !== bindingId && !key.startsWith(`${bindingId}\n`)) {
+				if (key !== agentScopeId && !key.startsWith(`${agentScopeId}\n`)) {
 					continue;
 				}
 				clients.delete(key);
-				closePromises.push(closeClientAfterFailure(cachedClient.client));
+				closePromises.push(
+					closeClientForTeardown(cachedClient.client, {
+						context: closeErrorContextFromCacheKey(key),
+						onCloseError: options.onCloseError,
+					}),
+				);
 			}
 			for (const [key, pendingClient] of pendingClients.entries()) {
-				if (key !== bindingId && !key.startsWith(`${bindingId}\n`)) {
+				if (key !== agentScopeId && !key.startsWith(`${agentScopeId}\n`)) {
 					continue;
 				}
 				pendingClients.delete(key);
-				closePromises.push(pendingClient.promise.then(closeClientAfterFailure, () => undefined));
+				closePromises.push(
+					pendingClient.promise.then(
+						(client) =>
+							closeClientForTeardown(client, {
+								context: closeErrorContextFromCacheKey(key),
+								onCloseError: options.onCloseError,
+							}),
+						() => undefined,
+					),
+				);
 			}
 			await Promise.all(closePromises);
 		},
@@ -438,22 +496,36 @@ export function createUpstreamMcpClientRuntime(
 					continue;
 				}
 				clients.delete(key);
-				closePromises.push(closeClientAfterFailure(cachedClient.client));
+				closePromises.push(
+					closeClientForTeardown(cachedClient.client, {
+						context: closeErrorContextFromCacheKey(key),
+						onCloseError: options.onCloseError,
+					}),
+				);
 			}
 			for (const [key, pendingClient] of pendingClients.entries()) {
 				if (key !== scopeKey && !key.startsWith(`${scopeKey}\n`)) {
 					continue;
 				}
 				pendingClients.delete(key);
-				closePromises.push(pendingClient.promise.then(closeClientAfterFailure, () => undefined));
+				closePromises.push(
+					pendingClient.promise.then(
+						(client) =>
+							closeClientForTeardown(client, {
+								context: closeErrorContextFromCacheKey(key),
+								onCloseError: options.onCloseError,
+							}),
+						() => undefined,
+					),
+				);
 			}
 			await Promise.all(closePromises);
 		},
 		async listTools(call: ListToolsCall): Promise<readonly Tool[]> {
-			const key = cacheKey(call.bindingId, call.namespace);
+			const key = cacheKey(call.agentScopeId, call.namespace);
 			let client: UpstreamMcpClientLike | null = null;
 			try {
-				client = await getClient(call.bindingId, call.namespace);
+				client = await getClient(call.agentScopeId, call.namespace);
 				const server = serversByNamespace.get(call.namespace);
 				return redactToolCatalog(
 					await listAllTools(

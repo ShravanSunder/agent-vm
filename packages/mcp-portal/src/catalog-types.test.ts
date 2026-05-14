@@ -22,7 +22,29 @@ describe('portal catalog records', () => {
 		});
 	});
 
-	it('rejects model-visible server identity and auth metadata', () => {
+	it('accepts legitimate tool metadata keys that look like API fields', () => {
+		expect(
+			portalToolRecordSchema.parse({
+				inputSchema: { type: 'object' },
+				metadata: {
+					examples: [{ token: 'placeholder-token' }],
+					upstream: {
+						headers: {
+							Authorization: 'Bearer EXAMPLE',
+						},
+					},
+				},
+				namespace: 'linear',
+				toolName: 'create_issue',
+			}),
+		).toMatchObject({
+			metadata: {
+				examples: [{ token: 'placeholder-token' }],
+			},
+		});
+	});
+
+	it('rejects model-visible server identity metadata', () => {
 		expect(() =>
 			portalToolRecordSchema.parse({
 				inputSchema: { type: 'object' },
@@ -39,33 +61,7 @@ describe('portal catalog records', () => {
 				inputSchema: { type: 'object' },
 				metadata: {
 					upstream: {
-						headers: {
-							Authorization: 'Bearer secret',
-						},
-					},
-				},
-				namespace: 'linear',
-				toolName: 'create_issue',
-			}),
-		).toThrow(/headers/);
-
-		expect(() =>
-			portalToolRecordSchema.parse({
-				inputSchema: { type: 'object' },
-				metadata: {
-					examples: [{ token: 'secret' }],
-				},
-				namespace: 'linear',
-				toolName: 'create_issue',
-			}),
-		).toThrow(/token/);
-
-		expect(() =>
-			portalToolRecordSchema.parse({
-				inputSchema: { type: 'object' },
-				metadata: {
-					upstream: {
-						Headers: {
+						trace: {
 							AgentId: 'agent-secret',
 							SessionId: 'session-secret',
 						},
@@ -74,6 +70,6 @@ describe('portal catalog records', () => {
 				namespace: 'linear',
 				toolName: 'create_issue',
 			}),
-		).toThrow(/Headers/);
+		).toThrow(/AgentId/);
 	});
 });

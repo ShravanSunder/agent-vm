@@ -1,7 +1,7 @@
 {
 	"name": "@agent-vm/openclaw-mcp-portal-plugin",
 	"version": "0.0.58",
-	"description": "OpenClaw plugin that manages per-agent MCP Portal bindings over configured upstream MCP servers.",
+	"description": "OpenClaw plugin that supervises per-agent MCP Portal endpoints over configured upstream MCP servers.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
 		"url": "https://github.com/ShravanSunder/agent-vm/issues"
@@ -35,6 +35,7 @@
 		"test": "vitest run --root ../../ --config vitest.config.ts packages/openclaw-mcp-portal-plugin/src"
 	},
 	"dependencies": {
+		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/mcp-portal": "workspace:*",
 		"zod": "^4.4.3"
 	},

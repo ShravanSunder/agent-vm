@@ -8,6 +8,7 @@
 		"sourceMap": true,
 		"noEmit": false,
 		"paths": {
+			"@agent-vm/config-contracts": ["../config-contracts/dist/index.d.ts"],
 			"@agent-vm/mcp-portal": ["../mcp-portal/dist/index.d.ts"]
 		}
 	},

@@ -254,8 +254,23 @@ const imageProfilesSchema = z.object({
 	toolVms: z.record(z.string().min(1), toolVmImageProfileSchema).default({}),
 });
 
+const zoneAgentSchema = z
+	.object({
+		id: agentIdSchema,
+		toolVmProfile: z.string().min(1).optional(),
+	})
+	.strict();
+
+const zoneMcpConfigSchema = z
+	.object({
+		configDir: z.string().min(1),
+	})
+	.strict();
+
 const systemConfigSchema = z
 	.object({
+		$schema: z.string().min(1).optional(),
+		schemaVersion: z.literal(1).default(1),
 		host: z.object({
 			controllerPort: z.number().int().positive(),
 			projectNamespace: z
@@ -281,8 +296,10 @@ const systemConfigSchema = z
 				z
 					.object({
 						id: zoneIdSchema,
+						agents: z.array(zoneAgentSchema).optional(),
 						adminAccess: zoneAdminAccessSchema.optional(),
 						gateway: zoneGatewaySchema,
+						mcp: zoneMcpConfigSchema.optional(),
 						resources: zoneResourcesPolicySchema.optional(),
 						secrets: z.record(z.string(), secretReferenceSchema),
 						runtimeAuthHints: z.array(runtimeAuthHintSchema).optional(),
@@ -387,6 +404,14 @@ const systemConfigSchema = z
 					path: ['zones', zoneIndex, 'defaultToolVmProfile'],
 				});
 			}
+			const zoneAgents = zone.agents ?? [];
+			if (zone.gateway.type !== 'openclaw' && (zoneAgents.length > 0 || zone.mcp !== undefined)) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: `Worker zone '${zone.id}' must not declare agents or mcp.`,
+					path: ['zones', zoneIndex],
+				});
+			}
 			if (zone.gateway.type !== 'openclaw' && zone.agentToolVmProfiles !== undefined) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
@@ -418,9 +443,30 @@ const systemConfigSchema = z
 					path: ['zones', zoneIndex, 'agentToolVmProfiles'],
 				});
 			}
+			const seenAgentIds = new Set<string>();
+			for (const [agentIndex, agent] of zoneAgents.entries()) {
+				if (seenAgentIds.has(agent.id)) {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `Zone '${zone.id}' has duplicate agent id '${agent.id}'.`,
+						path: ['zones', zoneIndex, 'agents', agentIndex, 'id'],
+					});
+				}
+				seenAgentIds.add(agent.id);
+				if (
+					agent.toolVmProfile !== undefined &&
+					config.toolVmProfiles[agent.toolVmProfile] === undefined
+				) {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: `Zone '${zone.id}' agent '${agent.id}' references unknown toolVmProfile '${agent.toolVmProfile}'.`,
+						path: ['zones', zoneIndex, 'agents', agentIndex, 'toolVmProfile'],
+					});
+				}
+			}
 			if (
 				zone.defaultToolVmProfile !== undefined &&
-				!config.toolVmProfiles[zone.defaultToolVmProfile]
+				config.toolVmProfiles[zone.defaultToolVmProfile] === undefined
 			) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
@@ -481,6 +527,15 @@ const systemConfigSchema = z
 
 export type SystemConfig = z.infer<typeof systemConfigSchema>;
 export type SystemConfigInput = z.input<typeof systemConfigSchema>;
+
+export const systemConfigSchemaId = 'agent-vm:system:1';
+
+export function createSystemConfigSchemaArtifact(): Record<string, unknown> {
+	return {
+		$id: systemConfigSchemaId,
+		...z.toJSONSchema(systemConfigSchema, { target: 'draft-07' }),
+	};
+}
 
 export type LoadedSystemConfig = SystemConfig & {
 	readonly systemConfigPath: string;
@@ -598,6 +653,7 @@ function resolveRelativePaths(
 		zones: config.zones.map((zone) => ({
 			...zone,
 			gateway: resolveZoneGatewayPaths(zone.gateway),
+			...(zone.mcp === undefined ? {} : { mcp: { configDir: resolvePath(zone.mcp.configDir) } }),
 		})),
 		toolVmProfiles: Object.fromEntries(
 			Object.entries(config.toolVmProfiles).map(([profileId, profile]) => [

@@ -7,7 +7,7 @@ export default defineConfig({
 		'src/index.ts',
 		'src/tool-vm/index.ts',
 		'src/bin/agent-vm-mcp-portal.ts',
-		'src/bin/mcp-portal-server.ts',
+		'src/bin/portal-server.ts',
 	],
 	format: 'esm',
 	outExtensions: () => ({

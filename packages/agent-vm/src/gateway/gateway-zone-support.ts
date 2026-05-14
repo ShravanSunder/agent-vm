@@ -86,6 +86,7 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 
 	return {
 		id: zone.id,
+		...(zone.agents === undefined ? {} : { agents: zone.agents }),
 		gateway:
 			zone.gateway.type === 'openclaw'
 				? {
@@ -120,6 +121,7 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 		),
 		allowedHosts: zone.allowedHosts,
 		...(zone.defaultToolVmProfile ? { defaultToolVmProfile: zone.defaultToolVmProfile } : {}),
+		...(zone.mcp === undefined ? {} : { mcp: zone.mcp }),
 		websocketBypass: zone.websocketBypass,
 	};
 }

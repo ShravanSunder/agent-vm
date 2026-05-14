@@ -6,6 +6,7 @@ export default defineConfig({
 	resolve: {
 		alias: {
 			'@agent-vm/agent-vm': path.resolve('./packages/agent-vm/src/index.ts'),
+			'@agent-vm/config-contracts': path.resolve('./packages/config-contracts/src/index.ts'),
 			'@agent-vm/gondolin-adapter': path.resolve('./packages/gondolin-adapter/src/index.ts'),
 			'@agent-vm/agent-vm-worker': path.resolve('./packages/agent-vm-worker/src/index.ts'),
 			'@agent-vm/gateway-interface': path.resolve('./packages/gateway-interface/src/index.ts'),

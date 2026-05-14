@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
+import { loadMcpPortalConfig } from '@agent-vm/config-contracts';
 import {
-	createPortalBindingId,
-	createPortalServerName,
 	materializedPortalToolNames,
+	portalServerNameForAgent,
 } from '@agent-vm/openclaw-mcp-portal-plugin';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
@@ -47,14 +48,24 @@ interface OpenClawDeploymentConfig {
 	};
 }
 
-const defaultOpenClawGatewayPort = 18789;
-const portalSecretHeader = 'x-mcp-portal-binding-secret';
+interface PortalServerExpectation {
+	readonly accessHeaderName: string;
+	readonly host: string;
+	readonly port: number;
+}
+
+const defaultPortalServerExpectation: PortalServerExpectation = {
+	accessHeaderName: 'x-agent-vm-mcp-portal-secret',
+	host: '127.0.0.1',
+	port: 18790,
+};
 
 export interface OpenClawDeploymentDoctorTarget {
 	readonly configuredAuthProfileAgentIds?: readonly string[];
 	readonly config: OpenClawDeploymentConfig;
 	readonly configPath?: string;
 	readonly configReadError?: string;
+	readonly portalServer?: PortalServerExpectation;
 	readonly zoneId: string;
 }
 
@@ -84,6 +95,22 @@ function entryAllowsPromptInjection(
 	}
 	const hooks = entry.hooks;
 	return isObjectRecord(hooks) && hooks.allowPromptInjection === true;
+}
+
+function hasOnlyRuntimePortalPluginConfig(entries: Record<string, unknown> | undefined): boolean {
+	const entry = entries?.['mcp-portal'];
+	if (!isObjectRecord(entry)) {
+		return true;
+	}
+	const config = entry.config;
+	if (config === undefined) {
+		return true;
+	}
+	if (!isObjectRecord(config)) {
+		return false;
+	}
+	const runtimeKeys = new Set(['configDir', 'binPath']);
+	return Object.keys(config).every((key) => runtimeKeys.has(key));
 }
 
 function parseOpenClawDeploymentConfig(rawConfig: string): OpenClawDeploymentConfig {
@@ -116,8 +143,8 @@ function collectOpenClawCodexAgentIds(config: OpenClawDeploymentConfig): readonl
 		.filter((agentId): agentId is string => typeof agentId === 'string' && agentId.length > 0);
 }
 
-function portalBindingToolNames(agentId: string): readonly string[] {
-	return materializedPortalToolNames(createPortalServerName(agentId));
+function portalEndpointToolNames(agentId: string): readonly string[] {
+	return materializedPortalToolNames(portalServerNameForAgent(agentId));
 }
 
 function collectConfiguredAgentIds(config: OpenClawDeploymentConfig): readonly string[] {
@@ -127,42 +154,39 @@ function collectConfiguredAgentIds(config: OpenClawDeploymentConfig): readonly s
 		.filter((agentId): agentId is string => typeof agentId === 'string' && agentId.length > 0);
 }
 
-function openClawGatewayBaseUrl(config: OpenClawDeploymentConfig): string {
-	const port = config.gateway?.port;
-	const gatewayPort =
-		typeof port === 'number' && Number.isInteger(port) && port > 0
-			? port
-			: defaultOpenClawGatewayPort;
-	return `http://127.0.0.1:${gatewayPort}`;
-}
-
-function expectedPortalServerUrl(config: OpenClawDeploymentConfig, agentId: string): string {
-	return `${openClawGatewayBaseUrl(config)}/mcp-portal/bindings/${createPortalBindingId(agentId)}/mcp`;
+function expectedPortalServerUrl(portalServer: PortalServerExpectation, agentId: string): string {
+	return `http://${portalServer.host}:${String(portalServer.port)}/agents/${encodeURIComponent(agentId)}/mcp`;
 }
 
 function isPortalServerName(serverName: string): boolean {
 	return serverName.startsWith('mcp_portal_');
 }
 
-function hasExpectedPortalServer(config: OpenClawDeploymentConfig, agentId: string): boolean {
-	const server = config.mcp?.servers?.[createPortalServerName(agentId)];
+function hasExpectedPortalServer(
+	config: OpenClawDeploymentConfig,
+	agentId: string,
+	portalServer: PortalServerExpectation,
+): boolean {
+	const server = config.mcp?.servers?.[portalServerNameForAgent(agentId)];
 	if (!isObjectRecord(server)) {
 		return false;
 	}
 	const headers = server.headers;
-	const bindingSecret = isObjectRecord(headers) ? headers[portalSecretHeader] : undefined;
+	const accessHeaderValue = isObjectRecord(headers)
+		? headers[portalServer.accessHeaderName]
+		: undefined;
 	return (
 		server.transport === 'streamable-http' &&
-		server.url === expectedPortalServerUrl(config, agentId) &&
-		typeof bindingSecret === 'string' &&
-		bindingSecret.length > 0
+		server.url === expectedPortalServerUrl(portalServer, agentId) &&
+		typeof accessHeaderValue === 'string' &&
+		accessHeaderValue.length > 0
 	);
 }
 
 function hasNoOrphanPortalServers(config: OpenClawDeploymentConfig): boolean {
 	const servers = config.mcp?.servers ?? {};
 	const expectedServerNames = new Set(
-		collectConfiguredAgentIds(config).map((agentId) => createPortalServerName(agentId)),
+		collectConfiguredAgentIds(config).map((agentId) => portalServerNameForAgent(agentId)),
 	);
 	return Object.keys(servers).every(
 		(serverName) => !isPortalServerName(serverName) || expectedServerNames.has(serverName),
@@ -179,17 +203,21 @@ function portalDenyListForAgent(
 	return isObjectRecord(agent?.tools) && Array.isArray(agent.tools.deny) ? agent.tools.deny : [];
 }
 
-function hasValidPortalBindingTopology(config: OpenClawDeploymentConfig, agentId: string): boolean {
-	if (!hasExpectedPortalServer(config, agentId)) {
+function hasValidPortalEndpointTopology(
+	config: OpenClawDeploymentConfig,
+	agentId: string,
+	portalServer: PortalServerExpectation,
+): boolean {
+	if (!hasExpectedPortalServer(config, agentId, portalServer)) {
 		return false;
 	}
 
 	const configuredAgentIds = collectConfiguredAgentIds(config);
 	const deniedTools = portalDenyListForAgent(config, agentId);
-	const ownTools = portalBindingToolNames(agentId);
+	const ownTools = portalEndpointToolNames(agentId);
 	const siblingTools = configuredAgentIds
 		.filter((candidateAgentId) => candidateAgentId !== agentId)
-		.flatMap((candidateAgentId) => portalBindingToolNames(candidateAgentId));
+		.flatMap((candidateAgentId) => portalEndpointToolNames(candidateAgentId));
 	return (
 		ownTools.every((toolName) => !deniedTools.includes(toolName)) &&
 		siblingTools.every((toolName) => deniedTools.includes(toolName))
@@ -231,12 +259,17 @@ export function buildOpenClawDeploymentDoctorChecks(
 ): readonly DoctorCheck[] {
 	return targets.flatMap((target) => {
 		const config = target.config;
+		const portalServer = target.portalServer ?? defaultPortalServerExpectation;
 		const configReadableCheck = buildConfigReadableCheck(target);
+		if (target.configReadError !== undefined) {
+			return configReadableCheck ? [configReadableCheck] : [];
+		}
 		const pluginLoadPaths = config.plugins?.load?.paths;
 		const hasMemoryCore =
 			includesString(config.plugins?.allow, 'memory-core') ||
 			hasEnabledEntry(config.plugins?.entries, 'memory-core');
 		const workspace = config.agents?.defaults?.workspace;
+		const configuredAgentIds = collectConfiguredAgentIds(config);
 		return [
 			...(configReadableCheck ? [configReadableCheck] : []),
 			{
@@ -270,13 +303,19 @@ export function buildOpenClawDeploymentDoctorChecks(
 				hint: 'Set plugins.entries.mcp-portal.hooks.allowPromptInjection=true.',
 			},
 			{
-				name: `openclaw-mcp-portal-agent-bindings-${target.zoneId}`,
+				name: `openclaw-mcp-portal-config-source-${target.zoneId}`,
+				ok: hasOnlyRuntimePortalPluginConfig(config.plugins?.entries),
+				hint: 'Move MCP Portal namespace/tool policy to mcp-portal.config.jsonc; OpenClaw plugin config may only carry configDir/binPath.',
+			},
+			{
+				name: `openclaw-mcp-portal-agent-endpoints-${target.zoneId}`,
 				ok:
+					configuredAgentIds.length > 0 &&
 					hasNoOrphanPortalServers(config) &&
-					collectConfiguredAgentIds(config).every((agentId) =>
-						hasValidPortalBindingTopology(config, agentId),
+					configuredAgentIds.every((agentId) =>
+						hasValidPortalEndpointTopology(config, agentId, portalServer),
 					),
-				hint: 'Generate one mcp.servers portal binding per OpenClaw agent and deny sibling portal tool names on each agent.',
+				hint: 'Generate one mcp.servers portal endpoint per OpenClaw agent and deny sibling portal tool names on each agent.',
 			},
 			{
 				name: `openclaw-memory-slot-${target.zoneId}`,
@@ -307,6 +346,26 @@ function isOpenClawSystemZone(
 	return zone.gateway.type === 'openclaw';
 }
 
+async function loadPortalServerExpectation(
+	zone: OpenClawSystemZone,
+): Promise<PortalServerExpectation | undefined> {
+	if (zone.mcp === undefined) {
+		return undefined;
+	}
+	try {
+		const portalConfig = await loadMcpPortalConfig(
+			join(zone.mcp.configDir, 'mcp-portal.config.jsonc'),
+		);
+		return {
+			accessHeaderName: portalConfig.server.accessHeader.name,
+			host: portalConfig.server.host,
+			port: portalConfig.server.port,
+		};
+	} catch {
+		return undefined;
+	}
+}
+
 export async function collectOpenClawDeploymentDoctorChecks(
 	systemConfig: LoadedSystemConfig,
 ): Promise<readonly DoctorCheck[]> {
@@ -314,22 +373,25 @@ export async function collectOpenClawDeploymentDoctorChecks(
 		systemConfig.zones.filter(isOpenClawSystemZone).map(async (zone) => {
 			const configuredAuthProfileAgentIds = Object.keys(zone.gateway.authProfilesByAgent ?? {});
 			const configPath = zone.gateway.config;
+			const portalServer = await loadPortalServerExpectation(zone);
 			try {
 				const rawConfig = await readFile(configPath, 'utf8');
-				return {
+				const target = {
 					zoneId: zone.id,
 					configPath,
 					configuredAuthProfileAgentIds,
 					config: parseOpenClawDeploymentConfig(rawConfig),
 				} satisfies OpenClawDeploymentDoctorTarget;
+				return portalServer === undefined ? target : Object.assign(target, { portalServer });
 			} catch (error) {
-				return {
+				const target = {
 					zoneId: zone.id,
 					configPath,
 					configuredAuthProfileAgentIds,
 					config: {},
 					configReadError: error instanceof Error ? error.message : String(error),
 				} satisfies OpenClawDeploymentDoctorTarget;
+				return portalServer === undefined ? target : Object.assign(target, { portalServer });
 			}
 		}),
 	);

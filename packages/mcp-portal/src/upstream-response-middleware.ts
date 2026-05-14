@@ -29,6 +29,10 @@ function redactExactValues(text: string, exactValues: readonly string[]): string
 		.reduce((currentText, value) => currentText.split(value).join('[REDACTED]'), text);
 }
 
+export function redactExactCredentialText(text: string, options: RedactionOptions = {}): string {
+	return redactExactValues(text, options.exactValues ?? []);
+}
+
 export function redactCredentialText(text: string, options: RedactionOptions = {}): string {
 	const patternRedactedText = credentialPatterns.reduce(
 		(current, pattern) => current.replace(pattern, '[REDACTED]'),
@@ -60,6 +64,27 @@ function redactJsonValue(value: unknown, options: RedactionOptions, keyHint?: st
 	);
 }
 
+function redactExactJsonValue(value: unknown, options: RedactionOptions): unknown {
+	if (typeof value === 'string') {
+		return redactExactCredentialText(value, options);
+	}
+
+	if (Array.isArray(value)) {
+		return value.map((entry) => redactExactJsonValue(entry, options));
+	}
+
+	if (typeof value !== 'object' || value === null) {
+		return value;
+	}
+
+	return Object.fromEntries(
+		Object.entries(value).map(([key, childValue]) => [
+			key,
+			redactExactJsonValue(childValue, options),
+		]),
+	);
+}
+
 function isJsonValue(value: unknown): value is JsonValue {
 	if (
 		value === null ||
@@ -85,9 +110,43 @@ export function redactUpstreamResponse(response: unknown, options: RedactionOpti
 	return redactJsonValue(response, options);
 }
 
+export function redactUpstreamCatalogValue(
+	response: unknown,
+	options: RedactionOptions = {},
+): unknown {
+	return redactExactJsonValue(response, options);
+}
+
+function copyRedactedErrorField(props: {
+	readonly source: Error;
+	readonly target: Error;
+	readonly fieldName: string;
+	readonly options: RedactionOptions;
+}): void {
+	const descriptor = Object.getOwnPropertyDescriptor(props.source, props.fieldName);
+	if (!descriptor || !('value' in descriptor)) {
+		return;
+	}
+	Object.defineProperty(props.target, props.fieldName, {
+		...descriptor,
+		value: redactJsonValue(descriptor.value, props.options),
+	});
+}
+
 export function redactThrownError(error: unknown, options: RedactionOptions = {}): Error {
 	const message = error instanceof Error ? error.message : String(error);
-	return new Error(redactCredentialText(message, options));
+	if (!(error instanceof Error)) {
+		return new Error(redactCredentialText(message, options));
+	}
+
+	const redactedError = new Error(redactCredentialText(message, options), { cause: error });
+	redactedError.name = error.name;
+	if (error.stack) {
+		redactedError.stack = redactCredentialText(error.stack, options);
+	}
+	copyRedactedErrorField({ fieldName: 'code', options, source: error, target: redactedError });
+	copyRedactedErrorField({ fieldName: 'data', options, source: error, target: redactedError });
+	return redactedError;
 }
 
 export function toRedactedJsonValue(value: unknown, options: RedactionOptions = {}): JsonValue {

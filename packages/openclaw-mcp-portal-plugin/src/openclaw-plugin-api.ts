@@ -85,6 +85,12 @@ export interface OpenClawHttpRouteRegistration {
 	readonly replaceExisting?: boolean;
 }
 
+export interface OpenClawPluginService {
+	readonly id: string;
+	readonly start: () => Promise<void> | void;
+	readonly stop?: () => Promise<void> | void;
+}
+
 export interface OpenClawPortalPluginApi {
 	readonly config?: unknown;
 	readonly logger?: {
@@ -112,4 +118,5 @@ export interface OpenClawPortalPluginApi {
 		handler: (context: OpenClawPromptHookContext) => Promise<void> | void,
 	) => void;
 	readonly registerHttpRoute?: (registration: OpenClawHttpRouteRegistration) => void;
+	readonly registerService?: (service: OpenClawPluginService) => void;
 }

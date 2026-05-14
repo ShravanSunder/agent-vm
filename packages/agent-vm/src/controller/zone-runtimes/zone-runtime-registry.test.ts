@@ -18,6 +18,7 @@ import type {
 } from './zone-runtime-types.js';
 
 const systemConfig = {
+	schemaVersion: 1,
 	cacheDir: './cache',
 	runtimeDir: './runtime',
 	host: {

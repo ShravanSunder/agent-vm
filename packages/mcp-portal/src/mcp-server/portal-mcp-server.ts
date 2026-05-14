@@ -6,7 +6,7 @@ import {
 	type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 
-import type { PortalBindingIdentity } from '../portal-access-policy.js';
+import type { PortalAgentIdentity } from '../portal-access-policy.js';
 import {
 	createPortalToolHandlers,
 	portalToolInputSchemas,
@@ -54,7 +54,7 @@ function jsonToolResult(value: unknown): CallToolResult {
 }
 
 export function createPortalMcpServer(props: {
-	readonly identity: PortalBindingIdentity;
+	readonly identity: PortalAgentIdentity;
 	readonly runtime: PortalToolRuntime;
 }): Server {
 	const handlers = createPortalToolHandlers(props.runtime);

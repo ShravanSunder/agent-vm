@@ -14,7 +14,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 interface ValidSystemConfigZoneInput {
 	id: string;
+	agents?: readonly { readonly id: string; readonly toolVmProfile?: string }[];
 	gateway: Record<string, unknown>;
+	mcp?: { readonly configDir: string };
 	secrets: Record<string, unknown>;
 	runtimeAuthHints?: unknown;
 	allowedHosts: readonly string[];
@@ -283,6 +285,55 @@ describe('loadSystemConfig', () => {
 			},
 		});
 		expect(loadedZone.defaultToolVmProfile).toBe('standard');
+	});
+
+	test('loads OpenClaw zone agent records and MCP config directory references', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].agents = [{ id: 'shravan', toolVmProfile: 'standard' }, { id: 'sun' }];
+		config.zones[0].mcp = { configDir: './shravan' };
+		const configPath = await writeSystemConfigForTest('agent-vm-system-zone-agents-', config);
+
+		const loadedConfig = await loadSystemConfig(configPath);
+		const loadedZone = loadedConfig.zones.at(0);
+		if (loadedZone === undefined) {
+			throw new Error('Expected first loaded zone.');
+		}
+
+		expect(loadedZone.agents).toEqual([
+			{ id: 'shravan', toolVmProfile: 'standard' },
+			{ id: 'sun' },
+		]);
+		expect(loadedZone.mcp).toEqual({
+			configDir: path.join(path.dirname(configPath), 'shravan'),
+		});
+	});
+
+	test('rejects duplicate OpenClaw zone agent records', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].agents = [{ id: 'shravan' }, { id: 'shravan' }];
+		const configPath = await writeSystemConfigForTest('agent-vm-system-duplicate-agents-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/duplicate agent id 'shravan'/u);
+	});
+
+	test('rejects worker zones declaring agents or MCP Portal references', async () => {
+		const config = createValidSystemConfigInput();
+		const { zoneFilesDir: _zoneFilesDir, ...workerGateway } = config.zones[0].gateway;
+		config.zones[0] = {
+			...config.zones[0],
+			agents: [{ id: 'worker-agent' }],
+			gateway: {
+				...workerGateway,
+				type: 'worker',
+				imageProfile: 'worker',
+			},
+			mcp: { configDir: './worker' },
+		};
+		delete config.zones[0].defaultToolVmProfile;
+		delete config.zones[0].agentToolVmProfiles;
+		const configPath = await writeSystemConfigForTest('agent-vm-system-worker-agents-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/must not declare agents or mcp/u);
 	});
 
 	test('loads a valid plan-1 controller config', async () => {

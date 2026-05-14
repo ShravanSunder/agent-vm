@@ -3,17 +3,22 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { Hono } from 'hono';
 
-import type { PortalBindingIdentity } from '../portal-access-policy.js';
+import { createPortalAgentIdentity, type PortalAgentIdentity } from '../portal-access-policy.js';
 import { createPortalMcpServer } from './portal-mcp-server.js';
 import type { PortalToolRuntime } from './portal-tools.js';
 
-export interface PortalHttpBinding extends PortalBindingIdentity {
-	readonly secret: string;
+export interface PortalHttpAgentIdentity extends PortalAgentIdentity {}
+
+export interface PortalServerAccess {
+	readonly expectedValue: string;
+	readonly headerName: string;
 }
 
 export interface PortalHttpAppOptions {
-	readonly getBinding: (bindingId: string) => PortalHttpBinding | null;
-	readonly onSessionClosed?: (identity: PortalBindingIdentity) => Promise<void> | void;
+	readonly onSessionClosed?: (identity: PortalAgentIdentity) => Promise<void> | void;
+	readonly registeredAgentIds?: readonly string[];
+	readonly resolveAgentIdentity?: (agentId: string) => PortalHttpAgentIdentity | null;
+	readonly serverAccess?: PortalServerAccess;
 	readonly toolRuntime: PortalToolRuntime;
 }
 
@@ -21,11 +26,10 @@ export type PortalHttpApp = Hono & {
 	readonly closePortalSessions: () => Promise<void>;
 };
 
-const portalBindingSecretHeader = 'x-mcp-portal-binding-secret';
 const mcpSessionIdHeader = 'mcp-session-id';
 
 interface ActivePortalMcpSession {
-	readonly identity: PortalBindingIdentity;
+	readonly identity: PortalAgentIdentity;
 	readonly server: ReturnType<typeof createPortalMcpServer>;
 	readonly transport: WebStandardStreamableHTTPServerTransport;
 }
@@ -36,8 +40,8 @@ function timingSafeEqualString(left: string, right: string): boolean {
 	return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function activeSessionKey(bindingId: string, sessionId: string): string {
-	return `${bindingId}\n${sessionId}`;
+function activeSessionKey(scopeId: string, sessionId: string): string {
+	return `${scopeId}\n${sessionId}`;
 }
 
 export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpApp {
@@ -59,11 +63,17 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 		await options.onSessionClosed?.(activeSession.identity);
 	}
 
-	async function createActiveSession(binding: PortalHttpBinding): Promise<ActivePortalMcpSession> {
+	async function createActiveSession(
+		identityBase: PortalAgentIdentity,
+	): Promise<ActivePortalMcpSession> {
 		const sessionId = randomUUID();
-		const sessionKey = activeSessionKey(binding.bindingId, sessionId);
+		const sessionKey = activeSessionKey(identityBase.agentScopeId, sessionId);
 		let server: ReturnType<typeof createPortalMcpServer> | null = null;
-		const identity = { agentId: binding.agentId, bindingId: binding.bindingId, sessionId };
+		const identity = createPortalAgentIdentity({
+			agentId: identityBase.agentId,
+			agentScopeId: identityBase.agentScopeId,
+			sessionId,
+		});
 		const transport = new WebStandardStreamableHTTPServerTransport({
 			onsessionclosed: () => {
 				void closeActiveSession(sessionKey, { closeTransport: false });
@@ -72,7 +82,7 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 				if (!server) {
 					throw new Error('MCP Portal session initialized before server connection.');
 				}
-				activeSessions.set(activeSessionKey(binding.bindingId, initializedSessionId), {
+				activeSessions.set(activeSessionKey(identityBase.agentScopeId, initializedSessionId), {
 					identity,
 					server,
 					transport,
@@ -96,24 +106,40 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 		);
 	}
 
-	app.all('/mcp-portal/bindings/:bindingId/mcp', async (context) => {
-		const bindingId = context.req.param('bindingId');
-		const binding = options.getBinding(bindingId);
-		const providedSecret = context.req.header(portalBindingSecretHeader);
-		if (!binding || !providedSecret || !timingSafeEqualString(providedSecret, binding.secret)) {
-			return new Response('Unauthorized', { status: 401 });
+	app.get('/health', (context) =>
+		context.json({ agents: [...(options.registeredAgentIds ?? [])].toSorted(), ok: true }),
+	);
+
+	app.all('/agents/:agentId/mcp', async (context) => {
+		const serverAccess = options.serverAccess;
+		if (serverAccess !== undefined) {
+			const providedSecret = context.req.header(serverAccess.headerName);
+			if (
+				providedSecret === undefined ||
+				!timingSafeEqualString(providedSecret, serverAccess.expectedValue)
+			) {
+				return context.json({ error: { kind: 'unauthorized' }, ok: false }, 401);
+			}
+		}
+
+		const agentId = context.req.param('agentId');
+		const agentIdentity = options.resolveAgentIdentity?.(agentId) ?? null;
+		if (agentIdentity === null) {
+			return context.json({ error: { kind: 'unknown_agent' }, ok: false }, 404);
 		}
 
 		const mcpSessionId = context.req.header(mcpSessionIdHeader);
 		if (mcpSessionId) {
-			const activeSession = activeSessions.get(activeSessionKey(binding.bindingId, mcpSessionId));
+			const activeSession = activeSessions.get(
+				activeSessionKey(agentIdentity.agentScopeId, mcpSessionId),
+			);
 			if (!activeSession) {
 				return new Response('Unknown MCP portal session', { status: 404 });
 			}
 			return await activeSession.transport.handleRequest(context.req.raw);
 		}
 
-		const activeSession = await createActiveSession(binding);
+		const activeSession = await createActiveSession(agentIdentity);
 		return await activeSession.transport.handleRequest(context.req.raw);
 	});
 
