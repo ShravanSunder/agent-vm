@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { hashCallArguments, signApprovalToken } from '../auth/hmac-token.js';
 import type { PortalToolRecord } from '../catalog-types.js';
@@ -26,19 +26,26 @@ const profile: PortalAgentRuntimeRecord['profile'] = {
 	promptContext: { enabled: true, maxNamespaces: 12 },
 };
 
-const verifier = createPortalApprovalVerifier({
-	records: new Map<string, PortalAgentRuntimeRecord>([
-		[
-			'shravan',
-			{
-				agentId: 'shravan',
-				hmacKey,
-				profile,
-				profileName: 'builder',
-			},
-		],
-	]),
-});
+function createVerifier(props?: {
+	readonly onConservativeApprovalFallback?: Parameters<
+		typeof createPortalApprovalVerifier
+	>[0]['onConservativeApprovalFallback'];
+}): ReturnType<typeof createPortalApprovalVerifier> {
+	return createPortalApprovalVerifier({
+		onConservativeApprovalFallback: props?.onConservativeApprovalFallback ?? (() => undefined),
+		records: new Map<string, PortalAgentRuntimeRecord>([
+			[
+				'shravan',
+				{
+					agentId: 'shravan',
+					hmacKey,
+					profile,
+					profileName: 'builder',
+				},
+			],
+		]),
+	});
+}
 
 function createTool(
 	namespace: string,
@@ -70,6 +77,8 @@ function createCall(props: {
 
 describe('createPortalApprovalVerifier', () => {
 	it('fails closed for untrusted tools and trusted tools without annotations', () => {
+		const verifier = createVerifier();
+
 		expect(
 			verifier(
 				[
@@ -97,6 +106,8 @@ describe('createPortalApprovalVerifier', () => {
 	});
 
 	it('allows trusted explicitly read-only tools without a token', () => {
+		const verifier = createVerifier();
+
 		expect(
 			verifier(
 				[
@@ -112,7 +123,9 @@ describe('createPortalApprovalVerifier', () => {
 		).toEqual({ kind: 'allow' });
 	});
 
-	it('accepts plugin tokens that conservatively include trusted read-only calls', () => {
+	it('accepts and logs plugin tokens that conservatively include trusted read-only calls', () => {
+		const onConservativeApprovalFallback = vi.fn();
+		const verifier = createVerifier({ onConservativeApprovalFallback });
 		const readOnlyArguments = { query: 'deploy' };
 		const writeArguments = { id: 'ISSUE-1' };
 		const calls = [
@@ -140,5 +153,29 @@ describe('createPortalApprovalVerifier', () => {
 		});
 
 		expect(verifier(calls, 'shravan', token)).toEqual({ kind: 'allow' });
+		expect(onConservativeApprovalFallback).toHaveBeenCalledWith({
+			agentId: 'shravan',
+			conservativeCallCount: 2,
+			primaryReason: 'call-mismatch',
+			strictCallCount: 1,
+			toolRefs: ['linear/list_issues', 'github/delete_issue'],
+		});
+	});
+
+	it('rejects invalid approval tokens with the verifier reason', () => {
+		const verifier = createVerifier();
+
+		expect(
+			verifier(
+				[
+					createCall({
+						namespace: 'github',
+						toolName: 'delete_issue',
+					}),
+				],
+				'shravan',
+				'not.a.real.token',
+			),
+		).toEqual({ kind: 'approval_token_invalid', reason: 'malformed' });
 	});
 });

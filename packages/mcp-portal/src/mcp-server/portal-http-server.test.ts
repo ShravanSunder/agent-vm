@@ -151,6 +151,12 @@ describe('portal HTTP server', () => {
 				}),
 			]);
 
+			const invalidResult = await client.callTool({
+				arguments: { requests: [] },
+				name: 'mcp_portal_list',
+			});
+			expect(invalidResult.isError).toBe(true);
+
 			await transport.terminateSession();
 			await client.close();
 			await vi.waitFor(() =>

@@ -103,26 +103,35 @@ export function applyAgentOverrides(
 			throw new Error(`Invalid --agent override "${override}". Expected <agentId>=<profile>.`);
 		}
 		const existingAgent = nextAgents[agentId];
-		nextAgents[agentId] =
-			existingAgent === undefined
-				? { profile: profileName }
-				: { ...existingAgent, profile: profileName };
+		if (existingAgent === undefined) {
+			throw new Error(`Cannot override unknown MCP Portal agent "${agentId}".`);
+		}
+		nextAgents[agentId] = { ...existingAgent, profile: profileName };
 	}
 	return nextAgents;
 }
 
 interface DeferredPort {
 	readonly promise: Promise<number>;
+	readonly reject: (error: Error) => void;
 	readonly resolve: (port: number) => void;
 }
 
 function createDeferredPort(): DeferredPort {
+	let rejectPort: ((error: Error) => void) | undefined;
 	let resolvePort: ((port: number) => void) | undefined;
-	const promise = new Promise<number>((resolve) => {
+	const promise = new Promise<number>((resolve, reject) => {
+		rejectPort = reject;
 		resolvePort = resolve;
 	});
 	return {
 		promise,
+		reject: (error) => {
+			if (rejectPort === undefined) {
+				throw new Error('MCP Portal port rejector was not initialized.');
+			}
+			rejectPort(error);
+		},
 		resolve: (port) => {
 			if (resolvePort === undefined) {
 				throw new Error('MCP Portal port resolver was not initialized.');
@@ -264,7 +273,14 @@ export async function startPortalServer(
 		runtime: upstreamRuntime,
 		upstreamNamespaces: upstreamServers.map((server) => server.namespace),
 	});
-	const verifyApproval = createPortalApprovalVerifier({ records: agentRecords });
+	const verifyApproval = createPortalApprovalVerifier({
+		onConservativeApprovalFallback: (event) => {
+			process.stderr.write(
+				`[mcp-portal] conservative approval fallback agent=${event.agentId} reason=${event.primaryReason} strictCalls=${String(event.strictCallCount)} conservativeCalls=${String(event.conservativeCallCount)} tools=${event.toolRefs.join(',')}\n`,
+			);
+		},
+		records: agentRecords,
+	});
 	const app = createPortalHttpApp({
 		onSessionClosed: async (identity) => {
 			await sessionManager.invalidateSession(identity);
@@ -294,6 +310,9 @@ export async function startPortalServer(
 			listeningPort.resolve(info.port);
 		},
 	);
+	server.on('error', (error: Error) => {
+		listeningPort.reject(error);
+	});
 	const port = await listeningPort.promise;
 
 	return {

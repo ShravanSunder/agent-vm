@@ -37,6 +37,39 @@ export interface PortalSubprocessSupervisor {
 }
 
 const defaultBackoffSteps = [200, 400, 800, 1_600, 3_200, 5_000] as const;
+const inheritedPortalEnvNames = ['HOME', 'PATH', 'TEMP', 'TMP', 'TMPDIR'] as const;
+
+function createPortalSubprocessEnv(
+	hmacEnv: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+	const env: Record<string, string> = {};
+	for (const name of inheritedPortalEnvNames) {
+		const value = process.env[name];
+		if (value !== undefined) {
+			env[name] = value;
+		}
+	}
+	return { ...env, ...hmacEnv };
+}
+
+function logSubprocessOutput(props: {
+	readonly chunk: Buffer | string;
+	readonly logger: PortalSubprocessLogger;
+	readonly streamName: 'stderr' | 'stdout';
+}): void {
+	const text = String(props.chunk);
+	for (const line of text.split(/\r?\n/u)) {
+		if (line.length === 0) {
+			continue;
+		}
+		const message = `[mcp-portal ${props.streamName}] ${line}`;
+		if (props.streamName === 'stderr') {
+			props.logger.warn(message);
+		} else {
+			props.logger.info(message);
+		}
+	}
+}
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => {
@@ -124,15 +157,38 @@ export function createPortalSubprocessSupervisor(
 	let child: ChildProcess | null = null;
 	let stopping = false;
 	let restartCount = 0;
-	let restartWindowStartedAt = 0;
 
 	const spawnChild = (): ChildProcess => {
 		const nextChild = spawnFn(props.binPath, ['--config-dir', props.configDir], {
-			env: { ...process.env, ...props.hmacEnv },
+			env: createPortalSubprocessEnv(props.hmacEnv),
 			stdio: ['ignore', 'pipe', 'pipe'],
 		});
+		let failureHandled = false;
 		child = nextChild;
+		nextChild.stdout?.on('data', (chunk: Buffer | string) => {
+			logSubprocessOutput({ chunk, logger: props.logger, streamName: 'stdout' });
+		});
+		nextChild.stderr?.on('data', (chunk: Buffer | string) => {
+			logSubprocessOutput({ chunk, logger: props.logger, streamName: 'stderr' });
+		});
+		nextChild.on('error', (error: Error) => {
+			props.logger.error(`[mcp-portal] subprocess spawn failed: ${error.message}`);
+			if (failureHandled) {
+				return;
+			}
+			failureHandled = true;
+			if (child === nextChild) {
+				child = null;
+			}
+			if (!stopping) {
+				void scheduleRestart();
+			}
+		});
 		nextChild.on('exit', () => {
+			if (failureHandled) {
+				return;
+			}
+			failureHandled = true;
 			if (child === nextChild) {
 				child = null;
 			}
@@ -145,11 +201,6 @@ export function createPortalSubprocessSupervisor(
 	};
 
 	const scheduleRestart = async (): Promise<void> => {
-		const now = Date.now();
-		if (restartWindowStartedAt === 0 || now - restartWindowStartedAt > 60_000) {
-			restartWindowStartedAt = now;
-			restartCount = 0;
-		}
 		restartCount += 1;
 		if (restartCount > maxRestarts) {
 			props.logger.error('[mcp-portal] subprocess restart limit exhausted.');

@@ -42,12 +42,14 @@ imageProfiles
 
 zones[]
   id
+  agents
   gateway
   resources
   secrets
   runtimeAuthHints
   allowedHosts
   websocketBypass
+  mcp
   defaultToolVmProfile
   agentToolVmProfiles
   agentSandboxSeeds

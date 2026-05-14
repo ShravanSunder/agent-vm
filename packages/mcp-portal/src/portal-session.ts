@@ -119,10 +119,8 @@ export function createPortalSessionManager(
 	}
 
 	function generationForScope(scopeKey: string): number {
-		return (
-			agentScopeGenerations.get(scopeKey) ??
-			generationForAgentScope(scopeKey.split('\n', 1)[0] ?? scopeKey)
-		);
+		const agentScopeId = scopeKey.split('\n', 1)[0] ?? scopeKey;
+		return (agentScopeGenerations.get(scopeKey) ?? 0) + generationForAgentScope(agentScopeId);
 	}
 
 	function incrementScopeGeneration(scopeKey: string): void {

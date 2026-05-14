@@ -127,7 +127,16 @@ function approvalTokenCallDigests(calls: readonly PortalApprovalCall[]): readonl
 	}));
 }
 
+export interface ConservativeApprovalFallbackEvent {
+	readonly agentId: string;
+	readonly primaryReason: string;
+	readonly strictCallCount: number;
+	readonly conservativeCallCount: number;
+	readonly toolRefs: readonly string[];
+}
+
 export function createPortalApprovalVerifier(props: {
+	readonly onConservativeApprovalFallback: (event: ConservativeApprovalFallbackEvent) => void;
 	readonly records: ReadonlyMap<string, PortalAgentRuntimeRecord>;
 }): (
 	calls: readonly PortalApprovalCall[],
@@ -171,6 +180,15 @@ export function createPortalApprovalVerifier(props: {
 				calls: approvalTokenCallDigests(conservativeCallsRequiringApproval),
 			});
 			if (conservativeVerification.ok) {
+				props.onConservativeApprovalFallback({
+					agentId,
+					conservativeCallCount: conservativeCallsRequiringApproval.length,
+					primaryReason: verification.reason,
+					strictCallCount: callsRequiringApproval.length,
+					toolRefs: conservativeCallsRequiringApproval.map(
+						(call) => `${call.namespace}/${call.toolName}`,
+					),
+				});
 				return { kind: 'allow' };
 			}
 		}

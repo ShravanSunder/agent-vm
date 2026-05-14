@@ -439,7 +439,8 @@ Create `packages/openclaw-mcp-portal-plugin/src/hmac-key-registry.test.ts`:
 
 ```typescript
 import { describe, expect, it } from 'vitest';
-import { createHmacKeyRegistry, parseHmacKeysFromEnv } from './hmac-key-registry.js';
+import { parseHmacKeysFromEnv } from '@agent-vm/mcp-portal';
+import { createHmacKeyRegistry } from './hmac-key-registry.js';
 
 describe('createHmacKeyRegistry', () => {
 	it('generates one key per agent', () => {
@@ -545,20 +546,10 @@ export function createHmacKeyRegistry(props: CreateHmacKeyRegistryProps): HmacKe
 	};
 }
 
-export function parseHmacKeysFromEnv(env: NodeJS.ProcessEnv): Map<string, Buffer> {
-	const out = new Map<string, Buffer>();
-	for (const [name, value] of Object.entries(env)) {
-		if (!name.startsWith(ENV_PREFIX) || typeof value !== 'string') {
-			continue;
-		}
-		const agentId = name.slice(ENV_PREFIX.length);
-		if (!/^[0-9a-f]+$/.test(value) || value.length !== KEY_BYTES * 2) {
-			throw new Error(`Malformed HMAC key in env var "${name}".`);
-		}
-		out.set(agentId, Buffer.from(value, 'hex'));
-	}
-	return out;
-}
+// parseHmacKeysFromEnv lives in packages/mcp-portal/src/auth/hmac-env.ts and is
+// exported by @agent-vm/mcp-portal. The plugin imports it from the portal package
+// in tests only; production plugin code only generates per-boot keys and serializes
+// them for the subprocess environment.
 ```
 
 - [ ] **Step 4: Run tests**
@@ -1093,9 +1084,10 @@ describe('portal-server CLI', () => {
 		const binPath = require.resolve('../../dist/bin/portal-server.js');
 		const child = spawn(process.execPath, [binPath, '--port', '0', '--config-dir', configDir], {
 			env: {
-				...process.env,
+				HOME: process.env.HOME,
 				MCP_PORTAL_SERVER_SECRET: 'test-portal-secret',
 				PORTAL_HMAC_KEY__shravan: '00'.repeat(32),
+				PATH: process.env.PATH,
 				NODE_ENV: 'test',
 			},
 		});
@@ -2075,12 +2067,12 @@ git commit -m "refactor(mcp-portal): delete in-process registerHttpRoute path (h
 ### Task 14: End-to-end integration test
 
 **Files:**
-- Create: `packages/openclaw-mcp-portal-plugin/src/plugin-subprocess-integration.test.ts`
+- Create: `packages/openclaw-mcp-portal-plugin/src/plugin-subprocess-wiring.test.ts`
 - Create: `packages/mcp-portal/src/bin/portal-server.integration.test.ts`
 
 Two tests split by ownership:
 
-1. `plugin-subprocess-integration.test.ts` is a unit-style plugin integration test. It constructs the
+1. `plugin-subprocess-wiring.test.ts` is a unit-style plugin wiring test. It constructs the
    plugin programmatically, verifies the plugin registers the subprocess service, passes the configured
    `binPath` / `configDir` / HMAC env to the supervisor, and signs approved `mcp_portal_call` batches.
 2. `portal-server.integration.test.ts` is the real process/transport test. It runs in the explicit
@@ -2129,15 +2121,16 @@ describe('portal subprocess integration', () => {
 			binPath,
 			'--port',
 			'0',
-			'--config-dir',
-			tmp,
-		], {
-			env: {
-				...process.env,
-				MCP_PORTAL_SERVER_SECRET: portalServerSecret,
-				PORTAL_HMAC_KEY__shravan: hmacKey.toString('hex'),
-			},
-		});
+		'--config-dir',
+		tmp,
+	], {
+		env: {
+			HOME: process.env.HOME,
+			MCP_PORTAL_SERVER_SECRET: portalServerSecret,
+			PATH: process.env.PATH,
+			PORTAL_HMAC_KEY__shravan: hmacKey.toString('hex'),
+		},
+	});
 		portalPort = await readListeningPort(portalChild);
 	}, 30_000);
 
@@ -2183,14 +2176,14 @@ Fill in `readListeningPort`, the upstream mock, and the omitted call detail. Reu
 
 - [ ] **Step 2: Run the integration test**
 
-Run: `pnpm vitest run packages/openclaw-mcp-portal-plugin/src/plugin-subprocess-integration.test.ts`
+Run: `pnpm vitest run packages/openclaw-mcp-portal-plugin/src/plugin-subprocess-wiring.test.ts`
 
 Expected: all three assertions pass.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add packages/openclaw-mcp-portal-plugin/src/plugin-subprocess-integration.test.ts
+git add packages/openclaw-mcp-portal-plugin/src/plugin-subprocess-wiring.test.ts
 git commit -m "test(openclaw-portal-plugin): end-to-end subprocess integration"
 ```
 

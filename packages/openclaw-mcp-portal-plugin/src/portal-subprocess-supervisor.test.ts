@@ -1,5 +1,6 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -11,6 +12,8 @@ function silentLogger(): { error: () => void; info: () => void; warn: () => void
 
 class FakeChildProcess extends EventEmitter {
 	killed = false;
+	readonly stderr = new PassThrough();
+	readonly stdout = new PassThrough();
 
 	constructor(readonly exitAfterMs?: number) {
 		super();
@@ -32,6 +35,8 @@ class FakeChildProcess extends EventEmitter {
 
 describe('createPortalSubprocessSupervisor', () => {
 	it('spawns the portal binary with config dir, port, and HMAC env', async () => {
+		const previousSecret = process.env.AGENT_VM_SECRET_TOKEN;
+		process.env.AGENT_VM_SECRET_TOKEN = 'do-not-leak';
 		const spawnFn = vi.fn(
 			(_command: string, _args: readonly string[], _options: SpawnOptions) =>
 				new FakeChildProcess() as unknown as ChildProcess,
@@ -49,6 +54,8 @@ describe('createPortalSubprocessSupervisor', () => {
 
 		await supervisor.start();
 
+		const spawnOptions = spawnFn.mock.calls[0]?.[2];
+		const spawnedEnv = spawnOptions?.env ?? {};
 		expect(spawnFn).toHaveBeenCalledWith(
 			'/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server',
 			['--config-dir', '/config/gateways/sunclaw'],
@@ -56,7 +63,40 @@ describe('createPortalSubprocessSupervisor', () => {
 				env: expect.objectContaining({ PORTAL_HMAC_KEY__shravan: '00'.repeat(32) }),
 			}),
 		);
+		expect(spawnedEnv).not.toHaveProperty('AGENT_VM_SECRET_TOKEN');
 		expect(supervisor.isAlive()).toBe(true);
+		await supervisor.stop();
+		if (previousSecret === undefined) {
+			delete process.env.AGENT_VM_SECRET_TOKEN;
+		} else {
+			process.env.AGENT_VM_SECRET_TOKEN = previousSecret;
+		}
+	});
+
+	it('drains child stdout and stderr into the logger', async () => {
+		const child = new FakeChildProcess();
+		const logger = {
+			error: vi.fn(),
+			info: vi.fn(),
+			warn: vi.fn(),
+		};
+		const supervisor = createPortalSubprocessSupervisor({
+			binPath: '/x',
+			configDir: '/config',
+			fetchFn: vi.fn(async () => new Response(JSON.stringify({ ok: true }))),
+			host: '127.0.0.1',
+			hmacEnv: {},
+			logger,
+			port: 18_790,
+			spawnFn: () => child as unknown as ChildProcess,
+		});
+
+		await supervisor.start();
+		child.stdout.write('ready\n');
+		child.stderr.write('warned\n');
+
+		expect(logger.info).toHaveBeenCalledWith('[mcp-portal stdout] ready');
+		expect(logger.warn).toHaveBeenCalledWith('[mcp-portal stderr] warned');
 		await supervisor.stop();
 	});
 
@@ -111,6 +151,34 @@ describe('createPortalSubprocessSupervisor', () => {
 
 		await supervisor.start();
 		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		expect(onFatal).toHaveBeenCalledWith('backoff-exhausted');
+		await supervisor.stop();
+	});
+
+	it('handles spawn errors without throwing an unhandled child process error', async () => {
+		const onFatal = vi.fn();
+		const logger = silentLogger();
+		const supervisor = createPortalSubprocessSupervisor({
+			backoffSteps: [1],
+			binPath: '/missing',
+			configDir: '/config',
+			fetchFn: vi.fn(async () => new Response(JSON.stringify({ ok: true }))),
+			host: '127.0.0.1',
+			hmacEnv: {},
+			logger,
+			maxRestarts: 1,
+			onFatal,
+			port: 18_790,
+			spawnFn: () => {
+				const child = new FakeChildProcess();
+				queueMicrotask(() => child.emit('error', new Error('ENOENT')));
+				return child as unknown as ChildProcess;
+			},
+		});
+
+		await supervisor.start();
+		await new Promise((resolve) => setTimeout(resolve, 20));
 
 		expect(onFatal).toHaveBeenCalledWith('backoff-exhausted');
 		await supervisor.stop();

@@ -177,6 +177,24 @@ describe('portal tool handlers', () => {
 		});
 	});
 
+	it('rejects malformed list cursors instead of coercing them', async () => {
+		const handlers = createPortalToolHandlers({
+			callUpstreamTool: vi.fn(),
+			getSession: vi.fn(async () => session),
+		});
+
+		await expect(
+			handlers.list({
+				identity: session.identity,
+				input: { requests: [{ cursor: '12abc', id: 'linear-tools', limit: 10 }] },
+			}),
+		).resolves.toMatchObject({
+			errors: [expect.objectContaining({ kind: 'invalid_portal_input' })],
+			ok: false,
+			results: {},
+		});
+	});
+
 	it('rejects reserved request ids for every portal tool', async () => {
 		const handlers = createPortalToolHandlers({
 			callUpstreamTool: vi.fn(),

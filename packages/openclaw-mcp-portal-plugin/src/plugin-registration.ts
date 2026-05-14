@@ -141,11 +141,13 @@ function registerPortalService(props: {
 				hmacEnv: keyRegistry.serializeForEnv(),
 				logger: createLoggerAdapter(props.api),
 				onFatal: (reason) => {
+					props.runtimeState.markPortalUnavailable(reason);
 					props.api.logger?.error?.(`[mcp-portal] subprocess supervisor fatal: ${reason}`);
 				},
 				port: mcpPortalConfig.server.port,
 			});
 			await supervisor.start();
+			props.runtimeState.markPortalAvailable();
 		},
 		stop: async () => {
 			await supervisor?.stop();

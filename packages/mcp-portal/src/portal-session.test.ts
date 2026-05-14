@@ -404,4 +404,45 @@ describe('portal sessions', () => {
 		expect(listTools).toHaveBeenCalledTimes(2);
 		expect(closeAgentScope).toHaveBeenCalledWith('agent-scope-a');
 	});
+
+	it('does not cache a transport session when its parent scope is invalidated during build', async () => {
+		const firstListTools = createDeferred<readonly Tool[]>();
+		const closeAgentScope = vi.fn();
+		const closeSession = vi.fn();
+		let listToolsCallCount = 0;
+		const listTools = vi.fn(async (): Promise<readonly Tool[]> => {
+			listToolsCallCount += 1;
+			if (listToolsCallCount === 1) {
+				return await firstListTools.promise;
+			}
+			return [{ inputSchema: { type: 'object' }, name: 'fresh_tool' } satisfies Tool];
+		});
+		const manager = createPortalSessionManager({
+			accessPolicy: {
+				enabledNamespaces: ['linear'],
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			catalogTtlMs: 60_000,
+			runtime: { closeAgentScope, closeSession, listTools },
+			upstreamNamespaces: ['linear'],
+		});
+		const identity = createPortalAgentIdentity({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			sessionId: 'session-a',
+		});
+
+		await manager.invalidateSession(identity);
+		const staleSessionPromise = manager.getSession(identity);
+		await vi.waitFor(() => expect(listTools).toHaveBeenCalledTimes(1));
+		await manager.invalidateAgentScope('agent-scope-a');
+		firstListTools.resolve([{ inputSchema: { type: 'object' }, name: 'stale_tool' }]);
+		await staleSessionPromise;
+		await manager.getSession(identity);
+
+		expect(closeSession).toHaveBeenCalledWith('agent-scope-a\nsession-a');
+		expect(closeAgentScope).toHaveBeenCalledWith('agent-scope-a');
+		expect(listTools).toHaveBeenCalledTimes(2);
+	});
 });

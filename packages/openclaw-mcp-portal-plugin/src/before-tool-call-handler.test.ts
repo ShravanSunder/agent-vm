@@ -111,6 +111,60 @@ describe('createBeforeToolCallHandler', () => {
 		).resolves.toMatchObject({ block: true, blockReason: expect.stringContaining('not enabled') });
 	});
 
+	it('blocks portal calls when OpenClaw does not provide agent context', async () => {
+		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
+
+		await expect(
+			handler(
+				{
+					params: {
+						calls: [
+							{
+								arguments: {},
+								id: 'create',
+								namespace: 'linear',
+								toolName: 'create_issue',
+							},
+						],
+					},
+					toolName: 'mcp_portal_shravan__mcp_portal_call',
+				},
+				{},
+			),
+		).resolves.toMatchObject({
+			block: true,
+			blockReason: expect.stringContaining('missing OpenClaw agent context'),
+		});
+	});
+
+	it('blocks portal calls after the subprocess supervisor reports fatal', async () => {
+		const runtimeState = createRuntimeState();
+		runtimeState.markPortalUnavailable('backoff-exhausted');
+		const handler = createBeforeToolCallHandler({ runtimeState });
+
+		await expect(
+			handler(
+				{
+					params: {
+						calls: [
+							{
+								arguments: {},
+								id: 'create',
+								namespace: 'linear',
+								toolName: 'create_issue',
+							},
+						],
+					},
+					toolName: 'mcp_portal_shravan__mcp_portal_call',
+				},
+				{ agentId: 'shravan' },
+			),
+		).resolves.toMatchObject({
+			block: true,
+			blockReason: expect.stringContaining('backoff-exhausted'),
+		});
+	});
+
 	it('attaches one root approval token for approval-required batches', async () => {
 		const runtimeState = createRuntimeState();
 		const handler = createBeforeToolCallHandler({ runtimeState });
@@ -150,6 +204,32 @@ describe('createBeforeToolCallHandler', () => {
 				token: typeof token === 'string' ? token : '',
 			}),
 		).toEqual({ ok: true });
+	});
+
+	it('blocks approval-required calls when token mutation is ignored', async () => {
+		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
+		const params: Record<string, unknown> = {
+			calls: [
+				{
+					arguments: { title: 'Fix deploy' },
+					id: 'create',
+					namespace: 'linear',
+					toolName: 'create_issue',
+				},
+			],
+		};
+		Object.defineProperty(params, 'portalApprovalToken', {
+			configurable: true,
+			get: () => undefined,
+			set: () => undefined,
+		});
+
+		await expect(
+			handler({ params, toolName: 'mcp_portal_shravan__mcp_portal_call' }, { agentId: 'shravan' }),
+		).resolves.toMatchObject({
+			block: true,
+			blockReason: 'mcp-portal: could not attach server-side approval token.',
+		});
 	});
 
 	it('attaches approval tokens for trusted annotation namespaces', async () => {

@@ -79,6 +79,19 @@ export function createBeforeToolCallHandler(
 		if (agentId === null) {
 			return undefined;
 		}
+		const portalUnavailableReason = props.runtimeState.getPortalUnavailableReason();
+		if (portalUnavailableReason !== null) {
+			return {
+				block: true,
+				blockReason: `mcp-portal: portal subprocess unavailable (${portalUnavailableReason}).`,
+			};
+		}
+		if (context.agentId === undefined) {
+			return {
+				block: true,
+				blockReason: `mcp-portal: missing OpenClaw agent context for ${event.toolName}.`,
+			};
+		}
 		if (context.agentId !== undefined && context.agentId !== agentId) {
 			return {
 				block: true,
@@ -125,6 +138,12 @@ export function createBeforeToolCallHandler(
 		try {
 			event.params.portalApprovalToken = token;
 		} catch {
+			return {
+				block: true,
+				blockReason: 'mcp-portal: could not attach server-side approval token.',
+			};
+		}
+		if (event.params.portalApprovalToken !== token) {
 			return {
 				block: true,
 				blockReason: 'mcp-portal: could not attach server-side approval token.',

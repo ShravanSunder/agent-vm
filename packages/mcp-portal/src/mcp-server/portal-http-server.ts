@@ -57,10 +57,13 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 			return;
 		}
 		activeSessions.delete(sessionKey);
-		if (closeOptions.closeTransport) {
-			await activeSession.transport.close();
+		try {
+			if (closeOptions.closeTransport) {
+				await activeSession.transport.close();
+			}
+		} finally {
+			await options.onSessionClosed?.(activeSession.identity);
 		}
-		await options.onSessionClosed?.(activeSession.identity);
 	}
 
 	async function createActiveSession(

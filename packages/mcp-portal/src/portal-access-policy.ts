@@ -33,12 +33,29 @@ export function createPortalAgentIdentity(input: {
 	readonly agentScopeId: string;
 	readonly sessionId?: string;
 }): PortalAgentIdentity {
+	validateIdentitySegment('agentId', input.agentId);
+	validateIdentitySegment('agentScopeId', input.agentScopeId);
+	if (input.sessionId !== undefined) {
+		validateIdentitySegment('sessionId', input.sessionId);
+	}
 	return {
 		agentId: input.agentId,
 		agentScopeId: input.agentScopeId,
 		...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
 		[portalAgentIdentityBrand]: true,
 	};
+}
+
+function validateIdentitySegment(name: string, value: string): void {
+	if (value.length === 0) {
+		throw new Error(`MCP Portal ${name} must not be empty.`);
+	}
+	for (let index = 0; index < value.length; index += 1) {
+		const codePoint = value.charCodeAt(index);
+		if (codePoint < 32 || codePoint === 127) {
+			throw new Error(`MCP Portal ${name} must not contain control characters.`);
+		}
+	}
 }
 
 export function portalAgentScopeKey(identity: PortalAgentIdentity): string {

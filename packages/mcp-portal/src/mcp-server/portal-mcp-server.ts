@@ -10,6 +10,7 @@ import type { PortalAgentIdentity } from '../portal-access-policy.js';
 import {
 	createPortalToolHandlers,
 	portalToolInputSchemas,
+	type PortalBatchResult,
 	type PortalToolRuntime,
 } from './portal-tools.js';
 
@@ -47,9 +48,10 @@ export function listPortalMcpTools(): readonly Tool[] {
 	];
 }
 
-function jsonToolResult(value: unknown): CallToolResult {
+function jsonToolResult(value: PortalBatchResult): CallToolResult {
 	return {
 		content: [{ text: JSON.stringify(value), type: 'text' }],
+		...(value.ok ? {} : { isError: true }),
 	};
 }
 

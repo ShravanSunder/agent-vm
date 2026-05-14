@@ -74,7 +74,7 @@ const namespaceToolSelectorSchema = z
 	.strict();
 const listRequestSchema = z
 	.object({
-		cursor: z.string().optional(),
+		cursor: z.string().regex(/^\d+$/u).optional(),
 		id: safeRequestIdSchema,
 		limit: z.number().int().positive().max(100).default(20),
 		namespaces: z.array(z.string()).optional(),

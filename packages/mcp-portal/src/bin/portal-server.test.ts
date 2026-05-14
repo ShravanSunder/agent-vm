@@ -1,11 +1,16 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { portalHmacKeyEnvName } from '../auth/hmac-env.js';
-import { parsePortalServerCliArgs, startPortalServer } from './portal-server.js';
+import {
+	applyAgentOverrides,
+	parsePortalServerCliArgs,
+	startPortalServer,
+} from './portal-server.js';
 
 const startedServers: { readonly close: () => Promise<void> }[] = [];
 
@@ -58,6 +63,21 @@ describe('parsePortalServerCliArgs', () => {
 	});
 });
 
+describe('applyAgentOverrides', () => {
+	it('updates configured agents and rejects unknown agents', () => {
+		expect(
+			applyAgentOverrides(
+				{ shravan: { hmacKey: { name: 'KEY', source: 'environment' }, profile: 'default' } },
+				['shravan=builder'],
+			),
+		).toEqual({
+			shravan: { hmacKey: { name: 'KEY', source: 'environment' }, profile: 'builder' },
+		});
+
+		expect(() => applyAgentOverrides({}, ['unknown=builder'])).toThrow(/unknown/u);
+	});
+});
+
 describe('startPortalServer', () => {
 	it('starts a standalone Hono server and answers health', async () => {
 		const configDir = await createPortalConfigDir();
@@ -75,5 +95,39 @@ describe('startPortalServer', () => {
 
 		expect(response.status).toBe(200);
 		await expect(response.json()).resolves.toEqual({ agents: ['shravan'], ok: true });
+	});
+
+	it('rejects startup when the configured port cannot be bound', async () => {
+		const configDir = await createPortalConfigDir();
+		const reservedServer = createServer();
+		await new Promise<void>((resolve) => {
+			reservedServer.listen(0, '127.0.0.1', resolve);
+		});
+		const address = reservedServer.address();
+		if (address === null || typeof address === 'string') {
+			throw new Error('reserved server did not expose a TCP port');
+		}
+
+		try {
+			await expect(
+				startPortalServer({
+					args: { agentOverrides: [], configDir, port: address.port },
+					env: {
+						MCP_PORTAL_SERVER_SECRET: 'server-secret',
+						[portalHmacKeyEnvName('shravan')]: '00'.repeat(32),
+					},
+				}),
+			).rejects.toThrow();
+		} finally {
+			await new Promise<void>((resolve, reject) => {
+				reservedServer.close((error) => {
+					if (error) {
+						reject(error);
+					} else {
+						resolve();
+					}
+				});
+			});
+		}
 	});
 });
