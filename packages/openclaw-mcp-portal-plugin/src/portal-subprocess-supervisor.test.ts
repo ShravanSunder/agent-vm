@@ -94,9 +94,13 @@ describe('createPortalSubprocessSupervisor', () => {
 		await supervisor.start();
 		child.stdout.write('ready\n');
 		child.stderr.write('warned\n');
+		child.stdout.emit('error', new Error('stdout broke'));
+		child.stderr.emit('error', new Error('stderr broke'));
 
 		expect(logger.info).toHaveBeenCalledWith('[mcp-portal stdout] ready');
 		expect(logger.warn).toHaveBeenCalledWith('[mcp-portal stderr] warned');
+		expect(logger.warn).toHaveBeenCalledWith('[mcp-portal stdout] stream error: stdout broke');
+		expect(logger.warn).toHaveBeenCalledWith('[mcp-portal stderr] stream error: stderr broke');
 		await supervisor.stop();
 	});
 
@@ -135,35 +139,90 @@ describe('createPortalSubprocessSupervisor', () => {
 
 	it('reports fatal when restart budget is exhausted', async () => {
 		const onFatal = vi.fn();
+		let healthOk = true;
+		const children: FakeChildProcess[] = [];
 		const supervisor = createPortalSubprocessSupervisor({
 			backoffSteps: [1, 1, 1],
 			binPath: '/x',
 			configDir: '/config',
-			fetchFn: vi.fn(async () => new Response(JSON.stringify({ ok: true }))),
+			fetchFn: vi.fn(async () => {
+				if (!healthOk) {
+					throw new Error('not ready');
+				}
+				return new Response(JSON.stringify({ ok: true }));
+			}),
+			healthPollIntervalMs: 1,
+			healthTimeoutMs: 5,
 			host: '127.0.0.1',
 			hmacEnv: {},
 			logger: silentLogger(),
 			maxRestarts: 2,
 			onFatal,
 			port: 18_790,
-			spawnFn: () => new FakeChildProcess(1) as unknown as ChildProcess,
+			spawnFn: () => {
+				const child = new FakeChildProcess();
+				children.push(child);
+				return child as unknown as ChildProcess;
+			},
 		});
 
 		await supervisor.start();
+		healthOk = false;
+		children[0]?.emit('exit', 1, null);
 		await new Promise((resolve) => setTimeout(resolve, 50));
 
 		expect(onFatal).toHaveBeenCalledWith('backoff-exhausted');
 		await supervisor.stop();
 	});
 
-	it('handles spawn errors without throwing an unhandled child process error', async () => {
+	it('resets the restart budget after a restarted subprocess becomes healthy', async () => {
 		const onFatal = vi.fn();
-		const logger = silentLogger();
+		const children: FakeChildProcess[] = [];
+		const supervisor = createPortalSubprocessSupervisor({
+			backoffSteps: [1],
+			binPath: '/x',
+			configDir: '/config',
+			fetchFn: vi.fn(async () => new Response(JSON.stringify({ ok: true }))),
+			host: '127.0.0.1',
+			hmacEnv: {},
+			logger: silentLogger(),
+			maxRestarts: 1,
+			onFatal,
+			port: 18_790,
+			spawnFn: () => {
+				const child = new FakeChildProcess();
+				children.push(child);
+				return child as unknown as ChildProcess;
+			},
+		});
+
+		await supervisor.start();
+		children[0]?.emit('exit', 1, null);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		children[1]?.emit('exit', 1, null);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+
+		expect(children).toHaveLength(3);
+		expect(onFatal).not.toHaveBeenCalled();
+		await supervisor.stop();
+	});
+
+	it('rejects start with the spawn error instead of a health timeout', async () => {
+		const onFatal = vi.fn();
+		const logger = {
+			error: vi.fn(),
+			info: vi.fn(),
+			warn: vi.fn(),
+		};
 		const supervisor = createPortalSubprocessSupervisor({
 			backoffSteps: [1],
 			binPath: '/missing',
 			configDir: '/config',
-			fetchFn: vi.fn(async () => new Response(JSON.stringify({ ok: true }))),
+			fetchFn: vi.fn(async () => {
+				throw new Error('health should not win');
+			}),
+			healthPollIntervalMs: 1,
+			healthTimeoutMs: 100,
 			host: '127.0.0.1',
 			hmacEnv: {},
 			logger,
@@ -177,10 +236,10 @@ describe('createPortalSubprocessSupervisor', () => {
 			},
 		});
 
-		await supervisor.start();
-		await new Promise((resolve) => setTimeout(resolve, 20));
+		await expect(supervisor.start()).rejects.toThrow('ENOENT');
 
-		expect(onFatal).toHaveBeenCalledWith('backoff-exhausted');
+		expect(logger.error).toHaveBeenCalledWith('[mcp-portal] subprocess spawn failed: ENOENT');
+		expect(onFatal).not.toHaveBeenCalled();
 		await supervisor.stop();
 	});
 });

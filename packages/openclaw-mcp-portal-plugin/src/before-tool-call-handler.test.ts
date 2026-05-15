@@ -3,7 +3,7 @@ import {
 	verifyApprovalToken,
 	type ApprovalTokenCallDigest,
 } from '@agent-vm/mcp-portal';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createBeforeToolCallHandler } from './before-tool-call-handler.js';
 import { createHmacKeyRegistry } from './hmac-key-registry.js';
@@ -230,6 +230,37 @@ describe('createBeforeToolCallHandler', () => {
 			block: true,
 			blockReason: 'mcp-portal: could not attach server-side approval token.',
 		});
+	});
+
+	it('logs the token mutation error before blocking', async () => {
+		const logger = { warn: vi.fn() };
+		const handler = createBeforeToolCallHandler({ logger, runtimeState: createRuntimeState() });
+		const params: Record<string, unknown> = {
+			calls: [
+				{
+					arguments: { title: 'Fix deploy' },
+					id: 'create',
+					namespace: 'linear',
+					toolName: 'create_issue',
+				},
+			],
+		};
+		Object.defineProperty(params, 'portalApprovalToken', {
+			configurable: true,
+			set: () => {
+				throw new Error('frozen params');
+			},
+		});
+
+		await expect(
+			handler({ params, toolName: 'mcp_portal_shravan__mcp_portal_call' }, { agentId: 'shravan' }),
+		).resolves.toMatchObject({
+			block: true,
+			blockReason: 'mcp-portal: could not attach server-side approval token.',
+		});
+		expect(logger.warn).toHaveBeenCalledWith(
+			'[mcp-portal] could not attach server-side approval token: frozen params',
+		);
 	});
 
 	it('attaches approval tokens for trusted annotation namespaces', async () => {

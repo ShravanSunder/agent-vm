@@ -8,8 +8,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { portalHmacKeyEnvName } from '../auth/hmac-env.js';
 import {
 	applyAgentOverrides,
+	handlePortalServerError,
 	parsePortalServerCliArgs,
 	startPortalServer,
+	type PortalServerLogEvent,
 } from './portal-server.js';
 
 const startedServers: { readonly close: () => Promise<void> }[] = [];
@@ -79,6 +81,61 @@ describe('applyAgentOverrides', () => {
 });
 
 describe('startPortalServer', () => {
+	it('logs post-listen server errors without rejecting the resolved listener', () => {
+		const rejectedErrors: Error[] = [];
+		const loggedEvents: PortalServerLogEvent[] = [];
+
+		handlePortalServerError({
+			error: new Error('accept failed'),
+			hasListened: true,
+			listeningPort: {
+				promise: Promise.resolve(18_790),
+				reject: (error) => {
+					rejectedErrors.push(error);
+				},
+				resolve: () => undefined,
+			},
+			logger: { log: (event) => loggedEvents.push(event) },
+		});
+
+		expect(rejectedErrors).toEqual([]);
+		expect(loggedEvents).toEqual([
+			expect.objectContaining({
+				event: 'server_error',
+				level: 'error',
+				message: 'accept failed',
+			}),
+		]);
+	});
+
+	it('rejects pre-listen server errors after logging them', () => {
+		const rejectedErrors: Error[] = [];
+		const loggedEvents: PortalServerLogEvent[] = [];
+		const bindError = new Error('bind failed');
+
+		handlePortalServerError({
+			error: bindError,
+			hasListened: false,
+			listeningPort: {
+				promise: Promise.reject(bindError).catch(() => 0),
+				reject: (error) => {
+					rejectedErrors.push(error);
+				},
+				resolve: () => undefined,
+			},
+			logger: { log: (event) => loggedEvents.push(event) },
+		});
+
+		expect(rejectedErrors).toEqual([bindError]);
+		expect(loggedEvents).toEqual([
+			expect.objectContaining({
+				event: 'server_error',
+				level: 'error',
+				message: 'bind failed',
+			}),
+		]);
+	});
+
 	it('starts a standalone Hono server and answers health', async () => {
 		const configDir = await createPortalConfigDir();
 
@@ -116,6 +173,7 @@ describe('startPortalServer', () => {
 						MCP_PORTAL_SERVER_SECRET: 'server-secret',
 						[portalHmacKeyEnvName('shravan')]: '00'.repeat(32),
 					},
+					logger: { log: () => undefined },
 				}),
 			).rejects.toThrow();
 		} finally {

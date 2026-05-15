@@ -166,7 +166,13 @@ export function registerMcpPortalPlugin(api: OpenClawPortalPluginApi): void {
 	const runtimeState = createPortalPluginRuntimeState({ configDir });
 	const registeredService = registerPortalService({ api, configDir, runtimeState });
 
-	api.on?.('before_tool_call', createBeforeToolCallHandler({ runtimeState }), { priority: 80 });
+	api.on?.(
+		'before_tool_call',
+		createBeforeToolCallHandler({ logger: createLoggerAdapter(api), runtimeState }),
+		{
+			priority: 80,
+		},
+	);
 
 	api.on?.('before_prompt_build', createBeforePromptBuildHandler({ runtimeState }), {
 		priority: 80,

@@ -33,6 +33,28 @@ import {
 import { resolveSecretValue } from './secret-value-resolver.js';
 
 type PortalNodeServer = ReturnType<typeof serve>;
+type PortalServeFunction = typeof serve;
+
+export type PortalServerLogEvent =
+	| {
+			readonly agentId: string;
+			readonly conservativeCallCount: number;
+			readonly event: 'conservative_approval_fallback';
+			readonly level: 'warn';
+			readonly primaryReason: string;
+			readonly strictCallCount: number;
+			readonly toolRefs: readonly string[];
+	  }
+	| {
+			readonly event: 'server_error';
+			readonly level: 'error';
+			readonly message: string;
+			readonly stack?: string;
+	  };
+
+export interface PortalServerLogger {
+	readonly log: (event: PortalServerLogEvent) => void;
+}
 
 export interface PortalServerCliArgs {
 	readonly agentOverrides: readonly string[];
@@ -43,7 +65,9 @@ export interface PortalServerCliArgs {
 export interface StartPortalServerProps {
 	readonly args: PortalServerCliArgs;
 	readonly env: Readonly<Record<string, string | undefined>>;
+	readonly logger?: PortalServerLogger;
 	readonly resolveSecret?: (secret: SecretValue) => Promise<string>;
+	readonly serveFn?: PortalServeFunction;
 }
 
 interface ProfilePolicyMaps {
@@ -111,7 +135,7 @@ export function applyAgentOverrides(
 	return nextAgents;
 }
 
-interface DeferredPort {
+export interface DeferredPort {
 	readonly promise: Promise<number>;
 	readonly reject: (error: Error) => void;
 	readonly resolve: (port: number) => void;
@@ -139,6 +163,31 @@ function createDeferredPort(): DeferredPort {
 			resolvePort(port);
 		},
 	};
+}
+
+function defaultPortalServerLogger(): PortalServerLogger {
+	return {
+		log: (event) => {
+			process.stderr.write(`${JSON.stringify(event)}\n`);
+		},
+	};
+}
+
+export function handlePortalServerError(props: {
+	readonly error: Error;
+	readonly hasListened: boolean;
+	readonly listeningPort: DeferredPort;
+	readonly logger: PortalServerLogger;
+}): void {
+	props.logger.log({
+		event: 'server_error',
+		level: 'error',
+		message: props.error.message,
+		...(props.error.stack === undefined ? {} : { stack: props.error.stack }),
+	});
+	if (!props.hasListened) {
+		props.listeningPort.reject(props.error);
+	}
 }
 
 function closeNodeServer(server: PortalNodeServer): Promise<void> {
@@ -244,6 +293,8 @@ function withAgentOverrides(
 export async function startPortalServer(
 	props: StartPortalServerProps,
 ): Promise<{ readonly close: () => Promise<void>; readonly port: number }> {
+	const logger = props.logger ?? defaultPortalServerLogger();
+	const serveFn = props.serveFn ?? serve;
 	const resolveSecret =
 		props.resolveSecret ??
 		((secret: SecretValue) => resolveSecretValue(secret, { env: props.env }));
@@ -275,9 +326,15 @@ export async function startPortalServer(
 	});
 	const verifyApproval = createPortalApprovalVerifier({
 		onConservativeApprovalFallback: (event) => {
-			process.stderr.write(
-				`[mcp-portal] conservative approval fallback agent=${event.agentId} reason=${event.primaryReason} strictCalls=${String(event.strictCallCount)} conservativeCalls=${String(event.conservativeCallCount)} tools=${event.toolRefs.join(',')}\n`,
-			);
+			logger.log({
+				agentId: event.agentId,
+				conservativeCallCount: event.conservativeCallCount,
+				event: 'conservative_approval_fallback',
+				level: 'warn',
+				primaryReason: event.primaryReason,
+				strictCallCount: event.strictCallCount,
+				toolRefs: event.toolRefs,
+			});
 		},
 		records: agentRecords,
 	});
@@ -299,19 +356,21 @@ export async function startPortalServer(
 		},
 	});
 	const listeningPort = createDeferredPort();
-	const server = serve(
+	let hasListened = false;
+	const server = serveFn(
 		{
 			fetch: app.fetch,
 			hostname: portalConfig.server.host,
 			port: props.args.port ?? portalConfig.server.port,
 		},
 		(info) => {
+			hasListened = true;
 			process.stdout.write(`listening port=${String(info.port)}\n`);
 			listeningPort.resolve(info.port);
 		},
 	);
 	server.on('error', (error: Error) => {
-		listeningPort.reject(error);
+		handlePortalServerError({ error, hasListened, listeningPort, logger });
 	});
 	const port = await listeningPort.promise;
 

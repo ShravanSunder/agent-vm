@@ -23,6 +23,7 @@ interface CapturedSupervisorOptions {
 	readonly configDir: string;
 	readonly host: string;
 	readonly hmacEnv: Readonly<Record<string, string>>;
+	readonly onFatal?: (reason: string) => void;
 	readonly port: number;
 }
 
@@ -192,5 +193,80 @@ describe('MCP Portal plugin subprocess integration', () => {
 
 		await service.stop?.();
 		expect(supervisorMocks.stop).toHaveBeenCalledTimes(1);
+	});
+
+	it('blocks portal calls after supervisor fatal and allows them again after service restart', async () => {
+		const { registerMcpPortalPlugin } = await import('./plugin-registration.js');
+		const configDir = await createConfigDir();
+		const services: OpenClawPluginService[] = [];
+		let beforeToolCallHandler: BeforeToolCallHandler | undefined;
+
+		registerMcpPortalPlugin({
+			config: { tcpPool: { basePort: 19_000, size: 4 } },
+			logger: { error: () => undefined },
+			on: (hookName, handler): void => {
+				if (hookName === 'before_tool_call') {
+					beforeToolCallHandler = handler as BeforeToolCallHandler;
+				}
+			},
+			onDispose: () => undefined,
+			pluginConfig: {
+				binPath: '/tmp/agent-vm-mcp-portal-server',
+				configDir,
+			},
+			registerService: (service) => {
+				services.push(service);
+			},
+		});
+		const service = services[0];
+		if (service === undefined || beforeToolCallHandler === undefined) {
+			throw new Error('Expected plugin to register subprocess service and before_tool_call hook.');
+		}
+		await service.start();
+		const supervisorOptions = supervisorMocks.capturedOptions[0];
+		if (supervisorOptions?.onFatal === undefined) {
+			throw new Error('Expected supervisor options to include onFatal.');
+		}
+
+		supervisorOptions.onFatal('backoff-exhausted');
+		const blockedResult = await beforeToolCallHandler(
+			{
+				params: {
+					calls: [
+						{
+							arguments: { title: 'Fix release' },
+							id: 'create',
+							namespace: 'linear',
+							toolName: 'create_issue',
+						},
+					],
+				},
+				toolName: 'mcp_portal_shravan__mcp_portal_call',
+			},
+			{ agentId: 'shravan' },
+		);
+
+		expect(blockedResult).toMatchObject({
+			block: true,
+			blockReason: expect.stringContaining('backoff-exhausted'),
+		});
+
+		await service.start();
+		const params: Record<string, unknown> = {
+			calls: [
+				{
+					arguments: { title: 'Fix release' },
+					id: 'create',
+					namespace: 'linear',
+					toolName: 'create_issue',
+				},
+			],
+		};
+		const allowedResult = await beforeToolCallHandler(
+			{ params, toolName: 'mcp_portal_shravan__mcp_portal_call' },
+			{ agentId: 'shravan' },
+		);
+
+		expect(allowedResult).toMatchObject({ requireApproval: expect.any(Object) });
 	});
 });

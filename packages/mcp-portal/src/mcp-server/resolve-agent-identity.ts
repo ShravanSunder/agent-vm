@@ -136,7 +136,7 @@ export interface ConservativeApprovalFallbackEvent {
 }
 
 export function createPortalApprovalVerifier(props: {
-	readonly onConservativeApprovalFallback: (event: ConservativeApprovalFallbackEvent) => void;
+	readonly onConservativeApprovalFallback?: (event: ConservativeApprovalFallbackEvent) => void;
 	readonly records: ReadonlyMap<string, PortalAgentRuntimeRecord>;
 }): (
 	calls: readonly PortalApprovalCall[],
@@ -180,7 +180,7 @@ export function createPortalApprovalVerifier(props: {
 				calls: approvalTokenCallDigests(conservativeCallsRequiringApproval),
 			});
 			if (conservativeVerification.ok) {
-				props.onConservativeApprovalFallback({
+				props.onConservativeApprovalFallback?.({
 					agentId,
 					conservativeCallCount: conservativeCallsRequiringApproval.length,
 					primaryReason: verification.reason,

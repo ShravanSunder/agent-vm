@@ -17,6 +17,9 @@ import {
 const approvalTokenTtlMs = 60_000;
 
 export interface CreateBeforeToolCallHandlerProps {
+	readonly logger?: {
+		readonly warn?: (message: string) => void;
+	};
 	readonly runtimeState: PortalPluginRuntimeState;
 }
 
@@ -67,6 +70,10 @@ function parseCallRequests(params: Record<string, unknown>): readonly PortalCall
 	return parsedCalls;
 }
 
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 export function createBeforeToolCallHandler(
 	props: CreateBeforeToolCallHandlerProps,
 ): (
@@ -92,7 +99,7 @@ export function createBeforeToolCallHandler(
 				blockReason: `mcp-portal: missing OpenClaw agent context for ${event.toolName}.`,
 			};
 		}
-		if (context.agentId !== undefined && context.agentId !== agentId) {
+		if (context.agentId !== agentId) {
 			return {
 				block: true,
 				blockReason: `mcp-portal: tool ${event.toolName} is not assigned to agent ${context.agentId}.`,
@@ -137,7 +144,10 @@ export function createBeforeToolCallHandler(
 		});
 		try {
 			event.params.portalApprovalToken = token;
-		} catch {
+		} catch (error) {
+			props.logger?.warn?.(
+				`[mcp-portal] could not attach server-side approval token: ${errorMessage(error)}`,
+			);
 			return {
 				block: true,
 				blockReason: 'mcp-portal: could not attach server-side approval token.',

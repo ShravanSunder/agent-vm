@@ -162,6 +162,47 @@ describe('createPortalApprovalVerifier', () => {
 		});
 	});
 
+	it('allows conservative fallback without a callback when callers do not need audit hooks', () => {
+		const verifier = createPortalApprovalVerifier({
+			records: new Map<string, PortalAgentRuntimeRecord>([
+				[
+					'shravan',
+					{
+						agentId: 'shravan',
+						hmacKey,
+						profile,
+						profileName: 'builder',
+					},
+				],
+			]),
+		});
+		const calls = [
+			createCall({
+				annotations: { destructiveHint: false, readOnlyHint: true },
+				arguments: { query: 'deploy' },
+				namespace: 'linear',
+				toolName: 'list_issues',
+			}),
+			createCall({
+				arguments: { id: 'ISSUE-1' },
+				namespace: 'github',
+				toolName: 'delete_issue',
+			}),
+		];
+		const token = signApprovalToken({
+			agentId: 'shravan',
+			calls: calls.map((call) => ({
+				argumentsHash: hashCallArguments(call.arguments),
+				namespace: call.namespace,
+				toolName: call.toolName,
+			})),
+			expiresAtMs: Date.now() + 60_000,
+			key: hmacKey,
+		});
+
+		expect(verifier(calls, 'shravan', token)).toEqual({ kind: 'allow' });
+	});
+
 	it('rejects invalid approval tokens with the verifier reason', () => {
 		const verifier = createVerifier();
 

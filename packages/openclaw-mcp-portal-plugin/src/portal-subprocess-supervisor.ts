@@ -143,6 +143,16 @@ async function waitForHealth(props: WaitForHealthProps): Promise<void> {
 	return waitForHealthAttempt({ ...props, lastError: undefined, startedAt });
 }
 
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+interface SpawnedPortalChild {
+	readonly child: ChildProcess;
+	readonly enableAutoRestart: () => void;
+	readonly earlyFailure: Promise<never>;
+}
+
 export function createPortalSubprocessSupervisor(
 	props: CreatePortalSubprocessSupervisorProps,
 ): PortalSubprocessSupervisor {
@@ -158,18 +168,35 @@ export function createPortalSubprocessSupervisor(
 	let stopping = false;
 	let restartCount = 0;
 
-	const spawnChild = (): ChildProcess => {
+	const spawnChild = (): SpawnedPortalChild => {
 		const nextChild = spawnFn(props.binPath, ['--config-dir', props.configDir], {
 			env: createPortalSubprocessEnv(props.hmacEnv),
 			stdio: ['ignore', 'pipe', 'pipe'],
 		});
+		let autoRestartEnabled = false;
 		let failureHandled = false;
+		let rejectEarlyFailure: ((error: Error) => void) | undefined;
+		const earlyFailure = new Promise<never>((_resolve, reject) => {
+			rejectEarlyFailure = reject;
+		});
+		const rejectBeforeHealth = (error: Error): void => {
+			if (rejectEarlyFailure === undefined) {
+				throw new Error('MCP Portal early-failure rejector was not initialized.');
+			}
+			rejectEarlyFailure(error);
+		};
 		child = nextChild;
 		nextChild.stdout?.on('data', (chunk: Buffer | string) => {
 			logSubprocessOutput({ chunk, logger: props.logger, streamName: 'stdout' });
 		});
+		nextChild.stdout?.on('error', (error: Error) => {
+			props.logger.warn(`[mcp-portal stdout] stream error: ${error.message}`);
+		});
 		nextChild.stderr?.on('data', (chunk: Buffer | string) => {
 			logSubprocessOutput({ chunk, logger: props.logger, streamName: 'stderr' });
+		});
+		nextChild.stderr?.on('error', (error: Error) => {
+			props.logger.warn(`[mcp-portal stderr] stream error: ${error.message}`);
 		});
 		nextChild.on('error', (error: Error) => {
 			props.logger.error(`[mcp-portal] subprocess spawn failed: ${error.message}`);
@@ -180,11 +207,16 @@ export function createPortalSubprocessSupervisor(
 			if (child === nextChild) {
 				child = null;
 			}
-			if (!stopping) {
+			if (stopping) {
+				return;
+			}
+			if (autoRestartEnabled) {
 				void scheduleRestart();
+			} else {
+				rejectBeforeHealth(error);
 			}
 		});
-		nextChild.on('exit', () => {
+		nextChild.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
 			if (failureHandled) {
 				return;
 			}
@@ -195,9 +227,50 @@ export function createPortalSubprocessSupervisor(
 			if (stopping) {
 				return;
 			}
-			void scheduleRestart();
+			if (autoRestartEnabled) {
+				void scheduleRestart();
+			} else {
+				rejectBeforeHealth(
+					new Error(
+						`MCP Portal subprocess exited before health check completed (code=${String(code)} signal=${String(signal)}).`,
+					),
+				);
+			}
 		});
-		return nextChild;
+		return {
+			child: nextChild,
+			earlyFailure,
+			enableAutoRestart: () => {
+				autoRestartEnabled = true;
+			},
+		};
+	};
+
+	const spawnChildAndWaitForHealth = async (): Promise<void> => {
+		const spawnedChild = spawnChild();
+		try {
+			await Promise.race([
+				waitForHealth({
+					fetchFn,
+					host: props.host,
+					intervalMs: healthPollIntervalMs,
+					port: props.port,
+					timeoutMs: healthTimeoutMs,
+				}),
+				spawnedChild.earlyFailure,
+			]);
+		} catch (error) {
+			if (child === spawnedChild.child) {
+				child = null;
+				if (!spawnedChild.child.killed) {
+					spawnedChild.child.kill('SIGTERM');
+				}
+			}
+			throw error;
+		}
+		spawnedChild.enableAutoRestart();
+		restartCount = 0;
+		props.logger.info('[mcp-portal] subprocess is healthy.');
 	};
 
 	const scheduleRestart = async (): Promise<void> => {
@@ -214,22 +287,21 @@ export function createPortalSubprocessSupervisor(
 		if (stopping) {
 			return;
 		}
-		spawnChild();
+		try {
+			await spawnChildAndWaitForHealth();
+		} catch (error) {
+			props.logger.error(`[mcp-portal] subprocess restart failed: ${errorMessage(error)}`);
+			if (!stopping) {
+				await scheduleRestart();
+			}
+		}
 	};
 
 	return {
 		isAlive: () => child !== null && !child.killed,
 		start: async () => {
 			stopping = false;
-			spawnChild();
-			await waitForHealth({
-				fetchFn,
-				host: props.host,
-				intervalMs: healthPollIntervalMs,
-				port: props.port,
-				timeoutMs: healthTimeoutMs,
-			});
-			props.logger.info('[mcp-portal] subprocess is healthy.');
+			await spawnChildAndWaitForHealth();
 		},
 		stop: async () => {
 			stopping = true;
