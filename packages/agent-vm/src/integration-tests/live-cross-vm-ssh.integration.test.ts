@@ -96,6 +96,10 @@ describe('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
 				'"echo cross_vm_ok && cat /tmp/marker.txt && uname -m"',
 		);
 		log(`SSH result: exit=${sshResult.exitCode}`);
+		if (sshResult.exitCode !== 0) {
+			log(`SSH stdout: ${sshResult.stdout.trim()}`);
+			log(`SSH stderr: ${sshResult.stderr.trim()}`);
+		}
 
 		expect(sshResult.exitCode).toBe(0);
 		expect(sshResult.stdout).toContain('cross_vm_ok');

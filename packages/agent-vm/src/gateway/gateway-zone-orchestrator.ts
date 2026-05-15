@@ -12,6 +12,7 @@ import {
 	type ManagedVm,
 } from '@agent-vm/gondolin-adapter';
 
+import { assertOpenClawToolVmRequirements } from '../operations/openclaw-deployment-requirements.js';
 import { runTaskWithResult } from '../shared/run-task.js';
 import { resolveZoneSecrets } from './credential-manager.js';
 import { runGatewayHealthCheck } from './gateway-health-check.js';
@@ -215,12 +216,18 @@ export async function startGatewayZone(
 			zoneId: zone.id,
 		});
 	});
+	if (zone.gateway.type === 'openclaw') {
+		await runTaskStep('Validating OpenClaw Tool VM requirements', async () => {
+			await assertOpenClawToolVmRequirements(options.systemConfig, zone.id);
+		});
+	}
 	const lifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(zone.gateway.type);
 	const resolvedSecrets = await runTaskWithResult(
 		runTaskStep,
 		'Resolving zone secrets',
 		async () =>
 			await resolveZoneSecrets({
+				audience: 'gateway',
 				systemConfig: options.systemConfig,
 				zoneId: zone.id,
 				secretResolver: options.secretResolver,

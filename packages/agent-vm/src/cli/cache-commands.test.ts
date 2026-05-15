@@ -43,7 +43,10 @@ function createCacheCommandSystemConfig(): LoadedSystemConfig {
 			},
 			zones: [
 				{
-					allowedHosts: ['api.anthropic.com'],
+					egressHosts: ['api.anthropic.com'].map((host) => ({
+						host,
+						audience: 'gateway' as const,
+					})),
 					gateway: {
 						type: 'openclaw',
 						imageProfile: 'openclaw',
@@ -55,7 +58,14 @@ function createCacheCommandSystemConfig(): LoadedSystemConfig {
 						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
-					secrets: {},
+					secrets: {
+						OPENCLAW_GATEWAY_TOKEN: {
+							source: 'environment',
+							envVar: 'OPENCLAW_GATEWAY_TOKEN',
+							injection: 'env',
+							audience: 'gateway',
+						},
+					},
 					defaultToolVmProfile: 'standard',
 					agentToolVmProfiles: {},
 					websocketBypass: [],

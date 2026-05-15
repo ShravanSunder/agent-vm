@@ -1,5 +1,7 @@
+import { createLeaseClient } from './controller-lease-client.js';
 import { resolveGondolinPluginConfig } from './gondolin-plugin-config.js';
 import { createBackendDeps } from './openclaw-backend-dependencies.js';
+import { buildOpenClawRuntimeStatusReport } from './openclaw-runtime-status.js';
 import {
 	assertSdkShape,
 	type OpenClawToolRegistrationApi,
@@ -18,9 +20,15 @@ const plugin = {
 	description: 'Sandbox backend powered by Gondolin micro-VMs.',
 
 	register(api: {
+		readonly config?: Record<string, unknown>;
 		readonly pluginConfig: Record<string, unknown>;
 		readonly registerTool?: OpenClawToolRegistrationApi['registerTool'];
 		readonly registrationMode: string;
+		readonly runtime?: {
+			readonly config?: {
+				readonly current?: () => Record<string, unknown>;
+			};
+		};
 	}): void {
 		const registerTool = api.registerTool;
 		if (typeof registerTool !== 'function') {
@@ -41,6 +49,29 @@ const plugin = {
 		});
 		if (api.registrationMode !== 'full') {
 			return;
+		}
+		const buildRuntimeStatus = ():
+			| ReturnType<typeof buildOpenClawRuntimeStatusReport>
+			| undefined => {
+			const runtimeConfig = api.runtime?.config?.current?.() ?? api.config;
+			return runtimeConfig
+				? buildOpenClawRuntimeStatusReport({
+						config: runtimeConfig,
+						zoneId: pluginConfig.zoneId,
+					})
+				: undefined;
+		};
+		const initialRuntimeStatus = buildRuntimeStatus();
+		if (initialRuntimeStatus) {
+			const leaseClient = createLeaseClient({ controllerUrl: pluginConfig.controllerUrl });
+			void leaseClient
+				.publishOpenClawRuntimeStatus?.(initialRuntimeStatus)
+				?.catch((error: unknown) => {
+					const message = error instanceof Error ? error.message : JSON.stringify(error);
+					process.stderr.write(
+						`[gondolin] failed to publish OpenClaw runtime status: ${message}\n`,
+					);
+				});
 		}
 
 		const sdkPath = '/opt/openclaw-sdk/sandbox.js';
@@ -66,7 +97,13 @@ const plugin = {
 
 			const backendDependencies = createBackendDeps(sshHelpers);
 			sdkRaw.registerSandboxBackend('gondolin', {
-				factory: createGondolinSandboxBackendFactory(pluginConfig, backendDependencies),
+				factory: createGondolinSandboxBackendFactory(
+					{
+						...pluginConfig,
+						openClawRuntimeStatusProvider: buildRuntimeStatus,
+					},
+					backendDependencies,
+				),
 				manager: createGondolinSandboxBackendManager(pluginConfig, backendDependencies),
 			});
 		});

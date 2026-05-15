@@ -31,7 +31,7 @@ const systemConfig = {
 				stateDir: './state/worker',
 			},
 			secrets: {},
-			allowedHosts: ['api.openai.com'],
+			egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			websocketBypass: [],
 		},
 	],

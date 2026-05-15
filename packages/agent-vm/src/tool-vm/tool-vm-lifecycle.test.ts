@@ -11,7 +11,12 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 
-import type { CreateVmOptions, ManagedVm, PinnedRealFsRoot } from '@agent-vm/gondolin-adapter';
+import type {
+	CreateVmOptions,
+	ManagedVm,
+	PinnedRealFsRoot,
+	SecretResolver,
+} from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
@@ -82,7 +87,7 @@ async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 			},
 			zones: [
 				{
-					allowedHosts: ['api.anthropic.com'],
+					egressHosts: [{ host: 'api.anthropic.com', audience: 'gateway' }],
 					gateway: {
 						type: 'openclaw',
 						imageProfile: 'openclaw',
@@ -94,7 +99,14 @@ async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 						zoneFilesDir,
 					},
 					id: 'shravan',
-					secrets: {},
+					secrets: {
+						OPENCLAW_GATEWAY_TOKEN: {
+							source: 'environment',
+							envVar: 'OPENCLAW_GATEWAY_TOKEN',
+							injection: 'env',
+							audience: 'gateway',
+						},
+					},
 					defaultToolVmProfile: 'standard',
 					agentToolVmProfiles: {},
 					websocketBypass: [],
@@ -125,6 +137,19 @@ function createPinnedRealFsRoot(hostPath: string): PinnedRealFsRoot {
 		hostPath,
 		inode: 1,
 		realPath: hostPath,
+	};
+}
+
+function createSecretResolver(values: Record<string, string>): SecretResolver {
+	return {
+		resolve: vi.fn(async (ref) => {
+			const value = values[ref.ref];
+			if (value === undefined) {
+				throw new Error(`Missing test secret for ${ref.ref}`);
+			}
+			return value;
+		}),
+		resolveAll: vi.fn(async () => values),
 	};
 }
 
@@ -171,6 +196,7 @@ describe('createToolVm', () => {
 				tcpSlot: 0,
 				hostWorkMountDir: requestedWorkMountDir,
 				zoneId: 'shravan',
+				secretResolver: createSecretResolver({}),
 			},
 			{
 				buildGondolinImage: async () => ({
@@ -203,6 +229,149 @@ describe('createToolVm', () => {
 			}),
 		);
 		expect(capturedCreateVmOptions?.vfsMounts).not.toHaveProperty('/workspace');
+	});
+
+	it('passes only Tool VM egress hosts and mediated secrets into the Tool VM', async () => {
+		const managedVm = {
+			close: async () => {},
+			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+			getVmInstance: () => ({
+				close: async () => {},
+				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+				exec: async () => ({ exitCode: 0 }),
+				id: 'vm-instance',
+				setIngressRoutes: () => {},
+			}),
+			id: 'managed-vm',
+			setIngressRoutes: () => {},
+		} satisfies ManagedVm;
+		let capturedCreateVmOptions: CreateVmOptions | undefined;
+		const createManagedVm = vi.fn(async (createVmOptions: CreateVmOptions) => {
+			capturedCreateVmOptions = createVmOptions;
+			return managedVm;
+		});
+		const systemConfig = await createToolVmSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone');
+		}
+		zone.egressHosts = [
+			{ host: 'gateway.example.com', audience: 'gateway' },
+			{ host: 'api.github.com', audience: 'both' },
+			{ host: 'api.linear.app', audience: 'tool-vm' },
+			{ host: 'mcp2.readwise.io', audience: 'tool-vm' },
+		];
+		zone.secrets = {
+			DISCORD_BOT_TOKEN: {
+				source: 'environment',
+				envVar: 'DISCORD_BOT_TOKEN',
+				injection: 'env',
+				audience: 'gateway',
+			},
+			GATEWAY_ONLY_TOKEN: {
+				source: 'environment',
+				envVar: 'GATEWAY_ONLY_TOKEN',
+				injection: 'http-mediation',
+				audience: 'gateway',
+				hosts: ['gateway.example.com'],
+			},
+			GITHUB_TOKEN: {
+				source: 'environment',
+				envVar: 'GITHUB_TOKEN',
+				injection: 'http-mediation',
+				audience: 'both',
+				hosts: ['api.github.com'],
+			},
+			LINEAR_API_KEY: {
+				source: 'environment',
+				envVar: 'LINEAR_API_KEY',
+				injection: 'http-mediation',
+				audience: 'tool-vm',
+				hosts: ['api.linear.app'],
+			},
+			READWISE_ACCESS_TOKEN: {
+				source: 'environment',
+				envVar: 'READWISE_ACCESS_TOKEN',
+				injection: 'http-mediation',
+				audience: 'tool-vm',
+				hosts: ['mcp2.readwise.io'],
+			},
+		};
+		const secretValues = {
+			GITHUB_TOKEN: 'github-real-secret',
+			LINEAR_API_KEY: 'linear-real-secret',
+			READWISE_ACCESS_TOKEN: 'readwise-real-secret',
+		};
+		const resolveSecret = vi.fn(async (ref: { readonly ref: string }): Promise<string> => {
+			const value = secretValues[ref.ref as keyof typeof secretValues];
+			if (value === undefined) {
+				throw new Error(`Missing test secret for ${ref.ref}`);
+			}
+			return value;
+		});
+		const secretResolver: SecretResolver = {
+			resolve: resolveSecret,
+			resolveAll: vi.fn(async () => secretValues),
+		};
+		const standardProfile = systemConfig.toolVmProfiles.standard;
+		if (!standardProfile) {
+			throw new Error('Expected standard tool VM profile');
+		}
+		const requestedWorkMountDir = await createWorkMountDirectory(
+			systemConfig,
+			'cli-auth-work-mount',
+		);
+
+		await createToolVm(
+			{
+				cacheDir: systemConfig.cacheDir,
+				profile: standardProfile,
+				systemConfig,
+				tcpSlot: 0,
+				hostWorkMountDir: requestedWorkMountDir,
+				zoneId: 'shravan',
+				secretResolver,
+			},
+			{
+				buildGondolinImage: async () => ({
+					built: true,
+					fingerprint: 'tool-fingerprint',
+					imagePath: '/cache/tool-fingerprint',
+				}),
+				createManagedVm,
+				closePinnedRealFsRoot: () => {},
+				pinRealFsRoot: createPinnedRealFsRoot,
+			},
+		);
+
+		expect(capturedCreateVmOptions).toMatchObject({
+			allowedHosts: ['api.github.com', 'api.linear.app', 'mcp2.readwise.io'],
+			secrets: {
+				GITHUB_TOKEN: {
+					hosts: ['api.github.com'],
+					value: 'github-real-secret',
+				},
+				LINEAR_API_KEY: {
+					hosts: ['api.linear.app'],
+					value: 'linear-real-secret',
+				},
+				READWISE_ACCESS_TOKEN: {
+					hosts: ['mcp2.readwise.io'],
+					value: 'readwise-real-secret',
+				},
+			},
+		});
+		expect(capturedCreateVmOptions?.secrets).not.toHaveProperty('DISCORD_BOT_TOKEN');
+		expect(capturedCreateVmOptions?.secrets).not.toHaveProperty('GATEWAY_ONLY_TOKEN');
+		expect(resolveSecret).not.toHaveBeenCalledWith(
+			expect.objectContaining({ ref: 'DISCORD_BOT_TOKEN' }),
+		);
+		expect(resolveSecret).not.toHaveBeenCalledWith(
+			expect.objectContaining({ ref: 'GATEWAY_ONLY_TOKEN' }),
+		);
 	});
 
 	it('mounts zone Git leases at /zone and /agent-vm/zone-git', async () => {
@@ -256,6 +425,7 @@ describe('createToolVm', () => {
 					hostZoneGitRoot,
 				},
 				zoneId: 'shravan',
+				secretResolver: createSecretResolver({}),
 			},
 			{
 				buildGondolinImage: async () => ({
@@ -331,6 +501,7 @@ describe('createToolVm', () => {
 						hostZoneGitRoot: wrongHostZoneGitRoot,
 					},
 					zoneId: 'shravan',
+					secretResolver: createSecretResolver({}),
 				},
 				{
 					buildGondolinImage: async () => ({
@@ -381,6 +552,7 @@ describe('createToolVm', () => {
 				tcpSlot: 0,
 				hostWorkMountDir: requestedWorkMountDir,
 				zoneId: 'shravan',
+				secretResolver: createSecretResolver({}),
 			},
 			{
 				buildGondolinImage: async () => ({
@@ -453,6 +625,7 @@ describe('createToolVm', () => {
 				tcpSlot: 0,
 				hostWorkMountDir: requestedWorkMountDir,
 				zoneId: 'shravan',
+				secretResolver: createSecretResolver({}),
 			},
 			{
 				buildGondolinImage,
@@ -488,6 +661,7 @@ describe('createToolVm', () => {
 				{
 					cacheDir: systemConfig.cacheDir,
 					profile: standardProfile,
+					secretResolver: createSecretResolver({}),
 					systemConfig,
 					tcpSlot: 0,
 					hostWorkMountDir: '/etc',
@@ -531,6 +705,7 @@ describe('createToolVm', () => {
 				{
 					cacheDir: systemConfig.cacheDir,
 					profile: standardProfile,
+					secretResolver: createSecretResolver({}),
 					systemConfig,
 					tcpSlot: 0,
 					hostWorkMountDir: requestedWorkMountDir,
@@ -577,6 +752,7 @@ describe('createToolVm', () => {
 				{
 					cacheDir: systemConfig.cacheDir,
 					profile: standardProfile,
+					secretResolver: createSecretResolver({}),
 					systemConfig,
 					tcpSlot: 0,
 					hostWorkMountDir: requestedWorkMountDir,

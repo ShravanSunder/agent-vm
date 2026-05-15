@@ -47,8 +47,12 @@ In your `system.jsonc`, add a zone with `gateway.type: "worker"`:
       "stateDir": "../state/dev-worker"
     },
     "secrets": { ... },
-    "allowedHosts": ["api.openai.com", "api.github.com", "registry.npmjs.org", "mcp.deepwiki.com"],
-    "defaultToolVmProfile": "standard"
+    "egressHosts": [
+      { "host": "api.openai.com", "audience": "gateway" },
+      { "host": "api.github.com", "audience": "gateway" },
+      { "host": "registry.npmjs.org", "audience": "gateway" },
+      { "host": "mcp.deepwiki.com", "audience": "gateway" }
+    ]
   }]
 }
 ```
@@ -198,7 +202,7 @@ The full event history is written to `/state/tasks/{taskId}.jsonl` (JSONL format
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Task stuck in `planning` | LLM timeout or network issue | Check `allowedHosts` includes your LLM provider |
+| Task stuck in `planning` | LLM timeout or network issue | Check `egressHosts` includes your LLM provider with gateway audience |
 | Tests fail repeatedly | Wrong test command | Override `verification` in `.agent-vm/config.jsonc` |
 | PR not created | GitHub token missing | Configure `host.githubToken` in system.jsonc |
 | VM boot fails | Image not built | Run `agent-vm build` |

@@ -28,6 +28,13 @@ vi.mock('./gateway-recovery.js', () => ({
 
 const createdDirectories: string[] = [];
 
+const openClawToolVmSandbox = {
+	backend: 'gondolin',
+	mode: 'all',
+	scope: 'agent',
+	workspaceAccess: 'rw',
+} satisfies Record<string, string>;
+
 afterEach(() => {
 	cleanupOrphanedGatewayIfPresentMock.mockClear();
 	for (const directoryPath of createdDirectories.splice(0)) {
@@ -44,6 +51,12 @@ function createGatewayConfigPath(): string {
 	fs.writeFileSync(
 		configPath,
 		JSON.stringify({
+			agents: {
+				defaults: {
+					sandbox: openClawToolVmSandbox,
+					workspace: '/zone/agents/default',
+				},
+			},
 			gateway: {
 				auth: { mode: 'token' },
 				bind: 'loopback',
@@ -156,20 +169,26 @@ function createSystemConfig(): LoadedSystemConfig {
 							source: '1password',
 							ref: 'op://agent-vm/shravan-perplexity/credential',
 							injection: 'http-mediation',
+							audience: 'gateway',
 							hosts: ['api.perplexity.ai'],
 						},
 						DISCORD_BOT_TOKEN: {
 							source: '1password',
 							ref: 'op://agent-vm/shravan-discord/bot-token',
 							injection: 'env',
+							audience: 'gateway',
 						},
 						OPENCLAW_GATEWAY_TOKEN: {
 							source: '1password',
 							ref: 'op://agent-vm/shravan-gateway-auth/password',
 							injection: 'env',
+							audience: 'gateway',
 						},
 					},
-					allowedHosts: ['api.anthropic.com', 'api.openai.com', 'api.perplexity.ai'],
+					egressHosts: ['api.anthropic.com', 'api.openai.com', 'api.perplexity.ai'].map((host) => ({
+						host,
+						audience: 'gateway' as const,
+					})),
 					websocketBypass: ['gateway.discord.gg:443'],
 					defaultToolVmProfile: 'standard',
 					agentToolVmProfiles: {},
@@ -309,7 +328,12 @@ describe('startGatewayZone', () => {
 		expect(buildImage).toHaveBeenCalled();
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
-				allowedHosts: ['api.anthropic.com', 'api.openai.com', 'api.perplexity.ai'],
+				allowedHosts: expect.arrayContaining([
+					'controller.vm.host',
+					'api.anthropic.com',
+					'api.openai.com',
+					'api.perplexity.ai',
+				]),
 				cpus: 2,
 				env: expect.objectContaining({
 					HOME: '/home/openclaw',
@@ -360,6 +384,7 @@ describe('startGatewayZone', () => {
 		});
 		expect(taskTitles).toEqual([
 			'Cleaning orphaned gateway runtime',
+			'Validating OpenClaw Tool VM requirements',
 			'Resolving zone secrets',
 			'Building gateway image',
 			'Preparing host state',
@@ -383,6 +408,121 @@ describe('startGatewayZone', () => {
 				logPath: '/agent-vm/logs/gateway-boot-latest.log',
 			},
 		});
+	});
+
+	it('cleans orphaned gateway runtime before rejecting invalid OpenClaw Tool VM requirements', async () => {
+		const systemConfig = createSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (!zone || zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw gateway test zone.');
+		}
+		fs.writeFileSync(
+			zone.gateway.config,
+			JSON.stringify({
+				agents: {
+					defaults: {
+						sandbox: {
+							backend: 'host',
+							mode: 'all',
+							scope: 'agent',
+							workspaceAccess: 'rw',
+						},
+						workspace: '/zone/agents/default',
+					},
+					list: [],
+				},
+			}),
+			'utf8',
+		);
+		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => ({
+			cleanedUp: true,
+			killedPid: 28282,
+		}));
+		const buildImage = vi.fn(async () => ({
+			built: true,
+			fingerprint: 'fp',
+			imagePath: '/tmp/img',
+		}));
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({}),
+					systemConfig,
+					zoneId: 'shravan',
+				},
+				{
+					buildImage,
+					cleanupOrphanedGatewayIfPresent,
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				},
+			),
+		).rejects.toThrow("OpenClaw zone 'shravan' Tool VM requirements failed");
+
+		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledWith({
+			stateDir: zone.gateway.stateDir,
+			zoneId: 'shravan',
+		});
+		expect(buildImage).not.toHaveBeenCalled();
+	});
+
+	it('resolves only gateway audience secrets while starting the gateway VM', async () => {
+		const managedVm: ManagedVm = {
+			id: 'vm-gateway-only',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28286)),
+			setIngressRoutes: vi.fn(),
+		};
+		const systemConfig = createSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected gateway test system config to include a zone.');
+		}
+		zone.secrets.LINEAR_API_KEY = {
+			source: '1password',
+			ref: 'op://agent-vm/shravan-linear/credential',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.linear.app'],
+		};
+		zone.egressHosts = [...zone.egressHosts, { host: 'api.linear.app', audience: 'tool-vm' }];
+		const createManagedVm = vi.fn(async (): Promise<ManagedVm> => managedVm);
+
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					PERPLEXITY_API_KEY: 'pplx-key',
+					DISCORD_BOT_TOKEN: 'discord-token',
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(createManagedVm).toHaveBeenCalledWith(
+			expect.objectContaining({
+				allowedHosts: expect.not.arrayContaining(['api.linear.app']),
+				env: expect.not.objectContaining({
+					LINEAR_API_KEY: expect.any(String),
+				}),
+				secrets: expect.not.objectContaining({
+					LINEAR_API_KEY: expect.anything(),
+				}),
+			}),
+		);
 	});
 
 	it('materializes MCP Portal runtime plugin config and server entries from zone MCP config', async () => {
@@ -561,6 +701,7 @@ describe('startGatewayZone', () => {
 						source: '1password' as const,
 						ref: 'op://agent-vm/shravan-openai/credential',
 						injection: 'http-mediation' as const,
+						audience: 'gateway' as const,
 						hosts: ['api.openai.com'],
 					},
 				},

@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { loadMcpPortalConfig } from '@agent-vm/config-contracts';
@@ -9,6 +8,13 @@ import {
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { DoctorCheck } from './doctor.js';
+import {
+	collectOpenClawDeploymentRequirementTargets,
+	evaluateOpenClawDeploymentRequirements,
+	isObjectRecord,
+	type OpenClawDeploymentConfig,
+	type OpenClawDeploymentRequirementTarget,
+} from './openclaw-deployment-requirements.js';
 
 type OpenClawSystemZone = LoadedSystemConfig['zones'][number] & {
 	readonly gateway: Extract<
@@ -16,37 +22,6 @@ type OpenClawSystemZone = LoadedSystemConfig['zones'][number] & {
 		{ readonly type: 'openclaw' }
 	>;
 };
-
-interface OpenClawDeploymentConfig {
-	readonly [key: string]: unknown;
-	readonly agents?: {
-		readonly defaults?: {
-			readonly model?: unknown;
-			readonly sandbox?: {
-				readonly [key: string]: unknown;
-				readonly workspaceAccess?: unknown;
-			};
-			readonly workspace?: unknown;
-		};
-		readonly list?: readonly unknown[];
-	};
-	readonly gateway?: {
-		readonly port?: unknown;
-	};
-	readonly mcp?: {
-		readonly servers?: Record<string, unknown>;
-	};
-	readonly plugins?: {
-		readonly allow?: readonly unknown[];
-		readonly entries?: Record<string, unknown>;
-		readonly load?: {
-			readonly paths?: readonly unknown[];
-		};
-		readonly slots?: {
-			readonly memory?: unknown;
-		};
-	};
-}
 
 interface PortalServerExpectation {
 	readonly accessHeaderName: string;
@@ -63,14 +38,10 @@ const defaultPortalServerExpectation: PortalServerExpectation = {
 export interface OpenClawDeploymentDoctorTarget {
 	readonly configuredAuthProfileAgentIds?: readonly string[];
 	readonly config: OpenClawDeploymentConfig;
-	readonly configPath?: string;
-	readonly configReadError?: string;
+	readonly configPath?: string | undefined;
+	readonly configReadError?: string | undefined;
 	readonly portalServer?: PortalServerExpectation;
-	readonly zoneId: string;
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
+	readonly zoneId: OpenClawDeploymentRequirementTarget['zoneId'];
 }
 
 function includesString(values: readonly unknown[] | undefined, expectedValue: string): boolean {
@@ -113,11 +84,6 @@ function hasOnlyRuntimePortalPluginConfig(entries: Record<string, unknown> | und
 	return Object.keys(config).every((key) => runtimeKeys.has(key));
 }
 
-function parseOpenClawDeploymentConfig(rawConfig: string): OpenClawDeploymentConfig {
-	const parsedConfig: unknown = JSON.parse(rawConfig);
-	return isObjectRecord(parsedConfig) ? parsedConfig : {};
-}
-
 function resolveOpenClawModelName(model: unknown): string | undefined {
 	if (typeof model === 'string') {
 		return model;
@@ -158,6 +124,15 @@ function expectedPortalServerUrl(portalServer: PortalServerExpectation, agentId:
 	return `http://${portalServer.host}:${String(portalServer.port)}/agents/${encodeURIComponent(agentId)}/mcp`;
 }
 
+function readMcpServers(config: OpenClawDeploymentConfig): Readonly<Record<string, unknown>> {
+	const mcp = config.mcp;
+	if (!isObjectRecord(mcp)) {
+		return {};
+	}
+	const servers = mcp.servers;
+	return isObjectRecord(servers) ? servers : {};
+}
+
 function isPortalServerName(serverName: string): boolean {
 	return serverName.startsWith('mcp_portal_');
 }
@@ -167,7 +142,7 @@ function hasExpectedPortalServer(
 	agentId: string,
 	portalServer: PortalServerExpectation,
 ): boolean {
-	const server = config.mcp?.servers?.[portalServerNameForAgent(agentId)];
+	const server = readMcpServers(config)[portalServerNameForAgent(agentId)];
 	if (!isObjectRecord(server)) {
 		return false;
 	}
@@ -184,7 +159,7 @@ function hasExpectedPortalServer(
 }
 
 function hasNoOrphanPortalServers(config: OpenClawDeploymentConfig): boolean {
-	const servers = config.mcp?.servers ?? {};
+	const servers = readMcpServers(config);
 	const expectedServerNames = new Set(
 		collectConfiguredAgentIds(config).map((agentId) => portalServerNameForAgent(agentId)),
 	);
@@ -240,46 +215,48 @@ function buildAgentAuthProfileChecks(
 	});
 }
 
-function buildConfigReadableCheck(target: OpenClawDeploymentDoctorTarget): DoctorCheck | undefined {
-	if (target.configPath === undefined && target.configReadError === undefined) {
-		return undefined;
-	}
-	return {
-		name: `openclaw-deployment-config-readable-${target.zoneId}`,
-		ok: target.configReadError === undefined,
-		hint:
-			target.configReadError === undefined
-				? (target.configPath ?? 'OpenClaw config is readable')
-				: `Cannot read ${target.configPath ?? 'OpenClaw config'}: ${target.configReadError}`,
-	};
+function buildRequirementChecks(target: OpenClawDeploymentDoctorTarget): readonly DoctorCheck[] {
+	const requirementTarget: OpenClawDeploymentRequirementTarget =
+		target.configReadError === undefined
+			? {
+					config: target.config,
+					...(target.configPath ? { configPath: target.configPath } : {}),
+					kind: 'readable',
+					zoneId: target.zoneId,
+				}
+			: {
+					...(target.configPath ? { configPath: target.configPath } : {}),
+					configReadError: target.configReadError,
+					kind: 'unreadable',
+					zoneId: target.zoneId,
+				};
+	return evaluateOpenClawDeploymentRequirements(requirementTarget).map(
+		(finding) =>
+			({
+				name: finding.id,
+				ok: finding.ok,
+				hint: finding.hint,
+			}) satisfies DoctorCheck,
+	);
 }
 
 export function buildOpenClawDeploymentDoctorChecks(
 	targets: readonly OpenClawDeploymentDoctorTarget[],
 ): readonly DoctorCheck[] {
 	return targets.flatMap((target) => {
+		const requirementChecks = buildRequirementChecks(target);
+		if (target.configReadError !== undefined) {
+			return requirementChecks;
+		}
 		const config = target.config;
 		const portalServer = target.portalServer ?? defaultPortalServerExpectation;
-		const configReadableCheck = buildConfigReadableCheck(target);
-		if (target.configReadError !== undefined) {
-			return configReadableCheck ? [configReadableCheck] : [];
-		}
 		const pluginLoadPaths = config.plugins?.load?.paths;
 		const hasMemoryCore =
 			includesString(config.plugins?.allow, 'memory-core') ||
 			hasEnabledEntry(config.plugins?.entries, 'memory-core');
-		const workspace = config.agents?.defaults?.workspace;
 		const configuredAgentIds = collectConfiguredAgentIds(config);
 		return [
-			...(configReadableCheck ? [configReadableCheck] : []),
-			{
-				name: `openclaw-workspace-access-${target.zoneId}`,
-				ok: config.agents?.defaults?.sandbox?.workspaceAccess === 'rw',
-				hint:
-					config.agents?.defaults?.sandbox?.workspaceAccess === 'rw'
-						? 'agents.defaults.sandbox.workspaceAccess=rw'
-						: 'Set agents.defaults.sandbox.workspaceAccess to "rw" so agents can write their workspace.',
-			},
+			...requirementChecks,
 			{
 				name: `openclaw-plugin-load-paths-${target.zoneId}`,
 				ok: includesString(pluginLoadPaths, '/home/openclaw/.openclaw/extensions/gondolin'),
@@ -325,16 +302,6 @@ export function buildOpenClawDeploymentDoctorChecks(
 						? 'plugins.slots.memory=memory-core'
 						: 'Set plugins.slots.memory to "memory-core" when memory-core is enabled.',
 			},
-			{
-				name: `openclaw-shared-zone-workspace-${target.zoneId}`,
-				ok: workspace !== '/zone',
-				hint:
-					workspace === '/zone'
-						? 'Use /zone/agents/default or per-agent workspaces; keep /zone for shared zone files.'
-						: typeof workspace === 'string'
-							? workspace
-							: 'agents.defaults.workspace is unset',
-			},
 			...buildAgentAuthProfileChecks(target),
 		] as const satisfies readonly DoctorCheck[];
 	});
@@ -369,31 +336,45 @@ async function loadPortalServerExpectation(
 export async function collectOpenClawDeploymentDoctorChecks(
 	systemConfig: LoadedSystemConfig,
 ): Promise<readonly DoctorCheck[]> {
-	const targets = await Promise.all(
-		systemConfig.zones.filter(isOpenClawSystemZone).map(async (zone) => {
-			const configuredAuthProfileAgentIds = Object.keys(zone.gateway.authProfilesByAgent ?? {});
-			const configPath = zone.gateway.config;
-			const portalServer = await loadPortalServerExpectation(zone);
-			try {
-				const rawConfig = await readFile(configPath, 'utf8');
-				const target = {
-					zoneId: zone.id,
-					configPath,
-					configuredAuthProfileAgentIds,
-					config: parseOpenClawDeploymentConfig(rawConfig),
-				} satisfies OpenClawDeploymentDoctorTarget;
-				return portalServer === undefined ? target : Object.assign(target, { portalServer });
-			} catch (error) {
-				const target = {
-					zoneId: zone.id,
-					configPath,
-					configuredAuthProfileAgentIds,
-					config: {},
-					configReadError: error instanceof Error ? error.message : String(error),
-				} satisfies OpenClawDeploymentDoctorTarget;
-				return portalServer === undefined ? target : Object.assign(target, { portalServer });
-			}
-		}),
+	const openClawZones = systemConfig.zones.filter(isOpenClawSystemZone);
+	const configuredAuthProfileAgentIdsByZone = new Map(
+		openClawZones.map(
+			(zone) => [zone.id, Object.keys(zone.gateway.authProfilesByAgent ?? {})] as const,
+		),
 	);
-	return buildOpenClawDeploymentDoctorChecks(targets);
+	const portalServerByZone = new Map(
+		(
+			await Promise.all(
+				openClawZones.map(
+					async (zone) => [zone.id, await loadPortalServerExpectation(zone)] as const,
+				),
+			)
+		).filter(
+			(entry): entry is readonly [string, PortalServerExpectation] => entry[1] !== undefined,
+		),
+	);
+	const targets = await collectOpenClawDeploymentRequirementTargets(systemConfig);
+	const doctorTargets: OpenClawDeploymentDoctorTarget[] = [];
+	for (const target of targets) {
+		const baseTarget =
+			target.kind === 'readable'
+				? {
+						config: target.config,
+						configuredAuthProfileAgentIds:
+							configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],
+						configPath: target.configPath,
+						zoneId: target.zoneId,
+					}
+				: {
+						config: {},
+						configuredAuthProfileAgentIds:
+							configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],
+						configPath: target.configPath,
+						configReadError: target.configReadError,
+						zoneId: target.zoneId,
+					};
+		const portalServer = portalServerByZone.get(target.zoneId);
+		doctorTargets.push(portalServer === undefined ? baseTarget : { ...baseTarget, portalServer });
+	}
+	return buildOpenClawDeploymentDoctorChecks(doctorTargets);
 }

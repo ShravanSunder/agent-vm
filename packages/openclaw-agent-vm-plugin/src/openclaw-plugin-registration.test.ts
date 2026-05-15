@@ -64,30 +64,6 @@ describe('createGondolinPlugin', () => {
 		}).not.toThrow();
 	});
 
-	it.skip('register in full mode attempts SDK import and logs error for missing SDK path', async () => {
-		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-		defaultPlugin.register({
-			pluginConfig: {
-				controllerUrl: 'http://controller.vm.host:18800',
-				zoneId: 'shravan',
-			},
-			registrationMode: 'full',
-		});
-
-		// The SDK import will fail outside a gateway VM — poll until the error is logged
-		for (let attempt = 0; attempt < 20; attempt++) {
-			if (consoleSpy.mock.calls.length > 0) break;
-			// oxlint-disable-next-line eslint/no-await-in-loop -- polling for async rejection
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
-
-		expect(consoleSpy).toHaveBeenCalledWith(
-			expect.stringContaining('[gondolin] failed to load OpenClaw SDK'),
-		);
-		consoleSpy.mockRestore();
-	});
-
 	it('registers the zone_git_push tool from plugin config when available', () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const registerTool = vi.fn();
@@ -137,6 +113,61 @@ describe('createGondolinPlugin', () => {
 			);
 			expect(stderrWrite).not.toHaveBeenCalled();
 		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
+	it('publishes Tool VM runtime status from OpenClaw runtime config during full registration', async () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+		try {
+			defaultPlugin.register({
+				config: {
+					agents: {
+						defaults: {
+							sandbox: {
+								backend: 'gondolin',
+								mode: 'all',
+								scope: 'agent',
+								workspaceAccess: 'rw',
+							},
+							workspace: '/zone/agents/default',
+						},
+					},
+				},
+				pluginConfig: {
+					controllerUrl: 'http://controller.vm.host:18800',
+					zoneId: 'shravan',
+				},
+				registerTool: vi.fn(),
+				registrationMode: 'full',
+			});
+
+			await vi.waitFor(() => {
+				expect(fetchSpy).toHaveBeenCalledWith(
+					'http://controller.vm.host:18800/zones/shravan/openclaw-runtime-status',
+					expect.objectContaining({
+						method: 'POST',
+					}),
+				);
+			});
+			const requestInit = fetchSpy.mock.calls[0]?.[1];
+			if (typeof requestInit?.body !== 'string') {
+				throw new TypeError('Expected runtime status request body to be a string.');
+			}
+			const body = JSON.parse(requestInit.body) as {
+				readonly findings: readonly { readonly ok: boolean }[];
+				readonly pluginId: string;
+				readonly zoneId: string;
+			};
+			expect(body.pluginId).toBe('gondolin');
+			expect(body.zoneId).toBe('shravan');
+			expect(body.findings.every((finding) => finding.ok)).toBe(true);
+		} finally {
+			fetchSpy.mockRestore();
 			stderrWrite.mockRestore();
 		}
 	});

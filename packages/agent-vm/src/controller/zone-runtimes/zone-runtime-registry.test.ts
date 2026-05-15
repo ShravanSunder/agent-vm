@@ -47,8 +47,15 @@ const systemConfig = {
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
 			},
-			secrets: {},
-			allowedHosts: ['api.openai.com'],
+			secrets: {
+				OPENCLAW_GATEWAY_TOKEN: {
+					source: 'environment',
+					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					injection: 'env',
+					audience: 'gateway',
+				},
+			},
+			egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			websocketBypass: [],
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
@@ -65,8 +72,15 @@ const systemConfig = {
 				stateDir: './state/alevtina',
 				zoneFilesDir: './zone-files/alevtina',
 			},
-			secrets: {},
-			allowedHosts: ['api.openai.com'],
+			secrets: {
+				OPENCLAW_GATEWAY_TOKEN: {
+					source: 'environment',
+					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					injection: 'env',
+					audience: 'gateway',
+				},
+			},
+			egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			websocketBypass: [],
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
@@ -83,7 +97,7 @@ const systemConfig = {
 				stateDir: './state/worker',
 			},
 			secrets: {},
-			allowedHosts: ['api.openai.com'],
+			egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			websocketBypass: [],
 		},
 	],
@@ -413,6 +427,59 @@ describe('createOpenClawZoneRuntime', () => {
 		await expect(runtime.getLogs()).rejects.toThrow(
 			"Gateway runtime for zone 'shravan' is unavailable. Last error: gateway boot failed",
 		);
+	});
+
+	it('refreshes only gateway audience secrets for OpenClaw zones', async () => {
+		const baseZone = getOpenClawZone();
+		const zone = {
+			...baseZone,
+			secrets: {
+				...baseZone.secrets,
+				LINEAR_API_KEY: {
+					source: '1password',
+					ref: 'op://agent-vm/shravan-linear/credential',
+					injection: 'http-mediation',
+					audience: 'tool-vm',
+					hosts: ['api.linear.app'],
+				},
+			},
+			egressHosts: [...baseZone.egressHosts, { host: 'api.linear.app', audience: 'tool-vm' }],
+		} satisfies GatewayZone & {
+			readonly gateway: Extract<GatewayZone['gateway'], { readonly type: 'openclaw' }>;
+		};
+		const config = {
+			...loadedSystemConfig,
+			zones: [
+				zone,
+				...loadedSystemConfig.zones.filter((candidateZone) => candidateZone.id !== zone.id),
+			],
+		} satisfies LoadedSystemConfig;
+		const resolvedSecretRefs: string[] = [];
+		const runtime = createOpenClawZoneRuntime({
+			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
+			now: () => Date.parse('2026-04-30T10:00:00.000Z'),
+			restartGatewayZone: async () => {
+				throw new Error('restart is not needed by this refresh test');
+			},
+			runControllerCredentialsRefresh: async (_options, dependencies) => {
+				await dependencies.refreshZoneSecrets('shravan');
+				return { ok: true, zoneId: 'shravan' };
+			},
+			secretResolver: {
+				resolve: async (secretRef) => {
+					resolvedSecretRefs.push(secretRef.ref);
+					return `resolved:${secretRef.ref}`;
+				},
+				resolveAll: async () => ({}),
+			},
+			systemConfig: config,
+			zone,
+		});
+
+		await expect(runtime.refreshCredentials()).resolves.toEqual({ ok: true, zoneId: 'shravan' });
+
+		expect(resolvedSecretRefs).toEqual(['OPENCLAW_GATEWAY_TOKEN']);
 	});
 });
 

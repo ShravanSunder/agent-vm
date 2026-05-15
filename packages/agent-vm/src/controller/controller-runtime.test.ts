@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -57,8 +57,15 @@ const systemConfig = {
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
 			},
-			secrets: {},
-			allowedHosts: ['api.anthropic.com'],
+			secrets: {
+				OPENCLAW_GATEWAY_TOKEN: {
+					source: 'environment',
+					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					injection: 'env',
+					audience: 'gateway',
+				},
+			},
+			egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			websocketBypass: [],
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
@@ -168,6 +175,7 @@ function createPreparedWorkerTaskStub(
 describe('startControllerRuntime', () => {
 	it('starts the gateway, creates the controller app, and opens the controller port', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
 		const taskTitles: string[] = [];
 		const zone = systemConfig.zones[0];
 		if (!zone) {
@@ -1003,6 +1011,25 @@ describe('startControllerRuntime', () => {
 	it('releases active leases when runtime.close is called', async () => {
 		const tempDir = await mkdtemp(path.join(tmpdir(), 'agent-vm-runtime-close-'));
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		const openClawConfigPath = path.join(tempDir, 'openclaw.json');
+		await writeFile(
+			openClawConfigPath,
+			JSON.stringify({
+				agents: {
+					defaults: {
+						sandbox: {
+							backend: 'gondolin',
+							mode: 'all',
+							scope: 'agent',
+							workspaceAccess: 'rw',
+						},
+						workspace: '/zone/agents/default',
+					},
+					list: [],
+				},
+			}),
+			'utf8',
+		);
 		const testSystemConfig = {
 			...systemConfig,
 			zones: systemConfig.zones.map((zoneConfig) => ({
@@ -1011,6 +1038,7 @@ describe('startControllerRuntime', () => {
 					zoneConfig.gateway.type === 'openclaw'
 						? {
 								...zoneConfig.gateway,
+								config: openClawConfigPath,
 								stateDir: path.join(tempDir, 'state', zoneConfig.id),
 								zoneFilesDir: path.join(tempDir, 'zone-files', zoneConfig.id),
 							}
@@ -1097,11 +1125,33 @@ describe('startControllerRuntime', () => {
 				throw new Error('Expected runtime HTTP server args');
 			}
 
+			const runtimeStatusResponse = await startHttpServerArgs.app.request(
+				'/zones/shravan/openclaw-runtime-status',
+				{
+					body: JSON.stringify({
+						pluginId: 'gondolin',
+						zoneId: 'shravan',
+						findings: [
+							{
+								id: 'openclaw-tool-vm-agents-defaults-sandbox-backend-shravan-defaults',
+								ok: true,
+								hint: 'agents.defaults.sandbox.backend=gondolin',
+							},
+						],
+					}),
+					headers: {
+						'content-type': 'application/json',
+					},
+					method: 'POST',
+				},
+			);
+			expect(runtimeStatusResponse.status).toBe(200);
+
 			const leaseResponse = await startHttpServerArgs.app.request('/lease', {
 				body: JSON.stringify({
 					agentWorkspaceDir: '/zone',
 					profileId: 'standard',
-					scopeKey: 'close-runtime',
+					scopeKey: 'agent:close-runtime',
 					workMountDir: '/zone/sandbox-work',
 					zoneId: 'shravan',
 				}),
@@ -1195,6 +1245,7 @@ describe('startControllerRuntime', () => {
 
 	it('still closes the HTTP server when gateway restart fails before runtime.close', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected test zone.');

@@ -52,14 +52,16 @@ const systemConfig = {
 					source: '1password',
 					ref: 'op://AI/anthropic/api-key',
 					injection: 'env',
+					audience: 'gateway',
 				},
 				GITHUB_PAT: {
 					source: '1password',
 					ref: 'op://AI/github/pat',
 					injection: 'env',
+					audience: 'gateway',
 				},
 			},
-			allowedHosts: ['api.anthropic.com'],
+			egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			defaultToolVmProfile: 'standard',
 			websocketBypass: [],
 			agentToolVmProfiles: {},
@@ -89,6 +91,7 @@ describe('resolveZoneSecrets', () => {
 
 		await expect(
 			resolveZoneSecrets({
+				audience: 'gateway',
 				systemConfig,
 				zoneId: 'shravan',
 				secretResolver,
@@ -121,6 +124,7 @@ describe('resolveZoneSecrets', () => {
 							source: '1password' as const,
 							ref: 'op://agent-vm/shravan-gateway-auth/password',
 							injection: 'env' as const,
+							audience: 'gateway' as const,
 						},
 					},
 				},
@@ -132,6 +136,7 @@ describe('resolveZoneSecrets', () => {
 							source: '1password' as const,
 							ref: 'op://agent-vm/copse-gateway-auth/password',
 							injection: 'env' as const,
+							audience: 'gateway' as const,
 						},
 					},
 				},
@@ -140,6 +145,7 @@ describe('resolveZoneSecrets', () => {
 
 		await expect(
 			resolveZoneSecrets({
+				audience: 'gateway',
 				secretResolver,
 				systemConfig: multiZoneConfig,
 				zoneId: 'copse',
@@ -157,11 +163,70 @@ describe('resolveZoneSecrets', () => {
 
 		await expect(
 			resolveZoneSecrets({
+				audience: 'gateway',
 				secretResolver,
 				systemConfig,
 				zoneId: 'missing-zone',
 			}),
 		).rejects.toThrow("Unknown zone 'missing-zone'.");
+	});
+
+	it('requires Tool VM secret resolution to use http mediation', async () => {
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => '',
+			resolveAll: async () => ({}),
+		};
+
+		await expect(
+			resolveZoneSecrets({
+				audience: 'tool-vm',
+				injection: 'env',
+				secretResolver,
+				systemConfig,
+				zoneId: 'shravan',
+			} as never),
+		).rejects.toThrow("Tool VM secret resolution requires injection 'http-mediation'.");
+	});
+
+	it('rejects targeted Tool VM secrets that bypass the schema with env injection', async () => {
+		const baseZone = systemConfig.zones[0];
+		if (!baseZone) {
+			throw new Error('Expected base test zone');
+		}
+		const secretResolver: SecretResolver = {
+			resolve: async (): Promise<string> => {
+				throw new Error('secret should not be resolved');
+			},
+			resolveAll: async () => ({}),
+		};
+		const unsafeConfig = {
+			...systemConfig,
+			zones: [
+				{
+					...baseZone,
+					secrets: {
+						LINEAR_API_KEY: {
+							source: 'environment',
+							envVar: 'LINEAR_API_KEY',
+							injection: 'env',
+							audience: 'tool-vm',
+						},
+					},
+				},
+			],
+		} as never;
+
+		await expect(
+			resolveZoneSecrets({
+				audience: 'tool-vm',
+				injection: 'http-mediation',
+				secretResolver,
+				systemConfig: unsafeConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(
+			"Tool VM secret 'LINEAR_API_KEY' in zone 'shravan' must use injection 'http-mediation'.",
+		);
 	});
 
 	it('throws when a zone secret is missing an explicit ref', async () => {
@@ -177,13 +242,14 @@ describe('resolveZoneSecrets', () => {
 			...systemConfig,
 			zones: [
 				{
-					allowedHosts: baseZone.allowedHosts,
+					egressHosts: baseZone.egressHosts,
 					gateway: baseZone.gateway,
 					id: baseZone.id,
 					secrets: {
 						OPENCLAW_GATEWAY_TOKEN: {
 							source: '1password' as const,
 							injection: 'env' as const,
+							audience: 'gateway' as const,
 						},
 					},
 					defaultToolVmProfile: baseZone.defaultToolVmProfile,
@@ -195,6 +261,7 @@ describe('resolveZoneSecrets', () => {
 
 		await expect(
 			resolveZoneSecrets({
+				audience: 'gateway',
 				secretResolver,
 				// oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
 				systemConfig: envBackedConfig as unknown as SystemConfig,
@@ -218,13 +285,14 @@ describe('resolveZoneSecrets', () => {
 			...systemConfig,
 			zones: [
 				{
-					allowedHosts: baseZone.allowedHosts,
+					egressHosts: baseZone.egressHosts,
 					gateway: baseZone.gateway,
 					id: baseZone.id,
 					secrets: {
 						DISCORD_BOT_TOKEN: {
 							source: '1password' as const,
 							injection: 'env' as const,
+							audience: 'gateway' as const,
 						},
 					},
 					defaultToolVmProfile: baseZone.defaultToolVmProfile,
@@ -236,6 +304,7 @@ describe('resolveZoneSecrets', () => {
 
 		await expect(
 			resolveZoneSecrets({
+				audience: 'gateway',
 				secretResolver,
 				// oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
 				systemConfig: missingDiscordRefConfig as unknown as SystemConfig,
@@ -261,6 +330,7 @@ describe('resolveZoneSecrets', () => {
 							source: '1password' as const,
 							ref: 'op://agent-vm/shravan-perplexity/credential',
 							injection: 'http-mediation' as const,
+							audience: 'gateway' as const,
 							hosts: ['api.perplexity.ai'],
 						},
 					},
@@ -276,6 +346,7 @@ describe('resolveZoneSecrets', () => {
 
 		await expect(
 			resolveZoneSecrets({
+				audience: 'gateway',
 				secretResolver,
 				systemConfig: failingConfig,
 				zoneId: 'shravan',

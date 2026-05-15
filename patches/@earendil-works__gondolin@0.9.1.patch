@@ -1,0 +1,48 @@
+diff --git a/dist/src/qemu/net.js b/dist/src/qemu/net.js
+index b9eff8c4267d7c70170ff87951e971c938adce76..f25bcb883884891b9267424842e1eb01d790155f 100644
+--- a/dist/src/qemu/net.js
++++ b/dist/src/qemu/net.js
+@@ -253,19 +253,16 @@ export class QemuNetworkBackend extends EventEmitter {
+                 onTcpResume: (message) => this.handleTcpResume(message),
+             },
+             allowTcpFlow: (info) => {
++                const session = this.tcpSessions.get(info.key);
++                if (session?.mappedTcp) {
++                    session.protocol = "tcp";
++                    return true;
++                }
+                 if (info.protocol === "tcp") {
+-                    const session = this.tcpSessions.get(info.key);
+-                    const allowed = Boolean(session?.mappedTcp);
+-                    if (!allowed) {
+-                        if (this.options.debug) {
+-                            this.emitDebug(`tcp blocked ${info.srcIP}:${info.srcPort} -> ${info.dstIP}:${info.dstPort} (${info.protocol})`);
+-                        }
+-                        return false;
+-                    }
+-                    if (session) {
+-                        session.protocol = "tcp";
++                    if (this.options.debug) {
++                        this.emitDebug(`tcp blocked ${info.srcIP}:${info.srcPort} -> ${info.dstIP}:${info.dstPort} (${info.protocol})`);
+                     }
+-                    return true;
++                    return false;
+                 }
+                 if (info.protocol === "ssh") {
+                     const allowed = isSshFlowAllowed(this, info.key, info.dstIP, info.dstPort);
+@@ -275,7 +272,6 @@ export class QemuNetworkBackend extends EventEmitter {
+                         }
+                         return false;
+                     }
+-                    const session = this.tcpSessions.get(info.key);
+                     if (session) {
+                         session.protocol = "ssh";
+                     }
+@@ -287,7 +283,6 @@ export class QemuNetworkBackend extends EventEmitter {
+                     }
+                     return false;
+                 }
+-                const session = this.tcpSessions.get(info.key);
+                 if (session) {
+                     session.protocol = info.protocol;
+                     if (info.protocol === "http" || info.protocol === "tls") {

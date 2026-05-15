@@ -28,7 +28,7 @@ describe('resolveLeaseWorkMountDir', () => {
 		await mkdir(path.join(zoneFilesDir, 'project'), { recursive: true });
 		await mkdir(path.join(stateDir, 'sandboxes', 'agent', 'work'), { recursive: true });
 		zone = {
-			allowedHosts: ['api.openai.com'],
+			egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			gateway: {
 				type: 'openclaw',
 				imageProfile: 'openclaw',
@@ -40,7 +40,14 @@ describe('resolveLeaseWorkMountDir', () => {
 				zoneFilesDir,
 			},
 			id: 'shravan',
-			secrets: {},
+			secrets: {
+				OPENCLAW_GATEWAY_TOKEN: {
+					source: 'environment',
+					envVar: 'OPENCLAW_GATEWAY_TOKEN',
+					injection: 'env',
+					audience: 'gateway',
+				},
+			},
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
 			websocketBypass: [],

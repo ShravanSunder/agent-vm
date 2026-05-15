@@ -10,6 +10,8 @@ import type {
 } from '@agent-vm/gateway-interface';
 import {
 	buildGatewaySessionLabel as buildGatewaySessionLabelValue,
+	controllerVmHost,
+	gatewayVmAllowedHosts,
 	splitResolvedGatewaySecrets,
 } from '@agent-vm/gateway-interface';
 import {
@@ -52,7 +54,7 @@ function buildGatewayTcpHosts(
 	tcpPool: { readonly basePort: number; readonly size: number },
 ): Record<string, string> {
 	const tcpHosts: Record<string, string> = {
-		'controller.vm.host:18800': `127.0.0.1:${controllerPort}`,
+		[`${controllerVmHost}:18800`]: `127.0.0.1:${controllerPort}`,
 	};
 
 	for (let slot = 0; slot < tcpPool.size; slot += 1) {
@@ -85,21 +87,36 @@ function buildOpenClawBootstrapCommand(
 		'export PIP_CACHE_DIR=/work/cache/pip',
 		'export UV_CACHE_DIR=/work/cache/uv',
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
+		'export NODE_OPTIONS=--dns-result-order=ipv4first',
 	];
 	const secretEnvironmentLines = Object.entries({
 		...environmentSecrets,
 		...zone.runtimeEnvironment,
-	}).map(([secretName, secretValue]) => `export ${secretName}=${shellQuote(secretValue)}`);
+	}).map(
+		([secretName, secretValue]) =>
+			`export ${secretName}=${shellQuoteEnvSecretValue(secretName, secretValue)}`,
+	);
+	const secretsFileCommand =
+		secretEnvironmentLines.length === 0
+			? `: > ${openClawRuntimeSecretsEnvFilePath} && `
+			: `printf '%s\\n' ${secretEnvironmentLines.map((line) => shellQuote(line)).join(' ')} > ${openClawRuntimeSecretsEnvFilePath} && `;
+	const sshConfigLines = ['Host tool-*.vm.host', '  AddressFamily inet'];
+	const sshConfigCommand =
+		`mkdir -p /root/.ssh /home/openclaw/.ssh && ` +
+		`printf '%s\\n' ${sshConfigLines.map((line) => shellQuote(line)).join(' ')} > /root/.ssh/config && ` +
+		'cp /root/.ssh/config /home/openclaw/.ssh/config && ' +
+		'chown -R openclaw:openclaw /home/openclaw/.ssh && ' +
+		'chmod 700 /root/.ssh /home/openclaw/.ssh && ' +
+		'chmod 600 /root/.ssh/config /home/openclaw/.ssh/config && ';
 
 	return (
 		`mkdir -p /root /etc/profile.d /run/openclaw /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && chown -R openclaw:openclaw /work && cat > ${openClawShellEnvFilePath} << 'ENVEOF'\n` +
 		environmentLines.join('\n') +
 		'\nENVEOF\n' +
 		`chmod 644 ${openClawShellEnvFilePath} && ` +
-		`cat > ${openClawRuntimeSecretsEnvFilePath} << 'ENVEOF'\n` +
-		secretEnvironmentLines.join('\n') +
-		'\nENVEOF\n' +
+		secretsFileCommand +
 		`chmod 600 ${openClawRuntimeSecretsEnvFilePath} && ` +
+		sshConfigCommand +
 		'touch /root/.bashrc && ' +
 		`grep -qxF 'source ${openClawShellEnvFilePath}' /root/.bashrc || echo 'source ${openClawShellEnvFilePath}' >> /root/.bashrc && ` +
 		'touch /root/.bash_profile && ' +
@@ -113,6 +130,25 @@ function getEffectiveOpenClawConfigHostPath(zone: GatewayZoneConfig): string {
 
 function shellQuote(value: string): string {
 	return `'${value.replace(/'/gu, `'\\''`)}'`;
+}
+
+function includesShellUnsafeControlByte(value: string): boolean {
+	for (const character of value) {
+		const codePoint = character.codePointAt(0);
+		if (codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function shellQuoteEnvSecretValue(secretName: string, value: string): string {
+	if (includesShellUnsafeControlByte(value)) {
+		throw new Error(
+			`OpenClaw env-injected gateway secret '${secretName}' must be a single-line value without control bytes. Use http-mediation for secrets that require structured transport.`,
+		);
+	}
+	return shellQuote(value);
 }
 
 type SourceAwareSecretReference =
@@ -425,10 +461,11 @@ export const openclawLifecycle: GatewayLifecycle = {
 		);
 
 		return {
-			allowedHosts: [...zone.allowedHosts],
+			allowedHosts: gatewayVmAllowedHosts(zone.egressHosts),
 			environment: {
 				HOME: '/home/openclaw',
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
+				NODE_OPTIONS: '--dns-result-order=ipv4first',
 				OPENCLAW_CONFIG_PATH: effectiveOpenClawConfigVmPath,
 				OPENCLAW_HOME: '/home/openclaw',
 				OPENCLAW_STATE_DIR: openClawStateDirVmPath,

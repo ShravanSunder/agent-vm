@@ -3,19 +3,24 @@ import { randomUUID } from 'node:crypto';
 import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 import { Hono } from 'hono';
 
-import type { SystemConfig } from '../../config/system-config.js';
+import type { LoadedSystemConfig } from '../../config/system-config.js';
+import { OpenClawDeploymentRequirementError } from '../../operations/openclaw-deployment-requirements.js';
 import {
 	type AgentSandboxSeedResult,
 	SandboxSeedingError,
 	seedAgentSandboxWorkspace,
 } from '../leases/agent-sandbox-seeding.js';
 import { LeaseScopeConflictError } from '../leases/lease-manager.js';
-import { parseAgentIdFromScopeKey } from '../leases/lease-scope.js';
+import { parseAgentScopeKey, type AgentScopeParseResult } from '../leases/lease-scope.js';
 import {
 	LeaseWorkMountValidationError,
 	type ResolvedLeaseWorkMount,
 	resolveLeaseWorkMountDir as resolveLeaseWorkMountDirForZone,
 } from '../leases/lease-work-mount-paths.js';
+import {
+	OpenClawRuntimeStatusStore,
+	OpenClawRuntimeStatusUnavailableError,
+} from '../openclaw-runtime-status.js';
 import {
 	type ControllerLeaseManager,
 	type ControllerRouteOperations,
@@ -23,11 +28,31 @@ import {
 	serializeLeasePeekForResponse,
 	serializeLeaseForResponse,
 } from './controller-http-route-support.js';
-import { controllerLeaseCreateRequestSchema } from './controller-request-schemas.js';
+import {
+	controllerLeaseCreateRequestSchema,
+	controllerOpenClawRuntimeStatusRequestSchema,
+} from './controller-request-schemas.js';
 import { registerControllerZoneOperationRoutes } from './controller-zone-operation-routes.js';
 
 function writeControllerLeaseLog(message: string): void {
 	process.stderr.write(`[controller-http-routes] ${message}\n`);
+}
+
+type InvalidAgentScopeParseResult = Exclude<AgentScopeParseResult, { readonly kind: 'agent' }>;
+
+function assertUnreachableAgentScope(value: never): never {
+	throw new Error(`Unhandled agent scope parse result: ${JSON.stringify(value)}`);
+}
+
+function formatInvalidAgentScopeReason(parsedScope: InvalidAgentScopeParseResult): string {
+	switch (parsedScope.kind) {
+		case 'malformed-agent-scope':
+			return parsedScope.reason;
+		case 'non-agent-scope':
+			return 'Tool VM leases require agent-scoped OpenClaw sandboxes.';
+		default:
+			return assertUnreachableAgentScope(parsedScope);
+	}
 }
 
 function formatUnknownError(error: unknown): string {
@@ -102,7 +127,9 @@ export function createControllerApp(options: {
 	readonly zoneAgentToolVmProfiles?: Record<string, Record<string, string>>;
 	readonly zoneDefaultToolVmProfiles?: Record<string, string>;
 	readonly zoneIds?: ReadonlySet<string>;
+	readonly openClawRuntimeStatusStore?: OpenClawRuntimeStatusStore;
 	readonly operations?: Partial<ControllerRouteOperations>;
+	readonly validateToolVmLeaseRequirements?: (zoneId: string) => Promise<void>;
 	readonly resolveLeaseWorkMountDir: (options: {
 		readonly scopeKey: string;
 		readonly workMountDir: string;
@@ -139,7 +166,18 @@ export function createControllerApp(options: {
 			) {
 				return context.json({ error: `Unknown zone '${payload.zoneId}'` }, 400);
 			}
-			const agentId = parseAgentIdFromScopeKey(payload.scopeKey);
+			const parsedScope = parseAgentScopeKey(payload.scopeKey);
+			if (parsedScope.kind !== 'agent') {
+				const reason = formatInvalidAgentScopeReason(parsedScope);
+				return context.json(
+					{
+						error: `Invalid Tool VM lease scope '${payload.scopeKey}': ${reason}`,
+						kind: parsedScope.kind,
+					},
+					400,
+				);
+			}
+			const agentId = parsedScope.agentId;
 			const resolvedProfileId =
 				(agentId ? options.zoneAgentToolVmProfiles?.[payload.zoneId]?.[agentId] : undefined) ??
 				options.zoneDefaultToolVmProfiles?.[payload.zoneId] ??
@@ -154,6 +192,7 @@ export function createControllerApp(options: {
 			if (!defaultToolVmProfile) {
 				return context.json({ error: `Unknown tool VM profile '${resolvedProfileId}'` }, 400);
 			}
+			await options.validateToolVmLeaseRequirements?.(payload.zoneId);
 			const resolvedWorkMount = await options.resolveLeaseWorkMountDir({
 				scopeKey: payload.scopeKey,
 				workMountDir: payload.workMountDir,
@@ -176,6 +215,12 @@ export function createControllerApp(options: {
 			}
 			if (error instanceof LeaseScopeConflictError) {
 				return context.json({ error: error.message }, 409);
+			}
+			if (error instanceof OpenClawDeploymentRequirementError) {
+				return context.json({ error: error.message, kind: error.kind }, 400);
+			}
+			if (error instanceof OpenClawRuntimeStatusUnavailableError) {
+				return context.json({ error: error.message, kind: error.kind }, 409);
 			}
 			const diagnosticId = randomUUID();
 			if (error instanceof SandboxSeedingError) {
@@ -234,6 +279,53 @@ export function createControllerApp(options: {
 		return context.body(null, 204);
 	});
 
+	if (options.openClawRuntimeStatusStore) {
+		const openClawRuntimeStatusStore = options.openClawRuntimeStatusStore;
+		app.post('/zones/:zoneId/openclaw-runtime-status', async (context) => {
+			const zoneId = context.req.param('zoneId');
+			if (options.zoneIds && !options.zoneIds.has(zoneId)) {
+				return context.json({ error: `Unknown zone '${zoneId}'` }, 404);
+			}
+			let requestBody: unknown;
+			try {
+				requestBody = await context.req.json();
+			} catch {
+				return context.json(
+					{
+						error: 'invalid-json-request',
+						message: 'Request body must be valid JSON.',
+					},
+					400,
+				);
+			}
+			const parsedPayload = controllerOpenClawRuntimeStatusRequestSchema.safeParse(requestBody);
+			if (!parsedPayload.success) {
+				return context.json(
+					{
+						error: 'invalid-openclaw-runtime-status',
+						issues: parsedPayload.error.issues,
+					},
+					400,
+				);
+			}
+			const payload = parsedPayload.data;
+			if (payload.zoneId !== zoneId) {
+				return context.json(
+					{
+						error: `OpenClaw runtime status zone '${payload.zoneId}' does not match route zone '${zoneId}'.`,
+					},
+					400,
+				);
+			}
+			const snapshot = openClawRuntimeStatusStore.record(payload);
+			return context.json({
+				ok: true,
+				receivedAtMs: snapshot.receivedAtMs,
+				zoneId: snapshot.zoneId,
+			});
+		});
+	}
+
 	if (options.operations) {
 		const defaultOperations: ControllerRouteOperations = {
 			destroyZone: async () => {
@@ -266,9 +358,10 @@ export function createControllerService(options: {
 	readonly leaseManager: ControllerLeaseManager;
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly secretResolver?: SecretResolver;
-	readonly systemConfig: SystemConfig;
+	readonly systemConfig: LoadedSystemConfig;
 }): Hono {
 	const zonesById = new Map(options.systemConfig.zones.map((zone) => [zone.id, zone]));
+	const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
 	const app = createControllerApp({
 		leaseManager: options.leaseManager,
 		toolVmProfiles: options.systemConfig.toolVmProfiles,
@@ -285,7 +378,15 @@ export function createControllerService(options: {
 					: [[zone.id, zone.agentToolVmProfiles]],
 			),
 		),
+		openClawRuntimeStatusStore,
 		...(options.operations ? { operations: options.operations } : {}),
+		validateToolVmLeaseRequirements: async (zoneId) => {
+			const zone = zonesById.get(zoneId);
+			if (!zone || zone.gateway.type !== 'openclaw') {
+				return;
+			}
+			openClawRuntimeStatusStore.assertFreshOk(zoneId);
+		},
 		resolveLeaseWorkMountDir: async ({ scopeKey, workMountDir, zoneId }) => {
 			const zone = zonesById.get(zoneId);
 			if (!zone) {

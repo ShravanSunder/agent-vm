@@ -2,6 +2,7 @@ import {
 	ControllerLeaseRequestError,
 	createLeaseClient,
 	type GondolinLeaseResponse,
+	type OpenClawRuntimeStatusReport,
 } from '../controller-lease-client.js';
 import {
 	type CachedScopeEntry,
@@ -43,6 +44,7 @@ function shouldRefreshCachedLease(error: unknown): boolean {
 export function createGondolinSandboxBackendFactory(
 	options: {
 		readonly controllerUrl: string;
+		readonly openClawRuntimeStatusProvider?: () => OpenClawRuntimeStatusReport | undefined;
 		readonly profileId?: string;
 		readonly zoneId: string;
 	},
@@ -91,6 +93,10 @@ export function createGondolinSandboxBackendFactory(
 		// OpenClaw SDK still names the selected sandbox path `workspaceDir`.
 		// agent-vm's controller calls the same value `workMountDir` because it
 		// backs the Tool VM /work mount.
+		const runtimeStatus = options.openClawRuntimeStatusProvider?.();
+		if (runtimeStatus && leaseClient.publishOpenClawRuntimeStatus) {
+			await leaseClient.publishOpenClawRuntimeStatus(runtimeStatus);
+		}
 		const leaseResponse = await leaseClient.requestLease({
 			agentWorkspaceDir: params.agentWorkspaceDir,
 			profileId,

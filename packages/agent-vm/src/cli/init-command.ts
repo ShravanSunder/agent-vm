@@ -14,7 +14,7 @@ import {
 	createConfigContractSchemaArtifacts,
 	mcpPortalConfigSchemaPaths,
 } from '@agent-vm/config-contracts';
-import type { GatewayType } from '@agent-vm/gateway-interface';
+import type { EgressHostConfig, GatewayType, VmAudience } from '@agent-vm/gateway-interface';
 import {
 	resolveGondolinMinimumZigVersion,
 	resolveGondolinPackageSpec,
@@ -414,8 +414,10 @@ const defaultSystemConfig = (
 				backupDir: pathProfile.gatewayBackupDir(zoneId),
 			},
 			secrets: defaultSecretsForGatewayType(zoneId, gatewayType, secretsProvider),
-			runtimeAuthHints: defaultRuntimeAuthHintsForGatewayType(gatewayType),
-			allowedHosts: defaultAllowedHostsForGatewayType(gatewayType),
+			...(gatewayType === 'worker'
+				? { runtimeAuthHints: defaultRuntimeAuthHintsForGatewayType(gatewayType) }
+				: {}),
+			egressHosts: defaultEgressHostsForGatewayType(gatewayType),
 			websocketBypass: defaultWebsocketBypassForGatewayType(gatewayType),
 			...(gatewayType === 'openclaw'
 				? { defaultToolVmProfile: 'standard', agentToolVmProfiles: {}, agentSandboxSeeds: {} }
@@ -450,12 +452,14 @@ type SecretReference =
 			readonly source: '1password';
 			readonly ref: string;
 			readonly injection: SecretInjection;
+			readonly audience: VmAudience;
 			readonly hosts?: readonly string[];
 	  }
 	| {
 			readonly source: 'environment';
 			readonly envVar: string;
 			readonly injection: SecretInjection;
+			readonly audience: VmAudience;
 			readonly hosts?: readonly string[];
 	  };
 
@@ -500,6 +504,7 @@ interface SecretShape {
 	readonly envVar: string;
 	readonly opRef: string;
 	readonly injection: SecretInjection;
+	readonly audience: VmAudience;
 	readonly hosts?: readonly string[];
 }
 
@@ -511,6 +516,7 @@ function secretFromShape(shape: SecretShape, secretsProvider: SecretsProvider): 
 				source: '1password',
 				ref: shape.opRef,
 				injection: shape.injection,
+				audience: shape.audience,
 				...hostsField,
 			};
 		case 'environment':
@@ -518,6 +524,7 @@ function secretFromShape(shape: SecretShape, secretsProvider: SecretsProvider): 
 				source: 'environment',
 				envVar: shape.envVar,
 				injection: shape.injection,
+				audience: shape.audience,
 				...hostsField,
 			};
 		default:
@@ -537,6 +544,7 @@ function defaultSecretsForGatewayType(
 					envVar: 'GITHUB_TOKEN',
 					opRef: 'op://agent-vm/github-token/credential',
 					injection: 'http-mediation',
+					audience: 'gateway',
 					hosts: ['api.github.com'],
 				},
 				secretsProvider,
@@ -546,6 +554,7 @@ function defaultSecretsForGatewayType(
 					envVar: 'OPENAI_API_KEY',
 					opRef: 'op://agent-vm/workers-openai/credential',
 					injection: 'http-mediation',
+					audience: 'gateway',
 					hosts: ['api.openai.com'],
 				},
 				secretsProvider,
@@ -559,6 +568,7 @@ function defaultSecretsForGatewayType(
 				envVar: 'PERPLEXITY_API_KEY',
 				opRef: `op://agent-vm/${zoneId}-perplexity/credential`,
 				injection: 'http-mediation',
+				audience: 'gateway',
 				hosts: ['api.perplexity.ai'],
 			},
 			secretsProvider,
@@ -568,6 +578,7 @@ function defaultSecretsForGatewayType(
 				envVar: 'OPENCLAW_GATEWAY_TOKEN',
 				opRef: `op://agent-vm/${zoneId}-gateway-auth/password`,
 				injection: 'env',
+				audience: 'gateway',
 			},
 			secretsProvider,
 		),
@@ -592,7 +603,7 @@ function defaultRuntimeAuthHintsForGatewayType(
 	];
 }
 
-function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): readonly string[] {
+function defaultEgressHostsForGatewayType(gatewayType: GatewayType): readonly EgressHostConfig[] {
 	if (gatewayType === 'worker') {
 		return [
 			'api.anthropic.com',
@@ -602,7 +613,7 @@ function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): readonly s
 			'github.com',
 			'registry.npmjs.org',
 			'mcp.deepwiki.com',
-		];
+		].map((host) => ({ host, audience: 'gateway' }));
 	}
 
 	return [
@@ -626,7 +637,7 @@ function defaultAllowedHostsForGatewayType(gatewayType: GatewayType): readonly s
 		'api.cohere.ai',
 		'api.github.com',
 		'registry.npmjs.org',
-	];
+	].map((host) => ({ host, audience: 'gateway' }));
 }
 
 function defaultWebsocketBypassForGatewayType(gatewayType: GatewayType): readonly string[] {

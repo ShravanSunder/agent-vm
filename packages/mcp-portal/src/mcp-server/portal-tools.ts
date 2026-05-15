@@ -605,25 +605,21 @@ function isPreparedPortalCall(
 	return 'validatedArguments' in value;
 }
 
-async function addExecutableCallResults(
-	props: {
-		readonly identity: PortalAgentIdentity;
-		readonly preparedCalls: readonly PreparedPortalCall[];
-		readonly results: Record<string, PortalToolResult>;
-		readonly runtime: PortalToolRuntime;
-	},
-	index = 0,
-): Promise<void> {
-	const preparedCall = props.preparedCalls[index];
-	if (preparedCall === undefined) {
-		return;
-	}
-	props.results[preparedCall.input.id] = await executePreparedPortalCall(
-		preparedCall,
-		props.identity,
-		props.runtime,
+async function addExecutableCallResults(props: {
+	readonly identity: PortalAgentIdentity;
+	readonly preparedCalls: readonly PreparedPortalCall[];
+	readonly results: Record<string, PortalToolResult>;
+	readonly runtime: PortalToolRuntime;
+}): Promise<void> {
+	await Promise.all(
+		props.preparedCalls.map(async (preparedCall): Promise<void> => {
+			props.results[preparedCall.input.id] = await executePreparedPortalCall(
+				preparedCall,
+				props.identity,
+				props.runtime,
+			);
+		}),
 	);
-	await addExecutableCallResults(props, index + 1);
 }
 
 export function createPortalToolHandlers(runtime: PortalToolRuntime): PortalToolHandlers {

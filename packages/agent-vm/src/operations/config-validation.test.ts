@@ -81,7 +81,7 @@ async function writeContainerProjectFixture(rootPath: string): Promise<string> {
 					stateDir: '/var/agent-vm/state',
 				},
 				secrets: {},
-				allowedHosts: ['api.openai.com'],
+				egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			},
 		],
 		tcpPool: { basePort: 19000, size: 5 },
@@ -156,8 +156,15 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 						shravan: { source: 'environment', envVar: 'SHRAVAN_AUTH_PROFILES' },
 					},
 				},
-				secrets: {},
-				allowedHosts: ['api.openai.com'],
+				secrets: {
+					OPENCLAW_GATEWAY_TOKEN: {
+						source: 'environment',
+						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						injection: 'env',
+						audience: 'gateway',
+					},
+				},
+				egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 				defaultToolVmProfile: 'default',
 				agentToolVmProfiles: {},
 				agentSandboxSeeds: {
@@ -180,6 +187,19 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 		tcpPool: { basePort: 19000, size: 5 },
 	});
 	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'openclaw.json'), {
+		agents: {
+			defaults: {
+				model: { primary: 'openai-codex/gpt-5.5' },
+				sandbox: {
+					backend: 'gondolin',
+					mode: 'all',
+					scope: 'agent',
+					workspaceAccess: 'rw',
+				},
+				workspace: '/zone/agents/default',
+			},
+			list: [{ id: 'shravan' }],
+		},
 		gateway: {
 			auth: { mode: 'token' },
 			bind: 'loopback',
@@ -306,7 +326,7 @@ describe('runConfigValidation', () => {
 							stateDir: '/var/agent-vm/state',
 						},
 						secrets: {},
-						allowedHosts: ['api.openai.com'],
+						egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 					},
 				],
 				tcpPool: { basePort: 19000, size: 5 },

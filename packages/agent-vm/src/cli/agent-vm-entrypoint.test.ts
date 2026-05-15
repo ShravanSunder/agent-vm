@@ -66,7 +66,7 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 		},
 		zones: [
 			{
-				allowedHosts: ['api.anthropic.com'],
+				egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),
 				gateway: {
 					type: 'openclaw',
 					imageProfile: 'openclaw',
@@ -78,7 +78,14 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 					zoneFilesDir: './zone-files/shravan',
 				},
 				id: 'shravan',
-				secrets: {},
+				secrets: {
+					OPENCLAW_GATEWAY_TOKEN: {
+						source: 'environment',
+						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						injection: 'env',
+						audience: 'gateway',
+					},
+				},
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},
 				websocketBypass: [],
@@ -1580,7 +1587,10 @@ describe('runAgentVmCli', () => {
 					},
 					zones: [
 						{
-							allowedHosts: ['api.anthropic.com'],
+							egressHosts: ['api.anthropic.com'].map((host) => ({
+								host,
+								audience: 'gateway' as const,
+							})),
 							gateway: {
 								type: 'openclaw',
 								imageProfile: 'openclaw',
@@ -1592,7 +1602,14 @@ describe('runAgentVmCli', () => {
 								zoneFilesDir: './zone-files/shravan',
 							},
 							id: 'shravan',
-							secrets: {},
+							secrets: {
+								OPENCLAW_GATEWAY_TOKEN: {
+									source: 'environment',
+									envVar: 'OPENCLAW_GATEWAY_TOKEN',
+									injection: 'env',
+									audience: 'gateway',
+								},
+							},
 							websocketBypass: [],
 							defaultToolVmProfile: 'standard',
 							agentToolVmProfiles: {},
@@ -1822,7 +1839,10 @@ describe('runAgentVmCli', () => {
 				},
 				zones: [
 					{
-						allowedHosts: ['api.anthropic.com'],
+						egressHosts: ['api.anthropic.com'].map((host) => ({
+							host,
+							audience: 'gateway' as const,
+						})),
 						gateway: {
 							type: 'openclaw',
 							imageProfile: 'openclaw',
@@ -1834,7 +1854,14 @@ describe('runAgentVmCli', () => {
 							zoneFilesDir: './zone-files/shravan',
 						},
 						id: 'shravan',
-						secrets: {},
+						secrets: {
+							OPENCLAW_GATEWAY_TOKEN: {
+								source: 'environment',
+								envVar: 'OPENCLAW_GATEWAY_TOKEN',
+								injection: 'env',
+								audience: 'gateway',
+							},
+						},
 						websocketBypass: [],
 						defaultToolVmProfile: 'standard',
 						agentToolVmProfiles: {},
@@ -1859,30 +1886,40 @@ describe('runAgentVmCli', () => {
 			})),
 			startGatewayZone: vi.fn(async () => undefined as never),
 		};
+		const previousGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
 
-		for (const command of [
-			['controller', 'status'],
-			['controller', 'logs', '--zone', 'shravan'],
-			['controller', 'destroy', '--zone', 'shravan', '--purge'],
-			['controller', 'upgrade', '--zone', 'shravan'],
-			['controller', 'credentials', 'refresh', '--zone', 'shravan'],
-		] as const) {
-			// oxlint-disable-next-line no-await-in-loop -- commands intentionally run serially against shared mocks
-			await runAgentVmCli(
-				command,
-				{
-					stderr: {
-						write: () => true,
-					},
-					stdout: {
-						write: (chunk: string | Uint8Array) => {
-							outputs.push(String(chunk));
-							return true;
+		try {
+			for (const command of [
+				['controller', 'status'],
+				['controller', 'logs', '--zone', 'shravan'],
+				['controller', 'destroy', '--zone', 'shravan', '--purge'],
+				['controller', 'upgrade', '--zone', 'shravan'],
+				['controller', 'credentials', 'refresh', '--zone', 'shravan'],
+			] as const) {
+				// oxlint-disable-next-line no-await-in-loop -- commands intentionally run serially against shared mocks
+				await runAgentVmCli(
+					command,
+					{
+						stderr: {
+							write: () => true,
+						},
+						stdout: {
+							write: (chunk: string | Uint8Array) => {
+								outputs.push(String(chunk));
+								return true;
+							},
 						},
 					},
-				},
-				baseDependencies,
-			);
+					baseDependencies,
+				);
+			}
+		} finally {
+			if (previousGatewayToken === undefined) {
+				delete process.env.OPENCLAW_GATEWAY_TOKEN;
+			} else {
+				process.env.OPENCLAW_GATEWAY_TOKEN = previousGatewayToken;
+			}
 		}
 
 		expect(controllerClient.getControllerStatus).toHaveBeenCalled();
@@ -2154,7 +2191,10 @@ describe('runAgentVmCli', () => {
 					},
 					zones: [
 						{
-							allowedHosts: ['api.anthropic.com'],
+							egressHosts: ['api.anthropic.com'].map((host) => ({
+								host,
+								audience: 'gateway' as const,
+							})),
 							gateway: {
 								type: 'openclaw',
 								imageProfile: 'openclaw',
@@ -2166,7 +2206,14 @@ describe('runAgentVmCli', () => {
 								zoneFilesDir: './zone-files/shravan',
 							},
 							id: 'shravan',
-							secrets: {},
+							secrets: {
+								OPENCLAW_GATEWAY_TOKEN: {
+									source: 'environment',
+									envVar: 'OPENCLAW_GATEWAY_TOKEN',
+									injection: 'env',
+									audience: 'gateway',
+								},
+							},
 							websocketBypass: [],
 							defaultToolVmProfile: 'standard',
 							agentToolVmProfiles: {},
@@ -2304,7 +2351,10 @@ describe('runAgentVmCli', () => {
 					},
 					zones: [
 						{
-							allowedHosts: ['api.anthropic.com'],
+							egressHosts: ['api.anthropic.com'].map((host) => ({
+								host,
+								audience: 'gateway' as const,
+							})),
 							gateway: {
 								type: 'openclaw',
 								imageProfile: 'openclaw',
@@ -2316,7 +2366,14 @@ describe('runAgentVmCli', () => {
 								zoneFilesDir: './zone-files/shravan',
 							},
 							id: 'shravan',
-							secrets: {},
+							secrets: {
+								OPENCLAW_GATEWAY_TOKEN: {
+									source: 'environment',
+									envVar: 'OPENCLAW_GATEWAY_TOKEN',
+									injection: 'env',
+									audience: 'gateway',
+								},
+							},
 							websocketBypass: [],
 							defaultToolVmProfile: 'standard',
 							agentToolVmProfiles: {},

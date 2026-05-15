@@ -161,7 +161,7 @@ function createTestSystemConfig(): LoadedSystemConfig {
 			},
 			zones: [
 				{
-					allowedHosts: ['example.com'],
+					egressHosts: ['example.com'].map((host) => ({ host, audience: 'gateway' as const })),
 					gateway: {
 						type: 'openclaw',
 						imageProfile: 'openclaw',
@@ -173,7 +173,14 @@ function createTestSystemConfig(): LoadedSystemConfig {
 						zoneFilesDir: '/zone-files/test',
 					},
 					id: 'test-zone',
-					secrets: {},
+					secrets: {
+						OPENCLAW_GATEWAY_TOKEN: {
+							source: 'environment',
+							envVar: 'OPENCLAW_GATEWAY_TOKEN',
+							injection: 'env',
+							audience: 'gateway',
+						},
+					},
 					defaultToolVmProfile: 'standard',
 					agentToolVmProfiles: {},
 					websocketBypass: [],

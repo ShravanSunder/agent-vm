@@ -11,6 +11,7 @@ import { execa } from 'execa';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { buildRuntimePathIsolationChecks, collectVmHostSystemDoctorCheck } from './doctor.js';
+import { collectOpenClawDeploymentRequirementFindings } from './openclaw-deployment-requirements.js';
 import {
 	isRuntimeConfigReference,
 	isRuntimeSystemConfigPath,
@@ -525,6 +526,14 @@ export async function runConfigValidation(
 		...buildRuntimePathIsolationChecks(systemConfig),
 		...(await collectGatewayImageProfileChecks(systemConfig)),
 		...(await collectToolImageProfileChecks(systemConfig)),
+		...(await collectOpenClawDeploymentRequirementFindings(systemConfig)).map(
+			(finding) =>
+				({
+					name: finding.id,
+					ok: finding.ok,
+					hint: finding.hint,
+				}) satisfies ConfigValidationCheck,
+		),
 		...buildZoneToolVmProfileChecks(systemConfig),
 		...buildOpenClawAgentSetupChecks(systemConfig),
 		...(vmHostSystemCheck ? [vmHostSystemCheck] : []),

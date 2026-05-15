@@ -48,7 +48,7 @@ function makeSystemConfig(): SystemConfig {
 					stateDir,
 				},
 				secrets: {},
-				allowedHosts: ['github.com'],
+				egressHosts: ['github.com'].map((host) => ({ host, audience: 'gateway' as const })),
 				websocketBypass: [],
 			},
 		],

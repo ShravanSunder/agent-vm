@@ -35,6 +35,7 @@ export interface ControllerRuntimeDependencies {
 		readonly hostWorkMountDir: string;
 		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
+		readonly secretResolver: SecretResolver;
 	}) => Promise<import('@agent-vm/gondolin-adapter').ManagedVm>;
 	readonly createSecretResolver?: (options: {
 		readonly serviceAccountToken: string;

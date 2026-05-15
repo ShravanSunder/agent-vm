@@ -97,6 +97,10 @@ function parseApprovalTokenPayload(payloadEncoded: string): ApprovalTokenPayload
 	}
 }
 
+function isApprovalTokenParts(parts: readonly string[]): parts is readonly [string, string] {
+	return parts.length === 2;
+}
+
 function callsMatch(
 	leftCalls: readonly ApprovalTokenCallDigest[],
 	rightCalls: readonly ApprovalTokenCallDigest[],
@@ -117,14 +121,10 @@ function callsMatch(
 
 export function verifyApprovalToken(props: VerifyApprovalTokenProps): VerifyApprovalTokenResult {
 	const parts = props.token.split('.');
-	if (parts.length !== 2) {
+	if (!isApprovalTokenParts(parts)) {
 		return { ok: false, reason: 'malformed' };
 	}
-	const payloadEncoded = parts[0];
-	const signatureEncoded = parts[1];
-	if (payloadEncoded === undefined || signatureEncoded === undefined) {
-		return { ok: false, reason: 'malformed' };
-	}
+	const [payloadEncoded, signatureEncoded] = parts;
 	const expectedSignature = createHmac('sha256', props.key).update(payloadEncoded).digest();
 	const providedSignature = Buffer.from(signatureEncoded, 'base64url');
 	if (

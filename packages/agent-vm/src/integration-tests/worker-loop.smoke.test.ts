@@ -232,7 +232,10 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 			throw new Error('Expected a configured worker zone for the smoke test.');
 		}
 		workerZone.gateway.port = gatewayPort;
-		workerZone.allowedHosts = [...workerZone.allowedHosts, 'github.com'];
+		workerZone.egressHosts = [
+			...workerZone.egressHosts,
+			{ host: 'github.com', audience: 'gateway' },
+		];
 
 		await fs.writeFile(
 			workerZone.gateway.config,

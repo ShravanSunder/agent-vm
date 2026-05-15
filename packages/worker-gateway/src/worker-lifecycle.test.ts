@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { workerLifecycle } from './worker-lifecycle.js';
 
 const zone: GatewayZoneConfig = {
-	allowedHosts: ['api.openai.com'],
+	egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 	gateway: {
 		cpus: 2,
 		config: '/host/config/shravan/worker.json',
@@ -18,6 +18,7 @@ const zone: GatewayZoneConfig = {
 	secrets: {
 		OPENAI_API_KEY: {
 			injection: 'env',
+			audience: 'gateway',
 			source: '1password',
 			ref: 'op://vault/item/openai',
 		},
@@ -61,6 +62,61 @@ describe('workerLifecycle', () => {
 		expect(vmSpec.environment.pnpm_config_store_dir).toBe('/work/cache/pnpm/store');
 		expect(vmSpec.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');
 		expect(vmSpec.tcpHosts['controller.vm.host:18800']).toBe('127.0.0.1:18800');
+	});
+
+	it('keeps Tool VM audience secrets out of worker gateway env and mediation', () => {
+		const mixedAudienceZone: GatewayZoneConfig = {
+			...zone,
+			egressHosts: [
+				{ host: 'api.openai.com', audience: 'gateway' },
+				{ host: 'api.github.com', audience: 'both' },
+				{ host: 'api.linear.app', audience: 'tool-vm' },
+			],
+			secrets: {
+				...zone.secrets,
+				GITHUB_TOKEN: {
+					source: 'environment',
+					envVar: 'GITHUB_TOKEN',
+					injection: 'http-mediation',
+					audience: 'both',
+					hosts: ['api.github.com'],
+				},
+				LINEAR_API_KEY: {
+					source: 'environment',
+					envVar: 'LINEAR_API_KEY',
+					injection: 'http-mediation',
+					audience: 'tool-vm',
+					hosts: ['api.linear.app'],
+				},
+			},
+		};
+
+		const vmSpec = workerLifecycle.buildVmSpec({
+			controllerPort: 18800,
+			gatewayCacheDir: '/host/cache/gateways/shravan',
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			resolvedSecrets: {
+				OPENAI_API_KEY: 'openai-token',
+				GITHUB_TOKEN: 'github-token',
+				LINEAR_API_KEY: 'linear-token',
+			},
+			runtimeDir: '/host/runtime',
+			tcpPool: {
+				basePort: 19000,
+				size: 5,
+			},
+			zone: mixedAudienceZone,
+		});
+
+		expect(vmSpec.environment).toEqual(expect.objectContaining({ OPENAI_API_KEY: 'openai-token' }));
+		expect(vmSpec.environment).not.toHaveProperty('LINEAR_API_KEY');
+		expect(vmSpec.mediatedSecrets).toEqual({
+			GITHUB_TOKEN: {
+				hosts: ['api.github.com'],
+				value: 'github-token',
+			},
+		});
+		expect(vmSpec.allowedHosts).toEqual(['controller.vm.host', 'api.openai.com', 'api.github.com']);
 	});
 
 	it('builds a process spec that starts the worker HTTP server', () => {

@@ -393,6 +393,7 @@ export async function runControllerOperationCommand(
 				options.dependencies,
 			);
 			await resolveZoneSecrets({
+				audience: 'gateway',
 				secretResolver,
 				systemConfig: options.systemConfig,
 				zoneId,

@@ -12,6 +12,7 @@ function createSystemConfig(
 	controllerPort: number,
 	stateDirectory: string,
 	zoneFilesDirectory: string,
+	openClawConfigPath: string,
 ): LoadedSystemConfig {
 	return {
 		schemaVersion: 1,
@@ -53,12 +54,19 @@ function createSystemConfig(
 					memory: '2G',
 					cpus: 2,
 					port: controllerPort + 100,
-					config: './config/shravan/openclaw.json',
+					config: openClawConfigPath,
 					stateDir: stateDirectory,
 					zoneFilesDir: zoneFilesDirectory,
 				},
-				secrets: {},
-				allowedHosts: ['api.openai.com'],
+				secrets: {
+					OPENCLAW_GATEWAY_TOKEN: {
+						source: 'environment',
+						envVar: 'OPENCLAW_GATEWAY_TOKEN',
+						injection: 'env',
+						audience: 'gateway',
+					},
+				},
+				egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 				websocketBypass: [],
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},
@@ -151,11 +159,35 @@ describe('live integration: controller restart persistence', () => {
 		const stateDirectory = path.join(tempDirectory, 'state');
 		const zoneFilesDirectory = path.join(tempDirectory, 'zone-files');
 		const zoneLeaseDirectory = path.join(zoneFilesDirectory, 'restart-work');
+		const openClawConfigPath = path.join(tempDirectory, 'openclaw.json');
 		fs.mkdirSync(stateDirectory, { recursive: true });
 		fs.mkdirSync(zoneLeaseDirectory, { recursive: true });
+		fs.writeFileSync(
+			openClawConfigPath,
+			JSON.stringify({
+				agents: {
+					defaults: {
+						sandbox: {
+							backend: 'gondolin',
+							mode: 'all',
+							scope: 'agent',
+							workspaceAccess: 'rw',
+						},
+						workspace: '/zone/agents/default',
+					},
+					list: [],
+				},
+			}),
+			'utf8',
+		);
 
 		const controllerPort = 18841;
-		const systemConfig = createSystemConfig(controllerPort, stateDirectory, zoneFilesDirectory);
+		const systemConfig = createSystemConfig(
+			controllerPort,
+			stateDirectory,
+			zoneFilesDirectory,
+			openClawConfigPath,
+		);
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected restart test zone.');
@@ -247,11 +279,31 @@ describe('live integration: controller restart persistence', () => {
 		const leasesBody = (await leasesResponse.json()) as unknown[];
 		expect(leasesBody).toHaveLength(0);
 
+		const runtimeStatusResponse = await fetch(
+			`http://127.0.0.1:${controllerPort}/zones/shravan/openclaw-runtime-status`,
+			{
+				body: JSON.stringify({
+					pluginId: 'gondolin',
+					zoneId: 'shravan',
+					findings: [
+						{
+							id: 'openclaw-tool-vm-agents-defaults-sandbox-backend-shravan-defaults',
+							ok: true,
+							hint: 'agents.defaults.sandbox.backend=gondolin',
+						},
+					],
+				}),
+				headers: { 'content-type': 'application/json' },
+				method: 'POST',
+			},
+		);
+		expect(runtimeStatusResponse.status).toBe(200);
+
 		const createLeaseResponse = await fetch(`http://127.0.0.1:${controllerPort}/lease`, {
 			body: JSON.stringify({
 				agentWorkspaceDir: '/zone',
 				profileId: 'standard',
-				scopeKey: 'restart-test',
+				scopeKey: 'agent:restart-test',
 				workMountDir: '/zone/restart-work',
 				zoneId: 'shravan',
 			}),
