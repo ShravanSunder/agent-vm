@@ -145,7 +145,7 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
        v
   OpenClaw uses SSH to execute code in tool VM
        |
-  v  (scope-specific idle TTL; default 30 minutes)
+  v  (scope-specific idle TTL; default 100 minutes)
   Idle reaper: releaseLease()
        |  1. vm.close() → tool VM destroyed
        |  2. tcpPool.release(slot) → port freed
