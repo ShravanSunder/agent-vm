@@ -1,0 +1,122 @@
+import type { IncomingMessage, ServerResponse } from 'node:http';
+
+export interface OpenClawPromptHookContext {
+	readonly agentId?: string;
+	readonly appendPrompt?: (content: string) => void;
+}
+
+export interface OpenClawPluginHookContext {
+	readonly agentId?: string;
+	readonly sessionId?: string;
+	readonly sessionKey?: string;
+	readonly toolCallId?: string;
+	readonly toolName?: string;
+}
+
+export interface OpenClawAgentTurnPrepareEvent {
+	readonly messages?: readonly unknown[];
+	readonly prompt?: string;
+}
+
+export interface OpenClawBeforePromptBuildEvent {
+	readonly messages?: readonly unknown[];
+	readonly prompt?: string;
+}
+
+export interface OpenClawBeforeToolCallEvent {
+	readonly params: Record<string, unknown>;
+	readonly toolCallId?: string;
+	readonly toolName: string;
+}
+
+export type OpenClawApprovalResolution =
+	| 'allow-always'
+	| 'allow-once'
+	| 'cancelled'
+	| 'deny'
+	| 'timeout';
+
+export interface OpenClawBeforeToolCallResult {
+	readonly block?: boolean;
+	readonly blockReason?: string;
+	readonly requireApproval?: {
+		readonly description: string;
+		readonly onResolution?: (decision: OpenClawApprovalResolution) => Promise<void> | void;
+		readonly pluginId?: string;
+		readonly severity?: 'critical' | 'info' | 'warning';
+		readonly timeoutBehavior?: 'allow' | 'deny';
+		readonly timeoutMs?: number;
+		readonly title: string;
+	};
+}
+
+export interface OpenClawPromptHookResult {
+	readonly appendContext?: string;
+	readonly appendSystemContext?: string;
+	readonly prependContext?: string;
+	readonly prependSystemContext?: string;
+}
+
+export type OpenClawPluginHookEventMap = {
+	readonly agent_turn_prepare: OpenClawAgentTurnPrepareEvent;
+	readonly before_prompt_build: OpenClawBeforePromptBuildEvent;
+	readonly before_tool_call: OpenClawBeforeToolCallEvent;
+};
+
+export type OpenClawPluginHookResultMap = {
+	readonly agent_turn_prepare: OpenClawPromptHookResult;
+	readonly before_prompt_build: OpenClawPromptHookResult;
+	readonly before_tool_call: OpenClawBeforeToolCallResult;
+};
+
+export interface OpenClawPluginHookOptions {
+	readonly priority?: number;
+	readonly timeoutMs?: number;
+}
+
+export interface OpenClawHttpRouteRegistration {
+	readonly auth: 'gateway' | 'plugin';
+	readonly handler: (
+		request: IncomingMessage,
+		response: ServerResponse,
+	) => Promise<boolean> | boolean;
+	readonly match?: 'exact' | 'prefix';
+	readonly path: string;
+	readonly replaceExisting?: boolean;
+}
+
+export interface OpenClawPluginService {
+	readonly id: string;
+	readonly start: () => Promise<void> | void;
+	readonly stop?: () => Promise<void> | void;
+}
+
+export interface OpenClawPortalPluginApi {
+	readonly config?: unknown;
+	readonly logger?: {
+		readonly debug?: (message: string) => void;
+		readonly error?: (message: string) => void;
+		readonly info?: (message: string) => void;
+		readonly warn?: (message: string) => void;
+	};
+	readonly pluginConfig?: unknown;
+	readonly registrationMode?: string;
+	readonly on?: <THookName extends keyof OpenClawPluginHookEventMap>(
+		hookName: THookName,
+		handler: (
+			event: OpenClawPluginHookEventMap[THookName],
+			context: OpenClawPluginHookContext,
+		) =>
+			| OpenClawPluginHookResultMap[THookName]
+			| Promise<OpenClawPluginHookResultMap[THookName] | void>
+			| void,
+		options?: OpenClawPluginHookOptions,
+	) => void;
+	readonly onDispose?: (cleanup: () => Promise<void> | void) => void;
+	readonly registerPromptHook?: (
+		hookName: 'agent_turn_prepare' | 'before_prompt_build',
+		handler: (context: OpenClawPromptHookContext) => Promise<void> | void,
+	) => void;
+	readonly registerHttpRoute?: (registration: OpenClawHttpRouteRegistration) => void;
+	readonly registerService?: (service: OpenClawPluginService) => void;
+}

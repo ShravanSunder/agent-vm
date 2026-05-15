@@ -31,6 +31,7 @@ describe('runControllerDestroy', () => {
 		fs.mkdirSync(zoneFilesDir, { recursive: true });
 
 		const systemConfig = {
+			schemaVersion: 1,
 			cacheDir: './cache',
 			runtimeDir,
 			host: {
@@ -142,6 +143,7 @@ describe('runControllerDestroy', () => {
 		fs.mkdirSync(stateDir, { recursive: true });
 
 		const systemConfig = {
+			schemaVersion: 1,
 			cacheDir: './cache',
 			runtimeDir,
 			host: {

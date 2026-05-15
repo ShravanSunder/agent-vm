@@ -2,7 +2,7 @@
 import { command, subcommands } from 'cmd-ts';
 
 import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
-import { runMigrateImagesCommand } from '../migrate-commands.js';
+import { runMigrateImagesCommand, runMigrateMcpPortalConfigCommand } from '../migrate-commands.js';
 import { createConfigOption } from './command-definition-support.js';
 
 export function createMigrateSubcommands(io: CliIo, _dependencies: CliDependencies) {
@@ -25,6 +25,27 @@ export function createMigrateSubcommands(io: CliIo, _dependencies: CliDependenci
 					);
 					if (result.skippedProfiles.length > 0) {
 						io.stdout.write(`skipped image profiles: ${result.skippedProfiles.join(', ')}\n`);
+					}
+				},
+			}),
+			'mcp-portal': command({
+				name: 'mcp-portal',
+				description: 'Migrate OpenClaw MCP Portal config to standalone portal config files',
+				args: {
+					config: createConfigOption(),
+				},
+				handler: async ({ config }) => {
+					const result = await runMigrateMcpPortalConfigCommand({
+						systemConfigPath: config ?? 'config/system.json',
+					});
+					io.stdout.write(
+						`migrated MCP portal zones: ${result.migratedZones.length === 0 ? 'none' : result.migratedZones.join(', ')}\n`,
+					);
+					if (result.createdFiles.length > 0) {
+						io.stdout.write(`created MCP config files: ${result.createdFiles.join(', ')}\n`);
+					}
+					if (result.skippedZones.length > 0) {
+						io.stdout.write(`skipped MCP portal zones: ${result.skippedZones.join(', ')}\n`);
 					}
 				},
 			}),

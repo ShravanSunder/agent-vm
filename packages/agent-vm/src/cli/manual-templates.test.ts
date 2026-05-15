@@ -35,6 +35,7 @@ describe('manual templates', () => {
 			'docs/manual/scope.md',
 			'docs/manual/openclaw.md',
 			'docs/manual/openclaw-defaults.md',
+			'docs/manual/mcp-portal.md',
 			'docs/manual/agent-worker.md',
 			'docs/manual/secrets.md',
 			'docs/manual/tool-access.md',
@@ -132,6 +133,27 @@ describe('manual templates', () => {
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('@agent-vm/openclaw-agent-vm-plugin');
+		expect(
+			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
+		).toContain('@agent-vm/openclaw-mcp-portal-plugin');
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'mcp_portal_describe',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Denied tools do not enter',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'diagnostics',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'deny-all',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'trusted only for configured namespaces',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'config/schemas/*.schema.json',
+		);
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('message_tool_only');

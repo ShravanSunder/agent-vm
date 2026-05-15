@@ -1,0 +1,16 @@
+{
+	"id": "mcp-portal",
+	"name": "MCP Portal",
+	"description": "Managed per-agent MCP server facade over configured upstream MCP servers.",
+	"activation": {
+		"onStartup": true
+	},
+	"configSchema": {
+		"type": "object",
+		"additionalProperties": false,
+		"properties": {
+			"binPath": { "type": "string" },
+			"configDir": { "type": "string" }
+		}
+	}
+}

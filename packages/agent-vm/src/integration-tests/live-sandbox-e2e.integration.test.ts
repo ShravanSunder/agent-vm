@@ -146,6 +146,8 @@ describe('live e2e: sandbox plugin → controller → tool VM', () => {
 
 		// --- Step 4: Test the lease API from inside the gateway VM ---
 		log('testing lease API from gateway VM...');
+		// tcp.hosts maps the synthetic per-host IPv4 answer; the shared AAAA
+		// answer is only present for SSRF compatibility and is not a raw TCP path.
 		const healthCheck = await gatewayVm.exec('curl -4 -sS http://controller.vm.host:18800/health');
 		log(`health check: ${healthCheck.stdout.trim()}`);
 		expect(healthCheck.stdout).toContain('ok');

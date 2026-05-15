@@ -4,6 +4,7 @@ import type { SystemConfig } from '../config/system-config.js';
 import { runControllerUpgrade } from './upgrade-zone.js';
 
 const systemConfig = {
+	schemaVersion: 1,
 	cacheDir: './cache',
 	runtimeDir: './runtime',
 	host: {

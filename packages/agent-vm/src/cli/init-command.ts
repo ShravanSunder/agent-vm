@@ -10,15 +10,24 @@ import {
 	DEFAULT_WORK_REVIEWER_INSTRUCTIONS,
 	DEFAULT_WRAPUP_INSTRUCTIONS,
 } from '@agent-vm/agent-vm-worker';
+import {
+	createConfigContractSchemaArtifacts,
+	mcpPortalConfigSchemaPaths,
+} from '@agent-vm/config-contracts';
 import type { EgressHostConfig, GatewayType, VmAudience } from '@agent-vm/gateway-interface';
 import {
 	resolveGondolinMinimumZigVersion,
 	resolveGondolinPackageSpec,
 } from '@agent-vm/gondolin-adapter';
+import {
+	materializedPortalToolNames,
+	portalServerNameForAgent,
+} from '@agent-vm/openclaw-mcp-portal-plugin';
 import { z } from 'zod';
 
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { resolveConfigPath } from '../config/path-resolver.js';
+import { createSystemConfigSchemaArtifact } from '../config/system-config.js';
 import { buildDefaultProjectNamespace } from '../runtime/project-namespace.js';
 import {
 	getKeychainTokenSource,
@@ -83,6 +92,7 @@ interface ScaffoldPathProfile {
 	readonly runtimeDir: string;
 	readonly createLocalRuntimeDirectories: boolean;
 	readonly gatewayConfig: (zoneId: string, gatewayType: GatewayType) => string;
+	readonly gatewayConfigDir: (zoneId: string) => string;
 	readonly gatewayStateDir: (zoneId: string) => string;
 	readonly gatewayZoneFilesDir: (zoneId: string) => string;
 	readonly gatewayBackupDir: (zoneId: string) => string;
@@ -156,6 +166,7 @@ interface DefaultManagedImageOverlay {
 
 const defaultGatewayIngressPort = 18791;
 const defaultOpenClawExtensionsPath = '/home/openclaw/.openclaw/extensions/gondolin';
+const defaultOpenClawMcpPortalExtensionsPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
 const scaffoldedGatewayPortSystemConfigSchema = z
 	.object({
 		zones: z.array(
@@ -179,6 +190,7 @@ const localPathProfile: ScaffoldPathProfile = {
 	createLocalRuntimeDirectories: true,
 	gatewayConfig: (zoneId, gatewayType) =>
 		`./gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
+	gatewayConfigDir: (zoneId) => `./gateways/${zoneId}`,
 	gatewayStateDir: (zoneId) => `../state/${zoneId}`,
 	gatewayZoneFilesDir: (zoneId) => `../zone-files/${zoneId}`,
 	gatewayBackupDir: (zoneId) => `../backups/${zoneId}`,
@@ -194,6 +206,7 @@ const podPathProfile: ScaffoldPathProfile = {
 	createLocalRuntimeDirectories: false,
 	gatewayConfig: (zoneId, gatewayType) =>
 		`/etc/agent-vm/gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
+	gatewayConfigDir: (zoneId) => `/etc/agent-vm/gateways/${zoneId}`,
 	gatewayStateDir: () => '/var/agent-vm/state',
 	gatewayZoneFilesDir: () => '/var/agent-vm/zone-files',
 	gatewayBackupDir: () => '/var/agent-vm/backups',
@@ -216,6 +229,7 @@ const userDirPathProfile: ScaffoldPathProfile = {
 	createLocalRuntimeDirectories: true,
 	gatewayConfig: (zoneId, gatewayType) =>
 		`./gateways/${zoneId}/${resolveGatewayConfigFileName(gatewayType)}`,
+	gatewayConfigDir: (zoneId) => `./gateways/${zoneId}`,
 	gatewayStateDir: (zoneId) => `~/.agent-vm/state/${zoneId}`,
 	gatewayZoneFilesDir: (zoneId) => `~/.agent-vm/zone-files/${zoneId}`,
 	gatewayBackupDir: (zoneId) => `~/.agent-vm-backups/${zoneId}`,
@@ -342,7 +356,10 @@ const defaultSystemConfig = (
 	projectNamespace: string,
 	secretsProvider: SecretsProvider,
 	pathProfile: ScaffoldPathProfile,
+	agentIds?: readonly string[],
 ): object => ({
+	$schema: './schemas/system.schema.json',
+	schemaVersion: 1,
 	host: {
 		controllerPort: 18800,
 		projectNamespace,
@@ -404,6 +421,12 @@ const defaultSystemConfig = (
 			websocketBypass: defaultWebsocketBypassForGatewayType(gatewayType),
 			...(gatewayType === 'openclaw'
 				? { defaultToolVmProfile: 'standard', agentToolVmProfiles: {}, agentSandboxSeeds: {} }
+				: {}),
+			...(gatewayType === 'openclaw'
+				? {
+						agents: (agentIds ?? []).map((agentId) => ({ id: agentId })),
+						mcp: { configDir: pathProfile.gatewayConfigDir(zoneId) },
+					}
 				: {}),
 		},
 	],
@@ -631,7 +654,13 @@ function envVarsForGatewayType(gatewayType: GatewayType, zoneId: string): readon
 		case 'worker':
 			return ['GITHUB_TOKEN', 'OPENAI_API_KEY', zoneSshAccessEnvVar];
 		case 'openclaw':
-			return ['GITHUB_TOKEN', 'PERPLEXITY_API_KEY', 'OPENCLAW_GATEWAY_TOKEN', zoneSshAccessEnvVar];
+			return [
+				'GITHUB_TOKEN',
+				'PERPLEXITY_API_KEY',
+				'OPENCLAW_GATEWAY_TOKEN',
+				'MCP_PORTAL_SERVER_SECRET',
+				zoneSshAccessEnvVar,
+			];
 		default: {
 			const exhaustive: never = gatewayType;
 			throw new Error(`Unhandled gateway type: ${String(exhaustive)}`);
@@ -709,6 +738,17 @@ function formatAgentIdentityName(agentId: string): string {
 	return agentId.charAt(0).toUpperCase() + agentId.slice(1);
 }
 
+function defaultOpenClawPortalToolDenyList(
+	agentId: string,
+	agentIds: readonly string[],
+): readonly string[] {
+	return agentIds
+		.filter((candidateAgentId) => candidateAgentId !== agentId)
+		.flatMap((candidateAgentId) =>
+			materializedPortalToolNames(portalServerNameForAgent(candidateAgentId)),
+		);
+}
+
 function defaultOpenClawAgentsConfig(agentIds: readonly string[] | undefined): object {
 	return {
 		defaults: {
@@ -728,9 +768,80 @@ function defaultOpenClawAgentsConfig(agentIds: readonly string[] | undefined): o
 						id: agentId,
 						workspace: `/zone/agents/${agentId}`,
 						identity: { name: formatAgentIdentityName(agentId) },
+						tools: { deny: defaultOpenClawPortalToolDenyList(agentId, agentIds) },
 					})),
 				}
 			: {}),
+	};
+}
+
+function defaultOpenClawMcpPortalServers(agentIds: readonly string[] | undefined): object {
+	if (!agentIds || agentIds.length === 0) {
+		return {};
+	}
+
+	return Object.fromEntries(
+		agentIds.map((agentId) => {
+			const serverName = portalServerNameForAgent(agentId);
+			return [
+				serverName,
+				{
+					transport: 'streamable-http',
+					url: `http://127.0.0.1:18790/agents/${encodeURIComponent(agentId)}/mcp`,
+					headers: {
+						'x-agent-vm-mcp-portal-secret': '${MCP_PORTAL_SERVER_SECRET}',
+					},
+				},
+			];
+		}),
+	);
+}
+
+function defaultMcpProviderConfig(): object {
+	return {
+		$schema: mcpPortalConfigSchemaPaths.mcpFromGatewayConfig,
+		schemaVersion: 1,
+		providers: {},
+	};
+}
+
+function defaultMcpPortalAgentAssignments(agentIds: readonly string[] | undefined): object {
+	if (!agentIds || agentIds.length === 0) {
+		return {};
+	}
+	return Object.fromEntries(agentIds.map((agentId) => [agentId, { profile: 'default' }]));
+}
+
+function defaultMcpPortalConfig(agentIds: readonly string[] | undefined): object {
+	return {
+		$schema: mcpPortalConfigSchemaPaths.mcpPortalFromGatewayConfig,
+		schemaVersion: 1,
+		server: {
+			host: '127.0.0.1',
+			port: 18790,
+			accessHeader: {
+				name: 'x-agent-vm-mcp-portal-secret',
+				secret: { source: 'environment', name: 'MCP_PORTAL_SERVER_SECRET' },
+			},
+		},
+		agents: defaultMcpPortalAgentAssignments(agentIds),
+		profiles: {
+			default: {
+				enabledNamespaces: [],
+				enabledToolsByNamespace: {},
+				hiddenToolsByNamespace: {},
+				approval: {
+					allowWithoutApprovalTools: [],
+					alwaysAskTools: [],
+					annotationPolicy: 'destructive-requires-approval',
+					trustedAnnotationNamespaces: [],
+					writeTools: [],
+				},
+				promptContext: { enabled: true, maxNamespaces: 12 },
+				cache: { catalogTtlMs: 60_000 },
+				logging: { enabled: false },
+			},
+		},
 	};
 }
 
@@ -752,6 +863,9 @@ const defaultOpenClawConfig = (
 		port: 18789,
 	},
 	agents: defaultOpenClawAgentsConfig(agentIds),
+	mcp: {
+		servers: defaultOpenClawMcpPortalServers(agentIds),
+	},
 	tools: {
 		allow: ['zone_git_push'],
 		elevated: { enabled: false },
@@ -773,9 +887,9 @@ const defaultOpenClawConfig = (
 	session: { dmScope: 'per-channel-peer' },
 	plugins: {
 		load: {
-			paths: [defaultOpenClawExtensionsPath],
+			paths: [defaultOpenClawExtensionsPath, defaultOpenClawMcpPortalExtensionsPath],
 		},
-		allow: ['gondolin', 'memory-core'],
+		allow: ['gondolin', 'memory-core', 'mcp-portal'],
 		slots: { memory: 'memory-core' },
 		entries: {
 			gondolin: {
@@ -787,6 +901,10 @@ const defaultOpenClawConfig = (
 			},
 			'memory-core': {
 				enabled: true,
+			},
+			'mcp-portal': {
+				enabled: true,
+				hooks: { allowPromptInjection: true },
 			},
 		},
 	},
@@ -824,6 +942,10 @@ function formatJsoncConfig(comment: string, value: unknown): string {
 	return `// ${comment}\n${JSON.stringify(value, null, '\t')}\n`;
 }
 
+function formatJsonSchemaArtifact(value: Record<string, unknown>): string {
+	return `${JSON.stringify(value, null, '\t')}\n`;
+}
+
 function formatAuthoredConfig(filePath: string, comment: string, value: unknown): string {
 	if (filePath.endsWith('.jsonc')) {
 		return formatJsoncConfig(comment, value);
@@ -844,6 +966,39 @@ async function resolveScaffoldSystemConfigPath(configDir: string): Promise<strin
 		}
 	}
 	return path.join(configDir, 'system.jsonc');
+}
+
+async function writeConfigSchemaArtifacts(options: {
+	readonly configDir: string;
+	readonly created: string[];
+	readonly overwrite: boolean;
+	readonly skipped: string[];
+	readonly targetDir: string;
+}): Promise<void> {
+	const contractSchemas = createConfigContractSchemaArtifacts();
+	const schemas: Readonly<Record<string, Record<string, unknown>>> = {
+		'system.schema.json': createSystemConfigSchemaArtifact(),
+		'mcp.schema.json': contractSchemas.mcp,
+		'mcp-portal.schema.json': contractSchemas.mcpPortal,
+	};
+	const schemaWriteResults = await Promise.all(
+		Object.entries(schemas).map(async ([fileName, schema]) => {
+			const schemaPath = path.join(options.configDir, 'schemas', fileName);
+			return {
+				schemaPath,
+				status: await writeFileIfMissing(
+					schemaPath,
+					formatJsonSchemaArtifact(schema),
+					options.overwrite,
+				),
+			};
+		}),
+	);
+	for (const { schemaPath, status } of schemaWriteResults) {
+		(status === 'created' ? options.created : options.skipped).push(
+			path.relative(options.targetDir, schemaPath),
+		);
+	}
 }
 
 const defaultWorkerPromptFiles = [
@@ -971,11 +1126,19 @@ async function scaffoldAgentVmProjectInternal(
 				projectNamespace,
 				options.secretsProvider,
 				configWritablePathProfile,
+				options.agents,
 			),
 		),
 		overwrite,
 	);
 	(systemConfigStatus === 'created' ? created : skipped).push(systemConfigRelativePath);
+	await writeConfigSchemaArtifacts({
+		configDir,
+		created,
+		overwrite,
+		skipped,
+		targetDir: options.targetDir,
+	});
 
 	if (options.writeLocalEnvironmentFile) {
 		const envFilePath = path.join(options.targetDir, '.env.local');
@@ -1016,6 +1179,45 @@ async function scaffoldAgentVmProjectInternal(
 	(configStatus === 'created' ? created : skipped).push(
 		`config/gateways/${options.zoneId}/${configFileName}`,
 	);
+	if (gatewayType === 'openclaw') {
+		const mcpConfigPath = path.join(
+			options.targetDir,
+			'config',
+			'gateways',
+			options.zoneId,
+			'mcp.config.jsonc',
+		);
+		const mcpConfigStatus = await writeFileIfMissing(
+			mcpConfigPath,
+			formatJsoncConfig(
+				'Human-authored upstream MCP provider catalog for the MCP Portal.',
+				defaultMcpProviderConfig(),
+			),
+			overwrite,
+		);
+		(mcpConfigStatus === 'created' ? created : skipped).push(
+			`config/gateways/${options.zoneId}/mcp.config.jsonc`,
+		);
+
+		const mcpPortalConfigPath = path.join(
+			options.targetDir,
+			'config',
+			'gateways',
+			options.zoneId,
+			'mcp-portal.config.jsonc',
+		);
+		const mcpPortalConfigStatus = await writeFileIfMissing(
+			mcpPortalConfigPath,
+			formatJsoncConfig(
+				'Human-authored MCP Portal agent/profile policy config.',
+				defaultMcpPortalConfig(options.agents),
+			),
+			overwrite,
+		);
+		(mcpPortalConfigStatus === 'created' ? created : skipped).push(
+			`config/gateways/${options.zoneId}/mcp-portal.config.jsonc`,
+		);
+	}
 	if (gatewayType === 'worker') {
 		const promptFileResults = await Promise.all(
 			defaultWorkerPromptFiles.map(async (promptFile) => {

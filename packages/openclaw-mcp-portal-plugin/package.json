@@ -1,0 +1,45 @@
+{
+	"name": "@agent-vm/openclaw-mcp-portal-plugin",
+	"version": "0.0.58",
+	"description": "OpenClaw plugin that supervises per-agent MCP Portal endpoints over configured upstream MCP servers.",
+	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
+	"bugs": {
+		"url": "https://github.com/ShravanSunder/agent-vm/issues"
+	},
+	"license": "MIT",
+	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/openclaw-mcp-portal-plugin"
+	},
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsdown && cp openclaw.plugin.json dist/",
+		"prepack": "pnpm -C ../.. build",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "vitest run --root ../../ --config vitest.config.ts packages/openclaw-mcp-portal-plugin/src"
+	},
+	"dependencies": {
+		"@agent-vm/config-contracts": "workspace:*",
+		"@agent-vm/mcp-portal": "workspace:*",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"vitest": "^4.1.5"
+	}
+}

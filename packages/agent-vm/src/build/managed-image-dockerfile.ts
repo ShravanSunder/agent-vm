@@ -10,9 +10,23 @@ import { formatZodError } from '../cli/format-zod-error.js';
 export type ManagedImageBase = 'openclaw-gateway' | 'tool-vm' | 'worker-gateway';
 
 const managedOpenClawAgentVmPluginPackageName = '@agent-vm/openclaw-agent-vm-plugin';
+const managedOpenClawMcpPortalPluginPackageName = '@agent-vm/openclaw-mcp-portal-plugin';
+const managedMcpPortalPackageName = '@agent-vm/mcp-portal';
+const managedOpenClawPackageNames = new Set([
+	managedOpenClawAgentVmPluginPackageName,
+	managedOpenClawMcpPortalPluginPackageName,
+	managedMcpPortalPackageName,
+]);
 const managedOpenClawAgentVmPluginExtensionPath = '/home/openclaw/.openclaw/extensions/gondolin';
+const managedOpenClawMcpPortalPluginExtensionPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
 const managedOpenClawAgentVmPluginPackagePath =
 	'/pnpm/global/5/node_modules/@agent-vm/openclaw-agent-vm-plugin/dist';
+const managedOpenClawMcpPortalPluginPackagePath =
+	'/pnpm/global/5/node_modules/@agent-vm/openclaw-mcp-portal-plugin/dist';
+const managedMcpPortalServerScriptPath =
+	'/pnpm/global/5/node_modules/@agent-vm/mcp-portal/dist/bin/portal-server.js';
+const managedMcpPortalServerWrapperPath =
+	'/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server';
 
 export interface ManagedImageSource {
 	readonly kind: 'managedBase';
@@ -60,6 +74,8 @@ export interface ManagedDockerfilePlan {
 	readonly imageTargetFamily: 'gateway' | 'toolVm';
 	readonly imageTargetName: string;
 	readonly openClawAgentVmPluginPackage?: ManagedDockerfilePackagePlanEntry;
+	readonly openClawMcpPortalPluginPackage?: ManagedDockerfilePackagePlanEntry;
+	readonly mcpPortalPackage?: ManagedDockerfilePackagePlanEntry;
 	readonly openClawPackages: readonly ManagedDockerfilePackagePlanEntry[];
 	readonly warnings: readonly ManagedDockerfilePlanWarning[];
 }
@@ -182,7 +198,9 @@ function renderManagedDockerfile(props: {
 	readonly base: ManagedImageBase;
 	readonly baseImage: ManagedBaseImageReference;
 	readonly overlay: ManagedImageOverlay;
+	readonly mcpPortalPackageSpec?: string;
 	readonly openClawAgentVmPluginPackageSpec?: string;
+	readonly openClawMcpPortalPluginPackageSpec?: string;
 	readonly openClawPackages: readonly ManagedDockerfilePackagePlanEntry[];
 }): string {
 	const lines = [
@@ -198,10 +216,23 @@ function renderManagedDockerfile(props: {
 		);
 	}
 	if (props.base === 'openclaw-gateway') {
-		if (!props.openClawAgentVmPluginPackageSpec) {
-			throw new Error('OpenClaw gateway managed Dockerfiles require the OpenClaw plugin package spec.');
+		if (!props.openClawAgentVmPluginPackageSpec || !props.openClawMcpPortalPluginPackageSpec || !props.mcpPortalPackageSpec) {
+			throw new Error('OpenClaw gateway managed Dockerfiles require all managed OpenClaw plugin package specs.');
 		}
-		lines.push('RUN pnpm add -g ' + shellJoin([props.openClawAgentVmPluginPackageSpec]));
+		lines.push(
+			'RUN pnpm add -g ' +
+				shellJoin([
+					props.openClawAgentVmPluginPackageSpec,
+					props.openClawMcpPortalPluginPackageSpec,
+					props.mcpPortalPackageSpec,
+				]),
+		);
+	}
+	if (props.base === 'tool-vm') {
+		if (!props.mcpPortalPackageSpec) {
+			throw new Error('Tool VM managed Dockerfiles require the MCP Portal package spec.');
+		}
+		lines.push('RUN pnpm add -g ' + shellJoin([props.mcpPortalPackageSpec]));
 	}
 	if (props.openClawPackages.length > 0) {
 		lines.push('RUN pnpm add -g ' + shellJoin(props.openClawPackages.map((entry) => entry.spec)));
@@ -217,6 +248,13 @@ function renderManagedDockerfile(props: {
 		lines.push(
 			`RUN ln -sf ${managedOpenClawAgentVmPluginPackagePath} ${managedOpenClawAgentVmPluginExtensionPath}`,
 		);
+		lines.push(
+			`RUN ln -sf ${managedOpenClawMcpPortalPluginPackagePath} ${managedOpenClawMcpPortalPluginExtensionPath}`,
+		);
+		lines.push('RUN mkdir -p /opt/agent-vm/portal/bin');
+		lines.push(
+			`RUN printf '%s\\n' '#!/bin/sh' 'exec node ${managedMcpPortalServerScriptPath} "$@"' > ${managedMcpPortalServerWrapperPath} && chmod 0755 ${managedMcpPortalServerWrapperPath}`,
+		);
 	}
 	lines.push('');
 	return lines.join('\n');
@@ -231,15 +269,14 @@ function resolveOpenClawPackagePlanEntries(props: {
 	let overlayOpenClawVersion: string | undefined;
 
 	for (const overlayPackageSpec of props.overlay.extraOpenClawPackages) {
-		if (
-			overlayPackageSpec === managedOpenClawAgentVmPluginPackageName ||
-			overlayPackageSpec.startsWith(`${managedOpenClawAgentVmPluginPackageName}@`)
-		) {
-			continue;
-		}
 		const parsedPackageSpec = parsePackageSpec(overlayPackageSpec);
 		const name = parsedPackageSpec.name;
 		const version = parsedPackageSpec.version;
+		if (managedOpenClawPackageNames.has(name)) {
+			throw new Error(
+				`extraOpenClawPackages cannot override managed package ${name}. Update the agent-vm release instead.`,
+			);
+		}
 		if (name === 'openclaw' && version !== undefined) {
 			overlayOpenClawVersion = version;
 		}
@@ -317,6 +354,14 @@ export async function generateManagedDockerfile(
 		options.base === 'openclaw-gateway'
 			? await resolveManagedOpenClawAgentVmPluginPackageSpec()
 			: undefined;
+	const openClawMcpPortalPluginPackageSpec =
+		options.base === 'openclaw-gateway'
+			? await resolveManagedPackageSpec(managedOpenClawMcpPortalPluginPackageName)
+			: undefined;
+	const mcpPortalPackageSpec =
+		options.base === 'openclaw-gateway' || options.base === 'tool-vm'
+			? await resolveManagedPackageSpec(managedMcpPortalPackageName)
+			: undefined;
 	await fs.rm(options.outputDirectory, { force: true, recursive: true });
 	await fs.mkdir(path.join(options.outputDirectory, 'overlay'), { recursive: true });
 	const overlayDirectory = options.overlayPath ? path.dirname(options.overlayPath) : undefined;
@@ -336,10 +381,14 @@ export async function generateManagedDockerfile(
 		renderManagedDockerfile({
 			base: options.base,
 			baseImage,
+			...(mcpPortalPackageSpec === undefined ? {} : { mcpPortalPackageSpec }),
 			overlay,
 			...(openClawAgentVmPluginPackageSpec === undefined
 				? {}
 				: { openClawAgentVmPluginPackageSpec }),
+			...(openClawMcpPortalPluginPackageSpec === undefined
+				? {}
+				: { openClawMcpPortalPluginPackageSpec }),
 			openClawPackages,
 		}),
 		'utf8',
@@ -364,6 +413,24 @@ export async function generateManagedDockerfile(
 							name: managedOpenClawAgentVmPluginPackageName,
 							source: 'installed-package',
 							spec: openClawAgentVmPluginPackageSpec,
+						},
+					}),
+			...(openClawMcpPortalPluginPackageSpec === undefined
+				? {}
+				: {
+						openClawMcpPortalPluginPackage: {
+							name: managedOpenClawMcpPortalPluginPackageName,
+							source: 'installed-package',
+							spec: openClawMcpPortalPluginPackageSpec,
+						},
+					}),
+			...(mcpPortalPackageSpec === undefined
+				? {}
+				: {
+						mcpPortalPackage: {
+							name: managedMcpPortalPackageName,
+							source: 'installed-package',
+							spec: mcpPortalPackageSpec,
 						},
 					}),
 			openClawPackages,
@@ -406,8 +473,12 @@ async function resolvePackageRootFromEntrypoint(packageName: string): Promise<st
 }
 
 export async function resolveManagedOpenClawAgentVmPluginPackageSpec(): Promise<string> {
+	return await resolveManagedPackageSpec(managedOpenClawAgentVmPluginPackageName);
+}
+
+export async function resolveManagedPackageSpec(packageName: string): Promise<string> {
 	const packageRoot = await resolvePackageRootFromEntrypoint(
-		managedOpenClawAgentVmPluginPackageName,
+		packageName,
 	);
 	const packageJsonPath = path.join(packageRoot, 'package.json');
 	const packageJson: unknown = await loadJsonConfigFile(packageJsonPath);
@@ -415,12 +486,12 @@ export async function resolveManagedOpenClawAgentVmPluginPackageSpec(): Promise<
 		typeof packageJson !== 'object' ||
 		packageJson === null ||
 		!('name' in packageJson) ||
-		packageJson.name !== managedOpenClawAgentVmPluginPackageName ||
+		packageJson.name !== packageName ||
 		!('version' in packageJson) ||
 		typeof packageJson.version !== 'string'
 	) {
 		throw new Error(
-			`Expected ${packageJsonPath} to describe ${managedOpenClawAgentVmPluginPackageName} with a version.`,
+			`Expected ${packageJsonPath} to describe ${packageName} with a version.`,
 		);
 	}
 	return `${packageJson.name}@${packageJson.version}`;

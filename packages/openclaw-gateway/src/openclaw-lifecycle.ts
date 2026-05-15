@@ -218,6 +218,20 @@ function buildEffectiveSecretsConfig(
 	};
 }
 
+function buildEffectiveMcpPortalPluginConfig(
+	existingPluginConfig: Record<string, unknown>,
+	runtimeConfig: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+	const preservedConfig =
+		typeof existingPluginConfig.binPath === 'string'
+			? { binPath: existingPluginConfig.binPath }
+			: {};
+	return {
+		...preservedConfig,
+		...runtimeConfig,
+	};
+}
+
 function buildEffectivePluginsConfig(
 	parsedBaseConfig: Record<string, unknown>,
 	runtimePluginConfigs: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined,
@@ -236,14 +250,18 @@ function buildEffectivePluginsConfig(
 			const existingPluginConfig = isObjectRecord(existingEntryConfig.config)
 				? existingEntryConfig.config
 				: {};
+			const config =
+				pluginId === 'mcp-portal'
+					? buildEffectiveMcpPortalPluginConfig(existingPluginConfig, runtimeConfig)
+					: {
+							...existingPluginConfig,
+							...runtimeConfig,
+						};
 			return [
 				pluginId,
 				{
 					...existingEntryConfig,
-					config: {
-						...existingPluginConfig,
-						...runtimeConfig,
-					},
+					config,
 				},
 			] as const;
 		}),
@@ -254,6 +272,23 @@ function buildEffectivePluginsConfig(
 		entries: {
 			...existingEntriesConfig,
 			...runtimeEntriesConfig,
+		},
+	};
+}
+
+function buildEffectiveMcpConfig(
+	parsedBaseConfig: Record<string, unknown>,
+	runtimeMcpServers: Readonly<Record<string, unknown>> | undefined,
+): Record<string, unknown> {
+	const existingMcpConfig = isObjectRecord(parsedBaseConfig.mcp) ? parsedBaseConfig.mcp : {};
+	const existingServersConfig = isObjectRecord(existingMcpConfig.servers)
+		? existingMcpConfig.servers
+		: {};
+	return {
+		...existingMcpConfig,
+		servers: {
+			...existingServersConfig,
+			...runtimeMcpServers,
 		},
 	};
 }
@@ -348,6 +383,12 @@ async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<vo
 		if (!isObjectRecord(parsedBaseConfig)) {
 			throw new Error(`OpenClaw config at '${zone.gateway.config}' must be a JSON object.`);
 		}
+		const runtimePluginConfigs = {
+			...(zone.mcp === undefined
+				? {}
+				: { 'mcp-portal': { configDir: '/home/openclaw/.openclaw/config' } }),
+			...zone.runtimePluginConfigs,
+		};
 		const config = isObjectRecord(parsedBaseConfig.gateway) ? parsedBaseConfig.gateway : {};
 		const existingAuthConfig = isObjectRecord(config.auth) ? config.auth : {};
 		const effectiveConfig = {
@@ -366,7 +407,8 @@ async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<vo
 				lastTouchedAt: new Date().toISOString(),
 				lastTouchedVersion: 'agent-vm',
 			},
-			plugins: buildEffectivePluginsConfig(parsedBaseConfig, zone.runtimePluginConfigs),
+			mcp: buildEffectiveMcpConfig(parsedBaseConfig, zone.runtimeMcpServers),
+			plugins: buildEffectivePluginsConfig(parsedBaseConfig, runtimePluginConfigs),
 			secrets: buildEffectiveSecretsConfig(parsedBaseConfig),
 		};
 		const effectiveConfigPath = getEffectiveOpenClawConfigHostPath(zone);

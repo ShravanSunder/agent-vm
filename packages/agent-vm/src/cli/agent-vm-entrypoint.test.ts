@@ -20,6 +20,7 @@ import { parseAgentIds } from './commands/init-definition.js';
 
 function createCliBuildSystemConfig(): LoadedSystemConfig {
 	return {
+		schemaVersion: 1,
 		cacheDir: './cache',
 		runtimeDir: './runtime',
 		systemConfigPath: './config/system.json',
@@ -1272,6 +1273,7 @@ describe('runAgentVmCli', () => {
 				resolveGondolinMinimumZigVersion: async () => '0.15.2',
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
+					schemaVersion: 1,
 					cacheDir: './cache',
 					runtimeDir: './runtime',
 					systemConfigPath,
@@ -1395,6 +1397,7 @@ describe('runAgentVmCli', () => {
 				resolveGondolinMinimumZigVersion: async () => '0.15.2',
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
+					schemaVersion: 1,
 					cacheDir: './cache',
 					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
@@ -1541,6 +1544,7 @@ describe('runAgentVmCli', () => {
 				resolveGondolinMinimumZigVersion: async () => '0.15.2',
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
+					schemaVersion: 1,
 					cacheDir: './cache',
 					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
@@ -1792,6 +1796,7 @@ describe('runAgentVmCli', () => {
 			resolveGondolinMinimumZigVersion: async () => '0.15.2',
 			resolveServiceAccountToken: async () => 'mock-token',
 			loadSystemConfig: async (): Promise<LoadedSystemConfig> => ({
+				schemaVersion: 1,
 				cacheDir: './cache',
 				runtimeDir: './runtime',
 				systemConfigPath: './config/system.json',
@@ -2156,6 +2161,7 @@ describe('runAgentVmCli', () => {
 					listBackups,
 				}),
 				loadSystemConfig: async () => ({
+					schemaVersion: 1,
 					cacheDir: './cache',
 					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',
@@ -2315,6 +2321,7 @@ describe('runAgentVmCli', () => {
 					listBackups: () => [],
 				}),
 				loadSystemConfig: async () => ({
+					schemaVersion: 1,
 					cacheDir: './cache',
 					runtimeDir: './runtime',
 					systemConfigPath: './config/system.json',

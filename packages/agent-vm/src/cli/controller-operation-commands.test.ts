@@ -178,16 +178,30 @@ function createHealthyOpenClawConfig(): object {
 				},
 				workspace: '/zone/agents/default',
 			},
+			list: [{ id: 'sun' }],
 		},
 		channels: {},
+		mcp: {
+			servers: {
+				mcp_portal_sun: {
+					headers: { 'x-agent-vm-mcp-portal-secret': 'sun-secret' },
+					transport: 'streamable-http',
+					url: 'http://127.0.0.1:18790/agents/sun/mcp',
+				},
+			},
+		},
 		plugins: {
-			allow: ['gondolin', 'memory-core'],
+			allow: ['gondolin', 'memory-core', 'mcp-portal'],
 			entries: {
 				gondolin: { enabled: true },
 				'memory-core': { enabled: true },
+				'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
 			},
 			load: {
-				paths: ['/home/openclaw/.openclaw/extensions/gondolin'],
+				paths: [
+					'/home/openclaw/.openclaw/extensions/gondolin',
+					'/home/openclaw/.openclaw/extensions/mcp-portal',
+				],
 			},
 			slots: { memory: 'memory-core' },
 		},

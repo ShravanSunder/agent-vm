@@ -2,6 +2,11 @@ import { access } from 'node:fs/promises';
 import path from 'node:path';
 
 import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
+import {
+	loadMcpConfig,
+	loadMcpPortalConfig,
+	resolveMcpPortalProfile,
+} from '@agent-vm/config-contracts';
 import { execa } from 'execa';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
@@ -426,6 +431,77 @@ function buildOpenClawAgentSetupChecks(
 	});
 }
 
+async function collectMcpPortalConfigChecks(
+	systemConfig: LoadedSystemConfig,
+	zone: LoadedSystemConfig['zones'][number],
+): Promise<readonly ConfigValidationCheck[]> {
+	if (zone.gateway.type !== 'openclaw' || zone.mcp === undefined) {
+		return [];
+	}
+	const configDir = resolveProjectCheckoutPath(systemConfig, zone.mcp.configDir);
+	const mcpConfigPath = path.join(configDir, 'mcp.config.jsonc');
+	const mcpPortalConfigPath = path.join(configDir, 'mcp-portal.config.jsonc');
+	const checks: ConfigValidationCheck[] = [];
+	try {
+		await loadMcpConfig(mcpConfigPath);
+		checks.push({ name: `mcp-config-${zone.id}`, ok: true, hint: mcpConfigPath });
+	} catch (error) {
+		checks.push({
+			name: `mcp-config-${zone.id}`,
+			ok: false,
+			hint: `Missing or invalid ${mcpConfigPath}: ${getErrorMessage(error)}`,
+		});
+	}
+
+	try {
+		const portalConfig = await loadMcpPortalConfig(mcpPortalConfigPath);
+		checks.push({ name: `mcp-portal-config-${zone.id}`, ok: true, hint: mcpPortalConfigPath });
+		const declaredAgentIds = new Set((zone.agents ?? []).map((agent) => agent.id));
+		for (const agent of zone.agents ?? []) {
+			const portalAgent = portalConfig.agents[agent.id];
+			if (portalAgent === undefined) {
+				checks.push({
+					name: `mcp-portal-agent-${zone.id}-${agent.id}`,
+					ok: false,
+					hint: `Agent '${agent.id}' is missing from mcp-portal.config.jsonc agents.`,
+				});
+				continue;
+			}
+			try {
+				resolveMcpPortalProfile(portalConfig, portalAgent.profile);
+				checks.push({
+					name: `mcp-portal-profile-${zone.id}-${agent.id}`,
+					ok: true,
+					hint: portalAgent.profile,
+				});
+			} catch {
+				checks.push({
+					name: `mcp-portal-profile-${zone.id}-${agent.id}`,
+					ok: false,
+					hint: `Agent '${agent.id}' references unknown MCP Portal profile '${portalAgent.profile}'.`,
+				});
+			}
+		}
+		for (const agentId of Object.keys(portalConfig.agents)) {
+			if (declaredAgentIds.has(agentId)) {
+				continue;
+			}
+			checks.push({
+				name: `mcp-portal-agent-declared-${zone.id}-${agentId}`,
+				ok: false,
+				hint: `mcp-portal.config.jsonc declares agent '${agentId}' that is not in zones[].agents.`,
+			});
+		}
+	} catch (error) {
+		checks.push({
+			name: `mcp-portal-config-${zone.id}`,
+			ok: false,
+			hint: `Missing or invalid ${mcpPortalConfigPath}: ${getErrorMessage(error)}`,
+		});
+	}
+	return checks;
+}
+
 export async function runConfigValidation(
 	options: RunConfigValidationOptions,
 ): Promise<ConfigValidationResult> {
@@ -438,6 +514,13 @@ export async function runConfigValidation(
 				: await collectGatewayConfigCheck(systemConfig, zone),
 		),
 	);
+	const mcpPortalConfigChecks = (
+		await Promise.all(
+			systemConfig.zones.map(
+				async (zone) => await collectMcpPortalConfigChecks(systemConfig, zone),
+			),
+		)
+	).flat();
 	const vmHostSystemCheck = await collectVmHostSystemDoctorCheck(systemConfig);
 	const checks = [
 		...buildRuntimePathIsolationChecks(systemConfig),
@@ -455,6 +538,7 @@ export async function runConfigValidation(
 		...buildOpenClawAgentSetupChecks(systemConfig),
 		...(vmHostSystemCheck ? [vmHostSystemCheck] : []),
 		...zoneConfigChecks,
+		...mcpPortalConfigChecks,
 		...(await collectOpenClawConfigChecks(systemConfig, runCommand)),
 	] as const satisfies readonly ConfigValidationCheck[];
 

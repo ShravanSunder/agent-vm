@@ -5,6 +5,7 @@ import type { ActiveWorkerTask } from '../active-task-registry.js';
 import { createWorkerZoneRuntime } from './worker-zone-runtime.js';
 
 const systemConfig = {
+	schemaVersion: 1,
 	cacheDir: './cache',
 	runtimeDir: './runtime',
 	host: {

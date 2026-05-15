@@ -17,7 +17,9 @@ export type {
 	GatewayAuthConfig,
 	GatewayLifecycle,
 	GatewaySecretConfig,
+	GatewayZoneAgentConfig,
 	GatewayZoneConfig,
+	GatewayZoneMcpPortalConfig,
 	EnvInjectedGatewaySecretConfig,
 	HttpMediatedGatewaySecretConfig,
 } from './gateway-lifecycle.js';

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { loadMcpPortalConfig } from '@agent-vm/config-contracts';
 import type {
 	GatewayHealthCheck,
 	GatewayLifecycle,
@@ -34,6 +35,7 @@ import {
 	type GatewayZoneStartResult,
 	type StartGatewayZoneOptions,
 } from './gateway-zone-support.js';
+import { buildOpenClawMcpPortalMaterialization } from './mcp-portal-openclaw-materialization.js';
 
 const defaultGatewayReadinessRetryDelayMs = 500;
 const defaultGatewayReadinessTimeoutMs = 60_000;
@@ -164,6 +166,26 @@ async function waitForHealth(options: {
 	});
 }
 
+async function buildRuntimeMcpPortalMaterialization(
+	zone: GatewayZone,
+): Promise<Pick<GatewayZoneConfig, 'runtimeMcpServers' | 'runtimePluginConfigs'>> {
+	if (zone.gateway.type !== 'openclaw' || zone.mcp === undefined || zone.agents === undefined) {
+		return {};
+	}
+	const mcpPortalConfig = await loadMcpPortalConfig(
+		path.join(zone.mcp.configDir, 'mcp-portal.config.jsonc'),
+	);
+	const materialization = buildOpenClawMcpPortalMaterialization({
+		agents: zone.agents,
+		configDir: '/home/openclaw/.openclaw/config',
+		mcpPortalConfig,
+	});
+	return {
+		runtimeMcpServers: materialization.mcpServers,
+		runtimePluginConfigs: { 'mcp-portal': materialization.pluginConfig },
+	};
+}
+
 export async function startGatewayZone(
 	options: StartGatewayZoneOptions,
 	dependencies: GatewayManagerDependencies = {},
@@ -172,14 +194,21 @@ export async function startGatewayZone(
 		options.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
 	const zone = options.zoneOverride ?? findGatewayZone(options.systemConfig, options.zoneId);
 	const mappedLifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone);
+	const mcpPortalMaterialization = await buildRuntimeMcpPortalMaterialization(zone);
 	const lifecycleZone = {
 		...mappedLifecycleZone,
+		...mcpPortalMaterialization,
 		...(options.runtimeEnvironment === undefined
 			? {}
 			: { runtimeEnvironment: options.runtimeEnvironment }),
 		...(options.runtimePluginConfigs === undefined
 			? {}
-			: { runtimePluginConfigs: options.runtimePluginConfigs }),
+			: {
+					runtimePluginConfigs: {
+						...mcpPortalMaterialization.runtimePluginConfigs,
+						...options.runtimePluginConfigs,
+					},
+				}),
 	};
 	await runTaskStep('Cleaning orphaned gateway runtime', async () => {
 		await (dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent)({

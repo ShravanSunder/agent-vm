@@ -5,6 +5,7 @@ import type { SystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from './credential-manager.js';
 
 const systemConfig = {
+	schemaVersion: 1,
 	cacheDir: './cache',
 	runtimeDir: './runtime',
 	host: {

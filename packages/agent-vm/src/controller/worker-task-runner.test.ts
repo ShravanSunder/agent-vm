@@ -117,6 +117,7 @@ vi.mock('execa', () => ({
 }));
 
 const systemConfig = {
+	schemaVersion: 1,
 	cacheDir: '/tmp/cache',
 	runtimeDir: '/tmp/runtime',
 	systemConfigPath: '/tmp/config/system.json',

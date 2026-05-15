@@ -18,6 +18,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* && \
     update-ca-certificates && \
     corepack enable && \
+    corepack prepare pnpm@10.33.0 --activate && \
     ln -sf /usr/bin/fdfind /usr/local/bin/fd && \
     ln -sfn /proc/self/fd /dev/fd && \
     mkdir -p /work /run/sshd /var/log && \

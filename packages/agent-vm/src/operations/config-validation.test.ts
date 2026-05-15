@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -9,9 +9,28 @@ import { resolveProjectCheckoutPath, runConfigValidation } from './config-valida
 
 type TestCommandRunner = NonNullable<Parameters<typeof runConfigValidation>[0]['runCommand']>;
 
+const successfulOpenClawValidationCommand: TestCommandRunner = async () => ({
+	exitCode: 0,
+	stderr: '',
+	stdout: '{"ok":true}\\n',
+});
+
 async function writeJson(filePath: string, value: unknown): Promise<void> {
 	await mkdir(path.dirname(filePath), { recursive: true });
 	await writeFile(filePath, `${JSON.stringify(value, null, '\t')}\n`, 'utf8');
+}
+
+async function updateJsonFile(
+	filePath: string,
+	update: (value: Record<string, unknown>) => void,
+): Promise<void> {
+	const parsedValue: unknown = JSON.parse(await readFile(filePath, 'utf8'));
+	if (typeof parsedValue !== 'object' || parsedValue === null || Array.isArray(parsedValue)) {
+		throw new Error(`Expected ${filePath} to contain a JSON object.`);
+	}
+	const objectValue = parsedValue as Record<string, unknown>;
+	update(objectValue);
+	await writeJson(filePath, objectValue);
 }
 
 function minimalWorkerConfig(): unknown {
@@ -211,6 +230,74 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 		'utf8',
 	);
 	return path.join(rootPath, 'config', 'system.json');
+}
+
+async function addMcpPortalReferencesToOpenClawFixture(rootPath: string): Promise<void> {
+	const systemConfigPath = path.join(rootPath, 'config', 'system.json');
+	await updateJsonFile(systemConfigPath, (systemConfig) => {
+		const zones = systemConfig.zones;
+		if (!Array.isArray(zones)) {
+			throw new Error('Expected zones array.');
+		}
+		const firstZone = zones[0];
+		if (typeof firstZone !== 'object' || firstZone === null || Array.isArray(firstZone)) {
+			throw new Error('Expected first zone object.');
+		}
+		const zone = firstZone as Record<string, unknown>;
+		zone.agents = [{ id: 'shravan' }];
+		zone.mcp = { configDir: './gateways/shravan' };
+	});
+}
+
+async function writeMcpPortalConfigFiles(rootPath: string, profileName: string): Promise<void> {
+	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp.config.jsonc'), {
+		schemaVersion: 1,
+		providers: {},
+	});
+	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp-portal.config.jsonc'), {
+		schemaVersion: 1,
+		server: {
+			host: '127.0.0.1',
+			port: 18790,
+			accessHeader: {
+				name: 'x-agent-vm-mcp-portal-secret',
+				secret: { source: 'environment', name: 'MCP_PORTAL_SERVER_SECRET' },
+			},
+		},
+		agents: { shravan: { profile: profileName } },
+		profiles: {
+			default: {
+				enabledNamespaces: [],
+			},
+		},
+	});
+}
+
+async function writeMcpPortalConfigWithAgents(
+	rootPath: string,
+	agents: Record<string, { readonly profile: string }>,
+): Promise<void> {
+	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp.config.jsonc'), {
+		schemaVersion: 1,
+		providers: {},
+	});
+	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp-portal.config.jsonc'), {
+		schemaVersion: 1,
+		server: {
+			host: '127.0.0.1',
+			port: 18790,
+			accessHeader: {
+				name: 'x-agent-vm-mcp-portal-secret',
+				secret: { source: 'environment', name: 'MCP_PORTAL_SERVER_SECRET' },
+			},
+		},
+		agents,
+		profiles: {
+			default: {
+				enabledNamespaces: [],
+			},
+		},
+	});
 }
 
 describe('runConfigValidation', () => {
@@ -445,6 +532,100 @@ describe('runConfigValidation', () => {
 		expect(result.checks.find((check) => check.name === 'openclaw-config-shravan')).toMatchObject({
 			ok: false,
 			hint: expect.stringContaining('agents.defaults.thinkingDefault: Unrecognized key'),
+		});
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('reports missing referenced MCP config files', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.checks.find((check) => check.name === 'mcp-config-shravan')).toMatchObject({
+			ok: false,
+			hint: expect.stringContaining('Missing'),
+		});
+		expect(result.checks.find((check) => check.name === 'mcp-portal-config-shravan')).toMatchObject(
+			{
+				ok: false,
+				hint: expect.stringContaining('Missing'),
+			},
+		);
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('reports agent bindings that reference missing MCP Portal profiles', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		await writeMcpPortalConfigFiles(temporaryDirectoryPath, 'builder');
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(
+			result.checks.find((check) => check.name === 'mcp-portal-profile-shravan-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: "Agent 'shravan' references unknown MCP Portal profile 'builder'.",
+		});
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('reports system agents missing from MCP Portal agent bindings', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		await writeMcpPortalConfigWithAgents(temporaryDirectoryPath, {});
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(
+			result.checks.find((check) => check.name === 'mcp-portal-agent-shravan-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: "Agent 'shravan' is missing from mcp-portal.config.jsonc agents.",
+		});
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('reports MCP Portal agents not declared in system config', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		await writeMcpPortalConfigWithAgents(temporaryDirectoryPath, {
+			shravan: { profile: 'default' },
+			ghost: { profile: 'default' },
+		});
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(
+			result.checks.find((check) => check.name === 'mcp-portal-agent-declared-shravan-ghost'),
+		).toMatchObject({
+			ok: false,
+			hint: "mcp-portal.config.jsonc declares agent 'ghost' that is not in zones[].agents.",
 		});
 
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });

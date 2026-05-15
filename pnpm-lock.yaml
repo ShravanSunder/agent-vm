@@ -46,18 +46,27 @@ importers:
       '@agent-vm/agent-vm-worker':
         specifier: workspace:*
         version: link:../agent-vm-worker
+      '@agent-vm/config-contracts':
+        specifier: workspace:*
+        version: link:../config-contracts
       '@agent-vm/gateway-interface':
         specifier: workspace:*
         version: link:../gateway-interface
       '@agent-vm/gondolin-adapter':
         specifier: workspace:*
         version: link:../gondolin-adapter
+      '@agent-vm/mcp-portal':
+        specifier: workspace:*
+        version: link:../mcp-portal
       '@agent-vm/openclaw-agent-vm-plugin':
         specifier: workspace:*
         version: link:../openclaw-agent-vm-plugin
       '@agent-vm/openclaw-gateway':
         specifier: workspace:*
         version: link:../openclaw-gateway
+      '@agent-vm/openclaw-mcp-portal-plugin':
+        specifier: workspace:*
+        version: link:../openclaw-mcp-portal-plugin
       '@agent-vm/worker-gateway':
         specifier: workspace:*
         version: link:../worker-gateway
@@ -117,6 +126,19 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0))
 
+  packages/config-contracts:
+    dependencies:
+      jsonc-parser:
+        specifier: ^3.3.1
+        version: 3.3.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0))
+
   packages/gateway-interface:
     dependencies:
       '@agent-vm/gondolin-adapter':
@@ -135,6 +157,28 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
 
+  packages/mcp-portal:
+    dependencies:
+      '@agent-vm/config-contracts':
+        specifier: workspace:*
+        version: link:../config-contracts
+      '@hono/node-server':
+        specifier: ^2.0.2
+        version: 2.0.2(hono@4.12.18)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.4.3)
+      hono:
+        specifier: ^4.12.18
+        version: 4.12.18
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0))
+
   packages/openclaw-agent-vm-plugin:
     dependencies:
       '@agent-vm/gondolin-adapter':
@@ -149,6 +193,22 @@ importers:
       '@agent-vm/gondolin-adapter':
         specifier: workspace:*
         version: link:../gondolin-adapter
+
+  packages/openclaw-mcp-portal-plugin:
+    dependencies:
+      '@agent-vm/config-contracts':
+        specifier: workspace:*
+        version: link:../config-contracts
+      '@agent-vm/mcp-portal':
+        specifier: workspace:*
+        version: link:../mcp-portal
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0))
 
   packages/worker-gateway:
     dependencies:

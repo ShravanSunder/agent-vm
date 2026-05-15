@@ -15,6 +15,7 @@ function createSystemConfig(
 	openClawConfigPath: string,
 ): LoadedSystemConfig {
 	return {
+		schemaVersion: 1,
 		cacheDir: path.join(path.dirname(stateDirectory), 'cache'),
 		runtimeDir: path.join(path.dirname(stateDirectory), 'runtime'),
 		systemConfigPath: path.join(path.dirname(stateDirectory), 'config', 'system.json'),

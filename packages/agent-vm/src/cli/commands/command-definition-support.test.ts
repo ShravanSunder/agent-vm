@@ -48,6 +48,7 @@ describe('requireZone', () => {
 				{
 					cacheDir: './cache',
 					runtimeDir: './runtime',
+					schemaVersion: 1,
 					host: {
 						controllerPort: 18800,
 						projectNamespace: 'claw-tests-a1b2c3d4',
