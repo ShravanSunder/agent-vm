@@ -1,4 +1,5 @@
 export interface GondolinLeaseResponse {
+	readonly idleTtlMs?: number;
 	readonly leaseId: string;
 	readonly ssh: {
 		readonly host: string;
@@ -105,6 +106,8 @@ function isGondolinLeaseResponse(value: unknown): value is GondolinLeaseResponse
 	const record = objectValue(value);
 	return (
 		record !== undefined &&
+		(Reflect.get(record, 'idleTtlMs') === undefined ||
+			typeof Reflect.get(record, 'idleTtlMs') === 'number') &&
 		typeof Reflect.get(record, 'leaseId') === 'string' &&
 		isSshResponse(Reflect.get(record, 'ssh')) &&
 		typeof Reflect.get(record, 'tcpSlot') === 'number' &&

@@ -28,15 +28,21 @@ import { createControllerApp } from './controller-http-routes.js';
 type ControllerAppOptions = Parameters<typeof createControllerApp>[0];
 
 function createControllerAppForTest(
-	options: Omit<ControllerAppOptions, 'resolveLeaseWorkMountDir'> &
-		Partial<Pick<ControllerAppOptions, 'resolveLeaseWorkMountDir'>>,
+	options: Omit<ControllerAppOptions, 'resolveLeaseWorkMountDir' | 'ttlForLease'> &
+		Partial<Pick<ControllerAppOptions, 'resolveLeaseWorkMountDir' | 'ttlForLease'>>,
 ): ReturnType<typeof createControllerApp> {
-	return createControllerApp({
-		resolveLeaseWorkMountDir: async ({ workMountDir }) => ({
+	const {
+		resolveLeaseWorkMountDir = async ({ workMountDir }) => ({
 			guestWorkdir: '/work',
 			hostWorkMountDir: workMountDir,
 		}),
-		...options,
+		ttlForLease = () => 6_000_000,
+		...rest
+	} = options;
+	return createControllerApp({
+		...rest,
+		resolveLeaseWorkMountDir,
+		ttlForLease,
 	});
 }
 
@@ -245,6 +251,7 @@ describe('createControllerApp', () => {
 
 		expect(createResponse.status).toBe(200);
 		await expect(createResponse.json()).resolves.toMatchObject({
+			idleTtlMs: 6_000_000,
 			leaseId: 'lease-123',
 			ssh: {
 				identityPem: 'pem-from-file',
@@ -253,6 +260,10 @@ describe('createControllerApp', () => {
 			workdir: '/work',
 		});
 		expect(getResponse.status).toBe(200);
+		await expect(getResponse.json()).resolves.toMatchObject({
+			idleTtlMs: 6_000_000,
+			leaseId: 'lease-123',
+		});
 		expect(deleteResponse.status).toBe(204);
 		expect(keepLeaseAlive).toHaveBeenCalledWith('lease-123');
 		expect(releaseLease).toHaveBeenCalledWith('lease-123');
