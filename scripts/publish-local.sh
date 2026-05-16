@@ -14,14 +14,14 @@
 #   - `pnpm build` and `pnpm check` and `pnpm test:unit` are green.
 #
 # Use:
-#   scripts/publish-local.sh           # publish all packages
-#   scripts/publish-local.sh --dry-run # rehearsal, no upload
+#   AGENT_VM_NPM_TOKEN_OP_REF='op://agent-vm/npm-token-agent-vm-publish/credential' scripts/publish-local.sh
+#   AGENT_VM_NPM_TOKEN_OP_REF='op://agent-vm/npm-token-agent-vm-publish/credential' scripts/publish-local.sh --dry-run
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-OP_REF="${AGENT_VM_NPM_TOKEN_OP_REF:-op://agent-vm/npm-token/credential}"
+OP_REF="${AGENT_VM_NPM_TOKEN_OP_REF:-op://agent-vm/npm-token-agent-vm-publish/credential}"
 DRY_RUN_FLAG=""
 if [[ "${1:-}" == "--dry-run" ]]; then
 	DRY_RUN_FLAG="--dry-run"
