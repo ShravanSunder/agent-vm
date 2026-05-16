@@ -92,10 +92,7 @@ describe('isPortalServerEntrypoint', () => {
 
 		try {
 			await expect(
-				isPortalServerEntrypoint(
-					pathToFileURL(realEntrypointPath).href,
-					symlinkEntrypointPath,
-				),
+				isPortalServerEntrypoint(pathToFileURL(realEntrypointPath).href, symlinkEntrypointPath),
 			).resolves.toBe(true);
 		} finally {
 			await rm(targetDir, { force: true, recursive: true });
