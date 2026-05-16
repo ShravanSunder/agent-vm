@@ -122,9 +122,9 @@ describe('MCP Portal plugin subprocess integration', () => {
 
 		registerMcpPortalPlugin({
 			config: { tcpPool: { basePort: 19_000, size: 4 } },
+			lifecycle: { registerRuntimeLifecycle: () => undefined },
 			logger: { error: () => undefined },
 			on: captureOpenClawHook,
-			onDispose: () => undefined,
 			pluginConfig: {
 				binPath: '/tmp/agent-vm-mcp-portal-server',
 				configDir,
@@ -203,13 +203,13 @@ describe('MCP Portal plugin subprocess integration', () => {
 
 		registerMcpPortalPlugin({
 			config: { tcpPool: { basePort: 19_000, size: 4 } },
+			lifecycle: { registerRuntimeLifecycle: () => undefined },
 			logger: { error: () => undefined },
 			on: (hookName, handler): void => {
 				if (hookName === 'before_tool_call') {
 					beforeToolCallHandler = handler as BeforeToolCallHandler;
 				}
 			},
-			onDispose: () => undefined,
 			pluginConfig: {
 				binPath: '/tmp/agent-vm-mcp-portal-server',
 				configDir,

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type {
 	OpenClawPluginHookEventMap,
 	OpenClawPluginHookResultMap,
+	OpenClawRuntimeLifecycleRegistration,
 	OpenClawPluginService,
 } from './openclaw-plugin-api.js';
 import {
@@ -16,14 +17,14 @@ describe('plugin registration validation', () => {
 		expect(() => validatePortalPluginApi({})).toThrow(/registerService/u);
 		expect(() =>
 			validatePortalPluginApi({
-				onDispose: () => undefined,
+				registerRuntimeLifecycle: () => undefined,
 				registerService: () => undefined,
 			}),
 		).toThrow(/prompt hook/u);
 		expect(() =>
 			validatePortalPluginApi({
 				on: () => undefined,
-				onDispose: () => undefined,
+				registerRuntimeLifecycle: () => undefined,
 				registerService: () => undefined,
 			}),
 		).not.toThrow();
@@ -45,6 +46,50 @@ describe('plugin registration validation', () => {
 	});
 
 	it('registers one subprocess service plus prompt and tool hooks', () => {
+		const services: OpenClawPluginService[] = [];
+		const hooks: string[] = [];
+		let lifecycleRegistration: OpenClawRuntimeLifecycleRegistration | undefined;
+
+		registerMcpPortalPlugin({
+			config: {
+				tcpPool: { basePort: 19_000, size: 4 },
+			},
+			logger: { error: () => undefined },
+			lifecycle: {
+				registerRuntimeLifecycle: (lifecycle) => {
+					lifecycleRegistration = lifecycle;
+				},
+			},
+			on: <THookName extends keyof OpenClawPluginHookEventMap>(
+				hookName: THookName,
+				_handler: (
+					event: OpenClawPluginHookEventMap[THookName],
+					context: { readonly agentId?: string },
+				) =>
+					| OpenClawPluginHookResultMap[THookName]
+					| Promise<OpenClawPluginHookResultMap[THookName] | void>
+					| void,
+			): void => {
+				hooks.push(hookName);
+			},
+			pluginConfig: {
+				configDir: '/config/gateways/sunclaw',
+			},
+			registerService: (service) => {
+				services.push(service);
+			},
+		});
+
+		expect(services).toHaveLength(1);
+		expect(services[0]).toMatchObject({ id: 'mcp-portal-subprocess' });
+		expect(hooks).toEqual(['before_tool_call', 'before_prompt_build']);
+		expect(lifecycleRegistration).toMatchObject({
+			id: 'mcp-portal-subprocess',
+		});
+		expect(lifecycleRegistration?.cleanup).toEqual(expect.any(Function));
+	});
+
+	it('keeps the legacy onDispose cleanup fallback', () => {
 		const services: OpenClawPluginService[] = [];
 		const hooks: string[] = [];
 		let cleanup: (() => Promise<void> | void) | undefined;
