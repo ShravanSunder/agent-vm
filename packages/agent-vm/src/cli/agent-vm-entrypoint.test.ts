@@ -2054,6 +2054,8 @@ describe('runAgentVmCli', () => {
 		expect(remoteCommand).toEqual(expect.stringContaining('shravan'));
 		expect(remoteCommand).toEqual(expect.stringContaining('source /etc/profile.d/openclaw-env.sh'));
 		expect(remoteCommand).not.toEqual(expect.stringContaining('/run/openclaw/secrets.env'));
+		expect(remoteCommand).not.toEqual(expect.stringContaining('/pnpm/global/5'));
+		expect(remoteCommand).toEqual(expect.stringContaining('pnpm root -g'));
 		expect(remoteCommand).toEqual(expect.stringContaining('CODEX_HOME="$codex_home"'));
 		expect(remoteCommand).toEqual(expect.stringContaining('login --device-auth'));
 		expect(remoteCommand).toEqual(expect.stringContaining('auth.json: present'));
