@@ -34,10 +34,7 @@ export type ZoneSshAccessResponse = z.infer<typeof zoneSshAccessResponseSchema>;
 const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
 const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
 
-function buildRemoteCommandPrefix(options: { readonly withSecrets: boolean }): string {
-	if (!options.withSecrets) {
-		return `source ${openClawShellEnvFilePath} && `;
-	}
+function buildInteractiveSecretShellPrefix(): string {
 	return `source ${openClawShellEnvFilePath} && set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && `;
 }
 
@@ -46,7 +43,7 @@ function shellQuote(value: string): string {
 }
 
 function buildInteractiveSecretShellCommand(): string {
-	return `bash -lc ${shellQuote(`${buildRemoteCommandPrefix({ withSecrets: true })}exec bash -l`)}`;
+	return `bash -lc ${shellQuote(`${buildInteractiveSecretShellPrefix()}exec bash -l`)}`;
 }
 
 export async function resolveZoneAdminToken(options: {
@@ -83,8 +80,7 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 			'controller ssh opens an interactive shell only; remote commands are not supported.',
 		);
 	}
-	const withSecrets = options.restArguments.includes('--with-secrets');
-	const restArguments = options.restArguments.filter((argument) => argument !== '--with-secrets');
+	const restArguments = options.restArguments;
 	if (restArguments.includes('--print')) {
 		throw new Error('--print is not supported for controller ssh.');
 	}
@@ -97,7 +93,7 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	const parsedSshResponse = zoneSshAccessResponseSchema.safeParse(
 		await controllerClient.enableZoneSsh(zone.id, {
 			...(adminToken ? { adminToken } : {}),
-			secretEnv: withSecrets ? 'with-secrets' : 'default',
+			secretEnv: 'with-secrets',
 		}),
 	);
 	if (!parsedSshResponse.success) {
@@ -111,6 +107,7 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	const secretEnvEnabled = sshResponse.secretEnvEnabled === true;
 
 	const sshArguments = [
+		...(secretEnvEnabled ? ['-t'] : []),
 		'-o',
 		'StrictHostKeyChecking=no',
 		'-o',

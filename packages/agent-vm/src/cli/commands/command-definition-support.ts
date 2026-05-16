@@ -41,13 +41,6 @@ export function createPurgeFlag() {
 	});
 }
 
-export function createWithSecretsFlag() {
-	return flag({
-		long: 'with-secrets',
-		description: 'Load gateway runtime secrets into the SSH session',
-	});
-}
-
 export function loadSystemConfigFromOption(
 	configPath: string | undefined,
 	dependencies: Pick<CliDependencies, 'loadSystemConfig'>,

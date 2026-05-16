@@ -15,7 +15,6 @@ import {
 	appendZoneArgument,
 	createConfigOption,
 	createPurgeFlag,
-	createWithSecretsFlag,
 	createZoneOption,
 	loadSystemConfigFromOption,
 } from './command-definition-support.js';
@@ -153,17 +152,12 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 				description: 'Open an SSH session into the gateway VM',
 				args: {
 					config: createConfigOption(),
-					withSecrets: createWithSecretsFlag(),
 					zone: createZoneOption(),
 				},
-				handler: async ({ config, withSecrets, zone }) => {
+				handler: async ({ config, zone }) => {
 					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 					const selectedZone = requireZone(systemConfig, zone);
-					const restArguments = [
-						'--zone',
-						selectedZone.id,
-						...(withSecrets ? ['--with-secrets'] : []),
-					];
+					const restArguments = ['--zone', selectedZone.id];
 					await runSshCommand({
 						dependencies,
 						io,

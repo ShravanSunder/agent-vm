@@ -86,7 +86,7 @@ describe('manual templates', () => {
 			'op://agent-vm/<zoneId>-ssh-access/token',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
-			'agent-vm controller ssh --zone <zoneId> --with-secrets',
+			'agent-vm controller ssh --zone <zoneId>',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'Controller SSH opens an interactive shell only',
