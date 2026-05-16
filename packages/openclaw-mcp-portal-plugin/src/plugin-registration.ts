@@ -111,8 +111,7 @@ export function validatePortalPluginApi(api: OpenClawPortalPluginApi): void {
 	}
 	const hasLifecycleCleanupApi =
 		hasFunction(api.lifecycle?.registerRuntimeLifecycle) ||
-		hasFunction(api.registerRuntimeLifecycle) ||
-		hasFunction(api.onDispose);
+		hasFunction(api.registerRuntimeLifecycle);
 	if (hasLifecycleCleanupApi) {
 		return;
 	}
@@ -138,7 +137,7 @@ function registerPortalRuntimeCleanup(
 		api.registerRuntimeLifecycle(runtimeLifecycle);
 		return;
 	}
-	api.onDispose?.(cleanup);
+	throw new Error('MCP Portal plugin requires an OpenClaw lifecycle cleanup API.');
 }
 
 function registerPortalService(props: {

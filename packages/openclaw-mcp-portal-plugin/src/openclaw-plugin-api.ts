@@ -133,7 +133,6 @@ export interface OpenClawPortalPluginApi {
 			| void,
 		options?: OpenClawPluginHookOptions,
 	) => void;
-	readonly onDispose?: (cleanup: () => Promise<void> | void) => void;
 	readonly registerPromptHook?: (
 		hookName: 'agent_turn_prepare' | 'before_prompt_build',
 		handler: (context: OpenClawPromptHookContext) => Promise<void> | void,
