@@ -7,12 +7,12 @@ describe('shouldRunGondolinBuildPipelineSmoke', () => {
 		expect(shouldRunGondolinBuildPipelineSmoke({})).toBe(false);
 		expect(
 			shouldRunGondolinBuildPipelineSmoke({
-				AGENT_VM_GONDOLIN_BUILD_PIPELINE_SMOKE: 'true',
+				AGENT_VM_GONDOLIN_SMOKE: 'true',
 			}),
 		).toBe(false);
 		expect(
 			shouldRunGondolinBuildPipelineSmoke({
-				AGENT_VM_GONDOLIN_BUILD_PIPELINE_SMOKE: '1',
+				AGENT_VM_GONDOLIN_SMOKE: '1',
 			}),
 		).toBe(true);
 	});

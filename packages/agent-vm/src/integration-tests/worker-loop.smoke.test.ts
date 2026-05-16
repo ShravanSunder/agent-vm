@@ -1,144 +1,28 @@
 /* oxlint-disable eslint/no-await-in-loop -- smoke polling must be sequential against live services */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
-import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
-import { scaffoldAgentVmProject } from '../cli/init-command.js';
-import { loadSystemConfig } from '../config/system-config.js';
-import { startControllerRuntime } from '../controller/controller-runtime.js';
 import { executeWorkerTask, prepareWorkerTask } from '../controller/worker-task-runner.js';
-import { currentSmokeArchitecture, shouldRunWorkerGatewaySmoke } from './smoke-harness.js';
-
-function rebuildWorkerPackages(repoRoot: string): void {
-	execFileSync('pnpm', ['build'], {
-		cwd: repoRoot,
-		stdio: 'inherit',
-	});
-}
-
-async function findReusableGatewayImageDirectory(
-	currentProjectRoot: string,
-	gatewayBuildConfigPath: string,
-): Promise<string | null> {
-	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
-	const tempRootEntries = await fs.readdir(os.tmpdir(), { withFileTypes: true });
-	const smokeRunDirectories = tempRootEntries
-		.filter((entry) => entry.isDirectory() && entry.name.startsWith('worker-loop-smoke-'))
-		.map((entry) => path.join(os.tmpdir(), entry.name));
-
-	for (const smokeRunDirectory of smokeRunDirectories) {
-		if (smokeRunDirectory === currentProjectRoot) {
-			continue;
-		}
-		const candidateImageDir = path.join(
-			smokeRunDirectory,
-			'cache',
-			'images',
-			'gateway',
-			requiredFingerprint,
-		);
-		try {
-			await fs.access(path.join(candidateImageDir, 'manifest.json'));
-			await fs.access(path.join(candidateImageDir, 'rootfs.ext4'));
-			await fs.access(path.join(candidateImageDir, 'initramfs.cpio.lz4'));
-			await fs.access(path.join(candidateImageDir, 'vmlinuz-virt'));
-			return candidateImageDir;
-		} catch {
-			continue;
-		}
-	}
-
-	return null;
-}
-
-async function seedGatewayImageCacheIfAvailable(
-	activeCacheDir: string,
-	currentProjectRoot: string,
-	gatewayBuildConfigPath: string,
-): Promise<void> {
-	const reusableImageDir = await findReusableGatewayImageDirectory(
-		currentProjectRoot,
-		gatewayBuildConfigPath,
-	);
-	if (!reusableImageDir) {
-		return;
-	}
-
-	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
-	const activeImageDir = path.join(activeCacheDir, 'images', 'gateway', requiredFingerprint);
-	if (activeImageDir === reusableImageDir) {
-		return;
-	}
-
-	await fs.rm(activeImageDir, { recursive: true, force: true });
-	await fs.mkdir(path.dirname(activeImageDir), { recursive: true });
-	await fs.symlink(reusableImageDir, activeImageDir, 'dir');
-}
-
-async function prepareLocalWorkerPackageForGatewayImage(repoRoot: string): Promise<string> {
-	await fs.mkdir(path.join(repoRoot, 'tmp'), { recursive: true });
-	const packDirectory = await fs.mkdtemp(path.join(repoRoot, 'tmp', 'agent-vm-worker-pack-'));
-	execFileSync('pnpm', ['pack', '--pack-destination', packDirectory], {
-		cwd: path.join(repoRoot, 'packages', 'agent-vm-worker'),
-		stdio: 'pipe',
-	});
-	const packedTarballName = execFileSync('sh', ['-lc', 'ls *.tgz | tail -n 1'], {
-		cwd: packDirectory,
-		encoding: 'utf8',
-		stdio: 'pipe',
-	}).trim();
-	if (packedTarballName.length === 0) {
-		throw new Error('Failed to pack local agent-vm-worker tarball for smoke image.');
-	}
-	return path.join(packDirectory, packedTarballName);
-}
+import {
+	currentSmokeArchitecture,
+	prepareLocalWorkerPackageForGatewayImage,
+	rebuildWorkspacePackages,
+	scaffoldWorkerSmokeProject,
+	seedGatewayImageCacheIfAvailable,
+	shouldRunWorkerGatewaySmoke,
+	startSmokeControllerRuntime,
+	type SmokeHarnessRuntime,
+} from './smoke-harness.js';
 
 const architecture = currentSmokeArchitecture();
-const runWorkerSmoke = shouldRunWorkerGatewaySmoke({ architecture });
+const runWorkerSmoke = await shouldRunWorkerGatewaySmoke({ architecture });
 
 const describeWorkerSmoke = runWorkerSmoke ? describe : describe.skip;
-
-async function findAvailablePort(): Promise<number> {
-	return await new Promise((resolve, reject) => {
-		const server = net.createServer();
-		server.once('error', reject);
-		server.listen(0, '127.0.0.1', () => {
-			const address = server.address();
-			if (!address || typeof address === 'string') {
-				server.close(() => reject(new Error('Failed to determine an available port.')));
-				return;
-			}
-			server.close((error) => {
-				if (error) {
-					reject(error);
-					return;
-				}
-				resolve(address.port);
-			});
-		});
-	});
-}
-
-async function waitForControllerReady(controllerPort: number): Promise<void> {
-	for (let attempt = 0; attempt < 40; attempt += 1) {
-		const response = await fetch(`http://127.0.0.1:${controllerPort}/controller-status`);
-		if (response.ok) {
-			return;
-		}
-		// Polling is intentionally sequential because the controller startup is stateful.
-		// oxlint-disable-next-line eslint/no-await-in-loop
-		await new Promise((resolve) => setTimeout(resolve, 500));
-	}
-
-	throw new Error('Controller did not become ready in time.');
-}
 
 async function createSampleRepo(baseDir: string): Promise<string> {
 	const repoDir = path.join(baseDir, 'sample-repo');
@@ -174,60 +58,43 @@ async function createSampleRepo(baseDir: string): Promise<string> {
 }
 
 describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
-	let runtime: Awaited<ReturnType<typeof startControllerRuntime>> | undefined;
+	let harness: SmokeHarnessRuntime | undefined;
 
 	afterAll(async () => {
-		await runtime?.close();
+		await harness?.close();
 	});
 
 	it('runs a real worker task to completed through the controller route', async () => {
 		const repoRoot = path.resolve(process.cwd());
-		rebuildWorkerPackages(repoRoot);
+		rebuildWorkspacePackages(repoRoot);
 
-		const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-loop-smoke-'));
-		const controllerPort = await findAvailablePort();
-		const gatewayPort = await findAvailablePort();
-		const repoDir = await createSampleRepo(tempRoot);
-		await scaffoldAgentVmProject({
-			targetDir: tempRoot,
-			zoneId: 'worker-smoke',
-			gatewayType: 'worker',
+		const project = await scaffoldWorkerSmokeProject({
 			architecture,
-			secretsProvider: '1password',
+			prefix: 'worker-loop-smoke-',
+			zoneId: 'worker-smoke',
 		});
-		const scaffoldCachePath = path.join(os.tmpdir(), 'agent-vm-smoke-cache');
-		await fs.mkdir(scaffoldCachePath, { recursive: true });
+		const repoDir = await createSampleRepo(project.tempRoot);
 		const gatewayBuildConfigPath = path.join(
-			tempRoot,
+			project.tempRoot,
 			'vm-images',
 			'gateways',
 			'worker',
 			'build-config.jsonc',
 		);
-		await seedGatewayImageCacheIfAvailable(scaffoldCachePath, tempRoot, gatewayBuildConfigPath);
+		await seedGatewayImageCacheIfAvailable({
+			activeCacheDir: project.systemConfig.cacheDir,
+			currentProjectRoot: project.tempRoot,
+			gatewayBuildConfigPath,
+		});
 		const localWorkerTarballPath = await prepareLocalWorkerPackageForGatewayImage(repoRoot);
 
-		const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
-		systemConfig.cacheDir = scaffoldCachePath;
-		systemConfig.host.controllerPort = controllerPort;
-		systemConfig.host.projectNamespace = 'claw-tests-a1b2c3d4';
-		systemConfig.host.secretsProvider = {
-			type: '1password',
-			tokenSource: { type: 'env', envVar: 'OPEN_AI_TEST_KEY' },
-		};
-
-		const workerZone = systemConfig.zones[0];
-		if (!workerZone) {
-			throw new Error('Expected a configured worker zone for the smoke test.');
-		}
-		workerZone.gateway.port = gatewayPort;
-		workerZone.egressHosts = [
-			...workerZone.egressHosts,
+		project.zone.egressHosts = [
+			...project.zone.egressHosts,
 			{ host: 'github.com', audience: 'gateway' },
 		];
 
 		await fs.writeFile(
-			workerZone.gateway.config,
+			project.zone.gateway.config,
 			JSON.stringify({
 				runtimeInstructions: 'Smoke test runtime instructions.',
 				defaults: { provider: 'codex', model: 'gpt-5.4-mini' },
@@ -262,16 +129,15 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 						Object.keys(refs).map((key) => [key, process.env.OPEN_AI_TEST_KEY ?? '']),
 					),
 			};
-			runtime = await startControllerRuntime(
-				{
-					systemConfig,
+			harness = await startSmokeControllerRuntime({
+				secrets: {
+					OPEN_AI_TEST_KEY: process.env.OPEN_AI_TEST_KEY ?? '',
+				},
+				startOptions: {
+					systemConfig: project.systemConfig,
 					zoneIds: ['worker-smoke'],
 				},
-				{
-					createSecretResolver: async (): Promise<SecretResolver> => secretResolver,
-				},
-			);
-			await waitForControllerReady(controllerPort);
+			});
 			const repoUrl = pathToFileURL(repoDir).href;
 
 			const prepared = await prepareWorkerTask({
@@ -281,10 +147,13 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 					repos: [{ repoUrl, baseBranch: 'main' }],
 					context: { source: 'smoke-test' },
 				},
-				systemConfig,
+				systemConfig: project.systemConfig,
 				zoneId: 'worker-smoke',
 			});
-			const result = await executeWorkerTask(prepared, { secretResolver, systemConfig });
+			const result = await executeWorkerTask(prepared, {
+				secretResolver,
+				systemConfig: project.systemConfig,
+			});
 			expect(result.taskId).toBeTruthy();
 			const finalState = result.finalState as { readonly status?: string | undefined };
 			if (finalState.status !== 'completed') {

@@ -20,7 +20,7 @@ import {
 
 const architecture = currentSmokeArchitecture();
 const runOpenClawZoneGitSmoke =
-	process.env.AGENT_VM_OPENCLAW_ZONE_GIT_SMOKE === '1' && canRunGondolinSmoke(architecture);
+	process.env.AGENT_VM_OPENCLAW_SMOKE === '1' && (await canRunGondolinSmoke({ architecture }));
 const describeOpenClawZoneGitSmoke = runOpenClawZoneGitSmoke ? describe : describe.skip;
 
 interface ControllerLeaseResponse {

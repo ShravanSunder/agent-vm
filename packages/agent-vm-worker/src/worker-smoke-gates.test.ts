@@ -16,7 +16,7 @@ describe('shouldRunWorkerRuntimeSmoke', () => {
 		expect(
 			shouldRunWorkerRuntimeSmoke({
 				commandExists: () => true,
-				env: { AGENT_VM_WORKER_RUNTIME_SMOKE: '1' },
+				env: { AGENT_VM_WORKER_SMOKE: '1' },
 			}),
 		).toBe(false);
 	});
@@ -26,7 +26,7 @@ describe('shouldRunWorkerRuntimeSmoke', () => {
 			shouldRunWorkerRuntimeSmoke({
 				commandExists: () => false,
 				env: {
-					AGENT_VM_WORKER_RUNTIME_SMOKE: '1',
+					AGENT_VM_WORKER_SMOKE: '1',
 					OPEN_AI_TEST_KEY: 'test-token',
 				},
 			}),
@@ -38,7 +38,7 @@ describe('shouldRunWorkerRuntimeSmoke', () => {
 			shouldRunWorkerRuntimeSmoke({
 				commandExists: () => true,
 				env: {
-					AGENT_VM_WORKER_RUNTIME_SMOKE: '1',
+					AGENT_VM_WORKER_SMOKE: '1',
 					OPEN_AI_TEST_KEY: 'test-token',
 				},
 			}),
