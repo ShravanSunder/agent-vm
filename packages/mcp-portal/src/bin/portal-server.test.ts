@@ -9,6 +9,7 @@ import { portalHmacKeyEnvName } from '../auth/hmac-env.js';
 import {
 	applyAgentOverrides,
 	handlePortalServerError,
+	isPortalServerEntrypoint,
 	parsePortalServerCliArgs,
 	startPortalServer,
 	type PortalServerLogEvent,
@@ -77,6 +78,42 @@ describe('applyAgentOverrides', () => {
 		});
 
 		expect(() => applyAgentOverrides({}, ['unknown=builder'])).toThrow(/unknown/u);
+	});
+});
+
+describe('isPortalServerEntrypoint', () => {
+	it('recognizes symlinked argv entrypoints by resolved path', async () => {
+		const realPaths: Readonly<Record<string, string>> = {
+			'/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server':
+				'/pnpm/global/5/.pnpm/@agent-vm+mcp-portal@0.0.65/node_modules/@agent-vm/mcp-portal/dist/bin/portal-server.js',
+			'/pnpm/global/5/node_modules/@agent-vm/mcp-portal/dist/bin/portal-server.js':
+				'/pnpm/global/5/.pnpm/@agent-vm+mcp-portal@0.0.65/node_modules/@agent-vm/mcp-portal/dist/bin/portal-server.js',
+		};
+
+		await expect(
+			isPortalServerEntrypoint(
+				'file:///pnpm/global/5/node_modules/@agent-vm/mcp-portal/dist/bin/portal-server.js',
+				'/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server',
+				async (targetPath) => {
+					const realPath = realPaths[targetPath];
+					if (realPath === undefined) {
+						throw new Error(`unexpected path ${targetPath}`);
+					}
+					return realPath;
+				},
+			),
+		).resolves.toBe(true);
+	});
+
+	it('rejects missing or unresolved argv entrypoints', async () => {
+		await expect(isPortalServerEntrypoint('file:///portal-server.js', undefined)).resolves.toBe(
+			false,
+		);
+		await expect(
+			isPortalServerEntrypoint('file:///portal-server.js', '/missing', async () => {
+				throw new Error('missing');
+			}),
+		).resolves.toBe(false);
 	});
 });
 
