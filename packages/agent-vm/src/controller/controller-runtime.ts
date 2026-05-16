@@ -1,4 +1,7 @@
-import { createOpCliSecretResolver, type ManagedVm } from '@agent-vm/gondolin-adapter';
+import {
+	createSecretResolver as createOnePasswordSecretResolver,
+	type ManagedVm,
+} from '@agent-vm/gondolin-adapter';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { runTaskWithResult } from '../shared/run-task.js';
@@ -122,7 +125,7 @@ export async function startControllerRuntime(
 		async () =>
 			await createSecretResolver(
 				options.systemConfig,
-				dependencies.createSecretResolver ?? createOpCliSecretResolver,
+				dependencies.createSecretResolver ?? createOnePasswordSecretResolver,
 			),
 	);
 	const controllerGithubToken = await resolveControllerGithubToken(

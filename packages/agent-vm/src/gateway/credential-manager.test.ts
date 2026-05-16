@@ -1,7 +1,8 @@
-import type { SecretResolver } from '@agent-vm/gondolin-adapter';
-import { describe, expect, it } from 'vitest';
+import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
+import { createCompositeSecretResolver } from '../controller/composite-secret-resolver.js';
 import { resolveZoneSecrets } from './credential-manager.js';
 
 const systemConfig = {
@@ -81,12 +82,18 @@ const systemConfig = {
 } satisfies SystemConfig;
 
 describe('resolveZoneSecrets', () => {
-	it('resolves the named zone secret references through the shared resolver', async () => {
+	it('resolves the named zone secret references through one resolveAll call', async () => {
+		const resolve = vi.fn(async () => {
+			throw new Error('resolve should not be called for zone batch resolution');
+		});
+		const resolveAll = vi.fn(async (refs: Record<string, SecretRef>) =>
+			Object.fromEntries(
+				Object.entries(refs).map(([name, secretRef]) => [name, `resolved:${secretRef.ref}`]),
+			),
+		);
 		const secretResolver: SecretResolver = {
-			resolve: async (secretRef) => `resolved:${secretRef.ref}`,
-			resolveAll: async () => {
-				throw new Error('resolveAll is not used by this test');
-			},
+			resolve,
+			resolveAll,
 		};
 
 		await expect(
@@ -100,14 +107,26 @@ describe('resolveZoneSecrets', () => {
 			ANTHROPIC_API_KEY: 'resolved:op://AI/anthropic/api-key',
 			GITHUB_PAT: 'resolved:op://AI/github/pat',
 		});
+		expect(resolve).not.toHaveBeenCalled();
+		expect(resolveAll).toHaveBeenCalledTimes(1);
+		expect(resolveAll).toHaveBeenCalledWith({
+			ANTHROPIC_API_KEY: { source: '1password', ref: 'op://AI/anthropic/api-key' },
+			GITHUB_PAT: { source: '1password', ref: 'op://AI/github/pat' },
+		});
 	});
 
 	it('supports per-zone refs for the same secret name', async () => {
+		const resolve = vi.fn(async () => {
+			throw new Error('resolve should not be called for zone batch resolution');
+		});
+		const resolveAll = vi.fn(async (refs: Record<string, SecretRef>) =>
+			Object.fromEntries(
+				Object.entries(refs).map(([name, secretRef]) => [name, `resolved:${secretRef.ref}`]),
+			),
+		);
 		const secretResolver: SecretResolver = {
-			resolve: async (secretRef) => `resolved:${secretRef.ref}`,
-			resolveAll: async () => {
-				throw new Error('resolveAll is not used by this test');
-			},
+			resolve,
+			resolveAll,
 		};
 
 		const shravanZone = systemConfig.zones[0];
@@ -152,6 +171,13 @@ describe('resolveZoneSecrets', () => {
 			}),
 		).resolves.toEqual({
 			OPENCLAW_GATEWAY_TOKEN: 'resolved:op://agent-vm/copse-gateway-auth/password',
+		});
+		expect(resolve).not.toHaveBeenCalled();
+		expect(resolveAll).toHaveBeenCalledWith({
+			OPENCLAW_GATEWAY_TOKEN: {
+				source: '1password',
+				ref: 'op://agent-vm/copse-gateway-auth/password',
+			},
 		});
 	});
 
@@ -339,9 +365,18 @@ describe('resolveZoneSecrets', () => {
 		} satisfies SystemConfig;
 		const secretResolver: SecretResolver = {
 			resolve: async () => {
-				throw new Error('1Password lookup failed');
+				throw new Error('resolve should not be called');
 			},
-			resolveAll: async () => ({}),
+			resolveAll: async () => {
+				throw new AggregateError(
+					[
+						new Error(
+							"Failed to resolve secret 'PERPLEXITY_API_KEY' for zone 'shravan' from 'op://agent-vm/shravan-perplexity/credential': 1Password lookup failed",
+						),
+					],
+					'Failed to resolve 1 secret(s) via op read.',
+				);
+			},
 		};
 
 		await expect(
@@ -352,7 +387,54 @@ describe('resolveZoneSecrets', () => {
 				zoneId: 'shravan',
 			}),
 		).rejects.toThrow(
-			"Failed to resolve secret 'PERPLEXITY_API_KEY' for zone 'shravan' from 'op://agent-vm/shravan-perplexity/credential': 1Password lookup failed",
+			"Failed to resolve zone secrets for zone 'shravan': Failed to resolve 1 secret(s) via op read. Details: Failed to resolve secret 'PERPLEXITY_API_KEY' for zone 'shravan' from 'op://agent-vm/shravan-perplexity/credential': 1Password lookup failed",
+		);
+	});
+
+	it('keeps secret-specific context when an environment-backed batch secret is missing', async () => {
+		const baseZone = systemConfig.zones[0];
+		if (!baseZone) {
+			throw new Error('Expected base test zone');
+		}
+		const envConfig = {
+			...systemConfig,
+			zones: [
+				{
+					...baseZone,
+					secrets: {
+						OPENAI_API_KEY: {
+							source: 'environment' as const,
+							envVar: 'MISSING_OPENAI_API_KEY',
+							injection: 'env' as const,
+							audience: 'gateway' as const,
+						},
+					},
+				},
+			],
+		} satisfies SystemConfig;
+
+		await expect(
+			resolveZoneSecrets({
+				audience: 'gateway',
+				secretResolver: createCompositeSecretResolver(null, {}),
+				systemConfig: envConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(
+			"Failed to resolve zone secrets for zone 'shravan': Failed to resolve 1 secret(s). Details: Failed to resolve secret 'OPENAI_API_KEY' from 'MISSING_OPENAI_API_KEY': Environment variable 'MISSING_OPENAI_API_KEY' is not set.",
+		);
+	});
+
+	it('keeps secret-specific context when 1Password refs lack a configured provider', async () => {
+		await expect(
+			resolveZoneSecrets({
+				audience: 'gateway',
+				secretResolver: createCompositeSecretResolver(null, {}),
+				systemConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(
+			"Failed to resolve zone secrets for zone 'shravan': Failed to resolve 2 secret(s). Details: Failed to resolve secret 'ANTHROPIC_API_KEY' from 'op://AI/anthropic/api-key': Secret with source '1password' requires host.secretsProvider to be configured.; Failed to resolve secret 'GITHUB_PAT' from 'op://AI/github/pat': Secret with source '1password' requires host.secretsProvider to be configured.",
 		);
 	});
 });

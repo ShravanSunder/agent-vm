@@ -50,9 +50,19 @@ describe('createCompositeSecretResolver', () => {
 	});
 
 	it('resolveAll handles mixed secret sources', async () => {
+		const resolveOnePasswordSecret = vi.fn(async (ref) => `single:${ref.ref}`);
+		const resolveAllOnePasswordSecrets = vi.fn(
+			async (refs: Record<string, import('@agent-vm/gondolin-adapter').SecretRef>) =>
+				Object.fromEntries(
+					Object.entries(refs).map(([secretName, secretRef]) => [
+						secretName,
+						`batch:${secretRef.ref}`,
+					]),
+				),
+		);
 		const onePasswordResolver: SecretResolver = {
-			resolve: vi.fn(async (ref) => `resolved:${ref.ref}`),
-			resolveAll: vi.fn(async () => ({})),
+			resolve: resolveOnePasswordSecret,
+			resolveAll: resolveAllOnePasswordSecrets,
 		};
 		const resolver = createCompositeSecretResolver(onePasswordResolver, {
 			GITHUB_TOKEN: 'gh-token',
@@ -62,10 +72,31 @@ describe('createCompositeSecretResolver', () => {
 			resolver.resolveAll({
 				OPENAI_API_KEY: { source: '1password', ref: 'op://vault/openai/token' },
 				GITHUB_TOKEN: { source: 'environment', ref: 'GITHUB_TOKEN' },
+				ANTHROPIC_API_KEY: { source: '1password', ref: 'op://vault/anthropic/token' },
 			}),
 		).resolves.toEqual({
-			OPENAI_API_KEY: 'resolved:op://vault/openai/token',
+			OPENAI_API_KEY: 'batch:op://vault/openai/token',
+			GITHUB_TOKEN: 'gh-token',
+			ANTHROPIC_API_KEY: 'batch:op://vault/anthropic/token',
+		});
+		expect(resolveOnePasswordSecret).not.toHaveBeenCalled();
+		expect(resolveAllOnePasswordSecrets).toHaveBeenCalledTimes(1);
+		expect(resolveAllOnePasswordSecrets).toHaveBeenCalledWith({
+			OPENAI_API_KEY: { source: '1password', ref: 'op://vault/openai/token' },
+			ANTHROPIC_API_KEY: { source: '1password', ref: 'op://vault/anthropic/token' },
+		});
+	});
+
+	it('throws once when resolveAll includes onepassword refs without a configured provider', async () => {
+		const resolver = createCompositeSecretResolver(null, {
 			GITHUB_TOKEN: 'gh-token',
 		});
+
+		await expect(
+			resolver.resolveAll({
+				GITHUB_TOKEN: { source: 'environment', ref: 'GITHUB_TOKEN' },
+				OPENAI_API_KEY: { source: '1password', ref: 'op://vault/openai/token' },
+			}),
+		).rejects.toThrow('Failed to resolve 1 secret(s).');
 	});
 });

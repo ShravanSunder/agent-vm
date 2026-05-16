@@ -144,13 +144,32 @@ describe('createSecretResolver', () => {
 		expect(resolvedReferences).toEqual(['op://AI/anthropic/api-key']);
 	});
 
-	it('resolves a record of secret references and preserves keys', async () => {
+	it('resolves all refs through the sdk batch API and preserves caller keys', async () => {
+		const batchCalls: string[][] = [];
+		const singleResolveCalls: string[] = [];
 		const fakeClient: SecretResolverClient = {
 			secrets: {
-				resolve: async (secretReference: string): Promise<string> => `resolved:${secretReference}`,
-				resolveAll: async () => ({
-					individualResponses: {},
-				}),
+				resolve: async (secretReference: string): Promise<string> => {
+					singleResolveCalls.push(secretReference);
+					return `single:${secretReference}`;
+				},
+				resolveAll: async (secretReferences: readonly string[]) => {
+					batchCalls.push([...secretReferences]);
+					return {
+						individualResponses: Object.fromEntries(
+							secretReferences.map((secretReference) => [
+								secretReference,
+								{
+									content: {
+										secret: `batch:${secretReference}`,
+										itemId: `item:${secretReference}`,
+										vaultId: 'vault-id',
+									},
+								},
+							]),
+						),
+					};
+				},
 			},
 		};
 
@@ -167,10 +186,19 @@ describe('createSecretResolver', () => {
 					source: '1password',
 					ref: 'op://agent-vm/agent-discord-app/bot-token',
 				},
+				OPENCLAW_GATEWAY_TOKEN: {
+					source: '1password',
+					ref: 'op://agent-vm/agent-gateway/token',
+				},
 			}),
 		).resolves.toEqual({
-			DISCORD_BOT_TOKEN: 'resolved:op://agent-vm/agent-discord-app/bot-token',
+			DISCORD_BOT_TOKEN: 'batch:op://agent-vm/agent-discord-app/bot-token',
+			OPENCLAW_GATEWAY_TOKEN: 'batch:op://agent-vm/agent-gateway/token',
 		});
+		expect(batchCalls).toEqual([
+			['op://agent-vm/agent-discord-app/bot-token', 'op://agent-vm/agent-gateway/token'],
+		]);
+		expect(singleResolveCalls).toEqual([]);
 	});
 
 	it('falls back to op read when sdk client creation fails', async () => {
@@ -278,10 +306,64 @@ describe('createSecretResolver', () => {
 			},
 		]);
 	});
+
+	it('falls back to serial op reads when sdk resolveAll omits a requested ref', async () => {
+		const execCalls: Array<{
+			readonly args: readonly string[];
+			readonly command: string;
+			readonly env?: Readonly<Record<string, string | undefined>>;
+		}> = [];
+		const fakeClient: SecretResolverClient = {
+			secrets: {
+				resolve: async (secretReference: string): Promise<string> => `single:${secretReference}`,
+				resolveAll: async () => ({
+					individualResponses: {
+						'op://vault/item/a': {
+							content: {
+								secret: 'sdk-a',
+								itemId: 'item-a',
+								vaultId: 'vault-id',
+							},
+						},
+					},
+				}),
+			},
+		};
+		const secretResolver = await createSecretResolver(
+			{ serviceAccountToken: 'service-token' },
+			{
+				createClient: async (): Promise<SecretResolverClient> => fakeClient,
+				execFileAsync: async (command, args, options) => {
+					execCalls.push({
+						args,
+						command,
+						...(options?.env ? { env: options.env } : {}),
+					});
+					return { stdout: `op:${args[1]}\n`, stderr: '' };
+				},
+			},
+		);
+
+		await expect(
+			secretResolver.resolveAll({
+				A: { source: '1password', ref: 'op://vault/item/a' },
+				B: { source: '1password', ref: 'op://vault/item/b' },
+			}),
+		).resolves.toEqual({
+			A: 'op:op://vault/item/a',
+			B: 'op:op://vault/item/b',
+		});
+		expect(execCalls.map((call) => call.args)).toEqual([
+			['read', 'op://vault/item/a'],
+			['read', 'op://vault/item/b'],
+		]);
+	});
 });
 
 describe('createOpCliSecretResolver', () => {
 	it('resolves all refs sequentially via op read', async () => {
+		let inFlight = 0;
+		let maxInFlight = 0;
 		const execCalls: {
 			readonly args: readonly string[];
 			readonly command: string;
@@ -291,12 +373,18 @@ describe('createOpCliSecretResolver', () => {
 			{ serviceAccountToken: 'service-token' },
 			{
 				execFileAsync: async (command, args, options) => {
-					execCalls.push({
-						args,
-						command,
-						...(options?.env ? { env: options.env } : {}),
-					});
-					return { stdout: `${args[1]}\n`, stderr: '' };
+					inFlight += 1;
+					maxInFlight = Math.max(maxInFlight, inFlight);
+					try {
+						execCalls.push({
+							args,
+							command,
+							...(options?.env ? { env: options.env } : {}),
+						});
+						return { stdout: `${args[1]}\n`, stderr: '' };
+					} finally {
+						inFlight -= 1;
+					}
 				},
 			},
 		);
@@ -326,5 +414,39 @@ describe('createOpCliSecretResolver', () => {
 				}),
 			},
 		]);
+		expect(maxInFlight).toBe(1);
+	});
+
+	it('adds per-secret context when op read resolveAll fails', async () => {
+		const secretResolver = await createOpCliSecretResolver(
+			{ serviceAccountToken: 'service-token' },
+			{
+				execFileAsync: async (_command, args) => {
+					throw new Error(`denied:${args[1]}`);
+				},
+			},
+		);
+
+		await expect(
+			secretResolver.resolveAll({
+				A: { source: '1password', ref: 'op://vault/item/a' },
+				B: { source: '1password', ref: 'op://vault/item/b' },
+			}),
+		).rejects.toThrow('Failed to resolve 2 secret(s) via op read.');
+		await secretResolver
+			.resolveAll({
+				A: { source: '1password', ref: 'op://vault/item/a' },
+				B: { source: '1password', ref: 'op://vault/item/b' },
+			})
+			.catch((error: unknown) => {
+				expect(error).toBeInstanceOf(AggregateError);
+				if (!(error instanceof AggregateError)) {
+					throw new Error('Expected AggregateError');
+				}
+				expect(error.errors.map((cause: unknown) => String(cause))).toEqual([
+					"Error: Failed to resolve secret 'A' from 'op://vault/item/a' via op read: denied:op://vault/item/a",
+					"Error: Failed to resolve secret 'B' from 'op://vault/item/b' via op read: denied:op://vault/item/b",
+				]);
+			});
 	});
 });

@@ -1,13 +1,13 @@
 import { execFile } from 'node:child_process';
 
-import { createClient } from '@1password/sdk';
+import { createClient, type ResolveAllResponse, type ResolveReferenceError } from '@1password/sdk';
 
 import type { SecretRef } from './types.js';
 
 export interface SecretResolverClient {
 	readonly secrets: {
 		resolve(secretReference: string): Promise<string>;
-		resolveAll(secretReferences: readonly string[]): Promise<unknown>;
+		resolveAll(secretReferences: readonly string[]): Promise<ResolveAllResponse>;
 	};
 }
 
@@ -34,6 +34,10 @@ export interface ExecFileResult {
 
 function writeStderr(message: string): void {
 	process.stderr.write(`${message}\n`);
+}
+
+function formatUnknownError(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
 
 function ensureMacOsForKeychain(): void {
@@ -181,18 +185,81 @@ async function resolveAllSecretsWithOpCli(
 	) => Promise<ExecFileResult>,
 ): Promise<Record<string, string>> {
 	const resolvedSecrets: Record<string, string> = {};
+	const failures: Error[] = [];
 
 	for (const [secretName, secretRef] of Object.entries(refs)) {
-		// Sequential resolution avoids concurrent `op read` failures with the same service account token.
-		// oxlint-disable-next-line eslint/no-await-in-loop
-		resolvedSecrets[secretName] = await resolveSecretWithOpCli(
-			serviceAccountToken,
-			secretRef.ref,
-			exec,
+		try {
+			// Sequential resolution avoids concurrent `op read` failures with the same service account token.
+			// oxlint-disable-next-line eslint/no-await-in-loop
+			resolvedSecrets[secretName] = await resolveSecretWithOpCli(
+				serviceAccountToken,
+				secretRef.ref,
+				exec,
+			);
+		} catch (error) {
+			failures.push(
+				new Error(
+					`Failed to resolve secret '${secretName}' from '${secretRef.ref}' via op read: ${formatUnknownError(error)}`,
+					{ cause: error },
+				),
+			);
+		}
+	}
+
+	if (failures.length > 0) {
+		throw new AggregateError(
+			failures,
+			`Failed to resolve ${String(failures.length)} secret(s) via op read.`,
 		);
 	}
 
 	return resolvedSecrets;
+}
+
+function formatResolveReferenceError(error: ResolveReferenceError): string {
+	return 'message' in error && typeof error.message === 'string'
+		? `${error.type}: ${error.message}`
+		: error.type;
+}
+
+function readSdkBatchSecret(options: {
+	readonly response: ResolveAllResponse;
+	readonly secretName: string;
+	readonly secretReference: string;
+}): string {
+	const individualResponse = options.response.individualResponses[options.secretReference];
+	if (!individualResponse) {
+		throw new Error(
+			`1Password SDK resolveAll response omitted '${options.secretName}' (${options.secretReference}).`,
+		);
+	}
+	if (individualResponse.content !== undefined) {
+		return individualResponse.content.secret;
+	}
+	if (individualResponse.error !== undefined) {
+		throw new Error(
+			`1Password SDK resolveAll failed for '${options.secretName}' (${options.secretReference}): ${formatResolveReferenceError(individualResponse.error)}`,
+		);
+	}
+	throw new Error(
+		`1Password SDK resolveAll returned neither content nor error for '${options.secretName}' (${options.secretReference}).`,
+	);
+}
+
+function mapSdkResolveAllResponse(
+	refs: Record<string, SecretRef>,
+	response: ResolveAllResponse,
+): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries(refs).map(([secretName, secretRef]) => [
+			secretName,
+			readSdkBatchSecret({
+				response,
+				secretName,
+				secretReference: secretRef.ref,
+			}),
+		]),
+	);
 }
 
 export async function createSecretResolver(
@@ -222,28 +289,18 @@ export async function createSecretResolver(
 				}
 			},
 			resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> => {
-				const resolvedSecrets: Record<string, string> = {};
-
-				for (const [secretName, secretRef] of Object.entries(refs)) {
-					try {
-						// oxlint-disable-next-line eslint/no-await-in-loop
-						resolvedSecrets[secretName] = await client.secrets.resolve(secretRef.ref);
-					} catch (error) {
-						const message = error instanceof Error ? error.message : String(error);
-						writeStderr(
-							`[secret-resolver] 1Password SDK resolve failed for ${secretRef.ref}; falling back to op CLI: ${message}`,
-						);
-						// Sequential fallback avoids concurrent `op read` failures when the SDK path is unhealthy.
-						// oxlint-disable-next-line eslint/no-await-in-loop
-						resolvedSecrets[secretName] = await resolveSecretWithOpCli(
-							options.serviceAccountToken,
-							secretRef.ref,
-							exec,
-						);
-					}
+				try {
+					const response = await client.secrets.resolveAll(
+						Object.values(refs).map((secretRef) => secretRef.ref),
+					);
+					return mapSdkResolveAllResponse(refs, response);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					writeStderr(
+						`[secret-resolver] 1Password SDK resolveAll failed; falling back to serial op CLI reads: ${message}`,
+					);
+					return await resolveAllSecretsWithOpCli(options.serviceAccountToken, refs, exec);
 				}
-
-				return resolvedSecrets;
 			},
 		};
 	} catch (error) {

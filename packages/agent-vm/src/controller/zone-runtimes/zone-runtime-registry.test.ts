@@ -454,7 +454,7 @@ describe('createOpenClawZoneRuntime', () => {
 				...loadedSystemConfig.zones.filter((candidateZone) => candidateZone.id !== zone.id),
 			],
 		} satisfies LoadedSystemConfig;
-		const resolvedSecretRefs: string[] = [];
+		const resolvedSecretRefBatches: unknown[] = [];
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
@@ -467,11 +467,18 @@ describe('createOpenClawZoneRuntime', () => {
 				return { ok: true, zoneId: 'shravan' };
 			},
 			secretResolver: {
-				resolve: async (secretRef) => {
-					resolvedSecretRefs.push(secretRef.ref);
-					return `resolved:${secretRef.ref}`;
+				resolve: async () => {
+					throw new Error('resolve should not be called during credentials refresh');
 				},
-				resolveAll: async () => ({}),
+				resolveAll: async (refs) => {
+					resolvedSecretRefBatches.push(refs);
+					return Object.fromEntries(
+						Object.entries(refs).map(([secretName, secretRef]) => [
+							secretName,
+							`resolved:${secretRef.ref}`,
+						]),
+					);
+				},
 			},
 			systemConfig: config,
 			zone,
@@ -479,7 +486,14 @@ describe('createOpenClawZoneRuntime', () => {
 
 		await expect(runtime.refreshCredentials()).resolves.toEqual({ ok: true, zoneId: 'shravan' });
 
-		expect(resolvedSecretRefs).toEqual(['OPENCLAW_GATEWAY_TOKEN']);
+		expect(resolvedSecretRefBatches).toEqual([
+			{
+				OPENCLAW_GATEWAY_TOKEN: {
+					source: 'environment',
+					ref: 'OPENCLAW_GATEWAY_TOKEN',
+				},
+			},
+		]);
 	});
 });
 
