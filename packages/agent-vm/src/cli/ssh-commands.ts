@@ -10,6 +10,8 @@ import {
 	requireZone,
 	resolveControllerBaseUrl,
 } from './agent-vm-cli-support.js';
+import { formatZodError } from './format-zod-error.js';
+import { wrapWithOpenClawSecretShellEnvironment } from './openclaw-shell-prefix.js';
 
 interface RunSshCommandOptions {
 	readonly dependencies: CliDependencies;
@@ -30,21 +32,6 @@ export const zoneSshAccessResponseSchema = z
 	.passthrough();
 
 export type ZoneSshAccessResponse = z.infer<typeof zoneSshAccessResponseSchema>;
-
-const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
-const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
-
-function buildInteractiveSecretShellPrefix(): string {
-	return `source ${openClawShellEnvFilePath} && set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && `;
-}
-
-function shellQuote(value: string): string {
-	return `'${value.replace(/'/gu, `'\\''`)}'`;
-}
-
-function buildInteractiveSecretShellCommand(): string {
-	return `bash -lc ${shellQuote(`${buildInteractiveSecretShellPrefix()}exec bash -l`)}`;
-}
 
 export async function resolveZoneAdminToken(options: {
 	readonly dependencies: Pick<
@@ -97,7 +84,10 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 		}),
 	);
 	if (!parsedSshResponse.success) {
-		throw new Error('Controller returned an invalid SSH response.');
+		throw new Error(
+			formatZodError('Controller returned an invalid SSH response:', parsedSshResponse.error),
+			{ cause: parsedSshResponse.error },
+		);
 	}
 	const sshResponse: ZoneSshAccessResponse = parsedSshResponse.data;
 
@@ -121,7 +111,7 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 		'-p',
 		String(sshResponse.port),
 		`${sshResponse.user ?? 'root'}@${sshResponse.host}`,
-		buildInteractiveSecretShellCommand(),
+		wrapWithOpenClawSecretShellEnvironment('exec bash -l'),
 	];
 	const runInteractiveProcess =
 		options.dependencies.runInteractiveProcess ??

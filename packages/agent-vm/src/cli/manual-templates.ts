@@ -246,6 +246,7 @@ Use agent-vm controller ssh --zone <zoneId> for a gateway admin shell with runti
 Controller SSH opens an interactive shell only. Do not use it as a one-shot command runner, and do not try to print raw SSH commands from the CLI.
 For OpenClaw provider auth flows, prefer agent-vm auth openclaw <provider> --zone <zoneId>.
 For native Codex harness auth, use agent-vm auth codex-harness --zone <zoneId> --agent <agentId>.
+Managed OpenClaw gateway base images include the native Codex CLI so codex-harness auth can run inside the gateway VM. If a deployment overrides the base image, install @openai/codex in that image before running codex-harness auth.
 Tool VMs and agent sandboxes do not receive gateway SSH secrets.
 `,
 			),
@@ -337,6 +338,7 @@ When gateway.zoneGit is configured:
 A single OpenClaw gateway can host multiple agents. Use scope=agent when each agent should have a stable work mount and reusable Tool VM lease identity.
 
 Per-agent auth isolation works by using agent-vm auth codex-harness for native Codex CLI auth, gateway.authProfilesByAgent for OpenClaw auth profiles, and first-boot files through agentSandboxSeeds. Seeds target paths relative to the agent sandbox's /work backing directory and do not overwrite existing files.
+agent-vm auth codex-harness --all-agents runs one device-auth session per agent listed in the zone's system config. Use --agent <agentId> for a one-off login outside that configured list.
 
 OpenClaw tool allowlists are a policy layer. They do not remove binaries from the Tool VM image if a broad shell tool can still run them.
 

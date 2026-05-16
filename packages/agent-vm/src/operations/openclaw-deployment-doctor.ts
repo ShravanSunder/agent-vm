@@ -30,6 +30,17 @@ interface PortalServerExpectation {
 	readonly port: number;
 }
 
+interface CodexHarnessAuthReadError {
+	readonly agentId: string;
+	readonly message: string;
+	readonly path: string;
+}
+
+interface CodexHarnessAuthScan {
+	readonly agentIds: readonly string[];
+	readonly readErrors: readonly CodexHarnessAuthReadError[];
+}
+
 const defaultPortalServerExpectation: PortalServerExpectation = {
 	accessHeaderName: 'x-agent-vm-mcp-portal-secret',
 	host: '127.0.0.1',
@@ -39,6 +50,7 @@ const defaultPortalServerExpectation: PortalServerExpectation = {
 export interface OpenClawDeploymentDoctorTarget {
 	readonly configuredAuthProfileAgentIds?: readonly string[];
 	readonly configuredCodexHarnessAuthAgentIds?: readonly string[];
+	readonly codexHarnessAuthReadErrors?: readonly CodexHarnessAuthReadError[];
 	readonly config: OpenClawDeploymentConfig;
 	readonly configPath?: string | undefined;
 	readonly configReadError?: string | undefined;
@@ -224,6 +236,19 @@ function buildAgentAuthProfileChecks(
 	});
 }
 
+function buildCodexHarnessAuthReadErrorChecks(
+	target: OpenClawDeploymentDoctorTarget,
+): readonly DoctorCheck[] {
+	return (target.codexHarnessAuthReadErrors ?? []).map(
+		(readError) =>
+			({
+				name: `openclaw-codex-harness-auth-readable-${target.zoneId}-${readError.agentId}`,
+				ok: false,
+				hint: `Cannot read Codex harness auth.json at ${readError.path}: ${readError.message}`,
+			}) satisfies DoctorCheck,
+	);
+}
+
 function buildRequirementChecks(target: OpenClawDeploymentDoctorTarget): readonly DoctorCheck[] {
 	const requirementTarget: OpenClawDeploymentRequirementTarget =
 		target.configReadError === undefined
@@ -311,6 +336,7 @@ export function buildOpenClawDeploymentDoctorChecks(
 						? 'plugins.slots.memory=memory-core'
 						: 'Set plugins.slots.memory to "memory-core" when memory-core is enabled.',
 			},
+			...buildCodexHarnessAuthReadErrorChecks(target),
 			...buildAgentAuthProfileChecks(target),
 		] as const satisfies readonly DoctorCheck[];
 	});
@@ -345,8 +371,9 @@ async function loadPortalServerExpectation(
 async function collectCodexHarnessAuthAgentIds(
 	zone: OpenClawSystemZone,
 	config: OpenClawDeploymentConfig,
-): Promise<readonly string[]> {
+): Promise<CodexHarnessAuthScan> {
 	const agentIds: string[] = [];
+	const readErrors: CodexHarnessAuthReadError[] = [];
 	for (const agentId of collectOpenClawCodexAgentIds(config)) {
 		const authJsonPath = join(
 			zone.gateway.stateDir,
@@ -361,11 +388,21 @@ async function collectCodexHarnessAuthAgentIds(
 			// oxlint-disable-next-line no-await-in-loop -- each agent maps to a separate auth path
 			await access(authJsonPath);
 			agentIds.push(agentId);
-		} catch {
-			// Missing auth.json is reported by buildAgentAuthProfileChecks.
+		} catch (error) {
+			const errorCode =
+				isObjectRecord(error) && typeof error.code === 'string' ? error.code : undefined;
+			if (errorCode === 'ENOENT' || errorCode === 'ENOTDIR') {
+				// Missing auth.json is reported by buildAgentAuthProfileChecks.
+				continue;
+			}
+			readErrors.push({
+				agentId,
+				message: error instanceof Error ? error.message : String(error),
+				path: authJsonPath,
+			});
 		}
 	}
-	return agentIds;
+	return { agentIds, readErrors };
 }
 
 export async function collectOpenClawDeploymentDoctorChecks(
@@ -392,15 +429,16 @@ export async function collectOpenClawDeploymentDoctorChecks(
 	const doctorTargets = await Promise.all(
 		targets.map(async (target): Promise<OpenClawDeploymentDoctorTarget> => {
 			const zone = openClawZones.find((candidate) => candidate.id === target.zoneId);
-			const codexHarnessAuthAgentIds =
+			const codexHarnessAuthScan =
 				target.kind === 'readable' && zone
 					? await collectCodexHarnessAuthAgentIds(zone, target.config)
-					: [];
+					: { agentIds: [], readErrors: [] };
 			const baseTarget =
 				target.kind === 'readable'
 					? {
 							config: target.config,
-							configuredCodexHarnessAuthAgentIds: codexHarnessAuthAgentIds,
+							codexHarnessAuthReadErrors: codexHarnessAuthScan.readErrors,
+							configuredCodexHarnessAuthAgentIds: codexHarnessAuthScan.agentIds,
 							configuredAuthProfileAgentIds:
 								configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],
 							configPath: target.configPath,
@@ -408,7 +446,8 @@ export async function collectOpenClawDeploymentDoctorChecks(
 						}
 					: {
 							config: {},
-							configuredCodexHarnessAuthAgentIds: codexHarnessAuthAgentIds,
+							codexHarnessAuthReadErrors: codexHarnessAuthScan.readErrors,
+							configuredCodexHarnessAuthAgentIds: codexHarnessAuthScan.agentIds,
 							configuredAuthProfileAgentIds:
 								configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],
 							configPath: target.configPath,

@@ -50,7 +50,6 @@ export function createAuthSubcommands(io: CliIo, dependencies: CliDependencies) 
 						setDefault,
 						systemConfig,
 						zoneId: selectedZone.id,
-						...(dependencies.runCommand ? { runCommand: dependencies.runCommand } : {}),
 					});
 				},
 			}),

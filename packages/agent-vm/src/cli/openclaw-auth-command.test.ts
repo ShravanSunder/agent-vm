@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SystemConfig } from '../config/system-config.js';
 import type { ControllerClient } from '../controller/http/controller-client.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
-import { listAuthProviders, runOpenClawAuthCommand } from './openclaw-auth-command.js';
+import { runOpenClawAuthCommand } from './openclaw-auth-command.js';
 
 function createControllerClientStub(overrides?: {
 	readonly enableZoneSsh?: ControllerClient['enableZoneSsh'];
@@ -82,78 +82,6 @@ const systemConfig = {
 		},
 	],
 } satisfies SystemConfig;
-
-describe('listAuthProviders', () => {
-	it('queries over SSH and parses provider names from stdout', async () => {
-		const runCommand = vi.fn(async () => ({
-			exitCode: 0,
-			stdout: 'codex\nopenai-codex\nanthropic\n',
-			stderr: '',
-		}));
-
-		const providers = await listAuthProviders({
-			listProvidersCommand: 'list-cmd',
-			runCommand,
-			sshAccess: {
-				host: '127.0.0.1',
-				identityFile: '/tmp/key',
-				port: 2222,
-				user: 'root',
-			},
-		});
-
-		expect(providers).toEqual(['codex', 'openai-codex', 'anthropic']);
-		expect(runCommand).toHaveBeenCalledWith(
-			'ssh',
-			expect.arrayContaining([
-				'root@127.0.0.1',
-				expect.stringContaining('source /etc/profile.d/openclaw-env.sh && list-cmd'),
-			]),
-		);
-	});
-
-	it('returns empty array when command produces no output', async () => {
-		const runCommand = vi.fn(async () => ({
-			exitCode: 0,
-			stdout: '',
-			stderr: '',
-		}));
-
-		const providers = await listAuthProviders({
-			listProvidersCommand: 'list-cmd',
-			runCommand,
-			sshAccess: {
-				host: '127.0.0.1',
-				identityFile: '/tmp/key',
-				port: 2222,
-				user: 'root',
-			},
-		});
-
-		expect(providers).toEqual([]);
-	});
-
-	it('throws when the SSH command fails', async () => {
-		const runCommand = vi.fn(async () => ({
-			exitCode: 255,
-			stdout: '',
-			stderr: 'connection refused',
-		}));
-
-		await expect(
-			listAuthProviders({
-				listProvidersCommand: 'list-cmd',
-				runCommand,
-				sshAccess: {
-					host: '127.0.0.1',
-					identityFile: '/tmp/key',
-					port: 2222,
-					user: 'root',
-				},
-			}),
-		).rejects.toThrow('Failed to list auth providers: connection refused');
-	});
-});
 
 describe('runOpenClawAuthCommand', () => {
 	it('refuses the legacy OpenClaw openai-codex login path', async () => {

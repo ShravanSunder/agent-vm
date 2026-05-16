@@ -100,6 +100,12 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'agent-vm auth codex-harness --zone <zoneId> --agent <agentId>',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'Managed OpenClaw gateway base images include the native Codex CLI',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'@openai/codex',
+		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).not.toContain(
 			'controller ssh -- <remote command>',
 		);
@@ -184,6 +190,9 @@ describe('manual templates', () => {
 		expect(
 			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
 		).toContain('gateway.authProfilesByAgent');
+		expect(
+			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
+		).toContain('codex-harness --all-agents runs one device-auth session per agent');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfile');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfiles');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('/home/openclaw/zone-files');

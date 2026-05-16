@@ -111,6 +111,48 @@ function createCliBuildSystemConfigWithAgents(): LoadedSystemConfig {
 	};
 }
 
+function createCliBuildWorkerSystemConfig(): LoadedSystemConfig {
+	const systemConfig = createCliBuildSystemConfig();
+	const zone = systemConfig.zones[0];
+	if (!zone) {
+		throw new Error('Expected CLI test config to include a zone.');
+	}
+	return {
+		...systemConfig,
+		zones: [
+			{
+				...zone,
+				gateway: {
+					type: 'worker',
+					imageProfile: 'worker',
+					cpus: 2,
+					memory: '2G',
+					config: './config/shravan/worker.json',
+					port: 18791,
+					stateDir: './state/shravan',
+				},
+			},
+		],
+	};
+}
+
+function createCliBuildSystemConfigWithoutConfiguredAgents(): LoadedSystemConfig {
+	const systemConfig = createCliBuildSystemConfig();
+	const zone = systemConfig.zones[0];
+	if (!zone) {
+		throw new Error('Expected CLI test config to include a zone.');
+	}
+	return {
+		...systemConfig,
+		zones: [
+			{
+				...zone,
+				agents: [],
+			},
+		],
+	};
+}
+
 function createControllerClientStub(
 	enableZoneSsh: ControllerClient['enableZoneSsh'],
 ): ControllerClient {
@@ -1980,6 +2022,11 @@ describe('runAgentVmCli', () => {
 		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
 			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
 		);
+		const enableZoneSsh = vi.fn(async () => ({
+			host: '127.0.0.1',
+			port: 2222,
+			user: 'root',
+		}));
 
 		await runAgentVmCli(
 			['auth', 'codex-harness', '--zone', 'shravan', '--agent', 'shravan'],
@@ -1989,18 +2036,13 @@ describe('runAgentVmCli', () => {
 			},
 			{
 				...defaultCliDependencies,
-				createControllerClient: () =>
-					createControllerClientStub(async () => ({
-						host: '127.0.0.1',
-						port: 2222,
-						secretEnvEnabled: true,
-						user: 'root',
-					})),
+				createControllerClient: () => createControllerClientStub(enableZoneSsh),
 				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
 				runInteractiveProcess,
 			},
 		);
 
+		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', { secretEnv: 'default' });
 		const sshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
 		if (!sshArguments) {
 			throw new Error('Expected Codex login to invoke ssh.');
@@ -2010,15 +2052,21 @@ describe('runAgentVmCli', () => {
 		);
 		const remoteCommand = sshArguments?.at(-1);
 		expect(remoteCommand).toEqual(expect.stringContaining('shravan'));
+		expect(remoteCommand).toEqual(expect.stringContaining('source /etc/profile.d/openclaw-env.sh'));
+		expect(remoteCommand).not.toEqual(expect.stringContaining('/run/openclaw/secrets.env'));
 		expect(remoteCommand).toEqual(expect.stringContaining('CODEX_HOME="$codex_home"'));
 		expect(remoteCommand).toEqual(expect.stringContaining('login --device-auth'));
 		expect(remoteCommand).toEqual(expect.stringContaining('auth.json: present'));
 		expect(remoteCommand).toEqual(expect.stringContaining('openai-codex profiles:'));
 		expect(remoteCommand).toEqual(expect.stringContaining('auth-profiles.json'));
+		expect(remoteCommand).toEqual(expect.stringContaining('Install @openai/codex'));
 		expect(remoteCommand).toEqual(
 			expect.stringContaining('Could not read OpenClaw auth profile count'),
 		);
 		expect(remoteCommand).toEqual(expect.stringContaining('share a Codex refresh token'));
+		expect(remoteCommand).toEqual(
+			expect.stringContaining('shared-refresh-token diagnostic failed'),
+		);
 		expect(remoteCommand).not.toEqual(expect.stringContaining('openclaw models auth login'));
 	});
 
@@ -2048,6 +2096,104 @@ describe('runAgentVmCli', () => {
 				},
 			),
 		).rejects.toThrow('agent id must start with a lowercase letter or number');
+
+		expect(runInteractiveProcess).not.toHaveBeenCalled();
+	});
+
+	it('rejects auth codex-harness on non-OpenClaw zones before opening ssh', async () => {
+		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
+			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
+		);
+
+		await expect(
+			runAgentVmCli(
+				['auth', 'codex-harness', '--zone', 'shravan', '--agent', 'shravan'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					createControllerClient: vi.fn(),
+					loadSystemConfig: vi.fn(async () => createCliBuildWorkerSystemConfig()),
+					runInteractiveProcess,
+				},
+			),
+		).rejects.toThrow("auth codex-harness requires an OpenClaw zone, got 'worker'");
+
+		expect(runInteractiveProcess).not.toHaveBeenCalled();
+	});
+
+	it('rejects auth codex-harness when both target modes are provided', async () => {
+		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
+			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
+		);
+
+		await expect(
+			runAgentVmCli(
+				['auth', 'codex-harness', '--zone', 'shravan', '--agent', 'shravan', '--all-agents'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					createControllerClient: vi.fn(),
+					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
+					runInteractiveProcess,
+				},
+			),
+		).rejects.toThrow('Use either --agent or --all-agents, not both.');
+
+		expect(runInteractiveProcess).not.toHaveBeenCalled();
+	});
+
+	it('rejects auth codex-harness when no target mode is provided', async () => {
+		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
+			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
+		);
+
+		await expect(
+			runAgentVmCli(
+				['auth', 'codex-harness', '--zone', 'shravan'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					createControllerClient: vi.fn(),
+					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
+					runInteractiveProcess,
+				},
+			),
+		).rejects.toThrow('auth codex-harness requires --agent <agentId> or --all-agents.');
+
+		expect(runInteractiveProcess).not.toHaveBeenCalled();
+	});
+
+	it('rejects auth codex-harness --all-agents when the zone has no configured agents', async () => {
+		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
+			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
+		);
+
+		await expect(
+			runAgentVmCli(
+				['auth', 'codex-harness', '--zone', 'shravan', '--all-agents'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					createControllerClient: vi.fn(),
+					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithoutConfiguredAgents()),
+					runInteractiveProcess,
+				},
+			),
+		).rejects.toThrow(
+			"Zone 'shravan' has no configured agents; use --agent <agentId> for a one-off login.",
+		);
 
 		expect(runInteractiveProcess).not.toHaveBeenCalled();
 	});

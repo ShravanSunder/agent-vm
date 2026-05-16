@@ -6,22 +6,13 @@ import {
 	type CliIo,
 	resolveControllerBaseUrl,
 } from './agent-vm-cli-support.js';
+import { formatZodError } from './format-zod-error.js';
+import { shellQuote, wrapWithOpenClawShellEnvironment } from './openclaw-shell-prefix.js';
 import {
 	resolveZoneAdminToken,
 	zoneSshAccessResponseSchema,
 	type ZoneSshAccessResponse,
 } from './ssh-commands.js';
-
-const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
-const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
-
-function shellQuote(value: string): string {
-	return `'${value.replace(/'/gu, `'\\''`)}'`;
-}
-
-function buildSecretLoadedShellPrefix(): string {
-	return `source ${openClawShellEnvFilePath} && set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && `;
-}
 
 function buildCodexHarnessAuthRemoteCommand(agentId: string): string {
 	const script = [
@@ -32,12 +23,15 @@ function buildCodexHarnessAuthRemoteCommand(agentId: string): string {
 		'codex_home="$agent_dir/codex-home"',
 		'auth_json="$codex_home/auth.json"',
 		'mkdir -p "$agent_dir" "$codex_home"',
-		'chmod 700 "$agent_dir" "$codex_home" 2>/dev/null || true',
+		'if ! chmod 700 "$agent_dir" "$codex_home"; then',
+		'  echo "WARNING: could not chmod 700 $agent_dir and $codex_home; auth.json contains a refresh token." >&2',
+		'fi',
 		'codex_binary="$(command -v codex || true)"',
 		'if [ -z "$codex_binary" ]; then',
 		'  codex_js="$(find /pnpm/global/5/.pnpm /pnpm/global/5/node_modules /usr/local/lib/node_modules -path \'*/node_modules/@openai/codex/bin/codex.js\' -type f -print -quit 2>/dev/null || true)"',
 		'  if [ -z "$codex_js" ]; then',
 		'    echo "Could not locate the Codex CLI binary in PATH or pnpm global install paths." >&2',
+		'    echo "Install @openai/codex in the OpenClaw gateway image, or add it to the gateway overlay extraOpenClawPackages before running auth codex-harness." >&2',
 		'    exit 127',
 		'  fi',
 		'  codex_binary="node $codex_js"',
@@ -54,7 +48,14 @@ function buildCodexHarnessAuthRemoteCommand(agentId: string): string {
 		'  echo "Codex login did not create auth.json at $auth_json." >&2',
 		'  exit 1',
 		'fi',
-		'auth_mtime="$(stat -c "%y" "$auth_json" 2>/dev/null || date -r "$auth_json" "+%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || echo unknown)"',
+		'auth_mtime="$(stat -c "%y" "$auth_json" 2>/dev/null || true)"',
+		'if [ -z "$auth_mtime" ]; then',
+		'  auth_mtime="$(date -r "$auth_json" "+%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || true)"',
+		'fi',
+		'if [ -z "$auth_mtime" ]; then',
+		'  echo "WARNING: could not stat auth.json mtime at $auth_json." >&2',
+		'  auth_mtime="unknown"',
+		'fi',
 		'profile_file="$agent_dir/auth-profiles.json"',
 		'profile_count="unknown"',
 		'if command -v node >/dev/null 2>&1; then',
@@ -84,20 +85,24 @@ function buildCodexHarnessAuthRemoteCommand(agentId: string): string {
 		'echo "  openai-codex profiles: $profile_count"',
 		'legacy_main="$state_dir/agents/main/agent/auth-profiles.json"',
 		'if [ -f "$legacy_main" ]; then',
-		'  echo "WARNING: $legacy_main exists; this can shadow per-agent OpenClaw auth profiles." >&2',
+		'  echo "WARNING: $legacy_main exists. If main is not an intentionally configured agent/global auth profile, it may shadow per-agent OpenClaw auth profiles." >&2',
 		'fi',
 		'if [ -d "$state_dir/agents" ]; then',
 		'  if command -v node >/dev/null 2>&1; then',
-		'    node - "$auth_json" "$state_dir/agents" <<\'NODE\' || true',
+		'    if ! node - "$auth_json" "$state_dir/agents" <<\'NODE\'',
 		'const fs = require("node:fs");',
 		'const path = require("node:path");',
 		'const currentAuthPath = process.argv[2];',
 		'const agentsDir = process.argv[3];',
+		'function warning(message) {',
+		'  console.error(`WARNING: ${message}`);',
+		'}',
 		'function readRefreshToken(authPath) {',
 		'  try {',
 		'    const parsed = JSON.parse(fs.readFileSync(authPath, "utf8"));',
 		'    return typeof parsed.refresh_token === "string" && parsed.refresh_token.trim() ? parsed.refresh_token : undefined;',
-		'  } catch {',
+		'  } catch (error) {',
+		'    warning(`could not read Codex auth token metadata from ${authPath}: ${error instanceof Error ? error.message : String(error)}`);',
 		'    return undefined;',
 		'  }',
 		'}',
@@ -125,7 +130,8 @@ function buildCodexHarnessAuthRemoteCommand(agentId: string): string {
 		'let currentAuthBytes;',
 		'try {',
 		'  currentAuthBytes = fs.readFileSync(currentAuthPath);',
-		'} catch {',
+		'} catch (error) {',
+		'  warning(`could not compare current Codex auth bytes from ${currentAuthPath}: ${error instanceof Error ? error.message : String(error)}`);',
 		'  currentAuthBytes = undefined;',
 		'}',
 		'const currentRefreshToken = readRefreshToken(currentAuthPath);',
@@ -136,7 +142,8 @@ function buildCodexHarnessAuthRemoteCommand(agentId: string): string {
 		'  let byteIdentical = false;',
 		'  try {',
 		'    byteIdentical = Boolean(currentAuthBytes?.equals(fs.readFileSync(otherAuthPath)));',
-		'  } catch {',
+		'  } catch (error) {',
+		'    warning(`could not compare Codex auth bytes between ${currentAuthPath} and ${otherAuthPath}: ${error instanceof Error ? error.message : String(error)}`);',
 		'    byteIdentical = false;',
 		'  }',
 		'  const otherRefreshToken = readRefreshToken(otherAuthPath);',
@@ -147,6 +154,9 @@ function buildCodexHarnessAuthRemoteCommand(agentId: string): string {
 		'  }',
 		'}',
 		'NODE',
+		'    then',
+		'      echo "WARNING: shared-refresh-token diagnostic failed." >&2',
+		'    fi',
 		'  else',
 		'    while IFS= read -r other_auth; do',
 		'      if [ "$other_auth" != "$auth_json" ] && cmp -s "$auth_json" "$other_auth"; then',
@@ -156,7 +166,7 @@ function buildCodexHarnessAuthRemoteCommand(agentId: string): string {
 		'  fi',
 		'fi',
 	].join('\n');
-	return `bash -lc ${shellQuote(`${buildSecretLoadedShellPrefix()}${script}`)}`;
+	return wrapWithOpenClawShellEnvironment(script);
 }
 
 function buildSshArguments(
@@ -241,18 +251,16 @@ export async function runCodexHarnessAuthCommand(options: {
 	const parsedSshResponse = zoneSshAccessResponseSchema.safeParse(
 		await controllerClient.enableZoneSsh(options.zone.id, {
 			...(adminToken ? { adminToken } : {}),
-			secretEnv: 'with-secrets',
+			secretEnv: 'default',
 		}),
 	);
 	if (!parsedSshResponse.success) {
-		throw new Error('Controller returned an invalid SSH response.');
-	}
-	const sshResponse = parsedSshResponse.data;
-	if (sshResponse.secretEnvEnabled !== true) {
 		throw new Error(
-			'Controller did not enable gateway secrets for this Codex login session. Check the zone gateway.ssh.secretEnv policy and configured zone secrets.',
+			formatZodError('Controller returned an invalid SSH response:', parsedSshResponse.error),
+			{ cause: parsedSshResponse.error },
 		);
 	}
+	const sshResponse = parsedSshResponse.data;
 
 	const runInteractiveProcess =
 		options.dependencies.runInteractiveProcess ??

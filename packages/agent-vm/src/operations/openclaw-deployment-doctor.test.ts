@@ -692,6 +692,71 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		});
 	});
 
+	it('prefers OpenClaw auth profile hints when both auth profile and Codex harness auth exist', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				configuredAuthProfileAgentIds: ['sun'],
+				configuredCodexHarnessAuthAgentIds: ['sun'],
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'openai-codex/gpt-5.5' },
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'sun' }],
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-sun'),
+		).toMatchObject({
+			ok: true,
+			hint: 'OpenClaw auth profile configured for agent sun',
+		});
+	});
+
+	it('reports Codex harness auth.json read errors separately from missing auth material', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				codexHarnessAuthReadErrors: [
+					{
+						agentId: 'sun',
+						message: 'EACCES: permission denied',
+						path: '/state/agents/sun/agent/codex-home/auth.json',
+					},
+				],
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'openai-codex/gpt-5.5' },
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'sun' }],
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-codex-harness-auth-readable-shravan-sun'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Cannot read Codex harness auth.json at /state/agents/sun/agent/codex-home/auth.json: EACCES: permission denied',
+		});
+		expect(
+			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-sun'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Run agent-vm auth codex-harness --zone shravan --agent sun or configure gateway.authProfilesByAgent.sun.',
+		});
+	});
+
 	it('skips per-agent auth profile checks for non-Codex agents', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{

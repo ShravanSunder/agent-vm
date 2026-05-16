@@ -8,69 +8,9 @@ import {
 	requireZone,
 	resolveControllerBaseUrl,
 } from './agent-vm-cli-support.js';
-import {
-	resolveZoneAdminToken,
-	zoneSshAccessResponseSchema,
-	type ZoneSshAccessResponse,
-} from './ssh-commands.js';
-
-const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
-
-function shellQuote(value: string): string {
-	return `'${value.replace(/'/gu, `'\\''`)}'`;
-}
-
-function wrapWithOpenClawShellEnvironment(command: string): string {
-	return `bash -lc ${shellQuote(`source ${openClawShellEnvFilePath} && ${command}`)}`;
-}
-
-export async function listAuthProviders(options: {
-	readonly listProvidersCommand: string;
-	readonly runCommand?: (
-		command: string,
-		arguments_: readonly string[],
-	) => Promise<{ readonly exitCode: number; readonly stderr: string; readonly stdout: string }>;
-	readonly sshAccess: ZoneSshAccessResponse;
-}): Promise<readonly string[]> {
-	if (!options.sshAccess.host || !options.sshAccess.port) {
-		throw new Error('Cannot list auth providers: controller returned incomplete SSH access.');
-	}
-
-	const runCommand =
-		options.runCommand ??
-		(async (
-			command: string,
-			arguments_: readonly string[],
-		): Promise<{ readonly exitCode: number; readonly stderr: string; readonly stdout: string }> => {
-			const result = await execa(command, arguments_, { reject: false });
-			return {
-				exitCode: result.exitCode ?? 0,
-				stderr: result.stderr,
-				stdout: result.stdout,
-			};
-		});
-	const commandResult = await runCommand('ssh', [
-		'-o',
-		'StrictHostKeyChecking=no',
-		'-o',
-		'UserKnownHostsFile=/dev/null',
-		...(options.sshAccess.identityFile ? ['-i', options.sshAccess.identityFile] : []),
-		'-p',
-		String(options.sshAccess.port),
-		`${options.sshAccess.user ?? 'root'}@${options.sshAccess.host}`,
-		wrapWithOpenClawShellEnvironment(options.listProvidersCommand),
-	]);
-	if (commandResult.exitCode !== 0) {
-		throw new Error(
-			`Failed to list auth providers: ${commandResult.stderr || `ssh exited with ${commandResult.exitCode}`}`,
-		);
-	}
-
-	return commandResult.stdout
-		.split('\n')
-		.map((line) => line.trim())
-		.filter((line) => line.length > 0);
-}
+import { formatZodError } from './format-zod-error.js';
+import { wrapWithOpenClawShellEnvironment } from './openclaw-shell-prefix.js';
+import { resolveZoneAdminToken, zoneSshAccessResponseSchema } from './ssh-commands.js';
 
 export async function runOpenClawAuthCommand(options: {
 	readonly authConfig: GatewayAuthConfig | undefined;
@@ -79,16 +19,11 @@ export async function runOpenClawAuthCommand(options: {
 		| 'createControllerClient'
 		| 'createSecretResolver'
 		| 'resolveServiceAccountToken'
-		| 'runCommand'
 		| 'runInteractiveProcess'
 	>;
 	readonly deviceCode?: boolean;
 	readonly io: CliIo;
 	readonly provider: string;
-	readonly runCommand?: (
-		command: string,
-		arguments_: readonly string[],
-	) => Promise<{ readonly exitCode: number; readonly stderr: string; readonly stdout: string }>;
 	readonly systemConfig: SystemConfig;
 	readonly setDefault?: boolean;
 	readonly zoneId: string;
@@ -118,7 +53,10 @@ export async function runOpenClawAuthCommand(options: {
 		}),
 	);
 	if (!parsedSshResponse.success) {
-		throw new Error('Controller returned an invalid SSH response.');
+		throw new Error(
+			formatZodError('Controller returned an invalid SSH response:', parsedSshResponse.error),
+			{ cause: parsedSshResponse.error },
+		);
 	}
 
 	const sshResponse = parsedSshResponse.data;
