@@ -1,4 +1,4 @@
-import type { SecretResolver } from '@agent-vm/gondolin-adapter';
+import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createCompositeSecretResolver } from './composite-secret-resolver.js';
@@ -98,5 +98,49 @@ describe('createCompositeSecretResolver', () => {
 				OPENAI_API_KEY: { source: '1password', ref: 'op://vault/openai/token' },
 			}),
 		).rejects.toThrow('Failed to resolve 1 secret(s).');
+	});
+
+	it('aggregates environment and onepassword batch failures', async () => {
+		const resolveAllOnePasswordSecrets = vi.fn(
+			async (_refs: Record<string, Extract<SecretRef, { readonly source: '1password' }>>) => {
+				throw new AggregateError(
+					[
+						new Error(
+							"Failed to resolve secret 'OPENAI_API_KEY' from 'op://vault/openai/token': missing item",
+						),
+					],
+					'Failed to resolve 1 secret(s).',
+				);
+			},
+		);
+		const onePasswordResolver: SecretResolver = {
+			resolve: vi.fn(async () => {
+				throw new Error('single resolver should not be used');
+			}),
+			resolveAll: resolveAllOnePasswordSecrets,
+		};
+		const resolver = createCompositeSecretResolver(onePasswordResolver, {});
+
+		try {
+			await resolver.resolveAll({
+				GITHUB_TOKEN: { source: 'environment', ref: 'GITHUB_TOKEN' },
+				OPENAI_API_KEY: { source: '1password', ref: 'op://vault/openai/token' },
+			});
+			throw new Error('Expected resolveAll to throw an aggregate failure.');
+		} catch (error) {
+			expect(error).toBeInstanceOf(AggregateError);
+			if (!(error instanceof AggregateError)) {
+				return;
+			}
+			expect(error.message).toBe('Failed to resolve 2 secret(s).');
+			expect(error.errors.map((failure: unknown) => String(failure))).toEqual([
+				"Error: Failed to resolve secret 'GITHUB_TOKEN' from 'GITHUB_TOKEN': Environment variable 'GITHUB_TOKEN' is not set.",
+				"Error: Failed to resolve secret 'OPENAI_API_KEY' from 'op://vault/openai/token': missing item",
+			]);
+		}
+		expect(resolveAllOnePasswordSecrets).toHaveBeenCalledTimes(1);
+		expect(resolveAllOnePasswordSecrets).toHaveBeenCalledWith({
+			OPENAI_API_KEY: { source: '1password', ref: 'op://vault/openai/token' },
+		});
 	});
 });

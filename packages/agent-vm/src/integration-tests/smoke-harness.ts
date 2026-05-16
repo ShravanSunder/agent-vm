@@ -469,13 +469,15 @@ export async function prepareLocalWorkerPackageForGatewayImage(repoRoot: string)
 		cwd: path.join(repoRoot, 'packages', 'agent-vm-worker'),
 		stdio: 'pipe',
 	});
-	const packedTarballName = execFileSync('sh', ['-lc', 'ls *.tgz | tail -n 1'], {
-		cwd: packDirectory,
-		encoding: 'utf8',
-		stdio: 'pipe',
-	}).trim();
-	if (packedTarballName.length === 0) {
+	const packedTarballs = (await fs.readdir(packDirectory)).filter((fileName) =>
+		fileName.endsWith('.tgz'),
+	);
+	const [packedTarballName] = packedTarballs;
+	if (packedTarballName === undefined) {
 		throw new Error('Failed to pack local agent-vm-worker tarball for smoke image.');
+	}
+	if (packedTarballs.length > 1) {
+		throw new Error('Expected pnpm pack to produce exactly one agent-vm-worker tarball.');
 	}
 	return path.join(packDirectory, packedTarballName);
 }

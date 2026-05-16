@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 import {
+	prepareLocalWorkerPackageForGatewayImage,
 	scaffoldGatewaySmokeProject,
 	shouldRunWorkerGatewaySmoke,
 	useLocalOpenClawGatewayImagePackages,
@@ -196,6 +197,33 @@ describe('startSmokeControllerRuntime', () => {
 		expect(dockerfile).toContain('/home/openclaw/.openclaw/extensions/mcp-portal');
 		expect(dockerfile).toContain('/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server');
 		expect(dockerfile).not.toMatch(/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u);
+	});
+});
+
+describe('prepareLocalWorkerPackageForGatewayImage', () => {
+	it('packs the local worker package and returns the generated tarball path', async () => {
+		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-worker-pack-'));
+		const workerPackageDir = path.join(temporaryRoot, 'packages', 'agent-vm-worker');
+		await fs.mkdir(workerPackageDir, { recursive: true });
+		await fs.writeFile(
+			path.join(workerPackageDir, 'package.json'),
+			JSON.stringify(
+				{
+					name: '@agent-vm/fake-worker-pack-fixture',
+					version: '0.0.0',
+					files: ['index.js'],
+				},
+				null,
+				2,
+			),
+		);
+		await fs.writeFile(path.join(workerPackageDir, 'index.js'), 'export {};\n');
+
+		const tarballPath = await prepareLocalWorkerPackageForGatewayImage(temporaryRoot);
+		const packedFiles = await fs.readdir(path.dirname(tarballPath));
+
+		expect(path.basename(tarballPath)).toBe('agent-vm-fake-worker-pack-fixture-0.0.0.tgz');
+		expect(packedFiles).toEqual(['agent-vm-fake-worker-pack-fixture-0.0.0.tgz']);
 	});
 });
 
