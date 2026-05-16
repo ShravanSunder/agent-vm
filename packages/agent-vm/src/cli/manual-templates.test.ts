@@ -95,7 +95,10 @@ describe('manual templates', () => {
 			'Do not use it as a one-shot command runner',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
-			'agent-vm auth-interactive <provider> --zone <zoneId>',
+			'agent-vm auth openclaw <provider> --zone <zoneId>',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'agent-vm auth codex-harness --zone <zoneId> --agent <agentId>',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).not.toContain(
 			'controller ssh -- <remote command>',

@@ -72,7 +72,7 @@ export async function listAuthProviders(options: {
 		.filter((line) => line.length > 0);
 }
 
-export async function runAuthInteractiveCommand(options: {
+export async function runOpenClawAuthCommand(options: {
 	readonly authConfig: GatewayAuthConfig | undefined;
 	readonly dependencies: Pick<
 		CliDependencies,
@@ -93,6 +93,11 @@ export async function runAuthInteractiveCommand(options: {
 	readonly setDefault?: boolean;
 	readonly zoneId: string;
 }): Promise<void> {
+	if (options.provider === 'openai-codex') {
+		throw new Error(
+			`Refusing to run OpenClaw provider login for 'openai-codex'. Use 'agent-vm auth codex-harness --zone ${options.zoneId} --agent <agentId>' for native Codex CLI auth, or use provider 'openai' for OpenClaw-managed auth.`,
+		);
+	}
 	if (!options.authConfig) {
 		throw new Error(`Zone '${options.zoneId}' does not support interactive auth.`);
 	}

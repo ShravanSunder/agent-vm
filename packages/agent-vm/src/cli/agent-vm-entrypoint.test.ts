@@ -8,7 +8,7 @@ import { ZodError } from 'zod';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { ControllerClient } from '../controller/http/controller-client.js';
-import { defaultCliDependencies } from './agent-vm-cli-support.js';
+import { defaultCliDependencies, type CliDependencies } from './agent-vm-cli-support.js';
 import {
 	handleCliMainError,
 	isCliEntrypoint,
@@ -89,6 +89,23 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 				defaultToolVmProfile: 'standard',
 				agentToolVmProfiles: {},
 				websocketBypass: [],
+			},
+		],
+	};
+}
+
+function createCliBuildSystemConfigWithAgents(): LoadedSystemConfig {
+	const systemConfig = createCliBuildSystemConfig();
+	const zone = systemConfig.zones[0];
+	if (!zone) {
+		throw new Error('Expected CLI test config to include a zone.');
+	}
+	return {
+		...systemConfig,
+		zones: [
+			{
+				...zone,
+				agents: [{ id: 'shravan' }, { id: 'ember' }],
 			},
 		],
 	};
@@ -968,11 +985,11 @@ describe('runAgentVmCli', () => {
 		expect(stdoutChunks.join('')).toContain('"ok": true');
 	});
 
-	it('routes auth to an interactive SSH-backed OpenClaw login', async () => {
+	it('routes auth openclaw to an interactive SSH-backed OpenClaw login', async () => {
 		const runInteractiveProcess = vi.fn(async () => {});
 
 		await runAgentVmCli(
-			['auth-interactive', 'codex', '--zone', 'shravan'],
+			['auth', 'openclaw', 'codex', '--zone', 'shravan'],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -1006,11 +1023,11 @@ describe('runAgentVmCli', () => {
 		]);
 	});
 
-	it('passes auth-interactive device-code and set-default flags to the login command', async () => {
+	it('passes auth openclaw device-code and set-default flags to the login command', async () => {
 		const runInteractiveProcess = vi.fn(async () => {});
 
 		await runAgentVmCli(
-			['auth-interactive', 'openai-codex', '--zone', 'shravan', '--device-code', '--set-default'],
+			['auth', 'openclaw', 'openai', '--zone', 'shravan', '--device-code', '--set-default'],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
@@ -1038,11 +1055,11 @@ describe('runAgentVmCli', () => {
 		);
 	});
 
-	it('auth-interactive without --zone shows available zones', async () => {
+	it('auth openclaw without --zone shows available zones', async () => {
 		const stderrChunks: string[] = [];
 		await expect(
 			runAgentVmCli(
-				['auth-interactive', 'codex'],
+				['auth', 'openclaw', 'codex'],
 				{
 					stderr: {
 						write: (s: string) => {
@@ -1957,6 +1974,117 @@ describe('runAgentVmCli', () => {
 			'ssh',
 			expect.arrayContaining([expect.stringContaining('/run/openclaw/secrets.env')]),
 		);
+	});
+
+	it('routes auth codex-harness to native per-agent Codex CLI auth', async () => {
+		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
+			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
+		);
+
+		await runAgentVmCli(
+			['auth', 'codex-harness', '--zone', 'shravan', '--agent', 'shravan'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () =>
+					createControllerClientStub(async () => ({
+						host: '127.0.0.1',
+						port: 2222,
+						secretEnvEnabled: true,
+						user: 'root',
+					})),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
+				runInteractiveProcess,
+			},
+		);
+
+		const sshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
+		if (!sshArguments) {
+			throw new Error('Expected Codex login to invoke ssh.');
+		}
+		expect(sshArguments).toEqual(
+			expect.arrayContaining(['-t', 'root@127.0.0.1', expect.stringContaining('agent_id=')]),
+		);
+		const remoteCommand = sshArguments?.at(-1);
+		expect(remoteCommand).toEqual(expect.stringContaining('shravan'));
+		expect(remoteCommand).toEqual(expect.stringContaining('CODEX_HOME="$codex_home"'));
+		expect(remoteCommand).toEqual(expect.stringContaining('login --device-auth'));
+		expect(remoteCommand).toEqual(expect.stringContaining('auth.json: present'));
+		expect(remoteCommand).toEqual(expect.stringContaining('openai-codex profiles:'));
+		expect(remoteCommand).toEqual(expect.stringContaining('auth-profiles.json'));
+		expect(remoteCommand).toEqual(
+			expect.stringContaining('Could not read OpenClaw auth profile count'),
+		);
+		expect(remoteCommand).toEqual(expect.stringContaining('share a Codex refresh token'));
+		expect(remoteCommand).not.toEqual(expect.stringContaining('openclaw models auth login'));
+	});
+
+	it('rejects unsafe auth codex-harness agent ids before opening ssh', async () => {
+		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
+			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
+		);
+
+		await expect(
+			runAgentVmCli(
+				['auth', 'codex-harness', '--zone', 'shravan', '--agent', '../main'],
+				{
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				{
+					...defaultCliDependencies,
+					createControllerClient: () =>
+						createControllerClientStub(async () => ({
+							host: '127.0.0.1',
+							port: 2222,
+							secretEnvEnabled: true,
+							user: 'root',
+						})),
+					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
+					runInteractiveProcess,
+				},
+			),
+		).rejects.toThrow('agent id must start with a lowercase letter or number');
+
+		expect(runInteractiveProcess).not.toHaveBeenCalled();
+	});
+
+	it('routes auth codex-harness --all-agents one native login per configured agent', async () => {
+		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
+			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
+		);
+
+		await runAgentVmCli(
+			['auth', 'codex-harness', '--zone', 'shravan', '--all-agents'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () =>
+					createControllerClientStub(async () => ({
+						host: '127.0.0.1',
+						port: 2222,
+						secretEnvEnabled: true,
+						user: 'root',
+					})),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
+				runInteractiveProcess,
+			},
+		);
+
+		expect(runInteractiveProcess).toHaveBeenCalledTimes(2);
+		const firstSshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
+		const secondSshArguments = vi.mocked(runInteractiveProcess).mock.calls[1]?.[1];
+		if (!firstSshArguments || !secondSshArguments) {
+			throw new Error('Expected one ssh invocation per agent.');
+		}
+		expect(firstSshArguments.at(-1)).toEqual(expect.stringContaining('shravan'));
+		expect(secondSshArguments.at(-1)).toEqual(expect.stringContaining('ember'));
 	});
 
 	it('routes controller stop through the controller client', async () => {

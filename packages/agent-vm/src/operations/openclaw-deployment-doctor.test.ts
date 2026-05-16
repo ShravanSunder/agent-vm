@@ -21,6 +21,7 @@ function createSystemConfig(
 	openClawConfigPath: string,
 	authProfilesByAgent: Record<string, { readonly ref: string; readonly source: '1password' }> = {},
 	mcpConfigDir?: string,
+	stateDir = './state/shravan',
 ): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
@@ -67,7 +68,7 @@ function createSystemConfig(
 						memory: '2G',
 						config: openClawConfigPath,
 						port: 18791,
-						stateDir: './state/shravan',
+						stateDir,
 						zoneFilesDir: './zone-files/shravan',
 						authProfilesByAgent,
 					},
@@ -681,13 +682,13 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-sun'),
 		).toMatchObject({
 			ok: true,
-			hint: 'auth profile configured for agent sun',
+			hint: 'OpenClaw auth profile configured for agent sun',
 		});
 		expect(
 			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Configure gateway.authProfilesByAgent.shravan or run OpenClaw auth onboarding for agent shravan.',
+			hint: 'Run agent-vm auth codex-harness --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
 		});
 	});
 
@@ -808,6 +809,57 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 			).toMatchObject({
 				ok: true,
 				hint: openClawConfigPath,
+			});
+		} finally {
+			await rm(temporaryDirectory, { force: true, recursive: true });
+		}
+	});
+
+	it('accepts Codex harness auth.json as per-agent Codex auth material', async () => {
+		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-doctor-'));
+		const configDirectory = path.join(temporaryDirectory, 'config');
+		const openClawConfigPath = path.join(configDirectory, 'openclaw.json');
+		const stateDir = path.join(temporaryDirectory, 'state', 'shravan');
+		await mkdir(configDirectory, { recursive: true });
+		await mkdir(path.join(stateDir, 'agents', 'sun', 'agent', 'codex-home'), {
+			recursive: true,
+		});
+		await writeFile(
+			path.join(stateDir, 'agents', 'sun', 'agent', 'codex-home', 'auth.json'),
+			'{}',
+			'utf8',
+		);
+		await writeFile(
+			openClawConfigPath,
+			JSON.stringify({
+				agents: {
+					defaults: {
+						model: { primary: 'openai-codex/gpt-5.5' },
+						sandbox: openClawToolVmSandbox,
+						workspace: '/zone/agents/default',
+					},
+					list: [{ id: 'sun' }, { id: 'shravan' }],
+				},
+			}),
+			'utf8',
+		);
+
+		try {
+			const checks = await collectOpenClawDeploymentDoctorChecks(
+				createSystemConfig(openClawConfigPath, {}, undefined, stateDir),
+			);
+
+			expect(
+				checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-sun'),
+			).toMatchObject({
+				ok: true,
+				hint: 'Codex harness auth.json present for agent sun',
+			});
+			expect(
+				checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-shravan'),
+			).toMatchObject({
+				ok: false,
+				hint: 'Run agent-vm auth codex-harness --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
 			});
 		} finally {
 			await rm(temporaryDirectory, { force: true, recursive: true });

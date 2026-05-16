@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SystemConfig } from '../config/system-config.js';
 import type { ControllerClient } from '../controller/http/controller-client.js';
 import { defaultCliDependencies } from './agent-vm-cli-support.js';
-import { listAuthProviders, runAuthInteractiveCommand } from './auth-interactive-command.js';
+import { listAuthProviders, runOpenClawAuthCommand } from './openclaw-auth-command.js';
 
 function createControllerClientStub(overrides?: {
 	readonly enableZoneSsh?: ControllerClient['enableZoneSsh'];
@@ -155,10 +155,29 @@ describe('listAuthProviders', () => {
 	});
 });
 
-describe('runAuthInteractiveCommand', () => {
+describe('runOpenClawAuthCommand', () => {
+	it('refuses the legacy OpenClaw openai-codex login path', async () => {
+		await expect(
+			runOpenClawAuthCommand({
+				authConfig,
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: vi.fn(),
+					runInteractiveProcess: vi.fn(),
+				},
+				io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
+				provider: 'openai-codex',
+				systemConfig,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(
+			"Refusing to run OpenClaw provider login for 'openai-codex'. Use 'agent-vm auth codex-harness --zone shravan --agent <agentId>' for native Codex CLI auth, or use provider 'openai' for OpenClaw-managed auth.",
+		);
+	});
+
 	it('throws when the lifecycle has no authConfig', async () => {
 		await expect(
-			runAuthInteractiveCommand({
+			runOpenClawAuthCommand({
 				authConfig: undefined,
 				dependencies: {
 					...defaultCliDependencies,
@@ -184,7 +203,7 @@ describe('runAuthInteractiveCommand', () => {
 			user: 'root',
 		}));
 
-		await runAuthInteractiveCommand({
+		await runOpenClawAuthCommand({
 			authConfig,
 			dependencies: {
 				...defaultCliDependencies,
@@ -228,7 +247,7 @@ describe('runAuthInteractiveCommand', () => {
 			throw new Error('Expected test zone.');
 		}
 
-		await runAuthInteractiveCommand({
+		await runOpenClawAuthCommand({
 			authConfig,
 			dependencies: {
 				...defaultCliDependencies,
@@ -274,7 +293,7 @@ describe('runAuthInteractiveCommand', () => {
 	it('passes device-code and set-default options into the login command', async () => {
 		const runInteractiveProcess = vi.fn(async () => {});
 
-		await runAuthInteractiveCommand({
+		await runOpenClawAuthCommand({
 			authConfig,
 			deviceCode: true,
 			dependencies: {
@@ -291,7 +310,7 @@ describe('runAuthInteractiveCommand', () => {
 				runInteractiveProcess,
 			},
 			io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
-			provider: 'openai-codex',
+			provider: 'openai',
 			setDefault: true,
 			systemConfig,
 			zoneId: 'shravan',
@@ -300,7 +319,7 @@ describe('runAuthInteractiveCommand', () => {
 		expect(runInteractiveProcess).toHaveBeenCalledWith(
 			'ssh',
 			expect.arrayContaining([
-				expect.stringContaining('login --provider openai-codex --device-code --set-default'),
+				expect.stringContaining('login --provider openai --device-code --set-default'),
 			]),
 		);
 	});
@@ -316,7 +335,7 @@ describe('runAuthInteractiveCommand', () => {
 		}));
 
 		await expect(
-			runAuthInteractiveCommand({
+			runOpenClawAuthCommand({
 				authConfig,
 				dependencies: {
 					...defaultCliDependencies,
