@@ -91,8 +91,27 @@ export interface OpenClawPluginService {
 	readonly stop?: () => Promise<void> | void;
 }
 
+export type OpenClawPluginHostCleanupReason = 'disable' | 'reset' | 'delete' | 'restart';
+
+export interface OpenClawRuntimeLifecycleRegistration {
+	readonly id: string;
+	readonly description?: string;
+	readonly cleanup?: (context: {
+		readonly reason: OpenClawPluginHostCleanupReason;
+		readonly sessionKey?: string;
+		readonly runId?: string;
+	}) => Promise<void> | void;
+}
+
+export type OpenClawRuntimeLifecycleRegistrar = (
+	lifecycle: OpenClawRuntimeLifecycleRegistration,
+) => void;
+
 export interface OpenClawPortalPluginApi {
 	readonly config?: unknown;
+	readonly lifecycle?: {
+		readonly registerRuntimeLifecycle: OpenClawRuntimeLifecycleRegistrar;
+	};
 	readonly logger?: {
 		readonly debug?: (message: string) => void;
 		readonly error?: (message: string) => void;
@@ -101,6 +120,8 @@ export interface OpenClawPortalPluginApi {
 	};
 	readonly pluginConfig?: unknown;
 	readonly registrationMode?: string;
+	readonly registerRuntimeLifecycle?: OpenClawRuntimeLifecycleRegistrar;
+	readonly registerService?: (service: OpenClawPluginService) => void;
 	readonly on?: <THookName extends keyof OpenClawPluginHookEventMap>(
 		hookName: THookName,
 		handler: (
@@ -112,11 +133,9 @@ export interface OpenClawPortalPluginApi {
 			| void,
 		options?: OpenClawPluginHookOptions,
 	) => void;
-	readonly onDispose?: (cleanup: () => Promise<void> | void) => void;
 	readonly registerPromptHook?: (
 		hookName: 'agent_turn_prepare' | 'before_prompt_build',
 		handler: (context: OpenClawPromptHookContext) => Promise<void> | void,
 	) => void;
 	readonly registerHttpRoute?: (registration: OpenClawHttpRouteRegistration) => void;
-	readonly registerService?: (service: OpenClawPluginService) => void;
 }

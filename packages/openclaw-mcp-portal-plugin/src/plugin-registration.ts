@@ -109,9 +109,35 @@ export function validatePortalPluginApi(api: OpenClawPortalPluginApi): void {
 	if (!hasFunction(api.on) && !hasFunction(api.registerPromptHook)) {
 		throw new Error('MCP Portal plugin requires OpenClaw prompt hook registration API.');
 	}
-	if (!hasFunction(api.onDispose)) {
-		throw new Error('MCP Portal plugin requires an OpenClaw lifecycle cleanup API.');
+	const hasLifecycleCleanupApi =
+		hasFunction(api.lifecycle?.registerRuntimeLifecycle) ||
+		hasFunction(api.registerRuntimeLifecycle);
+	if (hasLifecycleCleanupApi) {
+		return;
 	}
+	throw new Error('MCP Portal plugin requires an OpenClaw lifecycle cleanup API.');
+}
+
+function registerPortalRuntimeCleanup(
+	api: OpenClawPortalPluginApi,
+	cleanup: () => Promise<void> | void,
+): void {
+	const runtimeLifecycle = {
+		cleanup: async () => {
+			await cleanup();
+		},
+		description: 'Stops the MCP Portal subprocess supervised by the agent-vm plugin.',
+		id: 'mcp-portal-subprocess',
+	} satisfies Parameters<NonNullable<OpenClawPortalPluginApi['registerRuntimeLifecycle']>>[0];
+	if (hasFunction(api.lifecycle?.registerRuntimeLifecycle)) {
+		api.lifecycle.registerRuntimeLifecycle(runtimeLifecycle);
+		return;
+	}
+	if (hasFunction(api.registerRuntimeLifecycle)) {
+		api.registerRuntimeLifecycle(runtimeLifecycle);
+		return;
+	}
+	throw new Error('MCP Portal plugin requires an OpenClaw lifecycle cleanup API.');
 }
 
 function registerPortalService(props: {
@@ -188,7 +214,7 @@ export function registerMcpPortalPlugin(api: OpenClawPortalPluginApi): void {
 		});
 	}
 
-	api.onDispose?.(() => registeredService.getSupervisor()?.stop());
+	registerPortalRuntimeCleanup(api, () => registeredService.getSupervisor()?.stop());
 	void runtimeState.loadPortalConfig().catch((error: unknown) => {
 		api.logger?.error?.(
 			`[mcp-portal] failed to initialize portal config: ${messageFromUnknown(error)}`,

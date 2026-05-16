@@ -1930,11 +1930,11 @@ describe('runAgentVmCli', () => {
 		expect(outputs.join('\n')).toContain('"zoneId": "shravan"');
 	});
 
-	it('routes controller ssh with secrets through the ssh command handler', async () => {
+	it('routes controller ssh through the secret-loaded ssh command handler', async () => {
 		const runInteractiveProcess = vi.fn(async () => {});
 
 		await runAgentVmCli(
-			['controller', 'ssh', '--zone', 'shravan', '--with-secrets'],
+			['controller', 'ssh', '--zone', 'shravan'],
 			{
 				stderr: { write: () => true },
 				stdout: { write: () => true },
