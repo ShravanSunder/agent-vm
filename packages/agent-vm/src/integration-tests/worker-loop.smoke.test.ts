@@ -14,15 +14,7 @@ import { scaffoldAgentVmProject } from '../cli/init-command.js';
 import { loadSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 import { executeWorkerTask, prepareWorkerTask } from '../controller/worker-task-runner.js';
-
-function hasCommand(command: string): boolean {
-	try {
-		execFileSync('sh', ['-lc', `command -v ${command} >/dev/null`], { stdio: 'ignore' });
-		return true;
-	} catch {
-		return false;
-	}
-}
+import { currentSmokeArchitecture, shouldRunWorkerGatewaySmoke } from './smoke-harness.js';
 
 function rebuildWorkerPackages(repoRoot: string): void {
 	execFileSync('pnpm', ['build'], {
@@ -108,11 +100,8 @@ async function prepareLocalWorkerPackageForGatewayImage(repoRoot: string): Promi
 	return path.join(packDirectory, packedTarballName);
 }
 
-const runWorkerSmoke =
-	typeof process.env.OPEN_AI_TEST_KEY === 'string' &&
-	process.env.OPEN_AI_TEST_KEY.length > 0 &&
-	hasCommand('qemu-system-x86_64') &&
-	hasCommand('zig');
+const architecture = currentSmokeArchitecture();
+const runWorkerSmoke = shouldRunWorkerGatewaySmoke({ architecture });
 
 const describeWorkerSmoke = runWorkerSmoke ? describe : describe.skip;
 
@@ -203,7 +192,7 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 			targetDir: tempRoot,
 			zoneId: 'worker-smoke',
 			gatewayType: 'worker',
-			architecture: 'aarch64',
+			architecture,
 			secretsProvider: '1password',
 		});
 		const scaffoldCachePath = path.join(os.tmpdir(), 'agent-vm-smoke-cache');

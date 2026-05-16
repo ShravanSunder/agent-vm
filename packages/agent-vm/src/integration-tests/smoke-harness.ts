@@ -68,6 +68,23 @@ export function canRunGondolinSmoke(architecture: ImageArchitecture): boolean {
 	);
 }
 
+export function shouldRunWorkerGatewaySmoke(options: {
+	readonly architecture: ImageArchitecture;
+	readonly commandExists?: (command: string) => boolean;
+	readonly env?: Partial<Record<'AGENT_VM_WORKER_LOOP_SMOKE' | 'OPEN_AI_TEST_KEY', string>>;
+}): boolean {
+	const env = options.env ?? process.env;
+	const commandExists = options.commandExists ?? hasCommand;
+	return (
+		env.AGENT_VM_WORKER_LOOP_SMOKE === '1' &&
+		typeof env.OPEN_AI_TEST_KEY === 'string' &&
+		env.OPEN_AI_TEST_KEY.length > 0 &&
+		commandExists(qemuCommandForArchitecture(options.architecture)) &&
+		commandExists('zig') &&
+		commandExists('docker')
+	);
+}
+
 export function rebuildWorkspacePackages(repoRoot: string): void {
 	execFileSync('pnpm', ['build'], {
 		cwd: repoRoot,
