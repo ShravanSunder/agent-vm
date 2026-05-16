@@ -14,6 +14,10 @@ import type { ManagedVm } from '@agent-vm/gondolin-adapter';
  */
 import { describe, it, expect, afterAll } from 'vitest';
 
+import { shouldRunLiveVmIntegration } from './live-integration-gates.js';
+
+const describeLiveVmIntegration = shouldRunLiveVmIntegration() ? describe : describe.skip;
+
 async function fetchIngressUntilReady(url: string, attempt = 0): Promise<Response> {
 	const response = await fetch(url);
 	if (response.status !== 502 || attempt >= 30) {
@@ -23,7 +27,7 @@ async function fetchIngressUntilReady(url: string, attempt = 0): Promise<Respons
 	return await fetchIngressUntilReady(url, attempt + 1);
 }
 
-describe('live smoke: real Gondolin VM', () => {
+describeLiveVmIntegration('live smoke: real Gondolin VM', () => {
 	let vm: ManagedVm | null = null;
 
 	afterAll(async () => {

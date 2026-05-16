@@ -20,6 +20,9 @@ export default defineConfig({
 			'@agent-vm/openclaw-agent-vm-plugin': repoPath(
 				'packages/openclaw-agent-vm-plugin/src/index.ts',
 			),
+			'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server': repoPath(
+				'packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts',
+			),
 			'@agent-vm/mcp-portal': repoPath('packages/mcp-portal/src/index.ts'),
 			'@agent-vm/openclaw-mcp-portal-plugin': repoPath(
 				'packages/openclaw-mcp-portal-plugin/src/index.ts',

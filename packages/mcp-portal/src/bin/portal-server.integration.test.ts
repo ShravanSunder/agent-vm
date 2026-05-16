@@ -6,23 +6,17 @@ import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { serve, type ServerType } from '@hono/node-server';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import {
-	CallToolRequestSchema,
-	ListToolsRequestSchema,
-	type CallToolResult,
-	type Tool,
-} from '@modelcontextprotocol/sdk/types.js';
-import { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { portalHmacKeyEnvName } from '../auth/hmac-env.js';
 import { hashCallArguments, signApprovalToken } from '../auth/hmac-token.js';
+import {
+	startFakeUpstreamMcpServer,
+	type StartedFakeUpstreamMcpServer,
+} from '../testing/fake-upstream-mcp-server.js';
 
 const agentId = 'shravan';
 const namespace = 'upstream-mock';
@@ -30,16 +24,7 @@ const portalAccessHeaderName = 'x-agent-vm-mcp-portal-secret';
 const portalAccessSecret = 'portal-server-secret';
 const hmacKey = Buffer.from('a'.repeat(64), 'hex');
 
-interface UpstreamToolCallRecord {
-	readonly argumentsValue: unknown;
-	readonly name: string;
-}
-
-interface StartedUpstreamServer {
-	readonly calls: readonly UpstreamToolCallRecord[];
-	readonly close: () => Promise<void>;
-	readonly url: string;
-}
+type StartedUpstreamServer = StartedFakeUpstreamMcpServer;
 
 interface ChildOutput {
 	stderr: string;
@@ -53,11 +38,6 @@ interface StartedPortalProcess {
 	readonly output: ChildOutput;
 }
 
-interface StartedHonoServer {
-	readonly port: number;
-	readonly server: ServerType;
-}
-
 interface PortalClientHandle {
 	readonly client: Client;
 	readonly close: () => Promise<void>;
@@ -65,26 +45,6 @@ interface PortalClientHandle {
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-async function closeServer(server: ServerType): Promise<void> {
-	await new Promise<void>((resolve, reject) => {
-		server.close((error) => {
-			if (error) {
-				reject(error);
-			} else {
-				resolve();
-			}
-		});
-	});
-}
-
-async function serveHonoOnOpenPort(app: Hono): Promise<StartedHonoServer> {
-	return await new Promise<StartedHonoServer>((resolve) => {
-		const server = serve({ fetch: app.fetch, hostname: '127.0.0.1', port: 0 }, (info) => {
-			resolve({ port: info.port, server });
-		});
-	});
 }
 
 async function findOpenPort(): Promise<number> {
@@ -107,86 +67,6 @@ async function findOpenPort(): Promise<number> {
 			});
 		});
 	});
-}
-
-function createToolResult(name: string, argumentsValue: unknown): CallToolResult {
-	return {
-		content: [
-			{
-				text: JSON.stringify({ arguments: argumentsValue, name, ok: true }),
-				type: 'text',
-			},
-		],
-		structuredContent: { name, ok: true },
-	};
-}
-
-function createUpstreamTools(): readonly Tool[] {
-	return [
-		{
-			annotations: { destructiveHint: false, readOnlyHint: true },
-			description: 'Reads a mock record.',
-			inputSchema: {
-				additionalProperties: false,
-				properties: { title: { type: 'string' } },
-				required: ['title'],
-				type: 'object',
-			},
-			name: 'read_thing',
-		},
-		{
-			annotations: { destructiveHint: true },
-			description: 'Writes a mock record.',
-			inputSchema: {
-				additionalProperties: false,
-				properties: { title: { type: 'string' } },
-				required: ['title'],
-				type: 'object',
-			},
-			name: 'write_thing',
-		},
-	] satisfies readonly Tool[];
-}
-
-async function startUpstreamMcpServer(): Promise<StartedUpstreamServer> {
-	const calls: UpstreamToolCallRecord[] = [];
-	const tools = createUpstreamTools();
-	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
-	const app = new Hono();
-
-	app.all('/mcp', async (context) => {
-		const transport = new WebStandardStreamableHTTPServerTransport();
-		const server = new Server(
-			{ name: 'portal-upstream-fixture', version: '1.0.0' },
-			{ capabilities: { tools: { listChanged: false } } },
-		);
-
-		server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
-		server.setRequestHandler(CallToolRequestSchema, async (request) => {
-			const tool = toolsByName.get(request.params.name);
-			if (tool === undefined) {
-				return {
-					content: [{ text: `Unknown tool ${request.params.name}`, type: 'text' }],
-					isError: true,
-				};
-			}
-			const argumentsValue = request.params.arguments ?? {};
-			calls.push({ argumentsValue, name: tool.name });
-			return createToolResult(tool.name, argumentsValue);
-		});
-
-		await server.connect(transport);
-		return await transport.handleRequest(context.req.raw);
-	});
-
-	const startedServer = await serveHonoOnOpenPort(app);
-	return {
-		calls,
-		close: async () => {
-			await closeServer(startedServer.server);
-		},
-		url: `http://127.0.0.1:${String(startedServer.port)}/mcp`,
-	};
 }
 
 async function writeConfigFiles(props: {
@@ -384,7 +264,7 @@ describe('portal server subprocess integration', () => {
 
 	beforeAll(async () => {
 		configDir = await mkdtemp(join(tmpdir(), 'agent-vm-mcp-portal-subprocess-'));
-		upstreamServer = await startUpstreamMcpServer();
+		upstreamServer = await startFakeUpstreamMcpServer();
 		portalPort = await findOpenPort();
 		await writeConfigFiles({
 			configDir,
