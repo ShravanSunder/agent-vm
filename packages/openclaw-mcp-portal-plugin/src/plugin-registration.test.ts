@@ -89,10 +89,10 @@ describe('plugin registration validation', () => {
 		expect(lifecycleRegistration?.cleanup).toEqual(expect.any(Function));
 	});
 
-	it('keeps the legacy onDispose cleanup fallback', () => {
+	it('supports the OpenClaw runtime lifecycle API without onDispose', () => {
 		const services: OpenClawPluginService[] = [];
 		const hooks: string[] = [];
-		let cleanup: (() => Promise<void> | void) | undefined;
+		let lifecycleRegistration: OpenClawRuntimeLifecycleRegistration | undefined;
 
 		registerMcpPortalPlugin({
 			config: {
@@ -111,11 +111,11 @@ describe('plugin registration validation', () => {
 			): void => {
 				hooks.push(hookName);
 			},
-			onDispose: (callback) => {
-				cleanup = callback;
-			},
 			pluginConfig: {
 				configDir: '/config/gateways/sunclaw',
+			},
+			registerRuntimeLifecycle: (lifecycle) => {
+				lifecycleRegistration = lifecycle;
 			},
 			registerService: (service) => {
 				services.push(service);
@@ -125,6 +125,9 @@ describe('plugin registration validation', () => {
 		expect(services).toHaveLength(1);
 		expect(services[0]).toMatchObject({ id: 'mcp-portal-subprocess' });
 		expect(hooks).toEqual(['before_tool_call', 'before_prompt_build']);
-		expect(cleanup).toEqual(expect.any(Function));
+		expect(lifecycleRegistration).toMatchObject({
+			id: 'mcp-portal-subprocess',
+		});
+		expect(lifecycleRegistration?.cleanup).toEqual(expect.any(Function));
 	});
 });
