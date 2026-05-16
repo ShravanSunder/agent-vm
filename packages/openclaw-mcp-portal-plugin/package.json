@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/openclaw-mcp-portal-plugin",
-	"version": "0.0.60",
+	"version": "0.0.62",
 	"description": "OpenClaw plugin that supervises per-agent MCP Portal endpoints over configured upstream MCP servers.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
