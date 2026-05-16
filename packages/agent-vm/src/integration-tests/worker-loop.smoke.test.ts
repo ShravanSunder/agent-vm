@@ -132,6 +132,7 @@ describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 			harness = await startSmokeControllerRuntime({
 				secrets: {
 					OPEN_AI_TEST_KEY: process.env.OPEN_AI_TEST_KEY ?? '',
+					'op://agent-vm/github-token/credential': process.env.OPEN_AI_TEST_KEY ?? '',
 				},
 				startOptions: {
 					systemConfig: project.systemConfig,

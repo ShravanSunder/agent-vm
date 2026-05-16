@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { createSecretResolverFromSystemConfig } from '../controller/controller-runtime-support.js';
+import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 
 type FakeManagedVmInstance = ManagedVmInstance & {
@@ -121,6 +122,12 @@ describe('smoke: gateway startup secret resolution', () => {
 						stateDir,
 					},
 					secrets: {
+						ENV_ONLY_TOKEN: {
+							source: 'environment',
+							envVar: 'SECRET_SMOKE_ENV_ONLY_TOKEN',
+							injection: 'env',
+							audience: 'gateway',
+						},
 						OPENCLAW_GATEWAY_TOKEN: {
 							source: '1password',
 							ref: 'op://agent-vm/secret-smoke-gateway/password',
@@ -133,6 +140,13 @@ describe('smoke: gateway startup secret resolution', () => {
 							injection: 'http-mediation',
 							audience: 'gateway',
 							hosts: ['api.perplexity.ai'],
+						},
+						TOOL_VM_HTTP_TOKEN: {
+							source: '1password',
+							ref: 'op://agent-vm/secret-smoke-tool-vm/credential',
+							injection: 'http-mediation',
+							audience: 'tool-vm',
+							hosts: ['api.example.test'],
 						},
 					},
 					egressHosts: [{ host: 'api.perplexity.ai', audience: 'gateway' }],
@@ -166,6 +180,8 @@ describe('smoke: gateway startup secret resolution', () => {
 			createInnerResolver,
 			async () => 'service-token',
 		);
+		const previousEnvOnlyToken = process.env.SECRET_SMOKE_ENV_ONLY_TOKEN;
+		process.env.SECRET_SMOKE_ENV_ONLY_TOKEN = 'env-only-token';
 
 		const lifecycle: GatewayLifecycle = {
 			buildProcessSpec: () => ({
@@ -187,32 +203,40 @@ describe('smoke: gateway startup secret resolution', () => {
 			prepareHostState: async () => {},
 		};
 
-		await startGatewayZone(
-			{
-				secretResolver,
-				systemConfig,
-				zoneId: 'secret-smoke',
-			},
-			{
-				buildImage: async () => ({
-					built: false,
-					fingerprint: 'gateway-secret-resolution-smoke',
-					imagePath: path.join(tempRoot, 'image'),
-				}),
-				cleanupOrphanedGatewayIfPresent: async () => ({
-					cleanedUp: false,
-					killedPid: null,
-				}),
-				createManagedVm: async () => createFakeManagedVm(),
-				loadBuildConfig: async () =>
-					({
-						arch: 'aarch64',
-						distro: 'alpine',
-					}) satisfies BuildConfig,
-				loadGatewayLifecycle: () => lifecycle,
-				writeGatewayRuntimeRecord: async () => {},
-			},
-		);
+		try {
+			await startGatewayZone(
+				{
+					secretResolver,
+					systemConfig,
+					zoneId: 'secret-smoke',
+				},
+				{
+					buildImage: async () => ({
+						built: false,
+						fingerprint: 'gateway-secret-resolution-smoke',
+						imagePath: path.join(tempRoot, 'image'),
+					}),
+					cleanupOrphanedGatewayIfPresent: async () => ({
+						cleanedUp: false,
+						killedPid: null,
+					}),
+					createManagedVm: async () => createFakeManagedVm(),
+					loadBuildConfig: async () =>
+						({
+							arch: 'aarch64',
+							distro: 'alpine',
+						}) satisfies BuildConfig,
+					loadGatewayLifecycle: () => lifecycle,
+					writeGatewayRuntimeRecord: async () => {},
+				},
+			);
+		} finally {
+			if (previousEnvOnlyToken === undefined) {
+				delete process.env.SECRET_SMOKE_ENV_ONLY_TOKEN;
+			} else {
+				process.env.SECRET_SMOKE_ENV_ONLY_TOKEN = previousEnvOnlyToken;
+			}
+		}
 
 		expect(createInnerResolver).toHaveBeenCalledTimes(1);
 		expect(innerResolve).not.toHaveBeenCalled();
@@ -225,6 +249,26 @@ describe('smoke: gateway startup secret resolution', () => {
 			PERPLEXITY_API_KEY: {
 				source: '1password',
 				ref: 'op://agent-vm/secret-smoke-perplexity/credential',
+			},
+		});
+
+		await expect(
+			resolveZoneSecrets({
+				audience: 'tool-vm',
+				injection: 'http-mediation',
+				secretResolver,
+				systemConfig,
+				zoneId: 'secret-smoke',
+			}),
+		).resolves.toEqual({
+			TOOL_VM_HTTP_TOKEN: 'resolved:TOOL_VM_HTTP_TOKEN',
+		});
+		expect(innerResolve).not.toHaveBeenCalled();
+		expect(innerResolveAll).toHaveBeenCalledTimes(2);
+		expect(innerResolveAll).toHaveBeenLastCalledWith({
+			TOOL_VM_HTTP_TOKEN: {
+				source: '1password',
+				ref: 'op://agent-vm/secret-smoke-tool-vm/credential',
 			},
 		});
 	});

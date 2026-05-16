@@ -136,6 +136,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		});
 		harness = await startSmokeControllerRuntime({
 			secrets: {
+				GITHUB_TOKEN: 'mcp-portal-smoke-github-token',
 				MCP_PORTAL_SERVER_SECRET: portalAccessSecret,
 				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
 				PERPLEXITY_API_KEY: 'unused-perplexity-smoke-token',
