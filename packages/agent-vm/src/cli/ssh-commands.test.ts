@@ -161,6 +161,41 @@ describe('runSshCommand', () => {
 		]);
 	});
 
+	it('fails closed when the controller cannot enable ssh secrets', async () => {
+		const enableZoneSsh = vi.fn(async () => ({
+			host: '127.0.0.1',
+			identityFile: '/tmp/key',
+			port: 2222,
+			secretEnvEnabled: false,
+			user: 'root',
+		}));
+		const runInteractiveProcess = vi.fn(
+			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
+		);
+
+		await expect(
+			runSshCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: () => createControllerClientStub(enableZoneSsh),
+					runInteractiveProcess,
+				},
+				io: {
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				restArguments: ['--zone', 'shravan'],
+				systemConfig,
+			}),
+		).rejects.toThrow(
+			'Controller did not enable gateway secrets for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured zone secrets.',
+		);
+		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
+			secretEnv: 'with-secrets',
+		});
+		expect(runInteractiveProcess).not.toHaveBeenCalled();
+	});
+
 	it('rejects --print for ssh sessions', async () => {
 		await expect(
 			runSshCommand({
@@ -295,6 +330,7 @@ describe('runSshCommand', () => {
 						createControllerClientStub(async () => ({
 							host: '127.0.0.1',
 							port: 2222,
+							secretEnvEnabled: true,
 							user: 'root',
 						})),
 					runInteractiveProcess,

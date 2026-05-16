@@ -105,9 +105,14 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 		throw new Error('Controller returned incomplete SSH access details.');
 	}
 	const secretEnvEnabled = sshResponse.secretEnvEnabled === true;
+	if (!secretEnvEnabled) {
+		throw new Error(
+			'Controller did not enable gateway secrets for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured zone secrets.',
+		);
+	}
 
 	const sshArguments = [
-		...(secretEnvEnabled ? ['-t'] : []),
+		'-t',
 		'-o',
 		'StrictHostKeyChecking=no',
 		'-o',
@@ -116,7 +121,7 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 		'-p',
 		String(sshResponse.port),
 		`${sshResponse.user ?? 'root'}@${sshResponse.host}`,
-		...(secretEnvEnabled ? [buildInteractiveSecretShellCommand()] : []),
+		buildInteractiveSecretShellCommand(),
 	];
 	const runInteractiveProcess =
 		options.dependencies.runInteractiveProcess ??
