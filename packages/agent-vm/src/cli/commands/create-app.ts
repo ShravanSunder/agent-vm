@@ -2,7 +2,7 @@
 import { subcommands } from 'cmd-ts';
 
 import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
-import { createAuthInteractiveCommand } from './auth-interactive-definition.js';
+import { createAuthSubcommands } from './auth-definition.js';
 import { createBackupSubcommands } from './backup-definition.js';
 import { createBuildCommand } from './build-definition.js';
 import { createCacheSubcommands } from './cache-definition.js';
@@ -34,7 +34,7 @@ export function createAgentVmApp(io: CliIo, dependencies: CliDependencies, cliVe
 			config: createConfigSubcommands(io, dependencies),
 			paths: createPathsSubcommands(io, dependencies),
 			backup: createBackupSubcommands(io, dependencies),
-			'auth-interactive': createAuthInteractiveCommand(io, dependencies),
+			auth: createAuthSubcommands(io, dependencies),
 			controller: createControllerSubcommands(io, dependencies),
 			'zone-git': createZoneGitSubcommands(io, dependencies),
 		},

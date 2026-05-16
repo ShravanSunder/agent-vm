@@ -265,8 +265,8 @@ agent-vm controller logs --zone my-openclaw
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Gateway won't start | Auth profiles missing | Check `gateway.authProfilesByAgent` in system.jsonc |
-| Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth-interactive codex --zone <id>` |
+| Doctor reports `openclaw-agent-auth-profile-*` failing | Auth material missing | Check `gateway.authProfilesByAgent` in system.jsonc or run `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
+| Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
 | Tool calls fail | Lease creation failing | Check `defaultToolVmProfile` exists, TCP pool has free slots |
 | Discord not connecting | Deployment channel config incomplete | Add Discord plugin/config, `DISCORD_BOT_TOKEN`, Discord hosts, and `gateway.discord.gg:443` |
 | Can't reach external API | Host not allowlisted | Add to `zones[].egressHosts` with the needed audience |

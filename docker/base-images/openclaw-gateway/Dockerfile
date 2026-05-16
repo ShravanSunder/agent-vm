@@ -19,7 +19,7 @@ RUN apt-get update && \
     update-ca-certificates && \
     corepack enable && \
     corepack prepare pnpm@10.33.0 --activate && \
-    pnpm add -g openclaw@2026.5.2 && \
+    pnpm add -g openclaw@2026.5.2 @openai/codex && \
     OPENCLAW_PACKAGE_ROOT="$(pnpm root -g)/openclaw" && \
     (cd "$OPENCLAW_PACKAGE_ROOT" && node scripts/postinstall-bundled-plugins.mjs) && \
     printf '%s\n' \

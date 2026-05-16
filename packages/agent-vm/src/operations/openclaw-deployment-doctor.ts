@@ -1,3 +1,4 @@
+import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { loadMcpPortalConfig } from '@agent-vm/config-contracts';
@@ -29,6 +30,17 @@ interface PortalServerExpectation {
 	readonly port: number;
 }
 
+interface CodexHarnessAuthReadError {
+	readonly agentId: string;
+	readonly message: string;
+	readonly path: string;
+}
+
+interface CodexHarnessAuthScan {
+	readonly agentIds: readonly string[];
+	readonly readErrors: readonly CodexHarnessAuthReadError[];
+}
+
 const defaultPortalServerExpectation: PortalServerExpectation = {
 	accessHeaderName: 'x-agent-vm-mcp-portal-secret',
 	host: '127.0.0.1',
@@ -37,6 +49,8 @@ const defaultPortalServerExpectation: PortalServerExpectation = {
 
 export interface OpenClawDeploymentDoctorTarget {
 	readonly configuredAuthProfileAgentIds?: readonly string[];
+	readonly configuredCodexHarnessAuthAgentIds?: readonly string[];
+	readonly codexHarnessAuthReadErrors?: readonly CodexHarnessAuthReadError[];
 	readonly config: OpenClawDeploymentConfig;
 	readonly configPath?: string | undefined;
 	readonly configReadError?: string | undefined;
@@ -203,16 +217,36 @@ function buildAgentAuthProfileChecks(
 	target: OpenClawDeploymentDoctorTarget,
 ): readonly DoctorCheck[] {
 	const configuredAuthProfileAgentIds = new Set(target.configuredAuthProfileAgentIds ?? []);
+	const configuredCodexHarnessAuthAgentIds = new Set(
+		target.configuredCodexHarnessAuthAgentIds ?? [],
+	);
 	return collectOpenClawCodexAgentIds(target.config).map((agentId) => {
 		const hasAuthProfile = configuredAuthProfileAgentIds.has(agentId);
+		const hasCodexHarnessAuth = configuredCodexHarnessAuthAgentIds.has(agentId);
+		const hasAuthMaterial = hasAuthProfile || hasCodexHarnessAuth;
 		return {
 			name: `openclaw-agent-auth-profile-${target.zoneId}-${agentId}`,
-			ok: hasAuthProfile,
+			ok: hasAuthMaterial,
 			hint: hasAuthProfile
-				? `auth profile configured for agent ${agentId}`
-				: `Configure gateway.authProfilesByAgent.${agentId} or run OpenClaw auth onboarding for agent ${agentId}.`,
+				? `OpenClaw auth profile configured for agent ${agentId}`
+				: hasCodexHarnessAuth
+					? `Codex harness auth.json present for agent ${agentId}`
+					: `Run agent-vm auth codex-harness --zone ${target.zoneId} --agent ${agentId} or configure gateway.authProfilesByAgent.${agentId}.`,
 		} satisfies DoctorCheck;
 	});
+}
+
+function buildCodexHarnessAuthReadErrorChecks(
+	target: OpenClawDeploymentDoctorTarget,
+): readonly DoctorCheck[] {
+	return (target.codexHarnessAuthReadErrors ?? []).map(
+		(readError) =>
+			({
+				name: `openclaw-codex-harness-auth-readable-${target.zoneId}-${readError.agentId}`,
+				ok: false,
+				hint: `Cannot read Codex harness auth.json at ${readError.path}: ${readError.message}`,
+			}) satisfies DoctorCheck,
+	);
 }
 
 function buildRequirementChecks(target: OpenClawDeploymentDoctorTarget): readonly DoctorCheck[] {
@@ -302,6 +336,7 @@ export function buildOpenClawDeploymentDoctorChecks(
 						? 'plugins.slots.memory=memory-core'
 						: 'Set plugins.slots.memory to "memory-core" when memory-core is enabled.',
 			},
+			...buildCodexHarnessAuthReadErrorChecks(target),
 			...buildAgentAuthProfileChecks(target),
 		] as const satisfies readonly DoctorCheck[];
 	});
@@ -333,6 +368,43 @@ async function loadPortalServerExpectation(
 	}
 }
 
+async function collectCodexHarnessAuthAgentIds(
+	zone: OpenClawSystemZone,
+	config: OpenClawDeploymentConfig,
+): Promise<CodexHarnessAuthScan> {
+	const agentIds: string[] = [];
+	const readErrors: CodexHarnessAuthReadError[] = [];
+	for (const agentId of collectOpenClawCodexAgentIds(config)) {
+		const authJsonPath = join(
+			zone.gateway.stateDir,
+			'agents',
+			agentId,
+			'agent',
+			'codex-home',
+			'auth.json',
+		);
+		try {
+			// Auth contents are secret; doctor only checks file presence.
+			// oxlint-disable-next-line no-await-in-loop -- each agent maps to a separate auth path
+			await access(authJsonPath);
+			agentIds.push(agentId);
+		} catch (error) {
+			const errorCode =
+				isObjectRecord(error) && typeof error.code === 'string' ? error.code : undefined;
+			if (errorCode === 'ENOENT' || errorCode === 'ENOTDIR') {
+				// Missing auth.json is reported by buildAgentAuthProfileChecks.
+				continue;
+			}
+			readErrors.push({
+				agentId,
+				message: error instanceof Error ? error.message : String(error),
+				path: authJsonPath,
+			});
+		}
+	}
+	return { agentIds, readErrors };
+}
+
 export async function collectOpenClawDeploymentDoctorChecks(
 	systemConfig: LoadedSystemConfig,
 ): Promise<readonly DoctorCheck[]> {
@@ -354,27 +426,37 @@ export async function collectOpenClawDeploymentDoctorChecks(
 		),
 	);
 	const targets = await collectOpenClawDeploymentRequirementTargets(systemConfig);
-	const doctorTargets: OpenClawDeploymentDoctorTarget[] = [];
-	for (const target of targets) {
-		const baseTarget =
-			target.kind === 'readable'
-				? {
-						config: target.config,
-						configuredAuthProfileAgentIds:
-							configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],
-						configPath: target.configPath,
-						zoneId: target.zoneId,
-					}
-				: {
-						config: {},
-						configuredAuthProfileAgentIds:
-							configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],
-						configPath: target.configPath,
-						configReadError: target.configReadError,
-						zoneId: target.zoneId,
-					};
-		const portalServer = portalServerByZone.get(target.zoneId);
-		doctorTargets.push(portalServer === undefined ? baseTarget : { ...baseTarget, portalServer });
-	}
+	const doctorTargets = await Promise.all(
+		targets.map(async (target): Promise<OpenClawDeploymentDoctorTarget> => {
+			const zone = openClawZones.find((candidate) => candidate.id === target.zoneId);
+			const codexHarnessAuthScan =
+				target.kind === 'readable' && zone
+					? await collectCodexHarnessAuthAgentIds(zone, target.config)
+					: { agentIds: [], readErrors: [] };
+			const baseTarget =
+				target.kind === 'readable'
+					? {
+							config: target.config,
+							codexHarnessAuthReadErrors: codexHarnessAuthScan.readErrors,
+							configuredCodexHarnessAuthAgentIds: codexHarnessAuthScan.agentIds,
+							configuredAuthProfileAgentIds:
+								configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],
+							configPath: target.configPath,
+							zoneId: target.zoneId,
+						}
+					: {
+							config: {},
+							codexHarnessAuthReadErrors: codexHarnessAuthScan.readErrors,
+							configuredCodexHarnessAuthAgentIds: codexHarnessAuthScan.agentIds,
+							configuredAuthProfileAgentIds:
+								configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],
+							configPath: target.configPath,
+							configReadError: target.configReadError,
+							zoneId: target.zoneId,
+						};
+			const portalServer = portalServerByZone.get(target.zoneId);
+			return portalServer === undefined ? baseTarget : Object.assign(baseTarget, { portalServer });
+		}),
+	);
 	return buildOpenClawDeploymentDoctorChecks(doctorTargets);
 }
