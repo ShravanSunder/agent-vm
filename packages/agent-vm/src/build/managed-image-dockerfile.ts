@@ -266,7 +266,7 @@ function renderManagedDockerfile(props: {
 		);
 		lines.push('RUN mkdir -p /opt/agent-vm/portal/bin');
 		lines.push(
-			`RUN printf '%s\\n' '#!/bin/sh' 'exec node "$(realpath ${managedMcpPortalServerScriptPath})" "$@"' > ${managedMcpPortalServerWrapperPath} && chmod 0755 ${managedMcpPortalServerWrapperPath}`,
+			`RUN printf '%s\\n' '#!/bin/sh' 'exec node ${managedMcpPortalServerScriptPath} "$@"' > ${managedMcpPortalServerWrapperPath} && chmod 0755 ${managedMcpPortalServerWrapperPath}`,
 		);
 	}
 	lines.push('');

@@ -124,7 +124,7 @@ describe('managed image release', () => {
 			'/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server',
 		);
 		expect(generatedDockerfile).toContain(
-			'exec node "$(realpath /pnpm/global/5/node_modules/@agent-vm/mcp-portal/dist/bin/portal-server.js)" "$@"',
+			'exec node /pnpm/global/5/node_modules/@agent-vm/mcp-portal/dist/bin/portal-server.js "$@"',
 		);
 		expect(generatedDockerfile).not.toContain('@openclaw/discord@2026.5.2');
 		expect(result.plan).toMatchObject({
