@@ -106,6 +106,11 @@ describe('managed image release', () => {
 		});
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).toContain('ENV PNPM_HOME=/pnpm');
+		expect(generatedDockerfile).toContain('ENV PATH=${PNPM_HOME}:${PATH}');
+		expect(generatedDockerfile).toContain(
+			'RUN pnpm config set global-dir /pnpm/global && pnpm config set global-bin-dir /pnpm',
+		);
 		expect(generatedDockerfile).toContain('RUN pnpm add -g "@agent-vm/openclaw-agent-vm-plugin@');
 		expect(generatedDockerfile).toContain('"@agent-vm/openclaw-mcp-portal-plugin@');
 		expect(generatedDockerfile).toContain('"@agent-vm/mcp-portal@');
@@ -182,6 +187,11 @@ describe('managed image release', () => {
 		});
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).toContain('ENV PNPM_HOME=/pnpm');
+		expect(generatedDockerfile).toContain('ENV PATH=${PNPM_HOME}:${PATH}');
+		expect(generatedDockerfile).toContain(
+			'RUN pnpm config set global-dir /pnpm/global && pnpm config set global-bin-dir /pnpm',
+		);
 		expect(generatedDockerfile).toContain('RUN pnpm add -g "@agent-vm/mcp-portal@');
 		expect(generatedDockerfile).not.toMatch(
 			/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u,

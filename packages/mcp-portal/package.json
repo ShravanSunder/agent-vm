@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/mcp-portal",
-	"version": "0.0.63",
+	"version": "0.0.64",
 	"description": "Agent-scoped MCP Portal server and TypeScript helpers for composable upstream MCP tools.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -39,6 +39,10 @@
 		"./auth/hmac-env": {
 			"types": "./dist/auth/hmac-env.d.ts",
 			"import": "./dist/auth/hmac-env.js"
+		},
+		"./testing/fake-upstream-mcp-server": {
+			"types": "./dist/testing/fake-upstream-mcp-server.d.ts",
+			"import": "./dist/testing/fake-upstream-mcp-server.js"
 		}
 	},
 	"publishConfig": {

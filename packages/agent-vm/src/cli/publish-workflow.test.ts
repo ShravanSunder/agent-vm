@@ -3,6 +3,9 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+const publishNpmTokenOpRef = 'op://agent-vm/npm-token-agent-vm-publish/credential';
+const staleNpmTokenOpRef = ['op://agent-vm', 'npm-token', 'credential'].join('/');
+
 describe('publish workflow', () => {
 	it('caches Gondolin Zig tarballs in CI and publish workflows', async () => {
 		const workflowPaths = [
@@ -70,5 +73,22 @@ describe('publish workflow', () => {
 		);
 		expect(workflow).not.toMatch(/docker build -t/u);
 		expect(workflow).not.toMatch(/docker push "ghcr\.io\/shravansunder\/agent-vm-/u);
+	});
+
+	it('uses the publish-specific 1Password item for local npm publish', async () => {
+		const publishScript = await fs.readFile(
+			path.join(process.cwd(), 'scripts', 'publish-local.sh'),
+			'utf8',
+		);
+		const agentsGuidance = await fs.readFile(path.join(process.cwd(), 'AGENTS.md'), 'utf8');
+
+		expect(publishScript).toContain(
+			`OP_REF="\${AGENT_VM_NPM_TOKEN_OP_REF:-${publishNpmTokenOpRef}}"`,
+		);
+		expect(publishScript).not.toContain(staleNpmTokenOpRef);
+		expect(agentsGuidance).toContain(
+			`AGENT_VM_NPM_TOKEN_OP_REF='${publishNpmTokenOpRef}' scripts/publish-local.sh`,
+		);
+		expect(agentsGuidance).not.toContain(staleNpmTokenOpRef);
 	});
 });

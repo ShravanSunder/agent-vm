@@ -1,9 +1,12 @@
 import { createManagedVm, type ManagedVm } from '@agent-vm/gondolin-adapter';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-const TEST_SECRET_VALUE = 'agent-vm-http-mediation-test-secret';
+import { shouldRunLiveVmIntegration } from './live-integration-gates.js';
 
-describe('live HTTP mediation', () => {
+const TEST_SECRET_VALUE = 'agent-vm-http-mediation-test-secret';
+const describeLiveVmIntegration = shouldRunLiveVmIntegration() ? describe : describe.skip;
+
+describeLiveVmIntegration('live HTTP mediation', () => {
 	let vm: ManagedVm | null = null;
 
 	beforeAll(async () => {
