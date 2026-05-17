@@ -1097,6 +1097,87 @@ describe('runAgentVmCli', () => {
 		);
 	});
 
+	it('routes auth openclaw --agent to the OpenClaw provider login for that agent', async () => {
+		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
+			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
+		);
+
+		await runAgentVmCli(
+			['auth', 'openclaw', 'openai-codex', '--zone', 'shravan', '--agent', 'shravan'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () =>
+					createControllerClientStub(async () => ({
+						host: '127.0.0.1',
+						identityFile: '/tmp/test-key',
+						port: 19000,
+						user: 'root',
+					})),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
+				runInteractiveProcess,
+			},
+		);
+
+		expect(runInteractiveProcess).toHaveBeenCalledTimes(1);
+		const sshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
+		if (!sshArguments) {
+			throw new Error('Expected OpenClaw login to invoke ssh.');
+		}
+		const remoteCommand = sshArguments.at(-1);
+		expect(remoteCommand).toEqual(expect.stringContaining('openclaw models auth'));
+		expect(remoteCommand).toEqual(expect.stringContaining('--agent'));
+		expect(remoteCommand).toEqual(expect.stringContaining('shravan'));
+		expect(remoteCommand).toEqual(expect.stringContaining('login --provider'));
+		expect(remoteCommand).toEqual(expect.stringContaining('openai-codex'));
+		expect(remoteCommand).not.toEqual(expect.stringContaining('CODEX_HOME='));
+		expect(remoteCommand).not.toEqual(expect.stringContaining('codex login'));
+	});
+
+	it('routes auth openclaw --all-agents to one OpenClaw provider login per configured agent', async () => {
+		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
+			async (_command: string, _arguments_: readonly string[]): Promise<void> => {},
+		);
+
+		await runAgentVmCli(
+			['auth', 'openclaw', 'openai-codex', '--zone', 'shravan', '--all-agents'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () =>
+					createControllerClientStub(async () => ({
+						host: '127.0.0.1',
+						identityFile: '/tmp/test-key',
+						port: 19000,
+						user: 'root',
+					})),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfigWithAgents()),
+				runInteractiveProcess,
+			},
+		);
+
+		expect(runInteractiveProcess).toHaveBeenCalledTimes(2);
+		const firstSshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
+		const secondSshArguments = vi.mocked(runInteractiveProcess).mock.calls[1]?.[1];
+		if (!firstSshArguments || !secondSshArguments) {
+			throw new Error('Expected one ssh invocation per agent.');
+		}
+		expect(firstSshArguments.at(-1)).toEqual(expect.stringContaining('openclaw models auth'));
+		expect(firstSshArguments.at(-1)).toEqual(expect.stringContaining('--agent'));
+		expect(firstSshArguments.at(-1)).toEqual(expect.stringContaining('shravan'));
+		expect(firstSshArguments.at(-1)).toEqual(expect.stringContaining('login --provider'));
+		expect(secondSshArguments.at(-1)).toEqual(expect.stringContaining('openclaw models auth'));
+		expect(secondSshArguments.at(-1)).toEqual(expect.stringContaining('--agent'));
+		expect(secondSshArguments.at(-1)).toEqual(expect.stringContaining('ember'));
+		expect(secondSshArguments.at(-1)).toEqual(expect.stringContaining('login --provider'));
+	});
+
 	it('auth openclaw without --zone shows available zones', async () => {
 		const stderrChunks: string[] = [];
 		await expect(
