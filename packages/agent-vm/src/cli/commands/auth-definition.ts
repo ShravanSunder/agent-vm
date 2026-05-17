@@ -20,6 +20,15 @@ export function createAuthSubcommands(io: CliIo, dependencies: CliDependencies) 
 				name: 'openclaw',
 				description: 'Run OpenClaw-managed provider auth for a gateway zone.',
 				args: {
+					agent: option({
+						type: optional(string),
+						long: 'agent',
+						description: 'OpenClaw agent id whose isolated auth profile should receive auth.',
+					}),
+					allAgents: flag({
+						long: 'all-agents',
+						description: 'Run OpenClaw provider auth once for every configured zone agent.',
+					}),
 					config: createConfigOption(),
 					deviceCode: flag({
 						long: 'device-code',
@@ -36,12 +45,14 @@ export function createAuthSubcommands(io: CliIo, dependencies: CliDependencies) 
 					}),
 					zone: createZoneOption(),
 				},
-				handler: async ({ config, deviceCode, provider, setDefault, zone }) => {
+				handler: async ({ agent, allAgents, config, deviceCode, provider, setDefault, zone }) => {
 					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 					const selectedZone = requireZone(systemConfig, zone);
 					const lifecycle = loadGatewayLifecycle(selectedZone.gateway.type);
 
 					await runOpenClawAuthCommand({
+						...(agent ? { agentId: agent } : {}),
+						allAgents,
 						authConfig: lifecycle.authConfig,
 						dependencies,
 						deviceCode,

@@ -98,6 +98,9 @@ describe('manual templates', () => {
 			'agent-vm auth openclaw <provider> --zone <zoneId>',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'--all-agents to repeat the same provider login',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'agent-vm auth codex-harness --zone <zoneId> --agent <agentId>',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
@@ -190,6 +193,9 @@ describe('manual templates', () => {
 		expect(
 			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
 		).toContain('gateway.authProfilesByAgent');
+		expect(
+			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
+		).toContain('auth openclaw <provider> --all-agents repeats');
 		expect(
 			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
 		).toContain('codex-harness --all-agents runs one device-auth session per agent');

@@ -433,10 +433,16 @@ export const openclawLifecycle: GatewayLifecycle = {
 		listProvidersCommand: 'openclaw models auth list --format plain 2>/dev/null || echo ""',
 		buildLoginCommand: (
 			provider: string,
-			options: { readonly deviceCode?: boolean; readonly setDefault?: boolean } = {},
+			options: {
+				readonly agentId?: string;
+				readonly deviceCode?: boolean;
+				readonly setDefault?: boolean;
+			} = {},
 		): string =>
 			[
-				`openclaw models auth login --provider ${shellQuote(provider)}`,
+				'openclaw models auth',
+				...(options.agentId ? [`--agent ${shellQuote(options.agentId)}`] : []),
+				`login --provider ${shellQuote(provider)}`,
 				...(options.deviceCode === true ? ['--device-code'] : []),
 				...(options.setDefault === true ? ['--set-default'] : []),
 			].join(' '),

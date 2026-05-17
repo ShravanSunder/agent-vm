@@ -84,22 +84,33 @@ const systemConfig = {
 } satisfies SystemConfig;
 
 describe('runOpenClawAuthCommand', () => {
-	it('refuses the legacy OpenClaw openai-codex login path', async () => {
-		await expect(
-			runOpenClawAuthCommand({
-				authConfig,
-				dependencies: {
-					...defaultCliDependencies,
-					createControllerClient: vi.fn(),
-					runInteractiveProcess: vi.fn(),
-				},
-				io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
-				provider: 'openai-codex',
-				systemConfig,
-				zoneId: 'shravan',
-			}),
-		).rejects.toThrow(
-			"Refusing to run OpenClaw provider login for 'openai-codex'. Use 'agent-vm auth codex-harness --zone shravan --agent <agentId>' for native Codex CLI auth, or use provider 'openai' for OpenClaw-managed auth.",
+	it('runs OpenClaw provider login for openai-codex when requested', async () => {
+		const runInteractiveProcess = vi.fn(async () => {});
+
+		await runOpenClawAuthCommand({
+			authConfig,
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: vi.fn(() =>
+					createControllerClientStub({
+						enableZoneSsh: async () => ({
+							host: '127.0.0.1',
+							port: 2222,
+							user: 'root',
+						}),
+					}),
+				),
+				runInteractiveProcess,
+			},
+			io: { stdout: { write: vi.fn(() => true) }, stderr: { write: vi.fn(() => true) } },
+			provider: 'openai-codex',
+			systemConfig,
+			zoneId: 'shravan',
+		});
+
+		expect(runInteractiveProcess).toHaveBeenCalledWith(
+			'ssh',
+			expect.arrayContaining([expect.stringContaining('login --provider openai-codex')]),
 		);
 	});
 
