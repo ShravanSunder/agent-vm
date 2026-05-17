@@ -35,12 +35,74 @@ export interface ExecFileResult {
 	readonly stderr: string;
 }
 
-function writeStderr(message: string): void {
-	process.stderr.write(`${message}\n`);
-}
-
 function formatUnknownError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+class RedactedExecFileError extends Error {
+	constructor(
+		message: string,
+		readonly safeDetail: string,
+	) {
+		super(message);
+		this.name = 'RedactedExecFileError';
+	}
+}
+
+class OpInjectOutputError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'OpInjectOutputError';
+	}
+}
+
+function formatErrorMetadataValue(value: unknown): string | undefined {
+	if (typeof value === 'number' || typeof value === 'string') {
+		return String(value);
+	}
+	return undefined;
+}
+
+function readErrorCode(error: Error): string | undefined {
+	if (!('code' in error)) {
+		return undefined;
+	}
+	return formatErrorMetadataValue(error.code);
+}
+
+function readErrorSignal(error: Error): string | undefined {
+	if (!('signal' in error)) {
+		return undefined;
+	}
+	return formatErrorMetadataValue(error.signal);
+}
+
+function formatRedactedExecErrorDetail(error: Error): string {
+	const exitCode = readErrorCode(error) ?? 'unknown';
+	const signal = readErrorSignal(error);
+	return signal === undefined ? `exit code ${exitCode}` : `exit code ${exitCode}, signal ${signal}`;
+}
+
+function createExecFileError(options: {
+	readonly command: string;
+	readonly error: Error;
+	readonly redactErrorOutput?: boolean | undefined;
+	readonly stderr: string;
+}): Error {
+	if (options.redactErrorOutput) {
+		const safeDetail = formatRedactedExecErrorDetail(options.error);
+		return new RedactedExecFileError(`${options.command} failed: ${safeDetail}`, safeDetail);
+	}
+
+	const errorDetail = options.stderr.trim() || options.error.message;
+	return new Error(`${options.command} failed: ${errorDetail}`);
+}
+
+function createStdinWriteError(command: string, redactErrorOutput?: boolean): Error {
+	if (redactErrorOutput) {
+		return new RedactedExecFileError(`${command} failed writing stdin`, 'stdin write failed');
+	}
+	return new Error(`${command} failed writing stdin`);
 }
 
 function ensureMacOsForKeychain(): void {
@@ -57,29 +119,51 @@ function execFileAsync(
 	options?: ExecFileOptions,
 ): Promise<ExecFileResult> {
 	return new Promise((resolve, reject) => {
+		let hasSettled = false;
+		const rejectOnce = (error: Error): void => {
+			if (hasSettled) {
+				return;
+			}
+			hasSettled = true;
+			reject(error);
+		};
+		const resolveOnce = (result: ExecFileResult): void => {
+			if (hasSettled) {
+				return;
+			}
+			hasSettled = true;
+			resolve(result);
+		};
 		const child = execFile(
 			command,
 			[...args],
 			{ env: options?.env, timeout: 30_000 },
 			(error, stdout, stderr) => {
 				if (error) {
-					const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
-					const errorDetail = options?.redactErrorOutput
-						? errorMessage
-						: stderr.trim() || errorMessage;
-					reject(new Error(`${command} failed: ${errorDetail}`));
+					rejectOnce(
+						createExecFileError({
+							command,
+							error,
+							redactErrorOutput: options?.redactErrorOutput,
+							stderr,
+						}),
+					);
 					return;
 				}
 
-				resolve({ stdout, stderr });
+				resolveOnce({ stdout, stderr });
 			},
 		);
 		if (options?.input !== undefined) {
 			if (!child.stdin) {
 				child.kill();
-				reject(new Error(`${command} did not expose stdin for input`));
+				rejectOnce(new Error(`${command} did not expose stdin for input`));
 				return;
 			}
+			child.stdin.once('error', () => {
+				child.kill();
+				rejectOnce(createStdinWriteError(command, options.redactErrorOutput));
+			});
 			child.stdin.end(options.input);
 		}
 	});
@@ -181,12 +265,66 @@ async function resolveSecretWithOpCli(
 	) => Promise<ExecFileResult>,
 ): Promise<string> {
 	const result = await exec('op', ['read', secretReference], {
-		env: {
-			...process.env,
-			OP_SERVICE_ACCOUNT_TOKEN: serviceAccountToken,
-		},
+		env: createOpCliServiceAccountEnv(serviceAccountToken),
 	});
-	return result.stdout.trim();
+	return stripOpReadStdoutTerminator(result.stdout);
+}
+
+function stripOpReadStdoutTerminator(stdout: string): string {
+	if (stdout.endsWith('\r\n')) {
+		return stdout.slice(0, -2);
+	}
+	if (stdout.endsWith('\n')) {
+		return stdout.slice(0, -1);
+	}
+	return stdout;
+}
+
+// Keep `op` auth scoped to the service-account token chosen by agent-vm.
+// Ambient OP_CONNECT_* or OP_SESSION values can switch the CLI to another auth path.
+const opCliProcessPlumbingEnvNames = [
+	'APPDATA',
+	'ALL_PROXY',
+	'all_proxy',
+	'COMSPEC',
+	'HOME',
+	'HTTP_PROXY',
+	'http_proxy',
+	'HTTPS_PROXY',
+	'https_proxy',
+	'LANG',
+	'LC_ALL',
+	'LC_CTYPE',
+	'LOCALAPPDATA',
+	'NO_PROXY',
+	'no_proxy',
+	'PATH',
+	'SSL_CERT_DIR',
+	'SSL_CERT_FILE',
+	'TEMP',
+	'TMP',
+	'TMPDIR',
+	'TZ',
+	'USERPROFILE',
+	'WINDIR',
+	'XDG_CACHE_HOME',
+	'XDG_CONFIG_HOME',
+	'XDG_DATA_HOME',
+	'XDG_RUNTIME_DIR',
+] satisfies readonly string[];
+
+function createOpCliServiceAccountEnv(
+	serviceAccountToken: string,
+): Readonly<Record<string, string | undefined>> {
+	const env: Record<string, string | undefined> = {};
+	for (const envName of opCliProcessPlumbingEnvNames) {
+		const envValue = process.env[envName];
+		if (envValue !== undefined) {
+			env[envName] = envValue;
+		}
+	}
+	env.OP_SERVICE_ACCOUNT_TOKEN = serviceAccountToken;
+	return env;
 }
 
 async function resolveAllSecretsWithOpCli(
@@ -200,76 +338,172 @@ async function resolveAllSecretsWithOpCli(
 ): Promise<Record<string, string>> {
 	try {
 		return await resolveAllSecretsWithOpInject(serviceAccountToken, refs, exec);
-	} catch {
-		writeStderr(
-			'[secret-resolver] op inject batch resolution failed; falling back to serial op read.',
-		);
-		return await resolveAllSecretsWithSerialOpReads(serviceAccountToken, refs, exec);
+	} catch (error) {
+		const sanitizedInjectError = sanitizeOpInjectError(error);
+		try {
+			return await resolveAllSecretsWithSerialOpReads(serviceAccountToken, refs, exec);
+		} catch (readError) {
+			if (readError instanceof AggregateError) {
+				const readErrorChildren = readAggregateErrorChildren(readError);
+				throw createAggregateErrorWithCause({
+					cause: readError,
+					errors: [sanitizedInjectError, ...readErrorChildren],
+					message: readError.message,
+				});
+			}
+			throw createAggregateErrorWithCause({
+				cause: readError,
+				errors: [sanitizedInjectError, readError],
+				message: 'op inject and serial op read both failed.',
+			});
+		}
 	}
 }
 
-function opInjectStartMarker(batchId: string, index: number): string {
-	return `agent-vm-op-inject-start:${batchId}:${String(index)}`;
+function sanitizeOpInjectError(error: unknown): Error {
+	if (error instanceof RedactedExecFileError) {
+		return new Error(`op inject failed before serial op read: ${error.safeDetail}`);
+	}
+	if (error instanceof OpInjectOutputError) {
+		return new Error(`op inject failed before serial op read: ${error.message}`);
+	}
+	const errorType = error instanceof Error ? error.name : typeof error;
+	return new Error(`op inject failed before serial op read: ${errorType}`);
 }
 
-function opInjectEndMarker(batchId: string, index: number): string {
-	return `agent-vm-op-inject-end:${batchId}:${String(index)}`;
+function readAggregateErrorChildren(error: AggregateError): readonly unknown[] {
+	const errorChildren: unknown = error.errors;
+	return Array.isArray(errorChildren) ? errorChildren : [];
 }
 
-function buildOpInjectTemplate(
-	entries: readonly (readonly [string, SecretRef])[],
-	batchId: string,
-): string {
+function createAggregateErrorWithCause(options: {
+	readonly cause: unknown;
+	readonly errors: readonly unknown[];
+	readonly message: string;
+}): AggregateError {
+	const aggregateError = new AggregateError(options.errors, options.message);
+	aggregateError.cause = options.cause;
+	return aggregateError;
+}
+
+function createFallbackStageError(stage: string, error: unknown): Error {
+	return new Error(`${stage} failed before op CLI fallback: ${formatUnknownError(error)}`, {
+		cause: error,
+	});
+}
+
+function createFallbackFailureError(options: {
+	readonly fallbackError: unknown;
+	readonly message: string;
+	readonly stageError: Error;
+}): AggregateError {
+	if (options.fallbackError instanceof AggregateError) {
+		return createAggregateErrorWithCause({
+			cause: options.fallbackError,
+			errors: [options.stageError, ...readAggregateErrorChildren(options.fallbackError)],
+			message: options.fallbackError.message,
+		});
+	}
+	return createAggregateErrorWithCause({
+		cause: options.fallbackError,
+		errors: [options.stageError, options.fallbackError],
+		message: options.message,
+	});
+}
+
+interface OpInjectEntry {
+	readonly markerId: string;
+	readonly secretName: string;
+	readonly secretRef: SecretRef;
+}
+
+function opInjectStartMarker(markerId: string): string {
+	return `agent-vm-op-inject-start:${markerId}`;
+}
+
+function opInjectEndMarker(markerId: string): string {
+	return `agent-vm-op-inject-end:${markerId}`;
+}
+
+function createOpInjectEntries(refs: Record<string, SecretRef>): readonly OpInjectEntry[] {
+	return Object.entries(refs).map(([secretName, secretRef]) => ({
+		markerId: randomUUID(),
+		secretName,
+		secretRef,
+	}));
+}
+
+function buildOpInjectTemplate(entries: readonly OpInjectEntry[]): string {
 	return entries
-		.map(([_secretName, secretRef], index) =>
+		.map((entry) =>
 			[
-				opInjectStartMarker(batchId, index),
-				`{{ ${secretRef.ref} }}`,
-				opInjectEndMarker(batchId, index),
+				opInjectStartMarker(entry.markerId),
+				`{{ ${entry.secretRef.ref} }}`,
+				opInjectEndMarker(entry.markerId),
 			].join('\n'),
 		)
 		.join('\n');
 }
 
-function extractInjectedSecret(options: {
-	readonly batchId: string;
-	readonly index: number;
+function findUniqueOpInjectMarker(options: {
+	readonly marker: string;
+	readonly markerDescription: string;
 	readonly output: string;
 	readonly secretName: string;
 	readonly secretReference: string;
+}): number {
+	const markerIndex = options.output.indexOf(options.marker);
+	if (markerIndex === -1) {
+		throw new OpInjectOutputError(
+			`op inject output omitted ${options.markerDescription} marker for secret '${options.secretName}' (${options.secretReference}).`,
+		);
+	}
+	const repeatedMarkerIndex = options.output.indexOf(
+		options.marker,
+		markerIndex + options.marker.length,
+	);
+	if (repeatedMarkerIndex !== -1) {
+		throw new OpInjectOutputError(
+			`op inject output for secret '${options.secretName}' (${options.secretReference}) contained repeated ${options.markerDescription} marker.`,
+		);
+	}
+	return markerIndex;
+}
+
+function extractInjectedSecret(options: {
+	readonly entry: OpInjectEntry;
+	readonly output: string;
 }): string {
-	const startToken = `${opInjectStartMarker(options.batchId, options.index)}\n`;
-	const endToken = `\n${opInjectEndMarker(options.batchId, options.index)}`;
-	const valueStartIndex = options.output.indexOf(startToken);
-	if (valueStartIndex === -1) {
-		throw new Error(
-			`op inject output omitted start marker for secret '${options.secretName}' (${options.secretReference}).`,
-		);
-	}
+	const startToken = `${opInjectStartMarker(options.entry.markerId)}\n`;
+	const endToken = `\n${opInjectEndMarker(options.entry.markerId)}`;
+	const valueStartIndex = findUniqueOpInjectMarker({
+		marker: startToken,
+		markerDescription: 'start',
+		output: options.output,
+		secretName: options.entry.secretName,
+		secretReference: options.entry.secretRef.ref,
+	});
 	const secretStartIndex = valueStartIndex + startToken.length;
-	const secretEndIndex = options.output.indexOf(endToken, secretStartIndex);
-	if (secretEndIndex === -1) {
-		throw new Error(
-			`op inject output omitted end marker for secret '${options.secretName}' (${options.secretReference}).`,
-		);
-	}
-	return options.output.slice(secretStartIndex, secretEndIndex).trim();
+	const secretEndIndex = findUniqueOpInjectMarker({
+		marker: endToken,
+		markerDescription: 'end',
+		output: options.output,
+		secretName: options.entry.secretName,
+		secretReference: options.entry.secretRef.ref,
+	});
+	return options.output.slice(secretStartIndex, secretEndIndex);
 }
 
 function mapOpInjectOutput(
-	entries: readonly (readonly [string, SecretRef])[],
-	batchId: string,
+	entries: readonly OpInjectEntry[],
 	output: string,
 ): Record<string, string> {
 	return Object.fromEntries(
-		entries.map(([secretName, secretRef], index) => [
-			secretName,
+		entries.map((entry) => [
+			entry.secretName,
 			extractInjectedSecret({
-				batchId,
-				index,
+				entry,
 				output,
-				secretName,
-				secretReference: secretRef.ref,
 			}),
 		]),
 	);
@@ -284,21 +518,17 @@ async function resolveAllSecretsWithOpInject(
 		options?: ExecFileOptions,
 	) => Promise<ExecFileResult>,
 ): Promise<Record<string, string>> {
-	const entries = Object.entries(refs);
+	const entries = createOpInjectEntries(refs);
 	if (entries.length === 0) {
 		return {};
 	}
 
-	const batchId = randomUUID();
 	const result = await exec('op', ['inject'], {
-		env: {
-			...process.env,
-			OP_SERVICE_ACCOUNT_TOKEN: serviceAccountToken,
-		},
-		input: buildOpInjectTemplate(entries, batchId),
+		env: createOpCliServiceAccountEnv(serviceAccountToken),
+		input: buildOpInjectTemplate(entries),
 		redactErrorOutput: true,
 	});
-	return mapOpInjectOutput(entries, batchId, result.stdout);
+	return mapOpInjectOutput(entries, result.stdout);
 }
 
 async function resolveAllSecretsWithSerialOpReads(
@@ -407,11 +637,16 @@ export async function createSecretResolver(
 				try {
 					return await client.secrets.resolve(ref.ref);
 				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					writeStderr(
-						`[secret-resolver] 1Password SDK resolve failed for ${ref.ref}; falling back to op CLI: ${message}`,
-					);
-					return await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec);
+					const sdkResolveError = createFallbackStageError('1Password SDK resolve', error);
+					try {
+						return await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec);
+					} catch (fallbackError) {
+						throw createFallbackFailureError({
+							fallbackError,
+							message: '1Password SDK resolve and op CLI fallback both failed.',
+							stageError: sdkResolveError,
+						});
+					}
 				}
 			},
 			resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> => {
@@ -421,24 +656,44 @@ export async function createSecretResolver(
 					);
 					return mapSdkResolveAllResponse(refs, response);
 				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					writeStderr(
-						`[secret-resolver] 1Password SDK resolveAll failed; falling back to op CLI batch inject: ${message}`,
-					);
-					return await resolveAllSecretsWithOpCli(options.serviceAccountToken, refs, exec);
+					const sdkResolveAllError = createFallbackStageError('1Password SDK resolveAll', error);
+					try {
+						return await resolveAllSecretsWithOpCli(options.serviceAccountToken, refs, exec);
+					} catch (fallbackError) {
+						throw createFallbackFailureError({
+							fallbackError,
+							message: '1Password SDK resolveAll and op CLI fallback both failed.',
+							stageError: sdkResolveAllError,
+						});
+					}
 				}
 			},
 		};
 	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		writeStderr(
-			`[secret-resolver] 1Password SDK client creation failed; falling back to op CLI: ${message}`,
-		);
+		const sdkClientCreationError = createFallbackStageError('1Password SDK client creation', error);
 		return {
-			resolve: async (ref: SecretRef): Promise<string> =>
-				await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec),
-			resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> =>
-				await resolveAllSecretsWithOpCli(options.serviceAccountToken, refs, exec),
+			resolve: async (ref: SecretRef): Promise<string> => {
+				try {
+					return await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec);
+				} catch (fallbackError) {
+					throw createFallbackFailureError({
+						fallbackError,
+						message: '1Password SDK client creation and op CLI fallback both failed.',
+						stageError: sdkClientCreationError,
+					});
+				}
+			},
+			resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> => {
+				try {
+					return await resolveAllSecretsWithOpCli(options.serviceAccountToken, refs, exec);
+				} catch (fallbackError) {
+					throw createFallbackFailureError({
+						fallbackError,
+						message: '1Password SDK client creation and op CLI fallback both failed.',
+						stageError: sdkClientCreationError,
+					});
+				}
+			},
 		};
 	}
 }
