@@ -36,6 +36,14 @@ export interface ExecFileResult {
 }
 
 function formatUnknownError(error: unknown): string {
+	if (error instanceof AggregateError) {
+		const childMessages = readAggregateErrorChildren(error).map(formatUnknownError);
+		if (childMessages.length === 0) {
+			return error.message;
+		}
+		const separator = error.message.endsWith('.') ? '' : '.';
+		return `${error.message}${separator} Details: ${childMessages.join('; ')}`;
+	}
 	return error instanceof Error ? error.message : String(error);
 }
 
@@ -43,8 +51,9 @@ class RedactedExecFileError extends Error {
 	constructor(
 		message: string,
 		readonly safeDetail: string,
+		options?: { readonly cause?: unknown },
 	) {
-		super(message);
+		super(message, options);
 		this.name = 'RedactedExecFileError';
 	}
 }
@@ -98,11 +107,21 @@ function createExecFileError(options: {
 	return new Error(`${options.command} failed: ${errorDetail}`);
 }
 
-function createStdinWriteError(command: string, redactErrorOutput?: boolean): Error {
+function formatStdinWriteErrorDetail(error: Error): string {
+	const errorCode = readErrorCode(error);
+	return errorCode === undefined ? 'stdin write failed' : `stdin write failed: ${errorCode}`;
+}
+
+function createStdinWriteError(command: string, error: Error, redactErrorOutput?: boolean): Error {
 	if (redactErrorOutput) {
-		return new RedactedExecFileError(`${command} failed writing stdin`, 'stdin write failed');
+		const safeDetail = formatStdinWriteErrorDetail(error);
+		return new RedactedExecFileError(`${command} failed writing stdin: ${safeDetail}`, safeDetail, {
+			cause: error,
+		});
 	}
-	return new Error(`${command} failed writing stdin`);
+	return new Error(`${command} failed writing stdin: ${formatUnknownError(error)}`, {
+		cause: error,
+	});
 }
 
 function ensureMacOsForKeychain(): void {
@@ -160,9 +179,9 @@ function execFileAsync(
 				rejectOnce(new Error(`${command} did not expose stdin for input`));
 				return;
 			}
-			child.stdin.once('error', () => {
+			child.stdin.once('error', (error: Error) => {
 				child.kill();
-				rejectOnce(createStdinWriteError(command, options.redactErrorOutput));
+				rejectOnce(createStdinWriteError(command, error, options.redactErrorOutput));
 			});
 			child.stdin.end(options.input);
 		}
@@ -186,7 +205,7 @@ export async function resolveServiceAccountToken(
 	switch (source.type) {
 		case 'op-cli': {
 			// Uses `op read` which triggers biometric auth (Touch ID) on macOS
-			const result = await exec('op', ['read', source.ref]);
+			const result = await exec('op', ['read', source.ref], { redactErrorOutput: true });
 			const token = result.stdout.trim();
 			if (token.length === 0) {
 				throw new Error('op-cli token resolution returned empty value');
@@ -266,6 +285,7 @@ async function resolveSecretWithOpCli(
 ): Promise<string> {
 	const result = await exec('op', ['read', secretReference], {
 		env: createOpCliServiceAccountEnv(serviceAccountToken),
+		redactErrorOutput: true,
 	});
 	return stripOpReadStdoutTerminator(result.stdout);
 }
@@ -280,8 +300,8 @@ function stripOpReadStdoutTerminator(stdout: string): string {
 	return stdout;
 }
 
-// Keep `op` auth scoped to the service-account token chosen by agent-vm.
-// Ambient OP_CONNECT_* or OP_SESSION values can switch the CLI to another auth path.
+// This is an allowlist for process plumbing only. Do not add ambient OP_* auth
+// variables here; they can switch `op` away from agent-vm's service account token.
 const opCliProcessPlumbingEnvNames = [
 	'APPDATA',
 	'ALL_PROXY',
@@ -325,6 +345,22 @@ function createOpCliServiceAccountEnv(
 	}
 	env.OP_SERVICE_ACCOUNT_TOKEN = serviceAccountToken;
 	return env;
+}
+
+const opInjectTemplateDelimiterPattern = /(?:\{\{|\}\})/u;
+
+function assertOpInjectTemplateSafeReference(entry: OpInjectEntry): void {
+	if (
+		!opInjectTemplateDelimiterPattern.test(entry.secretRef.ref) &&
+		!entry.secretRef.ref.includes('\u0000') &&
+		!entry.secretRef.ref.includes('\r') &&
+		!entry.secretRef.ref.includes('\n')
+	) {
+		return;
+	}
+	throw new OpInjectOutputError(
+		`op inject template rejected unsafe 1Password reference for secret '${entry.secretName}'.`,
+	);
 }
 
 async function resolveAllSecretsWithOpCli(
@@ -435,13 +471,14 @@ function createOpInjectEntries(refs: Record<string, SecretRef>): readonly OpInje
 
 function buildOpInjectTemplate(entries: readonly OpInjectEntry[]): string {
 	return entries
-		.map((entry) =>
-			[
+		.map((entry) => {
+			assertOpInjectTemplateSafeReference(entry);
+			return [
 				opInjectStartMarker(entry.markerId),
 				`{{ ${entry.secretRef.ref} }}`,
 				opInjectEndMarker(entry.markerId),
-			].join('\n'),
-		)
+			].join('\n');
+		})
 		.join('\n');
 }
 

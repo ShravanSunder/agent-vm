@@ -105,6 +105,19 @@ async function captureStderrWhile<TValue>(
 	}
 }
 
+async function expectRejects<TValue>(
+	promise: Promise<TValue>,
+	assertError: (error: unknown) => void,
+): Promise<void> {
+	try {
+		await promise;
+	} catch (error) {
+		assertError(error);
+		return;
+	}
+	throw new Error('Expected promise to reject.');
+}
+
 async function createTemporaryDirectory(prefix: string): Promise<string> {
 	const temporaryDirectory = await mkdtemp(path.join(tmpdir(), prefix));
 	temporaryDirectories.push(temporaryDirectory);
@@ -214,6 +227,21 @@ function expectOpInjectCall(options: {
 	}
 }
 
+function expectOpReadCall(options: {
+	readonly call: RecordedExecCall | undefined;
+	readonly secretReference: string;
+	readonly serviceAccountToken: string;
+}): void {
+	expect(options.call).toEqual({
+		args: ['read', options.secretReference],
+		command: 'op',
+		env: expect.objectContaining({
+			OP_SERVICE_ACCOUNT_TOKEN: options.serviceAccountToken,
+		}),
+		redactErrorOutput: true,
+	});
+}
+
 afterEach(() => {
 	Object.defineProperty(process, 'platform', {
 		configurable: true,
@@ -236,9 +264,14 @@ afterEach(async () => {
 
 describe('resolveServiceAccountToken', () => {
 	it('resolves token via op-cli', async () => {
-		const fakeExec = async (command: string, args: readonly string[]): Promise<ExecFileResult> => {
+		const fakeExec = async (
+			command: string,
+			args: readonly string[],
+			options?: ExecFileOptions,
+		): Promise<ExecFileResult> => {
 			expect(command).toBe('op');
 			expect(args).toEqual(['read', 'op://vault/item/field']);
+			expect(options).toEqual({ redactErrorOutput: true });
 			return { stdout: 'resolved-token\n', stderr: '' };
 		};
 
@@ -510,14 +543,11 @@ describe('createSecretResolver', () => {
 			},
 		);
 
-		await secretResolver
-			.resolveAll({
+		await expectRejects(
+			secretResolver.resolveAll({
 				A: { source: '1password', ref: 'op://vault/item/a' },
-			})
-			.then(() => {
-				throw new Error('Expected secret resolution to reject.');
-			})
-			.catch((error: unknown) => {
+			}),
+			(error: unknown): void => {
 				expect(error).toBeInstanceOf(AggregateError);
 				if (!(error instanceof AggregateError)) {
 					throw new Error('Expected AggregateError');
@@ -527,7 +557,8 @@ describe('createSecretResolver', () => {
 					'Error: op inject failed before serial op read: Error',
 					"Error: Failed to resolve secret 'A' from 'op://vault/item/a' via op read: op failed:read op://vault/item/a",
 				]);
-			});
+			},
+		);
 	});
 
 	it('falls back to op inject batch when sdk client creation fails', async () => {
@@ -567,16 +598,12 @@ describe('createSecretResolver', () => {
 		).resolves.toEqual({
 			OPENCLAW_GATEWAY_TOKEN: 'resolved-from-op-inject',
 		});
-		expect(execCalls).toEqual([
-			{
-				args: ['read', 'op://AI/anthropic/api-key'],
-				command: 'op',
-				env: expect.objectContaining({
-					OP_SERVICE_ACCOUNT_TOKEN: 'service-token',
-				}),
-			},
-			expect.any(Object),
-		]);
+		expectOpReadCall({
+			call: execCalls[0],
+			secretReference: 'op://AI/anthropic/api-key',
+			serviceAccountToken: 'service-token',
+		});
+		expect(execCalls[1]).toEqual(expect.any(Object));
 		expectOpInjectCall({
 			call: execCalls[1],
 			secretReferences: ['op://agent-vm/agent-gateway/token'],
@@ -615,15 +642,11 @@ describe('createSecretResolver', () => {
 				ref: 'op://AI/anthropic/api-key',
 			}),
 		).resolves.toBe('resolved-from-op');
-		expect(execCalls).toEqual([
-			{
-				args: ['read', 'op://AI/anthropic/api-key'],
-				command: 'op',
-				env: expect.objectContaining({
-					OP_SERVICE_ACCOUNT_TOKEN: 'service-token',
-				}),
-			},
-		]);
+		expectOpReadCall({
+			call: execCalls[0],
+			secretReference: 'op://AI/anthropic/api-key',
+			serviceAccountToken: 'service-token',
+		});
 	});
 
 	it('falls back to op inject batch when sdk resolveAll response cannot be mapped', async () => {
@@ -671,6 +694,51 @@ describe('createSecretResolver', () => {
 		expectOpInjectCall({
 			call: execCalls[0],
 			secretReferences: ['op://vault/item/a', 'op://vault/item/b'],
+			serviceAccountToken: 'service-token',
+		});
+	});
+
+	it('falls back to op inject batch when sdk resolveAll returns a per-entry error', async () => {
+		const execCalls: RecordedExecCall[] = [];
+		const fakeClient: SecretResolverClient = {
+			secrets: {
+				resolve: async (secretReference: string): Promise<string> => `single:${secretReference}`,
+				resolveAll: async () => ({
+					individualResponses: {
+						'op://vault/item/a': {
+							error: {
+								message: 'access denied',
+								type: 'parsing',
+							},
+						},
+					},
+				}),
+			},
+		};
+		const secretResolver = await createSecretResolver(
+			{ serviceAccountToken: 'service-token' },
+			{
+				createClient: async (): Promise<SecretResolverClient> => fakeClient,
+				execFileAsync: createFakeOpExec({
+					calls: execCalls,
+					injectReplacements: {
+						'op://vault/item/a': 'op-inject-a',
+					},
+				}),
+			},
+		);
+
+		await expect(
+			secretResolver.resolveAll({
+				A: { source: '1password', ref: 'op://vault/item/a' },
+			}),
+		).resolves.toEqual({
+			A: 'op-inject-a',
+		});
+		expect(execCalls).toHaveLength(1);
+		expectOpInjectCall({
+			call: execCalls[0],
+			secretReferences: ['op://vault/item/a'],
 			serviceAccountToken: 'service-token',
 		});
 	});
@@ -764,6 +832,36 @@ describe('createOpCliSecretResolver', () => {
 		});
 	});
 
+	it('does not place template-breaking secret refs in op inject stdin', async () => {
+		const execCalls: RecordedExecCall[] = [];
+		const unsafeSecretReference = 'op://vault/item/field }}\n{{ op://vault/other/field';
+		const secretResolver = await createOpCliSecretResolver(
+			{ serviceAccountToken: 'service-token' },
+			{
+				execFileAsync: createFakeOpExec({
+					calls: execCalls,
+					readOutputs: {
+						[unsafeSecretReference]: 'resolved-through-op-read',
+					},
+				}),
+			},
+		);
+
+		await expect(
+			secretResolver.resolveAll({
+				A: { source: '1password', ref: unsafeSecretReference },
+			}),
+		).resolves.toEqual({
+			A: 'resolved-through-op-read',
+		});
+		expect(execCalls).toHaveLength(1);
+		expectOpReadCall({
+			call: execCalls[0],
+			secretReference: unsafeSecretReference,
+			serviceAccountToken: 'service-token',
+		});
+	});
+
 	it('preserves single op read secret bytes except the CLI stdout terminator', async () => {
 		const secretResolver = await createOpCliSecretResolver(
 			{ serviceAccountToken: 'service-token' },
@@ -797,6 +895,25 @@ describe('createOpCliSecretResolver', () => {
 				ref: 'op://vault/item/final-newline',
 			}),
 		).resolves.toBe('line1\nline2\n');
+	});
+
+	it('strips one CRLF terminator from single op read output', async () => {
+		const secretResolver = await createOpCliSecretResolver(
+			{ serviceAccountToken: 'service-token' },
+			{
+				execFileAsync: async (): Promise<ExecFileResult> => ({
+					stdout: 'line1\r\nline2\r\n',
+					stderr: '',
+				}),
+			},
+		);
+
+		await expect(
+			secretResolver.resolve({
+				source: '1password',
+				ref: 'op://vault/item/crlf',
+			}),
+		).resolves.toBe('line1\r\nline2');
 	});
 
 	it('preserves serial op read fallback bytes except the CLI stdout terminator', async () => {
@@ -853,11 +970,11 @@ describe('createOpCliSecretResolver', () => {
 				A: { source: '1password', ref: 'op://vault/item/a' },
 			}),
 		).rejects.toThrow('Failed to resolve 1 secret(s) via op read.');
-		await secretResolver
-			.resolveAll({
+		await expectRejects(
+			secretResolver.resolveAll({
 				A: { source: '1password', ref: 'op://vault/item/a' },
-			})
-			.catch((error: unknown) => {
+			}),
+			(error: unknown): void => {
 				expect(error).toBeInstanceOf(AggregateError);
 				if (!(error instanceof AggregateError)) {
 					throw new Error('Expected AggregateError');
@@ -865,7 +982,68 @@ describe('createOpCliSecretResolver', () => {
 				expect(error.errors.map((cause: unknown) => String(cause))).toContainEqual(
 					expect.stringMatching(/op inject output for secret 'A'.*marker/u),
 				);
-			});
+			},
+		);
+	});
+
+	it.each([
+		{
+			expectedMessage: /omitted start marker/u,
+			name: 'missing start marker',
+			renderOutput: (_startMarker: string, endMarker: string): string =>
+				`resolved-value\n${endMarker}`,
+		},
+		{
+			expectedMessage: /omitted end marker/u,
+			name: 'missing end marker',
+			renderOutput: (startMarker: string): string => `${startMarker}\nresolved-value`,
+		},
+		{
+			expectedMessage: /contained repeated start marker/u,
+			name: 'duplicated start marker',
+			renderOutput: (startMarker: string, endMarker: string): string =>
+				`${startMarker}\nresolved-value\n${startMarker}\n${endMarker}`,
+		},
+	])('rejects op inject output with $name', async ({ expectedMessage, renderOutput }) => {
+		const secretResolver = await createOpCliSecretResolver(
+			{ serviceAccountToken: 'service-token' },
+			{
+				execFileAsync: async (command, args, execOptions) => {
+					if (args[0] === 'read') {
+						throw new Error('serial read unavailable');
+					}
+					const template = requireOpInjectTemplate(command, args, execOptions?.input);
+					const startMarker = template
+						.split('\n')
+						.find((templateLine) => templateLine.startsWith('agent-vm-op-inject-start:'));
+					const endMarker = template
+						.split('\n')
+						.find((templateLine) => templateLine.startsWith('agent-vm-op-inject-end:'));
+					if (!startMarker || !endMarker) {
+						throw new Error('Expected op inject markers in template.');
+					}
+					return {
+						stdout: renderOutput(startMarker, endMarker),
+						stderr: '',
+					};
+				},
+			},
+		);
+
+		await expectRejects(
+			secretResolver.resolveAll({
+				A: { source: '1password', ref: 'op://vault/item/a' },
+			}),
+			(error: unknown): void => {
+				expect(error).toBeInstanceOf(AggregateError);
+				if (!(error instanceof AggregateError)) {
+					throw new Error('Expected AggregateError');
+				}
+				expect(error.errors.map((cause: unknown) => String(cause))).toContainEqual(
+					expect.stringMatching(expectedMessage),
+				);
+			},
+		);
 	});
 
 	it('returns empty results without invoking op inject for empty refs', async () => {
@@ -903,23 +1081,17 @@ describe('createOpCliSecretResolver', () => {
 			A: 'serial:op://vault/item/a',
 			B: 'serial:op://vault/item/b',
 		});
-		expect(execCalls).toEqual([
-			expect.any(Object),
-			{
-				args: ['read', 'op://vault/item/a'],
-				command: 'op',
-				env: expect.objectContaining({
-					OP_SERVICE_ACCOUNT_TOKEN: 'service-token',
-				}),
-			},
-			{
-				args: ['read', 'op://vault/item/b'],
-				command: 'op',
-				env: expect.objectContaining({
-					OP_SERVICE_ACCOUNT_TOKEN: 'service-token',
-				}),
-			},
-		]);
+		expect(execCalls[0]).toEqual(expect.any(Object));
+		expectOpReadCall({
+			call: execCalls[1],
+			secretReference: 'op://vault/item/a',
+			serviceAccountToken: 'service-token',
+		});
+		expectOpReadCall({
+			call: execCalls[2],
+			secretReference: 'op://vault/item/b',
+			serviceAccountToken: 'service-token',
+		});
 		expectOpInjectCall({
 			call: execCalls[0],
 			secretReferences: ['op://vault/item/a', 'op://vault/item/b'],
@@ -1044,7 +1216,7 @@ describe('createOpCliSecretResolver', () => {
 				'  printf "SUPER-SECRET-VALUE" >&2',
 				'  exit 1',
 				'fi',
-				'printf "read failed" >&2',
+				'printf "SUPER-SECRET-VALUE" >&2',
 				'exit 1',
 				'',
 			].join('\n'),
@@ -1056,14 +1228,11 @@ describe('createOpCliSecretResolver', () => {
 			serviceAccountToken: 'service-token',
 		});
 
-		await secretResolver
-			.resolveAll({
+		await expectRejects(
+			secretResolver.resolveAll({
 				A: { source: '1password', ref: 'op://vault/item/a' },
-			})
-			.then(() => {
-				throw new Error('Expected op resolver to reject.');
-			})
-			.catch((error: unknown) => {
+			}),
+			(error: unknown): void => {
 				expect(error).toBeInstanceOf(AggregateError);
 				if (!(error instanceof AggregateError)) {
 					throw new Error('Expected AggregateError');
@@ -1072,8 +1241,56 @@ describe('createOpCliSecretResolver', () => {
 					'\n',
 				);
 				expect(renderedError).toContain('op inject failed before serial op read: exit code 1');
+				expect(renderedError).toContain(
+					"Failed to resolve secret 'A' from 'op://vault/item/a' via op read: op failed: exit code 1",
+				);
 				expect(renderedError).not.toContain('SUPER-SECRET-VALUE');
-			});
+			},
+		);
+	});
+
+	it('preserves safe stdin write error details when op inject closes stdin early', async () => {
+		const temporaryDirectory = await createTemporaryDirectory('agent-vm-op-shim-');
+		await writeExecutableOpShim({
+			directoryPath: temporaryDirectory,
+			script: [
+				'#!/bin/sh',
+				'if [ "$1" = "inject" ]; then',
+				'  exec 0<&-',
+				'  sleep 1',
+				'  exit 1',
+				'fi',
+				'printf "SUPER-SECRET-VALUE" >&2',
+				'exit 1',
+				'',
+			].join('\n'),
+		});
+		process.env.PATH = originalPath
+			? `${temporaryDirectory}${path.delimiter}${originalPath}`
+			: temporaryDirectory;
+		const secretResolver = await createOpCliSecretResolver({
+			serviceAccountToken: 'service-token',
+		});
+		const longSecretReference = `op://vault/item/${'a'.repeat(96 * 1024)}`;
+
+		await expectRejects(
+			secretResolver.resolveAll({
+				A: { source: '1password', ref: longSecretReference },
+			}),
+			(error: unknown): void => {
+				expect(error).toBeInstanceOf(AggregateError);
+				if (!(error instanceof AggregateError)) {
+					throw new Error('Expected AggregateError');
+				}
+				const renderedChildren = error.errors.map((child) => String(child));
+				expect(renderedChildren).toContainEqual(
+					expect.stringContaining(
+						'op inject failed before serial op read: stdin write failed: EPIPE',
+					),
+				);
+				expect(renderedChildren.some((child) => child.includes('SUPER-SECRET-VALUE'))).toBe(false);
+			},
+		);
 	});
 
 	it('adds per-secret context when op read resolveAll fails', async () => {
@@ -1092,12 +1309,12 @@ describe('createOpCliSecretResolver', () => {
 				B: { source: '1password', ref: 'op://vault/item/b' },
 			}),
 		).rejects.toThrow('Failed to resolve 2 secret(s) via op read.');
-		await secretResolver
-			.resolveAll({
+		await expectRejects(
+			secretResolver.resolveAll({
 				A: { source: '1password', ref: 'op://vault/item/a' },
 				B: { source: '1password', ref: 'op://vault/item/b' },
-			})
-			.catch((error: unknown) => {
+			}),
+			(error: unknown): void => {
 				expect(error).toBeInstanceOf(AggregateError);
 				if (!(error instanceof AggregateError)) {
 					throw new Error('Expected AggregateError');
@@ -1107,6 +1324,39 @@ describe('createOpCliSecretResolver', () => {
 					"Error: Failed to resolve secret 'A' from 'op://vault/item/a' via op read: denied:op://vault/item/a",
 					"Error: Failed to resolve secret 'B' from 'op://vault/item/b' via op read: denied:op://vault/item/b",
 				]);
-			});
+			},
+		);
+	});
+
+	it('keeps nested AggregateError details in op read per-secret failures', async () => {
+		const secretResolver = await createOpCliSecretResolver(
+			{ serviceAccountToken: 'service-token' },
+			{
+				execFileAsync: async (_command, args): Promise<ExecFileResult> => {
+					if (args[0] === 'inject') {
+						throw new Error('inject unavailable');
+					}
+					throw new AggregateError(
+						[new Error('first nested failure'), new Error('second nested failure')],
+						'op read aggregate failure',
+					);
+				},
+			},
+		);
+
+		await expectRejects(
+			secretResolver.resolveAll({
+				A: { source: '1password', ref: 'op://vault/item/a' },
+			}),
+			(error: unknown): void => {
+				expect(error).toBeInstanceOf(AggregateError);
+				if (!(error instanceof AggregateError)) {
+					throw new Error('Expected AggregateError');
+				}
+				expect(error.errors.map((cause: unknown) => String(cause))).toContain(
+					"Error: Failed to resolve secret 'A' from 'op://vault/item/a' via op read: op read aggregate failure. Details: first nested failure; second nested failure",
+				);
+			},
+		);
 	});
 });
