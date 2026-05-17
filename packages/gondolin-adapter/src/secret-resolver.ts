@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 
 import { createClient, type ResolveAllResponse, type ResolveReferenceError } from '@1password/sdk';
 
@@ -25,6 +26,8 @@ export type TokenSource =
 
 export interface ExecFileOptions {
 	readonly env?: Readonly<Record<string, string | undefined>>;
+	readonly input?: string | undefined;
+	readonly redactErrorOutput?: boolean | undefined;
 }
 
 export interface ExecFileResult {
@@ -54,20 +57,31 @@ function execFileAsync(
 	options?: ExecFileOptions,
 ): Promise<ExecFileResult> {
 	return new Promise((resolve, reject) => {
-		execFile(
+		const child = execFile(
 			command,
 			[...args],
 			{ env: options?.env, timeout: 30_000 },
 			(error, stdout, stderr) => {
 				if (error) {
 					const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
-					reject(new Error(`${command} failed: ${stderr.trim() || errorMessage}`));
+					const errorDetail = options?.redactErrorOutput
+						? errorMessage
+						: stderr.trim() || errorMessage;
+					reject(new Error(`${command} failed: ${errorDetail}`));
 					return;
 				}
 
 				resolve({ stdout, stderr });
 			},
 		);
+		if (options?.input !== undefined) {
+			if (!child.stdin) {
+				child.kill();
+				reject(new Error(`${command} did not expose stdin for input`));
+				return;
+			}
+			child.stdin.end(options.input);
+		}
 	});
 }
 
@@ -176,6 +190,118 @@ async function resolveSecretWithOpCli(
 }
 
 async function resolveAllSecretsWithOpCli(
+	serviceAccountToken: string,
+	refs: Record<string, SecretRef>,
+	exec: (
+		command: string,
+		args: readonly string[],
+		options?: ExecFileOptions,
+	) => Promise<ExecFileResult>,
+): Promise<Record<string, string>> {
+	try {
+		return await resolveAllSecretsWithOpInject(serviceAccountToken, refs, exec);
+	} catch {
+		writeStderr(
+			'[secret-resolver] op inject batch resolution failed; falling back to serial op read.',
+		);
+		return await resolveAllSecretsWithSerialOpReads(serviceAccountToken, refs, exec);
+	}
+}
+
+function opInjectStartMarker(batchId: string, index: number): string {
+	return `agent-vm-op-inject-start:${batchId}:${String(index)}`;
+}
+
+function opInjectEndMarker(batchId: string, index: number): string {
+	return `agent-vm-op-inject-end:${batchId}:${String(index)}`;
+}
+
+function buildOpInjectTemplate(
+	entries: readonly (readonly [string, SecretRef])[],
+	batchId: string,
+): string {
+	return entries
+		.map(([_secretName, secretRef], index) =>
+			[
+				opInjectStartMarker(batchId, index),
+				`{{ ${secretRef.ref} }}`,
+				opInjectEndMarker(batchId, index),
+			].join('\n'),
+		)
+		.join('\n');
+}
+
+function extractInjectedSecret(options: {
+	readonly batchId: string;
+	readonly index: number;
+	readonly output: string;
+	readonly secretName: string;
+	readonly secretReference: string;
+}): string {
+	const startToken = `${opInjectStartMarker(options.batchId, options.index)}\n`;
+	const endToken = `\n${opInjectEndMarker(options.batchId, options.index)}`;
+	const valueStartIndex = options.output.indexOf(startToken);
+	if (valueStartIndex === -1) {
+		throw new Error(
+			`op inject output omitted start marker for secret '${options.secretName}' (${options.secretReference}).`,
+		);
+	}
+	const secretStartIndex = valueStartIndex + startToken.length;
+	const secretEndIndex = options.output.indexOf(endToken, secretStartIndex);
+	if (secretEndIndex === -1) {
+		throw new Error(
+			`op inject output omitted end marker for secret '${options.secretName}' (${options.secretReference}).`,
+		);
+	}
+	return options.output.slice(secretStartIndex, secretEndIndex).trim();
+}
+
+function mapOpInjectOutput(
+	entries: readonly (readonly [string, SecretRef])[],
+	batchId: string,
+	output: string,
+): Record<string, string> {
+	return Object.fromEntries(
+		entries.map(([secretName, secretRef], index) => [
+			secretName,
+			extractInjectedSecret({
+				batchId,
+				index,
+				output,
+				secretName,
+				secretReference: secretRef.ref,
+			}),
+		]),
+	);
+}
+
+async function resolveAllSecretsWithOpInject(
+	serviceAccountToken: string,
+	refs: Record<string, SecretRef>,
+	exec: (
+		command: string,
+		args: readonly string[],
+		options?: ExecFileOptions,
+	) => Promise<ExecFileResult>,
+): Promise<Record<string, string>> {
+	const entries = Object.entries(refs);
+	if (entries.length === 0) {
+		return {};
+	}
+
+	const batchId = randomUUID();
+	const result = await exec('op', ['inject'], {
+		env: {
+			...process.env,
+			OP_SERVICE_ACCOUNT_TOKEN: serviceAccountToken,
+		},
+		input: buildOpInjectTemplate(entries, batchId),
+		redactErrorOutput: true,
+	});
+	return mapOpInjectOutput(entries, batchId, result.stdout);
+}
+
+async function resolveAllSecretsWithSerialOpReads(
 	serviceAccountToken: string,
 	refs: Record<string, SecretRef>,
 	exec: (
@@ -297,7 +423,7 @@ export async function createSecretResolver(
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
 					writeStderr(
-						`[secret-resolver] 1Password SDK resolveAll failed; falling back to serial op CLI reads: ${message}`,
+						`[secret-resolver] 1Password SDK resolveAll failed; falling back to op CLI batch inject: ${message}`,
 					);
 					return await resolveAllSecretsWithOpCli(options.serviceAccountToken, refs, exec);
 				}
