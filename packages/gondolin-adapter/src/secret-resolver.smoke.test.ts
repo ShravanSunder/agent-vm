@@ -12,7 +12,7 @@ import { shouldRunOnePasswordSecretResolverSmoke } from './smoke-test-gates.js';
 import type { SecretRef } from './types.js';
 
 interface OnePasswordSmokeConfig {
-	readonly secretReference: string;
+	readonly secretReferences: readonly string[];
 	readonly serviceAccountToken: string;
 }
 
@@ -31,31 +31,49 @@ const unsafeAmbientOnePasswordAuthEnvNames = [
 	'OP_SESSION',
 ] satisfies readonly string[];
 
+const defaultOnePasswordSmokeSecretReferences = [
+	'op://agent-vm/smoke-test-item1/ref1',
+	'op://agent-vm/smoke-test-item1/ref2',
+	'op://agent-vm/smoke-test-item2/password',
+] satisfies readonly string[];
+
 const describeOnePasswordSecretResolverSmoke = shouldRunOnePasswordSecretResolverSmoke()
 	? describe
 	: describe.skip;
+
+function readSmokeSecretReferences(): readonly string[] {
+	const configuredReferences = process.env.AGENT_VM_1PASSWORD_SMOKE_REFS;
+	if (!configuredReferences) {
+		return defaultOnePasswordSmokeSecretReferences;
+	}
+
+	return configuredReferences
+		.split(',')
+		.map((secretReference) => secretReference.trim())
+		.filter((secretReference) => secretReference.length > 0);
+}
 
 function readOnePasswordSmokeConfig(): OnePasswordSmokeConfig {
 	const serviceAccountToken =
 		process.env.AGENT_VM_1PASSWORD_SMOKE_SERVICE_ACCOUNT_TOKEN ??
 		process.env.OP_SERVICE_ACCOUNT_TOKEN;
-	const secretReference = process.env.AGENT_VM_1PASSWORD_SMOKE_REF;
+	const secretReferences = readSmokeSecretReferences();
 
 	if (!serviceAccountToken) {
 		throw new Error(
 			'Set AGENT_VM_1PASSWORD_SMOKE_SERVICE_ACCOUNT_TOKEN or OP_SERVICE_ACCOUNT_TOKEN when AGENT_VM_1PASSWORD_SMOKE=1.',
 		);
 	}
-	if (!secretReference) {
-		throw new Error(
-			'Set AGENT_VM_1PASSWORD_SMOKE_REF to an op:// reference when AGENT_VM_1PASSWORD_SMOKE=1.',
-		);
+	if (secretReferences.length === 0) {
+		throw new Error('Set AGENT_VM_1PASSWORD_SMOKE_REFS to at least one op:// reference.');
 	}
-	if (!secretReference.startsWith('op://')) {
-		throw new Error('AGENT_VM_1PASSWORD_SMOKE_REF must be an op:// reference.');
+	for (const secretReference of secretReferences) {
+		if (!secretReference.startsWith('op://')) {
+			throw new Error('Every AGENT_VM_1PASSWORD_SMOKE_REFS entry must be an op:// reference.');
+		}
 	}
 
-	return { secretReference, serviceAccountToken };
+	return { secretReferences, serviceAccountToken };
 }
 
 function copyExecEnv(
@@ -169,7 +187,7 @@ const forcedFailingSdkClient = {
 } satisfies SecretResolverClient;
 
 describeOnePasswordSecretResolverSmoke('smoke: 1Password op inject fallback', () => {
-	it('resolves a live 1Password ref through one op inject subprocess after SDK failure', async () => {
+	it('resolves live 1Password refs through one op inject subprocess after SDK failure', async () => {
 		const config = readOnePasswordSmokeConfig();
 		const recordedOpCalls: RecordedOpCall[] = [];
 		const stderrWriteSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
@@ -180,16 +198,22 @@ describeOnePasswordSecretResolverSmoke('smoke: 1Password op inject fallback', ()
 				execFileAsync: createRecordingExecFileAsync(recordedOpCalls),
 			},
 		);
-		const refs = {
-			ONE_PASSWORD_SMOKE_SECRET: { ref: config.secretReference, source: '1password' },
-		} satisfies Record<string, SecretRef>;
+		const refs = Object.fromEntries(
+			config.secretReferences.map((secretReference, index) => [
+				`ONE_PASSWORD_SMOKE_SECRET_${String(index + 1)}`,
+				{ ref: secretReference, source: '1password' },
+			]),
+		) satisfies Record<string, SecretRef>;
 
 		try {
 			const resolvedSecrets = await resolver.resolveAll(refs);
-			const resolvedSecret = resolvedSecrets.ONE_PASSWORD_SMOKE_SECRET;
 
-			expect(resolvedSecret).toBeDefined();
-			expect(resolvedSecret?.length).toBeGreaterThan(0);
+			expect(Object.keys(resolvedSecrets)).toHaveLength(config.secretReferences.length);
+			for (const secretName of Object.keys(refs)) {
+				const resolvedSecret = resolvedSecrets[secretName];
+				expect(resolvedSecret).toBeDefined();
+				expect(resolvedSecret?.length).toBeGreaterThan(0);
+			}
 			expect(recordedOpCalls).toHaveLength(1);
 
 			const opInjectCall = recordedOpCalls[0];
@@ -199,7 +223,7 @@ describeOnePasswordSecretResolverSmoke('smoke: 1Password op inject fallback', ()
 
 			expect(opInjectCall.command).toBe('op');
 			expect(opInjectCall.args).toEqual(['inject', '--in-file', '/dev/stdin']);
-			expect(opInjectCall.inputLength).toBeGreaterThan(config.secretReference.length);
+			expect(opInjectCall.inputLength).toBeGreaterThan(config.secretReferences.join('').length);
 			expect(opInjectCall.redactErrorOutput).toBe(true);
 			expect(opInjectCall.serviceAccountTokenLength).toBe(config.serviceAccountToken.length);
 			expect(opInjectCall.forwardedUnsafeAuthEnvNames).toEqual([]);
