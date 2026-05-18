@@ -198,7 +198,7 @@ describeOnePasswordSecretResolverSmoke('smoke: 1Password op inject fallback', ()
 			}
 
 			expect(opInjectCall.command).toBe('op');
-			expect(opInjectCall.args).toEqual(['inject']);
+			expect(opInjectCall.args).toEqual(['inject', '--in-file', '/dev/stdin']);
 			expect(opInjectCall.inputLength).toBeGreaterThan(config.secretReference.length);
 			expect(opInjectCall.redactErrorOutput).toBe(true);
 			expect(opInjectCall.serviceAccountTokenLength).toBe(config.serviceAccountToken.length);

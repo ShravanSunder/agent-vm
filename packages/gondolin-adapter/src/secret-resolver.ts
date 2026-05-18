@@ -560,7 +560,7 @@ async function resolveAllSecretsWithOpInject(
 		return {};
 	}
 
-	const result = await exec('op', ['inject'], {
+	const result = await exec('op', ['inject', '--in-file', '/dev/stdin'], {
 		env: createOpCliServiceAccountEnv(serviceAccountToken),
 		input: buildOpInjectTemplate(entries),
 		redactErrorOutput: true,

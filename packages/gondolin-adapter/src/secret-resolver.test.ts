@@ -34,7 +34,14 @@ type FakeExecFileAsync = (
 ) => Promise<ExecFileResult>;
 
 function requireOpInjectTemplate(command: string, args: readonly string[], input?: string): string {
-	if (command !== 'op' || args.length !== 1 || args[0] !== 'inject' || input === undefined) {
+	if (
+		command !== 'op' ||
+		args.length !== 3 ||
+		args[0] !== 'inject' ||
+		args[1] !== '--in-file' ||
+		args[2] !== '/dev/stdin' ||
+		input === undefined
+	) {
 		throw new Error(`unexpected op fallback call: ${command} ${args.join(' ')}`);
 	}
 	return input;
@@ -209,7 +216,7 @@ function expectOpInjectCall(options: {
 	}
 
 	expect(options.call).toEqual({
-		args: ['inject'],
+		args: ['inject', '--in-file', '/dev/stdin'],
 		command: 'op',
 		env: expect.objectContaining({
 			OP_SERVICE_ACCOUNT_TOKEN: options.serviceAccountToken,
