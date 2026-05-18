@@ -23,6 +23,7 @@ interface RecordedOpCall {
 	readonly inputLength: number;
 	readonly redactErrorOutput: boolean;
 	readonly serviceAccountTokenLength: number;
+	readonly templateSecretReferences: readonly string[];
 }
 
 const unsafeAmbientOnePasswordAuthEnvNames = [
@@ -32,14 +33,26 @@ const unsafeAmbientOnePasswordAuthEnvNames = [
 ] satisfies readonly string[];
 
 const defaultOnePasswordSmokeSecretReferences = [
-	'op://agent-vm/smoke-test-item1/ref1',
-	'op://agent-vm/smoke-test-item1/ref2',
-	'op://agent-vm/smoke-test-item2/password',
+	'op://agent-vm-testing/smoke-test-item1/ref1',
+	'op://agent-vm-testing/smoke-test-item1/ref2',
+	'op://agent-vm-testing/smoke-test-item1/password',
+	'op://agent-vm-testing/smoke-test-item2/password',
 ] satisfies readonly string[];
 
 const describeOnePasswordSecretResolverSmoke = shouldRunOnePasswordSecretResolverSmoke()
 	? describe
 	: describe.skip;
+
+describe('smoke: 1Password default refs', () => {
+	it('covers both smoke items and item1 fields in one batch', () => {
+		expect(defaultOnePasswordSmokeSecretReferences).toEqual([
+			'op://agent-vm-testing/smoke-test-item1/ref1',
+			'op://agent-vm-testing/smoke-test-item1/ref2',
+			'op://agent-vm-testing/smoke-test-item1/password',
+			'op://agent-vm-testing/smoke-test-item2/password',
+		]);
+	});
+});
 
 function readSmokeSecretReferences(): readonly string[] {
 	const configuredReferences = process.env.AGENT_VM_1PASSWORD_SMOKE_REFS;
@@ -54,15 +67,11 @@ function readSmokeSecretReferences(): readonly string[] {
 }
 
 function readOnePasswordSmokeConfig(): OnePasswordSmokeConfig {
-	const serviceAccountToken =
-		process.env.AGENT_VM_1PASSWORD_SMOKE_SERVICE_ACCOUNT_TOKEN ??
-		process.env.OP_SERVICE_ACCOUNT_TOKEN;
+	const serviceAccountToken = process.env.TEST_OP_SERVICE_ACCOUNT_TOKEN;
 	const secretReferences = readSmokeSecretReferences();
 
 	if (!serviceAccountToken) {
-		throw new Error(
-			'Set AGENT_VM_1PASSWORD_SMOKE_SERVICE_ACCOUNT_TOKEN or OP_SERVICE_ACCOUNT_TOKEN when AGENT_VM_1PASSWORD_SMOKE=1.',
-		);
+		throw new Error('Set TEST_OP_SERVICE_ACCOUNT_TOKEN when AGENT_VM_1PASSWORD_SMOKE=1.');
 	}
 	if (secretReferences.length === 0) {
 		throw new Error('Set AGENT_VM_1PASSWORD_SMOKE_REFS to at least one op:// reference.');
@@ -105,14 +114,42 @@ function formatSmokeExecError(command: string, error: ExecFileException): Error 
 	return new Error(`${command} failed: exit code ${readExecErrorCode(error)}${signalDetail}`);
 }
 
+function readTemplateSecretReferences(input: string | undefined): readonly string[] {
+	if (input === undefined) {
+		return [];
+	}
+
+	const secretReferences: string[] = [];
+	for (const line of input.split('\n')) {
+		if (line.startsWith('{{ ') && line.endsWith(' }}')) {
+			secretReferences.push(line.slice(3, -3));
+		}
+	}
+	return secretReferences;
+}
+
+function createSmokeSecretRefs(secretReferences: readonly string[]): Record<string, SecretRef> {
+	const refs: Record<string, SecretRef> = {};
+	for (const [index, secretReference] of secretReferences.entries()) {
+		refs[`ONE_PASSWORD_SMOKE_SECRET_${String(index + 1)}`] = {
+			ref: secretReference,
+			source: '1password',
+		};
+	}
+	return refs;
+}
+
 function createRecordingExecFileAsync(
 	calls: RecordedOpCall[],
+	recordingOptions: {
+		readonly failOpInjectBeforeExec?: boolean | undefined;
+	} = {},
 ): (
 	command: string,
 	args: readonly string[],
-	options?: ExecFileOptions,
+	execOptions?: ExecFileOptions,
 ) => Promise<ExecFileResult> {
-	return (command, args, options): Promise<ExecFileResult> =>
+	return (command, args, execOptions): Promise<ExecFileResult> =>
 		new Promise((resolve, reject) => {
 			let hasSettled = false;
 			const resolveOnce = (result: ExecFileResult): void => {
@@ -129,18 +166,24 @@ function createRecordingExecFileAsync(
 				hasSettled = true;
 				reject(error);
 			};
-			const childEnv = copyExecEnv(options?.env);
+			const childEnv = copyExecEnv(execOptions?.env);
 
 			calls.push({
 				args: [...args],
 				command,
 				forwardedUnsafeAuthEnvNames: unsafeAmbientOnePasswordAuthEnvNames.filter(
-					(envName) => options?.env?.[envName] !== undefined,
+					(envName) => execOptions?.env?.[envName] !== undefined,
 				),
-				inputLength: options?.input?.length ?? 0,
-				redactErrorOutput: options?.redactErrorOutput === true,
-				serviceAccountTokenLength: options?.env?.OP_SERVICE_ACCOUNT_TOKEN?.length ?? 0,
+				inputLength: execOptions?.input?.length ?? 0,
+				redactErrorOutput: execOptions?.redactErrorOutput === true,
+				serviceAccountTokenLength: execOptions?.env?.OP_SERVICE_ACCOUNT_TOKEN?.length ?? 0,
+				templateSecretReferences: readTemplateSecretReferences(execOptions?.input),
 			});
+
+			if (recordingOptions.failOpInjectBeforeExec && command === 'op' && args[0] === 'inject') {
+				rejectOnce(new Error('forced op inject failure for 1Password smoke'));
+				return;
+			}
 
 			const child = execFile(
 				command,
@@ -159,7 +202,7 @@ function createRecordingExecFileAsync(
 				},
 			);
 
-			if (options?.input !== undefined) {
+			if (execOptions?.input !== undefined) {
 				if (!child.stdin) {
 					child.kill();
 					rejectOnce(new Error(`${command} did not expose stdin for smoke input`));
@@ -170,7 +213,7 @@ function createRecordingExecFileAsync(
 					child.kill();
 					rejectOnce(new Error(`${command} failed writing smoke input`));
 				});
-				child.stdin.end(options.input);
+				child.stdin.end(execOptions.input);
 			}
 		});
 }
@@ -186,47 +229,99 @@ const forcedFailingSdkClient = {
 	},
 } satisfies SecretResolverClient;
 
+function expectResolvedSmokeSecrets(
+	resolvedSecrets: Readonly<Record<string, string>>,
+	refs: Readonly<Record<string, SecretRef>>,
+): void {
+	expect(Object.keys(resolvedSecrets)).toHaveLength(Object.keys(refs).length);
+	for (const secretName of Object.keys(refs)) {
+		const resolvedSecret = resolvedSecrets[secretName];
+		expect(resolvedSecret).toBeDefined();
+		expect(resolvedSecret?.length).toBeGreaterThan(0);
+	}
+}
+
+function expectSafeRecordedOpCall(
+	opCall: RecordedOpCall | undefined,
+	config: OnePasswordSmokeConfig,
+): RecordedOpCall {
+	if (!opCall) {
+		throw new Error('Expected the smoke resolver to record an op subprocess call.');
+	}
+	expect(opCall.redactErrorOutput).toBe(true);
+	expect(opCall.serviceAccountTokenLength).toBe(config.serviceAccountToken.length);
+	expect(opCall.forwardedUnsafeAuthEnvNames).toEqual([]);
+	return opCall;
+}
+
+function expectOpInjectBatchCall(options: {
+	readonly config: OnePasswordSmokeConfig;
+	readonly opCall: RecordedOpCall | undefined;
+}): void {
+	const opInjectCall = expectSafeRecordedOpCall(options.opCall, options.config);
+	expect(opInjectCall.command).toBe('op');
+	expect(opInjectCall.args).toEqual(['inject', '--in-file', '/dev/stdin']);
+	expect(opInjectCall.inputLength).toBeGreaterThan(options.config.secretReferences.join('').length);
+	expect(opInjectCall.templateSecretReferences).toEqual(options.config.secretReferences);
+}
+
+function expectSerialOpReadFallbackCalls(options: {
+	readonly config: OnePasswordSmokeConfig;
+	readonly opCalls: readonly RecordedOpCall[];
+}): void {
+	expect(options.opCalls).toHaveLength(options.config.secretReferences.length + 1);
+	expectOpInjectBatchCall({
+		config: options.config,
+		opCall: options.opCalls[0],
+	});
+	for (const [index, secretReference] of options.config.secretReferences.entries()) {
+		const opReadCall = expectSafeRecordedOpCall(options.opCalls[index + 1], options.config);
+		expect(opReadCall.command).toBe('op');
+		expect(opReadCall.args).toEqual(['read', secretReference]);
+		expect(opReadCall.inputLength).toBe(0);
+		expect(opReadCall.templateSecretReferences).toEqual([]);
+	}
+}
+
 describeOnePasswordSecretResolverSmoke('smoke: 1Password op inject fallback', () => {
-	it('resolves live 1Password refs through one op inject subprocess after SDK failure', async () => {
+	it('resolves live refs through one op inject batch and verifies serial read fallback', async () => {
 		const config = readOnePasswordSmokeConfig();
-		const recordedOpCalls: RecordedOpCall[] = [];
+		const refs = createSmokeSecretRefs(config.secretReferences);
+		const batchOpCalls: RecordedOpCall[] = [];
+		const serialFallbackOpCalls: RecordedOpCall[] = [];
 		const stderrWriteSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-		const resolver = await createSecretResolver(
+		const batchResolver = await createSecretResolver(
 			{ serviceAccountToken: config.serviceAccountToken },
 			{
 				createClient: async () => forcedFailingSdkClient,
-				execFileAsync: createRecordingExecFileAsync(recordedOpCalls),
+				execFileAsync: createRecordingExecFileAsync(batchOpCalls),
 			},
 		);
-		const refs = Object.fromEntries(
-			config.secretReferences.map((secretReference, index) => [
-				`ONE_PASSWORD_SMOKE_SECRET_${String(index + 1)}`,
-				{ ref: secretReference, source: '1password' },
-			]),
-		) satisfies Record<string, SecretRef>;
+		const serialFallbackResolver = await createSecretResolver(
+			{ serviceAccountToken: config.serviceAccountToken },
+			{
+				createClient: async () => forcedFailingSdkClient,
+				execFileAsync: createRecordingExecFileAsync(serialFallbackOpCalls, {
+					failOpInjectBeforeExec: true,
+				}),
+			},
+		);
 
 		try {
-			const resolvedSecrets = await resolver.resolveAll(refs);
+			const batchResolvedSecrets = await batchResolver.resolveAll(refs);
+			expectResolvedSmokeSecrets(batchResolvedSecrets, refs);
+			expect(batchOpCalls).toHaveLength(1);
+			expectOpInjectBatchCall({
+				config,
+				opCall: batchOpCalls[0],
+			});
 
-			expect(Object.keys(resolvedSecrets)).toHaveLength(config.secretReferences.length);
-			for (const secretName of Object.keys(refs)) {
-				const resolvedSecret = resolvedSecrets[secretName];
-				expect(resolvedSecret).toBeDefined();
-				expect(resolvedSecret?.length).toBeGreaterThan(0);
-			}
-			expect(recordedOpCalls).toHaveLength(1);
-
-			const opInjectCall = recordedOpCalls[0];
-			if (!opInjectCall) {
-				throw new Error('Expected the smoke resolver to record one op inject subprocess call.');
-			}
-
-			expect(opInjectCall.command).toBe('op');
-			expect(opInjectCall.args).toEqual(['inject', '--in-file', '/dev/stdin']);
-			expect(opInjectCall.inputLength).toBeGreaterThan(config.secretReferences.join('').length);
-			expect(opInjectCall.redactErrorOutput).toBe(true);
-			expect(opInjectCall.serviceAccountTokenLength).toBe(config.serviceAccountToken.length);
-			expect(opInjectCall.forwardedUnsafeAuthEnvNames).toEqual([]);
+			const fallbackResolvedSecrets = await serialFallbackResolver.resolveAll(refs);
+			expectResolvedSmokeSecrets(fallbackResolvedSecrets, refs);
+			expectSerialOpReadFallbackCalls({
+				config,
+				opCalls: serialFallbackOpCalls,
+			});
 			expect(stderrWriteSpy).not.toHaveBeenCalled();
 		} finally {
 			stderrWriteSpy.mockRestore();
