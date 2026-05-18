@@ -177,7 +177,7 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	session.dmScope is per-channel-peer so Discord DMs from different people do not share one agent session.
 	tools.web.fetch.ssrfPolicy trusts fake-IP ranges for web_fetch. For gateway/tool TCP mappings, agent-vm's Gondolin adapter uses RFC2544 synthetic IPv4 plus ::ffff:198.18.0.1 as the synthetic AAAA answer so OpenClaw SSRF checks can validate all DNS answers without a broad hostname bypass.
 	tools.sandbox.tools.alsoAllow includes web_search, web_fetch, and message so sandboxed sessions can see web tools once a provider is configured and can explicitly send channel replies when OpenClaw uses message_tool_only group reply delivery.
-	plugins.load.paths includes /home/openclaw/.openclaw/extensions for vendored extensions and /pnpm/global/5/node_modules/@openclaw for managed OpenClaw packages.
+	plugins.load.paths includes /home/openclaw/.openclaw/extensions for agent-vm-managed extensions and the package manager's global root for managed OpenClaw packages.
 	plugins.slots.memory selects memory-core when memory-core is enabled.
 	gateway.auth.mode is token for agent-vm-managed gateways.
 	logging.file is rendered in the effective OpenClaw config as /agent-vm/logs/openclaw-YYYY-MM-DD.log unless the deployment explicitly sets its own logging.file.

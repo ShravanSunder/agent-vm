@@ -34,7 +34,7 @@ class FakeChildProcess extends EventEmitter {
 }
 
 describe('createPortalSubprocessSupervisor', () => {
-	it('spawns the portal binary with config dir, port, and HMAC env', async () => {
+	it('spawns the portal binary with config dir, HMAC env, and explicit portal env', async () => {
 		const previousSecret = process.env.AGENT_VM_SECRET_TOKEN;
 		process.env.AGENT_VM_SECRET_TOKEN = 'do-not-leak';
 		const spawnFn = vi.fn(
@@ -49,6 +49,7 @@ describe('createPortalSubprocessSupervisor', () => {
 			hmacEnv: { PORTAL_HMAC_KEY__shravan: '00'.repeat(32) },
 			logger: silentLogger(),
 			port: 18_790,
+			portalEnv: { MCP_PORTAL_SERVER_SECRET: 'portal-secret' },
 			spawnFn,
 		});
 
@@ -60,7 +61,10 @@ describe('createPortalSubprocessSupervisor', () => {
 			'/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server',
 			['--config-dir', '/config/gateways/sunclaw'],
 			expect.objectContaining({
-				env: expect.objectContaining({ PORTAL_HMAC_KEY__shravan: '00'.repeat(32) }),
+				env: expect.objectContaining({
+					MCP_PORTAL_SERVER_SECRET: 'portal-secret',
+					PORTAL_HMAC_KEY__shravan: '00'.repeat(32),
+				}),
 			}),
 		);
 		expect(spawnedEnv).not.toHaveProperty('AGENT_VM_SECRET_TOKEN');

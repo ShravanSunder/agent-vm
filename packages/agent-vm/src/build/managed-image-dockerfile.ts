@@ -19,12 +19,6 @@ const managedOpenClawPackageNames = new Set([
 ]);
 const managedOpenClawAgentVmPluginExtensionPath = '/home/openclaw/.openclaw/extensions/gondolin';
 const managedOpenClawMcpPortalPluginExtensionPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
-const managedOpenClawAgentVmPluginPackagePath =
-	'/pnpm/global/5/node_modules/@agent-vm/openclaw-agent-vm-plugin/dist';
-const managedOpenClawMcpPortalPluginPackagePath =
-	'/pnpm/global/5/node_modules/@agent-vm/openclaw-mcp-portal-plugin/dist';
-const managedMcpPortalServerScriptPath =
-	'/pnpm/global/5/node_modules/@agent-vm/mcp-portal/dist/bin/portal-server.js';
 const managedMcpPortalServerWrapperPath =
 	'/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server';
 const managedPnpmHomePath = '/pnpm';
@@ -257,16 +251,15 @@ function renderManagedDockerfile(props: {
 		lines.push(`RUN ${command}`);
 	}
 	if (props.base === 'openclaw-gateway') {
-		lines.push('RUN mkdir -p /pnpm/global/5/node_modules/@openclaw');
 		lines.push(
-			`RUN ln -sf ${managedOpenClawAgentVmPluginPackagePath} ${managedOpenClawAgentVmPluginExtensionPath}`,
-		);
-		lines.push(
-			`RUN ln -sf ${managedOpenClawMcpPortalPluginPackagePath} ${managedOpenClawMcpPortalPluginExtensionPath}`,
-		);
-		lines.push('RUN mkdir -p /opt/agent-vm/portal/bin');
-		lines.push(
-			`RUN printf '%s\\n' '#!/bin/sh' 'exec node ${managedMcpPortalServerScriptPath} "$@"' > ${managedMcpPortalServerWrapperPath} && chmod 0755 ${managedMcpPortalServerWrapperPath}`,
+			[
+				'RUN package_root="$(pnpm root -g)" && \\',
+				'    mkdir -p /home/openclaw/.openclaw/extensions /opt/agent-vm/portal/bin && \\',
+				`    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" ${managedOpenClawAgentVmPluginExtensionPath} && \\`,
+				`    ln -sfn "$package_root/@agent-vm/openclaw-mcp-portal-plugin/dist" ${managedOpenClawMcpPortalPluginExtensionPath} && \\`,
+				`    printf '%s\\n' '#!/bin/sh' "exec node $package_root/@agent-vm/mcp-portal/dist/bin/portal-server.js \\"\\$@\\"" > ${managedMcpPortalServerWrapperPath} && \\`,
+				`    chmod 0755 ${managedMcpPortalServerWrapperPath}`,
+			].join('\n'),
 		);
 	}
 	lines.push('');

@@ -267,10 +267,6 @@ export async function startControllerRuntime(
 		...(options.zoneIds ? { zoneIds: options.zoneIds } : {}),
 	});
 
-	await runTaskStep('Starting selected gateway zones', async () => {
-		await registry.startSelectedZones();
-	});
-
 	const serverRef: { current?: { close(): Promise<void> } } = {};
 	const stopController = createStopControllerOperation({
 		clearReaperTimer,
@@ -348,6 +344,9 @@ export async function startControllerRuntime(
 			app: controllerApp,
 			port: options.systemConfig.host.controllerPort,
 		});
+	});
+	await runTaskStep('Starting selected gateway zones', async () => {
+		await registry.startSelectedZones();
 	});
 
 	await idleReaper.reapExpiredLeases();

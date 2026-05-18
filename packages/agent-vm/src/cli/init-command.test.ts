@@ -1251,12 +1251,16 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(secrets).not.toHaveProperty('DISCORD_BOT_TOKEN');
 		expect(secrets).toHaveProperty('OPENCLAW_GATEWAY_TOKEN');
+		expect(secrets).toHaveProperty('MCP_PORTAL_SERVER_SECRET');
 		expect(secrets).not.toHaveProperty('ANTHROPIC_API_KEY');
 		expect(generatedSecretReferenceSchema.parse(secrets.PERPLEXITY_API_KEY).ref).toBe(
 			'op://agent-vm/test-openclaw-perplexity/credential',
 		);
 		expect(generatedSecretReferenceSchema.parse(secrets.OPENCLAW_GATEWAY_TOKEN).ref).toBe(
 			'op://agent-vm/test-openclaw-gateway-auth/password',
+		);
+		expect(generatedSecretReferenceSchema.parse(secrets.MCP_PORTAL_SERVER_SECRET).ref).toBe(
+			'op://agent-vm/test-openclaw-mcp-portal-server-secret/password',
 		);
 		expect(config.zones[0].adminAccess).toEqual({
 			mode: 'secret',
@@ -1445,6 +1449,7 @@ describe('scaffoldAgentVmProject', () => {
 		expect(envContent).toContain('# GITHUB_TOKEN=');
 		expect(envContent).toContain('# PERPLEXITY_API_KEY=');
 		expect(envContent).toContain('# OPENCLAW_GATEWAY_TOKEN=');
+		expect(envContent).toContain('# MCP_PORTAL_SERVER_SECRET=');
 		expect(envContent).toContain('# AGENT_VM_TEST_OPENCLAW_SSH_ACCESS_TOKEN=');
 		expect(envContent).not.toContain('DISCORD_BOT_TOKEN');
 		expect(config.zones[0].adminAccess).toEqual({

@@ -25,6 +25,7 @@ interface CapturedSupervisorOptions {
 	readonly hmacEnv: Readonly<Record<string, string>>;
 	readonly onFatal?: (reason: string) => void;
 	readonly port: number;
+	readonly portalEnv?: Readonly<Record<string, string>>;
 }
 
 const supervisorMocks = vi.hoisted(() => ({
@@ -63,7 +64,29 @@ async function createConfigDir(): Promise<string> {
 	await mkdir(configDir, { recursive: true });
 	await writeFile(
 		join(configDir, 'mcp.config.jsonc'),
-		`${JSON.stringify({ schemaVersion: 1, providers: {} }, null, '\t')}\n`,
+		`${JSON.stringify(
+			{
+				schemaVersion: 1,
+				providers: {
+					linear: {
+						kind: 'mcp',
+						namespace: 'linear',
+						transport: {
+							command: 'linear-mcp',
+							env: {
+								LINEAR_API_KEY: {
+									name: 'LINEAR_API_KEY',
+									source: 'environment',
+								},
+							},
+							kind: 'stdio',
+						},
+					},
+				},
+			},
+			null,
+			'\t',
+		)}\n`,
 		'utf8',
 	);
 	await writeFile(
@@ -105,6 +128,33 @@ async function createConfigDir(): Promise<string> {
 	return configDir;
 }
 
+async function withTemporaryEnv<T>(
+	values: Readonly<Record<string, string | undefined>>,
+	fn: () => Promise<T>,
+): Promise<T> {
+	const previousValues = new Map<string, string | undefined>();
+	for (const name of Object.keys(values)) {
+		previousValues.set(name, process.env[name]);
+		const nextValue = values[name];
+		if (nextValue === undefined) {
+			delete process.env[name];
+		} else {
+			process.env[name] = nextValue;
+		}
+	}
+	try {
+		return await fn();
+	} finally {
+		for (const [name, previousValue] of previousValues) {
+			if (previousValue === undefined) {
+				delete process.env[name];
+			} else {
+				process.env[name] = previousValue;
+			}
+		}
+	}
+}
+
 describe('MCP Portal plugin subprocess integration', () => {
 	it('starts the supervisor, shares HMAC keys, and signs approved portal calls', async () => {
 		const { registerMcpPortalPlugin } = await import('./plugin-registration.js');
@@ -138,12 +188,26 @@ describe('MCP Portal plugin subprocess integration', () => {
 			throw new Error('Expected plugin to register subprocess service and before_tool_call hook.');
 		}
 
-		await service.start();
+		await withTemporaryEnv(
+			{
+				AGENT_VM_UNRELATED_SECRET: 'do-not-leak',
+				LINEAR_API_KEY: 'linear-secret',
+				MCP_PORTAL_SERVER_SECRET: 'portal-secret',
+			},
+			async () => {
+				await service.start();
+			},
+		);
 		const supervisorOptions = supervisorMocks.capturedOptions[0];
 		if (supervisorOptions === undefined) {
 			throw new Error('Expected plugin to create a portal subprocess supervisor.');
 		}
 		expect(supervisorOptions).toMatchObject({ host: '127.0.0.1', port: 18_791 });
+		expect(supervisorOptions.portalEnv).toEqual({
+			LINEAR_API_KEY: 'linear-secret',
+			MCP_PORTAL_SERVER_SECRET: 'portal-secret',
+		});
+		expect(supervisorOptions.portalEnv).not.toHaveProperty('AGENT_VM_UNRELATED_SECRET');
 		const keyHex = supervisorOptions.hmacEnv[portalHmacKeyEnvName('shravan')];
 		if (keyHex === undefined) {
 			throw new Error('Expected HMAC env to contain a shravan key.');
@@ -222,7 +286,12 @@ describe('MCP Portal plugin subprocess integration', () => {
 		if (service === undefined || beforeToolCallHandler === undefined) {
 			throw new Error('Expected plugin to register subprocess service and before_tool_call hook.');
 		}
-		await service.start();
+		await withTemporaryEnv(
+			{ LINEAR_API_KEY: 'linear-secret', MCP_PORTAL_SERVER_SECRET: 'portal-secret' },
+			async () => {
+				await service.start();
+			},
+		);
 		const supervisorOptions = supervisorMocks.capturedOptions[0];
 		if (supervisorOptions?.onFatal === undefined) {
 			throw new Error('Expected supervisor options to include onFatal.');
@@ -251,7 +320,12 @@ describe('MCP Portal plugin subprocess integration', () => {
 			blockReason: expect.stringContaining('backoff-exhausted'),
 		});
 
-		await service.start();
+		await withTemporaryEnv(
+			{ LINEAR_API_KEY: 'linear-secret', MCP_PORTAL_SERVER_SECRET: 'portal-secret' },
+			async () => {
+				await service.start();
+			},
+		);
 		const params: Record<string, unknown> = {
 			calls: [
 				{
@@ -268,5 +342,39 @@ describe('MCP Portal plugin subprocess integration', () => {
 		);
 
 		expect(allowedResult).toMatchObject({ requireApproval: expect.any(Object) });
+	});
+
+	it('fails service startup with a clear error when a configured portal env secret is missing', async () => {
+		const { registerMcpPortalPlugin } = await import('./plugin-registration.js');
+		const configDir = await createConfigDir();
+		const services: OpenClawPluginService[] = [];
+
+		registerMcpPortalPlugin({
+			config: { tcpPool: { basePort: 19_000, size: 4 } },
+			lifecycle: { registerRuntimeLifecycle: () => undefined },
+			logger: { error: () => undefined },
+			on: () => undefined,
+			pluginConfig: {
+				binPath: '/tmp/agent-vm-mcp-portal-server',
+				configDir,
+			},
+			registerService: (service) => {
+				services.push(service);
+			},
+		});
+		const service = services[0];
+		if (service === undefined) {
+			throw new Error('Expected plugin to register subprocess service.');
+		}
+
+		await withTemporaryEnv(
+			{ LINEAR_API_KEY: 'linear-secret', MCP_PORTAL_SERVER_SECRET: undefined },
+			async () => {
+				await expect(service.start()).rejects.toThrow(
+					'Missing environment secret MCP_PORTAL_SERVER_SECRET for MCP Portal subprocess.',
+				);
+			},
+		);
+		expect(supervisorMocks.start).not.toHaveBeenCalled();
 	});
 });

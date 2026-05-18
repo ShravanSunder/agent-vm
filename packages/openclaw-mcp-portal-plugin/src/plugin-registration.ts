@@ -1,3 +1,12 @@
+import { join } from 'node:path';
+
+import {
+	loadMcpConfig,
+	type McpConfig,
+	type McpPortalConfig,
+	type SecretValue,
+} from '@agent-vm/config-contracts';
+
 import { createBeforePromptBuildHandler } from './before-prompt-build-handler.js';
 import { createBeforeToolCallHandler } from './before-tool-call-handler.js';
 import { createHmacKeyRegistry } from './hmac-key-registry.js';
@@ -25,6 +34,12 @@ interface TcpPoolConfig {
 }
 
 const pluginId = 'mcp-portal';
+const onePasswordCliEnvNames = [
+	'OP_SERVICE_ACCOUNT_TOKEN',
+	'OP_ACCOUNT',
+	'OP_CONNECT_HOST',
+	'OP_CONNECT_TOKEN',
+] as const;
 
 function hasFunction(value: unknown): value is (...args: readonly unknown[]) => unknown {
 	return typeof value === 'function';
@@ -44,6 +59,102 @@ function getObjectProperty(value: unknown, property: string): unknown {
 
 function messageFromUnknown(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function addEnvironmentSecretName(names: Set<string>, secret: SecretValue): void {
+	if (secret.source === 'environment') {
+		names.add(secret.name);
+	}
+}
+
+function secretUsesOnePassword(secret: SecretValue): boolean {
+	return secret.source === '1password';
+}
+
+function collectMcpConfigEnvironmentSecretNames(config: McpConfig): ReadonlySet<string> {
+	const names = new Set<string>();
+	for (const provider of Object.values(config.providers)) {
+		const transport = provider.transport;
+		const secrets =
+			transport.kind === 'stdio' ? Object.values(transport.env) : Object.values(transport.headers);
+		for (const secret of secrets) {
+			addEnvironmentSecretName(names, secret);
+		}
+	}
+	return names;
+}
+
+function collectMcpPortalConfigEnvironmentSecretNames(
+	config: McpPortalConfig,
+): ReadonlySet<string> {
+	const names = new Set<string>();
+	addEnvironmentSecretName(names, config.server.accessHeader.secret);
+	for (const agent of Object.values(config.agents)) {
+		if (agent.hmacKey !== undefined) {
+			addEnvironmentSecretName(names, agent.hmacKey);
+		}
+	}
+	return names;
+}
+
+function mcpConfigUsesOnePassword(config: McpConfig): boolean {
+	return Object.values(config.providers).some((provider) => {
+		const transport = provider.transport;
+		const secrets =
+			transport.kind === 'stdio' ? Object.values(transport.env) : Object.values(transport.headers);
+		return secrets.some(secretUsesOnePassword);
+	});
+}
+
+function mcpPortalConfigUsesOnePassword(config: McpPortalConfig): boolean {
+	return (
+		secretUsesOnePassword(config.server.accessHeader.secret) ||
+		Object.values(config.agents).some(
+			(agent) => agent.hmacKey !== undefined && secretUsesOnePassword(agent.hmacKey),
+		)
+	);
+}
+
+function resolveRequiredPortalEnv(props: {
+	readonly env: NodeJS.ProcessEnv;
+	readonly names: ReadonlySet<string>;
+}): Readonly<Record<string, string>> {
+	const resolvedEnv: Record<string, string> = {};
+	for (const name of [...props.names].toSorted()) {
+		const value = props.env[name];
+		if (value === undefined || value.length === 0) {
+			throw new Error(`Missing environment secret ${name} for MCP Portal subprocess.`);
+		}
+		resolvedEnv[name] = value;
+	}
+	return resolvedEnv;
+}
+
+export function createPortalSubprocessConfigEnv(props: {
+	readonly env?: NodeJS.ProcessEnv;
+	readonly mcpConfig: McpConfig;
+	readonly mcpPortalConfig: McpPortalConfig;
+}): Readonly<Record<string, string>> {
+	const env = props.env ?? process.env;
+	const requiredNames = new Set<string>([
+		...collectMcpConfigEnvironmentSecretNames(props.mcpConfig),
+		...collectMcpPortalConfigEnvironmentSecretNames(props.mcpPortalConfig),
+	]);
+	const portalEnv: Record<string, string> = {
+		...resolveRequiredPortalEnv({ env, names: requiredNames }),
+	};
+	if (
+		mcpConfigUsesOnePassword(props.mcpConfig) ||
+		mcpPortalConfigUsesOnePassword(props.mcpPortalConfig)
+	) {
+		for (const name of onePasswordCliEnvNames) {
+			const value = env[name];
+			if (value !== undefined && value.length > 0) {
+				portalEnv[name] = value;
+			}
+		}
+	}
+	return portalEnv;
 }
 
 function resolveConfigDir(api: OpenClawPortalPluginApi): string {
@@ -152,6 +263,7 @@ function registerPortalService(props: {
 		id: 'mcp-portal-subprocess',
 		start: async () => {
 			const mcpPortalConfig = await props.runtimeState.loadPortalConfig();
+			const mcpConfig = await loadMcpConfig(join(props.configDir, 'mcp.config.jsonc'));
 			validatePortalPortAgainstTcpPool({
 				port: mcpPortalConfig.server.port,
 				tcpPool: tcpPoolConfigFromApi(props.api),
@@ -171,6 +283,7 @@ function registerPortalService(props: {
 					props.api.logger?.error?.(`[mcp-portal] subprocess supervisor fatal: ${reason}`);
 				},
 				port: mcpPortalConfig.server.port,
+				portalEnv: createPortalSubprocessConfigEnv({ mcpConfig, mcpPortalConfig }),
 			});
 			await supervisor.start();
 			props.runtimeState.markPortalAvailable();

@@ -1001,6 +1001,73 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 		}
 	});
 
+	it('accepts runtime-materialized MCP Portal endpoints when system mcp config is present', async () => {
+		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-doctor-'));
+		const configDirectory = path.join(temporaryDirectory, 'config');
+		const openClawConfigPath = path.join(configDirectory, 'openclaw.json');
+		await mkdir(configDirectory, { recursive: true });
+		await writeFile(
+			path.join(configDirectory, 'mcp-portal.config.jsonc'),
+			JSON.stringify({
+				agents: { sun: { profile: 'default' } },
+				profiles: { default: { enabledNamespaces: [] } },
+				schemaVersion: 1,
+				server: {
+					accessHeader: {
+						name: 'x-agent-vm-mcp-portal-secret',
+						secret: { source: 'environment', name: 'MCP_PORTAL_SERVER_SECRET' },
+					},
+					host: '127.0.0.1',
+					port: 18_790,
+				},
+			}),
+			'utf8',
+		);
+		await writeFile(
+			openClawConfigPath,
+			JSON.stringify({
+				agents: {
+					defaults: {
+						sandbox: openClawToolVmSandbox,
+						workspace: '/zone/agents/default',
+					},
+					list: [{ id: 'sun' }],
+				},
+				plugins: {
+					allow: ['memory-core', 'mcp-portal'],
+					entries: {
+						'memory-core': { enabled: true },
+						'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
+					},
+					load: {
+						paths: [
+							'/home/openclaw/.openclaw/extensions/gondolin',
+							'/home/openclaw/.openclaw/extensions/mcp-portal',
+						],
+					},
+					slots: { memory: 'memory-core' },
+				},
+			}),
+			'utf8',
+		);
+
+		try {
+			const checks = await collectOpenClawDeploymentDoctorChecks(
+				createSystemConfig(openClawConfigPath, {}, configDirectory),
+			);
+
+			expect(
+				checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
+			).toMatchObject({
+				ok: true,
+				hint: 'agent-vm materializes one mcp.servers portal endpoint per OpenClaw agent at gateway start.',
+			});
+			expect(checks.every((check) => check.ok)).toBe(true);
+		} finally {
+			await rm(temporaryDirectory, { force: true, recursive: true });
+		}
+	});
+
 	it('reports unreadable OpenClaw config paths directly', async () => {
 		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-doctor-'));
 		const openClawConfigPath = path.join(temporaryDirectory, 'config', 'missing-openclaw.json');

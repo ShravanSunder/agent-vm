@@ -217,6 +217,7 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 			secrets: {
 				AGENT_VM_ZONE_GIT_SMOKE_GITHUB_TOKEN: 'local-remote-token-not-for-tool-vm',
 				GITHUB_TOKEN: 'local-remote-token-not-for-tool-vm',
+				MCP_PORTAL_SERVER_SECRET: 'zone-git-smoke-portal-secret',
 				OPENCLAW_GATEWAY_TOKEN: 'zone-git-smoke-gateway-token',
 				PERPLEXITY_API_KEY: 'unused-perplexity-smoke-token',
 			},

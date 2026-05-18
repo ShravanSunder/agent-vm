@@ -174,6 +174,7 @@ describe('startSmokeControllerRuntime', () => {
 			source: { kind: 'managedBase', base: 'openclaw-gateway' },
 		};
 
+		await createFakeGondolinAdapterPackage(repoRoot);
 		await createFakePackageDist(repoRoot, 'openclaw-agent-vm-plugin', 'gondolin');
 		await createFakePackageDist(repoRoot, 'openclaw-mcp-portal-plugin', 'mcp-portal');
 		await createFakePortalDist(repoRoot);
@@ -193,10 +194,39 @@ describe('startSmokeControllerRuntime', () => {
 			path.join(temporaryRoot, 'vm-images', 'gateways', 'openclaw-local-packages', 'Dockerfile'),
 		);
 		const dockerfile = await fs.readFile(dockerfilePath, 'utf8');
+		expect(dockerfile).toContain('COPY config-contracts-local.tgz /tmp/config-contracts-local.tgz');
+		expect(dockerfile).toContain('COPY gondolin-adapter-local.tgz /tmp/gondolin-adapter-local.tgz');
+		expect(dockerfile).toContain('COPY mcp-portal-local.tgz /tmp/mcp-portal-local.tgz');
+		expect(dockerfile).toContain(
+			'COPY openclaw-agent-vm-plugin-local.tgz /tmp/openclaw-agent-vm-plugin-local.tgz',
+		);
+		expect(dockerfile).toContain(
+			'COPY openclaw-mcp-portal-plugin-local.tgz /tmp/openclaw-mcp-portal-plugin-local.tgz',
+		);
+		expect(dockerfile).toContain('npm install --omit=dev --no-audit --no-fund');
+		expect(dockerfile).toContain('package_root="/opt/agent-vm/local-packages/node_modules"');
 		expect(dockerfile).toContain('/home/openclaw/.openclaw/extensions/gondolin');
 		expect(dockerfile).toContain('/home/openclaw/.openclaw/extensions/mcp-portal');
 		expect(dockerfile).toContain('/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server');
+		expect(dockerfile).toContain(
+			'exec node $package_root/@agent-vm/mcp-portal/dist/bin/portal-server.js',
+		);
+		expect(dockerfile).not.toContain('pnpm add -g');
+		expect(dockerfile).not.toContain('/work/repo/packages/mcp-portal');
 		expect(dockerfile).not.toMatch(/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u);
+		const toolVmDockerfilePath = systemConfig.imageProfiles.toolVms.tool?.dockerfile;
+		if (toolVmDockerfilePath === undefined) {
+			throw new Error('Expected local OpenClaw gateway helper to set Tool VM dockerfile path.');
+		}
+		const toolVmDockerfile = await fs.readFile(toolVmDockerfilePath, 'utf8');
+		expect(toolVmDockerfile).toContain(
+			'COPY config-contracts-local.tgz /tmp/config-contracts-local.tgz',
+		);
+		expect(toolVmDockerfile).toContain('COPY mcp-portal-local.tgz /tmp/mcp-portal-local.tgz');
+		expect(toolVmDockerfile).toContain('npm install --omit=dev --no-audit --no-fund');
+		expect(toolVmDockerfile).toContain('/opt/agent-vm/local-packages');
+		expect(toolVmDockerfile).not.toContain('pnpm add -g');
+		expect(toolVmDockerfile).not.toMatch(/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u);
 	});
 });
 
@@ -314,7 +344,23 @@ async function createFakePackageDist(
 	packageName: 'openclaw-agent-vm-plugin' | 'openclaw-mcp-portal-plugin',
 	pluginId: string,
 ): Promise<void> {
-	const distDir = path.join(repoRoot, 'packages', packageName, 'dist');
+	const packageDir = path.join(repoRoot, 'packages', packageName);
+	const distDir = path.join(packageDir, 'dist');
+	await fs.mkdir(packageDir, { recursive: true });
+	await fs.writeFile(
+		path.join(packageDir, 'package.json'),
+		`${JSON.stringify(
+			{
+				name: `@agent-vm/${packageName}`,
+				version: '0.0.0-smoke',
+				files: ['dist'],
+				type: 'module',
+			},
+			null,
+			'\t',
+		)}\n`,
+		'utf8',
+	);
 	await fs.mkdir(distDir, { recursive: true });
 	await fs.writeFile(
 		path.join(distDir, 'openclaw.plugin.json'),
@@ -325,7 +371,66 @@ async function createFakePackageDist(
 }
 
 async function createFakePortalDist(repoRoot: string): Promise<void> {
+	await createFakeConfigContractsPackage(repoRoot);
+	const packageDir = path.join(repoRoot, 'packages', 'mcp-portal');
+	await fs.mkdir(packageDir, { recursive: true });
+	await fs.writeFile(
+		path.join(packageDir, 'package.json'),
+		`${JSON.stringify(
+			{
+				name: '@agent-vm/mcp-portal',
+				version: '0.0.0-smoke',
+				files: ['dist'],
+			},
+			null,
+			'\t',
+		)}\n`,
+		'utf8',
+	);
 	const binDir = path.join(repoRoot, 'packages', 'mcp-portal', 'dist', 'bin');
 	await fs.mkdir(binDir, { recursive: true });
+	await fs.writeFile(
+		path.join(repoRoot, 'packages', 'mcp-portal', 'dist', 'index.js'),
+		'export {};\n',
+		'utf8',
+	);
 	await fs.writeFile(path.join(binDir, 'portal-server.js'), 'console.log("portal");\n', 'utf8');
+}
+
+async function createFakeConfigContractsPackage(repoRoot: string): Promise<void> {
+	const packageDir = path.join(repoRoot, 'packages', 'config-contracts');
+	await fs.mkdir(path.join(packageDir, 'dist'), { recursive: true });
+	await fs.writeFile(
+		path.join(packageDir, 'package.json'),
+		`${JSON.stringify(
+			{
+				name: '@agent-vm/config-contracts',
+				version: '0.0.0-smoke',
+				files: ['dist'],
+			},
+			null,
+			'\t',
+		)}\n`,
+		'utf8',
+	);
+	await fs.writeFile(path.join(packageDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
+}
+
+async function createFakeGondolinAdapterPackage(repoRoot: string): Promise<void> {
+	const packageDir = path.join(repoRoot, 'packages', 'gondolin-adapter');
+	await fs.mkdir(path.join(packageDir, 'dist'), { recursive: true });
+	await fs.writeFile(
+		path.join(packageDir, 'package.json'),
+		`${JSON.stringify(
+			{
+				name: '@agent-vm/gondolin-adapter',
+				version: '0.0.0-smoke',
+				files: ['dist'],
+			},
+			null,
+			'\t',
+		)}\n`,
+		'utf8',
+	);
+	await fs.writeFile(path.join(packageDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
 }

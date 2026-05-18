@@ -55,6 +55,7 @@ export interface OpenClawDeploymentDoctorTarget {
 	readonly configPath?: string | undefined;
 	readonly configReadError?: string | undefined;
 	readonly portalServer?: PortalServerExpectation;
+	readonly runtimeMaterializesPortalEndpoints?: boolean;
 	readonly zoneId: OpenClawDeploymentRequirementTarget['zoneId'];
 }
 
@@ -182,6 +183,10 @@ function hasNoOrphanPortalServers(config: OpenClawDeploymentConfig): boolean {
 	);
 }
 
+function hasAuthoredPortalServers(config: OpenClawDeploymentConfig): boolean {
+	return Object.keys(readMcpServers(config)).some(isPortalServerName);
+}
+
 function portalDenyListForAgent(
 	config: OpenClawDeploymentConfig,
 	agentId: string,
@@ -210,6 +215,26 @@ function hasValidPortalEndpointTopology(
 	return (
 		ownTools.every((toolName) => !deniedTools.includes(toolName)) &&
 		siblingTools.every((toolName) => deniedTools.includes(toolName))
+	);
+}
+
+function hasValidPortalEndpointConfiguration(props: {
+	readonly config: OpenClawDeploymentConfig;
+	readonly configuredAgentIds: readonly string[];
+	readonly portalServer: PortalServerExpectation;
+	readonly runtimeMaterializesPortalEndpoints: boolean;
+}): boolean {
+	if (props.configuredAgentIds.length === 0) {
+		return false;
+	}
+	if (props.runtimeMaterializesPortalEndpoints && !hasAuthoredPortalServers(props.config)) {
+		return true;
+	}
+	return (
+		hasNoOrphanPortalServers(props.config) &&
+		props.configuredAgentIds.every((agentId) =>
+			hasValidPortalEndpointTopology(props.config, agentId, props.portalServer),
+		)
 	);
 }
 
@@ -320,13 +345,16 @@ export function buildOpenClawDeploymentDoctorChecks(
 			},
 			{
 				name: `openclaw-mcp-portal-agent-endpoints-${target.zoneId}`,
-				ok:
-					configuredAgentIds.length > 0 &&
-					hasNoOrphanPortalServers(config) &&
-					configuredAgentIds.every((agentId) =>
-						hasValidPortalEndpointTopology(config, agentId, portalServer),
-					),
-				hint: 'Generate one mcp.servers portal endpoint per OpenClaw agent and deny sibling portal tool names on each agent.',
+				ok: hasValidPortalEndpointConfiguration({
+					config,
+					configuredAgentIds,
+					portalServer,
+					runtimeMaterializesPortalEndpoints: target.runtimeMaterializesPortalEndpoints === true,
+				}),
+				hint:
+					target.runtimeMaterializesPortalEndpoints === true
+						? 'agent-vm materializes one mcp.servers portal endpoint per OpenClaw agent at gateway start.'
+						: 'Generate one mcp.servers portal endpoint per OpenClaw agent and deny sibling portal tool names on each agent.',
 			},
 			{
 				name: `openclaw-memory-slot-${target.zoneId}`,
@@ -442,6 +470,7 @@ export async function collectOpenClawDeploymentDoctorChecks(
 							configuredAuthProfileAgentIds:
 								configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],
 							configPath: target.configPath,
+							runtimeMaterializesPortalEndpoints: zone?.mcp !== undefined,
 							zoneId: target.zoneId,
 						}
 					: {
@@ -452,6 +481,7 @@ export async function collectOpenClawDeploymentDoctorChecks(
 								configuredAuthProfileAgentIdsByZone.get(target.zoneId) ?? [],
 							configPath: target.configPath,
 							configReadError: target.configReadError,
+							runtimeMaterializesPortalEndpoints: zone?.mcp !== undefined,
 							zoneId: target.zoneId,
 						};
 			const portalServer = portalServerByZone.get(target.zoneId);

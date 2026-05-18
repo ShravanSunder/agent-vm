@@ -26,6 +26,7 @@ export interface CreatePortalSubprocessSupervisorProps {
 	readonly maxRestarts?: number;
 	readonly onFatal?: (reason: string) => void;
 	readonly port: number;
+	readonly portalEnv?: Readonly<Record<string, string>>;
 	readonly spawnFn?: PortalSubprocessSpawnFunction;
 	readonly stopGraceMs?: number;
 }
@@ -41,6 +42,7 @@ const inheritedPortalEnvNames = ['HOME', 'PATH', 'TEMP', 'TMP', 'TMPDIR'] as con
 
 function createPortalSubprocessEnv(
 	hmacEnv: Readonly<Record<string, string>>,
+	portalEnv: Readonly<Record<string, string>> = {},
 ): Readonly<Record<string, string>> {
 	const env: Record<string, string> = {};
 	for (const name of inheritedPortalEnvNames) {
@@ -49,7 +51,7 @@ function createPortalSubprocessEnv(
 			env[name] = value;
 		}
 	}
-	return { ...env, ...hmacEnv };
+	return { ...env, ...portalEnv, ...hmacEnv };
 }
 
 function logSubprocessOutput(props: {
@@ -170,7 +172,7 @@ export function createPortalSubprocessSupervisor(
 
 	const spawnChild = (): SpawnedPortalChild => {
 		const nextChild = spawnFn(props.binPath, ['--config-dir', props.configDir], {
-			env: createPortalSubprocessEnv(props.hmacEnv),
+			env: createPortalSubprocessEnv(props.hmacEnv, props.portalEnv),
 			stdio: ['ignore', 'pipe', 'pipe'],
 		});
 		let autoRestartEnabled = false;

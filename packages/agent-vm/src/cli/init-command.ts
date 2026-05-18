@@ -582,6 +582,15 @@ function defaultSecretsForGatewayType(
 			},
 			secretsProvider,
 		),
+		MCP_PORTAL_SERVER_SECRET: secretFromShape(
+			{
+				envVar: 'MCP_PORTAL_SERVER_SECRET',
+				opRef: `op://agent-vm/${zoneId}-mcp-portal-server-secret/password`,
+				injection: 'env',
+				audience: 'gateway',
+			},
+			secretsProvider,
+		),
 	};
 }
 
