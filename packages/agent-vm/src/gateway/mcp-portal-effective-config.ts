@@ -141,6 +141,10 @@ async function buildEffectivePlan(
 	]);
 	const requiredGatewayEgressHosts = new Set<string>();
 	const secretRefs: Record<string, SecretRef> = {};
+	const secretSourcesByEnvName = new Map<
+		string,
+		{ readonly providerName: string; readonly secretName: string }
+	>();
 	const secretPoliciesByEnvName = new Map<
 		string,
 		{ readonly hosts: readonly string[]; readonly injection: 'env' | 'http-mediation' }
@@ -171,9 +175,15 @@ async function buildEffectivePlan(
 				addRequiredHost(requiredGatewayEgressHosts, host, `secret policy ${secretName}`);
 			}
 			const envName = envNameForProviderSecret(providerNamespace, secretName);
-			if (Object.hasOwn(secretRefs, envName)) {
-				throw new Error(`mcp-portal: generated secret environment name collision for ${envName}.`);
+			const existingSource = secretSourcesByEnvName.get(envName);
+			if (existingSource !== undefined) {
+				throw new Error(
+					`mcp-portal: generated secret environment name collision for ${envName} between ` +
+						`${existingSource.providerName}.${existingSource.secretName} and ` +
+						`${providerNamespace}.${secretName}.`,
+				);
 			}
+			secretSourcesByEnvName.set(envName, { providerName: providerNamespace, secretName });
 			secretRefs[envName] = providerSecretRef(secret);
 			secretPoliciesByEnvName.set(envName, policy);
 			transportSecrets[secretName] = { name: envName, source: 'environment' };

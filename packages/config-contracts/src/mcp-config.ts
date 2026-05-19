@@ -9,10 +9,18 @@ const mcpProviderDiscoverySchema = z
 	})
 	.strict();
 
+const remoteTransportUrlSchema = z.url().refine(
+	(value) => {
+		const protocol = new URL(value).protocol;
+		return protocol === 'http:' || protocol === 'https:';
+	},
+	{ message: 'Remote MCP transport URLs must use http or https.' },
+);
+
 const streamableHttpTransportSchema = z
 	.object({
 		kind: z.literal('streamable-http'),
-		url: z.string().url(),
+		url: remoteTransportUrlSchema,
 		headers: z.record(z.string(), secretValueSchema).default({}),
 		requiredEgressHosts: z.array(z.string().min(1)).default([]),
 	})
@@ -21,7 +29,7 @@ const streamableHttpTransportSchema = z
 const sseTransportSchema = z
 	.object({
 		kind: z.literal('sse'),
-		url: z.string().url(),
+		url: remoteTransportUrlSchema,
 		headers: z.record(z.string(), secretValueSchema).default({}),
 		requiredEgressHosts: z.array(z.string().min(1)).default([]),
 	})

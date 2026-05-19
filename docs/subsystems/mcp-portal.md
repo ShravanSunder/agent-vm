@@ -5,7 +5,7 @@
 MCP Portal is an agent-facing tool facade and an upstream MCP client aggregator.
 Managed OpenClaw uses native OpenClaw tools that call `@agent-vm/mcp-portal/core`
 inside the gateway VM. External MCP clients use the separate
-`mcp-portal serve` adapter.
+`mcp-portal mcp-proxy serve` adapter.
 
 ## Model
 
@@ -101,7 +101,7 @@ configured upstream providers. Generated provider-secret environment names are
 provider-scoped, such as `AGENT_VM_MCP_LINEAR_AUTHORIZATION`, so two upstream
 providers can use the same authored header or env key without colliding.
 
-External `/mcp-proxy` mode is different: `mcp-portal serve` runs on the
+External `/mcp-proxy` mode is different: `mcp-portal mcp-proxy serve` runs on the
 operator host, resolves its configured auth secrets at process startup, and
 authenticates callers before constructing trusted agent scope for `/core`. When
 that external process must resolve 1Password refs, it uses `@agent-vm/secrets`

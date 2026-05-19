@@ -16,8 +16,27 @@ export interface PortalAgentBearerAuth {
 	readonly masterKey: Buffer;
 }
 
+export type PortalHttpAuditEvent = {
+	readonly agentId: string;
+	readonly clientAddress: string;
+	readonly decision: 'allow' | 'deny';
+	readonly kind: 'mcp_proxy_auth';
+	readonly reason?:
+		| 'malformed'
+		| 'missing'
+		| 'rate_limited'
+		| 'signature-mismatch'
+		| 'unknown_agent';
+	readonly timeMs: number;
+};
+
 export interface PortalHttpAppOptions {
 	readonly agentBearerAuth: PortalAgentBearerAuth;
+	readonly auditSink?: (event: PortalHttpAuditEvent) => Promise<void> | void;
+	readonly authFailureLimit?: {
+		readonly maxFailures: number;
+		readonly windowMs: number;
+	};
 	readonly core: PortalCore;
 	readonly onSessionClosed?: (identity: PortalAgentIdentity) => Promise<void> | void;
 	readonly registeredAgentIds?: readonly string[];
@@ -29,6 +48,7 @@ export type PortalHttpApp = Hono & {
 };
 
 const mcpSessionIdHeader = 'mcp-session-id';
+const defaultAuthFailureLimit = { maxFailures: 60, windowMs: 60_000 } as const;
 
 interface ActivePortalMcpSession {
 	readonly identity: PortalAgentIdentity;
@@ -36,8 +56,32 @@ interface ActivePortalMcpSession {
 	readonly transport: StreamableHTTPTransport;
 }
 
+interface AuthFailureBucket {
+	readonly resetAtMs: number;
+	failures: number;
+}
+
 function activeSessionKey(scopeId: string, sessionId: string): string {
 	return `${scopeId}\n${sessionId}`;
+}
+
+function unauthorizedResponse(): Response {
+	return Response.json({ error: { kind: 'unauthorized' }, ok: false }, { status: 401 });
+}
+
+function rateLimitedResponse(): Response {
+	return Response.json({ error: { kind: 'rate_limited' }, ok: false }, { status: 429 });
+}
+
+function clientAddressFromHeaders(headers: Headers): string {
+	const forwardedFor = headers.get('x-forwarded-for')?.split(',', 1)[0]?.trim();
+	return forwardedFor && forwardedFor.length > 0
+		? forwardedFor
+		: (headers.get('x-real-ip') ?? 'unknown');
+}
+
+function authFailureKey(agentId: string, clientAddress: string): string {
+	return `${agentId}\n${clientAddress}`;
 }
 
 export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpApp {
@@ -49,6 +93,46 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 	}
 	const app = new Hono();
 	const activeSessions = new Map<string, ActivePortalMcpSession>();
+	const authFailureBuckets = new Map<string, AuthFailureBucket>();
+	const authFailureLimit = options.authFailureLimit ?? defaultAuthFailureLimit;
+
+	async function auditAuth(event: Omit<PortalHttpAuditEvent, 'kind' | 'timeMs'>): Promise<void> {
+		await Promise.resolve(
+			options.auditSink?.({ ...event, kind: 'mcp_proxy_auth', timeMs: Date.now() }),
+		).catch(() => undefined);
+	}
+
+	function isAuthFailureRateLimited(agentId: string, clientAddress: string): boolean {
+		const nowMs = Date.now();
+		const key = authFailureKey(agentId, clientAddress);
+		const bucket = authFailureBuckets.get(key);
+		if (bucket === undefined) {
+			return false;
+		}
+		if (bucket.resetAtMs <= nowMs) {
+			authFailureBuckets.delete(key);
+			return false;
+		}
+		return bucket.failures >= authFailureLimit.maxFailures;
+	}
+
+	function recordAuthFailure(agentId: string, clientAddress: string): void {
+		const nowMs = Date.now();
+		const key = authFailureKey(agentId, clientAddress);
+		const bucket = authFailureBuckets.get(key);
+		if (bucket !== undefined && bucket.resetAtMs > nowMs) {
+			bucket.failures += 1;
+			return;
+		}
+		authFailureBuckets.set(key, {
+			failures: 1,
+			resetAtMs: nowMs + authFailureLimit.windowMs,
+		});
+	}
+
+	function clearAuthFailures(agentId: string, clientAddress: string): void {
+		authFailureBuckets.delete(authFailureKey(agentId, clientAddress));
+	}
 
 	async function closeActiveSession(
 		sessionKey: string,
@@ -124,6 +208,28 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 
 	app.all('/agents/:agentId/mcp', async (context) => {
 		const agentId = context.req.param('agentId');
+		const clientAddress = clientAddressFromHeaders(context.req.raw.headers);
+		if (isAuthFailureRateLimited(agentId, clientAddress)) {
+			await auditAuth({
+				agentId,
+				clientAddress,
+				decision: 'deny',
+				reason: 'rate_limited',
+			});
+			return rateLimitedResponse();
+		}
+		const agentIdentity = options.resolveAgentIdentity?.(agentId) ?? null;
+		if (agentIdentity === null) {
+			recordAuthFailure(agentId, clientAddress);
+			await auditAuth({
+				agentId,
+				clientAddress,
+				decision: 'deny',
+				reason: 'unknown_agent',
+			});
+			return unauthorizedResponse();
+		}
+
 		const agentBearerAuth = options.agentBearerAuth;
 		const credentialVersion = agentBearerAuth.credentialVersionsByAgent?.[agentId];
 		const verification = verifyAgentBearerAuthorization({
@@ -133,16 +239,17 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 			masterKey: agentBearerAuth.masterKey,
 		});
 		if (!verification.ok) {
-			return context.json(
-				{ error: { kind: 'unauthorized', reason: verification.reason }, ok: false },
-				401,
-			);
+			recordAuthFailure(agentId, clientAddress);
+			await auditAuth({
+				agentId,
+				clientAddress,
+				decision: 'deny',
+				reason: verification.reason,
+			});
+			return unauthorizedResponse();
 		}
-
-		const agentIdentity = options.resolveAgentIdentity?.(agentId) ?? null;
-		if (agentIdentity === null) {
-			return context.json({ error: { kind: 'unknown_agent' }, ok: false }, 404);
-		}
+		clearAuthFailures(agentId, clientAddress);
+		await auditAuth({ agentId, clientAddress, decision: 'allow' });
 
 		const mcpSessionId = context.req.header(mcpSessionIdHeader);
 		if (mcpSessionId) {

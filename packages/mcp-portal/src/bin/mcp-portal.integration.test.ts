@@ -187,13 +187,17 @@ async function startPortalProcess(props: {
 	await access(binPath);
 	await access(sourcePath);
 	const output: ChildOutput = { stderr: '', stdout: '' };
-	const child = spawn(binPath, [sourcePath, 'serve', '--config-dir', props.configDir], {
-		env: {
-			...process.env,
-			MCP_PORTAL_MASTER_KEY: masterKeyText,
+	const child = spawn(
+		binPath,
+		[sourcePath, 'mcp-proxy', 'serve', '--config-dir', props.configDir],
+		{
+			env: {
+				...process.env,
+				MCP_PORTAL_MASTER_KEY: masterKeyText,
+			},
+			stdio: ['ignore', 'pipe', 'pipe'],
 		},
-		stdio: ['ignore', 'pipe', 'pipe'],
-	});
+	);
 	child.stdout.setEncoding('utf8');
 	child.stderr.setEncoding('utf8');
 	child.stdout.on('data', (chunk: string) => {
@@ -311,7 +315,7 @@ describe('portal proxy CLI integration', () => {
 		});
 		expect(response.status).toBe(401);
 		expect(await response.json()).toMatchObject({
-			error: { kind: 'unauthorized', reason: 'signature-mismatch' },
+			error: { kind: 'unauthorized' },
 			ok: false,
 		});
 	}

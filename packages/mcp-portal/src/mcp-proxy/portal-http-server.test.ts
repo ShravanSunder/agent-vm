@@ -158,6 +158,115 @@ describe('portal HTTP server', () => {
 		).resolves.not.toMatchObject({ status: 401 });
 	});
 
+	it('returns opaque unauthorized responses for missing, invalid, and unknown-agent requests', async () => {
+		const app = createPortalHttpApp({
+			agentBearerAuth: { authorizationHeaderName: 'authorization', masterKey },
+			core: createTestPortalCore(),
+			resolveAgentIdentity: (agentId) =>
+				agentId === 'agent-a'
+					? createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-a' })
+					: null,
+		});
+		const expectedUnauthorizedBody = { error: { kind: 'unauthorized' }, ok: false };
+
+		const missingResponse = await app.request('/agents/agent-a/mcp');
+		const badBearerResponse = await app.request('/agents/agent-a/mcp', {
+			headers: { authorization: bearerAuthHeader('agent-b') },
+		});
+		const unknownAgentResponse = await app.request('/agents/missing-agent/mcp', {
+			headers: { authorization: bearerAuthHeader('missing-agent') },
+		});
+
+		expect(missingResponse.status).toBe(401);
+		expect(badBearerResponse.status).toBe(401);
+		expect(unknownAgentResponse.status).toBe(401);
+		await expect(missingResponse.json()).resolves.toEqual(expectedUnauthorizedBody);
+		await expect(badBearerResponse.json()).resolves.toEqual(expectedUnauthorizedBody);
+		await expect(unknownAgentResponse.json()).resolves.toEqual(expectedUnauthorizedBody);
+	});
+
+	it('audits bearer auth decisions without returning verifier details to clients', async () => {
+		const auditEvents: unknown[] = [];
+		const app = createPortalHttpApp({
+			agentBearerAuth: { authorizationHeaderName: 'authorization', masterKey },
+			auditSink: (event) => {
+				auditEvents.push(event);
+			},
+			core: createTestPortalCore(),
+			resolveAgentIdentity: (agentId) =>
+				agentId === 'agent-a'
+					? createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-a' })
+					: null,
+		});
+
+		await app.request('/agents/missing-agent/mcp', {
+			headers: { authorization: bearerAuthHeader('missing-agent') },
+		});
+		await app.request('/agents/agent-a/mcp', {
+			headers: { authorization: bearerAuthHeader('agent-b') },
+		});
+		await app.request('/agents/agent-a/mcp', {
+			headers: { authorization: bearerAuthHeader('agent-a') },
+		});
+
+		expect(auditEvents).toEqual([
+			expect.objectContaining({
+				agentId: 'missing-agent',
+				decision: 'deny',
+				kind: 'mcp_proxy_auth',
+				reason: 'unknown_agent',
+			}),
+			expect.objectContaining({
+				agentId: 'agent-a',
+				decision: 'deny',
+				kind: 'mcp_proxy_auth',
+				reason: 'signature-mismatch',
+			}),
+			expect.objectContaining({
+				agentId: 'agent-a',
+				decision: 'allow',
+				kind: 'mcp_proxy_auth',
+			}),
+		]);
+	});
+
+	it('rate-limits repeated failed bearer attempts per agent and client address', async () => {
+		const app = createPortalHttpApp({
+			agentBearerAuth: { authorizationHeaderName: 'authorization', masterKey },
+			authFailureLimit: { maxFailures: 2, windowMs: 60_000 },
+			core: createTestPortalCore(),
+			resolveAgentIdentity: (agentId) =>
+				agentId === 'agent-a'
+					? createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-a' })
+					: null,
+		});
+		const badHeaders = {
+			authorization: bearerAuthHeader('agent-b'),
+			'x-forwarded-for': '203.0.113.4',
+		};
+
+		await expect(
+			app.request('/agents/agent-a/mcp', { headers: badHeaders }),
+		).resolves.toMatchObject({
+			status: 401,
+		});
+		await expect(
+			app.request('/agents/agent-a/mcp', { headers: badHeaders }),
+		).resolves.toMatchObject({
+			status: 401,
+		});
+		await expect(
+			app.request('/agents/agent-a/mcp', { headers: badHeaders }),
+		).resolves.toMatchObject({
+			status: 429,
+		});
+		await expect(
+			app.request('/agents/agent-a/mcp', {
+				headers: { ...badHeaders, 'x-forwarded-for': '203.0.113.5' },
+			}),
+		).resolves.toMatchObject({ status: 401 });
+	});
+
 	it('serves initialize, tools/list, and tools/call through Streamable HTTP', async () => {
 		const seenAgentScopeIds: string[] = [];
 		const app = createPortalHttpApp({

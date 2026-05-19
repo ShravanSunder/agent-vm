@@ -5,7 +5,7 @@ Agent-scoped MCP Portal core library, external proxy, CLI, and Tool VM helpers.
 ## What This Package Owns
 
 - `/core`, the adapter-neutral portal execution library used by OpenClaw.
-- `mcp-portal serve`, the external `/mcp-proxy` MCP server command.
+- `mcp-portal mcp-proxy serve`, the external `/mcp-proxy` MCP server command.
 - The four model-facing portal tools: `mcp_portal_list`, `mcp_portal_search`, `mcp_portal_describe`, and `mcp_portal_call`.
 - JSON-Schema-derived Zod validation before upstream tool calls.
 - HMAC approval-token verification for portal calls that OpenClaw approved.
@@ -19,7 +19,7 @@ effective config directory. It does not launch a portal server in the gateway VM
 External MCP clients can use the proxy command:
 
 ```text
-mcp-portal serve --config-dir <dir>
+mcp-portal mcp-proxy serve --config-dir <dir>
 ```
 
 The portal loads two files from `--config-dir`:
@@ -32,7 +32,10 @@ Use `AGENT_VM_MCP_PORTAL_OP_TOKEN_SOURCE=env`, `op-cli`, or `keychain` plus the
 matching source-specific env settings when the proxy host needs 1Password
 access. If no token source is configured, env-only configs still work. The
 built-in HTTP bearer server is loopback-only; use a TLS reverse proxy and
-`write-credential --proxy-url <url>` for public endpoints.
+`mcp-portal mcp-proxy write-credential --proxy-url <url>` for public endpoints.
+The credential writer intentionally persists bearer material for external MCP
+clients. Files are written with mode `0600`; rotate `credentialVersion` or the
+portal `masterKey` to revoke issued credentials.
 
 ## Start Reading
 

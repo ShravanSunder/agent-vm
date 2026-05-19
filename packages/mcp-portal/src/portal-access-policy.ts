@@ -98,14 +98,11 @@ export function resolvePortalAccessPolicy(props: {
 	readonly upstreamNamespaces: readonly string[];
 }): ResolvedPortalAccessPolicy {
 	const agentNamespaces = props.config.enabledNamespacesByAgent[props.identity.agentId];
-	const globalNamespaces = props.config.enabledNamespaces ?? [];
+	const globalNamespaces = props.config.enabledNamespaces;
 	const selectedNamespaces =
 		agentNamespaces ??
-		(globalNamespaces.length > 0
-			? globalNamespaces
-			: props.config.defaultPolicy === 'allow-all'
-				? props.upstreamNamespaces
-				: []);
+		globalNamespaces ??
+		(props.config.defaultPolicy === 'allow-all' ? props.upstreamNamespaces : []);
 	const upstreamNamespaceSet = new Set(props.upstreamNamespaces);
 
 	return {

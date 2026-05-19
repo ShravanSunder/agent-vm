@@ -15,7 +15,11 @@ import {
 	fakeUpstreamNamespace,
 	startFakeUpstreamMcpServer,
 } from '../testing/fake-upstream-mcp-server.js';
-import { runMcpPortal, waitUntilPortalServerShutdown } from './mcp-portal.js';
+import {
+	runMcpPortal,
+	shouldRunMcpPortalEntrypoint,
+	waitUntilPortalServerShutdown,
+} from './mcp-portal.js';
 
 class FakeSignalTarget {
 	private readonly emitter = new EventEmitter();
@@ -49,6 +53,54 @@ describe('mcp-portal CLI', () => {
 		await shutdownPromise;
 
 		expect(close).toHaveBeenCalledTimes(1);
+	});
+
+	it('uses mcp-proxy subcommands for external proxy operations', async () => {
+		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-credential-'));
+		const previousMasterKey = process.env.MCP_PORTAL_MASTER_KEY;
+		try {
+			process.env.MCP_PORTAL_MASTER_KEY = externalMasterKeyText;
+			await writeFile(
+				join(workspace, 'mcp-portal.config.jsonc'),
+				JSON.stringify({
+					agents: { shravan: { profile: 'default' } },
+					externalAuth: {
+						masterKey: { name: 'MCP_PORTAL_MASTER_KEY', source: 'environment' },
+					},
+					mcpProxy: {
+						auth: { headerName: 'authorization' },
+						server: { host: '127.0.0.1', port: 18791 },
+					},
+					profiles: { default: { enabledNamespaces: [] } },
+					schemaVersion: 1,
+				}),
+			);
+			const outputPath = join(workspace, 'shravan.credential.json');
+
+			await expect(runMcpPortal(['serve', '--config-dir', workspace])).resolves.toBe(1);
+			expect(
+				await runMcpPortal([
+					'mcp-proxy',
+					'write-credential',
+					'--config-dir',
+					workspace,
+					'--agent',
+					'shravan',
+					'--out',
+					outputPath,
+					'--master-key-fingerprint',
+					formatMasterKeyFingerprint(externalMasterKey),
+				]),
+			).toBe(0);
+			await expect(readFile(outputPath, 'utf8')).resolves.toContain('Bearer ');
+		} finally {
+			if (previousMasterKey === undefined) {
+				delete process.env.MCP_PORTAL_MASTER_KEY;
+			} else {
+				process.env.MCP_PORTAL_MASTER_KEY = previousMasterKey;
+			}
+			await rm(workspace, { force: true, recursive: true });
+		}
 	});
 
 	it('validates catalog files and reports wrapper metadata errors', async () => {
@@ -122,6 +174,35 @@ describe('mcp-portal CLI', () => {
 		});
 	});
 
+	it('runs through package-manager symlinks named mcp-portal', () => {
+		expect(shouldRunMcpPortalEntrypoint('/tmp/node_modules/.bin/mcp-portal')).toBe(true);
+		expect(shouldRunMcpPortalEntrypoint('/repo/packages/mcp-portal/dist/bin/mcp-portal.js')).toBe(
+			true,
+		);
+		expect(shouldRunMcpPortalEntrypoint('/repo/packages/mcp-portal/src/bin/mcp-portal.ts')).toBe(
+			true,
+		);
+		expect(shouldRunMcpPortalEntrypoint('/repo/scripts/other.js')).toBe(false);
+	});
+
+	it('exports emitted portal-auth subpaths from the package build', async () => {
+		const packageJsonPath = fileURLToPath(new URL('../../package.json', import.meta.url));
+		const tsdownConfigPath = fileURLToPath(new URL('../../tsdown.config.ts', import.meta.url));
+		const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as {
+			readonly exports?: Readonly<Record<string, { readonly import?: string }>>;
+		};
+		const tsdownConfigText = await readFile(tsdownConfigPath, 'utf8');
+
+		for (const exportPath of [
+			'./portal-auth/agent-bearer-token',
+			'./portal-auth/hmac-env',
+			'./portal-auth/hmac-token',
+		]) {
+			expect(packageJson.exports?.[exportPath]?.import).toBe(`./dist/${exportPath.slice(2)}.js`);
+			expect(tsdownConfigText).toContain(`src/${exportPath.slice(2)}.ts`);
+		}
+	});
+
 	it('writes derived credentials only after an explicit master-key fingerprint match', async () => {
 		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-credential-'));
 		const previousMasterKey = process.env.MCP_PORTAL_MASTER_KEY;
@@ -152,6 +233,7 @@ describe('mcp-portal CLI', () => {
 
 			expect(
 				await runMcpPortal([
+					'mcp-proxy',
 					'write-credential',
 					'--config-dir',
 					workspace,
@@ -211,6 +293,7 @@ describe('mcp-portal CLI', () => {
 
 			expect(
 				await runMcpPortal([
+					'mcp-proxy',
 					'write-credential',
 					'--config-dir',
 					workspace,
@@ -266,6 +349,7 @@ describe('mcp-portal CLI', () => {
 
 			expect(
 				await runMcpPortal([
+					'mcp-proxy',
 					'write-credential',
 					'--config-dir',
 					workspace,
@@ -323,6 +407,7 @@ describe('mcp-portal CLI', () => {
 
 			expect(
 				await runMcpPortal([
+					'mcp-proxy',
 					'write-credential',
 					'--config-dir',
 					workspace,
@@ -374,6 +459,7 @@ describe('mcp-portal CLI', () => {
 			expect(
 				await runMcpPortal(
 					[
+						'mcp-proxy',
 						'write-credential',
 						'--config-dir',
 						workspace,

@@ -9,7 +9,12 @@ import {
 	type StreamableHTTPClientTransportOptions,
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { normalizeHeaders, type Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { ToolSchema, type Progress, type Tool } from '@modelcontextprotocol/sdk/types.js';
+import {
+	ToolSchema,
+	type Notification,
+	type Progress,
+	type Tool,
+} from '@modelcontextprotocol/sdk/types.js';
 
 import type { JsonObject } from './json-schema.js';
 import {
@@ -83,6 +88,11 @@ export type UpstreamToolEvent =
 
 export type UpstreamMcpProgress = Progress;
 
+export interface UpstreamNotification {
+	readonly method: string;
+	readonly params?: unknown;
+}
+
 export interface UpstreamListToolsResult {
 	readonly nextCursor?: string | undefined;
 	readonly tools: readonly Tool[];
@@ -103,6 +113,9 @@ export interface UpstreamMcpClientLike {
 	readonly close: () => Promise<void> | void;
 	readonly connect: (transport: unknown) => Promise<void>;
 	readonly listTools: (params?: { readonly cursor?: string }) => Promise<UpstreamListToolsResult>;
+	readonly onNotification?: (
+		handler: (notification: UpstreamNotification) => Promise<void> | void,
+	) => () => void;
 }
 
 export interface UpstreamMcpRuntimeOptions {
@@ -112,6 +125,7 @@ export interface UpstreamMcpRuntimeOptions {
 		server: NormalizedUpstreamMcpServer,
 		transport: Exclude<UpstreamMcpTransportKind, 'auto-http'>,
 	) => unknown;
+	readonly maxResponseBytes?: number;
 	readonly onCloseError?: (error: Error, context: UpstreamMcpCloseErrorContext) => void;
 	readonly servers: readonly NormalizedUpstreamMcpServer[];
 }
@@ -138,6 +152,7 @@ interface PendingClient {
 }
 
 const defaultConnectionTimeoutMs = 30_000;
+const defaultMaxResponseBytes = 4 * 1_024 * 1_024;
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -154,6 +169,19 @@ function isTransport(value: unknown): value is Transport {
 
 function createSdkClient(): UpstreamMcpClientLike {
 	const client = new Client({ name: 'mcp-portal', version: '1.0.0' });
+	const notificationHandlers = new Set<
+		(notification: UpstreamNotification) => Promise<void> | void
+	>();
+	client.fallbackNotificationHandler = async (notification: Notification): Promise<void> => {
+		await Promise.all(
+			[...notificationHandlers].map(async (handler) => {
+				await handler({
+					method: notification.method,
+					...(notification.params !== undefined ? { params: notification.params } : {}),
+				});
+			}),
+		);
+	};
 
 	return {
 		callTool: async (params, _resultSchema, options) =>
@@ -172,6 +200,12 @@ function createSdkClient(): UpstreamMcpClientLike {
 			return {
 				...(result.nextCursor !== undefined ? { nextCursor: result.nextCursor } : {}),
 				tools: result.tools,
+			};
+		},
+		onNotification: (handler) => {
+			notificationHandlers.add(handler);
+			return () => {
+				notificationHandlers.delete(handler);
 			};
 		},
 	};
@@ -264,9 +298,23 @@ function timeoutMsForServer(server: NormalizedUpstreamMcpServer): number {
 	return server.connectionTimeoutMs ?? defaultConnectionTimeoutMs;
 }
 
+function assertUpstreamResponseSize(value: unknown, maxResponseBytes: number): void {
+	const serialized = JSON.stringify(value);
+	if (serialized === undefined) {
+		return;
+	}
+	const byteLength = Buffer.byteLength(serialized, 'utf8');
+	if (byteLength > maxResponseBytes) {
+		throw new Error(
+			`MCP upstream response exceeded ${String(maxResponseBytes)} bytes (${String(byteLength)} bytes).`,
+		);
+	}
+}
+
 async function withTimeout<TResult>(
 	promise: Promise<TResult>,
 	props: {
+		readonly onTimeout?: (error: Error) => void;
 		readonly operation: string;
 		readonly timeoutMs: number;
 	},
@@ -277,7 +325,9 @@ async function withTimeout<TResult>(
 			promise,
 			new Promise<never>((_resolve, reject) => {
 				timeout = setTimeout(() => {
-					reject(new Error(`${props.operation} timed out after ${props.timeoutMs}ms.`));
+					const error = new Error(`${props.operation} timed out after ${props.timeoutMs}ms.`);
+					props.onTimeout?.(error);
+					reject(error);
 				}, props.timeoutMs);
 			}),
 		]);
@@ -286,6 +336,36 @@ async function withTimeout<TResult>(
 			clearTimeout(timeout);
 		}
 	}
+}
+
+function createRuntimeAbortSignal(parentSignal: AbortSignal | undefined): {
+	readonly abortTimeout: (error: Error) => void;
+	readonly dispose: () => void;
+	readonly signal: AbortSignal;
+} {
+	const controller = new AbortController();
+	const abortFromParent = (): void => {
+		if (!controller.signal.aborted) {
+			controller.abort(parentSignal?.reason);
+		}
+	};
+	if (parentSignal?.aborted) {
+		abortFromParent();
+	} else {
+		parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+	}
+
+	return {
+		abortTimeout: (error) => {
+			if (!controller.signal.aborted) {
+				controller.abort(error);
+			}
+		},
+		dispose: () => {
+			parentSignal?.removeEventListener('abort', abortFromParent);
+		},
+		signal: controller.signal,
+	};
 }
 
 async function listAllTools(
@@ -361,6 +441,7 @@ export function createUpstreamMcpClientRuntime(
 	const agentScopeGenerations = new Map<string, number>();
 	const createClient = options.createClient ?? createSdkClient;
 	const createTransport = options.createTransport ?? createSdkTransport;
+	const maxResponseBytes = options.maxResponseBytes ?? defaultMaxResponseBytes;
 	const redactionValues = [
 		...(options.additionalRedactionValues ?? []),
 		...options.servers.flatMap((server) => redactionValuesFromServer(server)),
@@ -472,10 +553,17 @@ export function createUpstreamMcpClientRuntime(
 			try {
 				client = await getClient(call.agentScopeId, call.namespace);
 				const server = serversByNamespace.get(call.namespace);
-				return redactUpstreamResponse(
-					await withTimeout(
+				const timeoutAbort = createRuntimeAbortSignal(call.signal);
+				const disposeNotificationHandler = client.onNotification?.((notification) => {
+					void call.onEvent?.({
+						kind: 'upstream_notification',
+						method: notification.method,
+						params: notification.params,
+					});
+				});
+				try {
+					const upstreamResult = await withTimeout(
 						client.callTool({ arguments: call.arguments, name: call.toolName }, undefined, {
-							...(call.signal !== undefined ? { signal: call.signal } : {}),
 							onprogress: (progress) => {
 								void call.onEvent?.({
 									kind: 'progress',
@@ -484,14 +572,20 @@ export function createUpstreamMcpClientRuntime(
 									...(progress.total !== undefined ? { total: progress.total } : {}),
 								});
 							},
+							signal: timeoutAbort.signal,
 						}),
 						{
+							onTimeout: timeoutAbort.abortTimeout,
 							operation: `MCP callTool ${call.namespace}.${call.toolName}`,
 							timeoutMs: server ? timeoutMsForServer(server) : defaultConnectionTimeoutMs,
 						},
-					),
-					{ exactValues: redactionValues },
-				);
+					);
+					assertUpstreamResponseSize(upstreamResult, maxResponseBytes);
+					return redactUpstreamResponse(upstreamResult, { exactValues: redactionValues });
+				} finally {
+					disposeNotificationHandler?.();
+					timeoutAbort.dispose();
+				}
 			} catch (error) {
 				clients.delete(key);
 				await closeClientAfterFailure(client);

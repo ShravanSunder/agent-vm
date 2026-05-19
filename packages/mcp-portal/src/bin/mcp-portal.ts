@@ -2,7 +2,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import {
 	loadMcpConfig,
@@ -75,12 +75,14 @@ function parseOutputDirectory(args: readonly string[]): string | null {
 function printUsage(): void {
 	process.stderr.write('Usage: mcp-portal validate <catalog.json>\n');
 	process.stderr.write('Usage: mcp-portal generate-helper <catalog.json> --out <directory>\n');
-	process.stderr.write('Usage: mcp-portal serve --config-dir <directory> [--port <port>]\n');
+	process.stderr.write(
+		'Usage: mcp-portal mcp-proxy serve --config-dir <directory> [--port <port>]\n',
+	);
 	process.stderr.write(
 		'Usage: mcp-portal call --config-dir <directory> --agent <agent-id> --input <request.json> [--tool <portal-tool-name>]\n',
 	);
 	process.stderr.write(
-		'Usage: mcp-portal write-credential --config-dir <directory> --agent <agent-id> --out <file> --master-key-fingerprint <sha256:...>\n',
+		'Usage: mcp-portal mcp-proxy write-credential --config-dir <directory> --agent <agent-id> --out <file> --master-key-fingerprint <sha256:...>\n',
 	);
 }
 
@@ -386,26 +388,39 @@ export async function runMcpPortal(
 	}
 
 	try {
+		if (command === 'mcp-proxy') {
+			const [mcpProxyCommand, ...mcpProxyArgs] = args.slice(1);
+			if (mcpProxyCommand === 'serve') {
+				const injectedSecretResolver = runtimeProps.secretResolver;
+				const server = await startPortalServer({
+					args: parsePortalServerCliArgs(mcpProxyArgs),
+					env: runtimeProps.env,
+					...(injectedSecretResolver !== undefined
+						? {
+								resolveSecret: (secret) =>
+									resolveSecretValue(secret, {
+										env: runtimeProps.env,
+										secretResolver: injectedSecretResolver,
+									}),
+							}
+						: {}),
+				});
+				await waitUntilPortalServerShutdown({ server });
+				return 0;
+			}
+			if (mcpProxyCommand === 'write-credential') {
+				return await writeCredentialFile(mcpProxyArgs, runtimeProps);
+			}
+			printUsage();
+			return 1;
+		}
 		if (command === 'serve') {
-			const injectedSecretResolver = runtimeProps.secretResolver;
-			const server = await startPortalServer({
-				args: parsePortalServerCliArgs(args.slice(1)),
-				env: runtimeProps.env,
-				...(injectedSecretResolver !== undefined
-					? {
-							resolveSecret: (secret) =>
-								resolveSecretValue(secret, {
-									env: runtimeProps.env,
-									secretResolver: injectedSecretResolver,
-								}),
-						}
-					: {}),
-			});
-			await waitUntilPortalServerShutdown({ server });
-			return 0;
+			printUsage();
+			return 1;
 		}
 		if (command === 'write-credential') {
-			return await writeCredentialFile(args.slice(1), runtimeProps);
+			printUsage();
+			return 1;
 		}
 		if (command === 'call') {
 			return await runCallCommand(args.slice(1), runtimeProps);
@@ -443,9 +458,21 @@ export async function runMcpPortal(
 	}
 }
 
-if (
-	process.argv[1]?.endsWith('mcp-portal.js') === true ||
-	process.argv[1]?.endsWith('mcp-portal.ts') === true
-) {
+/*
+ * Command-shape note: top-level `serve` and `write-credential` are
+ * intentionally rejected. The public CLI shape is `mcp-portal mcp-proxy ...`
+ * so the command mirrors the library adapter boundary.
+ */
+
+export function shouldRunMcpPortalEntrypoint(argvPath: string | undefined): boolean {
+	const entrypointName = argvPath === undefined ? undefined : basename(argvPath);
+	return (
+		entrypointName === 'mcp-portal' ||
+		entrypointName === 'mcp-portal.js' ||
+		entrypointName === 'mcp-portal.ts'
+	);
+}
+
+if (shouldRunMcpPortalEntrypoint(process.argv[1])) {
 	process.exitCode = await runMcpPortal(process.argv.slice(2));
 }

@@ -429,6 +429,66 @@ describe('portal core event stream', () => {
 		await core.close();
 	});
 
+	it('denies calls for tools outside the agent enabled tool list before upstream contact', async () => {
+		const callUpstreamTool = vi.fn(async () => ({ ok: true }));
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'deny-all',
+				enabledNamespaces: ['linear'],
+				enabledNamespacesByAgent: {},
+				enabledToolsByAgent: {
+					'agent-a': [{ namespace: 'linear', toolName: 'create_issue' }],
+				},
+				hiddenToolsByAgent: {},
+			},
+			approval: allowApproval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool,
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(async () => batchTools),
+			},
+			upstreamNamespaces: ['linear'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'cli-operator',
+		});
+
+		const result = await core.collectPortalCoreResult(
+			core.callStream({
+				input: {
+					calls: [
+						{
+							arguments: {},
+							id: 'blocked-call',
+							namespace: 'linear',
+							toolName: 'explode',
+						},
+					],
+				},
+				scope,
+				toolName: 'mcp_portal_call',
+			}),
+		);
+
+		expect(callUpstreamTool).not.toHaveBeenCalled();
+		expect(result.items).toEqual([
+			expect.objectContaining({
+				error: expect.objectContaining({
+					code: 'unknown_or_denied_tool',
+					namespace: 'linear',
+					toolName: 'explode',
+				}),
+				requestId: 'blocked-call',
+				status: 'failed',
+			}),
+		]);
+
+		await core.close();
+	});
+
 	it('rejects duplicate batch request ids before upstream contact', async () => {
 		const callUpstreamTool = vi.fn(async () => ({ ok: true }));
 		const core = createPortalCore({
@@ -603,6 +663,140 @@ describe('portal core event stream', () => {
 			error: expect.any(Error),
 			kind: 'failed',
 		});
+
+		await core.close();
+	});
+
+	it('drains queued upstream events before reporting a later abort', async () => {
+		const controller = new AbortController();
+		const callUpstreamTool = vi.fn((call) => {
+			call.onEvent?.({
+				kind: 'progress',
+				message: 'queued before abort',
+				progress: 1,
+				total: 2,
+			});
+			controller.abort(new Error('cancelled after upstream queued progress'));
+			return new Promise<never>(() => undefined);
+		});
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval: allowApproval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool,
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(async () => batchTools),
+			},
+			upstreamNamespaces: ['linear'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'cli-operator',
+		});
+		const stream = core.callStream({
+			input: {
+				calls: [
+					{
+						arguments: { title: 'First' },
+						id: 'call-1',
+						namespace: 'linear',
+						toolName: 'create_issue',
+					},
+				],
+			},
+			scope,
+			signal: controller.signal,
+			toolName: 'mcp_portal_call',
+		});
+		const iterator = stream[Symbol.asyncIterator]();
+
+		const started = await iterator.next();
+		const itemStarted = await iterator.next();
+		const syntheticProgress = await iterator.next();
+		const upstreamProgress = await iterator.next();
+		const failed = await iterator.next();
+
+		expect(started.value).toMatchObject({ kind: 'started' });
+		expect(itemStarted.value).toMatchObject({ kind: 'item_started', requestId: 'call-1' });
+		expect(syntheticProgress.value).toMatchObject({ kind: 'progress', requestId: 'call-1' });
+		expect(upstreamProgress.value).toMatchObject({
+			kind: 'progress',
+			message: 'queued before abort',
+			requestId: 'call-1',
+		});
+		expect(failed.value).toMatchObject({
+			error: expect.any(Error),
+			kind: 'failed',
+		});
+
+		await core.close();
+	});
+
+	it('fails instead of growing an unbounded upstream event queue', async () => {
+		const callUpstreamTool = vi.fn(async (call) => {
+			for (let index = 0; index < 1_025; index += 1) {
+				call.onEvent?.({
+					kind: 'progress',
+					message: `flood ${index}`,
+					progress: index,
+				});
+			}
+			return { ok: true };
+		});
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval: allowApproval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool,
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(async () => batchTools),
+			},
+			upstreamNamespaces: ['linear'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'cli-operator',
+		});
+
+		const result = await core.collectPortalCoreResult(
+			core.callStream({
+				input: {
+					calls: [
+						{
+							arguments: { title: 'Flood' },
+							id: 'call-1',
+							namespace: 'linear',
+							toolName: 'create_issue',
+						},
+					],
+				},
+				scope,
+				toolName: 'mcp_portal_call',
+			}),
+		);
+
+		expect(result.items).toEqual([
+			expect.objectContaining({
+				error: expect.objectContaining({
+					code: 'upstream_call_failed',
+					message: expect.stringMatching(/event queue exceeded/u),
+				}),
+				requestId: 'call-1',
+				status: 'failed',
+			}),
+		]);
 
 		await core.close();
 	});

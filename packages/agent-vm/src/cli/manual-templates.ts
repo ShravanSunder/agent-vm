@@ -198,7 +198,7 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 			content: generatedPage(
 				'MCP Portal',
 				`
-MCP Portal is a scoped tool facade over deployment-owned upstream MCP servers. Managed OpenClaw uses native tools in the gateway VM; external MCP clients use mcp-portal serve.
+MCP Portal is a scoped tool facade over deployment-owned upstream MCP servers. Managed OpenClaw uses native tools in the gateway VM; external MCP clients use mcp-portal mcp-proxy serve.
 
 	Agents should use progressive disclosure:
 	1. mcp_portal_list with requests[] for allowed namespaces and compact summaries.

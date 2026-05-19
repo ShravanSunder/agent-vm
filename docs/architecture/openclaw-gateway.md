@@ -222,7 +222,7 @@ construction rather than post-filtered from a global index.
 The plugin still participates in the agent loop. It injects prompt context before
 prompt construction and gates portal calls before tool execution. OpenClaw's
 trusted hook result is the approval boundary for managed native tools; external
-MCP clients use the separate `agent-vm-mcp-portal serve` adapter and its bearer
+MCP clients use the separate `mcp-portal mcp-proxy serve` adapter and its bearer
 auth.
 
 See [MCP Portal](../subsystems/mcp-portal.md) for the portal API, schema,

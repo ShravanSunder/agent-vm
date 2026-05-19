@@ -60,7 +60,6 @@ describe('portal sessions', () => {
 		const policy = resolvePortalAccessPolicy({
 			config: {
 				defaultPolicy: 'allow-all',
-				enabledNamespaces: [],
 				enabledNamespacesByAgent: {},
 				enabledToolsByAgent: {},
 				hiddenToolsByAgent: {},
@@ -70,6 +69,22 @@ describe('portal sessions', () => {
 		});
 
 		expect(policy.allowedNamespaces).toEqual(['github', 'linear']);
+	});
+
+	it('treats an explicit empty global namespace list as deny all', () => {
+		const policy = resolvePortalAccessPolicy({
+			config: {
+				defaultPolicy: 'allow-all',
+				enabledNamespaces: [],
+				enabledNamespacesByAgent: {},
+				enabledToolsByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			identity: createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-scope-a' }),
+			upstreamNamespaces: ['linear', 'github'],
+		});
+
+		expect(policy.allowedNamespaces).toEqual([]);
 	});
 
 	it('removes non-enabled tools before catalog construction', async () => {

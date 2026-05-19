@@ -125,6 +125,8 @@ export interface PortalCoreStreamCall {
 	readonly toolName: PortalCoreToolName;
 }
 
+const maxQueuedPortalCoreEvents = 1_024;
+
 export interface PortalCoreCollectOptions {
 	readonly onEvent?: (event: PortalCoreEvent) => Promise<void> | void;
 }
@@ -412,6 +414,9 @@ async function* callToolStream(props: {
 	let notifyQueuedEvent: (() => void) | undefined;
 	let executionDone = false;
 	const pushEvent = (event: PortalCoreEvent): void => {
+		if (queuedEvents.length >= maxQueuedPortalCoreEvents) {
+			throw new Error(`MCP Portal core event queue exceeded ${maxQueuedPortalCoreEvents} events.`);
+		}
 		queuedEvents.push(event);
 		notifyQueuedEvent?.();
 		notifyQueuedEvent = undefined;
@@ -483,12 +488,12 @@ async function* callToolStream(props: {
 		});
 	const hasPendingExecutionEvents = (): boolean => !executionDone || queuedEvents.length > 0;
 	while (hasPendingExecutionEvents()) {
-		throwIfAborted(props.signal);
 		const event = queuedEvents.shift();
 		if (event !== undefined) {
 			yield event;
 			continue;
 		}
+		throwIfAborted(props.signal);
 		// Streaming consumes events as they arrive; there is no parallel work to collect here.
 		// eslint-disable-next-line no-await-in-loop
 		await waitForQueuedCoreEvent({

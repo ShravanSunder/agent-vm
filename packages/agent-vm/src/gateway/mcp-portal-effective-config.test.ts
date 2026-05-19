@@ -557,6 +557,48 @@ describe('MCP Portal effective config materialization', () => {
 		});
 	});
 
+	it('reports both source secrets when normalized provider secret names collide', async () => {
+		const authoredDir = await createAuthoredDir({
+			mcpConfig: {
+				providers: {
+					linear: {
+						kind: 'mcp',
+						namespace: 'linear',
+						secretPolicies: {
+							'api-key': { hosts: ['api.linear.app'], injection: 'http-mediation' },
+							api_key: { hosts: ['api.linear.app'], injection: 'http-mediation' },
+						},
+						transport: {
+							headers: {
+								'api-key': {
+									ref: 'op://agent-vm/linear/api-key',
+									source: '1password',
+								},
+								api_key: {
+									ref: 'op://agent-vm/linear/api_key',
+									source: '1password',
+								},
+							},
+							kind: 'streamable-http',
+							url: 'https://api.linear.app/mcp',
+						},
+					},
+				},
+				schemaVersion: 1,
+			},
+		});
+
+		await expect(
+			planMcpPortalEffectiveConfig({
+				authoredConfigDir: authoredDir,
+				effectiveHostConfigDir: path.join(authoredDir, 'effective'),
+				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
+				secretResolver: createSecretResolver({}),
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(/api-key.*api_key|api_key.*api-key/u);
+	});
+
 	it('materializes authored environment provider secrets through the shared resolver', async () => {
 		const authoredDir = await createAuthoredDir({
 			mcpConfig: {

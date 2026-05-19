@@ -118,4 +118,30 @@ describe('loadMcpConfig', () => {
 		await expect(loadMcpConfig(mediatedWithoutHosts)).rejects.toThrow(/http-mediation/u);
 		await expect(loadMcpConfig(envWithHosts)).rejects.toThrow(/env.*hosts/u);
 	});
+
+	it('rejects non-http remote MCP transport URLs', async () => {
+		const fileUrlConfig = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"localFile": {
+					"kind": "mcp",
+					"namespace": "local-file",
+					"transport": { "kind": "streamable-http", "url": "file:///etc/passwd" }
+				}
+			}
+		}`);
+		const ftpUrlConfig = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"ftp": {
+					"kind": "mcp",
+					"namespace": "ftp",
+					"transport": { "kind": "sse", "url": "ftp://example.com/mcp" }
+				}
+			}
+		}`);
+
+		await expect(loadMcpConfig(fileUrlConfig)).rejects.toThrow(/http.*https/u);
+		await expect(loadMcpConfig(ftpUrlConfig)).rejects.toThrow(/http.*https/u);
+	});
 });
