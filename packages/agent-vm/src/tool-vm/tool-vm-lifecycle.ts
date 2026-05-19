@@ -169,7 +169,7 @@ export async function createToolVm(
 			cpus: options.profile.cpus,
 			imagePath: toolImage.imagePath,
 			memory: options.profile.memory,
-			rootfsMode: 'memory',
+			rootfsMode: 'cow',
 			sessionLabel: buildToolSessionLabel(
 				options.systemConfig.host.projectNamespace,
 				options.zoneId,
