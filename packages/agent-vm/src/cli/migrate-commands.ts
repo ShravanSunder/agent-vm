@@ -5,7 +5,6 @@ import {
 	createConfigContractSchemaArtifacts,
 	mcpPortalConfigSchemaPaths,
 } from '@agent-vm/config-contracts';
-import { portalServerNameForAgent } from '@agent-vm/openclaw-mcp-portal-plugin';
 import { applyEdits, modify, type FormattingOptions, type JSONPath } from 'jsonc-parser';
 
 import { loadJsonConfigFile } from '../config/json-config-file.js';
@@ -44,7 +43,7 @@ interface MutableSystemZone {
 		readonly type?: unknown;
 	};
 	readonly id?: unknown;
-	readonly mcp?: unknown;
+	readonly mcpPortal?: unknown;
 }
 
 interface ImageProfileMigration {
@@ -93,7 +92,7 @@ function parseMutableSystemZone(value: unknown): MutableSystemZone | null {
 					},
 				}),
 		id: value.id,
-		mcp: value.mcp,
+		mcpPortal: value.mcpPortal,
 	};
 }
 
@@ -278,14 +277,6 @@ function defaultMcpPortalConfigText(agentIds: readonly string[]): string {
 		{
 			$schema: mcpPortalConfigSchemaPaths.mcpPortalFromGatewayConfig,
 			schemaVersion: 1,
-			server: {
-				host: '127.0.0.1',
-				port: 18790,
-				accessHeader: {
-					name: 'x-agent-vm-mcp-portal-secret',
-					secret: { source: 'environment', name: 'MCP_PORTAL_SERVER_SECRET' },
-				},
-			},
 			agents: Object.fromEntries(agentIds.map((agentId) => [agentId, { profile: 'default' }])),
 			profiles: {
 				default: {
@@ -379,21 +370,6 @@ function extractOpenClawAgentIds(openClawConfig: unknown): readonly string[] {
 		.filter((agentId): agentId is string => agentId !== null);
 }
 
-function buildPortalMcpServers(agentIds: readonly string[]): Record<string, unknown> {
-	return Object.fromEntries(
-		agentIds.map((agentId) => [
-			portalServerNameForAgent(agentId),
-			{
-				transport: 'streamable-http',
-				url: `http://127.0.0.1:18790/agents/${encodeURIComponent(agentId)}/mcp`,
-				headers: {
-					'x-agent-vm-mcp-portal-secret': '${MCP_PORTAL_SERVER_SECRET}',
-				},
-			},
-		]),
-	);
-}
-
 function removePortalServerEntries(servers: Record<string, unknown>): Record<string, unknown> {
 	return Object.fromEntries(
 		Object.entries(servers).filter(([serverName]) => !serverName.startsWith('mcp_portal_')),
@@ -402,7 +378,7 @@ function removePortalServerEntries(servers: Record<string, unknown>): Record<str
 
 function migrateOpenClawConfigForPortal(
 	openClawConfig: unknown,
-	agentIds: readonly string[],
+	_agentIds: readonly string[],
 ): object {
 	const baseConfig = isRecord(openClawConfig) ? openClawConfig : {};
 	const existingMcp = isRecord(baseConfig.mcp) ? baseConfig.mcp : {};
@@ -413,24 +389,13 @@ function migrateOpenClawConfigForPortal(
 		? existingEntries['mcp-portal']
 		: {};
 	const existingPortalHooks = isRecord(existingPortalEntry.hooks) ? existingPortalEntry.hooks : {};
-	const existingPortalConfig = isRecord(existingPortalEntry.config)
-		? existingPortalEntry.config
-		: {};
-	const nextPortalConfig = {
-		...(typeof existingPortalConfig.binPath === 'string'
-			? { binPath: existingPortalConfig.binPath }
-			: {}),
-		configDir: '/home/openclaw/.openclaw/config',
-	};
+	const nextPortalConfig = { configDir: '/home/openclaw/.openclaw/config' };
 
 	return {
 		...baseConfig,
 		mcp: {
 			...existingMcp,
-			servers: {
-				...removePortalServerEntries(existingServers),
-				...buildPortalMcpServers(agentIds),
-			},
+			servers: removePortalServerEntries(existingServers),
 		},
 		plugins: {
 			...existingPlugins,
@@ -476,8 +441,8 @@ function applySystemMcpPortalMigration(props: {
 			props.agentIds.map((agentId) => ({ id: agentId })),
 		);
 	}
-	if (!isRecord(props.zone.mcp)) {
-		updatedConfigText = applyJsoncEdit(updatedConfigText, ['zones', props.zoneIndex, 'mcp'], {
+	if (!isRecord(props.zone.mcpPortal)) {
+		updatedConfigText = applyJsoncEdit(updatedConfigText, ['zones', props.zoneIndex, 'mcpPortal'], {
 			configDir: props.configDir,
 		});
 	}

@@ -14,8 +14,7 @@
 		"directory": "packages/mcp-portal"
 	},
 	"bin": {
-		"agent-vm-mcp-portal": "./dist/bin/agent-vm-mcp-portal.js",
-		"agent-vm-mcp-portal-server": "./dist/bin/portal-server.js"
+		"agent-vm-mcp-portal": "./dist/bin/agent-vm-mcp-portal.js"
 	},
 	"files": [
 		"dist"
@@ -28,6 +27,18 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
+		"./core": {
+			"types": "./dist/core/index.d.ts",
+			"import": "./dist/core/index.js"
+		},
+		"./mcp-proxy": {
+			"types": "./dist/mcp-proxy/index.d.ts",
+			"import": "./dist/mcp-proxy/index.js"
+		},
+		"./cli": {
+			"types": "./dist/cli/index.d.ts",
+			"import": "./dist/cli/index.js"
+		},
 		"./tool-vm": {
 			"types": "./dist/tool-vm/index.d.ts",
 			"import": "./dist/tool-vm/index.js"
@@ -39,6 +50,10 @@
 		"./auth/hmac-env": {
 			"types": "./dist/auth/hmac-env.d.ts",
 			"import": "./dist/auth/hmac-env.js"
+		},
+		"./auth/agent-bearer-token": {
+			"types": "./dist/auth/agent-bearer-token.d.ts",
+			"import": "./dist/auth/agent-bearer-token.js"
 		},
 		"./testing/fake-upstream-mcp-server": {
 			"types": "./dist/testing/fake-upstream-mcp-server.d.ts",
@@ -57,6 +72,7 @@
 	},
 	"dependencies": {
 		"@agent-vm/config-contracts": "workspace:*",
+		"@agent-vm/secrets": "workspace:*",
 		"@hono/node-server": "^2.0.2",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"hono": "^4.12.18",

@@ -10,7 +10,7 @@ export interface StartGatewayZoneOptions {
 	readonly runTask?: RunTaskFn;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;
 	readonly runtimePluginConfigs?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
-	readonly secretResolver: import('@agent-vm/gondolin-adapter').SecretResolver;
+	readonly secretResolver: import('@agent-vm/secrets').SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
 	readonly tcpHostsOverride?: Record<string, string>;
 	readonly vfsMountsOverride?: GatewayManagedVmFactoryOptions['vfsMounts'];
@@ -104,7 +104,7 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 		secrets: zone.secrets,
 		egressHosts: zone.egressHosts,
 		...(zone.defaultToolVmProfile ? { defaultToolVmProfile: zone.defaultToolVmProfile } : {}),
-		...(zone.mcp === undefined ? {} : { mcp: zone.mcp }),
+		...(zone.mcpPortal === undefined ? {} : { mcpPortal: zone.mcpPortal }),
 		websocketBypass: zone.websocketBypass,
 	};
 }

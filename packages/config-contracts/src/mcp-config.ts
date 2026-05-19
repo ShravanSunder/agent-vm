@@ -14,6 +14,7 @@ const streamableHttpTransportSchema = z
 		kind: z.literal('streamable-http'),
 		url: z.string().url(),
 		headers: z.record(z.string(), secretValueSchema).default({}),
+		requiredEgressHosts: z.array(z.string().min(1)).default([]),
 	})
 	.strict();
 
@@ -22,6 +23,7 @@ const sseTransportSchema = z
 		kind: z.literal('sse'),
 		url: z.string().url(),
 		headers: z.record(z.string(), secretValueSchema).default({}),
+		requiredEgressHosts: z.array(z.string().min(1)).default([]),
 	})
 	.strict();
 
@@ -32,6 +34,15 @@ const stdioTransportSchema = z
 		args: z.array(z.string()).default([]),
 		cwd: z.string().min(1).optional(),
 		env: z.record(z.string(), secretValueSchema).default({}),
+		networkAccess: z.enum(['declared', 'none']).optional(),
+		requiredEgressHosts: z.array(z.string().min(1)).default([]),
+	})
+	.strict();
+
+export const mcpSecretPolicySchema = z
+	.object({
+		hosts: z.array(z.string()).default([]),
+		injection: z.enum(['env', 'http-mediation']),
 	})
 	.strict();
 
@@ -40,6 +51,7 @@ export const mcpProviderSchema = z
 		kind: z.literal('mcp'),
 		namespace: z.string().min(1),
 		discovery: mcpProviderDiscoverySchema.default({}),
+		secretPolicies: z.record(z.string().min(1), mcpSecretPolicySchema).default({}),
 		transport: z.discriminatedUnion('kind', [
 			streamableHttpTransportSchema,
 			sseTransportSchema,

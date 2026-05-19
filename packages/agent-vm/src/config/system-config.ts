@@ -368,7 +368,7 @@ const systemConfigSchema = z
 						agents: z.array(zoneAgentSchema).optional(),
 						adminAccess: zoneAdminAccessSchema.optional(),
 						gateway: zoneGatewaySchema,
-						mcp: zoneMcpConfigSchema.optional(),
+						mcpPortal: zoneMcpConfigSchema.optional(),
 						resources: zoneResourcesPolicySchema.optional(),
 						secrets: z.record(secretNameSchema, secretReferenceSchema),
 						runtimeAuthHints: z.array(runtimeAuthHintSchema).optional(),
@@ -539,10 +539,13 @@ const systemConfigSchema = z
 				});
 			}
 			const zoneAgents = zone.agents ?? [];
-			if (zone.gateway.type !== 'openclaw' && (zoneAgents.length > 0 || zone.mcp !== undefined)) {
+			if (
+				zone.gateway.type !== 'openclaw' &&
+				(zoneAgents.length > 0 || zone.mcpPortal !== undefined)
+			) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: `Worker zone '${zone.id}' must not declare agents or mcp.`,
+					message: `Worker zone '${zone.id}' must not declare agents or mcpPortal.`,
 					path: ['zones', zoneIndex],
 				});
 			}
@@ -806,7 +809,9 @@ function resolveRelativePaths(
 		zones: config.zones.map((zone) => ({
 			...zone,
 			gateway: resolveZoneGatewayPaths(zone.gateway),
-			...(zone.mcp === undefined ? {} : { mcp: { configDir: resolvePath(zone.mcp.configDir) } }),
+			...(zone.mcpPortal === undefined
+				? {}
+				: { mcpPortal: { configDir: resolvePath(zone.mcpPortal.configDir) } }),
 		})),
 		toolVmProfiles: Object.fromEntries(
 			Object.entries(config.toolVmProfiles).map(([profileId, profile]) => [

@@ -1,5 +1,5 @@
 /* oxlint-disable eslint/no-await-in-loop -- smoke test steps must be sequential against live VMs */
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -31,189 +31,24 @@ const runOpenClawMcpPortalSmoke =
 	process.env.AGENT_VM_OPENCLAW_SMOKE === '1' && (await canRunGondolinSmoke({ architecture }));
 const describeOpenClawMcpPortalSmoke = runOpenClawMcpPortalSmoke ? describe : describe.skip;
 const agentId = 'smoke';
-const portalAccessHeaderName = 'x-agent-vm-mcp-portal-secret';
-const portalAccessSecret = 'portal-server-secret';
 const gatewayToken = 'mcp-portal-smoke-gateway-token';
+const portalToolNames = [
+	'mcp_portal_list',
+	'mcp_portal_search',
+	'mcp_portal_describe',
+	'mcp_portal_call',
+] as const;
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function firstTextContent(value: unknown): string {
-	if (!isObjectRecord(value) || !Array.isArray(value.content)) {
-		throw new Error('Expected MCP result with content.');
+async function readJsonObjectFile(filePath: string): Promise<Record<string, unknown>> {
+	const parsed: unknown = JSON.parse(await readFile(filePath, 'utf8'));
+	if (!isObjectRecord(parsed)) {
+		throw new Error(`Expected JSON object in ${filePath}.`);
 	}
-	const firstContent = value.content[0];
-	if (!isObjectRecord(firstContent) || firstContent.type !== 'text') {
-		throw new Error('Expected first MCP content item to be text.');
-	}
-	const text = firstContent.text;
-	if (typeof text !== 'string') {
-		throw new Error('Expected first MCP content item text to be a string.');
-	}
-	return text;
-}
-
-function parsePortalJsonResult(value: unknown): unknown {
-	return JSON.parse(firstTextContent(value)) as unknown;
-}
-
-function parseGatewayPortalResult(value: unknown): unknown {
-	if (!isObjectRecord(value) || !('result' in value)) {
-		return parsePortalJsonResult(value);
-	}
-	return parsePortalJsonResult(value.result);
-}
-
-function parseJsonText(text: string): unknown {
-	const trimmed = text.trim();
-	if (trimmed.length === 0) {
-		return {};
-	}
-	if (!trimmed.startsWith('event:') && !trimmed.startsWith('data:')) {
-		const parsed: unknown = JSON.parse(trimmed);
-		return parsed;
-	}
-	const dataLines = trimmed
-		.split(/\r?\n/u)
-		.filter((line) => line.startsWith('data:'))
-		.map((line) => line.slice('data:'.length).trim());
-	if (dataLines.length === 0) {
-		throw new Error(`Expected MCP event-stream response to contain data lines: ${trimmed}`);
-	}
-	const parsed: unknown = JSON.parse(dataLines.join('\n'));
 	return parsed;
-}
-
-function readJsonRpcResult(value: unknown): unknown {
-	if (!isObjectRecord(value)) {
-		throw new Error('Expected MCP JSON-RPC response object.');
-	}
-	if ('error' in value) {
-		throw new Error(`MCP JSON-RPC error: ${JSON.stringify(value.error)}`);
-	}
-	if (!('result' in value)) {
-		throw new Error(`Expected MCP JSON-RPC response result: ${JSON.stringify(value)}`);
-	}
-	return value.result;
-}
-
-function readMcpSessionId(response: Response): string {
-	const sessionId = response.headers.get('mcp-session-id');
-	if (sessionId === null || sessionId.length === 0) {
-		throw new Error('Expected MCP initialize response to include mcp-session-id.');
-	}
-	return sessionId;
-}
-
-async function readMcpResponseBody(response: Response): Promise<unknown> {
-	const text = await response.text();
-	return parseJsonText(text);
-}
-
-function createPortalMcpClient(options: {
-	readonly accessHeaderName: string;
-	readonly accessSecret: string;
-	readonly endpoint: string;
-}): {
-	readonly callTool: (props: {
-		readonly args: Record<string, unknown>;
-		readonly tool: string;
-	}) => Promise<unknown>;
-	readonly listTools: () => Promise<readonly string[]>;
-} {
-	let nextId = 1;
-	let sessionId: string | undefined;
-
-	async function postJsonRpc(method: string, params?: unknown): Promise<unknown> {
-		const headers: Record<string, string> = {
-			accept: 'application/json, text/event-stream',
-			'content-type': 'application/json',
-			[options.accessHeaderName]: options.accessSecret,
-		};
-		if (sessionId !== undefined) {
-			headers['mcp-session-id'] = sessionId;
-		}
-		const id = nextId;
-		nextId += 1;
-		const response = await fetch(options.endpoint, {
-			body: JSON.stringify({
-				jsonrpc: '2.0',
-				id,
-				method,
-				...(params === undefined ? {} : { params }),
-			}),
-			headers,
-			method: 'POST',
-		});
-		if (!response.ok) {
-			throw new Error(
-				`MCP request ${method} failed: ${String(response.status)} ${await response.text()}`,
-			);
-		}
-		if (method === 'initialize') {
-			sessionId = readMcpSessionId(response);
-		}
-		return readJsonRpcResult(await readMcpResponseBody(response));
-	}
-
-	async function postNotification(method: string): Promise<void> {
-		const headers: Record<string, string> = {
-			accept: 'application/json, text/event-stream',
-			'content-type': 'application/json',
-			[options.accessHeaderName]: options.accessSecret,
-		};
-		if (sessionId !== undefined) {
-			headers['mcp-session-id'] = sessionId;
-		}
-		const response = await fetch(options.endpoint, {
-			body: JSON.stringify({ jsonrpc: '2.0', method }),
-			headers,
-			method: 'POST',
-		});
-		if (!response.ok) {
-			throw new Error(
-				`MCP notification ${method} failed: ${String(response.status)} ${await response.text()}`,
-			);
-		}
-	}
-
-	async function ensureInitialized(): Promise<void> {
-		if (sessionId !== undefined) {
-			return;
-		}
-		await postJsonRpc('initialize', {
-			capabilities: {},
-			clientInfo: { name: 'agent-vm-openclaw-mcp-portal-smoke', version: '1.0.0' },
-			protocolVersion: '2025-03-26',
-		});
-		await postNotification('notifications/initialized');
-	}
-
-	return {
-		callTool: async (props): Promise<unknown> => {
-			await ensureInitialized();
-			return await postJsonRpc('tools/call', {
-				arguments: props.args,
-				name: props.tool,
-			});
-		},
-		listTools: async (): Promise<readonly string[]> => {
-			await ensureInitialized();
-			const result = await postJsonRpc('tools/list', {});
-			if (!isObjectRecord(result) || !Array.isArray(result.tools)) {
-				throw new Error(
-					`Expected MCP tools/list result with tools array: ${JSON.stringify(result)}`,
-				);
-			}
-			return result.tools.map((tool) => {
-				if (!isObjectRecord(tool) || typeof tool.name !== 'string') {
-					throw new Error(`Expected MCP tool descriptor with string name: ${JSON.stringify(tool)}`);
-				}
-				return tool.name;
-			});
-		},
-	};
 }
 
 function createSmokeGatewayClient(harness: SmokeHarnessRuntime): GatewayApiClient {
@@ -227,22 +62,67 @@ function createSmokeGatewayClient(harness: SmokeHarnessRuntime): GatewayApiClien
 	});
 }
 
-function createSmokePortalMcpEndpoint(options: {
-	readonly host: string;
-	readonly port: number;
-}): string {
-	const portalIngressPrefix = '/__agent-vm-smoke/mcp-portal';
-	return `http://${options.host}:${String(options.port)}${portalIngressPrefix}/agents/${encodeURIComponent(
-		agentId,
-	)}/mcp`;
+async function allowPortalNativeToolsInOpenClawConfig(configPath: string): Promise<void> {
+	const parsed: unknown = JSON.parse(await readFile(configPath, 'utf8'));
+	if (!isObjectRecord(parsed)) {
+		throw new Error('Expected OpenClaw smoke config to be a JSON object.');
+	}
+	const tools = isObjectRecord(parsed.tools) ? parsed.tools : {};
+	const existingAllow = Array.isArray(tools.allow)
+		? tools.allow.filter((tool): tool is string => typeof tool === 'string')
+		: [];
+	parsed.tools = {
+		...tools,
+		allow: [...new Set([...existingAllow, ...portalToolNames])],
+	};
+	await writeFile(configPath, `${JSON.stringify(parsed, null, '\t')}\n`, 'utf8');
+}
+
+function parseNativePortalToolResult(value: unknown): unknown {
+	if (!isObjectRecord(value) || value.ok !== true || !isObjectRecord(value.result)) {
+		throw new Error(`Expected successful OpenClaw /tools/invoke result: ${JSON.stringify(value)}`);
+	}
+	const details = value.result.details;
+	if (details !== undefined) {
+		return details;
+	}
+	const content = value.result.content;
+	if (typeof content === 'string') {
+		return JSON.parse(content) as unknown;
+	}
+	throw new Error(
+		`Expected OpenClaw tool result details or JSON content: ${JSON.stringify(value)}`,
+	);
+}
+
+function readScalarStructuredContent(result: unknown): unknown {
+	if (!isObjectRecord(result) || !Array.isArray(result.content)) {
+		throw new Error(`Expected scalar PortalCoreResult content: ${JSON.stringify(result)}`);
+	}
+	const contentBlock = result.content[0];
+	if (!isObjectRecord(contentBlock) || contentBlock.type !== 'json') {
+		throw new Error(
+			`Expected first scalar PortalCoreResult block to be JSON: ${JSON.stringify(result)}`,
+		);
+	}
+	return contentBlock.value;
+}
+
+function readSingleItem(result: unknown): Record<string, unknown> {
+	if (!isObjectRecord(result) || !Array.isArray(result.items) || result.items.length !== 1) {
+		throw new Error(`Expected PortalCoreResult with exactly one item: ${JSON.stringify(result)}`);
+	}
+	const item = result.items[0];
+	if (!isObjectRecord(item)) {
+		throw new Error(`Expected PortalCore item object: ${JSON.stringify(result)}`);
+	}
+	return item;
 }
 
 describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => {
 	let harness: SmokeHarnessRuntime | undefined;
 	let upstreamServer: StartedFakeUpstreamMcpServer | undefined;
 	let gatewayClient: GatewayApiClient | undefined;
-	let portalMcpClient: ReturnType<typeof createPortalMcpClient> | undefined;
-	let portalMcpEndpoint: string | undefined;
 
 	beforeAll(async () => {
 		const repoRoot = path.resolve(process.cwd());
@@ -264,23 +144,15 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			...systemZone.egressHosts,
 			{ audience: 'gateway', host: upstreamHost },
 		];
-		systemZone.secrets = {
-			...systemZone.secrets,
-			MCP_PORTAL_SERVER_SECRET: {
-				audience: 'gateway',
-				envVar: 'MCP_PORTAL_SERVER_SECRET',
-				injection: 'env',
-				source: 'environment',
-			},
-		};
 		await mkdir(path.join(systemZone.gateway.zoneFilesDir, 'agents', agentId), {
 			recursive: true,
 		});
+		await allowPortalNativeToolsInOpenClawConfig(systemZone.gateway.config);
 		await writeOpenClawMcpPortalSmokeConfigs({
 			agentId,
 			configDir: path.dirname(systemZone.gateway.config),
 			namespace: fakeUpstreamNamespace,
-			portalAccessHeaderName,
+			portalAccessHeaderName: 'unused-native-smoke-header',
 			upstreamUrl,
 		});
 		await useLocalOpenClawGatewayImagePackages({
@@ -296,7 +168,6 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		harness = await startSmokeControllerRuntime({
 			secrets: {
 				GITHUB_TOKEN: 'mcp-portal-smoke-github-token',
-				MCP_PORTAL_SERVER_SECRET: portalAccessSecret,
 				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
 				PERPLEXITY_API_KEY: 'unused-perplexity-smoke-token',
 			},
@@ -306,20 +177,13 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			},
 			startGatewayZone: async (startGatewayOptions) => {
 				const result = await startGatewayZone(startGatewayOptions);
-				const portalIngressPrefix = '/__agent-vm-smoke/mcp-portal';
 				result.vm.setIngressRoutes([
-					{
-						port: 18790,
-						prefix: portalIngressPrefix,
-						stripPrefix: true,
-					},
 					{
 						port: result.processSpec.guestListenPort,
 						prefix: '/',
 						stripPrefix: true,
 					},
 				]);
-				portalMcpEndpoint = createSmokePortalMcpEndpoint(result.ingress);
 				return result;
 			},
 			tcpHostsOverride: {
@@ -333,14 +197,6 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			},
 		});
 		gatewayClient = createSmokeGatewayClient(harness);
-		if (portalMcpEndpoint === undefined) {
-			throw new Error('OpenClaw MCP Portal smoke did not capture a portal MCP endpoint.');
-		}
-		portalMcpClient = createPortalMcpClient({
-			accessHeaderName: portalAccessHeaderName,
-			accessSecret: portalAccessSecret,
-			endpoint: portalMcpEndpoint,
-		});
 	}, 900_000);
 
 	afterAll(async () => {
@@ -351,24 +207,62 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 	it('boots OpenClaw and exposes the gateway API', async () => {
 		const status = await gatewayClient?.getGatewayStatus();
 		expect(status).toMatchObject({ ready: true });
-		await expect(portalMcpClient?.listTools()).resolves.toEqual(
-			expect.arrayContaining([
-				'mcp_portal_list',
-				'mcp_portal_search',
-				'mcp_portal_describe',
-				'mcp_portal_call',
-			]),
+	});
+
+	it('materializes native portal config without legacy server wiring', async () => {
+		if (harness === undefined) {
+			throw new Error('Expected OpenClaw MCP Portal smoke harness to be initialized.');
+		}
+		const zone = harness.systemConfig.zones[0];
+		if (zone === undefined || zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw MCP Portal smoke zone to be initialized.');
+		}
+		const effectivePortalDir = path.join(
+			harness.systemConfig.cacheDir,
+			'gateways',
+			zone.id,
+			'mcp-portal-effective',
 		);
+		const effectiveMcpConfig = await readJsonObjectFile(
+			path.join(effectivePortalDir, 'mcp.config.jsonc'),
+		);
+		const effectivePortalConfig = await readJsonObjectFile(
+			path.join(effectivePortalDir, 'mcp-portal.config.jsonc'),
+		);
+		const effectiveOpenClawConfig = await readJsonObjectFile(
+			path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
+		);
+		const mcpConfig = isObjectRecord(effectiveOpenClawConfig.mcp)
+			? effectiveOpenClawConfig.mcp
+			: {};
+		const mcpServers = isObjectRecord(mcpConfig.servers) ? mcpConfig.servers : {};
+		const serializedManagedConfigs = JSON.stringify({
+			effectiveMcpConfig,
+			effectiveOpenClawConfig,
+			effectivePortalConfig,
+		});
+
+		expect(
+			Object.keys(mcpServers).filter((serverName) => serverName.startsWith('mcp_portal')),
+		).toEqual([]);
+		expect(harness.runtime.zones[0]?.ingress?.port).not.toBe(18_790);
+		expect(serializedManagedConfigs).not.toContain('agent-vm-mcp-portal-server');
+		expect(serializedManagedConfigs).not.toMatch(
+			/OP_SERVICE_ACCOUNT_TOKEN|OP_CONNECT_TOKEN|OP_SESSION|op read|spawn op/u,
+		);
+		expect(effectivePortalConfig.mcpProxy).toBeUndefined();
+		expect(effectivePortalConfig.externalAuth).toBeUndefined();
 	});
 
 	it('discovers the fake upstream namespace through mcp_portal_list', async () => {
-		const result = parseGatewayPortalResult(
-			await portalMcpClient?.callTool({
+		const result = parseNativePortalToolResult(
+			await gatewayClient?.invokeTool({
+				agentId,
 				args: { requests: [{ id: 'list', limit: 10 }] },
 				tool: 'mcp_portal_list',
 			}),
 		);
-		expect(result).toMatchObject({
+		expect(readScalarStructuredContent(result)).toMatchObject({
 			ok: true,
 			results: {
 				list: {
@@ -383,8 +277,9 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 
 	it('calls read tools and blocks unsigned write tools', async () => {
 		const readArguments = { title: 'Read from full OpenClaw smoke' };
-		const readResult = parseGatewayPortalResult(
-			await portalMcpClient?.callTool({
+		const readResult = parseNativePortalToolResult(
+			await gatewayClient?.invokeTool({
+				agentId,
 				args: {
 					calls: [
 						{
@@ -398,16 +293,24 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 				tool: 'mcp_portal_call',
 			}),
 		);
-		expect(readResult).toMatchObject({
-			ok: true,
-			results: {
-				read: {
-					ok: true,
-					output: {
-						namespace: fakeUpstreamNamespace,
-						toolName: 'read_thing',
+		expect(readSingleItem(readResult)).toMatchObject({
+			requestId: 'read',
+			status: 'success',
+			structuredContent: {
+				namespace: fakeUpstreamNamespace,
+				result: {
+					content: [
+						{
+							text: expect.stringContaining('"name":"read_thing"'),
+							type: 'text',
+						},
+					],
+					structuredContent: {
+						name: 'read_thing',
+						ok: true,
 					},
 				},
+				toolName: 'read_thing',
 			},
 		});
 		expect(upstreamServer?.calls).toContainEqual({
@@ -416,8 +319,9 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		});
 
 		const writeArguments = { title: 'Write from full OpenClaw smoke' };
-		const writeResult = parseGatewayPortalResult(
-			await portalMcpClient?.callTool({
+		await expect(
+			gatewayClient?.invokeTool({
+				agentId,
 				args: {
 					calls: [
 						{
@@ -430,20 +334,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 				},
 				tool: 'mcp_portal_call',
 			}),
-		);
-		expect(writeResult).toMatchObject({
-			ok: false,
-			results: {
-				write: {
-					error: {
-						kind: 'approval_token_missing',
-						namespace: fakeUpstreamNamespace,
-						toolName: 'write_thing',
-					},
-					ok: false,
-				},
-			},
-		});
+		).rejects.toThrow(/requiresApproval/u);
 		expect(upstreamServer?.calls).not.toContainEqual({
 			argumentsValue: writeArguments,
 			name: 'write_thing',

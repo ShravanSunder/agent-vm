@@ -435,10 +435,10 @@ async function collectMcpPortalConfigChecks(
 	systemConfig: LoadedSystemConfig,
 	zone: LoadedSystemConfig['zones'][number],
 ): Promise<readonly ConfigValidationCheck[]> {
-	if (zone.gateway.type !== 'openclaw' || zone.mcp === undefined) {
+	if (zone.gateway.type !== 'openclaw' || zone.mcpPortal === undefined) {
 		return [];
 	}
-	const configDir = resolveProjectCheckoutPath(systemConfig, zone.mcp.configDir);
+	const configDir = resolveProjectCheckoutPath(systemConfig, zone.mcpPortal.configDir);
 	const mcpConfigPath = path.join(configDir, 'mcp.config.jsonc');
 	const mcpPortalConfigPath = path.join(configDir, 'mcp-portal.config.jsonc');
 	const checks: ConfigValidationCheck[] = [];

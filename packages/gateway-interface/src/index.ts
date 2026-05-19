@@ -26,6 +26,7 @@ export type {
 export type { GatewayHealthCheck, GatewayProcessSpec } from './gateway-process-spec.js';
 export type { GatewayVmSpec } from './gateway-vm-spec.js';
 export {
+	mergeRuntimeGatewaySecrets,
 	splitResolvedGatewaySecrets,
 	splitResolvedSecretsByInjection,
 } from './split-resolved-gateway-secrets.js';

@@ -245,7 +245,7 @@ async function addMcpPortalReferencesToOpenClawFixture(rootPath: string): Promis
 		}
 		const zone = firstZone as Record<string, unknown>;
 		zone.agents = [{ id: 'shravan' }];
-		zone.mcp = { configDir: './gateways/shravan' };
+		zone.mcpPortal = { configDir: './gateways/shravan' };
 	});
 }
 
@@ -256,14 +256,6 @@ async function writeMcpPortalConfigFiles(rootPath: string, profileName: string):
 	});
 	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp-portal.config.jsonc'), {
 		schemaVersion: 1,
-		server: {
-			host: '127.0.0.1',
-			port: 18790,
-			accessHeader: {
-				name: 'x-agent-vm-mcp-portal-secret',
-				secret: { source: 'environment', name: 'MCP_PORTAL_SERVER_SECRET' },
-			},
-		},
 		agents: { shravan: { profile: profileName } },
 		profiles: {
 			default: {
@@ -283,14 +275,6 @@ async function writeMcpPortalConfigWithAgents(
 	});
 	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp-portal.config.jsonc'), {
 		schemaVersion: 1,
-		server: {
-			host: '127.0.0.1',
-			port: 18790,
-			accessHeader: {
-				name: 'x-agent-vm-mcp-portal-secret',
-				secret: { source: 'environment', name: 'MCP_PORTAL_SERVER_SECRET' },
-			},
-		},
 		agents,
 		profiles: {
 			default: {

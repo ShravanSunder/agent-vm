@@ -5,7 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
-import type { SecretResolver } from '@agent-vm/gondolin-adapter';
+import type { SecretResolver } from '@agent-vm/secrets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { openclawLifecycle } from './openclaw-lifecycle.js';
@@ -55,9 +55,10 @@ const resolvedSecrets: Record<string, string> = {
 function createZone(overrides?: {
 	readonly authProfilesRef?: GatewayZoneConfig['gateway']['authProfilesRef'];
 	readonly gateway?: Partial<OpenClawGatewayConfig>;
-	readonly mcp?: GatewayZoneConfig['mcp'];
+	readonly mcpPortal?: GatewayZoneConfig['mcpPortal'];
 	readonly runtimeMcpServers?: GatewayZoneConfig['runtimeMcpServers'];
 	readonly runtimeEnvironment?: GatewayZoneConfig['runtimeEnvironment'];
+	readonly runtimeMediatedSecrets?: GatewayZoneConfig['runtimeMediatedSecrets'];
 	readonly runtimePluginConfigs?: GatewayZoneConfig['runtimePluginConfigs'];
 	readonly withoutAuthProfilesRef?: boolean;
 }): GatewayZoneConfig {
@@ -90,7 +91,7 @@ function createZone(overrides?: {
 			...overrides?.gateway,
 		},
 		id: 'shravan',
-		...(overrides?.mcp ? { mcp: overrides.mcp } : {}),
+		...(overrides?.mcpPortal ? { mcpPortal: overrides.mcpPortal } : {}),
 		secrets: {
 			DISCORD_BOT_TOKEN: {
 				injection: 'env',
@@ -114,6 +115,9 @@ function createZone(overrides?: {
 		},
 		defaultToolVmProfile: 'standard',
 		...(overrides?.runtimeEnvironment ? { runtimeEnvironment: overrides.runtimeEnvironment } : {}),
+		...(overrides?.runtimeMediatedSecrets
+			? { runtimeMediatedSecrets: overrides.runtimeMediatedSecrets }
+			: {}),
 		...(overrides?.runtimePluginConfigs
 			? { runtimePluginConfigs: overrides.runtimePluginConfigs }
 			: {}),
@@ -205,6 +209,58 @@ describe('openclawLifecycle', () => {
 
 			expect(vmSpec.environment.AGENT_VM_ZONE_GIT_TOKEN).toBe('runtime-zone-git-token');
 			expect(vmSpec.mediatedSecrets.AGENT_VM_ZONE_GIT_TOKEN).toBeUndefined();
+		});
+
+		it('injects generated runtime mediated secrets without authored zone secret config entries', () => {
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 3,
+				},
+				zone: createZone({
+					runtimeMediatedSecrets: {
+						AGENT_VM_MCP_TAVILY_API_KEY: {
+							hosts: ['api.tavily.com'],
+							value: 'runtime-tavily-token',
+						},
+					},
+				}),
+			});
+
+			expect(vmSpec.mediatedSecrets.AGENT_VM_MCP_TAVILY_API_KEY).toEqual({
+				hosts: ['api.tavily.com'],
+				value: 'runtime-tavily-token',
+			});
+			expect(vmSpec.environment.AGENT_VM_MCP_TAVILY_API_KEY).toBeUndefined();
+		});
+
+		it('rejects generated runtime secrets that collide with authored zone secrets', () => {
+			expect(() =>
+				openclawLifecycle.buildVmSpec({
+					controllerPort: 18800,
+					gatewayCacheDir: '/host/cache/gateways/shravan',
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					resolvedSecrets,
+					runtimeDir: '/host/runtime',
+					tcpPool: {
+						basePort: 19000,
+						size: 3,
+					},
+					zone: createZone({
+						runtimeMediatedSecrets: {
+							PERPLEXITY_API_KEY: {
+								hosts: ['api.perplexity.ai'],
+								value: 'runtime-perplexity-token',
+							},
+						},
+					}),
+				}),
+			).toThrow(/PERPLEXITY_API_KEY.*authored http-mediation secret/u);
 		});
 
 		it('builds the expected OpenClaw environment, mounts, and tcp hosts', () => {
@@ -543,7 +599,7 @@ describe('openclawLifecycle', () => {
 									enabled: true,
 									hooks: { allowPromptInjection: true },
 									config: {
-										binPath: '/custom/bin/agent-vm-mcp-portal-server',
+										binPath: '/custom/bin/stale-portal-binary',
 										promptContext: { enabled: true },
 									},
 								},
@@ -561,13 +617,9 @@ describe('openclawLifecycle', () => {
 					stateDir: path.join(tempDirectory, 'state'),
 					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
-				mcp: { configDir: configDirectory },
-				runtimeMcpServers: {
-					mcp_portal_shravan: {
-						headers: { 'x-agent-vm-mcp-portal-secret': '${MCP_PORTAL_SERVER_SECRET}' },
-						transport: 'streamable-http',
-						url: 'http://127.0.0.1:18790/agents/shravan/mcp',
-					},
+				mcpPortal: { configDir: configDirectory },
+				runtimePluginConfigs: {
+					'mcp-portal': { configDir: '/home/openclaw/.openclaw/config' },
 				},
 			});
 			const secretResolver: SecretResolver = {
@@ -593,22 +645,13 @@ describe('openclawLifecycle', () => {
 				plugins: {
 					entries: {
 						'mcp-portal': {
-							config: {
-								binPath: '/custom/bin/agent-vm-mcp-portal-server',
-								configDir: '/home/openclaw/.openclaw/config',
-							},
-						},
-					},
-				},
-				mcp: {
-					servers: {
-						mcp_portal_shravan: {
-							transport: 'streamable-http',
-							url: 'http://127.0.0.1:18790/agents/shravan/mcp',
+							config: { configDir: '/home/openclaw/.openclaw/config' },
 						},
 					},
 				},
 			});
+			expect(effectiveOpenClawConfigContent).not.toContain('stale-portal-binary');
+			expect(effectiveOpenClawConfigContent).not.toContain('binPath');
 			expect(effectiveOpenClawConfigContent).not.toContain('promptContext');
 		});
 

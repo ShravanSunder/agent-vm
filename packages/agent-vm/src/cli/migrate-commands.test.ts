@@ -246,7 +246,7 @@ describe('runMigrateMcpPortalConfigCommand', () => {
 								enabled: true,
 								hooks: { allowPromptInjection: true },
 								config: {
-									binPath: '/custom/bin/agent-vm-mcp-portal-server',
+									binPath: '/custom/bin/stale-portal-binary',
 									promptContext: { enabled: true },
 								},
 							},
@@ -293,7 +293,7 @@ describe('runMigrateMcpPortalConfigCommand', () => {
 			zones: [
 				{
 					agents: [{ id: 'sun' }, { id: 'shravan' }],
-					mcp: { configDir: './gateways/shravan' },
+					mcpPortal: { configDir: './gateways/shravan' },
 				},
 			],
 		});
@@ -318,17 +318,12 @@ describe('runMigrateMcpPortalConfigCommand', () => {
 						transport: 'streamable-http',
 						url: 'https://example.com/mcp',
 					},
-					mcp_portal_sun: {
-						transport: 'streamable-http',
-						url: 'http://127.0.0.1:18790/agents/sun/mcp',
-					},
 				},
 			},
 			plugins: {
 				entries: {
 					'mcp-portal': {
 						config: {
-							binPath: '/custom/bin/agent-vm-mcp-portal-server',
 							configDir: '/home/openclaw/.openclaw/config',
 						},
 					},
@@ -369,7 +364,7 @@ describe('runMigrateMcpPortalConfigCommand', () => {
 		expect(systemConfig).toMatchObject({
 			zones: [
 				{
-					mcp: { configDir: expectedConfigDir },
+					mcpPortal: { configDir: expectedConfigDir },
 				},
 			],
 		});
@@ -389,7 +384,7 @@ describe('runMigrateMcpPortalConfigCommand', () => {
 
 		const migratedText = await readFile(systemConfigPath, 'utf8');
 		expect(migratedText).toContain('// deployment-owned comment');
-		expect(migratedText).toContain('"mcp"');
+		expect(migratedText).toContain('"mcpPortal"');
 		expect(migratedText).toContain('"schemaVersion": 1');
 	});
 });

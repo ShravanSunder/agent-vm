@@ -46,6 +46,7 @@
 		"@agent-vm/openclaw-agent-vm-plugin": "workspace:*",
 		"@agent-vm/openclaw-gateway": "workspace:*",
 		"@agent-vm/openclaw-mcp-portal-plugin": "workspace:*",
+		"@agent-vm/secrets": "workspace:*",
 		"@agent-vm/worker-gateway": "workspace:*",
 		"@hono/node-server": "^2.0.2",
 		"cmd-ts": "^0.15.0",

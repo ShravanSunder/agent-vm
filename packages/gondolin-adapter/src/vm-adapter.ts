@@ -1,3 +1,4 @@
+import type { MediatedSecretSpec } from '@agent-vm/secrets';
 import {
 	MemoryProvider,
 	ReadonlyProvider,
@@ -21,7 +22,6 @@ import {
 	createPinnedRealFsProvider,
 	type PinnedRealFsRoot,
 } from './pinned-realfs.js';
-import type { SecretSpec } from './types.js';
 
 export const SYNTHETIC_DNS_IPV4_BENCHMARK = '198.18.0.1';
 export const SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK = '::ffff:198.18.0.1';
@@ -64,7 +64,7 @@ export interface ManagedVmDependencies {
 	createVm(vmOptions: VMOptions): Promise<ManagedVmInstance>;
 	createHttpHooks(options: {
 		readonly allowedHosts: readonly string[];
-		readonly secrets: Record<string, SecretSpec>;
+		readonly secrets: Record<string, MediatedSecretSpec>;
 		readonly onRequest?: (request: Request) => Promise<Request | Response | void>;
 		readonly onResponse?: (response: Response) => Promise<Response | void>;
 	}): Pick<CreateHttpHooksResult, 'env' | 'httpHooks'>;
@@ -93,7 +93,7 @@ export interface CreateVmOptions {
 	readonly cpus: number;
 	readonly rootfsMode: 'readonly' | 'memory' | 'cow';
 	readonly allowedHosts: readonly string[];
-	readonly secrets: Record<string, SecretSpec>;
+	readonly secrets: Record<string, MediatedSecretSpec>;
 	readonly vfsMounts: Record<string, VfsMountSpec>;
 	readonly tcpHosts?: Record<string, string>;
 	readonly env?: Record<string, string>;

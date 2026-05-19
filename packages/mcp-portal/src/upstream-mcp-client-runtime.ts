@@ -9,7 +9,7 @@ import {
 	type StreamableHTTPClientTransportOptions,
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { normalizeHeaders, type Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { ToolSchema, type Tool } from '@modelcontextprotocol/sdk/types.js';
+import { ToolSchema, type Progress, type Tool } from '@modelcontextprotocol/sdk/types.js';
 
 import type { JsonObject } from './json-schema.js';
 import {
@@ -54,8 +54,35 @@ export interface UpstreamToolCall {
 	readonly arguments: JsonObject;
 	readonly agentScopeId: string;
 	readonly namespace: string;
+	readonly onEvent?: (event: UpstreamToolEvent) => Promise<void> | void;
+	readonly requestId?: string;
+	readonly signal?: AbortSignal;
 	readonly toolName: string;
 }
+
+export type UpstreamToolEvent =
+	| {
+			readonly kind: 'progress';
+			readonly message?: string;
+			readonly progress: number;
+			readonly total?: number;
+	  }
+	// Extension event for runtimes that can source request-correlated MCP notifications.
+	// The stock SDK callTool bridge currently emits real progress via RequestOptions.onprogress.
+	| {
+			readonly kind: 'upstream_notification';
+			readonly method: string;
+			readonly params: unknown;
+	  }
+	// Extension event for runtimes that can source incremental content before the final result.
+	| {
+			readonly content:
+				| { readonly text: string; readonly type: 'text' }
+				| { readonly type: 'json'; readonly value: unknown };
+			readonly kind: 'partial_content';
+	  };
+
+export type UpstreamMcpProgress = Progress;
 
 export interface UpstreamListToolsResult {
 	readonly nextCursor?: string | undefined;
@@ -63,10 +90,17 @@ export interface UpstreamListToolsResult {
 }
 
 export interface UpstreamMcpClientLike {
-	readonly callTool: (params: {
-		readonly arguments: JsonObject;
-		readonly name: string;
-	}) => Promise<unknown>;
+	readonly callTool: (
+		params: {
+			readonly arguments: JsonObject;
+			readonly name: string;
+		},
+		resultSchema?: unknown,
+		options?: {
+			readonly onprogress?: (progress: UpstreamMcpProgress) => void;
+			readonly signal?: AbortSignal;
+		},
+	) => Promise<unknown>;
 	readonly close: () => Promise<void> | void;
 	readonly connect: (transport: unknown) => Promise<void>;
 	readonly listTools: (params?: { readonly cursor?: string }) => Promise<UpstreamListToolsResult>;
@@ -123,7 +157,8 @@ function createSdkClient(): UpstreamMcpClientLike {
 	const client = new Client({ name: 'agent-vm-mcp-portal', version: '1.0.0' });
 
 	return {
-		callTool: async (params) => await client.callTool(params),
+		callTool: async (params, _resultSchema, options) =>
+			await client.callTool(params, undefined, options),
 		close: async () => {
 			await client.close();
 		},
@@ -443,10 +478,23 @@ export function createUpstreamMcpClientRuntime(
 				client = await getClient(call.agentScopeId, call.namespace);
 				const server = serversByNamespace.get(call.namespace);
 				return redactUpstreamResponse(
-					await withTimeout(client.callTool({ arguments: call.arguments, name: call.toolName }), {
-						operation: `MCP callTool ${call.namespace}.${call.toolName}`,
-						timeoutMs: server ? timeoutMsForServer(server) : defaultConnectionTimeoutMs,
-					}),
+					await withTimeout(
+						client.callTool({ arguments: call.arguments, name: call.toolName }, undefined, {
+							...(call.signal !== undefined ? { signal: call.signal } : {}),
+							onprogress: (progress) => {
+								void call.onEvent?.({
+									kind: 'progress',
+									...(progress.message !== undefined ? { message: progress.message } : {}),
+									progress: progress.progress,
+									...(progress.total !== undefined ? { total: progress.total } : {}),
+								});
+							},
+						}),
+						{
+							operation: `MCP callTool ${call.namespace}.${call.toolName}`,
+							timeoutMs: server ? timeoutMsForServer(server) : defaultConnectionTimeoutMs,
+						},
+					),
 					{ exactValues: redactionValues },
 				);
 			} catch (error) {

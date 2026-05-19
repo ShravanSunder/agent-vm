@@ -162,8 +162,9 @@ Follow `.cursor/rules/ts-rules.md`; key points:
 ## Packages
 
 ```text
-gondolin-adapter          → VM build pipeline, adapter, secret resolver (no internal deps)
-gateway-interface         → Types: GatewayLifecycle, VmSpec, ProcessSpec (→ gondolin-adapter)
+secrets                   → SecretRef/SecretResolver contracts, env + 1Password resolution
+gondolin-adapter          → VM build pipeline and adapter (→ secrets)
+gateway-interface         → Types: GatewayLifecycle, VmSpec, ProcessSpec (→ gondolin-adapter, secrets)
 openclaw-gateway          → OpenClaw lifecycle (→ gateway-interface, gondolin-adapter)
 worker-gateway            → Worker lifecycle (→ gateway-interface, gondolin-adapter)
 openclaw-agent-vm-plugin  → OpenClaw sandbox backend (→ gondolin-adapter)

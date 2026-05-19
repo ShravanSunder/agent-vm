@@ -18,14 +18,6 @@ const portalConfig = {
 		},
 	},
 	schemaVersion: 1,
-	server: {
-		accessHeader: {
-			name: 'x-agent-vm-mcp-portal-secret',
-			secret: { name: 'MCP_PORTAL_SECRET', source: 'environment' },
-		},
-		host: '127.0.0.1',
-		port: 18_790,
-	},
 } satisfies McpPortalConfig;
 
 describe('mcpPortalCallRequiresApproval', () => {

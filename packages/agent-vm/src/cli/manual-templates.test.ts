@@ -167,6 +167,9 @@ describe('manual templates', () => {
 			'config/schemas/*.schema.json',
 		);
 		expect(
+			files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content,
+		).not.toContain('loopback server in the gateway');
+		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('message_tool_only');
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(

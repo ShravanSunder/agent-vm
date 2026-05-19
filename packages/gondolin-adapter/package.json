@@ -34,7 +34,7 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@1password/sdk": "^0.4.0",
+		"@agent-vm/secrets": "workspace:*",
 		"@earendil-works/gondolin": "0.9.1",
 		"zod": "^4.4.3"
 	}

@@ -1,13 +1,16 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
 import type { SecretValue } from '@agent-vm/config-contracts';
-
-const execFileAsync = promisify(execFile);
+import type { SecretRef, SecretResolver } from '@agent-vm/secrets';
 
 export interface ResolveSecretValueProps {
 	readonly env: Readonly<Record<string, string | undefined>>;
-	readonly readOnePasswordSecret?: (ref: string) => Promise<string>;
+	readonly secretResolver?: SecretResolver;
+}
+
+function secretRefFromSecretValue(secret: SecretValue): SecretRef {
+	if (secret.source === 'environment') {
+		return { ref: secret.name, source: 'environment' };
+	}
+	return { ref: secret.ref, source: '1password' };
 }
 
 export async function resolveSecretValue(
@@ -22,11 +25,8 @@ export async function resolveSecretValue(
 		return value;
 	}
 
-	const readOnePasswordSecret = props.readOnePasswordSecret ?? readOnePasswordCliSecret;
-	return await readOnePasswordSecret(secret.ref);
-}
-
-async function readOnePasswordCliSecret(ref: string): Promise<string> {
-	const { stdout } = await execFileAsync('op', ['read', ref], { encoding: 'utf8' });
-	return stdout.trimEnd();
+	if (props.secretResolver === undefined) {
+		throw new Error("Secret with source '1password' requires a configured secret resolver.");
+	}
+	return await props.secretResolver.resolve(secretRefFromSecretValue(secret));
 }

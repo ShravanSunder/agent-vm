@@ -8,8 +8,8 @@ import type {
 	BuildImageResult,
 	ManagedVm,
 	ManagedVmInstance,
-	SecretResolver,
 } from '@agent-vm/gondolin-adapter';
+import type { SecretResolver } from '@agent-vm/secrets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
@@ -68,6 +68,25 @@ function createGatewayConfigPath(): string {
 		'utf8',
 	);
 	return configPath;
+}
+
+function writeMinimalMcpPortalConfigs(
+	configDir: string,
+	mcpConfig: unknown = {
+		providers: {},
+		schemaVersion: 1,
+	},
+): void {
+	fs.writeFileSync(path.join(configDir, 'mcp.config.jsonc'), JSON.stringify(mcpConfig), 'utf8');
+	fs.writeFileSync(
+		path.join(configDir, 'mcp-portal.config.jsonc'),
+		JSON.stringify({
+			agents: { shravan: { profile: 'default' } },
+			profiles: { default: { enabledNamespaces: [] } },
+			schemaVersion: 1,
+		}),
+		'utf8',
+	);
 }
 
 function createSystemConfigPath(): string {
@@ -525,30 +544,14 @@ describe('startGatewayZone', () => {
 		);
 	});
 
-	it('materializes MCP Portal runtime plugin config and server entries from zone MCP config', async () => {
+	it('materializes MCP Portal runtime plugin config from zone MCP config', async () => {
 		const systemConfig = createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
 		const configDir = path.dirname(baseZone.gateway.config);
-		fs.writeFileSync(
-			path.join(configDir, 'mcp-portal.config.jsonc'),
-			JSON.stringify({
-				schemaVersion: 1,
-				server: {
-					host: '127.0.0.1',
-					port: 18790,
-					accessHeader: {
-						name: 'x-agent-vm-mcp-portal-secret',
-						secret: { source: 'environment', name: 'MCP_PORTAL_SERVER_SECRET' },
-					},
-				},
-				agents: { shravan: { profile: 'default' } },
-				profiles: { default: { enabledNamespaces: [] } },
-			}),
-			'utf8',
-		);
+		writeMinimalMcpPortalConfigs(configDir);
 		const lifecycleZones: GatewayZoneConfig[] = [];
 		const managedVm: ManagedVm = {
 			id: 'vm-mcp',
@@ -570,7 +573,7 @@ describe('startGatewayZone', () => {
 				zoneOverride: {
 					...baseZone,
 					agents: [{ id: 'shravan' }],
-					mcp: { configDir },
+					mcpPortal: { configDir },
 				},
 			},
 			{
@@ -606,15 +609,181 @@ describe('startGatewayZone', () => {
 		);
 
 		expect(lifecycleZones[0]?.runtimePluginConfigs).toEqual({
-			'mcp-portal': { configDir: '/home/openclaw/.openclaw/config' },
+			'mcp-portal': { configDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective' },
 		});
-		expect(lifecycleZones[0]?.runtimeMcpServers).toEqual({
-			mcp_portal_shravan: {
-				headers: { 'x-agent-vm-mcp-portal-secret': '${MCP_PORTAL_SERVER_SECRET}' },
-				transport: 'streamable-http',
-				url: 'http://127.0.0.1:18790/agents/shravan/mcp',
+		expect(lifecycleZones[0]?.runtimeMcpServers).toBeUndefined();
+	});
+
+	it('does not generate OpenClaw mcp.servers entries for managed MCP Portal', async () => {
+		const systemConfig = createSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const configDir = path.dirname(baseZone.gateway.config);
+		writeMinimalMcpPortalConfigs(configDir);
+		const lifecycleZones: GatewayZoneConfig[] = [];
+		const managedVm: ManagedVm = {
+			id: 'vm-mcp-native',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28290)),
+			setIngressRoutes: vi.fn(),
+		};
+
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+				zoneOverride: {
+					...baseZone,
+					agents: [{ id: 'shravan' }],
+					mcpPortal: { configDir },
+				},
 			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				loadGatewayLifecycle: () => ({
+					buildProcessSpec: () => ({
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/' } as const,
+						logPath: '/tmp/gateway.log',
+						startCommand: 'start',
+					}),
+					buildVmSpec: (options) => {
+						lifecycleZones.push(options.zone);
+						return {
+							allowedHosts: [],
+							environment: {},
+							mediatedSecrets: {},
+							rootfsMode: 'cow' as const,
+							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+							tcpHosts: {},
+							vfsMounts: {},
+						};
+					},
+				}),
+			},
+		);
+
+		expect(lifecycleZones[0]?.runtimeMcpServers).toBeUndefined();
+	});
+
+	it('rejects MCP Portal upstream hosts that are missing from gateway egress', async () => {
+		const systemConfig = createSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const configDir = path.dirname(baseZone.gateway.config);
+		writeMinimalMcpPortalConfigs(configDir, {
+			providers: {
+				deepwiki: {
+					kind: 'mcp',
+					namespace: 'deepwiki',
+					transport: { kind: 'streamable-http', url: 'https://mcp.deepwiki.com/mcp' },
+				},
+			},
+			schemaVersion: 1,
 		});
+		const buildImage = vi.fn(async () => ({
+			built: true,
+			fingerprint: 'fp',
+			imagePath: '/tmp/img',
+		}));
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({
+						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					}),
+					systemConfig,
+					zoneId: 'shravan',
+					zoneOverride: {
+						...baseZone,
+						mcpPortal: { configDir },
+					},
+				},
+				{
+					buildImage,
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				},
+			),
+		).rejects.toThrow(/mcp\.deepwiki\.com.*zones\[\]\.egressHosts/u);
+
+		expect(buildImage).not.toHaveBeenCalled();
+	});
+
+	it('allows MCP Portal upstream hosts declared for gateway egress', async () => {
+		const systemConfig = createSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const configDir = path.dirname(baseZone.gateway.config);
+		writeMinimalMcpPortalConfigs(configDir, {
+			providers: {
+				deepwiki: {
+					kind: 'mcp',
+					namespace: 'deepwiki',
+					transport: { kind: 'streamable-http', url: 'https://mcp.deepwiki.com/mcp' },
+				},
+			},
+			schemaVersion: 1,
+		});
+		const managedVm: ManagedVm = {
+			id: 'vm-mcp-egress',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
+			setIngressRoutes: vi.fn(),
+		};
+		const createManagedVm = vi.fn(async () => managedVm);
+
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+				zoneOverride: {
+					...baseZone,
+					egressHosts: [...baseZone.egressHosts, { audience: 'gateway', host: 'mcp.deepwiki.com' }],
+					mcpPortal: { configDir },
+				},
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(createManagedVm).toHaveBeenCalledWith(
+			expect.objectContaining({
+				allowedHosts: expect.arrayContaining(['mcp.deepwiki.com']),
+			}),
+		);
 	});
 
 	it('merges environmentOverride into vm environment before boot', async () => {

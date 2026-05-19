@@ -12,13 +12,11 @@ import {
 	buildGatewaySessionLabel as buildGatewaySessionLabelValue,
 	controllerVmHost,
 	gatewayVmAllowedHosts,
+	mergeRuntimeGatewaySecrets,
 	splitResolvedGatewaySecrets,
 } from '@agent-vm/gateway-interface';
-import {
-	type SecretRef,
-	type SecretResolver,
-	writeFileAtomically,
-} from '@agent-vm/gondolin-adapter';
+import { writeFileAtomically } from '@agent-vm/gondolin-adapter';
+import type { SecretRef, SecretResolver } from '@agent-vm/secrets';
 
 const effectiveOpenClawConfigFileName = 'effective-openclaw.json';
 const effectiveOpenClawConfigVmPath = `/home/openclaw/.openclaw/state/${effectiveOpenClawConfigFileName}`;
@@ -72,7 +70,14 @@ function buildOpenClawBootstrapCommand(
 	zone: GatewayZoneConfig,
 	resolvedSecrets: Record<string, string>,
 ): string {
-	const { environmentSecrets } = splitResolvedGatewaySecrets(zone, resolvedSecrets);
+	const { environmentSecrets } = mergeRuntimeGatewaySecrets(
+		splitResolvedGatewaySecrets(zone, resolvedSecrets),
+		{
+			logPrefix: 'openclaw-bootstrap-runtime-secrets',
+			runtimeEnvironment: zone.runtimeEnvironment,
+			runtimeMediatedSecrets: zone.runtimeMediatedSecrets,
+		},
+	);
 	const environmentLines = [
 		'export OPENCLAW_HOME=/home/openclaw',
 		`export OPENCLAW_CONFIG_PATH=${effectiveOpenClawConfigVmPath}`,
@@ -219,15 +224,10 @@ function buildEffectiveSecretsConfig(
 }
 
 function buildEffectiveMcpPortalPluginConfig(
-	existingPluginConfig: Record<string, unknown>,
+	_existingPluginConfig: Record<string, unknown>,
 	runtimeConfig: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> {
-	const preservedConfig =
-		typeof existingPluginConfig.binPath === 'string'
-			? { binPath: existingPluginConfig.binPath }
-			: {};
 	return {
-		...preservedConfig,
 		...runtimeConfig,
 	};
 }
@@ -384,9 +384,6 @@ async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<vo
 			throw new Error(`OpenClaw config at '${zone.gateway.config}' must be a JSON object.`);
 		}
 		const runtimePluginConfigs = {
-			...(zone.mcp === undefined
-				? {}
-				: { 'mcp-portal': { configDir: '/home/openclaw/.openclaw/config' } }),
 			...zone.runtimePluginConfigs,
 		};
 		const config = isObjectRecord(parsedBaseConfig.gateway) ? parsedBaseConfig.gateway : {};
@@ -461,9 +458,13 @@ export const openclawLifecycle: GatewayLifecycle = {
 			throw new Error(`OpenClaw lifecycle cannot build gateway type '${zone.gateway.type}'.`);
 		}
 		const configDirectory = path.dirname(path.resolve(zone.gateway.config));
-		const { environmentSecrets, mediatedSecrets } = splitResolvedGatewaySecrets(
-			zone,
-			resolvedSecrets,
+		const { environmentSecrets, mediatedSecrets } = mergeRuntimeGatewaySecrets(
+			splitResolvedGatewaySecrets(zone, resolvedSecrets),
+			{
+				logPrefix: 'openclaw-vm-runtime-secrets',
+				runtimeEnvironment: zone.runtimeEnvironment,
+				runtimeMediatedSecrets: zone.runtimeMediatedSecrets,
+			},
 		);
 
 		return {
@@ -485,9 +486,10 @@ export const openclawLifecycle: GatewayLifecycle = {
 				npm_config_cache: '/work/cache/npm',
 				pnpm_config_store_dir: '/work/cache/pnpm/store',
 				...environmentSecrets,
-				...zone.runtimeEnvironment,
 			},
-			mediatedSecrets,
+			mediatedSecrets: {
+				...mediatedSecrets,
+			},
 			rootfsMode: 'cow',
 			sessionLabel: buildGatewaySessionLabelValue(projectNamespace, zone.id),
 			tcpHosts: buildGatewayTcpHosts(zone, controllerPort, tcpPool),

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { SecretResolver } from '@agent-vm/gondolin-adapter';
+import type { SecretResolver } from '@agent-vm/secrets';
 import { Hono } from 'hono';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';

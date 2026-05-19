@@ -23,6 +23,10 @@ export interface StartedFakeUpstreamMcpServer {
 	readonly url: string;
 }
 
+export interface FakeUpstreamMcpServerOptions {
+	readonly emitProgress?: boolean;
+}
+
 interface StartedHonoServer {
 	readonly port: number;
 	readonly server: ServerType;
@@ -91,7 +95,9 @@ export function createFakeUpstreamTools(): readonly Tool[] {
 	] satisfies readonly Tool[];
 }
 
-export async function startFakeUpstreamMcpServer(): Promise<StartedFakeUpstreamMcpServer> {
+export async function startFakeUpstreamMcpServer(
+	options: FakeUpstreamMcpServerOptions = {},
+): Promise<StartedFakeUpstreamMcpServer> {
 	const calls: FakeUpstreamToolCallRecord[] = [];
 	const tools = createFakeUpstreamTools();
 	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
@@ -105,13 +111,25 @@ export async function startFakeUpstreamMcpServer(): Promise<StartedFakeUpstreamM
 		);
 
 		server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
-		server.setRequestHandler(CallToolRequestSchema, async (request) => {
+		server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 			const tool = toolsByName.get(request.params.name);
 			if (tool === undefined) {
 				return {
 					content: [{ text: `Unknown tool ${request.params.name}`, type: 'text' }],
 					isError: true,
 				};
+			}
+			const progressToken = extra['_meta']?.progressToken;
+			if (options.emitProgress === true && progressToken !== undefined) {
+				await extra.sendNotification({
+					method: 'notifications/progress',
+					params: {
+						message: 'fake upstream half done',
+						progress: 1,
+						progressToken,
+						total: 2,
+					},
+				});
 			}
 			const argumentsValue = isObjectRecord(request.params.arguments)
 				? request.params.arguments

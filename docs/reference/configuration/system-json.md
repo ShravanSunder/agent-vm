@@ -180,25 +180,16 @@ When `agents.list` is configured, agent-vm scaffolds sibling MCP config files in
 `config/gateways/<zone>/`:
 
 - `mcp.config.jsonc` describes upstream MCP providers and discovery.
-- `mcp-portal.config.jsonc` describes the portal server, access header, agent
-  profile assignments, and profile policies.
+- `mcp-portal.config.jsonc` describes agent profile assignments, profile
+  policies, and optional external `/mcp-proxy` auth.
 
-The effective OpenClaw config contains one generated
-`mcp.servers.mcp_portal_<agentId>` entry per agent. Each generated server points
-at that agent's Streamable HTTP portal endpoint:
-
-```text
-http://127.0.0.1:18790/agents/<agentId>/mcp
-```
-
-Each generated server also carries the access header configured in
-`mcp-portal.config.jsonc`, normally
-`x-agent-vm-mcp-portal-secret: ${MCP_PORTAL_SERVER_SECRET}`. Each agent keeps the
-normal OpenClaw tool surface and receives a `tools.deny` list for sibling
-agents' materialized portal tool names, so it can call only its own four portal
-tools. Operator-authored upstream MCP servers live in `mcp.config.jsonc`; the
-portal process uses those upstream servers but does not put upstream MCP auth
-into Tool VMs.
+Managed OpenClaw does not generate OpenClaw MCP server entries for MCP Portal.
+The plugin registers the four native portal tools directly and calls
+`@agent-vm/mcp-portal/core` in the gateway VM with OpenClaw's trusted
+`ctx.agentId`. Operator-authored upstream MCP servers live in
+`mcp.config.jsonc`; agent-vm materializes an effective gateway config that turns
+configured 1Password secrets into runtime environment references or
+runtime-mediated bindings before gateway boot.
 
 Local smoke coverage uses a fake Streamable HTTP MCP provider and the
 controller smoke harness `tcpHostsOverride` path to make that host-side provider

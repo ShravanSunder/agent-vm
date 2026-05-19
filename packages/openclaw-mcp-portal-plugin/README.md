@@ -1,26 +1,24 @@
 # @agent-vm/openclaw-mcp-portal-plugin
 
-OpenClaw plugin that supervises the MCP Portal subprocess and wires portal calls
-into the OpenClaw agent loop.
+OpenClaw plugin that registers native MCP Portal tools and wires portal calls
+directly into the OpenClaw agent loop.
 
 ## What This Package Owns
 
-- Starts and stops the `agent-vm-mcp-portal-server` subprocess through
-  OpenClaw `registerService`.
-- Generates per-agent HMAC keys for each plugin boot and passes them to the
-  portal subprocess as environment variables.
-- Registers `before_tool_call` to deny disallowed portal calls and attach
-  approval tokens to approved calls.
+- Registers native OpenClaw tools for `mcp_portal_list`,
+  `mcp_portal_search`, `mcp_portal_describe`, and `mcp_portal_call`.
+- Loads `/core` from the controller-materialized effective config directory.
+- Registers `before_tool_call` to deny disallowed portal calls and request
+  OpenClaw approval when policy requires it.
 - Registers `before_prompt_build` to inject scoped progressive-disclosure hints.
 
 ## Runtime Config
 
-The OpenClaw plugin config should only carry runtime process settings:
+The OpenClaw plugin config should only carry the effective config directory:
 
 ```json
 {
-	"configDir": "/home/openclaw/.openclaw/config",
-	"binPath": "/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server"
+	"configDir": "/home/openclaw/.openclaw/cache/mcp-portal-effective"
 }
 ```
 
@@ -29,7 +27,6 @@ Namespace/tool policy does not live in OpenClaw plugin config. It lives in
 
 ## Start Reading
 
-- `src/plugin-registration.ts` for OpenClaw service and hook registration.
-- `src/portal-subprocess-supervisor.ts` for process lifecycle.
-- `src/before-tool-call-handler.ts` for policy and approval-token behavior.
+- `src/plugin-registration.ts` for native tool and hook registration.
+- `src/before-tool-call-handler.ts` for policy and approval behavior.
 - `src/before-prompt-build-handler.ts` for prompt context injection.

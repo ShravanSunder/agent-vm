@@ -7,6 +7,10 @@ import type { JSONRPCMessage, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+	fakeUpstreamNamespace,
+	startFakeUpstreamMcpServer,
+} from './testing/fake-upstream-mcp-server.js';
+import {
 	createUpstreamMcpClientRuntime,
 	type NormalizedUpstreamMcpServer,
 	type RemoteUpstreamMcpServer,
@@ -222,6 +226,95 @@ describe('upstream MCP client runtime', () => {
 				toolName: 'create_issue',
 			}),
 		).resolves.toEqual({ content: [{ text: '[REDACTED]', type: 'text' }] });
+	});
+
+	it('passes progress and abort options through upstream tool calls', async () => {
+		const controller = new AbortController();
+		const progressEvents: unknown[] = [];
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(async (_params, _resultSchema, options) => {
+				expect(options?.signal).toBe(controller.signal);
+				options?.onprogress?.({
+					message: 'upstream half done',
+					progress: 5,
+					total: 10,
+				});
+				return { content: [] };
+			}),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => ({ tools: [] })),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: () => ({}),
+			servers: [createServer()],
+		});
+
+		await runtime.callTool({
+			arguments: {},
+			agentScopeId: 'agent-scope-a',
+			namespace: 'linear',
+			onEvent: (progress) => {
+				progressEvents.push(progress);
+			},
+			signal: controller.signal,
+			toolName: 'create_issue',
+		});
+
+		expect(progressEvents).toEqual([
+			{
+				kind: 'progress',
+				message: 'upstream half done',
+				progress: 5,
+				total: 10,
+			},
+		]);
+		expect(client.callTool).toHaveBeenCalledWith(
+			{ arguments: {}, name: 'create_issue' },
+			undefined,
+			expect.objectContaining({
+				onprogress: expect.any(Function),
+				signal: controller.signal,
+			}),
+		);
+	});
+
+	it('forwards real SDK progress notifications from the default MCP client', async () => {
+		const upstream = await startFakeUpstreamMcpServer({ emitProgress: true });
+		const progressEvents: unknown[] = [];
+		const runtime = createUpstreamMcpClientRuntime({
+			servers: [
+				{
+					namespace: fakeUpstreamNamespace,
+					transport: 'streamable-http',
+					url: upstream.url,
+				},
+			],
+		});
+		try {
+			await runtime.callTool({
+				arguments: { title: 'hello' },
+				agentScopeId: 'agent-scope-a',
+				namespace: fakeUpstreamNamespace,
+				onEvent: (event) => {
+					progressEvents.push(event);
+				},
+				toolName: 'read_thing',
+			});
+
+			expect(progressEvents).toEqual([
+				{
+					kind: 'progress',
+					message: 'fake upstream half done',
+					progress: 1,
+					total: 2,
+				},
+			]);
+		} finally {
+			await runtime.closeAgentScope('agent-scope-a');
+			await upstream.close();
+		}
 	});
 
 	it('redacts exact upstream header values from call results', async () => {

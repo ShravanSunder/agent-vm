@@ -67,6 +67,9 @@ importers:
       '@agent-vm/openclaw-mcp-portal-plugin':
         specifier: workspace:*
         version: link:../openclaw-mcp-portal-plugin
+      '@agent-vm/secrets':
+        specifier: workspace:*
+        version: link:../secrets
       '@agent-vm/worker-gateway':
         specifier: workspace:*
         version: link:../worker-gateway
@@ -144,12 +147,15 @@ importers:
       '@agent-vm/gondolin-adapter':
         specifier: workspace:*
         version: link:../gondolin-adapter
+      '@agent-vm/secrets':
+        specifier: workspace:*
+        version: link:../secrets
 
   packages/gondolin-adapter:
     dependencies:
-      '@1password/sdk':
-        specifier: ^0.4.0
-        version: 0.4.0
+      '@agent-vm/secrets':
+        specifier: workspace:*
+        version: link:../secrets
       '@earendil-works/gondolin':
         specifier: 0.9.1
         version: 0.9.1(patch_hash=a67b9d1755400b7e8d24ae8add50026ef807c69356da29d3880cf317d853a833)
@@ -162,6 +168,9 @@ importers:
       '@agent-vm/config-contracts':
         specifier: workspace:*
         version: link:../config-contracts
+      '@agent-vm/secrets':
+        specifier: workspace:*
+        version: link:../secrets
       '@hono/node-server':
         specifier: ^2.0.2
         version: 2.0.2(hono@4.12.18)
@@ -193,6 +202,9 @@ importers:
       '@agent-vm/gondolin-adapter':
         specifier: workspace:*
         version: link:../gondolin-adapter
+      '@agent-vm/secrets':
+        specifier: workspace:*
+        version: link:../secrets
 
   packages/openclaw-mcp-portal-plugin:
     dependencies:
@@ -212,6 +224,12 @@ importers:
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
+
+  packages/secrets:
+    dependencies:
+      '@1password/sdk':
+        specifier: ^0.4.0
+        version: 0.4.0
 
   packages/worker-gateway:
     dependencies:

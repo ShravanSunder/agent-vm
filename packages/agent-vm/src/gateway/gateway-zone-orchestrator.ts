@@ -1,7 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { loadMcpPortalConfig } from '@agent-vm/config-contracts';
 import type {
 	GatewayHealthCheck,
 	GatewayLifecycle,
@@ -35,7 +34,7 @@ import {
 	type GatewayZoneStartResult,
 	type StartGatewayZoneOptions,
 } from './gateway-zone-support.js';
-import { buildOpenClawMcpPortalMaterialization } from './mcp-portal-openclaw-materialization.js';
+import { writeMcpPortalEffectiveConfig } from './mcp-portal-effective-config.js';
 
 const defaultGatewayReadinessRetryDelayMs = 500;
 const defaultGatewayReadinessTimeoutMs = 60_000;
@@ -166,23 +165,49 @@ async function waitForHealth(options: {
 	});
 }
 
-async function buildRuntimeMcpPortalMaterialization(
-	zone: GatewayZone,
-): Promise<Pick<GatewayZoneConfig, 'runtimeMcpServers' | 'runtimePluginConfigs'>> {
-	if (zone.gateway.type !== 'openclaw' || zone.mcp === undefined || zone.agents === undefined) {
+async function buildRuntimeMcpPortalMaterialization(props: {
+	readonly cacheDir: string;
+	readonly secretResolver: StartGatewayZoneOptions['secretResolver'];
+	readonly zone: GatewayZone;
+}): Promise<
+	Pick<GatewayZoneConfig, 'runtimeEnvironment' | 'runtimeMediatedSecrets' | 'runtimePluginConfigs'>
+> {
+	const zone = props.zone;
+	if (zone.gateway.type !== 'openclaw' || zone.mcpPortal === undefined) {
 		return {};
 	}
-	const mcpPortalConfig = await loadMcpPortalConfig(
-		path.join(zone.mcp.configDir, 'mcp-portal.config.jsonc'),
+	const effectiveHostConfigDir = path.join(
+		props.cacheDir,
+		'gateways',
+		zone.id,
+		'mcp-portal-effective',
 	);
-	const materialization = buildOpenClawMcpPortalMaterialization({
-		agents: zone.agents,
-		configDir: '/home/openclaw/.openclaw/config',
-		mcpPortalConfig,
+	const effectiveVmConfigDir = '/home/openclaw/.openclaw/cache/mcp-portal-effective';
+	const materialization = await writeMcpPortalEffectiveConfig({
+		authoredConfigDir: zone.mcpPortal.configDir,
+		effectiveHostConfigDir,
+		effectiveVmConfigDir,
+		secretResolver: props.secretResolver,
+		zoneId: zone.id,
 	});
+	const declaredGatewayHosts = new Set(
+		zone.egressHosts
+			.filter((entry) => entry.audience === 'gateway' || entry.audience === 'both')
+			.map((entry) => entry.host),
+	);
+	for (const host of materialization.requiredGatewayEgressHosts) {
+		if (!declaredGatewayHosts.has(host)) {
+			throw new Error(
+				`mcp-portal: required gateway egress host '${host}' is missing from zones[].egressHosts`,
+			);
+		}
+	}
 	return {
-		runtimeMcpServers: materialization.mcpServers,
-		runtimePluginConfigs: { 'mcp-portal': materialization.pluginConfig },
+		runtimeEnvironment: materialization.runtimeEnvironment,
+		runtimeMediatedSecrets: materialization.runtimeMediatedSecrets,
+		runtimePluginConfigs: {
+			'mcp-portal': materialization.pluginConfig,
+		},
 	};
 }
 
@@ -194,13 +219,22 @@ export async function startGatewayZone(
 		options.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());
 	const zone = options.zoneOverride ?? findGatewayZone(options.systemConfig, options.zoneId);
 	const mappedLifecycleZone = mapSystemGatewayZoneToLifecycleZone(zone);
-	const mcpPortalMaterialization = await buildRuntimeMcpPortalMaterialization(zone);
+	const mcpPortalMaterialization = await buildRuntimeMcpPortalMaterialization({
+		cacheDir: options.systemConfig.cacheDir,
+		secretResolver: options.secretResolver,
+		zone,
+	});
 	const lifecycleZone = {
 		...mappedLifecycleZone,
 		...mcpPortalMaterialization,
 		...(options.runtimeEnvironment === undefined
 			? {}
-			: { runtimeEnvironment: options.runtimeEnvironment }),
+			: {
+					runtimeEnvironment: {
+						...mcpPortalMaterialization.runtimeEnvironment,
+						...options.runtimeEnvironment,
+					},
+				}),
 		...(options.runtimePluginConfigs === undefined
 			? {}
 			: {

@@ -1,10 +1,11 @@
 # @agent-vm/mcp-portal
 
-Agent-scoped MCP Portal server and Tool VM helpers.
+Agent-scoped MCP Portal core library, external proxy, CLI, and Tool VM helpers.
 
 ## What This Package Owns
 
-- The standalone `agent-vm-mcp-portal-server` HTTP MCP server.
+- `/core`, the adapter-neutral portal execution library used by OpenClaw.
+- `agent-vm-mcp-portal serve`, the external `/mcp-proxy` MCP server command.
 - The four model-facing portal tools: `mcp_portal_list`, `mcp_portal_search`, `mcp_portal_describe`, and `mcp_portal_call`.
 - JSON-Schema-derived Zod validation before upstream tool calls.
 - HMAC approval-token verification for portal calls that OpenClaw approved.
@@ -12,23 +13,31 @@ Agent-scoped MCP Portal server and Tool VM helpers.
 
 ## Runtime Shape
 
-The server is launched in the OpenClaw gateway VM and listens on a loopback port,
-normally `127.0.0.1:18790`.
+Managed OpenClaw loads `/core` in process from a controller-materialized
+effective config directory. It does not launch a portal server in the gateway VM.
 
-Each agent receives a distinct MCP URL:
+External MCP clients can use the proxy command:
 
 ```text
-http://127.0.0.1:18790/agents/<agentId>/mcp
+agent-vm-mcp-portal serve --config-dir <dir>
 ```
 
 The portal loads two files from `--config-dir`:
 
 - `mcp.config.jsonc`: upstream MCP provider catalog and credentials.
-- `mcp-portal.config.jsonc`: portal access header, agents, profiles, and policy.
+- `mcp-portal.config.jsonc`: agents, profiles, policy, and optional external proxy auth.
+
+External `serve` resolves `source: "1password"` refs through `@agent-vm/secrets`.
+Use `AGENT_VM_MCP_PORTAL_OP_TOKEN_SOURCE=env`, `op-cli`, or `keychain` plus the
+matching source-specific env settings when the proxy host needs 1Password
+access. If no token source is configured, env-only configs still work. The
+built-in HTTP bearer server is loopback-only; use a TLS reverse proxy and
+`write-credential --proxy-url <url>` for public endpoints.
 
 ## Start Reading
 
-- `src/bin/portal-server.ts` for CLI boot and config loading.
-- `src/mcp-server/portal-http-server.ts` for Hono routing and MCP transport.
-- `src/mcp-server/portal-tools.ts` for portal tool behavior.
+- `src/core/portal-core.ts` for adapter-neutral execution.
+- `src/bin/agent-vm-mcp-portal.ts` for CLI commands.
+- `src/mcp-proxy/portal-http-server.ts` for Hono routing and MCP transport.
+- `src/mcp-proxy/portal-tools.ts` for portal tool behavior.
 - `src/auth/hmac-token.ts` for approval-token signing and verification.

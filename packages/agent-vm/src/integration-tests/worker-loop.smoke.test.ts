@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
+import type { SecretRef, SecretResolver } from '@agent-vm/secrets';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { executeWorkerTask, prepareWorkerTask } from '../controller/worker-task-runner.js';

@@ -19,8 +19,6 @@ const managedOpenClawPackageNames = new Set([
 ]);
 const managedOpenClawAgentVmPluginExtensionPath = '/home/openclaw/.openclaw/extensions/gondolin';
 const managedOpenClawMcpPortalPluginExtensionPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
-const managedMcpPortalServerWrapperPath =
-	'/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server';
 const managedPnpmHomePath = '/pnpm';
 const managedPnpmGlobalDirectory = '/pnpm/global';
 
@@ -254,11 +252,9 @@ function renderManagedDockerfile(props: {
 		lines.push(
 			[
 				'RUN package_root="$(pnpm root -g)" && \\',
-				'    mkdir -p /home/openclaw/.openclaw/extensions /opt/agent-vm/portal/bin && \\',
+				'    mkdir -p /home/openclaw/.openclaw/extensions && \\',
 				`    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" ${managedOpenClawAgentVmPluginExtensionPath} && \\`,
-				`    ln -sfn "$package_root/@agent-vm/openclaw-mcp-portal-plugin/dist" ${managedOpenClawMcpPortalPluginExtensionPath} && \\`,
-				`    printf '%s\\n' '#!/bin/sh' "exec node $package_root/@agent-vm/mcp-portal/dist/bin/portal-server.js \\"\\$@\\"" > ${managedMcpPortalServerWrapperPath} && \\`,
-				`    chmod 0755 ${managedMcpPortalServerWrapperPath}`,
+				`    ln -sfn "$package_root/@agent-vm/openclaw-mcp-portal-plugin/dist" ${managedOpenClawMcpPortalPluginExtensionPath}`,
 			].join('\n'),
 		);
 	}

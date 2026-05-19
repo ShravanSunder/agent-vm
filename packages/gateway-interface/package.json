@@ -34,6 +34,7 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@agent-vm/gondolin-adapter": "workspace:*"
+		"@agent-vm/gondolin-adapter": "workspace:*",
+		"@agent-vm/secrets": "workspace:*"
 	}
 }

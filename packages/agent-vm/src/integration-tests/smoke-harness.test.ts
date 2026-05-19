@@ -174,6 +174,7 @@ describe('startSmokeControllerRuntime', () => {
 			source: { kind: 'managedBase', base: 'openclaw-gateway' },
 		};
 
+		await createFakeSecretsPackage(repoRoot);
 		await createFakeGondolinAdapterPackage(repoRoot);
 		await createFakePackageDist(repoRoot, 'openclaw-agent-vm-plugin', 'gondolin');
 		await createFakePackageDist(repoRoot, 'openclaw-mcp-portal-plugin', 'mcp-portal');
@@ -195,6 +196,7 @@ describe('startSmokeControllerRuntime', () => {
 		);
 		const dockerfile = await fs.readFile(dockerfilePath, 'utf8');
 		expect(dockerfile).toContain('COPY config-contracts-local.tgz /tmp/config-contracts-local.tgz');
+		expect(dockerfile).toContain('COPY secrets-local.tgz /tmp/secrets-local.tgz');
 		expect(dockerfile).toContain('COPY gondolin-adapter-local.tgz /tmp/gondolin-adapter-local.tgz');
 		expect(dockerfile).toContain('COPY mcp-portal-local.tgz /tmp/mcp-portal-local.tgz');
 		expect(dockerfile).toContain(
@@ -207,10 +209,7 @@ describe('startSmokeControllerRuntime', () => {
 		expect(dockerfile).toContain('package_root="/opt/agent-vm/local-packages/node_modules"');
 		expect(dockerfile).toContain('/home/openclaw/.openclaw/extensions/gondolin');
 		expect(dockerfile).toContain('/home/openclaw/.openclaw/extensions/mcp-portal');
-		expect(dockerfile).toContain('/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server');
-		expect(dockerfile).toContain(
-			'exec node $package_root/@agent-vm/mcp-portal/dist/bin/portal-server.js',
-		);
+		expect(dockerfile).not.toContain('portal-server.js');
 		expect(dockerfile).not.toContain('pnpm add -g');
 		expect(dockerfile).not.toContain('/work/repo/packages/mcp-portal');
 		expect(dockerfile).not.toMatch(/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u);
@@ -222,6 +221,7 @@ describe('startSmokeControllerRuntime', () => {
 		expect(toolVmDockerfile).toContain(
 			'COPY config-contracts-local.tgz /tmp/config-contracts-local.tgz',
 		);
+		expect(toolVmDockerfile).toContain('COPY secrets-local.tgz /tmp/secrets-local.tgz');
 		expect(toolVmDockerfile).toContain('COPY mcp-portal-local.tgz /tmp/mcp-portal-local.tgz');
 		expect(toolVmDockerfile).toContain('npm install --omit=dev --no-audit --no-fund');
 		expect(toolVmDockerfile).toContain('/opt/agent-vm/local-packages');
@@ -394,7 +394,11 @@ async function createFakePortalDist(repoRoot: string): Promise<void> {
 		'export {};\n',
 		'utf8',
 	);
-	await fs.writeFile(path.join(binDir, 'portal-server.js'), 'console.log("portal");\n', 'utf8');
+	await fs.writeFile(
+		path.join(binDir, 'agent-vm-mcp-portal.js'),
+		'console.log("portal");\n',
+		'utf8',
+	);
 }
 
 async function createFakeConfigContractsPackage(repoRoot: string): Promise<void> {
@@ -416,6 +420,25 @@ async function createFakeConfigContractsPackage(repoRoot: string): Promise<void>
 	await fs.writeFile(path.join(packageDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
 }
 
+async function createFakeSecretsPackage(repoRoot: string): Promise<void> {
+	const packageDir = path.join(repoRoot, 'packages', 'secrets');
+	await fs.mkdir(path.join(packageDir, 'dist'), { recursive: true });
+	await fs.writeFile(
+		path.join(packageDir, 'package.json'),
+		`${JSON.stringify(
+			{
+				name: '@agent-vm/secrets',
+				version: '0.0.0-smoke',
+				files: ['dist'],
+			},
+			null,
+			'\t',
+		)}\n`,
+		'utf8',
+	);
+	await fs.writeFile(path.join(packageDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
+}
+
 async function createFakeGondolinAdapterPackage(repoRoot: string): Promise<void> {
 	const packageDir = path.join(repoRoot, 'packages', 'gondolin-adapter');
 	await fs.mkdir(path.join(packageDir, 'dist'), { recursive: true });
@@ -423,6 +446,7 @@ async function createFakeGondolinAdapterPackage(repoRoot: string): Promise<void>
 		path.join(packageDir, 'package.json'),
 		`${JSON.stringify(
 			{
+				dependencies: { '@agent-vm/secrets': '0.0.0-smoke' },
 				name: '@agent-vm/gondolin-adapter',
 				version: '0.0.0-smoke',
 				files: ['dist'],

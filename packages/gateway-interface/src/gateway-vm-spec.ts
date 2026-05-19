@@ -1,4 +1,5 @@
-import type { SecretSpec, VfsMountSpec } from '@agent-vm/gondolin-adapter';
+import type { VfsMountSpec } from '@agent-vm/gondolin-adapter';
+import type { MediatedSecretSpec } from '@agent-vm/secrets';
 
 /**
  * Everything the controller needs to create the Gondolin VM.
@@ -7,7 +8,7 @@ import type { SecretSpec, VfsMountSpec } from '@agent-vm/gondolin-adapter';
 export interface GatewayVmSpec {
 	readonly environment: Record<string, string>;
 	readonly vfsMounts: Record<string, VfsMountSpec>;
-	readonly mediatedSecrets: Record<string, SecretSpec>;
+	readonly mediatedSecrets: Record<string, MediatedSecretSpec>;
 	readonly tcpHosts: Record<string, string>;
 	readonly allowedHosts: readonly string[];
 	readonly rootfsMode: 'readonly' | 'memory' | 'cow';

@@ -1,8 +1,18 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createPortalAgentIdentity, resolvePortalAccessPolicy } from './portal-access-policy.js';
+import {
+	createPortalAgentIdentity as createPortalAgentIdentityBase,
+	resolvePortalAccessPolicy,
+	type PortalAgentIdentity,
+} from './portal-access-policy.js';
 import { createPortalSessionManager } from './portal-session.js';
+
+function createPortalAgentIdentity(
+	input: Omit<Parameters<typeof createPortalAgentIdentityBase>[0], 'source'>,
+): PortalAgentIdentity {
+	return createPortalAgentIdentityBase({ ...input, source: 'cli-operator' });
+}
 
 function createDeferred<TValue>(): {
 	readonly promise: Promise<TValue>;

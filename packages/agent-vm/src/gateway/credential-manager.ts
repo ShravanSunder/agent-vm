@@ -1,5 +1,5 @@
 import { targetsAudience, type RuntimeVmAudience } from '@agent-vm/gateway-interface';
-import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
+import type { SecretRef, SecretResolver } from '@agent-vm/secrets';
 
 import type { SystemConfig } from '../config/system-config.js';
 

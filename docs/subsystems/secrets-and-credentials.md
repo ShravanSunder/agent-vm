@@ -12,16 +12,16 @@ delivers secrets to Gondolin VMs and host-side controller operations.
 Two discriminated unions drive the entire pipeline:
 
 ```
-SecretRef (gondolin-adapter/types.ts)
+SecretRef (@agent-vm/secrets)
   | { source: '1password'; ref: string }     -- op:// URI
   | { source: 'environment'; ref: string }    -- process.env key
 
-SecretSpec (gondolin-adapter/types.ts)
+MediatedSecretSpec (@agent-vm/secrets)
   { hosts: readonly string[]; value: string } -- resolved value bound to hosts
 ```
 
-`SecretRef` identifies *where* a secret lives. `SecretSpec` carries a resolved
-plaintext value together with the hosts it should be injected into.
+`SecretRef` identifies *where* a secret lives. `MediatedSecretSpec` carries a
+resolved plaintext value together with the hosts it should be injected into.
 
 ---
 
@@ -45,9 +45,8 @@ fails, the entire resolver falls back to op-cli for all operations.
 ## Token Source Resolution
 
 Before any 1Password secret can be resolved, the system needs a service account
-token. `resolveServiceAccountToken` (gondolin-adapter/secret-resolver.ts) supports
-three sources, selected by `host.secretsProvider.tokenSource` in the system
-config:
+token. `resolveServiceAccountToken` (`@agent-vm/secrets`) supports three
+sources, selected by `host.secretsProvider.tokenSource` in the system config:
 
 ```
 TokenSource
@@ -69,9 +68,9 @@ argument injection and is gated to `process.platform === 'darwin'`.
 
 ## Composite Secret Resolver
 
-`createCompositeSecretResolver` (agent-vm/controller/composite-secret-resolver.ts)
-is the single entry point for all secret resolution. It wraps an optional
-1Password resolver and dispatches based on the `source` discriminant:
+`createCompositeSecretResolver` (`@agent-vm/secrets`) is the single entry point
+for all secret resolution. It wraps an optional 1Password resolver and
+dispatches based on the `source` discriminant:
 
 ```
   resolve(ref: SecretRef)

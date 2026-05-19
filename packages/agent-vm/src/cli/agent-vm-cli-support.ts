@@ -1,9 +1,9 @@
-import type { SecretResolver } from '@agent-vm/gondolin-adapter';
+import { resolveGondolinMinimumZigVersion } from '@agent-vm/gondolin-adapter';
 import {
 	createSecretResolver,
-	resolveGondolinMinimumZigVersion,
+	type SecretResolver,
 	resolveServiceAccountToken,
-} from '@agent-vm/gondolin-adapter';
+} from '@agent-vm/secrets';
 
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';

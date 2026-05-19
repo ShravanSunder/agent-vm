@@ -22,14 +22,6 @@ function createRuntimeState(): ReturnType<typeof createPortalPluginRuntimeState>
 				},
 			},
 			schemaVersion: 1,
-			server: {
-				accessHeader: {
-					name: 'x-secret',
-					secret: { name: 'MCP_PORTAL_SECRET', source: 'environment' },
-				},
-				host: '127.0.0.1',
-				port: 18_790,
-			},
 		}),
 	});
 }

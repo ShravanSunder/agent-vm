@@ -1,4 +1,4 @@
-import type { SecretResolver } from '@agent-vm/gondolin-adapter';
+import type { MediatedSecretSpec, SecretResolver } from '@agent-vm/secrets';
 
 import type { EgressHostConfig, VmAudience } from './audience.js';
 import type { GatewayProcessSpec } from './gateway-process-spec.js';
@@ -111,8 +111,9 @@ export interface GatewayZoneConfig {
 	readonly id: string;
 	readonly agents?: readonly GatewayZoneAgentConfig[];
 	readonly gateway: GatewayZoneGatewayConfig;
-	readonly mcp?: GatewayZoneMcpPortalConfig;
+	readonly mcpPortal?: GatewayZoneMcpPortalConfig;
 	readonly runtimeMcpServers?: Readonly<Record<string, GatewayZoneMcpServerConfig>>;
+	readonly runtimeMediatedSecrets?: Readonly<Record<string, MediatedSecretSpec>>;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;
 	readonly runtimePluginConfigs?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 	readonly secrets: Readonly<Record<string, GatewaySecretConfig>>;

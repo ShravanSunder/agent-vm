@@ -121,12 +121,7 @@ describe('managed image release', () => {
 		expect(generatedDockerfile).toContain(
 			'ln -sfn "$package_root/@agent-vm/openclaw-mcp-portal-plugin/dist" /home/openclaw/.openclaw/extensions/mcp-portal',
 		);
-		expect(generatedDockerfile).toContain(
-			'/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server',
-		);
-		expect(generatedDockerfile).toContain(
-			'exec node $package_root/@agent-vm/mcp-portal/dist/bin/portal-server.js',
-		);
+		expect(generatedDockerfile).not.toContain('portal-server.js');
 		expect(generatedDockerfile).not.toContain('@openclaw/discord@2026.5.2');
 		expect(result.plan).toMatchObject({
 			baseImage: {
