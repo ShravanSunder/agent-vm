@@ -4,23 +4,44 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
+import {
+	resolveGondolinMinimumZigVersion,
+	type SecretRef,
+	type SecretResolver,
+} from '@agent-vm/gondolin-adapter';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import { resolveManagedImageRelease } from '../build/managed-image-dockerfile.js';
+import { isZigVersionAtLeast, resolveHostZigVersion } from '../build/zig-compatibility.js';
 import { scaffoldAgentVmProject, type ImageArchitecture } from '../cli/init-command.js';
 import { loadSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import type {
 	ControllerRuntime,
+	ControllerRuntimeDependencies,
 	StartControllerRuntimeOptions,
 } from '../controller/controller-runtime-types.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
+import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 
 interface OpenClawSmokeZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
 	readonly gateway: Extract<
 		LoadedSystemConfig['zones'][number]['gateway'],
 		{ readonly type: 'openclaw' }
 	>;
+}
+
+interface WorkerSmokeZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
+	readonly gateway: Extract<
+		LoadedSystemConfig['zones'][number]['gateway'],
+		{ readonly type: 'worker' }
+	>;
+}
+
+interface LocalOpenClawExtensionPackage {
+	readonly archiveName: string;
+	readonly extensionPath: string;
+	readonly packageDirectory: string;
 }
 
 export interface SmokeHarnessSecretMap {
@@ -43,6 +64,42 @@ export interface OpenClawSmokeProject {
 	readonly zone: OpenClawSmokeZone;
 }
 
+export interface WorkerSmokeProject {
+	readonly controllerPort: number;
+	readonly gatewayPort: number;
+	readonly systemConfig: LoadedSystemConfig;
+	readonly tempRoot: string;
+	readonly zone: WorkerSmokeZone;
+}
+
+export type GatewaySmokeKind = 'openclaw' | 'worker';
+
+export type GatewaySmokeProject = OpenClawSmokeProject | WorkerSmokeProject;
+
+export interface ScaffoldGatewaySmokeProjectOptions {
+	readonly agents?: readonly string[];
+	readonly architecture: ImageArchitecture;
+	readonly kind: GatewaySmokeKind;
+	readonly prefix: string;
+	readonly zoneId: string;
+}
+
+export interface GondolinSmokePrerequisiteOptions {
+	readonly architecture: ImageArchitecture;
+	readonly commandExists?: (command: string) => boolean;
+	readonly resolveRequiredZigVersion?: () => Promise<string>;
+	readonly resolveZigVersion?: () => Promise<string | undefined>;
+}
+
+export interface StartSmokeControllerRuntimeOptions {
+	readonly secrets: SmokeHarnessSecretMap;
+	readonly startGatewayZone?: typeof startGatewayZone;
+	readonly startHttpServer?: NonNullable<ControllerRuntimeDependencies['startHttpServer']>;
+	readonly startOptions: StartControllerRuntimeOptions;
+	readonly tcpHostsOverride?: StartGatewayZoneOptions['tcpHostsOverride'];
+	readonly vfsMountsOverride?: StartGatewayZoneOptions['vfsMountsOverride'];
+}
+
 export function hasCommand(command: string): boolean {
 	try {
 		execFileSync('sh', ['-lc', `command -v ${command} >/dev/null`], { stdio: 'ignore' });
@@ -60,12 +117,49 @@ export function qemuCommandForArchitecture(architecture: ImageArchitecture): str
 	return architecture === 'aarch64' ? 'qemu-system-aarch64' : 'qemu-system-x86_64';
 }
 
-export function canRunGondolinSmoke(architecture: ImageArchitecture): boolean {
+export async function canRunGondolinSmoke(
+	options: GondolinSmokePrerequisiteOptions,
+): Promise<boolean> {
+	const commandExists = options.commandExists ?? hasCommand;
+	if (
+		!commandExists(qemuCommandForArchitecture(options.architecture)) ||
+		!commandExists('docker')
+	) {
+		return false;
+	}
+	const requiredZigVersion = await (
+		options.resolveRequiredZigVersion ?? resolveGondolinMinimumZigVersion
+	)();
+	const installedZigVersion = await (options.resolveZigVersion ?? resolveHostZigVersion)();
 	return (
-		hasCommand(qemuCommandForArchitecture(architecture)) &&
-		hasCommand('zig') &&
-		hasCommand('docker')
+		installedZigVersion !== undefined &&
+		isZigVersionAtLeast(installedZigVersion, requiredZigVersion)
 	);
+}
+
+export async function shouldRunWorkerGatewaySmoke(options: {
+	readonly architecture: ImageArchitecture;
+	readonly commandExists?: (command: string) => boolean;
+	readonly env?: Partial<Record<'AGENT_VM_WORKER_SMOKE' | 'OPEN_AI_TEST_KEY', string>>;
+	readonly resolveRequiredZigVersion?: () => Promise<string>;
+	readonly resolveZigVersion?: () => Promise<string | undefined>;
+}): Promise<boolean> {
+	const env = options.env ?? process.env;
+	if (
+		env.AGENT_VM_WORKER_SMOKE !== '1' ||
+		typeof env.OPEN_AI_TEST_KEY !== 'string' ||
+		env.OPEN_AI_TEST_KEY.length === 0
+	) {
+		return false;
+	}
+	return await canRunGondolinSmoke({
+		architecture: options.architecture,
+		...(options.commandExists ? { commandExists: options.commandExists } : {}),
+		...(options.resolveRequiredZigVersion
+			? { resolveRequiredZigVersion: options.resolveRequiredZigVersion }
+			: {}),
+		...(options.resolveZigVersion ? { resolveZigVersion: options.resolveZigVersion } : {}),
+	});
 }
 
 export function rebuildWorkspacePackages(repoRoot: string): void {
@@ -231,7 +325,26 @@ export function getOpenClawSmokeZone(
 	return { ...zone, gateway: zone.gateway };
 }
 
-export async function useLocalOpenClawPluginGatewayImage(options: {
+function getWorkerSmokeZone(systemConfig: LoadedSystemConfig): WorkerSmokeProject['zone'] {
+	const zone = systemConfig.zones[0];
+	if (!zone || zone.gateway.type !== 'worker') {
+		throw new Error('Expected smoke system config to contain a Worker Gateway zone.');
+	}
+	return { ...zone, gateway: zone.gateway };
+}
+
+async function archivePackageDist(props: {
+	readonly archivePath: string;
+	readonly distDirectory: string;
+}): Promise<void> {
+	await fs.access(path.join(props.distDirectory, 'index.js'));
+	execFileSync('tar', ['--no-xattrs', '-czf', props.archivePath, '-C', props.distDirectory, '.'], {
+		env: { ...process.env, COPYFILE_DISABLE: '1' },
+		stdio: 'inherit',
+	});
+}
+
+export async function useLocalOpenClawGatewayImagePackages(options: {
 	readonly profileName: string;
 	readonly projectRoot: string;
 	readonly repoRoot: string;
@@ -241,43 +354,64 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 	if (!gatewayProfile) {
 		throw new Error(`Gateway image profile '${options.profileName}' is not configured.`);
 	}
-	const pluginDistDirectory = path.join(
-		options.repoRoot,
-		'packages',
-		'openclaw-agent-vm-plugin',
-		'dist',
-	);
-	await fs.access(path.join(pluginDistDirectory, 'openclaw.plugin.json'));
 	const managedImageRelease = await resolveManagedImageRelease();
 	const baseImage = managedImageRelease.baseImages['openclaw-gateway'];
 	const dockerContextDirectory = path.join(
 		options.projectRoot,
 		'vm-images',
 		'gateways',
-		`${options.profileName}-local-plugin`,
+		`${options.profileName}-local-packages`,
 	);
-	const pluginArchivePath = path.join(dockerContextDirectory, 'gondolin-dist.tgz');
 	const dockerfilePath = path.join(dockerContextDirectory, 'Dockerfile');
+	const packages = [
+		{
+			archiveName: 'gondolin-dist.tgz',
+			extensionPath: '/home/openclaw/.openclaw/extensions/gondolin',
+			packageDirectory: path.join(options.repoRoot, 'packages', 'openclaw-agent-vm-plugin'),
+		},
+		{
+			archiveName: 'mcp-portal-plugin-dist.tgz',
+			extensionPath: '/home/openclaw/.openclaw/extensions/mcp-portal',
+			packageDirectory: path.join(options.repoRoot, 'packages', 'openclaw-mcp-portal-plugin'),
+		},
+	] satisfies readonly LocalOpenClawExtensionPackage[];
 
 	await fs.rm(dockerContextDirectory, { force: true, recursive: true });
 	await fs.mkdir(dockerContextDirectory, { recursive: true });
-	execFileSync('tar', ['--no-xattrs', '-czf', pluginArchivePath, '-C', pluginDistDirectory, '.'], {
-		env: { ...process.env, COPYFILE_DISABLE: '1' },
-		stdio: 'inherit',
-	});
+	await Promise.all(
+		packages.map((packageConfig) =>
+			archivePackageDist({
+				archivePath: path.join(dockerContextDirectory, packageConfig.archiveName),
+				distDirectory: path.join(packageConfig.packageDirectory, 'dist'),
+			}),
+		),
+	);
+	const portalServerPath = path.join(
+		options.repoRoot,
+		'packages',
+		'mcp-portal',
+		'dist',
+		'bin',
+		'portal-server.js',
+	);
+	await fs.access(portalServerPath);
+
 	await fs.writeFile(
 		dockerfilePath,
 		[
 			`FROM ${baseImage.repository}:${baseImage.tag}`,
 			'',
-			'# Generated by the OpenClaw zone-git smoke harness from the local plugin dist.',
+			'# Generated by the OpenClaw smoke harness from local package dist outputs.',
 			'COPY gondolin-dist.tgz /tmp/gondolin-dist.tgz',
-			'RUN mkdir -p /pnpm/global/5/node_modules/@openclaw',
-			'RUN rm -rf /home/openclaw/.openclaw/extensions/gondolin && \\',
-			'    mkdir -p /home/openclaw/.openclaw/extensions/gondolin && \\',
+			'COPY mcp-portal-plugin-dist.tgz /tmp/mcp-portal-plugin-dist.tgz',
+			'RUN rm -rf /home/openclaw/.openclaw/extensions/gondolin /home/openclaw/.openclaw/extensions/mcp-portal && \\',
+			'    mkdir -p /home/openclaw/.openclaw/extensions/gondolin /home/openclaw/.openclaw/extensions/mcp-portal /opt/agent-vm/portal/bin && \\',
 			'    tar -xzf /tmp/gondolin-dist.tgz -C /home/openclaw/.openclaw/extensions/gondolin && \\',
-			'    chown -R root:root /home/openclaw/.openclaw/extensions/gondolin && \\',
-			'    rm -f /tmp/gondolin-dist.tgz',
+			'    tar -xzf /tmp/mcp-portal-plugin-dist.tgz -C /home/openclaw/.openclaw/extensions/mcp-portal && \\',
+			'    chown -R root:root /home/openclaw/.openclaw/extensions/gondolin /home/openclaw/.openclaw/extensions/mcp-portal && \\',
+			'    rm -f /tmp/gondolin-dist.tgz /tmp/mcp-portal-plugin-dist.tgz',
+			'RUN printf \'#!/bin/sh\\nexec node /work/repo/packages/mcp-portal/dist/bin/portal-server.js "$@"\\n\' > /opt/agent-vm/portal/bin/agent-vm-mcp-portal-server && \\',
+			'    chmod 755 /opt/agent-vm/portal/bin/agent-vm-mcp-portal-server',
 			'',
 		].join('\n'),
 		'utf8',
@@ -285,6 +419,15 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 
 	gatewayProfile.dockerfile = dockerfilePath;
 	delete gatewayProfile.source;
+}
+
+export async function useLocalOpenClawPluginGatewayImage(options: {
+	readonly profileName: string;
+	readonly projectRoot: string;
+	readonly repoRoot: string;
+	readonly systemConfig: LoadedSystemConfig;
+}): Promise<void> {
+	await useLocalOpenClawGatewayImagePackages(options);
 }
 
 export async function scaffoldOpenClawSmokeProject(options: {
@@ -319,17 +462,183 @@ export async function scaffoldOpenClawSmokeProject(options: {
 	};
 }
 
-export async function startSmokeControllerRuntime(options: {
-	readonly secrets: SmokeHarnessSecretMap;
-	readonly startOptions: StartControllerRuntimeOptions;
-}): Promise<SmokeHarnessRuntime> {
+export async function prepareLocalWorkerPackageForGatewayImage(repoRoot: string): Promise<string> {
+	await fs.mkdir(path.join(repoRoot, 'tmp'), { recursive: true });
+	const packDirectory = await fs.mkdtemp(path.join(repoRoot, 'tmp', 'agent-vm-worker-pack-'));
+	execFileSync('pnpm', ['pack', '--pack-destination', packDirectory], {
+		cwd: path.join(repoRoot, 'packages', 'agent-vm-worker'),
+		stdio: 'pipe',
+	});
+	const packedTarballs = (await fs.readdir(packDirectory)).filter((fileName) =>
+		fileName.endsWith('.tgz'),
+	);
+	const [packedTarballName] = packedTarballs;
+	if (packedTarballName === undefined) {
+		throw new Error('Failed to pack local agent-vm-worker tarball for smoke image.');
+	}
+	if (packedTarballs.length > 1) {
+		throw new Error('Expected pnpm pack to produce exactly one agent-vm-worker tarball.');
+	}
+	return path.join(packDirectory, packedTarballName);
+}
+
+export async function scaffoldWorkerSmokeProject(options: {
+	readonly architecture: ImageArchitecture;
+	readonly prefix: string;
+	readonly zoneId: string;
+}): Promise<WorkerSmokeProject> {
+	const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), options.prefix));
+	const controllerPort = await findAvailablePort();
+	const gatewayPort = await findAvailablePort();
+	await scaffoldAgentVmProject({
+		architecture: options.architecture,
+		gatewayType: 'worker',
+		secretsProvider: '1password',
+		targetDir: tempRoot,
+		zoneId: options.zoneId,
+	});
+	const systemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
+	systemConfig.host.controllerPort = controllerPort;
+	systemConfig.host.projectNamespace = 'claw-tests-worker';
+	systemConfig.cacheDir = path.join(tempRoot, 'cache');
+	systemConfig.host.secretsProvider = {
+		type: '1password',
+		tokenSource: { type: 'env', envVar: 'OPEN_AI_TEST_KEY' },
+	};
+	const zone = getWorkerSmokeZone(systemConfig);
+	zone.gateway.port = gatewayPort;
+	return {
+		controllerPort,
+		gatewayPort,
+		systemConfig,
+		tempRoot,
+		zone,
+	};
+}
+
+export async function scaffoldGatewaySmokeProject(
+	options: ScaffoldGatewaySmokeProjectOptions,
+): Promise<GatewaySmokeProject> {
+	if (options.kind === 'openclaw') {
+		return await scaffoldOpenClawSmokeProject({
+			architecture: options.architecture,
+			prefix: options.prefix,
+			zoneId: options.zoneId,
+			...(options.agents ? { agents: options.agents } : {}),
+		});
+	}
+	return await scaffoldWorkerSmokeProject({
+		architecture: options.architecture,
+		prefix: options.prefix,
+		zoneId: options.zoneId,
+	});
+}
+
+export async function writeOpenClawMcpPortalSmokeConfigs(options: {
+	readonly agentId: string;
+	readonly configDir: string;
+	readonly namespace: string;
+	readonly portalAccessHeaderName: string;
+	readonly upstreamUrl: string;
+}): Promise<void> {
+	await fs.writeFile(
+		path.join(options.configDir, 'mcp.config.jsonc'),
+		`${JSON.stringify(
+			{
+				$schema: '../../schemas/mcp.schema.json',
+				providers: {
+					upstreamMock: {
+						discovery: { summary: 'Mock upstream MCP server for smoke tests' },
+						kind: 'mcp',
+						namespace: options.namespace,
+						transport: {
+							kind: 'streamable-http',
+							url: options.upstreamUrl,
+						},
+					},
+				},
+				schemaVersion: 1,
+			},
+			null,
+			'\t',
+		)}\n`,
+		'utf8',
+	);
+	await fs.writeFile(
+		path.join(options.configDir, 'mcp-portal.config.jsonc'),
+		`${JSON.stringify(
+			{
+				$schema: '../../schemas/mcp-portal.schema.json',
+				agents: {
+					[options.agentId]: { profile: 'smoke' },
+				},
+				profiles: {
+					smoke: {
+						approval: {
+							allowWithoutApprovalTools: [{ namespace: options.namespace, toolName: 'read_thing' }],
+							alwaysAskTools: [{ namespace: options.namespace, toolName: 'write_thing' }],
+							annotationPolicy: 'destructive-requires-approval',
+							trustedAnnotationNamespaces: [],
+							writeTools: [],
+						},
+						enabledNamespaces: [options.namespace],
+						enabledToolsByNamespace: {
+							[options.namespace]: ['read_thing', 'write_thing'],
+						},
+						hiddenToolsByNamespace: {},
+						promptContext: { enabled: true, maxNamespaces: 12 },
+					},
+				},
+				schemaVersion: 1,
+				server: {
+					accessHeader: {
+						name: options.portalAccessHeaderName,
+						secret: { name: 'MCP_PORTAL_SERVER_SECRET', source: 'environment' },
+					},
+					host: '127.0.0.1',
+					port: 18790,
+				},
+			},
+			null,
+			'\t',
+		)}\n`,
+		'utf8',
+	);
+}
+
+export async function startSmokeControllerRuntime(
+	options: StartSmokeControllerRuntimeOptions,
+): Promise<SmokeHarnessRuntime> {
 	const restoreEnvironment = applySmokeEnvironment(options.secrets);
 	const secretResolver = createSmokeSecretResolver(options.secrets);
 	try {
 		const runtime = await startControllerRuntime(options.startOptions, {
 			createSecretResolver: async (): Promise<SecretResolver> => secretResolver,
+			...(options.startHttpServer === undefined
+				? {}
+				: { startHttpServer: options.startHttpServer }),
+			...(options.startGatewayZone === undefined &&
+			options.tcpHostsOverride === undefined &&
+			options.vfsMountsOverride === undefined
+				? {}
+				: {
+						startGatewayZone: async (startGatewayOptions: StartGatewayZoneOptions) =>
+							await (options.startGatewayZone ?? startGatewayZone)({
+								...startGatewayOptions,
+								tcpHostsOverride: {
+									...startGatewayOptions.tcpHostsOverride,
+									...options.tcpHostsOverride,
+								},
+								vfsMountsOverride: {
+									...startGatewayOptions.vfsMountsOverride,
+									...options.vfsMountsOverride,
+								},
+							}),
+					}),
 		});
-		await waitForControllerReady(options.startOptions.systemConfig.host.controllerPort);
+		if (options.startHttpServer === undefined) {
+			await waitForControllerReady(options.startOptions.systemConfig.host.controllerPort);
+		}
 		return {
 			controllerUrl: `http://127.0.0.1:${options.startOptions.systemConfig.host.controllerPort}`,
 			runtime,

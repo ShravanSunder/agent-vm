@@ -1,4 +1,7 @@
-import { createOpCliSecretResolver, type ManagedVm } from '@agent-vm/gondolin-adapter';
+import {
+	createSecretResolver as createOnePasswordSecretResolver,
+	type ManagedVm,
+} from '@agent-vm/gondolin-adapter';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { runTaskWithResult } from '../shared/run-task.js';
@@ -47,7 +50,7 @@ import { createZoneRuntimeRegistry } from './zone-runtimes/zone-runtime-registry
 import type { ControllerZoneConfig } from './zone-runtimes/zone-runtime-types.js';
 
 const defaultLeaseIdleTtlPolicy = {
-	defaultMs: 30 * 60 * 1000,
+	defaultMs: 100 * 60 * 1000,
 	byScopeKind: {},
 	byScopePrefix: {},
 } satisfies LeaseIdleTtlPolicy;
@@ -122,7 +125,7 @@ export async function startControllerRuntime(
 		async () =>
 			await createSecretResolver(
 				options.systemConfig,
-				dependencies.createSecretResolver ?? createOpCliSecretResolver,
+				dependencies.createSecretResolver ?? createOnePasswordSecretResolver,
 			),
 	);
 	const controllerGithubToken = await resolveControllerGithubToken(
@@ -161,6 +164,11 @@ export async function startControllerRuntime(
 		now,
 		tcpPool,
 	});
+	const ttlForLease = (lease: { readonly scopeKey: string }): number =>
+		ttlForLeaseScope({
+			policy: options.systemConfig.leaseIdleTtl ?? defaultLeaseIdleTtlPolicy,
+			scopeKey: lease.scopeKey,
+		});
 	const idleReaper = createIdleReaper({
 		getLeases: () => leaseManager.listLeases(),
 		now,
@@ -170,11 +178,7 @@ export async function startControllerRuntime(
 		) => {
 			await leaseManager.releaseLease(leaseId, releaseOptions);
 		},
-		ttlForLease: (lease) =>
-			ttlForLeaseScope({
-				policy: options.systemConfig.leaseIdleTtl ?? defaultLeaseIdleTtlPolicy,
-				scopeKey: lease.scopeKey,
-			}),
+		ttlForLease,
 	});
 	const reaperTimer = (dependencies.setIntervalImpl ?? setInterval)(
 		() =>
@@ -337,6 +341,7 @@ export async function startControllerRuntime(
 		operations,
 		secretResolver,
 		systemConfig: options.systemConfig,
+		ttlForLease,
 	});
 	await runTaskStep(`Controller API on :${options.systemConfig.host.controllerPort}`, async () => {
 		serverRef.current = await (dependencies.startHttpServer ?? startControllerHttpServer)({

@@ -200,6 +200,13 @@ tools. Operator-authored upstream MCP servers live in `mcp.config.jsonc`; the
 portal process uses those upstream servers but does not put upstream MCP auth
 into Tool VMs.
 
+Local smoke coverage uses a fake Streamable HTTP MCP provider and the
+controller smoke harness `tcpHostsOverride` path to make that host-side provider
+reachable from inside the OpenClaw gateway VM. The smoke does not require
+DeepWiki, Tavily, 1Password, or real upstream MCP credentials; credentialed
+upstream providers belong in an explicit deployment smoke outside the default
+local suite.
+
 `agent-vm init --type openclaw --openclaw-agents sun,shravan,alevtina` scaffolds
 `agents.list` entries with `/zone/agents/<id>` workspaces. It deliberately does
 not scaffold channel bindings or Discord guild allowlists because those are
@@ -572,14 +579,14 @@ zones without exhausting Tool VM SSH slots immediately.
 
 ## leaseIdleTtl
 
-`leaseIdleTtl` is optional. When omitted, every lease uses the default 30 minute
+`leaseIdleTtl` is optional. When omitted, every lease uses the default 100 minute
 idle timeout. OpenClaw deployments that mix agent, session, and workspace-scope
 leases can override by scope kind or by scope-key prefix:
 
 ```json
 {
   "leaseIdleTtl": {
-    "defaultMs": 1800000,
+    "defaultMs": 6000000,
     "byScopeKind": {
       "agent": 7200000,
       "workspace": 900000

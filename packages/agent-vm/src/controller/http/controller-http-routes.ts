@@ -116,6 +116,7 @@ interface LeaseRequestLogContext {
 export function createControllerApp(options: {
 	readonly leaseManager: ControllerLeaseManager;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
+	readonly ttlForLease?: (lease: { readonly scopeKey: string }) => number;
 	readonly toolVmProfiles?: Record<
 		string,
 		{
@@ -208,7 +209,14 @@ export function createControllerApp(options: {
 				...(resolvedWorkMount.zoneGitMount ? { zoneGitMount: resolvedWorkMount.zoneGitMount } : {}),
 				zoneId: payload.zoneId,
 			});
-			return context.json(await serializeLeaseForResponse(lease, readIdentityPem));
+			const idleTtlMs = options.ttlForLease?.(lease);
+			return context.json(
+				await serializeLeaseForResponse(
+					lease,
+					readIdentityPem,
+					idleTtlMs !== undefined ? { idleTtlMs } : {},
+				),
+			);
 		} catch (error) {
 			if (error instanceof LeaseWorkMountValidationError) {
 				return context.json({ error: error.message, kind: error.kind }, 400);
@@ -258,7 +266,14 @@ export function createControllerApp(options: {
 		if (!leaseRenewal) {
 			return context.json({ error: 'Lease not found' }, 404);
 		}
-		return context.json(await serializeLeaseForResponse(leaseRenewal.lease, readIdentityPem));
+		const idleTtlMs = options.ttlForLease?.(leaseRenewal.lease);
+		return context.json(
+			await serializeLeaseForResponse(
+				leaseRenewal.lease,
+				readIdentityPem,
+				idleTtlMs !== undefined ? { idleTtlMs } : {},
+			),
+		);
 	});
 
 	app.get('/leases', (context) => {
@@ -359,11 +374,13 @@ export function createControllerService(options: {
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly secretResolver?: SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
+	readonly ttlForLease: (lease: { readonly scopeKey: string }) => number;
 }): Hono {
 	const zonesById = new Map(options.systemConfig.zones.map((zone) => [zone.id, zone]));
 	const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
 	const app = createControllerApp({
 		leaseManager: options.leaseManager,
+		ttlForLease: options.ttlForLease,
 		toolVmProfiles: options.systemConfig.toolVmProfiles,
 		zoneIds: new Set(options.systemConfig.zones.map((zone) => zone.id)),
 		zoneDefaultToolVmProfiles: Object.fromEntries(

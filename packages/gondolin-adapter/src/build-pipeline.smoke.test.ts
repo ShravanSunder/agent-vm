@@ -6,9 +6,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { buildImage } from './build-pipeline.js';
 import type { BuildConfig } from './build-pipeline.js';
+import { shouldRunGondolinBuildPipelineSmoke } from './smoke-test-gates.js';
 import { createManagedVm, type ManagedVm } from './vm-adapter.js';
 
 const temporaryDirectories: string[] = [];
+const describeGondolinBuildPipelineSmoke = shouldRunGondolinBuildPipelineSmoke()
+	? describe
+	: describe.skip;
 
 async function createTemporaryDirectory(prefix: string): Promise<string> {
 	const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), prefix));
@@ -35,7 +39,7 @@ afterEach(async () => {
 	);
 });
 
-describe('smoke: Gondolin image build rootfs init', () => {
+describeGondolinBuildPipelineSmoke('smoke: Gondolin image build rootfs init', () => {
 	it('boots an OCI-backed image with /dev/fd available for fd-number script paths', async () => {
 		const cacheDirectory = await createTemporaryDirectory('agent-vm-dev-fd-smoke-cache-');
 		const buildConfig = {

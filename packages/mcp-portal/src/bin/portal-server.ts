@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import {
@@ -405,7 +407,27 @@ async function main(): Promise<void> {
 	});
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+export async function isPortalServerEntrypoint(
+	importMetaUrl: string,
+	argvEntryPath: string | undefined,
+	realpathFn: (targetPath: string) => Promise<string> = realpath,
+): Promise<boolean> {
+	if (argvEntryPath === undefined) {
+		return false;
+	}
+	try {
+		const modulePath = fileURLToPath(importMetaUrl);
+		const [realModulePath, realArgvEntryPath] = await Promise.all([
+			realpathFn(modulePath),
+			realpathFn(argvEntryPath),
+		]);
+		return realModulePath === realArgvEntryPath;
+	} catch {
+		return false;
+	}
+}
+
+if (await isPortalServerEntrypoint(import.meta.url, process.argv[1])) {
 	void main().catch((error: unknown) => {
 		process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
 		process.exit(1);

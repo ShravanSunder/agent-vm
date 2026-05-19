@@ -27,6 +27,8 @@ const managedMcpPortalServerScriptPath =
 	'/pnpm/global/5/node_modules/@agent-vm/mcp-portal/dist/bin/portal-server.js';
 const managedMcpPortalServerWrapperPath =
 	'/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server';
+const managedPnpmHomePath = '/pnpm';
+const managedPnpmGlobalDirectory = '/pnpm/global';
 
 export interface ManagedImageSource {
 	readonly kind: 'managedBase';
@@ -213,6 +215,17 @@ function renderManagedDockerfile(props: {
 			'RUN apt-get update && apt-get install -y --no-install-recommends ' +
 				shellJoin(props.overlay.extraAptPackages) +
 				' && rm -rf /var/lib/apt/lists/*',
+		);
+	}
+	if (
+		props.base === 'openclaw-gateway' ||
+		props.base === 'tool-vm' ||
+		props.openClawPackages.length > 0
+	) {
+		lines.push(`ENV PNPM_HOME=${managedPnpmHomePath}`);
+		lines.push('ENV PATH=${PNPM_HOME}:${PATH}');
+		lines.push(
+			`RUN pnpm config set global-dir ${managedPnpmGlobalDirectory} && pnpm config set global-bin-dir ${managedPnpmHomePath}`,
 		);
 	}
 	if (props.base === 'openclaw-gateway') {

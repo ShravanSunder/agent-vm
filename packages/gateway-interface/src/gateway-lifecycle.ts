@@ -24,6 +24,7 @@ export interface GatewayAuthConfig {
 		provider: string,
 		options?: {
 			readonly deviceCode?: boolean;
+			readonly agentId?: string;
 			readonly setDefault?: boolean;
 		},
 	) => string;

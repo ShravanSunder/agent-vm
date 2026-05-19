@@ -1743,6 +1743,24 @@ describe('loadSystemConfig', () => {
 		});
 	});
 
+	test('defaults partial lease idle TTL policy to 100 minutes', async () => {
+		const config = createValidSystemConfigInput();
+		config.leaseIdleTtl = {
+			byScopeKind: {
+				agent: 2 * 60 * 60 * 1000,
+			},
+		};
+		const configPath = await writeSystemConfigForTest('agent-vm-system-lease-ttl-default-', config);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			leaseIdleTtl: {
+				defaultMs: 6_000_000,
+				byScopeKind: { agent: 7_200_000 },
+				byScopePrefix: {},
+			},
+		});
+	});
+
 	test('rejects non-positive lease idle TTL values', async () => {
 		const config = createValidSystemConfigInput();
 		config.leaseIdleTtl = { defaultMs: 0 };

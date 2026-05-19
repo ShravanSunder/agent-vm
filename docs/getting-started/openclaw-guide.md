@@ -142,7 +142,7 @@ When the agent needs to run code, OpenClaw requests a tool VM lease from the con
 Leases are scoped by `scopeKey` for reuse within the same conversation. For
 `agent:<agentId>` scopes, the controller selects the Tool VM profile from the
 zone's `agentToolVmProfiles` map, falling back to `defaultToolVmProfile`. Idle
-leases are reaped by `leaseIdleTtl`, with a 30 minute default when no policy is
+leases are reaped by `leaseIdleTtl`, with a 100 minute default when no policy is
 configured.
 
 The lease `workMountDir` is a gateway VM path, not a host path. It must name a
@@ -265,8 +265,8 @@ agent-vm controller logs --zone my-openclaw
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Gateway won't start | Auth profiles missing | Check `gateway.authProfilesByAgent` in system.jsonc |
-| Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth-interactive codex --zone <id>` |
+| Doctor reports `openclaw-agent-auth-profile-*` failing | Auth material missing | Check `gateway.authProfilesByAgent` in system.jsonc or run `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
+| Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
 | Tool calls fail | Lease creation failing | Check `defaultToolVmProfile` exists, TCP pool has free slots |
 | Discord not connecting | Deployment channel config incomplete | Add Discord plugin/config, `DISCORD_BOT_TOKEN`, Discord hosts, and `gateway.discord.gg:443` |
 | Can't reach external API | Host not allowlisted | Add to `zones[].egressHosts` with the needed audience |

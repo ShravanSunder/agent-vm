@@ -1,24 +1,34 @@
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { defineConfig } from 'vitest/config';
+
+const repositoryRoot = path.dirname(fileURLToPath(import.meta.url));
+
+function repoPath(relativePath: string): string {
+	return path.resolve(repositoryRoot, relativePath);
+}
 
 export default defineConfig({
 	resolve: {
 		alias: {
-			'@agent-vm/agent-vm': path.resolve('./packages/agent-vm/src/index.ts'),
-			'@agent-vm/config-contracts': path.resolve('./packages/config-contracts/src/index.ts'),
-			'@agent-vm/gondolin-adapter': path.resolve('./packages/gondolin-adapter/src/index.ts'),
-			'@agent-vm/agent-vm-worker': path.resolve('./packages/agent-vm-worker/src/index.ts'),
-			'@agent-vm/gateway-interface': path.resolve('./packages/gateway-interface/src/index.ts'),
-			'@agent-vm/openclaw-agent-vm-plugin': path.resolve(
-				'./packages/openclaw-agent-vm-plugin/src/index.ts',
+			'@agent-vm/agent-vm': repoPath('packages/agent-vm/src/index.ts'),
+			'@agent-vm/config-contracts': repoPath('packages/config-contracts/src/index.ts'),
+			'@agent-vm/gondolin-adapter': repoPath('packages/gondolin-adapter/src/index.ts'),
+			'@agent-vm/agent-vm-worker': repoPath('packages/agent-vm-worker/src/index.ts'),
+			'@agent-vm/gateway-interface': repoPath('packages/gateway-interface/src/index.ts'),
+			'@agent-vm/openclaw-agent-vm-plugin': repoPath(
+				'packages/openclaw-agent-vm-plugin/src/index.ts',
 			),
-			'@agent-vm/mcp-portal': path.resolve('./packages/mcp-portal/src/index.ts'),
-			'@agent-vm/openclaw-mcp-portal-plugin': path.resolve(
-				'./packages/openclaw-mcp-portal-plugin/src/index.ts',
+			'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server': repoPath(
+				'packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts',
 			),
-			'@agent-vm/openclaw-gateway': path.resolve('./packages/openclaw-gateway/src/index.ts'),
-			'@agent-vm/worker-gateway': path.resolve('./packages/worker-gateway/src/index.ts'),
+			'@agent-vm/mcp-portal': repoPath('packages/mcp-portal/src/index.ts'),
+			'@agent-vm/openclaw-mcp-portal-plugin': repoPath(
+				'packages/openclaw-mcp-portal-plugin/src/index.ts',
+			),
+			'@agent-vm/openclaw-gateway': repoPath('packages/openclaw-gateway/src/index.ts'),
+			'@agent-vm/worker-gateway': repoPath('packages/worker-gateway/src/index.ts'),
 		},
 	},
 	test: {
@@ -39,6 +49,6 @@ export default defineConfig({
 			'**/tests/integration/**',
 			'**/tests/e2e/**',
 		],
-		setupFiles: ['./vitest.setup.ts'],
+		setupFiles: [repoPath('vitest.setup.ts')],
 	},
 });

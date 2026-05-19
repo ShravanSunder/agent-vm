@@ -13,7 +13,11 @@ import type { ManagedVm } from '@agent-vm/gondolin-adapter';
  */
 import { describe, it, expect, afterAll } from 'vitest';
 
-describe('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
+import { shouldRunLiveVmIntegration } from './live-integration-gates.js';
+
+const describeLiveVmIntegration = shouldRunLiveVmIntegration() ? describe : describe.skip;
+
+describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
 	let toolVm: ManagedVm | null = null;
 	let gatewayVm: ManagedVm | null = null;
 

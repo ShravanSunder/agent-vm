@@ -286,7 +286,7 @@ The controller exposes a REST API. Routes are split across two modules: core lea
 **Idle Reaper** (`idle-reaper.ts`): Runs on a 60-second interval. Any lease
 with `lastUsedAt` older than its resolved TTL is automatically released. The
 policy checks exact or prefix `leaseIdleTtl.byScopePrefix`, then
-`leaseIdleTtl.byScopeKind`, then the default 30 minute fallback.
+`leaseIdleTtl.byScopeKind`, then the default 100 minute fallback.
 
 **Active Task Registry** (`active-task-registry.ts`): Tracks in-flight worker tasks by zone and task ID. Used by the push-branches endpoint to verify a task is still active before allowing branch pushes.
 

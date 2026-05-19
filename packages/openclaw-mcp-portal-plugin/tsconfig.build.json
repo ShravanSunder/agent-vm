@@ -12,5 +12,5 @@
 			"@agent-vm/mcp-portal": ["../mcp-portal/dist/index.d.ts"]
 		}
 	},
-	"exclude": ["src/**/*.test.ts"]
+	"exclude": ["src/**/*.test.ts", "src/**/*.typecheck.ts"]
 }

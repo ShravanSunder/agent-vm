@@ -140,10 +140,18 @@ describe('openclawLifecycle', () => {
 			);
 			expect(
 				openclawLifecycle.authConfig?.buildLoginCommand('openai-codex', {
+					agentId: 'shravan',
+				}),
+			).toBe("openclaw models auth --agent 'shravan' login --provider 'openai-codex'");
+			expect(
+				openclawLifecycle.authConfig?.buildLoginCommand('openai-codex', {
+					agentId: 'shravan',
 					deviceCode: true,
 					setDefault: true,
 				}),
-			).toBe("openclaw models auth login --provider 'openai-codex' --device-code --set-default");
+			).toBe(
+				"openclaw models auth --agent 'shravan' login --provider 'openai-codex' --device-code --set-default",
+			);
 		});
 
 		it('shell-quotes provider values safely', () => {
