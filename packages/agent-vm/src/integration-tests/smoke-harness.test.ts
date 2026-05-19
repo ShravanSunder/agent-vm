@@ -394,11 +394,7 @@ async function createFakePortalDist(repoRoot: string): Promise<void> {
 		'export {};\n',
 		'utf8',
 	);
-	await fs.writeFile(
-		path.join(binDir, 'agent-vm-mcp-portal.js'),
-		'console.log("portal");\n',
-		'utf8',
-	);
+	await fs.writeFile(path.join(binDir, 'mcp-portal.js'), 'console.log("portal");\n', 'utf8');
 }
 
 async function createFakeConfigContractsPackage(repoRoot: string): Promise<void> {

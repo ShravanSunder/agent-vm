@@ -8,11 +8,11 @@ import {
 	type PortalAgentIdentity,
 	type PortalToolSelector,
 } from '../portal-access-policy.js';
+import { generateTypescriptCatalogArtifact } from '../portal-config/typescript-artifact.js';
 import type { PortalSession } from '../portal-session.js';
 import type { ToolSearchResult } from '../search-index.js';
 import { decodeToolRef } from '../tool-ref.js';
 import { createToolSummary, type ToolSummary } from '../tool-summary.js';
-import { generateTypescriptCatalogArtifact } from '../tool-vm/typescript-artifact.js';
 import { validatePortalToolArguments } from './portal-call-validation.js';
 
 export interface PortalToolSuccess {

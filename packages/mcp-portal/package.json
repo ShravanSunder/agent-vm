@@ -14,7 +14,7 @@
 		"directory": "packages/mcp-portal"
 	},
 	"bin": {
-		"agent-vm-mcp-portal": "./dist/bin/agent-vm-mcp-portal.js"
+		"mcp-portal": "./dist/bin/mcp-portal.js"
 	},
 	"files": [
 		"dist"
@@ -39,21 +39,21 @@
 			"types": "./dist/cli/index.d.ts",
 			"import": "./dist/cli/index.js"
 		},
-		"./tool-vm": {
-			"types": "./dist/tool-vm/index.d.ts",
-			"import": "./dist/tool-vm/index.js"
+		"./portal-config": {
+			"types": "./dist/portal-config/index.d.ts",
+			"import": "./dist/portal-config/index.js"
 		},
-		"./auth/hmac-token": {
-			"types": "./dist/auth/hmac-token.d.ts",
-			"import": "./dist/auth/hmac-token.js"
+		"./portal-auth/hmac-token": {
+			"types": "./dist/portal-auth/hmac-token.d.ts",
+			"import": "./dist/portal-auth/hmac-token.js"
 		},
-		"./auth/hmac-env": {
-			"types": "./dist/auth/hmac-env.d.ts",
-			"import": "./dist/auth/hmac-env.js"
+		"./portal-auth/hmac-env": {
+			"types": "./dist/portal-auth/hmac-env.d.ts",
+			"import": "./dist/portal-auth/hmac-env.js"
 		},
-		"./auth/agent-bearer-token": {
-			"types": "./dist/auth/agent-bearer-token.d.ts",
-			"import": "./dist/auth/agent-bearer-token.js"
+		"./portal-auth/agent-bearer-token": {
+			"types": "./dist/portal-auth/agent-bearer-token.d.ts",
+			"import": "./dist/portal-auth/agent-bearer-token.js"
 		},
 		"./testing/fake-upstream-mcp-server": {
 			"types": "./dist/testing/fake-upstream-mcp-server.d.ts",
@@ -73,6 +73,7 @@
 	"dependencies": {
 		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/secrets": "workspace:*",
+		"@hono/mcp": "^0.3.0",
 		"@hono/node-server": "^2.0.2",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"hono": "^4.12.18",

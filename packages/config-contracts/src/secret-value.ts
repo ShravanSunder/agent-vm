@@ -10,7 +10,7 @@ export const secretValueSchema = z.discriminatedUnion('source', [
 	z
 		.object({
 			source: z.literal('1password'),
-			ref: z.string().min(1),
+			ref: z.string().regex(/^op:\/\//u, '1Password refs must start with op://'),
 		})
 		.strict(),
 ]);

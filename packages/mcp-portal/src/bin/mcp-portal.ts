@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { chmod, mkdir, open, readFile, rename, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { chmod, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
@@ -12,12 +13,6 @@ import {
 import type { SecretResolver } from '@agent-vm/secrets';
 import { z } from 'zod';
 
-import {
-	decodePortalMasterKey,
-	deriveAgentBearerToken,
-	formatMasterKeyFingerprint,
-} from '../auth/agent-bearer-token.js';
-import { parseHmacKeysFromEnv } from '../auth/hmac-env.js';
 import { portalToolRecordSchema, type PortalToolRecord } from '../catalog-types.js';
 import {
 	buildProfilePolicyMaps,
@@ -37,7 +32,13 @@ import {
 	createPortalApprovalVerifier,
 	resolveAgentHmacKeys,
 } from '../mcp-proxy/resolve-agent-identity.js';
-import { generateTypescriptCatalogArtifact } from '../tool-vm/typescript-artifact.js';
+import {
+	decodePortalMasterKey,
+	deriveAgentBearerToken,
+	formatMasterKeyFingerprint,
+} from '../portal-auth/agent-bearer-token.js';
+import { parseHmacKeysFromEnv } from '../portal-auth/hmac-env.js';
+import { generateTypescriptCatalogArtifact } from '../portal-config/typescript-artifact.js';
 import { createUpstreamMcpClientRuntime } from '../upstream-mcp-client-runtime.js';
 import { resolveSecretValue } from './secret-value-resolver.js';
 
@@ -72,18 +73,14 @@ function parseOutputDirectory(args: readonly string[]): string | null {
 }
 
 function printUsage(): void {
-	process.stderr.write('Usage: agent-vm-mcp-portal validate <catalog.json>\n');
+	process.stderr.write('Usage: mcp-portal validate <catalog.json>\n');
+	process.stderr.write('Usage: mcp-portal generate-helper <catalog.json> --out <directory>\n');
+	process.stderr.write('Usage: mcp-portal serve --config-dir <directory> [--port <port>]\n');
 	process.stderr.write(
-		'Usage: agent-vm-mcp-portal generate-helper <catalog.json> --out <directory>\n',
+		'Usage: mcp-portal call --config-dir <directory> --agent <agent-id> --input <request.json> [--tool <portal-tool-name>]\n',
 	);
 	process.stderr.write(
-		'Usage: agent-vm-mcp-portal serve --config-dir <directory> [--port <port>]\n',
-	);
-	process.stderr.write(
-		'Usage: agent-vm-mcp-portal call --config-dir <directory> --agent <agent-id> --input <request.json> [--tool <portal-tool-name>]\n',
-	);
-	process.stderr.write(
-		'Usage: agent-vm-mcp-portal write-credential --config-dir <directory> --agent <agent-id> --out <file> --master-key-fingerprint <sha256:...>\n',
+		'Usage: mcp-portal write-credential --config-dir <directory> --agent <agent-id> --out <file> --master-key-fingerprint <sha256:...>\n',
 	);
 }
 
@@ -104,15 +101,18 @@ function normalizeCredentialProxyUrl(value: string): string {
 }
 
 async function writeFileAtomically(filePath: string, content: string): Promise<void> {
-	const tempPath = `${filePath}.tmp`;
-	const handle = await open(tempPath, 'w', 0o600);
+	const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+	const handle = await open(tempPath, 'wx', 0o600);
 	try {
 		await handle.writeFile(content, 'utf8');
 		await handle.sync();
-	} finally {
 		await handle.close();
+		await rename(tempPath, filePath);
+	} catch (error) {
+		await handle.close().catch(() => undefined);
+		await rm(tempPath, { force: true });
+		throw error;
 	}
-	await rename(tempPath, filePath);
 	await chmod(filePath, 0o600);
 }
 
@@ -164,7 +164,14 @@ async function writeCredentialFile(
 			`Master-key fingerprint mismatch. Expected ${expectedFingerprint}; resolved ${actualFingerprint}.`,
 		);
 	}
-	const bearer = deriveAgentBearerToken({ agentId, masterKey });
+	const agentConfig = portalConfig.agents[agentId];
+	const bearer = deriveAgentBearerToken({
+		agentId,
+		...(agentConfig.credentialVersion === undefined
+			? {}
+			: { credentialVersion: agentConfig.credentialVersion }),
+		masterKey,
+	});
 	const proxyUrl =
 		proxyUrlOverride === null
 			? credentialProxyUrlFromConfig(requireCredentialMcpProxy(portalConfig.mcpProxy), agentId)
@@ -364,7 +371,7 @@ async function runCallCommand(
 	}
 }
 
-export async function runAgentVmMcpPortal(
+export async function runMcpPortal(
 	args: readonly string[],
 	props: AgentVmMcpPortalRuntimeProps = {},
 ): Promise<number> {
@@ -437,8 +444,8 @@ export async function runAgentVmMcpPortal(
 }
 
 if (
-	process.argv[1]?.endsWith('agent-vm-mcp-portal.js') === true ||
-	process.argv[1]?.endsWith('agent-vm-mcp-portal.ts') === true
+	process.argv[1]?.endsWith('mcp-portal.js') === true ||
+	process.argv[1]?.endsWith('mcp-portal.ts') === true
 ) {
-	process.exitCode = await runAgentVmMcpPortal(process.argv.slice(2));
+	process.exitCode = await runMcpPortal(process.argv.slice(2));
 }

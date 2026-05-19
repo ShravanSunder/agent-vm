@@ -46,6 +46,38 @@ describe('agent bearer token helpers', () => {
 		).toEqual({ ok: false, reason: 'malformed' });
 	});
 
+	it('binds bearer authorization to the agent credential version', () => {
+		const masterKey = Buffer.from('master-key');
+		const versionOneBearer = deriveAgentBearerToken({
+			agentId: 'shravan',
+			credentialVersion: 1,
+			masterKey,
+		});
+		const versionTwoBearer = deriveAgentBearerToken({
+			agentId: 'shravan',
+			credentialVersion: 2,
+			masterKey,
+		});
+
+		expect(versionOneBearer).not.toBe(versionTwoBearer);
+		expect(
+			verifyAgentBearerAuthorization({
+				agentId: 'shravan',
+				authorizationHeader: `Bearer ${versionOneBearer}`,
+				credentialVersion: 2,
+				masterKey,
+			}),
+		).toEqual({ ok: false, reason: 'signature-mismatch' });
+		expect(
+			verifyAgentBearerAuthorization({
+				agentId: 'shravan',
+				authorizationHeader: `Bearer ${versionTwoBearer}`,
+				credentialVersion: 2,
+				masterKey,
+			}),
+		).toEqual({ ok: true });
+	});
+
 	it('formats a stable non-secret master-key fingerprint', () => {
 		const fingerprint = formatMasterKeyFingerprint(Buffer.from('master-key'));
 

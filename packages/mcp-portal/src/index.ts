@@ -1,6 +1,4 @@
 export * from './catalog-types.js';
-export * from './auth/hmac-env.js';
-export * from './auth/hmac-token.js';
 export * from './json-schema.js';
 export * from './portal-access-policy.js';
 export * from './portal-session.js';
@@ -8,7 +6,6 @@ export * from './search-index.js';
 export * from './tool-graph.js';
 export * from './tool-ref.js';
 export * from './tool-summary.js';
-export * from './tool-vm/index.js';
 export * from './upstream-mcp-client-runtime.js';
 export * from './upstream-response-middleware.js';
 export * from './zod-schema-loader.js';

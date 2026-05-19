@@ -22,7 +22,6 @@ import {
 } from '@agent-vm/secrets';
 import { serve } from '@hono/node-server';
 
-import { decodePortalMasterKey } from '../auth/agent-bearer-token.js';
 import { resolveSecretValue } from '../bin/secret-value-resolver.js';
 import { createPortalCore } from '../core/portal-core.js';
 import { resolveUpstreamServers } from '../core/provider-runtime.js';
@@ -33,6 +32,7 @@ import {
 	createPortalHttpAgentResolver,
 } from '../mcp-proxy/resolve-agent-identity.js';
 import type { PortalToolSelector } from '../portal-access-policy.js';
+import { decodePortalMasterKey } from '../portal-auth/agent-bearer-token.js';
 import { createUpstreamMcpClientRuntime } from '../upstream-mcp-client-runtime.js';
 
 type PortalNodeServer = ReturnType<typeof serve>;
@@ -367,6 +367,17 @@ export function deriveApprovalHmacKeysFromMasterKey(props: {
 	);
 }
 
+function credentialVersionsByAgent(
+	portalConfig: McpPortalConfig,
+): Readonly<Record<string, number>> {
+	return Object.fromEntries(
+		Object.entries(portalConfig.agents).map(([agentId, agent]) => [
+			agentId,
+			agent.credentialVersion ?? 1,
+		]),
+	);
+}
+
 export async function startPortalServer(
 	props: StartPortalServerProps,
 ): Promise<{ readonly close: () => Promise<void>; readonly port: number }> {
@@ -397,7 +408,10 @@ export async function startPortalServer(
 	});
 	const agentRecords = createPortalAgentRuntimeRecords({ hmacKeys, portalConfig });
 	const upstreamServers = await resolveUpstreamServers({ config: mcpConfig, resolveSecret });
-	const upstreamRuntime = createUpstreamMcpClientRuntime({ servers: upstreamServers });
+	const upstreamRuntime = createUpstreamMcpClientRuntime({
+		additionalRedactionValues: [masterKey.toString('base64url')],
+		servers: upstreamServers,
+	});
 	const profilePolicyMaps = buildProfilePolicyMaps(portalConfig);
 	const verifyApproval = createPortalApprovalVerifier({
 		records: agentRecords,
@@ -421,6 +435,7 @@ export async function startPortalServer(
 	const app = createPortalHttpApp({
 		agentBearerAuth: {
 			authorizationHeaderName: proxyStartup.mcpProxy.auth.headerName,
+			credentialVersionsByAgent: credentialVersionsByAgent(portalConfig),
 			masterKey,
 		},
 		core,

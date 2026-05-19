@@ -34,7 +34,7 @@
 - Effective MCP Portal configs are rebuildable and live under `cacheDir`, not `stateDir`.
 - The gateway VM and portal adapters never receive `OP_SERVICE_ACCOUNT_TOKEN`, `OP_CONNECT_TOKEN`, `OP_SESSION`, or other 1Password process credentials.
 - Authored `source: "1password"` in MCP Portal configs is a host/controller instruction. The controller materializes it before gateway boot.
-- Managed OpenClaw portal config loads during gateway startup. The controller validates MCP provider network needs before boot: HTTP/SSE upstream provider hosts, stdio provider `requiredEgressHosts`, and `http-mediation` secret hosts must be allowed for gateway egress. The materializer reports required hosts but does not silently mutate `zone.egressHosts`; init/migrate may scaffold config, while startup validate fails closed. Managed OpenClaw opens no MCP Portal-specific ingress route.
+- Managed OpenClaw portal config loads during gateway startup. The controller derives MCP provider network needs before boot: HTTP/SSE upstream provider hosts, stdio provider `requiredEgressHosts`, and `http-mediation` secret hosts are folded into the effective gateway egress used to boot the VM. Authored `zone.egressHosts` remains deployment-owned input, but MCP Portal-required remote hosts are compiled into the runtime VM spec automatically. Loopback MCP provider URLs stay local and do not create external egress. Managed OpenClaw opens no MCP Portal-specific ingress route.
 - HMAC bearer verification is stateless. Per-agent bearer revocation requires rotating `externalAuth.masterKey`, which invalidates all derived credentials that share that master-key fingerprint.
 - `externalAuth.masterKey` values resolve to canonical base64url-encoded key material and must decode to at least 32 bytes before bearer or approval HMAC keys are derived. Do not interpret master-key secrets as arbitrary UTF-8 strings.
 - `agent-vm-mcp-portal serve` is hard-cut to `/mcp-proxy` only. Legacy shared-header `server.accessHeader` startup, `serverAccess` HTTP auth, and `MCP_PORTAL_SERVER_SECRET` are removed from the external proxy path.
@@ -146,8 +146,8 @@ Operator CLI
 - Writes effective config under `<cacheDir>/gateways/<zoneId>/mcp-portal-effective`.
 - Passes the VM path `/home/openclaw/.openclaw/cache/mcp-portal-effective` to the OpenClaw plugin.
 - Injects generated runtime env secrets and generated runtime mediated secrets into the gateway VM spec.
-- Validates required gateway egress hosts from MCP HTTP/SSE provider URLs, explicit stdio provider `requiredEgressHosts`, and `http-mediation` secret policies before boot.
-- Does not ask Gondolin or the SDK to infer network access from MCP config. It compiles authored `zone.egressHosts` into Gondolin `allowedHosts`; missing MCP Portal hosts are validation errors.
+- Compiles required gateway egress hosts from MCP HTTP/SSE provider URLs, explicit stdio provider `requiredEgressHosts`, and `http-mediation` secret policies before boot.
+- Does not ask Gondolin or the SDK to infer network access from MCP config. It compiles authored `zone.egressHosts` plus MCP Portal-required remote provider/secret hosts into Gondolin `allowedHosts`.
 - Must not open portal-specific ingress for managed OpenClaw.
 
 ---
@@ -1185,8 +1185,8 @@ Prove:
 - materializer outputs runtime env secrets for `injection: "env"`.
 - materializer outputs runtime mediated secrets for `injection: "http-mediation"`.
 - materializer fails loudly when `secretResolver.resolveAll(...)` omits an expected generated env name or returns an empty string; it must never inject `""` as a fallback secret value.
-- materializer reports required gateway egress hosts for HTTP/SSE provider URLs, explicit provider `requiredEgressHosts`, and mediated-secret hosts but does not edit `zone.egressHosts`.
-- startup validation fails closed when a required gateway egress host is missing from `zone.egressHosts` for audience `gateway`.
+- materializer reports required gateway egress hosts for HTTP/SSE provider URLs, explicit provider `requiredEgressHosts`, and mediated-secret hosts without editing the authored `zone.egressHosts`.
+- startup merges reported remote hosts into the effective lifecycle zone egress before building the OpenClaw VM spec.
 - effective files are written under `<cacheDir>/gateways/<zoneId>/mcp-portal-effective`.
 
 Add these concrete tests to `packages/agent-vm/src/gateway/mcp-portal-effective-config.test.ts` before implementing the materializer:
@@ -1200,7 +1200,8 @@ Add these concrete tests to `packages/agent-vm/src/gateway/mcp-portal-effective-
 - `planMcpPortalEffectiveConfig includes mediated secret hosts as required gateway egress`: authored stdio provider has `env.TAVILY_API_KEY.source = "1password"` and `secretPolicies.TAVILY_API_KEY = { injection: "http-mediation", hosts: ["api.tavily.com"] }`; expected `requiredGatewayEgressHosts` contains `api.tavily.com`.
 - `planMcpPortalEffectiveConfig deduplicates required gateway egress hosts`: authored HTTP provider URL host and mediated secret host both use `api.linear.app`; expected `requiredGatewayEgressHosts` contains `api.linear.app` once.
 - `planMcpPortalEffectiveConfig rejects wildcard, empty, or malformed provider or mediated hosts`: examples `*.example.com`, `""`, and `"https://api.example.com/path"` fail with a message naming the provider or secret policy and host.
-- `planMcpPortalEffectiveConfig keeps network policy read-only`: mutate neither the authored MCP config object nor a supplied `zone.egressHosts` fixture; the materializer only reports `requiredGatewayEgressHosts`.
+- `planMcpPortalEffectiveConfig keeps authored network policy read-only`: mutate neither the authored MCP config object nor a supplied `zone.egressHosts` fixture; the materializer only reports `requiredGatewayEgressHosts`.
+- `planMcpPortalEffectiveConfig ignores loopback provider URLs for external egress`: authored HTTP/SSE provider URLs on `127.0.0.1`, `localhost`, or `::1` add no `requiredGatewayEgressHosts`.
 - `writeMcpPortalEffectiveConfig generates provider-scoped secret env names`: two providers with a header named `authorization` become distinct refs such as `AGENT_VM_MCP_LINEAR_AUTHORIZATION` and `AGENT_VM_MCP_NOTION_AUTHORIZATION`.
 - `writeMcpPortalEffectiveConfig materializes authored environment provider secrets`: authored `{ source: "environment", name: "LINEAR_MCP_TOKEN" }` is resolved by the shared resolver and rewritten to a generated `AGENT_VM_MCP_LINEAR_AUTHORIZATION` ref in the effective MCP config.
 - `writeMcpPortalEffectiveConfig rejects missing resolved secret values`: fake resolver returns `{}` for an expected `AGENT_VM_MCP_*` name; expected error names that env name and no effective file is treated as valid.
@@ -1286,22 +1287,23 @@ For mediated secrets, the VM env value is the Gondolin placeholder generated by 
 
 In `gateway-zone-orchestrator.ts`:
 
-- add a failing test to `packages/agent-vm/src/gateway/gateway-zone-orchestrator.test.ts` named `fails before OpenClaw lifecycle when MCP Portal requires undeclared gateway egress`.
+- add a passing test to `packages/agent-vm/src/gateway/gateway-zone-orchestrator.test.ts` named `adds MCP Portal upstream hosts to effective gateway egress`.
   - authored MCP config: HTTP provider URL `https://mcp.deepwiki.com/mcp`
-  - zone `egressHosts`: does not include `mcp.deepwiki.com` with audience `gateway` or `both`
-  - expected: startup throws `mcp-portal: required gateway egress host 'mcp.deepwiki.com' is missing from zones[].egressHosts`
-  - expected: lifecycle `buildVmSpec(...)` and `createManagedVm(...)` are not called.
-- add a passing test named `passes MCP Portal required egress when zone declares gateway audience`.
+  - zone `egressHosts`: does not include `mcp.deepwiki.com`
+  - expected: startup reaches lifecycle `buildVmSpec(...)`
+  - expected: `createManagedVm(...)` receives `allowedHosts` containing `mcp.deepwiki.com`.
+- add a passing test named `does not duplicate MCP Portal upstream hosts declared for gateway egress`.
   - authored MCP config: HTTP provider URL `https://mcp.deepwiki.com/mcp`
   - zone `egressHosts`: includes `{ host: "mcp.deepwiki.com", audience: "gateway" }`
-  - expected: startup reaches lifecycle `buildVmSpec(...)`.
-- add a passing test named `passes MCP Portal required egress when zone declares both audience`.
-  - zone `egressHosts`: includes `{ host: "mcp.deepwiki.com", audience: "both" }`
-  - expected: startup reaches lifecycle `buildVmSpec(...)`.
+  - expected: `createManagedVm(...)` receives `allowedHosts` containing `mcp.deepwiki.com` only once.
+- add a passing test named `keeps loopback MCP Portal provider URLs out of gateway egress`.
+  - authored MCP config: HTTP provider URL `http://127.0.0.1:18791/mcp`
+  - expected: startup reaches lifecycle `buildVmSpec(...)`
+  - expected: `createManagedVm(...)` does not receive `127.0.0.1` or `localhost` as generated allowed hosts.
 - if `zone.gateway.type === "openclaw"` and `zone.mcpPortal` exists, materialize configs before resolving the VM spec
 - write effective configs under `path.join(systemConfig.cacheDir, 'gateways', zone.id, 'mcp-portal-effective')`
 - use VM path `/home/openclaw/.openclaw/cache/mcp-portal-effective`
-- validate every `requiredGatewayEgressHosts` entry is present in `zone.egressHosts` with `audience: "gateway"` before calling the OpenClaw lifecycle
+- merge every remote `requiredGatewayEgressHosts` entry missing from gateway/both `zone.egressHosts` into the lifecycle zone with `audience: "gateway"` before calling the OpenClaw lifecycle
 - merge runtime environment and mediated secrets into lifecycle zone
 - pass `runtimePluginConfigs['mcp-portal'].configDir` to OpenClaw
 - do not create `runtimeMcpServers`
@@ -1555,8 +1557,8 @@ Add tests proving validate fails for:
 - stdio provider `1password` env secret without explicit `secretPolicies`
 - `http-mediation` secret policy without hosts when host cannot be inferred
 - effective materialization that would leave `source: "1password"` in either effective config
-- HTTP/SSE MCP provider URL host missing from `zone.egressHosts` for audience `gateway`
-- mediated-secret host missing from `zone.egressHosts` for audience `gateway`
+- HTTP/SSE MCP provider URL hosts are reported by the materializer and added to effective gateway egress
+- mediated-secret hosts are reported by the materializer and added to effective gateway egress
 
 Validate must not require live 1Password access.
 
@@ -1570,7 +1572,7 @@ Validation should:
 - use a shape-only secret resolver that returns deterministic placeholders and never calls live 1Password
 - avoid writing effective config files
 - verify all effective secret refs become environment refs
-- verify required provider and mediation egress hosts are present in `zone.egressHosts` for audience `gateway`
+- verify required provider and mediation egress hosts appear in the effective gateway egress plan
 - verify no OpenClaw portal MCP-registry entries are authored or required for managed native mode
 
 Add named checks:

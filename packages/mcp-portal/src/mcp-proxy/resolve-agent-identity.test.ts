@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { hashCallArguments, signApprovalToken } from '../auth/hmac-token.js';
 import type { PortalToolRecord } from '../catalog-types.js';
 import type { JsonObject } from '../json-schema.js';
+import { hashCallArguments, signApprovalToken } from '../portal-auth/hmac-token.js';
 import {
 	createPortalApprovalVerifier,
 	type PortalAgentRuntimeRecord,
@@ -211,5 +211,62 @@ describe('createPortalApprovalVerifier', () => {
 				'not.a.real.token',
 			),
 		).toEqual({ kind: 'approval_token_invalid', reason: 'malformed' });
+	});
+
+	it('rejects replayed approval tokens after the first successful use', () => {
+		const verifier = createVerifier();
+		const calls = [
+			createCall({
+				arguments: { id: 'ISSUE-1' },
+				namespace: 'github',
+				toolName: 'delete_issue',
+			}),
+		];
+		const token = signApprovalToken({
+			agentId: 'shravan',
+			calls: calls.map((call) => ({
+				argumentsHash: hashCallArguments(call.arguments),
+				namespace: call.namespace,
+				toolName: call.toolName,
+			})),
+			expiresAtMs: Date.now() + 60_000,
+			jti: 'approval-replay',
+			key: hmacKey,
+		});
+
+		expect(verifier(calls, 'shravan', token)).toEqual({ kind: 'allow' });
+		expect(verifier(calls, 'shravan', token)).toEqual({
+			kind: 'approval_token_invalid',
+			reason: 'replayed',
+		});
+	});
+
+	it('rejects approval tokens with signer-chosen lifetime above the verifier cap', () => {
+		const verifier = createVerifier();
+		const calls = [
+			createCall({
+				arguments: { id: 'ISSUE-1' },
+				namespace: 'github',
+				toolName: 'delete_issue',
+			}),
+		];
+		const issuedAtMs = Date.now();
+		const token = signApprovalToken({
+			agentId: 'shravan',
+			calls: calls.map((call) => ({
+				argumentsHash: hashCallArguments(call.arguments),
+				namespace: call.namespace,
+				toolName: call.toolName,
+			})),
+			expiresAtMs: issuedAtMs + 10 * 60_000,
+			issuedAtMs,
+			jti: 'approval-too-long',
+			key: hmacKey,
+		});
+
+		expect(verifier(calls, 'shravan', token)).toEqual({
+			kind: 'approval_token_invalid',
+			reason: 'ttl-exceeded',
+		});
 	});
 });

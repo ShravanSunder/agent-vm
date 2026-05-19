@@ -38,6 +38,8 @@ describe('signApprovalToken / verifyApprovalToken', () => {
 			agentId: 'shravan',
 			calls: [sampleCallDigest],
 			expiresAtMs: 20_000,
+			issuedAtMs: 10_000,
+			jti: 'approval-1',
 			key: testKey,
 		});
 
@@ -57,6 +59,8 @@ describe('signApprovalToken / verifyApprovalToken', () => {
 			agentId: 'shravan',
 			calls: [sampleCallDigest],
 			expiresAtMs: 10_000,
+			issuedAtMs: 1_000,
+			jti: 'approval-expired',
 			key: testKey,
 		});
 
@@ -76,6 +80,8 @@ describe('signApprovalToken / verifyApprovalToken', () => {
 			agentId: 'other-agent',
 			calls: [sampleCallDigest],
 			expiresAtMs: 20_000,
+			issuedAtMs: 10_000,
+			jti: 'approval-agent',
 			key: testKey,
 		});
 
@@ -95,6 +101,8 @@ describe('signApprovalToken / verifyApprovalToken', () => {
 			agentId: 'shravan',
 			calls: [sampleCallDigest],
 			expiresAtMs: 20_000,
+			issuedAtMs: 10_000,
+			jti: 'approval-calls',
 			key: testKey,
 		});
 
@@ -151,6 +159,8 @@ describe('signApprovalToken / verifyApprovalToken', () => {
 			agentId: 'shravan',
 			calls: [sampleCallDigest],
 			expiresAtMs: 20_000,
+			issuedAtMs: 10_000,
+			jti: 'approval-signature',
 			key: testKey,
 		});
 		const [payloadEncoded] = token.split('.');
@@ -167,5 +177,60 @@ describe('signApprovalToken / verifyApprovalToken', () => {
 				token: `${payloadEncoded}.not-the-signature`,
 			}),
 		).toEqual({ ok: false, reason: 'signature-mismatch' });
+	});
+
+	it('rejects tokens whose signer-chosen lifetime exceeds the verifier cap', () => {
+		const token = signApprovalToken({
+			agentId: 'shravan',
+			calls: [sampleCallDigest],
+			expiresAtMs: 20_001,
+			issuedAtMs: 10_000,
+			jti: 'approval-long-lived',
+			key: testKey,
+		});
+
+		expect(
+			verifyApprovalToken({
+				agentId: 'shravan',
+				calls: [sampleCallDigest],
+				key: testKey,
+				maxLifetimeMs: 10_000,
+				nowMs: 10_001,
+				token,
+			}),
+		).toEqual({ ok: false, reason: 'ttl-exceeded' });
+	});
+
+	it('rejects replayed token identifiers through the verifier consumed-token hook', () => {
+		const token = signApprovalToken({
+			agentId: 'shravan',
+			calls: [sampleCallDigest],
+			expiresAtMs: 20_000,
+			issuedAtMs: 10_000,
+			jti: 'approval-replay',
+			key: testKey,
+		});
+		const consumed = new Set<string>();
+		const consumeTokenId = (jti: string): boolean => {
+			if (consumed.has(jti)) {
+				return false;
+			}
+			consumed.add(jti);
+			return true;
+		};
+		const verificationProps = {
+			agentId: 'shravan',
+			calls: [sampleCallDigest],
+			consumeTokenId,
+			key: testKey,
+			nowMs: 10_001,
+			token,
+		};
+
+		expect(verifyApprovalToken(verificationProps)).toEqual({ ok: true });
+		expect(verifyApprovalToken(verificationProps)).toEqual({
+			ok: false,
+			reason: 'replayed',
+		});
 	});
 });

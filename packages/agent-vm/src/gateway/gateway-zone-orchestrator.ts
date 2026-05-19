@@ -170,7 +170,12 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 	readonly secretResolver: StartGatewayZoneOptions['secretResolver'];
 	readonly zone: GatewayZone;
 }): Promise<
-	Pick<GatewayZoneConfig, 'runtimeEnvironment' | 'runtimeMediatedSecrets' | 'runtimePluginConfigs'>
+	Partial<
+		Pick<
+			GatewayZoneConfig,
+			'egressHosts' | 'runtimeEnvironment' | 'runtimeMediatedSecrets' | 'runtimePluginConfigs'
+		>
+	>
 > {
 	const zone = props.zone;
 	if (zone.gateway.type !== 'openclaw' || zone.mcpPortal === undefined) {
@@ -195,14 +200,11 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 			.filter((entry) => entry.audience === 'gateway' || entry.audience === 'both')
 			.map((entry) => entry.host),
 	);
-	for (const host of materialization.requiredGatewayEgressHosts) {
-		if (!declaredGatewayHosts.has(host)) {
-			throw new Error(
-				`mcp-portal: required gateway egress host '${host}' is missing from zones[].egressHosts`,
-			);
-		}
-	}
+	const generatedGatewayEgressHosts = materialization.requiredGatewayEgressHosts
+		.filter((host) => !declaredGatewayHosts.has(host))
+		.map((host) => ({ audience: 'gateway' as const, host }));
 	return {
+		egressHosts: [...zone.egressHosts, ...generatedGatewayEgressHosts],
 		runtimeEnvironment: materialization.runtimeEnvironment,
 		runtimeMediatedSecrets: materialization.runtimeMediatedSecrets,
 		runtimePluginConfigs: {
@@ -227,6 +229,7 @@ export async function startGatewayZone(
 	const lifecycleZone = {
 		...mappedLifecycleZone,
 		...mcpPortalMaterialization,
+		egressHosts: mcpPortalMaterialization.egressHosts ?? mappedLifecycleZone.egressHosts,
 		...(options.runtimeEnvironment === undefined
 			? {}
 			: {

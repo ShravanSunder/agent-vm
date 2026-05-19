@@ -7,9 +7,12 @@ import {
 	type SecretValue,
 } from '@agent-vm/config-contracts';
 
-import { hashCallArguments, verifyApprovalToken } from '../auth/hmac-token.js';
 import type { PortalApprovalCall } from '../core/portal-tools.js';
 import { createPortalAgentIdentity } from '../portal-access-policy.js';
+import { hashCallArguments, verifyApprovalToken } from '../portal-auth/hmac-token.js';
+
+const approvalTokenMaxLifetimeMs = 5 * 60_000;
+const approvalTokenReplayCacheLimit = 4_096;
 
 export interface ResolveAgentHmacKeysProps {
 	readonly agents: Readonly<Record<string, McpPortalAgentConfig>>;
@@ -131,6 +134,24 @@ export function createPortalApprovalVerifier(props: {
 	| { readonly kind: 'allow' }
 	| { readonly kind: 'approval_token_invalid'; readonly reason: string }
 	| { readonly kind: 'approval_token_missing' } {
+	const consumedApprovalTokenIds = new Map<string, number>();
+	const consumeTokenId = (agentId: string, jti: string, expiresAtMs: number): boolean => {
+		const nowMs = Date.now();
+		for (const [tokenKey, tokenExpiresAtMs] of consumedApprovalTokenIds) {
+			if (
+				tokenExpiresAtMs <= nowMs ||
+				consumedApprovalTokenIds.size > approvalTokenReplayCacheLimit
+			) {
+				consumedApprovalTokenIds.delete(tokenKey);
+			}
+		}
+		const tokenKey = `${agentId}\n${jti}`;
+		if (consumedApprovalTokenIds.has(tokenKey)) {
+			return false;
+		}
+		consumedApprovalTokenIds.set(tokenKey, expiresAtMs);
+		return true;
+	};
 	return (calls, agentId, token) => {
 		const record = props.records.get(agentId);
 		if (record === undefined) {
@@ -148,7 +169,10 @@ export function createPortalApprovalVerifier(props: {
 		const verificationProps = {
 			agentId,
 			calls: approvalTokenCallDigests(callsRequiringApproval),
+			consumeTokenId: (jti: string, expiresAtMs: number) =>
+				consumeTokenId(agentId, jti, expiresAtMs),
 			key: record.hmacKey,
+			maxLifetimeMs: approvalTokenMaxLifetimeMs,
 			nowMs: Date.now(),
 			token,
 		};

@@ -681,7 +681,7 @@ describe('startGatewayZone', () => {
 		expect(lifecycleZones[0]?.runtimeMcpServers).toBeUndefined();
 	});
 
-	it('rejects MCP Portal upstream hosts that are missing from gateway egress', async () => {
+	it('adds MCP Portal upstream hosts to effective gateway egress', async () => {
 		const systemConfig = createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
@@ -698,36 +698,48 @@ describe('startGatewayZone', () => {
 			},
 			schemaVersion: 1,
 		});
-		const buildImage = vi.fn(async () => ({
-			built: true,
-			fingerprint: 'fp',
-			imagePath: '/tmp/img',
-		}));
+		const managedVm: ManagedVm = {
+			id: 'vm-mcp-generated-egress',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
+			setIngressRoutes: vi.fn(),
+		};
+		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
 
-		await expect(
-			startGatewayZone(
-				{
-					secretResolver: createOpenClawSecretResolver({
-						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
-					}),
-					systemConfig,
-					zoneId: 'shravan',
-					zoneOverride: {
-						...baseZone,
-						mcpPortal: { configDir },
-					},
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+				zoneOverride: {
+					...baseZone,
+					mcpPortal: { configDir },
 				},
-				{
-					buildImage,
-					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
-				},
-			),
-		).rejects.toThrow(/mcp\.deepwiki\.com.*zones\[\]\.egressHosts/u);
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
 
-		expect(buildImage).not.toHaveBeenCalled();
+		expect(createManagedVm).toHaveBeenCalledWith(
+			expect.objectContaining({
+				allowedHosts: expect.arrayContaining(['mcp.deepwiki.com']),
+			}),
+		);
 	});
 
-	it('allows MCP Portal upstream hosts declared for gateway egress', async () => {
+	it('does not duplicate MCP Portal upstream hosts declared for gateway egress', async () => {
 		const systemConfig = createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
@@ -753,7 +765,7 @@ describe('startGatewayZone', () => {
 			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
 			setIngressRoutes: vi.fn(),
 		};
-		const createManagedVm = vi.fn(async () => managedVm);
+		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
 
 		await startGatewayZone(
 			{
@@ -782,6 +794,70 @@ describe('startGatewayZone', () => {
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
 				allowedHosts: expect.arrayContaining(['mcp.deepwiki.com']),
+			}),
+		);
+		const createManagedVmCall = createManagedVm.mock.calls[0];
+		if (!createManagedVmCall) {
+			throw new Error('Expected gateway VM creation call');
+		}
+		const [vmOptions] = createManagedVmCall as [{ readonly allowedHosts: readonly string[] }];
+		expect(vmOptions.allowedHosts.filter((host) => host === 'mcp.deepwiki.com')).toHaveLength(1);
+	});
+
+	it('keeps loopback MCP Portal provider URLs out of gateway egress', async () => {
+		const systemConfig = createSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const configDir = path.dirname(baseZone.gateway.config);
+		writeMinimalMcpPortalConfigs(configDir, {
+			providers: {
+				local_proxy: {
+					kind: 'mcp',
+					namespace: 'local_proxy',
+					transport: { kind: 'streamable-http', url: 'http://127.0.0.1:18791/mcp' },
+				},
+			},
+			schemaVersion: 1,
+		});
+		const managedVm: ManagedVm = {
+			id: 'vm-mcp-loopback',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28292)),
+			setIngressRoutes: vi.fn(),
+		};
+		const createManagedVm = vi.fn(async () => managedVm);
+
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+				zoneOverride: {
+					...baseZone,
+					mcpPortal: { configDir },
+				},
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(createManagedVm).toHaveBeenCalledWith(
+			expect.objectContaining({
+				allowedHosts: expect.not.arrayContaining(['127.0.0.1', 'localhost']),
 			}),
 		);
 	});

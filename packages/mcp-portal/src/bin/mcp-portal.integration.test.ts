@@ -12,8 +12,8 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { deriveAgentBearerToken } from '../auth/agent-bearer-token.js';
-import { hashCallArguments, signApprovalToken } from '../auth/hmac-token.js';
+import { deriveAgentBearerToken } from '../portal-auth/agent-bearer-token.js';
+import { hashCallArguments, signApprovalToken } from '../portal-auth/hmac-token.js';
 import {
 	startFakeUpstreamMcpServer,
 	type StartedFakeUpstreamMcpServer,
@@ -183,7 +183,7 @@ async function startPortalProcess(props: {
 	readonly port: number;
 }): Promise<StartedPortalProcess> {
 	const binPath = join(process.cwd(), 'node_modules/.bin/tsx');
-	const sourcePath = join(process.cwd(), 'packages/mcp-portal/src/bin/agent-vm-mcp-portal.ts');
+	const sourcePath = join(process.cwd(), 'packages/mcp-portal/src/bin/mcp-portal.ts');
 	await access(binPath);
 	await access(sourcePath);
 	const output: ChildOutput = { stderr: '', stdout: '' };
@@ -279,7 +279,7 @@ describe('portal proxy CLI integration', () => {
 	let upstreamServer: StartedUpstreamServer | null = null;
 
 	beforeAll(async () => {
-		configDir = await mkdtemp(join(tmpdir(), 'agent-vm-mcp-portal-proxy-'));
+		configDir = await mkdtemp(join(tmpdir(), 'mcp-portal-proxy-'));
 		upstreamServer = await startFakeUpstreamMcpServer({ emitProgress: true });
 		portalPort = await findOpenPort();
 		await writeConfigFiles({

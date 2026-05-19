@@ -9,8 +9,7 @@ Comments are allowed in authored config. Runtime files that the controller
 writes, including effective worker config, runtime records, API bodies, and
 task event logs, remain strict JSON/JSONL.
 
-New scaffolds and `agent-vm migrate mcp-portal` write deployment-local JSON
-Schema files under `config/schemas/`:
+New scaffolds write deployment-local JSON Schema files under `config/schemas/`:
 
 - `system.schema.json`
 - `mcp.schema.json`

@@ -101,6 +101,38 @@ describe('MCP Portal effective config materialization', () => {
 		expect(zoneEgressHosts).toEqual([{ audience: 'gateway', host: 'api.openai.com' }]);
 	});
 
+	it('does not report loopback HTTP provider URLs as external gateway egress', async () => {
+		const authoredDir = await createAuthoredDir({
+			mcpConfig: {
+				providers: {
+					local_proxy: {
+						kind: 'mcp',
+						namespace: 'local_proxy',
+						transport: { kind: 'streamable-http', url: 'http://127.0.0.1:18791/mcp' },
+					},
+					localhost_proxy: {
+						kind: 'mcp',
+						namespace: 'localhost_proxy',
+						transport: { kind: 'sse', url: 'http://localhost:18792/sse' },
+					},
+				},
+				schemaVersion: 1,
+			},
+		});
+
+		await expect(
+			planMcpPortalEffectiveConfig({
+				authoredConfigDir: authoredDir,
+				effectiveHostConfigDir: path.join(authoredDir, 'effective'),
+				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
+				secretResolver: createSecretResolver({}),
+				zoneId: 'shravan',
+			}),
+		).resolves.toMatchObject({
+			requiredGatewayEgressHosts: [],
+		});
+	});
+
 	it('reports SSE provider URL hosts as required gateway egress', async () => {
 		const authoredDir = await createAuthoredDir({
 			mcpConfig: {
@@ -637,7 +669,7 @@ describe('MCP Portal effective config materialization', () => {
 						kind: 'mcp',
 						namespace: 'tavily',
 						secretPolicies: {
-							TAVILY_API_KEY: { hosts: ['api.tavily.com'], injection: 'env' },
+							TAVILY_API_KEY: { hosts: [], injection: 'env' },
 						},
 						transport: {
 							args: ['-y', 'tavily-mcp'],

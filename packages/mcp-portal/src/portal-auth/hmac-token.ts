@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
 import { z } from 'zod';
 
@@ -12,6 +12,8 @@ export interface SignApprovalTokenProps {
 	readonly agentId: string;
 	readonly calls: readonly ApprovalTokenCallDigest[];
 	readonly expiresAtMs: number;
+	readonly issuedAtMs?: number;
+	readonly jti?: string;
 	readonly key: Buffer;
 }
 
@@ -19,6 +21,8 @@ export interface VerifyApprovalTokenProps {
 	readonly agentId: string;
 	readonly calls: readonly ApprovalTokenCallDigest[];
 	readonly key: Buffer;
+	readonly consumeTokenId?: (jti: string, expiresAtMs: number) => boolean;
+	readonly maxLifetimeMs?: number;
 	readonly nowMs: number;
 	readonly token: string;
 }
@@ -32,7 +36,9 @@ export type VerifyApprovalTokenResult =
 				| 'call-mismatch'
 				| 'expired'
 				| 'malformed'
-				| 'signature-mismatch';
+				| 'replayed'
+				| 'signature-mismatch'
+				| 'ttl-exceeded';
 	  };
 
 const approvalTokenCallDigestSchema = z
@@ -48,6 +54,8 @@ const approvalTokenPayloadSchema = z
 		agentId: z.string().min(1),
 		calls: z.array(approvalTokenCallDigestSchema),
 		exp: z.number().int(),
+		iat: z.number().int(),
+		jti: z.string().min(1),
 	})
 	.strict();
 
@@ -81,6 +89,8 @@ export function signApprovalToken(props: SignApprovalTokenProps): string {
 		agentId: props.agentId,
 		calls: [...props.calls],
 		exp: props.expiresAtMs,
+		iat: props.issuedAtMs ?? Date.now(),
+		jti: props.jti ?? randomUUID(),
 	} satisfies ApprovalTokenPayload;
 	const payloadEncoded = base64UrlEncode(canonicalize(payload));
 	const signature = createHmac('sha256', props.key).update(payloadEncoded).digest('base64url');
@@ -141,11 +151,17 @@ export function verifyApprovalToken(props: VerifyApprovalTokenProps): VerifyAppr
 	if (payload.exp <= props.nowMs) {
 		return { ok: false, reason: 'expired' };
 	}
+	if (props.maxLifetimeMs !== undefined && payload.exp - payload.iat > props.maxLifetimeMs) {
+		return { ok: false, reason: 'ttl-exceeded' };
+	}
 	if (payload.agentId !== props.agentId) {
 		return { ok: false, reason: 'agent-mismatch' };
 	}
 	if (!callsMatch(payload.calls, props.calls)) {
 		return { ok: false, reason: 'call-mismatch' };
+	}
+	if (props.consumeTokenId !== undefined && !props.consumeTokenId(payload.jti, payload.exp)) {
+		return { ok: false, reason: 'replayed' };
 	}
 	return { ok: true };
 }

@@ -117,12 +117,16 @@ export type McpPortalProxyConfig = z.infer<typeof mcpPortalProxySchema>;
 
 export const mcpPortalAgentConfigSchema = z
 	.object({
+		credentialVersion: z.number().int().positive().default(1),
 		profile: z.string().min(1),
 		hmacKey: secretValueSchema.optional(),
 	})
 	.strict();
 
-export type McpPortalAgentConfig = z.infer<typeof mcpPortalAgentConfigSchema>;
+type ParsedMcpPortalAgentConfig = z.infer<typeof mcpPortalAgentConfigSchema>;
+export type McpPortalAgentConfig = Omit<ParsedMcpPortalAgentConfig, 'credentialVersion'> & {
+	readonly credentialVersion?: number;
+};
 
 export const mcpPortalConfigSchema = z
 	.object({
@@ -144,7 +148,10 @@ export const mcpPortalConfigSchema = z
 		}
 	});
 
-export type McpPortalConfig = z.infer<typeof mcpPortalConfigSchema>;
+type ParsedMcpPortalConfig = z.infer<typeof mcpPortalConfigSchema>;
+export type McpPortalConfig = Omit<ParsedMcpPortalConfig, 'agents'> & {
+	readonly agents: Readonly<Record<string, McpPortalAgentConfig>>;
+};
 
 export const openClawMcpPortalPluginConfigSchema = z
 	.object({

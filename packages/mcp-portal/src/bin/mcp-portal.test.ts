@@ -7,12 +7,15 @@ import { fileURLToPath } from 'node:url';
 import { createStaticSecretResolver } from '@agent-vm/secrets';
 import { describe, expect, it, vi } from 'vitest';
 
-import { deriveAgentBearerToken, formatMasterKeyFingerprint } from '../auth/agent-bearer-token.js';
+import {
+	deriveAgentBearerToken,
+	formatMasterKeyFingerprint,
+} from '../portal-auth/agent-bearer-token.js';
 import {
 	fakeUpstreamNamespace,
 	startFakeUpstreamMcpServer,
 } from '../testing/fake-upstream-mcp-server.js';
-import { runAgentVmMcpPortal, waitUntilPortalServerShutdown } from './agent-vm-mcp-portal.js';
+import { runMcpPortal, waitUntilPortalServerShutdown } from './mcp-portal.js';
 
 class FakeSignalTarget {
 	private readonly emitter = new EventEmitter();
@@ -33,7 +36,7 @@ class FakeSignalTarget {
 const externalMasterKey = Buffer.from('0123456789abcdef0123456789abcdef');
 const externalMasterKeyText = externalMasterKey.toString('base64url');
 
-describe('agent-vm-mcp-portal CLI', () => {
+describe('mcp-portal CLI', () => {
 	it('closes the serve runtime when a shutdown signal arrives', async () => {
 		const signalTarget = new FakeSignalTarget();
 		const close = vi.fn(async () => undefined);
@@ -49,7 +52,7 @@ describe('agent-vm-mcp-portal CLI', () => {
 	});
 
 	it('validates catalog files and reports wrapper metadata errors', async () => {
-		const workspace = await mkdtemp(join(tmpdir(), 'agent-vm-mcp-portal-'));
+		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-'));
 		try {
 			const validCatalogPath = join(workspace, 'catalog.json');
 			const invalidCatalogPath = join(workspace, 'invalid.json');
@@ -75,15 +78,15 @@ describe('agent-vm-mcp-portal CLI', () => {
 				}),
 			);
 
-			expect(await runAgentVmMcpPortal(['validate', validCatalogPath])).toBe(0);
-			expect(await runAgentVmMcpPortal(['validate', invalidCatalogPath])).toBe(1);
+			expect(await runMcpPortal(['validate', validCatalogPath])).toBe(0);
+			expect(await runMcpPortal(['validate', invalidCatalogPath])).toBe(1);
 		} finally {
 			await rm(workspace, { force: true, recursive: true });
 		}
 	});
 
 	it('generates catalog JSON and TypeScript helper files', async () => {
-		const workspace = await mkdtemp(join(tmpdir(), 'agent-vm-mcp-portal-'));
+		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-'));
 		try {
 			const catalogPath = join(workspace, 'catalog.json');
 			const outputDir = join(workspace, 'generated');
@@ -96,9 +99,7 @@ describe('agent-vm-mcp-portal CLI', () => {
 				}),
 			);
 
-			expect(await runAgentVmMcpPortal(['generate-helper', catalogPath, '--out', outputDir])).toBe(
-				0,
-			);
+			expect(await runMcpPortal(['generate-helper', catalogPath, '--out', outputDir])).toBe(0);
 			await expect(readFile(join(outputDir, 'catalog.json'), 'utf-8')).resolves.toContain(
 				'create_issue',
 			);
@@ -117,12 +118,12 @@ describe('agent-vm-mcp-portal CLI', () => {
 		};
 
 		expect(packageJson.bin).toEqual({
-			'agent-vm-mcp-portal': './dist/bin/agent-vm-mcp-portal.js',
+			'mcp-portal': './dist/bin/mcp-portal.js',
 		});
 	});
 
 	it('writes derived credentials only after an explicit master-key fingerprint match', async () => {
-		const workspace = await mkdtemp(join(tmpdir(), 'agent-vm-mcp-portal-credential-'));
+		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-credential-'));
 		const previousMasterKey = process.env.MCP_PORTAL_MASTER_KEY;
 		const stderrChunks: string[] = [];
 		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
@@ -150,7 +151,7 @@ describe('agent-vm-mcp-portal CLI', () => {
 			const bearer = deriveAgentBearerToken({ agentId: 'shravan', masterKey: externalMasterKey });
 
 			expect(
-				await runAgentVmMcpPortal([
+				await runMcpPortal([
 					'write-credential',
 					'--config-dir',
 					workspace,
@@ -186,7 +187,7 @@ describe('agent-vm-mcp-portal CLI', () => {
 	});
 
 	it('writes credentials with custom header names and explicit proxy URL overrides', async () => {
-		const workspace = await mkdtemp(join(tmpdir(), 'agent-vm-mcp-portal-credential-'));
+		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-credential-'));
 		const previousMasterKey = process.env.MCP_PORTAL_MASTER_KEY;
 		try {
 			process.env.MCP_PORTAL_MASTER_KEY = externalMasterKeyText;
@@ -209,7 +210,7 @@ describe('agent-vm-mcp-portal CLI', () => {
 			const bearer = deriveAgentBearerToken({ agentId: 'shravan', masterKey: externalMasterKey });
 
 			expect(
-				await runAgentVmMcpPortal([
+				await runMcpPortal([
 					'write-credential',
 					'--config-dir',
 					workspace,
@@ -245,7 +246,7 @@ describe('agent-vm-mcp-portal CLI', () => {
 	});
 
 	it('writes credentials with an explicit proxy URL when mcpProxy is absent', async () => {
-		const workspace = await mkdtemp(join(tmpdir(), 'agent-vm-mcp-portal-credential-'));
+		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-credential-'));
 		const previousMasterKey = process.env.MCP_PORTAL_MASTER_KEY;
 		try {
 			process.env.MCP_PORTAL_MASTER_KEY = externalMasterKeyText;
@@ -264,7 +265,7 @@ describe('agent-vm-mcp-portal CLI', () => {
 			const bearer = deriveAgentBearerToken({ agentId: 'shravan', masterKey: externalMasterKey });
 
 			expect(
-				await runAgentVmMcpPortal([
+				await runMcpPortal([
 					'write-credential',
 					'--config-dir',
 					workspace,
@@ -300,7 +301,7 @@ describe('agent-vm-mcp-portal CLI', () => {
 	});
 
 	it('refuses to write credentials when the master-key fingerprint differs', async () => {
-		const workspace = await mkdtemp(join(tmpdir(), 'agent-vm-mcp-portal-credential-'));
+		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-credential-'));
 		const previousMasterKey = process.env.MCP_PORTAL_MASTER_KEY;
 		try {
 			process.env.MCP_PORTAL_MASTER_KEY = externalMasterKeyText;
@@ -321,7 +322,7 @@ describe('agent-vm-mcp-portal CLI', () => {
 			);
 
 			expect(
-				await runAgentVmMcpPortal([
+				await runMcpPortal([
 					'write-credential',
 					'--config-dir',
 					workspace,
@@ -345,7 +346,7 @@ describe('agent-vm-mcp-portal CLI', () => {
 	});
 
 	it('writes credentials with a shared resolver for 1Password-backed master keys', async () => {
-		const workspace = await mkdtemp(join(tmpdir(), 'agent-vm-mcp-portal-credential-'));
+		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-credential-'));
 		const stderrChunks: string[] = [];
 		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
 			stderrChunks.push(String(chunk));
@@ -371,7 +372,7 @@ describe('agent-vm-mcp-portal CLI', () => {
 			const bearer = deriveAgentBearerToken({ agentId: 'shravan', masterKey: externalMasterKey });
 
 			expect(
-				await runAgentVmMcpPortal(
+				await runMcpPortal(
 					[
 						'write-credential',
 						'--config-dir',
@@ -404,7 +405,7 @@ describe('agent-vm-mcp-portal CLI', () => {
 	});
 
 	it('streams call progress to stderr and writes the final core result to stdout', async () => {
-		const workspace = await mkdtemp(join(tmpdir(), 'agent-vm-mcp-portal-call-'));
+		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-call-'));
 		const upstream = await startFakeUpstreamMcpServer();
 		const stdoutChunks: string[] = [];
 		const stderrChunks: string[] = [];
@@ -483,7 +484,7 @@ describe('agent-vm-mcp-portal CLI', () => {
 			);
 
 			expect(
-				await runAgentVmMcpPortal(
+				await runMcpPortal(
 					['call', '--config-dir', workspace, '--agent', 'shravan', '--input', inputPath],
 					{
 						env: {},

@@ -70,7 +70,8 @@ describe('upstream response middleware', () => {
 		const redacted = redactThrownError(upstreamError);
 
 		expect(redacted.name).toBe('McpError');
-		expect(redacted.cause).toBe(upstreamError);
+		expect(redacted.cause).not.toBe(upstreamError);
+		expect(String(redacted.cause)).not.toContain('super-secret');
 		expect(redacted.stack).toBe('McpError: request failed with [REDACTED]');
 		expect(redacted.message).toBe('request failed with [REDACTED]');
 		expect(Object.getOwnPropertyDescriptor(redacted, 'code')?.value).toBe('TRANSPORT_FAILURE');

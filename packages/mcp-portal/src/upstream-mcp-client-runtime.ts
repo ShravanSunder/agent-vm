@@ -13,7 +13,6 @@ import { ToolSchema, type Progress, type Tool } from '@modelcontextprotocol/sdk/
 
 import type { JsonObject } from './json-schema.js';
 import {
-	isCredentialConfigKey,
 	redactThrownError,
 	redactUpstreamCatalogValue,
 	redactUpstreamResponse,
@@ -154,7 +153,7 @@ function isTransport(value: unknown): value is Transport {
 }
 
 function createSdkClient(): UpstreamMcpClientLike {
-	const client = new Client({ name: 'agent-vm-mcp-portal', version: '1.0.0' });
+	const client = new Client({ name: 'mcp-portal', version: '1.0.0' });
 
 	return {
 		callTool: async (params, _resultSchema, options) =>
@@ -255,14 +254,10 @@ function transportAttempts(
 
 function redactionValuesFromServer(server: NormalizedUpstreamMcpServer): readonly string[] {
 	if (server.transport === 'stdio') {
-		return Object.entries(server.env ?? {})
-			.filter(([key, value]) => isCredentialConfigKey(key) && value.length > 0)
-			.map(([, value]) => value);
+		return Object.values(server.env ?? {}).filter((value) => value.length > 0);
 	}
 
-	return Object.entries(server.headers ?? {})
-		.filter(([key, value]) => isCredentialConfigKey(key) && value.length > 0)
-		.map(([, value]) => value);
+	return Object.values(server.headers ?? {}).filter((value) => value.length > 0);
 }
 
 function timeoutMsForServer(server: NormalizedUpstreamMcpServer): number {

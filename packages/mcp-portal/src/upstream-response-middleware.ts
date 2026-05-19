@@ -139,7 +139,17 @@ export function redactThrownError(error: unknown, options: RedactionOptions = {}
 		return new Error(redactCredentialText(message, options));
 	}
 
-	const redactedError = new Error(redactCredentialText(message, options), { cause: error });
+	const rawCause = 'cause' in error ? error.cause : undefined;
+	const redactedCause =
+		rawCause === undefined || rawCause === error
+			? undefined
+			: rawCause instanceof Error
+				? redactThrownError(rawCause, options)
+				: redactJsonValue(rawCause, options);
+	const redactedError =
+		redactedCause === undefined
+			? new Error(redactCredentialText(message, options))
+			: new Error(redactCredentialText(message, options), { cause: redactedCause });
 	redactedError.name = error.name;
 	if (error.stack) {
 		redactedError.stack = redactCredentialText(error.stack, options);

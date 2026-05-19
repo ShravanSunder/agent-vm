@@ -44,7 +44,23 @@ export const mcpSecretPolicySchema = z
 		hosts: z.array(z.string()).default([]),
 		injection: z.enum(['env', 'http-mediation']),
 	})
-	.strict();
+	.strict()
+	.superRefine((policy, context) => {
+		if (policy.injection === 'http-mediation' && policy.hosts.length === 0) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'http-mediation secret policies must declare at least one host.',
+				path: ['hosts'],
+			});
+		}
+		if (policy.injection === 'env' && policy.hosts.length > 0) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'env secret policies must not declare hosts.',
+				path: ['hosts'],
+			});
+		}
+	});
 
 export const mcpProviderSchema = z
 	.object({

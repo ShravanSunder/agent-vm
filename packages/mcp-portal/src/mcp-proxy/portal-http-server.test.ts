@@ -6,12 +6,12 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { describe, expect, it } from 'vitest';
 
-import { deriveAgentBearerToken } from '../auth/agent-bearer-token.js';
 import { createPortalCore, type PortalCore } from '../core/portal-core.js';
 import {
 	createPortalAgentIdentity as createPortalAgentIdentityBase,
 	type PortalAgentIdentity,
 } from '../portal-access-policy.js';
+import { deriveAgentBearerToken } from '../portal-auth/agent-bearer-token.js';
 import { createPortalHttpApp } from './portal-http-server.js';
 
 const masterKey = Buffer.from('master-key');
@@ -111,7 +111,7 @@ describe('portal HTTP server', () => {
 	});
 
 	it('requires the configured bearer header before handling agent MCP requests', async () => {
-		const customHeaderName = 'x-agent-vm-mcp-portal-bearer';
+		const customHeaderName = 'x-mcp-portal-bearer';
 		const app = createPortalHttpApp({
 			agentBearerAuth: { authorizationHeaderName: customHeaderName, masterKey },
 			core: createTestPortalCore(),
@@ -263,6 +263,60 @@ describe('portal HTTP server', () => {
 				// The server-side purge intentionally closes the transport out from under the client.
 			}
 		} finally {
+			await new Promise<void>((resolve, reject) => {
+				server.close((error) => {
+					if (error) {
+						reject(error);
+					} else {
+						resolve();
+					}
+				});
+			});
+		}
+	});
+
+	it('attempts every active session close before surfacing close errors', async () => {
+		let closeCallbackCount = 0;
+		const closedSessionIds: string[] = [];
+		const app = createPortalHttpApp({
+			agentBearerAuth: { authorizationHeaderName: 'authorization', masterKey },
+			core: createTestPortalCore(),
+			onSessionClosed: async (identity) => {
+				closeCallbackCount += 1;
+				if (closeCallbackCount === 1) {
+					closedSessionIds.push(identity.sessionId ?? 'missing-session-id');
+					throw new Error('first close failed');
+				}
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				closedSessionIds.push(identity.sessionId ?? 'missing-session-id');
+			},
+			resolveAgentIdentity: (agentId) =>
+				agentId === 'agent-a'
+					? createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-a' })
+					: null,
+		});
+		const server = serve({ fetch: app.fetch, port: 0 });
+		let clients: Client[] = [];
+		try {
+			const address = server.address() as AddressInfo;
+			clients = await Promise.all(
+				['portal-http-test-a', 'portal-http-test-b'].map(async (clientName) => {
+					const transport = new StreamableHTTPClientTransport(
+						new URL(`http://127.0.0.1:${address.port}/agents/agent-a/mcp`),
+						{ requestInit: { headers: { authorization: bearerAuthHeader('agent-a') } } },
+					);
+					const client = new Client({ name: clientName, version: '1.0.0' });
+					await client.connect(asClientTransport(transport));
+					return client;
+				}),
+			);
+
+			await expect(app.closePortalSessions()).rejects.toThrow(
+				/Failed to close one or more MCP Portal sessions/u,
+			);
+			expect(closedSessionIds).toHaveLength(2);
+		} finally {
+			await Promise.allSettled(clients.map(async (client) => await client.close()));
 			await new Promise<void>((resolve, reject) => {
 				server.close((error) => {
 					if (error) {

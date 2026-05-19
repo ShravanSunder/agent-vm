@@ -652,6 +652,54 @@ describe('portal core event stream', () => {
 		await core.close();
 	});
 
+	it('wakes and fails a scalar stream aborted while catalog work is pending', async () => {
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval: allowApproval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool: vi.fn(),
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(() => new Promise<never>(() => undefined)),
+			},
+			upstreamNamespaces: ['docs'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'cli-operator',
+		});
+		const controller = new AbortController();
+		const stream = core.callStream({
+			input: { requests: [{ id: 'list-docs', limit: 10 }] },
+			scope,
+			signal: controller.signal,
+			toolName: 'mcp_portal_list',
+		});
+		const iterator = stream[Symbol.asyncIterator]();
+
+		const started = await iterator.next();
+		controller.abort(new Error('cancelled scalar while pending'));
+		const failed = await Promise.race([
+			iterator.next(),
+			new Promise<IteratorResult<PortalCoreEvent>>((_, reject) => {
+				setTimeout(() => reject(new Error('aborted scalar stream did not wake')), 250);
+			}),
+		]);
+
+		expect(started.value).toMatchObject({ kind: 'started' });
+		expect(failed.value).toMatchObject({
+			error: expect.any(Error),
+			kind: 'failed',
+		});
+
+		await core.close();
+	});
+
 	it('collects scalar tool output without item events', async () => {
 		const core = createPortalCore({
 			accessPolicy: {

@@ -416,7 +416,7 @@ describe('upstream MCP client runtime', () => {
 		]);
 	});
 
-	it('does not exact-redact non-credential stdio env values from tool catalogs', async () => {
+	it('exact-redacts all resolved stdio env values from tool catalogs', async () => {
 		const client: UpstreamMcpClientLike = {
 			callTool: vi.fn(),
 			close: vi.fn(),
@@ -448,7 +448,7 @@ describe('upstream MCP client runtime', () => {
 			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'local' }),
 		).resolves.toEqual([
 			{
-				description: 'run /usr/local/bin/tool',
+				description: 'run [REDACTED]/tool',
 				inputSchema: { type: 'object' },
 				name: 'inspect_path',
 			},

@@ -1,4 +1,5 @@
-import { mkdir, open, rename } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, open, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -54,6 +55,15 @@ function assertValidHost(host: string, context: string): void {
 	}
 }
 
+function isLoopbackUrlHost(hostname: string): boolean {
+	return (
+		hostname === 'localhost' ||
+		hostname === '127.0.0.1' ||
+		hostname === '[::1]' ||
+		hostname === '::1'
+	);
+}
+
 function addRequiredHost(hosts: Set<string>, host: string, context: string): void {
 	assertValidHost(host, context);
 	hosts.add(host);
@@ -61,6 +71,9 @@ function addRequiredHost(hosts: Set<string>, host: string, context: string): voi
 
 function addUrlHost(hosts: Set<string>, url: string, context: string): void {
 	const parsedUrl = new URL(url);
+	if (isLoopbackUrlHost(parsedUrl.hostname)) {
+		return;
+	}
 	addRequiredHost(hosts, parsedUrl.hostname, context);
 }
 
@@ -198,15 +211,18 @@ async function buildEffectivePlan(
 }
 
 async function writeFileAtomically(filePath: string, content: string): Promise<void> {
-	const tempPath = `${filePath}.tmp`;
-	const handle = await open(tempPath, 'w', 0o600);
+	const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+	const handle = await open(tempPath, 'wx', 0o600);
 	try {
 		await handle.writeFile(content, 'utf8');
 		await handle.sync();
-	} finally {
 		await handle.close();
+		await rename(tempPath, filePath);
+	} catch (error) {
+		await handle.close().catch(() => undefined);
+		await rm(tempPath, { force: true });
+		throw error;
 	}
-	await rename(tempPath, filePath);
 }
 
 export async function planMcpPortalEffectiveConfig(

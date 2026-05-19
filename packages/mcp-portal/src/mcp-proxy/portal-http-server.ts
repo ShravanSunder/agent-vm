@@ -1,17 +1,18 @@
 import { randomUUID } from 'node:crypto';
 
-import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
+import { StreamableHTTPTransport } from '@hono/mcp';
 import { Hono } from 'hono';
 
-import { verifyAgentBearerAuthorization } from '../auth/agent-bearer-token.js';
 import type { PortalCore } from '../core/portal-core.js';
 import { createPortalAgentIdentity, type PortalAgentIdentity } from '../portal-access-policy.js';
+import { verifyAgentBearerAuthorization } from '../portal-auth/agent-bearer-token.js';
 import { createPortalMcpServer } from './portal-mcp-server.js';
 
 export interface PortalHttpAgentIdentity extends PortalAgentIdentity {}
 
 export interface PortalAgentBearerAuth {
 	readonly authorizationHeaderName: string;
+	readonly credentialVersionsByAgent?: Readonly<Record<string, number>>;
 	readonly masterKey: Buffer;
 }
 
@@ -32,7 +33,7 @@ const mcpSessionIdHeader = 'mcp-session-id';
 interface ActivePortalMcpSession {
 	readonly identity: PortalAgentIdentity;
 	readonly server: ReturnType<typeof createPortalMcpServer>;
-	readonly transport: WebStandardStreamableHTTPServerTransport;
+	readonly transport: StreamableHTTPTransport;
 }
 
 function activeSessionKey(scopeId: string, sessionId: string): string {
@@ -79,7 +80,7 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 			sessionId,
 			source: identityBase.source,
 		});
-		const transport = new WebStandardStreamableHTTPServerTransport({
+		const transport = new StreamableHTTPTransport({
 			onsessionclosed: () => {
 				void closeActiveSession(sessionKey, { closeTransport: false });
 			},
@@ -104,11 +105,17 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 	}
 
 	async function closePortalSessions(): Promise<void> {
-		await Promise.all(
+		const closeResults = await Promise.allSettled(
 			[...activeSessions.keys()].map((sessionKey) =>
 				closeActiveSession(sessionKey, { closeTransport: true }),
 			),
 		);
+		const closeErrors = closeResults
+			.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+			.map((result): unknown => result.reason);
+		if (closeErrors.length > 0) {
+			throw new AggregateError(closeErrors, 'Failed to close one or more MCP Portal sessions.');
+		}
 	}
 
 	app.get('/health', (context) =>
@@ -118,9 +125,11 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 	app.all('/agents/:agentId/mcp', async (context) => {
 		const agentId = context.req.param('agentId');
 		const agentBearerAuth = options.agentBearerAuth;
+		const credentialVersion = agentBearerAuth.credentialVersionsByAgent?.[agentId];
 		const verification = verifyAgentBearerAuthorization({
 			agentId,
 			authorizationHeader: context.req.header(agentBearerAuth.authorizationHeaderName),
+			...(credentialVersion === undefined ? {} : { credentialVersion }),
 			masterKey: agentBearerAuth.masterKey,
 		});
 		if (!verification.ok) {
@@ -143,11 +152,11 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 			if (!activeSession) {
 				return new Response('Unknown MCP portal session', { status: 404 });
 			}
-			return await activeSession.transport.handleRequest(context.req.raw);
+			return await activeSession.transport.handleRequest(context);
 		}
 
 		const activeSession = await createActiveSession(agentIdentity);
-		return await activeSession.transport.handleRequest(context.req.raw);
+		return await activeSession.transport.handleRequest(context);
 	});
 
 	return Object.assign(app, { closePortalSessions });

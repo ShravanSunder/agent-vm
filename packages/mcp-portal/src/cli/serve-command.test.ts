@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { SecretResolver } from '@agent-vm/secrets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { deriveAgentBearerToken } from '../auth/agent-bearer-token.js';
+import { deriveAgentBearerToken } from '../portal-auth/agent-bearer-token.js';
 import {
 	applyAgentOverrides,
 	createServeSecretResolver,
@@ -97,11 +97,21 @@ describe('applyAgentOverrides', () => {
 	it('updates configured agents and rejects unknown agents', () => {
 		expect(
 			applyAgentOverrides(
-				{ shravan: { hmacKey: { name: 'KEY', source: 'environment' }, profile: 'default' } },
+				{
+					shravan: {
+						credentialVersion: 1,
+						hmacKey: { name: 'KEY', source: 'environment' },
+						profile: 'default',
+					},
+				},
 				['shravan=builder'],
 			),
 		).toEqual({
-			shravan: { hmacKey: { name: 'KEY', source: 'environment' }, profile: 'builder' },
+			shravan: {
+				credentialVersion: 1,
+				hmacKey: { name: 'KEY', source: 'environment' },
+				profile: 'builder',
+			},
 		});
 
 		expect(() => applyAgentOverrides({}, ['unknown=builder'])).toThrow(/unknown/u);

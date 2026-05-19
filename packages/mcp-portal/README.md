@@ -5,7 +5,7 @@ Agent-scoped MCP Portal core library, external proxy, CLI, and Tool VM helpers.
 ## What This Package Owns
 
 - `/core`, the adapter-neutral portal execution library used by OpenClaw.
-- `agent-vm-mcp-portal serve`, the external `/mcp-proxy` MCP server command.
+- `mcp-portal serve`, the external `/mcp-proxy` MCP server command.
 - The four model-facing portal tools: `mcp_portal_list`, `mcp_portal_search`, `mcp_portal_describe`, and `mcp_portal_call`.
 - JSON-Schema-derived Zod validation before upstream tool calls.
 - HMAC approval-token verification for portal calls that OpenClaw approved.
@@ -19,7 +19,7 @@ effective config directory. It does not launch a portal server in the gateway VM
 External MCP clients can use the proxy command:
 
 ```text
-agent-vm-mcp-portal serve --config-dir <dir>
+mcp-portal serve --config-dir <dir>
 ```
 
 The portal loads two files from `--config-dir`:
@@ -37,7 +37,7 @@ built-in HTTP bearer server is loopback-only; use a TLS reverse proxy and
 ## Start Reading
 
 - `src/core/portal-core.ts` for adapter-neutral execution.
-- `src/bin/agent-vm-mcp-portal.ts` for CLI commands.
+- `src/bin/mcp-portal.ts` for CLI commands.
 - `src/mcp-proxy/portal-http-server.ts` for Hono routing and MCP transport.
 - `src/mcp-proxy/portal-tools.ts` for portal tool behavior.
-- `src/auth/hmac-token.ts` for approval-token signing and verification.
+- `src/portal-auth/hmac-token.ts` for approval-token signing and verification.
