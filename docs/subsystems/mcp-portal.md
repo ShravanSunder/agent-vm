@@ -111,6 +111,16 @@ configured, env-only MCP Portal configs still run without 1Password access.
 The built-in HTTP bearer server is loopback-only; exposing MCP Portal publicly
 requires an outer TLS reverse proxy and an explicit credential `proxyUrl`.
 
+Upstream MCP provider URLs are trusted deployment config. Runtime validation
+rejects non-HTTP schemes such as `file:` but does not reject loopback or
+private-network hosts. That is deliberate: local sidecars, host-mounted fake
+upstreams, and private service MCP providers are supported deployment shapes.
+Do not import arbitrary third-party MCP provider definitions into
+`mcp.config.jsonc` without review. If a future onboarding flow accepts
+less-trusted provider config, it should add an explicit per-provider network
+allowlist or operator approval step before enabling private-network targets,
+not a blanket ban that would break loopback sidecars.
+
 Annotation trust is per upstream namespace. Untrusted upstream annotations do
 not bypass approval. V1 does not accept model-visible approval tokens,
 `commitToken`, or draft/commit fields. In managed OpenClaw mode, the

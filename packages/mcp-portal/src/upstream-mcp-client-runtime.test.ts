@@ -355,7 +355,7 @@ describe('upstream MCP client runtime', () => {
 		}
 	});
 
-	it('forwards non-progress upstream notifications through client notification listeners', async () => {
+	it('does not forward uncorrelated upstream notifications through client notification listeners', async () => {
 		let notificationHandler:
 			| ((notification: {
 					readonly method: string;
@@ -397,13 +397,7 @@ describe('upstream MCP client runtime', () => {
 			toolName: 'create_issue',
 		});
 
-		expect(upstreamEvents).toEqual([
-			{
-				kind: 'upstream_notification',
-				method: 'notifications/message',
-				params: { data: 'halfway', level: 'info' },
-			},
-		]);
+		expect(upstreamEvents).toEqual([]);
 		expect(notificationHandler).toBeUndefined();
 	});
 
@@ -620,7 +614,45 @@ describe('upstream MCP client runtime', () => {
 		expect(client.close).toHaveBeenCalledTimes(1);
 	});
 
-	it('does not cache a pending client that resolves after agent scope close', async () => {
+	it('closes a client when connect times out before the SDK promise resolves', async () => {
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(() => new Promise<never>(() => undefined)),
+			listTools: vi.fn(),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: () => ({}),
+			servers: [createServer({ connectionTimeoutMs: 1 })],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
+		).rejects.toThrow(/connect.*timed out/u);
+		expect(client.close).toHaveBeenCalledTimes(1);
+	});
+
+	it('closes a client when listTools times out before the SDK promise resolves', async () => {
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(() => new Promise<never>(() => undefined)),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: () => ({}),
+			servers: [createServer({ connectionTimeoutMs: 1 })],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
+		).rejects.toThrow(/listTools.*timed out/u);
+		expect(client.close).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not cache or double-close a pending client that resolves after agent scope close', async () => {
 		const connectStarted = createDeferred<void>();
 		const allowConnect = createDeferred<void>();
 		const clients: UpstreamMcpClientLike[] = [];
@@ -656,11 +688,57 @@ describe('upstream MCP client runtime', () => {
 
 		await expect(firstListPromise).rejects.toThrow(/invalidated/);
 		await closePromise;
-		expect(clients[0]?.close).toHaveBeenCalledTimes(2);
+		expect(clients[0]?.close).toHaveBeenCalledTimes(1);
 		await expect(
 			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
 		).resolves.toEqual([{ inputSchema: { type: 'object' }, name: 'tool_2' }]);
 		expect(clients).toHaveLength(2);
+	});
+
+	it('does not forward uncorrelated upstream notifications into call events', async () => {
+		const releaseCall = createDeferred<unknown>();
+		let notificationHandler:
+			| ((notification: {
+					readonly method: string;
+					readonly params?: unknown;
+			  }) => Promise<void> | void)
+			| undefined;
+		const onEvent = vi.fn();
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(async () => await releaseCall.promise),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => ({ tools: [] })),
+			onNotification: (handler) => {
+				notificationHandler = handler;
+				return () => {
+					notificationHandler = undefined;
+				};
+			},
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: () => ({}),
+			servers: [createServer()],
+		});
+
+		const callPromise = runtime.callTool({
+			arguments: {},
+			agentScopeId: 'agent-scope-a',
+			namespace: 'linear',
+			onEvent,
+			toolName: 'create_issue',
+		});
+		await notificationHandler?.({
+			method: 'notifications/cancelled',
+			params: { reason: 'other request' },
+		});
+		releaseCall.resolve({ ok: true });
+
+		await expect(callPromise).resolves.toEqual({ ok: true });
+		expect(onEvent).not.toHaveBeenCalledWith(
+			expect.objectContaining({ kind: 'upstream_notification' }),
+		);
 	});
 
 	it('closes only the requested transport-session scoped clients', async () => {

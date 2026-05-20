@@ -58,6 +58,16 @@ describe('mcp-portal CLI', () => {
 	it('uses mcp-proxy subcommands for external proxy operations', async () => {
 		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-credential-'));
 		const previousMasterKey = process.env.MCP_PORTAL_MASTER_KEY;
+		const stdoutChunks: string[] = [];
+		const stderrChunks: string[] = [];
+		const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+			stdoutChunks.push(String(chunk));
+			return true;
+		});
+		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+			stderrChunks.push(String(chunk));
+			return true;
+		});
 		try {
 			process.env.MCP_PORTAL_MASTER_KEY = externalMasterKeyText;
 			await writeFile(
@@ -75,25 +85,25 @@ describe('mcp-portal CLI', () => {
 					schemaVersion: 1,
 				}),
 			);
-			const outputPath = join(workspace, 'shravan.credential.json');
 
 			await expect(runMcpPortal(['serve', '--config-dir', workspace])).resolves.toBe(1);
 			expect(
 				await runMcpPortal([
 					'mcp-proxy',
-					'write-credential',
+					'print-client-config',
 					'--config-dir',
 					workspace,
 					'--agent',
 					'shravan',
-					'--out',
-					outputPath,
 					'--master-key-fingerprint',
 					formatMasterKeyFingerprint(externalMasterKey),
 				]),
 			).toBe(0);
-			await expect(readFile(outputPath, 'utf8')).resolves.toContain('Bearer ');
+			expect(stdoutChunks.join('')).toContain('Bearer ');
+			expect(stderrChunks.join('')).toContain('WARNING');
 		} finally {
+			stdoutSpy.mockRestore();
+			stderrSpy.mockRestore();
 			if (previousMasterKey === undefined) {
 				delete process.env.MCP_PORTAL_MASTER_KEY;
 			} else {
@@ -203,10 +213,15 @@ describe('mcp-portal CLI', () => {
 		}
 	});
 
-	it('writes derived credentials only after an explicit master-key fingerprint match', async () => {
+	it('prints derived client config to stdout only after an explicit master-key fingerprint match', async () => {
 		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-credential-'));
 		const previousMasterKey = process.env.MCP_PORTAL_MASTER_KEY;
+		const stdoutChunks: string[] = [];
 		const stderrChunks: string[] = [];
+		const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+			stdoutChunks.push(String(chunk));
+			return true;
+		});
 		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
 			stderrChunks.push(String(chunk));
 			return true;
@@ -228,26 +243,24 @@ describe('mcp-portal CLI', () => {
 					schemaVersion: 1,
 				}),
 			);
-			const outputPath = join(workspace, 'shravan.credential.json');
 			const bearer = deriveAgentBearerToken({ agentId: 'shravan', masterKey: externalMasterKey });
 
 			expect(
 				await runMcpPortal([
 					'mcp-proxy',
-					'write-credential',
+					'print-client-config',
 					'--config-dir',
 					workspace,
 					'--agent',
 					'shravan',
-					'--out',
-					outputPath,
 					'--master-key-fingerprint',
 					formatMasterKeyFingerprint(externalMasterKey),
 				]),
 			).toBe(0);
-			const credential = JSON.parse(await readFile(outputPath, 'utf8')) as {
+			const credential = JSON.parse(stdoutChunks.join('')) as {
 				readonly authorizationHeaderName: string;
 				readonly authorizationHeaderValue: string;
+				readonly mcpServers: Readonly<Record<string, { readonly headers: Record<string, string> }>>;
 				readonly proxyUrl: string;
 			};
 
@@ -256,8 +269,14 @@ describe('mcp-portal CLI', () => {
 				authorizationHeaderValue: `Bearer ${bearer}`,
 				proxyUrl: 'http://127.0.0.1:18791/agents/shravan/mcp',
 			});
+			expect(credential.mcpServers['mcp-portal-shravan']?.headers.authorization).toBe(
+				`Bearer ${bearer}`,
+			);
+			expect(stderrChunks.join('')).toContain('WARNING');
+			expect(stderrChunks.join('')).toContain('bearer credential material');
 			expect(stderrChunks.join('')).not.toContain(bearer);
 		} finally {
+			stdoutSpy.mockRestore();
 			stderrSpy.mockRestore();
 			if (previousMasterKey === undefined) {
 				delete process.env.MCP_PORTAL_MASTER_KEY;
@@ -268,9 +287,14 @@ describe('mcp-portal CLI', () => {
 		}
 	});
 
-	it('writes credentials with custom header names and explicit proxy URL overrides', async () => {
+	it('prints client config with custom header names and explicit proxy URL overrides', async () => {
 		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-credential-'));
 		const previousMasterKey = process.env.MCP_PORTAL_MASTER_KEY;
+		const stdoutChunks: string[] = [];
+		const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+			stdoutChunks.push(String(chunk));
+			return true;
+		});
 		try {
 			process.env.MCP_PORTAL_MASTER_KEY = externalMasterKeyText;
 			await writeFile(
@@ -288,28 +312,26 @@ describe('mcp-portal CLI', () => {
 					schemaVersion: 1,
 				}),
 			);
-			const outputPath = join(workspace, 'shravan.credential.json');
 			const bearer = deriveAgentBearerToken({ agentId: 'shravan', masterKey: externalMasterKey });
 
 			expect(
 				await runMcpPortal([
 					'mcp-proxy',
-					'write-credential',
+					'print-client-config',
 					'--config-dir',
 					workspace,
 					'--agent',
 					'shravan',
-					'--out',
-					outputPath,
 					'--master-key-fingerprint',
 					formatMasterKeyFingerprint(externalMasterKey),
 					'--proxy-url',
 					'https://mcp-portal.example.com/agents/shravan/mcp',
 				]),
 			).toBe(0);
-			const credential = JSON.parse(await readFile(outputPath, 'utf8')) as {
+			const credential = JSON.parse(stdoutChunks.join('')) as {
 				readonly authorizationHeaderName: string;
 				readonly authorizationHeaderValue: string;
+				readonly mcpServers: Readonly<Record<string, { readonly headers: Record<string, string> }>>;
 				readonly proxyUrl: string;
 			};
 
@@ -318,7 +340,11 @@ describe('mcp-portal CLI', () => {
 				authorizationHeaderValue: `Bearer ${bearer}`,
 				proxyUrl: 'https://mcp-portal.example.com/agents/shravan/mcp',
 			});
+			expect(
+				credential.mcpServers['mcp-portal-shravan']?.headers['x-mcp-portal-authorization'],
+			).toBe(`Bearer ${bearer}`);
 		} finally {
+			stdoutSpy.mockRestore();
 			if (previousMasterKey === undefined) {
 				delete process.env.MCP_PORTAL_MASTER_KEY;
 			} else {
@@ -328,9 +354,14 @@ describe('mcp-portal CLI', () => {
 		}
 	});
 
-	it('writes credentials with an explicit proxy URL when mcpProxy is absent', async () => {
+	it('prints client config with an explicit proxy URL when mcpProxy is absent', async () => {
 		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-credential-'));
 		const previousMasterKey = process.env.MCP_PORTAL_MASTER_KEY;
+		const stdoutChunks: string[] = [];
+		const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+			stdoutChunks.push(String(chunk));
+			return true;
+		});
 		try {
 			process.env.MCP_PORTAL_MASTER_KEY = externalMasterKeyText;
 			await writeFile(
@@ -344,26 +375,23 @@ describe('mcp-portal CLI', () => {
 					schemaVersion: 1,
 				}),
 			);
-			const outputPath = join(workspace, 'shravan.credential.json');
 			const bearer = deriveAgentBearerToken({ agentId: 'shravan', masterKey: externalMasterKey });
 
 			expect(
 				await runMcpPortal([
 					'mcp-proxy',
-					'write-credential',
+					'print-client-config',
 					'--config-dir',
 					workspace,
 					'--agent',
 					'shravan',
-					'--out',
-					outputPath,
 					'--master-key-fingerprint',
 					formatMasterKeyFingerprint(externalMasterKey),
 					'--proxy-url',
 					'https://mcp-portal.example.com/agents/shravan/mcp',
 				]),
 			).toBe(0);
-			const credential = JSON.parse(await readFile(outputPath, 'utf8')) as {
+			const credential = JSON.parse(stdoutChunks.join('')) as {
 				readonly authorizationHeaderName: string;
 				readonly authorizationHeaderValue: string;
 				readonly proxyUrl: string;
@@ -375,6 +403,7 @@ describe('mcp-portal CLI', () => {
 				proxyUrl: 'https://mcp-portal.example.com/agents/shravan/mcp',
 			});
 		} finally {
+			stdoutSpy.mockRestore();
 			if (previousMasterKey === undefined) {
 				delete process.env.MCP_PORTAL_MASTER_KEY;
 			} else {
@@ -384,9 +413,14 @@ describe('mcp-portal CLI', () => {
 		}
 	});
 
-	it('refuses to write credentials when the master-key fingerprint differs', async () => {
+	it('refuses to print client config when the master-key fingerprint differs', async () => {
 		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-credential-'));
 		const previousMasterKey = process.env.MCP_PORTAL_MASTER_KEY;
+		const stdoutChunks: string[] = [];
+		const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+			stdoutChunks.push(String(chunk));
+			return true;
+		});
 		try {
 			process.env.MCP_PORTAL_MASTER_KEY = externalMasterKeyText;
 			await writeFile(
@@ -408,19 +442,18 @@ describe('mcp-portal CLI', () => {
 			expect(
 				await runMcpPortal([
 					'mcp-proxy',
-					'write-credential',
+					'print-client-config',
 					'--config-dir',
 					workspace,
 					'--agent',
 					'shravan',
-					'--out',
-					join(workspace, 'shravan.credential.json'),
 					'--master-key-fingerprint',
 					'sha256:not-the-key',
 				]),
 			).toBe(1);
-			await expect(readFile(join(workspace, 'shravan.credential.json'), 'utf8')).rejects.toThrow();
+			expect(stdoutChunks.join('')).toBe('');
 		} finally {
+			stdoutSpy.mockRestore();
 			if (previousMasterKey === undefined) {
 				delete process.env.MCP_PORTAL_MASTER_KEY;
 			} else {
@@ -430,9 +463,14 @@ describe('mcp-portal CLI', () => {
 		}
 	});
 
-	it('writes credentials with a shared resolver for 1Password-backed master keys', async () => {
+	it('prints client config with a shared resolver for 1Password-backed master keys', async () => {
 		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-credential-'));
+		const stdoutChunks: string[] = [];
 		const stderrChunks: string[] = [];
+		const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+			stdoutChunks.push(String(chunk));
+			return true;
+		});
 		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
 			stderrChunks.push(String(chunk));
 			return true;
@@ -453,20 +491,17 @@ describe('mcp-portal CLI', () => {
 					schemaVersion: 1,
 				}),
 			);
-			const outputPath = join(workspace, 'shravan.credential.json');
 			const bearer = deriveAgentBearerToken({ agentId: 'shravan', masterKey: externalMasterKey });
 
 			expect(
 				await runMcpPortal(
 					[
 						'mcp-proxy',
-						'write-credential',
+						'print-client-config',
 						'--config-dir',
 						workspace,
 						'--agent',
 						'shravan',
-						'--out',
-						outputPath,
 						'--master-key-fingerprint',
 						formatMasterKeyFingerprint(externalMasterKey),
 					],
@@ -478,15 +513,44 @@ describe('mcp-portal CLI', () => {
 					},
 				),
 			).toBe(0);
-			const credential = JSON.parse(await readFile(outputPath, 'utf8')) as {
+			const credential = JSON.parse(stdoutChunks.join('')) as {
 				readonly authorizationHeaderValue: string;
 			};
 
 			expect(credential.authorizationHeaderValue).toBe(`Bearer ${bearer}`);
 			expect(stderrChunks.join('')).not.toContain(bearer);
 		} finally {
+			stdoutSpy.mockRestore();
 			stderrSpy.mockRestore();
 			await rm(workspace, { force: true, recursive: true });
+		}
+	});
+
+	it('rejects the disabled credential file writer', async () => {
+		const stderrChunks: string[] = [];
+		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+			stderrChunks.push(String(chunk));
+			return true;
+		});
+		try {
+			expect(
+				await runMcpPortal([
+					'mcp-proxy',
+					'write-credential',
+					'--config-dir',
+					'/tmp/unused',
+					'--agent',
+					'shravan',
+					'--out',
+					'/tmp/unused.json',
+					'--master-key-fingerprint',
+					'sha256:not-used',
+				]),
+			).toBe(1);
+			expect(stderrChunks.join('')).toContain('print-client-config');
+			expect(stderrChunks.join('')).toContain('disabled');
+		} finally {
+			stderrSpy.mockRestore();
 		}
 	});
 

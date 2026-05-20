@@ -52,22 +52,32 @@ function timingSafeEqualToken(left: string, right: string): boolean {
 	return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
+function mismatchedTokenWithExpectedLength(expectedToken: string): string {
+	const replacementPrefix = expectedToken.startsWith('A') ? 'B' : 'A';
+	return `${replacementPrefix}${expectedToken.slice(1)}`;
+}
+
 export function verifyAgentBearerAuthorization(
 	props: VerifyAgentBearerAuthorizationProps,
 ): VerifyAgentBearerAuthorizationResult {
-	if (props.authorizationHeader === undefined) {
-		return { ok: false, reason: 'missing' };
-	}
-	const [scheme, token, extra] = props.authorizationHeader.split(/\s+/u);
-	if (scheme !== 'Bearer' || token === undefined || token.length === 0 || extra !== undefined) {
-		return { ok: false, reason: 'malformed' };
-	}
 	const expectedToken = deriveAgentBearerToken({
 		agentId: props.agentId,
 		credentialVersion: props.credentialVersion ?? 1,
 		masterKey: props.masterKey,
 	});
-	if (!timingSafeEqualToken(token, expectedToken)) {
+	const mismatchedToken = mismatchedTokenWithExpectedLength(expectedToken);
+
+	if (props.authorizationHeader === undefined) {
+		timingSafeEqualToken(mismatchedToken, expectedToken);
+		return { ok: false, reason: 'missing' };
+	}
+	const [scheme, token, extra] = props.authorizationHeader.split(/\s+/u);
+	if (scheme !== 'Bearer' || token === undefined || token.length === 0 || extra !== undefined) {
+		timingSafeEqualToken(mismatchedToken, expectedToken);
+		return { ok: false, reason: 'malformed' };
+	}
+	const comparableToken = token.length === expectedToken.length ? token : mismatchedToken;
+	if (!timingSafeEqualToken(comparableToken, expectedToken)) {
 		return { ok: false, reason: 'signature-mismatch' };
 	}
 	return { ok: true };

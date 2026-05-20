@@ -276,11 +276,13 @@ describe('startPortalServer', () => {
 
 	it('starts the external MCP proxy with derived bearer auth', async () => {
 		const configDir = await createProxyConfigDir();
+		const loggedEvents: PortalServerLogEvent[] = [];
 		const startedServer = await startPortalServer({
 			args: { agentOverrides: [], configDir, port: 0 },
 			env: {
 				MCP_PORTAL_MASTER_KEY: externalMasterKeyText,
 			},
+			logger: { log: (event) => loggedEvents.push(event) },
 		});
 		startedServers.push(startedServer);
 
@@ -297,6 +299,19 @@ describe('startPortalServer', () => {
 				},
 			}),
 		).resolves.not.toMatchObject({ status: 401 });
+		expect(loggedEvents).toEqual([
+			expect.objectContaining({
+				decision: 'deny',
+				event: 'mcp_proxy_auth',
+				level: 'warn',
+				reason: 'missing',
+			}),
+			expect.objectContaining({
+				decision: 'allow',
+				event: 'mcp_proxy_auth',
+				level: 'info',
+			}),
+		]);
 	});
 
 	it('rejects startup when the configured port cannot be bound', async () => {

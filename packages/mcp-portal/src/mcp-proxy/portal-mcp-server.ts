@@ -15,6 +15,7 @@ import type {
 	PortalCoreToolName,
 } from '../core/portal-core.js';
 import { portalToolInputSchemas } from '../core/portal-tools.js';
+import { redactThrownError } from '../upstream-response-middleware.js';
 
 export const portalMcpToolNames = [
 	'mcp_portal_list',
@@ -82,10 +83,11 @@ function jsonToolResult(value: PortalCoreResult): CallToolResult {
 }
 
 function errorToolResult(error: unknown): CallToolResult {
+	const redactedError = redactThrownError(error);
 	return {
 		content: [
 			{
-				text: error instanceof Error ? error.message : String(error),
+				text: redactedError.message,
 				type: 'text',
 			},
 		],

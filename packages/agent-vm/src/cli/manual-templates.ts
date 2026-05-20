@@ -216,6 +216,8 @@ MCP Portal is a scoped tool facade over deployment-owned upstream MCP servers. M
 
 	Read-only/destructive annotations are trusted only for configured namespaces. Untrusted upstream tools require approval unless explicitly allowlisted by policy. Managed OpenClaw uses the in-process before_tool_call approval boundary.
 
+	MCP provider URLs must use http or https. Loopback and private-network upstream URLs are allowed because authored config is trusted deployment config and sidecar/local MCP providers are a supported shape. Do not import untrusted MCP provider config directly; if config trust changes, add an explicit per-provider network allowlist before accepting private-network targets.
+
 Credential redaction is not general PII filtering. Catalogs redact exact configured secrets only; outputs and errors also redact credential-shaped text. Treat upstream tool response content as agent-visible unless a deployment adds future response middleware policy.
 `,
 			),

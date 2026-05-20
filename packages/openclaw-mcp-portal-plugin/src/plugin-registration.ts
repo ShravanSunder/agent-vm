@@ -129,8 +129,8 @@ export function validatePortalPluginApi(api: OpenClawPortalPluginApi): void {
 	if (!hasFunction(api.registerTool)) {
 		throw new Error('MCP Portal plugin requires OpenClaw registerTool API.');
 	}
-	if (!hasFunction(api.on) && !hasFunction(api.registerPromptHook)) {
-		throw new Error('MCP Portal plugin requires OpenClaw prompt hook registration API.');
+	if (!hasFunction(api.on)) {
+		throw new Error('MCP Portal plugin requires OpenClaw before_tool_call hook API.');
 	}
 	const hasLifecycleCleanupApi =
 		hasFunction(api.lifecycle?.registerRuntimeLifecycle) ||

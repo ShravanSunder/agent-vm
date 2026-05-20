@@ -87,6 +87,9 @@ function buildManagedEffectivePortalConfig(portalConfig: McpPortalConfig): McpPo
 	const coreConfig = structuredClone(portalConfig);
 	delete coreConfig.externalAuth;
 	delete coreConfig.mcpProxy;
+	for (const agent of Object.values(coreConfig.agents)) {
+		delete agent.hmacKey;
+	}
 	return coreConfig;
 }
 

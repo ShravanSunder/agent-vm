@@ -49,6 +49,8 @@ export type PortalHttpApp = Hono & {
 
 const mcpSessionIdHeader = 'mcp-session-id';
 const defaultAuthFailureLimit = { maxFailures: 60, windowMs: 60_000 } as const;
+const authFailureBucketLimit = 1_024;
+const directClientAddress = 'direct-client';
 
 interface ActivePortalMcpSession {
 	readonly identity: PortalAgentIdentity;
@@ -73,15 +75,8 @@ function rateLimitedResponse(): Response {
 	return Response.json({ error: { kind: 'rate_limited' }, ok: false }, { status: 429 });
 }
 
-function clientAddressFromHeaders(headers: Headers): string {
-	const forwardedFor = headers.get('x-forwarded-for')?.split(',', 1)[0]?.trim();
-	return forwardedFor && forwardedFor.length > 0
-		? forwardedFor
-		: (headers.get('x-real-ip') ?? 'unknown');
-}
-
-function authFailureKey(agentId: string, clientAddress: string): string {
-	return `${agentId}\n${clientAddress}`;
+function unavailableResponse(): Response {
+	return Response.json({ error: { kind: 'shutting_down' }, ok: false }, { status: 503 });
 }
 
 export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpApp {
@@ -95,6 +90,7 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 	const activeSessions = new Map<string, ActivePortalMcpSession>();
 	const authFailureBuckets = new Map<string, AuthFailureBucket>();
 	const authFailureLimit = options.authFailureLimit ?? defaultAuthFailureLimit;
+	let closing = false;
 
 	async function auditAuth(event: Omit<PortalHttpAuditEvent, 'kind' | 'timeMs'>): Promise<void> {
 		await Promise.resolve(
@@ -102,36 +98,52 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 		).catch(() => undefined);
 	}
 
-	function isAuthFailureRateLimited(agentId: string, clientAddress: string): boolean {
+	function pruneAuthFailureBuckets(nowMs: number): void {
+		for (const [key, bucket] of authFailureBuckets) {
+			if (bucket.resetAtMs <= nowMs) {
+				authFailureBuckets.delete(key);
+			}
+		}
+		while (authFailureBuckets.size > authFailureBucketLimit) {
+			const firstKey = authFailureBuckets.keys().next().value;
+			if (typeof firstKey !== 'string') {
+				return;
+			}
+			authFailureBuckets.delete(firstKey);
+		}
+	}
+
+	function isAuthFailureRateLimited(clientAddress: string): boolean {
 		const nowMs = Date.now();
-		const key = authFailureKey(agentId, clientAddress);
-		const bucket = authFailureBuckets.get(key);
+		pruneAuthFailureBuckets(nowMs);
+		const bucket = authFailureBuckets.get(clientAddress);
 		if (bucket === undefined) {
 			return false;
 		}
 		if (bucket.resetAtMs <= nowMs) {
-			authFailureBuckets.delete(key);
+			authFailureBuckets.delete(clientAddress);
 			return false;
 		}
 		return bucket.failures >= authFailureLimit.maxFailures;
 	}
 
-	function recordAuthFailure(agentId: string, clientAddress: string): void {
+	function recordAuthFailure(clientAddress: string): void {
 		const nowMs = Date.now();
-		const key = authFailureKey(agentId, clientAddress);
-		const bucket = authFailureBuckets.get(key);
+		pruneAuthFailureBuckets(nowMs);
+		const bucket = authFailureBuckets.get(clientAddress);
 		if (bucket !== undefined && bucket.resetAtMs > nowMs) {
 			bucket.failures += 1;
 			return;
 		}
-		authFailureBuckets.set(key, {
+		authFailureBuckets.set(clientAddress, {
 			failures: 1,
 			resetAtMs: nowMs + authFailureLimit.windowMs,
 		});
+		pruneAuthFailureBuckets(nowMs);
 	}
 
-	function clearAuthFailures(agentId: string, clientAddress: string): void {
-		authFailureBuckets.delete(authFailureKey(agentId, clientAddress));
+	function clearAuthFailures(clientAddress: string): void {
+		authFailureBuckets.delete(clientAddress);
 	}
 
 	async function closeActiveSession(
@@ -189,14 +201,22 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 	}
 
 	async function closePortalSessions(): Promise<void> {
-		const closeResults = await Promise.allSettled(
-			[...activeSessions.keys()].map((sessionKey) =>
-				closeActiveSession(sessionKey, { closeTransport: true }),
-			),
-		);
-		const closeErrors = closeResults
-			.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-			.map((result): unknown => result.reason);
+		closing = true;
+		const closeErrors: unknown[] = [];
+		while (activeSessions.size > 0) {
+			// Closing may trigger callbacks that mutate activeSessions, so drain snapshots until empty.
+			// eslint-disable-next-line no-await-in-loop
+			const closeResults = await Promise.allSettled(
+				[...activeSessions.keys()].map((sessionKey) =>
+					closeActiveSession(sessionKey, { closeTransport: true }),
+				),
+			);
+			closeErrors.push(
+				...closeResults
+					.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+					.map((result): unknown => result.reason),
+			);
+		}
 		if (closeErrors.length > 0) {
 			throw new AggregateError(closeErrors, 'Failed to close one or more MCP Portal sessions.');
 		}
@@ -208,8 +228,11 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 
 	app.all('/agents/:agentId/mcp', async (context) => {
 		const agentId = context.req.param('agentId');
-		const clientAddress = clientAddressFromHeaders(context.req.raw.headers);
-		if (isAuthFailureRateLimited(agentId, clientAddress)) {
+		const clientAddress = directClientAddress;
+		if (closing) {
+			return unavailableResponse();
+		}
+		if (isAuthFailureRateLimited(clientAddress)) {
 			await auditAuth({
 				agentId,
 				clientAddress,
@@ -218,18 +241,6 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 			});
 			return rateLimitedResponse();
 		}
-		const agentIdentity = options.resolveAgentIdentity?.(agentId) ?? null;
-		if (agentIdentity === null) {
-			recordAuthFailure(agentId, clientAddress);
-			await auditAuth({
-				agentId,
-				clientAddress,
-				decision: 'deny',
-				reason: 'unknown_agent',
-			});
-			return unauthorizedResponse();
-		}
-
 		const agentBearerAuth = options.agentBearerAuth;
 		const credentialVersion = agentBearerAuth.credentialVersionsByAgent?.[agentId];
 		const verification = verifyAgentBearerAuthorization({
@@ -238,8 +249,19 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 			...(credentialVersion === undefined ? {} : { credentialVersion }),
 			masterKey: agentBearerAuth.masterKey,
 		});
+		const agentIdentity = options.resolveAgentIdentity?.(agentId) ?? null;
+		if (agentIdentity === null) {
+			recordAuthFailure(clientAddress);
+			await auditAuth({
+				agentId,
+				clientAddress,
+				decision: 'deny',
+				reason: 'unknown_agent',
+			});
+			return unauthorizedResponse();
+		}
 		if (!verification.ok) {
-			recordAuthFailure(agentId, clientAddress);
+			recordAuthFailure(clientAddress);
 			await auditAuth({
 				agentId,
 				clientAddress,
@@ -248,7 +270,7 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 			});
 			return unauthorizedResponse();
 		}
-		clearAuthFailures(agentId, clientAddress);
+		clearAuthFailures(clientAddress);
 		await auditAuth({ agentId, clientAddress, decision: 'allow' });
 
 		const mcpSessionId = context.req.header(mcpSessionIdHeader);

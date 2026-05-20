@@ -32,15 +32,34 @@ Use `AGENT_VM_MCP_PORTAL_OP_TOKEN_SOURCE=env`, `op-cli`, or `keychain` plus the
 matching source-specific env settings when the proxy host needs 1Password
 access. If no token source is configured, env-only configs still work. The
 built-in HTTP bearer server is loopback-only; use a TLS reverse proxy and
-`mcp-portal mcp-proxy write-credential --proxy-url <url>` for public endpoints.
-The credential writer intentionally persists bearer material for external MCP
-clients. Files are written with mode `0600`; rotate `credentialVersion` or the
-portal `masterKey` to revoke issued credentials.
+`mcp-portal mcp-proxy print-client-config --proxy-url <url>` for public
+endpoints. The printed client config contains bearer credential material on
+stdout. Treat it like an API token, keep it out of logs and commits, and rotate
+`credentialVersion` or the portal `masterKey` to revoke issued credentials.
+
+`mcp-proxy serve` keeps approval-token replay state in process. Run one serving
+process per external endpoint unless a future shared replay store is added.
+Restarting the process clears consumed approval JTIs, so approval token TTLs
+must stay short.
+
+Managed OpenClaw materialization rewrites provider secrets to environment
+references in the effective MCP config. Plaintext provider values flow only into
+runtime environment variables for `injection: "env"` or into host-mediated
+runtime secret state for `injection: "http-mediation"`; they are not written to
+the generated config files.
+
+Upstream MCP provider URLs are deployment-owned config. The schema rejects
+non-HTTP schemes, but it intentionally allows loopback and private-network HTTP
+targets because local sidecars and private service MCP providers are supported.
+Do not load provider config from untrusted sources. If a future workflow imports
+less-trusted provider definitions, put an explicit per-provider network
+allowlist in front of private-network targets instead of blanket-blocking
+loopback.
 
 ## Start Reading
 
 - `src/core/portal-core.ts` for adapter-neutral execution.
 - `src/bin/mcp-portal.ts` for CLI commands.
 - `src/mcp-proxy/portal-http-server.ts` for Hono routing and MCP transport.
-- `src/mcp-proxy/portal-tools.ts` for portal tool behavior.
+- `src/core/portal-tools.ts` for portal tool behavior.
 - `src/portal-auth/hmac-token.ts` for approval-token signing and verification.

@@ -230,7 +230,7 @@ describe('portal HTTP server', () => {
 		]);
 	});
 
-	it('rate-limits repeated failed bearer attempts per agent and client address', async () => {
+	it('rate-limits repeated failed bearer attempts without trusting spoofed forwarded headers', async () => {
 		const app = createPortalHttpApp({
 			agentBearerAuth: { authorizationHeaderName: 'authorization', masterKey },
 			authFailureLimit: { maxFailures: 2, windowMs: 60_000 },
@@ -264,7 +264,35 @@ describe('portal HTTP server', () => {
 			app.request('/agents/agent-a/mcp', {
 				headers: { ...badHeaders, 'x-forwarded-for': '203.0.113.5' },
 			}),
+		).resolves.toMatchObject({ status: 429 });
+	});
+
+	it('rate-limits failed bearer attempts across probed agent ids', async () => {
+		const app = createPortalHttpApp({
+			agentBearerAuth: { authorizationHeaderName: 'authorization', masterKey },
+			authFailureLimit: { maxFailures: 2, windowMs: 60_000 },
+			core: createTestPortalCore(),
+			resolveAgentIdentity: (agentId) =>
+				agentId === 'agent-a'
+					? createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-a' })
+					: null,
+		});
+
+		await expect(
+			app.request('/agents/missing-a/mcp', {
+				headers: { authorization: bearerAuthHeader('missing-a') },
+			}),
 		).resolves.toMatchObject({ status: 401 });
+		await expect(
+			app.request('/agents/missing-b/mcp', {
+				headers: { authorization: bearerAuthHeader('missing-b') },
+			}),
+		).resolves.toMatchObject({ status: 401 });
+		await expect(
+			app.request('/agents/missing-c/mcp', {
+				headers: { authorization: bearerAuthHeader('missing-c') },
+			}),
+		).resolves.toMatchObject({ status: 429 });
 	});
 
 	it('serves initialize, tools/list, and tools/call through Streamable HTTP', async () => {
@@ -364,7 +392,7 @@ describe('portal HTTP server', () => {
 						'mcp-session-id': sessionId,
 					},
 				}),
-			).resolves.toMatchObject({ status: 404 });
+			).resolves.toMatchObject({ status: 503 });
 
 			try {
 				await client.close();
@@ -426,6 +454,55 @@ describe('portal HTTP server', () => {
 			expect(closedSessionIds).toHaveLength(2);
 		} finally {
 			await Promise.allSettled(clients.map(async (client) => await client.close()));
+			await new Promise<void>((resolve, reject) => {
+				server.close((error) => {
+					if (error) {
+						reject(error);
+					} else {
+						resolve();
+					}
+				});
+			});
+		}
+	});
+
+	it('rejects new MCP sessions after shutdown begins', async () => {
+		let releaseClose: (() => void) | undefined;
+		const closeStarted = new Promise<void>((resolve) => {
+			releaseClose = resolve;
+		});
+		const app = createPortalHttpApp({
+			agentBearerAuth: { authorizationHeaderName: 'authorization', masterKey },
+			core: createTestPortalCore(),
+			onSessionClosed: async () => {
+				await closeStarted;
+			},
+			resolveAgentIdentity: (agentId) =>
+				agentId === 'agent-a'
+					? createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-a' })
+					: null,
+		});
+		const server = serve({ fetch: app.fetch, port: 0 });
+		try {
+			const address = server.address() as AddressInfo;
+			const transport = new StreamableHTTPClientTransport(
+				new URL(`http://127.0.0.1:${address.port}/agents/agent-a/mcp`),
+				{ requestInit: { headers: { authorization: bearerAuthHeader('agent-a') } } },
+			);
+			const client = new Client({ name: 'portal-http-test', version: '1.0.0' });
+			await client.connect(asClientTransport(transport));
+			const closePromise = app.closePortalSessions();
+
+			await expect(
+				app.request('/agents/agent-a/mcp', {
+					headers: { authorization: bearerAuthHeader('agent-a') },
+				}),
+			).resolves.toMatchObject({ status: 503 });
+
+			releaseClose?.();
+			await closePromise;
+			await Promise.allSettled([client.close()]);
+		} finally {
 			await new Promise<void>((resolve, reject) => {
 				server.close((error) => {
 					if (error) {

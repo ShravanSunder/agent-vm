@@ -213,6 +213,67 @@ describe('createPortalApprovalVerifier', () => {
 		).toEqual({ kind: 'approval_token_invalid', reason: 'malformed' });
 	});
 
+	it('audits approval allow and deny decisions', () => {
+		const auditEvents: unknown[] = [];
+		const verifier = createPortalApprovalVerifier({
+			auditSink: (event) => {
+				auditEvents.push(event);
+			},
+			records: new Map<string, PortalAgentRuntimeRecord>([
+				[
+					'shravan',
+					{
+						agentId: 'shravan',
+						hmacKey,
+						profile,
+						profileName: 'builder',
+					},
+				],
+			]),
+		});
+		const calls = [
+			createCall({
+				annotations: { destructiveHint: false, readOnlyHint: true },
+				namespace: 'linear',
+				toolName: 'list_issues',
+			}),
+			createCall({
+				namespace: 'github',
+				toolName: 'delete_issue',
+			}),
+		];
+		const token = signApprovalToken({
+			agentId: 'shravan',
+			calls: [
+				{
+					argumentsHash: hashCallArguments({}),
+					namespace: 'github',
+					toolName: 'delete_issue',
+				},
+			],
+			expiresAtMs: Date.now() + 60_000,
+			jti: 'approval-audit',
+			key: hmacKey,
+		});
+
+		expect(verifier(calls, 'shravan', undefined)).toEqual({ kind: 'approval_token_missing' });
+		expect(verifier(calls, 'shravan', token)).toEqual({ kind: 'allow' });
+
+		expect(auditEvents).toEqual([
+			expect.objectContaining({
+				agentId: 'shravan',
+				decision: 'deny',
+				kind: 'mcp_portal_approval',
+				reason: 'approval_token_missing',
+			}),
+			expect.objectContaining({
+				agentId: 'shravan',
+				decision: 'allow',
+				kind: 'mcp_portal_approval',
+			}),
+		]);
+	});
+
 	it('rejects replayed approval tokens after the first successful use', () => {
 		const verifier = createVerifier();
 		const calls = [

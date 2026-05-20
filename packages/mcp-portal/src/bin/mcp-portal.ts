@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
-import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 import {
@@ -82,7 +81,7 @@ function printUsage(): void {
 		'Usage: mcp-portal call --config-dir <directory> --agent <agent-id> --input <request.json> [--tool <portal-tool-name>]\n',
 	);
 	process.stderr.write(
-		'Usage: mcp-portal mcp-proxy write-credential --config-dir <directory> --agent <agent-id> --out <file> --master-key-fingerprint <sha256:...>\n',
+		'Usage: mcp-portal mcp-proxy print-client-config --config-dir <directory> --agent <agent-id> --master-key-fingerprint <sha256:...> [--proxy-url <url>]\n',
 	);
 }
 
@@ -102,22 +101,6 @@ function normalizeCredentialProxyUrl(value: string): string {
 	return url.toString();
 }
 
-async function writeFileAtomically(filePath: string, content: string): Promise<void> {
-	const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-	const handle = await open(tempPath, 'wx', 0o600);
-	try {
-		await handle.writeFile(content, 'utf8');
-		await handle.sync();
-		await handle.close();
-		await rename(tempPath, filePath);
-	} catch (error) {
-		await handle.close().catch(() => undefined);
-		await rm(tempPath, { force: true });
-		throw error;
-	}
-	await chmod(filePath, 0o600);
-}
-
 type RequiredPortalRuntimeProps = Required<Pick<AgentVmMcpPortalRuntimeProps, 'env'>> &
 	Pick<AgentVmMcpPortalRuntimeProps, 'secretResolver'>;
 
@@ -125,30 +108,67 @@ async function createCliSecretResolver(props: RequiredPortalRuntimeProps): Promi
 	return props.secretResolver ?? (await createServeSecretResolver(props.env));
 }
 
-async function writeCredentialFile(
+interface McpPortalClientConfigServer {
+	readonly headers: Readonly<Record<string, string>>;
+	readonly type: 'streamable-http';
+	readonly url: string;
+}
+
+interface McpPortalClientConfig {
+	readonly agentId: string;
+	readonly authorizationHeaderName: string;
+	readonly authorizationHeaderValue: string;
+	readonly kind: 'mcp-portal-client-config';
+	readonly masterKeyFingerprint: string;
+	readonly mcpServers: Readonly<Record<string, McpPortalClientConfigServer>>;
+	readonly proxyUrl: string;
+	readonly schemaVersion: 1;
+}
+
+function serverNameForClientConfig(agentId: string): string {
+	return `mcp-portal-${agentId.replaceAll(/[^A-Za-z0-9_-]/gu, '-')}`;
+}
+
+function printCredentialMaterialWarning(): void {
+	process.stderr.write(
+		[
+			'WARNING: MCP Portal client config is bearer credential material.',
+			'WARNING: Treat stdout like an API token. Do not paste it into logs, commits, or chat.',
+			'WARNING: The token is per-agent and remains valid until credentialVersion or masterKey rotation.',
+			'',
+		].join('\n'),
+	);
+}
+
+function printDisabledCredentialWriter(): number {
+	process.stderr.write(
+		[
+			'mcp-portal: mcp-proxy write-credential is disabled because it persists bearer credentials.',
+			'Use mcp-portal mcp-proxy print-client-config and decide explicitly where stdout is stored.',
+			'',
+		].join('\n'),
+	);
+	return 1;
+}
+
+async function printClientConfig(
 	args: readonly string[],
 	runtimeProps: RequiredPortalRuntimeProps,
 ): Promise<number> {
 	const configDir = readFlag(args, '--config-dir');
 	const agentId = readFlag(args, '--agent');
-	const outputPath = readFlag(args, '--out');
 	const expectedFingerprint = readFlag(args, '--master-key-fingerprint');
 	const proxyUrlOverride = readFlag(args, '--proxy-url');
-	if (
-		configDir === null ||
-		agentId === null ||
-		outputPath === null ||
-		expectedFingerprint === null
-	) {
+	if (configDir === null || agentId === null || expectedFingerprint === null) {
 		printUsage();
 		return 1;
 	}
 	const portalConfig = await loadMcpPortalConfig(join(configDir, 'mcp-portal.config.jsonc'));
 	if (portalConfig.externalAuth === undefined) {
-		throw new Error('write-credential requires externalAuth.masterKey.');
+		throw new Error('print-client-config requires externalAuth.masterKey.');
 	}
 	if (portalConfig.mcpProxy === undefined && proxyUrlOverride === null) {
-		throw new Error('write-credential requires mcpProxy server settings.');
+		throw new Error('print-client-config requires mcpProxy server settings or --proxy-url.');
 	}
 	if (portalConfig.agents[agentId] === undefined) {
 		throw new Error(`Unknown MCP Portal agent "${agentId}".`);
@@ -179,22 +199,25 @@ async function writeCredentialFile(
 			? credentialProxyUrlFromConfig(requireCredentialMcpProxy(portalConfig.mcpProxy), agentId)
 			: normalizeCredentialProxyUrl(proxyUrlOverride);
 	const authorizationHeaderName = portalConfig.mcpProxy?.auth.headerName ?? 'authorization';
-	await writeFileAtomically(
-		outputPath,
-		`${JSON.stringify(
-			{
-				agentId,
-				authorizationHeaderName,
-				authorizationHeaderValue: `Bearer ${bearer}`,
-				masterKeyFingerprint: actualFingerprint,
-				proxyUrl,
-				schemaVersion: 1,
+	const authorizationHeaderValue = `Bearer ${bearer}`;
+	const clientConfig = {
+		agentId,
+		authorizationHeaderName,
+		authorizationHeaderValue,
+		kind: 'mcp-portal-client-config',
+		masterKeyFingerprint: actualFingerprint,
+		mcpServers: {
+			[serverNameForClientConfig(agentId)]: {
+				headers: { [authorizationHeaderName]: authorizationHeaderValue },
+				type: 'streamable-http',
+				url: proxyUrl,
 			},
-			null,
-			'\t',
-		)}\n`,
-	);
-	process.stderr.write(`wrote MCP Portal credential file ${outputPath}\n`);
+		},
+		proxyUrl,
+		schemaVersion: 1,
+	} satisfies McpPortalClientConfig;
+	printCredentialMaterialWarning();
+	process.stdout.write(`${JSON.stringify(clientConfig, null, '\t')}\n`);
 	return 0;
 }
 
@@ -202,7 +225,7 @@ function requireCredentialMcpProxy(
 	mcpProxy: McpPortalConfig['mcpProxy'],
 ): NonNullable<McpPortalConfig['mcpProxy']> {
 	if (mcpProxy === undefined) {
-		throw new Error('write-credential requires mcpProxy server settings.');
+		throw new Error('print-client-config requires mcpProxy server settings or --proxy-url.');
 	}
 	return mcpProxy;
 }
@@ -409,7 +432,10 @@ export async function runMcpPortal(
 				return 0;
 			}
 			if (mcpProxyCommand === 'write-credential') {
-				return await writeCredentialFile(mcpProxyArgs, runtimeProps);
+				return printDisabledCredentialWriter();
+			}
+			if (mcpProxyCommand === 'print-client-config') {
+				return await printClientConfig(mcpProxyArgs, runtimeProps);
 			}
 			printUsage();
 			return 1;
@@ -459,7 +485,7 @@ export async function runMcpPortal(
 }
 
 /*
- * Command-shape note: top-level `serve` and `write-credential` are
+ * Command-shape note: top-level `serve` and credential commands are
  * intentionally rejected. The public CLI shape is `mcp-portal mcp-proxy ...`
  * so the command mirrors the library adapter boundary.
  */

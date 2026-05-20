@@ -166,6 +166,12 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'config/schemas/*.schema.json',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'private-network upstream URLs',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'authored config is trusted deployment config',
+		);
 		expect(
 			files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content,
 		).not.toContain('loopback server in the gateway');

@@ -126,6 +126,7 @@ export interface PortalCoreStreamCall {
 }
 
 const maxQueuedPortalCoreEvents = 1_024;
+const maxPortalCoreEventBytes = 256 * 1_024;
 
 export interface PortalCoreCollectOptions {
 	readonly onEvent?: (event: PortalCoreEvent) => Promise<void> | void;
@@ -236,6 +237,19 @@ function errorFromAbortSignal(signal: AbortSignal): Error {
 function throwIfAborted(signal: AbortSignal | undefined): void {
 	if (signal?.aborted) {
 		throw errorFromAbortSignal(signal);
+	}
+}
+
+function assertPortalCoreEventSize(event: PortalCoreEvent): void {
+	const serialized = JSON.stringify(event);
+	if (serialized === undefined) {
+		return;
+	}
+	const byteLength = Buffer.byteLength(serialized, 'utf8');
+	if (byteLength > maxPortalCoreEventBytes) {
+		throw new Error(
+			`MCP Portal core event exceeded ${String(maxPortalCoreEventBytes)} bytes (${String(byteLength)} bytes).`,
+		);
 	}
 }
 
@@ -388,6 +402,7 @@ export async function collectPortalCoreResult(
 async function* scalarToolStream(props: {
 	readonly input: unknown;
 	readonly scope: PortalAgentScope;
+	readonly signal?: AbortSignal;
 	readonly sessionManager: PortalSessionManager;
 	readonly toolName: Exclude<PortalCoreToolName, 'mcp_portal_call'>;
 	readonly toolRuntime: PortalToolRuntime;
@@ -399,7 +414,9 @@ async function* scalarToolStream(props: {
 			: props.toolName === 'mcp_portal_search'
 				? handlers.search
 				: handlers.describe;
+	throwIfAborted(props.signal);
 	const batchResult = await handler({ identity: props.scope, input: props.input });
+	throwIfAborted(props.signal);
 	yield { kind: 'completed', result: scalarBatchResultToCoreResult(batchResult) };
 }
 
@@ -414,6 +431,7 @@ async function* callToolStream(props: {
 	let notifyQueuedEvent: (() => void) | undefined;
 	let executionDone = false;
 	const pushEvent = (event: PortalCoreEvent): void => {
+		assertPortalCoreEventSize(event);
 		if (queuedEvents.length >= maxQueuedPortalCoreEvents) {
 			throw new Error(`MCP Portal core event queue exceeded ${maxQueuedPortalCoreEvents} events.`);
 		}
@@ -578,6 +596,7 @@ export function createPortalCore(props: CreatePortalCoreProps): PortalCore {
 			yield* scalarToolStream({
 				input: call.input,
 				scope: call.scope,
+				...(call.signal !== undefined ? { signal: call.signal } : {}),
 				sessionManager,
 				toolName: call.toolName,
 				toolRuntime,

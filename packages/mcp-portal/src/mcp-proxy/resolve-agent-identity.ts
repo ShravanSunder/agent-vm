@@ -27,6 +27,15 @@ export interface PortalAgentRuntimeRecord {
 	readonly profileName: string;
 }
 
+export interface PortalApprovalAuditEvent {
+	readonly agentId: string;
+	readonly decision: 'allow' | 'deny';
+	readonly kind: 'mcp_portal_approval';
+	readonly reason?: 'approval_token_invalid' | 'approval_token_missing' | 'no_approval_required';
+	readonly timeMs: number;
+	readonly verifierReason?: string;
+}
+
 async function resolveAgentHmacKeyEntry(props: {
 	readonly agent: McpPortalAgentConfig;
 	readonly agentId: string;
@@ -125,6 +134,7 @@ function approvalTokenCallDigests(calls: readonly PortalApprovalCall[]): readonl
 }
 
 export function createPortalApprovalVerifier(props: {
+	readonly auditSink?: (event: PortalApprovalAuditEvent) => void;
 	readonly records: ReadonlyMap<string, PortalAgentRuntimeRecord>;
 }): (
 	calls: readonly PortalApprovalCall[],
@@ -134,6 +144,10 @@ export function createPortalApprovalVerifier(props: {
 	| { readonly kind: 'allow' }
 	| { readonly kind: 'approval_token_invalid'; readonly reason: string }
 	| { readonly kind: 'approval_token_missing' } {
+	function auditApproval(event: Omit<PortalApprovalAuditEvent, 'kind' | 'timeMs'>): void {
+		props.auditSink?.({ ...event, kind: 'mcp_portal_approval', timeMs: Date.now() });
+	}
+
 	const consumedApprovalTokenIds = new Map<string, number>();
 	const consumeTokenId = (agentId: string, jti: string, expiresAtMs: number): boolean => {
 		const nowMs = Date.now();
@@ -155,15 +169,23 @@ export function createPortalApprovalVerifier(props: {
 	return (calls, agentId, token) => {
 		const record = props.records.get(agentId);
 		if (record === undefined) {
+			auditApproval({
+				agentId,
+				decision: 'deny',
+				reason: 'approval_token_invalid',
+				verifierReason: 'unknown-agent',
+			});
 			return { kind: 'approval_token_invalid', reason: 'unknown-agent' };
 		}
 		const callsRequiringApproval = calls.filter((call) =>
 			approvalRequiredByProfile(record.profile, call),
 		);
 		if (callsRequiringApproval.length === 0) {
+			auditApproval({ agentId, decision: 'allow', reason: 'no_approval_required' });
 			return { kind: 'allow' };
 		}
 		if (token === undefined) {
+			auditApproval({ agentId, decision: 'deny', reason: 'approval_token_missing' });
 			return { kind: 'approval_token_missing' };
 		}
 		const verificationProps = {
@@ -178,8 +200,15 @@ export function createPortalApprovalVerifier(props: {
 		};
 		const verification = verifyApprovalToken(verificationProps);
 		if (verification.ok) {
+			auditApproval({ agentId, decision: 'allow' });
 			return { kind: 'allow' };
 		}
+		auditApproval({
+			agentId,
+			decision: 'deny',
+			reason: 'approval_token_invalid',
+			verifierReason: verification.reason,
+		});
 		return { kind: 'approval_token_invalid', reason: verification.reason };
 	};
 }

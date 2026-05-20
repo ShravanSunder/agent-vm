@@ -25,11 +25,12 @@ import { serve } from '@hono/node-server';
 import { resolveSecretValue } from '../bin/secret-value-resolver.js';
 import { createPortalCore } from '../core/portal-core.js';
 import { resolveUpstreamServers } from '../core/provider-runtime.js';
-import { createPortalHttpApp } from '../mcp-proxy/portal-http-server.js';
+import { createPortalHttpApp, type PortalHttpAuditEvent } from '../mcp-proxy/portal-http-server.js';
 import {
 	createPortalAgentRuntimeRecords,
 	createPortalApprovalVerifier,
 	createPortalHttpAgentResolver,
+	type PortalApprovalAuditEvent,
 } from '../mcp-proxy/resolve-agent-identity.js';
 import type { PortalToolSelector } from '../portal-access-policy.js';
 import { decodePortalMasterKey } from '../portal-auth/agent-bearer-token.js';
@@ -38,12 +39,38 @@ import { createUpstreamMcpClientRuntime } from '../upstream-mcp-client-runtime.j
 type PortalNodeServer = ReturnType<typeof serve>;
 type PortalServeFunction = typeof serve;
 
-export type PortalServerLogEvent = {
-	readonly event: 'server_error';
-	readonly level: 'error';
-	readonly message: string;
-	readonly stack?: string;
-};
+export type PortalServerLogEvent =
+	| {
+			readonly event: 'server_error';
+			readonly level: 'error';
+			readonly message: string;
+			readonly stack?: string;
+	  }
+	| {
+			readonly agentId: string;
+			readonly clientAddress: string;
+			readonly decision: PortalHttpAuditEvent['decision'];
+			readonly event: 'mcp_proxy_auth';
+			readonly level: 'info' | 'warn';
+			readonly reason?: PortalHttpAuditEvent['reason'];
+			readonly timeMs: number;
+	  }
+	| {
+			readonly agentId: string;
+			readonly decision: PortalApprovalAuditEvent['decision'];
+			readonly event: 'mcp_portal_approval';
+			readonly level: 'info' | 'warn';
+			readonly reason?: PortalApprovalAuditEvent['reason'];
+			readonly timeMs: number;
+			readonly verifierReason?: string;
+	  }
+	| {
+			readonly agentScopeId: string;
+			readonly event: 'upstream_close_error';
+			readonly level: 'warn';
+			readonly message: string;
+			readonly namespace?: string;
+	  };
 
 export interface PortalServerLogger {
 	readonly log: (event: PortalServerLogEvent) => void;
@@ -410,10 +437,30 @@ export async function startPortalServer(
 	const upstreamServers = await resolveUpstreamServers({ config: mcpConfig, resolveSecret });
 	const upstreamRuntime = createUpstreamMcpClientRuntime({
 		additionalRedactionValues: [masterKey.toString('base64url')],
+		onCloseError: (error, context) => {
+			props.logger?.log({
+				agentScopeId: context.agentScopeId,
+				event: 'upstream_close_error',
+				level: 'warn',
+				message: error.message,
+				...(context.namespace === undefined ? {} : { namespace: context.namespace }),
+			});
+		},
 		servers: upstreamServers,
 	});
 	const profilePolicyMaps = buildProfilePolicyMaps(portalConfig);
 	const verifyApproval = createPortalApprovalVerifier({
+		auditSink: (event) => {
+			props.logger?.log({
+				agentId: event.agentId,
+				decision: event.decision,
+				event: 'mcp_portal_approval',
+				level: event.decision === 'allow' ? 'info' : 'warn',
+				...('reason' in event ? { reason: event.reason } : {}),
+				timeMs: event.timeMs,
+				...('verifierReason' in event ? { verifierReason: event.verifierReason } : {}),
+			});
+		},
 		records: agentRecords,
 	});
 	const core = createPortalCore({
@@ -437,6 +484,17 @@ export async function startPortalServer(
 			authorizationHeaderName: proxyStartup.mcpProxy.auth.headerName,
 			credentialVersionsByAgent: credentialVersionsByAgent(portalConfig),
 			masterKey,
+		},
+		auditSink: (event) => {
+			props.logger?.log({
+				agentId: event.agentId,
+				clientAddress: event.clientAddress,
+				decision: event.decision,
+				event: 'mcp_proxy_auth',
+				level: event.decision === 'allow' ? 'info' : 'warn',
+				...(event.reason === undefined ? {} : { reason: event.reason }),
+				timeMs: event.timeMs,
+			});
 		},
 		core,
 		onSessionClosed: async (identity) => {

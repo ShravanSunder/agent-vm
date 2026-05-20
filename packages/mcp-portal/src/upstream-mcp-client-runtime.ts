@@ -439,6 +439,7 @@ export function createUpstreamMcpClientRuntime(
 	const clients = new Map<string, CachedClient>();
 	const pendingClients = new Map<string, PendingClient>();
 	const agentScopeGenerations = new Map<string, number>();
+	const closedClients = new WeakSet<UpstreamMcpClientLike>();
 	const createClient = options.createClient ?? createSdkClient;
 	const createTransport = options.createTransport ?? createSdkTransport;
 	const maxResponseBytes = options.maxResponseBytes ?? defaultMaxResponseBytes;
@@ -462,6 +463,28 @@ export function createUpstreamMcpClientRuntime(
 
 	function incrementScopeGeneration(scopeKey: string): void {
 		agentScopeGenerations.set(scopeKey, (agentScopeGenerations.get(scopeKey) ?? 0) + 1);
+	}
+
+	async function closeClientAfterFailureOnce(client: UpstreamMcpClientLike | null): Promise<void> {
+		if (!client || closedClients.has(client)) {
+			return;
+		}
+		closedClients.add(client);
+		await closeClientAfterFailure(client);
+	}
+
+	async function closeClientForTeardownOnce(
+		client: UpstreamMcpClientLike | null,
+		context: UpstreamMcpCloseErrorContext,
+	): Promise<void> {
+		if (!client || closedClients.has(client)) {
+			return;
+		}
+		closedClients.add(client);
+		await closeClientForTeardown(client, {
+			context,
+			onCloseError: options.onCloseError,
+		});
 	}
 
 	async function createConnectedClient(
@@ -494,7 +517,7 @@ export function createUpstreamMcpClientRuntime(
 				return client;
 			} catch (error) {
 				const redactedError = redactThrownError(error, { exactValues: redactionValues });
-				await closeClientAfterFailure(client);
+				await closeClientAfterFailureOnce(client);
 				return tryAttempt(attemptIndex + 1, redactedError);
 			}
 		}
@@ -518,7 +541,7 @@ export function createUpstreamMcpClientRuntime(
 		}
 		if (pendingClient) {
 			pendingClients.delete(key);
-			void pendingClient.promise.then(closeClientAfterFailure, () => undefined);
+			void pendingClient.promise.then(closeClientAfterFailureOnce, () => undefined);
 		}
 
 		const server = serversByNamespace.get(namespace);
@@ -532,7 +555,7 @@ export function createUpstreamMcpClientRuntime(
 		try {
 			const client = await pending;
 			if (generationForAgentScope(agentScopeId) !== generation) {
-				await closeClientAfterFailure(client);
+				await closeClientAfterFailureOnce(client);
 				throw new Error(
 					`MCP client for agent scope "${rootAgentScopeId(agentScopeId)}" was invalidated.`,
 				);
@@ -554,13 +577,6 @@ export function createUpstreamMcpClientRuntime(
 				client = await getClient(call.agentScopeId, call.namespace);
 				const server = serversByNamespace.get(call.namespace);
 				const timeoutAbort = createRuntimeAbortSignal(call.signal);
-				const disposeNotificationHandler = client.onNotification?.((notification) => {
-					void call.onEvent?.({
-						kind: 'upstream_notification',
-						method: notification.method,
-						params: notification.params,
-					});
-				});
 				try {
 					const upstreamResult = await withTimeout(
 						client.callTool({ arguments: call.arguments, name: call.toolName }, undefined, {
@@ -583,12 +599,11 @@ export function createUpstreamMcpClientRuntime(
 					assertUpstreamResponseSize(upstreamResult, maxResponseBytes);
 					return redactUpstreamResponse(upstreamResult, { exactValues: redactionValues });
 				} finally {
-					disposeNotificationHandler?.();
 					timeoutAbort.dispose();
 				}
 			} catch (error) {
 				clients.delete(key);
-				await closeClientAfterFailure(client);
+				await closeClientAfterFailureOnce(client);
 				throw redactThrownError(error, { exactValues: redactionValues });
 			}
 		},
@@ -601,10 +616,7 @@ export function createUpstreamMcpClientRuntime(
 				}
 				clients.delete(key);
 				closePromises.push(
-					closeClientForTeardown(cachedClient.client, {
-						context: closeErrorContextFromCacheKey(key),
-						onCloseError: options.onCloseError,
-					}),
+					closeClientForTeardownOnce(cachedClient.client, closeErrorContextFromCacheKey(key)),
 				);
 			}
 			for (const [key, pendingClient] of pendingClients.entries()) {
@@ -614,11 +626,7 @@ export function createUpstreamMcpClientRuntime(
 				pendingClients.delete(key);
 				closePromises.push(
 					pendingClient.promise.then(
-						(client) =>
-							closeClientForTeardown(client, {
-								context: closeErrorContextFromCacheKey(key),
-								onCloseError: options.onCloseError,
-							}),
+						(client) => closeClientForTeardownOnce(client, closeErrorContextFromCacheKey(key)),
 						() => undefined,
 					),
 				);
@@ -634,10 +642,7 @@ export function createUpstreamMcpClientRuntime(
 				}
 				clients.delete(key);
 				closePromises.push(
-					closeClientForTeardown(cachedClient.client, {
-						context: closeErrorContextFromCacheKey(key),
-						onCloseError: options.onCloseError,
-					}),
+					closeClientForTeardownOnce(cachedClient.client, closeErrorContextFromCacheKey(key)),
 				);
 			}
 			for (const [key, pendingClient] of pendingClients.entries()) {
@@ -647,11 +652,7 @@ export function createUpstreamMcpClientRuntime(
 				pendingClients.delete(key);
 				closePromises.push(
 					pendingClient.promise.then(
-						(client) =>
-							closeClientForTeardown(client, {
-								context: closeErrorContextFromCacheKey(key),
-								onCloseError: options.onCloseError,
-							}),
+						(client) => closeClientForTeardownOnce(client, closeErrorContextFromCacheKey(key)),
 						() => undefined,
 					),
 				);
@@ -675,7 +676,7 @@ export function createUpstreamMcpClientRuntime(
 				);
 			} catch (error) {
 				clients.delete(key);
-				await closeClientAfterFailure(client);
+				await closeClientAfterFailureOnce(client);
 				throw redactThrownError(error, { exactValues: redactionValues });
 			}
 		},

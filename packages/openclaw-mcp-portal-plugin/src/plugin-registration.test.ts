@@ -61,14 +61,15 @@ describe('plugin registration validation', () => {
 		expect(source).not.toContain('failed to initialize portal config');
 	});
 
-	it('requires native tool registration, prompt/tool hooks, and lifecycle cleanup APIs', () => {
+	it('requires native tool registration, before-tool-call hooks, and lifecycle cleanup APIs', () => {
 		expect(() => validatePortalPluginApi({})).toThrow(/registerTool/u);
 		expect(() =>
 			validatePortalPluginApi({
+				registerPromptHook: () => undefined,
 				registerRuntimeLifecycle: () => undefined,
 				registerTool: () => undefined,
 			}),
-		).toThrow(/prompt hook/u);
+		).toThrow(/before_tool_call/u);
 		expect(() =>
 			validatePortalPluginApi({
 				on: () => undefined,

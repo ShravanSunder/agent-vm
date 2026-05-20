@@ -801,6 +801,66 @@ describe('portal core event stream', () => {
 		await core.close();
 	});
 
+	it('fails instead of queuing oversized upstream event payloads', async () => {
+		const callUpstreamTool = vi.fn(async (call) => {
+			call.onEvent?.({
+				content: [{ text: 'x'.repeat(300 * 1_024), type: 'text' }],
+				kind: 'partial_content',
+			});
+			return { ok: true };
+		});
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval: allowApproval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool,
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(async () => batchTools),
+			},
+			upstreamNamespaces: ['linear'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'cli-operator',
+		});
+
+		const result = await core.collectPortalCoreResult(
+			core.callStream({
+				input: {
+					calls: [
+						{
+							arguments: { title: 'Oversized' },
+							id: 'call-1',
+							namespace: 'linear',
+							toolName: 'create_issue',
+						},
+					],
+				},
+				scope,
+				toolName: 'mcp_portal_call',
+			}),
+		);
+
+		expect(result.items).toEqual([
+			expect.objectContaining({
+				error: expect.objectContaining({
+					code: 'upstream_call_failed',
+					message: expect.stringMatching(/core event exceeded/u),
+				}),
+				requestId: 'call-1',
+				status: 'failed',
+			}),
+		]);
+
+		await core.close();
+	});
+
 	it('emits a failed terminal event when scalar execution is aborted after start', async () => {
 		const core = createPortalCore({
 			accessPolicy: {

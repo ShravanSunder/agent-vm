@@ -370,7 +370,15 @@ describe('MCP Portal effective config materialization', () => {
 				schemaVersion: 1,
 			},
 			portalConfig: {
-				agents: { shravan: { profile: 'default' } },
+				agents: {
+					shravan: {
+						hmacKey: {
+							ref: 'op://agent-vm/shravan-mcp-portal-approval/credential',
+							source: '1password',
+						},
+						profile: 'default',
+					},
+				},
 				externalAuth: {
 					masterKey: {
 						ref: 'op://agent-vm/sunfam-mcp-portal-external-auth/credential',
@@ -401,6 +409,10 @@ describe('MCP Portal effective config materialization', () => {
 		) as Record<string, unknown>;
 
 		expect(JSON.stringify(effectivePortalConfig)).not.toContain('source');
+		expect(JSON.stringify(effectivePortalConfig)).not.toContain('op://');
+		expect(effectivePortalConfig.agents).toEqual({
+			shravan: { credentialVersion: 1, profile: 'default' },
+		});
 		expect(effectivePortalConfig.externalAuth).toBeUndefined();
 		expect(effectivePortalConfig.mcpProxy).toBeUndefined();
 	});
