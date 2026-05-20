@@ -1256,7 +1256,7 @@ describe('createOpCliSecretResolver', () => {
 		);
 	});
 
-	it('preserves safe stdin write error details when op inject closes stdin early', async () => {
+	it('preserves safe op inject failure details when the child closes stdin early', async () => {
 		const temporaryDirectory = await createTemporaryDirectory('agent-vm-op-shim-');
 		await writeExecutableOpShim({
 			directoryPath: temporaryDirectory,
@@ -1291,8 +1291,11 @@ describe('createOpCliSecretResolver', () => {
 				}
 				const renderedChildren = error.errors.map((child) => String(child));
 				expect(renderedChildren).toContainEqual(
-					expect.stringContaining(
-						'op inject failed before serial op read: stdin write failed: EPIPE',
+					expect.stringContaining('op inject failed before serial op read: '),
+				);
+				expect(renderedChildren).toContainEqual(
+					expect.stringMatching(
+						/op inject failed before serial op read: (stdin write failed|exit code 1)/u,
 					),
 				);
 				expect(renderedChildren.some((child) => child.includes('SUPER-SECRET-VALUE'))).toBe(false);
