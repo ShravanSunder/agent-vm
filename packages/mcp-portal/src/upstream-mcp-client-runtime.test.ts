@@ -76,7 +76,50 @@ describe('upstream MCP client runtime', () => {
 			{ inputSchema: { type: 'object' }, name: 'a' },
 			{ inputSchema: { type: 'object' }, name: 'b' },
 		]);
-		expect(client.listTools).toHaveBeenNthCalledWith(2, { cursor: 'next' });
+		expect(client.listTools).toHaveBeenNthCalledWith(2, { cursor: 'next' }, expect.any(Object));
+	});
+
+	it('threads timeout abort signals into listTools requests', async () => {
+		const listToolSignals: (AbortSignal | undefined)[] = [];
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async (_params, options) => {
+				listToolSignals.push(options?.signal);
+				return { tools: [] };
+			}),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: vi.fn(() => ({})),
+			servers: [createServer()],
+		});
+
+		await runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' });
+
+		expect(listToolSignals).toEqual([expect.any(AbortSignal)]);
+	});
+
+	it('threads timeout abort signals into connect requests', async () => {
+		const connectSignals: (AbortSignal | undefined)[] = [];
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(async (_transport, options) => {
+				connectSignals.push(options?.signal);
+			}),
+			listTools: vi.fn(async () => ({ tools: [] })),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: vi.fn(() => ({})),
+			servers: [createServer()],
+		});
+
+		await runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' });
+
+		expect(connectSignals).toEqual([expect.any(AbortSignal)]);
 	});
 
 	it('tries Streamable HTTP before SSE for unspecified remote transport', async () => {

@@ -134,6 +134,8 @@ function approvalTokenCallDigests(calls: readonly PortalApprovalCall[]): readonl
 }
 
 export function createPortalApprovalVerifier(props: {
+	readonly approvalTokenReplayCacheLimit?: number;
+	readonly auditErrorSink?: (error: Error, event: PortalApprovalAuditEvent) => void;
 	readonly auditSink?: (event: PortalApprovalAuditEvent) => void;
 	readonly records: ReadonlyMap<string, PortalAgentRuntimeRecord>;
 }): (
@@ -145,23 +147,33 @@ export function createPortalApprovalVerifier(props: {
 	| { readonly kind: 'approval_token_invalid'; readonly reason: string }
 	| { readonly kind: 'approval_token_missing' } {
 	function auditApproval(event: Omit<PortalApprovalAuditEvent, 'kind' | 'timeMs'>): void {
-		props.auditSink?.({ ...event, kind: 'mcp_portal_approval', timeMs: Date.now() });
+		const auditEvent = { ...event, kind: 'mcp_portal_approval', timeMs: Date.now() } as const;
+		try {
+			props.auditSink?.(auditEvent);
+		} catch (error) {
+			props.auditErrorSink?.(error instanceof Error ? error : new Error(String(error)), auditEvent);
+		}
 	}
 
 	const consumedApprovalTokenIds = new Map<string, number>();
-	const consumeTokenId = (agentId: string, jti: string, expiresAtMs: number): boolean => {
+	const replayCacheLimit = props.approvalTokenReplayCacheLimit ?? approvalTokenReplayCacheLimit;
+	const consumeTokenId = (
+		agentId: string,
+		jti: string,
+		expiresAtMs: number,
+	): boolean | { readonly ok: false; readonly reason: 'replay-cache-full' | 'replayed' } => {
 		const nowMs = Date.now();
 		for (const [tokenKey, tokenExpiresAtMs] of consumedApprovalTokenIds) {
-			if (
-				tokenExpiresAtMs <= nowMs ||
-				consumedApprovalTokenIds.size > approvalTokenReplayCacheLimit
-			) {
+			if (tokenExpiresAtMs <= nowMs) {
 				consumedApprovalTokenIds.delete(tokenKey);
 			}
 		}
 		const tokenKey = `${agentId}\n${jti}`;
 		if (consumedApprovalTokenIds.has(tokenKey)) {
-			return false;
+			return { ok: false, reason: 'replayed' };
+		}
+		if (consumedApprovalTokenIds.size >= replayCacheLimit) {
+			return { ok: false, reason: 'replay-cache-full' };
 		}
 		consumedApprovalTokenIds.set(tokenKey, expiresAtMs);
 		return true;

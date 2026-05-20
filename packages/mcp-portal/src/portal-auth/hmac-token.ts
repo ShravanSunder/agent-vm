@@ -21,7 +21,10 @@ export interface VerifyApprovalTokenProps {
 	readonly agentId: string;
 	readonly calls: readonly ApprovalTokenCallDigest[];
 	readonly key: Buffer;
-	readonly consumeTokenId?: (jti: string, expiresAtMs: number) => boolean;
+	readonly consumeTokenId?: (
+		jti: string,
+		expiresAtMs: number,
+	) => boolean | { readonly ok: false; readonly reason: 'replay-cache-full' | 'replayed' };
 	readonly maxLifetimeMs?: number;
 	readonly nowMs: number;
 	readonly token: string;
@@ -36,6 +39,7 @@ export type VerifyApprovalTokenResult =
 				| 'call-mismatch'
 				| 'expired'
 				| 'malformed'
+				| 'replay-cache-full'
 				| 'replayed'
 				| 'signature-mismatch'
 				| 'ttl-exceeded';
@@ -160,8 +164,14 @@ export function verifyApprovalToken(props: VerifyApprovalTokenProps): VerifyAppr
 	if (!callsMatch(payload.calls, props.calls)) {
 		return { ok: false, reason: 'call-mismatch' };
 	}
-	if (props.consumeTokenId !== undefined && !props.consumeTokenId(payload.jti, payload.exp)) {
-		return { ok: false, reason: 'replayed' };
+	if (props.consumeTokenId !== undefined) {
+		const consumeResult = props.consumeTokenId(payload.jti, payload.exp);
+		if (consumeResult === false) {
+			return { ok: false, reason: 'replayed' };
+		}
+		if (typeof consumeResult === 'object' && !consumeResult.ok) {
+			return { ok: false, reason: consumeResult.reason };
+		}
 	}
 	return { ok: true };
 }

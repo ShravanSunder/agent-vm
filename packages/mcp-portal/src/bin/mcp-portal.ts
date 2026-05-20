@@ -234,7 +234,10 @@ function credentialProxyUrlFromConfig(
 	mcpProxy: NonNullable<McpPortalConfig['mcpProxy']>,
 	agentId: string,
 ): string {
-	return `http://${mcpProxy.server.host}:${String(mcpProxy.server.port)}/agents/${encodeURIComponent(agentId)}/mcp`;
+	const host = mcpProxy.server.host.includes(':')
+		? `[${mcpProxy.server.host.replace(/^\[|\]$/gu, '')}]`
+		: mcpProxy.server.host;
+	return `http://${host}:${String(mcpProxy.server.port)}/agents/${encodeURIComponent(agentId)}/mcp`;
 }
 
 const portalCoreToolNames = new Set<string>([

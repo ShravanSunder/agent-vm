@@ -8,10 +8,13 @@ import { describe, expect, it } from 'vitest';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 import {
+	disableOpenClawMcpPortalPlugin,
 	prepareLocalWorkerPackageForGatewayImage,
 	scaffoldGatewaySmokeProject,
 	shouldRunWorkerGatewaySmoke,
 	useLocalOpenClawGatewayImagePackages,
+	useLocalOpenClawPluginGatewayImage,
+	useLocalToolVmMcpPortalPackage,
 } from './smoke-harness.js';
 
 describe('shouldRunWorkerGatewaySmoke', () => {
@@ -227,6 +230,111 @@ describe('startSmokeControllerRuntime', () => {
 		expect(toolVmDockerfile).toContain('/opt/agent-vm/local-packages');
 		expect(toolVmDockerfile).not.toContain('pnpm add -g');
 		expect(toolVmDockerfile).not.toMatch(/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u);
+	});
+
+	it('writes plugin-only OpenClaw smoke images without mutating Tool VM MCP Portal profiles', async () => {
+		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-smoke-harness-'));
+		const repoRoot = path.join(temporaryRoot, 'repo');
+		const systemConfig = createMinimalOpenClawSystemConfig();
+		systemConfig.imageProfiles.gateways.openclaw = {
+			type: 'openclaw',
+			buildConfig: path.join(temporaryRoot, 'build-config.jsonc'),
+			source: { kind: 'managedBase', base: 'openclaw-gateway' },
+		};
+		const originalToolVmProfile = { ...systemConfig.imageProfiles.toolVms.tool };
+
+		await createFakeSecretsPackage(repoRoot);
+		await createFakeGondolinAdapterPackage(repoRoot);
+		await createFakePackageDist(repoRoot, 'openclaw-agent-vm-plugin', 'gondolin');
+
+		await useLocalOpenClawPluginGatewayImage({
+			profileName: 'openclaw',
+			projectRoot: temporaryRoot,
+			repoRoot,
+			systemConfig,
+		});
+
+		const dockerfilePath = systemConfig.imageProfiles.gateways.openclaw.dockerfile;
+		if (dockerfilePath === undefined) {
+			throw new Error('Expected plugin-only helper to set dockerfile path.');
+		}
+		const dockerfile = await fs.readFile(dockerfilePath, 'utf8');
+		expect(dockerfile).toContain(
+			'COPY openclaw-agent-vm-plugin-local.tgz /tmp/openclaw-agent-vm-plugin-local.tgz',
+		);
+		expect(dockerfile).not.toContain('mcp-portal-local.tgz');
+		expect(dockerfile).not.toContain('openclaw-mcp-portal-plugin-local.tgz');
+		expect(systemConfig.imageProfiles.toolVms.tool).toEqual(originalToolVmProfile);
+	});
+
+	it('writes local MCP Portal Tool VM smoke images only when requested explicitly', async () => {
+		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-smoke-harness-'));
+		const repoRoot = path.join(temporaryRoot, 'repo');
+		const systemConfig = createMinimalOpenClawSystemConfig();
+		const originalGatewayProfile = { ...systemConfig.imageProfiles.gateways.openclaw };
+
+		await createFakeSecretsPackage(repoRoot);
+		await createFakePortalDist(repoRoot);
+
+		await useLocalToolVmMcpPortalPackage({
+			projectRoot: temporaryRoot,
+			repoRoot,
+			systemConfig,
+		});
+
+		expect(systemConfig.imageProfiles.gateways.openclaw).toEqual(originalGatewayProfile);
+		const toolVmDockerfilePath = systemConfig.imageProfiles.toolVms.tool?.dockerfile;
+		if (toolVmDockerfilePath === undefined) {
+			throw new Error('Expected explicit Tool VM helper to set dockerfile path.');
+		}
+		expect(toolVmDockerfilePath).toBe(
+			path.join(temporaryRoot, 'vm-images', 'tool-vms', 'tool-local-mcp-portal', 'Dockerfile'),
+		);
+		const toolVmDockerfile = await fs.readFile(toolVmDockerfilePath, 'utf8');
+		expect(toolVmDockerfile).toContain(
+			'COPY config-contracts-local.tgz /tmp/config-contracts-local.tgz',
+		);
+		expect(toolVmDockerfile).toContain('COPY secrets-local.tgz /tmp/secrets-local.tgz');
+		expect(toolVmDockerfile).toContain('COPY mcp-portal-local.tgz /tmp/mcp-portal-local.tgz');
+		expect(toolVmDockerfile).not.toContain('openclaw-agent-vm-plugin-local.tgz');
+		expect(toolVmDockerfile).not.toContain('openclaw-mcp-portal-plugin-local.tgz');
+		expect(toolVmDockerfile).not.toContain('pnpm add -g');
+	});
+
+	it('removes MCP Portal plugin loading from OpenClaw smokes that do not exercise portal tools', async () => {
+		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-smoke-harness-'));
+		const configPath = path.join(temporaryRoot, 'openclaw.json');
+		await fs.writeFile(
+			configPath,
+			`${JSON.stringify(
+				{
+					plugins: {
+						allow: ['gondolin', 'memory-core', 'mcp-portal'],
+						entries: {
+							gondolin: { enabled: true },
+							'mcp-portal': { enabled: true },
+						},
+						load: {
+							paths: [
+								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/home/openclaw/.openclaw/extensions/mcp-portal',
+							],
+						},
+					},
+				},
+				null,
+				'\t',
+			)}\n`,
+			'utf8',
+		);
+
+		await disableOpenClawMcpPortalPlugin(configPath);
+
+		const rewrittenConfig = await fs.readFile(configPath, 'utf8');
+		expect(rewrittenConfig).toContain('/home/openclaw/.openclaw/extensions/gondolin');
+		expect(rewrittenConfig).toContain('"gondolin"');
+		expect(rewrittenConfig).not.toContain('/home/openclaw/.openclaw/extensions/mcp-portal');
+		expect(rewrittenConfig).not.toContain('"mcp-portal"');
 	});
 });
 

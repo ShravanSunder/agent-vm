@@ -113,6 +113,61 @@ describe('mcp-portal CLI', () => {
 		}
 	});
 
+	it('prints a valid client config URL for IPv6 loopback proxy hosts', async () => {
+		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-credential-'));
+		const previousMasterKey = process.env.MCP_PORTAL_MASTER_KEY;
+		const stdoutChunks: string[] = [];
+		const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+			stdoutChunks.push(String(chunk));
+			return true;
+		});
+		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		try {
+			process.env.MCP_PORTAL_MASTER_KEY = externalMasterKeyText;
+			await writeFile(
+				join(workspace, 'mcp-portal.config.jsonc'),
+				JSON.stringify({
+					agents: { shravan: { profile: 'default' } },
+					externalAuth: {
+						masterKey: { name: 'MCP_PORTAL_MASTER_KEY', source: 'environment' },
+					},
+					mcpProxy: {
+						auth: { headerName: 'authorization' },
+						server: { host: '::1', port: 18791 },
+					},
+					profiles: { default: { enabledNamespaces: [] } },
+					schemaVersion: 1,
+				}),
+			);
+
+			expect(
+				await runMcpPortal([
+					'mcp-proxy',
+					'print-client-config',
+					'--config-dir',
+					workspace,
+					'--agent',
+					'shravan',
+					'--master-key-fingerprint',
+					formatMasterKeyFingerprint(externalMasterKey),
+				]),
+			).toBe(0);
+			const clientConfig = JSON.parse(stdoutChunks.join('')) as { readonly proxyUrl: string };
+
+			expect(clientConfig.proxyUrl).toBe('http://[::1]:18791/agents/shravan/mcp');
+			expect(() => new URL(clientConfig.proxyUrl)).not.toThrow();
+		} finally {
+			stdoutSpy.mockRestore();
+			stderrSpy.mockRestore();
+			if (previousMasterKey === undefined) {
+				delete process.env.MCP_PORTAL_MASTER_KEY;
+			} else {
+				process.env.MCP_PORTAL_MASTER_KEY = previousMasterKey;
+			}
+			await rm(workspace, { force: true, recursive: true });
+		}
+	});
+
 	it('validates catalog files and reports wrapper metadata errors', async () => {
 		const workspace = await mkdtemp(join(tmpdir(), 'mcp-portal-'));
 		try {

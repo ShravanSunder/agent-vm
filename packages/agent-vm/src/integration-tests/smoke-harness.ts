@@ -11,6 +11,7 @@ import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builde
 import { resolveManagedImageRelease } from '../build/managed-image-dockerfile.js';
 import { isZigVersionAtLeast, resolveHostZigVersion } from '../build/zig-compatibility.js';
 import { scaffoldAgentVmProject, type ImageArchitecture } from '../cli/init-command.js';
+import { loadJsonConfigFile } from '../config/json-config-file.js';
 import { loadSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
 import type {
 	ControllerRuntime,
@@ -44,6 +45,9 @@ interface LocalDockerPackageTarball {
 	readonly archiveName: string;
 	readonly sourcePath: string;
 }
+
+const defaultOpenClawMcpPortalExtensionsPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
+const openClawMcpPortalPluginName = 'mcp-portal';
 
 export interface SmokeHarnessSecretMap {
 	readonly [secretKey: string]: string;
@@ -369,7 +373,7 @@ async function copyLocalPackageTarballsToDockerContext(options: {
 	);
 }
 
-async function useLocalToolVmMcpPortalPackage(options: {
+async function useLocalToolVmMcpPortalPackageTarballs(options: {
 	readonly localConfigContractsTarballPath: string;
 	readonly localMcpPortalTarballPath: string;
 	readonly localSecretsTarballPath: string;
@@ -429,8 +433,72 @@ async function useLocalToolVmMcpPortalPackage(options: {
 	);
 }
 
+export async function useLocalToolVmMcpPortalPackage(options: {
+	readonly projectRoot: string;
+	readonly repoRoot: string;
+	readonly systemConfig: LoadedSystemConfig;
+}): Promise<void> {
+	const localConfigContractsTarballPath = await packLocalPackageTarball({
+		packageDirectory: path.join(options.repoRoot, 'packages', 'config-contracts'),
+		packageName: 'config-contracts',
+	});
+	const localSecretsTarballPath = await packLocalPackageTarball({
+		packageDirectory: path.join(options.repoRoot, 'packages', 'secrets'),
+		packageName: 'secrets',
+	});
+	const localMcpPortalTarballPath = await packLocalPackageTarball({
+		packageDirectory: path.join(options.repoRoot, 'packages', 'mcp-portal'),
+		packageName: 'mcp-portal',
+	});
+	await useLocalToolVmMcpPortalPackageTarballs({
+		localConfigContractsTarballPath,
+		localMcpPortalTarballPath,
+		localSecretsTarballPath,
+		projectRoot: options.projectRoot,
+		systemConfig: options.systemConfig,
+	});
+}
+
 function localPackageTarballArchiveName(packageName: string): string {
 	return `${packageName}-local.tgz`;
+}
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function mutableJsonRecord(value: unknown): Record<string, unknown> | undefined {
+	if (!isJsonRecord(value)) {
+		return undefined;
+	}
+	return value;
+}
+
+function withoutStringValue(value: unknown, removedValue: string): unknown {
+	if (!Array.isArray(value)) {
+		return value;
+	}
+	return value.filter((entry) => entry !== removedValue);
+}
+
+export async function disableOpenClawMcpPortalPlugin(configPath: string): Promise<void> {
+	const config = mutableJsonRecord(await loadJsonConfigFile(configPath));
+	if (!config) {
+		throw new Error(`OpenClaw config at ${configPath} must be an object.`);
+	}
+	const plugins = mutableJsonRecord(config.plugins);
+	const pluginLoad = mutableJsonRecord(plugins?.load);
+	if (pluginLoad) {
+		pluginLoad.paths = withoutStringValue(pluginLoad.paths, defaultOpenClawMcpPortalExtensionsPath);
+	}
+	if (plugins) {
+		plugins.allow = withoutStringValue(plugins.allow, openClawMcpPortalPluginName);
+	}
+	const pluginEntries = mutableJsonRecord(plugins?.entries);
+	if (pluginEntries) {
+		delete pluginEntries[openClawMcpPortalPluginName];
+	}
+	await fs.writeFile(configPath, `${JSON.stringify(config, null, '\t')}\n`, 'utf8');
 }
 
 export async function useLocalOpenClawGatewayImagePackages(options: {
@@ -509,7 +577,7 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 		dockerContextDirectory,
 		tarballs: localPackageTarballs,
 	});
-	await useLocalToolVmMcpPortalPackage({
+	await useLocalToolVmMcpPortalPackageTarballs({
 		localConfigContractsTarballPath,
 		localMcpPortalTarballPath,
 		localSecretsTarballPath,
@@ -550,7 +618,77 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 	readonly repoRoot: string;
 	readonly systemConfig: LoadedSystemConfig;
 }): Promise<void> {
-	await useLocalOpenClawGatewayImagePackages(options);
+	const gatewayProfile = options.systemConfig.imageProfiles.gateways[options.profileName];
+	if (!gatewayProfile) {
+		throw new Error(`Gateway image profile '${options.profileName}' is not configured.`);
+	}
+	const managedImageRelease = await resolveManagedImageRelease();
+	const baseImage = managedImageRelease.baseImages['openclaw-gateway'];
+	const dockerContextDirectory = path.join(
+		options.projectRoot,
+		'vm-images',
+		'gateways',
+		`${options.profileName}-local-plugin`,
+	);
+	const dockerfilePath = path.join(dockerContextDirectory, 'Dockerfile');
+	const localSecretsTarballPath = await packLocalPackageTarball({
+		packageDirectory: path.join(options.repoRoot, 'packages', 'secrets'),
+		packageName: 'secrets',
+	});
+	const localGondolinAdapterTarballPath = await packLocalPackageTarball({
+		packageDirectory: path.join(options.repoRoot, 'packages', 'gondolin-adapter'),
+		packageName: 'gondolin-adapter',
+	});
+	const localOpenClawAgentVmPluginTarballPath = await packLocalPackageTarball({
+		packageDirectory: path.join(options.repoRoot, 'packages', 'openclaw-agent-vm-plugin'),
+		packageName: 'openclaw-agent-vm-plugin',
+	});
+	const localPackageTarballs = [
+		{
+			archiveName: localPackageTarballArchiveName('secrets'),
+			sourcePath: localSecretsTarballPath,
+		},
+		{
+			archiveName: localPackageTarballArchiveName('gondolin-adapter'),
+			sourcePath: localGondolinAdapterTarballPath,
+		},
+		{
+			archiveName: localPackageTarballArchiveName('openclaw-agent-vm-plugin'),
+			sourcePath: localOpenClawAgentVmPluginTarballPath,
+		},
+	] satisfies readonly LocalDockerPackageTarball[];
+
+	await fs.rm(dockerContextDirectory, { force: true, recursive: true });
+	await fs.mkdir(dockerContextDirectory, { recursive: true });
+	await copyLocalPackageTarballsToDockerContext({
+		dockerContextDirectory,
+		tarballs: localPackageTarballs,
+	});
+
+	await fs.writeFile(
+		dockerfilePath,
+		[
+			`FROM ${baseImage.repository}:${baseImage.tag}`,
+			'',
+			'# Generated by the OpenClaw smoke harness from local plugin package tarballs.',
+			...localPackageTarballs.map(
+				(tarball) => `COPY ${tarball.archiveName} /tmp/${tarball.archiveName}`,
+			),
+			'RUN mkdir -p /opt/agent-vm/local-packages && \\',
+			'    npm install --omit=dev --no-audit --no-fund --prefix /opt/agent-vm/local-packages ' +
+				localPackageTarballs.map((tarball) => `/tmp/${tarball.archiveName}`).join(' ') +
+				' && \\',
+			'    rm -f ' + localPackageTarballs.map((tarball) => `/tmp/${tarball.archiveName}`).join(' '),
+			'RUN package_root="/opt/agent-vm/local-packages/node_modules" && \\',
+			'    mkdir -p /home/openclaw/.openclaw/extensions && \\',
+			'    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin',
+			'',
+		].join('\n'),
+		'utf8',
+	);
+
+	gatewayProfile.dockerfile = dockerfilePath;
+	delete gatewayProfile.source;
 }
 
 export async function scaffoldOpenClawSmokeProject(options: {

@@ -48,7 +48,7 @@ zones[]
   runtimeAuthHints
   egressHosts
   websocketBypass
-  mcp
+  mcpPortal
   defaultToolVmProfile
   agentToolVmProfiles
   agentSandboxSeeds
@@ -189,6 +189,37 @@ The plugin registers the four native portal tools directly and calls
 `mcp.config.jsonc`; agent-vm materializes an effective gateway config that turns
 configured 1Password secrets into runtime environment references or
 runtime-mediated bindings before gateway boot.
+
+`zones[].mcpPortal.configDir` points at the directory containing those two
+authored files. In managed OpenClaw mode, `externalAuth` and `mcpProxy` are
+stripped from the gateway effective config; they are only used by the external
+`mcp-portal mcp-proxy serve` adapter.
+
+Important fields in `mcp-portal.config.jsonc`:
+
+- `agents.<agentId>.profile` selects a profile.
+- `agents.<agentId>.credentialVersion` revokes previously printed external
+  `/mcp-proxy` bearer credentials for that agent.
+- `agents.<agentId>.hmacKey` is used for OpenClaw approval-token verification
+  and is stripped before managed gateway config enters the VM.
+- `externalAuth.masterKey` is required only for external `/mcp-proxy` bearer
+  auth and client-config generation.
+- `mcpProxy.server.host`, `mcpProxy.server.port`, and
+  `mcpProxy.auth.headerName` configure the loopback Hono MCP proxy.
+- `profiles.<name>.enabledNamespaces`, `enabledToolsByNamespace`,
+  `hiddenToolsByNamespace`, and `approval` define the agent's portal policy.
+
+Important fields in `mcp.config.jsonc` provider entries:
+
+- `transport.kind` may be `streamable-http`, `sse`, or `stdio`.
+- Remote provider `transport.url` must use `http` or `https`.
+- Stdio providers must declare `transport.networkAccess`.
+- `transport.networkAccess: "declared"` requires non-empty
+  `transport.requiredEgressHosts`.
+- Every secret in `transport.env` or `transport.headers` needs a matching
+  `secretPolicies.<name>` entry.
+- `secretPolicies.<name>.injection` is either `env` or `http-mediation`;
+  mediated secrets must list allowed `hosts`.
 
 Local smoke coverage uses a fake Streamable HTTP MCP provider and the
 controller smoke harness `tcpHostsOverride` path to make that host-side provider
@@ -612,3 +643,6 @@ The schema rejects:
 - `agentToolVmProfiles` values referencing missing `toolVmProfiles`.
 - `agentSandboxSeeds` targets that are absolute or escape the sandbox work mount.
 - Tool VM profiles referencing missing Tool VM image profiles.
+- OpenClaw MCP Portal configs that fail materialization semantics, including
+  missing stdio `networkAccess`, missing provider `secretPolicies`, invalid
+  mediated hosts, and generated secret environment-name collisions.

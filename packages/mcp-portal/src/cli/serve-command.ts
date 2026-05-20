@@ -57,12 +57,27 @@ export type PortalServerLogEvent =
 	  }
 	| {
 			readonly agentId: string;
+			readonly clientAddress: string;
+			readonly event: 'mcp_proxy_auth_audit_error';
+			readonly level: 'warn';
+			readonly message: string;
+			readonly timeMs: number;
+	  }
+	| {
+			readonly agentId: string;
 			readonly decision: PortalApprovalAuditEvent['decision'];
 			readonly event: 'mcp_portal_approval';
 			readonly level: 'info' | 'warn';
 			readonly reason?: PortalApprovalAuditEvent['reason'];
 			readonly timeMs: number;
 			readonly verifierReason?: string;
+	  }
+	| {
+			readonly agentId: string;
+			readonly event: 'mcp_portal_approval_audit_error';
+			readonly level: 'warn';
+			readonly message: string;
+			readonly timeMs: number;
 	  }
 	| {
 			readonly agentScopeId: string;
@@ -438,7 +453,7 @@ export async function startPortalServer(
 	const upstreamRuntime = createUpstreamMcpClientRuntime({
 		additionalRedactionValues: [masterKey.toString('base64url')],
 		onCloseError: (error, context) => {
-			props.logger?.log({
+			logger.log({
 				agentScopeId: context.agentScopeId,
 				event: 'upstream_close_error',
 				level: 'warn',
@@ -450,8 +465,17 @@ export async function startPortalServer(
 	});
 	const profilePolicyMaps = buildProfilePolicyMaps(portalConfig);
 	const verifyApproval = createPortalApprovalVerifier({
+		auditErrorSink: (error, event) => {
+			logger.log({
+				agentId: event.agentId,
+				event: 'mcp_portal_approval_audit_error',
+				level: 'warn',
+				message: error.message,
+				timeMs: event.timeMs,
+			});
+		},
 		auditSink: (event) => {
-			props.logger?.log({
+			logger.log({
 				agentId: event.agentId,
 				decision: event.decision,
 				event: 'mcp_portal_approval',
@@ -486,13 +510,23 @@ export async function startPortalServer(
 			masterKey,
 		},
 		auditSink: (event) => {
-			props.logger?.log({
+			logger.log({
 				agentId: event.agentId,
 				clientAddress: event.clientAddress,
 				decision: event.decision,
 				event: 'mcp_proxy_auth',
 				level: event.decision === 'allow' ? 'info' : 'warn',
 				...(event.reason === undefined ? {} : { reason: event.reason }),
+				timeMs: event.timeMs,
+			});
+		},
+		auditErrorSink: (error, event) => {
+			logger.log({
+				agentId: event.agentId,
+				clientAddress: event.clientAddress,
+				event: 'mcp_proxy_auth_audit_error',
+				level: 'warn',
+				message: error.message,
 				timeMs: event.timeMs,
 			});
 		},

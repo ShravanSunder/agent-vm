@@ -11,11 +11,13 @@ import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client
 import {
 	canRunGondolinSmoke,
 	currentSmokeArchitecture,
+	disableOpenClawMcpPortalPlugin,
 	rebuildWorkspacePackages,
 	scaffoldOpenClawSmokeProject,
 	startSmokeControllerRuntime,
 	type SmokeHarnessRuntime,
 	useLocalOpenClawPluginGatewayImage,
+	useLocalToolVmMcpPortalPackage,
 } from './smoke-harness.js';
 
 const architecture = currentSmokeArchitecture();
@@ -182,6 +184,12 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 		});
 		await useLocalOpenClawPluginGatewayImage({
 			profileName: project.zone.gateway.imageProfile,
+			projectRoot: project.tempRoot,
+			repoRoot,
+			systemConfig: project.systemConfig,
+		});
+		await disableOpenClawMcpPortalPlugin(project.zone.gateway.config);
+		await useLocalToolVmMcpPortalPackage({
 			projectRoot: project.tempRoot,
 			repoRoot,
 			systemConfig: project.systemConfig,

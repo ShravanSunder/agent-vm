@@ -16,14 +16,36 @@ import { createPortalHttpApp } from './portal-http-server.js';
 
 const masterKey = Buffer.from('master-key');
 
+interface TestRequestEnvironment {
+	readonly incoming: {
+		readonly socket: {
+			readonly remoteAddress: string;
+			readonly remoteFamily: string;
+			readonly remotePort: number;
+		};
+	};
+}
+
 function createPortalAgentIdentity(
 	input: Omit<Parameters<typeof createPortalAgentIdentityBase>[0], 'source'>,
 ): PortalAgentIdentity {
 	return createPortalAgentIdentityBase({ ...input, source: 'mcp-proxy-bearer' });
 }
 
-function bearerAuthHeader(agentId: string): string {
-	return `Bearer ${deriveAgentBearerToken({ agentId, masterKey })}`;
+function requestEnvironment(remoteAddress: string): TestRequestEnvironment {
+	return {
+		incoming: {
+			socket: { remoteAddress, remoteFamily: 'IPv4', remotePort: 48123 },
+		},
+	};
+}
+
+function bearerAuthHeader(agentId: string, credentialVersion?: number): string {
+	return `Bearer ${deriveAgentBearerToken({
+		agentId,
+		...(credentialVersion === undefined ? {} : { credentialVersion }),
+		masterKey,
+	})}`;
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -158,6 +180,32 @@ describe('portal HTTP server', () => {
 		).resolves.not.toMatchObject({ status: 401 });
 	});
 
+	it('rejects bearers derived for stale credential versions at the HTTP boundary', async () => {
+		const app = createPortalHttpApp({
+			agentBearerAuth: {
+				authorizationHeaderName: 'authorization',
+				credentialVersionsByAgent: { 'agent-a': 2 },
+				masterKey,
+			},
+			core: createTestPortalCore(),
+			resolveAgentIdentity: (agentId) =>
+				agentId === 'agent-a'
+					? createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-a' })
+					: null,
+		});
+
+		await expect(
+			app.request('/agents/agent-a/mcp', {
+				headers: { authorization: bearerAuthHeader('agent-a', 1) },
+			}),
+		).resolves.toMatchObject({ status: 401 });
+		await expect(
+			app.request('/agents/agent-a/mcp', {
+				headers: { authorization: bearerAuthHeader('agent-a', 2) },
+			}),
+		).resolves.not.toMatchObject({ status: 401 });
+	});
+
 	it('returns opaque unauthorized responses for missing, invalid, and unknown-agent requests', async () => {
 		const app = createPortalHttpApp({
 			agentBearerAuth: { authorizationHeaderName: 'authorization', masterKey },
@@ -230,6 +278,31 @@ describe('portal HTTP server', () => {
 		]);
 	});
 
+	it('reports audit sink failures without changing the auth response', async () => {
+		const auditErrors: unknown[] = [];
+		const app = createPortalHttpApp({
+			agentBearerAuth: { authorizationHeaderName: 'authorization', masterKey },
+			auditErrorSink: (error) => {
+				auditErrors.push(error);
+			},
+			auditSink: () => {
+				throw new Error('audit sink unavailable');
+			},
+			core: createTestPortalCore(),
+			resolveAgentIdentity: (agentId) =>
+				agentId === 'agent-a'
+					? createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-a' })
+					: null,
+		});
+
+		await expect(
+			app.request('/agents/agent-a/mcp', {
+				headers: { authorization: bearerAuthHeader('agent-a') },
+			}),
+		).resolves.not.toMatchObject({ status: 401 });
+		expect(auditErrors).toEqual([expect.any(Error)]);
+	});
+
 	it('rate-limits repeated failed bearer attempts without trusting spoofed forwarded headers', async () => {
 		const app = createPortalHttpApp({
 			agentBearerAuth: { authorizationHeaderName: 'authorization', masterKey },
@@ -293,6 +366,68 @@ describe('portal HTTP server', () => {
 				headers: { authorization: bearerAuthHeader('missing-c') },
 			}),
 		).resolves.toMatchObject({ status: 429 });
+	});
+
+	it('uses socket peer addresses when available for auth failure buckets', async () => {
+		const app = createPortalHttpApp({
+			agentBearerAuth: { authorizationHeaderName: 'authorization', masterKey },
+			authFailureLimit: { maxFailures: 1, windowMs: 60_000 },
+			core: createTestPortalCore(),
+			resolveAgentIdentity: (agentId) =>
+				agentId === 'agent-a'
+					? createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-a' })
+					: null,
+		});
+		await expect(
+			app.request(
+				'/agents/agent-a/mcp',
+				{ headers: { authorization: bearerAuthHeader('agent-b') } },
+				requestEnvironment('198.51.100.10'),
+			),
+		).resolves.toMatchObject({ status: 401 });
+		await expect(
+			app.request(
+				'/agents/agent-a/mcp',
+				{ headers: { authorization: bearerAuthHeader('agent-b') } },
+				requestEnvironment('198.51.100.10'),
+			),
+		).resolves.toMatchObject({ status: 429 });
+		await expect(
+			app.request(
+				'/agents/agent-a/mcp',
+				{ headers: { authorization: bearerAuthHeader('agent-b') } },
+				requestEnvironment('198.51.100.11'),
+			),
+		).resolves.toMatchObject({ status: 401 });
+	});
+
+	it('resets auth failure buckets after the configured window', async () => {
+		const app = createPortalHttpApp({
+			agentBearerAuth: { authorizationHeaderName: 'authorization', masterKey },
+			authFailureLimit: { maxFailures: 1, windowMs: 5 },
+			core: createTestPortalCore(),
+			resolveAgentIdentity: (agentId) =>
+				agentId === 'agent-a'
+					? createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-a' })
+					: null,
+		});
+
+		await expect(
+			app.request('/agents/agent-a/mcp', {
+				headers: { authorization: bearerAuthHeader('agent-b') },
+			}),
+		).resolves.toMatchObject({ status: 401 });
+		await expect(
+			app.request('/agents/agent-a/mcp', {
+				headers: { authorization: bearerAuthHeader('agent-b') },
+			}),
+		).resolves.toMatchObject({ status: 429 });
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		await expect(
+			app.request('/agents/agent-a/mcp', {
+				headers: { authorization: bearerAuthHeader('agent-b') },
+			}),
+		).resolves.toMatchObject({ status: 401 });
 	});
 
 	it('serves initialize, tools/list, and tools/call through Streamable HTTP', async () => {

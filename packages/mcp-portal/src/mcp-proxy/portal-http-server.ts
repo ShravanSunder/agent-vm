@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { StreamableHTTPTransport } from '@hono/mcp';
-import { Hono } from 'hono';
+import { getConnInfo } from '@hono/node-server/conninfo';
+import { Hono, type Context } from 'hono';
 
 import type { PortalCore } from '../core/portal-core.js';
 import { createPortalAgentIdentity, type PortalAgentIdentity } from '../portal-access-policy.js';
@@ -32,6 +33,7 @@ export type PortalHttpAuditEvent = {
 
 export interface PortalHttpAppOptions {
 	readonly agentBearerAuth: PortalAgentBearerAuth;
+	readonly auditErrorSink?: (error: Error, event: PortalHttpAuditEvent) => Promise<void> | void;
 	readonly auditSink?: (event: PortalHttpAuditEvent) => Promise<void> | void;
 	readonly authFailureLimit?: {
 		readonly maxFailures: number;
@@ -79,6 +81,19 @@ function unavailableResponse(): Response {
 	return Response.json({ error: { kind: 'shutting_down' }, ok: false }, { status: 503 });
 }
 
+function errorFromUnknown(error: unknown): Error {
+	return error instanceof Error ? error : new Error(String(error));
+}
+
+function clientAddressFromContext(context: Context): string {
+	try {
+		const address = getConnInfo(context).remote.address;
+		return address && address.length > 0 ? address : directClientAddress;
+	} catch {
+		return directClientAddress;
+	}
+}
+
 export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpApp {
 	if (options.agentBearerAuth === undefined) {
 		throw new Error('MCP Portal HTTP app requires agent bearer auth.');
@@ -93,9 +108,12 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 	let closing = false;
 
 	async function auditAuth(event: Omit<PortalHttpAuditEvent, 'kind' | 'timeMs'>): Promise<void> {
-		await Promise.resolve(
-			options.auditSink?.({ ...event, kind: 'mcp_proxy_auth', timeMs: Date.now() }),
-		).catch(() => undefined);
+		const auditEvent = { ...event, kind: 'mcp_proxy_auth', timeMs: Date.now() } as const;
+		try {
+			await options.auditSink?.(auditEvent);
+		} catch (error) {
+			await options.auditErrorSink?.(errorFromUnknown(error), auditEvent);
+		}
 	}
 
 	function pruneAuthFailureBuckets(nowMs: number): void {
@@ -228,7 +246,7 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 
 	app.all('/agents/:agentId/mcp', async (context) => {
 		const agentId = context.req.param('agentId');
-		const clientAddress = directClientAddress;
+		const clientAddress = clientAddressFromContext(context);
 		if (closing) {
 			return unavailableResponse();
 		}

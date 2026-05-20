@@ -26,8 +26,13 @@ const profile: PortalAgentRuntimeRecord['profile'] = {
 	promptContext: { enabled: true, maxNamespaces: 12 },
 };
 
-function createVerifier(): ReturnType<typeof createPortalApprovalVerifier> {
+function createVerifier(
+	options: { readonly approvalTokenReplayCacheLimit?: number } = {},
+): ReturnType<typeof createPortalApprovalVerifier> {
 	return createPortalApprovalVerifier({
+		...(options.approvalTokenReplayCacheLimit === undefined
+			? {}
+			: { approvalTokenReplayCacheLimit: options.approvalTokenReplayCacheLimit }),
 		records: new Map<string, PortalAgentRuntimeRecord>([
 			[
 				'shravan',
@@ -297,6 +302,43 @@ describe('createPortalApprovalVerifier', () => {
 
 		expect(verifier(calls, 'shravan', token)).toEqual({ kind: 'allow' });
 		expect(verifier(calls, 'shravan', token)).toEqual({
+			kind: 'approval_token_invalid',
+			reason: 'replayed',
+		});
+	});
+
+	it('does not evict live consumed approval token ids when replay cache is full', () => {
+		const verifier = createVerifier({ approvalTokenReplayCacheLimit: 2 });
+		const calls = [
+			createCall({
+				arguments: { id: 'ISSUE-1' },
+				namespace: 'github',
+				toolName: 'delete_issue',
+			}),
+		];
+		const createToken = (jti: string): string =>
+			signApprovalToken({
+				agentId: 'shravan',
+				calls: calls.map((call) => ({
+					argumentsHash: hashCallArguments(call.arguments),
+					namespace: call.namespace,
+					toolName: call.toolName,
+				})),
+				expiresAtMs: Date.now() + 60_000,
+				jti,
+				key: hmacKey,
+			});
+		const firstToken = createToken('approval-replay-1');
+
+		expect(verifier(calls, 'shravan', firstToken)).toEqual({ kind: 'allow' });
+		expect(verifier(calls, 'shravan', createToken('approval-replay-2'))).toEqual({
+			kind: 'allow',
+		});
+		expect(verifier(calls, 'shravan', createToken('approval-replay-3'))).toEqual({
+			kind: 'approval_token_invalid',
+			reason: 'replay-cache-full',
+		});
+		expect(verifier(calls, 'shravan', firstToken)).toEqual({
 			kind: 'approval_token_invalid',
 			reason: 'replayed',
 		});

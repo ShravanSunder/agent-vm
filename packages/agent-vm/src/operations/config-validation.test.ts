@@ -265,6 +265,21 @@ async function writeMcpPortalConfigFiles(rootPath: string, profileName: string):
 	});
 }
 
+async function writeMcpPortalConfigWithProvider(
+	rootPath: string,
+	provider: unknown,
+): Promise<void> {
+	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp.config.jsonc'), {
+		providers: { tavily: provider },
+		schemaVersion: 1,
+	});
+	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp-portal.config.jsonc'), {
+		agents: { shravan: { profile: 'default' } },
+		profiles: { default: { enabledNamespaces: ['tavily'] } },
+		schemaVersion: 1,
+	});
+}
+
 async function writeMcpPortalConfigWithAgents(
 	rootPath: string,
 	agents: Record<string, { readonly profile: string }>,
@@ -542,6 +557,39 @@ describe('runConfigValidation', () => {
 				hint: expect.stringContaining('Missing'),
 			},
 		);
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('runs MCP Portal materialization validation before gateway boot', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		await writeMcpPortalConfigWithProvider(temporaryDirectoryPath, {
+			kind: 'mcp',
+			namespace: 'tavily',
+			secretPolicies: {},
+			transport: {
+				args: ['-y', 'tavily-mcp'],
+				command: 'npx',
+				env: {},
+				kind: 'stdio',
+			},
+		});
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(
+			result.checks.find((check) => check.name === 'mcp-portal-effective-config-shravan'),
+		).toMatchObject({
+			hint: expect.stringContaining('must declare networkAccess'),
+			ok: false,
+		});
 
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});

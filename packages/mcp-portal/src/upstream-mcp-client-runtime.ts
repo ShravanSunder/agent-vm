@@ -111,8 +111,14 @@ export interface UpstreamMcpClientLike {
 		},
 	) => Promise<unknown>;
 	readonly close: () => Promise<void> | void;
-	readonly connect: (transport: unknown) => Promise<void>;
-	readonly listTools: (params?: { readonly cursor?: string }) => Promise<UpstreamListToolsResult>;
+	readonly connect: (
+		transport: unknown,
+		options?: { readonly signal?: AbortSignal },
+	) => Promise<void>;
+	readonly listTools: (
+		params?: { readonly cursor?: string },
+		options?: { readonly signal?: AbortSignal },
+	) => Promise<UpstreamListToolsResult>;
 	readonly onNotification?: (
 		handler: (notification: UpstreamNotification) => Promise<void> | void,
 	) => () => void;
@@ -189,14 +195,14 @@ function createSdkClient(): UpstreamMcpClientLike {
 		close: async () => {
 			await client.close();
 		},
-		connect: async (transport) => {
+		connect: async (transport, options) => {
 			if (!isTransport(transport)) {
 				throw new Error('SDK MCP client requires a valid MCP transport.');
 			}
-			await client.connect(transport);
+			await client.connect(transport, options);
 		},
-		listTools: async (params) => {
-			const result = await client.listTools(params);
+		listTools: async (params, options) => {
+			const result = await client.listTools(params, options);
 			return {
 				...(result.nextCursor !== undefined ? { nextCursor: result.nextCursor } : {}),
 				tools: result.tools,
@@ -372,15 +378,23 @@ async function listAllTools(
 	client: UpstreamMcpClientLike,
 	cursor: string | undefined,
 	collectedTools: readonly Tool[],
+	timeoutAbort: {
+		readonly abortTimeout: (error: Error) => void;
+		readonly signal: AbortSignal;
+	},
 	timeoutMs: number,
 ): Promise<readonly Tool[]> {
-	const result = await withTimeout(client.listTools(cursor ? { cursor } : undefined), {
-		operation: 'MCP listTools',
-		timeoutMs,
-	});
+	const result = await withTimeout(
+		client.listTools(cursor ? { cursor } : undefined, { signal: timeoutAbort.signal }),
+		{
+			onTimeout: timeoutAbort.abortTimeout,
+			operation: 'MCP listTools',
+			timeoutMs,
+		},
+	);
 	const nextTools = [...collectedTools, ...result.tools];
 	return result.nextCursor
-		? listAllTools(client, result.nextCursor, nextTools, timeoutMs)
+		? listAllTools(client, result.nextCursor, nextTools, timeoutAbort, timeoutMs)
 		: nextTools;
 }
 
@@ -509,8 +523,10 @@ export function createUpstreamMcpClientRuntime(
 					? withRemoteHeaders(server)
 					: server;
 			const transport = createTransport(transportServer, transportKind);
+			const timeoutAbort = createRuntimeAbortSignal(undefined);
 			try {
-				await withTimeout(client.connect(transport), {
+				await withTimeout(client.connect(transport, { signal: timeoutAbort.signal }), {
+					onTimeout: timeoutAbort.abortTimeout,
 					operation: `MCP ${transportKind} connect for namespace "${server.namespace}"`,
 					timeoutMs: timeoutMsForServer(server),
 				});
@@ -519,6 +535,8 @@ export function createUpstreamMcpClientRuntime(
 				const redactedError = redactThrownError(error, { exactValues: redactionValues });
 				await closeClientAfterFailureOnce(client);
 				return tryAttempt(attemptIndex + 1, redactedError);
+			} finally {
+				timeoutAbort.dispose();
 			}
 		}
 
@@ -561,6 +579,15 @@ export function createUpstreamMcpClientRuntime(
 				);
 			}
 			clients.set(key, { client });
+			if (generationForAgentScope(agentScopeId) !== generation) {
+				if (clients.get(key)?.client === client) {
+					clients.delete(key);
+				}
+				await closeClientAfterFailureOnce(client);
+				throw new Error(
+					`MCP client for agent scope "${rootAgentScopeId(agentScopeId)}" was invalidated.`,
+				);
+			}
 			return client;
 		} finally {
 			if (pendingClients.get(key) === pendingRecord) {
@@ -665,15 +692,21 @@ export function createUpstreamMcpClientRuntime(
 			try {
 				client = await getClient(call.agentScopeId, call.namespace);
 				const server = serversByNamespace.get(call.namespace);
-				return redactToolCatalog(
-					await listAllTools(
-						client,
-						undefined,
-						[],
-						server ? timeoutMsForServer(server) : defaultConnectionTimeoutMs,
-					),
-					{ exactValues: redactionValues },
-				);
+				const timeoutAbort = createRuntimeAbortSignal(undefined);
+				try {
+					return redactToolCatalog(
+						await listAllTools(
+							client,
+							undefined,
+							[],
+							timeoutAbort,
+							server ? timeoutMsForServer(server) : defaultConnectionTimeoutMs,
+						),
+						{ exactValues: redactionValues },
+					);
+				} finally {
+					timeoutAbort.dispose();
+				}
 			} catch (error) {
 				clients.delete(key);
 				await closeClientAfterFailureOnce(client);
