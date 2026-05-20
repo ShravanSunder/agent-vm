@@ -1,6 +1,8 @@
 import type { SecretRef, SecretResolver } from './contracts.js';
 
-function resolveEnvironmentSecret(ref: SecretRef, env: NodeJS.ProcessEnv): string {
+type SecretEnvironment = Readonly<Record<string, string | undefined>>;
+
+function resolveEnvironmentSecret(ref: SecretRef, env: SecretEnvironment): string {
 	const value = env[ref.ref];
 	if (value === undefined) {
 		throw new Error(`Environment variable '${ref.ref}' is not set.`);
@@ -41,7 +43,7 @@ function extractAggregateErrors(error: AggregateError): readonly Error[] {
 
 export function createCompositeSecretResolver(
 	onePasswordResolver: SecretResolver | null,
-	env: NodeJS.ProcessEnv = process.env,
+	env: SecretEnvironment = process.env,
 ): SecretResolver {
 	return {
 		async resolve(ref: SecretRef): Promise<string> {

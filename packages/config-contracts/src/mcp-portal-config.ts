@@ -123,10 +123,7 @@ export const mcpPortalAgentConfigSchema = z
 	})
 	.strict();
 
-type ParsedMcpPortalAgentConfig = z.infer<typeof mcpPortalAgentConfigSchema>;
-export type McpPortalAgentConfig = Omit<ParsedMcpPortalAgentConfig, 'credentialVersion'> & {
-	readonly credentialVersion?: number;
-};
+export type McpPortalAgentConfig = z.infer<typeof mcpPortalAgentConfigSchema>;
 
 export const mcpPortalConfigSchema = z
 	.object({

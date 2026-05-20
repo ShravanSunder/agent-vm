@@ -2,7 +2,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 export interface DeriveAgentBearerTokenProps {
 	readonly agentId: string;
-	readonly credentialVersion?: number;
+	readonly credentialVersion: number;
 	readonly masterKey: Buffer;
 }
 
@@ -36,9 +36,8 @@ export function decodePortalMasterKey(encodedMasterKey: string): Buffer {
 }
 
 export function deriveAgentBearerToken(props: DeriveAgentBearerTokenProps): string {
-	const credentialVersion = props.credentialVersion ?? 1;
 	return createHmac('sha256', props.masterKey)
-		.update(`${bearerPurposePrefix}${props.agentId}:v${String(credentialVersion)}`)
+		.update(`${bearerPurposePrefix}${props.agentId}:v${String(props.credentialVersion)}`)
 		.digest('base64url');
 }
 
@@ -62,7 +61,7 @@ export function verifyAgentBearerAuthorization(
 ): VerifyAgentBearerAuthorizationResult {
 	const expectedToken = deriveAgentBearerToken({
 		agentId: props.agentId,
-		credentialVersion: props.credentialVersion ?? 1,
+		credentialVersion: props.credentialVersion,
 		masterKey: props.masterKey,
 	});
 	const mismatchedToken = mismatchedTokenWithExpectedLength(expectedToken);

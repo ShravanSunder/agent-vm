@@ -298,7 +298,11 @@ describe('mcp-portal CLI', () => {
 					schemaVersion: 1,
 				}),
 			);
-			const bearer = deriveAgentBearerToken({ agentId: 'shravan', masterKey: externalMasterKey });
+			const bearer = deriveAgentBearerToken({
+				agentId: 'shravan',
+				credentialVersion: 1,
+				masterKey: externalMasterKey,
+			});
 
 			expect(
 				await runMcpPortal([
@@ -367,7 +371,11 @@ describe('mcp-portal CLI', () => {
 					schemaVersion: 1,
 				}),
 			);
-			const bearer = deriveAgentBearerToken({ agentId: 'shravan', masterKey: externalMasterKey });
+			const bearer = deriveAgentBearerToken({
+				agentId: 'shravan',
+				credentialVersion: 1,
+				masterKey: externalMasterKey,
+			});
 
 			expect(
 				await runMcpPortal([
@@ -430,7 +438,11 @@ describe('mcp-portal CLI', () => {
 					schemaVersion: 1,
 				}),
 			);
-			const bearer = deriveAgentBearerToken({ agentId: 'shravan', masterKey: externalMasterKey });
+			const bearer = deriveAgentBearerToken({
+				agentId: 'shravan',
+				credentialVersion: 1,
+				masterKey: externalMasterKey,
+			});
 
 			expect(
 				await runMcpPortal([
@@ -546,7 +558,11 @@ describe('mcp-portal CLI', () => {
 					schemaVersion: 1,
 				}),
 			);
-			const bearer = deriveAgentBearerToken({ agentId: 'shravan', masterKey: externalMasterKey });
+			const bearer = deriveAgentBearerToken({
+				agentId: 'shravan',
+				credentialVersion: 1,
+				masterKey: externalMasterKey,
+			});
 
 			expect(
 				await runMcpPortal(

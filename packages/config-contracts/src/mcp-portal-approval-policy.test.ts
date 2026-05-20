@@ -4,7 +4,7 @@ import { mcpPortalCallRequiresApproval } from './mcp-portal-approval-policy.js';
 import { resolveMcpPortalProfile, type McpPortalConfig } from './mcp-portal-config.js';
 
 const portalConfig = {
-	agents: { shravan: { profile: 'builder' } },
+	agents: { shravan: { credentialVersion: 1, profile: 'builder' } },
 	profiles: {
 		builder: {
 			approval: {

@@ -8,8 +8,8 @@ function createRuntimeState(): ReturnType<typeof createPortalPluginRuntimeState>
 		configDir: '/config',
 		loadPortalConfig: async () => ({
 			agents: {
-				hidden: { profile: 'quiet' },
-				shravan: { profile: 'builder' },
+				hidden: { credentialVersion: 1, profile: 'quiet' },
+				shravan: { credentialVersion: 1, profile: 'builder' },
 			},
 			profiles: {
 				builder: {

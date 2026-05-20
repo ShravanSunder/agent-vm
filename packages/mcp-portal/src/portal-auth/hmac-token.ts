@@ -24,7 +24,9 @@ export interface VerifyApprovalTokenProps {
 	readonly consumeTokenId?: (
 		jti: string,
 		expiresAtMs: number,
-	) => boolean | { readonly ok: false; readonly reason: 'replay-cache-full' | 'replayed' };
+	) =>
+		| { readonly ok: true }
+		| { readonly ok: false; readonly reason: 'replay-cache-full' | 'replayed' };
 	readonly maxLifetimeMs?: number;
 	readonly nowMs: number;
 	readonly token: string;
@@ -166,10 +168,7 @@ export function verifyApprovalToken(props: VerifyApprovalTokenProps): VerifyAppr
 	}
 	if (props.consumeTokenId !== undefined) {
 		const consumeResult = props.consumeTokenId(payload.jti, payload.exp);
-		if (consumeResult === false) {
-			return { ok: false, reason: 'replayed' };
-		}
-		if (typeof consumeResult === 'object' && !consumeResult.ok) {
+		if (!consumeResult.ok) {
 			return { ok: false, reason: consumeResult.reason };
 		}
 	}

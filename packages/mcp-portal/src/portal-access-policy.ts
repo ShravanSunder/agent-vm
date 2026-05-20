@@ -72,7 +72,7 @@ function validateIdentitySegment(name: string, value: string): void {
 	}
 	for (let index = 0; index < value.length; index += 1) {
 		const codePoint = value.charCodeAt(index);
-		if (codePoint < 32 || codePoint === 127) {
+		if (codePoint < 32 || codePoint === 127 || codePoint === 0x2028 || codePoint === 0x2029) {
 			throw new Error(`MCP Portal ${name} must not contain control characters.`);
 		}
 	}

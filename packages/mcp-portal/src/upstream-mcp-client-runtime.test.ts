@@ -635,6 +635,44 @@ describe('upstream MCP client runtime', () => {
 		expect(client.close).toHaveBeenCalledTimes(1);
 	});
 
+	it('keeps cached clients after caller cancellation aborts callTool', async () => {
+		const abortError = new DOMException('caller cancelled', 'AbortError');
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn().mockRejectedValueOnce(abortError).mockResolvedValueOnce({ ok: true }),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => ({ tools: [] })),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: () => ({}),
+			servers: [createServer()],
+		});
+		const controller = new AbortController();
+		controller.abort(abortError);
+
+		await expect(
+			runtime.callTool({
+				arguments: {},
+				agentScopeId: 'agent-scope-a',
+				namespace: 'linear',
+				signal: controller.signal,
+				toolName: 'create_issue',
+			}),
+		).rejects.toThrow('caller cancelled');
+		await expect(
+			runtime.callTool({
+				arguments: {},
+				agentScopeId: 'agent-scope-a',
+				namespace: 'linear',
+				toolName: 'create_issue',
+			}),
+		).resolves.toEqual({ ok: true });
+
+		expect(client.connect).toHaveBeenCalledTimes(1);
+		expect(client.close).not.toHaveBeenCalled();
+	});
+
 	it('closes cached clients after listTools failures', async () => {
 		const client: UpstreamMcpClientLike = {
 			callTool: vi.fn(),

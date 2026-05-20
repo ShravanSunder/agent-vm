@@ -161,7 +161,9 @@ export function createPortalApprovalVerifier(props: {
 		agentId: string,
 		jti: string,
 		expiresAtMs: number,
-	): boolean | { readonly ok: false; readonly reason: 'replay-cache-full' | 'replayed' } => {
+	):
+		| { readonly ok: true }
+		| { readonly ok: false; readonly reason: 'replay-cache-full' | 'replayed' } => {
 		const nowMs = Date.now();
 		for (const [tokenKey, tokenExpiresAtMs] of consumedApprovalTokenIds) {
 			if (tokenExpiresAtMs <= nowMs) {
@@ -176,7 +178,7 @@ export function createPortalApprovalVerifier(props: {
 			return { ok: false, reason: 'replay-cache-full' };
 		}
 		consumedApprovalTokenIds.set(tokenKey, expiresAtMs);
-		return true;
+		return { ok: true };
 	};
 	return (calls, agentId, token) => {
 		const record = props.records.get(agentId);

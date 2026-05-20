@@ -189,9 +189,7 @@ async function printClientConfig(
 	const agentConfig = portalConfig.agents[agentId];
 	const bearer = deriveAgentBearerToken({
 		agentId,
-		...(agentConfig.credentialVersion === undefined
-			? {}
-			: { credentialVersion: agentConfig.credentialVersion }),
+		credentialVersion: agentConfig.credentialVersion,
 		masterKey,
 	});
 	const proxyUrl =

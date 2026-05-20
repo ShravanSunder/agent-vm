@@ -205,7 +205,7 @@ export async function createServeSecretResolver(
 						tokenSource,
 					}),
 				});
-	return createCompositeSecretResolver(onePasswordResolver, env as NodeJS.ProcessEnv);
+	return createCompositeSecretResolver(onePasswordResolver, env);
 }
 
 export interface ProfilePolicyMaps {
@@ -415,7 +415,7 @@ function credentialVersionsByAgent(
 	return Object.fromEntries(
 		Object.entries(portalConfig.agents).map(([agentId, agent]) => [
 			agentId,
-			agent.credentialVersion ?? 1,
+			agent.credentialVersion,
 		]),
 	);
 }

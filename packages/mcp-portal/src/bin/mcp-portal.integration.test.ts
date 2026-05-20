@@ -237,7 +237,7 @@ async function createPortalClient(port: number): Promise<PortalClientHandle> {
 		{
 			requestInit: {
 				headers: {
-					authorization: `Bearer ${deriveAgentBearerToken({ agentId, masterKey })}`,
+					authorization: `Bearer ${deriveAgentBearerToken({ agentId, credentialVersion: 1, masterKey })}`,
 				},
 			},
 		},

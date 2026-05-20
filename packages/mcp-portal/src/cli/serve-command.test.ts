@@ -294,6 +294,7 @@ describe('startPortalServer', () => {
 				headers: {
 					authorization: `Bearer ${deriveAgentBearerToken({
 						agentId: 'shravan',
+						credentialVersion: 1,
 						masterKey: externalMasterKey,
 					})}`,
 				},

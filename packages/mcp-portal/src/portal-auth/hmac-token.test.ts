@@ -211,12 +211,14 @@ describe('signApprovalToken / verifyApprovalToken', () => {
 			key: testKey,
 		});
 		const consumed = new Set<string>();
-		const consumeTokenId = (jti: string): boolean => {
+		const consumeTokenId = (
+			jti: string,
+		): { readonly ok: true } | { readonly ok: false; readonly reason: 'replayed' } => {
 			if (consumed.has(jti)) {
-				return false;
+				return { ok: false, reason: 'replayed' };
 			}
 			consumed.add(jti);
-			return true;
+			return { ok: true };
 		};
 		const verificationProps = {
 			agentId: 'shravan',
@@ -232,5 +234,27 @@ describe('signApprovalToken / verifyApprovalToken', () => {
 			ok: false,
 			reason: 'replayed',
 		});
+	});
+
+	it('uses structured consumed-token hook rejection reasons directly', () => {
+		const token = signApprovalToken({
+			agentId: 'shravan',
+			calls: [sampleCallDigest],
+			expiresAtMs: 20_000,
+			issuedAtMs: 10_000,
+			jti: 'approval-cache-full',
+			key: testKey,
+		});
+
+		expect(
+			verifyApprovalToken({
+				agentId: 'shravan',
+				calls: [sampleCallDigest],
+				consumeTokenId: () => ({ ok: false, reason: 'replay-cache-full' }),
+				key: testKey,
+				nowMs: 10_001,
+				token,
+			}),
+		).toEqual({ ok: false, reason: 'replay-cache-full' });
 	});
 });

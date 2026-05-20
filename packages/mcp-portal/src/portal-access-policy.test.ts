@@ -27,4 +27,21 @@ describe('createPortalAgentIdentity', () => {
 			}),
 		).toThrow(/sessionId/u);
 	});
+
+	it('rejects unicode line-separator identity segments', () => {
+		expect(() =>
+			createPortalAgentIdentity({
+				agentId: 'agent\u2028a',
+				agentScopeId: 'agent-a',
+				source: 'cli-operator',
+			}),
+		).toThrow(/agentId/u);
+		expect(() =>
+			createPortalAgentIdentity({
+				agentId: 'agent-a',
+				agentScopeId: 'agent\u2029a',
+				source: 'cli-operator',
+			}),
+		).toThrow(/agentScopeId/u);
+	});
 });

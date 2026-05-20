@@ -11,22 +11,23 @@ describe('agent bearer token helpers', () => {
 	it('derives deterministic audience-scoped bearers per agent', () => {
 		const masterKey = Buffer.from('master-key');
 
-		expect(deriveAgentBearerToken({ agentId: 'shravan', masterKey })).toBe(
-			deriveAgentBearerToken({ agentId: 'shravan', masterKey }),
+		expect(deriveAgentBearerToken({ agentId: 'shravan', credentialVersion: 1, masterKey })).toBe(
+			deriveAgentBearerToken({ agentId: 'shravan', credentialVersion: 1, masterKey }),
 		);
-		expect(deriveAgentBearerToken({ agentId: 'shravan', masterKey })).not.toBe(
-			deriveAgentBearerToken({ agentId: 'alevtina', masterKey }),
-		);
+		expect(
+			deriveAgentBearerToken({ agentId: 'shravan', credentialVersion: 1, masterKey }),
+		).not.toBe(deriveAgentBearerToken({ agentId: 'alevtina', credentialVersion: 1, masterKey }));
 	});
 
 	it('verifies bearer authorization without accepting wrong agents or schemes', () => {
 		const masterKey = Buffer.from('master-key');
-		const bearer = deriveAgentBearerToken({ agentId: 'shravan', masterKey });
+		const bearer = deriveAgentBearerToken({ agentId: 'shravan', credentialVersion: 1, masterKey });
 
 		expect(
 			verifyAgentBearerAuthorization({
 				agentId: 'shravan',
 				authorizationHeader: `Bearer ${bearer}`,
+				credentialVersion: 1,
 				masterKey,
 			}),
 		).toEqual({ ok: true });
@@ -34,6 +35,7 @@ describe('agent bearer token helpers', () => {
 			verifyAgentBearerAuthorization({
 				agentId: 'alevtina',
 				authorizationHeader: `Bearer ${bearer}`,
+				credentialVersion: 1,
 				masterKey,
 			}),
 		).toEqual({ ok: false, reason: 'signature-mismatch' });
@@ -41,6 +43,7 @@ describe('agent bearer token helpers', () => {
 			verifyAgentBearerAuthorization({
 				agentId: 'shravan',
 				authorizationHeader: bearer,
+				credentialVersion: 1,
 				masterKey,
 			}),
 		).toEqual({ ok: false, reason: 'malformed' });

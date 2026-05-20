@@ -317,6 +317,14 @@ function assertUpstreamResponseSize(value: unknown, maxResponseBytes: number): v
 	}
 }
 
+function isAbortError(error: unknown): boolean {
+	return error instanceof Error && error.name === 'AbortError';
+}
+
+function isCallerAbortError(error: unknown, signal: AbortSignal | undefined): boolean {
+	return signal?.aborted === true && (error === signal.reason || isAbortError(error));
+}
+
 async function withTimeout<TResult>(
 	promise: Promise<TResult>,
 	props: {
@@ -629,6 +637,9 @@ export function createUpstreamMcpClientRuntime(
 					timeoutAbort.dispose();
 				}
 			} catch (error) {
+				if (isCallerAbortError(error, call.signal)) {
+					throw redactThrownError(error, { exactValues: redactionValues });
+				}
 				clients.delete(key);
 				await closeClientAfterFailureOnce(client);
 				throw redactThrownError(error, { exactValues: redactionValues });

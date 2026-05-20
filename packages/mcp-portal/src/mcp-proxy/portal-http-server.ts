@@ -41,6 +41,10 @@ export interface PortalHttpAppOptions {
 	};
 	readonly core: PortalCore;
 	readonly onSessionClosed?: (identity: PortalAgentIdentity) => Promise<void> | void;
+	readonly onSessionCloseError?: (
+		error: Error,
+		identity: PortalAgentIdentity,
+	) => Promise<void> | void;
 	readonly registeredAgentIds?: readonly string[];
 	readonly resolveAgentIdentity?: (agentId: string) => PortalHttpAgentIdentity | null;
 }
@@ -53,6 +57,7 @@ const mcpSessionIdHeader = 'mcp-session-id';
 const defaultAuthFailureLimit = { maxFailures: 60, windowMs: 60_000 } as const;
 const authFailureBucketLimit = 1_024;
 const directClientAddress = 'direct-client';
+const unknownAgentCredentialVersionForOpaqueAuthTiming = 1;
 
 interface ActivePortalMcpSession {
 	readonly identity: PortalAgentIdentity;
@@ -104,6 +109,7 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 	const app = new Hono();
 	const activeSessions = new Map<string, ActivePortalMcpSession>();
 	const authFailureBuckets = new Map<string, AuthFailureBucket>();
+	const pendingNewSessionRequests = new Set<Promise<void>>();
 	const authFailureLimit = options.authFailureLimit ?? defaultAuthFailureLimit;
 	let closing = false;
 
@@ -114,6 +120,13 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 		} catch (error) {
 			await options.auditErrorSink?.(errorFromUnknown(error), auditEvent);
 		}
+	}
+
+	async function reportSessionCloseError(
+		error: unknown,
+		identity: PortalAgentIdentity,
+	): Promise<void> {
+		await options.onSessionCloseError?.(errorFromUnknown(error), identity);
 	}
 
 	function pruneAuthFailureBuckets(nowMs: number): void {
@@ -182,6 +195,18 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 		}
 	}
 
+	function trackPendingNewSessionRequest(): () => void {
+		let resolvePending: (() => void) | undefined;
+		const pendingRequest = new Promise<void>((resolve) => {
+			resolvePending = resolve;
+		});
+		pendingNewSessionRequests.add(pendingRequest);
+		return () => {
+			pendingNewSessionRequests.delete(pendingRequest);
+			resolvePending?.();
+		};
+	}
+
 	async function createActiveSession(
 		identityBase: PortalAgentIdentity,
 	): Promise<ActivePortalMcpSession> {
@@ -196,7 +221,9 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 		});
 		const transport = new StreamableHTTPTransport({
 			onsessionclosed: () => {
-				void closeActiveSession(sessionKey, { closeTransport: false });
+				void closeActiveSession(sessionKey, { closeTransport: false }).catch((error: unknown) =>
+					reportSessionCloseError(error, identity),
+				);
 			},
 			onsessioninitialized: (initializedSessionId) => {
 				if (!server) {
@@ -220,8 +247,13 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 
 	async function closePortalSessions(): Promise<void> {
 		closing = true;
-		const closeErrors: unknown[] = [];
-		while (activeSessions.size > 0) {
+		const closeErrors: Error[] = [];
+		while (activeSessions.size > 0 || pendingNewSessionRequests.size > 0) {
+			if (pendingNewSessionRequests.size > 0) {
+				// eslint-disable-next-line no-await-in-loop
+				await Promise.allSettled(pendingNewSessionRequests);
+				continue;
+			}
 			// Closing may trigger callbacks that mutate activeSessions, so drain snapshots until empty.
 			// eslint-disable-next-line no-await-in-loop
 			const closeResults = await Promise.allSettled(
@@ -232,7 +264,7 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 			closeErrors.push(
 				...closeResults
 					.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-					.map((result): unknown => result.reason),
+					.map((result): Error => errorFromUnknown(result.reason)),
 			);
 		}
 		if (closeErrors.length > 0) {
@@ -264,7 +296,7 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 		const verification = verifyAgentBearerAuthorization({
 			agentId,
 			authorizationHeader: context.req.header(agentBearerAuth.authorizationHeaderName),
-			...(credentialVersion === undefined ? {} : { credentialVersion }),
+			credentialVersion: credentialVersion ?? unknownAgentCredentialVersionForOpaqueAuthTiming,
 			masterKey: agentBearerAuth.masterKey,
 		});
 		const agentIdentity = options.resolveAgentIdentity?.(agentId) ?? null;
@@ -302,8 +334,20 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 			return await activeSession.transport.handleRequest(context);
 		}
 
-		const activeSession = await createActiveSession(agentIdentity);
-		return await activeSession.transport.handleRequest(context);
+		const finishPendingRequest = trackPendingNewSessionRequest();
+		try {
+			if (closing) {
+				return unavailableResponse();
+			}
+			const activeSession = await createActiveSession(agentIdentity);
+			if (closing) {
+				await activeSession.transport.close();
+				return unavailableResponse();
+			}
+			return await activeSession.transport.handleRequest(context);
+		} finally {
+			finishPendingRequest();
+		}
 	});
 
 	return Object.assign(app, { closePortalSessions });
