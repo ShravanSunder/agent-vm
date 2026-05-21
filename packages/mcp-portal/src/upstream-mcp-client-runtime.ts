@@ -9,12 +9,7 @@ import {
 	type StreamableHTTPClientTransportOptions,
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { normalizeHeaders, type Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import {
-	ToolSchema,
-	type Notification,
-	type Progress,
-	type Tool,
-} from '@modelcontextprotocol/sdk/types.js';
+import { ToolSchema, type Progress, type Tool } from '@modelcontextprotocol/sdk/types.js';
 
 import type { JsonObject } from './json-schema.js';
 import {
@@ -88,11 +83,6 @@ export type UpstreamToolEvent =
 
 export type UpstreamMcpProgress = Progress;
 
-export interface UpstreamNotification {
-	readonly method: string;
-	readonly params?: unknown;
-}
-
 export interface UpstreamListToolsResult {
 	readonly nextCursor?: string | undefined;
 	readonly tools: readonly Tool[];
@@ -119,9 +109,6 @@ export interface UpstreamMcpClientLike {
 		params?: { readonly cursor?: string },
 		options?: { readonly signal?: AbortSignal },
 	) => Promise<UpstreamListToolsResult>;
-	readonly onNotification?: (
-		handler: (notification: UpstreamNotification) => Promise<void> | void,
-	) => () => void;
 }
 
 export interface UpstreamMcpRuntimeOptions {
@@ -175,20 +162,6 @@ function isTransport(value: unknown): value is Transport {
 
 function createSdkClient(): UpstreamMcpClientLike {
 	const client = new Client({ name: 'mcp-portal', version: '1.0.0' });
-	const notificationHandlers = new Set<
-		(notification: UpstreamNotification) => Promise<void> | void
-	>();
-	client.fallbackNotificationHandler = async (notification: Notification): Promise<void> => {
-		await Promise.all(
-			[...notificationHandlers].map(async (handler) => {
-				await handler({
-					method: notification.method,
-					...(notification.params !== undefined ? { params: notification.params } : {}),
-				});
-			}),
-		);
-	};
-
 	return {
 		callTool: async (params, _resultSchema, options) =>
 			await client.callTool(params, undefined, options),
@@ -206,12 +179,6 @@ function createSdkClient(): UpstreamMcpClientLike {
 			return {
 				...(result.nextCursor !== undefined ? { nextCursor: result.nextCursor } : {}),
 				tools: result.tools,
-			};
-		},
-		onNotification: (handler) => {
-			notificationHandlers.add(handler);
-			return () => {
-				notificationHandlers.delete(handler);
 			};
 		},
 	};

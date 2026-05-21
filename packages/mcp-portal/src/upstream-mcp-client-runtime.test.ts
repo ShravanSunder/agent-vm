@@ -398,52 +398,6 @@ describe('upstream MCP client runtime', () => {
 		}
 	});
 
-	it('does not forward uncorrelated upstream notifications through client notification listeners', async () => {
-		let notificationHandler:
-			| ((notification: {
-					readonly method: string;
-					readonly params?: unknown;
-			  }) => Promise<void> | void)
-			| undefined;
-		const upstreamEvents: unknown[] = [];
-		const client: UpstreamMcpClientLike = {
-			callTool: vi.fn(async () => {
-				await notificationHandler?.({
-					method: 'notifications/message',
-					params: { data: 'halfway', level: 'info' },
-				});
-				return { content: [] };
-			}),
-			close: vi.fn(),
-			connect: vi.fn(),
-			listTools: vi.fn(async () => ({ tools: [] })),
-			onNotification: (handler) => {
-				notificationHandler = handler;
-				return () => {
-					notificationHandler = undefined;
-				};
-			},
-		};
-		const runtime = createUpstreamMcpClientRuntime({
-			createClient: () => client,
-			createTransport: () => ({}),
-			servers: [createServer()],
-		});
-
-		await runtime.callTool({
-			arguments: {},
-			agentScopeId: 'agent-scope-a',
-			namespace: 'linear',
-			onEvent: (event) => {
-				upstreamEvents.push(event);
-			},
-			toolName: 'create_issue',
-		});
-
-		expect(upstreamEvents).toEqual([]);
-		expect(notificationHandler).toBeUndefined();
-	});
-
 	it('redacts exact upstream header values from call results', async () => {
 		const client: UpstreamMcpClientLike = {
 			callTool: vi.fn(async () => ({
@@ -774,52 +728,6 @@ describe('upstream MCP client runtime', () => {
 			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
 		).resolves.toEqual([{ inputSchema: { type: 'object' }, name: 'tool_2' }]);
 		expect(clients).toHaveLength(2);
-	});
-
-	it('does not forward uncorrelated upstream notifications into call events', async () => {
-		const releaseCall = createDeferred<unknown>();
-		let notificationHandler:
-			| ((notification: {
-					readonly method: string;
-					readonly params?: unknown;
-			  }) => Promise<void> | void)
-			| undefined;
-		const onEvent = vi.fn();
-		const client: UpstreamMcpClientLike = {
-			callTool: vi.fn(async () => await releaseCall.promise),
-			close: vi.fn(),
-			connect: vi.fn(),
-			listTools: vi.fn(async () => ({ tools: [] })),
-			onNotification: (handler) => {
-				notificationHandler = handler;
-				return () => {
-					notificationHandler = undefined;
-				};
-			},
-		};
-		const runtime = createUpstreamMcpClientRuntime({
-			createClient: () => client,
-			createTransport: () => ({}),
-			servers: [createServer()],
-		});
-
-		const callPromise = runtime.callTool({
-			arguments: {},
-			agentScopeId: 'agent-scope-a',
-			namespace: 'linear',
-			onEvent,
-			toolName: 'create_issue',
-		});
-		await notificationHandler?.({
-			method: 'notifications/cancelled',
-			params: { reason: 'other request' },
-		});
-		releaseCall.resolve({ ok: true });
-
-		await expect(callPromise).resolves.toEqual({ ok: true });
-		expect(onEvent).not.toHaveBeenCalledWith(
-			expect.objectContaining({ kind: 'upstream_notification' }),
-		);
 	});
 
 	it('closes only the requested transport-session scoped clients', async () => {
