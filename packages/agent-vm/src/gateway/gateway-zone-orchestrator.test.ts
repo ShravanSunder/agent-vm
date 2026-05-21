@@ -1350,6 +1350,65 @@ describe('startGatewayZone', () => {
 		expect(result.processSpec.logPath).toBe('/tmp/worker.log');
 	});
 
+	it('omits full gateway commands from command failure messages', async () => {
+		const secretBearingBootstrapCommand =
+			"export FUTURE_SECRET='do-not-leak-command-material' && false";
+		const managedVm: ManagedVm = {
+			id: 'vm-failed-bootstrap',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async (command: string) =>
+				command === secretBearingBootstrapCommand
+					? { exitCode: 1, stdout: 'bootstrap stdout', stderr: 'bootstrap stderr' }
+					: { exitCode: 0, stdout: '200', stderr: '' },
+			),
+			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28287)),
+		};
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({
+						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					}),
+					systemConfig: createSystemConfig(),
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					createManagedVm: vi.fn(async () => managedVm),
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					loadGatewayLifecycle: () => ({
+						buildProcessSpec: () => ({
+							bootstrapCommand: secretBearingBootstrapCommand,
+							guestListenPort: 18789,
+							healthCheck: { type: 'http', port: 18789, path: '/' } as const,
+							logPath: '/tmp/worker.log',
+							startCommand: 'start-worker',
+						}),
+						buildVmSpec: () => ({
+							allowedHosts: [],
+							environment: {},
+							mediatedSecrets: {},
+							rootfsMode: 'cow' as const,
+							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+							tcpHosts: {},
+							vfsMounts: {},
+						}),
+					}),
+				},
+			),
+		).rejects.toThrow(
+			/^(?!.*(?:do-not-leak-command-material|Command:))Configuring gateway failed with exit 1/u,
+		);
+	});
+
 	it('retries health checks until a 2xx response is returned', async () => {
 		const execMock = vi.fn(async (command: string) => {
 			if (!command.includes('curl -sS -o /dev/null -w "%{http_code}"')) {

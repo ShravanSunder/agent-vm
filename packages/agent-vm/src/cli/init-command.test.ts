@@ -1228,6 +1228,7 @@ describe('scaffoldAgentVmProject', () => {
 			},
 		});
 		expect(config.zones[0].gateway.ssh).toEqual({ secretEnv: 'explicit' });
+		expect(config.zones[0].gateway.rawEnvSecrets).toEqual(['AGENT_VM_ZONE_GIT_TOKEN']);
 	});
 
 	it('scaffolds broad model-provider network defaults for openclaw type', async () => {

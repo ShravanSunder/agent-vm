@@ -78,12 +78,8 @@ function formatCommandOutput(name: string, value: string): string {
 	return trimmedValue.length > 0 ? `\n${name}:\n${trimmedValue}` : '';
 }
 
-function formatGatewayCommandFailure(
-	stepName: string,
-	command: string,
-	result: GatewayCommandResult,
-): string {
-	return `${stepName} failed with exit ${result.exitCode}.${formatCommandOutput('stdout', result.stdout)}${formatCommandOutput('stderr', result.stderr)}\nCommand:\n${command}`;
+function formatGatewayCommandFailure(stepName: string, result: GatewayCommandResult): string {
+	return `${stepName} failed with exit ${result.exitCode}.${formatCommandOutput('stdout', result.stdout)}${formatCommandOutput('stderr', result.stderr)}`;
 }
 
 async function execGatewayCommand(options: {
@@ -93,7 +89,7 @@ async function execGatewayCommand(options: {
 }): Promise<GatewayCommandResult> {
 	const result = await options.managedVm.exec(options.command);
 	if (result.exitCode !== 0) {
-		throw new Error(formatGatewayCommandFailure(options.stepName, options.command, result));
+		throw new Error(formatGatewayCommandFailure(options.stepName, result));
 	}
 	return result;
 }
