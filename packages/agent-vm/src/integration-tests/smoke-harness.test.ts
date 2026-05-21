@@ -8,9 +8,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 import {
+	collectSmokeDockerImageTags,
 	disableOpenClawMcpPortalPlugin,
 	findReusableGatewayImageDirectory,
 	prepareLocalWorkerPackageForGatewayImage,
+	removeSmokeDockerImagesForSystemConfig,
 	removeSmokeTempRoot,
 	scaffoldGatewaySmokeProject,
 	shouldRunWorkerGatewaySmoke,
@@ -233,6 +235,48 @@ describe('startSmokeControllerRuntime', () => {
 		await removeSmokeTempRoot(temporaryRoot);
 
 		await expect(fs.access(temporaryRoot)).resolves.toBeUndefined();
+	});
+
+	it('removes Docker images declared by smoke build configs', async () => {
+		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
+		const gatewayBuildConfigPath = path.join(temporaryRoot, 'gateway-build.jsonc');
+		const toolBuildConfigPath = path.join(temporaryRoot, 'tool-build.jsonc');
+		const systemConfig = createMinimalOpenClawSystemConfig(temporaryRoot);
+		const gatewayProfile = systemConfig.imageProfiles.gateways.openclaw;
+		const toolVmProfile = systemConfig.imageProfiles.toolVms.tool;
+		if (gatewayProfile === undefined || toolVmProfile === undefined) {
+			throw new Error('Expected smoke test fixture to define gateway and Tool VM profiles.');
+		}
+		gatewayProfile.buildConfig = gatewayBuildConfigPath;
+		toolVmProfile.buildConfig = toolBuildConfigPath;
+		await fs.writeFile(
+			gatewayBuildConfigPath,
+			`${JSON.stringify({ oci: { image: 'agent-vm-gateway:latest' } })}\n`,
+			'utf8',
+		);
+		await fs.writeFile(
+			toolBuildConfigPath,
+			`${JSON.stringify({ oci: { image: 'agent-vm-tool:latest' } })}\n`,
+			'utf8',
+		);
+		const dockerCommands: string[][] = [];
+
+		expect(await collectSmokeDockerImageTags(systemConfig)).toEqual([
+			'agent-vm-gateway:latest',
+			'agent-vm-tool:latest',
+		]);
+		await removeSmokeDockerImagesForSystemConfig(systemConfig, {
+			runDockerCommand: async (args) => {
+				dockerCommands.push([...args]);
+			},
+		});
+
+		expect(dockerCommands).toEqual([
+			['image', 'inspect', 'agent-vm-gateway:latest'],
+			['image', 'rm', '--force', 'agent-vm-gateway:latest'],
+			['image', 'inspect', 'agent-vm-tool:latest'],
+			['image', 'rm', '--force', 'agent-vm-tool:latest'],
+		]);
 	});
 
 	it('writes a local OpenClaw gateway smoke Dockerfile that installs both portal packages', async () => {

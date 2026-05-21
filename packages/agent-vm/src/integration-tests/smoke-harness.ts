@@ -1,8 +1,9 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import { resolveGondolinMinimumZigVersion } from '@agent-vm/gondolin-adapter';
 import type { SecretRef, SecretResolver } from '@agent-vm/secrets';
@@ -47,6 +48,7 @@ interface LocalDockerPackageTarball {
 }
 
 const defaultOpenClawMcpPortalExtensionsPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
+const execFileAsync = promisify(execFile);
 const openClawMcpPortalPluginName = 'mcp-portal';
 const smokeTempRootPrefixes = [
 	'agent-vm-gateway-smoke-project-',
@@ -110,6 +112,10 @@ export interface StartSmokeControllerRuntimeOptions {
 	readonly startOptions: StartControllerRuntimeOptions;
 	readonly tcpHostsOverride?: StartGatewayZoneOptions['tcpHostsOverride'];
 	readonly vfsMountsOverride?: StartGatewayZoneOptions['vfsMountsOverride'];
+}
+
+export interface RemoveSmokeDockerImagesOptions {
+	readonly runDockerCommand?: (args: readonly string[]) => Promise<void>;
 }
 
 export function hasCommand(command: string): boolean {
@@ -536,6 +542,78 @@ function mutableJsonRecord(value: unknown): Record<string, unknown> | undefined 
 	return value;
 }
 
+async function runDockerCommand(args: readonly string[]): Promise<void> {
+	await execFileAsync('docker', [...args]);
+}
+
+async function readSmokeDockerImageTag(buildConfigPath: string): Promise<string | null> {
+	let buildConfig: Record<string, unknown> | undefined;
+	try {
+		buildConfig = mutableJsonRecord(await loadJsonConfigFile(buildConfigPath));
+	} catch (error) {
+		if (isJsonRecord(error) && error.code === 'ENOENT') {
+			return null;
+		}
+		throw error;
+	}
+	const ociConfig = mutableJsonRecord(buildConfig?.oci);
+	const imageTag = ociConfig?.image;
+	return typeof imageTag === 'string' && imageTag.length > 0 ? imageTag : null;
+}
+
+export async function collectSmokeDockerImageTags(
+	systemConfig: LoadedSystemConfig,
+): Promise<readonly string[]> {
+	const imageProfiles = [
+		...Object.values(systemConfig.imageProfiles.gateways),
+		...Object.values(systemConfig.imageProfiles.toolVms),
+	];
+	const imageTags: string[] = [];
+	for (const imageProfile of imageProfiles) {
+		// oxlint-disable-next-line eslint/no-await-in-loop -- config files are intentionally read deterministically
+		const imageTag = await readSmokeDockerImageTag(imageProfile.buildConfig);
+		if (imageTag !== null) {
+			imageTags.push(imageTag);
+		}
+	}
+	return Array.from(new Set(imageTags));
+}
+
+export async function removeSmokeDockerImages(
+	imageTags: readonly string[],
+	options: RemoveSmokeDockerImagesOptions = {},
+): Promise<void> {
+	const dockerCommand = options.runDockerCommand ?? runDockerCommand;
+	for (const imageTag of Array.from(new Set(imageTags))) {
+		try {
+			// oxlint-disable-next-line eslint/no-await-in-loop -- one tag at a time keeps cleanup errors attributable
+			await dockerCommand(['image', 'inspect', imageTag]);
+		} catch {
+			continue;
+		}
+		// oxlint-disable-next-line eslint/no-await-in-loop -- one tag at a time keeps cleanup errors attributable
+		await dockerCommand(['image', 'rm', '--force', imageTag]);
+	}
+}
+
+export async function removeSmokeDockerImagesForSystemConfig(
+	systemConfig: LoadedSystemConfig,
+	options: RemoveSmokeDockerImagesOptions = {},
+): Promise<void> {
+	await removeSmokeDockerImages(await collectSmokeDockerImageTags(systemConfig), options);
+}
+
+function throwIfSmokeHarnessCleanupFailed(errors: readonly unknown[]): void {
+	if (errors.length === 0) {
+		return;
+	}
+	const [firstError] = errors;
+	if (errors.length === 1 && firstError !== undefined) {
+		throw firstError;
+	}
+	throw new AggregateError(errors, 'Smoke harness cleanup failed.');
+}
+
 function withoutStringValue(value: unknown, removedValue: string): unknown {
 	if (!Array.isArray(value)) {
 		return value;
@@ -947,6 +1025,7 @@ export async function startSmokeControllerRuntime(
 ): Promise<SmokeHarnessRuntime> {
 	const restoreEnvironment = applySmokeEnvironment(options.secrets);
 	const secretResolver = createSmokeSecretResolver(options.secrets);
+	const tempRoot = path.dirname(path.dirname(options.startOptions.systemConfig.systemConfigPath));
 	try {
 		const runtime = await startControllerRuntime(options.startOptions, {
 			createSecretResolver: async (): Promise<SecretResolver> => secretResolver,
@@ -979,23 +1058,44 @@ export async function startSmokeControllerRuntime(
 			controllerUrl: `http://127.0.0.1:${options.startOptions.systemConfig.host.controllerPort}`,
 			runtime,
 			systemConfig: options.startOptions.systemConfig,
-			tempRoot: path.dirname(path.dirname(options.startOptions.systemConfig.systemConfigPath)),
+			tempRoot,
 			close: async () => {
+				const cleanupErrors: unknown[] = [];
 				try {
 					await runtime.close();
-				} finally {
-					try {
-						await removeSmokeTempRoot(
-							path.dirname(path.dirname(options.startOptions.systemConfig.systemConfigPath)),
-						);
-					} finally {
-						restoreEnvironment();
-					}
+				} catch (error) {
+					cleanupErrors.push(error);
 				}
+				try {
+					await removeSmokeDockerImagesForSystemConfig(options.startOptions.systemConfig);
+				} catch (error) {
+					cleanupErrors.push(error);
+				}
+				try {
+					await removeSmokeTempRoot(tempRoot);
+				} catch (error) {
+					cleanupErrors.push(error);
+				} finally {
+					restoreEnvironment();
+				}
+				throwIfSmokeHarnessCleanupFailed(cleanupErrors);
 			},
 		};
 	} catch (error) {
-		restoreEnvironment();
+		const cleanupErrors: unknown[] = [error];
+		try {
+			await removeSmokeDockerImagesForSystemConfig(options.startOptions.systemConfig);
+		} catch (cleanupError) {
+			cleanupErrors.push(cleanupError);
+		}
+		try {
+			await removeSmokeTempRoot(tempRoot);
+		} catch (cleanupError) {
+			cleanupErrors.push(cleanupError);
+		} finally {
+			restoreEnvironment();
+		}
+		throwIfSmokeHarnessCleanupFailed(cleanupErrors);
 		throw error;
 	}
 }
