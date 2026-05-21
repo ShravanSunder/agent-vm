@@ -53,6 +53,26 @@ async function readJsonObjectFile(filePath: string): Promise<Record<string, unkn
 	return parsed;
 }
 
+async function readManagedEffectiveConfigPair(effectivePortalDir: string): Promise<{
+	readonly effectiveMcpConfig: Record<string, unknown>;
+	readonly effectivePortalConfig: Record<string, unknown>;
+}> {
+	const manifest = await readJsonObjectFile(
+		path.join(effectivePortalDir, 'mcp-portal-effective-manifest.json'),
+	);
+	const mcpConfigFile = manifest.mcpConfigFile;
+	const portalConfigFile = manifest.portalConfigFile;
+	if (typeof mcpConfigFile !== 'string' || typeof portalConfigFile !== 'string') {
+		throw new Error('Expected MCP Portal effective config manifest to name both config files.');
+	}
+	return {
+		effectiveMcpConfig: await readJsonObjectFile(path.join(effectivePortalDir, mcpConfigFile)),
+		effectivePortalConfig: await readJsonObjectFile(
+			path.join(effectivePortalDir, portalConfigFile),
+		),
+	};
+}
+
 function createSmokeGatewayClient(harness: SmokeHarnessRuntime): GatewayApiClient {
 	const gatewayIngress = harness.runtime.zones[0]?.ingress;
 	if (!gatewayIngress) {
@@ -235,12 +255,8 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 			zone.id,
 			'mcp-portal-effective',
 		);
-		const effectiveMcpConfig = await readJsonObjectFile(
-			path.join(effectivePortalDir, 'mcp.config.jsonc'),
-		);
-		const effectivePortalConfig = await readJsonObjectFile(
-			path.join(effectivePortalDir, 'mcp-portal.config.jsonc'),
-		);
+		const { effectiveMcpConfig, effectivePortalConfig } =
+			await readManagedEffectiveConfigPair(effectivePortalDir);
 		const effectiveOpenClawConfig = await readJsonObjectFile(
 			path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
 		);

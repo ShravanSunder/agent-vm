@@ -1,5 +1,3 @@
-import { join } from 'node:path';
-
 import {
 	loadMcpConfig,
 	loadMcpPortalConfig,
@@ -21,6 +19,7 @@ import {
 
 import { createBeforePromptBuildHandler } from './before-prompt-build-handler.js';
 import { createBeforeToolCallHandler } from './before-tool-call-handler.js';
+import { resolveEffectiveConfigPaths } from './effective-config-manifest.js';
 import type {
 	OpenClawPortalPluginApi,
 	OpenClawPluginToolContext,
@@ -207,9 +206,10 @@ async function resolveManagedPortalSecret(secret: SecretValue): Promise<string> 
 }
 
 async function createManagedPortalCore(configDir: string): Promise<PortalCore> {
+	const effectiveConfigPaths = await resolveEffectiveConfigPaths(configDir);
 	const [mcpConfig, portalConfig] = await Promise.all([
-		loadMcpConfig(join(configDir, 'mcp.config.jsonc')),
-		loadMcpPortalConfig(join(configDir, 'mcp-portal.config.jsonc')),
+		loadMcpConfig(effectiveConfigPaths.mcpConfigPath),
+		loadMcpPortalConfig(effectiveConfigPaths.portalConfigPath),
 	]);
 	const upstreamServers = await resolveUpstreamServers({
 		config: mcpConfig,

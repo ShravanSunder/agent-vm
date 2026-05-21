@@ -279,6 +279,54 @@ describe('createPortalApprovalVerifier', () => {
 		]);
 	});
 
+	it('keeps approval decisions stable when the audit sink throws', () => {
+		const auditErrors: { readonly error: Error; readonly event: unknown }[] = [];
+		const verifier = createPortalApprovalVerifier({
+			auditErrorSink: (error, event) => {
+				auditErrors.push({ error, event });
+			},
+			auditSink: () => {
+				throw new Error('approval audit sink failed');
+			},
+			records: new Map<string, PortalAgentRuntimeRecord>([
+				[
+					'shravan',
+					{
+						agentId: 'shravan',
+						hmacKey,
+						profile,
+						profileName: 'builder',
+					},
+				],
+			]),
+		});
+
+		expect(
+			verifier(
+				[
+					createCall({
+						namespace: 'github',
+						toolName: 'delete_issue',
+					}),
+				],
+				'shravan',
+				undefined,
+			),
+		).toEqual({ kind: 'approval_token_missing' });
+
+		expect(auditErrors).toEqual([
+			{
+				error: expect.objectContaining({ message: 'approval audit sink failed' }),
+				event: expect.objectContaining({
+					agentId: 'shravan',
+					decision: 'deny',
+					kind: 'mcp_portal_approval',
+					reason: 'approval_token_missing',
+				}),
+			},
+		]);
+	});
+
 	it('rejects replayed approval tokens after the first successful use', () => {
 		const verifier = createVerifier();
 		const calls = [

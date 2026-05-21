@@ -1,6 +1,6 @@
-import { join } from 'node:path';
-
 import { loadMcpPortalConfig, type McpPortalConfig } from '@agent-vm/config-contracts';
+
+import { resolveEffectiveConfigPaths } from './effective-config-manifest.js';
 
 export interface PortalPluginRuntimeState {
 	readonly configDir: string;
@@ -19,13 +19,13 @@ export function createPortalPluginRuntimeState(props: {
 	let portalConfigPromise: Promise<McpPortalConfig> | null = null;
 	let portalUnavailableReason: string | null = null;
 	const loadPortalConfigFile = props.loadPortalConfig ?? loadMcpPortalConfig;
-	const portalConfigPath = join(props.configDir, 'mcp-portal.config.jsonc');
 
 	function loadPortalConfig(): Promise<McpPortalConfig> {
 		if (portalConfigPromise !== null) {
 			return portalConfigPromise;
 		}
-		const nextPromise = loadPortalConfigFile(portalConfigPath)
+		const nextPromise = resolveEffectiveConfigPaths(props.configDir)
+			.then((effectiveConfigPaths) => loadPortalConfigFile(effectiveConfigPaths.portalConfigPath))
 			.then((portalConfig) => {
 				loadedPortalConfig = portalConfig;
 				return portalConfig;

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, rename, rm } from 'node:fs/promises';
+import { mkdir, open, readdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -35,6 +35,14 @@ export type McpPortalEffectiveConfigWriteResult = Omit<
 	McpPortalEffectiveConfigPlan,
 	'effectiveMcpConfig' | 'effectivePortalConfig'
 >;
+
+const effectiveConfigManifestFileName = 'mcp-portal-effective-manifest.json';
+
+interface EffectiveConfigManifest {
+	readonly mcpConfigFile: string;
+	readonly portalConfigFile: string;
+	readonly schemaVersion: 1;
+}
 
 function normalizeEnvironmentSegment(value: string): string {
 	return value.replaceAll(/[^A-Za-z0-9_]/gu, '_').toUpperCase();
@@ -240,19 +248,90 @@ async function buildEffectivePlan(
 	};
 }
 
-async function writeFileAtomically(filePath: string, content: string): Promise<void> {
-	const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-	const handle = await open(tempPath, 'wx', 0o600);
+async function writeNewFileAndSync(filePath: string, content: string): Promise<void> {
+	const handle = await open(filePath, 'wx', 0o600);
 	try {
 		await handle.writeFile(content, 'utf8');
 		await handle.sync();
 		await handle.close();
-		await rename(tempPath, filePath);
 	} catch (error) {
 		await handle.close().catch(() => undefined);
+		await rm(filePath, { force: true });
+		throw error;
+	}
+}
+
+async function replaceFileAtomically(filePath: string, content: string): Promise<void> {
+	const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+	await writeNewFileAndSync(tempPath, content);
+	try {
+		await rename(tempPath, filePath);
+	} catch (error) {
 		await rm(tempPath, { force: true });
 		throw error;
 	}
+}
+
+async function syncDirectory(directoryPath: string): Promise<void> {
+	const handle = await open(directoryPath, 'r');
+	try {
+		await handle.sync();
+	} finally {
+		await handle.close();
+	}
+}
+
+function isGeneratedEffectiveConfigFileName(fileName: string): boolean {
+	return (
+		/^mcp\.config\.[0-9a-f-]+\.jsonc$/u.test(fileName) ||
+		/^mcp-portal\.config\.[0-9a-f-]+\.jsonc$/u.test(fileName)
+	);
+}
+
+async function pruneStaleGeneratedConfigFiles(
+	directoryPath: string,
+	currentFileNames: ReadonlySet<string>,
+): Promise<void> {
+	const entries = await readdir(directoryPath, { withFileTypes: true });
+	await Promise.all(
+		entries
+			.filter(
+				(entry) =>
+					entry.isFile() &&
+					isGeneratedEffectiveConfigFileName(entry.name) &&
+					!currentFileNames.has(entry.name),
+			)
+			.map((entry) => rm(path.join(directoryPath, entry.name), { force: true })),
+	);
+}
+
+async function writeEffectiveConfigGeneration(props: {
+	readonly directoryPath: string;
+	readonly mcpConfigContent: string;
+	readonly portalConfigContent: string;
+}): Promise<void> {
+	const generation = randomUUID();
+	const manifest: EffectiveConfigManifest = {
+		mcpConfigFile: `mcp.config.${generation}.jsonc`,
+		portalConfigFile: `mcp-portal.config.${generation}.jsonc`,
+		schemaVersion: 1,
+	};
+	const currentFileNames = new Set([manifest.mcpConfigFile, manifest.portalConfigFile]);
+
+	await writeNewFileAndSync(
+		path.join(props.directoryPath, manifest.mcpConfigFile),
+		props.mcpConfigContent,
+	);
+	await writeNewFileAndSync(
+		path.join(props.directoryPath, manifest.portalConfigFile),
+		props.portalConfigContent,
+	);
+	await replaceFileAtomically(
+		path.join(props.directoryPath, effectiveConfigManifestFileName),
+		`${JSON.stringify(manifest, null, '\t')}\n`,
+	);
+	await syncDirectory(props.directoryPath);
+	await pruneStaleGeneratedConfigFiles(props.directoryPath, currentFileNames);
 }
 
 export async function planMcpPortalEffectiveConfig(
@@ -266,14 +345,11 @@ export async function writeMcpPortalEffectiveConfig(
 ): Promise<McpPortalEffectiveConfigWriteResult> {
 	const plan = await buildEffectivePlan(props, true);
 	await mkdir(props.effectiveHostConfigDir, { recursive: true, mode: 0o700 });
-	await writeFileAtomically(
-		path.join(props.effectiveHostConfigDir, 'mcp.config.jsonc'),
-		`${JSON.stringify(plan.effectiveMcpConfig, null, '\t')}\n`,
-	);
-	await writeFileAtomically(
-		path.join(props.effectiveHostConfigDir, 'mcp-portal.config.jsonc'),
-		`${JSON.stringify(plan.effectivePortalConfig, null, '\t')}\n`,
-	);
+	await writeEffectiveConfigGeneration({
+		directoryPath: props.effectiveHostConfigDir,
+		mcpConfigContent: `${JSON.stringify(plan.effectiveMcpConfig, null, '\t')}\n`,
+		portalConfigContent: `${JSON.stringify(plan.effectivePortalConfig, null, '\t')}\n`,
+	});
 
 	return {
 		effectiveConfigDir: plan.effectiveConfigDir,

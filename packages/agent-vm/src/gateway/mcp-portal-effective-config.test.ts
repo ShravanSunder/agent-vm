@@ -14,6 +14,14 @@ import {
 const createdDirectories: string[] = [];
 type TestSecretResolver = SecretResolver & { readonly resolveAllMock: ReturnType<typeof vi.fn> };
 
+const effectiveConfigManifestFileName = 'mcp-portal-effective-manifest.json';
+
+interface TestEffectiveConfigManifest {
+	readonly mcpConfigFile: string;
+	readonly portalConfigFile: string;
+	readonly schemaVersion: 1;
+}
+
 afterEach(async () => {
 	await Promise.all(
 		createdDirectories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
@@ -64,6 +72,48 @@ function createSecretResolver(values: Readonly<Record<string, string>>): TestSec
 		resolveAll,
 		resolveAllMock: resolveAll,
 	} satisfies SecretResolver & { readonly resolveAllMock: typeof resolveAll };
+}
+
+async function readEffectiveConfigManifest(
+	effectiveDir: string,
+): Promise<TestEffectiveConfigManifest> {
+	const manifest: unknown = JSON.parse(
+		await readFile(path.join(effectiveDir, effectiveConfigManifestFileName), 'utf8'),
+	);
+	if (
+		typeof manifest !== 'object' ||
+		manifest === null ||
+		!('schemaVersion' in manifest) ||
+		!('mcpConfigFile' in manifest) ||
+		!('portalConfigFile' in manifest)
+	) {
+		throw new Error('test effective config manifest has unexpected shape');
+	}
+	const schemaVersion = manifest.schemaVersion;
+	const mcpConfigFile = manifest.mcpConfigFile;
+	const portalConfigFile = manifest.portalConfigFile;
+	if (
+		schemaVersion !== 1 ||
+		typeof mcpConfigFile !== 'string' ||
+		typeof portalConfigFile !== 'string'
+	) {
+		throw new Error('test effective config manifest has unexpected shape');
+	}
+	return { mcpConfigFile, portalConfigFile, schemaVersion };
+}
+
+async function readEffectiveMcpConfig<TConfig>(effectiveDir: string): Promise<TConfig> {
+	const manifest = await readEffectiveConfigManifest(effectiveDir);
+	return JSON.parse(
+		await readFile(path.join(effectiveDir, manifest.mcpConfigFile), 'utf8'),
+	) as TConfig;
+}
+
+async function readEffectivePortalConfig<TConfig>(effectiveDir: string): Promise<TConfig> {
+	const manifest = await readEffectiveConfigManifest(effectiveDir);
+	return JSON.parse(
+		await readFile(path.join(effectiveDir, manifest.portalConfigFile), 'utf8'),
+	) as TConfig;
 }
 
 describe('MCP Portal effective config materialization', () => {
@@ -404,9 +454,8 @@ describe('MCP Portal effective config materialization', () => {
 			}),
 			zoneId: 'shravan',
 		});
-		const effectivePortalConfig = JSON.parse(
-			await readFile(path.join(effectiveDir, 'mcp-portal.config.jsonc'), 'utf8'),
-		) as Record<string, unknown>;
+		const effectivePortalConfig =
+			await readEffectivePortalConfig<Record<string, unknown>>(effectiveDir);
 
 		expect(JSON.stringify(effectivePortalConfig)).not.toContain('source');
 		expect(JSON.stringify(effectivePortalConfig)).not.toContain('op://');
@@ -457,9 +506,9 @@ describe('MCP Portal effective config materialization', () => {
 			secretResolver,
 			zoneId: 'shravan',
 		});
-		const effectiveMcpConfig = JSON.parse(
-			await readFile(path.join(effectiveDir, 'mcp.config.jsonc'), 'utf8'),
-		) as { readonly providers: Record<string, { readonly transport: { readonly env: unknown } }> };
+		const effectiveMcpConfig = await readEffectiveMcpConfig<{
+			readonly providers: Record<string, { readonly transport: { readonly env: unknown } }>;
+		}>(effectiveDir);
 
 		expect(secretResolver.resolveAllMock).toHaveBeenCalledTimes(1);
 		expect(effectiveMcpConfig.providers.tavily?.transport.env).toEqual({
@@ -478,6 +527,40 @@ describe('MCP Portal effective config materialization', () => {
 		expect(result.pluginConfig).toEqual({
 			configDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
 		});
+	});
+
+	it('publishes generated effective configs through a single manifest pointer', async () => {
+		const authoredDir = await createAuthoredDir({
+			mcpConfig: {
+				providers: {
+					linear: {
+						kind: 'mcp',
+						namespace: 'linear',
+						transport: { kind: 'streamable-http', url: 'https://api.linear.app/mcp' },
+					},
+				},
+				schemaVersion: 1,
+			},
+		});
+		const effectiveDir = path.join(authoredDir, 'effective');
+
+		await writeMcpPortalEffectiveConfig({
+			authoredConfigDir: authoredDir,
+			effectiveHostConfigDir: effectiveDir,
+			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
+			secretResolver: createSecretResolver({}),
+			zoneId: 'shravan',
+		});
+		const manifest = await readEffectiveConfigManifest(effectiveDir);
+
+		expect(manifest.mcpConfigFile).toMatch(/^mcp\.config\.[0-9a-f-]+\.jsonc$/u);
+		expect(manifest.portalConfigFile).toMatch(/^mcp-portal\.config\.[0-9a-f-]+\.jsonc$/u);
+		await expect(
+			readFile(path.join(effectiveDir, manifest.mcpConfigFile), 'utf8'),
+		).resolves.toContain('linear');
+		await expect(
+			readFile(path.join(effectiveDir, manifest.portalConfigFile), 'utf8'),
+		).resolves.toContain('shravan');
 	});
 
 	it('generates provider-scoped secret env names to avoid cross-provider collisions', async () => {
@@ -535,11 +618,9 @@ describe('MCP Portal effective config materialization', () => {
 			secretResolver,
 			zoneId: 'shravan',
 		});
-		const effectiveMcpConfig = JSON.parse(
-			await readFile(path.join(effectiveDir, 'mcp.config.jsonc'), 'utf8'),
-		) as {
+		const effectiveMcpConfig = await readEffectiveMcpConfig<{
 			readonly providers: Record<string, { readonly transport: { readonly headers: unknown } }>;
-		};
+		}>(effectiveDir);
 
 		expect(effectiveMcpConfig.providers.linear?.transport.headers).toEqual({
 			authorization: { name: 'AGENT_VM_MCP_LINEAR_AUTHORIZATION', source: 'environment' },
@@ -690,11 +771,9 @@ describe('MCP Portal effective config materialization', () => {
 			secretResolver,
 			zoneId: 'shravan',
 		});
-		const effectiveMcpConfig = JSON.parse(
-			await readFile(path.join(effectiveDir, 'mcp.config.jsonc'), 'utf8'),
-		) as {
+		const effectiveMcpConfig = await readEffectiveMcpConfig<{
 			readonly providers: Record<string, { readonly transport: { readonly headers: unknown } }>;
-		};
+		}>(effectiveDir);
 
 		expect(effectiveMcpConfig.providers.linear?.transport.headers).toEqual({
 			authorization: { name: 'AGENT_VM_MCP_LINEAR_AUTHORIZATION', source: 'environment' },
