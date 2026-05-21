@@ -26,7 +26,7 @@ export function createPortalPromptContext(props: {
 			: [];
 
 	return [
-		'MCP Portal is available as an MCP server.',
+		'MCP Portal is available as native OpenClaw tools.',
 		'Use mcp_portal_list with requests[], mcp_portal_search with requests[],',
 		'mcp_portal_describe with requests[], and mcp_portal_call with calls[].',
 		'Responses are { ok, results, errors, diagnostics }; results is keyed by each request/call id and each value is discriminated by ok: true or ok: false.',

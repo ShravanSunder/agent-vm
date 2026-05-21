@@ -9,11 +9,10 @@ import {
 	type StreamableHTTPClientTransportOptions,
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { normalizeHeaders, type Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { ToolSchema, type Tool } from '@modelcontextprotocol/sdk/types.js';
+import { ToolSchema, type Progress, type Tool } from '@modelcontextprotocol/sdk/types.js';
 
 import type { JsonObject } from './json-schema.js';
 import {
-	isCredentialConfigKey,
 	redactThrownError,
 	redactUpstreamCatalogValue,
 	redactUpstreamResponse,
@@ -54,8 +53,35 @@ export interface UpstreamToolCall {
 	readonly arguments: JsonObject;
 	readonly agentScopeId: string;
 	readonly namespace: string;
+	readonly onEvent?: (event: UpstreamToolEvent) => Promise<void> | void;
+	readonly requestId?: string;
+	readonly signal?: AbortSignal;
 	readonly toolName: string;
 }
+
+export type UpstreamToolEvent =
+	| {
+			readonly kind: 'progress';
+			readonly message?: string;
+			readonly progress: number;
+			readonly total?: number;
+	  }
+	// Extension event for runtimes that can source request-correlated MCP notifications.
+	// The stock SDK callTool bridge currently emits real progress via RequestOptions.onprogress.
+	| {
+			readonly kind: 'upstream_notification';
+			readonly method: string;
+			readonly params: unknown;
+	  }
+	// Extension event for runtimes that can source incremental content before the final result.
+	| {
+			readonly content:
+				| { readonly text: string; readonly type: 'text' }
+				| { readonly type: 'json'; readonly value: unknown };
+			readonly kind: 'partial_content';
+	  };
+
+export type UpstreamMcpProgress = Progress;
 
 export interface UpstreamListToolsResult {
 	readonly nextCursor?: string | undefined;
@@ -63,13 +89,26 @@ export interface UpstreamListToolsResult {
 }
 
 export interface UpstreamMcpClientLike {
-	readonly callTool: (params: {
-		readonly arguments: JsonObject;
-		readonly name: string;
-	}) => Promise<unknown>;
+	readonly callTool: (
+		params: {
+			readonly arguments: JsonObject;
+			readonly name: string;
+		},
+		resultSchema?: unknown,
+		options?: {
+			readonly onprogress?: (progress: UpstreamMcpProgress) => void;
+			readonly signal?: AbortSignal;
+		},
+	) => Promise<unknown>;
 	readonly close: () => Promise<void> | void;
-	readonly connect: (transport: unknown) => Promise<void>;
-	readonly listTools: (params?: { readonly cursor?: string }) => Promise<UpstreamListToolsResult>;
+	readonly connect: (
+		transport: unknown,
+		options?: { readonly signal?: AbortSignal },
+	) => Promise<void>;
+	readonly listTools: (
+		params?: { readonly cursor?: string },
+		options?: { readonly signal?: AbortSignal },
+	) => Promise<UpstreamListToolsResult>;
 }
 
 export interface UpstreamMcpRuntimeOptions {
@@ -79,6 +118,7 @@ export interface UpstreamMcpRuntimeOptions {
 		server: NormalizedUpstreamMcpServer,
 		transport: Exclude<UpstreamMcpTransportKind, 'auto-http'>,
 	) => unknown;
+	readonly maxResponseBytes?: number;
 	readonly onCloseError?: (error: Error, context: UpstreamMcpCloseErrorContext) => void;
 	readonly servers: readonly NormalizedUpstreamMcpServer[];
 }
@@ -105,6 +145,7 @@ interface PendingClient {
 }
 
 const defaultConnectionTimeoutMs = 30_000;
+const defaultMaxResponseBytes = 4 * 1_024 * 1_024;
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -120,21 +161,21 @@ function isTransport(value: unknown): value is Transport {
 }
 
 function createSdkClient(): UpstreamMcpClientLike {
-	const client = new Client({ name: 'agent-vm-mcp-portal', version: '1.0.0' });
-
+	const client = new Client({ name: 'mcp-portal', version: '1.0.0' });
 	return {
-		callTool: async (params) => await client.callTool(params),
+		callTool: async (params, _resultSchema, options) =>
+			await client.callTool(params, undefined, options),
 		close: async () => {
 			await client.close();
 		},
-		connect: async (transport) => {
+		connect: async (transport, options) => {
 			if (!isTransport(transport)) {
 				throw new Error('SDK MCP client requires a valid MCP transport.');
 			}
-			await client.connect(transport);
+			await client.connect(transport, options);
 		},
-		listTools: async (params) => {
-			const result = await client.listTools(params);
+		listTools: async (params, options) => {
+			const result = await client.listTools(params, options);
 			return {
 				...(result.nextCursor !== undefined ? { nextCursor: result.nextCursor } : {}),
 				tools: result.tools,
@@ -220,23 +261,41 @@ function transportAttempts(
 
 function redactionValuesFromServer(server: NormalizedUpstreamMcpServer): readonly string[] {
 	if (server.transport === 'stdio') {
-		return Object.entries(server.env ?? {})
-			.filter(([key, value]) => isCredentialConfigKey(key) && value.length > 0)
-			.map(([, value]) => value);
+		return Object.values(server.env ?? {}).filter((value) => value.length > 0);
 	}
 
-	return Object.entries(server.headers ?? {})
-		.filter(([key, value]) => isCredentialConfigKey(key) && value.length > 0)
-		.map(([, value]) => value);
+	return Object.values(server.headers ?? {}).filter((value) => value.length > 0);
 }
 
 function timeoutMsForServer(server: NormalizedUpstreamMcpServer): number {
 	return server.connectionTimeoutMs ?? defaultConnectionTimeoutMs;
 }
 
+function assertUpstreamResponseSize(value: unknown, maxResponseBytes: number): void {
+	const serialized = JSON.stringify(value);
+	if (serialized === undefined) {
+		return;
+	}
+	const byteLength = Buffer.byteLength(serialized, 'utf8');
+	if (byteLength > maxResponseBytes) {
+		throw new Error(
+			`MCP upstream response exceeded ${String(maxResponseBytes)} bytes (${String(byteLength)} bytes).`,
+		);
+	}
+}
+
+function isAbortError(error: unknown): boolean {
+	return error instanceof Error && error.name === 'AbortError';
+}
+
+function isCallerAbortError(error: unknown, signal: AbortSignal | undefined): boolean {
+	return signal?.aborted === true && (error === signal.reason || isAbortError(error));
+}
+
 async function withTimeout<TResult>(
 	promise: Promise<TResult>,
 	props: {
+		readonly onTimeout?: (error: Error) => void;
 		readonly operation: string;
 		readonly timeoutMs: number;
 	},
@@ -247,7 +306,9 @@ async function withTimeout<TResult>(
 			promise,
 			new Promise<never>((_resolve, reject) => {
 				timeout = setTimeout(() => {
-					reject(new Error(`${props.operation} timed out after ${props.timeoutMs}ms.`));
+					const error = new Error(`${props.operation} timed out after ${props.timeoutMs}ms.`);
+					props.onTimeout?.(error);
+					reject(error);
 				}, props.timeoutMs);
 			}),
 		]);
@@ -258,19 +319,57 @@ async function withTimeout<TResult>(
 	}
 }
 
+function createRuntimeAbortSignal(parentSignal: AbortSignal | undefined): {
+	readonly abortTimeout: (error: Error) => void;
+	readonly dispose: () => void;
+	readonly signal: AbortSignal;
+} {
+	const controller = new AbortController();
+	const abortFromParent = (): void => {
+		if (!controller.signal.aborted) {
+			controller.abort(parentSignal?.reason);
+		}
+	};
+	if (parentSignal?.aborted) {
+		abortFromParent();
+	} else {
+		parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+	}
+
+	return {
+		abortTimeout: (error) => {
+			if (!controller.signal.aborted) {
+				controller.abort(error);
+			}
+		},
+		dispose: () => {
+			parentSignal?.removeEventListener('abort', abortFromParent);
+		},
+		signal: controller.signal,
+	};
+}
+
 async function listAllTools(
 	client: UpstreamMcpClientLike,
 	cursor: string | undefined,
 	collectedTools: readonly Tool[],
+	timeoutAbort: {
+		readonly abortTimeout: (error: Error) => void;
+		readonly signal: AbortSignal;
+	},
 	timeoutMs: number,
 ): Promise<readonly Tool[]> {
-	const result = await withTimeout(client.listTools(cursor ? { cursor } : undefined), {
-		operation: 'MCP listTools',
-		timeoutMs,
-	});
+	const result = await withTimeout(
+		client.listTools(cursor ? { cursor } : undefined, { signal: timeoutAbort.signal }),
+		{
+			onTimeout: timeoutAbort.abortTimeout,
+			operation: 'MCP listTools',
+			timeoutMs,
+		},
+	);
 	const nextTools = [...collectedTools, ...result.tools];
 	return result.nextCursor
-		? listAllTools(client, result.nextCursor, nextTools, timeoutMs)
+		? listAllTools(client, result.nextCursor, nextTools, timeoutAbort, timeoutMs)
 		: nextTools;
 }
 
@@ -329,8 +428,10 @@ export function createUpstreamMcpClientRuntime(
 	const clients = new Map<string, CachedClient>();
 	const pendingClients = new Map<string, PendingClient>();
 	const agentScopeGenerations = new Map<string, number>();
+	const closedClients = new WeakSet<UpstreamMcpClientLike>();
 	const createClient = options.createClient ?? createSdkClient;
 	const createTransport = options.createTransport ?? createSdkTransport;
+	const maxResponseBytes = options.maxResponseBytes ?? defaultMaxResponseBytes;
 	const redactionValues = [
 		...(options.additionalRedactionValues ?? []),
 		...options.servers.flatMap((server) => redactionValuesFromServer(server)),
@@ -351,6 +452,28 @@ export function createUpstreamMcpClientRuntime(
 
 	function incrementScopeGeneration(scopeKey: string): void {
 		agentScopeGenerations.set(scopeKey, (agentScopeGenerations.get(scopeKey) ?? 0) + 1);
+	}
+
+	async function closeClientAfterFailureOnce(client: UpstreamMcpClientLike | null): Promise<void> {
+		if (!client || closedClients.has(client)) {
+			return;
+		}
+		closedClients.add(client);
+		await closeClientAfterFailure(client);
+	}
+
+	async function closeClientForTeardownOnce(
+		client: UpstreamMcpClientLike | null,
+		context: UpstreamMcpCloseErrorContext,
+	): Promise<void> {
+		if (!client || closedClients.has(client)) {
+			return;
+		}
+		closedClients.add(client);
+		await closeClientForTeardown(client, {
+			context,
+			onCloseError: options.onCloseError,
+		});
 	}
 
 	async function createConnectedClient(
@@ -375,16 +498,20 @@ export function createUpstreamMcpClientRuntime(
 					? withRemoteHeaders(server)
 					: server;
 			const transport = createTransport(transportServer, transportKind);
+			const timeoutAbort = createRuntimeAbortSignal(undefined);
 			try {
-				await withTimeout(client.connect(transport), {
+				await withTimeout(client.connect(transport, { signal: timeoutAbort.signal }), {
+					onTimeout: timeoutAbort.abortTimeout,
 					operation: `MCP ${transportKind} connect for namespace "${server.namespace}"`,
 					timeoutMs: timeoutMsForServer(server),
 				});
 				return client;
 			} catch (error) {
 				const redactedError = redactThrownError(error, { exactValues: redactionValues });
-				await closeClientAfterFailure(client);
+				await closeClientAfterFailureOnce(client);
 				return tryAttempt(attemptIndex + 1, redactedError);
+			} finally {
+				timeoutAbort.dispose();
 			}
 		}
 
@@ -407,7 +534,7 @@ export function createUpstreamMcpClientRuntime(
 		}
 		if (pendingClient) {
 			pendingClients.delete(key);
-			void pendingClient.promise.then(closeClientAfterFailure, () => undefined);
+			void pendingClient.promise.then(closeClientAfterFailureOnce, () => undefined);
 		}
 
 		const server = serversByNamespace.get(namespace);
@@ -421,12 +548,21 @@ export function createUpstreamMcpClientRuntime(
 		try {
 			const client = await pending;
 			if (generationForAgentScope(agentScopeId) !== generation) {
-				await closeClientAfterFailure(client);
+				await closeClientAfterFailureOnce(client);
 				throw new Error(
 					`MCP client for agent scope "${rootAgentScopeId(agentScopeId)}" was invalidated.`,
 				);
 			}
 			clients.set(key, { client });
+			if (generationForAgentScope(agentScopeId) !== generation) {
+				if (clients.get(key)?.client === client) {
+					clients.delete(key);
+				}
+				await closeClientAfterFailureOnce(client);
+				throw new Error(
+					`MCP client for agent scope "${rootAgentScopeId(agentScopeId)}" was invalidated.`,
+				);
+			}
 			return client;
 		} finally {
 			if (pendingClients.get(key) === pendingRecord) {
@@ -442,16 +578,37 @@ export function createUpstreamMcpClientRuntime(
 			try {
 				client = await getClient(call.agentScopeId, call.namespace);
 				const server = serversByNamespace.get(call.namespace);
-				return redactUpstreamResponse(
-					await withTimeout(client.callTool({ arguments: call.arguments, name: call.toolName }), {
-						operation: `MCP callTool ${call.namespace}.${call.toolName}`,
-						timeoutMs: server ? timeoutMsForServer(server) : defaultConnectionTimeoutMs,
-					}),
-					{ exactValues: redactionValues },
-				);
+				const timeoutAbort = createRuntimeAbortSignal(call.signal);
+				try {
+					const upstreamResult = await withTimeout(
+						client.callTool({ arguments: call.arguments, name: call.toolName }, undefined, {
+							onprogress: (progress) => {
+								void call.onEvent?.({
+									kind: 'progress',
+									...(progress.message !== undefined ? { message: progress.message } : {}),
+									progress: progress.progress,
+									...(progress.total !== undefined ? { total: progress.total } : {}),
+								});
+							},
+							signal: timeoutAbort.signal,
+						}),
+						{
+							onTimeout: timeoutAbort.abortTimeout,
+							operation: `MCP callTool ${call.namespace}.${call.toolName}`,
+							timeoutMs: server ? timeoutMsForServer(server) : defaultConnectionTimeoutMs,
+						},
+					);
+					assertUpstreamResponseSize(upstreamResult, maxResponseBytes);
+					return redactUpstreamResponse(upstreamResult, { exactValues: redactionValues });
+				} finally {
+					timeoutAbort.dispose();
+				}
 			} catch (error) {
+				if (isCallerAbortError(error, call.signal)) {
+					throw redactThrownError(error, { exactValues: redactionValues });
+				}
 				clients.delete(key);
-				await closeClientAfterFailure(client);
+				await closeClientAfterFailureOnce(client);
 				throw redactThrownError(error, { exactValues: redactionValues });
 			}
 		},
@@ -464,10 +621,7 @@ export function createUpstreamMcpClientRuntime(
 				}
 				clients.delete(key);
 				closePromises.push(
-					closeClientForTeardown(cachedClient.client, {
-						context: closeErrorContextFromCacheKey(key),
-						onCloseError: options.onCloseError,
-					}),
+					closeClientForTeardownOnce(cachedClient.client, closeErrorContextFromCacheKey(key)),
 				);
 			}
 			for (const [key, pendingClient] of pendingClients.entries()) {
@@ -477,11 +631,7 @@ export function createUpstreamMcpClientRuntime(
 				pendingClients.delete(key);
 				closePromises.push(
 					pendingClient.promise.then(
-						(client) =>
-							closeClientForTeardown(client, {
-								context: closeErrorContextFromCacheKey(key),
-								onCloseError: options.onCloseError,
-							}),
+						(client) => closeClientForTeardownOnce(client, closeErrorContextFromCacheKey(key)),
 						() => undefined,
 					),
 				);
@@ -497,10 +647,7 @@ export function createUpstreamMcpClientRuntime(
 				}
 				clients.delete(key);
 				closePromises.push(
-					closeClientForTeardown(cachedClient.client, {
-						context: closeErrorContextFromCacheKey(key),
-						onCloseError: options.onCloseError,
-					}),
+					closeClientForTeardownOnce(cachedClient.client, closeErrorContextFromCacheKey(key)),
 				);
 			}
 			for (const [key, pendingClient] of pendingClients.entries()) {
@@ -510,11 +657,7 @@ export function createUpstreamMcpClientRuntime(
 				pendingClients.delete(key);
 				closePromises.push(
 					pendingClient.promise.then(
-						(client) =>
-							closeClientForTeardown(client, {
-								context: closeErrorContextFromCacheKey(key),
-								onCloseError: options.onCloseError,
-							}),
+						(client) => closeClientForTeardownOnce(client, closeErrorContextFromCacheKey(key)),
 						() => undefined,
 					),
 				);
@@ -527,18 +670,24 @@ export function createUpstreamMcpClientRuntime(
 			try {
 				client = await getClient(call.agentScopeId, call.namespace);
 				const server = serversByNamespace.get(call.namespace);
-				return redactToolCatalog(
-					await listAllTools(
-						client,
-						undefined,
-						[],
-						server ? timeoutMsForServer(server) : defaultConnectionTimeoutMs,
-					),
-					{ exactValues: redactionValues },
-				);
+				const timeoutAbort = createRuntimeAbortSignal(undefined);
+				try {
+					return redactToolCatalog(
+						await listAllTools(
+							client,
+							undefined,
+							[],
+							timeoutAbort,
+							server ? timeoutMsForServer(server) : defaultConnectionTimeoutMs,
+						),
+						{ exactValues: redactionValues },
+					);
+				} finally {
+					timeoutAbort.dispose();
+				}
 			} catch (error) {
 				clients.delete(key);
-				await closeClientAfterFailure(client);
+				await closeClientAfterFailureOnce(client);
 				throw redactThrownError(error, { exactValues: redactionValues });
 			}
 		},

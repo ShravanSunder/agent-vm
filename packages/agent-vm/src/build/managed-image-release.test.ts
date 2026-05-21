@@ -117,15 +117,11 @@ describe('managed image release', () => {
 		expect(generatedDockerfile).toContain(
 			'RUN pnpm add -g "openclaw@2026.5.7" "@openclaw/discord@2026.5.7"',
 		);
+		expect(generatedDockerfile).toContain('package_root="$(pnpm root -g)"');
 		expect(generatedDockerfile).toContain(
-			'RUN ln -sf /pnpm/global/5/node_modules/@agent-vm/openclaw-mcp-portal-plugin/dist /home/openclaw/.openclaw/extensions/mcp-portal',
+			'ln -sfn "$package_root/@agent-vm/openclaw-mcp-portal-plugin/dist" /home/openclaw/.openclaw/extensions/mcp-portal',
 		);
-		expect(generatedDockerfile).toContain(
-			'/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server',
-		);
-		expect(generatedDockerfile).toContain(
-			'exec node /pnpm/global/5/node_modules/@agent-vm/mcp-portal/dist/bin/portal-server.js "$@"',
-		);
+		expect(generatedDockerfile).not.toContain('portal-server.js');
 		expect(generatedDockerfile).not.toContain('@openclaw/discord@2026.5.2');
 		expect(result.plan).toMatchObject({
 			baseImage: {

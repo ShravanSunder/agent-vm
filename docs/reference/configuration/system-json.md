@@ -9,8 +9,7 @@ Comments are allowed in authored config. Runtime files that the controller
 writes, including effective worker config, runtime records, API bodies, and
 task event logs, remain strict JSON/JSONL.
 
-New scaffolds and `agent-vm migrate mcp-portal` write deployment-local JSON
-Schema files under `config/schemas/`:
+New scaffolds write deployment-local JSON Schema files under `config/schemas/`:
 
 - `system.schema.json`
 - `mcp.schema.json`
@@ -49,7 +48,7 @@ zones[]
   runtimeAuthHints
   egressHosts
   websocketBypass
-  mcp
+  mcpPortal
   defaultToolVmProfile
   agentToolVmProfiles
   agentSandboxSeeds
@@ -180,25 +179,47 @@ When `agents.list` is configured, agent-vm scaffolds sibling MCP config files in
 `config/gateways/<zone>/`:
 
 - `mcp.config.jsonc` describes upstream MCP providers and discovery.
-- `mcp-portal.config.jsonc` describes the portal server, access header, agent
-  profile assignments, and profile policies.
+- `mcp-portal.config.jsonc` describes agent profile assignments, profile
+  policies, and optional external `/mcp-proxy` auth.
 
-The effective OpenClaw config contains one generated
-`mcp.servers.mcp_portal_<agentId>` entry per agent. Each generated server points
-at that agent's Streamable HTTP portal endpoint:
+Managed OpenClaw does not generate OpenClaw MCP server entries for MCP Portal.
+The plugin registers the four native portal tools directly and calls
+`@agent-vm/mcp-portal/core` in the gateway VM with OpenClaw's trusted
+`ctx.agentId`. Operator-authored upstream MCP servers live in
+`mcp.config.jsonc`; agent-vm materializes an effective gateway config that turns
+configured 1Password secrets into runtime environment references or
+runtime-mediated bindings before gateway boot.
 
-```text
-http://127.0.0.1:18790/agents/<agentId>/mcp
-```
+`zones[].mcpPortal.configDir` points at the directory containing those two
+authored files. In managed OpenClaw mode, `externalAuth` and `mcpProxy` are
+stripped from the gateway effective config; they are only used by the external
+`mcp-portal mcp-proxy serve` adapter.
 
-Each generated server also carries the access header configured in
-`mcp-portal.config.jsonc`, normally
-`x-agent-vm-mcp-portal-secret: ${MCP_PORTAL_SERVER_SECRET}`. Each agent keeps the
-normal OpenClaw tool surface and receives a `tools.deny` list for sibling
-agents' materialized portal tool names, so it can call only its own four portal
-tools. Operator-authored upstream MCP servers live in `mcp.config.jsonc`; the
-portal process uses those upstream servers but does not put upstream MCP auth
-into Tool VMs.
+Important fields in `mcp-portal.config.jsonc`:
+
+- `agents.<agentId>.profile` selects a profile.
+- `agents.<agentId>.credentialVersion` revokes previously printed external
+  `/mcp-proxy` bearer credentials for that agent.
+- `agents.<agentId>.hmacKey` is used for OpenClaw approval-token verification
+  and is stripped before managed gateway config enters the VM.
+- `externalAuth.masterKey` is required only for external `/mcp-proxy` bearer
+  auth and client-config generation.
+- `mcpProxy.server.host`, `mcpProxy.server.port`, and
+  `mcpProxy.auth.headerName` configure the loopback Hono MCP proxy.
+- `profiles.<name>.enabledNamespaces`, `enabledToolsByNamespace`,
+  `hiddenToolsByNamespace`, and `approval` define the agent's portal policy.
+
+Important fields in `mcp.config.jsonc` provider entries:
+
+- `transport.kind` may be `streamable-http`, `sse`, or `stdio`.
+- Remote provider `transport.url` must use `http` or `https`.
+- Stdio providers must declare `transport.networkAccess`.
+- `transport.networkAccess: "declared"` requires non-empty
+  `transport.requiredEgressHosts`.
+- Every secret in `transport.env` or `transport.headers` needs a matching
+  `secretPolicies.<name>` entry.
+- `secretPolicies.<name>.injection` is either `env` or `http-mediation`;
+  mediated secrets must list allowed `hosts`.
 
 Local smoke coverage uses a fake Streamable HTTP MCP provider and the
 controller smoke harness `tcpHostsOverride` path to make that host-side provider
@@ -401,6 +422,14 @@ Unmapped agents use the zone fallback `defaultToolVmProfile`.
 boots. There is no shared per-agent fallback; configure each agent that needs an
 auth profile.
 
+`gateway.rawEnvSecrets` is the explicit escape hatch for OpenClaw secrets that
+must reach the gateway VM as raw environment variables. `OPENCLAW_GATEWAY_TOKEN`
+is allowed by default. Other provider or service tokens should use
+`http-mediation` unless the integration cannot work with HTTP mediation, such as
+a non-HTTP or websocket credential flow. Generated runtime env secrets also need
+to be named here when a feature requires them, for example
+`AGENT_VM_ZONE_GIT_TOKEN`.
+
 `agentSandboxSeeds` writes first-boot files into the agent's scoped sandbox work
 mount before the Tool VM starts. Targets are relative to the sandbox
 `/work` backing directory, cannot use `..`, and are not written for shared
@@ -511,6 +540,11 @@ always mediated. `source: "environment"` is allowed for a Tool VM secret only
 when `injection` is `http-mediation`; in that case the controller reads the
 environment variable and Gondolin mediates the value.
 
+OpenClaw zones allow raw gateway env secrets only when the secret name is
+`OPENCLAW_GATEWAY_TOKEN` or is listed in `gateway.rawEnvSecrets`. This keeps
+provider API tokens on the mediated path by default and makes every raw-env
+exception visible in deployment config.
+
 Secret names must be valid environment variable identifiers. This keeps
 gateway env-file rendering and runtime placeholder names safe and predictable.
 
@@ -609,6 +643,8 @@ The schema rejects:
 - Legacy `allowedHosts`; use `egressHosts` with explicit `audience`.
 - Zone secrets without explicit `audience`.
 - Env-injected zone secrets with non-gateway audience or declared `hosts`.
+- OpenClaw env-injected zone secrets not listed in `gateway.rawEnvSecrets`,
+  except `OPENCLAW_GATEWAY_TOKEN`.
 - Mediated secret hosts not declared in `egressHosts` for the same audience.
 - OpenClaw zones without gateway-only env `OPENCLAW_GATEWAY_TOKEN`.
 - Zones referencing missing gateway image profiles.
@@ -622,3 +658,6 @@ The schema rejects:
 - `agentToolVmProfiles` values referencing missing `toolVmProfiles`.
 - `agentSandboxSeeds` targets that are absolute or escape the sandbox work mount.
 - Tool VM profiles referencing missing Tool VM image profiles.
+- OpenClaw MCP Portal configs that fail materialization semantics, including
+  missing stdio `networkAccess`, missing provider `secretPolicies`, invalid
+  mediated hosts, and generated secret environment-name collisions.

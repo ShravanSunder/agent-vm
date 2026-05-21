@@ -33,6 +33,19 @@
 			"@agent-vm/gateway-interface": ["./packages/gateway-interface/src/index.ts"],
 			"@agent-vm/openclaw-agent-vm-plugin": ["./packages/openclaw-agent-vm-plugin/src/index.ts"],
 			"@agent-vm/mcp-portal": ["./packages/mcp-portal/src/index.ts"],
+			"@agent-vm/mcp-portal/core": ["./packages/mcp-portal/src/core/index.ts"],
+			"@agent-vm/mcp-portal/mcp-proxy": ["./packages/mcp-portal/src/mcp-proxy/index.ts"],
+			"@agent-vm/mcp-portal/cli": ["./packages/mcp-portal/src/cli/index.ts"],
+			"@agent-vm/mcp-portal/portal-config": ["./packages/mcp-portal/src/portal-config/index.ts"],
+			"@agent-vm/mcp-portal/portal-auth/agent-bearer-token": [
+				"./packages/mcp-portal/src/portal-auth/agent-bearer-token.ts"
+			],
+			"@agent-vm/mcp-portal/portal-auth/hmac-env": [
+				"./packages/mcp-portal/src/portal-auth/hmac-env.ts"
+			],
+			"@agent-vm/mcp-portal/portal-auth/hmac-token": [
+				"./packages/mcp-portal/src/portal-auth/hmac-token.ts"
+			],
 			"@agent-vm/mcp-portal/testing/fake-upstream-mcp-server": [
 				"./packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts"
 			],
@@ -40,6 +53,7 @@
 				"./packages/openclaw-mcp-portal-plugin/src/index.ts"
 			],
 			"@agent-vm/openclaw-gateway": ["./packages/openclaw-gateway/src/index.ts"],
+			"@agent-vm/secrets": ["./packages/secrets/src/index.ts"],
 			"@agent-vm/worker-gateway": ["./packages/worker-gateway/src/index.ts"]
 		}
 	}

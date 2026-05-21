@@ -1,4 +1,4 @@
-import type { SecretResolver } from '@agent-vm/gondolin-adapter';
+import type { SecretResolver } from '@agent-vm/secrets';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { deleteGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';

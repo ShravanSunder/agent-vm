@@ -1,4 +1,4 @@
-import { createSecretResolver } from '@agent-vm/gondolin-adapter';
+import { createSecretResolver } from '@agent-vm/secrets';
 import { describe, expect, it } from 'vitest';
 
 import { defaultCliDependencies } from './agent-vm-cli-support.js';

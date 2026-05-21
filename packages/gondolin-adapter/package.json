@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/gondolin-adapter",
-	"version": "0.0.68",
+	"version": "0.0.70",
 	"description": "Adapter over @earendil-works/gondolin: VM build pipeline, image cache, and secret resolver.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -34,7 +34,7 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@1password/sdk": "^0.4.0",
+		"@agent-vm/secrets": "workspace:*",
 		"@earendil-works/gondolin": "0.9.1",
 		"zod": "^4.4.3"
 	}

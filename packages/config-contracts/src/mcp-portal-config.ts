@@ -74,25 +74,50 @@ export const resolvedMcpPortalProfileSchema = z
 
 export type ResolvedMcpPortalProfile = z.infer<typeof resolvedMcpPortalProfileSchema>;
 
-const mcpPortalAccessHeaderSchema = z
+export const mcpPortalExternalAuthSchema = z
 	.object({
-		name: z.string().min(1),
-		secret: secretValueSchema,
+		masterKey: secretValueSchema,
 	})
 	.strict();
 
-export const mcpPortalServerSchema = z
+export type McpPortalExternalAuthConfig = z.infer<typeof mcpPortalExternalAuthSchema>;
+
+function isLoopbackProxyHost(host: string): boolean {
+	const normalizedHost = host.toLowerCase();
+	return (
+		normalizedHost === 'localhost' || normalizedHost === '127.0.0.1' || normalizedHost === '::1'
+	);
+}
+
+export const mcpPortalProxySchema = z
 	.object({
-		host: z.string().min(1).default('127.0.0.1'),
-		port: z.number().int().min(1).max(65_535).default(18_790),
-		accessHeader: mcpPortalAccessHeaderSchema,
+		server: z
+			.object({
+				host: z
+					.string()
+					.min(1)
+					.refine(isLoopbackProxyHost, {
+						message: 'mcpProxy.server.host must be loopback-only for HTTP bearer auth.',
+					})
+					.default('127.0.0.1'),
+				port: z.number().int().min(1).max(65_535).default(18_791),
+			})
+			.strict()
+			.default({ host: '127.0.0.1', port: 18_791 }),
+		auth: z
+			.object({
+				headerName: z.string().min(1).default('authorization'),
+			})
+			.strict()
+			.default({ headerName: 'authorization' }),
 	})
 	.strict();
 
-export type McpPortalServerConfig = z.infer<typeof mcpPortalServerSchema>;
+export type McpPortalProxyConfig = z.infer<typeof mcpPortalProxySchema>;
 
 export const mcpPortalAgentConfigSchema = z
 	.object({
+		credentialVersion: z.number().int().positive().default(1),
 		profile: z.string().min(1),
 		hmacKey: secretValueSchema.optional(),
 	})
@@ -104,7 +129,8 @@ export const mcpPortalConfigSchema = z
 	.object({
 		$schema: z.string().min(1).optional(),
 		schemaVersion: z.literal(1),
-		server: mcpPortalServerSchema,
+		externalAuth: mcpPortalExternalAuthSchema.optional(),
+		mcpProxy: mcpPortalProxySchema.optional(),
 		agents: z.record(z.string().min(1), mcpPortalAgentConfigSchema).default({}),
 		profiles: z.record(z.string().min(1), mcpPortalProfileDefinitionSchema),
 	})
@@ -119,7 +145,10 @@ export const mcpPortalConfigSchema = z
 		}
 	});
 
-export type McpPortalConfig = z.infer<typeof mcpPortalConfigSchema>;
+type ParsedMcpPortalConfig = z.infer<typeof mcpPortalConfigSchema>;
+export type McpPortalConfig = Omit<ParsedMcpPortalConfig, 'agents'> & {
+	readonly agents: Readonly<Record<string, McpPortalAgentConfig>>;
+};
 
 export const openClawMcpPortalPluginConfigSchema = z
 	.object({

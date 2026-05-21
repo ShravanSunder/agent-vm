@@ -1,5 +1,5 @@
 import { appendEvent, type TaskEvent } from '@agent-vm/agent-vm-worker';
-import type { SecretResolver } from '@agent-vm/gondolin-adapter';
+import type { SecretResolver } from '@agent-vm/secrets';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { runControllerDestroy as runControllerDestroyDefault } from '../../operations/destroy-zone.js';

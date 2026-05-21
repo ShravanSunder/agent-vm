@@ -1,8 +1,18 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createPortalAgentIdentity, resolvePortalAccessPolicy } from './portal-access-policy.js';
+import {
+	createPortalAgentIdentity as createPortalAgentIdentityBase,
+	resolvePortalAccessPolicy,
+	type PortalAgentIdentity,
+} from './portal-access-policy.js';
 import { createPortalSessionManager } from './portal-session.js';
+
+function createPortalAgentIdentity(
+	input: Omit<Parameters<typeof createPortalAgentIdentityBase>[0], 'source'>,
+): PortalAgentIdentity {
+	return createPortalAgentIdentityBase({ ...input, source: 'cli-operator' });
+}
 
 function createDeferred<TValue>(): {
 	readonly promise: Promise<TValue>;
@@ -50,7 +60,6 @@ describe('portal sessions', () => {
 		const policy = resolvePortalAccessPolicy({
 			config: {
 				defaultPolicy: 'allow-all',
-				enabledNamespaces: [],
 				enabledNamespacesByAgent: {},
 				enabledToolsByAgent: {},
 				hiddenToolsByAgent: {},
@@ -60,6 +69,22 @@ describe('portal sessions', () => {
 		});
 
 		expect(policy.allowedNamespaces).toEqual(['github', 'linear']);
+	});
+
+	it('treats an explicit empty global namespace list as deny all', () => {
+		const policy = resolvePortalAccessPolicy({
+			config: {
+				defaultPolicy: 'allow-all',
+				enabledNamespaces: [],
+				enabledNamespacesByAgent: {},
+				enabledToolsByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			identity: createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-scope-a' }),
+			upstreamNamespaces: ['linear', 'github'],
+		});
+
+		expect(policy.allowedNamespaces).toEqual([]);
 	});
 
 	it('removes non-enabled tools before catalog construction', async () => {

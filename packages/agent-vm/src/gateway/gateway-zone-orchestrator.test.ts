@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -8,8 +8,8 @@ import type {
 	BuildImageResult,
 	ManagedVm,
 	ManagedVmInstance,
-	SecretResolver,
 } from '@agent-vm/gondolin-adapter';
+import type { SecretResolver } from '@agent-vm/secrets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
@@ -35,20 +35,22 @@ const openClawToolVmSandbox = {
 	workspaceAccess: 'rw',
 } satisfies Record<string, string>;
 
-afterEach(() => {
+afterEach(async () => {
 	cleanupOrphanedGatewayIfPresentMock.mockClear();
-	for (const directoryPath of createdDirectories.splice(0)) {
-		fs.rmSync(directoryPath, { recursive: true, force: true });
-	}
+	await Promise.all(
+		createdDirectories
+			.splice(0)
+			.map((directoryPath) => rm(directoryPath, { recursive: true, force: true })),
+	);
 });
 
-function createGatewayConfigPath(): string {
-	const workingDirectoryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-gateway-zone-'));
+async function createGatewayConfigPath(): Promise<string> {
+	const workingDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-gateway-zone-'));
 	createdDirectories.push(workingDirectoryPath);
 	const configDirectory = path.join(workingDirectoryPath, 'config', 'shravan');
-	fs.mkdirSync(configDirectory, { recursive: true });
+	await mkdir(configDirectory, { recursive: true });
 	const configPath = path.join(configDirectory, 'openclaw.json');
-	fs.writeFileSync(
+	await writeFile(
 		configPath,
 		JSON.stringify({
 			agents: {
@@ -70,11 +72,30 @@ function createGatewayConfigPath(): string {
 	return configPath;
 }
 
-function createSystemConfigPath(): string {
-	const workingDirectoryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-gateway-cache-id-'));
+async function writeMinimalMcpPortalConfigs(
+	configDir: string,
+	mcpConfig: unknown = {
+		providers: {},
+		schemaVersion: 1,
+	},
+): Promise<void> {
+	await writeFile(path.join(configDir, 'mcp.config.jsonc'), JSON.stringify(mcpConfig), 'utf8');
+	await writeFile(
+		path.join(configDir, 'mcp-portal.config.jsonc'),
+		JSON.stringify({
+			agents: { shravan: { profile: 'default' } },
+			profiles: { default: { enabledNamespaces: [] } },
+			schemaVersion: 1,
+		}),
+		'utf8',
+	);
+}
+
+async function createSystemConfigPath(): Promise<string> {
+	const workingDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-gateway-cache-id-'));
 	createdDirectories.push(workingDirectoryPath);
 	const configDirectory = path.join(workingDirectoryPath, 'config');
-	fs.mkdirSync(configDirectory, { recursive: true });
+	await mkdir(configDirectory, { recursive: true });
 	return path.join(configDirectory, 'system.json');
 }
 
@@ -116,8 +137,8 @@ function createHttpHealthGatewayLifecycle(): {
 	};
 }
 
-function createSystemConfig(): LoadedSystemConfig {
-	const workingDirectoryPath = fs.mkdtempSync(
+async function createSystemConfig(): Promise<LoadedSystemConfig> {
+	const workingDirectoryPath = await mkdtemp(
 		path.join(os.tmpdir(), 'agent-vm-gateway-zone-state-'),
 	);
 	createdDirectories.push(workingDirectoryPath);
@@ -160,7 +181,8 @@ function createSystemConfig(): LoadedSystemConfig {
 						memory: '2G',
 						cpus: 2,
 						port: 18791,
-						config: createGatewayConfigPath(),
+						config: await createGatewayConfigPath(),
+						rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN', 'DISCORD_BOT_TOKEN'],
 						stateDir: path.join(workingDirectoryPath, 'state', 'shravan'),
 						zoneFilesDir: path.join(workingDirectoryPath, 'zone-files', 'shravan'),
 					},
@@ -206,7 +228,7 @@ function createSystemConfig(): LoadedSystemConfig {
 				size: 5,
 			},
 		},
-		{ systemConfigPath: createSystemConfigPath() },
+		{ systemConfigPath: await createSystemConfigPath() },
 	);
 }
 
@@ -303,7 +325,7 @@ describe('startGatewayZone', () => {
 		};
 		const loadBuildConfig = vi.fn(async (): Promise<BuildConfig> => buildConfig);
 
-		const systemConfig = createSystemConfig();
+		const systemConfig = await createSystemConfig();
 		const result = await startGatewayZone(
 			{
 				runTask: async (title, fn) => {
@@ -323,8 +345,7 @@ describe('startGatewayZone', () => {
 
 		expect(loadBuildConfig).toHaveBeenCalledWith('./vm-images/gateways/openclaw/build-config.json');
 		const logDirectoryPath = path.join(systemConfig.runtimeDir, 'zones', 'shravan', 'logs');
-		expect(fs.existsSync(logDirectoryPath)).toBe(true);
-		expect(fs.statSync(logDirectoryPath).mode & 0o777).toBe(0o700);
+		expect((await stat(logDirectoryPath)).mode & 0o777).toBe(0o700);
 		expect(buildImage).toHaveBeenCalled();
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -411,12 +432,12 @@ describe('startGatewayZone', () => {
 	});
 
 	it('cleans orphaned gateway runtime before rejecting invalid OpenClaw Tool VM requirements', async () => {
-		const systemConfig = createSystemConfig();
+		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
 		if (!zone || zone.gateway.type !== 'openclaw') {
 			throw new Error('Expected OpenClaw gateway test zone.');
 		}
-		fs.writeFileSync(
+		await writeFile(
 			zone.gateway.config,
 			JSON.stringify({
 				agents: {
@@ -476,7 +497,7 @@ describe('startGatewayZone', () => {
 			getVmInstance: vi.fn(() => createVmInstanceStub(28286)),
 			setIngressRoutes: vi.fn(),
 		};
-		const systemConfig = createSystemConfig();
+		const systemConfig = await createSystemConfig();
 		const zone = systemConfig.zones[0];
 		if (!zone) {
 			throw new Error('Expected gateway test system config to include a zone.');
@@ -525,30 +546,14 @@ describe('startGatewayZone', () => {
 		);
 	});
 
-	it('materializes MCP Portal runtime plugin config and server entries from zone MCP config', async () => {
-		const systemConfig = createSystemConfig();
+	it('materializes MCP Portal runtime plugin config from zone MCP config', async () => {
+		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
 		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
 			throw new Error('Expected OpenClaw test zone.');
 		}
 		const configDir = path.dirname(baseZone.gateway.config);
-		fs.writeFileSync(
-			path.join(configDir, 'mcp-portal.config.jsonc'),
-			JSON.stringify({
-				schemaVersion: 1,
-				server: {
-					host: '127.0.0.1',
-					port: 18790,
-					accessHeader: {
-						name: 'x-agent-vm-mcp-portal-secret',
-						secret: { source: 'environment', name: 'MCP_PORTAL_SERVER_SECRET' },
-					},
-				},
-				agents: { shravan: { profile: 'default' } },
-				profiles: { default: { enabledNamespaces: [] } },
-			}),
-			'utf8',
-		);
+		await writeMinimalMcpPortalConfigs(configDir);
 		const lifecycleZones: GatewayZoneConfig[] = [];
 		const managedVm: ManagedVm = {
 			id: 'vm-mcp',
@@ -570,7 +575,7 @@ describe('startGatewayZone', () => {
 				zoneOverride: {
 					...baseZone,
 					agents: [{ id: 'shravan' }],
-					mcp: { configDir },
+					mcpPortal: { configDir },
 				},
 			},
 			{
@@ -606,15 +611,257 @@ describe('startGatewayZone', () => {
 		);
 
 		expect(lifecycleZones[0]?.runtimePluginConfigs).toEqual({
-			'mcp-portal': { configDir: '/home/openclaw/.openclaw/config' },
+			'mcp-portal': { configDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective' },
 		});
-		expect(lifecycleZones[0]?.runtimeMcpServers).toEqual({
-			mcp_portal_shravan: {
-				headers: { 'x-agent-vm-mcp-portal-secret': '${MCP_PORTAL_SERVER_SECRET}' },
-				transport: 'streamable-http',
-				url: 'http://127.0.0.1:18790/agents/shravan/mcp',
+		expect(lifecycleZones[0]?.runtimeMcpServers).toBeUndefined();
+	});
+
+	it('does not generate OpenClaw mcp.servers entries for managed MCP Portal', async () => {
+		const systemConfig = await createSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const configDir = path.dirname(baseZone.gateway.config);
+		await writeMinimalMcpPortalConfigs(configDir);
+		const lifecycleZones: GatewayZoneConfig[] = [];
+		const managedVm: ManagedVm = {
+			id: 'vm-mcp-native',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28290)),
+			setIngressRoutes: vi.fn(),
+		};
+
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+				zoneOverride: {
+					...baseZone,
+					agents: [{ id: 'shravan' }],
+					mcpPortal: { configDir },
+				},
 			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+				loadGatewayLifecycle: () => ({
+					buildProcessSpec: () => ({
+						bootstrapCommand: 'bootstrap',
+						guestListenPort: 18789,
+						healthCheck: { type: 'http', port: 18789, path: '/' } as const,
+						logPath: '/tmp/gateway.log',
+						startCommand: 'start',
+					}),
+					buildVmSpec: (options) => {
+						lifecycleZones.push(options.zone);
+						return {
+							allowedHosts: [],
+							environment: {},
+							mediatedSecrets: {},
+							rootfsMode: 'cow' as const,
+							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+							tcpHosts: {},
+							vfsMounts: {},
+						};
+					},
+				}),
+			},
+		);
+
+		expect(lifecycleZones[0]?.runtimeMcpServers).toBeUndefined();
+	});
+
+	it('adds MCP Portal upstream hosts to effective gateway egress', async () => {
+		const systemConfig = await createSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const configDir = path.dirname(baseZone.gateway.config);
+		await writeMinimalMcpPortalConfigs(configDir, {
+			providers: {
+				deepwiki: {
+					kind: 'mcp',
+					namespace: 'deepwiki',
+					transport: { kind: 'streamable-http', url: 'https://mcp.deepwiki.com/mcp' },
+				},
+			},
+			schemaVersion: 1,
 		});
+		const managedVm: ManagedVm = {
+			id: 'vm-mcp-generated-egress',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
+			setIngressRoutes: vi.fn(),
+		};
+		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+				zoneOverride: {
+					...baseZone,
+					mcpPortal: { configDir },
+				},
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(createManagedVm).toHaveBeenCalledWith(
+			expect.objectContaining({
+				allowedHosts: expect.arrayContaining(['mcp.deepwiki.com']),
+			}),
+		);
+	});
+
+	it('does not duplicate MCP Portal upstream hosts declared for gateway egress', async () => {
+		const systemConfig = await createSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const configDir = path.dirname(baseZone.gateway.config);
+		await writeMinimalMcpPortalConfigs(configDir, {
+			providers: {
+				deepwiki: {
+					kind: 'mcp',
+					namespace: 'deepwiki',
+					transport: { kind: 'streamable-http', url: 'https://mcp.deepwiki.com/mcp' },
+				},
+			},
+			schemaVersion: 1,
+		});
+		const managedVm: ManagedVm = {
+			id: 'vm-mcp-egress',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
+			setIngressRoutes: vi.fn(),
+		};
+		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+				zoneOverride: {
+					...baseZone,
+					egressHosts: [...baseZone.egressHosts, { audience: 'gateway', host: 'mcp.deepwiki.com' }],
+					mcpPortal: { configDir },
+				},
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(createManagedVm).toHaveBeenCalledWith(
+			expect.objectContaining({
+				allowedHosts: expect.arrayContaining(['mcp.deepwiki.com']),
+			}),
+		);
+		const createManagedVmCall = createManagedVm.mock.calls[0];
+		if (!createManagedVmCall) {
+			throw new Error('Expected gateway VM creation call');
+		}
+		const [vmOptions] = createManagedVmCall as [{ readonly allowedHosts: readonly string[] }];
+		expect(vmOptions.allowedHosts.filter((host) => host === 'mcp.deepwiki.com')).toHaveLength(1);
+	});
+
+	it('keeps loopback MCP Portal provider URLs out of gateway egress', async () => {
+		const systemConfig = await createSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const configDir = path.dirname(baseZone.gateway.config);
+		await writeMinimalMcpPortalConfigs(configDir, {
+			providers: {
+				local_proxy: {
+					kind: 'mcp',
+					namespace: 'local_proxy',
+					transport: { kind: 'streamable-http', url: 'http://127.0.0.1:18791/mcp' },
+				},
+			},
+			schemaVersion: 1,
+		});
+		const managedVm: ManagedVm = {
+			id: 'vm-mcp-loopback',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28292)),
+			setIngressRoutes: vi.fn(),
+		};
+		const createManagedVm = vi.fn(async () => managedVm);
+
+		await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig,
+				zoneId: 'shravan',
+				zoneOverride: {
+					...baseZone,
+					mcpPortal: { configDir },
+				},
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(createManagedVm).toHaveBeenCalledWith(
+			expect.objectContaining({
+				allowedHosts: expect.not.arrayContaining(['127.0.0.1', 'localhost']),
+			}),
+		);
 	});
 
 	it('merges environmentOverride into vm environment before boot', async () => {
@@ -639,7 +886,7 @@ describe('startGatewayZone', () => {
 					DISCORD_BOT_TOKEN: 'resolved-key',
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
-				systemConfig: createSystemConfig(),
+				systemConfig: await createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -674,7 +921,7 @@ describe('startGatewayZone', () => {
 			startGatewayZone(
 				{
 					secretResolver,
-					systemConfig: createSystemConfig(),
+					systemConfig: await createSystemConfig(),
 					zoneId: 'does-not-exist',
 				},
 				{
@@ -687,7 +934,7 @@ describe('startGatewayZone', () => {
 	});
 
 	it('loads the worker lifecycle for worker gateway zones', async () => {
-		const systemConfig = createSystemConfig();
+		const systemConfig = await createSystemConfig();
 		const workerSystemConfig: LoadedSystemConfig = {
 			...systemConfig,
 			zones: systemConfig.zones.map((zone) => ({
@@ -773,7 +1020,7 @@ describe('startGatewayZone', () => {
 		await startGatewayZone(
 			{
 				secretResolver,
-				systemConfig: createSystemConfig(),
+				systemConfig: await createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -831,7 +1078,7 @@ describe('startGatewayZone', () => {
 					DISCORD_BOT_TOKEN: 'token',
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
-				systemConfig: createSystemConfig(),
+				systemConfig: await createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -892,7 +1139,7 @@ describe('startGatewayZone', () => {
 					secretResolver: createOpenClawSecretResolver({
 						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
-					systemConfig: createSystemConfig(),
+					systemConfig: await createSystemConfig(),
 					zoneId: 'shravan',
 				},
 				{
@@ -942,7 +1189,7 @@ describe('startGatewayZone', () => {
 					secretResolver: createOpenClawSecretResolver({
 						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
-					systemConfig: createSystemConfig(),
+					systemConfig: await createSystemConfig(),
 					zoneId: 'shravan',
 				},
 				{
@@ -985,7 +1232,7 @@ describe('startGatewayZone', () => {
 					secretResolver: createOpenClawSecretResolver({
 						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
-					systemConfig: createSystemConfig(),
+					systemConfig: await createSystemConfig(),
 					zoneId: 'shravan',
 				},
 				{
@@ -1028,7 +1275,7 @@ describe('startGatewayZone', () => {
 					secretResolver: createOpenClawSecretResolver({
 						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 					}),
-					systemConfig: createSystemConfig(),
+					systemConfig: await createSystemConfig(),
 					zoneId: 'shravan',
 				},
 				{
@@ -1068,7 +1315,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createOpenClawSecretResolver({
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
-				systemConfig: createSystemConfig(),
+				systemConfig: await createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -1104,6 +1351,65 @@ describe('startGatewayZone', () => {
 		expect(result.processSpec.logPath).toBe('/tmp/worker.log');
 	});
 
+	it('omits full gateway commands from command failure messages', async () => {
+		const secretBearingBootstrapCommand =
+			"export FUTURE_SECRET='do-not-leak-command-material' && false";
+		const managedVm: ManagedVm = {
+			id: 'vm-failed-bootstrap',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(async (command: string) =>
+				command === secretBearingBootstrapCommand
+					? { exitCode: 1, stdout: 'bootstrap stdout', stderr: 'bootstrap stderr' }
+					: { exitCode: 0, stdout: '200', stderr: '' },
+			),
+			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28287)),
+		};
+
+		await expect(
+			startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({
+						OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+					}),
+					systemConfig: await createSystemConfig(),
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					createManagedVm: vi.fn(async () => managedVm),
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					loadGatewayLifecycle: () => ({
+						buildProcessSpec: () => ({
+							bootstrapCommand: secretBearingBootstrapCommand,
+							guestListenPort: 18789,
+							healthCheck: { type: 'http', port: 18789, path: '/' } as const,
+							logPath: '/tmp/worker.log',
+							startCommand: 'start-worker',
+						}),
+						buildVmSpec: () => ({
+							allowedHosts: [],
+							environment: {},
+							mediatedSecrets: {},
+							rootfsMode: 'cow' as const,
+							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+							tcpHosts: {},
+							vfsMounts: {},
+						}),
+					}),
+				},
+			),
+		).rejects.toThrow(
+			/^(?!.*(?:do-not-leak-command-material|Command:))Configuring gateway failed with exit 1/u,
+		);
+	});
+
 	it('retries health checks until a 2xx response is returned', async () => {
 		const execMock = vi.fn(async (command: string) => {
 			if (!command.includes('curl -sS -o /dev/null -w "%{http_code}"')) {
@@ -1132,7 +1438,7 @@ describe('startGatewayZone', () => {
 				secretResolver: createOpenClawSecretResolver({
 					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
 				}),
-				systemConfig: createSystemConfig(),
+				systemConfig: await createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -1181,7 +1487,7 @@ describe('startGatewayZone', () => {
 					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 					PERPLEXITY_API_KEY: 'pplx-key',
 				}),
-				systemConfig: createSystemConfig(),
+				systemConfig: await createSystemConfig(),
 				zoneId: 'shravan',
 			},
 			{
@@ -1233,7 +1539,7 @@ describe('startGatewayZone', () => {
 						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
 						PERPLEXITY_API_KEY: 'pplx-key',
 					}),
-					systemConfig: createSystemConfig(),
+					systemConfig: await createSystemConfig(),
 					zoneId: 'shravan',
 				},
 				{

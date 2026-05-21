@@ -1,8 +1,11 @@
-import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
+import {
+	createCompositeSecretResolver,
+	type SecretRef,
+	type SecretResolver,
+} from '@agent-vm/secrets';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
-import { createCompositeSecretResolver } from '../controller/composite-secret-resolver.js';
 import { resolveZoneSecrets } from './credential-manager.js';
 
 const systemConfig = {

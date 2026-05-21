@@ -62,4 +62,86 @@ describe('loadMcpConfig', () => {
 
 		await expect(loadMcpConfig(configPath)).rejects.toThrow(/Unrecognized key/u);
 	});
+
+	it('rejects 1Password secrets that are not op refs', async () => {
+		const configPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"linear": {
+					"kind": "mcp",
+					"namespace": "linear",
+					"secretPolicies": {
+						"authorization": { "injection": "http-mediation", "hosts": ["api.linear.app"] }
+					},
+					"transport": {
+						"kind": "streamable-http",
+						"url": "https://mcp.linear.test/mcp",
+						"headers": {
+							"authorization": { "source": "1password", "ref": "not-an-op-ref" }
+						}
+					}
+				}
+			}
+		}`);
+
+		await expect(loadMcpConfig(configPath)).rejects.toThrow(/op:\/\//u);
+	});
+
+	it('validates secret policy hosts against injection mode', async () => {
+		const mediatedWithoutHosts = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"linear": {
+					"kind": "mcp",
+					"namespace": "linear",
+					"secretPolicies": {
+						"authorization": { "injection": "http-mediation", "hosts": [] }
+					},
+					"transport": { "kind": "streamable-http", "url": "https://mcp.linear.test/mcp" }
+				}
+			}
+		}`);
+		const envWithHosts = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"linear": {
+					"kind": "mcp",
+					"namespace": "linear",
+					"secretPolicies": {
+						"authorization": { "injection": "env", "hosts": ["api.linear.app"] }
+					},
+					"transport": { "kind": "streamable-http", "url": "https://mcp.linear.test/mcp" }
+				}
+			}
+		}`);
+
+		await expect(loadMcpConfig(mediatedWithoutHosts)).rejects.toThrow(/http-mediation/u);
+		await expect(loadMcpConfig(envWithHosts)).rejects.toThrow(/env.*hosts/u);
+	});
+
+	it('rejects non-http remote MCP transport URLs', async () => {
+		const fileUrlConfig = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"localFile": {
+					"kind": "mcp",
+					"namespace": "local-file",
+					"transport": { "kind": "streamable-http", "url": "file:///etc/passwd" }
+				}
+			}
+		}`);
+		const ftpUrlConfig = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"providers": {
+				"ftp": {
+					"kind": "mcp",
+					"namespace": "ftp",
+					"transport": { "kind": "sse", "url": "ftp://example.com/mcp" }
+				}
+			}
+		}`);
+
+		await expect(loadMcpConfig(fileUrlConfig)).rejects.toThrow(/http.*https/u);
+		await expect(loadMcpConfig(ftpUrlConfig)).rejects.toThrow(/http.*https/u);
+	});
 });

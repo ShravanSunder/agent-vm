@@ -10,6 +10,7 @@ import {
 import { execa } from 'execa';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import { planMcpPortalEffectiveConfig } from '../gateway/mcp-portal-effective-config.js';
 import { buildRuntimePathIsolationChecks, collectVmHostSystemDoctorCheck } from './doctor.js';
 import { collectOpenClawDeploymentRequirementFindings } from './openclaw-deployment-requirements.js';
 import {
@@ -54,6 +55,11 @@ export interface RunConfigValidationOptions {
 function getErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
+
+const validationOnlySecretResolver = {
+	resolve: async (): Promise<string> => '',
+	resolveAll: async (): Promise<Record<string, string>> => ({}),
+};
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -435,10 +441,10 @@ async function collectMcpPortalConfigChecks(
 	systemConfig: LoadedSystemConfig,
 	zone: LoadedSystemConfig['zones'][number],
 ): Promise<readonly ConfigValidationCheck[]> {
-	if (zone.gateway.type !== 'openclaw' || zone.mcp === undefined) {
+	if (zone.gateway.type !== 'openclaw' || zone.mcpPortal === undefined) {
 		return [];
 	}
-	const configDir = resolveProjectCheckoutPath(systemConfig, zone.mcp.configDir);
+	const configDir = resolveProjectCheckoutPath(systemConfig, zone.mcpPortal.configDir);
 	const mcpConfigPath = path.join(configDir, 'mcp.config.jsonc');
 	const mcpPortalConfigPath = path.join(configDir, 'mcp-portal.config.jsonc');
 	const checks: ConfigValidationCheck[] = [];
@@ -497,6 +503,31 @@ async function collectMcpPortalConfigChecks(
 			name: `mcp-portal-config-${zone.id}`,
 			ok: false,
 			hint: `Missing or invalid ${mcpPortalConfigPath}: ${getErrorMessage(error)}`,
+		});
+	}
+	try {
+		const allowedRawEnvSecretNames =
+			zone.gateway.type === 'openclaw'
+				? ['OPENCLAW_GATEWAY_TOKEN', ...(zone.gateway.rawEnvSecrets ?? [])]
+				: [];
+		await planMcpPortalEffectiveConfig({
+			authoredConfigDir: configDir,
+			effectiveHostConfigDir: path.join(systemConfig.cacheDir, zone.id, 'mcp-portal-effective'),
+			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
+			allowedRawEnvSecretNames,
+			secretResolver: validationOnlySecretResolver,
+			zoneId: zone.id,
+		});
+		checks.push({
+			name: `mcp-portal-effective-config-${zone.id}`,
+			ok: true,
+			hint: configDir,
+		});
+	} catch (error) {
+		checks.push({
+			name: `mcp-portal-effective-config-${zone.id}`,
+			ok: false,
+			hint: `Invalid MCP Portal materialization config in ${configDir}: ${getErrorMessage(error)}`,
 		});
 	}
 	return checks;

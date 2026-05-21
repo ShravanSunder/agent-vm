@@ -1,4 +1,4 @@
-import { redactCredentialText } from '@agent-vm/mcp-portal';
+import { redactCredentialText } from '@agent-vm/mcp-portal/core';
 
 export function redactPortalSecrets(text: string, secretValues: readonly string[] = []): string {
 	return secretValues

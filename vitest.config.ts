@@ -20,8 +20,24 @@ export default defineConfig({
 			'@agent-vm/openclaw-agent-vm-plugin': repoPath(
 				'packages/openclaw-agent-vm-plugin/src/index.ts',
 			),
+			'@agent-vm/secrets': repoPath('packages/secrets/src/index.ts'),
 			'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server': repoPath(
 				'packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts',
+			),
+			'@agent-vm/mcp-portal/core': repoPath('packages/mcp-portal/src/core/index.ts'),
+			'@agent-vm/mcp-portal/mcp-proxy': repoPath('packages/mcp-portal/src/mcp-proxy/index.ts'),
+			'@agent-vm/mcp-portal/cli': repoPath('packages/mcp-portal/src/cli/index.ts'),
+			'@agent-vm/mcp-portal/portal-config': repoPath(
+				'packages/mcp-portal/src/portal-config/index.ts',
+			),
+			'@agent-vm/mcp-portal/portal-auth/agent-bearer-token': repoPath(
+				'packages/mcp-portal/src/portal-auth/agent-bearer-token.ts',
+			),
+			'@agent-vm/mcp-portal/portal-auth/hmac-env': repoPath(
+				'packages/mcp-portal/src/portal-auth/hmac-env.ts',
+			),
+			'@agent-vm/mcp-portal/portal-auth/hmac-token': repoPath(
+				'packages/mcp-portal/src/portal-auth/hmac-token.ts',
 			),
 			'@agent-vm/mcp-portal': repoPath('packages/mcp-portal/src/index.ts'),
 			'@agent-vm/openclaw-mcp-portal-plugin': repoPath(

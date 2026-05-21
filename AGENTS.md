@@ -72,6 +72,9 @@ fast formatting and linting.
 - Unit tests: `pnpm test:unit`.
 - Integration tests: `pnpm test:integration`.
 - Smoke tests: `pnpm test:smoke`.
+  Use `mise exec -- pnpm test:smoke` for smoke tests so the repo-pinned Zig
+  version in `mise.toml` is active. Live Gondolin/OpenClaw smokes depend on
+  that toolchain selection and may silently skip under a stale system `zig`.
 - Full quality gate: `pnpm check`.
   This includes the `@agent-vm/*` package version sync guard used by the
   publish script.
@@ -162,8 +165,9 @@ Follow `.cursor/rules/ts-rules.md`; key points:
 ## Packages
 
 ```text
-gondolin-adapter          → VM build pipeline, adapter, secret resolver (no internal deps)
-gateway-interface         → Types: GatewayLifecycle, VmSpec, ProcessSpec (→ gondolin-adapter)
+secrets                   → SecretRef/SecretResolver contracts, env + 1Password resolution
+gondolin-adapter          → VM build pipeline and adapter (→ secrets)
+gateway-interface         → Types: GatewayLifecycle, VmSpec, ProcessSpec (→ gondolin-adapter, secrets)
 openclaw-gateway          → OpenClaw lifecycle (→ gateway-interface, gondolin-adapter)
 worker-gateway            → Worker lifecycle (→ gateway-interface, gondolin-adapter)
 openclaw-agent-vm-plugin  → OpenClaw sandbox backend (→ gondolin-adapter)

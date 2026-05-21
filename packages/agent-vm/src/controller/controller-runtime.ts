@@ -1,7 +1,5 @@
-import {
-	createSecretResolver as createOnePasswordSecretResolver,
-	type ManagedVm,
-} from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secrets';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { runTaskWithResult } from '../shared/run-task.js';
@@ -267,10 +265,6 @@ export async function startControllerRuntime(
 		...(options.zoneIds ? { zoneIds: options.zoneIds } : {}),
 	});
 
-	await runTaskStep('Starting selected gateway zones', async () => {
-		await registry.startSelectedZones();
-	});
-
 	const serverRef: { current?: { close(): Promise<void> } } = {};
 	const stopController = createStopControllerOperation({
 		clearReaperTimer,
@@ -348,6 +342,9 @@ export async function startControllerRuntime(
 			app: controllerApp,
 			port: options.systemConfig.host.controllerPort,
 		});
+	});
+	await runTaskStep('Starting selected gateway zones', async () => {
+		await registry.startSelectedZones();
 	});
 
 	await idleReaper.reapExpiredLeases();

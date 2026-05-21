@@ -160,7 +160,7 @@ environment:
   PIP_CACHE_DIR         = /work/cache/pip
   UV_CACHE_DIR          = /work/cache/uv
   NODE_EXTRA_CA_CERTS   = /run/gondolin/ca-certificates.crt
-  + env-injected secrets, including OPENCLAW_GATEWAY_TOKEN
+  + allowed env-injected secrets, including OPENCLAW_GATEWAY_TOKEN
 
 vfsMounts:
   /home/openclaw/.openclaw/config    -> configDirectory  (realfs)
@@ -181,6 +181,13 @@ The effective config references `OPENCLAW_GATEWAY_TOKEN` through OpenClaw's env
 SecretRef shape. The gateway VM receives the token as an env-injected secret so
 the daemon can resolve that SecretRef at startup without storing the plaintext
 token in persistent state.
+
+OpenClaw raw env secrets are intentionally narrow. `OPENCLAW_GATEWAY_TOKEN` is
+allowed by default; additional gateway env secrets must be listed in
+`gateway.rawEnvSecrets`. Provider API tokens should use Gondolin
+`http-mediation` unless the integration cannot be mediated at the HTTP boundary.
+Generated runtime env secrets, such as zone-git capability env vars, must also
+be listed when enabled.
 
 Bundled OpenClaw plugin runtime dependencies are staged under
 `OPENCLAW_PLUGIN_STAGE_DIR`. Target state is image/rootfs-local staging at
@@ -286,7 +293,7 @@ Not implemented.  Worker has no interactive auth.
 | **guestListenPort**   | 18789                                            | 18789                                           |
 | **logPath**           | `/agent-vm/logs/gateway-boot-latest.log`         | `/tmp/agent-vm-worker.log`                      |
 | **rootfsMode**        | `cow`                                            | `cow`                                            |
-| **secret handling**   | Strips OPENCLAW_GATEWAY_TOKEN from env           | Passes all env secrets through                  |
+| **secret handling**   | Allows only explicit raw env secrets             | Passes gateway env secrets through             |
 
 ---
 

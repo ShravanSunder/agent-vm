@@ -12,7 +12,7 @@ import {
 	type WorkerConfig,
 	type WorkerConfigDraft,
 } from '@agent-vm/agent-vm-worker';
-import type { SecretResolver } from '@agent-vm/gondolin-adapter';
+import type { SecretResolver } from '@agent-vm/secrets';
 import { execa } from 'execa';
 import { z } from 'zod';
 

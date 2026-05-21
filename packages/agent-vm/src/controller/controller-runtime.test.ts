@@ -284,8 +284,8 @@ describe('startControllerRuntime', () => {
 		);
 		expect(taskTitles).toEqual([
 			'Resolving 1Password secrets',
-			'Starting selected gateway zones',
 			'Controller API on :18800',
+			'Starting selected gateway zones',
 		]);
 		expect(startHttpServer).toHaveBeenCalledWith(
 			expect.objectContaining({

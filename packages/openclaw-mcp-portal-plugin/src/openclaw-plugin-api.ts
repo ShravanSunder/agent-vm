@@ -5,6 +5,36 @@ export interface OpenClawPromptHookContext {
 	readonly appendPrompt?: (content: string) => void;
 }
 
+export interface OpenClawPluginToolContext {
+	readonly agentId?: string;
+	readonly sessionId?: string;
+	readonly sessionKey?: string;
+}
+
+export type OpenClawToolUpdateCallback = (update: unknown) => Promise<void> | void;
+
+export interface OpenClawToolRegistrationResult {
+	readonly content: string;
+	readonly details?: unknown;
+}
+
+export interface OpenClawToolRegistration {
+	readonly description: string;
+	readonly execute: (
+		toolCallId: string,
+		params: unknown,
+		signal?: AbortSignal,
+		onUpdate?: OpenClawToolUpdateCallback,
+	) => Promise<OpenClawToolRegistrationResult>;
+	readonly label?: string;
+	readonly name: string;
+	readonly parameters: unknown;
+}
+
+export type OpenClawToolFactory = (
+	context: OpenClawPluginToolContext,
+) => OpenClawToolRegistration | readonly OpenClawToolRegistration[] | null | undefined;
+
 export interface OpenClawPluginHookContext {
 	readonly agentId?: string;
 	readonly sessionId?: string;
@@ -120,6 +150,14 @@ export interface OpenClawPortalPluginApi {
 	};
 	readonly pluginConfig?: unknown;
 	readonly registrationMode?: string;
+	readonly registerTool?: (
+		tool: OpenClawToolRegistration | OpenClawToolFactory,
+		options?: {
+			readonly name?: string;
+			readonly names?: readonly string[];
+			readonly optional?: boolean;
+		},
+	) => void;
 	readonly registerRuntimeLifecycle?: OpenClawRuntimeLifecycleRegistrar;
 	readonly registerService?: (service: OpenClawPluginService) => void;
 	readonly on?: <THookName extends keyof OpenClawPluginHookEventMap>(

@@ -317,7 +317,7 @@ describe('loadSystemConfig', () => {
 	test('loads OpenClaw zone agent records and MCP config directory references', async () => {
 		const config = createValidSystemConfigInput();
 		config.zones[0].agents = [{ id: 'shravan', toolVmProfile: 'standard' }, { id: 'sun' }];
-		config.zones[0].mcp = { configDir: './shravan' };
+		config.zones[0].mcpPortal = { configDir: './shravan' };
 		const configPath = await writeSystemConfigForTest('agent-vm-system-zone-agents-', config);
 
 		const loadedConfig = await loadSystemConfig(configPath);
@@ -330,9 +330,17 @@ describe('loadSystemConfig', () => {
 			{ id: 'shravan', toolVmProfile: 'standard' },
 			{ id: 'sun' },
 		]);
-		expect(loadedZone.mcp).toEqual({
+		expect(loadedZone.mcpPortal).toEqual({
 			configDir: path.join(path.dirname(configPath), 'shravan'),
 		});
+	});
+
+	test('rejects legacy OpenClaw zone mcp config keys', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].mcp = { configDir: './shravan' };
+		const configPath = await writeSystemConfigForTest('agent-vm-system-legacy-zone-mcp-', config);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Unrecognized key.*mcp/u);
 	});
 
 	test('rejects duplicate OpenClaw zone agent records', async () => {
@@ -354,13 +362,15 @@ describe('loadSystemConfig', () => {
 				type: 'worker',
 				imageProfile: 'worker',
 			},
-			mcp: { configDir: './worker' },
+			mcpPortal: { configDir: './worker' },
 		};
 		delete config.zones[0].defaultToolVmProfile;
 		delete config.zones[0].agentToolVmProfiles;
 		const configPath = await writeSystemConfigForTest('agent-vm-system-worker-agents-', config);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/must not declare agents or mcp/u);
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/must not declare agents or mcpPortal/u,
+		);
 	});
 
 	test('loads a valid plan-1 controller config', async () => {
@@ -1311,6 +1321,49 @@ describe('loadSystemConfig', () => {
 		const configPath = await writeSystemConfigForTest('agent-vm-system-env-hosts-', config);
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/hosts/u);
+	});
+
+	test('rejects OpenClaw env secrets not listed in rawEnvSecrets', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.secrets.DISCORD_BOT_TOKEN = {
+			source: 'environment',
+			envVar: 'DISCORD_BOT_TOKEN',
+			injection: 'env',
+			audience: 'gateway',
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-openclaw-unlisted-env-secret-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/rawEnvSecrets/u);
+	});
+
+	test('allows OpenClaw env secrets explicitly listed in rawEnvSecrets', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.gateway.rawEnvSecrets = ['DISCORD_BOT_TOKEN'];
+		zone.secrets.DISCORD_BOT_TOKEN = {
+			source: 'environment',
+			envVar: 'DISCORD_BOT_TOKEN',
+			injection: 'env',
+			audience: 'gateway',
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-openclaw-listed-env-secret-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			zones: [
+				{
+					gateway: {
+						rawEnvSecrets: ['DISCORD_BOT_TOKEN'],
+					},
+				},
+			],
+		});
 	});
 
 	test('rejects secret names that cannot be exported safely', async () => {

@@ -9,19 +9,29 @@ const mcpProviderDiscoverySchema = z
 	})
 	.strict();
 
+const remoteTransportUrlSchema = z.url().refine(
+	(value) => {
+		const protocol = new URL(value).protocol;
+		return protocol === 'http:' || protocol === 'https:';
+	},
+	{ message: 'Remote MCP transport URLs must use http or https.' },
+);
+
 const streamableHttpTransportSchema = z
 	.object({
 		kind: z.literal('streamable-http'),
-		url: z.string().url(),
+		url: remoteTransportUrlSchema,
 		headers: z.record(z.string(), secretValueSchema).default({}),
+		requiredEgressHosts: z.array(z.string().min(1)).default([]),
 	})
 	.strict();
 
 const sseTransportSchema = z
 	.object({
 		kind: z.literal('sse'),
-		url: z.string().url(),
+		url: remoteTransportUrlSchema,
 		headers: z.record(z.string(), secretValueSchema).default({}),
+		requiredEgressHosts: z.array(z.string().min(1)).default([]),
 	})
 	.strict();
 
@@ -32,14 +42,40 @@ const stdioTransportSchema = z
 		args: z.array(z.string()).default([]),
 		cwd: z.string().min(1).optional(),
 		env: z.record(z.string(), secretValueSchema).default({}),
+		networkAccess: z.enum(['declared', 'none']).optional(),
+		requiredEgressHosts: z.array(z.string().min(1)).default([]),
 	})
 	.strict();
+
+export const mcpSecretPolicySchema = z
+	.object({
+		hosts: z.array(z.string()).default([]),
+		injection: z.enum(['env', 'http-mediation']),
+	})
+	.strict()
+	.superRefine((policy, context) => {
+		if (policy.injection === 'http-mediation' && policy.hosts.length === 0) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'http-mediation secret policies must declare at least one host.',
+				path: ['hosts'],
+			});
+		}
+		if (policy.injection === 'env' && policy.hosts.length > 0) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'env secret policies must not declare hosts.',
+				path: ['hosts'],
+			});
+		}
+	});
 
 export const mcpProviderSchema = z
 	.object({
 		kind: z.literal('mcp'),
 		namespace: z.string().min(1),
 		discovery: mcpProviderDiscoverySchema.default({}),
+		secretPolicies: z.record(z.string().min(1), mcpSecretPolicySchema).default({}),
 		transport: z.discriminatedUnion('kind', [
 			streamableHttpTransportSchema,
 			sseTransportSchema,

@@ -1,11 +1,17 @@
-import type { SecretSpec } from '@agent-vm/gondolin-adapter';
+import type { MediatedSecretSpec } from '@agent-vm/secrets';
 
 import { targetsAudience, type RuntimeVmAudience } from './audience.js';
 import type { GatewaySecretConfig, GatewayZoneConfig } from './gateway-lifecycle.js';
 
 export interface SplitResolvedSecretsResult {
 	readonly environmentSecrets: Record<string, string>;
-	readonly mediatedSecrets: Record<string, SecretSpec>;
+	readonly mediatedSecrets: Record<string, MediatedSecretSpec>;
+}
+
+export interface MergeRuntimeGatewaySecretsOptions {
+	readonly logPrefix?: string;
+	readonly runtimeEnvironment?: Readonly<Record<string, string>> | undefined;
+	readonly runtimeMediatedSecrets?: Readonly<Record<string, MediatedSecretSpec>> | undefined;
 }
 
 export type SecretInjectionConfig = GatewaySecretConfig;
@@ -21,7 +27,7 @@ export function splitResolvedSecretsByInjection(
 	options: SplitResolvedSecretsOptions,
 ): SplitResolvedSecretsResult {
 	const environmentSecrets: Record<string, string> = {};
-	const mediatedSecrets: Record<string, SecretSpec> = {};
+	const mediatedSecrets: Record<string, MediatedSecretSpec> = {};
 	const logPrefix = options.logPrefix ?? 'split-resolved-secrets';
 
 	for (const [secretName, secretValue] of Object.entries(resolvedSecrets)) {
@@ -72,4 +78,60 @@ export function splitResolvedGatewaySecrets(
 		audience: 'gateway',
 		logPrefix: 'split-resolved-gateway-secrets',
 	});
+}
+
+function assertNoRuntimeSecretCollision(
+	secretName: string,
+	target: 'environment' | 'http-mediation',
+	baseSecrets: SplitResolvedSecretsResult,
+	runtimeSeen: Set<string>,
+	logPrefix: string,
+): void {
+	if (runtimeSeen.has(secretName)) {
+		throw new Error(
+			`[${logPrefix}] Runtime gateway secret '${secretName}' is declared for both environment and http-mediation injection.`,
+		);
+	}
+	if (secretName in baseSecrets.environmentSecrets) {
+		throw new Error(
+			`[${logPrefix}] Runtime gateway ${target} secret '${secretName}' would overwrite an authored environment secret.`,
+		);
+	}
+	if (secretName in baseSecrets.mediatedSecrets) {
+		throw new Error(
+			`[${logPrefix}] Runtime gateway ${target} secret '${secretName}' would overwrite an authored http-mediation secret.`,
+		);
+	}
+	runtimeSeen.add(secretName);
+}
+
+export function mergeRuntimeGatewaySecrets(
+	baseSecrets: SplitResolvedSecretsResult,
+	options: MergeRuntimeGatewaySecretsOptions = {},
+): SplitResolvedSecretsResult {
+	const logPrefix = options.logPrefix ?? 'merge-runtime-gateway-secrets';
+	const runtimeSeen = new Set<string>();
+	for (const secretName of Object.keys(options.runtimeEnvironment ?? {})) {
+		assertNoRuntimeSecretCollision(secretName, 'environment', baseSecrets, runtimeSeen, logPrefix);
+	}
+	for (const secretName of Object.keys(options.runtimeMediatedSecrets ?? {})) {
+		assertNoRuntimeSecretCollision(
+			secretName,
+			'http-mediation',
+			baseSecrets,
+			runtimeSeen,
+			logPrefix,
+		);
+	}
+
+	return {
+		environmentSecrets: {
+			...baseSecrets.environmentSecrets,
+			...options.runtimeEnvironment,
+		},
+		mediatedSecrets: {
+			...baseSecrets.mediatedSecrets,
+			...options.runtimeMediatedSecrets,
+		},
+	};
 }

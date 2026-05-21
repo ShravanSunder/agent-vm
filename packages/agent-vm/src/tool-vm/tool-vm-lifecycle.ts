@@ -12,8 +12,8 @@ import {
 	pinRealFsRoot as pinRealFsRootDefault,
 	type ManagedVm,
 	type PinnedRealFsRoot,
-	type SecretResolver,
 } from '@agent-vm/gondolin-adapter';
+import type { SecretResolver } from '@agent-vm/secrets';
 
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';

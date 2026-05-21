@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+	mergeRuntimeGatewaySecrets,
 	splitResolvedGatewaySecrets,
 	splitResolvedSecretsByInjection,
 } from './split-resolved-gateway-secrets.js';
@@ -225,5 +226,94 @@ describe('splitResolvedGatewaySecrets', () => {
 				},
 			},
 		});
+	});
+});
+
+describe('mergeRuntimeGatewaySecrets', () => {
+	it('adds generated runtime secrets without requiring authored secret config entries', () => {
+		const result = mergeRuntimeGatewaySecrets(
+			{
+				environmentSecrets: {
+					OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
+				},
+				mediatedSecrets: {
+					PERPLEXITY_API_KEY: {
+						hosts: ['api.perplexity.ai'],
+						value: 'perplexity-real-secret',
+					},
+				},
+			},
+			{
+				runtimeEnvironment: {
+					AGENT_VM_MCP_STDIO_TOKEN: 'stdio-token',
+				},
+				runtimeMediatedSecrets: {
+					AGENT_VM_MCP_TAVILY_API_KEY: {
+						hosts: ['api.tavily.com'],
+						value: 'tavily-real-secret',
+					},
+				},
+			},
+		);
+
+		expect(result).toEqual({
+			environmentSecrets: {
+				AGENT_VM_MCP_STDIO_TOKEN: 'stdio-token',
+				OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
+			},
+			mediatedSecrets: {
+				AGENT_VM_MCP_TAVILY_API_KEY: {
+					hosts: ['api.tavily.com'],
+					value: 'tavily-real-secret',
+				},
+				PERPLEXITY_API_KEY: {
+					hosts: ['api.perplexity.ai'],
+					value: 'perplexity-real-secret',
+				},
+			},
+		});
+	});
+
+	it('rejects runtime secrets that overwrite authored environment secrets', () => {
+		expect(() =>
+			mergeRuntimeGatewaySecrets(
+				{
+					environmentSecrets: {
+						OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
+					},
+					mediatedSecrets: {},
+				},
+				{
+					runtimeMediatedSecrets: {
+						OPENCLAW_GATEWAY_TOKEN: {
+							hosts: ['api.example.com'],
+							value: 'runtime-token',
+						},
+					},
+				},
+			),
+		).toThrow(/OPENCLAW_GATEWAY_TOKEN.*authored environment secret/u);
+	});
+
+	it('rejects runtime secrets declared for both runtime injection paths', () => {
+		expect(() =>
+			mergeRuntimeGatewaySecrets(
+				{
+					environmentSecrets: {},
+					mediatedSecrets: {},
+				},
+				{
+					runtimeEnvironment: {
+						AGENT_VM_MCP_TOKEN: 'env-token',
+					},
+					runtimeMediatedSecrets: {
+						AGENT_VM_MCP_TOKEN: {
+							hosts: ['api.example.com'],
+							value: 'mediated-token',
+						},
+					},
+				},
+			),
+		).toThrow(/both environment and http-mediation/u);
 	});
 });
