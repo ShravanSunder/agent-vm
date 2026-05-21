@@ -611,7 +611,48 @@ describe('MCP Portal effective config materialization', () => {
 		).rejects.toThrow(/api-key.*api_key|api_key.*api-key/u);
 	});
 
-	it('materializes authored environment provider secrets through the shared resolver', async () => {
+	it('rejects authored environment provider secrets unless the generated env name is allowlisted', async () => {
+		const authoredDir = await createAuthoredDir({
+			mcpConfig: {
+				providers: {
+					linear: {
+						kind: 'mcp',
+						namespace: 'linear',
+						secretPolicies: {
+							authorization: { hosts: [], injection: 'env' },
+						},
+						transport: {
+							headers: {
+								authorization: {
+									name: 'LINEAR_MCP_TOKEN',
+									source: 'environment',
+								},
+							},
+							kind: 'streamable-http',
+							url: 'https://api.linear.app/mcp',
+						},
+					},
+				},
+				schemaVersion: 1,
+			},
+		});
+		const effectiveDir = path.join(authoredDir, 'effective');
+		const secretResolver = createSecretResolver({
+			LINEAR_MCP_TOKEN: 'linear-env-token',
+		});
+
+		await expect(
+			writeMcpPortalEffectiveConfig({
+				authoredConfigDir: authoredDir,
+				effectiveHostConfigDir: effectiveDir,
+				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
+				secretResolver,
+				zoneId: 'shravan',
+			}),
+		).rejects.toThrow(/AGENT_VM_MCP_LINEAR_AUTHORIZATION.*rawEnvSecrets/u);
+	});
+
+	it('materializes explicitly allowlisted environment provider secrets through the shared resolver', async () => {
 		const authoredDir = await createAuthoredDir({
 			mcpConfig: {
 				providers: {
@@ -645,6 +686,7 @@ describe('MCP Portal effective config materialization', () => {
 			authoredConfigDir: authoredDir,
 			effectiveHostConfigDir: effectiveDir,
 			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
+			allowedRawEnvSecretNames: ['AGENT_VM_MCP_LINEAR_AUTHORIZATION'],
 			secretResolver,
 			zoneId: 'shravan',
 		});
@@ -755,6 +797,7 @@ describe('MCP Portal effective config materialization', () => {
 				authoredConfigDir: authoredDir,
 				effectiveHostConfigDir: path.join(authoredDir, 'effective'),
 				effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
+				allowedRawEnvSecretNames: ['AGENT_VM_MCP_TAVILY_TAVILY_API_KEY'],
 				secretResolver: emptyValueResolver,
 				zoneId: 'shravan',
 			}),

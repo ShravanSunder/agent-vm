@@ -180,6 +180,7 @@ function createSystemConfig(): LoadedSystemConfig {
 						cpus: 2,
 						port: 18791,
 						config: createGatewayConfigPath(),
+						rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN', 'DISCORD_BOT_TOKEN'],
 						stateDir: path.join(workingDirectoryPath, 'state', 'shravan'),
 						zoneFilesDir: path.join(workingDirectoryPath, 'zone-files', 'shravan'),
 					},

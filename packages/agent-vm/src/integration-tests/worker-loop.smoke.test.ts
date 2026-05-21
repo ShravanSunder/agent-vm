@@ -12,11 +12,13 @@ import {
 	currentSmokeArchitecture,
 	prepareLocalWorkerPackageForGatewayImage,
 	rebuildWorkspacePackages,
+	removeSmokeTempRoot,
 	scaffoldWorkerSmokeProject,
 	seedGatewayImageCacheIfAvailable,
 	shouldRunWorkerGatewaySmoke,
 	startSmokeControllerRuntime,
 	type SmokeHarnessRuntime,
+	type WorkerSmokeProject,
 } from './smoke-harness.js';
 
 const architecture = currentSmokeArchitecture();
@@ -59,16 +61,23 @@ async function createSampleRepo(baseDir: string): Promise<string> {
 
 describeWorkerSmoke('smoke: real agent-vm-worker loop', () => {
 	let harness: SmokeHarnessRuntime | undefined;
+	let project: WorkerSmokeProject | undefined;
 
 	afterAll(async () => {
-		await harness?.close();
+		try {
+			await harness?.close();
+		} finally {
+			if (project) {
+				await removeSmokeTempRoot(project.tempRoot);
+			}
+		}
 	});
 
 	it('runs a real worker task to completed through the controller route', async () => {
 		const repoRoot = path.resolve(process.cwd());
 		rebuildWorkspacePackages(repoRoot);
 
-		const project = await scaffoldWorkerSmokeProject({
+		project = await scaffoldWorkerSmokeProject({
 			architecture,
 			prefix: 'worker-loop-smoke-',
 			zoneId: 'worker-smoke',

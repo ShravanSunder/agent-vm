@@ -96,6 +96,7 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 						...(zone.gateway.authProfilesByAgent
 							? { authProfilesByAgent: zone.gateway.authProfilesByAgent }
 							: {}),
+						...(zone.gateway.rawEnvSecrets ? { rawEnvSecrets: zone.gateway.rawEnvSecrets } : {}),
 					}
 				: {
 						...baseGateway,

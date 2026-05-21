@@ -19,8 +19,10 @@ import {
 	canRunGondolinSmoke,
 	currentSmokeArchitecture,
 	rebuildWorkspacePackages,
+	removeSmokeTempRoot,
 	scaffoldOpenClawSmokeProject,
 	startSmokeControllerRuntime,
+	type OpenClawSmokeProject,
 	type SmokeHarnessRuntime,
 	useLocalOpenClawGatewayImagePackages,
 	writeOpenClawMcpPortalSmokeConfigs,
@@ -121,6 +123,7 @@ function readSingleItem(result: unknown): Record<string, unknown> {
 
 describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => {
 	let harness: SmokeHarnessRuntime | undefined;
+	let project: OpenClawSmokeProject | undefined;
 	let upstreamServer: StartedFakeUpstreamMcpServer | undefined;
 	let gatewayClient: GatewayApiClient | undefined;
 
@@ -130,7 +133,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		upstreamServer = await startFakeUpstreamMcpServer();
 		const upstreamHost = 'smoke-upstream.vm.host';
 		const upstreamUrl = `http://${upstreamHost}:${String(upstreamServer.port)}/mcp`;
-		const project = await scaffoldOpenClawSmokeProject({
+		project = await scaffoldOpenClawSmokeProject({
 			agents: [agentId],
 			architecture,
 			prefix: 'openclaw-mcp-portal-smoke-',
@@ -200,8 +203,17 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 	}, 900_000);
 
 	afterAll(async () => {
-		await harness?.close();
-		await upstreamServer?.close();
+		try {
+			await harness?.close();
+		} finally {
+			try {
+				await upstreamServer?.close();
+			} finally {
+				if (project) {
+					await removeSmokeTempRoot(project.tempRoot);
+				}
+			}
+		}
 	});
 
 	it('boots OpenClaw and exposes the gateway API', async () => {

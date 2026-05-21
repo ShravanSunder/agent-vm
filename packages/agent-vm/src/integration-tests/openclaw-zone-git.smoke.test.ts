@@ -13,8 +13,10 @@ import {
 	currentSmokeArchitecture,
 	disableOpenClawMcpPortalPlugin,
 	rebuildWorkspacePackages,
+	removeSmokeTempRoot,
 	scaffoldOpenClawSmokeProject,
 	startSmokeControllerRuntime,
+	type OpenClawSmokeProject,
 	type SmokeHarnessRuntime,
 	useLocalOpenClawPluginGatewayImage,
 	useLocalToolVmMcpPortalPackage,
@@ -167,16 +169,23 @@ async function execGitInToolVm(options: {
 
 describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 	let harness: SmokeHarnessRuntime | undefined;
+	let project: OpenClawSmokeProject | undefined;
 
 	afterAll(async () => {
-		await harness?.close();
+		try {
+			await harness?.close();
+		} finally {
+			if (project) {
+				await removeSmokeTempRoot(project.tempRoot);
+			}
+		}
 	});
 
 	it('lets an agent commit in /zone and push through the OpenClaw zone_git_push tool', async () => {
 		const repoRoot = path.resolve(process.cwd());
 		rebuildWorkspacePackages(repoRoot);
 
-		const project = await scaffoldOpenClawSmokeProject({
+		project = await scaffoldOpenClawSmokeProject({
 			agents: ['smoke'],
 			architecture,
 			prefix: 'openclaw-zone-git-smoke-',

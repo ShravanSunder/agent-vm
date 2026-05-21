@@ -3,19 +3,37 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 import {
 	disableOpenClawMcpPortalPlugin,
+	findReusableGatewayImageDirectory,
 	prepareLocalWorkerPackageForGatewayImage,
+	removeSmokeTempRoot,
 	scaffoldGatewaySmokeProject,
 	shouldRunWorkerGatewaySmoke,
 	useLocalOpenClawGatewayImagePackages,
 	useLocalOpenClawPluginGatewayImage,
 	useLocalToolVmMcpPortalPackage,
 } from './smoke-harness.js';
+
+const temporaryRoots: string[] = [];
+
+async function createTemporaryRoot(prefix: string): Promise<string> {
+	const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+	temporaryRoots.push(temporaryRoot);
+	return temporaryRoot;
+}
+
+afterEach(async () => {
+	await Promise.all(
+		temporaryRoots.splice(0).map(async (temporaryRoot) => {
+			await fs.rm(temporaryRoot, { force: true, recursive: true });
+		}),
+	);
+});
 
 describe('shouldRunWorkerGatewaySmoke', () => {
 	it('requires explicit opt-in even when credentials and commands are available', async () => {
@@ -97,6 +115,7 @@ describe('scaffoldGatewaySmokeProject', () => {
 			prefix: 'agent-vm-gateway-smoke-project-',
 			zoneId: 'smoke-zone',
 		});
+		temporaryRoots.push(project.tempRoot);
 
 		expect(project.zone.gateway.type).toBe('openclaw');
 		expect(project.systemConfig.zones[0]?.agents).toEqual([{ id: 'smoke-agent' }]);
@@ -167,8 +186,57 @@ describe('startSmokeControllerRuntime', () => {
 		}
 	});
 
+	it('removes owned smoke temp roots when the harness closes', async () => {
+		const { startSmokeControllerRuntime } = await import('./smoke-harness.js');
+		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
+		const systemConfig = createMinimalOpenClawSystemConfig(temporaryRoot);
+		const zone = systemConfig.zones[0];
+		if (!zone || zone.gateway.type !== 'openclaw') {
+			throw new Error('Expected smoke system config to contain an OpenClaw zone.');
+		}
+
+		const harness = await startSmokeControllerRuntime({
+			secrets: {
+				OPEN_AI_TEST_KEY: 'test-service-account-token',
+				OPENCLAW_GATEWAY_TOKEN: 'test-gateway-token',
+			},
+			startGatewayZone: async () => ({
+				image: { built: false, fingerprint: 'test', imagePath: '/tmp/image' },
+				ingress: { host: '127.0.0.1', port: 18789 },
+				processSpec: {
+					bootstrapCommand: '',
+					guestListenPort: 18789,
+					healthCheck: { type: 'http', port: 18789, path: '/readyz' },
+					logPath: '/tmp/gateway.log',
+					startCommand: '',
+				},
+				vm: createManagedVmStub(),
+				zone,
+			}),
+			startHttpServer: async () => ({
+				close: async () => undefined,
+			}),
+			startOptions: {
+				systemConfig,
+				zoneIds: ['smoke'],
+			},
+		});
+
+		await harness.close();
+
+		await expect(fs.access(temporaryRoot)).rejects.toThrow();
+	});
+
+	it('does not remove unrelated temp roots through the smoke cleanup helper', async () => {
+		const temporaryRoot = await createTemporaryRoot('agent-vm-not-smoke-');
+
+		await removeSmokeTempRoot(temporaryRoot);
+
+		await expect(fs.access(temporaryRoot)).resolves.toBeUndefined();
+	});
+
 	it('writes a local OpenClaw gateway smoke Dockerfile that installs both portal packages', async () => {
-		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-smoke-harness-'));
+		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
 		const repoRoot = path.join(temporaryRoot, 'repo');
 		const systemConfig = createMinimalOpenClawSystemConfig();
 		systemConfig.imageProfiles.gateways.openclaw = {
@@ -233,7 +301,7 @@ describe('startSmokeControllerRuntime', () => {
 	});
 
 	it('writes plugin-only OpenClaw smoke images without mutating Tool VM MCP Portal profiles', async () => {
-		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-smoke-harness-'));
+		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
 		const repoRoot = path.join(temporaryRoot, 'repo');
 		const systemConfig = createMinimalOpenClawSystemConfig();
 		systemConfig.imageProfiles.gateways.openclaw = {
@@ -268,7 +336,7 @@ describe('startSmokeControllerRuntime', () => {
 	});
 
 	it('writes local MCP Portal Tool VM smoke images only when requested explicitly', async () => {
-		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-smoke-harness-'));
+		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
 		const repoRoot = path.join(temporaryRoot, 'repo');
 		const systemConfig = createMinimalOpenClawSystemConfig();
 		const originalGatewayProfile = { ...systemConfig.imageProfiles.gateways.openclaw };
@@ -302,7 +370,7 @@ describe('startSmokeControllerRuntime', () => {
 	});
 
 	it('removes MCP Portal plugin loading from OpenClaw smokes that do not exercise portal tools', async () => {
-		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-smoke-harness-'));
+		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
 		const configPath = path.join(temporaryRoot, 'openclaw.json');
 		await fs.writeFile(
 			configPath,
@@ -338,9 +406,27 @@ describe('startSmokeControllerRuntime', () => {
 	});
 });
 
+describe('findReusableGatewayImageDirectory', () => {
+	it('does not scan random system temp smoke directories unless an explicit cache root is configured', async () => {
+		const previousSmokeCacheRoot = process.env.AGENT_VM_SMOKE_CACHE_DIR;
+		delete process.env.AGENT_VM_SMOKE_CACHE_DIR;
+		try {
+			await expect(
+				findReusableGatewayImageDirectory('/tmp/current-smoke', '/tmp/build-config.jsonc'),
+			).resolves.toBeNull();
+		} finally {
+			if (previousSmokeCacheRoot === undefined) {
+				delete process.env.AGENT_VM_SMOKE_CACHE_DIR;
+			} else {
+				process.env.AGENT_VM_SMOKE_CACHE_DIR = previousSmokeCacheRoot;
+			}
+		}
+	});
+});
+
 describe('prepareLocalWorkerPackageForGatewayImage', () => {
 	it('packs the local worker package and returns the generated tarball path', async () => {
-		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-worker-pack-'));
+		const temporaryRoot = await createTemporaryRoot('agent-vm-worker-pack-');
 		const workerPackageDir = path.join(temporaryRoot, 'packages', 'agent-vm-worker');
 		await fs.mkdir(workerPackageDir, { recursive: true });
 		await fs.writeFile(
@@ -378,9 +464,9 @@ function createManagedVmStub(): ManagedVm {
 	return managedVm;
 }
 
-function createMinimalOpenClawSystemConfig(): LoadedSystemConfig {
+function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemConfig {
 	return {
-		cacheDir: '/tmp/cache',
+		cacheDir: path.join(projectRoot, 'cache'),
 		host: {
 			controllerPort: 18800,
 			projectNamespace: 'smoke-tests',
@@ -403,9 +489,9 @@ function createMinimalOpenClawSystemConfig(): LoadedSystemConfig {
 				},
 			},
 		},
-		runtimeDir: '/tmp/runtime',
+		runtimeDir: path.join(projectRoot, 'runtime'),
 		schemaVersion: 1,
-		systemConfigPath: '/tmp/system.json',
+		systemConfigPath: path.join(projectRoot, 'config', 'system.json'),
 		tcpPool: { basePort: 19000, size: 4 },
 		toolVmProfiles: {
 			standard: {
@@ -423,14 +509,14 @@ function createMinimalOpenClawSystemConfig(): LoadedSystemConfig {
 				egressHosts: [],
 				gateway: {
 					type: 'openclaw',
-					backupDir: '/tmp/backup',
-					config: '/tmp/openclaw.json',
+					backupDir: path.join(projectRoot, 'backup'),
+					config: path.join(projectRoot, 'config', 'openclaw.json'),
 					cpus: 1,
 					imageProfile: 'openclaw',
 					memory: '1G',
 					port: 18789,
-					stateDir: '/tmp/state',
-					zoneFilesDir: '/tmp/zone',
+					stateDir: path.join(projectRoot, 'state'),
+					zoneFilesDir: path.join(projectRoot, 'zone-files'),
 				},
 				id: 'smoke',
 				secrets: {

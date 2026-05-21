@@ -1323,6 +1323,49 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/hosts/u);
 	});
 
+	test('rejects OpenClaw env secrets not listed in rawEnvSecrets', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.secrets.DISCORD_BOT_TOKEN = {
+			source: 'environment',
+			envVar: 'DISCORD_BOT_TOKEN',
+			injection: 'env',
+			audience: 'gateway',
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-openclaw-unlisted-env-secret-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/rawEnvSecrets/u);
+	});
+
+	test('allows OpenClaw env secrets explicitly listed in rawEnvSecrets', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = config.zones[0];
+		zone.gateway.rawEnvSecrets = ['DISCORD_BOT_TOKEN'];
+		zone.secrets.DISCORD_BOT_TOKEN = {
+			source: 'environment',
+			envVar: 'DISCORD_BOT_TOKEN',
+			injection: 'env',
+			audience: 'gateway',
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-openclaw-listed-env-secret-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			zones: [
+				{
+					gateway: {
+						rawEnvSecrets: ['DISCORD_BOT_TOKEN'],
+					},
+				},
+			],
+		});
+	});
+
 	test('rejects secret names that cannot be exported safely', async () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];

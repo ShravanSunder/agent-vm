@@ -12,6 +12,7 @@ import {
 import type { MediatedSecretSpec, SecretRef, SecretResolver } from '@agent-vm/secrets';
 
 export interface McpPortalEffectiveConfigProps {
+	readonly allowedRawEnvSecretNames?: readonly string[];
 	readonly authoredConfigDir: string;
 	readonly effectiveHostConfigDir: string;
 	readonly effectiveVmConfigDir: string;
@@ -100,6 +101,18 @@ function providerSecretRef(secret: SecretValue): SecretRef {
 	return { ref: secret.ref, source: '1password' };
 }
 
+function assertAllowedRawEnvSecret(
+	envName: string,
+	allowedRawEnvSecretNames: ReadonlySet<string>,
+): void {
+	if (allowedRawEnvSecretNames.has(envName)) {
+		return;
+	}
+	throw new Error(
+		`mcp-portal: provider secret '${envName}' uses env injection but is not listed in gateway.rawEnvSecrets. Use http-mediation or add an explicit raw-env exception.`,
+	);
+}
+
 function validateProviderNetwork(
 	providerName: string,
 	provider: McpConfig['providers'][string],
@@ -143,6 +156,7 @@ async function buildEffectivePlan(
 		loadMcpPortalConfig(path.join(props.authoredConfigDir, 'mcp-portal.config.jsonc')),
 	]);
 	const requiredGatewayEgressHosts = new Set<string>();
+	const allowedRawEnvSecretNames = new Set(props.allowedRawEnvSecretNames ?? []);
 	const secretRefs: Record<string, SecretRef> = {};
 	const secretSourcesByEnvName = new Map<
 		string,
@@ -178,6 +192,9 @@ async function buildEffectivePlan(
 				addRequiredHost(requiredGatewayEgressHosts, host, `secret policy ${secretName}`);
 			}
 			const envName = envNameForProviderSecret(providerNamespace, secretName);
+			if (policy.injection === 'env') {
+				assertAllowedRawEnvSecret(envName, allowedRawEnvSecretNames);
+			}
 			const existingSource = secretSourcesByEnvName.get(envName);
 			if (existingSource !== undefined) {
 				throw new Error(

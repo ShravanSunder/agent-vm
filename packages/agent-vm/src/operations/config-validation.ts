@@ -506,10 +506,15 @@ async function collectMcpPortalConfigChecks(
 		});
 	}
 	try {
+		const allowedRawEnvSecretNames =
+			zone.gateway.type === 'openclaw'
+				? ['OPENCLAW_GATEWAY_TOKEN', ...(zone.gateway.rawEnvSecrets ?? [])]
+				: [];
 		await planMcpPortalEffectiveConfig({
 			authoredConfigDir: configDir,
 			effectiveHostConfigDir: path.join(systemConfig.cacheDir, zone.id, 'mcp-portal-effective'),
 			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
+			allowedRawEnvSecretNames,
 			secretResolver: validationOnlySecretResolver,
 			zoneId: zone.id,
 		});

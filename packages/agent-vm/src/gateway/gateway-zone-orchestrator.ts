@@ -181,6 +181,10 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 	if (zone.gateway.type !== 'openclaw' || zone.mcpPortal === undefined) {
 		return {};
 	}
+	const allowedRawEnvSecretNames = [
+		'OPENCLAW_GATEWAY_TOKEN',
+		...(zone.gateway.rawEnvSecrets ?? []),
+	];
 	const effectiveHostConfigDir = path.join(
 		props.cacheDir,
 		'gateways',
@@ -192,6 +196,7 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 		authoredConfigDir: zone.mcpPortal.configDir,
 		effectiveHostConfigDir,
 		effectiveVmConfigDir,
+		allowedRawEnvSecretNames,
 		secretResolver: props.secretResolver,
 		zoneId: zone.id,
 	});

@@ -48,6 +48,13 @@ interface LocalDockerPackageTarball {
 
 const defaultOpenClawMcpPortalExtensionsPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
 const openClawMcpPortalPluginName = 'mcp-portal';
+const smokeTempRootPrefixes = [
+	'agent-vm-gateway-smoke-project-',
+	'agent-vm-smoke-harness-',
+	'openclaw-mcp-portal-smoke-',
+	'openclaw-zone-git-smoke-',
+	'worker-loop-smoke-',
+] as const;
 
 export interface SmokeHarnessSecretMap {
 	readonly [secretKey: string]: string;
@@ -120,6 +127,26 @@ export function currentSmokeArchitecture(): ImageArchitecture {
 
 export function qemuCommandForArchitecture(architecture: ImageArchitecture): string {
 	return architecture === 'aarch64' ? 'qemu-system-aarch64' : 'qemu-system-x86_64';
+}
+
+function isOwnedSmokeTempRoot(tempRoot: string): boolean {
+	const resolvedTempRoot = path.resolve(tempRoot);
+	const resolvedSystemTempRoot = path.resolve(os.tmpdir());
+	if (
+		resolvedTempRoot === resolvedSystemTempRoot ||
+		!resolvedTempRoot.startsWith(`${resolvedSystemTempRoot}${path.sep}`)
+	) {
+		return false;
+	}
+	const basename = path.basename(resolvedTempRoot);
+	return smokeTempRootPrefixes.some((prefix) => basename.startsWith(prefix));
+}
+
+export async function removeSmokeTempRoot(tempRoot: string): Promise<void> {
+	if (!isOwnedSmokeTempRoot(tempRoot)) {
+		return;
+	}
+	await fs.rm(tempRoot, { force: true, recursive: true });
 }
 
 export async function canRunGondolinSmoke(
@@ -215,11 +242,15 @@ export async function findReusableGatewayImageDirectory(
 	currentProjectRoot: string,
 	gatewayBuildConfigPath: string,
 ): Promise<string | null> {
+	const explicitSmokeCacheRoot = process.env.AGENT_VM_SMOKE_CACHE_DIR;
+	if (!explicitSmokeCacheRoot) {
+		return null;
+	}
 	const requiredFingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath);
-	const tempRootEntries = await fs.readdir(os.tmpdir(), { withFileTypes: true });
+	const tempRootEntries = await fs.readdir(explicitSmokeCacheRoot, { withFileTypes: true });
 	const smokeRunDirectories = tempRootEntries
 		.filter((entry) => entry.isDirectory() && entry.name.includes('-smoke-'))
-		.map((entry) => path.join(os.tmpdir(), entry.name));
+		.map((entry) => path.join(explicitSmokeCacheRoot, entry.name));
 
 	for (const smokeRunDirectory of smokeRunDirectories) {
 		if (smokeRunDirectory === currentProjectRoot) {
@@ -342,21 +373,44 @@ async function packLocalPackageTarball(props: LocalNpmPackageTarball): Promise<s
 	const packageJsonPath = path.join(props.packageDirectory, 'package.json');
 	await fs.access(packageJsonPath);
 	const packDirectory = await fs.mkdtemp(path.join(os.tmpdir(), `${props.packageName}-pack-`));
-	execFileSync('pnpm', ['pack', '--pack-destination', packDirectory], {
-		cwd: props.packageDirectory,
-		stdio: 'pipe',
-	});
-	const packedTarballs = (await fs.readdir(packDirectory)).filter((fileName) =>
-		fileName.endsWith('.tgz'),
+	try {
+		execFileSync('pnpm', ['pack', '--pack-destination', packDirectory], {
+			cwd: props.packageDirectory,
+			stdio: 'pipe',
+		});
+		const packedTarballs = (await fs.readdir(packDirectory)).filter((fileName) =>
+			fileName.endsWith('.tgz'),
+		);
+		const [packedTarballName] = packedTarballs;
+		if (packedTarballName === undefined) {
+			throw new Error(`Failed to pack local ${props.packageName} tarball for smoke image.`);
+		}
+		if (packedTarballs.length > 1) {
+			throw new Error(
+				`Expected pnpm pack for ${props.packageName} to produce exactly one tarball.`,
+			);
+		}
+		return path.join(packDirectory, packedTarballName);
+	} catch (error) {
+		await fs.rm(packDirectory, { force: true, recursive: true });
+		throw error;
+	}
+}
+
+async function removeLocalPackageTarballDirectories(
+	tarballPaths: readonly (string | undefined)[],
+): Promise<void> {
+	await Promise.all(
+		Array.from(
+			new Set(
+				tarballPaths
+					.filter((tarballPath): tarballPath is string => tarballPath !== undefined)
+					.map((tarballPath) => path.dirname(tarballPath)),
+			),
+		).map(async (packDirectory) => {
+			await fs.rm(packDirectory, { force: true, recursive: true });
+		}),
 	);
-	const [packedTarballName] = packedTarballs;
-	if (packedTarballName === undefined) {
-		throw new Error(`Failed to pack local ${props.packageName} tarball for smoke image.`);
-	}
-	if (packedTarballs.length > 1) {
-		throw new Error(`Expected pnpm pack for ${props.packageName} to produce exactly one tarball.`);
-	}
-	return path.join(packDirectory, packedTarballName);
 }
 
 async function copyLocalPackageTarballsToDockerContext(options: {
@@ -450,13 +504,21 @@ export async function useLocalToolVmMcpPortalPackage(options: {
 		packageDirectory: path.join(options.repoRoot, 'packages', 'mcp-portal'),
 		packageName: 'mcp-portal',
 	});
-	await useLocalToolVmMcpPortalPackageTarballs({
-		localConfigContractsTarballPath,
-		localMcpPortalTarballPath,
-		localSecretsTarballPath,
-		projectRoot: options.projectRoot,
-		systemConfig: options.systemConfig,
-	});
+	try {
+		await useLocalToolVmMcpPortalPackageTarballs({
+			localConfigContractsTarballPath,
+			localMcpPortalTarballPath,
+			localSecretsTarballPath,
+			projectRoot: options.projectRoot,
+			systemConfig: options.systemConfig,
+		});
+	} finally {
+		await removeLocalPackageTarballDirectories([
+			localConfigContractsTarballPath,
+			localSecretsTarballPath,
+			localMcpPortalTarballPath,
+		]);
+	}
 }
 
 function localPackageTarballArchiveName(packageName: string): string {
@@ -544,72 +606,84 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 		packageDirectory: path.join(options.repoRoot, 'packages', 'openclaw-mcp-portal-plugin'),
 		packageName: 'openclaw-mcp-portal-plugin',
 	});
-	const localPackageTarballs = [
-		{
-			archiveName: localPackageTarballArchiveName('config-contracts'),
-			sourcePath: localConfigContractsTarballPath,
-		},
-		{
-			archiveName: localPackageTarballArchiveName('secrets'),
-			sourcePath: localSecretsTarballPath,
-		},
-		{
-			archiveName: localPackageTarballArchiveName('gondolin-adapter'),
-			sourcePath: localGondolinAdapterTarballPath,
-		},
-		{
-			archiveName: localPackageTarballArchiveName('mcp-portal'),
-			sourcePath: localMcpPortalTarballPath,
-		},
-		{
-			archiveName: localPackageTarballArchiveName('openclaw-agent-vm-plugin'),
-			sourcePath: localOpenClawAgentVmPluginTarballPath,
-		},
-		{
-			archiveName: localPackageTarballArchiveName('openclaw-mcp-portal-plugin'),
-			sourcePath: localOpenClawMcpPortalPluginTarballPath,
-		},
-	] satisfies readonly LocalDockerPackageTarball[];
+	try {
+		const localPackageTarballs = [
+			{
+				archiveName: localPackageTarballArchiveName('config-contracts'),
+				sourcePath: localConfigContractsTarballPath,
+			},
+			{
+				archiveName: localPackageTarballArchiveName('secrets'),
+				sourcePath: localSecretsTarballPath,
+			},
+			{
+				archiveName: localPackageTarballArchiveName('gondolin-adapter'),
+				sourcePath: localGondolinAdapterTarballPath,
+			},
+			{
+				archiveName: localPackageTarballArchiveName('mcp-portal'),
+				sourcePath: localMcpPortalTarballPath,
+			},
+			{
+				archiveName: localPackageTarballArchiveName('openclaw-agent-vm-plugin'),
+				sourcePath: localOpenClawAgentVmPluginTarballPath,
+			},
+			{
+				archiveName: localPackageTarballArchiveName('openclaw-mcp-portal-plugin'),
+				sourcePath: localOpenClawMcpPortalPluginTarballPath,
+			},
+		] satisfies readonly LocalDockerPackageTarball[];
 
-	await fs.rm(dockerContextDirectory, { force: true, recursive: true });
-	await fs.mkdir(dockerContextDirectory, { recursive: true });
-	await copyLocalPackageTarballsToDockerContext({
-		dockerContextDirectory,
-		tarballs: localPackageTarballs,
-	});
-	await useLocalToolVmMcpPortalPackageTarballs({
-		localConfigContractsTarballPath,
-		localMcpPortalTarballPath,
-		localSecretsTarballPath,
-		projectRoot: options.projectRoot,
-		systemConfig: options.systemConfig,
-	});
+		await fs.rm(dockerContextDirectory, { force: true, recursive: true });
+		await fs.mkdir(dockerContextDirectory, { recursive: true });
+		await copyLocalPackageTarballsToDockerContext({
+			dockerContextDirectory,
+			tarballs: localPackageTarballs,
+		});
+		await useLocalToolVmMcpPortalPackageTarballs({
+			localConfigContractsTarballPath,
+			localMcpPortalTarballPath,
+			localSecretsTarballPath,
+			projectRoot: options.projectRoot,
+			systemConfig: options.systemConfig,
+		});
 
-	await fs.writeFile(
-		dockerfilePath,
-		[
-			`FROM ${baseImage.repository}:${baseImage.tag}`,
-			'',
-			'# Generated by the OpenClaw smoke harness from local package tarballs.',
-			...localPackageTarballs.map(
-				(tarball) => `COPY ${tarball.archiveName} /tmp/${tarball.archiveName}`,
-			),
-			'RUN mkdir -p /opt/agent-vm/local-packages && \\',
-			'    npm install --omit=dev --no-audit --no-fund --prefix /opt/agent-vm/local-packages ' +
-				localPackageTarballs.map((tarball) => `/tmp/${tarball.archiveName}`).join(' ') +
-				' && \\',
-			'    rm -f ' + localPackageTarballs.map((tarball) => `/tmp/${tarball.archiveName}`).join(' '),
-			'RUN package_root="/opt/agent-vm/local-packages/node_modules" && \\',
-			'    mkdir -p /home/openclaw/.openclaw/extensions && \\',
-			'    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin && \\',
-			'    ln -sfn "$package_root/@agent-vm/openclaw-mcp-portal-plugin/dist" /home/openclaw/.openclaw/extensions/mcp-portal',
-			'',
-		].join('\n'),
-		'utf8',
-	);
+		await fs.writeFile(
+			dockerfilePath,
+			[
+				`FROM ${baseImage.repository}:${baseImage.tag}`,
+				'',
+				'# Generated by the OpenClaw smoke harness from local package tarballs.',
+				...localPackageTarballs.map(
+					(tarball) => `COPY ${tarball.archiveName} /tmp/${tarball.archiveName}`,
+				),
+				'RUN mkdir -p /opt/agent-vm/local-packages && \\',
+				'    npm install --omit=dev --no-audit --no-fund --prefix /opt/agent-vm/local-packages ' +
+					localPackageTarballs.map((tarball) => `/tmp/${tarball.archiveName}`).join(' ') +
+					' && \\',
+				'    rm -f ' +
+					localPackageTarballs.map((tarball) => `/tmp/${tarball.archiveName}`).join(' '),
+				'RUN package_root="/opt/agent-vm/local-packages/node_modules" && \\',
+				'    mkdir -p /home/openclaw/.openclaw/extensions && \\',
+				'    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin && \\',
+				'    ln -sfn "$package_root/@agent-vm/openclaw-mcp-portal-plugin/dist" /home/openclaw/.openclaw/extensions/mcp-portal',
+				'',
+			].join('\n'),
+			'utf8',
+		);
 
-	gatewayProfile.dockerfile = dockerfilePath;
-	delete gatewayProfile.source;
+		gatewayProfile.dockerfile = dockerfilePath;
+		delete gatewayProfile.source;
+	} finally {
+		await removeLocalPackageTarballDirectories([
+			localConfigContractsTarballPath,
+			localSecretsTarballPath,
+			localGondolinAdapterTarballPath,
+			localMcpPortalTarballPath,
+			localOpenClawAgentVmPluginTarballPath,
+			localOpenClawMcpPortalPluginTarballPath,
+		]);
+	}
 }
 
 export async function useLocalOpenClawPluginGatewayImage(options: {
@@ -643,52 +717,61 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 		packageDirectory: path.join(options.repoRoot, 'packages', 'openclaw-agent-vm-plugin'),
 		packageName: 'openclaw-agent-vm-plugin',
 	});
-	const localPackageTarballs = [
-		{
-			archiveName: localPackageTarballArchiveName('secrets'),
-			sourcePath: localSecretsTarballPath,
-		},
-		{
-			archiveName: localPackageTarballArchiveName('gondolin-adapter'),
-			sourcePath: localGondolinAdapterTarballPath,
-		},
-		{
-			archiveName: localPackageTarballArchiveName('openclaw-agent-vm-plugin'),
-			sourcePath: localOpenClawAgentVmPluginTarballPath,
-		},
-	] satisfies readonly LocalDockerPackageTarball[];
+	try {
+		const localPackageTarballs = [
+			{
+				archiveName: localPackageTarballArchiveName('secrets'),
+				sourcePath: localSecretsTarballPath,
+			},
+			{
+				archiveName: localPackageTarballArchiveName('gondolin-adapter'),
+				sourcePath: localGondolinAdapterTarballPath,
+			},
+			{
+				archiveName: localPackageTarballArchiveName('openclaw-agent-vm-plugin'),
+				sourcePath: localOpenClawAgentVmPluginTarballPath,
+			},
+		] satisfies readonly LocalDockerPackageTarball[];
 
-	await fs.rm(dockerContextDirectory, { force: true, recursive: true });
-	await fs.mkdir(dockerContextDirectory, { recursive: true });
-	await copyLocalPackageTarballsToDockerContext({
-		dockerContextDirectory,
-		tarballs: localPackageTarballs,
-	});
+		await fs.rm(dockerContextDirectory, { force: true, recursive: true });
+		await fs.mkdir(dockerContextDirectory, { recursive: true });
+		await copyLocalPackageTarballsToDockerContext({
+			dockerContextDirectory,
+			tarballs: localPackageTarballs,
+		});
 
-	await fs.writeFile(
-		dockerfilePath,
-		[
-			`FROM ${baseImage.repository}:${baseImage.tag}`,
-			'',
-			'# Generated by the OpenClaw smoke harness from local plugin package tarballs.',
-			...localPackageTarballs.map(
-				(tarball) => `COPY ${tarball.archiveName} /tmp/${tarball.archiveName}`,
-			),
-			'RUN mkdir -p /opt/agent-vm/local-packages && \\',
-			'    npm install --omit=dev --no-audit --no-fund --prefix /opt/agent-vm/local-packages ' +
-				localPackageTarballs.map((tarball) => `/tmp/${tarball.archiveName}`).join(' ') +
-				' && \\',
-			'    rm -f ' + localPackageTarballs.map((tarball) => `/tmp/${tarball.archiveName}`).join(' '),
-			'RUN package_root="/opt/agent-vm/local-packages/node_modules" && \\',
-			'    mkdir -p /home/openclaw/.openclaw/extensions && \\',
-			'    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin',
-			'',
-		].join('\n'),
-		'utf8',
-	);
+		await fs.writeFile(
+			dockerfilePath,
+			[
+				`FROM ${baseImage.repository}:${baseImage.tag}`,
+				'',
+				'# Generated by the OpenClaw smoke harness from local plugin package tarballs.',
+				...localPackageTarballs.map(
+					(tarball) => `COPY ${tarball.archiveName} /tmp/${tarball.archiveName}`,
+				),
+				'RUN mkdir -p /opt/agent-vm/local-packages && \\',
+				'    npm install --omit=dev --no-audit --no-fund --prefix /opt/agent-vm/local-packages ' +
+					localPackageTarballs.map((tarball) => `/tmp/${tarball.archiveName}`).join(' ') +
+					' && \\',
+				'    rm -f ' +
+					localPackageTarballs.map((tarball) => `/tmp/${tarball.archiveName}`).join(' '),
+				'RUN package_root="/opt/agent-vm/local-packages/node_modules" && \\',
+				'    mkdir -p /home/openclaw/.openclaw/extensions && \\',
+				'    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" /home/openclaw/.openclaw/extensions/gondolin',
+				'',
+			].join('\n'),
+			'utf8',
+		);
 
-	gatewayProfile.dockerfile = dockerfilePath;
-	delete gatewayProfile.source;
+		gatewayProfile.dockerfile = dockerfilePath;
+		delete gatewayProfile.source;
+	} finally {
+		await removeLocalPackageTarballDirectories([
+			localSecretsTarballPath,
+			localGondolinAdapterTarballPath,
+			localOpenClawAgentVmPluginTarballPath,
+		]);
+	}
 }
 
 export async function scaffoldOpenClawSmokeProject(options: {
@@ -901,7 +984,13 @@ export async function startSmokeControllerRuntime(
 				try {
 					await runtime.close();
 				} finally {
-					restoreEnvironment();
+					try {
+						await removeSmokeTempRoot(
+							path.dirname(path.dirname(options.startOptions.systemConfig.systemConfigPath)),
+						);
+					} finally {
+						restoreEnvironment();
+					}
 				}
 			},
 		};

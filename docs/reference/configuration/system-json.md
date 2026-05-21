@@ -422,6 +422,14 @@ Unmapped agents use the zone fallback `defaultToolVmProfile`.
 boots. There is no shared per-agent fallback; configure each agent that needs an
 auth profile.
 
+`gateway.rawEnvSecrets` is the explicit escape hatch for OpenClaw secrets that
+must reach the gateway VM as raw environment variables. `OPENCLAW_GATEWAY_TOKEN`
+is allowed by default. Other provider or service tokens should use
+`http-mediation` unless the integration cannot work with HTTP mediation, such as
+a non-HTTP or websocket credential flow. Generated runtime env secrets also need
+to be named here when a feature requires them, for example
+`AGENT_VM_ZONE_GIT_TOKEN`.
+
 `agentSandboxSeeds` writes first-boot files into the agent's scoped sandbox work
 mount before the Tool VM starts. Targets are relative to the sandbox
 `/work` backing directory, cannot use `..`, and are not written for shared
@@ -532,6 +540,11 @@ always mediated. `source: "environment"` is allowed for a Tool VM secret only
 when `injection` is `http-mediation`; in that case the controller reads the
 environment variable and Gondolin mediates the value.
 
+OpenClaw zones allow raw gateway env secrets only when the secret name is
+`OPENCLAW_GATEWAY_TOKEN` or is listed in `gateway.rawEnvSecrets`. This keeps
+provider API tokens on the mediated path by default and makes every raw-env
+exception visible in deployment config.
+
 Secret names must be valid environment variable identifiers. This keeps
 gateway env-file rendering and runtime placeholder names safe and predictable.
 
@@ -630,6 +643,8 @@ The schema rejects:
 - Legacy `allowedHosts`; use `egressHosts` with explicit `audience`.
 - Zone secrets without explicit `audience`.
 - Env-injected zone secrets with non-gateway audience or declared `hosts`.
+- OpenClaw env-injected zone secrets not listed in `gateway.rawEnvSecrets`,
+  except `OPENCLAW_GATEWAY_TOKEN`.
 - Mediated secret hosts not declared in `egressHosts` for the same audience.
 - OpenClaw zones without gateway-only env `OPENCLAW_GATEWAY_TOKEN`.
 - Zones referencing missing gateway image profiles.

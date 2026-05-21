@@ -70,6 +70,7 @@ interface OpenClawGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig 
 	readonly authProfilesByAgent?: Readonly<
 		Record<string, OnePasswordGatewayAuthProfilesRef | EnvironmentGatewayAuthProfilesRef>
 	>;
+	readonly rawEnvSecrets?: readonly string[];
 }
 
 interface WorkerGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
