@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { ControllerLeaseRequestError } from './controller-lease-client.js';
+import { ControllerLeaseRequestError, type LeaseClient } from './controller-lease-client.js';
 import {
 	createGondolinSandboxBackendFactory,
 	createGondolinSandboxBackendManager,
-	type FsBridgeLeaseContext,
-	type GondolinFsBridge,
+	type OpenClawFsBridgeLeaseContext,
+	type OpenClawSandboxFsBridge,
 } from './sandbox-backend-factory.js';
 
 function createLeaseResponse(
@@ -22,6 +22,7 @@ function createLeaseResponse(
 		readonly user: string;
 	};
 	readonly tcpSlot: number;
+	readonly transport: 'ssh-sandbox';
 	readonly workdir: string;
 } {
 	return {
@@ -35,6 +36,7 @@ function createLeaseResponse(
 			user: 'sandbox',
 		},
 		tcpSlot: 0,
+		transport: 'ssh-sandbox' as const,
 		workdir: '/work',
 	};
 }
@@ -47,6 +49,8 @@ function createLeasePeekResponse(leaseId: string = 'lease-123'): {
 	readonly scopeKey: string;
 	readonly ssh: { readonly host: string; readonly port: number; readonly user: string };
 	readonly tcpSlot: number;
+	readonly transport: 'ssh-sandbox';
+	readonly workdir: string;
 	readonly zoneId: string;
 } {
 	return {
@@ -57,11 +61,13 @@ function createLeasePeekResponse(leaseId: string = 'lease-123'): {
 		scopeKey: 'scope',
 		ssh: { host: 'tool-0.vm.host', port: 22, user: 'sandbox' },
 		tcpSlot: 0,
+		transport: 'ssh-sandbox' as const,
+		workdir: '/work',
 		zoneId: 'shravan',
 	};
 }
 
-function createMockFsBridge(): GondolinFsBridge {
+function createMockFsBridge(): OpenClawSandboxFsBridge {
 	return {
 		mkdirp: vi.fn(async () => {}),
 		readFile: vi.fn(async () => Buffer.from('file-content')),
@@ -76,10 +82,28 @@ function createMockFsBridge(): GondolinFsBridge {
 function createControllerLeaseError(status: number): ControllerLeaseRequestError {
 	return new ControllerLeaseRequestError({
 		bodyText: JSON.stringify({ error: 'lease-error' }),
-		context: 'Controller lease keepalive API',
+		context: 'Controller lease renew API',
 		responseBody: { error: 'lease-error' },
 		status,
 	});
+}
+
+function createActiveUseLeaseClientMethods(): Pick<
+	LeaseClient,
+	'startActiveUse' | 'heartbeatActiveUse' | 'endActiveUse'
+> {
+	return {
+		endActiveUse: vi.fn(async () => {}),
+		heartbeatActiveUse: vi.fn(async () => ({
+			expiresAt: 2_000,
+			heartbeatAfterMs: 1_000,
+		})),
+		startActiveUse: vi.fn(async (_leaseId, request) => ({
+			useId: request.useId,
+			expiresAt: 2_000,
+			heartbeatAfterMs: 1_000,
+		})),
+	};
 }
 
 describe('createGondolinSandboxBackendFactory', () => {
@@ -94,6 +118,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				user: 'sandbox',
 			},
 			tcpSlot: 0,
+			transport: 'ssh-sandbox' as const,
 			workdir: '/work',
 		}));
 		const publishOpenClawRuntimeStatus = vi.fn(async () => {});
@@ -103,7 +128,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			stdout: Buffer.from('ok'),
 		}));
 		const mockBridge = createMockFsBridge();
-		const createFsBridgeBuilder = vi.fn((_leaseContext: FsBridgeLeaseContext) =>
+		const createFsBridgeBuilder = vi.fn((_leaseContext: OpenClawFsBridgeLeaseContext) =>
 			vi.fn((_params: { readonly sandbox: unknown }) => mockBridge),
 		);
 		const buildExecSpec = vi.fn(async () => ({
@@ -133,7 +158,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 				buildExecSpec,
 				createFsBridgeBuilder,
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
 					peekLease: async () => createLeasePeekResponse(),
 					publishOpenClawRuntimeStatus,
 					releaseLease: async () => {},
@@ -212,7 +238,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			}),
 		);
 		// Verify the lease context includes a runRemoteShellScript bound to lease SSH
-		const leaseContext = createFsBridgeBuilder.mock.calls[0]?.[0] as FsBridgeLeaseContext;
+		const leaseContext = createFsBridgeBuilder.mock.calls[0]?.[0] as OpenClawFsBridgeLeaseContext;
 		expect(typeof leaseContext.runRemoteShellScript).toBe('function');
 
 		// Verify createFsBridge on the handle delegates to the builder
@@ -238,6 +264,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				user: 'sandbox',
 			},
 			tcpSlot: 0,
+			transport: 'ssh-sandbox' as const,
 			workdir: '/work',
 		}));
 
@@ -253,7 +280,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
@@ -281,7 +309,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		expect(requestLease).toHaveBeenCalledTimes(1);
 	});
 
-	it('drops a cached handle when lease keepalive returns 404 and requests a fresh lease', async () => {
+	it('drops a cached handle when lease renew returns 404 and requests a fresh lease', async () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const requestLease = vi
 			.fn()
@@ -295,6 +323,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 					user: 'sandbox',
 				},
 				tcpSlot: 0,
+				transport: 'ssh-sandbox' as const,
 				workdir: '/work',
 			})
 			.mockResolvedValueOnce({
@@ -307,9 +336,10 @@ describe('createGondolinSandboxBackendFactory', () => {
 					user: 'sandbox',
 				},
 				tcpSlot: 1,
+				transport: 'ssh-sandbox' as const,
 				workdir: '/work',
 			});
-		const keepLeaseAlive = vi
+		const renewLease = vi
 			.fn()
 			.mockResolvedValueOnce({ ok: true })
 			.mockRejectedValueOnce(createControllerLeaseError(404));
@@ -326,7 +356,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive,
+					...createActiveUseLeaseClientMethods(),
+					renewLease,
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
@@ -365,7 +396,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			expect(
 				loggedMessages.some(
 					(message) =>
-						message.includes('lease keepalive failed') &&
+						message.includes('lease renew failed') &&
 						message.includes("scope 'agent:main:session-stale'") &&
 						message.includes("lease 'lease-old'"),
 				),
@@ -375,9 +406,9 @@ describe('createGondolinSandboxBackendFactory', () => {
 		}
 	});
 
-	it('does not request a fresh lease when cached keepalive returns a client error other than 404', async () => {
+	it('does not request a fresh lease when cached renew returns a client error other than 404', async () => {
 		const requestLease = vi.fn(async () => createLeaseResponse('lease-client-error'));
-		const keepLeaseAlive = vi.fn().mockRejectedValueOnce(createControllerLeaseError(409));
+		const renewLease = vi.fn().mockRejectedValueOnce(createControllerLeaseError(409));
 
 		const factory = createGondolinSandboxBackendFactory(
 			{
@@ -391,7 +422,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive,
+					...createActiveUseLeaseClientMethods(),
+					renewLease,
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
@@ -422,9 +454,9 @@ describe('createGondolinSandboxBackendFactory', () => {
 		expect(requestLease).toHaveBeenCalledTimes(1);
 	});
 
-	it('does not request a fresh lease when cached keepalive returns a server error', async () => {
+	it('does not request a fresh lease when cached renew returns a server error', async () => {
 		const requestLease = vi.fn(async () => createLeaseResponse('lease-server-error'));
-		const keepLeaseAlive = vi.fn().mockRejectedValueOnce(createControllerLeaseError(503));
+		const renewLease = vi.fn().mockRejectedValueOnce(createControllerLeaseError(503));
 
 		const factory = createGondolinSandboxBackendFactory(
 			{
@@ -438,7 +470,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive,
+					...createActiveUseLeaseClientMethods(),
+					renewLease,
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
@@ -469,9 +502,9 @@ describe('createGondolinSandboxBackendFactory', () => {
 		expect(requestLease).toHaveBeenCalledTimes(1);
 	});
 
-	it('does not request a fresh lease when cached keepalive has a network failure', async () => {
+	it('does not request a fresh lease when cached renew has a network failure', async () => {
 		const requestLease = vi.fn(async () => createLeaseResponse('lease-network-error'));
-		const keepLeaseAlive = vi.fn().mockRejectedValueOnce(new Error('temporary network failure'));
+		const renewLease = vi.fn().mockRejectedValueOnce(new Error('temporary network failure'));
 
 		const factory = createGondolinSandboxBackendFactory(
 			{
@@ -485,7 +518,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive,
+					...createActiveUseLeaseClientMethods(),
+					renewLease,
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
@@ -528,6 +562,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 					user: 'sandbox',
 				},
 				tcpSlot: 0,
+				transport: 'ssh-sandbox' as const,
 				workdir: '/work',
 			};
 		});
@@ -544,7 +579,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
@@ -576,7 +612,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 	it('requests a new lease when the cached scope handle points at a missing lease', async () => {
 		let leaseCounter = 0;
-		const keepLeaseAlive = vi.fn(async (leaseId: string) => {
+		const renewLease = vi.fn(async (leaseId: string) => {
 			if (leaseId === 'lease-1') {
 				throw createControllerLeaseError(404);
 			}
@@ -594,6 +630,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 					user: 'sandbox',
 				},
 				tcpSlot: 0,
+				transport: 'ssh-sandbox' as const,
 				workdir: '/work',
 			};
 		});
@@ -610,7 +647,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive,
+					...createActiveUseLeaseClientMethods(),
+					renewLease,
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
@@ -636,7 +674,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		expect(firstHandle).not.toBe(secondHandle);
 		expect(requestLease).toHaveBeenCalledTimes(2);
-		expect(keepLeaseAlive).toHaveBeenCalledWith('lease-1');
+		expect(renewLease).toHaveBeenCalledWith('lease-1');
 		expect(secondHandle.runtimeId).toBe('lease-2');
 	});
 
@@ -653,13 +691,15 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease: vi.fn(async () => ({
 						leaseId: 'lease-finalize',
 						ssh: { host: 'h', identityPem: 'p', knownHostsLine: '', port: 22, user: 'u' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
 						workdir: '/w',
 					})),
 				}),
@@ -698,13 +738,15 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease: vi.fn(async () => ({
 						leaseId: 'lease-noop',
 						ssh: { host: 'h', identityPem: 'p', knownHostsLine: '', port: 22, user: 'u' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
 						workdir: '/w',
 					})),
 				}),
@@ -741,8 +783,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 			stderr: Buffer.from(''),
 			stdout: Buffer.from('/work\n'),
 		}));
-		let capturedLeaseContext: FsBridgeLeaseContext | undefined;
-		const createFsBridgeBuilder = vi.fn((leaseContext: FsBridgeLeaseContext) => {
+		let capturedLeaseContext: OpenClawFsBridgeLeaseContext | undefined;
+		const createFsBridgeBuilder = vi.fn((leaseContext: OpenClawFsBridgeLeaseContext) => {
 			capturedLeaseContext = leaseContext;
 			return vi.fn(() => createMockFsBridge());
 		});
@@ -760,7 +802,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 				})),
 				createFsBridgeBuilder,
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease: vi.fn(async () => ({
@@ -773,6 +816,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 							user: 'sandbox',
 						},
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
 						workdir: '/work',
 					})),
 				}),
@@ -815,287 +859,6 @@ describe('createGondolinSandboxBackendFactory', () => {
 		});
 	});
 
-	it('renews the lease around every ssh command boundary', async () => {
-		const keepLeaseAlive = vi.fn(async (leaseId: string) => createLeaseResponse(leaseId));
-		const buildExecSpec = vi.fn(async () => ({
-			argv: ['ssh'],
-			env: {},
-			stdinMode: 'pipe-open' as const,
-		}));
-		const runRemoteShellScript = vi.fn(async () => ({
-			code: 0,
-			stderr: Buffer.from(''),
-			stdout: Buffer.from('ok'),
-		}));
-		let capturedLeaseContext: FsBridgeLeaseContext | undefined;
-		const createFsBridgeBuilder = vi.fn((leaseContext: FsBridgeLeaseContext) => {
-			capturedLeaseContext = leaseContext;
-			return vi.fn(() => createMockFsBridge());
-		});
-
-		const factory = createGondolinSandboxBackendFactory(
-			{
-				controllerUrl: 'http://controller.vm.host:18800',
-				zoneId: 'shravan',
-			},
-			{
-				buildExecSpec,
-				createFsBridgeBuilder,
-				createLeaseClient: () => ({
-					keepLeaseAlive,
-					peekLease: async () => createLeasePeekResponse(),
-					releaseLease: async () => {},
-					requestLease: vi.fn(async () => createLeaseResponse('lease-command-boundary')),
-				}),
-				runRemoteShellScript,
-			},
-		);
-
-		const backend = await factory({
-			agentWorkspaceDir: '/work',
-			cfg: {},
-			scopeKey: 'test',
-			sessionKey: 'test',
-			workspaceDir: '/work',
-		});
-
-		const execSpec = await backend.buildExecSpec({
-			command: 'ls',
-			env: {},
-			usePty: false,
-			workdir: '/work',
-		});
-		await backend.finalizeExec?.({
-			exitCode: 0,
-			status: 'completed',
-			timedOut: false,
-			token: execSpec.finalizeToken,
-		});
-		await backend.runShellCommand({ script: 'pwd' });
-
-		expect(capturedLeaseContext).toBeDefined();
-		if (!capturedLeaseContext) {
-			throw new Error('Expected lease context to be captured');
-		}
-		await capturedLeaseContext.runRemoteShellScript({
-			script: 'cat /etc/hostname',
-		});
-
-		expect(keepLeaseAlive).toHaveBeenCalledTimes(6);
-		expect(keepLeaseAlive).toHaveBeenNthCalledWith(1, 'lease-command-boundary');
-		expect(keepLeaseAlive).toHaveBeenNthCalledWith(2, 'lease-command-boundary');
-		expect(keepLeaseAlive).toHaveBeenNthCalledWith(3, 'lease-command-boundary');
-		expect(keepLeaseAlive).toHaveBeenNthCalledWith(4, 'lease-command-boundary');
-		expect(keepLeaseAlive).toHaveBeenNthCalledWith(5, 'lease-command-boundary');
-		expect(keepLeaseAlive).toHaveBeenNthCalledWith(6, 'lease-command-boundary');
-		expect(keepLeaseAlive.mock.invocationCallOrder[0]).toBeLessThan(
-			buildExecSpec.mock.invocationCallOrder[0] ?? 0,
-		);
-		expect(keepLeaseAlive.mock.invocationCallOrder[2]).toBeLessThan(
-			runRemoteShellScript.mock.invocationCallOrder[0] ?? 0,
-		);
-		expect(keepLeaseAlive.mock.invocationCallOrder[4]).toBeLessThan(
-			runRemoteShellScript.mock.invocationCallOrder[1] ?? 0,
-		);
-	});
-
-	it('keeps renewing the lease while a shell command is still running', async () => {
-		vi.useFakeTimers();
-		try {
-			const keepLeaseAlive = vi.fn(async (leaseId: string) => createLeaseResponse(leaseId));
-			let finishCommand: (() => void) | undefined;
-			const runRemoteShellScript = vi.fn(
-				async () =>
-					await new Promise<{
-						readonly code: number;
-						readonly stderr: Buffer;
-						readonly stdout: Buffer;
-					}>((resolve) => {
-						finishCommand = () =>
-							resolve({
-								code: 0,
-								stderr: Buffer.from(''),
-								stdout: Buffer.from('ok'),
-							});
-					}),
-			);
-			const factory = createGondolinSandboxBackendFactory(
-				{
-					controllerUrl: 'http://controller.vm.host:18800',
-					zoneId: 'shravan',
-				},
-				{
-					buildExecSpec: vi.fn(async () => ({
-						argv: ['ssh'],
-						env: {},
-						stdinMode: 'pipe-open' as const,
-					})),
-					createLeaseClient: () => ({
-						keepLeaseAlive,
-						peekLease: async () => createLeasePeekResponse(),
-						releaseLease: async () => {},
-						requestLease: vi.fn(async () => createLeaseResponse('lease-long-command')),
-					}),
-					runRemoteShellScript,
-				},
-			);
-			const backend = await factory({
-				agentWorkspaceDir: '/work',
-				cfg: {},
-				scopeKey: 'test',
-				sessionKey: 'test',
-				workspaceDir: '/work',
-			});
-
-			const commandPromise = backend.runShellCommand({ script: 'sleep 120' });
-			await vi.advanceTimersByTimeAsync(120_000);
-			finishCommand?.();
-			await commandPromise;
-
-			expect(keepLeaseAlive).toHaveBeenCalledTimes(4);
-			expect(keepLeaseAlive).toHaveBeenNthCalledWith(1, 'lease-long-command');
-			expect(keepLeaseAlive).toHaveBeenNthCalledWith(2, 'lease-long-command');
-			expect(keepLeaseAlive).toHaveBeenNthCalledWith(3, 'lease-long-command');
-			expect(keepLeaseAlive).toHaveBeenNthCalledWith(4, 'lease-long-command');
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('uses controller lease ttl metadata to schedule active renewals', async () => {
-		vi.useFakeTimers();
-		try {
-			const keepLeaseAlive = vi.fn(async (leaseId: string) => createLeaseResponse(leaseId));
-			let finishCommand: (() => void) | undefined;
-			const runRemoteShellScript = vi.fn(
-				async () =>
-					await new Promise<{
-						readonly code: number;
-						readonly stderr: Buffer;
-						readonly stdout: Buffer;
-					}>((resolve) => {
-						finishCommand = () =>
-							resolve({
-								code: 0,
-								stderr: Buffer.from(''),
-								stdout: Buffer.from('ok'),
-							});
-					}),
-			);
-			const factory = createGondolinSandboxBackendFactory(
-				{
-					controllerUrl: 'http://controller.vm.host:18800',
-					zoneId: 'shravan',
-				},
-				{
-					buildExecSpec: vi.fn(async () => ({
-						argv: ['ssh'],
-						env: {},
-						stdinMode: 'pipe-open' as const,
-					})),
-					createLeaseClient: () => ({
-						keepLeaseAlive,
-						peekLease: async () => createLeasePeekResponse(),
-						releaseLease: async () => {},
-						requestLease: vi.fn(async () =>
-							createLeaseResponse('lease-short-ttl', { idleTtlMs: 30_000 }),
-						),
-					}),
-					runRemoteShellScript,
-				},
-			);
-			const backend = await factory({
-				agentWorkspaceDir: '/work',
-				cfg: {},
-				scopeKey: 'test',
-				sessionKey: 'test',
-				workspaceDir: '/work',
-			});
-
-			const commandPromise = backend.runShellCommand({ script: 'sleep 20' });
-			await vi.advanceTimersByTimeAsync(20_000);
-			finishCommand?.();
-			await commandPromise;
-
-			expect(keepLeaseAlive).toHaveBeenCalledTimes(4);
-			expect(keepLeaseAlive).toHaveBeenNthCalledWith(1, 'lease-short-ttl');
-			expect(keepLeaseAlive).toHaveBeenNthCalledWith(2, 'lease-short-ttl');
-			expect(keepLeaseAlive).toHaveBeenNthCalledWith(3, 'lease-short-ttl');
-			expect(keepLeaseAlive).toHaveBeenNthCalledWith(4, 'lease-short-ttl');
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('keeps exec renewal active until finalize token disposal completes', async () => {
-		vi.useFakeTimers();
-		try {
-			const keepLeaseAlive = vi.fn(async (leaseId: string) => createLeaseResponse(leaseId));
-			let finishDispose: (() => void) | undefined;
-			const dispose = vi.fn(
-				async () =>
-					await new Promise<void>((resolve) => {
-						finishDispose = resolve;
-					}),
-			);
-			const factory = createGondolinSandboxBackendFactory(
-				{
-					controllerUrl: 'http://controller.vm.host:18800',
-					zoneId: 'shravan',
-				},
-				{
-					buildExecSpec: vi.fn(async () => ({
-						argv: ['ssh'],
-						env: {},
-						finalizeToken: { dispose },
-						stdinMode: 'pipe-open' as const,
-					})),
-					createLeaseClient: () => ({
-						keepLeaseAlive,
-						peekLease: async () => createLeasePeekResponse(),
-						releaseLease: async () => {},
-						requestLease: vi.fn(async () =>
-							createLeaseResponse('lease-finalize-active', { idleTtlMs: 30_000 }),
-						),
-					}),
-					runRemoteShellScript: vi.fn(),
-				},
-			);
-			const backend = await factory({
-				agentWorkspaceDir: '/work',
-				cfg: {},
-				scopeKey: 'test',
-				sessionKey: 'test',
-				workspaceDir: '/work',
-			});
-
-			const execSpec = await backend.buildExecSpec({
-				command: 'ls',
-				env: {},
-				usePty: false,
-				workdir: '/work',
-			});
-			const finalizePromise = backend.finalizeExec?.({
-				exitCode: 0,
-				status: 'completed',
-				timedOut: false,
-				token: execSpec.finalizeToken,
-			});
-			await vi.advanceTimersByTimeAsync(20_000);
-			finishDispose?.();
-			await finalizePromise;
-
-			expect(dispose).toHaveBeenCalledTimes(1);
-			expect(keepLeaseAlive).toHaveBeenCalledTimes(4);
-			expect(keepLeaseAlive).toHaveBeenNthCalledWith(1, 'lease-finalize-active');
-			expect(keepLeaseAlive).toHaveBeenNthCalledWith(2, 'lease-finalize-active');
-			expect(keepLeaseAlive).toHaveBeenNthCalledWith(3, 'lease-finalize-active');
-			expect(keepLeaseAlive).toHaveBeenNthCalledWith(4, 'lease-finalize-active');
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
 	it('rethrows undefined finalize token disposal failures', async () => {
 		const factory = createGondolinSandboxBackendFactory(
 			{
@@ -1109,7 +872,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease: vi.fn(async () => createLeaseResponse('lease-dispose-throws')),
@@ -1154,7 +918,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 			{
 				buildExecSpec: vi.fn(),
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease: async () =>
@@ -1176,6 +941,55 @@ describe('createGondolinSandboxBackendFactory', () => {
 		).rejects.toThrow('Controller lease API returned an unexpected response.');
 	});
 
+	it('keeps filesystem bridging as an OpenClaw adapter concern over the SSH lease', async () => {
+		const mockBridge = createMockFsBridge();
+		const createFsBridge = vi.fn((_params: { readonly sandbox: unknown }) => mockBridge);
+		const createFsBridgeBuilder = vi.fn(
+			(_leaseContext: OpenClawFsBridgeLeaseContext) => createFsBridge,
+		);
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createFsBridgeBuilder,
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease: async () => createLeaseResponse('lease-123'),
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const backend = await factory({
+			agentWorkspaceDir: '/home/openclaw/work',
+			cfg: {},
+			scopeKey: 'agent:main:session-abc',
+			sessionKey: 'session-abc',
+			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/work',
+		});
+
+		const leaseContext = createFsBridgeBuilder.mock.calls[0]?.[0];
+		expect(leaseContext).toEqual(
+			expect.objectContaining({
+				remoteAgentWorkspaceDir: '/work',
+				remoteWorkspaceDir: '/work',
+			}),
+		);
+		expect(typeof leaseContext?.runRemoteShellScript).toBe('function');
+		expect(backend.createFsBridge?.({ sandbox: { id: 'sandbox' } })).toBe(mockBridge);
+		expect(createFsBridge).toHaveBeenCalledWith({ sandbox: { id: 'sandbox' } });
+	});
+
 	it('omits env and createFsBridge from handle when createFsBridgeBuilder is not provided', async () => {
 		const requestLease = vi.fn(async () => ({
 			leaseId: 'lease-456',
@@ -1187,6 +1001,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				user: 'sandbox',
 			},
 			tcpSlot: 1,
+			transport: 'ssh-sandbox' as const,
 			workdir: '/work',
 		}));
 
@@ -1202,7 +1017,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 					stdinMode: 'pipe-open' as const,
 				})),
 				createLeaseClient: () => ({
-					keepLeaseAlive: async () => createLeaseResponse('lease-keepalive'),
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
@@ -1227,7 +1043,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 describe('createGondolinSandboxBackendManager', () => {
 	it('describeRuntime returns running true when peekLease succeeds', async () => {
-		const keepLeaseAlive = vi.fn(async () => {
+		const renewLease = vi.fn(async () => {
 			throw new Error('describeRuntime should not extend lease idle timers');
 		});
 		const peekLease = vi.fn(async () => createLeasePeekResponse());
@@ -1239,7 +1055,8 @@ describe('createGondolinSandboxBackendManager', () => {
 			{
 				buildExecSpec: vi.fn(),
 				createLeaseClient: () => ({
-					keepLeaseAlive,
+					...createActiveUseLeaseClientMethods(),
+					renewLease,
 					peekLease,
 					releaseLease: vi.fn(async () => {}),
 					requestLease: vi.fn(),
@@ -1254,10 +1071,10 @@ describe('createGondolinSandboxBackendManager', () => {
 
 		expect(result).toEqual({ running: true, configLabelMatch: true });
 		expect(peekLease).toHaveBeenCalledWith('lease-123');
-		expect(keepLeaseAlive).not.toHaveBeenCalled();
+		expect(renewLease).not.toHaveBeenCalled();
 	});
 
-	it('describeRuntime returns running false when peekLease throws', async () => {
+	it('describeRuntime returns running false when peekLease returns not found', async () => {
 		const manager = createGondolinSandboxBackendManager(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
@@ -1266,9 +1083,10 @@ describe('createGondolinSandboxBackendManager', () => {
 			{
 				buildExecSpec: vi.fn(),
 				createLeaseClient: () => ({
-					keepLeaseAlive: vi.fn(),
+					...createActiveUseLeaseClientMethods(),
+					renewLease: vi.fn(),
 					peekLease: vi.fn(async () => {
-						throw new Error('not found');
+						throw createControllerLeaseError(404);
 					}),
 					releaseLease: vi.fn(async () => {}),
 					requestLease: vi.fn(),
@@ -1284,6 +1102,62 @@ describe('createGondolinSandboxBackendManager', () => {
 		expect(result).toEqual({ running: false, configLabelMatch: false });
 	});
 
+	it('describeRuntime rethrows controller errors other than not found', async () => {
+		const manager = createGondolinSandboxBackendManager(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: vi.fn(),
+					peekLease: vi.fn(async () => {
+						throw createControllerLeaseError(500);
+					}),
+					releaseLease: vi.fn(async () => {}),
+					requestLease: vi.fn(),
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		await expect(
+			manager.describeRuntime({
+				entry: { containerName: 'gondolin-scope-error' },
+			}),
+		).rejects.toThrow('Controller lease renew API returned HTTP 500');
+	});
+
+	it('describeRuntime rethrows network errors instead of treating them as missing leases', async () => {
+		const manager = createGondolinSandboxBackendManager(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: vi.fn(),
+					peekLease: vi.fn(async () => {
+						throw new Error('temporary controller outage');
+					}),
+					releaseLease: vi.fn(async () => {}),
+					requestLease: vi.fn(),
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		await expect(
+			manager.describeRuntime({
+				entry: { containerName: 'gondolin-scope-network-error' },
+			}),
+		).rejects.toThrow('temporary controller outage');
+	});
+
 	it('removeRuntime calls releaseLease with the containerName', async () => {
 		const releaseLease = vi.fn(async () => {});
 		const manager = createGondolinSandboxBackendManager(
@@ -1294,7 +1168,8 @@ describe('createGondolinSandboxBackendManager', () => {
 			{
 				buildExecSpec: vi.fn(),
 				createLeaseClient: () => ({
-					keepLeaseAlive: vi.fn(),
+					...createActiveUseLeaseClientMethods(),
+					renewLease: vi.fn(),
 					peekLease: vi.fn(async () => createLeasePeekResponse()),
 					releaseLease,
 					requestLease: vi.fn(),
@@ -1307,6 +1182,6 @@ describe('createGondolinSandboxBackendManager', () => {
 			entry: { containerName: 'gondolin-scope-remove' },
 		});
 
-		expect(releaseLease).toHaveBeenCalledWith('gondolin-scope-remove');
+		expect(releaseLease).toHaveBeenCalledWith('gondolin-scope-remove', { force: true });
 	});
 });

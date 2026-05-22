@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import type { SecretRef } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
 
@@ -170,6 +171,9 @@ function createControllerClientStub(
 			scopeKey: 'scope',
 			ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 			tcpSlot: 0,
+			transport: 'ssh-sandbox' as const,
+			workdir: '/work',
+
 			zoneId: 'shravan',
 		}),
 		listLeases: async () => [],
@@ -1391,6 +1395,9 @@ describe('runAgentVmCli', () => {
 						scopeKey: 'scope',
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
+						workdir: '/work',
+
 						zoneId: 'shravan',
 					}),
 					listLeases: async () => [],
@@ -1515,6 +1522,9 @@ describe('runAgentVmCli', () => {
 						scopeKey: 'scope',
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
+						workdir: '/work',
+
 						zoneId: 'shravan',
 					}),
 					listLeases: async () => [],
@@ -1662,6 +1672,9 @@ describe('runAgentVmCli', () => {
 						scopeKey: 'scope',
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
+						workdir: '/work',
+
 						zoneId: 'shravan',
 					}),
 					listLeases: async () => [],
@@ -1908,6 +1921,9 @@ describe('runAgentVmCli', () => {
 				scopeKey: 'scope',
 				ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 				tcpSlot: 0,
+				transport: 'ssh-sandbox' as const,
+				workdir: '/work',
+
 				zoneId: 'shravan',
 			})),
 			refreshZoneCredentials: vi.fn(async () => ({ ok: true, zoneId: 'shravan' })),
@@ -2341,6 +2357,9 @@ describe('runAgentVmCli', () => {
 						scopeKey: 'scope',
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
+						workdir: '/work',
+
 						zoneId: 'shravan',
 					}),
 					listLeases: async () => [],
@@ -2366,6 +2385,9 @@ describe('runAgentVmCli', () => {
 			scopeKey: 'scope',
 			ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 			tcpSlot: 0,
+			transport: 'ssh-sandbox' as const,
+			workdir: '/work',
+
 			zoneId: 'shravan',
 		}));
 		const releaseLease = vi.fn(async () => {});
@@ -2442,6 +2464,9 @@ describe('runAgentVmCli', () => {
 						scopeKey: 'scope',
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
+						workdir: '/work',
+
 						zoneId: 'shravan',
 					}),
 					listLeases,
@@ -2500,6 +2525,9 @@ describe('runAgentVmCli', () => {
 						scopeKey: 'scope',
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
+						workdir: '/work',
+
 						zoneId: 'shravan',
 					}),
 					listLeases: async () => [],
@@ -2656,6 +2684,9 @@ describe('runAgentVmCli', () => {
 						scopeKey: 'scope',
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
+						workdir: '/work',
+
 						zoneId: 'shravan',
 					}),
 					listLeases: async () => [],
@@ -2665,8 +2696,11 @@ describe('runAgentVmCli', () => {
 					upgradeZone: async () => ({}),
 				}),
 				createSecretResolver: async () => ({
-					resolve: async (ref: { ref: string }) => {
+					resolve: async (ref: SecretRef) => {
 						// Verify the 1P ref pattern
+						if (ref.source === 'config') {
+							throw new Error('Unexpected config secret.');
+						}
 						expect(ref.ref).toBe('op://agent-vm/shravan-gateway-backup/password');
 						return 'resolved-passphrase';
 					},

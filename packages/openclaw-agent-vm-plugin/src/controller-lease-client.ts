@@ -1,31 +1,15 @@
-export interface GondolinLeaseResponse {
-	readonly idleTtlMs?: number;
-	readonly leaseId: string;
-	readonly ssh: {
-		readonly host: string;
-		readonly identityPem: string;
-		readonly knownHostsLine: string;
-		readonly port: number;
-		readonly user: string;
-	};
-	readonly tcpSlot: number;
-	readonly workdir: string;
-}
-
-export interface LeasePeekResponse {
-	readonly createdAt: number;
-	readonly lastUsedAt: number;
-	readonly leaseId: string;
-	readonly profileId: string;
-	readonly scopeKey: string;
-	readonly ssh: {
-		readonly host: string;
-		readonly port: number;
-		readonly user: string;
-	};
-	readonly tcpSlot: number;
-	readonly zoneId: string;
-}
+import {
+	isToolVmLeasePeek,
+	isToolVmSshLease,
+	type ToolVmLeasePeek,
+	type ToolVmSshLease,
+} from '@agent-vm/gateway-interface';
+import type {
+	EndToolVmActiveUseRequest,
+	HeartbeatToolVmActiveUseResponse,
+	StartToolVmActiveUseRequest,
+	StartToolVmActiveUseResponse,
+} from '@agent-vm/gateway-interface';
 
 export interface OpenClawRuntimeStatusReport {
 	readonly findings: readonly {
@@ -38,18 +22,24 @@ export interface OpenClawRuntimeStatusReport {
 }
 
 export interface LeaseClient {
-	// Cached handles use keepalive; read-only runtime probes use peekLease.
-	keepLeaseAlive(leaseId: string): Promise<GondolinLeaseResponse>;
-	peekLease(leaseId: string): Promise<LeasePeekResponse>;
+	// Cached handles use renewLease; read-only runtime probes use peekLease.
+	endActiveUse(leaseId: string, useId: string, request: EndToolVmActiveUseRequest): Promise<void>;
+	heartbeatActiveUse(leaseId: string, useId: string): Promise<HeartbeatToolVmActiveUseResponse>;
+	peekLease(leaseId: string): Promise<ToolVmLeasePeek>;
 	publishOpenClawRuntimeStatus?(report: OpenClawRuntimeStatusReport): Promise<void>;
-	releaseLease(leaseId: string): Promise<void>;
+	releaseLease(leaseId: string, options?: { readonly force?: boolean }): Promise<void>;
+	renewLease(leaseId: string): Promise<ToolVmSshLease>;
 	requestLease(request: {
 		readonly agentWorkspaceDir: string;
 		readonly profileId: string;
 		readonly scopeKey: string;
 		readonly workMountDir: string;
 		readonly zoneId: string;
-	}): Promise<GondolinLeaseResponse>;
+	}): Promise<ToolVmSshLease>;
+	startActiveUse(
+		leaseId: string,
+		request: StartToolVmActiveUseRequest,
+	): Promise<StartToolVmActiveUseResponse>;
 }
 
 export type ControllerLeaseRequestErrorKind = 'client-error' | 'server-error';
@@ -80,53 +70,22 @@ function objectValue(value: unknown): object | undefined {
 	return typeof value === 'object' && value !== null ? value : undefined;
 }
 
-function isSshResponse(value: unknown): value is GondolinLeaseResponse['ssh'] {
+function isStartActiveUseResponse(value: unknown): value is StartToolVmActiveUseResponse {
 	const record = objectValue(value);
 	return (
 		record !== undefined &&
-		typeof Reflect.get(record, 'host') === 'string' &&
-		typeof Reflect.get(record, 'identityPem') === 'string' &&
-		typeof Reflect.get(record, 'knownHostsLine') === 'string' &&
-		typeof Reflect.get(record, 'port') === 'number' &&
-		typeof Reflect.get(record, 'user') === 'string'
+		typeof Reflect.get(record, 'expiresAt') === 'number' &&
+		typeof Reflect.get(record, 'heartbeatAfterMs') === 'number' &&
+		typeof Reflect.get(record, 'useId') === 'string'
 	);
 }
 
-function isLeasePeekSshResponse(value: unknown): value is LeasePeekResponse['ssh'] {
+function isHeartbeatActiveUseResponse(value: unknown): value is HeartbeatToolVmActiveUseResponse {
 	const record = objectValue(value);
 	return (
 		record !== undefined &&
-		typeof Reflect.get(record, 'host') === 'string' &&
-		typeof Reflect.get(record, 'port') === 'number' &&
-		typeof Reflect.get(record, 'user') === 'string'
-	);
-}
-
-function isGondolinLeaseResponse(value: unknown): value is GondolinLeaseResponse {
-	const record = objectValue(value);
-	return (
-		record !== undefined &&
-		(Reflect.get(record, 'idleTtlMs') === undefined ||
-			typeof Reflect.get(record, 'idleTtlMs') === 'number') &&
-		typeof Reflect.get(record, 'leaseId') === 'string' &&
-		isSshResponse(Reflect.get(record, 'ssh')) &&
-		typeof Reflect.get(record, 'tcpSlot') === 'number' &&
-		typeof Reflect.get(record, 'workdir') === 'string'
-	);
-}
-
-function isLeasePeekResponse(value: unknown): value is LeasePeekResponse {
-	const record = objectValue(value);
-	return (
-		record !== undefined &&
-		typeof Reflect.get(record, 'createdAt') === 'number' &&
-		typeof Reflect.get(record, 'lastUsedAt') === 'number' &&
-		typeof Reflect.get(record, 'leaseId') === 'string' &&
-		typeof Reflect.get(record, 'profileId') === 'string' &&
-		typeof Reflect.get(record, 'scopeKey') === 'string' &&
-		isLeasePeekSshResponse(Reflect.get(record, 'ssh')) &&
-		typeof Reflect.get(record, 'tcpSlot') === 'number' &&
-		typeof Reflect.get(record, 'zoneId') === 'string'
+		typeof Reflect.get(record, 'expiresAt') === 'number' &&
+		typeof Reflect.get(record, 'heartbeatAfterMs') === 'number'
 	);
 }
 
@@ -190,19 +149,59 @@ export function createLeaseClient(options: {
 }): LeaseClient {
 	const fetchImpl = options.fetchImpl ?? fetch;
 	const baseUrl = options.controllerUrl.replace(/\/$/u, '');
+	const renewLease = async (leaseId: string): Promise<ToolVmSshLease> => {
+		const response = await fetchImpl(`${baseUrl}/lease/${encodeURIComponent(leaseId)}/renew`, {
+			method: 'POST',
+		});
+		return await readJsonResponse(response, 'Controller lease renew API', isToolVmSshLease);
+	};
 
 	return {
-		keepLeaseAlive: async (leaseId: string): Promise<GondolinLeaseResponse> => {
-			const response = await fetchImpl(`${baseUrl}/lease/${leaseId}`);
+		endActiveUse: async (
+			leaseId: string,
+			useId: string,
+			request: EndToolVmActiveUseRequest,
+		): Promise<void> => {
+			const response = await fetchImpl(
+				`${baseUrl}/lease/${encodeURIComponent(leaseId)}/uses/${encodeURIComponent(useId)}`,
+				{
+					body: JSON.stringify(request),
+					headers: {
+						'content-type': 'application/json',
+					},
+					method: 'DELETE',
+				},
+			);
+			if (!response.ok) {
+				const errorBody = await readErrorBody(response, 'Controller active-use end API');
+				throw new ControllerLeaseRequestError({
+					bodyText: errorBody.bodyText,
+					context: 'Controller active-use end API',
+					responseBody: errorBody.responseBody,
+					status: response.status,
+				});
+			}
+		},
+		heartbeatActiveUse: async (
+			leaseId: string,
+			useId: string,
+		): Promise<HeartbeatToolVmActiveUseResponse> => {
+			const response = await fetchImpl(
+				`${baseUrl}/lease/${encodeURIComponent(leaseId)}/uses/${encodeURIComponent(useId)}/heartbeat`,
+				{
+					method: 'POST',
+				},
+			);
 			return await readJsonResponse(
 				response,
-				'Controller lease keepalive API',
-				isGondolinLeaseResponse,
+				'Controller active-use heartbeat API',
+				isHeartbeatActiveUseResponse,
 			);
 		},
-		peekLease: async (leaseId: string): Promise<LeasePeekResponse> => {
-			const response = await fetchImpl(`${baseUrl}/lease/${leaseId}/peek`);
-			return await readJsonResponse(response, 'Controller lease peek API', isLeasePeekResponse);
+		renewLease,
+		peekLease: async (leaseId: string): Promise<ToolVmLeasePeek> => {
+			const response = await fetchImpl(`${baseUrl}/lease/${encodeURIComponent(leaseId)}/peek`);
+			return await readJsonResponse(response, 'Controller lease peek API', isToolVmLeasePeek);
 		},
 		publishOpenClawRuntimeStatus: async (report): Promise<void> => {
 			const response = await fetchImpl(
@@ -225,8 +224,15 @@ export function createLeaseClient(options: {
 				});
 			}
 		},
-		releaseLease: async (leaseId: string): Promise<void> => {
-			const response = await fetchImpl(`${baseUrl}/lease/${leaseId}`, {
+		releaseLease: async (
+			leaseId: string,
+			releaseOptions: { readonly force?: boolean } = {},
+		): Promise<void> => {
+			const releaseUrl = new URL(`${baseUrl}/lease/${encodeURIComponent(leaseId)}`);
+			if (releaseOptions.force === true) {
+				releaseUrl.searchParams.set('force', 'true');
+			}
+			const response = await fetchImpl(releaseUrl.toString(), {
 				method: 'DELETE',
 			});
 			if (!response.ok) {
@@ -239,7 +245,7 @@ export function createLeaseClient(options: {
 				});
 			}
 		},
-		requestLease: async (request): Promise<GondolinLeaseResponse> => {
+		requestLease: async (request): Promise<ToolVmSshLease> => {
 			const response = await fetchImpl(`${baseUrl}/lease`, {
 				body: JSON.stringify({
 					agentWorkspaceDir: request.agentWorkspaceDir,
@@ -253,7 +259,24 @@ export function createLeaseClient(options: {
 				},
 				method: 'POST',
 			});
-			return await readJsonResponse(response, 'Controller lease API', isGondolinLeaseResponse);
+			return await readJsonResponse(response, 'Controller lease API', isToolVmSshLease);
+		},
+		startActiveUse: async (
+			leaseId: string,
+			request: StartToolVmActiveUseRequest,
+		): Promise<StartToolVmActiveUseResponse> => {
+			const response = await fetchImpl(`${baseUrl}/lease/${encodeURIComponent(leaseId)}/uses`, {
+				body: JSON.stringify(request),
+				headers: {
+					'content-type': 'application/json',
+				},
+				method: 'POST',
+			});
+			return await readJsonResponse(
+				response,
+				'Controller active-use start API',
+				isStartActiveUseResponse,
+			);
 		},
 	};
 }

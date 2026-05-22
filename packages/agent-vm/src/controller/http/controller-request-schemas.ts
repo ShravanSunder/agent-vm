@@ -1,13 +1,34 @@
+import { isToolVmActiveUseId } from '@agent-vm/gateway-interface';
 import { z } from 'zod';
 
 import { workerTaskControllerRequestSchema } from '../../config/resource-contracts/index.js';
 
 export const controllerLeaseCreateRequestSchema = z.strictObject({
 	agentWorkspaceDir: z.string().min(1),
+	idleTtlMs: z.number().int().positive().optional(),
 	profileId: z.string().min(1),
 	scopeKey: z.string().min(1),
 	workMountDir: z.string().min(1),
 	zoneId: z.string().min(1),
+});
+
+export const controllerStartActiveUseRequestSchema = z.strictObject({
+	correlation: z
+		.strictObject({
+			agentId: z.string().min(1).optional(),
+			sessionId: z.string().min(1).optional(),
+			sessionKey: z.string().min(1).optional(),
+			toolCallId: z.string().min(1).optional(),
+			toolName: z.string().min(1).optional(),
+		})
+		.optional(),
+	useId: z.string().refine((value) => isToolVmActiveUseId(value), {
+		message: 'useId must be a UUIDv7.',
+	}),
+});
+
+export const controllerEndActiveUseRequestSchema = z.strictObject({
+	outcome: z.enum(['abandoned', 'cancelled', 'completed', 'failed', 'timed-out']),
 });
 
 export const controllerOpenClawRuntimeStatusRequestSchema = z.strictObject({

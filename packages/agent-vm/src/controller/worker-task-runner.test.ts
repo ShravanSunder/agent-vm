@@ -9,6 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import {
+	createManagedExecProcessStub,
+	createManagedVmFsStub,
+} from '../testing/managed-vm-test-helpers.js';
 import type { WorkerTaskInput } from './worker-task-runner.js';
 
 const startGatewayZoneMock = vi.fn();
@@ -236,7 +240,8 @@ describe('worker-task-runner', () => {
 			close: async () => await managedVmCloseMock(),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222, user: 'root' })),
-			exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+			exec: vi.fn(() => createManagedExecProcessStub()),
+			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
 			getVmInstance: vi.fn(),
 		};

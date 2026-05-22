@@ -136,6 +136,7 @@ agent scope reuses a stable work mount for one agent identity.
 shared scope intentionally shares one work mount across participants.
 
 Tool VM lease identity follows scopeKey. TCP slots are capacity; they are not identity.
+GET lease reads are read-only. Cached Tool VM handles renew idle leases with POST renew, and active shell/file operations heartbeat per-use records so long commands are not reaped mid-run.
 
 Example:
 - shravan agent uses scope=agent and scopeKey=agent-shravan.
@@ -155,6 +156,7 @@ Example:
 				`
 Agent-vm provides VM lifecycle, storage mounts, TCP/HTTP mediation, image build, and tool VM leases.
 OpenClaw owns plugin lifecycle, agents.list, channels, and gateway behavior.
+The controller is the control plane: it issues leases and tracks active uses. Command stdout, stderr, and file bridge traffic stay on the gateway-to-Tool-VM SSH data path.
 
 The default scaffold enables Gondolin and memory-core support. It does not enable Discord.
 OpenClaw-owned openclaw.json stays strict JSON unless OpenClaw itself supports comments or agent-vm renders a strict effective config first.

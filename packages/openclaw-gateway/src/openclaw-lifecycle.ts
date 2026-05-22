@@ -223,6 +223,10 @@ type SourceAwareSecretReference =
 	| {
 			readonly source: '1password';
 			readonly ref: string;
+	  }
+	| {
+			readonly source: 'config';
+			readonly value: string;
 	  };
 
 function isSourceAwareSecretReference(value: unknown): value is SourceAwareSecretReference {
@@ -242,23 +246,50 @@ function isSourceAwareSecretReference(value: unknown): value is SourceAwareSecre
 		return 'ref' in value && typeof value.ref === 'string';
 	}
 
+	if (value.source === 'config') {
+		return 'value' in value && typeof value.value === 'string';
+	}
+
 	return false;
 }
 
 function toSecretRef(secret: SourceAwareSecretReference): SecretRef {
-	return secret.source === 'environment'
-		? {
+	switch (secret.source) {
+		case 'environment':
+			return {
 				source: 'environment',
 				ref: secret.envVar,
-			}
-		: {
+			};
+		case '1password':
+			return {
 				source: '1password',
 				ref: secret.ref,
 			};
+		case 'config':
+			return {
+				source: 'config',
+				value: secret.value,
+			};
+		default: {
+			const exhaustiveCheck: never = secret;
+			throw new Error(`Unsupported secret source: ${JSON.stringify(exhaustiveCheck)}`);
+		}
+	}
 }
 
 function describeSecretReference(secret: SourceAwareSecretReference): string {
-	return secret.source === 'environment' ? secret.envVar : secret.ref;
+	switch (secret.source) {
+		case 'environment':
+			return secret.envVar;
+		case '1password':
+			return secret.ref;
+		case 'config':
+			return 'config value';
+		default: {
+			const exhaustiveCheck: never = secret;
+			throw new Error(`Unsupported secret source: ${JSON.stringify(exhaustiveCheck)}`);
+		}
+	}
 }
 
 function buildEffectiveSecretsConfig(

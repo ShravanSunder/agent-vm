@@ -31,7 +31,7 @@ export interface GatewayAuthConfig {
 }
 
 interface GatewayAuthProfilesRef {
-	readonly source: '1password' | 'environment';
+	readonly source: '1password' | 'config' | 'environment';
 }
 
 interface OnePasswordGatewayAuthProfilesRef extends GatewayAuthProfilesRef {
@@ -42,6 +42,11 @@ interface OnePasswordGatewayAuthProfilesRef extends GatewayAuthProfilesRef {
 interface EnvironmentGatewayAuthProfilesRef extends GatewayAuthProfilesRef {
 	readonly source: 'environment';
 	readonly envVar: string;
+}
+
+interface ConfigGatewayAuthProfilesRef extends GatewayAuthProfilesRef {
+	readonly source: 'config';
+	readonly value: string;
 }
 
 export type GatewaySshSecretEnvMode = 'always' | 'explicit' | 'never';
@@ -59,6 +64,7 @@ interface GatewayZoneBaseGatewayConfig {
 	readonly stateDir: string;
 	readonly ssh: GatewaySshConfig;
 	readonly authProfilesRef?:
+		| ConfigGatewayAuthProfilesRef
 		| OnePasswordGatewayAuthProfilesRef
 		| EnvironmentGatewayAuthProfilesRef
 		| undefined;
@@ -68,7 +74,12 @@ interface OpenClawGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig 
 	readonly type: 'openclaw';
 	readonly zoneFilesDir: string;
 	readonly authProfilesByAgent?: Readonly<
-		Record<string, OnePasswordGatewayAuthProfilesRef | EnvironmentGatewayAuthProfilesRef>
+		Record<
+			string,
+			| ConfigGatewayAuthProfilesRef
+			| OnePasswordGatewayAuthProfilesRef
+			| EnvironmentGatewayAuthProfilesRef
+		>
 	>;
 	readonly rawEnvSecrets?: readonly string[];
 }
@@ -89,7 +100,15 @@ interface EnvironmentSecretSourceConfig {
 	readonly envVar: string;
 }
 
-type SecretSourceConfig = OnePasswordSecretSourceConfig | EnvironmentSecretSourceConfig;
+interface ConfigSecretSourceConfig {
+	readonly source: 'config';
+	readonly value: string;
+}
+
+type SecretSourceConfig =
+	| OnePasswordSecretSourceConfig
+	| EnvironmentSecretSourceConfig
+	| ConfigSecretSourceConfig;
 
 export type EnvInjectedGatewaySecretConfig = SecretSourceConfig & {
 	readonly audience: 'gateway';

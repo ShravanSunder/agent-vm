@@ -84,6 +84,15 @@ const environmentEnvSecretSchema = z
 	})
 	.strict();
 
+const configEnvSecretSchema = z
+	.object({
+		source: z.literal('config'),
+		value: z.string().min(1),
+		injection: z.literal('env'),
+		audience: z.literal('gateway'),
+	})
+	.strict();
+
 const onePasswordMediatedSecretSchema = z
 	.object({
 		source: z.literal('1password'),
@@ -104,11 +113,23 @@ const environmentMediatedSecretSchema = z
 	})
 	.strict();
 
+const configMediatedSecretSchema = z
+	.object({
+		source: z.literal('config'),
+		value: z.string().min(1),
+		injection: z.literal('http-mediation'),
+		audience: vmAudienceSchema,
+		hosts: z.array(z.string().min(1)).min(1),
+	})
+	.strict();
+
 const secretReferenceSchema = z.union([
 	onePasswordEnvSecretSchema,
 	environmentEnvSecretSchema,
+	configEnvSecretSchema,
 	onePasswordMediatedSecretSchema,
 	environmentMediatedSecretSchema,
+	configMediatedSecretSchema,
 ]);
 
 const runtimeAuthHintSchema = z.discriminatedUnion('kind', [
@@ -158,6 +179,12 @@ const authProfilesSecretSchema = z.discriminatedUnion('source', [
 			envVar: z.string().min(1),
 		})
 		.strict(),
+	z
+		.object({
+			source: z.literal('config'),
+			value: z.string().min(1),
+		})
+		.strict(),
 ]);
 
 const agentSandboxSeedSchema = z
@@ -188,6 +215,12 @@ const hostSecretReferenceSchema = z.discriminatedUnion('source', [
 		.object({
 			source: z.literal('environment'),
 			envVar: z.string().min(1),
+		})
+		.strict(),
+	z
+		.object({
+			source: z.literal('config'),
+			value: z.string().min(1),
 		})
 		.strict(),
 ]);
@@ -292,6 +325,12 @@ const leaseIdleTtlSchema = z
 			.int()
 			.positive()
 			.default(100 * 60 * 1000),
+		maxRequestedMs: z
+			.number()
+			.int()
+			.positive()
+			.default(24 * 60 * 60 * 1000),
+		minRequestedMs: z.number().int().positive().default(1_000),
 		byScopeKind: z.partialRecord(leaseScopeKindSchema, z.number().int().positive()).default({}),
 		byScopePrefix: z.record(z.string().min(1), z.number().int().positive()).default({}),
 	})

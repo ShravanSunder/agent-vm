@@ -11,6 +11,11 @@ export type SecretRef =
 	| {
 			readonly source: 'environment';
 			readonly ref: string;
+	  }
+	| {
+			readonly source: 'config';
+			readonly ref?: never;
+			readonly value: string;
 	  };
 
 export interface SecretResolver {

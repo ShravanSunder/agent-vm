@@ -37,17 +37,27 @@ export async function resolveControllerGithubToken(
 		return process.env.GITHUB_TOKEN ?? null;
 	}
 
-	return await secretResolver.resolve(
-		githubTokenConfig.source === 'environment'
-			? {
-					source: 'environment',
-					ref: githubTokenConfig.envVar,
-				}
-			: {
-					source: '1password',
-					ref: githubTokenConfig.ref,
-				},
-	);
+	switch (githubTokenConfig.source) {
+		case 'environment':
+			return await secretResolver.resolve({
+				source: 'environment',
+				ref: githubTokenConfig.envVar,
+			});
+		case '1password':
+			return await secretResolver.resolve({
+				source: '1password',
+				ref: githubTokenConfig.ref,
+			});
+		case 'config':
+			return await secretResolver.resolve({
+				source: 'config',
+				value: githubTokenConfig.value,
+			});
+		default: {
+			const exhaustiveCheck: never = githubTokenConfig;
+			throw new Error(`Unsupported GitHub token source: ${JSON.stringify(exhaustiveCheck)}`);
+		}
+	}
 }
 
 export function findConfiguredZone(

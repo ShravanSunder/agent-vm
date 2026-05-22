@@ -1,10 +1,14 @@
 import net from 'node:net';
+import { Readable } from 'node:stream';
 
 import {
 	MemoryProvider,
 	createHttpHooks,
+	type ExecProcess as GondolinExecProcess,
+	type ExecResult as GondolinExecResult,
 	type HttpHooks,
 	type VMOptions,
+	type VmFs as GondolinVmFs,
 	type VirtualProvider,
 } from '@earendil-works/gondolin';
 import { describe, expect, it, vi } from 'vitest';
@@ -22,10 +26,60 @@ function createTestProvider(): VirtualProvider {
 	return new MemoryProvider();
 }
 
+/* oxlint-disable typescript-eslint/no-unsafe-type-assertion, unicorn/no-thenable -- This
+   test double intentionally models Gondolin's awaitable ExecProcess shape. */
+function createFakeExecProcess(result: {
+	readonly exitCode: number;
+	readonly stderr: string;
+	readonly stdout: string;
+}): GondolinExecProcess {
+	const execResult = {
+		exitCode: result.exitCode,
+		stderr: result.stderr,
+		stdout: result.stdout,
+	} as GondolinExecResult;
+	const resultPromise = Promise.resolve(execResult);
+	return {
+		[Symbol.asyncIterator]: async function* (): AsyncIterator<string> {
+			yield result.stdout;
+		},
+		catch: resultPromise.catch.bind(resultPromise),
+		finally: resultPromise.finally.bind(resultPromise),
+		stderr: Readable.from([result.stderr]),
+		stdout: Readable.from([result.stdout]),
+		then: resultPromise.then.bind(resultPromise),
+	} as GondolinExecProcess;
+}
+/* oxlint-enable typescript-eslint/no-unsafe-type-assertion, unicorn/no-thenable */
+
+const readFakeVmFile = vi.fn(
+	async (
+		_filePath: string,
+		options?: { readonly encoding?: BufferEncoding | null },
+	): Promise<Buffer | string> => (options?.encoding ? 'file-data' : Buffer.from('file-data')),
+);
+
+function createFakeVmFs(): GondolinVmFs {
+	return {
+		access: vi.fn(async () => {}),
+		deleteFile: vi.fn(async () => {}),
+		listDir: vi.fn(async () => ['entry.txt']),
+		mkdir: vi.fn(async () => {}),
+		readFile: readFakeVmFile as unknown as GondolinVmFs['readFile'],
+		readFileStream: vi.fn(async () => Readable.from([Buffer.from('file-data')])),
+		rename: vi.fn(async () => {}),
+		stat: vi.fn(async () => {
+			throw new Error('stat not implemented in fake');
+		}),
+		writeFile: vi.fn(async () => {}),
+	};
+}
+
 function createFakeVmInstance(): ManagedVmInstance {
 	return {
+		fs: createFakeVmFs(),
 		id: 'vm-123',
-		exec: vi.fn(async () => ({ exitCode: 0, stdout: 'ok', stderr: '' })),
+		exec: vi.fn(() => createFakeExecProcess({ exitCode: 0, stdout: 'ok', stderr: '' })),
 		enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 		enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 		setIngressRoutes: vi.fn(),
@@ -130,12 +184,18 @@ describe('createManagedVm', () => {
 
 	it('translates controller options into gondolin vm options and delegates runtime methods', async () => {
 		let capturedVmOptions: VMOptions | undefined;
-		const execMock = vi.fn(async () => ({ exitCode: 0, stdout: 'ok', stderr: '' }));
+		let capturedExecCommand: string | string[] | undefined;
+		const fakeFs = createFakeVmFs();
+		const execMock = vi.fn((command: string | string[]) => {
+			capturedExecCommand = command;
+			return createFakeExecProcess({ exitCode: 0, stdout: 'ok', stderr: '' });
+		});
 		const enableSshMock = vi.fn(async () => ({ host: '127.0.0.1', port: 2222 }));
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
 		const setIngressRoutesMock = vi.fn();
 		const closeMock = vi.fn(async () => {});
 		const fakeVmInstance: ManagedVmInstance = {
+			fs: fakeFs,
 			id: 'vm-123',
 			exec: execMock,
 			enableSsh: enableSshMock,
@@ -214,11 +274,24 @@ describe('createManagedVm', () => {
 			},
 		});
 
-		expect(await managedVm.exec('echo hi')).toEqual({
-			exitCode: 0,
-			stderr: '',
-			stdout: 'ok',
+		const bufferedResult = await managedVm.exec('echo hi');
+		expect(bufferedResult.stdout).toBe('ok');
+
+		const readonlyCommand = ['/bin/echo', 'hi'] as const;
+		const streamedProcess = managedVm.exec(readonlyCommand, {
+			buffer: false,
+			stdout: 'pipe',
+			windowBytes: 32 * 1024,
 		});
+
+		expect(streamedProcess.stdout).not.toBeNull();
+		expect(managedVm.fs).toBe(fakeFs);
+		expect(execMock).toHaveBeenCalledWith(['/bin/echo', 'hi'], {
+			buffer: false,
+			stdout: 'pipe',
+			windowBytes: 32 * 1024,
+		});
+		expect(capturedExecCommand).not.toBe(readonlyCommand);
 		await managedVm.enableSsh();
 		await managedVm.enableIngress();
 		expect(managedVm.getVmInstance()).toBe(fakeVmInstance);

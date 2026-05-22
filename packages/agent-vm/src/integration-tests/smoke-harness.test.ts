@@ -8,6 +8,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { StartGatewayZoneOptions } from '../gateway/gateway-zone-support.js';
 import {
+	createManagedExecProcessStub,
+	createManagedVmFsStub,
+} from '../testing/managed-vm-test-helpers.js';
+import {
 	collectSmokeDockerImageTags,
 	disableOpenClawMcpPortalPlugin,
 	findReusableGatewayImageDirectory,
@@ -507,7 +511,8 @@ function createManagedVmStub(): ManagedVm {
 		close: async () => undefined,
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18789 }),
 		enableSsh: async () => ({ host: '127.0.0.1', port: 2222, user: 'root' }),
-		exec: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+		exec: () => createManagedExecProcessStub(),
+		fs: createManagedVmFsStub(),
 		getVmInstance: () => managedVm,
 		setIngressRoutes: () => undefined,
 	};

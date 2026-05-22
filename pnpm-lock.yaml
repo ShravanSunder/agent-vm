@@ -31,6 +31,9 @@ importers:
       tsdown:
         specifier: ^0.22.0
         version: 0.22.0(tsx@4.21.0)(typescript@6.0.3)
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -150,6 +153,9 @@ importers:
       '@agent-vm/secret-management':
         specifier: workspace:*
         version: link:../secret-management
+      uuid:
+        specifier: ^11.1.1
+        version: 11.1.1
 
   packages/gondolin-adapter:
     dependencies:
@@ -193,6 +199,9 @@ importers:
 
   packages/openclaw-agent-vm-plugin:
     dependencies:
+      '@agent-vm/gateway-interface':
+        specifier: workspace:*
+        version: link:../gateway-interface
       '@agent-vm/gondolin-adapter':
         specifier: workspace:*
         version: link:../gondolin-adapter
@@ -3358,6 +3367,10 @@ packages:
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
+  uuid@11.1.1:
+    resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
+    hasBin: true
+
   uuid@14.0.0:
     resolution: {integrity: sha512-Qo+uWgilfSmAhXCMav1uYFynlQO7fMFiMVZsQqZRMIXp0O7rR7qjkj+cPvBHLgBqi960QCoo/PH2/6ZtVqKvrg==}
     hasBin: true
@@ -5152,7 +5165,6 @@ snapshots:
       '@esbuild/win32-arm64': 0.27.7
       '@esbuild/win32-ia32': 0.27.7
       '@esbuild/win32-x64': 0.27.7
-    optional: true
 
   escalade@3.2.0: {}
 
@@ -5395,7 +5407,6 @@ snapshots:
   get-tsconfig@4.14.0:
     dependencies:
       resolve-pkg-maps: 1.0.0
-    optional: true
 
   get-tsconfig@5.0.0-beta.5:
     dependencies:
@@ -6588,7 +6599,6 @@ snapshots:
       get-tsconfig: 4.14.0
     optionalDependencies:
       fsevents: 2.3.3
-    optional: true
 
   tweetnacl@0.14.5: {}
 
@@ -6636,6 +6646,8 @@ snapshots:
     optional: true
 
   util-deprecate@1.0.2: {}
+
+  uuid@11.1.1: {}
 
   uuid@14.0.0: {}
 

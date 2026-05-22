@@ -19,6 +19,10 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createControllerApp } from '../controller/http/controller-http-routes.js';
 import type { Lease } from '../controller/leases/lease-manager.js';
 import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
+import {
+	createManagedExecProcessStub,
+	createManagedVmFsStub,
+} from '../testing/managed-vm-test-helpers.js';
 
 async function findAvailablePort(): Promise<number> {
 	return await new Promise((resolve, reject) => {
@@ -82,6 +86,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 		const lease: Lease = {
 			agentWorkspaceDir: '/home/openclaw/work',
 			createdAt: Date.now(),
+			effectiveIdleTtlMs: 30 * 60 * 1000,
 			id: 'smoke-lease-001',
 			lastUsedAt: Date.now(),
 			profileId: 'standard',
@@ -103,7 +108,8 @@ describe('live smoke: API client → controller over real HTTP', () => {
 					port: 19000,
 					user: 'sandbox',
 				})),
-				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+				exec: vi.fn(() => createManagedExecProcessStub()),
+				fs: createManagedVmFsStub(),
 				id: 'tool-vm-smoke',
 				setIngressRoutes: vi.fn(),
 				getVmInstance: vi.fn(),
@@ -123,7 +129,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 			},
 			leaseManager: {
 				createLease,
-				keepLeaseAlive: vi.fn(() => ({
+				renewLease: vi.fn(() => ({
 					kind: 'renewed' as const,
 					lastUsedAt: lease.lastUsedAt,
 					lease,

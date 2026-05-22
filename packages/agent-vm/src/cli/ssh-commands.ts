@@ -51,11 +51,18 @@ export async function resolveZoneAdminToken(options: {
 		options.dependencies,
 	);
 	const secret = adminAccess.secret;
-	return await secretResolver.resolve(
-		secret.source === 'environment'
-			? { source: 'environment', ref: secret.envVar }
-			: { source: '1password', ref: secret.ref },
-	);
+	switch (secret.source) {
+		case 'environment':
+			return await secretResolver.resolve({ source: 'environment', ref: secret.envVar });
+		case '1password':
+			return await secretResolver.resolve({ source: '1password', ref: secret.ref });
+		case 'config':
+			return await secretResolver.resolve({ source: 'config', value: secret.value });
+		default: {
+			const exhaustiveCheck: never = secret;
+			throw new Error(`Unsupported zone admin secret source: ${JSON.stringify(exhaustiveCheck)}`);
+		}
+	}
 }
 
 export async function runSshCommand(options: RunSshCommandOptions): Promise<void> {

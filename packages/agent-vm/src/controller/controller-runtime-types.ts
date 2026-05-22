@@ -52,6 +52,7 @@ export interface ControllerRuntimeDependencies {
 		workerIngress: { readonly host: string; readonly port: number },
 	) => void | Promise<void>;
 	readonly onWorkerTaskFinished?: (zoneId: string, taskId: string) => void | Promise<void>;
+	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly setIntervalImpl?: (
 		callback: () => void | Promise<void>,
 		delayMs: number,

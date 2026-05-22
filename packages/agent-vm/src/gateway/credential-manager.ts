@@ -84,6 +84,12 @@ export async function resolveZoneSecrets(
 			continue;
 		}
 		switch (secretConfig.source) {
+			case 'config':
+				secretRefs[secretName] = {
+					source: 'config',
+					value: secretConfig.value,
+				};
+				break;
 			case 'environment':
 				if (!secretConfig.envVar) {
 					throw new Error(

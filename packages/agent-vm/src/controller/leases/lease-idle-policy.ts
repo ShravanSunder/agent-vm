@@ -11,6 +11,8 @@ export type LeaseScopeKind = (typeof leaseScopeKinds)[number];
 
 export interface LeaseIdleTtlPolicy {
 	readonly defaultMs: number;
+	readonly maxRequestedMs: number;
+	readonly minRequestedMs: number;
 	readonly byScopeKind: Partial<Readonly<Record<LeaseScopeKind, number>>>;
 	readonly byScopePrefix: Readonly<Record<string, number>>;
 }

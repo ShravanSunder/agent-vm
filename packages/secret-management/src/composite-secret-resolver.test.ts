@@ -14,6 +14,22 @@ describe('createCompositeSecretResolver', () => {
 		);
 	});
 
+	it('resolves config secrets from inline values', async () => {
+		const resolver = createCompositeSecretResolver(null, {});
+
+		await expect(resolver.resolve({ source: 'config', value: 'inline-token' })).resolves.toBe(
+			'inline-token',
+		);
+	});
+
+	it('rejects empty config secrets', async () => {
+		const resolver = createCompositeSecretResolver(null, {});
+
+		await expect(resolver.resolve({ source: 'config', value: '   ' })).rejects.toThrow(
+			'Config secret value is empty.',
+		);
+	});
+
 	it('routes onepassword secrets to the wrapped resolver', async () => {
 		const resolveOnePasswordSecret = vi.fn(async (ref) => `resolved:${ref.ref}`);
 		const onePasswordResolver: SecretResolver = {
@@ -72,11 +88,13 @@ describe('createCompositeSecretResolver', () => {
 			resolver.resolveAll({
 				OPENAI_API_KEY: { source: '1password', ref: 'op://vault/openai/token' },
 				GITHUB_TOKEN: { source: 'environment', ref: 'GITHUB_TOKEN' },
+				LINEAR_API_KEY: { source: 'config', value: 'linear-token' },
 				ANTHROPIC_API_KEY: { source: '1password', ref: 'op://vault/anthropic/token' },
 			}),
 		).resolves.toEqual({
 			OPENAI_API_KEY: 'batch:op://vault/openai/token',
 			GITHUB_TOKEN: 'gh-token',
+			LINEAR_API_KEY: 'linear-token',
 			ANTHROPIC_API_KEY: 'batch:op://vault/anthropic/token',
 		});
 		expect(resolveOnePasswordSecret).not.toHaveBeenCalled();
@@ -98,6 +116,25 @@ describe('createCompositeSecretResolver', () => {
 				OPENAI_API_KEY: { source: '1password', ref: 'op://vault/openai/token' },
 			}),
 		).rejects.toThrow('Failed to resolve 1 secret(s).');
+	});
+
+	it('adds config secret context when resolveAll rejects empty inline values', async () => {
+		const resolver = createCompositeSecretResolver(null, {});
+
+		try {
+			await resolver.resolveAll({
+				INLINE_TOKEN: { source: 'config', value: '   ' },
+			});
+			throw new Error('Expected resolveAll to throw an aggregate failure.');
+		} catch (error) {
+			expect(error).toBeInstanceOf(AggregateError);
+			if (!(error instanceof AggregateError)) {
+				return;
+			}
+			expect(error.errors.map((failure: unknown) => String(failure))).toEqual([
+				"Error: Failed to resolve secret 'INLINE_TOKEN' from '<config>': Config secret value is empty.",
+			]);
+		}
 	});
 
 	it('aggregates environment and onepassword batch failures', async () => {

@@ -10,10 +10,14 @@ import {
 	type CreateHttpHooksResult,
 	type EnableIngressOptions,
 	type EnableSshOptions,
+	type ExecOptions as GondolinExecOptions,
+	type ExecProcess as GondolinExecProcess,
+	type ExecResult as GondolinExecResult,
 	type IngressRoute as GondolinIngressRoute,
 	type ShadowPredicate,
 	type ShadowProviderOptions,
 	type VMOptions,
+	type VmFs as GondolinVmFs,
 	type VirtualProvider,
 } from '@earendil-works/gondolin';
 
@@ -26,11 +30,11 @@ import {
 export const SYNTHETIC_DNS_IPV4_BENCHMARK = '198.18.0.1';
 export const SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK = '::ffff:198.18.0.1';
 
-export interface ExecResult {
-	readonly exitCode: number;
-	readonly stdout: string;
-	readonly stderr: string;
-}
+export type ManagedExecInput = string | readonly string[];
+export type ManagedExecOptions = GondolinExecOptions;
+export type ManagedExecProcess = GondolinExecProcess;
+export type ManagedExecResult = GondolinExecResult;
+export type ManagedVmFs = GondolinVmFs;
 
 export type IngressRoute = GondolinIngressRoute;
 
@@ -48,12 +52,9 @@ export interface IngressAccess {
 }
 
 export interface ManagedVmInstance {
+	readonly fs: ManagedVmFs;
 	readonly id: string;
-	exec(command: string): Promise<{
-		readonly exitCode: number;
-		readonly stdout?: string;
-		readonly stderr?: string;
-	}>;
+	exec(command: string | string[], options?: ManagedExecOptions): ManagedExecProcess;
 	enableSsh(options?: EnableSshOptions): Promise<SshAccess>;
 	enableIngress(options?: EnableIngressOptions): Promise<IngressAccess>;
 	setIngressRoutes(routes: readonly IngressRoute[]): void;
@@ -103,8 +104,9 @@ export interface CreateVmOptions {
 }
 
 export interface ManagedVm {
+	readonly fs: ManagedVmFs;
 	readonly id: string;
-	exec(command: string): Promise<ExecResult>;
+	exec(command: ManagedExecInput, options?: ManagedExecOptions): ManagedExecProcess;
 	enableSsh(options?: EnableSshOptions): Promise<SshAccess>;
 	enableIngress(options?: EnableIngressOptions): Promise<IngressAccess>;
 	getVmInstance(): ManagedVmInstance;
@@ -328,14 +330,11 @@ export async function createManagedVm(
 	}
 
 	return {
+		fs: vmInstance.fs,
 		id: vmInstance.id,
-		async exec(command: string): Promise<ExecResult> {
-			const executionResult = await vmInstance.exec(command);
-			return {
-				exitCode: executionResult.exitCode,
-				stdout: executionResult.stdout ?? '',
-				stderr: executionResult.stderr ?? '',
-			};
+		exec(command: ManagedExecInput, execOptions?: ManagedExecOptions): ManagedExecProcess {
+			const normalizedCommand = typeof command === 'string' ? command : [...command];
+			return vmInstance.exec(normalizedCommand, execOptions);
 		},
 		async enableSsh(sshOptions?: EnableSshOptions): Promise<SshAccess> {
 			return await vmInstance.enableSsh(sshOptions);

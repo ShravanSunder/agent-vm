@@ -628,6 +628,73 @@ describe('loadSystemConfig', () => {
 		expect(zone.gateway.zoneGit?.remote.branch).toBe('main');
 	});
 
+	test('loads config-backed zone secrets', async () => {
+		const input = createValidSystemConfigInput();
+		configureFirstZoneAsWorker(input);
+		input.zones[0].secrets = {
+			GITHUB_TOKEN: {
+				source: 'config',
+				value: 'gh-inline-token',
+				injection: 'http-mediation',
+				audience: 'gateway',
+				hosts: ['api.github.com'],
+			},
+		};
+		input.zones[0].egressHosts = [{ host: 'api.github.com', audience: 'gateway' }];
+		const configPath = await writeSystemConfigForTest('agent-vm-system-config-secret-', input);
+
+		const config = await loadSystemConfig(configPath);
+
+		expect(config.zones[0]?.secrets.GITHUB_TOKEN).toEqual({
+			source: 'config',
+			value: 'gh-inline-token',
+			injection: 'http-mediation',
+			audience: 'gateway',
+			hosts: ['api.github.com'],
+		});
+	});
+
+	test('rejects config-backed zone secrets without a value', async () => {
+		const input = createValidSystemConfigInput();
+		configureFirstZoneAsWorker(input);
+		input.zones[0].secrets = {
+			GITHUB_TOKEN: {
+				source: 'config',
+				injection: 'http-mediation',
+				audience: 'gateway',
+				hosts: ['api.github.com'],
+			},
+		};
+		input.zones[0].egressHosts = [{ host: 'api.github.com', audience: 'gateway' }];
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-secret-missing-value-',
+			input,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/value/u);
+	});
+
+	test('rejects config-backed zone secrets with an empty value', async () => {
+		const input = createValidSystemConfigInput();
+		configureFirstZoneAsWorker(input);
+		input.zones[0].secrets = {
+			GITHUB_TOKEN: {
+				source: 'config',
+				value: '',
+				injection: 'http-mediation',
+				audience: 'gateway',
+				hosts: ['api.github.com'],
+			},
+		};
+		input.zones[0].egressHosts = [{ host: 'api.github.com', audience: 'gateway' }];
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-secret-empty-value-',
+			input,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/value/u);
+	});
+
 	test('rejects unsafe OpenClaw zone Git branch names', async () => {
 		const input = createValidSystemConfigInput();
 		input.zones[0].gateway.zoneGit = {

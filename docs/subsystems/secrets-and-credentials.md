@@ -15,6 +15,7 @@ Two discriminated unions drive the entire pipeline:
 SecretRef (@agent-vm/secret-management)
   | { source: '1password'; ref: string }     -- op:// URI
   | { source: 'environment'; ref: string }    -- process.env key
+  | { source: 'config'; value: string }       -- inline config value
 
 MediatedSecretSpec (@agent-vm/secret-management)
   { hosts: readonly string[]; value: string } -- resolved value bound to hosts
@@ -32,6 +33,7 @@ resolved plaintext value together with the hosts it should be injected into.
 | 1Password SDK | `@1password/sdk` `createClient` | Primary path for `source: '1password'` refs |
 | op-cli fallback | `op read <ref>` subprocess | Automatic fallback when SDK fails (per-secret) |
 | Environment variable | `process.env[key]` | `source: 'environment'` refs |
+| Config value | `system.json` inline value | `source: 'config'` refs for local/test-only plaintext config |
 | macOS Keychain | `security find-generic-password` | Token storage only (service account token) |
 
 The SDK is preferred because it resolves secrets in-process without spawning
@@ -321,9 +323,9 @@ OpenClaw admin commands source the gateway token in a subshell wrapper.
 
 | File | Package | Responsibility |
 |------|---------|---------------|
-| `secret-resolver.ts` | gondolin-adapter | Token source resolution, 1Password SDK/CLI resolver, fallback logic |
-| `types.ts` | gondolin-adapter | `SecretRef` and `SecretSpec` type definitions |
-| `composite-secret-resolver.ts` | agent-vm | Dispatches by source discriminant; exhaustive switch |
+| `onepassword-secret-resolver.ts` | secrets | Token source resolution, 1Password SDK/CLI resolver, fallback logic |
+| `contracts.ts` | secrets | `SecretRef`, `SecretResolver`, and `MediatedSecretSpec` type definitions |
+| `composite-secret-resolver.ts` | secrets | Dispatches by source discriminant; exhaustive switch |
 | `controller-runtime-support.ts` | agent-vm | Wires token source -> resolver -> composite; resolves githubToken |
 | `credential-manager.ts` | agent-vm | Maps zone config entries to SecretRefs; resolves per-zone secrets |
 | `split-resolved-gateway-secrets.ts` | gateway-interface | Categorizes resolved secrets into env vs mediated |

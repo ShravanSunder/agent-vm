@@ -143,7 +143,11 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
   Response: { leaseId, ssh: { host, port: 19000, user, identityFile } }
        |
        v
-  OpenClaw uses SSH to execute code in tool VM
+  Gateway uses SSH directly to execute code in tool VM
+       |
+       |-- POST /lease/:leaseId/uses before command or file-bridge script
+       |-- POST /lease/:leaseId/uses/:useId/heartbeat while it runs
+       |-- DELETE /lease/:leaseId/uses/:useId when it finishes
        |
   v  (scope-specific idle TTL; default 100 minutes)
   Idle reaper: releaseLease()
@@ -160,6 +164,22 @@ a caller conflict, not as a new tool VM. Before reuse, the controller probes the
 VM; dead leases are evicted and replaced. This means a user's tool VM persists
 across multiple tool calls within the same conversation without silently
 crossing work mount or profile boundaries.
+
+Cached handles renew the idle lease with `POST /lease/:leaseId/renew`. `GET`
+lease routes are read-only; they do not update `lastUsedAt`. In-flight commands
+and file-bridge operations are tracked separately as active uses, so a
+long-running SSH command keeps the Tool VM protected from idle reap without
+making the controller a stdout/stderr data proxy. If a plugin misses its final
+cleanup callback, plugin heartbeats stop after a finite safety cap (12 hours by
+default); the controller then marks the use stale after the heartbeat window and
+the normal idle reaper can release the lease later.
+
+The shared agent-vm lease type exposes only an SSH capability: lease id,
+workdir, TCP slot, and endpoint/key material. The OpenClaw filesystem bridge is
+adapter behavior inside `@agent-vm/openclaw-agent-vm-plugin`; it translates
+OpenClaw's sandbox file API into remote shell scripts over that SSH lease. The
+controller does not expose a generic filesystem RPC for Tool VMs and does not
+proxy command stdout/stderr.
 
 For `scopeKey` values shaped as `agent:<agentId>`, the controller first checks
 the zone's `agentToolVmProfiles[agentId]` mapping. If no agent-specific mapping
@@ -247,8 +267,10 @@ The `openclaw-agent-vm-plugin` package bridges OpenClaw's sandbox system to Gond
        |
        | 1. Request lease from controller
        | 2. Get SSH access to tool VM
-       | 3. Provide file bridge (read/write via SSH)
-       | 4. Provide shell execution (commands via SSH)
+       | 3. Start active-use records for shell and file-bridge operations
+       | 4. Provide file bridge (read/write via SSH)
+       | 5. Provide shell execution (commands via SSH)
+       | 6. End active-use records on finalize/command completion
        v
   Tool VM: runs agent-generated code safely
 ```
@@ -256,6 +278,10 @@ The `openclaw-agent-vm-plugin` package bridges OpenClaw's sandbox system to Gond
 The plugin provides:
 - **File bridge**: `mkdirp`, `readFile`, `writeFile`, `stat`, `remove`, `rename` — all via SSH into the tool VM
 - **Shell execution**: run arbitrary commands in the tool VM
+- **Active-use tracking**: every shell command and file-bridge script opens a
+  controller active-use record and heartbeats it while the SSH operation is
+  pending, so the controller can reap stale leases without proxying command
+  output.
 - **Work mount access**: tool VMs use `/work` for lease-local execution.
   Lease requests provide `workMountDir` as a concrete OpenClaw gateway child
   path under `/home/openclaw/.openclaw/state/sandboxes` or `/zone`; the roots

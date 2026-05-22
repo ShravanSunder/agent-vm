@@ -11,6 +11,10 @@ import type { LoadedSystemConfig } from '../config/system-config.js';
 import { createSecretResolverFromSystemConfig } from '../controller/controller-runtime-support.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import {
+	createManagedExecProcessStub,
+	createManagedVmFsStub,
+} from '../testing/managed-vm-test-helpers.js';
 
 type FakeManagedVmInstance = ManagedVmInstance & {
 	readonly server: {
@@ -25,7 +29,7 @@ type FakeManagedVmInstance = ManagedVmInstance & {
 function createFakeManagedVmInstance(): FakeManagedVmInstance {
 	return {
 		close: async () => {},
-		exec: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+		exec: () => createManagedExecProcessStub(),
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 		enableSsh: async () => ({
 			command: 'ssh fake',
@@ -34,6 +38,7 @@ function createFakeManagedVmInstance(): FakeManagedVmInstance {
 			privateKeyPath: '/tmp/fake-key',
 			user: 'root',
 		}),
+		fs: createManagedVmFsStub(),
 		id: 'gateway-secret-resolution-smoke-instance',
 		server: {
 			controller: {
@@ -59,11 +64,8 @@ function createFakeManagedVm(): ManagedVm {
 			privateKeyPath: '/tmp/fake-key',
 			user: 'root',
 		}),
-		exec: async () => ({
-			exitCode: 0,
-			stderr: '',
-			stdout: '',
-		}),
+		exec: () => createManagedExecProcessStub(),
+		fs: createManagedVmFsStub(),
 		getVmInstance: () => fakeVmInstance,
 		setIngressRoutes: () => {},
 	};

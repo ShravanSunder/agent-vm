@@ -5,6 +5,9 @@ import { createClient, type ResolveAllResponse, type ResolveReferenceError } fro
 
 import type { SecretRef, SecretResolver } from './contracts.js';
 
+type ConfigSecretRef = Extract<SecretRef, { readonly source: 'config' }>;
+type OnePasswordSecretRef = Extract<SecretRef, { readonly source: '1password' }>;
+
 export interface SecretResolverClient {
 	readonly secrets: {
 		resolve(secretReference: string): Promise<string>;
@@ -269,6 +272,64 @@ export interface CreateSecretResolverDependencies {
 	readonly integrationVersion?: string;
 }
 
+function resolveConfigSecretValue(ref: ConfigSecretRef): string {
+	if (ref.value.trim().length === 0) {
+		throw new Error('Config secret value is empty.');
+	}
+	return ref.value;
+}
+
+function createCompositeOnlySecretSourceError(
+	source: Exclude<SecretRef['source'], '1password' | 'config'>,
+): Error {
+	return new Error(
+		`Secret source '${source}' must be resolved by the composite resolver before reaching the 1Password resolver.`,
+	);
+}
+
+interface SplitSecretRefs {
+	readonly onePasswordRefs: Record<string, OnePasswordSecretRef>;
+	readonly resolvedSecrets: Record<string, string>;
+}
+
+function splitSecretRefs(refs: Record<string, SecretRef>): SplitSecretRefs {
+	const onePasswordRefs: Record<string, OnePasswordSecretRef> = {};
+	const resolvedSecrets: Record<string, string> = {};
+
+	for (const [secretName, secretRef] of Object.entries(refs)) {
+		switch (secretRef.source) {
+			case '1password':
+				onePasswordRefs[secretName] = secretRef;
+				break;
+			case 'config':
+				resolvedSecrets[secretName] = resolveConfigSecretValue(secretRef);
+				break;
+			case 'environment':
+				throw createCompositeOnlySecretSourceError(secretRef.source);
+			default: {
+				const exhaustiveCheck: never = secretRef;
+				throw new Error(`Unsupported secret source: ${JSON.stringify(exhaustiveCheck)}`);
+			}
+		}
+	}
+
+	return { onePasswordRefs, resolvedSecrets };
+}
+
+function hasOnePasswordRefs(refs: Record<string, OnePasswordSecretRef>): boolean {
+	return Object.keys(refs).length > 0;
+}
+
+function mergeResolvedSecrets(
+	resolvedSecrets: Record<string, string>,
+	onePasswordSecrets: Record<string, string>,
+): Record<string, string> {
+	return {
+		...resolvedSecrets,
+		...onePasswordSecrets,
+	};
+}
+
 async function resolveSecretWithOpCli(
 	serviceAccountToken: string,
 	secretReference: string,
@@ -360,7 +421,7 @@ function assertOpInjectTemplateSafeReference(entry: OpInjectEntry): void {
 
 async function resolveAllSecretsWithOpCli(
 	serviceAccountToken: string,
-	refs: Record<string, SecretRef>,
+	refs: Record<string, OnePasswordSecretRef>,
 	exec: (
 		command: string,
 		args: readonly string[],
@@ -445,7 +506,7 @@ function createFallbackFailureError(options: {
 interface OpInjectEntry {
 	readonly markerId: string;
 	readonly secretName: string;
-	readonly secretRef: SecretRef;
+	readonly secretRef: OnePasswordSecretRef;
 }
 
 function opInjectStartMarker(markerId: string): string {
@@ -456,7 +517,9 @@ function opInjectEndMarker(markerId: string): string {
 	return `agent-vm-op-inject-end:${markerId}`;
 }
 
-function createOpInjectEntries(refs: Record<string, SecretRef>): readonly OpInjectEntry[] {
+function createOpInjectEntries(
+	refs: Record<string, OnePasswordSecretRef>,
+): readonly OpInjectEntry[] {
 	return Object.entries(refs).map(([secretName, secretRef]) => ({
 		markerId: randomUUID(),
 		secretName,
@@ -543,7 +606,7 @@ function mapOpInjectOutput(
 
 async function resolveAllSecretsWithOpInject(
 	serviceAccountToken: string,
-	refs: Record<string, SecretRef>,
+	refs: Record<string, OnePasswordSecretRef>,
 	exec: (
 		command: string,
 		args: readonly string[],
@@ -565,7 +628,7 @@ async function resolveAllSecretsWithOpInject(
 
 async function resolveAllSecretsWithSerialOpReads(
 	serviceAccountToken: string,
-	refs: Record<string, SecretRef>,
+	refs: Record<string, OnePasswordSecretRef>,
 	exec: (
 		command: string,
 		args: readonly string[],
@@ -635,7 +698,7 @@ function readSdkBatchSecret(options: {
 }
 
 function mapSdkResolveAllResponse(
-	refs: Record<string, SecretRef>,
+	refs: Record<string, OnePasswordSecretRef>,
 	response: ResolveAllResponse,
 ): Record<string, string> {
 	return Object.fromEntries(
@@ -666,6 +729,18 @@ export async function createSecretResolver(
 
 		return {
 			resolve: async (ref: SecretRef): Promise<string> => {
+				switch (ref.source) {
+					case 'config':
+						return resolveConfigSecretValue(ref);
+					case 'environment':
+						throw createCompositeOnlySecretSourceError(ref.source);
+					case '1password':
+						break;
+					default: {
+						const exhaustiveCheck: never = ref;
+						throw new Error(`Unsupported secret source: ${JSON.stringify(exhaustiveCheck)}`);
+					}
+				}
 				try {
 					return await client.secrets.resolve(ref.ref);
 				} catch (error) {
@@ -682,15 +757,29 @@ export async function createSecretResolver(
 				}
 			},
 			resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> => {
+				const splitRefs = splitSecretRefs(refs);
+				if (!hasOnePasswordRefs(splitRefs.onePasswordRefs)) {
+					return splitRefs.resolvedSecrets;
+				}
 				try {
 					const response = await client.secrets.resolveAll(
-						Object.values(refs).map((secretRef) => secretRef.ref),
+						Object.values(splitRefs.onePasswordRefs).map((secretRef) => secretRef.ref),
 					);
-					return mapSdkResolveAllResponse(refs, response);
+					return mergeResolvedSecrets(
+						splitRefs.resolvedSecrets,
+						mapSdkResolveAllResponse(splitRefs.onePasswordRefs, response),
+					);
 				} catch (error) {
 					const sdkResolveAllError = createFallbackStageError('1Password SDK resolveAll', error);
 					try {
-						return await resolveAllSecretsWithOpCli(options.serviceAccountToken, refs, exec);
+						return mergeResolvedSecrets(
+							splitRefs.resolvedSecrets,
+							await resolveAllSecretsWithOpCli(
+								options.serviceAccountToken,
+								splitRefs.onePasswordRefs,
+								exec,
+							),
+						);
 					} catch (fallbackError) {
 						throw createFallbackFailureError({
 							fallbackError,
@@ -705,6 +794,20 @@ export async function createSecretResolver(
 		const sdkClientCreationError = createFallbackStageError('1Password SDK client creation', error);
 		return {
 			resolve: async (ref: SecretRef): Promise<string> => {
+				switch (ref.source) {
+					case 'config':
+						return resolveConfigSecretValue(ref);
+					case 'environment':
+						throw createCompositeOnlySecretSourceError(ref.source);
+					case '1password':
+						break;
+					default: {
+						const exhaustiveCheck: never = ref;
+						throw new Error(`Unsupported secret source: ${JSON.stringify(exhaustiveCheck)}`, {
+							cause: error,
+						});
+					}
+				}
 				try {
 					return await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec);
 				} catch (fallbackError) {
@@ -716,8 +819,19 @@ export async function createSecretResolver(
 				}
 			},
 			resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> => {
+				const splitRefs = splitSecretRefs(refs);
+				if (!hasOnePasswordRefs(splitRefs.onePasswordRefs)) {
+					return splitRefs.resolvedSecrets;
+				}
 				try {
-					return await resolveAllSecretsWithOpCli(options.serviceAccountToken, refs, exec);
+					return mergeResolvedSecrets(
+						splitRefs.resolvedSecrets,
+						await resolveAllSecretsWithOpCli(
+							options.serviceAccountToken,
+							splitRefs.onePasswordRefs,
+							exec,
+						),
+					);
 				} catch (fallbackError) {
 					throw createFallbackFailureError({
 						fallbackError,
@@ -739,9 +853,33 @@ export async function createOpCliSecretResolver(
 	const exec = dependencies.execFileAsync ?? execFileAsync;
 
 	return {
-		resolve: async (ref: SecretRef): Promise<string> =>
-			await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec),
-		resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> =>
-			await resolveAllSecretsWithOpCli(options.serviceAccountToken, refs, exec),
+		resolve: async (ref: SecretRef): Promise<string> => {
+			switch (ref.source) {
+				case 'config':
+					return resolveConfigSecretValue(ref);
+				case 'environment':
+					throw createCompositeOnlySecretSourceError(ref.source);
+				case '1password':
+					return await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec);
+				default: {
+					const exhaustiveCheck: never = ref;
+					throw new Error(`Unsupported secret source: ${JSON.stringify(exhaustiveCheck)}`);
+				}
+			}
+		},
+		resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> => {
+			const splitRefs = splitSecretRefs(refs);
+			if (!hasOnePasswordRefs(splitRefs.onePasswordRefs)) {
+				return splitRefs.resolvedSecrets;
+			}
+			return mergeResolvedSecrets(
+				splitRefs.resolvedSecrets,
+				await resolveAllSecretsWithOpCli(
+					options.serviceAccountToken,
+					splitRefs.onePasswordRefs,
+					exec,
+				),
+			);
+		},
 	};
 }

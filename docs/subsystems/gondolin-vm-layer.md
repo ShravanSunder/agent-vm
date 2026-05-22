@@ -32,7 +32,11 @@ Gondolin (`@earendil-works/gondolin`) is the external SDK that runs QEMU micro-V
   ManagedVm
   |
   |-- id: string                         Unique VM identifier
-  |-- exec(command) -> ExecResult        Run a shell command; returns exitCode, stdout, stderr
+  |-- exec(command, options?)            Run via Gondolin ExecProcess:
+  |                                      awaitable ExecResult and stream-capable
+  |-- fs                                 Gondolin VmFs: access, mkdir, listDir, stat,
+  |                                      rename, buffered and streaming read/write,
+  |                                      delete
   |-- enableSsh(options?) -> SshAccess   Open SSH tunnel; returns host, port, user, identityFile
   |-- enableIngress(options?) -> IngressAccess
   |                                      Open inbound HTTP route; returns host, port
@@ -42,7 +46,23 @@ Gondolin (`@earendil-works/gondolin`) is the external SDK that runs QEMU micro-V
   |-- close()                            Shut down the VM and release all resources
 ```
 
-`ExecResult` normalizes the SDK response: `stdout` and `stderr` default to `''` instead of `undefined`. `SshAccess` includes `host`, `port`, and optional `user`, `command`, `identityFile`. `IngressRoute` maps a URL prefix to a guest port with optional prefix stripping.
+`exec()` intentionally preserves Gondolin's native shape: string commands run
+through a login shell, array commands execute a specific binary, and options
+such as `stdout: 'pipe'`, `stderr: 'pipe'`, `stdin`, `pty`, `signal`,
+`windowBytes`, and `buffer: false` flow through to the SDK. Awaiting the return
+value yields Gondolin's `ExecResult`; when stdout/stderr are piped, callers can
+stream the process output with Gondolin's backpressure window.
+
+`fs` is the native Gondolin filesystem surface, not a separate agent-vm RPC
+protocol. It supports direct file operations and streaming reads/writes. For
+VFS-mounted paths, those operations hit the host-side VFS provider. For guest
+rootfs paths, Gondolin may wait for exec idle before serving file RPC, so
+long-running command artifacts should be written under VFS mounts rather than
+guest rootfs.
+
+`SshAccess` includes `host`, `port`, and optional `user`, `command`,
+`identityFile`. `IngressRoute` maps a URL prefix to a guest port with optional
+prefix stripping.
 
 ---
 
@@ -172,6 +192,30 @@ Discord media SSRF resolver and does not apply to raw mapped TCP.
 
 Worker VMs only map the controller endpoint. OpenClaw Gateway VMs map the controller plus all tool VM slots from the TCP pool.
 
+## VM Capability Transports
+
+`gateway-interface` defines the small shared lease vocabulary for VM
+capabilities: `VmCapabilityLease<TTransport>`, reusable SSH endpoint types, and
+the current `ToolVmSshLease` specialization.
+
+Only `ssh-sandbox` is implemented today. It means VM-to-VM SSH over `tcpHosts`:
+the controller creates or reuses the Tool VM, calls `enableSsh()`, returns an
+SSH capability to the OpenClaw gateway, and then leaves command I/O on the
+gateway-to-Tool-VM SSH data path. The controller is the control plane, not a
+command/file proxy.
+
+`gondolin-rpc` and `ingress-service` are reserved names for future capability
+work. `gondolin-rpc` should mean controller-owned execution through `ManagedVm`
+using native `vm.exec()` and `vm.fs`, which is the preferred shape for typed,
+controlled workloads such as credentialed CLI execution. `ingress-service`
+should mean a warm HTTP service inside a VM exposed through Gondolin ingress.
+Neither is part of the current Tool VM SSH path.
+
+OpenClaw's filesystem bridge remains plugin-owned. It is an OpenClaw
+remote-shell filesystem protocol implemented over SSH; it is not a generic
+Tool VM filesystem API. Controlled non-OpenClaw workloads should use Gondolin
+`vm.fs` directly once they own the `ManagedVm` handle.
+
 ---
 
 ## Image Build Pipeline
@@ -229,11 +273,11 @@ The `gondolin-adapter` package (`packages/gondolin-adapter/src/index.ts`) re-exp
 | `createManagedVm` | `vm-adapter.ts` | Boot a VM and return a `ManagedVm` handle |
 | `ManagedVm`, `ManagedVmInstance` | `vm-adapter.ts` | VM handle interfaces |
 | `CreateVmOptions`, `VfsMountSpec` | `vm-adapter.ts` | VM configuration types |
-| `ExecResult`, `SshAccess`, `IngressAccess`, `IngressRoute` | `vm-adapter.ts` | Result types |
+| `ManagedExecResult`, `SshAccess`, `IngressAccess`, `IngressRoute` | `vm-adapter.ts` | Result types |
 | `SecretResolver`, `createSecretResolver`, `createOpCliSecretResolver` | `secret-resolver.ts` | Resolve `SecretRef` values from 1Password SDK or `op` CLI |
 | `resolveServiceAccountToken`, `TokenSource` | `secret-resolver.ts` | Obtain 1Password service account token from op-cli, env, or macOS Keychain |
 | `SecretSpec` | `types.ts` | `{ hosts, value }` -- resolved secret with host binding |
-| `SecretRef` | `types.ts` | Discriminated union: `{ source: '1password', ref }` or `{ source: 'environment', ref }` |
+| `SecretRef` | `types.ts` | Discriminated union: `{ source: '1password', ref }`, `{ source: 'environment', ref }`, or `{ source: 'config', value }` |
 | `writeFileAtomically` | `write-file-atomically.ts` | Write-then-rename for crash-safe file updates |
 | `buildImage`, `computeBuildFingerprint` | `build-pipeline.ts` | Fingerprint-cached image builds |
 | `BuildConfig`, `BuildImageOptions`, `BuildImageResult` | `build-pipeline.ts` | Build configuration and result types |

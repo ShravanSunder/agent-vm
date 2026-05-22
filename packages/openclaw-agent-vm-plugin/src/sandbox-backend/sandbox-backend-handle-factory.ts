@@ -1,15 +1,26 @@
 import {
+	createToolVmActiveUseHandle,
+	type ToolVmActiveUseHandle,
+	type ToolVmActiveUseOutcome,
+	type ToolVmActiveUseCorrelation,
+	type StartToolVmActiveUseRequest,
+	type StartToolVmActiveUseResponse,
+	type HeartbeatToolVmActiveUseResponse,
+	type EndToolVmActiveUseRequest,
+	isToolVmSshLease,
+} from '@agent-vm/gateway-interface';
+
+import {
 	ControllerLeaseRequestError,
 	createLeaseClient,
-	type GondolinLeaseResponse,
+	type LeaseClient,
 	type OpenClawRuntimeStatusReport,
 } from '../controller-lease-client.js';
 import {
 	type CachedScopeEntry,
 	type CreateBackendDependencies,
-	type FsBridgeLeaseContext,
-	type GondolinSandboxBackendHandle,
-	isGondolinLeaseResponse,
+	type OpenClawFsBridgeLeaseContext,
+	type OpenClawSandboxBackendHandle,
 } from './sandbox-backend-contract.js';
 import { buildShellScriptWithArgs } from './sandbox-shell-script.js';
 
@@ -41,27 +52,46 @@ function shouldRefreshCachedLease(error: unknown): boolean {
 	return error instanceof ControllerLeaseRequestError && error.status === 404;
 }
 
-function hasDisposeFunction(
-	value: unknown,
-): value is { readonly dispose: () => void | Promise<void> } {
+function isCleanupNotFound(error: unknown): boolean {
+	return error instanceof ControllerLeaseRequestError && error.status === 404;
+}
+
+interface DisposableFinalizeToken {
+	dispose(): Promise<void>;
+}
+
+interface ActiveUseFinalizeToken {
+	readonly activeUseHandle: ToolVmActiveUseHandle;
+	readonly innerToken?: unknown;
+}
+
+function isDisposableFinalizeToken(value: unknown): value is DisposableFinalizeToken {
 	return (
 		typeof value === 'object' &&
 		value !== null &&
 		'dispose' in value &&
-		typeof value.dispose === 'function'
+		typeof Reflect.get(value, 'dispose') === 'function'
 	);
 }
 
-function renewalIntervalMsForLease(lease: GondolinLeaseResponse): number {
-	const fallbackRenewalIntervalMs = 60_000;
-	const minimumRenewalIntervalMs = 1_000;
-	if (lease.idleTtlMs === undefined) {
-		return fallbackRenewalIntervalMs;
-	}
-	return Math.max(
-		minimumRenewalIntervalMs,
-		Math.min(fallbackRenewalIntervalMs, Math.floor(lease.idleTtlMs / 3)),
+function isActiveUseFinalizeToken(value: unknown): value is ActiveUseFinalizeToken {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'activeUseHandle' in value &&
+		typeof Reflect.get(value, 'activeUseHandle') === 'object'
 	);
+}
+
+function activeUseOutcomeForFinalizeParams(finalizeParams: {
+	readonly status: 'completed' | 'failed';
+	readonly timedOut: boolean;
+}): ToolVmActiveUseOutcome {
+	return finalizeParams.timedOut
+		? 'timed-out'
+		: finalizeParams.status === 'completed'
+			? 'completed'
+			: 'failed';
 }
 
 export function createGondolinSandboxBackendFactory(
@@ -82,7 +112,7 @@ export function createGondolinSandboxBackendFactory(
 	readonly scopeKey: string;
 	readonly sessionKey: string;
 	readonly workspaceDir: string;
-}) => Promise<GondolinSandboxBackendHandle> {
+}) => Promise<OpenClawSandboxBackendHandle> {
 	const scopeCache = new Map<string, CachedScopeEntry>();
 
 	return async (params) => {
@@ -101,11 +131,11 @@ export function createGondolinSandboxBackendFactory(
 		const cachedEntry = scopeCache.get(cacheKey);
 		if (cachedEntry) {
 			try {
-				await leaseClient.keepLeaseAlive(cachedEntry.lease.leaseId);
+				await leaseClient.renewLease(cachedEntry.lease.leaseId);
 				return cachedEntry.handle;
 			} catch (error) {
 				writeSandboxBackendLog(
-					`lease keepalive failed for zone '${options.zoneId}' scope '${params.scopeKey}' lease '${cachedEntry.lease.leaseId}': ${formatUnknownError(error)}`,
+					`lease renew failed for zone '${options.zoneId}' scope '${params.scopeKey}' lease '${cachedEntry.lease.leaseId}': ${formatUnknownError(error)}`,
 				);
 				if (!shouldRefreshCachedLease(error)) {
 					throw error;
@@ -127,7 +157,7 @@ export function createGondolinSandboxBackendFactory(
 			workMountDir: params.workspaceDir,
 			zoneId: options.zoneId,
 		});
-		if (!isGondolinLeaseResponse(leaseResponse)) {
+		if (!isToolVmSshLease(leaseResponse)) {
 			throw new TypeError('Controller lease API returned an unexpected response.');
 		}
 
@@ -136,26 +166,12 @@ export function createGondolinSandboxBackendFactory(
 			cfg: params.cfg,
 			controllerUrl: options.controllerUrl,
 			createFsBridgeBuilder: dependencies.createFsBridgeBuilder,
-			keepLeaseAlive: async (operation) => {
-				try {
-					await leaseClient.keepLeaseAlive(lease.leaseId);
-				} catch (error) {
-					writeSandboxBackendLog(
-						`lease command keepalive failed during ${operation} for zone '${options.zoneId}' scope '${params.scopeKey}' lease '${lease.leaseId}': ${formatUnknownError(error)}`,
-					);
-					if (shouldRefreshCachedLease(error)) {
-						const cachedEntryForLease = scopeCache.get(cacheKey);
-						if (cachedEntryForLease?.lease.leaseId === lease.leaseId) {
-							scopeCache.delete(cacheKey);
-						}
-					}
-					throw error;
-				}
-			},
 			lease,
+			leaseClient,
 			runRemoteShellScript: dependencies.runRemoteShellScript,
 			buildExecSpec: dependencies.buildExecSpec,
 			scopeKey: params.scopeKey,
+			sessionKey: params.sessionKey,
 			zoneId: options.zoneId,
 		});
 		scopeCache.set(cacheKey, { handle, lease });
@@ -172,69 +188,67 @@ function createSandboxBackendHandle(options: {
 	};
 	readonly controllerUrl: string;
 	readonly createFsBridgeBuilder?: CreateBackendDependencies['createFsBridgeBuilder'];
-	readonly keepLeaseAlive: (operation: string) => Promise<void>;
-	readonly lease: GondolinLeaseResponse;
+	readonly lease: CachedScopeEntry['lease'];
+	readonly leaseClient: LeaseClient;
 	readonly runRemoteShellScript: CreateBackendDependencies['runRemoteShellScript'];
 	readonly scopeKey: string;
+	readonly sessionKey: string;
 	readonly zoneId: string;
-}): GondolinSandboxBackendHandle {
-	const renewalIntervalMs = renewalIntervalMsForLease(options.lease);
-
-	function beginLeaseRenewalTimer(operation: string): { readonly dispose: () => void } {
-		const interval = setInterval(() => {
-			void options.keepLeaseAlive(`${operation} active`).catch((error: unknown) => {
+}): OpenClawSandboxBackendHandle {
+	const createActiveUseHandle = async (
+		correlation: ToolVmActiveUseCorrelation,
+	): Promise<ToolVmActiveUseHandle> =>
+		await createToolVmActiveUseHandle({
+			correlation,
+			endActiveUse: async (useId: string, request: EndToolVmActiveUseRequest): Promise<void> => {
+				await options.leaseClient.endActiveUse(options.lease.leaseId, useId, request);
+			},
+			heartbeatActiveUse: async (useId: string): Promise<HeartbeatToolVmActiveUseResponse> =>
+				await options.leaseClient.heartbeatActiveUse(options.lease.leaseId, useId),
+			isEndErrorTolerable: isCleanupNotFound,
+			logEndFailure: (error: unknown): void => {
 				writeSandboxBackendLog(
-					`lease command keepalive failed while ${operation} was active for zone '${options.zoneId}' scope '${options.scopeKey}' lease '${options.lease.leaseId}': ${formatUnknownError(error)}`,
+					`active-use cleanup ignored for zone '${options.zoneId}' lease '${options.lease.leaseId}': ${formatUnknownError(error)}`,
 				);
-			});
-		}, renewalIntervalMs);
-		if ('unref' in interval && typeof interval.unref === 'function') {
-			interval.unref();
-		}
-		return {
-			dispose: () => clearInterval(interval),
-		};
-	}
+			},
+			logHeartbeatFailure: (error: unknown): void => {
+				writeSandboxBackendLog(
+					`active-use heartbeat failed for zone '${options.zoneId}' lease '${options.lease.leaseId}': ${formatUnknownError(error)}`,
+				);
+			},
+			startActiveUse: async (
+				request: StartToolVmActiveUseRequest,
+			): Promise<StartToolVmActiveUseResponse> =>
+				await options.leaseClient.startActiveUse(options.lease.leaseId, request),
+		});
 
-	async function renewLeaseAfterOperation(
-		operation: string,
-		optionsForRenewal: { readonly hadPrimaryError: boolean },
-	): Promise<void> {
+	const runWithActiveUse = async <TResult>(
+		correlation: ToolVmActiveUseCorrelation,
+		fn: () => Promise<TResult>,
+	): Promise<TResult> => {
+		const activeUseHandle = await createActiveUseHandle(correlation);
 		try {
-			await options.keepLeaseAlive(operation);
-		} catch (error) {
-			if (!optionsForRenewal.hadPrimaryError) {
-				throw error;
-			}
-			writeSandboxBackendLog(
-				`lease command keepalive failed after ${operation} for zone '${options.zoneId}' scope '${options.scopeKey}' lease '${options.lease.leaseId}': ${formatUnknownError(error)}`,
-			);
-		}
-	}
-
-	async function runWithLeaseRenewal<TValue>(
-		operation: string,
-		runOperation: () => Promise<TValue>,
-	): Promise<TValue> {
-		await options.keepLeaseAlive(`${operation} start`);
-		const renewalTimer = beginLeaseRenewalTimer(operation);
-		try {
-			const result = await runOperation();
-			renewalTimer.dispose();
-			await renewLeaseAfterOperation(`${operation} end`, { hadPrimaryError: false });
+			const result = await fn();
+			await activeUseHandle.dispose('completed');
 			return result;
 		} catch (error) {
-			renewalTimer.dispose();
-			await renewLeaseAfterOperation(`${operation} end`, { hadPrimaryError: true });
+			await activeUseHandle.dispose('failed').catch((cleanupError: unknown) => {
+				writeSandboxBackendLog(
+					`failed to end active use after operation failure for zone '${options.zoneId}' lease '${options.lease.leaseId}': ${formatUnknownError(cleanupError)}`,
+				);
+			});
 			throw error;
 		}
-	}
+	};
 
-	const boundRunRemoteShellScript: FsBridgeLeaseContext['runRemoteShellScript'] = async (
+	const boundRunRemoteShellScript: OpenClawFsBridgeLeaseContext['runRemoteShellScript'] = async (
 		shellParams,
 	) =>
-		await runWithLeaseRenewal(
-			'fs bridge shell command',
+		await runWithActiveUse(
+			{
+				sessionKey: options.sessionKey,
+				toolName: 'fs-bridge',
+			},
 			async () =>
 				await options.runRemoteShellScript({
 					...(shellParams.allowFailure !== undefined
@@ -246,6 +260,36 @@ function createSandboxBackendHandle(options: {
 					...(shellParams.stdin !== undefined ? { stdin: shellParams.stdin } : {}),
 				}),
 		);
+
+	const disposeInnerFinalizeToken = async (token: unknown): Promise<void> => {
+		if (isDisposableFinalizeToken(token)) {
+			await token.dispose();
+		}
+	};
+
+	const endActiveUseFinalizeToken = async (
+		token: ActiveUseFinalizeToken,
+		outcome: ToolVmActiveUseOutcome,
+	): Promise<void> => {
+		let innerError: unknown;
+		try {
+			await disposeInnerFinalizeToken(token.innerToken);
+		} catch (error) {
+			innerError = error;
+		}
+		let activeUseError: unknown;
+		try {
+			await token.activeUseHandle.dispose(outcome);
+		} catch (error) {
+			activeUseError = error;
+		}
+		if (innerError) {
+			throw innerError;
+		}
+		if (activeUseError) {
+			throw activeUseError;
+		}
+	};
 
 	const createFsBridge = options.createFsBridgeBuilder?.({
 		remoteAgentWorkspaceDir: options.lease.workdir,
@@ -263,69 +307,55 @@ function createSandboxBackendHandle(options: {
 		runtimeLabel: options.lease.leaseId,
 		workdir: options.lease.workdir,
 		buildExecSpec: async (execParams) => {
-			await options.keepLeaseAlive('exec spec build start');
-			const execRenewalTimer = beginLeaseRenewalTimer('exec command');
-			let execSpec: Awaited<ReturnType<CreateBackendDependencies['buildExecSpec']>>;
+			const activeUseHandle = await createActiveUseHandle({
+				sessionKey: options.sessionKey,
+				toolName: 'shell',
+			});
 			try {
-				execSpec = await options.buildExecSpec({
+				const execSpec = await options.buildExecSpec({
 					command: execParams.command,
 					env: execParams.env,
 					ssh: options.lease.ssh,
 					usePty: execParams.usePty,
 					workdir: execParams.workdir ?? options.lease.workdir,
 				});
+				return {
+					...execSpec,
+					finalizeToken: {
+						activeUseHandle,
+						...(execSpec.finalizeToken !== undefined ? { innerToken: execSpec.finalizeToken } : {}),
+					} satisfies ActiveUseFinalizeToken,
+				};
 			} catch (error) {
-				execRenewalTimer.dispose();
+				await activeUseHandle.dispose('failed').catch((cleanupError: unknown) => {
+					writeSandboxBackendLog(
+						`failed to end active use after buildExecSpec failure for zone '${options.zoneId}' lease '${options.lease.leaseId}': ${formatUnknownError(cleanupError)}`,
+					);
+				});
 				throw error;
 			}
-			return {
-				...execSpec,
-				finalizeToken: {
-					innerToken: execSpec.finalizeToken,
-					leaseRenewalTimer: execRenewalTimer,
-				},
-			};
 		},
 		finalizeExec: async (finalizeParams) => {
-			const token = finalizeParams.token;
-			const leaseRenewalTimer =
-				typeof token === 'object' &&
-				token !== null &&
-				'leaseRenewalTimer' in token &&
-				hasDisposeFunction(token.leaseRenewalTimer)
-					? token.leaseRenewalTimer
-					: undefined;
-			const innerToken =
-				typeof token === 'object' && token !== null && 'innerToken' in token
-					? token.innerToken
-					: token;
-			let hadPrimaryError = false;
-			let primaryError: unknown;
-			try {
-				if (hasDisposeFunction(innerToken)) {
-					await innerToken.dispose();
-				}
-			} catch (error) {
-				hadPrimaryError = true;
-				primaryError = error;
-			} finally {
-				await leaseRenewalTimer?.dispose();
+			if (isActiveUseFinalizeToken(finalizeParams.token)) {
+				await endActiveUseFinalizeToken(
+					finalizeParams.token,
+					activeUseOutcomeForFinalizeParams(finalizeParams),
+				);
+				return;
 			}
-			await renewLeaseAfterOperation('exec finalize', {
-				hadPrimaryError,
-			});
-			if (hadPrimaryError) {
-				throw primaryError;
-			}
+			await disposeInnerFinalizeToken(finalizeParams.token);
 		},
 		runShellCommand: async (commandParams) =>
-			await runWithLeaseRenewal(
-				'shell command',
+			await runWithActiveUse(
+				{
+					sessionKey: options.sessionKey,
+					toolName: 'runShellCommand',
+				},
 				async () =>
 					await options.runRemoteShellScript({
 						script: commandParams.script,
 						ssh: options.lease.ssh,
 					}),
 			),
-	} satisfies GondolinSandboxBackendHandle;
+	} satisfies OpenClawSandboxBackendHandle;
 }

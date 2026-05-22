@@ -53,6 +53,9 @@ function createSecretResolver(values: Readonly<Record<string, string>>): TestSec
 	const resolveAll = vi.fn(async (refs: Record<string, SecretRef>) =>
 		Object.fromEntries(
 			Object.entries(refs).map(([name, ref]) => {
+				if (ref.source === 'config') {
+					return [name, ref.value];
+				}
 				const value = values[ref.ref];
 				if (value === undefined) {
 					throw new Error(`missing secret ${ref.ref}`);
@@ -63,6 +66,9 @@ function createSecretResolver(values: Readonly<Record<string, string>>): TestSec
 	);
 	return {
 		resolve: async (secretRef) => {
+			if (secretRef.source === 'config') {
+				return secretRef.value;
+			}
 			const value = values[secretRef.ref];
 			if (value === undefined) {
 				throw new Error(`missing secret ${secretRef.ref}`);

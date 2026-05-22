@@ -1,5 +1,17 @@
 # Tool VM Mediated CLI Auth Implementation Plan
 
+Status: shipped baseline / reference-only for future credentialed runner work. Do not execute this plan as a new implementation plan.
+
+Use this for:
+- Audience-scoped egress and secret mediation vocabulary.
+- The rule that Tool VMs never receive raw `env` secrets.
+- Understanding the shipped HTTP-mediation substrate that later credentialed designs can reuse.
+
+Do not use this for:
+- Full credentialed CLI runner design.
+- Controller-owned Gondolin `vm.exec` / `vm.fs` execution.
+- Generic lease capability design.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `superpowers:subagent-driven-development` or
 > `superpowers:executing-plans` to implement this plan task-by-task. Use TDD for

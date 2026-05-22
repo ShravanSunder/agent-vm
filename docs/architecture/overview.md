@@ -168,7 +168,7 @@ start repo services"]
 
 ## Package Dependency Graph
 
-Seven packages compose the system. Dependencies flow downward.
+Eleven workspace packages compose the system. Dependencies flow downward.
 
 ```
                 @earendil-works/gondolin
@@ -372,7 +372,7 @@ The `gondolin-adapter` package wraps the raw SDK into higher-level operations:
 
 - **`createManagedVm(options)`** -- assembles VFS mounts, creates HTTP hooks, boots the VM, returns a `ManagedVm` handle (`exec`, `enableSsh`, `enableIngress`, `close`).
 - **`buildImage(options)`** -- fingerprint-cached image builds (SHA-256 of build config + runtime build version tag + fingerprint input).
-- **`SecretResolver` / `resolveServiceAccountToken`** -- resolve `SecretRef` values from 1Password or environment variables.
+- **`SecretResolver` / `resolveServiceAccountToken`** -- resolve `SecretRef` values from 1Password, environment variables, or inline config values.
 
 ### VFS Mount Types
 
@@ -531,6 +531,7 @@ Secrets are resolved on the host and delivered to VMs through two channels. Host
     |  Dispatches by SecretRef.source:
     |    '1password' -> onePasswordResolver.resolve(ref)
     |    'environment' -> process.env[ref.ref]
+    |    'config' -> ref.value
     |
     +---> resolveZoneSecrets(zone, resolver)
     |       |  For each zone.secrets[name]: resolve to plain text

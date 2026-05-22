@@ -6,6 +6,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
 import type { GatewayZone } from '../../gateway/gateway-zone-support.js';
+import {
+	createManagedExecProcessStub,
+	createManagedVmFsStub,
+} from '../../testing/managed-vm-test-helpers.js';
 import { ActiveTaskRegistry, type ActiveWorkerTask } from '../active-task-registry.js';
 import type { PreparedWorkerTask, WorkerTaskInput } from '../worker-task-runner.js';
 import { createOpenClawZoneRuntime } from './openclaw-zone-runtime.js';
@@ -308,15 +312,15 @@ describe('zone runtime contracts', () => {
 describe('createOpenClawZoneRuntime', () => {
 	it('starts, snapshots, reads logs, and stops one OpenClaw gateway zone', async () => {
 		const close = vi.fn(async () => {});
-		const exec = vi.fn(async (command: string) => ({
-			exitCode: 0,
-			stderr: '',
-			stdout: command.includes('/agent-vm/logs/*.log')
-				? 'gateway and runtime log output'
-				: command.includes('/readyz')
-					? '200'
-					: 'command output',
-		}));
+		const exec = vi.fn((command: string) =>
+			createManagedExecProcessStub({
+				stdout: command.includes('/agent-vm/logs/*.log')
+					? 'gateway and runtime log output'
+					: command.includes('/readyz')
+						? '200'
+						: 'command output',
+			}),
+		);
 		const runtime = createOpenClawZoneRuntime({
 			deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 			leaseManager: { listLeases: () => [], releaseLease: vi.fn(async () => {}) },
@@ -342,6 +346,7 @@ describe('createOpenClawZoneRuntime', () => {
 							port: 22,
 						})),
 						exec,
+						fs: createManagedVmFsStub(),
 						getVmInstance: vi.fn(),
 						id: 'vm-shravan',
 						setIngressRoutes: vi.fn(),

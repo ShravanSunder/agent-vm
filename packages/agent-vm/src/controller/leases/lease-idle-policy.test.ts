@@ -2,9 +2,21 @@ import { describe, expect, it } from 'vitest';
 
 import { ttlForLeaseScope } from './lease-idle-policy.js';
 
+function policyWithRequestBounds(policy: {
+	readonly byScopeKind: Record<string, number>;
+	readonly byScopePrefix: Record<string, number>;
+	readonly defaultMs: number;
+}): typeof policy & { readonly maxRequestedMs: number; readonly minRequestedMs: number } {
+	return {
+		...policy,
+		maxRequestedMs: 86_400_000,
+		minRequestedMs: 1_000,
+	};
+}
+
 describe('ttlForLeaseScope', () => {
 	it('maps the named scope kinds explicitly', () => {
-		const policy = {
+		const policy = policyWithRequestBounds({
 			defaultMs: 1_800_000,
 			byScopeKind: {
 				agent: 7_200_000,
@@ -15,7 +27,7 @@ describe('ttlForLeaseScope', () => {
 				workspace: 1_200_000,
 			},
 			byScopePrefix: {},
-		};
+		});
 
 		expect(ttlForLeaseScope({ policy, scopeKey: 'agent:shravan' })).toBe(7_200_000);
 		expect(ttlForLeaseScope({ policy, scopeKey: 'discord:channel:123' })).toBe(600_000);
@@ -29,11 +41,11 @@ describe('ttlForLeaseScope', () => {
 		expect(
 			ttlForLeaseScope({
 				scopeKey: 'agent:shravan:session-1',
-				policy: {
+				policy: policyWithRequestBounds({
 					defaultMs: 1_800_000,
 					byScopeKind: { agent: 7_200_000 },
 					byScopePrefix: { 'agent:shravan': 21_600_000 },
-				},
+				}),
 			}),
 		).toBe(21_600_000);
 	});
@@ -42,11 +54,11 @@ describe('ttlForLeaseScope', () => {
 		expect(
 			ttlForLeaseScope({
 				scopeKey: 'agent:alevtina:session-1',
-				policy: {
+				policy: policyWithRequestBounds({
 					defaultMs: 1_800_000,
 					byScopeKind: { agent: 7_200_000 },
 					byScopePrefix: {},
-				},
+				}),
 			}),
 		).toBe(7_200_000);
 	});
@@ -55,11 +67,11 @@ describe('ttlForLeaseScope', () => {
 		expect(
 			ttlForLeaseScope({
 				scopeKey: 'project:shared',
-				policy: {
+				policy: policyWithRequestBounds({
 					defaultMs: 1_800_000,
 					byScopeKind: { agent: 7_200_000 },
 					byScopePrefix: {},
-				},
+				}),
 			}),
 		).toBe(1_800_000);
 	});

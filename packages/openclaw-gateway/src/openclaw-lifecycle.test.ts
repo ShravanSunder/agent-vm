@@ -307,6 +307,9 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.environment.OPENCLAW_CONFIG_PATH).toBe(
 				'/home/openclaw/.openclaw/state/effective-openclaw.json',
 			);
+			expect(vmSpec.environment.NODE_OPTIONS).toBe(
+				'--dns-result-order=ipv4first --no-network-family-autoselection',
+			);
 			expect(vmSpec.environment.OPENCLAW_PLUGIN_STAGE_DIR).toBeUndefined();
 			expect(vmSpec.environment.TMPDIR).toBe('/work/tmp');
 			expect(vmSpec.environment.PNPM_HOME).toBe('/pnpm');
@@ -702,6 +705,53 @@ describe('openclawLifecycle', () => {
 				),
 			).resolves.toBe('{"profiles":["shravan"]}');
 			expect((await stat(zone.gateway.stateDir)).mode & 0o777).toBe(0o700);
+		});
+
+		it('writes config-backed auth profiles during host preparation', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-config-auth-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(path.join(configDirectory, 'openclaw.json'), '{}', 'utf8');
+			const zone = createZone({
+				authProfilesRef: {
+					source: 'config',
+					value: '{"profiles":["main-inline"]}',
+				},
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+					authProfilesByAgent: {
+						shravan: {
+							source: 'config',
+							value: '{"profiles":["shravan-inline"]}',
+						},
+					},
+				},
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) =>
+					secretRef.source === 'config' ? secretRef.value : 'unexpected',
+				resolveAll: async () => ({}),
+			};
+
+			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
+
+			await expect(
+				readFile(
+					path.join(zone.gateway.stateDir, 'agents', 'main', 'agent', 'auth-profiles.json'),
+					'utf8',
+				),
+			).resolves.toBe('{"profiles":["main-inline"]}');
+			await expect(
+				readFile(
+					path.join(zone.gateway.stateDir, 'agents', 'shravan', 'agent', 'auth-profiles.json'),
+					'utf8',
+				),
+			).resolves.toBe('{"profiles":["shravan-inline"]}');
 		});
 
 		it('injects MCP Portal configDir and replaces stale plugin config', async () => {

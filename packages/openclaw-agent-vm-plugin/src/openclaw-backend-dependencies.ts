@@ -1,15 +1,15 @@
 import type { SshHelpers, SshSandboxSession } from './openclaw-sandbox-sdk-contract.js';
 import type {
 	CreateBackendDependencies,
-	FsBridgeLeaseContext,
-	GondolinFsBridge,
+	OpenClawFsBridgeLeaseContext,
+	OpenClawSandboxFsBridge,
 } from './sandbox-backend-factory.js';
 
 export function createBackendDeps(ssh: SshHelpers): {
 	readonly buildExecSpec: CreateBackendDependencies['buildExecSpec'];
 	readonly createFsBridgeBuilder: (
-		leaseContext: FsBridgeLeaseContext,
-	) => (params: { readonly sandbox: unknown }) => GondolinFsBridge;
+		leaseContext: OpenClawFsBridgeLeaseContext,
+	) => (params: { readonly sandbox: unknown }) => OpenClawSandboxFsBridge;
 	readonly runRemoteShellScript: CreateBackendDependencies['runRemoteShellScript'];
 } {
 	return {
@@ -46,8 +46,8 @@ export function createBackendDeps(ssh: SshHelpers): {
 			};
 		},
 		createFsBridgeBuilder:
-			(leaseContext: FsBridgeLeaseContext) =>
-			(params: { readonly sandbox: unknown }): GondolinFsBridge =>
+			(leaseContext: OpenClawFsBridgeLeaseContext) =>
+			(params: { readonly sandbox: unknown }): OpenClawSandboxFsBridge =>
 				ssh.createRemoteShellSandboxFsBridge({
 					sandbox: params.sandbox,
 					runtime: {

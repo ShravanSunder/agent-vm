@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { type ControllerLeaseRequestError, createLeaseClient } from './controller-lease-client.js';
 
 describe('createLeaseClient', () => {
-	it('requests, keeps alive, peeks, and releases leases through the controller API', async () => {
+	it('requests, renews, peeks, and releases leases through the controller API', async () => {
 		const requests: { body: string | undefined; method: string; url: string }[] = [];
 		const leaseClient = createLeaseClient({
 			controllerUrl: 'http://controller.vm.host:18800',
@@ -25,6 +25,8 @@ describe('createLeaseClient', () => {
 							scopeKey: 'agent:main:session-abc',
 							ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 							tcpSlot: 0,
+							transport: 'ssh-sandbox',
+							workdir: '/work',
 							zoneId: 'shravan',
 						}
 					: {
@@ -37,6 +39,7 @@ describe('createLeaseClient', () => {
 								user: 'sandbox',
 							},
 							tcpSlot: 0,
+							transport: 'ssh-sandbox',
 							workdir: '/work',
 						};
 
@@ -49,13 +52,14 @@ describe('createLeaseClient', () => {
 			},
 		});
 
-		await leaseClient.requestLease({
+		const lease = await leaseClient.requestLease({
 			agentWorkspaceDir: '/home/openclaw/work',
 			profileId: 'standard',
 			scopeKey: 'agent:main:session-abc',
 			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 			zoneId: 'shravan',
 		});
+		expect(lease.transport).toBe('ssh-sandbox');
 		if (!leaseClient.publishOpenClawRuntimeStatus) {
 			throw new Error('Expected runtime status publisher.');
 		}
@@ -70,8 +74,10 @@ describe('createLeaseClient', () => {
 				},
 			],
 		});
-		await leaseClient.keepLeaseAlive('lease-123');
-		await leaseClient.peekLease('lease-123');
+		const renewedLease = await leaseClient.renewLease('lease-123');
+		const peekedLease = await leaseClient.peekLease('lease-123');
+		expect(renewedLease.transport).toBe('ssh-sandbox');
+		expect(peekedLease.transport).toBe('ssh-sandbox');
 		await leaseClient.releaseLease('lease-123');
 
 		expect(requests[0]?.body).toBeDefined();
@@ -93,7 +99,11 @@ describe('createLeaseClient', () => {
 				method: 'POST',
 				url: 'http://controller.vm.host:18800/zones/shravan/openclaw-runtime-status',
 			},
-			{ body: undefined, method: 'GET', url: 'http://controller.vm.host:18800/lease/lease-123' },
+			{
+				body: undefined,
+				method: 'POST',
+				url: 'http://controller.vm.host:18800/lease/lease-123/renew',
+			},
 			{
 				body: undefined,
 				method: 'GET',
@@ -103,6 +113,63 @@ describe('createLeaseClient', () => {
 				body: undefined,
 				method: 'DELETE',
 				url: 'http://controller.vm.host:18800/lease/lease-123',
+			},
+		]);
+	});
+
+	it('starts, heartbeats, and ends active uses through the controller API', async () => {
+		const requests: { body: string | undefined; method: string; url: string }[] = [];
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async (input, init) => {
+				const url =
+					typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+				requests.push({
+					body: typeof init?.body === 'string' ? init.body : undefined,
+					method: init?.method ?? 'GET',
+					url,
+				});
+				const responseBody = url.endsWith('/heartbeat')
+					? { expiresAt: 6_000, heartbeatAfterMs: 1_000 }
+					: {
+							expiresAt: 5_000,
+							heartbeatAfterMs: 1_000,
+							useId: '01890f00-0000-7000-8000-000000000000',
+						};
+				return new Response(JSON.stringify(responseBody), {
+					headers: { 'content-type': 'application/json' },
+					status: 200,
+				});
+			},
+		});
+
+		await leaseClient.startActiveUse('lease-123', {
+			correlation: { toolName: 'shell' },
+			useId: '01890f00-0000-7000-8000-000000000000',
+		});
+		await leaseClient.heartbeatActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000');
+		await leaseClient.endActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {
+			outcome: 'completed',
+		});
+
+		expect(requests).toEqual([
+			{
+				body: JSON.stringify({
+					correlation: { toolName: 'shell' },
+					useId: '01890f00-0000-7000-8000-000000000000',
+				}),
+				method: 'POST',
+				url: 'http://controller.vm.host:18800/lease/lease-123/uses',
+			},
+			{
+				body: undefined,
+				method: 'POST',
+				url: 'http://controller.vm.host:18800/lease/lease-123/uses/01890f00-0000-7000-8000-000000000000/heartbeat',
+			},
+			{
+				body: JSON.stringify({ outcome: 'completed' }),
+				method: 'DELETE',
+				url: 'http://controller.vm.host:18800/lease/lease-123/uses/01890f00-0000-7000-8000-000000000000',
 			},
 		]);
 	});
@@ -128,6 +195,38 @@ describe('createLeaseClient', () => {
 		).rejects.toThrow('Controller lease API returned an invalid response');
 	});
 
+	it('rejects lease responses missing the transport discriminator', async () => {
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async () =>
+				new Response(
+					JSON.stringify({
+						leaseId: 'lease-1',
+						ssh: {
+							host: 'tool-0.vm.host',
+							identityPem: 'pem',
+							knownHostsLine: 'known-hosts',
+							port: 22,
+							user: 'root',
+						},
+						tcpSlot: 0,
+						workdir: '/work',
+					}),
+					{ headers: { 'content-type': 'application/json' }, status: 200 },
+				),
+		});
+
+		await expect(
+			leaseClient.requestLease({
+				agentWorkspaceDir: '/workspace',
+				profileId: 'standard',
+				scopeKey: 'agent-session',
+				workMountDir: '/workspace',
+				zoneId: 'default',
+			}),
+		).rejects.toThrow('Controller lease API returned an invalid response');
+	});
+
 	it('strips trailing slash from controller url', async () => {
 		const requests: string[] = [];
 		const leaseClient = createLeaseClient({
@@ -141,6 +240,7 @@ describe('createLeaseClient', () => {
 						leaseId: 'lease-1',
 						ssh: { host: 'h', identityPem: 'p', knownHostsLine: '', port: 22, user: 'u' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox',
 						workdir: '/w',
 					}),
 					{ headers: { 'content-type': 'application/json' }, status: 200 },
@@ -159,7 +259,7 @@ describe('createLeaseClient', () => {
 		expect(requests[0]).toBe('http://controller.vm.host:18800/lease');
 	});
 
-	it('throws when lease keepalive returns a non-ok response', async () => {
+	it('throws when lease renew returns a non-ok response', async () => {
 		const leaseClient = createLeaseClient({
 			controllerUrl: 'http://controller.vm.host:18800',
 			fetchImpl: async () =>
@@ -169,7 +269,7 @@ describe('createLeaseClient', () => {
 				}),
 		});
 
-		await expect(leaseClient.keepLeaseAlive('lease-missing')).rejects.toMatchObject({
+		await expect(leaseClient.renewLease('lease-missing')).rejects.toMatchObject({
 			bodyText: JSON.stringify({ error: 'missing lease' }),
 			kind: 'client-error',
 			responseBody: { error: 'missing lease' },

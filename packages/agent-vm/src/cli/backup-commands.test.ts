@@ -1,3 +1,4 @@
+import type { SecretRef } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
@@ -111,6 +112,9 @@ describe('runBackupCommand', () => {
 						scopeKey: 'scope',
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
+						workdir: '/work',
+
 						zoneId: 'shravan',
 					}),
 					listLeases: async () => [],
@@ -181,6 +185,9 @@ describe('runBackupCommand', () => {
 						scopeKey: 'scope',
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
+						workdir: '/work',
+
 						zoneId: 'shravan',
 					}),
 					listLeases: async () => [],
@@ -190,7 +197,10 @@ describe('runBackupCommand', () => {
 					upgradeZone: async () => ({}),
 				}),
 				createSecretResolver: async () => ({
-					resolve: async (secretRef: { ref: string }) => {
+					resolve: async (secretRef: SecretRef) => {
+						if (secretRef.source === 'config') {
+							throw new Error('Unexpected config secret.');
+						}
 						expect(secretRef.ref).toBe('op://agent-vm/shravan-gateway-backup/password');
 						return 'backup-key';
 					},
@@ -245,6 +255,9 @@ describe('runBackupCommand', () => {
 							scopeKey: 'scope',
 							ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 							tcpSlot: 0,
+							transport: 'ssh-sandbox' as const,
+							workdir: '/work',
+
 							zoneId: 'shravan',
 						}),
 						listLeases: async () => [],
@@ -303,6 +316,9 @@ describe('runBackupCommand', () => {
 						scopeKey: 'scope',
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
+						workdir: '/work',
+
 						zoneId: 'shravan',
 					}),
 					listLeases: async () => [],
@@ -391,6 +407,9 @@ describe('runBackupCommand', () => {
 						scopeKey: 'scope',
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
+						workdir: '/work',
+
 						zoneId: 'shravan',
 					}),
 					listLeases: async () => [],

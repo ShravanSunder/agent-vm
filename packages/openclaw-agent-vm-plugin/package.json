@@ -34,6 +34,7 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
+		"@agent-vm/gateway-interface": "workspace:*",
 		"@agent-vm/gondolin-adapter": "workspace:*"
 	}
 }

@@ -320,6 +320,9 @@ export async function seedGatewayImageCacheIfAvailable(options: {
 
 export function createSmokeSecretResolver(secrets: SmokeHarnessSecretMap): SecretResolver {
 	const resolve = async (ref: SecretRef): Promise<string> => {
+		if (ref.source === 'config') {
+			return ref.value;
+		}
 		const secretKey = ref.ref;
 		const secret = secrets[secretKey] ?? process.env[secretKey];
 		if (secret === undefined) {

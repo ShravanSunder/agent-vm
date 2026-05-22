@@ -12,10 +12,14 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { CreateVmOptions, ManagedVm, PinnedRealFsRoot } from '@agent-vm/gondolin-adapter';
-import type { SecretResolver } from '@agent-vm/secret-management';
+import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
+import {
+	createManagedExecProcessStub,
+	createManagedVmFsStub,
+} from '../testing/managed-vm-test-helpers.js';
 import { createToolVm } from './tool-vm-lifecycle.js';
 
 const createdDirectories: string[] = [];
@@ -151,17 +155,19 @@ function createSecretResolver(values: Record<string, string>): SecretResolver {
 
 describe('createToolVm', () => {
 	it('mounts the lease host work mount directory at /work', async () => {
-		const exec = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+		const exec = vi.fn(() => createManagedExecProcessStub());
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
 			exec,
+			fs: createManagedVmFsStub(),
 			getVmInstance: () => ({
 				close: async () => {},
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
-				exec: async () => ({ exitCode: 0 }),
+				exec: () => createManagedExecProcessStub(),
+				fs: createManagedVmFsStub(),
 				id: 'vm-instance',
 				setIngressRoutes: () => {},
 			}),
@@ -238,12 +244,14 @@ describe('createToolVm', () => {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
-			exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+			exec: () => createManagedExecProcessStub(),
+			fs: createManagedVmFsStub(),
 			getVmInstance: () => ({
 				close: async () => {},
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
-				exec: async () => ({ exitCode: 0 }),
+				exec: () => createManagedExecProcessStub(),
+				fs: createManagedVmFsStub(),
 				id: 'vm-instance',
 				setIngressRoutes: () => {},
 			}),
@@ -307,7 +315,10 @@ describe('createToolVm', () => {
 			LINEAR_API_KEY: 'linear-real-secret',
 			READWISE_ACCESS_TOKEN: 'readwise-real-secret',
 		};
-		const resolveSecret = vi.fn(async (ref: { readonly ref: string }): Promise<string> => {
+		const resolveSecret = vi.fn(async (ref: SecretRef): Promise<string> => {
+			if (!ref.ref) {
+				throw new Error('Expected test secret ref to use a resolvable reference.');
+			}
 			const value = secretValues[ref.ref as keyof typeof secretValues];
 			if (value === undefined) {
 				throw new Error(`Missing test secret for ${ref.ref}`);
@@ -377,17 +388,19 @@ describe('createToolVm', () => {
 	});
 
 	it('mounts zone Git leases at /zone and /agent-vm/zone-git', async () => {
-		const exec = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+		const exec = vi.fn(() => createManagedExecProcessStub());
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
 			exec,
+			fs: createManagedVmFsStub(),
 			getVmInstance: () => ({
 				close: async () => {},
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
-				exec: async () => ({ exitCode: 0 }),
+				exec: () => createManagedExecProcessStub(),
+				fs: createManagedVmFsStub(),
 				id: 'vm-instance',
 				setIngressRoutes: () => {},
 			}),
@@ -523,12 +536,14 @@ describe('createToolVm', () => {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
-			exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+			exec: () => createManagedExecProcessStub(),
+			fs: createManagedVmFsStub(),
 			getVmInstance: () => ({
 				close: async () => {},
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
-				exec: async () => ({ exitCode: 0 }),
+				exec: () => createManagedExecProcessStub(),
+				fs: createManagedVmFsStub(),
 				id: 'vm-instance',
 				setIngressRoutes: () => {},
 			}),
@@ -582,21 +597,19 @@ describe('createToolVm', () => {
 	});
 
 	it('creates the tool VM without running redundant runtime setup commands', async () => {
-		const exec = vi.fn(async () => ({
-			exitCode: 0,
-			stderr: '',
-			stdout: '',
-		}));
+		const exec = vi.fn(() => createManagedExecProcessStub());
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
 			exec,
+			fs: createManagedVmFsStub(),
 			getVmInstance: () => ({
 				close: async () => {},
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 				enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
-				exec: async () => ({ exitCode: 0 }),
+				exec: () => createManagedExecProcessStub(),
+				fs: createManagedVmFsStub(),
 				id: 'vm-instance',
 				setIngressRoutes: () => {},
 			}),

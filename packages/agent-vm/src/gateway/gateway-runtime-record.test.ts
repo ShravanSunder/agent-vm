@@ -6,6 +6,10 @@ import type { ManagedVm, ManagedVmInstance } from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+	createManagedExecProcessStub,
+	createManagedVmFsStub,
+} from '../testing/managed-vm-test-helpers.js';
+import {
 	buildGatewayRuntimeRecord,
 	deleteGatewayRuntimeRecord,
 	loadGatewayRuntimeRecord,
@@ -37,7 +41,8 @@ function createVmInstanceStub(pid: number): ManagedVmInstance {
 			port: 19000,
 			user: 'sandbox',
 		}),
-		exec: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+		exec: () => createManagedExecProcessStub(),
+		fs: createManagedVmFsStub(),
 		id: 'gateway-vm-123',
 		server: {
 			controller: {
@@ -171,7 +176,8 @@ describe('gateway runtime record', () => {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
-			exec: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+			exec: () => createManagedExecProcessStub(),
+			fs: createManagedVmFsStub(),
 			getVmInstance: () => createVmInstanceStub(28282),
 			id: 'gateway-vm-123',
 			setIngressRoutes: () => {},
@@ -210,7 +216,8 @@ describe('gateway runtime record', () => {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
-			exec: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+			exec: () => createManagedExecProcessStub(),
+			fs: createManagedVmFsStub(),
 			getVmInstance: () => null as never,
 			id: 'gateway-vm-123',
 			setIngressRoutes: () => {},
@@ -239,7 +246,7 @@ describe('gateway runtime record', () => {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
-			exec: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+			exec: () => createManagedExecProcessStub(),
 			getVmInstance: () =>
 				({
 					close: async () => {},
@@ -251,7 +258,8 @@ describe('gateway runtime record', () => {
 						port: 19000,
 						user: 'sandbox',
 					}),
-					exec: async () => ({ exitCode: 0, stderr: '', stdout: '' }),
+					exec: () => createManagedExecProcessStub(),
+					fs: createManagedVmFsStub(),
 					id: 'gateway-vm-123',
 					server: {
 						controller: {
@@ -260,6 +268,7 @@ describe('gateway runtime record', () => {
 					},
 					setIngressRoutes: () => {},
 				}) as ManagedVmInstance,
+			fs: createManagedVmFsStub(),
 			id: 'gateway-vm-123',
 			setIngressRoutes: () => {},
 		} satisfies ManagedVm;

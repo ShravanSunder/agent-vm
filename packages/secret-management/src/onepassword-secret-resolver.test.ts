@@ -457,6 +457,87 @@ describe('createSecretResolver', () => {
 		expect(singleResolveCalls).toEqual([]);
 	});
 
+	it('resolves config refs locally and sends only 1Password refs to the sdk batch API', async () => {
+		const batchCalls: string[][] = [];
+		const fakeClient: SecretResolverClient = {
+			secrets: {
+				resolve: async (secretReference: string): Promise<string> => `single:${secretReference}`,
+				resolveAll: async (secretReferences: readonly string[]) => {
+					batchCalls.push([...secretReferences]);
+					return {
+						individualResponses: Object.fromEntries(
+							secretReferences.map((secretReference) => [
+								secretReference,
+								{
+									content: {
+										secret: `batch:${secretReference}`,
+										itemId: `item:${secretReference}`,
+										vaultId: 'vault-id',
+									},
+								},
+							]),
+						),
+					};
+				},
+			},
+		};
+
+		const secretResolver = await createSecretResolver(
+			{ serviceAccountToken: 'op-token' },
+			{
+				createClient: async (): Promise<SecretResolverClient> => fakeClient,
+			},
+		);
+
+		await expect(
+			secretResolver.resolve({
+				source: 'config',
+				value: 'inline-token',
+			}),
+		).resolves.toBe('inline-token');
+		await expect(
+			secretResolver.resolveAll({
+				INLINE_TOKEN: { source: 'config', value: 'inline-token' },
+				OPENAI_API_KEY: { source: '1password', ref: 'op://vault/openai/key' },
+			}),
+		).resolves.toEqual({
+			INLINE_TOKEN: 'inline-token',
+			OPENAI_API_KEY: 'batch:op://vault/openai/key',
+		});
+		expect(batchCalls).toEqual([['op://vault/openai/key']]);
+	});
+
+	it('rejects environment refs when the 1Password resolver is used directly', async () => {
+		const secretResolver = await createSecretResolver(
+			{ serviceAccountToken: 'op-token' },
+			{
+				createClient: async (): Promise<SecretResolverClient> => ({
+					secrets: {
+						resolve: async () => {
+							throw new Error('environment ref should not reach sdk resolve');
+						},
+						resolveAll: async () => {
+							throw new Error('environment ref should not reach sdk resolveAll');
+						},
+					},
+				}),
+			},
+		);
+
+		await expect(
+			secretResolver.resolve({ source: 'environment', ref: 'OPENAI_API_KEY' }),
+		).rejects.toThrow(
+			"Secret source 'environment' must be resolved by the composite resolver before reaching the 1Password resolver.",
+		);
+		await expect(
+			secretResolver.resolveAll({
+				OPENAI_API_KEY: { source: 'environment', ref: 'OPENAI_API_KEY' },
+			}),
+		).rejects.toThrow(
+			"Secret source 'environment' must be resolved by the composite resolver before reaching the 1Password resolver.",
+		);
+	});
+
 	it('falls back to one op inject batch when sdk resolveAll fails', async () => {
 		const execCalls: RecordedExecCall[] = [];
 		const fakeClient: SecretResolverClient = {
@@ -752,6 +833,40 @@ describe('createSecretResolver', () => {
 });
 
 describe('createOpCliSecretResolver', () => {
+	it('resolves config refs locally and sends only 1Password refs to op inject', async () => {
+		const execCalls: RecordedExecCall[] = [];
+		const secretResolver = await createOpCliSecretResolver(
+			{ serviceAccountToken: 'service-token' },
+			{
+				execFileAsync: createFakeOpExec({
+					calls: execCalls,
+					injectReplacements: {
+						'op://vault/item/a': 'op-inject-a',
+					},
+				}),
+			},
+		);
+
+		await expect(secretResolver.resolve({ source: 'config', value: 'inline-token' })).resolves.toBe(
+			'inline-token',
+		);
+		await expect(
+			secretResolver.resolveAll({
+				A: { source: '1password', ref: 'op://vault/item/a' },
+				INLINE: { source: 'config', value: 'inline-token' },
+			}),
+		).resolves.toEqual({
+			A: 'op-inject-a',
+			INLINE: 'inline-token',
+		});
+		expect(execCalls).toHaveLength(1);
+		expectOpInjectCall({
+			call: execCalls[0],
+			secretReferences: ['op://vault/item/a'],
+			serviceAccountToken: 'service-token',
+		});
+	});
+
 	it('resolves all refs through one op inject batch', async () => {
 		const execCalls: RecordedExecCall[] = [];
 		const secretResolver = await createOpCliSecretResolver(

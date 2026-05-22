@@ -26,7 +26,8 @@ async function createTempDirectory(prefix: string): Promise<string> {
 
 function createSecretResolver(): SecretResolver {
 	return {
-		resolve: async (secretRef) => `resolved:${secretRef.ref}`,
+		resolve: async (secretRef) =>
+			secretRef.source === 'config' ? secretRef.value : `resolved:${secretRef.ref}`,
 		resolveAll: async () => ({}),
 	};
 }
@@ -136,6 +137,39 @@ describe('seedAgentSandboxWorkspace', () => {
 			zoneId: 'home',
 		});
 		await expect(readFile(seededFilePath, 'utf8')).resolves.toBe('user-edited');
+	});
+
+	it('writes config-backed seed files into the sandbox workspace', async () => {
+		const rootPath = await createTempDirectory('agent-vm-sandbox-seed-config-');
+		const zone = {
+			...createOpenClawZone(rootPath),
+			agentSandboxSeeds: {
+				shravan: [
+					{
+						source: { source: 'config' as const, value: 'inline gcloud config' },
+						target: '.config/gcloud/configurations/config_default',
+						mode: 0o600,
+					},
+				],
+			},
+		} satisfies SystemConfig['zones'][number];
+		const hostWorkMountDir = path.join(zone.gateway.stateDir, 'sandboxes', 'agent-shravan', 'work');
+		await mkdir(hostWorkMountDir, { recursive: true });
+
+		const result = await seedAgentSandboxWorkspace({
+			scopeKey: 'agent:shravan',
+			secretResolver: createSecretResolver(),
+			hostWorkMountDir,
+			zone,
+		});
+
+		expect(result.kind).toBe('seeded');
+		await expect(
+			readFile(
+				path.join(hostWorkMountDir, '.config', 'gcloud', 'configurations', 'config_default'),
+				'utf8',
+			),
+		).resolves.toBe('inline gcloud config');
 	});
 
 	it('seeds Discord sub-scopes for the owning agent', async () => {

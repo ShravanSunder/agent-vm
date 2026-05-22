@@ -2,7 +2,10 @@ import type { SecretRef, SecretResolver } from './contracts.js';
 
 type SecretEnvironment = Readonly<Record<string, string | undefined>>;
 
-function resolveEnvironmentSecret(ref: SecretRef, env: SecretEnvironment): string {
+function resolveEnvironmentSecret(
+	ref: Extract<SecretRef, { readonly source: 'environment' }>,
+	env: SecretEnvironment,
+): string {
 	const value = env[ref.ref];
 	if (value === undefined) {
 		throw new Error(`Environment variable '${ref.ref}' is not set.`);
@@ -13,8 +16,29 @@ function resolveEnvironmentSecret(ref: SecretRef, env: SecretEnvironment): strin
 	return value;
 }
 
+function resolveConfigSecret(ref: Extract<SecretRef, { readonly source: 'config' }>): string {
+	if (ref.value.trim().length === 0) {
+		throw new Error('Config secret value is empty.');
+	}
+	return ref.value;
+}
+
 function formatUnknownError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function describeSecretRef(ref: SecretRef): string {
+	switch (ref.source) {
+		case '1password':
+		case 'environment':
+			return ref.ref;
+		case 'config':
+			return '<config>';
+		default: {
+			const exhaustiveCheck: never = ref;
+			return JSON.stringify(exhaustiveCheck);
+		}
+	}
 }
 
 function createSecretResolutionError(options: {
@@ -23,7 +47,7 @@ function createSecretResolutionError(options: {
 	readonly secretName: string;
 }): Error {
 	return new Error(
-		`Failed to resolve secret '${options.secretName}' from '${options.ref.ref}': ${formatUnknownError(options.cause)}`,
+		`Failed to resolve secret '${options.secretName}' from '${describeSecretRef(options.ref)}': ${formatUnknownError(options.cause)}`,
 		{ cause: options.cause },
 	);
 }
@@ -50,6 +74,8 @@ export function createCompositeSecretResolver(
 			switch (ref.source) {
 				case 'environment':
 					return resolveEnvironmentSecret(ref, env);
+				case 'config':
+					return resolveConfigSecret(ref);
 				case '1password': {
 					if (!onePasswordResolver) {
 						throw new Error(
@@ -78,6 +104,19 @@ export function createCompositeSecretResolver(
 					case 'environment':
 						try {
 							resolved[name] = resolveEnvironmentSecret(ref, env);
+						} catch (error) {
+							failures.push(
+								createSecretResolutionError({
+									cause: error,
+									ref,
+									secretName: name,
+								}),
+							);
+						}
+						break;
+					case 'config':
+						try {
+							resolved[name] = resolveConfigSecret(ref);
 						} catch (error) {
 							failures.push(
 								createSecretResolutionError({

@@ -35,6 +35,7 @@
 	},
 	"dependencies": {
 		"@agent-vm/gondolin-adapter": "workspace:*",
-		"@agent-vm/secret-management": "workspace:*"
+		"@agent-vm/secret-management": "workspace:*",
+		"uuid": "^11.1.1"
 	}
 }
