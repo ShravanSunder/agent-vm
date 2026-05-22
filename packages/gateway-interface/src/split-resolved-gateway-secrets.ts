@@ -1,4 +1,4 @@
-import type { MediatedSecretSpec } from '@agent-vm/secrets';
+import type { MediatedSecretSpec } from '@agent-vm/secret-management';
 
 import { targetsAudience, type RuntimeVmAudience } from './audience.js';
 import type { GatewaySecretConfig, GatewayZoneConfig } from './gateway-lifecycle.js';

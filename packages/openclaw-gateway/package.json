@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/openclaw-gateway",
-	"version": "0.0.70",
+	"version": "0.0.71",
 	"description": "OpenClaw gateway lifecycle running inside a Gondolin VM.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -36,6 +36,6 @@
 	"dependencies": {
 		"@agent-vm/gateway-interface": "workspace:*",
 		"@agent-vm/gondolin-adapter": "workspace:*",
-		"@agent-vm/secrets": "workspace:*"
+		"@agent-vm/secret-management": "workspace:*"
 	}
 }

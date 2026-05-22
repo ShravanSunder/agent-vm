@@ -67,7 +67,7 @@ importers:
       '@agent-vm/openclaw-mcp-portal-plugin':
         specifier: workspace:*
         version: link:../openclaw-mcp-portal-plugin
-      '@agent-vm/secrets':
+      '@agent-vm/secret-management':
         specifier: workspace:*
         version: link:../secrets
       '@agent-vm/worker-gateway':
@@ -147,13 +147,13 @@ importers:
       '@agent-vm/gondolin-adapter':
         specifier: workspace:*
         version: link:../gondolin-adapter
-      '@agent-vm/secrets':
+      '@agent-vm/secret-management':
         specifier: workspace:*
         version: link:../secrets
 
   packages/gondolin-adapter:
     dependencies:
-      '@agent-vm/secrets':
+      '@agent-vm/secret-management':
         specifier: workspace:*
         version: link:../secrets
       '@earendil-works/gondolin':
@@ -168,7 +168,7 @@ importers:
       '@agent-vm/config-contracts':
         specifier: workspace:*
         version: link:../config-contracts
-      '@agent-vm/secrets':
+      '@agent-vm/secret-management':
         specifier: workspace:*
         version: link:../secrets
       '@hono/mcp':
@@ -205,7 +205,7 @@ importers:
       '@agent-vm/gondolin-adapter':
         specifier: workspace:*
         version: link:../gondolin-adapter
-      '@agent-vm/secrets':
+      '@agent-vm/secret-management':
         specifier: workspace:*
         version: link:../secrets
 
@@ -228,7 +228,7 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)(yaml@2.9.0))
 
-  packages/secrets:
+  packages/secret-management:
     dependencies:
       '@1password/sdk':
         specifier: ^0.4.0

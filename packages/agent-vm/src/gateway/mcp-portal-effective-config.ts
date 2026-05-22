@@ -9,7 +9,7 @@ import {
 	type McpPortalConfig,
 	type SecretValue,
 } from '@agent-vm/config-contracts';
-import type { MediatedSecretSpec, SecretRef, SecretResolver } from '@agent-vm/secrets';
+import type { MediatedSecretSpec, SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 export interface McpPortalEffectiveConfigProps {
 	readonly allowedRawEnvSecretNames?: readonly string[];

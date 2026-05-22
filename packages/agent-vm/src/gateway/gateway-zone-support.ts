@@ -10,7 +10,7 @@ export interface StartGatewayZoneOptions {
 	readonly runTask?: RunTaskFn;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;
 	readonly runtimePluginConfigs?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
-	readonly secretResolver: import('@agent-vm/secrets').SecretResolver;
+	readonly secretResolver: import('@agent-vm/secret-management').SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
 	readonly tcpHostsOverride?: Record<string, string>;
 	readonly vfsMountsOverride?: GatewayManagedVmFactoryOptions['vfsMounts'];

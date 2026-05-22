@@ -53,7 +53,7 @@
 				"./packages/openclaw-mcp-portal-plugin/src/index.ts"
 			],
 			"@agent-vm/openclaw-gateway": ["./packages/openclaw-gateway/src/index.ts"],
-			"@agent-vm/secrets": ["./packages/secrets/src/index.ts"],
+			"@agent-vm/secret-management": ["./packages/secret-management/src/index.ts"],
 			"@agent-vm/worker-gateway": ["./packages/worker-gateway/src/index.ts"]
 		}
 	}
