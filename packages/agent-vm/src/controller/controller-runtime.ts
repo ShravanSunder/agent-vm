@@ -1,5 +1,5 @@
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
-import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secrets';
+import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { runTaskWithResult } from '../shared/run-task.js';
@@ -337,17 +337,57 @@ export async function startControllerRuntime(
 		systemConfig: options.systemConfig,
 		ttlForLease,
 	});
-	await runTaskStep(`Controller API on :${options.systemConfig.host.controllerPort}`, async () => {
-		serverRef.current = await (dependencies.startHttpServer ?? startControllerHttpServer)({
-			app: controllerApp,
-			port: options.systemConfig.host.controllerPort,
+	try {
+		await runTaskStep(
+			`Controller API on :${options.systemConfig.host.controllerPort}`,
+			async () => {
+				serverRef.current = await (dependencies.startHttpServer ?? startControllerHttpServer)({
+					app: controllerApp,
+					port: options.systemConfig.host.controllerPort,
+				});
+			},
+		);
+		await runTaskStep('Starting selected gateway zones', async () => {
+			await registry.startSelectedZones();
 		});
-	});
-	await runTaskStep('Starting selected gateway zones', async () => {
-		await registry.startSelectedZones();
-	});
 
-	await idleReaper.reapExpiredLeases();
+		await idleReaper.reapExpiredLeases();
+	} catch (error) {
+		clearReaperTimer();
+		requestHeartbeatRegistry.stopAll();
+		const cleanupErrors: Error[] = [];
+		try {
+			const releaseError = await releaseAllLeases();
+			if (releaseError) {
+				cleanupErrors.push(releaseError);
+			}
+		} catch (cleanupError) {
+			cleanupErrors.push(
+				cleanupError instanceof Error ? cleanupError : new Error(formatUnknownError(cleanupError)),
+			);
+		}
+		try {
+			await registry.stopAllZones();
+		} catch (cleanupError) {
+			cleanupErrors.push(
+				cleanupError instanceof Error ? cleanupError : new Error(formatUnknownError(cleanupError)),
+			);
+		}
+		try {
+			await serverRef.current?.close();
+		} catch (cleanupError) {
+			cleanupErrors.push(
+				cleanupError instanceof Error ? cleanupError : new Error(formatUnknownError(cleanupError)),
+			);
+		}
+		if (cleanupErrors.length > 0) {
+			writeControllerRuntimeLog(
+				`Controller startup cleanup failed: ${cleanupErrors.map((cleanupError) => cleanupError.message).join('; ')}`,
+			);
+			throw new Error('Controller startup failed and cleanup failed.', { cause: error });
+		}
+		throw error;
+	}
 
 	const snapshotByZone = registry.getSnapshotByZone();
 	return {

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
-import type { SecretResolver } from '@agent-vm/secrets';
+import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { openclawLifecycle } from './openclaw-lifecycle.js';
@@ -535,6 +535,17 @@ describe('openclawLifecycle', () => {
 								},
 							},
 						},
+						mcp: {
+							servers: {
+								filesystem: {
+									command: 'npx',
+									args: ['-y', '@modelcontextprotocol/server-filesystem', '/work'],
+								},
+								mcp_portal_shravan: {
+									url: 'http://127.0.0.1:18790/agents/shravan/mcp',
+								},
+							},
+						},
 					},
 					null,
 					2,
@@ -605,6 +616,14 @@ describe('openclawLifecycle', () => {
 						allowedOrigins: ['http://127.0.0.1:18791', 'http://localhost:18791'],
 					},
 				},
+				mcp: {
+					servers: {
+						filesystem: {
+							command: 'npx',
+							args: ['-y', '@modelcontextprotocol/server-filesystem', '/work'],
+						},
+					},
+				},
 				plugins: {
 					allow: ['gondolin'],
 					entries: {
@@ -628,6 +647,8 @@ describe('openclawLifecycle', () => {
 					lastTouchedVersion: 'agent-vm',
 				},
 			});
+			expect(effectiveOpenClawConfigContent).not.toContain('mcp_portal_shravan');
+			expect(effectiveOpenClawConfigContent).not.toContain('127.0.0.1:18790');
 			expect(
 				(await stat(path.join(zone.gateway.stateDir, 'effective-openclaw.json'))).mode & 0o777,
 			).toBe(0o600);

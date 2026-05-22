@@ -38,11 +38,29 @@ if ! command -v pnpm >/dev/null 2>&1; then
 	exit 1
 fi
 
+if ! command -v jq >/dev/null 2>&1; then
+	echo "[publish] error: jq not on PATH" >&2
+	exit 1
+fi
+
 echo "[publish] checking @agent-vm package version sync"
 bash scripts/check-package-version-sync.sh
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
+PUBLISHABLE_PACKAGES_PATH="$WORKDIR/publishable-packages.tsv"
+
+find packages -mindepth 2 -maxdepth 2 -name package.json -print0 |
+	xargs -0 jq -r '
+			select((.name | startswith("@agent-vm/")) and (.private != true)) |
+			[.name, .version] | @tsv
+		' |
+	sort -k1,1 > "$PUBLISHABLE_PACKAGES_PATH"
+
+if [[ ! -s "$PUBLISHABLE_PACKAGES_PATH" ]]; then
+	echo "[publish] error: no publishable @agent-vm packages found under packages/" >&2
+	exit 1
+fi
 
 NPM_TOKEN="$(op read "$OP_REF")"
 if [[ -z "$NPM_TOKEN" ]]; then
@@ -63,5 +81,25 @@ npm whoami
 
 echo "[publish] running pnpm -r publish --no-git-checks $DRY_RUN_FLAG"
 pnpm -r publish --access=public --no-git-checks $DRY_RUN_FLAG
+
+if [[ -z "$DRY_RUN_FLAG" ]]; then
+	echo "[publish] verifying every publishable @agent-vm package is visible on npm"
+	while IFS=$'\t' read -r package_name package_version; do
+		verified_version=""
+		for attempt in 1 2 3 4 5; do
+			if verified_version="$(npm view "${package_name}@${package_version}" version 2>/dev/null)"; then
+				break
+			fi
+			sleep 3
+		done
+
+		if [[ "$verified_version" != "$package_version" ]]; then
+			echo "[publish] error: ${package_name}@${package_version} is not visible on npm" >&2
+			exit 1
+		fi
+
+		echo "[publish] verified ${package_name}@${package_version}"
+	done < "$PUBLISHABLE_PACKAGES_PATH"
+fi
 
 echo "[publish] done"

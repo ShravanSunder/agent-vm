@@ -33,6 +33,7 @@
 		"oxlint-tsgolint": "^0.22.1",
 		"tasuku": "^2.3.0",
 		"tsdown": "^0.22.0",
+		"tsx": "4.21.0",
 		"typescript": "^6.0.3",
 		"vite": "^8.0.11",
 		"vitest": "^4.1.5"

@@ -17,7 +17,7 @@ import {
 	splitResolvedGatewaySecrets,
 } from '@agent-vm/gateway-interface';
 import { writeFileAtomically } from '@agent-vm/gondolin-adapter';
-import type { SecretRef, SecretResolver } from '@agent-vm/secrets';
+import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 const effectiveOpenClawConfigFileName = 'effective-openclaw.json';
 const effectiveOpenClawConfigVmPath = `/home/openclaw/.openclaw/state/${effectiveOpenClawConfigFileName}`;
@@ -336,10 +336,15 @@ function buildEffectiveMcpConfig(
 	const existingServersConfig = isObjectRecord(existingMcpConfig.servers)
 		? existingMcpConfig.servers
 		: {};
+	const retainedExistingServersConfig = Object.fromEntries(
+		Object.entries(existingServersConfig).filter(
+			([serverName]) => !serverName.startsWith('mcp_portal_'),
+		),
+	);
 	return {
 		...existingMcpConfig,
 		servers: {
-			...existingServersConfig,
+			...retainedExistingServersConfig,
 			...runtimeMcpServers,
 		},
 	};

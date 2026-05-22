@@ -91,4 +91,26 @@ describe('publish workflow', () => {
 		);
 		expect(agentsGuidance).not.toContain(staleNpmTokenOpRef);
 	});
+
+	it('verifies every publishable agent-vm package after local npm publish', async () => {
+		const publishScript = await fs.readFile(
+			path.join(process.cwd(), 'scripts', 'publish-local.sh'),
+			'utf8',
+		);
+
+		expect(publishScript).toContain('PUBLISHABLE_PACKAGES_PATH=');
+		expect(publishScript).toContain(
+			'select((.name | startswith("@agent-vm/")) and (.private != true))',
+		);
+		expect(publishScript).toContain(
+			'echo "[publish] verifying every publishable @agent-vm package is visible on npm"',
+		);
+		expect(publishScript).toContain('npm view "${package_name}@${package_version}" version');
+		expect(publishScript).toContain(
+			'echo "[publish] error: ${package_name}@${package_version} is not visible on npm"',
+		);
+		expect(publishScript.indexOf('pnpm -r publish')).toBeLessThan(
+			publishScript.indexOf('npm view "${package_name}@${package_version}" version'),
+		);
+	});
 });

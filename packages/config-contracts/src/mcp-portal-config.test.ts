@@ -4,7 +4,11 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { loadMcpPortalConfig, resolveMcpPortalProfile } from './mcp-portal-config.js';
+import {
+	loadMcpPortalConfig,
+	openClawMcpPortalPluginConfigSchema,
+	resolveMcpPortalProfile,
+} from './mcp-portal-config.js';
 
 async function writeConfigFile(text: string): Promise<string> {
 	const directory = await mkdtemp(join(tmpdir(), 'agent-vm-mcp-portal-config-'));
@@ -125,5 +129,16 @@ describe('loadMcpPortalConfig', () => {
 
 		const config = await loadMcpPortalConfig(configPath);
 		expect(() => resolveMcpPortalProfile(config, 'a')).toThrow(/MCP profile inheritance cycle/u);
+	});
+});
+
+describe('openClawMcpPortalPluginConfigSchema', () => {
+	it('rejects legacy subprocess binPath plugin config', () => {
+		expect(() =>
+			openClawMcpPortalPluginConfigSchema.parse({
+				binPath: '/custom/bin/stale-portal-binary',
+				configDir: '/home/openclaw/.openclaw/config',
+			}),
+		).toThrow(/binPath/u);
 	});
 });

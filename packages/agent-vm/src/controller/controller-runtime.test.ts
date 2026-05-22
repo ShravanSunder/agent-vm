@@ -392,6 +392,94 @@ describe('startControllerRuntime', () => {
 		await runtime.close();
 	});
 
+	it('closes the controller server when startup fails after binding the port', async () => {
+		const zone = systemConfig.zones[0];
+		if (!zone) {
+			throw new Error('Expected test zone.');
+		}
+		const closeHttpServer = vi.fn(async () => {});
+		const closeGatewayVm = vi.fn(async () => {});
+		const clearIntervalMock = vi.fn();
+		const fakeInterval = setTimeout(() => undefined, 0);
+		clearTimeout(fakeInterval);
+		const setIntervalMock = vi.fn(() => fakeInterval);
+		const startHttpServer = vi.fn(async () => ({
+			close: closeHttpServer,
+		}));
+
+		await expect(
+			startControllerRuntime(
+				{
+					systemConfig,
+					zoneIds: ['shravan'],
+				},
+				{
+					createManagedToolVm: vi.fn(async () => ({
+						close: vi.fn(async () => {}),
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({
+							command: 'ssh ...',
+							host: '127.0.0.1',
+							identityFile: '/tmp/key',
+							port: 19000,
+							user: 'sandbox',
+						})),
+						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+						id: 'tool-vm-post-bind-fail',
+						setIngressRoutes: vi.fn(),
+						getVmInstance: vi.fn(),
+					})),
+					createSecretResolver: async () => ({
+						resolve: async () => '',
+						resolveAll: async () => ({}),
+					}),
+					clearIntervalImpl: clearIntervalMock,
+					runTask: async (title, fn) => {
+						await fn();
+						if (title === 'Starting selected gateway zones') {
+							throw new Error('post-bind startup failed');
+						}
+					},
+					startGatewayZone: vi.fn(async () => ({
+						image: {
+							built: true,
+							fingerprint: 'gateway-image',
+							imagePath: '/tmp/gateway-image',
+						},
+						ingress: {
+							host: '127.0.0.1',
+							port: 18791,
+						},
+						processSpec: openClawProcessSpec,
+						vm: {
+							close: closeGatewayVm,
+							enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+							enableSsh: vi.fn(async () => ({
+								command: 'ssh ...',
+								host: '127.0.0.1',
+								identityFile: '/tmp/key',
+								port: 19000,
+								user: 'sandbox',
+							})),
+							exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+							id: 'gateway-vm-post-bind-fail',
+							setIngressRoutes: vi.fn(),
+							getVmInstance: vi.fn(),
+						},
+						zone,
+					})),
+					startHttpServer,
+					setIntervalImpl: setIntervalMock,
+				},
+			),
+		).rejects.toThrow('post-bind startup failed');
+
+		expect(startHttpServer).toHaveBeenCalledTimes(1);
+		expect(closeGatewayVm).toHaveBeenCalledTimes(1);
+		expect(closeHttpServer).toHaveBeenCalledTimes(1);
+		expect(clearIntervalMock).toHaveBeenCalledTimes(1);
+	});
+
 	it('registers stop-controller for worker runtimes', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 		const workerSystemConfig: LoadedSystemConfig = {

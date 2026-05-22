@@ -9,7 +9,7 @@ import {
 	type McpPortalConfig,
 	type SecretValue,
 } from '@agent-vm/config-contracts';
-import type { SecretResolver } from '@agent-vm/secrets';
+import type { SecretResolver } from '@agent-vm/secret-management';
 import { z } from 'zod';
 
 import { portalToolRecordSchema, type PortalToolRecord } from '../catalog-types.js';

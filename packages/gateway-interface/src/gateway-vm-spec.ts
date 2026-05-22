@@ -1,5 +1,5 @@
 import type { VfsMountSpec } from '@agent-vm/gondolin-adapter';
-import type { MediatedSecretSpec } from '@agent-vm/secrets';
+import type { MediatedSecretSpec } from '@agent-vm/secret-management';
 
 /**
  * Everything the controller needs to create the Gondolin VM.

@@ -88,7 +88,7 @@ The `mcp-proxy` namespace is the adapter boundary.
 ### Standalone And Local Operation
 
 - Standalone/local proxy operation can resolve environment secrets and
-  1Password refs through the host-side `@agent-vm/secrets` resolver.
+  1Password refs through the host-side `@agent-vm/secret-management` resolver.
 - This is distinct from managed OpenClaw. Managed gateway mode must keep
   1Password resolution host/controller-side.
 - Loopback upstream MCP providers are allowed. URL validation rejects non-HTTP

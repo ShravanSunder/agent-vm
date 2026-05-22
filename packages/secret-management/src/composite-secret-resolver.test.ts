@@ -52,7 +52,7 @@ describe('createCompositeSecretResolver', () => {
 	it('resolveAll handles mixed secret sources', async () => {
 		const resolveOnePasswordSecret = vi.fn(async (ref) => `single:${ref.ref}`);
 		const resolveAllOnePasswordSecrets = vi.fn(
-			async (refs: Record<string, import('@agent-vm/secrets').SecretRef>) =>
+			async (refs: Record<string, import('@agent-vm/secret-management').SecretRef>) =>
 				Object.fromEntries(
 					Object.entries(refs).map(([secretName, secretRef]) => [
 						secretName,

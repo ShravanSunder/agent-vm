@@ -22,7 +22,7 @@
 - `/cli` calls `/core` directly for local operator commands; it does not call a local HTTP server by default.
 - PI harness and generic external MCP clients outside OpenClaw use `/mcp-proxy`; managed OpenClaw does not preserve legacy portal entries in `cfg.mcp.servers`.
 - Codex harness/app-server projection support is out of scope for this delivery. Do not preserve or add portal-specific Codex harness behavior in this refactor.
-- Secret resolution is not a Gondolin responsibility. 1Password/env/composite resolver helpers live in a shared `@agent-vm/secrets` package so controller, gateway packages, MCP Portal, and tests do not depend on `@agent-vm/gondolin-adapter` just to resolve secrets.
+- Secret resolution is not a Gondolin responsibility. 1Password/env/composite resolver helpers live in a shared `@agent-vm/secret-management` package so controller, gateway packages, MCP Portal, and tests do not depend on `@agent-vm/gondolin-adapter` just to resolve secrets.
 - `/core` does not authenticate requests. Adapters authenticate and pass trusted `PortalAgentScope`.
 - `PortalAgentScope` carries a source discriminator (`openclaw-trusted`, `mcp-proxy-bearer`, or `cli-operator`) plus both OpenClaw `sessionId` and `sessionKey` when present. The source is adapter-owned evidence about how the scope was established, not an authorization shortcut inside `/core`.
 - All adapter-visible portal tool descriptors are config-derived after trusted agent scope is established.
@@ -119,7 +119,7 @@ Operator CLI
   - Adds external agent-scope bearer helpers for `/mcp-proxy` and `/cli`.
   - Adds master-key fingerprint helpers for credential-file generation and rotation checks.
 
-### `packages/secrets`
+### `packages/secret-management`
 
 - Owns `SecretRef`, `SecretResolver`, `MediatedSecretSpec`, token-source helpers, environment resolver, composite resolver, and 1Password SDK/op CLI resolver.
 - Does not import Gondolin, gateway lifecycle packages, MCP Portal, OpenClaw, controller runtime, or CLI packages.
@@ -284,17 +284,17 @@ Task 0 must refresh this section from the current checkout before implementation
 ## Task 1: Extract Shared Secrets Package
 
 **Files:**
-- Create: `packages/secrets/package.json`
-- Create: `packages/secrets/tsconfig.json`
-- Create: `packages/secrets/tsconfig.build.json`
-- Create: `packages/secrets/tsdown.config.ts`
-- Create: `packages/secrets/src/contracts.ts`
-- Create: `packages/secrets/src/environment-secret-resolver.ts`
-- Create: `packages/secrets/src/composite-secret-resolver.ts`
-- Create: `packages/secrets/src/onepassword-secret-resolver.ts`
-- Create: `packages/secrets/src/service-account-token.ts`
-- Create: `packages/secrets/src/testing.ts`
-- Create: `packages/secrets/src/index.ts`
+- Create: `packages/secret-management/package.json`
+- Create: `packages/secret-management/tsconfig.json`
+- Create: `packages/secret-management/tsconfig.build.json`
+- Create: `packages/secret-management/tsdown.config.ts`
+- Create: `packages/secret-management/src/contracts.ts`
+- Create: `packages/secret-management/src/environment-secret-resolver.ts`
+- Create: `packages/secret-management/src/composite-secret-resolver.ts`
+- Create: `packages/secret-management/src/onepassword-secret-resolver.ts`
+- Create: `packages/secret-management/src/service-account-token.ts`
+- Create: `packages/secret-management/src/testing.ts`
+- Create: `packages/secret-management/src/index.ts`
 - Move tests from `packages/gondolin-adapter/src/secret-resolver.test.ts`
 - Move smoke from `packages/gondolin-adapter/src/secret-resolver.smoke.test.ts`
 - Move tests from `packages/agent-vm/src/controller/composite-secret-resolver.test.ts`
@@ -306,11 +306,11 @@ Task 0 must refresh this section from the current checkout before implementation
 
 - [ ] **Step 1: Add package shell**
 
-Create `@agent-vm/secrets`.
+Create `@agent-vm/secret-management`.
 
 Package requirements:
 
-- package name is `@agent-vm/secrets`
+- package name is `@agent-vm/secret-management`
 - exports only ESM
 - build script uses `tsdown`
 - no dependency on `@agent-vm/gondolin-adapter`
@@ -366,7 +366,7 @@ Do not leave downstream packages importing `SecretRef`, `SecretResolver`, old `S
 Move `packages/agent-vm/src/controller/composite-secret-resolver.ts` into:
 
 ```text
-packages/secrets/src/composite-secret-resolver.ts
+packages/secret-management/src/composite-secret-resolver.ts
 ```
 
 The exported function remains:
@@ -389,8 +389,8 @@ It must preserve the batching behavior:
 Move `packages/gondolin-adapter/src/secret-resolver.ts` into:
 
 ```text
-packages/secrets/src/onepassword-secret-resolver.ts
-packages/secrets/src/service-account-token.ts
+packages/secret-management/src/onepassword-secret-resolver.ts
+packages/secret-management/src/service-account-token.ts
 ```
 
 Keep the current behavior:
@@ -408,13 +408,13 @@ Keep the current behavior:
 
 Update imports:
 
-- packages that need secret contracts import from `@agent-vm/secrets`
-- controller startup imports `createCompositeSecretResolver`, `createSecretResolver`, and `resolveServiceAccountToken` from `@agent-vm/secrets`
-- MCP Portal CLI uses `@agent-vm/secrets` to resolve `externalAuth.masterKey`
+- packages that need secret contracts import from `@agent-vm/secret-management`
+- controller startup imports `createCompositeSecretResolver`, `createSecretResolver`, and `resolveServiceAccountToken` from `@agent-vm/secret-management`
+- MCP Portal CLI uses `@agent-vm/secret-management` to resolve `externalAuth.masterKey`
 - `@agent-vm/gondolin-adapter` no longer exports `secret-resolver.js`
 - `@agent-vm/gondolin-adapter` no longer depends on `@1password/sdk`
 
-Do not make `@agent-vm/secrets` depend on:
+Do not make `@agent-vm/secret-management` depend on:
 
 - `@agent-vm/gondolin-adapter`
 - `@agent-vm/gateway-interface`
@@ -426,9 +426,9 @@ Do not make `@agent-vm/secrets` depend on:
 Move tests to:
 
 ```text
-packages/secrets/src/onepassword-secret-resolver.test.ts
-packages/secrets/src/composite-secret-resolver.test.ts
-packages/secrets/src/onepassword-secret-resolver.smoke.test.ts
+packages/secret-management/src/onepassword-secret-resolver.test.ts
+packages/secret-management/src/composite-secret-resolver.test.ts
+packages/secret-management/src/onepassword-secret-resolver.smoke.test.ts
 ```
 
 The live smoke still uses:
@@ -451,9 +451,9 @@ op://agent-vm-testing/smoke-test-item2/password
 Run:
 
 ```bash
-pnpm vitest run --root . --config vitest.config.ts packages/secrets/src
-AGENT_VM_1PASSWORD_SMOKE=1 pnpm vitest run --root . --config vitest.smoke.config.ts packages/secrets/src/onepassword-secret-resolver.smoke.test.ts
-pnpm --filter @agent-vm/secrets build
+pnpm vitest run --root . --config vitest.config.ts packages/secret-management/src
+AGENT_VM_1PASSWORD_SMOKE=1 pnpm vitest run --root . --config vitest.smoke.config.ts packages/secret-management/src/onepassword-secret-resolver.smoke.test.ts
+pnpm --filter @agent-vm/secret-management build
 pnpm --filter @agent-vm/gondolin-adapter build
 pnpm --filter @agent-vm/gateway-interface build
 pnpm --filter @agent-vm/agent-vm build
@@ -472,8 +472,8 @@ rg -n "@1password/sdk|secret-resolver" packages/gondolin-adapter package.json pa
 
 Expected:
 
-- secret contracts come from `@agent-vm/secrets`
-- `@1password/sdk` appears only in `packages/secrets/package.json` and `packages/secrets/src`
+- secret contracts come from `@agent-vm/secret-management`
+- `@1password/sdk` appears only in `packages/secret-management/package.json` and `packages/secret-management/src`
 - `@agent-vm/gondolin-adapter` has no 1Password resolver exports
 - no package imports secrets through Gondolin
 
@@ -1217,7 +1217,7 @@ Expected: FAIL before materializer exists.
 
 - [ ] **Step 4: Add runtime mediated secret plumbing**
 
-Import `MediatedSecretSpec` from `@agent-vm/secrets` in `packages/gateway-interface/src/gateway-lifecycle.ts`. Do not define `RuntimeMediatedSecretBinding`; it is the same `{ hosts, value }` shape under a third name.
+Import `MediatedSecretSpec` from `@agent-vm/secret-management` in `packages/gateway-interface/src/gateway-lifecycle.ts`. Do not define `RuntimeMediatedSecretBinding`; it is the same `{ hosts, value }` shape under a third name.
 
 Extend `GatewayZoneConfig` with:
 
@@ -1334,7 +1334,7 @@ Expected: exit 0.
 External `/mcp-proxy` startup contract:
 
 - `agent-vm-mcp-portal serve --config-dir <path>` loads authored MCP Portal configs, not managed OpenClaw effective configs.
-- The `serve` command runs on the operator or proxy host and may resolve authored `source: "1password"` refs at process startup through `@agent-vm/secrets`.
+- The `serve` command runs on the operator or proxy host and may resolve authored `source: "1password"` refs at process startup through `@agent-vm/secret-management`.
 - The `serve` command constructs a composite resolver from local env plus 1Password SDK/op CLI according to the same token-source rules as the controller. The external proxy process accepts explicit token-source env controls:
   - `AGENT_VM_MCP_PORTAL_OP_TOKEN_SOURCE=env|op-cli|keychain`
   - `AGENT_VM_MCP_PORTAL_OP_TOKEN_ENV_VAR=<env var>` for `env` token sources
@@ -1342,7 +1342,7 @@ External `/mcp-proxy` startup contract:
   - `AGENT_VM_MCP_PORTAL_OP_TOKEN_KEYCHAIN_SERVICE=<service>` and `AGENT_VM_MCP_PORTAL_OP_TOKEN_KEYCHAIN_ACCOUNT=<account>` for `keychain` token sources
   - when no explicit token source is configured, `OP_SERVICE_ACCOUNT_TOKEN` is used only if it is present; env-only configs must still work without a 1Password token
   - env-backed token bootstrap reads from the `env` snapshot supplied to `startPortalServer(...)` / `runAgentVmMcpPortal(...)`, not directly from ambient `process.env`
-- The `serve` command must not implement its own raw `op read` subprocess path. It delegates 1Password resolution to `@agent-vm/secrets` so env allowlisting, token-source behavior, and redacted errors stay centralized.
+- The `serve` command must not implement its own raw `op read` subprocess path. It delegates 1Password resolution to `@agent-vm/secret-management` so env allowlisting, token-source behavior, and redacted errors stay centralized.
 - `externalAuth.masterKey` is resolved at serve startup through that resolver before HMAC bearer verification is enabled.
 - The resolved master key must be canonical base64url without padding and must decode to at least 32 bytes. Startup fails closed for raw UTF-8 strings, padded base64, or short decoded keys.
 - Security boundary: the `/mcp-proxy` host must have access to the configured secret source; gateway VMs still do not receive `OP_SERVICE_ACCOUNT_TOKEN`, `OP_CONNECT_TOKEN`, `OP_SESSION`, or other 1Password process credentials.
@@ -1485,7 +1485,7 @@ Tests must prove:
 - `write-credential` prints only redacted metadata: output path and non-secret status. It does not emit the bearer, the full credential JSON, or resolved secret values.
 - `serve` starts `/mcp-proxy` through the same `agent-vm-mcp-portal` binary.
 - `serve` installs `SIGINT`/`SIGTERM` shutdown handling and closes portal sessions, upstream clients, and the HTTP listener before exiting.
-- `call` and `write-credential` use the same shared `@agent-vm/secrets` resolver path as `serve`; `source: "1password"` refs for `externalAuth.masterKey` or upstream provider secrets must work in all three CLI commands without a raw local `op read` implementation.
+- `call` and `write-credential` use the same shared `@agent-vm/secret-management` resolver path as `serve`; `source: "1password"` refs for `externalAuth.masterKey` or upstream provider secrets must work in all three CLI commands without a raw local `op read` implementation.
 
 - [ ] **Step 2: Move CLI orchestration out of bin**
 
@@ -1727,7 +1727,7 @@ Docs must say:
 - `mcp-portal.config.jsonc` owns agents/profiles and optional proxy auth.
 - `system.jsonc zones[].mcpPortal.configDir` points to the authored config folder.
 - credential files are secret material; credential-writing requires an expected master-key fingerprint and never prints bearer values.
-- `@agent-vm/secrets` owns 1Password/env/composite secret resolution; Gondolin remains a VM adapter and does not own secret resolver helpers.
+- `@agent-vm/secret-management` owns 1Password/env/composite secret resolution; Gondolin remains a VM adapter and does not own secret resolver helpers.
 
 - [ ] **Step 2: Document secret boundary**
 
@@ -1859,7 +1859,7 @@ Expected:
 
 Ship as stacked PRs unless the branch owner explicitly asks for one large PR:
 
-1. PR1: shared `@agent-vm/secrets` extraction and dependency cleanup.
+1. PR1: shared `@agent-vm/secret-management` extraction and dependency cleanup.
 2. PR2: `/core` extraction and path exports.
 3. PR3: native OpenClaw plugin adapter and old subprocess removal.
 4. PR4: `mcpPortal` rename and managed materialization with cache-backed effective configs.

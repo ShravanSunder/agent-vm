@@ -153,7 +153,6 @@ export type McpPortalConfig = Omit<ParsedMcpPortalConfig, 'agents'> & {
 export const openClawMcpPortalPluginConfigSchema = z
 	.object({
 		configDir: z.string().min(1),
-		binPath: z.string().min(1).optional(),
 	})
 	.strict();
 
