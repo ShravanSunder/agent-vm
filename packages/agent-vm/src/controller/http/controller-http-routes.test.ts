@@ -44,6 +44,7 @@ function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 	return {
 		agentWorkspaceDir: '/host/agent-work',
 		createdAt: tcpSlot,
+		effectiveIdleTtlMs: 30 * 60 * 1000,
 		guestWorkdir: '/work',
 		id: leaseId,
 		lastUsedAt: tcpSlot,
@@ -165,10 +166,11 @@ function createWorkerTaskResultStub(taskId: string): WorkerTaskResult {
 }
 
 describe('createControllerApp', () => {
-	it('creates, fetches, and releases leases through the controller api', async () => {
+	it('creates, renews, peeks, and releases leases through the controller api', async () => {
 		const lease: Lease = {
 			agentWorkspaceDir: '/home/openclaw/work',
 			createdAt: 1,
+			effectiveIdleTtlMs: 30 * 60 * 1000,
 			id: 'lease-123',
 			lastUsedAt: 1,
 			profileId: 'standard',
@@ -201,7 +203,7 @@ describe('createControllerApp', () => {
 			zoneId: 'shravan',
 		};
 		const createLease = vi.fn(async () => lease);
-		const keepLeaseAlive = vi.fn(() => ({
+		const renewLease = vi.fn(() => ({
 			kind: 'renewed' as const,
 			lastUsedAt: lease.lastUsedAt,
 			lease,
@@ -218,8 +220,8 @@ describe('createControllerApp', () => {
 			readIdentityPem: async () => 'pem-from-file',
 			leaseManager: {
 				createLease,
-				keepLeaseAlive,
-				peekLease: vi.fn(),
+				renewLease,
+				peekLease: vi.fn(() => ({ kind: 'snapshot' as const, lease })),
 				listLeases: vi.fn(() => []),
 				releaseLease,
 			},
@@ -239,6 +241,10 @@ describe('createControllerApp', () => {
 			method: 'POST',
 		});
 		const getResponse = await app.request('/lease/lease-123');
+		const renewResponse = await app.request('/lease/lease-123/renew', {
+			method: 'POST',
+		});
+		const peekResponse = await app.request('/lease/lease-123/peek');
 		const deleteResponse = await app.request('/lease/lease-123', {
 			method: 'DELETE',
 		});
@@ -253,9 +259,152 @@ describe('createControllerApp', () => {
 			workdir: '/work',
 		});
 		expect(getResponse.status).toBe(200);
+		expect(renewResponse.status).toBe(200);
+		expect(peekResponse.status).toBe(200);
 		expect(deleteResponse.status).toBe(204);
-		expect(keepLeaseAlive).toHaveBeenCalledWith('lease-123');
-		expect(releaseLease).toHaveBeenCalledWith('lease-123');
+		expect(renewLease).toHaveBeenCalledTimes(1);
+		expect(releaseLease).toHaveBeenCalledWith('lease-123', { force: false });
+	});
+
+	it('passes optional idleTtlMs through lease creation and rejects invalid values', async () => {
+		const createLease = vi.fn(async () => ({
+			...createLeaseStub('lease-ttl', 0),
+			effectiveIdleTtlMs: 60_000,
+		}));
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease,
+				renewLease: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			leaseIdleTtlPolicy: {
+				defaultMs: 30_000,
+				minRequestedMs: 5_000,
+				maxRequestedMs: 120_000,
+				byScopeKind: {},
+				byScopePrefix: {},
+			},
+		});
+
+		const createResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				idleTtlMs: 60_000,
+				profileId: 'standard',
+				scopeKey: 'agent:main:session-abc',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+		const invalidResponse = await app.request('/lease', {
+			body: JSON.stringify({
+				agentWorkspaceDir: '/home/openclaw/work',
+				idleTtlMs: 1_000,
+				profileId: 'standard',
+				scopeKey: 'agent:main:session-def',
+				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
+				zoneId: 'shravan',
+			}),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(createResponse.status).toBe(200);
+		expect(createLease).toHaveBeenCalledWith(
+			expect.objectContaining({
+				effectiveIdleTtlMs: 60_000,
+			}),
+		);
+		expect(invalidResponse.status).toBe(400);
+		await expect(invalidResponse.json()).resolves.toMatchObject({
+			error: 'invalid-lease-idle-ttl',
+		});
+	});
+
+	it('exposes active-use controller routes with UUIDv7 validation and idempotent cleanup', async () => {
+		const startActiveUse = vi.fn(() => ({
+			expiresAt: 5_000,
+			heartbeatAfterMs: 1_000,
+			useId: '01890f00-0000-7000-8000-000000000000',
+		}));
+		const heartbeatActiveUse = vi.fn(() => ({
+			expiresAt: 6_000,
+			heartbeatAfterMs: 1_000,
+		}));
+		const endActiveUse = vi.fn(() => ({ kind: 'ended' as const }));
+		const app = createControllerAppForTest({
+			toolVmProfiles: {},
+			leaseManager: {
+				createLease: vi.fn(async () => createLeaseStub('lease-123', 0)),
+				renewLease: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+				startActiveUse,
+				heartbeatActiveUse,
+				endActiveUse,
+			},
+		});
+
+		const startResponse = await app.request('/lease/lease-123/uses', {
+			body: JSON.stringify({
+				useId: '01890f00-0000-7000-8000-000000000000',
+				correlation: { toolName: 'shell' },
+			}),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+		const badStartResponse = await app.request('/lease/lease-123/uses', {
+			body: JSON.stringify({
+				useId: '1b5c5d78-91b4-4c8e-a15e-f475dced59ef',
+			}),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+		const heartbeatResponse = await app.request(
+			'/lease/lease-123/uses/01890f00-0000-7000-8000-000000000000/heartbeat',
+			{ method: 'POST' },
+		);
+		const endResponse = await app.request(
+			'/lease/lease-123/uses/01890f00-0000-7000-8000-000000000000',
+			{
+				body: JSON.stringify({ outcome: 'completed' }),
+				headers: { 'content-type': 'application/json' },
+				method: 'DELETE',
+			},
+		);
+
+		expect(startResponse.status).toBe(200);
+		await expect(startResponse.json()).resolves.toEqual({
+			expiresAt: 5_000,
+			heartbeatAfterMs: 1_000,
+			useId: '01890f00-0000-7000-8000-000000000000',
+		});
+		expect(badStartResponse.status).toBe(400);
+		expect(heartbeatResponse.status).toBe(200);
+		expect(endResponse.status).toBe(204);
+		expect(startActiveUse).toHaveBeenCalledWith('lease-123', {
+			correlation: { toolName: 'shell' },
+			useId: '01890f00-0000-7000-8000-000000000000',
+		});
+		expect(endActiveUse).toHaveBeenCalledWith('lease-123', '01890f00-0000-7000-8000-000000000000', {
+			outcome: 'completed',
+		});
 	});
 
 	it('rejects non-agent Tool VM lease scopes before creating a lease', async () => {
@@ -270,7 +419,7 @@ describe('createControllerApp', () => {
 			},
 			leaseManager: {
 				createLease,
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -317,7 +466,7 @@ describe('createControllerApp', () => {
 			validateToolVmLeaseRequirements: async (zoneId) => runtimeStatusStore.assertFreshOk(zoneId),
 			leaseManager: {
 				createLease,
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -408,7 +557,7 @@ describe('createControllerApp', () => {
 			openClawRuntimeStatusStore: new OpenClawRuntimeStatusStore(),
 			leaseManager: {
 				createLease: vi.fn(async () => createLeaseStub('lease-123', 0)),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -445,7 +594,7 @@ describe('createControllerApp', () => {
 			validateToolVmLeaseRequirements: async (zoneId) => runtimeStatusStore.assertFreshOk(zoneId),
 			leaseManager: {
 				createLease,
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -514,7 +663,7 @@ describe('createControllerApp', () => {
 			validateToolVmLeaseRequirements,
 			leaseManager: {
 				createLease,
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -554,7 +703,7 @@ describe('createControllerApp', () => {
 			},
 			leaseManager: {
 				createLease: vi.fn(async () => createLeaseStub('lease-legacy', 0)),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -590,7 +739,7 @@ describe('createControllerApp', () => {
 			},
 			leaseManager: {
 				createLease: vi.fn(async () => createLeaseStub('lease-mixed', 0)),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -633,7 +782,7 @@ describe('createControllerApp', () => {
 			readIdentityPem: async () => 'pem-from-file',
 			leaseManager: {
 				createLease,
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -697,7 +846,7 @@ describe('createControllerApp', () => {
 			readIdentityPem: async () => 'pem-from-file',
 			leaseManager: {
 				createLease,
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -746,7 +895,7 @@ describe('createControllerApp', () => {
 			},
 			leaseManager: {
 				createLease,
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -795,7 +944,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('No TCP slots available');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -848,7 +997,7 @@ describe('createControllerApp', () => {
 			},
 			leaseManager: {
 				createLease: vi.fn(async () => createLeaseStub('lease-unreachable', 0)),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -909,7 +1058,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new LeaseScopeConflictError('scope already uses a different workspace');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -941,7 +1090,7 @@ describe('createControllerApp', () => {
 		const app = createControllerAppForTest({
 			leaseManager: {
 				createLease,
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -992,7 +1141,7 @@ describe('createControllerApp', () => {
 		const app = createControllerAppForTest({
 			leaseManager: {
 				createLease,
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1052,7 +1201,7 @@ describe('createControllerApp', () => {
 		const app = createControllerAppForTest({
 			leaseManager: {
 				createLease,
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1141,7 +1290,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1204,7 +1353,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1262,7 +1411,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1319,7 +1468,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1365,7 +1514,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1408,7 +1557,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1458,7 +1607,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1518,7 +1667,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1569,7 +1718,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1613,7 +1762,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('should not be called');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1646,7 +1795,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(() => undefined),
+				renewLease: vi.fn(() => undefined),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1661,10 +1810,10 @@ describe('createControllerApp', () => {
 		});
 	});
 
-	it('peeks a lease without using the keepalive path', async () => {
+	it('peeks a lease without using the renew path', async () => {
 		const lease = createLeaseStub('lease-123', 0);
-		const keepLeaseAlive = vi.fn(() => {
-			throw new Error('keepalive should not be used for peek');
+		const renewLease = vi.fn(() => {
+			throw new Error('renew should not be used for peek');
 		});
 		const peekLease = vi.fn(() => ({ kind: 'snapshot' as const, lease }));
 		const app = createControllerAppForTest({
@@ -1679,7 +1828,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive,
+				renewLease,
 				peekLease,
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1700,7 +1849,7 @@ describe('createControllerApp', () => {
 			zoneId: 'shravan',
 		});
 		expect(peekLease).toHaveBeenCalledWith('lease-123');
-		expect(keepLeaseAlive).not.toHaveBeenCalled();
+		expect(renewLease).not.toHaveBeenCalled();
 	});
 
 	it('returns 404 when peeking a non-existent lease', async () => {
@@ -1716,7 +1865,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(() => undefined),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1745,7 +1894,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases,
 				releaseLease: vi.fn(async () => {}),
@@ -1778,7 +1927,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1812,7 +1961,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1856,7 +2005,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1904,7 +2053,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -1967,7 +2116,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2013,7 +2162,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2057,7 +2206,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2097,7 +2246,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2139,7 +2288,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2177,7 +2326,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2236,7 +2385,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2312,7 +2461,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2389,7 +2538,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2445,7 +2594,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2493,7 +2642,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2544,7 +2693,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2616,7 +2765,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2664,7 +2813,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2705,7 +2854,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2740,7 +2889,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
@@ -2780,7 +2929,7 @@ describe('createControllerApp', () => {
 				createLease: vi.fn(async () => {
 					throw new Error('not used');
 				}),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),

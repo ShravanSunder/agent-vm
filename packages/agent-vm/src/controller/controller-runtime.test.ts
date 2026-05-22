@@ -172,6 +172,24 @@ function createPreparedWorkerTaskStub(
 	};
 }
 
+function isUnknownRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+	return typeof value === 'object' && value !== null;
+}
+
+function readStringProperty(value: unknown, propertyName: string): string {
+	if (typeof value !== 'object' || value === null) {
+		throw new Error(`Expected response JSON object with '${propertyName}'.`);
+	}
+	if (!isUnknownRecord(value)) {
+		throw new Error(`Expected response JSON object with '${propertyName}'.`);
+	}
+	const propertyValue = value[propertyName];
+	if (typeof propertyValue !== 'string') {
+		throw new Error(`Expected response JSON property '${propertyName}' to be a string.`);
+	}
+	return propertyValue;
+}
+
 describe('startControllerRuntime', () => {
 	it('starts the gateway, creates the controller app, and opens the controller port', async () => {
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
@@ -246,7 +264,6 @@ describe('startControllerRuntime', () => {
 					enableSsh: vi.fn(async () => ({
 						command: 'ssh ...',
 						host: '127.0.0.1',
-						identityFile: '/tmp/key',
 						port: 19000,
 						user: 'sandbox',
 					})),
@@ -344,6 +361,328 @@ describe('startControllerRuntime', () => {
 		expect(clearIntervalMock).toHaveBeenCalledTimes(1);
 	});
 
+	it('reaps stale active uses before releasing expired idle leases', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		const tempRoot = await mkdtemp(path.join(tmpdir(), 'agent-vm-active-use-reap-'));
+		const stateDir = path.join(tempRoot, 'state', 'shravan');
+		const zoneFilesDir = path.join(tempRoot, 'zone-files', 'shravan');
+		await mkdir(path.join(stateDir, 'sandboxes', 'agent', 'work'), { recursive: true });
+		await mkdir(zoneFilesDir, { recursive: true });
+		const runtimeSystemConfig = {
+			...systemConfig,
+			runtimeDir: path.join(tempRoot, 'runtime'),
+			zones: systemConfig.zones.map((zone) => ({
+				...zone,
+				gateway: {
+					...zone.gateway,
+					stateDir,
+					zoneFilesDir,
+				},
+			})),
+			leaseIdleTtl: {
+				byScopeKind: {},
+				byScopePrefix: {},
+				defaultMs: 1_000,
+				maxRequestedMs: 60_000,
+				minRequestedMs: 1_000,
+			},
+		} satisfies LoadedSystemConfig;
+		const runtimeZone = runtimeSystemConfig.zones[0];
+		if (!runtimeZone) {
+			throw new Error('Expected runtime test zone.');
+		}
+		let now = 1_000;
+		let runReaper: (() => void | Promise<void>) | undefined;
+		let startHttpServerArgs:
+			| {
+					app: {
+						request(path: string, init?: RequestInit): Response | Promise<Response>;
+					};
+					port: number;
+			  }
+			| undefined;
+		const fakeInterval = setTimeout(() => undefined, 0);
+		clearTimeout(fakeInterval);
+		try {
+			const closeToolVm = vi.fn(async () => {});
+			const runtime = await startControllerRuntime(
+				{
+					systemConfig: runtimeSystemConfig,
+					zoneIds: ['shravan'],
+				},
+				{
+					createManagedToolVm: vi.fn(async () => ({
+						close: closeToolVm,
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({
+							command: 'ssh ...',
+							host: '127.0.0.1',
+							port: 19000,
+							user: 'sandbox',
+						})),
+						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+						id: 'tool-vm-active-use-reap',
+						setIngressRoutes: vi.fn(),
+						getVmInstance: vi.fn(),
+					})),
+					createSecretResolver: async () => ({
+						resolve: async () => '',
+						resolveAll: async () => ({}),
+					}),
+					now: () => now,
+					runTask: async (_title, fn) => {
+						await fn();
+					},
+					setIntervalImpl: (callback) => {
+						runReaper = callback;
+						return fakeInterval;
+					},
+					startGatewayZone: vi.fn(async () => ({
+						image: {
+							built: true,
+							fingerprint: 'gateway-image',
+							imagePath: '/tmp/gateway-image',
+						},
+						ingress: {
+							host: '127.0.0.1',
+							port: 18791,
+						},
+						processSpec: openClawProcessSpec,
+						vm: {
+							close: vi.fn(async () => {}),
+							enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+							enableSsh: vi.fn(async () => ({
+								command: 'ssh ...',
+								host: '127.0.0.1',
+								identityFile: '/tmp/key',
+								port: 19000,
+								user: 'sandbox',
+							})),
+							exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+							id: 'gateway-vm-active-use-reap',
+							setIngressRoutes: vi.fn(),
+							getVmInstance: vi.fn(),
+						},
+						zone: runtimeZone,
+					})),
+					startHttpServer: async (options) => {
+						startHttpServerArgs = options;
+						return { close: async () => {} };
+					},
+				},
+			);
+			if (!startHttpServerArgs) {
+				throw new Error('Expected startHttpServer to be called.');
+			}
+			if (!runReaper) {
+				throw new Error('Expected lease reaper callback to be registered.');
+			}
+			const runtimeStatusResponse = await startHttpServerArgs.app.request(
+				'/zones/shravan/openclaw-runtime-status',
+				{
+					body: JSON.stringify({
+						pluginId: 'gondolin',
+						zoneId: 'shravan',
+						findings: [
+							{
+								id: 'openclaw-tool-vm-agents-defaults-sandbox-backend-shravan-defaults',
+								ok: true,
+								hint: 'agents.defaults.sandbox.backend=gondolin',
+							},
+						],
+					}),
+					headers: { 'content-type': 'application/json' },
+					method: 'POST',
+				},
+			);
+			expect(runtimeStatusResponse.status).toBe(200);
+
+			const leaseResponse = await startHttpServerArgs.app.request('/lease', {
+				body: JSON.stringify({
+					agentWorkspaceDir: '/agent-work',
+					profileId: 'standard',
+					scopeKey: 'agent:active-use-reap',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
+					zoneId: 'shravan',
+				}),
+				headers: { 'content-type': 'application/json' },
+				method: 'POST',
+			});
+			const leasePayload: unknown = await leaseResponse.json();
+			expect(leaseResponse.status, JSON.stringify(leasePayload)).toBe(200);
+			const leaseId = readStringProperty(leasePayload, 'leaseId');
+			const activeUseResponse = await startHttpServerArgs.app.request(`/lease/${leaseId}/uses`, {
+				body: JSON.stringify({
+					useId: '01890f00-0000-7000-8000-000000000000',
+				}),
+				headers: { 'content-type': 'application/json' },
+				method: 'POST',
+			});
+			expect(activeUseResponse.status).toBe(200);
+
+			now = 123_001;
+			await runReaper();
+
+			expect(closeToolVm).toHaveBeenCalledTimes(1);
+			await runtime.close();
+		} finally {
+			await rm(tempRoot, { recursive: true, force: true });
+		}
+	});
+
+	it('force releases active-use leases during controller shutdown', async () => {
+		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
+		process.env.OPENCLAW_GATEWAY_TOKEN = 'gateway-token';
+		const tempRoot = await mkdtemp(path.join(tmpdir(), 'agent-vm-active-use-close-'));
+		const stateDir = path.join(tempRoot, 'state', 'shravan');
+		const zoneFilesDir = path.join(tempRoot, 'zone-files', 'shravan');
+		await mkdir(path.join(stateDir, 'sandboxes', 'agent', 'work'), { recursive: true });
+		await mkdir(zoneFilesDir, { recursive: true });
+		const runtimeSystemConfig = {
+			...systemConfig,
+			runtimeDir: path.join(tempRoot, 'runtime'),
+			zones: systemConfig.zones.map((zone) => ({
+				...zone,
+				gateway: {
+					...zone.gateway,
+					stateDir,
+					zoneFilesDir,
+				},
+			})),
+		} satisfies LoadedSystemConfig;
+		const runtimeZone = runtimeSystemConfig.zones[0];
+		if (!runtimeZone) {
+			throw new Error('Expected runtime test zone.');
+		}
+		let startHttpServerArgs:
+			| {
+					app: {
+						request(path: string, init?: RequestInit): Response | Promise<Response>;
+					};
+					port: number;
+			  }
+			| undefined;
+		const fakeInterval = setTimeout(() => undefined, 0);
+		clearTimeout(fakeInterval);
+		try {
+			const closeToolVm = vi.fn(async () => {});
+			const runtime = await startControllerRuntime(
+				{
+					systemConfig: runtimeSystemConfig,
+					zoneIds: ['shravan'],
+				},
+				{
+					createManagedToolVm: vi.fn(async () => ({
+						close: closeToolVm,
+						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+						enableSsh: vi.fn(async () => ({
+							command: 'ssh ...',
+							host: '127.0.0.1',
+							port: 19000,
+							user: 'sandbox',
+						})),
+						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+						id: 'tool-vm-active-use-shutdown',
+						setIngressRoutes: vi.fn(),
+						getVmInstance: vi.fn(),
+					})),
+					createSecretResolver: async () => ({
+						resolve: async () => '',
+						resolveAll: async () => ({}),
+					}),
+					runTask: async (_title, fn) => {
+						await fn();
+					},
+					setIntervalImpl: () => fakeInterval,
+					startGatewayZone: vi.fn(async () => ({
+						image: {
+							built: true,
+							fingerprint: 'gateway-image',
+							imagePath: '/tmp/gateway-image',
+						},
+						ingress: {
+							host: '127.0.0.1',
+							port: 18791,
+						},
+						processSpec: openClawProcessSpec,
+						vm: {
+							close: vi.fn(async () => {}),
+							enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+							enableSsh: vi.fn(async () => ({
+								command: 'ssh ...',
+								host: '127.0.0.1',
+								identityFile: '/tmp/key',
+								port: 19000,
+								user: 'sandbox',
+							})),
+							exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+							id: 'gateway-vm-active-use-shutdown',
+							setIngressRoutes: vi.fn(),
+							getVmInstance: vi.fn(),
+						},
+						zone: runtimeZone,
+					})),
+					startHttpServer: async (options) => {
+						startHttpServerArgs = options;
+						return { close: async () => {} };
+					},
+				},
+			);
+			if (!startHttpServerArgs) {
+				throw new Error('Expected startHttpServer to be called.');
+			}
+			const runtimeStatusResponse = await startHttpServerArgs.app.request(
+				'/zones/shravan/openclaw-runtime-status',
+				{
+					body: JSON.stringify({
+						pluginId: 'gondolin',
+						zoneId: 'shravan',
+						findings: [
+							{
+								id: 'openclaw-tool-vm-agents-defaults-sandbox-backend-shravan-defaults',
+								ok: true,
+								hint: 'agents.defaults.sandbox.backend=gondolin',
+							},
+						],
+					}),
+					headers: { 'content-type': 'application/json' },
+					method: 'POST',
+				},
+			);
+			expect(runtimeStatusResponse.status).toBe(200);
+
+			const leaseResponse = await startHttpServerArgs.app.request('/lease', {
+				body: JSON.stringify({
+					agentWorkspaceDir: '/agent-work',
+					profileId: 'standard',
+					scopeKey: 'agent:active-use-shutdown',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
+					zoneId: 'shravan',
+				}),
+				headers: { 'content-type': 'application/json' },
+				method: 'POST',
+			});
+			const leasePayload: unknown = await leaseResponse.json();
+			expect(leaseResponse.status, JSON.stringify(leasePayload)).toBe(200);
+			const leaseId = readStringProperty(leasePayload, 'leaseId');
+			const activeUseResponse = await startHttpServerArgs.app.request(`/lease/${leaseId}/uses`, {
+				body: JSON.stringify({
+					useId: '01890f00-0000-7000-8000-000000000001',
+				}),
+				headers: { 'content-type': 'application/json' },
+				method: 'POST',
+			});
+			expect(activeUseResponse.status).toBe(200);
+
+			await runtime.close();
+
+			expect(closeToolVm).toHaveBeenCalledTimes(1);
+		} finally {
+			await rm(tempRoot, { recursive: true, force: true });
+		}
+	});
+
 	it('keeps the controller inspectable when a selected gateway fails to boot', async () => {
 		const startHttpServer = vi.fn(async () => ({
 			close: async () => {},
@@ -361,7 +700,6 @@ describe('startControllerRuntime', () => {
 					enableSsh: vi.fn(async () => ({
 						command: 'ssh ...',
 						host: '127.0.0.1',
-						identityFile: '/tmp/key',
 						port: 19000,
 						user: 'sandbox',
 					})),

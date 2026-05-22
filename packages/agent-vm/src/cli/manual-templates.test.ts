@@ -175,6 +175,15 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
 			'defaultToolVmProfile',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
+			'active shell/file operations heartbeat per-use records',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('openclaw.md'))?.content).toContain(
+			'The controller is the control plane',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('openclaw.md'))?.content).toContain(
+			'gateway-to-Tool-VM SSH data path',
+		);
 		expect(files.find((file) => file.relativePath.endsWith('tool-access.md'))?.content).toContain(
 			'agentToolVmProfiles',
 		);

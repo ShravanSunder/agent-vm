@@ -31,7 +31,7 @@ export function createGondolinSandboxBackendManager(
 				dependencies.createLeaseClient?.({
 					controllerUrl: options.controllerUrl,
 				}) ?? createLeaseClient({ controllerUrl: options.controllerUrl });
-			await leaseClient.releaseLease(params.entry.containerName);
+			await leaseClient.releaseLease(params.entry.containerName, { force: true });
 		},
 	};
 }

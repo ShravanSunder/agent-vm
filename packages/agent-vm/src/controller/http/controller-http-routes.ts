@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
+import type {
+	StartToolVmActiveUseRequest,
+	ToolVmActiveUseCorrelation,
+} from '@agent-vm/gateway-interface';
 import type { SecretResolver } from '@agent-vm/gondolin-adapter';
 import { Hono } from 'hono';
 
@@ -10,7 +14,8 @@ import {
 	SandboxSeedingError,
 	seedAgentSandboxWorkspace,
 } from '../leases/agent-sandbox-seeding.js';
-import { LeaseScopeConflictError } from '../leases/lease-manager.js';
+import { ttlForLeaseScope, type LeaseIdleTtlPolicy } from '../leases/lease-idle-policy.js';
+import { LeaseActiveUseConflictError, LeaseScopeConflictError } from '../leases/lease-manager.js';
 import { parseAgentScopeKey, type AgentScopeParseResult } from '../leases/lease-scope.js';
 import {
 	LeaseWorkMountValidationError,
@@ -29,8 +34,10 @@ import {
 	serializeLeaseForResponse,
 } from './controller-http-route-support.js';
 import {
+	controllerEndActiveUseRequestSchema,
 	controllerLeaseCreateRequestSchema,
 	controllerOpenClawRuntimeStatusRequestSchema,
+	controllerStartActiveUseRequestSchema,
 } from './controller-request-schemas.js';
 import { registerControllerZoneOperationRoutes } from './controller-zone-operation-routes.js';
 
@@ -113,6 +120,66 @@ interface LeaseRequestLogContext {
 	readonly zoneId: string;
 }
 
+const defaultLeaseIdleTtlPolicy = {
+	defaultMs: 30 * 60 * 1000,
+	maxRequestedMs: 24 * 60 * 60 * 1000,
+	minRequestedMs: 1_000,
+	byScopeKind: {},
+	byScopePrefix: {},
+} satisfies LeaseIdleTtlPolicy;
+
+function resolveEffectiveIdleTtlMs(options: {
+	readonly policy: LeaseIdleTtlPolicy;
+	readonly requestedIdleTtlMs: number | undefined;
+	readonly scopeKey: string;
+}):
+	| { readonly kind: 'ok'; readonly value: number }
+	| { readonly kind: 'invalid'; readonly message: string } {
+	if (options.requestedIdleTtlMs === undefined) {
+		return {
+			kind: 'ok',
+			value: ttlForLeaseScope({ policy: options.policy, scopeKey: options.scopeKey }),
+		};
+	}
+	if (options.requestedIdleTtlMs < options.policy.minRequestedMs) {
+		return {
+			kind: 'invalid',
+			message: `Requested idleTtlMs must be at least ${String(options.policy.minRequestedMs)}ms.`,
+		};
+	}
+	if (options.requestedIdleTtlMs > options.policy.maxRequestedMs) {
+		return {
+			kind: 'invalid',
+			message: `Requested idleTtlMs must be at most ${String(options.policy.maxRequestedMs)}ms.`,
+		};
+	}
+	return { kind: 'ok', value: options.requestedIdleTtlMs };
+}
+
+function normalizeActiveUseCorrelation(
+	correlation:
+		| {
+				readonly agentId?: string | undefined;
+				readonly sessionId?: string | undefined;
+				readonly sessionKey?: string | undefined;
+				readonly toolCallId?: string | undefined;
+				readonly toolName?: string | undefined;
+		  }
+		| undefined,
+): ToolVmActiveUseCorrelation | undefined {
+	if (!correlation) {
+		return undefined;
+	}
+	const normalizedCorrelation = {
+		...(correlation.agentId !== undefined ? { agentId: correlation.agentId } : {}),
+		...(correlation.sessionId !== undefined ? { sessionId: correlation.sessionId } : {}),
+		...(correlation.sessionKey !== undefined ? { sessionKey: correlation.sessionKey } : {}),
+		...(correlation.toolCallId !== undefined ? { toolCallId: correlation.toolCallId } : {}),
+		...(correlation.toolName !== undefined ? { toolName: correlation.toolName } : {}),
+	} satisfies ToolVmActiveUseCorrelation;
+	return Object.keys(normalizedCorrelation).length > 0 ? normalizedCorrelation : undefined;
+}
+
 export function createControllerApp(options: {
 	readonly leaseManager: ControllerLeaseManager;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
@@ -128,6 +195,7 @@ export function createControllerApp(options: {
 	readonly zoneDefaultToolVmProfiles?: Record<string, string>;
 	readonly zoneIds?: ReadonlySet<string>;
 	readonly openClawRuntimeStatusStore?: OpenClawRuntimeStatusStore;
+	readonly leaseIdleTtlPolicy?: LeaseIdleTtlPolicy;
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly validateToolVmLeaseRequirements?: (zoneId: string) => Promise<void>;
 	readonly resolveLeaseWorkMountDir: (options: {
@@ -138,6 +206,7 @@ export function createControllerApp(options: {
 }): Hono {
 	const app = new Hono();
 	const readIdentityPem = options.readIdentityPem ?? readIdentityPemFromFile;
+	const leaseIdleTtlPolicy = options.leaseIdleTtlPolicy ?? defaultLeaseIdleTtlPolicy;
 
 	app.post('/lease', async (context) => {
 		let requestContext: LeaseRequestLogContext | undefined;
@@ -198,8 +267,20 @@ export function createControllerApp(options: {
 				workMountDir: payload.workMountDir,
 				zoneId: payload.zoneId,
 			});
+			const effectiveIdleTtl = resolveEffectiveIdleTtlMs({
+				policy: leaseIdleTtlPolicy,
+				requestedIdleTtlMs: payload.idleTtlMs,
+				scopeKey: payload.scopeKey,
+			});
+			if (effectiveIdleTtl.kind === 'invalid') {
+				return context.json(
+					{ error: 'invalid-lease-idle-ttl', message: effectiveIdleTtl.message },
+					400,
+				);
+			}
 			const lease = await options.leaseManager.createLease({
 				agentWorkspaceDir: payload.agentWorkspaceDir,
+				effectiveIdleTtlMs: effectiveIdleTtl.value,
 				profile: defaultToolVmProfile,
 				profileId: resolvedProfileId,
 				scopeKey: payload.scopeKey,
@@ -254,7 +335,15 @@ export function createControllerApp(options: {
 	});
 
 	app.get('/lease/:leaseId', async (context) => {
-		const leaseRenewal = options.leaseManager.keepLeaseAlive(context.req.param('leaseId'));
+		const leaseSnapshot = options.leaseManager.peekLease(context.req.param('leaseId'));
+		if (!leaseSnapshot) {
+			return context.json({ error: 'Lease not found' }, 404);
+		}
+		return context.json(await serializeLeaseForResponse(leaseSnapshot.lease, readIdentityPem));
+	});
+
+	app.post('/lease/:leaseId/renew', async (context) => {
+		const leaseRenewal = options.leaseManager.renewLease(context.req.param('leaseId'));
 		if (!leaseRenewal) {
 			return context.json({ error: 'Lease not found' }, 404);
 		}
@@ -275,7 +364,93 @@ export function createControllerApp(options: {
 	});
 
 	app.delete('/lease/:leaseId', async (context) => {
-		await options.leaseManager.releaseLease(context.req.param('leaseId'));
+		try {
+			await options.leaseManager.releaseLease(context.req.param('leaseId'), {
+				force: context.req.query('force') === 'true',
+			});
+			return context.body(null, 204);
+		} catch (error) {
+			if (error instanceof LeaseActiveUseConflictError) {
+				return context.json({ error: error.message, kind: 'active-lease-conflict' }, 409);
+			}
+			throw error;
+		}
+	});
+
+	app.post('/lease/:leaseId/uses', async (context) => {
+		if (!options.leaseManager.startActiveUse) {
+			return context.json({ error: 'Active use API unavailable' }, 404);
+		}
+		const parsedPayload = controllerStartActiveUseRequestSchema.safeParse(await context.req.json());
+		if (!parsedPayload.success) {
+			return context.json(
+				{
+					error: 'invalid-active-use-request',
+					issues: parsedPayload.error.issues,
+				},
+				400,
+			);
+		}
+		try {
+			const correlation = normalizeActiveUseCorrelation(parsedPayload.data.correlation);
+			const startRequest: StartToolVmActiveUseRequest = correlation
+				? {
+						correlation,
+						useId: parsedPayload.data.useId,
+					}
+				: { useId: parsedPayload.data.useId };
+			const activeUse = options.leaseManager.startActiveUse(
+				context.req.param('leaseId'),
+				startRequest,
+			);
+			if (!activeUse) {
+				return context.json({ error: 'Lease not found' }, 404);
+			}
+			return context.json(activeUse);
+		} catch (error) {
+			if (error instanceof LeaseActiveUseConflictError) {
+				return context.json({ error: error.message, kind: 'active-use-conflict' }, 409);
+			}
+			throw error;
+		}
+	});
+
+	app.post('/lease/:leaseId/uses/:useId/heartbeat', async (context) => {
+		if (!options.leaseManager.heartbeatActiveUse) {
+			return context.json({ error: 'Active use API unavailable' }, 404);
+		}
+		const heartbeat = options.leaseManager.heartbeatActiveUse(
+			context.req.param('leaseId'),
+			context.req.param('useId'),
+		);
+		if (!heartbeat) {
+			return context.json({ error: 'Active use not found' }, 404);
+		}
+		return context.json(heartbeat);
+	});
+
+	app.delete('/lease/:leaseId/uses/:useId', async (context) => {
+		if (!options.leaseManager.endActiveUse) {
+			return context.json({ error: 'Active use API unavailable' }, 404);
+		}
+		const parsedPayload = controllerEndActiveUseRequestSchema.safeParse(await context.req.json());
+		if (!parsedPayload.success) {
+			return context.json(
+				{
+					error: 'invalid-active-use-end-request',
+					issues: parsedPayload.error.issues,
+				},
+				400,
+			);
+		}
+		const result = options.leaseManager.endActiveUse(
+			context.req.param('leaseId'),
+			context.req.param('useId'),
+			parsedPayload.data,
+		);
+		if (!result) {
+			return context.json({ error: 'Lease not found' }, 404);
+		}
 		return context.body(null, 204);
 	});
 
@@ -364,6 +539,9 @@ export function createControllerService(options: {
 	const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
 	const app = createControllerApp({
 		leaseManager: options.leaseManager,
+		...(options.systemConfig.leaseIdleTtl
+			? { leaseIdleTtlPolicy: options.systemConfig.leaseIdleTtl }
+			: {}),
 		toolVmProfiles: options.systemConfig.toolVmProfiles,
 		zoneIds: new Set(options.systemConfig.zones.map((zone) => zone.id)),
 		zoneDefaultToolVmProfiles: Object.fromEntries(

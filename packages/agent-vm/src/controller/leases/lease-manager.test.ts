@@ -1,7 +1,11 @@
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createLeaseManager, LeaseScopeConflictError } from './lease-manager.js';
+import {
+	createLeaseManager,
+	LeaseActiveUseConflictError,
+	LeaseScopeConflictError,
+} from './lease-manager.js';
 import { createTcpPool } from './tcp-pool.js';
 
 function createManagedVmStub(id: string = 'tool-vm-1'): ManagedVm {
@@ -64,7 +68,7 @@ describe('createLeaseManager', () => {
 		});
 
 		expect(lease.tcpSlot).toBe(0);
-		expect(leaseManager.keepLeaseAlive(lease.id)?.lease).toMatchObject({
+		expect(leaseManager.renewLease(lease.id)?.lease).toMatchObject({
 			id: lease.id,
 			agentWorkspaceDir: '/home/openclaw/work',
 			guestWorkdir: '/work',
@@ -75,7 +79,7 @@ describe('createLeaseManager', () => {
 		await leaseManager.releaseLease(lease.id);
 
 		expect(closeMock).toHaveBeenCalled();
-		expect(leaseManager.keepLeaseAlive(lease.id)).toBeUndefined();
+		expect(leaseManager.renewLease(lease.id)).toBeUndefined();
 	});
 
 	it('reuses a live lease for the same zone scope profile and workspace', async () => {
@@ -134,10 +138,10 @@ describe('createLeaseManager', () => {
 		now = 150;
 
 		const peekedLease = leaseManager.peekLease(lease.id)?.lease;
-		const keptAliveLease = leaseManager.keepLeaseAlive(lease.id)?.lease;
+		const renewedLease = leaseManager.renewLease(lease.id)?.lease;
 
 		expect(peekedLease).toMatchObject({ id: lease.id, lastUsedAt: 100 });
-		expect(keptAliveLease).toMatchObject({ id: lease.id, lastUsedAt: 150 });
+		expect(renewedLease).toMatchObject({ id: lease.id, lastUsedAt: 150 });
 		expect(leaseManager.peekLease('missing-lease')).toBeUndefined();
 	});
 
@@ -445,7 +449,55 @@ describe('createLeaseManager', () => {
 
 		expect(reusedLease.id).toBe(lease.id);
 		expect(closeMock).toHaveBeenCalledTimes(1);
-		expect(leaseManager.keepLeaseAlive(lease.id)).toBeUndefined();
+		expect(leaseManager.renewLease(lease.id)).toBeUndefined();
+	});
+
+	it('rejects new active uses while the lease is releasing', async () => {
+		let releaseClose: (() => void) | undefined;
+		let markCloseStarted: (() => void) | undefined;
+		const closeStarted = new Promise<void>((resolve) => {
+			markCloseStarted = resolve;
+		});
+		const closeCanFinish = new Promise<void>((resolve) => {
+			releaseClose = resolve;
+		});
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => ({
+				...createManagedVmStub(),
+				close: vi.fn(async () => {
+					markCloseStarted?.();
+					await closeCanFinish;
+				}),
+			})),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const lease = await leaseManager.createLease({
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:release-active-use',
+			guestWorkdir: '/work',
+			hostWorkMountDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		});
+
+		const releasePromise = leaseManager.releaseLease(lease.id);
+		await closeStarted;
+
+		expect(() =>
+			leaseManager.startActiveUse(lease.id, {
+				useId: '01890f00-0000-7000-8000-000000000000',
+			}),
+		).toThrow(LeaseActiveUseConflictError);
+
+		releaseClose?.();
+		await releasePromise;
+		expect(leaseManager.peekLease(lease.id)).toBeUndefined();
 	});
 
 	it('does not release a lease that was touched after an idle reaper snapshot', async () => {
@@ -479,7 +531,7 @@ describe('createLeaseManager', () => {
 		await leaseManager.releaseLease(lease.id, { ifLastUsedAtBeforeOrAt: 150 });
 
 		expect(closeMock).not.toHaveBeenCalled();
-		expect(leaseManager.keepLeaseAlive(lease.id)?.lease).toMatchObject({ id: lease.id });
+		expect(leaseManager.renewLease(lease.id)?.lease).toMatchObject({ id: lease.id });
 	});
 
 	it('listLeases returns all active leases', async () => {
@@ -589,7 +641,7 @@ describe('createLeaseManager', () => {
 		});
 
 		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow('close failed');
-		expect(leaseManager.keepLeaseAlive(lease.id)).toBeUndefined();
+		expect(leaseManager.renewLease(lease.id)).toBeUndefined();
 		expect(tcpPool.allocate()).toBe(0);
 	});
 
@@ -620,6 +672,168 @@ describe('createLeaseManager', () => {
 		).rejects.toThrow('vm create failed');
 
 		expect(tcpPool.allocate()).toBe(0);
+	});
+
+	it('stores effective idle TTLs and rejects reuse with a mismatched requested TTL', async () => {
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const request = {
+			agentWorkspaceDir: '/host/agent-work',
+			effectiveIdleTtlMs: 60_000,
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:ttl',
+			guestWorkdir: '/work',
+			hostWorkMountDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		};
+
+		const lease = await leaseManager.createLease(request);
+		const reusedLease = await leaseManager.createLease(request);
+
+		expect(lease.effectiveIdleTtlMs).toBe(60_000);
+		expect(reusedLease.id).toBe(lease.id);
+		await expect(
+			leaseManager.createLease({
+				...request,
+				effectiveIdleTtlMs: 120_000,
+			}),
+		).rejects.toBeInstanceOf(LeaseScopeConflictError);
+	});
+
+	it('tracks active uses, heartbeats, tombstones, and forced release cleanup', async () => {
+		let now = 1_000;
+		const closeMock = vi.fn(async () => {});
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => ({
+				...createManagedVmStub(),
+				close: closeMock,
+			})),
+			now: () => now,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+			toolVmUsePolicy: {
+				endedUseTombstoneTtlMs: 10_000,
+				heartbeatAfterMs: 1_000,
+				heartbeatStaleMs: 4_000,
+			},
+		});
+		const lease = await leaseManager.createLease({
+			agentWorkspaceDir: '/host/agent-work',
+			effectiveIdleTtlMs: 60_000,
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:active-use',
+			guestWorkdir: '/work',
+			hostWorkMountDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		});
+
+		const startedUse = leaseManager.startActiveUse(lease.id, {
+			correlation: { toolName: 'shell' },
+			useId: '01890f00-0000-7000-8000-000000000000',
+		});
+		const repeatedStart = leaseManager.startActiveUse(lease.id, {
+			useId: '01890f00-0000-7000-8000-000000000000',
+		});
+		now = 2_000;
+		const heartbeat = leaseManager.heartbeatActiveUse(
+			lease.id,
+			'01890f00-0000-7000-8000-000000000000',
+		);
+		leaseManager.endActiveUse(lease.id, '01890f00-0000-7000-8000-000000000000', {
+			outcome: 'completed',
+		});
+
+		expect(startedUse).toEqual({
+			expiresAt: 5_000,
+			heartbeatAfterMs: 1_000,
+			useId: '01890f00-0000-7000-8000-000000000000',
+		});
+		expect(repeatedStart).toEqual(startedUse);
+		expect(heartbeat).toEqual({ expiresAt: 6_000, heartbeatAfterMs: 1_000 });
+		expect(leaseManager.getActiveUseCount(lease.id)).toBe(0);
+		expect(() =>
+			leaseManager.startActiveUse(lease.id, {
+				useId: '01890f00-0000-7000-8000-000000000000',
+			}),
+		).toThrow(/already ended/u);
+		expect(() =>
+			leaseManager.startActiveUse(lease.id, {
+				useId: '1b5c5d78-91b4-4c8e-a15e-f475dced59ef',
+			}),
+		).toThrow(/UUIDv7/u);
+
+		await leaseManager.releaseLease(lease.id, { force: true });
+
+		expect(closeMock).toHaveBeenCalledTimes(1);
+		expect(leaseManager.getActiveUseCount(lease.id)).toBe(0);
+	});
+
+	it('reaps stale active uses and expired tombstones without closing the lease', async () => {
+		let now = 1_000;
+		const closeMock = vi.fn(async () => {});
+		const leaseManager = createLeaseManager({
+			createManagedVm: vi.fn(async () => ({
+				...createManagedVmStub(),
+				close: closeMock,
+			})),
+			now: () => now,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+			toolVmUsePolicy: {
+				endedUseTombstoneTtlMs: 3_000,
+				heartbeatAfterMs: 1_000,
+				heartbeatStaleMs: 4_000,
+			},
+		});
+		const lease = await leaseManager.createLease({
+			agentWorkspaceDir: '/host/agent-work',
+			effectiveIdleTtlMs: 60_000,
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:reap',
+			guestWorkdir: '/work',
+			hostWorkMountDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+		});
+
+		leaseManager.startActiveUse(lease.id, {
+			useId: '01890f00-0000-7000-8000-000000000000',
+		});
+		leaseManager.startActiveUse(lease.id, {
+			useId: '01890f00-0000-7000-8000-000000000001',
+		});
+		now = 2_000;
+		leaseManager.heartbeatActiveUse(lease.id, '01890f00-0000-7000-8000-000000000001');
+		now = 5_001;
+
+		leaseManager.reapExpiredActiveUses();
+
+		expect(leaseManager.getActiveUseCount(lease.id)).toBe(1);
+		expect(closeMock).not.toHaveBeenCalled();
+
+		leaseManager.endActiveUse(lease.id, '01890f00-0000-7000-8000-000000000001', {
+			outcome: 'completed',
+		});
+		now = 9_000;
+		leaseManager.reapExpiredActiveUses();
+
+		expect(leaseManager.getActiveUseCount(lease.id)).toBe(0);
+		expect(closeMock).not.toHaveBeenCalled();
 	});
 
 	it('closes the VM and releases the tcp slot when enabling SSH fails', async () => {

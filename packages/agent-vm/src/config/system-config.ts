@@ -290,6 +290,12 @@ const leaseIdleTtlSchema = z
 			.int()
 			.positive()
 			.default(30 * 60 * 1000),
+		maxRequestedMs: z
+			.number()
+			.int()
+			.positive()
+			.default(24 * 60 * 60 * 1000),
+		minRequestedMs: z.number().int().positive().default(1_000),
 		byScopeKind: z.partialRecord(leaseScopeKindSchema, z.number().int().positive()).default({}),
 		byScopePrefix: z.record(z.string().min(1), z.number().int().positive()).default({}),
 	})

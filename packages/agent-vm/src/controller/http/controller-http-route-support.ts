@@ -80,8 +80,14 @@ export interface ControllerRouteOperations {
 
 export type ControllerLeaseManager = Pick<
 	LeaseManager,
-	'createLease' | 'keepLeaseAlive' | 'listLeases' | 'peekLease' | 'releaseLease'
->;
+	'createLease' | 'renewLease' | 'listLeases' | 'peekLease' | 'releaseLease'
+> &
+	Partial<
+		Pick<
+			LeaseManager,
+			'endActiveUse' | 'getActiveUseCount' | 'heartbeatActiveUse' | 'startActiveUse'
+		>
+	>;
 
 export async function readIdentityPemFromFile(identityFilePath: string): Promise<string> {
 	return await fs.readFile(identityFilePath, 'utf8');

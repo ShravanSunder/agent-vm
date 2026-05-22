@@ -9,18 +9,21 @@ describe('createIdleReaper', () => {
 			getLeases: () => [
 				{
 					id: 'lease-expired',
+					activeUseCount: 0,
+					effectiveIdleTtlMs: 5_000,
 					lastUsedAt: 1_000,
 					scopeKey: 'agent:shravan',
 				},
 				{
 					id: 'lease-active',
+					activeUseCount: 0,
+					effectiveIdleTtlMs: 5_000,
 					lastUsedAt: 9_500,
 					scopeKey: 'agent:shravan',
 				},
 			],
 			now: () => 10_000,
 			releaseLease,
-			ttlForLease: () => 5_000,
 		});
 
 		await idleReaper.reapExpiredLeases();
@@ -35,23 +38,28 @@ describe('createIdleReaper', () => {
 			getLeases: () => [
 				{
 					id: 'lease-expired-1',
+					activeUseCount: 0,
+					effectiveIdleTtlMs: 5_000,
 					lastUsedAt: 1_000,
 					scopeKey: 'agent:shravan',
 				},
 				{
 					id: 'lease-expired-2',
+					activeUseCount: 0,
+					effectiveIdleTtlMs: 5_000,
 					lastUsedAt: 2_000,
 					scopeKey: 'agent:shravan',
 				},
 				{
 					id: 'lease-active',
+					activeUseCount: 0,
+					effectiveIdleTtlMs: 5_000,
 					lastUsedAt: 9_900,
 					scopeKey: 'agent:shravan',
 				},
 			],
 			now: () => 10_000,
 			releaseLease,
-			ttlForLease: () => 5_000,
 		});
 
 		await idleReaper.reapExpiredLeases();
@@ -76,12 +84,23 @@ describe('createIdleReaper', () => {
 		});
 		const idleReaper = createIdleReaper({
 			getLeases: () => [
-				{ id: 'lease-expired-1', lastUsedAt: 1_000, scopeKey: 'agent:shravan' },
-				{ id: 'lease-expired-2', lastUsedAt: 2_000, scopeKey: 'agent:shravan' },
+				{
+					id: 'lease-expired-1',
+					activeUseCount: 0,
+					effectiveIdleTtlMs: 5_000,
+					lastUsedAt: 1_000,
+					scopeKey: 'agent:shravan',
+				},
+				{
+					id: 'lease-expired-2',
+					activeUseCount: 0,
+					effectiveIdleTtlMs: 5_000,
+					lastUsedAt: 2_000,
+					scopeKey: 'agent:shravan',
+				},
 			],
 			now: () => 10_000,
 			releaseLease,
-			ttlForLease: () => 5_000,
 		});
 
 		await idleReaper.reapExpiredLeases();
@@ -95,18 +114,21 @@ describe('createIdleReaper', () => {
 			getLeases: () => [
 				{
 					id: 'lease-active-1',
+					activeUseCount: 0,
+					effectiveIdleTtlMs: 5_000,
 					lastUsedAt: 9_995,
 					scopeKey: 'agent:shravan',
 				},
 				{
 					id: 'lease-active-2',
+					activeUseCount: 0,
+					effectiveIdleTtlMs: 5_000,
 					lastUsedAt: 9_999,
 					scopeKey: 'agent:shravan',
 				},
 			],
 			now: () => 10_000,
 			releaseLease,
-			ttlForLease: () => 5_000,
 		});
 
 		await idleReaper.reapExpiredLeases();
@@ -120,18 +142,21 @@ describe('createIdleReaper', () => {
 			getLeases: () => [
 				{
 					id: 'short-agent-lease',
+					activeUseCount: 0,
+					effectiveIdleTtlMs: 500,
 					lastUsedAt: 9_000,
 					scopeKey: 'agent:short',
 				},
 				{
 					id: 'long-agent-lease',
+					activeUseCount: 0,
+					effectiveIdleTtlMs: 5_000,
 					lastUsedAt: 9_000,
 					scopeKey: 'agent:long',
 				},
 			],
 			now: () => 10_000,
 			releaseLease,
-			ttlForLease: (lease) => (lease.scopeKey === 'agent:short' ? 500 : 5_000),
 		});
 
 		await idleReaper.reapExpiredLeases();
@@ -150,12 +175,23 @@ describe('createIdleReaper', () => {
 		});
 		const idleReaper = createIdleReaper({
 			getLeases: () => [
-				{ id: 'lease-expired-1', lastUsedAt: 1_000, scopeKey: 'agent:shravan' },
-				{ id: 'lease-expired-2', lastUsedAt: 2_000, scopeKey: 'agent:shravan' },
+				{
+					id: 'lease-expired-1',
+					activeUseCount: 0,
+					effectiveIdleTtlMs: 5_000,
+					lastUsedAt: 1_000,
+					scopeKey: 'agent:shravan',
+				},
+				{
+					id: 'lease-expired-2',
+					activeUseCount: 0,
+					effectiveIdleTtlMs: 5_000,
+					lastUsedAt: 2_000,
+					scopeKey: 'agent:shravan',
+				},
 			],
 			now: () => 10_000,
 			releaseLease,
-			ttlForLease: () => 5_000,
 		});
 
 		await expect(idleReaper.reapExpiredLeases()).rejects.toThrow(
@@ -165,5 +201,26 @@ describe('createIdleReaper', () => {
 		expect(releaseLease).toHaveBeenCalledWith('lease-expired-2', {
 			ifLastUsedAtBeforeOrAt: 5_000,
 		});
+	});
+
+	it('skips expired leases while active uses are present', async () => {
+		const releaseLease = vi.fn(async () => {});
+		const idleReaper = createIdleReaper({
+			getLeases: () => [
+				{
+					id: 'lease-expired-but-active',
+					activeUseCount: 1,
+					effectiveIdleTtlMs: 5_000,
+					lastUsedAt: 1_000,
+					scopeKey: 'agent:shravan',
+				},
+			],
+			now: () => 10_000,
+			releaseLease,
+		});
+
+		await idleReaper.reapExpiredLeases();
+
+		expect(releaseLease).not.toHaveBeenCalled();
 	});
 });

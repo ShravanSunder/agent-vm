@@ -29,8 +29,23 @@ export {
 	splitResolvedGatewaySecrets,
 	splitResolvedSecretsByInjection,
 } from './split-resolved-gateway-secrets.js';
+export {
+	createToolVmActiveUseHandle,
+	createToolVmActiveUseId,
+	isToolVmActiveUseId,
+} from './tool-vm-active-use.js';
 export type {
 	SecretInjectionConfig,
 	SplitResolvedGatewaySecretsResult,
 	SplitResolvedSecretsResult,
 } from './split-resolved-gateway-secrets.js';
+export type {
+	CreateToolVmActiveUseHandleOptions,
+	EndToolVmActiveUseRequest,
+	HeartbeatToolVmActiveUseResponse,
+	StartToolVmActiveUseRequest,
+	StartToolVmActiveUseResponse,
+	ToolVmActiveUseCorrelation,
+	ToolVmActiveUseHandle,
+	ToolVmActiveUseOutcome,
+} from './tool-vm-active-use.js';

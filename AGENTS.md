@@ -68,6 +68,8 @@ do not copy full architecture docs into deployment manuals.
 This is a pnpm TypeScript monorepo targeting Node 24. It uses the OXC stack for
 fast formatting and linting.
 
+- Use `mise exec -- <command>` for commands that depend on pinned local tools.
+  The repo `mise.toml` pins Zig for Gondolin image builds and smoke tests.
 - Install/build: `pnpm install`, then `pnpm build`.
 - Unit tests: `pnpm test:unit`.
 - Integration tests: `pnpm test:integration`.

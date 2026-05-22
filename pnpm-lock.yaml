@@ -144,6 +144,9 @@ importers:
       '@agent-vm/gondolin-adapter':
         specifier: workspace:*
         version: link:../gondolin-adapter
+      uuid:
+        specifier: ^11.1.1
+        version: 11.1.1
 
   packages/gondolin-adapter:
     dependencies:
@@ -181,6 +184,9 @@ importers:
 
   packages/openclaw-agent-vm-plugin:
     dependencies:
+      '@agent-vm/gateway-interface':
+        specifier: workspace:*
+        version: link:../gateway-interface
       '@agent-vm/gondolin-adapter':
         specifier: workspace:*
         version: link:../gondolin-adapter
@@ -2034,6 +2040,10 @@ packages:
   until-async@3.0.2:
     resolution: {integrity: sha512-IiSk4HlzAMqTUseHHe3VhIGyuFmN90zMTpD3Z3y8jeQbzLIq500MVM7Jq2vUAnTKAFPJrqwkzr6PoTcPhGcOiw==}
 
+  uuid@11.1.1:
+    resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
+    hasBin: true
+
   vary@1.1.2:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
@@ -3725,6 +3735,8 @@ snapshots:
 
   until-async@3.0.2:
     optional: true
+
+  uuid@11.1.1: {}
 
   vary@1.1.2: {}
 

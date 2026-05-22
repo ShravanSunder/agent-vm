@@ -51,6 +51,7 @@ describe('gondolin controller integration', () => {
 				createLease: vi.fn(async () => ({
 					agentWorkspaceDir: '/zone',
 					createdAt: 1,
+					effectiveIdleTtlMs: 300_000,
 					id: 'lease-123',
 					lastUsedAt: 1,
 					profileId: 'standard',
@@ -82,10 +83,20 @@ describe('gondolin controller integration', () => {
 					hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 					zoneId: 'shravan',
 				})),
-				keepLeaseAlive: vi.fn(),
+				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
 				releaseLease: vi.fn(async () => {}),
+				startActiveUse: vi.fn((_leaseId, request) => ({
+					expiresAt: 3_000,
+					heartbeatAfterMs: 1_000,
+					useId: request.useId,
+				})),
+				heartbeatActiveUse: vi.fn(() => ({
+					expiresAt: 3_000,
+					heartbeatAfterMs: 1_000,
+				})),
+				endActiveUse: vi.fn(),
 			},
 			resolveLeaseWorkMountDir: async ({ workMountDir }) => ({
 				guestWorkdir: '/work',
@@ -166,10 +177,20 @@ describe('gondolin controller integration', () => {
 					stdinMode: 'pipe-open',
 				}),
 				createLeaseClient: () => ({
-					keepLeaseAlive: vi.fn(async () => createLeaseResponse('lease-1')),
+					endActiveUse: vi.fn(async () => {}),
+					heartbeatActiveUse: vi.fn(async () => ({
+						expiresAt: 3_000,
+						heartbeatAfterMs: 1_000,
+					})),
+					renewLease: vi.fn(async () => createLeaseResponse('lease-1')),
 					peekLease: vi.fn(async () => createLeasePeekResponse('lease-1')),
 					releaseLease: vi.fn(async () => {}),
 					requestLease,
+					startActiveUse: vi.fn(async (_leaseId, request) => ({
+						expiresAt: 3_000,
+						heartbeatAfterMs: 1_000,
+						useId: request.useId,
+					})),
 				}),
 				runRemoteShellScript: async () => ({
 					code: 0,

@@ -23,7 +23,6 @@ import type { PushBranchRequest } from './git-push-operations.js';
 import { createControllerService } from './http/controller-http-routes.js';
 import { startControllerHttpServer } from './http/controller-http-server.js';
 import { createIdleReaper } from './leases/idle-reaper.js';
-import { ttlForLeaseScope, type LeaseIdleTtlPolicy } from './leases/lease-idle-policy.js';
 import { createLeaseManager } from './leases/lease-manager.js';
 import { createTcpPool } from './leases/tcp-pool.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
@@ -45,12 +44,6 @@ import {
 } from './zone-runtimes/zone-runtime-errors.js';
 import { createZoneRuntimeRegistry } from './zone-runtimes/zone-runtime-registry.js';
 import type { ControllerZoneConfig } from './zone-runtimes/zone-runtime-types.js';
-
-const defaultLeaseIdleTtlPolicy = {
-	defaultMs: 30 * 60 * 1000,
-	byScopeKind: {},
-	byScopePrefix: {},
-} satisfies LeaseIdleTtlPolicy;
 
 function writeControllerRuntimeLog(message: string): void {
 	process.stderr.write(`[agent-vm] ${message}\n`);
@@ -162,7 +155,14 @@ export async function startControllerRuntime(
 		tcpPool,
 	});
 	const idleReaper = createIdleReaper({
-		getLeases: () => leaseManager.listLeases(),
+		getLeases: () =>
+			leaseManager.listLeases().map((lease) => ({
+				activeUseCount: leaseManager.getActiveUseCount(lease.id),
+				effectiveIdleTtlMs: lease.effectiveIdleTtlMs,
+				id: lease.id,
+				lastUsedAt: lease.lastUsedAt,
+				scopeKey: lease.scopeKey,
+			})),
 		now,
 		releaseLease: async (
 			leaseId: string,
@@ -170,21 +170,18 @@ export async function startControllerRuntime(
 		) => {
 			await leaseManager.releaseLease(leaseId, releaseOptions);
 		},
-		ttlForLease: (lease) =>
-			ttlForLeaseScope({
-				policy: options.systemConfig.leaseIdleTtl ?? defaultLeaseIdleTtlPolicy,
-				scopeKey: lease.scopeKey,
-			}),
 	});
+	const reapToolVmLeases = async (): Promise<void> => {
+		leaseManager.reapExpiredActiveUses();
+		await idleReaper.reapExpiredLeases();
+	};
 	const reaperTimer = (dependencies.setIntervalImpl ?? setInterval)(
 		() =>
-			void idleReaper
-				.reapExpiredLeases()
-				.catch((error: unknown) =>
-					writeControllerRuntimeLog(
-						`Idle lease reaper failed: ${error instanceof Error ? error.message : String(error)}`,
-					),
+			reapToolVmLeases().catch((error: unknown) =>
+				writeControllerRuntimeLog(
+					`Tool VM lease reaper failed: ${error instanceof Error ? error.message : String(error)}`,
 				),
+			),
 		60_000,
 	);
 	const clearReaperTimer = (): void =>
@@ -194,7 +191,7 @@ export async function startControllerRuntime(
 		for (const lease of leaseManager.listLeases()) {
 			try {
 				// oxlint-disable-next-line eslint/no-await-in-loop -- sequential release avoids TCP slot races
-				await leaseManager.releaseLease(lease.id);
+				await leaseManager.releaseLease(lease.id, { force: true });
 			} catch (error) {
 				releaseErrors.push(error instanceof Error ? error : new Error(formatUnknownError(error)));
 				writeControllerRuntimeLog(
@@ -280,7 +277,8 @@ export async function startControllerRuntime(
 			}, 100);
 		},
 		getLeases: () => leaseManager.listLeases(),
-		releaseLease: async (leaseId: string) => await leaseManager.releaseLease(leaseId),
+		releaseLease: async (leaseId: string, releaseOptions) =>
+			await leaseManager.releaseLease(leaseId, releaseOptions),
 		stopAllZones: async () => await registry.stopAllZones(),
 	});
 	const operations = {
@@ -345,7 +343,7 @@ export async function startControllerRuntime(
 		});
 	});
 
-	await idleReaper.reapExpiredLeases();
+	await reapToolVmLeases();
 
 	const snapshotByZone = registry.getSnapshotByZone();
 	return {

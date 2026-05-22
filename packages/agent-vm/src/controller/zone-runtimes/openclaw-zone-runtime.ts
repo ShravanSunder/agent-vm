@@ -118,7 +118,10 @@ export function createOpenClawZoneRuntime(
 							options.leaseManager
 								.listLeases()
 								.filter((activeLease) => activeLease.zoneId === zoneId)
-								.map(async (lease) => await options.leaseManager.releaseLease(lease.id)),
+								.map(
+									async (lease) =>
+										await options.leaseManager.releaseLease(lease.id, { force: true }),
+								),
 						);
 					},
 					stopGatewayZone: async () => await stop(),

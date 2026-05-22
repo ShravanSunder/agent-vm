@@ -1,3 +1,11 @@
+import {
+	isToolVmActiveUseId,
+	type EndToolVmActiveUseRequest,
+	type HeartbeatToolVmActiveUseResponse,
+	type StartToolVmActiveUseRequest,
+	type StartToolVmActiveUseResponse,
+	type ToolVmActiveUseCorrelation,
+} from '@agent-vm/gateway-interface';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 
 import type { ZoneGitToolVmMount } from '../zone-git/zone-git-paths.js';
@@ -12,6 +20,7 @@ export interface ToolVmProfile {
 export interface Lease {
 	readonly agentWorkspaceDir: string;
 	readonly createdAt: number;
+	readonly effectiveIdleTtlMs: number;
 	readonly guestWorkdir: string;
 	readonly id: string;
 	readonly lastUsedAt: number;
@@ -45,6 +54,7 @@ export interface LeaseSnapshot {
 export interface LeaseManager {
 	createLease(options: {
 		readonly agentWorkspaceDir: string;
+		readonly effectiveIdleTtlMs?: number;
 		readonly profile: ToolVmProfile;
 		readonly profileId: string;
 		readonly scopeKey: string;
@@ -53,16 +63,69 @@ export interface LeaseManager {
 		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
 	}): Promise<Lease>;
-	keepLeaseAlive(leaseId: string): LeaseRenewal | undefined;
+	endActiveUse(
+		leaseId: string,
+		useId: string,
+		request: EndToolVmActiveUseRequest,
+	): { readonly kind: 'ended' | 'unknown-use' } | undefined;
+	getActiveUseCount(leaseId: string): number;
+	heartbeatActiveUse(leaseId: string, useId: string): HeartbeatToolVmActiveUseResponse | undefined;
+	renewLease(leaseId: string): LeaseRenewal | undefined;
 	listLeases(): Lease[];
 	peekLease(leaseId: string): LeaseSnapshot | undefined;
+	reapExpiredActiveUses(): void;
 	releaseLease(
 		leaseId: string,
-		options?: { readonly ifLastUsedAtBeforeOrAt?: number },
+		options?: { readonly force?: boolean; readonly ifLastUsedAtBeforeOrAt?: number },
 	): Promise<void>;
+	startActiveUse(
+		leaseId: string,
+		request: StartToolVmActiveUseRequest,
+	): StartToolVmActiveUseResponse | undefined;
 }
 
 export class LeaseScopeConflictError extends Error {}
+export class LeaseActiveUseConflictError extends Error {}
+
+export interface ToolVmUsePolicy {
+	readonly endedUseTombstoneTtlMs: number;
+	readonly heartbeatAfterMs: number;
+	readonly heartbeatStaleMs: number;
+}
+
+interface ToolVmActiveUse {
+	readonly correlation?: ToolVmActiveUseCorrelation;
+	readonly expiresAt: number;
+	readonly lastHeartbeatAt: number;
+	readonly leaseId: string;
+	readonly startedAt: number;
+	readonly useId: string;
+}
+
+interface EndedToolVmActiveUseTombstone {
+	readonly expiresAt: number;
+	readonly leaseId: string;
+	readonly useId: string;
+}
+
+const defaultLeaseEffectiveIdleTtlMs = 30 * 60 * 1000;
+const defaultToolVmUsePolicy = {
+	endedUseTombstoneTtlMs: 10 * 60 * 1000,
+	heartbeatAfterMs: 30 * 1000,
+	heartbeatStaleMs: 2 * 60 * 1000,
+} satisfies ToolVmUsePolicy;
+
+function assertValidToolVmUsePolicy(policy: ToolVmUsePolicy): void {
+	if (policy.heartbeatAfterMs <= 0) {
+		throw new Error('Tool VM active-use heartbeatAfterMs must be positive.');
+	}
+	if (policy.heartbeatStaleMs < policy.heartbeatAfterMs * 3) {
+		throw new Error('Tool VM active-use heartbeatStaleMs must be at least 3x heartbeatAfterMs.');
+	}
+	if (policy.endedUseTombstoneTtlMs <= 0) {
+		throw new Error('Tool VM active-use endedUseTombstoneTtlMs must be positive.');
+	}
+}
 
 function formatLeaseManagerError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -79,11 +142,20 @@ function assertReusableScopeLease(
 		readonly profileId: string;
 		readonly guestWorkdir: string;
 		readonly hostWorkMountDir: string;
+		readonly effectiveIdleTtlMs?: number;
 		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
 		readonly scopeKey: string;
 	},
 ): void {
+	if (
+		requestedLease.effectiveIdleTtlMs !== undefined &&
+		existingLease.effectiveIdleTtlMs !== requestedLease.effectiveIdleTtlMs
+	) {
+		throw new LeaseScopeConflictError(
+			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing effectiveIdleTtlMs '${String(existingLease.effectiveIdleTtlMs)}' does not match requested effectiveIdleTtlMs '${String(requestedLease.effectiveIdleTtlMs)}'.`,
+		);
+	}
 	if (existingLease.profileId !== requestedLease.profileId) {
 		throw new LeaseScopeConflictError(
 			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing profileId '${existingLease.profileId}' does not match requested profileId '${requestedLease.profileId}'.`,
@@ -143,9 +215,14 @@ function scopeIndexKey(scopeRequest: {
 	return `${scopeRequest.zoneId}\0${scopeRequest.scopeKey}`;
 }
 
+function activeUseKey(leaseId: string, useId: string): string {
+	return `${leaseId}\0${useId}`;
+}
+
 export function createLeaseManager(options: {
 	readonly createManagedVm: (leaseOptions: {
 		readonly agentWorkspaceDir: string;
+		readonly effectiveIdleTtlMs?: number;
 		readonly profile: ToolVmProfile;
 		readonly profileId: string;
 		readonly scopeKey: string;
@@ -157,10 +234,16 @@ export function createLeaseManager(options: {
 	}) => Promise<ManagedVm>;
 	readonly now: () => number;
 	readonly tcpPool: TcpPool;
+	readonly toolVmUsePolicy?: ToolVmUsePolicy;
 }): LeaseManager {
 	const leases = new Map<string, Lease>();
+	const activeUses = new Map<string, ToolVmActiveUse>();
+	const endedUseTombstones = new Map<string, EndedToolVmActiveUseTombstone>();
 	const leaseIdsByScope = new Map<string, string>();
+	const releasingLeaseIds = new Set<string>();
 	const scopeLocks = new Map<string, Promise<void>>();
+	const toolVmUsePolicy = options.toolVmUsePolicy ?? defaultToolVmUsePolicy;
+	assertValidToolVmUsePolicy(toolVmUsePolicy);
 
 	function storeLease(lease: Lease): void {
 		leases.set(lease.id, lease);
@@ -169,6 +252,17 @@ export function createLeaseManager(options: {
 
 	function deleteLease(lease: Lease): void {
 		leases.delete(lease.id);
+		releasingLeaseIds.delete(lease.id);
+		for (const [key, activeUse] of activeUses.entries()) {
+			if (activeUse.leaseId === lease.id) {
+				activeUses.delete(key);
+			}
+		}
+		for (const [key, tombstone] of endedUseTombstones.entries()) {
+			if (tombstone.leaseId === lease.id) {
+				endedUseTombstones.delete(key);
+			}
+		}
 		const indexKey = scopeIndexKey(lease);
 		// Only clear the scope index if it still points at this exact lease.
 		if (leaseIdsByScope.get(indexKey) === lease.id) {
@@ -255,6 +349,7 @@ export function createLeaseManager(options: {
 						const lease: Lease = {
 							agentWorkspaceDir: leaseOptions.agentWorkspaceDir,
 							createdAt,
+							effectiveIdleTtlMs: leaseOptions.effectiveIdleTtlMs ?? defaultLeaseEffectiveIdleTtlMs,
 							guestWorkdir: leaseOptions.guestWorkdir,
 							id: `${leaseOptions.zoneId}-${leaseOptions.scopeKey}-${createdAt}`,
 							lastUsedAt: createdAt,
@@ -285,7 +380,61 @@ export function createLeaseManager(options: {
 				}
 			});
 		},
-		keepLeaseAlive(leaseId: string): LeaseRenewal | undefined {
+		endActiveUse(
+			leaseId: string,
+			useId: string,
+			_request: EndToolVmActiveUseRequest,
+		): { readonly kind: 'ended' | 'unknown-use' } | undefined {
+			const lease = leases.get(leaseId);
+			if (!lease) {
+				return undefined;
+			}
+			const key = activeUseKey(leaseId, useId);
+			const activeUse = activeUses.get(key);
+			if (activeUse) {
+				activeUses.delete(key);
+				endedUseTombstones.set(key, {
+					expiresAt: options.now() + toolVmUsePolicy.endedUseTombstoneTtlMs,
+					leaseId,
+					useId,
+				});
+				touchLease(lease);
+				return { kind: 'ended' };
+			}
+			return { kind: 'unknown-use' };
+		},
+		getActiveUseCount(leaseId: string): number {
+			let count = 0;
+			for (const activeUse of activeUses.values()) {
+				if (activeUse.leaseId === leaseId) {
+					count += 1;
+				}
+			}
+			return count;
+		},
+		heartbeatActiveUse(
+			leaseId: string,
+			useId: string,
+		): HeartbeatToolVmActiveUseResponse | undefined {
+			const lease = leases.get(leaseId);
+			const activeUse = activeUses.get(activeUseKey(leaseId, useId));
+			if (!lease || !activeUse) {
+				return undefined;
+			}
+			const now = options.now();
+			const updatedUse = {
+				...activeUse,
+				expiresAt: now + toolVmUsePolicy.heartbeatStaleMs,
+				lastHeartbeatAt: now,
+			};
+			activeUses.set(activeUseKey(leaseId, useId), updatedUse);
+			touchLease(lease);
+			return {
+				expiresAt: updatedUse.expiresAt,
+				heartbeatAfterMs: toolVmUsePolicy.heartbeatAfterMs,
+			};
+		},
+		renewLease(leaseId: string): LeaseRenewal | undefined {
 			const lease = leases.get(leaseId);
 			if (!lease) {
 				return undefined;
@@ -304,9 +453,27 @@ export function createLeaseManager(options: {
 			const lease = leases.get(leaseId);
 			return lease ? { kind: 'snapshot', lease } : undefined;
 		},
+		reapExpiredActiveUses(): void {
+			const now = options.now();
+			for (const [key, activeUse] of activeUses.entries()) {
+				if (activeUse.expiresAt < now) {
+					activeUses.delete(key);
+					endedUseTombstones.set(key, {
+						expiresAt: now + toolVmUsePolicy.endedUseTombstoneTtlMs,
+						leaseId: activeUse.leaseId,
+						useId: activeUse.useId,
+					});
+				}
+			}
+			for (const [key, tombstone] of endedUseTombstones.entries()) {
+				if (tombstone.expiresAt < now) {
+					endedUseTombstones.delete(key);
+				}
+			}
+		},
 		async releaseLease(
 			leaseId: string,
-			releaseOptions?: { readonly ifLastUsedAtBeforeOrAt?: number },
+			releaseOptions?: { readonly force?: boolean; readonly ifLastUsedAtBeforeOrAt?: number },
 		): Promise<void> {
 			const lease = leases.get(leaseId);
 			if (!lease) {
@@ -323,6 +490,16 @@ export function createLeaseManager(options: {
 				) {
 					return;
 				}
+				if (releaseOptions?.force !== true) {
+					for (const activeUse of activeUses.values()) {
+						if (activeUse.leaseId === leaseId) {
+							throw new LeaseActiveUseConflictError(
+								`Tool VM lease '${leaseId}' is still in active use.`,
+							);
+						}
+					}
+				}
+				releasingLeaseIds.add(leaseId);
 
 				let releaseError: Error | undefined;
 				try {
@@ -338,6 +515,52 @@ export function createLeaseManager(options: {
 					throw releaseError;
 				}
 			});
+		},
+		startActiveUse(
+			leaseId: string,
+			request: StartToolVmActiveUseRequest,
+		): StartToolVmActiveUseResponse | undefined {
+			const lease = leases.get(leaseId);
+			if (!lease) {
+				return undefined;
+			}
+			if (releasingLeaseIds.has(leaseId)) {
+				throw new LeaseActiveUseConflictError(`Tool VM lease '${leaseId}' is releasing.`);
+			}
+			if (!isToolVmActiveUseId(request.useId)) {
+				throw new TypeError(`Tool VM active-use id '${request.useId}' must be a UUIDv7.`);
+			}
+			const key = activeUseKey(leaseId, request.useId);
+			const existingUse = activeUses.get(key);
+			if (existingUse) {
+				return {
+					expiresAt: existingUse.expiresAt,
+					heartbeatAfterMs: toolVmUsePolicy.heartbeatAfterMs,
+					useId: existingUse.useId,
+				};
+			}
+			const tombstone = endedUseTombstones.get(key);
+			if (tombstone) {
+				throw new LeaseActiveUseConflictError(
+					`Tool VM active-use id '${request.useId}' for lease '${leaseId}' already ended.`,
+				);
+			}
+			const now = options.now();
+			const activeUse = {
+				...(request.correlation ? { correlation: request.correlation } : {}),
+				expiresAt: now + toolVmUsePolicy.heartbeatStaleMs,
+				lastHeartbeatAt: now,
+				leaseId,
+				startedAt: now,
+				useId: request.useId,
+			} satisfies ToolVmActiveUse;
+			activeUses.set(key, activeUse);
+			touchLease(lease);
+			return {
+				expiresAt: activeUse.expiresAt,
+				heartbeatAfterMs: toolVmUsePolicy.heartbeatAfterMs,
+				useId: activeUse.useId,
+			};
 		},
 	};
 }

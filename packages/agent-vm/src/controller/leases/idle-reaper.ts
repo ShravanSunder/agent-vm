@@ -1,5 +1,7 @@
 export function createIdleReaper(options: {
 	readonly getLeases: () => {
+		readonly activeUseCount: number;
+		readonly effectiveIdleTtlMs: number;
 		readonly id: string;
 		readonly lastUsedAt: number;
 		readonly scopeKey: string;
@@ -9,7 +11,6 @@ export function createIdleReaper(options: {
 		leaseId: string,
 		options?: { readonly ifLastUsedAtBeforeOrAt?: number },
 	) => Promise<void>;
-	readonly ttlForLease: (lease: { readonly scopeKey: string }) => number;
 }): {
 	reapExpiredLeases(): Promise<void>;
 } {
@@ -17,7 +18,10 @@ export function createIdleReaper(options: {
 		async reapExpiredLeases(): Promise<void> {
 			const now = options.now();
 			const expiredLeases = options.getLeases().flatMap((lease) => {
-				const expirationCutoff = now - options.ttlForLease(lease);
+				if (lease.activeUseCount > 0) {
+					return [];
+				}
+				const expirationCutoff = now - lease.effectiveIdleTtlMs;
 				return lease.lastUsedAt < expirationCutoff ? [{ expirationCutoff, leaseId: lease.id }] : [];
 			});
 			const releaseErrors: Error[] = [];

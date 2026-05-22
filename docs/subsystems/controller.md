@@ -84,8 +84,12 @@ All routes are served by Hono on the configured `host.controllerPort` (default 1
 |--------|------|-------------|----------|
 | `GET` | `/health` | Liveness probe | `{ ok, port }` |
 | `POST` | `/lease` | Create a tool VM lease | Lease with SSH access details |
-| `GET` | `/lease/:leaseId` | Keep a lease alive and return agent-facing SSH access | Lease with SSH identity PEM |
+| `GET` | `/lease/:leaseId` | Read a lease without extending its idle timer | Lease with SSH identity PEM |
 | `GET` | `/lease/:leaseId/peek` | Inspect a lease without extending its idle timer | Lease summary without SSH identity PEM |
+| `POST` | `/lease/:leaseId/renew` | Renew an idle cached lease | Lease with SSH identity PEM |
+| `POST` | `/lease/:leaseId/uses` | Start an in-flight Tool VM use with a UUIDv7 use id | `{ useId, expiresAt, heartbeatAfterMs }` |
+| `POST` | `/lease/:leaseId/uses/:useId/heartbeat` | Heartbeat an in-flight Tool VM use | `{ expiresAt, heartbeatAfterMs }` |
+| `DELETE` | `/lease/:leaseId/uses/:useId` | End an in-flight Tool VM use | 204 No Content |
 | `GET` | `/leases` | List all active leases | Array of lease summaries |
 | `DELETE` | `/lease/:leaseId` | Release a lease, destroy its VM | 204 No Content |
 
@@ -137,7 +141,7 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
 ### Lease Lifecycle
 
 ```
-  POST /lease { zoneId, scopeKey, profileId, agentWorkspaceDir, workMountDir }
+  POST /lease { zoneId, scopeKey, profileId, agentWorkspaceDir, workMountDir, idleTtlMs? }
     |
     v
   resolveLeaseWorkMountDir()
@@ -162,7 +166,7 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
     |-- 5. createManagedVm(...)        Boot a tool VM with the slot's port
     |-- 5. vm.enableSsh({ port })      Start SSH listener, get access details
     |-- 6. Build Lease record          id = "{zoneId}-{scopeKey}-{timestamp}"
-    |-- 7. Store in leases Map
+    |-- 7. Store in leases Map with effectiveIdleTtlMs
     |
     |   On failure at step 2-3:
     |     vm.close() (if created) then tcpPool.release(slot)
@@ -172,16 +176,26 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
     |
     v
   releaseLease()
-    |-- 1. vm.close()                  Destroy the tool VM
-    |-- 2. leases.delete(leaseId)      Remove from tracking map
-    |-- 3. tcpPool.release(slot)       Return slot to pool
+    |-- 1. Reject when active uses exist unless force=true
+    |-- 2. vm.close()                  Destroy the tool VM
+    |-- 3. leases.delete(leaseId)      Remove from tracking map
+    |-- 4. tcpPool.release(slot)       Return slot to pool
 ```
 
 Each lease holds: `id`, `zoneId`, `scopeKey`, `profileId`, `agentWorkspaceDir`,
 `hostWorkMountDir`, `tcpSlot`, `vm` (ManagedVm handle), `sshAccess` (host, port,
-identity file, user), `createdAt`, and `lastUsedAt`. The lease manager does not
-clean work mount files on release; OpenClaw-selected lease work mounts are owned
-by the caller that supplied `workMountDir`.
+identity file, user), `createdAt`, `lastUsedAt`, and `effectiveIdleTtlMs`. The
+lease manager does not clean work mount files on release; OpenClaw-selected
+lease work mounts are owned by the caller that supplied `workMountDir`.
+
+`GET /lease/:leaseId` and `GET /lease/:leaseId/peek` are read-only. Lease-level
+idle renewal is `POST /lease/:leaseId/renew`. In-flight work uses
+`POST /lease/:leaseId/uses`, periodic use heartbeats, and
+`DELETE /lease/:leaseId/uses/:useId`; those active uses prevent idle reaping
+while the command or file-bridge operation is still running. Use ids are
+caller-issued UUIDv7 values so retries can be idempotent without another
+round-trip. Ended uses leave short tombstones so a duplicate start after a
+completed use is rejected instead of resurrecting old work.
 
 `workMountDir` is a gateway VM path, not a host path and not a `system.json`
 field. It must name a concrete child path below `/zone` or
@@ -213,13 +227,13 @@ Operations: `allocate()` returns the lowest free slot (throws if pool exhausted)
 
 `idle-reaper.ts` prevents orphaned tool VMs from leaking resources. It runs on
 a 60-second interval and releases any lease whose `lastUsedAt` exceeds its
-scope-specific TTL. If `leaseIdleTtl` is omitted, the fallback remains 30
-minutes for every lease.
+effective idle TTL and has no active uses. If `leaseIdleTtl` is omitted, the
+fallback remains 30 minutes for every lease.
 
 ```
   reapExpiredLeases()
-    |-- Compute ttlForLease(lease) from scopeKey
-    |-- Filter leases where (now - lastUsedAt) > ttl
+    |-- Skip leases with activeUseCount > 0
+    |-- Filter leases where (now - lastUsedAt) > effectiveIdleTtlMs
     |-- For each expired: releaseLease(leaseId)
     |   Sequential to avoid TCP slot allocation races
 ```

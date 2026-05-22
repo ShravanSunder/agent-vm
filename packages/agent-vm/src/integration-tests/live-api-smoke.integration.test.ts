@@ -82,6 +82,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 		const lease: Lease = {
 			agentWorkspaceDir: '/home/openclaw/work',
 			createdAt: Date.now(),
+			effectiveIdleTtlMs: 30 * 60 * 1000,
 			id: 'smoke-lease-001',
 			lastUsedAt: Date.now(),
 			profileId: 'standard',
@@ -123,7 +124,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 			},
 			leaseManager: {
 				createLease,
-				keepLeaseAlive: vi.fn(() => ({
+				renewLease: vi.fn(() => ({
 					kind: 'renewed' as const,
 					lastUsedAt: lease.lastUsedAt,
 					lease,
