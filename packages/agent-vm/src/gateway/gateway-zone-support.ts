@@ -93,6 +93,7 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 						...baseGateway,
 						type: 'openclaw',
 						zoneFilesDir: zone.gateway.zoneFilesDir,
+						controllerAuth: zone.gateway.controllerAuth,
 						...(zone.gateway.authProfilesByAgent
 							? { authProfilesByAgent: zone.gateway.authProfilesByAgent }
 							: {}),

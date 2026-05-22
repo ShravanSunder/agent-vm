@@ -61,6 +61,7 @@ function createSystemConfig(
 					config: openClawConfigPath,
 					stateDir: stateDirectory,
 					zoneFilesDir: zoneFilesDirectory,
+					controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 				},
 				secrets: {
 					OPENCLAW_GATEWAY_TOKEN: {

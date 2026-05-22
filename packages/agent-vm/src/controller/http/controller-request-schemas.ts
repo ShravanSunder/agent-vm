@@ -52,7 +52,7 @@ export const controllerDestroyZoneRequestSchema = z.object({
 export const controllerEnableSshRequestSchema = z
 	.object({
 		adminToken: z.string().min(1).optional(),
-		secretEnv: z.enum(['default', 'with-secrets']).default('default'),
+		secretEnv: z.enum(['default', 'gateway-token', 'all-secrets']).default('default'),
 	})
 	.strict();
 

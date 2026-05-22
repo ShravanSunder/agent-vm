@@ -11,7 +11,10 @@ import {
 	resolveControllerBaseUrl,
 } from './agent-vm-cli-support.js';
 import { formatZodError } from './format-zod-error.js';
-import { wrapWithOpenClawSecretShellEnvironment } from './openclaw-shell-prefix.js';
+import {
+	wrapWithOpenClawAllSecretsShellEnvironment,
+	wrapWithOpenClawGatewayTokenShellEnvironment,
+} from './openclaw-shell-prefix.js';
 
 interface RunSshCommandOptions {
 	readonly dependencies: CliDependencies;
@@ -32,6 +35,8 @@ export const zoneSshAccessResponseSchema = z
 	.passthrough();
 
 export type ZoneSshAccessResponse = z.infer<typeof zoneSshAccessResponseSchema>;
+
+type SshSecretEnvRequest = 'gateway-token' | 'all-secrets';
 
 export async function resolveZoneAdminToken(options: {
 	readonly dependencies: Pick<
@@ -74,7 +79,8 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 			'controller ssh opens an interactive shell only; remote commands are not supported.',
 		);
 	}
-	const restArguments = options.restArguments;
+	const requestAllSecrets = options.restArguments.includes('--all-secrets');
+	const restArguments = options.restArguments.filter((argument) => argument !== '--all-secrets');
 	if (restArguments.includes('--print')) {
 		throw new Error('--print is not supported for controller ssh.');
 	}
@@ -87,7 +93,7 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	const parsedSshResponse = zoneSshAccessResponseSchema.safeParse(
 		await controllerClient.enableZoneSsh(zone.id, {
 			...(adminToken ? { adminToken } : {}),
-			secretEnv: 'with-secrets',
+			secretEnv: requestAllSecrets ? 'all-secrets' : 'gateway-token',
 		}),
 	);
 	if (!parsedSshResponse.success) {
@@ -104,9 +110,14 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	const secretEnvEnabled = sshResponse.secretEnvEnabled === true;
 	if (!secretEnvEnabled) {
 		throw new Error(
-			'Controller did not enable gateway secrets for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured zone secrets.',
+			'Controller did not enable the gateway token for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured gateway.controllerAuth.secret.',
 		);
 	}
+	const secretEnvRequest: SshSecretEnvRequest = requestAllSecrets ? 'all-secrets' : 'gateway-token';
+	const remoteShellCommand =
+		secretEnvRequest === 'all-secrets'
+			? wrapWithOpenClawAllSecretsShellEnvironment('exec bash -l')
+			: wrapWithOpenClawGatewayTokenShellEnvironment('exec bash -l');
 
 	const sshArguments = [
 		'-t',
@@ -118,7 +129,7 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 		'-p',
 		String(sshResponse.port),
 		`${sshResponse.user ?? 'root'}@${sshResponse.host}`,
-		wrapWithOpenClawSecretShellEnvironment('exec bash -l'),
+		remoteShellCommand,
 	];
 	const runInteractiveProcess =
 		options.dependencies.runInteractiveProcess ??

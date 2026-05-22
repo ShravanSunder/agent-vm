@@ -19,7 +19,7 @@ export interface ControllerClient {
 
 export interface EnableZoneSshOptions {
 	readonly adminToken?: string;
-	readonly secretEnv?: 'default' | 'with-secrets';
+	readonly secretEnv?: 'default' | 'gateway-token' | 'all-secrets';
 }
 
 export interface ExecInZoneOptions {

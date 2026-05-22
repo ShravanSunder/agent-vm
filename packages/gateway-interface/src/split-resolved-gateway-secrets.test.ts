@@ -191,6 +191,7 @@ describe('splitResolvedGatewaySecrets', () => {
 					stateDir: './state',
 					ssh: { secretEnv: 'explicit' },
 					zoneFilesDir: './zone-files',
+					controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 				},
 				secrets: {
 					PERPLEXITY_API_KEY: {

@@ -80,6 +80,7 @@ function createSystemConfig(options: {
 					port: 18791,
 					stateDir: path.join(options.rootPath, 'state', 'sunfam'),
 					zoneFilesDir: path.join(options.rootPath, 'zone-files', 'sunfam'),
+					controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 					zoneGit: {
 						remote: {
 							repoUrl: options.remoteUrl,

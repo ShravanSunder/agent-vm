@@ -189,6 +189,7 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 						rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN', 'DISCORD_BOT_TOKEN'],
 						stateDir: path.join(workingDirectoryPath, 'state', 'shravan'),
 						zoneFilesDir: path.join(workingDirectoryPath, 'zone-files', 'shravan'),
+						controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 					},
 					secrets: {
 						PERPLEXITY_API_KEY: {

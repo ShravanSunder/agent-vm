@@ -47,6 +47,7 @@ const systemConfig = {
 				stateDir: './state/shravan',
 				ssh: { secretEnv: 'explicit' },
 				zoneFilesDir: './zone-files/shravan',
+				controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -74,6 +75,7 @@ const systemConfig = {
 				stateDir: './state/alevtina',
 				ssh: { secretEnv: 'explicit' },
 				zoneFilesDir: './zone-files/alevtina',
+				controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -275,7 +277,7 @@ describe('createControllerRuntimeOperations', () => {
 		await expect(
 			operations.enableSshForZone('shravan', {
 				adminToken: 'expected-admin-token',
-				secretEnv: 'with-secrets',
+				secretEnv: 'gateway-token',
 			}),
 		).resolves.toMatchObject({
 			host: '127.0.0.1',
@@ -347,9 +349,11 @@ describe('createControllerRuntimeOperations', () => {
 
 	it.each([
 		{ expected: false, policy: 'never', request: 'default' },
-		{ expected: false, policy: 'never', request: 'with-secrets' },
+		{ expected: false, policy: 'never', request: 'gateway-token' },
+		{ expected: false, policy: 'never', request: 'all-secrets' },
 		{ expected: false, policy: 'explicit', request: 'default' },
-		{ expected: true, policy: 'explicit', request: 'with-secrets' },
+		{ expected: true, policy: 'explicit', request: 'gateway-token' },
+		{ expected: true, policy: 'explicit', request: 'all-secrets' },
 	] as const)(
 		'resolves ssh secret env policy $policy with request $request',
 		({ expected, policy, request }) => {

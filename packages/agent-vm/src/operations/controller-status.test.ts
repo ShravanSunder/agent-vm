@@ -45,6 +45,7 @@ const systemConfig = {
 				config: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
+				controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -70,6 +71,7 @@ const systemConfig = {
 				config: './config/alevtina/openclaw.json',
 				stateDir: './state/alevtina',
 				zoneFilesDir: './zone-files/alevtina',
+				controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {

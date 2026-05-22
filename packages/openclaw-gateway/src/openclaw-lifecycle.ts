@@ -31,19 +31,13 @@ const openClawRuntimeLogFileVmPath = `${agentVmLogsDirVmPath}/openclaw-YYYY-MM-D
 const openClawGatewayBootLogFileVmPath = `${agentVmLogsDirVmPath}/gateway-boot-latest.log`;
 const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
 const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
-const openClawGatewayTokenEnvVar = 'OPENCLAW_GATEWAY_TOKEN';
+const openClawGatewayTokenEnvFilePath = '/run/openclaw/gateway-token.env';
 
 interface OpenClawSecretRef {
 	readonly id: string;
 	readonly provider: string;
 	readonly source: 'env';
 }
-
-const openClawGatewayTokenSecretRef: OpenClawSecretRef = {
-	id: openClawGatewayTokenEnvVar,
-	provider: 'default',
-	source: 'env',
-};
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -73,6 +67,9 @@ function buildOpenClawBootstrapCommand(
 	zone: GatewayZoneConfig,
 	resolvedSecrets: Record<string, string>,
 ): string {
+	if (zone.gateway.type !== 'openclaw') {
+		throw new Error(`OpenClaw lifecycle cannot build gateway type '${zone.gateway.type}'.`);
+	}
 	const { environmentSecrets } = mergeRuntimeGatewaySecrets(
 		splitAllowedOpenClawGatewaySecrets(zone, resolvedSecrets, 'openclaw-bootstrap-raw-env-secrets'),
 		{
@@ -118,7 +115,11 @@ function buildOpenClawBootstrapCommand(
 	const secretsFileCommand =
 		secretEnvironmentNames.length === 0
 			? `: > ${openClawRuntimeSecretsEnvFilePath} && `
-			: `{ ${secretEnvironmentNames.map(runtimeSecretExportCommand).join('; ')}; } > ${openClawRuntimeSecretsEnvFilePath} && `;
+			: `{ ${secretEnvironmentNames.map(runtimeSecretLiteralExportCommand).join('; ')}; } > ${openClawRuntimeSecretsEnvFilePath} && `;
+	const gatewayTokenSecretName = zone.gateway.controllerAuth.secret;
+	const gatewayTokenFileCommand = secretEnvironmentNames.includes(gatewayTokenSecretName)
+		? `{ ${runtimeSecretLiteralExportCommand(gatewayTokenSecretName)}; } > ${openClawGatewayTokenEnvFilePath} && `
+		: `: > ${openClawGatewayTokenEnvFilePath} && `;
 	const sshConfigLines = ['Host tool-*.vm.host', '  AddressFamily inet'];
 	const sshConfigCommand =
 		`mkdir -p /root/.ssh /home/openclaw/.ssh && ` +
@@ -135,6 +136,8 @@ function buildOpenClawBootstrapCommand(
 		`chmod 644 ${openClawShellEnvFilePath} && ` +
 		secretsFileCommand +
 		`chmod 600 ${openClawRuntimeSecretsEnvFilePath} && ` +
+		gatewayTokenFileCommand +
+		`chmod 600 ${openClawGatewayTokenEnvFilePath} && ` +
 		sshConfigCommand +
 		'touch /root/.bashrc && ' +
 		`grep -qxF 'source ${openClawShellEnvFilePath}' /root/.bashrc || echo 'source ${openClawShellEnvFilePath}' >> /root/.bashrc && ` +
@@ -177,10 +180,9 @@ function assertShellProfileSafeSecretValue(secretName: string, value: string): v
 	}
 }
 
-function runtimeSecretExportCommand(secretName: string): string {
+function runtimeSecretLiteralExportCommand(secretName: string): string {
 	const runtimeSecretValue = `"\${${secretName}?missing runtime secret ${secretName}}"`;
-	const exportLine = `export ${secretName}=${runtimeSecretValue}`;
-	return `: ${runtimeSecretValue} && printf '%s\\n' ${shellQuote(exportLine)}`;
+	return `secret_value=${runtimeSecretValue} && escaped_secret_value="$(printf '%s' "$secret_value" | sed 's/["\\\\$\`]/\\\\&/g')" && printf 'export ${secretName}="%s"\\n' "$escaped_secret_value"`;
 }
 
 function assertAllowedOpenClawEnvironmentSecrets(
@@ -192,7 +194,7 @@ function assertAllowedOpenClawEnvironmentSecrets(
 		throw new Error(`OpenClaw lifecycle cannot build gateway type '${zone.gateway.type}'.`);
 	}
 	const allowedRawEnvSecrets = new Set([
-		openClawGatewayTokenEnvVar,
+		zone.gateway.controllerAuth.secret,
 		...(zone.gateway.rawEnvSecrets ?? []),
 	]);
 	for (const secretName of Object.keys(environmentSecrets)) {
@@ -447,27 +449,38 @@ async function writeAuthProfilesIfConfigured(
 }
 
 async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<void> {
-	const gatewayTokenSecret = zone.secrets.OPENCLAW_GATEWAY_TOKEN;
+	if (zone.gateway.type !== 'openclaw') {
+		throw new Error(`OpenClaw lifecycle cannot build gateway type '${zone.gateway.type}'.`);
+	}
+	const gatewayTokenSecretName = zone.gateway.controllerAuth.secret;
+	const gatewayTokenSecret = zone.secrets[gatewayTokenSecretName];
 	if (!gatewayTokenSecret) {
 		throw new Error(
-			`Zone '${zone.id}' secret 'OPENCLAW_GATEWAY_TOKEN' is missing. Add an explicit 1Password or environment reference such as 'op://agent-vm/${zone.id}-gateway-auth/password'.`,
+			`Zone '${zone.id}' controllerAuth secret '${gatewayTokenSecretName}' is missing. Add an explicit 1Password or environment reference such as 'op://agent-vm/${zone.id}-gateway-auth/password'.`,
 		);
 	}
 	if (!isSourceAwareSecretReference(gatewayTokenSecret)) {
-		throw new Error(`Zone '${zone.id}' secret 'OPENCLAW_GATEWAY_TOKEN' has an invalid shape.`);
+		throw new Error(
+			`Zone '${zone.id}' controllerAuth secret '${gatewayTokenSecretName}' has an invalid shape.`,
+		);
 	}
 
 	try {
 		if (gatewayTokenSecret.source === '1password' && !gatewayTokenSecret.ref) {
 			throw new Error(
-				`Zone '${zone.id}' secret 'OPENCLAW_GATEWAY_TOKEN' is missing 'ref'. Add an explicit 1Password reference such as 'op://agent-vm/${zone.id}-gateway-auth/password'.`,
+				`Zone '${zone.id}' controllerAuth secret '${gatewayTokenSecretName}' is missing 'ref'. Add an explicit 1Password reference such as 'op://agent-vm/${zone.id}-gateway-auth/password'.`,
 			);
 		}
 		if (gatewayTokenSecret.source === 'environment' && !gatewayTokenSecret.envVar) {
 			throw new Error(
-				`Zone '${zone.id}' secret 'OPENCLAW_GATEWAY_TOKEN' is missing 'envVar'. Add an explicit environment variable name.`,
+				`Zone '${zone.id}' controllerAuth secret '${gatewayTokenSecretName}' is missing 'envVar'. Add an explicit environment variable name.`,
 			);
 		}
+		const openClawGatewayTokenSecretRef: OpenClawSecretRef = {
+			id: gatewayTokenSecretName,
+			provider: 'default',
+			source: 'env',
+		};
 		const rawBaseConfig = await readFile(zone.gateway.config, 'utf8');
 		const parsedBaseConfig: unknown = JSON.parse(rawBaseConfig);
 		if (!isObjectRecord(parsedBaseConfig)) {

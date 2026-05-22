@@ -13,7 +13,7 @@ export class ControllerRuntimeAtCapacityError extends Error {}
 
 export interface EnableSshForZoneOptions {
 	readonly adminToken?: string;
-	readonly secretEnv: 'default' | 'with-secrets';
+	readonly secretEnv: 'default' | 'gateway-token' | 'all-secrets';
 }
 
 export interface ExecInZoneOptions {

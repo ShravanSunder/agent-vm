@@ -392,6 +392,7 @@ files:
     "imageProfile": "openclaw",
     "stateDir": "../state/shravan",
     "zoneFilesDir": "../zone-files/shravan",
+    "controllerAuth": { "secret": "OPENCLAW_GATEWAY_TOKEN" },
     "authProfilesByAgent": {
       "shravan": { "source": "environment", "envVar": "SHRAVAN_AUTH_PROFILES" }
     }
@@ -432,13 +433,17 @@ support `environment`, `1password`, and `config` sources. Inline `config`
 values here are plaintext OpenClaw auth profiles and should be limited to local
 or test deployments.
 
-`gateway.rawEnvSecrets` is the explicit escape hatch for OpenClaw secrets that
-must reach the gateway VM as raw environment variables. `OPENCLAW_GATEWAY_TOKEN`
-is allowed by default. Other provider or service tokens should use
-`http-mediation` unless the integration cannot work with HTTP mediation, such as
-a non-HTTP or websocket credential flow. Generated runtime env secrets also need
-to be named here when a feature requires them, for example
-`AGENT_VM_ZONE_GIT_TOKEN`.
+`gateway.controllerAuth.secret` names the gateway env secret OpenClaw uses to
+authenticate controller API calls. The scaffold uses `OPENCLAW_GATEWAY_TOKEN`.
+That secret must exist in `zone.secrets` with `injection: "env"` and
+`audience: "gateway"`.
+
+`gateway.rawEnvSecrets` is the explicit escape hatch for other OpenClaw secrets
+that must reach the gateway VM as raw environment variables. Other provider or
+service tokens should use `http-mediation` unless the integration cannot work
+with HTTP mediation, such as a non-HTTP or websocket credential flow. Generated
+runtime env secrets also need to be named here when a feature requires them, for
+example `AGENT_VM_ZONE_GIT_TOKEN`.
 
 `agentSandboxSeeds` writes first-boot files into the agent's scoped sandbox work
 mount before the Tool VM starts. Targets are relative to the sandbox
@@ -564,10 +569,10 @@ always mediated. `source: "environment"` is allowed for a Tool VM secret only
 when `injection` is `http-mediation`; in that case the controller reads the
 environment variable and Gondolin mediates the value.
 
-OpenClaw zones allow raw gateway env secrets only when the secret name is
-`OPENCLAW_GATEWAY_TOKEN` or is listed in `gateway.rawEnvSecrets`. This keeps
-provider API tokens on the mediated path by default and makes every raw-env
-exception visible in deployment config.
+OpenClaw zones allow raw gateway env secrets only when the secret name matches
+`gateway.controllerAuth.secret` or is listed in `gateway.rawEnvSecrets`. This
+keeps provider API tokens on the mediated path by default and makes every
+raw-env exception visible in deployment config.
 
 Secret names must be valid environment variable identifiers. This keeps
 gateway env-file rendering and runtime placeholder names safe and predictable.
@@ -668,9 +673,10 @@ The schema rejects:
 - Zone secrets without explicit `audience`.
 - Env-injected zone secrets with non-gateway audience or declared `hosts`.
 - OpenClaw env-injected zone secrets not listed in `gateway.rawEnvSecrets`,
-  except `OPENCLAW_GATEWAY_TOKEN`.
+  except the configured `gateway.controllerAuth.secret`.
 - Mediated secret hosts not declared in `egressHosts` for the same audience.
-- OpenClaw zones without gateway-only env `OPENCLAW_GATEWAY_TOKEN`.
+- OpenClaw zones without a gateway-only env secret named by
+  `gateway.controllerAuth.secret`.
 - Zones referencing missing gateway image profiles.
 - Zone gateway type mismatches against the selected image profile.
 - OpenClaw zones declaring `runtimeAuthHints`.

@@ -182,12 +182,12 @@ function timingSafeEqualString(left: string, right: string): boolean {
 
 export function shouldEnableSshSecretEnv(options: {
 	readonly policy: 'explicit' | 'never';
-	readonly request: 'default' | 'with-secrets';
+	readonly request: 'default' | 'gateway-token' | 'all-secrets';
 }): boolean {
 	if (options.policy === 'never') {
 		return false;
 	}
-	return options.request === 'with-secrets';
+	return options.request !== 'default';
 }
 
 async function verifyZoneAdminAccess(options: {

@@ -178,7 +178,7 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 		return {};
 	}
 	const allowedRawEnvSecretNames = [
-		'OPENCLAW_GATEWAY_TOKEN',
+		zone.gateway.controllerAuth.secret,
 		...(zone.gateway.rawEnvSecrets ?? []),
 	];
 	const effectiveHostConfigDir = path.join(

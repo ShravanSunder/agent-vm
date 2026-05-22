@@ -152,6 +152,7 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 					imageProfile: 'openclaw',
 					stateDir: path.join(rootPath, 'state', 'shravan'),
 					zoneFilesDir: path.join(rootPath, 'zone-files', 'shravan'),
+					controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 					authProfilesByAgent: {
 						shravan: { source: 'environment', envVar: 'SHRAVAN_AUTH_PROFILES' },
 					},

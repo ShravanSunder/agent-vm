@@ -56,6 +56,7 @@ function createCacheCommandSystemConfig(): LoadedSystemConfig {
 						port: 18791,
 						stateDir: './state/shravan',
 						zoneFilesDir: './zone-files/shravan',
+						controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 					},
 					id: 'shravan',
 					secrets: {
