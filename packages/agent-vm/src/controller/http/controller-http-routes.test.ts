@@ -278,8 +278,9 @@ describe('createControllerApp', () => {
 		});
 		expect(getResponse.status).toBe(200);
 		await expect(getResponse.json()).resolves.toMatchObject({
-			idleTtlMs: 6_000_000,
 			leaseId: 'lease-123',
+			transport: 'ssh-sandbox',
+			workdir: '/work',
 		});
 		expect(renewResponse.status).toBe(200);
 		expect(peekResponse.status).toBe(200);

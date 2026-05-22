@@ -397,7 +397,7 @@ describe('startGatewayZone', () => {
 			}),
 		);
 		expect(execMock).toHaveBeenCalledWith(
-			'set -a && . /run/openclaw/secrets.env && set +a && cd /home/openclaw && nohup openclaw gateway --port 18789 > /agent-vm/logs/gateway-boot-latest.log 2>&1 &',
+			`set -a && . /run/openclaw/secrets.env && set +a && { printf 'gateway-boot: NODE_OPTIONS=%s\\n' "$NODE_OPTIONS" > /agent-vm/logs/gateway-boot-latest.log; } && cd /home/openclaw && nohup openclaw gateway --port 18789 >> /agent-vm/logs/gateway-boot-latest.log 2>&1 &`,
 		);
 		expect(setIngressRoutesMock).toHaveBeenCalledWith([
 			{
@@ -638,7 +638,8 @@ describe('startGatewayZone', () => {
 			close: vi.fn(async () => {}),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
-			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28290)),
 			setIngressRoutes: vi.fn(),
 		};
@@ -713,7 +714,8 @@ describe('startGatewayZone', () => {
 			close: vi.fn(async () => {}),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
-			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
 			setIngressRoutes: vi.fn(),
 		};
@@ -771,7 +773,8 @@ describe('startGatewayZone', () => {
 			close: vi.fn(async () => {}),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
-			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
 			setIngressRoutes: vi.fn(),
 		};
@@ -836,7 +839,8 @@ describe('startGatewayZone', () => {
 			close: vi.fn(async () => {}),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
-			exec: vi.fn(async () => ({ exitCode: 0, stdout: '200', stderr: '' })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28292)),
 			setIngressRoutes: vi.fn(),
 		};
@@ -1370,11 +1374,16 @@ describe('startGatewayZone', () => {
 			close: vi.fn(async () => {}),
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
-			exec: vi.fn(async (command: string) =>
+			exec: vi.fn((command: string) =>
 				command === secretBearingBootstrapCommand
-					? { exitCode: 1, stdout: 'bootstrap stdout', stderr: 'bootstrap stderr' }
-					: { exitCode: 0, stdout: '200', stderr: '' },
+					? createManagedExecProcessStub({
+							exitCode: 1,
+							stdout: 'bootstrap stdout',
+							stderr: 'bootstrap stderr',
+						})
+					: createManagedExecProcessStub({ stdout: '200' }),
 			),
+			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28287)),
 		};

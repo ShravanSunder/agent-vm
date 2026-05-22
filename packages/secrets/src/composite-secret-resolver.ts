@@ -2,7 +2,10 @@ import type { SecretRef, SecretResolver } from './contracts.js';
 
 type SecretEnvironment = Readonly<Record<string, string | undefined>>;
 
-function resolveEnvironmentSecret(ref: SecretRef, env: SecretEnvironment): string {
+function resolveEnvironmentSecret(
+	ref: Extract<SecretRef, { readonly source: 'environment' }>,
+	env: SecretEnvironment,
+): string {
 	const value = env[ref.ref];
 	if (value === undefined) {
 		throw new Error(`Environment variable '${ref.ref}' is not set.`);

@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
 	buildToolSessionLabel,
 	egressHostsForAudience,
+	FORCE_IPV4_EGRESS_NODE_OPTIONS,
 	splitResolvedSecretsByInjection,
 } from '@agent-vm/gateway-interface';
 import {
@@ -167,6 +168,9 @@ export async function createToolVm(
 		toolVm = await createManagedVm({
 			allowedHosts: egressHostsForAudience(zone.egressHosts, 'tool-vm'),
 			cpus: options.profile.cpus,
+			env: {
+				NODE_OPTIONS: FORCE_IPV4_EGRESS_NODE_OPTIONS,
+			},
 			imagePath: toolImage.imagePath,
 			memory: options.profile.memory,
 			rootfsMode: 'cow',

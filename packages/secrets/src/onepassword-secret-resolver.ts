@@ -803,7 +803,9 @@ export async function createSecretResolver(
 						break;
 					default: {
 						const exhaustiveCheck: never = ref;
-						throw new Error(`Unsupported secret source: ${JSON.stringify(exhaustiveCheck)}`);
+						throw new Error(`Unsupported secret source: ${JSON.stringify(exhaustiveCheck)}`, {
+							cause: error,
+						});
 					}
 				}
 				try {

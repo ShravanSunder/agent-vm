@@ -4,6 +4,9 @@ export function createStaticSecretResolver(
 	values: Readonly<Record<string, string>>,
 ): SecretResolver {
 	const resolve = async (ref: SecretRef): Promise<string> => {
+		if (ref.source === 'config') {
+			return ref.value;
+		}
 		const value = values[ref.ref];
 		if (value === undefined) {
 			throw new Error(`No test secret value configured for '${ref.ref}'.`);
