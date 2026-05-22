@@ -262,8 +262,7 @@ describe('createManagedVm', () => {
 				allowedHosts: [],
 				cpus: 1,
 				env: {
-					NODE_OPTIONS:
-						'--dns-result-order=ipv4first --no-network-family-autoselection',
+					NODE_OPTIONS: '--dns-result-order=ipv4first --no-network-family-autoselection',
 				},
 				imagePath: '',
 				memory: '1G',
