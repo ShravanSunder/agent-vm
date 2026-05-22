@@ -104,7 +104,7 @@ providers can use the same authored header or env key without colliding.
 External `/mcp-proxy` mode is different: `mcp-portal mcp-proxy serve` runs on the
 operator host, resolves its configured auth secrets at process startup, and
 authenticates callers before constructing trusted agent scope for `/core`. When
-that external process must resolve 1Password refs, it uses `@agent-vm/secrets`
+that external process must resolve 1Password refs, it uses `@agent-vm/secret-management`
 and accepts `AGENT_VM_MCP_PORTAL_OP_TOKEN_SOURCE=env`, `op-cli`, or `keychain`
 plus the matching source-specific env settings. If no token source is
 configured, env-only MCP Portal configs still run without 1Password access.

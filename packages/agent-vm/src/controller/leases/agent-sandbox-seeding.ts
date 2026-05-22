@@ -1,7 +1,7 @@
 import { lstat, mkdir, open, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { SecretRef, SecretResolver } from '@agent-vm/secrets';
+import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 import type { SystemConfig } from '../../config/system-config.js';
 import { parseAgentScopeKey } from './lease-scope.js';

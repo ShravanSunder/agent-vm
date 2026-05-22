@@ -12,7 +12,7 @@ import {
 	type WorkerConfig,
 	type WorkerConfigDraft,
 } from '@agent-vm/agent-vm-worker';
-import type { SecretResolver } from '@agent-vm/secrets';
+import type { SecretResolver } from '@agent-vm/secret-management';
 import { execa } from 'execa';
 import { z } from 'zod';
 

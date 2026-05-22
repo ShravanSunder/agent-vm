@@ -3,7 +3,7 @@ import {
 	createSecretResolver,
 	type SecretResolver,
 	resolveServiceAccountToken,
-} from '@agent-vm/secrets';
+} from '@agent-vm/secret-management';
 
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';

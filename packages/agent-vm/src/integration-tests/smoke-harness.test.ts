@@ -311,7 +311,9 @@ describe('startSmokeControllerRuntime', () => {
 		);
 		const dockerfile = await fs.readFile(dockerfilePath, 'utf8');
 		expect(dockerfile).toContain('COPY config-contracts-local.tgz /tmp/config-contracts-local.tgz');
-		expect(dockerfile).toContain('COPY secrets-local.tgz /tmp/secrets-local.tgz');
+		expect(dockerfile).toContain(
+			'COPY secret-management-local.tgz /tmp/secret-management-local.tgz',
+		);
 		expect(dockerfile).toContain('COPY gondolin-adapter-local.tgz /tmp/gondolin-adapter-local.tgz');
 		expect(dockerfile).toContain('COPY mcp-portal-local.tgz /tmp/mcp-portal-local.tgz');
 		expect(dockerfile).toContain(
@@ -336,7 +338,9 @@ describe('startSmokeControllerRuntime', () => {
 		expect(toolVmDockerfile).toContain(
 			'COPY config-contracts-local.tgz /tmp/config-contracts-local.tgz',
 		);
-		expect(toolVmDockerfile).toContain('COPY secrets-local.tgz /tmp/secrets-local.tgz');
+		expect(toolVmDockerfile).toContain(
+			'COPY secret-management-local.tgz /tmp/secret-management-local.tgz',
+		);
 		expect(toolVmDockerfile).toContain('COPY mcp-portal-local.tgz /tmp/mcp-portal-local.tgz');
 		expect(toolVmDockerfile).toContain('npm install --omit=dev --no-audit --no-fund');
 		expect(toolVmDockerfile).toContain('/opt/agent-vm/local-packages');
@@ -406,7 +410,9 @@ describe('startSmokeControllerRuntime', () => {
 		expect(toolVmDockerfile).toContain(
 			'COPY config-contracts-local.tgz /tmp/config-contracts-local.tgz',
 		);
-		expect(toolVmDockerfile).toContain('COPY secrets-local.tgz /tmp/secrets-local.tgz');
+		expect(toolVmDockerfile).toContain(
+			'COPY secret-management-local.tgz /tmp/secret-management-local.tgz',
+		);
 		expect(toolVmDockerfile).toContain('COPY mcp-portal-local.tgz /tmp/mcp-portal-local.tgz');
 		expect(toolVmDockerfile).not.toContain('openclaw-agent-vm-plugin-local.tgz');
 		expect(toolVmDockerfile).not.toContain('openclaw-mcp-portal-plugin-local.tgz');
@@ -655,13 +661,13 @@ async function createFakeConfigContractsPackage(repoRoot: string): Promise<void>
 }
 
 async function createFakeSecretsPackage(repoRoot: string): Promise<void> {
-	const packageDir = path.join(repoRoot, 'packages', 'secrets');
+	const packageDir = path.join(repoRoot, 'packages', 'secret-management');
 	await fs.mkdir(path.join(packageDir, 'dist'), { recursive: true });
 	await fs.writeFile(
 		path.join(packageDir, 'package.json'),
 		`${JSON.stringify(
 			{
-				name: '@agent-vm/secrets',
+				name: '@agent-vm/secret-management',
 				version: '0.0.0-smoke',
 				files: ['dist'],
 			},
@@ -680,7 +686,7 @@ async function createFakeGondolinAdapterPackage(repoRoot: string): Promise<void>
 		path.join(packageDir, 'package.json'),
 		`${JSON.stringify(
 			{
-				dependencies: { '@agent-vm/secrets': '0.0.0-smoke' },
+				dependencies: { '@agent-vm/secret-management': '0.0.0-smoke' },
 				name: '@agent-vm/gondolin-adapter',
 				version: '0.0.0-smoke',
 				files: ['dist'],

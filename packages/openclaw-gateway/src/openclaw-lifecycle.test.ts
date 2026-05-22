@@ -5,7 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
-import type { SecretResolver } from '@agent-vm/secrets';
+import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { openclawLifecycle } from './openclaw-lifecycle.js';

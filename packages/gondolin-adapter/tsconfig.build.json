@@ -5,7 +5,10 @@
 		"declaration": true,
 		"declarationMap": true,
 		"sourceMap": true,
-		"noEmit": false
+		"noEmit": false,
+		"paths": {
+			"@agent-vm/secret-management": ["../secret-management/dist/index.d.ts"]
+		}
 	},
 	"exclude": ["src/**/*.test.ts"]
 }

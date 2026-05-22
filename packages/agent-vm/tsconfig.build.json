@@ -16,6 +16,7 @@
 			"@agent-vm/openclaw-agent-vm-plugin": ["../openclaw-agent-vm-plugin/dist/index.d.ts"],
 			"@agent-vm/openclaw-mcp-portal-plugin": ["../openclaw-mcp-portal-plugin/dist/index.d.ts"],
 			"@agent-vm/openclaw-gateway": ["../openclaw-gateway/dist/index.d.ts"],
+			"@agent-vm/secret-management": ["../secret-management/dist/index.d.ts"],
 			"@agent-vm/worker-gateway": ["../worker-gateway/dist/index.d.ts"]
 		}
 	},

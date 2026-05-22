@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/mcp-portal",
-	"version": "0.0.70",
+	"version": "0.0.71",
 	"description": "Agent-scoped MCP Portal server and TypeScript helpers for composable upstream MCP tools.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -72,7 +72,7 @@
 	},
 	"dependencies": {
 		"@agent-vm/config-contracts": "workspace:*",
-		"@agent-vm/secrets": "workspace:*",
+		"@agent-vm/secret-management": "workspace:*",
 		"@hono/mcp": "^0.3.0",
 		"@hono/node-server": "^2.0.2",
 		"@modelcontextprotocol/sdk": "^1.29.0",

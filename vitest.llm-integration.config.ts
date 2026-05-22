@@ -36,7 +36,7 @@ export default defineConfig({
 			'@agent-vm/openclaw-agent-vm-plugin': path.resolve(
 				'./packages/openclaw-agent-vm-plugin/src/index.ts',
 			),
-			'@agent-vm/secrets': path.resolve('./packages/secrets/src/index.ts'),
+			'@agent-vm/secret-management': path.resolve('./packages/secret-management/src/index.ts'),
 			'@agent-vm/mcp-portal/core': path.resolve('./packages/mcp-portal/src/core/index.ts'),
 			'@agent-vm/mcp-portal/mcp-proxy': path.resolve(
 				'./packages/mcp-portal/src/mcp-proxy/index.ts',
