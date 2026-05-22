@@ -125,6 +125,46 @@ describe('workerLifecycle', () => {
 		expect(vmSpec.allowedHosts).toEqual(['controller.vm.host', 'api.openai.com', 'api.github.com']);
 	});
 
+	it('preserves the forced IPv4-preference flags even when a zone secret supplies NODE_OPTIONS', () => {
+		// Regression test for the merge-order bug surfaced in PR #93
+		// review: a zone secret named NODE_OPTIONS must NOT drop our
+		// forced flags, because Happy Eyeballs would race the
+		// synthetic AAAA again.
+		const zoneWithNodeOptionsSecret: GatewayZoneConfig = {
+			...zone,
+			secrets: {
+				...zone.secrets,
+				NODE_OPTIONS: {
+					injection: 'env',
+					audience: 'gateway',
+					source: 'environment',
+					envVar: 'NODE_OPTIONS',
+				},
+			},
+		};
+
+		const vmSpec = workerLifecycle.buildVmSpec({
+			controllerPort: 18800,
+			gatewayCacheDir: '/host/cache/gateways/shravan',
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			resolvedSecrets: {
+				OPENAI_API_KEY: 'openai-token',
+				NODE_OPTIONS: '--inspect=0.0.0.0:9229',
+			},
+			runtimeDir: '/host/runtime',
+			tcpPool: {
+				basePort: 19000,
+				size: 5,
+			},
+			zone: zoneWithNodeOptionsSecret,
+		});
+
+		// Forced flags lead; user value follows.
+		expect(vmSpec.environment.NODE_OPTIONS).toBe(
+			'--dns-result-order=ipv4first --no-network-family-autoselection --inspect=0.0.0.0:9229',
+		);
+	});
+
 	it('builds a process spec that starts the worker HTTP server', () => {
 		const processSpec = workerLifecycle.buildProcessSpec(zone, {
 			OPENAI_API_KEY: 'openai-token',

@@ -6,8 +6,8 @@ import type {
 } from '@agent-vm/gateway-interface';
 import {
 	buildGatewaySessionLabel,
+	composeNodeOptions,
 	controllerVmHost,
-	FORCE_IPV4_EGRESS_NODE_OPTIONS,
 	gatewayVmAllowedHosts,
 	splitResolvedGatewaySecrets,
 } from '@agent-vm/gateway-interface';
@@ -33,7 +33,6 @@ export const workerLifecycle: GatewayLifecycle = {
 				HOME: '/home/coder',
 				CONTROLLER_BASE_URL: 'http://controller.vm.host:18800',
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
-				NODE_OPTIONS: FORCE_IPV4_EGRESS_NODE_OPTIONS,
 				AGENT_VM_ZONE_ID: zone.id,
 				STATE_DIR: '/state',
 				WORKER_CONFIG_PATH: '/state/effective-worker.json',
@@ -47,6 +46,11 @@ export const workerLifecycle: GatewayLifecycle = {
 				PIP_CACHE_DIR: '/work/cache/pip',
 				UV_CACHE_DIR: '/work/cache/uv',
 				...environmentSecrets,
+				// NODE_OPTIONS goes AFTER the spread so a user-supplied
+				// NODE_OPTIONS in environmentSecrets cannot drop the
+				// forced IPv4-preference flags. composeNodeOptions
+				// preserves the user value as additional flags.
+				NODE_OPTIONS: composeNodeOptions(environmentSecrets.NODE_OPTIONS),
 			},
 			mediatedSecrets,
 			rootfsMode: 'cow',

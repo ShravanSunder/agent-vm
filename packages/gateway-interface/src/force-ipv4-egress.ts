@@ -35,3 +35,39 @@
  */
 export const FORCE_IPV4_EGRESS_NODE_OPTIONS =
 	'--dns-result-order=ipv4first --no-network-family-autoselection';
+
+/**
+ * Compose the forced IPv4-preference flags with a user-provided
+ * NODE_OPTIONS value (if any).
+ *
+ * Use this at every site where NODE_OPTIONS is set into a VM env
+ * block AFTER a spread of user-controlled secrets, to guarantee
+ * the forced flags are always present in the final value even if
+ * a zone secret happens to provide its own NODE_OPTIONS.
+ *
+ * Forced flags come FIRST so they are unambiguously applied.
+ * User-provided flags are appended verbatim. Node treats NODE_OPTIONS
+ * as a whitespace-separated list and all flags apply.
+ *
+ * Returns just the forced flags if the user value is undefined,
+ * empty, or whitespace-only.
+ *
+ * Examples:
+ *
+ *   composeNodeOptions(undefined)
+ *     ──► '--dns-result-order=ipv4first --no-network-family-autoselection'
+ *
+ *   composeNodeOptions('')
+ *     ──► '--dns-result-order=ipv4first --no-network-family-autoselection'
+ *
+ *   composeNodeOptions('--inspect=0.0.0.0:9229')
+ *     ──► '--dns-result-order=ipv4first --no-network-family-autoselection
+ *          --inspect=0.0.0.0:9229'
+ */
+export function composeNodeOptions(userValue: string | undefined): string {
+	const trimmed = userValue?.trim() ?? '';
+	if (trimmed === '') {
+		return FORCE_IPV4_EGRESS_NODE_OPTIONS;
+	}
+	return `${FORCE_IPV4_EGRESS_NODE_OPTIONS} ${trimmed}`;
+}

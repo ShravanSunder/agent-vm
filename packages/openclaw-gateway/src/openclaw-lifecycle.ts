@@ -11,6 +11,7 @@ import type {
 } from '@agent-vm/gateway-interface';
 import {
 	buildGatewaySessionLabel as buildGatewaySessionLabelValue,
+	composeNodeOptions,
 	controllerVmHost,
 	FORCE_IPV4_EGRESS_NODE_OPTIONS,
 	gatewayVmAllowedHosts,
@@ -99,7 +100,12 @@ function buildOpenClawBootstrapCommand(
 		'export PIP_CACHE_DIR=/work/cache/pip',
 		'export UV_CACHE_DIR=/work/cache/uv',
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
-		`export NODE_OPTIONS=${shellQuote(FORCE_IPV4_EGRESS_NODE_OPTIONS)}`,
+		// Prepend forced IPv4-preference flags to any pre-existing
+		// NODE_OPTIONS. The whole RHS is double-quoted so the
+		// substitution result is treated as one assignment value
+		// (no word splitting). See FORCE_IPV4_EGRESS_NODE_OPTIONS
+		// in @agent-vm/gateway-interface for the rationale.
+		`export NODE_OPTIONS="${FORCE_IPV4_EGRESS_NODE_OPTIONS}\${NODE_OPTIONS:+ \${NODE_OPTIONS}}"`,
 	];
 	const secretEnvironmentNames = Object.entries({
 		...environmentSecrets,
@@ -530,7 +536,6 @@ export const openclawLifecycle: GatewayLifecycle = {
 			environment: {
 				HOME: '/home/openclaw',
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
-				NODE_OPTIONS: FORCE_IPV4_EGRESS_NODE_OPTIONS,
 				OPENCLAW_CONFIG_PATH: effectiveOpenClawConfigVmPath,
 				OPENCLAW_HOME: '/home/openclaw',
 				OPENCLAW_STATE_DIR: openClawStateDirVmPath,
@@ -544,6 +549,11 @@ export const openclawLifecycle: GatewayLifecycle = {
 				npm_config_cache: '/work/cache/npm',
 				pnpm_config_store_dir: '/work/cache/pnpm/store',
 				...environmentSecrets,
+				// NODE_OPTIONS goes AFTER the spread so a user-supplied
+				// NODE_OPTIONS in environmentSecrets cannot drop the
+				// forced IPv4-preference flags. composeNodeOptions
+				// preserves the user value as additional flags.
+				NODE_OPTIONS: composeNodeOptions(environmentSecrets.NODE_OPTIONS),
 			},
 			mediatedSecrets: {
 				...mediatedSecrets,
