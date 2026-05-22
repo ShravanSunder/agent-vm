@@ -1,8 +1,11 @@
-import type { SecretResolver } from '@agent-vm/gondolin-adapter';
+import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../config/system-config.js';
-import { createSecretResolver } from './controller-runtime-support.js';
+import {
+	createSecretResolver,
+	resolveControllerGithubToken,
+} from './controller-runtime-support.js';
 
 const baseConfig = {
 	schemaVersion: 1,
@@ -103,6 +106,37 @@ describe('createSecretResolver', () => {
 		expect(resolveToken).toHaveBeenCalledWith(systemConfig.host.secretsProvider.tokenSource);
 		expect(createOnePasswordResolver).toHaveBeenCalledWith({
 			serviceAccountToken: 'service-token',
+		});
+	});
+
+	it('resolves config-backed host github tokens through the composite resolver', async () => {
+		const resolveSecret = vi.fn(async (ref: SecretRef): Promise<string> => {
+			if (ref.source === 'config') {
+				return ref.value;
+			}
+			return 'unexpected';
+		});
+		const resolver: SecretResolver = {
+			resolve: resolveSecret,
+			resolveAll: vi.fn(async () => ({})),
+		};
+		const systemConfig = {
+			...baseConfig,
+			host: {
+				...baseConfig.host,
+				githubToken: {
+					source: 'config' as const,
+					value: 'github-token',
+				},
+			},
+		} satisfies SystemConfig;
+
+		await expect(resolveControllerGithubToken(systemConfig, resolver)).resolves.toBe(
+			'github-token',
+		);
+		expect(resolveSecret).toHaveBeenCalledWith({
+			source: 'config',
+			value: 'github-token',
 		});
 	});
 });

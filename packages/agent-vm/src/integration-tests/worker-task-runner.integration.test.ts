@@ -9,6 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../../agent-vm-worker/src/server.js';
 import type { ServerDeps } from '../../../agent-vm-worker/src/server.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import {
+	createManagedExecProcessStub,
+	createManagedVmFsStub,
+} from '../testing/managed-vm-test-helpers.js';
 
 const startGatewayZoneMock = vi.fn();
 const startRepoResourceProvidersMock = vi.fn(async () => ({
@@ -185,7 +189,8 @@ describe('worker-task-runner integration', () => {
 				close: closeVmMock,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: workerPort })),
 				enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222, user: 'root' })),
-				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+				exec: vi.fn(() => createManagedExecProcessStub()),
+				fs: createManagedVmFsStub(),
 				setIngressRoutes: vi.fn(),
 				getVmInstance: vi.fn(),
 			},

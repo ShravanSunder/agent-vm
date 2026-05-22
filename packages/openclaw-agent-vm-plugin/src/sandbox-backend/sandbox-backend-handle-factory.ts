@@ -7,21 +7,20 @@ import {
 	type StartToolVmActiveUseResponse,
 	type HeartbeatToolVmActiveUseResponse,
 	type EndToolVmActiveUseRequest,
+	isToolVmSshLease,
 } from '@agent-vm/gateway-interface';
 
 import {
 	ControllerLeaseRequestError,
 	createLeaseClient,
-	type GondolinLeaseResponse,
 	type LeaseClient,
 	type OpenClawRuntimeStatusReport,
 } from '../controller-lease-client.js';
 import {
 	type CachedScopeEntry,
 	type CreateBackendDependencies,
-	type FsBridgeLeaseContext,
-	type GondolinSandboxBackendHandle,
-	isGondolinLeaseResponse,
+	type OpenClawFsBridgeLeaseContext,
+	type OpenClawSandboxBackendHandle,
 } from './sandbox-backend-contract.js';
 import { buildShellScriptWithArgs } from './sandbox-shell-script.js';
 
@@ -113,7 +112,7 @@ export function createGondolinSandboxBackendFactory(
 	readonly scopeKey: string;
 	readonly sessionKey: string;
 	readonly workspaceDir: string;
-}) => Promise<GondolinSandboxBackendHandle> {
+}) => Promise<OpenClawSandboxBackendHandle> {
 	const scopeCache = new Map<string, CachedScopeEntry>();
 
 	return async (params) => {
@@ -158,7 +157,7 @@ export function createGondolinSandboxBackendFactory(
 			workMountDir: params.workspaceDir,
 			zoneId: options.zoneId,
 		});
-		if (!isGondolinLeaseResponse(leaseResponse)) {
+		if (!isToolVmSshLease(leaseResponse)) {
 			throw new TypeError('Controller lease API returned an unexpected response.');
 		}
 
@@ -189,13 +188,13 @@ function createSandboxBackendHandle(options: {
 	};
 	readonly controllerUrl: string;
 	readonly createFsBridgeBuilder?: CreateBackendDependencies['createFsBridgeBuilder'];
-	readonly lease: GondolinLeaseResponse;
+	readonly lease: CachedScopeEntry['lease'];
 	readonly leaseClient: LeaseClient;
 	readonly runRemoteShellScript: CreateBackendDependencies['runRemoteShellScript'];
 	readonly scopeKey: string;
 	readonly sessionKey: string;
 	readonly zoneId: string;
-}): GondolinSandboxBackendHandle {
+}): OpenClawSandboxBackendHandle {
 	const createActiveUseHandle = async (
 		correlation: ToolVmActiveUseCorrelation,
 	): Promise<ToolVmActiveUseHandle> =>
@@ -242,7 +241,7 @@ function createSandboxBackendHandle(options: {
 		}
 	};
 
-	const boundRunRemoteShellScript: FsBridgeLeaseContext['runRemoteShellScript'] = async (
+	const boundRunRemoteShellScript: OpenClawFsBridgeLeaseContext['runRemoteShellScript'] = async (
 		shellParams,
 	) =>
 		await runWithActiveUse(
@@ -358,5 +357,5 @@ function createSandboxBackendHandle(options: {
 						ssh: options.lease.ssh,
 					}),
 			),
-	} satisfies GondolinSandboxBackendHandle;
+	} satisfies OpenClawSandboxBackendHandle;
 }

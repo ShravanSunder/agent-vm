@@ -174,6 +174,13 @@ cleanup callback, plugin heartbeats stop after a finite safety cap (12 hours by
 default); the controller then marks the use stale after the heartbeat window and
 the normal idle reaper can release the lease later.
 
+The shared agent-vm lease type exposes only an SSH capability: lease id,
+workdir, TCP slot, and endpoint/key material. The OpenClaw filesystem bridge is
+adapter behavior inside `@agent-vm/openclaw-agent-vm-plugin`; it translates
+OpenClaw's sandbox file API into remote shell scripts over that SSH lease. The
+controller does not expose a generic filesystem RPC for Tool VMs and does not
+proxy command stdout/stderr.
+
 For `scopeKey` values shaped as `agent:<agentId>`, the controller first checks
 the zone's `agentToolVmProfiles[agentId]` mapping. If no agent-specific mapping
 exists, it falls back to the zone's `defaultToolVmProfile`. This lets one

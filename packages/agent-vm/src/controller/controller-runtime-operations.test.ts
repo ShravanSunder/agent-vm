@@ -233,13 +233,14 @@ describe('createControllerRuntimeOperations', () => {
 			OpenClawZoneRuntime,
 			'destroy' | 'enableSsh' | 'exec' | 'getHealth' | 'getLogs' | 'refreshCredentials' | 'upgrade'
 		>;
+		const resolveSecret = vi.fn(async () => 'expected-admin-token');
 		const operations = createControllerRuntimeOperations({
 			destroyZoneRuntime: async (_zoneId, purged) => await runtime.destroy(purged),
 			getActiveLeases: () => [],
 			getOpenClawRuntime: () => runtime,
 			getRuntimeStatusByZone: () => ({}),
 			secretResolver: {
-				resolve: async () => 'expected-admin-token',
+				resolve: resolveSecret,
 				resolveAll: async () => ({}),
 			},
 			systemConfig: {
@@ -249,7 +250,7 @@ describe('createControllerRuntimeOperations', () => {
 						...baseZone,
 						adminAccess: {
 							mode: 'secret',
-							secret: { source: 'environment', envVar: 'SUNFAM_SSH_ACCESS_TOKEN' },
+							secret: { source: 'config', value: 'expected-admin-token' },
 						},
 					},
 				],
@@ -281,6 +282,10 @@ describe('createControllerRuntimeOperations', () => {
 			secretEnvEnabled: true,
 		});
 		expect(enableSsh).toHaveBeenCalledTimes(1);
+		expect(resolveSecret).toHaveBeenLastCalledWith({
+			source: 'config',
+			value: 'expected-admin-token',
+		});
 	});
 
 	it('requires the configured zone admin token before executing gateway commands', async () => {

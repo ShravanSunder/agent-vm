@@ -36,6 +36,13 @@ function writeStderr(message: string): void {
 	process.stderr.write(`${message}\n`);
 }
 
+function resolveConfigSecretValue(value: string): string {
+	if (value.trim().length === 0) {
+		throw new Error('Config secret value is empty.');
+	}
+	return value;
+}
+
 function ensureMacOsForKeychain(): void {
 	if (process.platform !== 'darwin') {
 		throw new Error(
@@ -183,6 +190,10 @@ async function resolveAllSecretsWithOpCli(
 	const resolvedSecrets: Record<string, string> = {};
 
 	for (const [secretName, secretRef] of Object.entries(refs)) {
+		if (secretRef.source === 'config') {
+			resolvedSecrets[secretName] = resolveConfigSecretValue(secretRef.value);
+			continue;
+		}
 		// Sequential resolution avoids concurrent `op read` failures with the same service account token.
 		// oxlint-disable-next-line eslint/no-await-in-loop
 		resolvedSecrets[secretName] = await resolveSecretWithOpCli(
@@ -211,6 +222,9 @@ export async function createSecretResolver(
 
 		return {
 			resolve: async (ref: SecretRef): Promise<string> => {
+				if (ref.source === 'config') {
+					return resolveConfigSecretValue(ref.value);
+				}
 				try {
 					return await client.secrets.resolve(ref.ref);
 				} catch (error) {
@@ -225,6 +239,10 @@ export async function createSecretResolver(
 				const resolvedSecrets: Record<string, string> = {};
 
 				for (const [secretName, secretRef] of Object.entries(refs)) {
+					if (secretRef.source === 'config') {
+						resolvedSecrets[secretName] = resolveConfigSecretValue(secretRef.value);
+						continue;
+					}
 					try {
 						// oxlint-disable-next-line eslint/no-await-in-loop
 						resolvedSecrets[secretName] = await client.secrets.resolve(secretRef.ref);
@@ -253,7 +271,9 @@ export async function createSecretResolver(
 		);
 		return {
 			resolve: async (ref: SecretRef): Promise<string> =>
-				await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec),
+				ref.source === 'config'
+					? resolveConfigSecretValue(ref.value)
+					: await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec),
 			resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> =>
 				await resolveAllSecretsWithOpCli(options.serviceAccountToken, refs, exec),
 		};
@@ -270,7 +290,9 @@ export async function createOpCliSecretResolver(
 
 	return {
 		resolve: async (ref: SecretRef): Promise<string> =>
-			await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec),
+			ref.source === 'config'
+				? resolveConfigSecretValue(ref.value)
+				: await resolveSecretWithOpCli(options.serviceAccountToken, ref.ref, exec),
 		resolveAll: async (refs: Record<string, SecretRef>): Promise<Record<string, string>> =>
 			await resolveAllSecretsWithOpCli(options.serviceAccountToken, refs, exec),
 	};

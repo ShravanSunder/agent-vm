@@ -7,6 +7,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
+import {
+	createManagedExecProcessStub,
+	createManagedVmFsStub,
+} from '../testing/managed-vm-test-helpers.js';
 
 function createSystemConfig(
 	controllerPort: number,
@@ -90,7 +94,14 @@ function createGatewayVmMock(
 	stateDirectory: string,
 ): Pick<
 	ManagedVm,
-	'close' | 'enableIngress' | 'enableSsh' | 'exec' | 'getVmInstance' | 'id' | 'setIngressRoutes'
+	| 'close'
+	| 'enableIngress'
+	| 'enableSsh'
+	| 'exec'
+	| 'fs'
+	| 'getVmInstance'
+	| 'id'
+	| 'setIngressRoutes'
 > {
 	return {
 		close: async () => {},
@@ -101,26 +112,25 @@ function createGatewayVmMock(
 			port: 19000,
 			user: 'root',
 		}),
-		exec: async (command: string) => {
+		exec: (command: string) => {
 			if (command === 'write-state persistence.txt persistent-value') {
 				fs.writeFileSync(path.join(stateDirectory, 'persistence.txt'), 'persistent-value', 'utf8');
-				return { exitCode: 0, stderr: '', stdout: '' };
+				return createManagedExecProcessStub();
 			}
 
 			if (command === 'read-state persistence.txt') {
-				return {
-					exitCode: 0,
-					stderr: '',
+				return createManagedExecProcessStub({
 					stdout: fs.readFileSync(path.join(stateDirectory, 'persistence.txt'), 'utf8'),
-				};
+				});
 			}
 
 			if (command.includes('cat /agent-vm/logs/gateway-boot-latest.log')) {
-				return { exitCode: 0, stderr: '', stdout: 'gateway-log' };
+				return createManagedExecProcessStub({ stdout: 'gateway-log' });
 			}
 
-			return { exitCode: 0, stderr: '', stdout: '' };
+			return createManagedExecProcessStub();
 		},
+		fs: createManagedVmFsStub(),
 		getVmInstance: () => ({}) as ManagedVmInstance,
 		id: 'gateway-vm-live-restart',
 		setIngressRoutes: () => {},
@@ -209,10 +219,12 @@ describe('live integration: controller restart persistence', () => {
 						enableSsh: vi.fn(async () => ({
 							command: 'ssh sandbox@127.0.0.1',
 							host: '127.0.0.1',
+							identityFile: path.join(tempDirectory, 'tool-vm-identity'),
 							port: 19000,
 							user: 'sandbox',
 						})),
-						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+						exec: vi.fn(() => createManagedExecProcessStub()),
+						fs: createManagedVmFsStub(),
 						id: 'tool-vm-live-restart',
 						setIngressRoutes: vi.fn(),
 						getVmInstance: vi.fn(),
@@ -221,6 +233,7 @@ describe('live integration: controller restart persistence', () => {
 						resolve: async () => '',
 						resolveAll: async () => ({}),
 					}),
+					readIdentityPem: async () => 'pem',
 					startGatewayZone: vi.fn(async () => ({
 						image: {
 							built: true,

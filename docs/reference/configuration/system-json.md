@@ -70,6 +70,13 @@ leaseIdleTtl
 | `secretsProvider` | when using `source: "1password"` | How the host resolves 1Password-backed secrets. |
 | `githubToken` | no | Host-only token for clone and push. Never enters the VM. |
 
+`githubToken` uses the same secret source shape as zone secrets:
+`{ "source": "environment", "envVar": "..." }`,
+`{ "source": "1password", "ref": "..." }`, or
+`{ "source": "config", "value": "..." }`. `source: "config"` embeds a
+host-side write token directly in `system.jsonc`; use it only for local or
+intentionally checked-in test deployments.
+
 `secretsProvider.tokenSource` may be:
 
 | Type | Meaning |
@@ -392,13 +399,18 @@ Unmapped agents use the zone fallback `defaultToolVmProfile`.
 `gateway.authProfilesByAgent` writes OpenClaw auth profiles to
 `<stateDir>/agents/<agentId>/agent/auth-profiles.json` before the gateway VM
 boots. There is no shared per-agent fallback; configure each agent that needs an
-auth profile.
+auth profile. `gateway.authProfilesRef` and `gateway.authProfilesByAgent`
+support `environment`, `1password`, and `config` sources. Inline `config`
+values here are plaintext OpenClaw auth profiles and should be limited to local
+or test deployments.
 
 `agentSandboxSeeds` writes first-boot files into the agent's scoped sandbox work
 mount before the Tool VM starts. Targets are relative to the sandbox
 `/work` backing directory, cannot use `..`, and are not written for shared
 `/zone` work mounts. Existing files are preserved so a user's edited credentials
-or config are not overwritten on later leases.
+or config are not overwritten on later leases. Seed sources support
+`environment`, `1password`, and `config`; inline seed values are written as
+plaintext files into the sandbox work mount on first boot.
 
 The important path model is:
 
@@ -484,12 +496,24 @@ contract file to run setup/finalization after resource resolution.
 
 ## secrets
 
-Zone secrets support two sources:
+Zone secrets support three sources:
 
 | Source | Fields |
 | --- | --- |
 | `environment` | `envVar` |
 | `1password` | `ref` |
+| `config` | `value` |
+
+`source: "config"` embeds the secret value directly in `system.json`; use it
+only for local or intentionally checked-in test credentials.
+
+The same secret source union is also used by host/controller fields such as
+`host.githubToken`, `zones[].adminAccess.secret`,
+`zones[].gateway.authProfilesRef`, `zones[].gateway.authProfilesByAgent`, and
+`zones[].agentSandboxSeeds[].source`. Inline `config` on those fields is still
+plaintext in the authored config and may include host write credentials or
+controller admin credentials, so treat it as a local/test convenience rather
+than a production secret store.
 
 Secrets support two injection modes:
 

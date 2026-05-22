@@ -2,7 +2,7 @@ export { createGondolinSandboxBackendFactory } from './sandbox-backend/sandbox-b
 export { createGondolinSandboxBackendManager } from './sandbox-backend/sandbox-backend-manager.js';
 export type {
 	CreateBackendDependencies,
-	FsBridgeLeaseContext,
-	GondolinFsBridge,
-	GondolinSandboxBackendHandle,
+	OpenClawFsBridgeLeaseContext,
+	OpenClawSandboxFsBridge,
+	OpenClawSandboxBackendHandle,
 } from './sandbox-backend/sandbox-backend-contract.js';

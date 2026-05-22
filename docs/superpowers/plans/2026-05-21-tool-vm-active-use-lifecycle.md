@@ -1,5 +1,26 @@
 # Tool VM Active-Use Lifecycle Plan
 
+Status: implemented supporting slice in commit `a95072f` (`Add Tool VM active-use lease lifecycle`). This was written and implemented before the current Tool VM architecture was clarified. It is not the authority for the revamp, not the standalone Tool VM system change, and should not be used by itself. Treat it as shipped supporting infrastructure that only becomes useful for the current revamp when paired with `2026-05-22-gondolin-adapter-tool-vm-ssh-cleanup.md`.
+
+Use this for:
+- Active-use start/heartbeat/end lifecycle.
+- Lease reaper behavior when a Tool VM has active operations.
+- Replacing mutating `GET /lease/:leaseId` keepalive behavior with explicit write endpoints.
+- Reviewing or extending the committed active-use implementation.
+
+Do not use this for:
+- The current Tool VM system change by itself.
+- Redesigning VM-to-VM SSH transport.
+- Adding generic filesystem RPC over SSH.
+- Credentialed runner execution; that follow-up should use controller-owned Gondolin `vm.exec` / `vm.fs`.
+- Starting a new implementation worktree from scratch.
+
+Committed behavior notes:
+- Tool VM already worked before this slice. Active-use changes only make lease lifetime safer during operations; they do not define the SSH capability boundary, widen Gondolin types, or clean up the OpenClaw FS bridge. Those are Plan 2 responsibilities.
+- Active-use state is memory-only. On controller restart, in-flight heartbeat calls receive not-found responses. The current OpenClaw helper logs heartbeat failures and retries; it does not abort the already-running SSH child. The controller relies on stale-use expiry and normal lease reaping after restart/recovery.
+- The active-use helper is generic, but the only committed consumer today is the OpenClaw SSH sandbox path (`buildExecSpec`, `finalizeExec`, `runShellCommand`, and the OpenClaw remote-shell FS bridge).
+- When changing release behavior, re-run `rg -n "releaseLease\\(" packages/agent-vm/src packages/openclaw-agent-vm-plugin/src --glob '*.{ts,tsx}'` and verify new teardown paths either use `force: true` intentionally or accept active-lease conflicts.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `superpowers:subagent-driven-development` or
 > `superpowers:executing-plans` to implement this plan task-by-task. Use TDD for

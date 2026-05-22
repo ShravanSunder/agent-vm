@@ -6,6 +6,10 @@ import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { describe, expect, it, vi } from 'vitest';
 
 import { OpenClawDeploymentRequirementError } from '../../operations/openclaw-deployment-requirements.js';
+import {
+	createManagedExecProcessStub,
+	createManagedVmFsStub,
+} from '../../testing/managed-vm-test-helpers.js';
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { SandboxSeedingError } from '../leases/agent-sandbox-seeding.js';
 import { LeaseScopeConflictError, type Lease } from '../leases/lease-manager.js';
@@ -32,6 +36,7 @@ function createControllerAppForTest(
 		Partial<Pick<ControllerAppOptions, 'resolveLeaseWorkMountDir'>>,
 ): ReturnType<typeof createControllerApp> {
 	return createControllerApp({
+		readIdentityPem: async () => 'pem',
 		resolveLeaseWorkMountDir: async ({ workMountDir }) => ({
 			guestWorkdir: '/work',
 			hostWorkMountDir: workMountDir,
@@ -52,6 +57,7 @@ function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 		scopeKey: `scope-${leaseId}`,
 		sshAccess: {
 			host: '127.0.0.1',
+			identityFile: '/tmp/key',
 			port: 19000 + tcpSlot,
 			user: 'sandbox',
 		},
@@ -61,10 +67,12 @@ function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 			enableSsh: vi.fn(async () => ({
 				host: '127.0.0.1',
+				identityFile: '/tmp/key',
 				port: 19000 + tcpSlot,
 				user: 'sandbox',
 			})),
-			exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+			exec: vi.fn(() => createManagedExecProcessStub()),
+			fs: createManagedVmFsStub(),
 			id: `tool-vm-${leaseId}`,
 			setIngressRoutes: vi.fn(),
 			getVmInstance: vi.fn(),
@@ -193,7 +201,8 @@ describe('createControllerApp', () => {
 					port: 19000,
 					user: 'sandbox',
 				})),
-				exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+				exec: vi.fn(() => createManagedExecProcessStub()),
+				fs: createManagedVmFsStub(),
 				id: 'tool-vm-1',
 				setIngressRoutes: vi.fn(),
 				getVmInstance: vi.fn(),
@@ -256,11 +265,16 @@ describe('createControllerApp', () => {
 				identityPem: 'pem-from-file',
 			},
 			tcpSlot: 0,
+			transport: 'ssh-sandbox',
 			workdir: '/work',
 		});
 		expect(getResponse.status).toBe(200);
 		expect(renewResponse.status).toBe(200);
 		expect(peekResponse.status).toBe(200);
+		await expect(peekResponse.json()).resolves.toMatchObject({
+			transport: 'ssh-sandbox',
+			workdir: '/work',
+		});
 		expect(deleteResponse.status).toBe(204);
 		expect(renewLease).toHaveBeenCalledTimes(1);
 		expect(releaseLease).toHaveBeenCalledWith('lease-123', { force: false });
@@ -1846,6 +1860,8 @@ describe('createControllerApp', () => {
 			scopeKey: 'scope-lease-123',
 			ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 			tcpSlot: 0,
+			transport: 'ssh-sandbox',
+			workdir: '/work',
 			zoneId: 'shravan',
 		});
 		expect(peekLease).toHaveBeenCalledWith('lease-123');

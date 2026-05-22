@@ -1,17 +1,23 @@
-import fs from 'node:fs';
+import { readFile } from 'node:fs/promises';
 
 import { createManagedVm } from '@agent-vm/gondolin-adapter';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
-/**
- * Live cross-VM SSH test — validates the tool VM lease + SSH exec flow.
- *
- * Creates a gateway VM and a tool VM, SSHes from gateway to tool via tcp.hosts.
- * This is the core execution path for the OpenClaw gondolin sandbox plugin.
- *
- * Run: pnpm vitest run packages/agent-vm/src/integration-tests/live-cross-vm-ssh.integration.test.ts
- * Requires: QEMU installed.
- */
 import { describe, it, expect, afterAll } from 'vitest';
+
+/**
+ * Live cross-VM SSH test — validates the gateway VM to Tool VM data path.
+ *
+ * 1. Tool VM exposes guest sshd through Gondolin enableSsh().
+ * 2. Host listens on 127.0.0.1:<toolSshPort>.
+ * 3. Gateway VM resolves tool-0.vm.host through per-host synthetic DNS.
+ * 4. Gondolin tcp.hosts maps tool-0.vm.host:22 to the host listener.
+ *
+ * Command stdout/stderr flows gateway VM -> Tool VM over SSH. The controller is
+ * not in the command data path.
+ *
+ * Run: mise exec -- pnpm vitest run --config vitest.integration.config.ts packages/agent-vm/src/integration-tests/live-cross-vm-ssh.integration.test.ts
+ * Requires: QEMU/Gondolin runtime assets and the local mapped-TCP patch or equivalent upstream fix.
+ */
 
 describe('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
 	let toolVm: ManagedVm | null = null;
@@ -72,7 +78,7 @@ describe('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
 
 		// Step 3: Install the tool VM's SSH identity inside the gateway VM
 		if (!toolSsh.identityFile) throw new Error('SSH identity file not available');
-		const identityPem = fs.readFileSync(toolSsh.identityFile, 'utf-8');
+		const identityPem = await readFile(toolSsh.identityFile, 'utf-8');
 
 		await gatewayVm.exec('mkdir -p /root/.ssh && chmod 700 /root/.ssh');
 		// Write identity via base64 to avoid escaping issues

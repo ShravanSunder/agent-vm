@@ -17,6 +17,11 @@ export function createCompositeSecretResolver(
 					}
 					return value;
 				}
+				case 'config':
+					if (ref.value.trim().length === 0) {
+						throw new Error('Config secret value is empty.');
+					}
+					return ref.value;
 				case '1password': {
 					if (!onePasswordResolver) {
 						throw new Error(

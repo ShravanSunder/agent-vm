@@ -1,5 +1,22 @@
 # Gondolin Secret Source Implementation Plan
 
+Status: superseded / reference-only for credentialed tool execution. Do not execute this plan directly.
+
+Superseded by:
+- `docs/superpowers/plans/2026-05-10-tool-vm-mediated-cli-auth.md` for the shipped audience-scoped Tool VM mediation direction.
+- `docs/superpowers/plans/2026-05-20-credentialed-tool-system.md` for the later credentialed tool target architecture.
+- `docs/superpowers/plans/2026-05-22-gondolin-adapter-tool-vm-ssh-cleanup.md` for the prerequisite Gondolin adapter widening.
+
+Still useful as background:
+- Secret manager evidence and local Gondolin API notes.
+- The distinction between HTTP-mediated secrets and raw credentials.
+- Tool VM access/profile concerns that still inform future designs.
+
+Do not use this for:
+- Gateway/plugin-owned rotating secret sources.
+- Credentialed runner v1 implementation.
+- Generic lease or SSH transport design.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build `gondolin-secret-source`, a gateway-side secret/token source that can inject and rotate Tool VM HTTP-mediated secrets without exposing raw credentials inside the Tool VM.

@@ -106,20 +106,27 @@ export async function serializeLeaseForResponse(
 		readonly user: string;
 	};
 	readonly tcpSlot: number;
+	readonly transport: 'ssh-sandbox';
 	readonly workdir: string;
 }> {
+	if (!lease.sshAccess.identityFile) {
+		throw new Error(`Lease '${lease.id}' does not have an SSH identity file.`);
+	}
+	const identityPem = await readIdentityPem(lease.sshAccess.identityFile);
+	if (identityPem.trim().length === 0) {
+		throw new Error(`Lease '${lease.id}' SSH identity file is empty.`);
+	}
 	return {
 		leaseId: lease.id,
 		ssh: {
 			host: `tool-${lease.tcpSlot}.vm.host`,
-			identityPem: lease.sshAccess.identityFile
-				? await readIdentityPem(lease.sshAccess.identityFile)
-				: '',
+			identityPem,
 			knownHostsLine: '',
 			port: 22,
 			user: lease.sshAccess.user ?? 'root',
 		},
 		tcpSlot: lease.tcpSlot,
+		transport: 'ssh-sandbox',
 		workdir: lease.guestWorkdir,
 	};
 }
@@ -137,6 +144,8 @@ export function serializeLeasePeekForResponse(lease: Lease): ControllerLeasePeek
 			user: lease.sshAccess.user ?? 'root',
 		},
 		tcpSlot: lease.tcpSlot,
+		transport: 'ssh-sandbox',
+		workdir: lease.guestWorkdir,
 		zoneId: lease.zoneId,
 	};
 }

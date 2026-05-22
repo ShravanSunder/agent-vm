@@ -25,6 +25,8 @@ describe('createLeaseClient', () => {
 							scopeKey: 'agent:main:session-abc',
 							ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 							tcpSlot: 0,
+							transport: 'ssh-sandbox',
+							workdir: '/work',
 							zoneId: 'shravan',
 						}
 					: {
@@ -37,6 +39,7 @@ describe('createLeaseClient', () => {
 								user: 'sandbox',
 							},
 							tcpSlot: 0,
+							transport: 'ssh-sandbox',
 							workdir: '/work',
 						};
 
@@ -49,13 +52,14 @@ describe('createLeaseClient', () => {
 			},
 		});
 
-		await leaseClient.requestLease({
+		const lease = await leaseClient.requestLease({
 			agentWorkspaceDir: '/home/openclaw/work',
 			profileId: 'standard',
 			scopeKey: 'agent:main:session-abc',
 			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 			zoneId: 'shravan',
 		});
+		expect(lease.transport).toBe('ssh-sandbox');
 		if (!leaseClient.publishOpenClawRuntimeStatus) {
 			throw new Error('Expected runtime status publisher.');
 		}
@@ -70,8 +74,10 @@ describe('createLeaseClient', () => {
 				},
 			],
 		});
-		await leaseClient.renewLease('lease-123');
-		await leaseClient.peekLease('lease-123');
+		const renewedLease = await leaseClient.renewLease('lease-123');
+		const peekedLease = await leaseClient.peekLease('lease-123');
+		expect(renewedLease.transport).toBe('ssh-sandbox');
+		expect(peekedLease.transport).toBe('ssh-sandbox');
 		await leaseClient.releaseLease('lease-123');
 
 		expect(requests[0]?.body).toBeDefined();
@@ -189,6 +195,38 @@ describe('createLeaseClient', () => {
 		).rejects.toThrow('Controller lease API returned an invalid response');
 	});
 
+	it('rejects lease responses missing the transport discriminator', async () => {
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async () =>
+				new Response(
+					JSON.stringify({
+						leaseId: 'lease-1',
+						ssh: {
+							host: 'tool-0.vm.host',
+							identityPem: 'pem',
+							knownHostsLine: 'known-hosts',
+							port: 22,
+							user: 'root',
+						},
+						tcpSlot: 0,
+						workdir: '/work',
+					}),
+					{ headers: { 'content-type': 'application/json' }, status: 200 },
+				),
+		});
+
+		await expect(
+			leaseClient.requestLease({
+				agentWorkspaceDir: '/workspace',
+				profileId: 'standard',
+				scopeKey: 'agent-session',
+				workMountDir: '/workspace',
+				zoneId: 'default',
+			}),
+		).rejects.toThrow('Controller lease API returned an invalid response');
+	});
+
 	it('strips trailing slash from controller url', async () => {
 		const requests: string[] = [];
 		const leaseClient = createLeaseClient({
@@ -202,6 +240,7 @@ describe('createLeaseClient', () => {
 						leaseId: 'lease-1',
 						ssh: { host: 'h', identityPem: 'p', knownHostsLine: '', port: 22, user: 'u' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox',
 						workdir: '/w',
 					}),
 					{ headers: { 'content-type': 'application/json' }, status: 200 },

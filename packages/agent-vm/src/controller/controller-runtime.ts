@@ -333,6 +333,7 @@ export async function startControllerRuntime(
 	const controllerApp = createControllerService({
 		leaseManager,
 		operations,
+		...(dependencies.readIdentityPem ? { readIdentityPem: dependencies.readIdentityPem } : {}),
 		secretResolver,
 		systemConfig: options.systemConfig,
 	});

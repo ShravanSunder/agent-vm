@@ -1,18 +1,8 @@
-import type { GondolinLeaseResponse, LeaseClient } from '../controller-lease-client.js';
+import type { ToolVmSshLease } from '@agent-vm/gateway-interface';
 
-export function isGondolinLeaseResponse(value: unknown): value is GondolinLeaseResponse {
-	return (
-		typeof value === 'object' &&
-		value !== null &&
-		typeof (value as { leaseId?: unknown }).leaseId === 'string' &&
-		typeof (value as { tcpSlot?: unknown }).tcpSlot === 'number' &&
-		typeof (value as { workdir?: unknown }).workdir === 'string' &&
-		typeof (value as { ssh?: unknown }).ssh === 'object' &&
-		(value as { ssh?: unknown }).ssh !== null
-	);
-}
+import type { LeaseClient } from '../controller-lease-client.js';
 
-export interface FsBridgeLeaseContext {
+export interface OpenClawFsBridgeLeaseContext {
 	readonly remoteAgentWorkspaceDir: string;
 	readonly remoteWorkspaceDir: string;
 	readonly runRemoteShellScript: (params: {
@@ -28,7 +18,7 @@ export interface FsBridgeLeaseContext {
 	}>;
 }
 
-export interface GondolinFsBridge {
+export interface OpenClawSandboxFsBridge {
 	mkdirp(params: {
 		readonly cwd?: string;
 		readonly filePath: string;
@@ -79,7 +69,7 @@ export interface CreateBackendDependencies {
 	readonly buildExecSpec: (params: {
 		readonly command: string;
 		readonly env: Record<string, string>;
-		readonly ssh: GondolinLeaseResponse['ssh'];
+		readonly ssh: ToolVmSshLease['ssh'];
 		readonly usePty: boolean;
 		readonly workdir: string;
 	}) => Promise<{
@@ -89,14 +79,14 @@ export interface CreateBackendDependencies {
 		readonly stdinMode: 'pipe-open' | 'pipe-closed';
 	}>;
 	readonly createFsBridgeBuilder?: (
-		leaseContext: FsBridgeLeaseContext,
-	) => (params: { readonly sandbox: unknown }) => GondolinFsBridge;
+		leaseContext: OpenClawFsBridgeLeaseContext,
+	) => (params: { readonly sandbox: unknown }) => OpenClawSandboxFsBridge;
 	readonly createLeaseClient?: (options: { readonly controllerUrl: string }) => LeaseClient;
 	readonly runRemoteShellScript: (params: {
 		readonly allowFailure?: boolean;
 		readonly script: string;
 		readonly signal?: AbortSignal;
-		readonly ssh: GondolinLeaseResponse['ssh'];
+		readonly ssh: ToolVmSshLease['ssh'];
 		readonly stdin?: Buffer | string;
 	}) => Promise<{
 		readonly code: number;
@@ -105,11 +95,11 @@ export interface CreateBackendDependencies {
 	}>;
 }
 
-export interface GondolinSandboxBackendHandle {
+export interface OpenClawSandboxBackendHandle {
 	readonly configLabel?: string;
 	readonly configLabelKind?: string;
-	createFsBridge?: (params: { readonly sandbox: unknown }) => GondolinFsBridge;
-	env?: Record<string, string>;
+	readonly createFsBridge?: (params: { readonly sandbox: unknown }) => OpenClawSandboxFsBridge;
+	readonly env?: Record<string, string>;
 	readonly id: string;
 	readonly runtimeId: string;
 	readonly runtimeLabel: string;
@@ -125,7 +115,7 @@ export interface GondolinSandboxBackendHandle {
 		readonly finalizeToken?: unknown;
 		readonly stdinMode: 'pipe-open' | 'pipe-closed';
 	}>;
-	finalizeExec?: (params: {
+	readonly finalizeExec?: (params: {
 		readonly exitCode: number | null;
 		readonly status: 'completed' | 'failed';
 		readonly timedOut: boolean;
@@ -139,6 +129,6 @@ export interface GondolinSandboxBackendHandle {
 }
 
 export interface CachedScopeEntry {
-	readonly handle: GondolinSandboxBackendHandle;
-	readonly lease: GondolinLeaseResponse;
+	readonly handle: OpenClawSandboxBackendHandle;
+	readonly lease: ToolVmSshLease;
 }

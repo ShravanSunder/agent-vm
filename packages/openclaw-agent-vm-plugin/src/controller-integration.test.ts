@@ -1,14 +1,18 @@
+import { Readable } from 'node:stream';
+
+import type { ToolVmLeasePeek, ToolVmSshLease } from '@agent-vm/gateway-interface';
+import type {
+	ManagedExecProcess,
+	ManagedExecResult,
+	ManagedVmFs,
+} from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createControllerApp } from '../../agent-vm/src/controller/http/controller-http-routes.js';
-import {
-	createLeaseClient,
-	type GondolinLeaseResponse,
-	type LeasePeekResponse,
-} from './controller-lease-client.js';
+import { createLeaseClient } from './controller-lease-client.js';
 import { createGondolinSandboxBackendFactory } from './sandbox-backend-factory.js';
 
-function createLeaseResponse(leaseId: string): GondolinLeaseResponse {
+function createLeaseResponse(leaseId: string): ToolVmSshLease {
 	return {
 		leaseId,
 		ssh: {
@@ -19,11 +23,12 @@ function createLeaseResponse(leaseId: string): GondolinLeaseResponse {
 			user: 'root',
 		},
 		tcpSlot: 0,
+		transport: 'ssh-sandbox' as const,
 		workdir: '/work',
 	};
 }
 
-function createLeasePeekResponse(leaseId: string): LeasePeekResponse {
+function createLeasePeekResponse(leaseId: string): ToolVmLeasePeek {
 	return {
 		createdAt: 1,
 		lastUsedAt: 1,
@@ -32,7 +37,68 @@ function createLeasePeekResponse(leaseId: string): LeasePeekResponse {
 		scopeKey: 'agent:main',
 		ssh: { host: 'tool-0.vm.host', port: 22, user: 'root' },
 		tcpSlot: 0,
+		transport: 'ssh-sandbox' as const,
+		workdir: '/work',
 		zoneId: 'shravan',
+	};
+}
+
+/* oxlint-disable typescript/no-unnecessary-type-parameters, typescript/no-unsafe-type-assertion, typescript-eslint/no-unsafe-type-assertion, unicorn/no-thenable -- Controller integration test doubles only need
+   Gondolin's promise/stream surface used by the controller route. */
+function createManagedExecProcessStub(): ManagedExecProcess {
+	const execResult = {
+		exitCode: 0,
+		stderr: '',
+		stdout: '',
+		stderrBuffer: Buffer.from(''),
+		stdoutBuffer: Buffer.from(''),
+		ok: true,
+		json<TValue = unknown>(): TValue {
+			return JSON.parse(this.stdout) as TValue;
+		},
+		lines(): string[] {
+			return this.stdout.split(/\r?\n/u);
+		},
+		toString(): string {
+			return this.stdout;
+		},
+	} as ManagedExecResult;
+	const resultPromise = Promise.resolve(execResult);
+	return {
+		[Symbol.asyncIterator]: async function* (): AsyncIterator<string> {
+			yield '';
+		},
+		catch: resultPromise.catch.bind(resultPromise),
+		finally: resultPromise.finally.bind(resultPromise),
+		stderr: Readable.from(['']),
+		stdout: Readable.from(['']),
+		then: resultPromise.then.bind(resultPromise),
+	} as ManagedExecProcess;
+}
+/* oxlint-enable typescript/no-unnecessary-type-parameters, typescript/no-unsafe-type-assertion, typescript-eslint/no-unsafe-type-assertion, unicorn/no-thenable */
+
+async function readManagedVmFsStubFile(
+	_filePath: string,
+	options?: { readonly encoding?: BufferEncoding | null },
+): Promise<Buffer | string> {
+	return options?.encoding ? '' : Buffer.from('');
+}
+
+function createManagedVmFsStub(): ManagedVmFs {
+	return {
+		access: async () => {},
+		deleteFile: async () => {},
+		listDir: async () => [],
+		mkdir: async () => {},
+		/* oxlint-disable-next-line typescript/no-unsafe-type-assertion -- VmFs.readFile overload
+		   is represented by one stub that covers text and buffer modes. */
+		readFile: readManagedVmFsStubFile as unknown as ManagedVmFs['readFile'],
+		readFileStream: async () => Readable.from([]),
+		rename: async () => {},
+		stat: async () => {
+			throw new Error('stat not implemented in ManagedVm test stub');
+		},
+		writeFile: async () => {},
 	};
 }
 
@@ -75,7 +141,8 @@ describe('gondolin controller integration', () => {
 							port: 19000,
 							user: 'sandbox',
 						})),
-						exec: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
+						exec: vi.fn(() => createManagedExecProcessStub()),
+						fs: createManagedVmFsStub(),
 						id: 'tool-vm-1',
 						setIngressRoutes: vi.fn(),
 						getVmInstance: vi.fn(),

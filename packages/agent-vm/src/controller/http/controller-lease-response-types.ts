@@ -12,6 +12,8 @@ export const controllerLeasePeekResponseSchema = z.object({
 		user: z.string(),
 	}),
 	tcpSlot: z.number().int(),
+	transport: z.literal('ssh-sandbox'),
+	workdir: z.string(),
 	zoneId: z.string(),
 });
 

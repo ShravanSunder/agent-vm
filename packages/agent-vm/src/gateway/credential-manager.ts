@@ -71,6 +71,12 @@ export async function resolveZoneSecrets(
 		}
 		let secretRef: SecretRef;
 		switch (secretConfig.source) {
+			case 'config':
+				secretRef = {
+					source: 'config',
+					value: secretConfig.value,
+				};
+				break;
 			case 'environment':
 				if (!secretConfig.envVar) {
 					throw new Error(
@@ -108,7 +114,11 @@ export async function resolveZoneSecrets(
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			const sourceReference =
-				secretConfig.source === 'environment' ? secretConfig.envVar : secretConfig.ref;
+				secretConfig.source === 'environment'
+					? secretConfig.envVar
+					: secretConfig.source === 'config'
+						? 'config value'
+						: secretConfig.ref;
 			throw new Error(
 				`Failed to resolve secret '${secretName}' for zone '${zone.id}' from '${sourceReference}': ${message}`,
 				{ cause: error },

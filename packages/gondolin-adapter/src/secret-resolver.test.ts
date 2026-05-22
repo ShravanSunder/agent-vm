@@ -144,6 +144,58 @@ describe('createSecretResolver', () => {
 		expect(resolvedReferences).toEqual(['op://AI/anthropic/api-key']);
 	});
 
+	it('resolves inline config secrets without calling the sdk client', async () => {
+		const fakeClient: SecretResolverClient = {
+			secrets: {
+				resolve: async (): Promise<string> => {
+					throw new Error('sdk should not resolve config secrets');
+				},
+				resolveAll: async () => ({
+					individualResponses: {},
+				}),
+			},
+		};
+		const secretResolver = await createSecretResolver(
+			{ serviceAccountToken: 'op-token' },
+			{
+				createClient: async (): Promise<SecretResolverClient> => fakeClient,
+			},
+		);
+
+		await expect(
+			secretResolver.resolve({
+				source: 'config',
+				value: 'inline-token',
+			}),
+		).resolves.toBe('inline-token');
+	});
+
+	it('rejects empty inline config secrets', async () => {
+		const fakeClient: SecretResolverClient = {
+			secrets: {
+				resolve: async (): Promise<string> => {
+					throw new Error('sdk should not resolve config secrets');
+				},
+				resolveAll: async () => ({
+					individualResponses: {},
+				}),
+			},
+		};
+		const secretResolver = await createSecretResolver(
+			{ serviceAccountToken: 'op-token' },
+			{
+				createClient: async (): Promise<SecretResolverClient> => fakeClient,
+			},
+		);
+
+		await expect(
+			secretResolver.resolve({
+				source: 'config',
+				value: '   ',
+			}),
+		).rejects.toThrow('Config secret value is empty.');
+	});
+
 	it('resolves a record of secret references and preserves keys', async () => {
 		const fakeClient: SecretResolverClient = {
 			secrets: {
@@ -281,6 +333,24 @@ describe('createSecretResolver', () => {
 });
 
 describe('createOpCliSecretResolver', () => {
+	it('rejects empty inline config secrets before op CLI fallback', async () => {
+		const secretResolver = await createOpCliSecretResolver(
+			{ serviceAccountToken: 'service-token' },
+			{
+				execFileAsync: async () => {
+					throw new Error('op should not resolve config secrets');
+				},
+			},
+		);
+
+		await expect(
+			secretResolver.resolve({
+				source: 'config',
+				value: '   ',
+			}),
+		).rejects.toThrow('Config secret value is empty.');
+	});
+
 	it('resolves all refs sequentially via op read', async () => {
 		const execCalls: {
 			readonly args: readonly string[];

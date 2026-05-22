@@ -2,6 +2,10 @@ import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+	createManagedExecProcessStub,
+	createManagedVmFsStub,
+} from '../../testing/managed-vm-test-helpers.js';
+import {
 	createLeaseManager,
 	LeaseActiveUseConflictError,
 	LeaseScopeConflictError,
@@ -19,7 +23,8 @@ function createManagedVmStub(id: string = 'tool-vm-1'): ManagedVm {
 			port: 19000,
 			user: 'sandbox',
 		})),
-		exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+		exec: vi.fn(() => createManagedExecProcessStub()),
+		fs: createManagedVmFsStub(),
 		id,
 		setIngressRoutes: vi.fn(),
 		getVmInstance: vi.fn(),
@@ -41,7 +46,8 @@ describe('createLeaseManager', () => {
 				close: closeMock,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 				enableSsh: enableSshMock,
-				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+				exec: vi.fn(() => createManagedExecProcessStub()),
+				fs: createManagedVmFsStub(),
 				id: 'tool-vm-1',
 				setIngressRoutes: vi.fn(),
 				getVmInstance: vi.fn(),
@@ -304,7 +310,7 @@ describe('createLeaseManager', () => {
 		const staleVm = {
 			...createManagedVmStub('stale-vm'),
 			close: staleClose,
-			exec: vi.fn(async () => {
+			exec: vi.fn(() => {
 				throw new Error('vm is gone');
 			}),
 		};
@@ -412,11 +418,12 @@ describe('createLeaseManager', () => {
 		const vm = {
 			...createManagedVmStub(),
 			close: closeMock,
-			exec: vi.fn(async () => {
-				markExecStarted?.();
-				await execCanFinish;
-				return { exitCode: 0, stdout: '', stderr: '' };
-			}),
+			exec: vi.fn(() =>
+				createManagedExecProcessStub({
+					beforeResolve: () => markExecStarted?.(),
+					waitFor: execCanFinish,
+				}),
+			),
 		};
 		const leaseManager = createLeaseManager({
 			createManagedVm: vi.fn(async () => vm),
@@ -546,7 +553,8 @@ describe('createLeaseManager', () => {
 					port: 19000,
 					user: 'sandbox',
 				})),
-				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+				exec: vi.fn(() => createManagedExecProcessStub()),
+				fs: createManagedVmFsStub(),
 				id: 'tool-vm-1',
 				setIngressRoutes: vi.fn(),
 				getVmInstance: vi.fn(),
@@ -617,7 +625,8 @@ describe('createLeaseManager', () => {
 					port: 19000,
 					user: 'sandbox',
 				})),
-				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+				exec: vi.fn(() => createManagedExecProcessStub()),
+				fs: createManagedVmFsStub(),
 				id: 'tool-vm-close-fail',
 				setIngressRoutes: vi.fn(),
 				getVmInstance: vi.fn(),
@@ -846,7 +855,8 @@ describe('createLeaseManager', () => {
 				enableSsh: vi.fn(async () => {
 					throw new Error('ssh setup failed');
 				}),
-				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+				exec: vi.fn(() => createManagedExecProcessStub()),
+				fs: createManagedVmFsStub(),
 				id: 'tool-vm-ssh-fail',
 				setIngressRoutes: vi.fn(),
 				getVmInstance: vi.fn(),
@@ -888,7 +898,8 @@ describe('createLeaseManager', () => {
 				enableSsh: vi.fn(async () => {
 					throw new Error('ssh setup failed');
 				}),
-				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+				exec: vi.fn(() => createManagedExecProcessStub()),
+				fs: createManagedVmFsStub(),
 				id: 'tool-vm-ssh-fail-close-fail',
 				setIngressRoutes: vi.fn(),
 				getVmInstance: vi.fn(),

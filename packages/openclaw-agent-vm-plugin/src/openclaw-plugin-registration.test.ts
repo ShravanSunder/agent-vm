@@ -7,7 +7,7 @@ import defaultPlugin, {
 	createBackendDeps,
 	type SshHelpers,
 } from './openclaw-plugin-registration.js';
-import type { GondolinFsBridge } from './sandbox-backend-factory.js';
+import type { OpenClawSandboxFsBridge } from './sandbox-backend-factory.js';
 
 function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
 	const mockSession = { command: 'ssh', configPath: '/tmp/ssh', host: 'tool-0.vm.host' };
@@ -369,7 +369,7 @@ describe('createBackendDeps', () => {
 	});
 
 	it('createFsBridgeBuilder delegates to SDK createRemoteShellSandboxFsBridge', () => {
-		const mockBridge: GondolinFsBridge = {
+		const mockBridge: OpenClawSandboxFsBridge = {
 			mkdirp: vi.fn(async () => {}),
 			readFile: vi.fn(async () => Buffer.from('remote-content')),
 			remove: vi.fn(async () => {}),

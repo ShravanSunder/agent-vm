@@ -14,6 +14,22 @@ describe('createCompositeSecretResolver', () => {
 		);
 	});
 
+	it('resolves config secrets from the inline value', async () => {
+		const resolver = createCompositeSecretResolver(null, {});
+
+		await expect(resolver.resolve({ source: 'config', value: 'inline-token' })).resolves.toBe(
+			'inline-token',
+		);
+	});
+
+	it('throws when a config secret value is empty', async () => {
+		const resolver = createCompositeSecretResolver(null, {});
+
+		await expect(resolver.resolve({ source: 'config', value: '   ' })).rejects.toThrow(
+			'Config secret value is empty.',
+		);
+	});
+
 	it('routes onepassword secrets to the wrapped resolver', async () => {
 		const resolveOnePasswordSecret = vi.fn(async (ref) => `resolved:${ref.ref}`);
 		const onePasswordResolver: SecretResolver = {
@@ -62,10 +78,12 @@ describe('createCompositeSecretResolver', () => {
 			resolver.resolveAll({
 				OPENAI_API_KEY: { source: '1password', ref: 'op://vault/openai/token' },
 				GITHUB_TOKEN: { source: 'environment', ref: 'GITHUB_TOKEN' },
+				LINEAR_API_KEY: { source: 'config', value: 'linear-token' },
 			}),
 		).resolves.toEqual({
 			OPENAI_API_KEY: 'resolved:op://vault/openai/token',
 			GITHUB_TOKEN: 'gh-token',
+			LINEAR_API_KEY: 'linear-token',
 		});
 	});
 });

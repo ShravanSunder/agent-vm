@@ -532,6 +532,7 @@ export function createControllerApp(options: {
 export function createControllerService(options: {
 	readonly leaseManager: ControllerLeaseManager;
 	readonly operations?: Partial<ControllerRouteOperations>;
+	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly secretResolver?: SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
 }): Hono {
@@ -539,6 +540,7 @@ export function createControllerService(options: {
 	const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
 	const app = createControllerApp({
 		leaseManager: options.leaseManager,
+		...(options.readIdentityPem ? { readIdentityPem: options.readIdentityPem } : {}),
 		...(options.systemConfig.leaseIdleTtl
 			? { leaseIdleTtlPolicy: options.systemConfig.leaseIdleTtl }
 			: {}),

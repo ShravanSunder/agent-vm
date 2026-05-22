@@ -19,6 +19,10 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createControllerApp } from '../controller/http/controller-http-routes.js';
 import type { Lease } from '../controller/leases/lease-manager.js';
 import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
+import {
+	createManagedExecProcessStub,
+	createManagedVmFsStub,
+} from '../testing/managed-vm-test-helpers.js';
 
 async function findAvailablePort(): Promise<number> {
 	return await new Promise((resolve, reject) => {
@@ -104,7 +108,8 @@ describe('live smoke: API client → controller over real HTTP', () => {
 					port: 19000,
 					user: 'sandbox',
 				})),
-				exec: vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+				exec: vi.fn(() => createManagedExecProcessStub()),
+				fs: createManagedVmFsStub(),
 				id: 'tool-vm-smoke',
 				setIngressRoutes: vi.fn(),
 				getVmInstance: vi.fn(),

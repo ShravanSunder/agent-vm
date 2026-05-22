@@ -88,15 +88,27 @@ function isPathWithin(candidatePath: string, rootPath: string): boolean {
 }
 
 function toSecretRef(seed: AgentSandboxSeed): SecretRef {
-	return seed.source.source === 'environment'
-		? {
+	switch (seed.source.source) {
+		case 'environment':
+			return {
 				source: 'environment',
 				ref: seed.source.envVar,
-			}
-		: {
+			};
+		case '1password':
+			return {
 				source: '1password',
 				ref: seed.source.ref,
 			};
+		case 'config':
+			return {
+				source: 'config',
+				value: seed.source.value,
+			};
+		default: {
+			const exhaustiveCheck: never = seed.source;
+			throw new Error(`Unsupported seed secret source: ${JSON.stringify(exhaustiveCheck)}`);
+		}
+	}
 }
 
 async function writeSeedFileIfAbsent(options: {

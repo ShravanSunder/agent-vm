@@ -134,11 +134,41 @@ export function createControllerRuntimeOperations(options: {
 function toSecretRef(secret: {
 	readonly envVar?: string;
 	readonly ref?: string;
-	readonly source: '1password' | 'environment';
+	readonly source: '1password' | 'config' | 'environment';
+	readonly value?: string;
 }): SecretRef {
-	return secret.source === 'environment'
-		? { source: 'environment', ref: secret.envVar ?? '' }
-		: { source: '1password', ref: secret.ref ?? '' };
+	switch (secret.source) {
+		case 'environment':
+			return {
+				source: 'environment',
+				ref: requireSecretReferenceField(secret.envVar, 'environment', 'envVar'),
+			};
+		case '1password':
+			return {
+				source: '1password',
+				ref: requireSecretReferenceField(secret.ref, '1password', 'ref'),
+			};
+		case 'config':
+			return {
+				source: 'config',
+				value: requireSecretReferenceField(secret.value, 'config', 'value'),
+			};
+		default: {
+			const exhaustiveCheck: never = secret.source;
+			throw new Error(`Unsupported secret source: ${String(exhaustiveCheck)}`);
+		}
+	}
+}
+
+function requireSecretReferenceField(
+	value: string | undefined,
+	source: '1password' | 'config' | 'environment',
+	fieldName: string,
+): string {
+	if (value === undefined || value.trim().length === 0) {
+		throw new Error(`Secret with source '${source}' is missing required '${fieldName}'.`);
+	}
+	return value;
 }
 
 function timingSafeEqualString(left: string, right: string): boolean {

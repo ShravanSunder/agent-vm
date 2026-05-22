@@ -4,8 +4,8 @@ import { ControllerLeaseRequestError, type LeaseClient } from './controller-leas
 import {
 	createGondolinSandboxBackendFactory,
 	createGondolinSandboxBackendManager,
-	type FsBridgeLeaseContext,
-	type GondolinFsBridge,
+	type OpenClawFsBridgeLeaseContext,
+	type OpenClawSandboxFsBridge,
 } from './sandbox-backend-factory.js';
 
 function createLeaseResponse(leaseId: string): {
@@ -18,6 +18,7 @@ function createLeaseResponse(leaseId: string): {
 		readonly user: string;
 	};
 	readonly tcpSlot: number;
+	readonly transport: 'ssh-sandbox';
 	readonly workdir: string;
 } {
 	return {
@@ -30,6 +31,7 @@ function createLeaseResponse(leaseId: string): {
 			user: 'sandbox',
 		},
 		tcpSlot: 0,
+		transport: 'ssh-sandbox' as const,
 		workdir: '/work',
 	};
 }
@@ -42,6 +44,8 @@ function createLeasePeekResponse(leaseId: string = 'lease-123'): {
 	readonly scopeKey: string;
 	readonly ssh: { readonly host: string; readonly port: number; readonly user: string };
 	readonly tcpSlot: number;
+	readonly transport: 'ssh-sandbox';
+	readonly workdir: string;
 	readonly zoneId: string;
 } {
 	return {
@@ -52,11 +56,13 @@ function createLeasePeekResponse(leaseId: string = 'lease-123'): {
 		scopeKey: 'scope',
 		ssh: { host: 'tool-0.vm.host', port: 22, user: 'sandbox' },
 		tcpSlot: 0,
+		transport: 'ssh-sandbox' as const,
+		workdir: '/work',
 		zoneId: 'shravan',
 	};
 }
 
-function createMockFsBridge(): GondolinFsBridge {
+function createMockFsBridge(): OpenClawSandboxFsBridge {
 	return {
 		mkdirp: vi.fn(async () => {}),
 		readFile: vi.fn(async () => Buffer.from('file-content')),
@@ -107,6 +113,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				user: 'sandbox',
 			},
 			tcpSlot: 0,
+			transport: 'ssh-sandbox' as const,
 			workdir: '/work',
 		}));
 		const publishOpenClawRuntimeStatus = vi.fn(async () => {});
@@ -116,7 +123,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			stdout: Buffer.from('ok'),
 		}));
 		const mockBridge = createMockFsBridge();
-		const createFsBridgeBuilder = vi.fn((_leaseContext: FsBridgeLeaseContext) =>
+		const createFsBridgeBuilder = vi.fn((_leaseContext: OpenClawFsBridgeLeaseContext) =>
 			vi.fn((_params: { readonly sandbox: unknown }) => mockBridge),
 		);
 		const buildExecSpec = vi.fn(async () => ({
@@ -220,7 +227,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			}),
 		);
 		// Verify the lease context includes a runRemoteShellScript bound to lease SSH
-		const leaseContext = createFsBridgeBuilder.mock.calls[0]?.[0] as FsBridgeLeaseContext;
+		const leaseContext = createFsBridgeBuilder.mock.calls[0]?.[0] as OpenClawFsBridgeLeaseContext;
 		expect(typeof leaseContext.runRemoteShellScript).toBe('function');
 
 		// Verify createFsBridge on the handle delegates to the builder
@@ -246,6 +253,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				user: 'sandbox',
 			},
 			tcpSlot: 0,
+			transport: 'ssh-sandbox' as const,
 			workdir: '/work',
 		}));
 
@@ -304,6 +312,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 					user: 'sandbox',
 				},
 				tcpSlot: 0,
+				transport: 'ssh-sandbox' as const,
 				workdir: '/work',
 			})
 			.mockResolvedValueOnce({
@@ -316,6 +325,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 					user: 'sandbox',
 				},
 				tcpSlot: 1,
+				transport: 'ssh-sandbox' as const,
 				workdir: '/work',
 			});
 		const renewLease = vi
@@ -541,6 +551,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 					user: 'sandbox',
 				},
 				tcpSlot: 0,
+				transport: 'ssh-sandbox' as const,
 				workdir: '/work',
 			};
 		});
@@ -608,6 +619,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 					user: 'sandbox',
 				},
 				tcpSlot: 0,
+				transport: 'ssh-sandbox' as const,
 				workdir: '/work',
 			};
 		});
@@ -676,6 +688,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 						leaseId: 'lease-finalize',
 						ssh: { host: 'h', identityPem: 'p', knownHostsLine: '', port: 22, user: 'u' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
 						workdir: '/w',
 					})),
 				}),
@@ -722,6 +735,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 						leaseId: 'lease-noop',
 						ssh: { host: 'h', identityPem: 'p', knownHostsLine: '', port: 22, user: 'u' },
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
 						workdir: '/w',
 					})),
 				}),
@@ -758,8 +772,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 			stderr: Buffer.from(''),
 			stdout: Buffer.from('/work\n'),
 		}));
-		let capturedLeaseContext: FsBridgeLeaseContext | undefined;
-		const createFsBridgeBuilder = vi.fn((leaseContext: FsBridgeLeaseContext) => {
+		let capturedLeaseContext: OpenClawFsBridgeLeaseContext | undefined;
+		const createFsBridgeBuilder = vi.fn((leaseContext: OpenClawFsBridgeLeaseContext) => {
 			capturedLeaseContext = leaseContext;
 			return vi.fn(() => createMockFsBridge());
 		});
@@ -791,6 +805,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 							user: 'sandbox',
 						},
 						tcpSlot: 0,
+						transport: 'ssh-sandbox' as const,
 						workdir: '/work',
 					})),
 				}),
@@ -865,6 +880,55 @@ describe('createGondolinSandboxBackendFactory', () => {
 		).rejects.toThrow('Controller lease API returned an unexpected response.');
 	});
 
+	it('keeps filesystem bridging as an OpenClaw adapter concern over the SSH lease', async () => {
+		const mockBridge = createMockFsBridge();
+		const createFsBridge = vi.fn((_params: { readonly sandbox: unknown }) => mockBridge);
+		const createFsBridgeBuilder = vi.fn(
+			(_leaseContext: OpenClawFsBridgeLeaseContext) => createFsBridge,
+		);
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createFsBridgeBuilder,
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease: async () => createLeaseResponse('lease-123'),
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const backend = await factory({
+			agentWorkspaceDir: '/home/openclaw/work',
+			cfg: {},
+			scopeKey: 'agent:main:session-abc',
+			sessionKey: 'session-abc',
+			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/work',
+		});
+
+		const leaseContext = createFsBridgeBuilder.mock.calls[0]?.[0];
+		expect(leaseContext).toEqual(
+			expect.objectContaining({
+				remoteAgentWorkspaceDir: '/work',
+				remoteWorkspaceDir: '/work',
+			}),
+		);
+		expect(typeof leaseContext?.runRemoteShellScript).toBe('function');
+		expect(backend.createFsBridge?.({ sandbox: { id: 'sandbox' } })).toBe(mockBridge);
+		expect(createFsBridge).toHaveBeenCalledWith({ sandbox: { id: 'sandbox' } });
+	});
+
 	it('omits env and createFsBridge from handle when createFsBridgeBuilder is not provided', async () => {
 		const requestLease = vi.fn(async () => ({
 			leaseId: 'lease-456',
@@ -876,6 +940,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				user: 'sandbox',
 			},
 			tcpSlot: 1,
+			transport: 'ssh-sandbox' as const,
 			workdir: '/work',
 		}));
 

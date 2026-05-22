@@ -34,6 +34,12 @@ export {
 	createToolVmActiveUseId,
 	isToolVmActiveUseId,
 } from './tool-vm-active-use.js';
+export { isToolVmLeasePeek, isToolVmSshLease } from './tool-vm-lease.js';
+export {
+	isVmCapabilityLease,
+	isVmSshEndpoint,
+	isVmSshPublicEndpoint,
+} from './vm-capability-lease.js';
 export type {
 	SecretInjectionConfig,
 	SplitResolvedGatewaySecretsResult,
@@ -49,3 +55,10 @@ export type {
 	ToolVmActiveUseHandle,
 	ToolVmActiveUseOutcome,
 } from './tool-vm-active-use.js';
+export type { ToolVmLeasePeek, ToolVmSshLease } from './tool-vm-lease.js';
+export type {
+	VmCapabilityLease,
+	VmSshEndpoint,
+	VmSshLease,
+	VmSshPublicEndpoint,
+} from './vm-capability-lease.js';

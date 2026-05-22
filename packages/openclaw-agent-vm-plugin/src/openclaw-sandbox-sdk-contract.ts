@@ -33,7 +33,7 @@ export interface SshHelpers {
 			}>;
 		};
 		readonly sandbox: unknown;
-	}) => import('./sandbox-backend-factory.js').GondolinFsBridge;
+	}) => import('./sandbox-backend-factory.js').OpenClawSandboxFsBridge;
 	readonly createSshSandboxSessionFromSettings: (settings: {
 		readonly command: string;
 		readonly identityData?: string;
