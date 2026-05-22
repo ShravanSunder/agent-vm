@@ -312,6 +312,12 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.environment.PNPM_HOME).toBe('/pnpm');
 			expect(vmSpec.environment.PATH).toContain('/pnpm:');
 			expect(vmSpec.environment.npm_config_cache).toBe('/work/cache/npm');
+			// IPv4-preference egress for the Node OpenClaw process to defeat
+			// Happy Eyeballs racing on gondolin's shared synthetic AAAA.
+			// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
+			expect(vmSpec.environment.NODE_OPTIONS).toBe(
+				'--dns-result-order=ipv4first --no-network-family-autoselection',
+			);
 			expect(vmSpec.allowedHosts).toEqual([
 				'controller.vm.host',
 				'api.openai.com',
@@ -344,6 +350,51 @@ describe('openclawLifecycle', () => {
 				'tool-1.vm.host:22': '127.0.0.1:19001',
 			});
 			expect(vmSpec.sessionLabel).toBe('claw-tests-a1b2c3d4:shravan:gateway');
+		});
+
+		it('preserves the forced IPv4-preference flags even when a zone secret supplies NODE_OPTIONS', () => {
+			// Regression test for the merge-order bug surfaced in PR #93
+			// review: a zone secret named NODE_OPTIONS must NOT drop our
+			// forced flags, because Happy Eyeballs would race the
+			// synthetic AAAA again.
+			const baseZone = createZone({
+				gateway: {
+					rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN', 'DISCORD_BOT_TOKEN', 'NODE_OPTIONS'],
+				},
+			});
+			const zoneWithNodeOptions: GatewayZoneConfig = {
+				...baseZone,
+				secrets: {
+					...baseZone.secrets,
+					NODE_OPTIONS: {
+						injection: 'env',
+						audience: 'gateway',
+						source: 'environment',
+						envVar: 'NODE_OPTIONS_OVERRIDE',
+					},
+				},
+			};
+
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets: {
+					...resolvedSecrets,
+					NODE_OPTIONS: '--inspect=0.0.0.0:9229',
+				},
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 2,
+				},
+				zone: zoneWithNodeOptions,
+			});
+
+			// Forced flags lead; user value follows.
+			expect(vmSpec.environment.NODE_OPTIONS).toBe(
+				'--dns-result-order=ipv4first --no-network-family-autoselection --inspect=0.0.0.0:9229',
+			);
 		});
 	});
 
@@ -499,6 +550,13 @@ describe('openclawLifecycle', () => {
 				readFile(path.join(tempDirectory, 'etc', 'profile.d', 'openclaw-admin.sh'), 'utf8'),
 			).rejects.toThrow();
 			expect(environmentShellScript).toContain('export PATH=/pnpm:$PATH');
+			// The NODE_OPTIONS profile export uses a parameter-expansion
+			// compose so it prepends the forced flags to any pre-existing
+			// NODE_OPTIONS that a later-sourced secrets.env might set.
+			// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
+			expect(environmentShellScript).toContain(
+				'export NODE_OPTIONS="--dns-result-order=ipv4first --no-network-family-autoselection${NODE_OPTIONS:+ ${NODE_OPTIONS}}"',
+			);
 		});
 	});
 

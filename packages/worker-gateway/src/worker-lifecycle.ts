@@ -6,6 +6,7 @@ import type {
 } from '@agent-vm/gateway-interface';
 import {
 	buildGatewaySessionLabel,
+	composeNodeOptions,
 	controllerVmHost,
 	gatewayVmAllowedHosts,
 	splitResolvedGatewaySecrets,
@@ -45,6 +46,11 @@ export const workerLifecycle: GatewayLifecycle = {
 				PIP_CACHE_DIR: '/work/cache/pip',
 				UV_CACHE_DIR: '/work/cache/uv',
 				...environmentSecrets,
+				// NODE_OPTIONS goes AFTER the spread so a user-supplied
+				// NODE_OPTIONS in environmentSecrets cannot drop the
+				// forced IPv4-preference flags. composeNodeOptions
+				// preserves the user value as additional flags.
+				NODE_OPTIONS: composeNodeOptions(environmentSecrets.NODE_OPTIONS),
 			},
 			mediatedSecrets,
 			rootfsMode: 'cow',
@@ -65,8 +71,10 @@ export const workerLifecycle: GatewayLifecycle = {
 		return {
 			bootstrapCommand:
 				'mkdir -p /work/repos /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && if [ -f /state/agent-vm-worker.tgz ]; then npm install -g --force @openai/codex /state/agent-vm-worker.tgz; fi',
-			startCommand:
-				'cd /work && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state > /tmp/agent-vm-worker.log 2>&1 &',
+			// printf NODE_OPTIONS into the boot log so an env-loss regression
+			// is visible in the log stream without SSHing into the VM.
+			// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
+			startCommand: `{ printf 'worker-boot: NODE_OPTIONS=%s\\n' "$NODE_OPTIONS" > /tmp/agent-vm-worker.log; } && cd /work && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state >> /tmp/agent-vm-worker.log 2>&1 &`,
 			healthCheck: { type: 'http', port: 18789, path: '/health' },
 			guestListenPort: 18789,
 			logPath: '/tmp/agent-vm-worker.log',

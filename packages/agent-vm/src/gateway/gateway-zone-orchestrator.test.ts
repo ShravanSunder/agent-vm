@@ -391,7 +391,7 @@ describe('startGatewayZone', () => {
 			}),
 		);
 		expect(execMock).toHaveBeenCalledWith(
-			'set -a && . /run/openclaw/secrets.env && set +a && cd /home/openclaw && nohup openclaw gateway --port 18789 > /agent-vm/logs/gateway-boot-latest.log 2>&1 &',
+			`set -a && . /run/openclaw/secrets.env && set +a && { printf 'gateway-boot: NODE_OPTIONS=%s\\n' "$NODE_OPTIONS" > /agent-vm/logs/gateway-boot-latest.log; } && cd /home/openclaw && nohup openclaw gateway --port 18789 >> /agent-vm/logs/gateway-boot-latest.log 2>&1 &`,
 		);
 		expect(setIngressRoutesMock).toHaveBeenCalledWith([
 			{

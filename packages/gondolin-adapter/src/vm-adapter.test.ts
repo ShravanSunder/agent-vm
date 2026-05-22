@@ -233,6 +233,53 @@ describe('createManagedVm', () => {
 		expect(closeMock).toHaveBeenCalled();
 	});
 
+	it('caller env overrides hookBundle env on NODE_OPTIONS collision', async () => {
+		// Regression test for the merge-order invariant the lifecycles
+		// rely on: when hookBundle.env and options.env both define
+		// NODE_OPTIONS, options.env (the caller's value) must win.
+		// If a future change reverses the spread order in vm-adapter.ts,
+		// the IPv6-race bug fix would silently regress for every
+		// downstream lifecycle.
+		let capturedVmOptions: VMOptions | undefined;
+		const dependencies = createBaseDependencies({
+			createVm: vi.fn(async (vmOptions: VMOptions): Promise<ManagedVmInstance> => {
+				capturedVmOptions = vmOptions;
+				return createFakeVmInstance();
+			}),
+		});
+		// Override the default createHttpHooks to inject a competing
+		// NODE_OPTIONS value into hookBundle.env.
+		dependencies.createHttpHooks = vi.fn(() => ({
+			env: {
+				HTTPS_PROXY: 'http://proxy.vm.host:8080',
+				NODE_OPTIONS: '--this-must-lose',
+			},
+			httpHooks: {} satisfies HttpHooks,
+		}));
+
+		await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				env: {
+					NODE_OPTIONS: '--dns-result-order=ipv4first --no-network-family-autoselection',
+				},
+				imagePath: '',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		expect(capturedVmOptions?.env).toEqual(
+			expect.objectContaining({
+				NODE_OPTIONS: '--dns-result-order=ipv4first --no-network-family-autoselection',
+			}),
+		);
+	});
+
 	it('uses pinned RealFS providers for pinned mounts and closes the root with the VM', async () => {
 		let capturedVmOptions: VMOptions | undefined;
 		const pinnedRoot = createPinnedRoot(101);
