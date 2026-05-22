@@ -7,6 +7,7 @@ import type {
 import {
 	buildGatewaySessionLabel,
 	controllerVmHost,
+	FORCE_IPV4_EGRESS_NODE_OPTIONS,
 	gatewayVmAllowedHosts,
 	splitResolvedGatewaySecrets,
 } from '@agent-vm/gateway-interface';
@@ -32,6 +33,7 @@ export const workerLifecycle: GatewayLifecycle = {
 				HOME: '/home/coder',
 				CONTROLLER_BASE_URL: 'http://controller.vm.host:18800',
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
+				NODE_OPTIONS: FORCE_IPV4_EGRESS_NODE_OPTIONS,
 				AGENT_VM_ZONE_ID: zone.id,
 				STATE_DIR: '/state',
 				WORKER_CONFIG_PATH: '/state/effective-worker.json',

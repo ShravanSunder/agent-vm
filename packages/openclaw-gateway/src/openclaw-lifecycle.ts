@@ -12,6 +12,7 @@ import type {
 import {
 	buildGatewaySessionLabel as buildGatewaySessionLabelValue,
 	controllerVmHost,
+	FORCE_IPV4_EGRESS_NODE_OPTIONS,
 	gatewayVmAllowedHosts,
 	mergeRuntimeGatewaySecrets,
 	splitResolvedGatewaySecrets,
@@ -98,7 +99,7 @@ function buildOpenClawBootstrapCommand(
 		'export PIP_CACHE_DIR=/work/cache/pip',
 		'export UV_CACHE_DIR=/work/cache/uv',
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
-		'export NODE_OPTIONS=--dns-result-order=ipv4first',
+		`export NODE_OPTIONS=${shellQuote(FORCE_IPV4_EGRESS_NODE_OPTIONS)}`,
 	];
 	const secretEnvironmentNames = Object.entries({
 		...environmentSecrets,
@@ -529,7 +530,7 @@ export const openclawLifecycle: GatewayLifecycle = {
 			environment: {
 				HOME: '/home/openclaw',
 				NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
-				NODE_OPTIONS: '--dns-result-order=ipv4first',
+				NODE_OPTIONS: FORCE_IPV4_EGRESS_NODE_OPTIONS,
 				OPENCLAW_CONFIG_PATH: effectiveOpenClawConfigVmPath,
 				OPENCLAW_HOME: '/home/openclaw',
 				OPENCLAW_STATE_DIR: openClawStateDirVmPath,

@@ -10,6 +10,7 @@ export {
 	targetsAudience,
 	vmAudienceValues,
 } from './audience.js';
+export { FORCE_IPV4_EGRESS_NODE_OPTIONS } from './force-ipv4-egress.js';
 export type { EgressHostConfig, RuntimeVmAudience, VmAudience } from './audience.js';
 export type { GatewayType } from './gateway-runtime-contract.js';
 export type {

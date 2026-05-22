@@ -54,6 +54,12 @@ describe('workerLifecycle', () => {
 		expect(vmSpec.environment.OPENAI_API_KEY).toBe('openai-token');
 		expect(vmSpec.environment.AGENT_VM_ZONE_ID).toBe('shravan');
 		expect(vmSpec.environment.CONTROLLER_BASE_URL).toBe('http://controller.vm.host:18800');
+		// IPv4-preference egress for the Node controller-client to defeat
+		// Happy Eyeballs racing on gondolin's shared synthetic AAAA.
+		// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
+		expect(vmSpec.environment.NODE_OPTIONS).toBe(
+			'--dns-result-order=ipv4first --no-network-family-autoselection',
+		);
 		expect(vmSpec.environment.WORKER_CONFIG_PATH).toBe('/state/effective-worker.json');
 		expect(vmSpec.environment.WORK_DIR).toBe('/work');
 		expect(vmSpec.environment.REPOS_DIR).toBe('/work/repos');

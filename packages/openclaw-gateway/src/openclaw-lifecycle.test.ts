@@ -312,6 +312,12 @@ describe('openclawLifecycle', () => {
 			expect(vmSpec.environment.PNPM_HOME).toBe('/pnpm');
 			expect(vmSpec.environment.PATH).toContain('/pnpm:');
 			expect(vmSpec.environment.npm_config_cache).toBe('/work/cache/npm');
+			// IPv4-preference egress for the Node OpenClaw process to defeat
+			// Happy Eyeballs racing on gondolin's shared synthetic AAAA.
+			// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
+			expect(vmSpec.environment.NODE_OPTIONS).toBe(
+				'--dns-result-order=ipv4first --no-network-family-autoselection',
+			);
 			expect(vmSpec.allowedHosts).toEqual([
 				'controller.vm.host',
 				'api.openai.com',
