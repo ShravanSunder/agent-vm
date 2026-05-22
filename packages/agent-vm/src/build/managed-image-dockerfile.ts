@@ -19,14 +19,8 @@ const managedOpenClawPackageNames = new Set([
 ]);
 const managedOpenClawAgentVmPluginExtensionPath = '/home/openclaw/.openclaw/extensions/gondolin';
 const managedOpenClawMcpPortalPluginExtensionPath = '/home/openclaw/.openclaw/extensions/mcp-portal';
-const managedOpenClawAgentVmPluginPackagePath =
-	'/pnpm/global/5/node_modules/@agent-vm/openclaw-agent-vm-plugin/dist';
-const managedOpenClawMcpPortalPluginPackagePath =
-	'/pnpm/global/5/node_modules/@agent-vm/openclaw-mcp-portal-plugin/dist';
-const managedMcpPortalServerScriptPath =
-	'/pnpm/global/5/node_modules/@agent-vm/mcp-portal/dist/bin/portal-server.js';
-const managedMcpPortalServerWrapperPath =
-	'/opt/agent-vm/portal/bin/agent-vm-mcp-portal-server';
+const managedPnpmHomePath = '/pnpm';
+const managedPnpmGlobalDirectory = '/pnpm/global';
 
 export interface ManagedImageSource {
 	readonly kind: 'managedBase';
@@ -215,6 +209,17 @@ function renderManagedDockerfile(props: {
 				' && rm -rf /var/lib/apt/lists/*',
 		);
 	}
+	if (
+		props.base === 'openclaw-gateway' ||
+		props.base === 'tool-vm' ||
+		props.openClawPackages.length > 0
+	) {
+		lines.push(`ENV PNPM_HOME=${managedPnpmHomePath}`);
+		lines.push('ENV PATH=${PNPM_HOME}:${PATH}');
+		lines.push(
+			`RUN pnpm config set global-dir ${managedPnpmGlobalDirectory} && pnpm config set global-bin-dir ${managedPnpmHomePath}`,
+		);
+	}
 	if (props.base === 'openclaw-gateway') {
 		if (!props.openClawAgentVmPluginPackageSpec || !props.openClawMcpPortalPluginPackageSpec || !props.mcpPortalPackageSpec) {
 			throw new Error('OpenClaw gateway managed Dockerfiles require all managed OpenClaw plugin package specs.');
@@ -244,16 +249,13 @@ function renderManagedDockerfile(props: {
 		lines.push(`RUN ${command}`);
 	}
 	if (props.base === 'openclaw-gateway') {
-		lines.push('RUN mkdir -p /pnpm/global/5/node_modules/@openclaw');
 		lines.push(
-			`RUN ln -sf ${managedOpenClawAgentVmPluginPackagePath} ${managedOpenClawAgentVmPluginExtensionPath}`,
-		);
-		lines.push(
-			`RUN ln -sf ${managedOpenClawMcpPortalPluginPackagePath} ${managedOpenClawMcpPortalPluginExtensionPath}`,
-		);
-		lines.push('RUN mkdir -p /opt/agent-vm/portal/bin');
-		lines.push(
-			`RUN printf '%s\\n' '#!/bin/sh' 'exec node ${managedMcpPortalServerScriptPath} "$@"' > ${managedMcpPortalServerWrapperPath} && chmod 0755 ${managedMcpPortalServerWrapperPath}`,
+			[
+				'RUN package_root="$(pnpm root -g)" && \\',
+				'    mkdir -p /home/openclaw/.openclaw/extensions && \\',
+				`    ln -sfn "$package_root/@agent-vm/openclaw-agent-vm-plugin/dist" ${managedOpenClawAgentVmPluginExtensionPath} && \\`,
+				`    ln -sfn "$package_root/@agent-vm/openclaw-mcp-portal-plugin/dist" ${managedOpenClawMcpPortalPluginExtensionPath}`,
+			].join('\n'),
 		);
 	}
 	lines.push('');

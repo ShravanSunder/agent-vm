@@ -1,4 +1,5 @@
-import { createOpCliSecretResolver, type ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secrets';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { runTaskWithResult } from '../shared/run-task.js';
@@ -23,6 +24,7 @@ import type { PushBranchRequest } from './git-push-operations.js';
 import { createControllerService } from './http/controller-http-routes.js';
 import { startControllerHttpServer } from './http/controller-http-server.js';
 import { createIdleReaper } from './leases/idle-reaper.js';
+import { ttlForLeaseScope, type LeaseIdleTtlPolicy } from './leases/lease-idle-policy.js';
 import { createLeaseManager } from './leases/lease-manager.js';
 import { createTcpPool } from './leases/tcp-pool.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
@@ -44,6 +46,14 @@ import {
 } from './zone-runtimes/zone-runtime-errors.js';
 import { createZoneRuntimeRegistry } from './zone-runtimes/zone-runtime-registry.js';
 import type { ControllerZoneConfig } from './zone-runtimes/zone-runtime-types.js';
+
+const defaultLeaseIdleTtlPolicy = {
+	defaultMs: 100 * 60 * 1000,
+	maxRequestedMs: 24 * 60 * 60 * 1000,
+	minRequestedMs: 1_000,
+	byScopeKind: {},
+	byScopePrefix: {},
+} satisfies LeaseIdleTtlPolicy;
 
 function writeControllerRuntimeLog(message: string): void {
 	process.stderr.write(`[agent-vm] ${message}\n`);
@@ -115,7 +125,7 @@ export async function startControllerRuntime(
 		async () =>
 			await createSecretResolver(
 				options.systemConfig,
-				dependencies.createSecretResolver ?? createOpCliSecretResolver,
+				dependencies.createSecretResolver ?? createOnePasswordSecretResolver,
 			),
 	);
 	const controllerGithubToken = await resolveControllerGithubToken(
@@ -154,6 +164,11 @@ export async function startControllerRuntime(
 		now,
 		tcpPool,
 	});
+	const ttlForLease = (lease: { readonly scopeKey: string }): number =>
+		ttlForLeaseScope({
+			policy: options.systemConfig.leaseIdleTtl ?? defaultLeaseIdleTtlPolicy,
+			scopeKey: lease.scopeKey,
+		});
 	const idleReaper = createIdleReaper({
 		getLeases: () =>
 			leaseManager.listLeases().map((lease) => ({
@@ -260,10 +275,6 @@ export async function startControllerRuntime(
 		...(options.zoneIds ? { zoneIds: options.zoneIds } : {}),
 	});
 
-	await runTaskStep('Starting selected gateway zones', async () => {
-		await registry.startSelectedZones();
-	});
-
 	const serverRef: { current?: { close(): Promise<void> } } = {};
 	const stopController = createStopControllerOperation({
 		clearReaperTimer,
@@ -336,12 +347,16 @@ export async function startControllerRuntime(
 		...(dependencies.readIdentityPem ? { readIdentityPem: dependencies.readIdentityPem } : {}),
 		secretResolver,
 		systemConfig: options.systemConfig,
+		ttlForLease,
 	});
 	await runTaskStep(`Controller API on :${options.systemConfig.host.controllerPort}`, async () => {
 		serverRef.current = await (dependencies.startHttpServer ?? startControllerHttpServer)({
 			app: controllerApp,
 			port: options.systemConfig.host.controllerPort,
 		});
+	});
+	await runTaskStep('Starting selected gateway zones', async () => {
+		await registry.startSelectedZones();
 	});
 
 	await reapToolVmLeases();

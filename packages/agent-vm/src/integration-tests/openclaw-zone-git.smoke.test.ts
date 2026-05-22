@@ -11,16 +11,20 @@ import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client
 import {
 	canRunGondolinSmoke,
 	currentSmokeArchitecture,
+	disableOpenClawMcpPortalPlugin,
 	rebuildWorkspacePackages,
+	removeSmokeTempRoot,
 	scaffoldOpenClawSmokeProject,
 	startSmokeControllerRuntime,
+	type OpenClawSmokeProject,
 	type SmokeHarnessRuntime,
 	useLocalOpenClawPluginGatewayImage,
+	useLocalToolVmMcpPortalPackage,
 } from './smoke-harness.js';
 
 const architecture = currentSmokeArchitecture();
 const runOpenClawZoneGitSmoke =
-	process.env.AGENT_VM_OPENCLAW_ZONE_GIT_SMOKE === '1' && canRunGondolinSmoke(architecture);
+	process.env.AGENT_VM_OPENCLAW_SMOKE === '1' && (await canRunGondolinSmoke({ architecture }));
 const describeOpenClawZoneGitSmoke = runOpenClawZoneGitSmoke ? describe : describe.skip;
 
 interface ControllerLeaseResponse {
@@ -165,16 +169,23 @@ async function execGitInToolVm(options: {
 
 describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 	let harness: SmokeHarnessRuntime | undefined;
+	let project: OpenClawSmokeProject | undefined;
 
 	afterAll(async () => {
-		await harness?.close();
+		try {
+			await harness?.close();
+		} finally {
+			if (project) {
+				await removeSmokeTempRoot(project.tempRoot);
+			}
+		}
 	});
 
 	it('lets an agent commit in /zone and push through the OpenClaw zone_git_push tool', async () => {
 		const repoRoot = path.resolve(process.cwd());
 		rebuildWorkspacePackages(repoRoot);
 
-		const project = await scaffoldOpenClawSmokeProject({
+		project = await scaffoldOpenClawSmokeProject({
 			agents: ['smoke'],
 			architecture,
 			prefix: 'openclaw-zone-git-smoke-',
@@ -182,6 +193,12 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 		});
 		await useLocalOpenClawPluginGatewayImage({
 			profileName: project.zone.gateway.imageProfile,
+			projectRoot: project.tempRoot,
+			repoRoot,
+			systemConfig: project.systemConfig,
+		});
+		await disableOpenClawMcpPortalPlugin(project.zone.gateway.config);
+		await useLocalToolVmMcpPortalPackage({
 			projectRoot: project.tempRoot,
 			repoRoot,
 			systemConfig: project.systemConfig,
@@ -217,6 +234,7 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 			secrets: {
 				AGENT_VM_ZONE_GIT_SMOKE_GITHUB_TOKEN: 'local-remote-token-not-for-tool-vm',
 				GITHUB_TOKEN: 'local-remote-token-not-for-tool-vm',
+				MCP_PORTAL_SERVER_SECRET: 'zone-git-smoke-portal-secret',
 				OPENCLAW_GATEWAY_TOKEN: 'zone-git-smoke-gateway-token',
 				PERPLEXITY_API_KEY: 'unused-perplexity-smoke-token',
 			},

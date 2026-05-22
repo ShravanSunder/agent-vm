@@ -1,8 +1,17 @@
+import { readFile } from 'node:fs/promises';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { resolveSecretValue } from './secret-value-resolver.js';
 
 describe('resolveSecretValue', () => {
+	it('does not shell out to op directly', async () => {
+		const source = await readFile(new URL('./secret-value-resolver.ts', import.meta.url), 'utf8');
+
+		expect(source).not.toContain('node:child_process');
+		expect(source).not.toContain("execFileAsync('op'");
+	});
+
 	it('reads environment secrets', async () => {
 		await expect(
 			resolveSecretValue(
@@ -18,15 +27,21 @@ describe('resolveSecretValue', () => {
 		).rejects.toThrow(/MCP_PORTAL_SECRET/u);
 	});
 
-	it('uses injected 1Password reader for op refs', async () => {
-		const readOnePasswordSecret = vi.fn(async () => 'op-secret');
+	it('uses injected shared resolver for 1Password refs', async () => {
+		const secretResolver = {
+			resolve: vi.fn(async () => 'op-secret'),
+			resolveAll: vi.fn(),
+		};
 
 		await expect(
 			resolveSecretValue(
 				{ ref: 'op://vault/item/field', source: '1password' },
-				{ env: {}, readOnePasswordSecret },
+				{ env: {}, secretResolver },
 			),
 		).resolves.toBe('op-secret');
-		expect(readOnePasswordSecret).toHaveBeenCalledWith('op://vault/item/field');
+		expect(secretResolver.resolve).toHaveBeenCalledWith({
+			ref: 'op://vault/item/field',
+			source: '1password',
+		});
 	});
 });

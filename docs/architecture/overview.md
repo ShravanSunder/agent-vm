@@ -168,7 +168,7 @@ start repo services"]
 
 ## Package Dependency Graph
 
-Seven packages compose the system. Dependencies flow downward.
+Eleven workspace packages compose the system. Dependencies flow downward.
 
 ```
                 @earendil-works/gondolin
@@ -217,7 +217,8 @@ Seven packages compose the system. Dependencies flow downward.
 
 | Package | Responsibility |
 |---------|----------------|
-| **gondolin-adapter** | Wraps the Gondolin SDK. Creates VMs, resolves secrets (1Password/env), builds images with fingerprint caching, assembles VFS mounts and HTTP mediation hooks. |
+| **secrets** | Shared secret contracts and resolvers for environment and 1Password-backed references. |
+| **gondolin-adapter** | Wraps the Gondolin SDK. Creates VMs, builds images with fingerprint caching, assembles VFS mounts and HTTP mediation hooks. |
 | **gateway-interface** | The contract. `GatewayLifecycle` interface, `GatewayVmSpec`, `GatewayProcessSpec`. Both gateway types implement this. `splitResolvedGatewaySecrets()` routes secrets to env or HTTP mediation. |
 | **openclaw-gateway** | OpenClaw lifecycle: 4 VFS mounts, TCP pool for tool VM SSH, auth profiles, `prepareHostState` writes effective config to disk. |
 | **worker-gateway** | Worker lifecycle: RealFS control mounts (`/state` + task `/gitdirs`), rootfs/COW `/work/repos`, TCP to controller only, no auth, no `prepareHostState`. |
@@ -286,7 +287,7 @@ The controller exposes a REST API. Routes are split across two modules: core lea
 **Idle Reaper** (`idle-reaper.ts`): Runs on a 60-second interval. Any lease
 with `lastUsedAt` older than its resolved TTL is automatically released. The
 policy checks exact or prefix `leaseIdleTtl.byScopePrefix`, then
-`leaseIdleTtl.byScopeKind`, then the default 30 minute fallback.
+`leaseIdleTtl.byScopeKind`, then the default 100 minute fallback.
 
 **Active Task Registry** (`active-task-registry.ts`): Tracks in-flight worker tasks by zone and task ID. Used by the push-branches endpoint to verify a task is still active before allowing branch pushes.
 
@@ -371,7 +372,7 @@ The `gondolin-adapter` package wraps the raw SDK into higher-level operations:
 
 - **`createManagedVm(options)`** -- assembles VFS mounts, creates HTTP hooks, boots the VM, returns a `ManagedVm` handle (`exec`, `enableSsh`, `enableIngress`, `close`).
 - **`buildImage(options)`** -- fingerprint-cached image builds (SHA-256 of build config + runtime build version tag + fingerprint input).
-- **`SecretResolver` / `resolveServiceAccountToken`** -- resolve `SecretRef` values from 1Password or environment variables.
+- **`SecretResolver` / `resolveServiceAccountToken`** -- resolve `SecretRef` values from 1Password, environment variables, or inline config values.
 
 ### VFS Mount Types
 
@@ -530,6 +531,7 @@ Secrets are resolved on the host and delivered to VMs through two channels. Host
     |  Dispatches by SecretRef.source:
     |    '1password' -> onePasswordResolver.resolve(ref)
     |    'environment' -> process.env[ref.ref]
+    |    'config' -> ref.value
     |
     +---> resolveZoneSecrets(zone, resolver)
     |       |  For each zone.secrets[name]: resolve to plain text

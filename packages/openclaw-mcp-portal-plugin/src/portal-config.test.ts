@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { defaultPortalBinPath, parsePortalConfig } from './portal-config.js';
+import { parsePortalConfig } from './portal-config.js';
 
 const pluginManifestSchema = z
 	.object({
@@ -17,20 +17,16 @@ const pluginManifestSchema = z
 	.passthrough();
 
 describe('portal plugin launch config', () => {
-	it('applies subprocess defaults', () => {
-		expect(parsePortalConfig({})).toEqual({
-			binPath: defaultPortalBinPath,
-		});
+	it('requires an explicit managed config dir', () => {
+		expect(() => parsePortalConfig({})).toThrow();
 	});
 
-	it('accepts explicit config dir and bin path', () => {
+	it('accepts explicit config dir', () => {
 		expect(
 			parsePortalConfig({
-				binPath: '/tmp/portal-server',
 				configDir: '/config/gateways/sunclaw',
 			}),
 		).toEqual({
-			binPath: '/tmp/portal-server',
 			configDir: '/config/gateways/sunclaw',
 		});
 	});
@@ -47,9 +43,6 @@ describe('portal plugin launch config', () => {
 		);
 		const manifest = pluginManifestSchema.parse(JSON.parse(manifestText));
 
-		expect(Object.keys(manifest.configSchema.properties).toSorted()).toEqual([
-			'binPath',
-			'configDir',
-		]);
+		expect(Object.keys(manifest.configSchema.properties).toSorted()).toEqual(['configDir']);
 	});
 });

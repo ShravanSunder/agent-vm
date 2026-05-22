@@ -14,15 +14,19 @@ async function writeConfigFile(text: string): Promise<string> {
 }
 
 describe('loadMcpPortalConfig', () => {
-	it('loads server settings, agents, and profile assignments', async () => {
+	it('loads optional proxy auth settings, agents, and profile assignments', async () => {
 		const configPath = await writeConfigFile(`{
 			"schemaVersion": 1,
-			"server": {
-				"host": "127.0.0.1",
-				"port": 18790,
-				"accessHeader": {
-					"name": "x-agent-vm-mcp-portal-secret",
-					"secret": { "source": "environment", "name": "MCP_PORTAL_SERVER_SECRET" }
+			"externalAuth": {
+				"masterKey": { "source": "environment", "name": "MCP_PORTAL_MASTER_KEY" }
+			},
+			"mcpProxy": {
+					"server": {
+						"host": "127.0.0.1",
+						"port": 18791
+					},
+				"auth": {
+					"headerName": "authorization"
 				}
 			},
 			"agents": {
@@ -43,7 +47,12 @@ describe('loadMcpPortalConfig', () => {
 
 		const config = await loadMcpPortalConfig(configPath);
 		const profile = resolveMcpPortalProfile(config, 'builder');
-		expect(config.server.port).toBe(18790);
+		expect(config.externalAuth?.masterKey).toEqual({
+			name: 'MCP_PORTAL_MASTER_KEY',
+			source: 'environment',
+		});
+		expect(config.mcpProxy?.server.port).toBe(18791);
+		expect(config.mcpProxy?.auth.headerName).toBe('authorization');
 		expect(config.agents.shravan?.profile).toBe('builder');
 		expect(profile).toMatchObject({
 			enabledNamespaces: ['linear'],
@@ -54,15 +63,44 @@ describe('loadMcpPortalConfig', () => {
 		});
 	});
 
+	it('rejects legacy shared-header portal server config', async () => {
+		const configPath = await writeConfigFile(`{
+				"schemaVersion": 1,
+				"server": {
+					"host": "127.0.0.1",
+					"port": 18790,
+					"accessHeader": {
+						"name": "x-agent-vm-mcp-portal-secret",
+						"secret": { "source": "environment", "name": "MCP_PORTAL_SERVER_SECRET" }
+					}
+				},
+				"agents": { "shravan": { "profile": "default" } },
+				"profiles": { "default": { "enabledNamespaces": [] } }
+			}`);
+
+		await expect(loadMcpPortalConfig(configPath)).rejects.toThrow(/server/u);
+	});
+
+	it('rejects external proxy hosts outside loopback', async () => {
+		const configPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"externalAuth": {
+				"masterKey": { "source": "environment", "name": "MCP_PORTAL_MASTER_KEY" }
+			},
+			"mcpProxy": {
+				"server": { "host": "0.0.0.0", "port": 18791 },
+				"auth": { "headerName": "authorization" }
+			},
+			"agents": { "shravan": { "profile": "default" } },
+			"profiles": { "default": { "enabledNamespaces": [] } }
+		}`);
+
+		await expect(loadMcpPortalConfig(configPath)).rejects.toThrow(/loopback/u);
+	});
+
 	it('rejects unknown inherited profiles', async () => {
 		const configPath = await writeConfigFile(`{
 			"schemaVersion": 1,
-			"server": {
-				"accessHeader": {
-					"name": "x-agent-vm-mcp-portal-secret",
-					"secret": { "source": "environment", "name": "MCP_PORTAL_SERVER_SECRET" }
-				}
-			},
 			"agents": { "shravan": { "profile": "builder" } },
 			"profiles": {
 				"builder": { "extends": "missing", "enabledNamespaces": [] }
@@ -78,12 +116,6 @@ describe('loadMcpPortalConfig', () => {
 	it('detects profile inheritance cycles', async () => {
 		const configPath = await writeConfigFile(`{
 			"schemaVersion": 1,
-			"server": {
-				"accessHeader": {
-					"name": "x-agent-vm-mcp-portal-secret",
-					"secret": { "source": "environment", "name": "MCP_PORTAL_SERVER_SECRET" }
-				}
-			},
 			"agents": {},
 			"profiles": {
 				"a": { "extends": "b" },

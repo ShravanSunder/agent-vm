@@ -19,10 +19,6 @@ import {
 	resolveGondolinMinimumZigVersion,
 	resolveGondolinPackageSpec,
 } from '@agent-vm/gondolin-adapter';
-import {
-	materializedPortalToolNames,
-	portalServerNameForAgent,
-} from '@agent-vm/openclaw-mcp-portal-plugin';
 import { z } from 'zod';
 
 import { loadJsonConfigFile } from '../config/json-config-file.js';
@@ -409,6 +405,7 @@ const defaultSystemConfig = (
 					? {
 							zoneFilesDir: pathProfile.gatewayZoneFilesDir(zoneId),
 							authProfilesByAgent: {},
+							rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN'],
 						}
 					: {}),
 				backupDir: pathProfile.gatewayBackupDir(zoneId),
@@ -425,7 +422,7 @@ const defaultSystemConfig = (
 			...(gatewayType === 'openclaw'
 				? {
 						agents: (agentIds ?? []).map((agentId) => ({ id: agentId })),
-						mcp: { configDir: pathProfile.gatewayConfigDir(zoneId) },
+						mcpPortal: { configDir: pathProfile.gatewayConfigDir(zoneId) },
 					}
 				: {}),
 		},
@@ -654,13 +651,7 @@ function envVarsForGatewayType(gatewayType: GatewayType, zoneId: string): readon
 		case 'worker':
 			return ['GITHUB_TOKEN', 'OPENAI_API_KEY', zoneSshAccessEnvVar];
 		case 'openclaw':
-			return [
-				'GITHUB_TOKEN',
-				'PERPLEXITY_API_KEY',
-				'OPENCLAW_GATEWAY_TOKEN',
-				'MCP_PORTAL_SERVER_SECRET',
-				zoneSshAccessEnvVar,
-			];
+			return ['GITHUB_TOKEN', 'PERPLEXITY_API_KEY', 'OPENCLAW_GATEWAY_TOKEN', zoneSshAccessEnvVar];
 		default: {
 			const exhaustive: never = gatewayType;
 			throw new Error(`Unhandled gateway type: ${String(exhaustive)}`);
@@ -739,14 +730,10 @@ function formatAgentIdentityName(agentId: string): string {
 }
 
 function defaultOpenClawPortalToolDenyList(
-	agentId: string,
-	agentIds: readonly string[],
+	_agentId: string,
+	_agentIds: readonly string[],
 ): readonly string[] {
-	return agentIds
-		.filter((candidateAgentId) => candidateAgentId !== agentId)
-		.flatMap((candidateAgentId) =>
-			materializedPortalToolNames(portalServerNameForAgent(candidateAgentId)),
-		);
+	return [];
 }
 
 function defaultOpenClawAgentsConfig(agentIds: readonly string[] | undefined): object {
@@ -776,25 +763,8 @@ function defaultOpenClawAgentsConfig(agentIds: readonly string[] | undefined): o
 }
 
 function defaultOpenClawMcpPortalServers(agentIds: readonly string[] | undefined): object {
-	if (!agentIds || agentIds.length === 0) {
-		return {};
-	}
-
-	return Object.fromEntries(
-		agentIds.map((agentId) => {
-			const serverName = portalServerNameForAgent(agentId);
-			return [
-				serverName,
-				{
-					transport: 'streamable-http',
-					url: `http://127.0.0.1:18790/agents/${encodeURIComponent(agentId)}/mcp`,
-					headers: {
-						'x-agent-vm-mcp-portal-secret': '${MCP_PORTAL_SERVER_SECRET}',
-					},
-				},
-			];
-		}),
-	);
+	void agentIds;
+	return {};
 }
 
 function defaultMcpProviderConfig(): object {
@@ -816,14 +786,6 @@ function defaultMcpPortalConfig(agentIds: readonly string[] | undefined): object
 	return {
 		$schema: mcpPortalConfigSchemaPaths.mcpPortalFromGatewayConfig,
 		schemaVersion: 1,
-		server: {
-			host: '127.0.0.1',
-			port: 18790,
-			accessHeader: {
-				name: 'x-agent-vm-mcp-portal-secret',
-				secret: { source: 'environment', name: 'MCP_PORTAL_SERVER_SECRET' },
-			},
-		},
 		agents: defaultMcpPortalAgentAssignments(agentIds),
 		profiles: {
 			default: {

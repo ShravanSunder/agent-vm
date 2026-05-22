@@ -8,8 +8,8 @@ function createRuntimeState(): ReturnType<typeof createPortalPluginRuntimeState>
 		configDir: '/config',
 		loadPortalConfig: async () => ({
 			agents: {
-				hidden: { profile: 'quiet' },
-				shravan: { profile: 'builder' },
+				hidden: { credentialVersion: 1, profile: 'quiet' },
+				shravan: { credentialVersion: 1, profile: 'builder' },
 			},
 			profiles: {
 				builder: {
@@ -22,14 +22,6 @@ function createRuntimeState(): ReturnType<typeof createPortalPluginRuntimeState>
 				},
 			},
 			schemaVersion: 1,
-			server: {
-				accessHeader: {
-					name: 'x-secret',
-					secret: { name: 'MCP_PORTAL_SECRET', source: 'environment' },
-				},
-				host: '127.0.0.1',
-				port: 18_790,
-			},
 		}),
 	});
 }

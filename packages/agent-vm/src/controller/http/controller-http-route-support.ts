@@ -96,7 +96,9 @@ export async function readIdentityPemFromFile(identityFilePath: string): Promise
 export async function serializeLeaseForResponse(
 	lease: Lease,
 	readIdentityPem: (identityFilePath: string) => Promise<string>,
+	options: { readonly idleTtlMs?: number } = {},
 ): Promise<{
+	readonly idleTtlMs?: number;
 	readonly leaseId: string;
 	readonly ssh: {
 		readonly host: string;
@@ -117,6 +119,7 @@ export async function serializeLeaseForResponse(
 		throw new Error(`Lease '${lease.id}' SSH identity file is empty.`);
 	}
 	return {
+		...(options.idleTtlMs !== undefined ? { idleTtlMs: options.idleTtlMs } : {}),
 		leaseId: lease.id,
 		ssh: {
 			host: `tool-${lease.tcpSlot}.vm.host`,

@@ -104,6 +104,42 @@ function createManagedVmFsStub(): ManagedVmFs {
 
 describe('gondolin controller integration', () => {
 	it('requests a lease through the controller app and builds an exec spec from the returned ssh lease', async () => {
+		const lease = {
+			agentWorkspaceDir: '/zone',
+			createdAt: 1,
+			effectiveIdleTtlMs: 300_000,
+			id: 'lease-123',
+			lastUsedAt: 1,
+			profileId: 'standard',
+			scopeKey: 'agent:main:session-abc',
+			guestWorkdir: '/work',
+			sshAccess: {
+				command: 'ssh ...',
+				host: '127.0.0.1',
+				identityFile: '/tmp/key',
+				port: 19000,
+				user: 'sandbox',
+			},
+			tcpSlot: 0,
+			vm: {
+				close: vi.fn(async () => {}),
+				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+				enableSsh: vi.fn(async () => ({
+					command: 'ssh ...',
+					host: '127.0.0.1',
+					identityFile: '/tmp/key',
+					port: 19000,
+					user: 'sandbox',
+				})),
+				exec: vi.fn(() => createManagedExecProcessStub()),
+				fs: createManagedVmFsStub(),
+				id: 'tool-vm-1',
+				setIngressRoutes: vi.fn(),
+				getVmInstance: vi.fn(),
+			},
+			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
+			zoneId: 'shravan',
+		};
 		const controllerApp = createControllerApp({
 			readIdentityPem: async () => 'pem',
 			toolVmProfiles: {
@@ -114,42 +150,7 @@ describe('gondolin controller integration', () => {
 				},
 			},
 			leaseManager: {
-				createLease: vi.fn(async () => ({
-					agentWorkspaceDir: '/zone',
-					createdAt: 1,
-					effectiveIdleTtlMs: 300_000,
-					id: 'lease-123',
-					lastUsedAt: 1,
-					profileId: 'standard',
-					scopeKey: 'agent:main:session-abc',
-					guestWorkdir: '/work',
-					sshAccess: {
-						command: 'ssh ...',
-						host: '127.0.0.1',
-						identityFile: '/tmp/key',
-						port: 19000,
-						user: 'sandbox',
-					},
-					tcpSlot: 0,
-					vm: {
-						close: vi.fn(async () => {}),
-						enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
-						enableSsh: vi.fn(async () => ({
-							command: 'ssh ...',
-							host: '127.0.0.1',
-							identityFile: '/tmp/key',
-							port: 19000,
-							user: 'sandbox',
-						})),
-						exec: vi.fn(() => createManagedExecProcessStub()),
-						fs: createManagedVmFsStub(),
-						id: 'tool-vm-1',
-						setIngressRoutes: vi.fn(),
-						getVmInstance: vi.fn(),
-					},
-					hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
-					zoneId: 'shravan',
-				})),
+				createLease: vi.fn(async () => lease),
 				renewLease: vi.fn(),
 				peekLease: vi.fn(),
 				listLeases: vi.fn(() => []),
@@ -225,6 +226,12 @@ describe('gondolin controller integration', () => {
 		expect(backend.runtimeId).toBe('lease-123');
 		expect(backend.configLabel).toBe('http://controller.vm.host:18800 (shravan)');
 		expect(backend.configLabelKind).toBe('VM');
+		await backend.finalizeExec?.({
+			status: 'completed',
+			exitCode: 0,
+			timedOut: false,
+			token: execSpec.finalizeToken,
+		});
 	});
 
 	it('does not reuse a cached handle when the same scopeKey changes workspace identity', async () => {

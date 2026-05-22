@@ -5,7 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import type { GatewayZoneConfig } from '@agent-vm/gateway-interface';
-import type { SecretResolver } from '@agent-vm/gondolin-adapter';
+import type { SecretResolver } from '@agent-vm/secrets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { openclawLifecycle } from './openclaw-lifecycle.js';
@@ -23,14 +23,18 @@ async function pathExists(filePath: string): Promise<boolean> {
 	}
 }
 
-async function renderBootstrapFiles(command: string, rootDirectory: string): Promise<void> {
+async function renderBootstrapFiles(
+	command: string,
+	rootDirectory: string,
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
 	const rootedCommand = command
 		.replaceAll('/root', path.join(rootDirectory, 'root'))
 		.replaceAll('/etc/profile.d', path.join(rootDirectory, 'etc', 'profile.d'))
 		.replaceAll('/run/openclaw', path.join(rootDirectory, 'run', 'openclaw'))
 		.replaceAll('/work', path.join(rootDirectory, 'work'))
 		.replace(`chown -R openclaw:openclaw ${path.join(rootDirectory, 'work')} && `, '');
-	await execFileAsync('bash', ['-lc', rootedCommand]);
+	await execFileAsync('sh', ['-lc', rootedCommand], { env });
 }
 
 function shellQuoteForTest(value: string): string {
@@ -55,9 +59,10 @@ const resolvedSecrets: Record<string, string> = {
 function createZone(overrides?: {
 	readonly authProfilesRef?: GatewayZoneConfig['gateway']['authProfilesRef'];
 	readonly gateway?: Partial<OpenClawGatewayConfig>;
-	readonly mcp?: GatewayZoneConfig['mcp'];
+	readonly mcpPortal?: GatewayZoneConfig['mcpPortal'];
 	readonly runtimeMcpServers?: GatewayZoneConfig['runtimeMcpServers'];
 	readonly runtimeEnvironment?: GatewayZoneConfig['runtimeEnvironment'];
+	readonly runtimeMediatedSecrets?: GatewayZoneConfig['runtimeMediatedSecrets'];
 	readonly runtimePluginConfigs?: GatewayZoneConfig['runtimePluginConfigs'];
 	readonly withoutAuthProfilesRef?: boolean;
 }): GatewayZoneConfig {
@@ -66,6 +71,7 @@ function createZone(overrides?: {
 		config: '/host/config/shravan/openclaw.json',
 		memory: '2G',
 		port: 18791,
+		rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN', 'DISCORD_BOT_TOKEN'],
 		ssh: { secretEnv: 'explicit' },
 		stateDir: '/host/state/shravan',
 		type: 'openclaw',
@@ -90,7 +96,7 @@ function createZone(overrides?: {
 			...overrides?.gateway,
 		},
 		id: 'shravan',
-		...(overrides?.mcp ? { mcp: overrides.mcp } : {}),
+		...(overrides?.mcpPortal ? { mcpPortal: overrides.mcpPortal } : {}),
 		secrets: {
 			DISCORD_BOT_TOKEN: {
 				injection: 'env',
@@ -114,6 +120,9 @@ function createZone(overrides?: {
 		},
 		defaultToolVmProfile: 'standard',
 		...(overrides?.runtimeEnvironment ? { runtimeEnvironment: overrides.runtimeEnvironment } : {}),
+		...(overrides?.runtimeMediatedSecrets
+			? { runtimeMediatedSecrets: overrides.runtimeMediatedSecrets }
+			: {}),
 		...(overrides?.runtimePluginConfigs
 			? { runtimePluginConfigs: overrides.runtimePluginConfigs }
 			: {}),
@@ -140,10 +149,18 @@ describe('openclawLifecycle', () => {
 			);
 			expect(
 				openclawLifecycle.authConfig?.buildLoginCommand('openai-codex', {
+					agentId: 'shravan',
+				}),
+			).toBe("openclaw models auth --agent 'shravan' login --provider 'openai-codex'");
+			expect(
+				openclawLifecycle.authConfig?.buildLoginCommand('openai-codex', {
+					agentId: 'shravan',
 					deviceCode: true,
 					setDefault: true,
 				}),
-			).toBe("openclaw models auth login --provider 'openai-codex' --device-code --set-default");
+			).toBe(
+				"openclaw models auth --agent 'shravan' login --provider 'openai-codex' --device-code --set-default",
+			);
 		});
 
 		it('shell-quotes provider values safely', () => {
@@ -177,6 +194,27 @@ describe('openclawLifecycle', () => {
 			});
 		});
 
+		it('rejects authored env secrets that are not explicit raw-env exceptions', () => {
+			expect(() =>
+				openclawLifecycle.buildVmSpec({
+					controllerPort: 18800,
+					gatewayCacheDir: '/host/cache/gateways/shravan',
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					resolvedSecrets,
+					runtimeDir: '/host/runtime',
+					tcpPool: {
+						basePort: 19000,
+						size: 3,
+					},
+					zone: createZone({
+						gateway: {
+							rawEnvSecrets: [],
+						},
+					}),
+				}),
+			).toThrow(/DISCORD_BOT_TOKEN.*rawEnvSecrets/u);
+		});
+
 		it('injects runtime environment without mediating or persisting it', () => {
 			const vmSpec = openclawLifecycle.buildVmSpec({
 				controllerPort: 18800,
@@ -197,6 +235,58 @@ describe('openclawLifecycle', () => {
 
 			expect(vmSpec.environment.AGENT_VM_ZONE_GIT_TOKEN).toBe('runtime-zone-git-token');
 			expect(vmSpec.mediatedSecrets.AGENT_VM_ZONE_GIT_TOKEN).toBeUndefined();
+		});
+
+		it('injects generated runtime mediated secrets without authored zone secret config entries', () => {
+			const vmSpec = openclawLifecycle.buildVmSpec({
+				controllerPort: 18800,
+				gatewayCacheDir: '/host/cache/gateways/shravan',
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				resolvedSecrets,
+				runtimeDir: '/host/runtime',
+				tcpPool: {
+					basePort: 19000,
+					size: 3,
+				},
+				zone: createZone({
+					runtimeMediatedSecrets: {
+						AGENT_VM_MCP_TAVILY_API_KEY: {
+							hosts: ['api.tavily.com'],
+							value: 'runtime-tavily-token',
+						},
+					},
+				}),
+			});
+
+			expect(vmSpec.mediatedSecrets.AGENT_VM_MCP_TAVILY_API_KEY).toEqual({
+				hosts: ['api.tavily.com'],
+				value: 'runtime-tavily-token',
+			});
+			expect(vmSpec.environment.AGENT_VM_MCP_TAVILY_API_KEY).toBeUndefined();
+		});
+
+		it('rejects generated runtime secrets that collide with authored zone secrets', () => {
+			expect(() =>
+				openclawLifecycle.buildVmSpec({
+					controllerPort: 18800,
+					gatewayCacheDir: '/host/cache/gateways/shravan',
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					resolvedSecrets,
+					runtimeDir: '/host/runtime',
+					tcpPool: {
+						basePort: 19000,
+						size: 3,
+					},
+					zone: createZone({
+						runtimeMediatedSecrets: {
+							PERPLEXITY_API_KEY: {
+								hosts: ['api.perplexity.ai'],
+								value: 'runtime-perplexity-token',
+							},
+						},
+					}),
+				}),
+			).toThrow(/PERPLEXITY_API_KEY.*authored http-mediation secret/u);
 		});
 
 		it('builds the expected OpenClaw environment, mounts, and tcp hosts', () => {
@@ -275,11 +365,11 @@ describe('openclawLifecycle', () => {
 			expect(processSpec.bootstrapCommand).toContain('/run/openclaw/secrets.env');
 			expect(processSpec.bootstrapCommand).toContain("printf '%s\\n'");
 			expect(processSpec.bootstrapCommand).toContain('DISCORD_BOT_TOKEN');
-			expect(processSpec.bootstrapCommand).toContain('discord-token');
 			expect(processSpec.bootstrapCommand).toContain('OPENCLAW_GATEWAY_TOKEN');
-			expect(processSpec.bootstrapCommand).toContain('gateway');
 			expect(processSpec.bootstrapCommand).toContain('AGENT_VM_ZONE_GIT_TOKEN');
-			expect(processSpec.bootstrapCommand).toContain('runtime-zone-git-token');
+			expect(processSpec.bootstrapCommand).not.toContain('discord-token');
+			expect(processSpec.bootstrapCommand).not.toContain("gateway'token");
+			expect(processSpec.bootstrapCommand).not.toContain('runtime-zone-git-token');
 			expect(processSpec.bootstrapCommand).not.toContain(
 				`cat > /run/openclaw/secrets.env << 'ENVEOF'`,
 			);
@@ -326,12 +416,29 @@ describe('openclawLifecycle', () => {
 			}
 		});
 
+		it('rejects unallowlisted authored env secrets before building the bootstrap command', () => {
+			expect(() =>
+				openclawLifecycle.buildProcessSpec(
+					createZone({
+						gateway: {
+							rawEnvSecrets: [],
+						},
+					}),
+					resolvedSecrets,
+				),
+			).toThrow(/DISCORD_BOT_TOKEN.*rawEnvSecrets/u);
+		});
+
 		it('renders an empty runtime secrets file when no env secrets are resolved', async () => {
 			const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-bootstrap-empty-'));
 			createdDirectories.push(tempDirectory);
 			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), {});
 
-			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory);
+			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory, {
+				...process.env,
+				DISCORD_BOT_TOKEN: resolvedSecrets.DISCORD_BOT_TOKEN,
+				OPENCLAW_GATEWAY_TOKEN: resolvedSecrets.OPENCLAW_GATEWAY_TOKEN,
+			});
 
 			await expect(
 				readFile(path.join(tempDirectory, 'run', 'openclaw', 'secrets.env'), 'utf8'),
@@ -349,13 +456,29 @@ describe('openclawLifecycle', () => {
 				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
 			});
 
-			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory);
+			expect(processSpec.bootstrapCommand).not.toContain(gatewayToken);
+			expect(processSpec.bootstrapCommand).not.toContain(discordToken);
+			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory, {
+				...process.env,
+				DISCORD_BOT_TOKEN: discordToken,
+				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
+			});
 
 			const secretsFilePath = path.join(tempDirectory, 'run', 'openclaw', 'secrets.env');
-			const { stdout } = await execFileAsync('bash', [
-				'-lc',
-				`set -eu; source ${shellQuoteForTest(secretsFilePath)}; printf '%s\\n%s' "$OPENCLAW_GATEWAY_TOKEN" "$DISCORD_BOT_TOKEN"`,
-			]);
+			const { stdout } = await execFileAsync(
+				'bash',
+				[
+					'-lc',
+					`set -eu; . ${shellQuoteForTest(secretsFilePath)}; printf '%s\\n%s' "$OPENCLAW_GATEWAY_TOKEN" "$DISCORD_BOT_TOKEN"`,
+				],
+				{
+					env: {
+						...process.env,
+						DISCORD_BOT_TOKEN: discordToken,
+						OPENCLAW_GATEWAY_TOKEN: gatewayToken,
+					},
+				},
+			);
 
 			expect(stdout).toBe(`${gatewayToken}\n${discordToken}`);
 		});
@@ -365,7 +488,11 @@ describe('openclawLifecycle', () => {
 			createdDirectories.push(tempDirectory);
 			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), resolvedSecrets);
 
-			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory);
+			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory, {
+				...process.env,
+				DISCORD_BOT_TOKEN: resolvedSecrets.DISCORD_BOT_TOKEN,
+				OPENCLAW_GATEWAY_TOKEN: resolvedSecrets.OPENCLAW_GATEWAY_TOKEN,
+			});
 
 			const environmentShellScript = await readFile(
 				path.join(tempDirectory, 'etc', 'profile.d', 'openclaw-env.sh'),
@@ -588,7 +715,7 @@ describe('openclawLifecycle', () => {
 									enabled: true,
 									hooks: { allowPromptInjection: true },
 									config: {
-										binPath: '/custom/bin/agent-vm-mcp-portal-server',
+										binPath: '/custom/bin/stale-portal-binary',
 										promptContext: { enabled: true },
 									},
 								},
@@ -606,13 +733,9 @@ describe('openclawLifecycle', () => {
 					stateDir: path.join(tempDirectory, 'state'),
 					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
-				mcp: { configDir: configDirectory },
-				runtimeMcpServers: {
-					mcp_portal_shravan: {
-						headers: { 'x-agent-vm-mcp-portal-secret': '${MCP_PORTAL_SERVER_SECRET}' },
-						transport: 'streamable-http',
-						url: 'http://127.0.0.1:18790/agents/shravan/mcp',
-					},
+				mcpPortal: { configDir: configDirectory },
+				runtimePluginConfigs: {
+					'mcp-portal': { configDir: '/home/openclaw/.openclaw/config' },
 				},
 			});
 			const secretResolver: SecretResolver = {
@@ -638,22 +761,13 @@ describe('openclawLifecycle', () => {
 				plugins: {
 					entries: {
 						'mcp-portal': {
-							config: {
-								binPath: '/custom/bin/agent-vm-mcp-portal-server',
-								configDir: '/home/openclaw/.openclaw/config',
-							},
-						},
-					},
-				},
-				mcp: {
-					servers: {
-						mcp_portal_shravan: {
-							transport: 'streamable-http',
-							url: 'http://127.0.0.1:18790/agents/shravan/mcp',
+							config: { configDir: '/home/openclaw/.openclaw/config' },
 						},
 					},
 				},
 			});
+			expect(effectiveOpenClawConfigContent).not.toContain('stale-portal-binary');
+			expect(effectiveOpenClawConfigContent).not.toContain('binPath');
 			expect(effectiveOpenClawConfigContent).not.toContain('promptContext');
 		});
 

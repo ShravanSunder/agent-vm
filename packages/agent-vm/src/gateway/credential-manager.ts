@@ -1,5 +1,5 @@
 import { targetsAudience, type RuntimeVmAudience } from '@agent-vm/gateway-interface';
-import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
+import type { SecretRef, SecretResolver } from '@agent-vm/secrets';
 
 import type { SystemConfig } from '../config/system-config.js';
 
@@ -25,6 +25,20 @@ function findZone(
 	zoneId: string,
 ): SystemConfig['zones'][number] | undefined {
 	return systemConfig.zones.find((zone) => zone.id === zoneId);
+}
+
+function formatUnknownError(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function formatSecretResolutionFailure(zoneId: string, error: unknown): string {
+	const message = formatUnknownError(error);
+	if (error instanceof AggregateError && error.errors.length > 0) {
+		const details = Array.from<unknown>(error.errors).map(formatUnknownError).join('; ');
+		const separator = message.endsWith('.') ? '' : '.';
+		return `Failed to resolve zone secrets for zone '${zoneId}': ${message}${separator} Details: ${details}`;
+	}
+	return `Failed to resolve zone secrets for zone '${zoneId}': ${message}`;
 }
 
 type ResolveZoneSecretsOptions =
@@ -56,7 +70,7 @@ export async function resolveZoneSecrets(
 		throw new Error(`Unknown zone '${options.zoneId}'.`);
 	}
 
-	const resolvedSecrets: Record<string, string> = {};
+	const secretRefs: Record<string, SecretRef> = {};
 	for (const [secretName, secretConfig] of Object.entries(zone.secrets)) {
 		if (!targetsAudience(secretConfig.audience, runtimeAudience)) {
 			continue;
@@ -69,10 +83,9 @@ export async function resolveZoneSecrets(
 		if (injectionFilter && secretConfig.injection !== injectionFilter) {
 			continue;
 		}
-		let secretRef: SecretRef;
 		switch (secretConfig.source) {
 			case 'config':
-				secretRef = {
+				secretRefs[secretName] = {
 					source: 'config',
 					value: secretConfig.value,
 				};
@@ -83,7 +96,7 @@ export async function resolveZoneSecrets(
 						`Zone '${zone.id}' secret '${secretName}' is missing 'envVar'. Add an explicit environment variable name.`,
 					);
 				}
-				secretRef = {
+				secretRefs[secretName] = {
 					ref: secretConfig.envVar,
 					source: 'environment',
 				};
@@ -94,7 +107,7 @@ export async function resolveZoneSecrets(
 						`Zone '${zone.id}' secret '${secretName}' is missing 'ref'. Add an explicit 1Password reference such as '${buildSuggestedSecretRef(zone.id, secretName)}'.`,
 					);
 				}
-				secretRef = {
+				secretRefs[secretName] = {
 					ref: secretConfig.ref,
 					source: '1password',
 				};
@@ -106,25 +119,11 @@ export async function resolveZoneSecrets(
 				);
 			}
 		}
-
-		try {
-			// Sequential resolution gives the user exact secret context on failure.
-			// oxlint-disable-next-line eslint/no-await-in-loop
-			resolvedSecrets[secretName] = await options.secretResolver.resolve(secretRef);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			const sourceReference =
-				secretConfig.source === 'environment'
-					? secretConfig.envVar
-					: secretConfig.source === 'config'
-						? 'config value'
-						: secretConfig.ref;
-			throw new Error(
-				`Failed to resolve secret '${secretName}' for zone '${zone.id}' from '${sourceReference}': ${message}`,
-				{ cause: error },
-			);
-		}
 	}
 
-	return resolvedSecrets;
+	try {
+		return await options.secretResolver.resolveAll(secretRefs);
+	} catch (error) {
+		throw new Error(formatSecretResolutionFailure(zone.id, error), { cause: error });
+	}
 }

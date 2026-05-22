@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 
-import type { SecretRef, SecretResolver } from '@agent-vm/gondolin-adapter';
+import type { SecretRef, SecretResolver } from '@agent-vm/secrets';
 
 import type { SystemConfig } from '../config/system-config.js';
 import {

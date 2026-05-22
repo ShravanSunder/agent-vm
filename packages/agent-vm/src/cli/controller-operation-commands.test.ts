@@ -88,6 +88,7 @@ function createWorkerSystemConfig(
 function createOpenClawSystemConfig(
 	toolVmBuildConfigPath: string,
 	systemConfigPath: string,
+	options: { readonly includeMcpPortal?: boolean } = {},
 ): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
@@ -148,6 +149,14 @@ function createOpenClawSystemConfig(
 						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
+					...(options.includeMcpPortal === true
+						? {
+								agents: [{ id: 'sun' }],
+								mcpPortal: {
+									configDir: path.join(path.dirname(systemConfigPath), 'gateways', 'shravan'),
+								},
+							}
+						: {}),
 					secrets: {
 						OPENCLAW_GATEWAY_TOKEN: {
 							source: 'environment',
@@ -181,15 +190,6 @@ function createHealthyOpenClawConfig(): object {
 			list: [{ id: 'sun' }],
 		},
 		channels: {},
-		mcp: {
-			servers: {
-				mcp_portal_sun: {
-					headers: { 'x-agent-vm-mcp-portal-secret': 'sun-secret' },
-					transport: 'streamable-http',
-					url: 'http://127.0.0.1:18790/agents/sun/mcp',
-				},
-			},
-		},
 		plugins: {
 			allow: ['gondolin', 'memory-core', 'mcp-portal'],
 			entries: {
@@ -212,6 +212,7 @@ function createManagedBaseOpenClawSystemConfig(
 	gatewayBuildConfigPath: string,
 	toolVmBuildConfigPath: string,
 	systemConfigPath: string,
+	options: { readonly includeMcpPortal?: boolean } = {},
 ): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
@@ -275,6 +276,14 @@ function createManagedBaseOpenClawSystemConfig(
 						zoneFilesDir: './zone-files/shravan',
 					},
 					id: 'shravan',
+					...(options.includeMcpPortal === true
+						? {
+								agents: [{ id: 'sun' }],
+								mcpPortal: {
+									configDir: path.join(path.dirname(systemConfigPath), 'gateways', 'shravan'),
+								},
+							}
+						: {}),
 					secrets: {
 						OPENCLAW_GATEWAY_TOKEN: {
 							source: 'environment',
@@ -290,6 +299,25 @@ function createManagedBaseOpenClawSystemConfig(
 			],
 		},
 		{ systemConfigPath },
+	);
+}
+
+async function writeNativeMcpPortalConfigFiles(configDirectoryPath: string): Promise<void> {
+	const portalConfigDirectoryPath = path.join(configDirectoryPath, 'gateways', 'shravan');
+	await fs.mkdir(portalConfigDirectoryPath, { recursive: true });
+	await fs.writeFile(
+		path.join(portalConfigDirectoryPath, 'mcp.config.jsonc'),
+		JSON.stringify({ providers: {}, schemaVersion: 1 }),
+		'utf8',
+	);
+	await fs.writeFile(
+		path.join(portalConfigDirectoryPath, 'mcp-portal.config.jsonc'),
+		JSON.stringify({
+			agents: { sun: { profile: 'default' } },
+			profiles: { default: { enabledNamespaces: [] } },
+			schemaVersion: 1,
+		}),
+		'utf8',
 	);
 }
 
@@ -572,6 +600,7 @@ describe('runControllerOperationCommand', () => {
 		await fs.mkdir(binDirectoryPath, { recursive: true });
 		await fs.mkdir(path.dirname(openClawConfigPath), { recursive: true });
 		await fs.writeFile(openClawConfigPath, JSON.stringify(createHealthyOpenClawConfig()), 'utf8');
+		await writeNativeMcpPortalConfigFiles(configDirectoryPath);
 		await fs.writeFile(
 			path.join(binDirectoryPath, 'openclaw'),
 			`#!/bin/sh
@@ -585,6 +614,7 @@ printf '{"ok":true}\\n'
 		const systemConfig = createOpenClawSystemConfig(
 			path.join(temporaryDirectoryPath, 'vm-images', 'tool-vms', 'default', 'build-config.json'),
 			path.join(configDirectoryPath, 'system.json'),
+			{ includeMcpPortal: true },
 		);
 		await writeImageBuildConfigsForDoctor(systemConfig);
 
@@ -865,6 +895,7 @@ printf '{"ok":true}\\n'
 		await fs.mkdir(path.dirname(toolVmBuildConfigPath), { recursive: true });
 		await fs.mkdir(path.dirname(openClawConfigPath), { recursive: true });
 		await fs.writeFile(openClawConfigPath, JSON.stringify(createHealthyOpenClawConfig()), 'utf8');
+		await writeNativeMcpPortalConfigFiles(path.dirname(systemConfigPath));
 		await fs.writeFile(
 			gatewayBuildConfigPath,
 			JSON.stringify({ oci: { image: 'agent-vm-openclaw:latest', pullPolicy: 'never' } }),
@@ -898,6 +929,7 @@ printf '{"ok":true}\\n'
 				gatewayBuildConfigPath,
 				toolVmBuildConfigPath,
 				systemConfigPath,
+				{ includeMcpPortal: true },
 			),
 		});
 

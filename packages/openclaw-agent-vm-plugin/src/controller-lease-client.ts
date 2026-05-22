@@ -200,7 +200,7 @@ export function createLeaseClient(options: {
 		},
 		renewLease,
 		peekLease: async (leaseId: string): Promise<ToolVmLeasePeek> => {
-			const response = await fetchImpl(`${baseUrl}/lease/${leaseId}/peek`);
+			const response = await fetchImpl(`${baseUrl}/lease/${encodeURIComponent(leaseId)}/peek`);
 			return await readJsonResponse(response, 'Controller lease peek API', isToolVmLeasePeek);
 		},
 		publishOpenClawRuntimeStatus: async (report): Promise<void> => {

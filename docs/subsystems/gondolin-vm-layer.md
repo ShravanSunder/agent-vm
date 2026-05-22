@@ -293,8 +293,8 @@ The `gondolin-adapter` package (`packages/gondolin-adapter/src/index.ts`) re-exp
 | File | Lines | Responsibility |
 |------|-------|----------------|
 | `packages/gondolin-adapter/src/vm-adapter.ts` | 287 | `ManagedVm` interface, `createManagedVm()`, VFS provider assembly, HTTP hooks wiring |
-| `packages/gondolin-adapter/src/secret-resolver.ts` | 278 | `SecretResolver` interface, 1Password SDK client with op-cli fallback, token source resolution |
-| `packages/gondolin-adapter/src/types.ts` | 14 | `SecretSpec` and `SecretRef` type definitions |
+| `packages/secrets/src/contracts.ts` | 28 | `SecretRef`, `SecretResolver`, and `MediatedSecretSpec` shared contracts |
+| `packages/secrets/src/onepassword-secret-resolver.ts` | 574 | 1Password SDK client with op-cli fallback and token source resolution |
 | `packages/gondolin-adapter/src/build-pipeline.ts` | 132 | `buildImage()`, `computeBuildFingerprint()`, asset verification |
 | `packages/gondolin-adapter/src/mount-policy.ts` | 117 | Writable mount validation, auth path protection |
 | `packages/gondolin-adapter/src/policy-compiler.ts` | 33 | VM host allowlist compilation and deduplication |

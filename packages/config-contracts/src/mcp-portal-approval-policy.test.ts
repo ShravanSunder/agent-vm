@@ -4,7 +4,7 @@ import { mcpPortalCallRequiresApproval } from './mcp-portal-approval-policy.js';
 import { resolveMcpPortalProfile, type McpPortalConfig } from './mcp-portal-config.js';
 
 const portalConfig = {
-	agents: { shravan: { profile: 'builder' } },
+	agents: { shravan: { credentialVersion: 1, profile: 'builder' } },
 	profiles: {
 		builder: {
 			approval: {
@@ -18,14 +18,6 @@ const portalConfig = {
 		},
 	},
 	schemaVersion: 1,
-	server: {
-		accessHeader: {
-			name: 'x-agent-vm-mcp-portal-secret',
-			secret: { name: 'MCP_PORTAL_SECRET', source: 'environment' },
-		},
-		host: '127.0.0.1',
-		port: 18_790,
-	},
 } satisfies McpPortalConfig;
 
 describe('mcpPortalCallRequiresApproval', () => {

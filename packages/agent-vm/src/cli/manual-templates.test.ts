@@ -86,7 +86,7 @@ describe('manual templates', () => {
 			'op://agent-vm/<zoneId>-ssh-access/token',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
-			'agent-vm controller ssh --zone <zoneId> --with-secrets',
+			'agent-vm controller ssh --zone <zoneId>',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'Controller SSH opens an interactive shell only',
@@ -95,7 +95,19 @@ describe('manual templates', () => {
 			'Do not use it as a one-shot command runner',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
-			'agent-vm auth-interactive <provider> --zone <zoneId>',
+			'agent-vm auth openclaw <provider> --zone <zoneId>',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'--all-agents to repeat the same provider login',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'agent-vm auth codex-harness --zone <zoneId> --agent <agentId>',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'Managed OpenClaw gateway base images include the native Codex CLI',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'@openai/codex',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).not.toContain(
 			'controller ssh -- <remote command>',
@@ -154,6 +166,15 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'config/schemas/*.schema.json',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'private-network upstream URLs',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'authored config is trusted deployment config',
+		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content,
+		).not.toContain('loopback server in the gateway');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('message_tool_only');
@@ -190,6 +211,12 @@ describe('manual templates', () => {
 		expect(
 			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
 		).toContain('gateway.authProfilesByAgent');
+		expect(
+			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
+		).toContain('auth openclaw <provider> --all-agents repeats');
+		expect(
+			files.find((file) => file.relativePath.endsWith('per-agent-setup.md'))?.content,
+		).toContain('codex-harness --all-agents runs one device-auth session per agent');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfile');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfiles');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('/home/openclaw/zone-files');

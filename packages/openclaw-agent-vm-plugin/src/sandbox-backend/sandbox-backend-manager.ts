@@ -1,4 +1,4 @@
-import { createLeaseClient } from '../controller-lease-client.js';
+import { ControllerLeaseRequestError, createLeaseClient } from '../controller-lease-client.js';
 import type { CreateBackendDependencies } from './sandbox-backend-contract.js';
 
 export function createGondolinSandboxBackendManager(
@@ -22,7 +22,10 @@ export function createGondolinSandboxBackendManager(
 			try {
 				const leaseStatus = await leaseClient.peekLease(params.entry.containerName);
 				return { configLabelMatch: true, running: leaseStatus !== null };
-			} catch {
+			} catch (error) {
+				if (!(error instanceof ControllerLeaseRequestError) || error.status !== 404) {
+					throw error;
+				}
 				return { configLabelMatch: false, running: false };
 			}
 		},

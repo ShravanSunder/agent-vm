@@ -21,6 +21,7 @@ function createSystemConfig(
 	openClawConfigPath: string,
 	authProfilesByAgent: Record<string, { readonly ref: string; readonly source: '1password' }> = {},
 	mcpConfigDir?: string,
+	stateDir = './state/shravan',
 ): LoadedSystemConfig {
 	return createLoadedSystemConfig(
 		{
@@ -67,12 +68,12 @@ function createSystemConfig(
 						memory: '2G',
 						config: openClawConfigPath,
 						port: 18791,
-						stateDir: './state/shravan',
+						stateDir,
 						zoneFilesDir: './zone-files/shravan',
 						authProfilesByAgent,
 					},
 					id: 'shravan',
-					...(mcpConfigDir === undefined ? {} : { mcp: { configDir: mcpConfigDir } }),
+					...(mcpConfigDir === undefined ? {} : { mcpPortal: { configDir: mcpConfigDir } }),
 					secrets: {
 						OPENCLAW_GATEWAY_TOKEN: {
 							audience: 'gateway',
@@ -94,6 +95,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
 				configuredAuthProfileAgentIds: ['sun', 'shravan'],
+				runtimeMaterializesPortalEndpoints: true,
 				zoneId: 'shravan',
 				config: {
 					agents: {
@@ -102,44 +104,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 							sandbox: openClawToolVmSandbox,
 							workspace: '/zone/agents/default',
 						},
-						list: [
-							{
-								id: 'sun',
-								tools: {
-									deny: [
-										'mcp_portal_shravan__mcp_portal_list',
-										'mcp_portal_shravan__mcp_portal_search',
-										'mcp_portal_shravan__mcp_portal_describe',
-										'mcp_portal_shravan__mcp_portal_call',
-									],
-								},
-							},
-							{
-								id: 'shravan',
-								tools: {
-									deny: [
-										'mcp_portal_sun__mcp_portal_list',
-										'mcp_portal_sun__mcp_portal_search',
-										'mcp_portal_sun__mcp_portal_describe',
-										'mcp_portal_sun__mcp_portal_call',
-									],
-								},
-							},
-						],
-					},
-					mcp: {
-						servers: {
-							mcp_portal_sun: {
-								headers: { 'x-agent-vm-mcp-portal-secret': 'sun-secret' },
-								transport: 'streamable-http',
-								url: 'http://127.0.0.1:18790/agents/sun/mcp',
-							},
-							mcp_portal_shravan: {
-								headers: { 'x-agent-vm-mcp-portal-secret': 'shravan-secret' },
-								transport: 'streamable-http',
-								url: 'http://127.0.0.1:18790/agents/shravan/mcp',
-							},
-						},
+						list: [{ id: 'sun' }, { id: 'shravan' }],
 					},
 					session: {
 						dmScope: 'per-channel-peer',
@@ -187,6 +152,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
 				configuredAuthProfileAgentIds: ['sun'],
+				runtimeMaterializesPortalEndpoints: true,
 				zoneId: 'shravan',
 				config: {
 					agents: {
@@ -196,15 +162,6 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 							workspace: '/zone/agents/default',
 						},
 						list: [{ id: 'sun' }],
-					},
-					mcp: {
-						servers: {
-							mcp_portal_sun: {
-								headers: { 'x-agent-vm-mcp-portal-secret': 'sun-secret' },
-								transport: 'streamable-http',
-								url: 'http://127.0.0.1:18790/agents/sun/mcp',
-							},
-						},
 					},
 					session: {
 						dmScope: 'per-peer',
@@ -359,7 +316,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Generate one mcp.servers portal endpoint per OpenClaw agent and deny sibling portal tool names on each agent.',
+			hint: 'Set zones[].mcpPortal.configDir so agent-vm registers native MCP Portal tools through the OpenClaw plugin.',
 		});
 	});
 
@@ -372,25 +329,9 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						list: [
 							{
 								id: 'sun',
-								tools: {
-									deny: [
-										'mcp_portal_shravan__mcp_portal_list',
-										'mcp_portal_shravan__mcp_portal_search',
-										'mcp_portal_shravan__mcp_portal_describe',
-										'mcp_portal_shravan__mcp_portal_call',
-									],
-								},
 							},
 							{
 								id: 'shravan',
-								tools: {
-									deny: [
-										'mcp_portal_sun__mcp_portal_list',
-										'mcp_portal_sun__mcp_portal_search',
-										'mcp_portal_sun__mcp_portal_describe',
-										'mcp_portal_sun__mcp_portal_call',
-									],
-								},
 							},
 						],
 					},
@@ -425,25 +366,9 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						list: [
 							{
 								id: 'sun',
-								tools: {
-									deny: [
-										'mcp_portal_shravan__mcp_portal_list',
-										'mcp_portal_shravan__mcp_portal_search',
-										'mcp_portal_shravan__mcp_portal_describe',
-										'mcp_portal_shravan__mcp_portal_call',
-									],
-								},
 							},
 							{
 								id: 'shravan',
-								tools: {
-									deny: [
-										'mcp_portal_sun__mcp_portal_list',
-										'mcp_portal_sun__mcp_portal_search',
-										'mcp_portal_sun__mcp_portal_describe',
-										'mcp_portal_sun__mcp_portal_call',
-									],
-								},
 							},
 						],
 					},
@@ -479,25 +404,9 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						list: [
 							{
 								id: 'sun',
-								tools: {
-									deny: [
-										'mcp_portal_shravan__mcp_portal_list',
-										'mcp_portal_shravan__mcp_portal_search',
-										'mcp_portal_shravan__mcp_portal_describe',
-										'mcp_portal_shravan__mcp_portal_call',
-									],
-								},
 							},
 							{
 								id: 'shravan',
-								tools: {
-									deny: [
-										'mcp_portal_sun__mcp_portal_list',
-										'mcp_portal_sun__mcp_portal_search',
-										'mcp_portal_sun__mcp_portal_describe',
-										'mcp_portal_sun__mcp_portal_call',
-									],
-								},
 							},
 						],
 					},
@@ -548,19 +457,15 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Generate one mcp.servers portal endpoint per OpenClaw agent and deny sibling portal tool names on each agent.',
+			hint: 'Set zones[].mcpPortal.configDir so agent-vm registers native MCP Portal tools through the OpenClaw plugin.',
 		});
 	});
 
-	it('accepts portal endpoints using configured non-default server settings', () => {
+	it('accepts native MCP Portal when runtime materialization is configured', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
 				configuredAuthProfileAgentIds: ['sun'],
-				portalServer: {
-					accessHeaderName: 'x-custom-portal-secret',
-					host: '127.0.0.2',
-					port: 18_888,
-				},
+				runtimeMaterializesPortalEndpoints: true,
 				zoneId: 'shravan',
 				config: {
 					agents: {
@@ -569,16 +474,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 							sandbox: openClawToolVmSandbox,
 							workspace: '/zone/agents/default',
 						},
-						list: [{ id: 'sun', tools: { deny: [] } }],
-					},
-					mcp: {
-						servers: {
-							mcp_portal_sun: {
-								headers: { 'x-custom-portal-secret': '${MCP_PORTAL_SERVER_SECRET}' },
-								transport: 'streamable-http',
-								url: 'http://127.0.0.2:18888/agents/sun/mcp',
-							},
-						},
+						list: [{ id: 'sun' }],
 					},
 					plugins: {
 						allow: ['gondolin', 'memory-core', 'mcp-portal'],
@@ -647,7 +543,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-mcp-portal-config-source-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Move MCP Portal namespace/tool policy to mcp-portal.config.jsonc; OpenClaw plugin config may only carry configDir/binPath.',
+			hint: 'Move MCP Portal namespace/tool policy to mcp-portal.config.jsonc; OpenClaw plugin config may only carry configDir.',
 		});
 	});
 
@@ -681,13 +577,78 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-sun'),
 		).toMatchObject({
 			ok: true,
-			hint: 'auth profile configured for agent sun',
+			hint: 'OpenClaw auth profile configured for agent sun',
 		});
 		expect(
 			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Configure gateway.authProfilesByAgent.shravan or run OpenClaw auth onboarding for agent shravan.',
+			hint: 'Run agent-vm auth codex-harness --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
+		});
+	});
+
+	it('prefers OpenClaw auth profile hints when both auth profile and Codex harness auth exist', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				configuredAuthProfileAgentIds: ['sun'],
+				configuredCodexHarnessAuthAgentIds: ['sun'],
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'openai-codex/gpt-5.5' },
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'sun' }],
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-sun'),
+		).toMatchObject({
+			ok: true,
+			hint: 'OpenClaw auth profile configured for agent sun',
+		});
+	});
+
+	it('reports Codex harness auth.json read errors separately from missing auth material', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				codexHarnessAuthReadErrors: [
+					{
+						agentId: 'sun',
+						message: 'EACCES: permission denied',
+						path: '/state/agents/sun/agent/codex-home/auth.json',
+					},
+				],
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'openai-codex/gpt-5.5' },
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'sun' }],
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-codex-harness-auth-readable-shravan-sun'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Cannot read Codex harness auth.json at /state/agents/sun/agent/codex-home/auth.json: EACCES: permission denied',
+		});
+		expect(
+			checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-sun'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Run agent-vm auth codex-harness --zone shravan --agent sun or configure gateway.authProfilesByAgent.sun.',
 		});
 	});
 
@@ -767,15 +728,6 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 					},
 					list: [{ id: 'sun' }],
 				},
-				mcp: {
-					servers: {
-						mcp_portal_sun: {
-							headers: { 'x-agent-vm-mcp-portal-secret': 'sun-secret' },
-							transport: 'streamable-http',
-							url: 'http://127.0.0.1:18790/agents/sun/mcp',
-						},
-					},
-				},
 				session: {
 					dmScope: 'per-channel-peer',
 				},
@@ -799,7 +751,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 
 		try {
 			const checks = await collectOpenClawDeploymentDoctorChecks(
-				createSystemConfig(openClawConfigPath),
+				createSystemConfig(openClawConfigPath, {}, path.dirname(openClawConfigPath)),
 			);
 
 			expect(checks.every((check) => check.ok)).toBe(true);
@@ -814,7 +766,58 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 		}
 	});
 
-	it('loads MCP Portal server expectations from mcp-portal.config.jsonc', async () => {
+	it('accepts Codex harness auth.json as per-agent Codex auth material', async () => {
+		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-doctor-'));
+		const configDirectory = path.join(temporaryDirectory, 'config');
+		const openClawConfigPath = path.join(configDirectory, 'openclaw.json');
+		const stateDir = path.join(temporaryDirectory, 'state', 'shravan');
+		await mkdir(configDirectory, { recursive: true });
+		await mkdir(path.join(stateDir, 'agents', 'sun', 'agent', 'codex-home'), {
+			recursive: true,
+		});
+		await writeFile(
+			path.join(stateDir, 'agents', 'sun', 'agent', 'codex-home', 'auth.json'),
+			'{}',
+			'utf8',
+		);
+		await writeFile(
+			openClawConfigPath,
+			JSON.stringify({
+				agents: {
+					defaults: {
+						model: { primary: 'openai-codex/gpt-5.5' },
+						sandbox: openClawToolVmSandbox,
+						workspace: '/zone/agents/default',
+					},
+					list: [{ id: 'sun' }, { id: 'shravan' }],
+				},
+			}),
+			'utf8',
+		);
+
+		try {
+			const checks = await collectOpenClawDeploymentDoctorChecks(
+				createSystemConfig(openClawConfigPath, {}, undefined, stateDir),
+			);
+
+			expect(
+				checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-sun'),
+			).toMatchObject({
+				ok: true,
+				hint: 'Codex harness auth.json present for agent sun',
+			});
+			expect(
+				checks.find((check) => check.name === 'openclaw-agent-auth-profile-shravan-shravan'),
+			).toMatchObject({
+				ok: false,
+				hint: 'Run agent-vm auth codex-harness --zone shravan --agent shravan or configure gateway.authProfilesByAgent.shravan.',
+			});
+		} finally {
+			await rm(temporaryDirectory, { force: true, recursive: true });
+		}
+	});
+
+	it('accepts native MCP Portal when mcp-portal config is present', async () => {
 		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-doctor-'));
 		const configDirectory = path.join(temporaryDirectory, 'config');
 		const openClawConfigPath = path.join(configDirectory, 'openclaw.json');
@@ -825,14 +828,6 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 				agents: { sun: { profile: 'default' } },
 				profiles: { default: { enabledNamespaces: [] } },
 				schemaVersion: 1,
-				server: {
-					accessHeader: {
-						name: 'x-custom-portal-secret',
-						secret: { source: 'environment', name: 'MCP_PORTAL_SERVER_SECRET' },
-					},
-					host: '127.0.0.2',
-					port: 18_888,
-				},
 			}),
 			'utf8',
 		);
@@ -845,15 +840,6 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 						workspace: '/zone/agents/default',
 					},
 					list: [{ id: 'sun' }],
-				},
-				mcp: {
-					servers: {
-						mcp_portal_sun: {
-							headers: { 'x-custom-portal-secret': 'sun-secret' },
-							transport: 'streamable-http',
-							url: 'http://127.0.0.2:18888/agents/sun/mcp',
-						},
-					},
 				},
 				plugins: {
 					allow: ['memory-core', 'mcp-portal'],
@@ -878,6 +864,65 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 				createSystemConfig(openClawConfigPath, {}, configDirectory),
 			);
 
+			expect(checks.every((check) => check.ok)).toBe(true);
+		} finally {
+			await rm(temporaryDirectory, { force: true, recursive: true });
+		}
+	});
+
+	it('accepts runtime-materialized MCP Portal endpoints when system mcp config is present', async () => {
+		const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'openclaw-doctor-'));
+		const configDirectory = path.join(temporaryDirectory, 'config');
+		const openClawConfigPath = path.join(configDirectory, 'openclaw.json');
+		await mkdir(configDirectory, { recursive: true });
+		await writeFile(
+			path.join(configDirectory, 'mcp-portal.config.jsonc'),
+			JSON.stringify({
+				agents: { sun: { profile: 'default' } },
+				profiles: { default: { enabledNamespaces: [] } },
+				schemaVersion: 1,
+			}),
+			'utf8',
+		);
+		await writeFile(
+			openClawConfigPath,
+			JSON.stringify({
+				agents: {
+					defaults: {
+						sandbox: openClawToolVmSandbox,
+						workspace: '/zone/agents/default',
+					},
+					list: [{ id: 'sun' }],
+				},
+				plugins: {
+					allow: ['memory-core', 'mcp-portal'],
+					entries: {
+						'memory-core': { enabled: true },
+						'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
+					},
+					load: {
+						paths: [
+							'/home/openclaw/.openclaw/extensions/gondolin',
+							'/home/openclaw/.openclaw/extensions/mcp-portal',
+						],
+					},
+					slots: { memory: 'memory-core' },
+				},
+			}),
+			'utf8',
+		);
+
+		try {
+			const checks = await collectOpenClawDeploymentDoctorChecks(
+				createSystemConfig(openClawConfigPath, {}, configDirectory),
+			);
+
+			expect(
+				checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
+			).toMatchObject({
+				ok: true,
+				hint: 'agent-vm registers native MCP Portal tools through the OpenClaw plugin; do not configure mcp.servers portal endpoints.',
+			});
 			expect(checks.every((check) => check.ok)).toBe(true);
 		} finally {
 			await rm(temporaryDirectory, { force: true, recursive: true });

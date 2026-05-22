@@ -12,8 +12,8 @@ import {
 	pinRealFsRoot as pinRealFsRootDefault,
 	type ManagedVm,
 	type PinnedRealFsRoot,
-	type SecretResolver,
 } from '@agent-vm/gondolin-adapter';
+import type { SecretResolver } from '@agent-vm/secrets';
 
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
@@ -169,7 +169,7 @@ export async function createToolVm(
 			cpus: options.profile.cpus,
 			imagePath: toolImage.imagePath,
 			memory: options.profile.memory,
-			rootfsMode: 'memory',
+			rootfsMode: 'cow',
 			sessionLabel: buildToolSessionLabel(
 				options.systemConfig.host.projectNamespace,
 				options.zoneId,

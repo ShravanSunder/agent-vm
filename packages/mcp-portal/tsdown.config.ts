@@ -5,9 +5,15 @@ export default defineConfig({
 	dts: true,
 	entry: [
 		'src/index.ts',
-		'src/tool-vm/index.ts',
-		'src/bin/agent-vm-mcp-portal.ts',
-		'src/bin/portal-server.ts',
+		'src/core/index.ts',
+		'src/mcp-proxy/index.ts',
+		'src/cli/index.ts',
+		'src/portal-config/index.ts',
+		'src/portal-auth/agent-bearer-token.ts',
+		'src/portal-auth/hmac-env.ts',
+		'src/portal-auth/hmac-token.ts',
+		'src/bin/mcp-portal.ts',
+		'src/testing/fake-upstream-mcp-server.ts',
 	],
 	format: 'esm',
 	outExtensions: () => ({

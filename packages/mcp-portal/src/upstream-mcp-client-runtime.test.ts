@@ -7,6 +7,10 @@ import type { JSONRPCMessage, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+	fakeUpstreamNamespace,
+	startFakeUpstreamMcpServer,
+} from './testing/fake-upstream-mcp-server.js';
+import {
 	createUpstreamMcpClientRuntime,
 	type NormalizedUpstreamMcpServer,
 	type RemoteUpstreamMcpServer,
@@ -72,7 +76,50 @@ describe('upstream MCP client runtime', () => {
 			{ inputSchema: { type: 'object' }, name: 'a' },
 			{ inputSchema: { type: 'object' }, name: 'b' },
 		]);
-		expect(client.listTools).toHaveBeenNthCalledWith(2, { cursor: 'next' });
+		expect(client.listTools).toHaveBeenNthCalledWith(2, { cursor: 'next' }, expect.any(Object));
+	});
+
+	it('threads timeout abort signals into listTools requests', async () => {
+		const listToolSignals: (AbortSignal | undefined)[] = [];
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async (_params, options) => {
+				listToolSignals.push(options?.signal);
+				return { tools: [] };
+			}),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: vi.fn(() => ({})),
+			servers: [createServer()],
+		});
+
+		await runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' });
+
+		expect(listToolSignals).toEqual([expect.any(AbortSignal)]);
+	});
+
+	it('threads timeout abort signals into connect requests', async () => {
+		const connectSignals: (AbortSignal | undefined)[] = [];
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(async (_transport, options) => {
+				connectSignals.push(options?.signal);
+			}),
+			listTools: vi.fn(async () => ({ tools: [] })),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: vi.fn(() => ({})),
+			servers: [createServer()],
+		});
+
+		await runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' });
+
+		expect(connectSignals).toEqual([expect.any(AbortSignal)]);
 	});
 
 	it('tries Streamable HTTP before SSE for unspecified remote transport', async () => {
@@ -224,6 +271,133 @@ describe('upstream MCP client runtime', () => {
 		).resolves.toEqual({ content: [{ text: '[REDACTED]', type: 'text' }] });
 	});
 
+	it('passes progress and abort options through upstream tool calls', async () => {
+		const controller = new AbortController();
+		const progressEvents: unknown[] = [];
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(async (_params, _resultSchema, options) => {
+				expect(options?.signal).toBeDefined();
+				expect(options?.signal?.aborted).toBe(false);
+				options?.onprogress?.({
+					message: 'upstream half done',
+					progress: 5,
+					total: 10,
+				});
+				controller.abort(new Error('caller cancelled'));
+				expect(options?.signal?.aborted).toBe(true);
+				return { content: [] };
+			}),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => ({ tools: [] })),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: () => ({}),
+			servers: [createServer()],
+		});
+
+		await runtime.callTool({
+			arguments: {},
+			agentScopeId: 'agent-scope-a',
+			namespace: 'linear',
+			onEvent: (progress) => {
+				progressEvents.push(progress);
+			},
+			signal: controller.signal,
+			toolName: 'create_issue',
+		});
+
+		expect(progressEvents).toEqual([
+			{
+				kind: 'progress',
+				message: 'upstream half done',
+				progress: 5,
+				total: 10,
+			},
+		]);
+		expect(client.callTool).toHaveBeenCalledWith(
+			{ arguments: {}, name: 'create_issue' },
+			undefined,
+			expect.objectContaining({
+				onprogress: expect.any(Function),
+				signal: expect.any(AbortSignal),
+			}),
+		);
+	});
+
+	it('aborts the upstream callTool request when the configured timeout expires', async () => {
+		let observedSignal: AbortSignal | undefined;
+		const abortObserved = createDeferred<void>();
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn((_params, _resultSchema, options) => {
+				observedSignal = options?.signal;
+				observedSignal?.addEventListener('abort', () => abortObserved.resolve(undefined), {
+					once: true,
+				});
+				return new Promise<never>(() => undefined);
+			}),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => ({ tools: [] })),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: () => ({}),
+			servers: [createServer({ connectionTimeoutMs: 1 })],
+		});
+
+		await expect(
+			runtime.callTool({
+				arguments: {},
+				agentScopeId: 'agent-scope-a',
+				namespace: 'linear',
+				toolName: 'create_issue',
+			}),
+		).rejects.toThrow(/timed out after 1ms/u);
+
+		expect(observedSignal).toBeDefined();
+		await abortObserved.promise;
+		expect(observedSignal?.aborted).toBe(true);
+	});
+
+	it('forwards real SDK progress notifications from the default MCP client', async () => {
+		const upstream = await startFakeUpstreamMcpServer({ emitProgress: true });
+		const progressEvents: unknown[] = [];
+		const runtime = createUpstreamMcpClientRuntime({
+			servers: [
+				{
+					namespace: fakeUpstreamNamespace,
+					transport: 'streamable-http',
+					url: upstream.url,
+				},
+			],
+		});
+		try {
+			await runtime.callTool({
+				arguments: { title: 'hello' },
+				agentScopeId: 'agent-scope-a',
+				namespace: fakeUpstreamNamespace,
+				onEvent: (event) => {
+					progressEvents.push(event);
+				},
+				toolName: 'read_thing',
+			});
+
+			expect(progressEvents).toEqual([
+				{
+					kind: 'progress',
+					message: 'fake upstream half done',
+					progress: 1,
+					total: 2,
+				},
+			]);
+		} finally {
+			await runtime.closeAgentScope('agent-scope-a');
+			await upstream.close();
+		}
+	});
+
 	it('redacts exact upstream header values from call results', async () => {
 		const client: UpstreamMcpClientLike = {
 			callTool: vi.fn(async () => ({
@@ -323,7 +497,7 @@ describe('upstream MCP client runtime', () => {
 		]);
 	});
 
-	it('does not exact-redact non-credential stdio env values from tool catalogs', async () => {
+	it('exact-redacts all resolved stdio env values from tool catalogs', async () => {
 		const client: UpstreamMcpClientLike = {
 			callTool: vi.fn(),
 			close: vi.fn(),
@@ -355,11 +529,37 @@ describe('upstream MCP client runtime', () => {
 			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'local' }),
 		).resolves.toEqual([
 			{
-				description: 'run /usr/local/bin/tool',
+				description: 'run [REDACTED]/tool',
 				inputSchema: { type: 'object' },
 				name: 'inspect_path',
 			},
 		]);
+	});
+
+	it('rejects upstream call results that exceed the configured response byte cap', async () => {
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(async () => ({
+				content: [{ text: 'x'.repeat(256), type: 'text' }],
+			})),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => ({ tools: [] })),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: () => ({}),
+			maxResponseBytes: 100,
+			servers: [createServer()],
+		});
+
+		await expect(
+			runtime.callTool({
+				arguments: {},
+				agentScopeId: 'agent-scope-a',
+				namespace: 'linear',
+				toolName: 'create_issue',
+			}),
+		).rejects.toThrow(/exceeded 100 bytes/u);
 	});
 
 	it('closes cached clients after callTool failures', async () => {
@@ -389,6 +589,44 @@ describe('upstream MCP client runtime', () => {
 		expect(client.close).toHaveBeenCalledTimes(1);
 	});
 
+	it('keeps cached clients after caller cancellation aborts callTool', async () => {
+		const abortError = new DOMException('caller cancelled', 'AbortError');
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn().mockRejectedValueOnce(abortError).mockResolvedValueOnce({ ok: true }),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => ({ tools: [] })),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: () => ({}),
+			servers: [createServer()],
+		});
+		const controller = new AbortController();
+		controller.abort(abortError);
+
+		await expect(
+			runtime.callTool({
+				arguments: {},
+				agentScopeId: 'agent-scope-a',
+				namespace: 'linear',
+				signal: controller.signal,
+				toolName: 'create_issue',
+			}),
+		).rejects.toThrow('caller cancelled');
+		await expect(
+			runtime.callTool({
+				arguments: {},
+				agentScopeId: 'agent-scope-a',
+				namespace: 'linear',
+				toolName: 'create_issue',
+			}),
+		).resolves.toEqual({ ok: true });
+
+		expect(client.connect).toHaveBeenCalledTimes(1);
+		expect(client.close).not.toHaveBeenCalled();
+	});
+
 	it('closes cached clients after listTools failures', async () => {
 		const client: UpstreamMcpClientLike = {
 			callTool: vi.fn(),
@@ -411,7 +649,45 @@ describe('upstream MCP client runtime', () => {
 		expect(client.close).toHaveBeenCalledTimes(1);
 	});
 
-	it('does not cache a pending client that resolves after agent scope close', async () => {
+	it('closes a client when connect times out before the SDK promise resolves', async () => {
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(() => new Promise<never>(() => undefined)),
+			listTools: vi.fn(),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: () => ({}),
+			servers: [createServer({ connectionTimeoutMs: 1 })],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
+		).rejects.toThrow(/connect.*timed out/u);
+		expect(client.close).toHaveBeenCalledTimes(1);
+	});
+
+	it('closes a client when listTools times out before the SDK promise resolves', async () => {
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(() => new Promise<never>(() => undefined)),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport: () => ({}),
+			servers: [createServer({ connectionTimeoutMs: 1 })],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
+		).rejects.toThrow(/listTools.*timed out/u);
+		expect(client.close).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not cache or double-close a pending client that resolves after agent scope close', async () => {
 		const connectStarted = createDeferred<void>();
 		const allowConnect = createDeferred<void>();
 		const clients: UpstreamMcpClientLike[] = [];
@@ -447,7 +723,7 @@ describe('upstream MCP client runtime', () => {
 
 		await expect(firstListPromise).rejects.toThrow(/invalidated/);
 		await closePromise;
-		expect(clients[0]?.close).toHaveBeenCalledTimes(2);
+		expect(clients[0]?.close).toHaveBeenCalledTimes(1);
 		await expect(
 			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
 		).resolves.toEqual([{ inputSchema: { type: 'object' }, name: 'tool_2' }]);

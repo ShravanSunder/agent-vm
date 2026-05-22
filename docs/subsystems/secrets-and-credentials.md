@@ -12,16 +12,17 @@ delivers secrets to Gondolin VMs and host-side controller operations.
 Two discriminated unions drive the entire pipeline:
 
 ```
-SecretRef (gondolin-adapter/types.ts)
+SecretRef (@agent-vm/secrets)
   | { source: '1password'; ref: string }     -- op:// URI
   | { source: 'environment'; ref: string }    -- process.env key
+  | { source: 'config'; value: string }       -- inline config value
 
-SecretSpec (gondolin-adapter/types.ts)
+MediatedSecretSpec (@agent-vm/secrets)
   { hosts: readonly string[]; value: string } -- resolved value bound to hosts
 ```
 
-`SecretRef` identifies *where* a secret lives. `SecretSpec` carries a resolved
-plaintext value together with the hosts it should be injected into.
+`SecretRef` identifies *where* a secret lives. `MediatedSecretSpec` carries a
+resolved plaintext value together with the hosts it should be injected into.
 
 ---
 
@@ -32,6 +33,7 @@ plaintext value together with the hosts it should be injected into.
 | 1Password SDK | `@1password/sdk` `createClient` | Primary path for `source: '1password'` refs |
 | op-cli fallback | `op read <ref>` subprocess | Automatic fallback when SDK fails (per-secret) |
 | Environment variable | `process.env[key]` | `source: 'environment'` refs |
+| Config value | `system.json` inline value | `source: 'config'` refs for local/test-only plaintext config |
 | macOS Keychain | `security find-generic-password` | Token storage only (service account token) |
 
 The SDK is preferred because it resolves secrets in-process without spawning
@@ -45,9 +47,8 @@ fails, the entire resolver falls back to op-cli for all operations.
 ## Token Source Resolution
 
 Before any 1Password secret can be resolved, the system needs a service account
-token. `resolveServiceAccountToken` (gondolin-adapter/secret-resolver.ts) supports
-three sources, selected by `host.secretsProvider.tokenSource` in the system
-config:
+token. `resolveServiceAccountToken` (`@agent-vm/secrets`) supports three
+sources, selected by `host.secretsProvider.tokenSource` in the system config:
 
 ```
 TokenSource
@@ -69,9 +70,9 @@ argument injection and is gated to `process.platform === 'darwin'`.
 
 ## Composite Secret Resolver
 
-`createCompositeSecretResolver` (agent-vm/controller/composite-secret-resolver.ts)
-is the single entry point for all secret resolution. It wraps an optional
-1Password resolver and dispatches based on the `source` discriminant:
+`createCompositeSecretResolver` (`@agent-vm/secrets`) is the single entry point
+for all secret resolution. It wraps an optional 1Password resolver and
+dispatches based on the `source` discriminant:
 
 ```
   resolve(ref: SecretRef)
@@ -200,9 +201,10 @@ Returns:
 The OpenClaw lifecycle keeps `OPENCLAW_GATEWAY_TOKEN` as an environment
 secret. The effective config references it through OpenClaw's env SecretRef
 shape instead of storing the plaintext token in `<stateDir>/effective-openclaw.json`.
-The gateway daemon sources the runtime secret file during startup, and root
-admin shells get a narrow `openclaw` wrapper that sources only the gateway
-token for that child process.
+Other raw environment secrets must be named explicitly in
+`gateway.rawEnvSecrets`; provider API tokens should use `http-mediation` unless
+the integration cannot be mediated at the HTTP boundary. Generated runtime env
+secrets, such as zone-git capability env vars, must also be listed when enabled.
 
 MCP Portal upstream credentials stay in the gateway VM portal process. The
 portal exposes schema, summaries, helper source, and validated call results to
@@ -298,11 +300,11 @@ toolchain setup is not known.
 
 | Secret | Resolved On | Enters VM? | Mechanism |
 |--------|------------|------------|-----------|
-| Zone secret (injection: env, audience: gateway) | Host | Gateway VM only | VM environment variable |
+| Zone secret (injection: env, audience: gateway) | Host | Gateway VM only | VM environment variable; OpenClaw requires `OPENCLAW_GATEWAY_TOKEN` or `gateway.rawEnvSecrets` |
 | Zone secret (injection: http-mediation, audience: gateway/both) | Host | Placeholder only | Gateway VM Gondolin proxy injects into HTTP requests |
 | Zone secret (injection: http-mediation, audience: tool-vm/both) | Host | Placeholder only | Tool VM Gondolin proxy injects into HTTP requests |
 | Worker runtimeAuthHints for mediated secrets | Host | Placeholder name only | Generated worker runtime instructions under `/agent-vm` |
-| OPENCLAW_GATEWAY_TOKEN | Host | Gateway VM only | Env SecretRef plus runtime-only `/run/openclaw/gateway-auth.env` for root `openclaw` admin commands |
+| OPENCLAW_GATEWAY_TOKEN | Host | Gateway VM only | Env SecretRef plus runtime-only `/run/openclaw/secrets.env`; allowed raw env by default |
 | githubToken | Host | No | Controller-side git push only |
 | gateway.authProfilesByAgent | Host | Indirectly | Per-agent profile written to host disk; VM reads via VFS mount |
 | gateway.authProfilesRef | Host | Indirectly | Legacy main-agent fallback written to host disk; VM reads via VFS mount |
@@ -321,9 +323,9 @@ OpenClaw admin commands source the gateway token in a subshell wrapper.
 
 | File | Package | Responsibility |
 |------|---------|---------------|
-| `secret-resolver.ts` | gondolin-adapter | Token source resolution, 1Password SDK/CLI resolver, fallback logic |
-| `types.ts` | gondolin-adapter | `SecretRef` and `SecretSpec` type definitions |
-| `composite-secret-resolver.ts` | agent-vm | Dispatches by source discriminant; exhaustive switch |
+| `onepassword-secret-resolver.ts` | secrets | Token source resolution, 1Password SDK/CLI resolver, fallback logic |
+| `contracts.ts` | secrets | `SecretRef`, `SecretResolver`, and `MediatedSecretSpec` type definitions |
+| `composite-secret-resolver.ts` | secrets | Dispatches by source discriminant; exhaustive switch |
 | `controller-runtime-support.ts` | agent-vm | Wires token source -> resolver -> composite; resolves githubToken |
 | `credential-manager.ts` | agent-vm | Maps zone config entries to SecretRefs; resolves per-zone secrets |
 | `split-resolved-gateway-secrets.ts` | gateway-interface | Categorizes resolved secrets into env vs mediated |

@@ -8,6 +8,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
+import { shouldRunWorkerRuntimeSmoke } from './worker-smoke-gates.js';
+
 function hasCommand(command: string): boolean {
 	try {
 		execFileSync('sh', ['-lc', `command -v ${command} >/dev/null`], { stdio: 'ignore' });
@@ -17,10 +19,10 @@ function hasCommand(command: string): boolean {
 	}
 }
 
-const runWorkerOnlySmoke =
-	typeof process.env.OPEN_AI_TEST_KEY === 'string' &&
-	process.env.OPEN_AI_TEST_KEY.length > 0 &&
-	hasCommand('codex');
+const runWorkerOnlySmoke = shouldRunWorkerRuntimeSmoke({
+	commandExists: hasCommand,
+	env: process.env,
+});
 
 const describeWorkerOnlySmoke = runWorkerOnlySmoke ? describe : describe.skip;
 

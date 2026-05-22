@@ -4,6 +4,8 @@ import { createManagedVm } from '@agent-vm/gondolin-adapter';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { describe, it, expect, afterAll } from 'vitest';
 
+import { shouldRunLiveVmIntegration } from './live-integration-gates.js';
+
 /**
  * Live cross-VM SSH test — validates the gateway VM to Tool VM data path.
  *
@@ -18,8 +20,9 @@ import { describe, it, expect, afterAll } from 'vitest';
  * Run: mise exec -- pnpm vitest run --config vitest.integration.config.ts packages/agent-vm/src/integration-tests/live-cross-vm-ssh.integration.test.ts
  * Requires: QEMU/Gondolin runtime assets and the local mapped-TCP patch or equivalent upstream fix.
  */
+const describeLiveVmIntegration = shouldRunLiveVmIntegration() ? describe : describe.skip;
 
-describe('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
+describeLiveVmIntegration('live: cross-VM SSH via tcp.hosts (lease flow)', () => {
 	let toolVm: ManagedVm | null = null;
 	let gatewayVm: ManagedVm | null = null;
 

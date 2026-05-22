@@ -228,7 +228,8 @@ Operations: `allocate()` returns the lowest free slot (throws if pool exhausted)
 `idle-reaper.ts` prevents orphaned tool VMs from leaking resources. It runs on
 a 60-second interval and releases any lease whose `lastUsedAt` exceeds its
 effective idle TTL and has no active uses. If `leaseIdleTtl` is omitted, the
-fallback remains 30 minutes for every lease.
+fallback remains 100
+minutes for every lease.
 
 ```
   reapExpiredLeases()

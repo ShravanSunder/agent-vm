@@ -7,18 +7,17 @@ import type {
 	GatewayProcessSpec,
 	GatewayZoneConfig,
 	GatewayVmSpec,
+	SplitResolvedGatewaySecretsResult,
 } from '@agent-vm/gateway-interface';
 import {
 	buildGatewaySessionLabel as buildGatewaySessionLabelValue,
 	controllerVmHost,
 	gatewayVmAllowedHosts,
+	mergeRuntimeGatewaySecrets,
 	splitResolvedGatewaySecrets,
 } from '@agent-vm/gateway-interface';
-import {
-	type SecretRef,
-	type SecretResolver,
-	writeFileAtomically,
-} from '@agent-vm/gondolin-adapter';
+import { writeFileAtomically } from '@agent-vm/gondolin-adapter';
+import type { SecretRef, SecretResolver } from '@agent-vm/secrets';
 
 const effectiveOpenClawConfigFileName = 'effective-openclaw.json';
 const effectiveOpenClawConfigVmPath = `/home/openclaw/.openclaw/state/${effectiveOpenClawConfigFileName}`;
@@ -72,7 +71,19 @@ function buildOpenClawBootstrapCommand(
 	zone: GatewayZoneConfig,
 	resolvedSecrets: Record<string, string>,
 ): string {
-	const { environmentSecrets } = splitResolvedGatewaySecrets(zone, resolvedSecrets);
+	const { environmentSecrets } = mergeRuntimeGatewaySecrets(
+		splitAllowedOpenClawGatewaySecrets(zone, resolvedSecrets, 'openclaw-bootstrap-raw-env-secrets'),
+		{
+			logPrefix: 'openclaw-bootstrap-runtime-secrets',
+			runtimeEnvironment: zone.runtimeEnvironment,
+			runtimeMediatedSecrets: zone.runtimeMediatedSecrets,
+		},
+	);
+	assertAllowedOpenClawEnvironmentSecrets(
+		zone,
+		environmentSecrets,
+		'openclaw-bootstrap-runtime-raw-env-secrets',
+	);
 	const environmentLines = [
 		'export OPENCLAW_HOME=/home/openclaw',
 		`export OPENCLAW_CONFIG_PATH=${effectiveOpenClawConfigVmPath}`,
@@ -89,17 +100,18 @@ function buildOpenClawBootstrapCommand(
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
 		'export NODE_OPTIONS=--dns-result-order=ipv4first --no-network-family-autoselection',
 	];
-	const secretEnvironmentLines = Object.entries({
+	const secretEnvironmentNames = Object.entries({
 		...environmentSecrets,
 		...zone.runtimeEnvironment,
-	}).map(
-		([secretName, secretValue]) =>
-			`export ${secretName}=${shellQuoteEnvSecretValue(secretName, secretValue)}`,
-	);
+	}).map(([secretName, secretValue]) => {
+		assertShellSafeEnvName(secretName);
+		assertShellProfileSafeSecretValue(secretName, secretValue);
+		return secretName;
+	});
 	const secretsFileCommand =
-		secretEnvironmentLines.length === 0
+		secretEnvironmentNames.length === 0
 			? `: > ${openClawRuntimeSecretsEnvFilePath} && `
-			: `printf '%s\\n' ${secretEnvironmentLines.map((line) => shellQuote(line)).join(' ')} > ${openClawRuntimeSecretsEnvFilePath} && `;
+			: `{ ${secretEnvironmentNames.map(runtimeSecretExportCommand).join('; ')}; } > ${openClawRuntimeSecretsEnvFilePath} && `;
 	const sshConfigLines = ['Host tool-*.vm.host', '  AddressFamily inet'];
 	const sshConfigCommand =
 		`mkdir -p /root/.ssh /home/openclaw/.ssh && ` +
@@ -142,13 +154,58 @@ function includesShellUnsafeControlByte(value: string): boolean {
 	return false;
 }
 
-function shellQuoteEnvSecretValue(secretName: string, value: string): string {
+function assertShellSafeEnvName(secretName: string): void {
+	if (!/^[_A-Za-z][_0-9A-Za-z]*$/u.test(secretName)) {
+		throw new Error(
+			`OpenClaw env-injected gateway secret '${secretName}' must be a shell-safe environment variable name.`,
+		);
+	}
+}
+
+function assertShellProfileSafeSecretValue(secretName: string, value: string): void {
 	if (includesShellUnsafeControlByte(value)) {
 		throw new Error(
 			`OpenClaw env-injected gateway secret '${secretName}' must be a single-line value without control bytes. Use http-mediation for secrets that require structured transport.`,
 		);
 	}
-	return shellQuote(value);
+}
+
+function runtimeSecretExportCommand(secretName: string): string {
+	const runtimeSecretValue = `"\${${secretName}?missing runtime secret ${secretName}}"`;
+	const exportLine = `export ${secretName}=${runtimeSecretValue}`;
+	return `: ${runtimeSecretValue} && printf '%s\\n' ${shellQuote(exportLine)}`;
+}
+
+function assertAllowedOpenClawEnvironmentSecrets(
+	zone: GatewayZoneConfig,
+	environmentSecrets: Readonly<Record<string, string>>,
+	logPrefix: string,
+): void {
+	if (zone.gateway.type !== 'openclaw') {
+		throw new Error(`OpenClaw lifecycle cannot build gateway type '${zone.gateway.type}'.`);
+	}
+	const allowedRawEnvSecrets = new Set([
+		openClawGatewayTokenEnvVar,
+		...(zone.gateway.rawEnvSecrets ?? []),
+	]);
+	for (const secretName of Object.keys(environmentSecrets)) {
+		if (allowedRawEnvSecrets.has(secretName)) {
+			continue;
+		}
+		throw new Error(
+			`[${logPrefix}] OpenClaw env secret '${secretName}' must be listed in gateway.rawEnvSecrets or use injection 'http-mediation'.`,
+		);
+	}
+}
+
+function splitAllowedOpenClawGatewaySecrets(
+	zone: GatewayZoneConfig,
+	resolvedSecrets: Record<string, string>,
+	logPrefix: string,
+): SplitResolvedGatewaySecretsResult {
+	const splitSecrets = splitResolvedGatewaySecrets(zone, resolvedSecrets);
+	assertAllowedOpenClawEnvironmentSecrets(zone, splitSecrets.environmentSecrets, logPrefix);
+	return splitSecrets;
 }
 
 type SourceAwareSecretReference =
@@ -250,15 +307,10 @@ function buildEffectiveSecretsConfig(
 }
 
 function buildEffectiveMcpPortalPluginConfig(
-	existingPluginConfig: Record<string, unknown>,
+	_existingPluginConfig: Record<string, unknown>,
 	runtimeConfig: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> {
-	const preservedConfig =
-		typeof existingPluginConfig.binPath === 'string'
-			? { binPath: existingPluginConfig.binPath }
-			: {};
 	return {
-		...preservedConfig,
 		...runtimeConfig,
 	};
 }
@@ -415,9 +467,6 @@ async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<vo
 			throw new Error(`OpenClaw config at '${zone.gateway.config}' must be a JSON object.`);
 		}
 		const runtimePluginConfigs = {
-			...(zone.mcp === undefined
-				? {}
-				: { 'mcp-portal': { configDir: '/home/openclaw/.openclaw/config' } }),
 			...zone.runtimePluginConfigs,
 		};
 		const config = isObjectRecord(parsedBaseConfig.gateway) ? parsedBaseConfig.gateway : {};
@@ -464,10 +513,16 @@ export const openclawLifecycle: GatewayLifecycle = {
 		listProvidersCommand: 'openclaw models auth list --format plain 2>/dev/null || echo ""',
 		buildLoginCommand: (
 			provider: string,
-			options: { readonly deviceCode?: boolean; readonly setDefault?: boolean } = {},
+			options: {
+				readonly agentId?: string;
+				readonly deviceCode?: boolean;
+				readonly setDefault?: boolean;
+			} = {},
 		): string =>
 			[
-				`openclaw models auth login --provider ${shellQuote(provider)}`,
+				'openclaw models auth',
+				...(options.agentId ? [`--agent ${shellQuote(options.agentId)}`] : []),
+				`login --provider ${shellQuote(provider)}`,
 				...(options.deviceCode === true ? ['--device-code'] : []),
 				...(options.setDefault === true ? ['--set-default'] : []),
 			].join(' '),
@@ -486,9 +541,18 @@ export const openclawLifecycle: GatewayLifecycle = {
 			throw new Error(`OpenClaw lifecycle cannot build gateway type '${zone.gateway.type}'.`);
 		}
 		const configDirectory = path.dirname(path.resolve(zone.gateway.config));
-		const { environmentSecrets, mediatedSecrets } = splitResolvedGatewaySecrets(
+		const { environmentSecrets, mediatedSecrets } = mergeRuntimeGatewaySecrets(
+			splitAllowedOpenClawGatewaySecrets(zone, resolvedSecrets, 'openclaw-vm-raw-env-secrets'),
+			{
+				logPrefix: 'openclaw-vm-runtime-secrets',
+				runtimeEnvironment: zone.runtimeEnvironment,
+				runtimeMediatedSecrets: zone.runtimeMediatedSecrets,
+			},
+		);
+		assertAllowedOpenClawEnvironmentSecrets(
 			zone,
-			resolvedSecrets,
+			environmentSecrets,
+			'openclaw-vm-runtime-raw-env-secrets',
 		);
 
 		return {
@@ -510,9 +574,10 @@ export const openclawLifecycle: GatewayLifecycle = {
 				npm_config_cache: '/work/cache/npm',
 				pnpm_config_store_dir: '/work/cache/pnpm/store',
 				...environmentSecrets,
-				...zone.runtimeEnvironment,
 			},
-			mediatedSecrets,
+			mediatedSecrets: {
+				...mediatedSecrets,
+			},
 			rootfsMode: 'cow',
 			sessionLabel: buildGatewaySessionLabelValue(projectNamespace, zone.id),
 			tcpHosts: buildGatewayTcpHosts(zone, controllerPort, tcpPool),

@@ -2,10 +2,18 @@ const portalAgentIdentityBrand = Symbol('PortalAgentIdentity');
 
 export type PortalAgentIdentity = {
 	readonly agentId: string;
+	// `agentScopeId` is the upstream session/cache boundary. Most current adapters scope it
+	// per agent, but the core keeps it separate so a future adapter can isolate per session
+	// without changing the authorization identity.
 	readonly agentScopeId: string;
+	readonly authSubject?: string;
 	readonly sessionId?: string;
+	readonly sessionKey?: string;
+	readonly source: PortalAgentScopeSource;
 	readonly [portalAgentIdentityBrand]: true;
 };
+
+export type PortalAgentScopeSource = 'cli-operator' | 'mcp-proxy-bearer' | 'openclaw-trusted';
 
 export interface PortalToolSelector {
 	readonly namespace: string;
@@ -31,17 +39,29 @@ export interface ResolvedPortalAccessPolicy {
 export function createPortalAgentIdentity(input: {
 	readonly agentId: string;
 	readonly agentScopeId: string;
+	readonly authSubject?: string;
 	readonly sessionId?: string;
+	readonly sessionKey?: string;
+	readonly source: PortalAgentScopeSource;
 }): PortalAgentIdentity {
 	validateIdentitySegment('agentId', input.agentId);
 	validateIdentitySegment('agentScopeId', input.agentScopeId);
 	if (input.sessionId !== undefined) {
 		validateIdentitySegment('sessionId', input.sessionId);
 	}
+	if (input.sessionKey !== undefined) {
+		validateIdentitySegment('sessionKey', input.sessionKey);
+	}
+	if (input.authSubject !== undefined) {
+		validateIdentitySegment('authSubject', input.authSubject);
+	}
 	return {
 		agentId: input.agentId,
 		agentScopeId: input.agentScopeId,
+		...(input.authSubject !== undefined ? { authSubject: input.authSubject } : {}),
 		...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+		...(input.sessionKey !== undefined ? { sessionKey: input.sessionKey } : {}),
+		source: input.source,
 		[portalAgentIdentityBrand]: true,
 	};
 }
@@ -52,16 +72,15 @@ function validateIdentitySegment(name: string, value: string): void {
 	}
 	for (let index = 0; index < value.length; index += 1) {
 		const codePoint = value.charCodeAt(index);
-		if (codePoint < 32 || codePoint === 127) {
+		if (codePoint < 32 || codePoint === 127 || codePoint === 0x2028 || codePoint === 0x2029) {
 			throw new Error(`MCP Portal ${name} must not contain control characters.`);
 		}
 	}
 }
 
 export function portalAgentScopeKey(identity: PortalAgentIdentity): string {
-	return identity.sessionId
-		? `${identity.agentScopeId}\n${identity.sessionId}`
-		: identity.agentScopeId;
+	const sessionScope = identity.sessionId ?? identity.sessionKey;
+	return sessionScope ? `${identity.agentScopeId}\n${sessionScope}` : identity.agentScopeId;
 }
 
 function sortToolSelectors(
@@ -79,14 +98,11 @@ export function resolvePortalAccessPolicy(props: {
 	readonly upstreamNamespaces: readonly string[];
 }): ResolvedPortalAccessPolicy {
 	const agentNamespaces = props.config.enabledNamespacesByAgent[props.identity.agentId];
-	const globalNamespaces = props.config.enabledNamespaces ?? [];
+	const globalNamespaces = props.config.enabledNamespaces;
 	const selectedNamespaces =
 		agentNamespaces ??
-		(globalNamespaces.length > 0
-			? globalNamespaces
-			: props.config.defaultPolicy === 'allow-all'
-				? props.upstreamNamespaces
-				: []);
+		globalNamespaces ??
+		(props.config.defaultPolicy === 'allow-all' ? props.upstreamNamespaces : []);
 	const upstreamNamespaceSet = new Set(props.upstreamNamespaces);
 
 	return {

@@ -1,9 +1,9 @@
-import type { SecretResolver } from '@agent-vm/gondolin-adapter';
+import { resolveGondolinMinimumZigVersion } from '@agent-vm/gondolin-adapter';
 import {
-	createOpCliSecretResolver,
-	resolveGondolinMinimumZigVersion,
+	createSecretResolver,
+	type SecretResolver,
 	resolveServiceAccountToken,
-} from '@agent-vm/gondolin-adapter';
+} from '@agent-vm/secrets';
 
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';
@@ -43,7 +43,7 @@ export interface CliDependencies {
 	readonly buildControllerStatus: typeof buildControllerStatus;
 	readonly createAgeBackupEncryption: typeof createAgeBackupEncryption;
 	readonly createControllerClient: typeof createControllerClient;
-	readonly createSecretResolver: typeof createOpCliSecretResolver;
+	readonly createSecretResolver: typeof createSecretResolver;
 	readonly createZoneBackupManager: typeof createZoneBackupManager;
 	readonly getCurrentWorkingDirectory?: () => string;
 	readonly initRepoResources?: (options: {
@@ -116,7 +116,7 @@ export const defaultCliDependencies: CliDependencies = {
 	buildControllerStatus,
 	createAgeBackupEncryption,
 	createControllerClient,
-	createSecretResolver: createOpCliSecretResolver,
+	createSecretResolver,
 	createZoneBackupManager,
 	getCurrentWorkingDirectory: () => process.cwd(),
 	loadSystemConfig,

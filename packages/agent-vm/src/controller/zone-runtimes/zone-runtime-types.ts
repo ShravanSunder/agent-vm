@@ -1,6 +1,7 @@
 import type { TaskState } from '@agent-vm/agent-vm-worker';
 import type { GatewayProcessSpec } from '@agent-vm/gateway-interface';
-import type { ManagedVm, SecretResolver } from '@agent-vm/gondolin-adapter';
+import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import type { SecretResolver } from '@agent-vm/secrets';
 
 import type { LoadedSystemConfig, SystemConfig } from '../../config/system-config.js';
 import type { GatewayZoneStartResult } from '../../gateway/gateway-zone-support.js';

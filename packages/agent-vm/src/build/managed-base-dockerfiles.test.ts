@@ -29,4 +29,13 @@ describe('managed base Dockerfiles', () => {
 		expect(dockerfile).toContain('ENV PATH=${PNPM_HOME}:${PATH}');
 		expect(dockerfile).toContain('exec /pnpm/openclaw "$@"');
 	});
+
+	it('installs the native Codex CLI in the OpenClaw gateway base for harness auth', async () => {
+		const dockerfile = await fs.readFile(
+			path.join(process.cwd(), 'docker', 'base-images', 'openclaw-gateway', 'Dockerfile'),
+			'utf8',
+		);
+
+		expect(dockerfile).toContain('pnpm add -g openclaw@2026.5.2 @openai/codex');
+	});
 });

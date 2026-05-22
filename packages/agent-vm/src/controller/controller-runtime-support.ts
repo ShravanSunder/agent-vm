@@ -1,8 +1,10 @@
-import type { SecretResolver } from '@agent-vm/gondolin-adapter';
-import { resolveServiceAccountToken } from '@agent-vm/gondolin-adapter';
+import {
+	createCompositeSecretResolver,
+	resolveServiceAccountToken,
+	type SecretResolver,
+} from '@agent-vm/secrets';
 
 import type { SystemConfig } from '../config/system-config.js';
-import { createCompositeSecretResolver } from './composite-secret-resolver.js';
 
 export async function createSecretResolverFromSystemConfig(
 	systemConfig: SystemConfig,

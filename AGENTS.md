@@ -74,19 +74,25 @@ fast formatting and linting.
 - Unit tests: `pnpm test:unit`.
 - Integration tests: `pnpm test:integration`.
 - Smoke tests: `pnpm test:smoke`.
+  Use `mise exec -- pnpm test:smoke` for smoke tests so the repo-pinned Zig
+  version in `mise.toml` is active. Live Gondolin/OpenClaw smokes depend on
+  that toolchain selection and may silently skip under a stale system `zig`.
 - Full quality gate: `pnpm check`.
   This includes the `@agent-vm/*` package version sync guard used by the
   publish script.
 - OXC formatting: `pnpm fmt:check` to verify, `pnpm fmt` to apply Oxfmt.
 - OXC linting: `pnpm lint` for Oxlint, `pnpm lint:types` for type-aware Oxlint.
 - Typecheck: `pnpm typecheck`.
-- Local npm publish: `set -a; source .env.local; set +a; scripts/publish-local.sh`.
-  This script reads the npm token from
-  `op://agent-vm/npm-token/credential` through 1Password,
+- Local npm publish must use the release-specific 1Password item:
+  `set -a; source .env.local; set +a; AGENT_VM_NPM_TOKEN_OP_REF='op://agent-vm/npm-token-agent-vm-publish/credential' scripts/publish-local.sh`.
+  The script defaults to that same item, reads the token through 1Password,
   writes it only to a temporary npm user config, and runs `pnpm -r publish`.
   Do this before trying browser `npm login` or assuming npm auth is blocked.
-  Verify publication with `npm view <package> version` for every
-  `@agent-vm/*` package before saying a release is published.
+  If 1Password times out, verify the same item with
+  `op read 'op://agent-vm/npm-token-agent-vm-publish/credential' >/dev/null`
+  and rerun the exact publish command above. Verify publication with
+  `npm view <package> version` for every `@agent-vm/*` package before saying a
+  release is published.
 
 Prefer targeted commands while iterating, then run the broad gate before
 claiming done. Do not use `npm` or `yarn` in this repo.
@@ -161,8 +167,9 @@ Follow `.cursor/rules/ts-rules.md`; key points:
 ## Packages
 
 ```text
-gondolin-adapter          → VM build pipeline, adapter, secret resolver (no internal deps)
-gateway-interface         → Types: GatewayLifecycle, VmSpec, ProcessSpec (→ gondolin-adapter)
+secrets                   → SecretRef/SecretResolver contracts, env + 1Password resolution
+gondolin-adapter          → VM build pipeline and adapter (→ secrets)
+gateway-interface         → Types: GatewayLifecycle, VmSpec, ProcessSpec (→ gondolin-adapter, secrets)
 openclaw-gateway          → OpenClaw lifecycle (→ gateway-interface, gondolin-adapter)
 worker-gateway            → Worker lifecycle (→ gateway-interface, gondolin-adapter)
 openclaw-agent-vm-plugin  → OpenClaw sandbox backend (→ gondolin-adapter)

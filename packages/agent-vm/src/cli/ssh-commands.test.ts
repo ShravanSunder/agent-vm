@@ -120,7 +120,14 @@ function createControllerClientStub(
 }
 
 describe('runSshCommand', () => {
-	it('spawns an interactive ssh session', async () => {
+	it('spawns a secret-loaded interactive ssh session by default', async () => {
+		const enableZoneSsh = vi.fn(async () => ({
+			host: '127.0.0.1',
+			identityFile: '/tmp/key',
+			port: 2222,
+			secretEnvEnabled: true,
+			user: 'root',
+		}));
 		const runInteractiveProcess = vi.fn(
 			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
 		);
@@ -128,13 +135,7 @@ describe('runSshCommand', () => {
 		await runSshCommand({
 			dependencies: {
 				...defaultCliDependencies,
-				createControllerClient: () =>
-					createControllerClientStub(async () => ({
-						host: '127.0.0.1',
-						identityFile: '/tmp/key',
-						port: 2222,
-						user: 'root',
-					})),
+				createControllerClient: () => createControllerClientStub(enableZoneSsh),
 				runInteractiveProcess,
 			},
 			io: {
@@ -145,7 +146,11 @@ describe('runSshCommand', () => {
 			systemConfig,
 		});
 
+		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
+			secretEnv: 'with-secrets',
+		});
 		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', [
+			'-t',
 			'-o',
 			'StrictHostKeyChecking=no',
 			'-o',
@@ -155,7 +160,43 @@ describe('runSshCommand', () => {
 			'-p',
 			'2222',
 			'root@127.0.0.1',
+			expect.stringContaining('/run/openclaw/secrets.env'),
 		]);
+	});
+
+	it('fails closed when the controller cannot enable ssh secrets', async () => {
+		const enableZoneSsh = vi.fn(async () => ({
+			host: '127.0.0.1',
+			identityFile: '/tmp/key',
+			port: 2222,
+			secretEnvEnabled: false,
+			user: 'root',
+		}));
+		const runInteractiveProcess = vi.fn(
+			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
+		);
+
+		await expect(
+			runSshCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: () => createControllerClientStub(enableZoneSsh),
+					runInteractiveProcess,
+				},
+				io: {
+					stderr: { write: () => true },
+					stdout: { write: () => true },
+				},
+				restArguments: ['--zone', 'shravan'],
+				systemConfig,
+			}),
+		).rejects.toThrow(
+			'Controller did not enable gateway secrets for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured zone secrets.',
+		);
+		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
+			secretEnv: 'with-secrets',
+		});
+		expect(runInteractiveProcess).not.toHaveBeenCalled();
 	});
 
 	it('rejects --print for ssh sessions', async () => {
@@ -238,7 +279,7 @@ describe('runSshCommand', () => {
 				stderr: { write: () => true },
 				stdout: { write: () => true },
 			},
-			restArguments: ['--zone', 'shravan', '--with-secrets'],
+			restArguments: ['--zone', 'shravan'],
 			systemConfig: systemConfigWithAdminAccess,
 		});
 
@@ -250,6 +291,7 @@ describe('runSshCommand', () => {
 		if (!sshInvocation) {
 			throw new Error('Expected SSH invocation.');
 		}
+		expect(sshInvocation[1]).toContain('-t');
 		const shellCommand = sshInvocation[1].at(-1);
 		if (typeof shellCommand !== 'string') {
 			throw new Error('Expected SSH shell command to be present.');
@@ -291,6 +333,7 @@ describe('runSshCommand', () => {
 						createControllerClientStub(async () => ({
 							host: '127.0.0.1',
 							port: 2222,
+							secretEnvEnabled: true,
 							user: 'root',
 						})),
 					runInteractiveProcess,
