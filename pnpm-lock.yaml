@@ -69,7 +69,7 @@ importers:
         version: link:../openclaw-mcp-portal-plugin
       '@agent-vm/secret-management':
         specifier: workspace:*
-        version: link:../secrets
+        version: link:../secret-management
       '@agent-vm/worker-gateway':
         specifier: workspace:*
         version: link:../worker-gateway
@@ -149,13 +149,13 @@ importers:
         version: link:../gondolin-adapter
       '@agent-vm/secret-management':
         specifier: workspace:*
-        version: link:../secrets
+        version: link:../secret-management
 
   packages/gondolin-adapter:
     dependencies:
       '@agent-vm/secret-management':
         specifier: workspace:*
-        version: link:../secrets
+        version: link:../secret-management
       '@earendil-works/gondolin':
         specifier: 0.9.1
         version: 0.9.1(patch_hash=a67b9d1755400b7e8d24ae8add50026ef807c69356da29d3880cf317d853a833)
@@ -170,7 +170,7 @@ importers:
         version: link:../config-contracts
       '@agent-vm/secret-management':
         specifier: workspace:*
-        version: link:../secrets
+        version: link:../secret-management
       '@hono/mcp':
         specifier: ^0.3.0
         version: 0.3.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(hono-rate-limiter@0.5.3(hono@4.12.18))(hono@4.12.18)(zod@4.4.3)
@@ -207,7 +207,7 @@ importers:
         version: link:../gondolin-adapter
       '@agent-vm/secret-management':
         specifier: workspace:*
-        version: link:../secrets
+        version: link:../secret-management
 
   packages/openclaw-mcp-portal-plugin:
     dependencies:
