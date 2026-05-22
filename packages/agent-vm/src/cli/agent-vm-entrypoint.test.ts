@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { SecretRef } from '@agent-vm/secrets';
+import type { SecretRef } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
 

@@ -19,7 +19,7 @@ import {
 	resolveServiceAccountToken,
 	type SecretResolver,
 	type TokenSource,
-} from '@agent-vm/secrets';
+} from '@agent-vm/secret-management';
 import { serve } from '@hono/node-server';
 
 import { resolveSecretValue } from '../bin/secret-value-resolver.js';

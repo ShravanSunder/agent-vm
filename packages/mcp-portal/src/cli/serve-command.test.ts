@@ -3,7 +3,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { SecretResolver } from '@agent-vm/secrets';
+import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { deriveAgentBearerToken } from '../portal-auth/agent-bearer-token.js';

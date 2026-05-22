@@ -2,7 +2,7 @@ import {
 	createCompositeSecretResolver,
 	resolveServiceAccountToken,
 	type SecretResolver,
-} from '@agent-vm/secrets';
+} from '@agent-vm/secret-management';
 
 import type { SystemConfig } from '../config/system-config.js';
 

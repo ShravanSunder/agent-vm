@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 
-import type { SecretRef, SecretResolver } from '@agent-vm/secrets';
+import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 import type { SystemConfig } from '../config/system-config.js';
 import {

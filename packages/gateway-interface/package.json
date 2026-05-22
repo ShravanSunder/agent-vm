@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/gateway-interface",
-	"version": "0.0.70",
+	"version": "0.0.71",
 	"description": "Shared TypeScript interfaces for VM gateway lifecycles, VmSpec, and ProcessSpec.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -35,7 +35,7 @@
 	},
 	"dependencies": {
 		"@agent-vm/gondolin-adapter": "workspace:*",
-		"@agent-vm/secrets": "workspace:*",
+		"@agent-vm/secret-management": "workspace:*",
 		"uuid": "^11.1.1"
 	}
 }

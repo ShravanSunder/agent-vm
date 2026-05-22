@@ -1,5 +1,5 @@
 import type { SecretValue } from '@agent-vm/config-contracts';
-import type { SecretRef, SecretResolver } from '@agent-vm/secrets';
+import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 export interface ResolveSecretValueProps {
 	readonly env: Readonly<Record<string, string | undefined>>;

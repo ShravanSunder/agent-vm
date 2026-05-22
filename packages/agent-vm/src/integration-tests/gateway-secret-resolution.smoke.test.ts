@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import type { GatewayLifecycle } from '@agent-vm/gateway-interface';
 import type { BuildConfig, ManagedVm, ManagedVmInstance } from '@agent-vm/gondolin-adapter';
-import type { SecretRef, SecretResolver } from '@agent-vm/secrets';
+import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';

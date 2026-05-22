@@ -1,4 +1,4 @@
-import type { MediatedSecretSpec, SecretResolver } from '@agent-vm/secrets';
+import type { MediatedSecretSpec, SecretResolver } from '@agent-vm/secret-management';
 
 import type { EgressHostConfig, VmAudience } from './audience.js';
 import type { GatewayProcessSpec } from './gateway-process-spec.js';

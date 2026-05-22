@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from
 import os from 'node:os';
 import path from 'node:path';
 
-import type { SecretResolver } from '@agent-vm/secrets';
+import type { SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SystemConfig } from '../../config/system-config.js';

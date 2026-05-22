@@ -27,7 +27,7 @@ The portal loads two files from `--config-dir`:
 - `mcp.config.jsonc`: upstream MCP provider catalog and credentials.
 - `mcp-portal.config.jsonc`: agents, profiles, policy, and optional external proxy auth.
 
-External `serve` resolves `source: "1password"` refs through `@agent-vm/secrets`.
+External `serve` resolves `source: "1password"` refs through `@agent-vm/secret-management`.
 Use `AGENT_VM_MCP_PORTAL_OP_TOKEN_SOURCE=env`, `op-cli`, or `keychain` plus the
 matching source-specific env settings when the proxy host needs 1Password
 access. If no token source is configured, env-only configs still work. The

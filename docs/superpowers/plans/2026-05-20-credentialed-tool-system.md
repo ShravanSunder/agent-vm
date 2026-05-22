@@ -38,7 +38,7 @@ Those plans were useful inputs, but they split the problem incorrectly. The targ
 1. Credential maintainer path: operator/controller only. It can initialize OAuth flows, write keyrings, and mutate encrypted credential state.
 2. Agent execution path: agent-callable through typed tools only. It validates known tool names and typed args, builds argv itself, executes in a controlled backend, and returns stdout/artifacts through the controller.
 
-The plan is stacked on the MCP Portal managed-mode direction. If the MCP Portal branch that extracts `@agent-vm/secrets` and managed effective config has not landed when this plan is executed, stop before implementation and land that substrate first. Do not re-create the old subprocess-per-agent MCP Portal model in this plan.
+The plan is stacked on the MCP Portal managed-mode direction. If the MCP Portal branch that extracts `@agent-vm/secret-management` and managed effective config has not landed when this plan is executed, stop before implementation and land that substrate first. Do not re-create the old subprocess-per-agent MCP Portal model in this plan.
 
 ## Why This Shape
 

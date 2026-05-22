@@ -1,5 +1,5 @@
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
-import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secrets';
+import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { runTaskWithResult } from '../shared/run-task.js';

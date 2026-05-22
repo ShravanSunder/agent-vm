@@ -1,4 +1,4 @@
-import type { SecretRef } from '@agent-vm/secrets';
+import type { SecretRef } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';

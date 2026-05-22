@@ -11,7 +11,7 @@ import {
 	type SecretResolver,
 } from './index.js';
 
-describe('@agent-vm/secrets package exports', () => {
+describe('@agent-vm/secret-management package exports', () => {
 	test('owns shared secret contracts and resolver factories', () => {
 		const secretRef = {
 			ref: 'TEST_SECRET',

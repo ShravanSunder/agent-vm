@@ -12,12 +12,12 @@ delivers secrets to Gondolin VMs and host-side controller operations.
 Two discriminated unions drive the entire pipeline:
 
 ```
-SecretRef (@agent-vm/secrets)
+SecretRef (@agent-vm/secret-management)
   | { source: '1password'; ref: string }     -- op:// URI
   | { source: 'environment'; ref: string }    -- process.env key
   | { source: 'config'; value: string }       -- inline config value
 
-MediatedSecretSpec (@agent-vm/secrets)
+MediatedSecretSpec (@agent-vm/secret-management)
   { hosts: readonly string[]; value: string } -- resolved value bound to hosts
 ```
 
@@ -47,7 +47,7 @@ fails, the entire resolver falls back to op-cli for all operations.
 ## Token Source Resolution
 
 Before any 1Password secret can be resolved, the system needs a service account
-token. `resolveServiceAccountToken` (`@agent-vm/secrets`) supports three
+token. `resolveServiceAccountToken` (`@agent-vm/secret-management`) supports three
 sources, selected by `host.secretsProvider.tokenSource` in the system config:
 
 ```
@@ -70,7 +70,7 @@ argument injection and is gated to `process.platform === 'darwin'`.
 
 ## Composite Secret Resolver
 
-`createCompositeSecretResolver` (`@agent-vm/secrets`) is the single entry point
+`createCompositeSecretResolver` (`@agent-vm/secret-management`) is the single entry point
 for all secret resolution. It wraps an optional 1Password resolver and
 dispatches based on the `source` discriminant:
 
