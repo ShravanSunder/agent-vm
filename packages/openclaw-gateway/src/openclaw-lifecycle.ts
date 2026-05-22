@@ -592,7 +592,12 @@ export const openclawLifecycle: GatewayLifecycle = {
 	): GatewayProcessSpec {
 		return {
 			bootstrapCommand: buildOpenClawBootstrapCommand(zone, resolvedSecrets),
-			startCommand: `set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && cd /home/openclaw && nohup openclaw gateway --port 18789 > ${openClawGatewayBootLogFileVmPath} 2>&1 &`,
+			// printf NODE_OPTIONS into the boot log so an env-loss regression
+			// (e.g. a future secrets.env or merge change that drops the
+			// FORCE_IPV4_EGRESS_NODE_OPTIONS flags) is visible in the log
+			// stream without SSHing into the VM.  See
+			// FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
+			startCommand: `set -a && . ${openClawRuntimeSecretsEnvFilePath} && set +a && { printf 'gateway-boot: NODE_OPTIONS=%s\\n' "$NODE_OPTIONS" > ${openClawGatewayBootLogFileVmPath}; } && cd /home/openclaw && nohup openclaw gateway --port 18789 >> ${openClawGatewayBootLogFileVmPath} 2>&1 &`,
 			healthCheck: {
 				type: 'http',
 				port: 18789,
