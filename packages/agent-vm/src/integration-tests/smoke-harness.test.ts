@@ -572,6 +572,7 @@ function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemCo
 					port: 18789,
 					stateDir: path.join(projectRoot, 'state'),
 					zoneFilesDir: path.join(projectRoot, 'zone-files'),
+					controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 				},
 				id: 'smoke',
 				secrets: {

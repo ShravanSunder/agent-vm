@@ -52,6 +52,7 @@ const systemConfig = {
 				port: 18791,
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
+				controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 			},
 			id: 'shravan',
 			secrets: {
@@ -120,7 +121,7 @@ function createControllerClientStub(
 }
 
 describe('runSshCommand', () => {
-	it('spawns a secret-loaded interactive ssh session by default', async () => {
+	it('spawns a gateway-token-loaded interactive ssh session by default', async () => {
 		const enableZoneSsh = vi.fn(async () => ({
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',
@@ -147,7 +148,7 @@ describe('runSshCommand', () => {
 		});
 
 		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
-			secretEnv: 'with-secrets',
+			secretEnv: 'gateway-token',
 		});
 		expect(runInteractiveProcess).toHaveBeenCalledWith('ssh', [
 			'-t',
@@ -160,11 +161,49 @@ describe('runSshCommand', () => {
 			'-p',
 			'2222',
 			'root@127.0.0.1',
-			expect.stringContaining('/run/openclaw/secrets.env'),
+			expect.stringContaining('/run/openclaw/gateway-token.env'),
 		]);
+		const sshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
+		const shellCommand = sshArguments?.at(-1);
+		expect(shellCommand).not.toEqual(expect.stringContaining('/run/openclaw/secrets.env'));
 	});
 
-	it('fails closed when the controller cannot enable ssh secrets', async () => {
+	it('spawns an all-secrets interactive ssh session when explicitly requested', async () => {
+		const enableZoneSsh = vi.fn(async () => ({
+			host: '127.0.0.1',
+			identityFile: '/tmp/key',
+			port: 2222,
+			secretEnvEnabled: true,
+			user: 'root',
+		}));
+		const runInteractiveProcess = vi.fn(
+			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
+		);
+
+		await runSshCommand({
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: () => createControllerClientStub(enableZoneSsh),
+				runInteractiveProcess,
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			restArguments: ['--zone', 'shravan', '--all-secrets'],
+			systemConfig,
+		});
+
+		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
+			secretEnv: 'all-secrets',
+		});
+		const sshArguments = vi.mocked(runInteractiveProcess).mock.calls[0]?.[1];
+		const shellCommand = sshArguments?.at(-1);
+		expect(shellCommand).toEqual(expect.stringContaining('/run/openclaw/secrets.env'));
+		expect(shellCommand).not.toEqual(expect.stringContaining('/run/openclaw/gateway-token.env'));
+	});
+
+	it('fails closed when the controller cannot enable the ssh gateway token', async () => {
 		const enableZoneSsh = vi.fn(async () => ({
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',
@@ -191,10 +230,10 @@ describe('runSshCommand', () => {
 				systemConfig,
 			}),
 		).rejects.toThrow(
-			'Controller did not enable gateway secrets for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured zone secrets.',
+			'Controller did not enable the gateway token for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured gateway.controllerAuth.secret.',
 		);
 		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
-			secretEnv: 'with-secrets',
+			secretEnv: 'gateway-token',
 		});
 		expect(runInteractiveProcess).not.toHaveBeenCalled();
 	});
@@ -251,7 +290,7 @@ describe('runSshCommand', () => {
 		expect(runInteractiveProcess).not.toHaveBeenCalled();
 	});
 
-	it('resolves zone admin access and requests a secret-backed ssh session', async () => {
+	it('resolves zone admin access and requests a gateway-token-backed ssh session', async () => {
 		const enableZoneSsh = vi.fn(async () => ({
 			host: '127.0.0.1',
 			identityFile: '/tmp/key',
@@ -285,7 +324,7 @@ describe('runSshCommand', () => {
 
 		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
 			adminToken: 'resolved-admin-token',
-			secretEnv: 'with-secrets',
+			secretEnv: 'gateway-token',
 		});
 		const sshInvocation = vi.mocked(runInteractiveProcess).mock.calls.at(0);
 		if (!sshInvocation) {
@@ -296,7 +335,8 @@ describe('runSshCommand', () => {
 		if (typeof shellCommand !== 'string') {
 			throw new Error('Expected SSH shell command to be present.');
 		}
-		expect(shellCommand).toContain('/run/openclaw/secrets.env');
+		expect(shellCommand).toContain('/run/openclaw/gateway-token.env');
+		expect(shellCommand).not.toContain('/run/openclaw/secrets.env');
 		expect(shellCommand).not.toContain('resolved-admin-token');
 	});
 

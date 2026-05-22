@@ -171,6 +171,7 @@ function createTestSystemConfig(): LoadedSystemConfig {
 						port: 18791,
 						stateDir: '/state/test',
 						zoneFilesDir: '/zone-files/test',
+						controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 					},
 					id: 'test-zone',
 					secrets: {

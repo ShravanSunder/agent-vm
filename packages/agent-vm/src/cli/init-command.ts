@@ -404,6 +404,7 @@ const defaultSystemConfig = (
 				...(gatewayType === 'openclaw'
 					? {
 							zoneFilesDir: pathProfile.gatewayZoneFilesDir(zoneId),
+							controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 							authProfilesByAgent: {},
 							rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN'],
 						}

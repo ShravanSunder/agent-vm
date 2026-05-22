@@ -52,6 +52,7 @@ const systemConfig = {
 				config: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
+				controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 				authProfilesByAgent: {
 					shravan: { source: 'environment', envVar: 'SHRAVAN_AUTH_PROFILES' },
 				},

@@ -1228,6 +1228,9 @@ describe('scaffoldAgentVmProject', () => {
 			},
 		});
 		expect(config.zones[0].gateway.ssh).toEqual({ secretEnv: 'explicit' });
+		expect(config.zones[0].gateway.controllerAuth).toEqual({
+			secret: 'OPENCLAW_GATEWAY_TOKEN',
+		});
 		expect(config.zones[0].gateway.rawEnvSecrets).toEqual(['AGENT_VM_ZONE_GIT_TOKEN']);
 	});
 

@@ -147,6 +147,7 @@ function createOpenClawSystemConfig(
 						port: 18791,
 						stateDir: './state/shravan',
 						zoneFilesDir: './zone-files/shravan',
+						controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 					},
 					id: 'shravan',
 					...(options.includeMcpPortal === true
@@ -274,6 +275,7 @@ function createManagedBaseOpenClawSystemConfig(
 						port: 18791,
 						stateDir: './state/shravan',
 						zoneFilesDir: './zone-files/shravan',
+						controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 					},
 					id: 'shravan',
 					...(options.includeMcpPortal === true

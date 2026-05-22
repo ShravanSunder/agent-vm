@@ -55,6 +55,10 @@ export interface GatewaySshConfig {
 	readonly secretEnv: GatewaySshSecretEnvMode;
 }
 
+export interface GatewayControllerAuthConfig {
+	readonly secret: string;
+}
+
 interface GatewayZoneBaseGatewayConfig {
 	readonly type: GatewayType;
 	readonly memory: string;
@@ -73,6 +77,7 @@ interface GatewayZoneBaseGatewayConfig {
 interface OpenClawGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
 	readonly type: 'openclaw';
 	readonly zoneFilesDir: string;
+	readonly controllerAuth: GatewayControllerAuthConfig;
 	readonly authProfilesByAgent?: Readonly<
 		Record<
 			string,

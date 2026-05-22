@@ -97,6 +97,7 @@ async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 						port: 18791,
 						stateDir,
 						zoneFilesDir,
+						controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 					},
 					id: 'shravan',
 					secrets: {

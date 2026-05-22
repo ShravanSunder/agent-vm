@@ -508,7 +508,7 @@ async function collectMcpPortalConfigChecks(
 	try {
 		const allowedRawEnvSecretNames =
 			zone.gateway.type === 'openclaw'
-				? ['OPENCLAW_GATEWAY_TOKEN', ...(zone.gateway.rawEnvSecrets ?? [])]
+				? [zone.gateway.controllerAuth.secret, ...(zone.gateway.rawEnvSecrets ?? [])]
 				: [];
 		await planMcpPortalEffectiveConfig({
 			authoredConfigDir: configDir,

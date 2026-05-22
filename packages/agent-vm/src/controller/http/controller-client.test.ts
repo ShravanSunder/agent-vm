@@ -45,7 +45,11 @@ describe('createControllerClient', () => {
 		await controllerClient.refreshZoneCredentials('shravan');
 		await controllerClient.enableZoneSsh('shravan', {
 			adminToken: 'admin-token',
-			secretEnv: 'with-secrets',
+			secretEnv: 'gateway-token',
+		});
+		await controllerClient.enableZoneSsh('shravan', {
+			adminToken: 'admin-token',
+			secretEnv: 'all-secrets',
 		});
 		await controllerClient.destroyZone('shravan', true);
 		await controllerClient.upgradeZone('shravan');
@@ -61,7 +65,12 @@ describe('createControllerClient', () => {
 			},
 			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/credentials/refresh' },
 			{
-				body: JSON.stringify({ adminToken: 'admin-token', secretEnv: 'with-secrets' }),
+				body: JSON.stringify({ adminToken: 'admin-token', secretEnv: 'gateway-token' }),
+				method: 'POST',
+				url: 'http://127.0.0.1:18800/zones/shravan/enable-ssh',
+			},
+			{
+				body: JSON.stringify({ adminToken: 'admin-token', secretEnv: 'all-secrets' }),
 				method: 'POST',
 				url: 'http://127.0.0.1:18800/zones/shravan/enable-ssh',
 			},
