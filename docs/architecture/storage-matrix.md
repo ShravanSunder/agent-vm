@@ -42,6 +42,18 @@ repair/download caches                  rebuildable
 OpenClaw zone files                     long-lived household
                                        user/agent files
 
+/agent-vm/logs                          RealFS runtimeDir      no
+gateway-boot-latest.log,                zone-lifetime, wiped by
+openclaw-YYYY-MM-DD.log                 destroy-zone --purge
+
+/agent-vm/zone-git                      RealFS runtimeDir      no, but PRESERVED
+zone-files.git (when zoneGit            authoritative store for
+configured)                             committed-but-unpushed
+                                       zone work; referenced by
+                                       backed-up zoneFilesDir/.git
+                                       pointer. See storage-model
+                                       "runtimeDir is two lifecycles".
+
 /work/tmp                               rootfs/COW             no
 large temp, TMPDIR target               disposable disk
 
