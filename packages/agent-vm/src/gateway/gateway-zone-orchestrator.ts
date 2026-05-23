@@ -226,37 +226,30 @@ export async function startGatewayZone(
 
 	// Phase A: collect host-side prerequisites in parallel.
 	//
-	// cleanup, assertions, and buildImage operate on disjoint paths (stateDir
-	// runtime record, zone.gateway.config file, cacheDir/gateway-images) and
-	// have no shared in-process state, so they run concurrently.
+	// All five branches operate on disjoint paths and have no shared in-process
+	// state:
+	//   - mcpPortalMaterialization writes $cacheDir/gateways/$zoneId/mcp-portal-effective/
+	//   - cleanup reads/deletes $stateDir/gateway-runtime.json (and may signal a
+	//     foreign QEMU PID after five fence checks; that orphan has no relation
+	//     to this controller's processes)
+	//   - assertions reads $zone.gateway.config (pure validation)
+	//   - resolveZoneSecrets reads zone.secrets (no IO beyond secretResolver)
+	//   - buildGatewayImage operates on $cacheDir/gateway-images/$profile
 	//
-	// mcpPortalMat and resolveZoneSecrets both call secretResolver.resolveAll
-	// with different ref sets. The 1Password resolver's op-CLI fallback
-	// serializes `op read` internally with the comment "Sequential resolution
-	// avoids concurrent `op read` failures with the same service account
-	// token." Running the two resolveAll calls in parallel would defeat that
-	// within-call serialization if both fall back to the op-CLI path. So we
-	// chain them: mcpPortalMat → resolveSecrets, as one parallel branch
-	// alongside cleanup, assertions, and buildImage.
-	const portalAndSecretsPromise = (async () => {
-		const mcp = await buildRuntimeMcpPortalMaterialization({
-			cacheDir: options.systemConfig.cacheDir,
-			secretResolver: options.secretResolver,
-			zone,
-		});
-		const secrets = await runTaskWithResult(
-			runTaskStep,
-			'Resolving zone secrets',
-			async () =>
-				await resolveZoneSecrets({
-					audience: 'gateway',
-					systemConfig: options.systemConfig,
-					zoneId: zone.id,
-					secretResolver: options.secretResolver,
-				}),
-		);
-		return { mcp, secrets } as const;
-	})();
+	// mcpPortalMaterialization and resolveZoneSecrets both call
+	// secretResolver.resolveAll concurrently with disjoint ref sets. The
+	// @1password/sdk JS client is documented in its source to be concurrency-
+	// safe on a single Client instance (SharedCore WASM module handles
+	// concurrent invocations). The op-CLI fallback layer is intentionally
+	// two-tier only — SDK → op inject — with no further serial `op read`
+	// tier; see packages/secret-management/src/onepassword-secret-resolver.ts
+	// for the rationale (the previous third tier reintroduced a documented
+	// concurrent `op read` hazard at the outer-call layer).
+	const mcpPortalMaterializationPromise = buildRuntimeMcpPortalMaterialization({
+		cacheDir: options.systemConfig.cacheDir,
+		secretResolver: options.secretResolver,
+		zone,
+	});
 	const cleanupPromise = runTaskStep('Cleaning orphaned gateway runtime', async () => {
 		await (dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent)({
 			legacyRecordDefaults: {
@@ -275,6 +268,17 @@ export async function startGatewayZone(
 					await assertOpenClawToolVmRequirements(options.systemConfig, zone.id);
 				})
 			: Promise.resolve();
+	const resolvedSecretsPromise = runTaskWithResult(
+		runTaskStep,
+		'Resolving zone secrets',
+		async () =>
+			await resolveZoneSecrets({
+				audience: 'gateway',
+				systemConfig: options.systemConfig,
+				zoneId: zone.id,
+				secretResolver: options.secretResolver,
+			}),
+	);
 	const imagePromise = runTaskWithResult(runTaskStep, 'Building gateway image', async () => {
 		const gatewayImageProfile = selectGatewayImageProfile({
 			systemConfig: options.systemConfig,
@@ -295,8 +299,13 @@ export async function startGatewayZone(
 			},
 		);
 	});
-	const [{ mcp: mcpPortalMaterialization, secrets: resolvedSecrets }, , , image] =
-		await Promise.all([portalAndSecretsPromise, cleanupPromise, assertionsPromise, imagePromise]);
+	const [mcpPortalMaterialization, , , resolvedSecrets, image] = await Promise.all([
+		mcpPortalMaterializationPromise,
+		cleanupPromise,
+		assertionsPromise,
+		resolvedSecretsPromise,
+		imagePromise,
+	]);
 	const lifecycleZone = {
 		...mappedLifecycleZone,
 		...mcpPortalMaterialization,

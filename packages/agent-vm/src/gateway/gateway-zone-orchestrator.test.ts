@@ -413,17 +413,16 @@ describe('startGatewayZone', () => {
 		expect(enableIngressMock).toHaveBeenCalledWith({
 			listenPort: 18791,
 		});
-		// Phase A runs cleanup, validation, image build, and the
-		// mcpPortalMaterialization → resolveZoneSecrets chain in parallel via
-		// Promise.all. Argument order determines synchronous title-push order;
-		// 'Resolving zone secrets' pushes only after mcpPortalMaterialization
-		// resolves, so it lands after 'Building gateway image' despite being
-		// declared earlier in the source.
+		// Phase A runs five branches in parallel via Promise.all. Argument
+		// order determines synchronous title-push order; all four titled
+		// branches push synchronously at array-eval time, in declaration
+		// order: cleanup, assertions, resolveSecrets, image. (The
+		// mcpPortalMaterialization branch does not push a title.)
 		expect(taskTitles).toEqual([
 			'Cleaning orphaned gateway runtime',
 			'Validating OpenClaw Tool VM requirements',
-			'Building gateway image',
 			'Resolving zone secrets',
+			'Building gateway image',
 			'Preparing host state',
 			'Booting gateway VM',
 			'Configuring gateway',
