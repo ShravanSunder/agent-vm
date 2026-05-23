@@ -490,6 +490,112 @@ describe('createControllerApp', () => {
 		expect(createLease).not.toHaveBeenCalled();
 	});
 
+	it('rejects OpenClaw sandbox contract mismatches before creating a lease', async () => {
+		const createLease = vi.fn(async () => createLeaseStub('lease-123', 0));
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease,
+				renewLease: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const workspaceAccessResponse = await app.request('/lease', {
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					sandbox: {
+						backend: 'gondolin',
+						mode: 'all',
+						scope: 'agent',
+						workspaceAccess: 'ro',
+					},
+				}),
+			),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+		const scopeResponse = await app.request('/lease', {
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					sandbox: {
+						backend: 'gondolin',
+						mode: 'all',
+						scope: 'session',
+						workspaceAccess: 'rw',
+					},
+				}),
+			),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(workspaceAccessResponse.status).toBe(400);
+		await expect(workspaceAccessResponse.json()).resolves.toMatchObject({
+			error: 'invalid-tool-vm-sandbox-contract',
+			message: 'Invalid OpenClaw sandbox contract: workspaceAccess must be rw, received ro.',
+		});
+		expect(scopeResponse.status).toBe(400);
+		await expect(scopeResponse.json()).resolves.toMatchObject({
+			error: 'invalid-tool-vm-sandbox-contract',
+			message: 'Invalid OpenClaw sandbox contract: scope must be agent, received session.',
+		});
+		expect(createLease).not.toHaveBeenCalled();
+	});
+
+	it('rejects mismatched lease agent and session identity before creating a lease', async () => {
+		const createLease = vi.fn(async () => createLeaseStub('lease-123', 0));
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease,
+				renewLease: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const response = await app.request('/lease', {
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					agentId: 'beta',
+					scopeKey: 'agent:beta',
+					sessionKey: 'agent:main:session-abc',
+				}),
+			),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toMatchObject({
+			error: 'tool-vm-lease-agent-mismatch',
+			message: "Lease agentId 'beta' does not match sessionKey agent 'main'.",
+		});
+		expect(createLease).not.toHaveBeenCalled();
+	});
+
 	it('rejects Tool VM leases until the OpenClaw plugin reports fresh runtime status', async () => {
 		let nowMs = 1_000;
 		const runtimeStatusStore = new OpenClawRuntimeStatusStore({

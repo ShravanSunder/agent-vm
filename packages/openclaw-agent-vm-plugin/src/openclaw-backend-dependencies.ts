@@ -5,6 +5,8 @@ import type {
 	OpenClawSandboxFsBridge,
 } from './sandbox-backend-factory.js';
 
+const OPENCLAW_SSH_SESSION_SCRATCH_ROOT = '/work';
+
 export function createBackendDeps(ssh: SshHelpers): {
 	readonly buildExecSpec: CreateBackendDependencies['buildExecSpec'];
 	readonly createFsBridgeBuilder: (
@@ -20,7 +22,7 @@ export function createBackendDeps(ssh: SshHelpers): {
 				strictHostKeyChecking: false,
 				target: `${sshCreds.user}@${sshCreds.host}:${sshCreds.port}`,
 				updateHostKeys: false,
-				workspaceRoot: workdir,
+				workspaceRoot: OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
 			});
 			const disposeSshSandboxSession = ssh.disposeSshSandboxSession;
 			return {
@@ -63,7 +65,7 @@ export function createBackendDeps(ssh: SshHelpers): {
 				strictHostKeyChecking: false,
 				target: `${sshCreds.user}@${sshCreds.host}:${sshCreds.port}`,
 				updateHostKeys: false,
-				workspaceRoot: '/work',
+				workspaceRoot: OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
 			});
 			return await ssh.runSshSandboxCommand({
 				...(allowFailure !== undefined ? { allowFailure } : {}),

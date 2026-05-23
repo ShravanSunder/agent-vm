@@ -370,6 +370,29 @@ describe('createLeaseClient', () => {
 		} satisfies Partial<ControllerLeaseRequestError>);
 	});
 
+	it('includes structured controller message and guidance in thrown lease request errors', async () => {
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async () =>
+				new Response(
+					JSON.stringify({
+						error: 'invalid-tool-vm-sandbox-contract',
+						message: 'Invalid OpenClaw sandbox contract: scope must be agent, received session.',
+						guidance:
+							'Managed OpenClaw/Gondolin requires backend="gondolin", mode="all", scope="agent", and workspaceAccess="rw".',
+					}),
+					{
+						headers: { 'content-type': 'application/json' },
+						status: 400,
+					},
+				),
+		});
+
+		await expect(leaseClient.requestLease(createLeaseRequest())).rejects.toThrow(
+			/Invalid OpenClaw sandbox contract: scope must be agent, received session\..*Guidance: Managed OpenClaw\/Gondolin requires backend="gondolin"/u,
+		);
+	});
+
 	it('distinguishes controller server failures from bad lease requests', async () => {
 		const leaseClient = createLeaseClient({
 			controllerUrl: 'http://controller.vm.host:18800',

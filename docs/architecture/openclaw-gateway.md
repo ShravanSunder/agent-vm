@@ -32,7 +32,7 @@ OpenClaw runs a persistent gateway VM that hosts an interactive chat agent. Tool
   |  | long-running    |  | ephemeral     |  | ephemeral     |     |
   |  | OpenClaw :18789 |  | no secrets    |  | no secrets    |     |
   |  | 4 VFS mounts    |  | no network    |  | no network    |     |
-  |  | TCP to all tools|  | /work         |  | /work         |     |
+  |  | TCP to all tools|  | /workspace    |  | /workspace    |     |
   |  +-----------------+  +---------------+  +---------------+      |
   |                        tool-0.vm.host:22  tool-1.vm.host:22     |
   +----------------------------------------------------------------+
@@ -208,7 +208,7 @@ the gateway and durable `/zone` namespace shared.
 
 Before the first Tool VM boot for an agent-scoped sandbox work mount, the
 controller can seed configured files such as `.config/gcloud/...` into that
-sandbox's `/work` backing directory. Seeds are first-boot only and do not
+sandbox's `/workspace` backing directory. Seeds are first-boot only and do not
 overwrite files that already exist.
 
 The controller reports reuse conflicts as `LeaseScopeConflictError`, surfaced

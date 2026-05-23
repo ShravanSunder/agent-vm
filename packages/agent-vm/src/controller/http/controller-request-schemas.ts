@@ -3,16 +3,32 @@ import { z } from 'zod';
 
 import { workerTaskControllerRequestSchema } from '../../config/resource-contracts/index.js';
 
+function isAbsolutePosixPath(value: string): boolean {
+	return value.startsWith('/');
+}
+
+function pathContainsParentTraversal(value: string): boolean {
+	return value.split('/').includes('..');
+}
+
+const controllerLeaseAgentWorkspacePathSchema = z
+	.string()
+	.min(1)
+	.refine(isAbsolutePosixPath, { message: 'path must be absolute.' })
+	.refine((value) => !pathContainsParentTraversal(value), {
+		message: 'path must not contain parent traversal.',
+	});
+
 export const controllerLeaseCreateRequestSchema = z.strictObject({
 	agentId: z.string().min(1),
-	agentWorkspaceDir: z.string().min(1),
+	agentWorkspaceDir: controllerLeaseAgentWorkspacePathSchema,
 	idleTtlMs: z.number().int().positive().optional(),
 	profileId: z.string().min(1),
 	sandbox: z.strictObject({
-		backend: z.unknown(),
-		mode: z.unknown(),
-		scope: z.unknown(),
-		workspaceAccess: z.unknown(),
+		backend: z.string(),
+		mode: z.string(),
+		scope: z.string(),
+		workspaceAccess: z.string(),
 	}),
 	scopeKey: z.string().min(1),
 	sessionKey: z.string().min(1),

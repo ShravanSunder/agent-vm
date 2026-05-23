@@ -265,6 +265,7 @@ describe('createBackendDeps', () => {
 				target: 'sandbox@tool-0.vm.host:22',
 				identityData: 'pem',
 				strictHostKeyChecking: false,
+				workspaceRoot: '/work',
 			}),
 		);
 		expect(ssh.buildExecRemoteCommand).toHaveBeenCalledWith({

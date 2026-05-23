@@ -1,6 +1,16 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import {
+	effectiveOpenClawGondolinSandboxValue,
+	formatOpenClawGondolinRequirementFieldPath,
+	formatOpenClawGondolinRequirementFindingId,
+	formatOpenClawGondolinRequirementHint,
+	OPENCLAW_GONDOLIN_SANDBOX_REQUIREMENTS,
+	type OpenClawGondolinSandboxRequirement,
+	type OpenClawGondolinSandboxRequirementKey,
+} from '@agent-vm/openclaw-agent-vm-plugin';
+
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import {
 	isRuntimeConfigReference,
@@ -161,9 +171,9 @@ function readAgentConfigEntries(config: OpenClawDeploymentConfig): readonly {
 function effectiveSandboxValue(
 	defaults: OpenClawAgentConfig,
 	agentConfig: OpenClawAgentConfig,
-	key: 'backend' | 'mode' | 'scope' | 'workspaceAccess',
+	key: OpenClawGondolinSandboxRequirementKey,
 ): unknown {
-	return agentConfig.sandbox?.[key] ?? defaults.sandbox?.[key];
+	return effectiveOpenClawGondolinSandboxValue(defaults, agentConfig, key);
 }
 
 function readSandboxToolPolicy(
@@ -277,18 +287,27 @@ function effectiveWorkspace(
 
 function requirementFinding(options: {
 	readonly actualValue: unknown;
-	readonly expectedValue: string;
-	readonly fieldPath: string;
 	readonly label: string;
+	readonly requirement: OpenClawGondolinSandboxRequirement;
 	readonly zoneId: string;
 }): OpenClawDeploymentRequirementFinding {
-	const ok = options.actualValue === options.expectedValue;
+	const fieldPath = formatOpenClawGondolinRequirementFieldPath(
+		options.label,
+		options.requirement.key,
+	);
+	const ok = options.actualValue === options.requirement.expectedValue;
 	return {
-		id: `openclaw-tool-vm-${options.fieldPath.replace(/[.[\]]/gu, '-')}-${options.zoneId}-${options.label}`,
+		id: formatOpenClawGondolinRequirementFindingId({
+			fieldPath,
+			label: options.label,
+			zoneId: options.zoneId,
+		}),
 		ok,
-		hint: ok
-			? `${options.fieldPath}=${options.expectedValue}`
-			: `Set ${options.fieldPath} to "${options.expectedValue}" for OpenClaw Tool VM mediation.`,
+		hint: formatOpenClawGondolinRequirementHint({
+			expectedValue: options.requirement.expectedValue,
+			fieldPath,
+			ok,
+		}),
 	};
 }
 
@@ -321,46 +340,25 @@ export function evaluateOpenClawDeploymentRequirements(
 		buildSandboxPluginToolPolicyFinding(target),
 		...readAgentConfigEntries(target.config).flatMap(({ config, label }) => {
 			const workspace = effectiveWorkspace(defaults, config);
-			return [
+			const sandboxRequirementFindings = OPENCLAW_GONDOLIN_SANDBOX_REQUIREMENTS.map((requirement) =>
 				requirementFinding({
-					actualValue: effectiveSandboxValue(defaults, config, 'backend'),
-					expectedValue: 'gondolin',
-					fieldPath: `agents.${label}.sandbox.backend`,
+					actualValue: effectiveSandboxValue(defaults, config, requirement.key),
+					requirement,
 					label,
 					zoneId: target.zoneId,
 				}),
-				requirementFinding({
-					actualValue: effectiveSandboxValue(defaults, config, 'mode'),
-					expectedValue: 'all',
-					fieldPath: `agents.${label}.sandbox.mode`,
-					label,
-					zoneId: target.zoneId,
-				}),
-				requirementFinding({
-					actualValue: effectiveSandboxValue(defaults, config, 'scope'),
-					expectedValue: 'agent',
-					fieldPath: `agents.${label}.sandbox.scope`,
-					label,
-					zoneId: target.zoneId,
-				}),
-				requirementFinding({
-					actualValue: effectiveSandboxValue(defaults, config, 'workspaceAccess'),
-					expectedValue: 'rw',
-					fieldPath: `agents.${label}.sandbox.workspaceAccess`,
-					label,
-					zoneId: target.zoneId,
-				}),
-				{
-					id: `openclaw-tool-vm-workspace-${target.zoneId}-${label}`,
-					ok: workspace !== '/zone',
-					hint:
-						workspace === '/zone'
-							? 'Use /zone/agents/default or per-agent workspaces; keep /zone for shared zone files.'
-							: typeof workspace === 'string'
-								? workspace
-								: 'agents workspace is unset',
-				},
-			] as const satisfies readonly OpenClawDeploymentRequirementFinding[];
+			);
+			const workspaceFinding = {
+				id: `openclaw-tool-vm-workspace-${target.zoneId}-${label}`,
+				ok: workspace !== '/zone',
+				hint:
+					workspace === '/zone'
+						? 'Use /zone/agents/default or per-agent workspaces; keep /zone for shared zone files.'
+						: typeof workspace === 'string'
+							? workspace
+							: 'agents workspace is unset',
+			} satisfies OpenClawDeploymentRequirementFinding;
+			return sandboxRequirementFindings.concat(workspaceFinding);
 		}),
 	];
 }

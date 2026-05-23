@@ -134,6 +134,78 @@ function gondolinSandboxConfig(
 }
 
 describe('createGondolinSandboxBackendFactory', () => {
+	it('rejects unsupported OpenClaw sandbox config before requesting a lease', async () => {
+		const requestLease = vi.fn(async () => createLeaseResponse('lease-123'));
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		await expect(
+			factory({
+				agentWorkspaceDir: '/work',
+				cfg: gondolinSandboxConfig({ scope: 'session' }),
+				scopeKey: 'agent:main',
+				sessionKey: 'agent:main:session-abc',
+				workspaceDir: '/work',
+			}),
+		).rejects.toThrow('OpenClaw Gondolin sandbox requires scope=agent; received session.');
+		expect(requestLease).not.toHaveBeenCalled();
+	});
+
+	it('rejects scope keys that do not match the resolved OpenClaw agent before requesting a lease', async () => {
+		const requestLease = vi.fn(async () => createLeaseResponse('lease-123'));
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		await expect(
+			factory({
+				agentWorkspaceDir: '/work',
+				cfg: gondolinSandboxConfig(),
+				scopeKey: 'agent:beta',
+				sessionKey: 'agent:main:session-abc',
+				workspaceDir: '/work',
+			}),
+		).rejects.toThrow("requires scopeKey 'agent:main' for agent 'main'");
+		expect(requestLease).not.toHaveBeenCalled();
+	});
+
 	it('requests a lease and exposes an ssh-backed sandbox handle with fs bridge', async () => {
 		const requestLease = vi.fn(async () => ({
 			leaseId: 'lease-123',

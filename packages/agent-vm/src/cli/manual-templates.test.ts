@@ -191,6 +191,12 @@ describe('manual templates', () => {
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('message_tool_only');
+		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
+			'runtime-paths.md explains /workspace, /work, and other in-VM paths',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('layout.md'))?.content).toContain(
+			'OpenClaw Tool VMs mount the validated lease work mount at /workspace',
+		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'OpenClaw Tool VMs run commands in the lease workdir returned by the controller',
 		);

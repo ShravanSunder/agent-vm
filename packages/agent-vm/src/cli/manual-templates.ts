@@ -65,7 +65,7 @@ Read in this order:
 7. mcp-portal.md explains progressive MCP discovery and gateway-owned MCP auth.
 8. tool-access.md explains binary, auth, OpenClaw tool, and zone/image isolation.
 9. channels.md explains how deployments add Discord or other channels.
-10. runtime-paths.md explains /work and other in-VM paths.
+10. runtime-paths.md explains /workspace, /work, and other in-VM paths.
 11. per-agent-setup.md explains multi-agent scope and tool access choices.
 12. migration-discord.md explains how existing Discord deployments keep working.
 13. secrets.md explains runtime auth and HTTP mediation.
@@ -93,7 +93,7 @@ When OpenClaw zoneGit is enabled, runtimeDir stores Git metadata at runtimeDir/z
 
 Author JSONC for human-owned agent-vm config. Runtime files such as /state/effective-worker.json, task event JSONL, runtime records, and API bodies stay strict JSON.
 OpenClaw gateway VMs mount zoneFilesDir at /zone.
-OpenClaw Tool VMs mount the validated lease work mount at /work.
+OpenClaw Tool VMs mount the validated lease work mount at /workspace; /work remains Tool VM rootfs/COW scratch.
 OpenClaw Tool VMs with zoneGit mount zoneFilesDir at /zone and runtimeDir/zones/<zoneId>/zone-git at /agent-vm/zone-git.
 Worker task VMs keep repo files on rootfs/COW at /work/repos.
 OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work.
@@ -376,7 +376,7 @@ When gateway.zoneGit is configured:
 - Host zone files stay in gateway.zoneFilesDir.
 - Host Git metadata lives in runtimeDir/zones/<zoneId>/zone-git/zone-files.git.
 - Gateway VM zone files stay mounted at /zone.
-- Tool VMs mount /zone and /agent-vm/zone-git instead of /work.
+- Tool VMs mount /zone and /agent-vm/zone-git instead of /workspace.
 - Tool VM workdir is the requested /zone child path, such as /zone/agents/shravan.
 - Backups include current zone files and exclude runtimeDir Git metadata.
 - Backups require a clean and pushed zone Git repo.
