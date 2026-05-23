@@ -55,11 +55,17 @@ export interface GatewaySshConfig {
 	readonly secretEnv: GatewaySshSecretEnvMode;
 }
 
+export interface GatewayIngressConfig {
+	readonly upstreamHeaderTimeoutMs?: number;
+	readonly upstreamResponseTimeoutMs?: number;
+}
+
 interface GatewayZoneBaseGatewayConfig {
 	readonly type: GatewayType;
 	readonly memory: string;
 	readonly cpus: number;
 	readonly port: number;
+	readonly ingress?: GatewayIngressConfig;
 	readonly config: string;
 	readonly stateDir: string;
 	readonly runtimeRootfsSize?: string;

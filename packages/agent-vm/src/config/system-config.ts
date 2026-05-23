@@ -274,6 +274,13 @@ const zoneGatewayBaseSchema = z.object({
 	memory: z.string().min(1),
 	cpus: z.number().int().positive(),
 	port: z.number().int().positive(),
+	ingress: z
+		.object({
+			upstreamHeaderTimeoutMs: z.number().int().positive().optional(),
+			upstreamResponseTimeoutMs: z.number().int().positive().optional(),
+		})
+		.strict()
+		.optional(),
 	config: z.string().min(1),
 	stateDir: z.string().min(1),
 	runtimeRootfsSize: z.string().min(1).optional(),

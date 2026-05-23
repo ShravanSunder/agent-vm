@@ -378,9 +378,41 @@ function getWorkerSmokeZone(systemConfig: LoadedSystemConfig): WorkerSmokeProjec
 	return { ...zone, gateway: zone.gateway };
 }
 
+function packageFileEntryIsLiteral(fileEntry: string): boolean {
+	return !/[!*[\]{}]/u.test(fileEntry);
+}
+
+async function assertLocalPackageFilesExist(props: LocalNpmPackageTarball): Promise<void> {
+	const packageJsonPath = path.join(props.packageDirectory, 'package.json');
+	const packageManifest = mutableJsonRecord(await loadJsonConfigFile(packageJsonPath));
+	const files = packageManifest?.files;
+	const fileEntries = Array.isArray(files)
+		? files.filter((fileEntry): fileEntry is string => typeof fileEntry === 'string')
+		: undefined;
+	if (fileEntries === undefined) {
+		return;
+	}
+	await Promise.all(
+		fileEntries.filter(packageFileEntryIsLiteral).map(async (fileEntry) => {
+			try {
+				await fs.access(path.join(props.packageDirectory, fileEntry));
+			} catch (error) {
+				if (isJsonRecord(error) && error.code === 'ENOENT') {
+					throw new Error(
+						`${props.packageName} declares package file "${fileEntry}" but it does not exist.`,
+						{ cause: error },
+					);
+				}
+				throw error;
+			}
+		}),
+	);
+}
+
 async function packLocalPackageTarball(props: LocalNpmPackageTarball): Promise<string> {
 	const packageJsonPath = path.join(props.packageDirectory, 'package.json');
 	await fs.access(packageJsonPath);
+	await assertLocalPackageFilesExist(props);
 	const packDirectory = await fs.mkdtemp(path.join(os.tmpdir(), `${props.packageName}-pack-`));
 	try {
 		execFileSync('pnpm', ['pack', '--pack-destination', packDirectory], {
@@ -675,6 +707,10 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 		packageDirectory: path.join(options.repoRoot, 'packages', 'gondolin-adapter'),
 		packageName: 'gondolin-adapter',
 	});
+	const localGatewayInterfaceTarballPath = await packLocalPackageTarball({
+		packageDirectory: path.join(options.repoRoot, 'packages', 'gateway-interface'),
+		packageName: 'gateway-interface',
+	});
 	const localMcpPortalTarballPath = await packLocalPackageTarball({
 		packageDirectory: path.join(options.repoRoot, 'packages', 'mcp-portal'),
 		packageName: 'mcp-portal',
@@ -700,6 +736,10 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 			{
 				archiveName: localPackageTarballArchiveName('gondolin-adapter'),
 				sourcePath: localGondolinAdapterTarballPath,
+			},
+			{
+				archiveName: localPackageTarballArchiveName('gateway-interface'),
+				sourcePath: localGatewayInterfaceTarballPath,
 			},
 			{
 				archiveName: localPackageTarballArchiveName('mcp-portal'),
@@ -760,6 +800,7 @@ export async function useLocalOpenClawGatewayImagePackages(options: {
 			localConfigContractsTarballPath,
 			localSecretManagementTarballPath,
 			localGondolinAdapterTarballPath,
+			localGatewayInterfaceTarballPath,
 			localMcpPortalTarballPath,
 			localOpenClawAgentVmPluginTarballPath,
 			localOpenClawMcpPortalPluginTarballPath,
@@ -794,6 +835,10 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 		packageDirectory: path.join(options.repoRoot, 'packages', 'gondolin-adapter'),
 		packageName: 'gondolin-adapter',
 	});
+	const localGatewayInterfaceTarballPath = await packLocalPackageTarball({
+		packageDirectory: path.join(options.repoRoot, 'packages', 'gateway-interface'),
+		packageName: 'gateway-interface',
+	});
 	const localOpenClawAgentVmPluginTarballPath = await packLocalPackageTarball({
 		packageDirectory: path.join(options.repoRoot, 'packages', 'openclaw-agent-vm-plugin'),
 		packageName: 'openclaw-agent-vm-plugin',
@@ -807,6 +852,10 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 			{
 				archiveName: localPackageTarballArchiveName('gondolin-adapter'),
 				sourcePath: localGondolinAdapterTarballPath,
+			},
+			{
+				archiveName: localPackageTarballArchiveName('gateway-interface'),
+				sourcePath: localGatewayInterfaceTarballPath,
 			},
 			{
 				archiveName: localPackageTarballArchiveName('openclaw-agent-vm-plugin'),
@@ -850,6 +899,7 @@ export async function useLocalOpenClawPluginGatewayImage(options: {
 		await removeLocalPackageTarballDirectories([
 			localSecretManagementTarballPath,
 			localGondolinAdapterTarballPath,
+			localGatewayInterfaceTarballPath,
 			localOpenClawAgentVmPluginTarballPath,
 		]);
 	}

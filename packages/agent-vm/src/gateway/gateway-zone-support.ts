@@ -1,4 +1,8 @@
-import type { GatewayProcessSpec, GatewayZoneConfig } from '@agent-vm/gateway-interface';
+import type {
+	GatewayIngressConfig,
+	GatewayProcessSpec,
+	GatewayZoneConfig,
+} from '@agent-vm/gateway-interface';
 
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
 import type { RunTaskFn } from '../shared/run-task.js';
@@ -74,10 +78,31 @@ export function findGatewayZone(systemConfig: SystemConfig, zoneId: string): Gat
 	return zone;
 }
 
+function resolveGatewayIngressConfig(
+	ingress: GatewayZone['gateway']['ingress'],
+): GatewayIngressConfig | undefined {
+	if (!ingress) {
+		return undefined;
+	}
+
+	const resolvedIngress = {
+		...(ingress.upstreamHeaderTimeoutMs === undefined
+			? {}
+			: { upstreamHeaderTimeoutMs: ingress.upstreamHeaderTimeoutMs }),
+		...(ingress.upstreamResponseTimeoutMs === undefined
+			? {}
+			: { upstreamResponseTimeoutMs: ingress.upstreamResponseTimeoutMs }),
+	};
+
+	return Object.keys(resolvedIngress).length > 0 ? resolvedIngress : undefined;
+}
+
 export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZoneConfig {
+	const ingress = resolveGatewayIngressConfig(zone.gateway.ingress);
 	const baseGateway = {
 		cpus: zone.gateway.cpus,
 		config: zone.gateway.config,
+		...(ingress ? { ingress } : {}),
 		memory: zone.gateway.memory,
 		port: zone.gateway.port,
 		...(zone.gateway.runtimeRootfsSize

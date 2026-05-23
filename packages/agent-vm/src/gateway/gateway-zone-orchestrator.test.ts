@@ -411,6 +411,7 @@ describe('startGatewayZone', () => {
 			},
 		]);
 		expect(enableIngressMock).toHaveBeenCalledWith({
+			bufferResponseBody: false,
 			listenPort: 18791,
 		});
 		// Phase A runs five branches in parallel via Promise.all. Argument
@@ -443,6 +444,212 @@ describe('startGatewayZone', () => {
 				guestListenPort: 18789,
 				logPath: '/agent-vm/logs/gateway-boot-latest.log',
 			},
+		});
+	});
+
+	it('passes configured gateway ingress timeouts to Gondolin', async () => {
+		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
+		const managedVm: ManagedVm = {
+			id: 'vm-123',
+			close: vi.fn(async () => {}),
+			enableIngress: enableIngressMock,
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn((command: string) =>
+				createManagedExecProcessStub({
+					stdout: command.includes('curl -sS -o /dev/null -w "%{http_code}"') ? '200' : '',
+				}),
+			),
+			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28282),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28282)),
+			setIngressRoutes: vi.fn(),
+		};
+		const systemConfig = await createSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (!zone || zone.gateway.type !== 'openclaw') {
+			throw new Error('expected OpenClaw test zone');
+		}
+		const systemConfigWithIngressTimeouts: LoadedSystemConfig = {
+			...systemConfig,
+			zones: [
+				{
+					...zone,
+					gateway: {
+						...zone.gateway,
+						ingress: {
+							upstreamHeaderTimeoutMs: 5_000,
+							upstreamResponseTimeoutMs: 120_000,
+						},
+					},
+				},
+			],
+		};
+
+		await startGatewayZone(
+			{
+				runTask: async (_title, fn) => {
+					await fn();
+				},
+				secretResolver: createOpenClawSecretResolver({
+					PERPLEXITY_API_KEY: 'resolved-key',
+					DISCORD_BOT_TOKEN: 'resolved-key',
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig: systemConfigWithIngressTimeouts,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fingerprint-123',
+					imagePath: '/tmp/gateway-image',
+				})),
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(enableIngressMock).toHaveBeenCalledWith({
+			bufferResponseBody: false,
+			listenPort: 18791,
+			upstreamHeaderTimeoutMs: 5_000,
+			upstreamResponseTimeoutMs: 120_000,
+		});
+	});
+
+	it('omits unset gateway ingress response timeout when only header timeout is configured', async () => {
+		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
+		const managedVm: ManagedVm = {
+			id: 'vm-123',
+			close: vi.fn(async () => {}),
+			enableIngress: enableIngressMock,
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn((command: string) =>
+				createManagedExecProcessStub({
+					stdout: command.includes('curl -sS -o /dev/null -w "%{http_code}"') ? '200' : '',
+				}),
+			),
+			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28282),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28282)),
+			setIngressRoutes: vi.fn(),
+		};
+		const systemConfig = await createSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (!zone || zone.gateway.type !== 'openclaw') {
+			throw new Error('expected OpenClaw test zone');
+		}
+		const systemConfigWithHeaderTimeout: LoadedSystemConfig = {
+			...systemConfig,
+			zones: [
+				{
+					...zone,
+					gateway: {
+						...zone.gateway,
+						ingress: {
+							upstreamHeaderTimeoutMs: 5_000,
+						},
+					},
+				},
+			],
+		};
+
+		await startGatewayZone(
+			{
+				runTask: async (_title, fn) => {
+					await fn();
+				},
+				secretResolver: createOpenClawSecretResolver({
+					PERPLEXITY_API_KEY: 'resolved-key',
+					DISCORD_BOT_TOKEN: 'resolved-key',
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig: systemConfigWithHeaderTimeout,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fingerprint-123',
+					imagePath: '/tmp/gateway-image',
+				})),
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(enableIngressMock).toHaveBeenCalledWith({
+			bufferResponseBody: false,
+			listenPort: 18791,
+			upstreamHeaderTimeoutMs: 5_000,
+		});
+	});
+
+	it('omits unset gateway ingress header timeout when only response timeout is configured', async () => {
+		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
+		const managedVm: ManagedVm = {
+			id: 'vm-123',
+			close: vi.fn(async () => {}),
+			enableIngress: enableIngressMock,
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn((command: string) =>
+				createManagedExecProcessStub({
+					stdout: command.includes('curl -sS -o /dev/null -w "%{http_code}"') ? '200' : '',
+				}),
+			),
+			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28282),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28282)),
+			setIngressRoutes: vi.fn(),
+		};
+		const systemConfig = await createSystemConfig();
+		const zone = systemConfig.zones[0];
+		if (!zone || zone.gateway.type !== 'openclaw') {
+			throw new Error('expected OpenClaw test zone');
+		}
+		const systemConfigWithResponseTimeout: LoadedSystemConfig = {
+			...systemConfig,
+			zones: [
+				{
+					...zone,
+					gateway: {
+						...zone.gateway,
+						ingress: {
+							upstreamResponseTimeoutMs: 120_000,
+						},
+					},
+				},
+			],
+		};
+
+		await startGatewayZone(
+			{
+				runTask: async (_title, fn) => {
+					await fn();
+				},
+				secretResolver: createOpenClawSecretResolver({
+					PERPLEXITY_API_KEY: 'resolved-key',
+					DISCORD_BOT_TOKEN: 'resolved-key',
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig: systemConfigWithResponseTimeout,
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fingerprint-123',
+					imagePath: '/tmp/gateway-image',
+				})),
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(enableIngressMock).toHaveBeenCalledWith({
+			bufferResponseBody: false,
+			listenPort: 18791,
+			upstreamResponseTimeoutMs: 120_000,
 		});
 	});
 

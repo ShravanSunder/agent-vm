@@ -27,6 +27,15 @@ Use progressive disclosure when learning this repo:
    - `docs/subsystems/gondolin-vm-layer.md` — Gondolin adapter, VFS, `tcpHosts`, image build.
    - `docs/subsystems/worker-task-pipeline.md` — host-side Agent Worker task lifecycle, repo resources, teardown.
 
+For gateway serving, streaming, WebSocket, Control UI, or exposed webserver
+port work, read `docs/architecture/openclaw-gateway.md`,
+`docs/subsystems/gondolin-vm-layer.md`, and the `gateway.ingress` section of
+`docs/reference/configuration/system-json.md` before editing. Keep the boundary
+clear: `zones[].gateway.port` is the host-facing Gondolin ingress listener,
+agent-vm currently routes `/` to the OpenClaw guest gateway port, and arbitrary
+extra guest webservers require explicit ingress routes rather than rootfs-size
+or OpenClaw-only config changes.
+
 For configuration questions, start at `docs/reference/configuration/README.md`,
 then drill down:
 

@@ -491,6 +491,48 @@ describe('runConfigValidation', () => {
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
+	it('reports sandboxed MCP Portal plugins hidden by sandbox tool policy', async () => {
+		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+		await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+		await writeMcpPortalConfigFiles(temporaryDirectoryPath, 'default');
+		await updateJsonFile(
+			path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'openclaw.json'),
+			(openClawConfig) => {
+				openClawConfig.plugins = {
+					allow: ['mcp-portal'],
+					entries: {
+						'mcp-portal': { enabled: true },
+					},
+				};
+				openClawConfig.tools = {
+					alsoAllow: ['group:plugins'],
+					sandbox: {
+						tools: {
+							alsoAllow: ['web_search'],
+						},
+					},
+				};
+			},
+		);
+		const systemConfig = await loadSystemConfig(systemConfigPath);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			systemConfig,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(
+			result.checks.find((check) => check.name === 'openclaw-sandbox-plugin-tools-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Sandboxed agents need tools.sandbox.tools.alsoAllow to include "group:plugins" (or mcp-portal / mcp_portal_*). Top-level tools.alsoAllow does not expose optional plugin tools inside sandbox.mode=all.',
+		});
+
+		await rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
 	it('accepts OpenClaw configs when host-only plugin path validation is the only issue', async () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
 		const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);

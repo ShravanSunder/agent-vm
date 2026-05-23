@@ -357,11 +357,25 @@ function registerNativePortalTools(props: {
 	);
 }
 
+function shouldRegisterPortalRuntimeHooks(api: OpenClawPortalPluginApi): boolean {
+	return api.registrationMode === undefined || api.registrationMode === 'full';
+}
+
+function formatRegistrationMode(api: OpenClawPortalPluginApi): string {
+	return api.registrationMode ?? 'full';
+}
+
 export function registerMcpPortalPlugin(api: OpenClawPortalPluginApi): void {
-	if (api.registrationMode !== undefined && api.registrationMode !== 'full') {
+	const logger = createLoggerAdapter(api);
+	const registerRuntimeHooks = shouldRegisterPortalRuntimeHooks(api);
+	if (registerRuntimeHooks) {
+		validatePortalPluginApi(api);
+	} else if (!hasFunction(api.registerTool)) {
+		logger.warn(
+			`[mcp-portal] skipped native portal tool registration for registrationMode='${formatRegistrationMode(api)}' because OpenClaw did not expose registerTool.`,
+		);
 		return;
 	}
-	validatePortalPluginApi(api);
 	const configDir = resolveConfigDir(api);
 	const runtimeState = createPortalPluginRuntimeState({ configDir });
 	let corePromise: Promise<PortalCore> | undefined;
@@ -374,13 +388,16 @@ export function registerMcpPortalPlugin(api: OpenClawPortalPluginApi): void {
 	};
 	registerNativePortalTools({ api, getCore, runtimeState });
 
-	api.on?.(
-		'before_tool_call',
-		createBeforeToolCallHandler({ logger: createLoggerAdapter(api), runtimeState }),
-		{
-			priority: 80,
-		},
-	);
+	if (!registerRuntimeHooks) {
+		logger.info(
+			`[mcp-portal] registered native portal tools for registrationMode='${formatRegistrationMode(api)}'.`,
+		);
+		return;
+	}
+
+	api.on?.('before_tool_call', createBeforeToolCallHandler({ logger, runtimeState }), {
+		priority: 80,
+	});
 
 	api.on?.('before_prompt_build', createBeforePromptBuildHandler({ runtimeState }), {
 		priority: 80,
@@ -400,6 +417,7 @@ export function registerMcpPortalPlugin(api: OpenClawPortalPluginApi): void {
 		const core = await corePromise?.catch(() => undefined);
 		await core?.close();
 	});
+	logger.info('[mcp-portal] registered native portal tools and runtime hooks.');
 }
 
 const pluginEntry = {

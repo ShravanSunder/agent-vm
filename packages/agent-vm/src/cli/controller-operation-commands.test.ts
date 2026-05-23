@@ -205,6 +205,13 @@ function createHealthyOpenClawConfig(): object {
 			},
 			slots: { memory: 'memory-core' },
 		},
+		tools: {
+			sandbox: {
+				tools: {
+					alsoAllow: ['group:plugins'],
+				},
+			},
+		},
 	};
 }
 

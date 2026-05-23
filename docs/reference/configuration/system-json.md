@@ -43,6 +43,7 @@ zones[]
   id
   agents
   gateway
+    ingress
   resources
   secrets
   runtimeAuthHints
@@ -173,6 +174,33 @@ Channel config is deployment-owned. Enable channels in
 Managed OpenClaw image profiles install known extracted channel packages, such
 as `@openclaw/discord`, from the OpenClaw channel config.
 
+## gateway.ingress
+
+`zones[].gateway.ingress` customizes the host-facing Gondolin ingress timeout
+behavior for the gateway VM. Omit it for Gondolin defaults.
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `upstreamHeaderTimeoutMs` | no | Timeout while waiting for response headers from the guest gateway process. |
+| `upstreamResponseTimeoutMs` | no | Timeout between upstream response body chunks from the guest gateway process. |
+
+agent-vm exposes the OpenClaw gateway through one host-facing Gondolin ingress
+listener at `zones[].gateway.port`. The current OpenClaw gateway route maps `/`
+to the OpenClaw guest gateway port, so the Control UI, `/healthz`, `/readyz`,
+OpenAI-compatible HTTP endpoints, SSE streaming, and WebSocket traffic share the
+same route.
+
+agent-vm keeps Gondolin response buffering disabled for gateway ingress so
+streaming responses can pass through incrementally. Long-running non-streaming
+gateway requests, such as direct agent API calls, may need a larger
+`upstreamResponseTimeoutMs` than Gondolin's default. Streaming responses are less
+sensitive because each emitted chunk resets the response-body idle timer.
+
+These timeout settings do not open additional guest webserver ports. Additional
+guest HTTP services require explicit Gondolin ingress routes from non-root path
+prefixes to guest ports. Raw TCP services belong in `tcpHosts`, not HTTP
+ingress.
+
 ## OpenClaw MCP Portal Defaults
 
 Managed OpenClaw gateway images install `@agent-vm/openclaw-mcp-portal-plugin`
@@ -275,10 +303,12 @@ the observed Discord media failure happens earlier in OpenClaw's own SSRF guard
 as it validates synthetic DNS answers.
 
 The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search`,
-`web_fetch`, and `message`. That does not configure a search provider by
-itself; it prevents sandbox tool policy from hiding web tools after the
-deployment adds a provider, and keeps OpenClaw's `message_tool_only` group reply
-mode usable by exposing the explicit channel reply tool.
+`web_fetch`, `message`, and `group:plugins`. That does not configure a search
+provider by itself; it prevents sandbox tool policy from hiding web tools after
+the deployment adds a provider, keeps OpenClaw's `message_tool_only` group reply
+mode usable by exposing the explicit channel reply tool, and exposes optional
+plugin-owned tools such as MCP Portal's `mcp_portal_*` tools to sandboxed
+agents.
 
 OpenClaw Tool VMs mount their validated lease work mount at `/work`. Worker task VMs keep
 repo edits under `/work/repos/<repoId>`.
