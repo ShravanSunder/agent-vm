@@ -301,13 +301,14 @@ The plugin provides:
   controller active-use record and heartbeats it while the SSH operation is
   pending, so the controller can reap stale leases without proxying command
   output.
-- **Work mount access**: tool VMs use `/work` for lease-local execution.
+- **Work mount access**: tool VMs use `/workspace` for lease-local RealFS
+  execution; `/work` remains VM-local rootfs/COW scratch.
   Lease requests provide `workMountDir` as a concrete OpenClaw gateway child
   path under `/home/openclaw/.openclaw/state/sandboxes` or `/zone`; the roots
   themselves are validation boundaries and are rejected as mount targets.
   The controller maps that gateway path to `hostWorkMountDir`, verifies the
   real path is inside either `stateDir/sandboxes` or `zoneFilesDir`, and mounts
-  it into the Tool VM at `/work`.
+  non-zone-git work mounts into the Tool VM at `/workspace`.
 
 OpenClaw SDK compatibility note: OpenClaw currently names the selected sandbox
 path `workspaceDir`. The agent-vm plugin translates that field to

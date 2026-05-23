@@ -214,10 +214,14 @@ the default `/tmp` tmpfs, but that is usually a heavier solution than setting
   Backing: rootfs/COW unless explicitly mounted
   Purpose: large temporary disk-backed files
 
-OpenClaw Tool VM /work
+OpenClaw Tool VM /workspace
   Backing: RealFS hostWorkMountDir resolved from lease workMountDir
   Purpose: lease-selected execution directory; workMountDir must be a concrete
            child path under /zone or /home/openclaw/.openclaw/state/sandboxes
+
+OpenClaw Tool VM /work
+  Backing: rootfs/COW
+  Purpose: disposable scratch; not the lease RealFS mount
 
 /tmp
   Backing: guest tmpfs unless overridden

@@ -4,13 +4,38 @@ import path from 'node:path';
 
 import type { ManagedVm, ManagedVmInstance } from '@agent-vm/gondolin-adapter';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { z } from 'zod';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
+import type { controllerLeaseCreateRequestSchema } from '../controller/http/controller-request-schemas.js';
 import {
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
+
+type ControllerLeaseCreateRequestBody = z.input<typeof controllerLeaseCreateRequestSchema>;
+
+function createLeaseRequestBody(
+	overrides: Partial<ControllerLeaseCreateRequestBody> = {},
+): ControllerLeaseCreateRequestBody {
+	return {
+		agentId: 'main',
+		agentWorkspaceDir: '/zone',
+		profileId: 'standard',
+		sandbox: {
+			backend: 'gondolin',
+			mode: 'all',
+			scope: 'agent',
+			workspaceAccess: 'rw',
+		},
+		scopeKey: 'agent:main',
+		sessionKey: 'agent:main:restart-test',
+		workMountDir: '/zone/restart-work',
+		zoneId: 'shravan',
+		...overrides,
+	};
+}
 
 function createSystemConfig(
 	controllerPort: number,
@@ -320,13 +345,13 @@ describe('live integration: controller restart persistence', () => {
 		expect(runtimeStatusResponse.status).toBe(200);
 
 		const createLeaseResponse = await fetch(`http://127.0.0.1:${controllerPort}/lease`, {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/zone',
-				profileId: 'standard',
-				scopeKey: 'agent:restart-test',
-				workMountDir: '/zone/restart-work',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					agentId: 'restart-test',
+					scopeKey: 'agent:restart-test',
+					sessionKey: 'agent:restart-test:integration',
+				}),
+			),
 			headers: { 'content-type': 'application/json' },
 			method: 'POST',
 		});

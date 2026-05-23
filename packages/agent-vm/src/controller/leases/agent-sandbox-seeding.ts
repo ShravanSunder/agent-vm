@@ -1,10 +1,10 @@
 import { lstat, mkdir, open, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
+import { isOpenClawAgentId } from '@agent-vm/openclaw-agent-vm-plugin';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 import type { SystemConfig } from '../../config/system-config.js';
-import { parseAgentScopeKey } from './lease-scope.js';
 
 type ZoneConfig = SystemConfig['zones'][number];
 type AgentSandboxSeed = NonNullable<ZoneConfig['agentSandboxSeeds']>[string][number];
@@ -30,12 +30,8 @@ export type AgentSandboxSeedResult =
 			readonly zoneId: string;
 	  }
 	| {
-			readonly kind: 'non-agent-scope';
-			readonly scopeKey: string;
-			readonly zoneId: string;
-	  }
-	| {
-			readonly kind: 'malformed-agent-scope';
+			readonly agentId: string;
+			readonly kind: 'malformed-agent-id';
 			readonly reason: string;
 			readonly scopeKey: string;
 			readonly zoneId: string;
@@ -198,6 +194,7 @@ async function ensureSeedParentDirectoryInsideWorkspace(options: {
 }
 
 export async function seedAgentSandboxWorkspace(options: {
+	readonly agentId: string;
 	readonly scopeKey: string;
 	readonly secretResolver: SecretResolver;
 	readonly hostWorkMountDir: string;
@@ -206,19 +203,16 @@ export async function seedAgentSandboxWorkspace(options: {
 	if (options.zone.gateway.type !== 'openclaw') {
 		return { kind: 'not-openclaw-zone', zoneId: options.zone.id };
 	}
-	const parsedScope = parseAgentScopeKey(options.scopeKey);
-	if (parsedScope.kind === 'non-agent-scope') {
-		return { kind: 'non-agent-scope', scopeKey: options.scopeKey, zoneId: options.zone.id };
-	}
-	if (parsedScope.kind === 'malformed-agent-scope') {
+	const agentId = options.agentId;
+	if (!isOpenClawAgentId(agentId)) {
 		return {
-			kind: 'malformed-agent-scope',
-			reason: parsedScope.reason,
+			agentId,
+			kind: 'malformed-agent-id',
+			reason: `invalid agent id '${agentId}'`,
 			scopeKey: options.scopeKey,
 			zoneId: options.zone.id,
 		};
 	}
-	const agentId = parsedScope.agentId;
 	const seeds = options.zone.agentSandboxSeeds?.[agentId] ?? [];
 	if (seeds.length === 0) {
 		return {

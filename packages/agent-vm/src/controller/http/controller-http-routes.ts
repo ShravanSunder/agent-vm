@@ -4,6 +4,13 @@ import type {
 	StartToolVmActiveUseRequest,
 	ToolVmActiveUseCorrelation,
 } from '@agent-vm/gateway-interface';
+import {
+	expectedOpenClawGondolinScopeKey,
+	findOpenClawGondolinSandboxMismatch,
+	OPENCLAW_GONDOLIN_LEASE_SCOPE_GUIDANCE,
+	resolveOpenClawAgentIdFromSessionKey,
+	type OpenClawGondolinSandboxSnapshot,
+} from '@agent-vm/openclaw-agent-vm-plugin';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { Hono } from 'hono';
 
@@ -16,7 +23,6 @@ import {
 } from '../leases/agent-sandbox-seeding.js';
 import { ttlForLeaseScope, type LeaseIdleTtlPolicy } from '../leases/lease-idle-policy.js';
 import { LeaseActiveUseConflictError, LeaseScopeConflictError } from '../leases/lease-manager.js';
-import { parseAgentScopeKey, type AgentScopeParseResult } from '../leases/lease-scope.js';
 import {
 	LeaseWorkMountValidationError,
 	type ResolvedLeaseWorkMount,
@@ -45,23 +51,6 @@ function writeControllerLeaseLog(message: string): void {
 	process.stderr.write(`[controller-http-routes] ${message}\n`);
 }
 
-type InvalidAgentScopeParseResult = Exclude<AgentScopeParseResult, { readonly kind: 'agent' }>;
-
-function assertUnreachableAgentScope(value: never): never {
-	throw new Error(`Unhandled agent scope parse result: ${JSON.stringify(value)}`);
-}
-
-function formatInvalidAgentScopeReason(parsedScope: InvalidAgentScopeParseResult): string {
-	switch (parsedScope.kind) {
-		case 'malformed-agent-scope':
-			return parsedScope.reason;
-		case 'non-agent-scope':
-			return 'Tool VM leases require agent-scoped OpenClaw sandboxes.';
-		default:
-			return assertUnreachableAgentScope(parsedScope);
-	}
-}
-
 function formatUnknownError(error: unknown): string {
 	if (error instanceof Error) {
 		return error.stack ?? error.message;
@@ -87,9 +76,9 @@ function logAgentSandboxSeedResult(result: AgentSandboxSeedResult): void {
 				`seeded sandbox for zone '${result.zoneId}' scope '${result.scopeKey}' agent '${result.agentId}': ${String(result.written)} written, ${String(result.alreadyExisted)} already existed`,
 			);
 			return;
-		case 'malformed-agent-scope':
+		case 'malformed-agent-id':
 			writeControllerLeaseLog(
-				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': ${result.reason}`,
+				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}' agent '${result.agentId}': ${result.reason}`,
 			);
 			return;
 		case 'sandbox-root-missing':
@@ -108,7 +97,6 @@ function logAgentSandboxSeedResult(result: AgentSandboxSeedResult): void {
 			);
 			return;
 		case 'no-seeds-configured':
-		case 'non-agent-scope':
 		case 'not-openclaw-zone':
 			return;
 	}
@@ -118,6 +106,85 @@ interface LeaseRequestLogContext {
 	readonly scopeKey: string;
 	readonly workMountDir: string;
 	readonly zoneId: string;
+}
+
+interface LeaseContractErrorBody {
+	readonly error: string;
+	readonly guidance: string;
+	readonly message: string;
+	readonly received: LeaseContractReceivedFields;
+}
+
+interface LeaseContractReceivedFields {
+	readonly agentId?: string;
+	readonly expectedScopeKey?: string;
+	readonly sandbox?: OpenClawGondolinSandboxSnapshot;
+	readonly scopeKey?: string;
+	readonly sessionAgentId?: string;
+	readonly sessionKey?: string;
+}
+
+function leaseContractErrorBody(options: LeaseContractErrorBody): LeaseContractErrorBody {
+	return {
+		error: options.error,
+		guidance: options.guidance,
+		message: options.message,
+		received: options.received,
+	};
+}
+
+function validateOpenClawGondolinLeaseContract(payload: {
+	readonly agentId: string;
+	readonly sandbox: {
+		readonly backend: unknown;
+		readonly mode: unknown;
+		readonly scope: unknown;
+		readonly workspaceAccess: unknown;
+	};
+	readonly scopeKey: string;
+	readonly sessionKey: string;
+}): LeaseContractErrorBody | null {
+	const sessionAgentId = resolveOpenClawAgentIdFromSessionKey(payload.sessionKey);
+	if (sessionAgentId !== payload.agentId) {
+		return leaseContractErrorBody({
+			error: 'tool-vm-lease-agent-mismatch',
+			message: `Lease agentId '${payload.agentId}' does not match sessionKey agent '${sessionAgentId}'.`,
+			guidance:
+				'The OpenClaw plugin must resolve agentId from sessionKey and send both values unchanged to the controller.',
+			received: {
+				agentId: payload.agentId,
+				sessionAgentId,
+				sessionKey: payload.sessionKey,
+			},
+		});
+	}
+	const mismatch = findOpenClawGondolinSandboxMismatch(payload.sandbox);
+	if (mismatch) {
+		return leaseContractErrorBody({
+			error: 'invalid-tool-vm-sandbox-contract',
+			message: `Invalid OpenClaw sandbox contract: ${mismatch.key} must be ${mismatch.expectedValue}, received ${String(payload.sandbox[mismatch.key])}.`,
+			guidance:
+				'Managed OpenClaw/Gondolin requires backend="gondolin", mode="all", scope="agent", and workspaceAccess="rw".',
+			received: {
+				sandbox: payload.sandbox,
+			},
+		});
+	}
+	const expectedScopeKey = expectedOpenClawGondolinScopeKey(payload.agentId);
+	if (payload.scopeKey !== expectedScopeKey) {
+		return leaseContractErrorBody({
+			error: 'invalid-tool-vm-lease-scope',
+			message: `Invalid Tool VM lease scopeKey '${payload.scopeKey}': expected '${expectedScopeKey}'.`,
+			guidance: OPENCLAW_GONDOLIN_LEASE_SCOPE_GUIDANCE,
+			received: {
+				agentId: payload.agentId,
+				expectedScopeKey,
+				scopeKey: payload.scopeKey,
+				sessionKey: payload.sessionKey,
+			},
+		});
+	}
+	return null;
 }
 
 const defaultLeaseIdleTtlPolicy = {
@@ -201,6 +268,7 @@ export function createControllerApp(options: {
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly validateToolVmLeaseRequirements?: (zoneId: string) => Promise<void>;
 	readonly resolveLeaseWorkMountDir: (options: {
+		readonly agentId: string;
 		readonly scopeKey: string;
 		readonly workMountDir: string;
 		readonly zoneId: string;
@@ -237,18 +305,11 @@ export function createControllerApp(options: {
 			) {
 				return context.json({ error: `Unknown zone '${payload.zoneId}'` }, 400);
 			}
-			const parsedScope = parseAgentScopeKey(payload.scopeKey);
-			if (parsedScope.kind !== 'agent') {
-				const reason = formatInvalidAgentScopeReason(parsedScope);
-				return context.json(
-					{
-						error: `Invalid Tool VM lease scope '${payload.scopeKey}': ${reason}`,
-						kind: parsedScope.kind,
-					},
-					400,
-				);
+			const contractError = validateOpenClawGondolinLeaseContract(payload);
+			if (contractError) {
+				return context.json(contractError, 400);
 			}
-			const agentId = parsedScope.agentId;
+			const agentId = payload.agentId;
 			const resolvedProfileId =
 				(agentId ? options.zoneAgentToolVmProfiles?.[payload.zoneId]?.[agentId] : undefined) ??
 				options.zoneDefaultToolVmProfiles?.[payload.zoneId] ??
@@ -265,6 +326,7 @@ export function createControllerApp(options: {
 			}
 			await options.validateToolVmLeaseRequirements?.(payload.zoneId);
 			const resolvedWorkMount = await options.resolveLeaseWorkMountDir({
+				agentId,
 				scopeKey: payload.scopeKey,
 				workMountDir: payload.workMountDir,
 				zoneId: payload.zoneId,
@@ -585,7 +647,7 @@ export function createControllerService(options: {
 			}
 			openClawRuntimeStatusStore.assertFreshOk(zoneId);
 		},
-		resolveLeaseWorkMountDir: async ({ scopeKey, workMountDir, zoneId }) => {
+		resolveLeaseWorkMountDir: async ({ agentId, scopeKey, workMountDir, zoneId }) => {
 			const zone = zonesById.get(zoneId);
 			if (!zone) {
 				throw new Error(`Unknown zone '${zoneId}'`);
@@ -597,6 +659,7 @@ export function createControllerService(options: {
 			});
 			if (options.secretResolver) {
 				const seedResult = await seedAgentSandboxWorkspace({
+					agentId,
 					scopeKey,
 					secretResolver: options.secretResolver,
 					hostWorkMountDir: resolvedWorkMount.hostWorkMountDir,

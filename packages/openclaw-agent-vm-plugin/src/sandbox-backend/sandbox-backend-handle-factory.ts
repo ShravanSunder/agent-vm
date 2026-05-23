@@ -17,6 +17,14 @@ import {
 	type OpenClawRuntimeStatusReport,
 } from '../controller-lease-client.js';
 import {
+	expectedOpenClawGondolinScopeKey,
+	findOpenClawGondolinSandboxMismatch,
+	OPENCLAW_GONDOLIN_LEASE_SCOPE_GUIDANCE,
+	resolveOpenClawAgentIdFromSessionKey,
+	snapshotOpenClawGondolinSandboxConfig,
+	type OpenClawGondolinSandboxSnapshot,
+} from '../openclaw-gondolin-contract.js';
+import {
 	type CachedScopeEntry,
 	type CreateBackendDependencies,
 	type OpenClawFsBridgeLeaseContext,
@@ -40,7 +48,16 @@ function scopeCacheKey(params: {
 	].join('\0');
 }
 
+function formatControllerLeaseRequestError(error: ControllerLeaseRequestError): string {
+	const responseBody =
+		error.responseBody === undefined ? error.bodyText : JSON.stringify(error.responseBody);
+	return `${error.message}; response=${responseBody}`;
+}
+
 function formatUnknownError(error: unknown): string {
+	if (error instanceof ControllerLeaseRequestError) {
+		return formatControllerLeaseRequestError(error);
+	}
 	return error instanceof Error ? error.message : String(error);
 }
 
@@ -94,6 +111,29 @@ function activeUseOutcomeForFinalizeParams(finalizeParams: {
 			: 'failed';
 }
 
+function resolveLeaseRequestAgentId(sessionKey: string): string {
+	return resolveOpenClawAgentIdFromSessionKey(sessionKey);
+}
+
+function assertPluginLeaseContract(params: {
+	readonly agentId: string;
+	readonly cfg: OpenClawGondolinSandboxSnapshot;
+	readonly scopeKey: string;
+}): void {
+	const mismatch = findOpenClawGondolinSandboxMismatch(params.cfg);
+	if (mismatch) {
+		throw new Error(
+			`OpenClaw Gondolin sandbox requires ${mismatch.key}=${mismatch.expectedValue}; received ${String(params.cfg[mismatch.key])}.`,
+		);
+	}
+	const expectedScopeKey = expectedOpenClawGondolinScopeKey(params.agentId);
+	if (params.scopeKey !== expectedScopeKey) {
+		throw new Error(
+			`OpenClaw Gondolin sandbox requires scopeKey '${expectedScopeKey}' for agent '${params.agentId}'; received '${params.scopeKey}'. ${OPENCLAW_GONDOLIN_LEASE_SCOPE_GUIDANCE}`,
+		);
+	}
+}
+
 export function createGondolinSandboxBackendFactory(
 	options: {
 		readonly controllerUrl: string;
@@ -104,7 +144,7 @@ export function createGondolinSandboxBackendFactory(
 	dependencies: CreateBackendDependencies,
 ): (params: {
 	readonly agentWorkspaceDir: string;
-	readonly cfg: {
+	readonly cfg: OpenClawGondolinSandboxSnapshot & {
 		readonly docker?: {
 			readonly env?: Record<string, string>;
 		};
@@ -117,6 +157,12 @@ export function createGondolinSandboxBackendFactory(
 
 	return async (params) => {
 		const profileId = options.profileId ?? 'standard';
+		const agentId = resolveLeaseRequestAgentId(params.sessionKey);
+		assertPluginLeaseContract({
+			agentId,
+			cfg: params.cfg,
+			scopeKey: params.scopeKey,
+		});
 		const cacheKey = scopeCacheKey({
 			agentWorkspaceDir: params.agentWorkspaceDir,
 			profileId,
@@ -145,15 +191,18 @@ export function createGondolinSandboxBackendFactory(
 		}
 		// OpenClaw SDK still names the selected sandbox path `workspaceDir`.
 		// agent-vm's controller calls the same value `workMountDir` because it
-		// backs the Tool VM /work mount.
+		// selects the host path exposed at the lease response `workdir`.
 		const runtimeStatus = options.openClawRuntimeStatusProvider?.();
 		if (runtimeStatus && leaseClient.publishOpenClawRuntimeStatus) {
 			await leaseClient.publishOpenClawRuntimeStatus(runtimeStatus);
 		}
 		const leaseResponse = await leaseClient.requestLease({
+			agentId,
 			agentWorkspaceDir: params.agentWorkspaceDir,
 			profileId,
+			sandbox: snapshotOpenClawGondolinSandboxConfig(params.cfg),
 			scopeKey: params.scopeKey,
+			sessionKey: params.sessionKey,
 			workMountDir: params.workspaceDir,
 			zoneId: options.zoneId,
 		});

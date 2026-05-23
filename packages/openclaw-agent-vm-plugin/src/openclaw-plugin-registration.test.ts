@@ -9,10 +9,12 @@ import defaultPlugin, {
 } from './openclaw-plugin-registration.js';
 import type { OpenClawSandboxFsBridge } from './sandbox-backend-factory.js';
 
+const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
+
 function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
 	const mockSession = { command: 'ssh', configPath: '/tmp/ssh', host: 'tool-0.vm.host' };
 	return {
-		buildExecRemoteCommand: vi.fn(() => 'cd /work && ls -la'),
+		buildExecRemoteCommand: vi.fn(() => `cd ${OPENCLAW_TOOL_VM_WORKSPACE_MOUNT} && ls -la`),
 		buildRemoteCommand: vi.fn(() => '/bin/sh -c pwd'),
 		buildSshSandboxArgv: vi.fn(() => ['ssh', '-i', '/tmp/key', 'tool-0.vm.host', 'ls']),
 		createRemoteShellSandboxFsBridge: vi.fn(() => ({
@@ -20,7 +22,10 @@ function createMockSshHelpers(overrides?: Partial<SshHelpers>): SshHelpers {
 			readFile: vi.fn(async () => Buffer.from('content')),
 			remove: vi.fn(async () => {}),
 			rename: vi.fn(async () => {}),
-			resolvePath: vi.fn(() => ({ containerPath: '/work/f.txt', relativePath: 'f.txt' })),
+			resolvePath: vi.fn(() => ({
+				containerPath: `${OPENCLAW_TOOL_VM_WORKSPACE_MOUNT}/f.txt`,
+				relativePath: 'f.txt',
+			})),
 			stat: vi.fn(async () => ({ mtimeMs: 0, size: 0, type: 'file' as const })),
 			writeFile: vi.fn(async () => {}),
 		})),
@@ -252,7 +257,7 @@ describe('createBackendDeps', () => {
 				user: 'sandbox',
 			},
 			usePty: false,
-			workdir: '/work',
+			workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 		});
 
 		expect(ssh.createSshSandboxSessionFromSettings).toHaveBeenCalledWith(
@@ -264,7 +269,7 @@ describe('createBackendDeps', () => {
 		);
 		expect(ssh.buildExecRemoteCommand).toHaveBeenCalledWith({
 			command: 'ls -la',
-			workdir: '/work',
+			workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			env: { TEST: '1' },
 		});
 		expect(execSpec.stdinMode).toBe('pipe-open');
@@ -297,7 +302,7 @@ describe('createBackendDeps', () => {
 				user: 'sandbox',
 			},
 			usePty: false,
-			workdir: '/work',
+			workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 		});
 
 		const token = execSpec.finalizeToken as { dispose: () => Promise<void> };
@@ -322,7 +327,7 @@ describe('createBackendDeps', () => {
 				user: 'sandbox',
 			},
 			usePty: false,
-			workdir: '/work',
+			workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 		});
 
 		const token = execSpec.finalizeToken as { dispose: () => Promise<void> };
@@ -375,7 +380,7 @@ describe('createBackendDeps', () => {
 			remove: vi.fn(async () => {}),
 			rename: vi.fn(async () => {}),
 			resolvePath: vi.fn(() => ({
-				containerPath: '/work/readme.md',
+				containerPath: `${OPENCLAW_TOOL_VM_WORKSPACE_MOUNT}/readme.md`,
 				relativePath: 'readme.md',
 			})),
 			stat: vi.fn(async () => ({ mtimeMs: 2000, size: 100, type: 'file' as const })),
@@ -392,8 +397,8 @@ describe('createBackendDeps', () => {
 			stdout: Buffer.from(''),
 		}));
 		const createFsBridge = deps.createFsBridgeBuilder({
-			remoteWorkspaceDir: '/work',
-			remoteAgentWorkspaceDir: '/work',
+			remoteWorkspaceDir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+			remoteAgentWorkspaceDir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			runRemoteShellScript: mockRunShellScript,
 		});
 
@@ -404,8 +409,8 @@ describe('createBackendDeps', () => {
 		expect(createRemoteShellSandboxFsBridge).toHaveBeenCalledWith({
 			sandbox: fakeSandbox,
 			runtime: {
-				remoteWorkspaceDir: '/work',
-				remoteAgentWorkspaceDir: '/work',
+				remoteWorkspaceDir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+				remoteAgentWorkspaceDir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 				runRemoteShellScript: mockRunShellScript,
 			},
 		});

@@ -1,20 +1,16 @@
-interface OpenClawAgentConfig {
-	readonly [key: string]: unknown;
-	readonly id?: unknown;
-	readonly sandbox?: {
-		readonly [key: string]: unknown;
-		readonly backend?: unknown;
-		readonly mode?: unknown;
-		readonly scope?: unknown;
-		readonly workspaceAccess?: unknown;
-	};
-	readonly workspace?: unknown;
-}
+import {
+	effectiveOpenClawGondolinSandboxValue,
+	formatOpenClawGondolinRequirementFieldPath,
+	formatOpenClawGondolinRequirementFindingId,
+	formatOpenClawGondolinRequirementHint,
+	OPENCLAW_GONDOLIN_SANDBOX_REQUIREMENTS,
+	type OpenClawGondolinAgentConfig,
+} from './openclaw-gondolin-contract.js';
 
 interface OpenClawRuntimeConfig {
 	readonly [key: string]: unknown;
 	readonly agents?: {
-		readonly defaults?: OpenClawAgentConfig;
+		readonly defaults?: OpenClawGondolinAgentConfig;
 		readonly list?: readonly unknown[];
 	};
 }
@@ -36,7 +32,7 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function readAgentConfigEntries(config: OpenClawRuntimeConfig): readonly {
-	readonly config: OpenClawAgentConfig;
+	readonly config: OpenClawGondolinAgentConfig;
 	readonly label: string;
 }[] {
 	const defaultConfig = config.agents?.defaults ?? {};
@@ -52,17 +48,9 @@ function readAgentConfigEntries(config: OpenClawRuntimeConfig): readonly {
 	return [{ config: defaultConfig, label: 'defaults' }, ...agentConfigs];
 }
 
-function effectiveSandboxValue(
-	defaults: OpenClawAgentConfig,
-	agentConfig: OpenClawAgentConfig,
-	key: 'backend' | 'mode' | 'scope' | 'workspaceAccess',
-): unknown {
-	return agentConfig.sandbox?.[key] ?? defaults.sandbox?.[key];
-}
-
 function effectiveWorkspace(
-	defaults: OpenClawAgentConfig,
-	agentConfig: OpenClawAgentConfig,
+	defaults: OpenClawGondolinAgentConfig,
+	agentConfig: OpenClawGondolinAgentConfig,
 ): unknown {
 	return agentConfig.workspace ?? defaults.workspace;
 }
@@ -76,11 +64,17 @@ function requirementFinding(options: {
 }): OpenClawRuntimeRequirementFinding {
 	const ok = options.actualValue === options.expectedValue;
 	return {
-		id: `openclaw-tool-vm-${options.fieldPath.replace(/[.[\]]/gu, '-')}-${options.zoneId}-${options.label}`,
+		id: formatOpenClawGondolinRequirementFindingId({
+			fieldPath: options.fieldPath,
+			label: options.label,
+			zoneId: options.zoneId,
+		}),
 		ok,
-		hint: ok
-			? `${options.fieldPath}=${options.expectedValue}`
-			: `Set ${options.fieldPath} to "${options.expectedValue}" for OpenClaw Tool VM mediation.`,
+		hint: formatOpenClawGondolinRequirementHint({
+			expectedValue: options.expectedValue,
+			fieldPath: options.fieldPath,
+			ok,
+		}),
 	};
 }
 
@@ -95,46 +89,30 @@ export function buildOpenClawRuntimeStatusReport(options: {
 		zoneId: options.zoneId,
 		findings: readAgentConfigEntries(config).flatMap(({ config: agentConfig, label }) => {
 			const workspace = effectiveWorkspace(defaults, agentConfig);
-			return [
+			const requirementFindings = OPENCLAW_GONDOLIN_SANDBOX_REQUIREMENTS.map((requirement) =>
 				requirementFinding({
-					actualValue: effectiveSandboxValue(defaults, agentConfig, 'backend'),
-					expectedValue: 'gondolin',
-					fieldPath: `agents.${label}.sandbox.backend`,
+					actualValue: effectiveOpenClawGondolinSandboxValue(
+						defaults,
+						agentConfig,
+						requirement.key,
+					),
+					expectedValue: requirement.expectedValue,
+					fieldPath: formatOpenClawGondolinRequirementFieldPath(label, requirement.key),
 					label,
 					zoneId: options.zoneId,
 				}),
-				requirementFinding({
-					actualValue: effectiveSandboxValue(defaults, agentConfig, 'mode'),
-					expectedValue: 'all',
-					fieldPath: `agents.${label}.sandbox.mode`,
-					label,
-					zoneId: options.zoneId,
-				}),
-				requirementFinding({
-					actualValue: effectiveSandboxValue(defaults, agentConfig, 'scope'),
-					expectedValue: 'agent',
-					fieldPath: `agents.${label}.sandbox.scope`,
-					label,
-					zoneId: options.zoneId,
-				}),
-				requirementFinding({
-					actualValue: effectiveSandboxValue(defaults, agentConfig, 'workspaceAccess'),
-					expectedValue: 'rw',
-					fieldPath: `agents.${label}.sandbox.workspaceAccess`,
-					label,
-					zoneId: options.zoneId,
-				}),
-				{
-					id: `openclaw-tool-vm-workspace-${options.zoneId}-${label}`,
-					ok: workspace !== '/zone',
-					hint:
-						workspace === '/zone'
-							? 'Use /zone/agents/default or per-agent workspaces; keep /zone for shared zone files.'
-							: typeof workspace === 'string'
-								? workspace
-								: 'agents workspace is unset',
-				},
-			] as const satisfies readonly OpenClawRuntimeRequirementFinding[];
+			);
+			const workspaceFinding = {
+				id: `openclaw-tool-vm-workspace-${options.zoneId}-${label}`,
+				ok: workspace !== '/zone',
+				hint:
+					workspace === '/zone'
+						? 'Use /zone/agents/default or per-agent workspaces; keep /zone for shared zone files.'
+						: typeof workspace === 'string'
+							? workspace
+							: 'agents workspace is unset',
+			} satisfies OpenClawRuntimeRequirementFinding;
+			return requirementFindings.concat(workspaceFinding);
 		}),
 	};
 }

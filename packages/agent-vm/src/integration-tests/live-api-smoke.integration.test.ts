@@ -15,14 +15,40 @@ import { Hono } from 'hono';
  * Run: pnpm vitest run packages/agent-vm/src/integration-tests/live-api-smoke.integration.test.ts
  */
 import { afterAll, describe, expect, it, vi } from 'vitest';
+import type { z } from 'zod';
 
 import { createControllerApp } from '../controller/http/controller-http-routes.js';
+import type { controllerLeaseCreateRequestSchema } from '../controller/http/controller-request-schemas.js';
 import type { Lease } from '../controller/leases/lease-manager.js';
+import { OPENCLAW_TOOL_VM_WORKSPACE_MOUNT } from '../controller/leases/lease-work-mount-paths.js';
 import { createGatewayApiClient } from '../gateway-api-client/gateway-api-client.js';
 import {
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
+
+type ControllerLeaseCreateRequestBody = z.input<typeof controllerLeaseCreateRequestSchema>;
+
+function createLeaseRequestBody(
+	overrides: Partial<ControllerLeaseCreateRequestBody> = {},
+): ControllerLeaseCreateRequestBody {
+	return {
+		agentId: 'main',
+		agentWorkspaceDir: '/work',
+		profileId: 'standard',
+		sandbox: {
+			backend: 'gondolin',
+			mode: 'all',
+			scope: 'agent',
+			workspaceAccess: 'rw',
+		},
+		scopeKey: 'agent:main',
+		sessionKey: 'agent:main:smoke-test',
+		workMountDir: '/work',
+		zoneId: 'shravan',
+		...overrides,
+	};
+}
 
 async function findAvailablePort(): Promise<number> {
 	return await new Promise((resolve, reject) => {
@@ -91,7 +117,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 			lastUsedAt: Date.now(),
 			profileId: 'standard',
 			scopeKey: 'agent:main:smoke',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			sshAccess: {
 				host: '127.0.0.1',
 				identityFile: '/tmp/key',
@@ -140,7 +166,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 				releaseLease: vi.fn(async () => {}),
 			},
 			resolveLeaseWorkMountDir: async ({ workMountDir }) => ({
-				guestWorkdir: '/work',
+				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 				hostWorkMountDir: workMountDir,
 			}),
 		});
@@ -170,13 +196,13 @@ describe('live smoke: API client → controller over real HTTP', () => {
 		const leaseResponse = await fetch(`http://127.0.0.1:${controllerPort}/lease`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({
-				agentWorkspaceDir: '/work',
-				profileId: 'standard',
-				scopeKey: 'agent:smoke-test',
-				workMountDir: '/work',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					agentId: 'smoke-test',
+					scopeKey: 'agent:smoke-test',
+					sessionKey: 'agent:smoke-test:integration',
+				}),
+			),
 		});
 		const leaseBody = (await leaseResponse.json()) as { leaseId: string };
 		expect(leaseResponse.status).toBe(200);

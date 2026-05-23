@@ -1,6 +1,33 @@
 import { describe, expect, it } from 'vitest';
 
-import { type ControllerLeaseRequestError, createLeaseClient } from './controller-lease-client.js';
+import {
+	type ControllerLeaseRequestError,
+	type OpenClawGondolinLeaseRequest,
+	createLeaseClient,
+} from './controller-lease-client.js';
+
+const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
+
+function createLeaseRequest(
+	overrides: Partial<OpenClawGondolinLeaseRequest> = {},
+): OpenClawGondolinLeaseRequest {
+	return {
+		agentId: 'main',
+		agentWorkspaceDir: '/home/openclaw/work',
+		profileId: 'standard',
+		sandbox: {
+			backend: 'gondolin',
+			mode: 'all',
+			scope: 'agent',
+			workspaceAccess: 'rw',
+		},
+		scopeKey: 'agent:main',
+		sessionKey: 'agent:main:session-abc',
+		workMountDir: '/home/openclaw/work',
+		zoneId: 'shravan',
+		...overrides,
+	};
+}
 
 describe('createLeaseClient', () => {
 	it('requests, renews, peeks, and releases leases through the controller API', async () => {
@@ -26,7 +53,7 @@ describe('createLeaseClient', () => {
 							ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 							tcpSlot: 0,
 							transport: 'ssh-sandbox',
-							workdir: '/work',
+							workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 							zoneId: 'shravan',
 						}
 					: {
@@ -40,7 +67,7 @@ describe('createLeaseClient', () => {
 							},
 							tcpSlot: 0,
 							transport: 'ssh-sandbox',
-							workdir: '/work',
+							workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 						};
 
 				return new Response(JSON.stringify(responseBody), {
@@ -52,13 +79,12 @@ describe('createLeaseClient', () => {
 			},
 		});
 
-		const lease = await leaseClient.requestLease({
-			agentWorkspaceDir: '/home/openclaw/work',
-			profileId: 'standard',
-			scopeKey: 'agent:main:session-abc',
-			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
-			zoneId: 'shravan',
-		});
+		const lease = await leaseClient.requestLease(
+			createLeaseRequest({
+				scopeKey: 'agent:main',
+				workMountDir: '/home/openclaw/work',
+			}),
+		);
 		expect(lease.transport).toBe('ssh-sandbox');
 		if (!leaseClient.publishOpenClawRuntimeStatus) {
 			throw new Error('Expected runtime status publisher.');
@@ -82,10 +108,18 @@ describe('createLeaseClient', () => {
 
 		expect(requests[0]?.body).toBeDefined();
 		expect(JSON.parse(requests[0]?.body ?? '{}')).toEqual({
+			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
 			profileId: 'standard',
-			scopeKey: 'agent:main:session-abc',
-			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
+			sandbox: {
+				backend: 'gondolin',
+				mode: 'all',
+				scope: 'agent',
+				workspaceAccess: 'rw',
+			},
+			scopeKey: 'agent:main',
+			sessionKey: 'agent:main:session-abc',
+			workMountDir: '/home/openclaw/work',
 			zoneId: 'shravan',
 		});
 		expect(requests).toEqual([
@@ -185,13 +219,9 @@ describe('createLeaseClient', () => {
 		});
 
 		await expect(
-			leaseClient.requestLease({
-				agentWorkspaceDir: '/work',
-				profileId: 'standard',
-				scopeKey: 'test',
-				workMountDir: '/work',
-				zoneId: 'shravan',
-			}),
+			leaseClient.requestLease(
+				createLeaseRequest({ agentWorkspaceDir: '/work', workMountDir: '/work' }),
+			),
 		).rejects.toThrow('Controller lease API returned an invalid response');
 	});
 
@@ -210,20 +240,20 @@ describe('createLeaseClient', () => {
 							user: 'root',
 						},
 						tcpSlot: 0,
-						workdir: '/work',
+						workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 					}),
 					{ headers: { 'content-type': 'application/json' }, status: 200 },
 				),
 		});
 
 		await expect(
-			leaseClient.requestLease({
-				agentWorkspaceDir: '/workspace',
-				profileId: 'standard',
-				scopeKey: 'agent-session',
-				workMountDir: '/workspace',
-				zoneId: 'default',
-			}),
+			leaseClient.requestLease(
+				createLeaseRequest({
+					agentWorkspaceDir: '/workspace',
+					workMountDir: '/workspace',
+					zoneId: 'default',
+				}),
+			),
 		).rejects.toThrow('Controller lease API returned an invalid response');
 	});
 
@@ -248,13 +278,9 @@ describe('createLeaseClient', () => {
 			},
 		});
 
-		await leaseClient.requestLease({
-			agentWorkspaceDir: '/work',
-			profileId: 'standard',
-			scopeKey: 'test',
-			workMountDir: '/work',
-			zoneId: 'shravan',
-		});
+		await leaseClient.requestLease(
+			createLeaseRequest({ agentWorkspaceDir: '/work', workMountDir: '/work' }),
+		);
 
 		expect(requests[0]).toBe('http://controller.vm.host:18800/lease');
 	});
@@ -331,13 +357,9 @@ describe('createLeaseClient', () => {
 		});
 
 		await expect(
-			leaseClient.requestLease({
-				agentWorkspaceDir: '/work',
-				profileId: 'standard',
-				scopeKey: 'test',
-				workMountDir: '/work',
-				zoneId: 'shravan',
-			}),
+			leaseClient.requestLease(
+				createLeaseRequest({ agentWorkspaceDir: '/work', workMountDir: '/work' }),
+			),
 		).rejects.toMatchObject({
 			kind: 'client-error',
 			responseBody: {
@@ -359,13 +381,9 @@ describe('createLeaseClient', () => {
 		});
 
 		await expect(
-			leaseClient.requestLease({
-				agentWorkspaceDir: '/work',
-				profileId: 'standard',
-				scopeKey: 'test',
-				workMountDir: '/work',
-				zoneId: 'shravan',
-			}),
+			leaseClient.requestLease(
+				createLeaseRequest({ agentWorkspaceDir: '/work', workMountDir: '/work' }),
+			),
 		).rejects.toMatchObject({
 			kind: 'server-error',
 			responseBody: {

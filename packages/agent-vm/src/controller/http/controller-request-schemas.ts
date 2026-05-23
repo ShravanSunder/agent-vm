@@ -4,10 +4,18 @@ import { z } from 'zod';
 import { workerTaskControllerRequestSchema } from '../../config/resource-contracts/index.js';
 
 export const controllerLeaseCreateRequestSchema = z.strictObject({
+	agentId: z.string().min(1),
 	agentWorkspaceDir: z.string().min(1),
 	idleTtlMs: z.number().int().positive().optional(),
 	profileId: z.string().min(1),
+	sandbox: z.strictObject({
+		backend: z.unknown(),
+		mode: z.unknown(),
+		scope: z.unknown(),
+		workspaceAccess: z.unknown(),
+	}),
 	scopeKey: z.string().min(1),
+	sessionKey: z.string().min(1),
 	workMountDir: z.string().min(1),
 	zoneId: z.string().min(1),
 });

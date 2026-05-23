@@ -14,6 +14,7 @@ import {
 const OPENCLAW_STATE_VM_ROOT = '/home/openclaw/.openclaw/state';
 const OPENCLAW_STATE_SANDBOXES_VM_ROOT = `${OPENCLAW_STATE_VM_ROOT}/sandboxes`;
 const OPENCLAW_ZONE_FILES_VM_ROOT = OPENCLAW_ZONE_FILES_GUEST_ROOT;
+export const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
 
 type ZoneConfig = SystemConfig['zones'][number];
 
@@ -232,7 +233,7 @@ export async function resolveLeaseWorkMountDir(options: {
 		};
 	}
 	return {
-		guestWorkdir: '/work',
+		guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 		hostWorkMountDir: realHostWorkMountDir,
 	};
 }

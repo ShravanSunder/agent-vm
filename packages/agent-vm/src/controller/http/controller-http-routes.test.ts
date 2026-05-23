@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { describe, expect, it, vi } from 'vitest';
+import type { z } from 'zod';
 
 import { OpenClawDeploymentRequirementError } from '../../operations/openclaw-deployment-requirements.js';
 import {
@@ -13,7 +14,10 @@ import {
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { SandboxSeedingError } from '../leases/agent-sandbox-seeding.js';
 import { LeaseScopeConflictError, type Lease } from '../leases/lease-manager.js';
-import { LeaseWorkMountValidationError } from '../leases/lease-work-mount-paths.js';
+import {
+	OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+	LeaseWorkMountValidationError,
+} from '../leases/lease-work-mount-paths.js';
 import { OpenClawRuntimeStatusStore } from '../openclaw-runtime-status.js';
 import type { PreparedWorkerTask, WorkerTaskResult } from '../worker-task-runner.js';
 import { ZoneGitConflictError } from '../zone-git/zone-git-operations.js';
@@ -28,8 +32,10 @@ import {
 	ControllerTaskNotReadyError,
 } from './controller-http-route-support.js';
 import { createControllerApp } from './controller-http-routes.js';
+import type { controllerLeaseCreateRequestSchema } from './controller-request-schemas.js';
 
 type ControllerAppOptions = Parameters<typeof createControllerApp>[0];
+type ControllerLeaseCreateRequestBody = z.input<typeof controllerLeaseCreateRequestSchema>;
 
 function createControllerAppForTest(
 	options: Omit<ControllerAppOptions, 'resolveLeaseWorkMountDir' | 'ttlForLease'> &
@@ -38,7 +44,7 @@ function createControllerAppForTest(
 	const {
 		readIdentityPem = async () => 'pem',
 		resolveLeaseWorkMountDir = async ({ workMountDir }) => ({
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: workMountDir,
 		}),
 		ttlForLease = () => 6_000_000,
@@ -57,7 +63,7 @@ function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 		agentWorkspaceDir: '/host/agent-work',
 		createdAt: tcpSlot,
 		effectiveIdleTtlMs: 30 * 60 * 1000,
-		guestWorkdir: '/work',
+		guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 		id: leaseId,
 		lastUsedAt: tcpSlot,
 		profileId: 'standard',
@@ -87,6 +93,27 @@ function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 		},
 		hostWorkMountDir: '/host/sandbox-work',
 		zoneId: 'shravan',
+	};
+}
+
+function createLeaseRequestBody(
+	overrides: Partial<ControllerLeaseCreateRequestBody> = {},
+): ControllerLeaseCreateRequestBody {
+	return {
+		agentId: 'main',
+		agentWorkspaceDir: '/home/openclaw/work',
+		profileId: 'standard',
+		sandbox: {
+			backend: 'gondolin',
+			mode: 'all',
+			scope: 'agent',
+			workspaceAccess: 'rw',
+		},
+		scopeKey: 'agent:main',
+		sessionKey: 'agent:main:session-abc',
+		workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
+		zoneId: 'shravan',
+		...overrides,
 	};
 }
 
@@ -190,7 +217,7 @@ describe('createControllerApp', () => {
 			id: 'lease-123',
 			lastUsedAt: 1,
 			profileId: 'standard',
-			scopeKey: 'agent:main:session-abc',
+			scopeKey: 'agent:main',
 			sshAccess: {
 				command: 'ssh ...',
 				host: '127.0.0.1',
@@ -216,7 +243,7 @@ describe('createControllerApp', () => {
 				getHostPid: () => null,
 				getVmInstance: vi.fn(),
 			},
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
 			zoneId: 'shravan',
 		};
@@ -246,13 +273,7 @@ describe('createControllerApp', () => {
 		});
 
 		const createResponse = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				profileId: 'standard',
-				scopeKey: 'agent:main:session-abc',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(createLeaseRequestBody()),
 			headers: {
 				'content-type': 'application/json',
 			},
@@ -276,19 +297,19 @@ describe('createControllerApp', () => {
 			},
 			tcpSlot: 0,
 			transport: 'ssh-sandbox',
-			workdir: '/work',
+			workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 		});
 		expect(getResponse.status).toBe(200);
 		await expect(getResponse.json()).resolves.toMatchObject({
 			leaseId: 'lease-123',
 			transport: 'ssh-sandbox',
-			workdir: '/work',
+			workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 		});
 		expect(renewResponse.status).toBe(200);
 		expect(peekResponse.status).toBe(200);
 		await expect(peekResponse.json()).resolves.toMatchObject({
 			transport: 'ssh-sandbox',
-			workdir: '/work',
+			workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 		});
 		expect(deleteResponse.status).toBe(204);
 		expect(renewLease).toHaveBeenCalledTimes(1);
@@ -325,28 +346,23 @@ describe('createControllerApp', () => {
 		});
 
 		const createResponse = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				idleTtlMs: 60_000,
-				profileId: 'standard',
-				scopeKey: 'agent:main:session-abc',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					idleTtlMs: 60_000,
+				}),
+			),
 			headers: {
 				'content-type': 'application/json',
 			},
 			method: 'POST',
 		});
 		const invalidResponse = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				idleTtlMs: 1_000,
-				profileId: 'standard',
-				scopeKey: 'agent:main:session-def',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					idleTtlMs: 1_000,
+					sessionKey: 'agent:main:session-def',
+				}),
+			),
 			headers: {
 				'content-type': 'application/json',
 			},
@@ -456,13 +472,11 @@ describe('createControllerApp', () => {
 		});
 
 		const response = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				profileId: 'standard',
-				scopeKey: 'session:main',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					scopeKey: 'session:main',
+				}),
+			),
 			headers: {
 				'content-type': 'application/json',
 			},
@@ -471,7 +485,7 @@ describe('createControllerApp', () => {
 
 		expect(response.status).toBe(400);
 		await expect(response.json()).resolves.toMatchObject({
-			kind: 'non-agent-scope',
+			error: 'invalid-tool-vm-lease-scope',
 		});
 		expect(createLease).not.toHaveBeenCalled();
 	});
@@ -503,13 +517,12 @@ describe('createControllerApp', () => {
 		});
 
 		const missingStatusResponse = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				profileId: 'standard',
-				scopeKey: 'agent:main',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					scopeKey: 'agent:main',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+				}),
+			),
 			headers: {
 				'content-type': 'application/json',
 			},
@@ -542,13 +555,12 @@ describe('createControllerApp', () => {
 
 		expect(statusResponse.status).toBe(200);
 		const leaseResponse = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				profileId: 'standard',
-				scopeKey: 'agent:main',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					scopeKey: 'agent:main',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+				}),
+			),
 			headers: {
 				'content-type': 'application/json',
 			},
@@ -560,13 +572,13 @@ describe('createControllerApp', () => {
 
 		nowMs = 2_000;
 		const staleStatusResponse = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				profileId: 'standard',
-				scopeKey: 'agent:main:later',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					sessionKey: 'agent:main:later',
+					scopeKey: 'agent:main',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+				}),
+			),
 			headers: {
 				'content-type': 'application/json',
 			},
@@ -650,13 +662,12 @@ describe('createControllerApp', () => {
 
 		expect(statusResponse.status).toBe(200);
 		const leaseResponse = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				profileId: 'standard',
-				scopeKey: 'agent:main',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					scopeKey: 'agent:main',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+				}),
+			),
 			headers: {
 				'content-type': 'application/json',
 			},
@@ -700,13 +711,12 @@ describe('createControllerApp', () => {
 		});
 
 		const response = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				profileId: 'standard',
-				scopeKey: 'agent:main',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					scopeKey: 'agent:main',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
+				}),
+			),
 			headers: {
 				'content-type': 'application/json',
 			},
@@ -743,11 +753,13 @@ describe('createControllerApp', () => {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				profileId: 'standard',
-				scopeKey: 'agent:shravan',
+				...createLeaseRequestBody({
+					agentId: 'shravan',
+					agentWorkspaceDir: '/home/openclaw/work',
+					scopeKey: 'agent:shravan',
+					sessionKey: 'agent:shravan:session-abc',
+				}),
 				workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/agent-shravan/work',
-				zoneId: 'shravan',
 			}),
 		});
 
@@ -779,12 +791,14 @@ describe('createControllerApp', () => {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				profileId: 'standard',
-				scopeKey: 'agent:shravan',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent-shravan/work',
+				...createLeaseRequestBody({
+					agentId: 'shravan',
+					agentWorkspaceDir: '/home/openclaw/work',
+					scopeKey: 'agent:shravan',
+					sessionKey: 'agent:shravan:session-abc',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent-shravan/work',
+				}),
 				workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/legacy/work',
-				zoneId: 'shravan',
 			}),
 		});
 
@@ -797,7 +811,7 @@ describe('createControllerApp', () => {
 	it('normalizes lease workMountDir before creating the lease', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-normalized', 0));
 		const resolveLeaseWorkMountDir = vi.fn(async () => ({
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/state/shravan/sandboxes/agent/work',
 		}));
 		const app = createControllerAppForTest({
@@ -820,13 +834,12 @@ describe('createControllerApp', () => {
 		});
 
 		const createResponse = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				profileId: 'standard',
-				scopeKey: 'agent:main',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					scopeKey: 'agent:main',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
+				}),
+			),
 			headers: {
 				'content-type': 'application/json',
 			},
@@ -835,6 +848,7 @@ describe('createControllerApp', () => {
 
 		expect(createResponse.status).toBe(200);
 		expect(resolveLeaseWorkMountDir).toHaveBeenCalledWith({
+			agentId: 'main',
 			scopeKey: 'agent:main',
 			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
 			zoneId: 'shravan',
@@ -842,7 +856,7 @@ describe('createControllerApp', () => {
 		expect(createLease).toHaveBeenCalledWith(
 			expect.objectContaining({
 				hostWorkMountDir: '/host/state/shravan/sandboxes/agent/work',
-				guestWorkdir: '/work',
+				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			}),
 		);
 	});
@@ -884,13 +898,15 @@ describe('createControllerApp', () => {
 		});
 
 		const createResponse = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/zone/agents/shravan',
-				profileId: 'standard',
-				scopeKey: 'agent:shravan',
-				workMountDir: '/zone/agents/shravan',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					agentId: 'shravan',
+					agentWorkspaceDir: '/zone/agents/shravan',
+					scopeKey: 'agent:shravan',
+					sessionKey: 'agent:shravan:discord:channel:123',
+					workMountDir: '/zone/agents/shravan',
+				}),
+			),
 			headers: {
 				'content-type': 'application/json',
 			},
@@ -938,13 +954,12 @@ describe('createControllerApp', () => {
 		});
 
 		const createResponse = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				profileId: 'standard',
-				scopeKey: 'agent:main',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/../../../etc',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					scopeKey: 'agent:main',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/../../../etc',
+				}),
+			),
 			headers: {
 				'content-type': 'application/json',
 			},
@@ -982,13 +997,7 @@ describe('createControllerApp', () => {
 
 		try {
 			const createResponse = await app.request('/lease', {
-				body: JSON.stringify({
-					agentWorkspaceDir: '/home/openclaw/work',
-					profileId: 'standard',
-					scopeKey: 'agent:main:session-abc',
-					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
-					zoneId: 'shravan',
-				}),
+				body: JSON.stringify(createLeaseRequestBody()),
 				headers: {
 					'content-type': 'application/json',
 				},
@@ -1006,7 +1015,7 @@ describe('createControllerApp', () => {
 					(message) =>
 						message.includes("lease creation failed diagnosticId='") &&
 						message.includes("zone='shravan'") &&
-						message.includes("scope='agent:main:session-abc'"),
+						message.includes("scope='agent:main'"),
 				),
 			).toBe(true);
 		} finally {
@@ -1041,13 +1050,7 @@ describe('createControllerApp', () => {
 
 		try {
 			const createResponse = await app.request('/lease', {
-				body: JSON.stringify({
-					agentWorkspaceDir: '/home/openclaw/work',
-					profileId: 'standard',
-					scopeKey: 'agent:main:session-abc',
-					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
-					zoneId: 'shravan',
-				}),
+				body: JSON.stringify(createLeaseRequestBody()),
 				headers: {
 					'content-type': 'application/json',
 				},
@@ -1066,7 +1069,7 @@ describe('createControllerApp', () => {
 					(message) =>
 						message.includes("status='500'") &&
 						message.includes("zone='shravan'") &&
-						message.includes("scope='agent:main:session-abc'"),
+						message.includes("scope='agent:main'"),
 				),
 			).toBe(true);
 		} finally {
@@ -1095,13 +1098,12 @@ describe('createControllerApp', () => {
 		});
 
 		const createResponse = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				profileId: 'standard',
-				scopeKey: 'agent:main',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					scopeKey: 'agent:main',
+					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
+				}),
+			),
 			headers: {
 				'content-type': 'application/json',
 			},
@@ -1138,13 +1140,7 @@ describe('createControllerApp', () => {
 		});
 
 		const createResponse = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				profileId: 'standard',
-				scopeKey: 'agent:main:session-abc',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(createLeaseRequestBody()),
 			headers: {
 				'content-type': 'application/json',
 			},
@@ -1165,7 +1161,7 @@ describe('createControllerApp', () => {
 		);
 	});
 
-	it('uses an agent-specific tool VM profile for agent-scoped leases with sub-scope parts', async () => {
+	it('uses an agent-specific tool VM profile for agent-scoped leases', async () => {
 		const createLease = vi.fn(async () => createLeaseStub('lease-agent-profile', 0));
 		const app = createControllerAppForTest({
 			leaseManager: {
@@ -1198,13 +1194,15 @@ describe('createControllerApp', () => {
 		});
 
 		const createResponse = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/zone/agents/shravan',
-				profileId: 'standard',
-				scopeKey: 'agent:shravan:discord:channel:123',
-				workMountDir: '/zone/agents/shravan',
-				zoneId: 'shravan',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					agentId: 'shravan',
+					agentWorkspaceDir: '/zone/agents/shravan',
+					scopeKey: 'agent:shravan',
+					sessionKey: 'agent:shravan:discord:channel:123',
+					workMountDir: '/zone/agents/shravan',
+				}),
+			),
 			headers: {
 				'content-type': 'application/json',
 			},
@@ -1220,7 +1218,7 @@ describe('createControllerApp', () => {
 					imageProfile: 'tools-dev',
 				},
 				profileId: 'toolsDev',
-				scopeKey: 'agent:shravan:discord:channel:123',
+				scopeKey: 'agent:shravan',
 			}),
 		);
 	});
@@ -1248,13 +1246,11 @@ describe('createControllerApp', () => {
 		});
 
 		const response = await app.request('/lease', {
-			body: JSON.stringify({
-				agentWorkspaceDir: '/home/openclaw/work',
-				profileId: 'standard',
-				scopeKey: 'agent:main:session-abc',
-				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
-				zoneId: 'bogus-zone',
-			}),
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					zoneId: 'bogus-zone',
+				}),
+			),
 			headers: {
 				'content-type': 'application/json',
 			},
@@ -1876,7 +1872,7 @@ describe('createControllerApp', () => {
 			ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 			tcpSlot: 0,
 			transport: 'ssh-sandbox',
-			workdir: '/work',
+			workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			zoneId: 'shravan',
 		});
 		expect(peekLease).toHaveBeenCalledWith('lease-123');

@@ -16,13 +16,28 @@ describe('controller request schemas', () => {
 		expect(jsonSchema).toMatchObject({
 			additionalProperties: false,
 			properties: {
+				agentId: { minLength: 1, type: 'string' },
 				agentWorkspaceDir: { minLength: 1, type: 'string' },
 				profileId: { minLength: 1, type: 'string' },
+				sandbox: expect.objectContaining({
+					required: ['backend', 'mode', 'scope', 'workspaceAccess'],
+					type: 'object',
+				}),
 				scopeKey: { minLength: 1, type: 'string' },
+				sessionKey: { minLength: 1, type: 'string' },
 				workMountDir: { minLength: 1, type: 'string' },
 				zoneId: { minLength: 1, type: 'string' },
 			},
-			required: ['agentWorkspaceDir', 'profileId', 'scopeKey', 'workMountDir', 'zoneId'],
+			required: [
+				'agentId',
+				'agentWorkspaceDir',
+				'profileId',
+				'sandbox',
+				'scopeKey',
+				'sessionKey',
+				'workMountDir',
+				'zoneId',
+			],
 			type: 'object',
 		});
 	});

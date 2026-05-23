@@ -19,7 +19,10 @@ import type { SecretResolver } from '@agent-vm/secret-management';
 import { buildGondolinImage as buildGondolinImageDefault } from '../build/gondolin-image-builder.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { ToolVmProfile } from '../controller/leases/lease-manager.js';
-import { validateResolvedToolWorkMountDir as validateResolvedToolWorkMountDirDefault } from '../controller/leases/lease-work-mount-paths.js';
+import {
+	OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+	validateResolvedToolWorkMountDir as validateResolvedToolWorkMountDirDefault,
+} from '../controller/leases/lease-work-mount-paths.js';
 import {
 	OPENCLAW_ZONE_FILES_GUEST_ROOT,
 	OPENCLAW_ZONE_GIT_GUEST_ROOT,
@@ -158,7 +161,7 @@ export async function createToolVm(
 				zone,
 			});
 			vfsMounts = {
-				'/work': {
+				[OPENCLAW_TOOL_VM_WORKSPACE_MOUNT]: {
 					hostPath: hostWorkMountDirectory,
 					kind: 'realfs',
 					pinnedHostRoot: pinnedWorkMountRoot,

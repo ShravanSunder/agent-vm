@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { isToolVmLeasePeek, isToolVmSshLease } from './tool-vm-lease.js';
 
+const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
+
 describe('Tool VM SSH lease types', () => {
 	it('accepts an SSH lease capability and does not model filesystem methods', () => {
 		const lease = {
@@ -15,7 +17,7 @@ describe('Tool VM SSH lease types', () => {
 			},
 			tcpSlot: 0,
 			transport: 'ssh-sandbox',
-			workdir: '/work',
+			workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 		};
 
 		expect(isToolVmSshLease(lease)).toBe(true);
@@ -38,7 +40,7 @@ describe('Tool VM SSH lease types', () => {
 				},
 				tcpSlot: 0,
 				transport: 'ssh-sandbox',
-				workdir: '/work',
+				workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 				zoneId: 'default',
 			}),
 		).toBe(true);

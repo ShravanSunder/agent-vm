@@ -500,11 +500,12 @@ OpenClaw gateway durable zone files:
   guest /zone  ->  host gateway.zoneFilesDir
 
 Tool VM selected work mount:
-  guest /work  ->  host path chosen by OpenClaw lease request
+  guest /workspace  ->  host path chosen by OpenClaw lease request
+  guest /work       ->  Tool VM rootfs/COW scratch
 
-That Tool VM /work backing path may be an agent sandbox work directory under
-stateDir, or a subpath of zoneFilesDir. The Tool VM root filesystem itself is
-disposable.
+That Tool VM `/workspace` backing path may be an agent sandbox work directory
+under stateDir, or a subpath of zoneFilesDir. The Tool VM root filesystem
+itself is disposable, including `/work`.
 ```
 
 ## toolVmProfiles

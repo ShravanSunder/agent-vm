@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { createControllerClient } from './controller-client.js';
 
+const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
+
 describe('createControllerClient', () => {
 	it('calls the controller service routes for operational commands', async () => {
 		const requests: { body?: string; method: string; url: string }[] = [];
@@ -25,7 +27,7 @@ describe('createControllerClient', () => {
 							ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 							tcpSlot: 0,
 							transport: 'ssh-sandbox',
-							workdir: '/work',
+							workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 							zoneId: 'shravan',
 						}
 					: { ok: true, zoneId: 'shravan' };

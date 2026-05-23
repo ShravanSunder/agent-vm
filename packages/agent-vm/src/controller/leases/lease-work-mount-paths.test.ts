@@ -70,7 +70,7 @@ describe('resolveLeaseWorkMountDir', () => {
 				zone,
 			}),
 		).resolves.toEqual({
-			guestWorkdir: '/work',
+			guestWorkdir: '/workspace',
 			hostWorkMountDir: await realpath(path.join(stateDir, 'sandboxes', 'agent', 'work')),
 		});
 	});
@@ -114,7 +114,7 @@ describe('resolveLeaseWorkMountDir', () => {
 				zone,
 			}),
 		).resolves.toEqual({
-			guestWorkdir: '/work',
+			guestWorkdir: '/workspace',
 			hostWorkMountDir: await realpath(path.join(zoneFilesDir, 'project')),
 		});
 	});
