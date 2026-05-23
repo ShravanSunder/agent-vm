@@ -74,7 +74,7 @@ async function readManagedEffectiveConfigPair(effectivePortalDir: string): Promi
 }
 
 function createSmokeGatewayClient(harness: SmokeHarnessRuntime): GatewayApiClient {
-	const gatewayIngress = harness.runtime.zones[0]?.ingress;
+	const gatewayIngress = harness.runtime.zones[0]?.gateway?.ingress;
 	if (!gatewayIngress) {
 		throw new Error('OpenClaw MCP Portal smoke did not expose a gateway ingress URL.');
 	}
@@ -273,7 +273,7 @@ describeOpenClawMcpPortalSmoke('smoke: OpenClaw MCP Portal gateway boot', () => 
 		expect(
 			Object.keys(mcpServers).filter((serverName) => serverName.startsWith('mcp_portal')),
 		).toEqual([]);
-		expect(harness.runtime.zones[0]?.ingress?.port).not.toBe(18_790);
+		expect(harness.runtime.zones[0]?.gateway?.ingress.port).not.toBe(18_790);
 		expect(serializedManagedConfigs).not.toContain('agent-vm-mcp-portal-server');
 		expect(serializedManagedConfigs).not.toMatch(
 			/OP_SERVICE_ACCOUNT_TOKEN|OP_CONNECT_TOKEN|OP_SESSION|op read|spawn op/u,

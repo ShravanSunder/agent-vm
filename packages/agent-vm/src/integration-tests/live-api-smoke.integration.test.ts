@@ -112,6 +112,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 				fs: createManagedVmFsStub(),
 				id: 'tool-vm-smoke',
 				setIngressRoutes: vi.fn(),
+				getHostPid: () => null,
 				getVmInstance: vi.fn(),
 			},
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',

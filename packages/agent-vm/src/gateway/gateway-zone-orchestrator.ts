@@ -259,6 +259,12 @@ export async function startGatewayZone(
 	})();
 	const cleanupPromise = runTaskStep('Cleaning orphaned gateway runtime', async () => {
 		await (dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent)({
+			legacyRecordDefaults: {
+				configPath: options.systemConfig.systemConfigPath,
+				controllerPort: options.systemConfig.host.controllerPort,
+			},
+			mode: 'in-process-recovery',
+			projectNamespace: options.systemConfig.host.projectNamespace,
 			stateDir: zone.gateway.stateDir,
 			zoneId: zone.id,
 		});
@@ -365,6 +371,7 @@ export async function startGatewayZone(
 				imagePath: image.imagePath,
 				memory: zone.gateway.memory,
 				rootfsMode: vmSpec.rootfsMode,
+				...(vmSpec.runtimeRootfsSize ? { runtimeRootfsSize: vmSpec.runtimeRootfsSize } : {}),
 				secrets: vmSpec.mediatedSecrets,
 				sessionLabel: vmSpec.sessionLabel,
 				tcpHosts,
@@ -454,11 +461,13 @@ export async function startGatewayZone(
 			await (dependencies.writeGatewayRuntimeRecord ?? writeGatewayRuntimeRecord)(
 				zone.gateway.stateDir,
 				buildGatewayRuntimeRecord({
+					controllerPort: options.systemConfig.host.controllerPort,
 					gatewayType: zone.gateway.type,
 					ingressPort: ingress.port,
 					managedVm,
 					processSpec,
 					projectNamespace: options.systemConfig.host.projectNamespace,
+					systemConfigPath: options.systemConfig.systemConfigPath,
 					zoneId: zone.id,
 				}),
 			);

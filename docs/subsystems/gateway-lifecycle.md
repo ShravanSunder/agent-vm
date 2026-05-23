@@ -133,9 +133,9 @@ Defined in `packages/openclaw-gateway/src/openclaw-lifecycle.ts`.
 Two host-side writes before VM boot:
 
 1. **Effective config** -- reads the base OpenClaw JSON config, configures
-   `gateway.auth.token` as an env SecretRef for `OPENCLAW_GATEWAY_TOKEN`, and
-   writes the result atomically to `<stateDir>/effective-openclaw.json`
-   with mode 0600. The plaintext gateway token is not written to this file.
+   `gateway.auth.token` as an env SecretRef for `OPENCLAW_GATEWAY_TOKEN`, and writes the result atomically to
+   `<stateDir>/effective-openclaw.json` with mode 0600. The plaintext gateway
+   token is not written to this file.
 
 2. **Auth profiles** -- if `gateway.authProfilesByAgent` is configured on the
    zone, resolves each agent's secret and writes `auth-profiles.json` to
@@ -178,16 +178,16 @@ rootfsMode: cow
 ```
 
 The effective config references `OPENCLAW_GATEWAY_TOKEN` through OpenClaw's env
-SecretRef shape. The gateway VM receives the token as an env-injected secret so
-the daemon can resolve that SecretRef at startup without storing the plaintext
-token in persistent state.
+SecretRef shape. The gateway VM receives the token as an
+env-injected secret so the daemon can resolve that SecretRef at startup without
+storing the plaintext token in persistent state.
 
-OpenClaw raw env secrets are intentionally narrow. `OPENCLAW_GATEWAY_TOKEN` is
-allowed by default; additional gateway env secrets must be listed in
-`gateway.rawEnvSecrets`. Provider API tokens should use Gondolin
-`http-mediation` unless the integration cannot be mediated at the HTTP boundary.
-Generated runtime env secrets, such as zone-git capability env vars, must also
-be listed when enabled.
+OpenClaw raw env secrets are intentionally narrow. The configured
+`OPENCLAW_GATEWAY_TOKEN` secret is allowed by default; additional gateway env
+secrets must be listed in `gateway.rawEnvSecrets`. Provider API tokens should
+use Gondolin `http-mediation` unless the integration cannot be mediated at the
+HTTP boundary. Generated runtime env secrets, such as zone-git capability env
+vars, must also be listed when enabled.
 
 Bundled OpenClaw plugin runtime dependencies are staged under
 `OPENCLAW_PLUGIN_STAGE_DIR`. Target state is image/rootfs-local staging at
@@ -199,9 +199,9 @@ rebuildable and must not be included in encrypted zone backups.
 
 - **bootstrap**: creates `/work/tmp` and `/work/cache/*`, writes
   `/etc/profile.d/openclaw-env.sh` with non-secret environment exports, writes
-  runtime-only secret env files under `/run/openclaw`, and installs a root-only
-  `openclaw` shell wrapper that sources only the gateway token for admin
-  commands.
+  runtime-only secret env files under `/run/openclaw`, including
+  `/run/openclaw/secrets.env` for the gateway daemon and token-only
+  `/run/openclaw/gateway-token.env` for controller SSH admin shells.
 - **start**: sources `/run/openclaw/secrets.env`, then runs
   `cd /home/openclaw && nohup openclaw gateway --port 18789`
 - **healthCheck**: HTTP on port 18789, path `/readyz`

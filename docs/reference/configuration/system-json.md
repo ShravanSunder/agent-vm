@@ -390,6 +390,7 @@ files:
     "port": 18791,
     "config": "./gateways/shravan/openclaw.json",
     "imageProfile": "openclaw",
+    "runtimeRootfsSize": "12G",
     "stateDir": "../state/shravan",
     "zoneFilesDir": "../zone-files/shravan",
     "authProfilesByAgent": {
@@ -432,13 +433,22 @@ support `environment`, `1password`, and `config` sources. Inline `config`
 values here are plaintext OpenClaw auth profiles and should be limited to local
 or test deployments.
 
-`gateway.rawEnvSecrets` is the explicit escape hatch for OpenClaw secrets that
-must reach the gateway VM as raw environment variables. `OPENCLAW_GATEWAY_TOKEN`
-is allowed by default. Other provider or service tokens should use
-`http-mediation` unless the integration cannot work with HTTP mediation, such as
-a non-HTTP or websocket credential flow. Generated runtime env secrets also need
-to be named here when a feature requires them, for example
-`AGENT_VM_ZONE_GIT_TOKEN`.
+`OPENCLAW_GATEWAY_TOKEN` is the gateway env secret OpenClaw uses to authenticate
+controller API calls. That secret must exist in `zone.secrets` with
+`injection: "env"` and `audience: "gateway"`.
+
+`gateway.rawEnvSecrets` is the explicit escape hatch for other OpenClaw secrets
+that must reach the gateway VM as raw environment variables. Other provider or
+service tokens should use `http-mediation` unless the integration cannot work
+with HTTP mediation, such as a non-HTTP or websocket credential flow. Generated
+runtime env secrets also need to be named here when a feature requires them, for
+example `AGENT_VM_ZONE_GIT_TOKEN`.
+
+`zones[].gateway.runtimeRootfsSize` optionally requests a minimum runtime root
+disk size for the gateway VM, using Gondolin `rootfs.size`. The base image is
+not rebuilt for this value; Gondolin grows the writable root disk and runs
+`resize2fs` in the guest before startup completes. The guest image must contain
+`resize2fs`.
 
 `agentSandboxSeeds` writes first-boot files into the agent's scoped sandbox work
 mount before the Tool VM starts. Targets are relative to the sandbox
@@ -474,7 +484,8 @@ Tool VMs, not gateway profiles and not OpenClaw user profiles.
     "standard": {
       "memory": "1G",
       "cpus": 1,
-      "imageProfile": "default"
+      "imageProfile": "default",
+      "runtimeRootfsSize": "16G"
     },
     "tools-dev": {
       "memory": "2G",
@@ -497,6 +508,12 @@ profiles from one config. Image profiles with the same resolved build config
 path and identical effective image fingerprints are deduped during
 `agent-vm build`, so separate profile names do not by themselves force separate
 Gondolin asset conversion work.
+
+`toolVmProfiles[*].runtimeRootfsSize` applies the same runtime root disk sizing
+to Tool VMs created from that profile. Use the image build config
+`rootfs.sizeMb` for packages baked into the base image; use
+`runtimeRootfsSize` for writable runtime capacity such as agent caches,
+temporary installs, browser artifacts, and command output generated after boot.
 
 ## zones[].resources
 
@@ -565,9 +582,9 @@ when `injection` is `http-mediation`; in that case the controller reads the
 environment variable and Gondolin mediates the value.
 
 OpenClaw zones allow raw gateway env secrets only when the secret name is
-`OPENCLAW_GATEWAY_TOKEN` or is listed in `gateway.rawEnvSecrets`. This keeps
-provider API tokens on the mediated path by default and makes every raw-env
-exception visible in deployment config.
+`OPENCLAW_GATEWAY_TOKEN` or is listed in `gateway.rawEnvSecrets`. This
+keeps provider API tokens on the mediated path by default and makes every
+raw-env exception visible in deployment config.
 
 Secret names must be valid environment variable identifiers. This keeps
 gateway env-file rendering and runtime placeholder names safe and predictable.
@@ -670,7 +687,7 @@ The schema rejects:
 - OpenClaw env-injected zone secrets not listed in `gateway.rawEnvSecrets`,
   except `OPENCLAW_GATEWAY_TOKEN`.
 - Mediated secret hosts not declared in `egressHosts` for the same audience.
-- OpenClaw zones without gateway-only env `OPENCLAW_GATEWAY_TOKEN`.
+- OpenClaw zones without a gateway-only env secret named `OPENCLAW_GATEWAY_TOKEN`.
 - Zones referencing missing gateway image profiles.
 - Zone gateway type mismatches against the selected image profile.
 - OpenClaw zones declaring `runtimeAuthHints`.

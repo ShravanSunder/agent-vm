@@ -66,6 +66,7 @@ function createFakeManagedVm(): ManagedVm {
 		}),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
+		getHostPid: () => 12_345,
 		getVmInstance: () => fakeVmInstance,
 		setIngressRoutes: () => {},
 	};

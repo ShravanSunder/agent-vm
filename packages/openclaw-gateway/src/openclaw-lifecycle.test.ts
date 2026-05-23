@@ -140,6 +140,76 @@ describe('openclawLifecycle', () => {
 			);
 		});
 
+		it('writes effective auth and SSH admin token files from the fixed gateway token secret', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-gateway-token-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify({ gateway: { bind: 'loopback' } }, null, 2),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					rawEnvSecrets: ['DISCORD_BOT_TOKEN'],
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/auth-profiles') {
+						return '{"profiles":["main"]}';
+					}
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
+					}
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
+			const effectiveOpenClawConfigContent = await readFile(
+				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
+				'utf8',
+			);
+			expect(JSON.parse(effectiveOpenClawConfigContent)).toMatchObject({
+				gateway: {
+					auth: {
+						token: {
+							id: 'OPENCLAW_GATEWAY_TOKEN',
+							provider: 'default',
+							source: 'env',
+						},
+					},
+				},
+			});
+
+			const processSpec = openclawLifecycle.buildProcessSpec(zone, {
+				OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
+				DISCORD_BOT_TOKEN: 'discord-token',
+			});
+			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory, {
+				...process.env,
+				OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
+				DISCORD_BOT_TOKEN: 'discord-token',
+			});
+			const gatewayTokenEnvFilePath = path.join(
+				tempDirectory,
+				'run',
+				'openclaw',
+				'gateway-token.env',
+			);
+			const tokenEnvFile = await readFile(gatewayTokenEnvFilePath, 'utf8');
+			expect(tokenEnvFile).toContain('OPENCLAW_GATEWAY_TOKEN');
+			expect(tokenEnvFile).not.toContain('DISCORD_BOT_TOKEN');
+		});
+
 		it('builds a login command for a given provider', () => {
 			expect(openclawLifecycle.authConfig?.buildLoginCommand('codex')).toBe(
 				"openclaw models auth login --provider 'codex'",
@@ -524,14 +594,53 @@ describe('openclawLifecycle', () => {
 				],
 				{
 					env: {
-						...process.env,
-						DISCORD_BOT_TOKEN: discordToken,
-						OPENCLAW_GATEWAY_TOKEN: gatewayToken,
+						PATH: process.env.PATH,
 					},
 				},
 			);
 
 			expect(stdout).toBe(`${gatewayToken}\n${discordToken}`);
+		});
+
+		it('writes a token-only admin env file without requiring other raw gateway secrets for SSH', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-bootstrap-admin-token-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const gatewayToken = "gateway' $ ` token";
+			const discordToken = "discord' $ ` token";
+			const processSpec = openclawLifecycle.buildProcessSpec(createZone(), {
+				...resolvedSecrets,
+				DISCORD_BOT_TOKEN: discordToken,
+				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
+			});
+
+			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory, {
+				...process.env,
+				DISCORD_BOT_TOKEN: discordToken,
+				OPENCLAW_GATEWAY_TOKEN: gatewayToken,
+			});
+
+			const gatewayTokenEnvFilePath = path.join(
+				tempDirectory,
+				'run',
+				'openclaw',
+				'gateway-token.env',
+			);
+			const tokenEnvFile = await readFile(gatewayTokenEnvFilePath, 'utf8');
+			expect(tokenEnvFile).toContain('OPENCLAW_GATEWAY_TOKEN');
+			expect(tokenEnvFile).not.toContain('DISCORD_BOT_TOKEN');
+			expect(tokenEnvFile).not.toContain(discordToken);
+			const { stdout } = await execFileAsync(
+				'bash',
+				[
+					'-lc',
+					`set -eu; . ${shellQuoteForTest(gatewayTokenEnvFilePath)}; printf '%s' "$OPENCLAW_GATEWAY_TOKEN"`,
+				],
+				{ env: { PATH: process.env.PATH } },
+			);
+
+			expect(stdout).toBe(gatewayToken);
 		});
 
 		it('writes profile scripts without expanding runtime shell expressions', async () => {

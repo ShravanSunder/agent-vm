@@ -83,6 +83,7 @@ async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 					cpus: 1,
 					imageProfile: 'default',
 					memory: '1G',
+					runtimeRootfsSize: '16G',
 				},
 			},
 			zones: [
@@ -162,6 +163,7 @@ describe('createToolVm', () => {
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
 			exec,
 			fs: createManagedVmFsStub(),
+			getHostPid: () => 28282,
 			getVmInstance: () => ({
 				close: async () => {},
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -237,6 +239,7 @@ describe('createToolVm', () => {
 		expect(capturedCreateVmOptions?.env?.NODE_OPTIONS).toBe(
 			'--dns-result-order=ipv4first --no-network-family-autoselection',
 		);
+		expect(capturedCreateVmOptions?.runtimeRootfsSize).toBe('16G');
 	});
 
 	it('passes only Tool VM egress hosts and mediated secrets into the Tool VM', async () => {
@@ -246,6 +249,7 @@ describe('createToolVm', () => {
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
 			exec: () => createManagedExecProcessStub(),
 			fs: createManagedVmFsStub(),
+			getHostPid: () => null,
 			getVmInstance: () => ({
 				close: async () => {},
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -395,6 +399,7 @@ describe('createToolVm', () => {
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
 			exec,
 			fs: createManagedVmFsStub(),
+			getHostPid: () => null,
 			getVmInstance: () => ({
 				close: async () => {},
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -538,6 +543,7 @@ describe('createToolVm', () => {
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
 			exec: () => createManagedExecProcessStub(),
 			fs: createManagedVmFsStub(),
+			getHostPid: () => null,
 			getVmInstance: () => ({
 				close: async () => {},
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -604,6 +610,7 @@ describe('createToolVm', () => {
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
 			exec,
 			fs: createManagedVmFsStub(),
+			getHostPid: () => null,
 			getVmInstance: () => ({
 				close: async () => {},
 				enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),

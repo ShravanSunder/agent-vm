@@ -347,6 +347,7 @@ describe('createOpenClawZoneRuntime', () => {
 						})),
 						exec,
 						fs: createManagedVmFsStub(),
+						getHostPid: () => null,
 						getVmInstance: vi.fn(),
 						id: 'vm-shravan',
 						setIngressRoutes: vi.fn(),

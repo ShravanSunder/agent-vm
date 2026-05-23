@@ -24,7 +24,7 @@ export type ControllerZoneConfig = SystemConfig['zones'][number];
 export interface GatewayZoneRuntimeHandle {
 	readonly ingress: GatewayZoneStartResult['ingress'];
 	readonly processSpec: GatewayProcessSpec;
-	readonly vm: Pick<ManagedVm, 'close' | 'enableSsh' | 'exec' | 'id'>;
+	readonly vm: Pick<ManagedVm, 'close' | 'enableSsh' | 'exec' | 'getHostPid' | 'id'>;
 }
 
 export type ControllerZoneRuntimeSnapshot = ControllerRuntimeZoneStatus;

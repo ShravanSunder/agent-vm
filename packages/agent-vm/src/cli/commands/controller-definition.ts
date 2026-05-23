@@ -2,10 +2,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { command, positional, string, subcommands } from 'cmd-ts';
+import { command, flag, positional, string, subcommands } from 'cmd-ts';
 
 import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
 import type { LoadedSystemConfig } from '../../config/system-config.js';
+import { runControllerOfflineCleanup } from '../../operations/controller-offline-cleanup.js';
 import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
 import { runControllerOperationCommand } from '../controller-operation-commands.js';
 import { runLeaseCommand } from '../lease-commands.js';
@@ -125,12 +126,15 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 						},
 						{ runTask },
 					);
+					const startedZone = runtime.zones.find(
+						(runtimeZone) => runtimeZone.zoneId === selectedZone.id,
+					);
 					io.stdout.write(
 						`${JSON.stringify(
 							{
 								controllerPort: runtime.controllerPort,
-								ingress: runtime.gateway?.ingress ?? null,
-								vmId: runtime.gateway?.vm.id ?? null,
+								ingress: startedZone?.gateway?.ingress ?? null,
+								vmId: startedZone?.gateway?.vm.id ?? null,
 								zoneId: selectedZone.id,
 							},
 							null,
@@ -143,6 +147,38 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 				description: 'Stop the controller',
 				name: 'stop',
 			}),
+			cleanup: command({
+				name: 'cleanup',
+				description: 'Clean up recorded gateway VM processes without contacting the controller',
+				args: {
+					config: createConfigOption(),
+					force: flag({
+						long: 'force',
+						description: 'Allow cleanup even if the controller health endpoint is reachable',
+					}),
+					zone: createZoneOption(),
+				},
+				handler: async ({ config, force, zone }) => {
+					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+					const selectedZone = requireZone(systemConfig, zone);
+					const result = await (
+						dependencies.runControllerOfflineCleanup ?? runControllerOfflineCleanup
+					)({
+						force,
+						systemConfig,
+						zoneId: selectedZone.id,
+					});
+					io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+					const cleanupWarnings = result.results
+						.map((cleanupResult) => cleanupResult.cleanupWarning)
+						.filter((cleanupWarning): cleanupWarning is string => cleanupWarning !== undefined);
+					if (cleanupWarnings.length > 0) {
+						throw new Error(
+							`Controller cleanup completed with warnings: ${cleanupWarnings.join('; ')}`,
+						);
+					}
+				},
+			}),
 			status: createControllerOperationSubcommand(io, dependencies, {
 				description: 'Show controller status',
 				name: 'status',
@@ -151,13 +187,21 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 				name: 'ssh',
 				description: 'Open an SSH session into the gateway VM',
 				args: {
+					allSecrets: flag({
+						long: 'all-secrets',
+						description: 'Load every raw gateway environment secret in the SSH shell',
+					}),
 					config: createConfigOption(),
 					zone: createZoneOption(),
 				},
-				handler: async ({ config, zone }) => {
+				handler: async ({ allSecrets, config, zone }) => {
 					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 					const selectedZone = requireZone(systemConfig, zone);
-					const restArguments = ['--zone', selectedZone.id];
+					const restArguments = [
+						'--zone',
+						selectedZone.id,
+						...(allSecrets ? ['--all-secrets'] : []),
+					];
 					await runSshCommand({
 						dependencies,
 						io,

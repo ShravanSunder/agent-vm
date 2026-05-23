@@ -62,6 +62,7 @@ interface GatewayZoneBaseGatewayConfig {
 	readonly port: number;
 	readonly config: string;
 	readonly stateDir: string;
+	readonly runtimeRootfsSize?: string;
 	readonly ssh: GatewaySshConfig;
 	readonly authProfilesRef?:
 		| ConfigGatewayAuthProfilesRef

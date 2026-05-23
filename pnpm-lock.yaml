@@ -5,9 +5,9 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@earendil-works/gondolin@0.9.1':
-    hash: a67b9d1755400b7e8d24ae8add50026ef807c69356da29d3880cf317d853a833
-    path: patches/@earendil-works__gondolin@0.9.1.patch
+  '@earendil-works/gondolin@0.12.0':
+    hash: a62e288cbcd45d50ffa7751ebd3c87715a00bce8324b4ba626f0f4670c4bd9d0
+    path: patches/@earendil-works__gondolin@0.12.0.patch
 
 importers:
 
@@ -163,8 +163,8 @@ importers:
         specifier: workspace:*
         version: link:../secret-management
       '@earendil-works/gondolin':
-        specifier: 0.9.1
-        version: 0.9.1(patch_hash=a67b9d1755400b7e8d24ae8add50026ef807c69356da29d3880cf317d853a833)
+        specifier: 0.12.0
+        version: 0.12.0(patch_hash=a62e288cbcd45d50ffa7751ebd3c87715a00bce8324b4ba626f0f4670c4bd9d0)
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -407,20 +407,24 @@ packages:
     resolution: {integrity: sha512-GgcWwRCs/xPtaqlMy8qRhPnZf9vlWcWZNHAitnVQ3yk7JmSralSiq5q07yaffYE8SogtDm7zFeKccx1QNVARpw==}
     engines: {node: '>= 20.12.0'}
 
-  '@earendil-works/gondolin-krun-runner-darwin-arm64@0.9.1':
-    resolution: {integrity: sha512-gmQrgV2nWfa6rtKmfTDmDdoRH4or7AAG+dQjAVBMwTCrXBh0yuAWSSDzgI88AuN9xv/E4JifDnN2pg+zvDHTiw==}
+  '@cto.af/wtf8@0.0.5':
+    resolution: {integrity: sha512-LfUFi+Vv4eDzj+XAtR89e3wwjXA/NZjUSwU5NhwbBrLecxPaBYFy3exCuc1j+D4UZeOVdqlsl8G7LmOt18V0tg==}
+    engines: {node: '>=20'}
+
+  '@earendil-works/gondolin-krun-runner-darwin-arm64@0.12.0':
+    resolution: {integrity: sha512-ftDlusht4PcT7Y3TuPrZIKrCXy3isiBTVMvlXYK0pcud2uXY6uwFTGeunYgP+8ND/60ddb+MImqbfmkcK8B84A==}
     cpu: [arm64]
     os: [darwin]
     hasBin: true
 
-  '@earendil-works/gondolin-krun-runner-linux-x64@0.9.1':
-    resolution: {integrity: sha512-AvPPZkI1DNt8wRM5mOA2RHxwlvPbpeTLbD6RgOKCeTpxrYWEt0CYNvFkay2mCdO/6VN/4uJfR5Opcgwb3GnAEQ==}
+  '@earendil-works/gondolin-krun-runner-linux-x64@0.12.0':
+    resolution: {integrity: sha512-RRYsgwe2r5ApKmFNy469QgwnyjAHpAs9XANdWpTd9ol4iUYOY3sX7e0xIooAKxd+ktxGI4N/xRWicwGen3D/Ow==}
     cpu: [x64]
     os: [linux]
     hasBin: true
 
-  '@earendil-works/gondolin@0.9.1':
-    resolution: {integrity: sha512-yg7AkbpmRWUyf+oBO4koFNVP1pC9p7hTFDIwuqomo5Iih685Q/7rfw7vVGA8mkTtHL82M+6Vy+dsnAT0FAfFvQ==}
+  '@earendil-works/gondolin@0.12.0':
+    resolution: {integrity: sha512-BXbvzQKb5QmxY5NtthRDONJTu7+IDKbzqWGrJyyNXMP7N681Tx0Q9TK8pK1ba8nUvYQTipNJyGZOsJfYiZll1A==}
     engines: {node: '>=23.6.0'}
     hasBin: true
 
@@ -1762,8 +1766,8 @@ packages:
     resolution: {integrity: sha512-L28STB170nwWS63UjtlEOE3dldQApaJXZkOI1uMFfzf3rRuPegHaHesyee+YxQ+W6SvRDQV6UrdOdRiR153wJg==}
     engines: {node: '>=6'}
 
-  cbor@10.0.12:
-    resolution: {integrity: sha512-exQDevYd7ZQLP4moMQcZkKCVZsXLAtUSflObr3xTh4xzFIv/xBCdvCd6L259kQOUP2kcTC0jvC6PpZIf/WmRXA==}
+  cbor2@2.3.0:
+    resolution: {integrity: sha512-76WB3hq8BoaGkMkBVJ27fW5LJU+qqDLEpgRNCG/SYKhODWXpVPOTD4UcUto3IEzYLA52nsvbhb0wabhHDn3qXg==}
     engines: {node: '>=20'}
 
   chai@6.2.2:
@@ -2666,10 +2670,6 @@ packages:
   node-gyp-build@4.8.4:
     resolution: {integrity: sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==}
     hasBin: true
-
-  nofilter@3.1.0:
-    resolution: {integrity: sha512-l2NNj07e9afPnhAhvgVrCD/oy2Ai1yfLpuo3EpiO1jFTsB4sFz6oIfAfSZyQzVpkZQ9xS8ZS5g1jCBgq4Hwo0g==}
-    engines: {node: '>=12.19'}
 
   npm-run-path@6.0.0:
     resolution: {integrity: sha512-9qny7Z9DsQU8Ou39ERsPU4OZQlSTP47ShQzuKZ6PRXpYLtIFgl/DEBYEXKlvcEa+9tHVcK8CF81Y2V72qaZhWA==}
@@ -3848,21 +3848,23 @@ snapshots:
       fast-wrap-ansi: 0.2.0
       sisteransi: 1.0.5
 
-  '@earendil-works/gondolin-krun-runner-darwin-arm64@0.9.1':
+  '@cto.af/wtf8@0.0.5': {}
+
+  '@earendil-works/gondolin-krun-runner-darwin-arm64@0.12.0':
     optional: true
 
-  '@earendil-works/gondolin-krun-runner-linux-x64@0.9.1':
+  '@earendil-works/gondolin-krun-runner-linux-x64@0.12.0':
     optional: true
 
-  '@earendil-works/gondolin@0.9.1(patch_hash=a67b9d1755400b7e8d24ae8add50026ef807c69356da29d3880cf317d853a833)':
+  '@earendil-works/gondolin@0.12.0(patch_hash=a62e288cbcd45d50ffa7751ebd3c87715a00bce8324b4ba626f0f4670c4bd9d0)':
     dependencies:
-      cbor: 10.0.12
+      cbor2: 2.3.0
       node-forge: 1.4.0
       ssh2: 1.17.0
       undici: 6.25.0
     optionalDependencies:
-      '@earendil-works/gondolin-krun-runner-darwin-arm64': 0.9.1
-      '@earendil-works/gondolin-krun-runner-linux-x64': 0.9.1
+      '@earendil-works/gondolin-krun-runner-darwin-arm64': 0.12.0
+      '@earendil-works/gondolin-krun-runner-linux-x64': 0.12.0
 
   '@earendil-works/pi-agent-core@0.74.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)':
     dependencies:
@@ -4918,9 +4920,9 @@ snapshots:
 
   camelcase@5.3.1: {}
 
-  cbor@10.0.12:
+  cbor2@2.3.0:
     dependencies:
-      nofilter: 3.1.0
+      '@cto.af/wtf8': 0.0.5
 
   chai@6.2.2: {}
 
@@ -5837,8 +5839,6 @@ snapshots:
   node-forge@1.4.0: {}
 
   node-gyp-build@4.8.4: {}
-
-  nofilter@3.1.0: {}
 
   npm-run-path@6.0.0:
     dependencies:

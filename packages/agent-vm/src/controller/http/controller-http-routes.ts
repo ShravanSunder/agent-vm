@@ -190,6 +190,7 @@ export function createControllerApp(options: {
 			readonly cpus: number;
 			readonly imageProfile: string;
 			readonly memory: string;
+			readonly runtimeRootfsSize?: string | undefined;
 		}
 	>;
 	readonly zoneAgentToolVmProfiles?: Record<string, Record<string, string>>;

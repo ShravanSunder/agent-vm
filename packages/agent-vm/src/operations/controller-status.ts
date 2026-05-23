@@ -10,6 +10,7 @@ export interface ControllerRuntimeZoneStatus {
 			readonly port: number;
 		};
 		readonly vm: {
+			readonly hostPid?: number;
 			readonly id: string;
 		};
 	};

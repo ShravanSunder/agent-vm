@@ -26,6 +26,8 @@ function createStateDirectory(): string {
 
 function createRuntimeRecord(stateDirectory: string, qemuPid: number): Promise<void> {
 	return writeGatewayRuntimeRecord(stateDirectory, {
+		configPath: '/deployments/claw/config/system.jsonc',
+		controllerPort: 18800,
 		createdAt: '2026-04-13T12:34:56.000Z',
 		gatewayType: 'openclaw',
 		guestListenPort: 18789,
@@ -36,6 +38,25 @@ function createRuntimeRecord(stateDirectory: string, qemuPid: number): Promise<v
 		vmId: `vm-${qemuPid}`,
 		zoneId: 'shravan',
 	});
+}
+
+function writeLegacyRuntimeRecord(stateDirectory: string, qemuPid: number): void {
+	fs.mkdirSync(stateDirectory, { recursive: true });
+	fs.writeFileSync(
+		path.join(stateDirectory, 'gateway-runtime.json'),
+		`${JSON.stringify({
+			createdAt: '2026-04-13T12:34:56.000Z',
+			gatewayType: 'openclaw',
+			guestListenPort: 18789,
+			ingressPort: 18791,
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			qemuPid,
+			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+			vmId: `vm-${qemuPid}`,
+			zoneId: 'shravan',
+		})}\n`,
+		'utf8',
+	);
 }
 
 function findDefinitelyDeadPid(): number {
@@ -65,6 +86,31 @@ describe('integration: orphan recovery', () => {
 
 		await expect(
 			cleanupOrphanedGatewayIfPresent({
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				stateDir: stateDirectory,
+				zoneId: 'shravan',
+			}),
+		).resolves.toEqual({
+			cleanedUp: true,
+			killedPid: null,
+		});
+
+		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toBeNull();
+		expect(fs.existsSync(path.join(stateDirectory, 'gateway-runtime.json'))).toBe(false);
+	});
+
+	it('removes a stale legacy runtime record when current config metadata is supplied', async () => {
+		const stateDirectory = createStateDirectory();
+		const deadPid = findDefinitelyDeadPid();
+		writeLegacyRuntimeRecord(stateDirectory, deadPid);
+
+		await expect(
+			cleanupOrphanedGatewayIfPresent({
+				legacyRecordDefaults: {
+					configPath: '/deployments/claw/config/system.jsonc',
+					controllerPort: 18800,
+				},
+				projectNamespace: 'claw-tests-a1b2c3d4',
 				stateDir: stateDirectory,
 				zoneId: 'shravan',
 			}),
@@ -83,6 +129,7 @@ describe('integration: orphan recovery', () => {
 
 		await expect(
 			cleanupOrphanedGatewayIfPresent({
+				projectNamespace: 'claw-tests-a1b2c3d4',
 				stateDir: stateDirectory,
 				zoneId: 'shravan',
 			}),
@@ -97,6 +144,7 @@ describe('integration: orphan recovery', () => {
 
 		await expect(
 			cleanupOrphanedGatewayIfPresent({
+				projectNamespace: 'claw-tests-a1b2c3d4',
 				stateDir: stateDirectory,
 				zoneId: 'shravan',
 			}),
@@ -114,6 +162,7 @@ describe('integration: orphan recovery', () => {
 
 		await expect(
 			cleanupOrphanedGatewayIfPresent({
+				projectNamespace: 'claw-tests-a1b2c3d4',
 				stateDir: stateDirectory,
 				zoneId: 'shravan',
 			}),

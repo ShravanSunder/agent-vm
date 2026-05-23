@@ -243,7 +243,7 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 				zoneIds: [project.zone.id],
 			},
 		});
-		const gatewayIngress = harness.runtime.zones[0]?.ingress;
+		const gatewayIngress = harness.runtime.zones[0]?.gateway?.ingress;
 		if (!gatewayIngress) {
 			throw new Error('OpenClaw gateway smoke did not expose an ingress URL.');
 		}

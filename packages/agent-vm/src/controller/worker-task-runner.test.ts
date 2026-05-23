@@ -243,6 +243,7 @@ describe('worker-task-runner', () => {
 			exec: vi.fn(() => createManagedExecProcessStub()),
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
+			getHostPid: () => null,
 			getVmInstance: vi.fn(),
 		};
 
