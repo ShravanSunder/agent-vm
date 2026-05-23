@@ -24,10 +24,12 @@ field             scope                 durable?          backup?   contains
 cacheDir          system                yes               no        rebuildable image/plugin/tool
                                                                        cache
 
-runtimeDir        system                task-lifetime     no        active worker artifacts,
-                                                                       zone runtime logs,
-                                                                       gitdirs, repo metadata,
-                                                                       recovery exports
+runtimeDir        system                mixed: worker     no        active worker artifacts,
+                                        per-task                       zone runtime logs,
+                                        ephemeral;                     gitdirs, repo metadata,
+                                        OpenClaw zone-                 recovery exports
+                                        persistent (see
+                                        below)
 
 stateDir          per-zone              yes               yes       identity, auth profiles,
                                                                        effective config,
@@ -43,6 +45,44 @@ backupDir         per-zone output       artifact          no        encrypted ba
 Worker zones do not have `zoneFilesDir` in the target schema. Worker repo files
 live inside the VM under `/work/repos/<repoId>`, while worker gitdirs live under
 `runtimeDir`.
+
+### runtimeDir is two lifecycles, not one
+
+`runtimeDir`'s "task-lifetime" durability covers only the worker subtree.
+The OpenClaw zone subtree has different lifecycle rules.
+
+```text
+subtree                                             lifecycle              wiped by
+─────────────────────────────────────────           ─────────────────      ────────────────────────
+runtimeDir/worker-tasks/<zone>/<task>/              per-task               postStopGateway runs
+  work/, gitdirs/, repo-metadata/                                          fs.rm(taskRuntimeRoot)
+                                                                           on every task end
+
+runtimeDir/zones/<zone>/logs/                       per-zone               destroy-zone --purge
+                                                                           (orchestrator creates,
+                                                                           openclaw appends across
+                                                                           every gateway restart)
+
+runtimeDir/zones/<zone>/zone-git/                   per-zone, preserved    NOT wiped by
+                                                    even on destroy        destroy-zone --purge
+                                                                           (see two reasons
+                                                                           below)
+```
+
+Two reasons `zone-git/` is preserved even on `destroy-zone --purge`:
+
+1. **Data loss prevention.** `zone-git/zone-files.git` is the authoritative
+   git store for committed work in this zone. Backups capture
+   `zoneFilesDir` (the worktree) but not the git history under
+   `runtimeDir/zones/<zone>/zone-git/`. Any commits that have not been
+   pushed to a remote live only in `zone-git/`; wiping it loses that
+   history irrecoverably.
+2. **Pointer integrity.** `zoneFilesDir/.git` is a `gitdir:` pointer file
+   (not a directory) referencing `/agent-vm/zone-git/zone-files.git`
+   inside the gateway VM, which is realfs-mounted to
+   `runtimeDir/zones/<zone>/zone-git/zone-files.git`. Backed-up
+   `zoneFilesDir` carries this pointer with it; wiping the target leaves
+   any future restore with a dangling `.git` reference.
 
 ## Lease Path Vocabulary
 

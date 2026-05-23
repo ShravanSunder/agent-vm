@@ -409,11 +409,17 @@ describe('startGatewayZone', () => {
 		expect(enableIngressMock).toHaveBeenCalledWith({
 			listenPort: 18791,
 		});
+		// Phase A runs cleanup, validation, image build, and the
+		// mcpPortalMaterialization → resolveZoneSecrets chain in parallel via
+		// Promise.all. Argument order determines synchronous title-push order;
+		// 'Resolving zone secrets' pushes only after mcpPortalMaterialization
+		// resolves, so it lands after 'Building gateway image' despite being
+		// declared earlier in the source.
 		expect(taskTitles).toEqual([
 			'Cleaning orphaned gateway runtime',
 			'Validating OpenClaw Tool VM requirements',
-			'Resolving zone secrets',
 			'Building gateway image',
+			'Resolving zone secrets',
 			'Preparing host state',
 			'Booting gateway VM',
 			'Configuring gateway',
@@ -1582,6 +1588,118 @@ describe('startGatewayZone', () => {
 			),
 		).rejects.toThrow(/disk full/u);
 
+		expect(closeMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('throws AggregateError when both prepareHostState and createManagedVm fail in Phase C', async () => {
+		const prepError = new Error('prep failed: disk full');
+		const vmError = new Error('vm failed: kernel panic');
+
+		let caught: unknown;
+		try {
+			await startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						PERPLEXITY_API_KEY: 'pplx-key',
+					}),
+					systemConfig: await createSystemConfig(),
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
+						cleanedUp: false,
+						killedPid: null,
+					})),
+					createManagedVm: vi.fn(async () => {
+						throw vmError;
+					}),
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					loadGatewayLifecycle: () => ({
+						...createHttpHealthGatewayLifecycle(),
+						prepareHostState: async () => {
+							throw prepError;
+						},
+					}),
+				},
+			);
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(caught).toBeInstanceOf(AggregateError);
+		const aggregate = caught as AggregateError;
+		expect(aggregate.errors).toContain(prepError);
+		expect(aggregate.errors).toContain(vmError);
+	});
+
+	it('aggregates prep error and close error when VM came up but prep failed', async () => {
+		const prepError = new Error('prep failed: disk full');
+		const closeError = new Error('close failed: qemu unresponsive');
+		const closeMock = vi.fn(async () => {
+			throw closeError;
+		});
+		const managedVm: ManagedVm = {
+			id: 'vm-prep-fail-close-fail',
+			close: closeMock,
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
+			setIngressRoutes: vi.fn(),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
+		};
+
+		let caught: unknown;
+		try {
+			await startGatewayZone(
+				{
+					secretResolver: createOpenClawSecretResolver({
+						DISCORD_BOT_TOKEN: 'discord-token',
+						OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+						PERPLEXITY_API_KEY: 'pplx-key',
+					}),
+					systemConfig: await createSystemConfig(),
+					zoneId: 'shravan',
+				},
+				{
+					buildImage: vi.fn(async () => ({
+						built: true,
+						fingerprint: 'fp',
+						imagePath: '/tmp/img',
+					})),
+					cleanupOrphanedGatewayIfPresent: vi.fn(async () => ({
+						cleanedUp: false,
+						killedPid: null,
+					})),
+					createManagedVm: vi.fn(async () => managedVm),
+					loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+					loadGatewayLifecycle: () => ({
+						...createHttpHealthGatewayLifecycle(),
+						prepareHostState: async () => {
+							throw prepError;
+						},
+					}),
+				},
+			);
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(caught).toBeInstanceOf(AggregateError);
+		const aggregate = caught as AggregateError;
+		expect(aggregate.errors).toContain(prepError);
+		expect(
+			aggregate.errors.some(
+				(error: unknown) => error instanceof Error && error.cause === closeError,
+			),
+		).toBe(true);
 		expect(closeMock).toHaveBeenCalledTimes(1);
 	});
 });
