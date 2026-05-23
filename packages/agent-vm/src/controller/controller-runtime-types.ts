@@ -36,6 +36,12 @@ export interface ControllerRuntimeDependencies {
 	}) => Promise<SecretResolver>;
 	readonly deleteGatewayRuntimeRecord?: typeof deleteGatewayRuntimeRecord;
 	readonly now?: () => number;
+	// Injected by tests so the lease manager doesn't shell out to `ps` against
+	// a fake managed-vm pid when capturing process identity for the runtime
+	// record. Production omits this; the lease manager uses the real default.
+	readonly readProcessIdentity?: (
+		pid: number,
+	) => Promise<{ readonly command: string; readonly lstart: string } | null>;
 	readonly runTask?: RunTaskFn;
 	readonly prepareWorkerTask?: typeof prepareWorkerTask;
 	readonly executeWorkerTask?: typeof executeWorkerTask;

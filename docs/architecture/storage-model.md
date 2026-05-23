@@ -167,6 +167,37 @@ durable state
   It is not part of `runtimeDir`; the shared word "runtime" does not imply the
   same lifecycle.
 
+  Note: `tool-leases/<leaseId>.json` is a per-lease durable recovery record
+  for OpenClaw Tool VMs. The schema is versioned via `schemaVersion` and
+  includes a `processIdentity` block (ps `lstart` + full `command`) captured
+  at lease creation. On controller startup, Phase A scans this directory and
+  applies the following recovery discipline:
+
+  - **Five-fence scope check** — `configPath`, `controllerPort`,
+    `projectNamespace`, `zoneId`, `sessionLabel` must all match the running
+    deployment. Any mismatch in `in-process-recovery` mode quarantines the
+    record (rename to `*.quarantined.<ts>.json`) and skips the PID; in
+    `offline-cleanup` mode the cleanup throws.
+
+  - **Process identity check** — before each signal (SIGTERM and again
+    before SIGKILL), the live process identity is re-read via `ps -o
+    lstart=,command=` and must match the recorded identity exactly. PID
+    reuse during the read-record → signal window is detected and refused.
+
+  - **Schema-mismatch quarantine** — records whose JSON fails Zod parse are
+    renamed to `*.invalid.<ts>.json` and skipped by subsequent `loadAll`
+    calls. Future schema migrations must dispatch on `schemaVersion` rather
+    than relying on the optional/fallback shape.
+
+  Lifecycle invariants enforced by the lease manager:
+  - `createLease` writes the record after `storeLease`. On write failure
+    the lease is unstored and the VM is closed before throwing.
+  - `evictLease` and `releaseLease` delete the record **only** when
+    `vm.close()` succeeds. On close failure the record is preserved AND the
+    tcp slot is moved into a per-process quarantine set (not reusable until
+    next controller restart) so the orphan QEMU's host port cannot collide
+    with a fresh lease on the same slot.
+
 rebuildable cache
   Owner: controller/runtime tooling
   Host: <cacheDir>
@@ -233,6 +264,7 @@ host stateDir
     agents/<agentId>/agent/auth-profiles.json
     sandboxes/<agentId>/work/
     gateway-runtime.json
+    tool-leases/<leaseId>.json
 
 host cacheDir
   ~/.agent-vm/cache/

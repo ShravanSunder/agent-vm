@@ -3,6 +3,25 @@ import { describe, expect, it, vi } from 'vitest';
 import { cleanupOrphanedGatewayIfPresent } from './gateway-recovery.js';
 import type { GatewayRuntimeRecord } from './gateway-runtime-record.js';
 
+// Stub readProcessIdentity at the module boundary so tests that don't
+// explicitly inject one get a default matching the factory record. Tests
+// that want a mismatch (the PID-reuse defense test) inject per-call.
+vi.mock('../shared/managed-vm-process.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../shared/managed-vm-process.js')>();
+	return {
+		...actual,
+		readProcessIdentity: vi.fn(async () => ({
+			command: 'qemu-system-aarch64 -m 4G -smp 4 -kernel /vm-images/gateway/kernel',
+			lstart: 'Mon Apr 13 12:34:56 2026',
+		})),
+	};
+});
+
+const matchingProcessIdentity = {
+	command: 'qemu-system-aarch64 -m 4G -smp 4 -kernel /vm-images/gateway/kernel',
+	lstart: 'Mon Apr 13 12:34:56 2026',
+};
+
 function createGatewayRuntimeRecord(
 	overrides: Partial<GatewayRuntimeRecord> = {},
 ): GatewayRuntimeRecord {
@@ -13,13 +32,19 @@ function createGatewayRuntimeRecord(
 		gatewayType: 'openclaw',
 		guestListenPort: 18789,
 		ingressPort: 18791,
+		processIdentity: matchingProcessIdentity,
 		projectNamespace: 'claw-tests-a1b2c3d4',
 		qemuPid: 48282,
+		schemaVersion: 1,
 		sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 		vmId: 'gateway-vm-123',
 		zoneId: 'shravan',
 		...overrides,
 	};
+}
+
+async function matchingIdentityResolver(): Promise<{ command: string; lstart: string }> {
+	return matchingProcessIdentity;
 }
 
 describe('cleanupOrphanedGatewayIfPresent', () => {
@@ -191,6 +216,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 						logMessages.push(message);
 					},
 					readProcessCommand,
+					readProcessIdentity: matchingIdentityResolver,
 					sleep: async () => {},
 				},
 			),
@@ -199,7 +225,6 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 			killedPid: 48282,
 		});
 
-		expect(readProcessCommand).toHaveBeenCalledWith(48282);
 		expect(killProcess).toHaveBeenNthCalledWith(1, 48282, 'SIGTERM');
 		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledWith('/state/shravan');
 		expect(logMessages).toEqual([
@@ -209,19 +234,10 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 	});
 
 	it('fails fast when the recorded pid belongs to a different process', async () => {
-		const loadGatewayRuntimeRecord = vi.fn(async () =>
-			createGatewayRuntimeRecord({
-				createdAt: '2026-04-13T12:34:56.000Z',
-				gatewayType: 'openclaw' as const,
-				guestListenPort: 18789,
-				ingressPort: 18791,
-				projectNamespace: 'claw-tests-a1b2c3d4',
-				qemuPid: 48282,
-				sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-				vmId: 'gateway-vm-123',
-				zoneId: 'shravan',
-			}),
-		);
+		// Live process's identity differs from the recorded one: same PID,
+		// different process. Cleanup must refuse rather than killing the
+		// unrelated process. This exercises the identity-check rejection path.
+		const loadGatewayRuntimeRecord = vi.fn(async () => createGatewayRuntimeRecord());
 		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
 
 		await expect(
@@ -237,10 +253,14 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 					killProcess: vi.fn(),
 					loadGatewayRuntimeRecord,
 					readProcessCommand: async () => 'node /tmp/something-else.js',
+					readProcessIdentity: async () => ({
+						command: 'node /tmp/something-else.js',
+						lstart: 'Tue Apr 14 15:00:00 2026',
+					}),
 					sleep: async () => {},
 				},
 			),
-		).rejects.toThrow(/unexpected live process/i);
+		).rejects.toThrow(/process identity changed/u);
 
 		expect(deleteGatewayRuntimeRecord).not.toHaveBeenCalled();
 	});
@@ -444,19 +464,13 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 					deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 					isProcessAlive: () => true,
 					killProcess: vi.fn(),
-					loadGatewayRuntimeRecord: async () =>
-						createGatewayRuntimeRecord({
-							createdAt: '2026-04-13T12:34:56.000Z',
-							gatewayType: 'openclaw',
-							guestListenPort: 18789,
-							ingressPort: 18791,
-							projectNamespace: 'claw-tests-a1b2c3d4',
-							qemuPid: 48282,
-							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-							vmId: 'gateway-vm-123',
-							zoneId: 'shravan',
-						}),
+					loadGatewayRuntimeRecord: async () => createGatewayRuntimeRecord(),
 					readProcessCommand: async () => {
+						throw new Error('ps failed');
+					},
+					// Identity probe also fails — the cleanup must surface the
+					// error rather than silently treating the pid as gone.
+					readProcessIdentity: async () => {
 						throw new Error('ps failed');
 					},
 					sleep: async () => {},
@@ -590,7 +604,38 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 					},
 				},
 			),
-		).rejects.toThrow(/Failed to terminate orphaned gateway VM process 48282/u);
+		).rejects.toThrow(/Failed to terminate orphaned managed VM process 48282/u);
 		dateNowSpy.mockRestore();
+	});
+
+	it('refuses to signal when the live PID identity differs from the recorded one (PID reuse defense)', async () => {
+		// Same PID, different process: recorded was the original QEMU,
+		// live is a different process that took the PID after the first
+		// died. Cleanup must REFUSE the signal rather than killing the
+		// unrelated process.
+		const killProcess = vi.fn();
+		await expect(
+			cleanupOrphanedGatewayIfPresent(
+				{
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					stateDir: '/state/shravan',
+					zoneId: 'shravan',
+				},
+				{
+					deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+					isProcessAlive: () => true,
+					killProcess,
+					loadGatewayRuntimeRecord: vi.fn(async () => createGatewayRuntimeRecord()),
+					log: () => {},
+					readProcessCommand: async () => '/usr/local/bin/postgres -D /var/lib/postgres',
+					readProcessIdentity: async () => ({
+						command: '/usr/local/bin/postgres -D /var/lib/postgres',
+						lstart: 'Tue Apr 14 15:00:00 2026',
+					}),
+					sleep: async () => {},
+				},
+			),
+		).rejects.toThrow(/refusing SIGTERM to pid 48282: process identity changed/u);
+		expect(killProcess).not.toHaveBeenCalled();
 	});
 });

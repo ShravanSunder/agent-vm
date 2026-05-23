@@ -151,7 +151,15 @@ export async function startControllerRuntime(
 	const zoneGitCapabilityStore =
 		dependencies.zoneGitCapabilityStore ?? new ZoneGitCapabilityStore();
 	const zoneGitOperationLocks = dependencies.zoneGitOperationLocks ?? new ZoneGitOperationLocks();
+	const stateDirFor = (zoneId: string): string => {
+		const zone = options.systemConfig.zones.find((candidate) => candidate.id === zoneId);
+		if (!zone) {
+			throw new Error(`Unknown zone '${zoneId}' while resolving tool VM state directory.`);
+		}
+		return zone.gateway.stateDir;
+	};
 	const leaseManager = createLeaseManager({
+		controllerPort: options.systemConfig.host.controllerPort,
 		createManagedVm: async (leaseOptions) =>
 			await createManagedToolVm({
 				profile: leaseOptions.profile,
@@ -162,6 +170,12 @@ export async function startControllerRuntime(
 				secretResolver,
 			}),
 		now,
+		projectNamespace: options.systemConfig.host.projectNamespace,
+		...(dependencies.readProcessIdentity !== undefined
+			? { readProcessIdentity: dependencies.readProcessIdentity }
+			: {}),
+		stateDirFor,
+		systemConfigPath: options.systemConfig.systemConfigPath,
 		tcpPool,
 	});
 	const ttlForLease = (lease: { readonly scopeKey: string }): number =>

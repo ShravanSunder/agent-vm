@@ -10,15 +10,29 @@ import {
 import { type ManagedVm, writeFileAtomically } from '@agent-vm/gondolin-adapter';
 import { ZodError, z } from 'zod';
 
+import { readProcessIdentity as defaultReadProcessIdentity } from '../shared/managed-vm-process.js';
+
+// `schemaVersion` and `processIdentity` are optional on the LOADED type so
+// records written before they existed remain loadable. New writes via
+// `buildGatewayRuntimeRecord` ALWAYS populate both. Cleanup paths use
+// processIdentity when present (strong PID-reuse defense) and fall back to a
+// command-only check when absent.
 export const gatewayRuntimeRecordSchema = z.object({
 	configPath: z.string().min(1),
 	controllerPort: z.number().int().positive(),
-	createdAt: z.string().datetime(),
+	createdAt: z.iso.datetime(),
 	gatewayType: z.enum(gatewayTypeValues),
 	guestListenPort: z.number().int().positive(),
 	ingressPort: z.number().int().positive(),
+	processIdentity: z
+		.object({
+			command: z.string().min(1),
+			lstart: z.string().min(1),
+		})
+		.optional(),
 	projectNamespace: z.string().min(1),
 	qemuPid: z.number().int().positive(),
+	schemaVersion: z.literal(1).optional(),
 	sessionLabel: z.string().min(1),
 	vmId: z.string().min(1),
 	zoneId: z.string().min(1),
@@ -180,17 +194,27 @@ function resolveManagedVmQemuPid(managedVm: ManagedVm): number {
 	return qemuPid;
 }
 
-export function buildGatewayRuntimeRecord(options: {
+export async function buildGatewayRuntimeRecord(options: {
 	readonly controllerPort: number;
 	readonly gatewayType: GatewayType;
 	readonly ingressPort: number;
 	readonly managedVm: ManagedVm;
 	readonly processSpec: GatewayProcessSpec;
 	readonly projectNamespace: string;
+	readonly readProcessIdentity?: typeof defaultReadProcessIdentity;
 	readonly systemConfigPath: string;
 	readonly zoneId: string;
-}): GatewayRuntimeRecord {
+}): Promise<GatewayRuntimeRecord> {
 	const gatewayType = gatewayRuntimeRecordSchema.shape.gatewayType.parse(options.gatewayType);
+	const qemuPid = resolveManagedVmQemuPid(options.managedVm);
+	// Capture process identity (ps lstart + command) for PID-reuse defense
+	// on recovery. ps must succeed — surface clearly if the VM exited.
+	const identity = await (options.readProcessIdentity ?? defaultReadProcessIdentity)(qemuPid);
+	if (identity === null) {
+		throw new Error(
+			`Failed to capture process identity for gateway VM pid ${qemuPid}: ps returned no rows. The VM may have exited during startup.`,
+		);
+	}
 
 	return {
 		configPath: options.systemConfigPath,
@@ -199,8 +223,10 @@ export function buildGatewayRuntimeRecord(options: {
 		gatewayType,
 		guestListenPort: options.processSpec.guestListenPort,
 		ingressPort: options.ingressPort,
+		processIdentity: identity,
 		projectNamespace: options.projectNamespace,
-		qemuPid: resolveManagedVmQemuPid(options.managedVm),
+		qemuPid,
+		schemaVersion: 1,
 		sessionLabel: buildGatewaySessionLabel(options.projectNamespace, options.zoneId),
 		vmId: options.managedVm.id,
 		zoneId: options.zoneId,

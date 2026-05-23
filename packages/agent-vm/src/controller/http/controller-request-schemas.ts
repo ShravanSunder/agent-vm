@@ -3,11 +3,23 @@ import { z } from 'zod';
 
 import { workerTaskControllerRequestSchema } from '../../config/resource-contracts/index.js';
 
+// `scopeKey` is embedded in `lease.id`, which in turn is used as a path
+// component for the per-lease runtime record (`$stateDir/tool-leases/$id.json`).
+// We tighten the schema to a conservative shape — lowercase alphanumerics with
+// colons, dots, dashes, and underscores — so that path-traversal sequences
+// (`..`, `/`, `\`) and other filesystem-meaningful characters cannot appear in
+// any derived path. parseAgentScopeKey adds an additional per-segment shape
+// check; this regex is the outer-perimeter guardrail.
+const safeScopeKeyPattern = /^[a-z0-9][a-z0-9:._-]*$/u;
+export const safeScopeKeySchema = z.string().min(1).max(128).regex(safeScopeKeyPattern, {
+	message: 'scopeKey must match /^[a-z0-9][a-z0-9:._-]*$/ and be at most 128 chars',
+});
+
 export const controllerLeaseCreateRequestSchema = z.strictObject({
 	agentWorkspaceDir: z.string().min(1),
 	idleTtlMs: z.number().int().positive().optional(),
 	profileId: z.string().min(1),
-	scopeKey: z.string().min(1),
+	scopeKey: safeScopeKeySchema,
 	workMountDir: z.string().min(1),
 	zoneId: z.string().min(1),
 });

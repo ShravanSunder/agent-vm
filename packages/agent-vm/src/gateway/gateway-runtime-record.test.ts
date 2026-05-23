@@ -245,7 +245,7 @@ describe('gateway runtime record', () => {
 		expect(logMessages[0]).toMatch(/Quarantined malformed gateway runtime record/u);
 	});
 
-	it('builds a runtime record from the live gateway runtime and captures the QEMU pid', () => {
+	it('builds a runtime record from the live gateway runtime and captures the QEMU pid', async () => {
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -257,9 +257,13 @@ describe('gateway runtime record', () => {
 			id: 'gateway-vm-123',
 			setIngressRoutes: () => {},
 		} satisfies ManagedVm;
+		const stubIdentity = {
+			command: 'qemu-system-x86_64 -m 4G -smp 4',
+			lstart: 'Fri May 22 10:00:00 2026',
+		};
 
 		expect(
-			buildGatewayRuntimeRecord({
+			await buildGatewayRuntimeRecord({
 				controllerPort: 18800,
 				gatewayType: 'openclaw',
 				ingressPort: 18791,
@@ -272,6 +276,7 @@ describe('gateway runtime record', () => {
 					startCommand: 'start-openclaw',
 				},
 				projectNamespace: 'claw-tests-a1b2c3d4',
+				readProcessIdentity: async () => stubIdentity,
 				systemConfigPath: '/deployments/claw/config/system.jsonc',
 				zoneId: 'shravan',
 			}),
@@ -282,15 +287,17 @@ describe('gateway runtime record', () => {
 			gatewayType: 'openclaw',
 			guestListenPort: 18789,
 			ingressPort: 18791,
+			processIdentity: stubIdentity,
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			qemuPid: 28282,
+			schemaVersion: 1,
 			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 			vmId: 'gateway-vm-123',
 			zoneId: 'shravan',
 		});
 	});
 
-	it('throws when Gondolin does not expose an active host PID', () => {
+	it('throws when Gondolin does not expose an active host PID', async () => {
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -303,7 +310,7 @@ describe('gateway runtime record', () => {
 			setIngressRoutes: () => {},
 		} satisfies ManagedVm;
 
-		expect(() =>
+		await expect(
 			buildGatewayRuntimeRecord({
 				controllerPort: 18800,
 				gatewayType: 'openclaw',
@@ -317,13 +324,14 @@ describe('gateway runtime record', () => {
 					startCommand: 'start-openclaw',
 				},
 				projectNamespace: 'claw-tests-a1b2c3d4',
+				readProcessIdentity: async () => null,
 				systemConfigPath: '/deployments/claw/config/system.jsonc',
 				zoneId: 'shravan',
 			}),
-		).toThrow(/does not expose an active host pid/u);
+		).rejects.toThrow(/does not expose an active host pid/u);
 	});
 
-	it('throws when the Managed VM wrapper is missing getHostPid', () => {
+	it('throws when the Managed VM wrapper is missing getHostPid', async () => {
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -335,7 +343,7 @@ describe('gateway runtime record', () => {
 			setIngressRoutes: () => {},
 		} as unknown as ManagedVm;
 
-		expect(() =>
+		await expect(
 			buildGatewayRuntimeRecord({
 				controllerPort: 18800,
 				gatewayType: 'openclaw',
@@ -349,13 +357,14 @@ describe('gateway runtime record', () => {
 					startCommand: 'start-openclaw',
 				},
 				projectNamespace: 'claw-tests-a1b2c3d4',
+				readProcessIdentity: async () => null,
 				systemConfigPath: '/deployments/claw/config/system.jsonc',
 				zoneId: 'shravan',
 			}),
-		).toThrow(/missing getHostPid/u);
+		).rejects.toThrow(/missing getHostPid/u);
 	});
 
-	it('throws when Gondolin exposes an invalid host PID', () => {
+	it('throws when Gondolin exposes an invalid host PID', async () => {
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -368,7 +377,7 @@ describe('gateway runtime record', () => {
 			setIngressRoutes: () => {},
 		} satisfies ManagedVm;
 
-		expect(() =>
+		await expect(
 			buildGatewayRuntimeRecord({
 				controllerPort: 18800,
 				gatewayType: 'openclaw',
@@ -382,9 +391,10 @@ describe('gateway runtime record', () => {
 					startCommand: 'start-openclaw',
 				},
 				projectNamespace: 'claw-tests-a1b2c3d4',
+				readProcessIdentity: async () => null,
 				systemConfigPath: '/deployments/claw/config/system.jsonc',
 				zoneId: 'shravan',
 			}),
-		).toThrow(/invalid host pid/u);
+		).rejects.toThrow(/invalid host pid/u);
 	});
 });

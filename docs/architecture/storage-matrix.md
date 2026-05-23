@@ -65,6 +65,9 @@ sockets, pid files, tiny scratch        memory-pressure only
 
 gateway-runtime.json                    stateDir               yes
 host runtime record                     durable enough
+
+tool-leases/<leaseId>.json              stateDir               yes
+per-lease tool VM recovery record       durable enough
 ```
 
 OpenClaw gateways are long-lived, so rootfs/COW paths such as `/work/tmp` and

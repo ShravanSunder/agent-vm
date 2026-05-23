@@ -1,6 +1,11 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
+import {
+	isProcessAlive,
+	killOrphanedManagedVmProcess,
+	killProcess,
+	readProcessCommand,
+	readProcessIdentity,
+	sleep,
+} from '../shared/managed-vm-process.js';
 import type {
 	GatewayRuntimeRecord,
 	GatewayRuntimeRecordLegacyDefaults,
@@ -10,42 +15,6 @@ import {
 	loadGatewayRuntimeRecord,
 	quarantineGatewayRuntimeRecord,
 } from './gateway-runtime-record.js';
-
-const execFileAsync = promisify(execFile);
-
-function isProcessAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		if (typeof error === 'object' && error !== null && 'code' in error) {
-			if (error.code === 'EPERM') {
-				return true;
-			}
-			if (error.code === 'ESRCH') {
-				return false;
-			}
-		}
-		throw error;
-	}
-}
-
-async function readProcessCommand(pid: number): Promise<string | null> {
-	try {
-		const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'command=']);
-		const command = stdout.trim();
-		return command.length > 0 ? command : null;
-	} catch (error) {
-		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 1) {
-			return null;
-		}
-		throw error;
-	}
-}
-
-function isManagedGatewayProcess(command: string): boolean {
-	return /\b(qemu-system|krun)\b/u.test(command);
-}
 
 function writeRecoveryLog(message: string): void {
 	process.stderr.write(`[agent-vm] ${message}\n`);
@@ -90,107 +59,26 @@ function validateRuntimeRecordCleanupScope(options: {
 	return null;
 }
 
-function killProcess(pid: number, signal: NodeJS.Signals): void {
-	try {
-		process.kill(pid, signal);
-	} catch (error) {
-		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH') {
-			return;
-		}
-		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'EPERM') {
-			throw new Error(
-				`Permission denied while sending ${signal} to orphaned gateway pid ${pid}. The process is still running and may require elevated privileges to terminate.`,
-				{ cause: error },
-			);
-		}
-		throw error;
-	}
-}
-
-function isNoSuchProcessError(error: unknown): boolean {
-	return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH';
-}
-
-async function sleep(delayMs: number): Promise<void> {
-	await new Promise((resolve) => setTimeout(resolve, delayMs));
-}
-
-async function waitForExit(options: {
-	readonly pid: number;
-	readonly processIsAlive: (pid: number) => boolean;
-	readonly sleep: (delayMs: number) => Promise<void>;
-	readonly timeoutMs: number;
-}): Promise<boolean> {
-	const deadline = Date.now() + options.timeoutMs;
-	while (Date.now() < deadline) {
-		if (!options.processIsAlive(options.pid)) {
-			return true;
-		}
-		// oxlint-disable-next-line no-await-in-loop -- polling loop must wait between liveness checks
-		await options.sleep(100);
-	}
-	return !options.processIsAlive(options.pid);
-}
-
 async function killOrphanedGatewayProcess(
 	runtimeRecord: GatewayRuntimeRecord,
 	dependencies: Required<
 		Pick<
 			GatewayRecoveryDependencies,
-			'isProcessAlive' | 'killProcess' | 'readProcessCommand' | 'sleep'
+			'isProcessAlive' | 'killProcess' | 'readProcessCommand' | 'readProcessIdentity' | 'sleep'
 		>
 	>,
 ): Promise<number | null> {
-	if (!dependencies.isProcessAlive(runtimeRecord.qemuPid)) {
-		return null;
-	}
-
-	const processCommand = await dependencies.readProcessCommand(runtimeRecord.qemuPid);
-	if (!processCommand || !isManagedGatewayProcess(processCommand)) {
-		throw new Error(
-			`Gateway runtime record for zone '${runtimeRecord.zoneId}' points at unexpected live process ${runtimeRecord.qemuPid}: ${processCommand ?? '(command unavailable)'}.`,
-		);
-	}
-
-	try {
-		dependencies.killProcess(runtimeRecord.qemuPid, 'SIGTERM');
-	} catch (error) {
-		if (!isNoSuchProcessError(error)) {
-			throw error;
-		}
-	}
-	if (
-		await waitForExit({
-			pid: runtimeRecord.qemuPid,
-			processIsAlive: dependencies.isProcessAlive,
-			sleep: dependencies.sleep,
-			timeoutMs: 2_000,
-		})
-	) {
-		return runtimeRecord.qemuPid;
-	}
-
-	try {
-		dependencies.killProcess(runtimeRecord.qemuPid, 'SIGKILL');
-	} catch (error) {
-		if (!isNoSuchProcessError(error)) {
-			throw error;
-		}
-	}
-	if (
-		await waitForExit({
-			pid: runtimeRecord.qemuPid,
-			processIsAlive: dependencies.isProcessAlive,
-			sleep: dependencies.sleep,
-			timeoutMs: 2_000,
-		})
-	) {
-		return runtimeRecord.qemuPid;
-	}
-
-	throw new Error(
-		`Failed to terminate orphaned gateway VM process ${runtimeRecord.qemuPid} for zone '${runtimeRecord.zoneId}'.`,
-	);
+	return await killOrphanedManagedVmProcess({
+		contextLabel: `Gateway runtime record for zone '${runtimeRecord.zoneId}'`,
+		dependencies,
+		pid: runtimeRecord.qemuPid,
+		// recordedIdentity is optional on the schema for back-compat with
+		// pre-v1 records; cleanup falls back to the command-only check when
+		// it's absent. New writes always set it.
+		...(runtimeRecord.processIdentity !== undefined
+			? { recordedIdentity: runtimeRecord.processIdentity }
+			: {}),
+	});
 }
 
 export interface GatewayRecoveryDependencies {
@@ -200,6 +88,7 @@ export interface GatewayRecoveryDependencies {
 	readonly loadGatewayRuntimeRecord?: typeof loadGatewayRuntimeRecord;
 	readonly log?: (message: string) => void;
 	readonly readProcessCommand?: (pid: number) => Promise<string | null>;
+	readonly readProcessIdentity?: typeof readProcessIdentity;
 	readonly quarantineGatewayRuntimeRecord?: typeof quarantineGatewayRuntimeRecord;
 	readonly sleep?: (delayMs: number) => Promise<void>;
 }
@@ -265,6 +154,7 @@ export async function cleanupOrphanedGatewayIfPresent(
 		isProcessAlive: dependencies.isProcessAlive ?? isProcessAlive,
 		killProcess: dependencies.killProcess ?? killProcess,
 		readProcessCommand: dependencies.readProcessCommand ?? readProcessCommand,
+		readProcessIdentity: dependencies.readProcessIdentity ?? readProcessIdentity,
 		sleep: dependencies.sleep ?? sleep,
 	});
 	try {

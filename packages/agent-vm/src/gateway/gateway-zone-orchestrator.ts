@@ -11,6 +11,7 @@ import {
 	type ManagedVm,
 } from '@agent-vm/gondolin-adapter';
 
+import { cleanupOrphanedToolVmsIfPresent } from '../controller/leases/tool-vm-recovery.js';
 import { assertOpenClawToolVmRequirements } from '../operations/openclaw-deployment-requirements.js';
 import { runTaskWithResult } from '../shared/run-task.js';
 import { resolveZoneSecrets } from './credential-manager.js';
@@ -44,10 +45,16 @@ const defaultGatewayReadinessMaxAttempts = Math.ceil(
 
 export interface GatewayManagerDependencies extends GatewayImageBuilderDependencies {
 	readonly cleanupOrphanedGatewayIfPresent?: typeof cleanupOrphanedGatewayIfPresent;
+	readonly cleanupOrphanedToolVmsIfPresent?: typeof cleanupOrphanedToolVmsIfPresent;
 	readonly createManagedVm?: (options: GatewayManagedVmFactoryOptions) => Promise<ManagedVm>;
 	readonly gatewayReadinessMaxAttempts?: number;
 	readonly gatewayReadinessRetryDelayMs?: number;
 	readonly loadGatewayLifecycle?: (type: GatewayZoneConfig['gateway']['type']) => GatewayLifecycle;
+	// Injected by tests so the gateway record build doesn't shell out to ps
+	// against a fake pid. Production omits this; uses the real default.
+	readonly readProcessIdentity?: (
+		pid: number,
+	) => Promise<{ readonly command: string; readonly lstart: string } | null>;
 	readonly writeGatewayRuntimeRecord?: (
 		stateDirectory: string,
 		record: GatewayRuntimeRecord,
@@ -266,6 +273,24 @@ export async function startGatewayZone(
 			zoneId: zone.id,
 		});
 	});
+	// Tool VM orphan cleanup runs in-process-recovery mode only for OpenClaw
+	// zones — worker zones never spawn tool VMs, so there is no
+	// $stateDir/tool-leases/ subtree to scan. Same five-fence + ps-command
+	// discipline as the gateway cleanup above: any scope mismatch quarantines
+	// the record instead of signaling its PID.
+	const toolVmCleanupPromise =
+		zone.gateway.type === 'openclaw'
+			? runTaskStep('Cleaning orphaned tool VMs', async () => {
+					await (dependencies.cleanupOrphanedToolVmsIfPresent ?? cleanupOrphanedToolVmsIfPresent)({
+						expectedConfigPath: options.systemConfig.systemConfigPath,
+						expectedControllerPort: options.systemConfig.host.controllerPort,
+						mode: 'in-process-recovery',
+						projectNamespace: options.systemConfig.host.projectNamespace,
+						stateDir: zone.gateway.stateDir,
+						zoneId: zone.id,
+					});
+				})
+			: Promise.resolve();
 	const assertionsPromise =
 		zone.gateway.type === 'openclaw'
 			? runTaskStep('Validating OpenClaw Tool VM requirements', async () => {
@@ -320,9 +345,10 @@ export async function startGatewayZone(
 	// other reasons are lost (only the first reaches the caller). Background
 	// completion of the other branches is harmless — no Phase A branch
 	// produces a host-visible resource that needs cleanup.
-	const [mcpPortalMaterialization, , , resolvedSecrets, image] = await Promise.all([
+	const [mcpPortalMaterialization, , , , resolvedSecrets, image] = await Promise.all([
 		mcpPortalMaterializationPromise,
 		cleanupPromise,
+		toolVmCleanupPromise,
 		assertionsPromise,
 		resolvedSecretsPromise,
 		imagePromise,
@@ -496,13 +522,16 @@ export async function startGatewayZone(
 		await runTaskStep('Recording gateway runtime', async () => {
 			await (dependencies.writeGatewayRuntimeRecord ?? writeGatewayRuntimeRecord)(
 				zone.gateway.stateDir,
-				buildGatewayRuntimeRecord({
+				await buildGatewayRuntimeRecord({
 					controllerPort: options.systemConfig.host.controllerPort,
 					gatewayType: zone.gateway.type,
 					ingressPort: ingress.port,
 					managedVm,
 					processSpec,
 					projectNamespace: options.systemConfig.host.projectNamespace,
+					...(dependencies.readProcessIdentity !== undefined
+						? { readProcessIdentity: dependencies.readProcessIdentity }
+						: {}),
 					systemConfigPath: options.systemConfig.systemConfigPath,
 					zoneId: zone.id,
 				}),

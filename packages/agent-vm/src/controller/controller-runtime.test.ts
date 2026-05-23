@@ -278,12 +278,16 @@ describe('startControllerRuntime', () => {
 					fs: createManagedVmFsStub(),
 					id: 'tool-vm-1',
 					setIngressRoutes: vi.fn(),
-					getHostPid: () => null,
+					getHostPid: () => 12345,
 					getVmInstance: vi.fn(),
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
 					resolveAll: async () => ({}),
+				}),
+				readProcessIdentity: async () => ({
+					command: 'qemu-system-x86_64 -m 1G',
+					lstart: 'Fri May 22 10:00:00 2026',
 				}),
 				clearIntervalImpl: clearIntervalMock,
 				runTask: async (title, fn) => {
@@ -446,12 +450,16 @@ describe('startControllerRuntime', () => {
 						fs: createManagedVmFsStub(),
 						id: 'tool-vm-active-use-reap',
 						setIngressRoutes: vi.fn(),
-						getHostPid: () => null,
+						getHostPid: () => 12345,
 						getVmInstance: vi.fn(),
 					})),
 					createSecretResolver: async () => ({
 						resolve: async () => '',
 						resolveAll: async () => ({}),
+					}),
+					readProcessIdentity: async () => ({
+						command: 'qemu-system-x86_64 -m 1G',
+						lstart: 'Fri May 22 10:00:00 2026',
 					}),
 					now: () => now,
 					readIdentityPem: async () => 'pem',
@@ -489,7 +497,7 @@ describe('startControllerRuntime', () => {
 							fs: createManagedVmFsStub(),
 							id: 'gateway-vm-active-use-reap',
 							setIngressRoutes: vi.fn(),
-							getHostPid: () => null,
+							getHostPid: () => 12345,
 							getVmInstance: vi.fn(),
 						},
 						zone: runtimeZone,
@@ -617,12 +625,16 @@ describe('startControllerRuntime', () => {
 						fs: createManagedVmFsStub(),
 						id: 'tool-vm-active-use-shutdown',
 						setIngressRoutes: vi.fn(),
-						getHostPid: () => null,
+						getHostPid: () => 12345,
 						getVmInstance: vi.fn(),
 					})),
 					createSecretResolver: async () => ({
 						resolve: async () => '',
 						resolveAll: async () => ({}),
+					}),
+					readProcessIdentity: async () => ({
+						command: 'qemu-system-x86_64 -m 1G',
+						lstart: 'Fri May 22 10:00:00 2026',
 					}),
 					readIdentityPem: async () => 'pem',
 					runTask: async (_title, fn) => {
@@ -656,7 +668,7 @@ describe('startControllerRuntime', () => {
 							fs: createManagedVmFsStub(),
 							id: 'gateway-vm-active-use-shutdown',
 							setIngressRoutes: vi.fn(),
-							getHostPid: () => null,
+							getHostPid: () => 12345,
 							getVmInstance: vi.fn(),
 						},
 						zone: runtimeZone,
@@ -746,12 +758,16 @@ describe('startControllerRuntime', () => {
 					fs: createManagedVmFsStub(),
 					id: 'tool-vm-boot-fail',
 					setIngressRoutes: vi.fn(),
-					getHostPid: () => null,
+					getHostPid: () => 12345,
 					getVmInstance: vi.fn(),
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
 					resolveAll: async () => ({}),
+				}),
+				readProcessIdentity: async () => ({
+					command: 'qemu-system-x86_64 -m 1G',
+					lstart: 'Fri May 22 10:00:00 2026',
 				}),
 				startGatewayZone: vi.fn(async () => {
 					throw new Error('gateway boot failed');
@@ -827,12 +843,16 @@ describe('startControllerRuntime', () => {
 					fs: createManagedVmFsStub(),
 					id: 'tool-vm-worker-stop',
 					setIngressRoutes: vi.fn(),
-					getHostPid: () => null,
+					getHostPid: () => 12345,
 					getVmInstance: vi.fn(),
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
 					resolveAll: async () => ({}),
+				}),
+				readProcessIdentity: async () => ({
+					command: 'qemu-system-x86_64 -m 1G',
+					lstart: 'Fri May 22 10:00:00 2026',
 				}),
 				startGatewayZone: vi.fn(async () => ({
 					image: {
@@ -861,7 +881,7 @@ describe('startControllerRuntime', () => {
 						fs: createManagedVmFsStub(),
 						id: 'gateway-vm-worker',
 						setIngressRoutes: vi.fn(),
-						getHostPid: () => null,
+						getHostPid: () => 12345,
 						getVmInstance: vi.fn(),
 					},
 					zone: workerZone,
@@ -950,12 +970,16 @@ describe('startControllerRuntime', () => {
 						fs: createManagedVmFsStub(),
 						id: 'tool-vm-worker-task',
 						setIngressRoutes: vi.fn(),
-						getHostPid: () => null,
+						getHostPid: () => 12345,
 						getVmInstance: vi.fn(),
 					})),
 					createSecretResolver: async () => ({
 						resolve: async () => 'controller-token',
 						resolveAll: async () => ({}),
+					}),
+					readProcessIdentity: async () => ({
+						command: 'qemu-system-x86_64 -m 1G',
+						lstart: 'Fri May 22 10:00:00 2026',
 					}),
 					prepareWorkerTask,
 					executeWorkerTask,
@@ -1053,6 +1077,10 @@ describe('startControllerRuntime', () => {
 						resolve: async () => 'controller-token',
 						resolveAll: async () => ({}),
 					}),
+					readProcessIdentity: async () => ({
+						command: 'qemu-system-x86_64 -m 1G',
+						lstart: 'Fri May 22 10:00:00 2026',
+					}),
 					startGatewayZone: vi.fn(async () => {
 						throw new Error('zone git status should not require a booted gateway');
 					}),
@@ -1142,6 +1170,10 @@ describe('startControllerRuntime', () => {
 					createSecretResolver: async () => ({
 						resolve: async () => '',
 						resolveAll: async () => ({}),
+					}),
+					readProcessIdentity: async () => ({
+						command: 'qemu-system-x86_64 -m 1G',
+						lstart: 'Fri May 22 10:00:00 2026',
 					}),
 					startGatewayZone: vi.fn(async () => {
 						throw new Error('zone git status should not require a booted gateway');
@@ -1250,12 +1282,16 @@ describe('startControllerRuntime', () => {
 					fs: createManagedVmFsStub(),
 					id: 'tool-vm-worker-capacity',
 					setIngressRoutes: vi.fn(),
-					getHostPid: () => null,
+					getHostPid: () => 12345,
 					getVmInstance: vi.fn(),
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
 					resolveAll: async () => ({}),
+				}),
+				readProcessIdentity: async () => ({
+					command: 'qemu-system-x86_64 -m 1G',
+					lstart: 'Fri May 22 10:00:00 2026',
 				}),
 				prepareWorkerTask,
 				executeWorkerTask,
@@ -1352,7 +1388,7 @@ describe('startControllerRuntime', () => {
 					fs: createManagedVmFsStub(),
 					id: 'gateway-vm-cleanup-test',
 					setIngressRoutes: vi.fn(),
-					getHostPid: () => null,
+					getHostPid: () => 12345,
 					getVmInstance: vi.fn(),
 				},
 				zone,
@@ -1379,12 +1415,16 @@ describe('startControllerRuntime', () => {
 					fs: createManagedVmFsStub(),
 					id: 'tool-vm-cleanup-test',
 					setIngressRoutes: vi.fn(),
-					getHostPid: () => null,
+					getHostPid: () => 12345,
 					getVmInstance: vi.fn(),
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
 					resolveAll: async () => ({}),
+				}),
+				readProcessIdentity: async () => ({
+					command: 'qemu-system-x86_64 -m 1G',
+					lstart: 'Fri May 22 10:00:00 2026',
 				}),
 				deleteGatewayRuntimeRecord,
 				startGatewayZone,
@@ -1478,12 +1518,16 @@ describe('startControllerRuntime', () => {
 						fs: createManagedVmFsStub(),
 						id: 'tool-vm-close',
 						setIngressRoutes: vi.fn(),
-						getHostPid: () => null,
+						getHostPid: () => 12345,
 						getVmInstance: vi.fn(),
 					})),
 					createSecretResolver: async () => ({
 						resolve: async () => '',
 						resolveAll: async () => ({}),
+					}),
+					readProcessIdentity: async () => ({
+						command: 'qemu-system-x86_64 -m 1G',
+						lstart: 'Fri May 22 10:00:00 2026',
 					}),
 					readIdentityPem: async () => 'pem',
 					startGatewayZone: vi.fn(async () => ({
@@ -1513,7 +1557,7 @@ describe('startControllerRuntime', () => {
 							fs: createManagedVmFsStub(),
 							id: 'gateway-vm-close',
 							setIngressRoutes: vi.fn(),
-							getHostPid: () => null,
+							getHostPid: () => 12345,
 							getVmInstance: vi.fn(),
 						},
 						zone,
@@ -1604,12 +1648,16 @@ describe('startControllerRuntime', () => {
 					fs: createManagedVmFsStub(),
 					id: 'tool-vm-clean',
 					setIngressRoutes: vi.fn(),
-					getHostPid: () => null,
+					getHostPid: () => 12345,
 					getVmInstance: vi.fn(),
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
 					resolveAll: async () => ({}),
+				}),
+				readProcessIdentity: async () => ({
+					command: 'qemu-system-x86_64 -m 1G',
+					lstart: 'Fri May 22 10:00:00 2026',
 				}),
 				deleteGatewayRuntimeRecord: async () => {
 					throw new Error('permission denied');
@@ -1641,7 +1689,7 @@ describe('startControllerRuntime', () => {
 						fs: createManagedVmFsStub(),
 						id: 'gateway-vm-clean',
 						setIngressRoutes: vi.fn(),
-						getHostPid: () => null,
+						getHostPid: () => 12345,
 						getVmInstance: vi.fn(),
 					},
 					zone,
@@ -1692,7 +1740,7 @@ describe('startControllerRuntime', () => {
 					fs: createManagedVmFsStub(),
 					id: 'gateway-vm-close-after-failed-restart',
 					setIngressRoutes: vi.fn(),
-					getHostPid: () => null,
+					getHostPid: () => 12345,
 					getVmInstance: vi.fn(),
 				},
 				zone,
@@ -1727,12 +1775,16 @@ describe('startControllerRuntime', () => {
 					fs: createManagedVmFsStub(),
 					id: 'tool-vm-close-after-failed-restart',
 					setIngressRoutes: vi.fn(),
-					getHostPid: () => null,
+					getHostPid: () => 12345,
 					getVmInstance: vi.fn(),
 				})),
 				createSecretResolver: async () => ({
 					resolve: async () => '',
 					resolveAll: async () => ({}),
+				}),
+				readProcessIdentity: async () => ({
+					command: 'qemu-system-x86_64 -m 1G',
+					lstart: 'Fri May 22 10:00:00 2026',
 				}),
 				startGatewayZone,
 				startHttpServer: vi.fn(async (options) => {

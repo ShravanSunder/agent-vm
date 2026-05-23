@@ -8,8 +8,14 @@ import {
 } from '@agent-vm/gateway-interface';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 
+import type { readProcessIdentity as defaultReadProcessIdentity } from '../../shared/managed-vm-process.js';
 import type { ZoneGitToolVmMount } from '../zone-git/zone-git-paths.js';
 import type { TcpPool } from './tcp-pool.js';
+import {
+	buildToolVmRuntimeRecord,
+	deleteToolVmRuntimeRecord,
+	writeToolVmRuntimeRecord,
+} from './tool-vm-runtime-record.js';
 
 export interface ToolVmProfile {
 	readonly cpus: number;
@@ -221,6 +227,7 @@ function activeUseKey(leaseId: string, useId: string): string {
 }
 
 export function createLeaseManager(options: {
+	readonly controllerPort: number;
 	readonly createManagedVm: (leaseOptions: {
 		readonly agentWorkspaceDir: string;
 		readonly effectiveIdleTtlMs?: number;
@@ -233,9 +240,17 @@ export function createLeaseManager(options: {
 		readonly zoneGitMount?: ZoneGitToolVmMount;
 		readonly zoneId: string;
 	}) => Promise<ManagedVm>;
+	readonly deleteToolVmRuntimeRecord?: typeof deleteToolVmRuntimeRecord;
 	readonly now: () => number;
+	readonly projectNamespace: string;
+	// Injected for tests so we don't shell out to `ps` against a fake pid.
+	// Production uses the default real implementation.
+	readonly readProcessIdentity?: typeof defaultReadProcessIdentity;
+	readonly stateDirFor: (zoneId: string) => string;
+	readonly systemConfigPath: string;
 	readonly tcpPool: TcpPool;
 	readonly toolVmUsePolicy?: ToolVmUsePolicy;
+	readonly writeToolVmRuntimeRecord?: typeof writeToolVmRuntimeRecord;
 }): LeaseManager {
 	const leases = new Map<string, Lease>();
 	const activeUses = new Map<string, ToolVmActiveUse>();
@@ -310,15 +325,35 @@ export function createLeaseManager(options: {
 		}
 	}
 
+	const writeRuntimeRecord = options.writeToolVmRuntimeRecord ?? writeToolVmRuntimeRecord;
+	const deleteRuntimeRecord = options.deleteToolVmRuntimeRecord ?? deleteToolVmRuntimeRecord;
+
 	async function evictLease(lease: Lease): Promise<void> {
 		deleteLease(lease);
-		options.tcpPool.release(lease.tcpSlot);
+		let closeSucceeded = true;
 		try {
 			await lease.vm.close();
 		} catch (error) {
+			closeSucceeded = false;
 			writeLeaseManagerWarning(
-				`failed to close evicted lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(error)}`,
+				`failed to close evicted lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(error)}. Quarantining tcp slot ${lease.tcpSlot} and preserving runtime record for next-startup cleanup.`,
 			);
+		}
+		// Only release the tcp slot when close() succeeded. If close failed the
+		// QEMU may still be holding the host port — quarantine the slot so a
+		// fresh createLease cannot race onto the same port. Next-startup Phase A
+		// will reap the orphan; this controller process will not reuse the slot.
+		if (closeSucceeded) {
+			options.tcpPool.release(lease.tcpSlot);
+			try {
+				await deleteRuntimeRecord(options.stateDirFor(lease.zoneId), lease.id);
+			} catch (deleteError) {
+				writeLeaseManagerWarning(
+					`failed to delete tool VM runtime record for evicted lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(deleteError)}`,
+				);
+			}
+		} else {
+			options.tcpPool.quarantine(lease.tcpSlot);
 		}
 	}
 
@@ -337,11 +372,17 @@ export function createLeaseManager(options: {
 					await evictLease(existingLease);
 				}
 				const tcpSlot = options.tcpPool.allocate();
+				// Tracks whether the slot is safe to release after partial-create
+				// failure. If vm.close() throws or never runs (VM was created but
+				// teardown failed), the host port may still be held — quarantine
+				// the slot instead of releasing it.
+				let vmCreatedButNotClosed = false;
 				try {
 					const vm = await options.createManagedVm({
 						...leaseOptions,
 						tcpSlot,
 					});
+					vmCreatedButNotClosed = true;
 					try {
 						const sshAccess = await vm.enableSsh({
 							listenPort: options.tcpPool.portForSlot(tcpSlot),
@@ -364,19 +405,52 @@ export function createLeaseManager(options: {
 							zoneId: leaseOptions.zoneId,
 						};
 						storeLease(lease);
+						// Persist a runtime record so the next controller startup can
+						// scope-fence and clean up this tool VM's QEMU if we crash
+						// before evictLease/releaseLease runs.
+						try {
+							await writeRuntimeRecord(
+								options.stateDirFor(lease.zoneId),
+								await buildToolVmRuntimeRecord({
+									controllerPort: options.controllerPort,
+									leaseId: lease.id,
+									managedVm: vm,
+									projectNamespace: options.projectNamespace,
+									...(options.readProcessIdentity !== undefined
+										? { readProcessIdentity: options.readProcessIdentity }
+										: {}),
+									scopeKey: lease.scopeKey,
+									systemConfigPath: options.systemConfigPath,
+									tcpSlot: lease.tcpSlot,
+									zoneId: lease.zoneId,
+								}),
+							);
+						} catch (writeError) {
+							// Undo: remove the in-memory lease + close the VM + release the
+							// TCP slot, then surface the failure to the caller.
+							deleteLease(lease);
+							throw writeError;
+						}
+						vmCreatedButNotClosed = false;
 						return lease;
 					} catch (error) {
 						try {
 							await vm.close();
+							vmCreatedButNotClosed = false;
 						} catch (closeError) {
 							writeLeaseManagerWarning(
-								`failed to close partially-created lease VM for zone '${leaseOptions.zoneId}' scope '${leaseOptions.scopeKey}': ${formatLeaseManagerError(closeError)}`,
+								`failed to close partially-created lease VM for zone '${leaseOptions.zoneId}' scope '${leaseOptions.scopeKey}': ${formatLeaseManagerError(closeError)}. Quarantining tcp slot ${tcpSlot}.`,
 							);
 						}
 						throw error;
 					}
 				} catch (error) {
-					options.tcpPool.release(tcpSlot);
+					if (vmCreatedButNotClosed) {
+						// VM may still hold the host port — see comment above.
+						options.tcpPool.quarantine(tcpSlot);
+					} else {
+						options.tcpPool.release(tcpSlot);
+					}
 					throw error;
 				}
 			});
@@ -510,7 +584,28 @@ export function createLeaseManager(options: {
 				}
 
 				deleteLease(currentLease);
-				options.tcpPool.release(currentLease.tcpSlot);
+
+				if (releaseError === undefined) {
+					// Close succeeded: slot is safe to re-allocate, record is
+					// safe to delete.
+					options.tcpPool.release(currentLease.tcpSlot);
+					try {
+						await deleteRuntimeRecord(options.stateDirFor(currentLease.zoneId), currentLease.id);
+					} catch (deleteError) {
+						writeLeaseManagerWarning(
+							`failed to delete tool VM runtime record for released lease '${currentLease.id}' in zone '${currentLease.zoneId}': ${formatLeaseManagerError(deleteError)}`,
+						);
+					}
+				} else {
+					// Close failed: QEMU may still hold the host port. Quarantine
+					// the slot so the next createLease in this process can't race
+					// onto the same port, and preserve the runtime record so the
+					// next controller's Phase A cleanup can scope-fence + signal.
+					options.tcpPool.quarantine(currentLease.tcpSlot);
+					writeLeaseManagerWarning(
+						`failed to close released lease '${currentLease.id}' in zone '${currentLease.zoneId}': ${formatLeaseManagerError(releaseError)}. Quarantining tcp slot ${currentLease.tcpSlot} and preserving runtime record for next-startup cleanup.`,
+					);
+				}
 
 				if (releaseError) {
 					throw releaseError;
