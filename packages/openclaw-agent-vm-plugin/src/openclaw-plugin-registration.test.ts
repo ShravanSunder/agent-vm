@@ -4,6 +4,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import defaultPlugin, {
+	OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
 	createBackendDeps,
 	type SshHelpers,
 } from './openclaw-plugin-registration.js';
@@ -265,7 +266,7 @@ describe('createBackendDeps', () => {
 				target: 'sandbox@tool-0.vm.host:22',
 				identityData: 'pem',
 				strictHostKeyChecking: false,
-				workspaceRoot: '/work',
+				workspaceRoot: OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
 			}),
 		);
 		expect(ssh.buildExecRemoteCommand).toHaveBeenCalledWith({

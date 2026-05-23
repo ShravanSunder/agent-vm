@@ -596,6 +596,56 @@ describe('createControllerApp', () => {
 		expect(createLease).not.toHaveBeenCalled();
 	});
 
+	it('warns when legacy lease session keys fall back to the main agent', async () => {
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const createLease = vi.fn(async () => createLeaseStub('lease-123', 0));
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease,
+				renewLease: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		try {
+			const response = await app.request('/lease', {
+				body: JSON.stringify(
+					createLeaseRequestBody({
+						sessionKey: 'session-abc',
+					}),
+				),
+				headers: {
+					'content-type': 'application/json',
+				},
+				method: 'POST',
+			});
+
+			expect(response.status).toBe(200);
+			const loggedMessages = stderrWrite.mock.calls.map(([message]) => String(message));
+			expect(
+				loggedMessages.some(
+					(message) =>
+						message.includes('[WARN]') &&
+						message.includes("sessionKey 'session-abc'") &&
+						message.includes('defaulting agentId=main') &&
+						message.includes("zone='shravan'") &&
+						message.includes("scope='agent:main'"),
+				),
+			).toBe(true);
+		} finally {
+			stderrWrite.mockRestore();
+		}
+	});
+
 	it('rejects Tool VM leases until the OpenClaw plugin reports fresh runtime status', async () => {
 		let nowMs = 1_000;
 		const runtimeStatusStore = new OpenClawRuntimeStatusStore({

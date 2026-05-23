@@ -7,6 +7,7 @@ import type {
 import {
 	expectedOpenClawGondolinScopeKey,
 	findOpenClawGondolinSandboxMismatch,
+	isOpenClawAgentSessionKey,
 	OPENCLAW_GONDOLIN_LEASE_SCOPE_GUIDANCE,
 	resolveOpenClawAgentIdFromSessionKey,
 	type OpenClawGondolinSandboxSnapshot,
@@ -304,6 +305,11 @@ export function createControllerApp(options: {
 						!(payload.zoneId in options.zoneDefaultToolVmProfiles)
 			) {
 				return context.json({ error: `Unknown zone '${payload.zoneId}'` }, 400);
+			}
+			if (!isOpenClawAgentSessionKey(payload.sessionKey)) {
+				writeControllerLeaseLog(
+					`[WARN] OpenClaw lease sessionKey '${payload.sessionKey}' is not agent-shaped; defaulting agentId=main zone='${payload.zoneId}' scope='${payload.scopeKey}'`,
+				);
 			}
 			const contractError = validateOpenClawGondolinLeaseContract(payload);
 			if (contractError) {

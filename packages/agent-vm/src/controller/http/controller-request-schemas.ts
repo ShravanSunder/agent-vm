@@ -2,19 +2,17 @@ import { isToolVmActiveUseId } from '@agent-vm/gateway-interface';
 import { z } from 'zod';
 
 import { workerTaskControllerRequestSchema } from '../../config/resource-contracts/index.js';
-
-function isAbsolutePosixPath(value: string): boolean {
-	return value.startsWith('/');
-}
-
-function pathContainsParentTraversal(value: string): boolean {
-	return value.split('/').includes('..');
-}
+import {
+	isAbsolutePosixPath,
+	isRootPosixPath,
+	pathContainsParentTraversal,
+} from '../leases/lease-path-helpers.js';
 
 const controllerLeaseAgentWorkspacePathSchema = z
 	.string()
 	.min(1)
 	.refine(isAbsolutePosixPath, { message: 'path must be absolute.' })
+	.refine((value) => !isRootPosixPath(value), { message: 'path must not be root.' })
 	.refine((value) => !pathContainsParentTraversal(value), {
 		message: 'path must not contain parent traversal.',
 	});

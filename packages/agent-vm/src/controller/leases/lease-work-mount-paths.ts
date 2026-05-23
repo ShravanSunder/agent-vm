@@ -8,6 +8,7 @@ import {
 	resolveZoneGitPaths,
 	type ZoneGitToolVmMount,
 } from '../zone-git/zone-git-paths.js';
+import { pathContainsParentTraversal } from './lease-path-helpers.js';
 
 // These guest roots are mounted by the OpenClaw gateway image. Lease callers
 // must speak in gateway paths; the controller owns translation to host paths.
@@ -43,10 +44,6 @@ export interface ResolvedLeaseWorkMount {
 	readonly guestWorkdir: string;
 	readonly hostWorkMountDir: string;
 	readonly zoneGitMount?: ZoneGitToolVmMount;
-}
-
-function pathContainsParentTraversal(inputPath: string): boolean {
-	return inputPath.split(/[\\/]+/u).includes('..');
 }
 
 function normalizeGuestWorkMountDir(workMountDir: string): string {

@@ -5,7 +5,7 @@ import type {
 	OpenClawSandboxFsBridge,
 } from './sandbox-backend-factory.js';
 
-const OPENCLAW_SSH_SESSION_SCRATCH_ROOT = '/work';
+export const OPENCLAW_SSH_SESSION_SCRATCH_ROOT = '/work';
 
 export function createBackendDeps(ssh: SshHelpers): {
 	readonly buildExecSpec: CreateBackendDependencies['buildExecSpec'];

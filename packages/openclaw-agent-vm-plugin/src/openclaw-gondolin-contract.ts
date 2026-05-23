@@ -80,6 +80,11 @@ export function resolveOpenClawAgentIdFromSessionKey(sessionKey: string): string
 	return normalizeOpenClawAgentId(parts[1]);
 }
 
+export function isOpenClawAgentSessionKey(sessionKey: string): boolean {
+	const parts = sessionKey.trim().split(':');
+	return parts[0] === 'agent' && parts[1] !== undefined && isOpenClawAgentId(parts[1]);
+}
+
 export function expectedOpenClawGondolinScopeKey(agentId: string): string {
 	return `agent:${agentId}`;
 }

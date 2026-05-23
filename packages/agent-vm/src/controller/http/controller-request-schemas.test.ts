@@ -104,5 +104,11 @@ describe('controller request schemas', () => {
 				agentWorkspaceDir: '/home/openclaw/../agent',
 			}).success,
 		).toBe(false);
+		expect(
+			controllerLeaseCreateRequestSchema.safeParse({
+				...validLeaseRequest,
+				agentWorkspaceDir: '/',
+			}).success,
+		).toBe(false);
 	});
 });
