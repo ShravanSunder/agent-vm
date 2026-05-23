@@ -198,13 +198,14 @@ Returns:
 }
 ```
 
-The OpenClaw lifecycle keeps `OPENCLAW_GATEWAY_TOKEN` as an environment
+The OpenClaw lifecycle keeps `OPENCLAW_GATEWAY_TOKEN` as a gateway environment
 secret. The effective config references it through OpenClaw's env SecretRef
-shape instead of storing the plaintext token in `<stateDir>/effective-openclaw.json`.
-Other raw environment secrets must be named explicitly in
-`gateway.rawEnvSecrets`; provider API tokens should use `http-mediation` unless
-the integration cannot be mediated at the HTTP boundary. Generated runtime env
-secrets, such as zone-git capability env vars, must also be listed when enabled.
+shape instead of storing the plaintext token in
+`<stateDir>/effective-openclaw.json`. Other raw
+environment secrets must be named explicitly in `gateway.rawEnvSecrets`;
+provider API tokens should use `http-mediation` unless the integration cannot
+be mediated at the HTTP boundary. Generated runtime env secrets, such as
+zone-git capability env vars, must also be listed when enabled.
 
 MCP Portal upstream credentials stay in the gateway VM portal process. The
 portal exposes schema, summaries, helper source, and validated call results to
@@ -304,7 +305,7 @@ toolchain setup is not known.
 | Zone secret (injection: http-mediation, audience: gateway/both) | Host | Placeholder only | Gateway VM Gondolin proxy injects into HTTP requests |
 | Zone secret (injection: http-mediation, audience: tool-vm/both) | Host | Placeholder only | Tool VM Gondolin proxy injects into HTTP requests |
 | Worker runtimeAuthHints for mediated secrets | Host | Placeholder name only | Generated worker runtime instructions under `/agent-vm` |
-| OPENCLAW_GATEWAY_TOKEN | Host | Gateway VM only | Env SecretRef plus runtime-only `/run/openclaw/secrets.env`; allowed raw env by default |
+| OPENCLAW_GATEWAY_TOKEN | Host | Gateway VM only | Env SecretRef plus runtime-only `/run/openclaw/secrets.env` and token-only `/run/openclaw/gateway-token.env`; allowed raw env by default |
 | githubToken | Host | No | Controller-side git push only |
 | gateway.authProfilesByAgent | Host | Indirectly | Per-agent profile written to host disk; VM reads via VFS mount |
 | gateway.authProfilesRef | Host | Indirectly | Legacy main-agent fallback written to host disk; VM reads via VFS mount |

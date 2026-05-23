@@ -59,6 +59,7 @@ const secretNameSchema = z
 		'secret names must not use JavaScript prototype property names',
 	);
 const defaultOpenClawRawEnvSecretNames = ['OPENCLAW_GATEWAY_TOKEN'] as const;
+
 const egressHostSchema = z
 	.object({
 		host: z.string().min(1),

@@ -90,6 +90,9 @@ describe('manual templates', () => {
 			'agent-vm controller ssh --zone <zoneId>',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
+			'--all-secrets',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(
 			'Controller SSH opens an interactive shell only',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('secrets.md'))?.content).toContain(

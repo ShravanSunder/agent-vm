@@ -2113,8 +2113,10 @@ describe('runAgentVmCli', () => {
 		expect(outputs.join('\n')).toContain('"zoneId": "shravan"');
 	});
 
-	it('routes controller ssh through the secret-loaded ssh command handler', async () => {
-		const runInteractiveProcess = vi.fn(async () => {});
+	it('routes controller ssh through the gateway-token-loaded ssh command handler', async () => {
+		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
+			async () => {},
+		);
 
 		await runAgentVmCli(
 			['controller', 'ssh', '--zone', 'shravan'],
@@ -2138,8 +2140,51 @@ describe('runAgentVmCli', () => {
 
 		expect(runInteractiveProcess).toHaveBeenCalledWith(
 			'ssh',
-			expect.arrayContaining([expect.stringContaining('/run/openclaw/secrets.env')]),
+			expect.arrayContaining([expect.stringContaining('/run/openclaw/gateway-token.env')]),
 		);
+		const firstSshCall = vi.mocked(runInteractiveProcess).mock.calls[0];
+		if (!firstSshCall) {
+			throw new Error('Expected SSH process to run.');
+		}
+		const sshArguments = firstSshCall[1];
+		const remoteCommand = sshArguments.at(-1);
+		expect(remoteCommand).not.toEqual(expect.stringContaining('/run/openclaw/secrets.env'));
+	});
+
+	it('routes controller ssh --all-secrets through the raw gateway secret env file', async () => {
+		const runInteractiveProcess: NonNullable<CliDependencies['runInteractiveProcess']> = vi.fn(
+			async () => {},
+		);
+		const enableZoneSsh = vi.fn(async () => ({
+			host: '127.0.0.1',
+			port: 2222,
+			secretEnvEnabled: true,
+			user: 'root',
+		}));
+
+		await runAgentVmCli(
+			['controller', 'ssh', '--zone', 'shravan', '--all-secrets'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient: () => createControllerClientStub(enableZoneSsh),
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				runInteractiveProcess,
+			},
+		);
+
+		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', { secretEnv: 'all-secrets' });
+		const firstSshCall = vi.mocked(runInteractiveProcess).mock.calls[0];
+		if (!firstSshCall) {
+			throw new Error('Expected SSH process to run.');
+		}
+		const sshArguments = firstSshCall[1];
+		const remoteCommand = sshArguments.at(-1);
+		expect(remoteCommand).toEqual(expect.stringContaining('/run/openclaw/secrets.env'));
+		expect(remoteCommand).not.toEqual(expect.stringContaining('/run/openclaw/gateway-token.env'));
 	});
 
 	it('routes auth codex-harness to native per-agent Codex CLI auth', async () => {

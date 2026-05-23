@@ -1536,7 +1536,20 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/egressHosts/u);
 	});
 
-	test('rejects OpenClaw zones without gateway env token', async () => {
+	test('rejects legacy OpenClaw controller auth configuration', async () => {
+		const config = createValidSystemConfigInput();
+		Object.assign(config.zones[0].gateway, {
+			controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
+		});
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-openclaw-controller-auth-legacy-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Unrecognized key.*controllerAuth/u);
+	});
+
+	test('rejects OpenClaw zones without the gateway token secret', async () => {
 		const config = createValidSystemConfigInput();
 		delete config.zones[0].secrets.OPENCLAW_GATEWAY_TOKEN;
 		const configPath = await writeSystemConfigForTest(

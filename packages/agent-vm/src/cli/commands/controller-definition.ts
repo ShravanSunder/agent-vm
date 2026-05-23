@@ -187,13 +187,21 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 				name: 'ssh',
 				description: 'Open an SSH session into the gateway VM',
 				args: {
+					allSecrets: flag({
+						long: 'all-secrets',
+						description: 'Load every raw gateway environment secret in the SSH shell',
+					}),
 					config: createConfigOption(),
 					zone: createZoneOption(),
 				},
-				handler: async ({ config, zone }) => {
+				handler: async ({ allSecrets, config, zone }) => {
 					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
 					const selectedZone = requireZone(systemConfig, zone);
-					const restArguments = ['--zone', selectedZone.id];
+					const restArguments = [
+						'--zone',
+						selectedZone.id,
+						...(allSecrets ? ['--all-secrets'] : []),
+					];
 					await runSshCommand({
 						dependencies,
 						io,
