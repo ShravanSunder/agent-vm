@@ -145,6 +145,10 @@ async function writeOpenClawProjectFixture(rootPath: string): Promise<string> {
 				id: 'shravan',
 				gateway: {
 					type: 'openclaw',
+					controlAuth: {
+						mode: 'token',
+						secret: 'OPENCLAW_GATEWAY_TOKEN',
+					},
 					memory: '2G',
 					cpus: 2,
 					port: 18791,

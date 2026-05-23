@@ -37,6 +37,10 @@ function createOpenClawZone(rootPath: string): SystemConfig['zones'][number] {
 		id: 'home',
 		gateway: {
 			type: 'openclaw',
+			controlAuth: {
+				mode: 'token',
+				secret: 'OPENCLAW_GATEWAY_TOKEN',
+			},
 			imageProfile: 'openclaw',
 			memory: '2G',
 			cpus: 2,

@@ -184,6 +184,10 @@ describe('splitResolvedGatewaySecrets', () => {
 				id: 'sunfam',
 				gateway: {
 					type: 'openclaw',
+					controlAuth: {
+						mode: 'token',
+						secret: 'OPENCLAW_GATEWAY_TOKEN',
+					},
 					memory: '2G',
 					cpus: 2,
 					port: 18791,

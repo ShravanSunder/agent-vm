@@ -605,6 +605,10 @@ function createMinimalOpenClawSystemConfig(projectRoot = '/tmp'): LoadedSystemCo
 				egressHosts: [],
 				gateway: {
 					type: 'openclaw',
+					controlAuth: {
+						mode: 'token',
+						secret: 'OPENCLAW_GATEWAY_TOKEN',
+					},
 					backupDir: path.join(projectRoot, 'backup'),
 					config: path.join(projectRoot, 'config', 'openclaw.json'),
 					cpus: 1,

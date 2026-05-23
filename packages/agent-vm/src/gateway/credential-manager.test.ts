@@ -43,6 +43,10 @@ const systemConfig = {
 			id: 'shravan',
 			gateway: {
 				type: 'openclaw',
+				controlAuth: {
+					mode: 'token',
+					secret: 'OPENCLAW_GATEWAY_TOKEN',
+				},
 				imageProfile: 'openclaw',
 				memory: '2G',
 				cpus: 2,

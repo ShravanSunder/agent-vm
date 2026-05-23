@@ -51,6 +51,10 @@ function createSystemConfig(
 					agentToolVmProfiles: {},
 					defaultToolVmProfile: 'default',
 					gateway: {
+						controlAuth: {
+							mode: 'token',
+							secret: 'OPENCLAW_GATEWAY_TOKEN',
+						},
 						config: '/deployments/shravan-claw-beta/config/gateways/beta/openclaw.json',
 						cpus: 2,
 						imageProfile: 'openclaw',

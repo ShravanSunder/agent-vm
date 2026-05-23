@@ -60,6 +60,11 @@ export interface GatewayIngressConfig {
 	readonly upstreamResponseTimeoutMs?: number;
 }
 
+export interface OpenClawGatewayControlAuthConfig {
+	readonly mode: 'token';
+	readonly secret: string;
+}
+
 interface GatewayZoneBaseGatewayConfig {
 	readonly type: GatewayType;
 	readonly memory: string;
@@ -79,6 +84,7 @@ interface GatewayZoneBaseGatewayConfig {
 
 interface OpenClawGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
 	readonly type: 'openclaw';
+	readonly controlAuth: OpenClawGatewayControlAuthConfig;
 	readonly zoneFilesDir: string;
 	readonly authProfilesByAgent?: Readonly<
 		Record<

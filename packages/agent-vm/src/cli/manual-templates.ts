@@ -293,7 +293,7 @@ Use env only when the gateway process itself must read the raw value.
 Do not bake secrets into Dockerfiles or images.
 
 Each zone can protect controller-mediated SSH with adminAccess. For 1Password-backed configs, create op://agent-vm/<zoneId>-ssh-access/token.
-Use agent-vm controller ssh --zone <zoneId> for a gateway admin shell with runtime environment and OPENCLAW_GATEWAY_TOKEN loaded.
+Use agent-vm controller ssh --zone <zoneId> for a gateway admin shell. OpenClaw admin commands source the token named by gateway.controlAuth.secret.
 Use agent-vm controller ssh --zone <zoneId> --all-secrets only when the shell must inspect or debug every raw gateway environment secret.
 Controller SSH opens an interactive shell only. Do not use it as a one-shot command runner, and do not try to print raw SSH commands from the CLI.
 For OpenClaw provider auth flows, prefer agent-vm auth openclaw <provider> --zone <zoneId>. Add --agent <agentId> for one agent or --all-agents to repeat the same provider login for every configured zone agent.
