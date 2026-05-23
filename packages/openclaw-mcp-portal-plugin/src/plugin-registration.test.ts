@@ -145,6 +145,123 @@ describe('plugin registration validation', () => {
 		expect(lifecycleRegistration?.cleanup).toEqual(expect.any(Function));
 	});
 
+	it('registers native portal tools during OpenClaw tool discovery without runtime hooks', () => {
+		const hooks: string[] = [];
+		const logger = { info: vi.fn() };
+		const registeredTools: OpenClawToolFactory[] = [];
+
+		registerMcpPortalPlugin({
+			logger,
+			on: <THookName extends keyof OpenClawPluginHookEventMap>(
+				hookName: THookName,
+				_handler: (
+					event: OpenClawPluginHookEventMap[THookName],
+					context: { readonly agentId?: string },
+				) =>
+					| OpenClawPluginHookResultMap[THookName]
+					| Promise<OpenClawPluginHookResultMap[THookName] | void>
+					| void,
+			): void => {
+				hooks.push(hookName);
+			},
+			pluginConfig: {
+				configDir: '/config/gateways/sunclaw',
+			},
+			registrationMode: 'tool-discovery',
+			registerTool: (tool) => {
+				if (typeof tool === 'function') {
+					registeredTools.push(tool);
+				}
+			},
+		});
+
+		expect(registeredTools).toHaveLength(1);
+		expect(registeredTools[0]?.({ agentId: 'shravan' })).toEqual([
+			expect.objectContaining({ name: 'mcp_portal_list' }),
+			expect.objectContaining({ name: 'mcp_portal_search' }),
+			expect.objectContaining({ name: 'mcp_portal_describe' }),
+			expect.objectContaining({ name: 'mcp_portal_call' }),
+		]);
+		expect(hooks).toEqual([]);
+		expect(logger.info).toHaveBeenCalledWith(
+			"[mcp-portal] registered native portal tools for registrationMode='tool-discovery'.",
+		);
+	});
+
+	it('registers native portal tools during OpenClaw capability discovery without runtime hooks', () => {
+		const registeredTools: OpenClawToolFactory[] = [];
+
+		registerMcpPortalPlugin({
+			pluginConfig: {
+				configDir: '/config/gateways/sunclaw',
+			},
+			registrationMode: 'discovery',
+			registerTool: (tool) => {
+				if (typeof tool === 'function') {
+					registeredTools.push(tool);
+				}
+			},
+		});
+
+		expect(registeredTools).toHaveLength(1);
+		expect(registeredTools[0]?.({ agentId: 'shravan' })).toEqual([
+			expect.objectContaining({ name: 'mcp_portal_list' }),
+			expect.objectContaining({ name: 'mcp_portal_search' }),
+			expect.objectContaining({ name: 'mcp_portal_describe' }),
+			expect.objectContaining({ name: 'mcp_portal_call' }),
+		]);
+	});
+
+	it('requires a portal config directory during OpenClaw capability discovery', () => {
+		expect(() =>
+			registerMcpPortalPlugin({
+				registrationMode: 'discovery',
+				registerTool: () => undefined,
+			}),
+		).toThrow(/requires configDir/u);
+	});
+
+	it('registers native portal tools in any non-full mode that exposes registerTool', () => {
+		const registeredTools: OpenClawToolFactory[] = [];
+
+		registerMcpPortalPlugin({
+			pluginConfig: {
+				configDir: '/config/gateways/sunclaw',
+			},
+			registrationMode: 'setup-runtime',
+			registerTool: (tool) => {
+				if (typeof tool === 'function') {
+					registeredTools.push(tool);
+				}
+			},
+		});
+
+		expect(registeredTools).toHaveLength(1);
+		expect(registeredTools[0]?.({ agentId: 'shravan' })).toEqual([
+			expect.objectContaining({ name: 'mcp_portal_list' }),
+			expect.objectContaining({ name: 'mcp_portal_search' }),
+			expect.objectContaining({ name: 'mcp_portal_describe' }),
+			expect.objectContaining({ name: 'mcp_portal_call' }),
+		]);
+	});
+
+	it('skips non-full registration modes when registerTool is unavailable', () => {
+		const logger = { warn: vi.fn() };
+
+		expect(() =>
+			registerMcpPortalPlugin({
+				logger,
+				pluginConfig: {
+					configDir: '/config/gateways/sunclaw',
+				},
+				registrationMode: 'cli-metadata',
+			}),
+		).not.toThrow();
+		expect(logger.warn).toHaveBeenCalledWith(
+			"[mcp-portal] skipped native portal tool registration for registrationMode='cli-metadata' because OpenClaw did not expose registerTool.",
+		);
+	});
+
 	it('uses the loaded portal profile to scope native tool descriptors', async () => {
 		const configDir = await createPortalConfigDir({ enabledNamespaces: ['linear'] });
 		let registeredToolFactory: OpenClawToolFactory | undefined;

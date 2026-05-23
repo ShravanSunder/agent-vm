@@ -16,6 +16,7 @@ export type { GatewayType } from './gateway-runtime-contract.js';
 export type {
 	BuildGatewayVmSpecOptions,
 	GatewayAuthConfig,
+	GatewayIngressConfig,
 	GatewayLifecycle,
 	GatewaySecretConfig,
 	GatewayZoneAgentConfig,

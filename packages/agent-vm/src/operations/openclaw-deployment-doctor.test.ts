@@ -17,6 +17,14 @@ const openClawToolVmSandbox = {
 	workspaceAccess: 'rw',
 } satisfies Record<string, string>;
 
+const openClawSandboxPluginTools = {
+	sandbox: {
+		tools: {
+			alsoAllow: ['group:plugins'],
+		},
+	},
+} satisfies Record<string, unknown>;
+
 function createSystemConfig(
 	openClawConfigPath: string,
 	authProfilesByAgent: Record<string, { readonly ref: string; readonly source: '1password' }> = {},
@@ -141,6 +149,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						},
 						slots: { memory: 'memory-core' },
 					},
+					tools: openClawSandboxPluginTools,
 				},
 			},
 		]);
@@ -202,6 +211,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						},
 						slots: { memory: 'memory-core' },
 					},
+					tools: openClawSandboxPluginTools,
 				},
 			},
 		]);
@@ -318,6 +328,91 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			ok: false,
 			hint: 'Set zones[].mcpPortal.configDir so agent-vm registers native MCP Portal tools through the OpenClaw plugin.',
 		});
+	});
+
+	it('flags sandboxed MCP Portal deployments without sandbox plugin tool access', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				runtimeMaterializesPortalEndpoints: true,
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'sun' }],
+					},
+					plugins: {
+						allow: ['gondolin', 'memory-core', 'mcp-portal'],
+						entries: {
+							gondolin: { enabled: true },
+							'memory-core': { enabled: true },
+							'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
+						},
+						load: {
+							paths: [
+								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/home/openclaw/.openclaw/extensions/mcp-portal',
+							],
+						},
+						slots: { memory: 'memory-core' },
+					},
+					tools: {
+						alsoAllow: ['group:plugins'],
+						sandbox: {
+							tools: {
+								alsoAllow: ['web_search', 'web_fetch', 'message'],
+							},
+						},
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-sandbox-plugin-tools-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Sandboxed agents need tools.sandbox.tools.alsoAllow to include "group:plugins" (or mcp-portal / mcp_portal_*). Top-level tools.alsoAllow does not expose optional plugin tools inside sandbox.mode=all.',
+		});
+	});
+
+	it('does not treat empty sandbox alsoAllow as plugin tool access', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				runtimeMaterializesPortalEndpoints: true,
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'sun' }],
+					},
+					plugins: {
+						allow: ['gondolin', 'memory-core', 'mcp-portal'],
+						entries: {
+							gondolin: { enabled: true },
+							'memory-core': { enabled: true },
+							'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
+						},
+					},
+					tools: {
+						sandbox: {
+							tools: {
+								alsoAllow: [],
+							},
+						},
+					},
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-sandbox-plugin-tools-shravan'),
+		).toMatchObject({ ok: false });
 	});
 
 	it('flags portal endpoints without the generated access header', () => {
@@ -491,6 +586,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						},
 						slots: { memory: 'memory-core' },
 					},
+					tools: openClawSandboxPluginTools,
 				},
 			},
 		]);
@@ -745,6 +841,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 					},
 					slots: { memory: 'memory-core' },
 				},
+				tools: openClawSandboxPluginTools,
 			}),
 			'utf8',
 		);
@@ -855,6 +952,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 					},
 					slots: { memory: 'memory-core' },
 				},
+				tools: openClawSandboxPluginTools,
 			}),
 			'utf8',
 		);
@@ -908,6 +1006,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 					},
 					slots: { memory: 'memory-core' },
 				},
+				tools: openClawSandboxPluginTools,
 			}),
 			'utf8',
 		);
