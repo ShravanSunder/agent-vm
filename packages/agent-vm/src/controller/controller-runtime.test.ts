@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { describe, expect, it, vi } from 'vitest';
+import type { z } from 'zod';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import {
@@ -11,11 +12,14 @@ import {
 	createManagedVmFsStub,
 } from '../testing/managed-vm-test-helpers.js';
 import { startControllerRuntime } from './controller-runtime.js';
+import type { controllerLeaseCreateRequestSchema } from './http/controller-request-schemas.js';
 import type {
 	ExecuteWorkerTaskOptions,
 	PreparedWorkerTask,
 	PrepareWorkerTaskOptions,
 } from './worker-task-runner.js';
+
+type ControllerLeaseCreateRequestBody = z.input<typeof controllerLeaseCreateRequestSchema>;
 
 const systemConfig = {
 	schemaVersion: 1,
@@ -91,6 +95,27 @@ const systemConfig = {
 		size: 5,
 	},
 } satisfies LoadedSystemConfig;
+
+function createLeaseRequestBody(
+	overrides: Partial<ControllerLeaseCreateRequestBody> = {},
+): ControllerLeaseCreateRequestBody {
+	return {
+		agentId: 'main',
+		agentWorkspaceDir: '/agent-work',
+		profileId: 'standard',
+		sandbox: {
+			backend: 'gondolin',
+			mode: 'all',
+			scope: 'agent',
+			workspaceAccess: 'rw',
+		},
+		scopeKey: 'agent:main',
+		sessionKey: 'agent:main:controller-runtime-test',
+		workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
+		zoneId: 'shravan',
+		...overrides,
+	};
+}
 
 const openClawProcessSpec = {
 	bootstrapCommand: 'bootstrap-openclaw',
@@ -531,13 +556,13 @@ describe('startControllerRuntime', () => {
 			expect(runtimeStatusResponse.status).toBe(200);
 
 			const leaseResponse = await startHttpServerArgs.app.request('/lease', {
-				body: JSON.stringify({
-					agentWorkspaceDir: '/agent-work',
-					profileId: 'standard',
-					scopeKey: 'agent:active-use-reap',
-					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
-					zoneId: 'shravan',
-				}),
+				body: JSON.stringify(
+					createLeaseRequestBody({
+						agentId: 'active-use-reap',
+						scopeKey: 'agent:active-use-reap',
+						sessionKey: 'agent:active-use-reap:controller-runtime-test',
+					}),
+				),
 				headers: { 'content-type': 'application/json' },
 				method: 'POST',
 			});
@@ -695,13 +720,13 @@ describe('startControllerRuntime', () => {
 			expect(runtimeStatusResponse.status).toBe(200);
 
 			const leaseResponse = await startHttpServerArgs.app.request('/lease', {
-				body: JSON.stringify({
-					agentWorkspaceDir: '/agent-work',
-					profileId: 'standard',
-					scopeKey: 'agent:active-use-shutdown',
-					workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
-					zoneId: 'shravan',
-				}),
+				body: JSON.stringify(
+					createLeaseRequestBody({
+						agentId: 'active-use-shutdown',
+						scopeKey: 'agent:active-use-shutdown',
+						sessionKey: 'agent:active-use-shutdown:controller-runtime-test',
+					}),
+				),
 				headers: { 'content-type': 'application/json' },
 				method: 'POST',
 			});
@@ -1558,13 +1583,15 @@ describe('startControllerRuntime', () => {
 			expect(runtimeStatusResponse.status).toBe(200);
 
 			const leaseResponse = await startHttpServerArgs.app.request('/lease', {
-				body: JSON.stringify({
-					agentWorkspaceDir: '/zone',
-					profileId: 'standard',
-					scopeKey: 'agent:close-runtime',
-					workMountDir: '/zone/sandbox-work',
-					zoneId: 'shravan',
-				}),
+				body: JSON.stringify(
+					createLeaseRequestBody({
+						agentId: 'close-runtime',
+						agentWorkspaceDir: '/zone',
+						scopeKey: 'agent:close-runtime',
+						sessionKey: 'agent:close-runtime:controller-runtime-test',
+						workMountDir: '/zone/sandbox-work',
+					}),
+				),
 				headers: {
 					'content-type': 'application/json',
 				},

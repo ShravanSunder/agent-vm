@@ -1,6 +1,9 @@
 import { createLeaseClient } from './controller-lease-client.js';
 import { resolveGondolinPluginConfig } from './gondolin-plugin-config.js';
-import { createBackendDeps } from './openclaw-backend-dependencies.js';
+import {
+	OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
+	createBackendDeps,
+} from './openclaw-backend-dependencies.js';
 import { buildOpenClawRuntimeStatusReport } from './openclaw-runtime-status.js';
 import {
 	assertSdkShape,
@@ -117,5 +120,5 @@ const plugin = {
 
 export default plugin;
 
-export { createBackendDeps };
+export { OPENCLAW_SSH_SESSION_SCRATCH_ROOT, createBackendDeps };
 export type { SshHelpers };

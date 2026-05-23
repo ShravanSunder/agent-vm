@@ -2,12 +2,34 @@ import { isToolVmActiveUseId } from '@agent-vm/gateway-interface';
 import { z } from 'zod';
 
 import { workerTaskControllerRequestSchema } from '../../config/resource-contracts/index.js';
+import {
+	isAbsolutePosixPath,
+	isRootPosixPath,
+	pathContainsParentTraversal,
+} from '../leases/lease-path-helpers.js';
+
+const controllerLeaseAgentWorkspacePathSchema = z
+	.string()
+	.min(1)
+	.refine(isAbsolutePosixPath, { message: 'path must be absolute.' })
+	.refine((value) => !isRootPosixPath(value), { message: 'path must not be root.' })
+	.refine((value) => !pathContainsParentTraversal(value), {
+		message: 'path must not contain parent traversal.',
+	});
 
 export const controllerLeaseCreateRequestSchema = z.strictObject({
-	agentWorkspaceDir: z.string().min(1),
+	agentId: z.string().min(1),
+	agentWorkspaceDir: controllerLeaseAgentWorkspacePathSchema,
 	idleTtlMs: z.number().int().positive().optional(),
 	profileId: z.string().min(1),
+	sandbox: z.strictObject({
+		backend: z.string(),
+		mode: z.string(),
+		scope: z.string(),
+		workspaceAccess: z.string(),
+	}),
 	scopeKey: z.string().min(1),
+	sessionKey: z.string().min(1),
 	workMountDir: z.string().min(1),
 	zoneId: z.string().min(1),
 });

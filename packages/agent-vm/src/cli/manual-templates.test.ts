@@ -191,8 +191,20 @@ describe('manual templates', () => {
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('message_tool_only');
+		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
+			'runtime-paths.md explains /workspace, /work, and other in-VM paths',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('layout.md'))?.content).toContain(
+			'OpenClaw Tool VMs mount the validated lease work mount at /workspace',
+		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
-			'OpenClaw Tool VMs run commands in /work',
+			'OpenClaw Tool VMs run commands in the lease workdir returned by the controller',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'/workspace is the Tool VM guest RealFS mount',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'/work is Tool VM-local rootfs/COW scratch',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'workMountDir',
@@ -233,7 +245,6 @@ describe('manual templates', () => {
 		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfile');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('toolProfiles');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('/home/openclaw/zone-files');
-		expect(files.map((file) => file.content).join('\n')).not.toContain('/workspace');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('stable workspace');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('one workspace');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('which workspace');

@@ -35,7 +35,7 @@ Use docs/manual/scope.md before changing OpenClaw sandbox scope or tool VM lease
 Use docs/manual/gateway-ingress.md before changing gateway ports, OpenClaw Control UI access, SSE/streaming behavior, WebSocket access, or serving additional webservers from inside a VM.
 Use docs/manual/tool-access.md before answering whether a tool binary, auth profile, or tool VM image should be agent-specific.
 Use docs/manual/channels.md before helping a human configure Discord, Slack, Telegram, or another OpenClaw channel.
-Use docs/manual/runtime-paths.md before answering where files appear inside VMs or how workMountDir backs Tool VM /work.
+Use docs/manual/runtime-paths.md before answering where files appear inside VMs or how workMountDir backs the Tool VM lease workdir.
 Use docs/manual/per-agent-setup.md before changing multi-agent layouts, scope=agent behavior, or per-agent tool/auth isolation.
 
 Do not assume Discord is enabled by the framework. Channels and channel secrets are deployment-owned.
@@ -65,7 +65,7 @@ Read in this order:
 7. mcp-portal.md explains progressive MCP discovery and gateway-owned MCP auth.
 8. tool-access.md explains binary, auth, OpenClaw tool, and zone/image isolation.
 9. channels.md explains how deployments add Discord or other channels.
-10. runtime-paths.md explains /work and other in-VM paths.
+10. runtime-paths.md explains /workspace, /work, and other in-VM paths.
 11. per-agent-setup.md explains multi-agent scope and tool access choices.
 12. migration-discord.md explains how existing Discord deployments keep working.
 13. secrets.md explains runtime auth and HTTP mediation.
@@ -93,7 +93,7 @@ When OpenClaw zoneGit is enabled, runtimeDir stores Git metadata at runtimeDir/z
 
 Author JSONC for human-owned agent-vm config. Runtime files such as /state/effective-worker.json, task event JSONL, runtime records, and API bodies stay strict JSON.
 OpenClaw gateway VMs mount zoneFilesDir at /zone.
-OpenClaw Tool VMs mount the validated lease work mount at /work.
+OpenClaw Tool VMs mount the validated lease work mount at /workspace; /work remains Tool VM rootfs/COW scratch.
 OpenClaw Tool VMs with zoneGit mount zoneFilesDir at /zone and runtimeDir/zones/<zoneId>/zone-git at /agent-vm/zone-git.
 Worker task VMs keep repo files on rootfs/COW at /work/repos.
 OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work.
@@ -144,7 +144,7 @@ GET lease reads are read-only. Cached Tool VM handles renew idle leases with POS
 Example:
 - shravan agent uses scope=agent and scopeKey=agent-shravan.
 - alevtina agent uses scope=agent and scopeKey=agent-alevtina.
-- Each agent gets its own scoped sandbox mounted at /work in its Tool VM.
+- Each agent gets its own scoped sandbox mounted at /workspace in its Tool VM.
 - If both agents share one OpenClaw zone, unmapped agents use defaultToolVmProfile.
 - Configure agentToolVmProfiles when agents in one zone need different Tool VM images.
 - Configure gateway.authProfilesByAgent and agentSandboxSeeds for per-agent auth/profile files.
@@ -359,8 +359,9 @@ Discord recipe:
 			content: generatedPage(
 				'Runtime Paths',
 				`
-OpenClaw Tool VMs run commands in /work.
-/work is the Tool VM guest mount. It is backed by the validated workMountDir selected by OpenClaw and resolved by the controller to hostWorkMountDir.
+OpenClaw Tool VMs run commands in the lease workdir returned by the controller. For normal OpenClaw sandbox leases that workdir is /workspace.
+/workspace is the Tool VM guest RealFS mount. It is backed by the validated workMountDir selected by OpenClaw and resolved by the controller to hostWorkMountDir.
+/work is Tool VM-local rootfs/COW scratch and is deleted with the Tool VM.
 /agent-vm contains generated agent-vm runtime instructions.
 /state is controller/gateway plumbing, not the primary place for agent docs.
 worker repo edits live under /work/repos inside Worker gateway task VMs.
@@ -375,7 +376,7 @@ When gateway.zoneGit is configured:
 - Host zone files stay in gateway.zoneFilesDir.
 - Host Git metadata lives in runtimeDir/zones/<zoneId>/zone-git/zone-files.git.
 - Gateway VM zone files stay mounted at /zone.
-- Tool VMs mount /zone and /agent-vm/zone-git instead of /work.
+- Tool VMs mount /zone and /agent-vm/zone-git instead of /workspace.
 - Tool VM workdir is the requested /zone child path, such as /zone/agents/shravan.
 - Backups include current zone files and exclude runtimeDir Git metadata.
 - Backups require a clean and pushed zone Git repo.
@@ -389,7 +390,7 @@ When gateway.zoneGit is configured:
 				`
 A single OpenClaw gateway can host multiple agents. Use scope=agent when each agent should have a stable work mount and reusable Tool VM lease identity.
 
-Per-agent auth isolation works by using agent-vm auth codex-harness for native Codex CLI auth, gateway.authProfilesByAgent for OpenClaw auth profiles, and first-boot files through agentSandboxSeeds. Seeds target paths relative to the agent sandbox's /work backing directory and do not overwrite existing files.
+Per-agent auth isolation works by using agent-vm auth codex-harness for native Codex CLI auth, gateway.authProfilesByAgent for OpenClaw auth profiles, and first-boot files through agentSandboxSeeds. Seeds target paths relative to the agent sandbox backing directory exposed at /workspace in Tool VMs and do not overwrite existing files.
 agent-vm auth openclaw <provider> --all-agents repeats the same OpenClaw provider login once per configured zone agent.
 agent-vm auth codex-harness --all-agents runs one device-auth session per agent listed in the zone's system config. Use --agent <agentId> for a one-off login outside that configured list.
 

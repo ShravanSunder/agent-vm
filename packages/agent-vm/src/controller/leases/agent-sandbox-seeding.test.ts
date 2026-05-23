@@ -82,6 +82,7 @@ describe('seedAgentSandboxWorkspace', () => {
 		await mkdir(hostWorkMountDir, { recursive: true });
 
 		const result = await seedAgentSandboxWorkspace({
+			agentId: 'shravan',
 			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
@@ -125,6 +126,7 @@ describe('seedAgentSandboxWorkspace', () => {
 		await writeFile(seededFilePath, 'user-edited', 'utf8');
 
 		const result = await seedAgentSandboxWorkspace({
+			agentId: 'shravan',
 			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
@@ -161,6 +163,7 @@ describe('seedAgentSandboxWorkspace', () => {
 		await mkdir(hostWorkMountDir, { recursive: true });
 
 		const result = await seedAgentSandboxWorkspace({
+			agentId: 'shravan',
 			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
@@ -183,6 +186,7 @@ describe('seedAgentSandboxWorkspace', () => {
 		await mkdir(hostWorkMountDir, { recursive: true });
 
 		const result = await seedAgentSandboxWorkspace({
+			agentId: 'shravan',
 			scopeKey: 'agent:shravan:discord:channel:123:thread:456',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
@@ -210,6 +214,7 @@ describe('seedAgentSandboxWorkspace', () => {
 		await mkdir(hostWorkMountDir, { recursive: true });
 
 		const result = await seedAgentSandboxWorkspace({
+			agentId: 'alevtina',
 			scopeKey: 'agent:alevtina',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
@@ -241,6 +246,7 @@ describe('seedAgentSandboxWorkspace', () => {
 		await mkdir(hostWorkMountDir, { recursive: true });
 
 		const result = await seedAgentSandboxWorkspace({
+			agentId: 'shravan',
 			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
@@ -267,6 +273,7 @@ describe('seedAgentSandboxWorkspace', () => {
 		await mkdir(hostWorkMountDir, { recursive: true });
 
 		const result = await seedAgentSandboxWorkspace({
+			agentId: 'shravan',
 			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
@@ -297,6 +304,7 @@ describe('seedAgentSandboxWorkspace', () => {
 		await mkdir(path.join(zone.gateway.stateDir, 'sandboxes'), { recursive: true });
 
 		const result = await seedAgentSandboxWorkspace({
+			agentId: 'shravan',
 			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
@@ -327,6 +335,7 @@ describe('seedAgentSandboxWorkspace', () => {
 
 		await expect(
 			seedAgentSandboxWorkspace({
+				agentId: 'shravan',
 				scopeKey: 'agent:shravan',
 				secretResolver,
 				hostWorkMountDir,
@@ -335,6 +344,7 @@ describe('seedAgentSandboxWorkspace', () => {
 		).rejects.toThrow(SandboxSeedingError);
 		await expect(
 			seedAgentSandboxWorkspace({
+				agentId: 'shravan',
 				scopeKey: 'agent:shravan',
 				secretResolver,
 				hostWorkMountDir,
@@ -366,6 +376,7 @@ describe('seedAgentSandboxWorkspace', () => {
 
 		await expect(
 			seedAgentSandboxWorkspace({
+				agentId: 'shravan',
 				scopeKey: 'agent:shravan',
 				secretResolver,
 				hostWorkMountDir,
@@ -378,23 +389,46 @@ describe('seedAgentSandboxWorkspace', () => {
 		});
 	});
 
-	it('returns a malformed result for unsafe agent scope ids', async () => {
+	it('does not trust unsafe agent scope ids when explicit agent id is valid', async () => {
 		const rootPath = await createTempDirectory('agent-vm-sandbox-seed-malformed-');
+		const zone = createOpenClawZone(rootPath);
+		const hostWorkMountDir = path.join(zone.gateway.stateDir, 'sandboxes', 'agent-shravan', 'work');
+		await mkdir(hostWorkMountDir, { recursive: true });
+
+		const result = await seedAgentSandboxWorkspace({
+			agentId: 'shravan',
+			scopeKey: 'agent:../shravan',
+			secretResolver: createSecretResolver(),
+			hostWorkMountDir,
+			zone,
+		});
+
+		expect(result).toMatchObject({
+			agentId: 'shravan',
+			kind: 'seeded',
+			scopeKey: 'agent:../shravan',
+		});
+	});
+
+	it('rejects malformed explicit agent ids', async () => {
+		const rootPath = await createTempDirectory('agent-vm-sandbox-seed-malformed-agent-');
 		const zone = createOpenClawZone(rootPath);
 		const hostWorkMountDir = path.join(zone.gateway.stateDir, 'sandboxes', 'agent-shravan', 'work');
 		await mkdir(hostWorkMountDir, { recursive: true });
 
 		await expect(
 			seedAgentSandboxWorkspace({
-				scopeKey: 'agent:../shravan',
+				agentId: '../shravan',
+				scopeKey: 'agent:shravan',
 				secretResolver: createSecretResolver(),
 				hostWorkMountDir,
 				zone,
 			}),
 		).resolves.toEqual({
-			kind: 'malformed-agent-scope',
+			agentId: '../shravan',
+			kind: 'malformed-agent-id',
 			reason: "invalid agent id '../shravan'",
-			scopeKey: 'agent:../shravan',
+			scopeKey: 'agent:shravan',
 			zoneId: 'home',
 		});
 	});

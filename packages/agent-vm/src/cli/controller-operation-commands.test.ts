@@ -353,7 +353,7 @@ function createControllerClientStub(): ReturnType<
 			ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 			tcpSlot: 0,
 			transport: 'ssh-sandbox' as const,
-			workdir: '/work',
+			workdir: '/workspace',
 
 			zoneId: 'shravan',
 		}),
@@ -495,7 +495,7 @@ describe('runControllerOperationCommand', () => {
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
 						transport: 'ssh-sandbox' as const,
-						workdir: '/work',
+						workdir: '/workspace',
 
 						zoneId: 'shravan',
 					}),
@@ -650,7 +650,7 @@ printf '{"ok":true}\\n'
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
 						transport: 'ssh-sandbox' as const,
-						workdir: '/work',
+						workdir: '/workspace',
 
 						zoneId: 'shravan',
 					}),
@@ -750,7 +750,7 @@ printf '{"ok":true}\\n'
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
 						transport: 'ssh-sandbox' as const,
-						workdir: '/work',
+						workdir: '/workspace',
 
 						zoneId: 'shravan',
 					}),
@@ -832,7 +832,7 @@ printf '{"ok":true}\\n'
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
 						transport: 'ssh-sandbox' as const,
-						workdir: '/work',
+						workdir: '/workspace',
 
 						zoneId: 'shravan',
 					}),
@@ -1107,7 +1107,7 @@ printf '{"ok":true}\\n'
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
 						transport: 'ssh-sandbox' as const,
-						workdir: '/work',
+						workdir: '/workspace',
 
 						zoneId: 'shravan',
 					}),
@@ -1202,7 +1202,7 @@ printf '{"ok":true}\\n'
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
 						transport: 'ssh-sandbox' as const,
-						workdir: '/work',
+						workdir: '/workspace',
 
 						zoneId: 'shravan',
 					}),
