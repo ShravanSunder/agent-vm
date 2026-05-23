@@ -64,12 +64,17 @@ runtimeDir/zones/<zone>/logs/                       per-zone               destr
                                                                            every gateway restart)
 
 runtimeDir/zones/<zone>/zone-git/                   per-zone, preserved    NOT wiped by
-                                                    even on destroy        destroy-zone --purge
-                                                                           (see two reasons
-                                                                           below)
+                                                    by destroy-zone's       destroy-zone --purge
+                                                    selective deletion      (see two reasons
+                                                    (see note below)        below)
 ```
 
-Two reasons `zone-git/` is preserved even on `destroy-zone --purge`:
+Note that `zone-git/` is preserved **implicitly**, not by explicit policy.
+`destroy-zone --purge` enumerates specific subtrees to delete (`worker-tasks/`,
+`zones/<zone>/logs/`, and `zoneFilesDir`). It does NOT use a broad
+`fs.rm(runtimeDir/zones/<zone>/)` that would also remove `zone-git/`. Any
+future change to `destroy-zone.ts` that broadens the rm scope must
+explicitly exclude `zone-git/` — the two reasons below are why.
 
 1. **Data loss prevention.** `zone-git/zone-files.git` is the authoritative
    git store for committed work in this zone. Backups capture

@@ -425,6 +425,21 @@ function assertOpInjectTemplateSafeReference(entry: OpInjectEntry): void {
 // concurrently. Adding a serial-op-read tier re-introduces the "concurrent
 // `op read` failures with the same service account token" hazard at the
 // outer-call layer whenever multiple callers fall back at once.
+//
+// Concurrency contract — what's verified vs what's assumed:
+//   ✓ @1password/sdk's client.secrets.resolveAll is concurrency-safe on a
+//     single Client instance (SharedCore WASM, verified via deepwiki source
+//     analysis of 1Password/onepassword-sdk-js). Callers can invoke resolveAll
+//     concurrently from multiple async contexts.
+//   ? Two concurrent `op inject` subprocesses with the same service-account
+//     token: NOT verified. 1Password's published comment about concurrency
+//     hazards specifically called out `op read`; `op inject` was not
+//     discussed. In practice op inject is the SDK's fallback and is only
+//     reached when the SDK already failed, so two concurrent op-inject
+//     invocations require both SDKs to fail at the same instant — rare.
+//     If a future contributor sees auth errors from concurrent fallback
+//     paths, the next investigation step is to test concurrent op inject
+//     directly and (if unsafe) add an outer-layer mutex here.
 async function resolveAllSecretsWithOpCli(
 	serviceAccountToken: string,
 	refs: Record<string, OnePasswordSecretRef>,

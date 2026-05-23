@@ -1731,4 +1731,60 @@ describe('startGatewayZone', () => {
 		).toBe(true);
 		expect(closeMock).toHaveBeenCalledTimes(1);
 	});
+
+	it('continues Phase A and starts the gateway when cleanup quarantines a foreign runtime record', async () => {
+		// cleanupOrphanedGatewayIfPresent's scoped fences (projectNamespace,
+		// configPath, controllerPort, zoneId, sessionLabel) can find that an
+		// existing runtime record belongs to a DIFFERENT controller. In
+		// 'in-process-recovery' mode it quarantines that record and returns
+		// cleanedUp:false with a cleanupWarning, WITHOUT signalling the
+		// foreign process. Phase A's other branches should not care; the
+		// gateway should start normally.
+		const cleanupQuarantineMock = vi.fn(async () => ({
+			cleanedUp: false,
+			cleanupWarning: `Gateway runtime record at '/state' belongs to projectNamespace 'other', not 'claw-tests-a1b2c3d4'. Refusing scoped cleanup. Quarantining the stale runtime record without signaling its recorded process during in-process recovery.`,
+			killedPid: null,
+		}));
+		const managedVm: ManagedVm = {
+			id: 'vm-quarantine',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28293),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28293)),
+			setIngressRoutes: vi.fn(),
+		};
+
+		const result = await startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					DISCORD_BOT_TOKEN: 'discord-token',
+					OPENCLAW_GATEWAY_TOKEN: 'gateway-token-123',
+					PERPLEXITY_API_KEY: 'pplx-key',
+				}),
+				systemConfig: await createSystemConfig(),
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				cleanupOrphanedGatewayIfPresent: cleanupQuarantineMock,
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		expect(cleanupQuarantineMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				mode: 'in-process-recovery',
+			}),
+		);
+		expect(result.vm).toBe(managedVm);
+		expect(result.ingress).toEqual({ host: '127.0.0.1', port: 18791 });
+	});
 });

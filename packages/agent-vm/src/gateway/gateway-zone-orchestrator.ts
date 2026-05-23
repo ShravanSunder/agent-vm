@@ -82,6 +82,10 @@ function formatGatewayCommandFailure(stepName: string, result: GatewayCommandRes
 	return `${stepName} failed with exit ${result.exitCode}.${formatCommandOutput('stdout', result.stdout)}${formatCommandOutput('stderr', result.stderr)}`;
 }
 
+function toPhaseCError(reason: unknown): Error {
+	return reason instanceof Error ? reason : new Error(String(reason));
+}
+
 async function execGatewayCommand(options: {
 	readonly command: string;
 	readonly managedVm: ManagedVm;
@@ -299,6 +303,23 @@ export async function startGatewayZone(
 			},
 		);
 	});
+	// Promise.all (fail-fast) rather than Promise.allSettled here. Rationale:
+	//   - The image build branch can be slow on a cold cache (minutes for a
+	//     full Gondolin rebuild). If any other branch fails fast (e.g., a
+	//     config assertion at ~10ms), we want the operator to see the error
+	//     immediately, not after the image build completes.
+	//   - The realistic multi-failure mode (1Password is down) hits both
+	//     secretResolver.resolveAll callers with the same root cause at the
+	//     same op-CLI timeout (~30s). Promise.all surfaces the first; that's
+	//     diagnostically sufficient.
+	//   - Phase C uses allSettled for a DIFFERENT reason: it has a live
+	//     QEMU resource to close on partial failure. Phase A produces no
+	//     such resource.
+	//
+	// Cost of fail-fast: if multiple branches reject simultaneously, the
+	// other reasons are lost (only the first reaches the caller). Background
+	// completion of the other branches is harmless — no Phase A branch
+	// produces a host-visible resource that needs cleanup.
 	const [mcpPortalMaterialization, , , resolvedSecrets, image] = await Promise.all([
 		mcpPortalMaterializationPromise,
 		cleanupPromise,
@@ -391,41 +412,40 @@ export async function startGatewayZone(
 		prepHostStatePromise,
 		managedVmPromise,
 	]);
-	const phaseCErrors: Error[] = [];
-	if (prepHostStateResult.status === 'rejected') {
-		phaseCErrors.push(
-			prepHostStateResult.reason instanceof Error
-				? prepHostStateResult.reason
-				: new Error(String(prepHostStateResult.reason)),
-		);
-		if (managedVmResult.status === 'fulfilled') {
-			try {
-				await managedVmResult.value.close();
-			} catch (closeError) {
-				phaseCErrors.push(
-					new Error(
-						`Failed to close gateway VM after host-state prep failure: ${closeError instanceof Error ? closeError.message : String(closeError)}`,
-						{ cause: closeError },
-					),
-				);
+	// Aggregate any failures from either Phase C branch. If prep failed
+	// after the VM came up, close the VM before throwing. The outer guard
+	// handles all failure paths in one place so the happy path below can
+	// rely on TypeScript narrowing both settled results to `fulfilled`
+	// without a dead-code assertion.
+	if (prepHostStateResult.status === 'rejected' || managedVmResult.status === 'rejected') {
+		const phaseCErrors: Error[] = [];
+		if (prepHostStateResult.status === 'rejected') {
+			phaseCErrors.push(toPhaseCError(prepHostStateResult.reason));
+			if (managedVmResult.status === 'fulfilled') {
+				try {
+					await managedVmResult.value.close();
+				} catch (closeError) {
+					phaseCErrors.push(
+						new Error(
+							`Failed to close gateway VM after host-state prep failure: ${closeError instanceof Error ? closeError.message : String(closeError)}`,
+							{ cause: closeError },
+						),
+					);
+				}
 			}
 		}
-	}
-	if (managedVmResult.status === 'rejected') {
-		phaseCErrors.push(
-			managedVmResult.reason instanceof Error
-				? managedVmResult.reason
-				: new Error(String(managedVmResult.reason)),
-		);
-	}
-	if (phaseCErrors.length > 1) {
-		throw new AggregateError(phaseCErrors, 'Phase C failed: prep host state and/or VM boot');
-	}
-	if (phaseCErrors.length === 1) {
-		throw phaseCErrors[0];
-	}
-	if (managedVmResult.status !== 'fulfilled') {
-		throw new Error('Gateway VM was not created and no error was reported.');
+		if (managedVmResult.status === 'rejected') {
+			phaseCErrors.push(toPhaseCError(managedVmResult.reason));
+		}
+		if (phaseCErrors.length > 1) {
+			throw new AggregateError(phaseCErrors, 'Phase C failed: prep host state and/or VM boot');
+		}
+		// At least one branch rejected, so phaseCErrors has exactly one entry.
+		const [singlePhaseCError] = phaseCErrors;
+		if (singlePhaseCError === undefined) {
+			throw new Error('Phase C unreachable: rejection branch with no collected errors');
+		}
+		throw singlePhaseCError;
 	}
 	const managedVm = managedVmResult.value;
 	try {

@@ -38,6 +38,11 @@ export async function runControllerDestroy(
 			force: true,
 			recursive: true,
 		});
+		// Do NOT broaden this to `fs.rm(runtimeDir/zones/<zone>)`.
+		// runtimeDir/zones/<zone>/zone-git/ holds the authoritative git store for
+		// committed-but-unpushed zone work and is referenced via a `gitdir:` pointer
+		// in the backed-up zoneFilesDir/.git. See
+		// docs/architecture/storage-model.md "runtimeDir is two lifecycles".
 		if (zone.gateway.type === 'openclaw') {
 			await fs.rm(zone.gateway.zoneFilesDir, { force: true, recursive: true });
 		}
