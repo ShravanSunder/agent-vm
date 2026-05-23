@@ -146,6 +146,13 @@ interface PendingClient {
 
 const defaultConnectionTimeoutMs = 30_000;
 const defaultMaxResponseBytes = 4 * 1_024 * 1_024;
+const inheritedStdioRuntimeEnvNames = [
+	'NODE_EXTRA_CA_CERTS',
+	'NODE_OPTIONS',
+	'REQUESTS_CA_BUNDLE',
+	'SSL_CERT_FILE',
+	'UV_CACHE_DIR',
+] as const;
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -181,6 +188,28 @@ function createSdkClient(): UpstreamMcpClientLike {
 				tools: result.tools,
 			};
 		},
+	};
+}
+
+function inheritedStdioRuntimeEnv(): Readonly<Record<string, string>> {
+	const inheritedEnv: Record<string, string> = {};
+	for (const name of inheritedStdioRuntimeEnvNames) {
+		const value = process.env[name];
+		if (value !== undefined && value.length > 0) {
+			inheritedEnv[name] = value;
+		}
+	}
+	return inheritedEnv;
+}
+
+function withStdioRuntimeEnv(server: NormalizedUpstreamMcpServer): NormalizedUpstreamMcpServer {
+	if (server.transport !== 'stdio') {
+		return server;
+	}
+
+	return {
+		...server,
+		env: { ...inheritedStdioRuntimeEnv(), ...server.env },
 	};
 }
 
@@ -496,7 +525,7 @@ export function createUpstreamMcpClientRuntime(
 			const transportServer =
 				transportKind === 'sse' && server.transport !== 'stdio'
 					? withRemoteHeaders(server)
-					: server;
+					: withStdioRuntimeEnv(server);
 			const transport = createTransport(transportServer, transportKind);
 			const timeoutAbort = createRuntimeAbortSignal(undefined);
 			try {

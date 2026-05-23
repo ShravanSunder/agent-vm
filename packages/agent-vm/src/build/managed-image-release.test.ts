@@ -74,6 +74,26 @@ describe('managed image release', () => {
 		);
 	});
 
+	it('installs uv in OpenClaw gateway Dockerfiles for stdio MCP providers', async () => {
+		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-uv-'));
+		const outputDirectory = path.join(temporaryDirectory, 'generated');
+
+		const result = await generateManagedDockerfile({
+			base: 'openclaw-gateway',
+			imageTargetFamily: 'gateway',
+			imageTargetName: 'openclaw',
+			managedImageRelease: createTestManagedImageRelease(),
+			outputDirectory,
+			requiredOpenClawPackageNames: [],
+		});
+
+		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		expect(generatedDockerfile).toContain(
+			'COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /usr/local/bin/',
+		);
+		expect(generatedDockerfile).toContain('RUN uv --version && uvx --version');
+	});
+
 	it('reports overlay OpenClaw package pins as deployment-owned plan entries', async () => {
 		const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-managed-plan-'));
 		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
