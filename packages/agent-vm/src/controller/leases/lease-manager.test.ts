@@ -35,6 +35,8 @@ const defaultRuntimeRecordOptions = {
 	writeToolVmRuntimeRecord: vi.fn(async () => {}),
 };
 
+const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
+
 function createManagedVmStub(id: string = 'tool-vm-1'): ManagedVm {
 	return {
 		close: vi.fn(async () => {}),
@@ -94,7 +96,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main:session-abc',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
 			zoneId: 'shravan',
 		});
@@ -103,7 +105,7 @@ describe('createLeaseManager', () => {
 		expect(leaseManager.renewLease(lease.id)?.lease).toMatchObject({
 			id: lease.id,
 			agentWorkspaceDir: '/home/openclaw/work',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
 			zoneId: 'shravan',
 		});
@@ -249,7 +251,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
@@ -281,7 +283,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
@@ -317,7 +319,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
@@ -332,7 +334,7 @@ describe('createLeaseManager', () => {
 				},
 				profileId: 'standard',
 				scopeKey: 'agent:main',
-				guestWorkdir: '/work',
+				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 				hostWorkMountDir: '/host/other-sandbox-work',
 				zoneId: 'shravan',
 			}),
@@ -359,7 +361,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
@@ -374,7 +376,7 @@ describe('createLeaseManager', () => {
 				},
 				profileId: 'large',
 				scopeKey: 'agent:main',
-				guestWorkdir: '/work',
+				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
@@ -398,7 +400,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
@@ -413,7 +415,7 @@ describe('createLeaseManager', () => {
 				},
 				profileId: 'standard',
 				scopeKey: 'agent:main',
-				guestWorkdir: '/work',
+				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
@@ -439,7 +441,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 		};
 
@@ -485,7 +487,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
@@ -545,7 +547,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
@@ -596,7 +598,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
@@ -646,7 +648,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:release-active-use',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
@@ -686,7 +688,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:main',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
@@ -733,7 +735,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'scope-a',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
@@ -746,7 +748,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'scope-b',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
@@ -808,7 +810,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'scope-close-fail',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
@@ -843,7 +845,7 @@ describe('createLeaseManager', () => {
 				},
 				profileId: 'standard',
 				scopeKey: 'scope-fail',
-				guestWorkdir: '/work',
+				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
@@ -869,7 +871,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:ttl',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		};
@@ -914,7 +916,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:active-use',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
@@ -987,7 +989,7 @@ describe('createLeaseManager', () => {
 			},
 			profileId: 'standard',
 			scopeKey: 'agent:reap',
-			guestWorkdir: '/work',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
@@ -1049,7 +1051,7 @@ describe('createLeaseManager', () => {
 				},
 				profileId: 'standard',
 				scopeKey: 'scope-ssh-fail',
-				guestWorkdir: '/work',
+				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
@@ -1095,7 +1097,7 @@ describe('createLeaseManager', () => {
 					},
 					profileId: 'standard',
 					scopeKey: 'scope-ssh-fail',
-					guestWorkdir: '/work',
+					guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 					hostWorkMountDir: '/host/sandbox-work',
 					zoneId: 'shravan',
 				}),

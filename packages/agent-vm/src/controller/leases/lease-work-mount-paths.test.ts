@@ -31,6 +31,10 @@ describe('resolveLeaseWorkMountDir', () => {
 			egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			gateway: {
 				type: 'openclaw',
+				controlAuth: {
+					mode: 'token',
+					secret: 'OPENCLAW_GATEWAY_TOKEN',
+				},
 				imageProfile: 'openclaw',
 				cpus: 2,
 				memory: '2G',
@@ -66,7 +70,7 @@ describe('resolveLeaseWorkMountDir', () => {
 				zone,
 			}),
 		).resolves.toEqual({
-			guestWorkdir: '/work',
+			guestWorkdir: '/workspace',
 			hostWorkMountDir: await realpath(path.join(stateDir, 'sandboxes', 'agent', 'work')),
 		});
 	});
@@ -110,7 +114,7 @@ describe('resolveLeaseWorkMountDir', () => {
 				zone,
 			}),
 		).resolves.toEqual({
-			guestWorkdir: '/work',
+			guestWorkdir: '/workspace',
 			hostWorkMountDir: await realpath(path.join(zoneFilesDir, 'project')),
 		});
 	});

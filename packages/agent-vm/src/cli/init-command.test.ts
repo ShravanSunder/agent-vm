@@ -99,6 +99,10 @@ const scaffoldedRuntimePathsSchema = z.object({
 			gateway: z.union([
 				z.object({
 					type: z.literal('openclaw'),
+					controlAuth: z.object({
+						mode: z.literal('token'),
+						secret: z.string().min(1),
+					}),
 					stateDir: z.string().min(1),
 					zoneFilesDir: z.string().min(1),
 					backupDir: z.string().min(1).optional(),
@@ -1245,6 +1249,10 @@ describe('scaffoldAgentVmProject', () => {
 				source: '1password',
 				ref: 'op://agent-vm/test-openclaw-ssh-access/token',
 			},
+		});
+		expect(config.zones[0].gateway.controlAuth).toEqual({
+			mode: 'token',
+			secret: 'OPENCLAW_GATEWAY_TOKEN',
 		});
 		expect(config.zones[0].gateway.ssh).toEqual({ secretEnv: 'explicit' });
 		expect(config.zones[0].gateway.rawEnvSecrets).toEqual(['AGENT_VM_ZONE_GIT_TOKEN']);

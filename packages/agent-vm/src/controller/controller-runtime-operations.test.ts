@@ -39,6 +39,10 @@ const systemConfig = {
 			adminAccess: { mode: 'none' },
 			gateway: {
 				type: 'openclaw',
+				controlAuth: {
+					mode: 'token',
+					secret: 'OPENCLAW_GATEWAY_TOKEN',
+				},
 				imageProfile: 'openclaw',
 				memory: '2G',
 				cpus: 2,
@@ -66,6 +70,10 @@ const systemConfig = {
 			adminAccess: { mode: 'none' },
 			gateway: {
 				type: 'openclaw',
+				controlAuth: {
+					mode: 'token',
+					secret: 'OPENCLAW_GATEWAY_TOKEN',
+				},
 				imageProfile: 'openclaw',
 				memory: '2G',
 				cpus: 2,

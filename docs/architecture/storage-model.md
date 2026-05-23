@@ -114,8 +114,11 @@ sandboxes/<child>                   OpenClaw gateway VM                RealFS ->
 hostWorkMountDir                    controller internal                trusted resolved host path
                                     after validation/realpath          passed to lease manager / RealFS
 
-/work                               Tool VM guest path                 RealFS -> hostWorkMountDir
+/workspace                          Tool VM guest path                 RealFS -> hostWorkMountDir
                                     lease-local execution dir          survives if backing host dir does
+
+/work                               Tool VM guest path                 rootfs/COW
+                                    disposable scratch                 deleted with the Tool VM
 
 agentWorkspaceDir                   OpenClaw/tool process cwd concept  guest-side agent working dir
                                     controller lease field             not a host storage root
@@ -306,15 +309,16 @@ OpenClaw gateway logs belong under `runtimeDir/zones/<zone>/logs` and are
 mounted into the gateway VM at `/agent-vm/logs`.
 
 OpenClaw agent sandbox work directories live under `stateDir` and can be mounted
-into Tool VMs as `/work`. Per-agent sandbox seeds are written only into these
-sandbox-backed `/work` directories, and only when the target file does not
-already exist. Shared `/zone` work mounts are not seeded this way.
+into Tool VMs as `/workspace`. Per-agent sandbox seeds are written only into
+these sandbox-backed workspace directories, and only when the target file does
+not already exist. Shared `/zone` work mounts are not seeded this way.
 
 Tool VM lease requests name `workMountDir` as a gateway path under a concrete
 child of `/zone` or `/home/openclaw/.openclaw/state/sandboxes`; the roots
 themselves are validation boundaries and rejected as mount targets. The
-controller resolves that gateway path to a trusted host `hostWorkMountDir`, and
-the Tool VM always sees the resolved directory at `/work`.
+controller resolves that gateway path to a trusted host `hostWorkMountDir`. For
+non-zone-git leases the Tool VM sees the resolved directory at `/workspace`;
+`/work` remains VM-local rootfs/COW scratch.
 
 ## Worker Repo Files And Git
 

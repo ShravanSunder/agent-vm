@@ -121,6 +121,7 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 				? {
 						...baseGateway,
 						type: 'openclaw',
+						controlAuth: zone.gateway.controlAuth,
 						zoneFilesDir: zone.gateway.zoneFilesDir,
 						...(zone.gateway.authProfilesByAgent
 							? { authProfilesByAgent: zone.gateway.authProfilesByAgent }

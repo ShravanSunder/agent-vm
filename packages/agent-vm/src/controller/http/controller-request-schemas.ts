@@ -2,6 +2,20 @@ import { isToolVmActiveUseId } from '@agent-vm/gateway-interface';
 import { z } from 'zod';
 
 import { workerTaskControllerRequestSchema } from '../../config/resource-contracts/index.js';
+import {
+	isAbsolutePosixPath,
+	isRootPosixPath,
+	pathContainsParentTraversal,
+} from '../leases/lease-path-helpers.js';
+
+const controllerLeaseAgentWorkspacePathSchema = z
+	.string()
+	.min(1)
+	.refine(isAbsolutePosixPath, { message: 'path must be absolute.' })
+	.refine((value) => !isRootPosixPath(value), { message: 'path must not be root.' })
+	.refine((value) => !pathContainsParentTraversal(value), {
+		message: 'path must not contain parent traversal.',
+	});
 
 // `scopeKey` is embedded in `lease.id`, which in turn is used as a path
 // component for the per-lease runtime record (`$stateDir/tool-leases/$id.json`).
@@ -16,10 +30,21 @@ export const safeScopeKeySchema = z.string().min(1).max(128).regex(safeScopeKeyP
 });
 
 export const controllerLeaseCreateRequestSchema = z.strictObject({
-	agentWorkspaceDir: z.string().min(1),
+	agentId: z.string().min(1),
+	agentWorkspaceDir: controllerLeaseAgentWorkspacePathSchema,
 	idleTtlMs: z.number().int().positive().optional(),
 	profileId: z.string().min(1),
+	sandbox: z.strictObject({
+		backend: z.string(),
+		mode: z.string(),
+		scope: z.string(),
+		workspaceAccess: z.string(),
+	}),
+	// Defense-in-depth on top of the cross-field agentId/scopeKey consistency
+	// check in controller-http-routes: refuse any scopeKey that could escape
+	// the tool-leases/ filesystem subtree once embedded in lease.id.
 	scopeKey: safeScopeKeySchema,
+	sessionKey: z.string().min(1),
 	workMountDir: z.string().min(1),
 	zoneId: z.string().min(1),
 });

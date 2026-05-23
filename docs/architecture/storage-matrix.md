@@ -218,8 +218,9 @@ added.
 
 ## Tool VM
 
-Tool VMs are lease-local execution sandboxes. Tool VMs always see the mounted
-working directory at `/work`. The lease request supplies `workMountDir` as an
+Tool VMs are lease-local execution sandboxes. Non-zone-git Tool VMs see the
+mounted RealFS working directory at `/workspace`; `/work` remains rootfs/COW
+scratch inside the Tool VM. The lease request supplies `workMountDir` as an
 OpenClaw gateway child path under `/zone` or
 `/home/openclaw/.openclaw/state/sandboxes`; those roots are allowed-root
 boundaries, not valid mount targets. The controller validates and translates
@@ -234,8 +235,11 @@ For the canonical name/location/storage vocabulary, see
 path or data                           backing                backup
 ──────────────────────────────         ─────────────────      ─────────
 
-/work                                  RealFS hostWorkMountDir varies
+/workspace                             RealFS hostWorkMountDir varies
 OpenClaw-selected tool work mount      owned by lease caller
+
+/work                                  rootfs/COW             no
+Tool VM scratch                        deleted with Tool VM
 
 /tmp, /run, /var/log                   guest tmpfs            no
 tiny scratch only                      memory-pressure

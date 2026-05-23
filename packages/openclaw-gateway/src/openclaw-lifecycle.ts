@@ -32,7 +32,6 @@ const openClawGatewayBootLogFileVmPath = `${agentVmLogsDirVmPath}/gateway-boot-l
 const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
 const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
 const openClawGatewayTokenEnvFilePath = '/run/openclaw/gateway-token.env';
-const openClawGatewayTokenEnvVar = 'OPENCLAW_GATEWAY_TOKEN';
 
 interface OpenClawSecretRef {
 	readonly id: string;
@@ -117,7 +116,7 @@ function buildOpenClawBootstrapCommand(
 		secretEnvironmentNames.length === 0
 			? `: > ${openClawRuntimeSecretsEnvFilePath} && `
 			: `{ ${secretEnvironmentNames.map(runtimeSecretLiteralExportCommand).join('; ')}; } > ${openClawRuntimeSecretsEnvFilePath} && `;
-	const gatewayTokenSecretName = openClawGatewayTokenEnvVar;
+	const gatewayTokenSecretName = zone.gateway.controlAuth.secret;
 	const gatewayTokenFileCommand = secretEnvironmentNames.includes(gatewayTokenSecretName)
 		? `{ ${runtimeSecretLiteralExportCommand(gatewayTokenSecretName)}; } > ${openClawGatewayTokenEnvFilePath} && `
 		: `: > ${openClawGatewayTokenEnvFilePath} && `;
@@ -195,7 +194,7 @@ function assertAllowedOpenClawEnvironmentSecrets(
 		throw new Error(`OpenClaw lifecycle cannot build gateway type '${zone.gateway.type}'.`);
 	}
 	const allowedRawEnvSecrets = new Set([
-		openClawGatewayTokenEnvVar,
+		zone.gateway.controlAuth.secret,
 		...(zone.gateway.rawEnvSecrets ?? []),
 	]);
 	for (const secretName of Object.keys(environmentSecrets)) {
@@ -453,7 +452,7 @@ async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<vo
 	if (zone.gateway.type !== 'openclaw') {
 		throw new Error(`OpenClaw lifecycle cannot build gateway type '${zone.gateway.type}'.`);
 	}
-	const gatewayTokenSecretName = openClawGatewayTokenEnvVar;
+	const gatewayTokenSecretName = zone.gateway.controlAuth.secret;
 	const gatewayTokenSecret = zone.secrets[gatewayTokenSecretName];
 	if (!gatewayTokenSecret) {
 		throw new Error(

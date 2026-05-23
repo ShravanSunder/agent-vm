@@ -34,6 +34,10 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
       "imageProfile": "openclaw",
       "stateDir": "../state/my-openclaw",
       "zoneFilesDir": "../zone-files/my-openclaw",
+      "controlAuth": {
+        "mode": "token",
+        "secret": "OPENCLAW_GATEWAY_TOKEN"
+      },
       "authProfilesByAgent": {
         "shravan": {
           "source": "environment",

@@ -133,7 +133,8 @@ Defined in `packages/openclaw-gateway/src/openclaw-lifecycle.ts`.
 Two host-side writes before VM boot:
 
 1. **Effective config** -- reads the base OpenClaw JSON config, configures
-   `gateway.auth.token` as an env SecretRef for `OPENCLAW_GATEWAY_TOKEN`, and writes the result atomically to
+   `gateway.auth.token` as an env SecretRef for the secret named by
+   `gateway.controlAuth.secret`, and writes the result atomically to
    `<stateDir>/effective-openclaw.json` with mode 0600. The plaintext gateway
    token is not written to this file.
 
@@ -160,7 +161,7 @@ environment:
   PIP_CACHE_DIR         = /work/cache/pip
   UV_CACHE_DIR          = /work/cache/uv
   NODE_EXTRA_CA_CERTS   = /run/gondolin/ca-certificates.crt
-  + allowed env-injected secrets, including OPENCLAW_GATEWAY_TOKEN
+  + allowed env-injected secrets, including gateway.controlAuth.secret
 
 vfsMounts:
   /home/openclaw/.openclaw/config    -> configDirectory  (realfs)
@@ -177,13 +178,13 @@ tcpHosts:
 rootfsMode: cow
 ```
 
-The effective config references `OPENCLAW_GATEWAY_TOKEN` through OpenClaw's env
-SecretRef shape. The gateway VM receives the token as an
-env-injected secret so the daemon can resolve that SecretRef at startup without
-storing the plaintext token in persistent state.
+The effective config references the configured `gateway.controlAuth.secret`
+through OpenClaw's env SecretRef shape. The gateway VM receives that token as
+an env-injected secret so the daemon can resolve the SecretRef at startup
+without storing the plaintext token in persistent state.
 
 OpenClaw raw env secrets are intentionally narrow. The configured
-`OPENCLAW_GATEWAY_TOKEN` secret is allowed by default; additional gateway env
+`gateway.controlAuth.secret` is allowed by default; additional gateway env
 secrets must be listed in `gateway.rawEnvSecrets`. Provider API tokens should
 use Gondolin `http-mediation` unless the integration cannot be mediated at the
 HTTP boundary. Generated runtime env secrets, such as zone-git capability env
