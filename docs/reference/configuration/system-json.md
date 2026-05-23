@@ -390,6 +390,7 @@ files:
     "port": 18791,
     "config": "./gateways/shravan/openclaw.json",
     "imageProfile": "openclaw",
+    "runtimeRootfsSize": "12G",
     "stateDir": "../state/shravan",
     "zoneFilesDir": "../zone-files/shravan",
     "authProfilesByAgent": {
@@ -440,6 +441,12 @@ a non-HTTP or websocket credential flow. Generated runtime env secrets also need
 to be named here when a feature requires them, for example
 `AGENT_VM_ZONE_GIT_TOKEN`.
 
+`zones[].gateway.runtimeRootfsSize` optionally requests a minimum runtime root
+disk size for the gateway VM, using Gondolin `rootfs.size`. The base image is
+not rebuilt for this value; Gondolin grows the writable root disk and runs
+`resize2fs` in the guest before startup completes. The guest image must contain
+`resize2fs`.
+
 `agentSandboxSeeds` writes first-boot files into the agent's scoped sandbox work
 mount before the Tool VM starts. Targets are relative to the sandbox
 `/work` backing directory, cannot use `..`, and are not written for shared
@@ -474,7 +481,8 @@ Tool VMs, not gateway profiles and not OpenClaw user profiles.
     "standard": {
       "memory": "1G",
       "cpus": 1,
-      "imageProfile": "default"
+      "imageProfile": "default",
+      "runtimeRootfsSize": "16G"
     },
     "tools-dev": {
       "memory": "2G",
@@ -497,6 +505,12 @@ profiles from one config. Image profiles with the same resolved build config
 path and identical effective image fingerprints are deduped during
 `agent-vm build`, so separate profile names do not by themselves force separate
 Gondolin asset conversion work.
+
+`toolVmProfiles[*].runtimeRootfsSize` applies the same runtime root disk sizing
+to Tool VMs created from that profile. Use the image build config
+`rootfs.sizeMb` for packages baked into the base image; use
+`runtimeRootfsSize` for writable runtime capacity such as agent caches,
+temporary installs, browser artifacts, and command output generated after boot.
 
 ## zones[].resources
 

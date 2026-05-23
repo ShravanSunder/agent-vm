@@ -75,13 +75,22 @@ function createFakeVmFs(): GondolinVmFs {
 	};
 }
 
-function createFakeVmInstance(): ManagedVmInstance {
+type TestManagedVmInstance = ManagedVmInstance & {
+	getHostPid(): number | null;
+};
+
+function createFakeVmInstance(
+	options: {
+		readonly hostPid?: number | null;
+	} = {},
+): TestManagedVmInstance {
 	return {
 		fs: createFakeVmFs(),
 		id: 'vm-123',
 		exec: vi.fn(() => createFakeExecProcess({ exitCode: 0, stdout: 'ok', stderr: '' })),
 		enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
 		enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+		getHostPid: vi.fn(() => options.hostPid ?? null),
 		setIngressRoutes: vi.fn(),
 		close: vi.fn(async () => {}),
 	};
@@ -304,6 +313,83 @@ describe('createManagedVm', () => {
 			{ port: 18789, prefix: '/', stripPrefix: true },
 		]);
 		expect(closeMock).toHaveBeenCalled();
+	});
+
+	it('passes runtime rootfs size to Gondolin when configured', async () => {
+		let capturedVmOptions: VMOptions | undefined;
+		const dependencies = createBaseDependencies({
+			createVm: vi.fn(async (vmOptions: VMOptions): Promise<ManagedVmInstance> => {
+				capturedVmOptions = vmOptions;
+				return createFakeVmInstance();
+			}),
+		});
+
+		await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 2,
+				imagePath: '/vm-images/gateways/openclaw',
+				memory: '4G',
+				rootfsMode: 'cow',
+				runtimeRootfsSize: '12G',
+				secrets: {},
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		expect(capturedVmOptions?.rootfs).toEqual({
+			mode: 'cow',
+			size: '12G',
+		});
+	});
+
+	it('exposes the active Gondolin host PID through ManagedVm', async () => {
+		const dependencies = createBaseDependencies({
+			createVm: vi.fn(
+				async (): Promise<ManagedVmInstance> => createFakeVmInstance({ hostPid: 42420 }),
+			),
+		});
+
+		const managedVm = await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 2,
+				imagePath: '/vm-images/gateways/openclaw',
+				memory: '4G',
+				rootfsMode: 'cow',
+				secrets: {},
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		expect(managedVm.getHostPid()).toBe(42420);
+	});
+
+	it('returns null when the underlying Gondolin VM does not expose a host PID', async () => {
+		const dependencies = createBaseDependencies({
+			createVm: vi.fn(async (): Promise<ManagedVmInstance> => {
+				const vmInstanceWithoutHostPid: Partial<ManagedVmInstance> = createFakeVmInstance();
+				delete vmInstanceWithoutHostPid.getHostPid;
+				return vmInstanceWithoutHostPid as ManagedVmInstance;
+			}),
+		});
+
+		const managedVm = await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 2,
+				imagePath: '/vm-images/gateways/openclaw',
+				memory: '4G',
+				rootfsMode: 'cow',
+				secrets: {},
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		expect(managedVm.getHostPid()).toBeNull();
 	});
 
 	it('caller env overrides hookBundle env on NODE_OPTIONS collision', async () => {

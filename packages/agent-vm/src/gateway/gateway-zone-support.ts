@@ -42,6 +42,7 @@ export interface GatewayManagedVmFactoryOptions {
 	readonly imagePath: string;
 	readonly memory: string;
 	readonly rootfsMode: 'readonly' | 'memory' | 'cow';
+	readonly runtimeRootfsSize?: string;
 	readonly secrets: Record<
 		string,
 		{
@@ -79,6 +80,9 @@ export function mapSystemGatewayZoneToLifecycleZone(zone: GatewayZone): GatewayZ
 		config: zone.gateway.config,
 		memory: zone.gateway.memory,
 		port: zone.gateway.port,
+		...(zone.gateway.runtimeRootfsSize
+			? { runtimeRootfsSize: zone.gateway.runtimeRootfsSize }
+			: {}),
 		ssh: zone.gateway.ssh ?? { secretEnv: 'explicit' },
 		stateDir: zone.gateway.stateDir,
 		...(zone.gateway.authProfilesRef ? { authProfilesRef: zone.gateway.authProfilesRef } : {}),

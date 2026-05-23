@@ -30,7 +30,7 @@ function createStateDirectory(): string {
 	return directoryPath;
 }
 
-function createVmInstanceStub(pid: number): ManagedVmInstance {
+function createVmInstanceStub(): ManagedVmInstance {
 	return {
 		close: async () => {},
 		enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -43,16 +43,10 @@ function createVmInstanceStub(pid: number): ManagedVmInstance {
 		}),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
+		getHostPid: () => 28282,
 		id: 'gateway-vm-123',
-		server: {
-			controller: {
-				child: {
-					pid,
-				},
-			},
-		},
 		setIngressRoutes: () => {},
-	} as ManagedVmInstance;
+	};
 }
 
 describe('gateway runtime record', () => {
@@ -60,6 +54,8 @@ describe('gateway runtime record', () => {
 		const stateDirectory = createStateDirectory();
 
 		await writeGatewayRuntimeRecord(stateDirectory, {
+			configPath: '/deployments/claw/config/system.jsonc',
+			controllerPort: 18800,
 			createdAt: '2026-04-13T12:34:56.000Z',
 			gatewayType: 'openclaw',
 			guestListenPort: 18789,
@@ -72,6 +68,8 @@ describe('gateway runtime record', () => {
 		});
 
 		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toEqual({
+			configPath: '/deployments/claw/config/system.jsonc',
+			controllerPort: 18800,
 			createdAt: '2026-04-13T12:34:56.000Z',
 			gatewayType: 'openclaw',
 			guestListenPort: 18789,
@@ -89,6 +87,8 @@ describe('gateway runtime record', () => {
 		const stateDirectory = createStateDirectory();
 
 		await writeGatewayRuntimeRecord(stateDirectory, {
+			configPath: '/deployments/claw/config/system.jsonc',
+			controllerPort: 18800,
 			createdAt: '2026-04-13T12:34:56.000Z',
 			gatewayType: 'openclaw',
 			guestListenPort: 18789,
@@ -105,11 +105,85 @@ describe('gateway runtime record', () => {
 		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toBeNull();
 	});
 
+	it('normalizes legacy runtime records with current config metadata on load', async () => {
+		const stateDirectory = createStateDirectory();
+		const runtimeRecordPath = path.join(stateDirectory, 'gateway-runtime.json');
+		await fs.promises.mkdir(stateDirectory, { recursive: true });
+		await fs.promises.writeFile(
+			runtimeRecordPath,
+			`${JSON.stringify({
+				createdAt: '2026-04-13T12:34:56.000Z',
+				gatewayType: 'openclaw',
+				guestListenPort: 18789,
+				ingressPort: 18791,
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				qemuPid: 4242,
+				sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+				vmId: 'vm-session-123',
+				zoneId: 'shravan',
+			})}\n`,
+			'utf8',
+		);
+
+		await expect(
+			loadGatewayRuntimeRecord(stateDirectory, {
+				legacyRecordDefaults: {
+					configPath: '/deployments/claw/config/system.jsonc',
+					controllerPort: 18800,
+				},
+			}),
+		).resolves.toEqual({
+			configPath: '/deployments/claw/config/system.jsonc',
+			controllerPort: 18800,
+			createdAt: '2026-04-13T12:34:56.000Z',
+			gatewayType: 'openclaw',
+			guestListenPort: 18789,
+			ingressPort: 18791,
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			qemuPid: 4242,
+			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+			vmId: 'vm-session-123',
+			zoneId: 'shravan',
+		});
+		expect(fs.existsSync(runtimeRecordPath)).toBe(true);
+	});
+
+	it('throws for valid legacy runtime records when current config metadata is missing', async () => {
+		const stateDirectory = createStateDirectory();
+		const runtimeRecordPath = path.join(stateDirectory, 'gateway-runtime.json');
+		await fs.promises.mkdir(stateDirectory, { recursive: true });
+		await fs.promises.writeFile(
+			runtimeRecordPath,
+			`${JSON.stringify({
+				createdAt: '2026-04-13T12:34:56.000Z',
+				gatewayType: 'openclaw',
+				guestListenPort: 18789,
+				ingressPort: 18791,
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				qemuPid: 4242,
+				sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+				vmId: 'vm-session-123',
+				zoneId: 'shravan',
+			})}\n`,
+			'utf8',
+		);
+
+		await expect(loadGatewayRuntimeRecord(stateDirectory)).rejects.toThrow(/legacy format/u);
+		expect(fs.existsSync(runtimeRecordPath)).toBe(true);
+		expect(
+			fs
+				.readdirSync(stateDirectory)
+				.some((entryName) => entryName.startsWith('gateway-runtime.invalid.')),
+		).toBe(false);
+	});
+
 	it('rejects invalid runtime records on write before touching disk', async () => {
 		const stateDirectory = createStateDirectory();
 
 		await expect(
 			writeGatewayRuntimeRecord(stateDirectory, {
+				configPath: '/deployments/claw/config/system.jsonc',
+				controllerPort: 18800,
 				createdAt: 'not-a-datetime',
 				gatewayType: 'openclaw',
 				guestListenPort: 18789,
@@ -178,13 +252,15 @@ describe('gateway runtime record', () => {
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
 			exec: () => createManagedExecProcessStub(),
 			fs: createManagedVmFsStub(),
-			getVmInstance: () => createVmInstanceStub(28282),
+			getHostPid: () => 28282,
+			getVmInstance: () => createVmInstanceStub(),
 			id: 'gateway-vm-123',
 			setIngressRoutes: () => {},
 		} satisfies ManagedVm;
 
 		expect(
 			buildGatewayRuntimeRecord({
+				controllerPort: 18800,
 				gatewayType: 'openclaw',
 				ingressPort: 18791,
 				managedVm,
@@ -196,9 +272,12 @@ describe('gateway runtime record', () => {
 					startCommand: 'start-openclaw',
 				},
 				projectNamespace: 'claw-tests-a1b2c3d4',
+				systemConfigPath: '/deployments/claw/config/system.jsonc',
 				zoneId: 'shravan',
 			}),
 		).toEqual({
+			configPath: '/deployments/claw/config/system.jsonc',
+			controllerPort: 18800,
 			createdAt: expect.any(String),
 			gatewayType: 'openclaw',
 			guestListenPort: 18789,
@@ -211,20 +290,22 @@ describe('gateway runtime record', () => {
 		});
 	});
 
-	it('throws when the live VM instance is missing', () => {
+	it('throws when Gondolin does not expose an active host PID', () => {
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
 			exec: () => createManagedExecProcessStub(),
 			fs: createManagedVmFsStub(),
-			getVmInstance: () => null as never,
+			getHostPid: () => null,
+			getVmInstance: () => createVmInstanceStub(),
 			id: 'gateway-vm-123',
 			setIngressRoutes: () => {},
 		} satisfies ManagedVm;
 
 		expect(() =>
 			buildGatewayRuntimeRecord({
+				controllerPort: 18800,
 				gatewayType: 'openclaw',
 				ingressPort: 18791,
 				managedVm,
@@ -236,45 +317,27 @@ describe('gateway runtime record', () => {
 					startCommand: 'start-openclaw',
 				},
 				projectNamespace: 'claw-tests-a1b2c3d4',
+				systemConfigPath: '/deployments/claw/config/system.jsonc',
 				zoneId: 'shravan',
 			}),
-		).toThrow(/live VM instance/u);
+		).toThrow(/does not expose an active host pid/u);
 	});
 
-	it('throws when the live VM is missing its QEMU pid', () => {
+	it('throws when the Managed VM wrapper is missing getHostPid', () => {
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
 			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
 			exec: () => createManagedExecProcessStub(),
-			getVmInstance: () =>
-				({
-					close: async () => {},
-					enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
-					enableSsh: async () => ({
-						command: 'ssh ...',
-						host: '127.0.0.1',
-						identityFile: '/tmp/key',
-						port: 19000,
-						user: 'sandbox',
-					}),
-					exec: () => createManagedExecProcessStub(),
-					fs: createManagedVmFsStub(),
-					id: 'gateway-vm-123',
-					server: {
-						controller: {
-							child: {},
-						},
-					},
-					setIngressRoutes: () => {},
-				}) as ManagedVmInstance,
 			fs: createManagedVmFsStub(),
+			getVmInstance: () => createVmInstanceStub(),
 			id: 'gateway-vm-123',
 			setIngressRoutes: () => {},
-		} satisfies ManagedVm;
+		} as unknown as ManagedVm;
 
 		expect(() =>
 			buildGatewayRuntimeRecord({
+				controllerPort: 18800,
 				gatewayType: 'openclaw',
 				ingressPort: 18791,
 				managedVm,
@@ -286,8 +349,42 @@ describe('gateway runtime record', () => {
 					startCommand: 'start-openclaw',
 				},
 				projectNamespace: 'claw-tests-a1b2c3d4',
+				systemConfigPath: '/deployments/claw/config/system.jsonc',
 				zoneId: 'shravan',
 			}),
-		).toThrow(/live QEMU pid/u);
+		).toThrow(/missing getHostPid/u);
+	});
+
+	it('throws when Gondolin exposes an invalid host PID', () => {
+		const managedVm = {
+			close: async () => {},
+			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
+			enableSsh: async () => ({ host: '127.0.0.1', port: 19000 }),
+			exec: () => createManagedExecProcessStub(),
+			fs: createManagedVmFsStub(),
+			getHostPid: () => 0,
+			getVmInstance: () => createVmInstanceStub(),
+			id: 'gateway-vm-123',
+			setIngressRoutes: () => {},
+		} satisfies ManagedVm;
+
+		expect(() =>
+			buildGatewayRuntimeRecord({
+				controllerPort: 18800,
+				gatewayType: 'openclaw',
+				ingressPort: 18791,
+				managedVm,
+				processSpec: {
+					bootstrapCommand: 'bootstrap-openclaw',
+					guestListenPort: 18789,
+					healthCheck: { path: '/', port: 18789, type: 'http' },
+					logPath: '/tmp/openclaw.log',
+					startCommand: 'start-openclaw',
+				},
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				systemConfigPath: '/deployments/claw/config/system.jsonc',
+				zoneId: 'shravan',
+			}),
+		).toThrow(/invalid host pid/u);
 	});
 });

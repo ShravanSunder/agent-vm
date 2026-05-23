@@ -513,6 +513,7 @@ function createManagedVmStub(): ManagedVm {
 		enableSsh: async () => ({ host: '127.0.0.1', port: 2222, user: 'root' }),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
+		getHostPid: () => null,
 		getVmInstance: () => managedVm,
 		setIngressRoutes: () => undefined,
 	};

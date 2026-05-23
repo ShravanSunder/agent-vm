@@ -67,6 +67,7 @@ Read in this order:
 10. per-agent-setup.md explains multi-agent scope and tool access choices.
 11. migration-discord.md explains how existing Discord deployments keep working.
 12. secrets.md explains runtime auth and HTTP mediation.
+13. operations.md explains start, graceful stop, and scoped offline cleanup.
 
 Local deployment notes belong in docs/manual/local-notes.md or another non-generated file.
 `,
@@ -146,6 +147,29 @@ Example:
 - Configure agentToolVmProfiles when agents in one zone need different Tool VM images.
 - Configure gateway.authProfilesByAgent and agentSandboxSeeds for per-agent auth/profile files.
 - Use separate zones when gateway lifecycle isolation or shared-zone cost is worse than another gateway VM.
+`,
+			),
+		},
+		{
+			relativePath: 'docs/manual/operations.md',
+			content: generatedPage(
+				'Operations',
+				`
+Use graceful controller stop first:
+
+agent-vm controller stop --config ${options.systemConfigPath}
+
+If the controller HTTP server is broken or gone, use scoped offline cleanup:
+
+agent-vm controller cleanup --config ${options.systemConfigPath} --zone ${options.defaultZoneId}
+
+Offline cleanup first refuses to run while the configured controller health endpoint is reachable. If the controller is responding but cannot stop the gateway, rerun the same command with --force.
+
+It reads the selected deployment config, loads only that zone's gateway-runtime.json, validates projectNamespace, zoneId, sessionLabel, PID, and process command, then signals only the recorded gateway VM process.
+
+Do not use broad QEMU process kills as normal deployment workflow. Multiple agent-vm installations can run on one host, and broad process matching can kill the wrong installation.
+
+Local package scripts should be thin wrappers around these commands. Deployment repos should not copy process-fencing logic.
 `,
 			),
 		},

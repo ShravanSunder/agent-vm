@@ -275,6 +275,7 @@ const zoneGatewayBaseSchema = z.object({
 	port: z.number().int().positive(),
 	config: z.string().min(1),
 	stateDir: z.string().min(1),
+	runtimeRootfsSize: z.string().min(1).optional(),
 	backupDir: z.string().min(1).optional(),
 	authProfilesRef: authProfilesSecretSchema.optional(),
 	ssh: gatewaySshSchema.optional(),
@@ -306,6 +307,7 @@ const toolVmProfileSchema = z
 		memory: z.string().min(1),
 		cpus: z.number().int().positive(),
 		imageProfile: z.string().min(1),
+		runtimeRootfsSize: z.string().min(1).optional(),
 	})
 	.strict();
 
@@ -510,29 +512,6 @@ const systemConfigSchema = z
 				zone.gateway.type === 'openclaw'
 					? new Set([...defaultOpenClawRawEnvSecretNames, ...(zone.gateway.rawEnvSecrets ?? [])])
 					: new Set<string>();
-			if (openClawGatewayToken) {
-				if (openClawGatewayToken.injection !== 'env') {
-					context.addIssue({
-						code: z.ZodIssueCode.custom,
-						message: `Zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must use injection 'env'.`,
-						path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'injection'],
-					});
-				}
-				if (openClawGatewayToken.audience !== 'gateway') {
-					context.addIssue({
-						code: z.ZodIssueCode.custom,
-						message: `Zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must target audience 'gateway'.`,
-						path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'audience'],
-					});
-				}
-				if ('hosts' in openClawGatewayToken) {
-					context.addIssue({
-						code: z.ZodIssueCode.custom,
-						message: `Zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must not declare hosts.`,
-						path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'hosts'],
-					});
-				}
-			}
 			if (zone.gateway.type === 'openclaw' && !openClawGatewayToken) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
@@ -541,6 +520,29 @@ const systemConfigSchema = z
 				});
 			}
 			if (zone.gateway.type === 'openclaw') {
+				if (openClawGatewayToken) {
+					if (openClawGatewayToken.injection !== 'env') {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `Zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must use injection 'env'.`,
+							path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'injection'],
+						});
+					}
+					if (openClawGatewayToken.audience !== 'gateway') {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `Zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must target audience 'gateway'.`,
+							path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'audience'],
+						});
+					}
+					if ('hosts' in openClawGatewayToken) {
+						context.addIssue({
+							code: z.ZodIssueCode.custom,
+							message: `Zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must not declare hosts.`,
+							path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'hosts'],
+						});
+					}
+				}
 				for (const [secretName, secret] of Object.entries(zone.secrets)) {
 					if (secret.injection !== 'env' || allowedOpenClawRawEnvSecrets.has(secretName)) {
 						continue;

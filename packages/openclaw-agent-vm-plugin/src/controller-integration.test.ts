@@ -135,6 +135,7 @@ describe('gondolin controller integration', () => {
 				fs: createManagedVmFsStub(),
 				id: 'tool-vm-1',
 				setIngressRoutes: vi.fn(),
+				getHostPid: () => null,
 				getVmInstance: vi.fn(),
 			},
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',

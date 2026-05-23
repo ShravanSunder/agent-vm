@@ -182,6 +182,23 @@ describe('loadSystemConfig', () => {
 		expect(loadedConfig.zones[0]?.id).toBe('shravan');
 	});
 
+	test('loads optional gateway and Tool VM runtime rootfs sizes', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].gateway.runtimeRootfsSize = '12G';
+		const standardToolVmProfile = config.toolVmProfiles?.standard;
+		if (!isRecord(standardToolVmProfile)) {
+			throw new Error('Expected standard Tool VM profile fixture.');
+		}
+		standardToolVmProfile.runtimeRootfsSize = '16G';
+
+		const configPath = await writeSystemConfigForTest('agent-vm-runtime-rootfs-', config);
+
+		const loaded = await loadSystemConfig(configPath);
+
+		expect(loaded.zones[0]?.gateway.runtimeRootfsSize).toBe('12G');
+		expect(loaded.toolVmProfiles.standard?.runtimeRootfsSize).toBe('16G');
+	});
+
 	test('loads managed base image profiles', async () => {
 		const config = createValidSystemConfigInput();
 		config.imageProfiles = {
@@ -2070,6 +2087,27 @@ describe('loadSystemConfig', () => {
 			],
 		});
 		expect(systemConfig.zones[0]).not.toHaveProperty('defaultToolVmProfile');
+	});
+
+	test('does not apply OpenClaw gateway token constraints to worker zones', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = configureFirstZoneAsWorker(config);
+		zone.egressHosts = [{ host: 'api.openai.com', audience: 'gateway' }];
+		zone.secrets.OPENCLAW_GATEWAY_TOKEN = {
+			source: 'environment',
+			envVar: 'OPENCLAW_GATEWAY_TOKEN',
+			injection: 'http-mediation',
+			audience: 'gateway',
+			hosts: ['api.openai.com'],
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-worker-openclaw-token-name-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			zones: [{ id: zone.id }],
+		});
 	});
 
 	test('rejects openclaw zones without a tool VM profile', async () => {

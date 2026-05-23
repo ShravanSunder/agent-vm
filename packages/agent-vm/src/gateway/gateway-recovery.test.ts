@@ -1,21 +1,171 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { cleanupOrphanedGatewayIfPresent } from './gateway-recovery.js';
+import type { GatewayRuntimeRecord } from './gateway-runtime-record.js';
+
+function createGatewayRuntimeRecord(
+	overrides: Partial<GatewayRuntimeRecord> = {},
+): GatewayRuntimeRecord {
+	return {
+		configPath: '/deployments/shravan-claw/config/system.jsonc',
+		controllerPort: 18800,
+		createdAt: '2026-04-13T12:34:56.000Z',
+		gatewayType: 'openclaw',
+		guestListenPort: 18789,
+		ingressPort: 18791,
+		projectNamespace: 'claw-tests-a1b2c3d4',
+		qemuPid: 48282,
+		sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+		vmId: 'gateway-vm-123',
+		zoneId: 'shravan',
+		...overrides,
+	};
+}
 
 describe('cleanupOrphanedGatewayIfPresent', () => {
+	it('refuses to clean up a runtime record from another project namespace', async () => {
+		await expect(
+			cleanupOrphanedGatewayIfPresent(
+				{
+					projectNamespace: 'shravan-claw-beta-25319b68',
+					stateDir: '/state/beta',
+					zoneId: 'beta',
+				},
+				{
+					deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+					isProcessAlive: () => true,
+					killProcess: vi.fn(),
+					loadGatewayRuntimeRecord: async () =>
+						createGatewayRuntimeRecord({
+							configPath: '/deployments/shravan-claw/config/system.json',
+							projectNamespace: 'shravan-claw-463c3e5f',
+							sessionLabel: 'shravan-claw-463c3e5f:sunfam:gateway',
+							zoneId: 'sunfam',
+						}),
+					readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
+					sleep: async () => {},
+				},
+			),
+		).rejects.toThrow(/belongs to projectNamespace 'shravan-claw-463c3e5f'/u);
+	});
+
+	it('refuses to clean up a runtime record whose session label does not match the config boundary', async () => {
+		await expect(
+			cleanupOrphanedGatewayIfPresent(
+				{
+					projectNamespace: 'shravan-claw-beta-25319b68',
+					stateDir: '/state/beta',
+					zoneId: 'beta',
+				},
+				{
+					deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+					isProcessAlive: () => true,
+					killProcess: vi.fn(),
+					loadGatewayRuntimeRecord: async () =>
+						createGatewayRuntimeRecord({
+							configPath: '/deployments/shravan-claw-beta/config/system.jsonc',
+							controllerPort: 18900,
+							ingressPort: 18891,
+							projectNamespace: 'shravan-claw-beta-25319b68',
+							sessionLabel: 'shravan-claw-463c3e5f:sunfam:gateway',
+							zoneId: 'beta',
+						}),
+					readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
+					sleep: async () => {},
+				},
+			),
+		).rejects.toThrow(/session label/u);
+	});
+
+	it('refuses to clean up a runtime record whose zone id does not match the requested zone', async () => {
+		await expect(
+			cleanupOrphanedGatewayIfPresent(
+				{
+					projectNamespace: 'claw-tests-a1b2c3d4',
+					stateDir: '/state/shravan',
+					zoneId: 'shravan',
+				},
+				{
+					deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+					isProcessAlive: () => true,
+					killProcess: vi.fn(),
+					loadGatewayRuntimeRecord: async () =>
+						createGatewayRuntimeRecord({
+							sessionLabel: 'claw-tests-a1b2c3d4:ember:gateway',
+							zoneId: 'ember',
+						}),
+					readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
+					sleep: async () => {},
+				},
+			),
+		).rejects.toThrow(/belongs to zone 'ember'/u);
+	});
+
+	it('quarantines mismatched records during in-process recovery without signaling the process', async () => {
+		const logMessages: string[] = [];
+		const killProcess = vi.fn();
+		const quarantineGatewayRuntimeRecord = vi.fn(async () => {});
+
+		await expect(
+			cleanupOrphanedGatewayIfPresent(
+				{
+					legacyRecordDefaults: {
+						configPath: '/deployments/shravan-claw-beta/config/system.jsonc',
+						controllerPort: 18900,
+					},
+					mode: 'in-process-recovery',
+					projectNamespace: 'shravan-claw-beta-25319b68',
+					stateDir: '/state/beta',
+					zoneId: 'beta',
+				},
+				{
+					deleteGatewayRuntimeRecord: vi.fn(async () => {}),
+					isProcessAlive: () => true,
+					killProcess,
+					loadGatewayRuntimeRecord: async () =>
+						createGatewayRuntimeRecord({
+							configPath: '/deployments/shravan-claw/config/system.jsonc',
+							projectNamespace: 'shravan-claw-463c3e5f',
+							sessionLabel: 'shravan-claw-463c3e5f:sunfam:gateway',
+							zoneId: 'sunfam',
+						}),
+					log: (message) => {
+						logMessages.push(message);
+					},
+					quarantineGatewayRuntimeRecord,
+					readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
+					sleep: async () => {},
+				},
+			),
+		).resolves.toEqual({
+			cleanedUp: false,
+			cleanupWarning: expect.stringContaining('Quarantining the stale runtime record'),
+			killedPid: null,
+		});
+
+		expect(killProcess).not.toHaveBeenCalled();
+		expect(quarantineGatewayRuntimeRecord).toHaveBeenCalledWith('/state/beta', {
+			log: expect.any(Function),
+			reason: expect.stringContaining('Quarantining the stale runtime record'),
+		});
+		expect(logMessages.join('\n')).toContain('configPath');
+	});
+
 	it('kills an orphaned qemu process, deletes the runtime record, and reports cleanup', async () => {
 		const logMessages: string[] = [];
-		const loadGatewayRuntimeRecord = vi.fn(async () => ({
-			createdAt: '2026-04-13T12:34:56.000Z',
-			gatewayType: 'openclaw' as const,
-			guestListenPort: 18789,
-			ingressPort: 18791,
-			projectNamespace: 'claw-tests-a1b2c3d4',
-			qemuPid: 48282,
-			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-			vmId: 'gateway-vm-123',
-			zoneId: 'shravan',
-		}));
+		const loadGatewayRuntimeRecord = vi.fn(async () =>
+			createGatewayRuntimeRecord({
+				createdAt: '2026-04-13T12:34:56.000Z',
+				gatewayType: 'openclaw' as const,
+				guestListenPort: 18789,
+				ingressPort: 18791,
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				qemuPid: 48282,
+				sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+				vmId: 'gateway-vm-123',
+				zoneId: 'shravan',
+			}),
+		);
 		const readProcessCommand = vi.fn(async () => 'qemu-system-aarch64 -nodefaults');
 		const isProcessAlive = vi
 			.fn()
@@ -28,6 +178,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		await expect(
 			cleanupOrphanedGatewayIfPresent(
 				{
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					stateDir: '/state/shravan',
 					zoneId: 'shravan',
 				},
@@ -58,22 +209,25 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 	});
 
 	it('fails fast when the recorded pid belongs to a different process', async () => {
-		const loadGatewayRuntimeRecord = vi.fn(async () => ({
-			createdAt: '2026-04-13T12:34:56.000Z',
-			gatewayType: 'openclaw' as const,
-			guestListenPort: 18789,
-			ingressPort: 18791,
-			projectNamespace: 'claw-tests-a1b2c3d4',
-			qemuPid: 48282,
-			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-			vmId: 'gateway-vm-123',
-			zoneId: 'shravan',
-		}));
+		const loadGatewayRuntimeRecord = vi.fn(async () =>
+			createGatewayRuntimeRecord({
+				createdAt: '2026-04-13T12:34:56.000Z',
+				gatewayType: 'openclaw' as const,
+				guestListenPort: 18789,
+				ingressPort: 18791,
+				projectNamespace: 'claw-tests-a1b2c3d4',
+				qemuPid: 48282,
+				sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+				vmId: 'gateway-vm-123',
+				zoneId: 'shravan',
+			}),
+		);
 		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
 
 		await expect(
 			cleanupOrphanedGatewayIfPresent(
 				{
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					stateDir: '/state/shravan',
 					zoneId: 'shravan',
 				},
@@ -98,6 +252,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		await expect(
 			cleanupOrphanedGatewayIfPresent(
 				{
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					stateDir: '/state/shravan',
 					zoneId: 'shravan',
 				},
@@ -105,17 +260,18 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 					deleteGatewayRuntimeRecord,
 					isProcessAlive: () => false,
 					killProcess,
-					loadGatewayRuntimeRecord: async () => ({
-						createdAt: '2026-04-13T12:34:56.000Z',
-						gatewayType: 'openclaw',
-						guestListenPort: 18789,
-						ingressPort: 18791,
-						projectNamespace: 'claw-tests-a1b2c3d4',
-						qemuPid: 48282,
-						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-						vmId: 'gateway-vm-123',
-						zoneId: 'shravan',
-					}),
+					loadGatewayRuntimeRecord: async () =>
+						createGatewayRuntimeRecord({
+							createdAt: '2026-04-13T12:34:56.000Z',
+							gatewayType: 'openclaw',
+							guestListenPort: 18789,
+							ingressPort: 18791,
+							projectNamespace: 'claw-tests-a1b2c3d4',
+							qemuPid: 48282,
+							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+							vmId: 'gateway-vm-123',
+							zoneId: 'shravan',
+						}),
 					readProcessCommand: async () => null,
 					sleep: async () => {},
 				},
@@ -141,6 +297,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		await expect(
 			cleanupOrphanedGatewayIfPresent(
 				{
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					stateDir: '/state/shravan',
 					zoneId: 'shravan',
 				},
@@ -148,17 +305,18 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 					deleteGatewayRuntimeRecord,
 					isProcessAlive,
 					killProcess,
-					loadGatewayRuntimeRecord: async () => ({
-						createdAt: '2026-04-13T12:34:56.000Z',
-						gatewayType: 'openclaw',
-						guestListenPort: 18789,
-						ingressPort: 18791,
-						projectNamespace: 'claw-tests-a1b2c3d4',
-						qemuPid: 48282,
-						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-						vmId: 'gateway-vm-123',
-						zoneId: 'shravan',
-					}),
+					loadGatewayRuntimeRecord: async () =>
+						createGatewayRuntimeRecord({
+							createdAt: '2026-04-13T12:34:56.000Z',
+							gatewayType: 'openclaw',
+							guestListenPort: 18789,
+							ingressPort: 18791,
+							projectNamespace: 'claw-tests-a1b2c3d4',
+							qemuPid: 48282,
+							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+							vmId: 'gateway-vm-123',
+							zoneId: 'shravan',
+						}),
 					readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
 					sleep: async () => {},
 				},
@@ -175,6 +333,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		await expect(
 			cleanupOrphanedGatewayIfPresent(
 				{
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					stateDir: '/state/shravan',
 					zoneId: 'shravan',
 				},
@@ -184,17 +343,18 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 						throw new Error('kill(0) failed unexpectedly');
 					},
 					killProcess: vi.fn(),
-					loadGatewayRuntimeRecord: async () => ({
-						createdAt: '2026-04-13T12:34:56.000Z',
-						gatewayType: 'openclaw',
-						guestListenPort: 18789,
-						ingressPort: 18791,
-						projectNamespace: 'claw-tests-a1b2c3d4',
-						qemuPid: 48282,
-						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-						vmId: 'gateway-vm-123',
-						zoneId: 'shravan',
-					}),
+					loadGatewayRuntimeRecord: async () =>
+						createGatewayRuntimeRecord({
+							createdAt: '2026-04-13T12:34:56.000Z',
+							gatewayType: 'openclaw',
+							guestListenPort: 18789,
+							ingressPort: 18791,
+							projectNamespace: 'claw-tests-a1b2c3d4',
+							qemuPid: 48282,
+							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+							vmId: 'gateway-vm-123',
+							zoneId: 'shravan',
+						}),
 					readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
 					sleep: async () => {},
 				},
@@ -206,6 +366,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		await expect(
 			cleanupOrphanedGatewayIfPresent(
 				{
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					stateDir: '/state/shravan',
 					zoneId: 'shravan',
 				},
@@ -226,6 +387,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		await expect(
 			cleanupOrphanedGatewayIfPresent(
 				{
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					stateDir: '/state/shravan',
 					zoneId: 'shravan',
 				},
@@ -239,17 +401,18 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 						.mockReturnValueOnce(true)
 						.mockReturnValueOnce(false),
 					killProcess: vi.fn(),
-					loadGatewayRuntimeRecord: async () => ({
-						createdAt: '2026-04-13T12:34:56.000Z',
-						gatewayType: 'openclaw',
-						guestListenPort: 18789,
-						ingressPort: 18791,
-						projectNamespace: 'claw-tests-a1b2c3d4',
-						qemuPid: 48282,
-						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-						vmId: 'gateway-vm-123',
-						zoneId: 'shravan',
-					}),
+					loadGatewayRuntimeRecord: async () =>
+						createGatewayRuntimeRecord({
+							createdAt: '2026-04-13T12:34:56.000Z',
+							gatewayType: 'openclaw',
+							guestListenPort: 18789,
+							ingressPort: 18791,
+							projectNamespace: 'claw-tests-a1b2c3d4',
+							qemuPid: 48282,
+							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+							vmId: 'gateway-vm-123',
+							zoneId: 'shravan',
+						}),
 					log: (message) => {
 						logMessages.push(message);
 					},
@@ -273,6 +436,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		await expect(
 			cleanupOrphanedGatewayIfPresent(
 				{
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					stateDir: '/state/shravan',
 					zoneId: 'shravan',
 				},
@@ -280,17 +444,18 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 					deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 					isProcessAlive: () => true,
 					killProcess: vi.fn(),
-					loadGatewayRuntimeRecord: async () => ({
-						createdAt: '2026-04-13T12:34:56.000Z',
-						gatewayType: 'openclaw',
-						guestListenPort: 18789,
-						ingressPort: 18791,
-						projectNamespace: 'claw-tests-a1b2c3d4',
-						qemuPid: 48282,
-						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-						vmId: 'gateway-vm-123',
-						zoneId: 'shravan',
-					}),
+					loadGatewayRuntimeRecord: async () =>
+						createGatewayRuntimeRecord({
+							createdAt: '2026-04-13T12:34:56.000Z',
+							gatewayType: 'openclaw',
+							guestListenPort: 18789,
+							ingressPort: 18791,
+							projectNamespace: 'claw-tests-a1b2c3d4',
+							qemuPid: 48282,
+							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+							vmId: 'gateway-vm-123',
+							zoneId: 'shravan',
+						}),
 					readProcessCommand: async () => {
 						throw new Error('ps failed');
 					},
@@ -316,22 +481,24 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		await expect(
 			cleanupOrphanedGatewayIfPresent(
 				{
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					stateDir: '/state/shravan',
 					zoneId: 'shravan',
 				},
 				{
 					deleteGatewayRuntimeRecord: vi.fn(async () => {}),
-					loadGatewayRuntimeRecord: async () => ({
-						createdAt: '2026-04-13T12:34:56.000Z',
-						gatewayType: 'openclaw',
-						guestListenPort: 18789,
-						ingressPort: 18791,
-						projectNamespace: 'claw-tests-a1b2c3d4',
-						qemuPid: 48282,
-						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-						vmId: 'gateway-vm-123',
-						zoneId: 'shravan',
-					}),
+					loadGatewayRuntimeRecord: async () =>
+						createGatewayRuntimeRecord({
+							createdAt: '2026-04-13T12:34:56.000Z',
+							gatewayType: 'openclaw',
+							guestListenPort: 18789,
+							ingressPort: 18791,
+							projectNamespace: 'claw-tests-a1b2c3d4',
+							qemuPid: 48282,
+							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+							vmId: 'gateway-vm-123',
+							zoneId: 'shravan',
+						}),
 					readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
 					sleep: async () => {},
 				},
@@ -355,6 +522,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		await expect(
 			cleanupOrphanedGatewayIfPresent(
 				{
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					stateDir: '/state/shravan',
 					zoneId: 'shravan',
 				},
@@ -362,17 +530,18 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 					deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 					isProcessAlive,
 					killProcess,
-					loadGatewayRuntimeRecord: async () => ({
-						createdAt: '2026-04-13T12:34:56.000Z',
-						gatewayType: 'openclaw',
-						guestListenPort: 18789,
-						ingressPort: 18791,
-						projectNamespace: 'claw-tests-a1b2c3d4',
-						qemuPid: 48282,
-						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-						vmId: 'gateway-vm-123',
-						zoneId: 'shravan',
-					}),
+					loadGatewayRuntimeRecord: async () =>
+						createGatewayRuntimeRecord({
+							createdAt: '2026-04-13T12:34:56.000Z',
+							gatewayType: 'openclaw',
+							guestListenPort: 18789,
+							ingressPort: 18791,
+							projectNamespace: 'claw-tests-a1b2c3d4',
+							qemuPid: 48282,
+							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+							vmId: 'gateway-vm-123',
+							zoneId: 'shravan',
+						}),
 					readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
 					sleep: async () => {
 						nowMs += 2_500;
@@ -395,6 +564,7 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		await expect(
 			cleanupOrphanedGatewayIfPresent(
 				{
+					projectNamespace: 'claw-tests-a1b2c3d4',
 					stateDir: '/state/shravan',
 					zoneId: 'shravan',
 				},
@@ -402,17 +572,18 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 					deleteGatewayRuntimeRecord: vi.fn(async () => {}),
 					isProcessAlive: () => true,
 					killProcess: vi.fn(),
-					loadGatewayRuntimeRecord: async () => ({
-						createdAt: '2026-04-13T12:34:56.000Z',
-						gatewayType: 'openclaw',
-						guestListenPort: 18789,
-						ingressPort: 18791,
-						projectNamespace: 'claw-tests-a1b2c3d4',
-						qemuPid: 48282,
-						sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-						vmId: 'gateway-vm-123',
-						zoneId: 'shravan',
-					}),
+					loadGatewayRuntimeRecord: async () =>
+						createGatewayRuntimeRecord({
+							createdAt: '2026-04-13T12:34:56.000Z',
+							gatewayType: 'openclaw',
+							guestListenPort: 18789,
+							ingressPort: 18791,
+							projectNamespace: 'claw-tests-a1b2c3d4',
+							qemuPid: 48282,
+							sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+							vmId: 'gateway-vm-123',
+							zoneId: 'shravan',
+						}),
 					readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
 					sleep: async () => {
 						nowMs += 2_500;

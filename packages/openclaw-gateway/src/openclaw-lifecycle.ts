@@ -590,6 +590,9 @@ export const openclawLifecycle: GatewayLifecycle = {
 				...mediatedSecrets,
 			},
 			rootfsMode: 'cow',
+			...(zone.gateway.runtimeRootfsSize
+				? { runtimeRootfsSize: zone.gateway.runtimeRootfsSize }
+				: {}),
 			sessionLabel: buildGatewaySessionLabelValue(projectNamespace, zone.id),
 			tcpHosts: buildGatewayTcpHosts(zone, controllerPort, tcpPool),
 			vfsMounts: {

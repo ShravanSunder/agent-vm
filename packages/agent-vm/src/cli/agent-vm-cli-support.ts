@@ -13,11 +13,15 @@ import {
 	type SystemConfig,
 } from '../config/system-config.js';
 import { createSecretResolver as createControllerSecretResolver } from '../controller/controller-runtime-support.js';
-import type { ControllerRuntimeDependencies } from '../controller/controller-runtime-types.js';
+import type {
+	ControllerRuntime,
+	ControllerRuntimeDependencies,
+} from '../controller/controller-runtime-types.js';
 import { startControllerRuntime } from '../controller/controller-runtime.js';
 import { createControllerClient } from '../controller/http/controller-client.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { runConfigValidation } from '../operations/config-validation.js';
+import { runControllerOfflineCleanup } from '../operations/controller-offline-cleanup.js';
 import { buildControllerStatus } from '../operations/controller-status.js';
 import { runControllerDoctor } from '../operations/doctor.js';
 import { runBuildCommand } from './build-command.js';
@@ -79,6 +83,7 @@ export interface CliDependencies {
 	readonly resolveServiceAccountToken: typeof resolveServiceAccountToken;
 	readonly resolveGondolinMinimumZigVersion: typeof resolveGondolinMinimumZigVersion;
 	readonly runControllerDoctor: typeof runControllerDoctor;
+	readonly runControllerOfflineCleanup?: typeof runControllerOfflineCleanup;
 	readonly runConfigValidation?: typeof runConfigValidation;
 	readonly promptAndStoreServiceAccountToken?: () => Promise<boolean>;
 	readonly resetWorkerInstructions?: typeof resetWorkerInstructions;
@@ -92,18 +97,7 @@ export interface CliDependencies {
 			readonly zoneId: string;
 		},
 		runtimeDependencies?: ControllerRuntimeDependencies,
-	) => Promise<{
-		readonly controllerPort: number;
-		readonly gateway?: {
-			readonly ingress: {
-				readonly host: string;
-				readonly port: number;
-			};
-			readonly vm: {
-				readonly id: string;
-			};
-		};
-	}>;
+	) => Promise<ControllerRuntime>;
 	readonly startGatewayZone: typeof startGatewayZone;
 }
 
@@ -125,6 +119,7 @@ export const defaultCliDependencies: CliDependencies = {
 	resolveGondolinMinimumZigVersion,
 	resolveServiceAccountToken,
 	runControllerDoctor,
+	runControllerOfflineCleanup,
 	runConfigValidation,
 	resetWorkerInstructions,
 	resolveCliVersion,

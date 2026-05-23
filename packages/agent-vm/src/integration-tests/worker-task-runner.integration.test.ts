@@ -192,6 +192,7 @@ describe('worker-task-runner integration', () => {
 				exec: vi.fn(() => createManagedExecProcessStub()),
 				fs: createManagedVmFsStub(),
 				setIngressRoutes: vi.fn(),
+				getHostPid: () => null,
 				getVmInstance: vi.fn(),
 			},
 			zone: systemConfig.zones[0],

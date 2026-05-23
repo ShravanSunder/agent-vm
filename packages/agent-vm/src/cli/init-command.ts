@@ -332,6 +332,7 @@ function defaultToolVmProfiles(gatewayType: GatewayType): Record<
 		readonly memory: string;
 		readonly cpus: number;
 		readonly imageProfile: string;
+		readonly runtimeRootfsSize?: string;
 	}
 > {
 	if (gatewayType !== 'openclaw') {
@@ -342,6 +343,7 @@ function defaultToolVmProfiles(gatewayType: GatewayType): Record<
 			memory: '1G',
 			cpus: 1,
 			imageProfile: 'default',
+			runtimeRootfsSize: '16G',
 		},
 	};
 }
@@ -399,6 +401,7 @@ const defaultSystemConfig = (
 				port: defaultGatewayIngressPort,
 				config: pathProfile.gatewayConfig(zoneId, gatewayType),
 				imageProfile: gatewayType,
+				runtimeRootfsSize: gatewayType === 'openclaw' ? '12G' : '8G',
 				stateDir: pathProfile.gatewayStateDir(zoneId),
 				ssh: { secretEnv: 'explicit' },
 				...(gatewayType === 'openclaw'
@@ -721,7 +724,7 @@ const defaultToolBuildConfig = (architecture: ImageArchitecture): object => ({
 	},
 	rootfs: {
 		label: 'tool-root',
-		sizeMb: 2048,
+		sizeMb: 4096,
 	},
 });
 

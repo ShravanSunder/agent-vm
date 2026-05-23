@@ -15,6 +15,7 @@ export interface ToolVmProfile {
 	readonly cpus: number;
 	readonly imageProfile: string;
 	readonly memory: string;
+	readonly runtimeRootfsSize?: string | undefined;
 }
 
 export interface Lease {

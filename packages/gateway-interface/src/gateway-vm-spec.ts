@@ -12,5 +12,6 @@ export interface GatewayVmSpec {
 	readonly tcpHosts: Record<string, string>;
 	readonly allowedHosts: readonly string[];
 	readonly rootfsMode: 'readonly' | 'memory' | 'cow';
+	readonly runtimeRootfsSize?: string;
 	readonly sessionLabel: string;
 }
