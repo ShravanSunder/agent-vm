@@ -1,2 +1,5 @@
 [tools]
 zig = "0.16.0"
+
+[tasks.lint]
+run = "pnpm lint"

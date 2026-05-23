@@ -82,6 +82,25 @@ The gateway VM boots at controller startup and stays running. It is NOT per-task
 
 The gateway stays alive until `controller stop`, `controller destroy`, or process exit.
 
+Gateway ingress has two different ports in play. `processSpec.guestListenPort`
+is the OpenClaw HTTP/WebSocket port inside the VM. `zones[].gateway.port` is the
+host-facing Gondolin ingress listener. After readiness, agent-vm writes one
+Gondolin route, `/` to `processSpec.guestListenPort`, then enables ingress on
+`zones[].gateway.port`.
+
+That single route is the OpenClaw serving surface. The Control UI, gateway
+WebSocket, `/healthz`, `/readyz`, `/v1/chat/completions`, `/v1/responses`, and
+plugin HTTP routes all pass through it. SSE streaming depends on Gondolin
+forwarding response chunks incrementally; agent-vm keeps response buffering
+disabled for gateway ingress and exposes timeout knobs under
+`zones[].gateway.ingress`.
+
+Serving another guest HTTP service, such as a preview server or sidecar
+dashboard, is a separate ingress-route design. It should add explicit non-root
+path-prefix routes to guest ports instead of changing rootfs size or treating
+OpenClaw config as a host port mapper. Raw TCP services use `tcpHosts`, not
+HTTP ingress.
+
 For the full 15-step boot sequence, see [overview.md](overview.md#gateway-zone-orchestrator).
 For the lifecycle implementation, see [subsystems/gateway-lifecycle.md](../subsystems/gateway-lifecycle.md#openclaw-implementation).
 For storage boundaries, see [storage-model.md](storage-model.md).

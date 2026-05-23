@@ -295,6 +295,7 @@ describe('startSmokeControllerRuntime', () => {
 
 		await createFakeSecretsPackage(repoRoot);
 		await createFakeGondolinAdapterPackage(repoRoot);
+		await createFakeGatewayInterfacePackage(repoRoot);
 		await createFakePackageDist(repoRoot, 'openclaw-agent-vm-plugin', 'gondolin');
 		await createFakePackageDist(repoRoot, 'openclaw-mcp-portal-plugin', 'mcp-portal');
 		await createFakePortalDist(repoRoot);
@@ -319,6 +320,9 @@ describe('startSmokeControllerRuntime', () => {
 			'COPY secret-management-local.tgz /tmp/secret-management-local.tgz',
 		);
 		expect(dockerfile).toContain('COPY gondolin-adapter-local.tgz /tmp/gondolin-adapter-local.tgz');
+		expect(dockerfile).toContain(
+			'COPY gateway-interface-local.tgz /tmp/gateway-interface-local.tgz',
+		);
 		expect(dockerfile).toContain('COPY mcp-portal-local.tgz /tmp/mcp-portal-local.tgz');
 		expect(dockerfile).toContain(
 			'COPY openclaw-agent-vm-plugin-local.tgz /tmp/openclaw-agent-vm-plugin-local.tgz',
@@ -365,6 +369,7 @@ describe('startSmokeControllerRuntime', () => {
 
 		await createFakeSecretsPackage(repoRoot);
 		await createFakeGondolinAdapterPackage(repoRoot);
+		await createFakeGatewayInterfacePackage(repoRoot);
 		await createFakePackageDist(repoRoot, 'openclaw-agent-vm-plugin', 'gondolin');
 
 		await useLocalOpenClawPluginGatewayImage({
@@ -379,6 +384,9 @@ describe('startSmokeControllerRuntime', () => {
 			throw new Error('Expected plugin-only helper to set dockerfile path.');
 		}
 		const dockerfile = await fs.readFile(dockerfilePath, 'utf8');
+		expect(dockerfile).toContain(
+			'COPY gateway-interface-local.tgz /tmp/gateway-interface-local.tgz',
+		);
 		expect(dockerfile).toContain(
 			'COPY openclaw-agent-vm-plugin-local.tgz /tmp/openclaw-agent-vm-plugin-local.tgz',
 		);
@@ -421,6 +429,38 @@ describe('startSmokeControllerRuntime', () => {
 		expect(toolVmDockerfile).not.toContain('openclaw-agent-vm-plugin-local.tgz');
 		expect(toolVmDockerfile).not.toContain('openclaw-mcp-portal-plugin-local.tgz');
 		expect(toolVmDockerfile).not.toContain('pnpm add -g');
+	});
+
+	it('fails local package image setup before packing when declared package files are missing', async () => {
+		const temporaryRoot = await createTemporaryRoot('agent-vm-smoke-harness-');
+		const repoRoot = path.join(temporaryRoot, 'repo');
+		const systemConfig = createMinimalOpenClawSystemConfig();
+		const packageDir = path.join(repoRoot, 'packages', 'mcp-portal');
+
+		await createFakeConfigContractsPackage(repoRoot);
+		await createFakeSecretsPackage(repoRoot);
+		await fs.mkdir(packageDir, { recursive: true });
+		await fs.writeFile(
+			path.join(packageDir, 'package.json'),
+			`${JSON.stringify(
+				{
+					name: '@agent-vm/mcp-portal',
+					version: '0.0.0-smoke',
+					files: ['dist'],
+				},
+				null,
+				'\t',
+			)}\n`,
+			'utf8',
+		);
+
+		await expect(
+			useLocalToolVmMcpPortalPackage({
+				projectRoot: temporaryRoot,
+				repoRoot,
+				systemConfig,
+			}),
+		).rejects.toThrow(/declares package file "dist" but it does not exist/u);
 	});
 
 	it('removes MCP Portal plugin loading from OpenClaw smokes that do not exercise portal tools', async () => {
@@ -694,6 +734,29 @@ async function createFakeGondolinAdapterPackage(repoRoot: string): Promise<void>
 			{
 				dependencies: { '@agent-vm/secret-management': '0.0.0-smoke' },
 				name: '@agent-vm/gondolin-adapter',
+				version: '0.0.0-smoke',
+				files: ['dist'],
+			},
+			null,
+			'\t',
+		)}\n`,
+		'utf8',
+	);
+	await fs.writeFile(path.join(packageDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
+}
+
+async function createFakeGatewayInterfacePackage(repoRoot: string): Promise<void> {
+	const packageDir = path.join(repoRoot, 'packages', 'gateway-interface');
+	await fs.mkdir(path.join(packageDir, 'dist'), { recursive: true });
+	await fs.writeFile(
+		path.join(packageDir, 'package.json'),
+		`${JSON.stringify(
+			{
+				dependencies: {
+					'@agent-vm/gondolin-adapter': '0.0.0-smoke',
+					'@agent-vm/secret-management': '0.0.0-smoke',
+				},
+				name: '@agent-vm/gateway-interface',
 				version: '0.0.0-smoke',
 				files: ['dist'],
 			},

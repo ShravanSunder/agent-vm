@@ -199,6 +199,51 @@ describe('loadSystemConfig', () => {
 		expect(loaded.toolVmProfiles.standard?.runtimeRootfsSize).toBe('16G');
 	});
 
+	test('loads gateway ingress timeout settings', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].gateway.ingress = {
+			upstreamHeaderTimeoutMs: 5_000,
+			upstreamResponseTimeoutMs: 120_000,
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-ingress-timeouts-',
+			config,
+		);
+
+		const loadedConfig = await loadSystemConfig(configPath);
+
+		expect(loadedConfig.zones[0]?.gateway.ingress).toEqual({
+			upstreamHeaderTimeoutMs: 5_000,
+			upstreamResponseTimeoutMs: 120_000,
+		});
+	});
+
+	test('rejects unknown gateway ingress timeout keys', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].gateway.ingress = {
+			idleTimeoutMs: 30_000,
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-ingress-unknown-key-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Unrecognized key.*idleTimeoutMs/u);
+	});
+
+	test('rejects non-positive gateway ingress timeout settings', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].gateway.ingress = {
+			upstreamResponseTimeoutMs: 0,
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-ingress-non-positive-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/upstreamResponseTimeoutMs/u);
+	});
+
 	test('loads managed base image profiles', async () => {
 		const config = createValidSystemConfigInput();
 		config.imageProfiles = {

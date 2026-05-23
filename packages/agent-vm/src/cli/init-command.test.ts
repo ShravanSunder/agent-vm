@@ -902,6 +902,7 @@ describe('scaffoldAgentVmProject', () => {
 			'web_search',
 			'web_fetch',
 			'message',
+			'group:plugins',
 		]);
 	});
 

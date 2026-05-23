@@ -202,9 +202,11 @@ AAAA answer prevents OpenClaw from rejecting a host only because DNS returned a
 fake IPv6 answer. It does not mean the guest has general IPv6 egress.
 
 The scaffold also includes `tools.sandbox.tools.alsoAllow` for `web_search`,
-`web_fetch`, and `message` so sandboxed sessions can see web tools when the
-deployment later configures a search or fetch provider, and can explicitly send
-channel replies when OpenClaw uses `message_tool_only` group reply delivery.
+`web_fetch`, `message`, and `group:plugins` so sandboxed sessions can see web
+tools when the deployment later configures a search or fetch provider, can
+explicitly send channel replies when OpenClaw uses `message_tool_only` group
+reply delivery, and can see optional plugin-owned tools such as MCP Portal's
+`mcp_portal_*` tools.
 
 ---
 

@@ -18,6 +18,7 @@ describe('manual templates', () => {
 		expect(content).toContain('config/system.jsonc');
 		expect(content).toContain('shravan');
 		expect(content).toContain('docs/manual/image-versioning.md');
+		expect(content).toContain('docs/manual/gateway-ingress.md');
 		expect(content).toContain('Do not silently edit privileged host/deployment config');
 		expect(content).not.toContain('Discord is enabled by default');
 	});
@@ -35,6 +36,7 @@ describe('manual templates', () => {
 			'docs/manual/scope.md',
 			'docs/manual/operations.md',
 			'docs/manual/openclaw.md',
+			'docs/manual/gateway-ingress.md',
 			'docs/manual/openclaw-defaults.md',
 			'docs/manual/mcp-portal.md',
 			'docs/manual/agent-worker.md',
@@ -65,6 +67,13 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
 			'coding agents helping end users set up and operate agent-vm deployments',
 		);
+		const gatewayIngressManual = files.find((file) =>
+			file.relativePath.endsWith('gateway-ingress.md'),
+		)?.content;
+		expect(gatewayIngressManual).toContain('zones[].gateway.port');
+		expect(gatewayIngressManual).toContain('SSE streaming');
+		expect(gatewayIngressManual).toContain('additional Gondolin ingress routes');
+		expect(gatewayIngressManual).toContain('Raw TCP services are not HTTP ingress');
 		expect(
 			files.find((file) => file.relativePath.endsWith('troubleshooting.md'))?.content,
 		).toContain('blocked URL fetch');

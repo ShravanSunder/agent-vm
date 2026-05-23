@@ -388,7 +388,14 @@ export async function startGatewayZone(
 			},
 		]);
 		const ingress = await managedVm.enableIngress({
+			bufferResponseBody: false,
 			listenPort: zone.gateway.port,
+			...(zone.gateway.ingress?.upstreamHeaderTimeoutMs === undefined
+				? {}
+				: { upstreamHeaderTimeoutMs: zone.gateway.ingress.upstreamHeaderTimeoutMs }),
+			...(zone.gateway.ingress?.upstreamResponseTimeoutMs === undefined
+				? {}
+				: { upstreamResponseTimeoutMs: zone.gateway.ingress.upstreamResponseTimeoutMs }),
 		});
 		await runTaskStep('Recording gateway runtime', async () => {
 			await (dependencies.writeGatewayRuntimeRecord ?? writeGatewayRuntimeRecord)(

@@ -32,6 +32,7 @@ Primary config:
 Use docs/manual/layout.md before moving files or changing generated folders.
 Use docs/manual/image-versioning.md before changing agent-vm package pins, managed image pins, OpenClaw runtime package pins, or generated Dockerfiles.
 Use docs/manual/scope.md before changing OpenClaw sandbox scope or tool VM lease behavior.
+Use docs/manual/gateway-ingress.md before changing gateway ports, OpenClaw Control UI access, SSE/streaming behavior, WebSocket access, or serving additional webservers from inside a VM.
 Use docs/manual/tool-access.md before answering whether a tool binary, auth profile, or tool VM image should be agent-specific.
 Use docs/manual/channels.md before helping a human configure Discord, Slack, Telegram, or another OpenClaw channel.
 Use docs/manual/runtime-paths.md before answering where files appear inside VMs or how workMountDir backs Tool VM /work.
@@ -59,15 +60,16 @@ Read in this order:
 2. image-versioning.md explains package pins, managed image pins, overlays, and generated Dockerfiles.
 3. scope.md explains session, agent, and shared scope.
 4. openclaw.md explains OpenClaw gateway configuration.
-5. openclaw-defaults.md explains agent-vm-owned OpenClaw defaults and doctor checks.
-6. mcp-portal.md explains progressive MCP discovery and gateway-owned MCP auth.
-7. tool-access.md explains binary, auth, OpenClaw tool, and zone/image isolation.
-8. channels.md explains how deployments add Discord or other channels.
-9. runtime-paths.md explains /work and other in-VM paths.
-10. per-agent-setup.md explains multi-agent scope and tool access choices.
-11. migration-discord.md explains how existing Discord deployments keep working.
-12. secrets.md explains runtime auth and HTTP mediation.
-13. operations.md explains start, graceful stop, and scoped offline cleanup.
+5. gateway-ingress.md explains host-facing gateway ports, OpenClaw web serving, SSE, WebSockets, and the boundary between single-route OpenClaw ingress and additional guest webservers.
+6. openclaw-defaults.md explains agent-vm-owned OpenClaw defaults and doctor checks.
+7. mcp-portal.md explains progressive MCP discovery and gateway-owned MCP auth.
+8. tool-access.md explains binary, auth, OpenClaw tool, and zone/image isolation.
+9. channels.md explains how deployments add Discord or other channels.
+10. runtime-paths.md explains /work and other in-VM paths.
+11. per-agent-setup.md explains multi-agent scope and tool access choices.
+12. migration-discord.md explains how existing Discord deployments keep working.
+13. secrets.md explains runtime auth and HTTP mediation.
+14. operations.md explains start, graceful stop, and scoped offline cleanup.
 
 Local deployment notes belong in docs/manual/local-notes.md or another non-generated file.
 `,
@@ -190,6 +192,27 @@ Multi-zone controller work makes one controller process manage multiple typed zo
 			),
 		},
 		{
+			relativePath: 'docs/manual/gateway-ingress.md',
+			content: generatedPage(
+				'Gateway Ingress And Serving',
+				`
+Agent-vm exposes OpenClaw gateway HTTP through Gondolin ingress. Keep three layers separate:
+
+1. zones[].gateway.port is the host-facing Gondolin ingress listener.
+2. Gondolin routes request path prefixes to guest loopback HTTP ports.
+3. OpenClaw serves its Control UI, gateway WebSocket, /healthz, /readyz, /v1/chat/completions, /v1/responses, and plugin HTTP routes from its guest gateway port.
+
+The current OpenClaw gateway route is intentionally simple: agent-vm sets one route, "/" -> the OpenClaw guest gateway port. That one route is enough for the OpenClaw Control UI, OpenAI-compatible APIs, SSE streaming, readiness probes, and WebSocket traffic when OpenClaw is the only guest web server being exposed.
+
+SSE and streaming responses need incremental forwarding. Agent-vm keeps Gondolin response buffering disabled for gateway ingress. If a request waits a long time before the first byte, tune zones[].gateway.ingress.upstreamHeaderTimeoutMs. If a long response can sit idle between body chunks, tune zones[].gateway.ingress.upstreamResponseTimeoutMs. Streaming responses are less sensitive to the body idle timeout when the model emits regular chunks.
+
+Do not treat gateway.ingress timeout settings as a general "open ports" mechanism. Serving additional guest HTTP services, such as a Vite preview, local app server, or sidecar dashboard, requires explicit additional Gondolin ingress routes that map non-root path prefixes to guest ports. Route prefixes should be designed so they do not shadow OpenClaw's "/" route, API routes, Control UI assets, or WebSocket endpoint.
+
+Raw TCP services are not HTTP ingress. Use configured tcpHosts for VM-to-host raw TCP mappings and keep HTTP serving on Gondolin ingress routes.
+	`,
+			),
+		},
+		{
 			relativePath: 'docs/manual/openclaw-defaults.md',
 			content: generatedPage(
 				'OpenClaw Defaults',
@@ -202,7 +225,7 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	agents.defaults.model.primary is openai-codex/gpt-5.5 with thinkingDefault low.
 	session.dmScope is per-channel-peer so Discord DMs from different people do not share one agent session.
 	tools.web.fetch.ssrfPolicy trusts fake-IP ranges for web_fetch. For gateway/tool TCP mappings, agent-vm's Gondolin adapter uses RFC2544 synthetic IPv4 plus ::ffff:198.18.0.1 as the synthetic AAAA answer so OpenClaw SSRF checks can validate all DNS answers without a broad hostname bypass.
-	tools.sandbox.tools.alsoAllow includes web_search, web_fetch, and message so sandboxed sessions can see web tools once a provider is configured and can explicitly send channel replies when OpenClaw uses message_tool_only group reply delivery.
+	tools.sandbox.tools.alsoAllow includes web_search, web_fetch, message, and group:plugins so sandboxed sessions can see web tools once a provider is configured, can explicitly send channel replies when OpenClaw uses message_tool_only group reply delivery, and can see optional plugin-owned tools such as mcp_portal_*.
 	plugins.load.paths includes /home/openclaw/.openclaw/extensions for agent-vm-managed extensions and the package manager's global root for managed OpenClaw packages.
 	plugins.slots.memory selects memory-core when memory-core is enabled.
 	gateway.auth.mode is token for agent-vm-managed gateways.
@@ -215,7 +238,7 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 
 	Use agent-vm init --openclaw-agents sun,shravan,alevtina to scaffold agents.list entries with per-agent /zone/agents/<id> workspaces.
 
-	Run agent-vm doctor after editing OpenClaw config. Doctor prints a pass/fail summary and warns about missing memory slots, missing plugin load paths, /zone used as an agent workspace, missing writable workspace access, and configured agents without auth profile material.
+	Run agent-vm doctor after editing OpenClaw config. Doctor prints a pass/fail summary and warns about missing memory slots, missing plugin load paths, /zone used as an agent workspace, missing writable workspace access, hidden sandbox plugin tools, and configured agents without auth profile material.
 	`,
 			),
 		},

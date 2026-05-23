@@ -836,7 +836,7 @@ const defaultOpenClawConfig = (
 		elevated: { enabled: false },
 		sandbox: {
 			tools: {
-				alsoAllow: ['web_search', 'web_fetch', 'message'],
+				alsoAllow: ['web_search', 'web_fetch', 'message', 'group:plugins'],
 			},
 		},
 		web: {

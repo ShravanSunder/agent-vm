@@ -408,7 +408,7 @@ The `gondolin-adapter` package wraps the raw SDK into higher-level operations:
     |-- 11. Start process            vm.exec(processSpec.startCommand)
     |-- 12. Wait for readiness       poll healthCheck (HTTP 2xx or exit 0, max 30 attempts)
     |-- 13. Set ingress routes       vm.setIngressRoutes([{ port, prefix: '/' }])
-    |-- 14. Enable ingress           vm.enableIngress({ listenPort: zone.gateway.port })
+    |-- 14. Enable ingress           vm.enableIngress({ listenPort, bufferResponseBody: false, ...zone.gateway.ingress })
     |-- 15. Write runtime record     writeGatewayRuntimeRecord() for crash recovery
     |
     v

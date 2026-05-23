@@ -64,6 +64,21 @@ guest rootfs.
 `identityFile`. `IngressRoute` maps a URL prefix to a guest port with optional
 prefix stripping.
 
+Gondolin ingress is for inbound HTTP from the host to guest HTTP services. The
+gateway VM uses it to expose OpenClaw: agent-vm sets one route, `/` to the
+OpenClaw guest gateway port, then listens on the configured host-facing gateway
+port. OpenClaw's Control UI, API routes, SSE responses, readiness probes, and
+WebSocket upgrades share that route.
+
+Response buffering must stay disabled for streaming behavior such as SSE. The
+Gondolin default allows WebSockets and streams response bodies; agent-vm keeps
+buffering disabled explicitly when enabling gateway ingress. Timeout settings
+control waiting for response headers and idle gaps between response chunks; they
+do not create additional host port mappings.
+
+Additional guest webservers require additional ingress routes from path prefixes
+to guest ports. Raw TCP services remain `tcpHosts` mappings, not HTTP ingress.
+
 ---
 
 ## CreateVmOptions

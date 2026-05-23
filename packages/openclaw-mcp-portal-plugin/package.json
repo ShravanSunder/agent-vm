@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/openclaw-mcp-portal-plugin",
-	"version": "0.0.72",
+	"version": "0.0.73",
 	"description": "OpenClaw plugin that registers native MCP Portal tools over configured upstream MCP servers.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -14,7 +14,8 @@
 		"directory": "packages/openclaw-mcp-portal-plugin"
 	},
 	"files": [
-		"dist"
+		"dist",
+		"openclaw.plugin.json"
 	],
 	"type": "module",
 	"main": "./dist/index.js",
