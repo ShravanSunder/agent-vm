@@ -58,7 +58,6 @@ const secretNameSchema = z
 		(secretName) => !['__proto__', 'constructor', 'prototype'].includes(secretName),
 		'secret names must not use JavaScript prototype property names',
 	);
-const defaultOpenClawRawEnvSecretNames = ['OPENCLAW_GATEWAY_TOKEN'] as const;
 
 const egressHostSchema = z
 	.object({
@@ -269,6 +268,15 @@ const zoneGitSchema = z
 	})
 	.strict();
 
+const openClawGatewayControlAuthSchema = z.discriminatedUnion('mode', [
+	z
+		.object({
+			mode: z.literal('token'),
+			secret: secretNameSchema,
+		})
+		.strict(),
+]);
+
 const zoneGatewayBaseSchema = z.object({
 	imageProfile: z.string().min(1),
 	memory: z.string().min(1),
@@ -292,6 +300,7 @@ const zoneGatewayBaseSchema = z.object({
 const openClawZoneGatewaySchema = zoneGatewayBaseSchema
 	.extend({
 		type: z.literal('openclaw'),
+		controlAuth: openClawGatewayControlAuthSchema,
 		zoneFilesDir: z.string().min(1),
 		authProfilesByAgent: z.record(agentIdSchema, authProfilesSecretSchema).optional(),
 		rawEnvSecrets: z.array(secretNameSchema).optional(),
@@ -515,16 +524,20 @@ const systemConfigSchema = z
 		}
 
 		for (const [zoneIndex, zone] of config.zones.entries()) {
-			const openClawGatewayToken = zone.secrets.OPENCLAW_GATEWAY_TOKEN;
+			const openClawControlAuthSecretName =
+				zone.gateway.type === 'openclaw' ? zone.gateway.controlAuth.secret : undefined;
+			const openClawGatewayToken = openClawControlAuthSecretName
+				? zone.secrets[openClawControlAuthSecretName]
+				: undefined;
 			const allowedOpenClawRawEnvSecrets =
 				zone.gateway.type === 'openclaw'
-					? new Set([...defaultOpenClawRawEnvSecretNames, ...(zone.gateway.rawEnvSecrets ?? [])])
+					? new Set([zone.gateway.controlAuth.secret, ...(zone.gateway.rawEnvSecrets ?? [])])
 					: new Set<string>();
 			if (zone.gateway.type === 'openclaw' && !openClawGatewayToken) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: `OpenClaw zone '${zone.id}' must declare OPENCLAW_GATEWAY_TOKEN as a gateway env secret.`,
-					path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN'],
+					message: `OpenClaw zone '${zone.id}' must declare control auth secret '${zone.gateway.controlAuth.secret}' as a gateway env secret.`,
+					path: ['zones', zoneIndex, 'secrets', zone.gateway.controlAuth.secret],
 				});
 			}
 			if (zone.gateway.type === 'openclaw') {
@@ -532,22 +545,22 @@ const systemConfigSchema = z
 					if (openClawGatewayToken.injection !== 'env') {
 						context.addIssue({
 							code: z.ZodIssueCode.custom,
-							message: `Zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must use injection 'env'.`,
-							path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'injection'],
+							message: `Zone '${zone.id}' OpenClaw control auth secret '${zone.gateway.controlAuth.secret}' must use injection 'env'.`,
+							path: ['zones', zoneIndex, 'secrets', zone.gateway.controlAuth.secret, 'injection'],
 						});
 					}
 					if (openClawGatewayToken.audience !== 'gateway') {
 						context.addIssue({
 							code: z.ZodIssueCode.custom,
-							message: `Zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must target audience 'gateway'.`,
-							path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'audience'],
+							message: `Zone '${zone.id}' OpenClaw control auth secret '${zone.gateway.controlAuth.secret}' must target audience 'gateway'.`,
+							path: ['zones', zoneIndex, 'secrets', zone.gateway.controlAuth.secret, 'audience'],
 						});
 					}
 					if ('hosts' in openClawGatewayToken) {
 						context.addIssue({
 							code: z.ZodIssueCode.custom,
-							message: `Zone '${zone.id}' OPENCLAW_GATEWAY_TOKEN must not declare hosts.`,
-							path: ['zones', zoneIndex, 'secrets', 'OPENCLAW_GATEWAY_TOKEN', 'hosts'],
+							message: `Zone '${zone.id}' OpenClaw control auth secret '${zone.gateway.controlAuth.secret}' must not declare hosts.`,
+							path: ['zones', zoneIndex, 'secrets', zone.gateway.controlAuth.secret, 'hosts'],
 						});
 					}
 				}

@@ -406,6 +406,10 @@ const defaultSystemConfig = (
 				ssh: { secretEnv: 'explicit' },
 				...(gatewayType === 'openclaw'
 					? {
+							controlAuth: {
+								mode: 'token',
+								secret: 'OPENCLAW_GATEWAY_TOKEN',
+							},
 							zoneFilesDir: pathProfile.gatewayZoneFilesDir(zoneId),
 							authProfilesByAgent: {},
 							rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN'],

@@ -98,6 +98,10 @@ function createValidSystemConfigInput(): ValidSystemConfigInput {
 				id: 'shravan',
 				gateway: {
 					type: 'openclaw',
+					controlAuth: {
+						mode: 'token',
+						secret: 'OPENCLAW_GATEWAY_TOKEN',
+					},
 					imageProfile: 'openclaw',
 					memory: '2G',
 					cpus: 2,
@@ -415,7 +419,11 @@ describe('loadSystemConfig', () => {
 
 	test('rejects worker zones declaring agents or MCP Portal references', async () => {
 		const config = createValidSystemConfigInput();
-		const { zoneFilesDir: _zoneFilesDir, ...workerGateway } = config.zones[0].gateway;
+		const {
+			controlAuth: _controlAuth,
+			zoneFilesDir: _zoneFilesDir,
+			...workerGateway
+		} = config.zones[0].gateway;
 		config.zones[0] = {
 			...config.zones[0],
 			agents: [{ id: 'worker-agent' }],
@@ -820,6 +828,10 @@ describe('loadSystemConfig', () => {
 			...input.zones[0],
 			gateway: {
 				type: 'openclaw',
+				controlAuth: {
+					mode: 'token',
+					secret: 'OPENCLAW_GATEWAY_TOKEN',
+				},
 				imageProfile: 'openclaw',
 				memory: '2G',
 				cpus: 2,
@@ -1032,6 +1044,10 @@ describe('loadSystemConfig', () => {
 						id: 'shravan',
 						gateway: {
 							type: 'openclaw',
+							controlAuth: {
+								mode: 'token',
+								secret: 'OPENCLAW_GATEWAY_TOKEN',
+							},
 							imageProfile: 'openclaw',
 							memory: '2G',
 							cpus: 2,
@@ -1112,6 +1128,10 @@ describe('loadSystemConfig', () => {
 						id: 'shravan',
 						gateway: {
 							type: 'openclaw',
+							controlAuth: {
+								mode: 'token',
+								secret: 'OPENCLAW_GATEWAY_TOKEN',
+							},
 							imageProfile: 'openclaw',
 							memory: '2G',
 							cpus: 2,
@@ -1594,7 +1614,50 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Unrecognized key.*controllerAuth/u);
 	});
 
-	test('rejects OpenClaw zones without the gateway token secret', async () => {
+	test('loads OpenClaw control auth from a configured zone secret pointer', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].gateway.controlAuth = {
+			mode: 'token',
+			secret: 'CUSTOM_GATEWAY_TOKEN',
+		};
+		delete config.zones[0].secrets.OPENCLAW_GATEWAY_TOKEN;
+		config.zones[0].secrets.CUSTOM_GATEWAY_TOKEN = {
+			source: 'environment',
+			envVar: 'CUSTOM_GATEWAY_TOKEN',
+			injection: 'env',
+			audience: 'gateway',
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-openclaw-control-auth-custom-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			zones: [
+				{
+					gateway: {
+						controlAuth: {
+							mode: 'token',
+							secret: 'CUSTOM_GATEWAY_TOKEN',
+						},
+					},
+				},
+			],
+		});
+	});
+
+	test('rejects OpenClaw zones without a control auth pointer', async () => {
+		const config = createValidSystemConfigInput();
+		delete config.zones[0].gateway.controlAuth;
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-openclaw-control-auth-pointer-missing-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/controlAuth/u);
+	});
+
+	test('rejects OpenClaw zones without the configured control auth secret', async () => {
 		const config = createValidSystemConfigInput();
 		delete config.zones[0].secrets.OPENCLAW_GATEWAY_TOKEN;
 		const configPath = await writeSystemConfigForTest(
@@ -1841,6 +1904,10 @@ describe('loadSystemConfig', () => {
 						id: 'shravan',
 						gateway: {
 							type: 'openclaw',
+							controlAuth: {
+								mode: 'token',
+								secret: 'OPENCLAW_GATEWAY_TOKEN',
+							},
 							imageProfile: 'openclaw',
 							memory: '2G',
 							cpus: 2,
@@ -2208,6 +2275,10 @@ describe('loadSystemConfig', () => {
 				id: 'shravan',
 				gateway: {
 					type: 'openclaw',
+					controlAuth: {
+						mode: 'token',
+						secret: 'OPENCLAW_GATEWAY_TOKEN',
+					},
 					imageProfile: 'missing-openclaw',
 					memory: '2G',
 					cpus: 2,

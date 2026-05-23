@@ -31,6 +31,10 @@ describe('resolveLeaseWorkMountDir', () => {
 			egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			gateway: {
 				type: 'openclaw',
+				controlAuth: {
+					mode: 'token',
+					secret: 'OPENCLAW_GATEWAY_TOKEN',
+				},
 				imageProfile: 'openclaw',
 				cpus: 2,
 				memory: '2G',

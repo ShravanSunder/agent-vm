@@ -71,6 +71,10 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 				egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),
 				gateway: {
 					type: 'openclaw',
+					controlAuth: {
+						mode: 'token',
+						secret: 'OPENCLAW_GATEWAY_TOKEN',
+					},
 					imageProfile: 'openclaw',
 					cpus: 2,
 					memory: '2G',
@@ -1732,6 +1736,10 @@ describe('runAgentVmCli', () => {
 							})),
 							gateway: {
 								type: 'openclaw',
+								controlAuth: {
+									mode: 'token',
+									secret: 'OPENCLAW_GATEWAY_TOKEN',
+								},
 								imageProfile: 'openclaw',
 								cpus: 2,
 								memory: '2G',
@@ -2039,6 +2047,10 @@ describe('runAgentVmCli', () => {
 						})),
 						gateway: {
 							type: 'openclaw',
+							controlAuth: {
+								mode: 'token',
+								secret: 'OPENCLAW_GATEWAY_TOKEN',
+							},
 							imageProfile: 'openclaw',
 							cpus: 2,
 							memory: '2G',
@@ -2790,6 +2802,10 @@ describe('runAgentVmCli', () => {
 							})),
 							gateway: {
 								type: 'openclaw',
+								controlAuth: {
+									mode: 'token',
+									secret: 'OPENCLAW_GATEWAY_TOKEN',
+								},
 								imageProfile: 'openclaw',
 								cpus: 2,
 								memory: '2G',
@@ -2953,6 +2969,10 @@ describe('runAgentVmCli', () => {
 							})),
 							gateway: {
 								type: 'openclaw',
+								controlAuth: {
+									mode: 'token',
+									secret: 'OPENCLAW_GATEWAY_TOKEN',
+								},
 								imageProfile: 'openclaw',
 								cpus: 2,
 								memory: '2G',

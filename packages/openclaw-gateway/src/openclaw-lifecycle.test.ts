@@ -65,8 +65,13 @@ function createZone(overrides?: {
 	readonly runtimeMediatedSecrets?: GatewayZoneConfig['runtimeMediatedSecrets'];
 	readonly runtimePluginConfigs?: GatewayZoneConfig['runtimePluginConfigs'];
 	readonly withoutAuthProfilesRef?: boolean;
+	readonly secrets?: GatewayZoneConfig['secrets'];
 }): GatewayZoneConfig {
 	const baseGateway: OpenClawGatewayConfig = {
+		controlAuth: {
+			mode: 'token',
+			secret: 'OPENCLAW_GATEWAY_TOKEN',
+		},
 		cpus: 2,
 		config: '/host/config/shravan/openclaw.json',
 		memory: '2G',
@@ -97,7 +102,7 @@ function createZone(overrides?: {
 		},
 		id: 'shravan',
 		...(overrides?.mcpPortal ? { mcpPortal: overrides.mcpPortal } : {}),
-		secrets: {
+		secrets: overrides?.secrets ?? {
 			DISCORD_BOT_TOKEN: {
 				injection: 'env',
 				audience: 'gateway',
@@ -140,7 +145,7 @@ describe('openclawLifecycle', () => {
 			);
 		});
 
-		it('writes effective auth and SSH admin token files from the fixed gateway token secret', async () => {
+		it('writes effective auth and SSH admin token files from the default gateway token secret', async () => {
 			const tempDirectory = await mkdtemp(
 				path.join(os.tmpdir(), 'openclaw-lifecycle-gateway-token-'),
 			);
@@ -208,6 +213,86 @@ describe('openclawLifecycle', () => {
 			const tokenEnvFile = await readFile(gatewayTokenEnvFilePath, 'utf8');
 			expect(tokenEnvFile).toContain('OPENCLAW_GATEWAY_TOKEN');
 			expect(tokenEnvFile).not.toContain('DISCORD_BOT_TOKEN');
+		});
+
+		it('writes effective auth and SSH admin token files from the configured control auth secret', async () => {
+			const tempDirectory = await mkdtemp(
+				path.join(os.tmpdir(), 'openclaw-lifecycle-custom-gateway-token-'),
+			);
+			createdDirectories.push(tempDirectory);
+			const configDirectory = path.join(tempDirectory, 'config');
+			await mkdir(configDirectory, { recursive: true });
+			await writeFile(
+				path.join(configDirectory, 'openclaw.json'),
+				JSON.stringify({ gateway: { bind: 'loopback' } }, null, 2),
+				'utf8',
+			);
+			const zone = createZone({
+				gateway: {
+					config: path.join(configDirectory, 'openclaw.json'),
+					controlAuth: {
+						mode: 'token',
+						secret: 'CUSTOM_GATEWAY_TOKEN',
+					},
+					rawEnvSecrets: [],
+					stateDir: path.join(tempDirectory, 'state'),
+					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
+				},
+				secrets: {
+					CUSTOM_GATEWAY_TOKEN: {
+						injection: 'env',
+						audience: 'gateway',
+						source: '1password',
+						ref: 'op://vault/item/custom-gateway-token',
+					},
+				},
+			});
+			const secretResolver: SecretResolver = {
+				resolve: async (secretRef) => {
+					if (secretRef.ref === 'op://vault/item/auth-profiles') {
+						return '{"profiles":["main"]}';
+					}
+					if (secretRef.ref === 'op://vault/item/custom-gateway-token') {
+						return 'resolved-custom-gateway-token';
+					}
+					throw new Error(`Unexpected ref: ${secretRef.ref}`);
+				},
+				resolveAll: async () => ({}),
+			};
+
+			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
+			const effectiveOpenClawConfigContent = await readFile(
+				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
+				'utf8',
+			);
+			expect(JSON.parse(effectiveOpenClawConfigContent)).toMatchObject({
+				gateway: {
+					auth: {
+						token: {
+							id: 'CUSTOM_GATEWAY_TOKEN',
+							provider: 'default',
+							source: 'env',
+						},
+					},
+				},
+			});
+
+			const processSpec = openclawLifecycle.buildProcessSpec(zone, {
+				CUSTOM_GATEWAY_TOKEN: 'custom-gateway-token',
+			});
+			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory, {
+				...process.env,
+				CUSTOM_GATEWAY_TOKEN: 'custom-gateway-token',
+			});
+			const gatewayTokenEnvFilePath = path.join(
+				tempDirectory,
+				'run',
+				'openclaw',
+				'gateway-token.env',
+			);
+			const tokenEnvFile = await readFile(gatewayTokenEnvFilePath, 'utf8');
+			expect(tokenEnvFile).toContain('CUSTOM_GATEWAY_TOKEN');
+			expect(tokenEnvFile).not.toContain('OPENCLAW_GATEWAY_TOKEN');
 		});
 
 		it('builds a login command for a given provider', () => {

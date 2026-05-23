@@ -463,9 +463,14 @@ support `environment`, `1password`, and `config` sources. Inline `config`
 values here are plaintext OpenClaw auth profiles and should be limited to local
 or test deployments.
 
-`OPENCLAW_GATEWAY_TOKEN` is the gateway env secret OpenClaw uses to authenticate
-controller API calls. That secret must exist in `zone.secrets` with
-`injection: "env"` and `audience: "gateway"`.
+`gateway.controlAuth` is required for OpenClaw gateways and names the
+gateway env secret OpenClaw uses to authenticate controller API calls. The
+referenced secret must exist in `zone.secrets` with `injection: "env"` and
+`audience: "gateway"`. New scaffolds use:
+
+```json
+"controlAuth": { "mode": "token", "secret": "OPENCLAW_GATEWAY_TOKEN" }
+```
 
 `gateway.rawEnvSecrets` is the explicit escape hatch for other OpenClaw secrets
 that must reach the gateway VM as raw environment variables. Other provider or
@@ -611,8 +616,8 @@ always mediated. `source: "environment"` is allowed for a Tool VM secret only
 when `injection` is `http-mediation`; in that case the controller reads the
 environment variable and Gondolin mediates the value.
 
-OpenClaw zones allow raw gateway env secrets only when the secret name is
-`OPENCLAW_GATEWAY_TOKEN` or is listed in `gateway.rawEnvSecrets`. This
+OpenClaw zones allow raw gateway env secrets only when the secret is referenced
+by `gateway.controlAuth.secret` or is listed in `gateway.rawEnvSecrets`. This
 keeps provider API tokens on the mediated path by default and makes every
 raw-env exception visible in deployment config.
 
@@ -715,9 +720,10 @@ The schema rejects:
 - Zone secrets without explicit `audience`.
 - Env-injected zone secrets with non-gateway audience or declared `hosts`.
 - OpenClaw env-injected zone secrets not listed in `gateway.rawEnvSecrets`,
-  except `OPENCLAW_GATEWAY_TOKEN`.
+  except the configured `gateway.controlAuth.secret`.
 - Mediated secret hosts not declared in `egressHosts` for the same audience.
-- OpenClaw zones without a gateway-only env secret named `OPENCLAW_GATEWAY_TOKEN`.
+- OpenClaw zones without `gateway.controlAuth` or without the referenced
+  gateway-only env secret.
 - Zones referencing missing gateway image profiles.
 - Zone gateway type mismatches against the selected image profile.
 - OpenClaw zones declaring `runtimeAuthHints`.
