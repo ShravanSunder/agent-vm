@@ -72,7 +72,6 @@ describe('runControllerDestroy', () => {
 						config: './config/shravan/openclaw.json',
 						stateDir,
 						zoneFilesDir,
-						controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 					},
 					secrets: {
 						OPENCLAW_GATEWAY_TOKEN: {

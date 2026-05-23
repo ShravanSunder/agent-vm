@@ -110,7 +110,7 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	const secretEnvEnabled = sshResponse.secretEnvEnabled === true;
 	if (!secretEnvEnabled) {
 		throw new Error(
-			'Controller did not enable the gateway token for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured gateway.controllerAuth.secret.',
+			'Controller did not enable OPENCLAW_GATEWAY_TOKEN for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured OPENCLAW_GATEWAY_TOKEN secret.',
 		);
 	}
 	const secretEnvRequest: SshSecretEnvRequest = requestAllSecrets ? 'all-secrets' : 'gateway-token';

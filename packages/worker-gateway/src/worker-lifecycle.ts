@@ -54,6 +54,9 @@ export const workerLifecycle: GatewayLifecycle = {
 			},
 			mediatedSecrets,
 			rootfsMode: 'cow',
+			...(zone.gateway.runtimeRootfsSize
+				? { runtimeRootfsSize: zone.gateway.runtimeRootfsSize }
+				: {}),
 			sessionLabel: buildGatewaySessionLabel(projectNamespace, zone.id),
 			tcpHosts: {
 				[`${controllerVmHost}:18800`]: `127.0.0.1:${controllerPort}`,

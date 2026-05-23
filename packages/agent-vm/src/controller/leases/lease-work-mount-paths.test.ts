@@ -38,7 +38,6 @@ describe('resolveLeaseWorkMountDir', () => {
 				port: 18791,
 				stateDir,
 				zoneFilesDir,
-				controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 			},
 			id: 'shravan',
 			secrets: {

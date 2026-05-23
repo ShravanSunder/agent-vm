@@ -61,7 +61,6 @@ function createSystemConfig(
 					config: openClawConfigPath,
 					stateDir: stateDirectory,
 					zoneFilesDir: zoneFilesDirectory,
-					controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 				},
 				secrets: {
 					OPENCLAW_GATEWAY_TOKEN: {
@@ -100,6 +99,7 @@ function createGatewayVmMock(
 	| 'enableSsh'
 	| 'exec'
 	| 'fs'
+	| 'getHostPid'
 	| 'getVmInstance'
 	| 'id'
 	| 'setIngressRoutes'
@@ -132,6 +132,7 @@ function createGatewayVmMock(
 			return createManagedExecProcessStub();
 		},
 		fs: createManagedVmFsStub(),
+		getHostPid: () => null,
 		getVmInstance: () => ({}) as ManagedVmInstance,
 		id: 'gateway-vm-live-restart',
 		setIngressRoutes: () => {},
@@ -228,6 +229,7 @@ describe('live integration: controller restart persistence', () => {
 						fs: createManagedVmFsStub(),
 						id: 'tool-vm-live-restart',
 						setIngressRoutes: vi.fn(),
+						getHostPid: () => null,
 						getVmInstance: vi.fn(),
 					})),
 					createSecretResolver: async () => ({

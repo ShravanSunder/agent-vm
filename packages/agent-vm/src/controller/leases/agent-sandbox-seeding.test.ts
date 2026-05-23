@@ -44,7 +44,6 @@ function createOpenClawZone(rootPath: string): SystemConfig['zones'][number] {
 			config: path.join(rootPath, 'openclaw.json'),
 			stateDir: path.join(rootPath, 'state'),
 			zoneFilesDir: path.join(rootPath, 'zone-files'),
-			controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 			authProfilesByAgent: {},
 		},
 		secrets: {

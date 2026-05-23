@@ -198,11 +198,10 @@ Returns:
 }
 ```
 
-The OpenClaw lifecycle keeps the secret named by `gateway.controllerAuth.secret`
-as a gateway environment secret. The scaffold uses `OPENCLAW_GATEWAY_TOKEN`,
-but the name is deployment config, not a lifecycle constant. The effective
-config references it through OpenClaw's env SecretRef shape instead of storing
-the plaintext token in `<stateDir>/effective-openclaw.json`. Other raw
+The OpenClaw lifecycle keeps `OPENCLAW_GATEWAY_TOKEN` as a gateway environment
+secret. The effective config references it through OpenClaw's env SecretRef
+shape instead of storing the plaintext token in
+`<stateDir>/effective-openclaw.json`. Other raw
 environment secrets must be named explicitly in `gateway.rawEnvSecrets`;
 provider API tokens should use `http-mediation` unless the integration cannot
 be mediated at the HTTP boundary. Generated runtime env secrets, such as
@@ -302,11 +301,11 @@ toolchain setup is not known.
 
 | Secret | Resolved On | Enters VM? | Mechanism |
 |--------|------------|------------|-----------|
-| Zone secret (injection: env, audience: gateway) | Host | Gateway VM only | VM environment variable; OpenClaw requires `gateway.controllerAuth.secret` or `gateway.rawEnvSecrets` |
+| Zone secret (injection: env, audience: gateway) | Host | Gateway VM only | VM environment variable; OpenClaw requires `OPENCLAW_GATEWAY_TOKEN` or `gateway.rawEnvSecrets` |
 | Zone secret (injection: http-mediation, audience: gateway/both) | Host | Placeholder only | Gateway VM Gondolin proxy injects into HTTP requests |
 | Zone secret (injection: http-mediation, audience: tool-vm/both) | Host | Placeholder only | Tool VM Gondolin proxy injects into HTTP requests |
 | Worker runtimeAuthHints for mediated secrets | Host | Placeholder name only | Generated worker runtime instructions under `/agent-vm` |
-| gateway.controllerAuth.secret | Host | Gateway VM only | Env SecretRef plus runtime-only `/run/openclaw/secrets.env` and token-only `/run/openclaw/gateway-token.env`; allowed raw env by default |
+| OPENCLAW_GATEWAY_TOKEN | Host | Gateway VM only | Env SecretRef plus runtime-only `/run/openclaw/secrets.env` and token-only `/run/openclaw/gateway-token.env`; allowed raw env by default |
 | githubToken | Host | No | Controller-side git push only |
 | gateway.authProfilesByAgent | Host | Indirectly | Per-agent profile written to host disk; VM reads via VFS mount |
 | gateway.authProfilesRef | Host | Indirectly | Legacy main-agent fallback written to host disk; VM reads via VFS mount |

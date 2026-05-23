@@ -47,7 +47,6 @@ const systemConfig = {
 				stateDir: './state/shravan',
 				ssh: { secretEnv: 'explicit' },
 				zoneFilesDir: './zone-files/shravan',
-				controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {
@@ -75,7 +74,6 @@ const systemConfig = {
 				stateDir: './state/alevtina',
 				ssh: { secretEnv: 'explicit' },
 				zoneFilesDir: './zone-files/alevtina',
-				controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 			},
 			secrets: {
 				OPENCLAW_GATEWAY_TOKEN: {

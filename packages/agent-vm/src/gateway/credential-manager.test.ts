@@ -50,7 +50,6 @@ const systemConfig = {
 				config: './config/shravan/openclaw.json',
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
-				controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 			},
 			secrets: {
 				ANTHROPIC_API_KEY: {

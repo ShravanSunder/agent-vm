@@ -1,8 +1,8 @@
 diff --git a/dist/src/qemu/net.js b/dist/src/qemu/net.js
-index b9eff8c4267d7c70170ff87951e971c938adce76..f25bcb883884891b9267424842e1eb01d790155f 100644
+index 096b146191c6f2d554a53ea2df43c5fe24405f36..533ecb87bb8818ba7387bdc55f74c562b4571730 100644
 --- a/dist/src/qemu/net.js
 +++ b/dist/src/qemu/net.js
-@@ -253,19 +253,16 @@ export class QemuNetworkBackend extends EventEmitter {
+@@ -290,19 +290,16 @@ export class QemuNetworkBackend extends EventEmitter {
                  onTcpResume: (message) => this.handleTcpResume(message),
              },
              allowTcpFlow: (info) => {
@@ -30,7 +30,7 @@ index b9eff8c4267d7c70170ff87951e971c938adce76..f25bcb883884891b9267424842e1eb01
                  }
                  if (info.protocol === "ssh") {
                      const allowed = isSshFlowAllowed(this, info.key, info.dstIP, info.dstPort);
-@@ -275,7 +272,6 @@ export class QemuNetworkBackend extends EventEmitter {
+@@ -312,7 +309,6 @@ export class QemuNetworkBackend extends EventEmitter {
                          }
                          return false;
                      }
@@ -38,7 +38,7 @@ index b9eff8c4267d7c70170ff87951e971c938adce76..f25bcb883884891b9267424842e1eb01
                      if (session) {
                          session.protocol = "ssh";
                      }
-@@ -287,7 +283,6 @@ export class QemuNetworkBackend extends EventEmitter {
+@@ -324,7 +320,6 @@ export class QemuNetworkBackend extends EventEmitter {
                      }
                      return false;
                  }

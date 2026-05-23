@@ -70,7 +70,6 @@ function createSystemConfig(
 						port: 18791,
 						stateDir,
 						zoneFilesDir: './zone-files/shravan',
-						controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 						authProfilesByAgent,
 					},
 					id: 'shravan',

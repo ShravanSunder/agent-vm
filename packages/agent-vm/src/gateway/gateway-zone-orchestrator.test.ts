@@ -187,9 +187,9 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 						port: 18791,
 						config: await createGatewayConfigPath(),
 						rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN', 'DISCORD_BOT_TOKEN'],
+						runtimeRootfsSize: '12G',
 						stateDir: path.join(workingDirectoryPath, 'state', 'shravan'),
 						zoneFilesDir: path.join(workingDirectoryPath, 'zone-files', 'shravan'),
-						controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 					},
 					secrets: {
 						PERPLEXITY_API_KEY: {
@@ -255,6 +255,7 @@ function createVmInstanceStub(pid: number = 28282): ManagedVmInstance {
 		}),
 		exec: () => createManagedExecProcessStub(),
 		fs: createManagedVmFsStub(),
+		getHostPid: () => pid,
 		id: `vm-instance-${pid}`,
 		server: {
 			controller: {
@@ -307,6 +308,7 @@ describe('startGatewayZone', () => {
 			enableSsh: enableSshMock,
 			exec: execMock,
 			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28282),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28282)),
 			setIngressRoutes: setIngressRoutesMock,
 		};
@@ -374,6 +376,7 @@ describe('startGatewayZone', () => {
 				imagePath: '/tmp/gateway-image',
 				memory: '2G',
 				rootfsMode: 'cow',
+				runtimeRootfsSize: '12G',
 				sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 				secrets: {
 					PERPLEXITY_API_KEY: {
@@ -488,6 +491,12 @@ describe('startGatewayZone', () => {
 		).rejects.toThrow("OpenClaw zone 'shravan' Tool VM requirements failed");
 
 		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledWith({
+			legacyRecordDefaults: {
+				configPath: systemConfig.systemConfigPath,
+				controllerPort: 18800,
+			},
+			mode: 'in-process-recovery',
+			projectNamespace: 'claw-tests-a1b2c3d4',
 			stateDir: zone.gateway.stateDir,
 			zoneId: 'shravan',
 		});
@@ -502,6 +511,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28286),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28286)),
 			setIngressRoutes: vi.fn(),
 		};
@@ -570,6 +580,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28290),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28290)),
 			setIngressRoutes: vi.fn(),
 		};
@@ -641,6 +652,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28290),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28290)),
 			setIngressRoutes: vi.fn(),
 		};
@@ -717,6 +729,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28291),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
 			setIngressRoutes: vi.fn(),
 		};
@@ -776,6 +789,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28291),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28291)),
 			setIngressRoutes: vi.fn(),
 		};
@@ -842,6 +856,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28292),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28292)),
 			setIngressRoutes: vi.fn(),
 		};
@@ -885,6 +900,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28286),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28286)),
 			setIngressRoutes: vi.fn(),
 		};
@@ -998,6 +1014,7 @@ describe('startGatewayZone', () => {
 					enableSsh: vi.fn(),
 					exec: execMock,
 					fs: createManagedVmFsStub(),
+					getHostPid: vi.fn(() => 12345),
 					getVmInstance: vi.fn(() => createVmInstanceStub(12345)),
 					id: 'worker-vm-123',
 					setIngressRoutes: setIngressRoutesMock,
@@ -1023,6 +1040,7 @@ describe('startGatewayZone', () => {
 			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
 			exec: execMock,
 			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28283),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28283)),
 			setIngressRoutes: setIngressRoutesMock,
 		};
@@ -1084,6 +1102,7 @@ describe('startGatewayZone', () => {
 			exec: execMock,
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
+			getHostPid: vi.fn(() => 28284),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28284)),
 		};
 		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
@@ -1146,6 +1165,7 @@ describe('startGatewayZone', () => {
 			exec: execMock,
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
+			getHostPid: vi.fn(() => 28285),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28285)),
 		};
 
@@ -1197,6 +1217,7 @@ describe('startGatewayZone', () => {
 			exec: execMock,
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
+			getHostPid: vi.fn(() => 28285),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28285)),
 		};
 
@@ -1241,6 +1262,7 @@ describe('startGatewayZone', () => {
 			),
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
+			getHostPid: vi.fn(() => 28285),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28285)),
 		};
 
@@ -1285,6 +1307,7 @@ describe('startGatewayZone', () => {
 				.mockReturnValue(createManagedExecProcessStub({ stdout: '500' })),
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
+			getHostPid: vi.fn(() => 28286),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28286)),
 		};
 
@@ -1323,6 +1346,7 @@ describe('startGatewayZone', () => {
 			exec: execMock,
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
+			getHostPid: vi.fn(() => 28287),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28287)),
 		};
 
@@ -1386,6 +1410,7 @@ describe('startGatewayZone', () => {
 			),
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
+			getHostPid: vi.fn(() => 28287),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28287)),
 		};
 
@@ -1450,6 +1475,7 @@ describe('startGatewayZone', () => {
 			exec: execMock,
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
+			getHostPid: vi.fn(() => 28288),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28288)),
 		};
 
@@ -1498,6 +1524,7 @@ describe('startGatewayZone', () => {
 			exec: execMock,
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
+			getHostPid: vi.fn(() => 28289),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28289)),
 		};
 
@@ -1550,6 +1577,7 @@ describe('startGatewayZone', () => {
 			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
 			fs: createManagedVmFsStub(),
 			setIngressRoutes: vi.fn(),
+			getHostPid: vi.fn(() => 28290),
 			getVmInstance: vi.fn(() => createVmInstanceStub(28290)),
 		};
 

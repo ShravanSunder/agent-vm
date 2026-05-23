@@ -223,9 +223,21 @@ const generatedOpenClawToolVmSystemConfigSchema = generatedSystemConfigSchema.ex
 	}),
 	tcpPool: z.object({ basePort: z.number(), size: z.number() }),
 	toolVmProfiles: z.object({
-		standard: z.object({ imageProfile: z.string() }).passthrough(),
+		standard: z
+			.object({
+				imageProfile: z.string(),
+				runtimeRootfsSize: z.string(),
+			})
+			.passthrough(),
 	}),
-	zones: z.tuple([z.object({ defaultToolVmProfile: z.string() }).passthrough()]),
+	zones: z.tuple([
+		z
+			.object({
+				defaultToolVmProfile: z.string(),
+				gateway: z.object({ runtimeRootfsSize: z.string() }).passthrough(),
+			})
+			.passthrough(),
+	]),
 });
 
 const generatedManagedImageOverlaySchema = z.object({
@@ -234,6 +246,12 @@ const generatedManagedImageOverlaySchema = z.object({
 	extraOpenClawPackages: z.array(z.string()),
 	copy: z.array(z.unknown()),
 	runAfterBase: z.array(z.string()),
+});
+
+const generatedBuildConfigSchema = z.object({
+	rootfs: z.object({
+		sizeMb: z.number(),
+	}),
 });
 
 describe('scaffoldAgentVmProject', () => {
@@ -1228,9 +1246,6 @@ describe('scaffoldAgentVmProject', () => {
 			},
 		});
 		expect(config.zones[0].gateway.ssh).toEqual({ secretEnv: 'explicit' });
-		expect(config.zones[0].gateway.controllerAuth).toEqual({
-			secret: 'OPENCLAW_GATEWAY_TOKEN',
-		});
 		expect(config.zones[0].gateway.rawEnvSecrets).toEqual(['AGENT_VM_ZONE_GIT_TOKEN']);
 	});
 
@@ -1302,10 +1317,26 @@ describe('scaffoldAgentVmProject', () => {
 		expect(config.zones[0].defaultToolVmProfile).toBe('standard');
 		expect(config.tcpPool).toEqual({ basePort: 19000, size: 12 });
 		expect(config.toolVmProfiles.standard.imageProfile).toBe('default');
+		expect(config.toolVmProfiles.standard.runtimeRootfsSize).toBe('16G');
+		expect(config.zones[0].gateway.runtimeRootfsSize).toBe('12G');
 		expect(config.toolVmProfiles.standard).not.toHaveProperty('workspaceRoot');
 		expect(config.imageProfiles.toolVms.default.buildConfig).toBe(
 			'../vm-images/tool-vms/default/build-config.jsonc',
 		);
+		expect(
+			generatedBuildConfigSchema.parse(
+				await readGeneratedJsonc(
+					path.join(targetDir, 'vm-images', 'gateways', 'openclaw', 'build-config.jsonc'),
+				),
+			).rootfs.sizeMb,
+		).toBe(4096);
+		expect(
+			generatedBuildConfigSchema.parse(
+				await readGeneratedJsonc(
+					path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'build-config.jsonc'),
+				),
+			).rootfs.sizeMb,
+		).toBe(4096);
 		expect(config.imageProfiles.toolVms.default.source).toEqual({
 			kind: 'managedBase',
 			base: 'tool-vm',

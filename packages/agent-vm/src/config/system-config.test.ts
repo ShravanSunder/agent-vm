@@ -104,7 +104,6 @@ function createValidSystemConfigInput(): ValidSystemConfigInput {
 					port: 18791,
 					config: './shravan/openclaw.json',
 					stateDir: '../state/shravan',
-					controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 					zoneFilesDir: '../zone-files/shravan',
 				},
 				secrets: {
@@ -181,6 +180,23 @@ describe('loadSystemConfig', () => {
 		expect(loadedConfig.systemConfigPath).toBe(configPath);
 		expect(loadedConfig.host.controllerPort).toBe(18800);
 		expect(loadedConfig.zones[0]?.id).toBe('shravan');
+	});
+
+	test('loads optional gateway and Tool VM runtime rootfs sizes', async () => {
+		const config = createValidSystemConfigInput();
+		config.zones[0].gateway.runtimeRootfsSize = '12G';
+		const standardToolVmProfile = config.toolVmProfiles?.standard;
+		if (!isRecord(standardToolVmProfile)) {
+			throw new Error('Expected standard Tool VM profile fixture.');
+		}
+		standardToolVmProfile.runtimeRootfsSize = '16G';
+
+		const configPath = await writeSystemConfigForTest('agent-vm-runtime-rootfs-', config);
+
+		const loaded = await loadSystemConfig(configPath);
+
+		expect(loaded.zones[0]?.gateway.runtimeRootfsSize).toBe('12G');
+		expect(loaded.toolVmProfiles.standard?.runtimeRootfsSize).toBe('16G');
 	});
 
 	test('loads managed base image profiles', async () => {
@@ -354,11 +370,7 @@ describe('loadSystemConfig', () => {
 
 	test('rejects worker zones declaring agents or MCP Portal references', async () => {
 		const config = createValidSystemConfigInput();
-		const {
-			controllerAuth: _controllerAuth,
-			zoneFilesDir: _zoneFilesDir,
-			...workerGateway
-		} = config.zones[0].gateway;
+		const { zoneFilesDir: _zoneFilesDir, ...workerGateway } = config.zones[0].gateway;
 		config.zones[0] = {
 			...config.zones[0],
 			agents: [{ id: 'worker-agent' }],
@@ -576,7 +588,6 @@ describe('loadSystemConfig', () => {
 				port: 18791,
 				config: './shravan/worker.json',
 				stateDir: '../state/shravan',
-				controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 				zoneFilesDir: '../zone-files/shravan',
 			},
 		};
@@ -982,7 +993,6 @@ describe('loadSystemConfig', () => {
 							port: 18791,
 							config: './shravan/openclaw.json',
 							stateDir: '../state/shravan',
-							controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 							zoneFilesDir: '../zone-files/shravan',
 						},
 						secrets: {
@@ -1063,7 +1073,6 @@ describe('loadSystemConfig', () => {
 							port: 18791,
 							config: './shravan/openclaw.json',
 							stateDir: '../state/shravan',
-							controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 							zoneFilesDir: '../zone-files/shravan',
 						},
 						secrets: {
@@ -1527,51 +1536,20 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/egressHosts/u);
 	});
 
-	test('loads OpenClaw controller auth from a configured env secret name', async () => {
+	test('rejects legacy OpenClaw controller auth configuration', async () => {
 		const config = createValidSystemConfigInput();
-		const zone = config.zones[0];
-		zone.gateway.controllerAuth = { secret: 'CUSTOM_GATEWAY_CONTROLLER_TOKEN' };
-		delete zone.secrets.OPENCLAW_GATEWAY_TOKEN;
-		zone.secrets.CUSTOM_GATEWAY_CONTROLLER_TOKEN = {
-			source: 'environment',
-			envVar: 'CUSTOM_GATEWAY_CONTROLLER_TOKEN',
-			injection: 'env',
-			audience: 'gateway',
-		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-openclaw-custom-controller-auth-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
-			zones: [
-				{
-					gateway: {
-						controllerAuth: { secret: 'CUSTOM_GATEWAY_CONTROLLER_TOKEN' },
-					},
-					secrets: {
-						CUSTOM_GATEWAY_CONTROLLER_TOKEN: {
-							injection: 'env',
-							audience: 'gateway',
-						},
-					},
-				},
-			],
+		Object.assign(config.zones[0].gateway, {
+			controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 		});
-	});
-
-	test('rejects OpenClaw zones without controller auth configuration', async () => {
-		const config = createValidSystemConfigInput();
-		delete config.zones[0].gateway.controllerAuth;
 		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-openclaw-controller-auth-missing-',
+			'agent-vm-system-openclaw-controller-auth-legacy-',
 			config,
 		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/controllerAuth/u);
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Unrecognized key.*controllerAuth/u);
 	});
 
-	test('rejects OpenClaw zones without the configured controller auth secret', async () => {
+	test('rejects OpenClaw zones without the gateway token secret', async () => {
 		const config = createValidSystemConfigInput();
 		delete config.zones[0].secrets.OPENCLAW_GATEWAY_TOKEN;
 		const configPath = await writeSystemConfigForTest(
@@ -1579,9 +1557,7 @@ describe('loadSystemConfig', () => {
 			config,
 		);
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(
-			/controllerAuth.*OPENCLAW_GATEWAY_TOKEN/u,
-		);
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/OPENCLAW_GATEWAY_TOKEN/u);
 	});
 
 	test('rejects OpenClaw gateway token outside gateway env injection', async () => {
@@ -1826,7 +1802,6 @@ describe('loadSystemConfig', () => {
 							port: 18791,
 							config: './shravan/openclaw.json',
 							stateDir: '../state/shravan',
-							controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 							zoneFilesDir: '../zone-files/shravan',
 						},
 						secrets: {
@@ -2127,6 +2102,27 @@ describe('loadSystemConfig', () => {
 		expect(systemConfig.zones[0]).not.toHaveProperty('defaultToolVmProfile');
 	});
 
+	test('does not apply OpenClaw gateway token constraints to worker zones', async () => {
+		const config = createValidSystemConfigInput();
+		const zone = configureFirstZoneAsWorker(config);
+		zone.egressHosts = [{ host: 'api.openai.com', audience: 'gateway' }];
+		zone.secrets.OPENCLAW_GATEWAY_TOKEN = {
+			source: 'environment',
+			envVar: 'OPENCLAW_GATEWAY_TOKEN',
+			injection: 'http-mediation',
+			audience: 'gateway',
+			hosts: ['api.openai.com'],
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-worker-openclaw-token-name-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
+			zones: [{ id: zone.id }],
+		});
+	});
+
 	test('rejects openclaw zones without a tool VM profile', async () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
@@ -2173,7 +2169,6 @@ describe('loadSystemConfig', () => {
 					port: 18791,
 					config: './shravan/openclaw.json',
 					stateDir: '../state/shravan',
-					controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 					zoneFilesDir: '../zone-files/shravan',
 				},
 				secrets: {

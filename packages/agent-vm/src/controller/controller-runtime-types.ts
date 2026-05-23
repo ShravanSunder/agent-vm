@@ -3,6 +3,7 @@ import type { SecretResolver } from '@agent-vm/secret-management';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { deleteGatewayRuntimeRecord } from '../gateway/gateway-runtime-record.js';
 import type { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import type { ControllerRuntimeZoneStatus } from '../operations/controller-status.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
 import type { createControllerService } from './http/controller-http-routes.js';
@@ -14,16 +15,9 @@ import type { ZoneGitToolVmMount } from './zone-git/zone-git-paths.js';
 
 export interface ControllerRuntime {
 	readonly controllerPort: number;
-	readonly zones: readonly {
-		readonly ingress?: {
-			readonly host: string;
-			readonly port: number;
-		};
-		readonly lastError?: string;
-		readonly lifecycleState: 'running' | 'failed' | 'stopped';
-		readonly vmId?: string;
+	readonly zones: readonly (ControllerRuntimeZoneStatus & {
 		readonly zoneId: string;
-	}[];
+	})[];
 	close(): Promise<void>;
 }
 

@@ -52,7 +52,6 @@ const systemConfig = {
 				port: 18791,
 				stateDir: './state/shravan',
 				zoneFilesDir: './zone-files/shravan',
-				controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 			},
 			id: 'shravan',
 			secrets: {
@@ -230,7 +229,7 @@ describe('runSshCommand', () => {
 				systemConfig,
 			}),
 		).rejects.toThrow(
-			'Controller did not enable the gateway token for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured gateway.controllerAuth.secret.',
+			'Controller did not enable OPENCLAW_GATEWAY_TOKEN for this SSH session. Check the zone gateway.ssh.secretEnv policy and configured OPENCLAW_GATEWAY_TOKEN secret.',
 		);
 		expect(enableZoneSsh).toHaveBeenCalledWith('shravan', {
 			secretEnv: 'gateway-token',

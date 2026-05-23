@@ -33,6 +33,7 @@ describe('manual templates', () => {
 			'docs/manual/layout.md',
 			'docs/manual/image-versioning.md',
 			'docs/manual/scope.md',
+			'docs/manual/operations.md',
 			'docs/manual/openclaw.md',
 			'docs/manual/openclaw-defaults.md',
 			'docs/manual/mcp-portal.md',
@@ -228,5 +229,20 @@ describe('manual templates', () => {
 		expect(files.map((file) => file.content).join('\n')).not.toContain('one workspace');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('which workspace');
 		expect(files.map((file) => file.content).join('\n')).not.toContain('allowedHosts');
+	});
+
+	it('documents graceful stop and scoped offline cleanup without broad qemu pkill', () => {
+		const files = buildManualTemplateFiles({
+			defaultZoneId: 'beta',
+			systemConfigPath: 'config/system.jsonc',
+		});
+
+		const operations = files.find((file) => file.relativePath === 'docs/manual/operations.md');
+		expect(operations?.content).toContain('agent-vm controller stop --config config/system.jsonc');
+		expect(operations?.content).toContain(
+			'agent-vm controller cleanup --config config/system.jsonc --zone beta',
+		);
+		expect(operations?.content).toContain('--force');
+		expect(operations?.content).not.toContain('pkill -f qemu-system');
 	});
 });

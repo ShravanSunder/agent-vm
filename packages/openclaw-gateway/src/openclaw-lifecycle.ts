@@ -32,6 +32,7 @@ const openClawGatewayBootLogFileVmPath = `${agentVmLogsDirVmPath}/gateway-boot-l
 const openClawShellEnvFilePath = '/etc/profile.d/openclaw-env.sh';
 const openClawRuntimeSecretsEnvFilePath = '/run/openclaw/secrets.env';
 const openClawGatewayTokenEnvFilePath = '/run/openclaw/gateway-token.env';
+const openClawGatewayTokenEnvVar = 'OPENCLAW_GATEWAY_TOKEN';
 
 interface OpenClawSecretRef {
 	readonly id: string;
@@ -116,7 +117,7 @@ function buildOpenClawBootstrapCommand(
 		secretEnvironmentNames.length === 0
 			? `: > ${openClawRuntimeSecretsEnvFilePath} && `
 			: `{ ${secretEnvironmentNames.map(runtimeSecretLiteralExportCommand).join('; ')}; } > ${openClawRuntimeSecretsEnvFilePath} && `;
-	const gatewayTokenSecretName = zone.gateway.controllerAuth.secret;
+	const gatewayTokenSecretName = openClawGatewayTokenEnvVar;
 	const gatewayTokenFileCommand = secretEnvironmentNames.includes(gatewayTokenSecretName)
 		? `{ ${runtimeSecretLiteralExportCommand(gatewayTokenSecretName)}; } > ${openClawGatewayTokenEnvFilePath} && `
 		: `: > ${openClawGatewayTokenEnvFilePath} && `;
@@ -194,7 +195,7 @@ function assertAllowedOpenClawEnvironmentSecrets(
 		throw new Error(`OpenClaw lifecycle cannot build gateway type '${zone.gateway.type}'.`);
 	}
 	const allowedRawEnvSecrets = new Set([
-		zone.gateway.controllerAuth.secret,
+		openClawGatewayTokenEnvVar,
 		...(zone.gateway.rawEnvSecrets ?? []),
 	]);
 	for (const secretName of Object.keys(environmentSecrets)) {
@@ -452,28 +453,26 @@ async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<vo
 	if (zone.gateway.type !== 'openclaw') {
 		throw new Error(`OpenClaw lifecycle cannot build gateway type '${zone.gateway.type}'.`);
 	}
-	const gatewayTokenSecretName = zone.gateway.controllerAuth.secret;
+	const gatewayTokenSecretName = openClawGatewayTokenEnvVar;
 	const gatewayTokenSecret = zone.secrets[gatewayTokenSecretName];
 	if (!gatewayTokenSecret) {
 		throw new Error(
-			`Zone '${zone.id}' controllerAuth secret '${gatewayTokenSecretName}' is missing. Add an explicit 1Password or environment reference such as 'op://agent-vm/${zone.id}-gateway-auth/password'.`,
+			`Zone '${zone.id}' secret '${gatewayTokenSecretName}' is missing. Add an explicit 1Password or environment reference such as 'op://agent-vm/${zone.id}-gateway-auth/password'.`,
 		);
 	}
 	if (!isSourceAwareSecretReference(gatewayTokenSecret)) {
-		throw new Error(
-			`Zone '${zone.id}' controllerAuth secret '${gatewayTokenSecretName}' has an invalid shape.`,
-		);
+		throw new Error(`Zone '${zone.id}' secret '${gatewayTokenSecretName}' has an invalid shape.`);
 	}
 
 	try {
 		if (gatewayTokenSecret.source === '1password' && !gatewayTokenSecret.ref) {
 			throw new Error(
-				`Zone '${zone.id}' controllerAuth secret '${gatewayTokenSecretName}' is missing 'ref'. Add an explicit 1Password reference such as 'op://agent-vm/${zone.id}-gateway-auth/password'.`,
+				`Zone '${zone.id}' secret '${gatewayTokenSecretName}' is missing 'ref'. Add an explicit 1Password reference such as 'op://agent-vm/${zone.id}-gateway-auth/password'.`,
 			);
 		}
 		if (gatewayTokenSecret.source === 'environment' && !gatewayTokenSecret.envVar) {
 			throw new Error(
-				`Zone '${zone.id}' controllerAuth secret '${gatewayTokenSecretName}' is missing 'envVar'. Add an explicit environment variable name.`,
+				`Zone '${zone.id}' secret '${gatewayTokenSecretName}' is missing 'envVar'. Add an explicit environment variable name.`,
 			);
 		}
 		const openClawGatewayTokenSecretRef: OpenClawSecretRef = {
@@ -603,6 +602,9 @@ export const openclawLifecycle: GatewayLifecycle = {
 				...mediatedSecrets,
 			},
 			rootfsMode: 'cow',
+			...(zone.gateway.runtimeRootfsSize
+				? { runtimeRootfsSize: zone.gateway.runtimeRootfsSize }
+				: {}),
 			sessionLabel: buildGatewaySessionLabelValue(projectNamespace, zone.id),
 			tcpHosts: buildGatewayTcpHosts(zone, controllerPort, tcpPool),
 			vfsMounts: {

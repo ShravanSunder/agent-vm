@@ -6,6 +6,7 @@ import { command, flag, positional, string, subcommands } from 'cmd-ts';
 
 import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
 import type { LoadedSystemConfig } from '../../config/system-config.js';
+import { runControllerOfflineCleanup } from '../../operations/controller-offline-cleanup.js';
 import { type CliDependencies, type CliIo, requireZone } from '../agent-vm-cli-support.js';
 import { runControllerOperationCommand } from '../controller-operation-commands.js';
 import { runLeaseCommand } from '../lease-commands.js';
@@ -125,12 +126,15 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 						},
 						{ runTask },
 					);
+					const startedZone = runtime.zones.find(
+						(runtimeZone) => runtimeZone.zoneId === selectedZone.id,
+					);
 					io.stdout.write(
 						`${JSON.stringify(
 							{
 								controllerPort: runtime.controllerPort,
-								ingress: runtime.gateway?.ingress ?? null,
-								vmId: runtime.gateway?.vm.id ?? null,
+								ingress: startedZone?.gateway?.ingress ?? null,
+								vmId: startedZone?.gateway?.vm.id ?? null,
 								zoneId: selectedZone.id,
 							},
 							null,
@@ -142,6 +146,38 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 			stop: createControllerOperationSubcommand(io, dependencies, {
 				description: 'Stop the controller',
 				name: 'stop',
+			}),
+			cleanup: command({
+				name: 'cleanup',
+				description: 'Clean up recorded gateway VM processes without contacting the controller',
+				args: {
+					config: createConfigOption(),
+					force: flag({
+						long: 'force',
+						description: 'Allow cleanup even if the controller health endpoint is reachable',
+					}),
+					zone: createZoneOption(),
+				},
+				handler: async ({ config, force, zone }) => {
+					const systemConfig = await loadSystemConfigFromOption(config, dependencies);
+					const selectedZone = requireZone(systemConfig, zone);
+					const result = await (
+						dependencies.runControllerOfflineCleanup ?? runControllerOfflineCleanup
+					)({
+						force,
+						systemConfig,
+						zoneId: selectedZone.id,
+					});
+					io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+					const cleanupWarnings = result.results
+						.map((cleanupResult) => cleanupResult.cleanupWarning)
+						.filter((cleanupWarning): cleanupWarning is string => cleanupWarning !== undefined);
+					if (cleanupWarnings.length > 0) {
+						throw new Error(
+							`Controller cleanup completed with warnings: ${cleanupWarnings.join('; ')}`,
+						);
+					}
+				},
 			}),
 			status: createControllerOperationSubcommand(io, dependencies, {
 				description: 'Show controller status',

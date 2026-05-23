@@ -158,11 +158,15 @@ export function createOpenClawZoneRuntime(
 		},
 		getSnapshot: () => {
 			if (gateway) {
+				const hostPid = gateway.vm.getHostPid();
 				return {
 					...(bootedAt ? { bootedAt } : {}),
 					gateway: {
 						ingress: gateway.ingress,
-						vm: { id: gateway.vm.id },
+						vm: {
+							...(hostPid === undefined || hostPid === null ? {} : { hostPid }),
+							id: gateway.vm.id,
+						},
 					},
 					lifecycleState: 'running',
 				};

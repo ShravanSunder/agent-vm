@@ -72,6 +72,8 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
 
 The `stopController` operation (exposed via `POST /stop-controller`) follows the same sequence but triggers the HTTP server close on a 100ms delay so the response can flush before the socket drops.
 
+Offline cleanup is the broken-controller path. `agent-vm controller cleanup --config <system-config> --zone <zone>` first refuses to run while the configured controller health endpoint is reachable. When the controller is responding but cannot stop the gateway, operators can pass `--force`. Cleanup reads the selected config, loads the zone's `gateway-runtime.json`, validates `projectNamespace`, `zoneId`, `sessionLabel`, and the recorded PID command, then terminates only that recorded gateway VM process. This is the supported replacement for deployment-local broad `pkill -f qemu-system-*` commands.
+
 ---
 
 ## HTTP API Routes

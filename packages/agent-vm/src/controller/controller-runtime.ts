@@ -388,15 +388,7 @@ export async function startControllerRuntime(
 		controllerPort: options.systemConfig.host.controllerPort,
 		zones: registry.selectedZoneIds.map((zoneId) => {
 			const snapshot = snapshotByZone[zoneId] ?? { lifecycleState: 'stopped' as const };
-			const runtimeZone = {
-				lifecycleState: snapshot.lifecycleState,
-				zoneId,
-			};
-			return Object.assign(
-				runtimeZone,
-				snapshot.gateway ? { ingress: snapshot.gateway.ingress, vmId: snapshot.gateway.vm.id } : {},
-				snapshot.lastError ? { lastError: snapshot.lastError } : {},
-			);
+			return Object.assign({ zoneId }, snapshot);
 		}),
 	};
 }

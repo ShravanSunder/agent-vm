@@ -57,6 +57,7 @@ export interface ManagedVmInstance {
 	exec(command: string | string[], options?: ManagedExecOptions): ManagedExecProcess;
 	enableSsh(options?: EnableSshOptions): Promise<SshAccess>;
 	enableIngress(options?: EnableIngressOptions): Promise<IngressAccess>;
+	getHostPid?(): number | null;
 	setIngressRoutes(routes: readonly IngressRoute[]): void;
 	close(): Promise<void>;
 }
@@ -93,6 +94,7 @@ export interface CreateVmOptions {
 	readonly memory: string;
 	readonly cpus: number;
 	readonly rootfsMode: 'readonly' | 'memory' | 'cow';
+	readonly runtimeRootfsSize?: string;
 	readonly allowedHosts: readonly string[];
 	readonly secrets: Record<string, MediatedSecretSpec>;
 	readonly vfsMounts: Record<string, VfsMountSpec>;
@@ -109,6 +111,7 @@ export interface ManagedVm {
 	exec(command: ManagedExecInput, options?: ManagedExecOptions): ManagedExecProcess;
 	enableSsh(options?: EnableSshOptions): Promise<SshAccess>;
 	enableIngress(options?: EnableIngressOptions): Promise<IngressAccess>;
+	getHostPid(): number | null;
 	getVmInstance(): ManagedVmInstance;
 	setIngressRoutes(routes: readonly IngressRoute[]): void;
 	close(): Promise<void>;
@@ -298,6 +301,7 @@ export async function createManagedVm(
 			...(options.sessionLabel ? { sessionLabel: options.sessionLabel } : {}),
 			rootfs: {
 				mode: options.rootfsMode,
+				...(options.runtimeRootfsSize === undefined ? {} : { size: options.runtimeRootfsSize }),
 			},
 			memory: options.memory,
 			cpus: options.cpus,
@@ -341,6 +345,9 @@ export async function createManagedVm(
 		},
 		async enableIngress(ingressOptions?: EnableIngressOptions): Promise<IngressAccess> {
 			return await vmInstance.enableIngress(ingressOptions);
+		},
+		getHostPid(): number | null {
+			return vmInstance.getHostPid?.() ?? null;
 		},
 		getVmInstance(): ManagedVmInstance {
 			return vmInstance;

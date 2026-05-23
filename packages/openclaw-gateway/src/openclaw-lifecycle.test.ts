@@ -69,7 +69,6 @@ function createZone(overrides?: {
 	const baseGateway: OpenClawGatewayConfig = {
 		cpus: 2,
 		config: '/host/config/shravan/openclaw.json',
-		controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 		memory: '2G',
 		port: 18791,
 		rawEnvSecrets: ['AGENT_VM_ZONE_GIT_TOKEN', 'DISCORD_BOT_TOKEN'],
@@ -141,9 +140,9 @@ describe('openclawLifecycle', () => {
 			);
 		});
 
-		it('writes effective auth and SSH admin token files from the configured controller auth secret', async () => {
+		it('writes effective auth and SSH admin token files from the fixed gateway token secret', async () => {
 			const tempDirectory = await mkdtemp(
-				path.join(os.tmpdir(), 'openclaw-lifecycle-custom-controller-auth-'),
+				path.join(os.tmpdir(), 'openclaw-lifecycle-gateway-token-'),
 			);
 			createdDirectories.push(tempDirectory);
 			const configDirectory = path.join(tempDirectory, 'config');
@@ -156,48 +155,34 @@ describe('openclawLifecycle', () => {
 			const zone = createZone({
 				gateway: {
 					config: path.join(configDirectory, 'openclaw.json'),
-					controllerAuth: { secret: 'CUSTOM_GATEWAY_CONTROLLER_TOKEN' },
 					rawEnvSecrets: ['DISCORD_BOT_TOKEN'],
 					stateDir: path.join(tempDirectory, 'state'),
 					zoneFilesDir: path.join(tempDirectory, 'zone-files'),
 				},
 			});
-			const { OPENCLAW_GATEWAY_TOKEN: _removedGatewayToken, ...remainingSecrets } = zone.secrets;
-			const customZone = {
-				...zone,
-				secrets: {
-					...remainingSecrets,
-					CUSTOM_GATEWAY_CONTROLLER_TOKEN: {
-						injection: 'env',
-						audience: 'gateway',
-						source: '1password',
-						ref: 'op://vault/item/custom-controller-token',
-					},
-				},
-			} satisfies GatewayZoneConfig;
 			const secretResolver: SecretResolver = {
 				resolve: async (secretRef) => {
 					if (secretRef.ref === 'op://vault/item/auth-profiles') {
 						return '{"profiles":["main"]}';
 					}
-					if (secretRef.ref === 'op://vault/item/custom-controller-token') {
-						return 'resolved-custom-controller-token';
+					if (secretRef.ref === 'op://vault/item/openclaw-gateway-token') {
+						return 'resolved-gateway-token';
 					}
 					throw new Error(`Unexpected ref: ${secretRef.ref}`);
 				},
 				resolveAll: async () => ({}),
 			};
 
-			await openclawLifecycle.prepareHostState?.(customZone, secretResolver);
+			await openclawLifecycle.prepareHostState?.(zone, secretResolver);
 			const effectiveOpenClawConfigContent = await readFile(
-				path.join(customZone.gateway.stateDir, 'effective-openclaw.json'),
+				path.join(zone.gateway.stateDir, 'effective-openclaw.json'),
 				'utf8',
 			);
 			expect(JSON.parse(effectiveOpenClawConfigContent)).toMatchObject({
 				gateway: {
 					auth: {
 						token: {
-							id: 'CUSTOM_GATEWAY_CONTROLLER_TOKEN',
+							id: 'OPENCLAW_GATEWAY_TOKEN',
 							provider: 'default',
 							source: 'env',
 						},
@@ -205,13 +190,13 @@ describe('openclawLifecycle', () => {
 				},
 			});
 
-			const processSpec = openclawLifecycle.buildProcessSpec(customZone, {
-				CUSTOM_GATEWAY_CONTROLLER_TOKEN: 'custom-token',
+			const processSpec = openclawLifecycle.buildProcessSpec(zone, {
+				OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
 				DISCORD_BOT_TOKEN: 'discord-token',
 			});
 			await renderBootstrapFiles(processSpec.bootstrapCommand, tempDirectory, {
 				...process.env,
-				CUSTOM_GATEWAY_CONTROLLER_TOKEN: 'custom-token',
+				OPENCLAW_GATEWAY_TOKEN: 'gateway-token',
 				DISCORD_BOT_TOKEN: 'discord-token',
 			});
 			const gatewayTokenEnvFilePath = path.join(
@@ -221,8 +206,7 @@ describe('openclawLifecycle', () => {
 				'gateway-token.env',
 			);
 			const tokenEnvFile = await readFile(gatewayTokenEnvFilePath, 'utf8');
-			expect(tokenEnvFile).toContain('CUSTOM_GATEWAY_CONTROLLER_TOKEN');
-			expect(tokenEnvFile).not.toContain('OPENCLAW_GATEWAY_TOKEN');
+			expect(tokenEnvFile).toContain('OPENCLAW_GATEWAY_TOKEN');
 			expect(tokenEnvFile).not.toContain('DISCORD_BOT_TOKEN');
 		});
 

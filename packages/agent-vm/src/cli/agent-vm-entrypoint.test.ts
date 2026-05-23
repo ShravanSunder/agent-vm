@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import type { ControllerRuntime } from '../controller/controller-runtime-types.js';
 import type { ControllerClient } from '../controller/http/controller-client.js';
 import { defaultCliDependencies, type CliDependencies } from './agent-vm-cli-support.js';
 import {
@@ -77,7 +78,6 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 					port: 18791,
 					stateDir: './state/shravan',
 					zoneFilesDir: './zone-files/shravan',
-					controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 				},
 				id: 'shravan',
 				secrets: {
@@ -135,6 +135,36 @@ function createCliBuildWorkerSystemConfig(): LoadedSystemConfig {
 				},
 			},
 		],
+	};
+}
+
+function createStartedControllerRuntime(
+	options: {
+		readonly controllerPort?: number;
+		readonly ingressHost?: string;
+		readonly ingressPort?: number;
+		readonly vmId?: string;
+		readonly zoneId?: string;
+	} = {},
+): ControllerRuntime {
+	return {
+		controllerPort: options.controllerPort ?? 18800,
+		zones: [
+			{
+				gateway: {
+					ingress: {
+						host: options.ingressHost ?? '127.0.0.1',
+						port: options.ingressPort ?? 18791,
+					},
+					vm: {
+						id: options.vmId ?? 'vm-123',
+					},
+				},
+				lifecycleState: 'running',
+				zoneId: options.zoneId ?? 'shravan',
+			},
+		],
+		close: async () => {},
 	};
 }
 
@@ -1468,22 +1498,7 @@ describe('runAgentVmCli', () => {
 					checks: [],
 					ok: true,
 				}),
-				startControllerRuntime: vi.fn(
-					async () =>
-						({
-							controllerPort: 18800,
-							gateway: {
-								ingress: {
-									host: '127.0.0.1',
-									port: 18791,
-								},
-								vm: {
-									id: 'vm-123',
-								},
-							},
-							close: async () => {},
-						}) as never,
-				),
+				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime()),
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
 		);
@@ -1595,22 +1610,7 @@ describe('runAgentVmCli', () => {
 					checks: [],
 					ok: true,
 				}),
-				startControllerRuntime: vi.fn(
-					async () =>
-						({
-							controllerPort: 18800,
-							gateway: {
-								ingress: {
-									host: '127.0.0.1',
-									port: 18791,
-								},
-								vm: {
-									id: 'vm-123',
-								},
-							},
-							close: async () => {},
-						}) as never,
-				),
+				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime()),
 				startGatewayZone: vi.fn(async () => undefined as never),
 			},
 		);
@@ -1621,22 +1621,7 @@ describe('runAgentVmCli', () => {
 	});
 
 	it('passes the bundled gondolin plugin source path into controller start', async () => {
-		const startControllerRuntime = vi.fn(
-			async () =>
-				({
-					controllerPort: 18800,
-					gateway: {
-						ingress: {
-							host: '127.0.0.1',
-							port: 18791,
-						},
-						vm: {
-							id: 'vm-123',
-						},
-					},
-					close: async () => {},
-				}) as never,
-		);
+		const startControllerRuntime = vi.fn(async () => createStartedControllerRuntime());
 
 		process.env.OP_SERVICE_ACCOUNT_TOKEN = 'token';
 
@@ -1754,7 +1739,6 @@ describe('runAgentVmCli', () => {
 								port: 18791,
 								stateDir: './state/shravan',
 								zoneFilesDir: './zone-files/shravan',
-								controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 							},
 							id: 'shravan',
 							secrets: {
@@ -1788,6 +1772,63 @@ describe('runAgentVmCli', () => {
 				runTask: expect.any(Function),
 			},
 		);
+	});
+
+	it('prints ingress and vm id from the selected controller runtime zone', async () => {
+		const outputs: string[] = [];
+		const baseSystemConfig = createCliBuildSystemConfig();
+
+		await runAgentVmCli(
+			['controller', 'start', '--zone', 'shravan'],
+			{
+				stderr: {
+					write: () => true,
+				},
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			{
+				...defaultCliDependencies,
+				isGatewayImageCached: async () => true,
+				loadSystemConfig: async () => baseSystemConfig,
+				startControllerRuntime: vi.fn(
+					async () =>
+						({
+							controllerPort: 18800,
+							zones: [
+								{
+									gateway: {
+										ingress: {
+											host: '127.0.0.1',
+											port: 18791,
+										},
+										vm: {
+											id: 'vm-123',
+										},
+									},
+									lifecycleState: 'running',
+									zoneId: 'shravan',
+								},
+							],
+							close: async () => {},
+						}) as never,
+				),
+			},
+		);
+
+		expect(JSON.parse(outputs.join(''))).toEqual({
+			controllerPort: 18800,
+			ingress: {
+				host: '127.0.0.1',
+				port: 18791,
+			},
+			vmId: 'vm-123',
+			zoneId: 'shravan',
+		});
 	});
 
 	it('fails fast when the gateway image cache is cold', async () => {
@@ -1850,18 +1891,13 @@ describe('runAgentVmCli', () => {
 		if (!primaryZone) {
 			throw new Error('Expected primary zone in test system config');
 		}
-		const startControllerRuntime = vi.fn(async () => ({
-			controllerPort: 18800,
-			gateway: {
-				ingress: {
-					host: '127.0.0.1',
-					port: 18792,
-				},
-				vm: {
-					id: 'vm-alevtina',
-				},
-			},
-		}));
+		const startControllerRuntime = vi.fn(async () =>
+			createStartedControllerRuntime({
+				ingressPort: 18792,
+				vmId: 'vm-alevtina',
+				zoneId: 'alevtina',
+			}),
+		);
 
 		await runAgentVmCli(
 			['controller', 'start', '--zone', 'alevtina'],
@@ -2010,7 +2046,6 @@ describe('runAgentVmCli', () => {
 							port: 18791,
 							stateDir: './state/shravan',
 							zoneFilesDir: './zone-files/shravan',
-							controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 						},
 						id: 'shravan',
 						secrets: {
@@ -2031,18 +2066,7 @@ describe('runAgentVmCli', () => {
 				checks: [],
 				ok: true,
 			}),
-			startControllerRuntime: vi.fn(async () => ({
-				controllerPort: 18800,
-				gateway: {
-					ingress: {
-						host: '127.0.0.1',
-						port: 18791,
-					},
-					vm: {
-						id: 'vm-123',
-					},
-				},
-			})),
+			startControllerRuntime: vi.fn(async () => createStartedControllerRuntime()),
 			startGatewayZone: vi.fn(async () => undefined as never),
 		};
 		const previousGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
@@ -2423,6 +2447,142 @@ describe('runAgentVmCli', () => {
 		expect(stopController).toHaveBeenCalled();
 	});
 
+	it('routes controller cleanup through offline cleanup without contacting the controller', async () => {
+		const stdoutChunks: string[] = [];
+		const createControllerClient = vi.fn();
+		const runControllerOfflineCleanup = vi.fn(async () => ({
+			results: [
+				{
+					cleanedUp: true,
+					killedPid: 48282,
+					stateDir: './state/shravan',
+					zoneId: 'shravan',
+				},
+			],
+		}));
+
+		await runAgentVmCli(
+			['controller', 'cleanup', '--config', './config/system.json', '--zone', 'shravan'],
+			{
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						stdoutChunks.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			{
+				...defaultCliDependencies,
+				createControllerClient,
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				runControllerOfflineCleanup,
+			},
+		);
+
+		expect(createControllerClient).not.toHaveBeenCalled();
+		expect(runControllerOfflineCleanup).toHaveBeenCalledWith({
+			force: false,
+			systemConfig: expect.objectContaining({
+				host: expect.objectContaining({
+					projectNamespace: 'claw-tests-a1b2c3d4',
+				}),
+			}),
+			zoneId: 'shravan',
+		});
+		expect(JSON.parse(stdoutChunks.join(''))).toEqual({
+			results: [
+				{
+					cleanedUp: true,
+					killedPid: 48282,
+					stateDir: './state/shravan',
+					zoneId: 'shravan',
+				},
+			],
+		});
+	});
+
+	it('passes controller cleanup force through offline cleanup', async () => {
+		const runControllerOfflineCleanup = vi.fn(async () => ({ results: [] }));
+
+		await runAgentVmCli(
+			['controller', 'cleanup', '--config', './config/system.json', '--zone', 'shravan', '--force'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+				runControllerOfflineCleanup,
+			},
+		);
+
+		expect(runControllerOfflineCleanup).toHaveBeenCalledWith({
+			force: true,
+			systemConfig: expect.objectContaining({
+				host: expect.objectContaining({
+					projectNamespace: 'claw-tests-a1b2c3d4',
+				}),
+			}),
+			zoneId: 'shravan',
+		});
+	});
+
+	it('reports controller cleanup warnings as command failures', async () => {
+		const stderrChunks: string[] = [];
+		const stdoutChunks: string[] = [];
+		const runControllerOfflineCleanup = vi.fn(async () => ({
+			results: [
+				{
+					cleanedUp: false,
+					cleanupWarning: 'failed to remove stale runtime record',
+					killedPid: 48282,
+					stateDir: './state/shravan',
+					zoneId: 'shravan',
+				},
+			],
+		}));
+
+		await expect(
+			runAgentVmCli(
+				['controller', 'cleanup', '--config', './config/system.json', '--zone', 'shravan'],
+				{
+					stderr: {
+						write: (chunk: string | Uint8Array) => {
+							stderrChunks.push(String(chunk));
+							return true;
+						},
+					},
+					stdout: {
+						write: (chunk: string | Uint8Array) => {
+							stdoutChunks.push(String(chunk));
+							return true;
+						},
+					},
+				},
+				{
+					...defaultCliDependencies,
+					loadSystemConfig: vi.fn(async () => createCliBuildSystemConfig()),
+					runControllerOfflineCleanup,
+				},
+			),
+		).rejects.toThrow(/Controller cleanup completed with warnings/u);
+
+		expect(JSON.parse(stdoutChunks.join(''))).toEqual({
+			results: [
+				{
+					cleanedUp: false,
+					cleanupWarning: 'failed to remove stale runtime record',
+					killedPid: 48282,
+					stateDir: './state/shravan',
+					zoneId: 'shravan',
+				},
+			],
+		});
+		expect(stderrChunks.join('')).toBe('');
+	});
+
 	it('routes controller lease list and release through the lease handler', async () => {
 		const listLeases = vi.fn(async () => [{ id: 'lease-123' }]);
 		const peekLease = vi.fn(async () => ({
@@ -2637,7 +2797,6 @@ describe('runAgentVmCli', () => {
 								port: 18791,
 								stateDir: './state/shravan',
 								zoneFilesDir: './zone-files/shravan',
-								controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 							},
 							id: 'shravan',
 							secrets: {
@@ -2655,10 +2814,7 @@ describe('runAgentVmCli', () => {
 					],
 				}),
 				runControllerDoctor: () => ({ checks: [], ok: true }),
-				startControllerRuntime: vi.fn(async () => ({
-					controllerPort: 18800,
-					gateway: { ingress: { host: '127.0.0.1', port: 18791 }, vm: { id: 'vm-1' } },
-				})),
+				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime({ vmId: 'vm-1' })),
 				resolveGondolinMinimumZigVersion: async () => '0.15.2',
 				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),
@@ -2804,7 +2960,6 @@ describe('runAgentVmCli', () => {
 								port: 18791,
 								stateDir: './state/shravan',
 								zoneFilesDir: './zone-files/shravan',
-								controllerAuth: { secret: 'OPENCLAW_GATEWAY_TOKEN' },
 							},
 							id: 'shravan',
 							secrets: {
@@ -2822,10 +2977,7 @@ describe('runAgentVmCli', () => {
 					],
 				}),
 				runControllerDoctor: () => ({ checks: [], ok: true }),
-				startControllerRuntime: vi.fn(async () => ({
-					controllerPort: 18800,
-					gateway: { ingress: { host: '127.0.0.1', port: 18791 }, vm: { id: 'vm-1' } },
-				})),
+				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime({ vmId: 'vm-1' })),
 				resolveGondolinMinimumZigVersion: async () => '0.15.2',
 				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),

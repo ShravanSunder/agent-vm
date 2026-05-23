@@ -174,6 +174,9 @@ export async function createToolVm(
 			imagePath: toolImage.imagePath,
 			memory: options.profile.memory,
 			rootfsMode: 'cow',
+			...(options.profile.runtimeRootfsSize
+				? { runtimeRootfsSize: options.profile.runtimeRootfsSize }
+				: {}),
 			sessionLabel: buildToolSessionLabel(
 				options.systemConfig.host.projectNamespace,
 				options.zoneId,

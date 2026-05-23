@@ -11,6 +11,8 @@ import { type ManagedVm, writeFileAtomically } from '@agent-vm/gondolin-adapter'
 import { ZodError, z } from 'zod';
 
 export const gatewayRuntimeRecordSchema = z.object({
+	configPath: z.string().min(1),
+	controllerPort: z.number().int().positive(),
 	createdAt: z.string().datetime(),
 	gatewayType: z.enum(gatewayTypeValues),
 	guestListenPort: z.number().int().positive(),
@@ -22,8 +24,17 @@ export const gatewayRuntimeRecordSchema = z.object({
 	zoneId: z.string().min(1),
 });
 
+const legacyGatewayRuntimeRecordSchema = gatewayRuntimeRecordSchema.omit({
+	configPath: true,
+	controllerPort: true,
+});
+
 export type GatewayRuntimeRecord = z.infer<typeof gatewayRuntimeRecordSchema>;
 export type GatewayRuntimeLog = (message: string) => void;
+export interface GatewayRuntimeRecordLegacyDefaults {
+	readonly configPath: string;
+	readonly controllerPort: number;
+}
 
 const gatewayRuntimeRecordFileName = 'gateway-runtime.json';
 
@@ -33,10 +44,6 @@ function resolveGatewayRuntimeRecordPath(stateDirectory: string): string {
 
 function resolveInvalidGatewayRuntimeRecordPath(stateDirectory: string): string {
 	return path.join(stateDirectory, `gateway-runtime.invalid.${Date.now()}.json`);
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null;
 }
 
 async function quarantineMalformedGatewayRuntimeRecord(
@@ -59,6 +66,31 @@ async function quarantineMalformedGatewayRuntimeRecord(
 	}
 }
 
+export async function quarantineGatewayRuntimeRecord(
+	stateDirectory: string,
+	options: {
+		readonly log?: GatewayRuntimeLog;
+		readonly reason: string;
+	} = { reason: 'runtime record no longer matches the active cleanup scope' },
+): Promise<void> {
+	const runtimeRecordPath = resolveGatewayRuntimeRecordPath(stateDirectory);
+	const quarantinedRuntimeRecordPath = path.join(
+		stateDirectory,
+		`gateway-runtime.quarantined.${Date.now()}.json`,
+	);
+	try {
+		await fs.rename(runtimeRecordPath, quarantinedRuntimeRecordPath);
+		(options.log ?? writeGatewayRuntimeLog)(
+			`Quarantined gateway runtime record '${runtimeRecordPath}' to '${quarantinedRuntimeRecordPath}': ${options.reason}.`,
+		);
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+			return;
+		}
+		throw error;
+	}
+}
+
 function writeGatewayRuntimeLog(message: string): void {
 	process.stderr.write(`[agent-vm] ${message}\n`);
 }
@@ -66,6 +98,7 @@ function writeGatewayRuntimeLog(message: string): void {
 export async function loadGatewayRuntimeRecord(
 	stateDirectory: string,
 	options: {
+		readonly legacyRecordDefaults?: GatewayRuntimeRecordLegacyDefaults;
 		readonly log?: GatewayRuntimeLog;
 	} = {},
 ): Promise<GatewayRuntimeRecord | null> {
@@ -81,7 +114,25 @@ export async function loadGatewayRuntimeRecord(
 	}
 
 	try {
-		return gatewayRuntimeRecordSchema.parse(JSON.parse(rawRuntimeRecord));
+		const parsedRuntimeRecord = JSON.parse(rawRuntimeRecord) as unknown;
+		const currentRuntimeRecord = gatewayRuntimeRecordSchema.safeParse(parsedRuntimeRecord);
+		if (currentRuntimeRecord.success) {
+			return currentRuntimeRecord.data;
+		}
+		const legacyRuntimeRecord = legacyGatewayRuntimeRecordSchema.safeParse(parsedRuntimeRecord);
+		if (legacyRuntimeRecord.success && options.legacyRecordDefaults !== undefined) {
+			return gatewayRuntimeRecordSchema.parse({
+				...legacyRuntimeRecord.data,
+				configPath: options.legacyRecordDefaults.configPath,
+				controllerPort: options.legacyRecordDefaults.controllerPort,
+			});
+		}
+		if (legacyRuntimeRecord.success) {
+			throw new Error(
+				`Gateway runtime record '${runtimeRecordPath}' uses the legacy format and requires legacyRecordDefaults to supply configPath and controllerPort.`,
+			);
+		}
+		throw currentRuntimeRecord.error;
 	} catch (error) {
 		if (!(error instanceof SyntaxError) && !(error instanceof ZodError)) {
 			throw error;
@@ -113,49 +164,37 @@ export async function deleteGatewayRuntimeRecord(stateDirectory: string): Promis
 }
 
 function resolveManagedVmQemuPid(managedVm: ManagedVm): number {
-	const vmInstance: unknown = managedVm.getVmInstance();
-	if (!isObjectRecord(vmInstance)) {
-		throw new Error('Gateway VM runtime is missing its live VM instance.');
+	if (typeof managedVm.getHostPid !== 'function') {
+		throw new Error('Managed VM wrapper is missing getHostPid(); update the Gondolin adapter.');
 	}
-
-	// Level 1 currently relies on Gondolin's live runtime object graph:
-	// VM -> SandboxServer -> SandboxController -> child_process.ChildProcess.
-	// If Gondolin refactors that structure, we fail closed here instead of
-	// silently persisting an invalid pid into gateway-runtime.json.
-	const server = vmInstance.server;
-	if (!isObjectRecord(server)) {
-		throw new Error('Gateway VM runtime is missing its live sandbox server.');
+	const qemuPid = managedVm.getHostPid();
+	if (qemuPid === null) {
+		throw new Error(
+			'Gondolin VM runtime does not expose an active host pid; upgrade @earendil-works/gondolin to a version with VM.getHostPid().',
+		);
 	}
-
-	const controller = server.controller;
-	if (!isObjectRecord(controller)) {
-		throw new Error('Gateway VM runtime is missing its live sandbox controller.');
-	}
-
-	const child = controller.child;
-	if (!isObjectRecord(child)) {
-		throw new Error('Gateway VM runtime is missing its live QEMU child process.');
-	}
-
-	const qemuPid = child.pid;
-	if (typeof qemuPid !== 'number' || !Number.isInteger(qemuPid) || qemuPid <= 0) {
-		throw new Error('Gateway VM runtime is missing its live QEMU pid.');
+	if (!Number.isInteger(qemuPid) || qemuPid <= 0) {
+		throw new Error(`Gondolin VM runtime exposed an invalid host pid: ${qemuPid}.`);
 	}
 
 	return qemuPid;
 }
 
 export function buildGatewayRuntimeRecord(options: {
+	readonly controllerPort: number;
 	readonly gatewayType: GatewayType;
 	readonly ingressPort: number;
 	readonly managedVm: ManagedVm;
 	readonly processSpec: GatewayProcessSpec;
 	readonly projectNamespace: string;
+	readonly systemConfigPath: string;
 	readonly zoneId: string;
 }): GatewayRuntimeRecord {
 	const gatewayType = gatewayRuntimeRecordSchema.shape.gatewayType.parse(options.gatewayType);
 
 	return {
+		configPath: options.systemConfigPath,
+		controllerPort: options.controllerPort,
 		createdAt: new Date().toISOString(),
 		gatewayType,
 		guestListenPort: options.processSpec.guestListenPort,
