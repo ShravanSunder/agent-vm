@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import type { JSONRPCMessage, Tool } from '@modelcontextprotocol/sdk/types.js';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	fakeUpstreamNamespace,
@@ -51,6 +51,40 @@ function portFromServerAddress(address: AddressInfo | string | null): number {
 }
 
 describe('upstream MCP client runtime', () => {
+	const originalNodeExtraCaCerts = process.env.NODE_EXTRA_CA_CERTS;
+	const originalNodeOptions = process.env.NODE_OPTIONS;
+	const originalRequestsCaBundle = process.env.REQUESTS_CA_BUNDLE;
+	const originalSslCertFile = process.env.SSL_CERT_FILE;
+	const originalUvCacheDir = process.env.UV_CACHE_DIR;
+
+	afterEach(() => {
+		if (originalNodeExtraCaCerts === undefined) {
+			delete process.env.NODE_EXTRA_CA_CERTS;
+		} else {
+			process.env.NODE_EXTRA_CA_CERTS = originalNodeExtraCaCerts;
+		}
+		if (originalNodeOptions === undefined) {
+			delete process.env.NODE_OPTIONS;
+		} else {
+			process.env.NODE_OPTIONS = originalNodeOptions;
+		}
+		if (originalRequestsCaBundle === undefined) {
+			delete process.env.REQUESTS_CA_BUNDLE;
+		} else {
+			process.env.REQUESTS_CA_BUNDLE = originalRequestsCaBundle;
+		}
+		if (originalSslCertFile === undefined) {
+			delete process.env.SSL_CERT_FILE;
+		} else {
+			process.env.SSL_CERT_FILE = originalSslCertFile;
+		}
+		if (originalUvCacheDir === undefined) {
+			delete process.env.UV_CACHE_DIR;
+		} else {
+			process.env.UV_CACHE_DIR = originalUvCacheDir;
+		}
+	});
+
 	it('pages listTools until nextCursor is absent', async () => {
 		const client: UpstreamMcpClientLike = {
 			callTool: vi.fn(),
@@ -77,6 +111,96 @@ describe('upstream MCP client runtime', () => {
 			{ inputSchema: { type: 'object' }, name: 'b' },
 		]);
 		expect(client.listTools).toHaveBeenNthCalledWith(2, { cursor: 'next' }, expect.any(Object));
+	});
+
+	it('preserves gateway Node runtime env for stdio MCP servers', async () => {
+		process.env.NODE_EXTRA_CA_CERTS = '/run/gondolin/ca-certificates.crt';
+		process.env.NODE_OPTIONS = '--dns-result-order=ipv4first';
+		const createTransport = vi.fn(() => ({}));
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => ({ tools: [] })),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport,
+			servers: [
+				{
+					args: ['-y', '-p', '@perplexity-ai/mcp-server', 'perplexity-mcp'],
+					command: 'npx',
+					env: { PERPLEXITY_API_KEY: 'secret-token-value' },
+					namespace: 'perplexity',
+					transport: 'stdio',
+				},
+			],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'perplexity' }),
+		).resolves.toEqual([]);
+
+		expect(createTransport).toHaveBeenCalledWith(
+			{
+				args: ['-y', '-p', '@perplexity-ai/mcp-server', 'perplexity-mcp'],
+				command: 'npx',
+				env: {
+					NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
+					NODE_OPTIONS: '--dns-result-order=ipv4first',
+					PERPLEXITY_API_KEY: 'secret-token-value',
+				},
+				namespace: 'perplexity',
+				transport: 'stdio',
+			},
+			'stdio',
+		);
+	});
+
+	it('preserves gateway Python and uv runtime env for stdio MCP servers', async () => {
+		process.env.REQUESTS_CA_BUNDLE = '/run/gondolin/ca-certificates.crt';
+		process.env.SSL_CERT_FILE = '/run/gondolin/ca-certificates.crt';
+		process.env.UV_CACHE_DIR = '/work/cache/uv';
+		const createTransport = vi.fn(() => ({}));
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => ({ tools: [] })),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport,
+			servers: [
+				{
+					args: ['run', 'mcp-server-example'],
+					command: 'uv',
+					env: { EXAMPLE_API_KEY: 'secret-token-value' },
+					namespace: 'python_docs',
+					transport: 'stdio',
+				},
+			],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'python_docs' }),
+		).resolves.toEqual([]);
+
+		expect(createTransport).toHaveBeenCalledWith(
+			{
+				args: ['run', 'mcp-server-example'],
+				command: 'uv',
+				env: {
+					EXAMPLE_API_KEY: 'secret-token-value',
+					REQUESTS_CA_BUNDLE: '/run/gondolin/ca-certificates.crt',
+					SSL_CERT_FILE: '/run/gondolin/ca-certificates.crt',
+					UV_CACHE_DIR: '/work/cache/uv',
+				},
+				namespace: 'python_docs',
+				transport: 'stdio',
+			},
+			'stdio',
+		);
 	});
 
 	it('threads timeout abort signals into listTools requests', async () => {
