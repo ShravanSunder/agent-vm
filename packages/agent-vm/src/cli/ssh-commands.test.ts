@@ -103,6 +103,7 @@ function createControllerClientStub(
 		getControllerStatus: async () => ({}),
 		getZoneLogs: async () => ({}),
 		peekLease: async () => ({
+			agentId: 'main',
 			createdAt: 1,
 			lastUsedAt: 1,
 			leaseId: 'lease-123',

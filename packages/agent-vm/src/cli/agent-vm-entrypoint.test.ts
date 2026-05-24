@@ -199,6 +199,7 @@ function createControllerClientStub(
 		getControllerStatus: async () => ({}),
 		getZoneLogs: async () => ({}),
 		peekLease: async () => ({
+			agentId: 'main',
 			createdAt: 1,
 			lastUsedAt: 1,
 			leaseId: 'lease-123',
@@ -1423,6 +1424,7 @@ describe('runAgentVmCli', () => {
 						zones: [],
 					}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -1535,6 +1537,7 @@ describe('runAgentVmCli', () => {
 						zones: [],
 					}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -1655,6 +1658,7 @@ describe('runAgentVmCli', () => {
 						zones: [],
 					}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -1960,6 +1964,7 @@ describe('runAgentVmCli', () => {
 			getZoneLogs: vi.fn(async () => ({ output: 'logs', zoneId: 'shravan' })),
 			listLeases: vi.fn(async () => []),
 			peekLease: vi.fn(async () => ({
+				agentId: 'main',
 				createdAt: 1,
 				lastUsedAt: 1,
 				leaseId: 'lease-123',
@@ -2434,6 +2439,7 @@ describe('runAgentVmCli', () => {
 					getZoneLogs: async () => ({}),
 					getControllerStatus: async () => ({}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -2598,6 +2604,7 @@ describe('runAgentVmCli', () => {
 	it('routes controller lease list and release through the lease handler', async () => {
 		const listLeases = vi.fn(async () => [{ id: 'lease-123' }]);
 		const peekLease = vi.fn(async () => ({
+			agentId: 'main',
 			createdAt: 1,
 			lastUsedAt: 1,
 			leaseId: 'lease-123',
@@ -2677,6 +2684,7 @@ describe('runAgentVmCli', () => {
 					getZoneLogs: async () => ({}),
 					getControllerStatus: async () => ({}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -2738,6 +2746,7 @@ describe('runAgentVmCli', () => {
 					getZoneLogs: async () => ({}),
 					getControllerStatus: async () => ({}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -2898,6 +2907,7 @@ describe('runAgentVmCli', () => {
 					getZoneLogs: async () => ({}),
 					getControllerStatus: async () => ({}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',

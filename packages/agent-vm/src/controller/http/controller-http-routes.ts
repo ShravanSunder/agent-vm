@@ -5,10 +5,8 @@ import type {
 	ToolVmActiveUseCorrelation,
 } from '@agent-vm/gateway-interface';
 import {
-	expectedOpenClawGondolinScopeKey,
 	findOpenClawGondolinSandboxMismatch,
 	isOpenClawAgentSessionKey,
-	OPENCLAW_GONDOLIN_LEASE_SCOPE_GUIDANCE,
 	resolveOpenClawAgentIdFromSessionKey,
 	type OpenClawGondolinSandboxSnapshot,
 } from '@agent-vm/openclaw-agent-vm-plugin';
@@ -108,6 +106,7 @@ function logAgentSandboxSeedResult(result: AgentSandboxSeedResult): void {
 }
 
 interface LeaseRequestLogContext {
+	readonly agentId: string;
 	readonly scopeKey: string;
 	readonly workMountDir: string;
 	readonly zoneId: string;
@@ -122,11 +121,21 @@ interface LeaseContractErrorBody {
 
 interface LeaseContractReceivedFields {
 	readonly agentId?: string;
-	readonly expectedScopeKey?: string;
 	readonly sandbox?: OpenClawGondolinSandboxSnapshot;
 	readonly scopeKey?: string;
 	readonly sessionAgentId?: string;
 	readonly sessionKey?: string;
+}
+
+interface AgentLeaseCompatibilityConflictResponseBody {
+	readonly error: 'agent-tool-vm-lease-compatibility-conflict';
+	readonly guidance: string;
+	readonly message: string;
+	readonly received: {
+		readonly agentId?: string;
+		readonly mismatchedFields: readonly string[];
+		readonly zoneId?: string;
+	};
 }
 
 function leaseContractErrorBody(options: LeaseContractErrorBody): LeaseContractErrorBody {
@@ -150,7 +159,7 @@ function validateOpenClawGondolinLeaseContract(payload: {
 	readonly sessionKey: string;
 }): LeaseContractErrorBody | null {
 	const sessionAgentId = resolveOpenClawAgentIdFromSessionKey(payload.sessionKey);
-	if (sessionAgentId !== payload.agentId) {
+	if (isOpenClawAgentSessionKey(payload.sessionKey) && sessionAgentId !== payload.agentId) {
 		return leaseContractErrorBody({
 			error: 'tool-vm-lease-agent-mismatch',
 			message: `Lease agentId '${payload.agentId}' does not match sessionKey agent '${sessionAgentId}'.`,
@@ -175,21 +184,28 @@ function validateOpenClawGondolinLeaseContract(payload: {
 			},
 		});
 	}
-	const expectedScopeKey = expectedOpenClawGondolinScopeKey(payload.agentId);
-	if (payload.scopeKey !== expectedScopeKey) {
-		return leaseContractErrorBody({
-			error: 'invalid-tool-vm-lease-scope',
-			message: `Invalid Tool VM lease scopeKey '${payload.scopeKey}': expected '${expectedScopeKey}'.`,
-			guidance: OPENCLAW_GONDOLIN_LEASE_SCOPE_GUIDANCE,
-			received: {
-				agentId: payload.agentId,
-				expectedScopeKey,
-				scopeKey: payload.scopeKey,
-				sessionKey: payload.sessionKey,
-			},
-		});
-	}
 	return null;
+}
+
+function agentLeaseCompatibilityConflictResponseBody(options: {
+	readonly error: AgentLeaseCompatibilityConflictError;
+	readonly requestContext: LeaseRequestLogContext | undefined;
+}): AgentLeaseCompatibilityConflictResponseBody {
+	return {
+		error: 'agent-tool-vm-lease-compatibility-conflict',
+		message: options.error.message,
+		guidance:
+			'Managed OpenClaw/Gondolin reuses one Tool VM per zone and agent. Release the existing lease or use a compatible profile/workspace/workdir.',
+		received: {
+			...(options.requestContext?.agentId !== undefined
+				? { agentId: options.requestContext.agentId }
+				: {}),
+			mismatchedFields: options.error.mismatchedFields,
+			...(options.requestContext?.zoneId !== undefined
+				? { zoneId: options.requestContext.zoneId }
+				: {}),
+		},
+	};
 }
 
 const defaultLeaseIdleTtlPolicy = {
@@ -330,6 +346,7 @@ export function createControllerApp(options: {
 			}
 			const payload = parsedPayload.data;
 			requestContext = {
+				agentId: payload.agentId,
 				scopeKey: payload.scopeKey,
 				workMountDir: payload.workMountDir,
 				zoneId: payload.zoneId,
@@ -409,7 +426,10 @@ export function createControllerApp(options: {
 				return context.json({ error: error.message, kind: error.kind }, 400);
 			}
 			if (error instanceof AgentLeaseCompatibilityConflictError) {
-				return context.json({ error: error.message }, 409);
+				return context.json(
+					agentLeaseCompatibilityConflictResponseBody({ error, requestContext }),
+					409,
+				);
 			}
 			if (error instanceof OpenClawDeploymentRequirementError) {
 				return context.json({ error: error.message, kind: error.kind }, 400);
@@ -477,6 +497,7 @@ export function createControllerApp(options: {
 
 	app.get('/leases', (context) => {
 		const leases = options.leaseManager.listLeases().map((lease) => ({
+			agentId: lease.agentId,
 			createdAt: lease.createdAt,
 			id: lease.id,
 			lastUsedAt: lease.lastUsedAt,
