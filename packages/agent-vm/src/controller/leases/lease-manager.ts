@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
 	isToolVmActiveUseId,
 	type EndToolVmActiveUseRequest,
@@ -241,6 +243,7 @@ function activeUseKey(leaseId: string, useId: string): string {
 
 export function createLeaseManager(options: {
 	readonly controllerPort: number;
+	readonly createRuntimeRecordId?: () => string;
 	readonly createManagedVm: (leaseOptions: {
 		readonly agentWorkspaceDir: string;
 		readonly effectiveIdleTtlMs?: number;
@@ -341,6 +344,7 @@ export function createLeaseManager(options: {
 
 	const writeRuntimeRecord = options.writeToolVmRuntimeRecord ?? writeToolVmRuntimeRecord;
 	const deleteRuntimeRecord = options.deleteToolVmRuntimeRecord ?? deleteToolVmRuntimeRecord;
+	const createRuntimeRecordId = options.createRuntimeRecordId ?? randomUUID;
 
 	async function evictLease(lease: Lease): Promise<void> {
 		deleteLease(lease);
@@ -403,6 +407,7 @@ export function createLeaseManager(options: {
 							listenPort: options.tcpPool.portForSlot(tcpSlot),
 						});
 						const createdAt = options.now();
+						const runtimeRecordId = createRuntimeRecordId();
 						const lease: Lease = {
 							agentId: leaseOptions.agentId,
 							agentWorkspaceDir: leaseOptions.agentWorkspaceDir,
@@ -412,7 +417,7 @@ export function createLeaseManager(options: {
 							id: `${leaseOptions.zoneId}-${leaseOptions.agentId}-${createdAt}`,
 							lastUsedAt: createdAt,
 							profileId: leaseOptions.profileId,
-							runtimeRecordId: `${leaseOptions.zoneId}-${leaseOptions.agentId}-${createdAt}`,
+							runtimeRecordId,
 							scopeKey: leaseOptions.scopeKey,
 							sshAccess,
 							tcpSlot,
@@ -430,13 +435,14 @@ export function createLeaseManager(options: {
 								options.stateDirFor(lease.zoneId),
 								await buildToolVmRuntimeRecord({
 									controllerPort: options.controllerPort,
+									agentId: lease.agentId,
 									leaseId: lease.id,
 									managedVm: vm,
 									projectNamespace: options.projectNamespace,
 									...(options.readProcessIdentity !== undefined
 										? { readProcessIdentity: options.readProcessIdentity }
 										: {}),
-									scopeKey: lease.scopeKey,
+									recordId: lease.runtimeRecordId,
 									systemConfigPath: options.systemConfigPath,
 									tcpSlot: lease.tcpSlot,
 									zoneId: lease.zoneId,

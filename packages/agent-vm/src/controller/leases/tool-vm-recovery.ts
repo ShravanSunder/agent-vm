@@ -12,7 +12,6 @@ import type { ToolVmRuntimeRecord } from './tool-vm-runtime-record.js';
 import {
 	deleteToolVmRuntimeRecord,
 	loadAllToolVmRuntimeRecords,
-	quarantineToolVmRuntimeRecord,
 } from './tool-vm-runtime-record.js';
 
 function writeRecoveryLog(message: string): void {
@@ -79,7 +78,6 @@ export interface ToolVmRecoveryDependencies {
 	readonly killProcess?: (pid: number, signal: NodeJS.Signals) => void;
 	readonly loadAllToolVmRuntimeRecords?: typeof loadAllToolVmRuntimeRecords;
 	readonly log?: (message: string) => void;
-	readonly quarantineToolVmRuntimeRecord?: typeof quarantineToolVmRuntimeRecord;
 	readonly readProcessCommand?: (pid: number) => Promise<string | null>;
 	readonly readProcessIdentity?: typeof readProcessIdentity;
 	readonly sleep?: (delayMs: number) => Promise<void>;
@@ -104,17 +102,16 @@ export async function cleanupOrphanedToolVmsIfPresent(
 	dependencies: ToolVmRecoveryDependencies = {},
 ): Promise<ToolVmCleanupResult> {
 	const log = dependencies.log ?? writeRecoveryLog;
-	const runtimeRecords = await (
+	const runtimeRecordResults = await (
 		dependencies.loadAllToolVmRuntimeRecords ?? loadAllToolVmRuntimeRecords
-	)(options.stateDir, { log });
-	if (runtimeRecords.length === 0) {
+	)(options.stateDir);
+	if (runtimeRecordResults.length === 0) {
 		return { cleanedCount: 0, killedPids: [], quarantinedCount: 0, warnings: [] };
 	}
 
 	const killedPids: number[] = [];
 	const warnings: string[] = [];
 	let cleanedCount = 0;
-	let quarantinedCount = 0;
 	const killDependencies = {
 		isProcessAlive: dependencies.isProcessAlive ?? isProcessAlive,
 		killProcess: dependencies.killProcess ?? killProcess,
@@ -122,10 +119,19 @@ export async function cleanupOrphanedToolVmsIfPresent(
 		readProcessIdentity: dependencies.readProcessIdentity ?? readProcessIdentity,
 		sleep: dependencies.sleep ?? sleep,
 	};
-	const quarantine = dependencies.quarantineToolVmRuntimeRecord ?? quarantineToolVmRuntimeRecord;
 	const deleteRecord = dependencies.deleteToolVmRuntimeRecord ?? deleteToolVmRuntimeRecord;
 
-	for (const runtimeRecord of runtimeRecords) {
+	for (const runtimeRecordResult of runtimeRecordResults) {
+		if (runtimeRecordResult.kind === 'parse-error') {
+			const warning = `Tool VM runtime record at '${runtimeRecordResult.path}' failed to parse: ${runtimeRecordResult.error.message}. Skipping during in-process recovery without mutating the file.`;
+			if (options.mode !== 'in-process-recovery') {
+				throw new Error(warning);
+			}
+			log(warning);
+			warnings.push(warning);
+			continue;
+		}
+		const runtimeRecord = runtimeRecordResult.record;
 		const scopeMismatch = validateToolVmRecordCleanupScope({
 			expectedConfigPath: options.expectedConfigPath,
 			expectedControllerPort: options.expectedControllerPort,
@@ -138,24 +144,9 @@ export async function cleanupOrphanedToolVmsIfPresent(
 			if (options.mode !== 'in-process-recovery') {
 				throw new Error(scopeMismatch);
 			}
-			const warning = `${scopeMismatch} Quarantining the stale runtime record without signaling its recorded process during in-process recovery.`;
+			const warning = `${scopeMismatch} Skipping the stale runtime record without signaling its recorded process during in-process recovery.`;
 			log(warning);
-			try {
-				// oxlint-disable-next-line no-await-in-loop -- quarantine each record before moving on; failures are isolated
-				await quarantine(options.stateDir, runtimeRecord.leaseId, {
-					log,
-					reason: warning,
-				});
-				warnings.push(warning);
-				quarantinedCount += 1;
-			} catch (quarantineError) {
-				// Quarantine failure must not abort the cleanup loop; the remaining
-				// records may still match scope and need their PIDs reaped. Log
-				// and surface as a warning so the operator can investigate.
-				const quarantineWarning = `Failed to quarantine stale tool VM runtime record for lease '${runtimeRecord.leaseId}' at '${options.stateDir}': ${quarantineError instanceof Error ? quarantineError.message : JSON.stringify(quarantineError)}`;
-				log(quarantineWarning);
-				warnings.push(quarantineWarning);
-			}
+			warnings.push(warning);
 			continue;
 		}
 
@@ -167,7 +158,7 @@ export async function cleanupOrphanedToolVmsIfPresent(
 		const killedPid = await killOrphanedToolVmProcess(runtimeRecord, killDependencies);
 		try {
 			// oxlint-disable-next-line no-await-in-loop -- per-record cleanup is intentionally serial
-			await deleteRecord(options.stateDir, runtimeRecord.leaseId);
+			await deleteRecord(options.stateDir, runtimeRecord.recordId);
 		} catch (error) {
 			const warning = `Failed to remove stale tool VM runtime record for lease '${runtimeRecord.leaseId}' at '${options.stateDir}': ${error instanceof Error ? error.message : JSON.stringify(error)}`;
 			log(warning);
@@ -188,5 +179,5 @@ export async function cleanupOrphanedToolVmsIfPresent(
 		}
 	}
 
-	return { cleanedCount, killedPids, quarantinedCount, warnings };
+	return { cleanedCount, killedPids, quarantinedCount: 0, warnings };
 }

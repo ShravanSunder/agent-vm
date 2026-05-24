@@ -1,142 +1,79 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { buildToolSessionLabel } from '@agent-vm/gateway-interface';
+import { buildGatewaySessionLabel, buildToolSessionLabel } from '@agent-vm/gateway-interface';
 import { type ManagedVm, writeFileAtomically } from '@agent-vm/gondolin-adapter';
 import { ZodError, z } from 'zod';
 
 import { readProcessIdentity as defaultReadProcessIdentity } from '../../shared/managed-vm-process.js';
 
-// Tool VM runtime record — added in this PR; no prior on-disk format exists.
-// `schemaVersion` is the explicit version anchor for future migrations:
-// if a future field becomes required, the load path will dispatch on
-// schemaVersion rather than silently quarantining and orphaning the QEMU.
-export const toolVmRuntimeRecordSchema = z.object({
-	configPath: z.string().min(1),
-	controllerPort: z.number().int().positive(),
-	createdAt: z.iso.datetime(),
+export const toolVmRuntimeRecordSchema = z.strictObject({
+	schemaVersion: z.literal(1),
+	recordId: z.uuid(),
+	agentId: z.string().min(1),
 	leaseId: z.string().min(1),
-	processIdentity: z.object({
+	vmId: z.string().min(1),
+	qemuPid: z.number().int().positive(),
+	processIdentity: z.strictObject({
 		command: z.string().min(1),
 		lstart: z.string().min(1),
 	}),
+	configPath: z.string().min(1),
+	controllerPort: z.number().int().positive(),
 	projectNamespace: z.string().min(1),
-	qemuPid: z.number().int().positive(),
-	schemaVersion: z.literal(1),
-	scopeKey: z.string().min(1),
-	sessionLabel: z.string().min(1),
-	tcpSlot: z.number().int().nonnegative(),
-	vmId: z.string().min(1),
 	zoneId: z.string().min(1),
+	gateway: z.strictObject({
+		sessionLabel: z.string().min(1),
+		vmId: z.string().min(1).optional(),
+	}),
+	tcpSlot: z.number().int().nonnegative(),
+	sessionLabel: z.string().min(1),
+	createdAt: z.iso.datetime(),
 });
 
 export type ToolVmRuntimeRecord = z.infer<typeof toolVmRuntimeRecordSchema>;
 export type ToolVmRuntimeLog = (message: string) => void;
 
-const toolLeasesDirectoryName = 'tool-leases';
-const quarantinedFilePattern = /^(?<leaseId>.+)\.quarantined\.\d+\.json$/u;
-// Defense-in-depth guardrail: the request-schema layer narrows scopeKey to a
-// strict regex, but lease.id strings flow through several layers before they
-// reach disk. We refuse any leaseId that contains a path-meaningful character
-// at the filesystem boundary so a future regression elsewhere cannot escape
-// the tool-leases/ subtree.
-const pathSafeLeaseIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9:._-]*$/u;
+export type ToolVmRuntimeRecordLoadResult =
+	| {
+			readonly kind: 'loaded';
+			readonly path: string;
+			readonly record: ToolVmRuntimeRecord;
+	  }
+	| {
+			readonly error: Error;
+			readonly kind: 'parse-error';
+			readonly path: string;
+	  };
 
-function assertPathSafeLeaseId(leaseId: string): void {
-	if (!pathSafeLeaseIdPattern.test(leaseId) || leaseId.includes('..')) {
-		throw new Error(
-			`Refusing to derive a runtime-record path from unsafe leaseId '${leaseId}': contains path-meaningful characters.`,
-		);
-	}
-}
+const toolLeasesDirectoryName = 'tool-leases';
 
 function resolveToolLeasesDirectory(stateDirectory: string): string {
 	return path.join(stateDirectory, toolLeasesDirectoryName);
 }
 
-function resolveToolVmRuntimeRecordPath(stateDirectory: string, leaseId: string): string {
-	assertPathSafeLeaseId(leaseId);
-	return path.join(resolveToolLeasesDirectory(stateDirectory), `${leaseId}.json`);
+function resolveToolVmRuntimeRecordPath(stateDirectory: string, recordId: string): string {
+	return path.join(resolveToolLeasesDirectory(stateDirectory), `${recordId}.json`);
 }
 
-function resolveInvalidToolVmRuntimeRecordPath(stateDirectory: string, leaseId: string): string {
-	assertPathSafeLeaseId(leaseId);
-	return path.join(
-		resolveToolLeasesDirectory(stateDirectory),
-		`${leaseId}.invalid.${Date.now()}.json`,
-	);
+export function toolVmRuntimeRecordFilename(record: ToolVmRuntimeRecord): string {
+	return `${record.recordId}.json`;
 }
 
-function resolveQuarantinedToolVmRuntimeRecordPath(
-	stateDirectory: string,
-	leaseId: string,
-): string {
-	assertPathSafeLeaseId(leaseId);
-	return path.join(
-		resolveToolLeasesDirectory(stateDirectory),
-		`${leaseId}.quarantined.${Date.now()}.json`,
-	);
+function parseToolVmRuntimeRecord(rawRuntimeRecord: string): ToolVmRuntimeRecord {
+	const parsedRuntimeRecord = JSON.parse(rawRuntimeRecord) as unknown;
+	return toolVmRuntimeRecordSchema.parse(parsedRuntimeRecord);
 }
 
-function writeToolVmRuntimeLog(message: string): void {
-	process.stderr.write(`[agent-vm] ${message}\n`);
-}
-
-async function quarantineMalformedToolVmRuntimeRecord(
-	stateDirectory: string,
-	leaseId: string,
-	runtimeRecordPath: string,
-	log: ToolVmRuntimeLog,
-): Promise<void> {
-	const invalidRuntimeRecordPath = resolveInvalidToolVmRuntimeRecordPath(stateDirectory, leaseId);
-	try {
-		await fs.rename(runtimeRecordPath, invalidRuntimeRecordPath);
-		log(
-			`Quarantined malformed tool VM runtime record '${runtimeRecordPath}' to '${invalidRuntimeRecordPath}'.`,
-		);
-		return;
-	} catch (error) {
-		await fs.rm(runtimeRecordPath, { force: true });
-		log(
-			`Deleted malformed tool VM runtime record '${runtimeRecordPath}' after quarantine rename failed: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
-		);
-	}
-}
-
-export async function quarantineToolVmRuntimeRecord(
-	stateDirectory: string,
-	leaseId: string,
-	options: {
-		readonly log?: ToolVmRuntimeLog;
-		readonly reason: string;
-	} = { reason: 'runtime record no longer matches the active cleanup scope' },
-): Promise<void> {
-	const runtimeRecordPath = resolveToolVmRuntimeRecordPath(stateDirectory, leaseId);
-	const quarantinedRuntimeRecordPath = resolveQuarantinedToolVmRuntimeRecordPath(
-		stateDirectory,
-		leaseId,
-	);
-	try {
-		await fs.rename(runtimeRecordPath, quarantinedRuntimeRecordPath);
-		(options.log ?? writeToolVmRuntimeLog)(
-			`Quarantined tool VM runtime record '${runtimeRecordPath}' to '${quarantinedRuntimeRecordPath}': ${options.reason}.`,
-		);
-	} catch (error) {
-		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
-			return;
-		}
-		throw error;
-	}
+function runtimeRecordParseError(error: SyntaxError | ZodError): Error {
+	return error instanceof Error ? error : new Error(String(error));
 }
 
 export async function loadToolVmRuntimeRecord(
 	stateDirectory: string,
-	leaseId: string,
-	options: {
-		readonly log?: ToolVmRuntimeLog;
-	} = {},
+	recordId: string,
 ): Promise<ToolVmRuntimeRecord | null> {
-	const runtimeRecordPath = resolveToolVmRuntimeRecordPath(stateDirectory, leaseId);
+	const runtimeRecordPath = resolveToolVmRuntimeRecordPath(stateDirectory, recordId);
 	let rawRuntimeRecord: string;
 	try {
 		rawRuntimeRecord = await fs.readFile(runtimeRecordPath, 'utf8');
@@ -146,30 +83,33 @@ export async function loadToolVmRuntimeRecord(
 		}
 		throw error;
 	}
+	return parseToolVmRuntimeRecord(rawRuntimeRecord);
+}
 
+async function loadToolVmRuntimeRecordResult(
+	runtimeRecordPath: string,
+): Promise<ToolVmRuntimeRecordLoadResult> {
 	try {
-		const parsedRuntimeRecord = JSON.parse(rawRuntimeRecord) as unknown;
-		return toolVmRuntimeRecordSchema.parse(parsedRuntimeRecord);
+		return {
+			kind: 'loaded',
+			path: runtimeRecordPath,
+			record: parseToolVmRuntimeRecord(await fs.readFile(runtimeRecordPath, 'utf8')),
+		};
 	} catch (error) {
 		if (!(error instanceof SyntaxError) && !(error instanceof ZodError)) {
 			throw error;
 		}
-		await quarantineMalformedToolVmRuntimeRecord(
-			stateDirectory,
-			leaseId,
-			runtimeRecordPath,
-			options.log ?? writeToolVmRuntimeLog,
-		);
-		return null;
+		return {
+			error: runtimeRecordParseError(error),
+			kind: 'parse-error',
+			path: runtimeRecordPath,
+		};
 	}
 }
 
 export async function loadAllToolVmRuntimeRecords(
 	stateDirectory: string,
-	options: {
-		readonly log?: ToolVmRuntimeLog;
-	} = {},
-): Promise<ToolVmRuntimeRecord[]> {
+): Promise<ToolVmRuntimeRecordLoadResult[]> {
 	const leasesDirectory = resolveToolLeasesDirectory(stateDirectory);
 	let entries: string[];
 	try {
@@ -180,50 +120,40 @@ export async function loadAllToolVmRuntimeRecords(
 		}
 		throw error;
 	}
-	const records: ToolVmRuntimeRecord[] = [];
+	const results: ToolVmRuntimeRecordLoadResult[] = [];
 	for (const entry of entries) {
-		// Skip quarantined files and anything that doesn't look like a runtime
-		// record. The `*.invalid.<ts>.json` and `*.quarantined.<ts>.json` files
-		// produced by quarantine paths must NOT be re-loaded.
-		if (quarantinedFilePattern.test(entry) || entry.includes('.invalid.')) {
-			continue;
-		}
 		if (!entry.endsWith('.json')) {
 			continue;
 		}
-		const leaseId = entry.slice(0, -'.json'.length);
-		if (leaseId.length === 0) {
-			continue;
-		}
-		// oxlint-disable-next-line no-await-in-loop -- per-entry load needs to surface its own quarantine state
-		const record = await loadToolVmRuntimeRecord(stateDirectory, leaseId, options);
-		if (record !== null) {
-			records.push(record);
-		}
+		const runtimeRecordPath = path.join(leasesDirectory, entry);
+		// oxlint-disable-next-line no-await-in-loop -- per-entry parse errors need their own path.
+		results.push(await loadToolVmRuntimeRecordResult(runtimeRecordPath));
 	}
-	// Sort by createdAt for deterministic iteration order in tests + logs.
-	records.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-	return records;
+	results.sort((left, right) => {
+		const leftCreatedAt = left.kind === 'loaded' ? left.record.createdAt : '';
+		const rightCreatedAt = right.kind === 'loaded' ? right.record.createdAt : '';
+		return leftCreatedAt.localeCompare(rightCreatedAt) || left.path.localeCompare(right.path);
+	});
+	return results;
 }
 
 export async function writeToolVmRuntimeRecord(
 	stateDirectory: string,
 	record: ToolVmRuntimeRecord,
 ): Promise<void> {
-	const runtimeRecordPath = resolveToolVmRuntimeRecordPath(stateDirectory, record.leaseId);
+	const parsedRecord = toolVmRuntimeRecordSchema.parse(record);
+	const runtimeRecordPath = resolveToolVmRuntimeRecordPath(stateDirectory, parsedRecord.recordId);
 	await fs.mkdir(resolveToolLeasesDirectory(stateDirectory), { recursive: true, mode: 0o700 });
-	await writeFileAtomically(
-		runtimeRecordPath,
-		`${JSON.stringify(toolVmRuntimeRecordSchema.parse(record), null, 2)}\n`,
-		{ mode: 0o600 },
-	);
+	await writeFileAtomically(runtimeRecordPath, `${JSON.stringify(parsedRecord, null, 2)}\n`, {
+		mode: 0o600,
+	});
 }
 
 export async function deleteToolVmRuntimeRecord(
 	stateDirectory: string,
-	leaseId: string,
+	recordId: string,
 ): Promise<void> {
-	await fs.rm(resolveToolVmRuntimeRecordPath(stateDirectory, leaseId), { force: true });
+	await fs.rm(resolveToolVmRuntimeRecordPath(stateDirectory, recordId), { force: true });
 }
 
 function resolveManagedVmQemuPid(managedVm: ManagedVm): number {
@@ -244,40 +174,46 @@ function resolveManagedVmQemuPid(managedVm: ManagedVm): number {
 }
 
 export async function buildToolVmRuntimeRecord(options: {
+	readonly agentId: string;
 	readonly controllerPort: number;
+	readonly gateway?: {
+		readonly sessionLabel: string;
+		readonly vmId?: string;
+	};
 	readonly leaseId: string;
 	readonly managedVm: ManagedVm;
 	readonly projectNamespace: string;
 	readonly readProcessIdentity?: typeof defaultReadProcessIdentity;
-	readonly scopeKey: string;
+	readonly recordId: string;
 	readonly systemConfigPath: string;
 	readonly tcpSlot: number;
 	readonly zoneId: string;
 }): Promise<ToolVmRuntimeRecord> {
 	const qemuPid = resolveManagedVmQemuPid(options.managedVm);
-	// Capture process identity (ps lstart + command) for PID-reuse defense
-	// on recovery. If ps fails or the process vanished between getHostPid and
-	// the ps call, the record is unwritable — surface clearly rather than
-	// silently dropping the identity check.
-	const identity = await (options.readProcessIdentity ?? defaultReadProcessIdentity)(qemuPid);
-	if (identity === null) {
+	const processIdentityReader = options.readProcessIdentity ?? defaultReadProcessIdentity;
+	const processIdentity = await processIdentityReader(qemuPid);
+	if (processIdentity === null) {
 		throw new Error(
-			`Failed to capture process identity for managed VM pid ${qemuPid}: ps returned no rows. The VM may have exited during lease creation.`,
+			`Failed to capture process identity for Tool VM '${options.managedVm.id}' pid ${String(qemuPid)}.`,
 		);
 	}
-	return {
+	return toolVmRuntimeRecordSchema.parse({
+		agentId: options.agentId,
 		configPath: options.systemConfigPath,
 		controllerPort: options.controllerPort,
 		createdAt: new Date().toISOString(),
+		gateway: options.gateway ?? {
+			sessionLabel: buildGatewaySessionLabel(options.projectNamespace, options.zoneId),
+		},
 		leaseId: options.leaseId,
-		processIdentity: identity,
+		processIdentity,
 		projectNamespace: options.projectNamespace,
 		qemuPid,
+		recordId: options.recordId,
 		schemaVersion: 1,
-		scopeKey: options.scopeKey,
 		sessionLabel: buildToolSessionLabel(options.projectNamespace, options.zoneId, options.tcpSlot),
 		tcpSlot: options.tcpSlot,
 		vmId: options.managedVm.id,
 		zoneId: options.zoneId,
-	};
+	});
 }

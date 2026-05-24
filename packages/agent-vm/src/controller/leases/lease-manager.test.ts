@@ -1349,6 +1349,7 @@ describe('createLeaseManager — runtime record disk integration', () => {
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => vm),
+			createRuntimeRecordId: () => '01890f00-0000-7000-8000-000000000001',
 			// override the no-op defaults with the real fs writers
 			deleteToolVmRuntimeRecord,
 			writeToolVmRuntimeRecord,
@@ -1358,20 +1359,26 @@ describe('createLeaseManager — runtime record disk integration', () => {
 		});
 
 		const lease = await leaseManager.createLease(integrationLeaseRequest);
-		const recordPath = path.join(stateDir, 'tool-leases', `${lease.id}.json`);
+		const recordPath = path.join(stateDir, 'tool-leases', `${lease.runtimeRecordId}.json`);
 		expect(fs.existsSync(recordPath)).toBe(true);
 		const parsed = JSON.parse(fs.readFileSync(recordPath, 'utf8')) as Record<string, unknown>;
 		expect(parsed).toMatchObject({
+			agentId: 'main',
 			configPath: '/etc/agent-vm/system.json',
 			controllerPort: 18800,
+			gateway: {
+				sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+			},
 			leaseId: lease.id,
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			qemuPid: 31337,
+			recordId: '01890f00-0000-7000-8000-000000000001',
 			schemaVersion: 1,
 			tcpSlot: 0,
 			vmId: 'tool-vm-integration',
 			zoneId: 'shravan',
 		});
+		expect(parsed).not.toHaveProperty('scopeKey');
 
 		await leaseManager.releaseLease(lease.id);
 		expect(fs.existsSync(recordPath)).toBe(false);
@@ -1384,6 +1391,7 @@ describe('createLeaseManager — runtime record disk integration', () => {
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => vm),
+			createRuntimeRecordId: () => '01890f00-0000-7000-8000-000000000002',
 			deleteToolVmRuntimeRecord,
 			writeToolVmRuntimeRecord,
 			stateDirFor: () => stateDir,
@@ -1392,7 +1400,7 @@ describe('createLeaseManager — runtime record disk integration', () => {
 		});
 
 		const lease = await leaseManager.createLease(integrationLeaseRequest);
-		const recordPath = path.join(stateDir, 'tool-leases', `${lease.id}.json`);
+		const recordPath = path.join(stateDir, 'tool-leases', `${lease.runtimeRecordId}.json`);
 		expect(fs.existsSync(recordPath)).toBe(true);
 
 		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow(/close hung/u);

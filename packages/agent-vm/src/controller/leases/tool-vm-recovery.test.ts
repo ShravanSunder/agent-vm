@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { cleanupOrphanedToolVmsIfPresent } from './tool-vm-recovery.js';
-import type { ToolVmRuntimeRecord } from './tool-vm-runtime-record.js';
+import type {
+	ToolVmRuntimeRecord,
+	ToolVmRuntimeRecordLoadResult,
+} from './tool-vm-runtime-record.js';
 
 function createToolVmRuntimeRecord(
 	overrides: Partial<ToolVmRuntimeRecord> = {},
@@ -10,6 +13,11 @@ function createToolVmRuntimeRecord(
 		configPath: '/deployments/shravan-claw/config/system.json',
 		controllerPort: 18800,
 		createdAt: '2026-04-13T12:34:56.000Z',
+		agentId: 'agentA',
+		gateway: {
+			sessionLabel: 'shravan-claw-463c3e5f:sunfam:gateway',
+			vmId: 'gateway-vm-instance-1',
+		},
 		leaseId: 'sunfam-agentA-1700000000000',
 		processIdentity: {
 			command: 'qemu-system-x86_64 -m 1G -smp 1 -kernel /vm-images/tool/kernel',
@@ -17,14 +25,24 @@ function createToolVmRuntimeRecord(
 		},
 		projectNamespace: 'shravan-claw-463c3e5f',
 		qemuPid: 48282,
+		recordId: '01890f00-0000-7000-8000-000000000001',
 		schemaVersion: 1,
-		scopeKey: 'agentA',
 		sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:3',
 		tcpSlot: 3,
 		vmId: 'tool-vm-instance-1',
 		zoneId: 'sunfam',
 		...overrides,
 	};
+}
+
+function loadedToolVmRuntimeRecords(
+	...records: readonly ToolVmRuntimeRecord[]
+): ToolVmRuntimeRecordLoadResult[] {
+	return records.map((record) => ({
+		kind: 'loaded',
+		path: `/state/${record.zoneId}/tool-leases/${record.recordId}.json`,
+		record,
+	}));
 }
 
 // `readProcessIdentity` returning the same identity as the recorded one
@@ -77,7 +95,7 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 				deleteToolVmRuntimeRecord,
 				isProcessAlive,
 				killProcess,
-				loadAllToolVmRuntimeRecords: async () => [record],
+				loadAllToolVmRuntimeRecords: async () => loadedToolVmRuntimeRecords(record),
 				log: () => {},
 				readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
 				readProcessIdentity: buildMatchingIdentityResolver(record),
@@ -85,10 +103,7 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 			},
 		);
 		expect(killProcess).toHaveBeenCalledWith(48282, 'SIGTERM');
-		expect(deleteToolVmRuntimeRecord).toHaveBeenCalledWith(
-			'/state/sunfam',
-			'sunfam-agentA-1700000000000',
-		);
+		expect(deleteToolVmRuntimeRecord).toHaveBeenCalledWith('/state/sunfam', record.recordId);
 		expect(result).toMatchObject({
 			cleanedCount: 1,
 			killedPids: [48282],
@@ -112,7 +127,8 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 				deleteToolVmRuntimeRecord,
 				isProcessAlive: () => false,
 				killProcess,
-				loadAllToolVmRuntimeRecords: async () => [createToolVmRuntimeRecord()],
+				loadAllToolVmRuntimeRecords: async () =>
+					loadedToolVmRuntimeRecords(createToolVmRuntimeRecord()),
 				log: () => {},
 				readProcessCommand,
 				sleep: async () => {},
@@ -142,7 +158,8 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 					deleteToolVmRuntimeRecord: vi.fn(async () => {}),
 					isProcessAlive: () => true,
 					killProcess,
-					loadAllToolVmRuntimeRecords: async () => [createToolVmRuntimeRecord()],
+					loadAllToolVmRuntimeRecords: async () =>
+						loadedToolVmRuntimeRecords(createToolVmRuntimeRecord()),
 					log: () => {},
 					readProcessCommand: async () => '/usr/local/bin/postgres -D /var/lib/postgres',
 					readProcessIdentity: async () => ({
@@ -156,9 +173,8 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 		expect(killProcess).not.toHaveBeenCalled();
 	});
 
-	it('quarantines a record from another project namespace in in-process-recovery mode', async () => {
+	it('skips a record from another project namespace in in-process-recovery mode', async () => {
 		const killProcess = vi.fn();
-		const quarantineToolVmRuntimeRecord = vi.fn(async () => {});
 		// configPath/controllerPort match the deployment; only projectNamespace
 		// (the third fence) differs. This exercises the projectNamespace fence
 		// in isolation.
@@ -174,21 +190,20 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 			{
 				isProcessAlive: () => true,
 				killProcess,
-				loadAllToolVmRuntimeRecords: async () => [
-					createToolVmRuntimeRecord({
-						projectNamespace: 'shravan-claw-463c3e5f',
-						sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:3',
-					}),
-				],
+				loadAllToolVmRuntimeRecords: async () =>
+					loadedToolVmRuntimeRecords(
+						createToolVmRuntimeRecord({
+							projectNamespace: 'shravan-claw-463c3e5f',
+							sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:3',
+						}),
+					),
 				log: () => {},
-				quarantineToolVmRuntimeRecord,
 				readProcessCommand: async () => 'qemu-system-aarch64',
 				sleep: async () => {},
 			},
 		);
 		expect(killProcess).not.toHaveBeenCalled();
-		expect(quarantineToolVmRuntimeRecord).toHaveBeenCalledTimes(1);
-		expect(result).toMatchObject({ cleanedCount: 0, quarantinedCount: 1 });
+		expect(result).toMatchObject({ cleanedCount: 0, quarantinedCount: 0 });
 		expect(result.warnings[0]).toMatch(/belongs to projectNamespace 'shravan-claw-463c3e5f'/u);
 	});
 
@@ -206,12 +221,13 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 				{
 					isProcessAlive: () => true,
 					killProcess: vi.fn(),
-					loadAllToolVmRuntimeRecords: async () => [
-						createToolVmRuntimeRecord({
-							projectNamespace: 'shravan-claw-463c3e5f',
-							sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:3',
-						}),
-					],
+					loadAllToolVmRuntimeRecords: async () =>
+						loadedToolVmRuntimeRecords(
+							createToolVmRuntimeRecord({
+								projectNamespace: 'shravan-claw-463c3e5f',
+								sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:3',
+							}),
+						),
 					log: () => {},
 					readProcessCommand: async () => 'qemu-system-aarch64',
 					sleep: async () => {},
@@ -241,51 +257,50 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 			fixture: { sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:9' },
 			label: 'sessionLabel fence',
 		},
-	])(
-		'quarantines on $label mismatch (in-process-recovery)',
-		async ({ expectedReason, fixture }) => {
-			const quarantineToolVmRuntimeRecord = vi.fn(async () => {});
-			const result = await cleanupOrphanedToolVmsIfPresent(
-				{
-					expectedConfigPath: '/deployments/shravan-claw/config/system.json',
-					expectedControllerPort: 18800,
-					mode: 'in-process-recovery',
-					projectNamespace: 'shravan-claw-463c3e5f',
-					stateDir: '/state/sunfam',
-					zoneId: 'sunfam',
-				},
-				{
-					isProcessAlive: () => true,
-					killProcess: vi.fn(),
-					loadAllToolVmRuntimeRecords: async () => [createToolVmRuntimeRecord(fixture)],
-					log: () => {},
-					quarantineToolVmRuntimeRecord,
-					readProcessCommand: async () => 'qemu-system-aarch64',
-					sleep: async () => {},
-				},
-			);
-			expect(quarantineToolVmRuntimeRecord).toHaveBeenCalledTimes(1);
-			expect(result.warnings[0]).toMatch(expectedReason);
-			expect(result.cleanedCount).toBe(0);
-			expect(result.quarantinedCount).toBe(1);
-		},
-	);
+	])('skips on $label mismatch (in-process-recovery)', async ({ expectedReason, fixture }) => {
+		const result = await cleanupOrphanedToolVmsIfPresent(
+			{
+				expectedConfigPath: '/deployments/shravan-claw/config/system.json',
+				expectedControllerPort: 18800,
+				mode: 'in-process-recovery',
+				projectNamespace: 'shravan-claw-463c3e5f',
+				stateDir: '/state/sunfam',
+				zoneId: 'sunfam',
+			},
+			{
+				isProcessAlive: () => true,
+				killProcess: vi.fn(),
+				loadAllToolVmRuntimeRecords: async () =>
+					loadedToolVmRuntimeRecords(createToolVmRuntimeRecord(fixture)),
+				log: () => {},
+				readProcessCommand: async () => 'qemu-system-aarch64',
+				sleep: async () => {},
+			},
+		);
+		expect(result.warnings[0]).toMatch(expectedReason);
+		expect(result.cleanedCount).toBe(0);
+		expect(result.quarantinedCount).toBe(0);
+	});
 
-	it('processes mixed records independently — kills the matching one, quarantines the foreign one', async () => {
+	it('processes mixed records independently — kills the matching one, skips the foreign one', async () => {
 		const killProcess = vi.fn();
 		const deleteToolVmRuntimeRecord = vi.fn(async () => {});
-		const quarantineToolVmRuntimeRecord = vi.fn(async () => {});
-		const matchingRecord = createToolVmRuntimeRecord({ leaseId: 'sunfam-agentA-1', qemuPid: 100 });
+		const matchingRecord = createToolVmRuntimeRecord({
+			leaseId: 'sunfam-agentA-1',
+			qemuPid: 100,
+			recordId: '01890f00-0000-7000-8000-000000000002',
+		});
 		const foreignRecord = createToolVmRuntimeRecord({
 			leaseId: 'sunfam-agentB-2',
 			projectNamespace: 'shravan-claw-beta-25319b68',
 			qemuPid: 200,
+			recordId: '01890f00-0000-7000-8000-000000000003',
 			sessionLabel: 'shravan-claw-beta-25319b68:sunfam:tool:4',
 			tcpSlot: 4,
 		});
 		// First record (matching scope) goes through the kill flow:
 		//   entry alive → poll alive → poll dead. Foreign record is
-		//   quarantined and never reaches the kill path.
+		//   skipped and never reaches the kill path.
 		const isProcessAlive = vi
 			.fn()
 			.mockReturnValueOnce(true)
@@ -304,9 +319,9 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 				deleteToolVmRuntimeRecord,
 				isProcessAlive,
 				killProcess,
-				loadAllToolVmRuntimeRecords: async () => [matchingRecord, foreignRecord],
+				loadAllToolVmRuntimeRecords: async () =>
+					loadedToolVmRuntimeRecords(matchingRecord, foreignRecord),
 				log: () => {},
-				quarantineToolVmRuntimeRecord,
 				readProcessCommand: async () => 'qemu-system-aarch64',
 				readProcessIdentity: async (pid) =>
 					pid === matchingRecord.qemuPid ? matchingRecord.processIdentity : null,
@@ -315,17 +330,18 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 		);
 		expect(killProcess).toHaveBeenCalledWith(100, 'SIGTERM');
 		expect(killProcess).not.toHaveBeenCalledWith(200, expect.anything());
-		expect(quarantineToolVmRuntimeRecord).toHaveBeenCalledWith(
+		expect(deleteToolVmRuntimeRecord).toHaveBeenCalledWith(
 			'/state/sunfam',
-			'sunfam-agentB-2',
-			expect.anything(),
+			matchingRecord.recordId,
 		);
-		expect(deleteToolVmRuntimeRecord).toHaveBeenCalledWith('/state/sunfam', 'sunfam-agentA-1');
-		expect(deleteToolVmRuntimeRecord).not.toHaveBeenCalledWith('/state/sunfam', 'sunfam-agentB-2');
+		expect(deleteToolVmRuntimeRecord).not.toHaveBeenCalledWith(
+			'/state/sunfam',
+			foreignRecord.recordId,
+		);
 		expect(result).toMatchObject({
 			cleanedCount: 1,
 			killedPids: [100],
-			quarantinedCount: 1,
+			quarantinedCount: 0,
 		});
 	});
 
@@ -365,7 +381,7 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 				deleteToolVmRuntimeRecord,
 				isProcessAlive,
 				killProcess: vi.fn(),
-				loadAllToolVmRuntimeRecords: async () => [recordA, recordB],
+				loadAllToolVmRuntimeRecords: async () => loadedToolVmRuntimeRecords(recordA, recordB),
 				log: () => {},
 				readProcessCommand: async () => 'qemu-system-aarch64',
 				readProcessIdentity: async (pid) => {
