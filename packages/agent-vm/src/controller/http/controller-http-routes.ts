@@ -35,6 +35,7 @@ import {
 } from '../openclaw-runtime-status.js';
 import {
 	type ControllerLeaseManager,
+	type ControllerRuntimeReadiness,
 	type ControllerRouteOperations,
 	readIdentityPemFromFile,
 	serializeLeasePeekForResponse,
@@ -249,8 +250,10 @@ function normalizeActiveUseCorrelation(
 }
 
 export function createControllerApp(options: {
+	readonly controllerPort?: number;
 	readonly leaseManager: ControllerLeaseManager;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
+	readonly runtimeReadiness?: () => ControllerRuntimeReadiness;
 	readonly ttlForLease?: (lease: { readonly scopeKey: string }) => number;
 	readonly toolVmProfiles?: Record<
 		string,
@@ -278,8 +281,38 @@ export function createControllerApp(options: {
 	const app = new Hono();
 	const readIdentityPem = options.readIdentityPem ?? readIdentityPemFromFile;
 	const leaseIdleTtlPolicy = options.leaseIdleTtlPolicy ?? defaultLeaseIdleTtlPolicy;
+	const getRuntimeReadiness = (): ControllerRuntimeReadiness =>
+		options.runtimeReadiness?.() ?? { ready: true, state: 'ready' };
+	const rejectIfRuntimeNotReady = (): Response | null => {
+		const readiness = getRuntimeReadiness();
+		return readiness.ready
+			? null
+			: Response.json(
+					{
+						error: 'controller-not-ready',
+						state: readiness.state,
+					},
+					{ status: 503 },
+				);
+	};
+
+	app.get('/health', (context) => {
+		const readiness = getRuntimeReadiness();
+		return context.json(
+			{
+				ok: readiness.ready,
+				...(options.controllerPort !== undefined ? { port: options.controllerPort } : {}),
+				state: readiness.state,
+			},
+			readiness.ready ? 200 : 503,
+		);
+	});
 
 	app.post('/lease', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady();
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		let requestContext: LeaseRequestLogContext | undefined;
 		try {
 			const parsedPayload = controllerLeaseCreateRequestSchema.safeParse(await context.req.json());
@@ -420,6 +453,10 @@ export function createControllerApp(options: {
 	});
 
 	app.post('/lease/:leaseId/renew', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady();
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		const leaseRenewal = options.leaseManager.renewLease(context.req.param('leaseId'));
 		if (!leaseRenewal) {
 			return context.json({ error: 'Lease not found' }, 404);
@@ -448,6 +485,10 @@ export function createControllerApp(options: {
 	});
 
 	app.delete('/lease/:leaseId', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady();
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		try {
 			await options.leaseManager.releaseLease(context.req.param('leaseId'), {
 				force: context.req.query('force') === 'true',
@@ -462,6 +503,10 @@ export function createControllerApp(options: {
 	});
 
 	app.post('/lease/:leaseId/uses', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady();
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		if (!options.leaseManager.startActiveUse) {
 			return context.json({ error: 'Active use API unavailable' }, 404);
 		}
@@ -500,6 +545,10 @@ export function createControllerApp(options: {
 	});
 
 	app.post('/lease/:leaseId/uses/:useId/heartbeat', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady();
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		if (!options.leaseManager.heartbeatActiveUse) {
 			return context.json({ error: 'Active use API unavailable' }, 404);
 		}
@@ -514,6 +563,10 @@ export function createControllerApp(options: {
 	});
 
 	app.delete('/lease/:leaseId/uses/:useId', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady();
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		if (!options.leaseManager.endActiveUse) {
 			return context.json({ error: 'Active use API unavailable' }, 404);
 		}
@@ -604,10 +657,16 @@ export function createControllerApp(options: {
 				throw new Error('upgrade-zone-unavailable');
 			},
 		};
-		registerControllerZoneOperationRoutes(app, {
-			...defaultOperations,
-			...options.operations,
-		});
+		registerControllerZoneOperationRoutes(
+			app,
+			{
+				...defaultOperations,
+				...options.operations,
+			},
+			{
+				runtimeReadiness: getRuntimeReadiness,
+			},
+		);
 	}
 
 	return app;
@@ -617,6 +676,7 @@ export function createControllerService(options: {
 	readonly leaseManager: ControllerLeaseManager;
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
+	readonly runtimeReadiness?: () => ControllerRuntimeReadiness;
 	readonly secretResolver?: SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
 	readonly ttlForLease: (lease: { readonly scopeKey: string }) => number;
@@ -624,8 +684,10 @@ export function createControllerService(options: {
 	const zonesById = new Map(options.systemConfig.zones.map((zone) => [zone.id, zone]));
 	const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
 	const app = createControllerApp({
+		controllerPort: options.systemConfig.host.controllerPort,
 		leaseManager: options.leaseManager,
 		...(options.readIdentityPem ? { readIdentityPem: options.readIdentityPem } : {}),
+		...(options.runtimeReadiness ? { runtimeReadiness: options.runtimeReadiness } : {}),
 		...(options.systemConfig.leaseIdleTtl
 			? { leaseIdleTtlPolicy: options.systemConfig.leaseIdleTtl }
 			: {}),
@@ -676,13 +738,6 @@ export function createControllerService(options: {
 			return resolvedWorkMount;
 		},
 	});
-
-	app.get('/health', (context) =>
-		context.json({
-			ok: true,
-			port: options.systemConfig.host.controllerPort,
-		}),
-	);
 
 	return app;
 }

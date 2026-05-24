@@ -11,6 +11,30 @@ import type { ControllerLeasePeekResponse } from './controller-lease-response-ty
 export class ControllerTaskNotReadyError extends Error {}
 export class ControllerRuntimeAtCapacityError extends Error {}
 
+export type ControllerRuntimeReadinessState = 'ready' | 'recovering' | 'stopping';
+
+export interface ControllerRuntimeReadiness {
+	readonly ready: boolean;
+	readonly state: ControllerRuntimeReadinessState;
+}
+
+export interface MutableControllerRuntimeReadiness {
+	get(): ControllerRuntimeReadiness;
+	set(state: ControllerRuntimeReadinessState): void;
+}
+
+export function createMutableControllerRuntimeReadiness(
+	initialState: ControllerRuntimeReadinessState,
+): MutableControllerRuntimeReadiness {
+	let state = initialState;
+	return {
+		get: () => ({ ready: state === 'ready', state }),
+		set: (nextState) => {
+			state = nextState;
+		},
+	};
+}
+
 export interface EnableSshForZoneOptions {
 	readonly adminToken?: string;
 	readonly secretEnv: 'default' | 'gateway-token' | 'all-secrets';

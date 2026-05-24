@@ -23,6 +23,7 @@ import {
 import {
 	ControllerRuntimeAtCapacityError,
 	ControllerTaskNotReadyError,
+	type ControllerRuntimeReadiness,
 	type ControllerRouteOperations,
 	type ExecInZoneOptions,
 } from './controller-http-route-support.js';
@@ -299,7 +300,23 @@ function zoneRuntimeErrorBody(error: unknown):
 export function registerControllerZoneOperationRoutes(
 	app: Hono,
 	operations: ControllerRouteOperations,
+	options: {
+		readonly runtimeReadiness?: () => ControllerRuntimeReadiness;
+	} = {},
 ): void {
+	const rejectIfRuntimeNotReady = (context: Context): Response | null => {
+		const readiness = options.runtimeReadiness?.() ?? { ready: true, state: 'ready' as const };
+		return readiness.ready
+			? null
+			: context.json(
+					{
+						error: 'controller-not-ready',
+						state: readiness.state,
+					},
+					503,
+				);
+	};
+
 	app.get('/controller-status', async (context) => context.json(await operations.getStatus()));
 	app.get('/zones/:zoneId/status', async (context) => {
 		try {
@@ -429,6 +446,10 @@ export function registerControllerZoneOperationRoutes(
 		const prepareWorkerTask = operations.prepareWorkerTask;
 		const executeWorkerTask = operations.executeWorkerTask;
 		app.post('/zones/:zoneId/worker-tasks', async (context) => {
+			const notReadyResponse = rejectIfRuntimeNotReady(context);
+			if (notReadyResponse) {
+				return notReadyResponse;
+			}
 			const parsedPayload = await parseJsonBodyWithSchema(
 				context,
 				controllerWorkerTaskRequestSchema,

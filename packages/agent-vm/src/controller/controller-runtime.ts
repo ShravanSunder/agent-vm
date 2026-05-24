@@ -21,6 +21,7 @@ import {
 } from './controller-runtime-types.js';
 import type { PullDefaultRequest } from './git-pull-default-operations.js';
 import type { PushBranchRequest } from './git-push-operations.js';
+import { createMutableControllerRuntimeReadiness } from './http/controller-http-route-support.js';
 import { createControllerService } from './http/controller-http-routes.js';
 import { startControllerHttpServer } from './http/controller-http-server.js';
 import { createIdleReaper } from './leases/idle-reaper.js';
@@ -290,6 +291,7 @@ export async function startControllerRuntime(
 	});
 
 	const serverRef: { current?: { close(): Promise<void> } } = {};
+	const runtimeReadiness = createMutableControllerRuntimeReadiness('recovering');
 	const stopController = createStopControllerOperation({
 		clearReaperTimer,
 		closeControllerServer: async () => {
@@ -359,6 +361,7 @@ export async function startControllerRuntime(
 		leaseManager,
 		operations,
 		...(dependencies.readIdentityPem ? { readIdentityPem: dependencies.readIdentityPem } : {}),
+		runtimeReadiness: runtimeReadiness.get,
 		secretResolver,
 		systemConfig: options.systemConfig,
 		ttlForLease,
@@ -369,9 +372,16 @@ export async function startControllerRuntime(
 			port: options.systemConfig.host.controllerPort,
 		});
 	});
-	await runTaskStep('Starting selected gateway zones', async () => {
-		await registry.startSelectedZones();
-	});
+	try {
+		await runTaskStep('Starting selected gateway zones', async () => {
+			await registry.startSelectedZones();
+		});
+		runtimeReadiness.set('ready');
+	} catch (error) {
+		runtimeReadiness.set('stopping');
+		await serverRef.current?.close();
+		throw error;
+	}
 
 	await reapToolVmLeases();
 

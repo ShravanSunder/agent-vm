@@ -209,6 +209,126 @@ function createWorkerTaskResultStub(taskId: string): WorkerTaskResult {
 }
 
 describe('createControllerApp', () => {
+	it('returns recovering health while runtime startup is not ready', async () => {
+		const app = createControllerAppForTest({
+			controllerPort: 18800,
+			runtimeReadiness: () => ({ ready: false, state: 'recovering' }),
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => createLeaseStub('lease-123', 0)),
+				renewLease: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const response = await app.request('/health');
+
+		expect(response.status).toBe(503);
+		await expect(response.json()).resolves.toMatchObject({
+			ok: false,
+			state: 'recovering',
+		});
+	});
+
+	it('returns not-ready for lease creation while runtime is recovering', async () => {
+		const createLease = vi.fn(async () => createLeaseStub('lease-123', 0));
+		const app = createControllerAppForTest({
+			runtimeReadiness: () => ({ ready: false, state: 'recovering' }),
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease,
+				renewLease: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const response = await app.request('/lease', {
+			body: JSON.stringify(createLeaseRequestBody()),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(503);
+		await expect(response.json()).resolves.toMatchObject({
+			error: 'controller-not-ready',
+			state: 'recovering',
+		});
+		expect(createLease).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		['POST', '/lease/lease-123/renew'],
+		['DELETE', '/lease/lease-123'],
+		['POST', '/lease/lease-123/uses'],
+		['POST', '/lease/lease-123/uses/01890f00-0000-7000-8000-000000000000/heartbeat'],
+		['DELETE', '/lease/lease-123/uses/use_01890f00000070008000000000000000'],
+		['POST', '/zones/shravan/worker-tasks'],
+	] as const)(
+		'returns not-ready for %s %s while runtime is recovering',
+		async (method, routePath) => {
+			const app = createControllerAppForTest({
+				runtimeReadiness: () => ({ ready: false, state: 'recovering' }),
+				toolVmProfiles: {
+					standard: {
+						cpus: 1,
+						memory: '1G',
+						imageProfile: 'default',
+					},
+				},
+				leaseManager: {
+					createLease: vi.fn(async () => createLeaseStub('lease-123', 0)),
+					renewLease: vi.fn(),
+					peekLease: vi.fn(() => ({
+						kind: 'snapshot' as const,
+						lease: createLeaseStub('lease-123', 0),
+					})),
+					listLeases: vi.fn(() => []),
+					releaseLease: vi.fn(async () => {}),
+					startActiveUse: vi.fn(),
+					heartbeatActiveUse: vi.fn(),
+					endActiveUse: vi.fn(),
+				},
+				operations: {
+					destroyZone: vi.fn(async () => ({})),
+					getStatus: vi.fn(async () => ({})),
+					getZoneLogs: vi.fn(async () => ({})),
+					refreshZoneCredentials: vi.fn(async () => ({})),
+					prepareWorkerTask: vi.fn(async () => createPreparedWorkerTaskStub('worker-task-1')),
+					executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
+					upgradeZone: vi.fn(async () => ({})),
+				},
+			});
+
+			const response = await app.request(routePath, {
+				...(method === 'DELETE' ? {} : { body: JSON.stringify({}) }),
+				headers: { 'content-type': 'application/json' },
+				method,
+			});
+
+			expect(response.status).toBe(503);
+			await expect(response.json()).resolves.toMatchObject({
+				error: 'controller-not-ready',
+				state: 'recovering',
+			});
+		},
+	);
+
 	it('creates, renews, peeks, and releases leases through the controller api', async () => {
 		const lease: Lease = {
 			agentWorkspaceDir: '/home/openclaw/work',
