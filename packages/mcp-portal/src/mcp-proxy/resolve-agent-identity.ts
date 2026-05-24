@@ -1,6 +1,6 @@
 import {
 	resolveMcpPortalProfile,
-	mcpPortalCallRequiresApproval,
+	mcpPortalCallPolicyDecision,
 	type McpPortalAgentConfig,
 	type McpPortalConfig,
 	type ResolvedMcpPortalProfile,
@@ -31,7 +31,11 @@ export interface PortalApprovalAuditEvent {
 	readonly agentId: string;
 	readonly decision: 'allow' | 'deny';
 	readonly kind: 'mcp_portal_approval';
-	readonly reason?: 'approval_token_invalid' | 'approval_token_missing' | 'no_approval_required';
+	readonly reason?:
+		| 'approval_token_invalid'
+		| 'approval_token_missing'
+		| 'call_blocked'
+		| 'no_approval_required';
 	readonly timeMs: number;
 	readonly verifierReason?: string;
 }
@@ -109,12 +113,12 @@ export function createPortalHttpAgentResolver(
 	};
 }
 
-function approvalRequiredByProfile(
+function callDecisionByProfile(
 	profile: ResolvedMcpPortalProfile,
 	call: PortalApprovalCall,
-): boolean {
+): ReturnType<typeof mcpPortalCallPolicyDecision> {
 	const annotations = call.tool.annotations;
-	return mcpPortalCallRequiresApproval(profile, {
+	return mcpPortalCallPolicyDecision(profile, {
 		...(annotations === undefined ? {} : { annotations }),
 		namespace: call.namespace,
 		toolName: call.toolName,
@@ -144,6 +148,7 @@ export function createPortalApprovalVerifier(props: {
 	token: string | undefined,
 ) =>
 	| { readonly kind: 'allow' }
+	| { readonly kind: 'call_blocked' }
 	| { readonly kind: 'approval_token_invalid'; readonly reason: string }
 	| { readonly kind: 'approval_token_missing' } {
 	function auditApproval(event: Omit<PortalApprovalAuditEvent, 'kind' | 'timeMs'>): void {
@@ -191,8 +196,13 @@ export function createPortalApprovalVerifier(props: {
 			});
 			return { kind: 'approval_token_invalid', reason: 'unknown-agent' };
 		}
-		const callsRequiringApproval = calls.filter((call) =>
-			approvalRequiredByProfile(record.profile, call),
+		const callDecisions = calls.map((call) => callDecisionByProfile(record.profile, call));
+		if (callDecisions.some((decision) => decision.kind === 'blocked')) {
+			auditApproval({ agentId, decision: 'deny', reason: 'call_blocked' });
+			return { kind: 'call_blocked' };
+		}
+		const callsRequiringApproval = calls.filter(
+			(_call, index) => callDecisions[index]?.kind === 'requires_approval',
 		);
 		if (callsRequiringApproval.length === 0) {
 			auditApproval({ agentId, decision: 'allow', reason: 'no_approval_required' });

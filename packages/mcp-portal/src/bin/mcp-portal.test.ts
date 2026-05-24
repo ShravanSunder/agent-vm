@@ -674,8 +674,11 @@ describe('mcp-portal CLI', () => {
 						default: {
 							namespaces: {
 								[fakeUpstreamNamespace]: {
-									approval: { allowWithoutApproval: ['read_thing'] },
-									tools: { enabled: ['read_thing'] },
+									calls: {
+										requiresApproval: { allow: [] },
+										withoutApproval: { allow: ['read_thing'] },
+									},
+									tools: { allow: ['read_thing'] },
 								},
 							},
 						},

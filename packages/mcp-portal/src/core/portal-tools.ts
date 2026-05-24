@@ -232,6 +232,7 @@ export interface PortalToolRuntime {
 		approvalToken: string | undefined,
 	) =>
 		| { readonly kind: 'allow' }
+		| { readonly kind: 'call_blocked' }
 		| { readonly kind: 'approval_token_invalid'; readonly reason: string }
 		| { readonly kind: 'approval_token_missing' }
 		| { readonly kind: 'approval_required'; readonly level: 'critical' | 'standard' };
@@ -244,7 +245,8 @@ type PortalApprovalDecision =
 	| { readonly kind: 'approval_configuration_missing' }
 	| { readonly kind: 'approval_required'; readonly level: 'critical' | 'standard' }
 	| { readonly kind: 'approval_token_invalid'; readonly reason: string }
-	| { readonly kind: 'approval_token_missing' };
+	| { readonly kind: 'approval_token_missing' }
+	| { readonly kind: 'call_blocked' };
 
 export interface PortalToolHandlers {
 	readonly call: (call: PortalToolHandlerCall) => Promise<PortalBatchResult>;
@@ -768,6 +770,18 @@ export function createPortalToolHandlers(runtime: PortalToolRuntime): PortalTool
 							message: `MCP Portal approval token is invalid: ${approval.reason}.`,
 							namespace: preparedResult.tool.namespace,
 							reason: approval.reason,
+							toolName: preparedResult.tool.toolName,
+						},
+						input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },
+					});
+					continue;
+				}
+				if (approval.kind === 'call_blocked') {
+					results[preparedResult.input.id] = itemError({
+						error: {
+							kind: 'call_blocked',
+							message: 'MCP Portal policy does not allow this tool call.',
+							namespace: preparedResult.tool.namespace,
 							toolName: preparedResult.tool.toolName,
 						},
 						input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },

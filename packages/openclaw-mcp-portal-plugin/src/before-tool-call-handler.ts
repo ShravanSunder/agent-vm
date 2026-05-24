@@ -8,7 +8,7 @@ import type {
 import type { PortalPluginRuntimeState } from './portal-plugin-runtime-state.js';
 import {
 	profileAllowsPortalCall,
-	profileRequiresPortalApproval,
+	profilePortalCallDecision,
 	type PortalCallRequest,
 } from './portal-tool-policy.js';
 
@@ -95,7 +95,19 @@ export function createBeforeToolCallHandler(
 			}
 		}
 
-		const approvalCalls = calls.filter((call) => profileRequiresPortalApproval(profile, call));
+		const approvalCalls: PortalCallRequest[] = [];
+		for (const call of calls) {
+			const decision = profilePortalCallDecision(profile, call);
+			if (decision.kind === 'blocked') {
+				return {
+					block: true,
+					blockReason: `policy: ${agentId}/${call.namespace}/${call.toolName} is not callable`,
+				};
+			}
+			if (decision.kind === 'requires_approval') {
+				approvalCalls.push(call);
+			}
+		}
 		if (approvalCalls.length === 0) {
 			return undefined;
 		}

@@ -1051,11 +1051,11 @@ export async function writeOpenClawMcpPortalSmokeConfigs(options: {
 					smoke: {
 						namespaces: {
 							[options.namespace]: {
-								approval: {
-									allowWithoutApproval: ['read_thing'],
-									alwaysAsk: ['write_thing'],
+								calls: {
+									requiresApproval: { allow: ['write_thing'] },
+									withoutApproval: { allow: ['read_thing'] },
 								},
-								tools: { enabled: ['read_thing', 'write_thing'] },
+								tools: { allow: ['read_thing', 'write_thing'] },
 							},
 						},
 						promptContext: { enabled: true, maxNamespaces: 12 },

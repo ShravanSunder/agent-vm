@@ -1,5 +1,6 @@
 import {
-	mcpPortalCallRequiresApproval,
+	mcpPortalCallPolicyDecision,
+	type McpPortalCallPolicyDecision,
 	type ResolvedMcpPortalProfile,
 } from '@agent-vm/config-contracts';
 
@@ -17,17 +18,17 @@ export function profileAllowsPortalCall(
 	if (!profile.enabledNamespaces.includes(call.namespace)) {
 		return false;
 	}
-	const enabledTools = profile.enabledToolsByNamespace[call.namespace] ?? [];
-	if (enabledTools.length > 0 && !enabledTools.includes(call.toolName)) {
+	const enabledTools = profile.enabledToolsByNamespace[call.namespace];
+	if (enabledTools !== undefined && !enabledTools.includes(call.toolName)) {
 		return false;
 	}
 	const hiddenTools = profile.hiddenToolsByNamespace[call.namespace] ?? [];
 	return !hiddenTools.includes(call.toolName);
 }
 
-export function profileRequiresPortalApproval(
+export function profilePortalCallDecision(
 	profile: ResolvedMcpPortalProfile,
 	call: { readonly namespace: string; readonly toolName: string },
-): boolean {
-	return mcpPortalCallRequiresApproval(profile, call);
+): McpPortalCallPolicyDecision {
+	return mcpPortalCallPolicyDecision(profile, call);
 }

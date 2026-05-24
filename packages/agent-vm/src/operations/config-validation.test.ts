@@ -285,7 +285,13 @@ async function writeMcpPortalConfigWithProvider(
 		profiles: {
 			default: {
 				namespaces: {
-					tavily: { tools: { enableAll: true } },
+					tavily: {
+						calls: {
+							requiresApproval: { allow: '*' },
+							withoutApproval: { allow: [] },
+						},
+						tools: { allow: '*' },
+					},
 				},
 			},
 		},
@@ -445,7 +451,11 @@ describe('runConfigValidation', () => {
 					default: {
 						namespaces: {
 							deepwiki: {
-								tools: { enabled: ['ask_question'] },
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['ask_question'] },
+								},
+								tools: { allow: ['ask_question'] },
 							},
 						},
 					},
@@ -479,12 +489,13 @@ describe('runConfigValidation', () => {
 					default: {
 						namespaces: {
 							deepwiki: {
-								tools: {
-									enableAll: true,
-									hidden: ['missing_hidden_tool'],
+								calls: {
+									requiresApproval: { allow: [] },
+									withoutApproval: { allow: ['missing_approval_tool'] },
 								},
-								approval: {
-									allowWithoutApproval: ['missing_approval_tool'],
+								tools: {
+									allow: '*',
+									deny: ['missing_hidden_tool'],
 								},
 							},
 						},
@@ -524,7 +535,13 @@ describe('runConfigValidation', () => {
 				profiles: {
 					default: {
 						namespaces: {
-							deepwiki: { tools: { enableAll: true } },
+							deepwiki: {
+								calls: {
+									requiresApproval: { allow: '*' },
+									withoutApproval: { allow: [] },
+								},
+								tools: { allow: '*' },
+							},
 						},
 					},
 				},
@@ -557,7 +574,13 @@ describe('runConfigValidation', () => {
 				profiles: {
 					default: {
 						namespaces: {
-							deepwiki: { tools: { enableAll: true } },
+							deepwiki: {
+								calls: {
+									requiresApproval: { allow: '*' },
+									withoutApproval: { allow: [] },
+								},
+								tools: { allow: '*' },
+							},
 						},
 					},
 				},
@@ -603,7 +626,13 @@ describe('runConfigValidation', () => {
 				profiles: {
 					default: {
 						namespaces: {
-							deepwiki: { tools: { enableAll: true } },
+							deepwiki: {
+								calls: {
+									requiresApproval: { allow: '*' },
+									withoutApproval: { allow: [] },
+								},
+								tools: { allow: '*' },
+							},
 						},
 					},
 				},

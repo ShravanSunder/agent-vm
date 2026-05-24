@@ -5,13 +5,11 @@ import { createPortalPluginRuntimeState } from './portal-plugin-runtime-state.js
 
 function createRuntimeState(): ReturnType<typeof createPortalPluginRuntimeState> {
 	const emptyNamespacePolicy = {
-		approval: {
-			allowWithoutApproval: [],
-			alwaysAsk: [],
-			trustedAnnotations: false,
-			write: [],
+		calls: {
+			requiresApproval: { allow: '*' as const, deny: [] },
+			withoutApproval: { allow: [], deny: [] },
 		},
-		tools: { enableAll: true as const, hidden: [] },
+		tools: { allow: '*' as const, deny: [] },
 	};
 	return createPortalPluginRuntimeState({
 		configDir: '/config',

@@ -8,6 +8,7 @@ const baseProfile = {
 		allowWithoutApprovalTools: [],
 		alwaysAskTools: [],
 		annotationPolicy: 'destructive-requires-approval',
+		callPoliciesByNamespace: {},
 		trustedAnnotationNamespaces: [],
 		writeTools: [],
 	},
@@ -20,13 +21,16 @@ const baseProfile = {
 } satisfies ResolvedMcpPortalProfile;
 
 describe('profileAllowsPortalCall', () => {
-	it('treats missing or empty enabledTools entries as namespace-level allow', () => {
+	it('treats missing enabledTools entries as namespace-level allow', () => {
 		expect(
 			profileAllowsPortalCall(baseProfile, {
 				namespace: 'linear',
 				toolName: 'list_issues',
 			}),
 		).toBe(true);
+	});
+
+	it('treats empty enabledTools entries as an empty exact allowlist', () => {
 		expect(
 			profileAllowsPortalCall(
 				{
@@ -38,7 +42,7 @@ describe('profileAllowsPortalCall', () => {
 					toolName: 'list_issues',
 				},
 			),
-		).toBe(true);
+		).toBe(false);
 	});
 
 	it('narrows tools only when enabledTools lists explicit tool names', () => {
