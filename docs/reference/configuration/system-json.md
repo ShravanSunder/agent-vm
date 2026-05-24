@@ -243,12 +243,12 @@ Important fields in `mcp-portal.config.jsonc`:
 - `mcpProxy.server.host`, `mcpProxy.server.port`, and
   `mcpProxy.auth.headerName` configure the loopback Hono MCP proxy.
 - `profiles.<name>.namespaces` defines the agent's portal policy per namespace:
-  `tools.enableAll`, `tools.enabled`, `tools.disabled`, `tools.hidden`,
-  `approval.allowWithoutApproval`, `approval.alwaysAsk`, `approval.write`, and
-  `approval.trustedAnnotations`. Each namespace must choose exactly one tool
-  exposure mode: `tools.enableAll: true` for every discovered tool unless
-  hidden by `tools.hidden`, `tools.enabled` for an explicit allowlist, or
-  `tools.disabled: true` to keep the namespace authored but inactive.
+  `tools.allow`, `tools.deny`, `calls.withoutApproval`, and
+  `calls.requiresApproval`. `tools.allow` is `*` for every discovered tool or an
+  explicit list of visible tool names; `tools.deny` removes tools from the
+  catalog. Call selectors use the same shape and decide whether a visible tool
+  runs directly or requires approval. Visible tools outside both call selectors
+  are blocked at execution time.
   A profile is a complete policy. Profiles do not inherit from or merge with
   other profiles; assign an agent to the profile you want it to use.
 

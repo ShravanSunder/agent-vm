@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
 	loadMcpConfig,
 	loadMcpPortalConfig,
+	type PortalToolSelector,
 	resolveMcpPortalProfile,
 	type ResolvedMcpPortalProfile,
 	type SecretValue,
@@ -45,6 +46,7 @@ function profileNamespaces(profile: ResolvedMcpPortalProfile): readonly string[]
 			...profile.enabledNamespaces,
 			...Object.keys(profile.enabledToolsByNamespace),
 			...Object.keys(profile.hiddenToolsByNamespace),
+			...Object.keys(profile.approval.callPoliciesByNamespace),
 			...profile.approval.allowWithoutApprovalTools.map((tool) => tool.namespace),
 			...profile.approval.alwaysAskTools.map((tool) => tool.namespace),
 			...profile.approval.writeTools.map((tool) => tool.namespace),
@@ -52,14 +54,25 @@ function profileNamespaces(profile: ResolvedMcpPortalProfile): readonly string[]
 	).toSorted();
 }
 
+function selectorToolNames(selector: PortalToolSelector): readonly string[] {
+	return selector.allow === '*' ? selector.deny : [...selector.allow, ...selector.deny];
+}
+
 function profileToolNamesForNamespace(
 	profile: ResolvedMcpPortalProfile,
 	namespace: string,
 ): readonly string[] {
+	const callPolicy = profile.approval.callPoliciesByNamespace[namespace];
 	return Array.from(
 		new Set([
 			...(profile.enabledToolsByNamespace[namespace] ?? []),
 			...(profile.hiddenToolsByNamespace[namespace] ?? []),
+			...(callPolicy === undefined
+				? []
+				: [
+						...selectorToolNames(callPolicy.requiresApproval),
+						...selectorToolNames(callPolicy.withoutApproval),
+					]),
 			...profile.approval.allowWithoutApprovalTools
 				.filter((tool) => tool.namespace === namespace)
 				.map((tool) => tool.toolName),

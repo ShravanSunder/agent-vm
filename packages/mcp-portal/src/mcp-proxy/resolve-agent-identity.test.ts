@@ -15,6 +15,16 @@ const profile: PortalAgentRuntimeRecord['profile'] = {
 		allowWithoutApprovalTools: [],
 		alwaysAskTools: [],
 		annotationPolicy: 'destructive-requires-approval',
+		callPoliciesByNamespace: {
+			github: {
+				requiresApproval: { allow: '*', deny: [] },
+				withoutApproval: { allow: [], deny: [] },
+			},
+			linear: {
+				requiresApproval: { allow: '*', deny: [] },
+				withoutApproval: { allow: [], deny: [] },
+			},
+		},
 		trustedAnnotationNamespaces: ['linear'],
 		writeTools: [],
 	},

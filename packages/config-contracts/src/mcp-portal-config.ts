@@ -12,6 +12,15 @@ export const namespaceToolRefSchema = z
 
 export type NamespaceToolRef = z.infer<typeof namespaceToolRefSchema>;
 
+export const portalToolSelectorSchema = z
+	.object({
+		allow: z.union([z.literal('*'), z.array(z.string().min(1))]),
+		deny: z.array(z.string().min(1)).default([]),
+	})
+	.strict();
+
+export type PortalToolSelector = z.infer<typeof portalToolSelectorSchema>;
+
 export const portalApprovalConfigSchema = z
 	.object({
 		allowWithoutApprovalTools: z.array(namespaceToolRefSchema).default([]),
@@ -19,6 +28,17 @@ export const portalApprovalConfigSchema = z
 		annotationPolicy: z
 			.enum(['destructive-requires-approval', 'always-require-approval'])
 			.default('destructive-requires-approval'),
+		callPoliciesByNamespace: z
+			.record(
+				z.string().min(1),
+				z
+					.object({
+						requiresApproval: portalToolSelectorSchema,
+						withoutApproval: portalToolSelectorSchema,
+					})
+					.strict(),
+			)
+			.default({}),
 		trustedAnnotationNamespaces: z.array(z.string().min(1)).default([]),
 		writeTools: z.array(namespaceToolRefSchema).default([]),
 	})
@@ -26,30 +46,12 @@ export const portalApprovalConfigSchema = z
 
 export type PortalApprovalConfig = z.infer<typeof portalApprovalConfigSchema>;
 
-const portalNamespaceEnableAllToolsSchema = z
+const portalNamespaceCallPolicySchema = z
 	.object({
-		enableAll: z.literal(true),
-		hidden: z.array(z.string().min(1)).default([]),
+		requiresApproval: portalToolSelectorSchema,
+		withoutApproval: portalToolSelectorSchema,
 	})
 	.strict();
-
-const portalNamespaceEnabledToolsSchema = z
-	.object({
-		enabled: z.array(z.string().min(1)).min(1),
-	})
-	.strict();
-
-const portalNamespaceDisabledToolsSchema = z
-	.object({
-		disabled: z.literal(true),
-	})
-	.strict();
-
-const portalNamespaceToolsSchema = z.union([
-	portalNamespaceEnableAllToolsSchema,
-	portalNamespaceEnabledToolsSchema,
-	portalNamespaceDisabledToolsSchema,
-]);
 
 const portalNamespaceApprovalSchema = z
 	.object({
@@ -69,8 +71,9 @@ const defaultPortalNamespaceApproval = {
 
 const portalNamespacePolicySchema = z
 	.object({
-		approval: portalNamespaceApprovalSchema.default(defaultPortalNamespaceApproval),
-		tools: portalNamespaceToolsSchema,
+		approval: portalNamespaceApprovalSchema.default(defaultPortalNamespaceApproval).optional(),
+		calls: portalNamespaceCallPolicySchema,
+		tools: portalToolSelectorSchema,
 	})
 	.strict();
 
@@ -236,11 +239,19 @@ function namespaceToolRefs(
 	);
 }
 
+function selectorAllowList(selector: PortalToolSelector): readonly string[] {
+	return selector.allow === '*' ? [] : selector.allow;
+}
+
+function selectorHasVisibleTools(selector: PortalToolSelector): boolean {
+	return selector.allow === '*' || selector.allow.length > 0;
+}
+
 function activeNamespaces(
 	namespaces: Readonly<Record<string, PortalNamespacePolicy>>,
 ): Readonly<Record<string, PortalNamespacePolicy>> {
 	return Object.fromEntries(
-		Object.entries(namespaces).filter(([, policy]) => !('disabled' in policy.tools)),
+		Object.entries(namespaces).filter(([, policy]) => selectorHasVisibleTools(policy.tools)),
 	);
 }
 
@@ -249,12 +260,18 @@ function compileNamespaceApproval(
 	annotationPolicy: PortalApprovalConfig['annotationPolicy'],
 ): PortalApprovalConfig {
 	return portalApprovalConfigSchema.parse({
-		allowWithoutApprovalTools: namespaceToolRefs(
-			namespaces,
-			(policy) => policy.approval?.allowWithoutApproval ?? [],
-		),
+		allowWithoutApprovalTools: namespaceToolRefs(namespaces, (policy) => [
+			...selectorAllowList(policy.calls.withoutApproval),
+			...(policy.approval?.allowWithoutApproval ?? []),
+		]),
 		annotationPolicy,
-		alwaysAskTools: namespaceToolRefs(namespaces, (policy) => policy.approval?.alwaysAsk ?? []),
+		alwaysAskTools: namespaceToolRefs(namespaces, (policy) => [
+			...selectorAllowList(policy.calls.requiresApproval),
+			...(policy.approval?.alwaysAsk ?? []),
+		]),
+		callPoliciesByNamespace: Object.fromEntries(
+			Object.entries(namespaces).map(([namespace, policy]) => [namespace, policy.calls]),
+		),
 		trustedAnnotationNamespaces: Object.entries(namespaces)
 			.filter(([, policy]) => policy.approval?.trustedAnnotations)
 			.map(([namespace]) => namespace),
@@ -267,11 +284,8 @@ function compileEnabledToolsByNamespace(
 ): Record<string, readonly string[]> {
 	return Object.fromEntries(
 		Object.entries(namespaces)
-			.filter(([, policy]) => 'enabled' in policy.tools)
-			.map(([namespace, policy]) => [
-				namespace,
-				'enabled' in policy.tools ? policy.tools.enabled : [],
-			]),
+			.filter(([, policy]) => policy.tools.allow !== '*')
+			.map(([namespace, policy]) => [namespace, selectorAllowList(policy.tools)]),
 	);
 }
 
@@ -280,11 +294,8 @@ function compileHiddenToolsByNamespace(
 ): Record<string, readonly string[]> {
 	return Object.fromEntries(
 		Object.entries(namespaces)
-			.filter(([, policy]) => 'hidden' in policy.tools && policy.tools.hidden.length > 0)
-			.map(([namespace, policy]) => [
-				namespace,
-				'hidden' in policy.tools ? policy.tools.hidden : [],
-			]),
+			.filter(([, policy]) => (policy.tools.deny ?? []).length > 0)
+			.map(([namespace, policy]) => [namespace, policy.tools.deny ?? []]),
 	);
 }
 

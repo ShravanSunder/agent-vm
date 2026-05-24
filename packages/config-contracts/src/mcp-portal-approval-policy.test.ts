@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { mcpPortalCallRequiresApproval } from './mcp-portal-approval-policy.js';
+import {
+	mcpPortalCallPolicyDecision,
+	mcpPortalCallRequiresApproval,
+} from './mcp-portal-approval-policy.js';
 import { resolveMcpPortalProfile, type McpPortalConfig } from './mcp-portal-config.js';
 
 const portalConfig = {
@@ -9,13 +12,11 @@ const portalConfig = {
 		builder: {
 			namespaces: {
 				linear: {
-					approval: {
-						allowWithoutApproval: ['viewer'],
-						alwaysAsk: [],
-						trustedAnnotations: true,
-						write: [],
+					calls: {
+						withoutApproval: { allow: ['viewer'], deny: [] },
+						requiresApproval: { allow: ['delete_issue'], deny: [] },
 					},
-					tools: { enableAll: true, hidden: [] },
+					tools: { allow: '*', deny: [] },
 				},
 			},
 		},
@@ -28,11 +29,11 @@ describe('mcpPortalCallRequiresApproval', () => {
 
 	it('fails closed for untrusted namespaces and missing annotations', () => {
 		expect(
-			mcpPortalCallRequiresApproval(profile, {
+			mcpPortalCallPolicyDecision(profile, {
 				namespace: 'github',
 				toolName: 'delete_issue',
 			}),
-		).toBe(true);
+		).toEqual({ kind: 'blocked' });
 		expect(
 			mcpPortalCallRequiresApproval(profile, {
 				namespace: 'linear',
@@ -49,11 +50,10 @@ describe('mcpPortalCallRequiresApproval', () => {
 			}),
 		).toBe(false);
 		expect(
-			mcpPortalCallRequiresApproval(profile, {
-				annotations: { destructiveHint: false, readOnlyHint: true },
+			mcpPortalCallPolicyDecision(profile, {
 				namespace: 'linear',
 				toolName: 'list_issues',
 			}),
-		).toBe(false);
+		).toEqual({ kind: 'blocked' });
 	});
 });

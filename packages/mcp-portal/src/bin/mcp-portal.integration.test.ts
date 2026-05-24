@@ -110,11 +110,11 @@ async function writeConfigFiles(props: {
 					builder: {
 						namespaces: {
 							[namespace]: {
-								approval: {
-									allowWithoutApproval: ['read_thing'],
-									alwaysAsk: ['write_thing'],
+								calls: {
+									requiresApproval: { allow: ['write_thing'] },
+									withoutApproval: { allow: ['read_thing'] },
 								},
-								tools: { enabled: ['read_thing', 'write_thing'] },
+								tools: { allow: ['read_thing', 'write_thing'] },
 							},
 						},
 					},

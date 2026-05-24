@@ -43,7 +43,13 @@ async function createAuthoredDir(props: {
 				profiles: {
 					default: {
 						namespaces: {
-							deepwiki: { tools: { enableAll: true } },
+							deepwiki: {
+								calls: {
+									requiresApproval: { allow: '*' },
+									withoutApproval: { allow: [] },
+								},
+								tools: { allow: '*' },
+							},
 						},
 					},
 				},

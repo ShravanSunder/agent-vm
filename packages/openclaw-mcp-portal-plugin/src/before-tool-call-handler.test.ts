@@ -12,15 +12,13 @@ function createRuntimeState(): ReturnType<typeof createPortalPluginRuntimeState>
 				builder: {
 					namespaces: {
 						linear: {
-							approval: {
-								allowWithoutApproval: ['list_issues'],
-								alwaysAsk: ['create_issue'],
-								trustedAnnotations: false,
-								write: [],
+							calls: {
+								withoutApproval: { allow: ['list_issues'], deny: [] },
+								requiresApproval: { allow: ['create_issue'], deny: [] },
 							},
 							tools: {
-								enabled: ['create_issue', 'list_issues'],
-								hidden: ['hidden_issue'],
+								allow: ['create_issue', 'list_issues'],
+								deny: ['hidden_issue'],
 							},
 						},
 					},
