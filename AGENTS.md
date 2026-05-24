@@ -121,7 +121,7 @@ a default profile.
 
 Use targeted tests first:
 
-- Config shape and migration: `pnpm vitest run packages/config-contracts/src/mcp-portal-config.test.ts`.
+- Config shape: `pnpm vitest run packages/config-contracts/src/mcp-portal-config.test.ts`.
 - Portal tool result shapes: `pnpm vitest run packages/mcp-portal/src/core/portal-tools.test.ts`.
 - Live validation behavior: `pnpm vitest run packages/agent-vm/src/operations/config-validation.test.ts`.
 

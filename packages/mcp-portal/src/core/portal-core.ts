@@ -72,6 +72,7 @@ export interface PortalCoreItemError {
 	readonly message: string;
 	readonly namespace?: string;
 	readonly toolName?: string;
+	readonly upstream?: unknown;
 }
 
 export type PortalCoreContentBlock =
@@ -300,12 +301,14 @@ function itemErrorFromPortalResult(result: PortalToolResult): PortalCoreItemErro
 	const kind = errorRecord.kind;
 	const namespace = errorRecord.namespace;
 	const toolName = errorRecord.toolName;
+	const upstream = errorRecord.upstream;
 
 	return {
 		code: typeof kind === 'string' ? kind : 'portal_item_failed',
 		message: messageFromUnknown(result.error),
 		...(typeof namespace === 'string' ? { namespace } : {}),
 		...(typeof toolName === 'string' ? { toolName } : {}),
+		...(upstream === undefined ? {} : { upstream }),
 	};
 }
 

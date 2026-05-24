@@ -2211,27 +2211,7 @@ In `packages/agent-vm/src/cli/manual-templates.ts`, update the MCP Portal sectio
 Run agent-vm validate --mcp-live after editing MCP providers or MCP Portal profiles. Static validate checks schema and materialization. Live validate starts each configured MCP provider, runs tools/list, and reports namespace, transport, phase, and hints for failures.
 ```
 
-- [ ] **Step 5: Add a beta-config migration helper**
-
-Create a small one-shot migration script at `packages/config-contracts/scripts/migrate-mcp-portal-profile-shape.ts`. It should:
-
-- Accept a path to one `mcp-portal.config.jsonc`.
-- Load the legacy profile shape.
-- Rewrite each profile to the new `namespaces` shape.
-- Preserve `promptContext`, `cache`, `logging`, and `approval.annotationPolicy`.
-- Drop any legacy `extends` field because MCP Portal profiles are complete
-  policies and no longer support inheritance.
-- Convert:
-  - `enabledToolsByNamespace[namespace]` to `namespaces[namespace].tools.enabled`
-  - `hiddenToolsByNamespace[namespace]` to `namespaces[namespace].tools.hidden`
-  - `approval.allowWithoutApprovalTools` to per-namespace `approval.allowWithoutApproval`
-  - `approval.alwaysAskTools` to per-namespace `approval.alwaysAsk`
-  - `approval.writeTools` to per-namespace `approval.write`
-  - `approval.trustedAnnotationNamespaces` to per-namespace `approval.trustedAnnotations`
-
-Add a unit test in `packages/config-contracts/src/mcp-portal-config.test.ts` or a colocated script test proving the current beta-shaped legacy config migrates to the new authored shape.
-
-- [ ] **Step 6: Update smoke fixtures**
+- [ ] **Step 5: Update smoke fixtures**
 
 In `packages/agent-vm/src/integration-tests/openclaw-mcp-portal.smoke.test.ts`, replace old profile config with:
 
@@ -2266,7 +2246,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit Task 9**
 
 ```bash
-git add packages/config-contracts/scripts/migrate-mcp-portal-profile-shape.ts packages/config-contracts/src/mcp-portal-config.test.ts packages/agent-vm/src/cli/init-command.ts packages/agent-vm/src/cli/init-command.test.ts packages/agent-vm/src/cli/manual-templates.ts packages/agent-vm/src/cli/manual-templates.test.ts docs/subsystems/mcp-portal.md packages/agent-vm/src/integration-tests/openclaw-mcp-portal.smoke.test.ts
+git add packages/config-contracts/src/mcp-portal-config.test.ts packages/agent-vm/src/cli/init-command.ts packages/agent-vm/src/cli/init-command.test.ts packages/agent-vm/src/cli/manual-templates.ts packages/agent-vm/src/cli/manual-templates.test.ts docs/subsystems/mcp-portal.md packages/agent-vm/src/integration-tests/openclaw-mcp-portal.smoke.test.ts
 git commit -m "docs: update MCP Portal diagnostics and defaults"
 ```
 
@@ -2409,12 +2389,11 @@ node -e 'const p=require("./package.json"); for (const [name, spec] of Object.en
 
 Expected: beta `package.json` dependency and `pnpm.overrides` resolve every `@agent-vm/*` package to the just-packed local tarballs, without publishing a new npm package version.
 
-- [ ] **Step 5: Migrate beta MCP Portal config**
+- [ ] **Step 5: Update beta MCP Portal config**
 
-From `/Users/shravansunder/Documents/dev/project-dev/shravan-claw-beta`, run the migration helper against the beta MCP Portal config:
+From `/Users/shravansunder/Documents/dev/project-dev/shravan-claw-beta`, edit the beta MCP Portal config directly to the new authored profile shape:
 
 ```bash
-pnpm exec tsx /Users/shravansunder/Documents/dev/project-dev/agent-vm.fix-mcp-portal-profile-dx/packages/config-contracts/scripts/migrate-mcp-portal-profile-shape.ts config/gateways/beta/mcp-portal.config.jsonc
 pnpm exec agent-vm validate --config config/system.jsonc
 ```
 

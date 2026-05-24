@@ -83,9 +83,8 @@ They do not receive upstream MCP credentials.
 Authored deployment config is JSONC. `system.jsonc` points at
 `config/schemas/system.schema.json`; gateway MCP config files point at
 `../../schemas/mcp.schema.json` and `../../schemas/mcp-portal.schema.json`.
-Those schema files are emitted by `agent-vm init` and
-kept in sync from Zod schemas for editor tooling. Runtime
-migration gates use `schemaVersion`.
+Those schema files are emitted by `agent-vm init` and kept in sync from Zod
+schemas for editor tooling. Runtime compatibility checks use `schemaVersion`.
 
 ## Auth, Approval, And Redaction
 
@@ -93,6 +92,27 @@ migration gates use `schemaVersion`.
 Remote MCP uses Streamable HTTP by default, supports legacy HTTP+SSE, and
 supports stdio for gateway-owned local servers. For SSE, auth headers must be
 applied to both the initial stream request and subsequent POST requests.
+
+### Stdio Runtime Environment
+
+MCP Portal starts stdio providers with explicit provider secrets plus a narrow
+gateway runtime environment allowlist. This avoids leaking arbitrary gateway
+environment variables while preserving runtime settings required by package
+launchers inside Gondolin.
+
+Inherited runtime variables:
+
+- `NODE_EXTRA_CA_CERTS`
+- `NODE_OPTIONS`
+- `REQUESTS_CA_BUNDLE`
+- `SSL_CERT_FILE`
+- `UV_CACHE_DIR`
+
+Managed OpenClaw gateway Dockerfiles install pinned `uv` and `uvx` binaries so
+`uv run` stdio providers can start without deployment-owned image overlays.
+
+Use `transport.env` for provider credentials such as `PERPLEXITY_API_KEY` or
+`TAVILY_API_KEY`. Do not rely on whole-process environment inheritance.
 
 Managed OpenClaw gateway mode does not start a portal HTTP server, does not open
 guest port `18790`, and does not require `MCP_PORTAL_SERVER_SECRET`. The

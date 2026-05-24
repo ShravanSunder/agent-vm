@@ -154,7 +154,8 @@ For the canonical name/location/storage vocabulary, see
 [Lease Path Vocabulary](../../architecture/storage-model.md#lease-path-vocabulary).
 
 ```text
-Tool VM guest path: /work
+Tool VM lease workdir: /workspace
+Tool VM rootfs/COW scratch: /work
 OpenClaw gateway zone files: /zone
 OpenClaw state sandboxes: /home/openclaw/.openclaw/state/sandboxes
 ```
@@ -313,8 +314,10 @@ mode usable by exposing the explicit channel reply tool, and exposes optional
 plugin-owned tools such as MCP Portal's `mcp_portal_*` tools to sandboxed
 agents.
 
-OpenClaw Tool VMs mount their validated lease work mount at `/work`. Worker task VMs keep
-repo edits under `/work/repos/<repoId>`.
+OpenClaw Tool VMs mount their validated lease work mount at `/workspace`.
+`/work` remains Tool VM rootfs/COW scratch. Worker task VMs keep repo edits
+under `/work/repos/<repoId>`; worker `/work` is per-task rootfs and is unrelated
+to the Tool VM scratch path above.
 
 ## imageProfiles
 
@@ -490,11 +493,11 @@ not rebuilt for this value; Gondolin grows the writable root disk and runs
 
 `agentSandboxSeeds` writes first-boot files into the agent's scoped sandbox work
 mount before the Tool VM starts. Targets are relative to the sandbox
-`/work` backing directory, cannot use `..`, and are not written for shared
-`/zone` work mounts. Existing files are preserved so a user's edited credentials
-or config are not overwritten on later leases. Seed sources support
-`environment`, `1password`, and `config`; inline seed values are written as
-plaintext files into the sandbox work mount on first boot.
+backing directory exposed at `/workspace` in Tool VMs, cannot use `..`, and are
+not written for shared `/zone` work mounts. Existing files are preserved so a
+user's edited credentials or config are not overwritten on later leases. Seed
+sources support `environment`, `1password`, and `config`; inline seed values are
+written as plaintext files into the sandbox work mount on first boot.
 
 The important path model is:
 
@@ -503,11 +506,12 @@ OpenClaw gateway durable zone files:
   guest /zone  ->  host gateway.zoneFilesDir
 
 Tool VM selected work mount:
-  guest /work  ->  host path chosen by OpenClaw lease request
+  guest /workspace  ->  host path chosen by OpenClaw lease request
+  guest /work       ->  Tool VM rootfs/COW scratch
 
-That Tool VM /work backing path may be an agent sandbox work directory under
-stateDir, or a subpath of zoneFilesDir. The Tool VM root filesystem itself is
-disposable.
+That Tool VM `/workspace` backing path may be an agent sandbox work directory
+under stateDir, or a subpath of zoneFilesDir. The Tool VM root filesystem
+itself is disposable, including `/work`.
 ```
 
 ## toolVmProfiles

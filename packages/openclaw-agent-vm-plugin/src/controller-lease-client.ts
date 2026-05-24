@@ -10,6 +10,15 @@ import type {
 	StartToolVmActiveUseRequest,
 	StartToolVmActiveUseResponse,
 } from '@agent-vm/gateway-interface';
+import { z } from 'zod';
+
+export type JsonValue =
+	| boolean
+	| null
+	| number
+	| string
+	| { readonly [key: string]: JsonValue }
+	| readonly JsonValue[];
 
 export interface OpenClawRuntimeStatusReport {
 	readonly findings: readonly {
@@ -21,6 +30,24 @@ export interface OpenClawRuntimeStatusReport {
 	readonly zoneId: string;
 }
 
+export interface OpenClawGondolinLeaseSandboxSnapshot {
+	readonly backend: unknown;
+	readonly mode: unknown;
+	readonly scope: unknown;
+	readonly workspaceAccess: unknown;
+}
+
+export interface OpenClawGondolinLeaseRequest {
+	readonly agentId: string;
+	readonly agentWorkspaceDir: string;
+	readonly profileId: string;
+	readonly sandbox: OpenClawGondolinLeaseSandboxSnapshot;
+	readonly scopeKey: string;
+	readonly sessionKey: string;
+	readonly workMountDir: string;
+	readonly zoneId: string;
+}
+
 export interface LeaseClient {
 	// Cached handles use renewLease; read-only runtime probes use peekLease.
 	endActiveUse(leaseId: string, useId: string, request: EndToolVmActiveUseRequest): Promise<void>;
@@ -29,13 +56,7 @@ export interface LeaseClient {
 	publishOpenClawRuntimeStatus?(report: OpenClawRuntimeStatusReport): Promise<void>;
 	releaseLease(leaseId: string, options?: { readonly force?: boolean }): Promise<void>;
 	renewLease(leaseId: string): Promise<ToolVmSshLease>;
-	requestLease(request: {
-		readonly agentWorkspaceDir: string;
-		readonly profileId: string;
-		readonly scopeKey: string;
-		readonly workMountDir: string;
-		readonly zoneId: string;
-	}): Promise<ToolVmSshLease>;
+	requestLease(request: OpenClawGondolinLeaseRequest): Promise<ToolVmSshLease>;
 	startActiveUse(
 		leaseId: string,
 		request: StartToolVmActiveUseRequest,
@@ -47,18 +68,22 @@ export type ControllerLeaseRequestErrorKind = 'client-error' | 'server-error';
 export class ControllerLeaseRequestError extends Error {
 	readonly bodyText: string;
 	readonly kind: ControllerLeaseRequestErrorKind;
-	readonly responseBody: unknown;
+	readonly responseBody: JsonValue | undefined;
 	readonly status: number;
 
 	constructor(options: {
 		readonly bodyText: string;
 		readonly context: string;
-		readonly responseBody: unknown;
+		readonly responseBody: JsonValue | undefined;
 		readonly status: number;
 	}) {
 		const kind: ControllerLeaseRequestErrorKind =
 			options.status >= 400 && options.status < 500 ? 'client-error' : 'server-error';
-		super(`${options.context} returned HTTP ${String(options.status)} (${kind})`);
+		super(
+			`${options.context} returned HTTP ${String(options.status)} (${kind})${formatStructuredErrorSuffix(
+				options.responseBody,
+			)}`,
+		);
 		this.bodyText = options.bodyText;
 		this.kind = kind;
 		this.responseBody = options.responseBody;
@@ -66,8 +91,51 @@ export class ControllerLeaseRequestError extends Error {
 	}
 }
 
+const structuredControllerErrorSchema = z.object({
+	guidance: z.string().trim().min(1).optional(),
+	message: z.string().trim().min(1).optional(),
+});
+
+function isJsonObjectRecord(value: unknown): value is { readonly [key: string]: JsonValue } {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		!Array.isArray(value) &&
+		Object.values(value).every(isJsonValue)
+	);
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+	if (
+		value === null ||
+		typeof value === 'string' ||
+		typeof value === 'boolean' ||
+		typeof value === 'number'
+	) {
+		return true;
+	}
+	if (Array.isArray(value)) {
+		return value.every(isJsonValue);
+	}
+	return isJsonObjectRecord(value);
+}
+
+const jsonValueSchema = z.custom<JsonValue>(isJsonValue);
+
 function objectValue(value: unknown): object | undefined {
 	return typeof value === 'object' && value !== null ? value : undefined;
+}
+
+function formatStructuredErrorSuffix(responseBody: JsonValue | undefined): string {
+	const parsedError = structuredControllerErrorSchema.safeParse(responseBody);
+	if (!parsedError.success) {
+		return '';
+	}
+	const { guidance, message } = parsedError.data;
+	const parts = [message, guidance ? `Guidance: ${guidance}` : undefined].filter(
+		(part): part is string => part !== undefined,
+	);
+	return parts.length > 0 ? `: ${parts.join(' ')}` : '';
 }
 
 function isStartActiveUseResponse(value: unknown): value is StartToolVmActiveUseResponse {
@@ -97,9 +165,11 @@ function writeLeaseClientLog(message: string): void {
 	process.stderr.write(`[openclaw-agent-vm-plugin] ${message}\n`);
 }
 
-function parseJsonBody(bodyText: string, context: string): unknown {
+function parseJsonBody(bodyText: string, context: string): JsonValue | undefined {
 	try {
-		return JSON.parse(bodyText);
+		const parsedJson: unknown = JSON.parse(bodyText);
+		const parsedBody = jsonValueSchema.safeParse(parsedJson);
+		return parsedBody.success ? parsedBody.data : undefined;
 	} catch (error) {
 		writeLeaseClientLog(`${context} returned a non-JSON error body: ${formatUnknownError(error)}`);
 		return undefined;
@@ -111,7 +181,7 @@ async function readErrorBody(
 	context: string,
 ): Promise<{
 	readonly bodyText: string;
-	readonly responseBody: unknown;
+	readonly responseBody: JsonValue | undefined;
 }> {
 	const bodyText = await response.text().catch(() => '(unreadable)');
 	return {
@@ -248,9 +318,12 @@ export function createLeaseClient(options: {
 		requestLease: async (request): Promise<ToolVmSshLease> => {
 			const response = await fetchImpl(`${baseUrl}/lease`, {
 				body: JSON.stringify({
+					agentId: request.agentId,
 					agentWorkspaceDir: request.agentWorkspaceDir,
 					profileId: request.profileId,
+					sandbox: request.sandbox,
 					scopeKey: request.scopeKey,
+					sessionKey: request.sessionKey,
 					workMountDir: request.workMountDir,
 					zoneId: request.zoneId,
 				}),

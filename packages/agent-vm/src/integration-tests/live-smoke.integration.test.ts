@@ -86,7 +86,7 @@ describeLiveVmIntegration('live smoke: real Gondolin VM', () => {
 		await rm(tmpDir, { recursive: true, force: true });
 	}, 60_000);
 
-	it('should persist writable RealFS /work files across disposable VM lifetimes', async () => {
+	it('should persist writable RealFS /workspace files across disposable VM lifetimes', async () => {
 		if (vm) {
 			await vm.close();
 			vm = null;
@@ -102,7 +102,7 @@ describeLiveVmIntegration('live smoke: real Gondolin VM', () => {
 				allowedHosts: [],
 				secrets: {},
 				vfsMounts: {
-					'/work': {
+					'/workspace': {
 						kind: 'realfs',
 						hostPath: hostWorkMountDir,
 					},
@@ -110,7 +110,7 @@ describeLiveVmIntegration('live smoke: real Gondolin VM', () => {
 			});
 
 			const writeResult = await vm.exec(
-				"mkdir -p /work/project && printf 'persisted through realfs' > /work/project/notes.md",
+				"mkdir -p /workspace/project && printf 'persisted through realfs' > /workspace/project/notes.md",
 			);
 			expect(writeResult.exitCode).toBe(0);
 			await expect(
@@ -126,14 +126,14 @@ describeLiveVmIntegration('live smoke: real Gondolin VM', () => {
 				allowedHosts: [],
 				secrets: {},
 				vfsMounts: {
-					'/work': {
+					'/workspace': {
 						kind: 'realfs',
 						hostPath: hostWorkMountDir,
 					},
 				},
 			});
 
-			const readResult = await vm.exec('cat /work/project/notes.md');
+			const readResult = await vm.exec('cat /workspace/project/notes.md');
 			expect(readResult.exitCode).toBe(0);
 			expect(readResult.stdout.trim()).toBe('persisted through realfs');
 		} finally {

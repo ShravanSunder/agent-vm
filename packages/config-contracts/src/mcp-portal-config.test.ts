@@ -4,7 +4,6 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { migrateMcpPortalProfileShape } from '../scripts/migrate-mcp-portal-profile-shape.js';
 import { loadMcpPortalConfig, resolveMcpPortalProfile } from './mcp-portal-config.js';
 
 async function writeConfigFile(text: string): Promise<string> {
@@ -233,58 +232,5 @@ describe('loadMcpPortalConfig', () => {
 		const profile = resolveMcpPortalProfile(config, 'default');
 
 		expect(profile.approval.annotationPolicy).toBe('always-require-approval');
-	});
-
-	it('migrates legacy profile policy fields to per-namespace policy', () => {
-		expect(
-			migrateMcpPortalProfileShape({
-				agents: { beta: { profile: 'default' } },
-				profiles: {
-					default: {
-						cache: { catalogTtlMs: 60_000 },
-						enabledNamespaces: ['deepwiki'],
-						enabledToolsByNamespace: {
-							deepwiki: ['ask_question'],
-						},
-						hiddenToolsByNamespace: {
-							deepwiki: ['read_wiki_contents'],
-						},
-						approval: {
-							allowWithoutApprovalTools: [{ namespace: 'deepwiki', toolName: 'ask_question' }],
-							alwaysAskTools: [{ namespace: 'deepwiki', toolName: 'admin_tool' }],
-							annotationPolicy: 'always-require-approval',
-							trustedAnnotationNamespaces: ['deepwiki'],
-							writeTools: [{ namespace: 'deepwiki', toolName: 'write_note' }],
-						},
-						logging: { enabled: true },
-					},
-				},
-				schemaVersion: 1,
-			}),
-		).toMatchObject({
-			profiles: {
-				default: {
-					cache: { catalogTtlMs: 60_000 },
-					logging: { enabled: true },
-					approval: {
-						annotationPolicy: 'always-require-approval',
-					},
-					namespaces: {
-						deepwiki: {
-							approval: {
-								allowWithoutApproval: ['ask_question'],
-								alwaysAsk: ['admin_tool'],
-								trustedAnnotations: true,
-								write: ['write_note'],
-							},
-							tools: {
-								enabled: ['ask_question'],
-								hidden: ['read_wiki_contents'],
-							},
-						},
-					},
-				},
-			},
-		});
 	});
 });

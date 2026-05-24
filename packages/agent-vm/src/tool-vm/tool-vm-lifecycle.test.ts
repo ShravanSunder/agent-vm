@@ -159,7 +159,7 @@ function createSecretResolver(values: Record<string, string>): SecretResolver {
 }
 
 describe('createToolVm', () => {
-	it('mounts the lease host work mount directory at /work', async () => {
+	it('mounts the lease host work mount directory at /workspace and leaves /work ephemeral', async () => {
 		const exec = vi.fn(() => createManagedExecProcessStub());
 		const managedVm = {
 			close: async () => {},
@@ -221,7 +221,7 @@ describe('createToolVm', () => {
 		expect(createManagedVm).toHaveBeenCalledWith(
 			expect.objectContaining({
 				vfsMounts: {
-					'/work': {
+					'/workspace': {
 						hostPath: realWorkMountDir,
 						kind: 'realfs',
 						pinnedHostRoot: expect.objectContaining({
@@ -231,12 +231,12 @@ describe('createToolVm', () => {
 				},
 			}),
 		);
-		expect(capturedCreateVmOptions?.vfsMounts['/work']?.pinnedHostRoot).toEqual(
+		expect(capturedCreateVmOptions?.vfsMounts['/workspace']?.pinnedHostRoot).toEqual(
 			expect.objectContaining({
 				realPath: realWorkMountDir,
 			}),
 		);
-		expect(capturedCreateVmOptions?.vfsMounts).not.toHaveProperty('/workspace');
+		expect(capturedCreateVmOptions?.vfsMounts).not.toHaveProperty('/work');
 		// IPv4-preference egress for Node consumers inside the Tool VM
 		// to defeat Happy Eyeballs racing on gondolin's synthetic AAAA.
 		// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
@@ -540,7 +540,7 @@ describe('createToolVm', () => {
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 
-	it('persists tool writes through the RealFS /work backing directory', async () => {
+	it('persists tool writes through the RealFS /workspace backing directory', async () => {
 		const managedVm = {
 			close: async () => {},
 			enableIngress: async () => ({ host: '127.0.0.1', port: 18791 }),
@@ -588,14 +588,20 @@ describe('createToolVm', () => {
 					imagePath: '/cache/tool-fingerprint',
 				}),
 				createManagedVm: async (createVmOptions) => {
-					const workMount = createVmOptions.vfsMounts['/work'];
-					if (!workMount || workMount.kind !== 'realfs') {
-						throw new Error('Expected Tool VM /work to be a RealFS mount.');
+					const workspaceMount = createVmOptions.vfsMounts['/workspace'];
+					if (!workspaceMount || workspaceMount.kind !== 'realfs') {
+						throw new Error('Expected Tool VM /workspace to be a RealFS mount.');
 					}
-					if (typeof workMount.hostPath !== 'string') {
-						throw new Error('Expected Tool VM /work RealFS mount to include hostPath.');
+					if (createVmOptions.vfsMounts['/work']) {
+						throw new Error('Expected Tool VM /work to remain rootfs/COW, not a RealFS mount.');
 					}
-					await writeFile(path.join(workMount.hostPath, 'notes.md'), 'persisted through /work');
+					if (typeof workspaceMount.hostPath !== 'string') {
+						throw new Error('Expected Tool VM /workspace RealFS mount to include hostPath.');
+					}
+					await writeFile(
+						path.join(workspaceMount.hostPath, 'notes.md'),
+						'persisted through /workspace',
+					);
 					return managedVm;
 				},
 				closePinnedRealFsRoot: () => {},
@@ -603,7 +609,7 @@ describe('createToolVm', () => {
 			},
 		);
 
-		await expect(readFile(persistedFilePath, 'utf8')).resolves.toBe('persisted through /work');
+		await expect(readFile(persistedFilePath, 'utf8')).resolves.toBe('persisted through /workspace');
 	});
 
 	it('creates the tool VM without running redundant runtime setup commands', async () => {

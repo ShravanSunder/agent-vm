@@ -533,6 +533,34 @@ describe('runConfigValidation', () => {
 		]);
 	});
 
+	it('reports live MCP profile resolution failures as validation checks', async () => {
+		const systemConfig = await createSystemConfigWithLiveMcpFiles({
+			mcpConfig: createSingleToolMcpConfig({
+				namespace: 'deepwiki',
+				toolName: 'ask_question',
+			}),
+			portalConfig: {
+				schemaVersion: 1,
+				agents: { shravan: { profile: 'missing' } },
+				profiles: { default: { namespaces: { deepwiki: {} } } },
+			},
+		});
+
+		await expect(
+			runLiveMcpPortalValidation({
+				createRuntime: () => createFakeMcpRuntime({ deepwiki: ['ask_question'] }),
+				secretResolver: createTestSecretResolver(),
+				systemConfig,
+			}),
+		).resolves.toEqual([
+			expect.objectContaining({
+				hint: expect.stringContaining("unknown MCP profile 'missing'"),
+				name: 'mcp-live-shravan-config',
+				ok: false,
+			}),
+		]);
+	});
+
 	it('reports live MCP secret resolution failures as validation checks', async () => {
 		const systemConfig = await createSystemConfigWithLiveMcpFiles({
 			mcpConfig: {

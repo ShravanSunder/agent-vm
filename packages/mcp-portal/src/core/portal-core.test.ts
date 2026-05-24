@@ -214,7 +214,20 @@ describe('portal core event stream', () => {
 	it('streams batch item progress and collects success and failure results', async () => {
 		const callUpstreamTool = vi.fn(async (call: { readonly toolName: string }) => {
 			if (call.toolName === 'explode') {
-				throw new Error('upstream failed deliberately');
+				throw new UpstreamMcpError({
+					causeMessage: '502 Bad Gateway',
+					elapsedMs: 23,
+					hint: 'MCP provider accepted discovery but the tool call failed; inspect the tool arguments and upstream provider response.',
+					kind: 'upstream_mcp_failed',
+					namespace: 'linear',
+					operation: 'tools/call',
+					phase: 'call_tool',
+					toolName: 'explode',
+					transport: {
+						kind: 'streamable-http',
+						url: 'https://linear.example.test/mcp',
+					},
+				});
 			}
 			return { content: [{ text: 'created', type: 'text' }] };
 		});
@@ -294,9 +307,21 @@ describe('portal core event stream', () => {
 				{
 					error: {
 						code: 'upstream_call_failed',
-						message: 'upstream failed deliberately',
+						message: 'linear: call_tool explode failed: 502 Bad Gateway',
 						namespace: 'linear',
 						toolName: 'explode',
+						upstream: {
+							causeMessage: '502 Bad Gateway',
+							hint: expect.stringContaining('provider accepted discovery'),
+							kind: 'upstream_mcp_failed',
+							namespace: 'linear',
+							phase: 'call_tool',
+							toolName: 'explode',
+							transport: {
+								kind: 'streamable-http',
+								url: 'https://linear.example.test/mcp',
+							},
+						},
 					},
 					requestId: 'bad-call',
 					status: 'failed',

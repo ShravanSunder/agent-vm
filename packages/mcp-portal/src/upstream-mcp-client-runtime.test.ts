@@ -128,6 +128,52 @@ describe('upstream MCP client runtime', () => {
 		);
 	});
 
+	it('preserves gateway Python and uv runtime env for stdio MCP servers', async () => {
+		vi.stubEnv('REQUESTS_CA_BUNDLE', '/run/gondolin/ca-certificates.crt');
+		vi.stubEnv('SSL_CERT_FILE', '/run/gondolin/ca-certificates.crt');
+		vi.stubEnv('UV_CACHE_DIR', '/work/cache/uv');
+		const createTransport = vi.fn(() => ({}));
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => ({ tools: [] })),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport,
+			servers: [
+				{
+					args: ['run', 'mcp-server-example'],
+					command: 'uv',
+					env: { EXAMPLE_API_KEY: 'secret-token-value' },
+					namespace: 'python_docs',
+					transport: 'stdio',
+				},
+			],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'python_docs' }),
+		).resolves.toEqual([]);
+
+		expect(createTransport).toHaveBeenCalledWith(
+			{
+				args: ['run', 'mcp-server-example'],
+				command: 'uv',
+				env: {
+					EXAMPLE_API_KEY: 'secret-token-value',
+					REQUESTS_CA_BUNDLE: '/run/gondolin/ca-certificates.crt',
+					SSL_CERT_FILE: '/run/gondolin/ca-certificates.crt',
+					UV_CACHE_DIR: '/work/cache/uv',
+				},
+				namespace: 'python_docs',
+				transport: 'stdio',
+			},
+			'stdio',
+		);
+	});
+
 	it('wraps listTools timeout with structured upstream diagnostics', async () => {
 		const neverListingClient: UpstreamMcpClientLike = {
 			callTool: vi.fn(),

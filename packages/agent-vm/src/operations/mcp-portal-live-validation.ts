@@ -181,22 +181,27 @@ async function validateMcpPortalZone(
 	}
 	const serverNamespaces = new Set(servers.map((server) => server.namespace));
 	const referencedNamespaces = new Set<string>();
-	const namespaceChecks = Object.entries(portalConfig.agents).flatMap(([agentId, agent]) => {
-		const profile = resolveMcpPortalProfile(portalConfig, agent.profile);
-		return profileNamespaces(profile).flatMap((namespace) => {
-			referencedNamespaces.add(namespace);
-			if (serverNamespaces.has(namespace)) {
-				return [];
-			}
-			return [
-				{
-					hint: `Agent '${agentId}' profile '${agent.profile}' references MCP namespace '${namespace}', but no provider with that namespace exists in mcp.config.jsonc.`,
-					name: `mcp-live-profile-namespace-${zone.id}-${agentId}-${namespace}`,
-					ok: false,
-				} satisfies ConfigValidationCheck,
-			];
+	let namespaceChecks: readonly ConfigValidationCheck[];
+	try {
+		namespaceChecks = Object.entries(portalConfig.agents).flatMap(([agentId, agent]) => {
+			const profile = resolveMcpPortalProfile(portalConfig, agent.profile);
+			return profileNamespaces(profile).flatMap((namespace) => {
+				referencedNamespaces.add(namespace);
+				if (serverNamespaces.has(namespace)) {
+					return [];
+				}
+				return [
+					{
+						hint: `Agent '${agentId}' profile '${agent.profile}' references MCP namespace '${namespace}', but no provider with that namespace exists in mcp.config.jsonc.`,
+						name: `mcp-live-profile-namespace-${zone.id}-${agentId}-${namespace}`,
+						ok: false,
+					} satisfies ConfigValidationCheck,
+				];
+			});
 		});
-	});
+	} catch (error) {
+		return zoneConfigFailure(zone.id, error);
+	}
 
 	const namespacesToValidate = [...serverNamespaces]
 		.filter((namespace) => referencedNamespaces.has(namespace))

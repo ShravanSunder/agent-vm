@@ -8,12 +8,14 @@ import {
 	resolveZoneGitPaths,
 	type ZoneGitToolVmMount,
 } from '../zone-git/zone-git-paths.js';
+import { pathContainsParentTraversal } from './lease-path-helpers.js';
 
 // These guest roots are mounted by the OpenClaw gateway image. Lease callers
 // must speak in gateway paths; the controller owns translation to host paths.
 const OPENCLAW_STATE_VM_ROOT = '/home/openclaw/.openclaw/state';
 const OPENCLAW_STATE_SANDBOXES_VM_ROOT = `${OPENCLAW_STATE_VM_ROOT}/sandboxes`;
 const OPENCLAW_ZONE_FILES_VM_ROOT = OPENCLAW_ZONE_FILES_GUEST_ROOT;
+export const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
 
 type ZoneConfig = SystemConfig['zones'][number];
 
@@ -42,10 +44,6 @@ export interface ResolvedLeaseWorkMount {
 	readonly guestWorkdir: string;
 	readonly hostWorkMountDir: string;
 	readonly zoneGitMount?: ZoneGitToolVmMount;
-}
-
-function pathContainsParentTraversal(inputPath: string): boolean {
-	return inputPath.split(/[\\/]+/u).includes('..');
 }
 
 function normalizeGuestWorkMountDir(workMountDir: string): string {
@@ -232,7 +230,7 @@ export async function resolveLeaseWorkMountDir(options: {
 		};
 	}
 	return {
-		guestWorkdir: '/work',
+		guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 		hostWorkMountDir: realHostWorkMountDir,
 	};
 }

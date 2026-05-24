@@ -117,7 +117,7 @@ describe('runBackupCommand', () => {
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
 						transport: 'ssh-sandbox' as const,
-						workdir: '/work',
+						workdir: '/workspace',
 
 						zoneId: 'shravan',
 					}),
@@ -190,7 +190,7 @@ describe('runBackupCommand', () => {
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
 						transport: 'ssh-sandbox' as const,
-						workdir: '/work',
+						workdir: '/workspace',
 
 						zoneId: 'shravan',
 					}),
@@ -260,7 +260,7 @@ describe('runBackupCommand', () => {
 							ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 							tcpSlot: 0,
 							transport: 'ssh-sandbox' as const,
-							workdir: '/work',
+							workdir: '/workspace',
 
 							zoneId: 'shravan',
 						}),
@@ -321,7 +321,7 @@ describe('runBackupCommand', () => {
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
 						transport: 'ssh-sandbox' as const,
-						workdir: '/work',
+						workdir: '/workspace',
 
 						zoneId: 'shravan',
 					}),
@@ -412,7 +412,7 @@ describe('runBackupCommand', () => {
 						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 						tcpSlot: 0,
 						transport: 'ssh-sandbox' as const,
-						workdir: '/work',
+						workdir: '/workspace',
 
 						zoneId: 'shravan',
 					}),

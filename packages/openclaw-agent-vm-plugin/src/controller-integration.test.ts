@@ -12,6 +12,8 @@ import { createControllerApp } from '../../agent-vm/src/controller/http/controll
 import { createLeaseClient } from './controller-lease-client.js';
 import { createGondolinSandboxBackendFactory } from './sandbox-backend-factory.js';
 
+const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
+
 function createLeaseResponse(leaseId: string): ToolVmSshLease {
 	return {
 		leaseId,
@@ -24,7 +26,7 @@ function createLeaseResponse(leaseId: string): ToolVmSshLease {
 		},
 		tcpSlot: 0,
 		transport: 'ssh-sandbox' as const,
-		workdir: '/work',
+		workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 	};
 }
 
@@ -38,8 +40,22 @@ function createLeasePeekResponse(leaseId: string): ToolVmLeasePeek {
 		ssh: { host: 'tool-0.vm.host', port: 22, user: 'root' },
 		tcpSlot: 0,
 		transport: 'ssh-sandbox' as const,
-		workdir: '/work',
+		workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 		zoneId: 'shravan',
+	};
+}
+
+function gondolinSandboxConfig(): {
+	readonly backend: 'gondolin';
+	readonly mode: 'all';
+	readonly scope: 'agent';
+	readonly workspaceAccess: 'rw';
+} {
+	return {
+		backend: 'gondolin',
+		mode: 'all',
+		scope: 'agent',
+		workspaceAccess: 'rw',
 	};
 }
 
@@ -111,8 +127,8 @@ describe('gondolin controller integration', () => {
 			id: 'lease-123',
 			lastUsedAt: 1,
 			profileId: 'standard',
-			scopeKey: 'agent:main:session-abc',
-			guestWorkdir: '/work',
+			scopeKey: 'agent:main',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			sshAccess: {
 				command: 'ssh ...',
 				host: '127.0.0.1',
@@ -168,7 +184,7 @@ describe('gondolin controller integration', () => {
 				endActiveUse: vi.fn(),
 			},
 			resolveLeaseWorkMountDir: async ({ workMountDir }) => ({
-				guestWorkdir: '/work',
+				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 				hostWorkMountDir: workMountDir,
 			}),
 		});
@@ -203,14 +219,15 @@ describe('gondolin controller integration', () => {
 		const backend = await factory({
 			agentWorkspaceDir: '/home/openclaw/work',
 			cfg: {
+				...gondolinSandboxConfig(),
 				docker: {
 					env: {
 						OPENCLAW_LOG_LEVEL: 'debug',
 					},
 				},
 			},
-			scopeKey: 'agent:main:session-abc',
-			sessionKey: 'session-abc',
+			scopeKey: 'agent:main',
+			sessionKey: 'agent:main:session-abc',
 			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 		});
 		const execSpec = await backend.buildExecSpec({
@@ -219,7 +236,7 @@ describe('gondolin controller integration', () => {
 				TEST_ENV: '1',
 			},
 			usePty: false,
-			workdir: '/work',
+			workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 		});
 
 		expect(execSpec.argv).toEqual(['ssh', 'tool-0.vm.host', 'ls -la']);
@@ -235,14 +252,50 @@ describe('gondolin controller integration', () => {
 		});
 	});
 
-	it('does not reuse a cached handle when the same scopeKey changes workspace identity', async () => {
+	it('does not reuse a cached handle when the profile changes for the same agent scope', async () => {
 		const requestLease = vi
 			.fn()
 			.mockResolvedValueOnce(createLeaseResponse('lease-1'))
 			.mockResolvedValueOnce(createLeaseResponse('lease-2'));
-		const factory = createGondolinSandboxBackendFactory(
+		const standardFactory = createGondolinSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
+				profileId: 'standard',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: async ({ command, env, ssh }) => ({
+					argv: ['ssh', ssh.host, command],
+					env,
+					stdinMode: 'pipe-open',
+				}),
+				createLeaseClient: () => ({
+					endActiveUse: vi.fn(async () => {}),
+					heartbeatActiveUse: vi.fn(async () => ({
+						expiresAt: 3_000,
+						heartbeatAfterMs: 1_000,
+					})),
+					renewLease: vi.fn(async () => createLeaseResponse('lease-1')),
+					peekLease: vi.fn(async () => createLeasePeekResponse('lease-1')),
+					releaseLease: vi.fn(async () => {}),
+					requestLease,
+					startActiveUse: vi.fn(async (_leaseId, request) => ({
+						expiresAt: 3_000,
+						heartbeatAfterMs: 1_000,
+						useId: request.useId,
+					})),
+				}),
+				runRemoteShellScript: async () => ({
+					code: 0,
+					stderr: Buffer.from(''),
+					stdout: Buffer.from('ok'),
+				}),
+			},
+		);
+		const gpuFactory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				profileId: 'gpu',
 				zoneId: 'shravan',
 			},
 			{
@@ -275,19 +328,19 @@ describe('gondolin controller integration', () => {
 			},
 		);
 
-		const first = await factory({
+		const first = await standardFactory({
 			agentWorkspaceDir: '/home/openclaw/work',
-			cfg: {},
+			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'session-1',
-			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/agent-main/work',
+			workspaceDir: '/home/openclaw/work',
 		});
-		const second = await factory({
-			agentWorkspaceDir: '/home/openclaw/other-work',
-			cfg: {},
+		const second = await gpuFactory({
+			agentWorkspaceDir: '/home/openclaw/work',
+			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'session-1',
-			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/agent-main-other/work',
+			workspaceDir: '/home/openclaw/work',
 		});
 
 		expect(first.runtimeId).toBe('lease-1');

@@ -152,7 +152,13 @@ interface PendingClient {
 
 const defaultConnectionTimeoutMs = 30_000;
 const defaultMaxResponseBytes = 4 * 1_024 * 1_024;
-const inheritedStdioRuntimeEnvNames = ['NODE_EXTRA_CA_CERTS', 'NODE_OPTIONS'] as const;
+const inheritedStdioRuntimeEnvNames = [
+	'NODE_EXTRA_CA_CERTS',
+	'NODE_OPTIONS',
+	'REQUESTS_CA_BUNDLE',
+	'SSL_CERT_FILE',
+	'UV_CACHE_DIR',
+] as const;
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);

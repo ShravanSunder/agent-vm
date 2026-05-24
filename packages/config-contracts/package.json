@@ -13,9 +13,6 @@
 		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
 		"directory": "packages/config-contracts"
 	},
-	"bin": {
-		"agent-vm-migrate-mcp-portal-profile-shape": "./dist/scripts/migrate-mcp-portal-profile-shape.js"
-	},
 	"files": [
 		"dist"
 	],
