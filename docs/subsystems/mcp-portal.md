@@ -61,10 +61,14 @@ Each profile is a complete portal policy. Profiles do not inherit from or merge
 with other profiles; `agents.<agentId>.profile` selects exactly one profile.
 Namespace exposure is fail closed. Empty `profiles.<name>.namespaces` exposes no
 upstream namespaces. Each namespace colocates its policy:
-`tools.enabled`, `tools.hidden`, `approval.allowWithoutApproval`,
+`tools.enableAll`, `tools.enabled`, `tools.disabled`, `tools.hidden`,
+`approval.allowWithoutApproval`,
 `approval.alwaysAsk`, `approval.write`, and `approval.trustedAnnotations`.
-Missing `tools.enabled` means all discovered tools in that namespace are
-available unless hidden; list one or more tool names to narrow that namespace.
+Each namespace must choose exactly one tool exposure mode: `tools.enableAll:
+true` exposes every discovered tool unless hidden by `tools.hidden`,
+`tools.enabled` narrows the namespace to explicit tool names, and
+`tools.disabled: true` keeps the namespace authored but out of the active agent
+policy.
 
 ## Schema Contract
 

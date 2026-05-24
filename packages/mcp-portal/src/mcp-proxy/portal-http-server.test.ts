@@ -80,7 +80,7 @@ function createTestPortalCore(
 		accessPolicy: {
 			defaultPolicy: 'deny-all',
 			enabledNamespacesByAgent: { 'agent-a': ['linear'] },
-			enabledToolsByAgent: {},
+			enabledToolsByNamespaceByAgent: {},
 			hiddenToolsByAgent: {},
 		},
 		approval: allowApproval,

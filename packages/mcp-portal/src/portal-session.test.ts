@@ -41,7 +41,7 @@ describe('portal sessions', () => {
 				defaultPolicy: 'deny-all',
 				enabledNamespaces: [],
 				enabledNamespacesByAgent: {},
-				enabledToolsByAgent: {},
+				enabledToolsByNamespaceByAgent: {},
 				hiddenToolsByAgent: {},
 			},
 			catalogTtlMs: 60_000,
@@ -62,7 +62,7 @@ describe('portal sessions', () => {
 			config: {
 				defaultPolicy: 'allow-all',
 				enabledNamespacesByAgent: {},
-				enabledToolsByAgent: {},
+				enabledToolsByNamespaceByAgent: {},
 				hiddenToolsByAgent: {},
 			},
 			identity: createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-scope-a' }),
@@ -78,7 +78,7 @@ describe('portal sessions', () => {
 				defaultPolicy: 'allow-all',
 				enabledNamespaces: [],
 				enabledNamespacesByAgent: {},
-				enabledToolsByAgent: {},
+				enabledToolsByNamespaceByAgent: {},
 				hiddenToolsByAgent: {},
 			},
 			identity: createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-scope-a' }),
@@ -94,8 +94,8 @@ describe('portal sessions', () => {
 				defaultPolicy: 'deny-all',
 				enabledNamespaces: ['linear'],
 				enabledNamespacesByAgent: {},
-				enabledToolsByAgent: {
-					'agent-a': [{ namespace: 'linear', toolName: 'search_issues' }],
+				enabledToolsByNamespaceByAgent: {
+					'agent-a': { linear: ['search_issues'] },
 				},
 				hiddenToolsByAgent: {},
 			},
@@ -118,6 +118,47 @@ describe('portal sessions', () => {
 
 		expect(session.catalog.tools.map((tool) => `${tool.namespace}.${tool.toolName}`)).toEqual([
 			'linear.search_issues',
+		]);
+	});
+
+	it('keeps exact tool policy scoped to its namespace', async () => {
+		const manager = createPortalSessionManager({
+			accessPolicy: {
+				defaultPolicy: 'deny-all',
+				enabledNamespaces: ['deepwiki', 'linear'],
+				enabledNamespacesByAgent: {},
+				enabledToolsByNamespaceByAgent: {
+					'agent-a': { deepwiki: ['ask_question'] },
+				},
+				hiddenToolsByAgent: {},
+			},
+			catalogTtlMs: 60_000,
+			runtime: {
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(async ({ namespace }): Promise<readonly Tool[]> => {
+					if (namespace === 'deepwiki') {
+						return [
+							{ inputSchema: { type: 'object' }, name: 'ask_question' },
+							{ inputSchema: { type: 'object' }, name: 'read_wiki_contents' },
+						];
+					}
+					return [
+						{ inputSchema: { type: 'object' }, name: 'list_issues' },
+						{ inputSchema: { type: 'object' }, name: 'save_issue' },
+					];
+				}),
+			},
+			upstreamNamespaces: ['deepwiki', 'linear'],
+		});
+
+		const session = await manager.getSession(
+			createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-scope-a' }),
+		);
+
+		expect(session.catalog.tools.map((tool) => `${tool.namespace}.${tool.toolName}`)).toEqual([
+			'deepwiki.ask_question',
+			'linear.list_issues',
+			'linear.save_issue',
 		]);
 	});
 

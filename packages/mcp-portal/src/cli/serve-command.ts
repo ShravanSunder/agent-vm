@@ -210,7 +210,9 @@ export async function createServeSecretResolver(
 
 export interface ProfilePolicyMaps {
 	readonly enabledNamespacesByAgent: Readonly<Record<string, readonly string[]>>;
-	readonly enabledToolsByAgent: Readonly<Record<string, readonly PortalToolSelector[]>>;
+	readonly enabledToolsByNamespaceByAgent: Readonly<
+		Record<string, Readonly<Record<string, readonly string[]>>>
+	>;
 	readonly hiddenToolsByAgent: Readonly<Record<string, readonly PortalToolSelector[]>>;
 }
 
@@ -352,14 +354,17 @@ export function buildProfilePolicyMaps(
 	portalConfig: McpPortalConfig,
 ): ProfilePolicyMaps & { readonly cacheTtlMs: number } {
 	const enabledNamespacesByAgent: Record<string, readonly string[]> = {};
-	const enabledToolsByAgent: Record<string, readonly PortalToolSelector[]> = {};
+	const enabledToolsByNamespaceByAgent: Record<
+		string,
+		Readonly<Record<string, readonly string[]>>
+	> = {};
 	const hiddenToolsByAgent: Record<string, readonly PortalToolSelector[]> = {};
 	const profileTtls: number[] = [];
 
 	for (const [agentId, agent] of Object.entries(portalConfig.agents)) {
 		const profile: ResolvedMcpPortalProfile = resolveMcpPortalProfile(portalConfig, agent.profile);
 		enabledNamespacesByAgent[agentId] = profile.enabledNamespaces;
-		enabledToolsByAgent[agentId] = selectorsFromNamespaceTools(profile.enabledToolsByNamespace);
+		enabledToolsByNamespaceByAgent[agentId] = profile.enabledToolsByNamespace;
 		hiddenToolsByAgent[agentId] = selectorsFromNamespaceTools(profile.hiddenToolsByNamespace);
 		profileTtls.push(profile.cache.catalogTtlMs);
 	}
@@ -367,7 +372,7 @@ export function buildProfilePolicyMaps(
 	return {
 		cacheTtlMs: profileTtls.length === 0 ? 60_000 : Math.min(...profileTtls),
 		enabledNamespacesByAgent,
-		enabledToolsByAgent,
+		enabledToolsByNamespaceByAgent,
 		hiddenToolsByAgent,
 	};
 }
@@ -491,7 +496,7 @@ export async function startPortalServer(
 		accessPolicy: {
 			defaultPolicy: 'deny-all',
 			enabledNamespacesByAgent: profilePolicyMaps.enabledNamespacesByAgent,
-			enabledToolsByAgent: profilePolicyMaps.enabledToolsByAgent,
+			enabledToolsByNamespaceByAgent: profilePolicyMaps.enabledToolsByNamespaceByAgent,
 			hiddenToolsByAgent: profilePolicyMaps.hiddenToolsByAgent,
 		},
 		approval: (calls, identity, approvalToken) =>

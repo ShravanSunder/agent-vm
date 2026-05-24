@@ -44,7 +44,9 @@ interface TcpPoolConfig {
 interface ProfilePolicyMaps {
 	readonly cacheTtlMs: number;
 	readonly enabledNamespacesByAgent: Readonly<Record<string, readonly string[]>>;
-	readonly enabledToolsByAgent: Readonly<Record<string, readonly PortalToolSelector[]>>;
+	readonly enabledToolsByNamespaceByAgent: Readonly<
+		Record<string, Readonly<Record<string, readonly string[]>>>
+	>;
 	readonly hiddenToolsByAgent: Readonly<Record<string, readonly PortalToolSelector[]>>;
 }
 
@@ -172,14 +174,17 @@ function selectorsFromNamespaceTools(
 
 function buildProfilePolicyMaps(portalConfig: McpPortalConfig): ProfilePolicyMaps {
 	const enabledNamespacesByAgent: Record<string, readonly string[]> = {};
-	const enabledToolsByAgent: Record<string, readonly PortalToolSelector[]> = {};
+	const enabledToolsByNamespaceByAgent: Record<
+		string,
+		Readonly<Record<string, readonly string[]>>
+	> = {};
 	const hiddenToolsByAgent: Record<string, readonly PortalToolSelector[]> = {};
 	const profileTtls: number[] = [];
 
 	for (const [agentId, agent] of Object.entries(portalConfig.agents)) {
 		const profile: ResolvedMcpPortalProfile = resolveMcpPortalProfile(portalConfig, agent.profile);
 		enabledNamespacesByAgent[agentId] = profile.enabledNamespaces;
-		enabledToolsByAgent[agentId] = selectorsFromNamespaceTools(profile.enabledToolsByNamespace);
+		enabledToolsByNamespaceByAgent[agentId] = profile.enabledToolsByNamespace;
 		hiddenToolsByAgent[agentId] = selectorsFromNamespaceTools(profile.hiddenToolsByNamespace);
 		profileTtls.push(profile.cache.catalogTtlMs);
 	}
@@ -187,7 +192,7 @@ function buildProfilePolicyMaps(portalConfig: McpPortalConfig): ProfilePolicyMap
 	return {
 		cacheTtlMs: profileTtls.length === 0 ? 60_000 : Math.min(...profileTtls),
 		enabledNamespacesByAgent,
-		enabledToolsByAgent,
+		enabledToolsByNamespaceByAgent,
 		hiddenToolsByAgent,
 	};
 }
@@ -222,7 +227,7 @@ async function createManagedPortalCore(configDir: string): Promise<PortalCore> {
 		accessPolicy: {
 			defaultPolicy: 'deny-all',
 			enabledNamespacesByAgent: profilePolicyMaps.enabledNamespacesByAgent,
-			enabledToolsByAgent: profilePolicyMaps.enabledToolsByAgent,
+			enabledToolsByNamespaceByAgent: profilePolicyMaps.enabledToolsByNamespaceByAgent,
 			hiddenToolsByAgent: profilePolicyMaps.hiddenToolsByAgent,
 		},
 		approvalTrustBoundary: 'openclaw-before-tool-call-hook',
