@@ -6,7 +6,7 @@ describe('createPortalPluginRuntimeState', () => {
 	it('loads portal config from the conventional file once', async () => {
 		const loadPortalConfig = vi.fn(async () => ({
 			agents: {},
-			profiles: { default: {} },
+			profiles: { default: { namespaces: {} } },
 			schemaVersion: 1 as const,
 		}));
 		const state = createPortalPluginRuntimeState({
@@ -29,7 +29,7 @@ describe('createPortalPluginRuntimeState', () => {
 			.mockRejectedValueOnce(new Error('temporary config read failure'))
 			.mockResolvedValueOnce({
 				agents: {},
-				profiles: { default: {} },
+				profiles: { default: { namespaces: {} } },
 				schemaVersion: 1 as const,
 			});
 		const state = createPortalPluginRuntimeState({

@@ -34,9 +34,17 @@ export type PortalCoreToolName =
 	| 'mcp_portal_call';
 
 export interface PortalAuditEvent {
+	readonly causeMessage?: string;
+	readonly elapsedMs?: number;
+	readonly hint?: string;
 	readonly kind: string;
 	readonly message: string;
 	readonly namespace?: string;
+	readonly operation?: string;
+	readonly phase?: string;
+	readonly timeoutMs?: number;
+	readonly toolName?: string;
+	readonly transport?: unknown;
 }
 
 export interface PortalCoreResult {
@@ -205,11 +213,7 @@ const portalCallInputSchema = z
 function diagnosticsToAuditEvents(
 	diagnostics: readonly PortalBatchDiagnostic[],
 ): readonly PortalAuditEvent[] {
-	return diagnostics.map((diagnostic) => ({
-		kind: diagnostic.kind,
-		message: diagnostic.message,
-		...(diagnostic.namespace !== undefined ? { namespace: diagnostic.namespace } : {}),
-	}));
+	return diagnostics.map((diagnostic) => ({ ...diagnostic }));
 }
 
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {
@@ -348,7 +352,33 @@ function batchItemsToCoreResult(props: {
 function namespaceDescription(namespaces: readonly string[]): string {
 	return namespaces.length === 0
 		? 'No upstream MCP namespaces are authorized for this agent scope.'
-		: `Authorized MCP namespaces for this agent scope: ${namespaces.join(', ')}.`;
+		: `Allowed namespaces for this agent: ${namespaces.join(', ')}.`;
+}
+
+function cloneJsonObject<TValue>(value: TValue): TValue {
+	return structuredClone(value);
+}
+
+function withListNamespaceSchemaDescription(
+	inputSchema: Tool['inputSchema'],
+	namespaces: readonly string[],
+): Tool['inputSchema'] {
+	const clonedSchema = cloneJsonObject(inputSchema);
+	const requests = isUnknownRecord(clonedSchema.properties)
+		? clonedSchema.properties.requests
+		: undefined;
+	const requestItems = isUnknownRecord(requests) ? requests.items : undefined;
+	const requestProperties = isUnknownRecord(requestItems) ? requestItems.properties : undefined;
+	const namespaceProperty = isUnknownRecord(requestProperties)
+		? requestProperties.namespaces
+		: undefined;
+	if (isUnknownRecord(namespaceProperty)) {
+		namespaceProperty.description =
+			namespaces.length === 0
+				? 'Optional namespace filter. No upstream MCP namespaces are authorized for this agent. Omit to list all currently discovered authorized namespaces.'
+				: `Optional namespace filter. Allowed namespaces for this agent: ${namespaces.join(', ')}. Omit to list all currently discovered authorized namespaces.`;
+	}
+	return clonedSchema;
 }
 
 export function listPortalCoreToolDescriptors(
@@ -358,21 +388,24 @@ export function listPortalCoreToolDescriptors(
 	return [
 		{
 			description: `List authorized MCP namespaces and compact tool summaries. ${scopeDescription}`,
-			inputSchema: portalToolInputSchemas.mcp_portal_list,
+			inputSchema: withListNamespaceSchemaDescription(
+				portalToolInputSchemas.mcp_portal_list,
+				namespaces,
+			),
 			name: 'mcp_portal_list',
 		},
 		{
-			description: `Search the caller scoped MCP Portal index. ${scopeDescription}`,
+			description: 'Search the caller scoped MCP Portal index.',
 			inputSchema: portalToolInputSchemas.mcp_portal_search,
 			name: 'mcp_portal_search',
 		},
 		{
-			description: `Describe exact MCP tool schemas and optional TypeScript/Zod helpers. ${scopeDescription}`,
+			description: 'Describe exact MCP tool schemas and optional TypeScript/Zod helpers.',
 			inputSchema: portalToolInputSchemas.mcp_portal_describe,
 			name: 'mcp_portal_describe',
 		},
 		{
-			description: `Validate and call an authorized upstream MCP tool by namespace and toolName. ${scopeDescription}`,
+			description: 'Validate and call an authorized upstream MCP tool by namespace and toolName.',
 			inputSchema: portalToolInputSchemas.mcp_portal_call,
 			name: 'mcp_portal_call',
 		},

@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import type { JSONRPCMessage, Tool } from '@modelcontextprotocol/sdk/types.js';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	fakeUpstreamNamespace,
@@ -15,6 +15,7 @@ import {
 	type NormalizedUpstreamMcpServer,
 	type RemoteUpstreamMcpServer,
 	type UpstreamMcpClientLike,
+	type UpstreamListToolsResult,
 } from './upstream-mcp-client-runtime.js';
 
 function createServer(
@@ -51,6 +52,10 @@ function portFromServerAddress(address: AddressInfo | string | null): number {
 }
 
 describe('upstream MCP client runtime', () => {
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
 	it('pages listTools until nextCursor is absent', async () => {
 		const client: UpstreamMcpClientLike = {
 			callTool: vi.fn(),
@@ -77,6 +82,125 @@ describe('upstream MCP client runtime', () => {
 			{ inputSchema: { type: 'object' }, name: 'b' },
 		]);
 		expect(client.listTools).toHaveBeenNthCalledWith(2, { cursor: 'next' }, expect.any(Object));
+	});
+
+	it('preserves gateway Node runtime env for stdio MCP servers', async () => {
+		vi.stubEnv('NODE_EXTRA_CA_CERTS', '/run/gondolin/ca-certificates.crt');
+		vi.stubEnv('NODE_OPTIONS', '--dns-result-order=ipv4first');
+		const createTransport = vi.fn(() => ({}));
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => ({ tools: [] })),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport,
+			servers: [
+				{
+					args: ['-y', '-p', '@perplexity-ai/mcp-server', 'perplexity-mcp'],
+					command: 'npx',
+					env: { PERPLEXITY_API_KEY: 'secret-token-value' },
+					namespace: 'perplexity',
+					transport: 'stdio',
+				},
+			],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'perplexity' }),
+		).resolves.toEqual([]);
+
+		expect(createTransport).toHaveBeenCalledWith(
+			{
+				args: ['-y', '-p', '@perplexity-ai/mcp-server', 'perplexity-mcp'],
+				command: 'npx',
+				env: {
+					NODE_EXTRA_CA_CERTS: '/run/gondolin/ca-certificates.crt',
+					NODE_OPTIONS: '--dns-result-order=ipv4first',
+					PERPLEXITY_API_KEY: 'secret-token-value',
+				},
+				namespace: 'perplexity',
+				transport: 'stdio',
+			},
+			'stdio',
+		);
+	});
+
+	it('wraps listTools timeout with structured upstream diagnostics', async () => {
+		const neverListingClient: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => await new Promise<UpstreamListToolsResult>(() => undefined)),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => neverListingClient,
+			createTransport: vi.fn(() => ({})),
+			servers: [
+				createServer({
+					connectionTimeoutMs: 5,
+					headers: { Authorization: 'secret-token-value' },
+				}),
+			],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
+		).rejects.toMatchObject({
+			details: {
+				causeMessage: expect.stringContaining('MCP listTools timed out after 5ms'),
+				kind: 'upstream_mcp_failed',
+				namespace: 'linear',
+				phase: 'list_tools',
+				timeoutMs: 5,
+				transport: { kind: 'streamable-http', url: 'https://mcp.example.test' },
+			},
+		});
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
+		).rejects.not.toThrow(/secret-token-value/u);
+	});
+
+	it('wraps stdio connect failures with command and arg count diagnostics', async () => {
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => ({
+				callTool: vi.fn(),
+				close: vi.fn(),
+				connect: vi.fn(async () => {
+					throw new Error('spawn ENOENT');
+				}),
+				listTools: vi.fn(),
+			}),
+			createTransport: vi.fn(() => ({})),
+			servers: [
+				{
+					args: ['-y', '-p', '@perplexity-ai/mcp-server', 'wrong-bin'],
+					command: 'npx',
+					env: { PERPLEXITY_API_KEY: 'secret-token-value' },
+					namespace: 'perplexity',
+					transport: 'stdio',
+				},
+			],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'perplexity' }),
+		).rejects.toMatchObject({
+			details: {
+				causeMessage: 'spawn ENOENT',
+				hint: expect.stringContaining('stdio MCP command failed before tool discovery'),
+				kind: 'upstream_mcp_failed',
+				namespace: 'perplexity',
+				phase: 'connect',
+				transport: {
+					argCount: 4,
+					command: 'npx',
+					kind: 'stdio',
+				},
+			},
+		});
 	});
 
 	it('threads timeout abort signals into listTools requests', async () => {

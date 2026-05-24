@@ -57,12 +57,14 @@ the scoped catalog after resolving the server-side agent policy, then builds
 the search index from that scoped catalog. It does not build one global index
 and post-filter results.
 
-Namespace exposure is fail closed. Empty namespace config exposes no upstream
-namespaces. `enabledToolsByNamespace` further narrows the catalog before
-hidden-tool policy, graph construction, or search indexing. A missing namespace
-entry or an empty list means "all tools in this enabled namespace"; list one or
-more tool names to narrow that namespace, and use `hiddenToolsByNamespace` for
-explicit exclusions.
+Each profile is a complete portal policy. Profiles do not inherit from or merge
+with other profiles; `agents.<agentId>.profile` selects exactly one profile.
+Namespace exposure is fail closed. Empty `profiles.<name>.namespaces` exposes no
+upstream namespaces. Each namespace colocates its policy:
+`tools.enabled`, `tools.hidden`, `approval.allowWithoutApproval`,
+`approval.alwaysAsk`, `approval.write`, and `approval.trustedAnnotations`.
+Missing `tools.enabled` means all discovered tools in that namespace are
+available unless hidden; list one or more tool names to narrow that namespace.
 
 ## Schema Contract
 
@@ -101,6 +103,25 @@ configured upstream providers. Generated provider-secret environment names are
 provider-scoped, such as `AGENT_VM_MCP_LINEAR_AUTHORIZATION`, so two upstream
 providers can use the same authored header or env key without colliding.
 
+### Stdio runtime environment
+
+MCP Portal starts stdio providers with explicit provider secrets plus a narrow
+gateway runtime environment allowlist. This avoids leaking arbitrary gateway
+environment variables while preserving runtime settings required by package
+launchers inside Gondolin.
+
+Inherited runtime variables:
+
+- `NODE_EXTRA_CA_CERTS`
+- `NODE_OPTIONS`
+
+Use `transport.env` for provider credentials such as `PERPLEXITY_API_KEY` or
+`TAVILY_API_KEY`. Do not rely on whole-process environment inheritance.
+
+Python/`uv` launchers are intentionally out of scope for this PR. Prefer remote
+MCP providers unless a concrete local `uv run` provider is required, then add a
+separate managed-image and stdio-env change with live evidence.
+
 External `/mcp-proxy` mode is different: `mcp-portal mcp-proxy serve` runs on the
 operator host, resolves its configured auth secrets at process startup, and
 authenticates callers before constructing trusted agent scope for `/core`. When
@@ -135,6 +156,33 @@ not clobbered before indexing. This is not general PII minimization. Upstream
 tool responses can still contain names, emails, issue comments, and other user
 data. The `upstream-response-middleware.ts` boundary is reserved for future PII
 and content-policy filtering.
+
+### Runtime diagnostics
+
+MCP Portal returns one result shape in both OpenClaw native plugin mode and
+direct MCP proxy mode:
+
+```json
+{
+	"auditEvents": [
+		{
+			"kind": "upstream_mcp_failed",
+			"namespace": "tavily",
+			"phase": "connect",
+			"message": "tavily: connect failed: Authentication failed",
+			"hint": "remote MCP connection failed; verify URL, auth header, network egress, and transport kind."
+		}
+	],
+	"structuredContent": {
+		"diagnostics": []
+	}
+}
+```
+
+OpenClaw native tools return this value in `details`. Direct MCP proxy tools
+return the same value as JSON text content. Use
+`agent-vm validate --mcp-live` after changing providers, secrets, or profile
+tool names.
 
 Intent verification is future work. A future draft-confirm-commit flow should
 remain server-side and must not turn model-visible fields into proof of

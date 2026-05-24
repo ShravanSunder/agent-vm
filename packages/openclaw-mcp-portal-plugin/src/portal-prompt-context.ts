@@ -4,8 +4,16 @@ export interface PortalPromptNamespaceSummary {
 }
 
 export interface PortalPromptDiagnostic {
+	readonly hint?: string;
 	readonly message: string;
 	readonly namespace: string;
+	readonly phase?: string;
+}
+
+function formatDiagnostic(entry: PortalPromptDiagnostic): string {
+	const phase = entry.phase === undefined ? '' : ` ${entry.phase}`;
+	const hint = entry.hint === undefined ? '' : ` Hint: ${entry.hint}`;
+	return `${entry.namespace}${phase}: ${entry.message}.${hint}`;
 }
 
 export function createPortalPromptContext(props: {
@@ -18,11 +26,7 @@ export function createPortalPromptContext(props: {
 			: 'none configured';
 	const diagnostics =
 		props.diagnostics !== undefined && props.diagnostics.length > 0
-			? [
-					`Discovery diagnostics: ${props.diagnostics
-						.map((entry) => `${entry.namespace}: ${entry.message}`)
-						.join('; ')}`,
-				]
+			? [`Discovery diagnostics: ${props.diagnostics.map(formatDiagnostic).join('; ')}`]
 			: [];
 
 	return [

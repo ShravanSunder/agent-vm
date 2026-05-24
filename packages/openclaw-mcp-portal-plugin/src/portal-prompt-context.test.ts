@@ -18,4 +18,23 @@ describe('portal prompt context', () => {
 		expect(context).not.toContain('inputSchema');
 		expect(context).not.toContain('secret');
 	});
+
+	it('includes phase and hint in prompt diagnostics', () => {
+		const context = createPortalPromptContext({
+			diagnostics: [
+				{
+					hint: 'stdio MCP command failed before tool discovery; verify command, package bin name, gateway PATH, and arg count.',
+					message: 'perplexity: connect failed: spawn ENOENT',
+					namespace: 'perplexity',
+					phase: 'connect',
+				},
+			],
+			namespaces: [],
+		});
+
+		expect(context).toContain(
+			'Discovery diagnostics: perplexity connect: perplexity: connect failed: spawn ENOENT',
+		);
+		expect(context).toContain('Hint: stdio MCP command failed before tool discovery');
+	});
 });

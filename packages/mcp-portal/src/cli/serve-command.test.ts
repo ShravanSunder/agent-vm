@@ -35,7 +35,7 @@ async function createPortalConfigDir(): Promise<string> {
 		join(configDir, 'mcp-portal.config.jsonc'),
 		JSON.stringify({
 			agents: { shravan: { profile: 'default' } },
-			profiles: { default: { enabledNamespaces: [] } },
+			profiles: { default: { namespaces: {} } },
 			schemaVersion: 1,
 		}),
 	);
@@ -59,7 +59,7 @@ async function createProxyConfigDir(): Promise<string> {
 				auth: { headerName: 'authorization' },
 				server: { host: '127.0.0.1', port: 18_791 },
 			},
-			profiles: { default: { enabledNamespaces: [] } },
+			profiles: { default: { namespaces: {} } },
 			schemaVersion: 1,
 		}),
 	);

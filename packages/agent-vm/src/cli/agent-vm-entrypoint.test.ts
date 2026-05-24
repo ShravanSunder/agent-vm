@@ -1066,6 +1066,42 @@ describe('runAgentVmCli', () => {
 		expect(stdoutChunks.join('')).toContain('"ok": true');
 	});
 
+	it('routes validate --mcp-live to config validation with a secret resolver', async () => {
+		const runConfigValidation = vi.fn(async () => ({ checks: [], ok: true }));
+		const onePasswordResolver = {
+			resolve: vi.fn(async () => 'secret-value'),
+			resolveAll: vi.fn(async () => ({})),
+		};
+		const createSecretResolver = vi.fn(async () => onePasswordResolver);
+		const systemConfig = createCliBuildSystemConfig();
+
+		await runAgentVmCli(
+			['validate', '--config', './custom-system.json', '--mcp-live'],
+			{
+				stderr: { write: () => true },
+				stdout: { write: () => true },
+			},
+			{
+				...defaultCliDependencies,
+				createSecretResolver,
+				loadSystemConfig: vi.fn(async () => systemConfig),
+				resolveServiceAccountToken: vi.fn(async () => 'service-account-token'),
+				runConfigValidation,
+			},
+		);
+
+		expect(createSecretResolver).toHaveBeenCalledWith({
+			serviceAccountToken: 'service-account-token',
+		});
+		expect(runConfigValidation).toHaveBeenCalledWith(
+			expect.objectContaining({
+				mcpLive: true,
+				secretResolver: expect.objectContaining({ resolve: expect.any(Function) }),
+				systemConfig,
+			}),
+		);
+	});
+
 	it('routes auth openclaw to an interactive SSH-backed OpenClaw login', async () => {
 		const runInteractiveProcess = vi.fn(async () => {});
 

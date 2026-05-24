@@ -39,7 +39,13 @@ async function createPortalConfigDir(props: {
 		join(dir, 'mcp-portal.config.jsonc'),
 		JSON.stringify({
 			agents: { shravan: { profile: 'default' } },
-			profiles: { default: { enabledNamespaces: props.enabledNamespaces } },
+			profiles: {
+				default: {
+					namespaces: Object.fromEntries(
+						props.enabledNamespaces.map((namespace) => [namespace, {}]),
+					),
+				},
+			},
 			schemaVersion: 1,
 		}),
 	);
@@ -308,7 +314,7 @@ describe('plugin registration validation', () => {
 		}
 
 		expect(tools.find((tool) => tool.name === 'mcp_portal_list')?.description).toContain(
-			'Authorized MCP namespaces for this agent scope: linear.',
+			'Allowed namespaces for this agent: linear.',
 		);
 	});
 

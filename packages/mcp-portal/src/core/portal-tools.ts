@@ -12,7 +12,8 @@ import { generateTypescriptCatalogArtifact } from '../portal-config/typescript-a
 import type { PortalSession } from '../portal-session.js';
 import type { ToolSearchResult } from '../search-index.js';
 import { decodeToolRef } from '../tool-ref.js';
-import { createToolSummary, type ToolSummary } from '../tool-summary.js';
+import { createToolSummary, type ToolSchemaHint, type ToolSummary } from '../tool-summary.js';
+import { upstreamMcpFailureDetailsFromUnknown } from '../upstream-mcp-errors.js';
 import { validatePortalToolArguments } from './portal-call-validation.js';
 
 export interface PortalToolSuccess {
@@ -37,9 +38,17 @@ export interface PortalBatchError {
 }
 
 export interface PortalBatchDiagnostic {
+	readonly causeMessage?: string;
+	readonly elapsedMs?: number;
+	readonly hint?: string;
 	readonly kind: string;
 	readonly message: string;
 	readonly namespace?: string;
+	readonly operation?: string;
+	readonly phase?: string;
+	readonly timeoutMs?: number;
+	readonly toolName?: string;
+	readonly transport?: unknown;
 }
 
 export interface PortalBatchResult {
@@ -131,6 +140,16 @@ interface PreparedPortalCall {
 	readonly validatedArguments: JsonObject;
 	readonly tool: PortalToolRecord;
 }
+
+const describeBeforeCallSchemaHint = {
+	message: 'Use mcp_portal_describe for exact input schema before calling.',
+	next: 'describe_before_call',
+} as const satisfies ToolSchemaHint;
+
+const callReadySchemaHint = {
+	message: 'Full input schema included.',
+	next: 'call_ready',
+} as const satisfies ToolSchemaHint;
 
 function isToolSchemaProperties(value: unknown): value is Record<string, object> {
 	return (
@@ -271,9 +290,9 @@ function itemOutput(props: {
 
 function discoveryDiagnostics(session: PortalSession): readonly PortalBatchDiagnostic[] {
 	return session.catalog.discoveryFailures.map((failure) => ({
-		kind: 'upstream_discovery_failed',
-		message: failure.message,
-		namespace: failure.namespace,
+		...failure,
+		kind:
+			failure.kind === 'upstream_mcp_failed' ? 'upstream_mcp_failed' : 'upstream_discovery_failed',
 	}));
 }
 
@@ -431,6 +450,7 @@ function describeToolOutput(props: {
 						relationship.to.toolRef === toolSummary.toolRef,
 				)
 			: [],
+		schemaHint: callReadySchemaHint,
 		toolName: props.tool.toolName,
 		toolRef: toolSummary.toolRef,
 	};
@@ -458,6 +478,7 @@ function searchOutputWithFullSchema(
 		input: summary.input,
 		namespace: summary.namespace,
 		safety: summary.safety,
+		schemaHint: callReadySchemaHint,
 		toolName: summary.toolName,
 		toolRef: summary.toolRef,
 	};
@@ -486,6 +507,16 @@ function searchOutputWithFullSchema(
 	return result;
 }
 
+function toolSummaryWithSchemaHint(summary: ToolSummary): ToolSummary {
+	return Object.assign({}, summary, { schemaHint: describeBeforeCallSchemaHint });
+}
+
+function toolSearchResultWithSchemaHint(
+	summary: ToolSearchResult,
+): ToolSearchResult & { readonly schemaHint: ToolSchemaHint } {
+	return Object.assign({}, summary, { schemaHint: describeBeforeCallSchemaHint });
+}
+
 function listRequestResult(session: PortalSession, request: ListRequest): PortalToolResult {
 	const filteredTools = applyExactFilters(session.catalog.tools, {
 		...(request.namespaces !== undefined ? { namespaces: request.namespaces } : {}),
@@ -496,7 +527,7 @@ function listRequestResult(session: PortalSession, request: ListRequest): Portal
 		return itemError({ error: filteredTools.error, input: request });
 	}
 	const page = paginate(
-		filteredTools.tools.map((tool) => createToolSummary(tool)),
+		filteredTools.tools.map((tool) => toolSummaryWithSchemaHint(createToolSummary(tool))),
 		request.limit,
 		request.cursor,
 	);
@@ -522,7 +553,7 @@ function searchRequestResult(session: PortalSession, request: SearchRequest): Po
 	const tools =
 		request.schemaDetail === 'full'
 			? result.results.map((summary) => searchOutputWithFullSchema(session, summary))
-			: result.results;
+			: result.results.map((summary) => toolSearchResultWithSchemaHint(summary));
 
 	return itemOutput({ input: request, output: { tools } });
 }
@@ -617,12 +648,14 @@ async function executePreparedPortalCall(
 			},
 		});
 	} catch (error) {
+		const upstream = upstreamMcpFailureDetailsFromUnknown(error);
 		return itemError({
 			error: {
 				kind: 'upstream_call_failed',
 				message: messageFromError(error),
 				namespace: call.tool.namespace,
 				toolName: call.tool.toolName,
+				...(upstream === null ? {} : { upstream }),
 			},
 			input,
 		});

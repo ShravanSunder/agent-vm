@@ -1049,18 +1049,15 @@ export async function writeOpenClawMcpPortalSmokeConfigs(options: {
 				},
 				profiles: {
 					smoke: {
-						approval: {
-							allowWithoutApprovalTools: [{ namespace: options.namespace, toolName: 'read_thing' }],
-							alwaysAskTools: [{ namespace: options.namespace, toolName: 'write_thing' }],
-							annotationPolicy: 'destructive-requires-approval',
-							trustedAnnotationNamespaces: [],
-							writeTools: [],
+						namespaces: {
+							[options.namespace]: {
+								approval: {
+									allowWithoutApproval: ['read_thing'],
+									alwaysAsk: ['write_thing'],
+								},
+								tools: { enabled: ['read_thing', 'write_thing'] },
+							},
 						},
-						enabledNamespaces: [options.namespace],
-						enabledToolsByNamespace: {
-							[options.namespace]: ['read_thing', 'write_thing'],
-						},
-						hiddenToolsByNamespace: {},
 						promptContext: { enabled: true, maxNamespaces: 12 },
 					},
 				},

@@ -7,6 +7,7 @@ import {
 	type PortalAgentIdentity,
 } from './portal-access-policy.js';
 import { createPortalSessionManager } from './portal-session.js';
+import { UpstreamMcpError } from './upstream-mcp-errors.js';
 
 function createPortalAgentIdentity(
 	input: Omit<Parameters<typeof createPortalAgentIdentityBase>[0], 'source'>,
@@ -223,7 +224,11 @@ describe('portal sessions', () => {
 		);
 
 		expect(degradedSession.catalog.discoveryFailures).toEqual([
-			{ message: 'readwise unavailable', namespace: 'readwise' },
+			{
+				kind: 'upstream_discovery_failed',
+				message: 'readwise unavailable',
+				namespace: 'readwise',
+			},
 		]);
 		expect(
 			degradedSession.catalog.tools.map((tool) => `${tool.namespace}.${tool.toolName}`),
@@ -243,7 +248,11 @@ describe('portal sessions', () => {
 			},
 			catalogTtlMs: 60_000,
 			discoveryFailures: [
-				{ message: 'MCP namespace "github" is missing url.', namespace: 'github' },
+				{
+					kind: 'upstream_discovery_failed',
+					message: 'MCP namespace "github" is missing url.',
+					namespace: 'github',
+				},
 			],
 			runtime: {
 				closeAgentScope: vi.fn(),
@@ -261,10 +270,69 @@ describe('portal sessions', () => {
 		);
 
 		expect(session.catalog.discoveryFailures).toEqual([
-			{ message: 'MCP namespace "github" is missing url.', namespace: 'github' },
+			{
+				kind: 'upstream_discovery_failed',
+				message: 'MCP namespace "github" is missing url.',
+				namespace: 'github',
+			},
 		]);
 		expect(session.catalog.tools.map((tool) => `${tool.namespace}.${tool.toolName}`)).toEqual([
 			'linear.create_issue',
+		]);
+	});
+
+	it('preserves structured upstream discovery diagnostics', async () => {
+		const manager = createPortalSessionManager({
+			accessPolicy: {
+				enabledNamespaces: ['perplexity'],
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			catalogTtlMs: 60_000,
+			runtime: {
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(async () => {
+					throw new UpstreamMcpError({
+						causeMessage: 'spawn ENOENT',
+						elapsedMs: 12,
+						hint: 'stdio MCP command failed before tool discovery; verify command, package bin name, gateway PATH, and arg count.',
+						kind: 'upstream_mcp_failed',
+						namespace: 'perplexity',
+						operation: 'MCP stdio connect for namespace "perplexity"',
+						phase: 'connect',
+						timeoutMs: 30_000,
+						transport: {
+							argCount: 4,
+							command: 'npx',
+							kind: 'stdio',
+						},
+					});
+				}),
+			},
+			upstreamNamespaces: ['perplexity'],
+		});
+
+		const session = await manager.getSession(
+			createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-scope-a' }),
+		);
+
+		expect(session.catalog.discoveryFailures).toEqual([
+			{
+				causeMessage: 'spawn ENOENT',
+				elapsedMs: 12,
+				hint: 'stdio MCP command failed before tool discovery; verify command, package bin name, gateway PATH, and arg count.',
+				kind: 'upstream_mcp_failed',
+				message: 'perplexity: connect failed: spawn ENOENT',
+				namespace: 'perplexity',
+				operation: 'MCP stdio connect for namespace "perplexity"',
+				phase: 'connect',
+				timeoutMs: 30_000,
+				transport: {
+					argCount: 4,
+					command: 'npx',
+					kind: 'stdio',
+				},
+			},
 		]);
 	});
 

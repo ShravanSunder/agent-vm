@@ -329,7 +329,7 @@ async function writeNativeMcpPortalConfigFiles(configDirectoryPath: string): Pro
 		path.join(portalConfigDirectoryPath, 'mcp-portal.config.jsonc'),
 		JSON.stringify({
 			agents: { sun: { profile: 'default' } },
-			profiles: { default: { enabledNamespaces: [] } },
+			profiles: { default: { namespaces: {} } },
 			schemaVersion: 1,
 		}),
 		'utf8',

@@ -7,5 +7,6 @@ export * from './tool-graph.js';
 export * from './tool-ref.js';
 export * from './tool-summary.js';
 export * from './upstream-mcp-client-runtime.js';
+export * from './upstream-mcp-errors.js';
 export * from './upstream-response-middleware.js';
 export * from './zod-schema-loader.js';

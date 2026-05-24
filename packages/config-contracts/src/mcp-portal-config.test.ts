@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { migrateMcpPortalProfileShape } from '../scripts/migrate-mcp-portal-profile-shape.js';
 import { loadMcpPortalConfig, resolveMcpPortalProfile } from './mcp-portal-config.js';
 
 async function writeConfigFile(text: string): Promise<string> {
@@ -33,13 +34,12 @@ describe('loadMcpPortalConfig', () => {
 				"shravan": { "profile": "builder" }
 			},
 			"profiles": {
-				"default": {
-					"enabledNamespaces": []
-				},
 				"builder": {
-					"extends": "default",
-					"enabledNamespaces": ["linear"],
-					"enabledToolsByNamespace": { "linear": ["create_issue"] },
+					"namespaces": {
+						"linear": {
+							"tools": { "enabled": ["create_issue"] }
+						}
+					},
 					"logging": { "enabled": true }
 				}
 			}
@@ -75,7 +75,7 @@ describe('loadMcpPortalConfig', () => {
 					}
 				},
 				"agents": { "shravan": { "profile": "default" } },
-				"profiles": { "default": { "enabledNamespaces": [] } }
+				"profiles": { "default": { "namespaces": {} } }
 			}`);
 
 		await expect(loadMcpPortalConfig(configPath)).rejects.toThrow(/server/u);
@@ -92,38 +92,199 @@ describe('loadMcpPortalConfig', () => {
 				"auth": { "headerName": "authorization" }
 			},
 			"agents": { "shravan": { "profile": "default" } },
-			"profiles": { "default": { "enabledNamespaces": [] } }
+			"profiles": { "default": { "namespaces": {} } }
 		}`);
 
 		await expect(loadMcpPortalConfig(configPath)).rejects.toThrow(/loopback/u);
 	});
 
-	it('rejects unknown inherited profiles', async () => {
+	it('rejects profile inheritance in authored MCP Portal config', async () => {
 		const configPath = await writeConfigFile(`{
 			"schemaVersion": 1,
 			"agents": { "shravan": { "profile": "builder" } },
 			"profiles": {
-				"builder": { "extends": "missing", "enabledNamespaces": [] }
+				"builder": { "extends": "default", "namespaces": {} }
 			}
 		}`);
 
-		const config = await loadMcpPortalConfig(configPath);
-		expect(() => resolveMcpPortalProfile(config, 'builder')).toThrow(
-			/unknown MCP profile 'missing'/u,
-		);
+		await expect(loadMcpPortalConfig(configPath)).rejects.toThrow(/extends/u);
 	});
 
-	it('detects profile inheritance cycles', async () => {
+	it('resolves per-namespace authored portal policy into the internal profile shape', async () => {
 		const configPath = await writeConfigFile(`{
 			"schemaVersion": 1,
-			"agents": {},
+			"agents": { "beta": { "profile": "default" } },
 			"profiles": {
-				"a": { "extends": "b" },
-				"b": { "extends": "a" }
+				"default": {
+					"namespaces": {
+						"deepwiki": {
+							"tools": {
+								"enabled": ["read_wiki_structure", "ask_question"]
+							},
+							"approval": {
+								"allowWithoutApproval": ["read_wiki_structure", "ask_question"],
+								"trustedAnnotations": true
+							}
+						},
+						"tavily": {
+							"tools": {
+								"enabled": ["tavily_search", "tavily_extract"]
+							},
+							"approval": {
+								"allowWithoutApproval": ["tavily_search", "tavily_extract"]
+							}
+						}
+					},
+					"logging": { "enabled": true }
+				}
 			}
 		}`);
 
 		const config = await loadMcpPortalConfig(configPath);
-		expect(() => resolveMcpPortalProfile(config, 'a')).toThrow(/MCP profile inheritance cycle/u);
+		const profile = resolveMcpPortalProfile(config, 'default');
+
+		expect(profile.enabledNamespaces).toEqual(['deepwiki', 'tavily']);
+		expect(profile.enabledToolsByNamespace).toEqual({
+			deepwiki: ['read_wiki_structure', 'ask_question'],
+			tavily: ['tavily_search', 'tavily_extract'],
+		});
+		expect(profile.approval.allowWithoutApprovalTools).toEqual([
+			{ namespace: 'deepwiki', toolName: 'read_wiki_structure' },
+			{ namespace: 'deepwiki', toolName: 'ask_question' },
+			{ namespace: 'tavily', toolName: 'tavily_search' },
+			{ namespace: 'tavily', toolName: 'tavily_extract' },
+		]);
+		expect(profile.approval.trustedAnnotationNamespaces).toEqual(['deepwiki']);
+		expect(profile.logging.enabled).toBe(true);
+	});
+
+	it('rejects split legacy namespace and approval profile fields', async () => {
+		const configPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"agents": { "beta": { "profile": "default" } },
+			"profiles": {
+				"default": {
+					"enabledNamespaces": ["deepwiki"],
+					"enabledToolsByNamespace": { "deepwiki": ["ask_question"] }
+				}
+			}
+		}`);
+
+		await expect(loadMcpPortalConfig(configPath)).rejects.toThrow(/enabledNamespaces/u);
+	});
+
+	it('uses only the selected profile as the complete MCP Portal policy', async () => {
+		const configPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"agents": { "beta": { "profile": "child" } },
+			"profiles": {
+				"base": {
+					"namespaces": {
+						"deepwiki": {
+							"tools": { "enabled": ["ask_question"] },
+							"approval": { "allowWithoutApproval": ["ask_question"] }
+						}
+					}
+				},
+				"child": {
+					"namespaces": {
+						"deepwiki": {
+							"tools": { "hidden": ["read_wiki_contents"] },
+							"approval": { "alwaysAsk": ["admin_tool"] }
+						}
+					}
+				}
+			}
+		}`);
+
+		const config = await loadMcpPortalConfig(configPath);
+		const profile = resolveMcpPortalProfile(config, 'child');
+
+		expect(profile.enabledNamespaces).toEqual(['deepwiki']);
+		expect(profile.enabledToolsByNamespace).toEqual({});
+		expect(profile.hiddenToolsByNamespace).toEqual({
+			deepwiki: ['read_wiki_contents'],
+		});
+		expect(profile.approval.allowWithoutApprovalTools).toEqual([]);
+		expect(profile.approval.alwaysAskTools).toEqual([
+			{ namespace: 'deepwiki', toolName: 'admin_tool' },
+		]);
+	});
+
+	it('preserves profile-wide annotation policy through the new authored shape', async () => {
+		const configPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"agents": { "beta": { "profile": "default" } },
+			"profiles": {
+				"default": {
+					"approval": {
+						"annotationPolicy": "always-require-approval"
+					},
+					"namespaces": {
+						"deepwiki": {
+							"tools": { "enabled": ["ask_question"] }
+						}
+					}
+				}
+			}
+		}`);
+
+		const config = await loadMcpPortalConfig(configPath);
+		const profile = resolveMcpPortalProfile(config, 'default');
+
+		expect(profile.approval.annotationPolicy).toBe('always-require-approval');
+	});
+
+	it('migrates legacy profile policy fields to per-namespace policy', () => {
+		expect(
+			migrateMcpPortalProfileShape({
+				agents: { beta: { profile: 'default' } },
+				profiles: {
+					default: {
+						cache: { catalogTtlMs: 60_000 },
+						enabledNamespaces: ['deepwiki'],
+						enabledToolsByNamespace: {
+							deepwiki: ['ask_question'],
+						},
+						hiddenToolsByNamespace: {
+							deepwiki: ['read_wiki_contents'],
+						},
+						approval: {
+							allowWithoutApprovalTools: [{ namespace: 'deepwiki', toolName: 'ask_question' }],
+							alwaysAskTools: [{ namespace: 'deepwiki', toolName: 'admin_tool' }],
+							annotationPolicy: 'always-require-approval',
+							trustedAnnotationNamespaces: ['deepwiki'],
+							writeTools: [{ namespace: 'deepwiki', toolName: 'write_note' }],
+						},
+						logging: { enabled: true },
+					},
+				},
+				schemaVersion: 1,
+			}),
+		).toMatchObject({
+			profiles: {
+				default: {
+					cache: { catalogTtlMs: 60_000 },
+					logging: { enabled: true },
+					approval: {
+						annotationPolicy: 'always-require-approval',
+					},
+					namespaces: {
+						deepwiki: {
+							approval: {
+								allowWithoutApproval: ['ask_question'],
+								alwaysAsk: ['admin_tool'],
+								trustedAnnotations: true,
+								write: ['write_note'],
+							},
+							tools: {
+								enabled: ['ask_question'],
+								hidden: ['read_wiki_contents'],
+							},
+						},
+					},
+				},
+			},
+		});
 	});
 });

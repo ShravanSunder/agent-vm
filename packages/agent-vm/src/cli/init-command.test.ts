@@ -995,7 +995,7 @@ describe('scaffoldAgentVmProject', () => {
 				shravan: { profile: 'default' },
 				alevtina: { profile: 'default' },
 			},
-			profiles: { default: { enabledNamespaces: [] } },
+			profiles: { default: { namespaces: {} } },
 		});
 	});
 

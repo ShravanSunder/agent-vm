@@ -927,7 +927,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 			path.join(configDirectory, 'mcp-portal.config.jsonc'),
 			JSON.stringify({
 				agents: { sun: { profile: 'default' } },
-				profiles: { default: { enabledNamespaces: [] } },
+				profiles: { default: { namespaces: {} } },
 				schemaVersion: 1,
 			}),
 			'utf8',
@@ -981,7 +981,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 			path.join(configDirectory, 'mcp-portal.config.jsonc'),
 			JSON.stringify({
 				agents: { sun: { profile: 'default' } },
-				profiles: { default: { enabledNamespaces: [] } },
+				profiles: { default: { namespaces: {} } },
 				schemaVersion: 1,
 			}),
 			'utf8',

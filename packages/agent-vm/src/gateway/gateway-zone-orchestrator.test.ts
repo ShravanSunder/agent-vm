@@ -88,7 +88,7 @@ async function writeMinimalMcpPortalConfigs(
 		path.join(configDir, 'mcp-portal.config.jsonc'),
 		JSON.stringify({
 			agents: { shravan: { profile: 'default' } },
-			profiles: { default: { enabledNamespaces: [] } },
+			profiles: { default: { namespaces: {} } },
 			schemaVersion: 1,
 		}),
 		'utf8',

@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/config-contracts",
-	"version": "0.0.73",
+	"version": "0.0.77",
 	"description": "Shared agent-vm JSONC config schemas and TypeScript contracts.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -12,6 +12,9 @@
 		"type": "git",
 		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
 		"directory": "packages/config-contracts"
+	},
+	"bin": {
+		"agent-vm-migrate-mcp-portal-profile-shape": "./dist/scripts/migrate-mcp-portal-profile-shape.js"
 	},
 	"files": [
 		"dist"
