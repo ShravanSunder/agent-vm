@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
 	type ControllerLeaseRequestError,
@@ -45,6 +45,7 @@ describe('createLeaseClient', () => {
 
 				const responseBody = url.endsWith('/peek')
 					? {
+							agentId: 'main',
 							createdAt: 1,
 							lastUsedAt: 1,
 							leaseId: 'lease-123',
@@ -57,7 +58,9 @@ describe('createLeaseClient', () => {
 							zoneId: 'shravan',
 						}
 					: {
+							agentId: 'main',
 							leaseId: 'lease-123',
+							scopeKey: 'agent:main',
 							ssh: {
 								host: 'tool-0.vm.host',
 								identityPem: 'pem',
@@ -225,6 +228,44 @@ describe('createLeaseClient', () => {
 		).rejects.toThrow('Controller lease API returned an invalid response');
 	});
 
+	it('surfaces agent lease compatibility conflicts without retrying or releasing', async () => {
+		const fetchImpl = vi.fn(
+			async () =>
+				new Response(
+					JSON.stringify({
+						error: 'agent-tool-vm-lease-compatibility-conflict',
+						guidance:
+							'Managed OpenClaw/Gondolin reuses one Tool VM per zone and agent. Release the existing lease or use a compatible profile/workspace/workdir.',
+						message:
+							"existing Tool VM lease for agent 'beta' is not compatible with this request; mismatched fields: profileId",
+						received: {
+							agentId: 'beta',
+							mismatchedFields: ['profileId'],
+							zoneId: 'shravan',
+						},
+					}),
+					{ headers: { 'content-type': 'application/json' }, status: 409 },
+				),
+		);
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl,
+		});
+
+		await expect(
+			leaseClient.requestLease(
+				createLeaseRequest({
+					agentId: 'beta',
+					scopeKey: 'agent:beta:discord:channel:123',
+					sessionKey: 'agent:beta:discord:channel:123',
+				}),
+			),
+		).rejects.toThrow(
+			/existing Tool VM lease for agent 'beta' is not compatible.*Guidance: Managed OpenClaw\/Gondolin/u,
+		);
+		expect(fetchImpl).toHaveBeenCalledTimes(1);
+	});
+
 	it('rejects lease responses missing the transport discriminator', async () => {
 		const leaseClient = createLeaseClient({
 			controllerUrl: 'http://controller.vm.host:18800',
@@ -267,7 +308,9 @@ describe('createLeaseClient', () => {
 				);
 				return new Response(
 					JSON.stringify({
+						agentId: 'main',
 						leaseId: 'lease-1',
+						scopeKey: 'agent:main',
 						ssh: { host: 'h', identityPem: 'p', knownHostsLine: '', port: 22, user: 'u' },
 						tcpSlot: 0,
 						transport: 'ssh-sandbox',

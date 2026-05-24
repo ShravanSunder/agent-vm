@@ -17,9 +17,7 @@ import {
 	type OpenClawRuntimeStatusReport,
 } from '../controller-lease-client.js';
 import {
-	expectedOpenClawGondolinScopeKey,
 	findOpenClawGondolinSandboxMismatch,
-	OPENCLAW_GONDOLIN_LEASE_SCOPE_GUIDANCE,
 	resolveOpenClawAgentIdFromSessionKey,
 	snapshotOpenClawGondolinSandboxConfig,
 	type OpenClawGondolinSandboxSnapshot,
@@ -32,16 +30,16 @@ import {
 } from './sandbox-backend-contract.js';
 import { buildShellScriptWithArgs } from './sandbox-shell-script.js';
 
-function scopeCacheKey(params: {
+function agentLeaseCacheKey(params: {
+	readonly agentId: string;
 	readonly agentWorkspaceDir: string;
 	readonly profileId: string;
-	readonly scopeKey: string;
 	readonly workspaceDir: string;
 	readonly zoneId: string;
 }): string {
 	return [
 		params.zoneId,
-		params.scopeKey,
+		params.agentId,
 		params.profileId,
 		params.agentWorkspaceDir,
 		params.workspaceDir,
@@ -126,12 +124,6 @@ function assertPluginLeaseContract(params: {
 			`OpenClaw Gondolin sandbox requires ${mismatch.key}=${mismatch.expectedValue}; received ${String(params.cfg[mismatch.key])}.`,
 		);
 	}
-	const expectedScopeKey = expectedOpenClawGondolinScopeKey(params.agentId);
-	if (params.scopeKey !== expectedScopeKey) {
-		throw new Error(
-			`OpenClaw Gondolin sandbox requires scopeKey '${expectedScopeKey}' for agent '${params.agentId}'; received '${params.scopeKey}'. ${OPENCLAW_GONDOLIN_LEASE_SCOPE_GUIDANCE}`,
-		);
-	}
 }
 
 export function createGondolinSandboxBackendFactory(
@@ -163,10 +155,10 @@ export function createGondolinSandboxBackendFactory(
 			cfg: params.cfg,
 			scopeKey: params.scopeKey,
 		});
-		const cacheKey = scopeCacheKey({
+		const cacheKey = agentLeaseCacheKey({
+			agentId,
 			agentWorkspaceDir: params.agentWorkspaceDir,
 			profileId,
-			scopeKey: params.scopeKey,
 			workspaceDir: params.workspaceDir,
 			zoneId: options.zoneId,
 		});

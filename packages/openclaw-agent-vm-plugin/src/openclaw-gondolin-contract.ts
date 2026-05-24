@@ -10,7 +10,7 @@ export const OPENCLAW_GONDOLIN_SANDBOX_REQUIREMENTS = [
 ] as const;
 
 export const OPENCLAW_GONDOLIN_LEASE_SCOPE_GUIDANCE =
-	'Managed OpenClaw/Gondolin requires agents.*.sandbox.scope="agent"; the lease scopeKey must be agent:<agentId>, not a raw channel, session, or subagent key.';
+	'Managed OpenClaw/Gondolin requires an explicit agentId. scopeKey is OpenClaw scope provenance and may include channel, session, thread, or subagent segments under that agent.';
 
 export type OpenClawGondolinSandboxRequirement =
 	(typeof OPENCLAW_GONDOLIN_SANDBOX_REQUIREMENTS)[number];
@@ -83,10 +83,6 @@ export function resolveOpenClawAgentIdFromSessionKey(sessionKey: string): string
 export function isOpenClawAgentSessionKey(sessionKey: string): boolean {
 	const parts = sessionKey.trim().split(':');
 	return parts[0] === 'agent' && parts[1] !== undefined && isOpenClawAgentId(parts[1]);
-}
-
-export function expectedOpenClawGondolinScopeKey(agentId: string): string {
-	return `agent:${agentId}`;
 }
 
 export function snapshotOpenClawGondolinSandboxConfig(cfg: OpenClawGondolinSandboxSnapshot): {

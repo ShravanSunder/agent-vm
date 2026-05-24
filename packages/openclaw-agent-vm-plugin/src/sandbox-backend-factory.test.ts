@@ -12,10 +12,16 @@ const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
 
 function createLeaseResponse(
 	leaseId: string,
-	options: { readonly idleTtlMs?: number } = {},
+	options: {
+		readonly agentId?: string;
+		readonly idleTtlMs?: number;
+		readonly scopeKey?: string;
+	} = {},
 ): {
+	readonly agentId: string;
 	readonly idleTtlMs?: number;
 	readonly leaseId: string;
+	readonly scopeKey: string;
 	readonly ssh: {
 		readonly host: string;
 		readonly identityPem: string;
@@ -28,8 +34,10 @@ function createLeaseResponse(
 	readonly workdir: string;
 } {
 	return {
+		agentId: options.agentId ?? 'main',
 		...(options.idleTtlMs !== undefined ? { idleTtlMs: options.idleTtlMs } : {}),
 		leaseId,
+		scopeKey: options.scopeKey ?? 'agent:main',
 		ssh: {
 			host: 'tool-0.vm.host',
 			identityPem: 'pem',
@@ -44,6 +52,7 @@ function createLeaseResponse(
 }
 
 function createLeasePeekResponse(leaseId: string = 'lease-123'): {
+	readonly agentId: string;
 	readonly createdAt: number;
 	readonly lastUsedAt: number;
 	readonly leaseId: string;
@@ -56,6 +65,7 @@ function createLeasePeekResponse(leaseId: string = 'lease-123'): {
 	readonly zoneId: string;
 } {
 	return {
+		agentId: 'main',
 		createdAt: 1,
 		lastUsedAt: 1,
 		leaseId,
@@ -170,8 +180,13 @@ describe('createGondolinSandboxBackendFactory', () => {
 		expect(requestLease).not.toHaveBeenCalled();
 	});
 
-	it('rejects scope keys that do not match the resolved OpenClaw agent before requesting a lease', async () => {
-		const requestLease = vi.fn(async () => createLeaseResponse('lease-123'));
+	it('passes arbitrary scope provenance under the resolved OpenClaw agent', async () => {
+		const requestLease = vi.fn(async () =>
+			createLeaseResponse('shravan-main-100', {
+				agentId: 'main',
+				scopeKey: 'agent:beta',
+			}),
+		);
 		const factory = createGondolinSandboxBackendFactory(
 			{
 				controllerUrl: 'http://controller.vm.host:18800',
@@ -194,32 +209,25 @@ describe('createGondolinSandboxBackendFactory', () => {
 			},
 		);
 
-		await expect(
-			factory({
-				agentWorkspaceDir: '/work',
-				cfg: gondolinSandboxConfig(),
+		await factory({
+			agentWorkspaceDir: '/work',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta',
+			sessionKey: 'agent:main:session-abc',
+			workspaceDir: '/work',
+		});
+
+		expect(requestLease).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentId: 'main',
 				scopeKey: 'agent:beta',
 				sessionKey: 'agent:main:session-abc',
-				workspaceDir: '/work',
 			}),
-		).rejects.toThrow("requires scopeKey 'agent:main' for agent 'main'");
-		expect(requestLease).not.toHaveBeenCalled();
+		);
 	});
 
 	it('requests a lease and exposes an ssh-backed sandbox handle with fs bridge', async () => {
-		const requestLease = vi.fn(async () => ({
-			leaseId: 'lease-123',
-			ssh: {
-				host: 'tool-0.vm.host',
-				identityPem: 'pem',
-				knownHostsLine: 'known-hosts',
-				port: 22,
-				user: 'sandbox',
-			},
-			tcpSlot: 0,
-			transport: 'ssh-sandbox' as const,
-			workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
-		}));
+		const requestLease = vi.fn(async () => createLeaseResponse('lease-123'));
 		const publishOpenClawRuntimeStatus = vi.fn(async () => {});
 		const runRemoteShellScript = vi.fn(async () => ({
 			code: 0,
@@ -356,20 +364,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 		expect(typeof backend.finalizeExec).toBe('function');
 	});
 
-	it('reuses the same handle for the same scopeKey (scope-based VM reuse)', async () => {
-		const requestLease = vi.fn(async () => ({
-			leaseId: 'lease-reuse',
-			ssh: {
-				host: 'tool-0.vm.host',
-				identityPem: 'pem',
-				knownHostsLine: '',
-				port: 22,
-				user: 'sandbox',
-			},
-			tcpSlot: 0,
-			transport: 'ssh-sandbox' as const,
-			workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
-		}));
+	it('reuses the same handle for repeated requests from the same agent', async () => {
+		const requestLease = vi.fn(async () => createLeaseResponse('lease-reuse'));
 
 		const factory = createGondolinSandboxBackendFactory(
 			{
@@ -412,36 +408,61 @@ describe('createGondolinSandboxBackendFactory', () => {
 		expect(requestLease).toHaveBeenCalledTimes(1);
 	});
 
+	it('reuses one handle for channel-shaped scopes under the same agent', async () => {
+		const requestLease = vi.fn(async () =>
+			createLeaseResponse('shravan-beta-100', {
+				agentId: 'beta',
+				scopeKey: 'agent:beta:discord:channel:123',
+			}),
+		);
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('shravan-beta-100'),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const firstHandle = await factory({
+			agentWorkspaceDir: '/workspace/beta',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:discord:channel:123',
+			sessionKey: 'agent:beta:discord:channel:123',
+			workspaceDir: '/workspace/beta',
+		});
+		const secondHandle = await factory({
+			agentWorkspaceDir: '/workspace/beta',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:discord:channel:999',
+			sessionKey: 'agent:beta:discord:channel:999',
+			workspaceDir: '/workspace/beta',
+		});
+
+		expect(secondHandle).toBe(firstHandle);
+		expect(requestLease).toHaveBeenCalledTimes(1);
+	});
+
 	it('drops a cached handle when lease renew returns 404 and requests a fresh lease', async () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const requestLease = vi
 			.fn()
-			.mockResolvedValueOnce({
-				leaseId: 'lease-old',
-				ssh: {
-					host: 'tool-0.vm.host',
-					identityPem: 'pem',
-					knownHostsLine: '',
-					port: 22,
-					user: 'sandbox',
-				},
-				tcpSlot: 0,
-				transport: 'ssh-sandbox' as const,
-				workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
-			})
-			.mockResolvedValueOnce({
-				leaseId: 'lease-new',
-				ssh: {
-					host: 'tool-1.vm.host',
-					identityPem: 'pem',
-					knownHostsLine: '',
-					port: 22,
-					user: 'sandbox',
-				},
-				tcpSlot: 1,
-				transport: 'ssh-sandbox' as const,
-				workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
-			});
+			.mockResolvedValueOnce(createLeaseResponse('lease-old'))
+			.mockResolvedValueOnce(createLeaseResponse('lease-new'));
 		const renewLease = vi
 			.fn()
 			.mockResolvedValueOnce({ ok: true })
@@ -655,19 +676,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		let leaseCounter = 0;
 		const requestLease = vi.fn(async () => {
 			leaseCounter++;
-			return {
-				leaseId: `lease-${leaseCounter}`,
-				ssh: {
-					host: 'tool-0.vm.host',
-					identityPem: 'pem',
-					knownHostsLine: '',
-					port: 22,
-					user: 'sandbox',
-				},
-				tcpSlot: 0,
-				transport: 'ssh-sandbox' as const,
-				workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
-			};
+			return createLeaseResponse(`lease-${leaseCounter}`);
 		});
 
 		const factory = createGondolinSandboxBackendFactory(
@@ -723,19 +732,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		});
 		const requestLease = vi.fn(async () => {
 			leaseCounter += 1;
-			return {
-				leaseId: `lease-${leaseCounter}`,
-				ssh: {
-					host: 'tool-0.vm.host',
-					identityPem: 'pem',
-					knownHostsLine: '',
-					port: 22,
-					user: 'sandbox',
-				},
-				tcpSlot: 0,
-				transport: 'ssh-sandbox' as const,
-				workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
-			};
+			return createLeaseResponse(`lease-${leaseCounter}`);
 		});
 
 		const factory = createGondolinSandboxBackendFactory(
@@ -798,13 +795,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 					renewLease: async () => createLeaseResponse('lease-renew'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
-					requestLease: vi.fn(async () => ({
-						leaseId: 'lease-finalize',
-						ssh: { host: 'h', identityPem: 'p', knownHostsLine: '', port: 22, user: 'u' },
-						tcpSlot: 0,
-						transport: 'ssh-sandbox' as const,
-						workdir: '/w',
-					})),
+					requestLease: vi.fn(async () => createLeaseResponse('lease-finalize')),
 				}),
 				runRemoteShellScript: vi.fn(),
 			},
@@ -845,13 +836,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 					renewLease: async () => createLeaseResponse('lease-renew'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
-					requestLease: vi.fn(async () => ({
-						leaseId: 'lease-noop',
-						ssh: { host: 'h', identityPem: 'p', knownHostsLine: '', port: 22, user: 'u' },
-						tcpSlot: 0,
-						transport: 'ssh-sandbox' as const,
-						workdir: '/w',
-					})),
+					requestLease: vi.fn(async () => createLeaseResponse('lease-noop')),
 				}),
 				runRemoteShellScript: vi.fn(),
 			},
@@ -909,19 +894,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 					renewLease: async () => createLeaseResponse('lease-renew'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
-					requestLease: vi.fn(async () => ({
-						leaseId: 'lease-789',
-						ssh: {
-							host: 'tool-0.vm.host',
-							identityPem: 'pem',
-							knownHostsLine: '',
-							port: 22,
-							user: 'sandbox',
-						},
-						tcpSlot: 0,
-						transport: 'ssh-sandbox' as const,
-						workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
-					})),
+					requestLease: vi.fn(async () => createLeaseResponse('lease-789')),
 				}),
 				runRemoteShellScript,
 			},
@@ -955,7 +928,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			ssh: {
 				host: 'tool-0.vm.host',
 				identityPem: 'pem',
-				knownHostsLine: '',
+				knownHostsLine: 'known-hosts',
 				port: 22,
 				user: 'sandbox',
 			},
@@ -1094,19 +1067,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 	});
 
 	it('omits env and createFsBridge from handle when createFsBridgeBuilder is not provided', async () => {
-		const requestLease = vi.fn(async () => ({
-			leaseId: 'lease-456',
-			ssh: {
-				host: 'tool-0.vm.host',
-				identityPem: 'pem',
-				knownHostsLine: '',
-				port: 22,
-				user: 'sandbox',
-			},
-			tcpSlot: 1,
-			transport: 'ssh-sandbox' as const,
-			workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
-		}));
+		const requestLease = vi.fn(async () => createLeaseResponse('lease-456'));
 
 		const factory = createGondolinSandboxBackendFactory(
 			{

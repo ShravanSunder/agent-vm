@@ -16,7 +16,9 @@ const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
 
 function createLeaseResponse(leaseId: string): ToolVmSshLease {
 	return {
+		agentId: 'main',
 		leaseId,
+		scopeKey: 'agent:main',
 		ssh: {
 			host: 'tool-0.vm.host',
 			identityPem: 'pem',
@@ -32,6 +34,7 @@ function createLeaseResponse(leaseId: string): ToolVmSshLease {
 
 function createLeasePeekResponse(leaseId: string): ToolVmLeasePeek {
 	return {
+		agentId: 'main',
 		createdAt: 1,
 		lastUsedAt: 1,
 		leaseId,
