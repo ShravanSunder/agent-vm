@@ -559,8 +559,8 @@ describe('portal core event stream', () => {
 				defaultPolicy: 'deny-all',
 				enabledNamespaces: ['linear'],
 				enabledNamespacesByAgent: {},
-				enabledToolsByAgent: {
-					'agent-a': [{ namespace: 'linear', toolName: 'create_issue' }],
+				enabledToolsByNamespaceByAgent: {
+					'agent-a': { linear: ['create_issue'] },
 				},
 				hiddenToolsByAgent: {},
 			},

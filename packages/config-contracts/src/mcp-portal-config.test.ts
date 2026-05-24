@@ -188,7 +188,10 @@ describe('loadMcpPortalConfig', () => {
 				"child": {
 					"namespaces": {
 						"deepwiki": {
-							"tools": { "hidden": ["read_wiki_contents"] },
+							"tools": {
+								"enableAll": true,
+								"hidden": ["read_wiki_contents"]
+							},
 							"approval": { "alwaysAsk": ["admin_tool"] }
 						}
 					}
@@ -232,5 +235,109 @@ describe('loadMcpPortalConfig', () => {
 		const profile = resolveMcpPortalProfile(config, 'default');
 
 		expect(profile.approval.annotationPolicy).toBe('always-require-approval');
+	});
+
+	it('requires each namespace tool policy to choose enableAll or enabled names', async () => {
+		const configPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"agents": { "beta": { "profile": "default" } },
+			"profiles": {
+				"default": {
+					"namespaces": {
+						"linear": {
+							"tools": { "hidden": ["delete_comment"] }
+						}
+					}
+				}
+			}
+		}`);
+
+		await expect(loadMcpPortalConfig(configPath)).rejects.toThrow(/enableAll|enabled/u);
+	});
+
+	it('rejects namespace tool policy that mixes enableAll and enabled names', async () => {
+		const configPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"agents": { "beta": { "profile": "default" } },
+			"profiles": {
+				"default": {
+					"namespaces": {
+						"linear": {
+							"tools": {
+								"enableAll": true,
+								"enabled": ["list_issues"]
+							}
+						}
+					}
+				}
+			}
+		}`);
+
+		await expect(loadMcpPortalConfig(configPath)).rejects.toThrow(/enableAll|enabled/u);
+	});
+
+	it('resolves enableAll namespace tools without adding exact enabled tools', async () => {
+		const configPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"agents": { "beta": { "profile": "default" } },
+			"profiles": {
+				"default": {
+					"namespaces": {
+						"deepwiki": {
+							"tools": { "enabled": ["ask_question"] }
+						},
+						"linear": {
+							"tools": {
+								"enableAll": true,
+								"hidden": ["delete_comment"]
+							}
+						}
+					}
+				}
+			}
+		}`);
+
+		const config = await loadMcpPortalConfig(configPath);
+		const profile = resolveMcpPortalProfile(config, 'default');
+
+		expect(profile.enabledToolsByNamespace).toEqual({
+			deepwiki: ['ask_question'],
+		});
+		expect(profile.hiddenToolsByNamespace).toEqual({
+			linear: ['delete_comment'],
+		});
+	});
+
+	it('keeps explicitly disabled namespaces out of the resolved active profile', async () => {
+		const configPath = await writeConfigFile(`{
+			"schemaVersion": 1,
+			"agents": { "beta": { "profile": "default" } },
+			"profiles": {
+				"default": {
+					"namespaces": {
+						"deepwiki": {
+							"tools": { "enabled": ["ask_question"] }
+						},
+						"linear": {
+							"tools": { "disabled": true },
+							"approval": {
+								"allowWithoutApproval": ["list_issues"],
+								"trustedAnnotations": true
+							}
+						}
+					}
+				}
+			}
+		}`);
+
+		const config = await loadMcpPortalConfig(configPath);
+		const profile = resolveMcpPortalProfile(config, 'default');
+
+		expect(profile.enabledNamespaces).toEqual(['deepwiki']);
+		expect(profile.enabledToolsByNamespace).toEqual({
+			deepwiki: ['ask_question'],
+		});
+		expect(profile.approval.allowWithoutApprovalTools).toEqual([]);
+		expect(profile.approval.trustedAnnotationNamespaces).toEqual([]);
 	});
 });

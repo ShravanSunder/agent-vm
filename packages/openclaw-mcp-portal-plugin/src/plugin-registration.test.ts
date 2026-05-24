@@ -42,7 +42,7 @@ async function createPortalConfigDir(props: {
 			profiles: {
 				default: {
 					namespaces: Object.fromEntries(
-						props.enabledNamespaces.map((namespace) => [namespace, {}]),
+						props.enabledNamespaces.map((namespace) => [namespace, { tools: { enableAll: true } }]),
 					),
 				},
 			},

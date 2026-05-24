@@ -40,7 +40,13 @@ async function createAuthoredDir(props: {
 		JSON.stringify(
 			props.portalConfig ?? {
 				agents: { shravan: { profile: 'default' } },
-				profiles: { default: { namespaces: { deepwiki: {} } } },
+				profiles: {
+					default: {
+						namespaces: {
+							deepwiki: { tools: { enableAll: true } },
+						},
+					},
+				},
 				schemaVersion: 1,
 			},
 		),

@@ -370,7 +370,7 @@ async function runCallCommand(
 		accessPolicy: {
 			defaultPolicy: 'deny-all',
 			enabledNamespacesByAgent: profilePolicyMaps.enabledNamespacesByAgent,
-			enabledToolsByAgent: profilePolicyMaps.enabledToolsByAgent,
+			enabledToolsByNamespaceByAgent: profilePolicyMaps.enabledToolsByNamespaceByAgent,
 			hiddenToolsByAgent: profilePolicyMaps.hiddenToolsByAgent,
 		},
 		approval: (calls, scope, approvalToken) => verifyApproval(calls, scope.agentId, approvalToken),

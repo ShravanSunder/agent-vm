@@ -86,15 +86,13 @@ function isHiddenTool(tool: PortalToolRecord, hiddenTools: readonly PortalToolSe
 
 function isEnabledTool(
 	tool: PortalToolRecord,
-	enabledTools: readonly PortalToolSelector[],
+	enabledToolsByNamespace: Readonly<Record<string, readonly string[]>>,
 ): boolean {
-	if (enabledTools.length === 0) {
+	const enabledTools = enabledToolsByNamespace[tool.namespace];
+	if (enabledTools === undefined) {
 		return true;
 	}
-	return enabledTools.some(
-		(enabledTool) =>
-			enabledTool.namespace === tool.namespace && enabledTool.toolName === tool.toolName,
-	);
+	return enabledTools.includes(tool.toolName);
 }
 
 function portalToolFromMcpTool(namespace: string, tool: Tool): PortalToolRecord {
@@ -182,7 +180,7 @@ export function createPortalSessionManager(
 			for (const mcpTool of mcpTools) {
 				const portalTool = portalToolFromMcpTool(namespace, mcpTool);
 				if (
-					isEnabledTool(portalTool, policy.enabledTools) &&
+					isEnabledTool(portalTool, policy.enabledToolsByNamespace) &&
 					!isHiddenTool(portalTool, policy.hiddenTools)
 				) {
 					tools.push(portalTool);

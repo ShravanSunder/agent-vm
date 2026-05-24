@@ -11,7 +11,7 @@ function createRuntimeState(): ReturnType<typeof createPortalPluginRuntimeState>
 			trustedAnnotations: false,
 			write: [],
 		},
-		tools: { hidden: [] },
+		tools: { enableAll: true as const, hidden: [] },
 	};
 	return createPortalPluginRuntimeState({
 		configDir: '/config',

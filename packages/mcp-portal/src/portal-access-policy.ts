@@ -26,13 +26,15 @@ export interface PortalAccessPolicyConfig {
 	readonly defaultPolicy?: PortalDefaultPolicy;
 	readonly enabledNamespaces?: readonly string[];
 	readonly enabledNamespacesByAgent: Readonly<Record<string, readonly string[]>>;
-	readonly enabledToolsByAgent?: Readonly<Record<string, readonly PortalToolSelector[]>>;
+	readonly enabledToolsByNamespaceByAgent?: Readonly<
+		Record<string, Readonly<Record<string, readonly string[]>>>
+	>;
 	readonly hiddenToolsByAgent: Readonly<Record<string, readonly PortalToolSelector[]>>;
 }
 
 export interface ResolvedPortalAccessPolicy {
 	readonly allowedNamespaces: readonly string[];
-	readonly enabledTools: readonly PortalToolSelector[];
+	readonly enabledToolsByNamespace: Readonly<Record<string, readonly string[]>>;
 	readonly hiddenTools: readonly PortalToolSelector[];
 }
 
@@ -83,6 +85,16 @@ export function portalAgentScopeKey(identity: PortalAgentIdentity): string {
 	return sessionScope ? `${identity.agentScopeId}\n${sessionScope}` : identity.agentScopeId;
 }
 
+function sortEnabledToolsByNamespace(
+	toolsByNamespace: Readonly<Record<string, readonly string[]>>,
+): Readonly<Record<string, readonly string[]>> {
+	return Object.fromEntries(
+		Object.entries(toolsByNamespace)
+			.toSorted(([leftNamespace], [rightNamespace]) => leftNamespace.localeCompare(rightNamespace))
+			.map(([namespace, toolNames]) => [namespace, [...toolNames].toSorted()]),
+	);
+}
+
 function sortToolSelectors(
 	selectors: readonly PortalToolSelector[],
 ): readonly PortalToolSelector[] {
@@ -109,8 +121,8 @@ export function resolvePortalAccessPolicy(props: {
 		allowedNamespaces: selectedNamespaces
 			.filter((namespace) => upstreamNamespaceSet.has(namespace))
 			.toSorted(),
-		enabledTools: sortToolSelectors(
-			props.config.enabledToolsByAgent?.[props.identity.agentId] ?? [],
+		enabledToolsByNamespace: sortEnabledToolsByNamespace(
+			props.config.enabledToolsByNamespaceByAgent?.[props.identity.agentId] ?? {},
 		),
 		hiddenTools: sortToolSelectors(props.config.hiddenToolsByAgent[props.identity.agentId] ?? []),
 	};

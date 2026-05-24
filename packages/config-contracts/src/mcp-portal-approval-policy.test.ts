@@ -15,7 +15,7 @@ const portalConfig = {
 						trustedAnnotations: true,
 						write: [],
 					},
-					tools: { hidden: [] },
+					tools: { enableAll: true, hidden: [] },
 				},
 			},
 		},

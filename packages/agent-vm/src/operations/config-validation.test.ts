@@ -282,7 +282,13 @@ async function writeMcpPortalConfigWithProvider(
 	});
 	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp-portal.config.jsonc'), {
 		agents: { shravan: { profile: 'default' } },
-		profiles: { default: { namespaces: { tavily: {} } } },
+		profiles: {
+			default: {
+				namespaces: {
+					tavily: { tools: { enableAll: true } },
+				},
+			},
+		},
 		schemaVersion: 1,
 	});
 }
@@ -474,7 +480,7 @@ describe('runConfigValidation', () => {
 						namespaces: {
 							deepwiki: {
 								tools: {
-									enabled: ['ask_question'],
+									enableAll: true,
 									hidden: ['missing_hidden_tool'],
 								},
 								approval: {
@@ -515,7 +521,13 @@ describe('runConfigValidation', () => {
 			portalConfig: {
 				schemaVersion: 1,
 				agents: { shravan: { profile: 'default' } },
-				profiles: { default: { namespaces: { deepwiki: {} } } },
+				profiles: {
+					default: {
+						namespaces: {
+							deepwiki: { tools: { enableAll: true } },
+						},
+					},
+				},
 			},
 		});
 
@@ -542,7 +554,13 @@ describe('runConfigValidation', () => {
 			portalConfig: {
 				schemaVersion: 1,
 				agents: { shravan: { profile: 'missing' } },
-				profiles: { default: { namespaces: { deepwiki: {} } } },
+				profiles: {
+					default: {
+						namespaces: {
+							deepwiki: { tools: { enableAll: true } },
+						},
+					},
+				},
 			},
 		});
 
@@ -582,7 +600,13 @@ describe('runConfigValidation', () => {
 			portalConfig: {
 				schemaVersion: 1,
 				agents: { shravan: { profile: 'default' } },
-				profiles: { default: { namespaces: { deepwiki: {} } } },
+				profiles: {
+					default: {
+						namespaces: {
+							deepwiki: { tools: { enableAll: true } },
+						},
+					},
+				},
 			},
 		});
 
