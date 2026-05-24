@@ -170,27 +170,28 @@ durable state
   It is not part of `runtimeDir`; the shared word "runtime" does not imply the
   same lifecycle.
 
-  Note: `tool-leases/<leaseId>.json` is a per-lease durable recovery record
-  for OpenClaw Tool VMs. The schema is versioned via `schemaVersion` and
-  includes a `processIdentity` block (ps `lstart` + full `command`) captured
-  at lease creation. On controller startup, Phase A scans this directory and
-  applies the following recovery discipline:
+  Note: `tool-leases/<recordId>.json` is a durable recovery record for an
+  OpenClaw Tool VM. `recordId` is a controller-generated UUID. The record keeps
+  `agentId`, `leaseId`, `vmId`, `qemuPid`, deployment fences, TCP slot, and
+  session/process evidence. It never persists OpenClaw `scopeKey`.
 
-  - **Five-fence scope check** — `configPath`, `controllerPort`,
+  On controller startup, Phase A scans this directory and applies the following
+  recovery discipline:
+
+  - **Five-fence deployment check** — `configPath`, `controllerPort`,
     `projectNamespace`, `zoneId`, `sessionLabel` must all match the running
-    deployment. Any mismatch in `in-process-recovery` mode quarantines the
-    record (rename to `*.quarantined.<ts>.json`) and skips the PID; in
-    `offline-cleanup` mode the cleanup throws.
+    deployment. Any mismatch in `in-process-recovery` mode warns and skips the
+    record without signaling or mutating it; in `offline-cleanup` mode the
+    cleanup throws.
 
-  - **Process identity check** — before each signal (SIGTERM and again
-    before SIGKILL), the live process identity is re-read via `ps -o
-    lstart=,command=` and must match the recorded identity exactly. PID
-    reuse during the read-record → signal window is detected and refused.
+  - **Host ownership proof** — recovery uses host-side `lsof` to check TCP
+    listener ownership, then verifies the recorded pid and process identity
+    before signaling QEMU/krun. PID reuse during the read-record → signal
+    window is detected and refused.
 
-  - **Schema-mismatch quarantine** — records whose JSON fails Zod parse are
-    renamed to `*.invalid.<ts>.json` and skipped by subsequent `loadAll`
-    calls. Future schema migrations must dispatch on `schemaVersion` rather
-    than relying on the optional/fallback shape.
+  - **Hard-cut schema handling** — records whose JSON fails Zod parse are
+    warned and skipped by startup recovery without mutation. There is no
+    compatibility or rename path for this development format.
 
   Lifecycle invariants enforced by the lease manager:
   - `createLease` writes the record after `storeLease`. On write failure
@@ -267,7 +268,7 @@ host stateDir
     agents/<agentId>/agent/auth-profiles.json
     sandboxes/<agentId>/work/
     gateway-runtime.json
-    tool-leases/<leaseId>.json
+    tool-leases/<recordId>.json
 
 host cacheDir
   ~/.agent-vm/cache/

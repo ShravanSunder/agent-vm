@@ -511,6 +511,12 @@ under stateDir, or a subpath of zoneFilesDir. The Tool VM root filesystem
 itself is disposable, including `/work`.
 ```
 
+Tool VM and gateway startup recovery use host-side TCP listener ownership
+checks before signaling recorded QEMU/krun processes. The controller requires
+`lsof` on the host for that recovery path. If `lsof` is unavailable and
+persisted runtime records need port-owner verification, startup fails with a
+clear host dependency error instead of guessing ownership.
+
 ## toolVmProfiles
 
 `toolVmProfiles` names the Tool VM runtime profiles available to OpenClaw

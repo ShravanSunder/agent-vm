@@ -213,6 +213,12 @@ describe('manual templates', () => {
 			'hostWorkMountDir',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'binds the controller port before recovery',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'uses `lsof` to check TCP listener ownership',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'persistent zone files live at /zone',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
@@ -220,6 +226,12 @@ describe('manual templates', () => {
 		);
 		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
 			'defaultToolVmProfile',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
+			'one compatible Tool VM per zone and OpenClaw agent id',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
+			'scopeKey may describe a channel',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
 			'active shell/file operations heartbeat per-use records',

@@ -66,8 +66,11 @@ sockets, pid files, tiny scratch        memory-pressure only
 gateway-runtime.json                    stateDir               yes
 host runtime record                     durable enough
 
-tool-leases/<leaseId>.json              stateDir               yes
-per-lease tool VM recovery record       durable enough
+tool-leases/<recordId>.json             stateDir               yes
+Tool VM recovery record                 durable enough
+recordId UUID; keeps agentId,
+leaseId, vmId, qemuPid; never
+stores OpenClaw scopeKey
 ```
 
 OpenClaw gateways are long-lived, so rootfs/COW paths such as `/work/tmp` and

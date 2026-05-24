@@ -174,15 +174,19 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
        |  2. tcpPool.release(slot) → port freed
 ```
 
-### Scope-Based Reuse
+### Agent-Based Reuse
 
-Leases are keyed by `scopeKey` — typically `{channel}:{userId}`. If the same
-scope already has an active lease, it is reused only when `profileId`,
-`hostWorkMountDir`, and `agentWorkspaceDir` also match. A mismatch is treated as
-a caller conflict, not as a new tool VM. Before reuse, the controller probes the
-VM; dead leases are evicted and replaced. This means a user's tool VM persists
-across multiple tool calls within the same conversation without silently
-crossing work mount or profile boundaries.
+Managed OpenClaw/Gondolin Tool VM leases are agent-keyed. The controller
+creates or reuses one compatible Tool VM per `zoneId + agentId`. OpenClaw
+`scopeKey` remains in the lease request and response as channel/session
+provenance and TTL-policy input, but it is not a Tool VM identity axis.
+
+If the same agent already has an active lease, it is reused only when
+`profileId`, `hostWorkMountDir`, and `agentWorkspaceDir` also match. A mismatch
+is treated as a caller conflict, not as a new tool VM. Before reuse, the
+controller probes the VM; dead leases are evicted and replaced. This means an
+agent's Tool VM persists across multiple tool calls, channels, sessions, or
+subagents without silently crossing work mount or profile boundaries.
 
 Cached handles renew the idle lease with `POST /lease/:leaseId/renew`. `GET`
 lease routes are read-only; they do not update `lastUsedAt`. In-flight commands
@@ -200,21 +204,21 @@ OpenClaw's sandbox file API into remote shell scripts over that SSH lease. The
 controller does not expose a generic filesystem RPC for Tool VMs and does not
 proxy command stdout/stderr.
 
-For `scopeKey` values shaped as `agent:<agentId>`, the controller first checks
-the zone's `agentToolVmProfiles[agentId]` mapping. If no agent-specific mapping
-exists, it falls back to the zone's `defaultToolVmProfile`. This lets one
-OpenClaw zone serve multiple agents with different Tool VM images while keeping
-the gateway and durable `/zone` namespace shared.
+The controller first checks the zone's `agentToolVmProfiles[agentId]` mapping.
+If no agent-specific mapping exists, it falls back to the zone's
+`defaultToolVmProfile`. This lets one OpenClaw zone serve multiple agents with
+different Tool VM images while keeping the gateway and durable `/zone` namespace
+shared.
 
 Before the first Tool VM boot for an agent-scoped sandbox work mount, the
 controller can seed configured files such as `.config/gcloud/...` into that
 sandbox's `/workspace` backing directory. Seeds are first-boot only and do not
 overwrite files that already exist.
 
-The controller reports reuse conflicts as `LeaseScopeConflictError`, surfaced
-through the lease route as HTTP 409. The message names the zone, `scopeKey`, and
-the mismatched field so operators can distinguish a caller bug from VM capacity
-or startup failure.
+The controller reports reuse conflicts as `AgentLeaseCompatibilityConflictError`,
+surfaced through the lease route as HTTP 409. The message names the zone,
+`agentId`, and the mismatched field so operators can distinguish a caller bug
+from VM capacity or startup failure.
 
 ### TCP Pool
 
