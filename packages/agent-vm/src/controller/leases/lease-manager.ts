@@ -25,6 +25,7 @@ export interface ToolVmProfile {
 }
 
 export interface Lease {
+	readonly agentId: string;
 	readonly agentWorkspaceDir: string;
 	readonly createdAt: number;
 	readonly effectiveIdleTtlMs: number;
@@ -32,6 +33,7 @@ export interface Lease {
 	readonly id: string;
 	readonly lastUsedAt: number;
 	readonly profileId: string;
+	readonly runtimeRecordId: string;
 	readonly scopeKey: string;
 	readonly sshAccess: {
 		readonly command?: string;
@@ -60,6 +62,7 @@ export interface LeaseSnapshot {
 
 export interface LeaseManager {
 	createLease(options: {
+		readonly agentId: string;
 		readonly agentWorkspaceDir: string;
 		readonly effectiveIdleTtlMs?: number;
 		readonly profile: ToolVmProfile;
@@ -91,7 +94,15 @@ export interface LeaseManager {
 	): StartToolVmActiveUseResponse | undefined;
 }
 
-export class LeaseScopeConflictError extends Error {}
+export class AgentLeaseCompatibilityConflictError extends Error {
+	public constructor(
+		message: string,
+		public readonly mismatchedFields: readonly string[],
+	) {
+		super(message);
+		this.name = 'AgentLeaseCompatibilityConflictError';
+	}
+}
 export class LeaseActiveUseConflictError extends Error {}
 
 export interface ToolVmUsePolicy {
@@ -121,6 +132,15 @@ const defaultToolVmUsePolicy = {
 	heartbeatAfterMs: 30 * 1000,
 	heartbeatStaleMs: 2 * 60 * 1000,
 } satisfies ToolVmUsePolicy;
+const leaseAgentIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/iu;
+
+function assertValidLeaseAgentId(agentId: string): void {
+	if (!leaseAgentIdPattern.test(agentId)) {
+		throw new Error(
+			`Invalid Tool VM lease agentId '${agentId}': expected an OpenClaw agent id matching /^[a-z0-9][a-z0-9_-]{0,63}$/i.`,
+		);
+	}
+}
 
 function assertValidToolVmUsePolicy(policy: ToolVmUsePolicy): void {
 	if (policy.heartbeatAfterMs <= 0) {
@@ -142,50 +162,43 @@ function writeLeaseManagerWarning(message: string): void {
 	process.stderr.write(`[lease-manager] ${message}\n`);
 }
 
-function assertReusableScopeLease(
+function assertCompatibleAgentLeaseRequest(
 	existingLease: Lease,
 	requestedLease: {
 		readonly agentWorkspaceDir: string;
-		readonly profileId: string;
+		readonly effectiveIdleTtlMs?: number;
 		readonly guestWorkdir: string;
 		readonly hostWorkMountDir: string;
-		readonly effectiveIdleTtlMs?: number;
+		readonly profileId: string;
 		readonly zoneGitMount?: ZoneGitToolVmMount;
-		readonly zoneId: string;
-		readonly scopeKey: string;
 	},
 ): void {
+	const mismatchedFields: string[] = [];
 	if (
 		requestedLease.effectiveIdleTtlMs !== undefined &&
 		existingLease.effectiveIdleTtlMs !== requestedLease.effectiveIdleTtlMs
 	) {
-		throw new LeaseScopeConflictError(
-			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing effectiveIdleTtlMs '${String(existingLease.effectiveIdleTtlMs)}' does not match requested effectiveIdleTtlMs '${String(requestedLease.effectiveIdleTtlMs)}'.`,
-		);
+		mismatchedFields.push('effectiveIdleTtlMs');
 	}
 	if (existingLease.profileId !== requestedLease.profileId) {
-		throw new LeaseScopeConflictError(
-			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing profileId '${existingLease.profileId}' does not match requested profileId '${requestedLease.profileId}'.`,
-		);
+		mismatchedFields.push('profileId');
 	}
 	if (existingLease.hostWorkMountDir !== requestedLease.hostWorkMountDir) {
-		throw new LeaseScopeConflictError(
-			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing hostWorkMountDir '${existingLease.hostWorkMountDir}' does not match requested hostWorkMountDir '${requestedLease.hostWorkMountDir}'.`,
-		);
+		mismatchedFields.push('hostWorkMountDir');
 	}
 	if (existingLease.guestWorkdir !== requestedLease.guestWorkdir) {
-		throw new LeaseScopeConflictError(
-			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing guestWorkdir '${existingLease.guestWorkdir}' does not match requested guestWorkdir '${requestedLease.guestWorkdir}'.`,
-		);
+		mismatchedFields.push('guestWorkdir');
 	}
 	if (!zoneGitMountsEqual(existingLease.zoneGitMount, requestedLease.zoneGitMount)) {
-		throw new LeaseScopeConflictError(
-			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing zoneGitMount does not match requested zoneGitMount.`,
-		);
+		mismatchedFields.push('zoneGitMount');
 	}
 	if (existingLease.agentWorkspaceDir !== requestedLease.agentWorkspaceDir) {
-		throw new LeaseScopeConflictError(
-			`Tool VM lease scope conflict for zone '${requestedLease.zoneId}' scopeKey '${requestedLease.scopeKey}': existing agentWorkspaceDir '${existingLease.agentWorkspaceDir}' does not match requested agentWorkspaceDir '${requestedLease.agentWorkspaceDir}'.`,
+		mismatchedFields.push('agentWorkspaceDir');
+	}
+	if (mismatchedFields.length > 0) {
+		throw new AgentLeaseCompatibilityConflictError(
+			`existing Tool VM lease for agent '${existingLease.agentId}' is not compatible with this request; mismatched fields: ${mismatchedFields.join(', ')}`,
+			mismatchedFields,
 		);
 	}
 }
@@ -215,11 +228,11 @@ async function isLeaseVmLive(lease: Lease): Promise<boolean> {
 	}
 }
 
-function scopeIndexKey(scopeRequest: {
-	readonly scopeKey: string;
+function agentLeaseIndexKey(agentLease: {
+	readonly agentId: string;
 	readonly zoneId: string;
 }): string {
-	return `${scopeRequest.zoneId}\0${scopeRequest.scopeKey}`;
+	return `${agentLease.zoneId}\0${agentLease.agentId}`;
 }
 
 function activeUseKey(leaseId: string, useId: string): string {
@@ -231,6 +244,7 @@ export function createLeaseManager(options: {
 	readonly createManagedVm: (leaseOptions: {
 		readonly agentWorkspaceDir: string;
 		readonly effectiveIdleTtlMs?: number;
+		readonly agentId: string;
 		readonly profile: ToolVmProfile;
 		readonly profileId: string;
 		readonly scopeKey: string;
@@ -255,15 +269,15 @@ export function createLeaseManager(options: {
 	const leases = new Map<string, Lease>();
 	const activeUses = new Map<string, ToolVmActiveUse>();
 	const endedUseTombstones = new Map<string, EndedToolVmActiveUseTombstone>();
-	const leaseIdsByScope = new Map<string, string>();
+	const leaseIdsByAgent = new Map<string, string>();
 	const releasingLeaseIds = new Set<string>();
-	const scopeLocks = new Map<string, Promise<void>>();
+	const agentLeaseLocks = new Map<string, Promise<void>>();
 	const toolVmUsePolicy = options.toolVmUsePolicy ?? defaultToolVmUsePolicy;
 	assertValidToolVmUsePolicy(toolVmUsePolicy);
 
 	function storeLease(lease: Lease): void {
 		leases.set(lease.id, lease);
-		leaseIdsByScope.set(scopeIndexKey(lease), lease.id);
+		leaseIdsByAgent.set(agentLeaseIndexKey(lease), lease.id);
 	}
 
 	function deleteLease(lease: Lease): void {
@@ -279,18 +293,18 @@ export function createLeaseManager(options: {
 				endedUseTombstones.delete(key);
 			}
 		}
-		const indexKey = scopeIndexKey(lease);
-		// Only clear the scope index if it still points at this exact lease.
-		if (leaseIdsByScope.get(indexKey) === lease.id) {
-			leaseIdsByScope.delete(indexKey);
+		const indexKey = agentLeaseIndexKey(lease);
+		// Only clear the agent index if it still points at this exact lease.
+		if (leaseIdsByAgent.get(indexKey) === lease.id) {
+			leaseIdsByAgent.delete(indexKey);
 		}
 	}
 
-	function findLeaseForScope(scopeRequest: {
-		readonly scopeKey: string;
+	function findLeaseForAgent(agentLease: {
+		readonly agentId: string;
 		readonly zoneId: string;
 	}): Lease | undefined {
-		const leaseId = leaseIdsByScope.get(scopeIndexKey(scopeRequest));
+		const leaseId = leaseIdsByAgent.get(agentLeaseIndexKey(agentLease));
 		return leaseId ? leases.get(leaseId) : undefined;
 	}
 
@@ -304,23 +318,23 @@ export function createLeaseManager(options: {
 	}
 
 	async function withScopeLock<TValue>(
-		scopeRequest: { readonly scopeKey: string; readonly zoneId: string },
+		agentLease: { readonly agentId: string; readonly zoneId: string },
 		fn: () => Promise<TValue>,
 	): Promise<TValue> {
-		const lockKey = `${scopeRequest.zoneId}\0${scopeRequest.scopeKey}`;
-		const previousLock = scopeLocks.get(lockKey) ?? Promise.resolve();
+		const lockKey = `${agentLease.zoneId}\0${agentLease.agentId}`;
+		const previousLock = agentLeaseLocks.get(lockKey) ?? Promise.resolve();
 		let releaseCurrentLock: (() => void) | undefined;
 		const currentLock = new Promise<void>((resolve) => {
 			releaseCurrentLock = resolve;
 		});
-		scopeLocks.set(lockKey, currentLock);
+		agentLeaseLocks.set(lockKey, currentLock);
 		await previousLock.catch(() => {});
 		try {
 			return await fn();
 		} finally {
 			releaseCurrentLock?.();
-			if (scopeLocks.get(lockKey) === currentLock) {
-				scopeLocks.delete(lockKey);
+			if (agentLeaseLocks.get(lockKey) === currentLock) {
+				agentLeaseLocks.delete(lockKey);
 			}
 		}
 	}
@@ -346,7 +360,7 @@ export function createLeaseManager(options: {
 		if (closeSucceeded) {
 			options.tcpPool.release(lease.tcpSlot);
 			try {
-				await deleteRuntimeRecord(options.stateDirFor(lease.zoneId), lease.id);
+				await deleteRuntimeRecord(options.stateDirFor(lease.zoneId), lease.runtimeRecordId);
 			} catch (deleteError) {
 				writeLeaseManagerWarning(
 					`failed to delete tool VM runtime record for evicted lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(deleteError)}`,
@@ -360,12 +374,13 @@ export function createLeaseManager(options: {
 	return {
 		async createLease(leaseOptions) {
 			return await withScopeLock(leaseOptions, async () => {
-				const existingLease = findLeaseForScope({
-					scopeKey: leaseOptions.scopeKey,
+				assertValidLeaseAgentId(leaseOptions.agentId);
+				const existingLease = findLeaseForAgent({
+					agentId: leaseOptions.agentId,
 					zoneId: leaseOptions.zoneId,
 				});
 				if (existingLease) {
-					assertReusableScopeLease(existingLease, leaseOptions);
+					assertCompatibleAgentLeaseRequest(existingLease, leaseOptions);
 					if (await isLeaseVmLive(existingLease)) {
 						return touchLease(existingLease);
 					}
@@ -389,13 +404,15 @@ export function createLeaseManager(options: {
 						});
 						const createdAt = options.now();
 						const lease: Lease = {
+							agentId: leaseOptions.agentId,
 							agentWorkspaceDir: leaseOptions.agentWorkspaceDir,
 							createdAt,
 							effectiveIdleTtlMs: leaseOptions.effectiveIdleTtlMs ?? defaultLeaseEffectiveIdleTtlMs,
 							guestWorkdir: leaseOptions.guestWorkdir,
-							id: `${leaseOptions.zoneId}-${leaseOptions.scopeKey}-${createdAt}`,
+							id: `${leaseOptions.zoneId}-${leaseOptions.agentId}-${createdAt}`,
 							lastUsedAt: createdAt,
 							profileId: leaseOptions.profileId,
+							runtimeRecordId: `${leaseOptions.zoneId}-${leaseOptions.agentId}-${createdAt}`,
 							scopeKey: leaseOptions.scopeKey,
 							sshAccess,
 							tcpSlot,
@@ -590,7 +607,10 @@ export function createLeaseManager(options: {
 					// safe to delete.
 					options.tcpPool.release(currentLease.tcpSlot);
 					try {
-						await deleteRuntimeRecord(options.stateDirFor(currentLease.zoneId), currentLease.id);
+						await deleteRuntimeRecord(
+							options.stateDirFor(currentLease.zoneId),
+							currentLease.runtimeRecordId,
+						);
 					} catch (deleteError) {
 						writeLeaseManagerWarning(
 							`failed to delete tool VM runtime record for released lease '${currentLease.id}' in zone '${currentLease.zoneId}': ${formatLeaseManagerError(deleteError)}`,

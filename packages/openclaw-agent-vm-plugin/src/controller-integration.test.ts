@@ -121,12 +121,14 @@ function createManagedVmFsStub(): ManagedVmFs {
 describe('gondolin controller integration', () => {
 	it('requests a lease through the controller app and builds an exec spec from the returned ssh lease', async () => {
 		const lease = {
+			agentId: 'main',
 			agentWorkspaceDir: '/zone',
 			createdAt: 1,
 			effectiveIdleTtlMs: 300_000,
 			id: 'lease-123',
 			lastUsedAt: 1,
 			profileId: 'standard',
+			runtimeRecordId: 'lease-123',
 			scopeKey: 'agent:main',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			sshAccess: {

@@ -110,12 +110,14 @@ describe('live smoke: API client → controller over real HTTP', () => {
 
 		// --- Real controller lease API ---
 		const lease: Lease = {
+			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
 			createdAt: Date.now(),
 			effectiveIdleTtlMs: 30 * 60 * 1000,
 			id: 'smoke-lease-001',
 			lastUsedAt: Date.now(),
 			profileId: 'standard',
+			runtimeRecordId: 'smoke-lease-001',
 			scopeKey: 'agent:main:smoke',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			sshAccess: {

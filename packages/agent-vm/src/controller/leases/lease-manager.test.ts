@@ -10,9 +10,9 @@ import {
 	createManagedVmFsStub,
 } from '../../testing/managed-vm-test-helpers.js';
 import {
+	AgentLeaseCompatibilityConflictError,
 	createLeaseManager,
 	LeaseActiveUseConflictError,
-	LeaseScopeConflictError,
 } from './lease-manager.js';
 import { createTcpPool } from './tcp-pool.js';
 import { deleteToolVmRuntimeRecord, writeToolVmRuntimeRecord } from './tool-vm-runtime-record.js';
@@ -58,6 +58,30 @@ function createManagedVmStub(id: string = 'tool-vm-1'): ManagedVm {
 }
 
 describe('createLeaseManager', () => {
+	function createAgentLeaseOptions(
+		overrides: Partial<Parameters<ReturnType<typeof createLeaseManager>['createLease']>[0]> & {
+			readonly agentId?: string;
+		} = {},
+	): Parameters<ReturnType<typeof createLeaseManager>['createLease']>[0] & {
+		readonly agentId: string;
+	} {
+		return {
+			agentId: 'beta',
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:beta:discord:channel:123',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+			hostWorkMountDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+			...overrides,
+		};
+	}
+
 	it('creates, stores, and releases a lease while returning its tcp slot', async () => {
 		const closeMock = vi.fn(async () => {});
 		const enableSshMock = vi.fn(async () => ({
@@ -88,6 +112,7 @@ describe('createLeaseManager', () => {
 		});
 
 		const lease = await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
 			profile: {
 				cpus: 1,
@@ -104,6 +129,7 @@ describe('createLeaseManager', () => {
 		expect(lease.tcpSlot).toBe(0);
 		expect(leaseManager.renewLease(lease.id)?.lease).toMatchObject({
 			id: lease.id,
+			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
@@ -156,6 +182,7 @@ describe('createLeaseManager', () => {
 
 		await expect(
 			leaseManager.createLease({
+				agentId: 'main',
 				agentWorkspaceDir: '/home/openclaw/work',
 				profile: { cpus: 1, memory: '1G', imageProfile: 'default' },
 				profileId: 'standard',
@@ -173,6 +200,7 @@ describe('createLeaseManager', () => {
 		expect(leaseManager.listLeases()).toHaveLength(0);
 		// tcp slot must be reusable for a subsequent createLease.
 		const reusable = await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
 			profile: { cpus: 1, memory: '1G', imageProfile: 'default' },
 			profileId: 'standard',
@@ -216,6 +244,7 @@ describe('createLeaseManager', () => {
 		});
 
 		const lease = await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
 			profile: { cpus: 1, memory: '1G', imageProfile: 'default' },
 			profileId: 'standard',
@@ -243,6 +272,7 @@ describe('createLeaseManager', () => {
 			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -266,6 +296,130 @@ describe('createLeaseManager', () => {
 		expect(createManagedVm).toHaveBeenCalledTimes(1);
 	});
 
+	it('reuses the same live Tool VM for different scope keys under one agent', async () => {
+		const createManagedVm = vi.fn(async () => createManagedVmStub());
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm,
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+
+		const firstLease = await leaseManager.createLease(
+			createAgentLeaseOptions({
+				agentId: 'beta',
+				scopeKey: 'agent:beta:discord:channel:123',
+			}),
+		);
+		const secondLease = await leaseManager.createLease(
+			createAgentLeaseOptions({
+				agentId: 'beta',
+				scopeKey: 'agent:beta:discord:channel:999',
+			}),
+		);
+
+		expect(secondLease.id).toBe(firstLease.id);
+		expect(secondLease.agentId).toBe('beta');
+		expect(secondLease.scopeKey).toBe('agent:beta:discord:channel:123');
+		expect(createManagedVm).toHaveBeenCalledTimes(1);
+	});
+
+	it('creates separate Tool VMs for separate agents in the same zone', async () => {
+		const createManagedVm = vi.fn(async () =>
+			createManagedVmStub(`tool-vm-${createManagedVm.mock.calls.length}`),
+		);
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm,
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+
+		const betaLease = await leaseManager.createLease(
+			createAgentLeaseOptions({ agentId: 'beta', scopeKey: 'agent:beta:manual' }),
+		);
+		const lauraLease = await leaseManager.createLease(
+			createAgentLeaseOptions({ agentId: 'laura', scopeKey: 'agent:laura:manual' }),
+		);
+
+		expect(lauraLease.id).not.toBe(betaLease.id);
+		expect(leaseManager.listLeases()).toHaveLength(2);
+		expect(createManagedVm).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not put raw scopeKey into lease id', async () => {
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+
+		const lease = await leaseManager.createLease(
+			createAgentLeaseOptions({
+				agentId: 'beta',
+				scopeKey: 'agent:beta:discord:channel:123',
+			}),
+		);
+
+		expect(lease.id).toMatch(/^shravan-beta-\d+$/u);
+		expect(lease.id).not.toContain('agent:');
+		expect(lease.id).not.toContain('discord');
+	});
+
+	it('rejects an incompatible workspace request for an existing agent lease', async () => {
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+
+		await leaseManager.createLease(
+			createAgentLeaseOptions({
+				agentId: 'beta',
+				hostWorkMountDir: '/tmp/beta-workspace-a',
+			}),
+		);
+
+		await expect(
+			leaseManager.createLease(
+				createAgentLeaseOptions({
+					agentId: 'beta',
+					hostWorkMountDir: '/tmp/beta-workspace-b',
+					scopeKey: 'agent:beta:manual:different-scope',
+				}),
+			),
+		).rejects.toThrow(/existing Tool VM lease for agent 'beta' is not compatible/u);
+	});
+
+	it('rejects an incompatible profile request for an existing agent lease', async () => {
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+
+		await leaseManager.createLease(
+			createAgentLeaseOptions({
+				agentId: 'beta',
+				profileId: 'standard',
+			}),
+		);
+
+		await expect(
+			leaseManager.createLease(
+				createAgentLeaseOptions({
+					agentId: 'beta',
+					profile: { cpus: 2, memory: '2G', imageProfile: 'large' },
+					profileId: 'large',
+					scopeKey: 'agent:beta:manual:different-scope',
+				}),
+			),
+		).rejects.toThrow(/existing Tool VM lease for agent 'beta' is not compatible/u);
+	});
+
 	it('peeks a lease without extending its idle timestamp', async () => {
 		let now = 100;
 		const leaseManager = createLeaseManager({
@@ -275,6 +429,7 @@ describe('createLeaseManager', () => {
 			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -311,6 +466,7 @@ describe('createLeaseManager', () => {
 		});
 
 		await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -326,6 +482,7 @@ describe('createLeaseManager', () => {
 
 		await expect(
 			leaseManager.createLease({
+				agentId: 'main',
 				agentWorkspaceDir: '/host/agent-work',
 				profile: {
 					cpus: 1,
@@ -338,9 +495,7 @@ describe('createLeaseManager', () => {
 				hostWorkMountDir: '/host/other-sandbox-work',
 				zoneId: 'shravan',
 			}),
-		).rejects.toThrow(
-			"Tool VM lease scope conflict for zone 'shravan' scopeKey 'agent:main': existing hostWorkMountDir '/host/sandbox-work' does not match requested hostWorkMountDir '/host/other-sandbox-work'.",
-		);
+		).rejects.toThrow(/existing Tool VM lease for agent 'main' is not compatible/u);
 		expect(closeMock).not.toHaveBeenCalled();
 	});
 
@@ -353,6 +508,7 @@ describe('createLeaseManager', () => {
 		});
 
 		await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -368,6 +524,7 @@ describe('createLeaseManager', () => {
 
 		await expect(
 			leaseManager.createLease({
+				agentId: 'main',
 				agentWorkspaceDir: '/host/agent-work',
 				profile: {
 					cpus: 2,
@@ -380,7 +537,7 @@ describe('createLeaseManager', () => {
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
-		).rejects.toBeInstanceOf(LeaseScopeConflictError);
+		).rejects.toBeInstanceOf(AgentLeaseCompatibilityConflictError);
 	});
 
 	it('rejects same-scope lease reuse when the agent workspace changes', async () => {
@@ -392,6 +549,7 @@ describe('createLeaseManager', () => {
 		});
 
 		await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -407,6 +565,7 @@ describe('createLeaseManager', () => {
 
 		await expect(
 			leaseManager.createLease({
+				agentId: 'main',
 				agentWorkspaceDir: '/host/other-agent-work',
 				profile: {
 					cpus: 1,
@@ -419,7 +578,7 @@ describe('createLeaseManager', () => {
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
-		).rejects.toBeInstanceOf(LeaseScopeConflictError);
+		).rejects.toBeInstanceOf(AgentLeaseCompatibilityConflictError);
 	});
 
 	it('does not reuse matching scope keys across zones', async () => {
@@ -433,6 +592,7 @@ describe('createLeaseManager', () => {
 			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -479,6 +639,7 @@ describe('createLeaseManager', () => {
 			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -505,12 +666,12 @@ describe('createLeaseManager', () => {
 			const loggedMessages = stderrWrite.mock.calls.map(([message]) => String(message));
 			expect(
 				loggedMessages.some((message) =>
-					message.includes("liveness check failed for lease 'shravan-agent:main-100'"),
+					message.includes("liveness check failed for lease 'shravan-main-100'"),
 				),
 			).toBe(true);
 			expect(
 				loggedMessages.some((message) =>
-					message.includes("failed to close evicted lease 'shravan-agent:main-100'"),
+					message.includes("failed to close evicted lease 'shravan-main-100'"),
 				),
 			).toBe(true);
 		} finally {
@@ -539,6 +700,7 @@ describe('createLeaseManager', () => {
 			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -590,6 +752,7 @@ describe('createLeaseManager', () => {
 			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -640,6 +803,7 @@ describe('createLeaseManager', () => {
 			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
 		});
 		const lease = await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -680,6 +844,7 @@ describe('createLeaseManager', () => {
 			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -702,7 +867,7 @@ describe('createLeaseManager', () => {
 		expect(leaseManager.renewLease(lease.id)?.lease).toMatchObject({ id: lease.id });
 	});
 
-	it('listLeases returns all active leases', async () => {
+	it('listLeases returns all active leases across agents', async () => {
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
@@ -727,6 +892,7 @@ describe('createLeaseManager', () => {
 		});
 
 		const lease1 = await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -740,6 +906,7 @@ describe('createLeaseManager', () => {
 			zoneId: 'shravan',
 		});
 		const lease2 = await leaseManager.createLease({
+			agentId: 'laura',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -802,6 +969,7 @@ describe('createLeaseManager', () => {
 		});
 
 		const lease = await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -837,6 +1005,7 @@ describe('createLeaseManager', () => {
 
 		await expect(
 			leaseManager.createLease({
+				agentId: 'main',
 				agentWorkspaceDir: '/host/agent-work',
 				profile: {
 					cpus: 1,
@@ -862,6 +1031,7 @@ describe('createLeaseManager', () => {
 			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			effectiveIdleTtlMs: 60_000,
 			profile: {
@@ -886,7 +1056,7 @@ describe('createLeaseManager', () => {
 				...request,
 				effectiveIdleTtlMs: 120_000,
 			}),
-		).rejects.toBeInstanceOf(LeaseScopeConflictError);
+		).rejects.toBeInstanceOf(AgentLeaseCompatibilityConflictError);
 	});
 
 	it('tracks active uses, heartbeats, tombstones, and forced release cleanup', async () => {
@@ -907,6 +1077,7 @@ describe('createLeaseManager', () => {
 			},
 		});
 		const lease = await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			effectiveIdleTtlMs: 60_000,
 			profile: {
@@ -980,6 +1151,7 @@ describe('createLeaseManager', () => {
 			},
 		});
 		const lease = await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			effectiveIdleTtlMs: 60_000,
 			profile: {
@@ -1043,6 +1215,7 @@ describe('createLeaseManager', () => {
 
 		await expect(
 			leaseManager.createLease({
+				agentId: 'main',
 				agentWorkspaceDir: '/host/agent-work',
 				profile: {
 					cpus: 1,
@@ -1089,6 +1262,7 @@ describe('createLeaseManager', () => {
 		try {
 			await expect(
 				leaseManager.createLease({
+					agentId: 'main',
 					agentWorkspaceDir: '/host/agent-work',
 					profile: {
 						cpus: 1,
@@ -1159,6 +1333,7 @@ describe('createLeaseManager — runtime record disk integration', () => {
 	}
 
 	const integrationLeaseRequest = {
+		agentId: 'main',
 		agentWorkspaceDir: '/home/openclaw/work',
 		profile: { cpus: 1, memory: '1G', imageProfile: 'default' as const },
 		profileId: 'standard' as const,

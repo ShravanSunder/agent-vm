@@ -13,7 +13,7 @@ import {
 } from '../../testing/managed-vm-test-helpers.js';
 import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { SandboxSeedingError } from '../leases/agent-sandbox-seeding.js';
-import { LeaseScopeConflictError, type Lease } from '../leases/lease-manager.js';
+import { AgentLeaseCompatibilityConflictError, type Lease } from '../leases/lease-manager.js';
 import {
 	OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 	LeaseWorkMountValidationError,
@@ -60,6 +60,7 @@ function createControllerAppForTest(
 
 function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 	return {
+		agentId: 'main',
 		agentWorkspaceDir: '/host/agent-work',
 		createdAt: tcpSlot,
 		effectiveIdleTtlMs: 30 * 60 * 1000,
@@ -67,6 +68,7 @@ function createLeaseStub(leaseId: string, tcpSlot: number): Lease {
 		id: leaseId,
 		lastUsedAt: tcpSlot,
 		profileId: 'standard',
+		runtimeRecordId: leaseId,
 		scopeKey: `scope-${leaseId}`,
 		sshAccess: {
 			host: '127.0.0.1',
@@ -331,12 +333,14 @@ describe('createControllerApp', () => {
 
 	it('creates, renews, peeks, and releases leases through the controller api', async () => {
 		const lease: Lease = {
+			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
 			createdAt: 1,
 			effectiveIdleTtlMs: 30 * 60 * 1000,
 			id: 'lease-123',
 			lastUsedAt: 1,
 			profileId: 'standard',
+			runtimeRecordId: 'lease-123',
 			scopeKey: 'agent:main',
 			sshAccess: {
 				command: 'ssh ...',
@@ -1364,7 +1368,10 @@ describe('createControllerApp', () => {
 			},
 			leaseManager: {
 				createLease: vi.fn(async () => {
-					throw new LeaseScopeConflictError('scope already uses a different workspace');
+					throw new AgentLeaseCompatibilityConflictError(
+						"existing Tool VM lease for agent 'main' is not compatible with this request; mismatched fields: hostWorkMountDir",
+						['hostWorkMountDir'],
+					);
 				}),
 				renewLease: vi.fn(),
 				peekLease: vi.fn(),
@@ -1388,7 +1395,8 @@ describe('createControllerApp', () => {
 
 		expect(createResponse.status).toBe(409);
 		await expect(createResponse.json()).resolves.toEqual({
-			error: 'scope already uses a different workspace',
+			error:
+				"existing Tool VM lease for agent 'main' is not compatible with this request; mismatched fields: hostWorkMountDir",
 		});
 	});
 

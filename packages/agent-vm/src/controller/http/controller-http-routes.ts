@@ -23,7 +23,10 @@ import {
 	seedAgentSandboxWorkspace,
 } from '../leases/agent-sandbox-seeding.js';
 import { ttlForLeaseScope, type LeaseIdleTtlPolicy } from '../leases/lease-idle-policy.js';
-import { LeaseActiveUseConflictError, LeaseScopeConflictError } from '../leases/lease-manager.js';
+import {
+	AgentLeaseCompatibilityConflictError,
+	LeaseActiveUseConflictError,
+} from '../leases/lease-manager.js';
 import {
 	LeaseWorkMountValidationError,
 	type ResolvedLeaseWorkMount,
@@ -382,6 +385,7 @@ export function createControllerApp(options: {
 				);
 			}
 			const lease = await options.leaseManager.createLease({
+				agentId,
 				agentWorkspaceDir: payload.agentWorkspaceDir,
 				effectiveIdleTtlMs: effectiveIdleTtl.value,
 				profile: defaultToolVmProfile,
@@ -404,7 +408,7 @@ export function createControllerApp(options: {
 			if (error instanceof LeaseWorkMountValidationError) {
 				return context.json({ error: error.message, kind: error.kind }, 400);
 			}
-			if (error instanceof LeaseScopeConflictError) {
+			if (error instanceof AgentLeaseCompatibilityConflictError) {
 				return context.json({ error: error.message }, 409);
 			}
 			if (error instanceof OpenClawDeploymentRequirementError) {
