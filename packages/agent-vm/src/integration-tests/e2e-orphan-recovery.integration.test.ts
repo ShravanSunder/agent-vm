@@ -32,31 +32,17 @@ function createRuntimeRecord(stateDirectory: string, qemuPid: number): Promise<v
 		gatewayType: 'openclaw',
 		guestListenPort: 18789,
 		ingressPort: 18791,
+		processIdentity: {
+			command: 'qemu-system-aarch64 -m 4G',
+			lstart: 'Fri May 22 10:00:00 2026',
+		},
 		projectNamespace: 'claw-tests-a1b2c3d4',
 		qemuPid,
+		schemaVersion: 1,
 		sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
 		vmId: `vm-${qemuPid}`,
 		zoneId: 'shravan',
 	});
-}
-
-function writeLegacyRuntimeRecord(stateDirectory: string, qemuPid: number): void {
-	fs.mkdirSync(stateDirectory, { recursive: true });
-	fs.writeFileSync(
-		path.join(stateDirectory, 'gateway-runtime.json'),
-		`${JSON.stringify({
-			createdAt: '2026-04-13T12:34:56.000Z',
-			gatewayType: 'openclaw',
-			guestListenPort: 18789,
-			ingressPort: 18791,
-			projectNamespace: 'claw-tests-a1b2c3d4',
-			qemuPid,
-			sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
-			vmId: `vm-${qemuPid}`,
-			zoneId: 'shravan',
-		})}\n`,
-		'utf8',
-	);
 }
 
 function findDefinitelyDeadPid(): number {
@@ -99,17 +85,12 @@ describe('integration: orphan recovery', () => {
 		expect(fs.existsSync(path.join(stateDirectory, 'gateway-runtime.json'))).toBe(false);
 	});
 
-	it('removes a stale legacy runtime record when current config metadata is supplied', async () => {
+	it('removes a stale runtime record when the gateway port is already free', async () => {
 		const stateDirectory = createStateDirectory();
-		const deadPid = findDefinitelyDeadPid();
-		writeLegacyRuntimeRecord(stateDirectory, deadPid);
+		await createRuntimeRecord(stateDirectory, 1);
 
 		await expect(
 			cleanupOrphanedGatewayIfPresent({
-				legacyRecordDefaults: {
-					configPath: '/deployments/claw/config/system.jsonc',
-					controllerPort: 18800,
-				},
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				stateDir: stateDirectory,
 				zoneId: 'shravan',
@@ -120,23 +101,6 @@ describe('integration: orphan recovery', () => {
 		});
 
 		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toBeNull();
-		expect(fs.existsSync(path.join(stateDirectory, 'gateway-runtime.json'))).toBe(false);
-	});
-
-	it('refuses to touch a live non-gateway process and leaves the record in place', async () => {
-		const stateDirectory = createStateDirectory();
-		await createRuntimeRecord(stateDirectory, 1);
-
-		await expect(
-			cleanupOrphanedGatewayIfPresent({
-				projectNamespace: 'claw-tests-a1b2c3d4',
-				stateDir: stateDirectory,
-				zoneId: 'shravan',
-			}),
-		).rejects.toThrow(/unexpected live process/u);
-
-		const runtimeRecord = await loadGatewayRuntimeRecord(stateDirectory);
-		expect(runtimeRecord?.qemuPid).toBe(1);
 	});
 
 	it('is a no-op when no runtime record exists', async () => {
@@ -154,7 +118,7 @@ describe('integration: orphan recovery', () => {
 		});
 	});
 
-	it('quarantines malformed runtime records during cleanup', async () => {
+	it('throws and preserves malformed runtime records during offline cleanup', async () => {
 		const stateDirectory = createStateDirectory();
 		const runtimeRecordPath = path.join(stateDirectory, 'gateway-runtime.json');
 		fs.mkdirSync(stateDirectory, { recursive: true });
@@ -166,16 +130,8 @@ describe('integration: orphan recovery', () => {
 				stateDir: stateDirectory,
 				zoneId: 'shravan',
 			}),
-		).resolves.toEqual({
-			cleanedUp: false,
-			killedPid: null,
-		});
+		).rejects.toThrow(/Malformed gateway runtime record/u);
 
-		expect(fs.existsSync(runtimeRecordPath)).toBe(false);
-		expect(
-			fs
-				.readdirSync(stateDirectory)
-				.some((entryName) => entryName.startsWith('gateway-runtime.invalid.')),
-		).toBe(true);
+		expect(fs.existsSync(runtimeRecordPath)).toBe(true);
 	});
 });

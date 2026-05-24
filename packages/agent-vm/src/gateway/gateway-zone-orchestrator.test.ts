@@ -734,10 +734,6 @@ describe('startGatewayZone', () => {
 		).rejects.toThrow("OpenClaw zone 'shravan' Tool VM requirements failed");
 
 		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledWith({
-			legacyRecordDefaults: {
-				configPath: systemConfig.systemConfigPath,
-				controllerPort: 18800,
-			},
 			mode: 'in-process-recovery',
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			stateDir: zone.gateway.stateDir,
@@ -799,6 +795,7 @@ describe('startGatewayZone', () => {
 			mode: 'in-process-recovery',
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			stateDir: zone.gateway.stateDir,
+			tcpBasePort: 19000,
 			zoneId: 'shravan',
 		});
 	});
@@ -2091,17 +2088,17 @@ describe('startGatewayZone', () => {
 		expect(closeMock).toHaveBeenCalledTimes(1);
 	});
 
-	it('continues Phase A and starts the gateway when cleanup quarantines a foreign runtime record', async () => {
+	it('continues Phase A and starts the gateway when cleanup skips a foreign runtime record', async () => {
 		// cleanupOrphanedGatewayIfPresent's scoped fences (projectNamespace,
 		// configPath, controllerPort, zoneId, sessionLabel) can find that an
 		// existing runtime record belongs to a DIFFERENT controller. In
-		// 'in-process-recovery' mode it quarantines that record and returns
+		// 'in-process-recovery' mode it skips that record and returns
 		// cleanedUp:false with a cleanupWarning, WITHOUT signalling the
 		// foreign process. Phase A's other branches should not care; the
 		// gateway should start normally.
 		const cleanupQuarantineMock = vi.fn(async () => ({
 			cleanedUp: false,
-			cleanupWarning: `Gateway runtime record at '/state' belongs to projectNamespace 'other', not 'claw-tests-a1b2c3d4'. Refusing scoped cleanup. Quarantining the stale runtime record without signaling its recorded process during in-process recovery.`,
+			cleanupWarning: `Gateway runtime record at '/state' belongs to projectNamespace 'other', not 'claw-tests-a1b2c3d4'. Refusing scoped cleanup. Skipping the stale runtime record without signaling its recorded process during in-process recovery.`,
 			killedPid: null,
 		}));
 		const managedVm: ManagedVm = {

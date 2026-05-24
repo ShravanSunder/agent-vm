@@ -12,43 +12,42 @@ import { ZodError, z } from 'zod';
 
 import { readProcessIdentity as defaultReadProcessIdentity } from '../shared/managed-vm-process.js';
 
-// `schemaVersion` and `processIdentity` are optional on the LOADED type so
-// records written before they existed remain loadable. New writes via
-// `buildGatewayRuntimeRecord` ALWAYS populate both. Cleanup paths use
-// processIdentity when present (strong PID-reuse defense) and fall back to a
-// command-only check when absent.
-export const gatewayRuntimeRecordSchema = z.object({
+export const gatewayRuntimeRecordSchema = z.strictObject({
+	schemaVersion: z.literal(1),
 	configPath: z.string().min(1),
 	controllerPort: z.number().int().positive(),
 	createdAt: z.iso.datetime(),
 	gatewayType: z.enum(gatewayTypeValues),
 	guestListenPort: z.number().int().positive(),
 	ingressPort: z.number().int().positive(),
-	processIdentity: z
-		.object({
-			command: z.string().min(1),
-			lstart: z.string().min(1),
-		})
-		.optional(),
+	processIdentity: z.strictObject({
+		command: z.string().min(1),
+		lstart: z.string().min(1),
+	}),
 	projectNamespace: z.string().min(1),
 	qemuPid: z.number().int().positive(),
-	schemaVersion: z.literal(1).optional(),
 	sessionLabel: z.string().min(1),
 	vmId: z.string().min(1),
 	zoneId: z.string().min(1),
 });
 
-const legacyGatewayRuntimeRecordSchema = gatewayRuntimeRecordSchema.omit({
-	configPath: true,
-	controllerPort: true,
-});
-
 export type GatewayRuntimeRecord = z.infer<typeof gatewayRuntimeRecordSchema>;
-export type GatewayRuntimeLog = (message: string) => void;
-export interface GatewayRuntimeRecordLegacyDefaults {
-	readonly configPath: string;
-	readonly controllerPort: number;
-}
+
+export type GatewayRuntimeRecordLoadResult =
+	| {
+			readonly kind: 'loaded';
+			readonly path: string;
+			readonly record: GatewayRuntimeRecord;
+	  }
+	| {
+			readonly kind: 'missing';
+			readonly path: string;
+	  }
+	| {
+			readonly error: Error;
+			readonly kind: 'parse-error';
+			readonly path: string;
+	  };
 
 const gatewayRuntimeRecordFileName = 'gateway-runtime.json';
 
@@ -56,121 +55,66 @@ function resolveGatewayRuntimeRecordPath(stateDirectory: string): string {
 	return path.join(stateDirectory, gatewayRuntimeRecordFileName);
 }
 
-function resolveInvalidGatewayRuntimeRecordPath(stateDirectory: string): string {
-	return path.join(stateDirectory, `gateway-runtime.invalid.${Date.now()}.json`);
+function parseGatewayRuntimeRecord(rawRuntimeRecord: string): GatewayRuntimeRecord {
+	const parsedRuntimeRecord = JSON.parse(rawRuntimeRecord) as unknown;
+	return gatewayRuntimeRecordSchema.parse(parsedRuntimeRecord);
 }
 
-async function quarantineMalformedGatewayRuntimeRecord(
-	stateDirectory: string,
-	runtimeRecordPath: string,
-	log: GatewayRuntimeLog,
-): Promise<void> {
-	const invalidRuntimeRecordPath = resolveInvalidGatewayRuntimeRecordPath(stateDirectory);
-	try {
-		await fs.rename(runtimeRecordPath, invalidRuntimeRecordPath);
-		log(
-			`Quarantined malformed gateway runtime record '${runtimeRecordPath}' to '${invalidRuntimeRecordPath}'.`,
-		);
-		return;
-	} catch (error) {
-		await fs.rm(runtimeRecordPath, { force: true });
-		log(
-			`Deleted malformed gateway runtime record '${runtimeRecordPath}' after quarantine rename failed: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
-		);
-	}
+function runtimeRecordParseError(error: SyntaxError | ZodError): Error {
+	return error instanceof Error ? error : new Error(String(error));
 }
 
-export async function quarantineGatewayRuntimeRecord(
+export async function loadGatewayRuntimeRecordResult(
 	stateDirectory: string,
-	options: {
-		readonly log?: GatewayRuntimeLog;
-		readonly reason: string;
-	} = { reason: 'runtime record no longer matches the active cleanup scope' },
-): Promise<void> {
+): Promise<GatewayRuntimeRecordLoadResult> {
 	const runtimeRecordPath = resolveGatewayRuntimeRecordPath(stateDirectory);
-	const quarantinedRuntimeRecordPath = path.join(
-		stateDirectory,
-		`gateway-runtime.quarantined.${Date.now()}.json`,
-	);
 	try {
-		await fs.rename(runtimeRecordPath, quarantinedRuntimeRecordPath);
-		(options.log ?? writeGatewayRuntimeLog)(
-			`Quarantined gateway runtime record '${runtimeRecordPath}' to '${quarantinedRuntimeRecordPath}': ${options.reason}.`,
-		);
+		return {
+			kind: 'loaded',
+			path: runtimeRecordPath,
+			record: parseGatewayRuntimeRecord(await fs.readFile(runtimeRecordPath, 'utf8')),
+		};
 	} catch (error) {
 		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
-			return;
+			return {
+				kind: 'missing',
+				path: runtimeRecordPath,
+			};
 		}
-		throw error;
+		if (!(error instanceof SyntaxError) && !(error instanceof ZodError)) {
+			throw error;
+		}
+		return {
+			error: runtimeRecordParseError(error),
+			kind: 'parse-error',
+			path: runtimeRecordPath,
+		};
 	}
-}
-
-function writeGatewayRuntimeLog(message: string): void {
-	process.stderr.write(`[agent-vm] ${message}\n`);
 }
 
 export async function loadGatewayRuntimeRecord(
 	stateDirectory: string,
-	options: {
-		readonly legacyRecordDefaults?: GatewayRuntimeRecordLegacyDefaults;
-		readonly log?: GatewayRuntimeLog;
-	} = {},
 ): Promise<GatewayRuntimeRecord | null> {
-	const runtimeRecordPath = resolveGatewayRuntimeRecordPath(stateDirectory);
-	let rawRuntimeRecord: string;
-	try {
-		rawRuntimeRecord = await fs.readFile(runtimeRecordPath, 'utf8');
-	} catch (error) {
-		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
-			return null;
-		}
-		throw error;
-	}
-
-	try {
-		const parsedRuntimeRecord = JSON.parse(rawRuntimeRecord) as unknown;
-		const currentRuntimeRecord = gatewayRuntimeRecordSchema.safeParse(parsedRuntimeRecord);
-		if (currentRuntimeRecord.success) {
-			return currentRuntimeRecord.data;
-		}
-		const legacyRuntimeRecord = legacyGatewayRuntimeRecordSchema.safeParse(parsedRuntimeRecord);
-		if (legacyRuntimeRecord.success && options.legacyRecordDefaults !== undefined) {
-			return gatewayRuntimeRecordSchema.parse({
-				...legacyRuntimeRecord.data,
-				configPath: options.legacyRecordDefaults.configPath,
-				controllerPort: options.legacyRecordDefaults.controllerPort,
-			});
-		}
-		if (legacyRuntimeRecord.success) {
-			throw new Error(
-				`Gateway runtime record '${runtimeRecordPath}' uses the legacy format and requires legacyRecordDefaults to supply configPath and controllerPort.`,
-			);
-		}
-		throw currentRuntimeRecord.error;
-	} catch (error) {
-		if (!(error instanceof SyntaxError) && !(error instanceof ZodError)) {
-			throw error;
-		}
-		await quarantineMalformedGatewayRuntimeRecord(
-			stateDirectory,
-			runtimeRecordPath,
-			options.log ?? writeGatewayRuntimeLog,
-		);
+	const loadResult = await loadGatewayRuntimeRecordResult(stateDirectory);
+	if (loadResult.kind === 'missing') {
 		return null;
 	}
+	if (loadResult.kind === 'parse-error') {
+		throw loadResult.error;
+	}
+	return loadResult.record;
 }
 
 export async function writeGatewayRuntimeRecord(
 	stateDirectory: string,
 	record: GatewayRuntimeRecord,
 ): Promise<void> {
+	const parsedRecord = gatewayRuntimeRecordSchema.parse(record);
 	const runtimeRecordPath = resolveGatewayRuntimeRecordPath(stateDirectory);
 	await fs.mkdir(stateDirectory, { recursive: true });
-	await writeFileAtomically(
-		runtimeRecordPath,
-		`${JSON.stringify(gatewayRuntimeRecordSchema.parse(record), null, 2)}\n`,
-		{ mode: 0o600 },
-	);
+	await writeFileAtomically(runtimeRecordPath, `${JSON.stringify(parsedRecord, null, 2)}\n`, {
+		mode: 0o600,
+	});
 }
 
 export async function deleteGatewayRuntimeRecord(stateDirectory: string): Promise<void> {
@@ -207,28 +151,27 @@ export async function buildGatewayRuntimeRecord(options: {
 }): Promise<GatewayRuntimeRecord> {
 	const gatewayType = gatewayRuntimeRecordSchema.shape.gatewayType.parse(options.gatewayType);
 	const qemuPid = resolveManagedVmQemuPid(options.managedVm);
-	// Capture process identity (ps lstart + command) for PID-reuse defense
-	// on recovery. ps must succeed — surface clearly if the VM exited.
-	const identity = await (options.readProcessIdentity ?? defaultReadProcessIdentity)(qemuPid);
-	if (identity === null) {
+	const processIdentityReader = options.readProcessIdentity ?? defaultReadProcessIdentity;
+	const processIdentity = await processIdentityReader(qemuPid);
+	if (processIdentity === null) {
 		throw new Error(
-			`Failed to capture process identity for gateway VM pid ${qemuPid}: ps returned no rows. The VM may have exited during startup.`,
+			`Failed to capture process identity for gateway VM '${options.managedVm.id}' pid ${String(qemuPid)}.`,
 		);
 	}
 
-	return {
+	return gatewayRuntimeRecordSchema.parse({
 		configPath: options.systemConfigPath,
 		controllerPort: options.controllerPort,
 		createdAt: new Date().toISOString(),
 		gatewayType,
 		guestListenPort: options.processSpec.guestListenPort,
 		ingressPort: options.ingressPort,
-		processIdentity: identity,
+		processIdentity,
 		projectNamespace: options.projectNamespace,
 		qemuPid,
 		schemaVersion: 1,
 		sessionLabel: buildGatewaySessionLabel(options.projectNamespace, options.zoneId),
 		vmId: options.managedVm.id,
 		zoneId: options.zoneId,
-	};
+	});
 }

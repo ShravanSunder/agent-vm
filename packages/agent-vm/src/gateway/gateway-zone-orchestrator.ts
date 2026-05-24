@@ -263,10 +263,6 @@ export async function startGatewayZone(
 	});
 	const cleanupPromise = runTaskStep('Cleaning orphaned gateway runtime', async () => {
 		await (dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent)({
-			legacyRecordDefaults: {
-				configPath: options.systemConfig.systemConfigPath,
-				controllerPort: options.systemConfig.host.controllerPort,
-			},
 			mode: 'in-process-recovery',
 			projectNamespace: options.systemConfig.host.projectNamespace,
 			stateDir: zone.gateway.stateDir,
@@ -287,6 +283,7 @@ export async function startGatewayZone(
 						mode: 'in-process-recovery',
 						projectNamespace: options.systemConfig.host.projectNamespace,
 						stateDir: zone.gateway.stateDir,
+						tcpBasePort: options.systemConfig.tcpPool.basePort,
 						zoneId: zone.id,
 					});
 				})

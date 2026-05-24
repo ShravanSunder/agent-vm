@@ -62,23 +62,7 @@ export async function readProcessIdentity(pid: number): Promise<ProcessIdentity 
 		if (trimmed.length === 0) {
 			return null;
 		}
-		// `lstart` always renders as 24 chars in BSD format (`Day Mon DD HH:MM:SS YYYY`).
-		// macOS ps -o lstart= produces exactly that; Linux ps coreutils renders
-		// without leading zero on the day-of-month so the length is 23-24 chars.
-		// To stay portable we split on the FIRST run of >=2 spaces between the
-		// two `-o` columns. ps separates `-o` columns with at least one space
-		// and pads to column width — easiest is to find the first space at
-		// position >=24 and split there.
-		const splitIndex = findLstartCommandBoundary(trimmed);
-		if (splitIndex === null) {
-			return null;
-		}
-		const lstart = trimmed.slice(0, splitIndex).trim();
-		const command = trimmed.slice(splitIndex).trim();
-		if (lstart.length === 0 || command.length === 0) {
-			return null;
-		}
-		return { command, lstart };
+		return parseProcessIdentityOutput(trimmed);
 	} catch (error) {
 		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 1) {
 			return null;
@@ -87,9 +71,23 @@ export async function readProcessIdentity(pid: number): Promise<ProcessIdentity 
 	}
 }
 
+export function parseProcessIdentityOutput(line: string): ProcessIdentity | null {
+	const splitIndex = findLstartCommandBoundary(line.trim());
+	if (splitIndex === null) {
+		return null;
+	}
+	const lstart = line.slice(0, splitIndex).trim();
+	const command = line.slice(splitIndex).trim();
+	if (lstart.length === 0 || command.length === 0) {
+		return null;
+	}
+	return { command, lstart };
+}
+
 function findLstartCommandBoundary(line: string): number | null {
-	// `lstart` is "Day Mon DD HH:MM:SS YYYY" — exactly 4 whitespace-separated
-	// tokens. Find the end of the 4th token; everything after is `command`.
+	// `lstart` is "Day Mon DD HH:MM:SS YYYY" — exactly five
+	// whitespace-separated tokens. Find the end of the fifth token; everything
+	// after is `command`.
 	let tokenCount = 0;
 	let inToken = false;
 	for (let index = 0; index < line.length; index += 1) {
@@ -100,7 +98,7 @@ function findLstartCommandBoundary(line: string): number | null {
 		} else if (isSpace && inToken) {
 			inToken = false;
 			tokenCount += 1;
-			if (tokenCount === 4) {
+			if (tokenCount === 5) {
 				return index;
 			}
 		}

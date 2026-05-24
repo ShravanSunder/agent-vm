@@ -2,12 +2,17 @@ import { buildToolSessionLabel } from '@agent-vm/gateway-interface';
 
 import {
 	isProcessAlive,
+	isManagedVmProcess,
 	killOrphanedManagedVmProcess,
 	killProcess,
 	readProcessCommand,
 	readProcessIdentity,
 	sleep,
 } from '../../shared/managed-vm-process.js';
+import {
+	readTcpListenPortOwner as defaultReadTcpListenPortOwner,
+	type PortOwner,
+} from '../../shared/port-owner.js';
 import type { ToolVmRuntimeRecord } from './tool-vm-runtime-record.js';
 import {
 	deleteToolVmRuntimeRecord,
@@ -72,14 +77,56 @@ async function killOrphanedToolVmProcess(
 	});
 }
 
+type ToolVmPortOwnershipProof =
+	| { readonly kind: 'owned' }
+	| { readonly kind: 'record-stale' }
+	| { readonly kind: 'unproven'; readonly warning: string };
+
+async function verifyToolVmPortOwnership(options: {
+	readonly portForSlot?: (slot: number) => number;
+	readonly readTcpListenPortOwner?: (port: number) => Promise<PortOwner | null>;
+	readonly runtimeRecord: ToolVmRuntimeRecord;
+}): Promise<ToolVmPortOwnershipProof> {
+	if (!options.portForSlot && !options.readTcpListenPortOwner) {
+		return { kind: 'owned' };
+	}
+	if (!options.portForSlot) {
+		return {
+			kind: 'unproven',
+			warning: `Tool VM runtime record '${options.runtimeRecord.recordId}' cannot verify port ownership because no portForSlot dependency was provided.`,
+		};
+	}
+	const readTcpListenPortOwner = options.readTcpListenPortOwner ?? defaultReadTcpListenPortOwner;
+	const expectedPort = options.portForSlot(options.runtimeRecord.tcpSlot);
+	const portOwner = await readTcpListenPortOwner(expectedPort);
+	if (portOwner === null) {
+		return { kind: 'record-stale' };
+	}
+	if (portOwner.pid !== options.runtimeRecord.qemuPid) {
+		return {
+			kind: 'unproven',
+			warning: `Tool VM runtime record '${options.runtimeRecord.recordId}' port ${String(expectedPort)} is held by pid ${String(portOwner.pid)}, expected pid ${String(options.runtimeRecord.qemuPid)}.`,
+		};
+	}
+	if (!isManagedVmProcess(portOwner.command)) {
+		return {
+			kind: 'unproven',
+			warning: `Tool VM runtime record '${options.runtimeRecord.recordId}' port ${String(expectedPort)} is held by pid ${String(portOwner.pid)} but command is not a managed VM process: ${portOwner.command}.`,
+		};
+	}
+	return { kind: 'owned' };
+}
+
 export interface ToolVmRecoveryDependencies {
 	readonly deleteToolVmRuntimeRecord?: typeof deleteToolVmRuntimeRecord;
 	readonly isProcessAlive?: (pid: number) => boolean;
 	readonly killProcess?: (pid: number, signal: NodeJS.Signals) => void;
 	readonly loadAllToolVmRuntimeRecords?: typeof loadAllToolVmRuntimeRecords;
 	readonly log?: (message: string) => void;
+	readonly portForSlot?: (slot: number) => number;
 	readonly readProcessCommand?: (pid: number) => Promise<string | null>;
 	readonly readProcessIdentity?: typeof readProcessIdentity;
+	readonly readTcpListenPortOwner?: (port: number) => Promise<PortOwner | null>;
 	readonly sleep?: (delayMs: number) => Promise<void>;
 }
 
@@ -97,6 +144,7 @@ export async function cleanupOrphanedToolVmsIfPresent(
 		readonly mode?: 'in-process-recovery' | 'offline-cleanup';
 		readonly projectNamespace: string;
 		readonly stateDir: string;
+		readonly tcpBasePort?: number;
 		readonly zoneId: string;
 	},
 	dependencies: ToolVmRecoveryDependencies = {},
@@ -120,6 +168,15 @@ export async function cleanupOrphanedToolVmsIfPresent(
 		sleep: dependencies.sleep ?? sleep,
 	};
 	const deleteRecord = dependencies.deleteToolVmRuntimeRecord ?? deleteToolVmRuntimeRecord;
+	const portForSlot =
+		dependencies.portForSlot ??
+		(options.tcpBasePort === undefined
+			? undefined
+			: (
+					(tcpBasePort: number) =>
+					(slot: number): number =>
+						tcpBasePort + slot
+				)(options.tcpBasePort));
 
 	for (const runtimeRecordResult of runtimeRecordResults) {
 		if (runtimeRecordResult.kind === 'parse-error') {
@@ -153,6 +210,40 @@ export async function cleanupOrphanedToolVmsIfPresent(
 		log(
 			`Found persisted tool VM runtime for lease '${runtimeRecord.leaseId}' (zone '${runtimeRecord.zoneId}', slot ${runtimeRecord.tcpSlot}, pid ${runtimeRecord.qemuPid}, vm ${runtimeRecord.vmId}).`,
 		);
+
+		// oxlint-disable-next-line no-await-in-loop -- per-record ownership proof must precede that record's signal/delete decision.
+		const portOwnershipProof = await verifyToolVmPortOwnership({
+			...(portForSlot ? { portForSlot } : {}),
+			...(dependencies.readTcpListenPortOwner
+				? { readTcpListenPortOwner: dependencies.readTcpListenPortOwner }
+				: {}),
+			runtimeRecord,
+		});
+		if (portOwnershipProof.kind === 'unproven') {
+			if (options.mode !== 'in-process-recovery') {
+				throw new Error(portOwnershipProof.warning);
+			}
+			const warning = `Skipping ${portOwnershipProof.warning}`;
+			log(warning);
+			warnings.push(warning);
+			continue;
+		}
+		if (portOwnershipProof.kind === 'record-stale') {
+			try {
+				// oxlint-disable-next-line no-await-in-loop -- per-record cleanup is intentionally serial
+				await deleteRecord(options.stateDir, runtimeRecord.recordId);
+			} catch (error) {
+				const warning = `Failed to remove stale tool VM runtime record for lease '${runtimeRecord.leaseId}' at '${options.stateDir}': ${error instanceof Error ? error.message : JSON.stringify(error)}`;
+				log(warning);
+				warnings.push(warning);
+				continue;
+			}
+			log(
+				`Removed stale tool VM runtime record for lease '${runtimeRecord.leaseId}' after confirming its TCP listener was already gone.`,
+			);
+			cleanedCount += 1;
+			continue;
+		}
 
 		// oxlint-disable-next-line no-await-in-loop -- per-record cleanup is intentionally serial to bound concurrent signals to QEMU pids
 		const killedPid = await killOrphanedToolVmProcess(runtimeRecord, killDependencies);

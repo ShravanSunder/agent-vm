@@ -45,6 +45,19 @@ function loadedToolVmRuntimeRecords(
 	}));
 }
 
+function createCleanupOptions(
+	overrides: Partial<Parameters<typeof cleanupOrphanedToolVmsIfPresent>[0]> = {},
+): Parameters<typeof cleanupOrphanedToolVmsIfPresent>[0] {
+	return {
+		expectedConfigPath: '/deployments/shravan-claw/config/system.json',
+		expectedControllerPort: 18800,
+		projectNamespace: 'shravan-claw-463c3e5f',
+		stateDir: '/state/sunfam',
+		zoneId: 'sunfam',
+		...overrides,
+	};
+}
+
 // `readProcessIdentity` returning the same identity as the recorded one
 // simulates production: ps confirms the PID is still the same QEMU instance.
 function buildMatchingIdentityResolver(
@@ -69,6 +82,53 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 			},
 		);
 		expect(result).toEqual({ cleanedCount: 0, killedPids: [], quarantinedCount: 0, warnings: [] });
+	});
+
+	it('skips without signaling when a tool VM port is held by a different pid', async () => {
+		const record = createToolVmRuntimeRecord({
+			qemuPid: 111,
+			sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:0',
+			tcpSlot: 0,
+		});
+		const killProcess = vi.fn();
+		const logMessages: string[] = [];
+
+		const result = await cleanupOrphanedToolVmsIfPresent(
+			createCleanupOptions({ mode: 'in-process-recovery' }),
+			{
+				killProcess,
+				loadAllToolVmRuntimeRecords: async () => loadedToolVmRuntimeRecords(record),
+				log: (message) => {
+					logMessages.push(message);
+				},
+				portForSlot: () => 19_500,
+				readTcpListenPortOwner: async () => ({ command: 'qemu-system-aarch64', pid: 222 }),
+			},
+		);
+
+		expect(killProcess).not.toHaveBeenCalled();
+		expect(result.cleanedCount).toBe(0);
+		expect(result.warnings.join('\n')).toContain('held by pid 222, expected pid 111');
+		expect(logMessages.join('\n')).toContain('held by pid 222, expected pid 111');
+	});
+
+	it('throws in offline cleanup when a tool VM port is held by a different pid', async () => {
+		const record = createToolVmRuntimeRecord({
+			qemuPid: 111,
+			sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:0',
+			tcpSlot: 0,
+		});
+		const killProcess = vi.fn();
+
+		await expect(
+			cleanupOrphanedToolVmsIfPresent(createCleanupOptions({ mode: 'offline-cleanup' }), {
+				killProcess,
+				loadAllToolVmRuntimeRecords: async () => loadedToolVmRuntimeRecords(record),
+				portForSlot: () => 19_500,
+				readTcpListenPortOwner: async () => ({ command: 'qemu-system-aarch64', pid: 222 }),
+			}),
+		).rejects.toThrow(/port 19500 is held by pid 222, expected pid 111/u);
+		expect(killProcess).not.toHaveBeenCalled();
 	});
 
 	it('kills the recorded qemu pid and deletes the record when scope matches', async () => {
