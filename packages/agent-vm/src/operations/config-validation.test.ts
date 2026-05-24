@@ -2,10 +2,13 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import type { UpstreamMcpClientRuntime } from '@agent-vm/mcp-portal';
+import type { SecretResolver } from '@agent-vm/secret-management';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createLoadedSystemConfig, loadSystemConfig } from '../config/system-config.js';
 import { resolveProjectCheckoutPath, runConfigValidation } from './config-validation.js';
+import { runLiveMcpPortalValidation } from './mcp-portal-live-validation.js';
 
 type TestCommandRunner = NonNullable<Parameters<typeof runConfigValidation>[0]['runCommand']>;
 
@@ -263,7 +266,7 @@ async function writeMcpPortalConfigFiles(rootPath: string, profileName: string):
 		agents: { shravan: { profile: profileName } },
 		profiles: {
 			default: {
-				enabledNamespaces: [],
+				namespaces: {},
 			},
 		},
 	});
@@ -279,7 +282,7 @@ async function writeMcpPortalConfigWithProvider(
 	});
 	await writeJson(path.join(rootPath, 'config', 'gateways', 'shravan', 'mcp-portal.config.jsonc'), {
 		agents: { shravan: { profile: 'default' } },
-		profiles: { default: { enabledNamespaces: ['tavily'] } },
+		profiles: { default: { namespaces: { tavily: {} } } },
 		schemaVersion: 1,
 	});
 }
@@ -297,13 +300,314 @@ async function writeMcpPortalConfigWithAgents(
 		agents,
 		profiles: {
 			default: {
-				enabledNamespaces: [],
+				namespaces: {},
 			},
 		},
 	});
 }
 
+async function createOpenClawSystemConfigWithMcpPortal(): Promise<
+	Awaited<ReturnType<typeof loadSystemConfig>>
+> {
+	const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+	const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+	await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+	await writeMcpPortalConfigFiles(temporaryDirectoryPath, 'default');
+	return await loadSystemConfig(systemConfigPath);
+}
+
+function createSingleToolMcpConfig(props: {
+	readonly namespace: string;
+	readonly toolName: string;
+}): unknown {
+	void props.toolName;
+	return {
+		schemaVersion: 1,
+		providers: {
+			[props.namespace]: {
+				kind: 'mcp',
+				namespace: props.namespace,
+				secretPolicies: {},
+				transport: {
+					kind: 'streamable-http',
+					url: `https://${props.namespace}.example.test/mcp`,
+				},
+			},
+		},
+	};
+}
+
+async function createSystemConfigWithLiveMcpFiles(props: {
+	readonly mcpConfig: unknown;
+	readonly portalConfig: unknown;
+}): Promise<Awaited<ReturnType<typeof loadSystemConfig>>> {
+	const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
+	const systemConfigPath = await writeOpenClawProjectFixture(temporaryDirectoryPath);
+	await addMcpPortalReferencesToOpenClawFixture(temporaryDirectoryPath);
+	await writeJson(
+		path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'mcp.config.jsonc'),
+		props.mcpConfig,
+	);
+	await writeJson(
+		path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'mcp-portal.config.jsonc'),
+		props.portalConfig,
+	);
+	return await loadSystemConfig(systemConfigPath);
+}
+
+function createFakeMcpRuntime(
+	toolsByNamespace: Readonly<Record<string, readonly string[]>>,
+): UpstreamMcpClientRuntime {
+	return {
+		callTool: vi.fn(),
+		closeAgentScope: vi.fn(),
+		closeSession: vi.fn(),
+		listTools: vi.fn(async (call: { readonly namespace: string }) =>
+			(toolsByNamespace[call.namespace] ?? []).map((name) => ({
+				inputSchema: { type: 'object' as const },
+				name,
+			})),
+		),
+	};
+}
+
+function createTestSecretResolver(): SecretResolver {
+	return {
+		resolve: vi.fn(async () => 'secret-value'),
+		resolveAll: vi.fn(async () => ({})),
+	};
+}
+
 describe('runConfigValidation', () => {
+	it('skips live MCP discovery unless --mcp-live is requested', async () => {
+		const systemConfig = await createOpenClawSystemConfigWithMcpPortal();
+		const runLiveMcpPortalValidationMock = vi.fn(async () => [
+			{ hint: 'deepwiki discovered 2 tools', name: 'mcp-live-deepwiki', ok: true },
+		]);
+
+		const result = await runConfigValidation({
+			runCommand: successfulOpenClawValidationCommand,
+			runLiveMcpPortalValidation: runLiveMcpPortalValidationMock,
+			systemConfig,
+		});
+
+		expect(runLiveMcpPortalValidationMock).not.toHaveBeenCalled();
+		expect(result.checks.map((check) => check.name)).not.toContain('mcp-live-deepwiki');
+	});
+
+	it('includes live MCP discovery checks when requested', async () => {
+		const systemConfig = await createOpenClawSystemConfigWithMcpPortal();
+		const secretResolver = createTestSecretResolver();
+		const runLiveMcpPortalValidationMock = vi.fn(async () => [
+			{
+				hint: 'perplexity connect failed: stdio MCP command failed before tool discovery; verify command, package bin name, gateway PATH, and arg count.',
+				name: 'mcp-live-beta-perplexity',
+				ok: false,
+			},
+		]);
+
+		const result = await runConfigValidation({
+			mcpLive: true,
+			runCommand: successfulOpenClawValidationCommand,
+			runLiveMcpPortalValidation: runLiveMcpPortalValidationMock,
+			secretResolver,
+			systemConfig,
+		});
+
+		expect(runLiveMcpPortalValidationMock).toHaveBeenCalledWith({
+			secretResolver,
+			systemConfig,
+		});
+		expect(result.ok).toBe(false);
+		expect(result.checks).toContainEqual({
+			hint: 'perplexity connect failed: stdio MCP command failed before tool discovery; verify command, package bin name, gateway PATH, and arg count.',
+			name: 'mcp-live-beta-perplexity',
+			ok: false,
+		});
+	});
+
+	it('fails when a portal profile references a namespace without an MCP provider', async () => {
+		const systemConfig = await createSystemConfigWithLiveMcpFiles({
+			mcpConfig: {
+				schemaVersion: 1,
+				providers: {},
+			},
+			portalConfig: {
+				schemaVersion: 1,
+				agents: { shravan: { profile: 'default' } },
+				profiles: {
+					default: {
+						namespaces: {
+							deepwiki: {
+								tools: { enabled: ['ask_question'] },
+							},
+						},
+					},
+				},
+			},
+		});
+
+		await expect(
+			runLiveMcpPortalValidation({
+				createRuntime: () => createFakeMcpRuntime({ deepwiki: ['ask_question'] }),
+				secretResolver: createTestSecretResolver(),
+				systemConfig,
+			}),
+		).resolves.toContainEqual({
+			hint: "Agent 'shravan' profile 'default' references MCP namespace 'deepwiki', but no provider with that namespace exists in mcp.config.jsonc.",
+			name: 'mcp-live-profile-namespace-shravan-shravan-deepwiki',
+			ok: false,
+		});
+	});
+
+	it('checks hidden and approval tool names, not only enabled tools', async () => {
+		const systemConfig = await createSystemConfigWithLiveMcpFiles({
+			mcpConfig: createSingleToolMcpConfig({
+				namespace: 'deepwiki',
+				toolName: 'ask_question',
+			}),
+			portalConfig: {
+				schemaVersion: 1,
+				agents: { shravan: { profile: 'default' } },
+				profiles: {
+					default: {
+						namespaces: {
+							deepwiki: {
+								tools: {
+									enabled: ['ask_question'],
+									hidden: ['missing_hidden_tool'],
+								},
+								approval: {
+									allowWithoutApproval: ['missing_approval_tool'],
+								},
+							},
+						},
+					},
+				},
+			},
+		});
+
+		await expect(
+			runLiveMcpPortalValidation({
+				createRuntime: () => createFakeMcpRuntime({ deepwiki: ['ask_question'] }),
+				secretResolver: createTestSecretResolver(),
+				systemConfig,
+			}),
+		).resolves.toContainEqual({
+			hint: "Agent 'shravan' profile 'default' references missing deepwiki tools: missing_approval_tool, missing_hidden_tool. Actual tools: ask_question.",
+			name: 'mcp-live-profile-tools-shravan-shravan-deepwiki',
+			ok: false,
+		});
+	});
+
+	it('reports live MCP config load failures as validation checks', async () => {
+		const systemConfig = await createSystemConfigWithLiveMcpFiles({
+			mcpConfig: {
+				providers: {
+					deepwiki: {
+						kind: 'mcp',
+						namespace: 'deepwiki',
+						transport: { kind: 'streamable-http', url: 'not-a-url' },
+					},
+				},
+				schemaVersion: 1,
+			},
+			portalConfig: {
+				schemaVersion: 1,
+				agents: { shravan: { profile: 'default' } },
+				profiles: { default: { namespaces: { deepwiki: {} } } },
+			},
+		});
+
+		await expect(
+			runLiveMcpPortalValidation({
+				createRuntime: () => createFakeMcpRuntime({ deepwiki: ['ask_question'] }),
+				secretResolver: createTestSecretResolver(),
+				systemConfig,
+			}),
+		).resolves.toEqual([
+			expect.objectContaining({
+				name: 'mcp-live-shravan-config',
+				ok: false,
+			}),
+		]);
+	});
+
+	it('reports live MCP profile resolution failures as validation checks', async () => {
+		const systemConfig = await createSystemConfigWithLiveMcpFiles({
+			mcpConfig: createSingleToolMcpConfig({
+				namespace: 'deepwiki',
+				toolName: 'ask_question',
+			}),
+			portalConfig: {
+				schemaVersion: 1,
+				agents: { shravan: { profile: 'missing' } },
+				profiles: { default: { namespaces: { deepwiki: {} } } },
+			},
+		});
+
+		await expect(
+			runLiveMcpPortalValidation({
+				createRuntime: () => createFakeMcpRuntime({ deepwiki: ['ask_question'] }),
+				secretResolver: createTestSecretResolver(),
+				systemConfig,
+			}),
+		).resolves.toEqual([
+			expect.objectContaining({
+				hint: expect.stringContaining("unknown MCP profile 'missing'"),
+				name: 'mcp-live-shravan-config',
+				ok: false,
+			}),
+		]);
+	});
+
+	it('reports live MCP secret resolution failures as validation checks', async () => {
+		const systemConfig = await createSystemConfigWithLiveMcpFiles({
+			mcpConfig: {
+				providers: {
+					deepwiki: {
+						kind: 'mcp',
+						namespace: 'deepwiki',
+						transport: {
+							headers: {
+								Authorization: { name: 'MISSING_TOKEN', source: 'environment' },
+							},
+							kind: 'streamable-http',
+							url: 'https://deepwiki.example.test/mcp',
+						},
+					},
+				},
+				schemaVersion: 1,
+			},
+			portalConfig: {
+				schemaVersion: 1,
+				agents: { shravan: { profile: 'default' } },
+				profiles: { default: { namespaces: { deepwiki: {} } } },
+			},
+		});
+
+		const secretResolver = {
+			resolve: vi.fn(async () => {
+				throw new Error('secret missing');
+			}),
+			resolveAll: vi.fn(async () => ({})),
+		} satisfies SecretResolver;
+
+		await expect(
+			runLiveMcpPortalValidation({
+				createRuntime: () => createFakeMcpRuntime({ deepwiki: ['ask_question'] }),
+				secretResolver,
+				systemConfig,
+			}),
+		).resolves.toEqual([
+			expect.objectContaining({
+				hint: expect.stringContaining('secret missing'),
+				name: 'mcp-live-shravan-config',
+				ok: false,
+			}),
+		]);
+	});
+
 	it('leaves runtime container paths unchanged inside /etc/agent-vm', () => {
 		const systemConfig = createLoadedSystemConfig(
 			{

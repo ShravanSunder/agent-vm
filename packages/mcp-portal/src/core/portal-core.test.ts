@@ -1,7 +1,13 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createPortalCore, collectPortalCoreResult, type PortalCoreEvent } from './portal-core.js';
+import { UpstreamMcpError } from '../upstream-mcp-errors.js';
+import {
+	createPortalCore,
+	collectPortalCoreResult,
+	listPortalCoreToolDescriptors,
+	type PortalCoreEvent,
+} from './portal-core.js';
 
 const batchTools = [
 	{
@@ -113,10 +119,115 @@ describe('portal core event stream', () => {
 		await core.close();
 	});
 
+	it('puts allowed namespace guidance on the list descriptor and list schema only', () => {
+		const descriptors = listPortalCoreToolDescriptors(['deepwiki', 'tavily', 'perplexity']);
+		const listDescriptor = descriptors.find((descriptor) => descriptor.name === 'mcp_portal_list');
+		const searchDescriptor = descriptors.find(
+			(descriptor) => descriptor.name === 'mcp_portal_search',
+		);
+		const requestSchema = listDescriptor?.inputSchema.properties?.requests;
+		const requestItems =
+			typeof requestSchema === 'object' && requestSchema !== null && 'items' in requestSchema
+				? requestSchema.items
+				: undefined;
+		const requestProperties =
+			typeof requestItems === 'object' && requestItems !== null && 'properties' in requestItems
+				? requestItems.properties
+				: undefined;
+		const namespacesSchema =
+			typeof requestProperties === 'object' &&
+			requestProperties !== null &&
+			'namespaces' in requestProperties
+				? requestProperties.namespaces
+				: undefined;
+		const namespaceDescription =
+			typeof namespacesSchema === 'object' &&
+			namespacesSchema !== null &&
+			'description' in namespacesSchema
+				? namespacesSchema.description
+				: undefined;
+
+		expect(listDescriptor?.description).toContain(
+			'Allowed namespaces for this agent: deepwiki, tavily, perplexity',
+		);
+		expect(searchDescriptor?.description).not.toContain('Allowed namespaces for this agent:');
+		expect(namespaceDescription).toContain(
+			'Allowed namespaces for this agent: deepwiki, tavily, perplexity',
+		);
+	});
+
+	it('carries structured discovery diagnostics into core audit events', async () => {
+		const core = createPortalCore({
+			accessPolicy: {
+				enabledNamespaces: ['tavily'],
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval: allowApproval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool: vi.fn(),
+				closeAgentScope: vi.fn(),
+				closeSession: vi.fn(),
+				listTools: vi.fn(async () => {
+					throw new UpstreamMcpError({
+						causeMessage: 'Authentication failed',
+						elapsedMs: 31,
+						hint: 'remote MCP connection failed; verify URL, auth header, network egress, and transport kind.',
+						kind: 'upstream_mcp_failed',
+						namespace: 'tavily',
+						operation: 'MCP streamable-http connect for namespace "tavily"',
+						phase: 'connect',
+						timeoutMs: 30_000,
+						transport: { kind: 'streamable-http', url: 'https://mcp.tavily.com/mcp/' },
+					});
+				}),
+			},
+			upstreamNamespaces: ['tavily'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-a',
+			source: 'cli-operator',
+		});
+
+		const result = await core.collectPortalCoreResult(
+			core.callStream({
+				input: { requests: [{ id: 'list' }] },
+				scope,
+				toolName: 'mcp_portal_list',
+			}),
+		);
+
+		expect(result.auditEvents).toEqual([
+			expect.objectContaining({
+				causeMessage: 'Authentication failed',
+				hint: expect.stringContaining('verify URL'),
+				kind: 'upstream_mcp_failed',
+				namespace: 'tavily',
+				phase: 'connect',
+			}),
+		]);
+		await core.close();
+	});
+
 	it('streams batch item progress and collects success and failure results', async () => {
 		const callUpstreamTool = vi.fn(async (call: { readonly toolName: string }) => {
 			if (call.toolName === 'explode') {
-				throw new Error('upstream failed deliberately');
+				throw new UpstreamMcpError({
+					causeMessage: '502 Bad Gateway',
+					elapsedMs: 23,
+					hint: 'MCP provider accepted discovery but the tool call failed; inspect the tool arguments and upstream provider response.',
+					kind: 'upstream_mcp_failed',
+					namespace: 'linear',
+					operation: 'tools/call',
+					phase: 'call_tool',
+					toolName: 'explode',
+					transport: {
+						kind: 'streamable-http',
+						url: 'https://linear.example.test/mcp',
+					},
+				});
 			}
 			return { content: [{ text: 'created', type: 'text' }] };
 		});
@@ -196,9 +307,21 @@ describe('portal core event stream', () => {
 				{
 					error: {
 						code: 'upstream_call_failed',
-						message: 'upstream failed deliberately',
+						message: 'linear: call_tool explode failed: 502 Bad Gateway',
 						namespace: 'linear',
 						toolName: 'explode',
+						upstream: {
+							causeMessage: '502 Bad Gateway',
+							hint: expect.stringContaining('provider accepted discovery'),
+							kind: 'upstream_mcp_failed',
+							namespace: 'linear',
+							phase: 'call_tool',
+							toolName: 'explode',
+							transport: {
+								kind: 'streamable-http',
+								url: 'https://linear.example.test/mcp',
+							},
+						},
 					},
 					requestId: 'bad-call',
 					status: 'failed',

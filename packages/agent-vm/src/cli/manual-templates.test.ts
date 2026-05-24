@@ -19,6 +19,7 @@ describe('manual templates', () => {
 		expect(content).toContain('shravan');
 		expect(content).toContain('docs/manual/image-versioning.md');
 		expect(content).toContain('docs/manual/gateway-ingress.md');
+		expect(content).toContain('docs/manual/mcp-portal.md');
 		expect(content).toContain('Do not silently edit privileged host/deployment config');
 		expect(content).not.toContain('Discord is enabled by default');
 	});

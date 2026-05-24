@@ -15,6 +15,7 @@ import {
 	type NormalizedUpstreamMcpServer,
 	type RemoteUpstreamMcpServer,
 	type UpstreamMcpClientLike,
+	type UpstreamListToolsResult,
 } from './upstream-mcp-client-runtime.js';
 
 function createServer(
@@ -51,38 +52,8 @@ function portFromServerAddress(address: AddressInfo | string | null): number {
 }
 
 describe('upstream MCP client runtime', () => {
-	const originalNodeExtraCaCerts = process.env.NODE_EXTRA_CA_CERTS;
-	const originalNodeOptions = process.env.NODE_OPTIONS;
-	const originalRequestsCaBundle = process.env.REQUESTS_CA_BUNDLE;
-	const originalSslCertFile = process.env.SSL_CERT_FILE;
-	const originalUvCacheDir = process.env.UV_CACHE_DIR;
-
 	afterEach(() => {
-		if (originalNodeExtraCaCerts === undefined) {
-			delete process.env.NODE_EXTRA_CA_CERTS;
-		} else {
-			process.env.NODE_EXTRA_CA_CERTS = originalNodeExtraCaCerts;
-		}
-		if (originalNodeOptions === undefined) {
-			delete process.env.NODE_OPTIONS;
-		} else {
-			process.env.NODE_OPTIONS = originalNodeOptions;
-		}
-		if (originalRequestsCaBundle === undefined) {
-			delete process.env.REQUESTS_CA_BUNDLE;
-		} else {
-			process.env.REQUESTS_CA_BUNDLE = originalRequestsCaBundle;
-		}
-		if (originalSslCertFile === undefined) {
-			delete process.env.SSL_CERT_FILE;
-		} else {
-			process.env.SSL_CERT_FILE = originalSslCertFile;
-		}
-		if (originalUvCacheDir === undefined) {
-			delete process.env.UV_CACHE_DIR;
-		} else {
-			process.env.UV_CACHE_DIR = originalUvCacheDir;
-		}
+		vi.unstubAllEnvs();
 	});
 
 	it('pages listTools until nextCursor is absent', async () => {
@@ -114,8 +85,8 @@ describe('upstream MCP client runtime', () => {
 	});
 
 	it('preserves gateway Node runtime env for stdio MCP servers', async () => {
-		process.env.NODE_EXTRA_CA_CERTS = '/run/gondolin/ca-certificates.crt';
-		process.env.NODE_OPTIONS = '--dns-result-order=ipv4first';
+		vi.stubEnv('NODE_EXTRA_CA_CERTS', '/run/gondolin/ca-certificates.crt');
+		vi.stubEnv('NODE_OPTIONS', '--dns-result-order=ipv4first');
 		const createTransport = vi.fn(() => ({}));
 		const client: UpstreamMcpClientLike = {
 			callTool: vi.fn(),
@@ -158,9 +129,9 @@ describe('upstream MCP client runtime', () => {
 	});
 
 	it('preserves gateway Python and uv runtime env for stdio MCP servers', async () => {
-		process.env.REQUESTS_CA_BUNDLE = '/run/gondolin/ca-certificates.crt';
-		process.env.SSL_CERT_FILE = '/run/gondolin/ca-certificates.crt';
-		process.env.UV_CACHE_DIR = '/work/cache/uv';
+		vi.stubEnv('REQUESTS_CA_BUNDLE', '/run/gondolin/ca-certificates.crt');
+		vi.stubEnv('SSL_CERT_FILE', '/run/gondolin/ca-certificates.crt');
+		vi.stubEnv('UV_CACHE_DIR', '/work/cache/uv');
 		const createTransport = vi.fn(() => ({}));
 		const client: UpstreamMcpClientLike = {
 			callTool: vi.fn(),
@@ -201,6 +172,81 @@ describe('upstream MCP client runtime', () => {
 			},
 			'stdio',
 		);
+	});
+
+	it('wraps listTools timeout with structured upstream diagnostics', async () => {
+		const neverListingClient: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => await new Promise<UpstreamListToolsResult>(() => undefined)),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => neverListingClient,
+			createTransport: vi.fn(() => ({})),
+			servers: [
+				createServer({
+					connectionTimeoutMs: 5,
+					headers: { Authorization: 'secret-token-value' },
+				}),
+			],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
+		).rejects.toMatchObject({
+			details: {
+				causeMessage: expect.stringContaining('MCP listTools timed out after 5ms'),
+				kind: 'upstream_mcp_failed',
+				namespace: 'linear',
+				phase: 'list_tools',
+				timeoutMs: 5,
+				transport: { kind: 'streamable-http', url: 'https://mcp.example.test' },
+			},
+		});
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'linear' }),
+		).rejects.not.toThrow(/secret-token-value/u);
+	});
+
+	it('wraps stdio connect failures with command and arg count diagnostics', async () => {
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => ({
+				callTool: vi.fn(),
+				close: vi.fn(),
+				connect: vi.fn(async () => {
+					throw new Error('spawn ENOENT');
+				}),
+				listTools: vi.fn(),
+			}),
+			createTransport: vi.fn(() => ({})),
+			servers: [
+				{
+					args: ['-y', '-p', '@perplexity-ai/mcp-server', 'wrong-bin'],
+					command: 'npx',
+					env: { PERPLEXITY_API_KEY: 'secret-token-value' },
+					namespace: 'perplexity',
+					transport: 'stdio',
+				},
+			],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'perplexity' }),
+		).rejects.toMatchObject({
+			details: {
+				causeMessage: 'spawn ENOENT',
+				hint: expect.stringContaining('stdio MCP command failed before tool discovery'),
+				kind: 'upstream_mcp_failed',
+				namespace: 'perplexity',
+				phase: 'connect',
+				transport: {
+					argCount: 4,
+					command: 'npx',
+					kind: 'stdio',
+				},
+			},
+		});
 	});
 
 	it('threads timeout abort signals into listTools requests', async () => {

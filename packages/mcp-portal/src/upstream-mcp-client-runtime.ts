@@ -13,6 +13,12 @@ import { ToolSchema, type Progress, type Tool } from '@modelcontextprotocol/sdk/
 
 import type { JsonObject } from './json-schema.js';
 import {
+	createUpstreamMcpError,
+	isUpstreamMcpError,
+	messageFromUnknownError,
+	transportSummaryFromServer,
+} from './upstream-mcp-errors.js';
+import {
 	redactThrownError,
 	redactUpstreamCatalogValue,
 	redactUpstreamResponse,
@@ -300,6 +306,10 @@ function timeoutMsForServer(server: NormalizedUpstreamMcpServer): number {
 	return server.connectionTimeoutMs ?? defaultConnectionTimeoutMs;
 }
 
+function elapsedMsSince(startedAt: number): number {
+	return Math.max(0, Date.now() - startedAt);
+}
+
 function assertUpstreamResponseSize(value: unknown, maxResponseBytes: number): void {
 	const serialized = JSON.stringify(value);
 	if (serialized === undefined) {
@@ -528,6 +538,7 @@ export function createUpstreamMcpClientRuntime(
 					: withStdioRuntimeEnv(server);
 			const transport = createTransport(transportServer, transportKind);
 			const timeoutAbort = createRuntimeAbortSignal(undefined);
+			const startedAt = Date.now();
 			try {
 				await withTimeout(client.connect(transport, { signal: timeoutAbort.signal }), {
 					onTimeout: timeoutAbort.abortTimeout,
@@ -538,7 +549,17 @@ export function createUpstreamMcpClientRuntime(
 			} catch (error) {
 				const redactedError = redactThrownError(error, { exactValues: redactionValues });
 				await closeClientAfterFailureOnce(client);
-				return tryAttempt(attemptIndex + 1, redactedError);
+				const structuredError = createUpstreamMcpError({
+					attemptTransport: transportKind,
+					causeMessage: messageFromUnknownError(redactedError),
+					elapsedMs: elapsedMsSince(startedAt),
+					namespace: server.namespace,
+					operation: `MCP ${transportKind} connect for namespace "${server.namespace}"`,
+					phase: 'connect',
+					timeoutMs: timeoutMsForServer(server),
+					transport: transportSummaryFromServer(server, transportKind),
+				});
+				return tryAttempt(attemptIndex + 1, structuredError);
 			} finally {
 				timeoutAbort.dispose();
 			}
@@ -604,6 +625,7 @@ export function createUpstreamMcpClientRuntime(
 		async callTool(call: UpstreamToolCall): Promise<unknown> {
 			const key = cacheKey(call.agentScopeId, call.namespace);
 			let client: UpstreamMcpClientLike | null = null;
+			const startedAt = Date.now();
 			try {
 				client = await getClient(call.agentScopeId, call.namespace);
 				const server = serversByNamespace.get(call.namespace);
@@ -638,7 +660,24 @@ export function createUpstreamMcpClientRuntime(
 				}
 				clients.delete(key);
 				await closeClientAfterFailureOnce(client);
-				throw redactThrownError(error, { exactValues: redactionValues });
+				if (isUpstreamMcpError(error)) {
+					throw error;
+				}
+				const redactedError = redactThrownError(error, { exactValues: redactionValues });
+				const server = serversByNamespace.get(call.namespace);
+				if (server !== undefined) {
+					throw createUpstreamMcpError({
+						causeMessage: messageFromUnknownError(redactedError),
+						elapsedMs: elapsedMsSince(startedAt),
+						namespace: call.namespace,
+						operation: `MCP callTool ${call.namespace}.${call.toolName}`,
+						phase: 'call_tool',
+						timeoutMs: timeoutMsForServer(server),
+						toolName: call.toolName,
+						transport: transportSummaryFromServer(server),
+					});
+				}
+				throw redactedError;
 			}
 		},
 		async closeAgentScope(agentScopeId: string): Promise<void> {
@@ -696,6 +735,7 @@ export function createUpstreamMcpClientRuntime(
 		async listTools(call: ListToolsCall): Promise<readonly Tool[]> {
 			const key = cacheKey(call.agentScopeId, call.namespace);
 			let client: UpstreamMcpClientLike | null = null;
+			const startedAt = Date.now();
 			try {
 				client = await getClient(call.agentScopeId, call.namespace);
 				const server = serversByNamespace.get(call.namespace);
@@ -717,7 +757,23 @@ export function createUpstreamMcpClientRuntime(
 			} catch (error) {
 				clients.delete(key);
 				await closeClientAfterFailureOnce(client);
-				throw redactThrownError(error, { exactValues: redactionValues });
+				if (isUpstreamMcpError(error)) {
+					throw error;
+				}
+				const redactedError = redactThrownError(error, { exactValues: redactionValues });
+				const server = serversByNamespace.get(call.namespace);
+				if (server !== undefined) {
+					throw createUpstreamMcpError({
+						causeMessage: messageFromUnknownError(redactedError),
+						elapsedMs: elapsedMsSince(startedAt),
+						namespace: call.namespace,
+						operation: 'MCP listTools',
+						phase: 'list_tools',
+						timeoutMs: timeoutMsForServer(server),
+						transport: transportSummaryFromServer(server),
+					});
+				}
+				throw redactedError;
 			}
 		},
 	};

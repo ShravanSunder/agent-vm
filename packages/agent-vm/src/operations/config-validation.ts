@@ -7,48 +7,38 @@ import {
 	loadMcpPortalConfig,
 	resolveMcpPortalProfile,
 } from '@agent-vm/config-contracts';
+import type { SecretResolver } from '@agent-vm/secret-management';
 import { execa } from 'execa';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { planMcpPortalEffectiveConfig } from '../gateway/mcp-portal-effective-config.js';
-import { buildRuntimePathIsolationChecks, collectVmHostSystemDoctorCheck } from './doctor.js';
-import { collectOpenClawDeploymentRequirementFindings } from './openclaw-deployment-requirements.js';
 import {
-	isRuntimeConfigReference,
-	isRuntimeSystemConfigPath,
-	runtimeConfigRoot,
-} from './runtime-config-paths.js';
+	type ConfigValidationCheck,
+	type ConfigValidationCommandOptions,
+	type ConfigValidationCommandResult,
+	type ConfigValidationCommandRunner,
+	type ConfigValidationResult,
+	projectRootForSystemConfig,
+	resolveProjectCheckoutPath,
+} from './config-validation-shared.js';
+import { buildRuntimePathIsolationChecks, collectVmHostSystemDoctorCheck } from './doctor.js';
+import { runLiveMcpPortalValidation } from './mcp-portal-live-validation.js';
+import { collectOpenClawDeploymentRequirementFindings } from './openclaw-deployment-requirements.js';
 
-export interface ConfigValidationCheck {
-	readonly name: string;
-	readonly ok: boolean;
-	readonly hint?: string;
-}
-
-export interface ConfigValidationResult {
-	readonly ok: boolean;
-	readonly checks: readonly ConfigValidationCheck[];
-}
-
-export interface ConfigValidationCommandOptions {
-	readonly cwd?: string;
-	readonly env?: Readonly<Record<string, string>>;
-}
-
-export interface ConfigValidationCommandResult {
-	readonly exitCode: number;
-	readonly stderr: string;
-	readonly stdout: string;
-}
-
-export type ConfigValidationCommandRunner = (
-	command: string,
-	arguments_: readonly string[],
-	options?: ConfigValidationCommandOptions,
-) => Promise<ConfigValidationCommandResult>;
+export {
+	type ConfigValidationCheck,
+	type ConfigValidationCommandOptions,
+	type ConfigValidationCommandResult,
+	type ConfigValidationCommandRunner,
+	type ConfigValidationResult,
+	resolveProjectCheckoutPath,
+};
 
 export interface RunConfigValidationOptions {
+	readonly mcpLive?: boolean;
 	readonly runCommand?: ConfigValidationCommandRunner;
+	readonly runLiveMcpPortalValidation?: typeof runLiveMcpPortalValidation;
+	readonly secretResolver?: SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
 }
 
@@ -210,32 +200,6 @@ function shouldTreatOpenClawValidationResultAsSuccess(
 	}
 	const issues = getOpenClawValidationIssues(parsedOutput);
 	return issues.length > 0 && issues.every((issue) => isHostOnlyOpenClawPluginPathIssue(issue));
-}
-
-function projectRootForSystemConfig(systemConfig: LoadedSystemConfig): string {
-	return path.resolve(path.dirname(systemConfig.systemConfigPath), '..');
-}
-
-export function resolveProjectCheckoutPath(
-	systemConfig: LoadedSystemConfig,
-	configuredPath: string,
-): string {
-	if (isRuntimeSystemConfigPath(systemConfig)) {
-		return configuredPath;
-	}
-	if (!isRuntimeConfigReference(configuredPath)) {
-		return configuredPath;
-	}
-
-	const relativeRuntimePath = path.relative(runtimeConfigRoot, configuredPath);
-	const projectRoot = projectRootForSystemConfig(systemConfig);
-	if (relativeRuntimePath === 'system.json') {
-		return path.join(projectRoot, 'config', 'system.json');
-	}
-	if (relativeRuntimePath.startsWith(`gateways${path.sep}`) || relativeRuntimePath === 'gateways') {
-		return path.join(projectRoot, 'config', relativeRuntimePath);
-	}
-	return path.join(projectRoot, relativeRuntimePath);
 }
 
 async function collectReadableFileCheck(
@@ -552,6 +516,17 @@ export async function runConfigValidation(
 			),
 		)
 	).flat();
+	const liveMcpPortalChecks =
+		options.mcpLive === true
+			? await (options.runLiveMcpPortalValidation ?? runLiveMcpPortalValidation)({
+					secretResolver:
+						options.secretResolver ??
+						(() => {
+							throw new Error('agent-vm validate --mcp-live requires a secret resolver.');
+						})(),
+					systemConfig,
+				})
+			: [];
 	const vmHostSystemCheck = await collectVmHostSystemDoctorCheck(systemConfig);
 	const checks = [
 		...buildRuntimePathIsolationChecks(systemConfig),
@@ -570,6 +545,7 @@ export async function runConfigValidation(
 		...(vmHostSystemCheck ? [vmHostSystemCheck] : []),
 		...zoneConfigChecks,
 		...mcpPortalConfigChecks,
+		...liveMcpPortalChecks,
 		...(await collectOpenClawConfigChecks(systemConfig, runCommand)),
 	] as const satisfies readonly ConfigValidationCheck[];
 

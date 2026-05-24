@@ -4,6 +4,15 @@ import { createBeforePromptBuildHandler } from './before-prompt-build-handler.js
 import { createPortalPluginRuntimeState } from './portal-plugin-runtime-state.js';
 
 function createRuntimeState(): ReturnType<typeof createPortalPluginRuntimeState> {
+	const emptyNamespacePolicy = {
+		approval: {
+			allowWithoutApproval: [],
+			alwaysAsk: [],
+			trustedAnnotations: false,
+			write: [],
+		},
+		tools: { hidden: [] },
+	};
 	return createPortalPluginRuntimeState({
 		configDir: '/config',
 		loadPortalConfig: async () => ({
@@ -13,11 +22,17 @@ function createRuntimeState(): ReturnType<typeof createPortalPluginRuntimeState>
 			},
 			profiles: {
 				builder: {
-					enabledNamespaces: ['linear', 'github', 'readwise'],
+					namespaces: {
+						github: emptyNamespacePolicy,
+						linear: emptyNamespacePolicy,
+						readwise: emptyNamespacePolicy,
+					},
 					promptContext: { enabled: true, maxNamespaces: 2 },
 				},
 				quiet: {
-					enabledNamespaces: ['linear'],
+					namespaces: {
+						linear: emptyNamespacePolicy,
+					},
 					promptContext: { enabled: false, maxNamespaces: 12 },
 				},
 			},

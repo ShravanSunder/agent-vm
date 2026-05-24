@@ -1,6 +1,49 @@
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { CallToolRequestSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it } from 'vitest';
+import { vi } from 'vitest';
 
-import { emitMcpProgress, listPortalMcpTools } from './portal-mcp-server.js';
+import { createPortalCore } from '../core/portal-core.js';
+import { UpstreamMcpError } from '../upstream-mcp-errors.js';
+import { createPortalMcpServer, emitMcpProgress, listPortalMcpTools } from './portal-mcp-server.js';
+
+type CapturedCallToolHandler = (
+	request: {
+		readonly method: 'tools/call';
+		readonly params: {
+			readonly arguments?: Readonly<Record<string, unknown>>;
+			readonly name: string;
+		};
+	},
+	extra: {
+		readonly _meta?: { readonly progressToken?: number | string };
+		readonly sendNotification: (notification: {
+			readonly method: 'notifications/message' | 'notifications/progress';
+			readonly params: Record<string, unknown>;
+		}) => Promise<void>;
+		readonly signal: AbortSignal;
+	},
+) => Promise<CallToolResult>;
+
+function captureCallToolHandler(registerServer: () => void): CapturedCallToolHandler {
+	let capturedHandler: CapturedCallToolHandler | undefined;
+	const setRequestHandler = vi
+		.spyOn(Server.prototype, 'setRequestHandler')
+		.mockImplementation((schema, handler) => {
+			if (schema === CallToolRequestSchema) {
+				capturedHandler = handler as unknown as CapturedCallToolHandler;
+			}
+		});
+	try {
+		registerServer();
+	} finally {
+		setRequestHandler.mockRestore();
+	}
+	if (capturedHandler === undefined) {
+		throw new Error('CallToolRequestSchema handler was not registered.');
+	}
+	return capturedHandler;
+}
 
 describe('portal MCP server', () => {
 	it('exposes exactly the four progressive-disclosure tools', () => {
@@ -205,5 +248,82 @@ describe('portal MCP server', () => {
 				},
 			},
 		]);
+	});
+
+	it('returns structured diagnostics through direct MCP proxy calls', async () => {
+		const core = createPortalCore({
+			accessPolicy: {
+				enabledNamespaces: ['firecrawl'],
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval: () => ({ kind: 'allow' }),
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool: vi.fn(),
+				closeAgentScope: vi.fn(),
+				closeSession: vi.fn(),
+				listTools: vi.fn(async () => {
+					throw new UpstreamMcpError({
+						causeMessage: 'operation timed out',
+						elapsedMs: 30_001,
+						hint: 'MCP provider connected but tool discovery failed; run agent-vm validate --mcp-live for the configured namespace.',
+						kind: 'upstream_mcp_failed',
+						namespace: 'firecrawl',
+						operation: 'MCP listTools',
+						phase: 'list_tools',
+						timeoutMs: 30_000,
+						transport: { argCount: 2, command: 'npx', kind: 'stdio' },
+					});
+				}),
+			},
+			upstreamNamespaces: ['firecrawl'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-a',
+			source: 'cli-operator',
+		});
+		const callToolHandler = captureCallToolHandler(() => {
+			createPortalMcpServer({ core, scope });
+		});
+
+		const result = await callToolHandler(
+			{
+				method: 'tools/call',
+				params: {
+					arguments: { requests: [{ id: 'list' }] },
+					name: 'mcp_portal_list',
+				},
+			},
+			{
+				sendNotification: async () => undefined,
+				signal: new AbortController().signal,
+			},
+		);
+		const content = result.content[0];
+		const payload =
+			content?.type === 'text' ? (JSON.parse(content.text) as Record<string, unknown>) : {};
+
+		expect(result.isError).toBeUndefined();
+		expect(payload).toMatchObject({
+			auditEvents: [
+				{
+					kind: 'upstream_mcp_failed',
+					namespace: 'firecrawl',
+					phase: 'list_tools',
+				},
+			],
+			structuredContent: {
+				diagnostics: [
+					{
+						hint: expect.stringContaining('validate --mcp-live'),
+						namespace: 'firecrawl',
+						phase: 'list_tools',
+					},
+				],
+			},
+		});
+		await core.close();
 	});
 });

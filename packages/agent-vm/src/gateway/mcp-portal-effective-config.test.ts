@@ -40,7 +40,7 @@ async function createAuthoredDir(props: {
 		JSON.stringify(
 			props.portalConfig ?? {
 				agents: { shravan: { profile: 'default' } },
-				profiles: { default: { enabledNamespaces: ['deepwiki'] } },
+				profiles: { default: { namespaces: { deepwiki: {} } } },
 				schemaVersion: 1,
 			},
 		),
@@ -445,7 +445,7 @@ describe('MCP Portal effective config materialization', () => {
 					auth: { headerName: 'authorization' },
 					server: { host: '127.0.0.1', port: 18791 },
 				},
-				profiles: { default: { enabledNamespaces: [] } },
+				profiles: { default: { namespaces: {} } },
 				schemaVersion: 1,
 			},
 		});

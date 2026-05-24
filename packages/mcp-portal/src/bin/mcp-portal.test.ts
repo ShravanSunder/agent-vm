@@ -81,7 +81,7 @@ describe('mcp-portal CLI', () => {
 						auth: { headerName: 'authorization' },
 						server: { host: '127.0.0.1', port: 18791 },
 					},
-					profiles: { default: { enabledNamespaces: [] } },
+					profiles: { default: { namespaces: {} } },
 					schemaVersion: 1,
 				}),
 			);
@@ -135,7 +135,7 @@ describe('mcp-portal CLI', () => {
 						auth: { headerName: 'authorization' },
 						server: { host: '::1', port: 18791 },
 					},
-					profiles: { default: { enabledNamespaces: [] } },
+					profiles: { default: { namespaces: {} } },
 					schemaVersion: 1,
 				}),
 			);
@@ -294,7 +294,7 @@ describe('mcp-portal CLI', () => {
 						auth: { headerName: 'authorization' },
 						server: { host: '127.0.0.1', port: 18791 },
 					},
-					profiles: { default: { enabledNamespaces: [] } },
+					profiles: { default: { namespaces: {} } },
 					schemaVersion: 1,
 				}),
 			);
@@ -367,7 +367,7 @@ describe('mcp-portal CLI', () => {
 						auth: { headerName: 'x-mcp-portal-authorization' },
 						server: { host: '127.0.0.1', port: 18791 },
 					},
-					profiles: { default: { enabledNamespaces: [] } },
+					profiles: { default: { namespaces: {} } },
 					schemaVersion: 1,
 				}),
 			);
@@ -434,7 +434,7 @@ describe('mcp-portal CLI', () => {
 					externalAuth: {
 						masterKey: { name: 'MCP_PORTAL_MASTER_KEY', source: 'environment' },
 					},
-					profiles: { default: { enabledNamespaces: [] } },
+					profiles: { default: { namespaces: {} } },
 					schemaVersion: 1,
 				}),
 			);
@@ -501,7 +501,7 @@ describe('mcp-portal CLI', () => {
 						auth: { headerName: 'authorization' },
 						server: { host: '127.0.0.1', port: 18791 },
 					},
-					profiles: { default: { enabledNamespaces: [] } },
+					profiles: { default: { namespaces: {} } },
 					schemaVersion: 1,
 				}),
 			);
@@ -554,7 +554,7 @@ describe('mcp-portal CLI', () => {
 						auth: { headerName: 'authorization' },
 						server: { host: '127.0.0.1', port: 18791 },
 					},
-					profiles: { default: { enabledNamespaces: [] } },
+					profiles: { default: { namespaces: {} } },
 					schemaVersion: 1,
 				}),
 			);
@@ -672,18 +672,12 @@ describe('mcp-portal CLI', () => {
 					},
 					profiles: {
 						default: {
-							approval: {
-								allowWithoutApprovalTools: [
-									{ namespace: fakeUpstreamNamespace, toolName: 'read_thing' },
-								],
-								alwaysAskTools: [],
-								annotationPolicy: 'destructive-requires-approval',
-								trustedAnnotationNamespaces: [],
-								writeTools: [],
+							namespaces: {
+								[fakeUpstreamNamespace]: {
+									approval: { allowWithoutApproval: ['read_thing'] },
+									tools: { enabled: ['read_thing'] },
+								},
 							},
-							enabledNamespaces: [fakeUpstreamNamespace],
-							enabledToolsByNamespace: { [fakeUpstreamNamespace]: ['read_thing'] },
-							hiddenToolsByNamespace: {},
 						},
 					},
 					schemaVersion: 1,

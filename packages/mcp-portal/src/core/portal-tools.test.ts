@@ -5,6 +5,7 @@ import {
 	type PortalAgentIdentity,
 } from '../portal-access-policy.js';
 import type { PortalSession } from '../portal-session.js';
+import { UpstreamMcpError } from '../upstream-mcp-errors.js';
 import { createPortalToolHandlers } from './portal-tools.js';
 
 function createPortalAgentIdentity(
@@ -62,7 +63,13 @@ const degradedSession = {
 	...session,
 	catalog: {
 		...session.catalog,
-		discoveryFailures: [{ message: 'readwise unavailable', namespace: 'readwise' }],
+		discoveryFailures: [
+			{
+				kind: 'upstream_discovery_failed',
+				message: 'readwise unavailable',
+				namespace: 'readwise',
+			},
+		],
 	},
 } satisfies PortalSession;
 
@@ -155,6 +162,52 @@ describe('portal tool handlers', () => {
 				},
 			}),
 		).resolves.toMatchObject({ diagnostics: expectedDiagnostics, ok: true });
+	});
+
+	it('returns structured discovery diagnostics in portal tool responses', async () => {
+		const structuredDegradedSession = {
+			...session,
+			catalog: {
+				...session.catalog,
+				discoveryFailures: [
+					{
+						causeMessage: 'Authentication failed',
+						elapsedMs: 44,
+						hint: 'remote MCP connection failed; verify URL, auth header, network egress, and transport kind.',
+						kind: 'upstream_mcp_failed',
+						message: 'tavily: connect failed: Authentication failed',
+						namespace: 'tavily',
+						operation: 'MCP streamable-http connect for namespace "tavily"',
+						phase: 'connect',
+						timeoutMs: 30_000,
+						transport: { kind: 'streamable-http', url: 'https://mcp.tavily.com/mcp/' },
+					},
+				],
+			},
+		} satisfies PortalSession;
+		const handlers = createPortalToolHandlers({
+			callUpstreamTool: vi.fn(),
+			getSession: vi.fn(async () => structuredDegradedSession),
+		});
+
+		await expect(
+			handlers.list({
+				identity: session.identity,
+				input: { requests: [{ id: 'list-tools' }] },
+			}),
+		).resolves.toMatchObject({
+			diagnostics: [
+				{
+					causeMessage: 'Authentication failed',
+					hint: expect.stringContaining('verify URL'),
+					kind: 'upstream_mcp_failed',
+					namespace: 'tavily',
+					phase: 'connect',
+					transport: { kind: 'streamable-http', url: 'https://mcp.tavily.com/mcp/' },
+				},
+			],
+			ok: true,
+		});
 	});
 
 	it('rejects model-supplied identity fields and duplicate ids at the envelope level', async () => {
@@ -294,6 +347,93 @@ describe('portal tool handlers', () => {
 					},
 					ok: true,
 					output: { tools: [expect.objectContaining({ toolName: 'create_issue' })] },
+				},
+			},
+		});
+	});
+
+	it('adds schema-disclosure hints to list and summary search results', async () => {
+		const handlers = createPortalToolHandlers({
+			callUpstreamTool: vi.fn(),
+			getSession: vi.fn(async () => session),
+		});
+		const expectedHint = {
+			message: 'Use mcp_portal_describe for exact input schema before calling.',
+			next: 'describe_before_call',
+		};
+
+		await expect(
+			handlers.list({
+				identity: session.identity,
+				input: { requests: [{ id: 'linear-tools', limit: 10 }] },
+			}),
+		).resolves.toMatchObject({
+			results: {
+				'linear-tools': {
+					output: {
+						tools: expect.arrayContaining([expect.objectContaining({ schemaHint: expectedHint })]),
+					},
+				},
+			},
+		});
+		await expect(
+			handlers.search({
+				identity: session.identity,
+				input: { requests: [{ id: 'search-linear', query: 'issue', schemaDetail: 'summary' }] },
+			}),
+		).resolves.toMatchObject({
+			results: {
+				'search-linear': {
+					output: {
+						tools: expect.arrayContaining([expect.objectContaining({ schemaHint: expectedHint })]),
+					},
+				},
+			},
+		});
+	});
+
+	it('adds call-ready schema hints to describe and full-schema search results', async () => {
+		const handlers = createPortalToolHandlers({
+			callUpstreamTool: vi.fn(),
+			getSession: vi.fn(async () => session),
+		});
+		const expectedHint = {
+			message: 'Full input schema included.',
+			next: 'call_ready',
+		};
+
+		await expect(
+			handlers.describe({
+				identity: session.identity,
+				input: {
+					requests: [
+						{
+							id: 'describe-linear',
+							tools: [{ namespace: 'linear', toolName: 'create_issue' }],
+						},
+					],
+				},
+			}),
+		).resolves.toMatchObject({
+			results: {
+				'describe-linear': {
+					output: {
+						tools: expect.arrayContaining([expect.objectContaining({ schemaHint: expectedHint })]),
+					},
+				},
+			},
+		});
+		await expect(
+			handlers.search({
+				identity: session.identity,
+				input: { requests: [{ id: 'search-linear', query: 'issue', schemaDetail: 'full' }] },
+			}),
+		).resolves.toMatchObject({
+			results: {
+				'search-linear': {
+					output: {
+						tools: expect.arrayContaining([expect.objectContaining({ schemaHint: expectedHint })]),
+					},
 				},
 			},
 		});
@@ -536,7 +676,20 @@ describe('portal tool handlers', () => {
 	it('returns upstream failures as keyed item errors without aborting sibling calls', async () => {
 		const callUpstreamTool = vi.fn(async (call: { readonly toolName: string }) => {
 			if (call.toolName === 'create_issue') {
-				throw new Error('upstream exploded');
+				throw new UpstreamMcpError({
+					causeMessage: '502 Bad Gateway',
+					elapsedMs: 47,
+					hint: 'MCP provider accepted discovery but the tool call failed; inspect the tool arguments and upstream provider response.',
+					kind: 'upstream_mcp_failed',
+					namespace: 'linear',
+					operation: 'tools/call',
+					phase: 'call_tool',
+					toolName: 'create_issue',
+					transport: {
+						kind: 'streamable-http',
+						url: 'https://linear.example.test/mcp',
+					},
+				});
 			}
 			return { content: [{ text: 'created', type: 'text' }] };
 		});
@@ -579,9 +732,20 @@ describe('portal tool handlers', () => {
 				'failed-create': {
 					error: {
 						kind: 'upstream_call_failed',
-						message: 'upstream exploded',
+						message: 'linear: call_tool create_issue failed: 502 Bad Gateway',
 						namespace: 'linear',
 						toolName: 'create_issue',
+						upstream: {
+							causeMessage: '502 Bad Gateway',
+							kind: 'upstream_mcp_failed',
+							namespace: 'linear',
+							phase: 'call_tool',
+							toolName: 'create_issue',
+							transport: {
+								kind: 'streamable-http',
+								url: 'https://linear.example.test/mcp',
+							},
+						},
 					},
 					input: {
 						arguments: { title: 'Fix deploy' },

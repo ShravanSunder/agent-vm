@@ -26,12 +26,51 @@ export const portalApprovalConfigSchema = z
 
 export type PortalApprovalConfig = z.infer<typeof portalApprovalConfigSchema>;
 
+const portalNamespaceToolsSchema = z
+	.object({
+		enabled: z.array(z.string().min(1)).optional(),
+		hidden: z.array(z.string().min(1)).default([]),
+	})
+	.strict();
+
+const defaultPortalNamespaceTools = {
+	hidden: [],
+} satisfies z.infer<typeof portalNamespaceToolsSchema>;
+
+const portalNamespaceApprovalSchema = z
+	.object({
+		allowWithoutApproval: z.array(z.string().min(1)).default([]),
+		alwaysAsk: z.array(z.string().min(1)).default([]),
+		trustedAnnotations: z.boolean().default(false),
+		write: z.array(z.string().min(1)).default([]),
+	})
+	.strict();
+
+const defaultPortalNamespaceApproval = {
+	allowWithoutApproval: [],
+	alwaysAsk: [],
+	trustedAnnotations: false,
+	write: [],
+} satisfies z.infer<typeof portalNamespaceApprovalSchema>;
+
+const portalNamespacePolicySchema = z
+	.object({
+		approval: portalNamespaceApprovalSchema.default(defaultPortalNamespaceApproval),
+		tools: portalNamespaceToolsSchema.default(defaultPortalNamespaceTools),
+	})
+	.strict();
+
+type PortalNamespacePolicy = z.infer<typeof portalNamespacePolicySchema>;
+
 export const mcpPortalProfileDefinitionSchema = z
 	.object({
-		extends: z.string().min(1).optional(),
-		enabledNamespaces: z.array(z.string().min(1)).optional(),
-		enabledToolsByNamespace: z.record(z.string().min(1), z.array(z.string().min(1))).optional(),
-		hiddenToolsByNamespace: z.record(z.string().min(1), z.array(z.string().min(1))).optional(),
+		approval: z
+			.object({
+				annotationPolicy: portalApprovalConfigSchema.shape.annotationPolicy.optional(),
+			})
+			.strict()
+			.optional(),
+		namespaces: z.record(z.string().min(1), portalNamespacePolicySchema).default({}),
 		logging: z
 			.object({ enabled: z.boolean().default(false) })
 			.strict()
@@ -49,7 +88,6 @@ export const mcpPortalProfileDefinitionSchema = z
 			})
 			.strict()
 			.optional(),
-		approval: portalApprovalConfigSchema.optional(),
 	})
 	.strict();
 
@@ -169,56 +207,85 @@ const defaultProfile: ResolvedMcpPortalProfile = {
 	promptContext: { enabled: true, maxNamespaces: 12 },
 };
 
-interface ResolveProfileState {
-	readonly stack: readonly string[];
-}
+type AuthoredPortalNamespaces = McpPortalProfileDefinition['namespaces'];
 
 export async function loadMcpPortalConfig(configPath: string): Promise<McpPortalConfig> {
 	return mcpPortalConfigSchema.parse(await loadJsonConfigFile(configPath));
 }
 
-function mergeProfile(
-	base: ResolvedMcpPortalProfile,
-	override: McpPortalProfileDefinition,
-): ResolvedMcpPortalProfile {
-	return resolvedMcpPortalProfileSchema.parse({
-		approval: override.approval ?? base.approval,
-		cache: override.cache ?? base.cache,
-		enabledNamespaces: override.enabledNamespaces ?? base.enabledNamespaces,
-		enabledToolsByNamespace: override.enabledToolsByNamespace ?? base.enabledToolsByNamespace,
-		hiddenToolsByNamespace: override.hiddenToolsByNamespace ?? base.hiddenToolsByNamespace,
-		logging: override.logging ?? base.logging,
-		promptContext: override.promptContext ?? base.promptContext,
+function namespaceToolRefs(
+	namespaces: Readonly<Record<string, PortalNamespacePolicy>>,
+	selector: (policy: PortalNamespacePolicy) => readonly string[],
+): readonly NamespaceToolRef[] {
+	return Object.entries(namespaces).flatMap(([namespace, policy]) =>
+		selector(policy).map((toolName) => ({ namespace, toolName })),
+	);
+}
+
+function compileNamespaceApproval(
+	namespaces: Readonly<Record<string, PortalNamespacePolicy>>,
+	annotationPolicy: PortalApprovalConfig['annotationPolicy'],
+): PortalApprovalConfig {
+	return portalApprovalConfigSchema.parse({
+		allowWithoutApprovalTools: namespaceToolRefs(
+			namespaces,
+			(policy) => policy.approval?.allowWithoutApproval ?? [],
+		),
+		annotationPolicy,
+		alwaysAskTools: namespaceToolRefs(namespaces, (policy) => policy.approval?.alwaysAsk ?? []),
+		trustedAnnotationNamespaces: Object.entries(namespaces)
+			.filter(([, policy]) => policy.approval?.trustedAnnotations)
+			.map(([namespace]) => namespace),
+		writeTools: namespaceToolRefs(namespaces, (policy) => policy.approval?.write ?? []),
 	});
 }
 
-function resolveMcpPortalProfileWithState(
-	config: McpPortalConfig,
-	profileName: string,
-	state: ResolveProfileState,
-): ResolvedMcpPortalProfile {
-	const profile = config.profiles[profileName];
-	if (profile === undefined) {
-		throw new Error(`unknown MCP profile '${profileName}'`);
-	}
-	if (state.stack.includes(profileName)) {
-		throw new Error(`MCP profile inheritance cycle: ${[...state.stack, profileName].join(' -> ')}`);
-	}
+function compileEnabledToolsByNamespace(
+	namespaces: Readonly<Record<string, PortalNamespacePolicy>>,
+): Record<string, readonly string[]> {
+	return Object.fromEntries(
+		Object.entries(namespaces)
+			.filter(([, policy]) => policy.tools?.enabled !== undefined)
+			.map(([namespace, policy]) => [namespace, policy.tools?.enabled ?? []]),
+	);
+}
 
-	const parentProfile =
-		profile.extends === undefined
-			? defaultProfile
-			: resolveMcpPortalProfileWithState(config, profile.extends, {
-					stack: [...state.stack, profileName],
-				});
-	return mergeProfile(parentProfile, profile);
+function compileHiddenToolsByNamespace(
+	namespaces: Readonly<Record<string, PortalNamespacePolicy>>,
+): Record<string, readonly string[]> {
+	return Object.fromEntries(
+		Object.entries(namespaces)
+			.filter(([, policy]) => (policy.tools?.hidden ?? []).length > 0)
+			.map(([namespace, policy]) => [namespace, policy.tools?.hidden ?? []]),
+	);
+}
+
+function compileProfileFromNamespaces(
+	namespaces: AuthoredPortalNamespaces,
+	profile: McpPortalProfileDefinition,
+): ResolvedMcpPortalProfile {
+	const annotationPolicy =
+		profile.approval?.annotationPolicy ?? defaultProfile.approval.annotationPolicy;
+	return resolvedMcpPortalProfileSchema.parse({
+		approval: compileNamespaceApproval(namespaces, annotationPolicy),
+		cache: profile.cache ?? defaultProfile.cache,
+		enabledNamespaces: Object.keys(namespaces),
+		enabledToolsByNamespace: compileEnabledToolsByNamespace(namespaces),
+		hiddenToolsByNamespace: compileHiddenToolsByNamespace(namespaces),
+		logging: profile.logging ?? defaultProfile.logging,
+		promptContext: profile.promptContext ?? defaultProfile.promptContext,
+	});
 }
 
 export function resolveMcpPortalProfile(
 	config: McpPortalConfig,
 	profileName: string,
 ): ResolvedMcpPortalProfile {
-	return resolveMcpPortalProfileWithState(config, profileName, { stack: [] });
+	const profile = config.profiles[profileName];
+	if (profile === undefined) {
+		throw new Error(`unknown MCP profile '${profileName}'`);
+	}
+	return compileProfileFromNamespaces(profile.namespaces, profile);
 }
 
 export function secretValueToEnvironmentReference(secret: SecretValue): string {

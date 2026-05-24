@@ -81,18 +81,7 @@ describe('native MCP Portal onUpdate forwarding', () => {
 				JSON.stringify({
 					agents: { shravan: { profile: 'default' } },
 					profiles: {
-						default: {
-							approval: {
-								allowWithoutApprovalTools: [],
-								alwaysAskTools: [],
-								annotationPolicy: 'destructive-requires-approval',
-								trustedAnnotationNamespaces: [],
-								writeTools: [],
-							},
-							enabledNamespaces: [],
-							enabledToolsByNamespace: {},
-							hiddenToolsByNamespace: {},
-						},
+						default: { namespaces: {} },
 					},
 					schemaVersion: 1,
 				}),
@@ -205,18 +194,7 @@ describe('native MCP Portal onUpdate forwarding', () => {
 				JSON.stringify({
 					agents: { shravan: { profile: 'default' } },
 					profiles: {
-						default: {
-							approval: {
-								allowWithoutApprovalTools: [],
-								alwaysAskTools: [],
-								annotationPolicy: 'destructive-requires-approval',
-								trustedAnnotationNamespaces: [],
-								writeTools: [],
-							},
-							enabledNamespaces: [],
-							enabledToolsByNamespace: {},
-							hiddenToolsByNamespace: {},
-						},
+						default: { namespaces: {} },
 					},
 					schemaVersion: 1,
 				}),
@@ -291,7 +269,7 @@ describe('native MCP Portal onUpdate forwarding', () => {
 				join(workspace, 'mcp-portal.config.jsonc'),
 				JSON.stringify({
 					agents: { shravan: { profile: 'default' } },
-					profiles: { default: { enabledNamespaces: [] } },
+					profiles: { default: { namespaces: {} } },
 					schemaVersion: 1,
 				}),
 			);
@@ -383,18 +361,7 @@ describe('native MCP Portal onUpdate forwarding', () => {
 				JSON.stringify({
 					agents: { shravan: { profile: 'default' } },
 					profiles: {
-						default: {
-							approval: {
-								allowWithoutApprovalTools: [],
-								alwaysAskTools: [],
-								annotationPolicy: 'destructive-requires-approval',
-								trustedAnnotationNamespaces: [],
-								writeTools: [],
-							},
-							enabledNamespaces: [],
-							enabledToolsByNamespace: {},
-							hiddenToolsByNamespace: {},
-						},
+						default: { namespaces: {} },
 					},
 					schemaVersion: 1,
 				}),

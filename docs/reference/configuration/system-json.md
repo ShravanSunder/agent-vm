@@ -242,8 +242,11 @@ Important fields in `mcp-portal.config.jsonc`:
   auth and client-config generation.
 - `mcpProxy.server.host`, `mcpProxy.server.port`, and
   `mcpProxy.auth.headerName` configure the loopback Hono MCP proxy.
-- `profiles.<name>.enabledNamespaces`, `enabledToolsByNamespace`,
-  `hiddenToolsByNamespace`, and `approval` define the agent's portal policy.
+- `profiles.<name>.namespaces` defines the agent's portal policy per namespace:
+  `tools.enabled`, `tools.hidden`, `approval.allowWithoutApproval`,
+  `approval.alwaysAsk`, `approval.write`, and `approval.trustedAnnotations`.
+  A profile is a complete policy. Profiles do not inherit from or merge with
+  other profiles; assign an agent to the profile you want it to use.
 
 Important fields in `mcp.config.jsonc` provider entries:
 

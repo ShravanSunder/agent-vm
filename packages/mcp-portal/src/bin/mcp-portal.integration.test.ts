@@ -108,18 +108,15 @@ async function writeConfigFiles(props: {
 				},
 				profiles: {
 					builder: {
-						approval: {
-							allowWithoutApprovalTools: [{ namespace, toolName: 'read_thing' }],
-							alwaysAskTools: [{ namespace, toolName: 'write_thing' }],
-							annotationPolicy: 'destructive-requires-approval',
-							trustedAnnotationNamespaces: [],
-							writeTools: [],
+						namespaces: {
+							[namespace]: {
+								approval: {
+									allowWithoutApproval: ['read_thing'],
+									alwaysAsk: ['write_thing'],
+								},
+								tools: { enabled: ['read_thing', 'write_thing'] },
+							},
 						},
-						enabledNamespaces: [namespace],
-						enabledToolsByNamespace: {
-							[namespace]: ['read_thing', 'write_thing'],
-						},
-						hiddenToolsByNamespace: {},
 					},
 				},
 				externalAuth: {

@@ -12,6 +12,11 @@ import {
 } from './portal-access-policy.js';
 import { createSearchIndex, type SearchIndex } from './search-index.js';
 import { buildToolGraph, type SkillGraphInput, type ToolGraph } from './tool-graph.js';
+import {
+	formatUpstreamMcpFailureMessage,
+	messageFromUnknownError,
+	upstreamMcpFailureDetailsFromUnknown,
+} from './upstream-mcp-errors.js';
 
 export interface PortalCatalogSnapshot {
 	readonly agentScopeId: string;
@@ -22,8 +27,17 @@ export interface PortalCatalogSnapshot {
 }
 
 export interface PortalDiscoveryFailure {
+	readonly causeMessage?: string;
+	readonly elapsedMs?: number;
+	readonly hint?: string;
+	readonly kind: string;
 	readonly message: string;
 	readonly namespace: string;
+	readonly operation?: string;
+	readonly phase?: string;
+	readonly timeoutMs?: number;
+	readonly toolName?: string;
+	readonly transport?: unknown;
 }
 
 export interface PortalSession {
@@ -99,8 +113,20 @@ function createSourceHash(tools: readonly PortalToolRecord[]): string {
 	return createHash('sha256').update(JSON.stringify(tools)).digest('hex');
 }
 
-function messageFromError(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+function discoveryFailureFromError(namespace: string, error: unknown): PortalDiscoveryFailure {
+	const upstreamDetails = upstreamMcpFailureDetailsFromUnknown(error);
+	if (upstreamDetails !== null) {
+		return {
+			...upstreamDetails,
+			message: formatUpstreamMcpFailureMessage(upstreamDetails),
+			namespace,
+		};
+	}
+	return {
+		kind: 'upstream_discovery_failed',
+		message: messageFromUnknownError(error),
+		namespace,
+	};
 }
 
 export function createPortalSessionManager(
@@ -149,7 +175,7 @@ export function createPortalSessionManager(
 		for (const [index, namespaceToolGroup] of namespaceToolGroups.entries()) {
 			if (namespaceToolGroup.status === 'rejected') {
 				const namespace = allowedNamespaces[index] ?? 'unknown';
-				discoveryFailures.push({ message: messageFromError(namespaceToolGroup.reason), namespace });
+				discoveryFailures.push(discoveryFailureFromError(namespace, namespaceToolGroup.reason));
 				continue;
 			}
 			const { mcpTools, namespace } = namespaceToolGroup.value;

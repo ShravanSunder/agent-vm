@@ -7,14 +7,17 @@ const portalConfig = {
 	agents: { shravan: { credentialVersion: 1, profile: 'builder' } },
 	profiles: {
 		builder: {
-			approval: {
-				allowWithoutApprovalTools: [{ namespace: 'linear', toolName: 'viewer' }],
-				alwaysAskTools: [],
-				annotationPolicy: 'destructive-requires-approval',
-				trustedAnnotationNamespaces: ['linear'],
-				writeTools: [],
+			namespaces: {
+				linear: {
+					approval: {
+						allowWithoutApproval: ['viewer'],
+						alwaysAsk: [],
+						trustedAnnotations: true,
+						write: [],
+					},
+					tools: { hidden: [] },
+				},
 			},
-			enabledNamespaces: ['linear'],
 		},
 	},
 	schemaVersion: 1,

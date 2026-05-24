@@ -111,6 +111,32 @@ black-box smoke test in a temporary directory. Exercise the actual command a
 user would run, inspect the generated files, and run the relevant validation
 command against that generated output before claiming the default is safe.
 
+## MCP Portal Fast Loop
+
+For MCP Portal work, keep the provider layer and agent policy layer separate.
+`mcp.config.jsonc` owns upstream MCP providers, transports, egress, and secrets.
+`mcp-portal.config.jsonc` owns agent profile assignments and portal policy. A
+profile is a complete policy: there is no profile inheritance and no merge with
+a default profile.
+
+Use targeted tests first:
+
+- Config shape: `pnpm vitest run packages/config-contracts/src/mcp-portal-config.test.ts`.
+- Portal tool result shapes: `pnpm vitest run packages/mcp-portal/src/core/portal-tools.test.ts`.
+- Live validation behavior: `pnpm vitest run packages/agent-vm/src/operations/config-validation.test.ts`.
+
+When testing a deployment, run static validation before boot work, then live MCP
+validation after provider/profile edits:
+
+- `pnpm validate`
+- `pnpm exec agent-vm validate --config config/system.jsonc --mcp-live`
+
+For tight beta iteration before publishing, pack local tarballs from this repo
+and install them into the deployment with `pnpm add --force` or the deployment's
+existing package-update helper. Verify the installed package source afterward;
+do not leave beta pinned to stale local tarballs when the intent is to test a
+published registry version.
+
 ## Release Process
 
 Keep every published `@agent-vm/*` package version in sync for normal releases.

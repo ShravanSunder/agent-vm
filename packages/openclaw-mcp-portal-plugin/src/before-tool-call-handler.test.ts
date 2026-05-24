@@ -10,16 +10,20 @@ function createRuntimeState(): ReturnType<typeof createPortalPluginRuntimeState>
 			agents: { shravan: { credentialVersion: 1, profile: 'builder' } },
 			profiles: {
 				builder: {
-					approval: {
-						allowWithoutApprovalTools: [{ namespace: 'linear', toolName: 'list_issues' }],
-						alwaysAskTools: [{ namespace: 'linear', toolName: 'create_issue' }],
-						annotationPolicy: 'destructive-requires-approval',
-						trustedAnnotationNamespaces: [],
-						writeTools: [],
+					namespaces: {
+						linear: {
+							approval: {
+								allowWithoutApproval: ['list_issues'],
+								alwaysAsk: ['create_issue'],
+								trustedAnnotations: false,
+								write: [],
+							},
+							tools: {
+								enabled: ['create_issue', 'list_issues'],
+								hidden: ['hidden_issue'],
+							},
+						},
 					},
-					enabledNamespaces: ['linear'],
-					enabledToolsByNamespace: { linear: ['create_issue', 'list_issues'] },
-					hiddenToolsByNamespace: { linear: ['hidden_issue'] },
 				},
 			},
 			schemaVersion: 1,

@@ -796,16 +796,7 @@ function defaultMcpPortalConfig(agentIds: readonly string[] | undefined): object
 		agents: defaultMcpPortalAgentAssignments(agentIds),
 		profiles: {
 			default: {
-				enabledNamespaces: [],
-				enabledToolsByNamespace: {},
-				hiddenToolsByNamespace: {},
-				approval: {
-					allowWithoutApprovalTools: [],
-					alwaysAskTools: [],
-					annotationPolicy: 'destructive-requires-approval',
-					trustedAnnotationNamespaces: [],
-					writeTools: [],
-				},
+				namespaces: {},
 				promptContext: { enabled: true, maxNamespaces: 12 },
 				cache: { catalogTtlMs: 60_000 },
 				logging: { enabled: false },
