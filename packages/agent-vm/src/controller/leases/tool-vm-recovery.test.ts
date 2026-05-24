@@ -1,10 +1,32 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { PortOwner } from '../../shared/port-owner.js';
 import { cleanupOrphanedToolVmsIfPresent } from './tool-vm-recovery.js';
 import type {
 	ToolVmRuntimeRecord,
 	ToolVmRuntimeRecordLoadResult,
 } from './tool-vm-runtime-record.js';
+
+interface DeferredPromise<TResult> {
+	readonly promise: Promise<TResult>;
+	readonly resolve: (result: TResult) => void;
+}
+
+function createDeferredPromise<TResult>(): DeferredPromise<TResult> {
+	let resolveDeferred: ((result: TResult) => void) | null = null;
+	const promise = new Promise<TResult>((resolve) => {
+		resolveDeferred = resolve;
+	});
+	return {
+		promise,
+		resolve: (result: TResult): void => {
+			if (resolveDeferred === null) {
+				throw new Error('Deferred promise resolve callback was not initialized.');
+			}
+			resolveDeferred(result);
+		},
+	};
+}
 
 function createToolVmRuntimeRecord(
 	overrides: Partial<ToolVmRuntimeRecord> = {},
@@ -403,6 +425,54 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 			killedPids: [100],
 			quarantinedCount: 0,
 		});
+	});
+
+	it('starts cleanup for valid child records in parallel', async () => {
+		const recordA = createToolVmRuntimeRecord({
+			leaseId: 'sunfam-agentA-1',
+			qemuPid: 100,
+			recordId: '01890f00-0000-7000-8000-000000000002',
+			sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:0',
+			tcpSlot: 0,
+		});
+		const recordB = createToolVmRuntimeRecord({
+			leaseId: 'sunfam-agentA-2',
+			qemuPid: 200,
+			recordId: '01890f00-0000-7000-8000-000000000003',
+			sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:1',
+			tcpSlot: 1,
+		});
+		const firstPortLookup = createDeferredPromise<PortOwner | null>();
+		const deleteToolVmRuntimeRecord = vi.fn(async () => {});
+		const readTcpListenPortOwner = vi.fn((port: number): Promise<PortOwner | null> => {
+			if (port === 19_500) {
+				return firstPortLookup.promise;
+			}
+			return Promise.resolve(null);
+		});
+
+		const cleanupPromise = cleanupOrphanedToolVmsIfPresent(
+			createCleanupOptions({ mode: 'in-process-recovery' }),
+			{
+				deleteToolVmRuntimeRecord,
+				loadAllToolVmRuntimeRecords: async () => loadedToolVmRuntimeRecords(recordA, recordB),
+				log: () => {},
+				portForSlot: (slot) => 19_500 + slot,
+				readTcpListenPortOwner,
+			},
+		);
+
+		await Promise.resolve();
+
+		expect(readTcpListenPortOwner).toHaveBeenCalledWith(19_500);
+		expect(readTcpListenPortOwner).toHaveBeenCalledWith(19_501);
+
+		firstPortLookup.resolve(null);
+		const result = await cleanupPromise;
+
+		expect(deleteToolVmRuntimeRecord).toHaveBeenCalledWith('/state/sunfam', recordA.recordId);
+		expect(deleteToolVmRuntimeRecord).toHaveBeenCalledWith('/state/sunfam', recordB.recordId);
+		expect(result.cleanedCount).toBe(2);
 	});
 
 	it('records a warning when delete fails but proceeds with subsequent records', async () => {

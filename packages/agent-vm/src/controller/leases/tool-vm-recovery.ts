@@ -82,6 +82,17 @@ type ToolVmPortOwnershipProof =
 	| { readonly kind: 'record-stale' }
 	| { readonly kind: 'unproven'; readonly warning: string };
 
+interface ProvenToolVmRuntimeRecord {
+	readonly portOwnershipProof: ToolVmPortOwnershipProof;
+	readonly runtimeRecord: ToolVmRuntimeRecord;
+}
+
+interface ToolVmRecordCleanupOutcome {
+	readonly cleanedCount: number;
+	readonly killedPids: readonly number[];
+	readonly warnings: readonly string[];
+}
+
 async function verifyToolVmPortOwnership(options: {
 	readonly portForSlot?: (slot: number) => number;
 	readonly readTcpListenPortOwner?: (port: number) => Promise<PortOwner | null>;
@@ -178,6 +189,7 @@ export async function cleanupOrphanedToolVmsIfPresent(
 						tcpBasePort + slot
 				)(options.tcpBasePort));
 
+	const validRuntimeRecords: ToolVmRuntimeRecord[] = [];
 	for (const runtimeRecordResult of runtimeRecordResults) {
 		if (runtimeRecordResult.kind === 'parse-error') {
 			const warning = `Tool VM runtime record at '${runtimeRecordResult.path}' failed to parse: ${runtimeRecordResult.error.message}. Skipping during in-process recovery without mutating the file.`;
@@ -210,15 +222,25 @@ export async function cleanupOrphanedToolVmsIfPresent(
 		log(
 			`Found persisted tool VM runtime for lease '${runtimeRecord.leaseId}' (zone '${runtimeRecord.zoneId}', slot ${runtimeRecord.tcpSlot}, pid ${runtimeRecord.qemuPid}, vm ${runtimeRecord.vmId}).`,
 		);
+		validRuntimeRecords.push(runtimeRecord);
+	}
 
-		// oxlint-disable-next-line no-await-in-loop -- per-record ownership proof must precede that record's signal/delete decision.
-		const portOwnershipProof = await verifyToolVmPortOwnership({
-			...(portForSlot ? { portForSlot } : {}),
-			...(dependencies.readTcpListenPortOwner
-				? { readTcpListenPortOwner: dependencies.readTcpListenPortOwner }
-				: {}),
+	const provenRuntimeRecords: readonly ProvenToolVmRuntimeRecord[] = await Promise.all(
+		validRuntimeRecords.map(async (runtimeRecord) => ({
+			portOwnershipProof: await verifyToolVmPortOwnership({
+				...(portForSlot ? { portForSlot } : {}),
+				...(dependencies.readTcpListenPortOwner
+					? { readTcpListenPortOwner: dependencies.readTcpListenPortOwner }
+					: {}),
+				runtimeRecord,
+			}),
 			runtimeRecord,
-		});
+		})),
+	);
+
+	const cleanupReadyRuntimeRecords: ProvenToolVmRuntimeRecord[] = [];
+	for (const provenRuntimeRecord of provenRuntimeRecords) {
+		const { portOwnershipProof } = provenRuntimeRecord;
 		if (portOwnershipProof.kind === 'unproven') {
 			if (options.mode !== 'in-process-recovery') {
 				throw new Error(portOwnershipProof.warning);
@@ -228,46 +250,60 @@ export async function cleanupOrphanedToolVmsIfPresent(
 			warnings.push(warning);
 			continue;
 		}
-		if (portOwnershipProof.kind === 'record-stale') {
+		cleanupReadyRuntimeRecords.push(provenRuntimeRecord);
+	}
+
+	const cleanupOutcomes = await Promise.all(
+		cleanupReadyRuntimeRecords.map(async ({ portOwnershipProof, runtimeRecord }) => {
+			if (portOwnershipProof.kind === 'record-stale') {
+				try {
+					await deleteRecord(options.stateDir, runtimeRecord.recordId);
+				} catch (error) {
+					const warning = `Failed to remove stale tool VM runtime record for lease '${runtimeRecord.leaseId}' at '${options.stateDir}': ${error instanceof Error ? error.message : JSON.stringify(error)}`;
+					log(warning);
+					return {
+						cleanedCount: 0,
+						killedPids: [],
+						warnings: [warning],
+					} satisfies ToolVmRecordCleanupOutcome;
+				}
+				log(
+					`Removed stale tool VM runtime record for lease '${runtimeRecord.leaseId}' after confirming its TCP listener was already gone.`,
+				);
+				return {
+					cleanedCount: 1,
+					killedPids: [],
+					warnings: [],
+				} satisfies ToolVmRecordCleanupOutcome;
+			}
+			const killedPid = await killOrphanedToolVmProcess(runtimeRecord, killDependencies);
 			try {
-				// oxlint-disable-next-line no-await-in-loop -- per-record cleanup is intentionally serial
 				await deleteRecord(options.stateDir, runtimeRecord.recordId);
 			} catch (error) {
 				const warning = `Failed to remove stale tool VM runtime record for lease '${runtimeRecord.leaseId}' at '${options.stateDir}': ${error instanceof Error ? error.message : JSON.stringify(error)}`;
 				log(warning);
-				warnings.push(warning);
-				continue;
+				return {
+					cleanedCount: 0,
+					killedPids: killedPid === null ? [] : [killedPid],
+					warnings: [warning],
+				} satisfies ToolVmRecordCleanupOutcome;
 			}
 			log(
-				`Removed stale tool VM runtime record for lease '${runtimeRecord.leaseId}' after confirming its TCP listener was already gone.`,
+				killedPid === null
+					? `Removed stale tool VM runtime record for lease '${runtimeRecord.leaseId}' after confirming the orphaned process was already gone.`
+					: `Removed stale tool VM runtime record for lease '${runtimeRecord.leaseId}' after terminating orphaned tool VM pid ${killedPid}.`,
 			);
-			cleanedCount += 1;
-			continue;
-		}
-
-		// oxlint-disable-next-line no-await-in-loop -- per-record cleanup is intentionally serial to bound concurrent signals to QEMU pids
-		const killedPid = await killOrphanedToolVmProcess(runtimeRecord, killDependencies);
-		try {
-			// oxlint-disable-next-line no-await-in-loop -- per-record cleanup is intentionally serial
-			await deleteRecord(options.stateDir, runtimeRecord.recordId);
-		} catch (error) {
-			const warning = `Failed to remove stale tool VM runtime record for lease '${runtimeRecord.leaseId}' at '${options.stateDir}': ${error instanceof Error ? error.message : JSON.stringify(error)}`;
-			log(warning);
-			warnings.push(warning);
-			if (killedPid !== null) {
-				killedPids.push(killedPid);
-			}
-			continue;
-		}
-		log(
-			killedPid === null
-				? `Removed stale tool VM runtime record for lease '${runtimeRecord.leaseId}' after confirming the orphaned process was already gone.`
-				: `Removed stale tool VM runtime record for lease '${runtimeRecord.leaseId}' after terminating orphaned tool VM pid ${killedPid}.`,
-		);
-		cleanedCount += 1;
-		if (killedPid !== null) {
-			killedPids.push(killedPid);
-		}
+			return {
+				cleanedCount: 1,
+				killedPids: killedPid === null ? [] : [killedPid],
+				warnings: [],
+			} satisfies ToolVmRecordCleanupOutcome;
+		}),
+	);
+	for (const cleanupOutcome of cleanupOutcomes) {
+		cleanedCount += cleanupOutcome.cleanedCount;
+		killedPids.push(...cleanupOutcome.killedPids);
+		warnings.push(...cleanupOutcome.warnings);
 	}
 
 	return { cleanedCount, killedPids, quarantinedCount: 0, warnings };

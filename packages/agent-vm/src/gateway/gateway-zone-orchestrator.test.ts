@@ -19,6 +19,11 @@ import {
 } from '../testing/managed-vm-test-helpers.js';
 import { startGatewayZone } from './gateway-zone-orchestrator.js';
 
+interface DeferredPromise<TResult> {
+	readonly promise: Promise<TResult>;
+	readonly resolve: (result: TResult) => void;
+}
+
 const { cleanupOrphanedGatewayIfPresentMock, cleanupOrphanedToolVmsIfPresentMock } = vi.hoisted(
 	() => ({
 		cleanupOrphanedGatewayIfPresentMock: vi.fn(async () => ({
@@ -63,6 +68,22 @@ const openClawToolVmSandbox = {
 	scope: 'agent',
 	workspaceAccess: 'rw',
 } satisfies Record<string, string>;
+
+function createDeferredPromise<TResult>(): DeferredPromise<TResult> {
+	let resolveDeferred: ((result: TResult) => void) | null = null;
+	const promise = new Promise<TResult>((resolve) => {
+		resolveDeferred = resolve;
+	});
+	return {
+		promise,
+		resolve: (result: TResult): void => {
+			if (resolveDeferred === null) {
+				throw new Error('Deferred promise resolve callback was not initialized.');
+			}
+			resolveDeferred(result);
+		},
+	};
+}
 
 afterEach(async () => {
 	cleanupOrphanedGatewayIfPresentMock.mockClear();
@@ -444,17 +465,16 @@ describe('startGatewayZone', () => {
 			bufferResponseBody: false,
 			listenPort: 18791,
 		});
-		// Phase A runs six branches in parallel via Promise.all. Argument
-		// order determines synchronous title-push order; all five titled
-		// branches push synchronously at array-eval time, in declaration
-		// order: cleanup, toolVmCleanup, assertions, resolveSecrets, image.
+		// Phase A runs five branches in parallel via Promise.all. Recovery
+		// cleanup is one branch; for OpenClaw it titles child Tool VM cleanup
+		// first, then gateway cleanup after the child cleanup resolves.
 		// (The mcpPortalMaterialization branch does not push a title.)
 		expect(taskTitles).toEqual([
-			'Cleaning orphaned gateway runtime',
 			'Cleaning orphaned tool VMs',
 			'Validating OpenClaw Tool VM requirements',
 			'Resolving zone secrets',
 			'Building gateway image',
+			'Cleaning orphaned gateway runtime',
 			'Preparing host state',
 			'Booting gateway VM',
 			'Configuring gateway',
@@ -798,6 +818,71 @@ describe('startGatewayZone', () => {
 			tcpBasePort: 19000,
 			zoneId: 'shravan',
 		});
+	});
+
+	it('cleans OpenClaw tool VM children before gateway recovery during Phase A', async () => {
+		const managedVm: ManagedVm = {
+			id: 'vm-ordered-recovery',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28303),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28303)),
+			setIngressRoutes: vi.fn(),
+		};
+		const toolVmCleanup = createDeferredPromise<{
+			readonly cleanedCount: number;
+			readonly killedPids: readonly number[];
+			readonly quarantinedCount: number;
+			readonly warnings: readonly string[];
+		}>();
+		const cleanupOrphanedToolVmsIfPresent = vi.fn(() => toolVmCleanup.promise);
+		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => ({
+			cleanedUp: false,
+			killedPid: null,
+		}));
+		const startPromise = startGatewayZone(
+			{
+				secretResolver: createOpenClawSecretResolver({
+					PERPLEXITY_API_KEY: 'resolved-key',
+					DISCORD_BOT_TOKEN: 'resolved-key',
+					OPENCLAW_GATEWAY_TOKEN: 'resolved-gateway-token',
+				}),
+				systemConfig: await createSystemConfig(),
+				zoneId: 'shravan',
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				cleanupOrphanedGatewayIfPresent,
+				cleanupOrphanedToolVmsIfPresent,
+				createManagedVm: vi.fn(async () => managedVm),
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		await Promise.resolve();
+
+		expect(cleanupOrphanedToolVmsIfPresent).toHaveBeenCalledTimes(1);
+		expect(cleanupOrphanedGatewayIfPresent).not.toHaveBeenCalled();
+
+		toolVmCleanup.resolve({
+			cleanedCount: 1,
+			killedPids: [28282],
+			quarantinedCount: 0,
+			warnings: [],
+		});
+		await startPromise;
+
+		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledTimes(1);
+		expect(cleanupOrphanedToolVmsIfPresent.mock.invocationCallOrder[0]).toBeLessThan(
+			cleanupOrphanedGatewayIfPresent.mock.invocationCallOrder[0] ?? 0,
+		);
 	});
 
 	it('skips tool VM cleanup for worker gateway zones', async () => {
