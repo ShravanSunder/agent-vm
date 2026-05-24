@@ -254,28 +254,7 @@ export async function cleanupOrphanedToolVmsIfPresent(
 	}
 
 	const cleanupOutcomes = await Promise.all(
-		cleanupReadyRuntimeRecords.map(async ({ portOwnershipProof, runtimeRecord }) => {
-			if (portOwnershipProof.kind === 'record-stale') {
-				try {
-					await deleteRecord(options.stateDir, runtimeRecord.recordId);
-				} catch (error) {
-					const warning = `Failed to remove stale tool VM runtime record for lease '${runtimeRecord.leaseId}' at '${options.stateDir}': ${error instanceof Error ? error.message : JSON.stringify(error)}`;
-					log(warning);
-					return {
-						cleanedCount: 0,
-						killedPids: [],
-						warnings: [warning],
-					} satisfies ToolVmRecordCleanupOutcome;
-				}
-				log(
-					`Removed stale tool VM runtime record for lease '${runtimeRecord.leaseId}' after confirming its TCP listener was already gone.`,
-				);
-				return {
-					cleanedCount: 1,
-					killedPids: [],
-					warnings: [],
-				} satisfies ToolVmRecordCleanupOutcome;
-			}
+		cleanupReadyRuntimeRecords.map(async ({ runtimeRecord }) => {
 			const killedPid = await killOrphanedToolVmProcess(runtimeRecord, killDependencies);
 			try {
 				await deleteRecord(options.stateDir, runtimeRecord.recordId);

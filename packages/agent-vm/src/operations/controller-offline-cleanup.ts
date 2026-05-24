@@ -1,5 +1,8 @@
 import type { LoadedSystemConfig } from '../config/system-config.js';
-import { cleanupOrphanedToolVmsIfPresent } from '../controller/leases/tool-vm-recovery.js';
+import {
+	cleanupOrphanedToolVmsIfPresent,
+	type ToolVmCleanupResult,
+} from '../controller/leases/tool-vm-recovery.js';
 import { cleanupOrphanedGatewayIfPresent } from '../gateway/gateway-recovery.js';
 
 export interface ControllerOfflineCleanupResult {
@@ -8,6 +11,7 @@ export interface ControllerOfflineCleanupResult {
 		readonly cleanupWarning?: string;
 		readonly killedPid: number | null;
 		readonly stateDir: string;
+		readonly toolVmCleanup: ToolVmCleanupResult;
 		readonly zoneId: string;
 	}[];
 }
@@ -89,7 +93,7 @@ export async function runControllerOfflineCleanup(
 	const cleanupGateway =
 		dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent;
 	const results: ControllerOfflineCleanupResult['results'][number][] = [];
-	await cleanupToolVms({
+	const toolVmCleanup = await cleanupToolVms({
 		expectedConfigPath: options.systemConfig.systemConfigPath,
 		expectedControllerPort: options.systemConfig.host.controllerPort,
 		mode: 'offline-cleanup',
@@ -99,6 +103,8 @@ export async function runControllerOfflineCleanup(
 		zoneId: zone.id,
 	});
 	const result = await cleanupGateway({
+		expectedConfigPath: options.systemConfig.systemConfigPath,
+		expectedControllerPort: options.systemConfig.host.controllerPort,
 		mode: 'offline-cleanup',
 		projectNamespace: options.systemConfig.host.projectNamespace,
 		stateDir: zone.gateway.stateDir,
@@ -107,6 +113,7 @@ export async function runControllerOfflineCleanup(
 	results.push({
 		...result,
 		stateDir: zone.gateway.stateDir,
+		toolVmCleanup,
 		zoneId: zone.id,
 	});
 

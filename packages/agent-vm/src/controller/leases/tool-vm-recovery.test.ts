@@ -222,6 +222,75 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 		expect(result).toMatchObject({ cleanedCount: 1, killedPids: [], quarantinedCount: 0 });
 	});
 
+	it('kills the recorded qemu pid before deleting when the tool VM port is already free', async () => {
+		const killProcess = vi.fn();
+		const deleteToolVmRuntimeRecord = vi.fn(async () => {});
+		const record = createToolVmRuntimeRecord({
+			qemuPid: 111,
+			sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:0',
+			tcpSlot: 0,
+		});
+		const isProcessAlive = vi
+			.fn()
+			.mockReturnValueOnce(true)
+			.mockReturnValueOnce(true)
+			.mockReturnValueOnce(false);
+
+		const result = await cleanupOrphanedToolVmsIfPresent(
+			createCleanupOptions({ mode: 'in-process-recovery' }),
+			{
+				deleteToolVmRuntimeRecord,
+				isProcessAlive,
+				killProcess,
+				loadAllToolVmRuntimeRecords: async () => loadedToolVmRuntimeRecords(record),
+				log: () => {},
+				portForSlot: () => 19_500,
+				readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
+				readProcessIdentity: buildMatchingIdentityResolver(record),
+				readTcpListenPortOwner: async () => null,
+				sleep: async () => {},
+			},
+		);
+
+		expect(killProcess).toHaveBeenCalledWith(111, 'SIGTERM');
+		expect(deleteToolVmRuntimeRecord).toHaveBeenCalledWith('/state/sunfam', record.recordId);
+		expect(result).toMatchObject({
+			cleanedCount: 1,
+			killedPids: [111],
+			quarantinedCount: 0,
+		});
+	});
+
+	it('refuses to delete a port-free tool VM record when the recorded pid was reused', async () => {
+		const deleteToolVmRuntimeRecord = vi.fn(async () => {});
+		const killProcess = vi.fn();
+		const record = createToolVmRuntimeRecord({
+			qemuPid: 111,
+			sessionLabel: 'shravan-claw-463c3e5f:sunfam:tool:0',
+			tcpSlot: 0,
+		});
+
+		await expect(
+			cleanupOrphanedToolVmsIfPresent(createCleanupOptions({ mode: 'offline-cleanup' }), {
+				deleteToolVmRuntimeRecord,
+				isProcessAlive: () => true,
+				killProcess,
+				loadAllToolVmRuntimeRecords: async () => loadedToolVmRuntimeRecords(record),
+				log: () => {},
+				portForSlot: () => 19_500,
+				readProcessCommand: async () => 'node /tmp/not-tool-vm.js',
+				readProcessIdentity: async () => ({
+					command: 'node /tmp/not-tool-vm.js',
+					lstart: 'Tue Apr 14 15:00:00 2026',
+				}),
+				readTcpListenPortOwner: async () => null,
+				sleep: async () => {},
+			}),
+		).rejects.toThrow(/refusing SIGTERM to pid 111: process identity changed/u);
+		expect(killProcess).not.toHaveBeenCalled();
+		expect(deleteToolVmRuntimeRecord).not.toHaveBeenCalled();
+	});
+
 	it('refuses to signal when the live PID identity does not match the recorded one (PID reuse defense)', async () => {
 		const killProcess = vi.fn();
 		// Recorded identity is the original QEMU; live identity is a different

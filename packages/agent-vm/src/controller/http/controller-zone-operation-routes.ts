@@ -357,6 +357,10 @@ export function registerControllerZoneOperationRoutes(
 		}
 	});
 	app.post('/zones/:zoneId/zone-git/push', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady(context);
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		if (!operations.pushZoneGit) {
 			return context.json({ error: 'zone-git-push-unavailable' }, 405);
 		}
@@ -410,6 +414,10 @@ export function registerControllerZoneOperationRoutes(
 		}
 	});
 	app.post('/zones/:zoneId/credentials/refresh', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady(context);
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		try {
 			return context.json(await operations.refreshZoneCredentials(context.req.param('zoneId')));
 		} catch (error) {
@@ -417,6 +425,10 @@ export function registerControllerZoneOperationRoutes(
 		}
 	});
 	app.post('/zones/:zoneId/destroy', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady(context);
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		const parsedPayload = await parseJsonBodyWithSchema(
 			context,
 			controllerDestroyZoneRequestSchema,
@@ -435,6 +447,10 @@ export function registerControllerZoneOperationRoutes(
 		}
 	});
 	app.post('/zones/:zoneId/upgrade', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady(context);
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		try {
 			return context.json(await operations.upgradeZone(context.req.param('zoneId')));
 		} catch (error) {
@@ -535,6 +551,10 @@ export function registerControllerZoneOperationRoutes(
 	if (operations.closeTaskForZone) {
 		const closeTaskForZone = operations.closeTaskForZone;
 		app.post('/zones/:zoneId/tasks/:taskId/close', async (context) => {
+			const notReadyResponse = rejectIfRuntimeNotReady(context);
+			if (notReadyResponse) {
+				return notReadyResponse;
+			}
 			try {
 				return context.json(
 					await closeTaskForZone(context.req.param('zoneId'), context.req.param('taskId')),
@@ -561,6 +581,10 @@ export function registerControllerZoneOperationRoutes(
 	if (operations.pushTaskBranches) {
 		const pushTaskBranches = operations.pushTaskBranches;
 		app.post('/zones/:zoneId/tasks/:taskId/push-branches', async (context) => {
+			const notReadyResponse = rejectIfRuntimeNotReady(context);
+			if (notReadyResponse) {
+				return notReadyResponse;
+			}
 			const parsedPayload = await parseJsonBodyWithSchema(
 				context,
 				controllerPushBranchesRequestSchema,
@@ -594,6 +618,10 @@ export function registerControllerZoneOperationRoutes(
 	if (operations.pullDefaultForTask) {
 		const pullDefaultForTask = operations.pullDefaultForTask;
 		app.post('/zones/:zoneId/tasks/:taskId/pull-default', async (context) => {
+			const notReadyResponse = rejectIfRuntimeNotReady(context);
+			if (notReadyResponse) {
+				return notReadyResponse;
+			}
 			const parsedPayload = await parseJsonBodyWithSchema(
 				context,
 				controllerPullDefaultRequestSchema,
@@ -637,6 +665,10 @@ export function registerControllerZoneOperationRoutes(
 	if (operations.enableSshForZone) {
 		const enableSshForZone = operations.enableSshForZone;
 		app.post('/zones/:zoneId/enable-ssh', async (context) => {
+			const notReadyResponse = rejectIfRuntimeNotReady(context);
+			if (notReadyResponse) {
+				return notReadyResponse;
+			}
 			const parsedPayload = await parseJsonBodyWithSchema(
 				context,
 				controllerEnableSshRequestSchema,
@@ -660,6 +692,10 @@ export function registerControllerZoneOperationRoutes(
 	if (operations.execInZone) {
 		const execInZone = operations.execInZone;
 		app.post('/zones/:zoneId/execute-command', async (context) => {
+			const notReadyResponse = rejectIfRuntimeNotReady(context);
+			if (notReadyResponse) {
+				return notReadyResponse;
+			}
 			const parsedPayload = await parseJsonBodyWithSchema(
 				context,
 				controllerExecuteCommandRequestSchema,

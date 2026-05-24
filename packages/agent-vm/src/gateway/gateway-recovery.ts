@@ -26,11 +26,19 @@ function expectedGatewaySessionLabel(projectNamespace: string, zoneId: string): 
 }
 
 function validateRuntimeRecordCleanupScope(options: {
+	readonly expectedConfigPath: string;
+	readonly expectedControllerPort: number;
 	readonly projectNamespace: string;
 	readonly runtimeRecord: GatewayRuntimeRecord;
 	readonly stateDir: string;
 	readonly zoneId: string;
 }): string | null {
+	if (options.runtimeRecord.configPath !== options.expectedConfigPath) {
+		return `Gateway runtime record at '${options.stateDir}' for zone '${options.runtimeRecord.zoneId}' belongs to configPath '${options.runtimeRecord.configPath}', not '${options.expectedConfigPath}'. Refusing scoped cleanup.`;
+	}
+	if (options.runtimeRecord.controllerPort !== options.expectedControllerPort) {
+		return `Gateway runtime record at '${options.stateDir}' for zone '${options.runtimeRecord.zoneId}' belongs to controllerPort '${String(options.runtimeRecord.controllerPort)}', not '${String(options.expectedControllerPort)}'. Refusing scoped cleanup.`;
+	}
 	if (options.runtimeRecord.projectNamespace !== options.projectNamespace) {
 		return `Gateway runtime record at '${options.stateDir}' for zone '${options.runtimeRecord.zoneId}' belongs to projectNamespace '${options.runtimeRecord.projectNamespace}', not '${options.projectNamespace}'. Refusing scoped cleanup.`;
 	}
@@ -106,6 +114,8 @@ export interface GatewayRecoveryDependencies {
 
 export async function cleanupOrphanedGatewayIfPresent(
 	options: {
+		readonly expectedConfigPath: string;
+		readonly expectedControllerPort: number;
 		readonly mode?: 'in-process-recovery' | 'offline-cleanup';
 		readonly projectNamespace: string;
 		readonly stateDir: string;
@@ -138,6 +148,8 @@ export async function cleanupOrphanedGatewayIfPresent(
 	}
 	const runtimeRecord = runtimeRecordResult.record;
 	const scopeMismatch = validateRuntimeRecordCleanupScope({
+		expectedConfigPath: options.expectedConfigPath,
+		expectedControllerPort: options.expectedControllerPort,
 		projectNamespace: options.projectNamespace,
 		runtimeRecord,
 		stateDir: options.stateDir,
@@ -175,29 +187,6 @@ export async function cleanupOrphanedGatewayIfPresent(
 			killedPid: null,
 		};
 	}
-	if (portOwnershipProof.kind === 'record-stale') {
-		try {
-			await (dependencies.deleteGatewayRuntimeRecord ?? deleteGatewayRuntimeRecord)(
-				options.stateDir,
-			);
-		} catch (error) {
-			const cleanupWarning = `Failed to remove stale gateway runtime record for zone '${runtimeRecord.zoneId}' at '${options.stateDir}': ${error instanceof Error ? error.message : JSON.stringify(error)}`;
-			log(cleanupWarning);
-			return {
-				cleanedUp: false,
-				cleanupWarning,
-				killedPid: null,
-			};
-		}
-		log(
-			`Removed stale gateway runtime record for zone '${runtimeRecord.zoneId}' after confirming its TCP listener was already gone.`,
-		);
-		return {
-			cleanedUp: true,
-			killedPid: null,
-		};
-	}
-
 	const killedPid = await killOrphanedGatewayProcess(runtimeRecord, {
 		isProcessAlive: dependencies.isProcessAlive ?? isProcessAlive,
 		killProcess: dependencies.killProcess ?? killProcess,

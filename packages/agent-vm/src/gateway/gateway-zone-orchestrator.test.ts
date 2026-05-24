@@ -754,6 +754,8 @@ describe('startGatewayZone', () => {
 		).rejects.toThrow("OpenClaw zone 'shravan' Tool VM requirements failed");
 
 		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledWith({
+			expectedConfigPath: systemConfig.systemConfigPath,
+			expectedControllerPort: systemConfig.host.controllerPort,
 			mode: 'in-process-recovery',
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			stateDir: zone.gateway.stateDir,

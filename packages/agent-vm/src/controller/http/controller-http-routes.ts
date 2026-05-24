@@ -345,8 +345,9 @@ export function createControllerApp(options: {
 				);
 			}
 			const payload = parsedPayload.data;
+			const agentId = resolveOpenClawAgentIdFromSessionKey(payload.sessionKey);
 			requestContext = {
-				agentId: payload.agentId,
+				agentId,
 				scopeKey: payload.scopeKey,
 				workMountDir: payload.workMountDir,
 				zoneId: payload.zoneId,
@@ -368,7 +369,6 @@ export function createControllerApp(options: {
 			if (contractError) {
 				return context.json(contractError, 400);
 			}
-			const agentId = payload.agentId;
 			const resolvedProfileId =
 				(agentId ? options.zoneAgentToolVmProfiles?.[payload.zoneId]?.[agentId] : undefined) ??
 				options.zoneDefaultToolVmProfiles?.[payload.zoneId] ??

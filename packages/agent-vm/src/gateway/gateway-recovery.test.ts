@@ -44,6 +44,8 @@ function createGatewayRecoveryOptions(
 	overrides: Partial<Parameters<typeof cleanupOrphanedGatewayIfPresent>[0]> = {},
 ): Parameters<typeof cleanupOrphanedGatewayIfPresent>[0] {
 	return {
+		expectedConfigPath: '/deployments/shravan-claw/config/system.jsonc',
+		expectedControllerPort: 18_800,
 		projectNamespace: 'claw-tests-a1b2c3d4',
 		stateDir: '/state/shravan',
 		zoneId: 'shravan',
@@ -167,6 +169,44 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		expect(logMessages.join('\n')).toContain('projectNamespace');
 	});
 
+	it.each([
+		{
+			expectedReason: /belongs to configPath '/u,
+			fixture: { configPath: '/deployments/other/config/system.jsonc' },
+			label: 'configPath fence',
+		},
+		{
+			expectedReason: /belongs to controllerPort '19999'/u,
+			fixture: { controllerPort: 19_999 },
+			label: 'controllerPort fence',
+		},
+	])(
+		'skips gateway cleanup on $label mismatch during in-process recovery',
+		async ({ expectedReason, fixture }) => {
+			const deleteGatewayRuntimeRecord = vi.fn(async () => {});
+			const killProcess = vi.fn();
+
+			await expect(
+				cleanupOrphanedGatewayIfPresent(
+					createGatewayRecoveryOptions({ mode: 'in-process-recovery' }),
+					{
+						deleteGatewayRuntimeRecord,
+						killProcess,
+						loadGatewayRuntimeRecordResult: async () =>
+							loadedGatewayRuntimeRecord(createGatewayRuntimeRecord(fixture)),
+						readTcpListenPortOwner: async () => ({ command: 'qemu-system-aarch64', pid: 48_282 }),
+					},
+				),
+			).resolves.toEqual({
+				cleanedUp: false,
+				cleanupWarning: expect.stringMatching(expectedReason),
+				killedPid: null,
+			});
+			expect(killProcess).not.toHaveBeenCalled();
+			expect(deleteGatewayRuntimeRecord).not.toHaveBeenCalled();
+		},
+	);
+
 	it('skips gateway recovery when the ingress port is held by a different pid during startup recovery', async () => {
 		const killProcess = vi.fn();
 		const logMessages: string[] = [];
@@ -211,24 +251,57 @@ describe('cleanupOrphanedGatewayIfPresent', () => {
 		expect(killProcess).not.toHaveBeenCalled();
 	});
 
-	it('deletes a stale record when its ingress port is already free', async () => {
+	it('kills the recorded gateway process before deleting when its ingress port is already free', async () => {
+		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
+		const killProcess = vi.fn();
+		const record = createGatewayRuntimeRecord({ qemuPid: 111 });
+		const isProcessAlive = vi
+			.fn()
+			.mockReturnValueOnce(true)
+			.mockReturnValueOnce(true)
+			.mockReturnValueOnce(false);
+
+		await expect(
+			cleanupOrphanedGatewayIfPresent(createGatewayRecoveryOptions(), {
+				deleteGatewayRuntimeRecord,
+				isProcessAlive,
+				killProcess,
+				loadGatewayRuntimeRecordResult: async () => loadedGatewayRuntimeRecord(record),
+				readProcessCommand: async () => 'qemu-system-aarch64 -nodefaults',
+				readProcessIdentity: async () => record.processIdentity,
+				readTcpListenPortOwner: async () => null,
+				sleep: async () => {},
+			}),
+		).resolves.toEqual({
+			cleanedUp: true,
+			killedPid: 111,
+		});
+		expect(killProcess).toHaveBeenCalledWith(111, 'SIGTERM');
+		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledWith('/state/shravan');
+	});
+
+	it('refuses to delete a port-free gateway record when the recorded pid was reused', async () => {
 		const deleteGatewayRuntimeRecord = vi.fn(async () => {});
 		const killProcess = vi.fn();
 
 		await expect(
 			cleanupOrphanedGatewayIfPresent(createGatewayRecoveryOptions(), {
 				deleteGatewayRuntimeRecord,
+				isProcessAlive: () => true,
 				killProcess,
 				loadGatewayRuntimeRecordResult: async () =>
 					loadedGatewayRuntimeRecord(createGatewayRuntimeRecord({ qemuPid: 111 })),
+				readProcessCommand: async () => 'node /tmp/not-gateway.js',
+				readProcessIdentity: async () => ({
+					command: 'node /tmp/not-gateway.js',
+					lstart: 'Tue Apr 14 15:00:00 2026',
+				}),
 				readTcpListenPortOwner: async () => null,
+				sleep: async () => {},
 			}),
-		).resolves.toEqual({
-			cleanedUp: true,
-			killedPid: null,
-		});
+		).rejects.toThrow(/refusing SIGTERM to pid 111: process identity changed/u);
 		expect(killProcess).not.toHaveBeenCalled();
-		expect(deleteGatewayRuntimeRecord).toHaveBeenCalledWith('/state/shravan');
+		expect(deleteGatewayRuntimeRecord).not.toHaveBeenCalled();
 	});
 
 	it('kills an owned orphaned qemu process, deletes the runtime record, and reports cleanup', async () => {

@@ -264,6 +264,8 @@ export async function startGatewayZone(
 	});
 	const cleanupOrphanedGateway = async (): Promise<void> => {
 		await (dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent)({
+			expectedConfigPath: options.systemConfig.systemConfigPath,
+			expectedControllerPort: options.systemConfig.host.controllerPort,
 			mode: 'in-process-recovery',
 			projectNamespace: options.systemConfig.host.projectNamespace,
 			stateDir: zone.gateway.stateDir,

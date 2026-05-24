@@ -72,6 +72,8 @@ describe('integration: orphan recovery', () => {
 
 		await expect(
 			cleanupOrphanedGatewayIfPresent({
+				expectedConfigPath: '/deployments/claw/config/system.jsonc',
+				expectedControllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				stateDir: stateDirectory,
 				zoneId: 'shravan',
@@ -85,22 +87,21 @@ describe('integration: orphan recovery', () => {
 		expect(fs.existsSync(path.join(stateDirectory, 'gateway-runtime.json'))).toBe(false);
 	});
 
-	it('removes a stale runtime record when the gateway port is already free', async () => {
+	it('preserves a runtime record when the gateway port is free but the recorded pid is live and unrelated', async () => {
 		const stateDirectory = createStateDirectory();
 		await createRuntimeRecord(stateDirectory, 1);
 
 		await expect(
 			cleanupOrphanedGatewayIfPresent({
+				expectedConfigPath: '/deployments/claw/config/system.jsonc',
+				expectedControllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				stateDir: stateDirectory,
 				zoneId: 'shravan',
 			}),
-		).resolves.toEqual({
-			cleanedUp: true,
-			killedPid: null,
-		});
+		).rejects.toThrow(/process identity changed/u);
 
-		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.toBeNull();
+		await expect(loadGatewayRuntimeRecord(stateDirectory)).resolves.not.toBeNull();
 	});
 
 	it('is a no-op when no runtime record exists', async () => {
@@ -108,6 +109,8 @@ describe('integration: orphan recovery', () => {
 
 		await expect(
 			cleanupOrphanedGatewayIfPresent({
+				expectedConfigPath: '/deployments/claw/config/system.jsonc',
+				expectedControllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				stateDir: stateDirectory,
 				zoneId: 'shravan',
@@ -126,6 +129,8 @@ describe('integration: orphan recovery', () => {
 
 		await expect(
 			cleanupOrphanedGatewayIfPresent({
+				expectedConfigPath: '/deployments/claw/config/system.jsonc',
+				expectedControllerPort: 18800,
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				stateDir: stateDirectory,
 				zoneId: 'shravan',

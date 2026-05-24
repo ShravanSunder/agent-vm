@@ -77,10 +77,10 @@ recovery order
 
 - Modify `packages/agent-vm/src/controller/http/controller-http-routes.ts`
   - Accept `agentId`, `scopeKey`, and `sessionKey`.
-  - Validate agent ownership from `sessionKey` when the session key is agent-shaped.
+  - Resolve effective agent ownership from `sessionKey`; agent-shaped sessions use their embedded agent id, and non-agent-shaped OpenClaw sessions use OpenClaw's `main` fallback instead of trusting the payload agent id.
   - Stop rejecting channel/session-shaped `scopeKey` values.
   - Pass `agentId` and `requestScopeKey` into `LeaseManager.createLease`.
-  - Return 503 during recovery for mutating routes that need a ready runtime: `POST /lease`, lease renew/release/active-use routes, and `POST /zones/:zoneId/worker-tasks`. Keep `POST /stop-controller` callable.
+  - Return 503 during recovery for mutating routes that need a ready runtime: `POST /lease`, lease renew/release/active-use routes, zone-git push, credential refresh, zone destroy/upgrade, worker-task create/close/push/pull, zone SSH enable, and zone command execution. Keep `POST /stop-controller` callable.
 
 - Modify `packages/agent-vm/src/controller/leases/lease-manager.ts`
   - Add `Lease.agentId`.
@@ -124,6 +124,7 @@ recovery order
 - Modify `packages/agent-vm/src/operations/controller-offline-cleanup.ts`
   - Keep `agent-vm controller cleanup --config ... --zone ...` as the operator-initiated strict cleanup path.
   - Run Tool VM cleanup in `offline-cleanup` mode before gateway cleanup, matching startup ordering but throwing on unproven ownership instead of warn+skip.
+  - Return both Tool VM cleanup details and gateway cleanup details so operator output and warnings do not discard child-cleanup evidence.
 
 - Modify `packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-factory.ts`
   - Cache handles by agent identity plus workspace/profile, not raw scope key.
@@ -1580,7 +1581,11 @@ For ownership proof:
 ```ts
 const expectedPort = portForSlot(record.tcpSlot);
 const portOwner = await readTcpListenPortOwner(expectedPort);
-if (portOwner !== null && portOwner.pid !== record.qemuPid) {
+if (portOwner === null) {
+	// Port is free, but the record is not safe to delete yet. Continue into
+	// the recorded-pid liveness + process-identity check. Delete only after
+	// that pid is proven dead or after a matching managed VM process is killed.
+} else if (portOwner.pid !== record.qemuPid) {
 	const message = `Tool VM runtime record '${record.recordId}' port ${String(expectedPort)} is held by pid ${String(portOwner.pid)}, expected pid ${String(record.qemuPid)}.`;
 	if (mode === 'offline-cleanup') {
 		throw new Error(message);
@@ -1600,7 +1605,7 @@ In `gateway-recovery.ts`, inject:
 readonly readTcpListenPortOwner?: (port: number) => Promise<PortOwner | null>;
 ```
 
-Before signaling the gateway pid, check `runtimeRecord.ingressPort`. If the port is held by a different pid, branch exactly like Tool VM recovery:
+Before signaling the gateway pid, first check deployment fences (`configPath`, `controllerPort`, `projectNamespace`, `zoneId`, `sessionLabel`), then check `runtimeRecord.ingressPort`. If the port is free, continue into the recorded-pid process identity check before deleting the record. If the port is held by a different pid, branch exactly like Tool VM recovery:
 
 ```ts
 const portOwner = await readTcpListenPortOwner(runtimeRecord.ingressPort);

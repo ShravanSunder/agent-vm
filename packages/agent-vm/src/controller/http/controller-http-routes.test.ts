@@ -287,7 +287,16 @@ describe('createControllerApp', () => {
 		['POST', '/lease/lease-123/uses'],
 		['POST', '/lease/lease-123/uses/01890f00-0000-7000-8000-000000000000/heartbeat'],
 		['DELETE', '/lease/lease-123/uses/use_01890f00000070008000000000000000'],
+		['POST', '/zones/shravan/zone-git/push'],
+		['POST', '/zones/shravan/credentials/refresh'],
+		['POST', '/zones/shravan/destroy'],
+		['POST', '/zones/shravan/upgrade'],
 		['POST', '/zones/shravan/worker-tasks'],
+		['POST', '/zones/shravan/tasks/task-1/close'],
+		['POST', '/zones/shravan/tasks/task-1/push-branches'],
+		['POST', '/zones/shravan/tasks/task-1/pull-default'],
+		['POST', '/zones/shravan/enable-ssh'],
+		['POST', '/zones/shravan/execute-command'],
 	] as const)(
 		'returns not-ready for %s %s while runtime is recovering',
 		async (method, routePath) => {
@@ -314,13 +323,20 @@ describe('createControllerApp', () => {
 					endActiveUse: vi.fn(),
 				},
 				operations: {
+					closeTaskForZone: vi.fn(async () => ({ status: 'closed' as const })),
 					destroyZone: vi.fn(async () => ({})),
+					enableSshForZone: vi.fn(async () => ({})),
+					execInZone: vi.fn(async () => ({})),
 					getStatus: vi.fn(async () => ({})),
 					getZoneLogs: vi.fn(async () => ({})),
+					pushTaskBranches: vi.fn(async () => ({})),
+					pushZoneGit: vi.fn(async () => ({})),
+					pullDefaultForTask: vi.fn(async () => ({})),
 					refreshZoneCredentials: vi.fn(async () => ({})),
 					prepareWorkerTask: vi.fn(async () => createPreparedWorkerTaskStub('worker-task-1')),
 					executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
 					upgradeZone: vi.fn(async () => ({})),
+					verifyZoneGitPushToken: vi.fn(() => true),
 				},
 			});
 
@@ -835,6 +851,55 @@ describe('createControllerApp', () => {
 		} finally {
 			stderrWrite.mockRestore();
 		}
+	});
+
+	it('uses the main agent for legacy lease session keys instead of trusting payload agentId', async () => {
+		const createLease = vi.fn(async () => createLeaseStub('lease-123', 0));
+		const resolveLeaseWorkMountDir = vi.fn(
+			async ({ workMountDir }: { readonly workMountDir: string }) => ({
+				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+				hostWorkMountDir: workMountDir,
+			}),
+		);
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease,
+				renewLease: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+			resolveLeaseWorkMountDir,
+		});
+
+		const response = await app.request('/lease', {
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					agentId: 'beta',
+					scopeKey: 'discord:channel:123',
+					sessionKey: 'legacy-session-abc',
+				}),
+			),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(200);
+		expect(resolveLeaseWorkMountDir).toHaveBeenCalledWith(
+			expect.objectContaining({ agentId: 'main', scopeKey: 'discord:channel:123' }),
+		);
+		expect(createLease).toHaveBeenCalledWith(
+			expect.objectContaining({ agentId: 'main', scopeKey: 'discord:channel:123' }),
+		);
 	});
 
 	it('rejects Tool VM leases until the OpenClaw plugin reports fresh runtime status', async () => {

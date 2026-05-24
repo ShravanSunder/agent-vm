@@ -169,9 +169,13 @@ export function createControllerSubcommands(io: CliIo, dependencies: CliDependen
 						zoneId: selectedZone.id,
 					});
 					io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-					const cleanupWarnings = result.results
-						.map((cleanupResult) => cleanupResult.cleanupWarning)
-						.filter((cleanupWarning): cleanupWarning is string => cleanupWarning !== undefined);
+					const cleanupWarnings: string[] = [];
+					for (const cleanupResult of result.results) {
+						if (cleanupResult.cleanupWarning !== undefined) {
+							cleanupWarnings.push(cleanupResult.cleanupWarning);
+						}
+						cleanupWarnings.push(...cleanupResult.toolVmCleanup.warnings);
+					}
 					if (cleanupWarnings.length > 0) {
 						throw new Error(
 							`Controller cleanup completed with warnings: ${cleanupWarnings.join('; ')}`,
