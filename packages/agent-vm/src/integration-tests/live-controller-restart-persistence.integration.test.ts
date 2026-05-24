@@ -161,7 +161,7 @@ function createGatewayVmMock(
 			return createManagedExecProcessStub();
 		},
 		fs: createManagedVmFsStub(),
-		getHostPid: () => null,
+		getHostPid: () => 28_000,
 		getVmInstance: () => ({}) as ManagedVmInstance,
 		id: 'gateway-vm-live-restart',
 		setIngressRoutes: () => {},
@@ -258,12 +258,16 @@ describe('live integration: controller restart persistence', () => {
 						fs: createManagedVmFsStub(),
 						id: 'tool-vm-live-restart',
 						setIngressRoutes: vi.fn(),
-						getHostPid: () => null,
+						getHostPid: () => 28_100,
 						getVmInstance: vi.fn(),
 					})),
 					createSecretResolver: async () => ({
 						resolve: async () => '',
 						resolveAll: async () => ({}),
+					}),
+					readProcessIdentity: async () => ({
+						command: 'qemu-system-aarch64 -m 1G',
+						lstart: 'Fri May 22 10:00:00 2026',
 					}),
 					readIdentityPem: async () => 'pem',
 					startGatewayZone: vi.fn(async () => ({

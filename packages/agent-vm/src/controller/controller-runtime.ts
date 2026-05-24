@@ -361,7 +361,7 @@ export async function startControllerRuntime(
 		leaseManager,
 		operations,
 		...(dependencies.readIdentityPem ? { readIdentityPem: dependencies.readIdentityPem } : {}),
-		runtimeReadiness: runtimeReadiness.get,
+		runtimeReadiness: () => runtimeReadiness.get(),
 		secretResolver,
 		systemConfig: options.systemConfig,
 		ttlForLease,
