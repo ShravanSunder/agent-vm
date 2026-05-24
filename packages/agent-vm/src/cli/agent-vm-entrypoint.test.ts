@@ -199,6 +199,7 @@ function createControllerClientStub(
 		getControllerStatus: async () => ({}),
 		getZoneLogs: async () => ({}),
 		peekLease: async () => ({
+			agentId: 'main',
 			createdAt: 1,
 			lastUsedAt: 1,
 			leaseId: 'lease-123',
@@ -1459,6 +1460,7 @@ describe('runAgentVmCli', () => {
 						zones: [],
 					}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -1571,6 +1573,7 @@ describe('runAgentVmCli', () => {
 						zones: [],
 					}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -1691,6 +1694,7 @@ describe('runAgentVmCli', () => {
 						zones: [],
 					}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -1996,6 +2000,7 @@ describe('runAgentVmCli', () => {
 			getZoneLogs: vi.fn(async () => ({ output: 'logs', zoneId: 'shravan' })),
 			listLeases: vi.fn(async () => []),
 			peekLease: vi.fn(async () => ({
+				agentId: 'main',
 				createdAt: 1,
 				lastUsedAt: 1,
 				leaseId: 'lease-123',
@@ -2470,6 +2475,7 @@ describe('runAgentVmCli', () => {
 					getZoneLogs: async () => ({}),
 					getControllerStatus: async () => ({}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -2504,6 +2510,12 @@ describe('runAgentVmCli', () => {
 					cleanedUp: true,
 					killedPid: 48282,
 					stateDir: './state/shravan',
+					toolVmCleanup: {
+						cleanedCount: 0,
+						killedPids: [],
+						quarantinedCount: 0,
+						warnings: [],
+					},
 					zoneId: 'shravan',
 				},
 			],
@@ -2544,6 +2556,12 @@ describe('runAgentVmCli', () => {
 					cleanedUp: true,
 					killedPid: 48282,
 					stateDir: './state/shravan',
+					toolVmCleanup: {
+						cleanedCount: 0,
+						killedPids: [],
+						quarantinedCount: 0,
+						warnings: [],
+					},
 					zoneId: 'shravan',
 				},
 			],
@@ -2587,6 +2605,12 @@ describe('runAgentVmCli', () => {
 					cleanupWarning: 'failed to remove stale runtime record',
 					killedPid: 48282,
 					stateDir: './state/shravan',
+					toolVmCleanup: {
+						cleanedCount: 1,
+						killedPids: [123],
+						quarantinedCount: 0,
+						warnings: ['failed to remove stale tool VM runtime record'],
+					},
 					zoneId: 'shravan',
 				},
 			],
@@ -2624,6 +2648,12 @@ describe('runAgentVmCli', () => {
 					cleanupWarning: 'failed to remove stale runtime record',
 					killedPid: 48282,
 					stateDir: './state/shravan',
+					toolVmCleanup: {
+						cleanedCount: 1,
+						killedPids: [123],
+						quarantinedCount: 0,
+						warnings: ['failed to remove stale tool VM runtime record'],
+					},
 					zoneId: 'shravan',
 				},
 			],
@@ -2634,6 +2664,7 @@ describe('runAgentVmCli', () => {
 	it('routes controller lease list and release through the lease handler', async () => {
 		const listLeases = vi.fn(async () => [{ id: 'lease-123' }]);
 		const peekLease = vi.fn(async () => ({
+			agentId: 'main',
 			createdAt: 1,
 			lastUsedAt: 1,
 			leaseId: 'lease-123',
@@ -2713,6 +2744,7 @@ describe('runAgentVmCli', () => {
 					getZoneLogs: async () => ({}),
 					getControllerStatus: async () => ({}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -2774,6 +2806,7 @@ describe('runAgentVmCli', () => {
 					getZoneLogs: async () => ({}),
 					getControllerStatus: async () => ({}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -2934,6 +2967,7 @@ describe('runAgentVmCli', () => {
 					getZoneLogs: async () => ({}),
 					getControllerStatus: async () => ({}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',

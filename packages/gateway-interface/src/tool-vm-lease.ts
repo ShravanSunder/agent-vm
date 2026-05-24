@@ -8,11 +8,14 @@ import {
 } from './vm-capability-lease.js';
 
 export interface ToolVmSshLease extends VmSshLease<'ssh-sandbox'> {
+	readonly agentId: string;
+	readonly scopeKey: string;
 	readonly tcpSlot: number;
 	readonly workdir: string;
 }
 
 export interface ToolVmLeasePeek extends VmCapabilityLease<'ssh-sandbox'> {
+	readonly agentId: string;
 	readonly createdAt: number;
 	readonly lastUsedAt: number;
 	readonly profileId: string;
@@ -32,6 +35,8 @@ export function isToolVmSshLease(value: unknown): value is ToolVmSshLease {
 	return (
 		isVmCapabilityLease(record, 'ssh-sandbox') &&
 		isVmSshEndpoint(Reflect.get(record, 'ssh')) &&
+		typeof Reflect.get(record, 'agentId') === 'string' &&
+		typeof Reflect.get(record, 'scopeKey') === 'string' &&
 		typeof Reflect.get(record, 'tcpSlot') === 'number' &&
 		typeof Reflect.get(record, 'workdir') === 'string'
 	);
@@ -41,6 +46,7 @@ export function isToolVmLeasePeek(value: unknown): value is ToolVmLeasePeek {
 	const record = objectValue(value);
 	return (
 		isVmCapabilityLease(record, 'ssh-sandbox') &&
+		typeof Reflect.get(record, 'agentId') === 'string' &&
 		typeof Reflect.get(record, 'createdAt') === 'number' &&
 		typeof Reflect.get(record, 'lastUsedAt') === 'number' &&
 		typeof Reflect.get(record, 'profileId') === 'string' &&

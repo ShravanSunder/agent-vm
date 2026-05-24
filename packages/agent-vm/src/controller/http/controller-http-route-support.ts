@@ -11,6 +11,30 @@ import type { ControllerLeasePeekResponse } from './controller-lease-response-ty
 export class ControllerTaskNotReadyError extends Error {}
 export class ControllerRuntimeAtCapacityError extends Error {}
 
+export type ControllerRuntimeReadinessState = 'ready' | 'recovering' | 'stopping';
+
+export interface ControllerRuntimeReadiness {
+	readonly ready: boolean;
+	readonly state: ControllerRuntimeReadinessState;
+}
+
+export interface MutableControllerRuntimeReadiness {
+	get(): ControllerRuntimeReadiness;
+	set(state: ControllerRuntimeReadinessState): void;
+}
+
+export function createMutableControllerRuntimeReadiness(
+	initialState: ControllerRuntimeReadinessState,
+): MutableControllerRuntimeReadiness {
+	let state = initialState;
+	return {
+		get: () => ({ ready: state === 'ready', state }),
+		set: (nextState) => {
+			state = nextState;
+		},
+	};
+}
+
 export interface EnableSshForZoneOptions {
 	readonly adminToken?: string;
 	readonly secretEnv: 'default' | 'gateway-token' | 'all-secrets';
@@ -98,8 +122,10 @@ export async function serializeLeaseForResponse(
 	readIdentityPem: (identityFilePath: string) => Promise<string>,
 	options: { readonly idleTtlMs?: number } = {},
 ): Promise<{
+	readonly agentId: string;
 	readonly idleTtlMs?: number;
 	readonly leaseId: string;
+	readonly scopeKey: string;
 	readonly ssh: {
 		readonly host: string;
 		readonly identityPem: string;
@@ -119,8 +145,10 @@ export async function serializeLeaseForResponse(
 		throw new Error(`Lease '${lease.id}' SSH identity file is empty.`);
 	}
 	return {
+		agentId: lease.agentId,
 		...(options.idleTtlMs !== undefined ? { idleTtlMs: options.idleTtlMs } : {}),
 		leaseId: lease.id,
+		scopeKey: lease.scopeKey,
 		ssh: {
 			host: `tool-${lease.tcpSlot}.vm.host`,
 			identityPem,
@@ -136,6 +164,7 @@ export async function serializeLeaseForResponse(
 
 export function serializeLeasePeekForResponse(lease: Lease): ControllerLeasePeekResponse {
 	return {
+		agentId: lease.agentId,
 		createdAt: lease.createdAt,
 		lastUsedAt: lease.lastUsedAt,
 		leaseId: lease.id,

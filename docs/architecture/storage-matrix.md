@@ -42,6 +42,18 @@ repair/download caches                  rebuildable
 OpenClaw zone files                     long-lived household
                                        user/agent files
 
+/agent-vm/logs                          RealFS runtimeDir      no
+gateway-boot-latest.log,                zone-lifetime, wiped by
+openclaw-YYYY-MM-DD.log                 destroy-zone --purge
+
+/agent-vm/zone-git                      RealFS runtimeDir      no, but PRESERVED
+zone-files.git (when zoneGit            authoritative store for
+configured)                             committed-but-unpushed
+                                       zone work; referenced by
+                                       backed-up zoneFilesDir/.git
+                                       pointer. See storage-model
+                                       "runtimeDir is two lifecycles".
+
 /work/tmp                               rootfs/COW             no
 large temp, TMPDIR target               disposable disk
 
@@ -53,6 +65,12 @@ sockets, pid files, tiny scratch        memory-pressure only
 
 gateway-runtime.json                    stateDir               yes
 host runtime record                     durable enough
+
+tool-leases/<recordId>.json             stateDir               yes
+Tool VM recovery record                 durable enough
+recordId UUID; keeps agentId,
+leaseId, vmId, qemuPid; never
+stores OpenClaw scopeKey
 ```
 
 OpenClaw gateways are long-lived, so rootfs/COW paths such as `/work/tmp` and

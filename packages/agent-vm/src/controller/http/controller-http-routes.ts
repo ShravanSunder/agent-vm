@@ -5,10 +5,8 @@ import type {
 	ToolVmActiveUseCorrelation,
 } from '@agent-vm/gateway-interface';
 import {
-	expectedOpenClawGondolinScopeKey,
 	findOpenClawGondolinSandboxMismatch,
 	isOpenClawAgentSessionKey,
-	OPENCLAW_GONDOLIN_LEASE_SCOPE_GUIDANCE,
 	resolveOpenClawAgentIdFromSessionKey,
 	type OpenClawGondolinSandboxSnapshot,
 } from '@agent-vm/openclaw-agent-vm-plugin';
@@ -23,7 +21,10 @@ import {
 	seedAgentSandboxWorkspace,
 } from '../leases/agent-sandbox-seeding.js';
 import { ttlForLeaseScope, type LeaseIdleTtlPolicy } from '../leases/lease-idle-policy.js';
-import { LeaseActiveUseConflictError, LeaseScopeConflictError } from '../leases/lease-manager.js';
+import {
+	AgentLeaseCompatibilityConflictError,
+	LeaseActiveUseConflictError,
+} from '../leases/lease-manager.js';
 import {
 	LeaseWorkMountValidationError,
 	type ResolvedLeaseWorkMount,
@@ -35,6 +36,7 @@ import {
 } from '../openclaw-runtime-status.js';
 import {
 	type ControllerLeaseManager,
+	type ControllerRuntimeReadiness,
 	type ControllerRouteOperations,
 	readIdentityPemFromFile,
 	serializeLeasePeekForResponse,
@@ -104,6 +106,7 @@ function logAgentSandboxSeedResult(result: AgentSandboxSeedResult): void {
 }
 
 interface LeaseRequestLogContext {
+	readonly agentId: string;
 	readonly scopeKey: string;
 	readonly workMountDir: string;
 	readonly zoneId: string;
@@ -118,11 +121,21 @@ interface LeaseContractErrorBody {
 
 interface LeaseContractReceivedFields {
 	readonly agentId?: string;
-	readonly expectedScopeKey?: string;
 	readonly sandbox?: OpenClawGondolinSandboxSnapshot;
 	readonly scopeKey?: string;
 	readonly sessionAgentId?: string;
 	readonly sessionKey?: string;
+}
+
+interface AgentLeaseCompatibilityConflictResponseBody {
+	readonly error: 'agent-tool-vm-lease-compatibility-conflict';
+	readonly guidance: string;
+	readonly message: string;
+	readonly received: {
+		readonly agentId?: string;
+		readonly mismatchedFields: readonly string[];
+		readonly zoneId?: string;
+	};
 }
 
 function leaseContractErrorBody(options: LeaseContractErrorBody): LeaseContractErrorBody {
@@ -146,7 +159,7 @@ function validateOpenClawGondolinLeaseContract(payload: {
 	readonly sessionKey: string;
 }): LeaseContractErrorBody | null {
 	const sessionAgentId = resolveOpenClawAgentIdFromSessionKey(payload.sessionKey);
-	if (sessionAgentId !== payload.agentId) {
+	if (isOpenClawAgentSessionKey(payload.sessionKey) && sessionAgentId !== payload.agentId) {
 		return leaseContractErrorBody({
 			error: 'tool-vm-lease-agent-mismatch',
 			message: `Lease agentId '${payload.agentId}' does not match sessionKey agent '${sessionAgentId}'.`,
@@ -171,21 +184,28 @@ function validateOpenClawGondolinLeaseContract(payload: {
 			},
 		});
 	}
-	const expectedScopeKey = expectedOpenClawGondolinScopeKey(payload.agentId);
-	if (payload.scopeKey !== expectedScopeKey) {
-		return leaseContractErrorBody({
-			error: 'invalid-tool-vm-lease-scope',
-			message: `Invalid Tool VM lease scopeKey '${payload.scopeKey}': expected '${expectedScopeKey}'.`,
-			guidance: OPENCLAW_GONDOLIN_LEASE_SCOPE_GUIDANCE,
-			received: {
-				agentId: payload.agentId,
-				expectedScopeKey,
-				scopeKey: payload.scopeKey,
-				sessionKey: payload.sessionKey,
-			},
-		});
-	}
 	return null;
+}
+
+function agentLeaseCompatibilityConflictResponseBody(options: {
+	readonly error: AgentLeaseCompatibilityConflictError;
+	readonly requestContext: LeaseRequestLogContext | undefined;
+}): AgentLeaseCompatibilityConflictResponseBody {
+	return {
+		error: 'agent-tool-vm-lease-compatibility-conflict',
+		message: options.error.message,
+		guidance:
+			'Managed OpenClaw/Gondolin reuses one Tool VM per zone and agent. Release the existing lease or use a compatible profile/workspace/workdir.',
+		received: {
+			...(options.requestContext?.agentId !== undefined
+				? { agentId: options.requestContext.agentId }
+				: {}),
+			mismatchedFields: options.error.mismatchedFields,
+			...(options.requestContext?.zoneId !== undefined
+				? { zoneId: options.requestContext.zoneId }
+				: {}),
+		},
+	};
 }
 
 const defaultLeaseIdleTtlPolicy = {
@@ -249,8 +269,10 @@ function normalizeActiveUseCorrelation(
 }
 
 export function createControllerApp(options: {
+	readonly controllerPort?: number;
 	readonly leaseManager: ControllerLeaseManager;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
+	readonly runtimeReadiness?: () => ControllerRuntimeReadiness;
 	readonly ttlForLease?: (lease: { readonly scopeKey: string }) => number;
 	readonly toolVmProfiles?: Record<
 		string,
@@ -278,8 +300,38 @@ export function createControllerApp(options: {
 	const app = new Hono();
 	const readIdentityPem = options.readIdentityPem ?? readIdentityPemFromFile;
 	const leaseIdleTtlPolicy = options.leaseIdleTtlPolicy ?? defaultLeaseIdleTtlPolicy;
+	const getRuntimeReadiness = (): ControllerRuntimeReadiness =>
+		options.runtimeReadiness?.() ?? { ready: true, state: 'ready' };
+	const rejectIfRuntimeNotReady = (): Response | null => {
+		const readiness = getRuntimeReadiness();
+		return readiness.ready
+			? null
+			: Response.json(
+					{
+						error: 'controller-not-ready',
+						state: readiness.state,
+					},
+					{ status: 503 },
+				);
+	};
+
+	app.get('/health', (context) => {
+		const readiness = getRuntimeReadiness();
+		return context.json(
+			{
+				ok: readiness.ready,
+				...(options.controllerPort !== undefined ? { port: options.controllerPort } : {}),
+				state: readiness.state,
+			},
+			readiness.ready ? 200 : 503,
+		);
+	});
 
 	app.post('/lease', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady();
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		let requestContext: LeaseRequestLogContext | undefined;
 		try {
 			const parsedPayload = controllerLeaseCreateRequestSchema.safeParse(await context.req.json());
@@ -293,7 +345,9 @@ export function createControllerApp(options: {
 				);
 			}
 			const payload = parsedPayload.data;
+			const agentId = resolveOpenClawAgentIdFromSessionKey(payload.sessionKey);
 			requestContext = {
+				agentId,
 				scopeKey: payload.scopeKey,
 				workMountDir: payload.workMountDir,
 				zoneId: payload.zoneId,
@@ -315,7 +369,6 @@ export function createControllerApp(options: {
 			if (contractError) {
 				return context.json(contractError, 400);
 			}
-			const agentId = payload.agentId;
 			const resolvedProfileId =
 				(agentId ? options.zoneAgentToolVmProfiles?.[payload.zoneId]?.[agentId] : undefined) ??
 				options.zoneDefaultToolVmProfiles?.[payload.zoneId] ??
@@ -349,6 +402,7 @@ export function createControllerApp(options: {
 				);
 			}
 			const lease = await options.leaseManager.createLease({
+				agentId,
 				agentWorkspaceDir: payload.agentWorkspaceDir,
 				effectiveIdleTtlMs: effectiveIdleTtl.value,
 				profile: defaultToolVmProfile,
@@ -371,8 +425,11 @@ export function createControllerApp(options: {
 			if (error instanceof LeaseWorkMountValidationError) {
 				return context.json({ error: error.message, kind: error.kind }, 400);
 			}
-			if (error instanceof LeaseScopeConflictError) {
-				return context.json({ error: error.message }, 409);
+			if (error instanceof AgentLeaseCompatibilityConflictError) {
+				return context.json(
+					agentLeaseCompatibilityConflictResponseBody({ error, requestContext }),
+					409,
+				);
 			}
 			if (error instanceof OpenClawDeploymentRequirementError) {
 				return context.json({ error: error.message, kind: error.kind }, 400);
@@ -420,6 +477,10 @@ export function createControllerApp(options: {
 	});
 
 	app.post('/lease/:leaseId/renew', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady();
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		const leaseRenewal = options.leaseManager.renewLease(context.req.param('leaseId'));
 		if (!leaseRenewal) {
 			return context.json({ error: 'Lease not found' }, 404);
@@ -436,6 +497,7 @@ export function createControllerApp(options: {
 
 	app.get('/leases', (context) => {
 		const leases = options.leaseManager.listLeases().map((lease) => ({
+			agentId: lease.agentId,
 			createdAt: lease.createdAt,
 			id: lease.id,
 			lastUsedAt: lease.lastUsedAt,
@@ -448,6 +510,10 @@ export function createControllerApp(options: {
 	});
 
 	app.delete('/lease/:leaseId', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady();
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		try {
 			await options.leaseManager.releaseLease(context.req.param('leaseId'), {
 				force: context.req.query('force') === 'true',
@@ -462,6 +528,10 @@ export function createControllerApp(options: {
 	});
 
 	app.post('/lease/:leaseId/uses', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady();
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		if (!options.leaseManager.startActiveUse) {
 			return context.json({ error: 'Active use API unavailable' }, 404);
 		}
@@ -500,6 +570,10 @@ export function createControllerApp(options: {
 	});
 
 	app.post('/lease/:leaseId/uses/:useId/heartbeat', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady();
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		if (!options.leaseManager.heartbeatActiveUse) {
 			return context.json({ error: 'Active use API unavailable' }, 404);
 		}
@@ -514,6 +588,10 @@ export function createControllerApp(options: {
 	});
 
 	app.delete('/lease/:leaseId/uses/:useId', async (context) => {
+		const notReadyResponse = rejectIfRuntimeNotReady();
+		if (notReadyResponse) {
+			return notReadyResponse;
+		}
 		if (!options.leaseManager.endActiveUse) {
 			return context.json({ error: 'Active use API unavailable' }, 404);
 		}
@@ -541,6 +619,10 @@ export function createControllerApp(options: {
 	if (options.openClawRuntimeStatusStore) {
 		const openClawRuntimeStatusStore = options.openClawRuntimeStatusStore;
 		app.post('/zones/:zoneId/openclaw-runtime-status', async (context) => {
+			const notReadyResponse = rejectIfRuntimeNotReady();
+			if (notReadyResponse) {
+				return notReadyResponse;
+			}
 			const zoneId = context.req.param('zoneId');
 			if (options.zoneIds && !options.zoneIds.has(zoneId)) {
 				return context.json({ error: `Unknown zone '${zoneId}'` }, 404);
@@ -604,10 +686,16 @@ export function createControllerApp(options: {
 				throw new Error('upgrade-zone-unavailable');
 			},
 		};
-		registerControllerZoneOperationRoutes(app, {
-			...defaultOperations,
-			...options.operations,
-		});
+		registerControllerZoneOperationRoutes(
+			app,
+			{
+				...defaultOperations,
+				...options.operations,
+			},
+			{
+				runtimeReadiness: getRuntimeReadiness,
+			},
+		);
 	}
 
 	return app;
@@ -617,6 +705,7 @@ export function createControllerService(options: {
 	readonly leaseManager: ControllerLeaseManager;
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
+	readonly runtimeReadiness?: () => ControllerRuntimeReadiness;
 	readonly secretResolver?: SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
 	readonly ttlForLease: (lease: { readonly scopeKey: string }) => number;
@@ -624,8 +713,10 @@ export function createControllerService(options: {
 	const zonesById = new Map(options.systemConfig.zones.map((zone) => [zone.id, zone]));
 	const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
 	const app = createControllerApp({
+		controllerPort: options.systemConfig.host.controllerPort,
 		leaseManager: options.leaseManager,
 		...(options.readIdentityPem ? { readIdentityPem: options.readIdentityPem } : {}),
+		...(options.runtimeReadiness ? { runtimeReadiness: options.runtimeReadiness } : {}),
 		...(options.systemConfig.leaseIdleTtl
 			? { leaseIdleTtlPolicy: options.systemConfig.leaseIdleTtl }
 			: {}),
@@ -676,13 +767,6 @@ export function createControllerService(options: {
 			return resolvedWorkMount;
 		},
 	});
-
-	app.get('/health', (context) =>
-		context.json({
-			ok: true,
-			port: options.systemConfig.host.controllerPort,
-		}),
-	);
 
 	return app;
 }

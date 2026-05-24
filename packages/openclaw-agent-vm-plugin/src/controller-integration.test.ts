@@ -16,7 +16,9 @@ const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
 
 function createLeaseResponse(leaseId: string): ToolVmSshLease {
 	return {
+		agentId: 'main',
 		leaseId,
+		scopeKey: 'agent:main',
 		ssh: {
 			host: 'tool-0.vm.host',
 			identityPem: 'pem',
@@ -32,6 +34,7 @@ function createLeaseResponse(leaseId: string): ToolVmSshLease {
 
 function createLeasePeekResponse(leaseId: string): ToolVmLeasePeek {
 	return {
+		agentId: 'main',
 		createdAt: 1,
 		lastUsedAt: 1,
 		leaseId,
@@ -121,12 +124,14 @@ function createManagedVmFsStub(): ManagedVmFs {
 describe('gondolin controller integration', () => {
 	it('requests a lease through the controller app and builds an exec spec from the returned ssh lease', async () => {
 		const lease = {
+			agentId: 'main',
 			agentWorkspaceDir: '/zone',
 			createdAt: 1,
 			effectiveIdleTtlMs: 300_000,
 			id: 'lease-123',
 			lastUsedAt: 1,
 			profileId: 'standard',
+			runtimeRecordId: 'lease-123',
 			scopeKey: 'agent:main',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			sshAccess: {

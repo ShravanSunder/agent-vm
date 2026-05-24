@@ -419,6 +419,27 @@ function assertOpInjectTemplateSafeReference(entry: OpInjectEntry): void {
 	);
 }
 
+// Batch fallback for the SDK path is op inject only. We deliberately do not
+// chain to a serial `op read` loop: with two-level fallback (SDK → op inject),
+// the secret-management package's resolveAll API stays safe to call
+// concurrently. Adding a serial-op-read tier re-introduces the "concurrent
+// `op read` failures with the same service account token" hazard at the
+// outer-call layer whenever multiple callers fall back at once.
+//
+// Concurrency contract — what's verified vs what's assumed:
+//   ✓ @1password/sdk's client.secrets.resolveAll is concurrency-safe on a
+//     single Client instance (SharedCore WASM, verified via deepwiki source
+//     analysis of 1Password/onepassword-sdk-js). Callers can invoke resolveAll
+//     concurrently from multiple async contexts.
+//   ? Two concurrent `op inject` subprocesses with the same service-account
+//     token: NOT verified. 1Password's published comment about concurrency
+//     hazards specifically called out `op read`; `op inject` was not
+//     discussed. In practice op inject is the SDK's fallback and is only
+//     reached when the SDK already failed, so two concurrent op-inject
+//     invocations require both SDKs to fail at the same instant — rare.
+//     If a future contributor sees auth errors from concurrent fallback
+//     paths, the next investigation step is to test concurrent op inject
+//     directly and (if unsafe) add an outer-layer mutex here.
 async function resolveAllSecretsWithOpCli(
 	serviceAccountToken: string,
 	refs: Record<string, OnePasswordSecretRef>,
@@ -428,39 +449,7 @@ async function resolveAllSecretsWithOpCli(
 		options?: ExecFileOptions,
 	) => Promise<ExecFileResult>,
 ): Promise<Record<string, string>> {
-	try {
-		return await resolveAllSecretsWithOpInject(serviceAccountToken, refs, exec);
-	} catch (error) {
-		const sanitizedInjectError = sanitizeOpInjectError(error);
-		try {
-			return await resolveAllSecretsWithSerialOpReads(serviceAccountToken, refs, exec);
-		} catch (readError) {
-			if (readError instanceof AggregateError) {
-				const readErrorChildren = readAggregateErrorChildren(readError);
-				throw createAggregateErrorWithCause({
-					cause: readError,
-					errors: [sanitizedInjectError, ...readErrorChildren],
-					message: readError.message,
-				});
-			}
-			throw createAggregateErrorWithCause({
-				cause: readError,
-				errors: [sanitizedInjectError, readError],
-				message: 'op inject and serial op read both failed.',
-			});
-		}
-	}
-}
-
-function sanitizeOpInjectError(error: unknown): Error {
-	if (error instanceof RedactedExecFileError) {
-		return new Error(`op inject failed before serial op read: ${error.safeDetail}`);
-	}
-	if (error instanceof OpInjectOutputError) {
-		return new Error(`op inject failed before serial op read: ${error.message}`);
-	}
-	const errorType = error instanceof Error ? error.name : typeof error;
-	return new Error(`op inject failed before serial op read: ${errorType}`);
+	return await resolveAllSecretsWithOpInject(serviceAccountToken, refs, exec);
 }
 
 function readAggregateErrorChildren(error: AggregateError): readonly unknown[] {
@@ -624,47 +613,6 @@ async function resolveAllSecretsWithOpInject(
 		redactErrorOutput: true,
 	});
 	return mapOpInjectOutput(entries, result.stdout);
-}
-
-async function resolveAllSecretsWithSerialOpReads(
-	serviceAccountToken: string,
-	refs: Record<string, OnePasswordSecretRef>,
-	exec: (
-		command: string,
-		args: readonly string[],
-		options?: ExecFileOptions,
-	) => Promise<ExecFileResult>,
-): Promise<Record<string, string>> {
-	const resolvedSecrets: Record<string, string> = {};
-	const failures: Error[] = [];
-
-	for (const [secretName, secretRef] of Object.entries(refs)) {
-		try {
-			// Sequential resolution avoids concurrent `op read` failures with the same service account token.
-			// oxlint-disable-next-line eslint/no-await-in-loop
-			resolvedSecrets[secretName] = await resolveSecretWithOpCli(
-				serviceAccountToken,
-				secretRef.ref,
-				exec,
-			);
-		} catch (error) {
-			failures.push(
-				new Error(
-					`Failed to resolve secret '${secretName}' from '${secretRef.ref}' via op read: ${formatUnknownError(error)}`,
-					{ cause: error },
-				),
-			);
-		}
-	}
-
-	if (failures.length > 0) {
-		throw new AggregateError(
-			failures,
-			`Failed to resolve ${String(failures.length)} secret(s) via op read.`,
-		);
-	}
-
-	return resolvedSecrets;
 }
 
 function formatResolveReferenceError(error: ResolveReferenceError): string {

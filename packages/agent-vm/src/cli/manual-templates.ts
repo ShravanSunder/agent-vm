@@ -139,12 +139,14 @@ session scope isolates per conversation.
 agent scope reuses a stable work mount for one agent identity.
 shared scope intentionally shares one work mount across participants.
 
-Tool VM lease identity follows scopeKey. TCP slots are capacity; they are not identity.
+Managed OpenClaw Tool VMs are agent-keyed: one compatible Tool VM per zone and OpenClaw agent id.
+OpenClaw scopeKey may describe a channel, thread, session, or subagent scope under that agent; it does not choose the Tool VM.
+TCP slots are capacity; they are not identity.
 GET lease reads are read-only. Cached Tool VM handles renew idle leases with POST renew, and active shell/file operations heartbeat per-use records so long commands are not reaped mid-run.
 
 Example:
-- shravan agent uses scope=agent and scopeKey=agent-shravan.
-- alevtina agent uses scope=agent and scopeKey=agent-alevtina.
+- shravan agent uses agentId=shravan and may receive scopeKey=agent:shravan:discord:channel:123.
+- alevtina agent uses agentId=alevtina and may receive scopeKey=agent:alevtina:subagent:child.
 - Each agent gets its own scoped sandbox mounted at /workspace in its Tool VM.
 - If both agents share one OpenClaw zone, unmapped agents use defaultToolVmProfile.
 - Configure agentToolVmProfiles when agents in one zone need different Tool VM images.
@@ -374,6 +376,8 @@ OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work; 
 workMountDir is a gateway VM path under /zone or /home/openclaw/.openclaw/state/sandboxes. The roots themselves are validation boundaries; leases must choose concrete child paths.
 hostWorkMountDir is the host realpath after controller validation.
 OpenClaw SDK compatibility note: OpenClaw may call the selected sandbox path workspaceDir. The agent-vm plugin translates that external SDK name to controller workMountDir.
+Controller startup binds the controller port before recovery, so a second controller exits before cleanup instead of killing a running gateway.
+Host recovery uses \`lsof\` to check TCP listener ownership before signaling persisted gateway or Tool VM pids.
 
 When gateway.zoneGit is configured:
 - Host zone files stay in gateway.zoneFilesDir.

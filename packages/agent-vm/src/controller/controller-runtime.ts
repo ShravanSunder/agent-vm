@@ -21,6 +21,7 @@ import {
 } from './controller-runtime-types.js';
 import type { PullDefaultRequest } from './git-pull-default-operations.js';
 import type { PushBranchRequest } from './git-push-operations.js';
+import { createMutableControllerRuntimeReadiness } from './http/controller-http-route-support.js';
 import { createControllerService } from './http/controller-http-routes.js';
 import { startControllerHttpServer } from './http/controller-http-server.js';
 import { createIdleReaper } from './leases/idle-reaper.js';
@@ -151,7 +152,15 @@ export async function startControllerRuntime(
 	const zoneGitCapabilityStore =
 		dependencies.zoneGitCapabilityStore ?? new ZoneGitCapabilityStore();
 	const zoneGitOperationLocks = dependencies.zoneGitOperationLocks ?? new ZoneGitOperationLocks();
+	const stateDirFor = (zoneId: string): string => {
+		const zone = options.systemConfig.zones.find((candidate) => candidate.id === zoneId);
+		if (!zone) {
+			throw new Error(`Unknown zone '${zoneId}' while resolving tool VM state directory.`);
+		}
+		return zone.gateway.stateDir;
+	};
 	const leaseManager = createLeaseManager({
+		controllerPort: options.systemConfig.host.controllerPort,
 		createManagedVm: async (leaseOptions) =>
 			await createManagedToolVm({
 				profile: leaseOptions.profile,
@@ -162,6 +171,12 @@ export async function startControllerRuntime(
 				secretResolver,
 			}),
 		now,
+		projectNamespace: options.systemConfig.host.projectNamespace,
+		...(dependencies.readProcessIdentity !== undefined
+			? { readProcessIdentity: dependencies.readProcessIdentity }
+			: {}),
+		stateDirFor,
+		systemConfigPath: options.systemConfig.systemConfigPath,
 		tcpPool,
 	});
 	const ttlForLease = (lease: { readonly scopeKey: string }): number =>
@@ -276,6 +291,7 @@ export async function startControllerRuntime(
 	});
 
 	const serverRef: { current?: { close(): Promise<void> } } = {};
+	const runtimeReadiness = createMutableControllerRuntimeReadiness('recovering');
 	const stopController = createStopControllerOperation({
 		clearReaperTimer,
 		closeControllerServer: async () => {
@@ -345,6 +361,7 @@ export async function startControllerRuntime(
 		leaseManager,
 		operations,
 		...(dependencies.readIdentityPem ? { readIdentityPem: dependencies.readIdentityPem } : {}),
+		runtimeReadiness: () => runtimeReadiness.get(),
 		secretResolver,
 		systemConfig: options.systemConfig,
 		ttlForLease,
@@ -355,9 +372,16 @@ export async function startControllerRuntime(
 			port: options.systemConfig.host.controllerPort,
 		});
 	});
-	await runTaskStep('Starting selected gateway zones', async () => {
-		await registry.startSelectedZones();
-	});
+	try {
+		await runTaskStep('Starting selected gateway zones', async () => {
+			await registry.startSelectedZones();
+		});
+		runtimeReadiness.set('ready');
+	} catch (error) {
+		runtimeReadiness.set('stopping');
+		await serverRef.current?.close();
+		throw error;
+	}
 
 	await reapToolVmLeases();
 

@@ -1,16 +1,39 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	createManagedExecProcessStub,
 	createManagedVmFsStub,
 } from '../../testing/managed-vm-test-helpers.js';
 import {
+	AgentLeaseCompatibilityConflictError,
 	createLeaseManager,
 	LeaseActiveUseConflictError,
-	LeaseScopeConflictError,
 } from './lease-manager.js';
 import { createTcpPool } from './tcp-pool.js';
+import { deleteToolVmRuntimeRecord, writeToolVmRuntimeRecord } from './tool-vm-runtime-record.js';
+
+// Runtime-record persistence is exercised by tool-vm-runtime-record.test.ts.
+// In lease-manager tests we only need the in-memory lease lifecycle behavior,
+// so default the write/delete to no-ops via injection. readProcessIdentity is
+// stubbed to a synthetic value so buildToolVmRuntimeRecord doesn't shell out
+// to `ps` against the fake pid.
+const defaultRuntimeRecordOptions = {
+	controllerPort: 18800,
+	deleteToolVmRuntimeRecord: vi.fn(async () => {}),
+	projectNamespace: 'claw-tests-a1b2c3d4',
+	readProcessIdentity: async () => ({
+		command: 'qemu-system-x86_64 -m 1G',
+		lstart: 'Fri May 22 10:00:00 2026',
+	}),
+	stateDirFor: (zoneId: string) => `/tmp/lease-manager-tests/${zoneId}`,
+	systemConfigPath: '/etc/agent-vm/system.json',
+	writeToolVmRuntimeRecord: vi.fn(async () => {}),
+};
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
 
@@ -29,12 +52,36 @@ function createManagedVmStub(id: string = 'tool-vm-1'): ManagedVm {
 		fs: createManagedVmFsStub(),
 		id,
 		setIngressRoutes: vi.fn(),
-		getHostPid: () => null,
+		getHostPid: () => 12345,
 		getVmInstance: vi.fn(),
 	};
 }
 
 describe('createLeaseManager', () => {
+	function createAgentLeaseOptions(
+		overrides: Partial<Parameters<ReturnType<typeof createLeaseManager>['createLease']>[0]> & {
+			readonly agentId?: string;
+		} = {},
+	): Parameters<ReturnType<typeof createLeaseManager>['createLease']>[0] & {
+		readonly agentId: string;
+	} {
+		return {
+			agentId: 'beta',
+			agentWorkspaceDir: '/host/agent-work',
+			profile: {
+				cpus: 1,
+				memory: '1G',
+				imageProfile: 'default',
+			},
+			profileId: 'standard',
+			scopeKey: 'agent:beta:discord:channel:123',
+			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+			hostWorkMountDir: '/host/sandbox-work',
+			zoneId: 'shravan',
+			...overrides,
+		};
+	}
+
 	it('creates, stores, and releases a lease while returning its tcp slot', async () => {
 		const closeMock = vi.fn(async () => {});
 		const enableSshMock = vi.fn(async () => ({
@@ -45,6 +92,7 @@ describe('createLeaseManager', () => {
 			user: 'sandbox',
 		}));
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
 				close: closeMock,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
@@ -53,7 +101,7 @@ describe('createLeaseManager', () => {
 				fs: createManagedVmFsStub(),
 				id: 'tool-vm-1',
 				setIngressRoutes: vi.fn(),
-				getHostPid: () => null,
+				getHostPid: () => 12345,
 				getVmInstance: vi.fn(),
 			})),
 			now: () => 123,
@@ -64,6 +112,7 @@ describe('createLeaseManager', () => {
 		});
 
 		const lease = await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
 			profile: {
 				cpus: 1,
@@ -80,6 +129,7 @@ describe('createLeaseManager', () => {
 		expect(lease.tcpSlot).toBe(0);
 		expect(leaseManager.renewLease(lease.id)?.lease).toMatchObject({
 			id: lease.id,
+			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
@@ -92,15 +142,137 @@ describe('createLeaseManager', () => {
 		expect(leaseManager.renewLease(lease.id)).toBeUndefined();
 	});
 
+	it('closes VM, releases tcpSlot, and clears the lease when writeToolVmRuntimeRecord throws', async () => {
+		const closeMock = vi.fn(async () => {});
+		const createManagedVm = vi.fn(async () => ({
+			close: closeMock,
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({
+				command: 'ssh ...',
+				host: '127.0.0.1',
+				identityFile: '/tmp/key',
+				port: 19000,
+				user: 'sandbox',
+			})),
+			exec: vi.fn(() => createManagedExecProcessStub()),
+			fs: createManagedVmFsStub(),
+			id: 'tool-vm-write-fails',
+			setIngressRoutes: vi.fn(),
+			getHostPid: () => 12345,
+			getVmInstance: vi.fn(),
+		}));
+		const tcpPool = createTcpPool({ basePort: 19000, size: 2 });
+		const writeFailure = new Error('disk full');
+		// Throw on first call (the lease we want to verify gets rolled back),
+		// succeed afterward so the subsequent reuse-after-failure createLease
+		// can verify the tcpSlot was released cleanly.
+		const writeToolVmRuntimeRecordMock = vi
+			.fn()
+			.mockImplementationOnce(async () => {
+				throw writeFailure;
+			})
+			.mockImplementation(async () => {});
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm,
+			now: () => 200,
+			tcpPool,
+			writeToolVmRuntimeRecord: writeToolVmRuntimeRecordMock,
+		});
+
+		await expect(
+			leaseManager.createLease({
+				agentId: 'main',
+				agentWorkspaceDir: '/home/openclaw/work',
+				profile: { cpus: 1, memory: '1G', imageProfile: 'default' },
+				profileId: 'standard',
+				scopeKey: 'agent:write-fails',
+				guestWorkdir: '/work',
+				hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/x/work',
+				zoneId: 'shravan',
+			}),
+		).rejects.toBe(writeFailure);
+
+		expect(writeToolVmRuntimeRecordMock).toHaveBeenCalledTimes(1);
+		// VM must be closed to avoid a leaked QEMU/krun process.
+		expect(closeMock).toHaveBeenCalledTimes(1);
+		// No in-memory lease left behind.
+		expect(leaseManager.listLeases()).toHaveLength(0);
+		// tcp slot must be reusable for a subsequent createLease.
+		const reusable = await leaseManager.createLease({
+			agentId: 'main',
+			agentWorkspaceDir: '/home/openclaw/work',
+			profile: { cpus: 1, memory: '1G', imageProfile: 'default' },
+			profileId: 'standard',
+			scopeKey: 'agent:reuse-after-failure',
+			guestWorkdir: '/work',
+			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/y/work',
+			zoneId: 'shravan',
+		});
+		expect(reusable.tcpSlot).toBe(0);
+	});
+
+	it('preserves the runtime record on disk when releaseLease vm.close() throws', async () => {
+		const closeMock = vi.fn(async () => {
+			throw new Error('close hung');
+		});
+		const createManagedVm = vi.fn(async () => ({
+			close: closeMock,
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({
+				command: 'ssh ...',
+				host: '127.0.0.1',
+				identityFile: '/tmp/key',
+				port: 19000,
+				user: 'sandbox',
+			})),
+			exec: vi.fn(() => createManagedExecProcessStub()),
+			fs: createManagedVmFsStub(),
+			id: 'tool-vm-close-fails',
+			setIngressRoutes: vi.fn(),
+			getHostPid: () => 12345,
+			getVmInstance: vi.fn(),
+		}));
+		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
+		const deleteToolVmRuntimeRecordMock = vi.fn(async () => {});
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm,
+			deleteToolVmRuntimeRecord: deleteToolVmRuntimeRecordMock,
+			now: () => 300,
+			tcpPool,
+		});
+
+		const lease = await leaseManager.createLease({
+			agentId: 'main',
+			agentWorkspaceDir: '/home/openclaw/work',
+			profile: { cpus: 1, memory: '1G', imageProfile: 'default' },
+			profileId: 'standard',
+			scopeKey: 'agent:close-fails',
+			guestWorkdir: '/work',
+			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/z/work',
+			zoneId: 'shravan',
+		});
+
+		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow(/close hung/u);
+
+		// Invariant: runtime record must NOT be deleted when vm.close fails so
+		// the next controller's Phase A cleanup can scope-fence + signal the
+		// orphan QEMU.
+		expect(deleteToolVmRuntimeRecordMock).not.toHaveBeenCalled();
+	});
+
 	it('reuses a live lease for the same zone scope profile and workspace', async () => {
 		let now = 100;
 		const createManagedVm = vi.fn(async () => createManagedVmStub());
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm,
 			now: () => now,
 			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -124,14 +296,140 @@ describe('createLeaseManager', () => {
 		expect(createManagedVm).toHaveBeenCalledTimes(1);
 	});
 
+	it('reuses the same live Tool VM for different scope keys under one agent', async () => {
+		const createManagedVm = vi.fn(async () => createManagedVmStub());
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm,
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+
+		const firstLease = await leaseManager.createLease(
+			createAgentLeaseOptions({
+				agentId: 'beta',
+				scopeKey: 'agent:beta:discord:channel:123',
+			}),
+		);
+		const secondLease = await leaseManager.createLease(
+			createAgentLeaseOptions({
+				agentId: 'beta',
+				scopeKey: 'agent:beta:discord:channel:999',
+			}),
+		);
+
+		expect(secondLease.id).toBe(firstLease.id);
+		expect(secondLease.agentId).toBe('beta');
+		expect(secondLease.scopeKey).toBe('agent:beta:discord:channel:123');
+		expect(createManagedVm).toHaveBeenCalledTimes(1);
+	});
+
+	it('creates separate Tool VMs for separate agents in the same zone', async () => {
+		const createManagedVm = vi.fn(async () =>
+			createManagedVmStub(`tool-vm-${createManagedVm.mock.calls.length}`),
+		);
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm,
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+
+		const betaLease = await leaseManager.createLease(
+			createAgentLeaseOptions({ agentId: 'beta', scopeKey: 'agent:beta:manual' }),
+		);
+		const lauraLease = await leaseManager.createLease(
+			createAgentLeaseOptions({ agentId: 'laura', scopeKey: 'agent:laura:manual' }),
+		);
+
+		expect(lauraLease.id).not.toBe(betaLease.id);
+		expect(leaseManager.listLeases()).toHaveLength(2);
+		expect(createManagedVm).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not put raw scopeKey into lease id', async () => {
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+
+		const lease = await leaseManager.createLease(
+			createAgentLeaseOptions({
+				agentId: 'beta',
+				scopeKey: 'agent:beta:discord:channel:123',
+			}),
+		);
+
+		expect(lease.id).toMatch(/^shravan-beta-\d+$/u);
+		expect(lease.id).not.toContain('agent:');
+		expect(lease.id).not.toContain('discord');
+	});
+
+	it('rejects an incompatible workspace request for an existing agent lease', async () => {
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+
+		await leaseManager.createLease(
+			createAgentLeaseOptions({
+				agentId: 'beta',
+				hostWorkMountDir: '/tmp/beta-workspace-a',
+			}),
+		);
+
+		await expect(
+			leaseManager.createLease(
+				createAgentLeaseOptions({
+					agentId: 'beta',
+					hostWorkMountDir: '/tmp/beta-workspace-b',
+					scopeKey: 'agent:beta:manual:different-scope',
+				}),
+			),
+		).rejects.toThrow(/existing Tool VM lease for agent 'beta' is not compatible/u);
+	});
+
+	it('rejects an incompatible profile request for an existing agent lease', async () => {
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
+			now: () => 100,
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
+		});
+
+		await leaseManager.createLease(
+			createAgentLeaseOptions({
+				agentId: 'beta',
+				profileId: 'standard',
+			}),
+		);
+
+		await expect(
+			leaseManager.createLease(
+				createAgentLeaseOptions({
+					agentId: 'beta',
+					profile: { cpus: 2, memory: '2G', imageProfile: 'large' },
+					profileId: 'large',
+					scopeKey: 'agent:beta:manual:different-scope',
+				}),
+			),
+		).rejects.toThrow(/existing Tool VM lease for agent 'beta' is not compatible/u);
+	});
+
 	it('peeks a lease without extending its idle timestamp', async () => {
 		let now = 100;
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => createManagedVmStub()),
 			now: () => now,
 			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -158,6 +456,7 @@ describe('createLeaseManager', () => {
 	it('rejects same-scope lease reuse when the workspace changes', async () => {
 		const closeMock = vi.fn(async () => {});
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
 				...createManagedVmStub(),
 				close: closeMock,
@@ -167,6 +466,7 @@ describe('createLeaseManager', () => {
 		});
 
 		await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -182,6 +482,7 @@ describe('createLeaseManager', () => {
 
 		await expect(
 			leaseManager.createLease({
+				agentId: 'main',
 				agentWorkspaceDir: '/host/agent-work',
 				profile: {
 					cpus: 1,
@@ -194,20 +495,20 @@ describe('createLeaseManager', () => {
 				hostWorkMountDir: '/host/other-sandbox-work',
 				zoneId: 'shravan',
 			}),
-		).rejects.toThrow(
-			"Tool VM lease scope conflict for zone 'shravan' scopeKey 'agent:main': existing hostWorkMountDir '/host/sandbox-work' does not match requested hostWorkMountDir '/host/other-sandbox-work'.",
-		);
+		).rejects.toThrow(/existing Tool VM lease for agent 'main' is not compatible/u);
 		expect(closeMock).not.toHaveBeenCalled();
 	});
 
 	it('rejects same-scope lease reuse when the profile changes', async () => {
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => createManagedVmStub()),
 			now: () => 100,
 			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
 		});
 
 		await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -223,6 +524,7 @@ describe('createLeaseManager', () => {
 
 		await expect(
 			leaseManager.createLease({
+				agentId: 'main',
 				agentWorkspaceDir: '/host/agent-work',
 				profile: {
 					cpus: 2,
@@ -235,17 +537,19 @@ describe('createLeaseManager', () => {
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
-		).rejects.toBeInstanceOf(LeaseScopeConflictError);
+		).rejects.toBeInstanceOf(AgentLeaseCompatibilityConflictError);
 	});
 
 	it('rejects same-scope lease reuse when the agent workspace changes', async () => {
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => createManagedVmStub()),
 			now: () => 100,
 			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
 		});
 
 		await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -261,6 +565,7 @@ describe('createLeaseManager', () => {
 
 		await expect(
 			leaseManager.createLease({
+				agentId: 'main',
 				agentWorkspaceDir: '/host/other-agent-work',
 				profile: {
 					cpus: 1,
@@ -273,7 +578,7 @@ describe('createLeaseManager', () => {
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
 			}),
-		).rejects.toBeInstanceOf(LeaseScopeConflictError);
+		).rejects.toBeInstanceOf(AgentLeaseCompatibilityConflictError);
 	});
 
 	it('does not reuse matching scope keys across zones', async () => {
@@ -281,11 +586,13 @@ describe('createLeaseManager', () => {
 			createManagedVmStub(`tool-vm-${createManagedVm.mock.calls.length}`),
 		);
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm,
 			now: () => 100,
 			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -323,11 +630,16 @@ describe('createLeaseManager', () => {
 			createManagedVm.mock.calls.length === 1 ? staleVm : freshVm,
 		);
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm,
 			now: () => createManagedVm.mock.calls.length * 100,
-			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+			// Pool size 2: when the stale VM's close fails, slot 0 is
+			// quarantined (host port may still be held). The replacement lease
+			// must get slot 1 — that's the correct, port-safe behavior.
+			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -347,17 +659,19 @@ describe('createLeaseManager', () => {
 
 			expect(secondLease.id).not.toBe(firstLease.id);
 			expect(secondLease.vm.id).toBe('fresh-vm');
+			// Slot 0 must be quarantined since the stale VM's close threw.
+			expect(secondLease.tcpSlot).toBe(1);
 			expect(staleClose).toHaveBeenCalled();
 			expect(createManagedVm).toHaveBeenCalledTimes(2);
 			const loggedMessages = stderrWrite.mock.calls.map(([message]) => String(message));
 			expect(
 				loggedMessages.some((message) =>
-					message.includes("liveness check failed for lease 'shravan-agent:main-100'"),
+					message.includes("liveness check failed for lease 'shravan-main-100'"),
 				),
 			).toBe(true);
 			expect(
 				loggedMessages.some((message) =>
-					message.includes("failed to close evicted lease 'shravan-agent:main-100'"),
+					message.includes("failed to close evicted lease 'shravan-main-100'"),
 				),
 			).toBe(true);
 		} finally {
@@ -380,11 +694,13 @@ describe('createLeaseManager', () => {
 			return createManagedVmStub();
 		});
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm,
 			now: () => 100,
 			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -430,11 +746,13 @@ describe('createLeaseManager', () => {
 			),
 		};
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => vm),
 			now: () => 100,
 			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -473,6 +791,7 @@ describe('createLeaseManager', () => {
 			releaseClose = resolve;
 		});
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
 				...createManagedVmStub(),
 				close: vi.fn(async () => {
@@ -484,6 +803,7 @@ describe('createLeaseManager', () => {
 			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
 		});
 		const lease = await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -515,6 +835,7 @@ describe('createLeaseManager', () => {
 		let now = 100;
 		const closeMock = vi.fn(async () => {});
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
 				...createManagedVmStub(),
 				close: closeMock,
@@ -523,6 +844,7 @@ describe('createLeaseManager', () => {
 			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -545,8 +867,9 @@ describe('createLeaseManager', () => {
 		expect(leaseManager.renewLease(lease.id)?.lease).toMatchObject({ id: lease.id });
 	});
 
-	it('listLeases returns all active leases', async () => {
+	it('listLeases returns all active leases across agents', async () => {
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
 				close: vi.fn(async () => {}),
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
@@ -561,7 +884,7 @@ describe('createLeaseManager', () => {
 				fs: createManagedVmFsStub(),
 				id: 'tool-vm-1',
 				setIngressRoutes: vi.fn(),
-				getHostPid: () => null,
+				getHostPid: () => 12345,
 				getVmInstance: vi.fn(),
 			})),
 			now: () => 100,
@@ -569,6 +892,7 @@ describe('createLeaseManager', () => {
 		});
 
 		const lease1 = await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -582,6 +906,7 @@ describe('createLeaseManager', () => {
 			zoneId: 'shravan',
 		});
 		const lease2 = await leaseManager.createLease({
+			agentId: 'laura',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -603,6 +928,7 @@ describe('createLeaseManager', () => {
 
 	it('releaseLease is a no-op for non-existent lease ids', async () => {
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(),
 			now: () => 100,
 			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
@@ -620,6 +946,7 @@ describe('createLeaseManager', () => {
 		});
 		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
 				close: closeMock,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
@@ -634,7 +961,7 @@ describe('createLeaseManager', () => {
 				fs: createManagedVmFsStub(),
 				id: 'tool-vm-close-fail',
 				setIngressRoutes: vi.fn(),
-				getHostPid: () => null,
+				getHostPid: () => 12345,
 				getVmInstance: vi.fn(),
 			})),
 			now: () => 100,
@@ -642,6 +969,7 @@ describe('createLeaseManager', () => {
 		});
 
 		const lease = await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			profile: {
 				cpus: 1,
@@ -657,12 +985,17 @@ describe('createLeaseManager', () => {
 
 		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow('close failed');
 		expect(leaseManager.renewLease(lease.id)).toBeUndefined();
-		expect(tcpPool.allocate()).toBe(0);
+		// When close fails the QEMU may still hold the host port. The slot
+		// must be quarantined — NOT re-allocatable until proven safe — to
+		// prevent a same-process port collision.
+		expect(tcpPool.isQuarantined(0)).toBe(true);
+		expect(() => tcpPool.allocate()).toThrow('No TCP slots available');
 	});
 
 	it('releases the tcp slot when VM creation fails', async () => {
 		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => {
 				throw new Error('vm create failed');
 			}),
@@ -672,6 +1005,7 @@ describe('createLeaseManager', () => {
 
 		await expect(
 			leaseManager.createLease({
+				agentId: 'main',
 				agentWorkspaceDir: '/host/agent-work',
 				profile: {
 					cpus: 1,
@@ -691,11 +1025,13 @@ describe('createLeaseManager', () => {
 
 	it('stores effective idle TTLs and rejects reuse with a mismatched requested TTL', async () => {
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => createManagedVmStub()),
 			now: () => 100,
 			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
 		});
 		const request = {
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			effectiveIdleTtlMs: 60_000,
 			profile: {
@@ -720,13 +1056,14 @@ describe('createLeaseManager', () => {
 				...request,
 				effectiveIdleTtlMs: 120_000,
 			}),
-		).rejects.toBeInstanceOf(LeaseScopeConflictError);
+		).rejects.toBeInstanceOf(AgentLeaseCompatibilityConflictError);
 	});
 
 	it('tracks active uses, heartbeats, tombstones, and forced release cleanup', async () => {
 		let now = 1_000;
 		const closeMock = vi.fn(async () => {});
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
 				...createManagedVmStub(),
 				close: closeMock,
@@ -740,6 +1077,7 @@ describe('createLeaseManager', () => {
 			},
 		});
 		const lease = await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			effectiveIdleTtlMs: 60_000,
 			profile: {
@@ -799,6 +1137,7 @@ describe('createLeaseManager', () => {
 		let now = 1_000;
 		const closeMock = vi.fn(async () => {});
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
 				...createManagedVmStub(),
 				close: closeMock,
@@ -812,6 +1151,7 @@ describe('createLeaseManager', () => {
 			},
 		});
 		const lease = await leaseManager.createLease({
+			agentId: 'main',
 			agentWorkspaceDir: '/host/agent-work',
 			effectiveIdleTtlMs: 60_000,
 			profile: {
@@ -855,6 +1195,7 @@ describe('createLeaseManager', () => {
 		const closeMock = vi.fn(async () => {});
 		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
 				close: closeMock,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
@@ -865,7 +1206,7 @@ describe('createLeaseManager', () => {
 				fs: createManagedVmFsStub(),
 				id: 'tool-vm-ssh-fail',
 				setIngressRoutes: vi.fn(),
-				getHostPid: () => null,
+				getHostPid: () => 12345,
 				getVmInstance: vi.fn(),
 			})),
 			now: () => 100,
@@ -874,6 +1215,7 @@ describe('createLeaseManager', () => {
 
 		await expect(
 			leaseManager.createLease({
+				agentId: 'main',
 				agentWorkspaceDir: '/host/agent-work',
 				profile: {
 					cpus: 1,
@@ -899,6 +1241,7 @@ describe('createLeaseManager', () => {
 		});
 		const tcpPool = createTcpPool({ basePort: 19000, size: 1 });
 		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => ({
 				close: closeMock,
 				enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
@@ -909,7 +1252,7 @@ describe('createLeaseManager', () => {
 				fs: createManagedVmFsStub(),
 				id: 'tool-vm-ssh-fail-close-fail',
 				setIngressRoutes: vi.fn(),
-				getHostPid: () => null,
+				getHostPid: () => 12345,
 				getVmInstance: vi.fn(),
 			})),
 			now: () => 100,
@@ -919,6 +1262,7 @@ describe('createLeaseManager', () => {
 		try {
 			await expect(
 				leaseManager.createLease({
+					agentId: 'main',
 					agentWorkspaceDir: '/host/agent-work',
 					profile: {
 						cpus: 1,
@@ -934,7 +1278,10 @@ describe('createLeaseManager', () => {
 			).rejects.toThrow('ssh setup failed');
 
 			expect(closeMock).toHaveBeenCalledTimes(1);
-			expect(tcpPool.allocate()).toBe(0);
+			// VM created but close failed → slot must be quarantined, not freed,
+			// because the QEMU may still hold the host port.
+			expect(tcpPool.isQuarantined(0)).toBe(true);
+			expect(() => tcpPool.allocate()).toThrow('No TCP slots available');
 			const loggedMessages = stderrWrite.mock.calls.map(([message]) => String(message));
 			expect(
 				loggedMessages.some((message) =>
@@ -946,5 +1293,119 @@ describe('createLeaseManager', () => {
 		} finally {
 			stderrWrite.mockRestore();
 		}
+	});
+});
+
+describe('createLeaseManager — runtime record disk integration', () => {
+	const createdDirectories: string[] = [];
+	afterEach(() => {
+		for (const directoryPath of createdDirectories.splice(0)) {
+			fs.rmSync(directoryPath, { force: true, recursive: true });
+		}
+	});
+
+	function createTempStateDir(): string {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-lease-mgr-fs-'));
+		createdDirectories.push(dir);
+		return dir;
+	}
+
+	function makeIntegrationManagedVm(): ManagedVm & { closeMock: ReturnType<typeof vi.fn> } {
+		const closeMock = vi.fn(async () => {});
+		return {
+			close: closeMock,
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({
+				command: 'ssh ...',
+				host: '127.0.0.1',
+				identityFile: '/tmp/key',
+				port: 19000,
+				user: 'sandbox',
+			})),
+			exec: vi.fn(() => createManagedExecProcessStub()),
+			fs: createManagedVmFsStub(),
+			id: 'tool-vm-integration',
+			setIngressRoutes: vi.fn(),
+			getHostPid: () => 31337,
+			getVmInstance: vi.fn(),
+			closeMock,
+		} as ManagedVm & { closeMock: ReturnType<typeof vi.fn> };
+	}
+
+	const integrationLeaseRequest = {
+		agentId: 'main',
+		agentWorkspaceDir: '/home/openclaw/work',
+		profile: { cpus: 1, memory: '1G', imageProfile: 'default' as const },
+		profileId: 'standard' as const,
+		scopeKey: 'agent:integration',
+		guestWorkdir: '/work',
+		hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/integration/work',
+		zoneId: 'shravan',
+	};
+
+	it('createLease writes a real file to $stateDir/tool-leases/ and releaseLease deletes it on success', async () => {
+		const stateDir = createTempStateDir();
+		const vm = makeIntegrationManagedVm();
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm: vi.fn(async () => vm),
+			createRuntimeRecordId: () => '01890f00-0000-7000-8000-000000000001',
+			// override the no-op defaults with the real fs writers
+			deleteToolVmRuntimeRecord,
+			writeToolVmRuntimeRecord,
+			stateDirFor: () => stateDir,
+			now: () => 1_700_000_000_000,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+
+		const lease = await leaseManager.createLease(integrationLeaseRequest);
+		const recordPath = path.join(stateDir, 'tool-leases', `${lease.runtimeRecordId}.json`);
+		expect(fs.existsSync(recordPath)).toBe(true);
+		const parsed = JSON.parse(fs.readFileSync(recordPath, 'utf8')) as Record<string, unknown>;
+		expect(parsed).toMatchObject({
+			agentId: 'main',
+			configPath: '/etc/agent-vm/system.json',
+			controllerPort: 18800,
+			gateway: {
+				sessionLabel: 'claw-tests-a1b2c3d4:shravan:gateway',
+			},
+			leaseId: lease.id,
+			projectNamespace: 'claw-tests-a1b2c3d4',
+			qemuPid: 31337,
+			recordId: '01890f00-0000-7000-8000-000000000001',
+			schemaVersion: 1,
+			tcpSlot: 0,
+			vmId: 'tool-vm-integration',
+			zoneId: 'shravan',
+		});
+		expect(parsed).not.toHaveProperty('scopeKey');
+
+		await leaseManager.releaseLease(lease.id);
+		expect(fs.existsSync(recordPath)).toBe(false);
+	});
+
+	it('releaseLease preserves the record on disk when vm.close() throws', async () => {
+		const stateDir = createTempStateDir();
+		const vm = makeIntegrationManagedVm();
+		vm.closeMock.mockRejectedValueOnce(new Error('close hung'));
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createManagedVm: vi.fn(async () => vm),
+			createRuntimeRecordId: () => '01890f00-0000-7000-8000-000000000002',
+			deleteToolVmRuntimeRecord,
+			writeToolVmRuntimeRecord,
+			stateDirFor: () => stateDir,
+			now: () => 1_700_000_000_000,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+
+		const lease = await leaseManager.createLease(integrationLeaseRequest);
+		const recordPath = path.join(stateDir, 'tool-leases', `${lease.runtimeRecordId}.json`);
+		expect(fs.existsSync(recordPath)).toBe(true);
+
+		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow(/close hung/u);
+		// Critical invariant: record must remain so the next controller startup's
+		// Phase A cleanup can scope-fence + signal the orphan QEMU.
+		expect(fs.existsSync(recordPath)).toBe(true);
 	});
 });

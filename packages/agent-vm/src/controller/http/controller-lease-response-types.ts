@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const controllerLeasePeekResponseSchema = z.object({
+	agentId: z.string(),
 	createdAt: z.number(),
 	lastUsedAt: z.number(),
 	leaseId: z.string(),

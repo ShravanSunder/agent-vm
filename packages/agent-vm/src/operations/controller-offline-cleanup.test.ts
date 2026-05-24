@@ -202,6 +202,12 @@ describe('runControllerOfflineCleanup', () => {
 					cleanedUp: true,
 					killedPid: null,
 					stateDir: '/state/beta',
+					toolVmCleanup: {
+						cleanedCount: 0,
+						killedPids: [],
+						quarantinedCount: 0,
+						warnings: [],
+					},
 					zoneId: 'beta',
 				},
 			],
@@ -234,6 +240,12 @@ describe('runControllerOfflineCleanup', () => {
 					cleanedUp: true,
 					killedPid: 48282,
 					stateDir: '/state/beta',
+					toolVmCleanup: {
+						cleanedCount: 0,
+						killedPids: [],
+						quarantinedCount: 0,
+						warnings: [],
+					},
 					zoneId: 'beta',
 				},
 			],
@@ -241,6 +253,12 @@ describe('runControllerOfflineCleanup', () => {
 	});
 
 	it('cleans only the requested zone from the selected installation config', async () => {
+		const cleanupOrphanedToolVmsIfPresent = vi.fn(async () => ({
+			cleanedCount: 0,
+			killedPids: [],
+			quarantinedCount: 0,
+			warnings: [],
+		}));
 		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => ({
 			cleanedUp: true,
 			killedPid: 48282,
@@ -255,6 +273,7 @@ describe('runControllerOfflineCleanup', () => {
 				{
 					assertControllerUnavailableForOfflineCleanup: async () => {},
 					cleanupOrphanedGatewayIfPresent,
+					cleanupOrphanedToolVmsIfPresent,
 				},
 			),
 		).resolves.toEqual({
@@ -263,24 +282,46 @@ describe('runControllerOfflineCleanup', () => {
 					cleanedUp: true,
 					killedPid: 48282,
 					stateDir: '/state/beta',
+					toolVmCleanup: {
+						cleanedCount: 0,
+						killedPids: [],
+						quarantinedCount: 0,
+						warnings: [],
+					},
 					zoneId: 'beta',
 				},
 			],
 		});
 
+		expect(cleanupOrphanedToolVmsIfPresent).toHaveBeenCalledWith({
+			expectedConfigPath: '/deployments/shravan-claw-beta/config/system.jsonc',
+			expectedControllerPort: 18900,
+			mode: 'offline-cleanup',
+			projectNamespace: 'shravan-claw-beta-25319b68',
+			stateDir: '/state/beta',
+			tcpBasePort: 19000,
+			zoneId: 'beta',
+		});
 		expect(cleanupOrphanedGatewayIfPresent).toHaveBeenCalledWith({
-			legacyRecordDefaults: {
-				configPath: '/deployments/shravan-claw-beta/config/system.jsonc',
-				controllerPort: 18900,
-			},
+			expectedConfigPath: '/deployments/shravan-claw-beta/config/system.jsonc',
+			expectedControllerPort: 18900,
 			mode: 'offline-cleanup',
 			projectNamespace: 'shravan-claw-beta-25319b68',
 			stateDir: '/state/beta',
 			zoneId: 'beta',
 		});
+		expect(cleanupOrphanedToolVmsIfPresent.mock.invocationCallOrder[0]).toBeLessThan(
+			cleanupOrphanedGatewayIfPresent.mock.invocationCallOrder[0] ?? 0,
+		);
 	});
 
 	it('preserves cleanup warnings in the per-zone result', async () => {
+		const cleanupOrphanedToolVmsIfPresent = vi.fn(async () => ({
+			cleanedCount: 1,
+			killedPids: [123],
+			quarantinedCount: 0,
+			warnings: ['tool vm warning'],
+		}));
 		const cleanupOrphanedGatewayIfPresent = vi.fn(async () => ({
 			cleanedUp: false,
 			cleanupWarning: 'failed to remove stale runtime record',
@@ -296,6 +337,7 @@ describe('runControllerOfflineCleanup', () => {
 				{
 					assertControllerUnavailableForOfflineCleanup: async () => {},
 					cleanupOrphanedGatewayIfPresent,
+					cleanupOrphanedToolVmsIfPresent,
 				},
 			),
 		).resolves.toEqual({
@@ -305,6 +347,12 @@ describe('runControllerOfflineCleanup', () => {
 					cleanupWarning: 'failed to remove stale runtime record',
 					killedPid: 48282,
 					stateDir: '/state/beta',
+					toolVmCleanup: {
+						cleanedCount: 1,
+						killedPids: [123],
+						quarantinedCount: 0,
+						warnings: ['tool vm warning'],
+					},
 					zoneId: 'beta',
 				},
 			],

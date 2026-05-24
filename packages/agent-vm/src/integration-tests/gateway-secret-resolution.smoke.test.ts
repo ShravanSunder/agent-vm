@@ -225,6 +225,10 @@ describe('smoke: gateway startup secret resolution', () => {
 							distro: 'alpine',
 						}) satisfies BuildConfig,
 					loadGatewayLifecycle: () => lifecycle,
+					readProcessIdentity: async () => ({
+						command: 'qemu-system-aarch64 -m 2G',
+						lstart: 'Fri May 22 10:00:00 2026',
+					}),
 					writeGatewayRuntimeRecord: async () => {},
 				},
 			);

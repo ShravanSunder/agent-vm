@@ -19,6 +19,7 @@ describe('createControllerClient', () => {
 
 				const responseBody = url.endsWith('/lease/lease-123/peek')
 					? {
+							agentId: 'main',
 							createdAt: 1,
 							lastUsedAt: 1,
 							leaseId: 'lease-123',
@@ -55,7 +56,7 @@ describe('createControllerClient', () => {
 		});
 		await controllerClient.destroyZone('shravan', true);
 		await controllerClient.upgradeZone('shravan');
-		await controllerClient.peekLease('lease-123');
+		const leasePeek = await controllerClient.peekLease('lease-123');
 
 		expect(requests).toEqual([
 			{ method: 'GET', url: 'http://127.0.0.1:18800/controller-status' },
@@ -84,6 +85,7 @@ describe('createControllerClient', () => {
 			{ method: 'POST', url: 'http://127.0.0.1:18800/zones/shravan/upgrade' },
 			{ method: 'GET', url: 'http://127.0.0.1:18800/lease/lease-123/peek' },
 		]);
+		expect(leasePeek.agentId).toBe('main');
 	});
 
 	it('surfaces a readable error when a controller route returns non-json failure text', async () => {

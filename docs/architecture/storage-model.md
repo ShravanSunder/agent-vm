@@ -24,10 +24,12 @@ field             scope                 durable?          backup?   contains
 cacheDir          system                yes               no        rebuildable image/plugin/tool
                                                                        cache
 
-runtimeDir        system                task-lifetime     no        active worker artifacts,
-                                                                       zone runtime logs,
-                                                                       gitdirs, repo metadata,
-                                                                       recovery exports
+runtimeDir        system                mixed: worker     no        active worker artifacts,
+                                        per-task                       zone runtime logs,
+                                        ephemeral;                     gitdirs, repo metadata,
+                                        OpenClaw zone-                 recovery exports
+                                        persistent (see
+                                        below)
 
 stateDir          per-zone              yes               yes       identity, auth profiles,
                                                                        effective config,
@@ -43,6 +45,49 @@ backupDir         per-zone output       artifact          no        encrypted ba
 Worker zones do not have `zoneFilesDir` in the target schema. Worker repo files
 live inside the VM under `/work/repos/<repoId>`, while worker gitdirs live under
 `runtimeDir`.
+
+### runtimeDir is two lifecycles, not one
+
+`runtimeDir`'s "task-lifetime" durability covers only the worker subtree.
+The OpenClaw zone subtree has different lifecycle rules.
+
+```text
+subtree                                             lifecycle              wiped by
+─────────────────────────────────────────           ─────────────────      ────────────────────────
+runtimeDir/worker-tasks/<zone>/<task>/              per-task               postStopGateway runs
+  work/, gitdirs/, repo-metadata/                                          fs.rm(taskRuntimeRoot)
+                                                                           on every task end
+
+runtimeDir/zones/<zone>/logs/                       per-zone               destroy-zone --purge
+                                                                           (orchestrator creates,
+                                                                           openclaw appends across
+                                                                           every gateway restart)
+
+runtimeDir/zones/<zone>/zone-git/                   per-zone, preserved    NOT wiped by
+                                                    by destroy-zone's       destroy-zone --purge
+                                                    selective deletion      (see two reasons
+                                                    (see note below)        below)
+```
+
+Note that `zone-git/` is preserved **implicitly**, not by explicit policy.
+`destroy-zone --purge` enumerates specific subtrees to delete (`worker-tasks/`,
+`zones/<zone>/logs/`, and `zoneFilesDir`). It does NOT use a broad
+`fs.rm(runtimeDir/zones/<zone>/)` that would also remove `zone-git/`. Any
+future change to `destroy-zone.ts` that broadens the rm scope must
+explicitly exclude `zone-git/` — the two reasons below are why.
+
+1. **Data loss prevention.** `zone-git/zone-files.git` is the authoritative
+   git store for committed work in this zone. Backups capture
+   `zoneFilesDir` (the worktree) but not the git history under
+   `runtimeDir/zones/<zone>/zone-git/`. Any commits that have not been
+   pushed to a remote live only in `zone-git/`; wiping it loses that
+   history irrecoverably.
+2. **Pointer integrity.** `zoneFilesDir/.git` is a `gitdir:` pointer file
+   (not a directory) referencing `/agent-vm/zone-git/zone-files.git`
+   inside the gateway VM, which is realfs-mounted to
+   `runtimeDir/zones/<zone>/zone-git/zone-files.git`. Backed-up
+   `zoneFilesDir` carries this pointer with it; wiping the target leaves
+   any future restore with a dangling `.git` reference.
 
 ## Lease Path Vocabulary
 
@@ -125,6 +170,38 @@ durable state
   It is not part of `runtimeDir`; the shared word "runtime" does not imply the
   same lifecycle.
 
+  Note: `tool-leases/<recordId>.json` is a durable recovery record for an
+  OpenClaw Tool VM. `recordId` is a controller-generated UUID. The record keeps
+  `agentId`, `leaseId`, `vmId`, `qemuPid`, deployment fences, TCP slot, and
+  session/process evidence. It never persists OpenClaw `scopeKey`.
+
+  On controller startup, Phase A scans this directory and applies the following
+  recovery discipline:
+
+  - **Five-fence deployment check** — `configPath`, `controllerPort`,
+    `projectNamespace`, `zoneId`, `sessionLabel` must all match the running
+    deployment. Any mismatch in `in-process-recovery` mode warns and skips the
+    record without signaling or mutating it; in `offline-cleanup` mode the
+    cleanup throws.
+
+  - **Host ownership proof** — recovery uses host-side `lsof` to check TCP
+    listener ownership, then verifies the recorded pid and process identity
+    before signaling QEMU/krun. PID reuse during the read-record → signal
+    window is detected and refused.
+
+  - **Hard-cut schema handling** — records whose JSON fails Zod parse are
+    warned and skipped by startup recovery without mutation. There is no
+    compatibility or rename path for this development format.
+
+  Lifecycle invariants enforced by the lease manager:
+  - `createLease` writes the record after `storeLease`. On write failure
+    the lease is unstored and the VM is closed before throwing.
+  - `evictLease` and `releaseLease` delete the record **only** when
+    `vm.close()` succeeds. On close failure the record is preserved AND the
+    tcp slot is moved into a per-process quarantine set (not reusable until
+    next controller restart) so the orphan QEMU's host port cannot collide
+    with a fresh lease on the same slot.
+
 rebuildable cache
   Owner: controller/runtime tooling
   Host: <cacheDir>
@@ -191,6 +268,7 @@ host stateDir
     agents/<agentId>/agent/auth-profiles.json
     sandboxes/<agentId>/work/
     gateway-runtime.json
+    tool-leases/<recordId>.json
 
 host cacheDir
   ~/.agent-vm/cache/

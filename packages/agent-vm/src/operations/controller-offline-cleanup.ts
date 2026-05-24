@@ -1,4 +1,8 @@
 import type { LoadedSystemConfig } from '../config/system-config.js';
+import {
+	cleanupOrphanedToolVmsIfPresent,
+	type ToolVmCleanupResult,
+} from '../controller/leases/tool-vm-recovery.js';
 import { cleanupOrphanedGatewayIfPresent } from '../gateway/gateway-recovery.js';
 
 export interface ControllerOfflineCleanupResult {
@@ -7,6 +11,7 @@ export interface ControllerOfflineCleanupResult {
 		readonly cleanupWarning?: string;
 		readonly killedPid: number | null;
 		readonly stateDir: string;
+		readonly toolVmCleanup: ToolVmCleanupResult;
 		readonly zoneId: string;
 	}[];
 }
@@ -58,6 +63,7 @@ async function assertControllerUnavailableForOfflineCleanup(controllerPort: numb
 interface ControllerOfflineCleanupDependencies {
 	readonly assertControllerUnavailableForOfflineCleanup?: (controllerPort: number) => Promise<void>;
 	readonly cleanupOrphanedGatewayIfPresent?: typeof cleanupOrphanedGatewayIfPresent;
+	readonly cleanupOrphanedToolVmsIfPresent?: typeof cleanupOrphanedToolVmsIfPresent;
 }
 
 export async function runControllerOfflineCleanup(
@@ -82,13 +88,23 @@ export async function runControllerOfflineCleanup(
 		)(options.systemConfig.host.controllerPort);
 	}
 
-	const cleanup = dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent;
+	const cleanupToolVms =
+		dependencies.cleanupOrphanedToolVmsIfPresent ?? cleanupOrphanedToolVmsIfPresent;
+	const cleanupGateway =
+		dependencies.cleanupOrphanedGatewayIfPresent ?? cleanupOrphanedGatewayIfPresent;
 	const results: ControllerOfflineCleanupResult['results'][number][] = [];
-	const result = await cleanup({
-		legacyRecordDefaults: {
-			configPath: options.systemConfig.systemConfigPath,
-			controllerPort: options.systemConfig.host.controllerPort,
-		},
+	const toolVmCleanup = await cleanupToolVms({
+		expectedConfigPath: options.systemConfig.systemConfigPath,
+		expectedControllerPort: options.systemConfig.host.controllerPort,
+		mode: 'offline-cleanup',
+		projectNamespace: options.systemConfig.host.projectNamespace,
+		stateDir: zone.gateway.stateDir,
+		tcpBasePort: options.systemConfig.tcpPool.basePort,
+		zoneId: zone.id,
+	});
+	const result = await cleanupGateway({
+		expectedConfigPath: options.systemConfig.systemConfigPath,
+		expectedControllerPort: options.systemConfig.host.controllerPort,
 		mode: 'offline-cleanup',
 		projectNamespace: options.systemConfig.host.projectNamespace,
 		stateDir: zone.gateway.stateDir,
@@ -97,6 +113,7 @@ export async function runControllerOfflineCleanup(
 	results.push({
 		...result,
 		stateDir: zone.gateway.stateDir,
+		toolVmCleanup,
 		zoneId: zone.id,
 	});
 

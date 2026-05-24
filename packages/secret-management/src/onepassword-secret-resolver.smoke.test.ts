@@ -265,45 +265,17 @@ function expectOpInjectBatchCall(options: {
 	expect(opInjectCall.templateSecretReferences).toEqual(options.config.secretReferences);
 }
 
-function expectSerialOpReadFallbackCalls(options: {
-	readonly config: OnePasswordSmokeConfig;
-	readonly opCalls: readonly RecordedOpCall[];
-}): void {
-	expect(options.opCalls).toHaveLength(options.config.secretReferences.length + 1);
-	expectOpInjectBatchCall({
-		config: options.config,
-		opCall: options.opCalls[0],
-	});
-	for (const [index, secretReference] of options.config.secretReferences.entries()) {
-		const opReadCall = expectSafeRecordedOpCall(options.opCalls[index + 1], options.config);
-		expect(opReadCall.command).toBe('op');
-		expect(opReadCall.args).toEqual(['read', secretReference]);
-		expect(opReadCall.inputLength).toBe(0);
-		expect(opReadCall.templateSecretReferences).toEqual([]);
-	}
-}
-
 describeOnePasswordSecretResolverSmoke('smoke: 1Password op inject fallback', () => {
-	it('resolves live refs through one op inject batch and verifies serial read fallback', async () => {
+	it('resolves live refs through one op inject batch when the SDK fails', async () => {
 		const config = readOnePasswordSmokeConfig();
 		const refs = createSmokeSecretRefs(config.secretReferences);
 		const batchOpCalls: RecordedOpCall[] = [];
-		const serialFallbackOpCalls: RecordedOpCall[] = [];
 		const stderrWriteSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const batchResolver = await createSecretResolver(
 			{ serviceAccountToken: config.serviceAccountToken },
 			{
 				createClient: async () => forcedFailingSdkClient,
 				execFileAsync: createRecordingExecFileAsync(batchOpCalls),
-			},
-		);
-		const serialFallbackResolver = await createSecretResolver(
-			{ serviceAccountToken: config.serviceAccountToken },
-			{
-				createClient: async () => forcedFailingSdkClient,
-				execFileAsync: createRecordingExecFileAsync(serialFallbackOpCalls, {
-					failOpInjectBeforeExec: true,
-				}),
 			},
 		);
 
@@ -315,16 +287,31 @@ describeOnePasswordSecretResolverSmoke('smoke: 1Password op inject fallback', ()
 				config,
 				opCall: batchOpCalls[0],
 			});
-
-			const fallbackResolvedSecrets = await serialFallbackResolver.resolveAll(refs);
-			expectResolvedSmokeSecrets(fallbackResolvedSecrets, refs);
-			expectSerialOpReadFallbackCalls({
-				config,
-				opCalls: serialFallbackOpCalls,
-			});
 			expect(stderrWriteSpy).not.toHaveBeenCalled();
 		} finally {
 			stderrWriteSpy.mockRestore();
 		}
+	});
+
+	it('throws when both the SDK and op inject fail (no further fallback)', async () => {
+		const config = readOnePasswordSmokeConfig();
+		const refs = createSmokeSecretRefs(config.secretReferences);
+		const opCalls: RecordedOpCall[] = [];
+		const failingResolver = await createSecretResolver(
+			{ serviceAccountToken: config.serviceAccountToken },
+			{
+				createClient: async () => forcedFailingSdkClient,
+				execFileAsync: createRecordingExecFileAsync(opCalls, {
+					failOpInjectBeforeExec: true,
+				}),
+			},
+		);
+
+		await expect(failingResolver.resolveAll(refs)).rejects.toThrow(
+			/1Password SDK resolveAll and op CLI fallback both failed/u,
+		);
+		// op inject was attempted; serial op read fallback is intentionally absent.
+		const opReadCalls = opCalls.filter((call) => call.args[0] === 'read');
+		expect(opReadCalls).toEqual([]);
 	});
 });

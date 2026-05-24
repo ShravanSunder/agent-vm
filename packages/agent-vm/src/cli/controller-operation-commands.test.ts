@@ -345,6 +345,7 @@ function createControllerClientStub(): ReturnType<
 		getControllerStatus: async () => ({}),
 		getZoneLogs: async () => ({}),
 		peekLease: async () => ({
+			agentId: 'main',
 			createdAt: 1,
 			lastUsedAt: 1,
 			leaseId: 'lease-123',
@@ -487,6 +488,7 @@ describe('runControllerOperationCommand', () => {
 					getControllerStatus: async () => ({}),
 					getZoneLogs: async () => ({}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -642,6 +644,7 @@ printf '{"ok":true}\\n'
 					getControllerStatus: async () => ({}),
 					getZoneLogs: async () => ({}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -742,6 +745,7 @@ printf '{"ok":true}\\n'
 					getControllerStatus: async () => ({}),
 					getZoneLogs: async () => ({}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -824,6 +828,7 @@ printf '{"ok":true}\\n'
 					getControllerStatus: async () => ({}),
 					getZoneLogs: async () => ({}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -1099,6 +1104,7 @@ printf '{"ok":true}\\n'
 					getControllerStatus: async () => ({}),
 					getZoneLogs: async () => ({}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
@@ -1194,6 +1200,7 @@ printf '{"ok":true}\\n'
 					getControllerStatus: async () => ({}),
 					getZoneLogs: async () => ({}),
 					peekLease: async () => ({
+						agentId: 'main',
 						createdAt: 1,
 						lastUsedAt: 1,
 						leaseId: 'lease-123',
