@@ -619,6 +619,10 @@ export function createControllerApp(options: {
 	if (options.openClawRuntimeStatusStore) {
 		const openClawRuntimeStatusStore = options.openClawRuntimeStatusStore;
 		app.post('/zones/:zoneId/openclaw-runtime-status', async (context) => {
+			const notReadyResponse = rejectIfRuntimeNotReady();
+			if (notReadyResponse) {
+				return notReadyResponse;
+			}
 			const zoneId = context.req.param('zoneId');
 			if (options.zoneIds && !options.zoneIds.has(zoneId)) {
 				return context.json({ error: `Unknown zone '${zoneId}'` }, 404);

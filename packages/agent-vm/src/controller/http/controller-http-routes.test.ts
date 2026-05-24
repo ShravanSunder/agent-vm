@@ -297,6 +297,7 @@ describe('createControllerApp', () => {
 		['POST', '/zones/shravan/tasks/task-1/pull-default'],
 		['POST', '/zones/shravan/enable-ssh'],
 		['POST', '/zones/shravan/execute-command'],
+		['POST', '/zones/shravan/openclaw-runtime-status'],
 	] as const)(
 		'returns not-ready for %s %s while runtime is recovering',
 		async (method, routePath) => {
@@ -338,6 +339,7 @@ describe('createControllerApp', () => {
 					upgradeZone: vi.fn(async () => ({})),
 					verifyZoneGitPushToken: vi.fn(() => true),
 				},
+				openClawRuntimeStatusStore: new OpenClawRuntimeStatusStore(),
 			});
 
 			const response = await app.request(routePath, {
