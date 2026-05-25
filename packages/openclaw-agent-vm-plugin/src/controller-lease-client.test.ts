@@ -223,7 +223,12 @@ describe('createLeaseClient', () => {
 			},
 		);
 
-		expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
+		const requestBody = requests[0]?.init?.body;
+		expect(typeof requestBody).toBe('string');
+		if (typeof requestBody !== 'string') {
+			throw new Error('Expected heartbeat request body to be serialized JSON');
+		}
+		expect(JSON.parse(requestBody)).toEqual({
 			report: {
 				observedAtMs: 1_000,
 				phase: 'failed',

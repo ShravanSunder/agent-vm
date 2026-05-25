@@ -357,7 +357,9 @@ function createSandboxBackendHandle(options: {
 							...(shellParams.stdin !== undefined ? { stdin: shellParams.stdin } : {}),
 						}),
 					operationName: 'fs-bridge',
-					report: activeUseHandle.report,
+					report: (report) => {
+						activeUseHandle.report(report);
+					},
 					timeoutMs: 30_000,
 				}),
 		);
@@ -481,7 +483,9 @@ function createSandboxBackendHandle(options: {
 								ssh: options.lease.ssh,
 							}),
 						operationName: 'runShellCommand',
-						report: activeUseHandle.report,
+						report: (report) => {
+							activeUseHandle.report(report);
+						},
 						timeoutMs: 30_000,
 					}),
 			),
