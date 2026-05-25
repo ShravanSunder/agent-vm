@@ -14,7 +14,7 @@
 
 Beta already tested the target deployment shape.
 
-- Deployment repo: `/Users/shravansunder/Documents/dev/project-dev/shravan-claw-beta`
+- Deployment repo: `../shravan-claw-beta` from the sibling worktree root
 - Commit: `ed74d81 fix: mediate beta stdio mcp secrets`
 - Package: `@agent-vm/agent-vm` `0.0.81`
 - Config result:
@@ -212,8 +212,8 @@ Do not add duplicate tests for already-covered behavior.
 ## Task 4: Deployment Follow-Up
 
 **Files:**
-- Optional modify: `/Users/shravansunder/Documents/dev/project-dev/shravan-claw/config/gateways/sunfam/mcp.config.jsonc`
-- Optional modify: `/Users/shravansunder/Documents/dev/project-dev/shravan-claw/config/system.jsonc`
+- Optional modify: `../shravan-claw/config/gateways/sunfam/mcp.config.jsonc`
+- Optional modify: `../shravan-claw/config/system.jsonc`
 
 - [ ] **Step 1: Compare `shravan-claw` with beta**
 
@@ -221,7 +221,7 @@ Run:
 
 ```bash
 rg -n 'perplexity|firecrawl|rawEnvSecrets|AGENT_VM_MCP_PERPLEXITY|AGENT_VM_MCP_FIRECRAWL' \
-  /Users/shravansunder/Documents/dev/project-dev/shravan-claw/config
+  ../shravan-claw/config
 ```
 
 - [ ] **Step 2: Mirror beta only if sunfam still uses raw env**
@@ -246,7 +246,7 @@ Remove generated MCP env names from `gateway.rawEnvSecrets` if present.
 
 - [ ] **Step 3: Validate deployment config**
 
-Run from `/Users/shravansunder/Documents/dev/project-dev/shravan-claw`:
+Run from `../shravan-claw`:
 
 ```bash
 pnpm validate
