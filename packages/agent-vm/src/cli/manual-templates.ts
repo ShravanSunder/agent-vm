@@ -267,6 +267,8 @@ MCP Portal is a scoped tool facade over deployment-owned upstream MCP servers. M
 
 	MCP JSON Schema is canonical. Zod is derived for validation and helper code. Invalid call arguments and schemas that cannot be converted return structured errors without calling upstream. Tool VMs can use the mcp-portal helper package but do not receive upstream MCP credentials.
 
+	Prefer http-mediation for MCP provider API keys, including stdio providers, when the provider sends the env value in outbound HTTP headers or other Gondolin-supported request locations. The MCP server sees a placeholder env value; Gondolin swaps it for the real secret only for configured hosts. Use raw env injection only as an explicit exception for providers that cannot operate with placeholders.
+
 	Run agent-vm validate --mcp-live after editing MCP providers or MCP Portal profiles. Static validate checks schema and materialization. Live validate starts each configured MCP provider, runs tools/list, and reports namespace, transport, phase, and hints for failures.
 
 	Read-only/destructive annotations are trusted only for configured namespaces. Untrusted upstream tools require approval unless explicitly allowlisted by policy. Managed OpenClaw uses the in-process before_tool_call approval boundary.
