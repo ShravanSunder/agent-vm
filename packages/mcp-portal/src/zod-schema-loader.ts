@@ -4,8 +4,15 @@ import type { JsonObject, JsonValue } from './json-schema.js';
 
 export interface InputValidationIssue {
 	readonly code: string;
+	readonly expected?: string;
+	readonly keys?: readonly string[];
 	readonly message: string;
 	readonly path: readonly (number | string)[];
+	readonly received?: {
+		readonly preview?: string;
+		readonly type: string;
+	};
+	readonly values?: readonly JsonValue[];
 }
 
 export interface InputValidationError {
@@ -97,13 +104,123 @@ function unavailableError(
 	};
 }
 
-function toValidationIssue(issue: z.core.$ZodIssue): InputValidationIssue {
-	return {
+function valueAtPath(value: unknown, path: readonly (number | string)[]): unknown {
+	let currentValue = value;
+	for (const pathPart of path) {
+		if (typeof pathPart === 'number') {
+			if (!Array.isArray(currentValue)) {
+				return undefined;
+			}
+			currentValue = currentValue[pathPart];
+			continue;
+		}
+		if (!isJsonObjectValue(currentValue)) {
+			return undefined;
+		}
+		currentValue = currentValue[pathPart];
+	}
+	return currentValue;
+}
+
+function isJsonObjectValue(value: unknown): value is Readonly<Record<string, unknown>> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function jsonTypeName(value: unknown): string {
+	if (value === undefined) {
+		return 'undefined';
+	}
+	if (value === null) {
+		return 'null';
+	}
+	if (Array.isArray(value)) {
+		return 'array';
+	}
+	return typeof value;
+}
+
+function jsonValuePreview(value: unknown): string | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (typeof value === 'string') {
+		return value.length > 80 ? `${value.slice(0, 77)}...` : value;
+	}
+	if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
+		return String(value);
+	}
+	const serialized = JSON.stringify(value);
+	if (serialized === undefined) {
+		return undefined;
+	}
+	return serialized.length > 80 ? `${serialized.slice(0, 77)}...` : serialized;
+}
+
+function stringArrayFromIssue(
+	issue: z.core.$ZodIssue,
+	propertyName: string,
+): readonly string[] | undefined {
+	const value = issueRecord(issue)[propertyName];
+	if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) {
+		return undefined;
+	}
+	return value;
+}
+
+function jsonValuesFromIssue(
+	issue: z.core.$ZodIssue,
+	propertyName: string,
+): readonly JsonValue[] | undefined {
+	const value = issueRecord(issue)[propertyName];
+	if (!Array.isArray(value) || !value.every((entry): entry is JsonValue => isJsonValue(entry))) {
+		return undefined;
+	}
+	return value;
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+	return (
+		value === null ||
+		typeof value === 'string' ||
+		typeof value === 'number' ||
+		typeof value === 'boolean' ||
+		(Array.isArray(value) && value.every((entry) => isJsonValue(entry))) ||
+		(isJsonObjectValue(value) && Object.values(value).every((entry) => isJsonValue(entry)))
+	);
+}
+
+function expectedFromIssue(issue: z.core.$ZodIssue): string | undefined {
+	const expected = issueRecord(issue).expected;
+	return typeof expected === 'string' ? expected : undefined;
+}
+
+function issueRecord(issue: z.core.$ZodIssue): Readonly<Record<string, unknown>> {
+	return issue as unknown as Readonly<Record<string, unknown>>;
+}
+
+function toValidationIssue(issue: z.core.$ZodIssue, inputValue: unknown): InputValidationIssue {
+	const path = issue.path.map((pathPart) =>
+		typeof pathPart === 'symbol' ? String(pathPart) : pathPart,
+	);
+	const receivedValue = valueAtPath(inputValue, path);
+	const preview = jsonValuePreview(receivedValue);
+	const result: InputValidationIssue = {
 		code: issue.code,
 		message: issue.message,
-		path: issue.path.map((pathPart) =>
-			typeof pathPart === 'symbol' ? String(pathPart) : pathPart,
-		),
+		path,
+		received: {
+			type: jsonTypeName(receivedValue),
+			...(preview === undefined ? {} : { preview }),
+		},
+	};
+	const expected = expectedFromIssue(issue);
+	const keys = stringArrayFromIssue(issue, 'keys');
+	const values = jsonValuesFromIssue(issue, 'values');
+	return {
+		...result,
+		...(expected === undefined ? {} : { expected }),
+		...(keys === undefined ? {} : { keys }),
+		...(values === undefined ? {} : { values }),
 	};
 }
 
@@ -130,7 +247,7 @@ export function buildZodValidatorFromJsonSchema(jsonSchema: JsonObject): BuiltZo
 				return {
 					error: {
 						kind: 'input_validation',
-						issues: parsed.error.issues.map((issue) => toValidationIssue(issue)),
+						issues: parsed.error.issues.map((issue) => toValidationIssue(issue, value)),
 					},
 					ok: false,
 				};

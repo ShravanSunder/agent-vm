@@ -1,6 +1,9 @@
 import type { PortalToolRecord } from '../catalog-types.js';
 import type { JsonObject } from '../json-schema.js';
-import { buildZodValidatorFromJsonSchema } from '../zod-schema-loader.js';
+import {
+	buildZodValidatorFromJsonSchema,
+	type InputValidationIssue,
+} from '../zod-schema-loader.js';
 
 export function validatePortalToolArguments(
 	tool: PortalToolRecord,
@@ -10,11 +13,7 @@ export function validatePortalToolArguments(
 	| {
 			readonly error:
 				| {
-						readonly issues: readonly {
-							readonly code: string;
-							readonly message: string;
-							readonly path: readonly (number | string)[];
-						}[];
+						readonly issues: readonly InputValidationIssue[];
 						readonly kind: 'input_validation';
 						readonly namespace: string;
 						readonly toolName: string;

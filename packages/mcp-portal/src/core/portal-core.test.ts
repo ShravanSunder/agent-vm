@@ -333,6 +333,155 @@ describe('portal core event stream', () => {
 		await core.close();
 	});
 
+	it('surfaces input validation issues in failed core item errors', async () => {
+		const callUpstreamTool = vi.fn(async () => ({ content: [{ text: 'created', type: 'text' }] }));
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval: allowApproval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool,
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(async () => batchTools),
+			},
+			upstreamNamespaces: ['linear'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'cli-operator',
+		});
+
+		const result = await collectPortalCoreResult(
+			core.callStream({
+				input: {
+					calls: [
+						{
+							arguments: {},
+							id: 'bad-call',
+							namespace: 'linear',
+							toolName: 'create_issue',
+						},
+					],
+				},
+				scope,
+				toolName: 'mcp_portal_call',
+			}),
+		);
+
+		expect(result.items).toEqual([
+			{
+				error: {
+					code: 'input_validation',
+					issueCount: 1,
+					issues: [
+						expect.objectContaining({
+							code: expect.any(String),
+							expected: 'string',
+							message: expect.any(String),
+							path: ['title'],
+							received: { type: 'undefined' },
+						}),
+					],
+					message: expect.stringContaining('title: expected string; received undefined'),
+					namespace: 'linear',
+					toolName: 'create_issue',
+				},
+				requestId: 'bad-call',
+				status: 'failed',
+			},
+		]);
+		expect(result.items[0]?.status === 'failed' ? result.items[0].error.message : '').not.toBe(
+			'[object Object]',
+		);
+		expect(callUpstreamTool).not.toHaveBeenCalled();
+
+		await core.close();
+	});
+
+	it('caps agent-facing validation issues while reporting truncation', async () => {
+		const manyRequiredFieldsTool = {
+			inputSchema: {
+				properties: {
+					alpha: { type: 'string' },
+					bravo: { type: 'string' },
+					charlie: { type: 'string' },
+					delta: { type: 'string' },
+					echo: { type: 'string' },
+					foxtrot: { type: 'string' },
+				},
+				required: ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot'],
+				type: 'object',
+			},
+			name: 'many_required_fields',
+		} satisfies Tool;
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval: allowApproval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool: vi.fn(),
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(async () => [manyRequiredFieldsTool]),
+			},
+			upstreamNamespaces: ['linear'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'cli-operator',
+		});
+
+		const result = await collectPortalCoreResult(
+			core.callStream({
+				input: {
+					calls: [
+						{
+							arguments: {},
+							id: 'bad-call',
+							namespace: 'linear',
+							toolName: 'many_required_fields',
+						},
+					],
+				},
+				scope,
+				toolName: 'mcp_portal_call',
+			}),
+		);
+
+		expect(result.items).toEqual([
+			{
+				error: expect.objectContaining({
+					code: 'input_validation',
+					issueCount: 6,
+					issues: expect.arrayContaining([
+						expect.objectContaining({ path: ['alpha'] }),
+						expect.objectContaining({ path: ['echo'] }),
+					]),
+					issuesTruncated: 1,
+					message: expect.stringContaining('1 more validation issue(s) omitted'),
+				}),
+				requestId: 'bad-call',
+				status: 'failed',
+			},
+		]);
+		if (result.items[0]?.status !== 'failed') {
+			throw new Error('expected failed item');
+		}
+		expect(result.items[0].error.issues).toHaveLength(5);
+		expect(result.items[0].error.message).not.toContain('foxtrot');
+
+		await core.close();
+	});
+
 	it('forwards real upstream progress events while the call is in flight', async () => {
 		const callUpstreamTool = vi.fn(async (call) => {
 			call.onEvent?.({
