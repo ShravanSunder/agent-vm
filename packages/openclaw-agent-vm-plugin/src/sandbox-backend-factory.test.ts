@@ -135,6 +135,22 @@ function createActiveUseLeaseClientMethods(): Pick<
 	};
 }
 
+function createFactoryParamsForAgent(agentId: string): {
+	readonly agentWorkspaceDir: string;
+	readonly cfg: ReturnType<typeof gondolinSandboxConfig>;
+	readonly scopeKey: string;
+	readonly sessionKey: string;
+	readonly workspaceDir: string;
+} {
+	return {
+		agentWorkspaceDir: `/zone/agents/${agentId}`,
+		cfg: gondolinSandboxConfig(),
+		scopeKey: `agent:${agentId}:discord:channel:123`,
+		sessionKey: `agent:${agentId}:discord:channel:123`,
+		workspaceDir: `/zone/agents/${agentId}`,
+	};
+}
+
 function gondolinSandboxConfig(
 	overrides: Partial<{
 		readonly backend: unknown;
@@ -417,6 +433,85 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		expect(firstHandle).toBe(secondHandle);
 		expect(requestLease).toHaveBeenCalledTimes(1);
+	});
+
+	it('drops a cached handle when the cached SSH probe fails before reuse', async () => {
+		let leaseCounter = 0;
+		const requestLease = vi.fn(async () => {
+			leaseCounter += 1;
+			return createLeaseResponse(`01890f00-0000-7000-8000-00000000000${String(leaseCounter)}`);
+		});
+		const runRemoteShellScript = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('kex reset'))
+			.mockResolvedValue({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) });
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+					requestLease,
+				}),
+				runRemoteShellScript,
+			},
+		);
+
+		const firstHandle = await factory(createFactoryParamsForAgent('beta'));
+		const secondHandle = await factory(createFactoryParamsForAgent('beta'));
+
+		expect(secondHandle).not.toBe(firstHandle);
+		expect(requestLease).toHaveBeenCalledTimes(2);
+	});
+
+	it('drops a cached handle after an SSH command failure inside an operation', async () => {
+		const requestLease = vi
+			.fn()
+			.mockResolvedValueOnce(createLeaseResponse('01890f00-0000-7000-8000-000000000001'))
+			.mockResolvedValueOnce(createLeaseResponse('01890f00-0000-7000-8000-000000000002'));
+		const releaseLease = vi.fn(async () => {});
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease,
+					renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(async () => {
+					throw new Error('ssh hung');
+				}),
+			},
+		);
+
+		const handle = await factory(createFactoryParamsForAgent('beta'));
+		await expect(handle.runShellCommand({ script: 'pwd' })).rejects.toThrow(/ssh hung/u);
+		await factory(createFactoryParamsForAgent('beta'));
+
+		expect(releaseLease).toHaveBeenCalledWith('01890f00-0000-7000-8000-000000000001', {
+			force: true,
+		});
+		expect(requestLease).toHaveBeenCalledTimes(2);
 	});
 
 	it('does not fork the plugin cache for same-agent scope and host path drift', async () => {
