@@ -397,7 +397,9 @@ describe('createGondolinSandboxBackendFactory', () => {
 	});
 
 	it('normalizes /workspace subpaths before requesting a controller lease', async () => {
-		const requestLease = vi.fn(async () => createLeaseResponse('lease-workspace-subpath'));
+		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
+			createLeaseResponse('lease-workspace-subpath'),
+		);
 
 		const factory = createGondolinSandboxBackendFactory(
 			{
