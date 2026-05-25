@@ -1,6 +1,8 @@
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
+import { translateRuntimePath } from '@agent-vm/gateway-interface';
+
 import type { SystemConfig } from '../../config/system-config.js';
 import {
 	OPENCLAW_ZONE_FILES_GUEST_ROOT,
@@ -9,11 +11,11 @@ import {
 	type ZoneGitToolVmMount,
 } from '../zone-git/zone-git-paths.js';
 import { pathContainsParentTraversal } from './lease-path-helpers.js';
+import {
+	OPENCLAW_STATE_SANDBOXES_VM_ROOT,
+	createOpenClawGatewayLeasePathMapping,
+} from './openclaw-gateway-lease-path-mapping.js';
 
-// These guest roots are mounted by the OpenClaw gateway image. Lease callers
-// must speak in gateway paths; the controller owns translation to host paths.
-const OPENCLAW_STATE_VM_ROOT = '/home/openclaw/.openclaw/state';
-const OPENCLAW_STATE_SANDBOXES_VM_ROOT = `${OPENCLAW_STATE_VM_ROOT}/sandboxes`;
 const OPENCLAW_ZONE_FILES_VM_ROOT = OPENCLAW_ZONE_FILES_GUEST_ROOT;
 export const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
 
@@ -31,11 +33,22 @@ export type LeaseWorkMountValidationErrorKind =
 	| 'work-mount-not-absolute'
 	| 'work-mount-parent-traversal';
 
+interface LeaseWorkMountValidationErrorOptions extends ErrorOptions {
+	readonly guidance?: string;
+}
+
 export class LeaseWorkMountValidationError extends Error {
+	readonly guidance?: string;
 	readonly kind: LeaseWorkMountValidationErrorKind;
 
-	constructor(kind: LeaseWorkMountValidationErrorKind, message: string, options?: ErrorOptions) {
+	constructor(
+		kind: LeaseWorkMountValidationErrorKind,
+		message: string,
+		options?: LeaseWorkMountValidationErrorOptions,
+	) {
 		super(message, options);
+		this.name = 'LeaseWorkMountValidationError';
+		this.guidance = options?.guidance;
 		this.kind = kind;
 	}
 }
@@ -56,18 +69,6 @@ function normalizeGuestWorkMountDir(workMountDir: string): string {
 function isPathWithin(candidatePath: string, rootPath: string): boolean {
 	const relativePath = path.relative(rootPath, candidatePath);
 	return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
-}
-
-function mapGuestPathToHostPath(options: {
-	readonly guestRoot: string;
-	readonly hostRoot: string;
-	readonly normalizedWorkMountDir: string;
-}): string | null {
-	if (!options.normalizedWorkMountDir.startsWith(`${options.guestRoot}/`)) {
-		return null;
-	}
-	const relativePath = path.posix.relative(options.guestRoot, options.normalizedWorkMountDir);
-	return path.join(options.hostRoot, relativePath);
 }
 
 async function realpathIfDirectory(directoryPath: string): Promise<string> {
@@ -180,32 +181,38 @@ export async function resolveLeaseWorkMountDir(options: {
 		);
 	}
 	const normalizedWorkMountDir = normalizeGuestWorkMountDir(options.workMountDir);
-	if (
-		normalizedWorkMountDir === OPENCLAW_STATE_SANDBOXES_VM_ROOT ||
-		normalizedWorkMountDir === OPENCLAW_ZONE_FILES_VM_ROOT
-	) {
-		throw new LeaseWorkMountValidationError(
-			'root-mount-target',
-			`Lease workMountDir '${options.workMountDir}' must name a child path under ${OPENCLAW_ZONE_FILES_VM_ROOT} or ${OPENCLAW_STATE_SANDBOXES_VM_ROOT}, not the root itself.`,
-		);
-	}
-
-	const hostSandboxRoot = path.join(options.zone.gateway.stateDir, 'sandboxes');
-	const hostWorkMountDir =
-		mapGuestPathToHostPath({
-			guestRoot: OPENCLAW_STATE_SANDBOXES_VM_ROOT,
-			hostRoot: hostSandboxRoot,
-			normalizedWorkMountDir,
-		}) ??
-		mapGuestPathToHostPath({
-			guestRoot: OPENCLAW_ZONE_FILES_VM_ROOT,
-			hostRoot: options.zone.gateway.zoneFilesDir,
-			normalizedWorkMountDir,
+	const translation = translateRuntimePath({
+		inputPath: options.workMountDir,
+		mapping: createOpenClawGatewayLeasePathMapping({
+			stateDir: options.zone.gateway.stateDir,
+			zoneFilesDir: options.zone.gateway.zoneFilesDir,
+		}),
+		purpose: 'leaseMount',
+	});
+	if (!translation.ok) {
+		const kind =
+			translation.error.code === 'root-path-not-allowed'
+				? 'root-mount-target'
+				: 'outside-allowed-roots';
+		const message =
+			translation.error.code === 'root-path-not-allowed'
+				? `Lease workMountDir '${options.workMountDir}' must name a child path under ${OPENCLAW_ZONE_FILES_VM_ROOT} or ${OPENCLAW_STATE_SANDBOXES_VM_ROOT}, not the root itself.`
+				: translation.error.message;
+		throw new LeaseWorkMountValidationError(kind, message, {
+			guidance: translation.error.retryGuidance,
 		});
-	if (!hostWorkMountDir) {
+	}
+	if (translation.value.inputNamespace === 'host') {
 		throw new LeaseWorkMountValidationError(
 			'outside-allowed-roots',
 			`Lease workMountDir '${options.workMountDir}' must be under ${OPENCLAW_STATE_SANDBOXES_VM_ROOT} or ${OPENCLAW_ZONE_FILES_VM_ROOT}.`,
+		);
+	}
+	const hostWorkMountDir = translation.value.hostPath;
+	if (hostWorkMountDir === undefined) {
+		throw new LeaseWorkMountValidationError(
+			'outside-allowed-roots',
+			`Lease workMountDir '${options.workMountDir}' must resolve to a host-backed path.`,
 		);
 	}
 	const realHostWorkMountDir = await validateResolvedLeaseWorkMountDir({
