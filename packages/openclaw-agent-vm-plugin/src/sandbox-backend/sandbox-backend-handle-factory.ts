@@ -19,7 +19,6 @@ import {
 import {
 	findOpenClawGondolinSandboxMismatch,
 	resolveOpenClawAgentIdFromSessionKey,
-	snapshotOpenClawGondolinSandboxConfig,
 	type OpenClawGondolinSandboxSnapshot,
 } from '../openclaw-gondolin-contract.js';
 import {
@@ -30,20 +29,8 @@ import {
 } from './sandbox-backend-contract.js';
 import { buildShellScriptWithArgs } from './sandbox-shell-script.js';
 
-function agentLeaseCacheKey(params: {
-	readonly agentId: string;
-	readonly agentWorkspaceDir: string;
-	readonly profileId: string;
-	readonly workspaceDir: string;
-	readonly zoneId: string;
-}): string {
-	return [
-		params.zoneId,
-		params.agentId,
-		params.profileId,
-		params.agentWorkspaceDir,
-		params.workspaceDir,
-	].join('\0');
+function agentLeaseCacheKey(params: { readonly agentId: string; readonly zoneId: string }): string {
+	return [params.zoneId, params.agentId].join('\0');
 }
 
 function formatControllerLeaseRequestError(error: ControllerLeaseRequestError): string {
@@ -64,7 +51,9 @@ function writeSandboxBackendLog(message: string): void {
 }
 
 function shouldRefreshCachedLease(error: unknown): boolean {
-	return error instanceof ControllerLeaseRequestError && error.status === 404;
+	return (
+		error instanceof ControllerLeaseRequestError && (error.status === 404 || error.status === 410)
+	);
 }
 
 function isCleanupNotFound(error: unknown): boolean {
@@ -114,9 +103,7 @@ function resolveLeaseRequestAgentId(sessionKey: string): string {
 }
 
 function assertPluginLeaseContract(params: {
-	readonly agentId: string;
 	readonly cfg: OpenClawGondolinSandboxSnapshot;
-	readonly scopeKey: string;
 }): void {
 	const mismatch = findOpenClawGondolinSandboxMismatch(params.cfg);
 	if (mismatch) {
@@ -151,15 +138,10 @@ export function createGondolinSandboxBackendFactory(
 		const profileId = options.profileId ?? 'standard';
 		const agentId = resolveLeaseRequestAgentId(params.sessionKey);
 		assertPluginLeaseContract({
-			agentId,
 			cfg: params.cfg,
-			scopeKey: params.scopeKey,
 		});
 		const cacheKey = agentLeaseCacheKey({
 			agentId,
-			agentWorkspaceDir: params.agentWorkspaceDir,
-			profileId,
-			workspaceDir: params.workspaceDir,
 			zoneId: options.zoneId,
 		});
 		const leaseClient =
@@ -173,7 +155,7 @@ export function createGondolinSandboxBackendFactory(
 				return cachedEntry.handle;
 			} catch (error) {
 				writeSandboxBackendLog(
-					`lease renew failed for zone '${options.zoneId}' scope '${params.scopeKey}' lease '${cachedEntry.lease.leaseId}': ${formatUnknownError(error)}`,
+					`lease renew failed for zone '${options.zoneId}' agent '${agentId}' lease '${cachedEntry.lease.leaseId}': ${formatUnknownError(error)}`,
 				);
 				if (!shouldRefreshCachedLease(error)) {
 					throw error;
@@ -192,8 +174,6 @@ export function createGondolinSandboxBackendFactory(
 			agentId,
 			agentWorkspaceDir: params.agentWorkspaceDir,
 			profileId,
-			sandbox: snapshotOpenClawGondolinSandboxConfig(params.cfg),
-			scopeKey: params.scopeKey,
 			sessionKey: params.sessionKey,
 			workMountDir: params.workspaceDir,
 			zoneId: options.zoneId,

@@ -92,6 +92,7 @@ describe('Tool VM SSH lease types', () => {
 			isToolVmLeasePeek({
 				agentId: 'main',
 				createdAt: 1,
+				idleTtlMs: 6_000_000,
 				lastUsedAt: 2,
 				leaseId: '01890f00-0000-7000-8000-000000000000',
 				profileId: 'standard',

@@ -18,6 +18,7 @@ export interface ToolVmSshLease extends VmSshLease<'ssh-sandbox'> {
 export interface ToolVmLeasePeek extends VmCapabilityLease<'ssh-sandbox'> {
 	readonly agentId: string;
 	readonly createdAt: number;
+	readonly idleTtlMs: number;
 	readonly lastUsedAt: number;
 	readonly profileId: string;
 	readonly ssh: VmSshPublicEndpoint;
@@ -51,6 +52,7 @@ export function isToolVmLeasePeek(value: unknown): value is ToolVmLeasePeek {
 		isToolVmLeaseId(Reflect.get(record, 'leaseId')) &&
 		typeof Reflect.get(record, 'agentId') === 'string' &&
 		typeof Reflect.get(record, 'createdAt') === 'number' &&
+		typeof Reflect.get(record, 'idleTtlMs') === 'number' &&
 		typeof Reflect.get(record, 'lastUsedAt') === 'number' &&
 		typeof Reflect.get(record, 'profileId') === 'string' &&
 		isVmSshPublicEndpoint(Reflect.get(record, 'ssh')) &&

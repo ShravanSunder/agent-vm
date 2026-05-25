@@ -1,6 +1,10 @@
 import { Readable } from 'node:stream';
 
-import type { ToolVmLeasePeek, ToolVmSshLease } from '@agent-vm/gateway-interface';
+import {
+	isToolVmLeaseId,
+	type ToolVmLeasePeek,
+	type ToolVmSshLease,
+} from '@agent-vm/gateway-interface';
 import type {
 	ManagedExecProcess,
 	ManagedExecResult,
@@ -13,12 +17,26 @@ import { createLeaseClient } from './controller-lease-client.js';
 import { createGondolinSandboxBackendFactory } from './sandbox-backend-factory.js';
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
+const testLeaseIdByLabel = new Map<string, string>();
+
+function testToolVmLeaseId(label: string): string {
+	if (isToolVmLeaseId(label)) {
+		return label;
+	}
+	const existingLeaseId = testLeaseIdByLabel.get(label);
+	if (existingLeaseId) {
+		return existingLeaseId;
+	}
+	const leaseId = `01890f00-0000-7000-8000-${String(testLeaseIdByLabel.size + 1).padStart(12, '0')}`;
+	testLeaseIdByLabel.set(label, leaseId);
+	return leaseId;
+}
 
 function createLeaseResponse(leaseId: string): ToolVmSshLease {
 	return {
 		agentId: 'main',
-		leaseId,
-		scopeKey: 'agent:main',
+		idleTtlMs: 6_000_000,
+		leaseId: testToolVmLeaseId(leaseId),
 		ssh: {
 			host: 'tool-0.vm.host',
 			identityPem: 'pem',
@@ -36,10 +54,10 @@ function createLeasePeekResponse(leaseId: string): ToolVmLeasePeek {
 	return {
 		agentId: 'main',
 		createdAt: 1,
+		idleTtlMs: 6_000_000,
 		lastUsedAt: 1,
-		leaseId,
+		leaseId: testToolVmLeaseId(leaseId),
 		profileId: 'standard',
-		scopeKey: 'agent:main',
 		ssh: { host: 'tool-0.vm.host', port: 22, user: 'root' },
 		tcpSlot: 0,
 		transport: 'ssh-sandbox' as const,
@@ -128,11 +146,10 @@ describe('gondolin controller integration', () => {
 			agentWorkspaceDir: '/zone',
 			createdAt: 1,
 			effectiveIdleTtlMs: 300_000,
-			id: 'lease-123',
+			id: testToolVmLeaseId('lease-123'),
 			lastUsedAt: 1,
 			profileId: 'standard',
-			runtimeRecordId: 'lease-123',
-			scopeKey: 'agent:main',
+			runtimeRecordId: testToolVmLeaseId('lease-123'),
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			sshAccess: {
 				command: 'ssh ...',
@@ -246,7 +263,7 @@ describe('gondolin controller integration', () => {
 
 		expect(execSpec.argv).toEqual(['ssh', 'tool-0.vm.host', 'ls -la']);
 		expect(execSpec.stdinMode).toBe('pipe-open');
-		expect(backend.runtimeId).toBe('lease-123');
+		expect(backend.runtimeId).toBe(testToolVmLeaseId('lease-123'));
 		expect(backend.configLabel).toBe('http://controller.vm.host:18800 (shravan)');
 		expect(backend.configLabelKind).toBe('VM');
 		await backend.finalizeExec?.({
@@ -348,8 +365,8 @@ describe('gondolin controller integration', () => {
 			workspaceDir: '/home/openclaw/work',
 		});
 
-		expect(first.runtimeId).toBe('lease-1');
-		expect(second.runtimeId).toBe('lease-2');
+		expect(first.runtimeId).toBe(testToolVmLeaseId('lease-1'));
+		expect(second.runtimeId).toBe(testToolVmLeaseId('lease-2'));
 		expect(requestLease).toHaveBeenCalledTimes(2);
 	});
 });

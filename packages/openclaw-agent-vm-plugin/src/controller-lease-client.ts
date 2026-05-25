@@ -40,9 +40,8 @@ export interface OpenClawGondolinLeaseSandboxSnapshot {
 export interface OpenClawGondolinLeaseRequest {
 	readonly agentId: string;
 	readonly agentWorkspaceDir: string;
+	readonly idleTtlMs?: number;
 	readonly profileId: string;
-	readonly sandbox: OpenClawGondolinLeaseSandboxSnapshot;
-	readonly scopeKey: string;
 	readonly sessionKey: string;
 	readonly workMountDir: string;
 	readonly zoneId: string;
@@ -320,9 +319,8 @@ export function createLeaseClient(options: {
 				body: JSON.stringify({
 					agentId: request.agentId,
 					agentWorkspaceDir: request.agentWorkspaceDir,
+					...(request.idleTtlMs !== undefined ? { idleTtlMs: request.idleTtlMs } : {}),
 					profileId: request.profileId,
-					sandbox: request.sandbox,
-					scopeKey: request.scopeKey,
 					sessionKey: request.sessionKey,
 					workMountDir: request.workMountDir,
 					zoneId: request.zoneId,
