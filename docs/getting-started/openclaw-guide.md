@@ -132,7 +132,7 @@ When the agent needs to run code, OpenClaw requests a tool VM lease from the con
 ```
   OpenClaw (inside gateway VM)
        |
-       | POST /lease { scopeKey, zoneId, workMountDir }
+       | POST /lease { zoneId, agentId, sessionKey, workMountDir }
        v
   Controller
        |
@@ -143,11 +143,10 @@ When the agent needs to run code, OpenClaw requests a tool VM lease from the con
        | SSH access via tool-{slot}.vm.host:22
 ```
 
-Leases are scoped by `scopeKey` for reuse within the same conversation. For
-`agent:<agentId>` scopes, the controller selects the Tool VM profile from the
-zone's `agentToolVmProfiles` map, falling back to `defaultToolVmProfile`. Idle
-leases are reaped by `leaseIdleTtl`, with a 100 minute default when no policy is
-configured.
+Leases are keyed by `zoneId + agentId`. The controller selects the Tool VM
+profile from the zone's `agentToolVmProfiles` map, falling back to
+`defaultToolVmProfile`. Idle leases are reaped by `leaseIdleTtl`, with a 100
+minute default when no policy is configured.
 
 The lease `workMountDir` is a gateway VM path, not a host path. It must name a
 concrete child path under `/zone` or

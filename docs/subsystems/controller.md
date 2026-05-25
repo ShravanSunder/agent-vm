@@ -34,7 +34,7 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
     |
     |-- 5. Start idle reaper
     |      createIdleReaper({ ttlForLease })
-    |      TTL comes from leaseIdleTtl exact/prefix scope policy
+    |      TTL comes from the single leaseIdleTtl policy
     |      Attached to a 60-second interval timer
     |      Runs one immediate reap pass before accepting requests
     |
@@ -143,7 +143,7 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
 ### Lease Lifecycle
 
 ```
-  POST /lease { zoneId, scopeKey, profileId, agentWorkspaceDir, workMountDir, idleTtlMs? }
+  POST /lease { zoneId, agentId, sessionKey, profileId, agentWorkspaceDir, workMountDir, idleTtlMs? }
     |
     v
   resolveLeaseWorkMountDir()
@@ -152,22 +152,22 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
     |-- 2. Reject the allowed-root boundaries themselves as too broad
     |-- 3. Translate workMountDir to hostWorkMountDir under <stateDir>/sandboxes or <zoneFilesDir>
     |-- 4. realpath + containment check
-    |-- 5. For agent:<agentId> sandbox work mounts, seed first-boot files
+    |-- 5. For agent sandbox work mounts, seed first-boot files by agentId
     |
     v
   createLease()
-    |-- 1. Lock on (zoneId, scopeKey)
-    |-- 2. Existing same-scope lease?
+    |-- 1. Lock on (zoneId, agentId)
+    |-- 2. Existing same-agent lease?
     |       |-- profile/hostWorkMountDir/agentWorkspace mismatch -> 409 conflict
     |       |-- VM live -> reuse lease
     |       |-- VM dead -> close/evict/release TCP slot
     |-- 3. tcpPool.allocate()          Claim next free slot
-    |-- 4. selectToolVmProfileForLease()
-    |       |-- agent:<agentId> -> zone.agentToolVmProfiles[agentId]
+    |-- 4. selectToolVmProfileForAgent()
+    |       |-- zone.agentToolVmProfiles[agentId]
     |       |-- otherwise zone.defaultToolVmProfile
     |-- 5. createManagedVm(...)        Boot a tool VM with the slot's port
     |-- 5. vm.enableSsh({ port })      Start SSH listener, get access details
-    |-- 6. Build Lease record          id = "{zoneId}-{scopeKey}-{timestamp}"
+    |-- 6. Build Lease record          id = UUIDv7
     |-- 7. Store in leases Map with effectiveIdleTtlMs
     |
     |   On failure at step 2-3:
@@ -184,7 +184,7 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
     |-- 4. tcpPool.release(slot)       Return slot to pool
 ```
 
-Each lease holds: `id`, `zoneId`, `scopeKey`, `profileId`, `agentWorkspaceDir`,
+Each lease holds: `id`, `zoneId`, `agentId`, `profileId`, `agentWorkspaceDir`,
 `hostWorkMountDir`, `tcpSlot`, `vm` (ManagedVm handle), `sshAccess` (host, port,
 identity file, user), `createdAt`, `lastUsedAt`, and `effectiveIdleTtlMs`. The
 lease manager does not clean work mount files on release; OpenClaw-selected

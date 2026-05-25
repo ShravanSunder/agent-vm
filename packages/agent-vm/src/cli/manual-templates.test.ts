@@ -232,7 +232,10 @@ describe('manual templates', () => {
 			'one compatible Tool VM per zone and OpenClaw agent id',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
-			'scopeKey may describe a channel',
+			'OpenClaw scope keys are discarded before the controller lease request',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).not.toContain(
+			'scopeKey',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
 			'active shell/file operations heartbeat per-use records',

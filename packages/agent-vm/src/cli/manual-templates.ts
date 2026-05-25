@@ -31,7 +31,7 @@ Primary config:
 
 Use docs/manual/layout.md before moving files or changing generated folders.
 Use docs/manual/image-versioning.md before changing agent-vm package pins, managed image pins, OpenClaw runtime package pins, or generated Dockerfiles.
-Use docs/manual/scope.md before changing OpenClaw sandbox scope or tool VM lease behavior.
+Use docs/manual/scope.md before changing OpenClaw sandbox scope or agent-vm Tool VM lease behavior.
 Use docs/manual/gateway-ingress.md before changing gateway ports, OpenClaw Control UI access, SSE/streaming behavior, WebSocket access, or serving additional webservers from inside a VM.
 Use docs/manual/mcp-portal.md before changing MCP providers, MCP Portal profiles, MCP package pins, or live MCP validation.
 Use docs/manual/tool-access.md before answering whether a tool binary, auth profile, or tool VM image should be agent-specific.
@@ -140,13 +140,13 @@ agent scope reuses a stable work mount for one agent identity.
 shared scope intentionally shares one work mount across participants.
 
 Managed OpenClaw Tool VMs are agent-keyed: one compatible Tool VM per zone and OpenClaw agent id.
-OpenClaw scopeKey may describe a channel, thread, session, or subagent scope under that agent; it does not choose the Tool VM.
+OpenClaw scope keys are discarded before the controller lease request. They do not choose, identify, renew, list, log, or store Tool VM leases.
 TCP slots are capacity; they are not identity.
 GET lease reads are read-only. Cached Tool VM handles renew idle leases with POST renew, and active shell/file operations heartbeat per-use records so long commands are not reaped mid-run.
 
 Example:
-- shravan agent uses agentId=shravan and may receive scopeKey=agent:shravan:discord:channel:123.
-- alevtina agent uses agentId=alevtina and may receive scopeKey=agent:alevtina:subagent:child.
+- shravan agent uses agentId=shravan.
+- alevtina agent uses agentId=alevtina.
 - Each agent gets its own scoped sandbox mounted at /workspace in its Tool VM.
 - If both agents share one OpenClaw zone, unmapped agents use defaultToolVmProfile.
 - Configure agentToolVmProfiles when agents in one zone need different Tool VM images.
@@ -395,7 +395,7 @@ When gateway.zoneGit is configured:
 			content: generatedPage(
 				'Per-Agent Setup',
 				`
-A single OpenClaw gateway can host multiple agents. Use scope=agent when each agent should have a stable work mount and reusable Tool VM lease identity.
+A single OpenClaw gateway can host multiple agents. Use scope=agent so OpenClaw resolves each agent to its stable work mount; agent-vm still keys Tool VM lease identity by zone and agent id.
 
 Per-agent auth isolation works by using agent-vm auth codex-harness for native Codex CLI auth, gateway.authProfilesByAgent for OpenClaw auth profiles, and first-boot files through agentSandboxSeeds. Seeds target paths relative to the agent sandbox backing directory exposed at /workspace in Tool VMs and do not overwrite existing files.
 agent-vm auth openclaw <provider> --all-agents repeats the same OpenClaw provider login once per configured zone agent.

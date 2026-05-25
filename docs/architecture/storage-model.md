@@ -173,7 +173,7 @@ durable state
   Note: `tool-leases/<recordId>.json` is a durable recovery record for an
   OpenClaw Tool VM. `recordId` is a controller-generated UUID. The record keeps
   `agentId`, `leaseId`, `vmId`, `qemuPid`, deployment fences, TCP slot, and
-  session/process evidence. It never persists OpenClaw `scopeKey`.
+  session/process evidence. It never persists OpenClaw scope keys.
 
   On controller startup, Phase A scans this directory and applies the following
   recovery discipline:
