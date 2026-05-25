@@ -6,10 +6,11 @@ import {
 	type VmSshLease,
 	type VmSshPublicEndpoint,
 } from './vm-capability-lease.js';
+import { isToolVmLeaseId } from './tool-vm-lease-id.js';
 
 export interface ToolVmSshLease extends VmSshLease<'ssh-sandbox'> {
 	readonly agentId: string;
-	readonly scopeKey: string;
+	readonly idleTtlMs: number;
 	readonly tcpSlot: number;
 	readonly workdir: string;
 }
@@ -19,7 +20,6 @@ export interface ToolVmLeasePeek extends VmCapabilityLease<'ssh-sandbox'> {
 	readonly createdAt: number;
 	readonly lastUsedAt: number;
 	readonly profileId: string;
-	readonly scopeKey: string;
 	readonly ssh: VmSshPublicEndpoint;
 	readonly tcpSlot: number;
 	readonly workdir: string;
@@ -34,11 +34,13 @@ export function isToolVmSshLease(value: unknown): value is ToolVmSshLease {
 	const record = objectValue(value);
 	return (
 		isVmCapabilityLease(record, 'ssh-sandbox') &&
+		isToolVmLeaseId(Reflect.get(record, 'leaseId')) &&
 		isVmSshEndpoint(Reflect.get(record, 'ssh')) &&
 		typeof Reflect.get(record, 'agentId') === 'string' &&
-		typeof Reflect.get(record, 'scopeKey') === 'string' &&
+		typeof Reflect.get(record, 'idleTtlMs') === 'number' &&
 		typeof Reflect.get(record, 'tcpSlot') === 'number' &&
-		typeof Reflect.get(record, 'workdir') === 'string'
+		typeof Reflect.get(record, 'workdir') === 'string' &&
+		!Reflect.has(record, 'scopeKey')
 	);
 }
 
@@ -46,14 +48,15 @@ export function isToolVmLeasePeek(value: unknown): value is ToolVmLeasePeek {
 	const record = objectValue(value);
 	return (
 		isVmCapabilityLease(record, 'ssh-sandbox') &&
+		isToolVmLeaseId(Reflect.get(record, 'leaseId')) &&
 		typeof Reflect.get(record, 'agentId') === 'string' &&
 		typeof Reflect.get(record, 'createdAt') === 'number' &&
 		typeof Reflect.get(record, 'lastUsedAt') === 'number' &&
 		typeof Reflect.get(record, 'profileId') === 'string' &&
-		typeof Reflect.get(record, 'scopeKey') === 'string' &&
 		isVmSshPublicEndpoint(Reflect.get(record, 'ssh')) &&
 		typeof Reflect.get(record, 'tcpSlot') === 'number' &&
 		typeof Reflect.get(record, 'workdir') === 'string' &&
-		typeof Reflect.get(record, 'zoneId') === 'string'
+		typeof Reflect.get(record, 'zoneId') === 'string' &&
+		!Reflect.has(record, 'scopeKey')
 	);
 }

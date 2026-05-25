@@ -37,6 +37,7 @@ export {
 	createToolVmActiveUseId,
 	isToolVmActiveUseId,
 } from './tool-vm-active-use.js';
+export { createToolVmLeaseId, isToolVmLeaseId } from './tool-vm-lease-id.js';
 export { isToolVmLeasePeek, isToolVmSshLease } from './tool-vm-lease.js';
 export {
 	isVmCapabilityLease,
