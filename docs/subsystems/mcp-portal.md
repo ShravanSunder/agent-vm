@@ -109,11 +109,22 @@ Inherited runtime variables:
 - `SSL_CERT_FILE`
 - `UV_CACHE_DIR`
 
-Managed OpenClaw gateway Dockerfiles install pinned `uv` and `uvx` binaries so
-`uv run` stdio providers can start without deployment-owned image overlays.
-
 Use `transport.env` for provider credentials such as `PERPLEXITY_API_KEY` or
 `TAVILY_API_KEY`. Do not rely on whole-process environment inheritance.
+
+For stdio MCP providers, prefer
+`secretPolicies.<name>.injection: "http-mediation"` when the provider uses the
+secret in HTTP headers or query strings to call a remote API. The controller
+resolves the real secret on the host, gives the gateway VM only a generated
+placeholder environment value, and passes the real value to Gondolin as a
+host-restricted mediated secret. The stdio child process reads the placeholder
+from `transport.env`; Gondolin substitutes the real value only on outbound
+requests to the configured `hosts`.
+
+Use `secretPolicies.<name>.injection: "env"` only when the provider cannot work
+with HTTP mediation, such as protocols that place credentials in request bodies,
+opaque WebSocket payloads, or other bytes Gondolin cannot inspect. Raw env
+provider secrets must be named intentionally in `zones[].gateway.rawEnvSecrets`.
 
 Managed OpenClaw gateway mode does not start a portal HTTP server, does not open
 guest port `18790`, and does not require `MCP_PORTAL_SERVER_SECRET`. The
@@ -123,25 +134,6 @@ config before gateway boot and injects only the runtime environment needed by
 configured upstream providers. Generated provider-secret environment names are
 provider-scoped, such as `AGENT_VM_MCP_LINEAR_AUTHORIZATION`, so two upstream
 providers can use the same authored header or env key without colliding.
-
-### Stdio runtime environment
-
-MCP Portal starts stdio providers with explicit provider secrets plus a narrow
-gateway runtime environment allowlist. This avoids leaking arbitrary gateway
-environment variables while preserving runtime settings required by package
-launchers inside Gondolin.
-
-Inherited runtime variables:
-
-- `NODE_EXTRA_CA_CERTS`
-- `NODE_OPTIONS`
-
-Use `transport.env` for provider credentials such as `PERPLEXITY_API_KEY` or
-`TAVILY_API_KEY`. Do not rely on whole-process environment inheritance.
-
-Python/`uv` launchers are intentionally out of scope for this PR. Prefer remote
-MCP providers unless a concrete local `uv run` provider is required, then add a
-separate managed-image and stdio-env change with live evidence.
 
 External `/mcp-proxy` mode is different: `mcp-portal mcp-proxy serve` runs on the
 operator host, resolves its configured auth secrets at process startup, and

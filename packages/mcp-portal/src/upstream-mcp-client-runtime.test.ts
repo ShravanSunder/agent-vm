@@ -128,6 +128,48 @@ describe('upstream MCP client runtime', () => {
 		);
 	});
 
+	it('passes mediated placeholder env values through to stdio MCP transports', async () => {
+		const createTransport = vi.fn(() => ({}));
+		const client: UpstreamMcpClientLike = {
+			callTool: vi.fn(),
+			close: vi.fn(),
+			connect: vi.fn(),
+			listTools: vi.fn(async () => ({ tools: [] })),
+		};
+		const runtime = createUpstreamMcpClientRuntime({
+			createClient: () => client,
+			createTransport,
+			servers: [
+				{
+					args: ['-y', '-p', '@perplexity-ai/mcp-server', 'perplexity-mcp'],
+					command: 'npx',
+					env: {
+						PERPLEXITY_API_KEY: 'GONDOLIN_SECRET_test_placeholder',
+					},
+					namespace: 'perplexity',
+					transport: 'stdio',
+				},
+			],
+		});
+
+		await expect(
+			runtime.listTools({ agentScopeId: 'agent-scope-a', namespace: 'perplexity' }),
+		).resolves.toEqual([]);
+
+		expect(createTransport).toHaveBeenCalledWith(
+			{
+				args: ['-y', '-p', '@perplexity-ai/mcp-server', 'perplexity-mcp'],
+				command: 'npx',
+				env: {
+					PERPLEXITY_API_KEY: 'GONDOLIN_SECRET_test_placeholder',
+				},
+				namespace: 'perplexity',
+				transport: 'stdio',
+			},
+			'stdio',
+		);
+	});
+
 	it('preserves gateway Python and uv runtime env for stdio MCP servers', async () => {
 		vi.stubEnv('REQUESTS_CA_BUNDLE', '/run/gondolin/ca-certificates.crt');
 		vi.stubEnv('SSL_CERT_FILE', '/run/gondolin/ca-certificates.crt');

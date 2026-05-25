@@ -315,6 +315,58 @@ describe('createManagedVm', () => {
 		expect(closeMock).toHaveBeenCalled();
 	});
 
+	it('passes Gondolin mediated secret placeholders into VM environment', async () => {
+		let capturedVmOptions: VMOptions | undefined;
+		const dependencies = {
+			...createBaseDependencies({
+				createVm: vi.fn(async (vmOptions: VMOptions): Promise<ManagedVmInstance> => {
+					capturedVmOptions = vmOptions;
+					return createFakeVmInstance();
+				}),
+			}),
+			createHttpHooks: vi.fn(() => ({
+				env: {
+					AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY: 'GONDOLIN_SECRET_test_placeholder',
+				},
+				httpHooks: {} satisfies HttpHooks,
+			})),
+		} satisfies ManagedVmDependencies;
+
+		await createManagedVm(
+			{
+				allowedHosts: ['api.perplexity.ai'],
+				cpus: 1,
+				env: { OPENCLAW_LOG_LEVEL: 'debug' },
+				imagePath: '/vm-images/gateways/openclaw',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {
+					AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY: {
+						hosts: ['api.perplexity.ai'],
+						value: 'resolved-pplx-key',
+					},
+				},
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		expect(dependencies.createHttpHooks).toHaveBeenCalledWith({
+			allowedHosts: ['api.perplexity.ai'],
+			secrets: {
+				AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY: {
+					hosts: ['api.perplexity.ai'],
+					value: 'resolved-pplx-key',
+				},
+			},
+		});
+		expect(capturedVmOptions?.env).toMatchObject({
+			AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY: 'GONDOLIN_SECRET_test_placeholder',
+			OPENCLAW_LOG_LEVEL: 'debug',
+		});
+		expect(capturedVmOptions?.httpHooks).toEqual({});
+	});
+
 	it('applies managed ingress defaults when enabling ingress without explicit options', async () => {
 		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
 		const fakeVmInstance: ManagedVmInstance = {

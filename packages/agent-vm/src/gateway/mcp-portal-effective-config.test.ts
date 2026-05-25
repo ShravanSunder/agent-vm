@@ -808,6 +808,68 @@ describe('MCP Portal effective config materialization', () => {
 		});
 	});
 
+	it('materializes stdio provider http-mediation secrets as placeholder environment references', async () => {
+		const authoredDir = await createAuthoredDir({
+			mcpConfig: {
+				providers: {
+					perplexity: {
+						kind: 'mcp',
+						namespace: 'perplexity',
+						secretPolicies: {
+							PERPLEXITY_API_KEY: {
+								hosts: ['api.perplexity.ai'],
+								injection: 'http-mediation',
+							},
+						},
+						transport: {
+							args: ['-y', '-p', '@perplexity-ai/mcp-server', 'perplexity-mcp'],
+							command: 'npx',
+							env: {
+								PERPLEXITY_API_KEY: {
+									ref: 'op://agent-vm/sunfam-perplexity/credential',
+									source: '1password',
+								},
+							},
+							kind: 'stdio',
+							networkAccess: 'declared',
+							requiredEgressHosts: ['api.perplexity.ai'],
+						},
+					},
+				},
+				schemaVersion: 1,
+			},
+		});
+		const effectiveDir = path.join(authoredDir, 'effective');
+		const secretResolver = createSecretResolver({
+			'op://agent-vm/sunfam-perplexity/credential': 'resolved-pplx-key',
+		});
+
+		const result = await writeMcpPortalEffectiveConfig({
+			authoredConfigDir: authoredDir,
+			effectiveHostConfigDir: effectiveDir,
+			effectiveVmConfigDir: '/home/openclaw/.openclaw/cache/mcp-portal-effective',
+			secretResolver,
+			zoneId: 'beta',
+		});
+		const effectiveMcpConfig = await readEffectiveMcpConfig<{
+			readonly providers: Record<string, { readonly transport: { readonly env: unknown } }>;
+		}>(effectiveDir);
+
+		expect(effectiveMcpConfig.providers.perplexity?.transport.env).toEqual({
+			PERPLEXITY_API_KEY: {
+				name: 'AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY',
+				source: 'environment',
+			},
+		});
+		expect(result.runtimeEnvironment).toEqual({});
+		expect(result.runtimeMediatedSecrets).toEqual({
+			AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY: {
+				hosts: ['api.perplexity.ai'],
+				value: 'resolved-pplx-key',
+			},
+		});
+	});
+
 	it('rejects missing resolved provider secret values', async () => {
 		const authoredDir = await createAuthoredDir({
 			mcpConfig: {
