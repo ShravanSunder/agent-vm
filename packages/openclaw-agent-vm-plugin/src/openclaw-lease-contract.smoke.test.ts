@@ -1,4 +1,8 @@
-import type { ToolVmLeasePeek, ToolVmSshLease } from '@agent-vm/gateway-interface';
+import {
+	parseToolVmLeaseId,
+	type ToolVmLeasePeek,
+	type ToolVmSshLease,
+} from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LeaseClient, OpenClawGondolinLeaseRequest } from './controller-lease-client.js';
@@ -18,7 +22,9 @@ function createLeaseResponse(options: {
 	return {
 		agentId: options.agentId,
 		idleTtlMs: 6_000_000,
-		leaseId: `01890f00-0000-7000-8000-${String(options.leaseIndex).padStart(12, '0')}`,
+		leaseId: parseToolVmLeaseId(
+			`01890f00-0000-7000-8000-${String(options.leaseIndex).padStart(12, '0')}`,
+		),
 		ssh: {
 			host: `tool-${String(options.leaseIndex)}.vm.host`,
 			identityPem: 'pem',

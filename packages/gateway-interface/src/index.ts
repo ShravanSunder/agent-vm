@@ -37,7 +37,7 @@ export {
 	createToolVmActiveUseId,
 	isToolVmActiveUseId,
 } from './tool-vm-active-use.js';
-export { createToolVmLeaseId, isToolVmLeaseId } from './tool-vm-lease-id.js';
+export { createToolVmLeaseId, isToolVmLeaseId, parseToolVmLeaseId } from './tool-vm-lease-id.js';
 export { isToolVmLeasePeek, isToolVmSshLease } from './tool-vm-lease.js';
 export {
 	isVmCapabilityLease,
@@ -65,6 +65,7 @@ export type {
 	ToolVmSshOperationPhase,
 	ToolVmSshOperationReport,
 } from './tool-vm-active-use.js';
+export type { ToolVmLeaseId } from './tool-vm-lease-id.js';
 export type { ToolVmLeasePeek, ToolVmSshLease } from './tool-vm-lease.js';
 export type {
 	VmCapabilityLease,

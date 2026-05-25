@@ -71,6 +71,7 @@ export interface EndToolVmActiveUseRequest {
 }
 
 export interface ToolVmActiveUseHandle {
+	readonly signal: AbortSignal;
 	readonly useId: string;
 	dispose(outcome?: ToolVmActiveUseOutcome): Promise<void>;
 	end(outcome?: ToolVmActiveUseOutcome): Promise<void>;
@@ -141,6 +142,7 @@ export async function createToolVmActiveUseHandle(
 	const maxHeartbeatDurationMs = options.maxHeartbeatDurationMs ?? defaultMaxHeartbeatDurationMs;
 	const heartbeatJitterRatio = options.heartbeatJitterRatio ?? 0.1;
 	const random = options.randomImpl ?? Math.random;
+	const operationAbortController = new AbortController();
 	let ended = false;
 	let heartbeatTimer: HeartbeatTimer | undefined;
 	let latestReport: ToolVmActiveUseOperationReport | undefined;
@@ -177,6 +179,7 @@ export async function createToolVmActiveUseHandle(
 							options.isHeartbeatErrorRefreshable?.(error) === true &&
 							options.onRefreshableHeartbeatFailure
 						) {
+							operationAbortController.abort(error);
 							ended = true;
 							clearHeartbeatTimer();
 							void options.onRefreshableHeartbeatFailure(error).catch((staleError: unknown) => {
@@ -216,10 +219,14 @@ export async function createToolVmActiveUseHandle(
 	};
 
 	return {
+		signal: operationAbortController.signal,
 		useId: startedUse.useId,
 		dispose: end,
 		end,
 		report: (report): void => {
+			if (ended) {
+				return;
+			}
 			latestReport = report;
 		},
 	};

@@ -15,6 +15,7 @@ import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 
 import type { readProcessIdentity as defaultReadProcessIdentity } from '../../shared/managed-vm-process.js';
 import type { ZoneGitToolVmMount } from '../zone-git/zone-git-paths.js';
+import { defaultToolVmLeaseIdleTtlMs } from './lease-idle-policy.js';
 import type { TcpPool } from './tcp-pool.js';
 import {
 	buildToolVmRuntimeRecord,
@@ -103,7 +104,7 @@ export interface LeaseManager {
 		request: HeartbeatToolVmActiveUseRequest,
 	): HeartbeatToolVmActiveUseResponse | undefined;
 	renewLease(leaseId: string): Promise<LeaseRenewal>;
-	listLeases(): Lease[];
+	listLeases(): readonly Lease[];
 	peekLease(leaseId: string): LeaseSnapshot | undefined;
 	reapDeadIdleLeases(): Promise<void>;
 	reapExpiredActiveUses(): void;
@@ -150,7 +151,6 @@ interface EndedToolVmActiveUseTombstone {
 	readonly useId: string;
 }
 
-const defaultLeaseEffectiveIdleTtlMs = 30 * 60 * 1000;
 const defaultToolVmUsePolicy = {
 	endedUseTombstoneTtlMs: 10 * 60 * 1000,
 	heartbeatAfterMs: 30 * 1000,
@@ -375,7 +375,7 @@ export function createLeaseManager(options: {
 		return isLeaseIdleExpired(lease) && activeUseCountForLease(lease.id) === 0;
 	}
 
-	async function withScopeLock<TValue>(
+	async function withAgentLeaseLock<TValue>(
 		agentLease: { readonly agentId: string; readonly zoneId: string },
 		fn: () => Promise<TValue>,
 	): Promise<TValue> {
@@ -433,7 +433,7 @@ export function createLeaseManager(options: {
 
 	return {
 		async createLease(leaseOptions) {
-			return await withScopeLock(leaseOptions, async () => {
+			return await withAgentLeaseLock(leaseOptions, async () => {
 				assertValidLeaseAgentId(leaseOptions.agentId);
 				const existingLease = findLeaseForAgent({
 					agentId: leaseOptions.agentId,
@@ -472,7 +472,7 @@ export function createLeaseManager(options: {
 							agentId: leaseOptions.agentId,
 							agentWorkspaceDir: leaseOptions.agentWorkspaceDir,
 							createdAt,
-							effectiveIdleTtlMs: leaseOptions.effectiveIdleTtlMs ?? defaultLeaseEffectiveIdleTtlMs,
+							effectiveIdleTtlMs: leaseOptions.effectiveIdleTtlMs ?? defaultToolVmLeaseIdleTtlMs,
 							guestWorkdir: leaseOptions.guestWorkdir,
 							id: createLeaseId(),
 							lastUsedAt: createdAt,
@@ -612,22 +612,28 @@ export function createLeaseManager(options: {
 			if (!lease) {
 				return { kind: 'not-found', reason: 'missing' };
 			}
-			if (isLeaseExpired(lease)) {
-				await evictLease(lease);
-				return { kind: 'not-found', reason: 'expired' };
-			}
-			if (!(await isLeaseVmLive(lease))) {
-				await evictLease(lease);
-				return { kind: 'not-found', reason: 'dead' };
-			}
-			const renewedLease = touchLease(lease);
-			return {
-				kind: 'renewed',
-				lastUsedAt: renewedLease.lastUsedAt,
-				lease: renewedLease,
-			};
+			return await withAgentLeaseLock(lease, async () => {
+				const currentLease = leases.get(leaseId);
+				if (!currentLease) {
+					return { kind: 'not-found', reason: 'missing' };
+				}
+				if (isLeaseExpired(currentLease)) {
+					await evictLease(currentLease);
+					return { kind: 'not-found', reason: 'expired' };
+				}
+				if (!(await isLeaseVmLive(currentLease))) {
+					await evictLease(currentLease);
+					return { kind: 'not-found', reason: 'dead' };
+				}
+				const renewedLease = touchLease(currentLease);
+				return {
+					kind: 'renewed',
+					lastUsedAt: renewedLease.lastUsedAt,
+					lease: renewedLease,
+				};
+			});
 		},
-		listLeases(): Lease[] {
+		listLeases(): readonly Lease[] {
 			return [...leases.values()];
 		},
 		peekLease(leaseId: string): LeaseSnapshot | undefined {
@@ -635,19 +641,17 @@ export function createLeaseManager(options: {
 			return lease ? { kind: 'snapshot', lease } : undefined;
 		},
 		async reapDeadIdleLeases(): Promise<void> {
-			const deadIdleLeases: Lease[] = [];
 			for (const lease of leases.values()) {
-				if (activeUseCountForLease(lease.id) > 0) {
-					continue;
-				}
-				// oxlint-disable-next-line eslint/no-await-in-loop -- liveness probes are bounded and eviction order must observe the current lease map
-				if (!(await isLeaseVmLive(lease))) {
-					deadIdleLeases.push(lease);
-				}
-			}
-			for (const lease of deadIdleLeases) {
-				// oxlint-disable-next-line eslint/no-await-in-loop -- evictions mutate TCP pool and lease indexes
-				await evictLease(lease);
+				// oxlint-disable-next-line eslint/no-await-in-loop -- per-agent lock serializes eviction with renew/create/release
+				await withAgentLeaseLock(lease, async () => {
+					const currentLease = leases.get(lease.id);
+					if (!currentLease || activeUseCountForLease(currentLease.id) > 0) {
+						return;
+					}
+					if (!(await isLeaseVmLive(currentLease))) {
+						await evictLease(currentLease);
+					}
+				});
 			}
 		},
 		reapExpiredActiveUses(): void {
@@ -676,7 +680,7 @@ export function createLeaseManager(options: {
 			if (!lease) {
 				return;
 			}
-			await withScopeLock(lease, async () => {
+			await withAgentLeaseLock(lease, async () => {
 				const currentLease = leases.get(leaseId);
 				if (!currentLease) {
 					return;

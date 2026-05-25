@@ -1,4 +1,4 @@
-import { isToolVmLeaseId } from './tool-vm-lease-id.js';
+import { isToolVmLeaseId, type ToolVmLeaseId } from './tool-vm-lease-id.js';
 import {
 	isVmCapabilityLease,
 	isVmSshEndpoint,
@@ -11,6 +11,7 @@ import {
 export interface ToolVmSshLease extends VmSshLease<'ssh-sandbox'> {
 	readonly agentId: string;
 	readonly idleTtlMs: number;
+	readonly leaseId: ToolVmLeaseId;
 	readonly tcpSlot: number;
 	readonly workdir: string;
 }
@@ -20,6 +21,7 @@ export interface ToolVmLeasePeek extends VmCapabilityLease<'ssh-sandbox'> {
 	readonly createdAt: number;
 	readonly idleTtlMs: number;
 	readonly lastUsedAt: number;
+	readonly leaseId: ToolVmLeaseId;
 	readonly profileId: string;
 	readonly ssh: VmSshPublicEndpoint;
 	readonly tcpSlot: number;

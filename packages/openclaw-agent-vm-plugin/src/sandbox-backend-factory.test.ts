@@ -1,4 +1,8 @@
-import { isToolVmLeaseId } from '@agent-vm/gateway-interface';
+import {
+	isToolVmLeaseId,
+	parseToolVmLeaseId,
+	type ToolVmLeaseId,
+} from '@agent-vm/gateway-interface';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ControllerLeaseRequestError, type LeaseClient } from './controller-lease-client.js';
@@ -10,9 +14,9 @@ import {
 } from './sandbox-backend-factory.js';
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
-const testLeaseIdByLabel = new Map<string, string>();
+const testLeaseIdByLabel = new Map<string, ToolVmLeaseId>();
 
-function testToolVmLeaseId(label: string): string {
+function testToolVmLeaseId(label: string): ToolVmLeaseId {
 	if (isToolVmLeaseId(label)) {
 		return label;
 	}
@@ -21,8 +25,9 @@ function testToolVmLeaseId(label: string): string {
 		return existingLeaseId;
 	}
 	const leaseId = `01890f00-0000-7000-8000-${String(testLeaseIdByLabel.size + 1).padStart(12, '0')}`;
-	testLeaseIdByLabel.set(label, leaseId);
-	return leaseId;
+	const parsedLeaseId = parseToolVmLeaseId(leaseId);
+	testLeaseIdByLabel.set(label, parsedLeaseId);
+	return parsedLeaseId;
 }
 
 function createLeaseResponse(
@@ -34,7 +39,7 @@ function createLeaseResponse(
 ): {
 	readonly agentId: string;
 	readonly idleTtlMs: number;
-	readonly leaseId: string;
+	readonly leaseId: ToolVmLeaseId;
 	readonly ssh: {
 		readonly host: string;
 		readonly identityPem: string;
@@ -69,7 +74,7 @@ function createLeasePeekResponse(leaseId: string = 'lease-123'): {
 	readonly createdAt: number;
 	readonly idleTtlMs: number;
 	readonly lastUsedAt: number;
-	readonly leaseId: string;
+	readonly leaseId: ToolVmLeaseId;
 	readonly profileId: string;
 	readonly ssh: { readonly host: string; readonly port: number; readonly user: string };
 	readonly tcpSlot: number;
@@ -924,6 +929,60 @@ describe('createGondolinSandboxBackendFactory', () => {
 			token: { dispose: disposeFn },
 		});
 		expect(disposeFn).toHaveBeenCalledTimes(1);
+	});
+
+	it('finalizeExec does not stale the cached lease for a nonzero user command exit', async () => {
+		const releaseLease = vi.fn(async () => {});
+		const endActiveUse = vi.fn(async () => {});
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					endActiveUse,
+					renewLease: async () => createLeaseResponse('lease-renew'),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease,
+					requestLease: vi.fn(async () => createLeaseResponse('lease-command-failed')),
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const backend = await factory({
+			agentWorkspaceDir: '/work',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:main',
+			sessionKey: 'session-command-failed',
+			workspaceDir: '/work',
+		});
+		const execSpec = await backend.buildExecSpec({
+			command: 'pnpm test',
+			env: {},
+			usePty: false,
+		});
+
+		await backend.finalizeExec?.({
+			status: 'failed',
+			exitCode: 1,
+			timedOut: false,
+			token: execSpec.finalizeToken,
+		});
+
+		expect(endActiveUse).toHaveBeenCalledWith(
+			testToolVmLeaseId('lease-command-failed'),
+			expect.any(String),
+			expect.objectContaining({ outcome: 'failed' }),
+		);
+		expect(releaseLease).not.toHaveBeenCalled();
 	});
 
 	it('finalizeExec is a no-op when token has no dispose', async () => {

@@ -102,6 +102,38 @@ describe('tool VM active-use helpers', () => {
 		await handle.dispose('completed');
 	});
 
+	it('ignores operation reports after disposal', async () => {
+		const endActiveUse = vi.fn(async () => {});
+		const handle = await createToolVmActiveUseHandle({
+			clearTimeoutImpl: vi.fn() as unknown as typeof clearTimeout,
+			endActiveUse,
+			heartbeatActiveUse: vi.fn(async () => ({ expiresAt: 10_000, heartbeatAfterMs: 1_000 })),
+			setTimeoutImpl: vi.fn() as unknown as typeof setTimeout,
+			startActiveUse: vi.fn(async () => ({
+				expiresAt: 10_000,
+				heartbeatAfterMs: 1_000,
+				useId: '01890f00-0000-7000-8000-000000000000',
+			})),
+		});
+
+		await handle.dispose('completed');
+		handle.report({
+			observedAtMs: 1_000,
+			phase: 'failed',
+			ssh: {
+				failure: {
+					kind: 'ssh-command-failed',
+					message: 'late report',
+				},
+			},
+		});
+		await handle.dispose('completed');
+
+		expect(endActiveUse).toHaveBeenCalledWith('01890f00-0000-7000-8000-000000000000', {
+			outcome: 'completed',
+		});
+	});
+
 	it('applies deterministic heartbeat jitter and clears timers on dispose', async () => {
 		const clearTimeoutImpl = vi.fn() as unknown as typeof clearTimeout;
 		const setTimeoutImpl = vi.fn((callback: () => void, delayMs?: number) => {
@@ -162,6 +194,36 @@ describe('tool VM active-use helpers', () => {
 		expect(timers).toHaveLength(1);
 
 		await handle.dispose('failed');
+	});
+
+	it('aborts the operation signal after a refreshable heartbeat failure', async () => {
+		const timers: (() => void)[] = [];
+		const refreshableError = new Error('lease expired');
+		const handle = await createToolVmActiveUseHandle({
+			clearTimeoutImpl: vi.fn() as unknown as typeof clearTimeout,
+			endActiveUse: vi.fn(async () => {}),
+			heartbeatActiveUse: vi.fn(async () => {
+				throw refreshableError;
+			}),
+			isHeartbeatErrorRefreshable: () => true,
+			onRefreshableHeartbeatFailure: vi.fn(async () => {}),
+			setTimeoutImpl: ((callback: () => void) => {
+				timers.push(callback);
+				return timers.length as unknown as ReturnType<typeof setTimeout>;
+			}) as typeof setTimeout,
+			startActiveUse: vi.fn(async () => ({
+				expiresAt: 10_000,
+				heartbeatAfterMs: 1_000,
+				useId: '01890f00-0000-7000-8000-000000000000',
+			})),
+		});
+
+		timers[0]?.();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(handle.signal.aborted).toBe(true);
+		expect(handle.signal.reason).toBe(refreshableError);
 	});
 
 	it('continues retrying heartbeat failures because active-use is an operation guard, not a VM health check', async () => {

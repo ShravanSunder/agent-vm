@@ -128,7 +128,7 @@ export interface OpenClawSandboxBackendHandle {
 	}>;
 }
 
-export interface CachedScopeEntry {
+export interface CachedAgentLeaseEntry {
 	readonly handle: OpenClawSandboxBackendHandle;
 	readonly lease: ToolVmSshLease;
 }

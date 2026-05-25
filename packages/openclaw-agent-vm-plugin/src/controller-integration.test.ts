@@ -2,6 +2,8 @@ import { Readable } from 'node:stream';
 
 import {
 	isToolVmLeaseId,
+	parseToolVmLeaseId,
+	type ToolVmLeaseId,
 	type ToolVmLeasePeek,
 	type ToolVmSshLease,
 } from '@agent-vm/gateway-interface';
@@ -17,9 +19,9 @@ import { createLeaseClient } from './controller-lease-client.js';
 import { createGondolinSandboxBackendFactory } from './sandbox-backend-factory.js';
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
-const testLeaseIdByLabel = new Map<string, string>();
+const testLeaseIdByLabel = new Map<string, ToolVmLeaseId>();
 
-function testToolVmLeaseId(label: string): string {
+function testToolVmLeaseId(label: string): ToolVmLeaseId {
 	if (isToolVmLeaseId(label)) {
 		return label;
 	}
@@ -28,8 +30,9 @@ function testToolVmLeaseId(label: string): string {
 		return existingLeaseId;
 	}
 	const leaseId = `01890f00-0000-7000-8000-${String(testLeaseIdByLabel.size + 1).padStart(12, '0')}`;
-	testLeaseIdByLabel.set(label, leaseId);
-	return leaseId;
+	const parsedLeaseId = parseToolVmLeaseId(leaseId);
+	testLeaseIdByLabel.set(label, parsedLeaseId);
+	return parsedLeaseId;
 }
 
 function createLeaseResponse(leaseId: string): ToolVmSshLease {

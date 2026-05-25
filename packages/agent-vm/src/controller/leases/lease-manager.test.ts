@@ -176,6 +176,43 @@ describe('createLeaseManager', () => {
 		expect(leaseManager.peekLease(lease.id)).toBeUndefined();
 	});
 
+	it('serializes renew and dead-idle reaping so one dead lease is evicted once', async () => {
+		let resolveProbe: (() => void) | undefined;
+		const probeBarrier = new Promise<void>((resolve) => {
+			resolveProbe = resolve;
+		});
+		const closeMock = vi.fn(async () => {});
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createLeaseId: () => '01890f00-0000-7000-8000-000000000004',
+			createManagedVm: vi.fn(async () => ({
+				...createManagedVmStub(),
+				close: closeMock,
+				exec: vi.fn(() =>
+					createManagedExecProcessStub({
+						exitCode: 1,
+						stderr: 'dead',
+						stdout: '',
+						waitFor: probeBarrier,
+					}),
+				),
+			})),
+			now: () => 1_000,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const lease = await leaseManager.createLease(createAgentLeaseOptions());
+
+		const renewalPromise = leaseManager.renewLease(lease.id);
+		const reaperPromise = leaseManager.reapDeadIdleLeases();
+		resolveProbe?.();
+
+		await expect(renewalPromise).resolves.toEqual({ kind: 'not-found', reason: 'dead' });
+		await reaperPromise;
+
+		expect(closeMock).toHaveBeenCalledOnce();
+		expect(leaseManager.peekLease(lease.id)).toBeUndefined();
+	});
+
 	it('does not expire a lease while an active operation is heartbeating', async () => {
 		let now = 1_000;
 		const leaseManager = createLeaseManager({
@@ -379,7 +416,7 @@ describe('createLeaseManager', () => {
 		expect(deleteToolVmRuntimeRecordMock).not.toHaveBeenCalled();
 	});
 
-	it('reuses a live lease for the same zone scope profile and workspace', async () => {
+	it('reuses a live lease for the same zone agent profile and workspace', async () => {
 		let now = 100;
 		const createManagedVm = vi.fn(async () => createManagedVmStub());
 		const leaseManager = createLeaseManager({
@@ -561,7 +598,7 @@ describe('createLeaseManager', () => {
 		expect(leaseManager.peekLease('missing-lease')).toBeUndefined();
 	});
 
-	it('rejects same-scope lease reuse when the workspace changes', async () => {
+	it('rejects same-agent lease reuse when the workspace changes', async () => {
 		const closeMock = vi.fn(async () => {});
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
@@ -605,7 +642,7 @@ describe('createLeaseManager', () => {
 		expect(closeMock).not.toHaveBeenCalled();
 	});
 
-	it('rejects same-scope lease reuse when the profile changes', async () => {
+	it('rejects same-agent lease reuse when the profile changes', async () => {
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => createManagedVmStub()),
@@ -644,7 +681,7 @@ describe('createLeaseManager', () => {
 		).rejects.toBeInstanceOf(AgentLeaseCompatibilityConflictError);
 	});
 
-	it('rejects same-scope lease reuse when the agent workspace changes', async () => {
+	it('rejects same-agent lease reuse when the agent workspace changes', async () => {
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => createManagedVmStub()),
@@ -683,7 +720,7 @@ describe('createLeaseManager', () => {
 		).rejects.toBeInstanceOf(AgentLeaseCompatibilityConflictError);
 	});
 
-	it('does not reuse matching scope keys across zones', async () => {
+	it('does not reuse matching agent ids across zones', async () => {
 		const createManagedVm = vi.fn(async () =>
 			createManagedVmStub(`tool-vm-${createManagedVm.mock.calls.length}`),
 		);
@@ -714,7 +751,7 @@ describe('createLeaseManager', () => {
 		expect(createManagedVm).toHaveBeenCalledTimes(2);
 	});
 
-	it('evicts a stale same-scope lease before creating a replacement', async () => {
+	it('evicts a stale same-agent lease before creating a replacement', async () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const staleClose = vi.fn(async () => {
 			throw new Error('stale close failed');
@@ -779,7 +816,7 @@ describe('createLeaseManager', () => {
 		}
 	});
 
-	it('serializes concurrent createLease calls for the same zone scope', async () => {
+	it('serializes concurrent createLease calls for the same zone agent', async () => {
 		let releaseCreate: (() => void) | undefined;
 		let markCreateStarted: (() => void) | undefined;
 		const createStarted = new Promise<void>((resolve) => {
@@ -824,7 +861,7 @@ describe('createLeaseManager', () => {
 		expect(createManagedVm).toHaveBeenCalledTimes(1);
 	});
 
-	it('serializes releaseLease with same-scope createLease reuse', async () => {
+	it('serializes releaseLease with same-agent createLease reuse', async () => {
 		let releaseExec: (() => void) | undefined;
 		let markExecStarted: (() => void) | undefined;
 		const execStarted = new Promise<void>((resolve) => {

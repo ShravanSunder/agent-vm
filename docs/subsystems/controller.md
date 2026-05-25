@@ -207,10 +207,10 @@ gateway path to `hostWorkMountDir` before handing it to the lease manager.
 For the canonical name/location/storage vocabulary, see
 [Lease Path Vocabulary](../architecture/storage-model.md#lease-path-vocabulary).
 
-For OpenClaw `agent:<agentId>` scopes, the route resolves `profileId` from the
-zone's Tool VM policy. `agentToolVmProfiles[agentId]` wins when present;
-otherwise the lease uses `defaultToolVmProfile`. This lets one zone serve
-multiple agents with different disposable Tool VM images.
+For OpenClaw leases, the route resolves `profileId` from the request `agentId`
+and the zone's Tool VM policy. `agentToolVmProfiles[agentId]` wins when
+present; otherwise the lease uses `defaultToolVmProfile`. This lets one zone
+serve multiple agents with different disposable Tool VM images.
 
 ### TCP Pool
 

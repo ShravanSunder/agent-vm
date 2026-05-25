@@ -127,7 +127,7 @@ describe('createIdleReaper', () => {
 		expect(releaseLease).not.toHaveBeenCalled();
 	});
 
-	it('uses a separate TTL for each lease scope', async () => {
+	it('uses each lease effective TTL independently', async () => {
 		const releaseLease = vi.fn(async () => {});
 		const idleReaper = createIdleReaper({
 			getLeases: () => [
@@ -181,9 +181,22 @@ describe('createIdleReaper', () => {
 			releaseLease,
 		});
 
-		await expect(idleReaper.reapExpiredLeases()).rejects.toThrow(
-			'Failed to release 1 expired lease(s).',
-		);
+		let aggregateError: unknown;
+		try {
+			await idleReaper.reapExpiredLeases();
+		} catch (error) {
+			aggregateError = error;
+		}
+
+		expect(aggregateError).toBeInstanceOf(AggregateError);
+		expect(aggregateError).toMatchObject({
+			message: 'Failed to release 1 expired lease(s).',
+			errors: [
+				expect.objectContaining({
+					message: "Failed to release expired lease 'lease-expired-1': release failed",
+				}),
+			],
+		});
 		expect(releaseLease).toHaveBeenCalledTimes(2);
 		expect(releaseLease).toHaveBeenCalledWith('lease-expired-2', {
 			ifLastUsedAtBeforeOrAt: 5_000,

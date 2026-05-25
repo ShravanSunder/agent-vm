@@ -23,7 +23,7 @@ import {
 	type OpenClawGondolinSandboxSnapshot,
 } from '../openclaw-gondolin-contract.js';
 import {
-	type CachedScopeEntry,
+	type CachedAgentLeaseEntry,
 	type CreateBackendDependencies,
 	type OpenClawFsBridgeLeaseContext,
 	type OpenClawSandboxBackendHandle,
@@ -117,6 +117,19 @@ function mergedAbortSignal(
 	return AbortSignal.any([firstSignal, secondSignal]);
 }
 
+function mergedAbortSignals(
+	signals: readonly (AbortSignal | undefined)[],
+): AbortSignal | undefined {
+	const presentSignals = signals.filter((signal): signal is AbortSignal => signal !== undefined);
+	if (presentSignals.length === 0) {
+		return undefined;
+	}
+	if (presentSignals.length === 1) {
+		return presentSignals[0];
+	}
+	return AbortSignal.any(presentSignals);
+}
+
 function resolveLeaseRequestAgentId(sessionKey: string): string {
 	return resolveOpenClawAgentIdFromSessionKey(sessionKey);
 }
@@ -147,11 +160,13 @@ export function createGondolinSandboxBackendFactory(
 			readonly env?: Record<string, string>;
 		};
 	};
+	// OpenClaw SDK boundary input only. Agent-vm leases are keyed by agentId,
+	// so this value is intentionally not read or forwarded to the controller.
 	readonly scopeKey: string;
 	readonly sessionKey: string;
 	readonly workspaceDir: string;
 }) => Promise<OpenClawSandboxBackendHandle> {
-	const scopeCache = new Map<string, CachedScopeEntry>();
+	const agentLeaseCache = new Map<string, CachedAgentLeaseEntry>();
 
 	return async (params) => {
 		const profileId = options.profileId ?? 'standard';
@@ -168,11 +183,11 @@ export function createGondolinSandboxBackendFactory(
 				controllerUrl: options.controllerUrl,
 			}) ?? createLeaseClient({ controllerUrl: options.controllerUrl });
 		const markLeaseStale = async (
-			lease: CachedScopeEntry['lease'],
+			lease: CachedAgentLeaseEntry['lease'],
 			reason: ToolVmSshFailureKind,
 			error: unknown,
 		): Promise<void> => {
-			scopeCache.delete(cacheKey);
+			agentLeaseCache.delete(cacheKey);
 			writeSandboxBackendLog(
 				`lease marked stale for zone '${options.zoneId}' agent '${agentId}' lease '${lease.leaseId}' reason '${reason}': ${formatUnknownError(error)}`,
 			);
@@ -184,7 +199,7 @@ export function createGondolinSandboxBackendFactory(
 					);
 				});
 		};
-		const cachedEntry = scopeCache.get(cacheKey);
+		const cachedEntry = agentLeaseCache.get(cacheKey);
 		if (cachedEntry) {
 			try {
 				await leaseClient.renewLease(cachedEntry.lease.leaseId);
@@ -208,7 +223,7 @@ export function createGondolinSandboxBackendFactory(
 				if (error instanceof ToolVmSshOperationStaleError) {
 					await markLeaseStale(cachedEntry.lease, error.reason, error);
 				} else if (shouldRefreshCachedLease(error)) {
-					scopeCache.delete(cacheKey);
+					agentLeaseCache.delete(cacheKey);
 				} else {
 					throw error;
 				}
@@ -248,7 +263,7 @@ export function createGondolinSandboxBackendFactory(
 			sessionKey: params.sessionKey,
 			zoneId: options.zoneId,
 		});
-		scopeCache.set(cacheKey, { handle, lease });
+		agentLeaseCache.set(cacheKey, { handle, lease });
 		return handle;
 	};
 }
@@ -262,7 +277,7 @@ function createSandboxBackendHandle(options: {
 	};
 	readonly controllerUrl: string;
 	readonly createFsBridgeBuilder?: CreateBackendDependencies['createFsBridgeBuilder'];
-	readonly lease: CachedScopeEntry['lease'];
+	readonly lease: CachedAgentLeaseEntry['lease'];
 	readonly leaseClient: LeaseClient;
 	readonly markCachedLeaseStale: (reason: ToolVmSshFailureKind, error: unknown) => Promise<void>;
 	readonly runRemoteShellScript: CreateBackendDependencies['runRemoteShellScript'];
@@ -346,16 +361,22 @@ function createSandboxBackendHandle(options: {
 			},
 			async (activeUseHandle) =>
 				await runToolVmSshOperationWithGuard({
-					operation: async (signal) =>
-						await options.runRemoteShellScript({
+					operation: async (signal) => {
+						const operationSignal = mergedAbortSignals([
+							shellParams.signal,
+							activeUseHandle.signal,
+							signal,
+						]);
+						return await options.runRemoteShellScript({
 							...(shellParams.allowFailure !== undefined
 								? { allowFailure: shellParams.allowFailure }
 								: {}),
 							script: buildShellScriptWithArgs(shellParams.script, shellParams.args),
-							signal: mergedAbortSignal(shellParams.signal, signal),
+							...(operationSignal === undefined ? {} : { signal: operationSignal }),
 							ssh: options.lease.ssh,
 							...(shellParams.stdin !== undefined ? { stdin: shellParams.stdin } : {}),
-						}),
+						});
+					},
 					operationName: 'fs-bridge',
 					report: (report) => {
 						activeUseHandle.report(report);
@@ -440,16 +461,14 @@ function createSandboxBackendHandle(options: {
 		},
 		finalizeExec: async (finalizeParams) => {
 			if (isActiveUseFinalizeToken(finalizeParams.token)) {
-				if (finalizeParams.timedOut || finalizeParams.status === 'failed') {
+				if (finalizeParams.timedOut) {
 					finalizeParams.token.activeUseHandle.report({
 						observedAtMs: Date.now(),
 						phase: 'failed',
 						ssh: {
 							failure: {
-								kind: finalizeParams.timedOut ? 'ssh-command-timed-out' : 'ssh-command-failed',
-								message: finalizeParams.timedOut
-									? 'exec command timed out.'
-									: 'exec command failed.',
+								kind: 'ssh-command-timed-out',
+								message: 'exec command timed out.',
 							},
 						},
 					});
@@ -458,11 +477,8 @@ function createSandboxBackendHandle(options: {
 					finalizeParams.token,
 					activeUseOutcomeForFinalizeParams(finalizeParams),
 				);
-				if (finalizeParams.timedOut || finalizeParams.status === 'failed') {
-					await options.markCachedLeaseStale(
-						finalizeParams.timedOut ? 'ssh-command-timed-out' : 'ssh-command-failed',
-						undefined,
-					);
+				if (finalizeParams.timedOut) {
+					await options.markCachedLeaseStale('ssh-command-timed-out', undefined);
 				}
 				return;
 			}
@@ -479,7 +495,7 @@ function createSandboxBackendHandle(options: {
 						operation: async (signal) =>
 							await options.runRemoteShellScript({
 								script: commandParams.script,
-								signal,
+								signal: mergedAbortSignal(activeUseHandle.signal, signal),
 								ssh: options.lease.ssh,
 							}),
 						operationName: 'runShellCommand',

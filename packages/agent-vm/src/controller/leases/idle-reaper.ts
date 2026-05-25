@@ -31,7 +31,14 @@ export function createIdleReaper(options: {
 						ifLastUsedAtBeforeOrAt: expiredLease.expirationCutoff,
 					});
 				} catch (error) {
-					releaseErrors.push(error instanceof Error ? error : new Error(String(error)));
+					releaseErrors.push(
+						new Error(
+							`Failed to release expired lease '${expiredLease.leaseId}': ${
+								error instanceof Error ? error.message : String(error)
+							}`,
+							{ cause: error },
+						),
+					);
 				}
 			}
 			if (releaseErrors.length > 0) {
