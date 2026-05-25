@@ -103,6 +103,7 @@ function createOpenClawSandboxParams(options: {
 	readonly agentId: string;
 	readonly scopeKey: string;
 	readonly sessionKey: string;
+	readonly workspaceDir?: string;
 }): Parameters<ReturnType<typeof createGondolinSandboxBackendFactory>>[0] {
 	const agentWorkspaceDir = `/zone/agents/${options.agentId}`;
 	return {
@@ -115,7 +116,7 @@ function createOpenClawSandboxParams(options: {
 		},
 		scopeKey: options.scopeKey,
 		sessionKey: options.sessionKey,
-		workspaceDir: agentWorkspaceDir,
+		workspaceDir: options.workspaceDir ?? agentWorkspaceDir,
 	};
 }
 
@@ -169,8 +170,9 @@ describe('smoke: OpenClaw agent-vm lease contract', () => {
 			}),
 		);
 
-		expect(betaSecondHandle).toBe(betaFirstHandle);
-		expect(mainHandle).not.toBe(betaFirstHandle);
+		expect(betaSecondHandle).not.toBe(betaFirstHandle);
+		expect(betaSecondHandle.runtimeId).toBe(betaFirstHandle.runtimeId);
+		expect(mainHandle.runtimeId).not.toBe(betaFirstHandle.runtimeId);
 		expect(calls.requestedLeases).toHaveLength(2);
 		expect(calls.renewLeaseIds).toEqual(['01890f00-0000-7000-8000-000000000001']);
 		expect(runRemoteShellScript).toHaveBeenCalledWith(
@@ -199,5 +201,76 @@ describe('smoke: OpenClaw agent-vm lease contract', () => {
 			expect(request).not.toHaveProperty('scopeKey');
 			expect(request).not.toHaveProperty('sandbox');
 		}
+	});
+
+	it('normalizes Tool VM guest cwd aliases without forking the agent lease', async () => {
+		const calls: CapturedLeaseClientCalls = {
+			renewLeaseIds: [],
+			requestedLeases: [],
+		};
+		const runRemoteShellScript = vi.fn(async () => ({
+			code: 0,
+			stderr: Buffer.from(''),
+			stdout: Buffer.from('ok'),
+		}));
+		const leaseClient = createSmokeLeaseClient(calls);
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => leaseClient,
+				runRemoteShellScript,
+			},
+		);
+
+		const workspaceHandle = await factory(
+			createOpenClawSandboxParams({
+				agentId: 'beta',
+				scopeKey: 'agent:beta:discord:channel:123',
+				sessionKey: 'agent:beta:discord:channel:123',
+				workspaceDir: '/workspace/app',
+			}),
+		);
+		const scratchHandle = await factory(
+			createOpenClawSandboxParams({
+				agentId: 'beta',
+				scopeKey: 'agent:beta:subagent:child',
+				sessionKey: 'agent:beta:subagent:child',
+				workspaceDir: '/work/tmp',
+			}),
+		);
+
+		expect(scratchHandle).not.toBe(workspaceHandle);
+		expect(scratchHandle.runtimeId).toBe(workspaceHandle.runtimeId);
+		expect(workspaceHandle.workdir).toBe('/workspace/app');
+		expect(scratchHandle.workdir).toBe('/work/tmp');
+		expect(calls.requestedLeases).toEqual([
+			{
+				agentId: 'beta',
+				agentWorkspaceDir: '/zone/agents/beta',
+				profileId: 'standard',
+				sessionKey: 'agent:beta:discord:channel:123',
+				workMountDir: '/zone/agents/beta',
+				zoneId: 'shravan',
+			},
+		]);
+		expect(calls.renewLeaseIds).toEqual(['01890f00-0000-7000-8000-000000000001']);
+		expect(runRemoteShellScript).toHaveBeenCalledWith(
+			expect.objectContaining({
+				allowFailure: false,
+				script: 'true',
+			}),
+		);
+		const request = calls.requestedLeases[0];
+		expect(request).not.toHaveProperty('scopeKey');
+		expect(request).not.toHaveProperty('sandbox');
+		expect(request).not.toHaveProperty('workspaceDir');
 	});
 });
