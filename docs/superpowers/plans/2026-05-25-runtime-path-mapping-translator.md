@@ -1581,16 +1581,16 @@ git commit -m "fix: return lease path retry guidance"
 
 ---
 
-### Task 6: Add Hermetic Plugin Smoke For Subagent Cwd Matrix
+### Task 6: Add Plugin Contract Test For Subagent Cwd Matrix
 
 **Files:**
-- Modify: `packages/openclaw-agent-vm-plugin/src/openclaw-lease-contract.smoke.test.ts`
+- Modify: `packages/openclaw-agent-vm-plugin/src/openclaw-lease-contract.test.ts`
 
-- [ ] **Step 1: Add failing smoke coverage for `/workspace` and `/work` cwd aliases**
+- [ ] **Step 1: Add failing contract coverage for `/workspace` and `/work` cwd aliases**
 
-Add to `packages/openclaw-agent-vm-plugin/src/openclaw-lease-contract.smoke.test.ts`:
+Add to `packages/openclaw-agent-vm-plugin/src/openclaw-lease-contract.test.ts`:
 
-`scopeKey` remains in this smoke input only because OpenClaw's sandbox backend API supplies it. The recorded controller request must never include it.
+`scopeKey` remains in this contract-test input only because OpenClaw's sandbox backend API supplies it. The recorded controller request must never include it.
 
 ```ts
 it('normalizes Tool VM guest cwd aliases without forking the agent lease', async () => {
@@ -1641,21 +1641,21 @@ it('normalizes Tool VM guest cwd aliases without forking the agent lease', async
 });
 ```
 
-If this smoke file already has a recording fake lease client, reuse it and preserve its request-array naming.
+If this contract test file already has a recording fake lease client, reuse it and preserve its request-array naming.
 
-- [ ] **Step 2: Run the smoke test and verify failure**
+- [ ] **Step 2: Run the contract test and verify failure**
 
 Run:
 
 ```bash
-pnpm vitest run --config vitest.smoke.config.ts packages/openclaw-agent-vm-plugin/src/openclaw-lease-contract.smoke.test.ts -t "normalizes Tool VM guest cwd aliases"
+pnpm vitest run packages/openclaw-agent-vm-plugin/src/openclaw-lease-contract.test.ts -t "normalizes Tool VM guest cwd aliases"
 ```
 
-Expected: FAIL until Task 3 is implemented and until the smoke fake expects the new request shape.
+Expected: FAIL until Task 3 is implemented and until the contract-test fake expects the new request shape.
 
-- [ ] **Step 3: Adjust smoke fake helpers to the new request shape**
+- [ ] **Step 3: Adjust contract-test fake helpers to the new request shape**
 
-Make the smoke fake request type match the plugin request body after this plan:
+Make the contract-test fake request type match the plugin request body after this plan:
 
 ```ts
 interface RecordedLeaseRequest {
@@ -1676,12 +1676,12 @@ expect(request).not.toHaveProperty('sandbox');
 expect(request).not.toHaveProperty('workspaceDir');
 ```
 
-- [ ] **Step 4: Run the smoke test**
+- [ ] **Step 4: Run the contract test**
 
 Run:
 
 ```bash
-pnpm vitest run --config vitest.smoke.config.ts packages/openclaw-agent-vm-plugin/src/openclaw-lease-contract.smoke.test.ts -t "normalizes Tool VM guest cwd aliases"
+pnpm vitest run packages/openclaw-agent-vm-plugin/src/openclaw-lease-contract.test.ts -t "normalizes Tool VM guest cwd aliases"
 ```
 
 Expected: PASS.
@@ -1691,8 +1691,8 @@ Expected: PASS.
 Run:
 
 ```bash
-git add packages/openclaw-agent-vm-plugin/src/openclaw-lease-contract.smoke.test.ts
-git commit -m "test: smoke tool vm cwd path aliases"
+git add packages/openclaw-agent-vm-plugin/src/openclaw-lease-contract.test.ts
+git commit -m "test: cover tool vm cwd path aliases"
 ```
 
 ---

@@ -83,9 +83,22 @@ fast formatting and linting.
 - Unit tests: `pnpm test:unit`.
 - Integration tests: `pnpm test:integration`.
 - Smoke tests: `pnpm test:smoke`.
+  This runs `vitest.smoke.config.ts` and includes only
+  `packages/**/*.smoke.test.ts`. Smoke tests are production-shaped checks, not
+  fake-client contract tests. Current smoke types:
+  - CLI smoke: built `agent-vm` commands such as manual/resources update.
+  - Startup/config smoke: production startup wiring such as gateway secret
+    resolution.
+  - Live OpenClaw/Gondolin smoke: gated by `AGENT_VM_OPENCLAW_SMOKE=1`; boots
+    real OpenClaw/Gondolin VM flows and requires Docker, QEMU, and pinned Zig.
+  - Live Worker/Gondolin smoke: gated by `AGENT_VM_WORKER_SMOKE=1` or
+    `AGENT_VM_GONDOLIN_SMOKE=1`; boots worker/runtime or Gondolin image paths.
+  - Live 1Password smoke: gated by `AGENT_VM_1PASSWORD_SMOKE=1` plus explicit
+    1Password smoke refs and token env.
   Use `mise exec -- pnpm test:smoke` for smoke tests so the repo-pinned Zig
   version in `mise.toml` is active. Live Gondolin/OpenClaw smokes depend on
   that toolchain selection and may silently skip under a stale system `zig`.
+  Skipped live smoke tests are not evidence that their live path was exercised.
 - Full quality gate: `pnpm check`.
   This includes the `@agent-vm/*` package version sync guard used by the
   publish script.

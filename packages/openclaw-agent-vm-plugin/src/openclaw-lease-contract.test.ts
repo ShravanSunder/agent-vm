@@ -120,7 +120,7 @@ function createOpenClawSandboxParams(options: {
 	};
 }
 
-describe('smoke: OpenClaw agent-vm lease contract', () => {
+describe('OpenClaw agent-vm lease contract', () => {
 	it('discards OpenClaw scope input and keys Tool VM leases by zone and agent', async () => {
 		const calls: CapturedLeaseClientCalls = {
 			renewLeaseIds: [],
