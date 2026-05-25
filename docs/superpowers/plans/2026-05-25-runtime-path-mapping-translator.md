@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript, Vitest, pnpm monorepo, Oxfmt/Oxlint, Zod-adjacent typed contracts through `@agent-vm/gateway-interface`.
 
+**Base Branch:** Execute this plan only after `fix/tool-vm-lease-and-ingress-defaults` has landed, or rebase this plan onto that branch before starting. The controller `/lease` API must already be the hard-cut shape with no `scopeKey` and no `sandbox` request fields.
+
 ---
 
 ## Mental Model
@@ -90,7 +92,7 @@ Create:
 Modify:
 
 - `packages/gateway-interface/src/index.ts` — export runtime path mapping API.
-- `packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-factory.ts` — use plugin mapping before `requestLease`; cache by `zoneId + agentId`; store `effectiveGuestCwd`; normalize exec cwd.
+- `packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-factory.ts` — use plugin mapping before `requestLease`; cache the lease by `zoneId + agentId`; rebuild a per-call handle with the current `effectiveGuestCwd`; normalize exec cwd.
 - `packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-contract.ts` — keep dependency contract simple; workdir remains guest path only.
 - `packages/openclaw-agent-vm-plugin/src/openclaw-backend-dependencies.ts` — consume already-normalized guest workdir; no mapping logic here.
 - `packages/agent-vm/src/controller/leases/lease-work-mount-paths.ts` — reuse gateway-interface translator for gateway path mapping; preserve final `realpath` validation.
@@ -100,11 +102,49 @@ Modify:
 - `packages/agent-vm/src/controller/http/controller-http-routes.test.ts` — assert JSON guidance for path translation failures.
 - `docs/architecture/storage-model.md` — document that path matrix mechanics live in `gateway-interface`, while runtime mappings are injected.
 - `docs/architecture/openclaw-gateway.md` — document plugin cwd normalization and controller host-root enforcement.
+- `packages/agent-vm/src/cli/manual-templates.ts` — update generated manual runtime-path guidance.
+- `packages/agent-vm/src/cli/manual-templates.test.ts` — assert generated manual text matches the new path contract.
 
 Not touched in this plan:
 
 - `packages/gondolin-adapter/src/vm-adapter.ts` — it receives VFS mounts and should not learn OpenClaw path policy.
 - `packages/worker-gateway/src/worker-lifecycle.ts` — worker `/work/repos` semantics can use the generic translator in a separate worker-specific change.
+
+## TDD And Testing Pyramid
+
+This plan must be executed test-first. No production code step starts until the corresponding failing test has been written and run to confirm the expected failure.
+
+```text
+Acceptance / smoke loop
+  Task 6 proves the OpenClaw plugin boundary end to end:
+    - `/workspace[/subpath]` and `/work[/subpath]` are accepted as plugin input intent.
+    - the controller request never contains `workspaceDir`, `scopeKey`, or `sandbox`.
+    - same-agent subagent-shaped sessions reuse one controller lease.
+
+Integration loop
+  Task 3 proves the plugin factory behavior:
+    - lease cache key is `zoneId + agentId`.
+    - cached lease is reused across cwd intents.
+    - handle is rebuilt per call so `effectiveGuestCwd` stays request-local.
+
+  Task 4 and Task 5 prove the controller boundary:
+    - controller translates only controller-supported gateway paths.
+    - controller still rejects direct Tool VM guest paths in `/lease workMountDir`.
+    - structured retry guidance survives into HTTP JSON.
+
+Unit loop
+  Task 1 proves generic translator mechanics:
+    - absolute path normalization.
+    - parent traversal rejection.
+    - longest-prefix root match.
+    - root-path restrictions.
+    - purpose capability checks.
+
+  Task 2 proves OpenClaw Tool VM projection:
+    - host workspace paths become `/workspace[/subpath]` cwd.
+    - `/workspace[/subpath]` maps to the agent workspace mount.
+    - `/work[/subpath]` is execution cwd only, never lease mount identity.
+```
 
 ---
 
@@ -144,7 +184,6 @@ const mapping = {
 			capabilities: {
 				executionCwd: true,
 				leaseMount: true,
-				storageReference: true,
 			},
 			rootPathAllowed: true,
 			guidanceLabel: 'agent workspace',
@@ -159,7 +198,6 @@ const mapping = {
 			capabilities: {
 				executionCwd: true,
 				leaseMount: false,
-				storageReference: false,
 			},
 			rootPathAllowed: true,
 			guidanceLabel: 'Tool VM scratch',
@@ -176,7 +214,6 @@ const mapping = {
 			capabilities: {
 				executionCwd: true,
 				leaseMount: false,
-				storageReference: true,
 			},
 			rootPathAllowed: true,
 			guidanceLabel: 'workspace cache',
@@ -203,7 +240,6 @@ describe('translateRuntimePath', () => {
 				capabilities: {
 					executionCwd: true,
 					leaseMount: true,
-					storageReference: true,
 				},
 				guestPath: '/workspace/app',
 				guestRoot: '/workspace',
@@ -274,9 +310,6 @@ describe('translateRuntimePath', () => {
 				allowedPathForms: [
 					'/workspace[/subpath]',
 					'/zone/agents/beta[/subpath]',
-					'/work[/subpath]',
-					'/workspace-cache[/subpath]',
-					'/cache/workspace[/subpath]',
 				],
 				code: 'purpose-not-allowed',
 				inputPath: '/work/tmp',
@@ -284,7 +317,7 @@ describe('translateRuntimePath', () => {
 				message: "Path '/work/tmp' matched Tool VM scratch but cannot be used for leaseMount.",
 				purpose: 'leaseMount',
 				retryGuidance:
-					"Use one of the allowed path forms for test-tool-vm: /workspace[/subpath], /zone/agents/beta[/subpath], /work[/subpath], /workspace-cache[/subpath], /cache/workspace[/subpath].",
+					"Use one of the allowed path forms for test-tool-vm leaseMount: /workspace[/subpath], /zone/agents/beta[/subpath].",
 			},
 		});
 	});
@@ -293,7 +326,7 @@ describe('translateRuntimePath', () => {
 		const result = translateRuntimePath({
 			mapping,
 			inputPath: '/workspace-cache/npm',
-			purpose: 'storageReference',
+			purpose: 'executionCwd',
 		});
 
 		expect(result).toMatchObject({
@@ -345,7 +378,7 @@ describe('translateRuntimePath', () => {
 				message: "Path '/tmp/build' is not part of runtime path mapping 'test-tool-vm'.",
 				purpose: 'executionCwd',
 				retryGuidance:
-					"Use one of the allowed path forms for test-tool-vm: /workspace[/subpath], /zone/agents/beta[/subpath], /work[/subpath], /workspace-cache[/subpath], /cache/workspace[/subpath].",
+					"Use one of the allowed path forms for test-tool-vm executionCwd: /workspace[/subpath], /zone/agents/beta[/subpath], /work[/subpath], /workspace-cache[/subpath], /cache/workspace[/subpath].",
 			},
 		});
 	});
@@ -366,7 +399,6 @@ describe('translateRuntimePath', () => {
 					capabilities: {
 						executionCwd: false,
 						leaseMount: true,
-						storageReference: true,
 					},
 					rootPathAllowed: false,
 					guidanceLabel: 'zone files',
@@ -409,12 +441,11 @@ Create `packages/gateway-interface/src/runtime-paths/runtime-path-mapping.ts`:
 export const TOOL_VM_WORKSPACE_GUEST_ROOT = '/workspace';
 export const TOOL_VM_SCRATCH_GUEST_ROOT = '/work';
 
-export type RuntimePathPurpose = 'executionCwd' | 'leaseMount' | 'storageReference';
+export type RuntimePathPurpose = 'executionCwd' | 'leaseMount';
 
 export interface RuntimePathCapabilities {
 	readonly executionCwd: boolean;
 	readonly leaseMount: boolean;
-	readonly storageReference: boolean;
 }
 
 export type RuntimePathBacking =
@@ -426,11 +457,6 @@ export type RuntimePathBacking =
 	| {
 			readonly kind: 'guest-rootfs-cow';
 			readonly durability: 'vm-lifetime';
-	  }
-	| {
-			readonly kind: 'control-realfs';
-			readonly durability: 'durable' | 'runtime' | 'cache';
-			readonly backup: 'included' | 'excluded';
 	  };
 
 export interface RuntimePathRootMapping {
@@ -528,8 +554,14 @@ function joinRootAndRelative(rootPath: string, relativePath: string): string {
 	return relativePath === '' ? rootPath : `${rootPath}/${relativePath}`;
 }
 
-function allowedPathFormsForMapping(mapping: RuntimePathMapping): readonly string[] {
+function allowedPathFormsForMapping(
+	mapping: RuntimePathMapping,
+	purpose: RuntimePathPurpose,
+): readonly string[] {
 	return mapping.roots.flatMap((root) => {
+		if (!root.capabilities[purpose]) {
+			return [];
+		}
 		const suffix = root.rootPathAllowed ? '[/subpath]' : '/<child>';
 		return [root.guestRoot, root.hostRoot]
 			.filter((value): value is string => value !== undefined)
@@ -537,8 +569,8 @@ function allowedPathFormsForMapping(mapping: RuntimePathMapping): readonly strin
 	});
 }
 
-function retryGuidanceForMapping(mapping: RuntimePathMapping): string {
-	return `Use one of the allowed path forms for ${mapping.id}: ${allowedPathFormsForMapping(mapping).join(', ')}.`;
+function retryGuidanceForMapping(mapping: RuntimePathMapping, purpose: RuntimePathPurpose): string {
+	return `Use one of the allowed path forms for ${mapping.id} ${purpose}: ${allowedPathFormsForMapping(mapping, purpose).join(', ')}.`;
 }
 
 function errorResult(params: {
@@ -551,13 +583,13 @@ function errorResult(params: {
 	return {
 		ok: false,
 		error: {
-			allowedPathForms: allowedPathFormsForMapping(params.mapping),
+			allowedPathForms: allowedPathFormsForMapping(params.mapping, params.purpose),
 			code: params.code,
 			inputPath: params.inputPath,
 			mappingId: params.mapping.id,
 			message: params.message,
 			purpose: params.purpose,
-			retryGuidance: retryGuidanceForMapping(params.mapping),
+			retryGuidance: retryGuidanceForMapping(params.mapping, params.purpose),
 		},
 	};
 }
@@ -783,7 +815,7 @@ describe('resolveOpenClawToolVmPathIntent', () => {
 				code: 'unknown-runtime-path',
 				inputPath: '/zone/agents/alpha/app',
 				retryGuidance:
-					'Use one of the allowed path forms for openclaw-tool-vm: /workspace[/subpath], /zone/agents/beta[/subpath], /work[/subpath].',
+					'Use one of the allowed path forms for openclaw-tool-vm executionCwd: /workspace[/subpath], /zone/agents/beta[/subpath], /work[/subpath].',
 			},
 		});
 	});
@@ -853,7 +885,17 @@ export type OpenClawToolVmPathIntentResult =
 			readonly error: RuntimePathTranslationError;
 	  };
 
-export function createOpenClawToolVmPathMapping(options: {
+export class OpenClawToolVmPathIntentError extends Error {
+	readonly details: RuntimePathTranslationError;
+
+	constructor(details: RuntimePathTranslationError) {
+		super(`${details.message} ${details.retryGuidance}`);
+		this.name = 'OpenClawToolVmPathIntentError';
+		this.details = details;
+	}
+}
+
+function createOpenClawToolVmPathMapping(options: {
 	readonly agentWorkspaceDir: string;
 }): RuntimePathMapping {
 	return {
@@ -871,7 +913,6 @@ export function createOpenClawToolVmPathMapping(options: {
 				capabilities: {
 					executionCwd: true,
 					leaseMount: true,
-					storageReference: true,
 				},
 				rootPathAllowed: true,
 				guidanceLabel: 'agent workspace',
@@ -886,7 +927,6 @@ export function createOpenClawToolVmPathMapping(options: {
 				capabilities: {
 					executionCwd: true,
 					leaseMount: false,
-					storageReference: false,
 				},
 				rootPathAllowed: true,
 				guidanceLabel: 'Tool VM scratch',
@@ -932,6 +972,17 @@ export function resolveOpenClawToolVmPathIntent(options: {
 		},
 	};
 }
+
+export function assertOpenClawToolVmPathIntent(options: {
+	readonly agentWorkspaceDir: string;
+	readonly inputPath: string;
+}): OpenClawToolVmPathIntentResolution {
+	const result = resolveOpenClawToolVmPathIntent(options);
+	if (!result.ok) {
+		throw new OpenClawToolVmPathIntentError(result.error);
+	}
+	return result.value;
+}
 ```
 
 - [ ] **Step 4: Run plugin mapping tests**
@@ -959,11 +1010,14 @@ git commit -m "feat: add openclaw tool vm path mapping"
 
 **Files:**
 - Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-factory.ts`
+- Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-contract.ts`
 - Test: `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts`
 
 - [ ] **Step 1: Add failing integration tests for cwd aliases and cache identity**
 
 Add these tests to `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts` near the existing lease request tests:
+
+`scopeKey` remains in these factory inputs only because OpenClaw's sandbox backend API supplies it. These tests must prove the plugin discards it before calling the controller.
 
 ```ts
 it('normalizes /workspace subpaths before requesting a controller lease', async () => {
@@ -1082,10 +1136,13 @@ it('reuses one cached lease for the same agent when only cwd intent differs', as
 		workspaceDir: '/work/tmp',
 	});
 
-	expect(secondHandle).toBe(firstHandle);
+	expect(secondHandle).not.toBe(firstHandle);
+	expect(firstHandle.runtimeId).toBe(secondHandle.runtimeId);
+	expect(firstHandle.workdir).toBe('/workspace/app');
+	expect(secondHandle.workdir).toBe('/work/tmp');
 	expect(leaseClient.requestLease).toHaveBeenCalledTimes(1);
 	expect(leaseClient.renewLease).toHaveBeenCalledTimes(1);
-});
+	});
 ```
 
 Use the local fixture helper names already present in this file. If the current file uses different helper names than `createFakeLeaseClient`, `fakeLease`, `fakeDependencies`, or `gondolinSandboxConfig`, adapt only the names, not the assertions.
@@ -1098,7 +1155,7 @@ Run:
 pnpm vitest run packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts -t "normalizes /workspace|normalizes /work|reuses one cached lease"
 ```
 
-Expected: FAIL because the plugin currently sends `params.workspaceDir` directly as `workMountDir`, returns `lease.workdir` as handle workdir, and includes path fields in the cache key.
+Expected: FAIL because the plugin currently sends `params.workspaceDir` directly as `workMountDir`, returns `lease.workdir` as handle workdir, and returns the cached handle instead of rebuilding a per-call handle with the current cwd intent.
 
 - [ ] **Step 3: Update plugin cache key and handle state**
 
@@ -1107,10 +1164,7 @@ Modify `packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-ha
 Import the mapping helper:
 
 ```ts
-import {
-	resolveOpenClawToolVmPathIntent,
-	type OpenClawToolVmPathIntentResolution,
-} from './openclaw-tool-vm-path-mapping.js';
+import { assertOpenClawToolVmPathIntent } from './openclaw-tool-vm-path-mapping.js';
 ```
 
 Replace `agentLeaseCacheKey` with:
@@ -1127,18 +1181,17 @@ function agentLeaseCacheKey(params: {
 Inside the factory, resolve the path before computing the cache key:
 
 ```ts
-const pathIntent = resolveOpenClawToolVmPathIntent({
+const pathIntent = assertOpenClawToolVmPathIntent({
 	agentWorkspaceDir: params.agentWorkspaceDir,
 	inputPath: params.workspaceDir,
 });
-if (!pathIntent.ok) {
-	throw new Error(pathIntent.error.message + ' ' + pathIntent.error.retryGuidance);
-}
 const cacheKey = agentLeaseCacheKey({
 	agentId,
 	zoneId: options.zoneId,
 });
 ```
+
+Do not stringify path translation errors at this boundary. `assertOpenClawToolVmPathIntent` throws `OpenClawToolVmPathIntentError` with structured `details`, so callers and tests can inspect `code`, `allowedPathForms`, `mappingId`, `purpose`, and `retryGuidance`.
 
 Change the controller request:
 
@@ -1147,27 +1200,38 @@ const leaseResponse = await leaseClient.requestLease({
 	agentId,
 	agentWorkspaceDir: params.agentWorkspaceDir,
 	profileId,
-	sandbox: snapshotOpenClawGondolinSandboxConfig(params.cfg),
-	scopeKey: params.scopeKey,
 	sessionKey: params.sessionKey,
-	workMountDir: pathIntent.value.leaseWorkMountDir,
+	workMountDir: pathIntent.leaseWorkMountDir,
 	zoneId: options.zoneId,
 });
 ```
 
-Pass the effective cwd into the handle:
+Cache the lease, not the handle. The lease identity is agent-scoped; the effective cwd is request-local execution intent:
+
+```ts
+export interface CachedAgentLeaseEntry {
+	readonly lease: ToolVmSshLease;
+}
+```
+
+```ts
+agentLeaseCache.set(cacheKey, { lease });
+```
+
+On cache hit, renew/probe the cached lease and continue to the handle creation below. Do not `return cachedEntry.handle`; there is no cached handle after this change.
+
+Pass the current effective cwd into the new handle for this factory call:
 
 ```ts
 const handle = createSandboxBackendHandle({
 	cfg: params.cfg,
 	controllerUrl: options.controllerUrl,
 	createFsBridgeBuilder: dependencies.createFsBridgeBuilder,
-	effectiveGuestCwd: pathIntent.value.effectiveGuestCwd,
+	effectiveGuestCwd: pathIntent.effectiveGuestCwd,
 	lease,
 	leaseClient,
 	runRemoteShellScript: dependencies.runRemoteShellScript,
 	buildExecSpec: dependencies.buildExecSpec,
-	scopeKey: params.scopeKey,
 	sessionKey: params.sessionKey,
 	zoneId: options.zoneId,
 });
@@ -1224,7 +1288,7 @@ Expected: PASS.
 Run:
 
 ```bash
-git add packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-factory.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts
+git add packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-factory.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-contract.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts
 git commit -m "fix: normalize openclaw tool vm cwd intents"
 ```
 
@@ -1303,7 +1367,6 @@ export function createOpenClawGatewayLeasePathMapping(options: {
 				capabilities: {
 					executionCwd: false,
 					leaseMount: true,
-					storageReference: true,
 				},
 				rootPathAllowed: false,
 				guidanceLabel: 'OpenClaw sandbox work directory',
@@ -1320,7 +1383,6 @@ export function createOpenClawGatewayLeasePathMapping(options: {
 				capabilities: {
 					executionCwd: false,
 					leaseMount: true,
-					storageReference: true,
 				},
 				rootPathAllowed: false,
 				guidanceLabel: 'OpenClaw zone files',
@@ -1344,6 +1406,30 @@ import {
 
 Remove the local `OPENCLAW_STATE_VM_ROOT`, `OPENCLAW_STATE_SANDBOXES_VM_ROOT`, and `mapGuestPathToHostPath` definitions.
 
+Extend `LeaseWorkMountValidationError` so translation guidance can cross the resolver/HTTP boundary without duplicating strings:
+
+```ts
+interface LeaseWorkMountValidationErrorOptions extends ErrorOptions {
+	readonly guidance?: string;
+}
+
+export class LeaseWorkMountValidationError extends Error {
+	readonly guidance?: string;
+	readonly kind: LeaseWorkMountValidationErrorKind;
+
+	constructor(
+		kind: LeaseWorkMountValidationErrorKind,
+		message: string,
+		options?: LeaseWorkMountValidationErrorOptions,
+	) {
+		super(message, options);
+		this.name = 'LeaseWorkMountValidationError';
+		this.guidance = options?.guidance;
+		this.kind = kind;
+	}
+}
+```
+
 Inside `resolveLeaseWorkMountDir`, replace the `hostWorkMountDir` computation with:
 
 ```ts
@@ -1363,6 +1449,7 @@ if (!translation.ok) {
 	throw new LeaseWorkMountValidationError(
 		kind,
 		translation.error.message,
+		{ guidance: translation.error.retryGuidance },
 	);
 }
 const hostWorkMountDir = translation.value.hostPath;
@@ -1417,7 +1504,11 @@ it('returns retry guidance when lease workMountDir is a Tool VM guest path', asy
 		resolveLeaseWorkMountDir: async () => {
 			throw new LeaseWorkMountValidationError(
 				'outside-allowed-roots',
-				"Path '/work/tmp' matched Tool VM scratch but cannot be used for leaseMount. Use /workspace[/subpath], /work[/subpath], or an OpenClaw gateway path before calling the controller.",
+				"Path '/work/tmp' matched Tool VM scratch but cannot be used for leaseMount.",
+				{
+					guidance:
+						'Use one of the allowed path forms for openclaw-gateway-lease leaseMount: /zone/<child>, /home/openclaw/.openclaw/state/sandboxes/<child>.',
+				},
 			);
 		},
 	});
@@ -1433,7 +1524,7 @@ it('returns retry guidance when lease workMountDir is a Tool VM guest path', asy
 
 	await expect(response.json()).resolves.toMatchObject({
 		error: 'workMountDir outside allowed roots',
-		guidance: expect.stringContaining('Retry with a controller-supported OpenClaw gateway path'),
+		guidance: expect.stringContaining('/zone/<child>'),
 	});
 	expect(response.status).toBe(400);
 });
@@ -1451,7 +1542,7 @@ pnpm vitest run packages/agent-vm/src/controller/http/controller-http-routes.tes
 
 Expected: FAIL because the response does not yet include the new guidance field.
 
-- [ ] **Step 3: Add guidance to `LeaseWorkMountValidationError` response**
+- [ ] **Step 3: Add structured guidance to `LeaseWorkMountValidationError` response**
 
 In `packages/agent-vm/src/controller/http/controller-http-routes.ts`, inside the `catch (error)` branch for `LeaseWorkMountValidationError`, return:
 
@@ -1462,8 +1553,7 @@ return context.json(
 			error.kind === 'outside-allowed-roots'
 				? 'workMountDir outside allowed roots'
 				: error.kind,
-		guidance:
-			'Retry with a controller-supported OpenClaw gateway path under /zone/<child> or /home/openclaw/.openclaw/state/sandboxes/<child>. Tool VM guest paths such as /workspace and /work must be normalized by the OpenClaw plugin before calling the controller.',
+		...(error.guidance !== undefined ? { guidance: error.guidance } : {}),
 		message: error.message,
 	},
 	400,
@@ -1499,6 +1589,8 @@ git commit -m "fix: return lease path retry guidance"
 - [ ] **Step 1: Add failing smoke coverage for `/workspace` and `/work` cwd aliases**
 
 Add to `packages/openclaw-agent-vm-plugin/src/openclaw-lease-contract.smoke.test.ts`:
+
+`scopeKey` remains in this smoke input only because OpenClaw's sandbox backend API supplies it. The recorded controller request must never include it.
 
 ```ts
 it('normalizes Tool VM guest cwd aliases without forking the agent lease', async () => {
@@ -1610,6 +1702,8 @@ git commit -m "test: smoke tool vm cwd path aliases"
 **Files:**
 - Modify: `docs/architecture/storage-model.md`
 - Modify: `docs/architecture/openclaw-gateway.md`
+- Modify: `packages/agent-vm/src/cli/manual-templates.ts`
+- Test: `packages/agent-vm/src/cli/manual-templates.test.ts`
 
 - [ ] **Step 1: Update storage model with translator ownership**
 
@@ -1647,7 +1741,36 @@ paths, and proves the resolved path is inside the configured allowed roots
 before booting a Tool VM.
 ```
 
-- [ ] **Step 3: Run docs grep checks**
+- [ ] **Step 3: Update generated manual template**
+
+In `packages/agent-vm/src/cli/manual-templates.ts`, update the runtime paths manual text so it states the current split:
+
+```markdown
+The OpenClaw plugin may accept Tool VM guest cwd intent such as `/workspace`,
+`/workspace/<child>`, `/work`, or `/work/<child>`. The plugin translates that
+intent before it calls the controller.
+
+The controller `/lease workMountDir` is stricter: it accepts only
+controller-supported OpenClaw gateway paths such as `/zone/<child>` or
+`/home/openclaw/.openclaw/state/sandboxes/<child>`. Direct Tool VM guest paths
+such as `/workspace` and `/work` are rejected at the controller boundary.
+```
+
+Keep this concise; generated manuals are operational guidance, not the full architecture doc.
+
+- [ ] **Step 4: Update generated manual tests**
+
+In `packages/agent-vm/src/cli/manual-templates.test.ts`, add or update assertions for the generated runtime paths manual:
+
+```ts
+expect(runtimePathsManual).toContain('The OpenClaw plugin may accept Tool VM guest cwd intent');
+expect(runtimePathsManual).toContain('The controller `/lease workMountDir` is stricter');
+expect(runtimePathsManual).toContain('Direct Tool VM guest paths such as `/workspace` and `/work` are rejected at the controller boundary');
+```
+
+Use the local variable/helper names already present in `manual-templates.test.ts`.
+
+- [ ] **Step 5: Run docs grep checks**
 
 Run:
 
@@ -1657,12 +1780,22 @@ rg -n "Tool VM guest paths are rejected|rejects /workspace|/workMountDir = /work
 
 Expected: no result that claims `/workspace` or `/work` are always rejected at the plugin boundary. Results that say the controller rejects guest paths in `/lease workMountDir` are acceptable.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Run manual template tests**
 
 Run:
 
 ```bash
-git add docs/architecture/storage-model.md docs/architecture/openclaw-gateway.md
+pnpm vitest run packages/agent-vm/src/cli/manual-templates.test.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+Run:
+
+```bash
+git add docs/architecture/storage-model.md docs/architecture/openclaw-gateway.md packages/agent-vm/src/cli/manual-templates.ts packages/agent-vm/src/cli/manual-templates.test.ts
 git commit -m "docs: describe runtime path mapping ownership"
 ```
 
