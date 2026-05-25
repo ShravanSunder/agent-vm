@@ -120,12 +120,11 @@ export async function readIdentityPemFromFile(identityFilePath: string): Promise
 export async function serializeLeaseForResponse(
 	lease: Lease,
 	readIdentityPem: (identityFilePath: string) => Promise<string>,
-	options: { readonly idleTtlMs?: number } = {},
+	options: { readonly idleTtlMs: number },
 ): Promise<{
 	readonly agentId: string;
-	readonly idleTtlMs?: number;
+	readonly idleTtlMs: number;
 	readonly leaseId: string;
-	readonly scopeKey: string;
 	readonly ssh: {
 		readonly host: string;
 		readonly identityPem: string;
@@ -146,9 +145,8 @@ export async function serializeLeaseForResponse(
 	}
 	return {
 		agentId: lease.agentId,
-		...(options.idleTtlMs !== undefined ? { idleTtlMs: options.idleTtlMs } : {}),
+		idleTtlMs: options.idleTtlMs,
 		leaseId: lease.id,
-		scopeKey: lease.scopeKey,
 		ssh: {
 			host: `tool-${lease.tcpSlot}.vm.host`,
 			identityPem,
@@ -166,10 +164,10 @@ export function serializeLeasePeekForResponse(lease: Lease): ControllerLeasePeek
 	return {
 		agentId: lease.agentId,
 		createdAt: lease.createdAt,
+		idleTtlMs: lease.effectiveIdleTtlMs,
 		lastUsedAt: lease.lastUsedAt,
 		leaseId: lease.id,
 		profileId: lease.profileId,
-		scopeKey: lease.scopeKey,
 		ssh: {
 			host: lease.sshAccess.host,
 			port: lease.sshAccess.port,

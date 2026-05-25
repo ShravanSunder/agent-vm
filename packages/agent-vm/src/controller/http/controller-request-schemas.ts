@@ -17,33 +17,17 @@ const controllerLeaseAgentWorkspacePathSchema = z
 		message: 'path must not contain parent traversal.',
 	});
 
-// `scopeKey` is embedded in `lease.id`, which in turn is used as a path
-// component for the per-lease runtime record (`$stateDir/tool-leases/$id.json`).
-// We tighten the schema to a conservative shape — lowercase alphanumerics with
-// colons, dots, dashes, and underscores — so that path-traversal sequences
-// (`..`, `/`, `\`) and other filesystem-meaningful characters cannot appear in
-// any derived path. parseAgentScopeKey adds an additional per-segment shape
-// check; this regex is the outer-perimeter guardrail.
-const safeScopeKeyPattern = /^[a-z0-9][a-z0-9:._-]*$/u;
-export const safeScopeKeySchema = z.string().min(1).max(128).regex(safeScopeKeyPattern, {
-	message: 'scopeKey must match /^[a-z0-9][a-z0-9:._-]*$/ and be at most 128 chars',
+const openClawAgentIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/iu;
+
+const controllerLeaseAgentIdSchema = z.string().min(1).regex(openClawAgentIdPattern, {
+	message: 'agentId must match /^[a-z0-9][a-z0-9_-]{0,63}$/i',
 });
 
 export const controllerLeaseCreateRequestSchema = z.strictObject({
-	agentId: z.string().min(1),
+	agentId: controllerLeaseAgentIdSchema,
 	agentWorkspaceDir: controllerLeaseAgentWorkspacePathSchema,
 	idleTtlMs: z.number().int().positive().optional(),
 	profileId: z.string().min(1),
-	sandbox: z.strictObject({
-		backend: z.string(),
-		mode: z.string(),
-		scope: z.string(),
-		workspaceAccess: z.string(),
-	}),
-	// Defense-in-depth on top of the cross-field agentId/scopeKey consistency
-	// check in controller-http-routes: refuse any scopeKey that could escape
-	// the tool-leases/ filesystem subtree once embedded in lease.id.
-	scopeKey: safeScopeKeySchema,
 	sessionKey: z.string().min(1),
 	workMountDir: z.string().min(1),
 	zoneId: z.string().min(1),

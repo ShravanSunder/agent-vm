@@ -25,7 +25,6 @@ import { createMutableControllerRuntimeReadiness } from './http/controller-http-
 import { createControllerService } from './http/controller-http-routes.js';
 import { startControllerHttpServer } from './http/controller-http-server.js';
 import { createIdleReaper } from './leases/idle-reaper.js';
-import { ttlForLeaseScope, type LeaseIdleTtlPolicy } from './leases/lease-idle-policy.js';
 import { createLeaseManager } from './leases/lease-manager.js';
 import { createTcpPool } from './leases/tcp-pool.js';
 import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
@@ -47,14 +46,6 @@ import {
 } from './zone-runtimes/zone-runtime-errors.js';
 import { createZoneRuntimeRegistry } from './zone-runtimes/zone-runtime-registry.js';
 import type { ControllerZoneConfig } from './zone-runtimes/zone-runtime-types.js';
-
-const defaultLeaseIdleTtlPolicy = {
-	defaultMs: 100 * 60 * 1000,
-	maxRequestedMs: 24 * 60 * 60 * 1000,
-	minRequestedMs: 1_000,
-	byScopeKind: {},
-	byScopePrefix: {},
-} satisfies LeaseIdleTtlPolicy;
 
 function writeControllerRuntimeLog(message: string): void {
 	process.stderr.write(`[agent-vm] ${message}\n`);
@@ -179,11 +170,6 @@ export async function startControllerRuntime(
 		systemConfigPath: options.systemConfig.systemConfigPath,
 		tcpPool,
 	});
-	const ttlForLease = (lease: { readonly scopeKey: string }): number =>
-		ttlForLeaseScope({
-			policy: options.systemConfig.leaseIdleTtl ?? defaultLeaseIdleTtlPolicy,
-			scopeKey: lease.scopeKey,
-		});
 	const idleReaper = createIdleReaper({
 		getLeases: () =>
 			leaseManager.listLeases().map((lease) => ({
@@ -191,7 +177,6 @@ export async function startControllerRuntime(
 				effectiveIdleTtlMs: lease.effectiveIdleTtlMs,
 				id: lease.id,
 				lastUsedAt: lease.lastUsedAt,
-				scopeKey: lease.scopeKey,
 			})),
 		now,
 		releaseLease: async (
@@ -364,7 +349,6 @@ export async function startControllerRuntime(
 		runtimeReadiness: () => runtimeReadiness.get(),
 		secretResolver,
 		systemConfig: options.systemConfig,
-		ttlForLease,
 	});
 	await runTaskStep(`Controller API on :${options.systemConfig.host.controllerPort}`, async () => {
 		serverRef.current = await (dependencies.startHttpServer ?? startControllerHttpServer)({

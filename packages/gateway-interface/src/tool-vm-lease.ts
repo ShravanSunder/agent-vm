@@ -1,3 +1,4 @@
+import { isToolVmLeaseId } from './tool-vm-lease-id.js';
 import {
 	isVmCapabilityLease,
 	isVmSshEndpoint,
@@ -6,7 +7,6 @@ import {
 	type VmSshLease,
 	type VmSshPublicEndpoint,
 } from './vm-capability-lease.js';
-import { isToolVmLeaseId } from './tool-vm-lease-id.js';
 
 export interface ToolVmSshLease extends VmSshLease<'ssh-sandbox'> {
 	readonly agentId: string;

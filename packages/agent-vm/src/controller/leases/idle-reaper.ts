@@ -4,7 +4,6 @@ export function createIdleReaper(options: {
 		readonly effectiveIdleTtlMs: number;
 		readonly id: string;
 		readonly lastUsedAt: number;
-		readonly scopeKey: string;
 	}[];
 	readonly now: () => number;
 	readonly releaseLease: (

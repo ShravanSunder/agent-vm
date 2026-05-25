@@ -5,10 +5,8 @@ import type {
 	ToolVmActiveUseCorrelation,
 } from '@agent-vm/gateway-interface';
 import {
-	findOpenClawGondolinSandboxMismatch,
 	isOpenClawAgentSessionKey,
 	resolveOpenClawAgentIdFromSessionKey,
-	type OpenClawGondolinSandboxSnapshot,
 } from '@agent-vm/openclaw-agent-vm-plugin';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { Hono } from 'hono';
@@ -20,7 +18,7 @@ import {
 	SandboxSeedingError,
 	seedAgentSandboxWorkspace,
 } from '../leases/agent-sandbox-seeding.js';
-import { ttlForLeaseScope, type LeaseIdleTtlPolicy } from '../leases/lease-idle-policy.js';
+import type { LeaseIdleTtlPolicy } from '../leases/lease-idle-policy.js';
 import {
 	AgentLeaseCompatibilityConflictError,
 	LeaseActiveUseConflictError,
@@ -68,7 +66,7 @@ function logLeaseCreationFailure(options: {
 	readonly status: number;
 }): void {
 	writeControllerLeaseLog(
-		`[ERROR] lease creation failed diagnosticId='${options.diagnosticId}' status='${String(options.status)}' zone='${options.requestContext?.zoneId ?? '(unknown)'}' scope='${options.requestContext?.scopeKey ?? '(unknown)'}' workMountDir='${options.requestContext?.workMountDir ?? '(unknown)'}': ${formatUnknownError(options.error)}`,
+		`[ERROR] lease creation failed diagnosticId='${options.diagnosticId}' status='${String(options.status)}' zone='${options.requestContext?.zoneId ?? '(unknown)'}' agent='${options.requestContext?.agentId ?? '(unknown)'}' workMountDir='${options.requestContext?.workMountDir ?? '(unknown)'}': ${formatUnknownError(options.error)}`,
 	);
 }
 
@@ -107,7 +105,6 @@ function logAgentSandboxSeedResult(result: AgentSandboxSeedResult): void {
 
 interface LeaseRequestLogContext {
 	readonly agentId: string;
-	readonly scopeKey: string;
 	readonly workMountDir: string;
 	readonly zoneId: string;
 }
@@ -121,8 +118,6 @@ interface LeaseContractErrorBody {
 
 interface LeaseContractReceivedFields {
 	readonly agentId?: string;
-	readonly sandbox?: OpenClawGondolinSandboxSnapshot;
-	readonly scopeKey?: string;
 	readonly sessionAgentId?: string;
 	readonly sessionKey?: string;
 }
@@ -149,17 +144,10 @@ function leaseContractErrorBody(options: LeaseContractErrorBody): LeaseContractE
 
 function validateOpenClawGondolinLeaseContract(payload: {
 	readonly agentId: string;
-	readonly sandbox: {
-		readonly backend: unknown;
-		readonly mode: unknown;
-		readonly scope: unknown;
-		readonly workspaceAccess: unknown;
-	};
-	readonly scopeKey: string;
 	readonly sessionKey: string;
 }): LeaseContractErrorBody | null {
 	const sessionAgentId = resolveOpenClawAgentIdFromSessionKey(payload.sessionKey);
-	if (isOpenClawAgentSessionKey(payload.sessionKey) && sessionAgentId !== payload.agentId) {
+	if (sessionAgentId !== payload.agentId) {
 		return leaseContractErrorBody({
 			error: 'tool-vm-lease-agent-mismatch',
 			message: `Lease agentId '${payload.agentId}' does not match sessionKey agent '${sessionAgentId}'.`,
@@ -169,18 +157,6 @@ function validateOpenClawGondolinLeaseContract(payload: {
 				agentId: payload.agentId,
 				sessionAgentId,
 				sessionKey: payload.sessionKey,
-			},
-		});
-	}
-	const mismatch = findOpenClawGondolinSandboxMismatch(payload.sandbox);
-	if (mismatch) {
-		return leaseContractErrorBody({
-			error: 'invalid-tool-vm-sandbox-contract',
-			message: `Invalid OpenClaw sandbox contract: ${mismatch.key} must be ${mismatch.expectedValue}, received ${String(payload.sandbox[mismatch.key])}.`,
-			guidance:
-				'Managed OpenClaw/Gondolin requires backend="gondolin", mode="all", scope="agent", and workspaceAccess="rw".',
-			received: {
-				sandbox: payload.sandbox,
 			},
 		});
 	}
@@ -209,7 +185,7 @@ function agentLeaseCompatibilityConflictResponseBody(options: {
 }
 
 const defaultLeaseIdleTtlPolicy = {
-	defaultMs: 30 * 60 * 1000,
+	defaultMs: 100 * 60 * 1000,
 	maxRequestedMs: 24 * 60 * 60 * 1000,
 	minRequestedMs: 1_000,
 	byScopeKind: {},
@@ -219,14 +195,13 @@ const defaultLeaseIdleTtlPolicy = {
 function resolveEffectiveIdleTtlMs(options: {
 	readonly policy: LeaseIdleTtlPolicy;
 	readonly requestedIdleTtlMs: number | undefined;
-	readonly scopeKey: string;
 }):
 	| { readonly kind: 'ok'; readonly value: number }
 	| { readonly kind: 'invalid'; readonly message: string } {
 	if (options.requestedIdleTtlMs === undefined) {
 		return {
 			kind: 'ok',
-			value: ttlForLeaseScope({ policy: options.policy, scopeKey: options.scopeKey }),
+			value: options.policy.defaultMs,
 		};
 	}
 	if (options.requestedIdleTtlMs < options.policy.minRequestedMs) {
@@ -273,7 +248,6 @@ export function createControllerApp(options: {
 	readonly leaseManager: ControllerLeaseManager;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly runtimeReadiness?: () => ControllerRuntimeReadiness;
-	readonly ttlForLease?: (lease: { readonly scopeKey: string }) => number;
 	readonly toolVmProfiles?: Record<
 		string,
 		{
@@ -292,7 +266,6 @@ export function createControllerApp(options: {
 	readonly validateToolVmLeaseRequirements?: (zoneId: string) => Promise<void>;
 	readonly resolveLeaseWorkMountDir: (options: {
 		readonly agentId: string;
-		readonly scopeKey: string;
 		readonly workMountDir: string;
 		readonly zoneId: string;
 	}) => Promise<ResolvedLeaseWorkMount>;
@@ -345,10 +318,9 @@ export function createControllerApp(options: {
 				);
 			}
 			const payload = parsedPayload.data;
-			const agentId = resolveOpenClawAgentIdFromSessionKey(payload.sessionKey);
+			const agentId = payload.agentId;
 			requestContext = {
 				agentId,
-				scopeKey: payload.scopeKey,
 				workMountDir: payload.workMountDir,
 				zoneId: payload.zoneId,
 			};
@@ -362,7 +334,7 @@ export function createControllerApp(options: {
 			}
 			if (!isOpenClawAgentSessionKey(payload.sessionKey)) {
 				writeControllerLeaseLog(
-					`[WARN] OpenClaw lease sessionKey '${payload.sessionKey}' is not agent-shaped; defaulting agentId=main zone='${payload.zoneId}' scope='${payload.scopeKey}'`,
+					`[WARN] OpenClaw lease sessionKey '${payload.sessionKey}' is not agent-shaped; defaulting agentId=main zone='${payload.zoneId}' agent='${payload.agentId}'`,
 				);
 			}
 			const contractError = validateOpenClawGondolinLeaseContract(payload);
@@ -386,14 +358,12 @@ export function createControllerApp(options: {
 			await options.validateToolVmLeaseRequirements?.(payload.zoneId);
 			const resolvedWorkMount = await options.resolveLeaseWorkMountDir({
 				agentId,
-				scopeKey: payload.scopeKey,
 				workMountDir: payload.workMountDir,
 				zoneId: payload.zoneId,
 			});
 			const effectiveIdleTtl = resolveEffectiveIdleTtlMs({
 				policy: leaseIdleTtlPolicy,
 				requestedIdleTtlMs: payload.idleTtlMs,
-				scopeKey: payload.scopeKey,
 			});
 			if (effectiveIdleTtl.kind === 'invalid') {
 				return context.json(
@@ -407,19 +377,15 @@ export function createControllerApp(options: {
 				effectiveIdleTtlMs: effectiveIdleTtl.value,
 				profile: defaultToolVmProfile,
 				profileId: resolvedProfileId,
-				scopeKey: payload.scopeKey,
 				guestWorkdir: resolvedWorkMount.guestWorkdir,
 				hostWorkMountDir: resolvedWorkMount.hostWorkMountDir,
 				...(resolvedWorkMount.zoneGitMount ? { zoneGitMount: resolvedWorkMount.zoneGitMount } : {}),
 				zoneId: payload.zoneId,
 			});
-			const idleTtlMs = options.ttlForLease?.(lease);
 			return context.json(
-				await serializeLeaseForResponse(
-					lease,
-					readIdentityPem,
-					idleTtlMs !== undefined ? { idleTtlMs } : {},
-				),
+				await serializeLeaseForResponse(lease, readIdentityPem, {
+					idleTtlMs: effectiveIdleTtl.value,
+				}),
 			);
 		} catch (error) {
 			if (error instanceof LeaseWorkMountValidationError) {
@@ -473,7 +439,11 @@ export function createControllerApp(options: {
 		if (!leaseSnapshot) {
 			return context.json({ error: 'Lease not found' }, 404);
 		}
-		return context.json(await serializeLeaseForResponse(leaseSnapshot.lease, readIdentityPem));
+		return context.json(
+			await serializeLeaseForResponse(leaseSnapshot.lease, readIdentityPem, {
+				idleTtlMs: leaseSnapshot.lease.effectiveIdleTtlMs,
+			}),
+		);
 	});
 
 	app.post('/lease/:leaseId/renew', async (context) => {
@@ -481,17 +451,14 @@ export function createControllerApp(options: {
 		if (notReadyResponse) {
 			return notReadyResponse;
 		}
-		const leaseRenewal = options.leaseManager.renewLease(context.req.param('leaseId'));
-		if (!leaseRenewal) {
+		const leaseRenewal = await options.leaseManager.renewLease(context.req.param('leaseId'));
+		if (leaseRenewal.kind === 'not-found') {
 			return context.json({ error: 'Lease not found' }, 404);
 		}
-		const idleTtlMs = options.ttlForLease?.(leaseRenewal.lease);
 		return context.json(
-			await serializeLeaseForResponse(
-				leaseRenewal.lease,
-				readIdentityPem,
-				idleTtlMs !== undefined ? { idleTtlMs } : {},
-			),
+			await serializeLeaseForResponse(leaseRenewal.lease, readIdentityPem, {
+				idleTtlMs: leaseRenewal.lease.effectiveIdleTtlMs,
+			}),
 		);
 	});
 
@@ -502,7 +469,6 @@ export function createControllerApp(options: {
 			id: lease.id,
 			lastUsedAt: lease.lastUsedAt,
 			profileId: lease.profileId,
-			scopeKey: lease.scopeKey,
 			tcpSlot: lease.tcpSlot,
 			zoneId: lease.zoneId,
 		}));
@@ -708,7 +674,6 @@ export function createControllerService(options: {
 	readonly runtimeReadiness?: () => ControllerRuntimeReadiness;
 	readonly secretResolver?: SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
-	readonly ttlForLease: (lease: { readonly scopeKey: string }) => number;
 }): Hono {
 	const zonesById = new Map(options.systemConfig.zones.map((zone) => [zone.id, zone]));
 	const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
@@ -720,7 +685,6 @@ export function createControllerService(options: {
 		...(options.systemConfig.leaseIdleTtl
 			? { leaseIdleTtlPolicy: options.systemConfig.leaseIdleTtl }
 			: {}),
-		ttlForLease: options.ttlForLease,
 		toolVmProfiles: options.systemConfig.toolVmProfiles,
 		zoneIds: new Set(options.systemConfig.zones.map((zone) => zone.id)),
 		zoneDefaultToolVmProfiles: Object.fromEntries(
@@ -744,7 +708,7 @@ export function createControllerService(options: {
 			}
 			openClawRuntimeStatusStore.assertFreshOk(zoneId);
 		},
-		resolveLeaseWorkMountDir: async ({ agentId, scopeKey, workMountDir, zoneId }) => {
+		resolveLeaseWorkMountDir: async ({ agentId, workMountDir, zoneId }) => {
 			const zone = zonesById.get(zoneId);
 			if (!zone) {
 				throw new Error(`Unknown zone '${zoneId}'`);
@@ -755,9 +719,10 @@ export function createControllerService(options: {
 				zone,
 			});
 			if (options.secretResolver) {
+				const seedScopeKey = `agent:${agentId}`;
 				const seedResult = await seedAgentSandboxWorkspace({
 					agentId,
-					scopeKey,
+					scopeKey: seedScopeKey,
 					secretResolver: options.secretResolver,
 					hostWorkMountDir: resolvedWorkMount.hostWorkMountDir,
 					zone,

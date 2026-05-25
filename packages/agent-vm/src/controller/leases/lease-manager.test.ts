@@ -74,13 +74,105 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:beta:discord:channel:123',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 			...overrides,
 		};
 	}
+
+	it('creates opaque UUIDv7 lease ids instead of encoding zone, agent, or createdAt', async () => {
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createLeaseId: () => '01890f00-0000-7000-8000-000000000000',
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
+			now: () => 1_700_000_000_000,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+
+		const lease = await leaseManager.createLease(
+			createAgentLeaseOptions({
+				agentId: 'beta',
+			}),
+		);
+
+		expect(lease.id).toBe('01890f00-0000-7000-8000-000000000000');
+		expect(lease.id).not.toContain('beta');
+		expect(lease.id).not.toContain('shravan');
+		expect(lease.id).not.toContain('1700000000000');
+	});
+
+	it('evicts and refuses to renew an expired lease instead of resurrecting it', async () => {
+		let now = 1_000;
+		const closeMock = vi.fn(async () => {});
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createLeaseId: () => '01890f00-0000-7000-8000-000000000001',
+			createManagedVm: vi.fn(async () => ({
+				...createManagedVmStub(),
+				close: closeMock,
+			})),
+			now: () => now,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const lease = await leaseManager.createLease(
+			createAgentLeaseOptions({
+				effectiveIdleTtlMs: 1_000,
+			}),
+		);
+		now = 2_001;
+
+		const renewal = await leaseManager.renewLease(lease.id);
+
+		expect(renewal).toEqual({ kind: 'not-found', reason: 'expired' });
+		expect(closeMock).toHaveBeenCalledOnce();
+		expect(leaseManager.peekLease(lease.id)).toBeUndefined();
+	});
+
+	it('evicts and refuses to renew a lease whose VM liveness check fails', async () => {
+		const closeMock = vi.fn(async () => {});
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createLeaseId: () => '01890f00-0000-7000-8000-000000000002',
+			createManagedVm: vi.fn(async () => ({
+				...createManagedVmStub(),
+				close: closeMock,
+				exec: vi.fn(() =>
+					createManagedExecProcessStub({ exitCode: 1, stderr: 'dead', stdout: '' }),
+				),
+			})),
+			now: () => 1_000,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const lease = await leaseManager.createLease(createAgentLeaseOptions());
+
+		const renewal = await leaseManager.renewLease(lease.id);
+
+		expect(renewal).toEqual({ kind: 'not-found', reason: 'dead' });
+		expect(closeMock).toHaveBeenCalledOnce();
+		expect(leaseManager.peekLease(lease.id)).toBeUndefined();
+	});
+
+	it('does not expire a lease while an active operation is heartbeating', async () => {
+		let now = 1_000;
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createLeaseId: () => '01890f00-0000-7000-8000-000000000005',
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
+			now: () => now,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const lease = await leaseManager.createLease({
+			...createAgentLeaseOptions(),
+			effectiveIdleTtlMs: 1_000,
+		});
+		leaseManager.startActiveUse(lease.id, {
+			useId: '01890f00-0000-7000-8000-000000000000',
+		});
+		now = 2_001;
+
+		expect(await leaseManager.renewLease(lease.id)).toMatchObject({ kind: 'renewed' });
+	});
 
 	it('creates, stores, and releases a lease while returning its tcp slot', async () => {
 		const closeMock = vi.fn(async () => {});
@@ -120,26 +212,31 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:main:session-abc',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
 			zoneId: 'shravan',
 		});
 
 		expect(lease.tcpSlot).toBe(0);
-		expect(leaseManager.renewLease(lease.id)?.lease).toMatchObject({
-			id: lease.id,
-			agentId: 'main',
-			agentWorkspaceDir: '/home/openclaw/work',
-			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
-			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
-			zoneId: 'shravan',
+		await expect(leaseManager.renewLease(lease.id)).resolves.toMatchObject({
+			kind: 'renewed',
+			lease: {
+				id: lease.id,
+				agentId: 'main',
+				agentWorkspaceDir: '/home/openclaw/work',
+				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+				hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/session/work',
+				zoneId: 'shravan',
+			},
 		});
 
 		await leaseManager.releaseLease(lease.id);
 
 		expect(closeMock).toHaveBeenCalled();
-		expect(leaseManager.renewLease(lease.id)).toBeUndefined();
+		await expect(leaseManager.renewLease(lease.id)).resolves.toEqual({
+			kind: 'not-found',
+			reason: 'missing',
+		});
 	});
 
 	it('closes VM, releases tcpSlot, and clears the lease when writeToolVmRuntimeRecord throws', async () => {
@@ -186,7 +283,6 @@ describe('createLeaseManager', () => {
 				agentWorkspaceDir: '/home/openclaw/work',
 				profile: { cpus: 1, memory: '1G', imageProfile: 'default' },
 				profileId: 'standard',
-				scopeKey: 'agent:write-fails',
 				guestWorkdir: '/work',
 				hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/x/work',
 				zoneId: 'shravan',
@@ -204,7 +300,6 @@ describe('createLeaseManager', () => {
 			agentWorkspaceDir: '/home/openclaw/work',
 			profile: { cpus: 1, memory: '1G', imageProfile: 'default' },
 			profileId: 'standard',
-			scopeKey: 'agent:reuse-after-failure',
 			guestWorkdir: '/work',
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/y/work',
 			zoneId: 'shravan',
@@ -248,7 +343,6 @@ describe('createLeaseManager', () => {
 			agentWorkspaceDir: '/home/openclaw/work',
 			profile: { cpus: 1, memory: '1G', imageProfile: 'default' },
 			profileId: 'standard',
-			scopeKey: 'agent:close-fails',
 			guestWorkdir: '/work',
 			hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/z/work',
 			zoneId: 'shravan',
@@ -280,7 +374,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:main',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
@@ -308,19 +401,16 @@ describe('createLeaseManager', () => {
 		const firstLease = await leaseManager.createLease(
 			createAgentLeaseOptions({
 				agentId: 'beta',
-				scopeKey: 'agent:beta:discord:channel:123',
 			}),
 		);
 		const secondLease = await leaseManager.createLease(
 			createAgentLeaseOptions({
 				agentId: 'beta',
-				scopeKey: 'agent:beta:discord:channel:999',
 			}),
 		);
 
 		expect(secondLease.id).toBe(firstLease.id);
 		expect(secondLease.agentId).toBe('beta');
-		expect(secondLease.scopeKey).toBe('agent:beta:discord:channel:123');
 		expect(createManagedVm).toHaveBeenCalledTimes(1);
 	});
 
@@ -335,11 +425,9 @@ describe('createLeaseManager', () => {
 			tcpPool: createTcpPool({ basePort: 19000, size: 2 }),
 		});
 
-		const betaLease = await leaseManager.createLease(
-			createAgentLeaseOptions({ agentId: 'beta', scopeKey: 'agent:beta:manual' }),
-		);
+		const betaLease = await leaseManager.createLease(createAgentLeaseOptions({ agentId: 'beta' }));
 		const lauraLease = await leaseManager.createLease(
-			createAgentLeaseOptions({ agentId: 'laura', scopeKey: 'agent:laura:manual' }),
+			createAgentLeaseOptions({ agentId: 'laura' }),
 		);
 
 		expect(lauraLease.id).not.toBe(betaLease.id);
@@ -347,7 +435,7 @@ describe('createLeaseManager', () => {
 		expect(createManagedVm).toHaveBeenCalledTimes(2);
 	});
 
-	it('does not put raw scopeKey into lease id', async () => {
+	it('does not put agent provenance into lease id', async () => {
 		const leaseManager = createLeaseManager({
 			...defaultRuntimeRecordOptions,
 			createManagedVm: vi.fn(async () => createManagedVmStub()),
@@ -358,13 +446,12 @@ describe('createLeaseManager', () => {
 		const lease = await leaseManager.createLease(
 			createAgentLeaseOptions({
 				agentId: 'beta',
-				scopeKey: 'agent:beta:discord:channel:123',
 			}),
 		);
 
-		expect(lease.id).toMatch(/^shravan-beta-\d+$/u);
 		expect(lease.id).not.toContain('agent:');
-		expect(lease.id).not.toContain('discord');
+		expect(lease.id).not.toContain('beta');
+		expect(lease.id).not.toContain('shravan');
 	});
 
 	it('rejects an incompatible workspace request for an existing agent lease', async () => {
@@ -387,7 +474,6 @@ describe('createLeaseManager', () => {
 				createAgentLeaseOptions({
 					agentId: 'beta',
 					hostWorkMountDir: '/tmp/beta-workspace-b',
-					scopeKey: 'agent:beta:manual:different-scope',
 				}),
 			),
 		).rejects.toThrow(/existing Tool VM lease for agent 'beta' is not compatible/u);
@@ -414,7 +500,6 @@ describe('createLeaseManager', () => {
 					agentId: 'beta',
 					profile: { cpus: 2, memory: '2G', imageProfile: 'large' },
 					profileId: 'large',
-					scopeKey: 'agent:beta:manual:different-scope',
 				}),
 			),
 		).rejects.toThrow(/existing Tool VM lease for agent 'beta' is not compatible/u);
@@ -437,7 +522,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:main',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
@@ -446,7 +530,8 @@ describe('createLeaseManager', () => {
 		now = 150;
 
 		const peekedLease = leaseManager.peekLease(lease.id)?.lease;
-		const renewedLease = leaseManager.renewLease(lease.id)?.lease;
+		const renewal = await leaseManager.renewLease(lease.id);
+		const renewedLease = renewal.kind === 'renewed' ? renewal.lease : undefined;
 
 		expect(peekedLease).toMatchObject({ id: lease.id, lastUsedAt: 100 });
 		expect(renewedLease).toMatchObject({ id: lease.id, lastUsedAt: 150 });
@@ -474,7 +559,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:main',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
@@ -490,7 +574,6 @@ describe('createLeaseManager', () => {
 					imageProfile: 'default',
 				},
 				profileId: 'standard',
-				scopeKey: 'agent:main',
 				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 				hostWorkMountDir: '/host/other-sandbox-work',
 				zoneId: 'shravan',
@@ -516,7 +599,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:main',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
@@ -532,7 +614,6 @@ describe('createLeaseManager', () => {
 					imageProfile: 'large',
 				},
 				profileId: 'large',
-				scopeKey: 'agent:main',
 				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
@@ -557,7 +638,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:main',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
@@ -573,7 +653,6 @@ describe('createLeaseManager', () => {
 					imageProfile: 'default',
 				},
 				profileId: 'standard',
-				scopeKey: 'agent:main',
 				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
@@ -600,7 +679,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:main',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 		};
@@ -647,7 +725,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:main',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
@@ -666,12 +743,12 @@ describe('createLeaseManager', () => {
 			const loggedMessages = stderrWrite.mock.calls.map(([message]) => String(message));
 			expect(
 				loggedMessages.some((message) =>
-					message.includes("liveness check failed for lease 'shravan-main-100'"),
+					message.includes(`liveness check failed for lease '${firstLease.id}'`),
 				),
 			).toBe(true);
 			expect(
 				loggedMessages.some((message) =>
-					message.includes("failed to close evicted lease 'shravan-main-100'"),
+					message.includes(`failed to close evicted lease '${firstLease.id}'`),
 				),
 			).toBe(true);
 		} finally {
@@ -708,7 +785,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:main',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
@@ -760,7 +836,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:main',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
@@ -778,7 +853,10 @@ describe('createLeaseManager', () => {
 
 		expect(reusedLease.id).toBe(lease.id);
 		expect(closeMock).toHaveBeenCalledTimes(1);
-		expect(leaseManager.renewLease(lease.id)).toBeUndefined();
+		await expect(leaseManager.renewLease(lease.id)).resolves.toEqual({
+			kind: 'not-found',
+			reason: 'missing',
+		});
 	});
 
 	it('rejects new active uses while the lease is releasing', async () => {
@@ -811,7 +889,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:release-active-use',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
@@ -852,7 +929,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:main',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
@@ -864,7 +940,10 @@ describe('createLeaseManager', () => {
 		await leaseManager.releaseLease(lease.id, { ifLastUsedAtBeforeOrAt: 150 });
 
 		expect(closeMock).not.toHaveBeenCalled();
-		expect(leaseManager.renewLease(lease.id)?.lease).toMatchObject({ id: lease.id });
+		await expect(leaseManager.renewLease(lease.id)).resolves.toMatchObject({
+			kind: 'renewed',
+			lease: { id: lease.id },
+		});
 	});
 
 	it('listLeases returns all active leases across agents', async () => {
@@ -900,7 +979,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'scope-a',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
@@ -914,7 +992,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'scope-b',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
@@ -977,14 +1054,16 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'scope-close-fail',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
 		});
 
 		await expect(leaseManager.releaseLease(lease.id)).rejects.toThrow('close failed');
-		expect(leaseManager.renewLease(lease.id)).toBeUndefined();
+		await expect(leaseManager.renewLease(lease.id)).resolves.toEqual({
+			kind: 'not-found',
+			reason: 'missing',
+		});
 		// When close fails the QEMU may still hold the host port. The slot
 		// must be quarantined — NOT re-allocatable until proven safe — to
 		// prevent a same-process port collision.
@@ -1013,7 +1092,6 @@ describe('createLeaseManager', () => {
 					imageProfile: 'default',
 				},
 				profileId: 'standard',
-				scopeKey: 'scope-fail',
 				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
@@ -1040,7 +1118,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:ttl',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
@@ -1086,7 +1163,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:active-use',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
@@ -1160,7 +1236,6 @@ describe('createLeaseManager', () => {
 				imageProfile: 'default',
 			},
 			profileId: 'standard',
-			scopeKey: 'agent:reap',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			hostWorkMountDir: '/host/sandbox-work',
 			zoneId: 'shravan',
@@ -1223,7 +1298,6 @@ describe('createLeaseManager', () => {
 					imageProfile: 'default',
 				},
 				profileId: 'standard',
-				scopeKey: 'scope-ssh-fail',
 				guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 				hostWorkMountDir: '/host/sandbox-work',
 				zoneId: 'shravan',
@@ -1270,7 +1344,6 @@ describe('createLeaseManager', () => {
 						imageProfile: 'default',
 					},
 					profileId: 'standard',
-					scopeKey: 'scope-ssh-fail',
 					guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 					hostWorkMountDir: '/host/sandbox-work',
 					zoneId: 'shravan',
@@ -1286,7 +1359,7 @@ describe('createLeaseManager', () => {
 			expect(
 				loggedMessages.some((message) =>
 					message.includes(
-						"failed to close partially-created lease VM for zone 'shravan' scope 'scope-ssh-fail'",
+						"failed to close partially-created lease VM for zone 'shravan' agent 'main'",
 					),
 				),
 			).toBe(true);
@@ -1337,7 +1410,6 @@ describe('createLeaseManager — runtime record disk integration', () => {
 		agentWorkspaceDir: '/home/openclaw/work',
 		profile: { cpus: 1, memory: '1G', imageProfile: 'default' as const },
 		profileId: 'standard' as const,
-		scopeKey: 'agent:integration',
 		guestWorkdir: '/work',
 		hostWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/integration/work',
 		zoneId: 'shravan',

@@ -103,13 +103,6 @@ function createLeaseRequestBody(
 		agentId: 'main',
 		agentWorkspaceDir: '/agent-work',
 		profileId: 'standard',
-		sandbox: {
-			backend: 'gondolin',
-			mode: 'all',
-			scope: 'agent',
-			workspaceAccess: 'rw',
-		},
-		scopeKey: 'agent:main',
 		sessionKey: 'agent:main:controller-runtime-test',
 		workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
 		zoneId: 'shravan',
@@ -567,7 +560,6 @@ describe('startControllerRuntime', () => {
 				body: JSON.stringify(
 					createLeaseRequestBody({
 						agentId: 'active-use-reap',
-						scopeKey: 'agent:active-use-reap',
 						sessionKey: 'agent:active-use-reap:controller-runtime-test',
 					}),
 				),
@@ -735,7 +727,6 @@ describe('startControllerRuntime', () => {
 				body: JSON.stringify(
 					createLeaseRequestBody({
 						agentId: 'active-use-shutdown',
-						scopeKey: 'agent:active-use-shutdown',
 						sessionKey: 'agent:active-use-shutdown:controller-runtime-test',
 					}),
 				),
@@ -1631,7 +1622,6 @@ describe('startControllerRuntime', () => {
 					createLeaseRequestBody({
 						agentId: 'close-runtime',
 						agentWorkspaceDir: '/zone',
-						scopeKey: 'agent:close-runtime',
 						sessionKey: 'agent:close-runtime:controller-runtime-test',
 						workMountDir: '/zone/sandbox-work',
 					}),
