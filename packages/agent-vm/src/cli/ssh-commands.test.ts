@@ -105,10 +105,10 @@ function createControllerClientStub(
 		peekLease: async () => ({
 			agentId: 'main',
 			createdAt: 1,
+			idleTtlMs: 6_000_000,
 			lastUsedAt: 1,
 			leaseId: 'lease-123',
 			profileId: 'standard',
-			scopeKey: 'scope',
 			ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 			tcpSlot: 0,
 			transport: 'ssh-sandbox' as const,

@@ -83,7 +83,6 @@ describe('seedAgentSandboxWorkspace', () => {
 
 		const result = await seedAgentSandboxWorkspace({
 			agentId: 'shravan',
-			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
 			zone,
@@ -94,7 +93,6 @@ describe('seedAgentSandboxWorkspace', () => {
 			alreadyExisted: 0,
 			hostWorkMountDir: await realpath(hostWorkMountDir),
 			kind: 'seeded',
-			scopeKey: 'agent:shravan',
 			written: 1,
 			zoneId: 'home',
 		});
@@ -127,7 +125,6 @@ describe('seedAgentSandboxWorkspace', () => {
 
 		const result = await seedAgentSandboxWorkspace({
 			agentId: 'shravan',
-			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
 			zone,
@@ -138,7 +135,6 @@ describe('seedAgentSandboxWorkspace', () => {
 			alreadyExisted: 1,
 			hostWorkMountDir: await realpath(hostWorkMountDir),
 			kind: 'seeded',
-			scopeKey: 'agent:shravan',
 			written: 0,
 			zoneId: 'home',
 		});
@@ -164,7 +160,6 @@ describe('seedAgentSandboxWorkspace', () => {
 
 		const result = await seedAgentSandboxWorkspace({
 			agentId: 'shravan',
-			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
 			zone,
@@ -187,7 +182,6 @@ describe('seedAgentSandboxWorkspace', () => {
 
 		const result = await seedAgentSandboxWorkspace({
 			agentId: 'shravan',
-			scopeKey: 'agent:shravan:discord:channel:123:thread:456',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
 			zone,
@@ -215,7 +209,6 @@ describe('seedAgentSandboxWorkspace', () => {
 
 		const result = await seedAgentSandboxWorkspace({
 			agentId: 'alevtina',
-			scopeKey: 'agent:alevtina',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
 			zone,
@@ -224,7 +217,6 @@ describe('seedAgentSandboxWorkspace', () => {
 		expect(result).toEqual({
 			agentId: 'alevtina',
 			kind: 'no-seeds-configured',
-			scopeKey: 'agent:alevtina',
 			zoneId: 'home',
 		});
 		await expect(
@@ -247,7 +239,6 @@ describe('seedAgentSandboxWorkspace', () => {
 
 		const result = await seedAgentSandboxWorkspace({
 			agentId: 'shravan',
-			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
 			zone,
@@ -274,7 +265,6 @@ describe('seedAgentSandboxWorkspace', () => {
 
 		const result = await seedAgentSandboxWorkspace({
 			agentId: 'shravan',
-			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
 			zone,
@@ -286,7 +276,6 @@ describe('seedAgentSandboxWorkspace', () => {
 			agentId: 'shravan',
 			kind: 'work-mount-outside-sandbox',
 			sandboxRoot,
-			scopeKey: 'agent:shravan',
 			hostWorkMountDir: resolvedWorkMountDir,
 			zoneId: 'home',
 		});
@@ -305,7 +294,6 @@ describe('seedAgentSandboxWorkspace', () => {
 
 		const result = await seedAgentSandboxWorkspace({
 			agentId: 'shravan',
-			scopeKey: 'agent:shravan',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
 			zone,
@@ -314,7 +302,6 @@ describe('seedAgentSandboxWorkspace', () => {
 		expect(result).toEqual({
 			agentId: 'shravan',
 			kind: 'work-mount-missing',
-			scopeKey: 'agent:shravan',
 			hostWorkMountDir,
 			zoneId: 'home',
 		});
@@ -336,7 +323,6 @@ describe('seedAgentSandboxWorkspace', () => {
 		await expect(
 			seedAgentSandboxWorkspace({
 				agentId: 'shravan',
-				scopeKey: 'agent:shravan',
 				secretResolver,
 				hostWorkMountDir,
 				zone,
@@ -345,7 +331,6 @@ describe('seedAgentSandboxWorkspace', () => {
 		await expect(
 			seedAgentSandboxWorkspace({
 				agentId: 'shravan',
-				scopeKey: 'agent:shravan',
 				secretResolver,
 				hostWorkMountDir,
 				zone,
@@ -377,7 +362,6 @@ describe('seedAgentSandboxWorkspace', () => {
 		await expect(
 			seedAgentSandboxWorkspace({
 				agentId: 'shravan',
-				scopeKey: 'agent:shravan',
 				secretResolver,
 				hostWorkMountDir,
 				zone,
@@ -389,7 +373,7 @@ describe('seedAgentSandboxWorkspace', () => {
 		});
 	});
 
-	it('does not trust unsafe agent scope ids when explicit agent id is valid', async () => {
+	it('uses explicit agent id for sandbox seed selection', async () => {
 		const rootPath = await createTempDirectory('agent-vm-sandbox-seed-malformed-');
 		const zone = createOpenClawZone(rootPath);
 		const hostWorkMountDir = path.join(zone.gateway.stateDir, 'sandboxes', 'agent-shravan', 'work');
@@ -397,7 +381,6 @@ describe('seedAgentSandboxWorkspace', () => {
 
 		const result = await seedAgentSandboxWorkspace({
 			agentId: 'shravan',
-			scopeKey: 'agent:../shravan',
 			secretResolver: createSecretResolver(),
 			hostWorkMountDir,
 			zone,
@@ -406,7 +389,6 @@ describe('seedAgentSandboxWorkspace', () => {
 		expect(result).toMatchObject({
 			agentId: 'shravan',
 			kind: 'seeded',
-			scopeKey: 'agent:../shravan',
 		});
 	});
 
@@ -419,7 +401,6 @@ describe('seedAgentSandboxWorkspace', () => {
 		await expect(
 			seedAgentSandboxWorkspace({
 				agentId: '../shravan',
-				scopeKey: 'agent:shravan',
 				secretResolver: createSecretResolver(),
 				hostWorkMountDir,
 				zone,
@@ -428,7 +409,6 @@ describe('seedAgentSandboxWorkspace', () => {
 			agentId: '../shravan',
 			kind: 'malformed-agent-id',
 			reason: "invalid agent id '../shravan'",
-			scopeKey: 'agent:shravan',
 			zoneId: 'home',
 		});
 	});

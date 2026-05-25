@@ -328,15 +328,6 @@ const toolVmProfileSchema = z
 	})
 	.strict();
 
-const leaseScopeKindSchema = z.enum([
-	'agent',
-	'discord',
-	'project',
-	'session',
-	'shared',
-	'workspace',
-]);
-
 const leaseIdleTtlSchema = z
 	.object({
 		defaultMs: z
@@ -350,8 +341,6 @@ const leaseIdleTtlSchema = z
 			.positive()
 			.default(24 * 60 * 60 * 1000),
 		minRequestedMs: z.number().int().positive().default(1_000),
-		byScopeKind: z.partialRecord(leaseScopeKindSchema, z.number().int().positive()).default({}),
-		byScopePrefix: z.record(z.string().min(1), z.number().int().positive()).default({}),
 	})
 	.strict();
 

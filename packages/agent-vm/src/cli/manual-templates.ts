@@ -31,13 +31,13 @@ Primary config:
 
 Use docs/manual/layout.md before moving files or changing generated folders.
 Use docs/manual/image-versioning.md before changing agent-vm package pins, managed image pins, OpenClaw runtime package pins, or generated Dockerfiles.
-Use docs/manual/scope.md before changing OpenClaw sandbox scope or tool VM lease behavior.
+Use docs/manual/tool-vm-leases.md before changing agent-vm Tool VM lease identity, renewal, or reuse behavior.
 Use docs/manual/gateway-ingress.md before changing gateway ports, OpenClaw Control UI access, SSE/streaming behavior, WebSocket access, or serving additional webservers from inside a VM.
 Use docs/manual/mcp-portal.md before changing MCP providers, MCP Portal profiles, MCP package pins, or live MCP validation.
 Use docs/manual/tool-access.md before answering whether a tool binary, auth profile, or tool VM image should be agent-specific.
 Use docs/manual/channels.md before helping a human configure Discord, Slack, Telegram, or another OpenClaw channel.
 Use docs/manual/runtime-paths.md before answering where files appear inside VMs or how workMountDir backs the Tool VM lease workdir.
-Use docs/manual/per-agent-setup.md before changing multi-agent layouts, scope=agent behavior, or per-agent tool/auth isolation.
+Use docs/manual/per-agent-setup.md before changing multi-agent layouts, OpenClaw scope=agent configuration, or per-agent tool/auth isolation.
 
 Do not assume Discord is enabled by the framework. Channels and channel secrets are deployment-owned.
 Do not silently edit privileged host/deployment config. Explain the proposed Dockerfile, secret, egressHosts, websocketBypass, or OpenClaw config change and wait for the human to ask you to apply it.
@@ -59,7 +59,7 @@ This manual is generated from the installed agent-vm package. It is the deployme
 Read in this order:
 1. layout.md explains generated folders and ownership.
 2. image-versioning.md explains package pins, managed image pins, overlays, and generated Dockerfiles.
-3. scope.md explains session, agent, and shared scope.
+3. tool-vm-leases.md explains agent-keyed Tool VM lease identity and reuse.
 4. openclaw.md explains OpenClaw gateway configuration.
 5. gateway-ingress.md explains host-facing gateway ports, OpenClaw web serving, SSE, WebSockets, and the boundary between single-route OpenClaw ingress and additional guest webservers.
 6. openclaw-defaults.md explains agent-vm-owned OpenClaw defaults and doctor checks.
@@ -67,7 +67,7 @@ Read in this order:
 8. tool-access.md explains binary, auth, OpenClaw tool, and zone/image isolation.
 9. channels.md explains how deployments add Discord or other channels.
 10. runtime-paths.md explains /workspace, /work, and other in-VM paths.
-11. per-agent-setup.md explains multi-agent scope and tool access choices.
+11. per-agent-setup.md explains multi-agent layout and tool access choices.
 12. migration-discord.md explains how existing Discord deployments keep working.
 13. secrets.md explains runtime auth and HTTP mediation.
 14. operations.md explains start, graceful stop, and scoped offline cleanup.
@@ -129,25 +129,20 @@ agent-vm build prints the resolved base image, generated Dockerfile path, OpenCl
 			),
 		},
 		{
-			relativePath: 'docs/manual/scope.md',
+			relativePath: 'docs/manual/tool-vm-leases.md',
 			content: generatedPage(
-				'Scope And Tool VM Reuse',
+				'Tool VM Lease Identity And Reuse',
 				`
-OpenClaw sandbox scope decides which work mount a Tool VM sees.
-
-session scope isolates per conversation.
-agent scope reuses a stable work mount for one agent identity.
-shared scope intentionally shares one work mount across participants.
-
 Managed OpenClaw Tool VMs are agent-keyed: one compatible Tool VM per zone and OpenClaw agent id.
-OpenClaw scopeKey may describe a channel, thread, session, or subagent scope under that agent; it does not choose the Tool VM.
+The OpenClaw plugin derives agentId from the OpenClaw session key and sends agentId to the controller. OpenClaw scope keys are plugin-boundary metadata only: they are discarded before the controller lease request and do not choose, identify, renew, list, log, or store Tool VM leases.
+The controller validates the requested gateway work path, resolves it to a host work mount, and returns the Tool VM guest workdir. The lease identity remains zoneId + agentId, not a path string.
 TCP slots are capacity; they are not identity.
 GET lease reads are read-only. Cached Tool VM handles renew idle leases with POST renew, and active shell/file operations heartbeat per-use records so long commands are not reaped mid-run.
 
 Example:
-- shravan agent uses agentId=shravan and may receive scopeKey=agent:shravan:discord:channel:123.
-- alevtina agent uses agentId=alevtina and may receive scopeKey=agent:alevtina:subagent:child.
-- Each agent gets its own scoped sandbox mounted at /workspace in its Tool VM.
+- shravan agent uses agentId=shravan.
+- alevtina agent uses agentId=alevtina.
+- Each agent gets its own compatible Tool VM lease mounted at /workspace in its Tool VM.
 - If both agents share one OpenClaw zone, unmapped agents use defaultToolVmProfile.
 - Configure agentToolVmProfiles when agents in one zone need different Tool VM images.
 - Configure gateway.authProfilesByAgent and agentSandboxSeeds for per-agent auth/profile files.
@@ -377,6 +372,9 @@ worker repo edits live under /work/repos inside Worker gateway task VMs.
 Worker gateway task VMs use /work/tmp for temporary files and /work/cache for disposable package-manager cache.
 OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work; persistent zone files live at /zone and are backed by gateway.zoneFilesDir.
 
+The OpenClaw plugin may accept Tool VM guest cwd intent such as \`/workspace\`, \`/workspace/<child>\`, \`/work\`, or \`/work/<child>\`. The plugin translates that intent before it calls the controller.
+The controller \`/lease workMountDir\` is stricter: it accepts only controller-supported OpenClaw gateway paths such as \`/zone/<child>\` or \`/home/openclaw/.openclaw/state/sandboxes/<child>\`. Direct Tool VM guest paths such as \`/workspace\` and \`/work\` are rejected at the controller boundary.
+
 workMountDir is a gateway VM path under /zone or /home/openclaw/.openclaw/state/sandboxes. The roots themselves are validation boundaries; leases must choose concrete child paths.
 hostWorkMountDir is the host realpath after controller validation.
 OpenClaw SDK compatibility note: OpenClaw may call the selected sandbox path workspaceDir. The agent-vm plugin translates that external SDK name to controller workMountDir.
@@ -399,7 +397,7 @@ When gateway.zoneGit is configured:
 			content: generatedPage(
 				'Per-Agent Setup',
 				`
-A single OpenClaw gateway can host multiple agents. Use scope=agent when each agent should have a stable work mount and reusable Tool VM lease identity.
+A single OpenClaw gateway can host multiple agents. Use scope=agent so OpenClaw resolves each agent to its stable work mount; agent-vm still keys Tool VM lease identity by zone and agent id.
 
 Per-agent auth isolation works by using agent-vm auth codex-harness for native Codex CLI auth, gateway.authProfilesByAgent for OpenClaw auth profiles, and first-boot files through agentSandboxSeeds. Seeds target paths relative to the agent sandbox backing directory exposed at /workspace in Tool VMs and do not overwrite existing files.
 agent-vm auth openclaw <provider> --all-agents repeats the same OpenClaw provider login once per configured zone agent.

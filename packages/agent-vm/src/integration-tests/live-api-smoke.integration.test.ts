@@ -36,13 +36,6 @@ function createLeaseRequestBody(
 		agentId: 'main',
 		agentWorkspaceDir: '/work',
 		profileId: 'standard',
-		sandbox: {
-			backend: 'gondolin',
-			mode: 'all',
-			scope: 'agent',
-			workspaceAccess: 'rw',
-		},
-		scopeKey: 'agent:main',
 		sessionKey: 'agent:main:smoke-test',
 		workMountDir: '/work',
 		zoneId: 'shravan',
@@ -118,7 +111,6 @@ describe('live smoke: API client → controller over real HTTP', () => {
 			lastUsedAt: Date.now(),
 			profileId: 'standard',
 			runtimeRecordId: 'smoke-lease-001',
-			scopeKey: 'agent:main:smoke',
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			sshAccess: {
 				host: '127.0.0.1',
@@ -158,7 +150,7 @@ describe('live smoke: API client → controller over real HTTP', () => {
 			},
 			leaseManager: {
 				createLease,
-				renewLease: vi.fn(() => ({
+				renewLease: vi.fn(async () => ({
 					kind: 'renewed' as const,
 					lastUsedAt: lease.lastUsedAt,
 					lease,
@@ -201,7 +193,6 @@ describe('live smoke: API client → controller over real HTTP', () => {
 			body: JSON.stringify(
 				createLeaseRequestBody({
 					agentId: 'smoke-test',
-					scopeKey: 'agent:smoke-test',
 					sessionKey: 'agent:smoke-test:integration',
 				}),
 			),

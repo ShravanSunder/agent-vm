@@ -6,6 +6,7 @@ import {
 } from '@agent-vm/gateway-interface';
 import type {
 	EndToolVmActiveUseRequest,
+	HeartbeatToolVmActiveUseRequest,
 	HeartbeatToolVmActiveUseResponse,
 	StartToolVmActiveUseRequest,
 	StartToolVmActiveUseResponse,
@@ -40,9 +41,8 @@ export interface OpenClawGondolinLeaseSandboxSnapshot {
 export interface OpenClawGondolinLeaseRequest {
 	readonly agentId: string;
 	readonly agentWorkspaceDir: string;
+	readonly idleTtlMs?: number;
 	readonly profileId: string;
-	readonly sandbox: OpenClawGondolinLeaseSandboxSnapshot;
-	readonly scopeKey: string;
 	readonly sessionKey: string;
 	readonly workMountDir: string;
 	readonly zoneId: string;
@@ -51,7 +51,11 @@ export interface OpenClawGondolinLeaseRequest {
 export interface LeaseClient {
 	// Cached handles use renewLease; read-only runtime probes use peekLease.
 	endActiveUse(leaseId: string, useId: string, request: EndToolVmActiveUseRequest): Promise<void>;
-	heartbeatActiveUse(leaseId: string, useId: string): Promise<HeartbeatToolVmActiveUseResponse>;
+	heartbeatActiveUse(
+		leaseId: string,
+		useId: string,
+		request: HeartbeatToolVmActiveUseRequest,
+	): Promise<HeartbeatToolVmActiveUseResponse>;
 	peekLease(leaseId: string): Promise<ToolVmLeasePeek>;
 	publishOpenClawRuntimeStatus?(report: OpenClawRuntimeStatusReport): Promise<void>;
 	releaseLease(leaseId: string, options?: { readonly force?: boolean }): Promise<void>;
@@ -255,10 +259,15 @@ export function createLeaseClient(options: {
 		heartbeatActiveUse: async (
 			leaseId: string,
 			useId: string,
+			request: HeartbeatToolVmActiveUseRequest,
 		): Promise<HeartbeatToolVmActiveUseResponse> => {
 			const response = await fetchImpl(
 				`${baseUrl}/lease/${encodeURIComponent(leaseId)}/uses/${encodeURIComponent(useId)}/heartbeat`,
 				{
+					body: JSON.stringify(request),
+					headers: {
+						'content-type': 'application/json',
+					},
 					method: 'POST',
 				},
 			);
@@ -320,9 +329,8 @@ export function createLeaseClient(options: {
 				body: JSON.stringify({
 					agentId: request.agentId,
 					agentWorkspaceDir: request.agentWorkspaceDir,
+					...(request.idleTtlMs !== undefined ? { idleTtlMs: request.idleTtlMs } : {}),
 					profileId: request.profileId,
-					sandbox: request.sandbox,
-					scopeKey: request.scopeKey,
 					sessionKey: request.sessionKey,
 					workMountDir: request.workMountDir,
 					zoneId: request.zoneId,

@@ -15,13 +15,6 @@ function createLeaseRequest(
 		agentId: 'main',
 		agentWorkspaceDir: '/home/openclaw/work',
 		profileId: 'standard',
-		sandbox: {
-			backend: 'gondolin',
-			mode: 'all',
-			scope: 'agent',
-			workspaceAccess: 'rw',
-		},
-		scopeKey: 'agent:main',
 		sessionKey: 'agent:main:session-abc',
 		workMountDir: '/home/openclaw/work',
 		zoneId: 'shravan',
@@ -47,10 +40,10 @@ describe('createLeaseClient', () => {
 					? {
 							agentId: 'main',
 							createdAt: 1,
+							idleTtlMs: 6_000_000,
 							lastUsedAt: 1,
-							leaseId: 'lease-123',
+							leaseId: '01890f00-0000-7000-8000-000000000000',
 							profileId: 'standard',
-							scopeKey: 'agent:main:session-abc',
 							ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 							tcpSlot: 0,
 							transport: 'ssh-sandbox',
@@ -59,8 +52,8 @@ describe('createLeaseClient', () => {
 						}
 					: {
 							agentId: 'main',
-							leaseId: 'lease-123',
-							scopeKey: 'agent:main',
+							idleTtlMs: 6_000_000,
+							leaseId: '01890f00-0000-7000-8000-000000000000',
 							ssh: {
 								host: 'tool-0.vm.host',
 								identityPem: 'pem',
@@ -82,12 +75,7 @@ describe('createLeaseClient', () => {
 			},
 		});
 
-		const lease = await leaseClient.requestLease(
-			createLeaseRequest({
-				scopeKey: 'agent:main',
-				workMountDir: '/home/openclaw/work',
-			}),
-		);
+		const lease = await leaseClient.requestLease(createLeaseRequest());
 		expect(lease.transport).toBe('ssh-sandbox');
 		if (!leaseClient.publishOpenClawRuntimeStatus) {
 			throw new Error('Expected runtime status publisher.');
@@ -114,17 +102,12 @@ describe('createLeaseClient', () => {
 			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
 			profileId: 'standard',
-			sandbox: {
-				backend: 'gondolin',
-				mode: 'all',
-				scope: 'agent',
-				workspaceAccess: 'rw',
-			},
-			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-abc',
 			workMountDir: '/home/openclaw/work',
 			zoneId: 'shravan',
 		});
+		expect(JSON.parse(requests[0]?.body ?? '{}')).not.toHaveProperty('scopeKey');
+		expect(JSON.parse(requests[0]?.body ?? '{}')).not.toHaveProperty('sandbox');
 		expect(requests).toEqual([
 			{
 				body: expect.any(String),
@@ -184,7 +167,7 @@ describe('createLeaseClient', () => {
 			correlation: { toolName: 'shell' },
 			useId: '01890f00-0000-7000-8000-000000000000',
 		});
-		await leaseClient.heartbeatActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000');
+		await leaseClient.heartbeatActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {});
 		await leaseClient.endActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {
 			outcome: 'completed',
 		});
@@ -199,7 +182,7 @@ describe('createLeaseClient', () => {
 				url: 'http://controller.vm.host:18800/lease/lease-123/uses',
 			},
 			{
-				body: undefined,
+				body: JSON.stringify({}),
 				method: 'POST',
 				url: 'http://controller.vm.host:18800/lease/lease-123/uses/01890f00-0000-7000-8000-000000000000/heartbeat',
 			},
@@ -209,6 +192,54 @@ describe('createLeaseClient', () => {
 				url: 'http://controller.vm.host:18800/lease/lease-123/uses/01890f00-0000-7000-8000-000000000000',
 			},
 		]);
+	});
+
+	it('sends active-use heartbeat operation reports to the controller', async () => {
+		const requests: { readonly init?: RequestInit }[] = [];
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async (_input, init) => {
+				requests.push(init === undefined ? {} : { init });
+				return new Response(JSON.stringify({ expiresAt: 10_000, heartbeatAfterMs: 1_000 }), {
+					status: 200,
+				});
+			},
+		});
+
+		await leaseClient.heartbeatActiveUse(
+			'01890f00-0000-7000-8000-000000000000',
+			'01890f00-0000-7000-8000-000000000001',
+			{
+				report: {
+					observedAtMs: 1_000,
+					phase: 'failed',
+					ssh: {
+						failure: {
+							kind: 'ssh-command-timed-out',
+							message: 'SSH command exceeded 30000ms.',
+						},
+					},
+				},
+			},
+		);
+
+		const requestBody = requests[0]?.init?.body;
+		expect(typeof requestBody).toBe('string');
+		if (typeof requestBody !== 'string') {
+			throw new Error('Expected heartbeat request body to be serialized JSON');
+		}
+		expect(JSON.parse(requestBody)).toEqual({
+			report: {
+				observedAtMs: 1_000,
+				phase: 'failed',
+				ssh: {
+					failure: {
+						kind: 'ssh-command-timed-out',
+						message: 'SSH command exceeded 30000ms.',
+					},
+				},
+			},
+		});
 	});
 
 	it('throws TypeError when the controller returns an invalid lease response', async () => {
@@ -256,7 +287,6 @@ describe('createLeaseClient', () => {
 			leaseClient.requestLease(
 				createLeaseRequest({
 					agentId: 'beta',
-					scopeKey: 'agent:beta:discord:channel:123',
 					sessionKey: 'agent:beta:discord:channel:123',
 				}),
 			),
@@ -309,8 +339,8 @@ describe('createLeaseClient', () => {
 				return new Response(
 					JSON.stringify({
 						agentId: 'main',
-						leaseId: 'lease-1',
-						scopeKey: 'agent:main',
+						idleTtlMs: 6_000_000,
+						leaseId: '01890f00-0000-7000-8000-000000000001',
 						ssh: { host: 'h', identityPem: 'p', knownHostsLine: '', port: 22, user: 'u' },
 						tcpSlot: 0,
 						transport: 'ssh-sandbox',

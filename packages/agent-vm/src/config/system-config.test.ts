@@ -1982,43 +1982,34 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Unrecognized key/u);
 	});
 
-	test('loads lease idle TTL policy by scope prefix and scope kind', async () => {
+	test('loads the single lease idle TTL policy', async () => {
 		const config = createValidSystemConfigInput();
 		config.leaseIdleTtl = {
 			defaultMs: 30 * 60 * 1000,
-			byScopeKind: {
-				agent: 2 * 60 * 60 * 1000,
-				workspace: 15 * 60 * 1000,
-			},
-			byScopePrefix: {
-				'agent:shravan': 6 * 60 * 60 * 1000,
-			},
+			maxRequestedMs: 2 * 60 * 60 * 1000,
+			minRequestedMs: 5_000,
 		};
 		const configPath = await writeSystemConfigForTest('agent-vm-system-lease-ttl-', config);
 
 		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
 			leaseIdleTtl: {
 				defaultMs: 1_800_000,
-				byScopeKind: { agent: 7_200_000, workspace: 900_000 },
-				byScopePrefix: { 'agent:shravan': 21_600_000 },
+				maxRequestedMs: 7_200_000,
+				minRequestedMs: 5_000,
 			},
 		});
 	});
 
 	test('defaults partial lease idle TTL policy to 100 minutes', async () => {
 		const config = createValidSystemConfigInput();
-		config.leaseIdleTtl = {
-			byScopeKind: {
-				agent: 2 * 60 * 60 * 1000,
-			},
-		};
+		config.leaseIdleTtl = {};
 		const configPath = await writeSystemConfigForTest('agent-vm-system-lease-ttl-default-', config);
 
 		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
 			leaseIdleTtl: {
 				defaultMs: 6_000_000,
-				byScopeKind: { agent: 7_200_000 },
-				byScopePrefix: {},
+				maxRequestedMs: 86_400_000,
+				minRequestedMs: 1_000,
 			},
 		});
 	});
@@ -2031,15 +2022,18 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/leaseIdleTtl/u);
 	});
 
-	test('rejects unknown lease idle TTL scope kinds', async () => {
+	test('rejects legacy scope-specific lease idle TTL policy fields', async () => {
 		const config = createValidSystemConfigInput();
 		config.leaseIdleTtl = {
 			byScopeKind: {
-				task: 5 * 60 * 1000,
+				agent: 5 * 60 * 1000,
+			},
+			byScopePrefix: {
+				'agent:shravan': 10 * 60 * 1000,
 			},
 		};
 		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-unknown-lease-ttl-scope-',
+			'agent-vm-system-legacy-lease-ttl-scope-',
 			config,
 		);
 

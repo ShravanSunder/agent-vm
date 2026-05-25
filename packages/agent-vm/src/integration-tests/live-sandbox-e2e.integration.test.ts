@@ -157,7 +157,7 @@ describeLiveVmIntegration('live e2e: sandbox plugin → controller → tool VM',
 		expect(healthCheck.stdout).toContain('ok');
 
 		const leaseRequest = await gatewayVm.exec(
-			'curl -4 -sS -X POST -H "Content-Type: application/json" -d \'{"zoneId":"shravan","scopeKey":"agent:test","profileId":"standard","workMountDir":"/tmp","agentWorkspaceDir":"/tmp"}\' http://controller.vm.host:18800/lease',
+			'curl -4 -sS -X POST -H "Content-Type: application/json" -d \'{"zoneId":"shravan","agentId":"test","sessionKey":"agent:test:live-sandbox-e2e","profileId":"standard","workMountDir":"/tmp","agentWorkspaceDir":"/tmp"}\' http://controller.vm.host:18800/lease',
 		);
 		log(`lease response: ${leaseRequest.stdout.trim().slice(0, 100)}`);
 		expect(leaseRequest.stdout).toContain('test-lease-001');

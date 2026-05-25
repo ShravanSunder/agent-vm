@@ -37,6 +37,14 @@ export {
 	createToolVmActiveUseId,
 	isToolVmActiveUseId,
 } from './tool-vm-active-use.js';
+export {
+	OPENCLAW_STATE_SANDBOXES_VM_ROOT,
+	OPENCLAW_STATE_VM_ROOT,
+	TOOL_VM_SCRATCH_GUEST_ROOT,
+	TOOL_VM_WORKSPACE_GUEST_ROOT,
+	translateRuntimePath,
+} from './runtime-paths/runtime-path-mapping.js';
+export { createToolVmLeaseId, isToolVmLeaseId, parseToolVmLeaseId } from './tool-vm-lease-id.js';
 export { isToolVmLeasePeek, isToolVmSshLease } from './tool-vm-lease.js';
 export {
 	isVmCapabilityLease,
@@ -51,13 +59,32 @@ export type {
 export type {
 	CreateToolVmActiveUseHandleOptions,
 	EndToolVmActiveUseRequest,
+	HeartbeatToolVmActiveUseRequest,
 	HeartbeatToolVmActiveUseResponse,
 	StartToolVmActiveUseRequest,
 	StartToolVmActiveUseResponse,
 	ToolVmActiveUseCorrelation,
 	ToolVmActiveUseHandle,
 	ToolVmActiveUseOutcome,
+	ToolVmActiveUseOperationReport,
+	ToolVmSshFailureKind,
+	ToolVmSshFailureReport,
+	ToolVmSshOperationPhase,
+	ToolVmSshOperationReport,
 } from './tool-vm-active-use.js';
+export type {
+	RuntimePathBacking,
+	RuntimePathCapabilities,
+	RuntimePathMapping,
+	RuntimePathPurpose,
+	RuntimePathRootMapping,
+	RuntimePathTranslation,
+	RuntimePathTranslationError,
+	RuntimePathTranslationErrorCode,
+	TranslateRuntimePathInput,
+	TranslateRuntimePathResult,
+} from './runtime-paths/runtime-path-mapping.js';
+export type { ToolVmLeaseId } from './tool-vm-lease-id.js';
 export type { ToolVmLeasePeek, ToolVmSshLease } from './tool-vm-lease.js';
 export type {
 	VmCapabilityLease,

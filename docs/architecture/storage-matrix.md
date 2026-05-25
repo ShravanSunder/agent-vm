@@ -70,7 +70,7 @@ tool-leases/<recordId>.json             stateDir               yes
 Tool VM recovery record                 durable enough
 recordId UUID; keeps agentId,
 leaseId, vmId, qemuPid; never
-stores OpenClaw scopeKey
+stores OpenClaw scope keys
 ```
 
 OpenClaw gateways are long-lived, so rootfs/COW paths such as `/work/tmp` and

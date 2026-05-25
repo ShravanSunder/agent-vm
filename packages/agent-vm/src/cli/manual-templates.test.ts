@@ -34,7 +34,7 @@ describe('manual templates', () => {
 			'docs/manual/README.md',
 			'docs/manual/layout.md',
 			'docs/manual/image-versioning.md',
-			'docs/manual/scope.md',
+			'docs/manual/tool-vm-leases.md',
 			'docs/manual/operations.md',
 			'docs/manual/openclaw.md',
 			'docs/manual/gateway-ingress.md',
@@ -207,6 +207,13 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
 			'runtime-paths.md explains /workspace, /work, and other in-VM paths',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
+			'tool-vm-leases.md explains agent-keyed Tool VM lease identity and reuse',
+		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('tool-vm-leases.md'))?.content,
+		).toContain('The lease identity remains zoneId + agentId');
+		expect(files.some((file) => file.relativePath.endsWith('scope.md'))).toBe(false);
 		expect(files.find((file) => file.relativePath.endsWith('layout.md'))?.content).toContain(
 			'OpenClaw Tool VMs mount the validated lease work mount at /workspace',
 		);
@@ -218,6 +225,15 @@ describe('manual templates', () => {
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'/work is Tool VM-local rootfs/COW scratch',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'The OpenClaw plugin may accept Tool VM guest cwd intent',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'The controller `/lease workMountDir` is stricter',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'Direct Tool VM guest paths such as `/workspace` and `/work` are rejected at the controller boundary',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'workMountDir',
@@ -237,18 +253,14 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'worker repo edits live under /work/repos',
 		);
-		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
-			'defaultToolVmProfile',
-		);
-		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
-			'one compatible Tool VM per zone and OpenClaw agent id',
-		);
-		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
-			'scopeKey may describe a channel',
-		);
-		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
-			'active shell/file operations heartbeat per-use records',
-		);
+		const toolVmLeaseManual = files.find((file) =>
+			file.relativePath.endsWith('tool-vm-leases.md'),
+		)?.content;
+		expect(toolVmLeaseManual).toContain('defaultToolVmProfile');
+		expect(toolVmLeaseManual).toContain('one compatible Tool VM per zone and OpenClaw agent id');
+		expect(toolVmLeaseManual).toContain('discarded before the controller lease request');
+		expect(toolVmLeaseManual).not.toContain('scopeKey');
+		expect(toolVmLeaseManual).toContain('active shell/file operations heartbeat per-use records');
 		expect(files.find((file) => file.relativePath.endsWith('openclaw.md'))?.content).toContain(
 			'The controller is the control plane',
 		);

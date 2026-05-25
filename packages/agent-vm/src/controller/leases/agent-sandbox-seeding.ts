@@ -33,26 +33,22 @@ export type AgentSandboxSeedResult =
 			readonly agentId: string;
 			readonly kind: 'malformed-agent-id';
 			readonly reason: string;
-			readonly scopeKey: string;
 			readonly zoneId: string;
 	  }
 	| {
 			readonly agentId: string;
 			readonly kind: 'no-seeds-configured';
-			readonly scopeKey: string;
 			readonly zoneId: string;
 	  }
 	| {
 			readonly agentId: string;
 			readonly kind: 'sandbox-root-missing';
 			readonly sandboxRoot: string;
-			readonly scopeKey: string;
 			readonly zoneId: string;
 	  }
 	| {
 			readonly agentId: string;
 			readonly kind: 'work-mount-missing';
-			readonly scopeKey: string;
 			readonly hostWorkMountDir: string;
 			readonly zoneId: string;
 	  }
@@ -60,7 +56,6 @@ export type AgentSandboxSeedResult =
 			readonly agentId: string;
 			readonly kind: 'work-mount-outside-sandbox';
 			readonly sandboxRoot: string;
-			readonly scopeKey: string;
 			readonly hostWorkMountDir: string;
 			readonly zoneId: string;
 	  }
@@ -69,7 +64,6 @@ export type AgentSandboxSeedResult =
 			readonly alreadyExisted: number;
 			readonly hostWorkMountDir: string;
 			readonly kind: 'seeded';
-			readonly scopeKey: string;
 			readonly written: number;
 			readonly zoneId: string;
 	  };
@@ -195,7 +189,6 @@ async function ensureSeedParentDirectoryInsideWorkspace(options: {
 
 export async function seedAgentSandboxWorkspace(options: {
 	readonly agentId: string;
-	readonly scopeKey: string;
 	readonly secretResolver: SecretResolver;
 	readonly hostWorkMountDir: string;
 	readonly zone: ZoneConfig;
@@ -209,7 +202,6 @@ export async function seedAgentSandboxWorkspace(options: {
 			agentId,
 			kind: 'malformed-agent-id',
 			reason: `invalid agent id '${agentId}'`,
-			scopeKey: options.scopeKey,
 			zoneId: options.zone.id,
 		};
 	}
@@ -218,7 +210,6 @@ export async function seedAgentSandboxWorkspace(options: {
 		return {
 			agentId,
 			kind: 'no-seeds-configured',
-			scopeKey: options.scopeKey,
 			zoneId: options.zone.id,
 		};
 	}
@@ -232,7 +223,6 @@ export async function seedAgentSandboxWorkspace(options: {
 				agentId,
 				kind: 'sandbox-root-missing',
 				sandboxRoot: sandboxRootPath,
-				scopeKey: options.scopeKey,
 				zoneId: options.zone.id,
 			};
 		}
@@ -246,7 +236,6 @@ export async function seedAgentSandboxWorkspace(options: {
 			return {
 				agentId,
 				kind: 'work-mount-missing',
-				scopeKey: options.scopeKey,
 				hostWorkMountDir: options.hostWorkMountDir,
 				zoneId: options.zone.id,
 			};
@@ -258,7 +247,6 @@ export async function seedAgentSandboxWorkspace(options: {
 			agentId,
 			kind: 'work-mount-outside-sandbox',
 			sandboxRoot,
-			scopeKey: options.scopeKey,
 			hostWorkMountDir,
 			zoneId: options.zone.id,
 		};
@@ -291,7 +279,6 @@ export async function seedAgentSandboxWorkspace(options: {
 		alreadyExisted: seedResults.filter((result) => result === 'already-existed').length,
 		hostWorkMountDir,
 		kind: 'seeded',
-		scopeKey: options.scopeKey,
 		written: seedResults.filter((result) => result === 'written').length,
 		zoneId: options.zone.id,
 	};

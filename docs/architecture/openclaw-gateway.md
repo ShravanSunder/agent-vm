@@ -140,8 +140,9 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
        |
        v
   POST /lease {
-    scopeKey: "discord:user123",
     zoneId,
+    agentId,
+    sessionKey,
     profileId,
     agentWorkspaceDir,
     workMountDir: "/zone/..."
@@ -151,7 +152,7 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
   Controller: lease-manager.createLease()
        |
        |  1. Translate workMountDir from gateway path to trusted hostWorkMountDir
-       |  2. Reuse same scope only if profileId, hostWorkMountDir, and
+       |  2. Reuse same agent only if profileId, hostWorkMountDir, and
        |     agentWorkspaceDir match
        |  3. Probe existing VM; evict stale leases
        |  4. tcpPool.allocate() → slot 0 (port 19000)
@@ -168,7 +169,7 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
        |-- POST /lease/:leaseId/uses/:useId/heartbeat while it runs
        |-- DELETE /lease/:leaseId/uses/:useId when it finishes
        |
-  v  (scope-specific idle TTL; default 100 minutes)
+  v  (lease idle TTL; default 100 minutes)
   Idle reaper: releaseLease()
        |  1. vm.close() → tool VM destroyed
        |  2. tcpPool.release(slot) → port freed
@@ -178,8 +179,9 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
 
 Managed OpenClaw/Gondolin Tool VM leases are agent-keyed. The controller
 creates or reuses one compatible Tool VM per `zoneId + agentId`. OpenClaw
-`scopeKey` remains in the lease request and response as channel/session
-provenance and TTL-policy input, but it is not a Tool VM identity axis.
+scope keys are plugin-boundary SDK context only: the plugin may receive them
+from OpenClaw core, but does not send them to the controller, and the
+controller does not store, return, log, or derive TTL from them.
 
 If the same agent already has an active lease, it is reused only when
 `profileId`, `hostWorkMountDir`, and `agentWorkspaceDir` also match. A mismatch
@@ -309,10 +311,23 @@ The plugin provides:
   execution; `/work` remains VM-local rootfs/COW scratch.
   Lease requests provide `workMountDir` as a concrete OpenClaw gateway child
   path under `/home/openclaw/.openclaw/state/sandboxes` or `/zone`; the roots
-  themselves are validation boundaries and are rejected as mount targets.
+  themselves are validation boundaries, and the controller rejects them as mount
+  targets.
   The controller maps that gateway path to `hostWorkMountDir`, verifies the
   real path is inside either `stateDir/sandboxes` or `zoneFilesDir`, and mounts
   non-zone-git work mounts into the Tool VM at `/workspace`.
+
+The OpenClaw plugin normalizes workspace/cwd intent before calling the
+controller. Known Tool VM guest paths are allowed as intent: `/workspace` maps
+to the mounted agent workspace, while `/work` stays Tool VM rootfs/COW scratch.
+The plugin sends the controller only the lease mount source and keeps the
+effective guest cwd on the backend handle for SSH execution.
+
+The controller remains the security boundary for host mounts. It accepts
+controller-supported OpenClaw gateway paths such as `/zone/<child>` and
+`/home/openclaw/.openclaw/state/sandboxes/<child>`, translates them to host
+paths, and proves the resolved path is inside the configured allowed roots
+before booting a Tool VM.
 
 OpenClaw SDK compatibility note: OpenClaw currently names the selected sandbox
 path `workspaceDir`. The agent-vm plugin translates that field to

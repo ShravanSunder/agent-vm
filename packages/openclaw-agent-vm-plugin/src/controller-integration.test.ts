@@ -1,6 +1,12 @@
 import { Readable } from 'node:stream';
 
-import type { ToolVmLeasePeek, ToolVmSshLease } from '@agent-vm/gateway-interface';
+import {
+	isToolVmLeaseId,
+	parseToolVmLeaseId,
+	type ToolVmLeaseId,
+	type ToolVmLeasePeek,
+	type ToolVmSshLease,
+} from '@agent-vm/gateway-interface';
 import type {
 	ManagedExecProcess,
 	ManagedExecResult,
@@ -13,12 +19,27 @@ import { createLeaseClient } from './controller-lease-client.js';
 import { createGondolinSandboxBackendFactory } from './sandbox-backend-factory.js';
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
+const testLeaseIdByLabel = new Map<string, ToolVmLeaseId>();
+
+function testToolVmLeaseId(label: string): ToolVmLeaseId {
+	if (isToolVmLeaseId(label)) {
+		return label;
+	}
+	const existingLeaseId = testLeaseIdByLabel.get(label);
+	if (existingLeaseId) {
+		return existingLeaseId;
+	}
+	const leaseId = `01890f00-0000-7000-8000-${String(testLeaseIdByLabel.size + 1).padStart(12, '0')}`;
+	const parsedLeaseId = parseToolVmLeaseId(leaseId);
+	testLeaseIdByLabel.set(label, parsedLeaseId);
+	return parsedLeaseId;
+}
 
 function createLeaseResponse(leaseId: string): ToolVmSshLease {
 	return {
 		agentId: 'main',
-		leaseId,
-		scopeKey: 'agent:main',
+		idleTtlMs: 6_000_000,
+		leaseId: testToolVmLeaseId(leaseId),
 		ssh: {
 			host: 'tool-0.vm.host',
 			identityPem: 'pem',
@@ -36,10 +57,10 @@ function createLeasePeekResponse(leaseId: string): ToolVmLeasePeek {
 	return {
 		agentId: 'main',
 		createdAt: 1,
+		idleTtlMs: 6_000_000,
 		lastUsedAt: 1,
-		leaseId,
+		leaseId: testToolVmLeaseId(leaseId),
 		profileId: 'standard',
-		scopeKey: 'agent:main',
 		ssh: { host: 'tool-0.vm.host', port: 22, user: 'root' },
 		tcpSlot: 0,
 		transport: 'ssh-sandbox' as const,
@@ -128,11 +149,10 @@ describe('gondolin controller integration', () => {
 			agentWorkspaceDir: '/zone',
 			createdAt: 1,
 			effectiveIdleTtlMs: 300_000,
-			id: 'lease-123',
+			id: testToolVmLeaseId('lease-123'),
 			lastUsedAt: 1,
 			profileId: 'standard',
-			runtimeRecordId: 'lease-123',
-			scopeKey: 'agent:main',
+			runtimeRecordId: testToolVmLeaseId('lease-123'),
 			guestWorkdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
 			sshAccess: {
 				command: 'ssh ...',
@@ -246,7 +266,7 @@ describe('gondolin controller integration', () => {
 
 		expect(execSpec.argv).toEqual(['ssh', 'tool-0.vm.host', 'ls -la']);
 		expect(execSpec.stdinMode).toBe('pipe-open');
-		expect(backend.runtimeId).toBe('lease-123');
+		expect(backend.runtimeId).toBe(testToolVmLeaseId('lease-123'));
 		expect(backend.configLabel).toBe('http://controller.vm.host:18800 (shravan)');
 		expect(backend.configLabelKind).toBe('VM');
 		await backend.finalizeExec?.({
@@ -255,6 +275,61 @@ describe('gondolin controller integration', () => {
 			timedOut: false,
 			token: execSpec.finalizeToken,
 		});
+	});
+
+	it('reuses one controller lease for same-agent subagent scopes while sending no scopeKey', async () => {
+		const requestBodies: unknown[] = [];
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async (_input, init) => {
+				if (typeof init?.body === 'string') {
+					requestBodies.push(JSON.parse(init.body));
+				}
+				return new Response(JSON.stringify(createLeaseResponse('subagent-lease')), {
+					headers: { 'content-type': 'application/json' },
+					status: 200,
+				});
+			},
+		});
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: async () => ({ argv: ['ssh'], env: {}, stdinMode: 'pipe-open' }),
+				createLeaseClient: () => leaseClient,
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const firstHandle = await factory({
+			agentWorkspaceDir: '/zone/agents/beta',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:discord:channel:123',
+			sessionKey: 'agent:beta:discord:channel:123',
+			workspaceDir: '/zone/agents/beta',
+		});
+		const secondHandle = await factory({
+			agentWorkspaceDir: '/zone/agents/beta',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:subagent:child',
+			sessionKey: 'agent:beta:subagent:child',
+			workspaceDir: '/zone/agents/beta',
+		});
+
+		expect(secondHandle).not.toBe(firstHandle);
+		expect(secondHandle.runtimeId).toBe(firstHandle.runtimeId);
+		expect(requestBodies).toEqual([
+			{
+				agentId: 'beta',
+				agentWorkspaceDir: '/zone/agents/beta',
+				profileId: 'standard',
+				sessionKey: 'agent:beta:discord:channel:123',
+				workMountDir: '/zone/agents/beta',
+				zoneId: 'shravan',
+			},
+		]);
 	});
 
 	it('does not reuse a cached handle when the profile changes for the same agent scope', async () => {
@@ -348,8 +423,8 @@ describe('gondolin controller integration', () => {
 			workspaceDir: '/home/openclaw/work',
 		});
 
-		expect(first.runtimeId).toBe('lease-1');
-		expect(second.runtimeId).toBe('lease-2');
+		expect(first.runtimeId).toBe(testToolVmLeaseId('lease-1'));
+		expect(second.runtimeId).toBe(testToolVmLeaseId('lease-2'));
 		expect(requestLease).toHaveBeenCalledTimes(2);
 	});
 });

@@ -719,26 +719,23 @@ zones without exhausting Tool VM SSH slots immediately.
 ## leaseIdleTtl
 
 `leaseIdleTtl` is optional. When omitted, every lease uses the default 100 minute
-idle timeout. OpenClaw deployments that mix agent, session, and workspace-scope
-leases can override by scope kind or by scope-key prefix:
+idle timeout. Managed OpenClaw Tool VM leases use one TTL policy for all agents;
+OpenClaw scope keys are not part of the agent-vm lease model and cannot change
+TTL selection.
+Clients may request `idleTtlMs` on a lease request, bounded by `minRequestedMs`
+and `maxRequestedMs`:
 
 ```json
 {
   "leaseIdleTtl": {
     "defaultMs": 6000000,
-    "byScopeKind": {
-      "agent": 7200000,
-      "workspace": 900000
-    },
-    "byScopePrefix": {
-      "agent:shravan": 21600000
-    }
+    "minRequestedMs": 1000,
+    "maxRequestedMs": 86400000
   }
 }
 ```
 
-Selection order is exact or longest prefix match in `byScopePrefix`, then
-`byScopeKind`, then `defaultMs`.
+When `idleTtlMs` is omitted from the request, the controller uses `defaultMs`.
 
 ## Cross-Field Validation
 

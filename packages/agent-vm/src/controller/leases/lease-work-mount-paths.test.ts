@@ -8,6 +8,7 @@ import type { SystemConfig } from '../../config/system-config.js';
 import {
 	resolveLeaseWorkMountDir,
 	type LeaseWorkMountValidationError,
+	type LeaseWorkMountValidationErrorKind,
 	validateResolvedToolWorkMountDir,
 } from './lease-work-mount-paths.js';
 
@@ -195,6 +196,29 @@ describe('resolveLeaseWorkMountDir', () => {
 			}),
 		).rejects.toThrow(/must be under \/home\/openclaw\/\.openclaw\/state\/sandboxes or \/zone/u);
 	});
+
+	it.each([
+		{ kind: 'work-mount-unknown-runtime-path', workMountDir: '/workspace' },
+		{ kind: 'work-mount-unknown-runtime-path', workMountDir: '/workspace/app' },
+		{ kind: 'work-mount-unknown-runtime-path', workMountDir: '/work' },
+		{ kind: 'work-mount-unknown-runtime-path', workMountDir: '/work/tmp' },
+	] satisfies readonly {
+		readonly kind: LeaseWorkMountValidationErrorKind;
+		readonly workMountDir: string;
+	}[])(
+		'rejects Tool VM guest path %s as controller lease workMountDir',
+		async ({ kind, workMountDir }) => {
+			await expect(
+				resolveLeaseWorkMountDir({
+					runtimeDir,
+					workMountDir,
+					zone,
+				}),
+			).rejects.toMatchObject({
+				kind,
+			} satisfies Partial<LeaseWorkMountValidationError>);
+		},
+	);
 
 	it('allows direct lifecycle validation of resolved host work mount paths', async () => {
 		const hostWorkMountDir = path.join(zoneFilesDir, 'project');

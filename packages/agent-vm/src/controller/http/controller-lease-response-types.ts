@@ -1,13 +1,13 @@
 import { z } from 'zod';
 
-export const controllerLeasePeekResponseSchema = z.object({
+export const controllerLeasePeekResponseSchema = z.strictObject({
 	agentId: z.string(),
 	createdAt: z.number(),
+	idleTtlMs: z.number(),
 	lastUsedAt: z.number(),
 	leaseId: z.string(),
 	profileId: z.string(),
-	scopeKey: z.string(),
-	ssh: z.object({
+	ssh: z.strictObject({
 		host: z.string(),
 		port: z.number().int(),
 		user: z.string(),
