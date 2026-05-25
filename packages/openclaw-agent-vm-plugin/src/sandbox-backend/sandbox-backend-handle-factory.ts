@@ -39,6 +39,42 @@ function agentLeaseCacheKey(params: { readonly agentId: string; readonly zoneId:
 	return [params.zoneId, params.agentId].join('\0');
 }
 
+type CachedAgentLeaseCompatibility = Pick<
+	CachedAgentLeaseEntry,
+	'agentWorkspaceDir' | 'leaseWorkMountDir' | 'profileId'
+>;
+
+function findCachedLeaseCompatibilityMismatch(params: {
+	readonly cachedEntry: CachedAgentLeaseCompatibility;
+	readonly requestedEntry: CachedAgentLeaseCompatibility;
+}): string | undefined {
+	if (params.cachedEntry.agentWorkspaceDir !== params.requestedEntry.agentWorkspaceDir) {
+		return 'agentWorkspaceDir';
+	}
+	if (params.cachedEntry.leaseWorkMountDir !== params.requestedEntry.leaseWorkMountDir) {
+		return 'leaseWorkMountDir';
+	}
+	if (params.cachedEntry.profileId !== params.requestedEntry.profileId) {
+		return 'profileId';
+	}
+	return undefined;
+}
+
+function assertCachedLeaseCompatible(params: {
+	readonly agentId: string;
+	readonly cachedEntry: CachedAgentLeaseCompatibility;
+	readonly requestedEntry: CachedAgentLeaseCompatibility;
+	readonly zoneId: string;
+}): void {
+	const mismatch = findCachedLeaseCompatibilityMismatch(params);
+	if (mismatch === undefined) {
+		return;
+	}
+	throw new Error(
+		`Cannot reuse cached Tool VM lease for zone '${params.zoneId}' agent '${params.agentId}': ${mismatch} changed.`,
+	);
+}
+
 function formatControllerLeaseRequestError(error: ControllerLeaseRequestError): string {
 	const responseBody =
 		error.responseBody === undefined ? error.bodyText : JSON.stringify(error.responseBody);
@@ -168,6 +204,7 @@ export function createGondolinSandboxBackendFactory(
 	readonly workspaceDir: string;
 }) => Promise<OpenClawSandboxBackendHandle> {
 	const agentLeaseCache = new Map<string, CachedAgentLeaseEntry>();
+	const inFlightLeaseRequests = new Map<string, Promise<CachedAgentLeaseEntry>>();
 
 	return async (params) => {
 		const profileId = options.profileId ?? 'standard';
@@ -183,6 +220,11 @@ export function createGondolinSandboxBackendFactory(
 			agentId,
 			zoneId: options.zoneId,
 		});
+		const requestedCacheEntry = {
+			agentWorkspaceDir: params.agentWorkspaceDir,
+			leaseWorkMountDir: pathIntent.leaseWorkMountDir,
+			profileId,
+		} satisfies CachedAgentLeaseCompatibility;
 		const leaseClient =
 			dependencies.createLeaseClient?.({
 				controllerUrl: options.controllerUrl,
@@ -207,6 +249,12 @@ export function createGondolinSandboxBackendFactory(
 		const cachedEntry = agentLeaseCache.get(cacheKey);
 		let lease: CachedAgentLeaseEntry['lease'] | undefined;
 		if (cachedEntry) {
+			assertCachedLeaseCompatible({
+				agentId,
+				cachedEntry,
+				requestedEntry: requestedCacheEntry,
+				zoneId: options.zoneId,
+			});
 			try {
 				const renewedLease = await leaseClient.renewLease(cachedEntry.lease.leaseId);
 				await runToolVmSshOperationWithGuard({
@@ -222,7 +270,7 @@ export function createGondolinSandboxBackendFactory(
 					timeoutMs: 30_000,
 				});
 				lease = renewedLease;
-				agentLeaseCache.set(cacheKey, { lease });
+				agentLeaseCache.set(cacheKey, { ...requestedCacheEntry, lease });
 			} catch (error) {
 				writeSandboxBackendLog(
 					`lease renew failed for zone '${options.zoneId}' agent '${agentId}' lease '${cachedEntry.lease.leaseId}': ${formatUnknownError(error)}`,
@@ -237,25 +285,51 @@ export function createGondolinSandboxBackendFactory(
 			}
 		}
 		if (lease === undefined) {
-			// OpenClaw SDK still names the selected sandbox path `workspaceDir`.
-			// agent-vm's controller calls the selected host source `workMountDir`.
-			const runtimeStatus = options.openClawRuntimeStatusProvider?.();
-			if (runtimeStatus && leaseClient.publishOpenClawRuntimeStatus) {
-				await leaseClient.publishOpenClawRuntimeStatus(runtimeStatus);
+			const inFlightLeaseRequest = inFlightLeaseRequests.get(cacheKey);
+			if (inFlightLeaseRequest !== undefined) {
+				const inFlightEntry = await inFlightLeaseRequest;
+				assertCachedLeaseCompatible({
+					agentId,
+					cachedEntry: inFlightEntry,
+					requestedEntry: requestedCacheEntry,
+					zoneId: options.zoneId,
+				});
+				lease = inFlightEntry.lease;
+			} else {
+				// OpenClaw SDK still names the selected sandbox path `workspaceDir`.
+				// agent-vm's controller calls the selected host source `workMountDir`.
+				const leaseRequestPromise = (async (): Promise<CachedAgentLeaseEntry> => {
+					const runtimeStatus = options.openClawRuntimeStatusProvider?.();
+					if (runtimeStatus && leaseClient.publishOpenClawRuntimeStatus) {
+						await leaseClient.publishOpenClawRuntimeStatus(runtimeStatus);
+					}
+					const leaseResponse = await leaseClient.requestLease({
+						agentId,
+						agentWorkspaceDir: params.agentWorkspaceDir,
+						profileId,
+						sessionKey: params.sessionKey,
+						workMountDir: pathIntent.leaseWorkMountDir,
+						zoneId: options.zoneId,
+					});
+					if (!isToolVmSshLease(leaseResponse)) {
+						throw new TypeError('Controller lease API returned an unexpected response.');
+					}
+					return {
+						...requestedCacheEntry,
+						lease: leaseResponse,
+					};
+				})();
+				inFlightLeaseRequests.set(cacheKey, leaseRequestPromise);
+				try {
+					const leaseEntry = await leaseRequestPromise;
+					agentLeaseCache.set(cacheKey, leaseEntry);
+					lease = leaseEntry.lease;
+				} finally {
+					if (inFlightLeaseRequests.get(cacheKey) === leaseRequestPromise) {
+						inFlightLeaseRequests.delete(cacheKey);
+					}
+				}
 			}
-			const leaseResponse = await leaseClient.requestLease({
-				agentId,
-				agentWorkspaceDir: params.agentWorkspaceDir,
-				profileId,
-				sessionKey: params.sessionKey,
-				workMountDir: pathIntent.leaseWorkMountDir,
-				zoneId: options.zoneId,
-			});
-			if (!isToolVmSshLease(leaseResponse)) {
-				throw new TypeError('Controller lease API returned an unexpected response.');
-			}
-			lease = leaseResponse;
-			agentLeaseCache.set(cacheKey, { lease });
 		}
 		const handle = createSandboxBackendHandle({
 			cfg: params.cfg,

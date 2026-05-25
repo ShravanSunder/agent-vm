@@ -38,6 +38,8 @@ export {
 	isToolVmActiveUseId,
 } from './tool-vm-active-use.js';
 export {
+	OPENCLAW_STATE_SANDBOXES_VM_ROOT,
+	OPENCLAW_STATE_VM_ROOT,
 	TOOL_VM_SCRATCH_GUEST_ROOT,
 	TOOL_VM_WORKSPACE_GUEST_ROOT,
 	translateRuntimePath,

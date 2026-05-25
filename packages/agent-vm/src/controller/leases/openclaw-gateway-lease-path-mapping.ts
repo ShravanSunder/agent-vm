@@ -1,11 +1,14 @@
 import path from 'node:path';
 
-import type { RuntimePathMapping } from '@agent-vm/gateway-interface';
+import {
+	OPENCLAW_STATE_SANDBOXES_VM_ROOT,
+	OPENCLAW_STATE_VM_ROOT,
+	type RuntimePathMapping,
+} from '@agent-vm/gateway-interface';
 
 import { OPENCLAW_ZONE_FILES_GUEST_ROOT } from '../zone-git/zone-git-paths.js';
 
-export const OPENCLAW_STATE_VM_ROOT = '/home/openclaw/.openclaw/state';
-export const OPENCLAW_STATE_SANDBOXES_VM_ROOT = `${OPENCLAW_STATE_VM_ROOT}/sandboxes`;
+export { OPENCLAW_STATE_SANDBOXES_VM_ROOT, OPENCLAW_STATE_VM_ROOT };
 
 export function createOpenClawGatewayLeasePathMapping(options: {
 	readonly stateDir: string;
@@ -29,6 +32,7 @@ export function createOpenClawGatewayLeasePathMapping(options: {
 				hostRoot: path.join(options.stateDir, 'sandboxes'),
 				id: 'openclaw-sandboxes',
 				rootPathAllowed: false,
+				showHostRootInGuidance: false,
 			},
 			{
 				backing: {
@@ -45,6 +49,7 @@ export function createOpenClawGatewayLeasePathMapping(options: {
 				hostRoot: options.zoneFilesDir,
 				id: 'zone-files',
 				rootPathAllowed: false,
+				showHostRootInGuidance: false,
 			},
 		],
 	};

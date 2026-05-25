@@ -8,6 +8,7 @@ import type { SystemConfig } from '../../config/system-config.js';
 import {
 	resolveLeaseWorkMountDir,
 	type LeaseWorkMountValidationError,
+	type LeaseWorkMountValidationErrorKind,
 	validateResolvedToolWorkMountDir,
 } from './lease-work-mount-paths.js';
 
@@ -196,9 +197,17 @@ describe('resolveLeaseWorkMountDir', () => {
 		).rejects.toThrow(/must be under \/home\/openclaw\/\.openclaw\/state\/sandboxes or \/zone/u);
 	});
 
-	it.each(['/workspace', '/workspace/app', '/work', '/work/tmp'])(
+	it.each([
+		{ kind: 'work-mount-unknown-runtime-path', workMountDir: '/workspace' },
+		{ kind: 'work-mount-unknown-runtime-path', workMountDir: '/workspace/app' },
+		{ kind: 'work-mount-unknown-runtime-path', workMountDir: '/work' },
+		{ kind: 'work-mount-unknown-runtime-path', workMountDir: '/work/tmp' },
+	] satisfies readonly {
+		readonly kind: LeaseWorkMountValidationErrorKind;
+		readonly workMountDir: string;
+	}[])(
 		'rejects Tool VM guest path %s as controller lease workMountDir',
-		async (workMountDir) => {
+		async ({ kind, workMountDir }) => {
 			await expect(
 				resolveLeaseWorkMountDir({
 					runtimeDir,
@@ -206,7 +215,7 @@ describe('resolveLeaseWorkMountDir', () => {
 					zone,
 				}),
 			).rejects.toMatchObject({
-				kind: 'outside-allowed-roots',
+				kind,
 			} satisfies Partial<LeaseWorkMountValidationError>);
 		},
 	);

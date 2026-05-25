@@ -630,7 +630,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		expect(requestLease).toHaveBeenCalledTimes(2);
 	});
 
-	it('does not fork the plugin cache for same-agent scope and host path drift', async () => {
+	it('refuses a cached agent lease when the agent workspace root changes', async () => {
 		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
 			createLeaseResponse('shravan-beta-100', {
 				agentId: 'beta',
@@ -659,26 +659,78 @@ describe('createGondolinSandboxBackendFactory', () => {
 			},
 		);
 
-		const firstHandle = await factory({
+		await factory({
 			agentWorkspaceDir: '/workspace/beta',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:beta:discord:channel:123',
 			sessionKey: 'agent:beta:discord:channel:123',
 			workspaceDir: '/workspace/beta',
 		});
-		const secondHandle = await factory({
-			agentWorkspaceDir: '/workspace/beta-edited',
-			cfg: gondolinSandboxConfig(),
-			scopeKey: 'agent:beta:discord:channel:999',
-			sessionKey: 'agent:beta:discord:channel:999',
-			workspaceDir: '/workspace/beta-edited',
-		});
+		await expect(
+			factory({
+				agentWorkspaceDir: '/workspace/beta-edited',
+				cfg: gondolinSandboxConfig(),
+				scopeKey: 'agent:beta:discord:channel:999',
+				sessionKey: 'agent:beta:discord:channel:999',
+				workspaceDir: '/workspace/beta-edited',
+			}),
+		).rejects.toThrow(/cached Tool VM lease.*agentWorkspaceDir/u);
 
-		expect(secondHandle).not.toBe(firstHandle);
-		expect(secondHandle.runtimeId).toBe(firstHandle.runtimeId);
 		expect(requestLease).toHaveBeenCalledTimes(1);
 		expect(requestLease.mock.calls[0]?.[0]).not.toHaveProperty('scopeKey');
 		expect(requestLease.mock.calls[0]?.[0]).not.toHaveProperty('sandbox');
+	});
+
+	it('shares one in-flight lease request for concurrent same-agent calls', async () => {
+		let resolveRequest: (() => void) | undefined;
+		const requestGate = new Promise<void>((resolve) => {
+			resolveRequest = resolve;
+		});
+		const requestLease = vi.fn(async () => {
+			await requestGate;
+			return createLeaseResponse('shravan-beta-concurrent', {
+				agentId: 'beta',
+			});
+		});
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () =>
+						createLeaseResponse('shravan-beta-concurrent', {
+							agentId: 'beta',
+						}),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const firstHandlePromise = factory(createFactoryParamsForAgent('beta'));
+		const secondHandlePromise = factory(createFactoryParamsForAgent('beta'));
+		await Promise.resolve();
+
+		expect(requestLease).toHaveBeenCalledTimes(1);
+		resolveRequest?.();
+		const [firstHandle, secondHandle] = await Promise.all([
+			firstHandlePromise,
+			secondHandlePromise,
+		]);
+
+		expect(firstHandle).not.toBe(secondHandle);
+		expect(firstHandle.runtimeId).toBe(secondHandle.runtimeId);
+		expect(requestLease).toHaveBeenCalledTimes(1);
 	});
 
 	it('drops a cached handle when lease renew returns 404 and requests a fresh lease', async () => {

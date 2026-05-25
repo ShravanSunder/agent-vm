@@ -1585,10 +1585,14 @@ describe('createControllerApp', () => {
 		});
 
 		expect(createResponse.status).toBe(400);
-		await expect(createResponse.json()).resolves.toEqual({
-			error: 'workMountDir outside allowed roots',
-			kind: 'outside-allowed-roots',
-			message: 'workMountDir outside allowed roots',
+		await expect(createResponse.json()).resolves.toMatchObject({
+			error: 'invalid-lease-request',
+			issues: [
+				expect.objectContaining({
+					message: 'path must not contain parent traversal.',
+					path: ['workMountDir'],
+				}),
+			],
 		});
 		expect(createLease).not.toHaveBeenCalled();
 	});

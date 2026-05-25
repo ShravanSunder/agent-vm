@@ -1,7 +1,10 @@
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import { translateRuntimePath } from '@agent-vm/gateway-interface';
+import {
+	translateRuntimePath,
+	type RuntimePathTranslationErrorCode,
+} from '@agent-vm/gateway-interface';
 
 import type { SystemConfig } from '../../config/system-config.js';
 import {
@@ -31,7 +34,9 @@ export type LeaseWorkMountValidationErrorKind =
 	| 'root-mount-target'
 	| 'unsupported-gateway'
 	| 'work-mount-not-absolute'
-	| 'work-mount-parent-traversal';
+	| 'work-mount-parent-traversal'
+	| 'work-mount-purpose-not-allowed'
+	| 'work-mount-unknown-runtime-path';
 
 interface LeaseWorkMountValidationErrorOptions extends ErrorOptions {
 	readonly guidance?: string;
@@ -58,6 +63,15 @@ export interface ResolvedLeaseWorkMount {
 	readonly hostWorkMountDir: string;
 	readonly zoneGitMount?: ZoneGitToolVmMount;
 }
+
+const translatorErrorKindByCode = {
+	'invalid-runtime-root': 'outside-allowed-roots',
+	'path-not-absolute': 'work-mount-not-absolute',
+	'path-parent-traversal': 'work-mount-parent-traversal',
+	'purpose-not-allowed': 'work-mount-purpose-not-allowed',
+	'root-path-not-allowed': 'root-mount-target',
+	'unknown-runtime-path': 'work-mount-unknown-runtime-path',
+} satisfies Record<RuntimePathTranslationErrorCode, LeaseWorkMountValidationErrorKind>;
 
 function normalizeGuestWorkMountDir(workMountDir: string): string {
 	const normalizedWorkMountDir = path.posix.normalize(workMountDir);
@@ -190,10 +204,7 @@ export async function resolveLeaseWorkMountDir(options: {
 		purpose: 'leaseMount',
 	});
 	if (!translation.ok) {
-		const kind =
-			translation.error.code === 'root-path-not-allowed'
-				? 'root-mount-target'
-				: 'outside-allowed-roots';
+		const kind = translatorErrorKindByCode[translation.error.code];
 		const message =
 			translation.error.code === 'root-path-not-allowed'
 				? `Lease workMountDir '${options.workMountDir}' must name a child path under ${OPENCLAW_ZONE_FILES_VM_ROOT} or ${OPENCLAW_STATE_SANDBOXES_VM_ROOT}, not the root itself.`

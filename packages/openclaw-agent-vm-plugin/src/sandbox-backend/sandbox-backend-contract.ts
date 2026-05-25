@@ -129,5 +129,8 @@ export interface OpenClawSandboxBackendHandle {
 }
 
 export interface CachedAgentLeaseEntry {
+	readonly agentWorkspaceDir: string;
 	readonly lease: ToolVmSshLease;
+	readonly leaseWorkMountDir: string;
+	readonly profileId: string;
 }

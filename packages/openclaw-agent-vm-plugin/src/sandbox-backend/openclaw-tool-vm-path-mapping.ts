@@ -1,4 +1,5 @@
 import {
+	OPENCLAW_STATE_SANDBOXES_VM_ROOT,
 	TOOL_VM_SCRATCH_GUEST_ROOT,
 	TOOL_VM_WORKSPACE_GUEST_ROOT,
 	translateRuntimePath,
@@ -6,8 +7,6 @@ import {
 	type RuntimePathTranslation,
 	type RuntimePathTranslationError,
 } from '@agent-vm/gateway-interface';
-
-const OPENCLAW_STATE_SANDBOXES_ROOT = '/home/openclaw/.openclaw/state/sandboxes';
 
 export type OpenClawToolVmPathIntentKind =
 	| 'host-workspace-root'
@@ -43,6 +42,42 @@ export class OpenClawToolVmPathIntentError extends Error {
 		this.name = 'OpenClawToolVmPathIntentError';
 		this.details = details;
 	}
+}
+
+function pathContainsParentTraversal(inputPath: string): boolean {
+	return inputPath.split(/\/+/u).includes('..');
+}
+
+function normalizedAbsolutePath(inputPath: string): string {
+	const rawSegments = inputPath.split('/').filter((segment) => segment !== '' && segment !== '.');
+	return `/${rawSegments.join('/')}`;
+}
+
+function invalidAgentWorkspaceRootError(agentWorkspaceDir: string): RuntimePathTranslationError {
+	return {
+		allowedPathForms: [],
+		code: 'invalid-runtime-root',
+		inputPath: agentWorkspaceDir,
+		mappingId: 'openclaw-tool-vm',
+		message: `OpenClaw agentWorkspaceDir '${agentWorkspaceDir}' must be an absolute non-root path without parent traversal.`,
+		purpose: 'executionCwd',
+		retryGuidance:
+			'Retry with OpenClaw agentWorkspaceDir set to the resolved host RealFS workspace for the requested agent.',
+	};
+}
+
+function validateAgentWorkspaceDir(
+	agentWorkspaceDir: string,
+): RuntimePathTranslationError | undefined {
+	if (
+		agentWorkspaceDir.trim() === '' ||
+		!agentWorkspaceDir.startsWith('/') ||
+		normalizedAbsolutePath(agentWorkspaceDir) === '/' ||
+		pathContainsParentTraversal(agentWorkspaceDir)
+	) {
+		return invalidAgentWorkspaceRootError(agentWorkspaceDir);
+	}
+	return undefined;
 }
 
 function createOpenClawToolVmPathMapping(options: {
@@ -83,7 +118,7 @@ function createOpenClawToolVmPathMapping(options: {
 			},
 			{
 				id: 'openclaw-sandboxes',
-				hostRoot: OPENCLAW_STATE_SANDBOXES_ROOT,
+				hostRoot: OPENCLAW_STATE_SANDBOXES_VM_ROOT,
 				backing: {
 					kind: 'host-realfs',
 					durability: 'durable',
@@ -97,6 +132,25 @@ function createOpenClawToolVmPathMapping(options: {
 				guidanceLabel: 'OpenClaw sandbox work directory',
 			},
 		],
+	};
+}
+
+function resolveOpenClawSandboxPathIntent(translation: RuntimePathTranslation): {
+	readonly effectiveGuestCwd: string;
+	readonly leaseWorkMountDir: string;
+} {
+	const [sandboxChild, ...guestCwdSegments] = translation.relativePath.split('/');
+	const leaseWorkMountDir =
+		sandboxChild === undefined || sandboxChild === ''
+			? (translation.hostPath ?? OPENCLAW_STATE_SANDBOXES_VM_ROOT)
+			: `${OPENCLAW_STATE_SANDBOXES_VM_ROOT}/${sandboxChild}`;
+	const effectiveGuestCwd =
+		guestCwdSegments.length === 0
+			? TOOL_VM_WORKSPACE_GUEST_ROOT
+			: `${TOOL_VM_WORKSPACE_GUEST_ROOT}/${guestCwdSegments.join('/')}`;
+	return {
+		effectiveGuestCwd,
+		leaseWorkMountDir,
 	};
 }
 
@@ -118,6 +172,13 @@ export function resolveOpenClawToolVmPathIntent(options: {
 	readonly agentWorkspaceDir: string;
 	readonly inputPath: string;
 }): OpenClawToolVmPathIntentResult {
+	const agentWorkspaceDirError = validateAgentWorkspaceDir(options.agentWorkspaceDir);
+	if (agentWorkspaceDirError !== undefined) {
+		return {
+			error: agentWorkspaceDirError,
+			ok: false,
+		};
+	}
 	const translation = translateRuntimePath({
 		inputPath: options.inputPath,
 		mapping: createOpenClawToolVmPathMapping({
@@ -128,20 +189,24 @@ export function resolveOpenClawToolVmPathIntent(options: {
 	if (!translation.ok) {
 		return translation;
 	}
+	const sandboxPathIntent =
+		translation.value.rootId === 'openclaw-sandboxes'
+			? resolveOpenClawSandboxPathIntent(translation.value)
+			: undefined;
 	return {
 		ok: true,
 		value: {
 			effectiveGuestCwd:
-				translation.value.rootId === 'openclaw-sandboxes'
-					? TOOL_VM_WORKSPACE_GUEST_ROOT
+				sandboxPathIntent !== undefined
+					? sandboxPathIntent.effectiveGuestCwd
 					: (translation.value.guestPath ?? TOOL_VM_WORKSPACE_GUEST_ROOT),
 			...(translation.value.hostPath !== undefined
 				? { hostEquivalentPath: translation.value.hostPath }
 				: {}),
 			kind: kindForTranslation(translation.value),
 			leaseWorkMountDir:
-				translation.value.rootId === 'openclaw-sandboxes'
-					? (translation.value.hostPath ?? options.agentWorkspaceDir)
+				sandboxPathIntent !== undefined
+					? sandboxPathIntent.leaseWorkMountDir
 					: (translation.value.hostRoot ?? options.agentWorkspaceDir),
 		},
 	};

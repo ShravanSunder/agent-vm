@@ -17,6 +17,14 @@ const controllerLeaseAgentWorkspacePathSchema = z
 		message: 'path must not contain parent traversal.',
 	});
 
+const controllerLeaseWorkMountPathSchema = z
+	.string()
+	.min(1)
+	.refine(isAbsolutePosixPath, { message: 'path must be absolute.' })
+	.refine((value) => !pathContainsParentTraversal(value), {
+		message: 'path must not contain parent traversal.',
+	});
+
 const openClawAgentIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/iu;
 
 const controllerLeaseAgentIdSchema = z.string().min(1).regex(openClawAgentIdPattern, {
@@ -52,7 +60,7 @@ export const controllerLeaseCreateRequestSchema = z.strictObject({
 	idleTtlMs: z.number().int().positive().optional(),
 	profileId: z.string().min(1),
 	sessionKey: z.string().min(1),
-	workMountDir: z.string().min(1),
+	workMountDir: controllerLeaseWorkMountPathSchema,
 	zoneId: z.string().min(1),
 });
 

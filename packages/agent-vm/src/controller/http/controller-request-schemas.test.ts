@@ -106,7 +106,7 @@ describe('controller request schemas', () => {
 		expect(result.success).toBe(true);
 	});
 
-	it('rejects non-absolute and parent-traversing lease agent workspace paths', () => {
+	it('rejects non-absolute and parent-traversing lease path fields', () => {
 		const validLeaseRequest = {
 			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
@@ -132,6 +132,18 @@ describe('controller request schemas', () => {
 			controllerLeaseCreateRequestSchema.safeParse({
 				...validLeaseRequest,
 				agentWorkspaceDir: '/',
+			}).success,
+		).toBe(false);
+		expect(
+			controllerLeaseCreateRequestSchema.safeParse({
+				...validLeaseRequest,
+				workMountDir: 'relative/work',
+			}).success,
+		).toBe(false);
+		expect(
+			controllerLeaseCreateRequestSchema.safeParse({
+				...validLeaseRequest,
+				workMountDir: '/home/openclaw/../work',
 			}).success,
 		).toBe(false);
 	});

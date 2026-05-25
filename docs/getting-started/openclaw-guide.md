@@ -139,7 +139,7 @@ When the agent needs to run code, OpenClaw requests a tool VM lease from the con
        | Resolves hostWorkMountDir, allocates TCP slot, boots tool VM
        v
   Tool VM (Zone 3 — untrusted)
-       | /work mounted, no secrets, no network
+       | /workspace mounted, no secrets, no network
        | SSH access via tool-{slot}.vm.host:22
 ```
 
@@ -152,7 +152,7 @@ The lease `workMountDir` is a gateway VM path, not a host path. It must name a
 concrete child path under `/zone` or
 `/home/openclaw/.openclaw/state/sandboxes`; the roots themselves are rejected as
 too broad. The controller resolves the selected path to the host directory that
-backs the Tool VM's `/work` mount.
+backs the Tool VM's `/workspace` mount.
 
 For internals, see [architecture/openclaw-gateway.md](../architecture/openclaw-gateway.md#tool-vm-leases).
 

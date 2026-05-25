@@ -1,5 +1,7 @@
 export const TOOL_VM_WORKSPACE_GUEST_ROOT = '/workspace';
 export const TOOL_VM_SCRATCH_GUEST_ROOT = '/work';
+export const OPENCLAW_STATE_VM_ROOT = '/home/openclaw/.openclaw/state';
+export const OPENCLAW_STATE_SANDBOXES_VM_ROOT = `${OPENCLAW_STATE_VM_ROOT}/sandboxes`;
 
 export type RuntimePathPurpose = 'executionCwd' | 'leaseMount';
 
@@ -19,14 +21,32 @@ export type RuntimePathBacking =
 			readonly durability: 'vm-lifetime';
 	  };
 
-export interface RuntimePathRootMapping {
-	readonly backing: RuntimePathBacking;
+interface RuntimePathRootMappingBase {
 	readonly capabilities: RuntimePathCapabilities;
-	readonly guestRoot?: string;
 	readonly guidanceLabel: string;
-	readonly hostRoot?: string;
 	readonly id: string;
 	readonly rootPathAllowed: boolean;
+}
+
+export type RuntimePathRootMapping =
+	| (RuntimePathRootMappingBase & {
+			readonly backing: Extract<RuntimePathBacking, { readonly kind: 'host-realfs' }>;
+			readonly guestRoot?: string;
+			readonly hostRoot: string;
+			readonly showHostRootInGuidance?: boolean;
+	  })
+	| (RuntimePathRootMappingBase & {
+			readonly backing: Extract<RuntimePathBacking, { readonly kind: 'guest-rootfs-cow' }>;
+			readonly capabilities: RuntimePathCapabilities & { readonly leaseMount: false };
+			readonly guestRoot: string;
+			readonly hostRoot?: never;
+			readonly showHostRootInGuidance?: never;
+	  });
+
+function isHostRealfsRootMapping(
+	root: RuntimePathRootMapping,
+): root is Extract<RuntimePathRootMapping, { readonly backing: { readonly kind: 'host-realfs' } }> {
+	return root.backing.kind === 'host-realfs';
 }
 
 export interface RuntimePathMapping {
@@ -40,14 +60,9 @@ export interface TranslateRuntimePathInput {
 	readonly purpose: RuntimePathPurpose;
 }
 
-export interface RuntimePathTranslation {
+interface RuntimePathTranslationBase {
 	readonly backing: RuntimePathBacking;
 	readonly capabilities: RuntimePathCapabilities;
-	readonly guestPath?: string;
-	readonly guestRoot?: string;
-	readonly hasHostBacking: boolean;
-	readonly hostPath?: string;
-	readonly hostRoot?: string;
 	readonly inputNamespace: 'guest' | 'host';
 	readonly inputPath: string;
 	readonly mappingId: string;
@@ -55,9 +70,28 @@ export interface RuntimePathTranslation {
 	readonly rootId: string;
 }
 
+export type RuntimePathTranslation =
+	| (RuntimePathTranslationBase & {
+			readonly guestPath?: string;
+			readonly guestRoot?: string;
+			readonly hasHostBacking: true;
+			readonly hostPath: string;
+			readonly hostRoot: string;
+			readonly kind: 'host-backed';
+	  })
+	| (RuntimePathTranslationBase & {
+			readonly guestPath: string;
+			readonly guestRoot: string;
+			readonly hasHostBacking: false;
+			readonly hostPath?: never;
+			readonly hostRoot?: never;
+			readonly kind: 'guest-only';
+	  });
+
 export type RuntimePathTranslationErrorCode =
 	| 'path-not-absolute'
 	| 'path-parent-traversal'
+	| 'invalid-runtime-root'
 	| 'unknown-runtime-path'
 	| 'purpose-not-allowed'
 	| 'root-path-not-allowed';
@@ -123,7 +157,13 @@ function allowedPathFormsForMapping(
 			return [];
 		}
 		const suffix = root.rootPathAllowed ? '[/subpath]' : '/<child>';
-		return [root.guestRoot, root.hostRoot]
+		const pathForms = [
+			root.guestRoot,
+			root.backing.kind === 'host-realfs' && root.showHostRootInGuidance !== false
+				? root.hostRoot
+				: undefined,
+		];
+		return pathForms
 			.filter((value): value is string => value !== undefined)
 			.map((value) => `${normalizeRoot(value)}${suffix}`);
 	});
@@ -160,7 +200,10 @@ function findBestRootMatch(params: {
 }): RuntimePathRootMatch | undefined {
 	const matches = params.mapping.roots.flatMap((root): RuntimePathRootMatch[] => {
 		const guestRoot = root.guestRoot === undefined ? undefined : normalizeRoot(root.guestRoot);
-		const hostRoot = root.hostRoot === undefined ? undefined : normalizeRoot(root.hostRoot);
+		let hostRoot: string | undefined;
+		if (isHostRealfsRootMapping(root)) {
+			hostRoot = normalizeRoot(root.hostRoot);
+		}
 		const rootMatches: RuntimePathRootMatch[] = [];
 		if (guestRoot !== undefined && pathMatchesRoot(params.inputPath, guestRoot)) {
 			rootMatches.push({ inputNamespace: 'guest', matchedRoot: guestRoot, root });
@@ -227,8 +270,37 @@ export function translateRuntimePath(input: TranslateRuntimePathInput): Translat
 	}
 	const guestRoot =
 		match.root.guestRoot === undefined ? undefined : normalizeRoot(match.root.guestRoot);
-	const hostRoot =
-		match.root.hostRoot === undefined ? undefined : normalizeRoot(match.root.hostRoot);
+	let hostRoot: string | undefined;
+	if (isHostRealfsRootMapping(match.root)) {
+		hostRoot = normalizeRoot(match.root.hostRoot);
+	}
+	if (hostRoot === undefined) {
+		if (guestRoot === undefined) {
+			return errorResult({
+				code: 'invalid-runtime-root',
+				inputPath: normalizedInputPath,
+				mapping: input.mapping,
+				message: `Runtime path root '${match.root.id}' has no guest path.`,
+				purpose: input.purpose,
+			});
+		}
+		return {
+			ok: true,
+			value: {
+				backing: match.root.backing,
+				capabilities: match.root.capabilities,
+				guestPath: joinRootAndRelative(guestRoot, relativePath),
+				guestRoot,
+				hasHostBacking: false,
+				inputNamespace: match.inputNamespace,
+				inputPath: normalizedInputPath,
+				kind: 'guest-only',
+				mappingId: input.mapping.id,
+				relativePath,
+				rootId: match.root.id,
+			},
+		};
+	}
 	return {
 		ok: true,
 		value: {
@@ -238,11 +310,12 @@ export function translateRuntimePath(input: TranslateRuntimePathInput): Translat
 				? { guestPath: joinRootAndRelative(guestRoot, relativePath) }
 				: {}),
 			...(guestRoot !== undefined ? { guestRoot } : {}),
-			hasHostBacking: hostRoot !== undefined,
-			...(hostRoot !== undefined ? { hostPath: joinRootAndRelative(hostRoot, relativePath) } : {}),
-			...(hostRoot !== undefined ? { hostRoot } : {}),
+			hasHostBacking: true,
+			hostPath: joinRootAndRelative(hostRoot, relativePath),
+			hostRoot,
 			inputNamespace: match.inputNamespace,
 			inputPath: normalizedInputPath,
+			kind: 'host-backed',
 			mappingId: input.mapping.id,
 			relativePath,
 			rootId: match.root.id,

@@ -55,6 +55,13 @@ describe('resolveOpenClawToolVmPathIntent', () => {
 			kind: 'openclaw-sandbox-path',
 			leaseWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 		},
+		{
+			effectiveGuestCwd: '/workspace/app',
+			hostEquivalentPath: '/home/openclaw/.openclaw/state/sandboxes/work/app',
+			inputPath: '/home/openclaw/.openclaw/state/sandboxes/work/app',
+			kind: 'openclaw-sandbox-path',
+			leaseWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
+		},
 	])('projects $inputPath', ({ inputPath, ...expectedResolution }) => {
 		expect(
 			resolveOpenClawToolVmPathIntent({
@@ -97,6 +104,23 @@ describe('resolveOpenClawToolVmPathIntent', () => {
 			ok: false,
 		});
 	});
+
+	it.each(['', '/', 'relative/workspace'])(
+		'rejects invalid agent workspace root %s before translating input paths',
+		(agentWorkspaceDir) => {
+			const result = resolveOpenClawToolVmPathIntent({
+				agentWorkspaceDir,
+				inputPath: '/zone/agents/beta/app',
+			});
+
+			expect(result).toMatchObject({
+				error: {
+					code: 'invalid-runtime-root',
+				},
+				ok: false,
+			});
+		},
+	);
 
 	it('throws a structured error when asserting invalid path intent', () => {
 		expect(() =>

@@ -311,7 +311,8 @@ The plugin provides:
   execution; `/work` remains VM-local rootfs/COW scratch.
   Lease requests provide `workMountDir` as a concrete OpenClaw gateway child
   path under `/home/openclaw/.openclaw/state/sandboxes` or `/zone`; the roots
-  themselves are validation boundaries and are rejected as mount targets.
+  themselves are validation boundaries, and the controller rejects them as mount
+  targets.
   The controller maps that gateway path to `hostWorkMountDir`, verifies the
   real path is inside either `stateDir/sandboxes` or `zoneFilesDir`, and mounts
   non-zone-git work mounts into the Tool VM at `/workspace`.
