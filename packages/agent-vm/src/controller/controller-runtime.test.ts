@@ -425,8 +425,6 @@ describe('startControllerRuntime', () => {
 				},
 			})),
 			leaseIdleTtl: {
-				byScopeKind: {},
-				byScopePrefix: {},
 				defaultMs: 1_000,
 				maxRequestedMs: 60_000,
 				minRequestedMs: 1_000,

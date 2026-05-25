@@ -1,78 +1,35 @@
 import { describe, expect, it } from 'vitest';
 
-import { ttlForLeaseScope } from './lease-idle-policy.js';
+import {
+	defaultToolVmLeaseIdleTtlMs,
+	resolveToolVmLeaseIdleTtlMs,
+	type ToolVmLeaseIdleTtlPolicy,
+} from './lease-idle-policy.js';
 
-function policyWithRequestBounds(policy: {
-	readonly byScopeKind: Record<string, number>;
-	readonly byScopePrefix: Record<string, number>;
-	readonly defaultMs: number;
-}): typeof policy & { readonly maxRequestedMs: number; readonly minRequestedMs: number } {
-	return {
-		...policy,
-		maxRequestedMs: 86_400_000,
-		minRequestedMs: 1_000,
-	};
-}
+describe('Tool VM lease idle policy', () => {
+	it('uses the single default lease TTL when no request override is provided', () => {
+		const policy = {
+			defaultMs: defaultToolVmLeaseIdleTtlMs,
+			maxRequestedMs: 24 * 60 * 60 * 1000,
+			minRequestedMs: 1_000,
+		} satisfies ToolVmLeaseIdleTtlPolicy;
 
-describe('ttlForLeaseScope', () => {
-	it('maps the named scope kinds explicitly', () => {
-		const policy = policyWithRequestBounds({
-			defaultMs: 1_800_000,
-			byScopeKind: {
-				agent: 7_200_000,
-				discord: 600_000,
-				project: 3_600_000,
-				session: 900_000,
-				shared: 86_400_000,
-				workspace: 1_200_000,
-			},
-			byScopePrefix: {},
+		expect(resolveToolVmLeaseIdleTtlMs({ policy })).toEqual({
+			kind: 'ok',
+			value: 100 * 60 * 1000,
 		});
-
-		expect(ttlForLeaseScope({ policy, scopeKey: 'agent:shravan' })).toBe(7_200_000);
-		expect(ttlForLeaseScope({ policy, scopeKey: 'discord:channel:123' })).toBe(600_000);
-		expect(ttlForLeaseScope({ policy, scopeKey: 'project:repo' })).toBe(3_600_000);
-		expect(ttlForLeaseScope({ policy, scopeKey: 'session:abc' })).toBe(900_000);
-		expect(ttlForLeaseScope({ policy, scopeKey: 'shared:home' })).toBe(86_400_000);
-		expect(ttlForLeaseScope({ policy, scopeKey: 'workspace:repo' })).toBe(1_200_000);
 	});
 
-	it('prefers the longest scope prefix over scope kind and default', () => {
-		expect(
-			ttlForLeaseScope({
-				scopeKey: 'agent:shravan:session-1',
-				policy: policyWithRequestBounds({
-					defaultMs: 1_800_000,
-					byScopeKind: { agent: 7_200_000 },
-					byScopePrefix: { 'agent:shravan': 21_600_000 },
-				}),
-			}),
-		).toBe(21_600_000);
-	});
+	it('accepts requested TTL inside configured bounds', () => {
+		const policy = {
+			defaultMs: defaultToolVmLeaseIdleTtlMs,
+			maxRequestedMs: 24 * 60 * 60 * 1000,
+			minRequestedMs: 1_000,
+		} satisfies ToolVmLeaseIdleTtlPolicy;
 
-	it('uses scope kind when there is no scope prefix override', () => {
-		expect(
-			ttlForLeaseScope({
-				scopeKey: 'agent:alevtina:session-1',
-				policy: policyWithRequestBounds({
-					defaultMs: 1_800_000,
-					byScopeKind: { agent: 7_200_000 },
-					byScopePrefix: {},
-				}),
-			}),
-		).toBe(7_200_000);
-	});
-
-	it('falls back to default for unknown scope kinds', () => {
-		expect(
-			ttlForLeaseScope({
-				scopeKey: 'project:shared',
-				policy: policyWithRequestBounds({
-					defaultMs: 1_800_000,
-					byScopeKind: { agent: 7_200_000 },
-					byScopePrefix: {},
-				}),
-			}),
-		).toBe(1_800_000);
+		expect(resolveToolVmLeaseIdleTtlMs({ policy, requestedIdleTtlMs: 5_000 })).toEqual({
+			kind: 'ok',
+			value: 5_000,
+		});
 	});
 });

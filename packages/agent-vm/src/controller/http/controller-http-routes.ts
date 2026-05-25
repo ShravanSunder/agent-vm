@@ -18,7 +18,11 @@ import {
 	SandboxSeedingError,
 	seedAgentSandboxWorkspace,
 } from '../leases/agent-sandbox-seeding.js';
-import type { LeaseIdleTtlPolicy } from '../leases/lease-idle-policy.js';
+import {
+	defaultToolVmLeaseIdleTtlMs,
+	resolveToolVmLeaseIdleTtlMs,
+	type ToolVmLeaseIdleTtlPolicy,
+} from '../leases/lease-idle-policy.js';
 import {
 	AgentLeaseCompatibilityConflictError,
 	LeaseActiveUseConflictError,
@@ -185,39 +189,10 @@ function agentLeaseCompatibilityConflictResponseBody(options: {
 }
 
 const defaultLeaseIdleTtlPolicy = {
-	defaultMs: 100 * 60 * 1000,
+	defaultMs: defaultToolVmLeaseIdleTtlMs,
 	maxRequestedMs: 24 * 60 * 60 * 1000,
 	minRequestedMs: 1_000,
-	byScopeKind: {},
-	byScopePrefix: {},
-} satisfies LeaseIdleTtlPolicy;
-
-function resolveEffectiveIdleTtlMs(options: {
-	readonly policy: LeaseIdleTtlPolicy;
-	readonly requestedIdleTtlMs: number | undefined;
-}):
-	| { readonly kind: 'ok'; readonly value: number }
-	| { readonly kind: 'invalid'; readonly message: string } {
-	if (options.requestedIdleTtlMs === undefined) {
-		return {
-			kind: 'ok',
-			value: options.policy.defaultMs,
-		};
-	}
-	if (options.requestedIdleTtlMs < options.policy.minRequestedMs) {
-		return {
-			kind: 'invalid',
-			message: `Requested idleTtlMs must be at least ${String(options.policy.minRequestedMs)}ms.`,
-		};
-	}
-	if (options.requestedIdleTtlMs > options.policy.maxRequestedMs) {
-		return {
-			kind: 'invalid',
-			message: `Requested idleTtlMs must be at most ${String(options.policy.maxRequestedMs)}ms.`,
-		};
-	}
-	return { kind: 'ok', value: options.requestedIdleTtlMs };
-}
+} satisfies ToolVmLeaseIdleTtlPolicy;
 
 function normalizeActiveUseCorrelation(
 	correlation:
@@ -261,7 +236,7 @@ export function createControllerApp(options: {
 	readonly zoneDefaultToolVmProfiles?: Record<string, string>;
 	readonly zoneIds?: ReadonlySet<string>;
 	readonly openClawRuntimeStatusStore?: OpenClawRuntimeStatusStore;
-	readonly leaseIdleTtlPolicy?: LeaseIdleTtlPolicy;
+	readonly leaseIdleTtlPolicy?: ToolVmLeaseIdleTtlPolicy;
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly validateToolVmLeaseRequirements?: (zoneId: string) => Promise<void>;
 	readonly resolveLeaseWorkMountDir: (options: {
@@ -361,7 +336,7 @@ export function createControllerApp(options: {
 				workMountDir: payload.workMountDir,
 				zoneId: payload.zoneId,
 			});
-			const effectiveIdleTtl = resolveEffectiveIdleTtlMs({
+			const effectiveIdleTtl = resolveToolVmLeaseIdleTtlMs({
 				policy: leaseIdleTtlPolicy,
 				requestedIdleTtlMs: payload.idleTtlMs,
 			});

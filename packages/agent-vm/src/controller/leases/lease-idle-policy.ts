@@ -1,43 +1,48 @@
-export const leaseScopeKinds = [
-	'agent',
-	'discord',
-	'project',
-	'session',
-	'shared',
-	'workspace',
-] as const;
+export const defaultToolVmLeaseIdleTtlMs = 100 * 60 * 1000;
 
-export type LeaseScopeKind = (typeof leaseScopeKinds)[number];
-
-export interface LeaseIdleTtlPolicy {
+export interface ToolVmLeaseIdleTtlPolicy {
 	readonly defaultMs: number;
 	readonly maxRequestedMs: number;
 	readonly minRequestedMs: number;
-	readonly byScopeKind: Partial<Readonly<Record<LeaseScopeKind, number>>>;
-	readonly byScopePrefix: Readonly<Record<string, number>>;
 }
 
-function scopePrefixes(scopeKey: string): readonly string[] {
-	const segments = scopeKey.split(':').filter((segment) => segment.length > 0);
-	return segments.map((_segment, index) => segments.slice(0, index + 1).join(':')).toReversed();
-}
+export type ResolveToolVmLeaseIdleTtlResult =
+	| {
+			readonly kind: 'ok';
+			readonly value: number;
+	  }
+	| {
+			readonly kind: 'invalid';
+			readonly message: string;
+	  };
 
-function isLeaseScopeKind(scopeKind: string): scopeKind is LeaseScopeKind {
-	return leaseScopeKinds.some((candidate) => candidate === scopeKind);
-}
-
-export function ttlForLeaseScope(options: {
-	readonly policy: LeaseIdleTtlPolicy;
-	readonly scopeKey: string;
-}): number {
-	for (const prefix of scopePrefixes(options.scopeKey)) {
-		const ttl = options.policy.byScopePrefix[prefix];
-		if (ttl !== undefined) {
-			return ttl;
-		}
+export function resolveToolVmLeaseIdleTtlMs(options: {
+	readonly policy: ToolVmLeaseIdleTtlPolicy;
+	readonly requestedIdleTtlMs?: number | undefined;
+}): ResolveToolVmLeaseIdleTtlResult {
+	if (options.requestedIdleTtlMs === undefined) {
+		return {
+			kind: 'ok',
+			value: options.policy.defaultMs,
+		};
 	}
-	const scopeKind = options.scopeKey.split(':')[0] ?? '';
-	return isLeaseScopeKind(scopeKind)
-		? (options.policy.byScopeKind[scopeKind] ?? options.policy.defaultMs)
-		: options.policy.defaultMs;
+
+	if (options.requestedIdleTtlMs < options.policy.minRequestedMs) {
+		return {
+			kind: 'invalid',
+			message: `Requested idleTtlMs must be at least ${String(options.policy.minRequestedMs)}ms.`,
+		};
+	}
+
+	if (options.requestedIdleTtlMs > options.policy.maxRequestedMs) {
+		return {
+			kind: 'invalid',
+			message: `Requested idleTtlMs must be at most ${String(options.policy.maxRequestedMs)}ms.`,
+		};
+	}
+
+	return {
+		kind: 'ok',
+		value: options.requestedIdleTtlMs,
+	};
 }

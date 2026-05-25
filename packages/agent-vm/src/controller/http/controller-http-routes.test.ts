@@ -619,8 +619,6 @@ describe('createControllerApp', () => {
 				defaultMs: 30_000,
 				minRequestedMs: 5_000,
 				maxRequestedMs: 120_000,
-				byScopeKind: {},
-				byScopePrefix: {},
 			},
 		});
 
