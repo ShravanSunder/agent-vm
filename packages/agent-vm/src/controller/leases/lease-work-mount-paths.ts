@@ -38,7 +38,7 @@ interface LeaseWorkMountValidationErrorOptions extends ErrorOptions {
 }
 
 export class LeaseWorkMountValidationError extends Error {
-	readonly guidance?: string;
+	readonly guidance: string | undefined;
 	readonly kind: LeaseWorkMountValidationErrorKind;
 
 	constructor(
