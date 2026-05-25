@@ -196,14 +196,23 @@ export function createPortalApprovalVerifier(props: {
 function auditReasonFromDecision(
 	decision: PortalApprovalCallDecision,
 ): Exclude<PortalApprovalAuditEvent['reason'], undefined> {
-	if (decision.kind === 'approval_token_invalid') {
-		return 'approval_token_invalid';
+	switch (decision.kind) {
+		case 'allow':
+			return 'no_approval_required';
+		case 'approval_token_invalid':
+			return 'approval_token_invalid';
+		case 'approval_token_missing':
+			return 'approval_token_missing';
+		case 'call_blocked':
+			return 'call_blocked';
+		case 'approval_required':
+		case 'approval_configuration_missing':
+			return 'per_call_evaluation';
+		default: {
+			const exhaustiveDecision: never = decision;
+			throw new Error(
+				`Unhandled MCP Portal approval audit decision: ${JSON.stringify(exhaustiveDecision)}`,
+			);
+		}
 	}
-	if (decision.kind === 'approval_token_missing') {
-		return 'approval_token_missing';
-	}
-	if (decision.kind === 'call_blocked') {
-		return 'call_blocked';
-	}
-	return 'per_call_evaluation';
 }

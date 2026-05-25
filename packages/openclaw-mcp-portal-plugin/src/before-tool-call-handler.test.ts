@@ -1,5 +1,6 @@
 import {
 	hashCallArguments,
+	type ApprovalTokenCallDigest,
 	verifyApprovalToken,
 } from '@agent-vm/mcp-portal/portal-auth/hmac-token';
 import { describe, expect, it, vi } from 'vitest';
@@ -149,6 +150,35 @@ describe('createBeforeToolCallHandler', () => {
 		).resolves.toBeUndefined();
 	});
 
+	it('passes mixed batches through when one sibling is hidden', async () => {
+		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
+
+		await expect(
+			handler(
+				{
+					params: {
+						calls: [
+							{
+								arguments: { query: 'deploy' },
+								id: 'list',
+								namespace: 'linear',
+								toolName: 'list_issues',
+							},
+							{
+								arguments: {},
+								id: 'hidden',
+								namespace: 'linear',
+								toolName: 'hidden_issue',
+							},
+						],
+					},
+					toolName: 'mcp_portal_call',
+				},
+				{ agentId: 'shravan' },
+			),
+		).resolves.toBeUndefined();
+	});
+
 	it('injects a portal approval token for homogeneous approval batches', async () => {
 		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
 		const params: Record<string, unknown> = {
@@ -174,6 +204,82 @@ describe('createBeforeToolCallHandler', () => {
 			}),
 		});
 		expect(params).not.toHaveProperty('portalApprovalToken');
+	});
+
+	it('uses prepared approval token digests from core validation', async () => {
+		const runtimeState = createRuntimeState();
+		const defaultedArguments = { title: 'Default title' };
+		const resolvedDigests: ApprovalTokenCallDigest[] = [
+			{
+				argumentsHash: hashCallArguments(defaultedArguments),
+				namespace: 'linear',
+				toolName: 'create_issue',
+			},
+		];
+		const handler = createBeforeToolCallHandler({
+			resolveApprovalTokenCallDigests: async () => resolvedDigests,
+			runtimeState,
+		});
+
+		const result = await handler(
+			{
+				params: {
+					calls: [
+						{
+							arguments: {},
+							id: 'create',
+							namespace: 'linear',
+							toolName: 'create_issue',
+						},
+					],
+				},
+				toolName: 'mcp_portal_call',
+			},
+			{ agentId: 'shravan' },
+		);
+
+		expect(result?.params?.portalApprovalToken).toEqual(expect.any(String));
+		expect(
+			verifyApprovalToken({
+				agentId: 'shravan',
+				calls: resolvedDigests,
+				key: runtimeState.getApprovalHmacKey(),
+				maxLifetimeMs: 5 * 60_000,
+				nowMs: Date.now(),
+				token: result?.params?.portalApprovalToken as string,
+			}),
+		).toEqual({ ok: true });
+	});
+
+	it('blocks approval prompts when token digest preparation fails', async () => {
+		const handler = createBeforeToolCallHandler({
+			resolveApprovalTokenCallDigests: async () => {
+				throw new Error('catalog unavailable');
+			},
+			runtimeState: createRuntimeState(),
+		});
+
+		await expect(
+			handler(
+				{
+					params: {
+						calls: [
+							{
+								arguments: { title: 'Fix deploy' },
+								id: 'create',
+								namespace: 'linear',
+								toolName: 'create_issue',
+							},
+						],
+					},
+					toolName: 'mcp_portal_call',
+				},
+				{ agentId: 'shravan' },
+			),
+		).resolves.toMatchObject({
+			block: true,
+			blockReason: expect.stringContaining('failed to prepare approval token'),
+		});
 	});
 
 	it('keeps injected approval tokens valid after the approval prompt timeout boundary', async () => {

@@ -943,6 +943,73 @@ describe('portal tool handlers', () => {
 		);
 	});
 
+	it('returns item-level call-blocked errors while executing allowed siblings', async () => {
+		const callUpstreamTool = vi.fn(async (call) => ({
+			content: [{ text: `called ${call.toolName}`, type: 'text' }],
+		}));
+		const handlers = createPortalToolHandlers({
+			approval: (calls) => ({
+				decisionsByCallId: Object.fromEntries(
+					calls.map((call) => [
+						call.id,
+						call.toolName === 'create_issue' ? { kind: 'call_blocked' } : { kind: 'allow' },
+					]),
+				),
+			}),
+			callUpstreamTool,
+			getSession: vi.fn(async () => session),
+		});
+
+		await expect(
+			handlers.call({
+				identity: session.identity,
+				input: {
+					calls: [
+						{
+							arguments: { title: 'Fix deploy' },
+							id: 'blocked-create',
+							namespace: 'linear',
+							toolName: 'create_issue',
+						},
+						{
+							arguments: {},
+							id: 'safe-defaulted',
+							namespace: 'linear',
+							toolName: 'create_issue_with_default',
+						},
+					],
+				},
+			}),
+		).resolves.toMatchObject({
+			ok: false,
+			results: {
+				'blocked-create': {
+					error: {
+						kind: 'call_blocked',
+						message: 'MCP Portal policy does not allow this tool call.',
+						namespace: 'linear',
+						toolName: 'create_issue',
+					},
+					ok: false,
+				},
+				'safe-defaulted': {
+					ok: true,
+					output: {
+						namespace: 'linear',
+						toolName: 'create_issue_with_default',
+					},
+				},
+			},
+		});
+
+		expect(callUpstreamTool).toHaveBeenCalledTimes(1);
+		expect(callUpstreamTool).toHaveBeenCalledWith(
+			expect.objectContaining({
+				toolName: 'create_issue_with_default',
+			}),
+		);
+	});
+
 	it('returns item-level approval errors when every prepared call requires approval', async () => {
 		const callUpstreamTool = vi.fn();
 		const handlers = createPortalToolHandlers({

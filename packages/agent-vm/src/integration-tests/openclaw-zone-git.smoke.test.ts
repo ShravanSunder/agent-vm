@@ -1,7 +1,8 @@
 /* oxlint-disable eslint/no-await-in-loop -- smoke test steps must be sequential against live VMs */
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { buildOpenClawRuntimeStatusReport } from '@agent-vm/openclaw-agent-vm-plugin';
 import { execa } from 'execa';
 import { afterAll, describe, expect, it } from 'vitest';
 
@@ -41,6 +42,10 @@ interface ControllerLeasePeekResponse {
 		readonly port: number;
 		readonly user: string;
 	};
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function assertControllerLeaseResponse(
@@ -93,9 +98,17 @@ async function requestZoneGitLease(options: {
 }): Promise<ControllerLeaseResponse> {
 	const response = await fetch(`${options.controllerUrl}/lease`, {
 		body: JSON.stringify({
+			agentId: 'smoke',
 			agentWorkspaceDir: '/zone/agents/smoke',
 			profileId: 'standard',
+			sandbox: {
+				backend: 'gondolin',
+				mode: 'all',
+				scope: 'agent',
+				workspaceAccess: 'rw',
+			},
 			scopeKey: 'agent:smoke',
+			sessionKey: 'agent:smoke:zone-git-smoke',
 			workMountDir: '/zone/agents/smoke',
 			zoneId: options.zoneId,
 		}),
@@ -105,6 +118,31 @@ async function requestZoneGitLease(options: {
 	const payload = await readJsonResponse(response);
 	assertControllerLeaseResponse(payload);
 	return payload;
+}
+
+async function publishOpenClawRuntimeStatus(options: {
+	readonly controllerUrl: string;
+	readonly openClawConfigPath: string;
+	readonly zoneId: string;
+}): Promise<void> {
+	const parsedConfig: unknown = JSON.parse(await readFile(options.openClawConfigPath, 'utf8'));
+	if (!isObjectRecord(parsedConfig)) {
+		throw new Error(`Expected OpenClaw smoke config at ${options.openClawConfigPath}.`);
+	}
+	const response = await fetch(
+		`${options.controllerUrl}/zones/${encodeURIComponent(options.zoneId)}/openclaw-runtime-status`,
+		{
+			body: JSON.stringify(
+				buildOpenClawRuntimeStatusReport({
+					config: parsedConfig,
+					zoneId: options.zoneId,
+				}),
+			),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		},
+	);
+	await readJsonResponse(response);
 }
 
 async function peekLease(options: {
@@ -247,6 +285,11 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 		if (!gatewayIngress) {
 			throw new Error('OpenClaw gateway smoke did not expose an ingress URL.');
 		}
+		await publishOpenClawRuntimeStatus({
+			controllerUrl: harness.controllerUrl,
+			openClawConfigPath: project.zone.gateway.config,
+			zoneId: project.zone.id,
+		});
 
 		const lease = await requestZoneGitLease({
 			controllerUrl: harness.controllerUrl,

@@ -18,6 +18,8 @@ import type { SkillGraphInput } from '../tool-graph.js';
 import {
 	createPortalToolHandlers,
 	portalToolInputSchemas,
+	preparePortalApprovalCallDigests,
+	type PortalApprovalCallDigestMap,
 	type PortalApprovalCall,
 	type PortalBatchDiagnostic,
 	type PortalBatchResult,
@@ -183,6 +185,10 @@ export interface PortalCore {
 			scope: PortalAgentScope,
 			approvalToken: string | undefined,
 		) => ReturnType<PortalApprovalEvaluator>;
+		readonly prepareCallDigests: (props: {
+			readonly input: unknown;
+			readonly scope: PortalAgentScope;
+		}) => Promise<PortalApprovalCallDigestMap | null>;
 	};
 	readonly callStream: (call: PortalCoreStreamCall) => AsyncIterable<PortalCoreEvent>;
 	readonly close: () => Promise<void>;
@@ -775,6 +781,10 @@ export function createPortalCore(props: CreatePortalCoreProps): PortalCore {
 	return {
 		approval: {
 			evaluateCalls: (calls, scope, approvalToken) => approval(calls, scope, approvalToken),
+			prepareCallDigests: async ({ input, scope }) => {
+				const session = await sessionManager.getSession(scope);
+				return preparePortalApprovalCallDigests(session, input);
+			},
 		},
 		callStream,
 		close: async () => {

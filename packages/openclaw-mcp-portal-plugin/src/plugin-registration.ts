@@ -419,9 +419,39 @@ export function registerMcpPortalPlugin(api: OpenClawPortalPluginApi): void {
 		return;
 	}
 
-	api.on?.('before_tool_call', createBeforeToolCallHandler({ logger, runtimeState }), {
-		priority: 80,
-	});
+	api.on?.(
+		'before_tool_call',
+		createBeforeToolCallHandler({
+			logger,
+			resolveApprovalTokenCallDigests: async ({ agentId, approvalCalls, context, params }) => {
+				const core = await getCore();
+				const scope = core.createAgentScope({
+					agentId,
+					agentScopeId: agentId,
+					...(context.sessionId ? { sessionId: context.sessionId } : {}),
+					...(context.sessionKey ? { sessionKey: context.sessionKey } : {}),
+					source: 'openclaw-trusted',
+				});
+				const digestsByCallId = await core.approval.prepareCallDigests({ input: params, scope });
+				if (digestsByCallId === null) {
+					throw new Error('MCP Portal core could not prepare approval token digests.');
+				}
+				return approvalCalls.map((call) => {
+					const digest = digestsByCallId[call.id];
+					if (digest === undefined) {
+						throw new Error(
+							`MCP Portal core did not prepare an approval token digest for call '${call.id}'.`,
+						);
+					}
+					return digest;
+				});
+			},
+			runtimeState,
+		}),
+		{
+			priority: 80,
+		},
+	);
 
 	api.on?.('before_prompt_build', createBeforePromptBuildHandler({ runtimeState }), {
 		priority: 80,

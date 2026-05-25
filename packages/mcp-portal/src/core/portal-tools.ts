@@ -8,6 +8,7 @@ import {
 	type PortalAgentIdentity,
 	type PortalToolSelector,
 } from '../portal-access-policy.js';
+import { hashCallArguments, type ApprovalTokenCallDigest } from '../portal-auth/hmac-token.js';
 import { generateTypescriptCatalogArtifact } from '../portal-config/typescript-artifact.js';
 import type { PortalSession } from '../portal-session.js';
 import type { ToolSearchResult } from '../search-index.js';
@@ -246,6 +247,8 @@ export type PortalApprovalCallDecision =
 export interface PortalApprovalEvaluation {
 	readonly decisionsByCallId: Readonly<Record<string, PortalApprovalCallDecision>>;
 }
+
+export type PortalApprovalCallDigestMap = Readonly<Record<string, ApprovalTokenCallDigest>>;
 
 export interface PortalToolHandlers {
 	readonly call: (call: PortalToolHandlerCall) => Promise<PortalBatchResult>;
@@ -678,6 +681,32 @@ function isPreparedPortalCall(
 	return 'validatedArguments' in value;
 }
 
+export function preparePortalApprovalCallDigests(
+	session: PortalSession,
+	input: unknown,
+): PortalApprovalCallDigestMap | null {
+	const parsedInput = callExecutionInputSchema.safeParse(input);
+	if (!parsedInput.success || duplicateIdResult(parsedInput.data.calls)) {
+		return null;
+	}
+
+	const preparedResults = parsedInput.data.calls.map((request) =>
+		preparePortalCall(session, request),
+	);
+	const digests: Record<string, ApprovalTokenCallDigest> = {};
+	for (const preparedResult of preparedResults) {
+		if (!isPreparedPortalCall(preparedResult)) {
+			continue;
+		}
+		digests[preparedResult.input.id] = {
+			argumentsHash: hashCallArguments(preparedResult.validatedArguments),
+			namespace: preparedResult.tool.namespace,
+			toolName: preparedResult.tool.toolName,
+		};
+	}
+	return digests;
+}
+
 async function addExecutableCallResults(props: {
 	readonly identity: PortalAgentIdentity;
 	readonly preparedCalls: readonly PreparedPortalCall[];
@@ -752,71 +781,75 @@ export function createPortalToolHandlers(runtime: PortalToolRuntime): PortalTool
 					kind: 'approval_configuration_missing',
 				};
 
-				if (approvalDecision.kind === 'approval_required') {
-					results[preparedResult.input.id] = itemError({
-						error: {
-							kind: 'approval_required',
-							level: approvalDecision.level,
-							message: 'Operator approval is required before this MCP Portal call can run.',
-							namespace: preparedResult.tool.namespace,
-							toolName: preparedResult.tool.toolName,
-						},
-						input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },
-					});
-					continue;
+				switch (approvalDecision.kind) {
+					case 'allow':
+						callsToExecute.push(preparedResult);
+						continue;
+					case 'approval_required':
+						results[preparedResult.input.id] = itemError({
+							error: {
+								kind: 'approval_required',
+								level: approvalDecision.level,
+								message: 'Operator approval is required before this MCP Portal call can run.',
+								namespace: preparedResult.tool.namespace,
+								toolName: preparedResult.tool.toolName,
+							},
+							input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },
+						});
+						continue;
+					case 'approval_token_missing':
+						results[preparedResult.input.id] = itemError({
+							error: {
+								kind: 'approval_token_missing',
+								message:
+									'An MCP Portal approval token is required before this MCP Portal call can run.',
+								namespace: preparedResult.tool.namespace,
+								toolName: preparedResult.tool.toolName,
+							},
+							input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },
+						});
+						continue;
+					case 'approval_token_invalid':
+						results[preparedResult.input.id] = itemError({
+							error: {
+								kind: 'approval_token_invalid',
+								message: `MCP Portal approval token is invalid: ${approvalDecision.reason}.`,
+								namespace: preparedResult.tool.namespace,
+								reason: approvalDecision.reason,
+								toolName: preparedResult.tool.toolName,
+							},
+							input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },
+						});
+						continue;
+					case 'call_blocked':
+						results[preparedResult.input.id] = itemError({
+							error: {
+								kind: 'call_blocked',
+								message: 'MCP Portal policy does not allow this tool call.',
+								namespace: preparedResult.tool.namespace,
+								toolName: preparedResult.tool.toolName,
+							},
+							input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },
+						});
+						continue;
+					case 'approval_configuration_missing':
+						results[preparedResult.input.id] = itemError({
+							error: {
+								kind: 'approval_configuration_missing',
+								message: 'MCP Portal approval evaluation is not configured.',
+								namespace: preparedResult.tool.namespace,
+								toolName: preparedResult.tool.toolName,
+							},
+							input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },
+						});
+						continue;
+					default: {
+						const exhaustiveDecision: never = approvalDecision;
+						throw new Error(
+							`Unhandled MCP Portal approval decision: ${JSON.stringify(exhaustiveDecision)}`,
+						);
+					}
 				}
-				if (approvalDecision.kind === 'approval_token_missing') {
-					results[preparedResult.input.id] = itemError({
-						error: {
-							kind: 'approval_token_missing',
-							message:
-								'An MCP Portal approval token is required before this MCP Portal call can run.',
-							namespace: preparedResult.tool.namespace,
-							toolName: preparedResult.tool.toolName,
-						},
-						input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },
-					});
-					continue;
-				}
-				if (approvalDecision.kind === 'approval_token_invalid') {
-					results[preparedResult.input.id] = itemError({
-						error: {
-							kind: 'approval_token_invalid',
-							message: `MCP Portal approval token is invalid: ${approvalDecision.reason}.`,
-							namespace: preparedResult.tool.namespace,
-							reason: approvalDecision.reason,
-							toolName: preparedResult.tool.toolName,
-						},
-						input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },
-					});
-					continue;
-				}
-				if (approvalDecision.kind === 'call_blocked') {
-					results[preparedResult.input.id] = itemError({
-						error: {
-							kind: 'call_blocked',
-							message: 'MCP Portal policy does not allow this tool call.',
-							namespace: preparedResult.tool.namespace,
-							toolName: preparedResult.tool.toolName,
-						},
-						input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },
-					});
-					continue;
-				}
-				if (approvalDecision.kind === 'approval_configuration_missing') {
-					results[preparedResult.input.id] = itemError({
-						error: {
-							kind: 'approval_configuration_missing',
-							message: 'MCP Portal approval evaluation is not configured.',
-							namespace: preparedResult.tool.namespace,
-							toolName: preparedResult.tool.toolName,
-						},
-						input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },
-					});
-					continue;
-				}
-
-				callsToExecute.push(preparedResult);
 			}
 			await addExecutableCallResults({
 				identity: call.identity,

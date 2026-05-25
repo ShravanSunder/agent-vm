@@ -2,6 +2,7 @@ import type { ResolvedMcpPortalProfile } from '@agent-vm/config-contracts';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it, vi } from 'vitest';
 
+import { hashCallArguments } from '../portal-auth/hmac-token.js';
 import { UpstreamMcpError } from '../upstream-mcp-errors.js';
 import { createPortalPolicyApprovalEvaluator } from './portal-approval-evaluator.js';
 import {
@@ -802,6 +803,64 @@ describe('portal core event stream', () => {
 				}),
 			]),
 		);
+
+		await core.close();
+	});
+
+	it('prepares approval token digests from validated arguments', async () => {
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval: allowApproval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool: vi.fn(async () => ({ ok: true })),
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(
+					async () =>
+						[
+							{
+								inputSchema: {
+									properties: { title: { default: 'Fallback title', type: 'string' } },
+									type: 'object',
+								},
+								name: 'create_issue_with_default',
+							},
+						] satisfies readonly Tool[],
+				),
+			},
+			upstreamNamespaces: ['linear'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'openclaw-trusted',
+		});
+
+		await expect(
+			core.approval.prepareCallDigests({
+				input: {
+					calls: [
+						{
+							arguments: {},
+							id: 'defaulted',
+							namespace: 'linear',
+							toolName: 'create_issue_with_default',
+						},
+					],
+				},
+				scope,
+			}),
+		).resolves.toEqual({
+			defaulted: {
+				argumentsHash: hashCallArguments({ title: 'Fallback title' }),
+				namespace: 'linear',
+				toolName: 'create_issue_with_default',
+			},
+		});
 
 		await core.close();
 	});
