@@ -172,6 +172,13 @@ The `secrets` parameter in `CreateVmOptions` is a `Record<string, SecretSpec>` w
 
 The hook bundle also sets environment variables (`hookBundle.env`) that configure the in-VM HTTP client to route through the mediation proxy. The VM process makes normal HTTP requests -- it never knows secrets are being injected.
 
+For mediated secrets that are consumed through environment variables, such as
+stdio MCP provider API keys, `hookBundle.env` also contains generated
+placeholder values. `createManagedVm()` must pass both `httpHooks` and
+`hookBundle.env` into `VM.create()`: the hooks know how to substitute the
+placeholder, and the env bundle is how the gateway process and its stdio
+children receive the placeholder instead of the raw secret.
+
 Only hosts in the `allowedHosts` list can be reached. Requests to unlisted hosts are blocked at the proxy layer. At the controller configuration layer, zones declare audience-scoped `egressHosts`; gateway and Tool VM lifecycle code translate that higher-level policy into the low-level Gondolin `allowedHosts` list for each VM.
 
 ---

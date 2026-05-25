@@ -113,7 +113,16 @@ Managed OpenClaw gateway Dockerfiles install pinned `uv` and `uvx` binaries so
 `uv run` stdio providers can start without deployment-owned image overlays.
 
 Use `transport.env` for provider credentials such as `PERPLEXITY_API_KEY` or
-`TAVILY_API_KEY`. Do not rely on whole-process environment inheritance.
+`TAVILY_API_KEY`. Prefer `secretPolicies.<name>.injection: "http-mediation"`
+when the stdio MCP server reads the env value and sends it in outbound HTTP
+headers or other Gondolin-supported request locations. The effective config
+rewrites the authored secret to a generated `AGENT_VM_MCP_*` env reference; the
+gateway process and stdio child receive a placeholder value, while Gondolin
+substitutes the raw secret only for configured hosts. Use raw `env` injection
+only as an explicit exception for providers that cannot operate with
+placeholders.
+
+Do not rely on whole-process environment inheritance.
 
 Managed OpenClaw gateway mode does not start a portal HTTP server, does not open
 guest port `18790`, and does not require `MCP_PORTAL_SERVER_SECRET`. The
@@ -123,25 +132,6 @@ config before gateway boot and injects only the runtime environment needed by
 configured upstream providers. Generated provider-secret environment names are
 provider-scoped, such as `AGENT_VM_MCP_LINEAR_AUTHORIZATION`, so two upstream
 providers can use the same authored header or env key without colliding.
-
-### Stdio runtime environment
-
-MCP Portal starts stdio providers with explicit provider secrets plus a narrow
-gateway runtime environment allowlist. This avoids leaking arbitrary gateway
-environment variables while preserving runtime settings required by package
-launchers inside Gondolin.
-
-Inherited runtime variables:
-
-- `NODE_EXTRA_CA_CERTS`
-- `NODE_OPTIONS`
-
-Use `transport.env` for provider credentials such as `PERPLEXITY_API_KEY` or
-`TAVILY_API_KEY`. Do not rely on whole-process environment inheritance.
-
-Python/`uv` launchers are intentionally out of scope for this PR. Prefer remote
-MCP providers unless a concrete local `uv run` provider is required, then add a
-separate managed-image and stdio-env change with live evidence.
 
 External `/mcp-proxy` mode is different: `mcp-portal mcp-proxy serve` runs on the
 operator host, resolves its configured auth secrets at process startup, and

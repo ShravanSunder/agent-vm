@@ -190,6 +190,12 @@ describe('manual templates', () => {
 			'private-network upstream URLs',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Prefer http-mediation for MCP provider API keys, including stdio providers',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Use raw env injection only as an explicit exception',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'authored config is trusted deployment config',
 		);
 		expect(
