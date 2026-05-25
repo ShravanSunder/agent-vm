@@ -89,6 +89,7 @@ export interface LeaseManager {
 	renewLease(leaseId: string): Promise<LeaseRenewal>;
 	listLeases(): Lease[];
 	peekLease(leaseId: string): LeaseSnapshot | undefined;
+	reapDeadIdleLeases(): Promise<void>;
 	reapExpiredActiveUses(): void;
 	releaseLease(
 		leaseId: string,
@@ -596,6 +597,22 @@ export function createLeaseManager(options: {
 		peekLease(leaseId: string): LeaseSnapshot | undefined {
 			const lease = leases.get(leaseId);
 			return lease ? { kind: 'snapshot', lease } : undefined;
+		},
+		async reapDeadIdleLeases(): Promise<void> {
+			const deadIdleLeases: Lease[] = [];
+			for (const lease of leases.values()) {
+				if (activeUseCountForLease(lease.id) > 0) {
+					continue;
+				}
+				// oxlint-disable-next-line eslint/no-await-in-loop -- liveness probes are bounded and eviction order must observe the current lease map
+				if (!(await isLeaseVmLive(lease))) {
+					deadIdleLeases.push(lease);
+				}
+			}
+			for (const lease of deadIdleLeases) {
+				// oxlint-disable-next-line eslint/no-await-in-loop -- evictions mutate TCP pool and lease indexes
+				await evictLease(lease);
+			}
 		},
 		reapExpiredActiveUses(): void {
 			const now = options.now();

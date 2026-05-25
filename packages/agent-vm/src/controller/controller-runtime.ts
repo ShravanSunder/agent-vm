@@ -188,6 +188,8 @@ export async function startControllerRuntime(
 	});
 	const reapToolVmLeases = async (): Promise<void> => {
 		leaseManager.reapExpiredActiveUses();
+		// Prefer dead-VM eviction logs over idle-expiry logs when both are true.
+		await leaseManager.reapDeadIdleLeases();
 		await idleReaper.reapExpiredLeases();
 	};
 	const reaperTimer = (dependencies.setIntervalImpl ?? setInterval)(

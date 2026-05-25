@@ -153,6 +153,27 @@ describe('createLeaseManager', () => {
 		expect(leaseManager.peekLease(lease.id)).toBeUndefined();
 	});
 
+	it('reaps dead idle leases without treating active-use heartbeat as liveness', async () => {
+		const closeMock = vi.fn(async () => {});
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createLeaseId: () => '01890f00-0000-7000-8000-000000000003',
+			createManagedVm: vi.fn(async () => ({
+				...createManagedVmStub(),
+				close: closeMock,
+				exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 1, stderr: 'dead', stdout: '' })),
+			})),
+			now: () => 1_000,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const lease = await leaseManager.createLease(createAgentLeaseOptions());
+
+		await leaseManager.reapDeadIdleLeases();
+
+		expect(closeMock).toHaveBeenCalledOnce();
+		expect(leaseManager.peekLease(lease.id)).toBeUndefined();
+	});
+
 	it('does not expire a lease while an active operation is heartbeating', async () => {
 		let now = 1_000;
 		const leaseManager = createLeaseManager({

@@ -57,7 +57,7 @@ describe('tool VM active-use helpers', () => {
 		}
 	});
 
-	it('continues heartbeat scheduling after a transient heartbeat failure', async () => {
+	it('continues retrying heartbeat failures because active-use is an operation guard, not a VM health check', async () => {
 		vi.useFakeTimers();
 		try {
 			const heartbeatFailure = new Error('temporary controller failure');
