@@ -15,6 +15,7 @@ import {
 	type PortalSessionRuntime,
 } from '../portal-session.js';
 import type { SkillGraphInput } from '../tool-graph.js';
+import { isPortalCoreJsonValue } from './portal-core-validation.js';
 import {
 	createPortalToolHandlers,
 	portalToolInputSchemas,
@@ -246,19 +247,8 @@ function isStringArray(value: unknown): value is readonly string[] {
 	return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
-function isJsonValue(value: unknown): value is JsonValue {
-	return (
-		value === null ||
-		typeof value === 'string' ||
-		typeof value === 'number' ||
-		typeof value === 'boolean' ||
-		(Array.isArray(value) && value.every((entry) => isJsonValue(entry))) ||
-		(isUnknownRecord(value) && Object.values(value).every((entry) => isJsonValue(entry)))
-	);
-}
-
 function isJsonValueArray(value: unknown): value is readonly JsonValue[] {
-	return Array.isArray(value) && value.every((entry) => isJsonValue(entry));
+	return Array.isArray(value) && value.every((entry) => isPortalCoreJsonValue(entry));
 }
 
 function isValidationIssueReceived(

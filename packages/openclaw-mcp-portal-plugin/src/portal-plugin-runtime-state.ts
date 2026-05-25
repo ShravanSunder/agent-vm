@@ -31,6 +31,7 @@ export function createPortalPluginRuntimeState(props: {
 	const approvalHmacKey = randomBytes(32);
 	const consumedApprovalTokenIds = new Map<string, number>();
 	const replayCacheLimit = 4096;
+	const replayCacheCleanupThreshold = replayCacheLimit / 2;
 	const loadPortalConfigFile = props.loadPortalConfig ?? loadMcpPortalConfig;
 
 	function loadPortalConfig(): Promise<McpPortalConfig> {
@@ -53,14 +54,21 @@ export function createPortalPluginRuntimeState(props: {
 		return portalConfigPromise;
 	}
 
+	function sweepExpiredApprovalTokenIds(nowMs: number): void {
+		if (consumedApprovalTokenIds.size < replayCacheCleanupThreshold) {
+			return;
+		}
+		for (const [tokenKey, tokenExpiresAtMs] of consumedApprovalTokenIds) {
+			if (tokenExpiresAtMs <= nowMs) {
+				consumedApprovalTokenIds.delete(tokenKey);
+			}
+		}
+	}
+
 	return {
 		consumeApprovalTokenId: (agentId, jti, expiresAtMs) => {
 			const nowMs = Date.now();
-			for (const [tokenKey, tokenExpiresAtMs] of consumedApprovalTokenIds) {
-				if (tokenExpiresAtMs <= nowMs) {
-					consumedApprovalTokenIds.delete(tokenKey);
-				}
-			}
+			sweepExpiredApprovalTokenIds(nowMs);
 			const tokenKey = `${agentId}\n${jti}`;
 			if (consumedApprovalTokenIds.has(tokenKey)) {
 				return { ok: false, reason: 'replayed' };
