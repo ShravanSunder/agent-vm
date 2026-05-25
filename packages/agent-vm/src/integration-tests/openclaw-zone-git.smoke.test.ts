@@ -1,5 +1,5 @@
 /* oxlint-disable eslint/no-await-in-loop -- smoke test steps must be sequential against live VMs */
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
@@ -43,6 +43,10 @@ interface ControllerLeasePeekResponse {
 	};
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function assertControllerLeaseResponse(
 	payload: unknown,
 ): asserts payload is ControllerLeaseResponse {
@@ -58,6 +62,9 @@ function assertControllerLeaseResponse(
 		typeof response.ssh.identityPem !== 'string'
 	) {
 		throw new Error(`Lease response had unexpected shape: ${JSON.stringify(payload)}`);
+	}
+	if ('scopeKey' in payload) {
+		throw new Error(`Lease response must not expose scopeKey: ${JSON.stringify(payload)}`);
 	}
 }
 
@@ -85,6 +92,22 @@ async function readJsonResponse(response: Response): Promise<unknown> {
 		throw new Error(`HTTP ${String(response.status)}: ${responseBody}`);
 	}
 	return JSON.parse(responseBody) as unknown;
+}
+
+function parseUnknownJson(text: string): unknown {
+	return JSON.parse(text) as unknown;
+}
+
+async function readToolVmRuntimeRecordPayloads(stateDir: string): Promise<readonly unknown[]> {
+	const toolLeasesDir = path.join(stateDir, 'tool-leases');
+	const entries = await readdir(toolLeasesDir);
+	return await Promise.all(
+		entries
+			.filter((entry) => entry.endsWith('.json'))
+			.map(async (entry) =>
+				parseUnknownJson(await readFile(path.join(toolLeasesDir, entry), 'utf8')),
+			),
+	);
 }
 
 async function requestZoneGitLease(options: {
@@ -254,10 +277,22 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 			zoneId: project.zone.id,
 		});
 		expect(lease.workdir).toBe('/zone/agents/smoke');
+		const runtimeRecords = await readToolVmRuntimeRecordPayloads(project.zone.gateway.stateDir);
+		const matchingRecord = runtimeRecords.find(
+			(record) => isObjectRecord(record) && record.leaseId === lease.leaseId,
+		);
+		expect(matchingRecord).toMatchObject({
+			agentId: 'smoke',
+			leaseId: lease.leaseId,
+		});
+		for (const runtimeRecord of runtimeRecords) {
+			expect(JSON.stringify(runtimeRecord)).not.toContain('"scopeKey"');
+		}
 		const leasePeek = await peekLease({
 			controllerUrl: harness.controllerUrl,
 			leaseId: lease.leaseId,
 		});
+		expect(JSON.stringify(leasePeek)).not.toContain('"scopeKey"');
 		const identityFilePath = await createSshIdentityFile({
 			identityPem: lease.ssh.identityPem,
 			tempRoot: project.tempRoot,
