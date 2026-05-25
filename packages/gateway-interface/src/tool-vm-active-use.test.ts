@@ -92,16 +92,13 @@ describe('tool VM active-use helpers', () => {
 		timers[0]?.();
 		await Promise.resolve();
 
-		expect(heartbeatActiveUse).toHaveBeenCalledWith(
-			'01890f00-0000-7000-8000-000000000000',
-			{
-				report: {
-					observedAtMs: 1_001,
-					phase: 'probe-succeeded',
-					ssh: { probeSucceeded: true },
-				},
+		expect(heartbeatActiveUse).toHaveBeenCalledWith('01890f00-0000-7000-8000-000000000000', {
+			report: {
+				observedAtMs: 1_001,
+				phase: 'probe-succeeded',
+				ssh: { probeSucceeded: true },
 			},
-		);
+		});
 		await handle.dispose('completed');
 	});
 

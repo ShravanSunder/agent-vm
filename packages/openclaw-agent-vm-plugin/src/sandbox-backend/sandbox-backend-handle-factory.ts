@@ -176,11 +176,13 @@ export function createGondolinSandboxBackendFactory(
 			writeSandboxBackendLog(
 				`lease marked stale for zone '${options.zoneId}' agent '${agentId}' lease '${lease.leaseId}' reason '${reason}': ${formatUnknownError(error)}`,
 			);
-			await leaseClient.releaseLease(lease.leaseId, { force: true }).catch((releaseError: unknown) => {
-				writeSandboxBackendLog(
-					`best-effort stale lease release failed for zone '${options.zoneId}' agent '${agentId}' lease '${lease.leaseId}': ${formatUnknownError(releaseError)}`,
-				);
-			});
+			await leaseClient
+				.releaseLease(lease.leaseId, { force: true })
+				.catch((releaseError: unknown) => {
+					writeSandboxBackendLog(
+						`best-effort stale lease release failed for zone '${options.zoneId}' agent '${agentId}' lease '${lease.leaseId}': ${formatUnknownError(releaseError)}`,
+					);
+				});
 		};
 		const cachedEntry = scopeCache.get(cacheKey);
 		if (cachedEntry) {
@@ -262,10 +264,7 @@ function createSandboxBackendHandle(options: {
 	readonly createFsBridgeBuilder?: CreateBackendDependencies['createFsBridgeBuilder'];
 	readonly lease: CachedScopeEntry['lease'];
 	readonly leaseClient: LeaseClient;
-	readonly markCachedLeaseStale: (
-		reason: ToolVmSshFailureKind,
-		error: unknown,
-	) => Promise<void>;
+	readonly markCachedLeaseStale: (reason: ToolVmSshFailureKind, error: unknown) => Promise<void>;
 	readonly runRemoteShellScript: CreateBackendDependencies['runRemoteShellScript'];
 	readonly sessionKey: string;
 	readonly zoneId: string;
@@ -321,8 +320,7 @@ function createSandboxBackendHandle(options: {
 		} catch (error) {
 			await activeUseHandle
 				.dispose(
-					error instanceof ToolVmSshOperationStaleError &&
-						error.reason === 'ssh-command-timed-out'
+					error instanceof ToolVmSshOperationStaleError && error.reason === 'ssh-command-timed-out'
 						? 'timed-out'
 						: 'failed',
 				)
@@ -446,9 +444,7 @@ function createSandboxBackendHandle(options: {
 						phase: 'failed',
 						ssh: {
 							failure: {
-								kind: finalizeParams.timedOut
-									? 'ssh-command-timed-out'
-									: 'ssh-command-failed',
+								kind: finalizeParams.timedOut ? 'ssh-command-timed-out' : 'ssh-command-failed',
 								message: finalizeParams.timedOut
 									? 'exec command timed out.'
 									: 'exec command failed.',

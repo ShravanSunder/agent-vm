@@ -157,37 +157,40 @@ export async function createToolVmActiveUseHandle(
 			return;
 		}
 		clearHeartbeatTimer();
-		heartbeatTimer = setTimeoutImpl(() => {
-			if (now() - startedAt >= maxHeartbeatDurationMs) {
-				return;
-			}
-			const heartbeatRequest: HeartbeatToolVmActiveUseRequest =
-				latestReport === undefined ? {} : { report: latestReport };
-			void options
-				.heartbeatActiveUse(startedUse.useId, heartbeatRequest)
-				.then((heartbeat) => {
-					if (!ended) {
-						scheduleHeartbeat(heartbeat.heartbeatAfterMs);
-					}
-				})
-				.catch((error: unknown) => {
-					options.logHeartbeatFailure?.(error);
-					if (
-						options.isHeartbeatErrorRefreshable?.(error) === true &&
-						options.onRefreshableHeartbeatFailure
-					) {
-						ended = true;
-						clearHeartbeatTimer();
-						void options.onRefreshableHeartbeatFailure(error).catch((staleError: unknown) => {
-							options.logHeartbeatFailure?.(staleError);
-						});
-						return;
-					}
-					if (!ended) {
-						scheduleHeartbeat(startedUse.heartbeatAfterMs);
-					}
-				});
-		}, jitterDelayMs({ delayMs, jitterRatio: heartbeatJitterRatio, random }));
+		heartbeatTimer = setTimeoutImpl(
+			() => {
+				if (now() - startedAt >= maxHeartbeatDurationMs) {
+					return;
+				}
+				const heartbeatRequest: HeartbeatToolVmActiveUseRequest =
+					latestReport === undefined ? {} : { report: latestReport };
+				void options
+					.heartbeatActiveUse(startedUse.useId, heartbeatRequest)
+					.then((heartbeat) => {
+						if (!ended) {
+							scheduleHeartbeat(heartbeat.heartbeatAfterMs);
+						}
+					})
+					.catch((error: unknown) => {
+						options.logHeartbeatFailure?.(error);
+						if (
+							options.isHeartbeatErrorRefreshable?.(error) === true &&
+							options.onRefreshableHeartbeatFailure
+						) {
+							ended = true;
+							clearHeartbeatTimer();
+							void options.onRefreshableHeartbeatFailure(error).catch((staleError: unknown) => {
+								options.logHeartbeatFailure?.(staleError);
+							});
+							return;
+						}
+						if (!ended) {
+							scheduleHeartbeat(startedUse.heartbeatAfterMs);
+						}
+					});
+			},
+			jitterDelayMs({ delayMs, jitterRatio: heartbeatJitterRatio, random }),
+		);
 	};
 
 	scheduleHeartbeat(startedUse.heartbeatAfterMs);

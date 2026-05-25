@@ -232,7 +232,9 @@ interface FailedOptionalJsonBody {
 async function parseOptionalJsonBody<TValue>(
 	context: ControllerRouteContext,
 	schema: {
-		safeParse(value: unknown):
+		safeParse(
+			value: unknown,
+		):
 			| { readonly success: true; readonly data: TValue }
 			| { readonly success: false; readonly error: { readonly issues: unknown } };
 	},

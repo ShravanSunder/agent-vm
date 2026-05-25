@@ -31,7 +31,7 @@ function objectValue(value: unknown): object | undefined {
 	return typeof value === 'object' && value !== null ? value : undefined;
 }
 
-const deprecatedScopeKeyPropertyName = 'scope' + 'Key';
+const deprecatedScopeKeyPropertyName = ['scope', 'Key'].join('');
 
 export function isToolVmSshLease(value: unknown): value is ToolVmSshLease {
 	const record = objectValue(value);

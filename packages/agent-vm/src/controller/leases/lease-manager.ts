@@ -566,14 +566,19 @@ export function createLeaseManager(options: {
 		getActiveUses(leaseId: string): readonly ToolVmActiveUseSnapshot[] {
 			return [...activeUses.values()]
 				.filter((activeUse) => activeUse.leaseId === leaseId)
-				.map((activeUse) => ({
-					...(activeUse.correlation ? { correlation: activeUse.correlation } : {}),
-					expiresAt: activeUse.expiresAt,
-					...(activeUse.latestReport ? { latestReport: activeUse.latestReport } : {}),
-					leaseId: activeUse.leaseId,
-					startedAt: activeUse.startedAt,
-					useId: activeUse.useId,
-				}));
+				.map(
+					(activeUse) =>
+						Object.assign(
+							{
+								expiresAt: activeUse.expiresAt,
+								leaseId: activeUse.leaseId,
+								startedAt: activeUse.startedAt,
+								useId: activeUse.useId,
+							},
+							activeUse.correlation ? { correlation: activeUse.correlation } : {},
+							activeUse.latestReport ? { latestReport: activeUse.latestReport } : {},
+						) satisfies ToolVmActiveUseSnapshot,
+				);
 		},
 		heartbeatActiveUse(
 			leaseId: string,

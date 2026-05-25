@@ -161,7 +161,9 @@ describe('createLeaseManager', () => {
 			createManagedVm: vi.fn(async () => ({
 				...createManagedVmStub(),
 				close: closeMock,
-				exec: vi.fn(() => createManagedExecProcessStub({ exitCode: 1, stderr: 'dead', stdout: '' })),
+				exec: vi.fn(() =>
+					createManagedExecProcessStub({ exitCode: 1, stderr: 'dead', stdout: '' }),
+				),
 			})),
 			now: () => 1_000,
 			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
@@ -1245,22 +1247,18 @@ describe('createLeaseManager', () => {
 			useId: '01890f00-0000-7000-8000-000000000000',
 		});
 
-		leaseManager.heartbeatActiveUse(
-			lease.id,
-			'01890f00-0000-7000-8000-000000000000',
-			{
-				report: {
-					observedAtMs: 1_001,
-					phase: 'failed',
-					ssh: {
-						failure: {
-							kind: 'ssh-command-timed-out',
-							message: 'SSH command exceeded 30000ms.',
-						},
+		leaseManager.heartbeatActiveUse(lease.id, '01890f00-0000-7000-8000-000000000000', {
+			report: {
+				observedAtMs: 1_001,
+				phase: 'failed',
+				ssh: {
+					failure: {
+						kind: 'ssh-command-timed-out',
+						message: 'SSH command exceeded 30000ms.',
 					},
 				},
 			},
-		);
+		});
 
 		expect(leaseManager.getActiveUses(lease.id)).toEqual([
 			expect.objectContaining({
