@@ -73,9 +73,8 @@ is listed for discovery but blocked at execution time.
 MCP JSON Schema is canonical. Zod is derived from JSON Schema for validation and
 optional TypeScript helper generation. `mcp_portal_call` validates arguments
 before calling upstream and returns per-call Zod-style validation issues when
-input is invalid. If any call in a batch requires approval, no upstream calls in
-that batch run until the plugin-injected approval token is granted. If Zod
-cannot reconstruct a validator from the upstream schema, the portal returns
+input is invalid. If Zod cannot reconstruct a validator from the upstream schema,
+the portal returns
 `schema_validation_unavailable` for that call and does not call that upstream
 tool.
 
@@ -170,6 +169,28 @@ not bypass approval. V1 does not accept model-visible approval tokens,
 `before_tool_call` hook is the approval boundary: OpenClaw delivers the
 post-approval params to the native tool, and the native tool executes exactly
 those params through `/core`.
+
+### Item-Level Approval In Batches
+
+`mcp_portal_call` accepts batches, but approval is evaluated per inner MCP call.
+When a batch mixes approval-free calls with approval-required calls:
+
+- approval-free calls execute normally
+- blocked calls return item-level `call_blocked` errors
+- approval-required calls return item-level `approval_required` errors
+- the whole outer `mcp_portal_call` is not converted into one approval prompt
+
+Agents should retry only the approval-required calls in a separate
+`mcp_portal_call` batch. In OpenClaw native plugin mode, a homogeneous
+approval-required batch triggers the OpenClaw plugin approval prompt. After the
+operator approves it, the plugin injects a short-lived server-only
+`portalApprovalToken`, and MCP Portal core verifies the token before executing
+the gated calls.
+
+The token is bound to the approved agent id, exact namespace/tool names, and
+argument hashes. It is short-lived and single-use in both direct MCP proxy mode
+and OpenClaw native plugin mode. This preserves parallel safe reads while
+keeping writes and sensitive calls behind the configured approval policy.
 
 V1 redacts credential-shaped values from portal outputs and errors. Tool
 catalogs use exact configured credential value redaction only, so

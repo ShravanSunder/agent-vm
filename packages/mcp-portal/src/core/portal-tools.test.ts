@@ -73,8 +73,12 @@ const degradedSession = {
 	},
 } satisfies PortalSession;
 
-function allowDecision(): { readonly kind: 'allow' } {
-	return { kind: 'allow' };
+function allowDecision(calls: readonly { readonly id: string }[]): {
+	readonly decisionsByCallId: Readonly<Record<string, { readonly kind: 'allow' }>>;
+} {
+	return {
+		decisionsByCallId: Object.fromEntries(calls.map((call) => [call.id, { kind: 'allow' }])),
+	};
 }
 
 describe('portal tool handlers', () => {
@@ -870,10 +874,83 @@ describe('portal tool handlers', () => {
 		});
 	});
 
-	it('fails closed for the whole batch when approval is required', async () => {
+	it('executes approval-free calls when another prepared call needs approval', async () => {
+		const callUpstreamTool = vi.fn(async (call) => ({
+			content: [{ text: `called ${call.toolName}`, type: 'text' }],
+		}));
+		const handlers = createPortalToolHandlers({
+			approval: (calls) => ({
+				decisionsByCallId: Object.fromEntries(
+					calls.map((call) => [
+						call.id,
+						call.toolName === 'create_issue'
+							? { kind: 'approval_required', level: 'critical' }
+							: { kind: 'allow' },
+					]),
+				),
+			}),
+			callUpstreamTool,
+			getSession: vi.fn(async () => session),
+		});
+
+		await expect(
+			handlers.call({
+				identity: session.identity,
+				input: {
+					calls: [
+						{
+							arguments: { title: 'Fix deploy' },
+							id: 'needs-approval',
+							namespace: 'linear',
+							toolName: 'create_issue',
+						},
+						{
+							arguments: {},
+							id: 'safe-defaulted',
+							namespace: 'linear',
+							toolName: 'create_issue_with_default',
+						},
+					],
+				},
+			}),
+		).resolves.toMatchObject({
+			ok: false,
+			results: {
+				'needs-approval': {
+					error: {
+						kind: 'approval_required',
+						level: 'critical',
+						message: 'Operator approval is required before this MCP Portal call can run.',
+					},
+					ok: false,
+				},
+				'safe-defaulted': {
+					ok: true,
+					output: {
+						namespace: 'linear',
+						toolName: 'create_issue_with_default',
+					},
+				},
+			},
+		});
+
+		expect(callUpstreamTool).toHaveBeenCalledTimes(1);
+		expect(callUpstreamTool).toHaveBeenCalledWith(
+			expect.objectContaining({
+				arguments: { title: 'Fallback title' },
+				toolName: 'create_issue_with_default',
+			}),
+		);
+	});
+
+	it('returns item-level approval errors when every prepared call requires approval', async () => {
 		const callUpstreamTool = vi.fn();
 		const handlers = createPortalToolHandlers({
-			approval: () => ({ kind: 'approval_required', level: 'critical' }),
+			approval: (calls) => ({
+				decisionsByCallId: Object.fromEntries(
+					calls.map((call) => [call.id, { kind: 'approval_required', level: 'critical' }]),
+				),
+			}),
 			callUpstreamTool,
 			getSession: vi.fn(async () => session),
 		});

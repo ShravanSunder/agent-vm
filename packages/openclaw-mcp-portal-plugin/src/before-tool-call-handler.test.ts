@@ -87,7 +87,36 @@ describe('createBeforeToolCallHandler', () => {
 		});
 	});
 
-	it('requires approval without mutating portal call params', async () => {
+	it('passes mixed batches through so core can fail only gated calls', async () => {
+		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
+
+		await expect(
+			handler(
+				{
+					params: {
+						calls: [
+							{
+								arguments: { query: 'deploy' },
+								id: 'list',
+								namespace: 'linear',
+								toolName: 'list_issues',
+							},
+							{
+								arguments: { title: 'Fix deploy' },
+								id: 'create',
+								namespace: 'linear',
+								toolName: 'create_issue',
+							},
+						],
+					},
+					toolName: 'mcp_portal_call',
+				},
+				{ agentId: 'shravan' },
+			),
+		).resolves.toBeUndefined();
+	});
+
+	it('injects a portal approval token for homogeneous approval batches', async () => {
 		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
 		const params: Record<string, unknown> = {
 			calls: [
@@ -102,7 +131,15 @@ describe('createBeforeToolCallHandler', () => {
 
 		const result = await handler({ params, toolName: 'mcp_portal_call' }, { agentId: 'shravan' });
 
-		expect(result).toMatchObject({ requireApproval: expect.any(Object) });
+		expect(result).toMatchObject({
+			params: {
+				portalApprovalToken: expect.any(String),
+			},
+			requireApproval: expect.objectContaining({
+				pluginId: 'mcp-portal',
+				title: expect.stringContaining('MCP Portal batch'),
+			}),
+		});
 		expect(params).not.toHaveProperty('portalApprovalToken');
 	});
 

@@ -1,15 +1,18 @@
 import {
 	resolveMcpPortalProfile,
-	mcpPortalCallPolicyDecision,
 	type McpPortalAgentConfig,
 	type McpPortalConfig,
 	type ResolvedMcpPortalProfile,
 	type SecretValue,
 } from '@agent-vm/config-contracts';
 
-import type { PortalApprovalCall } from '../core/portal-tools.js';
+import { createPortalPolicyApprovalEvaluator } from '../core/portal-approval-evaluator.js';
+import type {
+	PortalApprovalCall,
+	PortalApprovalCallDecision,
+	PortalApprovalEvaluation,
+} from '../core/portal-tools.js';
 import { createPortalAgentIdentity } from '../portal-access-policy.js';
-import { hashCallArguments, verifyApprovalToken } from '../portal-auth/hmac-token.js';
 
 const approvalTokenMaxLifetimeMs = 5 * 60_000;
 const approvalTokenReplayCacheLimit = 4_096;
@@ -35,7 +38,8 @@ export interface PortalApprovalAuditEvent {
 		| 'approval_token_invalid'
 		| 'approval_token_missing'
 		| 'call_blocked'
-		| 'no_approval_required';
+		| 'no_approval_required'
+		| 'per_call_evaluation';
 	readonly timeMs: number;
 	readonly verifierReason?: string;
 }
@@ -113,30 +117,6 @@ export function createPortalHttpAgentResolver(
 	};
 }
 
-function callDecisionByProfile(
-	profile: ResolvedMcpPortalProfile,
-	call: PortalApprovalCall,
-): ReturnType<typeof mcpPortalCallPolicyDecision> {
-	const annotations = call.tool.annotations;
-	return mcpPortalCallPolicyDecision(profile, {
-		...(annotations === undefined ? {} : { annotations }),
-		namespace: call.namespace,
-		toolName: call.toolName,
-	});
-}
-
-function approvalTokenCallDigests(calls: readonly PortalApprovalCall[]): readonly {
-	readonly argumentsHash: string;
-	readonly namespace: string;
-	readonly toolName: string;
-}[] {
-	return calls.map((call) => ({
-		argumentsHash: hashCallArguments(call.arguments),
-		namespace: call.namespace,
-		toolName: call.toolName,
-	}));
-}
-
 export function createPortalApprovalVerifier(props: {
 	readonly approvalTokenReplayCacheLimit?: number;
 	readonly auditErrorSink?: (error: Error, event: PortalApprovalAuditEvent) => void;
@@ -146,11 +126,7 @@ export function createPortalApprovalVerifier(props: {
 	calls: readonly PortalApprovalCall[],
 	agentId: string,
 	token: string | undefined,
-) =>
-	| { readonly kind: 'allow' }
-	| { readonly kind: 'call_blocked' }
-	| { readonly kind: 'approval_token_invalid'; readonly reason: string }
-	| { readonly kind: 'approval_token_missing' } {
+) => PortalApprovalEvaluation {
 	function auditApproval(event: Omit<PortalApprovalAuditEvent, 'kind' | 'timeMs'>): void {
 		const auditEvent = { ...event, kind: 'mcp_portal_approval', timeMs: Date.now() } as const;
 		try {
@@ -185,54 +161,49 @@ export function createPortalApprovalVerifier(props: {
 		consumedApprovalTokenIds.set(tokenKey, expiresAtMs);
 		return { ok: true };
 	};
-	return (calls, agentId, token) => {
-		const record = props.records.get(agentId);
-		if (record === undefined) {
+	const evaluateApproval = createPortalPolicyApprovalEvaluator({
+		consumeTokenId,
+		maxLifetimeMs: approvalTokenMaxLifetimeMs,
+		resolveRecord: (agentId) => props.records.get(agentId),
+	});
+
+	function auditEvaluation(agentId: string, evaluation: PortalApprovalEvaluation): void {
+		const decisions = Object.values(evaluation.decisionsByCallId);
+		const firstDeny = decisions.find((decision) => decision.kind !== 'allow');
+		if (firstDeny === undefined) {
 			auditApproval({
 				agentId,
-				decision: 'deny',
-				reason: 'approval_token_invalid',
-				verifierReason: 'unknown-agent',
+				decision: 'allow',
+				...(decisions.length === 0 ? { reason: 'no_approval_required' } : {}),
 			});
-			return { kind: 'approval_token_invalid', reason: 'unknown-agent' };
-		}
-		const callDecisions = calls.map((call) => callDecisionByProfile(record.profile, call));
-		if (callDecisions.some((decision) => decision.kind === 'blocked')) {
-			auditApproval({ agentId, decision: 'deny', reason: 'call_blocked' });
-			return { kind: 'call_blocked' };
-		}
-		const callsRequiringApproval = calls.filter(
-			(_call, index) => callDecisions[index]?.kind === 'requires_approval',
-		);
-		if (callsRequiringApproval.length === 0) {
-			auditApproval({ agentId, decision: 'allow', reason: 'no_approval_required' });
-			return { kind: 'allow' };
-		}
-		if (token === undefined) {
-			auditApproval({ agentId, decision: 'deny', reason: 'approval_token_missing' });
-			return { kind: 'approval_token_missing' };
-		}
-		const verificationProps = {
-			agentId,
-			calls: approvalTokenCallDigests(callsRequiringApproval),
-			consumeTokenId: (jti: string, expiresAtMs: number) =>
-				consumeTokenId(agentId, jti, expiresAtMs),
-			key: record.hmacKey,
-			maxLifetimeMs: approvalTokenMaxLifetimeMs,
-			nowMs: Date.now(),
-			token,
-		};
-		const verification = verifyApprovalToken(verificationProps);
-		if (verification.ok) {
-			auditApproval({ agentId, decision: 'allow' });
-			return { kind: 'allow' };
+			return;
 		}
 		auditApproval({
 			agentId,
 			decision: 'deny',
-			reason: 'approval_token_invalid',
-			verifierReason: verification.reason,
+			reason: auditReasonFromDecision(firstDeny),
+			...(firstDeny.kind === 'approval_token_invalid' ? { verifierReason: firstDeny.reason } : {}),
 		});
-		return { kind: 'approval_token_invalid', reason: verification.reason };
+	}
+
+	return (calls, agentId, token) => {
+		const evaluation = evaluateApproval(calls, agentId, token);
+		auditEvaluation(agentId, evaluation);
+		return evaluation;
 	};
+}
+
+function auditReasonFromDecision(
+	decision: PortalApprovalCallDecision,
+): Exclude<PortalApprovalAuditEvent['reason'], undefined> {
+	if (decision.kind === 'approval_token_invalid') {
+		return 'approval_token_invalid';
+	}
+	if (decision.kind === 'approval_token_missing') {
+		return 'approval_token_missing';
+	}
+	if (decision.kind === 'call_blocked') {
+		return 'call_blocked';
+	}
+	return 'per_call_evaluation';
 }

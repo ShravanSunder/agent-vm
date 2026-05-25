@@ -1,13 +1,16 @@
+import type { ResolvedMcpPortalProfile } from '@agent-vm/config-contracts';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { UpstreamMcpError } from '../upstream-mcp-errors.js';
+import { createPortalPolicyApprovalEvaluator } from './portal-approval-evaluator.js';
 import {
 	createPortalCore,
 	collectPortalCoreResult,
 	listPortalCoreToolDescriptors,
 	type PortalCoreEvent,
 } from './portal-core.js';
+import type { PortalApprovalCallDecision, PortalApprovalEvaluation } from './portal-tools.js';
 
 const batchTools = [
 	{
@@ -33,8 +36,29 @@ const scalarTools = [
 	},
 ] satisfies readonly Tool[];
 
-function allowApproval(): { readonly kind: 'allow' } {
-	return { kind: 'allow' };
+const approvalProfile: ResolvedMcpPortalProfile = {
+	approval: {
+		allowWithoutApprovalTools: [{ namespace: 'linear', toolName: 'list_issues' }],
+		alwaysAskTools: [{ namespace: 'linear', toolName: 'create_issue' }],
+		annotationPolicy: 'destructive-requires-approval',
+		callPoliciesByNamespace: {},
+		trustedAnnotationNamespaces: [],
+		writeTools: [],
+	},
+	cache: { catalogTtlMs: 60_000 },
+	enabledNamespaces: ['linear'],
+	enabledToolsByNamespace: {},
+	hiddenToolsByNamespace: {},
+	logging: { enabled: false },
+	promptContext: { enabled: true, maxNamespaces: 12 },
+};
+
+function allowApproval(calls: readonly { readonly id: string }[]): {
+	readonly decisionsByCallId: Readonly<Record<string, { readonly kind: 'allow' }>>;
+} {
+	return {
+		decisionsByCallId: Object.fromEntries(calls.map((call) => [call.id, { kind: 'allow' }])),
+	};
 }
 
 describe('portal core event stream', () => {
@@ -619,12 +643,19 @@ describe('portal core event stream', () => {
 		await core.close();
 	});
 
-	it('evaluates approval once for the full batch before upstream contact', async () => {
+	it('evaluates approval once and applies decisions per call before upstream contact', async () => {
 		const callUpstreamTool = vi.fn(async () => ({ ok: true }));
-		const approval = vi.fn((calls: readonly { readonly id: string }[]) => {
-			void calls;
-			return { kind: 'approval_required', level: 'standard' } as const;
-		});
+		const approval = vi.fn(
+			(calls: readonly { readonly id: string }[]): PortalApprovalEvaluation => {
+				const decisionsByCallId: Record<string, PortalApprovalCallDecision> = {};
+				for (const call of calls) {
+					decisionsByCallId[call.id] = { kind: 'approval_required', level: 'standard' };
+				}
+				return {
+					decisionsByCallId,
+				};
+			},
+		);
 		const core = createPortalCore({
 			accessPolicy: {
 				defaultPolicy: 'allow-all',
@@ -697,6 +728,80 @@ describe('portal core event stream', () => {
 				status: 'failed',
 			}),
 		]);
+
+		await core.close();
+	});
+
+	it('returns approval-required only for gated native calls when no portal token is present', async () => {
+		const approval = createPortalPolicyApprovalEvaluator({
+			missingApprovalTokenDecision: { kind: 'approval_required', level: 'standard' },
+			resolveRecord: () => ({ hmacKey: Buffer.alloc(32, 1), profile: approvalProfile }),
+		});
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool: vi.fn(async () => ({ ok: true })),
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(
+					async () =>
+						[
+							{
+								inputSchema: { properties: {}, type: 'object' },
+								name: 'list_issues',
+							},
+							{
+								inputSchema: {
+									properties: { title: { type: 'string' } },
+									required: ['title'],
+									type: 'object',
+								},
+								name: 'create_issue',
+							},
+						] satisfies readonly Tool[],
+				),
+			},
+			upstreamNamespaces: ['linear'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'openclaw-trusted',
+		});
+
+		const result = await core.collectPortalCoreResult(
+			core.callStream({
+				input: {
+					calls: [
+						{ arguments: {}, id: 'list', namespace: 'linear', toolName: 'list_issues' },
+						{
+							arguments: { title: 'Fix deploy' },
+							id: 'create',
+							namespace: 'linear',
+							toolName: 'create_issue',
+						},
+					],
+				},
+				scope,
+				toolName: 'mcp_portal_call',
+			}),
+		);
+
+		expect(result.items).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ requestId: 'list', status: 'success' }),
+				expect.objectContaining({
+					error: expect.objectContaining({ code: 'approval_required' }),
+					requestId: 'create',
+					status: 'failed',
+				}),
+			]),
+		);
 
 		await core.close();
 	});

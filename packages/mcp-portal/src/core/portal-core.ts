@@ -172,15 +172,9 @@ interface CreatePortalCoreBaseProps {
 	readonly upstreamNamespaces: readonly string[];
 }
 
-export type CreatePortalCoreProps =
-	| (CreatePortalCoreBaseProps & {
-			readonly approval: PortalApprovalEvaluator;
-			readonly approvalTrustBoundary?: never;
-	  })
-	| (CreatePortalCoreBaseProps & {
-			readonly approval?: never;
-			readonly approvalTrustBoundary: 'openclaw-before-tool-call-hook';
-	  });
+export interface CreatePortalCoreProps extends CreatePortalCoreBaseProps {
+	readonly approval: PortalApprovalEvaluator;
+}
 
 export interface PortalCore {
 	readonly approval: {
@@ -744,14 +738,7 @@ export function createPortalCore(props: CreatePortalCoreProps): PortalCore {
 		upstreamNamespaces: props.upstreamNamespaces,
 	});
 	const createdAgentScopeIds = new Set<string>();
-	const approval: PortalApprovalEvaluator =
-		props.approval ??
-		(() => {
-			if (props.approvalTrustBoundary === 'openclaw-before-tool-call-hook') {
-				return { kind: 'allow' };
-			}
-			throw new Error('MCP Portal approval evaluation is not configured.');
-		});
+	const approval = props.approval;
 	const toolRuntime: PortalToolRuntime = {
 		approval,
 		callUpstreamTool: props.runtime.callUpstreamTool,

@@ -69,6 +69,7 @@ export type OpenClawApprovalResolution =
 export interface OpenClawBeforeToolCallResult {
 	readonly block?: boolean;
 	readonly blockReason?: string;
+	readonly params?: Record<string, unknown>;
 	readonly requireApproval?: {
 		readonly description: string;
 		readonly onResolution?: (decision: OpenClawApprovalResolution) => Promise<void> | void;

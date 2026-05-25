@@ -1,4 +1,5 @@
 import { resolveMcpPortalProfile } from '@agent-vm/config-contracts';
+import { hashCallArguments, signApprovalToken } from '@agent-vm/mcp-portal/portal-auth/hmac-token';
 
 import type {
 	OpenClawBeforeToolCallEvent,
@@ -58,6 +59,26 @@ function parseCallRequests(params: Record<string, unknown>): readonly PortalCall
 	return parsedCalls;
 }
 
+function approvalTokenForCalls(props: {
+	readonly agentId: string;
+	readonly calls: readonly PortalCallRequest[];
+	readonly key: Buffer;
+	readonly nowMs?: number;
+}): string {
+	const nowMs = props.nowMs ?? Date.now();
+	return signApprovalToken({
+		agentId: props.agentId,
+		calls: props.calls.map((call) => ({
+			argumentsHash: hashCallArguments(call.arguments),
+			namespace: call.namespace,
+			toolName: call.toolName,
+		})),
+		expiresAtMs: nowMs + 60_000,
+		issuedAtMs: nowMs,
+		key: props.key,
+	});
+}
+
 export function createBeforeToolCallHandler(
 	props: CreateBeforeToolCallHandlerProps,
 ): (
@@ -111,12 +132,32 @@ export function createBeforeToolCallHandler(
 		if (approvalCalls.length === 0) {
 			return undefined;
 		}
+		if (approvalCalls.length !== calls.length) {
+			return undefined;
+		}
 
 		const toolNames = approvalCalls
 			.map((call) => `${call.namespace}.${call.toolName}`)
 			.toSorted()
 			.join(', ');
+		let portalApprovalToken: string | undefined;
+		try {
+			portalApprovalToken = approvalTokenForCalls({
+				agentId,
+				calls: approvalCalls,
+				key: props.runtimeState.getApprovalHmacKey(),
+			});
+		} catch (error) {
+			props.logger?.warn?.(
+				`mcp-portal: failed to sign OpenClaw approval token: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+		}
 		return {
+			...(portalApprovalToken === undefined
+				? {}
+				: { params: { ...event.params, portalApprovalToken } }),
 			requireApproval: {
 				description: `Allow MCP Portal batch for agent ${agentId}: ${toolNames}.`,
 				pluginId: 'mcp-portal',

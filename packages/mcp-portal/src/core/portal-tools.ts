@@ -230,23 +230,22 @@ export interface PortalToolRuntime {
 		calls: readonly PortalApprovalCall[],
 		identity: PortalAgentIdentity,
 		approvalToken: string | undefined,
-	) =>
-		| { readonly kind: 'allow' }
-		| { readonly kind: 'call_blocked' }
-		| { readonly kind: 'approval_token_invalid'; readonly reason: string }
-		| { readonly kind: 'approval_token_missing' }
-		| { readonly kind: 'approval_required'; readonly level: 'critical' | 'standard' };
+	) => PortalApprovalEvaluation;
 	readonly callUpstreamTool: (call: PortalCallUpstreamTool) => Promise<unknown>;
 	readonly getSession: (identity: PortalAgentIdentity) => Promise<PortalSession>;
 }
 
-type PortalApprovalDecision =
+export type PortalApprovalCallDecision =
 	| { readonly kind: 'allow' }
 	| { readonly kind: 'approval_configuration_missing' }
 	| { readonly kind: 'approval_required'; readonly level: 'critical' | 'standard' }
 	| { readonly kind: 'approval_token_invalid'; readonly reason: string }
 	| { readonly kind: 'approval_token_missing' }
 	| { readonly kind: 'call_blocked' };
+
+export interface PortalApprovalEvaluation {
+	readonly decisionsByCallId: Readonly<Record<string, PortalApprovalCallDecision>>;
+}
 
 export interface PortalToolHandlers {
 	readonly call: (call: PortalToolHandlerCall) => Promise<PortalBatchResult>;
@@ -257,6 +256,15 @@ export interface PortalToolHandlers {
 
 function messageFromError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function approvalEvaluationForAllCalls(
+	calls: readonly PortalApprovalCall[],
+	decision: PortalApprovalCallDecision,
+): PortalApprovalEvaluation {
+	return {
+		decisionsByCallId: Object.fromEntries(calls.map((call) => [call.id, decision])),
+	};
 }
 
 function invalidPortalInput(error: unknown): PortalBatchResult {
@@ -714,15 +722,17 @@ export function createPortalToolHandlers(runtime: PortalToolRuntime): PortalTool
 						toolName: executableCall.tool.toolName,
 					}) satisfies PortalApprovalCall,
 			);
-			const allowDecision = { kind: 'allow' } satisfies PortalApprovalDecision;
-			const approval: PortalApprovalDecision =
+			const approval: PortalApprovalEvaluation =
 				approvalCalls.length === 0
-					? allowDecision
+					? approvalEvaluationForAllCalls(approvalCalls, { kind: 'allow' })
 					: (runtime.approval?.(
 							approvalCalls,
 							call.identity,
 							parsedInput.data.portalApprovalToken,
-						) ?? { kind: 'approval_configuration_missing' });
+						) ??
+						approvalEvaluationForAllCalls(approvalCalls, {
+							kind: 'approval_configuration_missing',
+						}));
 
 			const results: Record<string, PortalToolResult> = {};
 			const callsToExecute: PreparedPortalCall[] = [];
@@ -738,12 +748,16 @@ export function createPortalToolHandlers(runtime: PortalToolRuntime): PortalTool
 					continue;
 				}
 
-				if (approval.kind === 'approval_required') {
+				const approvalDecision = approval.decisionsByCallId[preparedResult.input.id] ?? {
+					kind: 'approval_configuration_missing',
+				};
+
+				if (approvalDecision.kind === 'approval_required') {
 					results[preparedResult.input.id] = itemError({
 						error: {
 							kind: 'approval_required',
-							level: approval.level,
-							message: 'Operator approval is required before this batch can run.',
+							level: approvalDecision.level,
+							message: 'Operator approval is required before this MCP Portal call can run.',
 							namespace: preparedResult.tool.namespace,
 							toolName: preparedResult.tool.toolName,
 						},
@@ -751,11 +765,12 @@ export function createPortalToolHandlers(runtime: PortalToolRuntime): PortalTool
 					});
 					continue;
 				}
-				if (approval.kind === 'approval_token_missing') {
+				if (approvalDecision.kind === 'approval_token_missing') {
 					results[preparedResult.input.id] = itemError({
 						error: {
 							kind: 'approval_token_missing',
-							message: 'An MCP Portal approval token is required before this batch can run.',
+							message:
+								'An MCP Portal approval token is required before this MCP Portal call can run.',
 							namespace: preparedResult.tool.namespace,
 							toolName: preparedResult.tool.toolName,
 						},
@@ -763,20 +778,20 @@ export function createPortalToolHandlers(runtime: PortalToolRuntime): PortalTool
 					});
 					continue;
 				}
-				if (approval.kind === 'approval_token_invalid') {
+				if (approvalDecision.kind === 'approval_token_invalid') {
 					results[preparedResult.input.id] = itemError({
 						error: {
 							kind: 'approval_token_invalid',
-							message: `MCP Portal approval token is invalid: ${approval.reason}.`,
+							message: `MCP Portal approval token is invalid: ${approvalDecision.reason}.`,
 							namespace: preparedResult.tool.namespace,
-							reason: approval.reason,
+							reason: approvalDecision.reason,
 							toolName: preparedResult.tool.toolName,
 						},
 						input: { ...preparedResult.input, arguments: preparedResult.validatedArguments },
 					});
 					continue;
 				}
-				if (approval.kind === 'call_blocked') {
+				if (approvalDecision.kind === 'call_blocked') {
 					results[preparedResult.input.id] = itemError({
 						error: {
 							kind: 'call_blocked',
@@ -788,7 +803,7 @@ export function createPortalToolHandlers(runtime: PortalToolRuntime): PortalTool
 					});
 					continue;
 				}
-				if (approval.kind === 'approval_configuration_missing') {
+				if (approvalDecision.kind === 'approval_configuration_missing') {
 					results[preparedResult.input.id] = itemError({
 						error: {
 							kind: 'approval_configuration_missing',
