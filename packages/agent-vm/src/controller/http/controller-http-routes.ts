@@ -412,7 +412,18 @@ export function createControllerApp(options: {
 			);
 		} catch (error) {
 			if (error instanceof LeaseWorkMountValidationError) {
-				return context.json({ error: error.message, kind: error.kind }, 400);
+				return context.json(
+					{
+						error:
+							error.kind === 'outside-allowed-roots'
+								? 'workMountDir outside allowed roots'
+								: error.kind,
+						...(error.guidance !== undefined ? { guidance: error.guidance } : {}),
+						kind: error.kind,
+						message: error.message,
+					},
+					400,
+				);
 			}
 			if (error instanceof AgentLeaseCompatibilityConflictError) {
 				return context.json(

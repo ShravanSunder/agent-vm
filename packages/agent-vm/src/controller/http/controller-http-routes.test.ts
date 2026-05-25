@@ -595,6 +595,57 @@ describe('createControllerApp', () => {
 		expect(createLease).not.toHaveBeenCalled();
 	});
 
+	it('returns retry guidance when lease workMountDir is a Tool VM guest path', async () => {
+		const createLease = vi.fn(async (_options: ControllerCreateLeaseOptions) =>
+			createLeaseStub('01890f00-0000-7000-8000-000000000000', 0),
+		);
+		const resolveLeaseWorkMountDir = vi.fn(async () => {
+			throw new LeaseWorkMountValidationError(
+				'outside-allowed-roots',
+				"Path '/work/tmp' matched Tool VM scratch but cannot be used for leaseMount.",
+				{
+					guidance:
+						'Use one of the allowed path forms for openclaw-gateway-lease leaseMount: /zone/<child>, /home/openclaw/.openclaw/state/sandboxes/<child>.',
+				},
+			);
+		});
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					imageProfile: 'default',
+					memory: '1G',
+				},
+			},
+			leaseManager: {
+				createLease,
+				listLeases: vi.fn(() => []),
+				peekLease: vi.fn(),
+				releaseLease: vi.fn(async () => {}),
+				renewLease: vi.fn(),
+			},
+			resolveLeaseWorkMountDir,
+		});
+
+		const response = await app.request('/lease', {
+			body: JSON.stringify(
+				createLeaseRequestBody({
+					workMountDir: '/work/tmp',
+				}),
+			),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toMatchObject({
+			error: 'workMountDir outside allowed roots',
+			guidance: expect.stringContaining('/zone/<child>'),
+			message: "Path '/work/tmp' matched Tool VM scratch but cannot be used for leaseMount.",
+		});
+		expect(createLease).not.toHaveBeenCalled();
+	});
+
 	it('passes optional idleTtlMs through lease creation and rejects invalid values', async () => {
 		const createLease = vi.fn(async () => ({
 			...createLeaseStub('lease-ttl', 0),
@@ -1537,6 +1588,7 @@ describe('createControllerApp', () => {
 		await expect(createResponse.json()).resolves.toEqual({
 			error: 'workMountDir outside allowed roots',
 			kind: 'outside-allowed-roots',
+			message: 'workMountDir outside allowed roots',
 		});
 		expect(createLease).not.toHaveBeenCalled();
 	});
