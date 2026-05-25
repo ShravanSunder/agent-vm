@@ -155,6 +155,12 @@ describe('manual templates', () => {
 		).toContain('session.dmScope');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
+		).toContain('approvals.plugin.mode');
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'approvals.plugin.mode=session',
+		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('::ffff:198.18.0.1');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,

@@ -15,6 +15,7 @@ describe('native MCP Portal onUpdate forwarding', () => {
 		};
 		const close = vi.fn(async () => undefined);
 		vi.doMock('@agent-vm/mcp-portal/core', () => ({
+			createPortalPolicyApprovalEvaluator: () => () => ({ decisionsByCallId: {} }),
 			createPortalCore: () => ({
 				callStream: async function* () {
 					yield {
@@ -132,6 +133,7 @@ describe('native MCP Portal onUpdate forwarding', () => {
 		};
 		const close = vi.fn(async () => undefined);
 		vi.doMock('@agent-vm/mcp-portal/core', () => ({
+			createPortalPolicyApprovalEvaluator: () => () => ({ decisionsByCallId: {} }),
 			createPortalCore: () => ({
 				callStream: async function* () {
 					yield {
@@ -238,6 +240,7 @@ describe('native MCP Portal onUpdate forwarding', () => {
 	it('rejects non-environment secrets in managed OpenClaw effective config', async () => {
 		vi.resetModules();
 		vi.doMock('@agent-vm/mcp-portal/core', () => ({
+			createPortalPolicyApprovalEvaluator: () => () => ({ decisionsByCallId: {} }),
 			createPortalCore: vi.fn(),
 			createUpstreamMcpClientRuntime: vi.fn(),
 			listPortalCoreToolDescriptors: () => [
@@ -332,6 +335,7 @@ describe('native MCP Portal onUpdate forwarding', () => {
 				createAgentScope: (scope: unknown) => scope,
 			}));
 		vi.doMock('@agent-vm/mcp-portal/core', () => ({
+			createPortalPolicyApprovalEvaluator: () => () => ({ decisionsByCallId: {} }),
 			createPortalCore,
 			createUpstreamMcpClientRuntime: () => ({
 				callTool: vi.fn(),

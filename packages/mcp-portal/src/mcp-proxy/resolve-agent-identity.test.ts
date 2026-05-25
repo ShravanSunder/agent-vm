@@ -85,52 +85,100 @@ function createCall(props: {
 	};
 }
 
+function expectDecision(
+	evaluation: ReturnType<ReturnType<typeof createPortalApprovalVerifier>>,
+	call: ReturnType<typeof createCall>,
+	decision: unknown,
+): void {
+	expect(evaluation.decisionsByCallId[call.id]).toEqual(decision);
+}
+
+function callAt(
+	calls: readonly ReturnType<typeof createCall>[],
+	index: number,
+): ReturnType<typeof createCall> {
+	const call = calls[index];
+	if (call === undefined) {
+		throw new Error(`Expected approval call at index ${index}.`);
+	}
+	return call;
+}
+
 describe('createPortalApprovalVerifier', () => {
-	it('fails closed for untrusted tools and trusted tools without annotations', () => {
-		const verifier = createVerifier();
+	it('allows no-approval calls while marking only gated calls as token-missing', () => {
+		const verifier = createPortalApprovalVerifier({
+			records: new Map<string, PortalAgentRuntimeRecord>([
+				[
+					'shravan',
+					{
+						agentId: 'shravan',
+						hmacKey,
+						profile: {
+							...profile,
+							approval: {
+								...profile.approval,
+								allowWithoutApprovalTools: [{ namespace: 'linear', toolName: 'list_issues' }],
+								alwaysAskTools: [{ namespace: 'linear', toolName: 'create_issue' }],
+								callPoliciesByNamespace: {},
+							},
+						},
+						profileName: 'builder',
+					},
+				],
+			]),
+		});
 
 		expect(
 			verifier(
 				[
+					createCall({ namespace: 'linear', toolName: 'list_issues' }),
 					createCall({
-						namespace: 'github',
-						toolName: 'delete_issue',
-					}),
-				],
-				'shravan',
-				undefined,
-			),
-		).toEqual({ kind: 'approval_token_missing' });
-		expect(
-			verifier(
-				[
-					createCall({
+						arguments: { title: 'Fix deploy' },
 						namespace: 'linear',
-						toolName: 'list_issues',
+						toolName: 'create_issue',
 					}),
 				],
 				'shravan',
 				undefined,
 			),
-		).toEqual({ kind: 'approval_token_missing' });
+		).toEqual({
+			decisionsByCallId: {
+				'linear.create_issue': { kind: 'approval_token_missing' },
+				'linear.list_issues': { kind: 'allow' },
+			},
+		});
+	});
+
+	it('fails closed for untrusted tools and trusted tools without annotations', () => {
+		const verifier = createVerifier();
+		const githubCall = createCall({
+			namespace: 'github',
+			toolName: 'delete_issue',
+		});
+		const linearCall = createCall({
+			namespace: 'linear',
+			toolName: 'list_issues',
+		});
+
+		expectDecision(verifier([githubCall], 'shravan', undefined), githubCall, {
+			kind: 'approval_token_missing',
+		});
+		expectDecision(verifier([linearCall], 'shravan', undefined), linearCall, {
+			kind: 'approval_token_missing',
+		});
 	});
 
 	it('allows trusted explicitly read-only tools without a token', () => {
 		const verifier = createVerifier();
+		const readOnlyCall = createCall({
+			annotations: { destructiveHint: false, readOnlyHint: true },
+			namespace: 'linear',
+			toolName: 'list_issues',
+		});
 
-		expect(
-			verifier(
-				[
-					createCall({
-						annotations: { destructiveHint: false, readOnlyHint: true },
-						namespace: 'linear',
-						toolName: 'list_issues',
-					}),
-				],
-				'shravan',
-				undefined,
-			),
-		).toEqual({ kind: 'allow' });
+		expectDecision(verifier([readOnlyCall], 'shravan', undefined), readOnlyCall, {
+			kind: 'allow',
+		});
 	});
 
 	it('rejects tokens that only match the conservative approval set', () => {
@@ -161,7 +209,7 @@ describe('createPortalApprovalVerifier', () => {
 			key: hmacKey,
 		});
 
-		expect(verifier(calls, 'shravan', token)).toEqual({
+		expectDecision(verifier(calls, 'shravan', token), callAt(calls, 1), {
 			kind: 'approval_token_invalid',
 			reason: 'call-mismatch',
 		});
@@ -205,7 +253,7 @@ describe('createPortalApprovalVerifier', () => {
 			key: hmacKey,
 		});
 
-		expect(verifier(calls, 'shravan', token)).toEqual({
+		expectDecision(verifier(calls, 'shravan', token), callAt(calls, 1), {
 			kind: 'approval_token_invalid',
 			reason: 'call-mismatch',
 		});
@@ -213,19 +261,15 @@ describe('createPortalApprovalVerifier', () => {
 
 	it('rejects invalid approval tokens with the verifier reason', () => {
 		const verifier = createVerifier();
+		const call = createCall({
+			namespace: 'github',
+			toolName: 'delete_issue',
+		});
 
-		expect(
-			verifier(
-				[
-					createCall({
-						namespace: 'github',
-						toolName: 'delete_issue',
-					}),
-				],
-				'shravan',
-				'not.a.real.token',
-			),
-		).toEqual({ kind: 'approval_token_invalid', reason: 'malformed' });
+		expectDecision(verifier([call], 'shravan', 'not.a.real.token'), call, {
+			kind: 'approval_token_invalid',
+			reason: 'malformed',
+		});
 	});
 
 	it('audits approval allow and deny decisions', () => {
@@ -271,8 +315,15 @@ describe('createPortalApprovalVerifier', () => {
 			key: hmacKey,
 		});
 
-		expect(verifier(calls, 'shravan', undefined)).toEqual({ kind: 'approval_token_missing' });
-		expect(verifier(calls, 'shravan', token)).toEqual({ kind: 'allow' });
+		expectDecision(verifier(calls, 'shravan', undefined), callAt(calls, 1), {
+			kind: 'approval_token_missing',
+		});
+		expect(verifier(calls, 'shravan', token)).toEqual({
+			decisionsByCallId: {
+				'github.delete_issue': { kind: 'allow' },
+				'linear.list_issues': { kind: 'allow' },
+			},
+		});
 
 		expect(auditEvents).toEqual([
 			expect.objectContaining({
@@ -311,18 +362,14 @@ describe('createPortalApprovalVerifier', () => {
 			]),
 		});
 
-		expect(
-			verifier(
-				[
-					createCall({
-						namespace: 'github',
-						toolName: 'delete_issue',
-					}),
-				],
-				'shravan',
-				undefined,
-			),
-		).toEqual({ kind: 'approval_token_missing' });
+		const call = createCall({
+			namespace: 'github',
+			toolName: 'delete_issue',
+		});
+
+		expectDecision(verifier([call], 'shravan', undefined), call, {
+			kind: 'approval_token_missing',
+		});
 
 		expect(auditErrors).toEqual([
 			{
@@ -358,8 +405,8 @@ describe('createPortalApprovalVerifier', () => {
 			key: hmacKey,
 		});
 
-		expect(verifier(calls, 'shravan', token)).toEqual({ kind: 'allow' });
-		expect(verifier(calls, 'shravan', token)).toEqual({
+		expectDecision(verifier(calls, 'shravan', token), callAt(calls, 0), { kind: 'allow' });
+		expectDecision(verifier(calls, 'shravan', token), callAt(calls, 0), {
 			kind: 'approval_token_invalid',
 			reason: 'replayed',
 		});
@@ -388,15 +435,15 @@ describe('createPortalApprovalVerifier', () => {
 			});
 		const firstToken = createToken('approval-replay-1');
 
-		expect(verifier(calls, 'shravan', firstToken)).toEqual({ kind: 'allow' });
-		expect(verifier(calls, 'shravan', createToken('approval-replay-2'))).toEqual({
+		expectDecision(verifier(calls, 'shravan', firstToken), callAt(calls, 0), { kind: 'allow' });
+		expectDecision(verifier(calls, 'shravan', createToken('approval-replay-2')), callAt(calls, 0), {
 			kind: 'allow',
 		});
-		expect(verifier(calls, 'shravan', createToken('approval-replay-3'))).toEqual({
+		expectDecision(verifier(calls, 'shravan', createToken('approval-replay-3')), callAt(calls, 0), {
 			kind: 'approval_token_invalid',
 			reason: 'replay-cache-full',
 		});
-		expect(verifier(calls, 'shravan', firstToken)).toEqual({
+		expectDecision(verifier(calls, 'shravan', firstToken), callAt(calls, 0), {
 			kind: 'approval_token_invalid',
 			reason: 'replayed',
 		});
@@ -425,7 +472,7 @@ describe('createPortalApprovalVerifier', () => {
 			key: hmacKey,
 		});
 
-		expect(verifier(calls, 'shravan', token)).toEqual({
+		expectDecision(verifier(calls, 'shravan', token), callAt(calls, 0), {
 			kind: 'approval_token_invalid',
 			reason: 'ttl-exceeded',
 		});

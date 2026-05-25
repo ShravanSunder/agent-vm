@@ -1,4 +1,5 @@
 export * from './provider-runtime.js';
+export * from './portal-approval-evaluator.js';
 export * from './portal-call-validation.js';
 export * from './portal-core.js';
 export * from './portal-tools.js';

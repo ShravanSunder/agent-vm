@@ -513,6 +513,14 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 		});
 		const firstPortLookup = createDeferredPromise<PortOwner | null>();
 		const deleteToolVmRuntimeRecord = vi.fn(async () => {});
+		const isProcessAlive = vi
+			.fn()
+			.mockReturnValueOnce(true)
+			.mockReturnValueOnce(true)
+			.mockReturnValueOnce(false)
+			.mockReturnValueOnce(true)
+			.mockReturnValueOnce(true)
+			.mockReturnValueOnce(false);
 		const readTcpListenPortOwner = vi.fn((port: number): Promise<PortOwner | null> => {
 			if (port === 19_500) {
 				return firstPortLookup.promise;
@@ -524,10 +532,19 @@ describe('cleanupOrphanedToolVmsIfPresent', () => {
 			createCleanupOptions({ mode: 'in-process-recovery' }),
 			{
 				deleteToolVmRuntimeRecord,
+				isProcessAlive,
+				killProcess: vi.fn(),
 				loadAllToolVmRuntimeRecords: async () => loadedToolVmRuntimeRecords(recordA, recordB),
 				log: () => {},
 				portForSlot: (slot) => 19_500 + slot,
+				readProcessCommand: async () => 'qemu-system-aarch64',
+				readProcessIdentity: async (pid) => {
+					if (pid === recordA.qemuPid) return recordA.processIdentity;
+					if (pid === recordB.qemuPid) return recordB.processIdentity;
+					return null;
+				},
 				readTcpListenPortOwner,
+				sleep: async () => {},
 			},
 		);
 

@@ -178,6 +178,56 @@ describe('createGondolinPlugin', () => {
 		}
 	});
 
+	it('retries Tool VM runtime status publishing while the controller becomes ready', async () => {
+		vi.useFakeTimers();
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ error: 'controller-not-ready' }), { status: 503 }),
+			)
+			.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+		try {
+			defaultPlugin.register({
+				config: {
+					agents: {
+						defaults: {
+							sandbox: {
+								backend: 'gondolin',
+								mode: 'all',
+								scope: 'agent',
+								workspaceAccess: 'rw',
+							},
+							workspace: '/zone/agents/default',
+						},
+					},
+				},
+				pluginConfig: {
+					controllerUrl: 'http://controller.vm.host:18800',
+					zoneId: 'shravan',
+				},
+				registerTool: vi.fn(),
+				registrationMode: 'full',
+			});
+
+			await vi.waitFor(() => {
+				expect(fetchSpy).toHaveBeenCalledTimes(1);
+			});
+			await vi.advanceTimersByTimeAsync(1_000);
+			await vi.waitFor(() => {
+				expect(fetchSpy).toHaveBeenCalledTimes(2);
+			});
+			expect(stderrWrite).not.toHaveBeenCalledWith(
+				expect.stringContaining('failed to publish OpenClaw runtime status'),
+			);
+		} finally {
+			fetchSpy.mockRestore();
+			stderrWrite.mockRestore();
+			vi.useRealTimers();
+		}
+	});
+
 	it('fails full registration when OpenClaw does not expose registerTool', () => {
 		expect(() =>
 			defaultPlugin.register({

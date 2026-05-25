@@ -25,6 +25,13 @@ const openClawSandboxPluginTools = {
 	},
 } satisfies Record<string, unknown>;
 
+const openClawPluginApprovalSession = {
+	plugin: {
+		enabled: true,
+		mode: 'session',
+	},
+} satisfies Record<string, unknown>;
+
 function createSystemConfig(
 	openClawConfigPath: string,
 	authProfilesByAgent: Record<string, { readonly ref: string; readonly source: '1password' }> = {},
@@ -121,6 +128,12 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 					session: {
 						dmScope: 'per-channel-peer',
 					},
+					approvals: {
+						plugin: {
+							enabled: true,
+							mode: 'session',
+						},
+					},
 					channels: {
 						discord: {
 							enabled: true,
@@ -161,6 +174,52 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		expect(checks.every((check) => check.ok)).toBe(true);
 	});
 
+	it('flags managed MCP Portal deployments without plugin approval session forwarding', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				configuredAuthProfileAgentIds: ['sun'],
+				runtimeMaterializesPortalEndpoints: true,
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'openai-codex/gpt-5.5' },
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'sun' }],
+					},
+					session: {
+						dmScope: 'per-channel-peer',
+					},
+					plugins: {
+						allow: ['gondolin', 'memory-core', 'mcp-portal'],
+						entries: {
+							gondolin: { enabled: true },
+							'memory-core': { enabled: true },
+							'mcp-portal': { enabled: true, hooks: { allowPromptInjection: true } },
+						},
+						load: {
+							paths: [
+								'/home/openclaw/.openclaw/extensions/gondolin',
+								'/home/openclaw/.openclaw/extensions/mcp-portal',
+							],
+						},
+						slots: { memory: 'memory-core' },
+					},
+					tools: openClawSandboxPluginTools,
+				},
+			},
+		]);
+
+		expect(
+			checks.find((check) => check.name === 'openclaw-mcp-portal-plugin-approvals-shravan'),
+		).toMatchObject({
+			ok: false,
+			hint: 'Set approvals.plugin.enabled=true and approvals.plugin.mode="session" so MCP Portal tools that require approval can return prompts to the originating chat.',
+		});
+	});
+
 	it('ignores OpenClaw-owned Discord session and binding semantics', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
@@ -182,6 +241,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 							shravan: ['discord:709857988919164981'],
 						},
 					},
+					approvals: openClawPluginApprovalSession,
 					channels: {
 						discord: {
 							enabled: true,
@@ -347,6 +407,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						},
 						list: [{ id: 'sun' }],
 					},
+					approvals: openClawPluginApprovalSession,
 					plugins: {
 						allow: ['gondolin', 'memory-core', 'mcp-portal'],
 						entries: {
@@ -395,6 +456,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						},
 						list: [{ id: 'sun' }],
 					},
+					approvals: openClawPluginApprovalSession,
 					plugins: {
 						allow: ['gondolin', 'memory-core', 'mcp-portal'],
 						entries: {
@@ -575,6 +637,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 						},
 						list: [{ id: 'sun' }],
 					},
+					approvals: openClawPluginApprovalSession,
 					plugins: {
 						allow: ['gondolin', 'memory-core', 'mcp-portal'],
 						entries: {
@@ -831,6 +894,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 				session: {
 					dmScope: 'per-channel-peer',
 				},
+				approvals: openClawPluginApprovalSession,
 				plugins: {
 					allow: ['memory-core', 'mcp-portal'],
 					entries: {
@@ -942,6 +1006,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 					},
 					list: [{ id: 'sun' }],
 				},
+				approvals: openClawPluginApprovalSession,
 				plugins: {
 					allow: ['memory-core', 'mcp-portal'],
 					entries: {
@@ -996,6 +1061,7 @@ describe('collectOpenClawDeploymentDoctorChecks', () => {
 					},
 					list: [{ id: 'sun' }],
 				},
+				approvals: openClawPluginApprovalSession,
 				plugins: {
 					allow: ['memory-core', 'mcp-portal'],
 					entries: {

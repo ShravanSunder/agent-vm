@@ -29,6 +29,17 @@ import {
 
 export const SYNTHETIC_DNS_IPV4_BENCHMARK = '198.18.0.1';
 export const SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK = '::ffff:198.18.0.1';
+export const MANAGED_VM_DEFAULT_INGRESS_MAX_BUFFERED_RESPONSE_BODY_BYTES = 512 * 1024 * 1024;
+export const MANAGED_VM_DEFAULT_INGRESS_UPSTREAM_HEADER_TIMEOUT_MS = 120_000;
+export const MANAGED_VM_DEFAULT_INGRESS_UPSTREAM_RESPONSE_TIMEOUT_MS = 120_000;
+
+export const MANAGED_VM_DEFAULT_INGRESS_OPTIONS = {
+	allowWebSockets: true,
+	bufferResponseBody: false,
+	maxBufferedResponseBodyBytes: MANAGED_VM_DEFAULT_INGRESS_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+	upstreamHeaderTimeoutMs: MANAGED_VM_DEFAULT_INGRESS_UPSTREAM_HEADER_TIMEOUT_MS,
+	upstreamResponseTimeoutMs: MANAGED_VM_DEFAULT_INGRESS_UPSTREAM_RESPONSE_TIMEOUT_MS,
+} satisfies EnableIngressOptions;
 
 export type ManagedExecInput = string | readonly string[];
 export type ManagedExecOptions = GondolinExecOptions;
@@ -282,6 +293,41 @@ function closePinnedRealFsRootsAfterFailure(
 	}
 }
 
+function resolveManagedVmIngressOptions(
+	ingressOptions: EnableIngressOptions = {},
+): EnableIngressOptions {
+	const resolvedOptions: EnableIngressOptions = {
+		...MANAGED_VM_DEFAULT_INGRESS_OPTIONS,
+	};
+
+	if (ingressOptions.listenHost !== undefined) {
+		resolvedOptions.listenHost = ingressOptions.listenHost;
+	}
+	if (ingressOptions.listenPort !== undefined) {
+		resolvedOptions.listenPort = ingressOptions.listenPort;
+	}
+	if (ingressOptions.allowWebSockets !== undefined) {
+		resolvedOptions.allowWebSockets = ingressOptions.allowWebSockets;
+	}
+	if (ingressOptions.hooks !== undefined) {
+		resolvedOptions.hooks = ingressOptions.hooks;
+	}
+	if (ingressOptions.bufferResponseBody !== undefined) {
+		resolvedOptions.bufferResponseBody = ingressOptions.bufferResponseBody;
+	}
+	if (ingressOptions.maxBufferedResponseBodyBytes !== undefined) {
+		resolvedOptions.maxBufferedResponseBodyBytes = ingressOptions.maxBufferedResponseBodyBytes;
+	}
+	if (ingressOptions.upstreamHeaderTimeoutMs !== undefined) {
+		resolvedOptions.upstreamHeaderTimeoutMs = ingressOptions.upstreamHeaderTimeoutMs;
+	}
+	if (ingressOptions.upstreamResponseTimeoutMs !== undefined) {
+		resolvedOptions.upstreamResponseTimeoutMs = ingressOptions.upstreamResponseTimeoutMs;
+	}
+
+	return resolvedOptions;
+}
+
 export async function createManagedVm(
 	options: CreateVmOptions,
 	dependencies: ManagedVmDependencies = createDefaultDependencies(),
@@ -344,7 +390,7 @@ export async function createManagedVm(
 			return await vmInstance.enableSsh(sshOptions);
 		},
 		async enableIngress(ingressOptions?: EnableIngressOptions): Promise<IngressAccess> {
-			return await vmInstance.enableIngress(ingressOptions);
+			return await vmInstance.enableIngress(resolveManagedVmIngressOptions(ingressOptions));
 		},
 		getHostPid(): number | null {
 			return vmInstance.getHostPid?.() ?? null;

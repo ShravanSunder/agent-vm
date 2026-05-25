@@ -67,8 +67,12 @@ function asClientTransport(transport: StreamableHTTPClientTransport): Transport 
 	return transport as unknown as Transport;
 }
 
-function allowApproval(): { readonly kind: 'allow' } {
-	return { kind: 'allow' };
+function allowApproval(calls: readonly { readonly id: string }[]): {
+	readonly decisionsByCallId: Readonly<Record<string, { readonly kind: 'allow' }>>;
+} {
+	return {
+		decisionsByCallId: Object.fromEntries(calls.map((call) => [call.id, { kind: 'allow' }])),
+	};
 }
 
 function createTestPortalCore(

@@ -315,6 +315,82 @@ describe('createManagedVm', () => {
 		expect(closeMock).toHaveBeenCalled();
 	});
 
+	it('applies managed ingress defaults when enabling ingress without explicit options', async () => {
+		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
+		const fakeVmInstance: ManagedVmInstance = {
+			...createFakeVmInstance(),
+			enableIngress: enableIngressMock,
+		};
+		const dependencies = createBaseDependencies({
+			createVm: vi.fn(async (): Promise<ManagedVmInstance> => fakeVmInstance),
+		});
+
+		const managedVm = await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				imagePath: '/vm-images/gateways/openclaw',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		await managedVm.enableIngress();
+
+		expect(enableIngressMock).toHaveBeenCalledWith({
+			allowWebSockets: true,
+			bufferResponseBody: false,
+			maxBufferedResponseBodyBytes: 512 * 1024 * 1024,
+			upstreamHeaderTimeoutMs: 120_000,
+			upstreamResponseTimeoutMs: 120_000,
+		});
+	});
+
+	it('lets explicit ingress options override managed defaults', async () => {
+		const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18891 }));
+		const fakeVmInstance: ManagedVmInstance = {
+			...createFakeVmInstance(),
+			enableIngress: enableIngressMock,
+		};
+		const dependencies = createBaseDependencies({
+			createVm: vi.fn(async (): Promise<ManagedVmInstance> => fakeVmInstance),
+		});
+
+		const managedVm = await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				imagePath: '/vm-images/gateways/openclaw',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		await managedVm.enableIngress({
+			allowWebSockets: false,
+			bufferResponseBody: true,
+			listenPort: 18891,
+			maxBufferedResponseBodyBytes: 64 * 1024 * 1024,
+			upstreamHeaderTimeoutMs: 5_000,
+			upstreamResponseTimeoutMs: 10_000,
+		});
+
+		expect(enableIngressMock).toHaveBeenCalledWith({
+			allowWebSockets: false,
+			bufferResponseBody: true,
+			listenPort: 18891,
+			maxBufferedResponseBodyBytes: 64 * 1024 * 1024,
+			upstreamHeaderTimeoutMs: 5_000,
+			upstreamResponseTimeoutMs: 10_000,
+		});
+	});
+
 	it('passes runtime rootfs size to Gondolin when configured', async () => {
 		let capturedVmOptions: VMOptions | undefined;
 		const dependencies = createBaseDependencies({

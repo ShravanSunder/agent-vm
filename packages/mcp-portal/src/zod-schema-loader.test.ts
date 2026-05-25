@@ -31,6 +31,62 @@ describe('zod from JSON Schema loader', () => {
 		});
 	});
 
+	it('reports actionable validation issue details for agent correction', () => {
+		const validator = buildZodValidatorFromJsonSchema({
+			additionalProperties: false,
+			properties: {
+				max_results: { type: 'number' },
+				search_depth: { enum: ['basic', 'advanced'], type: 'string' },
+				title: { type: 'string' },
+			},
+			required: ['title'],
+			type: 'object',
+		});
+
+		expect(validator.ok).toBe(true);
+		if (!validator.ok) {
+			throw new Error('validator should build');
+		}
+
+		expect(
+			validator.validate({
+				extra: true,
+				max_results: '3',
+				search_depth: 'deep',
+			}),
+		).toMatchObject({
+			error: {
+				kind: 'input_validation',
+				issues: expect.arrayContaining([
+					expect.objectContaining({
+						code: 'invalid_type',
+						expected: 'string',
+						path: ['title'],
+						received: { type: 'undefined' },
+					}),
+					expect.objectContaining({
+						code: 'invalid_type',
+						expected: 'number',
+						path: ['max_results'],
+						received: { preview: '3', type: 'string' },
+					}),
+					expect.objectContaining({
+						code: 'invalid_value',
+						path: ['search_depth'],
+						received: { preview: 'deep', type: 'string' },
+						values: ['basic', 'advanced'],
+					}),
+					expect.objectContaining({
+						code: 'unrecognized_keys',
+						keys: ['extra'],
+						path: [],
+					}),
+				]),
+			},
+			ok: false,
+		});
+	});
+
 	it('names unsupported JSON Schema features instead of calling upstream blind', () => {
 		const validator = buildZodValidatorFromJsonSchema({
 			properties: {

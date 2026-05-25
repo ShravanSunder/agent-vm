@@ -52,4 +52,20 @@ describe('createPortalPluginRuntimeState', () => {
 		state.markPortalAvailable();
 		expect(state.getPortalUnavailableReason()).toBeNull();
 	});
+
+	it('sweeps expired approval token ids only after the cache reaches the cleanup threshold', () => {
+		const state = createPortalPluginRuntimeState({ configDir: '/config' });
+		const expiredAtMs = Date.now() - 1;
+		const freshExpiresAtMs = Date.now() + 60_000;
+
+		for (let tokenIndex = 0; tokenIndex < 2048; tokenIndex += 1) {
+			expect(
+				state.consumeApprovalTokenId('agent-a', `expired-token-${String(tokenIndex)}`, expiredAtMs),
+			).toEqual({ ok: true });
+		}
+
+		expect(state.consumeApprovalTokenId('agent-a', 'expired-token-0', freshExpiresAtMs)).toEqual({
+			ok: true,
+		});
+	});
 });
