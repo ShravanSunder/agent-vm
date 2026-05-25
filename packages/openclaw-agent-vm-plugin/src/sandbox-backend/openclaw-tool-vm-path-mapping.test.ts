@@ -48,6 +48,13 @@ describe('resolveOpenClawToolVmPathIntent', () => {
 			kind: 'scratch-subpath',
 			leaseWorkMountDir: '/zone/agents/beta',
 		},
+		{
+			effectiveGuestCwd: '/workspace',
+			hostEquivalentPath: '/home/openclaw/.openclaw/state/sandboxes/work',
+			inputPath: '/home/openclaw/.openclaw/state/sandboxes/work',
+			kind: 'openclaw-sandbox-path',
+			leaseWorkMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
+		},
 	])('projects $inputPath', ({ inputPath, ...expectedResolution }) => {
 		expect(
 			resolveOpenClawToolVmPathIntent({
@@ -71,7 +78,7 @@ describe('resolveOpenClawToolVmPathIntent', () => {
 				code: 'unknown-runtime-path',
 				inputPath: '/zone/agents/alpha/app',
 				retryGuidance:
-					'Use one of the allowed path forms for openclaw-tool-vm executionCwd: /workspace[/subpath], /zone/agents/beta[/subpath], /work[/subpath].',
+					'Use one of the allowed path forms for openclaw-tool-vm executionCwd: /workspace[/subpath], /zone/agents/beta[/subpath], /work[/subpath], /home/openclaw/.openclaw/state/sandboxes/<child>.',
 			},
 			ok: false,
 		});

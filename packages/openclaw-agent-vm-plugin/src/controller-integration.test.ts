@@ -318,7 +318,8 @@ describe('gondolin controller integration', () => {
 			workspaceDir: '/zone/agents/beta',
 		});
 
-		expect(secondHandle).toBe(firstHandle);
+		expect(secondHandle).not.toBe(firstHandle);
+		expect(secondHandle.runtimeId).toBe(firstHandle.runtimeId);
 		expect(requestBodies).toEqual([
 			{
 				agentId: 'beta',

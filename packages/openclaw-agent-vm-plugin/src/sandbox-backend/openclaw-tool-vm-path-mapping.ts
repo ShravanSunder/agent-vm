@@ -7,9 +7,12 @@ import {
 	type RuntimePathTranslationError,
 } from '@agent-vm/gateway-interface';
 
+const OPENCLAW_STATE_SANDBOXES_ROOT = '/home/openclaw/.openclaw/state/sandboxes';
+
 export type OpenClawToolVmPathIntentKind =
 	| 'host-workspace-root'
 	| 'host-workspace-subpath'
+	| 'openclaw-sandbox-path'
 	| 'workspace-root'
 	| 'workspace-subpath'
 	| 'scratch-root'
@@ -78,6 +81,21 @@ function createOpenClawToolVmPathMapping(options: {
 				rootPathAllowed: true,
 				guidanceLabel: 'Tool VM scratch',
 			},
+			{
+				id: 'openclaw-sandboxes',
+				hostRoot: OPENCLAW_STATE_SANDBOXES_ROOT,
+				backing: {
+					kind: 'host-realfs',
+					durability: 'durable',
+					backup: 'included',
+				},
+				capabilities: {
+					executionCwd: true,
+					leaseMount: true,
+				},
+				rootPathAllowed: false,
+				guidanceLabel: 'OpenClaw sandbox work directory',
+			},
 		],
 	};
 }
@@ -86,6 +104,9 @@ function kindForTranslation(translation: RuntimePathTranslation): OpenClawToolVm
 	const isRoot = translation.relativePath === '';
 	if (translation.rootId === 'tool-vm-scratch') {
 		return isRoot ? 'scratch-root' : 'scratch-subpath';
+	}
+	if (translation.rootId === 'openclaw-sandboxes') {
+		return 'openclaw-sandbox-path';
 	}
 	if (translation.inputNamespace === 'host') {
 		return isRoot ? 'host-workspace-root' : 'host-workspace-subpath';
@@ -110,12 +131,18 @@ export function resolveOpenClawToolVmPathIntent(options: {
 	return {
 		ok: true,
 		value: {
-			effectiveGuestCwd: translation.value.guestPath ?? TOOL_VM_WORKSPACE_GUEST_ROOT,
+			effectiveGuestCwd:
+				translation.value.rootId === 'openclaw-sandboxes'
+					? TOOL_VM_WORKSPACE_GUEST_ROOT
+					: (translation.value.guestPath ?? TOOL_VM_WORKSPACE_GUEST_ROOT),
 			...(translation.value.hostPath !== undefined
 				? { hostEquivalentPath: translation.value.hostPath }
 				: {}),
 			kind: kindForTranslation(translation.value),
-			leaseWorkMountDir: translation.value.hostRoot ?? options.agentWorkspaceDir,
+			leaseWorkMountDir:
+				translation.value.rootId === 'openclaw-sandboxes'
+					? (translation.value.hostPath ?? options.agentWorkspaceDir)
+					: (translation.value.hostRoot ?? options.agentWorkspaceDir),
 		},
 	};
 }

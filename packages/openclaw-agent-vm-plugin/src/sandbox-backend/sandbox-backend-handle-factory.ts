@@ -22,6 +22,7 @@ import {
 	resolveOpenClawAgentIdFromSessionKey,
 	type OpenClawGondolinSandboxSnapshot,
 } from '../openclaw-gondolin-contract.js';
+import { assertOpenClawToolVmPathIntent } from './openclaw-tool-vm-path-mapping.js';
 import {
 	type CachedAgentLeaseEntry,
 	type CreateBackendDependencies,
@@ -174,6 +175,10 @@ export function createGondolinSandboxBackendFactory(
 		assertPluginLeaseContract({
 			cfg: params.cfg,
 		});
+		const pathIntent = assertOpenClawToolVmPathIntent({
+			agentWorkspaceDir: params.agentWorkspaceDir,
+			inputPath: params.workspaceDir,
+		});
 		const cacheKey = agentLeaseCacheKey({
 			agentId,
 			zoneId: options.zoneId,
@@ -200,22 +205,24 @@ export function createGondolinSandboxBackendFactory(
 				});
 		};
 		const cachedEntry = agentLeaseCache.get(cacheKey);
+		let lease: CachedAgentLeaseEntry['lease'] | undefined;
 		if (cachedEntry) {
 			try {
-				await leaseClient.renewLease(cachedEntry.lease.leaseId);
+				const renewedLease = await leaseClient.renewLease(cachedEntry.lease.leaseId);
 				await runToolVmSshOperationWithGuard({
 					operation: async (signal) =>
 						await dependencies.runRemoteShellScript({
 							allowFailure: false,
 							script: 'true',
 							signal,
-							ssh: cachedEntry.lease.ssh,
+							ssh: renewedLease.ssh,
 						}),
 					operationName: 'cached-ssh-probe',
 					report: () => {},
 					timeoutMs: 30_000,
 				});
-				return cachedEntry.handle;
+				lease = renewedLease;
+				agentLeaseCache.set(cacheKey, { lease });
 			} catch (error) {
 				writeSandboxBackendLog(
 					`lease renew failed for zone '${options.zoneId}' agent '${agentId}' lease '${cachedEntry.lease.leaseId}': ${formatUnknownError(error)}`,
@@ -229,30 +236,32 @@ export function createGondolinSandboxBackendFactory(
 				}
 			}
 		}
-		// OpenClaw SDK still names the selected sandbox path `workspaceDir`.
-		// agent-vm's controller calls the same value `workMountDir` because it
-		// selects the host path exposed at the lease response `workdir`.
-		const runtimeStatus = options.openClawRuntimeStatusProvider?.();
-		if (runtimeStatus && leaseClient.publishOpenClawRuntimeStatus) {
-			await leaseClient.publishOpenClawRuntimeStatus(runtimeStatus);
+		if (lease === undefined) {
+			// OpenClaw SDK still names the selected sandbox path `workspaceDir`.
+			// agent-vm's controller calls the selected host source `workMountDir`.
+			const runtimeStatus = options.openClawRuntimeStatusProvider?.();
+			if (runtimeStatus && leaseClient.publishOpenClawRuntimeStatus) {
+				await leaseClient.publishOpenClawRuntimeStatus(runtimeStatus);
+			}
+			const leaseResponse = await leaseClient.requestLease({
+				agentId,
+				agentWorkspaceDir: params.agentWorkspaceDir,
+				profileId,
+				sessionKey: params.sessionKey,
+				workMountDir: pathIntent.leaseWorkMountDir,
+				zoneId: options.zoneId,
+			});
+			if (!isToolVmSshLease(leaseResponse)) {
+				throw new TypeError('Controller lease API returned an unexpected response.');
+			}
+			lease = leaseResponse;
+			agentLeaseCache.set(cacheKey, { lease });
 		}
-		const leaseResponse = await leaseClient.requestLease({
-			agentId,
-			agentWorkspaceDir: params.agentWorkspaceDir,
-			profileId,
-			sessionKey: params.sessionKey,
-			workMountDir: params.workspaceDir,
-			zoneId: options.zoneId,
-		});
-		if (!isToolVmSshLease(leaseResponse)) {
-			throw new TypeError('Controller lease API returned an unexpected response.');
-		}
-
-		const lease = leaseResponse;
 		const handle = createSandboxBackendHandle({
 			cfg: params.cfg,
 			controllerUrl: options.controllerUrl,
 			createFsBridgeBuilder: dependencies.createFsBridgeBuilder,
+			effectiveGuestCwd: pathIntent.effectiveGuestCwd,
 			lease,
 			leaseClient,
 			markCachedLeaseStale: async (reason, error) => {
@@ -263,7 +272,6 @@ export function createGondolinSandboxBackendFactory(
 			sessionKey: params.sessionKey,
 			zoneId: options.zoneId,
 		});
-		agentLeaseCache.set(cacheKey, { handle, lease });
 		return handle;
 	};
 }
@@ -277,6 +285,7 @@ function createSandboxBackendHandle(options: {
 	};
 	readonly controllerUrl: string;
 	readonly createFsBridgeBuilder?: CreateBackendDependencies['createFsBridgeBuilder'];
+	readonly effectiveGuestCwd: string;
 	readonly lease: CachedAgentLeaseEntry['lease'];
 	readonly leaseClient: LeaseClient;
 	readonly markCachedLeaseStale: (reason: ToolVmSshFailureKind, error: unknown) => Promise<void>;
@@ -417,7 +426,7 @@ function createSandboxBackendHandle(options: {
 
 	const createFsBridge = options.createFsBridgeBuilder?.({
 		remoteAgentWorkspaceDir: options.lease.workdir,
-		remoteWorkspaceDir: options.lease.workdir,
+		remoteWorkspaceDir: options.effectiveGuestCwd,
 		runRemoteShellScript: boundRunRemoteShellScript,
 	});
 
@@ -429,7 +438,7 @@ function createSandboxBackendHandle(options: {
 		id: 'gondolin',
 		runtimeId: options.lease.leaseId,
 		runtimeLabel: options.lease.leaseId,
-		workdir: options.lease.workdir,
+		workdir: options.effectiveGuestCwd,
 		buildExecSpec: async (execParams) => {
 			const activeUseHandle = await createActiveUseHandle({
 				sessionKey: options.sessionKey,
@@ -441,7 +450,7 @@ function createSandboxBackendHandle(options: {
 					env: execParams.env,
 					ssh: options.lease.ssh,
 					usePty: execParams.usePty,
-					workdir: execParams.workdir ?? options.lease.workdir,
+					workdir: execParams.workdir ?? options.effectiveGuestCwd,
 				});
 				return {
 					...execSpec,

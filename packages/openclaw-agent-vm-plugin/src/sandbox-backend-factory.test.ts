@@ -194,7 +194,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				})),
 				createLeaseClient: () => ({
 					...createActiveUseLeaseClientMethods(),
-					renewLease: async () => createLeaseResponse('lease-renew'),
+					renewLease: async () => createLeaseResponse('lease-reuse'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
@@ -234,7 +234,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				})),
 				createLeaseClient: () => ({
 					...createActiveUseLeaseClientMethods(),
-					renewLease: async () => createLeaseResponse('lease-renew'),
+					renewLease: async () => createLeaseResponse('lease-reuse'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
@@ -396,7 +396,115 @@ describe('createGondolinSandboxBackendFactory', () => {
 		expect(typeof backend.finalizeExec).toBe('function');
 	});
 
-	it('reuses the same handle for repeated requests from the same agent', async () => {
+	it('normalizes /workspace subpaths before requesting a controller lease', async () => {
+		const requestLease = vi.fn(async () => createLeaseResponse('lease-workspace-subpath'));
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const handle = await factory({
+			agentWorkspaceDir: '/zone/agents/beta',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:subagent:child',
+			sessionKey: 'agent:beta:subagent:child',
+			workspaceDir: '/workspace/app',
+		});
+
+		expect(handle.workdir).toBe('/workspace/app');
+		expect(requestLease).toHaveBeenCalledWith({
+			agentId: 'beta',
+			agentWorkspaceDir: '/zone/agents/beta',
+			profileId: 'standard',
+			sessionKey: 'agent:beta:subagent:child',
+			workMountDir: '/zone/agents/beta',
+			zoneId: 'shravan',
+		});
+		expect(requestLease.mock.calls[0]?.[0]).not.toHaveProperty('scopeKey');
+		expect(requestLease.mock.calls[0]?.[0]).not.toHaveProperty('sandbox');
+		expect(requestLease.mock.calls[0]?.[0]).not.toHaveProperty('workspaceDir');
+	});
+
+	it('reuses one cached lease while rebuilding handles for different cwd intents', async () => {
+		const requestLease = vi.fn(async () =>
+			createLeaseResponse('lease-cwd-intent', {
+				agentId: 'beta',
+			}),
+		);
+		const renewLease = vi.fn(async (leaseId: string) =>
+			createLeaseResponse(leaseId, {
+				agentId: 'beta',
+			}),
+		);
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease,
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(async () => ({
+					code: 0,
+					stderr: Buffer.alloc(0),
+					stdout: Buffer.alloc(0),
+				})),
+			},
+		);
+
+		const firstHandle = await factory({
+			agentWorkspaceDir: '/zone/agents/beta',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:discord:channel:123',
+			sessionKey: 'agent:beta:discord:channel:123',
+			workspaceDir: '/workspace/app',
+		});
+		const secondHandle = await factory({
+			agentWorkspaceDir: '/zone/agents/beta',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:subagent:child',
+			sessionKey: 'agent:beta:subagent:child',
+			workspaceDir: '/work/tmp',
+		});
+
+		expect(secondHandle).not.toBe(firstHandle);
+		expect(firstHandle.runtimeId).toBe(secondHandle.runtimeId);
+		expect(firstHandle.workdir).toBe('/workspace/app');
+		expect(secondHandle.workdir).toBe('/work/tmp');
+		expect(requestLease).toHaveBeenCalledTimes(1);
+		expect(renewLease).toHaveBeenCalledTimes(1);
+	});
+
+	it('reuses the same lease for repeated requests from the same agent', async () => {
 		const requestLease = vi.fn(async () => createLeaseResponse('lease-reuse'));
 
 		const factory = createGondolinSandboxBackendFactory(
@@ -412,7 +520,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				})),
 				createLeaseClient: () => ({
 					...createActiveUseLeaseClientMethods(),
-					renewLease: async () => createLeaseResponse('lease-renew'),
+					renewLease: async () => createLeaseResponse('lease-reuse'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
@@ -436,7 +544,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 			workspaceDir: '/work',
 		});
 
-		expect(firstHandle).toBe(secondHandle);
+		expect(firstHandle).not.toBe(secondHandle);
+		expect(firstHandle.runtimeId).toBe(secondHandle.runtimeId);
 		expect(requestLease).toHaveBeenCalledTimes(1);
 	});
 
@@ -563,7 +672,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 			workspaceDir: '/workspace/beta-edited',
 		});
 
-		expect(secondHandle).toBe(firstHandle);
+		expect(secondHandle).not.toBe(firstHandle);
+		expect(secondHandle.runtimeId).toBe(firstHandle.runtimeId);
 		expect(requestLease).toHaveBeenCalledTimes(1);
 		expect(requestLease.mock.calls[0]?.[0]).not.toHaveProperty('scopeKey');
 		expect(requestLease.mock.calls[0]?.[0]).not.toHaveProperty('sandbox');
@@ -577,7 +687,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			.mockResolvedValueOnce(createLeaseResponse('lease-new'));
 		const renewLease = vi
 			.fn()
-			.mockResolvedValueOnce({ ok: true })
+			.mockResolvedValueOnce(createLeaseResponse('lease-old'))
 			.mockRejectedValueOnce(createControllerLeaseError(404));
 
 		const factory = createGondolinSandboxBackendFactory(
@@ -625,7 +735,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 				workspaceDir: '/work',
 			});
 
-			expect(firstHandle).toBe(secondHandle);
+			expect(firstHandle).not.toBe(secondHandle);
+			expect(firstHandle.runtimeId).toBe(secondHandle.runtimeId);
 			expect(thirdHandle).not.toBe(firstHandle);
 			expect(requestLease).toHaveBeenCalledTimes(2);
 			const loggedMessages = stderrWrite.mock.calls.map(([message]) => String(message));
