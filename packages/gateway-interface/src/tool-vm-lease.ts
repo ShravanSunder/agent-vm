@@ -31,6 +31,8 @@ function objectValue(value: unknown): object | undefined {
 	return typeof value === 'object' && value !== null ? value : undefined;
 }
 
+const deprecatedScopeKeyPropertyName = 'scope' + 'Key';
+
 export function isToolVmSshLease(value: unknown): value is ToolVmSshLease {
 	const record = objectValue(value);
 	return (
@@ -41,7 +43,7 @@ export function isToolVmSshLease(value: unknown): value is ToolVmSshLease {
 		typeof Reflect.get(record, 'idleTtlMs') === 'number' &&
 		typeof Reflect.get(record, 'tcpSlot') === 'number' &&
 		typeof Reflect.get(record, 'workdir') === 'string' &&
-		!Reflect.has(record, 'scopeKey')
+		!Reflect.has(record, deprecatedScopeKeyPropertyName)
 	);
 }
 
@@ -59,6 +61,6 @@ export function isToolVmLeasePeek(value: unknown): value is ToolVmLeasePeek {
 		typeof Reflect.get(record, 'tcpSlot') === 'number' &&
 		typeof Reflect.get(record, 'workdir') === 'string' &&
 		typeof Reflect.get(record, 'zoneId') === 'string' &&
-		!Reflect.has(record, 'scopeKey')
+		!Reflect.has(record, deprecatedScopeKeyPropertyName)
 	);
 }

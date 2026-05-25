@@ -10,7 +10,7 @@ export const OPENCLAW_GONDOLIN_SANDBOX_REQUIREMENTS = [
 ] as const;
 
 export const OPENCLAW_GONDOLIN_LEASE_SCOPE_GUIDANCE =
-	'Managed OpenClaw/Gondolin requires an explicit agentId. scopeKey is OpenClaw scope provenance and may include channel, session, thread, or subagent segments under that agent.';
+	'Managed OpenClaw/Gondolin leases are agent-scoped. The plugin derives agentId from sessionKey and does not send OpenClaw scopeKey to the controller.';
 
 export type OpenClawGondolinSandboxRequirement =
 	(typeof OPENCLAW_GONDOLIN_SANDBOX_REQUIREMENTS)[number];

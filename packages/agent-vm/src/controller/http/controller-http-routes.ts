@@ -79,27 +79,27 @@ function logAgentSandboxSeedResult(result: AgentSandboxSeedResult): void {
 	switch (result.kind) {
 		case 'seeded':
 			writeControllerLeaseLog(
-				`seeded sandbox for zone '${result.zoneId}' scope '${result.scopeKey}' agent '${result.agentId}': ${String(result.written)} written, ${String(result.alreadyExisted)} already existed`,
+				`seeded sandbox for zone '${result.zoneId}' agent '${result.agentId}' workMountDir '${result.hostWorkMountDir}': ${String(result.written)} written, ${String(result.alreadyExisted)} already existed`,
 			);
 			return;
 		case 'malformed-agent-id':
 			writeControllerLeaseLog(
-				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}' agent '${result.agentId}': ${result.reason}`,
+				`skipped sandbox seeding for zone '${result.zoneId}' agent '${result.agentId}': ${result.reason}`,
 			);
 			return;
 		case 'sandbox-root-missing':
 			writeControllerLeaseLog(
-				`skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': sandbox root '${result.sandboxRoot}' does not exist`,
+				`skipped sandbox seeding for zone '${result.zoneId}' agent '${result.agentId}': sandbox root '${result.sandboxRoot}' does not exist`,
 			);
 			return;
 		case 'work-mount-missing':
 			writeControllerLeaseLog(
-				`[WARN] skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': work mount '${result.hostWorkMountDir}' does not exist`,
+				`[WARN] skipped sandbox seeding for zone '${result.zoneId}' agent '${result.agentId}': work mount '${result.hostWorkMountDir}' does not exist`,
 			);
 			return;
 		case 'work-mount-outside-sandbox':
 			writeControllerLeaseLog(
-				`[WARN] skipped sandbox seeding for zone '${result.zoneId}' scope '${result.scopeKey}': work mount '${result.hostWorkMountDir}' is outside sandbox root '${result.sandboxRoot}'`,
+				`[WARN] skipped sandbox seeding for zone '${result.zoneId}' agent '${result.agentId}': work mount '${result.hostWorkMountDir}' is outside sandbox root '${result.sandboxRoot}'`,
 			);
 			return;
 		case 'no-seeds-configured':
@@ -758,10 +758,8 @@ export function createControllerService(options: {
 				zone,
 			});
 			if (options.secretResolver) {
-				const seedScopeKey = `agent:${agentId}`;
 				const seedResult = await seedAgentSandboxWorkspace({
 					agentId,
-					scopeKey: seedScopeKey,
 					secretResolver: options.secretResolver,
 					hostWorkMountDir: resolvedWorkMount.hostWorkMountDir,
 					zone,

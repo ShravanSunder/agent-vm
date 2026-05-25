@@ -243,7 +243,6 @@ export function createGondolinSandboxBackendFactory(
 			},
 			runRemoteShellScript: dependencies.runRemoteShellScript,
 			buildExecSpec: dependencies.buildExecSpec,
-			scopeKey: params.scopeKey,
 			sessionKey: params.sessionKey,
 			zoneId: options.zoneId,
 		});
@@ -268,7 +267,6 @@ function createSandboxBackendHandle(options: {
 		error: unknown,
 	) => Promise<void>;
 	readonly runRemoteShellScript: CreateBackendDependencies['runRemoteShellScript'];
-	readonly scopeKey: string;
 	readonly sessionKey: string;
 	readonly zoneId: string;
 }): OpenClawSandboxBackendHandle {

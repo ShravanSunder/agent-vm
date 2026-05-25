@@ -93,9 +93,10 @@ async function requestZoneGitLease(options: {
 }): Promise<ControllerLeaseResponse> {
 	const response = await fetch(`${options.controllerUrl}/lease`, {
 		body: JSON.stringify({
+			agentId: 'smoke',
 			agentWorkspaceDir: '/zone/agents/smoke',
 			profileId: 'standard',
-			scopeKey: 'agent:smoke',
+			sessionKey: 'agent:smoke:zone-git-smoke',
 			workMountDir: '/zone/agents/smoke',
 			zoneId: options.zoneId,
 		}),
