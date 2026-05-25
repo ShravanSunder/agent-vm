@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import {
+	hashCallArguments,
+	verifyApprovalToken,
+} from '@agent-vm/mcp-portal/portal-auth/hmac-token';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createBeforeToolCallHandler } from './before-tool-call-handler.js';
 import { createPortalPluginRuntimeState } from './portal-plugin-runtime-state.js';
@@ -17,7 +21,7 @@ function createRuntimeState(): ReturnType<typeof createPortalPluginRuntimeState>
 								requiresApproval: { allow: ['create_issue'], deny: [] },
 							},
 							tools: {
-								allow: ['create_issue', 'list_issues'],
+								allow: ['blocked_issue', 'create_issue', 'list_issues'],
 								deny: ['hidden_issue'],
 							},
 						},
@@ -116,6 +120,35 @@ describe('createBeforeToolCallHandler', () => {
 		).resolves.toBeUndefined();
 	});
 
+	it('passes mixed batches through when one visible call is blocked by call policy', async () => {
+		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
+
+		await expect(
+			handler(
+				{
+					params: {
+						calls: [
+							{
+								arguments: { query: 'deploy' },
+								id: 'list',
+								namespace: 'linear',
+								toolName: 'list_issues',
+							},
+							{
+								arguments: { query: 'deploy' },
+								id: 'blocked',
+								namespace: 'linear',
+								toolName: 'blocked_issue',
+							},
+						],
+					},
+					toolName: 'mcp_portal_call',
+				},
+				{ agentId: 'shravan' },
+			),
+		).resolves.toBeUndefined();
+	});
+
 	it('injects a portal approval token for homogeneous approval batches', async () => {
 		const handler = createBeforeToolCallHandler({ runtimeState: createRuntimeState() });
 		const params: Record<string, unknown> = {
@@ -141,6 +174,53 @@ describe('createBeforeToolCallHandler', () => {
 			}),
 		});
 		expect(params).not.toHaveProperty('portalApprovalToken');
+	});
+
+	it('keeps injected approval tokens valid after the approval prompt timeout boundary', async () => {
+		vi.useFakeTimers();
+		try {
+			const issuedAt = new Date('2026-05-25T00:00:00.000Z');
+			vi.setSystemTime(issuedAt);
+			const runtimeState = createRuntimeState();
+			const handler = createBeforeToolCallHandler({ runtimeState });
+			const callArguments = { title: 'Fix deploy' };
+
+			const result = await handler(
+				{
+					params: {
+						calls: [
+							{
+								arguments: callArguments,
+								id: 'create',
+								namespace: 'linear',
+								toolName: 'create_issue',
+							},
+						],
+					},
+					toolName: 'mcp_portal_call',
+				},
+				{ agentId: 'shravan' },
+			);
+
+			expect(result?.params?.portalApprovalToken).toEqual(expect.any(String));
+			const verification = verifyApprovalToken({
+				agentId: 'shravan',
+				calls: [
+					{
+						argumentsHash: hashCallArguments(callArguments),
+						namespace: 'linear',
+						toolName: 'create_issue',
+					},
+				],
+				key: runtimeState.getApprovalHmacKey(),
+				maxLifetimeMs: 5 * 60_000,
+				nowMs: issuedAt.getTime() + 60_001,
+				token: result?.params?.portalApprovalToken as string,
+			});
+			expect(verification).toEqual({ ok: true });
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('allows calls that are enabled and do not require approval', async () => {

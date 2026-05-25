@@ -13,6 +13,9 @@ import {
 	type PortalCallRequest,
 } from './portal-tool-policy.js';
 
+const approvalPromptTimeoutMs = 60_000;
+const approvalTokenLifetimeMs = 5 * 60_000;
+
 export interface CreateBeforeToolCallHandlerProps {
 	readonly logger?: {
 		readonly warn?: (message: string) => void;
@@ -73,7 +76,7 @@ function approvalTokenForCalls(props: {
 			namespace: call.namespace,
 			toolName: call.toolName,
 		})),
-		expiresAtMs: nowMs + 60_000,
+		expiresAtMs: nowMs + approvalTokenLifetimeMs,
 		issuedAtMs: nowMs,
 		key: props.key,
 	});
@@ -119,12 +122,6 @@ export function createBeforeToolCallHandler(
 		const approvalCalls: PortalCallRequest[] = [];
 		for (const call of calls) {
 			const decision = profilePortalCallDecision(profile, call);
-			if (decision.kind === 'blocked') {
-				return {
-					block: true,
-					blockReason: `policy: ${agentId}/${call.namespace}/${call.toolName} is not callable`,
-				};
-			}
 			if (decision.kind === 'requires_approval') {
 				approvalCalls.push(call);
 			}
@@ -163,7 +160,7 @@ export function createBeforeToolCallHandler(
 				pluginId: 'mcp-portal',
 				severity: 'warning',
 				timeoutBehavior: 'deny',
-				timeoutMs: 60_000,
+				timeoutMs: approvalPromptTimeoutMs,
 				title: `MCP Portal batch: ${toolNames}`,
 			},
 		};
