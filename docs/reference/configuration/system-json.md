@@ -175,6 +175,11 @@ Channel config is deployment-owned. Enable channels in
 Managed OpenClaw image profiles install known extracted channel packages, such
 as `@openclaw/discord`, from the OpenClaw channel config.
 
+New OpenClaw scaffolds set `approvals.plugin.enabled=true` with
+`approvals.plugin.mode="session"` so plugin approval prompts, including MCP
+Portal approvals, have an origin-session route by default. Exec approval
+forwarding and channel-native approver user IDs remain deployment-owned.
+
 ## gateway.ingress
 
 `zones[].gateway.ingress` customizes the host-facing Gondolin ingress timeout
@@ -209,7 +214,9 @@ and `@agent-vm/mcp-portal`. New OpenClaw scaffolds allow and enable the
 `mcp-portal` plugin, set
 `plugins.entries.mcp-portal.hooks.allowPromptInjection=true`, add
 `/home/openclaw/.openclaw/extensions/mcp-portal` to `plugins.load.paths`, and
-configure the plugin with the gateway MCP config directory.
+configure the plugin with the gateway MCP config directory. The scaffold also
+sets `approvals.plugin.mode="session"` so tools under
+`calls.requiresApproval` can return prompts to the originating chat.
 
 When `agents.list` is configured, agent-vm scaffolds sibling MCP config files in
 `config/gateways/<zone>/`:
@@ -263,6 +270,11 @@ Important fields in `mcp.config.jsonc` provider entries:
   `secretPolicies.<name>` entry.
 - `secretPolicies.<name>.injection` is either `env` or `http-mediation`;
   mediated secrets must list allowed `hosts`.
+- For stdio MCP API keys, prefer `http-mediation` when the MCP server sends the
+  env value in outbound HTTP headers or other Gondolin-supported request
+  locations. The effective config rewrites the authored env ref to a generated
+  `AGENT_VM_MCP_*` placeholder environment variable, while the raw value stays
+  in host-side mediated secret state.
 
 Local smoke coverage uses a fake Streamable HTTP MCP provider and the
 controller smoke harness `tcpHostsOverride` path to make that host-side provider

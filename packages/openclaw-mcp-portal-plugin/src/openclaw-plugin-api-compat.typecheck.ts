@@ -1,6 +1,7 @@
 import type { OpenClawPluginApi as OpenClawSdkPluginApi } from 'openclaw/plugin-sdk';
 
 import type {
+	OpenClawBeforeToolCallResult,
 	OpenClawPortalPluginApi,
 	OpenClawPluginService,
 	OpenClawRuntimeLifecycleRegistrar,
@@ -52,6 +53,17 @@ export const openClawPluginServiceMatchesSdk = true satisfies AssertAssignable<
 	OpenClawPluginService,
 	SdkServiceRegistration
 >;
+
+export function openClawBeforeToolCallResultMatchesSdk(
+	api: Pick<OpenClawSdkPluginApi, 'on'>,
+): void {
+	api.on(
+		'before_tool_call',
+		async (): Promise<OpenClawBeforeToolCallResult> => ({
+			params: {},
+		}),
+	);
+}
 
 export const openClawSdkApiProvidesRequiredPortalLifecycleSurface =
 	true satisfies AssertSupportedLifecycleSurface<OpenClawSdkPluginApi>;

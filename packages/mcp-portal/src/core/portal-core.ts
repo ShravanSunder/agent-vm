@@ -1,7 +1,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
-import { jsonObjectSchema } from '../json-schema.js';
+import { jsonObjectSchema, type JsonValue } from '../json-schema.js';
 import {
 	createPortalAgentIdentity,
 	resolvePortalAccessPolicy,
@@ -15,9 +15,12 @@ import {
 	type PortalSessionRuntime,
 } from '../portal-session.js';
 import type { SkillGraphInput } from '../tool-graph.js';
+import { isPortalCoreJsonValue } from './portal-core-validation.js';
 import {
 	createPortalToolHandlers,
 	portalToolInputSchemas,
+	preparePortalApprovalCallDigests,
+	type PortalApprovalCallDigestMap,
 	type PortalApprovalCall,
 	type PortalBatchDiagnostic,
 	type PortalBatchResult,
@@ -69,10 +72,26 @@ export type PortalCoreItemResult =
 
 export interface PortalCoreItemError {
 	readonly code: string;
+	readonly issues?: readonly PortalCoreValidationIssue[];
+	readonly issueCount?: number;
+	readonly issuesTruncated?: number;
 	readonly message: string;
 	readonly namespace?: string;
 	readonly toolName?: string;
 	readonly upstream?: unknown;
+}
+
+export interface PortalCoreValidationIssue {
+	readonly code: string;
+	readonly expected?: string;
+	readonly keys?: readonly string[];
+	readonly message: string;
+	readonly path: readonly (number | string)[];
+	readonly received?: {
+		readonly preview?: string;
+		readonly type: string;
+	};
+	readonly values?: readonly JsonValue[];
 }
 
 export type PortalCoreContentBlock =
@@ -136,6 +155,7 @@ export interface PortalCoreStreamCall {
 
 const maxQueuedPortalCoreEvents = 1_024;
 const maxPortalCoreEventBytes = 256 * 1_024;
+const maxAgentFacingValidationIssues = 5;
 
 export interface PortalCoreCollectOptions {
 	readonly onEvent?: (event: PortalCoreEvent) => Promise<void> | void;
@@ -155,15 +175,9 @@ interface CreatePortalCoreBaseProps {
 	readonly upstreamNamespaces: readonly string[];
 }
 
-export type CreatePortalCoreProps =
-	| (CreatePortalCoreBaseProps & {
-			readonly approval: PortalApprovalEvaluator;
-			readonly approvalTrustBoundary?: never;
-	  })
-	| (CreatePortalCoreBaseProps & {
-			readonly approval?: never;
-			readonly approvalTrustBoundary: 'openclaw-before-tool-call-hook';
-	  });
+export interface CreatePortalCoreProps extends CreatePortalCoreBaseProps {
+	readonly approval: PortalApprovalEvaluator;
+}
 
 export interface PortalCore {
 	readonly approval: {
@@ -172,6 +186,10 @@ export interface PortalCore {
 			scope: PortalAgentScope,
 			approvalToken: string | undefined,
 		) => ReturnType<PortalApprovalEvaluator>;
+		readonly prepareCallDigests: (props: {
+			readonly input: unknown;
+			readonly scope: PortalAgentScope;
+		}) => Promise<PortalApprovalCallDigestMap | null>;
 	};
 	readonly callStream: (call: PortalCoreStreamCall) => AsyncIterable<PortalCoreEvent>;
 	readonly close: () => Promise<void>;
@@ -225,9 +243,111 @@ function errorRecordFromUnknown(error: unknown): Record<string, unknown> {
 	return isUnknownRecord(error) ? error : {};
 }
 
+function isStringArray(value: unknown): value is readonly string[] {
+	return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function isJsonValueArray(value: unknown): value is readonly JsonValue[] {
+	return Array.isArray(value) && value.every((entry) => isPortalCoreJsonValue(entry));
+}
+
+function isValidationIssueReceived(
+	value: unknown,
+): value is { readonly preview?: string; readonly type: string } {
+	return (
+		isUnknownRecord(value) &&
+		typeof value.type === 'string' &&
+		(value.preview === undefined || typeof value.preview === 'string')
+	);
+}
+
+function isValidationIssue(value: unknown): value is PortalCoreValidationIssue {
+	return (
+		isUnknownRecord(value) &&
+		typeof value.code === 'string' &&
+		typeof value.message === 'string' &&
+		Array.isArray(value.path) &&
+		value.path.every((pathPart) => typeof pathPart === 'string' || typeof pathPart === 'number') &&
+		(value.expected === undefined || typeof value.expected === 'string') &&
+		(value.keys === undefined || isStringArray(value.keys)) &&
+		(value.received === undefined || isValidationIssueReceived(value.received)) &&
+		(value.values === undefined || isJsonValueArray(value.values))
+	);
+}
+
+function validationIssuesFromUnknown(
+	error: unknown,
+): readonly PortalCoreValidationIssue[] | undefined {
+	const issues = errorRecordFromUnknown(error).issues;
+	if (!Array.isArray(issues)) {
+		return undefined;
+	}
+	const validationIssues = issues.filter((issue): issue is PortalCoreValidationIssue =>
+		isValidationIssue(issue),
+	);
+	return validationIssues.length > 0 ? validationIssues : undefined;
+}
+
+function validationIssuePathLabel(path: readonly (number | string)[]): string {
+	return path.length === 0 ? '(root)' : path.map((pathPart) => String(pathPart)).join('.');
+}
+
+function formattedJsonValue(value: JsonValue): string {
+	const serialized = JSON.stringify(value);
+	return serialized ?? '[unserializable-json-value]';
+}
+
+function receivedValueLabel(received: PortalCoreValidationIssue['received']): string | undefined {
+	if (received === undefined) {
+		return undefined;
+	}
+	if (received.preview === undefined) {
+		return received.type;
+	}
+	const preview = received.type === 'string' ? JSON.stringify(received.preview) : received.preview;
+	return `${received.type} ${preview}`;
+}
+
+function validationIssueSummary(issue: PortalCoreValidationIssue): string {
+	const details = [
+		issue.expected === undefined ? undefined : `expected ${issue.expected}`,
+		issue.values === undefined
+			? undefined
+			: `allowed values ${issue.values.map((value) => formattedJsonValue(value)).join(', ')}`,
+		issue.keys === undefined ? undefined : `unrecognized keys ${issue.keys.join(', ')}`,
+		receivedValueLabel(issue.received) === undefined
+			? undefined
+			: `received ${receivedValueLabel(issue.received)}`,
+		issue.message,
+	].filter((detail): detail is string => detail !== undefined);
+	return `${validationIssuePathLabel(issue.path)}: ${details.join('; ')}`;
+}
+
+function agentFacingValidationIssues(
+	issues: readonly PortalCoreValidationIssue[],
+): readonly PortalCoreValidationIssue[] {
+	return issues.slice(0, maxAgentFacingValidationIssues);
+}
+
+function messageFromValidationIssues(issues: readonly PortalCoreValidationIssue[]): string {
+	const shownIssues = agentFacingValidationIssues(issues);
+	const truncatedIssues = issues.length - shownIssues.length;
+	const suffix =
+		truncatedIssues > 0
+			? ` | ${String(truncatedIssues)} more validation issue(s) omitted; call describe for the exact schema.`
+			: '';
+	return `Input validation failed: ${shownIssues
+		.map((issue) => validationIssueSummary(issue))
+		.join(' | ')}${suffix}`;
+}
+
 function messageFromUnknown(error: unknown): string {
 	if (error instanceof Error) {
 		return error.message;
+	}
+	const validationIssues = validationIssuesFromUnknown(error);
+	if (validationIssues !== undefined) {
+		return messageFromValidationIssues(validationIssues);
 	}
 	const record = errorRecordFromUnknown(error);
 	const message = record.message;
@@ -302,10 +422,23 @@ function itemErrorFromPortalResult(result: PortalToolResult): PortalCoreItemErro
 	const namespace = errorRecord.namespace;
 	const toolName = errorRecord.toolName;
 	const upstream = errorRecord.upstream;
+	const issues = validationIssuesFromUnknown(result.error);
+	const shownIssues = issues === undefined ? undefined : agentFacingValidationIssues(issues);
+	const issuesTruncated =
+		issues === undefined || shownIssues === undefined
+			? undefined
+			: issues.length - shownIssues.length;
 
 	return {
 		code: typeof kind === 'string' ? kind : 'portal_item_failed',
 		message: messageFromUnknown(result.error),
+		...(issues === undefined || shownIssues === undefined
+			? {}
+			: {
+					issueCount: issues.length,
+					issues: shownIssues,
+					...(issuesTruncated === undefined || issuesTruncated <= 0 ? {} : { issuesTruncated }),
+				}),
 		...(typeof namespace === 'string' ? { namespace } : {}),
 		...(typeof toolName === 'string' ? { toolName } : {}),
 		...(upstream === undefined ? {} : { upstream }),
@@ -601,14 +734,7 @@ export function createPortalCore(props: CreatePortalCoreProps): PortalCore {
 		upstreamNamespaces: props.upstreamNamespaces,
 	});
 	const createdAgentScopeIds = new Set<string>();
-	const approval: PortalApprovalEvaluator =
-		props.approval ??
-		(() => {
-			if (props.approvalTrustBoundary === 'openclaw-before-tool-call-hook') {
-				return { kind: 'allow' };
-			}
-			throw new Error('MCP Portal approval evaluation is not configured.');
-		});
+	const approval = props.approval;
 	const toolRuntime: PortalToolRuntime = {
 		approval,
 		callUpstreamTool: props.runtime.callUpstreamTool,
@@ -645,6 +771,10 @@ export function createPortalCore(props: CreatePortalCoreProps): PortalCore {
 	return {
 		approval: {
 			evaluateCalls: (calls, scope, approvalToken) => approval(calls, scope, approvalToken),
+			prepareCallDigests: async ({ input, scope }) => {
+				const session = await sessionManager.getSession(scope);
+				return preparePortalApprovalCallDigests(session, input);
+			},
 		},
 		callStream,
 		close: async () => {

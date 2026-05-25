@@ -257,7 +257,9 @@ describe('portal MCP server', () => {
 				enabledNamespacesByAgent: {},
 				hiddenToolsByAgent: {},
 			},
-			approval: () => ({ kind: 'allow' }),
+			approval: (calls) => ({
+				decisionsByCallId: Object.fromEntries(calls.map((call) => [call.id, { kind: 'allow' }])),
+			}),
 			catalogTtlMs: 60_000,
 			runtime: {
 				callUpstreamTool: vi.fn(),

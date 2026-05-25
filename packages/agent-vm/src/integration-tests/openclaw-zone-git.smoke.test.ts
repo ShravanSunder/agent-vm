@@ -2,6 +2,7 @@
 import { chmod, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { buildOpenClawRuntimeStatusReport } from '@agent-vm/openclaw-agent-vm-plugin';
 import { execa } from 'execa';
 import { afterAll, describe, expect, it } from 'vitest';
 
@@ -129,6 +130,31 @@ async function requestZoneGitLease(options: {
 	const payload = await readJsonResponse(response);
 	assertControllerLeaseResponse(payload);
 	return payload;
+}
+
+async function publishOpenClawRuntimeStatus(options: {
+	readonly controllerUrl: string;
+	readonly openClawConfigPath: string;
+	readonly zoneId: string;
+}): Promise<void> {
+	const parsedConfig: unknown = JSON.parse(await readFile(options.openClawConfigPath, 'utf8'));
+	if (!isObjectRecord(parsedConfig)) {
+		throw new Error(`Expected OpenClaw smoke config at ${options.openClawConfigPath}.`);
+	}
+	const response = await fetch(
+		`${options.controllerUrl}/zones/${encodeURIComponent(options.zoneId)}/openclaw-runtime-status`,
+		{
+			body: JSON.stringify(
+				buildOpenClawRuntimeStatusReport({
+					config: parsedConfig,
+					zoneId: options.zoneId,
+				}),
+			),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		},
+	);
+	await readJsonResponse(response);
 }
 
 async function peekLease(options: {
@@ -271,6 +297,11 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 		if (!gatewayIngress) {
 			throw new Error('OpenClaw gateway smoke did not expose an ingress URL.');
 		}
+		await publishOpenClawRuntimeStatus({
+			controllerUrl: harness.controllerUrl,
+			openClawConfigPath: project.zone.gateway.config,
+			zoneId: project.zone.id,
+		});
 
 		const lease = await requestZoneGitLease({
 			controllerUrl: harness.controllerUrl,

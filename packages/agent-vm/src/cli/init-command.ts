@@ -823,6 +823,12 @@ const defaultOpenClawConfig = (
 		port: 18789,
 	},
 	agents: defaultOpenClawAgentsConfig(agentIds),
+	approvals: {
+		plugin: {
+			enabled: true,
+			mode: 'session',
+		},
+	},
 	mcp: {
 		servers: defaultOpenClawMcpPortalServers(agentIds),
 	},

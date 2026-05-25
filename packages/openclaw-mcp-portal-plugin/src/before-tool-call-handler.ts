@@ -1,4 +1,9 @@
 import { resolveMcpPortalProfile } from '@agent-vm/config-contracts';
+import {
+	hashCallArguments,
+	signApprovalToken,
+	type ApprovalTokenCallDigest,
+} from '@agent-vm/mcp-portal/portal-auth/hmac-token';
 
 import type {
 	OpenClawBeforeToolCallEvent,
@@ -12,10 +17,20 @@ import {
 	type PortalCallRequest,
 } from './portal-tool-policy.js';
 
+const approvalPromptTimeoutMs = 60_000;
+const approvalTokenLifetimeMs = 5 * 60_000;
+
 export interface CreateBeforeToolCallHandlerProps {
 	readonly logger?: {
+		readonly error?: (message: string) => void;
 		readonly warn?: (message: string) => void;
 	};
+	readonly resolveApprovalTokenCallDigests?: (props: {
+		readonly agentId: string;
+		readonly approvalCalls: readonly PortalCallRequest[];
+		readonly context: OpenClawPluginHookContext;
+		readonly params: Record<string, unknown>;
+	}) => Promise<readonly ApprovalTokenCallDigest[]>;
 	readonly runtimeState: PortalPluginRuntimeState;
 }
 
@@ -58,6 +73,60 @@ function parseCallRequests(params: Record<string, unknown>): readonly PortalCall
 	return parsedCalls;
 }
 
+function fallbackApprovalTokenCallDigests(
+	calls: readonly PortalCallRequest[],
+): readonly ApprovalTokenCallDigest[] {
+	return calls.map((call) => ({
+		argumentsHash: hashCallArguments(call.arguments),
+		namespace: call.namespace,
+		toolName: call.toolName,
+	}));
+}
+
+function approvalTokenForCallDigests(props: {
+	readonly agentId: string;
+	readonly callDigests: readonly ApprovalTokenCallDigest[];
+	readonly key: Buffer;
+	readonly nowMs?: number;
+}): string {
+	const nowMs = props.nowMs ?? Date.now();
+	return signApprovalToken({
+		agentId: props.agentId,
+		calls: props.callDigests,
+		expiresAtMs: nowMs + approvalTokenLifetimeMs,
+		issuedAtMs: nowMs,
+		key: props.key,
+	});
+}
+
+function redactApprovalPreviewValue(key: string, value: unknown): unknown {
+	if (/token|secret|password|credential|api[-_]?key/iu.test(key)) {
+		return '[redacted]';
+	}
+	if (Array.isArray(value)) {
+		return value.map((entry) => redactApprovalPreviewValue(key, entry));
+	}
+	if (typeof value === 'object' && value !== null) {
+		return Object.fromEntries(
+			Object.entries(value).map(([entryKey, entryValue]) => [
+				entryKey,
+				redactApprovalPreviewValue(entryKey, entryValue),
+			]),
+		);
+	}
+	return value;
+}
+
+function approvalCallPreview(call: PortalCallRequest): string {
+	const redactedArguments = redactApprovalPreviewValue('arguments', call.arguments);
+	const serializedArguments = JSON.stringify(redactedArguments);
+	const preview =
+		serializedArguments.length > 500
+			? `${serializedArguments.slice(0, 497)}...`
+			: serializedArguments;
+	return `${call.id}: ${call.namespace}.${call.toolName} args=${preview}`;
+}
+
 export function createBeforeToolCallHandler(
 	props: CreateBeforeToolCallHandlerProps,
 ): (
@@ -86,24 +155,24 @@ export function createBeforeToolCallHandler(
 			return { block: true, blockReason: 'mcp-portal: malformed portal call batch.' };
 		}
 
-		for (const call of calls) {
-			if (!profileAllowsPortalCall(profile, call)) {
+		const disabledCalls = calls.filter((call) => !profileAllowsPortalCall(profile, call));
+		if (disabledCalls.length > 0) {
+			if (disabledCalls.length === calls.length) {
+				const call = disabledCalls[0];
 				return {
 					block: true,
-					blockReason: `policy: ${agentId}/${call.namespace}/${call.toolName} not enabled`,
+					blockReason:
+						call === undefined
+							? `policy: ${agentId} has no enabled MCP Portal calls in this batch`
+							: `policy: ${agentId}/${call.namespace}/${call.toolName} not enabled`,
 				};
 			}
+			return undefined;
 		}
 
 		const approvalCalls: PortalCallRequest[] = [];
 		for (const call of calls) {
 			const decision = profilePortalCallDecision(profile, call);
-			if (decision.kind === 'blocked') {
-				return {
-					block: true,
-					blockReason: `policy: ${agentId}/${call.namespace}/${call.toolName} is not callable`,
-				};
-			}
 			if (decision.kind === 'requires_approval') {
 				approvalCalls.push(call);
 			}
@@ -111,18 +180,49 @@ export function createBeforeToolCallHandler(
 		if (approvalCalls.length === 0) {
 			return undefined;
 		}
+		if (approvalCalls.length !== calls.length) {
+			return undefined;
+		}
 
 		const toolNames = approvalCalls
 			.map((call) => `${call.namespace}.${call.toolName}`)
 			.toSorted()
 			.join(', ');
+		let portalApprovalToken: string;
+		try {
+			const callDigests =
+				(await props.resolveApprovalTokenCallDigests?.({
+					agentId,
+					approvalCalls,
+					context,
+					params: event.params,
+				})) ?? fallbackApprovalTokenCallDigests(approvalCalls);
+			if (callDigests.length !== approvalCalls.length) {
+				throw new Error(
+					`prepared ${callDigests.length} approval token digests for ${approvalCalls.length} approval call(s)`,
+				);
+			}
+			portalApprovalToken = approvalTokenForCallDigests({
+				agentId,
+				callDigests,
+				key: props.runtimeState.getApprovalHmacKey(),
+			});
+		} catch (error) {
+			const message = `mcp-portal: failed to prepare approval token: ${
+				error instanceof Error ? error.message : String(error)
+			}`;
+			props.logger?.error?.(message);
+			return { block: true, blockReason: message };
+		}
+		const approvalPreview = approvalCalls.map(approvalCallPreview).join('\n');
 		return {
+			params: { ...event.params, portalApprovalToken },
 			requireApproval: {
-				description: `Allow MCP Portal batch for agent ${agentId}: ${toolNames}.`,
+				description: `Allow MCP Portal batch for agent ${agentId}:\n${approvalPreview}`,
 				pluginId: 'mcp-portal',
 				severity: 'warning',
 				timeoutBehavior: 'deny',
-				timeoutMs: 60_000,
+				timeoutMs: approvalPromptTimeoutMs,
 				title: `MCP Portal batch: ${toolNames}`,
 			},
 		};

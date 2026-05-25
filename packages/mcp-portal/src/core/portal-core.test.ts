@@ -1,13 +1,17 @@
+import type { ResolvedMcpPortalProfile } from '@agent-vm/config-contracts';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it, vi } from 'vitest';
 
+import { hashCallArguments } from '../portal-auth/hmac-token.js';
 import { UpstreamMcpError } from '../upstream-mcp-errors.js';
+import { createPortalPolicyApprovalEvaluator } from './portal-approval-evaluator.js';
 import {
 	createPortalCore,
 	collectPortalCoreResult,
 	listPortalCoreToolDescriptors,
 	type PortalCoreEvent,
 } from './portal-core.js';
+import type { PortalApprovalCallDecision, PortalApprovalEvaluation } from './portal-tools.js';
 
 const batchTools = [
 	{
@@ -33,8 +37,29 @@ const scalarTools = [
 	},
 ] satisfies readonly Tool[];
 
-function allowApproval(): { readonly kind: 'allow' } {
-	return { kind: 'allow' };
+const approvalProfile: ResolvedMcpPortalProfile = {
+	approval: {
+		allowWithoutApprovalTools: [{ namespace: 'linear', toolName: 'list_issues' }],
+		alwaysAskTools: [{ namespace: 'linear', toolName: 'create_issue' }],
+		annotationPolicy: 'destructive-requires-approval',
+		callPoliciesByNamespace: {},
+		trustedAnnotationNamespaces: [],
+		writeTools: [],
+	},
+	cache: { catalogTtlMs: 60_000 },
+	enabledNamespaces: ['linear'],
+	enabledToolsByNamespace: {},
+	hiddenToolsByNamespace: {},
+	logging: { enabled: false },
+	promptContext: { enabled: true, maxNamespaces: 12 },
+};
+
+function allowApproval(calls: readonly { readonly id: string }[]): {
+	readonly decisionsByCallId: Readonly<Record<string, { readonly kind: 'allow' }>>;
+} {
+	return {
+		decisionsByCallId: Object.fromEntries(calls.map((call) => [call.id, { kind: 'allow' }])),
+	};
 }
 
 describe('portal core event stream', () => {
@@ -333,6 +358,155 @@ describe('portal core event stream', () => {
 		await core.close();
 	});
 
+	it('surfaces input validation issues in failed core item errors', async () => {
+		const callUpstreamTool = vi.fn(async () => ({ content: [{ text: 'created', type: 'text' }] }));
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval: allowApproval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool,
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(async () => batchTools),
+			},
+			upstreamNamespaces: ['linear'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'cli-operator',
+		});
+
+		const result = await collectPortalCoreResult(
+			core.callStream({
+				input: {
+					calls: [
+						{
+							arguments: {},
+							id: 'bad-call',
+							namespace: 'linear',
+							toolName: 'create_issue',
+						},
+					],
+				},
+				scope,
+				toolName: 'mcp_portal_call',
+			}),
+		);
+
+		expect(result.items).toEqual([
+			{
+				error: {
+					code: 'input_validation',
+					issueCount: 1,
+					issues: [
+						expect.objectContaining({
+							code: expect.any(String),
+							expected: 'string',
+							message: expect.any(String),
+							path: ['title'],
+							received: { type: 'undefined' },
+						}),
+					],
+					message: expect.stringContaining('title: expected string; received undefined'),
+					namespace: 'linear',
+					toolName: 'create_issue',
+				},
+				requestId: 'bad-call',
+				status: 'failed',
+			},
+		]);
+		expect(result.items[0]?.status === 'failed' ? result.items[0].error.message : '').not.toBe(
+			'[object Object]',
+		);
+		expect(callUpstreamTool).not.toHaveBeenCalled();
+
+		await core.close();
+	});
+
+	it('caps agent-facing validation issues while reporting truncation', async () => {
+		const manyRequiredFieldsTool = {
+			inputSchema: {
+				properties: {
+					alpha: { type: 'string' },
+					bravo: { type: 'string' },
+					charlie: { type: 'string' },
+					delta: { type: 'string' },
+					echo: { type: 'string' },
+					foxtrot: { type: 'string' },
+				},
+				required: ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot'],
+				type: 'object',
+			},
+			name: 'many_required_fields',
+		} satisfies Tool;
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval: allowApproval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool: vi.fn(),
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(async () => [manyRequiredFieldsTool]),
+			},
+			upstreamNamespaces: ['linear'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'cli-operator',
+		});
+
+		const result = await collectPortalCoreResult(
+			core.callStream({
+				input: {
+					calls: [
+						{
+							arguments: {},
+							id: 'bad-call',
+							namespace: 'linear',
+							toolName: 'many_required_fields',
+						},
+					],
+				},
+				scope,
+				toolName: 'mcp_portal_call',
+			}),
+		);
+
+		expect(result.items).toEqual([
+			{
+				error: expect.objectContaining({
+					code: 'input_validation',
+					issueCount: 6,
+					issues: expect.arrayContaining([
+						expect.objectContaining({ path: ['alpha'] }),
+						expect.objectContaining({ path: ['echo'] }),
+					]),
+					issuesTruncated: 1,
+					message: expect.stringContaining('1 more validation issue(s) omitted'),
+				}),
+				requestId: 'bad-call',
+				status: 'failed',
+			},
+		]);
+		if (result.items[0]?.status !== 'failed') {
+			throw new Error('expected failed item');
+		}
+		expect(result.items[0].error.issues).toHaveLength(5);
+		expect(result.items[0].error.message).not.toContain('foxtrot');
+
+		await core.close();
+	});
+
 	it('forwards real upstream progress events while the call is in flight', async () => {
 		const callUpstreamTool = vi.fn(async (call) => {
 			call.onEvent?.({
@@ -470,12 +644,19 @@ describe('portal core event stream', () => {
 		await core.close();
 	});
 
-	it('evaluates approval once for the full batch before upstream contact', async () => {
+	it('evaluates approval once and applies decisions per call before upstream contact', async () => {
 		const callUpstreamTool = vi.fn(async () => ({ ok: true }));
-		const approval = vi.fn((calls: readonly { readonly id: string }[]) => {
-			void calls;
-			return { kind: 'approval_required', level: 'standard' } as const;
-		});
+		const approval = vi.fn(
+			(calls: readonly { readonly id: string }[]): PortalApprovalEvaluation => {
+				const decisionsByCallId: Record<string, PortalApprovalCallDecision> = {};
+				for (const call of calls) {
+					decisionsByCallId[call.id] = { kind: 'approval_required', level: 'standard' };
+				}
+				return {
+					decisionsByCallId,
+				};
+			},
+		);
 		const core = createPortalCore({
 			accessPolicy: {
 				defaultPolicy: 'allow-all',
@@ -548,6 +729,138 @@ describe('portal core event stream', () => {
 				status: 'failed',
 			}),
 		]);
+
+		await core.close();
+	});
+
+	it('returns approval-required only for gated native calls when no portal token is present', async () => {
+		const approval = createPortalPolicyApprovalEvaluator({
+			missingApprovalTokenDecision: { kind: 'approval_required', level: 'standard' },
+			resolveRecord: () => ({ hmacKey: Buffer.alloc(32, 1), profile: approvalProfile }),
+		});
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool: vi.fn(async () => ({ ok: true })),
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(
+					async () =>
+						[
+							{
+								inputSchema: { properties: {}, type: 'object' },
+								name: 'list_issues',
+							},
+							{
+								inputSchema: {
+									properties: { title: { type: 'string' } },
+									required: ['title'],
+									type: 'object',
+								},
+								name: 'create_issue',
+							},
+						] satisfies readonly Tool[],
+				),
+			},
+			upstreamNamespaces: ['linear'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'openclaw-trusted',
+		});
+
+		const result = await core.collectPortalCoreResult(
+			core.callStream({
+				input: {
+					calls: [
+						{ arguments: {}, id: 'list', namespace: 'linear', toolName: 'list_issues' },
+						{
+							arguments: { title: 'Fix deploy' },
+							id: 'create',
+							namespace: 'linear',
+							toolName: 'create_issue',
+						},
+					],
+				},
+				scope,
+				toolName: 'mcp_portal_call',
+			}),
+		);
+
+		expect(result.items).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ requestId: 'list', status: 'success' }),
+				expect.objectContaining({
+					error: expect.objectContaining({ code: 'approval_required' }),
+					requestId: 'create',
+					status: 'failed',
+				}),
+			]),
+		);
+
+		await core.close();
+	});
+
+	it('prepares approval token digests from validated arguments', async () => {
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'allow-all',
+				enabledNamespacesByAgent: {},
+				hiddenToolsByAgent: {},
+			},
+			approval: allowApproval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool: vi.fn(async () => ({ ok: true })),
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(
+					async () =>
+						[
+							{
+								inputSchema: {
+									properties: { title: { default: 'Fallback title', type: 'string' } },
+									type: 'object',
+								},
+								name: 'create_issue_with_default',
+							},
+						] satisfies readonly Tool[],
+				),
+			},
+			upstreamNamespaces: ['linear'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'openclaw-trusted',
+		});
+
+		await expect(
+			core.approval.prepareCallDigests({
+				input: {
+					calls: [
+						{
+							arguments: {},
+							id: 'defaulted',
+							namespace: 'linear',
+							toolName: 'create_issue_with_default',
+						},
+					],
+				},
+				scope,
+			}),
+		).resolves.toEqual({
+			defaulted: {
+				argumentsHash: hashCallArguments({ title: 'Fallback title' }),
+				namespace: 'linear',
+				toolName: 'create_issue_with_default',
+			},
+		});
 
 		await core.close();
 	});

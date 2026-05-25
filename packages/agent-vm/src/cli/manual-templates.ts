@@ -222,6 +222,7 @@ Agent-vm scaffolds OpenClaw defaults that make the deployment usable without han
 	agents.defaults.workspace points at /zone/agents/default so /zone remains shared zone storage.
 	agents.defaults.model.primary is openai-codex/gpt-5.5 with thinkingDefault low.
 	session.dmScope is per-channel-peer so Discord DMs from different people do not share one agent session.
+	approvals.plugin.enabled is true with approvals.plugin.mode=session so MCP Portal plugin approval prompts route back to the originating session by default. Exec approval forwarding remains deployment-owned.
 	tools.web.fetch.ssrfPolicy trusts fake-IP ranges for web_fetch. For gateway/tool TCP mappings, agent-vm's Gondolin adapter uses RFC2544 synthetic IPv4 plus ::ffff:198.18.0.1 as the synthetic AAAA answer so OpenClaw SSRF checks can validate all DNS answers without a broad hostname bypass.
 	tools.sandbox.tools.alsoAllow includes web_search, web_fetch, message, and group:plugins so sandboxed sessions can see web tools once a provider is configured, can explicitly send channel replies when OpenClaw uses message_tool_only group reply delivery, and can see optional plugin-owned tools such as mcp_portal_*.
 	plugins.load.paths includes /home/openclaw/.openclaw/extensions for agent-vm-managed extensions and the package manager's global root for managed OpenClaw packages.
@@ -261,9 +262,12 @@ MCP Portal is a scoped tool facade over deployment-owned upstream MCP servers. M
 
 	MCP JSON Schema is canonical. Zod is derived for validation and helper code. Invalid call arguments and schemas that cannot be converted return structured errors without calling upstream. Tool VMs can use the mcp-portal helper package but do not receive upstream MCP credentials.
 
+	Prefer http-mediation for MCP provider API keys, including stdio providers, when the provider sends the env value in outbound HTTP headers or other Gondolin-supported request locations. The MCP server sees a placeholder env value; Gondolin swaps it for the real secret only for configured hosts. Use raw env injection only as an explicit exception for providers that cannot operate with placeholders.
+
 	Run agent-vm validate --mcp-live after editing MCP providers or MCP Portal profiles. Static validate checks schema and materialization. Live validate starts each configured MCP provider, runs tools/list, and reports namespace, transport, phase, and hints for failures.
 
 	Read-only/destructive annotations are trusted only for configured namespaces. Untrusted upstream tools require approval unless explicitly allowlisted by policy. Managed OpenClaw uses the in-process before_tool_call approval boundary.
+	Scaffolded OpenClaw config sets approvals.plugin.mode=session so tools under calls.requiresApproval have a route back to the originating session. Channel-native approval settings, such as Discord approver user IDs, remain deployment-owned.
 
 	MCP provider URLs must use http or https. Loopback and private-network upstream URLs are allowed because authored config is trusted deployment config and sidecar/local MCP providers are a supported shape. Do not import untrusted MCP provider config directly; if config trust changes, add an explicit per-provider network allowlist before accepting private-network targets.
 

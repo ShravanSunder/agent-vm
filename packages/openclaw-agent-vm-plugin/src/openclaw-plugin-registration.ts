@@ -1,3 +1,4 @@
+/* oxlint-disable eslint/no-await-in-loop -- runtime status publish retries must be sequential */
 import { createLeaseClient } from './controller-lease-client.js';
 import { resolveGondolinPluginConfig } from './gondolin-plugin-config.js';
 import {
@@ -16,6 +17,33 @@ import {
 	createGondolinSandboxBackendManager,
 } from './sandbox-backend-factory.js';
 import { registerZoneGitTool } from './zone-git-tool.js';
+
+const runtimeStatusPublishMaxAttempts = 30;
+const runtimeStatusPublishRetryDelayMs = 1_000;
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => {
+		setTimeout(resolve, ms);
+	});
+}
+
+async function publishRuntimeStatusWithRetry(options: {
+	readonly controllerUrl: string;
+	readonly report: ReturnType<typeof buildOpenClawRuntimeStatusReport>;
+}): Promise<void> {
+	const leaseClient = createLeaseClient({ controllerUrl: options.controllerUrl });
+	for (let attemptIndex = 0; attemptIndex < runtimeStatusPublishMaxAttempts; attemptIndex += 1) {
+		try {
+			await leaseClient.publishOpenClawRuntimeStatus?.(options.report);
+			return;
+		} catch (error: unknown) {
+			if (attemptIndex === runtimeStatusPublishMaxAttempts - 1) {
+				throw error;
+			}
+			await sleep(runtimeStatusPublishRetryDelayMs);
+		}
+	}
+}
 
 const plugin = {
 	id: 'gondolin',
@@ -66,15 +94,13 @@ const plugin = {
 		};
 		const initialRuntimeStatus = buildRuntimeStatus();
 		if (initialRuntimeStatus) {
-			const leaseClient = createLeaseClient({ controllerUrl: pluginConfig.controllerUrl });
-			void leaseClient
-				.publishOpenClawRuntimeStatus?.(initialRuntimeStatus)
-				?.catch((error: unknown) => {
-					const message = error instanceof Error ? error.message : JSON.stringify(error);
-					process.stderr.write(
-						`[gondolin] failed to publish OpenClaw runtime status: ${message}\n`,
-					);
-				});
+			void publishRuntimeStatusWithRetry({
+				controllerUrl: pluginConfig.controllerUrl,
+				report: initialRuntimeStatus,
+			}).catch((error: unknown) => {
+				const message = error instanceof Error ? error.message : JSON.stringify(error);
+				process.stderr.write(`[gondolin] failed to publish OpenClaw runtime status: ${message}\n`);
+			});
 		}
 
 		const sdkPath = '/opt/openclaw-sdk/sandbox.js';

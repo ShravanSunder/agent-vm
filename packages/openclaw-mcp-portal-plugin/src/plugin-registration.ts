@@ -8,6 +8,7 @@ import {
 } from '@agent-vm/config-contracts';
 import {
 	createPortalCore,
+	createPortalPolicyApprovalEvaluator,
 	createUpstreamMcpClientRuntime,
 	listPortalCoreToolDescriptors,
 	resolveUpstreamServers,
@@ -210,7 +211,10 @@ async function resolveManagedPortalSecret(secret: SecretValue): Promise<string> 
 	return value;
 }
 
-async function createManagedPortalCore(configDir: string): Promise<PortalCore> {
+async function createManagedPortalCore(
+	configDir: string,
+	runtimeState: ReturnType<typeof createPortalPluginRuntimeState>,
+): Promise<PortalCore> {
 	const effectiveConfigPaths = await resolveEffectiveConfigPaths(configDir);
 	const [mcpConfig, portalConfig] = await Promise.all([
 		loadMcpConfig(effectiveConfigPaths.mcpConfigPath),
@@ -222,6 +226,21 @@ async function createManagedPortalCore(configDir: string): Promise<PortalCore> {
 	});
 	const upstreamRuntime = createUpstreamMcpClientRuntime({ servers: upstreamServers });
 	const profilePolicyMaps = buildProfilePolicyMaps(portalConfig);
+	const approval = createPortalPolicyApprovalEvaluator({
+		consumeTokenId: (agentId, jti, expiresAtMs) =>
+			runtimeState.consumeApprovalTokenId(agentId, jti, expiresAtMs),
+		missingApprovalTokenDecision: { kind: 'approval_required', level: 'standard' },
+		resolveRecord: (agentId) => {
+			const agent = portalConfig.agents[agentId];
+			if (agent === undefined) {
+				return undefined;
+			}
+			return {
+				hmacKey: runtimeState.getApprovalHmacKey(),
+				profile: resolveMcpPortalProfile(portalConfig, agent.profile),
+			};
+		},
+	});
 
 	return createPortalCore({
 		accessPolicy: {
@@ -230,7 +249,7 @@ async function createManagedPortalCore(configDir: string): Promise<PortalCore> {
 			enabledToolsByNamespaceByAgent: profilePolicyMaps.enabledToolsByNamespaceByAgent,
 			hiddenToolsByAgent: profilePolicyMaps.hiddenToolsByAgent,
 		},
-		approvalTrustBoundary: 'openclaw-before-tool-call-hook',
+		approval,
 		catalogTtlMs: profilePolicyMaps.cacheTtlMs,
 		runtime: {
 			callUpstreamTool: upstreamRuntime.callTool,
@@ -385,7 +404,7 @@ export function registerMcpPortalPlugin(api: OpenClawPortalPluginApi): void {
 	const runtimeState = createPortalPluginRuntimeState({ configDir });
 	let corePromise: Promise<PortalCore> | undefined;
 	const getCore = (): Promise<PortalCore> => {
-		corePromise ??= createManagedPortalCore(configDir).catch((error: unknown) => {
+		corePromise ??= createManagedPortalCore(configDir, runtimeState).catch((error: unknown) => {
 			corePromise = undefined;
 			throw error;
 		});
@@ -400,9 +419,39 @@ export function registerMcpPortalPlugin(api: OpenClawPortalPluginApi): void {
 		return;
 	}
 
-	api.on?.('before_tool_call', createBeforeToolCallHandler({ logger, runtimeState }), {
-		priority: 80,
-	});
+	api.on?.(
+		'before_tool_call',
+		createBeforeToolCallHandler({
+			logger,
+			resolveApprovalTokenCallDigests: async ({ agentId, approvalCalls, context, params }) => {
+				const core = await getCore();
+				const scope = core.createAgentScope({
+					agentId,
+					agentScopeId: agentId,
+					...(context.sessionId ? { sessionId: context.sessionId } : {}),
+					...(context.sessionKey ? { sessionKey: context.sessionKey } : {}),
+					source: 'openclaw-trusted',
+				});
+				const digestsByCallId = await core.approval.prepareCallDigests({ input: params, scope });
+				if (digestsByCallId === null) {
+					throw new Error('MCP Portal core could not prepare approval token digests.');
+				}
+				return approvalCalls.map((call) => {
+					const digest = digestsByCallId[call.id];
+					if (digest === undefined) {
+						throw new Error(
+							`MCP Portal core did not prepare an approval token digest for call '${call.id}'.`,
+						);
+					}
+					return digest;
+				});
+			},
+			runtimeState,
+		}),
+		{
+			priority: 80,
+		},
+	);
 
 	api.on?.('before_prompt_build', createBeforePromptBuildHandler({ runtimeState }), {
 		priority: 80,

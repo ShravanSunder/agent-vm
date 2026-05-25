@@ -194,6 +194,12 @@ function createHealthyOpenClawConfig(): object {
 			list: [{ id: 'sun' }],
 		},
 		channels: {},
+		approvals: {
+			plugin: {
+				enabled: true,
+				mode: 'session',
+			},
+		},
 		plugins: {
 			allow: ['gondolin', 'memory-core', 'mcp-portal'],
 			entries: {

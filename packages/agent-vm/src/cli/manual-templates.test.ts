@@ -155,6 +155,12 @@ describe('manual templates', () => {
 		).toContain('session.dmScope');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
+		).toContain('approvals.plugin.mode');
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'approvals.plugin.mode=session',
+		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
 		).toContain('::ffff:198.18.0.1');
 		expect(
 			files.find((file) => file.relativePath.endsWith('openclaw-defaults.md'))?.content,
@@ -182,6 +188,12 @@ describe('manual templates', () => {
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'private-network upstream URLs',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Prefer http-mediation for MCP provider API keys, including stdio providers',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Use raw env injection only as an explicit exception',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'authored config is trusted deployment config',
