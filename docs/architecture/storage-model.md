@@ -94,6 +94,18 @@ explicitly exclude `zone-git/` — the two reasons below are why.
 Tool VM lease paths cross three naming layers: OpenClaw SDK input, gateway VM
 paths, and controller-trusted host paths. Keep these names distinct.
 
+Runtime path translation is implemented as a shared pure translator in
+`@agent-vm/gateway-interface`. The shared code owns path mechanics: absolute
+path normalization, parent-traversal rejection, longest-root matching, relative
+path calculation, guest-to-host and host-to-guest mapping, storage backing
+classification, and structured retry guidance.
+
+Runtime packages inject their own mapping facts. The OpenClaw plugin injects
+the Tool VM mapping where `/workspace` is the RealFS workspace mount and
+`/work` is Tool VM rootfs/COW scratch. The controller injects the OpenClaw
+gateway lease mapping where `/zone` maps to `zoneFilesDir` and
+`/home/openclaw/.openclaw/state/sandboxes` maps to `stateDir/sandboxes`.
+
 ```text
 name / path                         layer / location                  storage / backing
 ────────────────────────────────    ───────────────────────────────   ─────────────────────────────

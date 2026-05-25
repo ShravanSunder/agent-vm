@@ -316,6 +316,18 @@ The plugin provides:
   real path is inside either `stateDir/sandboxes` or `zoneFilesDir`, and mounts
   non-zone-git work mounts into the Tool VM at `/workspace`.
 
+The OpenClaw plugin normalizes workspace/cwd intent before calling the
+controller. Known Tool VM guest paths are allowed as intent: `/workspace` maps
+to the mounted agent workspace, while `/work` stays Tool VM rootfs/COW scratch.
+The plugin sends the controller only the lease mount source and keeps the
+effective guest cwd on the backend handle for SSH execution.
+
+The controller remains the security boundary for host mounts. It accepts
+controller-supported OpenClaw gateway paths such as `/zone/<child>` and
+`/home/openclaw/.openclaw/state/sandboxes/<child>`, translates them to host
+paths, and proves the resolved path is inside the configured allowed roots
+before booting a Tool VM.
+
 OpenClaw SDK compatibility note: OpenClaw currently names the selected sandbox
 path `workspaceDir`. The agent-vm plugin translates that field to
 `workMountDir` before calling the controller.

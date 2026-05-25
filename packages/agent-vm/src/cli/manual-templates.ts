@@ -368,6 +368,9 @@ worker repo edits live under /work/repos inside Worker gateway task VMs.
 Worker gateway task VMs use /work/tmp for temporary files and /work/cache for disposable package-manager cache.
 OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work; persistent zone files live at /zone and are backed by gateway.zoneFilesDir.
 
+The OpenClaw plugin may accept Tool VM guest cwd intent such as \`/workspace\`, \`/workspace/<child>\`, \`/work\`, or \`/work/<child>\`. The plugin translates that intent before it calls the controller.
+The controller \`/lease workMountDir\` is stricter: it accepts only controller-supported OpenClaw gateway paths such as \`/zone/<child>\` or \`/home/openclaw/.openclaw/state/sandboxes/<child>\`. Direct Tool VM guest paths such as \`/workspace\` and \`/work\` are rejected at the controller boundary.
+
 workMountDir is a gateway VM path under /zone or /home/openclaw/.openclaw/state/sandboxes. The roots themselves are validation boundaries; leases must choose concrete child paths.
 hostWorkMountDir is the host realpath after controller validation.
 OpenClaw SDK compatibility note: OpenClaw may call the selected sandbox path workspaceDir. The agent-vm plugin translates that external SDK name to controller workMountDir.

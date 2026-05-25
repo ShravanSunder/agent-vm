@@ -215,6 +215,15 @@ describe('manual templates', () => {
 			'/work is Tool VM-local rootfs/COW scratch',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'The OpenClaw plugin may accept Tool VM guest cwd intent',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'The controller `/lease workMountDir` is stricter',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'Direct Tool VM guest paths such as `/workspace` and `/work` are rejected at the controller boundary',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'workMountDir',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
