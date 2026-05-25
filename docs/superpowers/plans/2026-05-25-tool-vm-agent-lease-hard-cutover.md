@@ -34,7 +34,7 @@ pid
 vmId
 ```
 
-`profileId`, `workMountDir`, `agentWorkspaceDir`, and zone-git mount details are reuse constraints for an existing per-agent VM. They are not id components.
+`profileId`, `workMountDir`, `agentWorkspaceDir`, and zone-git mount details are compatibility constraints for an existing per-agent VM. They are not id components, and they must not appear in the plugin cache key. A same-agent host path drift must not fork a second Tool VM; it either reuses the existing lease or surfaces a compatibility failure instead of creating a parallel lease.
 
 `scopeKey` is removed completely from:
 
@@ -201,6 +201,7 @@ Modify:
   - Assert managed tuple locally.
   - Do not send `scopeKey` or `sandbox` to controller.
   - Do not include `scopeKey` in cache key or logs.
+  - Change the plugin cache key to `zoneId + agentId` only. Do not key cached Tool VM handles by `profileId`, `workspaceDir`, `agentWorkspaceDir`, or `scopeKey`.
   - Refresh cached handle on controller renew 404/410.
   - Treat plugin-observed SSH failures, command timeouts, and active-use refreshable failures as stale-handle signals.
 
@@ -213,6 +214,7 @@ Modify:
 
 - `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts`
   - Same-agent different `scopeKey` inputs reuse the same handle and only send agent-scoped request.
+  - Same-agent host path drift does not fork a second cached handle.
   - Dead/expired renew response causes cache drop and fresh request.
   - SSH failure or timeout during a cached operation drops the cached handle, so the next operation requests a fresh lease.
 
@@ -1500,7 +1502,51 @@ function shouldRefreshCachedLease(error: unknown): boolean {
 }
 ```
 
-- [ ] **Step 5: Remove scope from plugin request and logs**
+- [ ] **Step 5: Make the plugin cache key agent-scoped only**
+
+In `sandbox-backend-handle-factory.ts`, replace the current cache key shape:
+
+```ts
+function agentLeaseCacheKey(params: {
+	readonly agentId: string;
+	readonly agentWorkspaceDir: string;
+	readonly profileId: string;
+	readonly workspaceDir: string;
+	readonly zoneId: string;
+}): string {
+	return [
+		params.zoneId,
+		params.agentId,
+		params.profileId,
+		params.agentWorkspaceDir,
+		params.workspaceDir,
+	].join('\0');
+}
+```
+
+with:
+
+```ts
+function agentLeaseCacheKey(params: {
+	readonly agentId: string;
+	readonly zoneId: string;
+}): string {
+	return [params.zoneId, params.agentId].join('\0');
+}
+```
+
+Update the call site:
+
+```ts
+const cacheKey = agentLeaseCacheKey({
+	agentId,
+	zoneId: options.zoneId,
+});
+```
+
+This is the plugin-side expression of the hard contract: one cached Tool VM handle per `zoneId + agentId`. `profileId`, `workspaceDir`, and `agentWorkspaceDir` remain request/diagnostic/compatibility data; they are not cache identity and must not fork a second cached Tool VM for the same agent.
+
+- [ ] **Step 6: Remove scope from plugin request and logs**
 
 In `createGondolinSandboxBackendFactory`, keep `params.scopeKey` only as SDK input. Replace the `requestLease` call with:
 
@@ -1521,7 +1567,7 @@ Replace renew failure log with:
 `lease renew failed for zone '${options.zoneId}' agent '${agentId}' lease '${cachedEntry.lease.leaseId}': ${formatUnknownError(error)}`
 ```
 
-- [ ] **Step 6: Keep plugin-side managed tuple assertion**
+- [ ] **Step 7: Keep plugin-side managed tuple assertion**
 
 Keep `assertPluginLeaseContract` checking `cfg`. Remove `scopeKey` from its params:
 
@@ -1544,7 +1590,7 @@ Call it as:
 assertPluginLeaseContract({ cfg: params.cfg });
 ```
 
-- [ ] **Step 7: Write plugin cache refresh integration test**
+- [ ] **Step 8: Write plugin cache refresh integration test**
 
 In `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts`, add:
 
@@ -1605,7 +1651,7 @@ it('refreshes the cached handle when renew reports an expired lease', async () =
 });
 ```
 
-- [ ] **Step 8: Update same-agent scope permutation test**
+- [ ] **Step 9: Update same-agent scope permutation test**
 
 In `sandbox-backend-factory.test.ts`, keep a test where first and second calls have different `scopeKey`, but assert the controller request does not include scope:
 
@@ -1620,7 +1666,62 @@ expect(requestLease).toHaveBeenCalledWith({
 });
 ```
 
-- [ ] **Step 9: Run plugin tests**
+- [ ] **Step 10: Add same-agent host path drift cache test**
+
+In `sandbox-backend-factory.test.ts`, add:
+
+```ts
+it('does not fork the plugin cache when the same agent arrives with a different host workspace path', async () => {
+	const requestLease = vi.fn(async () =>
+		createLeaseResponse('01890f00-0000-7000-8000-000000000001', { agentId: 'beta' }),
+	);
+	const factory = createGondolinSandboxBackendFactory(
+		{
+			controllerUrl: 'http://controller.vm.host:18800',
+			zoneId: 'shravan',
+		},
+		{
+			buildExecSpec: vi.fn(async () => ({
+				argv: ['ssh'],
+				env: {},
+				stdinMode: 'pipe-open' as const,
+			})),
+			createLeaseClient: () => ({
+				...createActiveUseLeaseClientMethods(),
+				peekLease: async () => createLeasePeekResponse(),
+				releaseLease: async () => {},
+				renewLease: async (leaseId: string) => createLeaseResponse(leaseId, { agentId: 'beta' }),
+				requestLease,
+			}),
+			runRemoteShellScript: vi.fn(async () => ({
+				code: 0,
+				stderr: Buffer.alloc(0),
+				stdout: Buffer.alloc(0),
+			})),
+		},
+	);
+
+	const firstHandle = await factory({
+		agentWorkspaceDir: '/zone/agents/beta',
+		cfg: gondolinSandboxConfig(),
+		scopeKey: 'agent:beta:discord:channel:123',
+		sessionKey: 'agent:beta:discord:channel:123',
+		workspaceDir: '/zone/agents/beta',
+	});
+	const secondHandle = await factory({
+		agentWorkspaceDir: '/zone/agents/beta-edited',
+		cfg: gondolinSandboxConfig(),
+		scopeKey: 'agent:beta:discord:channel:999',
+		sessionKey: 'agent:beta:discord:channel:999',
+		workspaceDir: '/zone/agents/beta-edited',
+	});
+
+	expect(secondHandle).toBe(firstHandle);
+	expect(requestLease).toHaveBeenCalledTimes(1);
+});
+```
+
+- [ ] **Step 11: Run plugin tests**
 
 Run:
 
@@ -1630,7 +1731,7 @@ pnpm vitest run packages/openclaw-agent-vm-plugin/src/controller-lease-client.te
 
 Expected: PASS after fixture updates remove `scopeKey` from controller request/response bodies.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
 git add packages/openclaw-agent-vm-plugin/src/controller-lease-client.ts packages/openclaw-agent-vm-plugin/src/controller-lease-client.test.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-factory.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts packages/openclaw-agent-vm-plugin/src/controller-integration.test.ts
