@@ -156,26 +156,33 @@ function jsonValuePreview(value: unknown): string | undefined {
 	return serialized.length > 80 ? `${serialized.slice(0, 77)}...` : serialized;
 }
 
-function stringArrayFromIssue(
-	issue: z.core.$ZodIssue,
-	propertyName: string,
-): readonly string[] | undefined {
-	const value = issueRecord(issue)[propertyName];
+function keysFromIssue(issue: z.core.$ZodIssue): readonly string[] | undefined {
+	if (!('keys' in issue)) {
+		return undefined;
+	}
+	const value = issue.keys;
 	if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) {
 		return undefined;
 	}
 	return value;
 }
 
-function jsonValuesFromIssue(
-	issue: z.core.$ZodIssue,
-	propertyName: string,
-): readonly JsonValue[] | undefined {
-	const value = issueRecord(issue)[propertyName];
-	if (!Array.isArray(value) || !value.every((entry): entry is JsonValue => isJsonValue(entry))) {
+function valuesFromIssue(issue: z.core.$ZodIssue): readonly JsonValue[] | undefined {
+	if (!('values' in issue)) {
 		return undefined;
 	}
-	return value;
+	const value: unknown = issue.values;
+	if (!Array.isArray(value)) {
+		return undefined;
+	}
+	const values: JsonValue[] = [];
+	for (const entry of value) {
+		if (!isJsonValue(entry)) {
+			return undefined;
+		}
+		values.push(entry);
+	}
+	return values;
 }
 
 function isJsonValue(value: unknown): value is JsonValue {
@@ -190,12 +197,11 @@ function isJsonValue(value: unknown): value is JsonValue {
 }
 
 function expectedFromIssue(issue: z.core.$ZodIssue): string | undefined {
-	const expected = issueRecord(issue).expected;
+	if (!('expected' in issue)) {
+		return undefined;
+	}
+	const expected = issue.expected;
 	return typeof expected === 'string' ? expected : undefined;
-}
-
-function issueRecord(issue: z.core.$ZodIssue): Readonly<Record<string, unknown>> {
-	return issue as unknown as Readonly<Record<string, unknown>>;
 }
 
 function toValidationIssue(issue: z.core.$ZodIssue, inputValue: unknown): InputValidationIssue {
@@ -214,8 +220,8 @@ function toValidationIssue(issue: z.core.$ZodIssue, inputValue: unknown): InputV
 		},
 	};
 	const expected = expectedFromIssue(issue);
-	const keys = stringArrayFromIssue(issue, 'keys');
-	const values = jsonValuesFromIssue(issue, 'values');
+	const keys = keysFromIssue(issue);
+	const values = valuesFromIssue(issue);
 	return {
 		...result,
 		...(expected === undefined ? {} : { expected }),

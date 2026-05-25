@@ -867,6 +867,12 @@ describe('scaffoldAgentVmProject', () => {
 					readonly paths: readonly string[];
 				};
 			};
+			readonly approvals: {
+				readonly plugin: {
+					readonly enabled: boolean;
+					readonly mode: string;
+				};
+			};
 			readonly tools: {
 				readonly allow: readonly string[];
 				readonly sandbox: {
@@ -897,6 +903,12 @@ describe('scaffoldAgentVmProject', () => {
 		expect(openClawConfig.agents.defaults.thinkingDefault).toBe('low');
 		expect(openClawConfig.agents.defaults.workspace).toBe('/zone/agents/default');
 		expect(openClawConfig.agents.defaults.models).toBeUndefined();
+		expect(openClawConfig.approvals).toEqual({
+			plugin: {
+				enabled: true,
+				mode: 'session',
+			},
+		});
 		expect(openClawConfig.tools.web.fetch.ssrfPolicy).toEqual({
 			allowIpv6UniqueLocalRange: true,
 			allowRfc2544BenchmarkRange: true,
@@ -1395,6 +1407,12 @@ describe('scaffoldAgentVmProject', () => {
 			};
 			readonly commands?: { readonly ownerAllowFrom?: readonly string[] };
 			readonly session?: { readonly dmScope?: string };
+			readonly approvals?: {
+				readonly plugin?: {
+					readonly enabled?: boolean;
+					readonly mode?: string;
+				};
+			};
 			readonly mcp?: { readonly servers?: Record<string, unknown> };
 			readonly plugins?: {
 				readonly allow?: readonly string[];
@@ -1415,6 +1433,12 @@ describe('scaffoldAgentVmProject', () => {
 		expect(openClawConfig.agents?.defaults?.sandbox?.scope).toBe('agent');
 		expect(openClawConfig.agents?.defaults?.sandbox?.workspaceAccess).toBe('rw');
 		expect(openClawConfig.session?.dmScope).toBe('per-channel-peer');
+		expect(openClawConfig.approvals).toEqual({
+			plugin: {
+				enabled: true,
+				mode: 'session',
+			},
+		});
 		expect(openClawConfig.commands?.ownerAllowFrom).toEqual([]);
 		expect(openClawConfig.plugins?.allow).toContain('memory-core');
 		expect(openClawConfig.plugins?.allow).toContain('mcp-portal');

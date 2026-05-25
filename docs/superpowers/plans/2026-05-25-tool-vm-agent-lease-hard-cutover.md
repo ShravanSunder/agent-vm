@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the current scope-shaped Tool VM lease model with a hard-cutover, agent-scoped lease model that uses opaque lease ids, rejects expired/dead lease renewal, and keeps workspace mapping separate from lease identity.
+**Goal:** Hard-cut the current scope-bearing Tool VM lease API/storage/TTL surface to an agent-scoped contract that uses opaque lease ids, rejects expired/dead lease renewal, and keeps workspace mapping separate from lease identity.
 
 **Architecture:** Agent-vm supports only managed OpenClaw/Gondolin Tool VM leases for `zoneId + agentId`. OpenClaw `scopeKey` stays outside agent-vm: the plugin may receive it from OpenClaw core, but it must not send it to the controller, and the controller must not store, return, log, or derive TTL from it. Lease renewal becomes a validity check: existing, unexpired, and live; invalid leases are evicted and the plugin refreshes its cached handle by creating a new lease.
 
@@ -17,6 +17,8 @@ The managed lease identity is:
 ```text
 zoneId + agentId
 ```
+
+The current code already reuses leases primarily by `zoneId + agentId`; this plan does not claim that reuse identity is still scope-shaped. The hard cutover removes `scopeKey` from the remaining API, runtime record, response, log, TTL, docs, and test surfaces where it still creates the wrong mental model.
 
 The following values are not lease identity:
 
@@ -246,7 +248,7 @@ Modify:
   - Assert opaque UUIDv7 `leaseId` fixtures.
 
 - `docs/architecture/storage-model.md`
-  - Update lease vocabulary and remove scope-shaped lease references.
+  - Update lease vocabulary and remove remaining scope-bearing lease references.
 
 - `docs/architecture/openclaw-gateway.md`
   - Update managed Tool VM lease contract and same-agent subagent behavior.
@@ -285,21 +287,15 @@ debug/beta-workflow-path-trace
 
 If files outside this plan are already modified, do not revert them. Avoid editing unrelated modified files unless the task explicitly requires it.
 
-- [ ] **Step 2: Confirm current full-suite blocker is unrelated**
+- [ ] **Step 2: Capture the current non-lease test baseline only if needed**
 
 Run:
 
 ```bash
-pnpm vitest run packages/mcp-portal/src/core/portal-core.test.ts
+pnpm vitest run packages/mcp-portal/src/core/portal-core.test.ts -t "surfaces input validation issues in failed core item errors"
 ```
 
-Expected before this plan is implemented:
-
-```text
-FAIL packages/mcp-portal/src/core/portal-core.test.ts > portal core event stream > surfaces input validation issues in failed core item errors
-```
-
-This test failure is outside the lease hard-cutover work. Do not fix it in this plan unless the user explicitly brings MCP Portal validation into scope.
+Expected on the plan branch when this plan was written: PASS with 1 passed and 19 skipped, or SKIP if the test name changed on a later branch. Do not bake a presumed MCP Portal failure into the lease work. If broad verification fails in MCP Portal later, rerun the focused MCP Portal test from the current checkout and classify it from current output before touching lease code.
 
 ---
 
@@ -355,8 +351,8 @@ export function createToolVmLeaseId(): string {
 	return uuidv7();
 }
 
-export function isToolVmLeaseId(value: string): boolean {
-	return validateUuid(value) && uuidVersion(value) === 7;
+export function isToolVmLeaseId(value: unknown): value is string {
+	return typeof value === 'string' && validateUuid(value) && uuidVersion(value) === 7;
 }
 ```
 
@@ -373,6 +369,7 @@ export { createToolVmLeaseId, isToolVmLeaseId } from './tool-vm-lease-id.js';
 Replace `packages/gateway-interface/src/tool-vm-lease.ts` with this shape:
 
 ```ts
+import { isToolVmLeaseId } from './tool-vm-lease-id.js';
 import {
 	isVmCapabilityLease,
 	isVmSshEndpoint,
@@ -408,6 +405,7 @@ export function isToolVmSshLease(value: unknown): value is ToolVmSshLease {
 	const record = objectValue(value);
 	return (
 		isVmCapabilityLease(record, 'ssh-sandbox') &&
+		isToolVmLeaseId(Reflect.get(record, 'leaseId')) &&
 		isVmSshEndpoint(Reflect.get(record, 'ssh')) &&
 		typeof Reflect.get(record, 'agentId') === 'string' &&
 		(Reflect.get(record, 'idleTtlMs') === undefined ||
@@ -422,6 +420,7 @@ export function isToolVmLeasePeek(value: unknown): value is ToolVmLeasePeek {
 	const record = objectValue(value);
 	return (
 		isVmCapabilityLease(record, 'ssh-sandbox') &&
+		isToolVmLeaseId(Reflect.get(record, 'leaseId')) &&
 		typeof Reflect.get(record, 'agentId') === 'string' &&
 		typeof Reflect.get(record, 'createdAt') === 'number' &&
 		typeof Reflect.get(record, 'lastUsedAt') === 'number' &&
@@ -647,16 +646,14 @@ In `packages/agent-vm/src/controller/http/controller-http-routes.test.ts`, add:
 it('creates an agent-scoped lease without accepting or returning scopeKey or sandbox', async () => {
 	const lease = createLeaseStub('01890f00-0000-7000-8000-000000000000', 0);
 	const createLease = vi.fn(async () => lease);
-	const app = createControllerApp({
-		...createControllerAppTestOptions({
-			leaseManager: {
-				createLease,
-				listLeases: vi.fn(() => []),
-				peekLease: vi.fn(),
-				releaseLease: vi.fn(async () => {}),
-				renewLease: vi.fn(),
-			},
-		}),
+	const app = createControllerAppForTest({
+		leaseManager: {
+			createLease,
+			listLeases: vi.fn(() => []),
+			peekLease: vi.fn(),
+			releaseLease: vi.fn(async () => {}),
+			renewLease: vi.fn(),
+		},
 	});
 
 	const response = await app.request('/lease', {
@@ -933,7 +930,6 @@ At the start of `startActiveUse`, after lease lookup:
 
 ```ts
 if (isLeaseExpired(lease)) {
-	void evictLease(lease);
 	return undefined;
 }
 ```
@@ -942,12 +938,11 @@ At the start of `heartbeatActiveUse`, after lease/use lookup:
 
 ```ts
 if (isLeaseExpired(lease)) {
-	void evictLease(lease);
 	return undefined;
 }
 ```
 
-Keep active-use as an operation guard only. Do not add VM liveness checks to heartbeat.
+Keep active-use as an operation guard only. Do not add VM liveness checks to heartbeat. Do not start background eviction from these synchronous methods; `renewLease`, `createLease`, and `reapDeadIdleLeases` own awaited cleanup.
 
 - [ ] **Step 11: Remove `scopeKey` from idle reaper**
 
@@ -997,16 +992,14 @@ In `packages/agent-vm/src/controller/http/controller-http-routes.test.ts`, add:
 ```ts
 it('returns a refreshable 404 when renew finds an expired lease', async () => {
 	const renewLease = vi.fn(async () => ({ kind: 'not-found' as const, reason: 'expired' as const }));
-	const app = createControllerApp({
-		...createControllerAppTestOptions({
-			leaseManager: {
-				createLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				peekLease: vi.fn(),
-				releaseLease: vi.fn(async () => {}),
-				renewLease,
-			},
-		}),
+	const app = createControllerAppForTest({
+		leaseManager: {
+			createLease: vi.fn(),
+			listLeases: vi.fn(() => []),
+			peekLease: vi.fn(),
+			releaseLease: vi.fn(async () => {}),
+			renewLease,
+		},
 	});
 
 	const response = await app.request('/lease/01890f00-0000-7000-8000-000000000000/renew', {
@@ -1023,16 +1016,14 @@ it('returns a refreshable 404 when renew finds an expired lease', async () => {
 
 it('returns a refreshable 404 when renew finds a dead lease', async () => {
 	const renewLease = vi.fn(async () => ({ kind: 'not-found' as const, reason: 'dead' as const }));
-	const app = createControllerApp({
-		...createControllerAppTestOptions({
-			leaseManager: {
-				createLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				peekLease: vi.fn(),
-				releaseLease: vi.fn(async () => {}),
-				renewLease,
-			},
-		}),
+	const app = createControllerAppForTest({
+		leaseManager: {
+			createLease: vi.fn(),
+			listLeases: vi.fn(() => []),
+			peekLease: vi.fn(),
+			releaseLease: vi.fn(async () => {}),
+			renewLease,
+		},
 	});
 
 	const response = await app.request('/lease/01890f00-0000-7000-8000-000000000000/renew', {
@@ -1420,16 +1411,14 @@ In `controller-http-routes.test.ts`, add:
 ```ts
 it('rejects Tool VM guest /workspace when it leaks back as lease request input', async () => {
 	const createLease = vi.fn(async () => createLeaseStub('01890f00-0000-7000-8000-000000000000', 0));
-	const app = createControllerApp({
-		...createControllerAppTestOptions({
-			leaseManager: {
-				createLease,
-				listLeases: vi.fn(() => []),
-				peekLease: vi.fn(),
-				releaseLease: vi.fn(async () => {}),
-				renewLease: vi.fn(),
-			},
-		}),
+	const app = createControllerAppForTest({
+		leaseManager: {
+			createLease,
+			listLeases: vi.fn(() => []),
+			peekLease: vi.fn(),
+			releaseLease: vi.fn(async () => {}),
+			renewLease: vi.fn(),
+		},
 	});
 
 	const response = await app.request('/lease', {
@@ -2013,10 +2002,26 @@ expect(record).toMatchObject({
 Run:
 
 ```bash
+rg -n "scopeKey" packages/agent-vm/src packages/gateway-interface/src -g '!*.test.ts'
+```
+
+Expected after implementation: no output.
+
+Run:
+
+```bash
+rg -n "scopeKey" packages/openclaw-agent-vm-plugin/src -g '!*.test.ts'
+```
+
+Expected after implementation: hits are limited to the OpenClaw SDK boundary where `params.scopeKey` is accepted and discarded before controller I/O. There must be no plugin controller request body, controller response parser, cache key, or lease log that includes `scopeKey`.
+
+Run:
+
+```bash
 rg -n "scopeKey" packages/agent-vm/src packages/gateway-interface/src packages/openclaw-agent-vm-plugin/src
 ```
 
-Expected after implementation: only OpenClaw SDK boundary tests may mention `scopeKey` as an input that the plugin discards. No controller, gateway-interface lease type, runtime record, response, or doc string should require it.
+Expected after implementation: any remaining test hits must be negative assertions or plugin-boundary fixtures proving `scopeKey` is discarded. No controller, gateway-interface lease type, runtime record, response, generated manual, or docs source should require it.
 
 - [ ] **Step 7: Run focused tests**
 
@@ -2149,7 +2154,7 @@ git commit -m "docs: document agent scoped tool vm leases"
 Run:
 
 ```bash
-rg -n "scopeKey" packages/agent-vm/src packages/gateway-interface/src packages/openclaw-agent-vm-plugin/src
+rg -n "scopeKey" packages/agent-vm/src packages/gateway-interface/src -g '!*.test.ts'
 ```
 
 Expected:
@@ -2157,7 +2162,13 @@ Expected:
 ```text
 ```
 
-If OpenClaw SDK boundary tests still use `scopeKey` as input to `createGondolinSandboxBackendFactory`, the hit must be in a test name or factory parameter proving the plugin discards it. There must be zero `scopeKey` hits in controller request/response types, Lease, runtime records, docs, or generated manual text.
+Run:
+
+```bash
+rg -n "scopeKey" packages/openclaw-agent-vm-plugin/src -g '!*.test.ts'
+```
+
+Expected: only SDK boundary input handling remains. If OpenClaw SDK boundary tests use `scopeKey` as input to `createGondolinSandboxBackendFactory`, each hit must be a test name or fixture proving the plugin discards it. There must be zero `scopeKey` hits in controller request/response types, Lease, runtime records, generated manuals, or gateway-interface lease types.
 
 - [ ] **Step 2: Run focused package tests**
 
@@ -2187,7 +2198,7 @@ Run:
 pnpm test:unit
 ```
 
-Expected: PASS. If MCP Portal validation failure still exists from preflight, stop and report it as pre-existing/out-of-scope with the exact failing test name.
+Expected: PASS. If MCP Portal fails here, rerun the focused MCP Portal command from Execution Preflight Step 2 and report the current failing test name before deciding whether it is in scope.
 
 - [ ] **Step 5: Run integration suite**
 

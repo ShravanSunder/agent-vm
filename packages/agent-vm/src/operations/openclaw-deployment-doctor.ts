@@ -80,6 +80,18 @@ function hasOnlyRuntimePortalPluginConfig(entries: Record<string, unknown> | und
 	return Object.keys(config).every((key) => runtimeKeys.has(key));
 }
 
+function hasPluginApprovalSessionRoute(config: OpenClawDeploymentConfig): boolean {
+	const approvals = config.approvals;
+	if (!isObjectRecord(approvals)) {
+		return false;
+	}
+	const pluginApprovals = approvals.plugin;
+	if (!isObjectRecord(pluginApprovals)) {
+		return false;
+	}
+	return pluginApprovals.enabled === true && pluginApprovals.mode === 'session';
+}
+
 function resolveOpenClawModelName(model: unknown): string | undefined {
 	if (typeof model === 'string') {
 		return model;
@@ -244,6 +256,11 @@ export function buildOpenClawDeploymentDoctorChecks(
 				name: `openclaw-mcp-portal-config-source-${target.zoneId}`,
 				ok: hasOnlyRuntimePortalPluginConfig(config.plugins?.entries),
 				hint: 'Move MCP Portal namespace/tool policy to mcp-portal.config.jsonc; OpenClaw plugin config may only carry configDir.',
+			},
+			{
+				name: `openclaw-mcp-portal-plugin-approvals-${target.zoneId}`,
+				ok: hasPluginApprovalSessionRoute(config),
+				hint: 'Set approvals.plugin.enabled=true and approvals.plugin.mode="session" so MCP Portal tools that require approval can return prompts to the originating chat.',
 			},
 			{
 				name: `openclaw-mcp-portal-agent-endpoints-${target.zoneId}`,

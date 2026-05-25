@@ -304,7 +304,7 @@ function validationIssuePathLabel(path: readonly (number | string)[]): string {
 
 function formattedJsonValue(value: JsonValue): string {
 	const serialized = JSON.stringify(value);
-	return serialized === undefined ? String(value) : serialized;
+	return serialized ?? '[unserializable-json-value]';
 }
 
 function receivedValueLabel(received: PortalCoreValidationIssue['received']): string | undefined {
