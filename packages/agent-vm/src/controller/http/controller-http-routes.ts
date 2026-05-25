@@ -393,7 +393,10 @@ export function createControllerApp(options: {
 			}
 			if (error instanceof AgentLeaseCompatibilityConflictError) {
 				return context.json(
-					agentLeaseCompatibilityConflictResponseBody({ error, requestContext }),
+					{
+						...agentLeaseCompatibilityConflictResponseBody({ error, requestContext }),
+						refreshable: false,
+					},
 					409,
 				);
 			}
@@ -453,7 +456,14 @@ export function createControllerApp(options: {
 		}
 		const leaseRenewal = await options.leaseManager.renewLease(context.req.param('leaseId'));
 		if (leaseRenewal.kind === 'not-found') {
-			return context.json({ error: 'Lease not found' }, 404);
+			return context.json(
+				{
+					error: 'Lease not found',
+					reason: leaseRenewal.reason,
+					refreshable: true,
+				},
+				404,
+			);
 		}
 		return context.json(
 			await serializeLeaseForResponse(leaseRenewal.lease, readIdentityPem, {

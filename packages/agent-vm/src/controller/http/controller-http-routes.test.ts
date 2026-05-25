@@ -457,6 +457,42 @@ describe('createControllerApp', () => {
 		expect(releaseLease).toHaveBeenCalledWith('lease-123', { force: false });
 	});
 
+	it('returns a refreshable 404 when lease renewal finds a dead lease', async () => {
+		const renewLease = vi.fn(async () => ({
+			kind: 'not-found' as const,
+			reason: 'dead' as const,
+		}));
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			leaseManager: {
+				createLease: vi.fn(async () => {
+					throw new Error('not used');
+				}),
+				renewLease,
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(async () => {}),
+			},
+		});
+
+		const response = await app.request('/lease/01890f00-0000-7000-8000-000000000000/renew', {
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(404);
+		await expect(response.json()).resolves.toEqual({
+			error: 'Lease not found',
+			reason: 'dead',
+			refreshable: true,
+		});
+	});
+
 	it('creates an agent-scoped lease without accepting or returning scopeKey or sandbox', async () => {
 		const lease = createLeaseStub('01890f00-0000-7000-8000-000000000000', 0);
 		const createLease = vi.fn(async (_options: ControllerCreateLeaseOptions) => lease);
@@ -1538,6 +1574,7 @@ describe('createControllerApp', () => {
 				"existing Tool VM lease for agent 'main' is not compatible with this request; mismatched fields: hostWorkMountDir",
 			guidance:
 				'Managed OpenClaw/Gondolin reuses one Tool VM per zone and agent. Release the existing lease or use a compatible profile/workspace/workdir.',
+			refreshable: false,
 			received: {
 				agentId: 'main',
 				mismatchedFields: ['hostWorkMountDir'],
