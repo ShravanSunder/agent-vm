@@ -196,6 +196,18 @@ describe('resolveLeaseWorkMountDir', () => {
 		).rejects.toThrow(/must be under \/home\/openclaw\/\.openclaw\/state\/sandboxes or \/zone/u);
 	});
 
+	it('rejects Tool VM guest /workspace as a lease request input path', async () => {
+		await expect(
+			resolveLeaseWorkMountDir({
+				runtimeDir,
+				workMountDir: '/workspace',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'outside-allowed-roots',
+		} satisfies Partial<LeaseWorkMountValidationError>);
+	});
+
 	it('allows direct lifecycle validation of resolved host work mount paths', async () => {
 		const hostWorkMountDir = path.join(zoneFilesDir, 'project');
 

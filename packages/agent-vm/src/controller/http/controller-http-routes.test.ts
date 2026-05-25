@@ -544,6 +544,57 @@ describe('createControllerApp', () => {
 		expect(createLeaseOptions).not.toHaveProperty('sandbox');
 	});
 
+	it('rejects Tool VM guest /workspace when it leaks back as lease request input', async () => {
+		const createLease = vi.fn(async (_options: ControllerCreateLeaseOptions) =>
+			createLeaseStub('01890f00-0000-7000-8000-000000000000', 0),
+		);
+		const resolveLeaseWorkMountDir = vi.fn(
+			async ({ workMountDir }: { readonly workMountDir: string }) => {
+				expect(workMountDir).toBe('/workspace');
+				throw new LeaseWorkMountValidationError(
+					'outside-allowed-roots',
+					"Lease workMountDir '/workspace' must be under /home/openclaw/.openclaw/state/sandboxes or /zone.",
+				);
+			},
+		);
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					imageProfile: 'default',
+					memory: '1G',
+				},
+			},
+			leaseManager: {
+				createLease,
+				listLeases: vi.fn(() => []),
+				peekLease: vi.fn(),
+				releaseLease: vi.fn(async () => {}),
+				renewLease: vi.fn(),
+			},
+			resolveLeaseWorkMountDir,
+		});
+
+		const response = await app.request('/lease', {
+			body: JSON.stringify({
+				agentId: 'main',
+				agentWorkspaceDir: '/zone/agents/main',
+				profileId: 'standard',
+				sessionKey: 'agent:main:manual',
+				workMountDir: '/workspace',
+				zoneId: 'shravan',
+			}),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toMatchObject({
+			kind: 'outside-allowed-roots',
+		});
+		expect(createLease).not.toHaveBeenCalled();
+	});
+
 	it('passes optional idleTtlMs through lease creation and rejects invalid values', async () => {
 		const createLease = vi.fn(async () => ({
 			...createLeaseStub('lease-ttl', 0),

@@ -274,6 +274,60 @@ describe('gondolin controller integration', () => {
 		});
 	});
 
+	it('reuses one controller lease for same-agent subagent scopes while sending no scopeKey', async () => {
+		const requestBodies: unknown[] = [];
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async (_input, init) => {
+				if (typeof init?.body === 'string') {
+					requestBodies.push(JSON.parse(init.body));
+				}
+				return new Response(JSON.stringify(createLeaseResponse('subagent-lease')), {
+					headers: { 'content-type': 'application/json' },
+					status: 200,
+				});
+			},
+		});
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: async () => ({ argv: ['ssh'], env: {}, stdinMode: 'pipe-open' }),
+				createLeaseClient: () => leaseClient,
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const firstHandle = await factory({
+			agentWorkspaceDir: '/zone/agents/beta',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:discord:channel:123',
+			sessionKey: 'agent:beta:discord:channel:123',
+			workspaceDir: '/zone/agents/beta',
+		});
+		const secondHandle = await factory({
+			agentWorkspaceDir: '/zone/agents/beta',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:subagent:child',
+			sessionKey: 'agent:beta:subagent:child',
+			workspaceDir: '/zone/agents/beta',
+		});
+
+		expect(secondHandle).toBe(firstHandle);
+		expect(requestBodies).toEqual([
+			{
+				agentId: 'beta',
+				agentWorkspaceDir: '/zone/agents/beta',
+				profileId: 'standard',
+				sessionKey: 'agent:beta:discord:channel:123',
+				workMountDir: '/zone/agents/beta',
+				zoneId: 'shravan',
+			},
+		]);
+	});
+
 	it('does not reuse a cached handle when the profile changes for the same agent scope', async () => {
 		const requestLease = vi
 			.fn()
