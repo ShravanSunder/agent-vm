@@ -52,12 +52,18 @@ export type {
 export type {
 	CreateToolVmActiveUseHandleOptions,
 	EndToolVmActiveUseRequest,
+	HeartbeatToolVmActiveUseRequest,
 	HeartbeatToolVmActiveUseResponse,
 	StartToolVmActiveUseRequest,
 	StartToolVmActiveUseResponse,
 	ToolVmActiveUseCorrelation,
 	ToolVmActiveUseHandle,
 	ToolVmActiveUseOutcome,
+	ToolVmActiveUseOperationReport,
+	ToolVmSshFailureKind,
+	ToolVmSshFailureReport,
+	ToolVmSshOperationPhase,
+	ToolVmSshOperationReport,
 } from './tool-vm-active-use.js';
 export type { ToolVmLeasePeek, ToolVmSshLease } from './tool-vm-lease.js';
 export type {

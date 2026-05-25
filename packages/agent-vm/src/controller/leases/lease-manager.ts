@@ -4,10 +4,12 @@ import {
 	createToolVmLeaseId,
 	isToolVmActiveUseId,
 	type EndToolVmActiveUseRequest,
+	type HeartbeatToolVmActiveUseRequest,
 	type HeartbeatToolVmActiveUseResponse,
 	type StartToolVmActiveUseRequest,
 	type StartToolVmActiveUseResponse,
 	type ToolVmActiveUseCorrelation,
+	type ToolVmActiveUseOperationReport,
 } from '@agent-vm/gateway-interface';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 
@@ -67,6 +69,15 @@ export interface LeaseSnapshot {
 	readonly lease: Lease;
 }
 
+export interface ToolVmActiveUseSnapshot {
+	readonly correlation?: ToolVmActiveUseCorrelation;
+	readonly expiresAt: number;
+	readonly latestReport?: ToolVmActiveUseOperationReport;
+	readonly leaseId: string;
+	readonly startedAt: number;
+	readonly useId: string;
+}
+
 export interface LeaseManager {
 	createLease(options: {
 		readonly agentId: string;
@@ -84,8 +95,13 @@ export interface LeaseManager {
 		useId: string,
 		request: EndToolVmActiveUseRequest,
 	): { readonly kind: 'ended' | 'unknown-use' } | undefined;
+	getActiveUses(leaseId: string): readonly ToolVmActiveUseSnapshot[];
 	getActiveUseCount(leaseId: string): number;
-	heartbeatActiveUse(leaseId: string, useId: string): HeartbeatToolVmActiveUseResponse | undefined;
+	heartbeatActiveUse(
+		leaseId: string,
+		useId: string,
+		request: HeartbeatToolVmActiveUseRequest,
+	): HeartbeatToolVmActiveUseResponse | undefined;
 	renewLease(leaseId: string): Promise<LeaseRenewal>;
 	listLeases(): Lease[];
 	peekLease(leaseId: string): LeaseSnapshot | undefined;
@@ -122,6 +138,7 @@ interface ToolVmActiveUse {
 	readonly correlation?: ToolVmActiveUseCorrelation;
 	readonly expiresAt: number;
 	readonly lastHeartbeatAt: number;
+	readonly latestReport?: ToolVmActiveUseOperationReport;
 	readonly leaseId: string;
 	readonly startedAt: number;
 	readonly useId: string;
@@ -546,9 +563,22 @@ export function createLeaseManager(options: {
 		getActiveUseCount(leaseId: string): number {
 			return activeUseCountForLease(leaseId);
 		},
+		getActiveUses(leaseId: string): readonly ToolVmActiveUseSnapshot[] {
+			return [...activeUses.values()]
+				.filter((activeUse) => activeUse.leaseId === leaseId)
+				.map((activeUse) => ({
+					...(activeUse.correlation ? { correlation: activeUse.correlation } : {}),
+					expiresAt: activeUse.expiresAt,
+					...(activeUse.latestReport ? { latestReport: activeUse.latestReport } : {}),
+					leaseId: activeUse.leaseId,
+					startedAt: activeUse.startedAt,
+					useId: activeUse.useId,
+				}));
+		},
 		heartbeatActiveUse(
 			leaseId: string,
 			useId: string,
+			request: HeartbeatToolVmActiveUseRequest,
 		): HeartbeatToolVmActiveUseResponse | undefined {
 			const lease = leases.get(leaseId);
 			const activeUse = activeUses.get(activeUseKey(leaseId, useId));
@@ -563,6 +593,7 @@ export function createLeaseManager(options: {
 				...activeUse,
 				expiresAt: now + toolVmUsePolicy.heartbeatStaleMs,
 				lastHeartbeatAt: now,
+				...(request.report === undefined ? {} : { latestReport: request.report }),
 			};
 			activeUses.set(activeUseKey(leaseId, useId), updatedUse);
 			touchLease(lease);
@@ -738,6 +769,7 @@ export function createLeaseManager(options: {
 				...(request.correlation ? { correlation: request.correlation } : {}),
 				expiresAt: now + toolVmUsePolicy.heartbeatStaleMs,
 				lastHeartbeatAt: now,
+				...(request.report === undefined ? {} : { latestReport: request.report }),
 				leaseId,
 				startedAt: now,
 				useId: request.useId,

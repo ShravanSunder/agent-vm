@@ -23,6 +23,29 @@ const controllerLeaseAgentIdSchema = z.string().min(1).regex(openClawAgentIdPatt
 	message: 'agentId must match /^[a-z0-9][a-z0-9_-]{0,63}$/i',
 });
 
+export const controllerToolVmSshFailureKindSchema = z.enum([
+	'active-use-refreshable-failure',
+	'ssh-command-failed',
+	'ssh-command-timed-out',
+	'ssh-probe-failed',
+]);
+
+export const controllerToolVmActiveUseOperationReportSchema = z.strictObject({
+	observedAtMs: z.number().int().nonnegative(),
+	phase: z.enum(['starting', 'probe-succeeded', 'running', 'completed', 'failed']),
+	ssh: z
+		.strictObject({
+			failure: z
+				.strictObject({
+					kind: controllerToolVmSshFailureKindSchema,
+					message: z.string().trim().min(1).max(500),
+				})
+				.optional(),
+			probeSucceeded: z.boolean().optional(),
+		})
+		.optional(),
+});
+
 export const controllerLeaseCreateRequestSchema = z.strictObject({
 	agentId: controllerLeaseAgentIdSchema,
 	agentWorkspaceDir: controllerLeaseAgentWorkspacePathSchema,
@@ -43,13 +66,19 @@ export const controllerStartActiveUseRequestSchema = z.strictObject({
 			toolName: z.string().min(1).optional(),
 		})
 		.optional(),
+	report: controllerToolVmActiveUseOperationReportSchema.optional(),
 	useId: z.string().refine((value) => isToolVmActiveUseId(value), {
 		message: 'useId must be a UUIDv7.',
 	}),
 });
 
+export const controllerHeartbeatToolVmActiveUseRequestSchema = z.strictObject({
+	report: controllerToolVmActiveUseOperationReportSchema.optional(),
+});
+
 export const controllerEndActiveUseRequestSchema = z.strictObject({
 	outcome: z.enum(['abandoned', 'cancelled', 'completed', 'failed', 'timed-out']),
+	report: controllerToolVmActiveUseOperationReportSchema.optional(),
 });
 
 export const controllerOpenClawRuntimeStatusRequestSchema = z.strictObject({

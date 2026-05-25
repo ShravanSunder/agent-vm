@@ -9,7 +9,7 @@ import {
 	resolveOpenClawAgentIdFromSessionKey,
 } from '@agent-vm/openclaw-agent-vm-plugin';
 import type { SecretResolver } from '@agent-vm/secret-management';
-import { Hono } from 'hono';
+import { type Context as ControllerRouteContext, Hono } from 'hono';
 
 import type { LoadedSystemConfig } from '../../config/system-config.js';
 import { OpenClawDeploymentRequirementError } from '../../operations/openclaw-deployment-requirements.js';
@@ -46,6 +46,7 @@ import {
 } from './controller-http-route-support.js';
 import {
 	controllerEndActiveUseRequestSchema,
+	controllerHeartbeatToolVmActiveUseRequestSchema,
 	controllerLeaseCreateRequestSchema,
 	controllerOpenClawRuntimeStatusRequestSchema,
 	controllerStartActiveUseRequestSchema,
@@ -216,6 +217,51 @@ function normalizeActiveUseCorrelation(
 		...(correlation.toolName !== undefined ? { toolName: correlation.toolName } : {}),
 	} satisfies ToolVmActiveUseCorrelation;
 	return Object.keys(normalizedCorrelation).length > 0 ? normalizedCorrelation : undefined;
+}
+
+interface ParsedOptionalJsonBody<TValue> {
+	readonly ok: true;
+	readonly value: TValue;
+}
+
+interface FailedOptionalJsonBody {
+	readonly ok: false;
+	readonly response: Response;
+}
+
+async function parseOptionalJsonBody<TValue>(
+	context: ControllerRouteContext,
+	schema: {
+		safeParse(value: unknown):
+			| { readonly success: true; readonly data: TValue }
+			| { readonly success: false; readonly error: { readonly issues: unknown } };
+	},
+	emptyValue: TValue,
+): Promise<ParsedOptionalJsonBody<TValue> | FailedOptionalJsonBody> {
+	const bodyText = await context.req.text();
+	if (bodyText.trim() === '') {
+		return { ok: true, value: emptyValue };
+	}
+	let parsedBody: unknown;
+	try {
+		parsedBody = JSON.parse(bodyText);
+	} catch {
+		return {
+			ok: false,
+			response: context.json({ error: 'Invalid JSON body' }, 400),
+		};
+	}
+	const parsedPayload = schema.safeParse(parsedBody);
+	if (!parsedPayload.success) {
+		return {
+			ok: false,
+			response: context.json(
+				{ error: 'Invalid request body', issues: parsedPayload.error.issues },
+				400,
+			),
+		};
+	}
+	return { ok: true, value: parsedPayload.data };
 }
 
 export function createControllerApp(options: {
@@ -498,12 +544,11 @@ export function createControllerApp(options: {
 		}
 		try {
 			const correlation = normalizeActiveUseCorrelation(parsedPayload.data.correlation);
-			const startRequest: StartToolVmActiveUseRequest = correlation
-				? {
-						correlation,
-						useId: parsedPayload.data.useId,
-					}
-				: { useId: parsedPayload.data.useId };
+			const startRequest: StartToolVmActiveUseRequest = {
+				...(correlation ? { correlation } : {}),
+				...(parsedPayload.data.report === undefined ? {} : { report: parsedPayload.data.report }),
+				useId: parsedPayload.data.useId,
+			};
 			const activeUse = options.leaseManager.startActiveUse(
 				context.req.param('leaseId'),
 				startRequest,
@@ -528,9 +573,18 @@ export function createControllerApp(options: {
 		if (!options.leaseManager.heartbeatActiveUse) {
 			return context.json({ error: 'Active use API unavailable' }, 404);
 		}
+		const heartbeatPayload = await parseOptionalJsonBody(
+			context,
+			controllerHeartbeatToolVmActiveUseRequestSchema,
+			{},
+		);
+		if (!heartbeatPayload.ok) {
+			return heartbeatPayload.response;
+		}
 		const heartbeat = options.leaseManager.heartbeatActiveUse(
 			context.req.param('leaseId'),
 			context.req.param('useId'),
+			heartbeatPayload.value,
 		);
 		if (!heartbeat) {
 			return context.json({ error: 'Active use not found' }, 404);

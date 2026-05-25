@@ -1200,6 +1200,7 @@ describe('createLeaseManager', () => {
 		const heartbeat = leaseManager.heartbeatActiveUse(
 			lease.id,
 			'01890f00-0000-7000-8000-000000000000',
+			{},
 		);
 		leaseManager.endActiveUse(lease.id, '01890f00-0000-7000-8000-000000000000', {
 			outcome: 'completed',
@@ -1228,6 +1229,53 @@ describe('createLeaseManager', () => {
 
 		expect(closeMock).toHaveBeenCalledTimes(1);
 		expect(leaseManager.getActiveUseCount(lease.id)).toBe(0);
+	});
+
+	it('replaces active-use operation reports instead of accumulating report history', async () => {
+		const leaseManager = createLeaseManager({
+			...defaultRuntimeRecordOptions,
+			createLeaseId: () => '01890f00-0000-7000-8000-000000000004',
+			createManagedVm: vi.fn(async () => createManagedVmStub()),
+			now: () => 1_000,
+			tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+		});
+		const lease = await leaseManager.createLease(createAgentLeaseOptions());
+		leaseManager.startActiveUse(lease.id, {
+			report: { observedAtMs: 1_000, phase: 'starting' },
+			useId: '01890f00-0000-7000-8000-000000000000',
+		});
+
+		leaseManager.heartbeatActiveUse(
+			lease.id,
+			'01890f00-0000-7000-8000-000000000000',
+			{
+				report: {
+					observedAtMs: 1_001,
+					phase: 'failed',
+					ssh: {
+						failure: {
+							kind: 'ssh-command-timed-out',
+							message: 'SSH command exceeded 30000ms.',
+						},
+					},
+				},
+			},
+		);
+
+		expect(leaseManager.getActiveUses(lease.id)).toEqual([
+			expect.objectContaining({
+				latestReport: {
+					observedAtMs: 1_001,
+					phase: 'failed',
+					ssh: {
+						failure: {
+							kind: 'ssh-command-timed-out',
+							message: 'SSH command exceeded 30000ms.',
+						},
+					},
+				},
+			}),
+		]);
 	});
 
 	it('reaps stale active uses and expired tombstones without closing the lease', async () => {
@@ -1269,7 +1317,7 @@ describe('createLeaseManager', () => {
 			useId: '01890f00-0000-7000-8000-000000000001',
 		});
 		now = 2_000;
-		leaseManager.heartbeatActiveUse(lease.id, '01890f00-0000-7000-8000-000000000001');
+		leaseManager.heartbeatActiveUse(lease.id, '01890f00-0000-7000-8000-000000000001', {});
 		now = 5_001;
 
 		leaseManager.reapExpiredActiveUses();

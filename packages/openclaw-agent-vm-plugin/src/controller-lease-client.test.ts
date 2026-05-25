@@ -167,7 +167,7 @@ describe('createLeaseClient', () => {
 			correlation: { toolName: 'shell' },
 			useId: '01890f00-0000-7000-8000-000000000000',
 		});
-		await leaseClient.heartbeatActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000');
+		await leaseClient.heartbeatActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {});
 		await leaseClient.endActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {
 			outcome: 'completed',
 		});
@@ -182,7 +182,7 @@ describe('createLeaseClient', () => {
 				url: 'http://controller.vm.host:18800/lease/lease-123/uses',
 			},
 			{
-				body: undefined,
+				body: JSON.stringify({}),
 				method: 'POST',
 				url: 'http://controller.vm.host:18800/lease/lease-123/uses/01890f00-0000-7000-8000-000000000000/heartbeat',
 			},
@@ -192,6 +192,49 @@ describe('createLeaseClient', () => {
 				url: 'http://controller.vm.host:18800/lease/lease-123/uses/01890f00-0000-7000-8000-000000000000',
 			},
 		]);
+	});
+
+	it('sends active-use heartbeat operation reports to the controller', async () => {
+		const requests: { readonly init?: RequestInit }[] = [];
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async (_input, init) => {
+				requests.push(init === undefined ? {} : { init });
+				return new Response(JSON.stringify({ expiresAt: 10_000, heartbeatAfterMs: 1_000 }), {
+					status: 200,
+				});
+			},
+		});
+
+		await leaseClient.heartbeatActiveUse(
+			'01890f00-0000-7000-8000-000000000000',
+			'01890f00-0000-7000-8000-000000000001',
+			{
+				report: {
+					observedAtMs: 1_000,
+					phase: 'failed',
+					ssh: {
+						failure: {
+							kind: 'ssh-command-timed-out',
+							message: 'SSH command exceeded 30000ms.',
+						},
+					},
+				},
+			},
+		);
+
+		expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
+			report: {
+				observedAtMs: 1_000,
+				phase: 'failed',
+				ssh: {
+					failure: {
+						kind: 'ssh-command-timed-out',
+						message: 'SSH command exceeded 30000ms.',
+					},
+				},
+			},
+		});
 	});
 
 	it('throws TypeError when the controller returns an invalid lease response', async () => {

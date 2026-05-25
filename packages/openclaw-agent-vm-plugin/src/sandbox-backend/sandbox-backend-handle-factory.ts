@@ -224,8 +224,8 @@ function createSandboxBackendHandle(options: {
 			endActiveUse: async (useId: string, request: EndToolVmActiveUseRequest): Promise<void> => {
 				await options.leaseClient.endActiveUse(options.lease.leaseId, useId, request);
 			},
-			heartbeatActiveUse: async (useId: string): Promise<HeartbeatToolVmActiveUseResponse> =>
-				await options.leaseClient.heartbeatActiveUse(options.lease.leaseId, useId),
+			heartbeatActiveUse: async (useId, request): Promise<HeartbeatToolVmActiveUseResponse> =>
+				await options.leaseClient.heartbeatActiveUse(options.lease.leaseId, useId, request),
 			isEndErrorTolerable: isCleanupNotFound,
 			logEndFailure: (error: unknown): void => {
 				writeSandboxBackendLog(

@@ -724,9 +724,72 @@ describe('createControllerApp', () => {
 			correlation: { toolName: 'shell' },
 			useId: '01890f00-0000-7000-8000-000000000000',
 		});
+		expect(heartbeatActiveUse).toHaveBeenCalledWith(
+			'lease-123',
+			'01890f00-0000-7000-8000-000000000000',
+			{},
+		);
 		expect(endActiveUse).toHaveBeenCalledWith('lease-123', '01890f00-0000-7000-8000-000000000000', {
 			outcome: 'completed',
 		});
+	});
+
+	it('accepts bounded active-use heartbeat operation reports', async () => {
+		const heartbeatActiveUse = vi.fn(() => ({
+			expiresAt: 10_000,
+			heartbeatAfterMs: 1_000,
+		}));
+		const app = createControllerAppForTest({
+			leaseManager: {
+				createLease: vi.fn(),
+				endActiveUse: vi.fn(),
+				getActiveUseCount: vi.fn(() => 1),
+				heartbeatActiveUse,
+				listLeases: vi.fn(() => []),
+				peekLease: vi.fn(),
+				releaseLease: vi.fn(async () => {}),
+				renewLease: vi.fn(),
+				startActiveUse: vi.fn(),
+			},
+		});
+
+		const response = await app.request(
+			'/lease/01890f00-0000-7000-8000-000000000000/uses/01890f00-0000-7000-8000-000000000001/heartbeat',
+			{
+				body: JSON.stringify({
+					report: {
+						observedAtMs: 1_000,
+						phase: 'failed',
+						ssh: {
+							failure: {
+								kind: 'ssh-command-timed-out',
+								message: 'runShellCommand exceeded 30000ms.',
+							},
+						},
+					},
+				}),
+				headers: { 'content-type': 'application/json' },
+				method: 'POST',
+			},
+		);
+
+		expect(response.status).toBe(200);
+		expect(heartbeatActiveUse).toHaveBeenCalledWith(
+			'01890f00-0000-7000-8000-000000000000',
+			'01890f00-0000-7000-8000-000000000001',
+			{
+				report: {
+					observedAtMs: 1_000,
+					phase: 'failed',
+					ssh: {
+						failure: {
+							kind: 'ssh-command-timed-out',
+							message: 'runShellCommand exceeded 30000ms.',
+						},
+					},
+				},
+			},
+		);
 	});
 
 	it('passes agentId while keeping channel-shaped session provenance out of the lease', async () => {
