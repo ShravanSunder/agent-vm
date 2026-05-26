@@ -747,12 +747,14 @@ describe('openclawLifecycle', () => {
 				readFile(path.join(tempDirectory, 'etc', 'profile.d', 'openclaw-admin.sh'), 'utf8'),
 			).rejects.toThrow();
 			expect(environmentShellScript).toContain('export PATH=/pnpm:$PATH');
-			// The NODE_OPTIONS profile export uses a parameter-expansion
-			// compose so it prepends the forced flags to any pre-existing
-			// NODE_OPTIONS that a later-sourced secrets.env might set.
-			// See FORCE_IPV4_EGRESS_NODE_OPTIONS in @agent-vm/gateway-interface.
+			// The NODE_OPTIONS profile export is idempotent so it keeps
+			// interactive shells safe without duplicating the forced flags
+			// that the VM env already provides.
 			expect(environmentShellScript).toContain(
-				'export NODE_OPTIONS="--dns-result-order=ipv4first --no-network-family-autoselection${NODE_OPTIONS:+ ${NODE_OPTIONS}}"',
+				'case " ${NODE_OPTIONS:-} " in *" --dns-result-order=ipv4first "*) ;; *) export NODE_OPTIONS="--dns-result-order=ipv4first${NODE_OPTIONS:+ ${NODE_OPTIONS}}";; esac',
+			);
+			expect(environmentShellScript).toContain(
+				'case " ${NODE_OPTIONS:-} " in *" --no-network-family-autoselection "*) ;; *) export NODE_OPTIONS="--no-network-family-autoselection${NODE_OPTIONS:+ ${NODE_OPTIONS}}";; esac',
 			);
 		});
 	});
