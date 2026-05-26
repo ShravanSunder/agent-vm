@@ -36,6 +36,17 @@ function createSingleAttemptPolicy(timeoutMs: number): ControllerRequestPolicy {
 	};
 }
 
+function createRetryingPolicy(timeoutMs: number): ControllerRequestPolicy {
+	return {
+		idempotency: 'safe-mutation',
+		maxAttempts: 2,
+		retryBaseDelayMs: 0,
+		retryEnabled: true,
+		retryStatuses: [503],
+		timeoutMs,
+	};
+}
+
 describe('createLeaseClient', () => {
 	it('keeps raw fetch calls inside the controller request policy boundary', async () => {
 		const leaseClientSource = await readFile(
@@ -533,6 +544,79 @@ describe('createLeaseClient', () => {
 			vi.useRealTimers();
 		}
 	});
+
+	it.each([
+		{
+			expectedOperation: 'lease-create',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.requestLease(createLeaseRequest()),
+		},
+		{
+			expectedOperation: 'lease-renew',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.renewLease('lease-123'),
+		},
+		{
+			expectedOperation: 'lease-peek',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.peekLease('lease-123'),
+		},
+		{
+			expectedOperation: 'lease-use-start',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.startActiveUse('lease-123', {
+					useId: '01890f00-0000-7000-8000-000000000000',
+				}),
+		},
+		{
+			expectedOperation: 'lease-heartbeat',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.heartbeatActiveUse(
+					'lease-123',
+					'01890f00-0000-7000-8000-000000000000',
+					{},
+				),
+		},
+		{
+			expectedOperation: 'lease-use-end',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.endActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {
+					outcome: 'completed',
+				}),
+		},
+		{
+			expectedOperation: 'lease-release',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.releaseLease('lease-123'),
+		},
+		{
+			expectedOperation: 'openclaw-runtime-status',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.publishOpenClawRuntimeStatus?.({
+					findings: [],
+					pluginId: 'gondolin',
+					zoneId: 'shravan',
+				}),
+		},
+	])(
+		'labels exhausted transport failures for $expectedOperation',
+		async ({ expectedOperation, run }) => {
+			const fetchImpl = vi.fn(async () => {
+				throw Object.assign(new Error('write EPIPE controller.vm.host:18800'), { code: 'EPIPE' });
+			});
+			const leaseClient = createLeaseClient({
+				controllerUrl: 'http://controller.vm.host:18800',
+				fetchImpl,
+				requestPolicy: createRetryingPolicy(500),
+			});
+
+			await expect(run(leaseClient)).rejects.toMatchObject({
+				code: 'controller-request-failed',
+				operation: expectedOperation,
+			});
+			expect(fetchImpl).toHaveBeenCalledTimes(2);
+		},
+	);
 
 	it('throws TypeError when the controller returns an invalid lease response', async () => {
 		const leaseClient = createLeaseClient({

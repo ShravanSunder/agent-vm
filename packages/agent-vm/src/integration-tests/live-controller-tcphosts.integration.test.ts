@@ -1,13 +1,22 @@
 import { once } from 'node:events';
+import { existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 
 import { createManagedVm } from '@agent-vm/gondolin-adapter';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 import { afterAll, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { shouldRunLiveVmIntegration } from './live-integration-gates.js';
 
 const describeLiveVmIntegration = shouldRunLiveVmIntegration() ? describe : describe.skip;
+const wrapperEvidenceSchema = z.object({
+	elapsedMs: z.number().nonnegative(),
+	name: z.literal('ControllerRequestTimeoutError'),
+	ok: z.literal(true),
+	operation: z.literal('gateway-control-link'),
+	timeoutMs: z.literal(500),
+});
 
 async function listenOnLoopback(server: Server): Promise<number> {
 	server.listen(0, '127.0.0.1');
@@ -57,6 +66,15 @@ describeLiveVmIntegration('live: gateway VM controller tcp.hosts path', () => {
 	});
 
 	it('resolves controller.vm.host, reaches the host controller, and bounds stalled responses', async () => {
+		const pluginDistIndexPath = new URL(
+			'../../../openclaw-agent-vm-plugin/dist/index.js',
+			import.meta.url,
+		);
+		if (!existsSync(pluginDistIndexPath)) {
+			throw new Error(
+				'Plugin not built. Run: pnpm --filter @agent-vm/openclaw-agent-vm-plugin build',
+			);
+		}
 		controllerServer = createServer((request, response) => {
 			if (request.url === '/health') {
 				response.writeHead(200, { 'content-type': 'application/json' });
@@ -79,7 +97,12 @@ describeLiveVmIntegration('live: gateway VM controller tcp.hosts path', () => {
 			rootfsMode: 'cow',
 			allowedHosts: [],
 			secrets: {},
-			vfsMounts: {},
+			vfsMounts: {
+				'/repo': {
+					kind: 'realfs-readonly',
+					hostPath: process.cwd(),
+				},
+			},
 			tcpHosts: {
 				'controller.vm.host:18800': `127.0.0.1:${String(controllerPort)}`,
 			},
@@ -106,5 +129,53 @@ describeLiveVmIntegration('live: gateway VM controller tcp.hosts path', () => {
 		expect(stalledResult.exitCode).toBe(28);
 		expect(stalledResult.stderr).toContain('Operation timed out');
 		expect(elapsedMs).toBeLessThan(10_000);
+
+		const wrapperResult =
+			await gatewayVm.exec(`env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy NO_PROXY=controller.vm.host no_proxy=controller.vm.host node --input-type=module <<'NODE'
+import {
+	ControllerRequestTimeoutError,
+	fetchControllerWithPolicy,
+} from 'file:///repo/packages/openclaw-agent-vm-plugin/dist/index.js';
+import dns from 'node:dns';
+
+dns.setDefaultResultOrder('ipv4first');
+
+const startedAtMs = Date.now();
+try {
+	const response = await fetchControllerWithPolicy('http://controller.vm.host:18800/stall', {
+		fetchImpl: fetch,
+		method: 'GET',
+		operation: 'gateway-control-link',
+		policy: {
+			maxAttempts: 1,
+			retryBaseDelayMs: 0,
+			timeoutMs: 500,
+		},
+	});
+	console.log(JSON.stringify({
+		body: await response.text().catch((error) => String(error)),
+		name: 'unexpected-success',
+		ok: false,
+		status: response.status,
+	}));
+	process.exit(1);
+} catch (error) {
+	console.log(JSON.stringify({
+		elapsedMs: Date.now() - startedAtMs,
+		name: error instanceof Error ? error.name : String(error),
+		ok: error instanceof ControllerRequestTimeoutError,
+		operation: error && typeof error === 'object' && 'operation' in error ? error.operation : undefined,
+		timeoutMs: error && typeof error === 'object' && 'timeoutMs' in error ? error.timeoutMs : undefined,
+	}));
+}
+NODE`);
+		if (wrapperResult.exitCode !== 0) {
+			throw new Error(
+				`controller wrapper script failed: stdout=${wrapperResult.stdout} stderr=${wrapperResult.stderr}`,
+			);
+		}
+		expect(wrapperResult.exitCode).toBe(0);
+		const wrapperEvidence = wrapperEvidenceSchema.parse(JSON.parse(wrapperResult.stdout));
+		expect(wrapperEvidence.elapsedMs).toBeLessThan(10_000);
 	});
 });

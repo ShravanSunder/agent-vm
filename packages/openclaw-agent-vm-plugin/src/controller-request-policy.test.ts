@@ -7,6 +7,7 @@ import {
 	type ControllerRequestPolicy,
 	type ControllerRequestPolicyTransportErrorCode,
 } from './controller-request-policy.js';
+import { ControllerRequestPolicyTransportError as BarrelControllerRequestPolicyTransportError } from './index.js';
 
 const retryDisabledPolicy = {
 	idempotency: 'read',
@@ -186,6 +187,32 @@ describe('OpenClaw controller request policy re-export', () => {
 		expect(fetchImpl).toHaveBeenCalledTimes(1);
 	});
 
+	it('propagates retry-looking caller cancellation without retrying', async () => {
+		const callerAbortController = new AbortController();
+		const callerError = new Error('fetch failed');
+		const fetchImpl = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+			return new Promise<Response>((_resolve, reject) => {
+				init?.signal?.addEventListener('abort', () => {
+					reject(init.signal?.reason);
+				});
+			});
+		});
+
+		const request = fetchControllerWithPolicy({
+			fetchImpl,
+			input: 'http://controller.vm.host:18800/health',
+			init: { method: 'GET', signal: callerAbortController.signal },
+			operation: 'controller-health',
+			policy: retryEnabledPolicy({ maxAttempts: 3, retryBaseDelayMs: 50, timeoutMs: 1_000 }),
+		});
+
+		await Promise.resolve();
+		callerAbortController.abort(callerError);
+
+		await expect(request).rejects.toBe(callerError);
+		expect(fetchImpl).toHaveBeenCalledTimes(1);
+	});
+
 	it('wraps non-timeout transport failures when retries are disabled', async () => {
 		const failure = new Error('invalid request construction');
 		const fetchImpl = vi
@@ -228,26 +255,31 @@ describe('OpenClaw controller request policy re-export', () => {
 		expect(fetchImpl).toHaveBeenCalledTimes(2);
 	});
 
-	it.each(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND', 'ENETUNREACH'])(
-		'retries transient %s controller-link failures',
-		async (causeCode) => {
-			const fetchImpl = vi
-				.fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>()
-				.mockRejectedValueOnce(new Error(`${causeCode}: controller.vm.host:18800`))
-				.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+	it.each([
+		'ECONNRESET',
+		'ETIMEDOUT',
+		'ECONNREFUSED',
+		'EAI_AGAIN',
+		'ENOTFOUND',
+		'ENETUNREACH',
+		'EPIPE',
+	])('retries transient %s controller-link failures', async (causeCode) => {
+		const fetchImpl = vi
+			.fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+			.mockRejectedValueOnce(new Error(`${causeCode}: controller.vm.host:18800`))
+			.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
 
-			const response = await fetchControllerWithPolicy({
-				fetchImpl,
-				input: 'http://controller.vm.host:18800/health',
-				init: { method: 'GET' },
-				operation: 'controller-health',
-				policy: retryEnabledPolicy({ maxAttempts: 2 }),
-			});
+		const response = await fetchControllerWithPolicy({
+			fetchImpl,
+			input: 'http://controller.vm.host:18800/health',
+			init: { method: 'GET' },
+			operation: 'controller-health',
+			policy: retryEnabledPolicy({ maxAttempts: 2 }),
+		});
 
-			expect(response.status).toBe(200);
-			expect(fetchImpl).toHaveBeenCalledTimes(2);
-		},
-	);
+		expect(response.status).toBe(200);
+		expect(fetchImpl).toHaveBeenCalledTimes(2);
+	});
 
 	it('exposes a typed transport error for resilience classification', () => {
 		const error = new ControllerRequestPolicyTransportError({
@@ -263,6 +295,16 @@ describe('OpenClaw controller request policy re-export', () => {
 			operation: 'lease-renew',
 		});
 		expect(errorCode).toBe('controller-request-failed');
+	});
+
+	it('exports typed controller request policy errors from the package entrypoint', () => {
+		expect(
+			new BarrelControllerRequestPolicyTransportError({
+				cause: new Error('write EPIPE'),
+				code: 'controller-request-failed',
+				operation: 'controller-health',
+			}),
+		).toBeInstanceOf(ControllerRequestPolicyTransportError);
 	});
 
 	it('does not retry non-retryable HTTP statuses', async () => {
@@ -313,5 +355,17 @@ describe('OpenClaw controller request policy re-export', () => {
 		await drainControllerResponseBody(streamedResponse);
 
 		expect(streamedResponse.bodyUsed).toBe(true);
+	});
+
+	it('treats repeated response body drains as already completed', async () => {
+		const response = new Response(JSON.stringify({ ok: true }), {
+			headers: { 'content-type': 'application/json' },
+			status: 200,
+		});
+
+		await drainControllerResponseBody(response);
+		await expect(drainControllerResponseBody(response)).resolves.toBeUndefined();
+
+		expect(response.bodyUsed).toBe(true);
 	});
 });

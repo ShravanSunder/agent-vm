@@ -1,7 +1,7 @@
 export * from './sandbox-backend-factory.js';
 export * from './gondolin-plugin-config.js';
-export * from './controller-lease-client.js';
 export * from './controller-request-policy.js';
+export * from './controller-lease-client.js';
 export { createGatewayControlLinkMonitor } from './gateway-control-link-monitor.js';
 export * from './openclaw-plugin-registration.js';
 export * from './openclaw-gondolin-contract.js';
