@@ -153,6 +153,14 @@ existing package-update helper. Verify the installed package source afterward;
 do not leave beta pinned to stale local tarballs when the intent is to test a
 published registry version.
 
+## Testing Worktree Changes In Beta
+
+For beta validation, use `pnpm beta:sync -- --deployment ../shravan-claw-beta`.
+It builds once, packs local `@agent-vm/*` tarballs, updates beta's host
+dependency pins, runs `pnpm install` in beta, and refreshes the OpenClaw gateway
+overlay tarballs. Then run beta's normal `mise exec -- pnpm build` and `pnpm
+start` commands.
+
 ## Release Process
 
 Keep every published `@agent-vm/*` package version in sync for normal releases.

@@ -56,7 +56,7 @@ export default defineConfig({
 		fileParallelism: false,
 		// Default suite runs unit-style tests. Live integration coverage uses
 		// the explicit .integration.test.ts suffix and runs separately.
-		include: ['packages/**/*.test.ts', 'packages/**/*.spec.ts'],
+		include: ['packages/**/*.test.ts', 'packages/**/*.spec.ts', 'scripts/**/*.test.ts'],
 		exclude: [
 			'**/node_modules/**',
 			'**/*.smoke.test.ts',
