@@ -70,6 +70,55 @@ const mapping = {
 	],
 } satisfies RuntimePathMapping;
 
+const invalidGuestLeaseMountMapping = {
+	id: 'invalid-guest-lease-mount',
+	roots: [
+		// @ts-expect-error guest-rootfs-cow roots can never be lease mounts.
+		{
+			backing: {
+				kind: 'guest-rootfs-cow',
+				durability: 'vm-lifetime',
+			},
+			capabilities: {
+				executionCwd: true,
+				leaseMount: true,
+			},
+			guidanceLabel: 'invalid scratch',
+			id: 'invalid-scratch',
+			locations: {
+				'tool-vm-guest': '/scratch',
+			},
+			rootPathAllowed: true,
+		},
+	],
+} satisfies RuntimePathMapping;
+void invalidGuestLeaseMountMapping;
+
+const invalidHostlessRealfsMapping = {
+	id: 'invalid-hostless-realfs',
+	roots: [
+		// @ts-expect-error host-realfs roots need a controller or OpenClaw location.
+		{
+			backing: {
+				kind: 'host-realfs',
+				durability: 'durable',
+				backup: 'included',
+			},
+			capabilities: {
+				executionCwd: true,
+				leaseMount: true,
+			},
+			guidanceLabel: 'invalid hostless realfs',
+			id: 'invalid-hostless',
+			locations: {
+				'tool-vm-guest': '/workspace',
+			},
+			rootPathAllowed: true,
+		},
+	],
+} satisfies RuntimePathMapping;
+void invalidHostlessRealfsMapping;
+
 describe('translateRuntimePath', () => {
 	it('maps Tool VM guest workspace subpaths to OpenClaw gateway paths', () => {
 		const result = translateRuntimePath({

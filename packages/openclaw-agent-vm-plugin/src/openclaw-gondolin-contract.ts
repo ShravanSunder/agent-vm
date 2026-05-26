@@ -30,6 +30,13 @@ export interface OpenClawGondolinAgentConfig {
 	readonly workspace?: unknown;
 }
 
+export class OpenClawAgentIdError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'OpenClawAgentIdError';
+	}
+}
+
 export function isOpenClawAgentId(value: string): boolean {
 	return agentIdPattern.test(value.trim());
 }
@@ -69,13 +76,21 @@ export function formatOpenClawGondolinRequirementHint(options: {
 
 export function normalizeOpenClawAgentId(value: string | undefined | null): string {
 	const trimmed = (value ?? '').trim().toLowerCase();
-	return isOpenClawAgentId(trimmed) ? trimmed : OPENCLAW_DEFAULT_AGENT_ID;
+	if (trimmed === '') {
+		return OPENCLAW_DEFAULT_AGENT_ID;
+	}
+	if (!isOpenClawAgentId(trimmed)) {
+		throw new OpenClawAgentIdError(`Invalid OpenClaw agentId '${value}'.`);
+	}
+	return trimmed;
 }
 
 export function resolveOpenClawAgentIdFromSessionKey(sessionKey: string): string {
 	const parts = sessionKey.trim().split(':');
-	if (parts[0] !== 'agent' || !parts[1]) {
-		return OPENCLAW_DEFAULT_AGENT_ID;
+	if (parts[0] !== 'agent' || !parts[1] || !isOpenClawAgentId(parts[1])) {
+		throw new OpenClawAgentIdError(
+			`OpenClaw sessionKey '${sessionKey}' must be agent-shaped and include a valid agentId.`,
+		);
 	}
 	return normalizeOpenClawAgentId(parts[1]);
 }

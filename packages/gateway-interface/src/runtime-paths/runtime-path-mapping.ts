@@ -23,17 +23,46 @@ export type RuntimePathBacking =
 	  };
 
 export type RuntimePathLocations = Partial<Record<RuntimePathNamespace, string>>;
+export type RuntimePathHostRealfsLocations =
+	| {
+			readonly 'controller-host': string;
+			readonly 'openclaw-gateway'?: string;
+			readonly 'tool-vm-guest'?: string;
+	  }
+	| {
+			readonly 'controller-host'?: string;
+			readonly 'openclaw-gateway': string;
+			readonly 'tool-vm-guest'?: string;
+	  };
+export interface RuntimePathGuestRootfsCowLocations {
+	readonly 'controller-host'?: never;
+	readonly 'openclaw-gateway'?: never;
+	readonly 'tool-vm-guest': string;
+}
 export type RuntimePathGuidanceVisibility = Partial<Record<RuntimePathNamespace, boolean>>;
 
-export interface RuntimePathRootMapping {
-	readonly backing: RuntimePathBacking;
+interface RuntimePathRootMappingBase {
 	readonly capabilities: RuntimePathCapabilities;
 	readonly guidanceLabel: string;
 	readonly id: string;
-	readonly locations: RuntimePathLocations;
+	/**
+	 * False for broad roots like /zone where mounting the root would expose
+	 * unrelated children; callers must request an explicit child path.
+	 */
 	readonly rootPathAllowed: boolean;
 	readonly showInGuidance?: RuntimePathGuidanceVisibility;
 }
+
+export type RuntimePathRootMapping =
+	| (RuntimePathRootMappingBase & {
+			readonly backing: Extract<RuntimePathBacking, { readonly kind: 'host-realfs' }>;
+			readonly locations: RuntimePathHostRealfsLocations;
+	  })
+	| (RuntimePathRootMappingBase & {
+			readonly backing: Extract<RuntimePathBacking, { readonly kind: 'guest-rootfs-cow' }>;
+			readonly capabilities: RuntimePathCapabilities & { readonly leaseMount: false };
+			readonly locations: RuntimePathGuestRootfsCowLocations;
+	  });
 
 export interface RuntimePathMapping {
 	readonly id: string;
@@ -214,7 +243,8 @@ function findInvalidRoot(
 	mapping: RuntimePathMapping,
 ): { readonly rootId: string; readonly rootPath: string } | undefined {
 	for (const root of mapping.roots) {
-		for (const rootPath of Object.values(root.locations)) {
+		for (const namespace of guidanceNamespaceOrder) {
+			const rootPath = root.locations[namespace];
 			if (rootPath !== undefined && runtimeRootIsInvalid(rootPath)) {
 				return { rootId: root.id, rootPath };
 			}
@@ -233,6 +263,8 @@ export function translateRuntimePath(input: TranslateRuntimePathInput): Translat
 			purpose: input.purpose,
 		});
 	}
+	// Reject traversal before normalization so /workspace/../secret cannot
+	// collapse into a seemingly valid path under a trusted root.
 	if (pathContainsParentTraversal(input.inputPath)) {
 		return errorResult({
 			code: 'path-parent-traversal',

@@ -412,14 +412,14 @@ describe('gondolin controller integration', () => {
 			agentWorkspaceDir: '/home/openclaw/work',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-1',
+			sessionKey: 'agent:main:session-1',
 			workspaceDir: '/home/openclaw/work',
 		});
 		const second = await gpuFactory({
 			agentWorkspaceDir: '/home/openclaw/work',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-1',
+			sessionKey: 'agent:main:session-1',
 			workspaceDir: '/home/openclaw/work',
 		});
 

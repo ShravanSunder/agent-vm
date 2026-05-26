@@ -163,6 +163,21 @@ describe('resolveOpenClawAgentWorkspaceSource', () => {
 		).toThrow(/must be an absolute or home-relative path/u);
 	});
 
+	it('rejects invalid configured agent ids instead of matching them as main', () => {
+		expect(() =>
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'main',
+				...fallbackPaths,
+				openClawConfig: {
+					agents: {
+						list: [{ id: 'Bad Name', workspace: '/zone/agents/bad-name' }],
+					},
+				},
+				paramsAgentWorkspaceDir: '/workspace',
+			}),
+		).toThrow(/Invalid OpenClaw agentId 'Bad Name'/u);
+	});
+
 	it('uses OpenClaw stateDir fallback when guest leakage arrives without explicit workspace config', () => {
 		expect(
 			resolveOpenClawAgentWorkspaceSource({

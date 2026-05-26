@@ -2,6 +2,7 @@ import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+	TOOL_VM_WORKSPACE_GUEST_ROOT,
 	translateRuntimePath,
 	type RuntimePathTranslationErrorCode,
 } from '@agent-vm/gateway-interface';
@@ -21,7 +22,7 @@ import {
 } from './openclaw-gateway-lease-path-mapping.js';
 
 const OPENCLAW_ZONE_FILES_VM_ROOT = OPENCLAW_ZONE_FILES_GUEST_ROOT;
-export const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
+export const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = TOOL_VM_WORKSPACE_GUEST_ROOT;
 
 type ZoneConfig = SystemConfig['zones'][number];
 

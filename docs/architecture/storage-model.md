@@ -126,11 +126,14 @@ sandboxes/<child>                   OpenClaw gateway VM                RealFS ->
 hostWorkMountDir                    controller internal                trusted resolved host path
                                     after validation/realpath          passed to lease manager / RealFS
 
-/workspace                          Tool VM guest path                 RealFS -> hostWorkMountDir
-                                    lease-local execution dir          survives if backing host dir does
+	/workspace                          Tool VM guest path                 RealFS -> hostWorkMountDir
+	                                    lease-local execution dir          survives if backing host dir does
 
-/work                               Tool VM guest path                 rootfs/COW
-                                    disposable scratch                 deleted with the Tool VM
+	effectiveGuestCwd                   plugin/controller response         Tool VM guest cwd for commands
+	                                    derived from runtime translation    may be /workspace, /workspace/sub, or /work
+
+	/work                               Tool VM guest path                 rootfs/COW
+	                                    disposable scratch                 deleted with the Tool VM
 
 agentWorkspaceDir                   OpenClaw/tool process cwd concept  guest-side agent working dir
                                     controller lease field             not a host storage root

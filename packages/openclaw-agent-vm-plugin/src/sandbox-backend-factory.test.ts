@@ -321,7 +321,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				},
 			},
 			scopeKey: 'agent:main',
-			sessionKey: 'session-abc',
+			sessionKey: 'agent:main:session-abc',
 			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 		});
 
@@ -347,7 +347,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
 			profileId: 'gpu',
-			sessionKey: 'session-abc',
+			sessionKey: 'agent:main:session-abc',
 			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 			zoneId: 'shravan',
 		});
@@ -816,14 +816,14 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-reuse',
+			sessionKey: 'agent:main:session-reuse',
 			workspaceDir: '/work',
 		});
 		const secondHandle = await factory({
 			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-reuse',
+			sessionKey: 'agent:main:session-reuse',
 			workspaceDir: '/work',
 		});
 
@@ -1052,21 +1052,21 @@ describe('createGondolinSandboxBackendFactory', () => {
 				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
-				sessionKey: 'session-stale',
+				sessionKey: 'agent:main:session-stale',
 				workspaceDir: '/work',
 			});
 			const secondHandle = await factory({
 				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
-				sessionKey: 'session-stale',
+				sessionKey: 'agent:main:session-stale',
 				workspaceDir: '/work',
 			});
 			const thirdHandle = await factory({
 				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
-				sessionKey: 'session-stale',
+				sessionKey: 'agent:main:session-stale',
 				workspaceDir: '/work',
 			});
 
@@ -1118,7 +1118,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-client-error',
+			sessionKey: 'agent:main:session-client-error',
 			workspaceDir: '/work',
 		});
 
@@ -1127,7 +1127,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
-				sessionKey: 'session-client-error',
+				sessionKey: 'agent:main:session-client-error',
 				workspaceDir: '/work',
 			}),
 		).rejects.toMatchObject({
@@ -1166,7 +1166,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-server-error',
+			sessionKey: 'agent:main:session-server-error',
 			workspaceDir: '/work',
 		});
 
@@ -1175,7 +1175,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
-				sessionKey: 'session-server-error',
+				sessionKey: 'agent:main:session-server-error',
 				workspaceDir: '/work',
 			}),
 		).rejects.toMatchObject({
@@ -1214,7 +1214,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-network-error',
+			sessionKey: 'agent:main:session-network-error',
 			workspaceDir: '/work',
 		});
 
@@ -1223,7 +1223,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
-				sessionKey: 'session-network-error',
+				sessionKey: 'agent:main:session-network-error',
 				workspaceDir: '/work',
 			}),
 		).rejects.toThrow('temporary network failure');
@@ -1319,14 +1319,14 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-stale',
+			sessionKey: 'agent:main:session-stale',
 			workspaceDir: '/work',
 		});
 		const secondHandle = await factory({
 			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-stale',
+			sessionKey: 'agent:main:session-stale',
 			workspaceDir: '/work',
 		});
 
@@ -1363,7 +1363,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-finalize',
+			sessionKey: 'agent:main:session-finalize',
 			workspaceDir: '/work',
 		});
 
@@ -1407,7 +1407,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-command-failed',
+			sessionKey: 'agent:main:session-command-failed',
 			workspaceDir: '/work',
 		});
 		const execSpec = await backend.buildExecSpec({
@@ -1458,7 +1458,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-noop',
+			sessionKey: 'agent:main:session-noop',
 			workspaceDir: '/work',
 		});
 
@@ -1516,7 +1516,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'test',
+			sessionKey: 'agent:main:test',
 			workspaceDir: '/work',
 		});
 
@@ -1573,7 +1573,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-dispose-throws',
+			sessionKey: 'agent:main:session-dispose-throws',
 			workspaceDir: '/work',
 		});
 
@@ -1623,7 +1623,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
-				sessionKey: 'test',
+				sessionKey: 'agent:main:test',
 				workspaceDir: '/work',
 			}),
 		).rejects.toThrow('Controller lease API returned an unexpected response.');
@@ -1662,7 +1662,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentWorkspaceDir: '/home/openclaw/work',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-abc',
+			sessionKey: 'agent:main:session-abc',
 			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 		});
 
@@ -1707,7 +1707,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'test',
+			sessionKey: 'agent:main:test',
 			workspaceDir: '/work',
 		});
 

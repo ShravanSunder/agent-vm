@@ -161,6 +161,18 @@ function validateOpenClawGondolinLeaseContract(payload: {
 	readonly agentId: string;
 	readonly sessionKey: string;
 }): LeaseContractErrorBody | null {
+	if (!isOpenClawAgentSessionKey(payload.sessionKey)) {
+		return leaseContractErrorBody({
+			error: 'tool-vm-lease-invalid-session-key',
+			message: `Lease sessionKey '${payload.sessionKey}' is not agent-shaped or contains an invalid agent id.`,
+			guidance:
+				'The OpenClaw plugin must send sessionKey in the form agent:<agentId>:<scope> with a valid agentId.',
+			received: {
+				agentId: payload.agentId,
+				sessionKey: payload.sessionKey,
+			},
+		});
+	}
 	const sessionAgentId = resolveOpenClawAgentIdFromSessionKey(payload.sessionKey);
 	if (sessionAgentId !== payload.agentId) {
 		return leaseContractErrorBody({
@@ -352,7 +364,13 @@ export function createControllerApp(options: {
 				);
 			}
 			const payload = parsedPayload.data;
-			options.onLeaseCreateRequest?.(payload);
+			try {
+				options.onLeaseCreateRequest?.(payload);
+			} catch (error) {
+				writeControllerLeaseLog(
+					`[WARN] lease create observer failed zone='${payload.zoneId}' agent='${payload.agentId}' workMountDir='${payload.workMountDir}': ${formatUnknownError(error)}`,
+				);
+			}
 			const agentId = payload.agentId;
 			requestContext = {
 				agentId,
@@ -366,11 +384,6 @@ export function createControllerApp(options: {
 						!(payload.zoneId in options.zoneDefaultToolVmProfiles)
 			) {
 				return context.json({ error: `Unknown zone '${payload.zoneId}'` }, 400);
-			}
-			if (!isOpenClawAgentSessionKey(payload.sessionKey)) {
-				writeControllerLeaseLog(
-					`[WARN] OpenClaw lease sessionKey '${payload.sessionKey}' is not agent-shaped; defaulting agentId=main zone='${payload.zoneId}' agent='${payload.agentId}'`,
-				);
 			}
 			const contractError = validateOpenClawGondolinLeaseContract(payload);
 			if (contractError) {
