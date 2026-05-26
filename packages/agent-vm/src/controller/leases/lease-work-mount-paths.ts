@@ -70,6 +70,7 @@ const translatorErrorKindByCode = {
 	'path-parent-traversal': 'work-mount-parent-traversal',
 	'purpose-not-allowed': 'work-mount-purpose-not-allowed',
 	'root-path-not-allowed': 'root-mount-target',
+	'target-namespace-not-available': 'work-mount-unknown-runtime-path',
 	'unknown-runtime-path': 'work-mount-unknown-runtime-path',
 } satisfies Record<RuntimePathTranslationErrorCode, LeaseWorkMountValidationErrorKind>;
 
@@ -202,6 +203,8 @@ export async function resolveLeaseWorkMountDir(options: {
 			zoneFilesDir: options.zone.gateway.zoneFilesDir,
 		}),
 		purpose: 'leaseMount',
+		sourceNamespace: 'openclaw-gateway',
+		targetNamespace: 'controller-host',
 	});
 	if (!translation.ok) {
 		const kind = translatorErrorKindByCode[translation.error.code];
@@ -213,21 +216,8 @@ export async function resolveLeaseWorkMountDir(options: {
 			guidance: translation.error.retryGuidance,
 		});
 	}
-	if (translation.value.inputNamespace === 'host') {
-		throw new LeaseWorkMountValidationError(
-			'outside-allowed-roots',
-			`Lease workMountDir '${options.workMountDir}' must be under ${OPENCLAW_STATE_SANDBOXES_VM_ROOT} or ${OPENCLAW_ZONE_FILES_VM_ROOT}.`,
-		);
-	}
-	const hostWorkMountDir = translation.value.hostPath;
-	if (hostWorkMountDir === undefined) {
-		throw new LeaseWorkMountValidationError(
-			'outside-allowed-roots',
-			`Lease workMountDir '${options.workMountDir}' must resolve to a host-backed path.`,
-		);
-	}
 	const realHostWorkMountDir = await validateResolvedLeaseWorkMountDir({
-		hostWorkMountDir,
+		hostWorkMountDir: translation.value.outputPath,
 		zone: options.zone,
 	});
 	if (

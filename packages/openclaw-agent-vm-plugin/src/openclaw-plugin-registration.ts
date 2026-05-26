@@ -129,6 +129,7 @@ const plugin = {
 				factory: createGondolinSandboxBackendFactory(
 					{
 						...pluginConfig,
+						openClawRuntimeConfigProvider: () => api.runtime?.config?.current?.() ?? api.config,
 						openClawRuntimeStatusProvider: buildRuntimeStatus,
 					},
 					backendDependencies,

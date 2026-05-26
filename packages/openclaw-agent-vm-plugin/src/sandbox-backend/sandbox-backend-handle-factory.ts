@@ -1,3 +1,5 @@
+import path from 'node:path/posix';
+
 import {
 	createToolVmActiveUseHandle,
 	type EndToolVmActiveUseRequest,
@@ -22,6 +24,7 @@ import {
 	resolveOpenClawAgentIdFromSessionKey,
 	type OpenClawGondolinSandboxSnapshot,
 } from '../openclaw-gondolin-contract.js';
+import { resolveOpenClawAgentWorkspaceSource } from './openclaw-agent-workspace-source.js';
 import { assertOpenClawToolVmPathIntent } from './openclaw-tool-vm-path-mapping.js';
 import {
 	type CachedAgentLeaseEntry,
@@ -171,6 +174,26 @@ function resolveLeaseRequestAgentId(sessionKey: string): string {
 	return resolveOpenClawAgentIdFromSessionKey(sessionKey);
 }
 
+function defaultOpenClawStateDir(): string | undefined {
+	const explicitStateDir = process.env.OPENCLAW_STATE_DIR?.trim();
+	if (explicitStateDir) {
+		return path.resolve(explicitStateDir);
+	}
+	const homeDirectory = process.env.HOME?.trim();
+	return homeDirectory ? path.join(homeDirectory, '.openclaw') : undefined;
+}
+
+function defaultOpenClawWorkspaceDir(): string | undefined {
+	const homeDirectory = process.env.HOME?.trim();
+	if (!homeDirectory) {
+		return undefined;
+	}
+	const profile = process.env.OPENCLAW_PROFILE?.trim().toLowerCase();
+	return profile && profile !== 'default'
+		? path.join(homeDirectory, '.openclaw', `workspace-${profile}`)
+		: path.join(homeDirectory, '.openclaw', 'workspace');
+}
+
 function assertPluginLeaseContract(params: {
 	readonly cfg: OpenClawGondolinSandboxSnapshot;
 }): void {
@@ -185,7 +208,10 @@ function assertPluginLeaseContract(params: {
 export function createGondolinSandboxBackendFactory(
 	options: {
 		readonly controllerUrl: string;
+		readonly openClawDefaultWorkspaceDirProvider?: () => string | undefined;
 		readonly openClawRuntimeStatusProvider?: () => OpenClawRuntimeStatusReport | undefined;
+		readonly openClawRuntimeConfigProvider?: () => Record<string, unknown> | undefined;
+		readonly openClawStateDirProvider?: () => string | undefined;
 		readonly profileId?: string;
 		readonly zoneId: string;
 	},
@@ -212,8 +238,16 @@ export function createGondolinSandboxBackendFactory(
 		assertPluginLeaseContract({
 			cfg: params.cfg,
 		});
+		const workspaceSource = resolveOpenClawAgentWorkspaceSource({
+			agentId,
+			defaultWorkspaceDir:
+				options.openClawDefaultWorkspaceDirProvider?.() ?? defaultOpenClawWorkspaceDir(),
+			openClawConfig: options.openClawRuntimeConfigProvider?.(),
+			paramsAgentWorkspaceDir: params.agentWorkspaceDir,
+			stateDir: options.openClawStateDirProvider?.() ?? defaultOpenClawStateDir(),
+		});
 		const pathIntent = assertOpenClawToolVmPathIntent({
-			agentWorkspaceDir: params.agentWorkspaceDir,
+			agentWorkspaceDir: workspaceSource.sourceDir,
 			inputPath: params.workspaceDir,
 		});
 		const cacheKey = agentLeaseCacheKey({
@@ -221,7 +255,7 @@ export function createGondolinSandboxBackendFactory(
 			zoneId: options.zoneId,
 		});
 		const requestedCacheEntry = {
-			agentWorkspaceDir: params.agentWorkspaceDir,
+			agentWorkspaceDir: workspaceSource.sourceDir,
 			leaseWorkMountDir: pathIntent.leaseWorkMountDir,
 			profileId,
 		} satisfies CachedAgentLeaseCompatibility;
@@ -305,7 +339,7 @@ export function createGondolinSandboxBackendFactory(
 					}
 					const leaseResponse = await leaseClient.requestLease({
 						agentId,
-						agentWorkspaceDir: params.agentWorkspaceDir,
+						agentWorkspaceDir: workspaceSource.sourceDir,
 						profileId,
 						sessionKey: params.sessionKey,
 						workMountDir: pathIntent.leaseWorkMountDir,

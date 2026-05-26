@@ -445,6 +445,112 @@ describe('createGondolinSandboxBackendFactory', () => {
 		expect(requestLease.mock.calls[0]?.[0]).not.toHaveProperty('workspaceDir');
 	});
 
+	it('canonicalizes leaked /workspace agentWorkspaceDir before requesting a controller lease', async () => {
+		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
+			createLeaseResponse('lease-leaked-workspace', {
+				agentId: 'beta',
+			}),
+		);
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				openClawDefaultWorkspaceDirProvider: () => '/home/openclaw/.openclaw/workspace',
+				openClawRuntimeConfigProvider: () => ({
+					agents: { list: [{ id: 'beta', workspace: '/zone/agents/beta' }] },
+				}),
+				openClawStateDirProvider: () => '/home/openclaw/.openclaw/state',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const handle = await factory({
+			agentWorkspaceDir: '/workspace',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:subagent:child',
+			sessionKey: 'agent:beta:subagent:child',
+			workspaceDir: '/workspace',
+		});
+
+		expect(handle.workdir).toBe('/workspace');
+		expect(requestLease).toHaveBeenCalledWith({
+			agentId: 'beta',
+			agentWorkspaceDir: '/zone/agents/beta',
+			profileId: 'standard',
+			sessionKey: 'agent:beta:subagent:child',
+			workMountDir: '/zone/agents/beta',
+			zoneId: 'shravan',
+		});
+	});
+
+	it('canonicalizes leaked sandbox agentWorkspaceDir before cache compatibility', async () => {
+		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
+			createLeaseResponse('lease-leaked-sandbox', {
+				agentId: 'beta',
+			}),
+		);
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				openClawDefaultWorkspaceDirProvider: () => '/home/openclaw/.openclaw/workspace',
+				openClawRuntimeConfigProvider: () => ({
+					agents: { list: [{ id: 'beta', workspace: '/zone/agents/beta' }] },
+				}),
+				openClawStateDirProvider: () => '/home/openclaw/.openclaw/state',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const handle = await factory({
+			agentWorkspaceDir: '/home/openclaw/.openclaw/state/sandboxes/child-123/work',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:subagent:child',
+			sessionKey: 'agent:beta:subagent:child',
+			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/child-123/work/project',
+		});
+
+		expect(handle.workdir).toBe('/workspace/work/project');
+		expect(requestLease).toHaveBeenCalledWith({
+			agentId: 'beta',
+			agentWorkspaceDir: '/zone/agents/beta',
+			profileId: 'standard',
+			sessionKey: 'agent:beta:subagent:child',
+			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/child-123',
+			zoneId: 'shravan',
+		});
+	});
+
 	it('reuses one cached lease while rebuilding handles for different cwd intents', async () => {
 		const requestLease = vi.fn(async () =>
 			createLeaseResponse('lease-cwd-intent', {
@@ -660,19 +766,19 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		await factory({
-			agentWorkspaceDir: '/workspace/beta',
+			agentWorkspaceDir: '/zone/agents/beta',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:beta:discord:channel:123',
 			sessionKey: 'agent:beta:discord:channel:123',
-			workspaceDir: '/workspace/beta',
+			workspaceDir: '/zone/agents/beta',
 		});
 		await expect(
 			factory({
-				agentWorkspaceDir: '/workspace/beta-edited',
+				agentWorkspaceDir: '/zone/agents/beta-edited',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:beta:discord:channel:999',
 				sessionKey: 'agent:beta:discord:channel:999',
-				workspaceDir: '/workspace/beta-edited',
+				workspaceDir: '/zone/agents/beta-edited',
 			}),
 		).rejects.toThrow(/cached Tool VM lease.*agentWorkspaceDir/u);
 

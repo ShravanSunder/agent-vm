@@ -88,8 +88,6 @@ function createOpenClawToolVmPathMapping(options: {
 		roots: [
 			{
 				id: 'agent-workspace',
-				guestRoot: TOOL_VM_WORKSPACE_GUEST_ROOT,
-				hostRoot: options.agentWorkspaceDir,
 				backing: {
 					kind: 'host-realfs',
 					durability: 'durable',
@@ -99,12 +97,15 @@ function createOpenClawToolVmPathMapping(options: {
 					executionCwd: true,
 					leaseMount: true,
 				},
+				locations: {
+					'openclaw-gateway': options.agentWorkspaceDir,
+					'tool-vm-guest': TOOL_VM_WORKSPACE_GUEST_ROOT,
+				},
 				rootPathAllowed: true,
 				guidanceLabel: 'agent workspace',
 			},
 			{
 				id: 'tool-vm-scratch',
-				guestRoot: TOOL_VM_SCRATCH_GUEST_ROOT,
 				backing: {
 					kind: 'guest-rootfs-cow',
 					durability: 'vm-lifetime',
@@ -113,12 +114,14 @@ function createOpenClawToolVmPathMapping(options: {
 					executionCwd: true,
 					leaseMount: false,
 				},
+				locations: {
+					'tool-vm-guest': TOOL_VM_SCRATCH_GUEST_ROOT,
+				},
 				rootPathAllowed: true,
 				guidanceLabel: 'Tool VM scratch',
 			},
 			{
 				id: 'openclaw-sandboxes',
-				hostRoot: OPENCLAW_STATE_SANDBOXES_VM_ROOT,
 				backing: {
 					kind: 'host-realfs',
 					durability: 'durable',
@@ -127,6 +130,9 @@ function createOpenClawToolVmPathMapping(options: {
 				capabilities: {
 					executionCwd: true,
 					leaseMount: true,
+				},
+				locations: {
+					'openclaw-gateway': OPENCLAW_STATE_SANDBOXES_VM_ROOT,
 				},
 				rootPathAllowed: false,
 				guidanceLabel: 'OpenClaw sandbox work directory',
@@ -142,7 +148,7 @@ function resolveOpenClawSandboxPathIntent(translation: RuntimePathTranslation): 
 	const [sandboxChild, ...guestCwdSegments] = translation.relativePath.split('/');
 	const leaseWorkMountDir =
 		sandboxChild === undefined || sandboxChild === ''
-			? (translation.hostPath ?? OPENCLAW_STATE_SANDBOXES_VM_ROOT)
+			? translation.outputPath
 			: `${OPENCLAW_STATE_SANDBOXES_VM_ROOT}/${sandboxChild}`;
 	const effectiveGuestCwd =
 		guestCwdSegments.length === 0
@@ -162,10 +168,16 @@ function kindForTranslation(translation: RuntimePathTranslation): OpenClawToolVm
 	if (translation.rootId === 'openclaw-sandboxes') {
 		return 'openclaw-sandbox-path';
 	}
-	if (translation.inputNamespace === 'host') {
+	if (translation.inputNamespace === 'openclaw-gateway') {
 		return isRoot ? 'host-workspace-root' : 'host-workspace-subpath';
 	}
 	return isRoot ? 'workspace-root' : 'workspace-subpath';
+}
+
+function leaseRootForTranslation(translation: RuntimePathTranslation): string {
+	return translation.relativePath === ''
+		? translation.outputPath
+		: translation.outputPath.slice(0, -(translation.relativePath.length + 1));
 }
 
 export function resolveOpenClawToolVmPathIntent(options: {
@@ -179,35 +191,55 @@ export function resolveOpenClawToolVmPathIntent(options: {
 			ok: false,
 		};
 	}
+	const mapping = createOpenClawToolVmPathMapping({
+		agentWorkspaceDir: options.agentWorkspaceDir,
+	});
+	const sandboxTranslation = translateRuntimePath({
+		inputPath: options.inputPath,
+		mapping,
+		purpose: 'executionCwd',
+		sourceNamespace: 'openclaw-gateway',
+		targetNamespace: 'openclaw-gateway',
+	});
+	if (sandboxTranslation.ok && sandboxTranslation.value.rootId === 'openclaw-sandboxes') {
+		const sandboxPathIntent = resolveOpenClawSandboxPathIntent(sandboxTranslation.value);
+		return {
+			ok: true,
+			value: {
+				effectiveGuestCwd: sandboxPathIntent.effectiveGuestCwd,
+				hostEquivalentPath: sandboxTranslation.value.outputPath,
+				kind: kindForTranslation(sandboxTranslation.value),
+				leaseWorkMountDir: sandboxPathIntent.leaseWorkMountDir,
+			},
+		};
+	}
 	const translation = translateRuntimePath({
 		inputPath: options.inputPath,
-		mapping: createOpenClawToolVmPathMapping({
-			agentWorkspaceDir: options.agentWorkspaceDir,
-		}),
+		mapping,
 		purpose: 'executionCwd',
+		targetNamespace: 'tool-vm-guest',
 	});
 	if (!translation.ok) {
 		return translation;
 	}
-	const sandboxPathIntent =
-		translation.value.rootId === 'openclaw-sandboxes'
-			? resolveOpenClawSandboxPathIntent(translation.value)
-			: undefined;
+	const hostEquivalentTranslation = translateRuntimePath({
+		inputPath: options.inputPath,
+		mapping,
+		purpose: 'executionCwd',
+		targetNamespace: 'openclaw-gateway',
+	});
 	return {
 		ok: true,
 		value: {
-			effectiveGuestCwd:
-				sandboxPathIntent !== undefined
-					? sandboxPathIntent.effectiveGuestCwd
-					: (translation.value.guestPath ?? TOOL_VM_WORKSPACE_GUEST_ROOT),
-			...(translation.value.hostPath !== undefined
-				? { hostEquivalentPath: translation.value.hostPath }
+			effectiveGuestCwd: translation.value.outputPath,
+			...(hostEquivalentTranslation.ok
+				? { hostEquivalentPath: hostEquivalentTranslation.value.outputPath }
 				: {}),
 			kind: kindForTranslation(translation.value),
 			leaseWorkMountDir:
-				sandboxPathIntent !== undefined
-					? sandboxPathIntent.leaseWorkMountDir
-					: (translation.value.hostRoot ?? options.agentWorkspaceDir),
+				hostEquivalentTranslation.ok && hostEquivalentTranslation.value.rootId !== 'tool-vm-scratch'
+					? leaseRootForTranslation(hostEquivalentTranslation.value)
+					: options.agentWorkspaceDir,
 		},
 	};
 }

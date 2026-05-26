@@ -194,7 +194,9 @@ describe('resolveLeaseWorkMountDir', () => {
 				workMountDir: hostWorkMountDir,
 				zone,
 			}),
-		).rejects.toThrow(/must be under \/home\/openclaw\/\.openclaw\/state\/sandboxes or \/zone/u);
+		).rejects.toMatchObject({
+			kind: 'work-mount-unknown-runtime-path',
+		} satisfies Partial<LeaseWorkMountValidationError>);
 	});
 
 	it.each([
