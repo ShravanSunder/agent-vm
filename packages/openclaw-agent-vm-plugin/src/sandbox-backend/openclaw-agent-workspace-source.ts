@@ -22,7 +22,6 @@ export type OpenClawAgentWorkspaceSourceKind =
 	| 'default-agent-workspace'
 	| 'default-workspace-child'
 	| 'sdk-agent-workspace'
-	| 'state-default-workspace'
 	| 'state-workspace-child';
 
 export interface OpenClawAgentWorkspaceSource {
@@ -179,23 +178,20 @@ export function resolveOpenClawAgentWorkspaceSource(options: {
 		options.stateDir === undefined
 			? undefined
 			: assertCanonicalSourcePath(options.stateDir, 'OpenClaw stateDir');
-	const defaultWorkspace =
-		options.defaultWorkspaceDir === undefined
-			? undefined
-			: assertCanonicalSourcePath(
-					options.defaultWorkspaceDir,
-					'OpenClaw default workspace directory',
-				);
-	if (stateRoot === undefined || defaultWorkspace === undefined) {
+	if (stateRoot === undefined) {
 		throw new OpenClawAgentWorkspaceSourceError(
-			`OpenClaw provided agentWorkspaceDir '${options.paramsAgentWorkspaceDir}' for agent '${agentId}', which is a runtime path. Provide OpenClaw stateDir/defaultWorkspaceDir providers or configure agents.list[].workspace.`,
+			`OpenClaw provided agentWorkspaceDir '${options.paramsAgentWorkspaceDir}' for agent '${agentId}', which is a runtime path. Provide an OpenClaw stateDir provider or configure agents.list[].workspace.`,
 		);
 	}
 
 	const defaultAgentId = resolveDefaultAgentId(options.openClawConfig);
+	if (agentId === defaultAgentId) {
+		throw new OpenClawAgentWorkspaceSourceError(
+			`OpenClaw provided agentWorkspaceDir '${options.paramsAgentWorkspaceDir}' for default agent '${agentId}', but OpenClaw's implicit default workspace is not controller lease backed; configure agents.list[].workspace or agents.defaults.workspace for managed Gondolin agents.`,
+		);
+	}
 	return {
-		kind: agentId === defaultAgentId ? 'state-default-workspace' : 'state-workspace-child',
-		sourceDir:
-			agentId === defaultAgentId ? defaultWorkspace : path.join(stateRoot, `workspace-${agentId}`),
+		kind: 'state-workspace-child',
+		sourceDir: path.join(stateRoot, `workspace-${agentId}`),
 	};
 }

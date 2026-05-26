@@ -615,6 +615,7 @@ describeOpenClawSubagentSmoke('smoke: OpenClaw subagent Tool VM lease path', () 
 			controllerUrl: harness.controllerUrl,
 			zoneId: 'subagent-lease-smoke',
 		});
+		observedLeaseRequests.length = 0;
 
 		const spawnResults: OpenClawSubagentSpawnProbeResult[] = [];
 		for (const contextWorkspaceDir of ['/workspace', '/workspace/subdir', '/work/tmp']) {
@@ -648,13 +649,14 @@ describeOpenClawSubagentSmoke('smoke: OpenClaw subagent Tool VM lease path', () 
 				? leasePayload.filter((lease) => isObjectRecord(lease) && lease.agentId === agentId)
 				: [],
 		).toHaveLength(1);
-		expect(observedLeaseRequests.length).toBeGreaterThan(0);
-		expect(observedLeaseRequests).toContainEqual({
-			agentId,
-			agentWorkspaceDir: '/zone/agents/smoke',
-			workMountDir: '/zone/agents/smoke',
-			zoneId: 'subagent-lease-smoke',
-		});
+		expect(observedLeaseRequests).toEqual(
+			Array.from({ length: spawnResults.length }, () => ({
+				agentId,
+				agentWorkspaceDir: '/zone/agents/smoke',
+				workMountDir: '/zone/agents/smoke',
+				zoneId: 'subagent-lease-smoke',
+			})),
+		);
 		for (const request of observedLeaseRequests) {
 			expect(request.workMountDir).not.toBe('/workspace');
 			expect(request.workMountDir.startsWith('/workspace/')).toBe(false);

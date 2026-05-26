@@ -103,6 +103,21 @@ describe('resolveOpenClawAgentWorkspaceSource', () => {
 		});
 	});
 
+	it('rejects default-agent state workspace fallback because it is not controller lease backed', () => {
+		expect(() =>
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'primary',
+				...fallbackPaths,
+				openClawConfig: {
+					agents: {
+						list: [{ id: 'primary', default: true }, { id: 'beta' }],
+					},
+				},
+				paramsAgentWorkspaceDir: '/workspace',
+			}),
+		).toThrow(/configure agents\.list\[\]\.workspace or agents\.defaults\.workspace/u);
+	});
+
 	it('keeps a non-guest absolute OpenClaw source path when config is unavailable', () => {
 		expect(
 			resolveOpenClawAgentWorkspaceSource({

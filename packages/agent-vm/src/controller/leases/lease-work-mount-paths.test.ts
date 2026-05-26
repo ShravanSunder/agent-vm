@@ -107,6 +107,19 @@ describe('resolveLeaseWorkMountDir', () => {
 		} satisfies Partial<LeaseWorkMountValidationError>);
 	});
 
+	it('rejects OpenClaw default workspace fallback paths because they are not gateway lease backed', async () => {
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'main',
+				runtimeDir,
+				workMountDir: '/home/openclaw/.openclaw/workspace',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'work-mount-unknown-runtime-path',
+		} satisfies Partial<LeaseWorkMountValidationError>);
+	});
+
 	it('rejects exact OpenClaw gateway work mount roots', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({

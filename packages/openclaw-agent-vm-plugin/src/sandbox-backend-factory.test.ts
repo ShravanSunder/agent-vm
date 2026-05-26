@@ -205,7 +205,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		await expect(
 			factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig({ scope: 'session' }),
 				scopeKey: 'agent:main',
 				sessionKey: 'agent:main:session-abc',
@@ -244,7 +244,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:beta',
 			sessionKey: 'agent:main:session-abc',
@@ -562,6 +562,11 @@ describe('createGondolinSandboxBackendFactory', () => {
 				agentId: 'beta',
 			}),
 		);
+		const buildExecSpec = vi.fn(async () => ({
+			argv: ['ssh'],
+			env: {},
+			stdinMode: 'pipe-open' as const,
+		}));
 
 		const factory = createGondolinSandboxBackendFactory(
 			{
@@ -569,11 +574,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				zoneId: 'shravan',
 			},
 			{
-				buildExecSpec: vi.fn(async () => ({
-					argv: ['ssh'],
-					env: {},
-					stdinMode: 'pipe-open' as const,
-				})),
+				buildExecSpec,
 				createLeaseClient: () => ({
 					...createActiveUseLeaseClientMethods(),
 					renewLease,
@@ -608,6 +609,14 @@ describe('createGondolinSandboxBackendFactory', () => {
 		expect(firstHandle.runtimeId).toBe(secondHandle.runtimeId);
 		expect(firstHandle.workdir).toBe('/workspace/app');
 		expect(secondHandle.workdir).toBe('/work/tmp');
+		await secondHandle.buildExecSpec({ command: 'pwd', env: {}, usePty: false });
+		expect(buildExecSpec).toHaveBeenCalledWith({
+			command: 'pwd',
+			env: {},
+			ssh: expect.any(Object),
+			usePty: false,
+			workdir: '/work/tmp',
+		});
 		expect(requestLease).toHaveBeenCalledTimes(1);
 		expect(renewLease).toHaveBeenCalledTimes(1);
 	});
@@ -638,14 +647,14 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		const firstHandle = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'session-reuse',
 			workspaceDir: '/work',
 		});
 		const secondHandle = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'session-reuse',
@@ -874,21 +883,21 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		try {
 			const firstHandle = await factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
 				sessionKey: 'session-stale',
 				workspaceDir: '/work',
 			});
 			const secondHandle = await factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
 				sessionKey: 'session-stale',
 				workspaceDir: '/work',
 			});
 			const thirdHandle = await factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
 				sessionKey: 'session-stale',
@@ -940,7 +949,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'session-client-error',
@@ -949,7 +958,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		await expect(
 			factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
 				sessionKey: 'session-client-error',
@@ -988,7 +997,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'session-server-error',
@@ -997,7 +1006,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		await expect(
 			factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
 				sessionKey: 'session-server-error',
@@ -1036,7 +1045,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'session-network-error',
@@ -1045,7 +1054,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		await expect(
 			factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
 				sessionKey: 'session-network-error',
@@ -1085,14 +1094,14 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		const handleA = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:alpha',
 			sessionKey: 'agent:alpha:session-a',
 			workspaceDir: '/work',
 		});
 		const handleB = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:beta',
 			sessionKey: 'agent:beta:session-b',
@@ -1141,14 +1150,14 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		const firstHandle = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'session-stale',
 			workspaceDir: '/work',
 		});
 		const secondHandle = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'session-stale',
@@ -1185,7 +1194,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		const backend = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'session-finalize',
@@ -1229,7 +1238,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		const backend = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'session-command-failed',
@@ -1280,7 +1289,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		const backend = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'session-noop',
@@ -1338,7 +1347,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'test',
@@ -1395,7 +1404,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			},
 		);
 		const backend = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'session-dispose-throws',
@@ -1445,7 +1454,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		await expect(
 			factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
 				sessionKey: 'test',
@@ -1529,7 +1538,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		const backend = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
 			sessionKey: 'test',
