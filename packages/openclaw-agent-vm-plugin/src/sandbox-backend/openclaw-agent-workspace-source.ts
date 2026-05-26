@@ -114,6 +114,20 @@ function assertCanonicalSourcePath(inputPath: string, context: string): string {
 	return normalized;
 }
 
+function assertLeaseBackedSourcePath(
+	inputPath: string,
+	context: string,
+	defaultWorkspaceDir: string | undefined,
+): string {
+	const normalized = assertCanonicalSourcePath(inputPath, context);
+	if (isRuntimePathLeak(normalized, defaultWorkspaceDir)) {
+		throw new OpenClawAgentWorkspaceSourceError(
+			`${context} must resolve to a controller lease-backed OpenClaw/Gondolin source path, not OpenClaw runtime fallback path '${normalized}'.`,
+		);
+	}
+	return normalized;
+}
+
 function readWorkspace(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
 }
@@ -155,16 +169,21 @@ export function resolveOpenClawAgentWorkspaceSource(options: {
 	if (agentWorkspace !== undefined) {
 		return {
 			kind: 'configured-agent-workspace',
-			sourceDir: assertCanonicalSourcePath(
+			sourceDir: assertLeaseBackedSourcePath(
 				agentWorkspace,
 				`agents.list workspace for '${agentId}'`,
+				options.defaultWorkspaceDir,
 			),
 		};
 	}
 
 	const defaultsWorkspace = readWorkspace(options.openClawConfig?.agents?.defaults?.workspace);
 	if (defaultsWorkspace !== undefined) {
-		const defaultsRoot = assertCanonicalSourcePath(defaultsWorkspace, 'agents.defaults.workspace');
+		const defaultsRoot = assertLeaseBackedSourcePath(
+			defaultsWorkspace,
+			'agents.defaults.workspace',
+			options.defaultWorkspaceDir,
+		);
 		const defaultAgentId = resolveDefaultAgentId(options.openClawConfig);
 		return {
 			kind: agentId === defaultAgentId ? 'default-agent-workspace' : 'default-workspace-child',

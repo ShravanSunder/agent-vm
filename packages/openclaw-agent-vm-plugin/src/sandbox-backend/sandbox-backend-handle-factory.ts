@@ -180,7 +180,7 @@ function defaultOpenClawStateDir(): string | undefined {
 		return path.resolve(explicitStateDir);
 	}
 	const homeDirectory = process.env.HOME?.trim();
-	return homeDirectory ? path.join(homeDirectory, '.openclaw') : undefined;
+	return homeDirectory ? path.join(homeDirectory, '.openclaw', 'state') : undefined;
 }
 
 function defaultOpenClawWorkspaceDir(): string | undefined {

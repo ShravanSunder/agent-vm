@@ -551,6 +551,62 @@ describe('createGondolinSandboxBackendFactory', () => {
 		});
 	});
 
+	it('uses the built-in OpenClaw state root fallback when default workspace leaks without explicit config', async () => {
+		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
+			createLeaseResponse('lease-default-workspace-fallback', {
+				agentId: 'beta',
+			}),
+		);
+		vi.stubEnv('HOME', '/home/openclaw');
+
+		try {
+			const factory = createGondolinSandboxBackendFactory(
+				{
+					controllerUrl: 'http://controller.vm.host:18800',
+					openClawRuntimeConfigProvider: () => ({
+						agents: { list: [{ id: 'primary', default: true }, { id: 'beta' }] },
+					}),
+					zoneId: 'shravan',
+				},
+				{
+					buildExecSpec: vi.fn(async () => ({
+						argv: ['ssh'],
+						env: {},
+						stdinMode: 'pipe-open' as const,
+					})),
+					createLeaseClient: () => ({
+						...createActiveUseLeaseClientMethods(),
+						renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+						peekLease: async () => createLeasePeekResponse(),
+						releaseLease: async () => {},
+						requestLease,
+					}),
+					runRemoteShellScript: vi.fn(),
+				},
+			);
+
+			const handle = await factory({
+				agentWorkspaceDir: '/home/openclaw/.openclaw/workspace',
+				cfg: gondolinSandboxConfig(),
+				scopeKey: 'agent:beta:subagent:child',
+				sessionKey: 'agent:beta:subagent:child',
+				workspaceDir: '/home/openclaw/.openclaw/workspace',
+			});
+
+			expect(handle.workdir).toBe('/workspace');
+			expect(requestLease).toHaveBeenCalledWith({
+				agentId: 'beta',
+				agentWorkspaceDir: '/home/openclaw/.openclaw/state/workspace-beta',
+				profileId: 'standard',
+				sessionKey: 'agent:beta:subagent:child',
+				workMountDir: '/home/openclaw/.openclaw/state/workspace-beta',
+				zoneId: 'shravan',
+			});
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+
 	it('canonicalizes leaked sandbox agentWorkspaceDir before cache compatibility', async () => {
 		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
 			createLeaseResponse('lease-leaked-sandbox', {

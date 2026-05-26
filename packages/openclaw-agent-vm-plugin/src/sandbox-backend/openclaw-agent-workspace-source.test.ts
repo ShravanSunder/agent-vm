@@ -240,4 +240,42 @@ describe('resolveOpenClawAgentWorkspaceSource', () => {
 			}),
 		).toThrow(/must resolve to a stable agent workspace path/u);
 	});
+
+	it('rejects configured agent workspaces under OpenClaw implicit default workspace', () => {
+		expect(() =>
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'beta',
+				...fallbackPaths,
+				openClawConfig: {
+					agents: {
+						list: [
+							{
+								id: 'beta',
+								workspace: '/home/openclaw/.openclaw/workspace',
+							},
+						],
+					},
+				},
+				paramsAgentWorkspaceDir: '/workspace',
+			}),
+		).toThrow(/must resolve to a controller lease-backed OpenClaw\/Gondolin source path/u);
+	});
+
+	it('rejects default workspaces under OpenClaw implicit profile workspace', () => {
+		expect(() =>
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'beta',
+				...fallbackPaths,
+				openClawConfig: {
+					agents: {
+						defaults: {
+							workspace: '/home/openclaw/.openclaw/workspace-profile',
+						},
+						list: [{ id: 'primary', default: true }, { id: 'beta' }],
+					},
+				},
+				paramsAgentWorkspaceDir: '/workspace',
+			}),
+		).toThrow(/must resolve to a controller lease-backed OpenClaw\/Gondolin source path/u);
+	});
 });

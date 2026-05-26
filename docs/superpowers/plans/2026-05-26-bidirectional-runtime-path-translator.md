@@ -897,6 +897,46 @@ describe('resolveOpenClawAgentWorkspaceSource', () => {
 		});
 	});
 
+	it('rejects configured agent workspaces under OpenClaw implicit default workspace', () => {
+		expect(() =>
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'beta',
+				defaultWorkspaceDir: '/home/openclaw/.openclaw/workspace',
+				openClawConfig: {
+					agents: {
+						list: [
+							{
+								id: 'beta',
+								workspace: '/home/openclaw/.openclaw/workspace',
+							},
+						],
+					},
+				},
+				paramsAgentWorkspaceDir: '/workspace',
+				stateDir: '/home/openclaw/.openclaw/state',
+			}),
+		).toThrow(/must resolve to a controller lease-backed OpenClaw\\/Gondolin source path/u);
+	});
+
+	it('rejects default workspaces under OpenClaw implicit profile workspace', () => {
+		expect(() =>
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'beta',
+				defaultWorkspaceDir: '/home/openclaw/.openclaw/workspace',
+				openClawConfig: {
+					agents: {
+						defaults: {
+							workspace: '/home/openclaw/.openclaw/workspace-profile',
+						},
+						list: [{ id: 'primary', default: true }, { id: 'beta' }],
+					},
+				},
+				paramsAgentWorkspaceDir: '/workspace',
+				stateDir: '/home/openclaw/.openclaw/state',
+			}),
+		).toThrow(/must resolve to a controller lease-backed OpenClaw\\/Gondolin source path/u);
+	});
+
 	it('rejects /work as a canonical workspace source', () => {
 		expect(() =>
 			resolveOpenClawAgentWorkspaceSource({
@@ -1040,6 +1080,20 @@ function assertCanonicalSourcePath(inputPath: string, context: string): string {
 	return normalized;
 }
 
+function assertLeaseBackedSourcePath(
+	inputPath: string,
+	context: string,
+	defaultWorkspaceDir: string | undefined,
+): string {
+	const normalized = assertCanonicalSourcePath(inputPath, context);
+	if (isRuntimePathLeak(normalized, defaultWorkspaceDir)) {
+		throw new OpenClawAgentWorkspaceSourceError(
+			`${context} must resolve to a controller lease-backed OpenClaw/Gondolin source path, not OpenClaw runtime fallback path '${normalized}'.`,
+		);
+	}
+	return normalized;
+}
+
 function readWorkspace(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
 }
@@ -1073,15 +1127,20 @@ export function resolveOpenClawAgentWorkspaceSource(options: {
 	if (agentWorkspace !== undefined) {
 		return {
 			kind: 'configured-agent-workspace',
-			sourceDir: assertCanonicalSourcePath(agentWorkspace, `agents.list workspace for '${agentId}'`),
+			sourceDir: assertLeaseBackedSourcePath(
+				agentWorkspace,
+				`agents.list workspace for '${agentId}'`,
+				options.defaultWorkspaceDir,
+			),
 		};
 	}
 
 	const defaultsWorkspace = readWorkspace(options.openClawConfig?.agents?.defaults?.workspace);
 	if (defaultsWorkspace !== undefined) {
-		const defaultsRoot = assertCanonicalSourcePath(
+		const defaultsRoot = assertLeaseBackedSourcePath(
 			defaultsWorkspace,
 			'agents.defaults.workspace',
+			options.defaultWorkspaceDir,
 		);
 		const defaultAgentId = resolveDefaultAgentId(options.openClawConfig);
 		return {
@@ -1425,7 +1484,7 @@ In production registration, those providers are derived from the OpenClaw runtim
 
 ```text
 openClawStateDirProvider:
-  OPENCLAW_STATE_DIR when set, otherwise ~/.openclaw inside the gateway process
+  OPENCLAW_STATE_DIR when set, otherwise ~/.openclaw/state inside the gateway process
 
 openClawDefaultWorkspaceDirProvider:
   ~/.openclaw/workspace by default
