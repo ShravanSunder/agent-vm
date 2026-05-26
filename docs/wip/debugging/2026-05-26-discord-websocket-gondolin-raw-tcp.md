@@ -1246,17 +1246,28 @@ Interpretation:
 - Beta only had `gateway.discord.gg:443` in `websocketBypass`.
 - Gondolin `tcp.hosts` explicitly rejects wildcards, so a raw passthrough
   wildcard cannot be expressed through today's `websocketBypass` surface.
-- `*.discord.gg` is valid for agent-vm `egressHosts`, but not for Gondolin raw
-  `tcpHosts`.
+- Wildcards such as `*.discord.gg`, `*.discord.com`, `*.discord.media`,
+  `*.discordapp.com`, and `*.discordapp.net` are valid for agent-vm
+  `egressHosts`, but not for Gondolin raw `tcpHosts`.
 
 Beta config was then adjusted:
 
 ```json
-{ "host": "*.discord.gg", "audience": "gateway" }
+{ "host": "discord.com", "audience": "both" }
+{ "host": "*.discord.com", "audience": "both" }
+{ "host": "discord.gg", "audience": "both" }
+{ "host": "*.discord.gg", "audience": "both" }
+{ "host": "discord.media", "audience": "both" }
+{ "host": "*.discord.media", "audience": "both" }
+{ "host": "discordapp.com", "audience": "both" }
+{ "host": "*.discordapp.com", "audience": "both" }
+{ "host": "*.discordapp.net", "audience": "both" }
 
 "websocketBypass": [
   "gateway.discord.gg:443",
-  "gateway-us-east1-c.discord.gg:443"
+  "gateway-us-east1-b.discord.gg:443",
+  "gateway-us-east1-c.discord.gg:443",
+  "gateway-us-east1-d.discord.gg:443"
 ]
 ```
 

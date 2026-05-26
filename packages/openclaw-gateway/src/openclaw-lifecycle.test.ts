@@ -751,7 +751,10 @@ describe('openclawLifecycle', () => {
 			// interactive shells safe without duplicating the forced flags
 			// that the VM env already provides.
 			expect(environmentShellScript).toContain(
-				'case " ${NODE_OPTIONS:-} " in *" --dns-result-order=ipv4first "*" --no-network-family-autoselection "*) ;; *) export NODE_OPTIONS="--dns-result-order=ipv4first --no-network-family-autoselection${NODE_OPTIONS:+ ${NODE_OPTIONS}}";; esac',
+				'case " ${NODE_OPTIONS:-} " in *" --dns-result-order=ipv4first "*) ;; *) export NODE_OPTIONS="--dns-result-order=ipv4first${NODE_OPTIONS:+ ${NODE_OPTIONS}}";; esac',
+			);
+			expect(environmentShellScript).toContain(
+				'case " ${NODE_OPTIONS:-} " in *" --no-network-family-autoselection "*) ;; *) export NODE_OPTIONS="--no-network-family-autoselection${NODE_OPTIONS:+ ${NODE_OPTIONS}}";; esac',
 			);
 		});
 	});

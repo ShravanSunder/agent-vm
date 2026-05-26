@@ -50,15 +50,15 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
         "source": "environment",
         "envVar": "OPENCLAW_GATEWAY_TOKEN",
         "injection": "env",
-        "audience": "gateway"
+        "audience": "both"
       }
     },
     "egressHosts": [
-      { "host": "api.anthropic.com", "audience": "gateway" },
-      { "host": "api.openai.com", "audience": "gateway" },
-      { "host": "auth.openai.com", "audience": "gateway" },
-      { "host": "chatgpt.com", "audience": "gateway" },
-      { "host": "generativelanguage.googleapis.com", "audience": "gateway" }
+      { "host": "api.anthropic.com", "audience": "both" },
+      { "host": "api.openai.com", "audience": "both" },
+      { "host": "auth.openai.com", "audience": "both" },
+      { "host": "chatgpt.com", "audience": "both" },
+      { "host": "generativelanguage.googleapis.com", "audience": "both" }
     ],
     "websocketBypass": [],
     "defaultToolVmProfile": "standard",
@@ -232,12 +232,22 @@ automatically when `channels.discord.enabled` is true.
     }
   },
   "egressHosts": [
-    { "host": "discord.com", "audience": "gateway" },
-    { "host": "discordapp.com", "audience": "gateway" },
-    { "host": "*.discordapp.com", "audience": "gateway" },
-    { "host": "*.discordapp.net", "audience": "gateway" }
+    { "host": "discord.com", "audience": "both" },
+    { "host": "*.discord.com", "audience": "both" },
+    { "host": "discord.gg", "audience": "both" },
+    { "host": "*.discord.gg", "audience": "both" },
+    { "host": "discord.media", "audience": "both" },
+    { "host": "*.discord.media", "audience": "both" },
+    { "host": "discordapp.com", "audience": "both" },
+    { "host": "*.discordapp.com", "audience": "both" },
+    { "host": "*.discordapp.net", "audience": "both" }
   ],
-  "websocketBypass": ["gateway.discord.gg:443"]
+  "websocketBypass": [
+    "gateway.discord.gg:443",
+    "gateway-us-east1-b.discord.gg:443",
+    "gateway-us-east1-c.discord.gg:443",
+    "gateway-us-east1-d.discord.gg:443"
+  ]
 }
 ```
 
@@ -273,5 +283,5 @@ agent-vm controller logs --zone my-openclaw
 | Doctor reports `openclaw-agent-auth-profile-*` failing | Auth material missing | Check `gateway.authProfilesByAgent` in system.jsonc or run `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
 | Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
 | Tool calls fail | Lease creation failing | Check `defaultToolVmProfile` exists, TCP pool has free slots |
-| Discord not connecting | Deployment channel config incomplete | Add Discord plugin/config, `DISCORD_BOT_TOKEN`, Discord hosts, and `gateway.discord.gg:443` |
+| Discord not connecting | Deployment channel config incomplete | Add Discord plugin/config, `DISCORD_BOT_TOKEN`, broad Discord egress hosts, and exact Discord Gateway `websocketBypass` hosts |
 | Can't reach external API | Host not allowlisted | Add to `zones[].egressHosts` with the needed audience |

@@ -368,10 +368,23 @@ For the full auth profile flow, see [subsystems/secrets-and-credentials.md](../s
 Discord and WhatsApp use WebSocket connections that can't go through HTTP mediation. These are configured as TCP pass-through:
 
 ```json
-"websocketBypass": ["gateway.discord.gg:443", "web.whatsapp.com:443"]
+"websocketBypass": [
+  "gateway.discord.gg:443",
+  "gateway-us-east1-b.discord.gg:443",
+  "gateway-us-east1-c.discord.gg:443",
+  "gateway-us-east1-d.discord.gg:443",
+  "web.whatsapp.com:443"
+]
 ```
 
 Bypass hosts get direct TCP forwarding via `tcpHosts` — no HTTP interception, no secret injection.
+
+Wildcard Discord policy belongs in `egressHosts` (`*.discord.gg`,
+`*.discord.com`, `*.discord.media`, `*.discordapp.com`,
+`*.discordapp.net`). Do not put wildcard entries such as
+`*.discord.gg:443` in `websocketBypass` unless the raw TCP bypass layer grows
+wildcard support; today the OpenClaw lifecycle compiles each `websocketBypass`
+entry into an exact Gondolin `tcpHosts` key.
 
 Because bypass hosts use raw `tcpHosts`, they rely on Gondolin's per-host
 synthetic IPv4 mapping. The adapter also emits an IPv4-mapped RFC2544 synthetic

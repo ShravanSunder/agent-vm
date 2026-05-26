@@ -97,11 +97,14 @@ function buildOpenClawBootstrapCommand(
 		'export PIP_CACHE_DIR=/work/cache/pip',
 		'export UV_CACHE_DIR=/work/cache/uv',
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
-		// Prepend forced IPv4-preference flags only when they are not
+		// Prepend each forced IPv4-preference flag only when it is not
 		// already present. The VM env normally carries these flags
 		// already; the profile keeps interactive shells safe without
 		// duplicating the boot-log value.
-		`case " \${NODE_OPTIONS:-} " in *" --dns-result-order=ipv4first "*" --no-network-family-autoselection "*) ;; *) export NODE_OPTIONS="${FORCE_IPV4_EGRESS_NODE_OPTIONS}\${NODE_OPTIONS:+ \${NODE_OPTIONS}}";; esac`,
+		...FORCE_IPV4_EGRESS_NODE_OPTIONS.split(' ').map(
+			(nodeOptionFlag) =>
+				`case " \${NODE_OPTIONS:-} " in *" ${nodeOptionFlag} "*) ;; *) export NODE_OPTIONS="${nodeOptionFlag}\${NODE_OPTIONS:+ \${NODE_OPTIONS}}";; esac`,
+		),
 	];
 	const secretEnvironmentNames = Object.entries({
 		...environmentSecrets,

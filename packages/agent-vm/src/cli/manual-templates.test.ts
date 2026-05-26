@@ -59,6 +59,18 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
 			'media.discordapp.net',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'*.discord.gg',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'*.discord.media',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'gateway-us-east1-c.discord.gg:443',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'wildcard websocketBypass',
+		);
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).not.toContain(
 			'Add runtimeAuthHints',
 		);

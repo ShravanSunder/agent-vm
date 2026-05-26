@@ -346,9 +346,10 @@ To add a channel:
 
 Discord recipe:
 - Add DISCORD_BOT_TOKEN as a zone secret.
-- Add discord.com, discordapp.com, *.discordapp.com, and *.discordapp.net to egressHosts with audience gateway.
+- Add discord.com, *.discord.com, discord.gg, *.discord.gg, discord.media, *.discord.media, discordapp.com, *.discordapp.com, and *.discordapp.net to egressHosts with audience both.
 - Discord media downloads use OpenClaw's Discord media SSRF policy, not tools.web.fetch.ssrfPolicy. If media logs show blocked URL fetch for cdn.discordapp.com or media.discordapp.net, verify the installed agent-vm version emits ::ffff:198.18.0.1 synthetic AAAA for Gondolin TCP-host VMs before adding broader OpenClaw hostname bypasses.
-- Add gateway.discord.gg:443 to websocketBypass.
+- Add exact Discord Gateway hosts such as gateway.discord.gg:443, gateway-us-east1-b.discord.gg:443, gateway-us-east1-c.discord.gg:443, and gateway-us-east1-d.discord.gg:443 to websocketBypass.
+- Do not use wildcard websocketBypass entries for Discord today. websocketBypass compiles to exact Gondolin tcpHosts entries; wildcard Discord coverage belongs in egressHosts until wildcard raw TCP bypass is implemented.
 - Enable channels.discord in deployment-owned openclaw.json.
 - Do not add Discord under plugins.allow or plugins.entries.
 - agent-vm build installs @openclaw/discord for managed OpenClaw images when channels.discord is enabled.
@@ -425,8 +426,8 @@ Agent-vm defaults are channel-neutral. Existing Discord deployments keep Discord
 1. Run agent-vm migrate images if the deployment still references Dockerfiles.
 2. Keep Discord enabled under channels.discord in config/gateways/<zone>/openclaw.json.
 3. Keep DISCORD_BOT_TOKEN in ${options.systemConfigPath} zone secrets.
-4. Keep discord.com, discordapp.com, *.discordapp.com, and *.discordapp.net in egressHosts with audience gateway.
-5. Keep gateway.discord.gg:443 in websocketBypass.
+4. Keep discord.com, *.discord.com, discord.gg, *.discord.gg, discord.media, *.discord.media, discordapp.com, *.discordapp.com, and *.discordapp.net in egressHosts with audience both.
+5. Keep exact Discord Gateway hosts such as gateway.discord.gg:443, gateway-us-east1-b.discord.gg:443, gateway-us-east1-c.discord.gg:443, and gateway-us-east1-d.discord.gg:443 in websocketBypass.
 
 Do not reintroduce Discord into agent-vm init defaults. Use this page as the deployment recipe.
 `,
