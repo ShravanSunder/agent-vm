@@ -4,6 +4,19 @@ export interface ControllerRequestPolicy {
 	readonly timeoutMs: number;
 }
 
+export const controllerRequestCauseCodes = [
+	'ECONNREFUSED',
+	'ECONNRESET',
+	'ETIMEDOUT',
+	'EAI_AGAIN',
+	'ENETUNREACH',
+	'ENOTFOUND',
+	'EPIPE',
+	'FETCH_FAILED',
+] as const;
+
+export type ControllerRequestCauseCode = (typeof controllerRequestCauseCodes)[number];
+
 export interface FetchControllerWithPolicyOptions extends RequestInit {
 	readonly clearTimeoutImpl?: ((timeout: ReturnType<typeof setTimeout>) => void) | undefined;
 	readonly fetchImpl: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -41,6 +54,71 @@ export class ControllerRequestTimeoutError extends Error {
 	}
 }
 
+export class ControllerRequestFailureError extends Error {
+	readonly attempt: number;
+	override readonly cause: unknown;
+	readonly causeCode: ControllerRequestCauseCode | undefined;
+	readonly maxAttempts: number;
+	readonly operation: string;
+
+	constructor(options: {
+		readonly attempt: number;
+		readonly cause: unknown;
+		readonly maxAttempts: number;
+		readonly operation: string;
+	}) {
+		const causeCode = extractControllerRequestCauseCode(options.cause);
+		super(
+			`Controller request '${options.operation}' failed${
+				causeCode === undefined ? '' : ` with ${causeCode}`
+			}`,
+		);
+		this.name = 'ControllerRequestFailureError';
+		this.attempt = options.attempt;
+		this.cause = options.cause;
+		this.causeCode = causeCode;
+		this.maxAttempts = options.maxAttempts;
+		this.operation = options.operation;
+	}
+}
+
+function isControllerRequestCauseCode(value: string): value is ControllerRequestCauseCode {
+	return controllerRequestCauseCodes.includes(value as ControllerRequestCauseCode);
+}
+
+function extractControllerRequestCauseCode(
+	error: unknown,
+	depth = 0,
+): ControllerRequestCauseCode | undefined {
+	if (depth > 4) {
+		return undefined;
+	}
+	if (typeof error === 'object' && error !== null && 'code' in error) {
+		const code = error.code;
+		if (typeof code === 'string' && isControllerRequestCauseCode(code)) {
+			return code;
+		}
+	}
+	if (typeof error === 'object' && error !== null && 'cause' in error) {
+		const nestedCauseCode = extractControllerRequestCauseCode(error.cause, depth + 1);
+		if (nestedCauseCode !== undefined) {
+			return nestedCauseCode;
+		}
+	}
+	if (error instanceof Error) {
+		const match = /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|ENOTFOUND|EPIPE/u.exec(
+			error.message,
+		);
+		if (match && isControllerRequestCauseCode(match[0])) {
+			return match[0];
+		}
+		if (/fetch failed/u.test(error.message)) {
+			return 'FETCH_FAILED';
+		}
+	}
+	return undefined;
+}
+
 function isAbortError(error: unknown): boolean {
 	return error instanceof DOMException && error.name === 'AbortError';
 }
@@ -50,7 +128,7 @@ function isRetryableControllerRequestError(error: unknown): boolean {
 		return true;
 	}
 	if (error instanceof Error) {
-		return /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|ENOTFOUND|fetch failed/u.test(
+		return /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|ENOTFOUND|EPIPE|fetch failed/u.test(
 			error.message,
 		);
 	}
@@ -117,7 +195,20 @@ export async function fetchControllerWithPolicy(
 			} else {
 				lastError = error;
 			}
-			if (attempt >= policy.maxAttempts || !isRetryableControllerRequestError(lastError)) {
+			const retryable = isRetryableControllerRequestError(lastError);
+			if (attempt >= policy.maxAttempts || !retryable) {
+				if (
+					retryable &&
+					!(lastError instanceof ControllerRequestTimeoutError) &&
+					!isSignalAborted(callerSignal)
+				) {
+					throw new ControllerRequestFailureError({
+						attempt,
+						cause: lastError,
+						maxAttempts: policy.maxAttempts,
+						operation,
+					});
+				}
 				throw lastError;
 			}
 			const delayMs = policy.retryBaseDelayMs * attempt;

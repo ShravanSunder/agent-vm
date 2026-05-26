@@ -4,9 +4,11 @@ import { createServer, type Server } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+	ControllerRequestFailureError,
 	ControllerRequestTimeoutError,
 	drainControllerResponseBody,
 	fetchControllerWithPolicy,
+	type ControllerRequestCauseCode,
 } from './controller-request-policy.js';
 
 async function listenOnLoopback(server: Server): Promise<number> {
@@ -235,6 +237,35 @@ describe('controller request policy', () => {
 		},
 	);
 
+	it('classifies exhausted controller-link transport failures for health reporting', async () => {
+		const transportError = Object.assign(new Error('connect ETIMEDOUT 198.19.42.7:18800'), {
+			code: 'ETIMEDOUT',
+		});
+		const fetchImpl = vi.fn(async () => {
+			throw transportError;
+		});
+
+		await expect(
+			fetchControllerWithPolicy('http://controller.vm.host:18800/health', {
+				fetchImpl,
+				method: 'GET',
+				operation: 'active-use-heartbeat',
+				policy: {
+					maxAttempts: 2,
+					retryBaseDelayMs: 0,
+					timeoutMs: 100,
+				},
+			}),
+		).rejects.toMatchObject({
+			attempt: 2,
+			causeCode: 'ETIMEDOUT',
+			maxAttempts: 2,
+			name: 'ControllerRequestFailureError',
+			operation: 'active-use-heartbeat',
+		});
+		expect(fetchImpl).toHaveBeenCalledTimes(2);
+	});
+
 	it('exposes a typed timeout error for resilience classification', async () => {
 		const error = new ControllerRequestTimeoutError({
 			operation: 'active-use-heartbeat',
@@ -249,6 +280,25 @@ describe('controller request policy', () => {
 			operation: 'active-use-heartbeat',
 			timeoutMs: 3_000,
 		});
+	});
+
+	it('exposes a typed transport error for resilience classification', () => {
+		const error = new ControllerRequestFailureError({
+			attempt: 3,
+			cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }),
+			maxAttempts: 3,
+			operation: 'lease-renew',
+		});
+		const causeCode: ControllerRequestCauseCode | undefined = error.causeCode;
+
+		expect(error).toMatchObject({
+			attempt: 3,
+			causeCode,
+			maxAttempts: 3,
+			name: 'ControllerRequestFailureError',
+			operation: 'lease-renew',
+		});
+		expect(causeCode).toBe('ECONNRESET');
 	});
 
 	it('clears request timers after successful and failed attempts', async () => {
