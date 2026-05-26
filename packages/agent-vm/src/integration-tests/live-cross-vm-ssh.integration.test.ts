@@ -18,7 +18,8 @@ import { shouldRunLiveVmIntegration } from './live-integration-gates.js';
  * not in the command data path.
  *
  * Run: mise exec -- pnpm vitest run --config vitest.integration.config.ts packages/agent-vm/src/integration-tests/live-cross-vm-ssh.integration.test.ts
- * Requires: QEMU/Gondolin runtime assets and the local mapped-TCP patch or equivalent upstream fix.
+ * Requires: QEMU/Gondolin runtime assets. Current Gondolin maps tcp.hosts flows
+ * as raw TCP via allowRawTcp, so SSH protocol sniffing is intentionally bypassed.
  */
 const describeLiveVmIntegration = shouldRunLiveVmIntegration() ? describe : describe.skip;
 
