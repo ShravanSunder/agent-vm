@@ -49,12 +49,20 @@ function containsParentTraversal(inputPath: string): boolean {
 	return inputPath.split(/\/+/u).includes('..');
 }
 
+function pathIsInsideOrEqual(inputPath: string, rootPath: string): boolean {
+	return inputPath === rootPath || inputPath.startsWith(`${rootPath}/`);
+}
+
 function isRuntimePathLeak(inputPath: string, defaultWorkspaceDir: string | undefined): boolean {
 	const normalized = normalizeAbsolutePosixPath(inputPath);
 	const normalizedDefaultWorkspace =
 		defaultWorkspaceDir === undefined
 			? undefined
 			: normalizeAbsolutePosixPath(resolveUserPathLikeOpenClaw(defaultWorkspaceDir));
+	const implicitWorkspaceFamilyRoot =
+		normalizedDefaultWorkspace === undefined
+			? undefined
+			: normalizedDefaultWorkspace.replace(/(?:-[^/]+)?$/u, '');
 	return (
 		normalized === TOOL_VM_WORKSPACE_GUEST_ROOT ||
 		normalized.startsWith(`${TOOL_VM_WORKSPACE_GUEST_ROOT}/`) ||
@@ -63,9 +71,11 @@ function isRuntimePathLeak(inputPath: string, defaultWorkspaceDir: string | unde
 		normalized === OPENCLAW_STATE_SANDBOXES_VM_ROOT ||
 		normalized.startsWith(`${OPENCLAW_STATE_SANDBOXES_VM_ROOT}/`) ||
 		(normalizedDefaultWorkspace !== undefined &&
-			(normalized === normalizedDefaultWorkspace ||
-				normalized.startsWith(`${normalizedDefaultWorkspace}-`) ||
-				normalized.startsWith(`${normalizedDefaultWorkspace}/`)))
+			(pathIsInsideOrEqual(normalized, normalizedDefaultWorkspace) ||
+				normalized.startsWith(`${normalizedDefaultWorkspace}-`))) ||
+		(implicitWorkspaceFamilyRoot !== undefined &&
+			(pathIsInsideOrEqual(normalized, implicitWorkspaceFamilyRoot) ||
+				normalized.startsWith(`${implicitWorkspaceFamilyRoot}-`)))
 	);
 }
 

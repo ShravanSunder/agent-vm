@@ -278,4 +278,44 @@ describe('resolveOpenClawAgentWorkspaceSource', () => {
 			}),
 		).toThrow(/must resolve to a controller lease-backed OpenClaw\/Gondolin source path/u);
 	});
+
+	it('rejects base implicit workspace when the active OpenClaw profile default workspace is profile-specific', () => {
+		expect(() =>
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'beta',
+				defaultWorkspaceDir: '/home/openclaw/.openclaw/workspace-beta',
+				openClawConfig: {
+					agents: {
+						list: [
+							{
+								id: 'beta',
+								workspace: '/home/openclaw/.openclaw/workspace',
+							},
+						],
+					},
+				},
+				paramsAgentWorkspaceDir: '/workspace',
+				stateDir: '/home/openclaw/.openclaw/state',
+			}),
+		).toThrow(/must resolve to a controller lease-backed OpenClaw\/Gondolin source path/u);
+	});
+
+	it('rejects base implicit defaults workspace when the active OpenClaw profile default workspace is profile-specific', () => {
+		expect(() =>
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'beta',
+				defaultWorkspaceDir: '/home/openclaw/.openclaw/workspace-beta',
+				openClawConfig: {
+					agents: {
+						defaults: {
+							workspace: '/home/openclaw/.openclaw/workspace',
+						},
+						list: [{ id: 'primary', default: true }, { id: 'beta' }],
+					},
+				},
+				paramsAgentWorkspaceDir: '/workspace',
+				stateDir: '/home/openclaw/.openclaw/state',
+			}),
+		).toThrow(/must resolve to a controller lease-backed OpenClaw\/Gondolin source path/u);
+	});
 });

@@ -937,6 +937,46 @@ describe('resolveOpenClawAgentWorkspaceSource', () => {
 		).toThrow(/must resolve to a controller lease-backed OpenClaw\\/Gondolin source path/u);
 	});
 
+	it('rejects base implicit workspace when the active OpenClaw profile default workspace is profile-specific', () => {
+		expect(() =>
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'beta',
+				defaultWorkspaceDir: '/home/openclaw/.openclaw/workspace-beta',
+				openClawConfig: {
+					agents: {
+						list: [
+							{
+								id: 'beta',
+								workspace: '/home/openclaw/.openclaw/workspace',
+							},
+						],
+					},
+				},
+				paramsAgentWorkspaceDir: '/workspace',
+				stateDir: '/home/openclaw/.openclaw/state',
+			}),
+		).toThrow(/must resolve to a controller lease-backed OpenClaw\\/Gondolin source path/u);
+	});
+
+	it('rejects base implicit defaults workspace when the active OpenClaw profile default workspace is profile-specific', () => {
+		expect(() =>
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'beta',
+				defaultWorkspaceDir: '/home/openclaw/.openclaw/workspace-beta',
+				openClawConfig: {
+					agents: {
+						defaults: {
+							workspace: '/home/openclaw/.openclaw/workspace',
+						},
+						list: [{ id: 'primary', default: true }, { id: 'beta' }],
+					},
+				},
+				paramsAgentWorkspaceDir: '/workspace',
+				stateDir: '/home/openclaw/.openclaw/state',
+			}),
+		).toThrow(/must resolve to a controller lease-backed OpenClaw\\/Gondolin source path/u);
+	});
+
 	it('rejects /work as a canonical workspace source', () => {
 		expect(() =>
 			resolveOpenClawAgentWorkspaceSource({
@@ -1019,6 +1059,10 @@ function containsParentTraversal(inputPath: string): boolean {
 	return inputPath.split(/\/+/u).includes('..');
 }
 
+function pathIsInsideOrEqual(inputPath: string, rootPath: string): boolean {
+	return inputPath === rootPath || inputPath.startsWith(`${rootPath}/`);
+}
+
 function resolveUserPathLikeOpenClaw(inputPath: string): string {
 	const trimmedPath = inputPath.trim();
 	const homeDirectory = process.env.HOME?.trim();
@@ -1037,6 +1081,10 @@ function isRuntimePathLeak(inputPath: string, defaultWorkspaceDir: string | unde
 		defaultWorkspaceDir === undefined
 			? undefined
 			: normalizeAbsolutePosixPath(resolveUserPathLikeOpenClaw(defaultWorkspaceDir));
+	const implicitWorkspaceFamilyRoot =
+		normalizedDefaultWorkspace === undefined
+			? undefined
+			: normalizedDefaultWorkspace.replace(/(?:-[^/]+)?$/u, '');
 	return (
 		normalized === TOOL_VM_WORKSPACE_GUEST_ROOT ||
 		normalized.startsWith(`${TOOL_VM_WORKSPACE_GUEST_ROOT}/`) ||
@@ -1044,14 +1092,12 @@ function isRuntimePathLeak(inputPath: string, defaultWorkspaceDir: string | unde
 		normalized.startsWith(`${TOOL_VM_SCRATCH_GUEST_ROOT}/`) ||
 		normalized === OPENCLAW_STATE_SANDBOXES_VM_ROOT ||
 		normalized.startsWith(`${OPENCLAW_STATE_SANDBOXES_VM_ROOT}/`) ||
-		normalizedDefaultWorkspace === normalized ||
-		(
-			normalizedDefaultWorkspace !== undefined &&
-			(
-				normalized.startsWith(`${normalizedDefaultWorkspace}-`) ||
-				normalized.startsWith(`${normalizedDefaultWorkspace}/`)
-			)
-		)
+		(normalizedDefaultWorkspace !== undefined &&
+			(pathIsInsideOrEqual(normalized, normalizedDefaultWorkspace) ||
+				normalized.startsWith(`${normalizedDefaultWorkspace}-`))) ||
+		(implicitWorkspaceFamilyRoot !== undefined &&
+			(pathIsInsideOrEqual(normalized, implicitWorkspaceFamilyRoot) ||
+				normalized.startsWith(`${implicitWorkspaceFamilyRoot}-`)))
 	);
 }
 

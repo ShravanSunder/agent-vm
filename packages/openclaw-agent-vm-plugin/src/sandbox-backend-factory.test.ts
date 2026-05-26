@@ -607,6 +607,63 @@ describe('createGondolinSandboxBackendFactory', () => {
 		}
 	});
 
+	it('rejects configured base implicit workspace when the active OpenClaw profile is non-default', async () => {
+		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
+			createLeaseResponse('lease-profile-poison', {
+				agentId: 'beta',
+			}),
+		);
+		vi.stubEnv('HOME', '/home/openclaw');
+		vi.stubEnv('OPENCLAW_PROFILE', 'beta');
+
+		try {
+			const factory = createGondolinSandboxBackendFactory(
+				{
+					controllerUrl: 'http://controller.vm.host:18800',
+					openClawRuntimeConfigProvider: () => ({
+						agents: {
+							list: [
+								{
+									id: 'beta',
+									workspace: '/home/openclaw/.openclaw/workspace',
+								},
+							],
+						},
+					}),
+					zoneId: 'shravan',
+				},
+				{
+					buildExecSpec: vi.fn(async () => ({
+						argv: ['ssh'],
+						env: {},
+						stdinMode: 'pipe-open' as const,
+					})),
+					createLeaseClient: () => ({
+						...createActiveUseLeaseClientMethods(),
+						renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+						peekLease: async () => createLeasePeekResponse(),
+						releaseLease: async () => {},
+						requestLease,
+					}),
+					runRemoteShellScript: vi.fn(),
+				},
+			);
+
+			await expect(
+				factory({
+					agentWorkspaceDir: '/workspace',
+					cfg: gondolinSandboxConfig(),
+					scopeKey: 'agent:beta:subagent:child',
+					sessionKey: 'agent:beta:subagent:child',
+					workspaceDir: '/workspace',
+				}),
+			).rejects.toThrow(/controller lease-backed OpenClaw\/Gondolin source path/u);
+			expect(requestLease).not.toHaveBeenCalled();
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+
 	it('canonicalizes leaked sandbox agentWorkspaceDir before cache compatibility', async () => {
 		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
 			createLeaseResponse('lease-leaked-sandbox', {
