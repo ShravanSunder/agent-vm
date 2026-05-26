@@ -17,6 +17,8 @@ export const controllerRequestCauseCodes = [
 
 export type ControllerRequestCauseCode = (typeof controllerRequestCauseCodes)[number];
 
+const controllerRequestCauseCodeSet: ReadonlySet<string> = new Set(controllerRequestCauseCodes);
+
 export interface FetchControllerWithPolicyOptions extends RequestInit {
 	readonly clearTimeoutImpl?: ((timeout: ReturnType<typeof setTimeout>) => void) | undefined;
 	readonly fetchImpl: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -83,7 +85,7 @@ export class ControllerRequestFailureError extends Error {
 }
 
 function isControllerRequestCauseCode(value: string): value is ControllerRequestCauseCode {
-	return controllerRequestCauseCodes.includes(value as ControllerRequestCauseCode);
+	return controllerRequestCauseCodeSet.has(value);
 }
 
 function extractControllerRequestCauseCode(
@@ -180,6 +182,7 @@ export async function fetchControllerWithPolicy(
 			abortController.abort();
 		}, policy.timeoutMs);
 		try {
+			// oxlint-disable-next-line eslint/no-await-in-loop -- retries must be sequential.
 			return await fetchImpl(input, { ...requestInit, signal: abortController.signal });
 		} catch (error) {
 			if (isSignalAborted(callerSignal) && isAbortError(error)) {
@@ -213,6 +216,7 @@ export async function fetchControllerWithPolicy(
 			}
 			const delayMs = policy.retryBaseDelayMs * attempt;
 			if (delayMs > 0) {
+				// oxlint-disable-next-line eslint/no-await-in-loop -- retry backoff is intentionally ordered.
 				await sleepImpl(delayMs);
 			}
 		} finally {
