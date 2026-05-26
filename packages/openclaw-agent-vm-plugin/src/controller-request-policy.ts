@@ -198,6 +198,9 @@ export async function fetchControllerWithPolicy(
 			} else {
 				lastError = error;
 			}
+			if (isSignalAborted(callerSignal)) {
+				throw abortReason(callerSignal);
+			}
 			const retryable = isRetryableControllerRequestError(lastError);
 			if (attempt >= policy.maxAttempts || !retryable) {
 				if (
@@ -228,5 +231,8 @@ export async function fetchControllerWithPolicy(
 }
 
 export async function drainControllerResponseBody(response: Response): Promise<void> {
+	if (response.bodyUsed) {
+		return;
+	}
 	await response.arrayBuffer();
 }
