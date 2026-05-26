@@ -238,16 +238,20 @@ export function createGondolinSandboxBackendFactory(
 		assertPluginLeaseContract({
 			cfg: params.cfg,
 		});
+		const defaultWorkspaceDir =
+			options.openClawDefaultWorkspaceDirProvider?.() ?? defaultOpenClawWorkspaceDir();
+		const equivalentAgentWorkspaceDirs =
+			defaultWorkspaceDir === undefined ? [] : [defaultWorkspaceDir];
 		const workspaceSource = resolveOpenClawAgentWorkspaceSource({
 			agentId,
-			defaultWorkspaceDir:
-				options.openClawDefaultWorkspaceDirProvider?.() ?? defaultOpenClawWorkspaceDir(),
+			defaultWorkspaceDir,
 			openClawConfig: options.openClawRuntimeConfigProvider?.(),
 			paramsAgentWorkspaceDir: params.agentWorkspaceDir,
 			stateDir: options.openClawStateDirProvider?.() ?? defaultOpenClawStateDir(),
 		});
 		const pathIntent = assertOpenClawToolVmPathIntent({
 			agentWorkspaceDir: workspaceSource.sourceDir,
+			equivalentAgentWorkspaceDirs,
 			inputPath: params.workspaceDir,
 		});
 		const cacheKey = agentLeaseCacheKey({

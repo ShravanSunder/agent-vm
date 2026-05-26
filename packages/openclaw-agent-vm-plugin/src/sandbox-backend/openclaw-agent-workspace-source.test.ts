@@ -47,6 +47,24 @@ describe('resolveOpenClawAgentWorkspaceSource', () => {
 		});
 	});
 
+	it('uses the configured agent workspace when OpenClaw leaks its implicit default workspace as agentWorkspaceDir', () => {
+		expect(
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'beta',
+				...fallbackPaths,
+				openClawConfig: {
+					agents: {
+						list: [{ id: 'beta', workspace: '/zone/agents/beta' }],
+					},
+				},
+				paramsAgentWorkspaceDir: '/home/openclaw/.openclaw/workspace',
+			}),
+		).toEqual({
+			kind: 'configured-agent-workspace',
+			sourceDir: '/zone/agents/beta',
+		});
+	});
+
 	it('uses defaults workspace plus agent id for non-default agents without explicit workspace', () => {
 		expect(
 			resolveOpenClawAgentWorkspaceSource({
@@ -139,6 +157,20 @@ describe('resolveOpenClawAgentWorkspaceSource', () => {
 				...fallbackPaths,
 				openClawConfig: undefined,
 				paramsAgentWorkspaceDir: '/workspace',
+			}),
+		).toEqual({
+			kind: 'state-workspace-child',
+			sourceDir: '/home/openclaw/.openclaw/state/workspace-beta',
+		});
+	});
+
+	it('uses OpenClaw stateDir fallback when implicit default workspace leakage arrives without explicit workspace config', () => {
+		expect(
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'beta',
+				...fallbackPaths,
+				openClawConfig: undefined,
+				paramsAgentWorkspaceDir: '/home/openclaw/.openclaw/workspace',
 			}),
 		).toEqual({
 			kind: 'state-workspace-child',

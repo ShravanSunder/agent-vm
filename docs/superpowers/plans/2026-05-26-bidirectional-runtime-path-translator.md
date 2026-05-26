@@ -758,6 +758,25 @@ describe('resolveOpenClawAgentWorkspaceSource', () => {
 		});
 	});
 
+	it('uses the configured agent workspace when OpenClaw leaks its implicit default workspace as agentWorkspaceDir', () => {
+		expect(
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'beta',
+				defaultWorkspaceDir: '/home/openclaw/.openclaw/workspace',
+				openClawConfig: {
+					agents: {
+						list: [{ id: 'beta', workspace: '/zone/agents/beta' }],
+					},
+				},
+				paramsAgentWorkspaceDir: '/home/openclaw/.openclaw/workspace',
+				stateDir: '/home/openclaw/.openclaw/state',
+			}),
+		).toEqual({
+			kind: 'configured-agent-workspace',
+			sourceDir: '/zone/agents/beta',
+		});
+	});
+
 	it('uses defaults workspace plus agent id for non-default agents without explicit workspace', () => {
 		expect(
 			resolveOpenClawAgentWorkspaceSource({
@@ -863,6 +882,21 @@ describe('resolveOpenClawAgentWorkspaceSource', () => {
 		});
 	});
 
+	it('uses OpenClaw stateDir fallback when implicit default workspace leakage arrives without explicit workspace config', () => {
+		expect(
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'beta',
+				defaultWorkspaceDir: '/home/openclaw/.openclaw/workspace',
+				openClawConfig: undefined,
+				paramsAgentWorkspaceDir: '/home/openclaw/.openclaw/workspace',
+				stateDir: '/home/openclaw/.openclaw/state',
+			}),
+		).toEqual({
+			kind: 'state-workspace-child',
+			sourceDir: '/home/openclaw/.openclaw/state/workspace-beta',
+		});
+	});
+
 	it('rejects /work as a canonical workspace source', () => {
 		expect(() =>
 			resolveOpenClawAgentWorkspaceSource({
@@ -945,15 +979,39 @@ function containsParentTraversal(inputPath: string): boolean {
 	return inputPath.split(/\/+/u).includes('..');
 }
 
-function isGuestAliasPath(inputPath: string): boolean {
+function resolveUserPathLikeOpenClaw(inputPath: string): string {
+	const trimmedPath = inputPath.trim();
+	const homeDirectory = process.env.HOME?.trim();
+	if (trimmedPath === '~' && homeDirectory) {
+		return homeDirectory;
+	}
+	if (trimmedPath.startsWith('~/') && homeDirectory) {
+		return path.resolve(path.join(homeDirectory, trimmedPath.slice(2)));
+	}
+	return path.resolve(trimmedPath);
+}
+
+function isRuntimePathLeak(inputPath: string, defaultWorkspaceDir: string | undefined): boolean {
 	const normalized = normalizeAbsolutePosixPath(inputPath);
+	const normalizedDefaultWorkspace =
+		defaultWorkspaceDir === undefined
+			? undefined
+			: normalizeAbsolutePosixPath(resolveUserPathLikeOpenClaw(defaultWorkspaceDir));
 	return (
 		normalized === TOOL_VM_WORKSPACE_GUEST_ROOT ||
 		normalized.startsWith(`${TOOL_VM_WORKSPACE_GUEST_ROOT}/`) ||
 		normalized === TOOL_VM_SCRATCH_GUEST_ROOT ||
 		normalized.startsWith(`${TOOL_VM_SCRATCH_GUEST_ROOT}/`) ||
 		normalized === OPENCLAW_STATE_SANDBOXES_VM_ROOT ||
-		normalized.startsWith(`${OPENCLAW_STATE_SANDBOXES_VM_ROOT}/`)
+		normalized.startsWith(`${OPENCLAW_STATE_SANDBOXES_VM_ROOT}/`) ||
+		normalizedDefaultWorkspace === normalized ||
+		(
+			normalizedDefaultWorkspace !== undefined &&
+			(
+				normalized.startsWith(`${normalizedDefaultWorkspace}-`) ||
+				normalized.startsWith(`${normalizedDefaultWorkspace}/`)
+			)
+		)
 	);
 }
 
@@ -1033,7 +1091,7 @@ export function resolveOpenClawAgentWorkspaceSource(options: {
 		};
 	}
 
-	if (!isGuestAliasPath(options.paramsAgentWorkspaceDir)) {
+	if (!isRuntimePathLeak(options.paramsAgentWorkspaceDir, options.defaultWorkspaceDir)) {
 		return {
 			kind: 'sdk-agent-workspace',
 			sourceDir: assertCanonicalSourcePath(
@@ -1308,15 +1366,20 @@ readonly openClawStateDirProvider?: () => string | undefined;
 Before path intent:
 
 ```ts
+const defaultWorkspaceDir =
+	options.openClawDefaultWorkspaceDirProvider?.() ?? defaultOpenClawWorkspaceDir();
+const equivalentAgentWorkspaceDirs =
+	defaultWorkspaceDir === undefined ? [] : [defaultWorkspaceDir];
 const workspaceSource = resolveOpenClawAgentWorkspaceSource({
 	agentId,
-	defaultWorkspaceDir: options.openClawDefaultWorkspaceDirProvider?.(),
+	defaultWorkspaceDir,
 	openClawConfig: options.openClawRuntimeConfigProvider?.(),
 	paramsAgentWorkspaceDir: params.agentWorkspaceDir,
 	stateDir: options.openClawStateDirProvider?.(),
 });
 const pathIntent = assertOpenClawToolVmPathIntent({
 	agentWorkspaceDir: workspaceSource.sourceDir,
+	equivalentAgentWorkspaceDirs,
 	inputPath: params.workspaceDir,
 });
 ```
@@ -1349,12 +1412,14 @@ The key point is that the resolver call includes the OpenClaw state/workspace fa
 ```ts
 const workspaceSource = resolveOpenClawAgentWorkspaceSource({
 	agentId,
-	defaultWorkspaceDir: options.openClawDefaultWorkspaceDirProvider?.(),
+	defaultWorkspaceDir,
 	openClawConfig: options.openClawRuntimeConfigProvider?.(),
 	paramsAgentWorkspaceDir: params.agentWorkspaceDir,
 	stateDir: options.openClawStateDirProvider?.(),
 });
 ```
+
+When present, the same `defaultWorkspaceDir` must also be passed to `assertOpenClawToolVmPathIntent` as an equivalent agent workspace dir. That lets `/home/openclaw/.openclaw/workspace` and profile-specific variants translate to the correct Tool VM guest cwd while keeping the controller lease mount anchored to `workspaceSource.sourceDir`.
 
 In production registration, those providers are derived from the OpenClaw runtime process environment using the same semantics as upstream:
 
@@ -1367,7 +1432,7 @@ openClawDefaultWorkspaceDirProvider:
   ~/.openclaw/workspace-<profile> when OPENCLAW_PROFILE is set and not "default"
 ```
 
-Do not use these fallback paths to create a second lease identity. They only recover the canonical OpenClaw source path when OpenClaw leaks a guest/sandbox runtime path at the SDK boundary.
+Do not use these fallback paths to create a second lease identity or controller mount. They only recover the canonical OpenClaw source path when OpenClaw leaks a guest/sandbox/default runtime path at the SDK boundary.
 
 - [ ] **Step 5: Wire registration provider**
 

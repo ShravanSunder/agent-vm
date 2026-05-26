@@ -49,15 +49,23 @@ function containsParentTraversal(inputPath: string): boolean {
 	return inputPath.split(/\/+/u).includes('..');
 }
 
-function isRuntimePathLeak(inputPath: string): boolean {
+function isRuntimePathLeak(inputPath: string, defaultWorkspaceDir: string | undefined): boolean {
 	const normalized = normalizeAbsolutePosixPath(inputPath);
+	const normalizedDefaultWorkspace =
+		defaultWorkspaceDir === undefined
+			? undefined
+			: normalizeAbsolutePosixPath(resolveUserPathLikeOpenClaw(defaultWorkspaceDir));
 	return (
 		normalized === TOOL_VM_WORKSPACE_GUEST_ROOT ||
 		normalized.startsWith(`${TOOL_VM_WORKSPACE_GUEST_ROOT}/`) ||
 		normalized === TOOL_VM_SCRATCH_GUEST_ROOT ||
 		normalized.startsWith(`${TOOL_VM_SCRATCH_GUEST_ROOT}/`) ||
 		normalized === OPENCLAW_STATE_SANDBOXES_VM_ROOT ||
-		normalized.startsWith(`${OPENCLAW_STATE_SANDBOXES_VM_ROOT}/`)
+		normalized.startsWith(`${OPENCLAW_STATE_SANDBOXES_VM_ROOT}/`) ||
+		(normalizedDefaultWorkspace !== undefined &&
+			(normalized === normalizedDefaultWorkspace ||
+				normalized.startsWith(`${normalizedDefaultWorkspace}-`) ||
+				normalized.startsWith(`${normalizedDefaultWorkspace}/`)))
 	);
 }
 
@@ -164,7 +172,7 @@ export function resolveOpenClawAgentWorkspaceSource(options: {
 		};
 	}
 
-	if (!isRuntimePathLeak(options.paramsAgentWorkspaceDir)) {
+	if (!isRuntimePathLeak(options.paramsAgentWorkspaceDir, options.defaultWorkspaceDir)) {
 		return {
 			kind: 'sdk-agent-workspace',
 			sourceDir: assertCanonicalSourcePath(

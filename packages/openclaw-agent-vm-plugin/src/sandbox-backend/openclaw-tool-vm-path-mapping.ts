@@ -182,12 +182,32 @@ function leaseRootForTranslation(translation: RuntimePathTranslation): string {
 
 export function resolveOpenClawToolVmPathIntent(options: {
 	readonly agentWorkspaceDir: string;
+	readonly equivalentAgentWorkspaceDirs?: readonly string[];
 	readonly inputPath: string;
 }): OpenClawToolVmPathIntentResult {
 	const agentWorkspaceDirError = validateAgentWorkspaceDir(options.agentWorkspaceDir);
 	if (agentWorkspaceDirError !== undefined) {
 		return {
 			error: agentWorkspaceDirError,
+			ok: false,
+		};
+	}
+	const mappings = [
+		createOpenClawToolVmPathMapping({
+			agentWorkspaceDir: options.agentWorkspaceDir,
+		}),
+		...(options.equivalentAgentWorkspaceDirs ?? []).map((equivalentAgentWorkspaceDir) =>
+			createOpenClawToolVmPathMapping({
+				agentWorkspaceDir: equivalentAgentWorkspaceDir,
+			}),
+		),
+	];
+	const invalidEquivalentRoot = (options.equivalentAgentWorkspaceDirs ?? [])
+		.map((equivalentAgentWorkspaceDir) => validateAgentWorkspaceDir(equivalentAgentWorkspaceDir))
+		.find((error) => error !== undefined);
+	if (invalidEquivalentRoot !== undefined) {
+		return {
+			error: invalidEquivalentRoot,
 			ok: false,
 		};
 	}
@@ -213,14 +233,34 @@ export function resolveOpenClawToolVmPathIntent(options: {
 			},
 		};
 	}
-	const translation = translateRuntimePath({
-		inputPath: options.inputPath,
-		mapping,
-		purpose: 'executionCwd',
-		targetNamespace: 'tool-vm-guest',
-	});
-	if (!translation.ok) {
-		return translation;
+	const translation = mappings
+		.map((candidateMapping) =>
+			translateRuntimePath({
+				inputPath: options.inputPath,
+				mapping: candidateMapping,
+				purpose: 'executionCwd',
+				targetNamespace: 'tool-vm-guest',
+			}),
+		)
+		.find((candidateTranslation) => candidateTranslation.ok);
+	if (translation === undefined) {
+		const fallbackTranslation = translateRuntimePath({
+			inputPath: options.inputPath,
+			mapping,
+			purpose: 'executionCwd',
+			targetNamespace: 'tool-vm-guest',
+		});
+		if (!fallbackTranslation.ok) {
+			return fallbackTranslation;
+		}
+		return {
+			ok: true,
+			value: {
+				effectiveGuestCwd: fallbackTranslation.value.outputPath,
+				kind: kindForTranslation(fallbackTranslation.value),
+				leaseWorkMountDir: options.agentWorkspaceDir,
+			},
+		};
 	}
 	const hostEquivalentTranslation = translateRuntimePath({
 		inputPath: options.inputPath,
@@ -246,6 +286,7 @@ export function resolveOpenClawToolVmPathIntent(options: {
 
 export function assertOpenClawToolVmPathIntent(options: {
 	readonly agentWorkspaceDir: string;
+	readonly equivalentAgentWorkspaceDirs?: readonly string[];
 	readonly inputPath: string;
 }): OpenClawToolVmPathIntentResolution {
 	const result = resolveOpenClawToolVmPathIntent(options);
