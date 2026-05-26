@@ -3,7 +3,7 @@ import {
 	parseToolVmLeaseId,
 	type ToolVmLeaseId,
 } from '@agent-vm/gateway-interface';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ControllerLeaseRequestError, type LeaseClient } from './controller-lease-client.js';
 import {
@@ -177,6 +177,17 @@ function gondolinSandboxConfig(
 		...overrides,
 	};
 }
+
+beforeEach(() => {
+	vi.stubGlobal(
+		'fetch',
+		vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true }))),
+	);
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
 
 describe('createGondolinSandboxBackendFactory', () => {
 	it('rejects unsupported OpenClaw sandbox config before requesting a lease', async () => {
@@ -1429,6 +1440,68 @@ describe('createGondolinSandboxBackendFactory', () => {
 			expect.objectContaining({ outcome: 'failed' }),
 		);
 		expect(releaseLease).not.toHaveBeenCalled();
+	});
+
+	it('finalizeExec publishes Tool VM SSH finalize health', async () => {
+		const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true })));
+		vi.stubGlobal('fetch', fetchMock);
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease: vi.fn(async () => createLeaseResponse('lease-finalize-health')),
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const backend = await factory({
+			agentWorkspaceDir: '/zone/agents/main',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:main',
+			sessionKey: 'agent:main:session-finalize-health',
+			workspaceDir: '/work',
+		});
+		const execSpec = await backend.buildExecSpec({
+			command: 'pnpm test',
+			env: {},
+			usePty: false,
+		});
+
+		await backend.finalizeExec?.({
+			status: 'completed',
+			exitCode: 0,
+			timedOut: false,
+			token: execSpec.finalizeToken,
+		});
+
+		const fetchCall = fetchMock.mock.calls[0];
+		expect(fetchCall?.[0]).toBe('http://controller.vm.host:18800/zones/shravan/health-events');
+		const init = fetchCall?.[1];
+		if (typeof init?.body !== 'string') {
+			throw new TypeError('Expected health publish request body to be a string.');
+		}
+		const event: unknown = JSON.parse(init.body);
+		expect(event).toMatchObject({
+			agentId: 'main',
+			kind: 'tool-vm-ssh',
+			leaseId: testToolVmLeaseId('lease-finalize-health'),
+			operation: 'finalize',
+			result: 'ok',
+			zoneId: 'shravan',
+		});
 	});
 
 	it('finalizeExec is a no-op when token has no dispose', async () => {

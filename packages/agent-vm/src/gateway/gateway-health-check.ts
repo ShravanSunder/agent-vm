@@ -4,7 +4,10 @@ export interface GatewayHealthProbeResult {
 	readonly exitCode: number;
 	readonly observation: string;
 	readonly ok: boolean;
+	readonly path?: string | undefined;
+	readonly port?: number | undefined;
 	readonly stderr: string;
+	readonly statusCode?: number | undefined;
 	readonly stdout: string;
 }
 
@@ -26,6 +29,10 @@ export async function runGatewayHealthCheck(options: {
 }): Promise<GatewayHealthProbeResult> {
 	const result = await options.exec(buildGatewayHealthCommand(options.healthCheck));
 	const stdout = result.stdout.trim();
+	const statusCode =
+		options.healthCheck.type === 'http' && /^\d+$/.test(stdout)
+			? Number.parseInt(stdout, 10)
+			: undefined;
 	const observation =
 		options.healthCheck.type === 'http' ? `http ${stdout || '(empty)'}` : `exit ${result.exitCode}`;
 	const ok = options.healthCheck.type === 'http' ? stdout.startsWith('2') : result.exitCode === 0;
@@ -34,7 +41,14 @@ export async function runGatewayHealthCheck(options: {
 		exitCode: result.exitCode,
 		observation,
 		ok,
+		...(options.healthCheck.type === 'http'
+			? {
+					path: options.healthCheck.path,
+					port: options.healthCheck.port,
+				}
+			: {}),
 		stderr: result.stderr,
+		...(statusCode === undefined ? {} : { statusCode }),
 		stdout: result.stdout,
 	};
 }

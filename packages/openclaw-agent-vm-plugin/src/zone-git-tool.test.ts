@@ -48,14 +48,44 @@ describe('registerZoneGitTool', () => {
 			content: JSON.stringify({ success: true }),
 			details: { success: true },
 		});
-		expect(fetchImpl).toHaveBeenCalledWith('http://127.0.0.1:18800/zones/sunfam/zone-git/push', {
-			body: JSON.stringify({ expectedHead: 'abc123' }),
-			headers: {
-				'content-type': 'application/json',
-				'x-agent-vm-zone-git-token': 'push-token',
-			},
-			method: 'POST',
+		expect(fetchImpl).toHaveBeenCalledWith(
+			'http://127.0.0.1:18800/zones/sunfam/zone-git/push',
+			expect.objectContaining({
+				body: JSON.stringify({ expectedHead: 'abc123' }),
+				headers: {
+					'content-type': 'application/json',
+					'x-agent-vm-zone-git-token': 'push-token',
+				},
+				method: 'POST',
+			}),
+		);
+	});
+
+	it('passes an AbortSignal through the bounded controller request policy', async () => {
+		let registeredTool: OpenClawToolRegistration | undefined;
+		let signal: AbortSignal | undefined;
+		const fetchImpl = vi.fn(async (_input, init) => {
+			signal = init?.signal ?? undefined;
+			return new Response(JSON.stringify({ success: true }));
 		});
+
+		registerZoneGitTool({
+			api: {
+				registerTool: (tool) => {
+					registeredTool = tool;
+				},
+			},
+			controllerUrl: 'http://127.0.0.1:18800',
+			fetchImpl,
+			zoneId: 'sunfam',
+		});
+
+		if (!registeredTool) {
+			throw new Error('Expected zone_git_push tool to be registered.');
+		}
+		await registeredTool.execute('tool-call-1', { expectedHead: 'abc123' });
+
+		expect(signal).toBeInstanceOf(AbortSignal);
 	});
 
 	it('throws controller error payloads from failed pushes', async () => {
@@ -84,11 +114,14 @@ describe('registerZoneGitTool', () => {
 		await expect(registeredTool.execute('tool-call-1', { expectedHead: 'abc123' })).rejects.toThrow(
 			'zone_git_push failed: 409 {"error":"zone git rejected push"}',
 		);
-		expect(fetchImpl).toHaveBeenCalledWith('http://127.0.0.1:18800/zones/sunfam/zone-git/push', {
-			body: JSON.stringify({ expectedHead: 'abc123' }),
-			headers: { 'content-type': 'application/json' },
-			method: 'POST',
-		});
+		expect(fetchImpl).toHaveBeenCalledWith(
+			'http://127.0.0.1:18800/zones/sunfam/zone-git/push',
+			expect.objectContaining({
+				body: JSON.stringify({ expectedHead: 'abc123' }),
+				headers: { 'content-type': 'application/json' },
+				method: 'POST',
+			}),
+		);
 	});
 
 	it('rejects missing expectedHead before calling the controller', async () => {

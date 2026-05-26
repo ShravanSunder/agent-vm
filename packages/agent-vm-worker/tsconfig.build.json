@@ -6,7 +6,12 @@
 		"declaration": true,
 		"declarationMap": true,
 		"sourceMap": true,
-		"noEmit": false
+		"noEmit": false,
+		"paths": {
+			"@agent-vm/gateway-interface": ["../gateway-interface/dist/index.d.ts"],
+			"@agent-vm/gondolin-adapter": ["../gondolin-adapter/dist/index.d.ts"],
+			"@agent-vm/secret-management": ["../secret-management/dist/index.d.ts"]
+		}
 	},
 	"exclude": ["src/**/*.test.ts"]
 }

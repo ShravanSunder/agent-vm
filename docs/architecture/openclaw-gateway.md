@@ -190,9 +190,16 @@ controller probes the VM; dead leases are evicted and replaced. This means an
 agent's Tool VM persists across multiple tool calls, channels, sessions, or
 subagents without silently crossing work mount or profile boundaries.
 
-Cached handles renew the idle lease with `POST /lease/:leaseId/renew`. `GET`
-lease routes are read-only; they do not update `lastUsedAt`. In-flight commands
-and file-bridge operations are tracked separately as active uses, so a
+Cached handles renew the idle lease with `POST /lease/:leaseId/renew`; health
+snapshots call this `lease-renew`. `GET` lease routes are read-only; they do
+not update `lastUsedAt`. In-flight commands and file-bridge operations are
+tracked separately as active uses; health snapshots call
+`POST /lease/:leaseId/uses/:useId/heartbeat` a `lease-heartbeat`. Successful
+lease-heartbeats and lease-renews both keep lease state alive, but they
+diagnose different boundaries. A lease-heartbeat means an active operation is
+still alive. A lease-renew means an idle cached lease is being reused. This
+distinction matters when debugging controller-link timeouts versus stale Tool
+VM SSH state. Because active uses are tracked separately, a
 long-running SSH command keeps the Tool VM protected from idle reap without
 making the controller a stdout/stderr data proxy. If a plugin misses its final
 cleanup callback, plugin heartbeats stop after a finite safety cap (12 hours by
@@ -408,6 +415,7 @@ The controller exposes operations for managing the OpenClaw Gateway:
 |-----------|----------|-------------|
 | Status | `GET /controller-status` | System config and zone health |
 | Health | `GET /zones/:id/health` | Live gateway health probe from inside the VM |
+| Health snapshot | `GET /zones/:id/health-snapshot` | In-memory zone health state derived from controller, gateway, lease, and Tool VM SSH events |
 | Logs | `GET /zones/:id/logs` | Gateway boot log plus OpenClaw runtime log tail from `/agent-vm/logs` in the VM |
 | Credentials | `POST /zones/:id/credentials/refresh` | Re-resolve secrets, restart gateway |
 | Destroy | `POST /zones/:id/destroy` | Stop gateway, release leases, purge state |
@@ -416,6 +424,11 @@ The controller exposes operations for managing the OpenClaw Gateway:
 | Exec | `POST /zones/:id/execute-command` | Run command in gateway VM after zone admin authorization when configured |
 
 For implementation details, see [subsystems/controller.md](../subsystems/controller.md#operations).
+
+The OpenClaw application heartbeat is not the same thing as infrastructure
+health. A scheduled OpenClaw agent turn can prove that OpenClaw app logic ran,
+but it does not by itself prove that the gateway-to-agent-vm-controller link,
+lease-heartbeat path, lease-renew path, or Tool VM SSH path is healthy.
 
 ---
 

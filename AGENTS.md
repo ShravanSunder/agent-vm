@@ -36,6 +36,14 @@ agent-vm currently routes `/` to the OpenClaw guest gateway port, and arbitrary
 extra guest webservers require explicit ingress routes rather than rootfs-size
 or OpenClaw-only config changes.
 
+For gateway health, agent-vm controller communication, lease-heartbeat,
+lease-renew, Tool VM SSH, or Gondolin `tcpHosts` timeout debugging, read
+`docs/subsystems/controller.md`, `docs/subsystems/gondolin-vm-layer.md`, and
+`docs/architecture/openclaw-gateway.md` before changing runtime behavior. Keep
+the health boundaries separate: host-side agent-vm controller, gateway VM,
+gateway-service process, gateway-to-controller control link, lease routes, and
+gateway-to-Tool-VM SSH are different failure surfaces.
+
 For configuration questions, start at `docs/reference/configuration/README.md`,
 then drill down:
 
@@ -84,11 +92,11 @@ fast formatting and linting.
 - Integration tests: `pnpm test:integration`.
 - Smoke tests: `pnpm test:smoke`.
   This runs `vitest.smoke.config.ts` and includes only
-  `packages/**/*.smoke.test.ts`. Smoke tests are production-shaped checks, not
-  fake-client contract tests. Current smoke types:
-  - CLI smoke: built `agent-vm` commands such as manual/resources update.
-  - Startup/config smoke: production startup wiring such as gateway secret
-    resolution.
+  `packages/**/*.smoke.test.ts`. Smoke tests are live or production-shaped
+  end-to-end checks, not fake-client contract tests. CLI/manual/resource
+  generation checks and startup/config contract checks belong in integration
+  tests unless they boot the production path they claim to prove. Current smoke
+  types:
   - Live OpenClaw/Gondolin smoke: gated by `AGENT_VM_OPENCLAW_SMOKE=1`; boots
     real OpenClaw/Gondolin VM flows and requires Docker, QEMU, and pinned Zig.
     For Tool VM lease/path changes, this must exercise a real controller,

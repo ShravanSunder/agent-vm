@@ -1,6 +1,11 @@
+import type { WorkerInternalControllerRequestOperation } from '@agent-vm/gateway-interface';
 import { execa } from 'execa';
 
 import type { RepoLocation } from '../../shared/repo-location.js';
+import {
+	WorkerControllerRequestPolicyTransportError,
+	fetchWorkerControllerWithPolicy,
+} from './controller-request-policy.js';
 
 export interface ControllerToolRepoSelection {
 	readonly repo: RepoLocation | null;
@@ -127,21 +132,28 @@ export async function currentBranch(cwd: string): Promise<CurrentBranchResult> {
 export async function postControllerJson(options: {
 	readonly url: string;
 	readonly body: Record<string, unknown>;
-	readonly timeoutMs: number;
+	readonly operation: WorkerInternalControllerRequestOperation;
 }): Promise<unknown> {
 	let response: Response;
 	try {
-		response = await fetch(options.url, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			signal: AbortSignal.timeout(options.timeoutMs),
-			body: JSON.stringify(options.body),
+		response = await fetchWorkerControllerWithPolicy({
+			input: options.url,
+			operation: options.operation,
+			init: {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(options.body),
+			},
 		});
 	} catch (error) {
+		const cause =
+			error instanceof WorkerControllerRequestPolicyTransportError && error.cause
+				? error.cause
+				: error;
 		return {
 			type: 'controller-transport-error',
 			success: false,
-			artifact: `Controller request failed before HTTP response: ${error instanceof Error ? error.message : String(error)}`,
+			artifact: `Controller request failed before HTTP response: ${cause instanceof Error ? cause.message : String(cause)}`,
 		} satisfies ControllerToolFailure;
 	}
 	const text = await response.text();

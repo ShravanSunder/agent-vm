@@ -13,6 +13,11 @@ import type {
 } from '@agent-vm/gateway-interface';
 import { z } from 'zod';
 
+import {
+	drainControllerResponseBody,
+	fetchControllerWithPolicy,
+} from './controller-request-policy.js';
+
 export type JsonValue =
 	| boolean
 	| null
@@ -224,8 +229,13 @@ export function createLeaseClient(options: {
 	const fetchImpl = options.fetchImpl ?? fetch;
 	const baseUrl = options.controllerUrl.replace(/\/$/u, '');
 	const renewLease = async (leaseId: string): Promise<ToolVmSshLease> => {
-		const response = await fetchImpl(`${baseUrl}/lease/${encodeURIComponent(leaseId)}/renew`, {
-			method: 'POST',
+		const response = await fetchControllerWithPolicy({
+			fetchImpl,
+			input: `${baseUrl}/lease/${encodeURIComponent(leaseId)}/renew`,
+			init: {
+				method: 'POST',
+			},
+			operation: 'lease-renew',
 		});
 		return await readJsonResponse(response, 'Controller lease renew API', isToolVmSshLease);
 	};
@@ -236,16 +246,18 @@ export function createLeaseClient(options: {
 			useId: string,
 			request: EndToolVmActiveUseRequest,
 		): Promise<void> => {
-			const response = await fetchImpl(
-				`${baseUrl}/lease/${encodeURIComponent(leaseId)}/uses/${encodeURIComponent(useId)}`,
-				{
+			const response = await fetchControllerWithPolicy({
+				fetchImpl,
+				input: `${baseUrl}/lease/${encodeURIComponent(leaseId)}/uses/${encodeURIComponent(useId)}`,
+				init: {
 					body: JSON.stringify(request),
 					headers: {
 						'content-type': 'application/json',
 					},
 					method: 'DELETE',
 				},
-			);
+				operation: 'lease-use-end',
+			});
 			if (!response.ok) {
 				const errorBody = await readErrorBody(response, 'Controller active-use end API');
 				throw new ControllerLeaseRequestError({
@@ -255,22 +267,25 @@ export function createLeaseClient(options: {
 					status: response.status,
 				});
 			}
+			await drainControllerResponseBody(response);
 		},
 		heartbeatActiveUse: async (
 			leaseId: string,
 			useId: string,
 			request: HeartbeatToolVmActiveUseRequest,
 		): Promise<HeartbeatToolVmActiveUseResponse> => {
-			const response = await fetchImpl(
-				`${baseUrl}/lease/${encodeURIComponent(leaseId)}/uses/${encodeURIComponent(useId)}/heartbeat`,
-				{
+			const response = await fetchControllerWithPolicy({
+				fetchImpl,
+				input: `${baseUrl}/lease/${encodeURIComponent(leaseId)}/uses/${encodeURIComponent(useId)}/heartbeat`,
+				init: {
 					body: JSON.stringify(request),
 					headers: {
 						'content-type': 'application/json',
 					},
 					method: 'POST',
 				},
-			);
+				operation: 'lease-heartbeat',
+			});
 			return await readJsonResponse(
 				response,
 				'Controller active-use heartbeat API',
@@ -279,20 +294,26 @@ export function createLeaseClient(options: {
 		},
 		renewLease,
 		peekLease: async (leaseId: string): Promise<ToolVmLeasePeek> => {
-			const response = await fetchImpl(`${baseUrl}/lease/${encodeURIComponent(leaseId)}/peek`);
+			const response = await fetchControllerWithPolicy({
+				fetchImpl,
+				input: `${baseUrl}/lease/${encodeURIComponent(leaseId)}/peek`,
+				operation: 'lease-peek',
+			});
 			return await readJsonResponse(response, 'Controller lease peek API', isToolVmLeasePeek);
 		},
 		publishOpenClawRuntimeStatus: async (report): Promise<void> => {
-			const response = await fetchImpl(
-				`${baseUrl}/zones/${encodeURIComponent(report.zoneId)}/openclaw-runtime-status`,
-				{
+			const response = await fetchControllerWithPolicy({
+				fetchImpl,
+				input: `${baseUrl}/zones/${encodeURIComponent(report.zoneId)}/openclaw-runtime-status`,
+				init: {
 					body: JSON.stringify(report),
 					headers: {
 						'content-type': 'application/json',
 					},
 					method: 'POST',
 				},
-			);
+				operation: 'openclaw-runtime-status',
+			});
 			if (!response.ok) {
 				const errorBody = await readErrorBody(response, 'Controller OpenClaw runtime status API');
 				throw new ControllerLeaseRequestError({
@@ -302,6 +323,7 @@ export function createLeaseClient(options: {
 					status: response.status,
 				});
 			}
+			await drainControllerResponseBody(response);
 		},
 		releaseLease: async (
 			leaseId: string,
@@ -311,8 +333,13 @@ export function createLeaseClient(options: {
 			if (releaseOptions.force === true) {
 				releaseUrl.searchParams.set('force', 'true');
 			}
-			const response = await fetchImpl(releaseUrl.toString(), {
-				method: 'DELETE',
+			const response = await fetchControllerWithPolicy({
+				fetchImpl,
+				input: releaseUrl.toString(),
+				init: {
+					method: 'DELETE',
+				},
+				operation: 'lease-release',
 			});
 			if (!response.ok) {
 				const errorBody = await readErrorBody(response, 'Controller lease release API');
@@ -323,22 +350,28 @@ export function createLeaseClient(options: {
 					status: response.status,
 				});
 			}
+			await drainControllerResponseBody(response);
 		},
 		requestLease: async (request): Promise<ToolVmSshLease> => {
-			const response = await fetchImpl(`${baseUrl}/lease`, {
-				body: JSON.stringify({
-					agentId: request.agentId,
-					agentWorkspaceDir: request.agentWorkspaceDir,
-					...(request.idleTtlMs !== undefined ? { idleTtlMs: request.idleTtlMs } : {}),
-					profileId: request.profileId,
-					sessionKey: request.sessionKey,
-					workMountDir: request.workMountDir,
-					zoneId: request.zoneId,
-				}),
-				headers: {
-					'content-type': 'application/json',
+			const response = await fetchControllerWithPolicy({
+				fetchImpl,
+				input: `${baseUrl}/lease`,
+				init: {
+					body: JSON.stringify({
+						agentId: request.agentId,
+						agentWorkspaceDir: request.agentWorkspaceDir,
+						...(request.idleTtlMs !== undefined ? { idleTtlMs: request.idleTtlMs } : {}),
+						profileId: request.profileId,
+						sessionKey: request.sessionKey,
+						workMountDir: request.workMountDir,
+						zoneId: request.zoneId,
+					}),
+					headers: {
+						'content-type': 'application/json',
+					},
+					method: 'POST',
 				},
-				method: 'POST',
+				operation: 'lease-create',
 			});
 			return await readJsonResponse(response, 'Controller lease API', isToolVmSshLease);
 		},
@@ -346,12 +379,17 @@ export function createLeaseClient(options: {
 			leaseId: string,
 			request: StartToolVmActiveUseRequest,
 		): Promise<StartToolVmActiveUseResponse> => {
-			const response = await fetchImpl(`${baseUrl}/lease/${encodeURIComponent(leaseId)}/uses`, {
-				body: JSON.stringify(request),
-				headers: {
-					'content-type': 'application/json',
+			const response = await fetchControllerWithPolicy({
+				fetchImpl,
+				input: `${baseUrl}/lease/${encodeURIComponent(leaseId)}/uses`,
+				init: {
+					body: JSON.stringify(request),
+					headers: {
+						'content-type': 'application/json',
+					},
+					method: 'POST',
 				},
-				method: 'POST',
+				operation: 'lease-use-start',
 			});
 			return await readJsonResponse(
 				response,

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type {
+	AgentVmHealthEvent,
 	StartToolVmActiveUseRequest,
 	ToolVmActiveUseCorrelation,
 } from '@agent-vm/gateway-interface';
@@ -11,8 +12,12 @@ import {
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { type Context as ControllerRouteContext, Hono } from 'hono';
 
-import type { LoadedSystemConfig } from '../../config/system-config.js';
+import {
+	resolveControllerHealthConfig,
+	type LoadedSystemConfig,
+} from '../../config/system-config.js';
 import { OpenClawDeploymentRequirementError } from '../../operations/openclaw-deployment-requirements.js';
+import { HealthEventStore } from '../health/health-event-store.js';
 import {
 	type AgentSandboxSeedResult,
 	SandboxSeedingError,
@@ -36,6 +41,7 @@ import {
 	OpenClawRuntimeStatusStore,
 	OpenClawRuntimeStatusUnavailableError,
 } from '../openclaw-runtime-status.js';
+import { registerControllerHealthEventRoutes } from './controller-health-event-routes.js';
 import {
 	type ControllerLeaseManager,
 	type ControllerRuntimeReadiness,
@@ -217,6 +223,9 @@ const defaultLeaseIdleTtlPolicy = {
 	minRequestedMs: 1_000,
 } satisfies ToolVmLeaseIdleTtlPolicy;
 
+const defaultHealthEventHistoryLimit = 500;
+const defaultHealthEventStaleAfterMs = 30_000;
+
 function normalizeActiveUseCorrelation(
 	correlation:
 		| {
@@ -239,6 +248,13 @@ function normalizeActiveUseCorrelation(
 		...(correlation.toolName !== undefined ? { toolName: correlation.toolName } : {}),
 	} satisfies ToolVmActiveUseCorrelation;
 	return Object.keys(normalizedCorrelation).length > 0 ? normalizedCorrelation : undefined;
+}
+
+function recordLeaseHealthEvent(
+	store: HealthEventStore,
+	event: AgentVmHealthEvent & { readonly kind: 'lease-heartbeat' | 'lease-renew' },
+): void {
+	store.record(event);
 }
 
 interface ParsedOptionalJsonBody<TValue> {
@@ -305,6 +321,7 @@ export function createControllerApp(options: {
 	readonly zoneAgentToolVmProfiles?: Record<string, Record<string, string>>;
 	readonly zoneDefaultToolVmProfiles?: Record<string, string>;
 	readonly zoneIds?: ReadonlySet<string>;
+	readonly healthEventStore?: HealthEventStore;
 	readonly openClawRuntimeStatusStore?: OpenClawRuntimeStatusStore;
 	readonly onLeaseCreateRequest?: (request: ObservedControllerLeaseCreateRequest) => void;
 	readonly leaseIdleTtlPolicy?: ToolVmLeaseIdleTtlPolicy;
@@ -319,6 +336,12 @@ export function createControllerApp(options: {
 	const app = new Hono();
 	const readIdentityPem = options.readIdentityPem ?? readIdentityPemFromFile;
 	const leaseIdleTtlPolicy = options.leaseIdleTtlPolicy ?? defaultLeaseIdleTtlPolicy;
+	const healthEventStore =
+		options.healthEventStore ??
+		new HealthEventStore({
+			eventHistoryLimit: defaultHealthEventHistoryLimit,
+			staleAfterMs: defaultHealthEventStaleAfterMs,
+		});
 	const getRuntimeReadiness = (): ControllerRuntimeReadiness =>
 		options.runtimeReadiness?.() ?? { ready: true, state: 'ready' };
 	const rejectIfRuntimeNotReady = (): Response | null => {
@@ -344,6 +367,12 @@ export function createControllerApp(options: {
 			},
 			readiness.ready ? 200 : 503,
 		);
+	});
+
+	registerControllerHealthEventRoutes(app, {
+		now: () => Date.now(),
+		store: healthEventStore,
+		...(options.zoneIds ? { zoneIds: options.zoneIds } : {}),
 	});
 
 	app.post('/lease', async (context) => {
@@ -513,8 +542,40 @@ export function createControllerApp(options: {
 		if (notReadyResponse) {
 			return notReadyResponse;
 		}
-		const leaseRenewal = await options.leaseManager.renewLease(context.req.param('leaseId'));
+		const leaseId = context.req.param('leaseId');
+		const startedAtMs = Date.now();
+		const preRenewSnapshot = options.leaseManager.peekLease(leaseId);
+		let leaseRenewal: Awaited<ReturnType<ControllerLeaseManager['renewLease']>>;
+		try {
+			leaseRenewal = await options.leaseManager.renewLease(leaseId);
+		} catch (error) {
+			if (preRenewSnapshot) {
+				recordLeaseHealthEvent(healthEventStore, {
+					agentId: preRenewSnapshot.lease.agentId,
+					elapsedMs: Date.now() - startedAtMs,
+					errorCode: error instanceof Error ? error.name : 'lease-renew-error',
+					kind: 'lease-renew',
+					leaseId,
+					observedAtMs: Date.now(),
+					result: 'failed',
+					zoneId: preRenewSnapshot.lease.zoneId,
+				});
+			}
+			throw error;
+		}
 		if (leaseRenewal.kind === 'not-found') {
+			if (preRenewSnapshot) {
+				recordLeaseHealthEvent(healthEventStore, {
+					agentId: preRenewSnapshot.lease.agentId,
+					elapsedMs: Date.now() - startedAtMs,
+					errorCode: leaseRenewal.reason,
+					kind: 'lease-renew',
+					leaseId,
+					observedAtMs: Date.now(),
+					result: 'failed',
+					zoneId: preRenewSnapshot.lease.zoneId,
+				});
+			}
 			return context.json(
 				{
 					error: 'Lease not found',
@@ -524,6 +585,15 @@ export function createControllerApp(options: {
 				404,
 			);
 		}
+		recordLeaseHealthEvent(healthEventStore, {
+			agentId: leaseRenewal.lease.agentId,
+			elapsedMs: Date.now() - startedAtMs,
+			kind: 'lease-renew',
+			leaseId,
+			observedAtMs: Date.now(),
+			result: 'ok',
+			zoneId: leaseRenewal.lease.zoneId,
+		});
 		return context.json(
 			await serializeLeaseForResponse(leaseRenewal.lease, readIdentityPem, {
 				idleTtlMs: leaseRenewal.lease.effectiveIdleTtlMs,
@@ -619,13 +689,42 @@ export function createControllerApp(options: {
 		if (!heartbeatPayload.ok) {
 			return heartbeatPayload.response;
 		}
+		const leaseId = context.req.param('leaseId');
+		const useId = context.req.param('useId');
+		const startedAtMs = Date.now();
+		const leaseSnapshot = options.leaseManager.peekLease(leaseId);
 		const heartbeat = options.leaseManager.heartbeatActiveUse(
-			context.req.param('leaseId'),
-			context.req.param('useId'),
+			leaseId,
+			useId,
 			heartbeatPayload.value,
 		);
 		if (!heartbeat) {
+			if (leaseSnapshot) {
+				recordLeaseHealthEvent(healthEventStore, {
+					agentId: leaseSnapshot.lease.agentId,
+					elapsedMs: Date.now() - startedAtMs,
+					errorCode: 'active-use-not-found',
+					kind: 'lease-heartbeat',
+					leaseId,
+					observedAtMs: Date.now(),
+					result: 'failed',
+					useId,
+					zoneId: leaseSnapshot.lease.zoneId,
+				});
+			}
 			return context.json({ error: 'Active use not found' }, 404);
+		}
+		if (leaseSnapshot) {
+			recordLeaseHealthEvent(healthEventStore, {
+				agentId: leaseSnapshot.lease.agentId,
+				elapsedMs: Date.now() - startedAtMs,
+				kind: 'lease-heartbeat',
+				leaseId,
+				observedAtMs: Date.now(),
+				result: 'ok',
+				useId,
+				zoneId: leaseSnapshot.lease.zoneId,
+			});
 		}
 		return context.json(heartbeat);
 	});
@@ -736,6 +835,8 @@ export function createControllerApp(options: {
 				...options.operations,
 			},
 			{
+				healthEventStore,
+				now: () => Date.now(),
 				runtimeReadiness: getRuntimeReadiness,
 			},
 		);
@@ -745,6 +846,7 @@ export function createControllerApp(options: {
 }
 
 export function createControllerService(options: {
+	readonly healthEventStore?: HealthEventStore;
 	readonly leaseManager: ControllerLeaseManager;
 	readonly onLeaseCreateRequest?: (request: ObservedControllerLeaseCreateRequest) => void;
 	readonly operations?: Partial<ControllerRouteOperations>;
@@ -755,8 +857,15 @@ export function createControllerService(options: {
 }): Hono {
 	const zonesById = new Map(options.systemConfig.zones.map((zone) => [zone.id, zone]));
 	const openClawRuntimeStatusStore = new OpenClawRuntimeStatusStore();
+	const controllerHealthConfig = resolveControllerHealthConfig(options.systemConfig);
 	const app = createControllerApp({
 		controllerPort: options.systemConfig.host.controllerPort,
+		healthEventStore:
+			options.healthEventStore ??
+			new HealthEventStore({
+				eventHistoryLimit: controllerHealthConfig.eventHistoryLimit,
+				staleAfterMs: controllerHealthConfig.staleAfterMs,
+			}),
 		leaseManager: options.leaseManager,
 		...(options.onLeaseCreateRequest ? { onLeaseCreateRequest: options.onLeaseCreateRequest } : {}),
 		...(options.readIdentityPem ? { readIdentityPem: options.readIdentityPem } : {}),
