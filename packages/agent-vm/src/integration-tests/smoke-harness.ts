@@ -54,6 +54,7 @@ const smokeTempRootPrefixes = [
 	'agent-vm-gateway-smoke-project-',
 	'agent-vm-smoke-harness-',
 	'openclaw-mcp-portal-smoke-',
+	'openclaw-subagent-lease-smoke-',
 	'openclaw-zone-git-smoke-',
 	'worker-loop-smoke-',
 ] as const;

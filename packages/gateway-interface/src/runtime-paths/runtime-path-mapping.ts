@@ -138,7 +138,7 @@ function namespaceShouldShowInGuidance(
 	namespace: RuntimePathNamespace,
 ): boolean {
 	if (root.showInGuidance?.[namespace] !== undefined) {
-		return root.showInGuidance[namespace] === true;
+		return root.showInGuidance[namespace];
 	}
 	return namespace !== 'controller-host';
 }
@@ -193,11 +193,11 @@ function findBestRootMatch(params: {
 	readonly sourceNamespace?: RuntimePathNamespace;
 }): RuntimePathRootMatch | undefined {
 	const matches = params.mapping.roots.flatMap((root): RuntimePathRootMatch[] =>
-		Object.entries(root.locations).flatMap(([namespace, rootPath]) => {
+		guidanceNamespaceOrder.flatMap((inputNamespace) => {
+			const rootPath = root.locations[inputNamespace];
 			if (rootPath === undefined) {
 				return [];
 			}
-			const inputNamespace = namespace as RuntimePathNamespace;
 			if (params.sourceNamespace !== undefined && inputNamespace !== params.sourceNamespace) {
 				return [];
 			}
