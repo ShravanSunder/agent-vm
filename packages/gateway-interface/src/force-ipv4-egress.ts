@@ -36,6 +36,8 @@
 export const FORCE_IPV4_EGRESS_NODE_OPTIONS =
 	'--dns-result-order=ipv4first --no-network-family-autoselection';
 
+const FORCE_IPV4_EGRESS_NODE_OPTION_FLAGS = FORCE_IPV4_EGRESS_NODE_OPTIONS.split(/\s+/u);
+
 /**
  * Compose the forced IPv4-preference flags with a user-provided
  * NODE_OPTIONS value (if any).
@@ -46,8 +48,9 @@ export const FORCE_IPV4_EGRESS_NODE_OPTIONS =
  * a zone secret happens to provide its own NODE_OPTIONS.
  *
  * Forced flags come FIRST so they are unambiguously applied.
- * User-provided flags are appended verbatim. Node treats NODE_OPTIONS
- * as a whitespace-separated list and all flags apply.
+ * User-provided flags are appended verbatim except for duplicate
+ * forced IPv4-preference flags. Node treats NODE_OPTIONS as a
+ * whitespace-separated list and all flags apply.
  *
  * Returns just the forced flags if the user value is undefined,
  * empty, or whitespace-only.
@@ -69,5 +72,11 @@ export function composeNodeOptions(userValue: string | undefined): string {
 	if (trimmed === '') {
 		return FORCE_IPV4_EGRESS_NODE_OPTIONS;
 	}
-	return `${FORCE_IPV4_EGRESS_NODE_OPTIONS} ${trimmed}`;
+	const userFlags = trimmed
+		.split(/\s+/u)
+		.filter((flag) => !FORCE_IPV4_EGRESS_NODE_OPTION_FLAGS.includes(flag));
+	if (userFlags.length === 0) {
+		return FORCE_IPV4_EGRESS_NODE_OPTIONS;
+	}
+	return `${FORCE_IPV4_EGRESS_NODE_OPTIONS} ${userFlags.join(' ')}`;
 }
