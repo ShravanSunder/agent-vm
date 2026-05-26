@@ -172,6 +172,43 @@ describe('controller request policies', () => {
 		expect(fetchImpl).toHaveBeenCalledOnce();
 	});
 
+	it('aborts retry backoff immediately when the caller cancels', async () => {
+		vi.useFakeTimers();
+		try {
+			const callerAbort = new AbortController();
+			const callerReason = new Error('caller stopped during retry backoff');
+			const fetchImpl = vi
+				.fn<NonNullable<Parameters<typeof fetchControllerWithPolicy>[0]['fetchImpl']>>()
+				.mockRejectedValueOnce(new Error('fetch failed'));
+
+			const request = fetchControllerWithPolicy({
+				fetchImpl,
+				input: 'http://controller.vm.host:18800/lease/lease-1/renew',
+				init: { method: 'POST', signal: callerAbort.signal },
+				operation: 'lease-renew',
+				policy: {
+					idempotency: 'safe-mutation',
+					maxAttempts: 2,
+					retryBaseDelayMs: 1_000,
+					retryEnabled: true,
+					retryStatuses: [503],
+					timeoutMs: 1_000,
+				},
+			});
+			const rejection = expect(request).rejects.toBe(callerReason);
+			await Promise.resolve();
+			expect(fetchImpl).toHaveBeenCalledOnce();
+
+			callerAbort.abort(callerReason);
+			await vi.advanceTimersByTimeAsync(0);
+
+			await rejection;
+			expect(fetchImpl).toHaveBeenCalledOnce();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('retries retryable HTTP statuses before returning success', async () => {
 		const fetchImpl = vi
 			.fn<NonNullable<Parameters<typeof fetchControllerWithPolicy>[0]['fetchImpl']>>()

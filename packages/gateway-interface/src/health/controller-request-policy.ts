@@ -128,9 +128,21 @@ export interface FetchControllerWithPolicyOptions {
 	readonly policy?: ControllerRequestPolicy;
 }
 
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => {
-		setTimeout(resolve, ms);
+function sleep(ms: number, signal?: AbortSignal | undefined): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted === true) {
+			reject(signal.reason);
+			return;
+		}
+		const timeout = setTimeout(() => {
+			signal?.removeEventListener('abort', onAbort);
+			resolve();
+		}, ms);
+		const onAbort = (): void => {
+			clearTimeout(timeout);
+			reject(signal?.reason);
+		};
+		signal?.addEventListener('abort', onAbort, { once: true });
 	});
 }
 
@@ -211,7 +223,7 @@ export async function fetchControllerWithPolicy(
 				await drainControllerResponseBody(response);
 				if (policy.retryBaseDelayMs > 0) {
 					// oxlint-disable-next-line eslint/no-await-in-loop -- retry backoff is intentionally sequential.
-					await sleep(policy.retryBaseDelayMs);
+					await sleep(policy.retryBaseDelayMs, options.init?.signal ?? undefined);
 				}
 				continue;
 			}
@@ -226,7 +238,7 @@ export async function fetchControllerWithPolicy(
 			}
 			if (policy.retryBaseDelayMs > 0) {
 				// oxlint-disable-next-line eslint/no-await-in-loop -- retry backoff is intentionally sequential.
-				await sleep(policy.retryBaseDelayMs);
+				await sleep(policy.retryBaseDelayMs, options.init?.signal ?? undefined);
 			}
 		}
 	}
