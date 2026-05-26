@@ -1,3 +1,7 @@
+import type {
+	configureHostNetworkDefaults,
+	HostNetworkDefaultsResult,
+} from '@agent-vm/gondolin-adapter';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
@@ -23,6 +27,7 @@ export interface ControllerRuntime {
 
 export interface ControllerRuntimeDependencies {
 	readonly clearIntervalImpl?: (timer: NodeJS.Timeout) => void;
+	readonly configureHostNetworkDefaults?: typeof configureHostNetworkDefaults;
 	readonly createManagedToolVm?: (options: {
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;
@@ -67,6 +72,8 @@ export interface ControllerRuntimeDependencies {
 	readonly zoneGitCapabilityStore?: ZoneGitCapabilityStore;
 	readonly zoneGitOperationLocks?: ZoneGitOperationLocks;
 }
+
+export type { HostNetworkDefaultsResult };
 
 export interface StartControllerRuntimeOptions {
 	readonly systemConfig: LoadedSystemConfig;

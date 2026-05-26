@@ -1,4 +1,4 @@
-import type { ManagedVm } from '@agent-vm/gondolin-adapter';
+import { configureHostNetworkDefaults, type ManagedVm } from '@agent-vm/gondolin-adapter';
 import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
@@ -108,6 +108,12 @@ export async function startControllerRuntime(
 	options: StartControllerRuntimeOptions,
 	dependencies: ControllerRuntimeDependencies,
 ): Promise<ControllerRuntime> {
+	const hostNetworkDefaults = (
+		dependencies.configureHostNetworkDefaults ?? configureHostNetworkDefaults
+	)();
+	writeControllerRuntimeLog(
+		`Host network defaults: dnsResultOrder=${hostNetworkDefaults.dnsResultOrder} autoSelectFamily=${hostNetworkDefaults.autoSelectFamily}`,
+	);
 	const now = dependencies.now ?? Date.now;
 	const runTaskStep =
 		dependencies.runTask ?? (async (_title: string, fn: () => Promise<void>) => await fn());

@@ -97,12 +97,11 @@ function buildOpenClawBootstrapCommand(
 		'export PIP_CACHE_DIR=/work/cache/pip',
 		'export UV_CACHE_DIR=/work/cache/uv',
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
-		// Prepend forced IPv4-preference flags to any pre-existing
-		// NODE_OPTIONS. The whole RHS is double-quoted so the
-		// substitution result is treated as one assignment value
-		// (no word splitting). See FORCE_IPV4_EGRESS_NODE_OPTIONS
-		// in @agent-vm/gateway-interface for the rationale.
-		`export NODE_OPTIONS="${FORCE_IPV4_EGRESS_NODE_OPTIONS}\${NODE_OPTIONS:+ \${NODE_OPTIONS}}"`,
+		// Prepend forced IPv4-preference flags only when they are not
+		// already present. The VM env normally carries these flags
+		// already; the profile keeps interactive shells safe without
+		// duplicating the boot-log value.
+		`case " \${NODE_OPTIONS:-} " in *" --dns-result-order=ipv4first "*" --no-network-family-autoselection "*) ;; *) export NODE_OPTIONS="${FORCE_IPV4_EGRESS_NODE_OPTIONS}\${NODE_OPTIONS:+ \${NODE_OPTIONS}}";; esac`,
 	];
 	const secretEnvironmentNames = Object.entries({
 		...environmentSecrets,

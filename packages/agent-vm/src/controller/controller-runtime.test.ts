@@ -279,6 +279,14 @@ describe('startControllerRuntime', () => {
 		const fakeInterval = setTimeout(() => undefined, 0);
 		clearTimeout(fakeInterval);
 		const setIntervalMock = vi.fn(() => fakeInterval);
+		const startupEvents: string[] = [];
+		const configureHostNetworkDefaults = vi.fn(() => {
+			startupEvents.push('host-network-defaults');
+			return {
+				autoSelectFamily: false,
+				dnsResultOrder: 'ipv4first',
+			} as const;
+		});
 
 		const runtime = await startControllerRuntime(
 			{
@@ -303,10 +311,14 @@ describe('startControllerRuntime', () => {
 					getHostPid: () => 12345,
 					getVmInstance: vi.fn(),
 				})),
-				createSecretResolver: async () => ({
-					resolve: async () => '',
-					resolveAll: async () => ({}),
-				}),
+				configureHostNetworkDefaults,
+				createSecretResolver: async () => {
+					startupEvents.push('secrets');
+					return {
+						resolve: async () => '',
+						resolveAll: async () => ({}),
+					};
+				},
 				readProcessIdentity: async () => ({
 					command: 'qemu-system-x86_64 -m 1G',
 					lstart: 'Fri May 22 10:00:00 2026',
@@ -344,6 +356,8 @@ describe('startControllerRuntime', () => {
 				port: 18800,
 			}),
 		);
+		expect(configureHostNetworkDefaults).toHaveBeenCalledOnce();
+		expect(startupEvents.slice(0, 2)).toEqual(['host-network-defaults', 'secrets']);
 		if (!startHttpServerArgs) {
 			throw new Error('Expected startHttpServer to be called.');
 		}

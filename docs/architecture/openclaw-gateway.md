@@ -380,6 +380,11 @@ identity-bearing route for raw TCP. After changing synthetic DNS behavior,
 verify that Discord stays online through the normal WebSocket client path and
 that forced IPv6 attempts do not delay reconnects.
 
+The OpenClaw gateway VM receives forced IPv4-preference `NODE_OPTIONS`, but
+raw `tcpHosts` upstream sockets are opened by the host-side Node process that
+creates the Gondolin VM. The Gondolin adapter therefore also sets host Node DNS
+and family-autoselection defaults before constructing Gondolin network state.
+
 ---
 
 ## Zone Operations
