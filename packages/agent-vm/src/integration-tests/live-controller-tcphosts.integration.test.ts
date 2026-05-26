@@ -11,11 +11,11 @@ import { shouldRunLiveVmIntegration } from './live-integration-gates.js';
 
 const describeLiveVmIntegration = shouldRunLiveVmIntegration() ? describe : describe.skip;
 const wrapperEvidenceSchema = z.object({
+	code: z.literal('controller-request-timeout'),
 	elapsedMs: z.number().nonnegative(),
-	name: z.literal('ControllerRequestTimeoutError'),
+	name: z.string(),
 	ok: z.literal(true),
 	operation: z.literal('gateway-control-link'),
-	timeoutMs: z.literal(500),
 });
 
 async function listenOnLoopback(server: Server): Promise<number> {
@@ -133,7 +133,7 @@ describeLiveVmIntegration('live: gateway VM controller tcp.hosts path', () => {
 		const wrapperResult =
 			await gatewayVm.exec(`env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy NO_PROXY=controller.vm.host no_proxy=controller.vm.host node --input-type=module <<'NODE'
 import {
-	ControllerRequestTimeoutError,
+	ControllerRequestPolicyTransportError,
 	fetchControllerWithPolicy,
 } from 'file:///repo/packages/openclaw-agent-vm-plugin/dist/index.js';
 import dns from 'node:dns';
@@ -142,13 +142,17 @@ dns.setDefaultResultOrder('ipv4first');
 
 const startedAtMs = Date.now();
 try {
-	const response = await fetchControllerWithPolicy('http://controller.vm.host:18800/stall', {
+	const response = await fetchControllerWithPolicy({
 		fetchImpl: fetch,
-		method: 'GET',
+		init: { method: 'GET' },
+		input: 'http://controller.vm.host:18800/stall',
 		operation: 'gateway-control-link',
 		policy: {
+			idempotency: 'read',
 			maxAttempts: 1,
 			retryBaseDelayMs: 0,
+			retryEnabled: false,
+			retryStatuses: [],
 			timeoutMs: 500,
 		},
 	});
@@ -161,11 +165,12 @@ try {
 	process.exit(1);
 } catch (error) {
 	console.log(JSON.stringify({
+		code: error && typeof error === 'object' && 'code' in error ? error.code : undefined,
 		elapsedMs: Date.now() - startedAtMs,
 		name: error instanceof Error ? error.name : String(error),
-		ok: error instanceof ControllerRequestTimeoutError,
+		ok: error instanceof ControllerRequestPolicyTransportError
+			&& error.code === 'controller-request-timeout',
 		operation: error && typeof error === 'object' && 'operation' in error ? error.operation : undefined,
-		timeoutMs: error && typeof error === 'object' && 'timeoutMs' in error ? error.timeoutMs : undefined,
 	}));
 }
 NODE`);
