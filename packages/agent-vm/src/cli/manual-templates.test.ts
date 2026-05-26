@@ -19,6 +19,7 @@ describe('manual templates', () => {
 		expect(content).toContain('shravan');
 		expect(content).toContain('docs/manual/image-versioning.md');
 		expect(content).toContain('docs/manual/gateway-ingress.md');
+		expect(content).toContain('lease-heartbeat');
 		expect(content).toContain('docs/manual/mcp-portal.md');
 		expect(content).toContain('Do not silently edit privileged host/deployment config');
 		expect(content).not.toContain('Discord is enabled by default');
@@ -222,6 +223,9 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
 			'tool-vm-leases.md explains agent-keyed Tool VM lease identity and reuse',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
+			'health snapshots',
+		);
 		expect(
 			files.find((file) => file.relativePath.endsWith('tool-vm-leases.md'))?.content,
 		).toContain('The lease identity remains zoneId + agentId');
@@ -273,8 +277,19 @@ describe('manual templates', () => {
 		expect(toolVmLeaseManual).toContain('discarded before the controller lease request');
 		expect(toolVmLeaseManual).not.toContain('scopeKey');
 		expect(toolVmLeaseManual).toContain('active shell/file operations heartbeat per-use records');
+		expect(toolVmLeaseManual).toContain('lease-heartbeat');
+		expect(toolVmLeaseManual).toContain('lease-renew');
+		expect(files.find((file) => file.relativePath.endsWith('operations.md'))?.content).toContain(
+			'GET /zones/<zoneId>/health-snapshot',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('operations.md'))?.content).toContain(
+			'Health timeouts are operation-specific',
+		);
 		expect(files.find((file) => file.relativePath.endsWith('openclaw.md'))?.content).toContain(
 			'The controller is the control plane',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('openclaw.md'))?.content).toContain(
+			'OpenClaw application heartbeat turns are not infrastructure health checks',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('openclaw.md'))?.content).toContain(
 			'gateway-to-Tool-VM SSH data path',

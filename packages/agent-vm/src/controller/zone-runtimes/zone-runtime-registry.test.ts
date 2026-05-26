@@ -413,6 +413,9 @@ describe('createOpenClawZoneRuntime', () => {
 		await expect(runtime.getHealth()).resolves.toEqual({
 			ok: true,
 			observation: 'http 200',
+			path: '/readyz',
+			port: 18789,
+			statusCode: 200,
 			zoneId: 'shravan',
 		});
 		await runtime.stop();

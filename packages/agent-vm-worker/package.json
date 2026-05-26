@@ -41,6 +41,7 @@
 		"start": "node ./dist/main.js"
 	},
 	"dependencies": {
+		"@agent-vm/gateway-interface": "workspace:*",
 		"@hono/node-server": "^2.0.2",
 		"@hono/zod-validator": "^0.8.0",
 		"@modelcontextprotocol/sdk": "^1.29.0",

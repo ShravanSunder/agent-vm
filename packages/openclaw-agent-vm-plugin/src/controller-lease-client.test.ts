@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -5,14 +7,9 @@ import {
 	type OpenClawGondolinLeaseRequest,
 	createLeaseClient,
 } from './controller-lease-client.js';
+import type { ControllerRequestPolicy } from './controller-request-policy.js';
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
-
-interface ControllerRequestPolicyForTest {
-	readonly maxAttempts: number;
-	readonly retryBaseDelayMs: number;
-	readonly timeoutMs: number;
-}
 
 function createLeaseRequest(
 	overrides: Partial<OpenClawGondolinLeaseRequest> = {},
@@ -28,7 +25,47 @@ function createLeaseRequest(
 	};
 }
 
+function createSingleAttemptPolicy(timeoutMs: number): ControllerRequestPolicy {
+	return {
+		idempotency: 'safe-mutation',
+		maxAttempts: 1,
+		retryBaseDelayMs: 0,
+		retryEnabled: false,
+		retryStatuses: [],
+		timeoutMs,
+	};
+}
+
+function createRetryingPolicy(timeoutMs: number): ControllerRequestPolicy {
+	return {
+		idempotency: 'safe-mutation',
+		maxAttempts: 2,
+		retryBaseDelayMs: 0,
+		retryEnabled: true,
+		retryStatuses: [503],
+		timeoutMs,
+	};
+}
+
 describe('createLeaseClient', () => {
+	it('keeps raw fetch calls inside the controller request policy boundary', async () => {
+		const leaseClientSource = await readFile(
+			new URL('./controller-lease-client.ts', import.meta.url),
+			{
+				encoding: 'utf8',
+			},
+		);
+		const requestPolicySource = await readFile(
+			new URL('./controller-request-policy.ts', import.meta.url),
+			{
+				encoding: 'utf8',
+			},
+		);
+
+		expect(leaseClientSource).not.toContain('fetchImpl(');
+		expect(requestPolicySource).toContain('@agent-vm/gateway-interface');
+	});
+
 	it('requests, renews, peeks, and releases leases through the controller API', async () => {
 		const requests: { body: string | undefined; method: string; url: string }[] = [];
 		const leaseClient = createLeaseClient({
@@ -265,13 +302,9 @@ describe('createLeaseClient', () => {
 				controllerUrl: 'http://controller.vm.host:18800',
 				fetchImpl,
 				requestPolicy: {
-					maxAttempts: 1,
-					retryBaseDelayMs: 1,
-					timeoutMs: 25,
+					...createSingleAttemptPolicy(25),
 				},
-			} satisfies Parameters<typeof createLeaseClient>[0] & {
-				readonly requestPolicy: ControllerRequestPolicyForTest;
-			};
+			} satisfies Parameters<typeof createLeaseClient>[0];
 			const leaseClient = createLeaseClient(leaseClientOptions);
 
 			void leaseClient
@@ -287,9 +320,8 @@ describe('createLeaseClient', () => {
 			expect(fetchImpl).toHaveBeenCalledTimes(1);
 			expect(heartbeatSignal?.aborted).toBe(true);
 			expect(settledError).toMatchObject({
-				name: 'ControllerRequestTimeoutError',
-				operation: 'active-use-heartbeat',
-				timeoutMs: 25,
+				code: 'controller-request-timeout',
+				operation: 'lease-heartbeat',
 			});
 		} finally {
 			vi.useRealTimers();
@@ -386,9 +418,7 @@ describe('createLeaseClient', () => {
 			controllerUrl: 'http://controller.vm.host:18800',
 			fetchImpl,
 			requestPolicy: {
-				maxAttempts: 1,
-				retryBaseDelayMs: 1,
-				timeoutMs: 500,
+				...createSingleAttemptPolicy(500),
 			},
 		});
 
@@ -427,7 +457,7 @@ describe('createLeaseClient', () => {
 
 	it.each([
 		{
-			expectedOperation: 'lease-request',
+			expectedOperation: 'lease-create',
 			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
 				await leaseClient.requestLease(createLeaseRequest()),
 		},
@@ -442,14 +472,14 @@ describe('createLeaseClient', () => {
 				await leaseClient.peekLease('lease-123'),
 		},
 		{
-			expectedOperation: 'active-use-start',
+			expectedOperation: 'lease-use-start',
 			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
 				await leaseClient.startActiveUse('lease-123', {
 					useId: '01890f00-0000-7000-8000-000000000000',
 				}),
 		},
 		{
-			expectedOperation: 'active-use-heartbeat',
+			expectedOperation: 'lease-heartbeat',
 			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
 				await leaseClient.heartbeatActiveUse(
 					'lease-123',
@@ -458,7 +488,7 @@ describe('createLeaseClient', () => {
 				),
 		},
 		{
-			expectedOperation: 'active-use-end',
+			expectedOperation: 'lease-use-end',
 			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
 				await leaseClient.endActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {
 					outcome: 'completed',
@@ -470,7 +500,7 @@ describe('createLeaseClient', () => {
 				await leaseClient.releaseLease('lease-123'),
 		},
 		{
-			expectedOperation: 'runtime-status-publish',
+			expectedOperation: 'openclaw-runtime-status',
 			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
 				await leaseClient.publishOpenClawRuntimeStatus?.({
 					findings: [],
@@ -493,9 +523,7 @@ describe('createLeaseClient', () => {
 				controllerUrl: 'http://controller.vm.host:18800',
 				fetchImpl,
 				requestPolicy: {
-					maxAttempts: 1,
-					retryBaseDelayMs: 1,
-					timeoutMs: 25,
+					...createSingleAttemptPolicy(25),
 				},
 			});
 
@@ -509,12 +537,8 @@ describe('createLeaseClient', () => {
 
 			expect(fetchImpl).toHaveBeenCalledTimes(1);
 			expect(settledError).toMatchObject({
-				attempt: 1,
-				elapsedMs: 25,
-				maxAttempts: 1,
-				name: 'ControllerRequestTimeoutError',
+				code: 'controller-request-timeout',
 				operation: expectedOperation,
-				timeoutMs: 25,
 			});
 		} finally {
 			vi.useRealTimers();
@@ -523,7 +547,7 @@ describe('createLeaseClient', () => {
 
 	it.each([
 		{
-			expectedOperation: 'lease-request',
+			expectedOperation: 'lease-create',
 			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
 				await leaseClient.requestLease(createLeaseRequest()),
 		},
@@ -538,14 +562,14 @@ describe('createLeaseClient', () => {
 				await leaseClient.peekLease('lease-123'),
 		},
 		{
-			expectedOperation: 'active-use-start',
+			expectedOperation: 'lease-use-start',
 			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
 				await leaseClient.startActiveUse('lease-123', {
 					useId: '01890f00-0000-7000-8000-000000000000',
 				}),
 		},
 		{
-			expectedOperation: 'active-use-heartbeat',
+			expectedOperation: 'lease-heartbeat',
 			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
 				await leaseClient.heartbeatActiveUse(
 					'lease-123',
@@ -554,7 +578,7 @@ describe('createLeaseClient', () => {
 				),
 		},
 		{
-			expectedOperation: 'active-use-end',
+			expectedOperation: 'lease-use-end',
 			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
 				await leaseClient.endActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {
 					outcome: 'completed',
@@ -566,7 +590,7 @@ describe('createLeaseClient', () => {
 				await leaseClient.releaseLease('lease-123'),
 		},
 		{
-			expectedOperation: 'runtime-status-publish',
+			expectedOperation: 'openclaw-runtime-status',
 			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
 				await leaseClient.publishOpenClawRuntimeStatus?.({
 					findings: [],
@@ -583,18 +607,11 @@ describe('createLeaseClient', () => {
 			const leaseClient = createLeaseClient({
 				controllerUrl: 'http://controller.vm.host:18800',
 				fetchImpl,
-				requestPolicy: {
-					maxAttempts: 2,
-					retryBaseDelayMs: 0,
-					timeoutMs: 500,
-				},
+				requestPolicy: createRetryingPolicy(500),
 			});
 
 			await expect(run(leaseClient)).rejects.toMatchObject({
-				attempt: 2,
-				causeCode: 'EPIPE',
-				maxAttempts: 2,
-				name: 'ControllerRequestFailureError',
+				code: 'controller-request-failed',
 				operation: expectedOperation,
 			});
 			expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -847,5 +864,93 @@ describe('createLeaseClient', () => {
 			},
 			status: 503,
 		} satisfies Partial<ControllerLeaseRequestError>);
+	});
+
+	it('passes an AbortSignal into active-use heartbeat requests', async () => {
+		let heartbeatSignal: AbortSignal | undefined;
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async (_input, init) => {
+				heartbeatSignal = init?.signal ?? undefined;
+				return new Response(JSON.stringify({ expiresAt: 6_000, heartbeatAfterMs: 1_000 }), {
+					headers: { 'content-type': 'application/json' },
+					status: 200,
+				});
+			},
+		});
+
+		await leaseClient.heartbeatActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {});
+
+		expect(heartbeatSignal).toBeInstanceOf(AbortSignal);
+	});
+
+	it('retries lease renew on retryable HTTP status before succeeding', async () => {
+		const fetchImpl = vi
+			.fn()
+			.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'busy' }), { status: 503 }))
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						agentId: 'main',
+						idleTtlMs: 6_000_000,
+						leaseId: '01890f00-0000-7000-8000-000000000000',
+						ssh: {
+							host: 'tool-0.vm.host',
+							identityPem: 'pem',
+							knownHostsLine: 'known-hosts',
+							port: 22,
+							user: 'sandbox',
+						},
+						tcpSlot: 0,
+						transport: 'ssh-sandbox',
+						workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+					}),
+					{ headers: { 'content-type': 'application/json' }, status: 200 },
+				),
+			);
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl,
+		});
+
+		await expect(leaseClient.renewLease('lease-123')).resolves.toMatchObject({
+			transport: 'ssh-sandbox',
+		});
+		expect(fetchImpl).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not retry unsafe lease creation on retryable HTTP status', async () => {
+		const fetchImpl = vi.fn(
+			async () => new Response(JSON.stringify({ error: 'busy' }), { status: 503 }),
+		);
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl,
+		});
+
+		await expect(leaseClient.requestLease(createLeaseRequest())).rejects.toMatchObject({
+			kind: 'server-error',
+			status: 503,
+		} satisfies Partial<ControllerLeaseRequestError>);
+		expect(fetchImpl).toHaveBeenCalledTimes(1);
+	});
+
+	it('drains successful runtime-status responses that return JSON bodies', async () => {
+		const response = new Response(JSON.stringify({ ok: true }), { status: 200 });
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async () => response,
+		});
+
+		if (!leaseClient.publishOpenClawRuntimeStatus) {
+			throw new Error('Expected runtime status publisher.');
+		}
+		await leaseClient.publishOpenClawRuntimeStatus({
+			findings: [],
+			pluginId: 'gondolin',
+			zoneId: 'shravan',
+		});
+
+		expect(response.bodyUsed).toBe(true);
 	});
 });

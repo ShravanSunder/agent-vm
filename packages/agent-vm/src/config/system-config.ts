@@ -344,6 +344,61 @@ const leaseIdleTtlSchema = z
 	})
 	.strict();
 
+const defaultControllerHealthConfig = {
+	enabled: true,
+	eventHistoryLimit: 500,
+	gatewayControlLinkBackoffCeilingMs: 120_000,
+	gatewayControlLinkIntervalMs: 10_000,
+	gatewayServiceIntervalMs: 10_000,
+	staleAfterMs: 30_000,
+} as const;
+
+const controllerHealthSchema = z
+	.object({
+		enabled: z.boolean().default(defaultControllerHealthConfig.enabled),
+		eventHistoryLimit: z
+			.number()
+			.int()
+			.positive()
+			.default(defaultControllerHealthConfig.eventHistoryLimit),
+		gatewayControlLinkBackoffCeilingMs: z
+			.number()
+			.int()
+			.positive()
+			.default(defaultControllerHealthConfig.gatewayControlLinkBackoffCeilingMs),
+		gatewayControlLinkIntervalMs: z
+			.number()
+			.int()
+			.positive()
+			.default(defaultControllerHealthConfig.gatewayControlLinkIntervalMs),
+		gatewayServiceIntervalMs: z
+			.number()
+			.int()
+			.positive()
+			.default(defaultControllerHealthConfig.gatewayServiceIntervalMs),
+		staleAfterMs: z.number().int().positive().default(defaultControllerHealthConfig.staleAfterMs),
+	})
+	.strict()
+	.superRefine((healthConfig, context) => {
+		if (
+			healthConfig.gatewayControlLinkBackoffCeilingMs >= healthConfig.gatewayControlLinkIntervalMs
+		) {
+			return;
+		}
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message:
+				'gatewayControlLinkBackoffCeilingMs must be greater than or equal to gatewayControlLinkIntervalMs.',
+			path: ['gatewayControlLinkBackoffCeilingMs'],
+		});
+	});
+
+const controllerConfigSchema = z
+	.object({
+		health: controllerHealthSchema.default(defaultControllerHealthConfig),
+	})
+	.strict();
+
 const imageConfigSchema = z
 	.object({
 		buildConfig: z.string().min(1),
@@ -406,6 +461,7 @@ const systemConfigSchema = z
 				.optional(),
 			githubToken: hostSecretReferenceSchema.optional(),
 		}),
+		controller: controllerConfigSchema.default({ health: defaultControllerHealthConfig }),
 		cacheDir: z.string().min(1).default('./cache'),
 		runtimeDir: z.string().min(1).default('./runtime'),
 		imageProfiles: imageProfilesSchema,
@@ -750,7 +806,11 @@ const systemConfigSchema = z
 		}
 	});
 
-export type SystemConfig = z.infer<typeof systemConfigSchema>;
+type ParsedSystemConfig = z.infer<typeof systemConfigSchema>;
+
+export type SystemConfig = Omit<ParsedSystemConfig, 'controller'> & {
+	readonly controller?: ParsedSystemConfig['controller'];
+};
 export type SystemConfigInput = z.input<typeof systemConfigSchema>;
 
 export const systemConfigSchemaId = 'agent-vm:system:1';
@@ -762,9 +822,17 @@ export function createSystemConfigSchemaArtifact(): Record<string, unknown> {
 	};
 }
 
+export type ControllerHealthConfig = ParsedSystemConfig['controller']['health'];
+
 export type LoadedSystemConfig = SystemConfig & {
 	readonly systemConfigPath: string;
 };
+
+export function resolveControllerHealthConfig(config: {
+	readonly controller?: ParsedSystemConfig['controller'];
+}): ControllerHealthConfig {
+	return config.controller?.health ?? defaultControllerHealthConfig;
+}
 
 function pathsOverlap(firstPath: string, secondPath: string): boolean {
 	const firstResolved = path.resolve(firstPath);

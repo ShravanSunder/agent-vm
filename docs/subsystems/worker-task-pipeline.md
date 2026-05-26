@@ -23,6 +23,11 @@ POST /zones/:zoneId/worker-tasks
   -> cleanup resources and VM
 ```
 
+Inside the worker VM, controller-tool requests are also bounded. Git push and
+pull-default use shared operation names and long per-request timeouts rather
+than the short health-probe budget. They are not retried automatically because
+they are unsafe mutations unless a future idempotency contract proves otherwise.
+
 Worker repo files are hot execution data. They live on the VM rootfs/COW under
 `/work/repos/<repoId>` so edits, package installs, builds, and tests avoid the
 Gondolin RealFS path. Git metadata lives under

@@ -95,6 +95,9 @@ importers:
 
   packages/agent-vm-worker:
     dependencies:
+      '@agent-vm/gateway-interface':
+        specifier: workspace:*
+        version: link:../gateway-interface
       '@hono/node-server':
         specifier: ^2.0.2
         version: 2.0.2(hono@4.12.18)

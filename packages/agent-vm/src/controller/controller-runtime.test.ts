@@ -34,6 +34,16 @@ const systemConfig = {
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 		},
 	},
+	controller: {
+		health: {
+			enabled: true,
+			eventHistoryLimit: 500,
+			gatewayControlLinkBackoffCeilingMs: 120_000,
+			gatewayControlLinkIntervalMs: 10_000,
+			gatewayServiceIntervalMs: 10_000,
+			staleAfterMs: 30_000,
+		},
+	},
 	imageProfiles: {
 		gateways: {
 			openclaw: {
@@ -341,7 +351,14 @@ describe('startControllerRuntime', () => {
 					AGENT_VM_ZONE_GIT_TOKEN: expect.any(String),
 				},
 				runtimePluginConfigs: {
-					gondolin: { zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN' },
+					gondolin: {
+						gatewayControlLinkMonitor: {
+							baseIntervalMs: 10_000,
+							enabled: true,
+							maxIntervalMs: 120_000,
+						},
+						zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
+					},
 				},
 				zoneId: 'shravan',
 			}),

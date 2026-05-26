@@ -8,9 +8,17 @@ import {
 describe('runToolVmSshOperationWithGuard', () => {
 	it('reports probe success and returns operation result', async () => {
 		const report = vi.fn();
+		const publishHealthEvent = vi.fn(async () => {});
 
 		await expect(
 			runToolVmSshOperationWithGuard({
+				healthEvent: {
+					agentId: 'beta',
+					leaseId: 'lease-1',
+					operation: 'probe',
+					publish: publishHealthEvent,
+					zoneId: 'sunfam',
+				},
 				now: () => 1_000,
 				operation: async () => 'ok',
 				operationName: 'probe',
@@ -28,6 +36,16 @@ describe('runToolVmSshOperationWithGuard', () => {
 			phase: 'completed',
 			ssh: { probeSucceeded: true },
 		});
+		expect(publishHealthEvent).toHaveBeenCalledWith({
+			agentId: 'beta',
+			elapsedMs: 0,
+			kind: 'tool-vm-ssh',
+			leaseId: 'lease-1',
+			observedAtMs: 1_000,
+			operation: 'probe',
+			result: 'ok',
+			zoneId: 'sunfam',
+		});
 	});
 
 	it('converts timeout into a stale-handle error and reports failure', async () => {
@@ -37,10 +55,18 @@ describe('runToolVmSshOperationWithGuard', () => {
 			return 1 as unknown as ReturnType<typeof setTimeout>;
 		}) as typeof setTimeout;
 		const report = vi.fn();
+		const publishHealthEvent = vi.fn(async () => {});
 
 		await expect(
 			runToolVmSshOperationWithGuard({
 				clearTimeoutImpl,
+				healthEvent: {
+					agentId: 'beta',
+					leaseId: 'lease-1',
+					operation: 'command',
+					publish: publishHealthEvent,
+					zoneId: 'sunfam',
+				},
 				now: () => 1_000,
 				operation: async () => new Promise<string>(() => {}),
 				operationName: 'runShellCommand',
@@ -62,6 +88,17 @@ describe('runToolVmSshOperationWithGuard', () => {
 				},
 			},
 		});
+		expect(publishHealthEvent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentId: 'beta',
+				errorCode: 'ssh-command-timed-out',
+				kind: 'tool-vm-ssh',
+				leaseId: 'lease-1',
+				operation: 'command',
+				result: 'failed',
+				zoneId: 'sunfam',
+			}),
+		);
 		expect(clearTimeoutImpl).toHaveBeenCalled();
 	});
 

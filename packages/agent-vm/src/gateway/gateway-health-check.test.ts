@@ -35,7 +35,10 @@ describe('gateway health checks', () => {
 			exitCode: 0,
 			observation: 'http 503',
 			ok: false,
+			path: '/readyz',
+			port: 18789,
 			stderr: '',
+			statusCode: 503,
 			stdout: '503',
 		});
 	});

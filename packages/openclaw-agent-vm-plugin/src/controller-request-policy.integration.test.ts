@@ -4,7 +4,19 @@ import { Socket } from 'node:net';
 
 import { describe, expect, it } from 'vitest';
 
-import { fetchControllerWithPolicy } from './controller-request-policy.js';
+import {
+	fetchControllerWithPolicy,
+	type ControllerRequestPolicy,
+} from './controller-request-policy.js';
+
+const singleAttemptPolicy = {
+	idempotency: 'read',
+	maxAttempts: 1,
+	retryBaseDelayMs: 0,
+	retryEnabled: false,
+	retryStatuses: [],
+	timeoutMs: 500,
+} satisfies ControllerRequestPolicy;
 
 async function listenOnLoopback(server: Server): Promise<number> {
 	server.listen(0, '127.0.0.1');
@@ -32,24 +44,20 @@ async function nextUnusedLoopbackPort(): Promise<number> {
 }
 
 describe('controller request policy real Node networking integration', () => {
-	it('classifies native fetch connection refusal with the raw Node cause code', async () => {
+	it('classifies native fetch connection refusal as a bounded controller-link failure', async () => {
 		const port = await nextUnusedLoopbackPort();
 
 		await expect(
-			fetchControllerWithPolicy(`http://127.0.0.1:${String(port)}/health`, {
+			fetchControllerWithPolicy({
 				fetchImpl: fetch,
-				method: 'GET',
-				operation: 'gateway-control-link',
-				policy: {
-					maxAttempts: 1,
-					retryBaseDelayMs: 0,
-					timeoutMs: 500,
-				},
+				input: `http://127.0.0.1:${String(port)}/health`,
+				init: { method: 'GET' },
+				operation: 'controller-health',
+				policy: singleAttemptPolicy,
 			}),
 		).rejects.toMatchObject({
-			causeCode: 'ECONNREFUSED',
-			name: 'ControllerRequestFailureError',
-			operation: 'gateway-control-link',
+			code: 'controller-request-failed',
+			operation: 'controller-health',
 		});
 	});
 
@@ -65,19 +73,16 @@ describe('controller request policy real Node networking integration', () => {
 
 		try {
 			await expect(
-				fetchControllerWithPolicy(`http://127.0.0.1:${String(port)}/health`, {
+				fetchControllerWithPolicy({
 					fetchImpl: fetch,
-					method: 'GET',
-					operation: 'gateway-control-link',
-					policy: {
-						maxAttempts: 1,
-						retryBaseDelayMs: 0,
-						timeoutMs: 500,
-					},
+					input: `http://127.0.0.1:${String(port)}/health`,
+					init: { method: 'GET' },
+					operation: 'controller-health',
+					policy: singleAttemptPolicy,
 				}),
 			).rejects.toMatchObject({
-				name: 'ControllerRequestFailureError',
-				operation: 'gateway-control-link',
+				code: 'controller-request-failed',
+				operation: 'controller-health',
 			});
 		} finally {
 			await closeServer(server);
@@ -92,13 +97,14 @@ describe('controller request policy real Node networking integration', () => {
 
 		try {
 			const requests = Array.from({ length: 3 }, (_value, index) =>
-				fetchControllerWithPolicy(`http://127.0.0.1:${String(port)}/heartbeat-${String(index)}`, {
+				fetchControllerWithPolicy({
 					fetchImpl: fetch,
-					method: 'POST',
-					operation: 'active-use-heartbeat',
+					input: `http://127.0.0.1:${String(port)}/heartbeat-${String(index)}`,
+					init: { method: 'POST' },
+					operation: 'lease-heartbeat',
 					policy: {
-						maxAttempts: 1,
-						retryBaseDelayMs: 0,
+						...singleAttemptPolicy,
+						idempotency: 'safe-mutation',
 						timeoutMs: 25,
 					},
 				}).catch((error: unknown) => error),
@@ -106,19 +112,16 @@ describe('controller request policy real Node networking integration', () => {
 
 			await expect(Promise.all(requests)).resolves.toEqual([
 				expect.objectContaining({
-					name: 'ControllerRequestTimeoutError',
-					operation: 'active-use-heartbeat',
-					timeoutMs: 25,
+					code: 'controller-request-timeout',
+					operation: 'lease-heartbeat',
 				}),
 				expect.objectContaining({
-					name: 'ControllerRequestTimeoutError',
-					operation: 'active-use-heartbeat',
-					timeoutMs: 25,
+					code: 'controller-request-timeout',
+					operation: 'lease-heartbeat',
 				}),
 				expect.objectContaining({
-					name: 'ControllerRequestTimeoutError',
-					operation: 'active-use-heartbeat',
-					timeoutMs: 25,
+					code: 'controller-request-timeout',
+					operation: 'lease-heartbeat',
 				}),
 			]);
 		} finally {

@@ -1,5 +1,5 @@
-/* oxlint-disable eslint/no-await-in-loop -- runtime status publish retries must be sequential */
 import { createLeaseClient } from './controller-lease-client.js';
+import { createGatewayControlLinkMonitor } from './gateway-control-link-monitor.js';
 import { resolveGondolinPluginConfig } from './gondolin-plugin-config.js';
 import {
 	OPENCLAW_SSH_SESSION_SCRATCH_ROOT,
@@ -18,31 +18,12 @@ import {
 } from './sandbox-backend-factory.js';
 import { registerZoneGitTool } from './zone-git-tool.js';
 
-const runtimeStatusPublishMaxAttempts = 30;
-const runtimeStatusPublishRetryDelayMs = 1_000;
-
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => {
-		setTimeout(resolve, ms);
-	});
-}
-
-async function publishRuntimeStatusWithRetry(options: {
+async function publishRuntimeStatus(options: {
 	readonly controllerUrl: string;
 	readonly report: ReturnType<typeof buildOpenClawRuntimeStatusReport>;
 }): Promise<void> {
 	const leaseClient = createLeaseClient({ controllerUrl: options.controllerUrl });
-	for (let attemptIndex = 0; attemptIndex < runtimeStatusPublishMaxAttempts; attemptIndex += 1) {
-		try {
-			await leaseClient.publishOpenClawRuntimeStatus?.(options.report);
-			return;
-		} catch (error: unknown) {
-			if (attemptIndex === runtimeStatusPublishMaxAttempts - 1) {
-				throw error;
-			}
-			await sleep(runtimeStatusPublishRetryDelayMs);
-		}
-	}
+	await leaseClient.publishOpenClawRuntimeStatus?.(options.report);
 }
 
 const plugin = {
@@ -81,6 +62,15 @@ const plugin = {
 		if (api.registrationMode !== 'full') {
 			return;
 		}
+		if (pluginConfig.gatewayControlLinkMonitor?.enabled) {
+			createGatewayControlLinkMonitor({
+				baseIntervalMs: pluginConfig.gatewayControlLinkMonitor.baseIntervalMs,
+				controllerUrl: pluginConfig.controllerUrl,
+				maxIntervalMs: pluginConfig.gatewayControlLinkMonitor.maxIntervalMs,
+				now: () => Date.now(),
+				zoneId: pluginConfig.zoneId,
+			}).start();
+		}
 		const buildRuntimeStatus = ():
 			| ReturnType<typeof buildOpenClawRuntimeStatusReport>
 			| undefined => {
@@ -94,7 +84,7 @@ const plugin = {
 		};
 		const initialRuntimeStatus = buildRuntimeStatus();
 		if (initialRuntimeStatus) {
-			void publishRuntimeStatusWithRetry({
+			void publishRuntimeStatus({
 				controllerUrl: pluginConfig.controllerUrl,
 				report: initialRuntimeStatus,
 			}).catch((error: unknown) => {
