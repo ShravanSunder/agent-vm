@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises';
-
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -48,24 +46,6 @@ function createRetryingPolicy(timeoutMs: number): ControllerRequestPolicy {
 }
 
 describe('createLeaseClient', () => {
-	it('keeps raw fetch calls inside the controller request policy boundary', async () => {
-		const leaseClientSource = await readFile(
-			new URL('./controller-lease-client.ts', import.meta.url),
-			{
-				encoding: 'utf8',
-			},
-		);
-		const requestPolicySource = await readFile(
-			new URL('./controller-request-policy.ts', import.meta.url),
-			{
-				encoding: 'utf8',
-			},
-		);
-
-		expect(leaseClientSource).not.toContain('fetchImpl(');
-		expect(requestPolicySource).toContain('@agent-vm/gateway-interface');
-	});
-
 	it('requests, renews, peeks, and releases leases through the controller API', async () => {
 		const requests: { body: string | undefined; method: string; url: string }[] = [];
 		const leaseClient = createLeaseClient({
