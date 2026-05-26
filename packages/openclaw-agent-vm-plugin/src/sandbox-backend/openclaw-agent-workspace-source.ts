@@ -92,15 +92,18 @@ function resolveUserPathLikeOpenClaw(inputPath: string): string {
 }
 
 function assertCanonicalSourcePath(inputPath: string, context: string): string {
-	if (inputPath.trim() === '' || containsParentTraversal(inputPath)) {
+	const trimmedPath = inputPath.trim();
+	if (trimmedPath === '' || containsParentTraversal(trimmedPath)) {
 		throw new OpenClawAgentWorkspaceSourceError(
 			`${context} must be a non-empty path without parent traversal.`,
 		);
 	}
-	const resolvedPath = resolveUserPathLikeOpenClaw(inputPath);
-	if (!resolvedPath.startsWith('/')) {
-		throw new OpenClawAgentWorkspaceSourceError(`${context} must resolve to an absolute path.`);
+	if (!trimmedPath.startsWith('/') && !trimmedPath.startsWith('~')) {
+		throw new OpenClawAgentWorkspaceSourceError(
+			`${context} must be an absolute or home-relative path.`,
+		);
 	}
+	const resolvedPath = resolveUserPathLikeOpenClaw(trimmedPath);
 	const normalized = normalizeAbsolutePosixPath(resolvedPath);
 	if (
 		normalized === '/' ||

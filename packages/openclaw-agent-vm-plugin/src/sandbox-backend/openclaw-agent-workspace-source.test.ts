@@ -150,6 +150,19 @@ describe('resolveOpenClawAgentWorkspaceSource', () => {
 		});
 	});
 
+	it('rejects relative workspace sources instead of resolving them from process cwd', () => {
+		expect(() =>
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'beta',
+				...fallbackPaths,
+				openClawConfig: {
+					agents: { list: [{ id: 'beta', workspace: 'relative-workspace' }] },
+				},
+				paramsAgentWorkspaceDir: '/workspace',
+			}),
+		).toThrow(/must be an absolute or home-relative path/u);
+	});
+
 	it('uses OpenClaw stateDir fallback when guest leakage arrives without explicit workspace config', () => {
 		expect(
 			resolveOpenClawAgentWorkspaceSource({

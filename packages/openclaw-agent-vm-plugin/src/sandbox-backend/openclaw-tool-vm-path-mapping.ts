@@ -233,34 +233,24 @@ export function resolveOpenClawToolVmPathIntent(options: {
 			},
 		};
 	}
-	const translation = mappings
-		.map((candidateMapping) =>
-			translateRuntimePath({
-				inputPath: options.inputPath,
-				mapping: candidateMapping,
-				purpose: 'executionCwd',
-				targetNamespace: 'tool-vm-guest',
-			}),
-		)
-		.find((candidateTranslation) => candidateTranslation.ok);
-	if (translation === undefined) {
-		const fallbackTranslation = translateRuntimePath({
+	const translationResults = mappings.map((candidateMapping) =>
+		translateRuntimePath({
 			inputPath: options.inputPath,
-			mapping,
+			mapping: candidateMapping,
 			purpose: 'executionCwd',
 			targetNamespace: 'tool-vm-guest',
-		});
-		if (!fallbackTranslation.ok) {
-			return fallbackTranslation;
+		}),
+	);
+	const translation = translationResults.find((candidateTranslation) => candidateTranslation.ok);
+	if (translation === undefined) {
+		const primaryTranslation = translationResults[0];
+		if (primaryTranslation === undefined || primaryTranslation.ok) {
+			return {
+				error: invalidAgentWorkspaceRootError(options.agentWorkspaceDir),
+				ok: false,
+			};
 		}
-		return {
-			ok: true,
-			value: {
-				effectiveGuestCwd: fallbackTranslation.value.outputPath,
-				kind: kindForTranslation(fallbackTranslation.value),
-				leaseWorkMountDir: options.agentWorkspaceDir,
-			},
-		};
+		return primaryTranslation;
 	}
 	const hostEquivalentTranslation = translateRuntimePath({
 		inputPath: options.inputPath,
