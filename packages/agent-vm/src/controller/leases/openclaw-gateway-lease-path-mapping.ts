@@ -27,12 +27,13 @@ export function createOpenClawGatewayLeasePathMapping(options: {
 					executionCwd: false,
 					leaseMount: true,
 				},
-				guestRoot: OPENCLAW_STATE_SANDBOXES_VM_ROOT,
 				guidanceLabel: 'OpenClaw sandbox work directory',
-				hostRoot: path.join(options.stateDir, 'sandboxes'),
 				id: 'openclaw-sandboxes',
+				locations: {
+					'controller-host': path.join(options.stateDir, 'sandboxes'),
+					'openclaw-gateway': OPENCLAW_STATE_SANDBOXES_VM_ROOT,
+				},
 				rootPathAllowed: false,
-				showHostRootInGuidance: false,
 			},
 			{
 				backing: {
@@ -44,12 +45,36 @@ export function createOpenClawGatewayLeasePathMapping(options: {
 					executionCwd: false,
 					leaseMount: true,
 				},
-				guestRoot: OPENCLAW_ZONE_FILES_GUEST_ROOT,
-				guidanceLabel: 'OpenClaw zone files',
-				hostRoot: options.zoneFilesDir,
-				id: 'zone-files',
+				guidanceLabel: 'OpenClaw state workspace',
+				id: 'openclaw-state',
+				locations: {
+					'controller-host': options.stateDir,
+					'openclaw-gateway': OPENCLAW_STATE_VM_ROOT,
+				},
 				rootPathAllowed: false,
-				showHostRootInGuidance: false,
+				showInGuidance: {
+					'controller-host': false,
+					'openclaw-gateway': false,
+					'tool-vm-guest': false,
+				},
+			},
+			{
+				backing: {
+					kind: 'host-realfs',
+					durability: 'durable',
+					backup: 'included',
+				},
+				capabilities: {
+					executionCwd: false,
+					leaseMount: true,
+				},
+				guidanceLabel: 'OpenClaw zone files',
+				id: 'zone-files',
+				locations: {
+					'controller-host': options.zoneFilesDir,
+					'openclaw-gateway': OPENCLAW_ZONE_FILES_GUEST_ROOT,
+				},
+				rootPathAllowed: false,
 			},
 		],
 	};

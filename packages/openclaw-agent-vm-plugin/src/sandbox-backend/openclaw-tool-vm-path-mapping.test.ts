@@ -122,6 +122,23 @@ describe('resolveOpenClawToolVmPathIntent', () => {
 		},
 	);
 
+	it('maps equivalent OpenClaw fallback workspace dirs back to the configured agent workspace', () => {
+		expect(
+			resolveOpenClawToolVmPathIntent({
+				agentWorkspaceDir: '/zone/agents/beta',
+				equivalentAgentWorkspaceDirs: ['/home/openclaw/.openclaw/state/workspace-beta'],
+				inputPath: '/home/openclaw/.openclaw/state/workspace-beta/app',
+			}),
+		).toEqual({
+			ok: true,
+			value: {
+				effectiveGuestCwd: '/workspace/app',
+				kind: 'host-workspace-subpath',
+				leaseWorkMountDir: '/zone/agents/beta',
+			},
+		});
+	});
+
 	it('throws a structured error when asserting invalid path intent', () => {
 		expect(() =>
 			assertOpenClawToolVmPathIntent({

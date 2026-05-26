@@ -114,6 +114,16 @@ interface LeaseRequestLogContext {
 	readonly zoneId: string;
 }
 
+export interface ObservedControllerLeaseCreateRequest {
+	readonly agentId: string;
+	readonly agentWorkspaceDir: string;
+	readonly idleTtlMs?: number | undefined;
+	readonly profileId: string;
+	readonly sessionKey: string;
+	readonly workMountDir: string;
+	readonly zoneId: string;
+}
+
 interface LeaseContractErrorBody {
 	readonly error: string;
 	readonly guidance: string;
@@ -151,6 +161,18 @@ function validateOpenClawGondolinLeaseContract(payload: {
 	readonly agentId: string;
 	readonly sessionKey: string;
 }): LeaseContractErrorBody | null {
+	if (!isOpenClawAgentSessionKey(payload.sessionKey)) {
+		return leaseContractErrorBody({
+			error: 'tool-vm-lease-invalid-session-key',
+			message: `Lease sessionKey '${payload.sessionKey}' is not agent-shaped or contains an invalid agent id.`,
+			guidance:
+				'The OpenClaw plugin must send sessionKey in the form agent:<agentId>:<scope> with a valid agentId.',
+			received: {
+				agentId: payload.agentId,
+				sessionKey: payload.sessionKey,
+			},
+		});
+	}
 	const sessionAgentId = resolveOpenClawAgentIdFromSessionKey(payload.sessionKey);
 	if (sessionAgentId !== payload.agentId) {
 		return leaseContractErrorBody({
@@ -284,6 +306,7 @@ export function createControllerApp(options: {
 	readonly zoneDefaultToolVmProfiles?: Record<string, string>;
 	readonly zoneIds?: ReadonlySet<string>;
 	readonly openClawRuntimeStatusStore?: OpenClawRuntimeStatusStore;
+	readonly onLeaseCreateRequest?: (request: ObservedControllerLeaseCreateRequest) => void;
 	readonly leaseIdleTtlPolicy?: ToolVmLeaseIdleTtlPolicy;
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly validateToolVmLeaseRequirements?: (zoneId: string) => Promise<void>;
@@ -341,6 +364,13 @@ export function createControllerApp(options: {
 				);
 			}
 			const payload = parsedPayload.data;
+			try {
+				options.onLeaseCreateRequest?.(payload);
+			} catch (error) {
+				writeControllerLeaseLog(
+					`[WARN] lease create observer failed zone='${payload.zoneId}' agent='${payload.agentId}' workMountDir='${payload.workMountDir}': ${formatUnknownError(error)}`,
+				);
+			}
 			const agentId = payload.agentId;
 			requestContext = {
 				agentId,
@@ -354,11 +384,6 @@ export function createControllerApp(options: {
 						!(payload.zoneId in options.zoneDefaultToolVmProfiles)
 			) {
 				return context.json({ error: `Unknown zone '${payload.zoneId}'` }, 400);
-			}
-			if (!isOpenClawAgentSessionKey(payload.sessionKey)) {
-				writeControllerLeaseLog(
-					`[WARN] OpenClaw lease sessionKey '${payload.sessionKey}' is not agent-shaped; defaulting agentId=main zone='${payload.zoneId}' agent='${payload.agentId}'`,
-				);
 			}
 			const contractError = validateOpenClawGondolinLeaseContract(payload);
 			if (contractError) {
@@ -721,6 +746,7 @@ export function createControllerApp(options: {
 
 export function createControllerService(options: {
 	readonly leaseManager: ControllerLeaseManager;
+	readonly onLeaseCreateRequest?: (request: ObservedControllerLeaseCreateRequest) => void;
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly runtimeReadiness?: () => ControllerRuntimeReadiness;
@@ -732,6 +758,7 @@ export function createControllerService(options: {
 	const app = createControllerApp({
 		controllerPort: options.systemConfig.host.controllerPort,
 		leaseManager: options.leaseManager,
+		...(options.onLeaseCreateRequest ? { onLeaseCreateRequest: options.onLeaseCreateRequest } : {}),
 		...(options.readIdentityPem ? { readIdentityPem: options.readIdentityPem } : {}),
 		...(options.runtimeReadiness ? { runtimeReadiness: options.runtimeReadiness } : {}),
 		...(options.systemConfig.leaseIdleTtl
@@ -766,6 +793,7 @@ export function createControllerService(options: {
 				throw new Error(`Unknown zone '${zoneId}'`);
 			}
 			const resolvedWorkMount = await resolveLeaseWorkMountDirForZone({
+				agentId,
 				runtimeDir: options.systemConfig.runtimeDir,
 				workMountDir,
 				zone,

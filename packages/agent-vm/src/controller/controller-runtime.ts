@@ -352,6 +352,9 @@ export async function startControllerRuntime(
 	};
 	const controllerApp = createControllerService({
 		leaseManager,
+		...(dependencies.onLeaseCreateRequest
+			? { onLeaseCreateRequest: dependencies.onLeaseCreateRequest }
+			: {}),
 		operations,
 		...(dependencies.readIdentityPem ? { readIdentityPem: dependencies.readIdentityPem } : {}),
 		runtimeReadiness: () => runtimeReadiness.get(),

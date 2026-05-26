@@ -75,7 +75,10 @@ export type {
 export type {
 	RuntimePathBacking,
 	RuntimePathCapabilities,
+	RuntimePathGuidanceVisibility,
+	RuntimePathLocations,
 	RuntimePathMapping,
+	RuntimePathNamespace,
 	RuntimePathPurpose,
 	RuntimePathRootMapping,
 	RuntimePathTranslation,

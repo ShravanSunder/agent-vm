@@ -91,6 +91,9 @@ fast formatting and linting.
     resolution.
   - Live OpenClaw/Gondolin smoke: gated by `AGENT_VM_OPENCLAW_SMOKE=1`; boots
     real OpenClaw/Gondolin VM flows and requires Docker, QEMU, and pinned Zig.
+    For Tool VM lease/path changes, this must exercise a real controller,
+    OpenClaw gateway, plugin, lease request, and Tool VM command path. Plugin
+    factory tests are integration tests, not smoke.
   - Live Worker/Gondolin smoke: gated by `AGENT_VM_WORKER_SMOKE=1` or
     `AGENT_VM_GONDOLIN_SMOKE=1`; boots worker/runtime or Gondolin image paths.
   - Live 1Password smoke: gated by `AGENT_VM_1PASSWORD_SMOKE=1` plus explicit

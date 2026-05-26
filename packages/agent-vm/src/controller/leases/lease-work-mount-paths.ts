@@ -2,6 +2,7 @@ import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+	TOOL_VM_WORKSPACE_GUEST_ROOT,
 	translateRuntimePath,
 	type RuntimePathTranslationErrorCode,
 } from '@agent-vm/gateway-interface';
@@ -15,12 +16,13 @@ import {
 } from '../zone-git/zone-git-paths.js';
 import { pathContainsParentTraversal } from './lease-path-helpers.js';
 import {
+	OPENCLAW_STATE_VM_ROOT,
 	OPENCLAW_STATE_SANDBOXES_VM_ROOT,
 	createOpenClawGatewayLeasePathMapping,
 } from './openclaw-gateway-lease-path-mapping.js';
 
 const OPENCLAW_ZONE_FILES_VM_ROOT = OPENCLAW_ZONE_FILES_GUEST_ROOT;
-export const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
+export const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = TOOL_VM_WORKSPACE_GUEST_ROOT;
 
 type ZoneConfig = SystemConfig['zones'][number];
 
@@ -70,6 +72,7 @@ const translatorErrorKindByCode = {
 	'path-parent-traversal': 'work-mount-parent-traversal',
 	'purpose-not-allowed': 'work-mount-purpose-not-allowed',
 	'root-path-not-allowed': 'root-mount-target',
+	'target-namespace-not-available': 'work-mount-unknown-runtime-path',
 	'unknown-runtime-path': 'work-mount-unknown-runtime-path',
 } satisfies Record<RuntimePathTranslationErrorCode, LeaseWorkMountValidationErrorKind>;
 
@@ -129,15 +132,28 @@ async function validateResolvedLeaseWorkMountDir(options: {
 		);
 	}
 	const hostSandboxRoot = path.join(options.zone.gateway.stateDir, 'sandboxes');
-	const [realCandidatePath, realSandboxRoot, realZoneFilesRoot] = await Promise.all([
+	const [realCandidatePath, realSandboxRoot, realZoneFilesRoot, realStateRoot] = await Promise.all([
 		realpathIfDirectory(options.hostWorkMountDir),
 		realpathAllowedRoot(hostSandboxRoot),
 		realpathAllowedRoot(options.zone.gateway.zoneFilesDir),
+		realpathAllowedRoot(options.zone.gateway.stateDir),
 	]);
 	const allowedRoots = [realSandboxRoot, realZoneFilesRoot].filter(
 		(root): root is string => root !== null,
 	);
-	if (!allowedRoots.some((root) => isPathWithin(realCandidatePath, root))) {
+	const stateRelativePath =
+		realStateRoot === null || !isPathWithin(realCandidatePath, realStateRoot)
+			? null
+			: path.relative(realStateRoot, realCandidatePath);
+	const isStateWorkspacePath =
+		stateRelativePath !== null &&
+		(stateRelativePath === 'workspace' ||
+			stateRelativePath.startsWith(`workspace${path.sep}`) ||
+			stateRelativePath.startsWith('workspace-'));
+	if (
+		!allowedRoots.some((root) => isPathWithin(realCandidatePath, root)) &&
+		!isStateWorkspacePath
+	) {
 		throw new LeaseWorkMountValidationError(
 			'host-outside-allowed-roots',
 			`Lease hostWorkMountDir '${options.hostWorkMountDir}' resolves outside allowed OpenClaw tool work mount roots for zone '${options.zone.id}'.`,
@@ -172,6 +188,7 @@ export async function validateResolvedToolWorkMountDir(options: {
 }
 
 export async function resolveLeaseWorkMountDir(options: {
+	readonly agentId: string;
 	readonly runtimeDir: string;
 	readonly workMountDir: string;
 	readonly zone: ZoneConfig;
@@ -202,6 +219,8 @@ export async function resolveLeaseWorkMountDir(options: {
 			zoneFilesDir: options.zone.gateway.zoneFilesDir,
 		}),
 		purpose: 'leaseMount',
+		sourceNamespace: 'openclaw-gateway',
+		targetNamespace: 'controller-host',
 	});
 	if (!translation.ok) {
 		const kind = translatorErrorKindByCode[translation.error.code];
@@ -213,21 +232,17 @@ export async function resolveLeaseWorkMountDir(options: {
 			guidance: translation.error.retryGuidance,
 		});
 	}
-	if (translation.value.inputNamespace === 'host') {
+	if (
+		translation.value.rootId === 'openclaw-state' &&
+		translation.value.relativePath !== `workspace-${options.agentId}`
+	) {
 		throw new LeaseWorkMountValidationError(
-			'outside-allowed-roots',
-			`Lease workMountDir '${options.workMountDir}' must be under ${OPENCLAW_STATE_SANDBOXES_VM_ROOT} or ${OPENCLAW_ZONE_FILES_VM_ROOT}.`,
-		);
-	}
-	const hostWorkMountDir = translation.value.hostPath;
-	if (hostWorkMountDir === undefined) {
-		throw new LeaseWorkMountValidationError(
-			'outside-allowed-roots',
-			`Lease workMountDir '${options.workMountDir}' must resolve to a host-backed path.`,
+			'work-mount-purpose-not-allowed',
+			`Lease workMountDir '${options.workMountDir}' matched OpenClaw state, but only '${OPENCLAW_STATE_VM_ROOT}/workspace-${options.agentId}' is allowed for agent '${options.agentId}'.`,
 		);
 	}
 	const realHostWorkMountDir = await validateResolvedLeaseWorkMountDir({
-		hostWorkMountDir,
+		hostWorkMountDir: translation.value.outputPath,
 		zone: options.zone,
 	});
 	if (

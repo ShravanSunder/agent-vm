@@ -3,6 +3,7 @@ export const TOOL_VM_SCRATCH_GUEST_ROOT = '/work';
 export const OPENCLAW_STATE_VM_ROOT = '/home/openclaw/.openclaw/state';
 export const OPENCLAW_STATE_SANDBOXES_VM_ROOT = `${OPENCLAW_STATE_VM_ROOT}/sandboxes`;
 
+export type RuntimePathNamespace = 'controller-host' | 'openclaw-gateway' | 'tool-vm-guest';
 export type RuntimePathPurpose = 'executionCwd' | 'leaseMount';
 
 export interface RuntimePathCapabilities {
@@ -21,33 +22,47 @@ export type RuntimePathBacking =
 			readonly durability: 'vm-lifetime';
 	  };
 
+export type RuntimePathLocations = Partial<Record<RuntimePathNamespace, string>>;
+export type RuntimePathHostRealfsLocations =
+	| {
+			readonly 'controller-host': string;
+			readonly 'openclaw-gateway'?: string;
+			readonly 'tool-vm-guest'?: string;
+	  }
+	| {
+			readonly 'controller-host'?: string;
+			readonly 'openclaw-gateway': string;
+			readonly 'tool-vm-guest'?: string;
+	  };
+export interface RuntimePathGuestRootfsCowLocations {
+	readonly 'controller-host'?: never;
+	readonly 'openclaw-gateway'?: never;
+	readonly 'tool-vm-guest': string;
+}
+export type RuntimePathGuidanceVisibility = Partial<Record<RuntimePathNamespace, boolean>>;
+
 interface RuntimePathRootMappingBase {
 	readonly capabilities: RuntimePathCapabilities;
 	readonly guidanceLabel: string;
 	readonly id: string;
+	/**
+	 * False for broad roots like /zone where mounting the root would expose
+	 * unrelated children; callers must request an explicit child path.
+	 */
 	readonly rootPathAllowed: boolean;
+	readonly showInGuidance?: RuntimePathGuidanceVisibility;
 }
 
 export type RuntimePathRootMapping =
 	| (RuntimePathRootMappingBase & {
 			readonly backing: Extract<RuntimePathBacking, { readonly kind: 'host-realfs' }>;
-			readonly guestRoot?: string;
-			readonly hostRoot: string;
-			readonly showHostRootInGuidance?: boolean;
+			readonly locations: RuntimePathHostRealfsLocations;
 	  })
 	| (RuntimePathRootMappingBase & {
 			readonly backing: Extract<RuntimePathBacking, { readonly kind: 'guest-rootfs-cow' }>;
 			readonly capabilities: RuntimePathCapabilities & { readonly leaseMount: false };
-			readonly guestRoot: string;
-			readonly hostRoot?: never;
-			readonly showHostRootInGuidance?: never;
+			readonly locations: RuntimePathGuestRootfsCowLocations;
 	  });
-
-function isHostRealfsRootMapping(
-	root: RuntimePathRootMapping,
-): root is Extract<RuntimePathRootMapping, { readonly backing: { readonly kind: 'host-realfs' } }> {
-	return root.backing.kind === 'host-realfs';
-}
 
 export interface RuntimePathMapping {
 	readonly id: string;
@@ -58,35 +73,21 @@ export interface TranslateRuntimePathInput {
 	readonly inputPath: string;
 	readonly mapping: RuntimePathMapping;
 	readonly purpose: RuntimePathPurpose;
+	readonly sourceNamespace?: RuntimePathNamespace;
+	readonly targetNamespace: RuntimePathNamespace;
 }
 
-interface RuntimePathTranslationBase {
+export interface RuntimePathTranslation {
 	readonly backing: RuntimePathBacking;
 	readonly capabilities: RuntimePathCapabilities;
-	readonly inputNamespace: 'guest' | 'host';
+	readonly inputNamespace: RuntimePathNamespace;
 	readonly inputPath: string;
 	readonly mappingId: string;
+	readonly outputNamespace: RuntimePathNamespace;
+	readonly outputPath: string;
 	readonly relativePath: string;
 	readonly rootId: string;
 }
-
-export type RuntimePathTranslation =
-	| (RuntimePathTranslationBase & {
-			readonly guestPath?: string;
-			readonly guestRoot?: string;
-			readonly hasHostBacking: true;
-			readonly hostPath: string;
-			readonly hostRoot: string;
-			readonly kind: 'host-backed';
-	  })
-	| (RuntimePathTranslationBase & {
-			readonly guestPath: string;
-			readonly guestRoot: string;
-			readonly hasHostBacking: false;
-			readonly hostPath?: never;
-			readonly hostRoot?: never;
-			readonly kind: 'guest-only';
-	  });
 
 export type RuntimePathTranslationErrorCode =
 	| 'path-not-absolute'
@@ -94,7 +95,8 @@ export type RuntimePathTranslationErrorCode =
 	| 'invalid-runtime-root'
 	| 'unknown-runtime-path'
 	| 'purpose-not-allowed'
-	| 'root-path-not-allowed';
+	| 'root-path-not-allowed'
+	| 'target-namespace-not-available';
 
 export interface RuntimePathTranslationError {
 	readonly allowedPathForms: readonly string[];
@@ -117,10 +119,16 @@ export type TranslateRuntimePathResult =
 	  };
 
 interface RuntimePathRootMatch {
-	readonly inputNamespace: 'guest' | 'host';
+	readonly inputNamespace: RuntimePathNamespace;
 	readonly matchedRoot: string;
 	readonly root: RuntimePathRootMapping;
 }
+
+const guidanceNamespaceOrder = [
+	'tool-vm-guest',
+	'openclaw-gateway',
+	'controller-host',
+] as const satisfies readonly RuntimePathNamespace[];
 
 function pathContainsParentTraversal(inputPath: string): boolean {
 	return inputPath.split(/\/+/u).includes('..');
@@ -148,6 +156,22 @@ function joinRootAndRelative(rootPath: string, relativePath: string): string {
 	return relativePath === '' ? rootPath : `${rootPath}/${relativePath}`;
 }
 
+function runtimeRootIsInvalid(rootPath: string): boolean {
+	return (
+		rootPath.trim() === '' || !rootPath.startsWith('/') || pathContainsParentTraversal(rootPath)
+	);
+}
+
+function namespaceShouldShowInGuidance(
+	root: RuntimePathRootMapping,
+	namespace: RuntimePathNamespace,
+): boolean {
+	if (root.showInGuidance?.[namespace] !== undefined) {
+		return root.showInGuidance[namespace];
+	}
+	return namespace !== 'controller-host';
+}
+
 function allowedPathFormsForMapping(
 	mapping: RuntimePathMapping,
 	purpose: RuntimePathPurpose,
@@ -157,15 +181,13 @@ function allowedPathFormsForMapping(
 			return [];
 		}
 		const suffix = root.rootPathAllowed ? '[/subpath]' : '/<child>';
-		const pathForms = [
-			root.guestRoot,
-			root.backing.kind === 'host-realfs' && root.showHostRootInGuidance !== false
-				? root.hostRoot
-				: undefined,
-		];
-		return pathForms
-			.filter((value): value is string => value !== undefined)
-			.map((value) => `${normalizeRoot(value)}${suffix}`);
+		return guidanceNamespaceOrder.flatMap((namespace): string[] => {
+			const rootPath = root.locations[namespace];
+			if (rootPath === undefined || !namespaceShouldShowInGuidance(root, namespace)) {
+				return [];
+			}
+			return [`${normalizeRoot(rootPath)}${suffix}`];
+		});
 	});
 }
 
@@ -197,23 +219,38 @@ function errorResult(params: {
 function findBestRootMatch(params: {
 	readonly inputPath: string;
 	readonly mapping: RuntimePathMapping;
+	readonly sourceNamespace?: RuntimePathNamespace;
 }): RuntimePathRootMatch | undefined {
-	const matches = params.mapping.roots.flatMap((root): RuntimePathRootMatch[] => {
-		const guestRoot = root.guestRoot === undefined ? undefined : normalizeRoot(root.guestRoot);
-		let hostRoot: string | undefined;
-		if (isHostRealfsRootMapping(root)) {
-			hostRoot = normalizeRoot(root.hostRoot);
-		}
-		const rootMatches: RuntimePathRootMatch[] = [];
-		if (guestRoot !== undefined && pathMatchesRoot(params.inputPath, guestRoot)) {
-			rootMatches.push({ inputNamespace: 'guest', matchedRoot: guestRoot, root });
-		}
-		if (hostRoot !== undefined && pathMatchesRoot(params.inputPath, hostRoot)) {
-			rootMatches.push({ inputNamespace: 'host', matchedRoot: hostRoot, root });
-		}
-		return rootMatches;
-	});
+	const matches = params.mapping.roots.flatMap((root): RuntimePathRootMatch[] =>
+		guidanceNamespaceOrder.flatMap((inputNamespace) => {
+			const rootPath = root.locations[inputNamespace];
+			if (rootPath === undefined) {
+				return [];
+			}
+			if (params.sourceNamespace !== undefined && inputNamespace !== params.sourceNamespace) {
+				return [];
+			}
+			const normalizedRoot = normalizeRoot(rootPath);
+			return pathMatchesRoot(params.inputPath, normalizedRoot)
+				? [{ inputNamespace, matchedRoot: normalizedRoot, root }]
+				: [];
+		}),
+	);
 	return matches.toSorted((left, right) => right.matchedRoot.length - left.matchedRoot.length)[0];
+}
+
+function findInvalidRoot(
+	mapping: RuntimePathMapping,
+): { readonly rootId: string; readonly rootPath: string } | undefined {
+	for (const root of mapping.roots) {
+		for (const namespace of guidanceNamespaceOrder) {
+			const rootPath = root.locations[namespace];
+			if (rootPath !== undefined && runtimeRootIsInvalid(rootPath)) {
+				return { rootId: root.id, rootPath };
+			}
+		}
+	}
+	return undefined;
 }
 
 export function translateRuntimePath(input: TranslateRuntimePathInput): TranslateRuntimePathResult {
@@ -226,6 +263,8 @@ export function translateRuntimePath(input: TranslateRuntimePathInput): Translat
 			purpose: input.purpose,
 		});
 	}
+	// Reject traversal before normalization so /workspace/../secret cannot
+	// collapse into a seemingly valid path under a trusted root.
 	if (pathContainsParentTraversal(input.inputPath)) {
 		return errorResult({
 			code: 'path-parent-traversal',
@@ -235,10 +274,21 @@ export function translateRuntimePath(input: TranslateRuntimePathInput): Translat
 			purpose: input.purpose,
 		});
 	}
+	const invalidRoot = findInvalidRoot(input.mapping);
+	if (invalidRoot !== undefined) {
+		return errorResult({
+			code: 'invalid-runtime-root',
+			inputPath: input.inputPath,
+			mapping: input.mapping,
+			message: `Runtime path root '${invalidRoot.rootId}' has invalid path '${invalidRoot.rootPath}'.`,
+			purpose: input.purpose,
+		});
+	}
 	const normalizedInputPath = normalizeAbsolutePath(input.inputPath);
 	const match = findBestRootMatch({
 		inputPath: normalizedInputPath,
 		mapping: input.mapping,
+		...(input.sourceNamespace === undefined ? {} : { sourceNamespace: input.sourceNamespace }),
 	});
 	if (match === undefined) {
 		return errorResult({
@@ -268,55 +318,27 @@ export function translateRuntimePath(input: TranslateRuntimePathInput): Translat
 			purpose: input.purpose,
 		});
 	}
-	const guestRoot =
-		match.root.guestRoot === undefined ? undefined : normalizeRoot(match.root.guestRoot);
-	let hostRoot: string | undefined;
-	if (isHostRealfsRootMapping(match.root)) {
-		hostRoot = normalizeRoot(match.root.hostRoot);
+	const targetRoot = match.root.locations[input.targetNamespace];
+	if (targetRoot === undefined) {
+		return errorResult({
+			code: 'target-namespace-not-available',
+			inputPath: normalizedInputPath,
+			mapping: input.mapping,
+			message: `Path '${normalizedInputPath}' matched ${match.root.guidanceLabel}, but '${input.targetNamespace}' is not available for that root.`,
+			purpose: input.purpose,
+		});
 	}
-	if (hostRoot === undefined) {
-		if (guestRoot === undefined) {
-			return errorResult({
-				code: 'invalid-runtime-root',
-				inputPath: normalizedInputPath,
-				mapping: input.mapping,
-				message: `Runtime path root '${match.root.id}' has no guest path.`,
-				purpose: input.purpose,
-			});
-		}
-		return {
-			ok: true,
-			value: {
-				backing: match.root.backing,
-				capabilities: match.root.capabilities,
-				guestPath: joinRootAndRelative(guestRoot, relativePath),
-				guestRoot,
-				hasHostBacking: false,
-				inputNamespace: match.inputNamespace,
-				inputPath: normalizedInputPath,
-				kind: 'guest-only',
-				mappingId: input.mapping.id,
-				relativePath,
-				rootId: match.root.id,
-			},
-		};
-	}
+	const normalizedTargetRoot = normalizeRoot(targetRoot);
 	return {
 		ok: true,
 		value: {
 			backing: match.root.backing,
 			capabilities: match.root.capabilities,
-			...(guestRoot !== undefined
-				? { guestPath: joinRootAndRelative(guestRoot, relativePath) }
-				: {}),
-			...(guestRoot !== undefined ? { guestRoot } : {}),
-			hasHostBacking: true,
-			hostPath: joinRootAndRelative(hostRoot, relativePath),
-			hostRoot,
 			inputNamespace: match.inputNamespace,
 			inputPath: normalizedInputPath,
-			kind: 'host-backed',
 			mappingId: input.mapping.id,
+			outputNamespace: input.targetNamespace,
+			outputPath: joinRootAndRelative(normalizedTargetRoot, relativePath),
 			relativePath,
 			rootId: match.root.id,
 		},

@@ -457,6 +457,42 @@ describe('createControllerApp', () => {
 		expect(releaseLease).toHaveBeenCalledWith('lease-123', { force: false });
 	});
 
+	it('isolates lease request observers from the create lease path', async () => {
+		const lease = createLeaseStub('lease-123', 0);
+		const createLease = vi.fn(async () => lease);
+		const app = createControllerAppForTest({
+			toolVmProfiles: {
+				standard: {
+					cpus: 1,
+					memory: '1G',
+					imageProfile: 'default',
+				},
+			},
+			readIdentityPem: async () => 'pem-from-file',
+			leaseManager: {
+				createLease,
+				renewLease: vi.fn(),
+				peekLease: vi.fn(),
+				listLeases: vi.fn(() => []),
+				releaseLease: vi.fn(),
+			},
+			onLeaseCreateRequest: () => {
+				throw new Error('observer failed');
+			},
+		});
+
+		const response = await app.request('/lease', {
+			body: JSON.stringify(createLeaseRequestBody()),
+			headers: {
+				'content-type': 'application/json',
+			},
+			method: 'POST',
+		});
+
+		expect(response.status).toBe(200);
+		expect(createLease).toHaveBeenCalledTimes(1);
+	});
+
 	it('returns a refreshable 404 when lease renewal finds a dead lease', async () => {
 		const renewLease = vi.fn(async () => ({
 			kind: 'not-found' as const,
@@ -1022,7 +1058,7 @@ describe('createControllerApp', () => {
 		expect(createLease).not.toHaveBeenCalled();
 	});
 
-	it('warns when legacy lease session keys fall back to the main agent', async () => {
+	it('rejects legacy lease session keys instead of defaulting to the main agent', async () => {
 		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 		const createLease = vi.fn(async () => createLeaseStub('lease-123', 0));
 		const app = createControllerAppForTest({
@@ -1055,17 +1091,20 @@ describe('createControllerApp', () => {
 				method: 'POST',
 			});
 
-			expect(response.status).toBe(200);
+			expect(response.status).toBe(400);
+			await expect(response.json()).resolves.toMatchObject({
+				error: 'tool-vm-lease-invalid-session-key',
+			});
 			const loggedMessages = stderrWrite.mock.calls.map(([message]) => String(message));
 			expect(
 				loggedMessages.some(
 					(message) =>
 						message.includes('[WARN]') &&
 						message.includes("sessionKey 'session-abc'") &&
-						message.includes('defaulting agentId=main') &&
-						message.includes("zone='shravan'"),
+						message.includes('defaulting agentId=main'),
 				),
-			).toBe(true);
+			).toBe(false);
+			expect(createLease).not.toHaveBeenCalled();
 		} finally {
 			stderrWrite.mockRestore();
 		}
@@ -1112,8 +1151,9 @@ describe('createControllerApp', () => {
 
 		expect(response.status).toBe(400);
 		await expect(response.json()).resolves.toMatchObject({
-			error: 'tool-vm-lease-agent-mismatch',
-			message: "Lease agentId 'beta' does not match sessionKey agent 'main'.",
+			error: 'tool-vm-lease-invalid-session-key',
+			message:
+				"Lease sessionKey 'legacy-session-abc' is not agent-shaped or contains an invalid agent id.",
 		});
 		expect(resolveLeaseWorkMountDir).not.toHaveBeenCalled();
 		expect(createLease).not.toHaveBeenCalled();

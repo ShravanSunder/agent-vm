@@ -28,6 +28,7 @@ describe('resolveLeaseWorkMountDir', () => {
 		stateDir = path.join(tempDir, 'state', 'shravan');
 		await mkdir(path.join(zoneFilesDir, 'project'), { recursive: true });
 		await mkdir(path.join(stateDir, 'sandboxes', 'agent', 'work'), { recursive: true });
+		await mkdir(path.join(stateDir, 'workspace-beta'), { recursive: true });
 		zone = {
 			egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
 			gateway: {
@@ -66,6 +67,7 @@ describe('resolveLeaseWorkMountDir', () => {
 	it('maps OpenClaw gateway sandbox paths to host stateDir sandboxes', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({
+				agentId: 'beta',
 				runtimeDir,
 				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
 				zone,
@@ -76,9 +78,52 @@ describe('resolveLeaseWorkMountDir', () => {
 		});
 	});
 
+	it('maps OpenClaw state fallback workspace paths to host stateDir workspace children', async () => {
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'beta',
+				runtimeDir,
+				workMountDir: '/home/openclaw/.openclaw/state/workspace-beta',
+				zone,
+			}),
+		).resolves.toEqual({
+			guestWorkdir: '/workspace',
+			hostWorkMountDir: await realpath(path.join(stateDir, 'workspace-beta')),
+		});
+	});
+
+	it('rejects unrelated OpenClaw state paths as lease work mounts', async () => {
+		await mkdir(path.join(stateDir, 'credentials'), { recursive: true });
+
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'beta',
+				runtimeDir,
+				workMountDir: '/home/openclaw/.openclaw/state/credentials',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'work-mount-purpose-not-allowed',
+		} satisfies Partial<LeaseWorkMountValidationError>);
+	});
+
+	it('rejects OpenClaw default workspace fallback paths because they are not gateway lease backed', async () => {
+		await expect(
+			resolveLeaseWorkMountDir({
+				agentId: 'main',
+				runtimeDir,
+				workMountDir: '/home/openclaw/.openclaw/workspace',
+				zone,
+			}),
+		).rejects.toMatchObject({
+			kind: 'work-mount-unknown-runtime-path',
+		} satisfies Partial<LeaseWorkMountValidationError>);
+	});
+
 	it('rejects exact OpenClaw gateway work mount roots', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({
+				agentId: 'beta',
 				runtimeDir,
 				workMountDir: '/home/openclaw/.openclaw/state/sandboxes',
 				zone,
@@ -86,6 +131,7 @@ describe('resolveLeaseWorkMountDir', () => {
 		).rejects.toThrow(/must name a child path under/u);
 		await expect(
 			resolveLeaseWorkMountDir({
+				agentId: 'beta',
 				runtimeDir,
 				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/',
 				zone,
@@ -93,6 +139,7 @@ describe('resolveLeaseWorkMountDir', () => {
 		).rejects.toThrow(/must name a child path under/u);
 		await expect(
 			resolveLeaseWorkMountDir({
+				agentId: 'beta',
 				runtimeDir,
 				workMountDir: '/zone',
 				zone,
@@ -100,6 +147,7 @@ describe('resolveLeaseWorkMountDir', () => {
 		).rejects.toThrow(/must name a child path under/u);
 		await expect(
 			resolveLeaseWorkMountDir({
+				agentId: 'beta',
 				runtimeDir,
 				workMountDir: '/zone/',
 				zone,
@@ -110,6 +158,7 @@ describe('resolveLeaseWorkMountDir', () => {
 	it('maps OpenClaw gateway /zone paths to host zoneFilesDir', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({
+				agentId: 'beta',
 				runtimeDir,
 				workMountDir: '/zone/project',
 				zone,
@@ -139,6 +188,7 @@ describe('resolveLeaseWorkMountDir', () => {
 
 		await expect(
 			resolveLeaseWorkMountDir({
+				agentId: 'beta',
 				runtimeDir,
 				workMountDir: '/zone/project',
 				zone: zoneWithZoneGit,
@@ -156,6 +206,7 @@ describe('resolveLeaseWorkMountDir', () => {
 	it('rejects traversal before path translation', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({
+				agentId: 'beta',
 				runtimeDir,
 				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/../../../etc',
 				zone,
@@ -163,6 +214,7 @@ describe('resolveLeaseWorkMountDir', () => {
 		).rejects.toThrow(/must not contain '\.\.' path segments/u);
 		await expect(
 			resolveLeaseWorkMountDir({
+				agentId: 'beta',
 				runtimeDir,
 				workMountDir: '/zone/../../../etc',
 				zone,
@@ -178,6 +230,7 @@ describe('resolveLeaseWorkMountDir', () => {
 
 		await expect(
 			resolveLeaseWorkMountDir({
+				agentId: 'beta',
 				runtimeDir,
 				workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/ssh-link',
 				zone,
@@ -190,11 +243,14 @@ describe('resolveLeaseWorkMountDir', () => {
 
 		await expect(
 			resolveLeaseWorkMountDir({
+				agentId: 'beta',
 				runtimeDir,
 				workMountDir: hostWorkMountDir,
 				zone,
 			}),
-		).rejects.toThrow(/must be under \/home\/openclaw\/\.openclaw\/state\/sandboxes or \/zone/u);
+		).rejects.toMatchObject({
+			kind: 'work-mount-unknown-runtime-path',
+		} satisfies Partial<LeaseWorkMountValidationError>);
 	});
 
 	it.each([
@@ -210,6 +266,7 @@ describe('resolveLeaseWorkMountDir', () => {
 		async ({ kind, workMountDir }) => {
 			await expect(
 				resolveLeaseWorkMountDir({
+					agentId: 'beta',
 					runtimeDir,
 					workMountDir,
 					zone,
@@ -246,6 +303,7 @@ describe('resolveLeaseWorkMountDir', () => {
 	it('rejects non-absolute work mount paths', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({
+				agentId: 'beta',
 				runtimeDir,
 				workMountDir: 'relative/work',
 				zone,
@@ -253,6 +311,7 @@ describe('resolveLeaseWorkMountDir', () => {
 		).rejects.toThrow(/Lease workMountDir 'relative\/work' must be absolute/u);
 		await expect(
 			resolveLeaseWorkMountDir({
+				agentId: 'beta',
 				runtimeDir,
 				workMountDir: 'relative/work',
 				zone,
@@ -265,6 +324,7 @@ describe('resolveLeaseWorkMountDir', () => {
 	it('rejects non-OpenClaw zones', async () => {
 		await expect(
 			resolveLeaseWorkMountDir({
+				agentId: 'beta',
 				runtimeDir,
 				workMountDir: '/zone/project',
 				zone: {
@@ -295,6 +355,7 @@ describe('resolveLeaseWorkMountDir', () => {
 
 		await expect(
 			resolveLeaseWorkMountDir({
+				agentId: 'beta',
 				runtimeDir,
 				workMountDir: '/zone/project',
 				zone: missingRootZone,
