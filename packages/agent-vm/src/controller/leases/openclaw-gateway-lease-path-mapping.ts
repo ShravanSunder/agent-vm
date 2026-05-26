@@ -45,6 +45,29 @@ export function createOpenClawGatewayLeasePathMapping(options: {
 					executionCwd: false,
 					leaseMount: true,
 				},
+				guidanceLabel: 'OpenClaw state workspace',
+				id: 'openclaw-state',
+				locations: {
+					'controller-host': options.stateDir,
+					'openclaw-gateway': OPENCLAW_STATE_VM_ROOT,
+				},
+				rootPathAllowed: false,
+				showInGuidance: {
+					'controller-host': false,
+					'openclaw-gateway': false,
+					'tool-vm-guest': false,
+				},
+			},
+			{
+				backing: {
+					kind: 'host-realfs',
+					durability: 'durable',
+					backup: 'included',
+				},
+				capabilities: {
+					executionCwd: false,
+					leaseMount: true,
+				},
 				guidanceLabel: 'OpenClaw zone files',
 				id: 'zone-files',
 				locations: {

@@ -155,4 +155,42 @@ describe('resolveOpenClawAgentWorkspaceSource', () => {
 			}),
 		).toThrow(/must resolve to an OpenClaw\/Gondolin source path/u);
 	});
+
+	it('rejects configured agent workspaces under OpenClaw sandbox state', () => {
+		expect(() =>
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'beta',
+				...fallbackPaths,
+				openClawConfig: {
+					agents: {
+						list: [
+							{
+								id: 'beta',
+								workspace: '/home/openclaw/.openclaw/state/sandboxes/child-session/work',
+							},
+						],
+					},
+				},
+				paramsAgentWorkspaceDir: '/workspace',
+			}),
+		).toThrow(/must resolve to a stable agent workspace path/u);
+	});
+
+	it('rejects default workspaces under OpenClaw sandbox state before deriving child paths', () => {
+		expect(() =>
+			resolveOpenClawAgentWorkspaceSource({
+				agentId: 'beta',
+				...fallbackPaths,
+				openClawConfig: {
+					agents: {
+						defaults: {
+							workspace: '/home/openclaw/.openclaw/state/sandboxes/parent-session/work',
+						},
+						list: [{ id: 'primary', default: true }, { id: 'beta' }],
+					},
+				},
+				paramsAgentWorkspaceDir: '/workspace',
+			}),
+		).toThrow(/must resolve to a stable agent workspace path/u);
+	});
 });

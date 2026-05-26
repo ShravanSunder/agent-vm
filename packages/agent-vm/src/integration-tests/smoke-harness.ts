@@ -107,6 +107,7 @@ export interface GondolinSmokePrerequisiteOptions {
 }
 
 export interface StartSmokeControllerRuntimeOptions {
+	readonly onLeaseCreateRequest?: ControllerRuntimeDependencies['onLeaseCreateRequest'];
 	readonly secrets: SmokeHarnessSecretMap;
 	readonly startGatewayZone?: typeof startGatewayZone;
 	readonly startHttpServer?: NonNullable<ControllerRuntimeDependencies['startHttpServer']>;
@@ -1080,6 +1081,9 @@ export async function startSmokeControllerRuntime(
 	try {
 		const runtime = await startControllerRuntime(options.startOptions, {
 			createSecretResolver: async (): Promise<SecretResolver> => secretResolver,
+			...(options.onLeaseCreateRequest === undefined
+				? {}
+				: { onLeaseCreateRequest: options.onLeaseCreateRequest }),
 			...(options.startHttpServer === undefined
 				? {}
 				: { startHttpServer: options.startHttpServer }),

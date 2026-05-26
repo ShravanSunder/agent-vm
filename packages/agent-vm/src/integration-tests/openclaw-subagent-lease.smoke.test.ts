@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { type ManagedVm } from '@agent-vm/gondolin-adapter';
+import { buildOpenClawRuntimeStatusReport } from '@agent-vm/openclaw-agent-vm-plugin';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { runBuildCommand } from '../cli/build-command.js';
@@ -34,11 +35,19 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 
 interface OpenClawSubagentSpawnProbeResult {
 	readonly childSessionKey: string;
+	readonly contextWorkspaceDir: string;
 	readonly error?: string;
 	readonly historyResponse: unknown;
 	readonly runId: string;
 	readonly waitResponse: unknown;
 	readonly status: 'accepted' | 'error';
+}
+
+interface ObservedLeaseCreateRequest {
+	readonly agentId: string;
+	readonly agentWorkspaceDir: string;
+	readonly workMountDir: string;
+	readonly zoneId: string;
 }
 
 function shellSingleQuote(value: string): string {
@@ -66,6 +75,8 @@ function parseSubagentSpawnProbeResult(stdout: string): OpenClawSubagentSpawnPro
 	}
 	return {
 		childSessionKey: parsed.childSessionKey,
+		contextWorkspaceDir:
+			typeof parsed.contextWorkspaceDir === 'string' ? parsed.contextWorkspaceDir : '',
 		...(typeof parsed.error === 'string' ? { error: parsed.error } : {}),
 		historyResponse: parsed.historyResponse,
 		runId: parsed.runId,
@@ -286,6 +297,58 @@ async function readControllerLeases(controllerUrl: string): Promise<unknown> {
 	return await response.json();
 }
 
+async function requestControllerLease(options: {
+	readonly controllerUrl: string;
+	readonly zoneId: string;
+}): Promise<void> {
+	const response = await fetch(`${options.controllerUrl}/lease`, {
+		body: JSON.stringify({
+			agentId,
+			agentWorkspaceDir: '/zone/agents/smoke',
+			profileId: 'standard',
+			sessionKey: `agent:${agentId}:parent-smoke`,
+			workMountDir: '/zone/agents/smoke',
+			zoneId: options.zoneId,
+		}),
+		headers: { 'content-type': 'application/json' },
+		method: 'POST',
+	});
+	if (!response.ok) {
+		throw new Error(
+			`Parent lease request failed HTTP ${String(response.status)}: ${await response.text()}`,
+		);
+	}
+}
+
+async function publishOpenClawRuntimeStatus(options: {
+	readonly controllerUrl: string;
+	readonly openClawConfigPath: string;
+	readonly zoneId: string;
+}): Promise<void> {
+	const parsedConfig: unknown = JSON.parse(await fs.readFile(options.openClawConfigPath, 'utf8'));
+	if (!isObjectRecord(parsedConfig)) {
+		throw new Error(`Expected OpenClaw smoke config at ${options.openClawConfigPath}.`);
+	}
+	const response = await fetch(
+		`${options.controllerUrl}/zones/${encodeURIComponent(options.zoneId)}/openclaw-runtime-status`,
+		{
+			body: JSON.stringify(
+				buildOpenClawRuntimeStatusReport({
+					config: parsedConfig,
+					zoneId: options.zoneId,
+				}),
+			),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		},
+	);
+	if (!response.ok) {
+		throw new Error(
+			`OpenClaw runtime status publish failed HTTP ${String(response.status)}: ${await response.text()}`,
+		);
+	}
+}
+
 async function waitForControllerLease(options: {
 	readonly agentId: string;
 	readonly controllerUrl: string;
@@ -310,8 +373,10 @@ async function waitForControllerLease(options: {
 
 async function runOpenClawSubagentSpawnProbe(options: {
 	readonly agentId: string;
+	readonly contextWorkspaceDir: string;
 	readonly gatewayVm: ManagedVm;
 	readonly guestListenPort: number;
+	readonly marker: string;
 }): Promise<OpenClawSubagentSpawnProbeResult> {
 	const command = `set -eu
 . /etc/profile.d/openclaw-env.sh
@@ -331,6 +396,8 @@ export OPENCLAW_PACKAGE_ROOT
 export OPENCLAW_GATEWAY_URL=${shellSingleQuote(`ws://127.0.0.1:${String(options.guestListenPort)}`)}
 export OPENCLAW_GUEST_PORT=${shellSingleQuote(String(options.guestListenPort))}
 export OPENCLAW_SUBAGENT_SMOKE_AGENT=${shellSingleQuote(options.agentId)}
+export OPENCLAW_SUBAGENT_SMOKE_CONTEXT_WORKSPACE=${shellSingleQuote(options.contextWorkspaceDir)}
+export OPENCLAW_SUBAGENT_SMOKE_MARKER=${shellSingleQuote(options.marker)}
 cd "$OPENCLAW_PACKAGE_ROOT"
 node --input-type=module <<'NODE'
 import { readdir, readFile } from 'node:fs/promises';
@@ -341,8 +408,10 @@ const packageRoot = process.env.OPENCLAW_PACKAGE_ROOT;
 const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
 const guestPort = process.env.OPENCLAW_GUEST_PORT;
 const agentId = process.env.OPENCLAW_SUBAGENT_SMOKE_AGENT;
+const contextWorkspaceDir = process.env.OPENCLAW_SUBAGENT_SMOKE_CONTEXT_WORKSPACE;
+const marker = process.env.OPENCLAW_SUBAGENT_SMOKE_MARKER;
 
-if (!packageRoot || !gatewayToken || !guestPort || !agentId) {
+if (!packageRoot || !gatewayToken || !guestPort || !agentId || !contextWorkspaceDir || !marker) {
 	throw new Error('Missing OpenClaw subagent smoke environment.');
 }
 
@@ -373,11 +442,11 @@ const spawnResult = await spawnSubagentDirect({
 	expectsCompletionMessage: false,
 	mode: 'run',
 	runTimeoutSeconds: 120,
-	task: 'Reply exactly SUBAGENT_LEASE_SMOKE_OK and nothing else.',
+	task: \`Reply exactly \${marker} and nothing else.\`,
 	thinking: 'low',
 }, {
 	agentSessionKey: \`agent:\${agentId}:main\`,
-	workspaceDir: '/workspace',
+	workspaceDir: contextWorkspaceDir,
 });
 let waitResponse = null;
 let historyResponse = null;
@@ -407,7 +476,7 @@ if (spawnResult.status === 'accepted') {
 			token: gatewayToken,
 			url: \`ws://127.0.0.1:\${guestPort}\`,
 		});
-		if (JSON.stringify(historyResponse).includes('SUBAGENT_LEASE_SMOKE_OK')) {
+		if (JSON.stringify(historyResponse).includes(marker)) {
 			break;
 		}
 		if (waitResponse && typeof waitResponse === 'object' && waitResponse.status === 'error') {
@@ -418,6 +487,7 @@ if (spawnResult.status === 'accepted') {
 }
 console.log('AGENT_VM_SUBAGENT_SMOKE_RESULT ' + JSON.stringify({
 	childSessionKey: spawnResult.childSessionKey,
+	contextWorkspaceDir,
 	error: spawnResult.error,
 	historyResponse,
 	runId: spawnResult.runId,
@@ -441,6 +511,7 @@ describeOpenClawSubagentSmoke('smoke: OpenClaw subagent Tool VM lease path', () 
 	let project: OpenClawSmokeProject | undefined;
 	let gatewayVm: ManagedVm | undefined;
 	let gatewayGuestListenPort: number | undefined;
+	const observedLeaseRequests: ObservedLeaseCreateRequest[] = [];
 
 	beforeAll(async () => {
 		const repoRoot = path.resolve(process.cwd());
@@ -483,6 +554,14 @@ describeOpenClawSubagentSmoke('smoke: OpenClaw subagent Tool VM lease path', () 
 			systemConfig: project.systemConfig,
 		});
 		harness = await startSmokeControllerRuntime({
+			onLeaseCreateRequest: (request) => {
+				observedLeaseRequests.push({
+					agentId: request.agentId,
+					agentWorkspaceDir: request.agentWorkspaceDir,
+					workMountDir: request.workMountDir,
+					zoneId: request.zoneId,
+				});
+			},
 			secrets: {
 				GITHUB_TOKEN: 'unused-subagent-smoke-token',
 				OPENAI_API_KEY: 'subagent-smoke-mock-openai-token',
@@ -527,25 +606,60 @@ describeOpenClawSubagentSmoke('smoke: OpenClaw subagent Tool VM lease path', () 
 			gatewayVm,
 			port: mockOpenAiPort,
 		});
-
-		const spawnResult = await runOpenClawSubagentSpawnProbe({
-			agentId,
-			gatewayVm,
-			guestListenPort: gatewayGuestListenPort,
+		await publishOpenClawRuntimeStatus({
+			controllerUrl: harness.controllerUrl,
+			openClawConfigPath: harness.systemConfig.zones[0]?.gateway.config ?? '',
+			zoneId: 'subagent-lease-smoke',
+		});
+		await requestControllerLease({
+			controllerUrl: harness.controllerUrl,
+			zoneId: 'subagent-lease-smoke',
 		});
 
-		expect(spawnResult.childSessionKey).toContain(`agent:${agentId}:subagent:`);
-		expect(spawnResult.error ?? '').not.toContain('outside-allowed-roots');
-		expect(spawnResult.error ?? '').not.toContain('/workspace');
-		expect(JSON.stringify(spawnResult.historyResponse)).toContain('SUBAGENT_LEASE_SMOKE_OK');
+		const spawnResults: OpenClawSubagentSpawnProbeResult[] = [];
+		for (const contextWorkspaceDir of ['/workspace', '/workspace/subdir', '/work/tmp']) {
+			spawnResults.push(
+				await runOpenClawSubagentSpawnProbe({
+					agentId,
+					contextWorkspaceDir,
+					gatewayVm,
+					guestListenPort: gatewayGuestListenPort,
+					marker: 'SUBAGENT_LEASE_SMOKE_OK',
+				}),
+			);
+		}
+
+		for (const spawnResult of spawnResults) {
+			expect(spawnResult.childSessionKey).toContain(`agent:${agentId}:subagent:`);
+			expect(spawnResult.error ?? '').not.toContain('outside-allowed-roots');
+			expect(spawnResult.error ?? '').not.toContain('/workspace');
+			expect(JSON.stringify(spawnResult.historyResponse)).toContain('SUBAGENT_LEASE_SMOKE_OK');
+		}
 
 		const leasePayload = await waitForControllerLease({
 			agentId,
 			controllerUrl: harness.controllerUrl,
-			diagnostic: JSON.stringify(spawnResult),
+			diagnostic: JSON.stringify(spawnResults),
 			timeoutMs: 120_000,
 		});
 		expect(JSON.stringify(leasePayload)).toContain(`"agentId":"${agentId}"`);
-		expect(JSON.stringify(leasePayload)).not.toContain('"workMountDir":"/workspace"');
+		expect(
+			Array.isArray(leasePayload)
+				? leasePayload.filter((lease) => isObjectRecord(lease) && lease.agentId === agentId)
+				: [],
+		).toHaveLength(1);
+		expect(observedLeaseRequests.length).toBeGreaterThan(0);
+		expect(observedLeaseRequests).toContainEqual({
+			agentId,
+			agentWorkspaceDir: '/zone/agents/smoke',
+			workMountDir: '/zone/agents/smoke',
+			zoneId: 'subagent-lease-smoke',
+		});
+		for (const request of observedLeaseRequests) {
+			expect(request.workMountDir).not.toBe('/workspace');
+			expect(request.workMountDir.startsWith('/workspace/')).toBe(false);
+			expect(request.workMountDir).not.toBe('/work');
+			expect(request.workMountDir.startsWith('/work/')).toBe(false);
+		}
 	});
 });

@@ -96,6 +96,14 @@ function assertCanonicalSourcePath(inputPath: string, context: string): string {
 			`${context} must resolve to an OpenClaw/Gondolin source path, not Tool VM guest path '${normalized}'.`,
 		);
 	}
+	if (
+		normalized === OPENCLAW_STATE_SANDBOXES_VM_ROOT ||
+		normalized.startsWith(`${OPENCLAW_STATE_SANDBOXES_VM_ROOT}/`)
+	) {
+		throw new OpenClawAgentWorkspaceSourceError(
+			`${context} must resolve to a stable agent workspace path, not transient OpenClaw sandbox path '${normalized}'.`,
+		);
+	}
 	return normalized;
 }
 

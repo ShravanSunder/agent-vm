@@ -114,6 +114,16 @@ interface LeaseRequestLogContext {
 	readonly zoneId: string;
 }
 
+export interface ObservedControllerLeaseCreateRequest {
+	readonly agentId: string;
+	readonly agentWorkspaceDir: string;
+	readonly idleTtlMs?: number | undefined;
+	readonly profileId: string;
+	readonly sessionKey: string;
+	readonly workMountDir: string;
+	readonly zoneId: string;
+}
+
 interface LeaseContractErrorBody {
 	readonly error: string;
 	readonly guidance: string;
@@ -284,6 +294,7 @@ export function createControllerApp(options: {
 	readonly zoneDefaultToolVmProfiles?: Record<string, string>;
 	readonly zoneIds?: ReadonlySet<string>;
 	readonly openClawRuntimeStatusStore?: OpenClawRuntimeStatusStore;
+	readonly onLeaseCreateRequest?: (request: ObservedControllerLeaseCreateRequest) => void;
 	readonly leaseIdleTtlPolicy?: ToolVmLeaseIdleTtlPolicy;
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly validateToolVmLeaseRequirements?: (zoneId: string) => Promise<void>;
@@ -341,6 +352,7 @@ export function createControllerApp(options: {
 				);
 			}
 			const payload = parsedPayload.data;
+			options.onLeaseCreateRequest?.(payload);
 			const agentId = payload.agentId;
 			requestContext = {
 				agentId,
@@ -721,6 +733,7 @@ export function createControllerApp(options: {
 
 export function createControllerService(options: {
 	readonly leaseManager: ControllerLeaseManager;
+	readonly onLeaseCreateRequest?: (request: ObservedControllerLeaseCreateRequest) => void;
 	readonly operations?: Partial<ControllerRouteOperations>;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly runtimeReadiness?: () => ControllerRuntimeReadiness;
@@ -732,6 +745,7 @@ export function createControllerService(options: {
 	const app = createControllerApp({
 		controllerPort: options.systemConfig.host.controllerPort,
 		leaseManager: options.leaseManager,
+		...(options.onLeaseCreateRequest ? { onLeaseCreateRequest: options.onLeaseCreateRequest } : {}),
 		...(options.readIdentityPem ? { readIdentityPem: options.readIdentityPem } : {}),
 		...(options.runtimeReadiness ? { runtimeReadiness: options.runtimeReadiness } : {}),
 		...(options.systemConfig.leaseIdleTtl
@@ -766,6 +780,7 @@ export function createControllerService(options: {
 				throw new Error(`Unknown zone '${zoneId}'`);
 			}
 			const resolvedWorkMount = await resolveLeaseWorkMountDirForZone({
+				agentId,
 				runtimeDir: options.systemConfig.runtimeDir,
 				workMountDir,
 				zone,
