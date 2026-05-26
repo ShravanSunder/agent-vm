@@ -50,7 +50,7 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
         "source": "environment",
         "envVar": "OPENCLAW_GATEWAY_TOKEN",
         "injection": "env",
-        "audience": "both"
+        "audience": "gateway"
       }
     },
     "egressHosts": [
