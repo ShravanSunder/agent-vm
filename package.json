@@ -23,6 +23,7 @@
 		"test:integration:llm": "vitest run --config vitest.llm-integration.config.ts",
 		"test:smoke": "vitest run --config vitest.smoke.config.ts",
 		"test:watch": "vitest",
+		"beta:sync": "tsx scripts/beta-tarball-sync.ts",
 		"perf:gondolin-vfs": "node scripts/perf/gondolin-vfs-benchmark.ts",
 		"perf:worker-git": "node scripts/perf/gondolin-worker-git-benchmark.ts"
 	},
