@@ -112,7 +112,7 @@ export async function runToolVmSshOperationWithGuard<TResult>(
 			ssh: { probeSucceeded: true },
 		});
 		const observedAtMs = now();
-		await publishHealthEvent({
+		void publishHealthEvent({
 			elapsedMs: observedAtMs - startedAtMs,
 			guardOptions: options,
 			observedAtMs,
@@ -139,7 +139,7 @@ export async function runToolVmSshOperationWithGuard<TResult>(
 			},
 		});
 		const observedAtMs = now();
-		await publishHealthEvent({
+		void publishHealthEvent({
 			elapsedMs: observedAtMs - startedAtMs,
 			errorCode: staleError.reason,
 			guardOptions: options,

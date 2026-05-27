@@ -7,6 +7,7 @@ import {
 
 export interface HealthEventStoreOptions {
 	readonly eventHistoryLimit: number;
+	readonly latestBucketLimit?: number | undefined;
 	readonly staleAfterMs: number;
 }
 
@@ -17,12 +18,14 @@ export interface DeriveHealthSnapshotOptions {
 
 export class HealthEventStore {
 	readonly #eventHistoryLimit: number;
+	readonly #latestBucketLimit: number;
 	readonly #latestByBucket = new Map<string, AgentVmHealthEvent>();
 	readonly #history: AgentVmHealthEvent[] = [];
 	readonly #staleAfterMs: number;
 
 	constructor(options: HealthEventStoreOptions) {
 		this.#eventHistoryLimit = options.eventHistoryLimit;
+		this.#latestBucketLimit = options.latestBucketLimit ?? 1_000;
 		this.#staleAfterMs = options.staleAfterMs;
 	}
 
@@ -36,6 +39,21 @@ export class HealthEventStore {
 		const previous = this.#latestByBucket.get(key);
 		if (!previous || previous.observedAtMs <= event.observedAtMs) {
 			this.#latestByBucket.set(key, event);
+		}
+		this.#evictOldestLatestBuckets();
+	}
+
+	#evictOldestLatestBuckets(): void {
+		if (this.#latestByBucket.size <= this.#latestBucketLimit) {
+			return;
+		}
+		const evictCount = this.#latestByBucket.size - this.#latestBucketLimit;
+		const keysToEvict = [...this.#latestByBucket.entries()]
+			.toSorted((first, second) => first[1].observedAtMs - second[1].observedAtMs)
+			.slice(0, evictCount)
+			.map(([key]) => key);
+		for (const key of keysToEvict) {
+			this.#latestByBucket.delete(key);
 		}
 	}
 

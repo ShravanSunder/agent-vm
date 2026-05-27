@@ -60,4 +60,29 @@ describe('HealthEventStore', () => {
 		expect(store.listHistory().map((event) => event.observedAtMs)).toEqual([2_000, 3_000]);
 		expect(store.listLatestEventsForZone('beta')).toHaveLength(3);
 	});
+
+	it('bounds latest event buckets for transient lease identifiers', () => {
+		const store = new HealthEventStore({
+			eventHistoryLimit: 20,
+			latestBucketLimit: 2,
+			staleAfterMs: 30_000,
+		});
+
+		for (let index = 0; index < 4; index += 1) {
+			store.record({
+				agentId: 'beta',
+				elapsedMs: 12,
+				kind: 'lease-heartbeat',
+				leaseId: `lease-${String(index)}`,
+				observedAtMs: 1_000 + index,
+				result: 'ok',
+				useId: `use-${String(index)}`,
+				zoneId: 'beta',
+			});
+		}
+
+		expect(store.listLatestEventsForZone('beta').map((event) => event.observedAtMs)).toEqual([
+			1_003, 1_002,
+		]);
+	});
 });

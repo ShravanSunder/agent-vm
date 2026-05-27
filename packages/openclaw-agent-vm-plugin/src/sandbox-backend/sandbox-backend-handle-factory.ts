@@ -659,7 +659,7 @@ function createSandboxBackendHandle(options: {
 					finalizeParams.token,
 					activeUseOutcomeForFinalizeParams(finalizeParams),
 				);
-				await publishFinalizeToolVmSshHealthEvent({
+				void publishFinalizeToolVmSshHealthEvent({
 					agentId: options.lease.agentId,
 					leaseId: options.lease.leaseId,
 					publishHealthEvent: options.publishHealthEvent,

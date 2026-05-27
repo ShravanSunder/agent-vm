@@ -48,6 +48,54 @@ describe('runToolVmSshOperationWithGuard', () => {
 		});
 	});
 
+	it('does not wait for successful health publishing before returning operation result', async () => {
+		const publishHealthEvent = vi.fn(async () => new Promise<void>(() => {}));
+
+		await expect(
+			runToolVmSshOperationWithGuard({
+				healthEvent: {
+					agentId: 'beta',
+					leaseId: 'lease-1',
+					operation: 'probe',
+					publish: publishHealthEvent,
+					zoneId: 'sunfam',
+				},
+				now: () => 1_000,
+				operation: async () => 'ok',
+				operationName: 'probe',
+				report: vi.fn(),
+				timeoutMs: 30_000,
+			}),
+		).resolves.toBe('ok');
+		expect(publishHealthEvent).toHaveBeenCalled();
+	});
+
+	it('does not wait for failed health publishing before throwing stale-handle errors', async () => {
+		const publishHealthEvent = vi.fn(async () => new Promise<void>(() => {}));
+
+		await expect(
+			runToolVmSshOperationWithGuard({
+				healthEvent: {
+					agentId: 'beta',
+					leaseId: 'lease-1',
+					operation: 'command',
+					publish: publishHealthEvent,
+					zoneId: 'sunfam',
+				},
+				now: () => 1_000,
+				operation: async () => {
+					throw new Error('kex reset');
+				},
+				operationName: 'runShellCommand',
+				report: vi.fn(),
+				timeoutMs: 30_000,
+			}),
+		).rejects.toMatchObject({
+			reason: 'ssh-command-failed',
+		});
+		expect(publishHealthEvent).toHaveBeenCalled();
+	});
+
 	it('converts timeout into a stale-handle error and reports failure', async () => {
 		const clearTimeoutImpl = vi.fn() as unknown as typeof clearTimeout;
 		const setTimeoutImpl = ((callback: () => void) => {

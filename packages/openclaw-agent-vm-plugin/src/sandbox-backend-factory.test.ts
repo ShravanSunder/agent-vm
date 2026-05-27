@@ -1504,6 +1504,58 @@ describe('createGondolinSandboxBackendFactory', () => {
 		});
 	});
 
+	it('finalizeExec does not wait for Tool VM SSH finalize health publishing', async () => {
+		const fetchMock = vi.fn<typeof fetch>(async () => new Promise<Response>(() => {}));
+		vi.stubGlobal('fetch', fetchMock);
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease: vi.fn(async () => createLeaseResponse('lease-finalize-health')),
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const backend = await factory({
+			agentWorkspaceDir: '/zone/agents/main',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:main',
+			sessionKey: 'agent:main:session-finalize-health',
+			workspaceDir: '/work',
+		});
+		const execSpec = await backend.buildExecSpec({
+			command: 'pnpm test',
+			env: {},
+			usePty: false,
+		});
+
+		await expect(
+			backend.finalizeExec?.({
+				status: 'completed',
+				exitCode: 0,
+				timedOut: false,
+				token: execSpec.finalizeToken,
+			}),
+		).resolves.toBeUndefined();
+		expect(fetchMock).toHaveBeenCalledWith(
+			'http://controller.vm.host:18800/zones/shravan/health-events',
+			expect.any(Object),
+		);
+	});
+
 	it('finalizeExec is a no-op when token has no dispose', async () => {
 		const factory = createGondolinSandboxBackendFactory(
 			{
