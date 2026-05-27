@@ -1280,6 +1280,125 @@ describe('startGatewayZone', () => {
 		expect(vmOptions.allowedHosts.filter((host) => host === 'mcp.deepwiki.com')).toHaveLength(1);
 	});
 
+	it('passes stdio MCP Portal http-mediation secrets to the gateway VM as generated mediated secrets', async () => {
+		const systemConfig = await createSystemConfig();
+		const baseZone = systemConfig.zones[0];
+		if (baseZone === undefined || baseZone.gateway.type !== 'openclaw') {
+			throw new Error('Expected OpenClaw test zone.');
+		}
+		const configDir = path.dirname(baseZone.gateway.config);
+		await writeMinimalMcpPortalConfigs(configDir, {
+			providers: {
+				perplexity: {
+					kind: 'mcp',
+					namespace: 'perplexity',
+					secretPolicies: {
+						PERPLEXITY_API_KEY: {
+							hosts: ['api.perplexity.ai'],
+							injection: 'http-mediation',
+						},
+					},
+					transport: {
+						args: ['-y', '-p', '@perplexity-ai/mcp-server', 'perplexity-mcp'],
+						command: 'npx',
+						env: {
+							PERPLEXITY_API_KEY: {
+								ref: 'op://agent-vm/sunfam-perplexity/credential',
+								source: '1password',
+							},
+						},
+						kind: 'stdio',
+						networkAccess: 'declared',
+						requiredEgressHosts: ['api.perplexity.ai'],
+					},
+				},
+			},
+			schemaVersion: 1,
+		});
+		const managedVm: ManagedVm = {
+			id: 'vm-mcp-mediated-stdio',
+			close: vi.fn(async () => {}),
+			enableIngress: vi.fn(async () => ({ host: '127.0.0.1', port: 18791 })),
+			enableSsh: vi.fn(async () => ({ host: '127.0.0.1', port: 2222 })),
+			exec: vi.fn(() => createManagedExecProcessStub({ stdout: '200' })),
+			fs: createManagedVmFsStub(),
+			getHostPid: vi.fn(() => 28293),
+			getVmInstance: vi.fn(() => createVmInstanceStub(28293)),
+			setIngressRoutes: vi.fn(),
+		};
+		const createManagedVm = vi.fn(async (_options: unknown): Promise<ManagedVm> => managedVm);
+
+		await startGatewayZone(
+			{
+				secretResolver: {
+					resolve: async (secretRef) => {
+						if (secretRef.ref === 'op://agent-vm/shravan-discord/bot-token') {
+							return 'discord-token';
+						}
+						if (secretRef.ref === 'op://agent-vm/shravan-gateway-auth/password') {
+							return 'resolved-gateway-token';
+						}
+						if (secretRef.ref === 'op://agent-vm/sunfam-perplexity/credential') {
+							return 'resolved-pplx-key';
+						}
+						if (secretRef.ref === 'op://agent-vm/shravan-perplexity/credential') {
+							return 'zone-pplx-key';
+						}
+						throw new Error(`Unexpected secret ref: ${secretRef.ref}`);
+					},
+					resolveAll: async (secretRefs) =>
+						Object.fromEntries(
+							Object.entries(secretRefs).map(([secretName, secretRef]) => {
+								if (secretRef.ref === 'op://agent-vm/shravan-discord/bot-token') {
+									return [secretName, 'discord-token'];
+								}
+								if (secretRef.ref === 'op://agent-vm/shravan-gateway-auth/password') {
+									return [secretName, 'resolved-gateway-token'];
+								}
+								if (secretRef.ref === 'op://agent-vm/sunfam-perplexity/credential') {
+									return [secretName, 'resolved-pplx-key'];
+								}
+								if (secretRef.ref === 'op://agent-vm/shravan-perplexity/credential') {
+									return [secretName, 'zone-pplx-key'];
+								}
+								throw new Error(`Unexpected secret ref: ${secretRef.ref}`);
+							}),
+						),
+				},
+				systemConfig,
+				zoneId: 'shravan',
+				zoneOverride: {
+					...baseZone,
+					mcpPortal: { configDir },
+				},
+			},
+			{
+				buildImage: vi.fn(async () => ({
+					built: true,
+					fingerprint: 'fp',
+					imagePath: '/tmp/img',
+				})),
+				createManagedVm,
+				loadBuildConfig: vi.fn(async () => minimalBuildConfig),
+			},
+		);
+
+		const createManagedVmCall = createManagedVm.mock.calls[0];
+		if (!createManagedVmCall) {
+			throw new Error('Expected gateway VM creation call');
+		}
+		const [vmOptions] = createManagedVmCall as [
+			{ readonly env: Record<string, string>; readonly secrets: Record<string, unknown> },
+		];
+		expect(vmOptions.secrets).toMatchObject({
+			AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY: {
+				hosts: ['api.perplexity.ai'],
+				value: 'resolved-pplx-key',
+			},
+		});
+		expect(vmOptions.env).not.toHaveProperty('AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY');
+	});
+
 	it('keeps loopback MCP Portal provider URLs out of gateway egress', async () => {
 		const systemConfig = await createSystemConfig();
 		const baseZone = systemConfig.zones[0];
