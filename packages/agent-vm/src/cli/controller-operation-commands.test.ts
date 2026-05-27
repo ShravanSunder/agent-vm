@@ -586,6 +586,16 @@ describe('runControllerOperationCommand', () => {
 							ok: false,
 							hint: 'missing binary\ninstall the binary',
 						},
+						{ name: 'controller-port', ok: true, value: 18800 },
+						{ name: 'host-cache-dir', ok: true },
+						{ name: 'host-runtime-dir', ok: true },
+						{ name: 'gateway-image-profile-worker-dockerfile', ok: true },
+						{ name: 'tool-vm-image-profile-default-dockerfile', ok: true },
+						{ name: 'zone-git-shravan', ok: true },
+						{ name: 'zone-runtime-shravan', ok: true },
+						{ name: 'zone-secrets-shravan', ok: true },
+						{ name: 'worker-config-path-worker', ok: true },
+						{ name: 'worker-config-schema-worker', ok: true },
 					],
 				}),
 			},
@@ -611,8 +621,13 @@ describe('runControllerOperationCommand', () => {
 		expect(output).toContain('controller-required-binary');
 		expect(output).toContain('missing binary');
 		expect(output).toContain('        install the binary');
-		expect(output).toContain('1 passed checks hidden. Use --show-passed to show them.');
-		expect(output).not.toContain('PASS');
+		expect(output).toContain('Passing (11)');
+		expect(output).toContain('PASS controller-port');
+		expect(output).toContain('PASS host-runtime-dir');
+		expect(output).toContain('... 8 more passing checks hidden. Use --show-passed to show all.');
+		expect(output).not.toContain('PASS gateway-image-profile-worker-dockerfile');
+		expect(output).not.toContain('PASS worker-config-worker');
+		expect(output).not.toContain('passed checks hidden.');
 		const parseDoctorOutput = (): void => {
 			JSON.parse(output);
 		};
@@ -677,7 +692,7 @@ describe('runControllerOperationCommand', () => {
 
 			const output = outputs.join('').replaceAll(ansiEscapeSequencePattern, '');
 			expect(output).toContain('Failures');
-			expect(output).toContain('Passed');
+			expect(output).toContain('Passing');
 			expect(output).toContain('FAIL controller-required-binary');
 			expect(output).toContain('PASS controller-port');
 			expect(output).not.toContain('passed checks hidden.');
