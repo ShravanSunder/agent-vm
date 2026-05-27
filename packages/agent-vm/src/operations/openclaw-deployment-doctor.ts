@@ -80,6 +80,13 @@ function hasOnlyRuntimePortalPluginConfig(entries: Record<string, unknown> | und
 	return Object.keys(config).every((key) => runtimeKeys.has(key));
 }
 
+function hasMcpPortalPlugin(config: OpenClawDeploymentConfig): boolean {
+	return (
+		includesString(config.plugins?.allow, 'mcp-portal') ||
+		hasEnabledEntry(config.plugins?.entries, 'mcp-portal')
+	);
+}
+
 function hasPluginApprovalSessionRoute(config: OpenClawDeploymentConfig): boolean {
 	const approvals = config.approvals;
 	if (!isObjectRecord(approvals)) {
@@ -140,6 +147,10 @@ function isPortalServerName(serverName: string): boolean {
 function hasNoOrphanPortalServers(config: OpenClawDeploymentConfig): boolean {
 	const servers = readMcpServers(config);
 	return Object.keys(servers).every((serverName) => !isPortalServerName(serverName));
+}
+
+function hasPortalServers(config: OpenClawDeploymentConfig): boolean {
+	return Object.keys(readMcpServers(config)).some(isPortalServerName);
 }
 
 function hasValidPortalEndpointConfiguration(props: {
@@ -240,6 +251,55 @@ export function buildOpenClawDeploymentDoctorChecks(
 			includesString(config.plugins?.allow, 'memory-core') ||
 			hasEnabledEntry(config.plugins?.entries, 'memory-core');
 		const configuredAgentIds = collectConfiguredAgentIds(config);
+		const shouldCheckMcpPortal =
+			target.runtimeMaterializesPortalEndpoints === true ||
+			hasMcpPortalPlugin(config) ||
+			hasPortalServers(config);
+		const mcpPortalChecks = shouldCheckMcpPortal
+			? [
+					{
+						name: `openclaw-mcp-portal-load-path-${target.zoneId}`,
+						ok: includesString(pluginLoadPaths, '/home/openclaw/.openclaw/extensions/mcp-portal'),
+						hint: 'Add plugins.load.paths for /home/openclaw/.openclaw/extensions/mcp-portal.',
+					},
+					{
+						name: `openclaw-mcp-portal-allowed-${target.zoneId}`,
+						ok:
+							includesString(config.plugins?.allow, 'mcp-portal') &&
+							hasEnabledEntry(config.plugins?.entries, 'mcp-portal'),
+						hint: 'Allow and enable the mcp-portal plugin.',
+					},
+					{
+						name: `openclaw-mcp-portal-prompt-injection-${target.zoneId}`,
+						ok: entryAllowsPromptInjection(config.plugins?.entries, 'mcp-portal'),
+						hint: 'Set plugins.entries.mcp-portal.hooks.allowPromptInjection=true.',
+					},
+					{
+						name: `openclaw-mcp-portal-config-source-${target.zoneId}`,
+						ok: hasOnlyRuntimePortalPluginConfig(config.plugins?.entries),
+						hint: 'Move MCP Portal namespace/tool policy to mcp-portal.config.jsonc; OpenClaw plugin config may only carry configDir.',
+					},
+					{
+						name: `openclaw-mcp-portal-plugin-approvals-${target.zoneId}`,
+						ok: hasPluginApprovalSessionRoute(config),
+						hint: 'Set approvals.plugin.enabled=true and approvals.plugin.mode="session" so MCP Portal tools that require approval can return prompts to the originating chat.',
+					},
+					{
+						name: `openclaw-mcp-portal-agent-endpoints-${target.zoneId}`,
+						ok: hasValidPortalEndpointConfiguration({
+							config,
+							configuredAgentIds,
+							runtimeMaterializesPortalEndpoints:
+								target.runtimeMaterializesPortalEndpoints === true,
+						}),
+						hint: buildPortalEndpointConfigurationHint({
+							configuredAgentIds,
+							runtimeMaterializesPortalEndpoints:
+								target.runtimeMaterializesPortalEndpoints === true,
+						}),
+					},
+				]
+			: [];
 		return [
 			...requirementChecks,
 			{
@@ -247,45 +307,7 @@ export function buildOpenClawDeploymentDoctorChecks(
 				ok: includesString(pluginLoadPaths, '/home/openclaw/.openclaw/extensions/gondolin'),
 				hint: 'Add plugins.load.paths for /home/openclaw/.openclaw/extensions/gondolin.',
 			},
-			{
-				name: `openclaw-mcp-portal-load-path-${target.zoneId}`,
-				ok: includesString(pluginLoadPaths, '/home/openclaw/.openclaw/extensions/mcp-portal'),
-				hint: 'Add plugins.load.paths for /home/openclaw/.openclaw/extensions/mcp-portal.',
-			},
-			{
-				name: `openclaw-mcp-portal-allowed-${target.zoneId}`,
-				ok:
-					includesString(config.plugins?.allow, 'mcp-portal') &&
-					hasEnabledEntry(config.plugins?.entries, 'mcp-portal'),
-				hint: 'Allow and enable the mcp-portal plugin.',
-			},
-			{
-				name: `openclaw-mcp-portal-prompt-injection-${target.zoneId}`,
-				ok: entryAllowsPromptInjection(config.plugins?.entries, 'mcp-portal'),
-				hint: 'Set plugins.entries.mcp-portal.hooks.allowPromptInjection=true.',
-			},
-			{
-				name: `openclaw-mcp-portal-config-source-${target.zoneId}`,
-				ok: hasOnlyRuntimePortalPluginConfig(config.plugins?.entries),
-				hint: 'Move MCP Portal namespace/tool policy to mcp-portal.config.jsonc; OpenClaw plugin config may only carry configDir.',
-			},
-			{
-				name: `openclaw-mcp-portal-plugin-approvals-${target.zoneId}`,
-				ok: hasPluginApprovalSessionRoute(config),
-				hint: 'Set approvals.plugin.enabled=true and approvals.plugin.mode="session" so MCP Portal tools that require approval can return prompts to the originating chat.',
-			},
-			{
-				name: `openclaw-mcp-portal-agent-endpoints-${target.zoneId}`,
-				ok: hasValidPortalEndpointConfiguration({
-					config,
-					configuredAgentIds,
-					runtimeMaterializesPortalEndpoints: target.runtimeMaterializesPortalEndpoints === true,
-				}),
-				hint: buildPortalEndpointConfigurationHint({
-					configuredAgentIds,
-					runtimeMaterializesPortalEndpoints: target.runtimeMaterializesPortalEndpoints === true,
-				}),
-			},
+			...mcpPortalChecks,
 			{
 				name: `openclaw-memory-slot-${target.zoneId}`,
 				ok: !hasMemoryCore || config.plugins?.slots?.memory === 'memory-core',

@@ -15,12 +15,19 @@ export function createDoctorCommand(io: CliIo, dependencies: CliDependencies) {
 				long: 'json',
 				description: 'Print machine-readable JSON output',
 			}),
+			showPassed: flag({
+				long: 'show-passed',
+				description: 'Include passed checks in human-readable output',
+			}),
 		},
-		handler: async ({ config, json }) => {
+		handler: async ({ config, json, showPassed }) => {
 			await runControllerOperationCommand({
 				dependencies,
 				io,
-				restArguments: json ? ['--json'] : [],
+				restArguments: [
+					json ? '--json' : undefined,
+					showPassed ? '--show-passed' : undefined,
+				].filter((argument): argument is string => argument !== undefined),
 				subcommand: 'doctor',
 				systemConfig: await loadSystemConfigFromOption(config, dependencies),
 			});
