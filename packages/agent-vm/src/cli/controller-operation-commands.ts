@@ -306,8 +306,11 @@ function appendDoctorPassingPreviewLines(lines: string[], checks: readonly Docto
 	}
 	const hiddenCheckCount = checks.length - visibleChecks.length;
 	if (hiddenCheckCount > 0) {
+		const checkLabel = hiddenCheckCount === 1 ? 'check' : 'checks';
 		lines.push(
-			dim(`... ${hiddenCheckCount} more passing checks hidden. Use --show-passed to show all.`),
+			dim(
+				`... ${hiddenCheckCount} more passing ${checkLabel} hidden. Use --show-passed to show all.`,
+			),
 		);
 	}
 }
@@ -328,7 +331,7 @@ function writeDoctorText(
 		lines.push(`Failures (${failedChecks.length})`);
 		appendDoctorCheckLines(lines, failedChecks);
 	}
-	if (options.showPassed) {
+	if (options.showPassed && passedChecks.length > 0) {
 		if (failedChecks.length > 0) {
 			lines.push('');
 		}

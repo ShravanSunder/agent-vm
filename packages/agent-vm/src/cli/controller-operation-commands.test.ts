@@ -636,6 +636,90 @@ describe('runControllerOperationCommand', () => {
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
+	it('uses singular wording for one hidden passing doctor check', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
+		try {
+			const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
+			const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
+			const outputs: string[] = [];
+			const systemConfig = createWorkerSystemConfig(workerConfigPath, systemConfigPath);
+
+			await runControllerOperationCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: createControllerClientStub,
+					runControllerDoctor: () => ({
+						ok: false,
+						checks: [
+							{ name: 'controller-required-binary', ok: false, hint: 'missing binary' },
+							{ name: 'controller-port', ok: true },
+							{ name: 'host-cache-dir', ok: true },
+							{ name: 'host-runtime-dir', ok: true },
+							{ name: 'worker-config-worker', ok: true },
+						],
+					}),
+				},
+				io: {
+					stderr: { write: () => true },
+					stdout: {
+						write: (chunk: string | Uint8Array) => {
+							outputs.push(String(chunk));
+							return true;
+						},
+					},
+				},
+				restArguments: [],
+				subcommand: 'doctor',
+				systemConfig,
+			});
+
+			const output = outputs.join('').replaceAll(ansiEscapeSequencePattern, '');
+			expect(output).toContain('... 1 more passing check hidden. Use --show-passed to show all.');
+			expect(output).not.toContain('... 1 more passing checks hidden.');
+		} finally {
+			await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+		}
+	});
+
+	it('does not print an empty passing section when show-passed has no passed checks', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
+		try {
+			const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
+			const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
+			const outputs: string[] = [];
+			const systemConfig = createWorkerSystemConfig(workerConfigPath, systemConfigPath);
+
+			await runControllerOperationCommand({
+				dependencies: {
+					...defaultCliDependencies,
+					createControllerClient: createControllerClientStub,
+					runControllerDoctor: () => ({
+						ok: false,
+						checks: [{ name: 'controller-required-binary', ok: false, hint: 'missing binary' }],
+					}),
+				},
+				io: {
+					stderr: { write: () => true },
+					stdout: {
+						write: (chunk: string | Uint8Array) => {
+							outputs.push(String(chunk));
+							return true;
+						},
+					},
+				},
+				restArguments: ['--show-passed'],
+				subcommand: 'doctor',
+				systemConfig,
+			});
+
+			const output = outputs.join('').replaceAll(ansiEscapeSequencePattern, '');
+			expect(output).toContain('Failures');
+			expect(output).not.toContain('Passing (0)');
+		} finally {
+			await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+		}
+	});
+
 	it('shows passed doctor checks when requested', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
 		try {
