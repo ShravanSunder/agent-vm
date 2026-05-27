@@ -281,7 +281,11 @@ function formatDoctorCheckDetails(check: DoctorCheck): readonly string[] {
 		details.push(`  value: ${String(check.value)}`);
 	}
 	if (check.hint !== undefined) {
-		details.push(`  hint: ${check.hint}`);
+		const [firstLine, ...remainingLines] = check.hint.split('\n');
+		details.push(`  hint: ${firstLine ?? ''}`);
+		for (const line of remainingLines) {
+			details.push(`        ${line}`);
+		}
 	}
 	return details;
 }

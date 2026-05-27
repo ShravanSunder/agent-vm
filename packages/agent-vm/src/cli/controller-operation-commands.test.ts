@@ -579,7 +579,13 @@ describe('runControllerOperationCommand', () => {
 				createControllerClient: createControllerClientStub,
 				runControllerDoctor: () => ({
 					ok: false,
-					checks: [{ name: 'controller-required-binary', ok: false, hint: 'missing binary' }],
+					checks: [
+						{
+							name: 'controller-required-binary',
+							ok: false,
+							hint: 'missing binary\ninstall the binary',
+						},
+					],
 				}),
 			},
 			io: {
@@ -599,8 +605,10 @@ describe('runControllerOperationCommand', () => {
 		const output = outputs.join('');
 		expect(output).toContain('agent-vm doctor');
 		expect(output).toContain('1 failed');
-		expect(output).toContain('FAIL controller-required-binary');
+		expect(output).toContain('FAIL');
+		expect(output).toContain('controller-required-binary');
 		expect(output).toContain('missing binary');
+		expect(output).toContain('        install the binary');
 		const parseDoctorOutput = (): void => {
 			JSON.parse(output);
 		};
