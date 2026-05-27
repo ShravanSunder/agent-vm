@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/config-contracts",
-	"version": "0.0.82",
+	"version": "0.0.83",
 	"description": "Shared agent-vm JSONC config schemas and TypeScript contracts.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {

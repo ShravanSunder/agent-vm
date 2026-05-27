@@ -153,6 +153,18 @@ function hasValidPortalEndpointConfiguration(props: {
 	return props.runtimeMaterializesPortalEndpoints && hasNoOrphanPortalServers(props.config);
 }
 
+function buildPortalEndpointConfigurationHint(props: {
+	readonly configuredAgentIds: readonly string[];
+	readonly runtimeMaterializesPortalEndpoints: boolean;
+}): string {
+	if (props.configuredAgentIds.length === 0) {
+		return 'No agents are configured for this OpenClaw zone. Add at least one agent under zones[].agents and openclaw.json agents.list before MCP Portal endpoint readiness can pass.';
+	}
+	return props.runtimeMaterializesPortalEndpoints
+		? 'agent-vm registers native MCP Portal tools through the OpenClaw plugin; do not configure mcp.servers portal endpoints.'
+		: 'Set zones[].mcpPortal.configDir so agent-vm registers native MCP Portal tools through the OpenClaw plugin.';
+}
+
 function buildAgentAuthProfileChecks(
 	target: OpenClawDeploymentDoctorTarget,
 ): readonly DoctorCheck[] {
@@ -269,10 +281,10 @@ export function buildOpenClawDeploymentDoctorChecks(
 					configuredAgentIds,
 					runtimeMaterializesPortalEndpoints: target.runtimeMaterializesPortalEndpoints === true,
 				}),
-				hint:
-					target.runtimeMaterializesPortalEndpoints === true
-						? 'agent-vm registers native MCP Portal tools through the OpenClaw plugin; do not configure mcp.servers portal endpoints.'
-						: 'Set zones[].mcpPortal.configDir so agent-vm registers native MCP Portal tools through the OpenClaw plugin.',
+				hint: buildPortalEndpointConfigurationHint({
+					configuredAgentIds,
+					runtimeMaterializesPortalEndpoints: target.runtimeMaterializesPortalEndpoints === true,
+				}),
 			},
 			{
 				name: `openclaw-memory-slot-${target.zoneId}`,
