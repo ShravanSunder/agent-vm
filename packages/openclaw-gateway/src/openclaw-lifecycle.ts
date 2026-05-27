@@ -488,6 +488,18 @@ async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<vo
 		}
 		const runtimePluginConfigs = {
 			...zone.runtimePluginConfigs,
+			gondolin: {
+				controllerUrl: `http://${controllerVmHost}:18800`,
+				gatewayControlLinkMonitor: {
+					baseIntervalMs: 10_000,
+					enabled: true,
+					maxIntervalMs: 120_000,
+				},
+				zoneId: zone.id,
+				...(isObjectRecord(zone.runtimePluginConfigs?.gondolin)
+					? zone.runtimePluginConfigs.gondolin
+					: {}),
+			},
 		};
 		const config = isObjectRecord(parsedBaseConfig.gateway) ? parsedBaseConfig.gateway : {};
 		const existingAuthConfig = isObjectRecord(config.auth) ? config.auth : {};

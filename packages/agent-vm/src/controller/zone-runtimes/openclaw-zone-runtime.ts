@@ -139,6 +139,9 @@ export function createOpenClawZoneRuntime(
 			return {
 				ok: result.ok,
 				observation: result.observation,
+				...(result.path === undefined ? {} : { path: result.path }),
+				...(result.port === undefined ? {} : { port: result.port }),
+				...(result.statusCode === undefined ? {} : { statusCode: result.statusCode }),
 				zoneId: options.zone.id,
 			};
 		},

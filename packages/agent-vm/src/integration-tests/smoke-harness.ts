@@ -53,6 +53,7 @@ const openClawMcpPortalPluginName = 'mcp-portal';
 const smokeTempRootPrefixes = [
 	'agent-vm-gateway-smoke-project-',
 	'agent-vm-smoke-harness-',
+	'openclaw-control-link-smoke-',
 	'openclaw-mcp-portal-smoke-',
 	'openclaw-subagent-lease-smoke-',
 	'openclaw-zone-git-smoke-',

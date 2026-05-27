@@ -869,6 +869,11 @@ describe('openclawLifecycle', () => {
 							enabled: true,
 							config: {
 								controllerUrl: 'http://controller.vm.host:18800',
+								gatewayControlLinkMonitor: {
+									baseIntervalMs: 10_000,
+									enabled: true,
+									maxIntervalMs: 120_000,
+								},
 								zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
 								zoneId: 'shravan',
 							},

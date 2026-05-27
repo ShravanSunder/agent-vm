@@ -1,6 +1,7 @@
 import { configureHostNetworkDefaults, type ManagedVm } from '@agent-vm/gondolin-adapter';
 import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
 
+import { resolveControllerHealthConfig } from '../config/system-config.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import { runTaskWithResult } from '../shared/run-task.js';
 import { createToolVm } from '../tool-vm/tool-vm-lifecycle.js';
@@ -21,6 +22,8 @@ import {
 } from './controller-runtime-types.js';
 import type { PullDefaultRequest } from './git-pull-default-operations.js';
 import type { PushBranchRequest } from './git-push-operations.js';
+import { createGatewayServiceHealthMonitor } from './health/gateway-service-health-monitor.js';
+import { HealthEventStore } from './health/health-event-store.js';
 import { createMutableControllerRuntimeReadiness } from './http/controller-http-route-support.js';
 import { createControllerService } from './http/controller-http-routes.js';
 import { startControllerHttpServer } from './http/controller-http-server.js';
@@ -68,6 +71,28 @@ function isWorkerZone(zone: ControllerZoneConfig): zone is ControllerZoneConfig 
 	readonly gateway: Extract<ControllerZoneConfig['gateway'], { readonly type: 'worker' }>;
 } {
 	return zone.gateway.type === 'worker';
+}
+
+function buildOpenClawRuntimePluginConfig(options: {
+	readonly systemConfig: StartControllerRuntimeOptions['systemConfig'];
+	readonly zoneGitCapabilityStore: ZoneGitCapabilityStore;
+	readonly zoneId: string;
+}): Readonly<Record<string, Readonly<Record<string, unknown>>>> {
+	const zoneGitRuntimePluginConfig = options.zoneGitCapabilityStore.buildRuntimePluginConfig(
+		options.zoneId,
+	);
+	const healthConfig = resolveControllerHealthConfig(options.systemConfig);
+	return {
+		...zoneGitRuntimePluginConfig,
+		gondolin: {
+			...zoneGitRuntimePluginConfig.gondolin,
+			gatewayControlLinkMonitor: {
+				baseIntervalMs: healthConfig.gatewayControlLinkIntervalMs,
+				enabled: healthConfig.enabled,
+				maxIntervalMs: healthConfig.gatewayControlLinkBackoffCeilingMs,
+			},
+		},
+	};
 }
 
 function resolveZoneGitOperationConfig(options: {
@@ -149,6 +174,11 @@ export async function startControllerRuntime(
 	const zoneGitCapabilityStore =
 		dependencies.zoneGitCapabilityStore ?? new ZoneGitCapabilityStore();
 	const zoneGitOperationLocks = dependencies.zoneGitOperationLocks ?? new ZoneGitOperationLocks();
+	const controllerHealthConfig = resolveControllerHealthConfig(options.systemConfig);
+	const healthEventStore = new HealthEventStore({
+		eventHistoryLimit: controllerHealthConfig.eventHistoryLimit,
+		staleAfterMs: controllerHealthConfig.staleAfterMs,
+	});
 	const stateDirFor = (zoneId: string): string => {
 		const zone = options.systemConfig.zones.find((candidate) => candidate.id === zoneId);
 		if (!zone) {
@@ -240,7 +270,11 @@ export async function startControllerRuntime(
 							await (dependencies.startGatewayZone ?? startGatewayZone)({
 								runTask: runTaskStep,
 								runtimeEnvironment: zoneGitCapabilityStore.buildRuntimeEnvironment(zoneId),
-								runtimePluginConfigs: zoneGitCapabilityStore.buildRuntimePluginConfig(zoneId),
+								runtimePluginConfigs: buildOpenClawRuntimePluginConfig({
+									systemConfig: options.systemConfig,
+									zoneGitCapabilityStore,
+									zoneId,
+								}),
 								secretResolver,
 								systemConfig: options.systemConfig,
 								zoneId,
@@ -351,6 +385,7 @@ export async function startControllerRuntime(
 		stopController,
 	};
 	const controllerApp = createControllerService({
+		healthEventStore,
 		leaseManager,
 		...(dependencies.onLeaseCreateRequest
 			? { onLeaseCreateRequest: dependencies.onLeaseCreateRequest }
@@ -380,10 +415,39 @@ export async function startControllerRuntime(
 
 	await reapToolVmLeases();
 
+	const gatewayServiceHealthMonitor = controllerHealthConfig.enabled
+		? createGatewayServiceHealthMonitor({
+				healthEventStore,
+				intervalMs: controllerHealthConfig.gatewayServiceIntervalMs,
+				now,
+				probeZoneHealth: async (zoneId) => {
+					const health = await operations.getZoneHealth(zoneId);
+					if (typeof health.path !== 'string' || typeof health.port !== 'number') {
+						throw new Error(
+							`Zone '${zoneId}' health probe did not include gateway service path/port.`,
+						);
+					}
+					return {
+						ok: health.ok,
+						path: health.path,
+						port: health.port,
+						...(typeof health.statusCode === 'number' ? { statusCode: health.statusCode } : {}),
+						zoneId: health.zoneId,
+					};
+				},
+				zoneIds: registry.selectedZoneIds.filter((zoneId) => {
+					const zone = options.systemConfig.zones.find((candidate) => candidate.id === zoneId);
+					return zone ? isOpenClawZone(zone) : false;
+				}),
+			})
+		: undefined;
+	gatewayServiceHealthMonitor?.start();
+
 	const snapshotByZone = registry.getSnapshotByZone();
 	return {
 		async close(): Promise<void> {
 			clearReaperTimer();
+			gatewayServiceHealthMonitor?.stop();
 			requestHeartbeatRegistry.stopAll();
 			const releaseError = await releaseAllLeases();
 			let stopError: Error | undefined;

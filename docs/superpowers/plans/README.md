@@ -41,12 +41,6 @@ supporting context.
   - Also adds the small generic VM capability/SSH type layer, specializes it as
     `ToolVmSshLease`, and keeps the OpenClaw FS bridge adapter-local.
 
-- `2026-05-22-gondolin-mapped-tcp-upstream.md`
-  - Current follow-up plan for upstreaming the local Gondolin mapped-TCP
-    classification patch.
-  - Externally visible GitHub issue/PR actions still require explicit human
-    authorization.
-
 ## Current Design References, Not Direct Execution Plans
 
 - `2026-05-20-credentialed-tool-system.md`

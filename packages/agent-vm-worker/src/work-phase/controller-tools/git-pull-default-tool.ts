@@ -10,7 +10,6 @@ import {
 	selectRepo,
 } from './controller-tool-support.js';
 
-const CONTROLLER_TOOL_TIMEOUT_MS = 120_000;
 const GIT_TOOL_TIMEOUT_MS = 30_000;
 
 interface GitToolCommandResult {
@@ -240,7 +239,7 @@ export function createGitPullDefaultTool(props: CreateGitPullDefaultToolProps): 
 
 			const result = await postControllerJson({
 				url: `${props.controllerBaseUrl}/zones/${props.zoneId}/tasks/${props.taskId}/pull-default`,
-				timeoutMs: CONTROLLER_TOOL_TIMEOUT_MS,
+				operation: 'worker-pull-default',
 				body: {
 					repoUrl: selected.repo.repoUrl,
 					currentBranch: currentBranchResult.branch,

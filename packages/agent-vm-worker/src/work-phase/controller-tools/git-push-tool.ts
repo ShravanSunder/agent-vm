@@ -7,8 +7,6 @@ import {
 	selectRepo,
 } from './controller-tool-support.js';
 
-const CONTROLLER_TOOL_TIMEOUT_MS = 120_000;
-
 export interface CreateGitPushToolProps {
 	readonly controllerBaseUrl: string;
 	readonly zoneId: string;
@@ -55,7 +53,7 @@ export function createGitPushTool(props: CreateGitPushToolProps): ToolDefinition
 
 			const result = await postControllerJson({
 				url: `${props.controllerBaseUrl}/zones/${props.zoneId}/tasks/${props.taskId}/push-branches`,
-				timeoutMs: CONTROLLER_TOOL_TIMEOUT_MS,
+				operation: 'worker-push-branches',
 				body: {
 					branches: [{ repoUrl: selected.repo.repoUrl, branchName: branchResult.branch }],
 				},

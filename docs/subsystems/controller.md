@@ -85,6 +85,8 @@ All routes are served by Hono on the configured `host.controllerPort` (default 1
 | Method | Path | Description | Response |
 |--------|------|-------------|----------|
 | `GET` | `/health` | Liveness probe | `{ ok, port }` |
+| `POST` | `/zones/:zoneId/health-events` | Record one zone-scoped health event from a gateway VM or controller observer | `{ ok: true }` |
+| `GET` | `/zones/:zoneId/health-snapshot` | Read the current in-memory zone health snapshot | Discriminated snapshot body |
 | `POST` | `/lease` | Create a tool VM lease | Lease with SSH access details |
 | `GET` | `/lease/:leaseId` | Read a lease without extending its idle timer | Lease with SSH identity PEM |
 | `GET` | `/lease/:leaseId/peek` | Inspect a lease without extending its idle timer | Lease summary without SSH identity PEM |
@@ -123,6 +125,55 @@ It must reject `-- <remote command>` and `--print` so the CLI does not become an
 unreviewed remote-command runner. Command execution inside a gateway VM is a
 separate `/zones/:zoneId/execute-command` controller operation and is protected
 by zone admin authorization when `adminAccess` is configured.
+
+---
+
+## Health Model
+
+The agent-vm controller is global, but operational health is zone-scoped.
+Operators debug the boundary that is sick for a specific zone: gateway VM,
+gateway-service process, gateway-to-controller control link, lease routes,
+Tool VM SSH, or worker controller-tool requests.
+
+`GET /health` is only the global agent-vm controller liveness endpoint. It does
+not emit a zone-scoped `controller-runtime` event because it has no zone
+context.
+
+Health events are in-memory controller state. They are not backup state and are
+lost on agent-vm controller restart. The latest event per boundary is retained
+separately from the bounded rolling history.
+
+```text
+agent-vm controller
+  |-- probes gateway-service through the zone runtime health check
+  |     -> gateway-service-health
+  |
+gateway VM / OpenClaw Gondolin plugin
+  |-- calls GET /health over controller.vm.host:18800
+  |     -> gateway-control-link
+  |
+lease routes
+  |-- POST /lease/:leaseId/renew
+  |     -> lease-renew
+  |-- POST /lease/:leaseId/uses/:useId/heartbeat
+  |     -> lease-heartbeat
+  |
+Tool VM SSH guard
+  |-- command, file-bridge, finalize, probe
+        -> tool-vm-ssh
+```
+
+`lease-heartbeat` is the user-facing name for
+`POST /lease/:leaseId/uses/:useId/heartbeat`. It keeps an in-flight Tool VM use
+alive and touches the lease when successful. `lease-renew` keeps an idle cached
+lease alive before reuse. Both can extend lease state, but they diagnose
+different paths: heartbeat means "an active operation still exists"; renew
+means "a cached lease can be reused."
+
+Bounded controller communication is operation-specific, not globally
+aggressive. Health probes use short timeouts and no retry. Git push/pull and
+lease-create operations use longer timeouts because normal work can legitimately
+take longer. Unsafe mutations are not retried without an idempotency proof.
 
 ---
 
