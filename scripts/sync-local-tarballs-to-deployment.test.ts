@@ -37,12 +37,13 @@ describe('beta tarball sync planning', () => {
 		});
 
 		const workspaceYaml = renderBetaPnpmWorkspace({
-			onlyBuiltDependencies: ['openclaw', 'ssh2'],
+			onlyBuiltDependencies: ['@google/genai', 'openclaw', 'ssh2'],
 			plan,
 		});
 
 		expect(workspaceYaml).toContain('packages: []');
-		expect(workspaceYaml).toContain('  - openclaw');
+		expect(workspaceYaml).toContain('  - "@google/genai"');
+		expect(workspaceYaml).toContain('  - "openclaw"');
 		expect(workspaceYaml).toContain(
 			"  '@agent-vm/openclaw-agent-vm-plugin': file:../agent-vm/tmp/beta-tarballs-abc123ef/agent-vm-openclaw-agent-vm-plugin-0.0.82.tgz",
 		);

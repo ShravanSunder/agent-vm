@@ -1,5 +1,5 @@
 // oxlint-disable typescript-eslint/explicit-function-return-type
-import { command } from 'cmd-ts';
+import { command, flag } from 'cmd-ts';
 
 import type { CliDependencies, CliIo } from '../agent-vm-cli-support.js';
 import { runControllerOperationCommand } from '../controller-operation-commands.js';
@@ -11,12 +11,16 @@ export function createDoctorCommand(io: CliIo, dependencies: CliDependencies) {
 		description: 'Check offline prerequisites for the configured agent-vm project',
 		args: {
 			config: createConfigOption(),
+			json: flag({
+				long: 'json',
+				description: 'Print machine-readable JSON output',
+			}),
 		},
-		handler: async ({ config }) => {
+		handler: async ({ config, json }) => {
 			await runControllerOperationCommand({
 				dependencies,
 				io,
-				restArguments: [],
+				restArguments: json ? ['--json'] : [],
 				subcommand: 'doctor',
 				systemConfig: await loadSystemConfigFromOption(config, dependencies),
 			});

@@ -159,7 +159,7 @@ export function createBetaTarballSyncPlan(
 export function renderBetaPnpmWorkspace(options: RenderBetaPnpmWorkspaceOptions): string {
 	const lines = ['packages: []', '', 'onlyBuiltDependencies:'];
 	for (const dependencyName of options.onlyBuiltDependencies) {
-		lines.push(`  - ${dependencyName}`);
+		lines.push(`  - ${JSON.stringify(dependencyName)}`);
 	}
 	lines.push('', 'overrides:');
 	for (const packageEntry of options.plan.packages) {
