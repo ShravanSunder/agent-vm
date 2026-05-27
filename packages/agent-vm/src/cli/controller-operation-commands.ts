@@ -62,6 +62,8 @@ interface DoctorCommandResult {
 	readonly summary: string;
 }
 
+const defaultPassingPreviewLimit = 3;
+
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -297,6 +299,22 @@ function appendDoctorCheckLines(lines: string[], checks: readonly DoctorCheck[])
 	}
 }
 
+function appendDoctorPassingPreviewLines(lines: string[], checks: readonly DoctorCheck[]): void {
+	const visibleChecks = checks.slice(0, defaultPassingPreviewLimit);
+	for (const check of visibleChecks) {
+		lines.push(`${formatDoctorCheckStatus(check)} ${check.name}`);
+	}
+	const hiddenCheckCount = checks.length - visibleChecks.length;
+	if (hiddenCheckCount > 0) {
+		const checkLabel = hiddenCheckCount === 1 ? 'check' : 'checks';
+		lines.push(
+			dim(
+				`... ${hiddenCheckCount} more passing ${checkLabel} hidden. Use --show-passed to show all.`,
+			),
+		);
+	}
+}
+
 function writeDoctorText(
 	io: CliIo,
 	result: DoctorCommandResult,
@@ -307,23 +325,24 @@ function writeDoctorText(
 	const statusLine =
 		result.failed === 0
 			? green(`${result.passed} passed, 0 failed`)
-			: red(`${result.failed} failed`) + dim(`, ${result.passed} passed`);
+			: red(`${result.failed} failed`) + dim(', ') + green(`${result.passed} passed`);
 	const lines = ['agent-vm doctor', '', statusLine, ''];
 	if (failedChecks.length > 0) {
 		lines.push(`Failures (${failedChecks.length})`);
 		appendDoctorCheckLines(lines, failedChecks);
 	}
-	if (options.showPassed) {
+	if (options.showPassed && passedChecks.length > 0) {
 		if (failedChecks.length > 0) {
 			lines.push('');
 		}
-		lines.push(`Passed (${passedChecks.length})`);
+		lines.push(green(`Passing (${passedChecks.length})`));
 		appendDoctorCheckLines(lines, passedChecks);
 	} else if (passedChecks.length > 0) {
 		if (failedChecks.length > 0) {
 			lines.push('');
 		}
-		lines.push(dim(`${passedChecks.length} passed checks hidden. Use --show-passed to show them.`));
+		lines.push(green(`Passing (${passedChecks.length})`));
+		appendDoctorPassingPreviewLines(lines, passedChecks);
 	}
 	io.stdout.write(`${lines.join('\n')}\n`);
 }
