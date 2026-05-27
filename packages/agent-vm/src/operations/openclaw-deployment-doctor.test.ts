@@ -602,6 +602,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 	it('flags portal endpoint checks when no agents are configured', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{
+				runtimeMaterializesPortalEndpoints: true,
 				zoneId: 'shravan',
 				config: {
 					agents: {
@@ -618,7 +619,7 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 			checks.find((check) => check.name === 'openclaw-mcp-portal-agent-endpoints-shravan'),
 		).toMatchObject({
 			ok: false,
-			hint: 'Set zones[].mcpPortal.configDir so agent-vm registers native MCP Portal tools through the OpenClaw plugin.',
+			hint: 'No agents are configured for this OpenClaw zone. Add at least one agent under zones[].agents and openclaw.json agents.list before MCP Portal endpoint readiness can pass.',
 		});
 	});
 
