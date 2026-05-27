@@ -9,7 +9,7 @@ import {
 	renderOpenClawGatewayOverlay,
 	resolvePnpmPackArgs,
 	updateBetaPackageManifest,
-} from './beta-tarball-sync.ts';
+} from './sync-local-tarballs-to-deployment.ts';
 
 describe('beta tarball sync planning', () => {
 	it('pins the host install and every workspace override to one tarball directory', () => {
