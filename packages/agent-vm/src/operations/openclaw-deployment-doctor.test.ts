@@ -220,6 +220,52 @@ describe('buildOpenClawDeploymentDoctorChecks', () => {
 		});
 	});
 
+	it('skips MCP Portal plugin readiness checks when MCP Portal is not configured', () => {
+		const checks = buildOpenClawDeploymentDoctorChecks([
+			{
+				configuredAuthProfileAgentIds: ['sun'],
+				runtimeMaterializesPortalEndpoints: false,
+				zoneId: 'shravan',
+				config: {
+					agents: {
+						defaults: {
+							model: { primary: 'openai-codex/gpt-5.5' },
+							sandbox: openClawToolVmSandbox,
+							workspace: '/zone/agents/default',
+						},
+						list: [{ id: 'sun' }],
+					},
+					approvals: openClawPluginApprovalSession,
+					plugins: {
+						allow: ['gondolin', 'memory-core', 'discord'],
+						entries: {
+							gondolin: { enabled: true },
+							'memory-core': { enabled: true },
+							discord: { enabled: true },
+						},
+						load: {
+							paths: ['/home/openclaw/.openclaw/extensions/gondolin'],
+						},
+						slots: { memory: 'memory-core' },
+					},
+					tools: openClawSandboxPluginTools,
+				},
+			},
+		]);
+
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-mcp-portal-load-path-shravan',
+		);
+		expect(checks.map((check) => check.name)).not.toContain('openclaw-mcp-portal-allowed-shravan');
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-mcp-portal-prompt-injection-shravan',
+		);
+		expect(checks.map((check) => check.name)).not.toContain(
+			'openclaw-mcp-portal-agent-endpoints-shravan',
+		);
+		expect(checks.every((check) => check.ok)).toBe(true);
+	});
+
 	it('ignores OpenClaw-owned Discord session and binding semantics', () => {
 		const checks = buildOpenClawDeploymentDoctorChecks([
 			{

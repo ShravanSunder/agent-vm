@@ -605,14 +605,80 @@ describe('runControllerOperationCommand', () => {
 		const output = outputs.join('');
 		expect(output).toContain('agent-vm doctor');
 		expect(output).toContain('1 failed');
+		expect(output).toContain('Failures');
 		expect(output).toContain('FAIL');
 		expect(output).toContain('controller-required-binary');
 		expect(output).toContain('missing binary');
 		expect(output).toContain('        install the binary');
+		expect(output).toContain('1 passed checks hidden. Use --show-passed to show them.');
+		expect(output).not.toContain('PASS');
 		const parseDoctorOutput = (): void => {
 			JSON.parse(output);
 		};
 		expect(parseDoctorOutput).toThrow();
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('shows passed doctor checks when requested', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
+		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
+		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
+		await fs.writeFile(
+			workerConfigPath,
+			JSON.stringify({
+				phases: {
+					plan: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					work: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					wrapup: { instructions: null },
+				},
+			}),
+			'utf8',
+		);
+		const outputs: string[] = [];
+		const systemConfig = createWorkerSystemConfig(workerConfigPath, systemConfigPath);
+		await writeImageBuildConfigsForDoctor(systemConfig);
+
+		await runControllerOperationCommand({
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: createControllerClientStub,
+				runControllerDoctor: () => ({
+					ok: false,
+					checks: [
+						{ name: 'controller-required-binary', ok: false, hint: 'missing binary' },
+						{ name: 'controller-port', ok: true, value: 18800 },
+					],
+				}),
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			restArguments: ['--show-passed'],
+			subcommand: 'doctor',
+			systemConfig,
+		});
+
+		const output = outputs.join('');
+		expect(output).toContain('Failures');
+		expect(output).toContain('Passed');
+		expect(output).toContain('FAIL controller-required-binary');
+		expect(output).toContain('PASS controller-port');
+		expect(output).not.toContain('passed checks hidden.');
 
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
