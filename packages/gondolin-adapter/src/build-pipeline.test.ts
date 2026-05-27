@@ -222,6 +222,58 @@ describe('buildImage', () => {
 		expect(fakeBuildIntoDirectory).toHaveBeenCalledTimes(1);
 	});
 
+	it('moves Gondolin work rootfs into output instead of copying it', async () => {
+		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
+		temporaryDirectories.push(cacheDirectory);
+		const buildConfig: BuildConfig = {
+			arch: 'aarch64',
+			distro: 'alpine',
+			rootfs: {
+				label: 'gondolin-root',
+			},
+		};
+		let rootfsSourceWasMoved = false;
+		let capturedWorkDir: string | undefined;
+
+		const result = await buildImage(
+			{
+				buildConfig,
+				cacheDir: cacheDirectory,
+			},
+			{
+				buildAssets: async (
+					_buildConfig: BuildConfig,
+					outputDirectory: string,
+					_configDir?: string,
+					workDir?: string,
+				): Promise<void> => {
+					if (!workDir) {
+						throw new Error('Expected an explicit Gondolin work directory.');
+					}
+					capturedWorkDir = workDir;
+					await fsPromises.mkdir(workDir, { recursive: true });
+					await fsPromises.mkdir(outputDirectory, { recursive: true });
+					const workRootfsPath = path.join(workDir, 'rootfs.ext4');
+					await fsPromises.writeFile(workRootfsPath, 'rootfs-from-work', 'utf8');
+					fs.copyFileSync(workRootfsPath, path.join(outputDirectory, 'rootfs.ext4'));
+					rootfsSourceWasMoved = !fs.existsSync(workRootfsPath);
+					await fsPromises.writeFile(path.join(outputDirectory, 'manifest.json'), '{}', 'utf8');
+					await fsPromises.writeFile(path.join(outputDirectory, 'initramfs.cpio.lz4'), '', 'utf8');
+					await fsPromises.writeFile(path.join(outputDirectory, 'vmlinuz-virt'), '', 'utf8');
+				},
+				gondolinVersion: 'gondolin@1',
+			},
+		);
+
+		expect(rootfsSourceWasMoved).toBe(true);
+		await expect(
+			fsPromises.readFile(path.join(result.imagePath, 'rootfs.ext4'), 'utf8'),
+		).resolves.toBe('rootfs-from-work');
+		await expect(fsPromises.access(capturedWorkDir ?? '')).rejects.toMatchObject({
+			code: 'ENOENT',
+		});
+	});
+
 	it('dedupes concurrent identical image builds in process', async () => {
 		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
 		temporaryDirectories.push(cacheDirectory);
