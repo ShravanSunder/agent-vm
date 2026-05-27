@@ -9,6 +9,7 @@ import { defaultCliDependencies } from './agent-vm-cli-support.js';
 import { runControllerOperationCommand } from './controller-operation-commands.js';
 
 const originalPath = process.env.PATH;
+const ansiEscapeSequencePattern = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
 
 afterEach(() => {
 	process.env.PATH = originalPath;
@@ -602,7 +603,7 @@ describe('runControllerOperationCommand', () => {
 			systemConfig,
 		});
 
-		const output = outputs.join('');
+		const output = outputs.join('').replaceAll(ansiEscapeSequencePattern, '');
 		expect(output).toContain('agent-vm doctor');
 		expect(output).toContain('1 failed');
 		expect(output).toContain('Failures');
@@ -673,7 +674,7 @@ describe('runControllerOperationCommand', () => {
 			systemConfig,
 		});
 
-		const output = outputs.join('');
+		const output = outputs.join('').replaceAll(ansiEscapeSequencePattern, '');
 		expect(output).toContain('Failures');
 		expect(output).toContain('Passed');
 		expect(output).toContain('FAIL controller-required-binary');
