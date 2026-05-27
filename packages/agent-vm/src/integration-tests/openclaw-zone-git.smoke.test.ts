@@ -1,5 +1,5 @@
 /* oxlint-disable eslint/no-await-in-loop -- smoke test steps must be sequential against live VMs */
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { buildOpenClawRuntimeStatusReport } from '@agent-vm/openclaw-agent-vm-plugin';
@@ -64,6 +64,9 @@ function assertControllerLeaseResponse(
 	) {
 		throw new Error(`Lease response had unexpected shape: ${JSON.stringify(payload)}`);
 	}
+	if ('scopeKey' in payload) {
+		throw new Error(`Lease response must not expose scopeKey: ${JSON.stringify(payload)}`);
+	}
 }
 
 function assertControllerLeasePeekResponse(
@@ -92,6 +95,22 @@ async function readJsonResponse(response: Response): Promise<unknown> {
 	return JSON.parse(responseBody) as unknown;
 }
 
+function parseUnknownJson(text: string): unknown {
+	return JSON.parse(text) as unknown;
+}
+
+async function readToolVmRuntimeRecordPayloads(stateDir: string): Promise<readonly unknown[]> {
+	const toolLeasesDir = path.join(stateDir, 'tool-leases');
+	const entries = await readdir(toolLeasesDir);
+	return await Promise.all(
+		entries
+			.filter((entry) => entry.endsWith('.json'))
+			.map(async (entry) =>
+				parseUnknownJson(await readFile(path.join(toolLeasesDir, entry), 'utf8')),
+			),
+	);
+}
+
 async function requestZoneGitLease(options: {
 	readonly controllerUrl: string;
 	readonly zoneId: string;
@@ -101,13 +120,6 @@ async function requestZoneGitLease(options: {
 			agentId: 'smoke',
 			agentWorkspaceDir: '/zone/agents/smoke',
 			profileId: 'standard',
-			sandbox: {
-				backend: 'gondolin',
-				mode: 'all',
-				scope: 'agent',
-				workspaceAccess: 'rw',
-			},
-			scopeKey: 'agent:smoke',
 			sessionKey: 'agent:smoke:zone-git-smoke',
 			workMountDir: '/zone/agents/smoke',
 			zoneId: options.zoneId,
@@ -296,10 +308,22 @@ describeOpenClawZoneGitSmoke('smoke: OpenClaw zone Git workflow', () => {
 			zoneId: project.zone.id,
 		});
 		expect(lease.workdir).toBe('/zone/agents/smoke');
+		const runtimeRecords = await readToolVmRuntimeRecordPayloads(project.zone.gateway.stateDir);
+		const matchingRecord = runtimeRecords.find(
+			(record) => isObjectRecord(record) && record.leaseId === lease.leaseId,
+		);
+		expect(matchingRecord).toMatchObject({
+			agentId: 'smoke',
+			leaseId: lease.leaseId,
+		});
+		for (const runtimeRecord of runtimeRecords) {
+			expect(JSON.stringify(runtimeRecord)).not.toContain('"scopeKey"');
+		}
 		const leasePeek = await peekLease({
 			controllerUrl: harness.controllerUrl,
 			leaseId: lease.leaseId,
 		});
+		expect(JSON.stringify(leasePeek)).not.toContain('"scopeKey"');
 		const identityFilePath = await createSshIdentityFile({
 			identityPem: lease.ssh.identityPem,
 			tempRoot: project.tempRoot,

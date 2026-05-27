@@ -19,6 +19,7 @@ describe('manual templates', () => {
 		expect(content).toContain('shravan');
 		expect(content).toContain('docs/manual/image-versioning.md');
 		expect(content).toContain('docs/manual/gateway-ingress.md');
+		expect(content).toContain('lease-heartbeat');
 		expect(content).toContain('docs/manual/mcp-portal.md');
 		expect(content).toContain('Do not silently edit privileged host/deployment config');
 		expect(content).not.toContain('Discord is enabled by default');
@@ -34,7 +35,7 @@ describe('manual templates', () => {
 			'docs/manual/README.md',
 			'docs/manual/layout.md',
 			'docs/manual/image-versioning.md',
-			'docs/manual/scope.md',
+			'docs/manual/tool-vm-leases.md',
 			'docs/manual/operations.md',
 			'docs/manual/openclaw.md',
 			'docs/manual/gateway-ingress.md',
@@ -58,6 +59,18 @@ describe('manual templates', () => {
 		);
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
 			'media.discordapp.net',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'*.discord.gg',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'*.discord.media',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'gateway-us-east1-c.discord.gg:443',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).toContain(
+			'wildcard websocketBypass',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('channels.md'))?.content).not.toContain(
 			'Add runtimeAuthHints',
@@ -190,6 +203,12 @@ describe('manual templates', () => {
 			'private-network upstream URLs',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Prefer http-mediation for MCP provider API keys, including stdio providers',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
+			'Use raw env injection only as an explicit exception',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'authored config is trusted deployment config',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
@@ -210,6 +229,16 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
 			'runtime-paths.md explains /workspace, /work, and other in-VM paths',
 		);
+		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
+			'tool-vm-leases.md explains agent-keyed Tool VM lease identity and reuse',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('README.md'))?.content).toContain(
+			'health snapshots',
+		);
+		expect(
+			files.find((file) => file.relativePath.endsWith('tool-vm-leases.md'))?.content,
+		).toContain('The lease identity remains zoneId + agentId');
+		expect(files.some((file) => file.relativePath.endsWith('scope.md'))).toBe(false);
 		expect(files.find((file) => file.relativePath.endsWith('layout.md'))?.content).toContain(
 			'OpenClaw Tool VMs mount the validated lease work mount at /workspace',
 		);
@@ -221,6 +250,15 @@ describe('manual templates', () => {
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'/work is Tool VM-local rootfs/COW scratch',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'The OpenClaw plugin may accept Tool VM guest cwd intent',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'The controller `/lease workMountDir` is stricter',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
+			'Direct Tool VM guest paths such as `/workspace` and `/work` are rejected at the controller boundary',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'workMountDir',
@@ -240,20 +278,27 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('runtime-paths.md'))?.content).toContain(
 			'worker repo edits live under /work/repos',
 		);
-		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
-			'defaultToolVmProfile',
+		const toolVmLeaseManual = files.find((file) =>
+			file.relativePath.endsWith('tool-vm-leases.md'),
+		)?.content;
+		expect(toolVmLeaseManual).toContain('defaultToolVmProfile');
+		expect(toolVmLeaseManual).toContain('one compatible Tool VM per zone and OpenClaw agent id');
+		expect(toolVmLeaseManual).toContain('discarded before the controller lease request');
+		expect(toolVmLeaseManual).not.toContain('scopeKey');
+		expect(toolVmLeaseManual).toContain('active shell/file operations heartbeat per-use records');
+		expect(toolVmLeaseManual).toContain('lease-heartbeat');
+		expect(toolVmLeaseManual).toContain('lease-renew');
+		expect(files.find((file) => file.relativePath.endsWith('operations.md'))?.content).toContain(
+			'GET /zones/<zoneId>/health-snapshot',
 		);
-		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
-			'one compatible Tool VM per zone and OpenClaw agent id',
-		);
-		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
-			'scopeKey may describe a channel',
-		);
-		expect(files.find((file) => file.relativePath.endsWith('scope.md'))?.content).toContain(
-			'active shell/file operations heartbeat per-use records',
+		expect(files.find((file) => file.relativePath.endsWith('operations.md'))?.content).toContain(
+			'Health timeouts are operation-specific',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('openclaw.md'))?.content).toContain(
 			'The controller is the control plane',
+		);
+		expect(files.find((file) => file.relativePath.endsWith('openclaw.md'))?.content).toContain(
+			'OpenClaw application heartbeat turns are not infrastructure health checks',
 		);
 		expect(files.find((file) => file.relativePath.endsWith('openclaw.md'))?.content).toContain(
 			'gateway-to-Tool-VM SSH data path',

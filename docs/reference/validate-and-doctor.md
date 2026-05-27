@@ -26,6 +26,8 @@ It checks:
 - Worker prompt file references exist and stay under `prompts/`.
 - OpenClaw gateway configs pass `openclaw config validate --json` for
   OpenClaw zones.
+- MCP Portal config shape, profile references, provider materialization, stdio
+  network declarations, mediated hosts, and raw-env exceptions are coherent.
 - Container runtime paths like `/etc/agent-vm/...` map back to checkout files
   when `system.jsonc` or `system.json` lives under a scaffold `config/` directory.
 - `vm-host-system/` is complete when present in a checked-out container
@@ -33,6 +35,12 @@ It checks:
 
 Use `validate` after editing config, prompts, scaffold files, or image recipe
 paths.
+
+Use `agent-vm validate --config config/system.jsonc --mcp-live` after changing
+MCP providers, provider secrets, or MCP Portal profile tool names. The live MCP
+pass resolves configured secrets, starts each provider, runs `tools/list`, and
+reports namespace, transport, phase, and hints for provider failures. That
+live upstream proof belongs to `validate --mcp-live`, not `doctor`.
 
 ## doctor
 
@@ -53,6 +61,8 @@ It checks:
 - Configured 1Password token source, if the config uses one.
 - OpenClaw CLI availability for OpenClaw zones.
 - OpenClaw gateway configs pass the catalog's own OpenClaw CLI validation.
+- OpenClaw MCP Portal plugin wiring and plugin approval routing for OpenClaw
+  zones.
 - OpenClaw Tool VM profile mappings, per-agent auth profile entries, and
   sandbox seed entries are visible as named checks.
 - OpenClaw Tool VM deployment requirements use the same finding IDs as

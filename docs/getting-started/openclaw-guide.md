@@ -54,11 +54,11 @@ For the full OpenClaw architecture, see [architecture/openclaw-gateway.md](../ar
       }
     },
     "egressHosts": [
-      { "host": "api.anthropic.com", "audience": "gateway" },
-      { "host": "api.openai.com", "audience": "gateway" },
-      { "host": "auth.openai.com", "audience": "gateway" },
-      { "host": "chatgpt.com", "audience": "gateway" },
-      { "host": "generativelanguage.googleapis.com", "audience": "gateway" }
+      { "host": "api.anthropic.com", "audience": "both" },
+      { "host": "api.openai.com", "audience": "both" },
+      { "host": "auth.openai.com", "audience": "both" },
+      { "host": "chatgpt.com", "audience": "both" },
+      { "host": "generativelanguage.googleapis.com", "audience": "both" }
     ],
     "websocketBypass": [],
     "defaultToolVmProfile": "standard",
@@ -132,28 +132,27 @@ When the agent needs to run code, OpenClaw requests a tool VM lease from the con
 ```
   OpenClaw (inside gateway VM)
        |
-       | POST /lease { scopeKey, zoneId, workMountDir }
+       | POST /lease { zoneId, agentId, sessionKey, workMountDir }
        v
   Controller
        |
        | Resolves hostWorkMountDir, allocates TCP slot, boots tool VM
        v
   Tool VM (Zone 3 — untrusted)
-       | /work mounted, no secrets, no network
+       | /workspace mounted, no secrets, no network
        | SSH access via tool-{slot}.vm.host:22
 ```
 
-Leases are scoped by `scopeKey` for reuse within the same conversation. For
-`agent:<agentId>` scopes, the controller selects the Tool VM profile from the
-zone's `agentToolVmProfiles` map, falling back to `defaultToolVmProfile`. Idle
-leases are reaped by `leaseIdleTtl`, with a 100 minute default when no policy is
-configured.
+Leases are keyed by `zoneId + agentId`. The controller selects the Tool VM
+profile from the zone's `agentToolVmProfiles` map, falling back to
+`defaultToolVmProfile`. Idle leases are reaped by `leaseIdleTtl`, with a 100
+minute default when no policy is configured.
 
 The lease `workMountDir` is a gateway VM path, not a host path. It must name a
 concrete child path under `/zone` or
-`/home/openclaw/.openclaw/state/sandboxes`; the roots themselves are rejected as
-too broad. The controller resolves the selected path to the host directory that
-backs the Tool VM's `/work` mount.
+`/home/openclaw/.openclaw/state/sandboxes`; the controller rejects those roots
+themselves as too broad. The controller resolves the selected path to the host
+directory that backs the Tool VM's `/workspace` mount.
 
 For internals, see [architecture/openclaw-gateway.md](../architecture/openclaw-gateway.md#tool-vm-leases).
 
@@ -233,12 +232,22 @@ automatically when `channels.discord.enabled` is true.
     }
   },
   "egressHosts": [
-    { "host": "discord.com", "audience": "gateway" },
-    { "host": "discordapp.com", "audience": "gateway" },
-    { "host": "*.discordapp.com", "audience": "gateway" },
-    { "host": "*.discordapp.net", "audience": "gateway" }
+    { "host": "discord.com", "audience": "both" },
+    { "host": "*.discord.com", "audience": "both" },
+    { "host": "discord.gg", "audience": "both" },
+    { "host": "*.discord.gg", "audience": "both" },
+    { "host": "discord.media", "audience": "both" },
+    { "host": "*.discord.media", "audience": "both" },
+    { "host": "discordapp.com", "audience": "both" },
+    { "host": "*.discordapp.com", "audience": "both" },
+    { "host": "*.discordapp.net", "audience": "both" }
   ],
-  "websocketBypass": ["gateway.discord.gg:443"]
+  "websocketBypass": [
+    "gateway.discord.gg:443",
+    "gateway-us-east1-b.discord.gg:443",
+    "gateway-us-east1-c.discord.gg:443",
+    "gateway-us-east1-d.discord.gg:443"
+  ]
 }
 ```
 
@@ -274,5 +283,5 @@ agent-vm controller logs --zone my-openclaw
 | Doctor reports `openclaw-agent-auth-profile-*` failing | Auth material missing | Check `gateway.authProfilesByAgent` in system.jsonc or run `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
 | Codex OAuth expired | Token expires ~10 days | Re-auth: `agent-vm auth codex-harness --zone <id> --agent <agentId>` |
 | Tool calls fail | Lease creation failing | Check `defaultToolVmProfile` exists, TCP pool has free slots |
-| Discord not connecting | Deployment channel config incomplete | Add Discord plugin/config, `DISCORD_BOT_TOKEN`, Discord hosts, and `gateway.discord.gg:443` |
+| Discord not connecting | Deployment channel config incomplete | Add Discord plugin/config, `DISCORD_BOT_TOKEN`, broad Discord egress hosts, and exact Discord Gateway `websocketBypass` hosts |
 | Can't reach external API | Host not allowlisted | Add to `zones[].egressHosts` with the needed audience |

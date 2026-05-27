@@ -13,6 +13,7 @@ import {
 } from '@earendil-works/gondolin';
 import { describe, expect, it, vi } from 'vitest';
 
+import { configureHostNetworkDefaults } from './host-network-defaults.js';
 import type { PinnedRealFsRoot } from './pinned-realfs.js';
 import {
 	SYNTHETIC_DNS_IPV4_BENCHMARK,
@@ -97,11 +98,20 @@ function createFakeVmInstance(
 }
 
 function createBaseDependencies(options?: {
+	readonly configureHostNetworkDefaults?: () => ReturnType<typeof configureHostNetworkDefaults>;
 	readonly createVm?: (vmOptions: VMOptions) => Promise<ManagedVmInstance>;
 	readonly closePinnedRealFsRoot?: (root: PinnedRealFsRoot) => void;
 	readonly createPinnedRealFsProvider?: (root: PinnedRealFsRoot) => VirtualProvider;
 }): ManagedVmDependencies {
 	return {
+		configureHostNetworkDefaults: vi.fn(
+			options?.configureHostNetworkDefaults ??
+				(() =>
+					({
+						autoSelectFamily: false,
+						dnsResultOrder: 'ipv4first',
+					}) as const),
+		),
 		createHttpHooks: vi.fn(() => ({
 			env: { HTTPS_PROXY: 'http://proxy.vm.host:8080' },
 			httpHooks: {} satisfies HttpHooks,
@@ -130,6 +140,68 @@ function createPinnedRoot(fd: number): PinnedRealFsRoot {
 }
 
 describe('createManagedVm', () => {
+	it('forces host Node DNS and family-autoselection defaults for Gondolin tcpHosts', () => {
+		const setDefaultResultOrder = vi.fn();
+		const setDefaultAutoSelectFamily = vi.fn();
+
+		const result = configureHostNetworkDefaults({
+			setDefaultAutoSelectFamily,
+			setDefaultResultOrder,
+		});
+
+		expect(setDefaultResultOrder).toHaveBeenCalledWith('ipv4first');
+		expect(setDefaultAutoSelectFamily).toHaveBeenCalledWith(false);
+		expect(result).toEqual({
+			autoSelectFamily: false,
+			dnsResultOrder: 'ipv4first',
+		});
+	});
+
+	it('reports unavailable host network default APIs without failing startup', () => {
+		const result = configureHostNetworkDefaults({
+			setDefaultAutoSelectFamily: undefined,
+			setDefaultResultOrder: undefined,
+		});
+
+		expect(result).toEqual({
+			autoSelectFamily: 'unavailable',
+			dnsResultOrder: 'unavailable',
+		});
+	});
+
+	it('configures host network defaults before creating Gondolin VM state', async () => {
+		const startupEvents: string[] = [];
+		const dependencies = createBaseDependencies({
+			configureHostNetworkDefaults: () => {
+				startupEvents.push('host-network-defaults');
+				return {
+					autoSelectFamily: false,
+					dnsResultOrder: 'ipv4first',
+				};
+			},
+			createVm: vi.fn(async (): Promise<ManagedVmInstance> => {
+				startupEvents.push('create-vm');
+				return createFakeVmInstance();
+			}),
+		});
+
+		await createManagedVm(
+			{
+				allowedHosts: [],
+				cpus: 1,
+				imagePath: '/vm-images/gateways/openclaw',
+				memory: '1G',
+				rootfsMode: 'memory',
+				secrets: {},
+				vfsMounts: {},
+			},
+			dependencies,
+		);
+
+		expect(dependencies.configureHostNetworkDefaults).toHaveBeenCalledOnce();
+		expect(startupEvents.slice(0, 2)).toEqual(['host-network-defaults', 'create-vm']);
+	});
+
 	it('uses an IPv4-mapped RFC2544 synthetic AAAA address for OpenClaw SSRF compatibility', () => {
 		expect(SYNTHETIC_DNS_IPV4_BENCHMARK).toBe('198.18.0.1');
 		expect(SYNTHETIC_DNS_IPV6_IPV4_MAPPED_BENCHMARK).toBe('::ffff:198.18.0.1');

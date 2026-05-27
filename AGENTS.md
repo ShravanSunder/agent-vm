@@ -36,6 +36,14 @@ agent-vm currently routes `/` to the OpenClaw guest gateway port, and arbitrary
 extra guest webservers require explicit ingress routes rather than rootfs-size
 or OpenClaw-only config changes.
 
+For gateway health, agent-vm controller communication, lease-heartbeat,
+lease-renew, Tool VM SSH, or Gondolin `tcpHosts` timeout debugging, read
+`docs/subsystems/controller.md`, `docs/subsystems/gondolin-vm-layer.md`, and
+`docs/architecture/openclaw-gateway.md` before changing runtime behavior. Keep
+the health boundaries separate: host-side agent-vm controller, gateway VM,
+gateway-service process, gateway-to-controller control link, lease routes, and
+gateway-to-Tool-VM SSH are different failure surfaces.
+
 For configuration questions, start at `docs/reference/configuration/README.md`,
 then drill down:
 
@@ -83,9 +91,25 @@ fast formatting and linting.
 - Unit tests: `pnpm test:unit`.
 - Integration tests: `pnpm test:integration`.
 - Smoke tests: `pnpm test:smoke`.
+  This runs `vitest.smoke.config.ts` and includes only
+  `packages/**/*.smoke.test.ts`. Smoke tests are live or production-shaped
+  end-to-end checks, not fake-client contract tests. CLI/manual/resource
+  generation checks and startup/config contract checks belong in integration
+  tests unless they boot the production path they claim to prove. Current smoke
+  types:
+  - Live OpenClaw/Gondolin smoke: gated by `AGENT_VM_OPENCLAW_SMOKE=1`; boots
+    real OpenClaw/Gondolin VM flows and requires Docker, QEMU, and pinned Zig.
+    For Tool VM lease/path changes, this must exercise a real controller,
+    OpenClaw gateway, plugin, lease request, and Tool VM command path. Plugin
+    factory tests are integration tests, not smoke.
+  - Live Worker/Gondolin smoke: gated by `AGENT_VM_WORKER_SMOKE=1` or
+    `AGENT_VM_GONDOLIN_SMOKE=1`; boots worker/runtime or Gondolin image paths.
+  - Live 1Password smoke: gated by `AGENT_VM_1PASSWORD_SMOKE=1` plus explicit
+    1Password smoke refs and token env.
   Use `mise exec -- pnpm test:smoke` for smoke tests so the repo-pinned Zig
   version in `mise.toml` is active. Live Gondolin/OpenClaw smokes depend on
   that toolchain selection and may silently skip under a stale system `zig`.
+  Skipped live smoke tests are not evidence that their live path was exercised.
 - Full quality gate: `pnpm check`.
   This includes the `@agent-vm/*` package version sync guard used by the
   publish script.
@@ -136,6 +160,14 @@ and install them into the deployment with `pnpm add --force` or the deployment's
 existing package-update helper. Verify the installed package source afterward;
 do not leave beta pinned to stale local tarballs when the intent is to test a
 published registry version.
+
+## Testing Worktree Changes In Beta
+
+For beta validation, use `pnpm dev:sync-tarballs -- --deployment
+../shravan-claw-beta`. It builds once, packs local `@agent-vm/*` tarballs,
+updates beta's host dependency pins, runs `pnpm install` in beta, and refreshes
+the OpenClaw gateway overlay tarballs. Then run beta's normal
+`mise exec -- pnpm build` and `pnpm start` commands.
 
 ## Release Process
 

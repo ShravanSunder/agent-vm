@@ -1,3 +1,7 @@
+import type {
+	configureHostNetworkDefaults,
+	HostNetworkDefaultsResult,
+} from '@agent-vm/gondolin-adapter';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
@@ -6,7 +10,10 @@ import type { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { ControllerRuntimeZoneStatus } from '../operations/controller-status.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 import type { ActiveWorkerTask } from './active-task-registry.js';
-import type { createControllerService } from './http/controller-http-routes.js';
+import type {
+	createControllerService,
+	ObservedControllerLeaseCreateRequest,
+} from './http/controller-http-routes.js';
 import type { ToolVmProfile } from './leases/lease-manager.js';
 import type { executeWorkerTask, prepareWorkerTask } from './worker-task-runner.js';
 import type { ZoneGitCapabilityStore } from './zone-git/zone-git-capability-store.js';
@@ -23,6 +30,7 @@ export interface ControllerRuntime {
 
 export interface ControllerRuntimeDependencies {
 	readonly clearIntervalImpl?: (timer: NodeJS.Timeout) => void;
+	readonly configureHostNetworkDefaults?: typeof configureHostNetworkDefaults;
 	readonly createManagedToolVm?: (options: {
 		readonly profile: ToolVmProfile;
 		readonly tcpSlot: number;
@@ -36,6 +44,7 @@ export interface ControllerRuntimeDependencies {
 	}) => Promise<SecretResolver>;
 	readonly deleteGatewayRuntimeRecord?: typeof deleteGatewayRuntimeRecord;
 	readonly now?: () => number;
+	readonly onLeaseCreateRequest?: (request: ObservedControllerLeaseCreateRequest) => void;
 	// Injected by tests so the lease manager doesn't shell out to `ps` against
 	// a fake managed-vm pid when capturing process identity for the runtime
 	// record. Production omits this; the lease manager uses the real default.
@@ -67,6 +76,8 @@ export interface ControllerRuntimeDependencies {
 	readonly zoneGitCapabilityStore?: ZoneGitCapabilityStore;
 	readonly zoneGitOperationLocks?: ZoneGitOperationLocks;
 }
+
+export type { HostNetworkDefaultsResult };
 
 export interface StartControllerRuntimeOptions {
 	readonly systemConfig: LoadedSystemConfig;

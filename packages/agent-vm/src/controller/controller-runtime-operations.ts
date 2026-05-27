@@ -41,6 +41,9 @@ interface ControllerRuntimeOperations {
 	readonly getZoneHealth: (targetZoneId: string) => Promise<{
 		readonly ok: boolean;
 		readonly observation: string;
+		readonly path?: string | undefined;
+		readonly port?: number | undefined;
+		readonly statusCode?: number | undefined;
 		readonly zoneId: string;
 	}>;
 	readonly getZoneStatus: (targetZoneId: string) => Promise<unknown>;

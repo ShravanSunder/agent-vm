@@ -5,6 +5,7 @@ import {
 	type OpenClawGondolinLeaseRequest,
 	createLeaseClient,
 } from './controller-lease-client.js';
+import type { ControllerRequestPolicy } from './controller-request-policy.js';
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
 
@@ -15,17 +16,32 @@ function createLeaseRequest(
 		agentId: 'main',
 		agentWorkspaceDir: '/home/openclaw/work',
 		profileId: 'standard',
-		sandbox: {
-			backend: 'gondolin',
-			mode: 'all',
-			scope: 'agent',
-			workspaceAccess: 'rw',
-		},
-		scopeKey: 'agent:main',
 		sessionKey: 'agent:main:session-abc',
 		workMountDir: '/home/openclaw/work',
 		zoneId: 'shravan',
 		...overrides,
+	};
+}
+
+function createSingleAttemptPolicy(timeoutMs: number): ControllerRequestPolicy {
+	return {
+		idempotency: 'safe-mutation',
+		maxAttempts: 1,
+		retryBaseDelayMs: 0,
+		retryEnabled: false,
+		retryStatuses: [],
+		timeoutMs,
+	};
+}
+
+function createRetryingPolicy(timeoutMs: number): ControllerRequestPolicy {
+	return {
+		idempotency: 'safe-mutation',
+		maxAttempts: 2,
+		retryBaseDelayMs: 0,
+		retryEnabled: true,
+		retryStatuses: [503],
+		timeoutMs,
 	};
 }
 
@@ -47,10 +63,10 @@ describe('createLeaseClient', () => {
 					? {
 							agentId: 'main',
 							createdAt: 1,
+							idleTtlMs: 6_000_000,
 							lastUsedAt: 1,
-							leaseId: 'lease-123',
+							leaseId: '01890f00-0000-7000-8000-000000000000',
 							profileId: 'standard',
-							scopeKey: 'agent:main:session-abc',
 							ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 							tcpSlot: 0,
 							transport: 'ssh-sandbox',
@@ -59,8 +75,8 @@ describe('createLeaseClient', () => {
 						}
 					: {
 							agentId: 'main',
-							leaseId: 'lease-123',
-							scopeKey: 'agent:main',
+							idleTtlMs: 6_000_000,
+							leaseId: '01890f00-0000-7000-8000-000000000000',
 							ssh: {
 								host: 'tool-0.vm.host',
 								identityPem: 'pem',
@@ -82,12 +98,7 @@ describe('createLeaseClient', () => {
 			},
 		});
 
-		const lease = await leaseClient.requestLease(
-			createLeaseRequest({
-				scopeKey: 'agent:main',
-				workMountDir: '/home/openclaw/work',
-			}),
-		);
+		const lease = await leaseClient.requestLease(createLeaseRequest());
 		expect(lease.transport).toBe('ssh-sandbox');
 		if (!leaseClient.publishOpenClawRuntimeStatus) {
 			throw new Error('Expected runtime status publisher.');
@@ -114,17 +125,12 @@ describe('createLeaseClient', () => {
 			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
 			profileId: 'standard',
-			sandbox: {
-				backend: 'gondolin',
-				mode: 'all',
-				scope: 'agent',
-				workspaceAccess: 'rw',
-			},
-			scopeKey: 'agent:main',
 			sessionKey: 'agent:main:session-abc',
 			workMountDir: '/home/openclaw/work',
 			zoneId: 'shravan',
 		});
+		expect(JSON.parse(requests[0]?.body ?? '{}')).not.toHaveProperty('scopeKey');
+		expect(JSON.parse(requests[0]?.body ?? '{}')).not.toHaveProperty('sandbox');
 		expect(requests).toEqual([
 			{
 				body: expect.any(String),
@@ -184,7 +190,7 @@ describe('createLeaseClient', () => {
 			correlation: { toolName: 'shell' },
 			useId: '01890f00-0000-7000-8000-000000000000',
 		});
-		await leaseClient.heartbeatActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000');
+		await leaseClient.heartbeatActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {});
 		await leaseClient.endActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {
 			outcome: 'completed',
 		});
@@ -199,7 +205,7 @@ describe('createLeaseClient', () => {
 				url: 'http://controller.vm.host:18800/lease/lease-123/uses',
 			},
 			{
-				body: undefined,
+				body: JSON.stringify({}),
 				method: 'POST',
 				url: 'http://controller.vm.host:18800/lease/lease-123/uses/01890f00-0000-7000-8000-000000000000/heartbeat',
 			},
@@ -210,6 +216,387 @@ describe('createLeaseClient', () => {
 			},
 		]);
 	});
+
+	it('sends active-use heartbeat operation reports to the controller', async () => {
+		const requests: { readonly init?: RequestInit }[] = [];
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async (_input, init) => {
+				requests.push(init === undefined ? {} : { init });
+				return new Response(JSON.stringify({ expiresAt: 10_000, heartbeatAfterMs: 1_000 }), {
+					status: 200,
+				});
+			},
+		});
+
+		await leaseClient.heartbeatActiveUse(
+			'01890f00-0000-7000-8000-000000000000',
+			'01890f00-0000-7000-8000-000000000001',
+			{
+				report: {
+					observedAtMs: 1_000,
+					phase: 'failed',
+					ssh: {
+						failure: {
+							kind: 'ssh-command-timed-out',
+							message: 'SSH command exceeded 30000ms.',
+						},
+					},
+				},
+			},
+		);
+
+		const requestBody = requests[0]?.init?.body;
+		expect(typeof requestBody).toBe('string');
+		if (typeof requestBody !== 'string') {
+			throw new Error('Expected heartbeat request body to be serialized JSON');
+		}
+		expect(JSON.parse(requestBody)).toEqual({
+			report: {
+				observedAtMs: 1_000,
+				phase: 'failed',
+				ssh: {
+					failure: {
+						kind: 'ssh-command-timed-out',
+						message: 'SSH command exceeded 30000ms.',
+					},
+				},
+			},
+		});
+	});
+
+	it('aborts a hung active-use heartbeat at the configured request timeout', async () => {
+		vi.useFakeTimers();
+		try {
+			let heartbeatSignal: AbortSignal | undefined;
+			let settledError: unknown;
+			const fetchImpl = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+				heartbeatSignal = init?.signal ?? undefined;
+				return new Promise<Response>((_resolve, reject) => {
+					init?.signal?.addEventListener('abort', () => {
+						reject(new DOMException('The operation was aborted.', 'AbortError'));
+					});
+				});
+			});
+			const leaseClientOptions = {
+				controllerUrl: 'http://controller.vm.host:18800',
+				fetchImpl,
+				requestPolicy: {
+					...createSingleAttemptPolicy(25),
+				},
+			} satisfies Parameters<typeof createLeaseClient>[0];
+			const leaseClient = createLeaseClient(leaseClientOptions);
+
+			void leaseClient
+				.heartbeatActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {})
+				.catch((error: unknown) => {
+					settledError = error;
+				});
+
+			await Promise.resolve();
+			await vi.advanceTimersByTimeAsync(25);
+			await Promise.resolve();
+
+			expect(fetchImpl).toHaveBeenCalledTimes(1);
+			expect(heartbeatSignal?.aborted).toBe(true);
+			expect(settledError).toMatchObject({
+				code: 'controller-request-timeout',
+				operation: 'lease-heartbeat',
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('drains successful OpenClaw runtime status response bodies', async () => {
+		const response = new Response(JSON.stringify({ ok: true, zoneId: 'shravan' }), {
+			headers: { 'content-type': 'application/json' },
+			status: 200,
+		});
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async () => response,
+		});
+
+		await leaseClient.publishOpenClawRuntimeStatus?.({
+			findings: [],
+			pluginId: 'gondolin',
+			zoneId: 'shravan',
+		});
+
+		await expect(response.text()).rejects.toThrow();
+	});
+
+	it('passes timeout signals to every controller operation', async () => {
+		const requests: {
+			readonly method: string;
+			readonly signal: AbortSignal | undefined;
+			readonly url: string;
+		}[] = [];
+		const leaseResponseBody = {
+			agentId: 'main',
+			idleTtlMs: 6_000_000,
+			leaseId: '01890f00-0000-7000-8000-000000000000',
+			ssh: {
+				host: 'tool-0.vm.host',
+				identityPem: 'pem',
+				knownHostsLine: 'known-hosts',
+				port: 22,
+				user: 'sandbox',
+			},
+			tcpSlot: 0,
+			transport: 'ssh-sandbox',
+			workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+		};
+		const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+			const url =
+				typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+			const method = init?.method ?? 'GET';
+			requests.push({ method, signal: init?.signal ?? undefined, url });
+
+			if (url.endsWith('/peek')) {
+				return new Response(
+					JSON.stringify({
+						...leaseResponseBody,
+						createdAt: 1,
+						lastUsedAt: 1,
+						profileId: 'standard',
+						ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
+						zoneId: 'shravan',
+					}),
+					{ headers: { 'content-type': 'application/json' }, status: 200 },
+				);
+			}
+			if (url.endsWith('/heartbeat')) {
+				return new Response(JSON.stringify({ expiresAt: 10_000, heartbeatAfterMs: 1_000 }), {
+					headers: { 'content-type': 'application/json' },
+					status: 200,
+				});
+			}
+			if (url.endsWith('/uses') && method === 'POST') {
+				return new Response(
+					JSON.stringify({
+						expiresAt: 10_000,
+						heartbeatAfterMs: 1_000,
+						useId: '01890f00-0000-7000-8000-000000000000',
+					}),
+					{ headers: { 'content-type': 'application/json' }, status: 200 },
+				);
+			}
+			if (method === 'DELETE') {
+				return new Response(null, { status: 204 });
+			}
+			if (url.endsWith('/openclaw-runtime-status')) {
+				return new Response(JSON.stringify({ ok: true }), { status: 200 });
+			}
+			return new Response(JSON.stringify(leaseResponseBody), {
+				headers: { 'content-type': 'application/json' },
+				status: 200,
+			});
+		});
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl,
+			requestPolicy: {
+				...createSingleAttemptPolicy(500),
+			},
+		});
+
+		await leaseClient.requestLease(createLeaseRequest());
+		await leaseClient.renewLease('lease-123');
+		await leaseClient.peekLease('lease-123');
+		await leaseClient.startActiveUse('lease-123', {
+			useId: '01890f00-0000-7000-8000-000000000000',
+		});
+		await leaseClient.heartbeatActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {});
+		await leaseClient.endActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {
+			outcome: 'completed',
+		});
+		await leaseClient.releaseLease('lease-123');
+		await leaseClient.publishOpenClawRuntimeStatus?.({
+			findings: [],
+			pluginId: 'gondolin',
+			zoneId: 'shravan',
+		});
+
+		expect(requests.map((request) => `${request.method} ${new URL(request.url).pathname}`)).toEqual(
+			[
+				'POST /lease',
+				'POST /lease/lease-123/renew',
+				'GET /lease/lease-123/peek',
+				'POST /lease/lease-123/uses',
+				'POST /lease/lease-123/uses/01890f00-0000-7000-8000-000000000000/heartbeat',
+				'DELETE /lease/lease-123/uses/01890f00-0000-7000-8000-000000000000',
+				'DELETE /lease/lease-123',
+				'POST /zones/shravan/openclaw-runtime-status',
+			],
+		);
+		expect(requests.every((request) => request.signal instanceof AbortSignal)).toBe(true);
+		expect(requests.every((request) => request.signal?.aborted === false)).toBe(true);
+	});
+
+	it.each([
+		{
+			expectedOperation: 'lease-create',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.requestLease(createLeaseRequest()),
+		},
+		{
+			expectedOperation: 'lease-renew',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.renewLease('lease-123'),
+		},
+		{
+			expectedOperation: 'lease-peek',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.peekLease('lease-123'),
+		},
+		{
+			expectedOperation: 'lease-use-start',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.startActiveUse('lease-123', {
+					useId: '01890f00-0000-7000-8000-000000000000',
+				}),
+		},
+		{
+			expectedOperation: 'lease-heartbeat',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.heartbeatActiveUse(
+					'lease-123',
+					'01890f00-0000-7000-8000-000000000000',
+					{},
+				),
+		},
+		{
+			expectedOperation: 'lease-use-end',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.endActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {
+					outcome: 'completed',
+				}),
+		},
+		{
+			expectedOperation: 'lease-release',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.releaseLease('lease-123'),
+		},
+		{
+			expectedOperation: 'openclaw-runtime-status',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.publishOpenClawRuntimeStatus?.({
+					findings: [],
+					pluginId: 'gondolin',
+					zoneId: 'shravan',
+				}),
+		},
+	])('labels timeout errors for $expectedOperation', async ({ expectedOperation, run }) => {
+		vi.useFakeTimers();
+		try {
+			let settledError: unknown;
+			const fetchImpl = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+				return new Promise<Response>((_resolve, reject) => {
+					init?.signal?.addEventListener('abort', () => {
+						reject(new DOMException('The operation was aborted.', 'AbortError'));
+					});
+				});
+			});
+			const leaseClient = createLeaseClient({
+				controllerUrl: 'http://controller.vm.host:18800',
+				fetchImpl,
+				requestPolicy: {
+					...createSingleAttemptPolicy(25),
+				},
+			});
+
+			void run(leaseClient).catch((error: unknown) => {
+				settledError = error;
+			});
+
+			await Promise.resolve();
+			await vi.advanceTimersByTimeAsync(25);
+			await Promise.resolve();
+
+			expect(fetchImpl).toHaveBeenCalledTimes(1);
+			expect(settledError).toMatchObject({
+				code: 'controller-request-timeout',
+				operation: expectedOperation,
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it.each([
+		{
+			expectedOperation: 'lease-create',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.requestLease(createLeaseRequest()),
+		},
+		{
+			expectedOperation: 'lease-renew',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.renewLease('lease-123'),
+		},
+		{
+			expectedOperation: 'lease-peek',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.peekLease('lease-123'),
+		},
+		{
+			expectedOperation: 'lease-use-start',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.startActiveUse('lease-123', {
+					useId: '01890f00-0000-7000-8000-000000000000',
+				}),
+		},
+		{
+			expectedOperation: 'lease-heartbeat',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.heartbeatActiveUse(
+					'lease-123',
+					'01890f00-0000-7000-8000-000000000000',
+					{},
+				),
+		},
+		{
+			expectedOperation: 'lease-use-end',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.endActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {
+					outcome: 'completed',
+				}),
+		},
+		{
+			expectedOperation: 'lease-release',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.releaseLease('lease-123'),
+		},
+		{
+			expectedOperation: 'openclaw-runtime-status',
+			run: async (leaseClient: ReturnType<typeof createLeaseClient>) =>
+				await leaseClient.publishOpenClawRuntimeStatus?.({
+					findings: [],
+					pluginId: 'gondolin',
+					zoneId: 'shravan',
+				}),
+		},
+	])(
+		'labels exhausted transport failures for $expectedOperation',
+		async ({ expectedOperation, run }) => {
+			const fetchImpl = vi.fn(async () => {
+				throw Object.assign(new Error('write EPIPE controller.vm.host:18800'), { code: 'EPIPE' });
+			});
+			const leaseClient = createLeaseClient({
+				controllerUrl: 'http://controller.vm.host:18800',
+				fetchImpl,
+				requestPolicy: createRetryingPolicy(500),
+			});
+
+			await expect(run(leaseClient)).rejects.toMatchObject({
+				code: 'controller-request-failed',
+				operation: expectedOperation,
+			});
+			expect(fetchImpl).toHaveBeenCalledTimes(2);
+		},
+	);
 
 	it('throws TypeError when the controller returns an invalid lease response', async () => {
 		const leaseClient = createLeaseClient({
@@ -256,7 +643,6 @@ describe('createLeaseClient', () => {
 			leaseClient.requestLease(
 				createLeaseRequest({
 					agentId: 'beta',
-					scopeKey: 'agent:beta:discord:channel:123',
 					sessionKey: 'agent:beta:discord:channel:123',
 				}),
 			),
@@ -309,8 +695,8 @@ describe('createLeaseClient', () => {
 				return new Response(
 					JSON.stringify({
 						agentId: 'main',
-						leaseId: 'lease-1',
-						scopeKey: 'agent:main',
+						idleTtlMs: 6_000_000,
+						leaseId: '01890f00-0000-7000-8000-000000000001',
 						ssh: { host: 'h', identityPem: 'p', knownHostsLine: '', port: 22, user: 'u' },
 						tcpSlot: 0,
 						transport: 'ssh-sandbox',
@@ -458,5 +844,93 @@ describe('createLeaseClient', () => {
 			},
 			status: 503,
 		} satisfies Partial<ControllerLeaseRequestError>);
+	});
+
+	it('passes an AbortSignal into active-use heartbeat requests', async () => {
+		let heartbeatSignal: AbortSignal | undefined;
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async (_input, init) => {
+				heartbeatSignal = init?.signal ?? undefined;
+				return new Response(JSON.stringify({ expiresAt: 6_000, heartbeatAfterMs: 1_000 }), {
+					headers: { 'content-type': 'application/json' },
+					status: 200,
+				});
+			},
+		});
+
+		await leaseClient.heartbeatActiveUse('lease-123', '01890f00-0000-7000-8000-000000000000', {});
+
+		expect(heartbeatSignal).toBeInstanceOf(AbortSignal);
+	});
+
+	it('retries lease renew on retryable HTTP status before succeeding', async () => {
+		const fetchImpl = vi
+			.fn()
+			.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'busy' }), { status: 503 }))
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						agentId: 'main',
+						idleTtlMs: 6_000_000,
+						leaseId: '01890f00-0000-7000-8000-000000000000',
+						ssh: {
+							host: 'tool-0.vm.host',
+							identityPem: 'pem',
+							knownHostsLine: 'known-hosts',
+							port: 22,
+							user: 'sandbox',
+						},
+						tcpSlot: 0,
+						transport: 'ssh-sandbox',
+						workdir: OPENCLAW_TOOL_VM_WORKSPACE_MOUNT,
+					}),
+					{ headers: { 'content-type': 'application/json' }, status: 200 },
+				),
+			);
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl,
+		});
+
+		await expect(leaseClient.renewLease('lease-123')).resolves.toMatchObject({
+			transport: 'ssh-sandbox',
+		});
+		expect(fetchImpl).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not retry unsafe lease creation on retryable HTTP status', async () => {
+		const fetchImpl = vi.fn(
+			async () => new Response(JSON.stringify({ error: 'busy' }), { status: 503 }),
+		);
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl,
+		});
+
+		await expect(leaseClient.requestLease(createLeaseRequest())).rejects.toMatchObject({
+			kind: 'server-error',
+			status: 503,
+		} satisfies Partial<ControllerLeaseRequestError>);
+		expect(fetchImpl).toHaveBeenCalledTimes(1);
+	});
+
+	it('drains successful runtime-status responses that return JSON bodies', async () => {
+		const response = new Response(JSON.stringify({ ok: true }), { status: 200 });
+		const leaseClient = createLeaseClient({
+			controllerUrl: 'http://controller.vm.host:18800',
+			fetchImpl: async () => response,
+		});
+
+		if (!leaseClient.publishOpenClawRuntimeStatus) {
+			throw new Error('Expected runtime status publisher.');
+		}
+		await leaseClient.publishOpenClawRuntimeStatus({
+			findings: [],
+			pluginId: 'gondolin',
+			zoneId: 'shravan',
+		});
+
+		expect(response.bodyUsed).toBe(true);
 	});
 });

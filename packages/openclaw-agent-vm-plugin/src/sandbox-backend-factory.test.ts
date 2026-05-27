@@ -1,4 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import {
+	isToolVmLeaseId,
+	parseToolVmLeaseId,
+	type ToolVmLeaseId,
+} from '@agent-vm/gateway-interface';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ControllerLeaseRequestError, type LeaseClient } from './controller-lease-client.js';
 import {
@@ -9,19 +14,32 @@ import {
 } from './sandbox-backend-factory.js';
 
 const OPENCLAW_TOOL_VM_WORKSPACE_MOUNT = '/workspace';
+const testLeaseIdByLabel = new Map<string, ToolVmLeaseId>();
+
+function testToolVmLeaseId(label: string): ToolVmLeaseId {
+	if (isToolVmLeaseId(label)) {
+		return label;
+	}
+	const existingLeaseId = testLeaseIdByLabel.get(label);
+	if (existingLeaseId) {
+		return existingLeaseId;
+	}
+	const leaseId = `01890f00-0000-7000-8000-${String(testLeaseIdByLabel.size + 1).padStart(12, '0')}`;
+	const parsedLeaseId = parseToolVmLeaseId(leaseId);
+	testLeaseIdByLabel.set(label, parsedLeaseId);
+	return parsedLeaseId;
+}
 
 function createLeaseResponse(
 	leaseId: string,
 	options: {
 		readonly agentId?: string;
 		readonly idleTtlMs?: number;
-		readonly scopeKey?: string;
 	} = {},
 ): {
 	readonly agentId: string;
-	readonly idleTtlMs?: number;
-	readonly leaseId: string;
-	readonly scopeKey: string;
+	readonly idleTtlMs: number;
+	readonly leaseId: ToolVmLeaseId;
 	readonly ssh: {
 		readonly host: string;
 		readonly identityPem: string;
@@ -33,11 +51,11 @@ function createLeaseResponse(
 	readonly transport: 'ssh-sandbox';
 	readonly workdir: string;
 } {
+	const normalizedLeaseId = testToolVmLeaseId(leaseId);
 	return {
 		agentId: options.agentId ?? 'main',
-		...(options.idleTtlMs !== undefined ? { idleTtlMs: options.idleTtlMs } : {}),
-		leaseId,
-		scopeKey: options.scopeKey ?? 'agent:main',
+		idleTtlMs: options.idleTtlMs ?? 6_000_000,
+		leaseId: normalizedLeaseId,
 		ssh: {
 			host: 'tool-0.vm.host',
 			identityPem: 'pem',
@@ -54,23 +72,24 @@ function createLeaseResponse(
 function createLeasePeekResponse(leaseId: string = 'lease-123'): {
 	readonly agentId: string;
 	readonly createdAt: number;
+	readonly idleTtlMs: number;
 	readonly lastUsedAt: number;
-	readonly leaseId: string;
+	readonly leaseId: ToolVmLeaseId;
 	readonly profileId: string;
-	readonly scopeKey: string;
 	readonly ssh: { readonly host: string; readonly port: number; readonly user: string };
 	readonly tcpSlot: number;
 	readonly transport: 'ssh-sandbox';
 	readonly workdir: string;
 	readonly zoneId: string;
 } {
+	const normalizedLeaseId = testToolVmLeaseId(leaseId);
 	return {
 		agentId: 'main',
 		createdAt: 1,
+		idleTtlMs: 6_000_000,
 		lastUsedAt: 1,
-		leaseId,
+		leaseId: normalizedLeaseId,
 		profileId: 'standard',
-		scopeKey: 'scope',
 		ssh: { host: 'tool-0.vm.host', port: 22, user: 'sandbox' },
 		tcpSlot: 0,
 		transport: 'ssh-sandbox' as const,
@@ -121,6 +140,22 @@ function createActiveUseLeaseClientMethods(): Pick<
 	};
 }
 
+function createFactoryParamsForAgent(agentId: string): {
+	readonly agentWorkspaceDir: string;
+	readonly cfg: ReturnType<typeof gondolinSandboxConfig>;
+	readonly scopeKey: string;
+	readonly sessionKey: string;
+	readonly workspaceDir: string;
+} {
+	return {
+		agentWorkspaceDir: `/zone/agents/${agentId}`,
+		cfg: gondolinSandboxConfig(),
+		scopeKey: `agent:${agentId}:discord:channel:123`,
+		sessionKey: `agent:${agentId}:discord:channel:123`,
+		workspaceDir: `/zone/agents/${agentId}`,
+	};
+}
+
 function gondolinSandboxConfig(
 	overrides: Partial<{
 		readonly backend: unknown;
@@ -143,6 +178,17 @@ function gondolinSandboxConfig(
 	};
 }
 
+beforeEach(() => {
+	vi.stubGlobal(
+		'fetch',
+		vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true }))),
+	);
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
+
 describe('createGondolinSandboxBackendFactory', () => {
 	it('rejects unsupported OpenClaw sandbox config before requesting a lease', async () => {
 		const requestLease = vi.fn(async () => createLeaseResponse('lease-123'));
@@ -159,7 +205,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				})),
 				createLeaseClient: () => ({
 					...createActiveUseLeaseClientMethods(),
-					renewLease: async () => createLeaseResponse('lease-renew'),
+					renewLease: async () => createLeaseResponse('lease-reuse'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
@@ -170,7 +216,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		await expect(
 			factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig({ scope: 'session' }),
 				scopeKey: 'agent:main',
 				sessionKey: 'agent:main:session-abc',
@@ -181,10 +227,9 @@ describe('createGondolinSandboxBackendFactory', () => {
 	});
 
 	it('passes arbitrary scope provenance under the resolved OpenClaw agent', async () => {
-		const requestLease = vi.fn(async () =>
+		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
 			createLeaseResponse('shravan-main-100', {
 				agentId: 'main',
-				scopeKey: 'agent:beta',
 			}),
 		);
 		const factory = createGondolinSandboxBackendFactory(
@@ -200,7 +245,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				})),
 				createLeaseClient: () => ({
 					...createActiveUseLeaseClientMethods(),
-					renewLease: async () => createLeaseResponse('lease-renew'),
+					renewLease: async () => createLeaseResponse('lease-reuse'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
@@ -210,7 +255,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:beta',
 			sessionKey: 'agent:main:session-abc',
@@ -220,10 +265,10 @@ describe('createGondolinSandboxBackendFactory', () => {
 		expect(requestLease).toHaveBeenCalledWith(
 			expect.objectContaining({
 				agentId: 'main',
-				scopeKey: 'agent:beta',
 				sessionKey: 'agent:main:session-abc',
 			}),
 		);
+		expect(requestLease.mock.calls[0]?.[0]).not.toHaveProperty('scopeKey');
 	});
 
 	it('requests a lease and exposes an ssh-backed sandbox handle with fs bridge', async () => {
@@ -287,7 +332,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				},
 			},
 			scopeKey: 'agent:main',
-			sessionKey: 'session-abc',
+			sessionKey: 'agent:main:session-abc',
 			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 		});
 
@@ -313,9 +358,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentId: 'main',
 			agentWorkspaceDir: '/home/openclaw/work',
 			profileId: 'gpu',
-			sandbox: gondolinSandboxConfig(),
-			scopeKey: 'agent:main',
-			sessionKey: 'session-abc',
+			sessionKey: 'agent:main:session-abc',
 			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 			zoneId: 'shravan',
 		});
@@ -357,14 +400,405 @@ describe('createGondolinSandboxBackendFactory', () => {
 		const bridge = backend.createFsBridge?.({ sandbox: { id: 'sandbox' } });
 		expect(bridge).toBe(mockBridge);
 
-		expect(backend.runtimeId).toBe('lease-123');
-		expect(backend.runtimeLabel).toBe('lease-123');
+		expect(backend.runtimeId).toBe(testToolVmLeaseId('lease-123'));
+		expect(backend.runtimeLabel).toBe(testToolVmLeaseId('lease-123'));
 		expect(backend.configLabel).toBe('http://controller.vm.host:18800 (shravan)');
 		expect(backend.configLabelKind).toBe('VM');
 		expect(typeof backend.finalizeExec).toBe('function');
 	});
 
-	it('reuses the same handle for repeated requests from the same agent', async () => {
+	it('normalizes /workspace subpaths before requesting a controller lease', async () => {
+		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
+			createLeaseResponse('lease-workspace-subpath'),
+		);
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const handle = await factory({
+			agentWorkspaceDir: '/zone/agents/beta',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:subagent:child',
+			sessionKey: 'agent:beta:subagent:child',
+			workspaceDir: '/workspace/app',
+		});
+
+		expect(handle.workdir).toBe('/workspace/app');
+		expect(requestLease).toHaveBeenCalledWith({
+			agentId: 'beta',
+			agentWorkspaceDir: '/zone/agents/beta',
+			profileId: 'standard',
+			sessionKey: 'agent:beta:subagent:child',
+			workMountDir: '/zone/agents/beta',
+			zoneId: 'shravan',
+		});
+		expect(requestLease.mock.calls[0]?.[0]).not.toHaveProperty('scopeKey');
+		expect(requestLease.mock.calls[0]?.[0]).not.toHaveProperty('sandbox');
+		expect(requestLease.mock.calls[0]?.[0]).not.toHaveProperty('workspaceDir');
+	});
+
+	it('canonicalizes leaked /workspace agentWorkspaceDir before requesting a controller lease', async () => {
+		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
+			createLeaseResponse('lease-leaked-workspace', {
+				agentId: 'beta',
+			}),
+		);
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				openClawDefaultWorkspaceDirProvider: () => '/home/openclaw/.openclaw/workspace',
+				openClawRuntimeConfigProvider: () => ({
+					agents: { list: [{ id: 'beta', workspace: '/zone/agents/beta' }] },
+				}),
+				openClawStateDirProvider: () => '/home/openclaw/.openclaw/state',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const handle = await factory({
+			agentWorkspaceDir: '/workspace',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:subagent:child',
+			sessionKey: 'agent:beta:subagent:child',
+			workspaceDir: '/workspace',
+		});
+
+		expect(handle.workdir).toBe('/workspace');
+		expect(requestLease).toHaveBeenCalledWith({
+			agentId: 'beta',
+			agentWorkspaceDir: '/zone/agents/beta',
+			profileId: 'standard',
+			sessionKey: 'agent:beta:subagent:child',
+			workMountDir: '/zone/agents/beta',
+			zoneId: 'shravan',
+		});
+	});
+
+	it('canonicalizes leaked OpenClaw default workspace agentWorkspaceDir before requesting a controller lease', async () => {
+		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
+			createLeaseResponse('lease-leaked-default-workspace', {
+				agentId: 'beta',
+			}),
+		);
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				openClawDefaultWorkspaceDirProvider: () => '/home/openclaw/.openclaw/workspace',
+				openClawRuntimeConfigProvider: () => ({
+					agents: { list: [{ id: 'beta', workspace: '/zone/agents/beta' }] },
+				}),
+				openClawStateDirProvider: () => '/home/openclaw/.openclaw/state',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const handle = await factory({
+			agentWorkspaceDir: '/home/openclaw/.openclaw/workspace',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:subagent:child',
+			sessionKey: 'agent:beta:subagent:child',
+			workspaceDir: '/home/openclaw/.openclaw/workspace',
+		});
+
+		expect(handle.workdir).toBe('/workspace');
+		expect(requestLease).toHaveBeenCalledWith({
+			agentId: 'beta',
+			agentWorkspaceDir: '/zone/agents/beta',
+			profileId: 'standard',
+			sessionKey: 'agent:beta:subagent:child',
+			workMountDir: '/zone/agents/beta',
+			zoneId: 'shravan',
+		});
+	});
+
+	it('uses the built-in OpenClaw state root fallback when default workspace leaks without explicit config', async () => {
+		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
+			createLeaseResponse('lease-default-workspace-fallback', {
+				agentId: 'beta',
+			}),
+		);
+		vi.stubEnv('HOME', '/home/openclaw');
+
+		try {
+			const factory = createGondolinSandboxBackendFactory(
+				{
+					controllerUrl: 'http://controller.vm.host:18800',
+					openClawRuntimeConfigProvider: () => ({
+						agents: { list: [{ id: 'primary', default: true }, { id: 'beta' }] },
+					}),
+					zoneId: 'shravan',
+				},
+				{
+					buildExecSpec: vi.fn(async () => ({
+						argv: ['ssh'],
+						env: {},
+						stdinMode: 'pipe-open' as const,
+					})),
+					createLeaseClient: () => ({
+						...createActiveUseLeaseClientMethods(),
+						renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+						peekLease: async () => createLeasePeekResponse(),
+						releaseLease: async () => {},
+						requestLease,
+					}),
+					runRemoteShellScript: vi.fn(),
+				},
+			);
+
+			const handle = await factory({
+				agentWorkspaceDir: '/home/openclaw/.openclaw/workspace',
+				cfg: gondolinSandboxConfig(),
+				scopeKey: 'agent:beta:subagent:child',
+				sessionKey: 'agent:beta:subagent:child',
+				workspaceDir: '/home/openclaw/.openclaw/workspace',
+			});
+
+			expect(handle.workdir).toBe('/workspace');
+			expect(requestLease).toHaveBeenCalledWith({
+				agentId: 'beta',
+				agentWorkspaceDir: '/home/openclaw/.openclaw/state/workspace-beta',
+				profileId: 'standard',
+				sessionKey: 'agent:beta:subagent:child',
+				workMountDir: '/home/openclaw/.openclaw/state/workspace-beta',
+				zoneId: 'shravan',
+			});
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+
+	it('rejects configured base implicit workspace when the active OpenClaw profile is non-default', async () => {
+		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
+			createLeaseResponse('lease-profile-poison', {
+				agentId: 'beta',
+			}),
+		);
+		vi.stubEnv('HOME', '/home/openclaw');
+		vi.stubEnv('OPENCLAW_PROFILE', 'beta');
+
+		try {
+			const factory = createGondolinSandboxBackendFactory(
+				{
+					controllerUrl: 'http://controller.vm.host:18800',
+					openClawRuntimeConfigProvider: () => ({
+						agents: {
+							list: [
+								{
+									id: 'beta',
+									workspace: '/home/openclaw/.openclaw/workspace',
+								},
+							],
+						},
+					}),
+					zoneId: 'shravan',
+				},
+				{
+					buildExecSpec: vi.fn(async () => ({
+						argv: ['ssh'],
+						env: {},
+						stdinMode: 'pipe-open' as const,
+					})),
+					createLeaseClient: () => ({
+						...createActiveUseLeaseClientMethods(),
+						renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+						peekLease: async () => createLeasePeekResponse(),
+						releaseLease: async () => {},
+						requestLease,
+					}),
+					runRemoteShellScript: vi.fn(),
+				},
+			);
+
+			await expect(
+				factory({
+					agentWorkspaceDir: '/workspace',
+					cfg: gondolinSandboxConfig(),
+					scopeKey: 'agent:beta:subagent:child',
+					sessionKey: 'agent:beta:subagent:child',
+					workspaceDir: '/workspace',
+				}),
+			).rejects.toThrow(/controller lease-backed OpenClaw\/Gondolin source path/u);
+			expect(requestLease).not.toHaveBeenCalled();
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+
+	it('canonicalizes leaked sandbox agentWorkspaceDir before cache compatibility', async () => {
+		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
+			createLeaseResponse('lease-leaked-sandbox', {
+				agentId: 'beta',
+			}),
+		);
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				openClawDefaultWorkspaceDirProvider: () => '/home/openclaw/.openclaw/workspace',
+				openClawRuntimeConfigProvider: () => ({
+					agents: { list: [{ id: 'beta', workspace: '/zone/agents/beta' }] },
+				}),
+				openClawStateDirProvider: () => '/home/openclaw/.openclaw/state',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const handle = await factory({
+			agentWorkspaceDir: '/home/openclaw/.openclaw/state/sandboxes/child-123/work',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:subagent:child',
+			sessionKey: 'agent:beta:subagent:child',
+			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/child-123/work/project',
+		});
+
+		expect(handle.workdir).toBe('/workspace/work/project');
+		expect(requestLease).toHaveBeenCalledWith({
+			agentId: 'beta',
+			agentWorkspaceDir: '/zone/agents/beta',
+			profileId: 'standard',
+			sessionKey: 'agent:beta:subagent:child',
+			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/child-123',
+			zoneId: 'shravan',
+		});
+	});
+
+	it('reuses one cached lease while rebuilding handles for different cwd intents', async () => {
+		const requestLease = vi.fn(async () =>
+			createLeaseResponse('lease-cwd-intent', {
+				agentId: 'beta',
+			}),
+		);
+		const renewLease = vi.fn(async (leaseId: string) =>
+			createLeaseResponse(leaseId, {
+				agentId: 'beta',
+			}),
+		);
+		const buildExecSpec = vi.fn(async () => ({
+			argv: ['ssh'],
+			env: {},
+			stdinMode: 'pipe-open' as const,
+		}));
+
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec,
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease,
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(async () => ({
+					code: 0,
+					stderr: Buffer.alloc(0),
+					stdout: Buffer.alloc(0),
+				})),
+			},
+		);
+
+		const firstHandle = await factory({
+			agentWorkspaceDir: '/zone/agents/beta',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:discord:channel:123',
+			sessionKey: 'agent:beta:discord:channel:123',
+			workspaceDir: '/workspace/app',
+		});
+		const secondHandle = await factory({
+			agentWorkspaceDir: '/zone/agents/beta',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:beta:subagent:child',
+			sessionKey: 'agent:beta:subagent:child',
+			workspaceDir: '/work/tmp',
+		});
+
+		expect(secondHandle).not.toBe(firstHandle);
+		expect(firstHandle.runtimeId).toBe(secondHandle.runtimeId);
+		expect(firstHandle.workdir).toBe('/workspace/app');
+		expect(secondHandle.workdir).toBe('/work/tmp');
+		await secondHandle.buildExecSpec({ command: 'pwd', env: {}, usePty: false });
+		expect(buildExecSpec).toHaveBeenCalledWith({
+			command: 'pwd',
+			env: {},
+			ssh: expect.any(Object),
+			usePty: false,
+			workdir: '/work/tmp',
+		});
+		expect(requestLease).toHaveBeenCalledTimes(1);
+		expect(renewLease).toHaveBeenCalledTimes(1);
+	});
+
+	it('reuses the same lease for repeated requests from the same agent', async () => {
 		const requestLease = vi.fn(async () => createLeaseResponse('lease-reuse'));
 
 		const factory = createGondolinSandboxBackendFactory(
@@ -380,7 +814,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 				})),
 				createLeaseClient: () => ({
 					...createActiveUseLeaseClientMethods(),
-					renewLease: async () => createLeaseResponse('lease-renew'),
+					renewLease: async () => createLeaseResponse('lease-reuse'),
 					peekLease: async () => createLeasePeekResponse(),
 					releaseLease: async () => {},
 					requestLease,
@@ -390,29 +824,108 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		const firstHandle = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-reuse',
+			sessionKey: 'agent:main:session-reuse',
 			workspaceDir: '/work',
 		});
 		const secondHandle = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-reuse',
+			sessionKey: 'agent:main:session-reuse',
 			workspaceDir: '/work',
 		});
 
-		expect(firstHandle).toBe(secondHandle);
+		expect(firstHandle).not.toBe(secondHandle);
+		expect(firstHandle.runtimeId).toBe(secondHandle.runtimeId);
 		expect(requestLease).toHaveBeenCalledTimes(1);
 	});
 
-	it('reuses one handle for channel-shaped scopes under the same agent', async () => {
-		const requestLease = vi.fn(async () =>
+	it('drops a cached handle when the cached SSH probe fails before reuse', async () => {
+		let leaseCounter = 0;
+		const requestLease = vi.fn(async () => {
+			leaseCounter += 1;
+			return createLeaseResponse(`01890f00-0000-7000-8000-00000000000${String(leaseCounter)}`);
+		});
+		const runRemoteShellScript = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('kex reset'))
+			.mockResolvedValue({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) });
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+					requestLease,
+				}),
+				runRemoteShellScript,
+			},
+		);
+
+		const firstHandle = await factory(createFactoryParamsForAgent('beta'));
+		const secondHandle = await factory(createFactoryParamsForAgent('beta'));
+
+		expect(secondHandle).not.toBe(firstHandle);
+		expect(requestLease).toHaveBeenCalledTimes(2);
+	});
+
+	it('drops a cached handle after an SSH command failure inside an operation', async () => {
+		const requestLease = vi
+			.fn()
+			.mockResolvedValueOnce(createLeaseResponse('01890f00-0000-7000-8000-000000000001'))
+			.mockResolvedValueOnce(createLeaseResponse('01890f00-0000-7000-8000-000000000002'));
+		const releaseLease = vi.fn(async () => {});
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease,
+					renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(async () => {
+					throw new Error('ssh hung');
+				}),
+			},
+		);
+
+		const handle = await factory(createFactoryParamsForAgent('beta'));
+		await expect(handle.runShellCommand({ script: 'pwd' })).rejects.toThrow(/ssh hung/u);
+		await factory(createFactoryParamsForAgent('beta'));
+
+		expect(releaseLease).toHaveBeenCalledWith('01890f00-0000-7000-8000-000000000001', {
+			force: true,
+		});
+		expect(requestLease).toHaveBeenCalledTimes(2);
+	});
+
+	it('refuses a cached agent lease when the agent workspace root changes', async () => {
+		const requestLease = vi.fn(async (_request: Parameters<LeaseClient['requestLease']>[0]) =>
 			createLeaseResponse('shravan-beta-100', {
 				agentId: 'beta',
-				scopeKey: 'agent:beta:discord:channel:123',
 			}),
 		);
 
@@ -438,22 +951,77 @@ describe('createGondolinSandboxBackendFactory', () => {
 			},
 		);
 
-		const firstHandle = await factory({
-			agentWorkspaceDir: '/workspace/beta',
+		await factory({
+			agentWorkspaceDir: '/zone/agents/beta',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:beta:discord:channel:123',
 			sessionKey: 'agent:beta:discord:channel:123',
-			workspaceDir: '/workspace/beta',
+			workspaceDir: '/zone/agents/beta',
 		});
-		const secondHandle = await factory({
-			agentWorkspaceDir: '/workspace/beta',
-			cfg: gondolinSandboxConfig(),
-			scopeKey: 'agent:beta:discord:channel:999',
-			sessionKey: 'agent:beta:discord:channel:999',
-			workspaceDir: '/workspace/beta',
-		});
+		await expect(
+			factory({
+				agentWorkspaceDir: '/zone/agents/beta-edited',
+				cfg: gondolinSandboxConfig(),
+				scopeKey: 'agent:beta:discord:channel:999',
+				sessionKey: 'agent:beta:discord:channel:999',
+				workspaceDir: '/zone/agents/beta-edited',
+			}),
+		).rejects.toThrow(/cached Tool VM lease.*agentWorkspaceDir/u);
 
-		expect(secondHandle).toBe(firstHandle);
+		expect(requestLease).toHaveBeenCalledTimes(1);
+		expect(requestLease.mock.calls[0]?.[0]).not.toHaveProperty('scopeKey');
+		expect(requestLease.mock.calls[0]?.[0]).not.toHaveProperty('sandbox');
+	});
+
+	it('shares one in-flight lease request for concurrent same-agent calls', async () => {
+		let resolveRequest: (() => void) | undefined;
+		const requestGate = new Promise<void>((resolve) => {
+			resolveRequest = resolve;
+		});
+		const requestLease = vi.fn(async () => {
+			await requestGate;
+			return createLeaseResponse('shravan-beta-concurrent', {
+				agentId: 'beta',
+			});
+		});
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () =>
+						createLeaseResponse('shravan-beta-concurrent', {
+							agentId: 'beta',
+						}),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease,
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const firstHandlePromise = factory(createFactoryParamsForAgent('beta'));
+		const secondHandlePromise = factory(createFactoryParamsForAgent('beta'));
+		await Promise.resolve();
+
+		expect(requestLease).toHaveBeenCalledTimes(1);
+		resolveRequest?.();
+		const [firstHandle, secondHandle] = await Promise.all([
+			firstHandlePromise,
+			secondHandlePromise,
+		]);
+
+		expect(firstHandle).not.toBe(secondHandle);
+		expect(firstHandle.runtimeId).toBe(secondHandle.runtimeId);
 		expect(requestLease).toHaveBeenCalledTimes(1);
 	});
 
@@ -465,7 +1033,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			.mockResolvedValueOnce(createLeaseResponse('lease-new'));
 		const renewLease = vi
 			.fn()
-			.mockResolvedValueOnce({ ok: true })
+			.mockResolvedValueOnce(createLeaseResponse('lease-old'))
 			.mockRejectedValueOnce(createControllerLeaseError(404));
 
 		const factory = createGondolinSandboxBackendFactory(
@@ -492,28 +1060,29 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		try {
 			const firstHandle = await factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
-				sessionKey: 'session-stale',
+				sessionKey: 'agent:main:session-stale',
 				workspaceDir: '/work',
 			});
 			const secondHandle = await factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
-				sessionKey: 'session-stale',
+				sessionKey: 'agent:main:session-stale',
 				workspaceDir: '/work',
 			});
 			const thirdHandle = await factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
-				sessionKey: 'session-stale',
+				sessionKey: 'agent:main:session-stale',
 				workspaceDir: '/work',
 			});
 
-			expect(firstHandle).toBe(secondHandle);
+			expect(firstHandle).not.toBe(secondHandle);
+			expect(firstHandle.runtimeId).toBe(secondHandle.runtimeId);
 			expect(thirdHandle).not.toBe(firstHandle);
 			expect(requestLease).toHaveBeenCalledTimes(2);
 			const loggedMessages = stderrWrite.mock.calls.map(([message]) => String(message));
@@ -521,8 +1090,8 @@ describe('createGondolinSandboxBackendFactory', () => {
 				loggedMessages.some(
 					(message) =>
 						message.includes('lease renew failed') &&
-						message.includes("scope 'agent:main'") &&
-						message.includes("lease 'lease-old'"),
+						message.includes("agent 'main'") &&
+						message.includes(`lease '${testToolVmLeaseId('lease-old')}'`),
 				),
 			).toBe(true);
 		} finally {
@@ -557,19 +1126,19 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-client-error',
+			sessionKey: 'agent:main:session-client-error',
 			workspaceDir: '/work',
 		});
 
 		await expect(
 			factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
-				sessionKey: 'session-client-error',
+				sessionKey: 'agent:main:session-client-error',
 				workspaceDir: '/work',
 			}),
 		).rejects.toMatchObject({
@@ -605,19 +1174,19 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-server-error',
+			sessionKey: 'agent:main:session-server-error',
 			workspaceDir: '/work',
 		});
 
 		await expect(
 			factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
-				sessionKey: 'session-server-error',
+				sessionKey: 'agent:main:session-server-error',
 				workspaceDir: '/work',
 			}),
 		).rejects.toMatchObject({
@@ -653,19 +1222,19 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-network-error',
+			sessionKey: 'agent:main:session-network-error',
 			workspaceDir: '/work',
 		});
 
 		await expect(
 			factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
-				sessionKey: 'session-network-error',
+				sessionKey: 'agent:main:session-network-error',
 				workspaceDir: '/work',
 			}),
 		).rejects.toThrow('temporary network failure');
@@ -702,14 +1271,14 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		const handleA = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:alpha',
 			sessionKey: 'agent:alpha:session-a',
 			workspaceDir: '/work',
 		});
 		const handleB = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:beta',
 			sessionKey: 'agent:beta:session-b',
@@ -717,15 +1286,15 @@ describe('createGondolinSandboxBackendFactory', () => {
 		});
 
 		expect(handleA).not.toBe(handleB);
-		expect(handleA.runtimeId).toBe('lease-1');
-		expect(handleB.runtimeId).toBe('lease-2');
+		expect(handleA.runtimeId).toBe(testToolVmLeaseId('lease-1'));
+		expect(handleB.runtimeId).toBe(testToolVmLeaseId('lease-2'));
 		expect(requestLease).toHaveBeenCalledTimes(2);
 	});
 
 	it('requests a new lease when the cached scope handle points at a missing lease', async () => {
 		let leaseCounter = 0;
 		const renewLease = vi.fn(async (leaseId: string) => {
-			if (leaseId === 'lease-1') {
+			if (leaseId === testToolVmLeaseId('lease-1')) {
 				throw createControllerLeaseError(404);
 			}
 			return createLeaseResponse(leaseId);
@@ -758,24 +1327,24 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		const firstHandle = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-stale',
+			sessionKey: 'agent:main:session-stale',
 			workspaceDir: '/work',
 		});
 		const secondHandle = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-stale',
+			sessionKey: 'agent:main:session-stale',
 			workspaceDir: '/work',
 		});
 
 		expect(firstHandle).not.toBe(secondHandle);
 		expect(requestLease).toHaveBeenCalledTimes(2);
-		expect(renewLease).toHaveBeenCalledWith('lease-1');
-		expect(secondHandle.runtimeId).toBe('lease-2');
+		expect(renewLease).toHaveBeenCalledWith(testToolVmLeaseId('lease-1'));
+		expect(secondHandle.runtimeId).toBe(testToolVmLeaseId('lease-2'));
 	});
 
 	it('finalizeExec calls dispose on token when dispose is present', async () => {
@@ -802,10 +1371,10 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		const backend = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-finalize',
+			sessionKey: 'agent:main:session-finalize',
 			workspaceDir: '/work',
 		});
 
@@ -817,6 +1386,174 @@ describe('createGondolinSandboxBackendFactory', () => {
 			token: { dispose: disposeFn },
 		});
 		expect(disposeFn).toHaveBeenCalledTimes(1);
+	});
+
+	it('finalizeExec does not stale the cached lease for a nonzero user command exit', async () => {
+		const releaseLease = vi.fn(async () => {});
+		const endActiveUse = vi.fn(async () => {});
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					endActiveUse,
+					renewLease: async () => createLeaseResponse('lease-renew'),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease,
+					requestLease: vi.fn(async () => createLeaseResponse('lease-command-failed')),
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const backend = await factory({
+			agentWorkspaceDir: '/zone/agents/main',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:main',
+			sessionKey: 'agent:main:session-command-failed',
+			workspaceDir: '/work',
+		});
+		const execSpec = await backend.buildExecSpec({
+			command: 'pnpm test',
+			env: {},
+			usePty: false,
+		});
+
+		await backend.finalizeExec?.({
+			status: 'failed',
+			exitCode: 1,
+			timedOut: false,
+			token: execSpec.finalizeToken,
+		});
+
+		expect(endActiveUse).toHaveBeenCalledWith(
+			testToolVmLeaseId('lease-command-failed'),
+			expect.any(String),
+			expect.objectContaining({ outcome: 'failed' }),
+		);
+		expect(releaseLease).not.toHaveBeenCalled();
+	});
+
+	it('finalizeExec publishes Tool VM SSH finalize health', async () => {
+		const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true })));
+		vi.stubGlobal('fetch', fetchMock);
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease: vi.fn(async () => createLeaseResponse('lease-finalize-health')),
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const backend = await factory({
+			agentWorkspaceDir: '/zone/agents/main',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:main',
+			sessionKey: 'agent:main:session-finalize-health',
+			workspaceDir: '/work',
+		});
+		const execSpec = await backend.buildExecSpec({
+			command: 'pnpm test',
+			env: {},
+			usePty: false,
+		});
+
+		await backend.finalizeExec?.({
+			status: 'completed',
+			exitCode: 0,
+			timedOut: false,
+			token: execSpec.finalizeToken,
+		});
+
+		const fetchCall = fetchMock.mock.calls[0];
+		expect(fetchCall?.[0]).toBe('http://controller.vm.host:18800/zones/shravan/health-events');
+		const init = fetchCall?.[1];
+		if (typeof init?.body !== 'string') {
+			throw new TypeError('Expected health publish request body to be a string.');
+		}
+		const event: unknown = JSON.parse(init.body);
+		expect(event).toMatchObject({
+			agentId: 'main',
+			kind: 'tool-vm-ssh',
+			leaseId: testToolVmLeaseId('lease-finalize-health'),
+			operation: 'finalize',
+			result: 'ok',
+			zoneId: 'shravan',
+		});
+	});
+
+	it('finalizeExec does not wait for Tool VM SSH finalize health publishing', async () => {
+		const fetchMock = vi.fn<typeof fetch>(async () => new Promise<Response>(() => {}));
+		vi.stubGlobal('fetch', fetchMock);
+		const factory = createGondolinSandboxBackendFactory(
+			{
+				controllerUrl: 'http://controller.vm.host:18800',
+				zoneId: 'shravan',
+			},
+			{
+				buildExecSpec: vi.fn(async () => ({
+					argv: ['ssh'],
+					env: {},
+					stdinMode: 'pipe-open' as const,
+				})),
+				createLeaseClient: () => ({
+					...createActiveUseLeaseClientMethods(),
+					renewLease: async () => createLeaseResponse('lease-renew'),
+					peekLease: async () => createLeasePeekResponse(),
+					releaseLease: async () => {},
+					requestLease: vi.fn(async () => createLeaseResponse('lease-finalize-health')),
+				}),
+				runRemoteShellScript: vi.fn(),
+			},
+		);
+
+		const backend = await factory({
+			agentWorkspaceDir: '/zone/agents/main',
+			cfg: gondolinSandboxConfig(),
+			scopeKey: 'agent:main',
+			sessionKey: 'agent:main:session-finalize-health',
+			workspaceDir: '/work',
+		});
+		const execSpec = await backend.buildExecSpec({
+			command: 'pnpm test',
+			env: {},
+			usePty: false,
+		});
+
+		await expect(
+			backend.finalizeExec?.({
+				status: 'completed',
+				exitCode: 0,
+				timedOut: false,
+				token: execSpec.finalizeToken,
+			}),
+		).resolves.toBeUndefined();
+		expect(fetchMock).toHaveBeenCalledWith(
+			'http://controller.vm.host:18800/zones/shravan/health-events',
+			expect.any(Object),
+		);
 	});
 
 	it('finalizeExec is a no-op when token has no dispose', async () => {
@@ -843,10 +1580,10 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		const backend = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-noop',
+			sessionKey: 'agent:main:session-noop',
 			workspaceDir: '/work',
 		});
 
@@ -901,10 +1638,10 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'test',
+			sessionKey: 'agent:main:test',
 			workspaceDir: '/work',
 		});
 
@@ -958,10 +1695,10 @@ describe('createGondolinSandboxBackendFactory', () => {
 			},
 		);
 		const backend = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-dispose-throws',
+			sessionKey: 'agent:main:session-dispose-throws',
 			workspaceDir: '/work',
 		});
 
@@ -1008,10 +1745,10 @@ describe('createGondolinSandboxBackendFactory', () => {
 
 		await expect(
 			factory({
-				agentWorkspaceDir: '/work',
+				agentWorkspaceDir: '/zone/agents/main',
 				cfg: gondolinSandboxConfig(),
 				scopeKey: 'agent:main',
-				sessionKey: 'test',
+				sessionKey: 'agent:main:test',
 				workspaceDir: '/work',
 			}),
 		).rejects.toThrow('Controller lease API returned an unexpected response.');
@@ -1050,7 +1787,7 @@ describe('createGondolinSandboxBackendFactory', () => {
 			agentWorkspaceDir: '/home/openclaw/work',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'session-abc',
+			sessionKey: 'agent:main:session-abc',
 			workspaceDir: '/home/openclaw/.openclaw/state/sandboxes/work',
 		});
 
@@ -1092,16 +1829,16 @@ describe('createGondolinSandboxBackendFactory', () => {
 		);
 
 		const backend = await factory({
-			agentWorkspaceDir: '/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			cfg: gondolinSandboxConfig(),
 			scopeKey: 'agent:main',
-			sessionKey: 'test',
+			sessionKey: 'agent:main:test',
 			workspaceDir: '/work',
 		});
 
 		expect(backend.env).toBeUndefined();
 		expect(backend.createFsBridge).toBeUndefined();
-		expect(backend.runtimeId).toBe('lease-456');
+		expect(backend.runtimeId).toBe(testToolVmLeaseId('lease-456'));
 	});
 });
 

@@ -34,6 +34,16 @@ const systemConfig = {
 			tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
 		},
 	},
+	controller: {
+		health: {
+			enabled: true,
+			eventHistoryLimit: 500,
+			gatewayControlLinkBackoffCeilingMs: 120_000,
+			gatewayControlLinkIntervalMs: 10_000,
+			gatewayServiceIntervalMs: 10_000,
+			staleAfterMs: 30_000,
+		},
+	},
 	imageProfiles: {
 		gateways: {
 			openclaw: {
@@ -103,13 +113,6 @@ function createLeaseRequestBody(
 		agentId: 'main',
 		agentWorkspaceDir: '/agent-work',
 		profileId: 'standard',
-		sandbox: {
-			backend: 'gondolin',
-			mode: 'all',
-			scope: 'agent',
-			workspaceAccess: 'rw',
-		},
-		scopeKey: 'agent:main',
 		sessionKey: 'agent:main:controller-runtime-test',
 		workMountDir: '/home/openclaw/.openclaw/state/sandboxes/agent/work',
 		zoneId: 'shravan',
@@ -286,6 +289,14 @@ describe('startControllerRuntime', () => {
 		const fakeInterval = setTimeout(() => undefined, 0);
 		clearTimeout(fakeInterval);
 		const setIntervalMock = vi.fn(() => fakeInterval);
+		const startupEvents: string[] = [];
+		const configureHostNetworkDefaults = vi.fn(() => {
+			startupEvents.push('host-network-defaults');
+			return {
+				autoSelectFamily: false,
+				dnsResultOrder: 'ipv4first',
+			} as const;
+		});
 
 		const runtime = await startControllerRuntime(
 			{
@@ -310,10 +321,14 @@ describe('startControllerRuntime', () => {
 					getHostPid: () => 12345,
 					getVmInstance: vi.fn(),
 				})),
-				createSecretResolver: async () => ({
-					resolve: async () => '',
-					resolveAll: async () => ({}),
-				}),
+				configureHostNetworkDefaults,
+				createSecretResolver: async () => {
+					startupEvents.push('secrets');
+					return {
+						resolve: async () => '',
+						resolveAll: async () => ({}),
+					};
+				},
 				readProcessIdentity: async () => ({
 					command: 'qemu-system-x86_64 -m 1G',
 					lstart: 'Fri May 22 10:00:00 2026',
@@ -336,7 +351,14 @@ describe('startControllerRuntime', () => {
 					AGENT_VM_ZONE_GIT_TOKEN: expect.any(String),
 				},
 				runtimePluginConfigs: {
-					gondolin: { zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN' },
+					gondolin: {
+						gatewayControlLinkMonitor: {
+							baseIntervalMs: 10_000,
+							enabled: true,
+							maxIntervalMs: 120_000,
+						},
+						zoneGitTokenEnv: 'AGENT_VM_ZONE_GIT_TOKEN',
+					},
 				},
 				zoneId: 'shravan',
 			}),
@@ -351,6 +373,8 @@ describe('startControllerRuntime', () => {
 				port: 18800,
 			}),
 		);
+		expect(configureHostNetworkDefaults).toHaveBeenCalledOnce();
+		expect(startupEvents.slice(0, 2)).toEqual(['host-network-defaults', 'secrets']);
 		if (!startHttpServerArgs) {
 			throw new Error('Expected startHttpServer to be called.');
 		}
@@ -432,8 +456,6 @@ describe('startControllerRuntime', () => {
 				},
 			})),
 			leaseIdleTtl: {
-				byScopeKind: {},
-				byScopePrefix: {},
 				defaultMs: 1_000,
 				maxRequestedMs: 60_000,
 				minRequestedMs: 1_000,
@@ -567,7 +589,6 @@ describe('startControllerRuntime', () => {
 				body: JSON.stringify(
 					createLeaseRequestBody({
 						agentId: 'active-use-reap',
-						scopeKey: 'agent:active-use-reap',
 						sessionKey: 'agent:active-use-reap:controller-runtime-test',
 					}),
 				),
@@ -735,7 +756,6 @@ describe('startControllerRuntime', () => {
 				body: JSON.stringify(
 					createLeaseRequestBody({
 						agentId: 'active-use-shutdown',
-						scopeKey: 'agent:active-use-shutdown',
 						sessionKey: 'agent:active-use-shutdown:controller-runtime-test',
 					}),
 				),
@@ -1631,7 +1651,6 @@ describe('startControllerRuntime', () => {
 					createLeaseRequestBody({
 						agentId: 'close-runtime',
 						agentWorkspaceDir: '/zone',
-						scopeKey: 'agent:close-runtime',
 						sessionKey: 'agent:close-runtime:controller-runtime-test',
 						workMountDir: '/zone/sandbox-work',
 					}),

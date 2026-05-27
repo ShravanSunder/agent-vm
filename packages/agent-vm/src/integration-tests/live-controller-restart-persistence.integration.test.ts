@@ -23,13 +23,6 @@ function createLeaseRequestBody(
 		agentId: 'main',
 		agentWorkspaceDir: '/zone',
 		profileId: 'standard',
-		sandbox: {
-			backend: 'gondolin',
-			mode: 'all',
-			scope: 'agent',
-			workspaceAccess: 'rw',
-		},
-		scopeKey: 'agent:main',
 		sessionKey: 'agent:main:restart-test',
 		workMountDir: '/zone/restart-work',
 		zoneId: 'shravan',
@@ -352,7 +345,6 @@ describe('live integration: controller restart persistence', () => {
 			body: JSON.stringify(
 				createLeaseRequestBody({
 					agentId: 'restart-test',
-					scopeKey: 'agent:restart-test',
 					sessionKey: 'agent:restart-test:integration',
 				}),
 			),

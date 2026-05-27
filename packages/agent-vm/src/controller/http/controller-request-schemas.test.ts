@@ -18,18 +18,8 @@ describe('controller request schemas', () => {
 			properties: {
 				agentId: { minLength: 1, type: 'string' },
 				agentWorkspaceDir: { minLength: 1, type: 'string' },
+				idleTtlMs: { exclusiveMinimum: 0, type: 'integer' },
 				profileId: { minLength: 1, type: 'string' },
-				sandbox: expect.objectContaining({
-					properties: expect.objectContaining({
-						backend: { type: 'string' },
-						mode: { type: 'string' },
-						scope: { type: 'string' },
-						workspaceAccess: { type: 'string' },
-					}),
-					required: ['backend', 'mode', 'scope', 'workspaceAccess'],
-					type: 'object',
-				}),
-				scopeKey: { minLength: 1, type: 'string' },
 				sessionKey: { minLength: 1, type: 'string' },
 				workMountDir: { minLength: 1, type: 'string' },
 				zoneId: { minLength: 1, type: 'string' },
@@ -38,8 +28,6 @@ describe('controller request schemas', () => {
 				'agentId',
 				'agentWorkspaceDir',
 				'profileId',
-				'sandbox',
-				'scopeKey',
 				'sessionKey',
 				'workMountDir',
 				'zoneId',
@@ -75,18 +63,54 @@ describe('controller request schemas', () => {
 		});
 	});
 
-	it('rejects non-absolute and parent-traversing lease agent workspace paths', () => {
-		const validLeaseRequest = {
+	it('rejects deprecated lease scopeKey and sandbox fields', () => {
+		const payload = {
 			agentId: 'main',
-			agentWorkspaceDir: '/home/openclaw/work',
+			agentWorkspaceDir: '/zone/agents/main',
 			profileId: 'standard',
+			scopeKey: 'agent:main',
 			sandbox: {
 				backend: 'gondolin',
 				mode: 'all',
 				scope: 'agent',
 				workspaceAccess: 'rw',
 			},
-			scopeKey: 'agent:main',
+			sessionKey: 'agent:main:manual',
+			workMountDir: '/zone/agents/main',
+			zoneId: 'shravan',
+		};
+
+		const result = controllerLeaseCreateRequestSchema.safeParse(payload);
+
+		expect(result.success).toBe(false);
+		expect(result.success ? [] : result.error.issues).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					code: 'unrecognized_keys',
+					keys: expect.arrayContaining(['scopeKey', 'sandbox']),
+				}),
+			]),
+		);
+	});
+
+	it('accepts the hard-cutover agent lease request shape', () => {
+		const result = controllerLeaseCreateRequestSchema.safeParse({
+			agentId: 'main',
+			agentWorkspaceDir: '/zone/agents/main',
+			profileId: 'standard',
+			sessionKey: 'agent:main:manual',
+			workMountDir: '/zone/agents/main',
+			zoneId: 'shravan',
+		});
+
+		expect(result.success).toBe(true);
+	});
+
+	it('rejects non-absolute and parent-traversing lease path fields', () => {
+		const validLeaseRequest = {
+			agentId: 'main',
+			agentWorkspaceDir: '/home/openclaw/work',
+			profileId: 'standard',
 			sessionKey: 'agent:main:session-abc',
 			workMountDir: '/home/openclaw/.openclaw/state/sandboxes/main/work',
 			zoneId: 'shravan',
@@ -108,6 +132,18 @@ describe('controller request schemas', () => {
 			controllerLeaseCreateRequestSchema.safeParse({
 				...validLeaseRequest,
 				agentWorkspaceDir: '/',
+			}).success,
+		).toBe(false);
+		expect(
+			controllerLeaseCreateRequestSchema.safeParse({
+				...validLeaseRequest,
+				workMountDir: 'relative/work',
+			}).success,
+		).toBe(false);
+		expect(
+			controllerLeaseCreateRequestSchema.safeParse({
+				...validLeaseRequest,
+				workMountDir: '/home/openclaw/../work',
 			}).success,
 		).toBe(false);
 	});

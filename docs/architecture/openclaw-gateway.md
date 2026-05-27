@@ -140,8 +140,9 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
        |
        v
   POST /lease {
-    scopeKey: "discord:user123",
     zoneId,
+    agentId,
+    sessionKey,
     profileId,
     agentWorkspaceDir,
     workMountDir: "/zone/..."
@@ -151,7 +152,7 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
   Controller: lease-manager.createLease()
        |
        |  1. Translate workMountDir from gateway path to trusted hostWorkMountDir
-       |  2. Reuse same scope only if profileId, hostWorkMountDir, and
+       |  2. Reuse same agent only if profileId, hostWorkMountDir, and
        |     agentWorkspaceDir match
        |  3. Probe existing VM; evict stale leases
        |  4. tcpPool.allocate() → slot 0 (port 19000)
@@ -168,7 +169,7 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
        |-- POST /lease/:leaseId/uses/:useId/heartbeat while it runs
        |-- DELETE /lease/:leaseId/uses/:useId when it finishes
        |
-  v  (scope-specific idle TTL; default 100 minutes)
+  v  (lease idle TTL; default 100 minutes)
   Idle reaper: releaseLease()
        |  1. vm.close() → tool VM destroyed
        |  2. tcpPool.release(slot) → port freed
@@ -178,8 +179,9 @@ When the agent needs to execute code, OpenClaw requests a tool VM lease through 
 
 Managed OpenClaw/Gondolin Tool VM leases are agent-keyed. The controller
 creates or reuses one compatible Tool VM per `zoneId + agentId`. OpenClaw
-`scopeKey` remains in the lease request and response as channel/session
-provenance and TTL-policy input, but it is not a Tool VM identity axis.
+scope keys are plugin-boundary SDK context only: the plugin may receive them
+from OpenClaw core, but does not send them to the controller, and the
+controller does not store, return, log, or derive TTL from them.
 
 If the same agent already has an active lease, it is reused only when
 `profileId`, `hostWorkMountDir`, and `agentWorkspaceDir` also match. A mismatch
@@ -188,9 +190,16 @@ controller probes the VM; dead leases are evicted and replaced. This means an
 agent's Tool VM persists across multiple tool calls, channels, sessions, or
 subagents without silently crossing work mount or profile boundaries.
 
-Cached handles renew the idle lease with `POST /lease/:leaseId/renew`. `GET`
-lease routes are read-only; they do not update `lastUsedAt`. In-flight commands
-and file-bridge operations are tracked separately as active uses, so a
+Cached handles renew the idle lease with `POST /lease/:leaseId/renew`; health
+snapshots call this `lease-renew`. `GET` lease routes are read-only; they do
+not update `lastUsedAt`. In-flight commands and file-bridge operations are
+tracked separately as active uses; health snapshots call
+`POST /lease/:leaseId/uses/:useId/heartbeat` a `lease-heartbeat`. Successful
+lease-heartbeats and lease-renews both keep lease state alive, but they
+diagnose different boundaries. A lease-heartbeat means an active operation is
+still alive. A lease-renew means an idle cached lease is being reused. This
+distinction matters when debugging controller-link timeouts versus stale Tool
+VM SSH state. Because active uses are tracked separately, a
 long-running SSH command keeps the Tool VM protected from idle reap without
 making the controller a stdout/stderr data proxy. If a plugin misses its final
 cleanup callback, plugin heartbeats stop after a finite safety cap (12 hours by
@@ -309,10 +318,23 @@ The plugin provides:
   execution; `/work` remains VM-local rootfs/COW scratch.
   Lease requests provide `workMountDir` as a concrete OpenClaw gateway child
   path under `/home/openclaw/.openclaw/state/sandboxes` or `/zone`; the roots
-  themselves are validation boundaries and are rejected as mount targets.
+  themselves are validation boundaries, and the controller rejects them as mount
+  targets.
   The controller maps that gateway path to `hostWorkMountDir`, verifies the
   real path is inside either `stateDir/sandboxes` or `zoneFilesDir`, and mounts
   non-zone-git work mounts into the Tool VM at `/workspace`.
+
+The OpenClaw plugin normalizes workspace/cwd intent before calling the
+controller. Known Tool VM guest paths are allowed as intent: `/workspace` maps
+to the mounted agent workspace, while `/work` stays Tool VM rootfs/COW scratch.
+The plugin sends the controller only the lease mount source and keeps the
+effective guest cwd on the backend handle for SSH execution.
+
+The controller remains the security boundary for host mounts. It accepts
+controller-supported OpenClaw gateway paths such as `/zone/<child>` and
+`/home/openclaw/.openclaw/state/sandboxes/<child>`, translates them to host
+paths, and proves the resolved path is inside the configured allowed roots
+before booting a Tool VM.
 
 OpenClaw SDK compatibility note: OpenClaw currently names the selected sandbox
 path `workspaceDir`. The agent-vm plugin translates that field to
@@ -353,10 +375,23 @@ For the full auth profile flow, see [subsystems/secrets-and-credentials.md](../s
 Discord and WhatsApp use WebSocket connections that can't go through HTTP mediation. These are configured as TCP pass-through:
 
 ```json
-"websocketBypass": ["gateway.discord.gg:443", "web.whatsapp.com:443"]
+"websocketBypass": [
+  "gateway.discord.gg:443",
+  "gateway-us-east1-b.discord.gg:443",
+  "gateway-us-east1-c.discord.gg:443",
+  "gateway-us-east1-d.discord.gg:443",
+  "web.whatsapp.com:443"
+]
 ```
 
 Bypass hosts get direct TCP forwarding via `tcpHosts` — no HTTP interception, no secret injection.
+
+Wildcard Discord policy belongs in `egressHosts` (`*.discord.gg`,
+`*.discord.com`, `*.discord.media`, `*.discordapp.com`,
+`*.discordapp.net`). Do not put wildcard entries such as
+`*.discord.gg:443` in `websocketBypass` unless the raw TCP bypass layer grows
+wildcard support; today the OpenClaw lifecycle compiles each `websocketBypass`
+entry into an exact Gondolin `tcpHosts` key.
 
 Because bypass hosts use raw `tcpHosts`, they rely on Gondolin's per-host
 synthetic IPv4 mapping. The adapter also emits an IPv4-mapped RFC2544 synthetic
@@ -364,6 +399,11 @@ AAAA answer for OpenClaw SSRF compatibility, but that AAAA answer is not the
 identity-bearing route for raw TCP. After changing synthetic DNS behavior,
 verify that Discord stays online through the normal WebSocket client path and
 that forced IPv6 attempts do not delay reconnects.
+
+The OpenClaw gateway VM receives forced IPv4-preference `NODE_OPTIONS`, but
+raw `tcpHosts` upstream sockets are opened by the host-side Node process that
+creates the Gondolin VM. The Gondolin adapter therefore also sets host Node DNS
+and family-autoselection defaults before constructing Gondolin network state.
 
 ---
 
@@ -375,6 +415,7 @@ The controller exposes operations for managing the OpenClaw Gateway:
 |-----------|----------|-------------|
 | Status | `GET /controller-status` | System config and zone health |
 | Health | `GET /zones/:id/health` | Live gateway health probe from inside the VM |
+| Health snapshot | `GET /zones/:id/health-snapshot` | In-memory zone health state derived from controller, gateway, lease, and Tool VM SSH events |
 | Logs | `GET /zones/:id/logs` | Gateway boot log plus OpenClaw runtime log tail from `/agent-vm/logs` in the VM |
 | Credentials | `POST /zones/:id/credentials/refresh` | Re-resolve secrets, restart gateway |
 | Destroy | `POST /zones/:id/destroy` | Stop gateway, release leases, purge state |
@@ -383,6 +424,11 @@ The controller exposes operations for managing the OpenClaw Gateway:
 | Exec | `POST /zones/:id/execute-command` | Run command in gateway VM after zone admin authorization when configured |
 
 For implementation details, see [subsystems/controller.md](../subsystems/controller.md#operations).
+
+The OpenClaw application heartbeat is not the same thing as infrastructure
+health. A scheduled OpenClaw agent turn can prove that OpenClaw app logic ran,
+but it does not by itself prove that the gateway-to-agent-vm-controller link,
+lease-heartbeat path, lease-renew path, or Tool VM SSH path is healthy.
 
 ---
 

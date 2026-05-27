@@ -142,10 +142,12 @@ is visible to any code running inside the VM.
 
 ### http-mediation injection
 
-The resolved value never enters the VM. Instead, the Gondolin HTTP proxy
-intercepts outbound requests matching the secret's `hosts` list and injects
-the credential (e.g. as a Bearer token or API key header). Code inside the
-VM makes requests to the allowed hosts without any secret material.
+The resolved raw value never enters the VM. Instead, Gondolin gives the VM a
+generated placeholder value and the Gondolin HTTP proxy intercepts outbound
+requests matching the secret's `hosts` list. When the request carries that
+placeholder in a supported location, such as an HTTP header, Gondolin swaps in
+the real credential before forwarding the request. Code inside the VM can
+reference the placeholder, but it cannot read the raw secret.
 
 ```
   +-------------------+          +--------------------+          +-----------+
@@ -160,6 +162,13 @@ Tool VM secrets must use `http-mediation`; the Tool VM never receives raw
 `env`-injected secrets. A secret may still use `source: "environment"` for a
 Tool VM audience, but that only tells the controller where to read the value
 before handing it to Gondolin mediation.
+
+For stdio MCP providers, prefer `http-mediation` when the upstream server reads
+an API key from env and sends it in an outbound request location that Gondolin
+substitutes. The stdio process receives a placeholder env value, not the real
+secret. Use raw `env` injection only when the upstream server cannot operate
+with a placeholder, such as local token-shape validation or request body/path
+auth that Gondolin does not substitute.
 
 ---
 

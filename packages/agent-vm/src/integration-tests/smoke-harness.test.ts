@@ -233,6 +233,14 @@ describe('startSmokeControllerRuntime', () => {
 		await expect(fs.access(temporaryRoot)).rejects.toThrow();
 	});
 
+	it('removes OpenClaw control-link smoke temp roots', async () => {
+		const temporaryRoot = await createTemporaryRoot('openclaw-control-link-smoke-');
+
+		await removeSmokeTempRoot(temporaryRoot);
+
+		await expect(fs.access(temporaryRoot)).rejects.toThrow();
+	});
+
 	it('does not remove unrelated temp roots through the smoke cleanup helper', async () => {
 		const temporaryRoot = await createTemporaryRoot('agent-vm-not-smoke-');
 

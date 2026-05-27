@@ -10,7 +10,7 @@ export const OPENCLAW_GONDOLIN_SANDBOX_REQUIREMENTS = [
 ] as const;
 
 export const OPENCLAW_GONDOLIN_LEASE_SCOPE_GUIDANCE =
-	'Managed OpenClaw/Gondolin requires an explicit agentId. scopeKey is OpenClaw scope provenance and may include channel, session, thread, or subagent segments under that agent.';
+	'Managed OpenClaw/Gondolin leases are agent-scoped. The plugin derives agentId from sessionKey and does not send OpenClaw scope keys to the controller.';
 
 export type OpenClawGondolinSandboxRequirement =
 	(typeof OPENCLAW_GONDOLIN_SANDBOX_REQUIREMENTS)[number];
@@ -28,6 +28,13 @@ export interface OpenClawGondolinAgentConfig {
 	readonly id?: unknown;
 	readonly sandbox?: OpenClawGondolinSandboxSnapshot;
 	readonly workspace?: unknown;
+}
+
+export class OpenClawAgentIdError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'OpenClawAgentIdError';
+	}
 }
 
 export function isOpenClawAgentId(value: string): boolean {
@@ -69,13 +76,21 @@ export function formatOpenClawGondolinRequirementHint(options: {
 
 export function normalizeOpenClawAgentId(value: string | undefined | null): string {
 	const trimmed = (value ?? '').trim().toLowerCase();
-	return isOpenClawAgentId(trimmed) ? trimmed : OPENCLAW_DEFAULT_AGENT_ID;
+	if (trimmed === '') {
+		return OPENCLAW_DEFAULT_AGENT_ID;
+	}
+	if (!isOpenClawAgentId(trimmed)) {
+		throw new OpenClawAgentIdError(`Invalid OpenClaw agentId '${value}'.`);
+	}
+	return trimmed;
 }
 
 export function resolveOpenClawAgentIdFromSessionKey(sessionKey: string): string {
 	const parts = sessionKey.trim().split(':');
-	if (parts[0] !== 'agent' || !parts[1]) {
-		return OPENCLAW_DEFAULT_AGENT_ID;
+	if (parts[0] !== 'agent' || !parts[1] || !isOpenClawAgentId(parts[1])) {
+		throw new OpenClawAgentIdError(
+			`OpenClaw sessionKey '${sessionKey}' must be agent-shaped and include a valid agentId.`,
+		);
 	}
 	return normalizeOpenClawAgentId(parts[1]);
 }

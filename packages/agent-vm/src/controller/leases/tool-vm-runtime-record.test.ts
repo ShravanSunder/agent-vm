@@ -22,7 +22,8 @@ import {
 } from './tool-vm-runtime-record.js';
 
 const createdDirectories: string[] = [];
-const sampleRecordId = '01890f00-0000-7000-8000-000000000000';
+const sampleLeaseId = '01890f00-0000-7000-8000-000000000000';
+const sampleRecordId = '01890f00-0000-7000-8000-000000000111';
 
 afterEach(async () => {
 	const directoriesToDelete = createdDirectories.splice(0);
@@ -91,7 +92,7 @@ function buildSampleRecord(overrides: Partial<ToolVmRuntimeRecord> = {}): ToolVm
 			sessionLabel: 'claw-tests-a1b2c3d4:sunfam:gateway',
 			vmId: 'gateway-vm-instance-1',
 		},
-		leaseId: 'sunfam-beta-1779576951215',
+		leaseId: sampleLeaseId,
 		processIdentity: {
 			command: 'qemu-system-x86_64 -m 1G -smp 1 -kernel /vm-images/tool/kernel',
 			lstart: 'Fri May 22 10:00:00 2026',
@@ -100,8 +101,8 @@ function buildSampleRecord(overrides: Partial<ToolVmRuntimeRecord> = {}): ToolVm
 		qemuPid: 48_282,
 		recordId: sampleRecordId,
 		schemaVersion: 1,
-		sessionLabel: 'claw-tests-a1b2c3d4:sunfam:tool:3',
-		tcpSlot: 3,
+		sessionLabel: 'claw-tests-a1b2c3d4:sunfam:tool:0',
+		tcpSlot: 0,
 		vmId: 'tool-vm-instance-1',
 		zoneId: 'sunfam',
 		...overrides,
@@ -120,9 +121,10 @@ describe('tool-vm-runtime-record', () => {
 
 		expect(toolVmRuntimeRecordSchema.parse(record)).toMatchObject({
 			agentId: 'beta',
-			leaseId: 'sunfam-beta-1779576951215',
+			leaseId: sampleLeaseId,
 			qemuPid: 48_282,
 			recordId: sampleRecordId,
+			tcpSlot: 0,
 			vmId: 'tool-vm-instance-1',
 		});
 
@@ -136,7 +138,7 @@ describe('tool-vm-runtime-record', () => {
 
 	it('uses recordId as the only filename identity', () => {
 		const record = buildSampleRecord({
-			leaseId: 'shravan-beta-1779576951215',
+			leaseId: sampleLeaseId,
 			recordId: sampleRecordId,
 		});
 
@@ -201,12 +203,12 @@ describe('tool-vm-runtime-record', () => {
 		const stateDir = await createStateDirectory();
 		const newer = buildSampleRecord({
 			createdAt: '2026-05-22T10:00:01.000Z',
-			leaseId: 'sunfam-beta-newer',
+			leaseId: '01890f00-0000-7000-8000-000000000002',
 			recordId: '01890f00-0000-7000-8000-000000000002',
 		});
 		const older = buildSampleRecord({
 			createdAt: '2026-05-22T10:00:00.000Z',
-			leaseId: 'sunfam-beta-older',
+			leaseId: '01890f00-0000-7000-8000-000000000001',
 			recordId: '01890f00-0000-7000-8000-000000000001',
 		});
 		await writeToolVmRuntimeRecord(stateDir, newer);
@@ -242,13 +244,13 @@ describe('tool-vm-runtime-record', () => {
 				sessionLabel: 'claw-tests-a1b2c3d4:sunfam:gateway',
 				vmId: 'gateway-vm-instance-1',
 			},
-			leaseId: 'sunfam-beta-1779576951215',
+			leaseId: sampleLeaseId,
 			managedVm: createManagedVmStub({ hostPid: 48_282, id: 'tool-vm-instance-1' }),
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			readProcessIdentity: async () => stubIdentity,
 			recordId: sampleRecordId,
 			systemConfigPath: '/etc/agent-vm/system.json',
-			tcpSlot: 3,
+			tcpSlot: 0,
 			zoneId: 'sunfam',
 		});
 
@@ -260,14 +262,14 @@ describe('tool-vm-runtime-record', () => {
 				sessionLabel: 'claw-tests-a1b2c3d4:sunfam:gateway',
 				vmId: 'gateway-vm-instance-1',
 			},
-			leaseId: 'sunfam-beta-1779576951215',
+			leaseId: sampleLeaseId,
 			processIdentity: stubIdentity,
 			projectNamespace: 'claw-tests-a1b2c3d4',
 			qemuPid: 48_282,
 			recordId: sampleRecordId,
 			schemaVersion: 1,
-			sessionLabel: 'claw-tests-a1b2c3d4:sunfam:tool:3',
-			tcpSlot: 3,
+			sessionLabel: 'claw-tests-a1b2c3d4:sunfam:tool:0',
+			tcpSlot: 0,
 			vmId: 'tool-vm-instance-1',
 			zoneId: 'sunfam',
 		});
@@ -283,7 +285,7 @@ describe('tool-vm-runtime-record', () => {
 				gateway: {
 					sessionLabel: 'claw-tests-a1b2c3d4:sunfam:gateway',
 				},
-				leaseId: 'sunfam-beta-1779576951215',
+				leaseId: sampleLeaseId,
 				managedVm: createManagedVmStub({ hostPid: 48_282, id: 'tool-vm-instance-1' }),
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				readProcessIdentity: async () => null,
@@ -310,7 +312,7 @@ describe('tool-vm-runtime-record', () => {
 				gateway: {
 					sessionLabel: 'claw-tests-a1b2c3d4:sunfam:gateway',
 				},
-				leaseId: 'sunfam-beta-1779576951215',
+				leaseId: sampleLeaseId,
 				managedVm,
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				recordId: sampleRecordId,
@@ -334,7 +336,7 @@ describe('tool-vm-runtime-record', () => {
 				gateway: {
 					sessionLabel: 'claw-tests-a1b2c3d4:sunfam:gateway',
 				},
-				leaseId: 'sunfam-beta-1779576951215',
+				leaseId: sampleLeaseId,
 				managedVm,
 				projectNamespace: 'claw-tests-a1b2c3d4',
 				recordId: sampleRecordId,

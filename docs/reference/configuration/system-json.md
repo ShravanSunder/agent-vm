@@ -31,6 +31,15 @@ host
   secretsProvider
   githubToken
 
+controller
+  health
+    enabled
+    gatewayServiceIntervalMs
+    gatewayControlLinkIntervalMs
+    gatewayControlLinkBackoffCeilingMs
+    staleAfterMs
+    eventHistoryLimit
+
 cacheDir
 
 runtimeDir
@@ -84,6 +93,41 @@ intentionally checked-in test deployments.
 | `env` | Read 1Password service account token from an env var. Defaults to `OP_SERVICE_ACCOUNT_TOKEN`. |
 | `keychain` | Read the service account token from macOS Keychain. |
 | `op-cli` | Resolve the service account token through the 1Password CLI. |
+
+## controller.health
+
+`controller.health` tunes agent-vm controller health collection. Omit it for
+the defaults.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | Enables periodic health monitors. Health routes remain available when disabled. |
+| `gatewayServiceIntervalMs` | `10000` | Host-side interval for the agent-vm controller to probe each running gateway-service through the gateway VM health check. |
+| `gatewayControlLinkIntervalMs` | `10000` | In-VM interval for the OpenClaw Gondolin plugin to call the agent-vm controller `GET /health` endpoint. |
+| `gatewayControlLinkBackoffCeilingMs` | `120000` | Maximum backoff interval for repeated gateway-to-controller failures. Must be at least `gatewayControlLinkIntervalMs`. |
+| `staleAfterMs` | `30000` | Age after which a latest health event is treated as stale in zone health snapshots. |
+| `eventHistoryLimit` | `500` | Rolling in-memory event history retained by the agent-vm controller. Latest per-boundary state is retained separately. |
+
+Health event history is in-memory controller state. It is useful for live
+diagnostics and zone health snapshots, but it is not durable across an
+agent-vm controller restart.
+
+Example:
+
+```jsonc
+{
+  "controller": {
+    "health": {
+      "enabled": true,
+      "gatewayServiceIntervalMs": 10000,
+      "gatewayControlLinkIntervalMs": 10000,
+      "gatewayControlLinkBackoffCeilingMs": 120000,
+      "staleAfterMs": 30000,
+      "eventHistoryLimit": 500
+    }
+  }
+}
+```
 
 ## cacheDir
 
@@ -270,6 +314,11 @@ Important fields in `mcp.config.jsonc` provider entries:
   `secretPolicies.<name>` entry.
 - `secretPolicies.<name>.injection` is either `env` or `http-mediation`;
   mediated secrets must list allowed `hosts`.
+- For stdio MCP API keys, prefer `http-mediation` when the MCP server sends the
+  env value in outbound HTTP headers or other Gondolin-supported request
+  locations. The effective config rewrites the authored env ref to a generated
+  `AGENT_VM_MCP_*` placeholder environment variable, while the raw value stays
+  in host-side mediated secret state.
 
 Local smoke coverage uses a fake Streamable HTTP MCP provider and the
 controller smoke harness `tcpHostsOverride` path to make that host-side provider
@@ -714,26 +763,23 @@ zones without exhausting Tool VM SSH slots immediately.
 ## leaseIdleTtl
 
 `leaseIdleTtl` is optional. When omitted, every lease uses the default 100 minute
-idle timeout. OpenClaw deployments that mix agent, session, and workspace-scope
-leases can override by scope kind or by scope-key prefix:
+idle timeout. Managed OpenClaw Tool VM leases use one TTL policy for all agents;
+OpenClaw scope keys are not part of the agent-vm lease model and cannot change
+TTL selection.
+Clients may request `idleTtlMs` on a lease request, bounded by `minRequestedMs`
+and `maxRequestedMs`:
 
 ```json
 {
   "leaseIdleTtl": {
     "defaultMs": 6000000,
-    "byScopeKind": {
-      "agent": 7200000,
-      "workspace": 900000
-    },
-    "byScopePrefix": {
-      "agent:shravan": 21600000
-    }
+    "minRequestedMs": 1000,
+    "maxRequestedMs": 86400000
   }
 }
 ```
 
-Selection order is exact or longest prefix match in `byScopePrefix`, then
-`byScopeKind`, then `defaultMs`.
+When `idleTtlMs` is omitted from the request, the controller uses `defaultMs`.
 
 ## Cross-Field Validation
 

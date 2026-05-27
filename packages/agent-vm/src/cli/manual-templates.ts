@@ -31,13 +31,14 @@ Primary config:
 
 Use docs/manual/layout.md before moving files or changing generated folders.
 Use docs/manual/image-versioning.md before changing agent-vm package pins, managed image pins, OpenClaw runtime package pins, or generated Dockerfiles.
-Use docs/manual/scope.md before changing OpenClaw sandbox scope or tool VM lease behavior.
+Use docs/manual/tool-vm-leases.md before changing agent-vm Tool VM lease identity, renewal, or reuse behavior.
 Use docs/manual/gateway-ingress.md before changing gateway ports, OpenClaw Control UI access, SSE/streaming behavior, WebSocket access, or serving additional webservers from inside a VM.
+Use docs/manual/operations.md before debugging agent-vm controller health, gateway service health, lease-heartbeat, lease-renew, Tool VM SSH, or Gondolin tcpHosts timeouts.
 Use docs/manual/mcp-portal.md before changing MCP providers, MCP Portal profiles, MCP package pins, or live MCP validation.
 Use docs/manual/tool-access.md before answering whether a tool binary, auth profile, or tool VM image should be agent-specific.
 Use docs/manual/channels.md before helping a human configure Discord, Slack, Telegram, or another OpenClaw channel.
 Use docs/manual/runtime-paths.md before answering where files appear inside VMs or how workMountDir backs the Tool VM lease workdir.
-Use docs/manual/per-agent-setup.md before changing multi-agent layouts, scope=agent behavior, or per-agent tool/auth isolation.
+Use docs/manual/per-agent-setup.md before changing multi-agent layouts, OpenClaw scope=agent configuration, or per-agent tool/auth isolation.
 
 Do not assume Discord is enabled by the framework. Channels and channel secrets are deployment-owned.
 Do not silently edit privileged host/deployment config. Explain the proposed Dockerfile, secret, egressHosts, websocketBypass, or OpenClaw config change and wait for the human to ask you to apply it.
@@ -59,7 +60,7 @@ This manual is generated from the installed agent-vm package. It is the deployme
 Read in this order:
 1. layout.md explains generated folders and ownership.
 2. image-versioning.md explains package pins, managed image pins, overlays, and generated Dockerfiles.
-3. scope.md explains session, agent, and shared scope.
+3. tool-vm-leases.md explains agent-keyed Tool VM lease identity and reuse.
 4. openclaw.md explains OpenClaw gateway configuration.
 5. gateway-ingress.md explains host-facing gateway ports, OpenClaw web serving, SSE, WebSockets, and the boundary between single-route OpenClaw ingress and additional guest webservers.
 6. openclaw-defaults.md explains agent-vm-owned OpenClaw defaults and doctor checks.
@@ -67,10 +68,10 @@ Read in this order:
 8. tool-access.md explains binary, auth, OpenClaw tool, and zone/image isolation.
 9. channels.md explains how deployments add Discord or other channels.
 10. runtime-paths.md explains /workspace, /work, and other in-VM paths.
-11. per-agent-setup.md explains multi-agent scope and tool access choices.
+11. per-agent-setup.md explains multi-agent layout and tool access choices.
 12. migration-discord.md explains how existing Discord deployments keep working.
 13. secrets.md explains runtime auth and HTTP mediation.
-14. operations.md explains start, graceful stop, and scoped offline cleanup.
+14. operations.md explains start, graceful stop, scoped offline cleanup, health snapshots, lease-heartbeat, lease-renew, gateway-service health, and gateway-to-controller control-link checks.
 
 Local deployment notes belong in docs/manual/local-notes.md or another non-generated file.
 `,
@@ -129,25 +130,21 @@ agent-vm build prints the resolved base image, generated Dockerfile path, OpenCl
 			),
 		},
 		{
-			relativePath: 'docs/manual/scope.md',
+			relativePath: 'docs/manual/tool-vm-leases.md',
 			content: generatedPage(
-				'Scope And Tool VM Reuse',
+				'Tool VM Lease Identity And Reuse',
 				`
-OpenClaw sandbox scope decides which work mount a Tool VM sees.
-
-session scope isolates per conversation.
-agent scope reuses a stable work mount for one agent identity.
-shared scope intentionally shares one work mount across participants.
-
 Managed OpenClaw Tool VMs are agent-keyed: one compatible Tool VM per zone and OpenClaw agent id.
-OpenClaw scopeKey may describe a channel, thread, session, or subagent scope under that agent; it does not choose the Tool VM.
+The OpenClaw plugin derives agentId from the OpenClaw session key and sends agentId to the controller. OpenClaw scope keys are plugin-boundary metadata only: they are discarded before the controller lease request and do not choose, identify, renew, list, log, or store Tool VM leases.
+The controller validates the requested gateway work path, resolves it to a host work mount, and returns the Tool VM guest workdir. The lease identity remains zoneId + agentId, not a path string.
 TCP slots are capacity; they are not identity.
 GET lease reads are read-only. Cached Tool VM handles renew idle leases with POST renew, and active shell/file operations heartbeat per-use records so long commands are not reaped mid-run.
+Health snapshots call POST renew lease-renew and active-use heartbeat lease-heartbeat. Both keep lease state alive when successful, but they prove different things: lease-renew proves an idle cached lease can be reused, while lease-heartbeat proves an active operation still has a live controller path.
 
 Example:
-- shravan agent uses agentId=shravan and may receive scopeKey=agent:shravan:discord:channel:123.
-- alevtina agent uses agentId=alevtina and may receive scopeKey=agent:alevtina:subagent:child.
-- Each agent gets its own scoped sandbox mounted at /workspace in its Tool VM.
+- shravan agent uses agentId=shravan.
+- alevtina agent uses agentId=alevtina.
+- Each agent gets its own compatible Tool VM lease mounted at /workspace in its Tool VM.
 - If both agents share one OpenClaw zone, unmapped agents use defaultToolVmProfile.
 - Configure agentToolVmProfiles when agents in one zone need different Tool VM images.
 - Configure gateway.authProfilesByAgent and agentSandboxSeeds for per-agent auth/profile files.
@@ -175,6 +172,20 @@ It reads the selected deployment config, loads only that zone's gateway-runtime.
 Do not use broad QEMU process kills as normal deployment workflow. Multiple agent-vm installations can run on one host, and broad process matching can kill the wrong installation.
 
 Local package scripts should be thin wrappers around these commands. Deployment repos should not copy process-fencing logic.
+
+Health model:
+- GET /health is the global agent-vm controller liveness endpoint.
+- GET /zones/<zoneId>/health is an on-demand live gateway-service probe.
+- GET /zones/<zoneId>/health-snapshot is an in-memory zone health view.
+- gateway-service-health means the agent-vm controller can probe the gateway service through the gateway VM runtime.
+- gateway-control-link means the gateway VM can call back to the agent-vm controller through controller.vm.host:18800.
+- lease-heartbeat means an active Tool VM operation can refresh its active use.
+- lease-renew means an idle cached Tool VM lease can be reused.
+- tool-vm-ssh means command, file-bridge, finalize, or probe SSH operations on the gateway-to-Tool-VM path.
+
+Health event history is in-memory controller state. It is useful for live diagnosis but is lost on agent-vm controller restart.
+
+Health timeouts are operation-specific. Short health probes should fail quickly; git push/pull and lease-create get longer budgets. Do not assume every abort means the work should be killed.
 `,
 			),
 		},
@@ -186,6 +197,7 @@ Local package scripts should be thin wrappers around these commands. Deployment 
 Agent-vm provides VM lifecycle, storage mounts, TCP/HTTP mediation, image build, and tool VM leases.
 OpenClaw owns plugin lifecycle, agents.list, channels, and gateway behavior.
 The controller is the control plane: it issues leases and tracks active uses. Command stdout, stderr, and file bridge traffic stay on the gateway-to-Tool-VM SSH data path.
+OpenClaw application heartbeat turns are not infrastructure health checks. Use agent-vm health snapshots to distinguish gateway-service health, gateway-to-controller control link, lease-heartbeat, lease-renew, and Tool VM SSH health.
 
 The default scaffold enables Gondolin and memory-core support. It does not enable Discord.
 OpenClaw-owned openclaw.json stays strict JSON unless OpenClaw itself supports comments or agent-vm renders a strict effective config first.
@@ -267,7 +279,7 @@ MCP Portal is a scoped tool facade over deployment-owned upstream MCP servers. M
 
 	MCP JSON Schema is canonical. Zod is derived for validation and helper code. Invalid call arguments and schemas that cannot be converted return structured errors without calling upstream. Tool VMs can use the mcp-portal helper package but do not receive upstream MCP credentials.
 
-	For stdio MCP providers, prefer secretPolicies.<name>.injection=http-mediation when the provider uses the secret in HTTP headers or query strings to call a remote API. The stdio child receives a generated placeholder through transport.env, and Gondolin substitutes the real secret only for outbound HTTP requests to the configured hosts. Use injection=env only when the provider cannot authenticate through mediated HTTP traffic.
+	Prefer http-mediation for MCP provider API keys, including stdio providers, when the provider sends the env value in outbound HTTP headers or other Gondolin-supported request locations. The MCP server sees a placeholder env value; Gondolin swaps it for the real secret only for configured hosts. Use raw env injection only as an explicit exception for providers that cannot operate with placeholders.
 
 	Run agent-vm validate --mcp-live after editing MCP providers or MCP Portal profiles. Static validate checks schema and materialization. Live validate starts each configured MCP provider, runs tools/list, and reports namespace, transport, phase, and hints for failures.
 
@@ -351,9 +363,10 @@ To add a channel:
 
 Discord recipe:
 - Add DISCORD_BOT_TOKEN as a zone secret.
-- Add discord.com, discordapp.com, *.discordapp.com, and *.discordapp.net to egressHosts with audience gateway.
+- Add discord.com, *.discord.com, discord.gg, *.discord.gg, discord.media, *.discord.media, discordapp.com, *.discordapp.com, and *.discordapp.net to egressHosts with audience both.
 - Discord media downloads use OpenClaw's Discord media SSRF policy, not tools.web.fetch.ssrfPolicy. If media logs show blocked URL fetch for cdn.discordapp.com or media.discordapp.net, verify the installed agent-vm version emits ::ffff:198.18.0.1 synthetic AAAA for Gondolin TCP-host VMs before adding broader OpenClaw hostname bypasses.
-- Add gateway.discord.gg:443 to websocketBypass.
+- Add exact Discord Gateway hosts such as gateway.discord.gg:443, gateway-us-east1-b.discord.gg:443, gateway-us-east1-c.discord.gg:443, and gateway-us-east1-d.discord.gg:443 to websocketBypass.
+- Do not use wildcard websocketBypass entries for Discord today. websocketBypass compiles to exact Gondolin tcpHosts entries; wildcard Discord coverage belongs in egressHosts until wildcard raw TCP bypass is implemented.
 - Enable channels.discord in deployment-owned openclaw.json.
 - Do not add Discord under plugins.allow or plugins.entries.
 - agent-vm build installs @openclaw/discord for managed OpenClaw images when channels.discord is enabled.
@@ -377,6 +390,9 @@ worker repo edits live under /work/repos inside Worker gateway task VMs.
 Worker gateway task VMs use /work/tmp for temporary files and /work/cache for disposable package-manager cache.
 OpenClaw gateway VMs use /work/tmp and /work/cache for disposable runtime work; persistent zone files live at /zone and are backed by gateway.zoneFilesDir.
 
+The OpenClaw plugin may accept Tool VM guest cwd intent such as \`/workspace\`, \`/workspace/<child>\`, \`/work\`, or \`/work/<child>\`. The plugin translates that intent before it calls the controller.
+The controller \`/lease workMountDir\` is stricter: it accepts only controller-supported OpenClaw gateway paths such as \`/zone/<child>\` or \`/home/openclaw/.openclaw/state/sandboxes/<child>\`. Direct Tool VM guest paths such as \`/workspace\` and \`/work\` are rejected at the controller boundary.
+
 workMountDir is a gateway VM path under /zone or /home/openclaw/.openclaw/state/sandboxes. The roots themselves are validation boundaries; leases must choose concrete child paths.
 hostWorkMountDir is the host realpath after controller validation.
 OpenClaw SDK compatibility note: OpenClaw may call the selected sandbox path workspaceDir. The agent-vm plugin translates that external SDK name to controller workMountDir.
@@ -399,7 +415,7 @@ When gateway.zoneGit is configured:
 			content: generatedPage(
 				'Per-Agent Setup',
 				`
-A single OpenClaw gateway can host multiple agents. Use scope=agent when each agent should have a stable work mount and reusable Tool VM lease identity.
+A single OpenClaw gateway can host multiple agents. Use scope=agent so OpenClaw resolves each agent to its stable work mount; agent-vm still keys Tool VM lease identity by zone and agent id.
 
 Per-agent auth isolation works by using agent-vm auth codex-harness for native Codex CLI auth, gateway.authProfilesByAgent for OpenClaw auth profiles, and first-boot files through agentSandboxSeeds. Seeds target paths relative to the agent sandbox backing directory exposed at /workspace in Tool VMs and do not overwrite existing files.
 agent-vm auth openclaw <provider> --all-agents repeats the same OpenClaw provider login once per configured zone agent.
@@ -427,8 +443,8 @@ Agent-vm defaults are channel-neutral. Existing Discord deployments keep Discord
 1. Run agent-vm migrate images if the deployment still references Dockerfiles.
 2. Keep Discord enabled under channels.discord in config/gateways/<zone>/openclaw.json.
 3. Keep DISCORD_BOT_TOKEN in ${options.systemConfigPath} zone secrets.
-4. Keep discord.com, discordapp.com, *.discordapp.com, and *.discordapp.net in egressHosts with audience gateway.
-5. Keep gateway.discord.gg:443 in websocketBypass.
+4. Keep discord.com, *.discord.com, discord.gg, *.discord.gg, discord.media, *.discord.media, discordapp.com, *.discordapp.com, and *.discordapp.net in egressHosts with audience both.
+5. Keep exact Discord Gateway hosts such as gateway.discord.gg:443, gateway-us-east1-b.discord.gg:443, gateway-us-east1-c.discord.gg:443, and gateway-us-east1-d.discord.gg:443 in websocketBypass.
 
 Do not reintroduce Discord into agent-vm init defaults. Use this page as the deployment recipe.
 `,

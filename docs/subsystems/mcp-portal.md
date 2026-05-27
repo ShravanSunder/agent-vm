@@ -110,7 +110,16 @@ Inherited runtime variables:
 - `UV_CACHE_DIR`
 
 Use `transport.env` for provider credentials such as `PERPLEXITY_API_KEY` or
-`TAVILY_API_KEY`. Do not rely on whole-process environment inheritance.
+`TAVILY_API_KEY`. Prefer `secretPolicies.<name>.injection: "http-mediation"`
+when the stdio MCP server reads the env value and sends it in outbound HTTP
+headers or other Gondolin-supported request locations. The effective config
+rewrites the authored secret to a generated `AGENT_VM_MCP_*` env reference; the
+gateway process and stdio child receive a placeholder value, while Gondolin
+substitutes the raw secret only for configured hosts. Use raw `env` injection
+only as an explicit exception for providers that cannot operate with
+placeholders.
+
+Do not rely on whole-process environment inheritance.
 
 For stdio MCP providers, prefer
 `secretPolicies.<name>.injection: "http-mediation"` when the provider uses the

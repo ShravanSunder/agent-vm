@@ -34,7 +34,7 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
     |
     |-- 5. Start idle reaper
     |      createIdleReaper({ ttlForLease })
-    |      TTL comes from leaseIdleTtl exact/prefix scope policy
+    |      TTL comes from the single leaseIdleTtl policy
     |      Attached to a 60-second interval timer
     |      Runs one immediate reap pass before accepting requests
     |
@@ -85,6 +85,8 @@ All routes are served by Hono on the configured `host.controllerPort` (default 1
 | Method | Path | Description | Response |
 |--------|------|-------------|----------|
 | `GET` | `/health` | Liveness probe | `{ ok, port }` |
+| `POST` | `/zones/:zoneId/health-events` | Record one zone-scoped health event from a gateway VM or controller observer | `{ ok: true }` |
+| `GET` | `/zones/:zoneId/health-snapshot` | Read the current in-memory zone health snapshot | Discriminated snapshot body |
 | `POST` | `/lease` | Create a tool VM lease | Lease with SSH access details |
 | `GET` | `/lease/:leaseId` | Read a lease without extending its idle timer | Lease with SSH identity PEM |
 | `GET` | `/lease/:leaseId/peek` | Inspect a lease without extending its idle timer | Lease summary without SSH identity PEM |
@@ -126,6 +128,55 @@ by zone admin authorization when `adminAccess` is configured.
 
 ---
 
+## Health Model
+
+The agent-vm controller is global, but operational health is zone-scoped.
+Operators debug the boundary that is sick for a specific zone: gateway VM,
+gateway-service process, gateway-to-controller control link, lease routes,
+Tool VM SSH, or worker controller-tool requests.
+
+`GET /health` is only the global agent-vm controller liveness endpoint. It does
+not emit a zone-scoped `controller-runtime` event because it has no zone
+context.
+
+Health events are in-memory controller state. They are not backup state and are
+lost on agent-vm controller restart. The latest event per boundary is retained
+separately from the bounded rolling history.
+
+```text
+agent-vm controller
+  |-- probes gateway-service through the zone runtime health check
+  |     -> gateway-service-health
+  |
+gateway VM / OpenClaw Gondolin plugin
+  |-- calls GET /health over controller.vm.host:18800
+  |     -> gateway-control-link
+  |
+lease routes
+  |-- POST /lease/:leaseId/renew
+  |     -> lease-renew
+  |-- POST /lease/:leaseId/uses/:useId/heartbeat
+  |     -> lease-heartbeat
+  |
+Tool VM SSH guard
+  |-- command, file-bridge, finalize, probe
+        -> tool-vm-ssh
+```
+
+`lease-heartbeat` is the user-facing name for
+`POST /lease/:leaseId/uses/:useId/heartbeat`. It keeps an in-flight Tool VM use
+alive and touches the lease when successful. `lease-renew` keeps an idle cached
+lease alive before reuse. Both can extend lease state, but they diagnose
+different paths: heartbeat means "an active operation still exists"; renew
+means "a cached lease can be reused."
+
+Bounded controller communication is operation-specific, not globally
+aggressive. Health probes use short timeouts and no retry. Git push/pull and
+lease-create operations use longer timeouts because normal work can legitimately
+take longer. Unsafe mutations are not retried without an idempotency proof.
+
+---
+
 ## Gateway Zone Orchestrator
 
 `startGatewayZone()` in `gateway-zone-orchestrator.ts` is the boot sequence for any gateway VM. The controller calls it once at startup for OpenClaw zones, and once per task for Worker zones. The full 15-step sequence is documented in the [gateway zone orchestrator architecture](../architecture/overview.md#gateway-zone-orchestrator). Key points for controller integration:
@@ -143,7 +194,7 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
 ### Lease Lifecycle
 
 ```
-  POST /lease { zoneId, scopeKey, profileId, agentWorkspaceDir, workMountDir, idleTtlMs? }
+  POST /lease { zoneId, agentId, sessionKey, profileId, agentWorkspaceDir, workMountDir, idleTtlMs? }
     |
     v
   resolveLeaseWorkMountDir()
@@ -152,22 +203,22 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
     |-- 2. Reject the allowed-root boundaries themselves as too broad
     |-- 3. Translate workMountDir to hostWorkMountDir under <stateDir>/sandboxes or <zoneFilesDir>
     |-- 4. realpath + containment check
-    |-- 5. For agent:<agentId> sandbox work mounts, seed first-boot files
+    |-- 5. For agent sandbox work mounts, seed first-boot files by agentId
     |
     v
   createLease()
-    |-- 1. Lock on (zoneId, scopeKey)
-    |-- 2. Existing same-scope lease?
+    |-- 1. Lock on (zoneId, agentId)
+    |-- 2. Existing same-agent lease?
     |       |-- profile/hostWorkMountDir/agentWorkspace mismatch -> 409 conflict
     |       |-- VM live -> reuse lease
     |       |-- VM dead -> close/evict/release TCP slot
     |-- 3. tcpPool.allocate()          Claim next free slot
-    |-- 4. selectToolVmProfileForLease()
-    |       |-- agent:<agentId> -> zone.agentToolVmProfiles[agentId]
+    |-- 4. selectToolVmProfileForAgent()
+    |       |-- zone.agentToolVmProfiles[agentId]
     |       |-- otherwise zone.defaultToolVmProfile
     |-- 5. createManagedVm(...)        Boot a tool VM with the slot's port
     |-- 5. vm.enableSsh({ port })      Start SSH listener, get access details
-    |-- 6. Build Lease record          id = "{zoneId}-{scopeKey}-{timestamp}"
+    |-- 6. Build Lease record          id = UUIDv7
     |-- 7. Store in leases Map with effectiveIdleTtlMs
     |
     |   On failure at step 2-3:
@@ -184,7 +235,7 @@ The lease manager (`lease-manager.ts`) creates, tracks, and releases tool VM lea
     |-- 4. tcpPool.release(slot)       Return slot to pool
 ```
 
-Each lease holds: `id`, `zoneId`, `scopeKey`, `profileId`, `agentWorkspaceDir`,
+Each lease holds: `id`, `zoneId`, `agentId`, `profileId`, `agentWorkspaceDir`,
 `hostWorkMountDir`, `tcpSlot`, `vm` (ManagedVm handle), `sshAccess` (host, port,
 identity file, user), `createdAt`, `lastUsedAt`, and `effectiveIdleTtlMs`. The
 lease manager does not clean work mount files on release; OpenClaw-selected
@@ -207,10 +258,10 @@ gateway path to `hostWorkMountDir` before handing it to the lease manager.
 For the canonical name/location/storage vocabulary, see
 [Lease Path Vocabulary](../architecture/storage-model.md#lease-path-vocabulary).
 
-For OpenClaw `agent:<agentId>` scopes, the route resolves `profileId` from the
-zone's Tool VM policy. `agentToolVmProfiles[agentId]` wins when present;
-otherwise the lease uses `defaultToolVmProfile`. This lets one zone serve
-multiple agents with different disposable Tool VM images.
+For OpenClaw leases, the route resolves `profileId` from the request `agentId`
+and the zone's Tool VM policy. `agentToolVmProfiles[agentId]` wins when
+present; otherwise the lease uses `defaultToolVmProfile`. This lets one zone
+serve multiple agents with different disposable Tool VM images.
 
 ### TCP Pool
 

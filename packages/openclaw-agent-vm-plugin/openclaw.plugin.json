@@ -21,6 +21,27 @@
 				"type": "string",
 				"minLength": 1
 			},
+			"gatewayControlLinkMonitor": {
+				"type": "object",
+				"additionalProperties": false,
+				"properties": {
+					"baseIntervalMs": {
+						"type": "number",
+						"minimum": 1
+					},
+					"enabled": {
+						"type": "boolean"
+					},
+					"maxIntervalMs": {
+						"type": "number",
+						"minimum": 1
+					}
+				}
+			},
+			"profileId": {
+				"type": "string",
+				"minLength": 1
+			},
 			"zoneGitToken": {
 				"type": "string",
 				"minLength": 1

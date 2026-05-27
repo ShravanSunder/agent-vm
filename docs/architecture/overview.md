@@ -260,7 +260,7 @@ The controller exposes a REST API. Routes are split across two modules: core lea
 | Method | Path | Purpose | Mode |
 |--------|------|---------|------|
 | `GET` | `/health` | Controller liveness check | Both |
-| `POST` | `/lease` | Acquire a tool VM lease (scope key, zone, profile) | OpenClaw |
+| `POST` | `/lease` | Acquire a tool VM lease (agent, zone, profile) | OpenClaw |
 | `GET` | `/lease/:leaseId` | Keep a lease alive and return agent-facing SSH access | OpenClaw |
 | `GET` | `/lease/:leaseId/peek` | Inspect a lease without extending its idle timer | OpenClaw |
 | `GET` | `/leases` | List all active leases | OpenClaw |
@@ -282,12 +282,12 @@ The controller exposes a REST API. Routes are split across two modules: core lea
 
 **TCP Pool** (`tcp-pool.ts`): Manages a fixed pool of TCP port slots. Each tool VM gets a unique slot mapped to `127.0.0.1:{basePort + slot}`. The gateway VM sees these as `tool-{slot}.vm.host:22` via Gondolin's synthetic DNS. Pool size is configured in `systemConfig.tcpPool.size`.
 
-**Lease Manager** (`lease-manager.ts`): Creates, tracks, and releases tool VM leases. Each lease holds a reference to a `ManagedVm`, a TCP slot, SSH access details, work mount identity, and timestamps. Live leases are reused by `zoneId` and `scopeKey` when the requested profile and validated work mount match, so OpenClaw `scope=agent` can keep using the same tool VM while the idle TTL keeps capacity bounded.
+**Lease Manager** (`lease-manager.ts`): Creates, tracks, and releases tool VM leases. Each lease holds a reference to a `ManagedVm`, a TCP slot, SSH access details, agent identity, work mount identity, and timestamps. Live leases are reused by `zoneId` and `agentId` when the requested profile and validated work mount match, so one OpenClaw agent can keep using the same tool VM while the idle TTL keeps capacity bounded.
 
 **Idle Reaper** (`idle-reaper.ts`): Runs on a 60-second interval. Any lease
 with `lastUsedAt` older than its resolved TTL is automatically released. The
-policy checks exact or prefix `leaseIdleTtl.byScopePrefix`, then
-`leaseIdleTtl.byScopeKind`, then the default 100 minute fallback.
+policy uses the single `leaseIdleTtl.defaultMs` value, bounded request overrides,
+and the default 100 minute fallback.
 
 **Active Task Registry** (`active-task-registry.ts`): Tracks in-flight worker tasks by zone and task ID. Used by the push-branches endpoint to verify a task is still active before allowing branch pushes.
 
@@ -627,7 +627,7 @@ directory.
   |-- zones[]           Zone definitions: gateway type, resources, secrets, audience-scoped egress hosts
   |-- toolVmProfiles    Named Tool VM profiles (memory, cpus, image profile)
   |-- tcpPool           Port range and pool size for tool VM TCP slots
-  |-- leaseIdleTtl      Optional per-scope lease idle TTL policy
+  |-- leaseIdleTtl      Optional lease idle TTL policy
 ```
 
 Each zone declares its `gateway.type` (`openclaw` or `worker`), resource

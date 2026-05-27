@@ -1,3 +1,4 @@
+import { fetchControllerWithPolicy } from './controller-request-policy.js';
 import type { OpenClawToolRegistrationApi } from './openclaw-sandbox-sdk-contract.js';
 
 type RequiredOpenClawToolRegistrationApi = OpenClawToolRegistrationApi & {
@@ -63,9 +64,10 @@ export function registerZoneGitTool(options: RegisterZoneGitToolOptions): void {
 			},
 			execute: async (_toolCallId: string, input: unknown) => {
 				const expectedHead = readExpectedHead(input);
-				const response = await (options.fetchImpl ?? fetch)(
-					buildControllerUrl(options.controllerUrl, options.zoneId),
-					{
+				const response = await fetchControllerWithPolicy({
+					fetchImpl: options.fetchImpl ?? fetch,
+					input: buildControllerUrl(options.controllerUrl, options.zoneId),
+					init: {
 						body: JSON.stringify({ expectedHead }),
 						headers: {
 							'content-type': 'application/json',
@@ -73,7 +75,8 @@ export function registerZoneGitTool(options: RegisterZoneGitToolOptions): void {
 						},
 						method: 'POST',
 					},
-				);
+					operation: 'zone-git-push',
+				});
 				const responseText = await readResponseText(response);
 				if (!response.ok) {
 					throw new Error(`zone_git_push failed: ${response.status} ${responseText.slice(0, 500)}`);

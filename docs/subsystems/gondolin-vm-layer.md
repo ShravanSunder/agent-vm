@@ -172,18 +172,25 @@ The `secrets` parameter in `CreateVmOptions` is a `Record<string, SecretSpec>` w
 
 The hook bundle also sets environment variables (`hookBundle.env`) that configure the in-VM HTTP client to route through the mediation proxy. The VM process makes normal HTTP requests -- it never knows secrets are being injected.
 
+For mediated secrets that are consumed through environment variables, such as
+stdio MCP provider API keys, `hookBundle.env` also contains generated
+placeholder values. `createManagedVm()` must pass both `httpHooks` and
+`hookBundle.env` into `VM.create()`: the hooks know how to substitute the
+placeholder, and the env bundle is how the gateway process and its stdio
+children receive the placeholder instead of the raw secret.
+
 Only hosts in the `allowedHosts` list can be reached. Requests to unlisted hosts are blocked at the proxy layer. At the controller configuration layer, zones declare audience-scoped `egressHosts`; gateway and Tool VM lifecycle code translate that higher-level policy into the low-level Gondolin `allowedHosts` list for each VM.
 
 ---
 
 ## TCP Host Mapping
 
-TCP host mapping lets processes inside the VM reach host-side TCP services via synthetic DNS hostnames. This is how gateway VMs talk to the controller and how OpenClaw Gateways reach tool VM SSH ports.
+TCP host mapping lets processes inside the VM reach host-side TCP services via synthetic DNS hostnames. This is how gateway VMs talk to the agent-vm controller and how OpenClaw Gateways reach Tool VM SSH ports.
 
 ```
   Inside VM                          Host Side
   ---------                          ---------
-  controller.vm.host:18800   ------> 127.0.0.1:18800   (controller HTTP API)
+  controller.vm.host:18800   ------> 127.0.0.1:18800   (agent-vm controller HTTP API)
   tool-0.vm.host:22          ------> 127.0.0.1:19000   (tool VM 0 SSH)
   tool-1.vm.host:22          ------> 127.0.0.1:19001   (tool VM 1 SSH)
 ```
@@ -205,7 +212,27 @@ Discord media SSRF failures. It can relax Gondolin's host-side HTTP internal-IP
 block for matching request hostnames, but it does not change OpenClaw's own
 Discord media SSRF resolver and does not apply to raw mapped TCP.
 
-Worker VMs only map the controller endpoint. OpenClaw Gateway VMs map the controller plus all tool VM slots from the TCP pool.
+Worker VMs only map the agent-vm controller endpoint. OpenClaw Gateway VMs map
+the agent-vm controller plus all Tool VM SSH slots from the TCP pool.
+
+These are two separate raw TCP paths:
+
+```text
+gateway VM -> agent-vm controller
+  controller.vm.host:18800 -> 127.0.0.1:<host controller port>
+  Used by lease create, lease-renew, lease-heartbeat, health-event publish,
+  runtime status publish, and gateway-control-link probes.
+
+gateway VM -> Tool VM SSH
+  tool-<slot>.vm.host:22 -> 127.0.0.1:<tcpPool slot port>
+  Used by OpenClaw command execution, filesystem bridge operations, finalize,
+  and cached-lease probes.
+```
+
+Mapped TCP is raw forwarding. It does not go through Gondolin HTTP hooks,
+egress header rewriting, or HTTP secret substitution. Keep mappings narrow and
+debug timeouts as control-link or SSH-path failures, not as HTTP ingress
+failures.
 
 ## VM Capability Transports
 

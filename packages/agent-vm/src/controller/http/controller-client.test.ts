@@ -21,10 +21,10 @@ describe('createControllerClient', () => {
 					? {
 							agentId: 'main',
 							createdAt: 1,
+							idleTtlMs: 6_000_000,
 							lastUsedAt: 1,
-							leaseId: 'lease-123',
+							leaseId: '01890f00-0000-7000-8000-000000000000',
 							profileId: 'standard',
-							scopeKey: 'scope',
 							ssh: { host: '127.0.0.1', port: 19000, user: 'sandbox' },
 							tcpSlot: 0,
 							transport: 'ssh-sandbox',

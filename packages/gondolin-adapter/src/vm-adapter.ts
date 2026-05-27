@@ -22,6 +22,10 @@ import {
 } from '@earendil-works/gondolin';
 
 import {
+	configureHostNetworkDefaults,
+	type HostNetworkDefaultsResult,
+} from './host-network-defaults.js';
+import {
 	closePinnedRealFsRoot,
 	createPinnedRealFsProvider,
 	type PinnedRealFsRoot,
@@ -74,6 +78,7 @@ export interface ManagedVmInstance {
 }
 
 export interface ManagedVmDependencies {
+	configureHostNetworkDefaults?: () => HostNetworkDefaultsResult;
 	createVm(vmOptions: VMOptions): Promise<ManagedVmInstance>;
 	createHttpHooks(options: {
 		readonly allowedHosts: readonly string[];
@@ -135,6 +140,7 @@ function createDefaultDependencies(): ManagedVmDependencies {
 	const createDefaultRealFsProvider = (hostPath: string): VirtualProvider =>
 		new RealFSProvider(hostPath);
 	return {
+		configureHostNetworkDefaults,
 		createVm: async (vmOptions: VMOptions): Promise<ManagedVmInstance> =>
 			(await VM.create(vmOptions)) as unknown as ManagedVmInstance,
 		createHttpHooks: (hookOptions) =>
@@ -332,6 +338,7 @@ export async function createManagedVm(
 	options: CreateVmOptions,
 	dependencies: ManagedVmDependencies = createDefaultDependencies(),
 ): Promise<ManagedVm> {
+	dependencies.configureHostNetworkDefaults?.();
 	const hasTcpHosts = options.tcpHosts && Object.keys(options.tcpHosts).length > 0;
 	const pinnedRealFsRoots = collectPinnedRealFsRoots(options.vfsMounts);
 	let vmInstance: ManagedVmInstance;

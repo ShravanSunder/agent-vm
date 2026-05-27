@@ -1,17 +1,21 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+	createToolVmLeaseId,
 	isToolVmActiveUseId,
 	type EndToolVmActiveUseRequest,
+	type HeartbeatToolVmActiveUseRequest,
 	type HeartbeatToolVmActiveUseResponse,
 	type StartToolVmActiveUseRequest,
 	type StartToolVmActiveUseResponse,
 	type ToolVmActiveUseCorrelation,
+	type ToolVmActiveUseOperationReport,
 } from '@agent-vm/gateway-interface';
 import type { ManagedVm } from '@agent-vm/gondolin-adapter';
 
 import type { readProcessIdentity as defaultReadProcessIdentity } from '../../shared/managed-vm-process.js';
 import type { ZoneGitToolVmMount } from '../zone-git/zone-git-paths.js';
+import { defaultToolVmLeaseIdleTtlMs } from './lease-idle-policy.js';
 import type { TcpPool } from './tcp-pool.js';
 import {
 	buildToolVmRuntimeRecord,
@@ -36,7 +40,6 @@ export interface Lease {
 	readonly lastUsedAt: number;
 	readonly profileId: string;
 	readonly runtimeRecordId: string;
-	readonly scopeKey: string;
 	readonly sshAccess: {
 		readonly command?: string;
 		readonly host: string;
@@ -51,15 +54,29 @@ export interface Lease {
 	readonly zoneId: string;
 }
 
-export interface LeaseRenewal {
-	readonly kind: 'renewed';
-	readonly lastUsedAt: number;
-	readonly lease: Lease;
-}
+export type LeaseRenewal =
+	| {
+			readonly kind: 'renewed';
+			readonly lastUsedAt: number;
+			readonly lease: Lease;
+	  }
+	| {
+			readonly kind: 'not-found';
+			readonly reason: 'dead' | 'expired' | 'missing';
+	  };
 
 export interface LeaseSnapshot {
 	readonly kind: 'snapshot';
 	readonly lease: Lease;
+}
+
+export interface ToolVmActiveUseSnapshot {
+	readonly correlation?: ToolVmActiveUseCorrelation;
+	readonly expiresAt: number;
+	readonly latestReport?: ToolVmActiveUseOperationReport;
+	readonly leaseId: string;
+	readonly startedAt: number;
+	readonly useId: string;
 }
 
 export interface LeaseManager {
@@ -69,7 +86,6 @@ export interface LeaseManager {
 		readonly effectiveIdleTtlMs?: number;
 		readonly profile: ToolVmProfile;
 		readonly profileId: string;
-		readonly scopeKey: string;
 		readonly guestWorkdir: string;
 		readonly hostWorkMountDir: string;
 		readonly zoneGitMount?: ZoneGitToolVmMount;
@@ -80,11 +96,17 @@ export interface LeaseManager {
 		useId: string,
 		request: EndToolVmActiveUseRequest,
 	): { readonly kind: 'ended' | 'unknown-use' } | undefined;
+	getActiveUses(leaseId: string): readonly ToolVmActiveUseSnapshot[];
 	getActiveUseCount(leaseId: string): number;
-	heartbeatActiveUse(leaseId: string, useId: string): HeartbeatToolVmActiveUseResponse | undefined;
-	renewLease(leaseId: string): LeaseRenewal | undefined;
-	listLeases(): Lease[];
+	heartbeatActiveUse(
+		leaseId: string,
+		useId: string,
+		request: HeartbeatToolVmActiveUseRequest,
+	): HeartbeatToolVmActiveUseResponse | undefined;
+	renewLease(leaseId: string): Promise<LeaseRenewal>;
+	listLeases(): readonly Lease[];
 	peekLease(leaseId: string): LeaseSnapshot | undefined;
+	reapDeadIdleLeases(): Promise<void>;
 	reapExpiredActiveUses(): void;
 	releaseLease(
 		leaseId: string,
@@ -117,6 +139,7 @@ interface ToolVmActiveUse {
 	readonly correlation?: ToolVmActiveUseCorrelation;
 	readonly expiresAt: number;
 	readonly lastHeartbeatAt: number;
+	readonly latestReport?: ToolVmActiveUseOperationReport;
 	readonly leaseId: string;
 	readonly startedAt: number;
 	readonly useId: string;
@@ -128,7 +151,6 @@ interface EndedToolVmActiveUseTombstone {
 	readonly useId: string;
 }
 
-const defaultLeaseEffectiveIdleTtlMs = 30 * 60 * 1000;
 const defaultToolVmUsePolicy = {
 	endedUseTombstoneTtlMs: 10 * 60 * 1000,
 	heartbeatAfterMs: 30 * 1000,
@@ -219,14 +241,29 @@ function zoneGitMountsEqual(
 }
 
 async function isLeaseVmLive(lease: Lease): Promise<boolean> {
+	const abortController = new AbortController();
+	let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 	try {
-		const result = await lease.vm.exec('true');
-		return result.exitCode === 0;
+		const timeoutResult = new Promise<false>((resolve) => {
+			timeoutHandle = setTimeout(() => {
+				abortController.abort();
+				resolve(false);
+			}, 5_000);
+		});
+		const probeResult = await Promise.race([
+			lease.vm.exec('true', { signal: abortController.signal }),
+			timeoutResult,
+		]);
+		return probeResult !== false && probeResult.exitCode === 0;
 	} catch (error) {
 		writeLeaseManagerWarning(
 			`liveness check failed for lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(error)}`,
 		);
 		return false;
+	} finally {
+		if (timeoutHandle !== undefined) {
+			clearTimeout(timeoutHandle);
+		}
 	}
 }
 
@@ -243,6 +280,7 @@ function activeUseKey(leaseId: string, useId: string): string {
 
 export function createLeaseManager(options: {
 	readonly controllerPort: number;
+	readonly createLeaseId?: () => string;
 	readonly createRuntimeRecordId?: () => string;
 	readonly createManagedVm: (leaseOptions: {
 		readonly agentWorkspaceDir: string;
@@ -250,7 +288,6 @@ export function createLeaseManager(options: {
 		readonly agentId: string;
 		readonly profile: ToolVmProfile;
 		readonly profileId: string;
-		readonly scopeKey: string;
 		readonly tcpSlot: number;
 		readonly guestWorkdir: string;
 		readonly hostWorkMountDir: string;
@@ -320,7 +357,25 @@ export function createLeaseManager(options: {
 		return touchedLease;
 	}
 
-	async function withScopeLock<TValue>(
+	function activeUseCountForLease(leaseId: string): number {
+		let count = 0;
+		for (const activeUse of activeUses.values()) {
+			if (activeUse.leaseId === leaseId) {
+				count += 1;
+			}
+		}
+		return count;
+	}
+
+	function isLeaseIdleExpired(lease: Lease): boolean {
+		return lease.lastUsedAt + lease.effectiveIdleTtlMs < options.now();
+	}
+
+	function isLeaseExpired(lease: Lease): boolean {
+		return isLeaseIdleExpired(lease) && activeUseCountForLease(lease.id) === 0;
+	}
+
+	async function withAgentLeaseLock<TValue>(
 		agentLease: { readonly agentId: string; readonly zoneId: string },
 		fn: () => Promise<TValue>,
 	): Promise<TValue> {
@@ -344,6 +399,7 @@ export function createLeaseManager(options: {
 
 	const writeRuntimeRecord = options.writeToolVmRuntimeRecord ?? writeToolVmRuntimeRecord;
 	const deleteRuntimeRecord = options.deleteToolVmRuntimeRecord ?? deleteToolVmRuntimeRecord;
+	const createLeaseId = options.createLeaseId ?? createToolVmLeaseId;
 	const createRuntimeRecordId = options.createRuntimeRecordId ?? randomUUID;
 
 	async function evictLease(lease: Lease): Promise<void> {
@@ -377,18 +433,22 @@ export function createLeaseManager(options: {
 
 	return {
 		async createLease(leaseOptions) {
-			return await withScopeLock(leaseOptions, async () => {
+			return await withAgentLeaseLock(leaseOptions, async () => {
 				assertValidLeaseAgentId(leaseOptions.agentId);
 				const existingLease = findLeaseForAgent({
 					agentId: leaseOptions.agentId,
 					zoneId: leaseOptions.zoneId,
 				});
 				if (existingLease) {
-					assertCompatibleAgentLeaseRequest(existingLease, leaseOptions);
-					if (await isLeaseVmLive(existingLease)) {
-						return touchLease(existingLease);
+					if (isLeaseExpired(existingLease)) {
+						await evictLease(existingLease);
+					} else {
+						assertCompatibleAgentLeaseRequest(existingLease, leaseOptions);
+						if (await isLeaseVmLive(existingLease)) {
+							return touchLease(existingLease);
+						}
+						await evictLease(existingLease);
 					}
-					await evictLease(existingLease);
 				}
 				const tcpSlot = options.tcpPool.allocate();
 				// Tracks whether the slot is safe to release after partial-create
@@ -412,13 +472,12 @@ export function createLeaseManager(options: {
 							agentId: leaseOptions.agentId,
 							agentWorkspaceDir: leaseOptions.agentWorkspaceDir,
 							createdAt,
-							effectiveIdleTtlMs: leaseOptions.effectiveIdleTtlMs ?? defaultLeaseEffectiveIdleTtlMs,
+							effectiveIdleTtlMs: leaseOptions.effectiveIdleTtlMs ?? defaultToolVmLeaseIdleTtlMs,
 							guestWorkdir: leaseOptions.guestWorkdir,
-							id: `${leaseOptions.zoneId}-${leaseOptions.agentId}-${createdAt}`,
+							id: createLeaseId(),
 							lastUsedAt: createdAt,
 							profileId: leaseOptions.profileId,
 							runtimeRecordId,
-							scopeKey: leaseOptions.scopeKey,
 							sshAccess,
 							tcpSlot,
 							vm,
@@ -462,7 +521,7 @@ export function createLeaseManager(options: {
 							vmCreatedButNotClosed = false;
 						} catch (closeError) {
 							writeLeaseManagerWarning(
-								`failed to close partially-created lease VM for zone '${leaseOptions.zoneId}' scope '${leaseOptions.scopeKey}': ${formatLeaseManagerError(closeError)}. Quarantining tcp slot ${tcpSlot}.`,
+								`failed to close partially-created lease VM for zone '${leaseOptions.zoneId}' agent '${leaseOptions.agentId}': ${formatLeaseManagerError(closeError)}. Quarantining tcp slot ${tcpSlot}.`,
 							);
 						}
 						throw error;
@@ -502,21 +561,36 @@ export function createLeaseManager(options: {
 			return { kind: 'unknown-use' };
 		},
 		getActiveUseCount(leaseId: string): number {
-			let count = 0;
-			for (const activeUse of activeUses.values()) {
-				if (activeUse.leaseId === leaseId) {
-					count += 1;
-				}
-			}
-			return count;
+			return activeUseCountForLease(leaseId);
+		},
+		getActiveUses(leaseId: string): readonly ToolVmActiveUseSnapshot[] {
+			return [...activeUses.values()]
+				.filter((activeUse) => activeUse.leaseId === leaseId)
+				.map(
+					(activeUse) =>
+						Object.assign(
+							{
+								expiresAt: activeUse.expiresAt,
+								leaseId: activeUse.leaseId,
+								startedAt: activeUse.startedAt,
+								useId: activeUse.useId,
+							},
+							activeUse.correlation ? { correlation: activeUse.correlation } : {},
+							activeUse.latestReport ? { latestReport: activeUse.latestReport } : {},
+						) satisfies ToolVmActiveUseSnapshot,
+				);
 		},
 		heartbeatActiveUse(
 			leaseId: string,
 			useId: string,
+			request: HeartbeatToolVmActiveUseRequest,
 		): HeartbeatToolVmActiveUseResponse | undefined {
 			const lease = leases.get(leaseId);
 			const activeUse = activeUses.get(activeUseKey(leaseId, useId));
 			if (!lease || !activeUse) {
+				return undefined;
+			}
+			if (isLeaseExpired(lease)) {
 				return undefined;
 			}
 			const now = options.now();
@@ -524,6 +598,7 @@ export function createLeaseManager(options: {
 				...activeUse,
 				expiresAt: now + toolVmUsePolicy.heartbeatStaleMs,
 				lastHeartbeatAt: now,
+				...(request.report === undefined ? {} : { latestReport: request.report }),
 			};
 			activeUses.set(activeUseKey(leaseId, useId), updatedUse);
 			touchLease(lease);
@@ -532,24 +607,52 @@ export function createLeaseManager(options: {
 				heartbeatAfterMs: toolVmUsePolicy.heartbeatAfterMs,
 			};
 		},
-		renewLease(leaseId: string): LeaseRenewal | undefined {
+		async renewLease(leaseId: string): Promise<LeaseRenewal> {
 			const lease = leases.get(leaseId);
 			if (!lease) {
-				return undefined;
+				return { kind: 'not-found', reason: 'missing' };
 			}
-			const renewedLease = touchLease(lease);
-			return {
-				kind: 'renewed',
-				lastUsedAt: renewedLease.lastUsedAt,
-				lease: renewedLease,
-			};
+			return await withAgentLeaseLock(lease, async () => {
+				const currentLease = leases.get(leaseId);
+				if (!currentLease) {
+					return { kind: 'not-found', reason: 'missing' };
+				}
+				if (isLeaseExpired(currentLease)) {
+					await evictLease(currentLease);
+					return { kind: 'not-found', reason: 'expired' };
+				}
+				if (!(await isLeaseVmLive(currentLease))) {
+					await evictLease(currentLease);
+					return { kind: 'not-found', reason: 'dead' };
+				}
+				const renewedLease = touchLease(currentLease);
+				return {
+					kind: 'renewed',
+					lastUsedAt: renewedLease.lastUsedAt,
+					lease: renewedLease,
+				};
+			});
 		},
-		listLeases(): Lease[] {
+		listLeases(): readonly Lease[] {
 			return [...leases.values()];
 		},
 		peekLease(leaseId: string): LeaseSnapshot | undefined {
 			const lease = leases.get(leaseId);
 			return lease ? { kind: 'snapshot', lease } : undefined;
+		},
+		async reapDeadIdleLeases(): Promise<void> {
+			for (const lease of leases.values()) {
+				// oxlint-disable-next-line eslint/no-await-in-loop -- per-agent lock serializes eviction with renew/create/release
+				await withAgentLeaseLock(lease, async () => {
+					const currentLease = leases.get(lease.id);
+					if (!currentLease || activeUseCountForLease(currentLease.id) > 0) {
+						return;
+					}
+					if (!(await isLeaseVmLive(currentLease))) {
+						await evictLease(currentLease);
+					}
+				});
+			}
 		},
 		reapExpiredActiveUses(): void {
 			const now = options.now();
@@ -577,7 +680,7 @@ export function createLeaseManager(options: {
 			if (!lease) {
 				return;
 			}
-			await withScopeLock(lease, async () => {
+			await withAgentLeaseLock(lease, async () => {
 				const currentLease = leases.get(leaseId);
 				if (!currentLease) {
 					return;
@@ -646,6 +749,9 @@ export function createLeaseManager(options: {
 			if (!lease) {
 				return undefined;
 			}
+			if (isLeaseExpired(lease)) {
+				return undefined;
+			}
 			if (releasingLeaseIds.has(leaseId)) {
 				throw new LeaseActiveUseConflictError(`Tool VM lease '${leaseId}' is releasing.`);
 			}
@@ -672,6 +778,7 @@ export function createLeaseManager(options: {
 				...(request.correlation ? { correlation: request.correlation } : {}),
 				expiresAt: now + toolVmUsePolicy.heartbeatStaleMs,
 				lastHeartbeatAt: now,
+				...(request.report === undefined ? {} : { latestReport: request.report }),
 				leaseId,
 				startedAt: now,
 				useId: request.useId,

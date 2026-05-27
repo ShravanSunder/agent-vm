@@ -1,5 +1,6 @@
 export * from './build-pipeline.js';
 export * from './gondolin-package.js';
+export * from './host-network-defaults.js';
 export * from './mount-policy.js';
 export * from './pinned-realfs.js';
 export * from './policy-compiler.js';

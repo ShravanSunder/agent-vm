@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Hard-cut the current scope-bearing Tool VM lease API/storage/TTL surface to an agent-scoped contract that uses opaque lease ids, rejects expired/dead lease renewal, and keeps workspace mapping separate from lease identity.
+**Goal:** Hard-cut the current scope-bearing Tool VM lease API/storage/TTL surface to an agent-scoped contract, and ship the companion managed Gondolin ingress defaults needed for agent workloads.
 
-**Architecture:** Agent-vm supports only managed OpenClaw/Gondolin Tool VM leases for `zoneId + agentId`. OpenClaw `scopeKey` stays outside agent-vm: the plugin may receive it from OpenClaw core, but it must not send it to the controller, and the controller must not store, return, log, or derive TTL from it. Lease renewal becomes a validity check: existing, unexpired, and live; invalid leases are evicted and the plugin refreshes its cached handle by creating a new lease.
+**Architecture:** Agent-vm supports only managed OpenClaw/Gondolin Tool VM leases for `zoneId + agentId`. OpenClaw `scopeKey` stays outside agent-vm: the plugin may receive it from OpenClaw core, but it must not send it to the controller, and the controller must not store, return, log, or derive TTL from it. Lease renewal becomes a validity check: existing, unexpired, and live; invalid leases are evicted and the plugin refreshes its cached handle by creating a new lease. Managed VM ingress defaults are applied in the Gondolin adapter so OpenClaw/gateway traffic is not constrained by low buffering or short upstream timeouts unless the caller explicitly overrides them.
 
 **Tech Stack:** TypeScript, pnpm, Vitest, Zod, Hono, `uuid` v7, `@agent-vm/gateway-interface`, `@agent-vm/openclaw-agent-vm-plugin`, `@agent-vm/agent-vm`.
 
@@ -34,7 +34,7 @@ pid
 vmId
 ```
 
-`profileId`, `workMountDir`, `agentWorkspaceDir`, and zone-git mount details are reuse constraints for an existing per-agent VM. They are not id components.
+`profileId`, `workMountDir`, `agentWorkspaceDir`, and zone-git mount details are compatibility constraints for an existing per-agent VM. They are not id components, and they must not appear in the plugin cache key. A same-agent host path drift must not fork a second Tool VM; it either reuses the existing lease or surfaces a compatibility failure instead of creating a parallel lease.
 
 `scopeKey` is removed completely from:
 
@@ -57,6 +57,20 @@ The plugin may keep `params.scopeKey` only as an OpenClaw SDK input it ignores f
 
 There is no old-record or old-API support in this plan. Runtime records, HTTP request bodies, response bodies, tests, docs, and generated manuals cut over in one pass. Startup must not migrate, quarantine, rename, or silently delete records that do not match the new schema.
 
+## Lease Lifetime Semantics
+
+A Tool VM lease is expired only when it is both idle and past its TTL:
+
+```text
+expired = lastUsedAt + effectiveIdleTtlMs < now AND activeUseCount === 0
+```
+
+Active-use heartbeats do not prove VM liveness and do not run SSH probes. They do protect an in-flight operation from idle expiry. A command may run longer than `effectiveIdleTtlMs` as long as its active-use handle is still heartbeating. Once the operation ends, normal idle TTL rules apply again.
+
+`renewLease` is the cached-handle validity gate. It checks expiration and VM liveness with a bounded probe before returning 200. If the lease is missing, expired, or dead, renewal returns a refreshable failure and the plugin must drop its cached handle.
+
+Create-time compatibility conflicts are not refreshable. If a second request for the same `zoneId + agentId` asks for a different profile, host work mount, guest workdir, agent workspace, zone-git mount, or explicit idle TTL, the controller returns a structured 409. The plugin surfaces that 409 instead of auto-releasing another live caller's VM.
+
 ## OpenClaw Boundary Facts
 
 These facts are grounded in the local OpenClaw checkout at `/Users/shravansunder/Documents/dev/open-source/ai-harness/openclaw` and were cross-checked with DeepWiki for `openclaw/openclaw`.
@@ -65,6 +79,33 @@ These facts are grounded in the local OpenClaw checkout at `/Users/shravansunder
 - The backend factory never receives Tool VM guest `/workspace` through the OpenClaw SDK. `/workspace` is the guest mount path returned by agent-vm after the controller chooses the validated RealFS source.
 - `src/agents/sandbox/shared.ts` resolves `scope="agent"` to `agent:<agentId>`. The plugin still treats any received `scopeKey` as discardable SDK context, because agent-vm identity is `zoneId + agentId`.
 - `src/agents/tools/sessions-spawn-tool.ts` forwards `cwd` to the ACP branch. The normal `runtime="subagent"` branch passes workspace context, not `cwd`, to child sessions.
+
+## Companion Gondolin Ingress Fix
+
+The lease fix and ingress fix are separate behaviors in one branch because they were found in the same beta workflow failure path.
+
+Ingress issue:
+
+```text
+Managed agent traffic should let the client and server own streaming,
+websocket, upload, and download behavior. The adapter should not add
+small buffering or short upstream timeout defaults that make OpenClaw
+or subagent workflows look broken from the outside.
+```
+
+Managed default behavior:
+
+```ts
+export const MANAGED_VM_DEFAULT_INGRESS_OPTIONS = {
+	allowWebSockets: true,
+	bufferResponseBody: false,
+	maxBufferedResponseBodyBytes: 512 * 1024 * 1024,
+	upstreamHeaderTimeoutMs: 120_000,
+	upstreamResponseTimeoutMs: 120_000,
+} satisfies EnableIngressOptions;
+```
+
+Explicit caller options still win. A controller or future package adapter may pass a smaller buffer, disable websockets, or change timeouts for a specific VM; the adapter default only fills omitted values.
 
 ## Target Request And Response
 
@@ -87,7 +128,7 @@ Controller to plugin:
 ```ts
 export interface ToolVmSshLease extends VmSshLease<'ssh-sandbox'> {
 	readonly agentId: string;
-	readonly idleTtlMs?: number;
+	readonly idleTtlMs: number;
 	readonly tcpSlot: number;
 	readonly workdir: string;
 }
@@ -125,6 +166,8 @@ No `scopeKey`. No `sandbox` tuple. `backend=gondolin`, `mode=all`, `scope=agent`
 | `/workspace` returned as normal Tool VM workdir | `controller-http-route-support.test.ts` or route test | controller integration fixture | lease response `workdir=/workspace` |
 | Single TTL default | `lease-idle-policy.test.ts` removal/rewrite | route response test | configless lease returns expected idle TTL |
 | Active-use is only an operation guard | `lease-manager.test.ts`, `tool-vm-active-use.test.ts` | plugin exec/finalize tests | long command not idle-released while active |
+| Plugin SSH probe/report invalidates stale handles | `tool-vm-active-use.test.ts`, `tool-vm-ssh-operation-guard.test.ts`, `sandbox-backend-factory.test.ts` | plugin/controller active-use route tests | killed or hung SSH causes next operation to request a fresh lease |
+| Managed ingress defaults support agent traffic | `vm-adapter.test.ts` | gateway/openclaw smoke after lease work | `enableIngress()` defaults include websockets, no buffering, 512MiB cap, 120s timeouts |
 
 ## File Structure
 
@@ -146,8 +189,18 @@ Modify:
 - `packages/gateway-interface/src/tool-vm-lease.test.ts`
   - Update shape tests to reject `scopeKey`.
 
+- `packages/gateway-interface/src/tool-vm-active-use.ts`
+  - Add typed operation report payloads for plugin-observed SSH state.
+  - Heartbeats remain operation guards, not VM health probes.
+  - Add jittered heartbeat scheduling without retaining report history.
+
+- `packages/gateway-interface/src/tool-vm-active-use.test.ts`
+  - Prove active-use reports are bounded to the latest value.
+  - Prove jittered heartbeat scheduling and timer cleanup do not leak after dispose.
+
 - `packages/gateway-interface/src/index.ts`
   - Export lease id helpers.
+  - Export active-use report types if they are not already exported through the package barrel.
 
 - `packages/openclaw-agent-vm-plugin/src/controller-lease-client.ts`
   - Remove `scopeKey` and `sandbox` from `LeaseRequest`.
@@ -162,11 +215,22 @@ Modify:
   - Assert managed tuple locally.
   - Do not send `scopeKey` or `sandbox` to controller.
   - Do not include `scopeKey` in cache key or logs.
+  - Change the plugin cache key to `zoneId + agentId` only. Do not key cached Tool VM handles by `profileId`, `workspaceDir`, `agentWorkspaceDir`, or `scopeKey`.
   - Refresh cached handle on controller renew 404/410.
+  - Treat plugin-observed SSH failures, command timeouts, and active-use refreshable failures as stale-handle signals.
+
+- `packages/openclaw-agent-vm-plugin/src/sandbox-backend/tool-vm-ssh-operation-guard.ts`
+  - Owns plugin-side SSH operation timeout, jittered active-use reporting, stale-handle classification, and best-effort cleanup.
+  - Stores only the latest operation report; no retained stdout/stderr buffers and no unbounded arrays.
+
+- `packages/openclaw-agent-vm-plugin/src/sandbox-backend/tool-vm-ssh-operation-guard.test.ts`
+  - Proves bounded timers, jitter, timeout failure, best-effort controller reporting, stale-handle classification, and timer cleanup.
 
 - `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts`
   - Same-agent different `scopeKey` inputs reuse the same handle and only send agent-scoped request.
+  - Same-agent host path drift does not fork a second cached handle.
   - Dead/expired renew response causes cache drop and fresh request.
+  - SSH failure or timeout during a cached operation drops the cached handle, so the next operation requests a fresh lease.
 
 - `packages/openclaw-agent-vm-plugin/src/controller-integration.test.ts`
   - Boundary integration for same-agent subagent-like requests, cross-agent requests, expired renew refresh, no `scopeKey` in request/response.
@@ -175,6 +239,7 @@ Modify:
   - Remove `safeScopeKeySchema`.
   - Remove `scopeKey` and `sandbox` from `controllerLeaseCreateRequestSchema`.
   - Validate `agentId` with OpenClaw-compatible regex.
+  - Add Zod schemas for optional active-use operation reports.
 
 - `packages/agent-vm/src/controller/http/controller-request-schemas.test.ts`
   - Update JSON schema snapshot expectations.
@@ -196,6 +261,7 @@ Modify:
   - Integration tests for new request/response contract.
   - Negative tests for `/workspace` request input.
   - Renew expired/dead lease returns refreshable failure.
+  - Active-use start/heartbeat/end accepts bounded operation reports and stores only the latest report.
 
 - `packages/agent-vm/src/controller/leases/lease-manager.ts`
   - Remove `scopeKey` from `Lease` and create options.
@@ -203,12 +269,14 @@ Modify:
   - Make `renewLease` async and liveness/expiry aware.
   - Add synchronous expiry checks for renew/create-reuse/start-active-use/heartbeat-active-use.
   - Add dead idle lease reaping for non-active leases.
+  - Store the latest active-use operation report for diagnostics; do not use reports as VM liveness proof.
 
 - `packages/agent-vm/src/controller/leases/lease-manager.test.ts`
   - Opaque id tests.
   - Expired renew eviction tests.
   - Dead VM renew eviction tests.
   - Same-agent different OpenClaw scopes no longer affect lease manager because they never enter it.
+  - Latest active-use report replacement test; no report history arrays.
 
 - `packages/agent-vm/src/controller/leases/idle-reaper.ts`
   - Remove `scopeKey` from inputs.
@@ -263,6 +331,15 @@ Modify:
 - `packages/agent-vm/src/cli/manual-templates.test.ts`
   - Assert new manual text.
 
+- `packages/gondolin-adapter/src/vm-adapter.ts`
+  - Add named managed ingress default constants.
+  - Resolve omitted `enableIngress()` options against those defaults.
+  - Preserve explicit caller overrides.
+
+- `packages/gondolin-adapter/src/vm-adapter.test.ts`
+  - Assert default `enableIngress()` options.
+  - Assert explicit options override defaults.
+
 Delete if unused after hard cutover:
 
 - `packages/agent-vm/src/controller/leases/lease-scope.ts`
@@ -282,7 +359,7 @@ git branch --show-current
 Expected:
 
 ```text
-debug/beta-workflow-path-trace
+fix/tool-vm-lease-and-ingress-defaults
 ```
 
 If files outside this plan are already modified, do not revert them. Avoid editing unrelated modified files unless the task explicitly requires it.
@@ -299,6 +376,190 @@ Expected on the plan branch when this plan was written: PASS with 1 passed and 1
 
 ---
 
+### Task 0: Managed Gondolin Ingress Defaults
+
+**Files:**
+- Modify: `packages/gondolin-adapter/src/vm-adapter.ts`
+- Modify: `packages/gondolin-adapter/src/vm-adapter.test.ts`
+
+- [ ] **Step 1: Write failing ingress default tests**
+
+In `packages/gondolin-adapter/src/vm-adapter.test.ts`, add:
+
+```ts
+it('applies managed ingress defaults when enabling ingress without explicit options', async () => {
+	const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18791 }));
+	const fakeVmInstance: ManagedVmInstance = {
+		...createFakeVmInstance(),
+		enableIngress: enableIngressMock,
+	};
+	const dependencies = createBaseDependencies({
+		createVm: vi.fn(async (): Promise<ManagedVmInstance> => fakeVmInstance),
+	});
+
+	const managedVm = await createManagedVm(
+		{
+			allowedHosts: [],
+			cpus: 1,
+			imagePath: '/vm-images/gateways/openclaw',
+			memory: '1G',
+			rootfsMode: 'memory',
+			secrets: {},
+			vfsMounts: {},
+		},
+		dependencies,
+	);
+
+	await managedVm.enableIngress();
+
+	expect(enableIngressMock).toHaveBeenCalledWith({
+		allowWebSockets: true,
+		bufferResponseBody: false,
+		maxBufferedResponseBodyBytes: 512 * 1024 * 1024,
+		upstreamHeaderTimeoutMs: 120_000,
+		upstreamResponseTimeoutMs: 120_000,
+	});
+});
+
+it('lets explicit ingress options override managed defaults', async () => {
+	const enableIngressMock = vi.fn(async () => ({ host: '127.0.0.1', port: 18891 }));
+	const fakeVmInstance: ManagedVmInstance = {
+		...createFakeVmInstance(),
+		enableIngress: enableIngressMock,
+	};
+	const dependencies = createBaseDependencies({
+		createVm: vi.fn(async (): Promise<ManagedVmInstance> => fakeVmInstance),
+	});
+
+	const managedVm = await createManagedVm(
+		{
+			allowedHosts: [],
+			cpus: 1,
+			imagePath: '/vm-images/gateways/openclaw',
+			memory: '1G',
+			rootfsMode: 'memory',
+			secrets: {},
+			vfsMounts: {},
+		},
+		dependencies,
+	);
+
+	await managedVm.enableIngress({
+		allowWebSockets: false,
+		bufferResponseBody: true,
+		listenPort: 18891,
+		maxBufferedResponseBodyBytes: 64 * 1024 * 1024,
+		upstreamHeaderTimeoutMs: 5_000,
+		upstreamResponseTimeoutMs: 10_000,
+	});
+
+	expect(enableIngressMock).toHaveBeenCalledWith({
+		allowWebSockets: false,
+		bufferResponseBody: true,
+		listenPort: 18891,
+		maxBufferedResponseBodyBytes: 64 * 1024 * 1024,
+		upstreamHeaderTimeoutMs: 5_000,
+		upstreamResponseTimeoutMs: 10_000,
+	});
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run:
+
+```bash
+pnpm vitest run packages/gondolin-adapter/src/vm-adapter.test.ts -t "ingress"
+```
+
+Expected: FAIL because `enableIngress()` forwards `undefined` instead of managed defaults.
+
+- [ ] **Step 3: Implement managed ingress defaults**
+
+In `packages/gondolin-adapter/src/vm-adapter.ts`, add:
+
+```ts
+export const MANAGED_VM_DEFAULT_INGRESS_MAX_BUFFERED_RESPONSE_BODY_BYTES = 512 * 1024 * 1024;
+export const MANAGED_VM_DEFAULT_INGRESS_UPSTREAM_HEADER_TIMEOUT_MS = 120_000;
+export const MANAGED_VM_DEFAULT_INGRESS_UPSTREAM_RESPONSE_TIMEOUT_MS = 120_000;
+
+// Applies only when a caller explicitly enables response buffering.
+// Managed OpenClaw defaults keep buffering disabled so streaming stays client/server-owned.
+export const MANAGED_VM_DEFAULT_INGRESS_OPTIONS = {
+	allowWebSockets: true,
+	bufferResponseBody: false,
+	maxBufferedResponseBodyBytes: MANAGED_VM_DEFAULT_INGRESS_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+	upstreamHeaderTimeoutMs: MANAGED_VM_DEFAULT_INGRESS_UPSTREAM_HEADER_TIMEOUT_MS,
+	upstreamResponseTimeoutMs: MANAGED_VM_DEFAULT_INGRESS_UPSTREAM_RESPONSE_TIMEOUT_MS,
+} satisfies EnableIngressOptions;
+```
+
+Add:
+
+```ts
+function resolveManagedVmIngressOptions(
+	ingressOptions: EnableIngressOptions = {},
+): EnableIngressOptions {
+	const resolvedOptions: EnableIngressOptions = {
+		...MANAGED_VM_DEFAULT_INGRESS_OPTIONS,
+	};
+
+	if (ingressOptions.listenHost !== undefined) {
+		resolvedOptions.listenHost = ingressOptions.listenHost;
+	}
+	if (ingressOptions.listenPort !== undefined) {
+		resolvedOptions.listenPort = ingressOptions.listenPort;
+	}
+	if (ingressOptions.allowWebSockets !== undefined) {
+		resolvedOptions.allowWebSockets = ingressOptions.allowWebSockets;
+	}
+	if (ingressOptions.hooks !== undefined) {
+		resolvedOptions.hooks = ingressOptions.hooks;
+	}
+	if (ingressOptions.bufferResponseBody !== undefined) {
+		resolvedOptions.bufferResponseBody = ingressOptions.bufferResponseBody;
+	}
+	if (ingressOptions.maxBufferedResponseBodyBytes !== undefined) {
+		resolvedOptions.maxBufferedResponseBodyBytes = ingressOptions.maxBufferedResponseBodyBytes;
+	}
+	if (ingressOptions.upstreamHeaderTimeoutMs !== undefined) {
+		resolvedOptions.upstreamHeaderTimeoutMs = ingressOptions.upstreamHeaderTimeoutMs;
+	}
+	if (ingressOptions.upstreamResponseTimeoutMs !== undefined) {
+		resolvedOptions.upstreamResponseTimeoutMs = ingressOptions.upstreamResponseTimeoutMs;
+	}
+
+	return resolvedOptions;
+}
+```
+
+Change managed VM ingress forwarding to:
+
+```ts
+async enableIngress(ingressOptions?: EnableIngressOptions): Promise<IngressAccess> {
+	return await vmInstance.enableIngress(resolveManagedVmIngressOptions(ingressOptions));
+}
+```
+
+- [ ] **Step 4: Run ingress tests**
+
+Run:
+
+```bash
+pnpm vitest run packages/gondolin-adapter/src/vm-adapter.test.ts -t "ingress"
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add packages/gondolin-adapter/src/vm-adapter.ts packages/gondolin-adapter/src/vm-adapter.test.ts
+git commit -m "fix: default managed gondolin ingress for agent traffic"
+```
+
+---
+
 ### Task 1: Opaque Lease Id Contract In Gateway Interface
 
 **Files:**
@@ -307,6 +568,22 @@ Expected on the plan branch when this plan was written: PASS with 1 passed and 1
 - Modify: `packages/gateway-interface/src/tool-vm-lease.ts`
 - Modify: `packages/gateway-interface/src/tool-vm-lease.test.ts`
 - Modify: `packages/gateway-interface/src/index.ts`
+
+- [ ] **Step 0: Confirm uuid v7 support**
+
+Run:
+
+```bash
+node -e "const pkg=require('./packages/gateway-interface/package.json'); console.log(pkg.dependencies.uuid)"
+```
+
+Expected:
+
+```text
+^11.1.1
+```
+
+If the version is lower than `9.0.0`, upgrade `uuid` before writing the lease-id helper. The plan branch currently has `^11.1.1`, which supports `v7`, `validate`, and `version`.
 
 - [ ] **Step 1: Write failing lease id tests**
 
@@ -381,7 +658,7 @@ import {
 
 export interface ToolVmSshLease extends VmSshLease<'ssh-sandbox'> {
 	readonly agentId: string;
-	readonly idleTtlMs?: number;
+	readonly idleTtlMs: number;
 	readonly tcpSlot: number;
 	readonly workdir: string;
 }
@@ -408,8 +685,7 @@ export function isToolVmSshLease(value: unknown): value is ToolVmSshLease {
 		isToolVmLeaseId(Reflect.get(record, 'leaseId')) &&
 		isVmSshEndpoint(Reflect.get(record, 'ssh')) &&
 		typeof Reflect.get(record, 'agentId') === 'string' &&
-		(Reflect.get(record, 'idleTtlMs') === undefined ||
-			typeof Reflect.get(record, 'idleTtlMs') === 'number') &&
+		typeof Reflect.get(record, 'idleTtlMs') === 'number' &&
 		typeof Reflect.get(record, 'tcpSlot') === 'number' &&
 		typeof Reflect.get(record, 'workdir') === 'string' &&
 		!Reflect.has(record, 'scopeKey')
@@ -443,6 +719,7 @@ it('rejects Tool VM lease responses that still include scopeKey', () => {
 	expect(
 		isToolVmSshLease({
 			agentId: 'main',
+			idleTtlMs: 6_000_000,
 			leaseId: '01890f00-0000-7000-8000-000000000000',
 			scopeKey: 'agent:main:discord:channel:123',
 			ssh: {
@@ -578,6 +855,7 @@ import { z } from 'zod';
 export const controllerLeasePeekResponseSchema = z.object({
 	agentId: z.string(),
 	createdAt: z.number(),
+	idleTtlMs: z.number(),
 	lastUsedAt: z.number(),
 	leaseId: z.string(),
 	profileId: z.string(),
@@ -597,12 +875,12 @@ export type ControllerLeasePeekResponse = z.infer<typeof controllerLeasePeekResp
 
 - [ ] **Step 5: Remove `scopeKey` from route support serializers**
 
-In `packages/agent-vm/src/controller/http/controller-http-route-support.ts`, update `serializeLeaseForResponse` return type to remove `scopeKey`, and return:
+In `packages/agent-vm/src/controller/http/controller-http-route-support.ts`, update `serializeLeaseForResponse` return type to remove `scopeKey`, require an explicit `idleTtlMs`, and return:
 
 ```ts
 return {
 	agentId: lease.agentId,
-	...(options.idleTtlMs !== undefined ? { idleTtlMs: options.idleTtlMs } : {}),
+	idleTtlMs: options.idleTtlMs,
 	leaseId: lease.id,
 	ssh: {
 		host: `tool-${lease.tcpSlot}.vm.host`,
@@ -851,12 +1129,55 @@ createToolVmLeaseId,
 
 - [ ] **Step 6: Add expiry helper**
 
-In `lease-manager.ts`, add near `touchLease`:
+In `lease-manager.ts`, add near `touchLease`. Expiry must account for active-use:
 
 ```ts
-function isLeaseExpired(lease: Lease): boolean {
+function isLeaseIdleExpired(lease: Lease): boolean {
 	return lease.lastUsedAt + lease.effectiveIdleTtlMs < options.now();
 }
+
+function isLeaseExpired(lease: Lease): boolean {
+	return isLeaseIdleExpired(lease) && activeUseCountForLease(lease.id) === 0;
+}
+```
+
+Move or define `activeUseCountForLease` before `isLeaseExpired` so this compiles:
+
+```ts
+function activeUseCountForLease(leaseId: string): number {
+	let count = 0;
+	for (const activeUse of activeUses.values()) {
+		if (activeUse.leaseId === leaseId) {
+			count += 1;
+		}
+	}
+	return count;
+}
+```
+
+Add this regression test:
+
+```ts
+it('does not expire a lease while an active operation is heartbeating', async () => {
+	let now = 1_000;
+	const leaseManager = createLeaseManager({
+		...defaultRuntimeRecordOptions,
+		createLeaseId: () => '01890f00-0000-7000-8000-000000000005',
+		createManagedVm: vi.fn(async () => createManagedVmStub()),
+		now: () => now,
+		tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+	});
+	const lease = await leaseManager.createLease({
+		...createAgentLeaseOptions(),
+		effectiveIdleTtlMs: 1_000,
+	});
+	leaseManager.startActiveUse(lease.id, {
+		useId: '01890f00-0000-7000-8000-000000000000',
+	});
+	now = 2_001;
+
+	expect(await leaseManager.renewLease(lease.id)).toMatchObject({ kind: 'renewed' });
+});
 ```
 
 - [ ] **Step 7: Use opaque lease id at creation**
@@ -880,6 +1201,41 @@ scopeKey: leaseOptions.scopeKey,
 ```
 
 - [ ] **Step 8: Make renewLease async and validity aware**
+
+First replace the existing liveness helper with a bounded probe. A hung VM must make renew return a dead refreshable failure instead of hanging the request:
+
+```ts
+const leaseVmLivenessTimeoutMs = 5_000;
+
+async function isLeaseVmLive(lease: Lease): Promise<boolean> {
+	const abortController = new AbortController();
+	let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+	try {
+		const timeoutResult = new Promise<false>((resolve) => {
+			timeoutHandle = setTimeout(() => {
+				abortController.abort();
+				resolve(false);
+			}, leaseVmLivenessTimeoutMs);
+		});
+		const probeResult = await Promise.race([
+			lease.vm.exec('true', { signal: abortController.signal }),
+			timeoutResult,
+		]);
+		return probeResult !== false && probeResult.exitCode === 0;
+	} catch (error) {
+		writeLeaseManagerWarning(
+			`liveness check failed for lease '${lease.id}' in zone '${lease.zoneId}': ${formatLeaseManagerError(error)}`,
+		);
+		return false;
+	} finally {
+		if (timeoutHandle !== undefined) {
+			clearTimeout(timeoutHandle);
+		}
+	}
+}
+```
+
+If `ManagedExecOptions` does not currently expose `signal`, update the local adapter type boundary in `packages/gondolin-adapter/src/vm-adapter.ts` so `ManagedVm.exec` accepts `{ signal?: AbortSignal }` and forwards it to Gondolin. Do not implement this liveness probe with an unbounded `lease.vm.exec('true')`.
 
 Replace current `renewLease` method with:
 
@@ -1077,8 +1433,24 @@ if (leaseRenewal.kind === 'not-found') {
 		},
 		404,
 	);
-}
+	}
+	```
+
+- [ ] **Step 4A: Keep create-time compatibility conflicts non-refreshable**
+
+Keep `AgentLeaseCompatibilityConflictError` mapped to HTTP 409 and make the response explicitly non-refreshable:
+
+```ts
+return context.json(
+	{
+		...agentLeaseCompatibilityConflictResponseBody({ error, requestContext }),
+		refreshable: false,
+	},
+	409,
+);
 ```
+
+The plugin must not treat this as a refresh trigger. A 409 means there is already a live per-agent Tool VM and this create request is incompatible with it. The caller must release the existing lease or retry with compatible profile/workspace/workdir/zone-git/TTL inputs. Same-agent host path drift while the plugin cache is warm must not reach this route because Task 5 caches by `zoneId + agentId` only; if the cache is cold and the controller has an incompatible live lease, surfacing 409 is intentional.
 
 - [ ] **Step 5: Remove sandbox contract validation from route**
 
@@ -1257,7 +1629,51 @@ function shouldRefreshCachedLease(error: unknown): boolean {
 }
 ```
 
-- [ ] **Step 5: Remove scope from plugin request and logs**
+- [ ] **Step 5: Make the plugin cache key agent-scoped only**
+
+In `sandbox-backend-handle-factory.ts`, replace the current cache key shape:
+
+```ts
+function agentLeaseCacheKey(params: {
+	readonly agentId: string;
+	readonly agentWorkspaceDir: string;
+	readonly profileId: string;
+	readonly workspaceDir: string;
+	readonly zoneId: string;
+}): string {
+	return [
+		params.zoneId,
+		params.agentId,
+		params.profileId,
+		params.agentWorkspaceDir,
+		params.workspaceDir,
+	].join('\0');
+}
+```
+
+with:
+
+```ts
+function agentLeaseCacheKey(params: {
+	readonly agentId: string;
+	readonly zoneId: string;
+}): string {
+	return [params.zoneId, params.agentId].join('\0');
+}
+```
+
+Update the call site:
+
+```ts
+const cacheKey = agentLeaseCacheKey({
+	agentId,
+	zoneId: options.zoneId,
+});
+```
+
+This is the plugin-side expression of the hard contract: one cached Tool VM handle per `zoneId + agentId`. `profileId`, `workspaceDir`, and `agentWorkspaceDir` remain request/diagnostic/compatibility data; they are not cache identity and must not fork a second cached Tool VM for the same agent.
+
+- [ ] **Step 6: Remove scope from plugin request and logs**
 
 In `createGondolinSandboxBackendFactory`, keep `params.scopeKey` only as SDK input. Replace the `requestLease` call with:
 
@@ -1278,7 +1694,7 @@ Replace renew failure log with:
 `lease renew failed for zone '${options.zoneId}' agent '${agentId}' lease '${cachedEntry.lease.leaseId}': ${formatUnknownError(error)}`
 ```
 
-- [ ] **Step 6: Keep plugin-side managed tuple assertion**
+- [ ] **Step 7: Keep plugin-side managed tuple assertion**
 
 Keep `assertPluginLeaseContract` checking `cfg`. Remove `scopeKey` from its params:
 
@@ -1301,7 +1717,7 @@ Call it as:
 assertPluginLeaseContract({ cfg: params.cfg });
 ```
 
-- [ ] **Step 7: Write plugin cache refresh integration test**
+- [ ] **Step 8: Write plugin cache refresh integration test**
 
 In `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts`, add:
 
@@ -1362,7 +1778,7 @@ it('refreshes the cached handle when renew reports an expired lease', async () =
 });
 ```
 
-- [ ] **Step 8: Update same-agent scope permutation test**
+- [ ] **Step 9: Update same-agent scope permutation test**
 
 In `sandbox-backend-factory.test.ts`, keep a test where first and second calls have different `scopeKey`, but assert the controller request does not include scope:
 
@@ -1377,7 +1793,62 @@ expect(requestLease).toHaveBeenCalledWith({
 });
 ```
 
-- [ ] **Step 9: Run plugin tests**
+- [ ] **Step 10: Add same-agent host path drift cache test**
+
+In `sandbox-backend-factory.test.ts`, add:
+
+```ts
+it('does not fork the plugin cache when the same agent arrives with a different host workspace path', async () => {
+	const requestLease = vi.fn(async () =>
+		createLeaseResponse('01890f00-0000-7000-8000-000000000001', { agentId: 'beta' }),
+	);
+	const factory = createGondolinSandboxBackendFactory(
+		{
+			controllerUrl: 'http://controller.vm.host:18800',
+			zoneId: 'shravan',
+		},
+		{
+			buildExecSpec: vi.fn(async () => ({
+				argv: ['ssh'],
+				env: {},
+				stdinMode: 'pipe-open' as const,
+			})),
+			createLeaseClient: () => ({
+				...createActiveUseLeaseClientMethods(),
+				peekLease: async () => createLeasePeekResponse(),
+				releaseLease: async () => {},
+				renewLease: async (leaseId: string) => createLeaseResponse(leaseId, { agentId: 'beta' }),
+				requestLease,
+			}),
+			runRemoteShellScript: vi.fn(async () => ({
+				code: 0,
+				stderr: Buffer.alloc(0),
+				stdout: Buffer.alloc(0),
+			})),
+		},
+	);
+
+	const firstHandle = await factory({
+		agentWorkspaceDir: '/zone/agents/beta',
+		cfg: gondolinSandboxConfig(),
+		scopeKey: 'agent:beta:discord:channel:123',
+		sessionKey: 'agent:beta:discord:channel:123',
+		workspaceDir: '/zone/agents/beta',
+	});
+	const secondHandle = await factory({
+		agentWorkspaceDir: '/zone/agents/beta-edited',
+		cfg: gondolinSandboxConfig(),
+		scopeKey: 'agent:beta:discord:channel:999',
+		sessionKey: 'agent:beta:discord:channel:999',
+		workspaceDir: '/zone/agents/beta-edited',
+	});
+
+	expect(secondHandle).toBe(firstHandle);
+	expect(requestLease).toHaveBeenCalledTimes(1);
+});
+```
+
+- [ ] **Step 11: Run plugin tests**
 
 Run:
 
@@ -1387,7 +1858,7 @@ pnpm vitest run packages/openclaw-agent-vm-plugin/src/controller-lease-client.te
 
 Expected: PASS after fixture updates remove `scopeKey` from controller request/response bodies.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
 git add packages/openclaw-agent-vm-plugin/src/controller-lease-client.ts packages/openclaw-agent-vm-plugin/src/controller-lease-client.test.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-factory.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts packages/openclaw-agent-vm-plugin/src/controller-integration.test.ts
@@ -1404,14 +1875,37 @@ git commit -m "feat: refresh agent vm plugin leases by agent"
 - Modify: `packages/openclaw-agent-vm-plugin/src/controller-integration.test.ts`
 - Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts`
 
-- [ ] **Step 1: Add controller negative test for `/workspace` as request input**
+- [ ] **Step 1: Add negative tests for `/workspace` as request input**
 
-In `controller-http-routes.test.ts`, add:
+First add the resolver-level proof in `lease-work-mount-paths.test.ts`, using the existing fixture whose allowed roots are `stateDir/sandboxes` and `zoneFilesDir`:
+
+```ts
+it('rejects Tool VM guest /workspace as a lease request input path', async () => {
+	await expect(
+		resolveLeaseWorkMountDir({
+			runtimeDir,
+			workMountDir: '/workspace',
+			zone,
+		}),
+	).rejects.toMatchObject({
+		kind: 'outside-allowed-roots',
+	});
+});
+```
+
+Then add the HTTP boundary proof in `controller-http-routes.test.ts`, using the existing `createControllerAppForTest` helper:
 
 ```ts
 it('rejects Tool VM guest /workspace when it leaks back as lease request input', async () => {
 	const createLease = vi.fn(async () => createLeaseStub('01890f00-0000-7000-8000-000000000000', 0));
 	const app = createControllerAppForTest({
+		toolVmProfiles: {
+			standard: {
+				cpus: 1,
+				imageProfile: 'default',
+				memory: '1G',
+			},
+		},
 		leaseManager: {
 			createLease,
 			listLeases: vi.fn(() => []),
@@ -1419,6 +1913,13 @@ it('rejects Tool VM guest /workspace when it leaks back as lease request input',
 			releaseLease: vi.fn(async () => {}),
 			renewLease: vi.fn(),
 		},
+		resolveLeaseWorkMountDir: vi.fn(async ({ workMountDir }) => {
+			expect(workMountDir).toBe('/workspace');
+			throw new LeaseWorkMountValidationError(
+				'outside-allowed-roots',
+				"Lease workMountDir '/workspace' must be under /home/openclaw/.openclaw/state/sandboxes or /zone.",
+			);
+		}),
 	});
 
 	const response = await app.request('/lease', {
@@ -1441,6 +1942,8 @@ it('rejects Tool VM guest /workspace when it leaks back as lease request input',
 	expect(createLease).not.toHaveBeenCalled();
 });
 ```
+
+Do not add a fake route-test config helper. The route test proves the controller refuses to create a lease when the resolver rejects the path; the resolver test proves `/workspace` is rejected against the real allowed-root fixture.
 
 - [ ] **Step 2: Add same-agent subagent permutation test**
 
@@ -1844,6 +2347,7 @@ In `controller-runtime.ts`, update:
 ```ts
 const reapToolVmLeases = async (): Promise<void> => {
 	leaseManager.reapExpiredActiveUses();
+	// Prefer dead-VM eviction logs over idle-expiry logs when both are true.
 	await leaseManager.reapDeadIdleLeases();
 	await idleReaper.reapExpiredLeases();
 };
@@ -1897,6 +2401,1039 @@ Expected: PASS.
 ```bash
 git add packages/gateway-interface/src/tool-vm-active-use.ts packages/gateway-interface/src/tool-vm-active-use.test.ts packages/agent-vm/src/controller/leases/lease-manager.ts packages/agent-vm/src/controller/leases/lease-manager.test.ts packages/agent-vm/src/controller/controller-runtime.ts packages/agent-vm/src/controller/controller-runtime.test.ts
 git commit -m "feat: reap dead idle tool vm leases"
+```
+
+---
+
+### Task 8A: Active-Use Operation Reports
+
+**Files:**
+- Modify: `packages/gateway-interface/src/tool-vm-active-use.ts`
+- Modify: `packages/gateway-interface/src/tool-vm-active-use.test.ts`
+- Modify: `packages/openclaw-agent-vm-plugin/src/controller-lease-client.ts`
+- Modify: `packages/openclaw-agent-vm-plugin/src/controller-lease-client.test.ts`
+- Modify: `packages/agent-vm/src/controller/http/controller-request-schemas.ts`
+- Modify: `packages/agent-vm/src/controller/http/controller-http-routes.ts`
+- Modify: `packages/agent-vm/src/controller/http/controller-http-routes.test.ts`
+- Modify: `packages/agent-vm/src/controller/leases/lease-manager.ts`
+- Modify: `packages/agent-vm/src/controller/leases/lease-manager.test.ts`
+
+**Design intent:**
+
+This task does not make active-use heartbeat a VM liveness proof. It adds the typed report channel used by the later SSH operation guard:
+
+```text
+plugin sends bounded latest report to controller
+controller stores diagnostic latest report and owns eviction/renewal truth
+```
+
+- [ ] **Step 1: Write failing active-use report and jitter tests**
+
+In `packages/gateway-interface/src/tool-vm-active-use.test.ts`, add:
+
+```ts
+it('sends only the latest active-use operation report on heartbeat', async () => {
+	const timers: (() => void)[] = [];
+	const heartbeatActiveUse = vi.fn(async () => ({
+		expiresAt: 10_000,
+		heartbeatAfterMs: 1_000,
+	}));
+	const handle = await createToolVmActiveUseHandle({
+		clearTimeoutImpl: vi.fn() as unknown as typeof clearTimeout,
+		endActiveUse: vi.fn(async () => {}),
+		heartbeatActiveUse,
+		setTimeoutImpl: ((callback: () => void) => {
+			timers.push(callback);
+			return timers.length as unknown as ReturnType<typeof setTimeout>;
+		}) as typeof setTimeout,
+		startActiveUse: vi.fn(async () => ({
+			expiresAt: 10_000,
+			heartbeatAfterMs: 1_000,
+			useId: '01890f00-0000-7000-8000-000000000000',
+		})),
+	});
+
+	handle.report({
+		observedAtMs: 1_000,
+		phase: 'starting',
+	});
+	handle.report({
+		observedAtMs: 1_001,
+		phase: 'probe-succeeded',
+		ssh: { probeSucceeded: true },
+	});
+
+	timers[0]?.();
+	await Promise.resolve();
+
+	expect(heartbeatActiveUse).toHaveBeenCalledWith('01890f00-0000-7000-8000-000000000000', {
+		report: {
+			observedAtMs: 1_001,
+			phase: 'probe-succeeded',
+			ssh: { probeSucceeded: true },
+		},
+	});
+	await handle.dispose('completed');
+});
+
+it('applies deterministic heartbeat jitter and clears timers on dispose', async () => {
+	const clearTimeoutImpl = vi.fn() as unknown as typeof clearTimeout;
+	const setTimeoutImpl = vi.fn((callback: () => void, delayMs?: number) => {
+		void callback;
+		void delayMs;
+		return 42 as unknown as ReturnType<typeof setTimeout>;
+	}) as unknown as typeof setTimeout;
+	const handle = await createToolVmActiveUseHandle({
+		clearTimeoutImpl,
+		endActiveUse: vi.fn(async () => {}),
+		heartbeatActiveUse: vi.fn(async () => ({ expiresAt: 10_000, heartbeatAfterMs: 1_000 })),
+		heartbeatJitterRatio: 0.2,
+		randomImpl: () => 1,
+		setTimeoutImpl,
+		startActiveUse: vi.fn(async () => ({
+			expiresAt: 10_000,
+			heartbeatAfterMs: 1_000,
+			useId: '01890f00-0000-7000-8000-000000000000',
+		})),
+	});
+
+	expect(setTimeoutImpl).toHaveBeenCalledWith(expect.any(Function), 1_200);
+
+	await handle.dispose('completed');
+
+	expect(clearTimeoutImpl).toHaveBeenCalledWith(42);
+});
+
+it('stops heartbeat scheduling after a refreshable heartbeat failure', async () => {
+	const timers: (() => void)[] = [];
+	const clearTimeoutImpl = vi.fn() as unknown as typeof clearTimeout;
+	const refreshableError = new Error('lease expired');
+	const onRefreshableHeartbeatFailure = vi.fn(async () => {});
+	const handle = await createToolVmActiveUseHandle({
+		clearTimeoutImpl,
+		endActiveUse: vi.fn(async () => {}),
+		heartbeatActiveUse: vi.fn(async () => {
+			throw refreshableError;
+		}),
+		isHeartbeatErrorRefreshable: () => true,
+		onRefreshableHeartbeatFailure,
+		setTimeoutImpl: ((callback: () => void) => {
+			timers.push(callback);
+			return timers.length as unknown as ReturnType<typeof setTimeout>;
+		}) as typeof setTimeout,
+		startActiveUse: vi.fn(async () => ({
+			expiresAt: 10_000,
+			heartbeatAfterMs: 1_000,
+			useId: '01890f00-0000-7000-8000-000000000000',
+		})),
+	});
+
+	timers[0]?.();
+	await Promise.resolve();
+	await Promise.resolve();
+
+	expect(onRefreshableHeartbeatFailure).toHaveBeenCalledWith(refreshableError);
+	expect(timers).toHaveLength(1);
+
+	await handle.dispose('failed');
+});
+```
+
+- [ ] **Step 2: Run active-use tests to verify failure**
+
+Run:
+
+```bash
+pnpm vitest run packages/gateway-interface/src/tool-vm-active-use.test.ts -t "operation report|jitter"
+```
+
+Expected: FAIL because the handle has no `report` method, heartbeat request has no body, and jitter options do not exist.
+
+- [ ] **Step 3: Add typed operation reports to active-use**
+
+In `packages/gateway-interface/src/tool-vm-active-use.ts`, add:
+
+```ts
+export type ToolVmSshOperationPhase =
+	| 'starting'
+	| 'probe-succeeded'
+	| 'running'
+	| 'completed'
+	| 'failed';
+
+export type ToolVmSshFailureKind =
+	| 'active-use-refreshable-failure'
+	| 'ssh-command-failed'
+	| 'ssh-command-timed-out'
+	| 'ssh-probe-failed';
+
+export interface ToolVmSshFailureReport {
+	readonly kind: ToolVmSshFailureKind;
+	readonly message: string;
+}
+
+export interface ToolVmSshOperationReport {
+	readonly failure?: ToolVmSshFailureReport;
+	readonly probeSucceeded?: boolean;
+}
+
+export interface ToolVmActiveUseOperationReport {
+	readonly observedAtMs: number;
+	readonly phase: ToolVmSshOperationPhase;
+	readonly ssh?: ToolVmSshOperationReport;
+}
+
+export interface HeartbeatToolVmActiveUseRequest {
+	readonly report?: ToolVmActiveUseOperationReport;
+}
+```
+
+Update request types:
+
+```ts
+export interface StartToolVmActiveUseRequest {
+	readonly correlation?: ToolVmActiveUseCorrelation;
+	readonly report?: ToolVmActiveUseOperationReport;
+	readonly useId: string;
+}
+
+export interface EndToolVmActiveUseRequest {
+	readonly outcome: ToolVmActiveUseOutcome;
+	readonly report?: ToolVmActiveUseOperationReport;
+}
+```
+
+Update handle/options:
+
+```ts
+export interface ToolVmActiveUseHandle {
+	readonly useId: string;
+	dispose(outcome?: ToolVmActiveUseOutcome): Promise<void>;
+	end(outcome?: ToolVmActiveUseOutcome): Promise<void>;
+	report(report: ToolVmActiveUseOperationReport): void;
+}
+
+export interface CreateToolVmActiveUseHandleOptions {
+	readonly correlation?: ToolVmActiveUseCorrelation;
+	readonly endActiveUse: (useId: string, request: EndToolVmActiveUseRequest) => Promise<void>;
+	readonly heartbeatActiveUse: (
+		useId: string,
+		request: HeartbeatToolVmActiveUseRequest,
+	) => Promise<HeartbeatToolVmActiveUseResponse>;
+	readonly heartbeatJitterRatio?: number;
+	readonly isEndErrorTolerable?: (error: unknown) => boolean;
+	readonly isHeartbeatErrorRefreshable?: (error: unknown) => boolean;
+	readonly logEndFailure?: (error: unknown) => void;
+	readonly logHeartbeatFailure?: (error: unknown) => void;
+	readonly maxHeartbeatDurationMs?: number;
+	readonly nowImpl?: () => number;
+	readonly onRefreshableHeartbeatFailure?: (error: unknown) => Promise<void>;
+	readonly randomImpl?: () => number;
+	readonly startActiveUse: (
+		request: StartToolVmActiveUseRequest,
+	) => Promise<StartToolVmActiveUseResponse>;
+	readonly setTimeoutImpl?: typeof setTimeout;
+	readonly clearTimeoutImpl?: typeof clearTimeout;
+}
+```
+
+Add deterministic jitter:
+
+```ts
+function jitterDelayMs(params: {
+	readonly delayMs: number;
+	readonly jitterRatio: number;
+	readonly random: () => number;
+}): number {
+	if (params.jitterRatio <= 0) {
+		return params.delayMs;
+	}
+	const spreadMs = params.delayMs * params.jitterRatio;
+	const minMs = params.delayMs - spreadMs;
+	const jitteredMs = minMs + params.random() * spreadMs * 2;
+	return Math.max(1, Math.round(jitteredMs));
+}
+```
+
+Inside `createToolVmActiveUseHandle`, keep only the latest report:
+
+```ts
+const heartbeatJitterRatio = options.heartbeatJitterRatio ?? 0.1;
+const random = options.randomImpl ?? Math.random;
+let latestReport: ToolVmActiveUseOperationReport | undefined;
+
+const heartbeatRequest = (): HeartbeatToolVmActiveUseRequest =>
+	latestReport === undefined ? {} : { report: latestReport };
+```
+
+Send report on heartbeat:
+
+```ts
+void options
+	.heartbeatActiveUse(startedUse.useId, heartbeatRequest())
+```
+
+Update heartbeat failure handling so refreshable failures can stop the handle and mark it stale:
+
+```ts
+.catch((error: unknown) => {
+	options.logHeartbeatFailure?.(error);
+	if (
+		options.isHeartbeatErrorRefreshable?.(error) === true &&
+		options.onRefreshableHeartbeatFailure
+	) {
+		ended = true;
+		clearHeartbeatTimer();
+		void options.onRefreshableHeartbeatFailure(error).catch((staleError: unknown) => {
+			options.logHeartbeatFailure?.(staleError);
+		});
+		return;
+	}
+	if (!ended) {
+		scheduleHeartbeat(startedUse.heartbeatAfterMs);
+	}
+});
+```
+
+When constructing the handle in the plugin, pass `isHeartbeatErrorRefreshable: isRefreshableLeaseError`. Transient controller/network errors keep retrying. Do not call `onRefreshableHeartbeatFailure` for generic network blips.
+
+Change the existing `setTimeoutImpl` delay argument from `delayMs` to:
+
+```ts
+jitterDelayMs({ delayMs, jitterRatio: heartbeatJitterRatio, random })
+```
+
+Send final report on dispose:
+
+```ts
+await options.endActiveUse(startedUse.useId, {
+	outcome,
+	...(latestReport === undefined ? {} : { report: latestReport }),
+});
+```
+
+Return:
+
+```ts
+return {
+	useId: startedUse.useId,
+	dispose: end,
+	end,
+	report: (report): void => {
+		latestReport = report;
+	},
+};
+```
+
+- [ ] **Step 4: Update controller client heartbeat request body**
+
+In `packages/openclaw-agent-vm-plugin/src/controller-lease-client.ts`, import `HeartbeatToolVmActiveUseRequest` and change the client interface:
+
+```ts
+heartbeatActiveUse(
+	leaseId: string,
+	useId: string,
+	request: HeartbeatToolVmActiveUseRequest,
+): Promise<HeartbeatToolVmActiveUseResponse>;
+```
+
+Change fetch construction:
+
+```ts
+const response = await fetchImpl(
+	`${baseUrl}/lease/${encodeURIComponent(leaseId)}/uses/${encodeURIComponent(useId)}/heartbeat`,
+	{
+		body: JSON.stringify(request),
+		headers: {
+			'content-type': 'application/json',
+		},
+		method: 'POST',
+	},
+);
+```
+
+Add a client test in `controller-lease-client.test.ts`:
+
+```ts
+it('sends active-use heartbeat operation reports to the controller', async () => {
+	const requests: { readonly init?: RequestInit }[] = [];
+	const client = createLeaseClient({
+		controllerUrl: 'http://controller.vm.host:18800',
+		fetchImpl: async (_input, init) => {
+			requests.push({ init });
+			return new Response(JSON.stringify({ expiresAt: 10_000, heartbeatAfterMs: 1_000 }), {
+				status: 200,
+			});
+		},
+	});
+
+	await client.heartbeatActiveUse('01890f00-0000-7000-8000-000000000000', 'use-1', {
+		report: {
+			observedAtMs: 1_000,
+			phase: 'failed',
+			ssh: {
+				failure: {
+					kind: 'ssh-command-timed-out',
+					message: 'SSH command exceeded 30000ms.',
+				},
+			},
+		},
+	});
+
+	expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
+		report: {
+			observedAtMs: 1_000,
+			phase: 'failed',
+			ssh: {
+				failure: {
+					kind: 'ssh-command-timed-out',
+					message: 'SSH command exceeded 30000ms.',
+				},
+			},
+		},
+	});
+});
+```
+
+- [ ] **Step 5: Add Zod schemas and store latest report in controller**
+
+In `controller-request-schemas.ts`, add:
+
+```ts
+export const controllerToolVmSshFailureKindSchema = z.enum([
+	'active-use-refreshable-failure',
+	'ssh-command-failed',
+	'ssh-command-timed-out',
+	'ssh-probe-failed',
+]);
+
+export const controllerToolVmActiveUseOperationReportSchema = z.strictObject({
+	observedAtMs: z.number().int().nonnegative(),
+	phase: z.enum(['starting', 'probe-succeeded', 'running', 'completed', 'failed']),
+	ssh: z
+		.strictObject({
+			failure: z
+				.strictObject({
+					kind: controllerToolVmSshFailureKindSchema,
+					message: z.string().trim().min(1).max(500),
+				})
+				.optional(),
+			probeSucceeded: z.boolean().optional(),
+		})
+		.optional(),
+});
+
+export const controllerHeartbeatToolVmActiveUseRequestSchema = z.strictObject({
+	report: controllerToolVmActiveUseOperationReportSchema.optional(),
+});
+```
+
+In `lease-manager.ts`, add the report to the active-use record type:
+
+```ts
+interface ToolVmActiveUse {
+	readonly correlation?: ToolVmActiveUseCorrelation;
+	readonly expiresAt: number;
+	readonly latestReport?: ToolVmActiveUseOperationReport;
+	readonly leaseId: string;
+	readonly startedAt: number;
+	readonly useId: string;
+}
+```
+
+Update `startActiveUse`, `heartbeatActiveUse`, and `endActiveUse` signatures to accept request bodies with optional reports. `heartbeatActiveUse` must replace the latest report, not append:
+
+```ts
+const updatedUse = {
+	...activeUse,
+	...(request.report === undefined ? {} : { latestReport: request.report }),
+	expiresAt: now + toolVmUsePolicy.heartbeatStaleMs,
+};
+```
+
+Add `lease-manager.test.ts`:
+
+```ts
+it('replaces active-use operation reports instead of accumulating report history', async () => {
+	const leaseManager = createLeaseManager({
+		...defaultRuntimeRecordOptions,
+		createLeaseId: () => '01890f00-0000-7000-8000-000000000004',
+		createManagedVm: vi.fn(async () => createManagedVmStub()),
+		now: () => 1_000,
+		tcpPool: createTcpPool({ basePort: 19000, size: 1 }),
+	});
+	const lease = await leaseManager.createLease(createAgentLeaseOptions());
+	leaseManager.startActiveUse(lease.id, {
+		report: { observedAtMs: 1_000, phase: 'starting' },
+		useId: '01890f00-0000-7000-8000-000000000000',
+	});
+
+	leaseManager.heartbeatActiveUse(lease.id, '01890f00-0000-7000-8000-000000000000', {
+		report: {
+			observedAtMs: 1_001,
+			phase: 'failed',
+			ssh: {
+				failure: {
+					kind: 'ssh-command-timed-out',
+					message: 'SSH command exceeded 30000ms.',
+				},
+			},
+		},
+	});
+
+	expect(leaseManager.getActiveUses(lease.id)).toEqual([
+		expect.objectContaining({
+			latestReport: {
+				observedAtMs: 1_001,
+				phase: 'failed',
+				ssh: {
+					failure: {
+						kind: 'ssh-command-timed-out',
+						message: 'SSH command exceeded 30000ms.',
+					},
+				},
+			},
+		}),
+	]);
+});
+```
+
+- [ ] **Step 6: Update active-use routes to parse request bodies**
+
+In `controller-http-routes.ts`, parse heartbeat body with the new schema. Empty body should behave as `{}`:
+
+```ts
+const heartbeatPayload = await parseOptionalJsonBody(
+	context,
+	controllerHeartbeatToolVmActiveUseRequestSchema,
+	{},
+);
+if (!heartbeatPayload.ok) {
+	return heartbeatPayload.response;
+}
+const heartbeat = options.leaseManager.heartbeatActiveUse(
+	context.req.param('leaseId'),
+	context.req.param('useId'),
+	heartbeatPayload.value,
+);
+```
+
+Add this route-local helper if the file does not already have an equivalent. Keep the helper generic and do not use `any`:
+
+```ts
+import type { Context as ControllerRouteContext } from 'hono';
+
+interface ParsedOptionalJsonBody<TValue> {
+	readonly ok: true;
+	readonly value: TValue;
+}
+
+interface FailedOptionalJsonBody {
+	readonly ok: false;
+	readonly response: Response;
+}
+
+async function parseOptionalJsonBody<TValue>(
+	context: ControllerRouteContext,
+	schema: {
+		safeParse(value: unknown):
+			| { readonly success: true; readonly data: TValue }
+			| { readonly success: false; readonly error: { readonly issues: unknown } };
+	},
+	emptyValue: TValue,
+): Promise<ParsedOptionalJsonBody<TValue> | FailedOptionalJsonBody> {
+	const bodyText = await context.req.text();
+	if (bodyText.trim() === '') {
+		return { ok: true, value: emptyValue };
+	}
+	let parsedBody: unknown;
+	try {
+		parsedBody = JSON.parse(bodyText);
+	} catch {
+		return {
+			ok: false,
+			response: context.json({ error: 'Invalid JSON body' }, 400),
+		};
+	}
+	const parsedPayload = schema.safeParse(parsedBody);
+	if (!parsedPayload.success) {
+		return {
+			ok: false,
+			response: context.json(
+				{ error: 'Invalid request body', issues: parsedPayload.error.issues },
+				400,
+			),
+		};
+	}
+	return { ok: true, value: parsedPayload.data };
+}
+```
+
+If the existing route context type has a different local name, use that concrete local type. Do not fall back to `any`.
+
+In `controller-http-routes.test.ts`, add:
+
+```ts
+it('accepts bounded active-use heartbeat operation reports', async () => {
+	const heartbeatActiveUse = vi.fn(() => ({
+		expiresAt: 10_000,
+		heartbeatAfterMs: 1_000,
+	}));
+	const app = createControllerAppForTest({
+		leaseManager: {
+			createLease: vi.fn(),
+			endActiveUse: vi.fn(),
+			getActiveUseCount: vi.fn(() => 1),
+			heartbeatActiveUse,
+			listLeases: vi.fn(() => []),
+			peekLease: vi.fn(),
+			releaseLease: vi.fn(async () => {}),
+			renewLease: vi.fn(),
+			startActiveUse: vi.fn(),
+		},
+	});
+
+	const response = await app.request(
+		'/lease/01890f00-0000-7000-8000-000000000000/uses/01890f00-0000-7000-8000-000000000001/heartbeat',
+		{
+			body: JSON.stringify({
+				report: {
+					observedAtMs: 1_000,
+					phase: 'failed',
+					ssh: {
+						failure: {
+							kind: 'ssh-command-timed-out',
+							message: 'runShellCommand exceeded 30000ms.',
+						},
+					},
+				},
+			}),
+			headers: { 'content-type': 'application/json' },
+			method: 'POST',
+		},
+	);
+
+	expect(response.status).toBe(200);
+	expect(heartbeatActiveUse).toHaveBeenCalledWith(
+		'01890f00-0000-7000-8000-000000000000',
+		'01890f00-0000-7000-8000-000000000001',
+		{
+			report: {
+				observedAtMs: 1_000,
+				phase: 'failed',
+				ssh: {
+					failure: {
+						kind: 'ssh-command-timed-out',
+						message: 'runShellCommand exceeded 30000ms.',
+					},
+				},
+			},
+		},
+	);
+	});
+	```
+
+- [ ] **Step 7: Run active-use report tests**
+
+Run:
+
+```bash
+pnpm vitest run packages/gateway-interface/src/tool-vm-active-use.test.ts packages/openclaw-agent-vm-plugin/src/controller-lease-client.test.ts packages/agent-vm/src/controller/http/controller-http-routes.test.ts packages/agent-vm/src/controller/leases/lease-manager.test.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add packages/gateway-interface/src/tool-vm-active-use.ts packages/gateway-interface/src/tool-vm-active-use.test.ts packages/openclaw-agent-vm-plugin/src/controller-lease-client.ts packages/openclaw-agent-vm-plugin/src/controller-lease-client.test.ts packages/agent-vm/src/controller/http/controller-request-schemas.ts packages/agent-vm/src/controller/http/controller-http-routes.ts packages/agent-vm/src/controller/http/controller-http-routes.test.ts packages/agent-vm/src/controller/leases/lease-manager.ts packages/agent-vm/src/controller/leases/lease-manager.test.ts
+git commit -m "feat: report tool vm active-use operation state"
+```
+
+---
+
+### Task 8B: Plugin SSH Operation Guard And Stale Lease Invalidation
+
+**Files:**
+- Create: `packages/openclaw-agent-vm-plugin/src/sandbox-backend/tool-vm-ssh-operation-guard.ts`
+- Create: `packages/openclaw-agent-vm-plugin/src/sandbox-backend/tool-vm-ssh-operation-guard.test.ts`
+- Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-factory.ts`
+- Modify: `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts`
+
+**Design intent:**
+
+The plugin observes SSH probe/command/finalize results. If the plugin can run `true` in the Tool VM over SSH and receive a clean exit, the SSH path succeeded at that time. That success is enough to reuse the cached handle for the next operation; it is not a promise that every future command will finish. SSH failure, timeout, or refreshable active-use failure marks the cached lease stale, best-effort releases it, and forces the next operation to request a fresh lease.
+
+- [ ] **Step 1: Write failing SSH operation guard unit tests**
+
+Create `packages/openclaw-agent-vm-plugin/src/sandbox-backend/tool-vm-ssh-operation-guard.test.ts`:
+
+```ts
+import { describe, expect, it, vi } from 'vitest';
+
+import {
+	ToolVmSshOperationStaleError,
+	runToolVmSshOperationWithGuard,
+} from './tool-vm-ssh-operation-guard.js';
+
+describe('runToolVmSshOperationWithGuard', () => {
+	it('reports probe success and returns operation result', async () => {
+		const report = vi.fn();
+
+		await expect(
+			runToolVmSshOperationWithGuard({
+				now: () => 1_000,
+				operation: async () => 'ok',
+				operationName: 'probe',
+				report,
+				timeoutMs: 30_000,
+			}),
+		).resolves.toBe('ok');
+
+		expect(report).toHaveBeenCalledWith({
+			observedAtMs: 1_000,
+			phase: 'running',
+		});
+		expect(report).toHaveBeenCalledWith({
+			observedAtMs: 1_000,
+			phase: 'completed',
+			ssh: { probeSucceeded: true },
+		});
+	});
+
+	it('converts timeout into a stale-handle error and reports failure', async () => {
+		const clearTimeoutImpl = vi.fn() as unknown as typeof clearTimeout;
+		const setTimeoutImpl = ((callback: () => void) => {
+			callback();
+			return 1 as unknown as ReturnType<typeof setTimeout>;
+		}) as typeof setTimeout;
+		const report = vi.fn();
+
+		await expect(
+			runToolVmSshOperationWithGuard({
+				clearTimeoutImpl,
+				now: () => 1_000,
+				operation: async () => new Promise<string>(() => {}),
+				operationName: 'runShellCommand',
+				report,
+				setTimeoutImpl,
+				timeoutMs: 30_000,
+			}),
+		).rejects.toMatchObject({
+			reason: 'ssh-command-timed-out',
+		});
+
+		expect(report).toHaveBeenCalledWith({
+			observedAtMs: 1_000,
+			phase: 'failed',
+			ssh: {
+				failure: {
+					kind: 'ssh-command-timed-out',
+					message: 'runShellCommand exceeded 30000ms.',
+				},
+			},
+		});
+		expect(clearTimeoutImpl).toHaveBeenCalled();
+	});
+
+	it('classifies rejected SSH operations as stale-handle failures', async () => {
+		await expect(
+			runToolVmSshOperationWithGuard({
+				now: () => 1_000,
+				operation: async () => {
+					throw new Error('kex reset');
+				},
+				operationName: 'fs-bridge',
+				report: vi.fn(),
+				timeoutMs: 30_000,
+			}),
+		).rejects.toBeInstanceOf(ToolVmSshOperationStaleError);
+	});
+});
+```
+
+- [ ] **Step 2: Implement SSH operation guard**
+
+Create `packages/openclaw-agent-vm-plugin/src/sandbox-backend/tool-vm-ssh-operation-guard.ts`:
+
+```ts
+import type {
+	ToolVmActiveUseOperationReport,
+	ToolVmSshFailureKind,
+} from '@agent-vm/gateway-interface';
+
+export class ToolVmSshOperationStaleError extends Error {
+	readonly cause: unknown;
+	readonly reason: ToolVmSshFailureKind;
+
+	constructor(options: {
+		readonly cause: unknown;
+		readonly message: string;
+		readonly reason: ToolVmSshFailureKind;
+	}) {
+		super(options.message);
+		this.cause = options.cause;
+		this.reason = options.reason;
+	}
+}
+
+export interface ToolVmSshOperationGuardOptions<TResult> {
+	readonly clearTimeoutImpl?: typeof clearTimeout;
+	readonly now?: () => number;
+	readonly operation: (signal: AbortSignal) => Promise<TResult>;
+	readonly operationName: string;
+	readonly report: (report: ToolVmActiveUseOperationReport) => void;
+	readonly setTimeoutImpl?: typeof setTimeout;
+	readonly timeoutMs: number;
+}
+
+function formatUnknownError(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+export async function runToolVmSshOperationWithGuard<TResult>(
+	options: ToolVmSshOperationGuardOptions<TResult>,
+): Promise<TResult> {
+	const now = options.now ?? Date.now;
+	const setTimeoutImpl = options.setTimeoutImpl ?? setTimeout;
+	const clearTimeoutImpl = options.clearTimeoutImpl ?? clearTimeout;
+	const abortController = new AbortController();
+	let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+	options.report({
+		observedAtMs: now(),
+		phase: 'running',
+	});
+
+	const timeoutPromise = new Promise<never>((_resolve, reject) => {
+		timeoutHandle = setTimeoutImpl(() => {
+			abortController.abort();
+			reject(
+				new ToolVmSshOperationStaleError({
+					cause: undefined,
+					message: `${options.operationName} exceeded ${String(options.timeoutMs)}ms.`,
+					reason: 'ssh-command-timed-out',
+				}),
+			);
+		}, options.timeoutMs);
+	});
+
+	try {
+		const result = await Promise.race([options.operation(abortController.signal), timeoutPromise]);
+		options.report({
+			observedAtMs: now(),
+			phase: 'completed',
+			ssh: { probeSucceeded: true },
+		});
+		return result;
+	} catch (error) {
+		const staleError =
+			error instanceof ToolVmSshOperationStaleError
+				? error
+				: new ToolVmSshOperationStaleError({
+						cause: error,
+						message: formatUnknownError(error),
+						reason: 'ssh-command-failed',
+					});
+		options.report({
+			observedAtMs: now(),
+			phase: 'failed',
+			ssh: {
+				failure: {
+					kind: staleError.reason,
+					message: staleError.message,
+				},
+			},
+		});
+		throw staleError;
+	} finally {
+		if (timeoutHandle !== undefined) {
+			clearTimeoutImpl(timeoutHandle);
+		}
+	}
+}
+```
+
+- [ ] **Step 3: Wire plugin stale-handle invalidation**
+
+In `sandbox-backend-handle-factory.ts`, add a stale callback to `createSandboxBackendHandle`:
+
+```ts
+const markCachedLeaseStale = async (reason: string, error: unknown): Promise<void> => {
+	scopeCache.delete(cacheKey);
+	writeSandboxBackendLog(
+		`lease marked stale for zone '${options.zoneId}' agent '${agentId}' lease '${lease.leaseId}' reason '${reason}': ${formatUnknownError(error)}`,
+	);
+	await leaseClient.releaseLease(lease.leaseId, { force: true }).catch((releaseError: unknown) => {
+		writeSandboxBackendLog(
+			`best-effort stale lease release failed for zone '${options.zoneId}' agent '${agentId}' lease '${lease.leaseId}': ${formatUnknownError(releaseError)}`,
+		);
+	});
+};
+```
+
+Pass it into the handle:
+
+```ts
+const handle = createSandboxBackendHandle({
+	buildExecSpec: dependencies.buildExecSpec,
+	cfg: params.cfg,
+	controllerUrl: options.controllerUrl,
+	createFsBridgeBuilder: dependencies.createFsBridgeBuilder,
+	lease,
+	leaseClient,
+	markCachedLeaseStale,
+	runRemoteShellScript: dependencies.runRemoteShellScript,
+	sessionKey: params.sessionKey,
+	zoneId: options.zoneId,
+});
+```
+
+Before returning a cached handle after `renewLease` succeeds, run a short plugin-side SSH probe:
+
+```ts
+await dependencies.runRemoteShellScript({
+	allowFailure: false,
+	script: 'true',
+	ssh: cachedEntry.lease.ssh,
+});
+```
+
+If the probe fails, delete the cache entry, best-effort release the old lease with `force: true`, and create a fresh lease. This probe proves only “SSH worked at this point in time.” It is not a future command guarantee. The probe must be wrapped in `runToolVmSshOperationWithGuard` and pass its `AbortSignal` into `runRemoteShellScript`, because the no-leak property depends on aborting the underlying SSH request when the timeout fires.
+
+Wrap `runShellCommand` and fs-bridge `runRemoteShellScript` with `runToolVmSshOperationWithGuard`. On `ToolVmSshOperationStaleError`, call `markCachedLeaseStale(error.reason, error)` before rethrowing. In `finalizeExec`, if `finalizeParams.timedOut === true` or `finalizeParams.status === 'failed'`, call:
+
+```ts
+await markCachedLeaseStale(
+	finalizeParams.timedOut ? 'ssh-command-timed-out' : 'ssh-command-failed',
+	undefined,
+);
+```
+
+after ending active-use.
+
+Also wire active-use refreshable failures to the same stale path. Add:
+
+```ts
+function isRefreshableLeaseError(error: unknown): boolean {
+	return error instanceof ControllerLeaseRequestError && (error.status === 404 || error.status === 410);
+}
+```
+
+Use `isRefreshableLeaseError` from both `shouldRefreshCachedLease` and active-use handling. If `startActiveUse` fails with a refreshable error, call:
+
+```ts
+await markCachedLeaseStale('active-use-refreshable-failure', error);
+```
+
+then rethrow. If a heartbeat fails with a refreshable error, `createToolVmActiveUseHandle` should call an `onRefreshableHeartbeatFailure` callback that marks the lease stale and stops scheduling further heartbeats for that handle. Transient heartbeat failures keep the existing jittered retry behavior.
+
+- [ ] **Step 4: Add plugin cache tests for SSH stale behavior**
+
+In `packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts`, add:
+
+```ts
+const createFactoryParamsForAgent = (agentId: string) => ({
+	agentWorkspaceDir: `/zone/agents/${agentId}`,
+	cfg: gondolinSandboxConfig(),
+	scopeKey: `agent:${agentId}:discord:channel:123`,
+	sessionKey: `agent:${agentId}:discord:channel:123`,
+	workspaceDir: `/zone/agents/${agentId}`,
+});
+
+it('drops a cached handle when the cached SSH probe fails before reuse', async () => {
+	let leaseCounter = 0;
+	const requestLease = vi.fn(async () => {
+		leaseCounter += 1;
+		return createLeaseResponse(`01890f00-0000-7000-8000-00000000000${leaseCounter}`);
+	});
+	const runRemoteShellScript = vi
+		.fn()
+		.mockRejectedValueOnce(new Error('kex reset'))
+		.mockResolvedValue({ code: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) });
+	const factory = createGondolinSandboxBackendFactory(
+		{
+			controllerUrl: 'http://controller.vm.host:18800',
+			zoneId: 'shravan',
+		},
+		{
+			buildExecSpec: vi.fn(async () => ({ argv: ['ssh'], env: {}, stdinMode: 'pipe-open' })),
+			createLeaseClient: () => ({
+				...createActiveUseLeaseClientMethods(),
+				peekLease: async () => createLeasePeekResponse(),
+				releaseLease: async () => {},
+				renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+				requestLease,
+			}),
+			runRemoteShellScript,
+		},
+	);
+
+	const firstHandle = await factory(createFactoryParamsForAgent('beta'));
+	const secondHandle = await factory(createFactoryParamsForAgent('beta'));
+
+	expect(secondHandle).not.toBe(firstHandle);
+	expect(requestLease).toHaveBeenCalledTimes(2);
+});
+```
+
+Add a second test:
+
+```ts
+it('drops a cached handle after an SSH command failure inside an operation', async () => {
+	const requestLease = vi
+		.fn()
+		.mockResolvedValueOnce(createLeaseResponse('01890f00-0000-7000-8000-000000000001'))
+		.mockResolvedValueOnce(createLeaseResponse('01890f00-0000-7000-8000-000000000002'));
+	const releaseLease = vi.fn(async () => {});
+	const factory = createGondolinSandboxBackendFactory(
+		{
+			controllerUrl: 'http://controller.vm.host:18800',
+			zoneId: 'shravan',
+		},
+		{
+			buildExecSpec: vi.fn(async () => ({ argv: ['ssh'], env: {}, stdinMode: 'pipe-open' })),
+			createLeaseClient: () => ({
+				...createActiveUseLeaseClientMethods(),
+				peekLease: async () => createLeasePeekResponse(),
+				releaseLease,
+				renewLease: async (leaseId: string) => createLeaseResponse(leaseId),
+				requestLease,
+			}),
+			runRemoteShellScript: vi.fn(async () => {
+				throw new Error('ssh hung');
+			}),
+		},
+	);
+
+	const handle = await factory(createFactoryParamsForAgent('beta'));
+	await expect(handle.runShellCommand({ script: 'pwd' })).rejects.toThrow(/ssh hung/u);
+	await factory(createFactoryParamsForAgent('beta'));
+
+	expect(releaseLease).toHaveBeenCalledWith('01890f00-0000-7000-8000-000000000001', {
+		force: true,
+	});
+	expect(requestLease).toHaveBeenCalledTimes(2);
+});
+```
+
+If the file already has an equivalent typed fixture helper, use it and delete the local `createFactoryParamsForAgent` helper from this snippet. Do not add throwaway local fixtures with loose `unknown` or `any`.
+
+- [ ] **Step 5: Run SSH operation guard tests**
+
+Run:
+
+```bash
+pnpm vitest run packages/gateway-interface/src/tool-vm-active-use.test.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend/tool-vm-ssh-operation-guard.test.ts packages/openclaw-agent-vm-plugin/src/controller-lease-client.test.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts packages/agent-vm/src/controller/http/controller-http-routes.test.ts packages/agent-vm/src/controller/leases/lease-manager.test.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add packages/gateway-interface/src/tool-vm-active-use.ts packages/gateway-interface/src/tool-vm-active-use.test.ts packages/openclaw-agent-vm-plugin/src/controller-lease-client.ts packages/openclaw-agent-vm-plugin/src/controller-lease-client.test.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend/tool-vm-ssh-operation-guard.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend/tool-vm-ssh-operation-guard.test.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend/sandbox-backend-handle-factory.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts packages/agent-vm/src/controller/http/controller-request-schemas.ts packages/agent-vm/src/controller/http/controller-http-routes.ts packages/agent-vm/src/controller/http/controller-http-routes.test.ts packages/agent-vm/src/controller/leases/lease-manager.ts packages/agent-vm/src/controller/leases/lease-manager.test.ts
+git commit -m "feat: invalidate tool vm leases on ssh failures"
 ```
 
 ---
@@ -2175,7 +3712,7 @@ Expected: only SDK boundary input handling remains. If OpenClaw SDK boundary tes
 Run:
 
 ```bash
-pnpm vitest run packages/gateway-interface/src/tool-vm-lease-id.test.ts packages/gateway-interface/src/tool-vm-lease.test.ts packages/agent-vm/src/controller/leases/lease-manager.test.ts packages/agent-vm/src/controller/http/controller-http-routes.test.ts packages/openclaw-agent-vm-plugin/src/controller-lease-client.test.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts packages/openclaw-agent-vm-plugin/src/controller-integration.test.ts
+pnpm vitest run packages/gateway-interface/src/tool-vm-lease-id.test.ts packages/gateway-interface/src/tool-vm-lease.test.ts packages/gateway-interface/src/tool-vm-active-use.test.ts packages/agent-vm/src/controller/leases/lease-manager.test.ts packages/agent-vm/src/controller/http/controller-http-routes.test.ts packages/openclaw-agent-vm-plugin/src/controller-lease-client.test.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend/tool-vm-ssh-operation-guard.test.ts packages/openclaw-agent-vm-plugin/src/sandbox-backend-factory.test.ts packages/openclaw-agent-vm-plugin/src/controller-integration.test.ts
 ```
 
 Expected: PASS.
@@ -2243,7 +3780,28 @@ Expected:
 
 The `leaseId` value must be a UUIDv7 string and must not contain `beta`, `agent`, `scope`, or a timestamp.
 
-- [ ] **Step 8: Commit verification-only fixture cleanup**
+- [ ] **Step 8: Beta-style negative API proof without secrets**
+
+Against the same local controller test instance, prove session/agent mismatch returns the structured 400:
+
+```bash
+curl -sS -X POST http://127.0.0.1:18800/lease \
+  -H 'content-type: application/json' \
+  --data '{"agentId":"beta","sessionKey":"agent:alpha:manual","zoneId":"beta","profileId":"standard","agentWorkspaceDir":"/zone/agents/beta","workMountDir":"/zone/agents/beta"}' \
+  | jq '{error, message, guidance}'
+```
+
+Expected:
+
+```json
+{
+  "error": "tool-vm-lease-agent-mismatch"
+}
+```
+
+The `message` must name the expected session agent and the received request agent. The `guidance` must tell the caller to send the explicit `agentId` derived from the OpenClaw session key.
+
+- [ ] **Step 9: Commit verification-only fixture cleanup**
 
 If test fixture updates were required after broad runs:
 
@@ -2266,10 +3824,11 @@ Skip this commit if no files changed after verification.
 - Dead VM renewal cannot lie: Tasks 3, 4, 5, 8.
 - TTL defaults fixed: Task 7.
 - Active-use semantics clarified: Task 8.
+- Plugin-observed SSH probe, timeout, and stale-handle invalidation covered: Task 8B.
 - Plugin/controller request-response hard cutover: Tasks 2, 4, 5.
 - Workspace RW and `/workspace` output-only path: Tasks 6 and 10.
 - Subagent permutation coverage: Task 6.
-- Integration tests included before full verification: Tasks 2, 5, 6, 11.
+- Integration tests included before full verification: Tasks 2, 5, 6, 8A, 8B, 11.
 
 ### Placeholder Scan
 
@@ -2286,6 +3845,7 @@ ToolVmLeaseIdleTtlPolicy
 resolveToolVmLeaseIdleTtlMs
 LeaseRenewal.kind = 'renewed' | 'not-found'
 LeaseRenewal.reason = 'missing' | 'expired' | 'dead'
+ToolVmSshFailureKind = 'active-use-refreshable-failure' | 'ssh-command-failed' | 'ssh-command-timed-out' | 'ssh-probe-failed'
 ```
 
 No task introduces `scopeKey` into the controller or gateway-interface lease contract.

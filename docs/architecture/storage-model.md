@@ -94,6 +94,18 @@ explicitly exclude `zone-git/` — the two reasons below are why.
 Tool VM lease paths cross three naming layers: OpenClaw SDK input, gateway VM
 paths, and controller-trusted host paths. Keep these names distinct.
 
+Runtime path translation is implemented as a shared pure translator in
+`@agent-vm/gateway-interface`. The shared code owns path mechanics: absolute
+path normalization, parent-traversal rejection, longest-root matching, relative
+path calculation, guest-to-host and host-to-guest mapping, storage backing
+classification, and structured retry guidance.
+
+Runtime packages inject their own mapping facts. The OpenClaw plugin injects
+the Tool VM mapping where `/workspace` is the RealFS workspace mount and
+`/work` is Tool VM rootfs/COW scratch. The controller injects the OpenClaw
+gateway lease mapping where `/zone` maps to `zoneFilesDir` and
+`/home/openclaw/.openclaw/state/sandboxes` maps to `stateDir/sandboxes`.
+
 ```text
 name / path                         layer / location                  storage / backing
 ────────────────────────────────    ───────────────────────────────   ─────────────────────────────
@@ -114,11 +126,14 @@ sandboxes/<child>                   OpenClaw gateway VM                RealFS ->
 hostWorkMountDir                    controller internal                trusted resolved host path
                                     after validation/realpath          passed to lease manager / RealFS
 
-/workspace                          Tool VM guest path                 RealFS -> hostWorkMountDir
-                                    lease-local execution dir          survives if backing host dir does
+	/workspace                          Tool VM guest path                 RealFS -> hostWorkMountDir
+	                                    lease-local execution dir          survives if backing host dir does
 
-/work                               Tool VM guest path                 rootfs/COW
-                                    disposable scratch                 deleted with the Tool VM
+	effectiveGuestCwd                   plugin/controller response         Tool VM guest cwd for commands
+	                                    derived from runtime translation    may be /workspace, /workspace/sub, or /work
+
+	/work                               Tool VM guest path                 rootfs/COW
+	                                    disposable scratch                 deleted with the Tool VM
 
 agentWorkspaceDir                   OpenClaw/tool process cwd concept  guest-side agent working dir
                                     controller lease field             not a host storage root
@@ -173,7 +188,7 @@ durable state
   Note: `tool-leases/<recordId>.json` is a durable recovery record for an
   OpenClaw Tool VM. `recordId` is a controller-generated UUID. The record keeps
   `agentId`, `leaseId`, `vmId`, `qemuPid`, deployment fences, TCP slot, and
-  session/process evidence. It never persists OpenClaw `scopeKey`.
+  session/process evidence. It never persists OpenClaw scope keys.
 
   On controller startup, Phase A scans this directory and applies the following
   recovery discipline:

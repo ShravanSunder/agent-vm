@@ -97,12 +97,14 @@ function buildOpenClawBootstrapCommand(
 		'export PIP_CACHE_DIR=/work/cache/pip',
 		'export UV_CACHE_DIR=/work/cache/uv',
 		'export NODE_EXTRA_CA_CERTS=/run/gondolin/ca-certificates.crt',
-		// Prepend forced IPv4-preference flags to any pre-existing
-		// NODE_OPTIONS. The whole RHS is double-quoted so the
-		// substitution result is treated as one assignment value
-		// (no word splitting). See FORCE_IPV4_EGRESS_NODE_OPTIONS
-		// in @agent-vm/gateway-interface for the rationale.
-		`export NODE_OPTIONS="${FORCE_IPV4_EGRESS_NODE_OPTIONS}\${NODE_OPTIONS:+ \${NODE_OPTIONS}}"`,
+		// Prepend each forced IPv4-preference flag only when it is not
+		// already present. The VM env normally carries these flags
+		// already; the profile keeps interactive shells safe without
+		// duplicating the boot-log value.
+		...FORCE_IPV4_EGRESS_NODE_OPTIONS.split(' ').map(
+			(nodeOptionFlag) =>
+				`case " \${NODE_OPTIONS:-} " in *" ${nodeOptionFlag} "*) ;; *) export NODE_OPTIONS="${nodeOptionFlag}\${NODE_OPTIONS:+ \${NODE_OPTIONS}}";; esac`,
+		),
 	];
 	const secretEnvironmentNames = Object.entries({
 		...environmentSecrets,
@@ -486,6 +488,18 @@ async function writeEffectiveOpenClawConfig(zone: GatewayZoneConfig): Promise<vo
 		}
 		const runtimePluginConfigs = {
 			...zone.runtimePluginConfigs,
+			gondolin: {
+				controllerUrl: `http://${controllerVmHost}:18800`,
+				gatewayControlLinkMonitor: {
+					baseIntervalMs: 10_000,
+					enabled: true,
+					maxIntervalMs: 120_000,
+				},
+				zoneId: zone.id,
+				...(isObjectRecord(zone.runtimePluginConfigs?.gondolin)
+					? zone.runtimePluginConfigs.gondolin
+					: {}),
+			},
 		};
 		const config = isObjectRecord(parsedBaseConfig.gateway) ? parsedBaseConfig.gateway : {};
 		const existingAuthConfig = isObjectRecord(config.auth) ? config.auth : {};

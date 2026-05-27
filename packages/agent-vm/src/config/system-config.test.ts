@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, test } from 'vitest';
 
-import { loadSystemConfig } from './system-config.js';
+import { loadSystemConfig, resolveControllerHealthConfig } from './system-config.js';
 
 const createdDirectories: string[] = [];
 
@@ -29,6 +29,7 @@ interface ValidSystemConfigZoneInput {
 
 interface ValidSystemConfigInput {
 	host: Record<string, unknown>;
+	controller?: unknown;
 	cacheDir: string;
 	runtimeDir: string;
 	imageProfiles: Record<string, unknown>;
@@ -220,6 +221,87 @@ describe('loadSystemConfig', () => {
 			upstreamHeaderTimeoutMs: 5_000,
 			upstreamResponseTimeoutMs: 120_000,
 		});
+	});
+
+	test('loads controller health defaults', async () => {
+		const config = createValidSystemConfigInput();
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-controller-health-defaults-',
+			config,
+		);
+
+		const loadedConfig = await loadSystemConfig(configPath);
+
+		expect(resolveControllerHealthConfig(loadedConfig)).toEqual({
+			enabled: true,
+			eventHistoryLimit: 500,
+			gatewayControlLinkBackoffCeilingMs: 120_000,
+			gatewayControlLinkIntervalMs: 10_000,
+			gatewayServiceIntervalMs: 10_000,
+			staleAfterMs: 30_000,
+		});
+	});
+
+	test('loads controller health overrides', async () => {
+		const config = createValidSystemConfigInput();
+		config.controller = {
+			health: {
+				enabled: false,
+				eventHistoryLimit: 25,
+				gatewayControlLinkBackoffCeilingMs: 90_000,
+				gatewayControlLinkIntervalMs: 15_000,
+				gatewayServiceIntervalMs: 20_000,
+				staleAfterMs: 45_000,
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-controller-health-overrides-',
+			config,
+		);
+
+		const loadedConfig = await loadSystemConfig(configPath);
+
+		expect(resolveControllerHealthConfig(loadedConfig)).toEqual({
+			enabled: false,
+			eventHistoryLimit: 25,
+			gatewayControlLinkBackoffCeilingMs: 90_000,
+			gatewayControlLinkIntervalMs: 15_000,
+			gatewayServiceIntervalMs: 20_000,
+			staleAfterMs: 45_000,
+		});
+	});
+
+	test('rejects non-positive controller health settings', async () => {
+		const config = createValidSystemConfigInput();
+		config.controller = {
+			health: {
+				gatewayServiceIntervalMs: 0,
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-controller-health-non-positive-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/gatewayServiceIntervalMs/u);
+	});
+
+	test('rejects controller health backoff ceilings below the base interval', async () => {
+		const config = createValidSystemConfigInput();
+		config.controller = {
+			health: {
+				gatewayControlLinkBackoffCeilingMs: 9_999,
+				gatewayControlLinkIntervalMs: 10_000,
+			},
+		};
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-controller-health-invalid-backoff-',
+			config,
+		);
+
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/gatewayControlLinkBackoffCeilingMs/u,
+		);
 	});
 
 	test('rejects unknown gateway ingress timeout keys', async () => {
@@ -1982,43 +2064,34 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/Unrecognized key/u);
 	});
 
-	test('loads lease idle TTL policy by scope prefix and scope kind', async () => {
+	test('loads the single lease idle TTL policy', async () => {
 		const config = createValidSystemConfigInput();
 		config.leaseIdleTtl = {
 			defaultMs: 30 * 60 * 1000,
-			byScopeKind: {
-				agent: 2 * 60 * 60 * 1000,
-				workspace: 15 * 60 * 1000,
-			},
-			byScopePrefix: {
-				'agent:shravan': 6 * 60 * 60 * 1000,
-			},
+			maxRequestedMs: 2 * 60 * 60 * 1000,
+			minRequestedMs: 5_000,
 		};
 		const configPath = await writeSystemConfigForTest('agent-vm-system-lease-ttl-', config);
 
 		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
 			leaseIdleTtl: {
 				defaultMs: 1_800_000,
-				byScopeKind: { agent: 7_200_000, workspace: 900_000 },
-				byScopePrefix: { 'agent:shravan': 21_600_000 },
+				maxRequestedMs: 7_200_000,
+				minRequestedMs: 5_000,
 			},
 		});
 	});
 
 	test('defaults partial lease idle TTL policy to 100 minutes', async () => {
 		const config = createValidSystemConfigInput();
-		config.leaseIdleTtl = {
-			byScopeKind: {
-				agent: 2 * 60 * 60 * 1000,
-			},
-		};
+		config.leaseIdleTtl = {};
 		const configPath = await writeSystemConfigForTest('agent-vm-system-lease-ttl-default-', config);
 
 		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
 			leaseIdleTtl: {
 				defaultMs: 6_000_000,
-				byScopeKind: { agent: 7_200_000 },
-				byScopePrefix: {},
+				maxRequestedMs: 86_400_000,
+				minRequestedMs: 1_000,
 			},
 		});
 	});
@@ -2031,15 +2104,18 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/leaseIdleTtl/u);
 	});
 
-	test('rejects unknown lease idle TTL scope kinds', async () => {
+	test('rejects legacy scope-specific lease idle TTL policy fields', async () => {
 		const config = createValidSystemConfigInput();
 		config.leaseIdleTtl = {
 			byScopeKind: {
-				task: 5 * 60 * 1000,
+				agent: 5 * 60 * 1000,
+			},
+			byScopePrefix: {
+				'agent:shravan': 10 * 60 * 1000,
 			},
 		};
 		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-unknown-lease-ttl-scope-',
+			'agent-vm-system-legacy-lease-ttl-scope-',
 			config,
 		);
 

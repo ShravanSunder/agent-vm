@@ -53,7 +53,9 @@ const openClawMcpPortalPluginName = 'mcp-portal';
 const smokeTempRootPrefixes = [
 	'agent-vm-gateway-smoke-project-',
 	'agent-vm-smoke-harness-',
+	'openclaw-control-link-smoke-',
 	'openclaw-mcp-portal-smoke-',
+	'openclaw-subagent-lease-smoke-',
 	'openclaw-zone-git-smoke-',
 	'worker-loop-smoke-',
 ] as const;
@@ -106,6 +108,7 @@ export interface GondolinSmokePrerequisiteOptions {
 }
 
 export interface StartSmokeControllerRuntimeOptions {
+	readonly onLeaseCreateRequest?: ControllerRuntimeDependencies['onLeaseCreateRequest'];
 	readonly secrets: SmokeHarnessSecretMap;
 	readonly startGatewayZone?: typeof startGatewayZone;
 	readonly startHttpServer?: NonNullable<ControllerRuntimeDependencies['startHttpServer']>;
@@ -1079,6 +1082,9 @@ export async function startSmokeControllerRuntime(
 	try {
 		const runtime = await startControllerRuntime(options.startOptions, {
 			createSecretResolver: async (): Promise<SecretResolver> => secretResolver,
+			...(options.onLeaseCreateRequest === undefined
+				? {}
+				: { onLeaseCreateRequest: options.onLeaseCreateRequest }),
 			...(options.startHttpServer === undefined
 				? {}
 				: { startHttpServer: options.startHttpServer }),

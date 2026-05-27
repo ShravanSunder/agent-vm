@@ -10,9 +10,51 @@ export {
 	targetsAudience,
 	vmAudienceValues,
 } from './audience.js';
+export {
+	agentVmHealthEventKinds,
+	agentVmHealthResultKinds,
+	deriveZoneHealthSnapshot,
+	gatewayControlLinkHealthPins,
+	healthEventBucketKey,
+	isAgentVmHealthEvent,
+	zoneHealthIssueKinds,
+	zoneHealthStateKinds,
+} from './health/agent-vm-health.js';
+export {
+	controllerRequestPolicies,
+	ControllerRequestPolicyTransportError,
+	drainControllerResponseBody,
+	externalControllerRoutes,
+	fetchControllerWithPolicy,
+	gatewayInternalControllerRequestOperations,
+	genericControllerRequestEventOperations,
+	workerInternalControllerRequestOperations,
+} from './health/controller-request-policy.js';
 export { composeNodeOptions, FORCE_IPV4_EGRESS_NODE_OPTIONS } from './force-ipv4-egress.js';
 export type { EgressHostConfig, RuntimeVmAudience, VmAudience } from './audience.js';
 export type { GatewayType } from './gateway-runtime-contract.js';
+export type {
+	AgentVmHealthEvent,
+	AgentVmHealthEventBase,
+	AgentVmHealthEventKind,
+	AgentVmHealthResultKind,
+	DeriveZoneHealthSnapshotOptions,
+	ToolVmSshHealthOperation,
+	ZoneHealthIssue,
+	ZoneHealthIssueKind,
+	ZoneHealthSnapshot,
+	ZoneHealthStateKind,
+} from './health/agent-vm-health.js';
+export type {
+	ControllerRequestPolicy,
+	ControllerRequestPolicyTransportErrorCode,
+	ControllerRequestPolicyOperation,
+	ExternalControllerRoute,
+	FetchControllerWithPolicyOptions,
+	GatewayInternalControllerRequestOperation,
+	GenericControllerRequestEventOperation,
+	WorkerInternalControllerRequestOperation,
+} from './health/controller-request-policy.js';
 export type {
 	BuildGatewayVmSpecOptions,
 	GatewayAuthConfig,
@@ -37,6 +79,14 @@ export {
 	createToolVmActiveUseId,
 	isToolVmActiveUseId,
 } from './tool-vm-active-use.js';
+export {
+	OPENCLAW_STATE_SANDBOXES_VM_ROOT,
+	OPENCLAW_STATE_VM_ROOT,
+	TOOL_VM_SCRATCH_GUEST_ROOT,
+	TOOL_VM_WORKSPACE_GUEST_ROOT,
+	translateRuntimePath,
+} from './runtime-paths/runtime-path-mapping.js';
+export { createToolVmLeaseId, isToolVmLeaseId, parseToolVmLeaseId } from './tool-vm-lease-id.js';
 export { isToolVmLeasePeek, isToolVmSshLease } from './tool-vm-lease.js';
 export {
 	isVmCapabilityLease,
@@ -51,13 +101,35 @@ export type {
 export type {
 	CreateToolVmActiveUseHandleOptions,
 	EndToolVmActiveUseRequest,
+	HeartbeatToolVmActiveUseRequest,
 	HeartbeatToolVmActiveUseResponse,
 	StartToolVmActiveUseRequest,
 	StartToolVmActiveUseResponse,
 	ToolVmActiveUseCorrelation,
 	ToolVmActiveUseHandle,
 	ToolVmActiveUseOutcome,
+	ToolVmActiveUseOperationReport,
+	ToolVmSshFailureKind,
+	ToolVmSshFailureReport,
+	ToolVmSshOperationPhase,
+	ToolVmSshOperationReport,
 } from './tool-vm-active-use.js';
+export type {
+	RuntimePathBacking,
+	RuntimePathCapabilities,
+	RuntimePathGuidanceVisibility,
+	RuntimePathLocations,
+	RuntimePathMapping,
+	RuntimePathNamespace,
+	RuntimePathPurpose,
+	RuntimePathRootMapping,
+	RuntimePathTranslation,
+	RuntimePathTranslationError,
+	RuntimePathTranslationErrorCode,
+	TranslateRuntimePathInput,
+	TranslateRuntimePathResult,
+} from './runtime-paths/runtime-path-mapping.js';
+export type { ToolVmLeaseId } from './tool-vm-lease-id.js';
 export type { ToolVmLeasePeek, ToolVmSshLease } from './tool-vm-lease.js';
 export type {
 	VmCapabilityLease,

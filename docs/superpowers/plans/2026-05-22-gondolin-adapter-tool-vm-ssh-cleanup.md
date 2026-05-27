@@ -17,7 +17,6 @@ Use this for:
 Do not use this for:
 - Implementing credentialed runner v1.
 - Implementing non-SSH transports such as credentialed `gondolin-rpc` leases or macOS bridge leases.
-- Removing the local Gondolin mapped-TCP patch; use `2026-05-22-gondolin-mapped-tcp-upstream.md` for that.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -154,9 +153,6 @@ follow-up: macos-bridge-controller
   reuses the same future VmCapabilityLease conceptual shape
   uses a host-side daemon capability, not Gondolin
 
-follow-up: gondolin-mapped-tcp-upstream
-  files the local mapped-TCP/SSH classification patch upstream
-  keeps this repo's live cross-VM SSH test as the proof case
 ```
 
 ## Important Caveats

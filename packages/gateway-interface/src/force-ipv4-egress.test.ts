@@ -40,6 +40,13 @@ describe('composeNodeOptions', () => {
 		);
 	});
 
+	it('deduplicates forced flags from a user value', () => {
+		expect(composeNodeOptions(FORCE_IPV4_EGRESS_NODE_OPTIONS)).toBe(FORCE_IPV4_EGRESS_NODE_OPTIONS);
+		expect(composeNodeOptions(`--inspect ${FORCE_IPV4_EGRESS_NODE_OPTIONS}`)).toBe(
+			`${FORCE_IPV4_EGRESS_NODE_OPTIONS} --inspect`,
+		);
+	});
+
 	it('places forced flags FIRST in the composed string', () => {
 		// Forced flags lead so they apply regardless of how Node
 		// interprets duplicate / conflicting flags in NODE_OPTIONS.
