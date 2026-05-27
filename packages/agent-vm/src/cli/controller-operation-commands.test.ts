@@ -524,7 +524,7 @@ describe('runControllerOperationCommand', () => {
 					},
 				},
 			},
-			restArguments: [],
+			restArguments: ['--json'],
 			subcommand: 'doctor',
 			systemConfig,
 		});
@@ -546,7 +546,78 @@ describe('runControllerOperationCommand', () => {
 		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});
 
-	it('summarizes failed doctor checks', async () => {
+	it('writes a human-readable failed doctor summary by default', async () => {
+		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
+		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
+		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
+		await fs.writeFile(
+			workerConfigPath,
+			JSON.stringify({
+				phases: {
+					plan: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					work: {
+						cycle: { kind: 'review', cycleCount: 1 },
+						agentInstructions: null,
+						reviewerInstructions: null,
+					},
+					wrapup: { instructions: null },
+				},
+			}),
+			'utf8',
+		);
+		const outputs: string[] = [];
+		const systemConfig = createWorkerSystemConfig(workerConfigPath, systemConfigPath);
+		await writeImageBuildConfigsForDoctor(systemConfig);
+
+		await runControllerOperationCommand({
+			dependencies: {
+				...defaultCliDependencies,
+				createControllerClient: createControllerClientStub,
+				runControllerDoctor: () => ({
+					ok: false,
+					checks: [
+						{
+							name: 'controller-required-binary',
+							ok: false,
+							hint: 'missing binary\ninstall the binary',
+						},
+					],
+				}),
+			},
+			io: {
+				stderr: { write: () => true },
+				stdout: {
+					write: (chunk: string | Uint8Array) => {
+						outputs.push(String(chunk));
+						return true;
+					},
+				},
+			},
+			restArguments: [],
+			subcommand: 'doctor',
+			systemConfig,
+		});
+
+		const output = outputs.join('');
+		expect(output).toContain('agent-vm doctor');
+		expect(output).toContain('1 failed');
+		expect(output).toContain('FAIL');
+		expect(output).toContain('controller-required-binary');
+		expect(output).toContain('missing binary');
+		expect(output).toContain('        install the binary');
+		const parseDoctorOutput = (): void => {
+			JSON.parse(output);
+		};
+		expect(parseDoctorOutput).toThrow();
+
+		await fs.rm(temporaryDirectoryPath, { force: true, recursive: true });
+	});
+
+	it('preserves machine-readable doctor output with json flag', async () => {
 		const temporaryDirectoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-doctor-'));
 		const systemConfigPath = path.join(temporaryDirectoryPath, 'system.json');
 		const workerConfigPath = path.join(temporaryDirectoryPath, 'worker.json');
@@ -591,7 +662,7 @@ describe('runControllerOperationCommand', () => {
 					},
 				},
 			},
-			restArguments: [],
+			restArguments: ['--json'],
 			subcommand: 'doctor',
 			systemConfig,
 		});
@@ -681,7 +752,7 @@ printf '{"ok":true}\\n'
 					},
 				},
 			},
-			restArguments: [],
+			restArguments: ['--json'],
 			subcommand: 'doctor',
 			systemConfig,
 		});
@@ -781,7 +852,7 @@ printf '{"ok":true}\\n'
 					},
 				},
 			},
-			restArguments: [],
+			restArguments: ['--json'],
 			subcommand: 'doctor',
 			systemConfig,
 		});
@@ -864,7 +935,7 @@ printf '{"ok":true}\\n'
 					},
 				},
 			},
-			restArguments: [],
+			restArguments: ['--json'],
 			subcommand: 'doctor',
 			systemConfig: createOpenClawSystemConfig(toolVmBuildConfigPath, systemConfigPath),
 		});
@@ -949,7 +1020,7 @@ printf '{"ok":true}\\n'
 					},
 				},
 			},
-			restArguments: [],
+			restArguments: ['--json'],
 			subcommand: 'doctor',
 			systemConfig: createManagedBaseOpenClawSystemConfig(
 				gatewayBuildConfigPath,
@@ -1028,7 +1099,7 @@ printf '{"ok":true}\\n'
 					},
 				},
 			},
-			restArguments: [],
+			restArguments: ['--json'],
 			subcommand: 'doctor',
 			systemConfig: createManagedBaseOpenClawSystemConfig(
 				missingGatewayBuildConfigPath,
@@ -1140,7 +1211,7 @@ printf '{"ok":true}\\n'
 					},
 				},
 			},
-			restArguments: [],
+			restArguments: ['--json'],
 			subcommand: 'doctor',
 			systemConfig: resolvedPathSystemConfig,
 		});
@@ -1236,7 +1307,7 @@ printf '{"ok":true}\\n'
 					},
 				},
 			},
-			restArguments: [],
+			restArguments: ['--json'],
 			subcommand: 'doctor',
 			systemConfig: createWorkerSystemConfig(workerConfigPath, systemConfigPath),
 		});

@@ -37,16 +37,33 @@ describe('beta tarball sync planning', () => {
 		});
 
 		const workspaceYaml = renderBetaPnpmWorkspace({
-			onlyBuiltDependencies: ['openclaw', 'ssh2'],
+			onlyBuiltDependencies: ['@google/genai', 'openclaw', 'ssh2'],
 			plan,
 		});
 
 		expect(workspaceYaml).toContain('packages: []');
-		expect(workspaceYaml).toContain('  - openclaw');
+		expect(workspaceYaml).toContain('  - "@google/genai"');
+		expect(workspaceYaml).toContain('  - "openclaw"');
 		expect(workspaceYaml).toContain(
 			"  '@agent-vm/openclaw-agent-vm-plugin': file:../agent-vm/tmp/beta-tarballs-abc123ef/agent-vm-openclaw-agent-vm-plugin-0.0.82.tgz",
 		);
 		expect(workspaceYaml).not.toContain('pnpm:');
+	});
+
+	it('omits onlyBuiltDependencies when the deployment does not configure built dependencies', () => {
+		const plan = createBetaTarballSyncPlan({
+			cacheKey: 'abc123ef',
+			tarballDirectoryReference: '../agent-vm/tmp/beta-tarballs-abc123ef',
+			version: '0.0.82',
+		});
+
+		const workspaceYaml = renderBetaPnpmWorkspace({
+			onlyBuiltDependencies: [],
+			plan,
+		});
+
+		expect(workspaceYaml).not.toContain('onlyBuiltDependencies:');
+		expect(workspaceYaml).toContain('overrides:');
 	});
 
 	it('updates beta package.json without leaving pnpm overrides in package.json', () => {

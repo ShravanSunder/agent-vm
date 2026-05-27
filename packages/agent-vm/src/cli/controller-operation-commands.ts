@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
+import { dim, green, red } from 'ansis';
 import { execa } from 'execa';
 
 import type { ManagedImageSource } from '../build/managed-image-dockerfile.js';
@@ -51,6 +52,14 @@ interface ImageProfileDoctorTarget {
 	readonly dockerfile?: string;
 	readonly source?: ManagedImageSource;
 	readonly type: 'openclaw' | 'toolVm' | 'worker';
+}
+
+interface DoctorCommandResult {
+	readonly checks: readonly DoctorCheck[];
+	readonly failed: number;
+	readonly ok: boolean;
+	readonly passed: number;
+	readonly summary: string;
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -262,6 +271,41 @@ function convertConfigValidationChecksToDoctorChecks(
 	);
 }
 
+function formatDoctorCheckStatus(check: DoctorCheck): string {
+	return check.ok ? green('PASS') : red('FAIL');
+}
+
+function formatDoctorCheckDetails(check: DoctorCheck): readonly string[] {
+	const details: string[] = [];
+	if (check.value !== undefined) {
+		details.push(`  value: ${String(check.value)}`);
+	}
+	if (check.hint !== undefined) {
+		const [firstLine, ...remainingLines] = check.hint.split('\n');
+		details.push(`  hint: ${firstLine ?? ''}`);
+		for (const line of remainingLines) {
+			details.push(`        ${line}`);
+		}
+	}
+	return details;
+}
+
+function writeDoctorText(io: CliIo, result: DoctorCommandResult): void {
+	const failedChecks = result.checks.filter((check) => !check.ok);
+	const passedChecks = result.checks.filter((check) => check.ok);
+	const orderedChecks = [...failedChecks, ...passedChecks];
+	const statusLine =
+		result.failed === 0
+			? green(`${result.passed} passed, 0 failed`)
+			: red(`${result.failed} failed`) + dim(`, ${result.passed} passed`);
+	const lines = ['agent-vm doctor', '', statusLine, ''];
+	for (const check of orderedChecks) {
+		lines.push(`${formatDoctorCheckStatus(check)} ${check.name}`);
+		lines.push(...formatDoctorCheckDetails(check));
+	}
+	io.stdout.write(`${lines.join('\n')}\n`);
+}
+
 export async function runControllerOperationCommand(
 	options: RunControllerOperationCommandOptions,
 ): Promise<void> {
@@ -347,13 +391,18 @@ export async function runControllerOperationCommand(
 			const checks = [...doctorResult.checks, ...dynamicChecks];
 			const failed = checks.filter((check) => !check.ok).length;
 			const passed = checks.length - failed;
-			writeJson(options.io, {
+			const result = {
 				ok: doctorResult.ok && failed === 0,
 				summary: failed === 0 ? 'all checks passed' : `${failed} check(s) failed`,
 				passed,
 				failed,
 				checks,
-			});
+			} satisfies DoctorCommandResult;
+			if (options.restArguments.includes('--json')) {
+				writeJson(options.io, result);
+				return;
+			}
+			writeDoctorText(options.io, result);
 			return;
 		}
 		case 'status':
