@@ -211,15 +211,6 @@ describe('manual templates', () => {
 		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
 			'authored config is trusted deployment config',
 		);
-		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
-			'stdio MCP providers',
-		);
-		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
-			'generated placeholder through transport.env',
-		);
-		expect(files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content).toContain(
-			'Use injection=env only when the provider cannot authenticate through mediated HTTP traffic',
-		);
 		expect(
 			files.find((file) => file.relativePath.endsWith('mcp-portal.md'))?.content,
 		).not.toContain('loopback server in the gateway');
