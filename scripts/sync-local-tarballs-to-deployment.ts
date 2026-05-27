@@ -332,7 +332,9 @@ async function packPackage(
 			maxBuffer: 20 * 1024 * 1024,
 		},
 	);
-	process.stdout.write(`[beta:sync] packed ${packageEntry.name} -> ${packageEntry.fileName}\n`);
+	process.stdout.write(
+		`[dev:sync-tarballs] packed ${packageEntry.name} -> ${packageEntry.fileName}\n`,
+	);
 }
 
 async function syncBetaTarballs(options: SyncBetaTarballsOptions): Promise<void> {
@@ -424,7 +426,9 @@ export function parseCliOptions(args: readonly string[]): SyncBetaTarballsOption
 		throw new Error(`Unknown argument '${arg}'.`);
 	}
 	if (!deploymentDirectory) {
-		throw new Error('Usage: tsx scripts/beta-tarball-sync.ts --deployment ../shravan-claw-beta');
+		throw new Error(
+			'Usage: tsx scripts/sync-local-tarballs-to-deployment.ts --deployment ../shravan-claw-beta',
+		);
 	}
 	return {
 		deploymentDirectory: path.resolve(deploymentDirectory),

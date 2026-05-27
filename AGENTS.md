@@ -155,11 +155,11 @@ published registry version.
 
 ## Testing Worktree Changes In Beta
 
-For beta validation, use `pnpm beta:sync -- --deployment ../shravan-claw-beta`.
-It builds once, packs local `@agent-vm/*` tarballs, updates beta's host
-dependency pins, runs `pnpm install` in beta, and refreshes the OpenClaw gateway
-overlay tarballs. Then run beta's normal `mise exec -- pnpm build` and `pnpm
-start` commands.
+For beta validation, use `pnpm dev:sync-tarballs -- --deployment
+../shravan-claw-beta`. It builds once, packs local `@agent-vm/*` tarballs,
+updates beta's host dependency pins, runs `pnpm install` in beta, and refreshes
+the OpenClaw gateway overlay tarballs. Then run beta's normal
+`mise exec -- pnpm build` and `pnpm start` commands.
 
 ## Release Process
 
