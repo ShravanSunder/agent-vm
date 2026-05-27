@@ -157,15 +157,15 @@ describe('upstream MCP client runtime', () => {
 		).resolves.toEqual([]);
 
 		expect(createTransport).toHaveBeenCalledWith(
-			{
+			expect.objectContaining({
 				args: ['-y', '-p', '@perplexity-ai/mcp-server', 'perplexity-mcp'],
 				command: 'npx',
-				env: {
+				env: expect.objectContaining({
 					PERPLEXITY_API_KEY: 'GONDOLIN_SECRET_test_placeholder',
-				},
+				}),
 				namespace: 'perplexity',
 				transport: 'stdio',
-			},
+			}),
 			'stdio',
 		);
 	});

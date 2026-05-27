@@ -855,7 +855,7 @@ describe('MCP Portal effective config materialization', () => {
 			readonly providers: Record<string, { readonly transport: { readonly env: unknown } }>;
 		}>(effectiveDir);
 
-		expect(effectiveMcpConfig.providers.perplexity?.transport.env).toEqual({
+		expect(effectiveMcpConfig.providers.perplexity?.transport?.env).toEqual({
 			PERPLEXITY_API_KEY: {
 				name: 'AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY',
 				source: 'environment',
